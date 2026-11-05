@@ -10,6 +10,7 @@
 // push.list.
 
 #include "common.slang"
+#include "custom.slang"
 
 // How strong the fill light is against the key.
 static const float FILL = 0.35;
@@ -30,10 +31,18 @@ PreviewOut previewVertex(uint vertexId : SV_VertexID)
     Mesh mesh = buffers()->meshes[instance.mesh];
     Vertex v = buffers()->vertices[mesh.vertexOffset + vertexId];
     float4 world = transform(instance.model, float4(v.position, 1.0));
+    float3 normal =
+        instance.normal0.xyz * v.normal.x + instance.normal1.xyz * v.normal.y + instance.normal2.xyz * v.normal.z;
+    // A custom shader moves its vertices in its preview as anywhere, at the preview's own time.
+    if (buffers()->materials[instance.material].shader != STANDARD_SHADER)
+    {
+        VertexInput moved = { world.xyz, normalize(normal), v.uv, instance.model.c3.xyz, push.frame->time };
+        world.xyz += customVertex(instance.material, moved);
+    }
     PreviewOut o;
     o.position = transform(push.frame->viewProj, world);
     o.world = world.xyz;
-    o.normal = instance.normal0.xyz * v.normal.x + instance.normal1.xyz * v.normal.y + instance.normal2.xyz * v.normal.z;
+    o.normal = normal;
     o.uv = v.uv;
     o.material = instance.material;
     return o;
@@ -45,32 +54,65 @@ float4 previewFragment(PreviewOut input) : SV_Target
     Frame* frame = push.frame;
     Material material = buffers()->materials[input.material];
     float4 base = material.baseColor * sampleTexture(material.baseColorTexture, input.uv);
-    if (material.alphaCutoff > 0.0 && base.a < material.alphaCutoff)
+    bool custom = material.shader != STANDARD_SHADER;
+    if (!custom && material.alphaCutoff > 0.0 && base.a < material.alphaCutoff)
     {
         discard;
     }
     float4 metalRough = sampleTexture(material.metallicRoughnessTexture, input.uv);
     float metallic = material.metallic * metalRough.b;
+    float roughness = material.roughness * metalRough.g;
+    float3 emission = material.emissive * sampleTexture(material.emissiveTexture, input.uv).rgb;
+    float3 view = normalize(frame->cameraPosition - input.world);
+    // Seen from behind, as a plane can be, a face is lit as its front.
+    float3 normal = normalize(input.normal);
+    normal = dot(normal, view) < 0.0 ? -normal : normal;
+    SurfaceOutput surface = { base.rgb, base.a, normal, metallic, roughness, emission };
+    if (custom)
+    {
+        SurfaceInput at = { input.uv, input.world, normal, view, float3(0.0), frame->time };
+        customSurface(input.material, at, surface);
+        if (material.alphaCutoff > 0.0 && surface.alpha < material.alphaCutoff)
+        {
+            discard;
+        }
+        if (customUnlit(input.material))
+        {
+            return float4(surface.color + surface.emission, 1.0);
+        }
+        base.rgb = surface.color;
+        normal = normalizeOr(surface.normal, normal);
+        metallic = saturate(surface.metallic);
+        roughness = saturate(surface.roughness);
+        emission = surface.emission;
+    }
 
     Surface s;
-    s.view = normalize(frame->cameraPosition - input.world);
-    // Seen from behind, as a plane can be, a face is lit as its front.
-    s.normal = normalize(input.normal);
-    s.normal = dot(s.normal, s.view) < 0.0 ? -s.normal : s.normal;
-    s.roughness = clamp(material.roughness * metalRough.g, 0.045, 1.0);
+    s.view = view;
+    s.normal = normal;
+    s.roughness = clamp(roughness, 0.045, 1.0);
     s.diffuse = base.rgb * (1.0 - metallic);
     s.f0 = lerp(float3(0.04), base.rgb, metallic);
 
-    float3 color = shade(s, -frame->sunDirection, frame->sunColor);
     float3 fill = normalize(s.view + float3(0.0, 0.25, 0.0) - frame->sunDirection * 0.3);
-    color += shade(s, fill, frame->sunColor * FILL);
+    float3 color;
+    if (custom && customLighting(input.material))
+    {
+        LightInput key = { -frame->sunDirection, frame->sunColor, view };
+        LightInput side = { fill, frame->sunColor * FILL, view };
+        color = customLight(input.material, key, surface) + customLight(input.material, side, surface);
+    }
+    else
+    {
+        color = shade(s, -frame->sunDirection, frame->sunColor) + shade(s, fill, frame->sunColor * FILL);
+    }
 
     float up = s.normal.y * 0.5 + 0.5;
     float3 ambient = lerp(frame->groundColor, lerp(frame->skyHorizon, frame->skyZenith, 0.5), up) * 0.35 * frame->ambient;
     float nv = saturate(dot(s.normal, s.view));
     float3 ambientFresnel = s.f0 + (max(float3(1.0 - s.roughness), s.f0) - s.f0) * pow(1.0 - nv, 5.0);
     color += ambient * (s.diffuse + ambientFresnel * (1.0 - s.roughness * 0.7));
-    color += material.emissive * sampleTexture(material.emissiveTexture, input.uv).rgb;
+    color += emission;
     return float4(color, 1.0);
 }
 

@@ -5,6 +5,7 @@
 #pragma once
 
 #include "common.slang"
+#include "custom.slang"
 
 // How much of the sky's ambient light reaches a surface: the diffuse share,
 // tinted toward post.aoTint where it is occluded, and the specular share for
@@ -45,7 +46,8 @@ float4 depthFragment(VertexOut input) : SV_Target0
 {
     ditherLodFade(input);
     Material material = buffers()->materials[input.material];
-    if (material.alphaCutoff > 0.0)
+    bool custom = material.shader != STANDARD_SHADER;
+    if (material.alphaCutoff > 0.0 && !custom)
     {
         float alpha = material.baseColor.a * sampleTexture(material.baseColorTexture, input.uv).a;
         if (alpha < material.alphaCutoff)
@@ -58,8 +60,22 @@ float4 depthFragment(VertexOut input) : SV_Target0
     float3 albedo = material.baseColor.rgb;
     float3 origin = buffers()->instances[input.instance].model.c3.xyz;
     seasonalSurface(push.frame, material, origin, shapeNormal(input, material), albedo, roughness);
-    // As rough as shading draws it, so reflections fade from bumpy shiny detail just as its highlights do.
     float3 normal = surfaceNormal(input, material);
+    // A custom shader's surface, cut out and as rough as shading has it.
+    if (custom)
+    {
+        float4 base = material.baseColor * sampleTexture(material.baseColorTexture, input.uv);
+        float metallic = material.metallic * sampleTexture(material.metallicRoughnessTexture, input.uv).b;
+        SurfaceOutput surface = { albedo, base.a, normal, metallic, roughness, material.emissive };
+        surface = customSurfaceAt(push.frame, input, surface, origin);
+        if (material.alphaCutoff > 0.0 && surface.alpha < material.alphaCutoff)
+        {
+            discard;
+        }
+        normal = surface.normal;
+        roughness = surface.roughness;
+    }
+    // As rough as shading draws it, so reflections fade from bumpy shiny detail just as its highlights do.
     roughness = smoothedRoughness(push.frame, normal, roughness);
     return float4(octEncode(normal) * 0.5 + 0.5, saturate(roughness), 1.0);
 }

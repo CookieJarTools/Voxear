@@ -105,7 +105,7 @@ pub struct GpuMaterial {
     /// `MATERIAL_GLOW_*`).
     pub glow_speed: f32,
     /// The custom shader it is drawn with, by its number among the
-    /// project's (`custom_shaders.slang`), or `STANDARD_SHADER`; its
+    /// project's (`project_shaders.slang`), or `STANDARD_SHADER`; its
     /// properties are its `MATERIAL_PROPERTIES` in `material_properties`.
     pub shader: u32,
     pub _pad: [u32; 3],

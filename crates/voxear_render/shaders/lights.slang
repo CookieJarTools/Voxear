@@ -13,6 +13,7 @@
 #pragma once
 
 #include "common.slang"
+#include "custom.slang"
 
 static const float LTC_SIZE = 64.0;
 // Corners of the polygon a disc is drawn as, its radius stretched so the
@@ -469,6 +470,39 @@ float3 localGlass(Frame* frame, Light light, float3 position, float3 normal)
     float glassTexel = texelMetres * float(LOCAL_SHADOW_TILE) / tile;
     float distance = length(position - light.position);
     return glassLight(frame, uv, corner / atlas, (corner + tile) / atlas, glassTexel, distance, 1.0);
+}
+
+// A local light as a custom shader's `light` takes it: the way to it, from
+// its middle for an area or tube light, and its colour as it arrives,
+// after distance, a spot's cone, its cookie and profile, its shadow and any
+// glass in the way.
+LightInput localLightInput(Light light, float3 position, float3 normal)
+{
+    float3 toLight = light.position - position;
+    float distanceSquared = max(dot(toLight, toLight), 1e-4);
+    toLight *= rsqrt(distanceSquared);
+    float attenuation = rangeWindow(distanceSquared, light.range) / distanceSquared;
+    float3 color = light.color;
+    if (light.kind == LIGHT_SPOT)
+    {
+        attenuation *= smoothstep(light.cosOuter, light.cosInner, dot(-toLight, light.direction));
+        if (light.cookie != NO_TEXTURE)
+        {
+            color *= cookieAt(light, -toLight);
+        }
+    }
+    else if (light.kind == LIGHT_RECTANGLE || light.kind == LIGHT_DISC)
+    {
+        attenuation *= saturate(dot(-toLight, light.direction));
+    }
+    if (light.profile != NO_TEXTURE)
+    {
+        attenuation *= profileAt(light, -toLight);
+    }
+    float shadow = localShadow(push.frame, light, position, normal);
+    color *= attenuation * shadow * localGlass(push.frame, light, position, normal);
+    LightInput input = { toLight, color, float3(0.0) };
+    return input;
 }
 
 float3 shadeLocalLight(Surface s, Light light, float3 position)

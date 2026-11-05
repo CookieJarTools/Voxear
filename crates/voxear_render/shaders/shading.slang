@@ -7,6 +7,7 @@
 
 #include "atmosphere.slang"
 #include "common.slang"
+#include "custom.slang"
 #include "ddgi_sample.slang"
 #include "glow.slang"
 #include "impostor.slang"
@@ -65,6 +66,14 @@ VertexOut forwardVertex(uint instanceIndex, uint lod, uint fade, uint cluster, u
     world.xyz += windOffset(frame, material, instance.model.c3.xyz, height, world.xyz, normal, v.wind, frame->time);
     float earlier = frame->time - frame->deltaTime;
     previous.xyz += windOffset(frame, material, instance.prevModel.c3.xyz, height, previous.xyz, normal, v.wind, earlier);
+    // A custom shader's vertex function, now and a frame ago.
+    if (material.shader != STANDARD_SHADER)
+    {
+        VertexInput now = { world.xyz, normal, v.uv, instance.model.c3.xyz, frame->time };
+        world.xyz += customVertex(instance.material, now);
+        VertexInput before = { previous.xyz, normal, v.uv, instance.prevModel.c3.xyz, earlier };
+        previous.xyz += customVertex(instance.material, before);
+    }
 
     VertexOut o;
     o.position = transform(push.frame->viewProj, world);
@@ -514,6 +523,36 @@ float3 localLights(Frame* frame, Surface s, float3 position, float2 pixel)
     return color;
 }
 
+// A custom shader's surface, from the standard one's: the material's
+// colour, normal, metallic, roughness and emission.
+SurfaceOutput customSurfaceAt(Frame* frame, VertexOut input, SurfaceOutput surface, float3 origin)
+{
+    float3 view = normalize(frame->cameraPosition - input.worldPosition);
+    SurfaceInput at = { input.uv, input.worldPosition, normalize(input.normal), view, origin, frame->time };
+    customSurface(input.material, at, surface);
+    surface.normal = normalizeOr(surface.normal, at.normal);
+    surface.metallic = saturate(surface.metallic);
+    surface.roughness = saturate(surface.roughness);
+    surface.alpha = saturate(surface.alpha);
+    return surface;
+}
+
+// An unlit custom shader's pixel: its colour as it is, hazed by the
+// atmosphere as anything lit is.
+FragmentOut unlitOutput(Frame* frame, VertexOut input, float3 color)
+{
+    if (frame->lighting.sky == SKY_ATMOSPHERE)
+    {
+        float2 screenUv = input.position.xy / float2(frame->viewport);
+        float4 haze = aerialPerspectiveAt(frame, screenUv, length(input.worldPosition - frame->cameraPosition));
+        color = color * haze.a + haze.rgb * skyLook(frame);
+    }
+    FragmentOut o;
+    o.color = float4(color, 1.0);
+    o.velocity = motion(input.currentClip, input.previousClip);
+    return o;
+}
+
 [shader("fragment")]
 FragmentOut fragmentMain(VertexOut input)
 {
@@ -522,7 +561,9 @@ FragmentOut fragmentMain(VertexOut input)
     Material material = buffers()->materials[input.material];
 
     float4 base = material.baseColor * sampleTexture(material.baseColorTexture, input.uv);
-    if (material.alphaCutoff > 0.0 && base.a < material.alphaCutoff)
+    bool custom = material.shader != STANDARD_SHADER;
+    // A custom shader's surface is cut out by its own alpha, below.
+    if (!custom && material.alphaCutoff > 0.0 && base.a < material.alphaCutoff)
     {
         discard;
     }
@@ -537,9 +578,31 @@ FragmentOut fragmentMain(VertexOut input)
     float roughness = material.roughness * metalRough.g;
     float3 origin = buffers()->instances[input.instance].model.c3.xyz;
     seasonalSurface(frame, material, origin, shapeNormal(input, material), base.rgb, roughness);
+    float3 emission =
+        material.emissive * sampleTexture(material.emissiveTexture, input.uv).rgb * glowAmount(frame, material, origin);
+    float3 normal = surfaceNormal(input, material);
+    SurfaceOutput surface = { base.rgb, base.a, normal, metallic, roughness, emission };
+    if (custom)
+    {
+        surface = customSurfaceAt(frame, input, surface, origin);
+        if (material.alphaCutoff > 0.0 && surface.alpha < material.alphaCutoff)
+        {
+            discard;
+        }
+        base.rgb = surface.color;
+        normal = surface.normal;
+        metallic = surface.metallic;
+        roughness = surface.roughness;
+        emission = surface.emission;
+        if (customUnlit(input.material))
+        {
+            return unlitOutput(frame, input, surface.color + emission);
+        }
+    }
+    bool customLit = custom && customLighting(input.material);
 
     Surface s;
-    s.normal = surfaceNormal(input, material);
+    s.normal = normal;
     s.view = normalize(frame->cameraPosition - input.worldPosition);
     s.roughness = clamp(smoothedRoughness(frame, s.normal, roughness), 0.045, 1.0);
     s.diffuse = base.rgb * (1.0 - metallic);
@@ -554,7 +617,12 @@ FragmentOut fragmentMain(VertexOut input)
     float3 sunThrough = sunLight * sunCookieAt(frame, input.worldPosition);
     sunThrough *= glassSun(frame, input.worldPosition, s.normal);
     float3 color = shade(s, -frame->sunDirection, sunThrough) * shadow;
-    if ((material.flags & MATERIAL_FOLIAGE) != 0)
+    if (customLit)
+    {
+        LightInput sun = { -frame->sunDirection, sunThrough * shadow, s.view };
+        color = customLight(input.material, sun, surface);
+    }
+    if (!customLit && (material.flags & MATERIAL_FOLIAGE) != 0)
     {
         // A leaf is thin, so its shaded side takes the light of its sunlit
         // one: the shadow there, a little way towards the sun, rather than
@@ -572,6 +640,13 @@ FragmentOut fragmentMain(VertexOut input)
     for (uint i = 0; i < clusterLights; i++)
     {
         uint light = buffers()->clusters[clusterBase + 1 + i];
+        if (customLit)
+        {
+            LightInput lamp = localLightInput(buffers()->lights[light], input.worldPosition, s.normal);
+            lamp.view = s.view;
+            color += customLight(input.material, lamp, surface);
+            continue;
+        }
         color += shadeLocalLight(s, buffers()->lights[light], input.worldPosition);
     }
 
@@ -587,7 +662,7 @@ FragmentOut fragmentMain(VertexOut input)
     float specularOcclusion = lerp(occlusion.specular, 1.0, found);
     color += ambient * s.diffuse * occlusion.diffuse + reflected * ambientFresnel * (1.0 - s.roughness * 0.7) * specularOcclusion;
 
-    color += material.emissive * sampleTexture(material.emissiveTexture, input.uv).rgb * glowAmount(frame, material, origin);
+    color += emission;
     if (atmosphere)
     {
         float2 screenUv = input.position.xy / float2(frame->viewport);
@@ -618,7 +693,7 @@ FragmentOut fragmentMain(VertexOut input)
     }
     else if (frame->debugView == DEBUG_VIEW_UNLIT)
     {
-        color = base.rgb + material.emissive * sampleTexture(material.emissiveTexture, input.uv).rgb;
+        color = base.rgb + emission;
     }
     else if (frame->debugView == DEBUG_VIEW_AMBIENT_OCCLUSION)
     {

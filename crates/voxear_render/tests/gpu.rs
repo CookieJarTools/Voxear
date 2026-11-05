@@ -2847,6 +2847,128 @@ fn glass_behind_frosted_glass_shows_blurred_through_it() {
     assert!(edge < 25, "seen through the frosted pane, not drawn over it: {inside:?} against {outside:?}");
 }
 
+/// A project's custom shaders as the engine writes them (`voxear_engine::
+/// shaders::dispatch_code`), by hand: 1 sets the colour, 2 is unlit, 3
+/// moves vertices up a metre, 4 lights in two flat bands.
+const CUSTOM_SHADERS: &str = r#"
+#pragma once
+namespace shader_1 {
+struct Paint { float3 color; };
+void surface(Paint paint, SurfaceInput input, inout SurfaceOutput surface) {
+    surface.color = paint.color;
+    surface.roughness = 1.0;
+}
+}
+namespace shader_2 {
+[Unlit]
+struct Glow { float3 color; };
+void surface(Glow glow, SurfaceInput input, inout SurfaceOutput surface) { surface.color = glow.color; }
+}
+namespace shader_3 {
+struct Lift { float height; };
+float3 vertex(Lift lift, VertexInput input) { return float3(0.0, lift.height, 0.0); }
+}
+namespace shader_4 {
+struct Toon { float3 color; };
+float3 light(Toon toon, LightInput light, SurfaceOutput surface) {
+    return (dot(surface.normal, light.direction) > 0.3 ? 1.0 : 0.2) * toon.color * light.color;
+}
+}
+float4* customValues(uint material) { return buffers()->materialProperties + material * MATERIAL_PROPERTIES; }
+void customSurface(uint material, SurfaceInput input, inout SurfaceOutput surface) {
+    switch (buffers()->materials[material].shader) {
+    case 1: { shader_1::Paint p; p.color = customValues(material)[0].xyz; shader_1::surface(p, input, surface); break; }
+    case 2: { shader_2::Glow p; p.color = customValues(material)[0].xyz; shader_2::surface(p, input, surface); break; }
+    default: break;
+    }
+}
+float3 customVertex(uint material, VertexInput input) {
+    switch (buffers()->materials[material].shader) {
+    case 3: { shader_3::Lift p; p.height = customValues(material)[0].x; return shader_3::vertex(p, input); }
+    default: return 0.0;
+    }
+}
+bool customUnlit(uint material) { return buffers()->materials[material].shader == 2; }
+bool customLighting(uint material) { return buffers()->materials[material].shader == 4; }
+float3 customLight(uint material, LightInput light, SurfaceOutput surface) {
+    shader_4::Toon p; p.color = customValues(material)[0].xyz;
+    return shader_4::light(p, light, surface);
+}
+"#;
+
+/// A white ball on a grey floor under the sun, seen from in front, drawn
+/// with custom shader `shader` and its first property `value`, or the
+/// standard shader for 0.
+fn custom_shader_render(shader: u32, value: [f32; 4]) -> Option<Vec<u8>> {
+    use voxear_render::{CustomShaderState, Sky};
+    let mut renderer = renderer()?;
+    renderer.set_custom_shaders(CUSTOM_SHADERS.to_string());
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 1.0, -4.0))));
+    let plane = renderer.primitive(Primitive::Plane).unwrap();
+    let sphere = renderer.primitive(Primitive::Sphere).unwrap();
+    let grey = MaterialDesc { base_color: [0.3, 0.3, 0.3, 1.0], ..MaterialDesc::default() };
+    let grey = renderer.add_material(&grey).unwrap();
+    world.spawn((MeshRenderer::new(plane, grey), Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(40.0))));
+    let mut ball = MaterialDesc { base_color: [1.0; 4], shader, ..MaterialDesc::default() };
+    ball.properties[0] = value;
+    let ball = renderer.add_material(&ball).unwrap();
+    world.spawn((MeshRenderer::new(sphere, ball), Transform::new(Vec3::new(0.0, 1.0, 0.0), Quat::IDENTITY, Vec3::ONE)));
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.5, -0.6, 1.0).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.2, ..Sky::default() });
+    let mut post = steady_post();
+    post.ambient_occlusion.enabled = false;
+    post.contact_shadows.enabled = false;
+    world.insert_resource(post);
+    // Compiling takes seconds, on its own thread, drawing with the shaders as they were meanwhile.
+    for _ in 0..600 {
+        run(&mut renderer, &world, &mut 0.0, 1);
+        match renderer.custom_shaders() {
+            CustomShaderState::Compiling => std::thread::sleep(std::time::Duration::from_millis(50)),
+            CustomShaderState::Failed(error) => panic!("the custom shaders did not compile: {error}"),
+            _ => break,
+        }
+    }
+    assert_eq!(*renderer.custom_shaders(), CustomShaderState::Ready);
+    run(&mut renderer, &world, &mut 0.0, 4);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+#[test]
+fn custom_shaders_set_the_surface_light_it_their_way_go_unlit_and_move_vertices() {
+    let Some(standard) = custom_shader_render(0, [0.0; 4]) else { return };
+    keep_image("custom standard.png", &standard);
+    // The ball's middle, a little up and left, lit by the sun.
+    let at = (300, 150);
+    let white = patch_rgb(&standard, at, 3);
+    assert!(white[0] > 120 && (white[0] - white[2]).abs() < 30, "the standard white ball: {white:?}");
+
+    let painted = custom_shader_render(1, [0.05, 0.1, 1.0, 0.0]).unwrap();
+    keep_image("custom surface.png", &painted);
+    let blue = patch_rgb(&painted, at, 3);
+    assert!(blue[2] > blue[0] + 60, "a surface function paints it blue: {blue:?}");
+
+    let unlit = custom_shader_render(2, [0.0, 1.0, 0.0, 0.0]).unwrap();
+    keep_image("custom unlit.png", &unlit);
+    let (lit_side, dark_side) = (patch_rgb(&unlit, at, 3), patch_rgb(&unlit, (340, 205), 3));
+    assert!(lit_side[1] > lit_side[0] + 100, "unlit green: {lit_side:?}");
+    assert!((lit_side[1] - dark_side[1]).abs() < 12, "the same all over, lit or not: {lit_side:?} {dark_side:?}");
+
+    let toon = custom_shader_render(4, [1.0, 0.4, 0.1, 0.0]).unwrap();
+    keep_image("custom light.png", &toon);
+    let band = patch_rgb(&toon, at, 3);
+    assert!(band[0] > band[2] + 60, "lit by its own light function, in its colour: {band:?}");
+
+    let lifted = custom_shader_render(3, [1.0, 0.0, 0.0, 0.0]).unwrap();
+    keep_image("custom vertex.png", &lifted);
+    // A metre above the ball: sky, a little blue, without the lift, and the ball, grey, with it.
+    let above = (320, 105);
+    let blueness = |rgb: [i32; 3]| rgb[2] - rgb[0];
+    let (sky, ball) = (patch_rgb(&standard, above, 3), patch_rgb(&lifted, above, 3));
+    assert!(blueness(ball) + 15 < blueness(sky), "a vertex function lifts it: {ball:?} where the sky was {sky:?}");
+}
+
 /// A floor in the sun, seen from above and in front, with a pane of glass
 /// standing two metres wide across the sun's light, or none: the floor
 /// where the light comes through the pane is in view, the pane itself is

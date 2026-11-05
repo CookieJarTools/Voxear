@@ -147,6 +147,9 @@ pub fn read(source: &str) -> Result<ShaderInfo> {
             info.properties.push(property);
         }
     }
+    if info.properties.len() > MAX_PROPERTIES {
+        bail!("{name} has {} properties; a shader has at most {MAX_PROPERTIES}", info.properties.len());
+    }
     Ok(info)
 }
 
@@ -344,6 +347,82 @@ fn number(text: &str) -> Result<f32> {
     text.parse::<f32>().with_context(|| format!("`{text}` is not a number"))
 }
 
+/// The project's shaders as Slang for the renderer to compile in place of
+/// its empty `project_shaders.slang`: each shader's source in a namespace of
+/// its own, named for its number, a function reading each one's properties
+/// from its material, and the functions that call the one a material picks
+/// by its number. Shaders that do not read are left out, so their
+/// materials draw as the standard shader.
+pub fn dispatch_code(registry: &ShaderRegistry) -> String {
+    let shaders: Vec<(&ProjectShader, &ShaderInfo)> =
+        registry.shaders.iter().filter_map(|shader| Some((shader, shader.info.as_ref().ok()?))).collect();
+    let mut code = String::from("// Written by the engine from the project's .shader assets.\n\n#pragma once\n\n");
+    for (shader, info) in &shaders {
+        let number = shader.number;
+        code += &format!("namespace shader_{number}\n{{\n#line 1 \"{}\"\n{}\n}}\n\n", shader.path, shader.source);
+        code += &format!(
+            "shader_{number}::{name} shader_{number}_properties(uint material)\n{{\n    \
+             float4* values = buffers()->materialProperties + material * MATERIAL_PROPERTIES;\n    \
+             shader_{number}::{name} properties;\n",
+            name = info.name
+        );
+        for (slot, property) in info.properties.iter().enumerate().take(MAX_PROPERTIES) {
+            let value = match property.kind {
+                PropertyKind::Float => format!("values[{slot}].x"),
+                PropertyKind::Float2 => format!("values[{slot}].xy"),
+                PropertyKind::Float3 | PropertyKind::Color { alpha: false } => format!("values[{slot}].xyz"),
+                PropertyKind::Float4 | PropertyKind::Color { alpha: true } => format!("values[{slot}]"),
+                PropertyKind::Toggle => format!("values[{slot}].x > 0.5"),
+                PropertyKind::Picture => {
+                    code += &format!("    properties.{}.index = asuint(values[{slot}].x);\n", property.name);
+                    continue;
+                }
+            };
+            code += &format!("    properties.{} = {value};\n", property.name);
+        }
+        code += "    return properties;\n}\n\n";
+    }
+    let calls = |wanted: fn(&ShaderInfo) -> bool, call: &dyn Fn(u32) -> String| -> String {
+        let mut cases = String::new();
+        for (shader, info) in shaders.iter().filter(|(_, info)| wanted(info)) {
+            cases += &format!("    case {}:\n        {}\n", shader.number, call(shader.number));
+        }
+        cases
+    };
+    let switch = "    switch (buffers()->materials[material].shader)\n    {\n";
+    code += "void customSurface(uint material, SurfaceInput input, inout SurfaceOutput surface)\n{\n";
+    code += switch;
+    code += &calls(|info| info.surface, &|n| {
+        format!("shader_{n}::surface(shader_{n}_properties(material), input, surface);\n        break;")
+    });
+    code += "    default:\n        break;\n    }\n}\n\n";
+    code += "float3 customVertex(uint material, VertexInput input)\n{\n";
+    code += switch;
+    code += &calls(|info| info.vertex, &|n| {
+        format!("return shader_{n}::vertex(shader_{n}_properties(material), input);")
+    });
+    code += "    default:\n        return 0.0;\n    }\n}\n\n";
+    code += "bool customUnlit(uint material)\n{\n";
+    code += switch;
+    code += &calls(|info| info.unlit, &|_| "return true;".to_string());
+    code += "    default:\n        return false;\n    }\n}\n\n";
+    code += "bool customLighting(uint material)\n{\n";
+    code += switch;
+    code += &calls(|info| info.light, &|_| "return true;".to_string());
+    code += "    default:\n        return false;\n    }\n}\n\n";
+    code += "float3 customLight(uint material, LightInput light, SurfaceOutput surface)\n{\n";
+    code += switch;
+    code += &calls(|info| info.light, &|n| {
+        format!("return shader_{n}::light(shader_{n}_properties(material), light, surface);")
+    });
+    code += "    default:\n        return 0.0;\n    }\n}\n";
+    code
+}
+
+/// The most properties a shader's materials can set: each is one of a
+/// material's `MATERIAL_PROPERTIES` on the GPU.
+pub const MAX_PROPERTIES: usize = voxear_render::MATERIAL_PROPERTIES;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -409,6 +488,25 @@ mod tests {
         assert!(registry.shaders[0].info.is_err());
         assert_eq!(registry.get(guid(1)).map(|(number, info)| (number, info.name.as_str())), Some((2, "Water")));
         assert!(registry.get(guid(2)).is_none(), "one that does not read draws as the standard shader");
+    }
+
+    #[test]
+    fn the_dispatch_calls_each_shaders_functions_by_its_number() {
+        let guid = |n: u32| format!("{n:032x}").parse::<AssetGuid>().unwrap();
+        let unlit = "[Unlit]\nstruct Glow { [Property, Color] float3 tint = 1.0; }";
+        let registry = ShaderRegistry::new(vec![
+            (guid(1), "Shaders/Water.shader".into(), WATER.into()),
+            (guid(2), "Shaders/Glow.shader".into(), unlit.into()),
+        ]);
+        let code = dispatch_code(&registry);
+        assert!(code.contains("namespace shader_2\n{\n#line 1 \"Shaders/Water.shader\""), "{code}");
+        assert!(code.contains("properties.deep = values[0].xyz;"));
+        assert!(code.contains("properties.ripples.index = asuint(values[2].x);"));
+        assert!(code.contains("properties.foam = values[3].x > 0.5;"));
+        assert!(code.contains("case 2:\n        shader_2::surface(shader_2_properties(material), input, surface);"));
+        assert!(code.contains("case 2:\n        return shader_2::vertex("));
+        assert!(code.contains("case 1:\n        return true;"), "Glow is unlit");
+        assert!(!code.contains("shader_1::surface"), "Glow has no surface function");
     }
 
     #[test]

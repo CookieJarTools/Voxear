@@ -3,6 +3,7 @@
 // only, as shadow.slang draws casters.
 
 #include "culling.slang"
+#include "custom.slang"
 #include "wind.slang"
 
 struct ShadowVertex
@@ -36,6 +37,11 @@ void shadowMesh(
         Instance data = drawn.data;
         float3 normal = normalize(data.normal0.xyz * v.normal.x + data.normal1.xyz * v.normal.y + data.normal2.xyz * v.normal.z);
         world.xyz += windOffset(push.frame, material, data.model.c3.xyz, height, world.xyz, normal, v.wind, push.frame->time);
+        if (material.shader != STANDARD_SHADER)
+        {
+            VertexInput moved = { world.xyz, normal, v.uv, data.model.c3.xyz, push.frame->time };
+            world.xyz += customVertex(drawn.data.material, moved);
+        }
         vertices[i].position = transform(shadowViewProj(push.frame, push.list, push.level), world);
     }
     for (uint i = thread.x; i < triangleCount; i += MESHLET_ROUND)

@@ -112,7 +112,7 @@ use crate::{
         MAX_CLUSTER_LIGHTS, MESHLET_CONES, MESHLET_CULLING, MESHLET_RUNS, Mat4Cols, NO_TEXTURE, Push,
         meshlet_lists_len, stat,
     SKY_ATMOSPHERE, },
-    hot_reload::{ShaderSet, ShaderWatcher},
+    hot_reload::{CustomCompile, ShaderSet, ShaderWatcher},
     pipelines::{DEPTH_FORMAT, HDR_FORMAT, PYRAMID_FORMAT, Pipelines, VELOCITY_FORMAT},
     shadows::ATLAS_RESOLUTION,
 };
@@ -333,6 +333,12 @@ pub struct Renderer {
     pipelines: Pipelines,
     output_format: vk::Format,
     watcher: Option<ShaderWatcher>,
+    /// The shaders the pipelines are made from, as built in or as hot
+    /// reload compiled them, before a project's custom shaders.
+    shaders: ShaderSet,
+    /// A project's custom shaders, compiled into the modules that draw
+    /// materials (see [`set_custom_shaders`](Self::set_custom_shaders)).
+    custom: CustomShaders,
     /// The 3D views drawn each frame: the first, which the stats are of, and
     /// any after it (see [`View`]).
     views: Vec<View>,
@@ -390,7 +396,8 @@ impl Renderer {
             Target::Window(swapchain) => swapchain.format.format,
             Target::Offscreen { image, .. } => image.desc.format,
         };
-        let pipelines = Pipelines::new(&gpu, &bindless, output_format, &ShaderSet::embedded())?;
+        let shaders = ShaderSet::embedded();
+        let pipelines = Pipelines::new(&gpu, &bindless, output_format, &shaders)?;
         let first = View::new(&gpu, 0)?;
         let ui_buffers = (0..FRAMES_IN_FLIGHT).map(|slot| create_ui_buffers(&gpu, slot)).collect::<Result<_>>()?;
         let main =
@@ -409,6 +416,8 @@ impl Renderer {
             pipelines,
             output_format,
             watcher: if hot_reload { ShaderWatcher::new() } else { None },
+            shaders,
+            custom: CustomShaders::default(),
             views: vec![first],
             frame_index: 0,
             last_time: None,
@@ -850,21 +859,95 @@ impl Renderer {
         let Some(result) = self.watcher.as_mut().and_then(ShaderWatcher::poll) else { return };
         let reloaded = result.and_then(|shaders| {
             self.gpu.wait_idle();
-            Pipelines::new(&self.gpu, &self.bindless, self.output_format, &shaders)
+            let pipelines = Pipelines::new(&self.gpu, &self.bindless, self.output_format, &shaders)?;
+            Ok((pipelines, shaders))
         });
         match reloaded {
-            Ok(pipelines) => {
+            Ok((pipelines, shaders)) => {
                 self.pipelines.destroy(&self.gpu);
                 self.pipelines = pipelines;
+                // Compiled with the project's custom shaders, which are part of them now.
+                self.shaders = shaders;
                 tracing::info!("shaders reloaded in {:.0} ms", started.elapsed().as_secs_f32() * 1000.0);
             }
             Err(error) => tracing::error!("shader reload failed, keeping the previous shaders: {error:#}"),
         }
     }
 
+    /// Compiles a project's custom shaders, `code` as its
+    /// `project_shaders.slang` (see `voxear_engine::shaders`), into the
+    /// shaders that draw materials, on a thread of its own, and draws with
+    /// them once they compile; until then, and if they do not, with those it
+    /// had. The same code again does nothing.
+    pub fn set_custom_shaders(&mut self, code: String) {
+        if self.custom.code == code {
+            return;
+        }
+        self.custom.code = code.clone();
+        if self.custom.compiling.is_some() {
+            self.custom.waiting = Some(code);
+            return;
+        }
+        let dir = self.custom.dir();
+        if let Some(watcher) = &mut self.watcher {
+            watcher.custom = Some(dir.clone());
+        }
+        self.custom.compiling = Some(CustomCompile::start(code, dir));
+        self.custom.state = CustomShaderState::Compiling;
+    }
+
+    /// Draws with modules compiled before with a project's custom shaders,
+    /// as a built game does, without compiling anything.
+    pub fn use_custom_modules(&mut self, modules: &[(String, Vec<u8>)]) -> Result<()> {
+        let shaders = self.shaders.replaced(modules);
+        self.gpu.wait_idle();
+        let pipelines = Pipelines::new(&self.gpu, &self.bindless, self.output_format, &shaders)?;
+        self.pipelines.destroy(&self.gpu);
+        self.pipelines = pipelines;
+        self.custom.state = CustomShaderState::Ready;
+        Ok(())
+    }
+
+    /// Where a project's custom shaders stand: compiling, drawn with, or
+    /// failed, with Slang's error naming the shader and the line.
+    pub fn custom_shaders(&self) -> &CustomShaderState {
+        &self.custom.state
+    }
+
+    /// Swaps in a project's custom shaders once they compiled.
+    fn finish_custom_shaders(&mut self) {
+        if !self.custom.compiling.as_mut().is_some_and(CustomCompile::finished) {
+            return;
+        }
+        let compiled = self.custom.compiling.take().expect("checked").take();
+        let made = compiled.and_then(|modules| {
+            let shaders = self.shaders.replaced(&modules);
+            self.gpu.wait_idle();
+            Ok((Pipelines::new(&self.gpu, &self.bindless, self.output_format, &shaders)?, shaders))
+        });
+        match made {
+            Ok((pipelines, shaders)) => {
+                self.pipelines.destroy(&self.gpu);
+                self.pipelines = pipelines;
+                self.shaders = shaders;
+                self.custom.state = CustomShaderState::Ready;
+                tracing::info!("custom shaders compiled");
+            }
+            Err(error) => {
+                tracing::error!("custom shaders did not compile: {error:#}");
+                self.custom.state = CustomShaderState::Failed(format!("{error:#}"));
+            }
+        }
+        if let Some(code) = self.custom.waiting.take() {
+            self.custom.code.clear();
+            self.set_custom_shaders(code);
+        }
+    }
+
     /// Draws the world's cameras, lights and mesh renderers, into each output.
     pub fn render(&mut self, world: &World, time: f32) -> Result<()> {
         self.reload_shaders();
+        self.finish_custom_shaders();
         for output in &mut self.outputs {
             if let (Some((width, height)), Target::Window(swapchain)) = (output.pending_size.take(), &mut output.target)
             {
@@ -2059,4 +2142,36 @@ fn create_meshlet_lists(gpu: &Gpu, prefix: &str, slot: usize, capacity: u32) -> 
     let work =
         gpu.create_buffer(&format!("{prefix}meshlet work {slot}"), entries * 8, storage, MemoryLocation::GpuOnly)?;
     Ok([draws, instances, work])
+}
+
+/// Where a project's custom shaders stand.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum CustomShaderState {
+    /// None asked for.
+    #[default]
+    None,
+    Compiling,
+    /// Drawn with.
+    Ready,
+    /// Slang's error, naming the shader and the line; the shaders drawn with
+    /// before stay.
+    Failed(String),
+}
+
+/// A project's custom shaders: the code last asked for, what compiles it,
+/// code asked for while it did, and where they stand.
+#[derive(Default)]
+struct CustomShaders {
+    code: String,
+    compiling: Option<CustomCompile>,
+    waiting: Option<String>,
+    state: CustomShaderState,
+}
+
+impl CustomShaders {
+    /// Where the project's `project_shaders.slang` and its modules are
+    /// written, for this run.
+    fn dir(&self) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("voxear-custom-shaders-{}", std::process::id()))
+    }
 }

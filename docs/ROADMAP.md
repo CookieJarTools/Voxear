@@ -1240,7 +1240,7 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   A material picks its **Shader** (Standard, or a project shader) and keeps its properties in the `.material` file;
   the material Inspector shows them as fields. On the GPU a material has a shader number and an offset into a
   buffer of property `float4`s; the project's shaders are compiled into the main shaders as one generated `switch`
-  on the shader number (`custom_shaders.slang`), so the GPU-driven culling and draw lists are unchanged and only
+  on the shader number (`project_shaders.slang`), so the GPU-driven culling and draw lists are unchanged and only
   materials using a custom shader pay for it. The editor compiles with the Slang compiler shipped beside it
   (`SLANGC`, then `slang/` next to the executable, then `PATH`), recompiling when a shader is saved; game builds
   precompile them. Steps: shader assets and properties; material shader and properties on the GPU; the generated

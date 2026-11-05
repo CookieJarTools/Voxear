@@ -1,6 +1,13 @@
 //! Shader hot reload for development checkouts: edit a `.slang` file and the
 //! running engine recompiles it and swaps pipelines. A compile error is
 //! logged and the previous shaders keep running.
+//!
+//! A project's custom shaders compile here too ([`CustomCompile`]): the
+//! modules that draw materials, again, with `VOXEAR_CUSTOM_SHADERS` defined
+//! and the project's `project_shaders.slang` on the include path. That needs the
+//! Slang compiler, shipped beside the engine (`slang/` next to its
+//! executable), and the engine's shader sources (`shaders/` beside it, or
+//! this crate's in a source checkout).
 
 use std::{
     borrow::Cow,
@@ -52,11 +59,90 @@ impl ShaderSet {
     pub fn get(&self, name: &str) -> Result<&[u8]> {
         self.spirv.get(name).map(|bytes| bytes.as_ref()).with_context(|| format!("no shader named {name}"))
     }
+
+    /// These shaders, with some compiled again in their place.
+    pub fn replaced(&self, modules: &[(String, Vec<u8>)]) -> Self {
+        let mut spirv = self.spirv.clone();
+        for (name, bytes) in modules {
+            spirv.insert(name.clone(), Cow::Owned(bytes.clone()));
+        }
+        Self { spirv }
+    }
+}
+
+/// The engine's shader sources: `shaders/` beside the executable, as the
+/// engine is installed, or this crate's own in a source checkout.
+pub fn engine_shader_dir() -> Option<PathBuf> {
+    let beside = std::env::current_exe().ok()?.parent()?.join("shaders");
+    let checkout = Path::new(env!("CARGO_MANIFEST_DIR")).join("shaders");
+    [beside, checkout].into_iter().find(|dir| dir.join("custom.slang").is_file())
+}
+
+/// A project's custom shaders compiling on a thread of their own, into the
+/// modules that draw materials.
+pub struct CustomCompile {
+    job: std::thread::JoinHandle<Result<Vec<(String, Vec<u8>)>>>,
+}
+
+impl CustomCompile {
+    /// Starts compiling `code`, a project's `project_shaders.slang`, in
+    /// `dir`, with the engine's shaders.
+    pub fn start(code: String, dir: PathBuf) -> Self {
+        Self { job: std::thread::spawn(move || compile_custom(&code, &dir)) }
+    }
+
+    /// The modules compiled, once done; an error says which shader failed
+    /// and where.
+    pub fn finished(&mut self) -> bool {
+        self.job.is_finished()
+    }
+
+    pub fn take(self) -> Result<Vec<(String, Vec<u8>)>> {
+        self.job.join().unwrap_or_else(|_| bail!("the shader compiler thread panicked"))
+    }
+}
+
+/// Compiles the modules that draw materials with `code` as their
+/// `project_shaders.slang`, written into `dir`, a module a thread.
+fn compile_custom(code: &str, dir: &Path) -> Result<Vec<(String, Vec<u8>)>> {
+    let engine = engine_shader_dir().context("the engine's shader sources are not installed beside it")?;
+    std::fs::create_dir_all(dir)?;
+    std::fs::write(dir.join("project_shaders.slang"), code)?;
+    let compiled: Vec<Result<(String, Vec<u8>)>> = std::thread::scope(|scope| {
+        let jobs: Vec<_> = CUSTOM_SHADER_MODULES
+            .iter()
+            .map(|&stem| {
+                let engine = &engine;
+                scope.spawn(move || {
+                    let target = dir.join(format!("{stem}.spv"));
+                    let output = Command::new(slangc())
+                        .arg(engine.join(format!("{stem}.slang")))
+                        .args(SLANG_ARGS)
+                        .args(["-D", "VOXEAR_CUSTOM_SHADERS"])
+                        .args(["-I".as_ref(), dir.as_os_str(), "-I".as_ref(), engine.as_os_str()])
+                        .arg("-o")
+                        .arg(&target)
+                        .output()
+                        .context("running the Slang compiler")?;
+                    if !output.status.success() {
+                        bail!("{}", String::from_utf8_lossy(&output.stderr).trim());
+                    }
+                    Ok((stem.to_string(), std::fs::read(&target)?))
+                })
+            })
+            .collect();
+        jobs.into_iter().map(|job| job.join().unwrap_or_else(|_| bail!("shader compiler thread panicked"))).collect()
+    });
+    // Every module includes the same shaders, so the first error says it all.
+    compiled.into_iter().collect()
 }
 
 pub struct ShaderWatcher {
     dir: PathBuf,
     out: PathBuf,
+    /// Where a project's `project_shaders.slang` is, when it has custom
+    /// shaders, compiled in when the modules are compiled again.
+    pub custom: Option<PathBuf>,
     stamps: HashMap<PathBuf, SystemTime>,
     last_poll: Instant,
 }
@@ -70,7 +156,7 @@ impl ShaderWatcher {
             return None;
         }
         let out = std::env::temp_dir().join(format!("voxear-shaders-{}", std::process::id()));
-        let mut watcher = Self { stamps: HashMap::new(), last_poll: Instant::now(), dir, out };
+        let mut watcher = Self { stamps: HashMap::new(), last_poll: Instant::now(), dir, out, custom: None };
         watcher.changed();
         tracing::info!("watching {} for shader changes", watcher.dir.display());
         Some(watcher)
@@ -120,9 +206,13 @@ impl ShaderWatcher {
 
     fn compile_one(&self, stem: &str, path: &Path) -> Result<(String, Vec<u8>)> {
         let target = self.out.join(format!("{stem}.spv"));
+        let custom = self.custom.iter().flat_map(|custom| {
+            ["-D".as_ref(), "VOXEAR_CUSTOM_SHADERS".as_ref(), "-I".as_ref(), custom.as_os_str()]
+        });
         let output = Command::new(slangc())
             .arg(path)
             .args(SLANG_ARGS)
+            .args(custom)
             .arg("-I")
             .arg(&self.dir)
             .arg("-o")
@@ -141,6 +231,16 @@ impl Drop for ShaderWatcher {
     }
 }
 
+/// The Slang compiler: `SLANGC`, else the one shipped in `slang/` beside the
+/// executable, else `slangc` on the path.
 fn slangc() -> String {
-    std::env::var("SLANGC").unwrap_or_else(|_| "slangc".into())
+    if let Ok(path) = std::env::var("SLANGC") {
+        return path;
+    }
+    let name = if cfg!(windows) { "slangc.exe" } else { "slangc" };
+    let beside = std::env::current_exe().ok().and_then(|exe| Some(exe.parent()?.join("slang").join(name)));
+    match beside.filter(|path| path.is_file()) {
+        Some(path) => path.to_string_lossy().into_owned(),
+        None => "slangc".into(),
+    }
 }

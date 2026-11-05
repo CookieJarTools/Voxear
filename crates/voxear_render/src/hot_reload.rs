@@ -5,7 +5,7 @@
 //! A project's custom shaders compile here too ([`CustomCompile`]): the
 //! modules that draw materials, again, with `VOXEAR_CUSTOM_SHADERS` defined
 //! and the project's `project_shaders.slang` on the include path. That needs the
-//! Slang compiler, shipped beside the engine (`slang/` next to its
+//! Slang compiler, shipped beside the engine (`slang/bin/` next to its
 //! executable), and the engine's shader sources (`shaders/` beside it, or
 //! this crate's in a source checkout).
 
@@ -88,7 +88,7 @@ impl CustomCompile {
     /// Starts compiling `code`, a project's `project_shaders.slang`, in
     /// `dir`, with the engine's shaders.
     pub fn start(code: String, dir: PathBuf) -> Self {
-        Self { job: std::thread::spawn(move || compile_custom(&code, &dir)) }
+        Self { job: std::thread::spawn(move || compile_custom_shaders(&code, &dir)) }
     }
 
     /// The modules compiled, once done; an error says which shader failed
@@ -103,8 +103,9 @@ impl CustomCompile {
 }
 
 /// Compiles the modules that draw materials with `code` as their
-/// `project_shaders.slang`, written into `dir`, a module a thread.
-fn compile_custom(code: &str, dir: &Path) -> Result<Vec<(String, Vec<u8>)>> {
+/// `project_shaders.slang`, written into `dir`, a module a thread, as a
+/// game build does ahead of time and [`CustomCompile`] while editing.
+pub fn compile_custom_shaders(code: &str, dir: &Path) -> Result<Vec<(String, Vec<u8>)>> {
     let engine = engine_shader_dir().context("the engine's shader sources are not installed beside it")?;
     std::fs::create_dir_all(dir)?;
     std::fs::write(dir.join("project_shaders.slang"), code)?;
@@ -231,14 +232,15 @@ impl Drop for ShaderWatcher {
     }
 }
 
-/// The Slang compiler: `SLANGC`, else the one shipped in `slang/` beside the
-/// executable, else `slangc` on the path.
+/// The Slang compiler: `SLANGC`, else the one shipped beside the executable
+/// (`slang/bin/`, its libraries in `slang/lib/` where it looks for them),
+/// else `slangc` on the path.
 fn slangc() -> String {
     if let Ok(path) = std::env::var("SLANGC") {
         return path;
     }
     let name = if cfg!(windows) { "slangc.exe" } else { "slangc" };
-    let beside = std::env::current_exe().ok().and_then(|exe| Some(exe.parent()?.join("slang").join(name)));
+    let beside = std::env::current_exe().ok().and_then(|exe| Some(exe.parent()?.join("slang").join("bin").join(name)));
     match beside.filter(|path| path.is_file()) {
         Some(path) => path.to_string_lossy().into_owned(),
         None => "slangc".into(),

@@ -69,6 +69,10 @@ Every project has a clear glass material built in: pick **Glass** in a Mesh Rend
 > [!NOTE]
 > Glass in front of other glass does not show the glass behind it. Make each mesh's glass face outwards: you see glass only from the side its faces point to.
 
+## Custom shaders
+
+Click the arrow on a material's **Shader** field to draw it with a shader of your own in place of **Standard**: a short file that changes its colour, how light falls on it, or moves its vertices. Its properties show as fields under the material's settings. See [[Custom Shaders]].
+
 ## The material file
 
 A material is a small text file:
@@ -87,6 +91,7 @@ normal_map = "c81f3e0a9b2d4c6e8f1a3b5d7e9f0a2c"
 - `foliage = true` lights it as leaves are, as above.
 - `glass = true` makes it glass, as above, and `ior` sets its index of refraction, 1.5 unless written.
 - `color_map`, `metallic_map`, `normal_map` and `emissive_map` name pictures by their IDs, from their `.meta` files, so the link survives a picture being renamed.
+- `shader` names a custom shader by its ID, and `[properties]` holds the values the material gives it. See [[Custom Shaders]].
 
 A model's own materials, with their pictures, can be written out as material files to edit. See [[Models]].
 

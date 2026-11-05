@@ -104,6 +104,7 @@ pub use scene::{
     Camera, Light, LightKind, MAX_TRANSITIONS, MeshRenderer, Sky, SkyBody, SkyMode, ViewOptions, temperature_color,
 };
 pub use voxear_rhi::TextureId;
+pub use hot_reload::{compile_custom_shaders, engine_shader_dir};
 
 use crate::{
     assets::Assets,

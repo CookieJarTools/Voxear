@@ -151,7 +151,8 @@ impl Game {
     /// read again, as when a table changed, it stays in the one it is in.
     /// Reads the project's custom shaders and has the renderer compile them
     /// into its own, on a thread of their own, and draws the materials that
-    /// use them with them. Nothing to compile for a project without any.
+    /// use them with them. Nothing to compile for a project without any, nor
+    /// for a built game, whose build compiled them.
     pub fn apply_custom_shaders(&mut self, renderer: &mut Renderer) {
         self.content.read_shaders();
         let registry = self.content.shaders();
@@ -165,7 +166,14 @@ impl Game {
         if registry.shaders.is_empty() && !had {
             return;
         }
-        renderer.set_custom_shaders(crate::shaders::dispatch_code(registry));
+        match self.content.built_shaders() {
+            Some(modules) => {
+                if let Err(error) = modules.and_then(|modules| renderer.use_custom_modules(&modules)) {
+                    tracing::error!("drawing with the built custom shaders: {error:#}");
+                }
+            }
+            None => renderer.set_custom_shaders(crate::shaders::dispatch_code(registry)),
+        }
         if let Err(error) = self.content.refresh_shaded_materials(renderer) {
             tracing::error!("{error:#}");
         }

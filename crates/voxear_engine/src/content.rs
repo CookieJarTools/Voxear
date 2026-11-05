@@ -657,6 +657,27 @@ impl Content {
         &self.shaders
     }
 
+    /// The modules the content build compiled the custom shaders into, by
+    /// name, from the topmost layer of built content that has them; `None`
+    /// for content read from the project's folder, or built without any.
+    pub fn built_shaders(&self) -> Option<Result<Vec<(String, Vec<u8>)>>> {
+        let Source::Bundles(_, layers) = &self.source else { return None };
+        let folders = layers.iter().rev().map(|(dir, _)| dir.join(crate::content_build::SHADERS_FOLDER));
+        let folder = folders.into_iter().find(|dir| dir.is_dir())?;
+        let read = || {
+            let mut modules = Vec::new();
+            for entry in std::fs::read_dir(&folder)? {
+                let path = entry?.path();
+                if path.extension().is_some_and(|extension| extension == "spv") {
+                    let name = path.file_stem().unwrap_or_default().to_string_lossy().into_owned();
+                    modules.push((name, std::fs::read(&path).with_context(|| format!("reading {}", path.display()))?));
+                }
+            }
+            Ok(modules)
+        };
+        Some(read())
+    }
+
     /// Uploads again every loaded material asset that names a custom
     /// shader, as after the project's shaders changed: their numbers,
     /// properties and defaults may have.

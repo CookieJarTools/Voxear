@@ -252,6 +252,14 @@ pub fn build_mounted(
 
     link_bundles(&mut catalog, &needs, &bundle_of);
     catalog.assets.sort_by(|a, b| a.path.cmp(&b.path));
+    let shaders: Vec<(AssetGuid, String, String)> = usage
+        .keys()
+        .filter_map(|guid| db.get(*guid).filter(|entry| entry.kind == AssetKind::Shader))
+        .map(|entry| Ok((entry.guid, entry.path.clone(), String::from_utf8(stored[&entry.guid].clone())?)))
+        .collect::<Result<_>>()?;
+    progress(usage.len(), usage.len(), "custom shaders")?;
+    let scratch = root.join(".voxear").join("ShaderBuild");
+    compile_shaders(shaders, &scratch, output).context("compiling the project's custom shaders")?;
     catalog.write(output)?;
     remove_stale(output, &catalog)?;
     cooker.prune()?;
@@ -336,9 +344,10 @@ fn usage_sets(
             let needed = named.contains(&e.guid) || code_roots.iter().any(|r| r.matches(e.guid, &e.path));
             // Code loads levels, prefabs and UI documents by path, which the build cannot see, and the game
             // reads its input actions and every string and asset table when it starts, an asset table taking
-            // each language's asset with it. A package's levels, prefabs and UI documents ship only when the
-            // game uses them, so a package of many ships what the game takes from it; its tables still ship,
-            // since the game reads them all, and its input actions never stand in for the project's.
+            // each language's asset with it. The project's shaders all ship, as they are compiled in together. A
+            // package's levels, prefabs and UI documents ship only when the game uses them, so a package of many
+            // ships what the game takes from it; its tables still ship, since the game reads them all, and its
+            // input actions never stand in for the project's.
             let blanket = match e.mount {
                 Mount::Project => matches!(
                     e.kind,
@@ -348,6 +357,7 @@ fn usage_sets(
                         | AssetKind::InputActions
                         | AssetKind::Strings
                         | AssetKind::AssetTable
+                        | AssetKind::Shader
                 ),
                 Mount::Package(_) => matches!(e.kind, AssetKind::Strings | AssetKind::AssetTable),
             } || matches(&settings.include, &e.path);
@@ -380,6 +390,56 @@ fn link_bundles(catalog: &mut Catalog, needs: &HashMap<AssetGuid, Needs>, bundle
 }
 
 /// Deletes bundles from earlier builds that the new catalog no longer lists.
+/// Where a build keeps the project's custom shaders, compiled into the
+/// engine's that draw materials, for the game to draw with as they are.
+pub const SHADERS_FOLDER: &str = "Shaders";
+
+/// The file in [`SHADERS_FOLDER`] naming what its modules were compiled
+/// from, so an unchanged build does not compile them again.
+const SHADERS_STAMP: &str = "compiled-from";
+
+/// Compiles the shaders shipped into the engine's modules that draw
+/// materials, into `output`'s [`SHADERS_FOLDER`]: a folder that is not there
+/// for a game without any. Unchanged shaders and engine are not compiled
+/// again. Slang works in `scratch`.
+fn compile_shaders(shaders: Vec<(AssetGuid, String, String)>, scratch: &Path, output: &Path) -> Result<()> {
+    let folder = output.join(SHADERS_FOLDER);
+    if shaders.is_empty() {
+        if folder.is_dir() {
+            std::fs::remove_dir_all(&folder).with_context(|| format!("removing {}", folder.display()))?;
+        }
+        return Ok(());
+    }
+    let registry = crate::shaders::ShaderRegistry::new(shaders);
+    if let Some(shader) = registry.shaders.iter().find(|shader| shader.info.is_err())
+        && let Err(error) = &shader.info
+    {
+        anyhow::bail!("{}: {error}", shader.path);
+    }
+    let code = crate::shaders::dispatch_code(&registry);
+    let engine = voxear_render::engine_shader_dir().context("the engine's shader sources are not installed beside it")?;
+    let mut sources: Vec<PathBuf> = std::fs::read_dir(&engine)?.map(|entry| Ok(entry?.path())).collect::<Result<_>>()?;
+    sources.sort();
+    let mut parts = vec![code.clone().into_bytes()];
+    for source in sources.iter().filter(|path| path.extension().is_some_and(|extension| extension == "slang")) {
+        parts.push(std::fs::read(source)?);
+    }
+    let stamp = content_hash(&parts.iter().map(Vec::as_slice).collect::<Vec<_>>());
+    if std::fs::read_to_string(folder.join(SHADERS_STAMP)).is_ok_and(|was| was == stamp) {
+        return Ok(());
+    }
+    let modules = voxear_render::compile_custom_shaders(&code, scratch)?;
+    if folder.is_dir() {
+        std::fs::remove_dir_all(&folder)?;
+    }
+    std::fs::create_dir_all(&folder)?;
+    for (name, spirv) in modules {
+        std::fs::write(folder.join(format!("{name}.spv")), spirv)?;
+    }
+    std::fs::write(folder.join(SHADERS_STAMP), stamp)?;
+    Ok(())
+}
+
 fn remove_stale(output: &Path, catalog: &Catalog) -> Result<()> {
     for entry in std::fs::read_dir(output)? {
         let path = entry?.path();

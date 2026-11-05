@@ -258,6 +258,15 @@ fn gather(root: &Path, target: &Path, engine: &str) -> Result<Vec<Packed>> {
         }
     }
     add(&root.join("managed/Voxear.Scripts.props"), "managed/Voxear.Scripts.props".into(), false)?;
+    // For a project's custom shaders: the engine's shader sources, which they are compiled into, and Slang.
+    for source in files_in(&root.join("crates/voxear_render/shaders"))? {
+        if source.extension().is_some_and(|extension| extension == "slang") {
+            add(&source, Path::new("bin/shaders").join(source.file_name().unwrap_or_default()), false)?;
+        }
+    }
+    for (source, path, program) in slang_files()? {
+        add(&source, path, program)?;
+    }
     // The manual VoxDocs shows after a project's own pages, pictures and all.
     for source in files_in(&root.join(MANUAL))? {
         add(&source, source.strip_prefix(root)?.to_path_buf(), false)?;
@@ -270,6 +279,39 @@ fn gather(root: &Path, target: &Path, engine: &str) -> Result<Vec<Packed>> {
         }
     }
     files.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(files)
+}
+
+/// The Slang compiler and the libraries it runs with, from where this
+/// machine has it (`SLANGC`, or `slangc` on the path), and where each goes
+/// in an install: `bin/slang/bin/`, and on Linux its libraries in
+/// `bin/slang/lib/`, where it looks for them.
+fn slang_files() -> Result<Vec<(PathBuf, PathBuf, bool)>> {
+    let slangc = match std::env::var_os("SLANGC") {
+        Some(path) => PathBuf::from(path),
+        None => {
+            let finder = if cfg!(windows) { "where" } else { "which" };
+            let found = Command::new(finder).arg("slangc").output().context("looking for slangc")?;
+            ensure!(found.status.success(), "slangc is not on the path; install Slang, or set SLANGC");
+            let first = String::from_utf8_lossy(&found.stdout).lines().next().unwrap_or_default().trim().to_string();
+            PathBuf::from(first)
+        }
+    };
+    let slangc = fs::canonicalize(&slangc).with_context(|| format!("finding {}", slangc.display()))?;
+    let bin = slangc.parent().context("slangc is in a folder")?.to_path_buf();
+    let program = Path::new("bin/slang/bin").join(slangc.file_name().unwrap_or_default());
+    let mut files = vec![(slangc.clone(), program, true)];
+    // Its own libraries, by name: on Windows beside it, on Linux in the lib folder next to its bin.
+    let (folder, into) = if cfg!(windows) { (bin, "bin/slang/bin") } else { (bin.join("../lib"), "bin/slang/lib") };
+    for entry in fs::read_dir(&folder).with_context(|| format!("reading {}", folder.display()))? {
+        let source = entry?.path();
+        let name = source.file_name().unwrap_or_default().to_string_lossy().into_owned();
+        let dll = cfg!(windows) && name.starts_with("slang") && name.ends_with(".dll");
+        let library = name.starts_with("libslang-") || dll;
+        if library && source.is_file() {
+            files.push((source, Path::new(into).join(&name), false));
+        }
+    }
     Ok(files)
 }
 
@@ -398,5 +440,14 @@ mod tests {
         assert!(version(&args(Channel::Stable, Some("0.2.0-beta.1"))).is_err());
         assert!(version(&args(Channel::Nightly, Some("0.2.0-beta.1"))).is_err());
         assert_eq!(today().len(), 8);
+    }
+
+    #[test]
+    fn slang_ships_with_the_compiler_library_beside_it() {
+        let files = slang_files().expect("Slang is installed where the engine is built");
+        let paths: Vec<String> = files.iter().map(|(_, path, _)| path.to_string_lossy().replace('\\', "/")).collect();
+        assert!(files.iter().any(|(_, path, program)| *program && path.starts_with("bin/slang/bin")), "{paths:?}");
+        let library = if cfg!(windows) { "bin/slang/bin/slang" } else { "bin/slang/lib/libslang-compiler" };
+        assert!(paths.iter().any(|path| path.starts_with(library)), "{paths:?}");
     }
 }

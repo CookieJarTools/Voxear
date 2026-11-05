@@ -2899,10 +2899,25 @@ float3 customLight(uint material, LightInput light, SurfaceOutput surface) {
 /// A white ball on a grey floor under the sun, seen from in front, drawn
 /// with custom shader `shader` and its first property `value`, or the
 /// standard shader for 0.
-fn custom_shader_render(shader: u32, value: [f32; 4]) -> Option<Vec<u8>> {
+/// When a test's custom shaders compile: while it draws, as the editor
+/// compiles them, or before, as a game build does.
+enum Compiled {
+    WhileDrawing,
+    Before,
+}
+
+fn custom_shader_render(shader: u32, value: [f32; 4], compiled: Compiled) -> Option<Vec<u8>> {
     use voxear_render::{CustomShaderState, Sky};
     let mut renderer = renderer()?;
-    renderer.set_custom_shaders(CUSTOM_SHADERS.to_string());
+    match compiled {
+        Compiled::WhileDrawing => renderer.set_custom_shaders(CUSTOM_SHADERS.to_string()),
+        Compiled::Before => {
+            let dir = std::env::temp_dir().join(format!("voxear-built-shaders-{}", std::process::id()));
+            let modules = voxear_render::compile_custom_shaders(CUSTOM_SHADERS, &dir).unwrap();
+            renderer.use_custom_modules(&modules).unwrap();
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
     let mut world = World::new();
     world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 1.0, -4.0))));
     let plane = renderer.primitive(Primitive::Plane).unwrap();
@@ -2937,30 +2952,34 @@ fn custom_shader_render(shader: u32, value: [f32; 4]) -> Option<Vec<u8>> {
 
 #[test]
 fn custom_shaders_set_the_surface_light_it_their_way_go_unlit_and_move_vertices() {
-    let Some(standard) = custom_shader_render(0, [0.0; 4]) else { return };
+    let Some(standard) = custom_shader_render(0, [0.0; 4], Compiled::WhileDrawing) else { return };
     keep_image("custom standard.png", &standard);
     // The ball's middle, a little up and left, lit by the sun.
     let at = (300, 150);
     let white = patch_rgb(&standard, at, 3);
     assert!(white[0] > 120 && (white[0] - white[2]).abs() < 30, "the standard white ball: {white:?}");
 
-    let painted = custom_shader_render(1, [0.05, 0.1, 1.0, 0.0]).unwrap();
+    let painted = custom_shader_render(1, [0.05, 0.1, 1.0, 0.0], Compiled::WhileDrawing).unwrap();
     keep_image("custom surface.png", &painted);
     let blue = patch_rgb(&painted, at, 3);
     assert!(blue[2] > blue[0] + 60, "a surface function paints it blue: {blue:?}");
+    let built = custom_shader_render(1, [0.05, 0.1, 1.0, 0.0], Compiled::Before).unwrap();
+    let built = patch_rgb(&built, at, 3);
+    let alike = built.iter().zip(blue).all(|(a, b)| (a - b).abs() < 6);
+    assert!(alike, "compiled before, as a game is: {built:?} where compiled while drawing gave {blue:?}");
 
-    let unlit = custom_shader_render(2, [0.0, 1.0, 0.0, 0.0]).unwrap();
+    let unlit = custom_shader_render(2, [0.0, 1.0, 0.0, 0.0], Compiled::WhileDrawing).unwrap();
     keep_image("custom unlit.png", &unlit);
     let (lit_side, dark_side) = (patch_rgb(&unlit, at, 3), patch_rgb(&unlit, (340, 205), 3));
     assert!(lit_side[1] > lit_side[0] + 100, "unlit green: {lit_side:?}");
     assert!((lit_side[1] - dark_side[1]).abs() < 12, "the same all over, lit or not: {lit_side:?} {dark_side:?}");
 
-    let toon = custom_shader_render(4, [1.0, 0.4, 0.1, 0.0]).unwrap();
+    let toon = custom_shader_render(4, [1.0, 0.4, 0.1, 0.0], Compiled::WhileDrawing).unwrap();
     keep_image("custom light.png", &toon);
     let band = patch_rgb(&toon, at, 3);
     assert!(band[0] > band[2] + 60, "lit by its own light function, in its colour: {band:?}");
 
-    let lifted = custom_shader_render(3, [1.0, 0.0, 0.0, 0.0]).unwrap();
+    let lifted = custom_shader_render(3, [1.0, 0.0, 0.0, 0.0], Compiled::WhileDrawing).unwrap();
     keep_image("custom vertex.png", &lifted);
     // A metre above the ball: sky, a little blue, without the lift, and the ball, grey, with it.
     let above = (320, 105);

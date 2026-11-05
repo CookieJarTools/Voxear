@@ -388,3 +388,29 @@ fn asset_tables_ship_with_every_languages_asset() {
     assert!(roots.contains(&"Text/Signs.assettable".to_string()), "the game reads every table as it starts");
     assert!(report.excluded.is_empty(), "the asset only the table names ships: {:?}", report.excluded);
 }
+
+#[test]
+fn custom_shaders_ship_compiled_and_compile_again_only_when_changed() {
+    const PAINT: &str = "struct Paint\n{\n    [Property, Color] float3 color = float3(1, 0.5, 0);\n}\n\n\
+        void surface(Paint paint, SurfaceInput input, inout SurfaceOutput surface)\n\
+        {\n    surface.color = paint.color;\n}\n";
+    let dir = project();
+    std::fs::write(dir.path().join("Materials/Paint.shader"), PAINT).unwrap();
+    let output = dir.path().join("Built");
+    content_build::build(dir.path(), &output, &unmerged(), &[]).unwrap();
+    let shaders = output.join(content_build::SHADERS_FOLDER);
+    let forward = shaders.join("forward.spv");
+    assert!(forward.is_file() && shaders.join("glass.spv").is_file(), "the modules that draw materials are compiled");
+    let content = Content::open_bundles(dir.path(), &output).unwrap();
+    assert_eq!(content.shaders().shaders.len(), 1, "the shader ships, numbered as it was compiled");
+    let modules = content.built_shaders().unwrap().unwrap();
+    assert!(modules.iter().any(|(name, spirv)| name == "forward" && spirv.len() > 1000), "the game reads them back");
+
+    let compiled = forward.metadata().unwrap().modified().unwrap();
+    content_build::build(dir.path(), &output, &unmerged(), &[]).unwrap();
+    assert_eq!(forward.metadata().unwrap().modified().unwrap(), compiled, "unchanged, so not compiled again");
+
+    std::fs::remove_file(dir.path().join("Materials/Paint.shader")).unwrap();
+    content_build::build(dir.path(), &output, &unmerged(), &[]).unwrap();
+    assert!(!shaders.exists(), "a game without custom shaders has none compiled");
+}

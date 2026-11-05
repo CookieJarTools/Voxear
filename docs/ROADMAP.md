@@ -808,7 +808,8 @@ Done so far:
 - **Ambient occlusion (GTAO)**, as Jimenez et al. and Intel's XeGTAO work it out, from depth drawn before shading.
   - The two-phase culling's passes draw depth first, then shade each pixel once.
   - Ambient occlusion takes only the sky's light away, with specular occlusion for reflections; the sun and lamps
-    are untouched.
+    are untouched. Specular occlusion darkens only the part of a reflection that comes from the probes: a traced
+    or screen-space reflection already stops at what is in its way.
   - At half resolution by default: each frame searches one pixel of each 2x2, and the temporal pass, at full
     resolution, fills in the rest from what lies on the same surface.
   - Settings in `[post.ambient_occlusion]`: radius, strength, a tint for stylised looks, quality, and

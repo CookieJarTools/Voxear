@@ -270,8 +270,10 @@ float3 surroundingsReflection(Frame* frame, float3 position, float3 normal, floa
 
 // As surroundingsReflection, with screen-space reflections over it where
 // they found something and the surface is smooth enough to show them.
-float3 environmentReflection(Frame* frame, float2 pixel, float3 position, float3 normal, float3 direction, float roughness, float3 ambient, bool atmosphere)
+// `found` is how much of the result came from those reflections.
+float3 environmentReflection(Frame* frame, float2 pixel, float3 position, float3 normal, float3 direction, float roughness, float3 ambient, bool atmosphere, out float found)
 {
+    found = 0.0;
     float3 reflected = surroundingsReflection(frame, position, normal, direction, roughness, ambient, atmosphere);
     if (frame->post.reflectionTexture == NO_TEXTURE)
     {
@@ -283,7 +285,8 @@ float3 environmentReflection(Frame* frame, float2 pixel, float3 position, float3
     // the surroundings over the rest. Blended in all the way down, a little of the surroundings' blotchier light
     // showed through a chrome ball's mirror as dark smudges.
     float smooth = saturate(2.0 - 2.0 * roughness / frame->post.reflectionMaxRoughness);
-    return lerp(reflected, screen.rgb, saturate(screen.a) * smooth);
+    found = saturate(screen.a) * smooth;
+    return lerp(reflected, screen.rgb, found);
 }
 
 // Where a point lies in the sun's shadow map: its cascade's tile of the
@@ -535,8 +538,13 @@ FragmentOut fragmentMain(VertexOut input)
     float nv = saturate(dot(s.normal, s.view));
     float3 ambientFresnel = s.f0 + (max(float3(1.0 - s.roughness), s.f0) - s.f0) * pow(1.0 - nv, 5.0);
     Occlusion occlusion = ambientOcclusion(frame, input.position.xy, nv, s.roughness);
-    float3 reflected = environmentReflection(frame, input.position.xy, input.worldPosition, s.normal, reflect(-s.view, s.normal), s.roughness, ambient, atmosphere);
-    color += ambient * s.diffuse * occlusion.diffuse + reflected * ambientFresnel * (1.0 - s.roughness * 0.7) * occlusion.specular;
+    float found;
+    float3 reflected = environmentReflection(frame, input.position.xy, input.worldPosition, s.normal, reflect(-s.view, s.normal), s.roughness, ambient, atmosphere, found);
+    // A reflection that was found already stops where something is in its way, so ambient occlusion only darkens
+    // the share that came from the surroundings. Over all of it, its screen-space guesses about what blocks a
+    // curved mirror lay grey smudges across a chrome ball that moved with the camera.
+    float specularOcclusion = lerp(occlusion.specular, 1.0, found);
+    color += ambient * s.diffuse * occlusion.diffuse + reflected * ambientFresnel * (1.0 - s.roughness * 0.7) * specularOcclusion;
 
     color += material.emissive * sampleTexture(material.emissiveTexture, input.uv).rgb * glowAmount(frame, material, origin);
     if (atmosphere)

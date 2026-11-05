@@ -241,7 +241,10 @@ void glassShadowMipMain(uint3 id : SV_DispatchThreadID)
 // thirteen reads Jimenez gives for bloom (2014), which weigh a wide tent
 // round each texel. Each the average of the four texels under it, a bright
 // lamp stayed in one texel or jumped to the next as it moved, and showed
-// through frosted glass as a square.
+// through frosted glass as a square. The first of them weighs each group of
+// four by how dim it is (Karis's average), as bloom does: a lamp's highlight
+// on a shiny ball, a pixel or two wide, comes and goes as the camera moves,
+// and blurred whole it flashed through frosted glass as a bright patch.
 [shader("compute")]
 [numthreads(8, 8, 1)]
 void glassCopyMain(uint3 id : SV_DispatchThreadID)
@@ -266,9 +269,22 @@ void glassCopyMain(uint3 id : SV_DispatchThreadID)
     float2 t = 0.5 / float2(push.size);
     float level = float(push.level);
     let at = (float2 offset) => texture.SampleLevel(linear, uv + offset * t, level);
-    float4 middle = at(float2(-1.0, -1.0)) + at(float2(1.0, -1.0)) + at(float2(-1.0, 1.0)) + at(float2(1.0, 1.0));
-    float4 corners = at(float2(-2.0, -2.0)) + at(float2(2.0, -2.0)) + at(float2(-2.0, 2.0)) + at(float2(2.0, 2.0));
-    float4 sides = at(float2(0.0, -2.0)) + at(float2(-2.0, 0.0)) + at(float2(2.0, 0.0)) + at(float2(0.0, 2.0));
-    float4 color = middle * 0.125 + corners * 0.03125 + sides * 0.0625 + at(float2(0.0, 0.0)) * 0.125;
-    storageImagesRgba16f[push.output][id.xy] = color;
+    float4 a = at(float2(-2.0, -2.0)), b = at(float2(0.0, -2.0)), c = at(float2(2.0, -2.0));
+    float4 d = at(float2(-1.0, -1.0)), e = at(float2(1.0, -1.0));
+    float4 f = at(float2(-2.0, 0.0)), g = at(float2(0.0, 0.0)), h = at(float2(2.0, 0.0));
+    float4 i = at(float2(-1.0, 1.0)), j = at(float2(1.0, 1.0));
+    float4 k = at(float2(-2.0, 2.0)), l = at(float2(0.0, 2.0)), m = at(float2(2.0, 2.0));
+    // The middle four, and the four groups round it, which together weigh the tent.
+    float4 groups[5] = { d + e + i + j, a + b + f + g, b + c + g + h, f + g + k + l, g + h + l + m };
+    float shares[5] = { 0.5, 0.125, 0.125, 0.125, 0.125 };
+    float4 color = 0.0;
+    float total = 0.0;
+    for (uint n = 0; n < 5; n++)
+    {
+        float4 group = groups[n] * 0.25;
+        float weight = shares[n] * (push.level == 0 ? 1.0 / (1.0 + dot(group.rgb, float3(0.2126, 0.7152, 0.0722))) : 1.0);
+        color += group * weight;
+        total += weight;
+    }
+    storageImagesRgba16f[push.output][id.xy] = color / total;
 }

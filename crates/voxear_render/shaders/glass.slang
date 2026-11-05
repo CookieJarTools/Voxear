@@ -96,6 +96,19 @@ float sceneDepthAt(float2 pixel)
     return textures[NonUniformResourceIndex(push.textures.x)].Load(int3(int2(pixel), 0)).r;
 }
 
+// How far towards a lamp a pane looks up the lamp's shadows from, in
+// metres: past its own thickness, so it does not filter its own light. A
+// pane is in the glass shadow map it is shaded by, and at its own depth it
+// filtered some pixels and not others, in a pattern of dots round a lamp in
+// front of frosted glass.
+static const float GLASS_SELF = 0.1;
+
+// Where a pane is lit from by `light`: a little towards it, past the pane.
+float3 litFrom(Light light, float3 position)
+{
+    return position + normalizeOr(light.position - position, 0.0) * GLASS_SELF;
+}
+
 [shader("fragment")]
 float4 glassFragment(VertexOut input) : SV_Target0
 {
@@ -173,7 +186,8 @@ float4 glassFragment(VertexOut input) : SV_Target0
         uint clusterBase = clusterAt(frame, input.position.xy, viewDepth) * (frame->clusterMaxLights + 1);
         for (uint i = 0; i < buffers()->clusters[clusterBase]; i++)
         {
-            LightInput lamp = localLightInput(buffers()->lights[buffers()->clusters[clusterBase + 1 + i]], input.worldPosition, s.normal);
+            Light light = buffers()->lights[buffers()->clusters[clusterBase + 1 + i]];
+            LightInput lamp = localLightInput(light, litFrom(light, input.worldPosition), s.normal);
             lamp.view = s.view;
             lit += customLight(input.material, lamp, surface);
         }
@@ -181,7 +195,13 @@ float4 glassFragment(VertexOut input) : SV_Target0
     else
     {
         lit += shade(s, -frame->sunDirection, sunThrough) * shadow;
-        lit += localLights(frame, s, input.worldPosition, input.position.xy);
+        float viewDepth = dot(input.worldPosition - frame->cameraPosition, frame->cameraForward);
+        uint clusterBase = clusterAt(frame, input.position.xy, viewDepth) * (frame->clusterMaxLights + 1);
+        for (uint i = 0; i < buffers()->clusters[clusterBase]; i++)
+        {
+            Light light = buffers()->lights[buffers()->clusters[clusterBase + 1 + i]];
+            lit += shadeLocalLight(s, light, litFrom(light, input.worldPosition));
+        }
     }
     lit += emission;
     if (atmosphere)

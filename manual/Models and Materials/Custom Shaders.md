@@ -26,11 +26,15 @@ To change one, make a copy of your own: right-click in the Project panel, choose
 
 ### Water
 
+For a whole sea, a lake or a river, use [[The Ocean]], a [[Pools and Dry Areas|Pool]] or a [[Streams|Stream]] instead: their waves are real ones the game can ask about, and things float on them. The Water shader is for water on a mesh of your own shape.
+
 - The waves move the mesh's vertices, so draw water on a mesh with plenty of them. On a single flat quad, only the light shows the waves.
 - Turn on the material's **Glass** to see into the water. What lies under it shows through, bluer and darker the deeper it is, and foam laps where it meets the shore. **Clarity** says what a metre of water lets through, and **Murk** how far you see into it. Set the material's **IOR** to 1.33, as water's is.
 - Without **Glass**, water is opaque, drawn in its **Deep** colour.
 
 ### Lava
+
+For a flow of lava along a path, or a lava lake, see [[Lava]].
 
 - **Temperature** sets the colour of the glow as real molten rock's: 1000 kelvin is a dull red, 1300 orange and 1800 yellow.
 - Lava's glow lights nothing round it. Put an orange Point Light just above it to light the rocks nearby.

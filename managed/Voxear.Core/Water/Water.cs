@@ -5,9 +5,9 @@ namespace Voxear;
 
 /// <summary>
 /// The water in the level: how high its surface is above a point, which way it faces there, and how it flows. The
-/// sea's waves are the ones drawn, worked out the same on every machine, so a boat bobs alike for every player.
-/// Without an Ocean in the level there is no water: <see cref="HeightAt"/> gives negative infinity, and
-/// <see cref="IsUnderwater"/> is false everywhere.
+/// sea's waves are the ones drawn, worked out the same on every machine, so a boat bobs alike for every player. Over a
+/// Pool its surface counts, and over a Stream its current. Where there is no water, as in a Dry Area or a level with
+/// no Ocean, Pool or Stream, <see cref="HeightAt"/> gives negative infinity and <see cref="IsUnderwater"/> is false.
 /// <code>
 /// protected override void Update()
 /// {
@@ -19,7 +19,7 @@ namespace Voxear;
 /// </summary>
 public static unsafe class Water
 {
-	/// <summary>Whether the level has water at all.</summary>
+	/// <summary>Whether there is water at the middle of the world, as there is wherever the level has a sea.</summary>
 	public static bool Exists => TrySample(Vector3.Zero, out _);
 
 	/// <summary>How high the water's surface is above or below <paramref name="position"/>, in the world.</summary>

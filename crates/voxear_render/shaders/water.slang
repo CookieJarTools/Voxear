@@ -22,6 +22,8 @@ static const uint POOL_QUADS = 64;
 static const uint STREAM_ACROSS = 8;
 // How long a Stream's ripples drift with it before they start again (two-phase flow).
 static const float FLOW_PERIOD = 1.5;
+// About how long a lava lake's surface lasts before it turns over, in seconds.
+static const float LAKE_TURNOVER = 15.0;
 // What a WaterOut is the sea's rather than a Pool's.
 static const uint SEA = 0xFFFFFFFF;
 static const float GRAVITY = 9.81;
@@ -858,9 +860,10 @@ FragmentOut lavaFragment(Frame* frame, WaterOut input, WaterBody body, bool stre
     }
     else
     {
-        // A lake: its plates drifting, its surface turning over in places.
+        // A lake: its plates drifting, its surface turning over in places every quarter of a minute or so, so a
+        // shorter Cooling crusts more of it over.
         plate = p + float2(sin(t * 0.05), cos(t * 0.043)) * 3.0 + float2(t * 0.02, 0.0);
-        age = cooling * (0.5 + 1.2 * lavaNoise(p * 0.08 + t * 0.01));
+        age = LAKE_TURNOVER * (0.5 + 1.2 * lavaNoise(p * 0.08 + t * 0.01));
         plateSize = 3.0;
     }
     if (frame->ocean.enabled != 0 && input.world.y < frame->ocean.level)

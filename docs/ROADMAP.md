@@ -1187,6 +1187,38 @@ Foliage shading (wrap lighting, light through the leaves, a rim of the sun's col
   (`WIND_BRANCH`). Unit tests for generation and the settings; GPU test: a pole's masked top sways further
   downwind, its foot still. The foliage shading's needs (normals, foliage materials) were already met by import.
 
+## Water ✅ (done)
+
+Sea of Thieves' and Crest's water, built in, with lava on the same bodies. Manual: `manual/Water`.
+
+- **Ocean** (`voxear_render::ocean`, `water.rs`, `shaders/water.slang`): Tessendorf FFT over dual JONSWAP spectra
+  (swell and wind sea, Atlas), four cascades of 256² over 1031, 257, 61 and 17 m tiles, each its own band of waves,
+  summed by a groupshared radix-2 inverse FFT into movement, folding and slopes with mips. Weather presets (Calm,
+  Normal, Stormy, Custom), Wave scale (taller without folding harder), choppiness and Rare's colour blend with
+  Atlas's scatter. A clipmap of 12 rings round the camera, morphing at their edges. Glints over slope-variance
+  roughness, refraction and Beer–Lambert absorption over a copy of the scene and its depth, written to depth and
+  velocity. Foam where crests fold, kept in a 512² square round the camera in rest space, so it stays where the
+  crest broke and streaks down the wave's back; shore foam where the water thins.
+- **Under the sea:** `underwaterSun` dims and tints lit surfaces with a caustic web, the under-water pass fogs the
+  view by distance with a waterline meniscus, and the surface from below shows Snell's window and total internal
+  reflection.
+- **Pools and Dry Areas** (`water_bodies.rs`): a Pool is water (or lava) over a box at its Obj's height, its walls
+  and bottom drawn as walls of water, below the sea dry to it, with as much of the sea's swell as it says. A Dry
+  Area (box, ball or capsule) is cut out of every surface per pixel, its sides walls of water.
+- **Paths and Streams:** `voxear_scene::Path` (centripetal Catmull-Rom, widths per point), edited in the Scene view
+  (`path_handles.rs`: drag, width, insert, extend, Shift-click to remove, one undo step each). A Stream samples its
+  Path each frame into world points with Manning speed, rapids foam carried downstream and travel time; drawn as a
+  strip with two-phase flow on the sea's small cascades and foam lines along the current.
+- **Lava:** Pools and Streams of lava glow by Planck's law; crust forms with travel time in plates placed by when the
+  lava set out, cracks narrowing as it cools, pahoehoe ropes bowed at the banks; lakes of drifting plates; crusted
+  at once under the sea.
+- **Queries and Buoyancy:** `voxear_engine::water` keeps a CPU copy of the two longest cascades (the same waves, on
+  every machine) and the Streams' points, for `Water.HeightAt`, `NormalAt`, `FlowAt`, `IsUnderwater` and
+  `TrySample` in C#. Buoyancy pushes nine columns across a body's Collider up by how far each is under, with drag
+  against the water's flow measured against the body's own bobbing.
+- Still to do: spray and splashes (with particles, M7), a bilge in Dry Areas, hull-shaped Dry Areas from meshes,
+  Streams blending into the Pool or sea they reach, and Buoyancy's settings from C#.
+
 ## M6 — Animation
 
 - GPU skinning, blend shapes, state machines, blend trees, layers and root motion.

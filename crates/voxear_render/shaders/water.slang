@@ -362,9 +362,6 @@ float shoreEdge(float depth)
 // How fast foam drifts downwind, in metres a second.
 static const float FOAM_DRIFT = 0.25;
 
-// How long foam's pattern is carried along a flow before it starts again.
-static const float FOAM_FLOW_PERIOD = 3.0;
-
 // Which way the wind blows over the sea, across the ground.
 float2 windDirection(Frame* frame)
 {
@@ -491,15 +488,12 @@ float4 foamPatternAt(Frame* frame, float2 rest, float blur = 0.0, bool drifting 
 }
 
 // Where on foam's pattern a pixel of the sea reads, and how old its foam
-// is. Where foam flows it is read at two places carried along the flow in
-// turn, each starting again while the other shows, so it moves without
-// stretching out of shape.
+// is. The pattern rides the waves but is not carried along by the surf:
+// that runs out from a rock on every side and back, and would stretch it
+// round the rock.
 struct FoamSpot
 {
     float2 shift;
-    float2 shiftAfter;
-    float after;
-    bool flowing;
     float age;
 };
 
@@ -508,10 +502,6 @@ struct FoamSpot
 float frothPattern(Frame* frame, float2 at, FoamSpot spot, out float domes)
 {
     float4 pattern = foamPatternAt(frame, at + spot.shift);
-    if (spot.flowing)
-    {
-        pattern = lerp(pattern, foamPatternAt(frame, at + spot.shiftAfter), spot.after);
-    }
     float aged = smoothstep(0.25, 0.75, spot.age);
     domes = lerp(pattern.z, 0.3, aged);
     return lerp(pattern.x, pattern.w, aged);
@@ -623,11 +613,10 @@ float breakingAt(Frame* frame, float2 rest, float depth)
 // by where the water rests, as the surface is drawn, so it rides the waves'
 // orbits as the water does and stays behind as a breaking crest runs on: a
 // streak down the wave's back. In red, how much foam there is; in green,
-// how much of it is fresh, the rest ageing towards lace; in blue and alpha,
-// which way the surf carries it, in metres a second, on top of its drift
-// downwind. It is made where crests
-// break and where the water surges against the ground, drifts downwind,
-// runs up the shore and drains back with each wave, spreads and fades. Last
+// how much of it is fresh, the rest ageing towards lace. It is made where
+// crests break and where the water surges against the ground, drifts
+// downwind, runs up the shore and drains back with each wave, spreads and
+// fades. Last
 // frame's foam in push.textures.x, its first texel's corner in the bits of
 // push.textures.yz, NaN on the first frame.
 [shader("compute")]
@@ -664,8 +653,7 @@ void oceanFoamMain(uint3 id : SV_DispatchThreadID)
     float contact = wet * max(saturate(1.0 - depth / 0.5), saturate(land / 8.0 * 2.5));
     // Carried downwind, and near land up towards it as a wave comes in, and back more slowly as it drains.
     float2 towards = length(uphill) > 1e-3 ? normalize(uphill) : 0.0;
-    float2 surf = towards * clamp(rising * (rising > 0.0 ? 1.2 : 0.4), -1.5, 1.5) * contact;
-    float2 flow = windDirection(frame) * FOAM_DRIFT + surf;
+    float2 flow = windDirection(frame) * FOAM_DRIFT + towards * clamp(rising * (rising > 0.0 ? 1.2 : 0.4), -1.5, 1.5) * contact;
 
     float4 kept = 0.0;
     float2 previousOrigin = float2(asfloat(push.textures.y), asfloat(push.textures.z));
@@ -697,12 +685,11 @@ void oceanFoamMain(uint3 id : SV_DispatchThreadID)
     float surging = saturate(rising * 3.0);
     float amount = saturate(max(kept.r * exp(-dt / 6.0), breaking) + churn * (0.1 + surging));
     float fresh = min(saturate(max(kept.g * exp(-dt / 1.0), breaking) + churn * surging), amount);
-    storageImagesRgba16f[push.output][id.xy] = float4(amount * wet, fresh * wet, surf);
+    storageImagesRgba16f[push.output][id.xy] = float4(amount * wet, fresh * wet, 0.0, 0.0);
 }
 
-// The foam round the camera at `rest` (oceanFoamMain): how much, how much
-// of it fresh, and which way the surf carries it; none outside the square it
-// keeps.
+// The foam round the camera at `rest` (oceanFoamMain): how much, and how
+// much of it fresh; none outside the square it keeps.
 float4 keptFoam(Frame* frame, float2 rest)
 {
     float2 uv = (rest - frame->ocean.foamOrigin) / (float(FOAM_TEXELS) * FOAM_TEXEL);
@@ -1226,23 +1213,10 @@ FragmentOut waterFragment(WaterOut input)
     float4 trail = sea ? keptFoam(frame, rest) : 0.0;
     float patchy = 0.6 + 0.8 * foamNoise(rest / 40.0 + frame->time * 0.02);
     float fresh = max(max(breaking, shore), trail.g * 1.2 * patchy);
-    // Where on the foam's pattern: riding the waves, and carried along where the surf runs; down a Stream, drawn
-    // out along it and carried with it.
+    // Where on the foam's pattern: riding the waves; down a Stream, drawn out along it and carried with it.
     FoamSpot spot;
     spot.shift = moved.xz * 0.3;
-    spot.shiftAfter = spot.shift;
-    spot.after = 0.0;
     spot.age = 0.0;
-    // Read at one place where the surf is still, both reads coming together as it slows, so nothing shows where it
-    // starts to run.
-    spot.flowing = dot(trail.ba, trail.ba) > 1e-6;
-    if (spot.flowing)
-    {
-        float phase = frac(frame->time / FOAM_FLOW_PERIOD + foamNoise(rest * 0.3));
-        spot.shift -= trail.ba * phase * FOAM_FLOW_PERIOD;
-        spot.shiftAfter -= trail.ba * frac(phase + 0.5) * FOAM_FLOW_PERIOD;
-        spot.after = abs(2.0 * phase - 1.0);
-    }
     float2 bubbleAt = rest - v.xz / max(v.y, 0.2) * 0.25;
     float streamPattern = 0.0;
     if (stream)

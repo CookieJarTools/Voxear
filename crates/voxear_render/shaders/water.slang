@@ -375,7 +375,7 @@ float2 windDirection(Frame* frame)
 
 // The tiling pattern foam is made of: this many texels a side, covering
 // this many metres of water.
-static const uint FOAM_PATTERN = 512;
+static const uint FOAM_PATTERN = 1024;
 static const float FOAM_PATTERN_SIZE = 6.0;
 
 // The nearest and second nearest of a scatter of points a unit apart round
@@ -409,19 +409,28 @@ float2 tiledCells(float2 p, float period)
     return float2(sqrt(first), sqrt(second) - sqrt(first));
 }
 
-// Smooth noise from 0 to 1 over `p`, repeating every `period` units.
+// Smooth noise from 0 to 1 over `p`, repeating every `period` units: a
+// slope at each whole point rather than a value, so its shapes do not line
+// up along them where foam is cut from it.
 float tiledNoise(float2 p, float period)
 {
     float2 n = floor(p);
     float2 f = frac(p);
-    f = f * f * (3.0 - 2.0 * f);
+    float2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
     float corner[4];
     for (uint i = 0; i < 4; i++)
     {
-        float2 at = n + float2(float(i & 1), float(i >> 1));
-        corner[i] = cellPoint(at - floor(at / period) * period).x;
+        float2 offset = float2(float(i & 1), float(i >> 1));
+        float2 at = n + offset;
+        corner[i] = dot(cellPoint(at - floor(at / period) * period) * 2.0 - 1.0, f - offset);
     }
-    return lerp(lerp(corner[0], corner[1], f.x), lerp(corner[2], corner[3], f.x), f.y);
+    return saturate(0.5 + 1.2 * lerp(lerp(corner[0], corner[1], u.x), lerp(corner[2], corner[3], u.x), u.y));
+}
+
+// Smooth noise from 0 to 1 over the sea at `p`, a unit across, for foam.
+float foamNoise(float2 p)
+{
+    return tiledNoise(p, 4096.0);
 }
 
 // Noise in three octaves over `p`, repeating every `period` units.
@@ -445,16 +454,18 @@ void foamPatternMain(uint3 id : SV_DispatchThreadID)
     float2 bent = uv + warp * 0.12;
     float body = tiledBillows(bent * 5.0, 5.0);
     float fine = tiledBillows(bent * 19.0, 19.0);
-    float2 tiny = tiledCells(bent * 96.0, 96.0);
+    float2 tiny = tiledCells(bent * 160.0, 160.0);
     float domes = sqrt(saturate(1.0 - pow(tiny.x / 0.5, 2.0)));
     // Fresh foam: clumps of small bubbles, with holes between.
     float froth = saturate((body * 0.75 + fine * 0.35 - 0.32) * 2.2) * (0.88 + 0.12 * domes);
     // Old foam: thin bubbly streaks drawn out by the water, and a few patches yet to burst.
     float2 drawn = uv + warp * 0.25;
     float streaks = max((1.0 - smoothstep(0.0, 0.03, abs(tiledBillows(drawn * 4.0, 4.0) - 0.5))) * 0.95,
-        (1.0 - smoothstep(0.0, 0.025, abs(tiledBillows(drawn * 9.0 + 0.5, 9.0) - 0.5))) * 0.7);
+        (1.0 - smoothstep(0.0, 0.025, abs(tiledBillows(drawn * 9.0 + 0.5, 9.0) - 0.5))) * 0.4);
+    // Broken along their length, so they do not run on as unbroken threads.
+    streaks *= smoothstep(0.38, 0.62, tiledBillows(drawn * 14.0 + 0.2, 14.0));
     float patches = smoothstep(0.62, 0.72, body);
-    float lace = saturate(streaks * (0.5 + 0.5 * fine) * (0.55 + 0.45 * domes) + patches * (0.3 + 0.7 * domes) * 0.8);
+    float lace = saturate(streaks * (0.5 + 0.5 * fine) * (0.8 + 0.2 * domes) + patches * (0.9 + 0.1 * domes) * 0.8);
     // Bubbles under the surface, small and scattered.
     float2 round = tiledCells(bent * 30.0 + 0.37, 30.0);
     float bubbles = (1.0 - smoothstep(0.05, 0.35, round.x)) * smoothstep(0.4, 0.7, tiledNoise(uv * 9.0, 9.0));
@@ -503,8 +514,7 @@ float frothPattern(Frame* frame, float2 at, FoamSpot spot, out float domes)
     }
     float aged = smoothstep(0.25, 0.75, spot.age);
     domes = lerp(pattern.z, 0.3, aged);
-    // Fresh foam's edges fray into its bubbles.
-    return lerp(pattern.x + (pattern.z - 0.5) * 0.2, pattern.w, aged);
+    return lerp(pattern.x, pattern.w, aged);
 }
 
 // Foam seen as a layer of froth standing on the water: where the view
@@ -527,7 +537,7 @@ float frothHeight(Frame* frame, float2 at, float from, float edge, float coverag
     float domes;
     float pattern = frothPattern(frame, at, spot, domes);
     float there = smoothstep(from, from + edge * 2.0, pattern) * saturate(coverage * 4.0);
-    return there * (0.45 + 0.55 * domes);
+    return there * (0.85 + 0.15 * domes);
 }
 
 // The froth over the water at `rest` (on the foam's pattern), seen along
@@ -547,7 +557,8 @@ Froth frothAt(Frame* frame, float2 rest, float3 v, float3 l, float coverage, flo
     froth.sun = 1.0;
     froth.crevice = 1.0;
     froth.glint = 0.0;
-    float thick = 0.03 * (0.5 + coverage) * (1.0 - 0.5 * spot.age) * near;
+    // Old foam lies flat on the water.
+    float thick = 0.03 * (0.5 + coverage) * (1.0 - 0.9 * spot.age) * near;
     // Where the view crosses the layer's top, over the water this pixel shows.
     float2 across = v.xz / max(v.y, 0.2) * thick;
     float before = 1.0;
@@ -613,7 +624,8 @@ float breakingAt(Frame* frame, float2 rest, float depth)
 // orbits as the water does and stays behind as a breaking crest runs on: a
 // streak down the wave's back. In red, how much foam there is; in green,
 // how much of it is fresh, the rest ageing towards lace; in blue and alpha,
-// which way it is carried, in metres a second. It is made where crests
+// which way the surf carries it, in metres a second, on top of its drift
+// downwind. It is made where crests
 // break and where the water surges against the ground, drifts downwind,
 // runs up the shore and drains back with each wave, spreads and fades. Last
 // frame's foam in push.textures.x, its first texel's corner in the bits of
@@ -652,7 +664,8 @@ void oceanFoamMain(uint3 id : SV_DispatchThreadID)
     float contact = wet * max(saturate(1.0 - depth / 0.5), saturate(land / 8.0 * 2.5));
     // Carried downwind, and near land up towards it as a wave comes in, and back more slowly as it drains.
     float2 towards = length(uphill) > 1e-3 ? normalize(uphill) : 0.0;
-    float2 flow = windDirection(frame) * FOAM_DRIFT + towards * clamp(rising * (rising > 0.0 ? 1.2 : 0.4), -1.5, 1.5) * contact;
+    float2 surf = towards * clamp(rising * (rising > 0.0 ? 1.2 : 0.4), -1.5, 1.5) * contact;
+    float2 flow = windDirection(frame) * FOAM_DRIFT + surf;
 
     float4 kept = 0.0;
     float2 previousOrigin = float2(asfloat(push.textures.y), asfloat(push.textures.z));
@@ -678,17 +691,18 @@ void oceanFoamMain(uint3 id : SV_DispatchThreadID)
         float crest = oceanMoved(frame, here, FOAM_TEXEL, false).y;
         float front = saturate((crest - oceanMoved(frame, here, FOAM_TEXEL, true).y) / dt * 2.0);
         float tall = saturate((crest - 0.45 * restingDepth) / (0.3 * restingDepth + 0.1));
-        breaking = max(breaking, tall * front * smoothstep(0.3, 0.7, lavaNoise(here * 0.25 + frame->time * 0.05)));
+        breaking = max(breaking, tall * front * smoothstep(0.3, 0.7, foamNoise(here * 0.25 + frame->time * 0.05)));
     }
-    float churn = contact * (0.2 + 1.4 * lavaNoise(here * 0.4 + frame->time * 0.1)) * 3.0 * dt;
+    float churn = contact * (0.2 + 1.4 * foamNoise(here * 0.4 + frame->time * 0.1)) * 3.0 * dt;
     float surging = saturate(rising * 3.0);
     float amount = saturate(max(kept.r * exp(-dt / 6.0), breaking) + churn * (0.1 + surging));
     float fresh = min(saturate(max(kept.g * exp(-dt / 1.0), breaking) + churn * surging), amount);
-    storageImagesRgba16f[push.output][id.xy] = float4(amount * wet, fresh * wet, flow);
+    storageImagesRgba16f[push.output][id.xy] = float4(amount * wet, fresh * wet, surf);
 }
 
 // The foam round the camera at `rest` (oceanFoamMain): how much, how much
-// of it fresh, and which way it is carried; none outside the square it keeps.
+// of it fresh, and which way the surf carries it; none outside the square it
+// keeps.
 float4 keptFoam(Frame* frame, float2 rest)
 {
     float2 uv = (rest - frame->ocean.foamOrigin) / (float(FOAM_TEXELS) * FOAM_TEXEL);
@@ -1210,7 +1224,7 @@ FragmentOut waterFragment(WaterOut input)
     // What breaking crests and the surf left, carried with the water (the sea's only). Some stretches of sea hold
     // their foam longer than others, the patches shifting slowly.
     float4 trail = sea ? keptFoam(frame, rest) : 0.0;
-    float patchy = 0.6 + 0.8 * lavaNoise(rest / 40.0 + frame->time * 0.02);
+    float patchy = 0.6 + 0.8 * foamNoise(rest / 40.0 + frame->time * 0.02);
     float fresh = max(max(breaking, shore), trail.g * 1.2 * patchy);
     // Where on the foam's pattern: riding the waves, and carried along where the surf runs; down a Stream, drawn
     // out along it and carried with it.
@@ -1219,10 +1233,12 @@ FragmentOut waterFragment(WaterOut input)
     spot.shiftAfter = spot.shift;
     spot.after = 0.0;
     spot.age = 0.0;
-    spot.flowing = dot(trail.ba, trail.ba) > 0.09;
+    // Read at one place where the surf is still, both reads coming together as it slows, so nothing shows where it
+    // starts to run.
+    spot.flowing = dot(trail.ba, trail.ba) > 1e-6;
     if (spot.flowing)
     {
-        float phase = frac(frame->time / FOAM_FLOW_PERIOD + lavaNoise(rest * 0.3));
+        float phase = frac(frame->time / FOAM_FLOW_PERIOD + foamNoise(rest * 0.3));
         spot.shift -= trail.ba * phase * FOAM_FLOW_PERIOD;
         spot.shiftAfter -= trail.ba * frac(phase + 0.5) * FOAM_FLOW_PERIOD;
         spot.after = abs(2.0 * phase - 1.0);
@@ -1243,11 +1259,11 @@ FragmentOut waterFragment(WaterOut input)
     float coverage = saturate(max(max(breaking, shore), trail.r * 1.2 * patchy));
     // Old foam breaks up into islands as its bubbles burst, rather than thinning evenly.
     spot.age = coverage > 0.0 ? 1.0 - saturate(fresh / coverage) : 0.0;
-    coverage *= 1.0 - spot.age * 0.6 * smoothstep(0.35, 0.65, lavaNoise(rest * 0.6 + frame->time * 0.05));
+    coverage *= 1.0 - spot.age * 0.6 * smoothstep(0.35, 0.65, foamNoise(rest * 0.6 + frame->time * 0.05));
     float domes = 0.0;
     float pattern = stream ? streamPattern : frothPattern(frame, rest, spot, domes);
     // Bubbles a hand's breadth under the foam, seen through the water, a pale turquoise, more as it ages.
-    float bubbles = coverage > 0.1 ? smoothstep(0.1, 0.5, coverage) * foamPatternAt(frame, bubbleAt, 1.0).y * (0.3 + 0.4 * spot.age) : 0.0;
+    float bubbles = coverage > 0.1 ? smoothstep(0.1, 0.5, coverage) * foamPatternAt(frame, bubbleAt, 4.0).y * (0.3 + 0.4 * spot.age) : 0.0;
     float3 bubbleLit = (scatter * 0.6 + 0.2) * (ambient + sunLight * shadow * 0.25);
     float3 under = behind * through + body * (1.0 - through) + bubbleLit * bubbles * 0.25;
     float3 color = (1.0 - fresnel) * under + fresnel * reflected + glints;
@@ -1269,11 +1285,13 @@ FragmentOut waterFragment(WaterOut input)
     if (sea && coverage > 0.01 && closeness > 0.0)
     {
         Froth froth = frothAt(frame, rest, v, l, coverage, from, edge, closeness, spot);
-        foam = froth.amount;
-        foamNormal = normalize(n + froth.tilt);
-        foamSun = froth.sun;
-        crevice = froth.crevice;
-        glint = froth.glint;
+        // Settling flat over its last few metres, so no line shows where it stops standing up.
+        float standing = smoothstep(0.0, 0.25, closeness);
+        foam = lerp(foam, froth.amount, standing);
+        foamNormal = normalize(lerp(foamNormal, normalize(n + froth.tilt), standing));
+        foamSun = lerp(1.0, froth.sun, standing);
+        crevice = lerp(1.0, froth.crevice, standing);
+        glint = froth.glint * standing;
     }
     // Lit as a rough white surface, light wrapping round its bubbles, darker down between its clumps.
     float wrapped = saturate((dot(foamNormal, l) + 0.4) / 1.4);
@@ -1282,7 +1300,7 @@ FragmentOut waterFragment(WaterOut input)
     float3 tint = lerp(1.0, scatter / max(max(max(scatter.r, scatter.g), scatter.b), 1e-3), 0.25);
     // Brighter on its densest froth and speckled by its bubbles, each brighter at its rim; a Stream's, drawn out
     // along it, is too fine to show either.
-    float speckle = stream ? 1.0 : (0.8 + 0.25 * saturate(pattern)) * (0.85 + 0.2 * domes);
+    float speckle = stream ? 1.0 : (0.8 + 0.25 * saturate(pattern)) * (0.93 + 0.07 * domes);
     float3 foamColor = 0.9 * lerp(tint * 0.7, 1.0, density) * speckle;
     float3 foamLit = foamColor * crevice * (ambient + sunLight * shadow * foamSun * wrapped / PI) + sunLight * shadow * glint * 0.6;
     float sparse = stream ? 1.0 : lerp(0.75, 1.0, saturate(pattern * 1.4));

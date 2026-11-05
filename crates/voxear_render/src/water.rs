@@ -54,7 +54,7 @@ const FOAM_TEXELS: u32 = 512;
 const FOAM_TEXEL: f32 = 0.5;
 /// The tiling pattern foam is made of, this many texels a side, as
 /// `FOAM_PATTERN` in `shaders/water.slang`; made once, with mips.
-const FOAM_PATTERN: u32 = 512;
+const FOAM_PATTERN: u32 = 1024;
 
 /// A view's sea: its spectrum, written when the sea changes, and the FFT's
 /// rows.

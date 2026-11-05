@@ -80,6 +80,10 @@ pub(crate) struct OceanBuffers {
     floor_origins: [Option<[f32; 2]>; FLOOR_SLICES],
     floor_level: Option<f32>,
     floor_frames: u32,
+    /// Until when, in the frame's seconds, the view under water and the
+    /// lens are kept up: a few seconds after the camera was last near water,
+    /// for the lens to dry.
+    under_until: f32,
 }
 
 impl OceanBuffers {
@@ -96,7 +100,7 @@ impl OceanBuffers {
         let stream_points = (0..slots)
             .map(|slot| gpu.create_buffer(&named(&format!("stream points {slot}")), size, usage, MemoryLocation::CpuToGpu))
             .collect::<Result<_>>()?;
-        Ok(Self { spectrum, fft, bodies, stream_points, sea: None, wave_height: 0.0, parity: false, foam_origin: None, lens_kept: false, floor_origins: [None; FLOOR_SLICES], floor_level: None, floor_frames: 0 })
+        Ok(Self { spectrum, fft, bodies, stream_points, sea: None, wave_height: 0.0, parity: false, foam_origin: None, lens_kept: false, floor_origins: [None; FLOOR_SLICES], floor_level: None, floor_frames: 0, under_until: f32::NEG_INFINITY })
     }
 
     pub fn into_buffers(self) -> Vec<Buffer> {
@@ -193,6 +197,10 @@ pub struct Water {
     floor: (ImageId, Vec<(u32, Vec<Ground>)>),
     /// The pattern foam is made of, and whether it is to be made this frame.
     pattern: (ImageId, bool),
+    /// Whether the camera is near enough water for the view under it and
+    /// the lens, and whether there are Pools or Streams to draw after the sea.
+    under: bool,
+    layered: bool,
     /// Whether the sea is drawn, how many Pools, how many points each
     /// Stream has, and how many Dry Areas.
     sea: bool,
@@ -225,7 +233,7 @@ impl Water {
         let usage = vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED;
         let mut desc = ImageDesc::new(N as u32, N as u32, WAVE_FORMAT, usage).with_mips();
         desc.mip_levels = WAVE_MIPS;
-        let foam_desc = ImageDesc::new(FOAM_TEXELS, FOAM_TEXELS, vk::Format::R32_SFLOAT, usage);
+        let foam_desc = ImageDesc::new(FOAM_TEXELS, FOAM_TEXELS, WAVE_FORMAT, usage);
         let (foam_a, foam_b) = (fg.history_image(gpu, bindless, "ocean foam a", foam_desc)?, fg.history_image(gpu, bindless, "ocean foam b", foam_desc)?);
         let (foam_now, foam_then) = if buffers.parity { (foam_a, foam_b) } else { (foam_b, foam_a) };
         let lens_desc = ImageDesc::new(1, 1, vk::Format::R32_SFLOAT, usage);
@@ -261,7 +269,10 @@ impl Water {
         let copy = fg.create_image(gpu, bindless, "water copy", copy_desc)?;
         let depth_desc = ImageDesc::new(extent.width, extent.height, vk::Format::R32_SFLOAT, usage);
         let depth_copy = fg.create_image(gpu, bindless, "water depth copy", depth_desc)?;
-        let second = match bodies.pools > 0 || !bodies.streams.is_empty() {
+        // Lava shows nothing through it, so a layer of only lava needs no copy of the picture behind it.
+        let layered = bodies.pools as usize + bodies.streams.len();
+        let clear = bodies.bodies[..layered].iter().any(|body| body.liquid == crate::water_bodies::Liquid::Water as u32);
+        let second = match clear {
             true => {
                 let copy = fg.create_image(gpu, bindless, "pool copy", copy_desc)?;
                 let depth = fg.create_image(gpu, bindless, "pool depth copy", depth_desc)?;
@@ -271,6 +282,27 @@ impl Water {
             false => None,
         };
 
+        // The view under water, the waterline and the wet lens only near water, and a few seconds after.
+        let near = |reach: f32| {
+            let sea = found.is_some() && camera.y < level + reach;
+            let pool = bodies.bodies[..bodies.pools as usize].iter().any(|pool| {
+                let local = Mat4::from_cols_array_2d(&pool.to_local).transform_point3(camera);
+                let (half, deep) = (Vec3::from(pool.size) * 0.5, pool.size[1]);
+                pool.liquid == crate::water_bodies::Liquid::Water as u32
+                    && local.x.abs() < half.x + 1.0
+                    && local.z.abs() < half.z + 1.0
+                    && local.y > -deep - 1.0
+                    && local.y < reach * pool.waves.max(0.2)
+            });
+            sea || pool
+        };
+        if near(1.0 + buffers.wave_height) {
+            buffers.under_until = time + 4.0;
+        }
+        let under = time < buffers.under_until;
+        if !under {
+            buffers.lens_kept = false;
+        }
         let linear = |srgb: [f32; 3]| srgb.map(|c| if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) });
         let absorb = linear(ocean.clarity).map(|t| -t.max(1e-3).ln() * ocean.murk.max(0.0));
         let texture = |id: ImageId| fg.texture(id).0;
@@ -295,7 +327,7 @@ impl Water {
             streams: bodies.streams.len() as u32,
             floor_texture: fg.texture(floor_image).0,
             foam_pattern: fg.texture(pattern).0,
-            _pad: 0,
+            wind: sea.direction[1].atan2(sea.direction[0]) as f32,
             floor,
         };
         Ok(Self {
@@ -312,6 +344,8 @@ impl Water {
             lens: (lens_now, lens_then, lens_kept),
             floor: (floor_image, floor_draws),
             pattern: (pattern, pattern_new),
+            under,
+            layered: layered > 0,
             size: [extent.width, extent.height],
             frame,
             sea: found.is_some(),
@@ -402,7 +436,7 @@ fn compute_barrier(ctx: &crate::graph::PassContext) {
 /// Records the sea's waves (the FFT, then the mips), then its surface over
 /// a copy of the picture and the depth so far.
 pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), water: Water, targets: WaterTargets) {
-    let Water { displacement, slopes, previous, fft, copy, copy_texture, copy_mips, depth_copy, second, foam, lens, floor, pattern, size, sea, pools, streams, dries, .. } = water;
+    let Water { displacement, slopes, previous, fft, copy, copy_texture, copy_mips, depth_copy, second, foam, lens, floor, pattern, under, layered, size, sea, pools, streams, dries, .. } = water;
     let (floor_image, floor_draws) = floor;
     // The pattern foam is made of, once, with its mips.
     let (pattern, pattern_new) = pattern;
@@ -474,20 +508,21 @@ pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), wat
             bind(ctx, pipelines.ocean_columns, vk::PipelineBindPoint::COMPUTE, &push);
             unsafe { ctx.gpu.device.cmd_dispatch(ctx.cmd, N as u32, 1, 1) };
         }
-        // Each mip from the one before, for every image at once.
-        for mip in 1..WAVE_MIPS {
+        // Each image's mips, four at a time from the one before: the first four, then the last four.
+        for first in [1usize, 5] {
             compute_barrier(ctx);
-            let side = (N as u32 >> mip).max(1);
+            let side = (N as u32 >> first).max(1);
             for cascade in 0..CASCADES {
                 for (texture, mips) in [(textures[cascade].0, &moved_mips[cascade]), (textures[cascade].1, &slope_mips[cascade])] {
                     let push = Push {
                         texture: texture.0,
-                        level: mip - 1,
-                        output: mips[mip as usize].0,
+                        level: first as u32 - 1,
+                        output: mips[first].0,
+                        textures: [mips[first + 1].0, mips[first + 2].0, mips[first + 3].0, 0],
                         size: [side, side],
                         ..push
                     };
-                    bind(ctx, pipelines.ocean_mip, vk::PipelineBindPoint::COMPUTE, &push);
+                    bind(ctx, pipelines.ocean_mips, vk::PipelineBindPoint::COMPUTE, &push);
                     unsafe { ctx.gpu.device.cmd_dispatch(ctx.cmd, side.div_ceil(8), side.div_ceil(8), 1) };
                 }
             }
@@ -500,7 +535,7 @@ pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), wat
     let foam_then_texture = fg.texture(foam_then);
     let mut foam_images =
         vec![(foam_now, ImageAccess::StorageWrite), (foam_then, ImageAccess::Sampled), (floor_image, ImageAccess::Sampled)];
-    foam_images.extend(displacement.iter().map(|&image| (image, ImageAccess::Sampled)));
+    foam_images.extend(displacement.iter().chain(&previous).map(|&image| (image, ImageAccess::Sampled)));
     fg.add_pass("Ocean foam", &foam_images, &[], move |ctx| {
         let [x, z] = previous_origin.map(f32::to_bits);
         let push = Push { output: foam_storage.0, textures: [foam_then_texture.0, x, z, 0], ..push };
@@ -514,12 +549,21 @@ pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), wat
     // The sea and the walls round its Dry Areas, over a copy of the picture so far.
     let first_dry = pools + streams.len() as u32;
     let draws = Draws { sea, pools: 0, streams: Vec::new(), walls: (first_dry, dries) };
-    record_layer(fg, (pipelines, push), &layer, (copy, copy_texture, &copy_mips, depth_copy), draws);
+    record_layer(fg, (pipelines, push), &layer, (copy, copy_texture, &copy_mips, depth_copy), (draws, true));
     // The Pools, their walls and the Streams over a copy made after the sea, so the sea shows through them.
-    if let Some((copy, copy_texture, copy_mips, depth_copy)) = second {
+    if layered {
         let streams = streams.iter().enumerate().map(|(i, &points)| (pools + i as u32, points)).collect();
         let draws = Draws { sea: false, pools, streams, walls: (0, pools) };
-        record_layer(fg, (pipelines, push), &layer, (copy, copy_texture, &copy_mips, depth_copy), draws);
+        match &second {
+            Some((copy, copy_texture, copy_mips, depth_copy)) => {
+                record_layer(fg, (pipelines, push), &layer, (*copy, *copy_texture, copy_mips, *depth_copy), (draws, true))
+            }
+            // Only lava: over the sea's copy, which it does not look through.
+            None => record_layer(fg, (pipelines, push), &layer, (copy, copy_texture, &copy_mips, depth_copy), (draws, false)),
+        }
+    }
+    if !under {
+        return;
     }
     // How wet the lens is: soaked under water, drying once out.
     let (lens_now, lens_then, lens_kept) = lens;
@@ -581,19 +625,22 @@ fn record_layer(
     (pipelines, push): (Pipelines, Push),
     layer: &Layer,
     (copy, copy_texture, copy_mips, depth_copy): (ImageId, TextureId, &[StorageImageId], ImageId),
-    draws: Draws,
+    (draws, fresh): (Draws, bool),
 ) {
     let Layer { hdr, velocity, depth, size, .. } = *layer;
-    crate::glass::record_copy(fg, (pipelines, push), (hdr, copy, copy_texture), copy_mips, size);
-    let depth_storage = fg.storage(depth_copy, 0);
-    let depth_texture = fg.texture(depth);
     let depth_copy_texture = fg.texture(depth_copy);
-    let copy_images = [(depth, ImageAccess::Sampled), (depth_copy, ImageAccess::StorageWrite)];
-    fg.add_pass("Water depth copy", &copy_images, &[], move |ctx| {
-        let push = Push { texture: depth_texture.0, output: depth_storage.0, size, ..push };
-        bind(ctx, pipelines.water_depth_copy, vk::PipelineBindPoint::COMPUTE, &push);
-        unsafe { ctx.gpu.device.cmd_dispatch(ctx.cmd, size[0].div_ceil(8), size[1].div_ceil(8), 1) };
-    });
+    // A fresh copy of the picture and its depth so far, unless what this layer draws does not look through them.
+    if fresh {
+        crate::glass::record_copy(fg, (pipelines, push), (hdr, copy, copy_texture), copy_mips, size);
+        let depth_storage = fg.storage(depth_copy, 0);
+        let depth_texture = fg.texture(depth);
+        let copy_images = [(depth, ImageAccess::Sampled), (depth_copy, ImageAccess::StorageWrite)];
+        fg.add_pass("Water depth copy", &copy_images, &[], move |ctx| {
+            let push = Push { texture: depth_texture.0, output: depth_storage.0, size, ..push };
+            bind(ctx, pipelines.water_depth_copy, vk::PipelineBindPoint::COMPUTE, &push);
+            unsafe { ctx.gpu.device.cmd_dispatch(ctx.cmd, size[0].div_ceil(8), size[1].div_ceil(8), 1) };
+        });
+    }
 
     let mut images = vec![
         (hdr, ImageAccess::ColorAttachment),

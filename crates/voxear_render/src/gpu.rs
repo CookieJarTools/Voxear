@@ -396,7 +396,8 @@ pub struct GpuOcean {
     pub floor_texture: u32,
     /// The tiling pattern foam is made of (see `water`).
     pub foam_pattern: u32,
-    pub _pad: u32,
+    /// Which way the wind blows, as an angle from +X towards +Z, in radians.
+    pub wind: f32,
     pub floor: [[f32; 4]; 4],
 }
 

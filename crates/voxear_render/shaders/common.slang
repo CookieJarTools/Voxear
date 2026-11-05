@@ -334,7 +334,8 @@ struct Ocean
     uint floorTexture;
     // The tiling pattern foam is made of (water.slang's foamPatternMain).
     uint foamPattern;
-    uint pad;
+    // Which way the wind blows, as an angle from +x towards +z, in radians.
+    float wind;
     float4 floor[4];
 };
 

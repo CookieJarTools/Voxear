@@ -1624,6 +1624,14 @@ impl View {
         } else {
             None
         };
+        let local_shadows = match extracted.local_shadows.is_empty() {
+            true => None,
+            false => {
+                let [width, height] = gpu::LOCAL_SHADOW_ATLAS;
+                let desc = ImageDesc::new(width, height, DEPTH_FORMAT, depth_usage);
+                Some(fg.shared_image(gpu, bindless, "local shadow atlas", desc)?)
+            }
+        };
 
         let history = (setup.frame_index % 2) as usize;
         let ambient_occlusion = match occluded {
@@ -1762,6 +1770,7 @@ impl View {
         frame_data.hiz_size = [pyramid_desc.width, pyramid_desc.height];
         frame_data.hiz_mips = pyramid_desc.mip_levels;
         frame_data.shadow_texture = shadows.map_or(NO_TEXTURE, |atlas| fg.texture(atlas).0);
+        frame_data.local_shadows.texture = local_shadows.map_or(NO_TEXTURE, |atlas| fg.texture(atlas).0);
         frame_data.delta_time = setup.delta_time;
         frame_data.frame_index = setup.frame_index as u32;
         frame_data.taa_reset = u32::from(taa_reset);
@@ -1826,6 +1835,7 @@ impl View {
             pyramid_mips: (0..pyramid_desc.mip_levels as usize).map(|mip| fg.storage(pyramid, mip)).collect(),
             pyramid_size: [pyramid_desc.width, pyramid_desc.height],
             shadows,
+            local_shadows: local_shadows.map(|atlas| (atlas, extracted.local_shadows.clone())),
         };
         let draws = passes::Draws {
             draws: fg.import_buffer(&buffers.draws),

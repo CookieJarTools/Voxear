@@ -974,6 +974,11 @@ fn the_inspector_edits_components_and_script_fields() {
     frame(&mut editor, &mut renderer);
     editor.ui.blur();
     assert_eq!(light(&editor).unwrap().intensity, 2.5);
+    let shadows = first_with(&editor.ui, prop_row(&editor.ui, "Shadows").expect("a local light's Shadows"), "checkbox");
+    assert!(!light(&editor).unwrap().shadows, "off until asked for");
+    click(&mut editor.ui, shadows.unwrap());
+    frame(&mut editor, &mut renderer);
+    assert!(light(&editor).unwrap().shadows, "its toggle turns them on");
     shot(&mut renderer, "inspector-light.png");
 
     let mut headers = Vec::new();

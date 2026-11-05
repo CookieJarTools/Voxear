@@ -947,8 +947,9 @@ foundations Nanite is built on, so this is a later step rather than a rewrite:
 - sky light and emissive surfaces
 - IES profiles and light cookies
 
-**Shadows.** Cascaded shadow maps first, then virtual shadow maps. Soft shadows use PCSS, and contact shadows cover
-small detail.
+**Shadows.** Cascaded shadow maps for the sun first, then virtual shadow maps. Soft shadows use PCSS, and contact
+shadows cover small detail. Local lights that ask for shadows share an atlas of their own: a spot light one view, a
+point, area or tube light a cube's six, the nearest eight lights a frame.
 
 **Atmosphere.** A physically based sky (Hillaire 2020) and **volumetric fog**. The fog is a froxel volume lit by
 every light type and by GI, with temporal reprojection, local fog volumes and height fog.

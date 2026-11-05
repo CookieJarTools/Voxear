@@ -132,6 +132,7 @@ pub fn record_reflections(
     history: ImageId,
     target: ImageId,
     probes: Option<Probes>,
+    local_shadows: Option<ImageId>,
 ) {
     let textures = [fg.texture(depth).0, fg.texture(history).0, fg.texture(surface).0, 0];
     let push = Push { textures, level: 0, ..push };
@@ -141,6 +142,8 @@ pub fn record_reflections(
         (surface, ImageAccess::Sampled),
         (target, ImageAccess::ColorAttachment),
     ];
+    // What rays meet is lit by local lights through their shadows.
+    images.extend(local_shadows.map(|atlas| (atlas, ImageAccess::Sampled)));
     let traced = probes.filter(|probes| !probes.software).zip(pipelines.ray_reflections);
     let pipeline = match traced {
         Some((Probes { irradiance, depth, states, .. }, pipeline)) => {

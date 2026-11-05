@@ -1626,6 +1626,59 @@ fn hanging_light_render(prepare: impl FnOnce(&mut Renderer) -> Light, height: f3
     lamp_render_with(renderer, &[(light, place)])
 }
 
+/// The floor seen from above, lit by `light` two metres up and two to the
+/// left, with a box half way between them, so its shadow falls round the
+/// middle when the light casts one. A small flame is drawn round the light,
+/// as the Sponza demo's candles have, which must not shut its light in.
+fn boxed_light_render(light: Light, meshlets: Meshlets) -> Option<Vec<u8>> {
+    let mut renderer = renderer_culling(meshlets, ViewOptions::default())?;
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let sphere = renderer.primitive(Primitive::Sphere).unwrap();
+    let material = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::new(LAMP_CAMERA, lamp_camera_rotation(), Vec3::ONE)));
+    let plane = renderer.primitive(Primitive::Plane).unwrap();
+    world.spawn((MeshRenderer::new(plane, material), Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(40.0))));
+    world.spawn((MeshRenderer::new(cube, material), Transform::new(Vec3::new(-1.0, 1.0, 0.0), Quat::IDENTITY, Vec3::splat(0.6))));
+    let down = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+    let at = Vec3::new(-2.0, 2.0, 0.0);
+    world.spawn((light, Transform::new(at, down, Vec3::ONE)));
+    let flame = Transform::new(at, Quat::IDENTITY, Vec3::new(0.08, 0.14, 0.08));
+    world.spawn((MeshRenderer::new(sphere, material), flame));
+    world.insert_resource(voxear_render::Sky { ambient: 0.0, ..voxear_render::Sky::default() });
+    let anti_aliasing = voxear_render::AntiAliasing { mode: voxear_render::AntiAliasingMode::Off, ..Default::default() };
+    world.insert_resource(voxear_render::PostProcess { anti_aliasing, ..voxear_render::PostProcess::neutral() });
+    run(&mut renderer, &world, &mut 0.0, 3);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+#[test]
+fn local_lights_cast_shadows_when_told_to() {
+    let white = Vec3::ONE;
+    let kinds = [
+        Light::point(white, 6.0, 10.0),
+        Light::spot(white, 6.0, 10.0, 110.0, 130.0),
+        Light::rectangle(white, 6.0, 10.0, 0.3, 0.3),
+        Light::tube(white, 6.0, 10.0, 0.4, 0.03),
+    ];
+    let paths = [Meshlets::Off, Meshlets::Compute, Meshlets::MeshShaders];
+    for (light, meshlets) in kinds.into_iter().flat_map(|light| paths.map(|meshlets| (light, meshlets))) {
+        let shadowing = Light { shadows: true, ..light };
+        let (Some(open), Some(shadowed)) = (boxed_light_render(light, meshlets), boxed_light_render(shadowing, meshlets))
+        else {
+            continue;
+        };
+        keep_image(&format!("{:?} light shadow.png", light.kind), &shadowed);
+        // Behind the box from the light, and as far on the light's other side, where nothing is in the way.
+        let (behind, clear) = (Vec3::new(0.2, 0.0, 0.0), Vec3::new(-4.2, 0.0, 0.0));
+        let (open_behind, open_clear) = (floor_brightness(&open, behind), floor_brightness(&open, clear));
+        let (shadow, lit) = (floor_brightness(&shadowed, behind), floor_brightness(&shadowed, clear));
+        assert!(open_behind > 60, "{:?}: without shadows, the light reaches past the box: {open_behind}", light.kind);
+        assert!(shadow * 4 < open_behind, "{:?}: with them, the box shades the floor: {shadow} against {open_behind}", light.kind);
+        assert!((lit - open_clear).abs() <= 6, "{:?}: where nothing is in the way, as lit as before: {lit}, {open_clear}", light.kind);
+    }
+}
+
 #[test]
 fn a_spot_lights_cookie_shapes_its_light() {
     let half_and_half = |renderer: &mut Renderer| {

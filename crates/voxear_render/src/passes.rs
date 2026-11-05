@@ -30,7 +30,7 @@ use crate::{
     ambient_occlusion, atmosphere, ddgi, glass,
     gpu::{
         CLUSTER_COUNT, DRAW_COMMAND_SIZE, DRAWS_AGAIN, DRAWS_INSTANCES, DRAWS_MESHLETS, LIST_EARLY, LIST_LATE,
-        LIST_SHADOW, Push, cleared_draw_counts, draw_count_offset, meshlet_count_offset, meshlet_list, stat,
+        LIST_LOCAL_SHADOW, LIST_SHADOW, LOCAL_SHADOW_ATLAS, LOCAL_SHADOW_COLUMNS, LOCAL_SHADOW_TILE, Push, cleared_draw_counts, draw_count_offset, meshlet_count_offset, meshlet_list, stat,
     },
     graph::{BufferAccess, BufferId, FrameGraph, ImageAccess, ImageId, PassContext},
     pipelines::Pipelines,
@@ -48,6 +48,9 @@ pub struct Targets {
     pub pyramid_mips: Vec<StorageImageId>,
     pub pyramid_size: [u32; 2],
     pub shadows: Option<ImageId>,
+    /// The local lights' shadow atlas, with each light's first view and how
+    /// many it takes, when any local light casts a shadow this frame.
+    pub local_shadows: Option<(ImageId, Vec<(u32, u32)>)>,
 }
 
 pub struct Draws {
@@ -229,6 +232,36 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
             unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
         });
     }
+    if let Some((atlas, lights)) = targets.local_shadows.clone() {
+        let count = lights.len() as u32;
+        fg.add_pass("Local shadow cull", &[], &culling, move |ctx| {
+            cull(ctx, pipelines.cull, &push, LIST_LOCAL_SHADOW, instances, count);
+        });
+        meshlet_pass(fg, "Local shadow meshlets", &[], [LIST_LOCAL_SHADOW, LIST_LOCAL_SHADOW + count]);
+        // Each light's list drawn into each of its views: a spot light's one, a cube's six.
+        fg.add_pass("Local shadows", &[(atlas, ImageAccess::DepthAttachment)], &drawing, move |ctx| {
+            let [width, height] = LOCAL_SHADOW_ATLAS;
+            let depth = attachment(ctx.view(atlas), vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL, Some(clear_depth(1.0)));
+            begin_rendering(ctx, vk::Extent2D { width, height }, &[], Some(&depth));
+            let shadow = mesh.map_or(pipelines.local_shadow, |mesh| mesh.local_shadow);
+            bind(ctx, shadow, vk::PipelineBindPoint::GRAPHICS, &draw_push);
+            for (light, &(first, faces)) in lights.iter().enumerate() {
+                let list = LIST_LOCAL_SHADOW + light as u32;
+                for view in first..first + faces {
+                    let offset = vk::Offset2D {
+                        x: (view % LOCAL_SHADOW_COLUMNS * LOCAL_SHADOW_TILE) as i32,
+                        y: (view / LOCAL_SHADOW_COLUMNS * LOCAL_SHADOW_TILE) as i32,
+                    };
+                    let size = vk::Extent2D { width: LOCAL_SHADOW_TILE, height: LOCAL_SHADOW_TILE };
+                    set_viewport(ctx, offset, size);
+                    ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { list, level: view, ..draw_push });
+                    indirect.draw(ctx, list);
+                }
+            }
+            unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
+        });
+    }
+    let local_atlas = targets.local_shadows.as_ref().map(|(atlas, _)| *atlas);
 
     let ambient_occlusion = frame.ambient_occlusion;
     let contact_shadows = frame.contact_shadows;
@@ -243,6 +276,7 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
         let mut images =
             vec![(targets.hdr, color), (targets.velocity, color), (targets.depth, ImageAccess::DepthAttachment)];
         images.extend(targets.shadows.map(|atlas| (atlas, ImageAccess::Sampled)));
+        images.extend(local_atlas.map(|atlas| (atlas, ImageAccess::Sampled)));
         images.extend(ambient_occlusion.map(|ao| (ao.current, ImageAccess::Sampled)));
         images.extend(contact_shadows.map(|contact| (contact, ImageAccess::Sampled)));
         images.extend(reflections.map(|(target, _)| (target, ImageAccess::Sampled)));
@@ -315,7 +349,8 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
             if let Some((target, history)) = reflections {
                 let surface = frame.surface.expect("the depth passes' surface");
                 let images = (depth, surface);
-                ambient_occlusion::record_reflections(fg, (pipelines, push), images, history, target, frame.probes);
+                let probes = frame.probes;
+                ambient_occlusion::record_reflections(fg, (pipelines, push), images, history, target, probes, local_atlas);
             }
             // Both lists again, over their own depth. Task shaders cull them again, without counting them again.
             let forward = mesh.map_or(pipelines.forward_on_depth, |mesh| mesh.forward_on_depth);
@@ -332,10 +367,11 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
         }),
     }
     if let Some(probes) = frame.probes {
-        ddgi::record(fg, (pipelines, push), probes);
+        ddgi::record(fg, (pipelines, push), probes, local_atlas);
     }
     if let Some(volume) = frame.volume {
-        volumetric::record(fg, (pipelines, push), volume, targets.shadows, &[draws.clusters]);
+        let shadows: Vec<ImageId> = targets.shadows.into_iter().chain(local_atlas).collect();
+        volumetric::record(fg, (pipelines, push), volume, &shadows, &[draws.clusters]);
     }
     // Counted in GPU memory, where the culling passes' atomics are fast, then copied out at once.
     let (readback, stats_bytes) = (draws.stats_readback_handle, stat::COUNT as u64 * 4);
@@ -364,7 +400,8 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
     });
 
     if let Some(glass) = frame.glass.clone() {
-        let mut sampled: Vec<ImageId> = targets.shadows.into_iter().chain(tables.iter().copied()).collect();
+        let mut sampled: Vec<ImageId> =
+            targets.shadows.into_iter().chain(local_atlas).chain(tables.iter().copied()).collect();
         sampled.extend(frame.probes.into_iter().flat_map(|probes| [probes.irradiance, probes.depth, probes.states]));
         let index_buffer = draws.index_buffer;
         let glass_targets =

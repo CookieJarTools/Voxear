@@ -25,7 +25,10 @@ static const uint CASCADES = 4;
 static const uint LIST_EARLY = 0;
 static const uint LIST_LATE = 1;
 static const uint LIST_SHADOW = 2;
-static const uint LIST_COUNT = LIST_SHADOW + CASCADES;
+// One list for each local light casting a shadow, drawn into each of its views.
+static const uint LIST_LOCAL_SHADOW = LIST_SHADOW + CASCADES;
+static const uint LOCAL_SHADOW_LIGHTS = 8;
+static const uint LIST_COUNT = LIST_LOCAL_SHADOW + LOCAL_SHADOW_LIGHTS;
 
 // Each instance list's draw count heads a dispatch's arguments (count, 1, 1).
 // With meshlet culling the list's draws are not written: its meshlets are
@@ -51,7 +54,7 @@ uint meshletCountIndex(uint list)
 
 // Meshlet lists, one after another: the main view's two hold two draws'
 // meshlets for each instance, since a fading instance draws two LODs; each
-// shadow cascade's holds one. `capacity` is the most meshlets every
+// shadow cascade's and local light's holds one. `capacity` is the most meshlets every
 // instance's draw could turn into together, worked out on the CPU.
 uint meshletListBase(uint list, uint capacity)
 {
@@ -269,6 +272,27 @@ struct Light
     float2 size;
     uint cookie;
     uint profile;
+    // Its first view in the local shadow atlas, or NO_SHADOW: a spot light's one, or a cube's six faces.
+    uint shadow;
+    uint3 pad;
+};
+
+static const uint NO_SHADOW = 0xFFFFFFFF;
+
+// Local lights' shadows; mirrors GpuLocalShadows in src/gpu.rs. Views are
+// LOCAL_SHADOW_TILE square, LOCAL_SHADOW_COLUMNS to a row of the atlas.
+static const uint LOCAL_SHADOW_VIEWS = 48;
+static const uint LOCAL_SHADOW_TILE = 512;
+static const uint LOCAL_SHADOW_COLUMNS = 8;
+static const uint2 LOCAL_SHADOW_ATLAS = uint2(4096, 3072);
+struct LocalShadows
+{
+    Mat4 viewProj[LOCAL_SHADOW_VIEWS];
+    // Each shadow list's light, and how far its shadow reaches.
+    float4 casters[LOCAL_SHADOW_LIGHTS];
+    uint texture;
+    uint count;
+    uint2 pad;
 };
 
 // Post-processing settings; mirrors GpuPost in src/gpu.rs.
@@ -554,7 +578,15 @@ struct Frame
     Wind wind;
     Pushes pushes;
     Seasons seasons;
+    LocalShadows localShadows;
 };
+
+// The projection a shadow draw puts its vertices through: a cascade's, or
+// for a local light's list the view `level` names.
+Mat4 shadowViewProj(Frame* frame, uint list, uint view)
+{
+    return list >= LIST_LOCAL_SHADOW ? frame->localShadows.viewProj[view] : frame->cascadeViewProj[list - LIST_SHADOW];
+}
 
 struct DrawCommand
 {

@@ -62,20 +62,20 @@ impl Volume {
     }
 }
 
-/// Records the two passes, reading the sun's shadows from `shadows` and the
-/// lights from `lights`.
+/// Records the two passes, reading the sun's and local lights' shadow
+/// atlases from `shadows` and the lights from `lights`.
 pub fn record(
     fg: &mut FrameGraph<'_>,
     (pipelines, push): (Pipelines, Push),
     volume: Volume,
-    shadows: Option<ImageId>,
+    shadows: &[ImageId],
     lights: &[BufferId],
 ) {
     let Volume { previous, current, integrated } = volume;
     // The sun's shadows are read as the opaque passes read them, with their atlas's tile size.
     let scatter = Push { textures: [fg.texture(previous).0, 0, 0, 0], size: [CASCADE_RESOLUTION; 2], ..push };
     let mut images = vec![(previous, ImageAccess::Sampled), (current, ImageAccess::ColorAttachment)];
-    images.extend(shadows.map(|atlas| (atlas, ImageAccess::Sampled)));
+    images.extend(shadows.iter().map(|&atlas| (atlas, ImageAccess::Sampled)));
     let buffers: Vec<_> = lights.iter().map(|&buffer| (buffer, BufferAccess::ShaderRead)).collect();
     fg.add_pass("Fog volume", &images, &buffers, move |ctx| draw(ctx, pipelines.volume_scatter, &scatter, current));
 

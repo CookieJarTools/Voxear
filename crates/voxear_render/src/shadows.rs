@@ -1,9 +1,15 @@
-//! Cascaded shadow maps for the sun.
+//! Cascaded shadow maps for the sun, and local lights' shadows.
 //!
 //! Each cascade covers a slice of the view frustum with a square orthographic
 //! projection fitted to the slice's bounding sphere. The sphere's size does
 //! not change as the camera turns, and its centre is snapped to whole shadow
 //! texels, so shadow edges stay still instead of shimmering.
+//!
+//! A local light casting a shadow takes views of an atlas of its own
+//! ([`local_views`]): a spot light one, along its cone, and any other light
+//! six, the faces of a cube round it. Each is a perspective view from the
+//! light, a little wider than its cone or its face, so the filter that
+//! softens the shadow's edge stays inside the view at its rim.
 
 use voxear_core::math::{Mat4, Quat, Vec3, camera::lh::proj::vulkan, camera::lh::view::look_to_mat4};
 
@@ -37,6 +43,52 @@ pub struct View {
     pub fov_y: f32,
     pub aspect: f32,
     pub near: f32,
+}
+
+/// The way each face of a light's cube looks, and which way is up in it.
+pub const CUBE_FACES: [(Vec3, Vec3); 6] = [
+    (Vec3::X, Vec3::Y),
+    (Vec3::NEG_X, Vec3::Y),
+    (Vec3::Y, Vec3::Z),
+    (Vec3::NEG_Y, Vec3::Z),
+    (Vec3::Z, Vec3::Y),
+    (Vec3::NEG_Z, Vec3::Y),
+];
+
+/// Texels round a local shadow view's rim beyond its cone or face, which
+/// the shaders keep their filter inside.
+pub const LOCAL_SHADOW_BORDER: f32 = 2.0;
+
+/// A local light as its shadow is drawn: where it is, how far its shadow
+/// reaches, and how near to it things start to cast (past its own shape and
+/// the glass or flame round it).
+pub struct LocalLight {
+    pub position: Vec3,
+    pub rotation: Quat,
+    pub range: f32,
+    pub near: f32,
+    /// A spot light's cone, across, in degrees; `None` for a cube.
+    pub cone_degrees: Option<f32>,
+}
+
+/// The views a local light's shadow is drawn in: one along a spot light's
+/// cone, or the six faces of a cube in `CUBE_FACES`' order.
+pub fn local_views(light: &LocalLight) -> Vec<Mat4> {
+    let size = crate::gpu::LOCAL_SHADOW_TILE as f32;
+    let grow = (size + 2.0 * LOCAL_SHADOW_BORDER) / size;
+    let far = light.range.max(light.near * 2.0);
+    let projection = |tan_half: f32| vulkan::perspective(2.0 * (tan_half * grow).atan(), 1.0, light.near, far);
+    match light.cone_degrees {
+        Some(cone) => {
+            let tan_half = (cone.clamp(1.0, 160.0).to_radians() * 0.5).tan();
+            let (forward, up) = (light.rotation * Vec3::Z, light.rotation * Vec3::Y);
+            vec![projection(tan_half) * look_to_mat4(light.position, forward, up)]
+        }
+        None => CUBE_FACES
+            .iter()
+            .map(|&(forward, up)| projection(1.0) * look_to_mat4(light.position, forward, up))
+            .collect(),
+    }
 }
 
 /// `light_direction` is the way the light travels. The cascades reach out
@@ -157,6 +209,37 @@ mod tests {
         // Casters between the sun and the slice must survive culling.
         assert!(inside(&cascades[0].planes, point + Vec3::new(-0.3, 1.0, -0.4) * 200.0));
         assert!(!inside(&cascades[0].planes, point + Vec3::X * 500.0));
+    }
+
+    #[test]
+    fn a_cube_sees_all_round_a_light_and_a_spot_along_its_cone() {
+        let light =
+            LocalLight { position: Vec3::new(1.0, 2.0, 3.0), rotation: Quat::IDENTITY, range: 10.0, near: 0.1, cone_degrees: None };
+        let faces = local_views(&light);
+        assert_eq!(faces.len(), 6);
+        for direction in [Vec3::X, Vec3::NEG_X, Vec3::Y, Vec3::NEG_Y, Vec3::Z, Vec3::NEG_Z, Vec3::new(0.4, -0.7, 0.6)] {
+            let point = light.position + direction.normalize() * 4.0;
+            let seen = faces.iter().filter(|face| {
+                let clip = **face * point.extend(1.0);
+                let ndc = clip.truncate() / clip.w;
+                clip.w > 0.0 && ndc.x.abs() <= 1.0 && ndc.y.abs() <= 1.0 && (0.0..=1.0).contains(&ndc.z)
+            });
+            assert!(seen.count() >= 1, "some face sees {direction}");
+        }
+        // Nearer is less deep, so a caster in front hides what lies behind it.
+        let depth = |at: Vec3| {
+            let clip = faces[4] * at.extend(1.0);
+            clip.z / clip.w
+        };
+        assert!(depth(light.position + Vec3::Z * 2.0) < depth(light.position + Vec3::Z * 6.0));
+
+        let spot = LocalLight { cone_degrees: Some(60.0), ..light };
+        let cone = local_views(&spot);
+        assert_eq!(cone.len(), 1);
+        let ahead = cone[0] * (spot.position + Vec3::Z * 5.0).extend(1.0);
+        assert!((ahead.x / ahead.w).abs() < 1e-4 && (ahead.y / ahead.w).abs() < 1e-4, "straight ahead is the middle");
+        let outside = cone[0] * (spot.position + Vec3::new(1.0, 0.0, 1.0) * 5.0).extend(1.0);
+        assert!((outside.x / outside.w).abs() > 1.0, "45 degrees off is outside a 60 degree cone");
     }
 
     #[test]

@@ -481,6 +481,9 @@ pub enum LightData {
         temperature: Option<f32>,
         #[serde(default = "default_range")]
         range: f32,
+        /// Whether it casts shadows (see `Light::shadows`).
+        #[serde(default, skip_serializing_if = "is_false")]
+        shadows: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         profile: Option<String>,
     },
@@ -494,6 +497,9 @@ pub enum LightData {
         temperature: Option<f32>,
         #[serde(default = "default_range")]
         range: f32,
+        /// Whether it casts shadows (see `Light::shadows`).
+        #[serde(default, skip_serializing_if = "is_false")]
+        shadows: bool,
         #[serde(default = "default_inner")]
         inner_angle: f32,
         #[serde(default = "default_outer")]
@@ -514,6 +520,9 @@ pub enum LightData {
         temperature: Option<f32>,
         #[serde(default = "default_range")]
         range: f32,
+        /// Whether it casts shadows (see `Light::shadows`).
+        #[serde(default, skip_serializing_if = "is_false")]
+        shadows: bool,
         #[serde(default = "one")]
         width: f32,
         #[serde(default = "one")]
@@ -529,6 +538,9 @@ pub enum LightData {
         temperature: Option<f32>,
         #[serde(default = "default_range")]
         range: f32,
+        /// Whether it casts shadows (see `Light::shadows`).
+        #[serde(default, skip_serializing_if = "is_false")]
+        shadows: bool,
         #[serde(default = "half")]
         radius: f32,
     },
@@ -543,6 +555,9 @@ pub enum LightData {
         temperature: Option<f32>,
         #[serde(default = "default_range")]
         range: f32,
+        /// Whether it casts shadows (see `Light::shadows`).
+        #[serde(default, skip_serializing_if = "is_false")]
+        shadows: bool,
         #[serde(default = "one")]
         length: f32,
         #[serde(default = "default_tube_radius")]
@@ -576,6 +591,18 @@ fn is_black3(colour: &[f32; 3]) -> bool {
 
 impl LightData {
     /// The light's colour temperature, in kelvin, whichever kind it is.
+    /// Whether a local light casts shadows; the sun always does.
+    pub fn shadows(&self) -> bool {
+        match *self {
+            Self::Directional { .. } => false,
+            Self::Point { shadows, .. }
+            | Self::Spot { shadows, .. }
+            | Self::Rectangle { shadows, .. }
+            | Self::Disc { shadows, .. }
+            | Self::Tube { shadows, .. } => shadows,
+        }
+    }
+
     pub fn temperature(&self) -> Option<f32> {
         match *self {
             Self::Directional { temperature, .. }
@@ -1536,7 +1563,7 @@ pub(crate) fn light_component(data: &LightData) -> Light {
             Light::tube(Vec3::from(linear(color)), intensity, range, length, radius)
         }
     };
-    Light { temperature: data.temperature(), ..light }
+    Light { temperature: data.temperature(), shadows: data.shadows(), ..light }
 }
 
 /// A light with its cookie and IES profile loaded, as a scene names them.
@@ -1558,6 +1585,7 @@ fn light_data(content: &Content, light: &Light) -> LightData {
     let temperature = light.temperature;
     let cookie = light.cookie.and_then(|texture| content.picture_guid(texture)).map(|guid| guid.to_string());
     let profile = light.profile.and_then(|texture| content.light_profile_guid(texture)).map(|guid| guid.to_string());
+    let shadows = light.shadows;
     match light.kind {
         LightKind::Directional => LightData::Directional {
             color,
@@ -1572,12 +1600,13 @@ fn light_data(content: &Content, light: &Light) -> LightData {
                 SkyBody::Moon => SkyBodyData::Moon,
             },
         },
-        LightKind::Point => LightData::Point { color, intensity, temperature, range: light.range, profile },
+        LightKind::Point => LightData::Point { color, intensity, temperature, range: light.range, shadows, profile },
         LightKind::Spot => LightData::Spot {
             color,
             intensity,
             temperature,
             range: light.range,
+            shadows,
             inner_angle: light.spot_inner_degrees,
             outer_angle: light.spot_outer_degrees,
             cookie,
@@ -1585,12 +1614,14 @@ fn light_data(content: &Content, light: &Light) -> LightData {
         },
         LightKind::Rectangle => {
             let (width, height) = (light.width, light.height);
-            LightData::Rectangle { color, intensity, temperature, range: light.range, width, height }
+            LightData::Rectangle { color, intensity, temperature, range: light.range, shadows, width, height }
         }
-        LightKind::Disc => LightData::Disc { color, intensity, temperature, range: light.range, radius: light.radius },
+        LightKind::Disc => {
+            LightData::Disc { color, intensity, temperature, range: light.range, shadows, radius: light.radius }
+        }
         LightKind::Tube => {
             let (length, radius) = (light.length, light.radius);
-            LightData::Tube { color, intensity, temperature, range: light.range, length, radius }
+            LightData::Tube { color, intensity, temperature, range: light.range, shadows, length, radius }
         }
     }
 }
@@ -1841,6 +1872,18 @@ mod tests {
         let lit = Light { temperature: Some(1900.0), ..default_light(LightKind::Point) };
         let warm = lit.light_color();
         assert!(warm.x > warm.z * 3.0, "a candle lights orange: {warm}");
+    }
+
+    #[test]
+    fn a_lights_shadows_read_and_write_back_and_are_left_out_when_off() {
+        for kind in ["point", "spot", "rectangle", "disc", "tube"] {
+            let casting: LightData = toml::from_str(&format!("type = \"{kind}\"\nshadows = true")).unwrap();
+            assert!(light_component(&casting).shadows, "{kind}");
+            assert_eq!(toml::from_str::<LightData>(&toml::to_string(&casting).unwrap()).unwrap(), casting);
+            let plain: LightData = toml::from_str(&format!("type = \"{kind}\"")).unwrap();
+            assert!(!light_component(&plain).shadows, "{kind} casts none unless told to");
+            assert!(!toml::to_string(&plain).unwrap().contains("shadows"));
+        }
     }
 
     #[test]

@@ -182,6 +182,49 @@ pub struct GpuLight {
     pub cookie: u32,
     /// An IES profile baked over the sphere (see `ies`), or `NO_TEXTURE`.
     pub profile: u32,
+    /// Its first view in the local shadow atlas, or `NO_SHADOW`: a spot
+    /// light's one, or the six faces of a cube round any other kind, in
+    /// `CUBE_FACES`' order.
+    pub shadow: u32,
+    pub _pad: [u32; 3],
+}
+
+/// A light that casts no shadow, or none this frame.
+pub const NO_SHADOW: u32 = u32::MAX;
+
+/// Local lights' shadows: how many lights may cast them in a frame, how many
+/// views of the atlas they share (a spot light takes one, any other six, a
+/// face of a cube each), and how big each view is, laid out in rows of
+/// `LOCAL_SHADOW_COLUMNS`.
+pub const LOCAL_SHADOW_LIGHTS: usize = 8;
+pub const LOCAL_SHADOW_VIEWS: usize = 48;
+pub const LOCAL_SHADOW_TILE: u32 = 512;
+pub const LOCAL_SHADOW_COLUMNS: u32 = 8;
+pub const LOCAL_SHADOW_ATLAS: [u32; 2] = [
+    LOCAL_SHADOW_TILE * LOCAL_SHADOW_COLUMNS,
+    LOCAL_SHADOW_TILE * (LOCAL_SHADOW_VIEWS as u32).div_ceil(LOCAL_SHADOW_COLUMNS),
+];
+
+/// The local lights casting shadows this frame, as shaders read them
+/// (`LocalShadows` in `shaders/common.slang`; see `shadows::local_views`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuLocalShadows {
+    /// Each view's projection from world space, its depth 0 at the light.
+    pub view_proj: [Mat4Cols; LOCAL_SHADOW_VIEWS],
+    /// Each shadow list's light: where it is and how far its shadow reaches,
+    /// which its casters are culled by.
+    pub casters: [[f32; 4]; LOCAL_SHADOW_LIGHTS],
+    /// The atlas, or `NO_TEXTURE` while no local light casts a shadow.
+    pub texture: u32,
+    pub count: u32,
+    pub _pad: [u32; 2],
+}
+
+impl Default for GpuLocalShadows {
+    fn default() -> Self {
+        Self { texture: NO_TEXTURE, ..bytemuck::Zeroable::zeroed() }
+    }
 }
 
 pub const DEBUG_VIEW_NONE: u32 = 0;
@@ -295,6 +338,7 @@ pub struct GpuFrame {
     pub wind: GpuWind,
     pub pushes: GpuPushes,
     pub seasons: GpuSeasons,
+    pub local_shadows: GpuLocalShadows,
 }
 
 /// Most pushers through foliage a frame takes, the nearest the camera.
@@ -639,7 +683,9 @@ pub const DRAW_COMMAND_SIZE: u64 = 20;
 pub const LIST_EARLY: u32 = 0;
 pub const LIST_LATE: u32 = 1;
 pub const LIST_SHADOW: u32 = 2;
-pub const LIST_COUNT: u32 = LIST_SHADOW + CASCADES as u32;
+/// One list for each local light casting a shadow, drawn into each of its views.
+pub const LIST_LOCAL_SHADOW: u32 = LIST_SHADOW + CASCADES as u32;
+pub const LIST_COUNT: u32 = LIST_LOCAL_SHADOW + LOCAL_SHADOW_LIGHTS as u32;
 
 /// The draw count buffer holds each instance list's count at the head of a
 /// dispatch's arguments, (count, 1, 1), and a fourth word. With meshlet
@@ -673,7 +719,8 @@ pub fn cleared_draw_counts() -> Vec<u32> {
 /// A meshlet list's first entry and how many it holds, when every instance
 /// list's draws can turn into `capacity` meshlets: the main view's lists
 /// hold twice that, as a fading instance draws two LODs, and each shadow
-/// cascade's holds it once. Mirrors `meshletListBase` in the shaders.
+/// cascade's and local light's holds it once. Mirrors `meshletListBase` in
+/// the shaders.
 pub fn meshlet_list(list: u32, capacity: u32) -> (u64, u32) {
     let capacity = u64::from(capacity);
     let (base, held) = if list < LIST_SHADOW {
@@ -686,7 +733,7 @@ pub fn meshlet_list(list: u32, capacity: u32) -> (u64, u32) {
 
 /// Entries in all the meshlet lists together.
 pub fn meshlet_lists_len(capacity: u32) -> u64 {
-    (4 + CASCADES as u64) * u64::from(capacity)
+    (4 + u64::from(LIST_COUNT - LIST_SHADOW)) * u64::from(capacity)
 }
 
 /// Counters the culling pass writes, read back a few frames later.
@@ -746,7 +793,7 @@ mod tests {
         assert_eq!(size_of::<GpuMaterial>(), 80);
         // Three matrices, ids and flags, then where its LODs end.
         assert_eq!(size_of::<GpuInstance>(), 192 + 32 + 16);
-        assert_eq!(size_of::<GpuLight>(), 80);
+        assert_eq!(size_of::<GpuLight>(), 96);
         // Two matrices, six planes, nine 16-byte rows, the cascades, then the
         // view matrix and three rows of clustering and timing.
         let cascades = CASCADES * (64 + 96 + 8);
@@ -757,9 +804,13 @@ mod tests {
         let ddgi = size_of::<GpuDdgi>();
         // Four seasons' colours and looks, then the dry colour and two rows of settings.
         let seasons = 16 * 4 * 2 + 16 + 32;
+        // Each view's matrix, each list's light, then the atlas and count.
+        let local_shadows = 64 * LOCAL_SHADOW_VIEWS + 16 * LOCAL_SHADOW_LIGHTS + 16;
+        assert_eq!(size_of::<GpuLocalShadows>(), local_shadows);
+        assert_eq!(LOCAL_SHADOW_ATLAS, [4096, 3072], "as LOCAL_SHADOW_ATLAS in the shaders");
         assert_eq!(
             size_of::<GpuFrame>(),
-            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi + 32 + 16 * MAX_PUSHERS + 4 * MAX_PUSHERS + 16 + seasons
+            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi + 32 + 16 * MAX_PUSHERS + 4 * MAX_PUSHERS + 16 + seasons + local_shadows
         );
         assert_eq!(size_of::<GpuDdgi>(), 32 * DDGI_CASCADES + 32 + 48);
         assert_eq!(size_of::<GpuLighting>(), lighting);

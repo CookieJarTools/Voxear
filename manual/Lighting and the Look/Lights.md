@@ -29,6 +29,7 @@ Select the light, and the Inspector shows:
 | Temperature | With Filter and Temperature, the light's colour temperature in kelvin, as below |
 | Intensity | How bright it is |
 | Range | How far the light reaches, in metres, from the nearest point of its shape. It fades out smoothly by then |
+| Shadows | Whether the light casts shadows, for any light but a directional one. Off by default: see below |
 | Inner angle, Outer angle | A spot light's cone, in degrees: full brightness inside the inner angle, fading to nothing at the outer |
 | Width, Height | A rectangle's size, in metres |
 | Radius | A disc's or a tube's radius, in metres |
@@ -82,9 +83,29 @@ Real light fittings are not equally bright in every direction: a downlight throw
 
 The profile's straight-ahead direction is the way the light faces, along its Obj's blue (Z) axis. The light's intensity still sets how bright it is overall: the profile only shapes it.
 
+## Shadows from lamps
+
+Turn on a light's **Shadows** and what stands in its way casts a shadow: a candle behind a pillar lights the floor round the pillar but not behind it. Without them, a light shines through walls, curtains and everything else, which costs nothing and often looks fine for small, soft lights.
+
+Each light that casts shadows draws what is round it again, so they cost more than the light itself:
+
+- A **spot light** draws its shadow once, along its cone.
+- Any other light draws it six times, once for each side of a cube round it.
+
+In each frame, the eight lights nearest the camera that ask for shadows cast them, as long as their views fit the shadow atlas (48 views, so up to eight spot lights, or eight point lights). Any more light without a shadow until the camera comes nearer.
+
+Nothing within 10 centimetres of a light casts its shadow, or just past its own shape for an area or tube light, so a flame or bulb drawn round a light does not shut its light in. Glass never casts shadows. An opaque shade does, as a real one would: the light comes out of its open end.
+
+```toml
+[obj.light]
+type = "point"
+temperature = 1900
+shadows = true
+```
+
 ## The sun
 
-The first directional light in the level is its **sun**. It is the only light that casts shadows, and the sky draws the sun's disc in its direction and colour. A level only uses one: any other directional lights are left out.
+The first directional light in the level is its **sun**. It always casts shadows, and the sky draws the sun's disc in its direction and colour. A level only uses one: any other directional lights are left out.
 
 At night, set its **Sky body** to Moon: the sky draws the moon instead, and darkens so the stars show. See [[The Sky]].
 

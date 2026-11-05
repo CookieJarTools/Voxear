@@ -106,7 +106,14 @@ impl Probes {
 }
 
 /// Records the rays and update passes, once the scene's top level is built.
-pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), probes: Probes) {
+/// The rays' hits are lit by local lights through their shadows in
+/// `local_shadows`, when any cast them.
+pub fn record(
+    fg: &mut FrameGraph<'_>,
+    (pipelines, push): (Pipelines, Push),
+    probes: Probes,
+    local_shadows: Option<ImageId>,
+) {
     let traced = if probes.software { Some(pipelines.ddgi_software) } else { pipelines.ddgi };
     let Some([rays_pipeline, update_pipeline]) = traced else {
         return;
@@ -115,12 +122,13 @@ pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), pro
     let groups = probe_count() * DDGI_CASCADES as u32;
 
     let trace = Push { output: fg.storage(rays, 0).0, ..push };
-    let images = [
+    let mut images = vec![
         (rays, ImageAccess::StorageWrite),
         (irradiance, ImageAccess::Sampled),
         (depth, ImageAccess::Sampled),
         (states, ImageAccess::Sampled),
     ];
+    images.extend(local_shadows.map(|atlas| (atlas, ImageAccess::Sampled)));
     fg.add_pass("DDGI rays", &images, &[], move |ctx| {
         bind(ctx, rays_pipeline, vk::PipelineBindPoint::COMPUTE, &trace);
         unsafe { ctx.gpu.device.cmd_dispatch(ctx.cmd, groups, 1, 1) };

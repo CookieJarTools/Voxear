@@ -7,6 +7,14 @@
 
 #include "common.slang"
 
+// Whether a sphere lies where a local light's shadow reaches: within its
+// range of the light, whichever of its views it falls in.
+bool insideLocalShadow(Frame* frame, uint light, float3 center, float radius)
+{
+    float4 caster = frame->localShadows.casters[light];
+    return distance(center, caster.xyz) < caster.w + radius;
+}
+
 bool insidePlanes(float4 planes[6], float3 center, float radius)
 {
     // Five planes: the sixth is unused (infinite far plane, or open near side).
@@ -119,6 +127,10 @@ uint cullMeshlet(Frame* frame, MeshletCuller culler, Meshlet meshlet)
 {
     float3 center = transform(culler.model, float4(meshlet.center, 1.0)).xyz;
     float radius = meshlet.radius * culler.scale;
+    if (culler.list >= LIST_LOCAL_SHADOW)
+    {
+        return insideLocalShadow(frame, culler.list - LIST_LOCAL_SHADOW, center, radius) ? MESHLET_VISIBLE : MESHLET_OUTSIDE;
+    }
     if (culler.list >= LIST_SHADOW)
     {
         return insidePlanes(frame->cascadePlanes[culler.list - LIST_SHADOW], center, radius) ? MESHLET_VISIBLE : MESHLET_OUTSIDE;
@@ -172,7 +184,7 @@ struct MeshletPayload
 };
 
 // Counts a wave's meshlet results: what the main view tested, culled and
-// drew, or what a shadow cascade drew.
+// drew, or what a shadow cascade or local light drew.
 void countMeshlets(uint list, bool tested, uint result)
 {
     if (list >= LIST_SHADOW)

@@ -79,7 +79,8 @@ float3 lightInFog(Light light, float3 position, float3 toCamera, float g)
     {
         facing = saturate(dot(-toLight, light.direction));
     }
-    return light.color * facing * window / distanceSquared * miePhase(g, dot(-toLight, toCamera));
+    float shadow = localShadow(push.frame, light, position, float3(0.0));
+    return light.color * facing * shadow * window / distanceSquared * miePhase(g, dot(-toLight, toCamera));
 }
 
 // textures: x last frame's scattering.

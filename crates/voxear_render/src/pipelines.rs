@@ -39,6 +39,7 @@ const EDGE_BIAS: (f32, f32) = (1.0, 1.0);
 #[derive(Clone, Copy)]
 pub struct MeshPipelines {
     pub shadow: vk::Pipeline,
+    pub local_shadow: vk::Pipeline,
     pub forward: vk::Pipeline,
     pub depth: vk::Pipeline,
     pub forward_on_depth: vk::Pipeline,
@@ -54,6 +55,11 @@ pub struct Pipelines {
     pub meshlet_cull: vk::Pipeline,
     pub pyramid: vk::Pipeline,
     pub shadow: vk::Pipeline,
+    /// As `shadow`, for local lights' views, without clamping depth: what
+    /// lies nearer a light than its near plane, as the flame or bulb round
+    /// it, is clipped away rather than flattened onto it, where it would
+    /// shade everything.
+    pub local_shadow: vk::Pipeline,
     pub forward: vk::Pipeline,
     /// The opaque lists as depth alone, drawn first when ambient occlusion
     /// is on, so it can work from the frame's whole depth.
@@ -228,6 +234,11 @@ impl Pipelines {
                 depth_clamp: true,
                 ..GraphicsPipelineDesc::depth_only("Shadows", shadow, c"shadowVertex", DEPTH_FORMAT)
             })?,
+            local_shadow: graphics(&GraphicsPipelineDesc {
+                cull: vk::CullModeFlags::NONE,
+                depth_bias: Some(SHADOW_BIAS),
+                ..GraphicsPipelineDesc::depth_only("Local shadows", shadow, c"shadowVertex", DEPTH_FORMAT)
+            })?,
             forward: graphics(&GraphicsPipelineDesc {
                 color_formats: scene_formats,
                 depth_format: Some(DEPTH_FORMAT),
@@ -376,6 +387,7 @@ impl Pipelines {
             self.meshlet_cull,
             self.pyramid,
             self.shadow,
+            self.local_shadow,
             self.forward,
             self.depth,
             self.forward_on_depth,
@@ -417,7 +429,7 @@ impl Pipelines {
             self.impostor_bake,
         ];
         let mesh =
-            self.mesh.iter().flat_map(|m| [m.shadow, m.forward, m.depth, m.forward_on_depth, m.wireframe, m.edges]);
+            self.mesh.iter().flat_map(|m| [m.shadow, m.local_shadow, m.forward, m.depth, m.forward_on_depth, m.wireframe, m.edges]);
         let traced = self.ddgi.into_iter().flatten().chain(self.ddgi_software).chain(self.ray_reflections);
         for pipeline in all.into_iter().chain(mesh).chain(traced) {
             unsafe { gpu.device.destroy_pipeline(pipeline, None) };
@@ -446,6 +458,14 @@ fn mesh_pipelines(
             depth_bias: Some(SHADOW_BIAS),
             depth_clamp: true,
             ..GraphicsPipelineDesc::mesh("Shadows", task, (shadow, c"shadowMesh"), None)
+        })?,
+        local_shadow: graphics(&GraphicsPipelineDesc {
+            cull: vk::CullModeFlags::NONE,
+            depth_format: Some(DEPTH_FORMAT),
+            depth_write: true,
+            depth_compare: vk::CompareOp::LESS_OR_EQUAL,
+            depth_bias: Some(SHADOW_BIAS),
+            ..GraphicsPipelineDesc::mesh("Local shadows", task, (shadow, c"shadowMesh"), None)
         })?,
         forward: graphics(&GraphicsPipelineDesc {
             color_formats: scene_formats,

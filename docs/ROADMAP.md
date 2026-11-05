@@ -840,8 +840,18 @@ Done so far:
 - **The atmosphere:** `[sky] mode = "atmosphere"`, a physically based sky as Hillaire models it (2020), with
   transmittance, multiple scattering, the sky view and aerial perspective drawn as tables, so the sky reddens at
   sunset, lights the scene from its own colours and hazes what lies far off. About 0.06 ms a frame.
-- Still to come for lights: shadows from point, spot and area lights; and the C# `Light` API. (The sky's settings
-  are in the editor now, on the Lighting page.)
+- **Shadows from point, spot, area and tube lights:** a light's `shadows = true` (Shadows in the Inspector, off by
+  default) draws what is in its reach into views of a 4096×3072 atlas of its own, 512 texels each: a spot light one
+  along its cone, any other six, a cube's faces, each a little wider so the filter stays inside it at the rim. The
+  eight nearest the camera, 48 views between them, cast shadows in a frame; each has a list of its own that the
+  culling fills by its reach and draws into each of its views, on every culling path. Without depth clamping, so
+  a flame or bulb round a light, nearer than its near plane, is clipped rather than shutting it in. Shading, glass,
+  the fog's light shafts, reflections and the GI's rays all read them, with nine taps of 2×2 PCF and a normal
+  offset. In Sponza's demo, its five candles, the Cold Lamp and the Neon Tube cost about 0.16 ms on an RTX 3070.
+  GPU test: a point, spot, rectangle and tube light each shade the floor behind a box with a flame round it, on
+  every culling path.
+- Still to come for lights: the C# `Light` API; caching local shadows of what does not move, and soft
+  shadows from area lights.
 - **Volumetric fog:** `[post.fog] volumetric = true` lights the height fog near the camera as a 128×72×64 froxel
   volume: the sun through its shadow cascades, so shafts show between shadows, every clustered light, and the
   sky, with Henyey-Greenstein scattering. Each froxel is sampled at a jittered depth and blended with last frame's
@@ -968,7 +978,7 @@ Done so far:
 Next:
 - Reference look: The Finals and Arc Raiders (Embark), for bounced light, exposure and contrast.
 - Alpha-tested and two-sided materials in the GI's rays; probe rays for reflections.
-- Virtual shadow maps, and shadows for point, spot and area lights.
+- Virtual shadow maps.
 - Optional third-party upscalers: AMD FSR, NVIDIA DLSS and Intel XeSS, each behind its own SDK.
 - Baked lightmapper, light probes and reflection probes.
 - Reflections: falling back to reflection probes rather than the sky, and tracing against the depth pyramid,

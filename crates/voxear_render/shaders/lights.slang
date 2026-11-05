@@ -300,18 +300,84 @@ float3 shadeTubeLight(Surface s, Light light, float3 position)
     return (diffuse + specular) * window;
 }
 
+// How much of a local light reaches `position` past what its shadow holds in
+// the way: 1 for a light that casts none. The view is a spot light's own, or
+// the face of its cube that `position` lies towards; the point is pushed off
+// its surface by a texel and a half there, against shadow acne, and nine
+// taps of hardware 2x2 filtering soften the edge, kept inside the view.
+float localShadow(Frame* frame, Light light, float3 position, float3 normal)
+{
+    if (light.shadow == NO_SHADOW || frame->localShadows.texture == NO_TEXTURE)
+    {
+        return 1.0;
+    }
+    float3 offset = position - light.position;
+    float3 across = abs(offset);
+    uint view = light.shadow;
+    float tanHalf = 1.0;
+    if (light.kind == LIGHT_SPOT)
+    {
+        tanHalf = sqrt(max(1.0 - light.cosOuter * light.cosOuter, 0.0)) / max(light.cosOuter, 0.05);
+    }
+    else if (across.x >= across.y && across.x >= across.z)
+    {
+        view += offset.x >= 0.0 ? 0 : 1;
+    }
+    else if (across.y >= across.z)
+    {
+        view += offset.y >= 0.0 ? 2 : 3;
+    }
+    else
+    {
+        view += offset.z >= 0.0 ? 4 : 5;
+    }
+    float texelMetres = 2.0 * length(offset) * tanHalf / float(LOCAL_SHADOW_TILE);
+    float4 clip = transform(frame->localShadows.viewProj[view], float4(position + normal * texelMetres * 1.5, 1.0));
+    if (clip.w <= 0.0)
+    {
+        return 1.0;
+    }
+    float3 ndc = clip.xyz / clip.w;
+    if (any(abs(ndc.xy) > 1.0) || ndc.z > 1.0)
+    {
+        return 1.0;
+    }
+    float tile = float(LOCAL_SHADOW_TILE);
+    float2 corner = float2(view % LOCAL_SHADOW_COLUMNS, view / LOCAL_SHADOW_COLUMNS) * tile;
+    float2 low = (corner + 1.5) / float2(LOCAL_SHADOW_ATLAS);
+    float2 high = (corner + tile - 1.5) / float2(LOCAL_SHADOW_ATLAS);
+    float2 uv = (corner + (ndc.xy * 0.5 + 0.5) * tile) / float2(LOCAL_SHADOW_ATLAS);
+    float2 texel = 1.0 / float2(LOCAL_SHADOW_ATLAS);
+    Texture2D atlas = textures[NonUniformResourceIndex(frame->localShadows.texture)];
+    float lit = 0.0;
+    for (int y = -1; y <= 1; y++)
+    {
+        for (int x = -1; x <= 1; x++)
+        {
+            float2 at = clamp(uv + float2(x, y) * texel, low, high);
+            lit += atlas.SampleCmpLevelZero(comparisonSamplers[COMPARISON_SAMPLER_SHADOW], at, ndc.z);
+        }
+    }
+    return lit / 9.0;
+}
+
 float3 shadeLocalLight(Surface s, Light light, float3 position)
 {
+    float shadow = localShadow(push.frame, light, position, s.normal);
+    if (shadow <= 0.0)
+    {
+        return 0.0;
+    }
     switch (light.kind)
     {
     case LIGHT_RECTANGLE:
-        return shadeRectangleLight(s, light, position);
+        return shadeRectangleLight(s, light, position) * shadow;
     case LIGHT_DISC:
-        return shadeDiscLight(s, light, position);
+        return shadeDiscLight(s, light, position) * shadow;
     case LIGHT_TUBE:
-        return shadeTubeLight(s, light, position);
+        return shadeTubeLight(s, light, position) * shadow;
     default:
-        return shadePunctualLight(s, light, position);
+        return shadePunctualLight(s, light, position) * shadow;
     }
 }
 

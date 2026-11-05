@@ -5,6 +5,8 @@
 //   built from the early pass, does not hide, minus what early already drew.
 //   It also records visibility for next frame's early pass.
 // - Shadows (LIST_SHADOW + cascade): casters inside each cascade.
+// - Local shadows (LIST_LOCAL_SHADOW + light): casters within each local
+//   light's reach that casts a shadow, drawn into each of its views.
 //
 // Each draw also picks the coarsest LOD whose error stays under a pixel. When
 // an instance's LOD changes, both LODs are drawn for a moment with
@@ -194,6 +196,24 @@ void cullShadow(Frame* frame, uint cascade, uint instance, Mesh mesh, float3 cen
     count(STAT_SHADOW_DRAWS);
 }
 
+// Casters within a local light's shadow, at the LOD a view of its atlas
+// would pick where they stand.
+void cullLocalShadow(Frame* frame, uint light, uint instance, Mesh mesh, float3 center, float radius, float scale)
+{
+    if (!insideLocalShadow(frame, light, center, radius))
+    {
+        return;
+    }
+    Instance drawn = buffers()->instances[instance];
+    bool plant = drawn.fade.y > 0.0 || (buffers()->materials[drawn.material].flags & MATERIAL_FOLIAGE) != 0;
+    float threshold = frame->lodThreshold * (plant ? PLANT_SHADOW_COARSER : 1.0);
+    // A cube face's view is 90 degrees across, so its texels per metre at a distance are half its size over it.
+    float away = max(distance(center, frame->localShadows.casters[light].xyz) - radius, 0.1);
+    uint lod = instanceLod(frame, drawn, mesh, center, radius, scale, float(LOCAL_SHADOW_TILE) * 0.5 / away, threshold);
+    emit(LIST_LOCAL_SHADOW + light, instance, mesh, lod, 0);
+    count(STAT_SHADOW_DRAWS);
+}
+
 [shader("compute")]
 [numthreads(64, 1, 1)]
 void cullMain(uint3 id : SV_DispatchThreadID)
@@ -221,6 +241,11 @@ void cullMain(uint3 id : SV_DispatchThreadID)
     {
         if ((instance.flags & INSTANCE_NO_SHADOW) != 0)
         {
+            return;
+        }
+        if (list >= LIST_LOCAL_SHADOW)
+        {
+            cullLocalShadow(frame, list - LIST_LOCAL_SHADOW, id.x, mesh, center, radius, scale);
             return;
         }
         cullShadow(frame, list - LIST_SHADOW, id.x, mesh, center, radius, scale);

@@ -1,4 +1,5 @@
-// Depth-only rendering of shadow casters into one cascade of the atlas.
+// Depth-only rendering of shadow casters into one cascade of the atlas, or
+// one view of a local light's.
 
 #include "wind.slang"
 
@@ -15,5 +16,5 @@ float4 shadowVertex(uint vertexId : SV_VertexID, uint drawId : SV_DrawIndex) : S
     float3 normal = normalize(instance.normal0.xyz * v.normal.x + instance.normal1.xyz * v.normal.y + instance.normal2.xyz * v.normal.z);
     float3 origin = instance.model.c3.xyz;
     world.xyz += windOffset(push.frame, material, origin, plantHeight(instance, mesh), world.xyz, normal, v.wind, push.frame->time);
-    return transform(push.frame->cascadeViewProj[push.list - LIST_SHADOW], world);
+    return transform(shadowViewProj(push.frame, push.list, push.level), world);
 }

@@ -36,7 +36,7 @@ void shadowMesh(
         Instance data = drawn.data;
         float3 normal = normalize(data.normal0.xyz * v.normal.x + data.normal1.xyz * v.normal.y + data.normal2.xyz * v.normal.z);
         world.xyz += windOffset(push.frame, material, data.model.c3.xyz, height, world.xyz, normal, v.wind, push.frame->time);
-        vertices[i].position = transform(push.frame->cascadeViewProj[push.list - LIST_SHADOW], world);
+        vertices[i].position = transform(shadowViewProj(push.frame, push.list, push.level), world);
     }
     for (uint i = thread.x; i < triangleCount; i += MESHLET_ROUND)
     {

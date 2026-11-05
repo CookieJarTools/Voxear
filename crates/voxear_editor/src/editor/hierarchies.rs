@@ -54,7 +54,8 @@ impl Editor {
         let content = self.ui.add_dock_panel_beside(self.nodes.dock, panel, "Hierarchy", beside);
         self.ui.add_class(content, "dock-content");
         let mut hierarchy = build(&mut self.ui, content);
-        hierarchy.update(&mut self.ui, &self.game.engine.world, &self.game.levels, self.inspector.types());
+        let game = (&self.game.levels, &self.game.content);
+        hierarchy.update(&mut self.ui, &self.game.engine.world, game, self.inspector.types());
         if let Some(selected) = self.selected() {
             hierarchy.select(&mut self.ui, &self.game.engine.world, selected);
         }
@@ -93,7 +94,8 @@ impl Editor {
     /// what its menus or a row dropped on it ask.
     fn hierarchy_frame(&mut self, renderer: &mut Renderer, delta: f32) {
         self.hierarchy.fade_ping(&mut self.ui, delta);
-        self.hierarchy.update(&mut self.ui, &self.game.engine.world, &self.game.levels, self.inspector.types());
+        let game = (&self.game.levels, &self.game.content);
+        self.hierarchy.update(&mut self.ui, &self.game.engine.world, game, self.inspector.types());
         self.hear_hierarchy_selection();
         if let Some(action) = self.hierarchy.action(&mut self.ui) {
             self.obj_action(action, renderer);
@@ -153,11 +155,11 @@ impl Editor {
 
     /// Lists the Objs as they are now in every Hierarchy.
     pub(super) fn refresh_hierarchies(&mut self) {
-        let (ui, world, levels, types) =
-            (&mut self.ui, &self.game.engine.world, &self.game.levels, self.inspector.types());
+        let (ui, world, types) = (&mut self.ui, &self.game.engine.world, self.inspector.types());
+        let game = (&self.game.levels, &self.game.content);
         let extras = self.extra_hierarchies.iter_mut().map(|extra| &mut extra.hierarchy);
         for hierarchy in std::iter::once(&mut self.hierarchy).chain(extras) {
-            hierarchy.update(ui, world, levels, types);
+            hierarchy.update(ui, world, game, types);
         }
     }
 

@@ -35,6 +35,8 @@ The new Obj is named after the model. A model of one part gets a **Mesh Renderer
 
 The Model Renderer shows the **Model** it draws, its **LOD bias** (as a Mesh Renderer's) and how many **Parts** it has. To move, hide or change one part on its own, open the Model Renderer's menu (the **⋯** on its header, or a right-click) and pick **Unpack to Objs**: the Obj then has an Obj inside it for each part, each with a Mesh Renderer, where the model puts it. Ctrl+Z packs it back up.
 
+In the Hierarchy, a model's Obj has a button of its own at the right of its row, apart from its arrow: click it to list the model's parts under it, greyed, by the names the model gives them. They belong to the model rather than being Objs, so clicking one selects the model's Obj, and they cannot be dragged elsewhere. Right-click the Obj or one of its parts for **Unpack to Objs** there too.
+
 In a scene file:
 
 ```toml

@@ -586,6 +586,30 @@
     background-color: var(--vx-selected);
 }
 
+/* An Obj drawing a whole model: a button of its own, apart from the arrow, that lists the model's parts. */
+.row-parts {
+    flex-shrink: 0;
+    width: 18px;
+    height: 18px;
+    margin-left: 4px;
+    border-radius: 4px;
+    color: var(--vx-muted);
+}
+
+.row-parts:hover {
+    background-color: var(--vx-hover);
+}
+
+.row-parts:checked {
+    color: var(--vx-accent);
+    background-color: var(--vx-selected);
+}
+
+/* A model's part, listed under its Obj: the model's, not an Obj of its own. */
+.model-part > .row-name, .model-part > .row-icon {
+    color: var(--vx-muted);
+}
+
 /* Prefab instances are tinted, as Unity tints them: the root, and lighter what is inside. */
 .row-name.prefab-root, .row-icon.prefab-root, .obj-tile.prefab-root > Icon {
     color: var(--vx-prefab);

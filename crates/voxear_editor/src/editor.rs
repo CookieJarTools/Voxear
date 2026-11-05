@@ -1521,6 +1521,7 @@ impl Editor {
         match action {
             ObjAction::OpenPrefab(entity) => return self.open_prefab_of(entity, renderer),
             ObjAction::Unpack(entity) => return self.unpack_prefab(entity),
+            ObjAction::UnpackModel(entity) => return self.unpack_model(entity, renderer),
             ObjAction::Frame(entity) => {
                 self.select(Some(entity));
                 return self.frame(&[entity], renderer);
@@ -1552,6 +1553,7 @@ impl Editor {
             },
             ObjAction::OpenPrefab(_)
             | ObjAction::Unpack(_)
+            | ObjAction::UnpackModel(_)
             | ObjAction::Frame(_)
             | ObjAction::AddToLevel(_)
             | ObjAction::CloseScene(_) => return,

@@ -4938,11 +4938,38 @@ fn a_model_dragged_from_the_project_places_objs_drawing_it() {
     let text = std::fs::read_to_string(dir.path().join("Scenes/Day.scene")).unwrap();
     assert!(text.contains(&format!("[obj.model]\nmodel = \"{guid}\"")), "saved naming the model:\n{text}");
 
-    // Unpacked from its Inspector, it is an Obj inside it for each part, where the model puts it, as one step.
+    // In the Hierarchy, its row has a button of its own, apart from its arrow, that lists its parts under it,
+    // greyed; a part clicked selects the Obj, as the parts are the model's.
+    let row = hierarchy_row(&editor.ui, "Pair").unwrap();
+    let button = first_with(&editor.ui, row, "row-parts").expect("a parts button");
+    assert!(editor.ui.is_visible(button), "on a model's Obj");
+    let spinner_row = hierarchy_row(&editor.ui, "Spinner A").unwrap();
+    let spinner_button = first_with(&editor.ui, spinner_row, "row-parts");
+    assert!(!spinner_button.is_some_and(|b| editor.ui.is_visible(b)), "not on a cube");
+    assert!(hierarchy_row(&editor.ui, "Left").is_none(), "its parts are not listed until asked for");
+    click(&mut editor.ui, button);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let left = hierarchy_row(&editor.ui, "Left").expect("its parts listed under it");
+    assert!(hierarchy_row(&editor.ui, "Right").is_some());
+    assert!(first_with(&editor.ui, left, "model-part").is_some(), "greyed, as the model's");
+    editor.select(None);
+    click(&mut editor.ui, left);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.selected(), Some(pair), "a part selects its model's Obj");
+
+    // The Model Renderer's menu in the Inspector unpacks it, and so does a part's in the Hierarchy: an Obj inside
+    // it for each part, where the model puts it, as one step.
     let header = section_header(&editor.ui, "Model Renderer").unwrap();
     context_click(&mut editor.ui, header);
     frame(&mut editor, &mut renderer);
-    let unpack = menu_item(&editor.ui, "Unpack to Objs").expect("the Model Renderer's menu unpacks it");
+    assert!(menu_item(&editor.ui, "Unpack to Objs").is_some(), "the Model Renderer's menu unpacks it");
+    editor.ui.key_down(Key::Escape);
+    frame(&mut editor, &mut renderer);
+    let left = hierarchy_row(&editor.ui, "Left").unwrap();
+    context_click(&mut editor.ui, left);
+    frame(&mut editor, &mut renderer);
+    let unpack = menu_item(&editor.ui, "Unpack to Objs").expect("a part's menu in the Hierarchy unpacks it");
     click(&mut editor.ui, unpack);
     frame(&mut editor, &mut renderer);
     let world = &editor.game.engine.world;

@@ -19,6 +19,12 @@
 //! the top of that scene; and below the rest, at the top of its own scene.
 //! The editor carries these out (see [`ObjAction`]).
 //!
+//! An Obj drawing a whole model has a button of its own on its row, apart
+//! from its arrow, that lists the model's parts under it, greyed: they are
+//! the model's, not Objs, so they cannot be dragged, and clicking one
+//! selects the model. Its menu, and theirs, offer to unpack the model to
+//! Objs, as its Inspector does.
+//!
 //! While the editor lets it ([`Hierarchy::take_drops`]), as it does while a
 //! prefab or model is dragged from the Project, the rows take drops from
 //! elsewhere too, landing in the same places, except that below the rest is
@@ -33,12 +39,12 @@ use std::{
 use voxear_assets::AssetGuid;
 use voxear_ecs::{Entity, World};
 use voxear_engine::{
-    EditBehaviours, Levels,
+    Content, EditBehaviours, Levels,
     audio::AudioSource,
     prefab::{FromPrefab, PrefabInstance},
     script_types::ScriptTypes,
 };
-use voxear_render::{Camera, Light, LodGroup, MeshRenderer};
+use voxear_render::{Camera, Light, LodGroup, MeshRenderer, ModelRenderer};
 use voxear_scene::{Destroying, InstanceMarker, Name, Parent};
 use voxear_ui::{DragSource, DropPlace, MenuItem, NodeId, TreeItems, Ui};
 
@@ -58,6 +64,18 @@ fn is_header(item: u64) -> bool {
     item < 1 << 32
 }
 
+/// A model's part is an item of its own too, with the top bit set, which a
+/// live entity's never has: its Obj's index, then its place in the model.
+const PART: u64 = 1 << 63;
+
+fn part_item(owner: Entity, part: usize) -> u64 {
+    PART | (u64::from(owner.index()) << 20) | part as u64
+}
+
+fn is_part(item: u64) -> bool {
+    item & PART != 0
+}
+
 /// What a row shows.
 #[derive(Clone, Debug, PartialEq)]
 struct Row {
@@ -68,6 +86,11 @@ struct Row {
     badge: &'static str,
     /// A prefab instance's root, or an Obj inside one.
     prefab: Option<bool>,
+    /// Whether it draws a whole model, so has a button to list its parts,
+    /// and whether they are listed.
+    model: Option<bool>,
+    /// A part of a model, listed under its Obj.
+    part: bool,
 }
 
 /// What the tree shows, rebuilt from the world when it changes.
@@ -81,6 +104,8 @@ struct Snapshot {
     alongside: HashSet<u64>,
     /// The open level's name, when a level is open.
     level: Option<String>,
+    /// Each model part's Obj, by the part's item.
+    owners: HashMap<u64, Entity>,
 }
 
 impl Snapshot {
@@ -101,8 +126,9 @@ impl Snapshot {
 /// How long a pinged row stays lit, in seconds.
 const PING: f32 = 1.5;
 
-/// What the tree shows, and the row lit by a ping, if any.
-struct Items(Rc<RefCell<Snapshot>>, Rc<Cell<Option<u64>>>);
+/// What the tree shows, the row lit by a ping, if any, and each row's parts
+/// button with the item it is bound to.
+struct Items(Rc<RefCell<Snapshot>>, Rc<Cell<Option<u64>>>, Rc<RefCell<Vec<(NodeId, Option<u64>)>>>);
 
 impl TreeItems for Items {
     fn children(&self, parent: Option<u64>) -> Vec<u64> {
@@ -126,6 +152,10 @@ impl TreeItems for Items {
         ui.add_class(badge, "row-badge");
         let count = ui.add_label(row, "");
         ui.add_class(count, "row-count");
+        let parts = ui.icon_button(row, "box");
+        ui.add_class(parts, "row-parts");
+        ui.set_tooltip(parts, "Show the model's parts", None);
+        self.2.borrow_mut().push((parts, None));
     }
 
     fn bind(&mut self, ui: &mut Ui, row: NodeId, item: u64) {
@@ -145,6 +175,12 @@ impl TreeItems for Items {
         let count = if inside > 0 && !shown.header { inside.to_string() } else { String::new() };
         ui.set_text(parts[3], &count);
         ui.set_class(row, "pinged", self.1.get() == Some(item));
+        ui.set_class(row, "model-part", shown.part);
+        ui.set_visible(parts[4], shown.model.is_some());
+        ui.set_checked(parts[4], shown.model == Some(true));
+        if let Some(button) = self.2.borrow_mut().iter_mut().find(|(button, _)| *button == parts[4]) {
+            button.1 = Some(item);
+        }
     }
 }
 
@@ -166,6 +202,8 @@ pub enum ObjAction {
     OpenPrefab(Entity),
     /// Make a prefab instance's Objs Objs of the scene, by its root.
     Unpack(Entity),
+    /// Make an Obj drawing a whole model an Obj for each of its parts.
+    UnpackModel(Entity),
     /// Show an Obj in the Scene view, as Frame Selected does.
     Frame(Entity),
     /// Add a scene opened alongside the level to the level's file.
@@ -186,19 +224,34 @@ pub struct Hierarchy {
     opened: HashSet<u64>,
     /// What each item of the menu open now does.
     menu: Vec<Option<ObjAction>>,
+    /// Each row's parts button, with the item it shows now.
+    part_buttons: Rc<RefCell<Vec<(NodeId, Option<u64>)>>>,
+    /// The Objs whose models' parts are listed.
+    showing_parts: HashSet<Entity>,
 }
 
 impl Hierarchy {
     pub fn new(ui: &mut Ui, tree: NodeId, filter: NodeId, add: NodeId) -> Self {
         let shown = Rc::new(RefCell::new(Snapshot::default()));
         let pinged = Rc::new(Cell::new(None));
-        ui.bind_tree(tree, Items(shown.clone(), pinged.clone()));
+        let part_buttons = Rc::new(RefCell::new(Vec::new()));
+        ui.bind_tree(tree, Items(shown.clone(), pinged.clone(), part_buttons.clone()));
         ui.set_rows_draggable(tree, true);
-        Self { tree, filter, add, shown, pinged, ping_left: 0.0, opened: HashSet::new(), menu: Vec::new() }
+        let (opened, menu, showing_parts) = (HashSet::new(), Vec::new(), HashSet::new());
+        Self { tree, filter, add, shown, pinged, ping_left: 0.0, opened, menu, part_buttons, showing_parts }
     }
 
     /// What the + button, a context click or a dropped row asks for.
     pub fn action(&mut self, ui: &mut Ui) -> Option<ObjAction> {
+        let toggled = self.part_buttons.borrow().iter().find_map(|&(button, item)| item.filter(|_| ui.clicked(button)));
+        if let Some(item) = toggled {
+            let owner = Entity::from_bits(item);
+            if !self.showing_parts.remove(&owner) {
+                self.showing_parts.insert(owner);
+                ui.set_expanded(self.tree, item, true);
+            }
+            return None;
+        }
         if let Some((item, onto)) = ui.dropped_item(self.tree) {
             return self.dropped(item, onto);
         }
@@ -211,7 +264,7 @@ impl Hierarchy {
         } else if let Some(item) = ui.item_at_pointer(self.tree).filter(|&item| !is_header(item))
             && ui.double_clicked(self.tree)
         {
-            return Some(ObjAction::Frame(Entity::from_bits(item)));
+            return self.obj_of(item).map(ObjAction::Frame);
         } else if ui.clicked(self.tree) && ui.item_at_pointer(self.tree).is_none() {
             // A click on the space below the rows selects nothing, as in Unity.
             self.clear(ui);
@@ -228,7 +281,7 @@ impl Hierarchy {
 
     /// Where a row let go of takes its Obj. A scene's header is not moved.
     fn dropped(&self, item: u64, onto: Option<(u64, DropPlace)>) -> Option<ObjAction> {
-        if is_header(item) {
+        if is_header(item) || is_part(item) || onto.is_some_and(|(target, _)| is_part(target)) {
             return None;
         }
         let entity = Entity::from_bits(item);
@@ -267,9 +320,10 @@ impl Hierarchy {
         let instance_root = row.is_some_and(|row| row.prefab == Some(true));
         let (parent, scene) = match on {
             Some(item) if is_header(item) => (None, shown.scenes.get(&item).copied()),
-            Some(item) => (Some(Entity::from_bits(item)), None),
+            Some(item) => (shown.owners.get(&item).copied().or(Some(Entity::from_bits(item))), None),
             None => (None, None),
         };
+        let model = parent.filter(|owner| shown.rows.get(&owner.to_bits()).is_some_and(|row| row.model.is_some()));
         let header = on.filter(|&item| is_header(item));
         let add_to_level = header.filter(|item| shown.alongside.contains(item)).and(shown.level.clone()).zip(scene);
         let closes = header.and(scene).filter(|_| shown.scenes.len() > 1);
@@ -293,6 +347,12 @@ impl Hierarchy {
                 items.push(MenuItem::new("Unpack Prefab"));
                 self.menu.push(Some(ObjAction::Unpack(entity)));
             }
+            items.push(MenuItem::separator());
+            self.menu.push(None);
+        }
+        if let Some(entity) = model {
+            items.push(MenuItem::new("Unpack to Objs"));
+            self.menu.push(Some(ObjAction::UnpackModel(entity)));
             items.push(MenuItem::separator());
             self.menu.push(None);
         }
@@ -320,9 +380,10 @@ impl Hierarchy {
 
     /// Shows the world as it is now, if anything changed. `types` say which
     /// scripts are `IInstance`s while their behaviours are not running.
-    pub fn update(&mut self, ui: &mut Ui, world: &World, levels: &Levels, types: &ScriptTypes) {
+    pub fn update(&mut self, ui: &mut Ui, world: &World, (levels, content): (&Levels, &Content), types: &ScriptTypes) {
         let filter = ui.text(self.filter).to_lowercase();
-        let snapshot = snapshot(world, levels, types, &filter);
+        self.showing_parts.retain(|&owner| world.has::<ModelRenderer>(owner));
+        let snapshot = snapshot(world, (levels, content), types, (&filter, &self.showing_parts));
         if *self.shown.borrow() == snapshot {
             return;
         }
@@ -340,8 +401,8 @@ impl Hierarchy {
     /// Inspector's reference fields take it.
     pub fn dragged(&self, source: &DragSource) -> Option<Entity> {
         match *source {
-            DragSource::Row { list, item: Some(item), .. } if list == self.tree && !is_header(item) => {
-                Some(Entity::from_bits(item))
+            DragSource::Row { list, item: Some(item), .. } if list == self.tree => {
+                (!is_header(item) && !is_part(item)).then(|| Entity::from_bits(item))
             }
             _ => None,
         }
@@ -359,12 +420,29 @@ impl Hierarchy {
             return None;
         }
         let item = ui.selected_items(self.tree).first().copied().filter(|&item| !is_header(item));
-        Some(item.map(Entity::from_bits))
+        Some(item.and_then(|item| self.obj_of(item)))
     }
 
-    /// Every Obj selected, in the tree's order; a scene's header is none.
+    /// Every Obj selected, in the tree's order; a scene's header is none,
+    /// and a model's part its model's Obj.
     pub fn selected_objs(&self, ui: &Ui) -> Vec<Entity> {
-        ui.selected_items(self.tree).into_iter().filter(|&item| !is_header(item)).map(Entity::from_bits).collect()
+        let mut objs: Vec<Entity> = Vec::new();
+        for obj in ui.selected_items(self.tree).into_iter().filter_map(|item| self.obj_of(item)) {
+            if !objs.contains(&obj) {
+                objs.push(obj);
+            }
+        }
+        objs
+    }
+
+    /// The Obj an item is: none for a scene's header, and its model's Obj
+    /// for a model's part.
+    fn obj_of(&self, item: u64) -> Option<Entity> {
+        match (is_header(item), is_part(item)) {
+            (true, _) => None,
+            (_, true) => self.shown.borrow().owners.get(&item).copied(),
+            _ => Some(Entity::from_bits(item)),
+        }
     }
 
     /// Selects these Objs, opening their scenes and the Objs they are in.
@@ -425,6 +503,9 @@ fn destination(shown: &Snapshot, target: u64, place: DropPlace) -> Option<Destin
     if is_header(target) {
         return shown.scenes.get(&target).map(|scene| Destination::SceneEnd(*scene));
     }
+    if is_part(target) {
+        return None;
+    }
     let entity = Entity::from_bits(target);
     Some(match place {
         DropPlace::Onto => Destination::Into(entity),
@@ -433,8 +514,9 @@ fn destination(shown: &Snapshot, target: u64, place: DropPlace) -> Option<Destin
     })
 }
 
-/// The icon for an Obj with a camera, a light, a mesh, an Audio Source or
-/// a LOD Group, the first it has in that order, or else the plain Obj's.
+/// The icon for an Obj with a camera, a light, a mesh, a whole model, an
+/// Audio Source or a LOD Group, the first it has in that order, or else the
+/// plain Obj's.
 pub fn icon(world: &World, entity: Entity) -> &'static str {
     if world.has::<Camera>(entity) {
         "camera"
@@ -442,6 +524,8 @@ pub fn icon(world: &World, entity: Entity) -> &'static str {
         "light"
     } else if world.has::<MeshRenderer>(entity) {
         "cube"
+    } else if world.has::<ModelRenderer>(entity) {
+        "box"
     } else if world.has::<AudioSource>(entity) {
         "audio"
     } else if world.has::<LodGroup>(entity) {
@@ -453,7 +537,12 @@ pub fn icon(world: &World, entity: Entity) -> &'static str {
 
 /// The scenes and their Objs as a tree, or with a filter, the Objs whose
 /// names contain it as a flat list, in the scenes' order either way.
-fn snapshot(world: &World, levels: &Levels, types: &ScriptTypes, filter: &str) -> Snapshot {
+fn snapshot(
+    world: &World,
+    (levels, content): (&Levels, &Content),
+    types: &ScriptTypes,
+    (filter, showing_parts): (&str, &HashSet<Entity>),
+) -> Snapshot {
     let mut snapshot = Snapshot::default();
     let scenes = levels.scene_order();
     // Each Obj's place: its scene, then its place there. Objs no scene keeps
@@ -473,7 +562,8 @@ fn snapshot(world: &World, levels: &Levels, types: &ScriptTypes, filter: &str) -
         // A prefab instance shows Unity's prefab cube, tinted.
         let icon = if prefab == Some(true) { "cube" } else { icon(world, entity) };
         let badge = if is_instance(world, types, entity) { "Instance" } else { "" };
-        let row = Row { name: name.0.clone(), icon, header: false, badge, prefab };
+        let model = world.has::<ModelRenderer>(entity).then(|| showing_parts.contains(&entity));
+        let row = Row { name: name.0.clone(), icon, header: false, badge, prefab, model, part: false };
         snapshot.rows.insert(entity.to_bits(), row);
         let (scene, at) = places.get(&entity).copied().unwrap_or((active, usize::MAX));
         all.push((entity, parent.map(|p| p.0), (scene, at, entity.index())));
@@ -491,7 +581,15 @@ fn snapshot(world: &World, levels: &Levels, types: &ScriptTypes, filter: &str) -
         let badge = if alongside { "Not in level" } else { "" };
         snapshot
             .rows
-            .insert(header, Row { name: stem(path).to_string(), icon: "scene", header: true, badge, prefab: None });
+            .insert(header, Row {
+                name: stem(path).to_string(),
+                icon: "scene",
+                header: true,
+                badge,
+                prefab: None,
+                model: None,
+                part: false,
+            });
         snapshot.scenes.insert(header, *guid);
         if alongside {
             snapshot.alongside.insert(header);
@@ -510,7 +608,34 @@ fn snapshot(world: &World, levels: &Levels, types: &ScriptTypes, filter: &str) -
         };
         snapshot.children.entry(under).or_default().push(entity.to_bits());
     }
+    // A listed model's parts, after its own Objs.
+    let listed: Vec<Entity> =
+        showing_parts.iter().copied().filter(|owner| snapshot.rows.contains_key(&owner.to_bits())).collect();
+    for owner in listed {
+        let Some(model) = world.get::<ModelRenderer>(owner) else { continue };
+        let names = part_names(content, model);
+        for index in 0..model.parts.len() {
+            let item = part_item(owner, index);
+            let name = names.get(index).filter(|name| !name.is_empty()).cloned();
+            let name = name.unwrap_or_else(|| format!("Part {}", index + 1));
+            let row = Row { name, icon: "box", header: false, badge: "", prefab: None, model: None, part: true };
+            snapshot.rows.insert(item, row);
+            snapshot.owners.insert(item, owner);
+            snapshot.children.entry(owner.to_bits()).or_default().push(item);
+        }
+    }
     snapshot
+}
+
+/// The names a model gives its parts, as a Model Renderer draws one for
+/// each of its nodes, in order; none when it is not loaded.
+fn part_names(content: &Content, model: &ModelRenderer) -> Vec<String> {
+    let guid = model.parts.first().and_then(|part| content.mesh_ref(part.mesh)).and_then(|mesh| mesh.guid());
+    let nodes = guid.and_then(|guid| content.loaded_model(guid)).unwrap_or_default();
+    match nodes.len() == model.parts.len() {
+        true => nodes.iter().map(|node| node.name.clone()).collect(),
+        false => Vec::new(),
+    }
 }
 
 /// A file's name without its folder or extension.

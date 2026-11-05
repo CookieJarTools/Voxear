@@ -15,9 +15,10 @@ use voxear_core::math::Quat;
 use voxear_rhi::{Bindless, Buffer, Gpu, ImageDesc, MemoryLocation, StorageImageId, TextureId, vk};
 
 use crate::{
-    gpu::{GpuOcean, Push},
+    gpu::{GpuOcean, GpuWaterBody, Push},
     graph::{BufferAccess, BufferId, FrameGraph, ImageAccess, ImageId},
     ocean::{self, CASCADES, CASCADE_SIZES, Complex, GPU_RESOLUTION as N, Ocean, SeaState},
+    water_bodies::MAX_WATER_BODIES,
     passes::{attachment, begin_rendering, bind},
     pipelines::{HDR_FORMAT, Pipelines},
 };
@@ -31,12 +32,16 @@ const WAVE_MIPS: u32 = 9;
 /// `WATER_QUADS` and `WATER_RINGS` in `shaders/water.slang`).
 const QUADS: u32 = 64;
 const RINGS: u32 = 12;
+/// A Pool's grid, as `POOL_QUADS` in `shaders/water.slang`.
+const POOL_QUADS: u32 = 64;
 
 /// A view's sea: its spectrum, written when the sea changes, and the FFT's
 /// rows.
 pub(crate) struct OceanBuffers {
     pub spectrum: Buffer,
     pub fft: Buffer,
+    /// Each frame in flight's Pools and Dry Areas.
+    pub bodies: Vec<Buffer>,
     /// The sea the spectrum is of.
     sea: Option<SeaState>,
     /// Its waves' significant height, in metres.
@@ -46,16 +51,22 @@ pub(crate) struct OceanBuffers {
 }
 
 impl OceanBuffers {
-    pub fn new(gpu: &Gpu, named: &dyn Fn(&str) -> String) -> Result<Self> {
+    pub fn new(gpu: &Gpu, named: &dyn Fn(&str) -> String, slots: usize) -> Result<Self> {
         let usage = vk::BufferUsageFlags::STORAGE_BUFFER;
         let waves = (CASCADES * N * N) as u64;
         let spectrum = gpu.create_buffer(&named("ocean spectrum"), waves * 16, usage, MemoryLocation::CpuToGpu)?;
         let fft = gpu.create_buffer(&named("ocean fft"), waves * 4 * 8, usage, MemoryLocation::GpuOnly)?;
-        Ok(Self { spectrum, fft, sea: None, wave_height: 0.0, parity: false })
+        let size = (MAX_WATER_BODIES * size_of::<GpuWaterBody>()) as u64;
+        let bodies = (0..slots)
+            .map(|slot| gpu.create_buffer(&named(&format!("water bodies {slot}")), size, usage, MemoryLocation::CpuToGpu))
+            .collect::<Result<_>>()?;
+        Ok(Self { spectrum, fft, bodies, sea: None, wave_height: 0.0, parity: false })
     }
 
-    pub fn into_buffers(self) -> [Buffer; 2] {
-        [self.spectrum, self.fft]
+    pub fn into_buffers(self) -> Vec<Buffer> {
+        let mut buffers = vec![self.spectrum, self.fft];
+        buffers.extend(self.bodies);
+        buffers
     }
 
     /// Writes the spectrum of `sea`, when it is not the one written already.
@@ -98,20 +109,28 @@ pub struct Water {
     depth_copy: ImageId,
     size: [u32; 2],
     pub frame: GpuOcean,
+    /// Whether the sea is drawn, and how many Pools.
+    sea: bool,
+    pools: u32,
 }
 
 impl Water {
-    /// The first Ocean's sea, at `level`, its wind along `rotation`, its
-    /// waves at `time`: its spectrum written if the sea changed, and this
-    /// frame's images.
+    /// The first Ocean's sea, at `level`, its wind along `rotation`, if
+    /// there is one, else a sea drawn nowhere whose small waves the Pools
+    /// take; its waves at `time`: its spectrum written if the sea changed,
+    /// this frame's Pools and Dry Areas written into `slot`'s buffer, and
+    /// this frame's images.
     pub(crate) fn new(
         fg: &mut FrameGraph<'_>,
         (gpu, bindless): (&Gpu, &mut Bindless),
-        buffers: &mut OceanBuffers,
-        (ocean, level, rotation): (&Ocean, f32, Quat),
+        (buffers, slot): (&mut OceanBuffers, usize),
+        (found, bodies): (Option<(Ocean, f32, Quat)>, &WaterBodies),
         (extent, time): (vk::Extent2D, f32),
     ) -> Result<Self> {
+        let (ocean, level, rotation) = found.unwrap_or((Ocean::default(), 0.0, Quat::IDENTITY));
+        let ocean = &ocean;
         let sea = ocean.sea_state(rotation);
+        buffers.bodies[slot].write(0, &bodies.bodies);
         buffers.prepare(gpu, &sea);
         buffers.parity = !buffers.parity;
         let usage = vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED;
@@ -147,13 +166,15 @@ impl Water {
             deep: linear(ocean.deep),
             level,
             scatter: linear(ocean.scatter),
-            foam: ocean.foam.max(0.0),
+            foam: (ocean.foam * ocean.weather.foam()).max(0.0),
             absorb,
             choppiness: sea.choppiness,
             wave_height: buffers.wave_height,
-            enabled: 1,
+            enabled: u32::from(found.is_some()),
             time: f64::from(time).rem_euclid(ocean::REPEAT_SECONDS) as f32,
-            _pad: 0.0,
+            pools: bodies.pools,
+            dries: bodies.bodies.len() as u32 - bodies.pools,
+            _pad: [0; 3],
         };
         Ok(Self {
             displacement,
@@ -166,8 +187,18 @@ impl Water {
             depth_copy,
             size: [extent.width, extent.height],
             frame,
+            sea: found.is_some(),
+            pools: bodies.pools,
         })
     }
+}
+
+/// This frame's Pools and then Dry Areas, the nearest the camera first, as
+/// the shaders read them.
+#[derive(Clone, Debug, Default)]
+pub struct WaterBodies {
+    pub bodies: Vec<GpuWaterBody>,
+    pub pools: u32,
 }
 
 /// What the sea's pass draws into and reads besides its own images.
@@ -193,7 +224,7 @@ fn compute_barrier(ctx: &crate::graph::PassContext) {
 /// Records the sea's waves (the FFT, then the mips), then its surface over
 /// a copy of the picture and the depth so far.
 pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), water: Water, targets: WaterTargets) {
-    let Water { displacement, slopes, previous, fft, copy, copy_texture, copy_mips, depth_copy, size, .. } = water;
+    let Water { displacement, slopes, previous, fft, copy, copy_texture, copy_mips, depth_copy, size, sea, pools, .. } = water;
     let storage = |fg: &mut FrameGraph<'_>, images: &[ImageId; CASCADES]| -> Vec<Vec<StorageImageId>> {
         images.iter().map(|&image| (0..WAVE_MIPS as usize).map(|mip| fg.storage(image, mip)).collect()).collect()
     };
@@ -269,10 +300,14 @@ pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), wat
         ];
         let depth = attachment(ctx.view(depth), vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL, None);
         begin_rendering(ctx, extent, &color, Some(&depth));
-        bind(ctx, pipelines.water, vk::PipelineBindPoint::GRAPHICS, &push);
-        unsafe {
-            ctx.gpu.device.cmd_draw(ctx.cmd, QUADS * QUADS * 6, RINGS, 0, 0);
-            ctx.gpu.device.cmd_end_rendering(ctx.cmd);
+        if sea {
+            bind(ctx, pipelines.water, vk::PipelineBindPoint::GRAPHICS, &push);
+            unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, QUADS * QUADS * 6, RINGS, 0, 0) };
         }
+        if pools > 0 {
+            bind(ctx, pipelines.water_pool, vk::PipelineBindPoint::GRAPHICS, &push);
+            unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, POOL_QUADS * POOL_QUADS * 6, pools, 0, 0) };
+        }
+        unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
     });
 }

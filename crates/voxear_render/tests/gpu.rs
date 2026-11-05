@@ -3590,3 +3590,49 @@ fn the_sea_is_blue_water_and_a_storm_breaks_into_whitecaps() {
     let (calm_foam, storm_foam) = (foam(&calm), foam(&stormy));
     assert!(storm_foam > calm_foam * 2 + 50, "a storm's whitecaps: {storm_foam} pixels against {calm_foam} when calm");
 }
+
+/// Where `point` is on screen in a 640×360 picture from a camera at `eye`
+/// looking along `look`, as the default camera's 60° projection puts it.
+fn on_screen(eye: Vec3, look: Quat, point: Vec3) -> (u32, u32) {
+    use voxear_core::math::{Mat4, camera::lh::proj::vulkan};
+    let view = Mat4::from_rotation_translation(look, eye).inverse();
+    let clip = vulkan::perspective_infinite_reverse(60f32.to_radians(), 640.0 / 360.0, 0.1) * view * point.extend(1.0);
+    (((clip.x / clip.w * 0.5 + 0.5) * 640.0) as u32, ((clip.y / clip.w * 0.5 + 0.5) * 360.0) as u32)
+}
+
+#[test]
+fn a_dry_area_keeps_the_sea_out_and_a_pool_holds_water_above_it() {
+    use voxear_render::{DryArea, Ocean, Pool, Sky, Weather};
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    let (eye, look) = (Vec3::new(0.0, 6.0, -8.0), Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.0, -0.35, 1.0).normalize()));
+    world.spawn((Camera::default(), Transform::new(eye, look, Vec3::ONE)));
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.4, -0.6, 0.6).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.6, ..Sky::default() });
+    let plane = renderer.primitive(Primitive::Plane).unwrap();
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let sand = MaterialDesc { base_color: [0.76, 0.66, 0.48, 1.0], roughness: 0.9, ..MaterialDesc::default() };
+    let sand = renderer.add_material(&sand).unwrap();
+    let rock = MaterialDesc { base_color: [0.4, 0.38, 0.36, 1.0], roughness: 0.9, ..MaterialDesc::default() };
+    let rock = renderer.add_material(&rock).unwrap();
+    world.spawn((MeshRenderer::new(plane, sand), Transform::new(Vec3::new(0.0, -3.0, 0.0), Quat::IDENTITY, Vec3::splat(200.0))));
+    world.spawn((Ocean { weather: Weather::Calm, ..Ocean::default() }, Transform::default()));
+    let hole = Vec3::new(-4.0, 0.0, 6.0);
+    world.spawn((DryArea { size: [3.0, 4.0, 7.0], ..DryArea::default() }, Transform::from_position(hole)));
+    // A block standing two metres out of the sea, a pool a metre deep on top of it.
+    world.spawn((MeshRenderer::new(cube, rock), Transform::new(Vec3::new(5.0, -1.0, 8.0), Quat::IDENTITY, Vec3::new(8.0, 4.0, 8.0))));
+    let pond = Vec3::new(5.0, 2.0, 8.0);
+    world.spawn((Pool { size: [6.0, 6.0], waves: 0.0, ..Pool::default() }, Transform::from_position(pond)));
+    run(&mut renderer, &world, &mut 10.0, 20);
+    let pixels = renderer.read_pixels().unwrap().2;
+    keep_image("water bodies.png", &pixels);
+    // The sand three metres down shows through the middle of the hole, warm, where the sea is blue round it.
+    let floor = patch_rgb(&pixels, on_screen(eye, look, hole), 3);
+    assert!(floor[0] > floor[2] + 8, "the sand at the bottom of the dry hole: {floor:?}");
+    let sea = patch_rgb(&pixels, on_screen(eye, look, hole + Vec3::new(4.0, 0.0, -1.0)), 3);
+    assert!(sea[2] > sea[0], "the sea beside it: {sea:?}");
+    // On the block, the pool's water: greener and bluer than the grey rock round it.
+    let water = patch_rgb(&pixels, on_screen(eye, look, pond), 3);
+    assert!(water[1] > water[0] + 10, "the pool's water on the block: {water:?}");
+}

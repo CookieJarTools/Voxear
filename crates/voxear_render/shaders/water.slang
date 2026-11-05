@@ -16,6 +16,10 @@ static const uint OCEAN_CASCADES = 4;
 static const uint WATER_QUADS = 64;
 static const uint WATER_RINGS = 12;
 static const float WATER_SPACING = 0.25;
+// A Pool's grid: this many quads along each side.
+static const uint POOL_QUADS = 64;
+// What a WaterOut is the sea's rather than a Pool's.
+static const uint SEA = 0xFFFFFFFF;
 static const float GRAVITY = 9.81;
 // The sea repeats after this many seconds (REPEAT_SECONDS in src/ocean.rs).
 static const float OCEAN_REPEAT = 1000.0;
@@ -210,6 +214,8 @@ struct WaterOut
     float2 rest : REST;
     float4 currentClip : CURRENT_CLIP;
     float4 previousClip : PREVIOUS_CLIP;
+    // SEA, or the Pool it is of.
+    nointerpolation uint body : BODY;
 };
 
 float2 cascadeUv(Frame* frame, uint cascade, float2 rest)
@@ -254,13 +260,7 @@ WaterOut waterVertex(uint vertexId : SV_VertexID, uint ring : SV_InstanceID)
         float2 middle = centre - extent + (float2(cell) + 0.5) * spacing;
         if (all(abs(middle - finerCentre) < float(WATER_QUADS) * 0.5 * finer))
         {
-            // All six corners at one point outside the view: nothing drawn.
-            o.position = float4(2.0, 2.0, 0.5, 1.0);
-            o.world = 0.0;
-            o.rest = 0.0;
-            o.currentClip = o.position;
-            o.previousClip = o.position;
-            return o;
+            return nothing();
         }
     }
     uint2 grid = cell + corners[vertexId % 6];
@@ -278,7 +278,93 @@ WaterOut waterVertex(uint vertexId : SV_VertexID, uint ring : SV_InstanceID)
     o.rest = rest;
     o.currentClip = transform(frame->unjitteredViewProj, float4(world, 1.0));
     o.previousClip = transform(frame->prevViewProj, float4(before, 1.0));
+    o.body = SEA;
     return o;
+}
+
+// A vertex drawn nowhere: all of a quad's corners at one point outside the
+// view.
+WaterOut nothing()
+{
+    WaterOut o;
+    o.position = float4(2.0, 2.0, 0.5, 1.0);
+    o.world = 0.0;
+    o.rest = 0.0;
+    o.currentClip = o.position;
+    o.previousClip = o.position;
+    o.body = SEA;
+    return o;
+}
+
+// A corner of a quad of Pool `pool`'s grid over its footprint, at its
+// height, with the sea's smallest waves on it as much as it says.
+[shader("vertex")]
+WaterOut poolVertex(uint vertexId : SV_VertexID, uint pool : SV_InstanceID)
+{
+    Frame* frame = push.frame;
+    static const uint2 corners[6] = { uint2(0, 0), uint2(0, 1), uint2(1, 0), uint2(1, 0), uint2(0, 1), uint2(1, 1) };
+    WaterBody body = buffers()->waterBodies[pool];
+    uint quad = vertexId / 6;
+    uint2 grid = uint2(quad % POOL_QUADS, quad / POOL_QUADS) + corners[vertexId % 6];
+    float2 across = (float2(grid) / float(POOL_QUADS) - 0.5) * body.size.xz;
+    float3 flat = transform(body.toWorld, float4(across.x, 0.0, across.y, 1.0)).xyz;
+    float spacing = max(body.size.x, body.size.z) / float(POOL_QUADS);
+    float3 world = flat + oceanMoved(frame, flat.xz, spacing, false) * body.waves;
+    float3 before = flat + oceanMoved(frame, flat.xz, spacing, true) * body.waves;
+    WaterOut o;
+    o.position = transform(frame->viewProj, float4(world, 1.0));
+    o.world = world;
+    o.rest = flat.xz;
+    o.currentClip = transform(frame->unjitteredViewProj, float4(world, 1.0));
+    o.previousClip = transform(frame->prevViewProj, float4(before, 1.0));
+    o.body = pool;
+    return o;
+}
+
+// How far `world` is outside Dry Area `body`, negative inside.
+float dryDistance(WaterBody body, float3 world)
+{
+    float3 local = transform(body.toLocal, float4(world, 1.0)).xyz;
+    float3 half = body.size * 0.5;
+    if (body.shape == DRY_SPHERE)
+    {
+        return length(local) - half.x;
+    }
+    if (body.shape == DRY_CAPSULE)
+    {
+        float reach = max(half.y - half.x, 0.0);
+        return length(local - float3(0.0, clamp(local.y, -reach, reach), 0.0)) - half.x;
+    }
+    float3 q = abs(local) - half;
+    return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0);
+}
+
+// Whether water drawn at `world` is kept out: inside a Dry Area; and, for
+// the sea, over a Pool lower than it, which is dry to the sea.
+bool keptDry(Frame* frame, float3 world, uint body)
+{
+    uint pools = frame->ocean.pools;
+    for (uint i = pools; i < pools + frame->ocean.dries; i++)
+    {
+        if (dryDistance(buffers()->waterBodies[i], world) < 0.0)
+        {
+            return true;
+        }
+    }
+    if (body != SEA)
+    {
+        return false;
+    }
+    for (uint i = 0; i < pools; i++)
+    {
+        WaterBody pool = buffers()->waterBodies[i];
+        float3 local = transform(pool.toLocal, float4(world, 1.0)).xyz;
+        if (pool.toWorld.c3.y < frame->ocean.level && all(abs(local.xz) <= pool.size.xz * 0.5) && local.y > -0.5)
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 // The distance to the nearest of a scatter of points, a cell a unit wide:
@@ -312,6 +398,17 @@ float waterCells(float2 p)
 FragmentOut waterFragment(WaterOut input)
 {
     Frame* frame = push.frame;
+    if (keptDry(frame, input.world, input.body))
+    {
+        discard;
+    }
+    bool sea = input.body == SEA;
+    WaterBody pool = buffers()->waterBodies[sea ? 0 : input.body];
+    // A Pool has the sea's waves as much as it says, and its own colours.
+    float waves = sea ? 1.0 : pool.waves;
+    float3 deep = sea ? frame->ocean.deep : pool.deep;
+    float3 scatter = sea ? frame->ocean.scatter : pool.scatter;
+    float3 absorb = sea ? frame->ocean.absorb : pool.absorb;
     float2 rest = input.rest;
     float2 slope = 0.0;
     float variance = 0.0;
@@ -322,11 +419,11 @@ FragmentOut waterFragment(WaterOut input)
         float2 uv = cascadeUv(frame, c, rest);
         float4 s = textures[NonUniformResourceIndex(frame->ocean.slopes[c])].Sample(samplers[SAMPLER_LINEAR_REPEAT], uv);
         float4 d = textures[NonUniformResourceIndex(frame->ocean.displacement[c])].Sample(samplers[SAMPLER_LINEAR_REPEAT], uv);
-        slope += s.xy;
+        slope += s.xy * waves;
         // The slopes the mips averaged away, too small to see here, as roughness (Atlas).
-        variance += max(s.z - s.x * s.x, 0.0) + max(s.w - s.y * s.y, 0.0);
-        folded += d.w - 1.0;
-        moved += d.xyz;
+        variance += (max(s.z - s.x * s.x, 0.0) + max(s.w - s.y * s.y, 0.0)) * waves * waves;
+        folded += (d.w - 1.0) * waves;
+        moved += d.xyz * waves;
     }
     float3 n = normalize(float3(-slope.x, 1.0, -slope.y));
     float3 v = normalize(frame->cameraPosition - input.world);
@@ -355,9 +452,8 @@ FragmentOut waterFragment(WaterOut input)
 
     // The water's own colour (Sea of Thieves, Atlas): deep blue lit by the sky, and the scatter colour where the
     // sun shines through the thin top of a wave towards the eye.
-    float3 deep = frame->ocean.deep;
-    float3 scatter = frame->ocean.scatter;
-    float crest = saturate(moved.y / max(frame->ocean.waveHeight * 0.5, 0.05)) + saturate(length(moved.xz) / max(frame->ocean.waveHeight, 0.05)) * 0.5;
+    float height = max(frame->ocean.waveHeight * waves, 0.02);
+    float crest = saturate(moved.y / (height * 0.5)) + saturate(length(moved.xz) / height) * 0.5;
     float towards = pow(saturate(dot(l, -v)), 4.0) * pow(saturate(0.5 - 0.5 * dot(l, n)), 3.0);
     float3 throughWave = (1.5 * crest * towards + 0.12 * pow(saturate(dot(v, n)), 2.0) + 0.04 * saturate(dot(l, n))) * scatter * sunLight * shadow;
     float3 body = deep * ambient + throughWave;
@@ -369,7 +465,7 @@ FragmentOut waterFragment(WaterOut input)
     float sceneDepth = behindDepth > 0.0 ? frame->near / behindDepth : 1e4;
     float along = max(dot(-v, frame->cameraForward), 0.05);
     float thickness = max(sceneDepth - surfaceDepth, 0.0) / along;
-    float3 through = exp(-frame->ocean.absorb * thickness);
+    float3 through = exp(-absorb * thickness);
     float2 bend = n.xz * 0.04 * saturate(thickness);
     float blur = sqrt(s.roughness) * 2.0 + log2(1.0 + thickness * 0.5);
     float3 behind = thickness < 1e3 ? glassBehind(push.texture, pixel / float2(frame->viewport) - bend, blur) : 0.0;
@@ -377,8 +473,9 @@ FragmentOut waterFragment(WaterOut input)
     float3 color = (1.0 - fresnel) * under + fresnel * reflected + glints;
 
     // Foam where a crest folds over, and where the water thins at a shore, in bubbles drifting with the waves.
-    float threshold = 0.55 + 0.6 * frame->ocean.foam;
-    float breaking = frame->ocean.foam > 0.0 ? saturate((threshold - folded) / 0.3) : 0.0;
+    // Only where the water folds hard does a crest break: a calm sea's gentle folding stays clear.
+    float threshold = 0.4 + 0.45 * frame->ocean.foam;
+    float breaking = frame->ocean.foam > 0.0 && sea ? saturate((threshold - folded) / 0.3) : 0.0;
     float shore = saturate(1.0 - thickness / 0.6);
     float lace = waterCells(rest * 1.3 + moved.xz * 0.5) * 0.7 + waterCells(rest * 4.1) * 0.3;
     float foam = saturate((max(breaking, shore) * 1.4 - lace) * 4.0);

@@ -53,6 +53,7 @@ mod texture_codec;
 mod ui_pass;
 mod volumetric;
 mod water;
+pub mod water_bodies;
 mod wind;
 
 use std::{collections::HashMap, mem::ManuallyDrop, path::PathBuf};
@@ -103,6 +104,7 @@ pub use model_renderer::{ModelPart, ModelRenderer};
 pub use seasons::{Leaves, Season, SeasonLook, Seasons};
 pub use wind::WindZone;
 pub use ocean::{Ocean, OceanSampler, SeaState, Weather};
+pub use water_bodies::{DryArea, DryShape, Liquid, Pool};
 pub use scene::{
     Camera, Light, LightKind, MAX_TRANSITIONS, MeshRenderer, Sky, SkyBody, SkyMode, ViewOptions, temperature_color,
 };
@@ -1430,7 +1432,7 @@ impl View {
             ao_history: None,
             atmosphere_tables: None,
             fog_history: false,
-            ocean: water::OceanBuffers::new(gpu, &named)?,
+            ocean: water::OceanBuffers::new(gpu, &named, FRAMES_IN_FLIGHT)?,
             ddgi_history: None,
             warned_meshlets: false,
         })
@@ -1848,10 +1850,17 @@ impl View {
         if let Some((maps, _)) = &glass_shadows {
             frame_data.glass_shadow = maps.frame_field(fg);
         }
-        // The first Ocean's sea, its waves moved on to now.
-        let water = match (extracted.ocean, wireframe) {
-            (Some(sea), false) => Some(water::Water::new(fg, (gpu, bindless), &mut self.ocean, (&sea.0, sea.1, sea.2), (extent, setup.time))?),
-            _ => None,
+        // The first Ocean's sea, its waves moved on to now, and the Pools and Dry Areas.
+        let wet = extracted.ocean.is_some() || extracted.water_bodies.pools > 0;
+        let water = match wet && !wireframe {
+            true => Some(water::Water::new(
+                fg,
+                (gpu, bindless),
+                (&mut self.ocean, slot),
+                (extracted.ocean, &extracted.water_bodies),
+                (extent, setup.time),
+            )?),
+            false => None,
         };
         if let Some(water) = &water {
             frame_data.ocean = water.frame;
@@ -1940,6 +1949,7 @@ impl View {
                 material_properties: assets.material_properties.address,
                 ocean_spectrum: self.ocean.spectrum.address,
                 ocean_fft: self.ocean.fft.address,
+                water_bodies: self.ocean.bodies[slot].address,
             }],
         );
         buffers.instances.write(0, &extracted.instances[..instance_count]);

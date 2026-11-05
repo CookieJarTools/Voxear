@@ -17,7 +17,7 @@ use voxear_engine::{
     physics::{CharacterController, Collider, ColliderMesh, ColliderShape, Joint, JointType, Vehicle, Wheel},
     physics2d::{Collider2D, ColliderShape2D},
 };
-use voxear_render::{Camera, Light, LightKind, PostVolume, VolumeShape, WindZone};
+use voxear_render::{Camera, DryArea, DryShape, Light, LightKind, Pool, PostVolume, VolumeShape, WindZone};
 use voxear_scene::{Destroying, EditorOnly, Transform, WorldTransform};
 use voxear_ui::{Color, Shape};
 
@@ -42,6 +42,8 @@ const FRUSTUM_ASPECT: f32 = 16.0 / 9.0;
 /// How long a directional light's direction is drawn, on screen.
 const DIRECTION: f32 = 70.0;
 const COLLIDER: u32 = 0x91f48b;
+/// Pools' footprints and Dry Areas' shapes.
+const WATER: u32 = 0x4fc4e8;
 /// The most triangles of a Mesh collider drawn, so that a big mesh does not
 /// slow the Scene view; the rest are left out.
 const MESH_TRIANGLES: usize = 4096;
@@ -104,6 +106,7 @@ pub fn shapes(
     if let Some(entity) = selected {
         post_volume(&mut shapes, world, camera, entity);
         wind_zone(&mut shapes, world, camera, entity);
+        water_body(&mut shapes, world, camera, entity);
     }
     shapes
 }
@@ -125,6 +128,37 @@ fn wind_zone(shapes: &mut Vec<Shape>, world: &World, camera: &ViewCamera, entity
         line(shapes, camera, start, tip, color);
         for side in [-1.0, 1.0] {
             line(shapes, camera, tip, tip - along * (size * 0.15) + across * (size * 0.1 * side), color);
+        }
+    }
+}
+
+/// The selected Pool's footprint, flat at its surface, and the selected Dry
+/// Area's shape, turned with their Obj.
+fn water_body(shapes: &mut Vec<Shape>, world: &World, camera: &ViewCamera, entity: Entity) {
+    let (_, rotation, position) = voxear_scene::world_matrix(world, entity).to_scale_rotation_translation();
+    let color = Color::hex(WATER);
+    if let Some(pool) = world.get::<Pool>(entity) {
+        let half = Vec3::new(pool.size[0] * 0.5, 0.0, pool.size[1] * 0.5);
+        wire_box(shapes, camera, position, rotation, half, color);
+    }
+    let Some(dry) = world.get::<DryArea>(entity) else { return };
+    let half = Vec3::from(dry.size) * 0.5;
+    match dry.shape {
+        DryShape::Box => wire_box(shapes, camera, position, rotation, half, color),
+        DryShape::Sphere => {
+            for axis in [Vec3::X, Vec3::Y, Vec3::Z] {
+                polyline(shapes, camera, &ring(camera, position, rotation * axis, half.x), color);
+            }
+        }
+        DryShape::Capsule => {
+            let reach = (half.y - half.x).max(0.0);
+            for end in [-reach, 0.0, reach] {
+                polyline(shapes, camera, &ring(camera, position + rotation * Vec3::new(0.0, end, 0.0), rotation * Vec3::Y, half.x), color);
+            }
+            for side in [Vec3::X, Vec3::NEG_X, Vec3::Z, Vec3::NEG_Z] {
+                let edge = rotation * (side * half.x);
+                line(shapes, camera, position + edge + rotation * Vec3::new(0.0, -reach, 0.0), position + edge + rotation * Vec3::new(0.0, reach, 0.0), color);
+            }
         }
     }
 }

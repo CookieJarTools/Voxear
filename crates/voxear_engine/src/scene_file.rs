@@ -58,7 +58,7 @@ use voxear_core::math::{EulerRot, Quat, Vec3};
 use voxear_ecs::{Entity, World};
 use voxear_render::{
     Camera, Foliage, FoliageInteraction, Light, LightKind, LodGroup, Look, LookName, MAX_TRANSITIONS, MeshRenderer, PostProcess, PostVolume, Renderer,
-    Ocean, Plant, Seasons, Sky, SkyBody, SkyMode, SunLook, VolumeShape, WindZone, scatter,
+    DryArea, Ocean, Plant, Pool, Seasons, Sky, SkyBody, SkyMode, SunLook, VolumeShape, WindZone, scatter,
 };
 use voxear_scene::{
     BehaviourSpec, Behaviours, Layer, Layers, Name, Parent, SceneComponents, ScenePersistence, Transform,
@@ -276,6 +276,12 @@ pub struct ObjData {
     /// An Ocean, the sea filling the level at the Obj's height.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ocean: Option<Ocean>,
+    /// A Pool, water (or lava) over a box of ground at the Obj's height.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pool: Option<Pool>,
+    /// A Dry Area, keeping water out of its shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dry_area: Option<DryArea>,
     /// Seasons, turning the level's plants through the year.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seasons: Option<Seasons>,
@@ -333,6 +339,8 @@ impl ObjData {
             collider: None,
             wind_zone: None,
             ocean: None,
+            pool: None,
+            dry_area: None,
             seasons: None,
             foliage_interaction: None,
             foliage: None,
@@ -1223,6 +1231,12 @@ fn capture_instance(
     if root.ocean.is_some() && root.ocean != prefab_root.ocean {
         instance.ocean = root.ocean;
     }
+    if root.pool.is_some() && root.pool != prefab_root.pool {
+        instance.pool = root.pool;
+    }
+    if root.dry_area.is_some() && root.dry_area != prefab_root.dry_area {
+        instance.dry_area = root.dry_area;
+    }
     if root.model.is_some() && root.model != prefab_root.model {
         instance.model.clone_from(&root.model);
     }
@@ -1339,6 +1353,12 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     }
     if let Some(ocean) = actual.ocean.filter(|o| Some(*o) != expected.ocean) {
         put("ocean", whole(&ocean, &Ocean::default())?);
+    }
+    if let Some(pool) = actual.pool.filter(|p| Some(*p) != expected.pool) {
+        put("pool", whole(&pool, &Pool::default())?);
+    }
+    if let Some(dry) = actual.dry_area.filter(|d| Some(*d) != expected.dry_area) {
+        put("dry_area", whole(&dry, &DryArea::default())?);
     }
     if let Some(seasons) = actual.seasons.filter(|s| Some(*s) != expected.seasons) {
         put("seasons", whole(&seasons, &Seasons::default())?);
@@ -1566,6 +1586,8 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.collider = world.get::<Collider>(entity).copied();
     obj.wind_zone = world.get::<WindZone>(entity).copied();
     obj.ocean = world.get::<Ocean>(entity).copied();
+    obj.pool = world.get::<Pool>(entity).copied();
+    obj.dry_area = world.get::<DryArea>(entity).copied();
     obj.seasons = world.get::<Seasons>(entity).copied();
     obj.foliage_interaction = world.get::<FoliageInteraction>(entity).copied();
     obj.model = world.get::<ModelSource>(entity).map(|source| {
@@ -1930,6 +1952,11 @@ mod tests {
         assert_eq!((ocean.weather, ocean.foam), (voxear_render::Weather::Stormy, 0.8));
         assert_eq!(ocean.choppiness, Ocean::default().choppiness, "the rest as they start");
         assert_eq!(toml::from_str::<ObjData>(&toml::to_string(&obj).unwrap()).unwrap().ocean, Some(ocean));
+        let obj: ObjData = toml::from_str("id = 2\n[pool]\nsize = [4.0, 8.0]\nliquid = \"lava\"\n[dry_area]\nshape = \"capsule\"").unwrap();
+        assert_eq!(obj.pool.map(|p| (p.size, p.liquid)), Some(([4.0, 8.0], voxear_render::Liquid::Lava)));
+        assert_eq!(obj.dry_area.map(|d| d.shape), Some(voxear_render::DryShape::Capsule));
+        let back: ObjData = toml::from_str(&toml::to_string(&obj).unwrap()).unwrap();
+        assert_eq!((back.pool, back.dry_area), (obj.pool, obj.dry_area));
     }
 
     #[test]

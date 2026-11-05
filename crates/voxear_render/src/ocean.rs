@@ -52,6 +52,17 @@ pub enum Weather {
 impl Weather {
     pub const ALL: [Self; 4] = [Self::Calm, Self::Normal, Self::Stormy, Self::Custom];
 
+    /// How much more foam it whips up than the Ocean's Foam says: real seas
+    /// fold about alike whatever their size, so a storm's whitecaps, as Sea
+    /// of Thieves has them, come from the weather.
+    pub fn foam(self) -> f32 {
+        match self {
+            Self::Calm => 0.2,
+            Self::Normal | Self::Custom => 1.0,
+            Self::Stormy => 2.0,
+        }
+    }
+
     /// As the editor shows it.
     pub fn name(self) -> &'static str {
         match self {

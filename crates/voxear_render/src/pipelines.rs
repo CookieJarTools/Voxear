@@ -114,6 +114,7 @@ pub struct Pipelines {
     pub ocean_mip: vk::Pipeline,
     pub water_depth_copy: vk::Pipeline,
     pub water: vk::Pipeline,
+    pub water_pool: vk::Pipeline,
     /// Panes into the glass shadow atlas (`glass::record_shadows`).
     pub glass_shadow: vk::Pipeline,
     pub glass_shadow_mip: vk::Pipeline,
@@ -332,6 +333,14 @@ impl Pipelines {
                 depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
                 cull: vk::CullModeFlags::NONE,
                 ..GraphicsPipelineDesc::new("Water", water, c"waterVertex", c"waterFragment")
+            })?,
+            water_pool: graphics(&GraphicsPipelineDesc {
+                color_formats: &[HDR_FORMAT, VELOCITY_FORMAT],
+                depth_format: Some(DEPTH_FORMAT),
+                depth_write: true,
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                cull: vk::CullModeFlags::NONE,
+                ..GraphicsPipelineDesc::new("Pools", water, c"poolVertex", c"waterFragment")
             })?,
             // Tested against the depth in its fragment shader, which reads it.
             glass: graphics(&GraphicsPipelineDesc {

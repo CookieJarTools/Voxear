@@ -6,7 +6,7 @@
 
 use voxear_core::math::{Quat, Vec3};
 use voxear_ecs::World;
-use voxear_render::{Ocean, OceanSampler, SeaState};
+use voxear_render::{DryArea, Ocean, OceanSampler, Pool, SeaState};
 use voxear_scene::{Transform, WorldTransform};
 
 /// The sea's long waves on the CPU, kept as a world resource.
@@ -57,8 +57,33 @@ pub fn update(world: &mut World, time: f64) {
     sampler.set_time(time);
 }
 
-/// The water at `at`, or `None` where there is no water.
+/// Where an Obj is in the world and how it is turned.
+fn placed(transform: &Transform, at: Option<&WorldTransform>) -> (Vec3, Quat) {
+    at.map_or((transform.position, transform.rotation), |w| {
+        let (_, rotation, position) = w.0.to_scale_rotation_translation();
+        (position, rotation)
+    })
+}
+
+/// The water at `at`, or `None` where there is no water: inside a Dry Area,
+/// or away from both the sea and every Pool. Over a Pool's footprint its
+/// surface, not the sea's.
 pub fn sample(world: &World, at: Vec3) -> Option<WaterPoint> {
+    let dry = world.query_ref::<(&DryArea, &Transform, Option<&WorldTransform>)>().into_iter().any(|(area, t, w)| {
+        let (position, rotation) = placed(t, w);
+        area.contains(position, rotation, at)
+    });
+    if dry {
+        return None;
+    }
+    let pools = world.query_ref::<(&Pool, &Transform, Option<&WorldTransform>)>();
+    let pool = pools.into_iter().find_map(|(pool, t, w)| {
+        let (position, rotation) = placed(t, w);
+        pool.surface_over(position, rotation, at)
+    });
+    if let Some(height) = pool {
+        return Some(WaterPoint { height, normal: Vec3::Y, flow: Vec3::ZERO });
+    }
     let sampler = world.resource::<WaterQuery>()?.sampler.as_ref()?;
     let height = sampler.height_at(at.x, at.z);
     Some(WaterPoint { height, normal: sampler.normal_at(at.x, at.z), flow: Vec3::ZERO })
@@ -96,5 +121,17 @@ mod tests {
         update(&mut world, 14.0);
         let later = sample(&world, Vec3::new(5.0, 0.0, 5.0)).unwrap();
         assert_ne!(now.height, later.height, "the waves move on");
+    }
+
+    #[test]
+    fn a_dry_area_has_no_water_and_a_pool_has_its_own() {
+        let mut world = World::new();
+        world.spawn((Ocean::default(), Transform::default()));
+        world.spawn((DryArea::default(), Transform::from_position(Vec3::new(20.0, 0.0, 0.0))));
+        world.spawn((Pool { size: [4.0, 4.0], ..Pool::default() }, Transform::from_position(Vec3::new(-20.0, 6.0, 0.0))));
+        update(&mut world, 1.0);
+        assert!(sample(&world, Vec3::new(20.0, 0.0, 0.5)).is_none(), "inside the hull it is dry");
+        assert_eq!(sample(&world, Vec3::new(-19.0, 0.0, 1.0)).map(|w| w.height), Some(6.0), "the pool's surface");
+        assert!(sample(&world, Vec3::new(0.0, 0.0, 0.0)).is_some(), "the sea elsewhere");
     }
 }

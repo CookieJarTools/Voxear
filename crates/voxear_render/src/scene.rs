@@ -270,6 +270,8 @@ pub struct ExtractedFrame {
     pub render_size: (u32, u32),
     /// The first Ocean, its Obj's height and turn.
     pub ocean: Option<(crate::Ocean, f32, Quat)>,
+    /// The Pools and Dry Areas nearest the camera.
+    pub water_bodies: crate::water::WaterBodies,
 }
 
 /// What an instance was made from: its Obj, for a plant of a Foliage its
@@ -576,6 +578,7 @@ pub fn extract(
         });
         (*ocean, position.y, rotation)
     });
+    let water_bodies = water_bodies(world, position);
     // And the first Seasons turns all its plants.
     let seasons = world.query_ref::<&crate::Seasons>().without::<Destroying>();
     if let Some(seasons) = seasons.into_iter().next() {
@@ -664,6 +667,7 @@ pub fn extract(
         post,
         render_size: (width, height),
         ocean,
+        water_bodies,
     }
 }
 
@@ -830,4 +834,40 @@ mod tests {
         assert!(ndc.y < 0.0, "up in the world is up on screen, which is -Y in Vulkan");
         assert!(ndc.z > 0.0 && ndc.z < 1.0, "reverse-Z depth lies in (0, 1)");
     }
+}
+
+/// The Pools and then the Dry Areas nearest `camera`, as many as a frame
+/// draws.
+fn water_bodies(world: &World, camera: Vec3) -> crate::water::WaterBodies {
+    use crate::water_bodies::{DryArea, MAX_WATER_BODIES, Pool};
+    let placed = |transform: &Transform, at: Option<&WorldTransform>| {
+        at.map_or((transform.position, transform.rotation), |w| {
+            let (_, rotation, position) = w.0.to_scale_rotation_translation();
+            (position, rotation)
+        })
+    };
+    let mut pools: Vec<(f32, crate::gpu::GpuWaterBody)> = world
+        .query_ref::<(&Pool, &Transform, Option<&WorldTransform>)>()
+        .without::<Destroying>()
+        .into_iter()
+        .map(|(pool, transform, at)| {
+            let (position, rotation) = placed(transform, at);
+            (position.distance_squared(camera), pool.gpu(position, rotation))
+        })
+        .collect();
+    let mut dries: Vec<(f32, crate::gpu::GpuWaterBody)> = world
+        .query_ref::<(&DryArea, &Transform, Option<&WorldTransform>)>()
+        .without::<Destroying>()
+        .into_iter()
+        .map(|(dry, transform, at)| {
+            let (position, rotation) = placed(transform, at);
+            (position.distance_squared(camera), dry.gpu(position, rotation))
+        })
+        .collect();
+    pools.sort_by(|a, b| a.0.total_cmp(&b.0));
+    dries.sort_by(|a, b| a.0.total_cmp(&b.0));
+    pools.truncate(MAX_WATER_BODIES / 2);
+    dries.truncate(MAX_WATER_BODIES - pools.len());
+    let count = pools.len() as u32;
+    crate::water::WaterBodies { bodies: pools.into_iter().chain(dries).map(|(_, body)| body).collect(), pools: count }
 }

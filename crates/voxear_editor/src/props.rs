@@ -23,7 +23,7 @@ use voxear_engine::{
 };
 use voxear_render::{
     Camera, Foliage, FoliageInteraction, Impostors, Light, LightKind, LodGroup, LodLevel, LodMeasure, MAX_TRANSITIONS, MeshRenderer, PostVolume, Renderer,
-    ModelRenderer, Ocean, Season, Seasons, SkyBody, VolumeShape, Weather, WindZone,
+    ModelRenderer, Ocean, Season, Seasons, SkyBody, VolumeShape, Weather, WindZone, DryArea, DryShape, Liquid, Pool,
 };
 use voxear_scene::{BehaviourSpec, Behaviours, Name, Parent, SceneComponents};
 
@@ -74,6 +74,8 @@ pub enum Part {
     PostVolume,
     WindZone,
     Ocean,
+    Pool,
+    DryArea,
     Seasons,
     FoliageInteraction,
     Foliage,
@@ -105,6 +107,8 @@ impl Part {
             Part::PostVolume => "post_volume".into(),
             Part::WindZone => "wind_zone".into(),
             Part::Ocean => "ocean".into(),
+            Part::Pool => "pool".into(),
+            Part::DryArea => "dry_area".into(),
             Part::Seasons => "seasons".into(),
             Part::FoliageInteraction => "foliage_interaction".into(),
             Part::Foliage => "foliage".into(),
@@ -132,6 +136,8 @@ impl Part {
             Part::PostVolume => "Post Volume",
             Part::WindZone => "Wind Zone",
             Part::Ocean => "Ocean",
+            Part::Pool => "Pool",
+            Part::DryArea => "Dry Area",
             Part::Seasons => "Seasons",
             Part::FoliageInteraction => "Foliage Interaction",
             Part::Foliage => "Foliage",
@@ -158,6 +164,8 @@ impl Part {
             Part::PostVolume => "panels",
             Part::WindZone => "move",
             Part::Ocean => "globe",
+            Part::Pool => "globe",
+            Part::DryArea => "box",
             Part::Seasons => "globe",
             Part::FoliageInteraction => "move",
             Part::Foliage => "cube",
@@ -217,6 +225,19 @@ pub enum Prop {
     OceanFoam,
     OceanClarity,
     OceanMurk,
+    /// A Pool's footprint and liquid, its waves, and its water's colours.
+    PoolSize,
+    PoolLiquid,
+    PoolWaves,
+    PoolDeep,
+    PoolScatter,
+    PoolClarity,
+    PoolMurk,
+    /// A Dry Area's shape, and its size as that shape has it.
+    DryShape,
+    DrySize,
+    DryWidth,
+    DryHeight,
     /// A Seasons' time of year, and the season it is nearest, which the
     /// rows of a season's look below it are for.
     TimeOfYear,
@@ -405,6 +426,14 @@ impl Prop {
             | Prop::OceanFoam
             | Prop::OceanClarity
             | Prop::OceanMurk => Part::Ocean,
+            Prop::PoolSize
+            | Prop::PoolLiquid
+            | Prop::PoolWaves
+            | Prop::PoolDeep
+            | Prop::PoolScatter
+            | Prop::PoolClarity
+            | Prop::PoolMurk => Part::Pool,
+            Prop::DryShape | Prop::DrySize | Prop::DryWidth | Prop::DryHeight => Part::DryArea,
             Prop::TimeOfYear
             | Prop::Season
             | Prop::SeasonColor(_)
@@ -549,6 +578,15 @@ impl Prop {
             Prop::OceanFoam => "foam",
             Prop::OceanClarity => "clarity",
             Prop::OceanMurk => "murk",
+            Prop::PoolSize => "size",
+            Prop::PoolLiquid => "liquid",
+            Prop::PoolWaves => "waves",
+            Prop::PoolDeep => "deep",
+            Prop::PoolScatter => "scatter",
+            Prop::PoolClarity => "clarity",
+            Prop::PoolMurk => "murk",
+            Prop::DryShape => "shape",
+            Prop::DrySize | Prop::DryWidth | Prop::DryHeight => "size",
             Prop::TimeOfYear | Prop::Season => "time_of_year",
             Prop::SeasonColor(season) => return format!("{}.color", season_key(*season)),
             Prop::SeasonColorAmount(season) => return format!("{}.color_amount", season_key(*season)),
@@ -707,6 +745,12 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     if world.has::<Ocean>(entity) {
         parts.push(Part::Ocean);
     }
+    if world.has::<Pool>(entity) {
+        parts.push(Part::Pool);
+    }
+    if world.has::<DryArea>(entity) {
+        parts.push(Part::DryArea);
+    }
     if world.has::<Seasons>(entity) {
         parts.push(Part::Seasons);
     }
@@ -832,6 +876,21 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             ]);
             props
         }
+        // Water's colours only for water.
+        Part::Pool => {
+            let water = world.get::<Pool>(entity).is_some_and(|pool| pool.liquid == Liquid::Water);
+            let mut props = vec![Prop::PoolSize, Prop::PoolLiquid];
+            if water {
+                props.extend([Prop::PoolWaves, Prop::PoolDeep, Prop::PoolScatter, Prop::PoolClarity, Prop::PoolMurk]);
+            }
+            props
+        }
+        // Each shape's own measures: a box's three sides, a ball's width, a capsule's width and height.
+        Part::DryArea => match world.get::<DryArea>(entity).map_or(DryShape::Box, |dry| dry.shape) {
+            DryShape::Box => vec![Prop::DryShape, Prop::DrySize],
+            DryShape::Sphere => vec![Prop::DryShape, Prop::DryWidth],
+            DryShape::Capsule => vec![Prop::DryShape, Prop::DryWidth, Prop::DryHeight],
+        },
         // The look of the season the year is nearest, under the choice of it.
         Part::Seasons => {
             let season = world.get::<Seasons>(entity).map_or(Season::Summer, |seasons| seasons.season());
@@ -1023,6 +1082,17 @@ pub fn label(prop: &Prop) -> String {
         Prop::OceanFoam => "Foam",
         Prop::OceanClarity => "Clarity",
         Prop::OceanMurk => "Murk",
+        Prop::PoolSize => "Size",
+        Prop::PoolLiquid => "Liquid",
+        Prop::PoolWaves => "Waves",
+        Prop::PoolDeep => "Deep",
+        Prop::PoolScatter => "Scatter",
+        Prop::PoolClarity => "Clarity",
+        Prop::PoolMurk => "Murk",
+        Prop::DryShape => "Shape",
+        Prop::DrySize => "Size",
+        Prop::DryWidth => "Width",
+        Prop::DryHeight => "Height",
         Prop::TimeOfYear => "Time of year",
         Prop::Season => "Season",
         Prop::SeasonColor(_) => "Colour",
@@ -1250,6 +1320,12 @@ pub fn add(
         Part::Ocean => {
             world.insert(entity, Ocean::default());
         }
+        Part::Pool => {
+            world.insert(entity, Pool::default());
+        }
+        Part::DryArea => {
+            world.insert(entity, DryArea::default());
+        }
         Part::Seasons => {
             world.insert(entity, Seasons::default());
         }
@@ -1278,6 +1354,8 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
         Part::PostVolume => drop(world.remove::<PostVolume>(entity)),
         Part::WindZone => drop(world.remove::<WindZone>(entity)),
         Part::Ocean => drop(world.remove::<Ocean>(entity)),
+        Part::Pool => drop(world.remove::<Pool>(entity)),
+        Part::DryArea => drop(world.remove::<DryArea>(entity)),
         Part::Seasons => drop(world.remove::<Seasons>(entity)),
         Part::FoliageInteraction => drop(world.remove::<FoliageInteraction>(entity)),
         Part::Foliage => {
@@ -1496,6 +1574,25 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::OceanFoam => Value::Number(world.get::<Ocean>(entity)?.foam),
         Prop::OceanClarity => Value::Color(world.get::<Ocean>(entity)?.clarity.map(round3)),
         Prop::OceanMurk => Value::Number(world.get::<Ocean>(entity)?.murk),
+        Prop::PoolSize => Value::Vector(world.get::<Pool>(entity)?.size.to_vec()),
+        Prop::PoolLiquid => {
+            let liquid = world.get::<Pool>(entity)?.liquid;
+            let index = Liquid::ALL.iter().position(|l| *l == liquid).unwrap_or(0);
+            Value::Choice(index, Liquid::ALL.iter().map(|l| l.name().to_string()).collect())
+        }
+        Prop::PoolWaves => Value::Number(world.get::<Pool>(entity)?.waves),
+        Prop::PoolDeep => Value::Color(world.get::<Pool>(entity)?.deep.map(round3)),
+        Prop::PoolScatter => Value::Color(world.get::<Pool>(entity)?.scatter.map(round3)),
+        Prop::PoolClarity => Value::Color(world.get::<Pool>(entity)?.clarity.map(round3)),
+        Prop::PoolMurk => Value::Number(world.get::<Pool>(entity)?.murk),
+        Prop::DryShape => {
+            let shape = world.get::<DryArea>(entity)?.shape;
+            let index = DryShape::ALL.iter().position(|s| *s == shape).unwrap_or(0);
+            Value::Choice(index, DryShape::ALL.iter().map(|s| s.name().to_string()).collect())
+        }
+        Prop::DrySize => Value::Vector(world.get::<DryArea>(entity)?.size.to_vec()),
+        Prop::DryWidth => Value::Number(world.get::<DryArea>(entity)?.size[0]),
+        Prop::DryHeight => Value::Number(world.get::<DryArea>(entity)?.size[1]),
         Prop::TimeOfYear => Value::Number(round3(world.get::<Seasons>(entity)?.time_of_year)),
         Prop::Season => {
             let season = world.get::<Seasons>(entity)?.season();
@@ -2240,6 +2337,31 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
             with(world, entity, |o: &mut Ocean| o.clarity = color.map(|c| c.clamp(0.0, 1.0)))
         }
         (Prop::OceanMurk, Value::Number(n)) => with(world, entity, |o: &mut Ocean| o.murk = n.clamp(0.0, 20.0)),
+        (Prop::PoolSize, Value::Vector(v)) if v.len() == 2 => {
+            with(world, entity, |p: &mut Pool| p.size = [v[0].max(0.1), v[1].max(0.1)])
+        }
+        (Prop::PoolLiquid, Value::Choice(index, _)) => {
+            let liquid = Liquid::ALL.get(index).copied().unwrap_or_default();
+            with(world, entity, |p: &mut Pool| p.liquid = liquid)
+        }
+        (Prop::PoolWaves, Value::Number(n)) => with(world, entity, |p: &mut Pool| p.waves = n.clamp(0.0, 2.0)),
+        (Prop::PoolDeep, Value::Color(color)) => with(world, entity, |p: &mut Pool| p.deep = color.map(|c| c.clamp(0.0, 1.0))),
+        (Prop::PoolScatter, Value::Color(color)) => {
+            with(world, entity, |p: &mut Pool| p.scatter = color.map(|c| c.clamp(0.0, 1.0)))
+        }
+        (Prop::PoolClarity, Value::Color(color)) => {
+            with(world, entity, |p: &mut Pool| p.clarity = color.map(|c| c.clamp(0.0, 1.0)))
+        }
+        (Prop::PoolMurk, Value::Number(n)) => with(world, entity, |p: &mut Pool| p.murk = n.clamp(0.0, 20.0)),
+        (Prop::DryShape, Value::Choice(index, _)) => {
+            let shape = DryShape::ALL.get(index).copied().unwrap_or_default();
+            with(world, entity, |d: &mut DryArea| d.shape = shape)
+        }
+        (Prop::DrySize, Value::Vector(v)) if v.len() == 3 => {
+            with(world, entity, |d: &mut DryArea| d.size = [v[0].max(0.01), v[1].max(0.01), v[2].max(0.01)])
+        }
+        (Prop::DryWidth, Value::Number(n)) => with(world, entity, |d: &mut DryArea| d.size[0] = n.max(0.01)),
+        (Prop::DryHeight, Value::Number(n)) => with(world, entity, |d: &mut DryArea| d.size[1] = n.max(0.01)),
         (Prop::TimeOfYear, Value::Number(n)) => {
             with(world, entity, |seasons: &mut Seasons| seasons.time_of_year = n.rem_euclid(4.0))
         }

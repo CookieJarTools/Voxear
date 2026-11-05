@@ -382,7 +382,33 @@ pub struct GpuOcean {
     pub enabled: u32,
     /// The time the waves are at, in seconds, repeating every `ocean::REPEAT_SECONDS`.
     pub time: f32,
-    pub _pad: f32,
+    /// How many Pools, then Dry Areas, `water_bodies` holds, in that order.
+    pub pools: u32,
+    pub dries: u32,
+    pub _pad: [u32; 3],
+}
+
+/// A Pool or a Dry Area (see `water_bodies`), as `WaterBody` in
+/// `shaders/common.slang`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuWaterBody {
+    pub to_world: Mat4Cols,
+    pub to_local: Mat4Cols,
+    /// A Pool's footprint (x, z) or a Dry Area's size, in metres.
+    pub size: [f32; 3],
+    /// `WATER_POOL` or `WATER_DRY`.
+    pub kind: u32,
+    /// A Pool's colours, linear.
+    pub deep: [f32; 3],
+    /// A Dry Area's shape: box, sphere or capsule.
+    pub shape: u32,
+    pub scatter: [f32; 3],
+    /// How much of the sea's smallest waves a Pool has.
+    pub waves: f32,
+    pub absorb: [f32; 3],
+    /// A Pool's liquid: water or lava.
+    pub liquid: u32,
 }
 
 /// Most pushers through foliage a frame takes, the nearest the camera.
@@ -708,6 +734,8 @@ pub struct GpuBuffers {
     /// The sea's spectrum, and its FFT's rows (see `water`).
     pub ocean_spectrum: u64,
     pub ocean_fft: u64,
+    /// This frame's Pools and Dry Areas.
+    pub water_bodies: u64,
 }
 
 /// A line of debug draw (see `voxear_core::debug_draw`), its colour sRGB.
@@ -860,13 +888,14 @@ mod tests {
         assert_eq!(LOCAL_SHADOW_ATLAS, [4096, 3072], "as LOCAL_SHADOW_ATLAS in the shaders");
         assert_eq!(
             size_of::<GpuFrame>(),
-            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi + 32 + 16 * MAX_PUSHERS + 4 * MAX_PUSHERS + 16 + seasons + local_shadows + 128
+            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi + 32 + 16 * MAX_PUSHERS + 4 * MAX_PUSHERS + 16 + seasons + local_shadows + 144
         );
-        assert_eq!(size_of::<GpuOcean>(), 128);
+        assert_eq!(size_of::<GpuOcean>(), 144);
+        assert_eq!(size_of::<GpuWaterBody>(), 192);
         assert_eq!(size_of::<GpuDdgi>(), 32 * DDGI_CASCADES + 32 + 48);
         assert_eq!(size_of::<GpuLighting>(), lighting);
         assert_eq!(size_of::<GpuPost>(), post);
-        assert_eq!(size_of::<GpuBuffers>(), 32 * 8);
+        assert_eq!(size_of::<GpuBuffers>(), 33 * 8);
         assert_eq!(size_of::<GpuDebugLine>(), 48);
         assert!(size_of::<Push>() as u32 <= voxear_rhi::PUSH_CONSTANT_SIZE);
     }

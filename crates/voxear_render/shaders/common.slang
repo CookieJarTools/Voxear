@@ -321,7 +321,31 @@ struct Ocean
     float waveHeight;
     uint enabled;
     float time;
-    float pad;
+    // How many Pools, then Dry Areas, Buffers::waterBodies holds.
+    uint pools;
+    uint dries;
+    uint3 pad;
+};
+
+// A Pool or a Dry Area (src/water_bodies.rs, GpuWaterBody): where it is, a Pool's footprint (x, z) or a Dry
+// Area's size, its kind (WATER_POOL, WATER_DRY), a Pool's colours, waves and liquid, a Dry Area's shape.
+static const uint WATER_POOL = 1;
+static const uint WATER_DRY = 2;
+static const uint DRY_BOX = 0;
+static const uint DRY_SPHERE = 1;
+static const uint DRY_CAPSULE = 2;
+struct WaterBody
+{
+    Mat4 toWorld;
+    Mat4 toLocal;
+    float3 size;
+    uint kind;
+    float3 deep;
+    uint shape;
+    float3 scatter;
+    float waves;
+    float3 absorb;
+    uint liquid;
 };
 
 struct LocalShadows
@@ -730,6 +754,8 @@ struct Buffers
     // The sea's spectrum, each wave's h0(k) and h0*(-k), N×N a cascade; and its FFT's rows, four fields each.
     float4* oceanSpectrum;
     float2* oceanFft;
+    // This frame's Pools, then its Dry Areas.
+    WaterBody* waterBodies;
 };
 
 struct Push

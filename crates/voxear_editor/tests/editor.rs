@@ -2816,7 +2816,7 @@ fn add_component_is_a_search_with_folders() {
     frame(&mut editor, &mut renderer);
     frame(&mut editor, &mut renderer);
     let labels = |ui: &Ui| picker_rows(ui).into_iter().map(|(label, _)| label).collect::<Vec<_>>();
-    assert_eq!(labels(&editor.ui), ["Rendering", "Audio", "Physics", "Physics 2D", "Scripts", "Effects"], "folders first, as in Unity");
+    assert_eq!(labels(&editor.ui), ["Rendering", "Water", "Audio", "Physics", "Physics 2D", "Scripts", "Effects"], "folders first, as in Unity");
     shot(&mut renderer, "add-component.png");
 
     // A folder opens on a click, its scripts past the namespace they share, with a back button.

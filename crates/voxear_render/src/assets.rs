@@ -236,6 +236,8 @@ pub struct Assets {
     material_slots: SlotAllocator,
     /// The glass materials, which are drawn apart from the rest.
     glass: Vec<MaterialHandle>,
+    /// The cut-out materials, whose instances rays test for holes.
+    cut_out: Vec<MaterialHandle>,
     mesh_ranges: HashMap<MeshHandle, MeshRanges>,
     /// The most meshlets any LOD of each mesh has, by its slot: the most one
     /// draw of it can turn into.
@@ -310,6 +312,7 @@ impl Assets {
             mesh_bounds: HashMap::new(),
             material_slots: SlotAllocator::new(MAX_MATERIALS as u32),
             glass: Vec::new(),
+            cut_out: Vec::new(),
             mesh_ranges: HashMap::new(),
             most_meshlets: vec![0; MAX_MESHES as usize],
             textures: HashMap::new(),
@@ -813,6 +816,10 @@ impl Assets {
         if desc.glass {
             self.glass.push(handle);
         }
+        self.cut_out.retain(|&cut_out| cut_out != handle);
+        if material.alpha_cutoff > 0.0 {
+            self.cut_out.push(handle);
+        }
         let offset = u64::from(slot) * size_of::<GpuMaterial>() as u64;
         gpu.upload_buffer(&self.materials, offset, bytemuck::bytes_of(&material))?;
         Ok(())
@@ -821,6 +828,12 @@ impl Assets {
     /// Whether a material is glass, drawn after the opaque scene.
     pub fn is_glass(&self, material: MaterialHandle) -> bool {
         self.glass.contains(&material)
+    }
+
+    /// Whether a material is cut out: drawn only where its picture's alpha
+    /// reaches its cutoff.
+    pub fn is_cut_out(&self, material: MaterialHandle) -> bool {
+        self.cut_out.contains(&material)
     }
 
     /// Frees a mesh once frames in flight are done with it. Built-in meshes

@@ -2286,6 +2286,12 @@ fn bounce_settings(bounce: Bounce) -> voxear_render::GlobalIllumination {
 /// down, with a red wall standing behind the camera, out of view, lit by a
 /// sun ahead, under a dim sky so bounced light shows as it does indoors.
 fn wall_behind_render(bounce: Bounce) -> Option<Vec<u8>> {
+    wall_behind_cut_out(bounce, None)
+}
+
+/// The wall-behind scene, its wall cut out where its picture's alpha, all
+/// `alpha` over, is below a half.
+fn wall_behind_cut_out(bounce: Bounce, alpha: Option<u8>) -> Option<Vec<u8>> {
     use voxear_render::Sky;
     let mut renderer = bounce_renderer(bounce)?;
     let mut world = World::new();
@@ -2293,7 +2299,18 @@ fn wall_behind_render(bounce: Bounce) -> Option<Vec<u8>> {
     let plane = renderer.primitive(Primitive::Plane).unwrap();
     let cube = renderer.primitive(Primitive::Cube).unwrap();
     let white = renderer.add_material(&MaterialDesc { base_color: [0.9, 0.9, 0.9, 1.0], ..MaterialDesc::default() }).unwrap();
-    let red = renderer.add_material(&MaterialDesc { base_color: [0.9, 0.05, 0.05, 1.0], ..MaterialDesc::default() }).unwrap();
+    let picture = alpha.map(|alpha| {
+        let rgba: Vec<u8> = (0..16).flat_map(|_| [255, 255, 255, alpha]).collect();
+        let source = voxear_render::TextureSource { name: "holes", width: 4, height: 4, rgba: &rgba, srgb: true };
+        renderer.add_texture(&source).unwrap()
+    });
+    let red = MaterialDesc {
+        base_color: [0.9, 0.05, 0.05, 1.0],
+        base_color_texture: picture,
+        alpha_cutoff: alpha.map(|_| 0.5),
+        ..MaterialDesc::default()
+    };
+    let red = renderer.add_material(&red).unwrap();
     world.spawn((MeshRenderer::new(plane, white), Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(40.0))));
     let wall = Transform::new(Vec3::new(0.0, 2.0, -1.0), Quat::IDENTITY, Vec3::new(8.0, 4.0, 0.5));
     world.spawn((MeshRenderer::new(cube, red), wall));
@@ -2652,6 +2669,28 @@ fn ray_traced_gi_bounces_the_colour_of_a_wall_the_camera_cannot_see() {
 #[test]
 fn software_rays_bounce_the_colour_of_a_wall_the_camera_cannot_see() {
     assert_floor_takes_the_hidden_walls_red(Bounce::Software, "wall behind software rays.png");
+}
+
+/// Checks that `bounce`'s rays pass through a cut-out wall's holes: one cut
+/// away all over bounces no red, and one whose picture is solid bounces it
+/// as a plain wall does.
+fn assert_rays_pass_through_cut_outs(bounce: Bounce, name: &str) {
+    let renders = (wall_behind_render(Bounce::Off), wall_behind_cut_out(bounce, Some(0)), wall_behind_cut_out(bounce, Some(255)));
+    let (Some(plain), Some(holes), Some(solid)) = renders else { return };
+    keep_image(name, &holes);
+    let (before, through, kept) = (floor_redness(&plain), floor_redness(&holes), floor_redness(&solid));
+    assert!(through <= before + 2, "a wall cut away all over bounces no red: {through}, from {before}");
+    assert!(kept > before + 6, "a cut-out wall whose picture is solid bounces its red: {kept}, from {before}");
+}
+
+#[test]
+fn ray_traced_gi_passes_through_a_cut_out_materials_holes() {
+    assert_rays_pass_through_cut_outs(Bounce::Traced, "cut-out wall ray traced.png");
+}
+
+#[test]
+fn software_rays_pass_through_a_cut_out_materials_holes() {
+    assert_rays_pass_through_cut_outs(Bounce::Software, "cut-out wall software rays.png");
 }
 
 /// A red wall and a blue one side by side, meeting at the middle of the

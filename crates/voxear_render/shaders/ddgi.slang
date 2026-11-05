@@ -34,13 +34,41 @@ struct Hit
     float2 barycentrics;
 };
 
+// Whether a material is cut out: drawn only where its picture's alpha
+// reaches its cutoff, as a card of leaves or a chain-link fence.
+bool cutOutMaterial(uint id)
+{
+    return buffers()->materials[buffers()->instances[id].material].alphaCutoff > 0.0;
+}
+
+// Whether a ray passes through a cut-out instance's triangle where it meets
+// it, through the holes its picture leaves, as the depth pass discards
+// them. Without this a card of leaves stopped every ray as a solid sheet,
+// and the shade under a tree was a dark square.
+bool passesThrough(uint id, uint primitive, float2 barycentrics)
+{
+    Instance instance = buffers()->instances[id];
+    Material material = buffers()->materials[instance.material];
+    Mesh mesh = buffers()->meshes[instance.mesh];
+    uint first = mesh.lods[0].indexOffset + primitive * 3;
+    float2 a = buffers()->vertices[mesh.vertexOffset + buffers()->indices[first]].uv;
+    float2 b = buffers()->vertices[mesh.vertexOffset + buffers()->indices[first + 1]].uv;
+    float2 c = buffers()->vertices[mesh.vertexOffset + buffers()->indices[first + 2]].uv;
+    float2 uv = a * (1.0 - barycentrics.x - barycentrics.y) + b * barycentrics.x + c * barycentrics.y;
+    float alpha = material.baseColor.a
+        * textures[NonUniformResourceIndex(material.baseColorTexture)].SampleLevel(samplers[SAMPLER_LINEAR_REPEAT], uv, 0.0).a;
+    return alpha < material.alphaCutoff;
+}
+
 #if SOFTWARE_RAYS
 #include "trace_software.slang"
 #else
 [[vk::binding(4, 0)]] RaytracingAccelerationStructure scenes[];
 
 // The nearest triangle along a ray, or any at all with `any`, by the GPU's
-// ray tracing, through the scene's top level.
+// ray tracing, through the scene's top level. Cut-out instances are in it
+// as not opaque (src/lib.rs), so their triangles come back as candidates,
+// each kept only where the ray does not pass through it.
 Hit traceScene(Frame* frame, float3 origin, float3 direction, float far, bool any)
 {
     RaytracingAccelerationStructure scene = scenes[NonUniformResourceIndex(frame->ddgi.scene)];
@@ -51,17 +79,23 @@ Hit traceScene(Frame* frame, float3 origin, float3 direction, float far, bool an
     ray.TMax = far;
     Hit hit;
     hit.found = false;
+    RayQuery<RAY_FLAG_NONE> query;
+    query.TraceRayInline(scene, any ? RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH : RAY_FLAG_NONE, 0xFF, ray);
+    while (query.Proceed())
+    {
+        bool kept = query.CandidateType() == CANDIDATE_NON_OPAQUE_TRIANGLE
+            && !passesThrough(query.CandidateInstanceID(), query.CandidatePrimitiveIndex(),
+                query.CandidateTriangleBarycentrics());
+        if (kept)
+        {
+            query.CommitNonOpaqueTriangleHit();
+        }
+    }
+    hit.found = query.CommittedStatus() == COMMITTED_TRIANGLE_HIT;
     if (any)
     {
-        RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_FORCE_OPAQUE> query;
-        query.TraceRayInline(scene, RAY_FLAG_NONE, 0xFF, ray);
-        query.Proceed();
-        hit.found = query.CommittedStatus() == COMMITTED_TRIANGLE_HIT;
         return hit;
     }
-    RayQuery<RAY_FLAG_FORCE_OPAQUE> query;
-    query.TraceRayInline(scene, RAY_FLAG_NONE, 0xFF, ray);
-    query.Proceed();
     hit.found = query.CommittedStatus() == COMMITTED_TRIANGLE_HIT;
     if (hit.found)
     {
@@ -164,12 +198,14 @@ float3 ddgiShadeHit(Frame* frame, uint id, uint primitive, float2 barycentrics,
     float3 weights = float3(1.0 - barycentrics.x - barycentrics.y, barycentrics.x, barycentrics.y);
     float3 local = a.normal * weights.x + b.normal * weights.y + c.normal * weights.z;
     float3 normal = normalize(instance.normal0.xyz * local.x + instance.normal1.xyz * local.y + instance.normal2.xyz * local.z);
-    // Its normals, not its winding, say which side is its front.
-    back = dot(normal, direction) > 0.0;
-    // Both faces of a surface take light, as its front does.
-    normal = back ? -normal : normal;
-    float2 uv = a.uv * weights.x + b.uv * weights.y + c.uv * weights.z;
+    // Its normals, not its winding, say which side is its front. A sheet, a cut-out card of leaves or a plant,
+    // has no inside: its back is no sign of a probe within a wall, and probes in a tree's crown were set aside.
     Material material = buffers()->materials[instance.material];
+    bool sheet = material.alphaCutoff > 0.0 || (material.flags & MATERIAL_FOLIAGE) != 0;
+    back = dot(normal, direction) > 0.0 && !sheet;
+    // Both faces of a surface take light, as its front does.
+    normal = dot(normal, direction) > 0.0 ? -normal : normal;
+    float2 uv = a.uv * weights.x + b.uv * weights.y + c.uv * weights.z;
     float4 base = material.baseColor
         * textures[NonUniformResourceIndex(material.baseColorTexture)].SampleLevel(samplers[SAMPLER_LINEAR_REPEAT], uv, mip);
     // Metalness as shading has it: the material's factor times its texture's blue, which glTF factors leave at 1.

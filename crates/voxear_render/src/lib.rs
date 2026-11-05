@@ -1459,7 +1459,8 @@ impl View {
                     m[0][0], m[1][0], m[2][0], m[3][0], m[0][1], m[1][1], m[2][1], m[3][1], m[0][2], m[1][2], m[2][2],
                     m[3][2],
                 ];
-                Some(voxear_rhi::Instance { mesh, transform, id: id as u32 })
+                let opaque = !assets.is_cut_out(MaterialHandle(instance.material));
+                Some(voxear_rhi::Instance { mesh, transform, id: id as u32, opaque })
             })
             .collect();
         // The same instances, of the same meshes' bottom levels, as this slot's top level was last built from:

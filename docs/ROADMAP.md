@@ -974,10 +974,15 @@ Done so far:
   grid round the sky, each show where it outshines a few hundredths of the sky behind it, so none by day and the
   brightest first at dusk. The moon and the stars are drawn as the dark-adapted eye sees them, whatever the
   exposure. `[sky] stars` scales them. GPU test: stars and the moon under the moon, none in a day sky.
+- **Cut-out materials in the rays:** the GI's and the reflections' rays pass through the holes of an alpha-tested
+  material, as the depth pass discards them: a cut-out instance is in the top level as not opaque, and a ray query
+  keeps each of its triangles only where the base colour's alpha reaches the cutoff; the software tracer tests
+  them the same way. A ray finding the back of a sheet (cut-out or foliage) no longer marks a probe as inside a
+  wall. GPU tests: a wall cut away all over bounces nothing, a solid one bounces its colour, both tracers.
 
 Next:
 - Reference look: The Finals and Arc Raiders (Embark), for bounced light, exposure and contrast.
-- Alpha-tested and two-sided materials in the GI's rays; probe rays for reflections.
+- Probe rays for reflections.
 - Virtual shadow maps.
 - Optional third-party upscalers: AMD FSR, NVIDIA DLSS and Intel XeSS, each behind its own SDK.
 - Baked lightmapper, light probes and reflection probes.

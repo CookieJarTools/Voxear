@@ -30,13 +30,16 @@ pub struct Triangles {
 }
 
 /// One instance of a mesh in a top level: its bottom level, where it is (the
-/// first three rows of its model matrix, row by row), and the number shaders
-/// get back for it, `CommittedInstanceID`.
+/// first three rows of its model matrix, row by row), the number shaders
+/// get back for it, `CommittedInstanceID`, and whether it is opaque. Ray
+/// queries are handed the triangles of one that is not as candidates, to
+/// keep or pass through, as for a cut-out material's holes.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Instance {
     pub mesh: vk::DeviceAddress,
     pub transform: [f32; 12],
     pub id: u32,
+    pub opaque: bool,
 }
 
 /// The usage buffers holding a bottom level's triangles need.
@@ -207,16 +210,19 @@ impl TopLevel {
         let written: Vec<vk::AccelerationStructureInstanceKHR> = instances
             .iter()
             .take(self.capacity as usize)
-            .map(|instance| vk::AccelerationStructureInstanceKHR {
-                transform: vk::TransformMatrixKHR { matrix: instance.transform },
-                instance_custom_index_and_mask: vk::Packed24_8::new(instance.id, 0xFF),
-                instance_shader_binding_table_record_offset_and_flags: vk::Packed24_8::new(
-                    0,
-                    vk::GeometryInstanceFlagsKHR::TRIANGLE_FACING_CULL_DISABLE.as_raw() as u8,
-                ),
-                acceleration_structure_reference: vk::AccelerationStructureReferenceKHR {
-                    device_handle: instance.mesh,
-                },
+            .map(|instance| {
+                let mut flags = vk::GeometryInstanceFlagsKHR::TRIANGLE_FACING_CULL_DISABLE;
+                if !instance.opaque {
+                    flags |= vk::GeometryInstanceFlagsKHR::FORCE_NO_OPAQUE;
+                }
+                vk::AccelerationStructureInstanceKHR {
+                    transform: vk::TransformMatrixKHR { matrix: instance.transform },
+                    instance_custom_index_and_mask: vk::Packed24_8::new(instance.id, 0xFF),
+                    instance_shader_binding_table_record_offset_and_flags: vk::Packed24_8::new(0, flags.as_raw() as u8),
+                    acceleration_structure_reference: vk::AccelerationStructureReferenceKHR {
+                        device_handle: instance.mesh,
+                    },
+                }
             })
             .collect();
         let mapped = self.instances.mapped().expect("instances are host visible");

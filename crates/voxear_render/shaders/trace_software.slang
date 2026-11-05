@@ -2,7 +2,8 @@
 // this frame's hierarchy over the scene's instances (built on the CPU each
 // frame), then through each instance's mesh's hierarchy over its finest
 // LOD's triangles (built when the mesh loads), in the mesh's own space.
-// See src/bvh.rs. Included by ddgi.slang with SOFTWARE_RAYS, after `Hit`.
+// See src/bvh.rs. Included by ddgi.slang with SOFTWARE_RAYS, after `Hit`
+// and `passesThrough`.
 
 #pragma once
 
@@ -73,11 +74,13 @@ bool hitTriangle(float3 origin, float3 direction, float3 a, float3 b, float3 c, 
     return u >= -EDGE && v >= -EDGE && u + v <= 1.0 + EDGE && t > 0.0;
 }
 
-// The nearest of a mesh's triangles along a ray in its own space, nearer
-// than `nearest` (which it shortens), or any with `any`.
-bool traceMesh(uint meshIndex, float3 origin, float3 direction, bool any, inout float nearest, out uint primitive,
-    out float2 barycentrics)
+// The nearest of instance `id`'s mesh's triangles along a ray in its own
+// space, nearer than `nearest` (which it shortens), or any with `any`;
+// through the holes of a cut-out one.
+bool traceMesh(uint id, uint meshIndex, float3 origin, float3 direction, bool any, inout float nearest,
+    out uint primitive, out float2 barycentrics)
 {
+    bool cutOut = cutOutMaterial(id);
     primitive = 0;
     barycentrics = 0.0;
     Mesh mesh = buffers()->meshes[meshIndex];
@@ -113,7 +116,8 @@ bool traceMesh(uint meshIndex, float3 origin, float3 direction, bool any, inout 
             float3 c = buffers()->vertices[mesh.vertexOffset + buffers()->indices[first + 2]].position;
             float t;
             float2 where;
-            if (hitTriangle(origin, direction, a, b, c, t, where) && t < nearest)
+            if (hitTriangle(origin, direction, a, b, c, t, where) && t < nearest
+                && !(cutOut && passesThrough(id, triangle, where)))
             {
                 nearest = t;
                 primitive = triangle;
@@ -171,7 +175,7 @@ Hit traceScene(Frame* frame, float3 origin, float3 direction, float far, bool an
                 dot(instance.inverse[2].xyz, direction));
             uint primitive;
             float2 barycentrics;
-            if (traceMesh(instance.mesh, localOrigin, localDirection, any, hit.t, primitive, barycentrics))
+            if (traceMesh(instance.instance, instance.mesh, localOrigin, localDirection, any, hit.t, primitive, barycentrics))
             {
                 hit.found = true;
                 hit.instance = instance.instance;

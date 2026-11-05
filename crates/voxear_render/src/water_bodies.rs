@@ -67,8 +67,12 @@ impl DryShape {
 pub struct Pool {
     /// Across and along, in metres.
     pub size: [f32; 2],
+    /// How deep the water is, in metres: its walls and bottom show from
+    /// outside, so a Pool raised over the ground is a block of water.
+    pub depth: f32,
     pub liquid: Liquid,
-    /// How much of the sea's smallest waves it has: 0 still, 1 as the sea's.
+    /// How much of the sea's long swell it takes, from 0 for none to 1 as
+    /// the sea's: its ripples and short waves it has always.
     pub waves: f32,
     /// The colour of its deep water, sRGB.
     pub deep: [f32; 3],
@@ -86,8 +90,9 @@ impl Default for Pool {
     fn default() -> Self {
         Self {
             size: [10.0, 10.0],
+            depth: 4.0,
             liquid: Liquid::Water,
-            waves: 0.15,
+            waves: 0.0,
             deep: [0.02, 0.18, 0.2],
             scatter: [0.15, 0.6, 0.5],
             clarity: [0.75, 0.93, 0.9],
@@ -148,7 +153,7 @@ impl Pool {
         GpuWaterBody {
             to_world: cols(to_world),
             to_local: cols(to_local),
-            size: [self.size[0].max(0.01), 0.0, self.size[1].max(0.01)],
+            size: [self.size[0].max(0.01), self.depth.max(0.01), self.size[1].max(0.01)],
             kind: WATER_POOL,
             deep: linear(self.deep),
             shape: 0,
@@ -159,12 +164,12 @@ impl Pool {
         }
     }
 
-    /// Whether `point` lies over its footprint, and its surface's height
-    /// there.
+    /// Its surface's height over `point`, when the point is over its
+    /// footprint and not below its bottom.
     pub fn surface_over(&self, position: Vec3, rotation: Quat, point: Vec3) -> Option<f32> {
         let local = rotation.inverse() * (point - position);
         let inside = local.x.abs() <= self.size[0] * 0.5 && local.z.abs() <= self.size[1] * 0.5;
-        inside.then_some(position.y)
+        (inside && local.y >= -self.depth).then_some(position.y)
     }
 }
 
@@ -214,7 +219,8 @@ mod tests {
     fn a_pools_surface_is_over_its_footprint_at_its_height() {
         let pond = Pool { size: [4.0, 10.0], ..Pool::default() };
         let at = Vec3::new(0.0, 2.0, 0.0);
-        assert_eq!(pond.surface_over(at, Quat::IDENTITY, Vec3::new(1.5, -5.0, 4.5)), Some(2.0));
+        assert_eq!(pond.surface_over(at, Quat::IDENTITY, Vec3::new(1.5, -1.0, 4.5)), Some(2.0));
         assert_eq!(pond.surface_over(at, Quat::IDENTITY, Vec3::new(2.5, 0.0, 0.0)), None);
+        assert_eq!(pond.surface_over(at, Quat::IDENTITY, Vec3::new(0.0, -3.0, 0.0)), None, "under its bottom, 4 m down");
     }
 }

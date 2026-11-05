@@ -227,6 +227,7 @@ pub enum Prop {
     OceanMurk,
     /// A Pool's footprint and liquid, its waves, and its water's colours.
     PoolSize,
+    PoolDepth,
     PoolLiquid,
     PoolWaves,
     PoolDeep,
@@ -427,6 +428,7 @@ impl Prop {
             | Prop::OceanClarity
             | Prop::OceanMurk => Part::Ocean,
             Prop::PoolSize
+            | Prop::PoolDepth
             | Prop::PoolLiquid
             | Prop::PoolWaves
             | Prop::PoolDeep
@@ -579,6 +581,7 @@ impl Prop {
             Prop::OceanClarity => "clarity",
             Prop::OceanMurk => "murk",
             Prop::PoolSize => "size",
+            Prop::PoolDepth => "depth",
             Prop::PoolLiquid => "liquid",
             Prop::PoolWaves => "waves",
             Prop::PoolDeep => "deep",
@@ -879,7 +882,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
         // Water's colours only for water.
         Part::Pool => {
             let water = world.get::<Pool>(entity).is_some_and(|pool| pool.liquid == Liquid::Water);
-            let mut props = vec![Prop::PoolSize, Prop::PoolLiquid];
+            let mut props = vec![Prop::PoolSize, Prop::PoolDepth, Prop::PoolLiquid];
             if water {
                 props.extend([Prop::PoolWaves, Prop::PoolDeep, Prop::PoolScatter, Prop::PoolClarity, Prop::PoolMurk]);
             }
@@ -1083,6 +1086,7 @@ pub fn label(prop: &Prop) -> String {
         Prop::OceanClarity => "Clarity",
         Prop::OceanMurk => "Murk",
         Prop::PoolSize => "Size",
+        Prop::PoolDepth => "Depth",
         Prop::PoolLiquid => "Liquid",
         Prop::PoolWaves => "Waves",
         Prop::PoolDeep => "Deep",
@@ -1575,6 +1579,7 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::OceanClarity => Value::Color(world.get::<Ocean>(entity)?.clarity.map(round3)),
         Prop::OceanMurk => Value::Number(world.get::<Ocean>(entity)?.murk),
         Prop::PoolSize => Value::Vector(world.get::<Pool>(entity)?.size.to_vec()),
+        Prop::PoolDepth => Value::Number(world.get::<Pool>(entity)?.depth),
         Prop::PoolLiquid => {
             let liquid = world.get::<Pool>(entity)?.liquid;
             let index = Liquid::ALL.iter().position(|l| *l == liquid).unwrap_or(0);
@@ -2340,6 +2345,7 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         (Prop::PoolSize, Value::Vector(v)) if v.len() == 2 => {
             with(world, entity, |p: &mut Pool| p.size = [v[0].max(0.1), v[1].max(0.1)])
         }
+        (Prop::PoolDepth, Value::Number(n)) => with(world, entity, |p: &mut Pool| p.depth = n.max(0.01)),
         (Prop::PoolLiquid, Value::Choice(index, _)) => {
             let liquid = Liquid::ALL.get(index).copied().unwrap_or_default();
             with(world, entity, |p: &mut Pool| p.liquid = liquid)

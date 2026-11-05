@@ -131,7 +131,8 @@ mod tests {
         world.spawn((Pool { size: [4.0, 4.0], ..Pool::default() }, Transform::from_position(Vec3::new(-20.0, 6.0, 0.0))));
         update(&mut world, 1.0);
         assert!(sample(&world, Vec3::new(20.0, 0.0, 0.5)).is_none(), "inside the hull it is dry");
-        assert_eq!(sample(&world, Vec3::new(-19.0, 0.0, 1.0)).map(|w| w.height), Some(6.0), "the pool's surface");
+        assert_eq!(sample(&world, Vec3::new(-19.0, 4.0, 1.0)).map(|w| w.height), Some(6.0), "the pool's surface");
+        assert!(sample(&world, Vec3::new(-19.0, 0.0, 1.0)).is_some_and(|w| w.height != 6.0), "under its bottom, the sea's");
         assert!(sample(&world, Vec3::new(0.0, 0.0, 0.0)).is_some(), "the sea elsewhere");
     }
 }

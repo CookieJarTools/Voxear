@@ -107,6 +107,9 @@ pub struct Water {
     copy_texture: TextureId,
     copy_mips: Vec<StorageImageId>,
     depth_copy: ImageId,
+    /// A copy of the picture and depth again after the sea, for the Pools
+    /// drawn over it, when there are any.
+    second: Option<(ImageId, TextureId, Vec<StorageImageId>, ImageId)>,
     size: [u32; 2],
     pub frame: GpuOcean,
     /// Whether the sea is drawn, how many Pools, and how many bodies in
@@ -156,6 +159,15 @@ impl Water {
         let copy = fg.create_image(gpu, bindless, "water copy", copy_desc)?;
         let depth_desc = ImageDesc::new(extent.width, extent.height, vk::Format::R32_SFLOAT, usage);
         let depth_copy = fg.create_image(gpu, bindless, "water depth copy", depth_desc)?;
+        let second = match bodies.pools > 0 {
+            true => {
+                let copy = fg.create_image(gpu, bindless, "pool copy", copy_desc)?;
+                let depth = fg.create_image(gpu, bindless, "pool depth copy", depth_desc)?;
+                let mips = (0..copy_desc.mip_levels as usize).map(|mip| fg.storage(copy, mip)).collect();
+                Some((copy, fg.texture(copy), mips, depth))
+            }
+            false => None,
+        };
 
         let linear = |srgb: [f32; 3]| srgb.map(|c| if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) });
         let absorb = linear(ocean.clarity).map(|t| -t.max(1e-3).ln() * ocean.murk.max(0.0));
@@ -187,6 +199,7 @@ impl Water {
             copy_texture: fg.texture(copy),
             copy_mips: (0..copy_desc.mip_levels as usize).map(|mip| fg.storage(copy, mip)).collect(),
             depth_copy,
+            second,
             size: [extent.width, extent.height],
             frame,
             sea: found.is_some(),
@@ -227,7 +240,7 @@ fn compute_barrier(ctx: &crate::graph::PassContext) {
 /// Records the sea's waves (the FFT, then the mips), then its surface over
 /// a copy of the picture and the depth so far.
 pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), water: Water, targets: WaterTargets) {
-    let Water { displacement, slopes, previous, fft, copy, copy_texture, copy_mips, depth_copy, size, sea, pools, bodies, .. } = water;
+    let Water { displacement, slopes, previous, fft, copy, copy_texture, copy_mips, depth_copy, second, size, sea, pools, bodies, .. } = water;
     let storage = |fg: &mut FrameGraph<'_>, images: &[ImageId; CASCADES]| -> Vec<Vec<StorageImageId>> {
         images.iter().map(|&image| (0..WAVE_MIPS as usize).map(|mip| fg.storage(image, mip)).collect()).collect()
     };
@@ -274,7 +287,48 @@ pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), wat
     });
 
     let WaterTargets { hdr, velocity, depth, sampled } = targets;
-    crate::glass::record_copy(fg, (pipelines, push), (hdr, copy, copy_texture), &copy_mips, size);
+    let waves: Vec<ImageId> = displacement.iter().chain(&slopes).chain(&previous).copied().collect();
+    let layer = Layer { hdr, velocity, depth, sampled, waves, size };
+    // The sea and the walls round its Dry Areas, over a copy of the picture so far.
+    let dries = bodies - pools;
+    let draws = Draws { sea, pools: 0, walls: (pools, dries) };
+    record_layer(fg, (pipelines, push), &layer, (copy, copy_texture, &copy_mips, depth_copy), draws);
+    // The Pools and their walls over a copy made after the sea, so the sea shows through them.
+    if let Some((copy, copy_texture, copy_mips, depth_copy)) = second {
+        let draws = Draws { sea: false, pools, walls: (0, pools) };
+        record_layer(fg, (pipelines, push), &layer, (copy, copy_texture, &copy_mips, depth_copy), draws);
+    }
+}
+
+/// What a layer of water draws into and reads.
+struct Layer {
+    hdr: ImageId,
+    velocity: ImageId,
+    depth: ImageId,
+    sampled: Vec<ImageId>,
+    waves: Vec<ImageId>,
+    size: [u32; 2],
+}
+
+/// What a layer of water draws: the sea, how many Pools, and the walls of
+/// the bodies from the first given, how many.
+#[derive(Clone, Copy)]
+struct Draws {
+    sea: bool,
+    pools: u32,
+    walls: (u32, u32),
+}
+
+/// Copies the picture and its depth, then draws a layer of water over them.
+fn record_layer(
+    fg: &mut FrameGraph<'_>,
+    (pipelines, push): (Pipelines, Push),
+    layer: &Layer,
+    (copy, copy_texture, copy_mips, depth_copy): (ImageId, TextureId, &[StorageImageId], ImageId),
+    draws: Draws,
+) {
+    let Layer { hdr, velocity, depth, size, .. } = *layer;
+    crate::glass::record_copy(fg, (pipelines, push), (hdr, copy, copy_texture), copy_mips, size);
     let depth_storage = fg.storage(depth_copy, 0);
     let depth_texture = fg.texture(depth);
     let depth_copy_texture = fg.texture(depth_copy);
@@ -292,8 +346,8 @@ pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), wat
         (copy, ImageAccess::Sampled),
         (depth_copy, ImageAccess::Sampled),
     ];
-    images.extend(displacement.iter().chain(&slopes).chain(&previous).map(|&image| (image, ImageAccess::Sampled)));
-    images.extend(sampled.iter().map(|&image| (image, ImageAccess::Sampled)));
+    images.extend(layer.waves.iter().map(|&image| (image, ImageAccess::Sampled)));
+    images.extend(layer.sampled.iter().map(|&image| (image, ImageAccess::Sampled)));
     let extent = vk::Extent2D { width: size[0], height: size[1] };
     let push = Push { texture: copy_texture.0, textures: [0, depth_copy_texture.0, 0, 0], ..push };
     fg.add_pass("Water", &images, &[], move |ctx| {
@@ -303,18 +357,19 @@ pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), wat
         ];
         let depth = attachment(ctx.view(depth), vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL, None);
         begin_rendering(ctx, extent, &color, Some(&depth));
-        if sea {
+        if draws.sea {
             bind(ctx, pipelines.water, vk::PipelineBindPoint::GRAPHICS, &push);
             unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, QUADS * QUADS * 6, RINGS, 0, 0) };
         }
-        if pools > 0 {
+        if draws.pools > 0 {
             bind(ctx, pipelines.water_pool, vk::PipelineBindPoint::GRAPHICS, &push);
-            unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, POOL_QUADS * POOL_QUADS * 6, pools, 0, 0) };
+            unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, POOL_QUADS * POOL_QUADS * 6, draws.pools, 0, 0) };
         }
-        // Each body's walls of water: six faces of its box.
-        if bodies > 0 {
-            bind(ctx, pipelines.water_wall, vk::PipelineBindPoint::GRAPHICS, &push);
-            unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, 36, bodies, 0, 0) };
+        // Walls of water: six faces of each body's box.
+        let (first, count) = draws.walls;
+        if count > 0 {
+            bind(ctx, pipelines.water_wall, vk::PipelineBindPoint::GRAPHICS, &Push { list: first, ..push });
+            unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, 36, count, 0, 0) };
         }
         unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
     });

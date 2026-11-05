@@ -3611,20 +3611,16 @@ fn a_dry_area_keeps_the_sea_out_and_a_pool_holds_water_above_it() {
     world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
     world.insert_resource(Sky { ambient: 0.6, ..Sky::default() });
     let plane = renderer.primitive(Primitive::Plane).unwrap();
-    let cube = renderer.primitive(Primitive::Cube).unwrap();
     let sand = MaterialDesc { base_color: [0.76, 0.66, 0.48, 1.0], roughness: 0.9, ..MaterialDesc::default() };
     let sand = renderer.add_material(&sand).unwrap();
-    let rock = MaterialDesc { base_color: [0.4, 0.38, 0.36, 1.0], roughness: 0.9, ..MaterialDesc::default() };
-    let rock = renderer.add_material(&rock).unwrap();
     world.spawn((MeshRenderer::new(plane, sand), Transform::new(Vec3::new(0.0, -3.0, 0.0), Quat::IDENTITY, Vec3::splat(200.0))));
     world.spawn((Ocean { weather: Weather::Calm, ..Ocean::default() }, Transform::default()));
     // Down past the floor, so the hole is dry to the sand.
     let hole = Vec3::new(-4.0, 0.0, 6.0);
     world.spawn((DryArea { size: [3.0, 8.0, 7.0], ..DryArea::default() }, Transform::from_position(hole)));
-    // A block standing two metres out of the sea, a pool a metre deep on top of it.
-    world.spawn((MeshRenderer::new(cube, rock), Transform::new(Vec3::new(5.0, -1.0, 8.0), Quat::IDENTITY, Vec3::new(8.0, 4.0, 8.0))));
-    let pond = Vec3::new(5.0, 2.0, 8.0);
-    world.spawn((Pool { size: [6.0, 6.0], waves: 0.0, ..Pool::default() }, Transform::from_position(pond)));
+    // A block of water raised over the sea, three metres deep, standing on nothing.
+    let pond = Vec3::new(5.0, 4.0, 8.0);
+    world.spawn((Pool { size: [6.0, 6.0], depth: 3.0, ..Pool::default() }, Transform::from_position(pond)));
     run(&mut renderer, &world, &mut 10.0, 20);
     let pixels = renderer.read_pixels().unwrap().2;
     keep_image("water bodies.png", &pixels);
@@ -3636,7 +3632,9 @@ fn a_dry_area_keeps_the_sea_out_and_a_pool_holds_water_above_it() {
     assert!(wall[1] > wall[0] + 15, "a wall of water at the hole's far end: {wall:?}");
     let sea = patch_rgb(&pixels, on_screen(eye, look, hole + Vec3::new(4.0, 0.0, -1.0)), 3);
     assert!(sea[2] > sea[0], "the sea beside it: {sea:?}");
-    // On the block, the pool's water: greener and bluer than the grey rock round it.
+    // The pool's water, raised over the sea, and its side seen down to its bottom, against the sky behind.
     let water = patch_rgb(&pixels, on_screen(eye, look, pond), 3);
-    assert!(water[1] > water[0] + 10, "the pool's water on the block: {water:?}");
+    assert!(water[1] > water[0] + 10, "the pool's water: {water:?}");
+    let side = patch_rgb(&pixels, on_screen(eye, look, pond + Vec3::new(0.0, -2.0, -3.0)), 2);
+    assert!(side[1] > side[0] + 10, "the pool's side, a wall of water: {side:?}");
 }

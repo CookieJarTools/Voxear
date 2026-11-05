@@ -223,17 +223,27 @@ float2 cascadeUv(Frame* frame, uint cascade, float2 rest)
     return rest / frame->ocean.sizes[cascade] + 0.5 / float(OCEAN_N);
 }
 
+// How much of cascade `cascade` water has whose `swell` says how much of
+// the sea's long waves it takes: a Pool has the short waves and ripples
+// always, so raised or lowered it moves as the sea round it does.
+float cascadeShare(uint cascade, float swell)
+{
+    return cascade >= 2 ? 1.0 : swell;
+}
+
 // How far the waves move the water resting at `rest`, sampled as coarsely
 // as the grid there is `spacing` metres apart, so waves shorter than it do
-// not alias; last frame's with `previous`.
-float3 oceanMoved(Frame* frame, float2 rest, float spacing, bool previous)
+// not alias; last frame's with `previous`; with as much of the long swell
+// as `swell` says.
+float3 oceanMoved(Frame* frame, float2 rest, float spacing, bool previous, float swell = 1.0)
 {
     float3 moved = 0.0;
     for (uint c = 0; c < OCEAN_CASCADES; c++)
     {
         uint image = previous ? frame->ocean.previous[c] : frame->ocean.displacement[c];
         float mip = max(log2(spacing / (frame->ocean.sizes[c] / float(OCEAN_N))), 0.0);
-        moved += textures[NonUniformResourceIndex(image)].SampleLevel(samplers[SAMPLER_LINEAR_REPEAT], cascadeUv(frame, c, rest), mip).xyz;
+        float3 d = textures[NonUniformResourceIndex(image)].SampleLevel(samplers[SAMPLER_LINEAR_REPEAT], cascadeUv(frame, c, rest), mip).xyz;
+        moved += d * cascadeShare(c, swell);
     }
     return moved;
 }
@@ -309,8 +319,8 @@ WaterOut poolVertex(uint vertexId : SV_VertexID, uint pool : SV_InstanceID)
     float2 across = (float2(grid) / float(POOL_QUADS) - 0.5) * body.size.xz;
     float3 flat = transform(body.toWorld, float4(across.x, 0.0, across.y, 1.0)).xyz;
     float spacing = max(body.size.x, body.size.z) / float(POOL_QUADS);
-    float3 world = flat + oceanMoved(frame, flat.xz, spacing, false) * body.waves;
-    float3 before = flat + oceanMoved(frame, flat.xz, spacing, true) * body.waves;
+    float3 world = flat + oceanMoved(frame, flat.xz, spacing, false, body.waves);
+    float3 before = flat + oceanMoved(frame, flat.xz, spacing, true, body.waves);
     WaterOut o;
     o.position = transform(frame->viewProj, float4(world, 1.0));
     o.world = world;
@@ -319,6 +329,20 @@ WaterOut poolVertex(uint vertexId : SV_VertexID, uint pool : SV_InstanceID)
     o.previousClip = transform(frame->prevViewProj, float4(before, 1.0));
     o.body = pool;
     return o;
+}
+
+// How far a view from `world` away from the camera (along -`v`) goes
+// through Pool `pool`'s water before it leaves its box: out of its sides or
+// its bottom.
+float poolExit(WaterBody pool, float3 world, float3 v)
+{
+    float3 origin = transform(pool.toLocal, float4(world, 1.0)).xyz;
+    float3 way = transform(pool.toLocal, float4(-v, 0.0)).xyz;
+    float3 low = float3(-pool.size.x * 0.5, -pool.size.y, -pool.size.z * 0.5);
+    float3 high = float3(pool.size.x * 0.5, 1e4, pool.size.z * 0.5);
+    float3 inverse = 1.0 / (abs(way) > 1e-6 ? way : 1e-6);
+    float3 far = max((low - origin) * inverse, (high - origin) * inverse);
+    return max(min(far.x, min(far.y, far.z)), 0.0);
 }
 
 // How far `world` is outside Dry Area `body`, negative inside.
@@ -419,11 +443,12 @@ FragmentOut waterFragment(WaterOut input)
         float2 uv = cascadeUv(frame, c, rest);
         float4 s = textures[NonUniformResourceIndex(frame->ocean.slopes[c])].Sample(samplers[SAMPLER_LINEAR_REPEAT], uv);
         float4 d = textures[NonUniformResourceIndex(frame->ocean.displacement[c])].Sample(samplers[SAMPLER_LINEAR_REPEAT], uv);
-        slope += s.xy * waves;
+        float share = cascadeShare(c, waves);
+        slope += s.xy * share;
         // The slopes the mips averaged away, too small to see here, as roughness (Atlas).
-        variance += (max(s.z - s.x * s.x, 0.0) + max(s.w - s.y * s.y, 0.0)) * waves * waves;
-        folded += (d.w - 1.0) * waves;
-        moved += d.xyz * waves;
+        variance += (max(s.z - s.x * s.x, 0.0) + max(s.w - s.y * s.y, 0.0)) * share * share;
+        folded += (d.w - 1.0) * share;
+        moved += d.xyz * share;
     }
     float3 n = normalize(float3(-slope.x, 1.0, -slope.y));
     float3 v = normalize(frame->cameraPosition - input.world);
@@ -452,7 +477,7 @@ FragmentOut waterFragment(WaterOut input)
 
     // The water's own colour (Sea of Thieves, Atlas): deep blue lit by the sky, and the scatter colour where the
     // sun shines through the thin top of a wave towards the eye.
-    float height = max(frame->ocean.waveHeight * waves, 0.02);
+    float height = max(frame->ocean.waveHeight * max(waves, 0.2), 0.05);
     float crest = saturate(moved.y / (height * 0.5)) + saturate(length(moved.xz) / height) * 0.5;
     float towards = pow(saturate(dot(l, -v)), 4.0) * pow(saturate(0.5 - 0.5 * dot(l, n)), 3.0);
     float3 throughWave = (1.5 * crest * towards + 0.12 * pow(saturate(dot(v, n)), 2.0) + 0.04 * saturate(dot(l, n))) * scatter * sunLight * shadow;
@@ -465,6 +490,8 @@ FragmentOut waterFragment(WaterOut input)
     float sceneDepth = behindDepth > 0.0 ? frame->near / behindDepth : 1e4;
     float along = max(dot(-v, frame->cameraForward), 0.05);
     float thickness = max(sceneDepth - surfaceDepth, 0.0) / along;
+    // A Pool's water ends at its sides and bottom, whatever lies past them.
+    thickness = sea ? thickness : min(thickness, poolExit(pool, input.world, v));
     float3 through = exp(-absorb * thickness);
     float2 bend = n.xz * 0.04 * saturate(thickness);
     float blur = sqrt(s.roughness) * 2.0 + log2(1.0 + thickness * 0.5);
@@ -475,7 +502,7 @@ FragmentOut waterFragment(WaterOut input)
     // Foam where a crest folds over, and where the water thins at a shore, in bubbles drifting with the waves.
     // Only where the water folds hard does a crest break: a calm sea's gentle folding stays clear.
     float threshold = 0.4 + 0.45 * frame->ocean.foam;
-    float breaking = frame->ocean.foam > 0.0 && sea ? saturate((threshold - folded) / 0.3) : 0.0;
+    float breaking = frame->ocean.foam > 0.0 ? saturate((threshold - folded) / 0.3) : 0.0;
     float shore = saturate(1.0 - thickness / 0.6);
     float lace = waterCells(rest * 1.3 + moved.xz * 0.5) * 0.7 + waterCells(rest * 4.1) * 0.3;
     float foam = saturate((max(breaking, shore) * 1.4 - lace) * 4.0);
@@ -506,14 +533,28 @@ struct WallOut
     nointerpolation uint body : BODY;
 };
 
+WallOut nothingWall()
+{
+    WallOut o;
+    o.position = float4(2.0, 2.0, 0.5, 1.0);
+    o.world = 0.0;
+    o.normal = float3(0.0, 1.0, 0.0);
+    o.currentClip = o.position;
+    o.previousClip = o.position;
+    o.body = 0;
+    return o;
+}
+
 // A corner of a face of body `body`'s box: a Dry Area's box, whose inside
 // faces show the water round it, as a parted sea's walls; or a Pool's,
-// from just over its surface down a long way, the ground hiding what is
-// under it, whose outside faces show the water in it from the side.
+// from just over its surface down as deep as it is, whose outside faces
+// and bottom show the water in it from the side and from below.
 [shader("vertex")]
-WallOut wallVertex(uint vertexId : SV_VertexID, uint body : SV_InstanceID)
+WallOut wallVertex(uint vertexId : SV_VertexID, uint instance : SV_InstanceID)
 {
     Frame* frame = push.frame;
+    // The bodies drawn start at push.list: the Dry Areas with the sea, the Pools after it.
+    uint body = push.list + instance;
     // Each face's normal and two edges, then its two triangles' corners.
     static const float3 normals[6] = { float3(1, 0, 0), float3(-1, 0, 0), float3(0, 1, 0), float3(0, -1, 0), float3(0, 0, 1), float3(0, 0, -1) };
     static const float3 us[6] = { float3(0, 0, 1), float3(0, 0, -1), float3(1, 0, 0), float3(1, 0, 0), float3(-1, 0, 0), float3(1, 0, 0) };
@@ -529,9 +570,14 @@ WallOut wallVertex(uint vertexId : SV_VertexID, uint body : SV_InstanceID)
     float3 centre;
     if (water.kind == WATER_POOL)
     {
-        // From a little over its surface, past its highest ripples, a hundred metres down.
-        half = float3(water.size.x * 0.5, 50.5, water.size.z * 0.5);
-        centre = float3(0.0, -50.0, 0.0);
+        // From a little over its surface, past its highest ripples, down as deep as it is; no lid.
+        if (face == 2)
+        {
+            return nothingWall();
+        }
+        float depth = water.size.y;
+        half = float3(water.size.x * 0.5, (depth + 0.5) * 0.5, water.size.z * 0.5);
+        centre = float3(0.0, (0.5 - depth) * 0.5, 0.0);
     }
     else
     {
@@ -555,7 +601,7 @@ float wallSurface(Frame* frame, WaterBody water, float3 world)
 {
     if (water.kind == WATER_POOL)
     {
-        return water.toWorld.c3.y + oceanMoved(frame, world.xz, 0.25, false).y * water.waves;
+        return water.toWorld.c3.y + oceanMoved(frame, world.xz, 0.25, false, water.waves).y;
     }
     return frame->ocean.level + oceanMoved(frame, world.xz, 0.25, false).y;
 }
@@ -592,6 +638,7 @@ FragmentOut wallFragment(WallOut input)
     float sceneDepth = behindDepth > 0.0 ? frame->near / behindDepth : 1e4;
     float along = max(dot(-v, frame->cameraForward), 0.05);
     float thickness = max(sceneDepth - wallDepth, 0.0) / along;
+    thickness = pool ? min(thickness, poolExit(water, input.world, v)) : thickness;
     float3 through = exp(-absorb * thickness);
     float3 behind = thickness < 1e3 ? glassBehind(push.texture, pixel / float2(frame->viewport), log2(1.0 + thickness * 0.3)) : 0.0;
 

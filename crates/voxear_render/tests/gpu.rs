@@ -2801,6 +2801,52 @@ fn glass_shows_through_glass() {
     assert!(apart < 25, "and shows through the clear pane: {through:?} for {alone:?}");
 }
 
+/// A green glass ball behind a large frosted pane turned across the view,
+/// the ball's middle nearer the camera than the pane's.
+fn ball_behind_frosted_render() -> Option<Vec<u8>> {
+    use voxear_render::Sky;
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 1.5, 0.0))));
+    let plane = renderer.primitive(Primitive::Plane).unwrap();
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let sphere = renderer.primitive(Primitive::Sphere).unwrap();
+    let pale = MaterialDesc { base_color: [0.6, 0.6, 0.6, 1.0], ..MaterialDesc::default() };
+    let pale = renderer.add_material(&pale).unwrap();
+    world.spawn((MeshRenderer::new(plane, pale), Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(40.0))));
+    let frosted = renderer.add_material(&MaterialDesc { roughness: 0.8, ..clear_glass() }).unwrap();
+    let green = renderer.add_material(&MaterialDesc { base_color: [0.1, 1.0, 0.1, 1.0], ..clear_glass() }).unwrap();
+    // From (-2, 1.5) to (10, 7.5) across the floor, its middle six metres off; the ball four and a half off, behind
+    // it, as the pane passes two and a half off in front of the camera.
+    let across = Vec3::new(12.0, 0.0, 6.0);
+    let turn = Quat::from_rotation_arc(Vec3::X, across.normalize());
+    let pane = Transform::new(Vec3::new(4.0, 1.5, 4.5), turn, Vec3::new(across.length(), 3.0, 0.02));
+    world.spawn((MeshRenderer::new(cube, frosted), pane));
+    world.spawn((MeshRenderer::new(sphere, green), Transform::new(BALL_BEHIND, Quat::IDENTITY, Vec3::splat(0.6))));
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.3, -0.6, 1.0).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky::default());
+    let mut post = steady_post();
+    post.ambient_occlusion.enabled = false;
+    post.contact_shadows.enabled = false;
+    world.insert_resource(post);
+    run(&mut renderer, &world, &mut 0.0, 4);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+const BALL_BEHIND: Vec3 = Vec3::new(0.0, 1.5, 4.5);
+
+#[test]
+fn glass_behind_frosted_glass_shows_blurred_through_it() {
+    let Some(pixels) = ball_behind_frosted_render() else { return };
+    keep_image("ball behind frosted glass.png", &pixels);
+    // The ball is straight ahead, in the middle of the picture; how sharply its green ends a little out from it.
+    let (inside, outside) = (patch_rgb(&pixels, (320, 180), 3), patch_rgb(&pixels, (320 + 40, 180), 3));
+    let greener = |rgb: [i32; 3]| rgb[1] - (rgb[0] + rgb[2]) / 2;
+    let edge = greener(inside) - greener(outside);
+    assert!(edge < 25, "seen through the frosted pane, not drawn over it: {inside:?} against {outside:?}");
+}
+
 /// A floor in the sun, seen from above and in front, with a pane of glass
 /// standing two metres wide across the sun's light, or none: the floor
 /// where the light comes through the pane is in view, the pane itself is

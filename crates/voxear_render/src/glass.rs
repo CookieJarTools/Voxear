@@ -70,14 +70,23 @@ pub struct Pane {
 }
 
 /// Moves the glass instances, and the entities beside them, after the rest,
-/// the farthest from the camera first, and returns how many are not glass.
+/// the farthest from the camera first, by the nearest point of each, and
+/// returns how many are not glass.
 pub fn sort_last<T>(instances: &mut Vec<GpuInstance>, entities: &mut Vec<T>, camera: Vec3, assets: &Assets) -> usize {
     let glass = |instance: &GpuInstance| assets.is_glass(MaterialHandle(instance.material));
     if !instances.iter().any(glass) {
         return instances.len();
     }
-    let distance =
-        |instance: &GpuInstance| Mat4::from_cols_array_2d(&instance.model).w_axis.truncate().distance(camera);
+    // To the nearest point of each pane's box, not its middle: a large pane turned to the view has its middle
+    // farther than a ball standing behind it, which was then drawn over the pane, flashing through frosted glass.
+    let distance = |instance: &GpuInstance| {
+        let model = Mat4::from_cols_array_2d(&instance.model);
+        let Some((low, high)) = assets.mesh_bounds(MeshHandle(instance.mesh)) else {
+            return model.w_axis.truncate().distance(camera);
+        };
+        let nearest = model.inverse().transform_point3(camera).clamp(low, high);
+        model.transform_point3(nearest).distance(camera)
+    };
     let mut order: Vec<usize> = (0..instances.len()).collect();
     // Opaque first, in the order they came; then glass, farthest first.
     order.sort_by(|&a, &b| {

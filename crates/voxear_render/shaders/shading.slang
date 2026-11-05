@@ -529,6 +529,115 @@ float3 localLights(Frame* frame, Surface s, float3 position, float2 pixel)
     return color;
 }
 
+// How far `world` is outside Dry Area `body`, negative inside.
+float dryDistance(WaterBody body, float3 world)
+{
+    float3 local = transform(body.toLocal, float4(world, 1.0)).xyz;
+    float3 half = body.size * 0.5;
+    if (body.shape == DRY_SPHERE)
+    {
+        return length(local) - half.x;
+    }
+    if (body.shape == DRY_CAPSULE)
+    {
+        float reach = max(half.y - half.x, 0.0);
+        return length(local - float3(0.0, clamp(local.y, -reach, reach), 0.0)) - half.x;
+    }
+    float3 q = abs(local) - half;
+    return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0);
+}
+
+// The water whose surface is over or under `world`: how high that surface
+// is and how fast its water takes each colour, a metre; the sea at its
+// level, or a Pool over its footprint above its bottom, not in a Dry Area.
+// False where there is none.
+bool waterSurface(Frame* frame, float3 world, out float surface, out float3 absorb)
+{
+    surface = -1e9;
+    absorb = frame->ocean.absorb;
+    if (frame->ocean.enabled == 0 && frame->ocean.pools == 0)
+    {
+        return false;
+    }
+    uint pools = frame->ocean.pools;
+    for (uint i = pools; i < pools + frame->ocean.dries; i++)
+    {
+        if (dryDistance(buffers()->waterBodies[i], world) < 0.0)
+        {
+            return false;
+        }
+    }
+    if (frame->ocean.enabled != 0)
+    {
+        surface = frame->ocean.level;
+    }
+    for (uint i = 0; i < pools; i++)
+    {
+        WaterBody pool = buffers()->waterBodies[i];
+        float3 local = transform(pool.toLocal, float4(world, 1.0)).xyz;
+        if (all(abs(local.xz) <= pool.size.xz * 0.5) && local.y > -pool.size.y)
+        {
+            surface = pool.toWorld.c3.y;
+            absorb = pool.absorb;
+        }
+    }
+    return surface > -1e8;
+}
+
+// The water over `world`, if it is under any (see waterSurface).
+bool waterOver(Frame* frame, float3 world, out float surface, out float3 absorb)
+{
+    if (!waterSurface(frame, world, surface, absorb))
+    {
+        return false;
+    }
+    return world.y < surface;
+}
+
+// Caustics: the sun's light focused and spread by the waves over it, a
+// moving web of bright lines: three waves of light crossing at angles, each
+// bent by the others, bright where they meet; from 0 to about 1. (Slang
+// stops on Dave Hoskins' iterated web inside the ray-traced GI module.)
+float causticWeb(float2 p, float time)
+{
+    float2 q = p * 6.2831853;
+    float a = sin(q.x + sin(q.y * 0.9 + time) * 1.3 + time * 0.7);
+    float b = sin(q.y * 1.1 + sin(q.x * 1.2 - time * 0.8) * 1.4 - time * 0.6);
+    float c = sin((q.x + q.y) * 0.75 + sin(q.x * 0.6 - q.y * 0.7 + time) * 1.1 + time * 0.5);
+    float lines = (1.0 - abs(a)) + (1.0 - abs(b)) + (1.0 - abs(c));
+    return pow(saturate(lines / 3.0), 6.0) * 2.5;
+}
+
+// How much of the sun reaches `world` under water: dimmed a colour at a
+// time by the water it comes down through, and broken into caustics, which
+// blur away with depth; and in `sky`, how much of the sky's light does. One
+// out of water. `time` moves the caustics (passed in: read from the frame
+// here, Slang stops with an internal error in the ray-traced GI module).
+float3 underwaterSun(Frame* frame, float3 world, float time, out float3 sky)
+{
+    sky = 1.0;
+#ifdef NO_UNDERWATER_LIGHT
+    return 1.0;
+#else
+    float surface;
+    float3 absorb;
+    if (!waterOver(frame, world, surface, absorb))
+    {
+        return 1.0;
+    }
+    float depth = surface - world.y;
+    float3 sunDown = -frame->sunDirection;
+    float slant = max(sunDown.y, 0.2);
+    sky = exp(-absorb * depth * 0.6);
+    // The web cast along the sun, a few metres across, moving with time.
+    float2 cast = world.xz + sunDown.xz / slant * depth;
+    float web = causticWeb(cast / 3.5, time * 0.45) + causticWeb(cast / 2.1 + 3.7, time * 0.31) * 0.5;
+    float focus = saturate(depth / 0.4) * exp(-depth / 15.0);
+    float caustic = lerp(1.0, 0.3 + web * 2.6, focus);
+    return exp(-absorb * depth / slant) * caustic;
+#endif
+}
+
 // A custom shader's surface, from the standard one's: the material's
 // colour, normal, metallic, roughness and emission; `thickness` as glass
 // sees through it, or SOLID_THICKNESS.
@@ -627,6 +736,9 @@ FragmentOut fragmentMain(VertexOut input)
     float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
     float3 sunThrough = sunLight * sunCookieAt(frame, input.worldPosition);
     sunThrough *= glassSun(frame, input.worldPosition, s.normal);
+    // Under water, the sun comes down through it in caustics, and the sky's light is dimmed.
+    float3 skyUnder;
+    sunThrough *= underwaterSun(frame, input.worldPosition, frame->time, skyUnder);
     float3 color = shade(s, -frame->sunDirection, sunThrough) * shadow;
     if (customLit)
     {
@@ -664,7 +776,7 @@ FragmentOut fragmentMain(VertexOut input)
     // The bounced light where the mesh has the surface, as the rays that gather it see it: moved by its vertex
     // function, as a wave's trough below the flat sheet the rays know, it read the probes under the sheet, in the dark.
     float3 lightAt = input.worldPosition - input.moved;
-    float3 ambient = ambientLight(frame, lightAt, s, sunLight, atmosphere);
+    float3 ambient = ambientLight(frame, lightAt, s, sunLight, atmosphere) * skyUnder;
     float nv = saturate(dot(s.normal, s.view));
     float3 ambientFresnel = s.f0 + (max(float3(1.0 - s.roughness), s.f0) - s.f0) * pow(1.0 - nv, 5.0);
     Occlusion occlusion = ambientOcclusion(frame, input.position.xy, nv, s.roughness);

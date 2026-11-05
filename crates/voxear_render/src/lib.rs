@@ -1667,6 +1667,10 @@ impl View {
         let extent = vk::Extent2D { width: extracted.render_size.0, height: extracted.render_size.1 };
         // Every Foliage's plants within their draw distance, as instances of their own.
         let camera = voxear_core::math::Vec3::from(extracted.frame.camera_position);
+        // Under the sea the air's fog is left out: the water's own takes its place (see `water`).
+        if extracted.ocean.is_some_and(|(_, level, _)| camera.y < level) {
+            extracted.post.fog.enabled = false;
+        }
         self.foliage.gather(world, camera, &mut extracted, &|mesh| assets.mesh_sphere(mesh), &assets.impostors);
         if extracted.instances.len() > MAX_INSTANCES as usize && !std::mem::replace(&mut self.warned_instances, true) {
             let count = extracted.instances.len();

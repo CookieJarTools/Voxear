@@ -345,24 +345,6 @@ float poolExit(WaterBody pool, float3 world, float3 v)
     return max(min(far.x, min(far.y, far.z)), 0.0);
 }
 
-// How far `world` is outside Dry Area `body`, negative inside.
-float dryDistance(WaterBody body, float3 world)
-{
-    float3 local = transform(body.toLocal, float4(world, 1.0)).xyz;
-    float3 half = body.size * 0.5;
-    if (body.shape == DRY_SPHERE)
-    {
-        return length(local) - half.x;
-    }
-    if (body.shape == DRY_CAPSULE)
-    {
-        float reach = max(half.y - half.x, 0.0);
-        return length(local - float3(0.0, clamp(local.y, -reach, reach), 0.0)) - half.x;
-    }
-    float3 q = abs(local) - half;
-    return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0);
-}
-
 // Whether water drawn at `world` is kept out: inside a Dry Area; and, for
 // the sea, over a Pool lower than it, which is dry to the sea.
 bool keptDry(Frame* frame, float3 world, uint body)
@@ -411,6 +393,61 @@ float waterCells(float2 p)
     return sqrt(nearest);
 }
 
+// Whether the camera is under the water's surface over it: the sea's, waves
+// and all, or a Pool's.
+bool cameraUnderwater(Frame* frame)
+{
+    float3 camera = frame->cameraPosition;
+    float surface;
+    float3 absorb;
+    if (!waterSurface(frame, camera, surface, absorb))
+    {
+        return false;
+    }
+    if (frame->ocean.enabled != 0 && surface == frame->ocean.level)
+    {
+        surface += oceanMoved(frame, camera.xz, 0.05, false).y;
+    }
+    return camera.y < surface;
+}
+
+// The surface seen from under the water: inside Snell's window, the sky
+// above bent through it; outside it, past the critical angle of 48.6°, the
+// water below mirrored, as total internal reflection does; the under-water
+// pass fogs it by how far it is.
+FragmentOut fromBelow(Frame* frame, WaterOut input, float3 n, float3 v, float3 deep, float3 scatter, float3 absorb)
+{
+    float3 down = -n;
+    float cosine = saturate(dot(down, v));
+    float sine = 1.33 * sqrt(1.0 - cosine * cosine);
+    bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
+    float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
+    Surface s;
+    s.normal = float3(0.0, 1.0, 0.0);
+    s.view = v;
+    s.roughness = 1.0;
+    s.diffuse = 0.0;
+    s.f0 = 0.02;
+    float3 ambient = ambientLight(frame, input.world, s, sunLight, atmosphere);
+    float3 water = deep * ambient + scatter * sunLight * 0.04;
+    float3 color = water;
+    if (sine < 1.0)
+    {
+        float3 bent = refract(-v, down, 1.33);
+        float3 sky = surroundingsReflection(frame, input.world, n, bent, 0.05, ambient, atmosphere);
+        // The sun's disc through the window, where the bent view meets it.
+        sky += sunLight * pow(saturate(dot(bent, -frame->sunDirection)), 800.0) * 40.0;
+        // Reflecting more towards the window's edge, wholly past it.
+        float edge = pow(saturate(sine), 6.0);
+        float fresnel = lerp(0.02 + 0.98 * pow(1.0 - cosine, 5.0), 1.0, edge);
+        color = lerp(sky, water, fresnel);
+    }
+    FragmentOut o;
+    o.color = float4(color, 1.0);
+    o.velocity = motion(input.currentClip, input.previousClip);
+    return o;
+}
+
 // The sea's surface: what lies under it, seen through it, bent by its
 // waves and lost a colour at a time with depth (push.texture the picture
 // behind it with mips, push.textures.y the depth behind it); the water's
@@ -452,8 +489,11 @@ FragmentOut waterFragment(WaterOut input)
     }
     float3 n = normalize(float3(-slope.x, 1.0, -slope.y));
     float3 v = normalize(frame->cameraPosition - input.world);
-    // Seen from below, the surface faces down.
-    n = dot(n, v) < 0.0 && v.y < 0.0 ? -n : n;
+    // From under the water the surface shows its underside; from the air, a wave above the camera its front.
+    if (cameraUnderwater(frame))
+    {
+        return fromBelow(frame, input, n, v, deep, scatter, absorb);
+    }
     float3 l = -frame->sunDirection;
     bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
     float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
@@ -494,7 +534,8 @@ FragmentOut waterFragment(WaterOut input)
     thickness = sea ? thickness : min(thickness, poolExit(pool, input.world, v));
     float3 through = exp(-absorb * thickness);
     float2 bend = n.xz * 0.04 * saturate(thickness);
-    float blur = sqrt(s.roughness) * 2.0 + log2(1.0 + thickness * 0.5);
+    // As sharp as clear water shows what is under it, blurring only where it is deep or rough.
+    float blur = sqrt(s.roughness) * 1.2 + log2(1.0 + thickness * 0.12);
     float3 behind = thickness < 1e3 ? glassBehind(push.texture, pixel / float2(frame->viewport) - bend, blur) : 0.0;
     float3 under = behind * through + body * (1.0 - through);
     float3 color = (1.0 - fresnel) * under + fresnel * reflected + glints;
@@ -668,4 +709,125 @@ FragmentOut wallFragment(WallOut input)
     o.color = float4(color, 1.0);
     o.velocity = motion(input.currentClip, input.previousClip);
     return o;
+}
+
+// ---------------------------------------------------------------- Under water
+
+struct UnderOut
+{
+    float4 position : SV_Position;
+};
+
+// A triangle over the whole view.
+[shader("vertex")]
+UnderOut underwaterVertex(uint id : SV_VertexID)
+{
+    float2 corner = float2((id << 1) & 2, id & 2);
+    UnderOut o;
+    o.position = float4(corner * 2.0 - 1.0, 0.0, 1.0);
+    return o;
+}
+
+// The water a pixel's view starts in: whether the camera's near plane there
+// is under it, as the camera half in the sea is under it below the
+// waterline; how much of what the pixel shows comes through the water as
+// far as it, and the water's own light over that far; and how near the
+// near plane is to the surface, for the waterline's dark meniscus.
+struct Under
+{
+    bool under;
+    float3 through;
+    float3 glow;
+    float meniscus;
+};
+
+Under underwaterAt(Frame* frame, float2 pixel)
+{
+    Under u;
+    u.under = false;
+    u.through = 1.0;
+    u.glow = 0.0;
+    u.meniscus = 0.0;
+    float2 ndc = pixel / float2(frame->viewport) * 2.0 - 1.0;
+    float4 nearH = transform(frame->invViewProj, float4(ndc, 1.0, 1.0));
+    float3 near = nearH.xyz / nearH.w;
+    float surface;
+    float3 absorb;
+    if (!waterSurface(frame, near, surface, absorb))
+    {
+        return u;
+    }
+    // Its waves too, for the sea, so the waterline rises and falls with them.
+    if (frame->ocean.enabled != 0 && surface == frame->ocean.level)
+    {
+        surface += oceanMoved(frame, near.xz, 0.05, false).y;
+    }
+    u.meniscus = saturate(1.0 - abs(near.y - surface) / 0.015);
+    if (near.y >= surface)
+    {
+        return u;
+    }
+    u.under = true;
+    float depth = textures[NonUniformResourceIndex(push.textures.x)].Load(int3(int2(pixel), 0)).r;
+    float distance = 1e4;
+    if (depth > 0.0)
+    {
+        float4 farH = transform(frame->invViewProj, float4(ndc, depth, 1.0));
+        distance = length(farH.xyz / farH.w - frame->cameraPosition);
+    }
+    u.through = exp(-absorb * distance);
+    // The water's own colours: a Pool's, or the sea's.
+    float3 deep = frame->ocean.deep;
+    float3 scatter = frame->ocean.scatter;
+    for (uint i = 0; i < frame->ocean.pools; i++)
+    {
+        WaterBody pool = buffers()->waterBodies[i];
+        float3 local = transform(pool.toLocal, float4(near, 1.0)).xyz;
+        if (all(abs(local.xz) <= pool.size.xz * 0.5) && local.y < 0.0 && local.y > -pool.size.y)
+        {
+            deep = pool.deep;
+            scatter = pool.scatter;
+        }
+    }
+    bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
+    float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
+    Surface s;
+    s.normal = float3(0.0, 1.0, 0.0);
+    s.view = float3(0.0, 1.0, 0.0);
+    s.roughness = 1.0;
+    s.diffuse = 0.0;
+    s.f0 = 0.02;
+    float3 ambient = ambientLight(frame, near, s, sunLight, atmosphere);
+    // Darker the deeper the camera; brighter looking towards the sun, as light scatters forwards.
+    float3 dim = exp(-absorb * max(surface - near.y, 0.0) * 0.5);
+    float3 view = normalize(near - frame->cameraPosition);
+    float forward = pow(saturate(dot(view, -frame->sunDirection)), 4.0);
+    float3 own = deep * ambient + scatter * sunLight * (0.03 + 0.12 * forward);
+    u.glow = own * dim * (1.0 - u.through);
+    return u;
+}
+
+// Dims what the view shows under water by the water it comes through,
+// colour by colour (blended as a filter), and darkens the waterline.
+[shader("fragment")]
+float4 underwaterDimFragment(UnderOut input) : SV_Target0
+{
+    Under u = underwaterAt(push.frame, input.position.xy);
+    if (!u.under && u.meniscus <= 0.0)
+    {
+        discard;
+    }
+    return float4(u.through * (1.0 - u.meniscus * 0.75), 1.0);
+}
+
+// Adds the water's own light over what the view shows under water.
+[shader("fragment")]
+float4 underwaterGlowFragment(UnderOut input) : SV_Target0
+{
+    Under u = underwaterAt(push.frame, input.position.xy);
+    if (!u.under)
+    {
+        discard;
+    }
+    return float4(u.glow, 1.0);
 }

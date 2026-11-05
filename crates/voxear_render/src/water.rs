@@ -298,6 +298,22 @@ pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), wat
         let draws = Draws { sea: false, pools, walls: (0, pools) };
         record_layer(fg, (pipelines, push), &layer, (copy, copy_texture, &copy_mips, depth_copy), draws);
     }
+    // Under water, where the view starts under it: what it shows dimmed and the water's light over it.
+    let mut images = vec![(hdr, ImageAccess::ColorAttachment), (depth, ImageAccess::Sampled)];
+    images.extend(layer.waves.iter().map(|&image| (image, ImageAccess::Sampled)));
+    images.extend(layer.sampled.iter().map(|&image| (image, ImageAccess::Sampled)));
+    let depth_texture = fg.texture(depth);
+    let push = Push { textures: [depth_texture.0, 0, 0, 0], ..push };
+    let extent = vk::Extent2D { width: size[0], height: size[1] };
+    fg.add_pass("Under water", &images, &[], move |ctx| {
+        let color = [attachment(ctx.view(hdr), vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL, None)];
+        begin_rendering(ctx, extent, &color, None);
+        for pipeline in [pipelines.underwater_dim, pipelines.underwater_glow] {
+            bind(ctx, pipeline, vk::PipelineBindPoint::GRAPHICS, &push);
+            unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, 3, 1, 0, 0) };
+        }
+        unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
+    });
 }
 
 /// What a layer of water draws into and reads.

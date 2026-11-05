@@ -3638,3 +3638,31 @@ fn a_dry_area_keeps_the_sea_out_and_a_pool_holds_water_above_it() {
     let side = patch_rgb(&pixels, on_screen(eye, look, pond + Vec3::new(0.0, -2.0, -3.0)), 2);
     assert!(side[1] > side[0] + 10, "the pool's side, a wall of water: {side:?}");
 }
+
+#[test]
+fn under_the_sea_the_water_tints_all_and_caustics_light_the_sand() {
+    use voxear_render::{Ocean, Sky, Weather};
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    let look = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.0, -0.5, 1.0).normalize());
+    world.spawn((Camera::default(), Transform::new(Vec3::new(0.0, -2.0, 0.0), look, Vec3::ONE)));
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.2, -0.8, 0.5).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.8, ..Sky::default() });
+    let plane = renderer.primitive(Primitive::Plane).unwrap();
+    let sand = MaterialDesc { base_color: [0.8, 0.72, 0.55, 1.0], roughness: 0.9, ..MaterialDesc::default() };
+    let sand = renderer.add_material(&sand).unwrap();
+    world.spawn((MeshRenderer::new(plane, sand), Transform::new(Vec3::new(0.0, -5.0, 0.0), Quat::IDENTITY, Vec3::splat(300.0))));
+    world.spawn((Ocean { weather: Weather::Calm, ..Ocean::default() }, Transform::default()));
+    run(&mut renderer, &world, &mut 20.0, 20);
+    let pixels = renderer.read_pixels().unwrap().2;
+    keep_image("under the sea.png", &pixels);
+    // The sand three metres under the camera, tinted: more green than red, though sand is redder than green.
+    let floor = patch_rgb(&pixels, (320, 260), 4);
+    assert!(floor[1] > floor[0], "the sand seen through the water: {floor:?}");
+    // Caustics: bright lines and darker gaps across the sand.
+    let lights: Vec<i32> = (200..340u32).step_by(4).flat_map(|y| (160..480u32).step_by(4).map(move |x| (x, y)))
+        .map(|at| rgb_at(&pixels, at)[1]).collect();
+    let (low, high) = (lights.iter().min().unwrap(), lights.iter().max().unwrap());
+    assert!(high - low > 25, "caustics light the sand unevenly: from {low} to {high}");
+}

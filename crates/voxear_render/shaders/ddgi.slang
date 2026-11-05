@@ -15,6 +15,8 @@
 // hierarchies of the scene's triangles in the compute shader
 // (trace_software.slang), for GPUs without it.
 
+// The probes need no light under water, and compiling it here stops Slang with an internal error.
+#define NO_UNDERWATER_LIGHT
 #include "shading.slang"
 #include "ddgi_sample.slang"
 #include "ambient_occlusion.slang"

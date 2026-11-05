@@ -31,6 +31,8 @@ struct VertexOut
     nointerpolation uint cluster : CLUSTER;
     float4 currentClip : CURRENT_CLIP;
     float4 previousClip : PREVIOUS_CLIP;
+    // How far a custom shader's vertex function moved it from where the mesh has it.
+    float3 moved : MOVED;
 };
 
 struct FragmentOut
@@ -67,10 +69,12 @@ VertexOut forwardVertex(uint instanceIndex, uint lod, uint fade, uint cluster, u
     float earlier = frame->time - frame->deltaTime;
     previous.xyz += windOffset(frame, material, instance.prevModel.c3.xyz, height, previous.xyz, normal, v.wind, earlier);
     // A custom shader's vertex function, now and a frame ago.
+    float3 moved = 0.0;
     if (material.shader != STANDARD_SHADER)
     {
         VertexInput now = { world.xyz, normal, v.uv, instance.model.c3.xyz, frame->time };
-        world.xyz += customVertex(instance.material, now);
+        moved = customVertex(instance.material, now);
+        world.xyz += moved;
         VertexInput before = { previous.xyz, normal, v.uv, instance.prevModel.c3.xyz, earlier };
         previous.xyz += customVertex(instance.material, before);
     }
@@ -88,6 +92,7 @@ VertexOut forwardVertex(uint instanceIndex, uint lod, uint fade, uint cluster, u
     o.cluster = cluster;
     o.currentClip = transform(push.frame->unjitteredViewProj, world);
     o.previousClip = transform(push.frame->prevViewProj, previous);
+    o.moved = moved;
     return o;
 }
 
@@ -110,6 +115,7 @@ VertexOut impostorVertex(Instance instance, uint instanceIndex, float2 corner, u
     o.cluster = cluster;
     o.currentClip = transform(frame->unjitteredViewProj, float4(c.world, 1.0));
     o.previousClip = transform(frame->prevViewProj, float4(c.world, 1.0));
+    o.moved = 0.0;
     return o;
 }
 
@@ -524,16 +530,19 @@ float3 localLights(Frame* frame, Surface s, float3 position, float2 pixel)
 }
 
 // A custom shader's surface, from the standard one's: the material's
-// colour, normal, metallic, roughness and emission.
-SurfaceOutput customSurfaceAt(Frame* frame, VertexOut input, SurfaceOutput surface, float3 origin)
+// colour, normal, metallic, roughness and emission; `thickness` as glass
+// sees through it, or SOLID_THICKNESS.
+SurfaceOutput customSurfaceAt(Frame* frame, VertexOut input, SurfaceOutput surface, float3 origin, float thickness, bool glass)
 {
     float3 view = normalize(frame->cameraPosition - input.worldPosition);
-    SurfaceInput at = { input.uv, input.worldPosition, normalize(input.normal), view, origin, frame->time };
+    SurfaceInput at = { input.uv, input.worldPosition, normalize(input.normal), view, origin, frame->time, thickness, glass };
     customSurface(input.material, at, surface);
     surface.normal = normalizeOr(surface.normal, at.normal);
     surface.metallic = saturate(surface.metallic);
     surface.roughness = saturate(surface.roughness);
     surface.alpha = saturate(surface.alpha);
+    surface.reflectance = saturate(surface.reflectance);
+    surface.transmission = saturate(surface.transmission);
     return surface;
 }
 
@@ -581,10 +590,10 @@ FragmentOut fragmentMain(VertexOut input)
     float3 emission =
         material.emissive * sampleTexture(material.emissiveTexture, input.uv).rgb * glowAmount(frame, material, origin);
     float3 normal = surfaceNormal(input, material);
-    SurfaceOutput surface = { base.rgb, base.a, normal, metallic, roughness, emission };
+    SurfaceOutput surface = materialSurface(base.rgb, base.a, normal, metallic, roughness, emission);
     if (custom)
     {
-        surface = customSurfaceAt(frame, input, surface, origin);
+        surface = customSurfaceAt(frame, input, surface, origin, SOLID_THICKNESS, false);
         if (material.alphaCutoff > 0.0 && surface.alpha < material.alphaCutoff)
         {
             discard;
@@ -606,10 +615,12 @@ FragmentOut fragmentMain(VertexOut input)
     s.view = normalize(frame->cameraPosition - input.worldPosition);
     s.roughness = clamp(smoothedRoughness(frame, s.normal, roughness), 0.045, 1.0);
     s.diffuse = base.rgb * (1.0 - metallic);
-    s.f0 = lerp(float3(0.04), base.rgb, metallic);
+    s.f0 = lerp(float3(surface.reflectance), base.rgb, metallic);
 
-    // A surface turned from the sun takes none of its light, shadow or not, so its shadow is not looked for.
-    bool facingSun = dot(s.normal, -frame->sunDirection) > 0.0;
+    // A surface turned from the sun takes none of its light, shadow or not, so its shadow is not looked for. A
+    // custom shader's own light may light it through, as the back of a wave is, so its shape's facing decides.
+    float3 facing = customLit ? normalize(input.normal) : s.normal;
+    bool facingSun = dot(facing, -frame->sunDirection) > 0.0;
     float shadow = facingSun ? min(sunShadow(frame, input.worldPosition, s.normal), contactShadow(frame, input.position.xy)) : 0.0;
     bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
     // Through the atmosphere, the sun reddens as it sets.
@@ -650,12 +661,15 @@ FragmentOut fragmentMain(VertexOut input)
         color += shadeLocalLight(s, buffers()->lights[light], input.worldPosition);
     }
 
-    float3 ambient = ambientLight(frame, input.worldPosition, s, sunLight, atmosphere);
+    // The bounced light where the mesh has the surface, as the rays that gather it see it: moved by its vertex
+    // function, as a wave's trough below the flat sheet the rays know, it read the probes under the sheet, in the dark.
+    float3 lightAt = input.worldPosition - input.moved;
+    float3 ambient = ambientLight(frame, lightAt, s, sunLight, atmosphere);
     float nv = saturate(dot(s.normal, s.view));
     float3 ambientFresnel = s.f0 + (max(float3(1.0 - s.roughness), s.f0) - s.f0) * pow(1.0 - nv, 5.0);
     Occlusion occlusion = ambientOcclusion(frame, input.position.xy, nv, s.roughness);
     float found;
-    float3 reflected = environmentReflection(frame, input.position.xy, input.worldPosition, s.normal, reflect(-s.view, s.normal), s.roughness, ambient, atmosphere, found);
+    float3 reflected = environmentReflection(frame, input.position.xy, lightAt, s.normal, reflect(-s.view, s.normal), s.roughness, ambient, atmosphere, found);
     // A reflection that was found already stops where something is in its way, so ambient occlusion only darkens
     // the share that came from the surroundings. Over all of it, its screen-space guesses about what blocks a
     // curved mirror lay grey smudges across a chrome ball that moved with the camera.

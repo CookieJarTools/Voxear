@@ -89,22 +89,55 @@ VertexOut glassVertex(uint vertexId : SV_VertexID)
     return forwardVertex(push.list, 0, 0, 0, vertexId);
 }
 
+// The scene's depth behind a pane, which it tests itself against, as the
+// pass reads the depth rather than drawing into it: push.textures.x.
+float sceneDepthAt(float2 pixel)
+{
+    return textures[NonUniformResourceIndex(push.textures.x)].Load(int3(int2(pixel), 0)).r;
+}
+
 [shader("fragment")]
 float4 glassFragment(VertexOut input) : SV_Target0
 {
     Frame* frame = push.frame;
+    // Behind what is drawn already, nearer the camera, it is hidden. Depth is reverse-Z: nearer is greater.
+    float behindDepth = sceneDepthAt(input.position.xy);
+    if (input.position.z < behindDepth)
+    {
+        discard;
+    }
     Material material = buffers()->materials[input.material];
     float4 tint = material.baseColor * sampleTexture(material.baseColorTexture, input.uv);
     float4 metalRough = sampleTexture(material.metallicRoughnessTexture, input.uv);
 
     Surface s;
-    s.normal = surfaceNormal(input, material);
     s.view = normalize(frame->cameraPosition - input.worldPosition);
-    s.roughness = clamp(material.roughness * metalRough.g, 0.02, 1.0);
-    s.diffuse = 0.0;
+    float3 emission = material.emissive * sampleTexture(material.emissiveTexture, input.uv).rgb;
     float ior = max(material.ior, 1.0);
     float r0 = (ior - 1.0) / (ior + 1.0);
-    s.f0 = r0 * r0;
+    // Clear glass scatters nothing and reflects as its index says; a custom shader may say otherwise.
+    SurfaceOutput surface = materialSurface(0.0, tint.a, surfaceNormal(input, material), 0.0, material.roughness * metalRough.g, emission);
+    surface.reflectance = r0 * r0;
+    surface.transmission = tint.rgb;
+    bool custom = material.shader != STANDARD_SHADER;
+    bool unlit = false;
+    if (custom)
+    {
+        // How far the view goes through the pane to what lies behind: the depths are infinite reverse-Z, so a view
+        // depth is near / depth, and along the view it is that over how squarely the view meets the forward axis.
+        float paneDepth = frame->near / max(input.position.z, 1e-7);
+        float sceneDepth = behindDepth > 0.0 ? frame->near / behindDepth : SOLID_THICKNESS;
+        float along = max(dot(-s.view, frame->cameraForward), 0.05);
+        float thickness = min(max(sceneDepth - paneDepth, 0.0) / along, SOLID_THICKNESS);
+        float3 origin = buffers()->instances[input.instance].model.c3.xyz;
+        surface = customSurfaceAt(frame, input, surface, origin, thickness, true);
+        unlit = customUnlit(input.material);
+    }
+    emission = surface.emission;
+    s.normal = surface.normal;
+    s.roughness = clamp(surface.roughness, 0.02, 1.0);
+    s.diffuse = surface.color;
+    s.f0 = surface.reflectance;
     float nv = saturate(dot(s.normal, s.view));
     float3 fresnel = s.f0 + (max(float3(1.0 - s.roughness), s.f0) - s.f0) * pow(1.0 - nv, 5.0);
 
@@ -114,32 +147,57 @@ float4 glassFragment(VertexOut input) : SV_Target0
     float2 uv = input.position.xy / float2(frame->viewport) - bend;
     float blur = sqrt(s.roughness) * GLASS_BLUR_MIPS;
     float3 behind = glassBehind(push.texture, uv, blur);
-    float3 through = behind * tint.rgb * (1.0 - fresnel);
+    float3 through = behind * surface.transmission * (1.0 - fresnel);
+    // An unlit custom shader's colour adds to what shows through, as a hologram's light does.
+    if (unlit)
+    {
+        return float4(behind * surface.transmission + surface.color + emission, 1.0);
+    }
 
     bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
     float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
     float3 sunThrough = sunLight * sunCookieAt(frame, input.worldPosition);
     float shadow = sunShadow(frame, input.worldPosition, s.normal);
-    float3 ambient = ambientLight(frame, input.worldPosition, s, sunLight, atmosphere);
+    // The bounced light where the mesh has the pane, as the rays that gather it see it (see fragmentMain).
+    float3 lightAt = input.worldPosition - input.moved;
+    float3 ambient = ambientLight(frame, lightAt, s, sunLight, atmosphere);
     float3 direction = reflect(-s.view, s.normal);
-    float3 surface = surroundingsReflection(frame, input.worldPosition, s.normal, direction, s.roughness, ambient, atmosphere) * fresnel;
-    surface += shade(s, -frame->sunDirection, sunThrough) * shadow;
-    surface += localLights(frame, s, input.worldPosition, input.position.xy);
-    surface += material.emissive * sampleTexture(material.emissiveTexture, input.uv).rgb;
+    float3 lit = surroundingsReflection(frame, lightAt, s.normal, direction, s.roughness, ambient, atmosphere) * fresnel;
+    // What the pane scatters itself, as murky water does, takes the ambient light as any surface does.
+    lit += ambient * s.diffuse;
+    if (custom && customLighting(input.material))
+    {
+        LightInput sun = { -frame->sunDirection, sunThrough * shadow, s.view };
+        lit += customLight(input.material, sun, surface);
+        float viewDepth = dot(input.worldPosition - frame->cameraPosition, frame->cameraForward);
+        uint clusterBase = clusterAt(frame, input.position.xy, viewDepth) * (frame->clusterMaxLights + 1);
+        for (uint i = 0; i < buffers()->clusters[clusterBase]; i++)
+        {
+            LightInput lamp = localLightInput(buffers()->lights[buffers()->clusters[clusterBase + 1 + i]], input.worldPosition, s.normal);
+            lamp.view = s.view;
+            lit += customLight(input.material, lamp, surface);
+        }
+    }
+    else
+    {
+        lit += shade(s, -frame->sunDirection, sunThrough) * shadow;
+        lit += localLights(frame, s, input.worldPosition, input.position.xy);
+    }
+    lit += emission;
     if (atmosphere)
     {
         // What lies behind is hazed already; the pane's own light is hazed as far as the pane.
         float4 haze = aerialPerspectiveAt(frame, input.position.xy / float2(frame->viewport), length(input.worldPosition - frame->cameraPosition));
-        surface *= haze.a;
+        lit *= haze.a;
     }
-    float3 color = through + surface;
+    float3 color = through + lit;
     if (frame->debugView == DEBUG_VIEW_NORMALS)
     {
         color = s.normal * 0.5 + 0.5;
     }
     else if (frame->debugView == DEBUG_VIEW_UNLIT)
     {
-        color = behind * tint.rgb;
+        color = behind * surface.transmission;
     }
     else if (frame->debugView == DEBUG_VIEW_GLOBAL_ILLUMINATION)
     {

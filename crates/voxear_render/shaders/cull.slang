@@ -43,6 +43,13 @@ uint instanceLod(Frame* frame, Instance instance, Mesh mesh, float3 center, floa
     {
         return min(forced - 1, last);
     }
+    // A custom shader that moves the vertices moves each where the full mesh has it. A simpler LOD has fewer, far
+    // apart: a sheet of water simplifies to a few triangles, its waves sampled at their corners, and drawn so in
+    // the shadow map it shadowed the waves drawn in full in patches.
+    if (buffers()->materials[instance.material].maxOffset > 0.0)
+    {
+        return 0;
+    }
     if ((instance.flags & INSTANCE_LOD_SCREEN) != 0)
     {
         // From the main camera, so shadows draw the LOD the view does.

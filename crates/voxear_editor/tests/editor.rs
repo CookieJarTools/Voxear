@@ -6693,6 +6693,65 @@ fn a_material_picks_a_custom_shader_and_edits_its_properties() {
 }
 
 #[test]
+fn a_material_picks_a_built_in_shader_and_one_is_copied_into_the_project() {
+    let Some(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()).ok() else { return };
+    let dir = hello_copy();
+    std::fs::create_dir_all(dir.path().join("Materials")).unwrap();
+    std::fs::write(dir.path().join("Materials/Paint.material"), "color = [0.8, 0.8, 0.8]\n").unwrap();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    assert_eq!(*renderer.custom_shaders(), voxear_render::CustomShaderState::None, "nothing compiled for none");
+
+    // The Shader field offers the built-in shaders after Standard, and Toon is compiled in once picked.
+    assert!(editor.inspect_path("Materials/Paint.material"));
+    frame(&mut editor, &mut renderer);
+    let field = first_with(&editor.ui, prop_row(&editor.ui, "Shader").unwrap(), "value-picker").unwrap();
+    let arrow = first_with(&editor.ui, field, "picker-arrow").unwrap();
+    click(&mut editor.ui, arrow);
+    for _ in 0..3 {
+        frame(&mut editor, &mut renderer);
+    }
+    let offered: Vec<String> = picker_rows(&editor.ui).into_iter().map(|(label, _)| label).collect();
+    assert_eq!(offered[..3], ["Standard", "Toon", "Storybook"], "{offered:?}");
+    let toon = picker_row(&editor.ui, "Toon").unwrap();
+    click_across_frames(&mut editor, &mut renderer, toon);
+    for _ in 0..600 {
+        frame(&mut editor, &mut renderer);
+        if *renderer.custom_shaders() != voxear_render::CustomShaderState::Compiling {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert_eq!(*renderer.custom_shaders(), voxear_render::CustomShaderState::Ready);
+    let text = std::fs::read_to_string(dir.path().join("Materials/Paint.material")).unwrap();
+    assert!(text.contains("shader = \"builtin:toon\""), "{text}");
+    frame(&mut editor, &mut renderer);
+    let label = first_with(&editor.ui, prop_row(&editor.ui, "Shader").unwrap(), "picker-label").unwrap();
+    assert_eq!(editor.ui.text(label), "Toon");
+    assert!(prop_row(&editor.ui, "Steps").is_some() && prop_row(&editor.ui, "Rim width").is_some(), "its settings");
+
+    // New Shader offers what one starts as, the built-in ones to copy and change among them.
+    open_folder(&mut editor, &mut renderer, "Materials");
+    let paint = tile(&editor.ui, "Paint.material").unwrap();
+    context_click(&mut editor.ui, paint);
+    frame(&mut editor, &mut renderer);
+    assert!(menu_item(&editor.ui, "New Unlit Shader").is_none(), "one item for shaders");
+    let item = menu_item(&editor.ui, "New Shader…").expect("the menu makes shaders");
+    click(&mut editor.ui, item);
+    for _ in 0..3 {
+        frame(&mut editor, &mut renderer);
+    }
+    let offered: Vec<String> = picker_rows(&editor.ui).into_iter().map(|(label, _)| label).collect();
+    assert_eq!(offered[..3], ["Lit", "Unlit", "Toon"], "{offered:?}");
+    let water = picker_row(&editor.ui, "Water").unwrap();
+    click_across_frames(&mut editor, &mut renderer, water);
+    frame(&mut editor, &mut renderer);
+    let copy = std::fs::read_to_string(dir.path().join("Materials/Water.shader")).expect("a copy of Water");
+    assert!(copy.contains("struct Water") && copy.contains("float3 vertex(Water water"), "named as its file");
+}
+
+#[test]
 fn a_scenes_inspector_shows_its_lighting_to_change() {
     let Some(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()).ok() else { return };
     let dir = hello_copy();

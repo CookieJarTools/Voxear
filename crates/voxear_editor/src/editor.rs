@@ -1046,6 +1046,7 @@ impl Editor {
             }
             ProjectEvent::Move { path, folder } => self.move_in_project(&path, &folder, renderer),
             ProjectEvent::Import { folder } => self.choose_imports(folder),
+            ProjectEvent::NewShader { folder, anchor } => self.browse_shader_starts(folder, anchor),
             ProjectEvent::WantsParts(path) => {
                 let parts = objs::model_parts(&mut self.game, renderer, &path);
                 if parts.is_empty() {
@@ -2261,6 +2262,7 @@ impl Editor {
                 (PickFor::ShaderPicture { material, property }, Chosen::Value(pick)) => {
                     self.pick_shader_picture(&material, &property, &pick, renderer);
                 }
+                (PickFor::NewShader { folder }, Chosen::Shader(start)) => self.make_shader(&folder, start, renderer),
                 (PickFor::PartMaterial { owner, node }, Chosen::Value(pick)) if alive(owner) => {
                     self.pick_part_material(owner, node, &pick, renderer);
                 }

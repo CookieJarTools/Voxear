@@ -21,50 +21,213 @@
 //! its name, its properties with their defaults, what its functions are,
 //! and how it is drawn ([`ShaderInfo`]). Slang itself compiles it, into the
 //! renderer's own shaders (see `shader_code`).
+//!
+//! The engine has shaders of its own built in too ([`BuiltinShader`]),
+//! which any material can pick as it picks a project's.
+
+use std::{collections::BTreeSet, fmt, str::FromStr};
 
 use anyhow::{Context, Result, bail};
 use voxear_assets::AssetGuid;
 
-/// One of the project's shaders: its asset, its number in the renderer's
-/// dispatch (from 1; 0 is the standard shader), its source, and what it
-/// declares, or why it could not be read.
+/// How a material's file names a built-in shader: `builtin:toon`.
+const BUILTIN: &str = "builtin:";
+
+/// A shader the engine has built in, which any material can pick. Each is
+/// compiled into the renderer's shaders only once a material uses it, so a
+/// project pays nothing for those it leaves alone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum BuiltinShader {
+    /// Light in flat steps, as a cartoon is painted.
+    Toon,
+    /// Soft, painted light, for the Storybook lighting look.
+    Storybook,
+    /// Pictures laid on by where the surface is, rather than by its UVs.
+    Triplanar,
+    /// Moving waves, ripples, and foam on the crests.
+    Water,
+    /// A figure of light with scrolling lines and a flicker.
+    Hologram,
+    /// Vertices swaying to and fro, for flags, signs and plants.
+    Sway,
+    /// Glowing molten rock under a drifting crust.
+    Lava,
+}
+
+impl BuiltinShader {
+    pub const ALL: [Self; 7] =
+        [Self::Toon, Self::Storybook, Self::Triplanar, Self::Water, Self::Hologram, Self::Sway, Self::Lava];
+
+    /// As a material's file names it, after `builtin:`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Toon => "toon",
+            Self::Storybook => "storybook",
+            Self::Triplanar => "triplanar",
+            Self::Water => "water",
+            Self::Hologram => "hologram",
+            Self::Sway => "sway",
+            Self::Lava => "lava",
+        }
+    }
+
+    /// As the editor shows it, and its properties struct is named.
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Toon => "Toon",
+            Self::Storybook => "Storybook",
+            Self::Triplanar => "Triplanar",
+            Self::Water => "Water",
+            Self::Hologram => "Hologram",
+            Self::Sway => "Sway",
+            Self::Lava => "Lava",
+        }
+    }
+
+    pub fn source(self) -> &'static str {
+        match self {
+            Self::Toon => include_str!("../shaders/toon.shader"),
+            Self::Storybook => include_str!("../shaders/storybook.shader"),
+            Self::Triplanar => include_str!("../shaders/triplanar.shader"),
+            Self::Water => include_str!("../shaders/water.shader"),
+            Self::Hologram => include_str!("../shaders/hologram.shader"),
+            Self::Sway => include_str!("../shaders/sway.shader"),
+            Self::Lava => include_str!("../shaders/lava.shader"),
+        }
+    }
+
+    /// `builtin:toon`, as a material's file and the object picker name it.
+    pub fn reference(self) -> String {
+        format!("{BUILTIN}{}", self.name())
+    }
+
+    /// The built-in shader `reference` names, as `builtin:toon`.
+    pub fn from_reference(reference: &str) -> Option<Self> {
+        let name = reference.strip_prefix(BUILTIN)?;
+        Self::ALL.into_iter().find(|shader| shader.name() == name)
+    }
+}
+
+/// The shader a material picks in place of the standard one: one built in,
+/// or one of the project's `.shader` assets. A material's file writes it as
+/// `builtin:toon` or as the asset's GUID.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub enum ShaderRef {
+    Builtin(BuiltinShader),
+    Asset(AssetGuid),
+}
+
+impl fmt::Display for ShaderRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Builtin(shader) => f.write_str(&shader.reference()),
+            Self::Asset(guid) => write!(f, "{guid}"),
+        }
+    }
+}
+
+impl FromStr for ShaderRef {
+    type Err = anyhow::Error;
+
+    fn from_str(text: &str) -> Result<Self> {
+        if text.starts_with(BUILTIN) {
+            return BuiltinShader::from_reference(text).map(Self::Builtin).with_context(|| {
+                let names: Vec<String> = BuiltinShader::ALL.iter().map(|shader| shader.reference()).collect();
+                format!("{text} is not a built-in shader; they are {}", names.join(", "))
+            });
+        }
+        Ok(Self::Asset(text.parse().with_context(|| format!("{text} is not a shader's GUID"))?))
+    }
+}
+
+impl TryFrom<String> for ShaderRef {
+    type Error = anyhow::Error;
+
+    fn try_from(text: String) -> Result<Self> {
+        text.parse()
+    }
+}
+
+impl From<ShaderRef> for String {
+    fn from(shader: ShaderRef) -> Self {
+        shader.to_string()
+    }
+}
+
+/// A shader the renderer can draw with: built in, or one of the project's.
+/// Its number in the renderer's dispatch (from 1; 0 is the standard
+/// shader), its source, and what it declares, or why it could not be read.
 #[derive(Clone, Debug)]
 pub struct ProjectShader {
-    pub guid: AssetGuid,
+    pub reference: ShaderRef,
+    /// Its asset's path, or `builtin:toon` for one built in.
     pub path: String,
     pub number: u32,
     pub source: String,
     pub info: std::result::Result<ShaderInfo, String>,
+    /// Whether it is compiled into the renderer's shaders: every one of the
+    /// project's own, and the built-in ones its materials use.
+    pub used: bool,
 }
 
-/// The project's shaders, numbered in the order of their paths, so the same
-/// project numbers them the same everywhere: in the editor, and in a game
-/// built from it.
+/// The shaders materials can pick: the built-in ones first, in their order,
+/// then the project's, in the order of their paths, so the same project
+/// numbers them the same everywhere: in the editor, and in a game built
+/// from it.
 #[derive(Clone, Debug, Default)]
 pub struct ShaderRegistry {
     pub shaders: Vec<ProjectShader>,
 }
 
 impl ShaderRegistry {
-    /// Numbers and reads these shaders, each its asset, path and source.
-    pub fn new(mut found: Vec<(AssetGuid, String, String)>) -> Self {
+    /// Numbers and reads the built-in shaders and these of the project's,
+    /// each its asset, path and source; `used` are the built-in ones that
+    /// materials pick.
+    pub fn new(mut found: Vec<(AssetGuid, String, String)>, used: &BTreeSet<BuiltinShader>) -> Self {
         found.sort_by(|a, b| a.1.cmp(&b.1));
+        let builtin = BuiltinShader::ALL.into_iter().map(|shader| {
+            (ShaderRef::Builtin(shader), shader.reference(), shader.source().to_string(), used.contains(&shader))
+        });
+        let project = found.into_iter().map(|(guid, path, source)| (ShaderRef::Asset(guid), path, source, true));
         let shaders = (1..)
-            .zip(found)
-            .map(|(number, (guid, path, source))| {
+            .zip(builtin.chain(project))
+            .map(|(number, (reference, path, source, used))| {
                 let info = read(&source).map_err(|error| format!("{error:#}"));
-                ProjectShader { guid, path, number, source, info }
+                ProjectShader { reference, path, number, source, info, used }
             })
             .collect();
         Self { shaders }
     }
 
-    /// A shader's number and what it declares, when the project has it and
-    /// it reads.
-    pub fn get(&self, guid: AssetGuid) -> Option<(u32, &ShaderInfo)> {
-        let shader = self.shaders.iter().find(|shader| shader.guid == guid)?;
+    /// A shader's number and what it declares, when there is such a shader
+    /// and it reads.
+    pub fn get(&self, reference: ShaderRef) -> Option<(u32, &ShaderInfo)> {
+        let shader = self.shaders.iter().find(|shader| shader.reference == reference)?;
         Some((shader.number, shader.info.as_ref().ok()?))
     }
+
+    /// The project's own shaders, without the built-in ones.
+    pub fn project_shaders(&self) -> impl Iterator<Item = &ProjectShader> {
+        self.shaders.iter().filter(|shader| matches!(shader.reference, ShaderRef::Asset(_)))
+    }
+
+    /// Whether any shader is compiled in: the project has one of its own, or
+    /// a material picks a built-in one.
+    pub fn any_used(&self) -> bool {
+        self.shaders.iter().any(|shader| shader.used)
+    }
+}
+
+/// The built-in shaders that materials pick, from what each picks.
+pub fn builtins_used(picked: impl IntoIterator<Item = Option<ShaderRef>>) -> BTreeSet<BuiltinShader> {
+    picked
+        .into_iter()
+        .filter_map(|shader| match shader {
+            Some(ShaderRef::Builtin(builtin)) => Some(builtin),
+            _ => None,
+        })
+        .collect()
 }
 
 /// What a property holds, and so how the material Inspector edits it.
@@ -351,11 +514,15 @@ fn number(text: &str) -> Result<f32> {
 /// its empty `project_shaders.slang`: each shader's source in a namespace of
 /// its own, named for its number, a function reading each one's properties
 /// from its material, and the functions that call the one a material picks
-/// by its number. Shaders that do not read are left out, so their
-/// materials draw as the standard shader.
+/// by its number. Shaders that do not read, and built-in ones no material
+/// uses, are left out, so their materials draw as the standard shader.
 pub fn dispatch_code(registry: &ShaderRegistry) -> String {
-    let shaders: Vec<(&ProjectShader, &ShaderInfo)> =
-        registry.shaders.iter().filter_map(|shader| Some((shader, shader.info.as_ref().ok()?))).collect();
+    let shaders: Vec<(&ProjectShader, &ShaderInfo)> = registry
+        .shaders
+        .iter()
+        .filter(|shader| shader.used)
+        .filter_map(|shader| Some((shader, shader.info.as_ref().ok()?)))
+        .collect();
     let mut code = String::from("// Written by the engine from the project's .shader assets.\n\n#pragma once\n\n");
     for (shader, info) in &shaders {
         let number = shader.number;
@@ -476,37 +643,81 @@ mod tests {
         assert!(read("struct S { [Property] double x; }\nvoid surface(S s) {}").is_err(), "an unknown type");
     }
 
+    /// The number the project's first shader gets, after the built-in ones.
+    const FIRST: u32 = BuiltinShader::ALL.len() as u32 + 1;
+
     #[test]
-    fn shaders_are_numbered_by_path_from_one_and_one_that_does_not_read_is_kept_with_its_error() {
+    fn shaders_are_numbered_by_path_after_the_built_in_ones_and_one_that_does_not_read_is_kept_with_its_error() {
         let guid = |n: u32| format!("{n:032x}").parse::<AssetGuid>().unwrap();
-        let registry = ShaderRegistry::new(vec![
-            (guid(1), "Shaders/Water.shader".into(), WATER.into()),
-            (guid(2), "Shaders/Broken.shader".into(), "struct Nothing { }".into()),
-        ]);
-        let numbers: Vec<(&str, u32)> = registry.shaders.iter().map(|s| (s.path.as_str(), s.number)).collect();
-        assert_eq!(numbers, [("Shaders/Broken.shader", 1), ("Shaders/Water.shader", 2)]);
-        assert!(registry.shaders[0].info.is_err());
-        assert_eq!(registry.get(guid(1)).map(|(number, info)| (number, info.name.as_str())), Some((2, "Water")));
-        assert!(registry.get(guid(2)).is_none(), "one that does not read draws as the standard shader");
+        let registry = ShaderRegistry::new(
+            vec![
+                (guid(1), "Shaders/Water.shader".into(), WATER.into()),
+                (guid(2), "Shaders/Broken.shader".into(), "struct Nothing { }".into()),
+            ],
+            &BTreeSet::new(),
+        );
+        let numbers: Vec<(&str, u32)> = registry.project_shaders().map(|s| (s.path.as_str(), s.number)).collect();
+        assert_eq!(numbers, [("Shaders/Broken.shader", FIRST), ("Shaders/Water.shader", FIRST + 1)]);
+        let water = registry.get(ShaderRef::Asset(guid(1))).map(|(number, info)| (number, info.name.as_str()));
+        assert_eq!(water, Some((FIRST + 1, "Water")));
+        let broken = registry.get(ShaderRef::Asset(guid(2)));
+        assert!(broken.is_none(), "one that does not read draws as the standard shader");
+        assert_eq!(registry.get(ShaderRef::Builtin(BuiltinShader::Toon)).map(|(number, _)| number), Some(1));
+    }
+
+    #[test]
+    fn every_built_in_shader_reads_and_its_struct_is_named_as_its_title() {
+        for shader in BuiltinShader::ALL {
+            let info = read(shader.source()).unwrap_or_else(|error| panic!("{}: {error:#}", shader.title()));
+            assert_eq!(info.name, shader.title());
+            assert!(!info.properties.is_empty(), "{} has settings", shader.title());
+            assert_eq!(BuiltinShader::from_reference(&shader.reference()), Some(shader));
+            let reference: ShaderRef = shader.reference().parse().unwrap();
+            assert_eq!(reference, ShaderRef::Builtin(shader));
+        }
+        assert!("builtin:nothing".parse::<ShaderRef>().is_err());
+        let toon = read(BuiltinShader::Toon.source()).unwrap();
+        assert!(toon.surface && toon.light && !toon.unlit);
+        assert!(read(BuiltinShader::Hologram.source()).unwrap().unlit);
+        assert!(read(BuiltinShader::Water.source()).unwrap().max_offset >= 2.0, "waves up to 2 metres high");
+    }
+
+    #[test]
+    fn only_the_built_in_shaders_materials_use_are_compiled_in() {
+        let none = ShaderRegistry::new(Vec::new(), &BTreeSet::new());
+        assert!(!none.any_used());
+        assert!(!dispatch_code(&none).contains("namespace shader_"));
+        let used = builtins_used([Some(ShaderRef::Builtin(BuiltinShader::Water)), None]);
+        let water = ShaderRegistry::new(Vec::new(), &used);
+        let code = dispatch_code(&water);
+        assert!(water.any_used());
+        assert!(code.contains("namespace shader_4\n{\n#line 1 \"builtin:water\""), "{code}");
+        assert!(!code.contains("namespace shader_1\n"), "Toon is left out");
     }
 
     #[test]
     fn the_dispatch_calls_each_shaders_functions_by_its_number() {
         let guid = |n: u32| format!("{n:032x}").parse::<AssetGuid>().unwrap();
         let unlit = "[Unlit]\nstruct Glow { [Property, Color] float3 tint = 1.0; }";
-        let registry = ShaderRegistry::new(vec![
-            (guid(1), "Shaders/Water.shader".into(), WATER.into()),
-            (guid(2), "Shaders/Glow.shader".into(), unlit.into()),
-        ]);
+        let registry = ShaderRegistry::new(
+            vec![
+                (guid(1), "Shaders/Water.shader".into(), WATER.into()),
+                (guid(2), "Shaders/Glow.shader".into(), unlit.into()),
+            ],
+            &BTreeSet::new(),
+        );
+        let (glow, water) = (FIRST, FIRST + 1);
         let code = dispatch_code(&registry);
-        assert!(code.contains("namespace shader_2\n{\n#line 1 \"Shaders/Water.shader\""), "{code}");
+        assert!(code.contains(&format!("namespace shader_{water}\n{{\n#line 1 \"Shaders/Water.shader\"")), "{code}");
         assert!(code.contains("properties.deep = values[0].xyz;"));
         assert!(code.contains("properties.ripples.index = asuint(values[2].x);"));
         assert!(code.contains("properties.foam = values[3].x > 0.5;"));
-        assert!(code.contains("case 2:\n        shader_2::surface(shader_2_properties(material), input, surface);"));
-        assert!(code.contains("case 2:\n        return shader_2::vertex("));
-        assert!(code.contains("case 1:\n        return true;"), "Glow is unlit");
-        assert!(!code.contains("shader_1::surface"), "Glow has no surface function");
+        let surface =
+            format!("case {water}:\n        shader_{water}::surface(shader_{water}_properties(material), input, surface);");
+        assert!(code.contains(&surface));
+        assert!(code.contains(&format!("case {water}:\n        return shader_{water}::vertex(")));
+        assert!(code.contains(&format!("case {glow}:\n        return true;")), "Glow is unlit");
+        assert!(!code.contains(&format!("shader_{glow}::surface")), "Glow has no surface function");
     }
 
     #[test]

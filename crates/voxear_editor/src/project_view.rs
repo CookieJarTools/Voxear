@@ -95,6 +95,10 @@ pub enum ProjectEvent {
     /// Import New Asset was chosen: the editor asks for files to copy into
     /// `folder` (from the project's folder).
     Import { folder: String },
+    /// New Shader was chosen: the editor offers what a shader can start as,
+    /// under `anchor`, to make the one picked in `folder` (from the
+    /// project's folder).
+    NewShader { folder: String, anchor: NodeId },
     /// A file or folder of the panel's was dragged onto a folder, by their
     /// paths, to move it there.
     Move { path: String, folder: String },
@@ -123,6 +127,7 @@ enum MenuAction {
     Delete,
     Import,
     New(NewFile),
+    NewShader,
 }
 
 /// How long a pinged file stays lit, in seconds.
@@ -901,8 +906,13 @@ impl ProjectView {
         add(MenuItem::separator(), None);
         add(MenuItem::new("Import New Asset…").enabled(open_to_new), Some(MenuAction::Import));
         add(MenuItem::separator(), None);
+        // Shaders are one item, offering what a new one starts as, to keep the menu short enough to show whole.
         for kind in NewFile::ALL {
-            add(MenuItem::new(kind.label()).enabled(open_to_new), Some(MenuAction::New(kind)));
+            match kind {
+                NewFile::Shader => add(MenuItem::new("New Shader…").enabled(open_to_new), Some(MenuAction::NewShader)),
+                NewFile::UnlitShader => {}
+                _ => add(MenuItem::new(kind.label()).enabled(open_to_new), Some(MenuAction::New(kind))),
+            }
         }
         let at = ui.pointer_position().unwrap_or_default();
         ui.open_menu(owner, at, &items);
@@ -967,6 +977,10 @@ impl ProjectView {
                 }
             }
             MenuAction::Import => vec![ProjectEvent::Import { folder: self.contents.borrow().folders[folder].path.clone() }],
+            MenuAction::NewShader => {
+                let folder = self.contents.borrow().folders[folder].path.clone();
+                vec![ProjectEvent::NewShader { folder, anchor: self.path }]
+            }
             MenuAction::New(kind) => {
                 let at = self.contents.borrow().folders[folder].path.clone();
                 let made = project_files::place(&self.mounts, &at).and_then(|at| {

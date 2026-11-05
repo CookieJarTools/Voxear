@@ -150,29 +150,32 @@ impl Game {
     /// (and as it starts, in the one the player chose last, see [`start`](Self::start));
     /// read again, as when a table changed, it stays in the one it is in.
     /// Reads the project's custom shaders and has the renderer compile them
-    /// into its own, on a thread of their own, and draws the materials that
-    /// use them with them. Nothing to compile for a project without any, nor
-    /// for a built game, whose build compiled them.
+    /// into its own, on a thread of their own, with the built-in ones its
+    /// materials pick, and draws the materials that use them with them.
+    /// Nothing to compile for a project without any, nor for a built game,
+    /// whose build compiled them, nor when nothing changed.
     pub fn apply_custom_shaders(&mut self, renderer: &mut Renderer) {
         self.content.read_shaders();
         let registry = self.content.shaders();
-        for shader in &registry.shaders {
+        for shader in registry.shaders.iter().filter(|shader| shader.used) {
             if let Err(error) = &shader.info {
                 tracing::error!("the shader {}: {error}", shader.path);
             }
         }
-        // A project that never had shaders keeps the renderer's own, uncompiled.
-        let had = *renderer.custom_shaders() != voxear_render::CustomShaderState::None;
-        if registry.shaders.is_empty() && !had {
-            return;
-        }
-        match self.content.built_shaders() {
-            Some(modules) => {
-                if let Err(error) = modules.and_then(|modules| renderer.use_custom_modules(&modules)) {
-                    tracing::error!("drawing with the built custom shaders: {error:#}");
-                }
+        // A built game draws with the shaders its build compiled, built-in ones and all.
+        if let Some(modules) = self.content.built_shaders() {
+            if let Err(error) = modules.and_then(|modules| renderer.use_custom_modules(&modules)) {
+                tracing::error!("drawing with the built custom shaders: {error:#}");
             }
-            None => renderer.set_custom_shaders(crate::shaders::dispatch_code(registry)),
+        } else {
+            // A project that never had shaders keeps the renderer's own, uncompiled.
+            let had = *renderer.custom_shaders() != voxear_render::CustomShaderState::None;
+            if !registry.any_used() && !had {
+                return;
+            }
+            if !renderer.set_custom_shaders(crate::shaders::dispatch_code(registry)) {
+                return;
+            }
         }
         if let Err(error) = self.content.refresh_shaded_materials(renderer) {
             tracing::error!("{error:#}");

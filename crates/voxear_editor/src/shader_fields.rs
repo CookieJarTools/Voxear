@@ -9,7 +9,7 @@
 use voxear_assets::AssetDb;
 use voxear_engine::{
     MaterialData, PropertyValue,
-    shaders::{PropertyKind, ShaderInfo, ShaderProperty, ShaderRegistry},
+    shaders::{PropertyKind, ShaderInfo, ShaderProperty, ShaderRef, ShaderRegistry},
 };
 use voxear_ui::{DragSource, NodeId, PickedColor, Style, Ui};
 
@@ -67,14 +67,21 @@ impl ShaderFields {
         db: &AssetDb,
     ) -> Self {
         let shader = slot(ui, rows, "Shader", "shader");
-        let picked = data.shader.and_then(|guid| registry.shaders.iter().find(|shader| shader.guid == guid));
-        let path = picked.map(|shader| shader.path.clone()).or_else(|| {
-            let guid = data.shader?;
-            db.get(guid).map(|entry| entry.path.clone())
-        });
-        match &path {
-            Some(path) => show_slot(ui, shader, Some(path), "Shader"),
-            None => {
+        let picked = data.shader.and_then(|picked| registry.shaders.iter().find(|shader| shader.reference == picked));
+        // A project's shader by its path, to ping; a built-in one is in no folder.
+        let path = match data.shader {
+            Some(ShaderRef::Asset(guid)) => {
+                picked.map(|shader| shader.path.clone()).or_else(|| db.get(guid).map(|entry| entry.path.clone()))
+            }
+            _ => None,
+        };
+        match (data.shader, &path) {
+            (_, Some(path)) => show_slot(ui, shader, Some(path), "Shader"),
+            (Some(ShaderRef::Builtin(builtin)), None) => {
+                ui.set_text(shader.label, builtin.title());
+                ui.set_visible(shader.icon, true);
+            }
+            _ => {
                 ui.set_text(shader.label, "Standard");
                 ui.set_visible(shader.icon, true);
             }

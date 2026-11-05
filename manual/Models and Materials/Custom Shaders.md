@@ -2,11 +2,42 @@
 order: 7
 ---
 
-A material draws its surface with the **Standard** shader unless you give it another. A custom shader is a short file of your own, in the Slang shading language, that changes how a surface looks: its colour and shine, how light falls on it, or where its vertices are. Materials pick a custom shader as their **Shader**, and set its properties in the Inspector like any other setting.
+A material draws its surface with the **Standard** shader unless you give it another. A custom shader is a short file in the Slang shading language that changes how a surface looks: its colour and shine, how light falls on it, or where its vertices are. Materials pick a custom shader as their **Shader**, and set its properties in the Inspector like any other setting.
+
+The engine has shaders of its own built in, for water, lava, toon shading and more, and you can write your own.
+
+## Built-in shaders
+
+Every project has these. Click the arrow on a material's **Shader** field and pick one from under **Standard**.
+
+| Shader | What it draws |
+| --- | --- |
+| Toon | Light in flat steps, as a cartoon is painted, with a coloured shade, a crisp shine, a rim of light and an optional ink line round the edges |
+| Storybook | Soft, painted light made for the Storybook lighting look: a warm glow where light turns to shade, golden highlights, light catching the edges from behind, and colour that wanders as brushstrokes do |
+| Triplanar | Pictures laid on by where the surface is rather than by its UVs, for rocks, cliffs and blocked-out levels, with a second picture over what faces up, as grass or snow on rock |
+| Water | A sea, a lake or a pond: waves, ripples, light through the tops of the waves, foam where they break, and with **Glass**, depth you can see into and foam along the shore |
+| Hologram | A figure of light, bright at its edges, with lines scrolling up it and a flicker. With **Glass**, a see-through force field |
+| Sway | Vertices swaying to and fro, more the farther from the Obj's foot, for flags, washing lines, signs and plants |
+| Lava | Plates of dark crust drifting on molten rock that glows through the cracks, its colour following its temperature |
+
+A built-in shader costs nothing until a material uses it.
+
+To change one, make a copy of your own: right-click in the Project panel, choose **New Shader…**, and pick it. The copy is an ordinary `.shader` file in your project, named for its file, to change as you like.
+
+### Water
+
+- The waves move the mesh's vertices, so draw water on a mesh with plenty of them. On a single flat quad, only the light shows the waves.
+- Turn on the material's **Glass** to see into the water. What lies under it shows through, bluer and darker the deeper it is, and foam laps where it meets the shore. **Clarity** says what a metre of water lets through, and **Murk** how far you see into it. Set the material's **IOR** to 1.33, as water's is.
+- Without **Glass**, water is opaque, drawn in its **Deep** colour.
+
+### Lava
+
+- **Temperature** sets the colour of the glow as real molten rock's: 1000 kelvin is a dull red, 1300 orange and 1800 yellow.
+- Lava's glow lights nothing round it. Put an orange Point Light just above it to light the rocks nearby.
 
 ## Making a shader
 
-Right-click in the Project panel and choose **New Shader**, or **New Unlit Shader** for one that ignores light. A new shader starts with a tint, a gloss and a pattern, and a vertex and a light function to uncomment and try:
+Right-click in the Project panel and choose **New Shader…**, then pick what it starts as: **Lit**, **Unlit** for one that ignores light, or one of the built-in shaders to change. A new lit shader starts with a tint, a gloss and a pattern, and a vertex and a light function to uncomment and try:
 
 ```slang
 struct Tinted
@@ -64,6 +95,8 @@ A shader has any of these three functions, each taking its struct, with the mate
 | `view` | The way to the camera |
 | `objectPosition` | Where the Obj is, so each Obj can differ |
 | `time` | Seconds since the game started |
+| `glass` | Whether the material is **Glass** |
+| `thickness` | For **Glass**, how far the view goes through it to what lies behind, in metres: shallow water at the shore, deep water further out. 1000 for anything else |
 
 `surface` starts as the material makes it, for you to change:
 
@@ -75,6 +108,9 @@ A shader has any of these three functions, each taking its struct, with the mate
 | `metallic` | 0 for plastic, wood or stone, 1 for bare metal |
 | `roughness` | 0 for a mirror, 1 for matt |
 | `emission` | Light it gives off |
+| `reflectance` | How much it reflects head on, if not metal: 0.04 for most things, 0.02 for water |
+| `transmission` | For **Glass**, how much of what lies behind shows through, by colour. `color` is then light the glass scatters itself, as murky water does |
+| `data` | Four numbers of your own, for your light function to read |
 
 ### The vertex function
 
@@ -100,12 +136,16 @@ Put `[MaxOffset(metres)]` on the struct to say how far the function moves a vert
 `light(shader, light, surface)` lights the surface your own way, as toon shading does, in place of the Standard shader's lighting. It is called once for the sun and once for each lamp that reaches the pixel, and returns the light that bounces towards the camera. `LightInput` has the `direction` to the light, the light's `color` as it arrives, already shadowed, and the `view` direction to the camera.
 
 ```slang
-float3 light(Toon shader, LightInput light, SurfaceOutput surface)
+float3 light(Cel shader, LightInput light, SurfaceOutput surface)
 {
     float lit = dot(surface.normal, light.direction) > 0.2 ? 1.0 : 0.3;
-    return surface.color * light.color * lit;
+    return surface.color / PI * light.color * lit;
 }
 ```
+
+Divide the surface's colour by `PI`, as above, for a surface as bright as the Standard shader would draw it.
+
+To hand the light function something the surface function worked out, such as how high on a wave a pixel is, put it in `surface.data`.
 
 Bounced light and reflections still light the surface as the Standard shader does.
 
@@ -143,6 +183,10 @@ pattern = "5b0e2a7c41d94f3c8a1f0e6b2d9c7a13"
 ```
 
 Colours are written as the colour picker shows them. Pictures are named by their IDs, as a material's maps are.
+
+## Custom shaders on glass
+
+A material with **Glass** turned on runs its shader too. `input.glass` is true, and `input.thickness` says how much glass, or water, lies between the surface and what is behind it. Set `surface.transmission` to what shows through, and `surface.color` to what the glass scatters itself. An unlit shader's colour adds to what shows through, as a hologram's light does.
 
 ## Custom shaders in a build
 

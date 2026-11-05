@@ -75,7 +75,7 @@ pub use gltf_import::{
 pub use gpu::{
     DEBUG_VIEW_AMBIENT_OCCLUSION, DEBUG_VIEW_CASCADES, DEBUG_VIEW_GLOBAL_ILLUMINATION, DEBUG_VIEW_LIGHT_COMPLEXITY,
     DEBUG_VIEW_LIT_WIREFRAME, DEBUG_VIEW_LOD, DEBUG_VIEW_MESHLETS, DEBUG_VIEW_NONE, DEBUG_VIEW_NORMALS, DEBUG_VIEW_UNLIT,
-    DEBUG_VIEW_WIREFRAME, MATERIAL_PROPERTIES, STANDARD_SHADER,
+    DEBUG_VIEW_WIREFRAME, MATERIAL_PROPERTIES, NO_TEXTURE, STANDARD_SHADER,
 };
 pub use graph::{BufferAccess, FrameGraph, ImageAccess, ImageId, PassContext, RenderGraph};
 pub use lod::{LodInfo, MAX_LODS, lod_at, lod_at_share, screen_share};
@@ -110,7 +110,7 @@ use crate::{
     assets::Assets,
     gpu::{
         CLUSTER_COUNT, DRAW_COMMAND_SIZE, DRAW_COUNT_SIZE, GpuBuffers, GpuFrame, GpuInstance, GpuLight, LIST_COUNT,
-        MAX_CLUSTER_LIGHTS, MESHLET_CONES, MESHLET_CULLING, MESHLET_RUNS, Mat4Cols, NO_TEXTURE, Push,
+        MAX_CLUSTER_LIGHTS, MESHLET_CONES, MESHLET_CULLING, MESHLET_RUNS, Mat4Cols, Push,
         meshlet_lists_len, stat,
     SKY_ATMOSPHERE, },
     hot_reload::{CustomCompile, ShaderSet, ShaderWatcher},
@@ -879,15 +879,15 @@ impl Renderer {
     /// `project_shaders.slang` (see `voxear_engine::shaders`), into the
     /// shaders that draw materials, on a thread of its own, and draws with
     /// them once they compile; until then, and if they do not, with those it
-    /// had. The same code again does nothing.
-    pub fn set_custom_shaders(&mut self, code: String) {
+    /// had. The same code again does nothing; whether the code changed.
+    pub fn set_custom_shaders(&mut self, code: String) -> bool {
         if self.custom.code == code {
-            return;
+            return false;
         }
         self.custom.code = code.clone();
         if self.custom.compiling.is_some() {
             self.custom.waiting = Some(code);
-            return;
+            return true;
         }
         let dir = self.custom.dir();
         if let Some(watcher) = &mut self.watcher {
@@ -895,6 +895,7 @@ impl Renderer {
         }
         self.custom.compiling = Some(CustomCompile::start(code, dir));
         self.custom.state = CustomShaderState::Compiling;
+        true
     }
 
     /// Draws with modules compiled before with a project's custom shaders,

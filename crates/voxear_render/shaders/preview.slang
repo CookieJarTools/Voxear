@@ -67,10 +67,10 @@ float4 previewFragment(PreviewOut input) : SV_Target
     // Seen from behind, as a plane can be, a face is lit as its front.
     float3 normal = normalize(input.normal);
     normal = dot(normal, view) < 0.0 ? -normal : normal;
-    SurfaceOutput surface = { base.rgb, base.a, normal, metallic, roughness, emission };
+    SurfaceOutput surface = materialSurface(base.rgb, base.a, normal, metallic, roughness, emission);
     if (custom)
     {
-        SurfaceInput at = { input.uv, input.world, normal, view, float3(0.0), frame->time };
+        SurfaceInput at = { input.uv, input.world, normal, view, float3(0.0), frame->time, SOLID_THICKNESS, false };
         customSurface(input.material, at, surface);
         if (material.alphaCutoff > 0.0 && surface.alpha < material.alphaCutoff)
         {
@@ -92,7 +92,7 @@ float4 previewFragment(PreviewOut input) : SV_Target
     s.normal = normal;
     s.roughness = clamp(roughness, 0.045, 1.0);
     s.diffuse = base.rgb * (1.0 - metallic);
-    s.f0 = lerp(float3(0.04), base.rgb, metallic);
+    s.f0 = lerp(float3(saturate(surface.reflectance)), base.rgb, metallic);
 
     float3 fill = normalize(s.view + float3(0.0, 0.25, 0.0) - frame->sunDirection * 0.3);
     float3 color;

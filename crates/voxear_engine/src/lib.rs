@@ -46,7 +46,7 @@ mod windowed;
 
 pub use content::{
     Content, ContentUsage, MaterialData, MaterialMap, MaterialSource, MovedPart, PropertyValue, Reimported, Released,
-    linear, srgb,
+    default_on_gpu, linear, srgb,
 };
 pub use engine::{EditBehaviours, Engine, STAGES};
 pub use fly_camera::FlyCamera;

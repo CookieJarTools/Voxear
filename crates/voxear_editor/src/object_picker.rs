@@ -20,7 +20,7 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use voxear_assets::AssetKind;
 use voxear_ecs::Entity;
-use voxear_engine::{AssetPreviews, Game};
+use voxear_engine::{AssetPreviews, Game, shaders::BuiltinShader};
 use voxear_ui::{ImageRef, ItemFns, NodeId, Style, Ui};
 
 use crate::{
@@ -68,6 +68,8 @@ pub enum Chosen {
     Control(String),
     /// An input action's icon, or none for its type's.
     Icon(Option<&'static str>),
+    /// What a new shader starts as.
+    Shader(crate::project_files::ShaderStart),
 }
 
 /// What a pick is for: a reference of an Obj's, or a scene of a level's.
@@ -93,6 +95,8 @@ pub enum PickFor {
     MaterialShader { material: String },
     /// A picture property of the custom shader of the material at this path.
     ShaderPicture { material: String, property: String },
+    /// What a new shader in this folder starts as.
+    NewShader { folder: String },
     /// The control of the binding picked in the Input Actions window.
     InputControl,
     /// The icon of the action picked in the Input Actions window.
@@ -440,6 +444,9 @@ pub fn decorate(game: &Game, choices: Vec<(String, Pick)>) -> Vec<Choice> {
                 Pick::Key(Some(key)) => ("globe", key_text(game, key)),
                 Pick::Obj(Some(entity)) => obj(game, *entity),
                 Pick::Asset(Some(reference)) if builtin_material(reference) => ("material", "Built in".into()),
+                Pick::Asset(Some(reference)) if BuiltinShader::from_reference(reference).is_some() => {
+                    ("shader", "Built in".into())
+                }
                 Pick::Asset(Some(reference)) if reference.starts_with("builtin:") => ("cube", "Built in".into()),
                 // A part of a model, as a mesh, beside the model it is in.
                 Pick::Asset(Some(reference)) if reference.contains('#') => {
@@ -454,6 +461,7 @@ pub fn decorate(game: &Game, choices: Vec<(String, Pick)>) -> Vec<Choice> {
             };
             let preview = match &pick {
                 Pick::Asset(Some(reference)) if builtin_material(reference) => None,
+                Pick::Asset(Some(reference)) if BuiltinShader::from_reference(reference).is_some() => None,
                 Pick::Asset(Some(reference)) if reference.starts_with("builtin:") => Some(reference.clone()),
                 Pick::Asset(Some(path)) => {
                     let db = game.content.db();

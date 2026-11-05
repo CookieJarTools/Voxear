@@ -283,13 +283,16 @@ pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), gla
     // have one of their own.
     let first = panes.len() - (panes.len() - 1) / layer * layer;
     let layers = std::iter::once(&panes[..first]).chain(panes[first..].chunks(layer));
+    // The panes read the depth rather than testing against it as an attachment, to know how far the view goes
+    // through each, as water's colour deepens with, and test themselves against it.
+    let depth_texture = fg.texture(depth);
     for drawn in layers {
         record_copy(fg, (pipelines, push), (hdr, copy, copy_texture), &copy_mips, size);
         let mut images =
-            vec![(hdr, ImageAccess::ColorAttachment), (depth, ImageAccess::DepthRead), (copy, ImageAccess::Sampled)];
+            vec![(hdr, ImageAccess::ColorAttachment), (depth, ImageAccess::Sampled), (copy, ImageAccess::Sampled)];
         images.extend(sampled.iter().map(|&image| (image, ImageAccess::Sampled)));
         let extent = vk::Extent2D { width: size[0], height: size[1] };
-        let push = Push { texture: copy_texture.0, ..push };
+        let push = Push { texture: copy_texture.0, textures: [depth_texture.0, 0, 0, 0], ..push };
         let buffers = [(clusters, BufferAccess::ShaderRead), (pushes, BufferAccess::ShaderRead)];
         let drawn = drawn.to_vec();
         fg.add_pass("Glass", &images, &buffers, move |ctx| {
@@ -301,8 +304,7 @@ pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), gla
                     .store_op(vk::AttachmentStoreOp::STORE)
             };
             let color = [load(ctx.view(hdr), vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)];
-            let depth = load(ctx.view(depth), vk::ImageLayout::DEPTH_READ_ONLY_OPTIMAL);
-            begin_rendering(ctx, extent, &color, Some(&depth));
+            begin_rendering(ctx, extent, &color, None);
             bind(ctx, pipelines.glass, vk::PipelineBindPoint::GRAPHICS, &push);
             unsafe { ctx.gpu.device.cmd_bind_index_buffer(ctx.cmd, index_buffer, 0, vk::IndexType::UINT32) };
             for pane in &drawn {

@@ -402,7 +402,7 @@ fn custom_shaders_ship_compiled_and_compile_again_only_when_changed() {
     let forward = shaders.join("forward.spv");
     assert!(forward.is_file() && shaders.join("glass.spv").is_file(), "the modules that draw materials are compiled");
     let content = Content::open_bundles(dir.path(), &output).unwrap();
-    assert_eq!(content.shaders().shaders.len(), 1, "the shader ships, numbered as it was compiled");
+    assert_eq!(content.shaders().project_shaders().count(), 1, "the shader ships, numbered as it was compiled");
     let modules = content.built_shaders().unwrap().unwrap();
     assert!(modules.iter().any(|(name, spirv)| name == "forward" && spirv.len() > 1000), "the game reads them back");
 

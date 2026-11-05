@@ -257,9 +257,19 @@ pub fn build_mounted(
         .filter_map(|guid| db.get(*guid).filter(|entry| entry.kind == AssetKind::Shader))
         .map(|entry| Ok((entry.guid, entry.path.clone(), String::from_utf8(stored[&entry.guid].clone())?)))
         .collect::<Result<_>>()?;
+    // The built-in shaders the materials shipped pick, which are compiled in with the project's.
+    let picked: Vec<_> = usage
+        .keys()
+        .filter(|guid| db.get(**guid).is_some_and(|entry| entry.kind == AssetKind::Material))
+        .map(|guid| {
+            let text = std::str::from_utf8(&stored[guid]).ok();
+            text.and_then(|text| toml::from_str::<crate::MaterialData>(text).ok()).and_then(|data| data.shader)
+        })
+        .collect();
+    let used = crate::shaders::builtins_used(picked);
     progress(usage.len(), usage.len(), "custom shaders")?;
     let scratch = root.join(".voxear").join("ShaderBuild");
-    compile_shaders(shaders, &scratch, output).context("compiling the project's custom shaders")?;
+    compile_shaders(shaders, &used, &scratch, output).context("compiling the project's custom shaders")?;
     catalog.write(output)?;
     remove_stale(output, &catalog)?;
     cooker.prune()?;
@@ -400,18 +410,24 @@ const SHADERS_STAMP: &str = "compiled-from";
 
 /// Compiles the shaders shipped into the engine's modules that draw
 /// materials, into `output`'s [`SHADERS_FOLDER`]: a folder that is not there
-/// for a game without any. Unchanged shaders and engine are not compiled
-/// again. Slang works in `scratch`.
-fn compile_shaders(shaders: Vec<(AssetGuid, String, String)>, scratch: &Path, output: &Path) -> Result<()> {
+/// for a game without any. With them, the built-in shaders in `used`.
+/// Unchanged shaders and engine are not compiled again. Slang works in
+/// `scratch`.
+fn compile_shaders(
+    shaders: Vec<(AssetGuid, String, String)>,
+    used: &std::collections::BTreeSet<crate::shaders::BuiltinShader>,
+    scratch: &Path,
+    output: &Path,
+) -> Result<()> {
     let folder = output.join(SHADERS_FOLDER);
-    if shaders.is_empty() {
+    let registry = crate::shaders::ShaderRegistry::new(shaders, used);
+    if !registry.any_used() {
         if folder.is_dir() {
             std::fs::remove_dir_all(&folder).with_context(|| format!("removing {}", folder.display()))?;
         }
         return Ok(());
     }
-    let registry = crate::shaders::ShaderRegistry::new(shaders);
-    if let Some(shader) = registry.shaders.iter().find(|shader| shader.info.is_err())
+    if let Some(shader) = registry.shaders.iter().find(|shader| shader.used && shader.info.is_err())
         && let Err(error) = &shader.info
     {
         anyhow::bail!("{}: {error}", shader.path);

@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail, ensure};
 use voxear_assets::{Access, Mount, Mounts, PACKAGES_FOLDER};
+use voxear_engine::shaders::BuiltinShader;
 
 /// Where a path of the Project panel's changes on disk: the folder of its
 /// mount, the project's or a folder package's, and its path in there.
@@ -166,9 +167,89 @@ pub fn create(root: &Path, folder: &str, kind: NewFile, namespace: &str) -> Resu
 /// A new shader, its struct named for its file: the file's name without
 /// what a name in code cannot have.
 fn shader(template: &str, name: &str) -> String {
+    template.replace("NAME", &struct_name(name))
+}
+
+/// A shader file's name as its struct's: without what a name in code
+/// cannot have.
+fn struct_name(name: &str) -> String {
     let named: String = name.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '_').collect();
-    let named = if named.starts_with(|c: char| c.is_ascii_alphabetic()) { named } else { format!("Shader{named}") };
-    template.replace("NAME", &named)
+    if named.starts_with(|c: char| c.is_ascii_alphabetic()) { named } else { format!("Shader{named}") }
+}
+
+/// What a new shader starts as: a lit or an unlit one to write, or a copy
+/// of one built in, to change.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShaderStart {
+    Lit,
+    Unlit,
+    Copy(BuiltinShader),
+}
+
+impl ShaderStart {
+    /// As New Shader offers them: the two to write first, then the built-in ones.
+    pub fn all() -> Vec<Self> {
+        let mut all = vec![Self::Lit, Self::Unlit];
+        all.extend(BuiltinShader::ALL.map(Self::Copy));
+        all
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Lit => "Lit",
+            Self::Unlit => "Unlit",
+            Self::Copy(builtin) => builtin.title(),
+        }
+    }
+
+    /// What it starts as, beside its name.
+    pub fn detail(self) -> &'static str {
+        match self {
+            Self::Lit | Self::Unlit => "To write",
+            Self::Copy(_) => "Built in, to change",
+        }
+    }
+}
+
+/// Makes a new shader in `folder` (from the project's folder) as `start`
+/// says, and returns its path.
+pub fn create_shader(root: &Path, folder: &str, start: ShaderStart, namespace: &str) -> Result<String> {
+    match start {
+        ShaderStart::Lit => create(root, folder, NewFile::Shader, namespace),
+        ShaderStart::Unlit => create(root, folder, NewFile::UnlitShader, namespace),
+        ShaderStart::Copy(builtin) => create_shader_from(root, folder, builtin),
+    }
+}
+
+/// Makes a copy of a built-in shader in `folder` (from the project's
+/// folder), to change as the project's own, and returns its path. Its
+/// struct is named for its file, as a new shader's is.
+fn create_shader_from(root: &Path, folder: &str, builtin: BuiltinShader) -> Result<String> {
+    let name = unique(&root.join(folder), builtin.title(), ".shader");
+    let path = join(folder, &name);
+    let named = struct_name(&name[..name.len() - ".shader".len()]);
+    let source = replace_word(builtin.source(), builtin.title(), &named);
+    let file = root.join(&path);
+    std::fs::write(&file, source).with_context(|| format!("making {}", file.display()))?;
+    Ok(path)
+}
+
+/// `text` with `word` replaced by `with` wherever it stands as a whole
+/// word, not inside another.
+fn replace_word(text: &str, word: &str, with: &str) -> String {
+    let in_word = |c: char| c.is_alphanumeric() || c == '_';
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(word) {
+        let previous = if at == 0 { out.chars().last() } else { rest[..at].chars().last() };
+        let before = previous.is_some_and(in_word);
+        let after = rest[at + word.len()..].chars().next().is_some_and(in_word);
+        out.push_str(&rest[..at]);
+        out.push_str(if before || after { word } else { with });
+        rest = &rest[at + word.len()..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// What a new shader starts as: a lit surface with a tint, a gloss and a
@@ -201,7 +282,7 @@ void surface(NAME shader, SurfaceInput input, inout SurfaceOutput surface)
 // float3 light(NAME shader, LightInput light, SurfaceOutput surface)
 // {
 //     float lit = dot(surface.normal, light.direction) > 0.2 ? 1.0 : 0.3;
-//     return surface.color * light.color * lit;
+//     return surface.color / PI * light.color * lit;
 // }
 "#;
 

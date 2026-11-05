@@ -2910,7 +2910,9 @@ fn custom_shader_render(shader: u32, value: [f32; 4], compiled: Compiled) -> Opt
     use voxear_render::{CustomShaderState, Sky};
     let mut renderer = renderer()?;
     match compiled {
-        Compiled::WhileDrawing => renderer.set_custom_shaders(CUSTOM_SHADERS.to_string()),
+        Compiled::WhileDrawing => {
+            renderer.set_custom_shaders(CUSTOM_SHADERS.to_string());
+        }
         Compiled::Before => {
             let dir = std::env::temp_dir().join(format!("voxear-built-shaders-{}", std::process::id()));
             let modules = voxear_render::compile_custom_shaders(CUSTOM_SHADERS, &dir).unwrap();

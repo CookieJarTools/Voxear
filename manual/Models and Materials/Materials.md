@@ -71,7 +71,7 @@ Every project has a clear glass material built in: pick **Glass** in a Mesh Rend
 
 ## Custom shaders
 
-Click the arrow on a material's **Shader** field to draw it with a shader of your own in place of **Standard**: a short file that changes its colour, how light falls on it, or moves its vertices. Its properties show as fields under the material's settings. See [[Custom Shaders]].
+Click the arrow on a material's **Shader** field to draw it with another shader in place of **Standard**: one built in, such as Water, Lava or Toon, or a short file of your own that changes its colour, how light falls on it, or moves its vertices. Its properties show as fields under the material's settings. See [[Custom Shaders]].
 
 ## The material file
 

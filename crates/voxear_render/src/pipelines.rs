@@ -312,10 +312,9 @@ impl Pipelines {
             glass_shadow_mip: create_compute_pipeline(gpu, layout, "Glass shadow mips", glass, c"glassShadowMipMain")?,
             foliage_push: create_compute_pipeline(gpu, layout, "Foliage pushes", foliage_push, c"pushMain")?,
             sky_light: create_compute_pipeline(gpu, layout, "Sky light", sky, c"skyLightMain")?,
+            // Tested against the depth in its fragment shader, which reads it.
             glass: graphics(&GraphicsPipelineDesc {
                 color_formats: hdr,
-                depth_format: Some(DEPTH_FORMAT),
-                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
                 ..GraphicsPipelineDesc::new("Glass", glass, c"glassVertex", c"glassFragment")
             })?,
             glass_shadow: graphics(&GraphicsPipelineDesc {

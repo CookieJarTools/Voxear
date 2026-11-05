@@ -51,9 +51,14 @@ struct Picture
     }
 };
 
+// How thick a surface that is not Glass counts as: as good as bottomless.
+static const float SOLID_THICKNESS = 1000.0;
+
 // Where a surface's pixel is, for `surface`: its UV, its place and normal
 // in the world, the way to the camera, the Obj's place, and the time in
-// seconds.
+// seconds. For a Glass material, `glass` is true and `thickness` is how far
+// the view goes through it, in metres, to what lies behind: shallow water
+// at a shore, deep in the middle. For any other, SOLID_THICKNESS.
 struct SurfaceInput
 {
     float2 uv;
@@ -62,11 +67,16 @@ struct SurfaceInput
     float3 view;
     float3 objectPosition;
     float time;
+    float thickness;
+    bool glass;
 };
 
 // A surface as `surface` sets it, starting as the material's own: its
 // colour and alpha, its normal in the world, metallic, roughness and what
-// it gives off.
+// it gives off; how much it reflects head on, if not metal (0.04 for most
+// things, 0.02 for water); for Glass, how much of what lies behind shows
+// through, by colour, its own colour being light it scatters, as murky
+// water does; and four values of the shader's own for its `light` to read.
 struct SurfaceOutput
 {
     float3 color;
@@ -75,7 +85,17 @@ struct SurfaceOutput
     float metallic;
     float roughness;
     float3 emission;
+    float reflectance;
+    float3 transmission;
+    float4 data;
 };
+
+// A surface as the material makes it, for its custom shader to change.
+SurfaceOutput materialSurface(float3 color, float alpha, float3 normal, float metallic, float roughness, float3 emission)
+{
+    SurfaceOutput surface = { color, alpha, normal, metallic, roughness, emission, 0.04, float3(0.0), float4(0.0) };
+    return surface;
+}
 
 // A vertex, for `vertex`: its place and normal in the world, its UV, the
 // Obj's place and the time in seconds.

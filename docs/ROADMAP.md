@@ -1248,6 +1248,14 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   again only when a shader or the engine changed; the player draws with those, needing no compiler. The shader
   Inspector shows its properties, functions, and compile state or error; the material Inspector edits its
   properties; New Shader and New Unlit Shader start from templates; the manual's Custom Shaders page.
+- **Built-in shaders ✅.** Toon, Storybook, Triplanar, Water, Hologram, Sway and Lava, embedded in the engine and
+  picked as `builtin:toon` (`BuiltinShader`, `ShaderRef`), numbered before a project's own and compiled in only
+  once a material uses one. New Shader… offers Lit, Unlit or a copy of a built-in one. Water and lava after Sea of
+  Thieves, Atlas, Unreal's single layer water, Bruneton et al.'s distant ocean lighting, Quilez's Voronoi edges and
+  blackbody colour. For them the shader API gained `SurfaceInput.thickness` and `glass` (the glass pass reads the
+  depth and tests itself against it), and `SurfaceOutput.reflectance`, `transmission` and `data`; the glass pass
+  runs a custom shader's surface and light functions; bounced light is read where a moved vertex rests; and a
+  material that moves its vertices always draws its full mesh, so its shadow matches it.
 - Shader Graph with previews and sub-graphs, plus material variants, writing custom shaders.
 - Particles:
   - the IR compiler and the stateless fast path

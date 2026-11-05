@@ -88,10 +88,10 @@ pub struct MaterialData {
     pub glow: Glow,
     #[serde(default = "default_glow_speed", skip_serializing_if = "is_default_glow_speed")]
     pub glow_speed: f32,
-    /// A custom shader asset it is drawn with, in place of the standard
-    /// shader (see `shaders`).
+    /// A custom shader it is drawn with, in place of the standard one: one
+    /// built in, or one of the project's (see `shaders`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub shader: Option<AssetGuid>,
+    pub shader: Option<crate::shaders::ShaderRef>,
     /// The values it gives its custom shader's properties, by name; the
     /// rest keep the shader's defaults.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
@@ -633,7 +633,8 @@ impl Content {
     }
 
     /// Reads the project's custom shaders again, as after one was added or
-    /// changed, numbering them afresh.
+    /// changed, numbering them afresh, and which built-in ones its materials
+    /// pick.
     pub fn read_shaders(&mut self) {
         let found: Vec<(AssetGuid, String)> = self
             .db
@@ -649,7 +650,21 @@ impl Content {
             }
         });
         let read: Vec<_> = read.collect();
-        self.shaders = crate::shaders::ShaderRegistry::new(read);
+        // The built-in shaders its material assets pick, which are compiled in with its own. A built game's were
+        // compiled when it was built, and reading every material would open every bundle.
+        let built = matches!(self.source, Source::Bundles(..));
+        let materials: Vec<String> = self
+            .db
+            .entries()
+            .filter(|entry| !built && entry.kind == AssetKind::Material)
+            .map(|entry| entry.path.clone())
+            .collect();
+        let picked: Vec<_> = materials
+            .iter()
+            .filter_map(|path| self.read_text(path).ok())
+            .map(|text| toml::from_str::<MaterialData>(&text).ok().and_then(|data| data.shader))
+            .collect();
+        self.shaders = crate::shaders::ShaderRegistry::new(read, &crate::shaders::builtins_used(picked));
     }
 
     /// The project's custom shaders, numbered as the renderer draws them.
@@ -896,14 +911,15 @@ impl Content {
         }
         let mut desc = data.desc(textures);
         // A shader the project does not have, or that does not compile, draws as the standard one.
-        let found = data.shader.and_then(|guid| self.shaders.get(guid)).map(|(number, info)| (number, info.clone()));
+        let found = data.shader.and_then(|shader| self.shaders.get(shader));
+        let found = found.map(|(number, info)| (number, info.clone()));
         if let Some((number, info)) = found {
             desc.shader = number;
             desc.max_offset = info.max_offset;
             for (slot, property) in desc.properties.iter_mut().zip(&info.properties) {
                 *slot = match data.properties.get(&property.name) {
                     Some(value) => self.property_values(renderer, value, property.kind)?,
-                    None => property.default,
+                    None => default_on_gpu(property),
                 };
             }
         }
@@ -929,12 +945,7 @@ impl Content {
             }
             PropertyValue::Picture(guid) => values[0] = f32::from_bits(self.picture(renderer, *guid, true)?.0),
         }
-        // Colours are written as they look, sRGB, and drawn in linear light.
-        if let crate::shaders::PropertyKind::Color { .. } = kind {
-            let [r, g, b] = linear([values[0], values[1], values[2]]);
-            values[..3].copy_from_slice(&[r, g, b]);
-        }
-        Ok(values)
+        Ok(colour_on_gpu(kind, values))
     }
 
     /// A picture asset as a light's cookie, in its colours as they look.
@@ -1395,6 +1406,25 @@ fn primitive(name: &str) -> Result<Primitive> {
 
 /// Colours in project files are sRGB, as picked in any colour picker, like
 /// Unity's inspector. Shading happens in linear space.
+/// A shader property's value until a material sets it, as its `float4` on
+/// the GPU: no picture, which samples as white, rather than whatever texture
+/// came first, and a colour in linear light.
+pub fn default_on_gpu(property: &crate::shaders::ShaderProperty) -> [f32; 4] {
+    match property.kind {
+        crate::shaders::PropertyKind::Picture => [f32::from_bits(voxear_render::NO_TEXTURE), 0.0, 0.0, 0.0],
+        kind => colour_on_gpu(kind, property.default),
+    }
+}
+
+/// Colours are written as they look, sRGB, and drawn in linear light.
+fn colour_on_gpu(kind: crate::shaders::PropertyKind, mut values: [f32; 4]) -> [f32; 4] {
+    if let crate::shaders::PropertyKind::Color { .. } = kind {
+        let [r, g, b] = linear([values[0], values[1], values[2]]);
+        values[..3].copy_from_slice(&[r, g, b]);
+    }
+    values
+}
+
 pub fn linear(srgb: [f32; 3]) -> [f32; 3] {
     srgb.map(|c| if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) })
 }
@@ -1412,7 +1442,7 @@ mod tests {
         let text = "shader = \"0000000000000000000000000000000a\"\n\n[properties]\nfoam = true\nwaveSpeed = 2.5\n\
                     deep = [0.0, 0.2, 0.3]\nripples = \"0000000000000000000000000000000b\"\n";
         let data: MaterialData = toml::from_str(text).unwrap();
-        assert!(data.shader.is_some());
+        assert!(matches!(data.shader, Some(crate::shaders::ShaderRef::Asset(_))));
         assert_eq!(data.properties["foam"], PropertyValue::Toggle(true));
         assert_eq!(data.properties["waveSpeed"], PropertyValue::Number(2.5));
         assert_eq!(data.properties["deep"], PropertyValue::Vector(vec![0.0, 0.2, 0.3]));
@@ -1420,5 +1450,8 @@ mod tests {
         assert_eq!(toml::from_str::<MaterialData>(&toml::to_string(&data).unwrap()).unwrap(), data);
         let plain = toml::to_string(&MaterialData::default()).unwrap();
         assert!(!plain.contains("shader") && !plain.contains("properties"), "left out when standard: {plain}");
+        let toon: MaterialData = toml::from_str("shader = \"builtin:toon\"\n").unwrap();
+        assert_eq!(toon.shader, Some(crate::shaders::ShaderRef::Builtin(crate::shaders::BuiltinShader::Toon)));
+        assert!(toml::to_string(&toon).unwrap().contains("shader = \"builtin:toon\""));
     }
 }

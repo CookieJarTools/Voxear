@@ -66,8 +66,8 @@ float4 depthFragment(VertexOut input) : SV_Target0
     {
         float4 base = material.baseColor * sampleTexture(material.baseColorTexture, input.uv);
         float metallic = material.metallic * sampleTexture(material.metallicRoughnessTexture, input.uv).b;
-        SurfaceOutput surface = { albedo, base.a, normal, metallic, roughness, material.emissive };
-        surface = customSurfaceAt(push.frame, input, surface, origin);
+        SurfaceOutput surface = materialSurface(albedo, base.a, normal, metallic, roughness, material.emissive);
+        surface = customSurfaceAt(push.frame, input, surface, origin, SOLID_THICKNESS, false);
         if (material.alphaCutoff > 0.0 && surface.alpha < material.alphaCutoff)
         {
             discard;

@@ -98,9 +98,9 @@ pub struct Frame {
     /// they run (whenever ambient occlusion, contact shadows or reflections
     /// are on).
     pub surface: Option<ImageId>,
-    /// Screen-space reflections' image, and last frame's finished picture
-    /// they read, when they are on; they need the depth drawn first too.
-    pub reflections: Option<(ImageId, ImageId)>,
+    /// The reflections' images, when they are on; they need the depth drawn
+    /// first too.
+    pub reflections: Option<ambient_occlusion::Reflections>,
     /// The atmosphere's tables, when the sky is the atmosphere: drawn first,
     /// and sampled by the opaque passes and the sky.
     pub atmosphere: Option<atmosphere::Tables>,
@@ -245,7 +245,7 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
         images.extend(targets.shadows.map(|atlas| (atlas, ImageAccess::Sampled)));
         images.extend(ambient_occlusion.map(|ao| (ao.current, ImageAccess::Sampled)));
         images.extend(contact_shadows.map(|contact| (contact, ImageAccess::Sampled)));
-        images.extend(reflections.map(|(target, _)| (target, ImageAccess::Sampled)));
+        images.extend(reflections.map(|reflections| (reflections.current, ImageAccess::Sampled)));
         // The GI's probes, which shading and reflections read.
         images.extend(frame.probes.into_iter().flat_map(|probes| {
             [probes.irradiance, probes.depth, probes.states].map(|image| (image, ImageAccess::Sampled))
@@ -312,10 +312,10 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
             if let Some(contact) = contact_shadows {
                 ambient_occlusion::record_contact_shadows(fg, (pipelines, push), depth, contact);
             }
-            if let Some((target, history)) = reflections {
+            if let Some(reflections) = reflections {
                 let surface = frame.surface.expect("the depth passes' surface");
                 let images = (depth, surface);
-                ambient_occlusion::record_reflections(fg, (pipelines, push), images, history, target, frame.probes);
+                ambient_occlusion::record_reflections(fg, (pipelines, push), images, reflections, frame.probes);
             }
             // Both lists again, over their own depth. Task shaders cull them again, without counting them again.
             let forward = mesh.map_or(pipelines.forward_on_depth, |mesh| mesh.forward_on_depth);

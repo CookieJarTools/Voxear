@@ -1051,6 +1051,13 @@ Foliage shading (wrap lighting, light through the leaves, a rim of the sun's col
 - **Shadow distance in the lighting:** `[sun] shadow_distance` (80 m by default, 5 to 1000) and `shadow_split` (0.85,
   0 even to 1 logarithmic) in lighting files, on `SunLook`, and on the Lighting page's Sun tab as Shadow distance
   and Cascade split; the four cascades fit them (`shadows::cascades`). Unit tests for the cascades and the file.
+- **Reflections that settle when the camera stops:** the half-resolution reflections pass traces each 2×2 from a
+  different one of its pixels each frame, as GTAO does, but nothing blended them, so a curved mirror's reflection
+  changed every frame by more than TAA's clamp lets through and the chrome ball showed dots cycling with the jitter.
+  **Reflections temporal** (`ambient_occlusion::Reflections`, `reflectionsTemporalFragment`) now blends them over
+  frames at full resolution, reprojected by the camera's motion and clamped to the four traced pixels nearest, as
+  the occlusion's temporal pass does; shading reads that. Ball pixels cycling with the jitter 108 to 3 (2 without
+  reflections; tracing at full resolution instead gave 5 for 0.6 ms); 0.12 ms at 1080p.
 - **GI that does not change as the camera walks up:** three cascades of probes, each twice as far apart as the last
   (`DDGI_CASCADES` 3, `DDGI_CASCADE_SCALE` 2), rather than two four times apart. Past the fine grid's sixteen metres,
   probes four metres apart smeared the neon tube's light down Sponza's corridor, and it changed before the camera as

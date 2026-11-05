@@ -34,7 +34,7 @@ use crate::{
     gpu::Push,
     graph::{FrameGraph, ImageAccess, ImageId, PassContext},
     passes::{begin_rendering, fullscreen},
-    pipelines::{AO_FORMAT, AO_HISTORY_FORMAT, Pipelines},
+    pipelines::{AO_FORMAT, AO_HISTORY_FORMAT, HDR_FORMAT, Pipelines},
 };
 
 const HISTORY_NAMES: [&str; 2] = ["ao history 0", "ao history 1"];
@@ -110,12 +110,53 @@ pub fn record_contact_shadows(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipel
     fg.add_pass("Contact shadows", &images, &[], move |ctx| draw(ctx, pipelines.contact_shadows, &push, target));
 }
 
-/// Records screen-space reflections into `target`, an image of
-/// `HDR_FORMAT` at half the view's size, reading `depth` once the depth
-/// passes drew it and `history`, last frame's finished picture. Its shader
-/// lives beside GTAO's, as both march through the depth buffer, and like
-/// GTAO's half-resolution passes each of its pixels stands for a different
-/// pixel of its 2×2 each frame.
+const REFLECTION_HISTORY_NAMES: [&str; 2] = ["reflection history 0", "reflection history 1"];
+
+/// The images one frame's reflections use: the half-resolution image they
+/// are traced or marched into, last frame's finished picture, which
+/// screen-space reflections read, and the two full-resolution histories they
+/// are blended into over frames, of which shading reads `current`.
+#[derive(Clone, Copy)]
+pub struct Reflections {
+    traced: ImageId,
+    picture: ImageId,
+    previous: ImageId,
+    pub current: ImageId,
+    /// Starts the history afresh, as when the view's size changed.
+    reset: bool,
+}
+
+impl Reflections {
+    /// The images for a view of `extent`, reading `picture`; `history` says
+    /// which history image this frame writes, as TAA's does.
+    pub fn new(
+        fg: &mut FrameGraph<'_>,
+        gpu: &Gpu,
+        bindless: &mut Bindless,
+        extent: vk::Extent2D,
+        (picture, history): (ImageId, usize),
+        reset: bool,
+    ) -> Result<Self> {
+        let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
+        let half = |size: u32| size.div_ceil(2);
+        let traced = ImageDesc::new(half(extent.width), half(extent.height), HDR_FORMAT, usage);
+        let full = ImageDesc::new(extent.width, extent.height, HDR_FORMAT, usage);
+        Ok(Self {
+            traced: fg.create_image(gpu, bindless, "reflections", traced)?,
+            picture,
+            previous: fg.history_image(gpu, bindless, REFLECTION_HISTORY_NAMES[1 - history], full)?,
+            current: fg.history_image(gpu, bindless, REFLECTION_HISTORY_NAMES[history], full)?,
+            reset,
+        })
+    }
+}
+
+/// Records the reflections, reading `depth` once the depth passes drew it,
+/// and their blend over frames. The traced pass is screen-space reflections,
+/// whose shader lives beside GTAO's, as both march through the depth buffer,
+/// and like GTAO's half-resolution passes each of its pixels stands for a
+/// different pixel of its 2×2 each frame; **Reflections temporal** then
+/// blends that into the whole of each 2×2 over a few frames.
 ///
 /// Given the GI's probes traced by the GPU's rays, it traces each pixel's
 /// mirror ray through the GI's scene instead (`ray_reflections`), lighting
@@ -124,27 +165,39 @@ pub fn record_reflections(
     fg: &mut FrameGraph<'_>,
     (pipelines, push): (Pipelines, Push),
     (depth, surface): (ImageId, ImageId),
-    history: ImageId,
-    target: ImageId,
+    reflections: Reflections,
     probes: Option<Probes>,
 ) {
-    let textures = [fg.texture(depth).0, fg.texture(history).0, fg.texture(surface).0, 0];
+    let Reflections { traced, picture, previous, current, reset } = reflections;
+    let textures = [fg.texture(depth).0, fg.texture(picture).0, fg.texture(surface).0, 0];
     let push = Push { textures, level: 1, ..push };
     let mut images = vec![
         (depth, ImageAccess::Sampled),
-        (history, ImageAccess::Sampled),
+        (picture, ImageAccess::Sampled),
         (surface, ImageAccess::Sampled),
-        (target, ImageAccess::ColorAttachment),
+        (traced, ImageAccess::ColorAttachment),
     ];
-    let traced = probes.filter(|probes| !probes.software).zip(pipelines.ray_reflections);
-    let pipeline = match traced {
+    let ray_traced = probes.filter(|probes| !probes.software).zip(pipelines.ray_reflections);
+    let pipeline = match ray_traced {
         Some((Probes { irradiance, depth, states, .. }, pipeline)) => {
             images.extend([irradiance, depth, states].map(|probe| (probe, ImageAccess::Sampled)));
             pipeline
         }
         None => pipelines.reflections,
     };
-    fg.add_pass("Reflections", &images, &[], move |ctx| draw(ctx, pipeline, &push, target));
+    fg.add_pass("Reflections", &images, &[], move |ctx| draw(ctx, pipeline, &push, traced));
+
+    let textures = [fg.texture(traced).0, fg.texture(previous).0, fg.texture(depth).0, u32::from(reset)];
+    let temporal = Push { textures, ..push };
+    let images = [
+        (traced, ImageAccess::Sampled),
+        (previous, ImageAccess::Sampled),
+        (depth, ImageAccess::Sampled),
+        (current, ImageAccess::ColorAttachment),
+    ];
+    fg.add_pass("Reflections temporal", &images, &[], move |ctx| {
+        draw(ctx, pipelines.reflections_temporal, &temporal, current)
+    });
 }
 
 /// A fullscreen pass that writes every pixel of `target`.

@@ -560,7 +560,8 @@ bool waterSurface(Frame* frame, float3 world, out float surface, out float3 abso
         return false;
     }
     uint pools = frame->ocean.pools;
-    for (uint i = pools; i < pools + frame->ocean.dries; i++)
+    uint dries = pools + frame->ocean.streams;
+    for (uint i = dries; i < dries + frame->ocean.dries; i++)
     {
         if (dryDistance(buffers()->waterBodies[i], world) < 0.0)
         {

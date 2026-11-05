@@ -294,8 +294,10 @@ impl Editor {
     /// Puts the Scene view under the pointer in use, unless the one in use is
     /// being flown or a handle in it dragged.
     pub(super) fn follow_pointer(&mut self) {
-        let dragging =
-            self.tools.is_dragging() || self.field_handles.is_dragging() || self.script_handles.is_dragging();
+        let dragging = self.tools.is_dragging()
+            || self.field_handles.is_dragging()
+            || self.path_handles.is_dragging()
+            || self.script_handles.is_dragging();
         if self.scene.fly.is_looking() || dragging || self.pressed_handle.is_some() {
             return;
         }

@@ -59,9 +59,9 @@ use voxear_core::math::{EulerRot, Quat, Vec3};
 use voxear_ecs::{Component, Entity, World};
 use voxear_render::{
     Camera, Foliage, FoliageInteraction, Light, MaterialHandle, MeshRenderer, ModelPart, ModelRenderer, Ocean, PostVolume, Renderer,
-    Seasons, WindZone, DryArea, Pool,
+    Seasons, Stream, WindZone, DryArea, Pool,
 };
-use voxear_scene::{BehaviourSpec, Name, Parent, Placement, ScenePersistence, Transform};
+use voxear_scene::{BehaviourSpec, Name, Parent, Path, Placement, ScenePersistence, Transform};
 
 use crate::{
     audio::{AudioListener, AudioSource, audio_source},
@@ -380,6 +380,10 @@ fn apply_instance(root: &mut ObjData, instance: &ObjData) {
     root.ocean = instance.ocean.or(root.ocean);
     root.pool = instance.pool.or(root.pool);
     root.dry_area = instance.dry_area.or(root.dry_area);
+    if instance.path.is_some() {
+        root.path.clone_from(&instance.path);
+    }
+    root.stream = instance.stream.or(root.stream);
     if instance.model.is_some() {
         root.model.clone_from(&instance.model);
     }
@@ -427,6 +431,9 @@ pub struct TemplateObj {
     pub ocean: Option<Ocean>,
     pub pool: Option<Pool>,
     pub dry_area: Option<DryArea>,
+    /// A Path component (`path` is where the Obj is in the prefab).
+    pub curve: Option<Path>,
+    pub stream: Option<Stream>,
     pub seasons: Option<Seasons>,
     pub foliage_interaction: Option<FoliageInteraction>,
     /// A Foliage, where there is a renderer to draw it, and how it was
@@ -574,6 +581,12 @@ impl Template {
             }
             if let Some(dry) = obj.dry_area {
                 world.insert(entity, dry);
+            }
+            if let Some(path) = obj.curve.clone() {
+                world.insert(entity, path);
+            }
+            if let Some(stream) = obj.stream {
+                world.insert(entity, stream);
             }
             if let Some(seasons) = obj.seasons {
                 world.insert(entity, seasons);
@@ -841,6 +854,8 @@ pub(crate) fn resolve_obj(
         ocean: data.ocean,
         pool: data.pool,
         dry_area: data.dry_area,
+        curve: data.path.clone(),
+        stream: data.stream,
         seasons: data.seasons,
         foliage_interaction: data.foliage_interaction,
         layer: data.layer.clone(),

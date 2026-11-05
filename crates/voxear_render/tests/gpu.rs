@@ -3591,6 +3591,49 @@ fn the_sea_is_blue_water_and_a_storm_breaks_into_whitecaps() {
     assert!(storm_foam > calm_foam * 2 + 50, "a storm's whitecaps: {storm_foam} pixels against {calm_foam} when calm");
 }
 
+/// A stream over sand, level, then down through rapids, then level again.
+fn stream_render(time: f32) -> Option<(Vec<u8>, Vec3, Quat)> {
+    use voxear_render::{Sky, Stream};
+    use voxear_scene::{Path, PathPoint};
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    let eye = Vec3::new(7.0, 5.0, -3.0);
+    let look = Quat::from_rotation_arc(Vec3::Z, (Vec3::new(0.0, -1.5, 12.0) - eye).normalize());
+    world.spawn((Camera::default(), Transform::new(eye, look, Vec3::ONE)));
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.4, -0.6, 0.6).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.6, ..Sky::default() });
+    let plane = renderer.primitive(Primitive::Plane).unwrap();
+    let sand = MaterialDesc { base_color: [0.76, 0.66, 0.48, 1.0], roughness: 0.9, ..MaterialDesc::default() };
+    let sand = renderer.add_material(&sand).unwrap();
+    world.spawn((MeshRenderer::new(plane, sand), Transform::new(Vec3::new(0.0, -3.0, 0.0), Quat::IDENTITY, Vec3::splat(200.0))));
+    let point = |y: f32, z: f32| PathPoint { position: [0.0, y, z], width: 4.0 };
+    let path = Path { points: vec![point(0.0, 0.0), point(0.0, 12.0), point(-1.5, 17.0), point(-1.5, 30.0)], closed: false };
+    world.spawn((Stream::default(), path, Transform::default()));
+    let mut time = time;
+    run(&mut renderer, &world, &mut time, 10);
+    Some((renderer.read_pixels().unwrap().2, eye, look))
+}
+
+#[test]
+fn a_stream_runs_along_its_path_and_breaks_white_where_it_runs_steep() {
+    let Some((pixels, eye, look)) = stream_render(10.0) else { return };
+    keep_image("stream.png", &pixels);
+    // Its water where it runs level, the sand's warmth gone under it.
+    let water = patch_rgb(&pixels, on_screen(eye, look, Vec3::new(0.0, 0.0, 6.0)), 2);
+    assert!(water[1] > water[0] + 10, "the stream's water: {water:?}");
+    let sand = patch_rgb(&pixels, on_screen(eye, look, Vec3::new(5.0, -3.0, 6.0)), 2);
+    assert!(sand[0] > sand[2] + 10, "dry sand beside it: {sand:?}");
+    // White water from the drop, churning on past its foot.
+    let rapids = patch_rgb(&pixels, on_screen(eye, look, Vec3::new(0.0, -1.5, 18.5)), 2);
+    assert!(rapids.iter().all(|&c| c > 120), "rapids: {rapids:?}");
+    // Its ripples drift downstream: half a second on, the water there is not as it was.
+    let (later, ..) = stream_render(10.5).unwrap();
+    let at = on_screen(eye, look, Vec3::new(0.0, 0.0, 6.0));
+    let changed = (0..8u32).flat_map(|dy| (0..8u32).map(move |dx| (at.0 - 4 + dx, at.1 - 4 + dy))).filter(|&p| rgb_at(&pixels, p) != rgb_at(&later, p)).count();
+    assert!(changed > 16, "its ripples move: {changed} of 64 pixels changed");
+}
+
 /// Where `point` is on screen in a 640×360 picture from a camera at `eye`
 /// looking along `look`, as the default camera's 60° projection puts it.
 fn on_screen(eye: Vec3, look: Quat, point: Vec3) -> (u32, u32) {

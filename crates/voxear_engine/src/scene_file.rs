@@ -58,7 +58,7 @@ use voxear_core::math::{EulerRot, Quat, Vec3};
 use voxear_ecs::{Entity, World};
 use voxear_render::{
     Camera, Foliage, FoliageInteraction, Light, LightKind, LodGroup, Look, LookName, MAX_TRANSITIONS, MeshRenderer, PostProcess, PostVolume, Renderer,
-    DryArea, Ocean, Plant, Pool, Seasons, Sky, SkyBody, SkyMode, SunLook, VolumeShape, WindZone, scatter,
+    DryArea, Ocean, Plant, Pool, Seasons, Sky, SkyBody, SkyMode, Stream, SunLook, VolumeShape, WindZone, scatter,
 };
 use voxear_scene::{
     BehaviourSpec, Behaviours, Layer, Layers, Name, Parent, SceneComponents, ScenePersistence, Transform,
@@ -282,6 +282,12 @@ pub struct ObjData {
     /// A Dry Area, keeping water out of its shape.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dry_area: Option<DryArea>,
+    /// A Path, points joined by a curve through them, for a Stream to run along.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<voxear_scene::Path>,
+    /// A Stream, water (or lava) running along the Obj's Path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stream: Option<Stream>,
     /// Seasons, turning the level's plants through the year.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seasons: Option<Seasons>,
@@ -341,6 +347,8 @@ impl ObjData {
             ocean: None,
             pool: None,
             dry_area: None,
+            path: None,
+            stream: None,
             seasons: None,
             foliage_interaction: None,
             foliage: None,
@@ -1237,6 +1245,12 @@ fn capture_instance(
     if root.dry_area.is_some() && root.dry_area != prefab_root.dry_area {
         instance.dry_area = root.dry_area;
     }
+    if root.path.is_some() && root.path != prefab_root.path {
+        instance.path.clone_from(&root.path);
+    }
+    if root.stream.is_some() && root.stream != prefab_root.stream {
+        instance.stream = root.stream;
+    }
     if root.model.is_some() && root.model != prefab_root.model {
         instance.model.clone_from(&root.model);
     }
@@ -1359,6 +1373,12 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     }
     if let Some(dry) = actual.dry_area.filter(|d| Some(*d) != expected.dry_area) {
         put("dry_area", whole(&dry, &DryArea::default())?);
+    }
+    if let Some(path) = actual.path.as_ref().filter(|p| Some(*p) != expected.path.as_ref()) {
+        put("path", whole(path, &voxear_scene::Path::default())?);
+    }
+    if let Some(stream) = actual.stream.filter(|s| Some(*s) != expected.stream) {
+        put("stream", whole(&stream, &Stream::default())?);
     }
     if let Some(seasons) = actual.seasons.filter(|s| Some(*s) != expected.seasons) {
         put("seasons", whole(&seasons, &Seasons::default())?);
@@ -1588,6 +1608,8 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.ocean = world.get::<Ocean>(entity).copied();
     obj.pool = world.get::<Pool>(entity).copied();
     obj.dry_area = world.get::<DryArea>(entity).copied();
+    obj.path = world.get::<voxear_scene::Path>(entity).cloned();
+    obj.stream = world.get::<Stream>(entity).copied();
     obj.seasons = world.get::<Seasons>(entity).copied();
     obj.foliage_interaction = world.get::<FoliageInteraction>(entity).copied();
     obj.model = world.get::<ModelSource>(entity).map(|source| {
@@ -1957,6 +1979,13 @@ mod tests {
         assert_eq!(obj.dry_area.map(|d| d.shape), Some(voxear_render::DryShape::Capsule));
         let back: ObjData = toml::from_str(&toml::to_string(&obj).unwrap()).unwrap();
         assert_eq!((back.pool, back.dry_area), (obj.pool, obj.dry_area));
+        let river = "id = 3\n[stream]\nspeed = 2.5\n[path]\npoints = [{ position = [0.0, 0.0, 0.0] }, { position = [0.0, -1.0, 8.0], width = 6.0 }]";
+        let obj: ObjData = toml::from_str(river).unwrap();
+        let path = obj.path.clone().expect("its path");
+        assert_eq!((path.points.len(), path.points[0].width, path.points[1].width), (2, 4.0, 6.0), "a width left out as it starts");
+        assert_eq!(obj.stream.map(|s| s.speed), Some(2.5));
+        let back: ObjData = toml::from_str(&toml::to_string(&obj).unwrap()).unwrap();
+        assert_eq!((back.path, back.stream), (obj.path, obj.stream));
     }
 
     #[test]

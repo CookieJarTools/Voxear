@@ -20,7 +20,7 @@ use voxear_engine::{
     scene_file::{FoliageSource, ModelSource},
 };
 use voxear_render::{
-    Camera, Foliage, FoliageInteraction, Light, LodGroup, MeshRenderer, ModelRenderer, Ocean, Renderer, Seasons, WindZone, DryArea, Pool,
+    Camera, Foliage, FoliageInteraction, Light, LodGroup, MeshRenderer, ModelRenderer, Ocean, Renderer, Seasons, WindZone, DryArea, Pool, Stream,
 };
 use voxear_scene::{Layer, Name, ScenePersistence, Transform};
 
@@ -55,6 +55,8 @@ pub struct ObjState {
     pub ocean: Option<Box<Ocean>>,
     pub pool: Option<Box<Pool>>,
     pub dry_area: Option<Box<DryArea>>,
+    pub path: Option<Box<voxear_scene::Path>>,
+    pub stream: Option<Box<Stream>>,
     pub seasons: Option<Box<Seasons>>,
     pub foliage_interaction: Option<FoliageInteraction>,
     /// A Foliage and how it was written; its plants are shared, not copied.
@@ -91,6 +93,8 @@ impl ObjState {
             ocean: world.get::<Ocean>(entity).copied().map(Box::new),
             pool: world.get::<Pool>(entity).copied().map(Box::new),
             dry_area: world.get::<DryArea>(entity).copied().map(Box::new),
+            path: world.get::<voxear_scene::Path>(entity).cloned().map(Box::new),
+            stream: world.get::<Stream>(entity).copied().map(Box::new),
             seasons: world.get::<Seasons>(entity).copied().map(Box::new),
             foliage_interaction: world.get::<FoliageInteraction>(entity).copied(),
             foliage: world
@@ -147,6 +151,8 @@ impl ObjState {
         put(world, entity, self.ocean.as_deref().copied());
         put(world, entity, self.pool.as_deref().copied());
         put(world, entity, self.dry_area.as_deref().copied());
+        put(world, entity, self.path.as_deref().cloned());
+        put(world, entity, self.stream.as_deref().copied());
         put(world, entity, self.seasons.as_deref().copied());
         put(world, entity, self.foliage_interaction);
         put(world, entity, self.foliage.as_deref().map(|(foliage, _)| foliage.clone()));

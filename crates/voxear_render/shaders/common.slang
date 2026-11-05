@@ -321,18 +321,35 @@ struct Ocean
     float waveHeight;
     uint enabled;
     float time;
-    // How many Pools, then Dry Areas, Buffers::waterBodies holds.
+    // How many Pools, then Dry Areas, Buffers::waterBodies holds; its Streams come between them.
     uint pools;
     uint dries;
     // The foam round the camera (water.slang's oceanFoamMain), and where its first texel's corner is.
     uint foamTexture;
     float2 foamOrigin;
+    uint streams;
+    uint3 pad;
+};
+
+// A place along a Stream (src/gpu.rs, GpuStreamPoint): its surface in the middle, which way it runs, how wide it is,
+// how fast it flows and how much it foams.
+struct StreamPoint
+{
+    float3 position;
+    float width;
+    float3 tangent;
+    float speed;
+    float foam;
+    float3 pad;
 };
 
 // A Pool or a Dry Area (src/water_bodies.rs, GpuWaterBody): where it is, a Pool's footprint (x, z) or a Dry
-// Area's size, its kind (WATER_POOL, WATER_DRY), a Pool's colours, waves and liquid, a Dry Area's shape.
+// Area's size, its kind (WATER_POOL, WATER_DRY, WATER_STREAM), a Pool's colours, waves and liquid, a Dry Area's
+// shape. A Stream's points are world-space, so its matrices are the identity; its depth is size.y, and its first
+// point in Buffers::streamPoints is in shape.
 static const uint WATER_POOL = 1;
 static const uint WATER_DRY = 2;
+static const uint WATER_STREAM = 3;
 static const uint DRY_BOX = 0;
 static const uint DRY_SPHERE = 1;
 static const uint DRY_CAPSULE = 2;
@@ -756,8 +773,9 @@ struct Buffers
     // The sea's spectrum, each wave's h0(k) and h0*(-k), N×N a cascade; and its FFT's rows, four fields each.
     float4* oceanSpectrum;
     float2* oceanFft;
-    // This frame's Pools, then its Dry Areas.
+    // This frame's Pools, Streams, then Dry Areas; and the points along its Streams.
     WaterBody* waterBodies;
+    StreamPoint* streamPoints;
 };
 
 struct Push

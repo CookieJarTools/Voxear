@@ -213,7 +213,10 @@ impl Editor {
     /// the release is not also a click.
     pub(super) fn update_marquee(&mut self, renderer: &Renderer, camera: &ViewCamera, point: Option<[f32; 2]>) -> bool {
         let pressed = self.ui.is_pressed(self.scene.viewport);
-        let free = !self.tools.is_dragging() && !self.field_handles.is_dragging() && !self.script_handles.is_dragging();
+        let free = !self.tools.is_dragging()
+            && !self.field_handles.is_dragging()
+            && !self.path_handles.is_dragging()
+            && !self.script_handles.is_dragging();
         let over = self.over_viewport();
         match (&mut self.marquee, pressed && free, point) {
             (None, true, Some(point)) if over => {

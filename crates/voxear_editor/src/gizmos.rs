@@ -42,8 +42,11 @@ const FRUSTUM_ASPECT: f32 = 16.0 / 9.0;
 /// How long a directional light's direction is drawn, on screen.
 const DIRECTION: f32 = 70.0;
 const COLLIDER: u32 = 0x91f48b;
-/// Pools' footprints and Dry Areas' shapes.
+/// Pools' footprints, Dry Areas' shapes and Streams' Paths.
 const WATER: u32 = 0x4fc4e8;
+/// A Path that is not a Stream's, and how far apart a Stream's chevrons are, in metres.
+const PATH: u32 = 0xe8c14f;
+const FLOW_MARKS: f32 = 4.0;
 /// The most triangles of a Mesh collider drawn, so that a big mesh does not
 /// slow the Scene view; the rest are left out.
 const MESH_TRIANGLES: usize = 4096;
@@ -107,8 +110,45 @@ pub fn shapes(
         post_volume(&mut shapes, world, camera, entity);
         wind_zone(&mut shapes, world, camera, entity);
         water_body(&mut shapes, world, camera, entity);
+        path_curve(&mut shapes, world, camera, entity);
     }
     shapes
+}
+
+/// The selected Obj's Path: its curve, and its edges as wide as it is; on a
+/// Stream, in water's colour with chevrons every few metres pointing the
+/// way it flows.
+fn path_curve(shapes: &mut Vec<Shape>, world: &World, camera: &ViewCamera, entity: Entity) {
+    let Some(path) = world.get::<voxear_scene::Path>(entity) else { return };
+    let stream = world.has::<voxear_render::Stream>(entity);
+    let color = Color::hex(if stream { WATER } else { PATH });
+    let faint = color.with_alpha(120);
+    let samples = path.samples(voxear_scene::world_matrix(world, entity), 0.5);
+    let side = |s: &voxear_scene::PathSample, sign: f32| {
+        let across = Vec3::new(s.tangent.z, 0.0, -s.tangent.x).normalize_or(Vec3::X);
+        s.position + across * s.width * 0.5 * sign
+    };
+    for pair in samples.windows(2) {
+        line(shapes, camera, pair[0].position, pair[1].position, color);
+        for sign in [-1.0, 1.0] {
+            line(shapes, camera, side(&pair[0], sign), side(&pair[1], sign), faint);
+        }
+    }
+    if !stream {
+        return;
+    }
+    let mut next = FLOW_MARKS;
+    for s in &samples {
+        if s.along < next {
+            continue;
+        }
+        next += FLOW_MARKS;
+        let back = s.position - s.tangent * s.width * 0.2;
+        for sign in [-1.0, 1.0] {
+            let wing = (side(s, sign) - s.position) * 0.4;
+            line(shapes, camera, back + wing, s.position, color);
+        }
+    }
 }
 
 /// Which way the selected Wind Zone blows: three arrows along its Obj's +Z,

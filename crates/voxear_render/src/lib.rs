@@ -104,7 +104,7 @@ pub use model_renderer::{ModelPart, ModelRenderer};
 pub use seasons::{Leaves, Season, SeasonLook, Seasons};
 pub use wind::WindZone;
 pub use ocean::{Ocean, OceanSampler, SeaState, Weather};
-pub use water_bodies::{DryArea, DryShape, Liquid, Pool};
+pub use water_bodies::{DryArea, DryShape, Liquid, Pool, Stream, StreamPoint, stream_over};
 pub use scene::{
     Camera, Light, LightKind, MAX_TRANSITIONS, MeshRenderer, Sky, SkyBody, SkyMode, ViewOptions, temperature_color,
 };
@@ -1855,7 +1855,7 @@ impl View {
             frame_data.glass_shadow = maps.frame_field(fg);
         }
         // The first Ocean's sea, its waves moved on to now, and the Pools and Dry Areas.
-        let wet = extracted.ocean.is_some() || extracted.water_bodies.pools > 0;
+        let wet = extracted.ocean.is_some() || extracted.water_bodies.pools > 0 || !extracted.water_bodies.streams.is_empty();
         let water = match wet && !wireframe {
             true => Some(water::Water::new(
                 fg,
@@ -1954,6 +1954,7 @@ impl View {
                 ocean_spectrum: self.ocean.spectrum.address,
                 ocean_fft: self.ocean.fft.address,
                 water_bodies: self.ocean.bodies[slot].address,
+                stream_points: self.ocean.stream_points[slot].address,
             }],
         );
         buffers.instances.write(0, &extracted.instances[..instance_count]);

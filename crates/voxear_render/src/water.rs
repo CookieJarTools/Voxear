@@ -15,10 +15,10 @@ use voxear_core::math::Quat;
 use voxear_rhi::{Bindless, Buffer, Gpu, ImageDesc, MemoryLocation, StorageImageId, TextureId, vk};
 
 use crate::{
-    gpu::{GpuOcean, GpuWaterBody, Push},
+    gpu::{GpuOcean, GpuStreamPoint, GpuWaterBody, Push},
     graph::{BufferAccess, BufferId, FrameGraph, ImageAccess, ImageId},
     ocean::{self, CASCADES, CASCADE_SIZES, Complex, GPU_RESOLUTION as N, Ocean, SeaState},
-    water_bodies::MAX_WATER_BODIES,
+    water_bodies::{MAX_STREAM_POINTS, MAX_WATER_BODIES},
     passes::{attachment, begin_rendering, bind},
     pipelines::{HDR_FORMAT, Pipelines},
 };
@@ -34,6 +34,8 @@ const QUADS: u32 = 64;
 const RINGS: u32 = 12;
 /// A Pool's grid, as `POOL_QUADS` in `shaders/water.slang`.
 const POOL_QUADS: u32 = 64;
+/// How many quads across a Stream, as `STREAM_ACROSS` in `shaders/water.slang`.
+const STREAM_ACROSS: u32 = 8;
 /// The foam round the camera: this many texels a side, this many metres
 /// each, as `FOAM_TEXELS` and `FOAM_TEXEL` in `shaders/water.slang`.
 const FOAM_TEXELS: u32 = 512;
@@ -44,8 +46,10 @@ const FOAM_TEXEL: f32 = 0.5;
 pub(crate) struct OceanBuffers {
     pub spectrum: Buffer,
     pub fft: Buffer,
-    /// Each frame in flight's Pools and Dry Areas.
+    /// Each frame in flight's Pools, Streams and Dry Areas, and the points
+    /// along its Streams.
     pub bodies: Vec<Buffer>,
+    pub stream_points: Vec<Buffer>,
     /// The sea the spectrum is of.
     sea: Option<SeaState>,
     /// Its waves' significant height, in metres.
@@ -66,12 +70,17 @@ impl OceanBuffers {
         let bodies = (0..slots)
             .map(|slot| gpu.create_buffer(&named(&format!("water bodies {slot}")), size, usage, MemoryLocation::CpuToGpu))
             .collect::<Result<_>>()?;
-        Ok(Self { spectrum, fft, bodies, sea: None, wave_height: 0.0, parity: false, foam_origin: None })
+        let size = (MAX_STREAM_POINTS * size_of::<GpuStreamPoint>()) as u64;
+        let stream_points = (0..slots)
+            .map(|slot| gpu.create_buffer(&named(&format!("stream points {slot}")), size, usage, MemoryLocation::CpuToGpu))
+            .collect::<Result<_>>()?;
+        Ok(Self { spectrum, fft, bodies, stream_points, sea: None, wave_height: 0.0, parity: false, foam_origin: None })
     }
 
     pub fn into_buffers(self) -> Vec<Buffer> {
         let mut buffers = vec![self.spectrum, self.fft];
         buffers.extend(self.bodies);
+        buffers.extend(self.stream_points);
         buffers
     }
 
@@ -114,18 +123,19 @@ pub struct Water {
     copy_mips: Vec<StorageImageId>,
     depth_copy: ImageId,
     /// A copy of the picture and depth again after the sea, for the Pools
-    /// drawn over it, when there are any.
+    /// and Streams drawn over it, when there are any.
     second: Option<(ImageId, TextureId, Vec<StorageImageId>, ImageId)>,
     size: [u32; 2],
     pub frame: GpuOcean,
     /// The foam round the camera: this frame's, last frame's, and where last
     /// frame's first texel was (NaN for none).
     foam: (ImageId, ImageId, [f32; 2]),
-    /// Whether the sea is drawn, how many Pools, and how many bodies in
-    /// all, each with walls of water.
+    /// Whether the sea is drawn, how many Pools, how many points each
+    /// Stream has, and how many Dry Areas.
     sea: bool,
     pools: u32,
-    bodies: u32,
+    streams: Vec<u32>,
+    dries: u32,
 }
 
 impl Water {
@@ -145,6 +155,7 @@ impl Water {
         let ocean = &ocean;
         let sea = ocean.sea_state(rotation);
         buffers.bodies[slot].write(0, &bodies.bodies);
+        buffers.stream_points[slot].write(0, &bodies.points);
         buffers.prepare(gpu, &sea);
         buffers.parity = !buffers.parity;
         let usage = vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED;
@@ -175,7 +186,7 @@ impl Water {
         let copy = fg.create_image(gpu, bindless, "water copy", copy_desc)?;
         let depth_desc = ImageDesc::new(extent.width, extent.height, vk::Format::R32_SFLOAT, usage);
         let depth_copy = fg.create_image(gpu, bindless, "water depth copy", depth_desc)?;
-        let second = match bodies.pools > 0 {
+        let second = match bodies.pools > 0 || !bodies.streams.is_empty() {
             true => {
                 let copy = fg.create_image(gpu, bindless, "pool copy", copy_desc)?;
                 let depth = fg.create_image(gpu, bindless, "pool depth copy", depth_desc)?;
@@ -203,9 +214,11 @@ impl Water {
             enabled: u32::from(found.is_some()),
             time: f64::from(time).rem_euclid(ocean::REPEAT_SECONDS) as f32,
             pools: bodies.pools,
-            dries: bodies.bodies.len() as u32 - bodies.pools,
+            dries: bodies.dries(),
             foam_texture: fg.texture(foam_now).0,
             foam_origin,
+            streams: bodies.streams.len() as u32,
+            _pad: [0; 3],
         };
         Ok(Self {
             displacement,
@@ -222,17 +235,27 @@ impl Water {
             frame,
             sea: found.is_some(),
             pools: bodies.pools,
-            bodies: bodies.bodies.len() as u32,
+            streams: bodies.streams.clone(),
+            dries: bodies.dries(),
         })
     }
 }
 
-/// This frame's Pools and then Dry Areas, the nearest the camera first, as
-/// the shaders read them.
+/// This frame's Pools, Streams and then Dry Areas, the nearest the camera
+/// first, as the shaders read them, and the points along its Streams: how
+/// many each has, in order.
 #[derive(Clone, Debug, Default)]
 pub struct WaterBodies {
     pub bodies: Vec<GpuWaterBody>,
     pub pools: u32,
+    pub streams: Vec<u32>,
+    pub points: Vec<GpuStreamPoint>,
+}
+
+impl WaterBodies {
+    pub fn dries(&self) -> u32 {
+        self.bodies.len() as u32 - self.pools - self.streams.len() as u32
+    }
 }
 
 /// What the sea's pass draws into and reads besides its own images.
@@ -258,7 +281,7 @@ fn compute_barrier(ctx: &crate::graph::PassContext) {
 /// Records the sea's waves (the FFT, then the mips), then its surface over
 /// a copy of the picture and the depth so far.
 pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), water: Water, targets: WaterTargets) {
-    let Water { displacement, slopes, previous, fft, copy, copy_texture, copy_mips, depth_copy, second, foam, size, sea, pools, bodies, .. } = water;
+    let Water { displacement, slopes, previous, fft, copy, copy_texture, copy_mips, depth_copy, second, foam, size, sea, pools, streams, dries, .. } = water;
     let storage = |fg: &mut FrameGraph<'_>, images: &[ImageId; CASCADES]| -> Vec<Vec<StorageImageId>> {
         images.iter().map(|&image| (0..WAVE_MIPS as usize).map(|mip| fg.storage(image, mip)).collect()).collect()
     };
@@ -322,12 +345,13 @@ pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), wat
     waves.push(foam_now);
     let layer = Layer { hdr, velocity, depth, sampled, waves, size };
     // The sea and the walls round its Dry Areas, over a copy of the picture so far.
-    let dries = bodies - pools;
-    let draws = Draws { sea, pools: 0, walls: (pools, dries) };
+    let first_dry = pools + streams.len() as u32;
+    let draws = Draws { sea, pools: 0, streams: Vec::new(), walls: (first_dry, dries) };
     record_layer(fg, (pipelines, push), &layer, (copy, copy_texture, &copy_mips, depth_copy), draws);
-    // The Pools and their walls over a copy made after the sea, so the sea shows through them.
+    // The Pools, their walls and the Streams over a copy made after the sea, so the sea shows through them.
     if let Some((copy, copy_texture, copy_mips, depth_copy)) = second {
-        let draws = Draws { sea: false, pools, walls: (0, pools) };
+        let streams = streams.iter().enumerate().map(|(i, &points)| (pools + i as u32, points)).collect();
+        let draws = Draws { sea: false, pools, streams, walls: (0, pools) };
         record_layer(fg, (pipelines, push), &layer, (copy, copy_texture, &copy_mips, depth_copy), draws);
     }
     // Under water, where the view starts under it: what it shows dimmed and the water's light over it.
@@ -358,12 +382,13 @@ struct Layer {
     size: [u32; 2],
 }
 
-/// What a layer of water draws: the sea, how many Pools, and the walls of
-/// the bodies from the first given, how many.
-#[derive(Clone, Copy)]
+/// What a layer of water draws: the sea, how many Pools, each Stream's body
+/// and how many points it has, and the walls of the bodies from the first
+/// given, how many.
 struct Draws {
     sea: bool,
     pools: u32,
+    streams: Vec<(u32, u32)>,
     walls: (u32, u32),
 }
 
@@ -412,6 +437,11 @@ fn record_layer(
         if draws.pools > 0 {
             bind(ctx, pipelines.water_pool, vk::PipelineBindPoint::GRAPHICS, &push);
             unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, POOL_QUADS * POOL_QUADS * 6, draws.pools, 0, 0) };
+        }
+        // Each Stream a strip along its points.
+        for &(body, points) in draws.streams.iter().filter(|(_, points)| *points > 1) {
+            bind(ctx, pipelines.water_stream, vk::PipelineBindPoint::GRAPHICS, &Push { list: body, level: points, ..push });
+            unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, (points - 1) * STREAM_ACROSS * 6, 1, 0, 0) };
         }
         // Walls of water: six faces of each body's box.
         let (first, count) = draws.walls;

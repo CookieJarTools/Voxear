@@ -836,10 +836,10 @@ mod tests {
     }
 }
 
-/// The Pools and then the Dry Areas nearest `camera`, as many as a frame
-/// draws.
+/// The Pools, the Streams and then the Dry Areas nearest `camera`, as many
+/// as a frame draws, and the points along the Streams.
 fn water_bodies(world: &World, camera: Vec3) -> crate::water::WaterBodies {
-    use crate::water_bodies::{DryArea, MAX_WATER_BODIES, Pool};
+    use crate::water_bodies::{DryArea, MAX_STREAM_POINTS, MAX_WATER_BODIES, Pool, Stream};
     let placed = |transform: &Transform, at: Option<&WorldTransform>| {
         at.map_or((transform.position, transform.rotation), |w| {
             let (_, rotation, position) = w.0.to_scale_rotation_translation();
@@ -864,10 +864,34 @@ fn water_bodies(world: &World, camera: Vec3) -> crate::water::WaterBodies {
             (position.distance_squared(camera), dry.gpu(position, rotation))
         })
         .collect();
+    // Each Stream's points along its Path, by how near the nearest of them is.
+    let mut streams: Vec<(f32, Stream, Vec<crate::water_bodies::StreamPoint>)> = world
+        .query_ref::<(&Stream, &voxear_scene::Path, &Transform, Option<&WorldTransform>)>()
+        .without::<Destroying>()
+        .into_iter()
+        .map(|(stream, path, transform, at)| {
+            let points = stream.points(path, at.map_or_else(|| transform.matrix(), |w| w.0));
+            let near = points.iter().map(|p| p.position.distance_squared(camera)).fold(f32::INFINITY, f32::min);
+            (near, *stream, points)
+        })
+        .collect();
     pools.sort_by(|a, b| a.0.total_cmp(&b.0));
+    streams.sort_by(|a, b| a.0.total_cmp(&b.0));
     dries.sort_by(|a, b| a.0.total_cmp(&b.0));
     pools.truncate(MAX_WATER_BODIES / 2);
-    dries.truncate(MAX_WATER_BODIES - pools.len());
-    let count = pools.len() as u32;
-    crate::water::WaterBodies { bodies: pools.into_iter().chain(dries).map(|(_, body)| body).collect(), pools: count }
+    streams.truncate(MAX_WATER_BODIES / 4);
+    dries.truncate(MAX_WATER_BODIES - pools.len() - streams.len());
+    let mut bodies: Vec<crate::gpu::GpuWaterBody> = pools.iter().map(|(_, body)| *body).collect();
+    let (mut counts, mut points) = (Vec::new(), Vec::new());
+    for (_, stream, along) in &streams {
+        let room = MAX_STREAM_POINTS - points.len();
+        if along.len() < 2 || along.len() > room {
+            continue;
+        }
+        bodies.push(stream.gpu(points.len() as u32));
+        counts.push(along.len() as u32);
+        points.extend(along.iter().map(|p| p.gpu()));
+    }
+    bodies.extend(dries.into_iter().map(|(_, body)| body));
+    crate::water::WaterBodies { bodies, pools: pools.len() as u32, streams: counts, points }
 }

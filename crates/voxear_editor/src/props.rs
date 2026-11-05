@@ -23,7 +23,7 @@ use voxear_engine::{
 };
 use voxear_render::{
     Camera, Foliage, FoliageInteraction, Impostors, Light, LightKind, LodGroup, LodLevel, LodMeasure, MAX_TRANSITIONS, MeshRenderer, PostVolume, Renderer,
-    ModelRenderer, Ocean, Season, Seasons, SkyBody, VolumeShape, Weather, WindZone, DryArea, DryShape, Liquid, Pool,
+    ModelRenderer, Ocean, Season, Seasons, SkyBody, VolumeShape, Weather, WindZone, DryArea, DryShape, Liquid, Pool, Stream,
 };
 use voxear_scene::{BehaviourSpec, Behaviours, Name, Parent, SceneComponents};
 
@@ -76,6 +76,9 @@ pub enum Part {
     Ocean,
     Pool,
     DryArea,
+    /// A Path, and a Stream running along it.
+    Path,
+    Stream,
     Seasons,
     FoliageInteraction,
     Foliage,
@@ -109,6 +112,8 @@ impl Part {
             Part::Ocean => "ocean".into(),
             Part::Pool => "pool".into(),
             Part::DryArea => "dry_area".into(),
+            Part::Path => "path".into(),
+            Part::Stream => "stream".into(),
             Part::Seasons => "seasons".into(),
             Part::FoliageInteraction => "foliage_interaction".into(),
             Part::Foliage => "foliage".into(),
@@ -138,6 +143,8 @@ impl Part {
             Part::Ocean => "Ocean",
             Part::Pool => "Pool",
             Part::DryArea => "Dry Area",
+            Part::Path => "Path",
+            Part::Stream => "Stream",
             Part::Seasons => "Seasons",
             Part::FoliageInteraction => "Foliage Interaction",
             Part::Foliage => "Foliage",
@@ -166,6 +173,8 @@ impl Part {
             Part::Ocean => "globe",
             Part::Pool => "globe",
             Part::DryArea => "box",
+            Part::Path => "move",
+            Part::Stream => "globe",
             Part::Seasons => "globe",
             Part::FoliageInteraction => "move",
             Part::Foliage => "cube",
@@ -235,6 +244,19 @@ pub enum Prop {
     PoolScatter,
     PoolClarity,
     PoolMurk,
+    /// A Path's points, edited in the Scene view, and whether it loops.
+    PathPoints,
+    PathClosed,
+    /// A Stream's liquid, depth and speed, where it breaks into rapids, and
+    /// its water's colours.
+    StreamLiquid,
+    StreamDepth,
+    StreamSpeed,
+    StreamRapids,
+    StreamDeep,
+    StreamScatter,
+    StreamClarity,
+    StreamMurk,
     /// A Dry Area's shape, and its size as that shape has it.
     DryShape,
     DrySize,
@@ -438,6 +460,15 @@ impl Prop {
             | Prop::PoolClarity
             | Prop::PoolMurk => Part::Pool,
             Prop::DryShape | Prop::DrySize | Prop::DryWidth | Prop::DryHeight => Part::DryArea,
+            Prop::PathPoints | Prop::PathClosed => Part::Path,
+            Prop::StreamLiquid
+            | Prop::StreamDepth
+            | Prop::StreamSpeed
+            | Prop::StreamRapids
+            | Prop::StreamDeep
+            | Prop::StreamScatter
+            | Prop::StreamClarity
+            | Prop::StreamMurk => Part::Stream,
             Prop::TimeOfYear
             | Prop::Season
             | Prop::SeasonColor(_)
@@ -591,6 +622,16 @@ impl Prop {
             Prop::PoolScatter => "scatter",
             Prop::PoolClarity => "clarity",
             Prop::PoolMurk => "murk",
+            Prop::PathPoints => "points",
+            Prop::PathClosed => "closed",
+            Prop::StreamLiquid => "liquid",
+            Prop::StreamDepth => "depth",
+            Prop::StreamSpeed => "speed",
+            Prop::StreamRapids => "rapids",
+            Prop::StreamDeep => "deep",
+            Prop::StreamScatter => "scatter",
+            Prop::StreamClarity => "clarity",
+            Prop::StreamMurk => "murk",
             Prop::DryShape => "shape",
             Prop::DrySize | Prop::DryWidth | Prop::DryHeight => "size",
             Prop::TimeOfYear | Prop::Season => "time_of_year",
@@ -757,6 +798,12 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     if world.has::<DryArea>(entity) {
         parts.push(Part::DryArea);
     }
+    if world.has::<voxear_scene::Path>(entity) {
+        parts.push(Part::Path);
+    }
+    if world.has::<Stream>(entity) {
+        parts.push(Part::Stream);
+    }
     if world.has::<Seasons>(entity) {
         parts.push(Part::Seasons);
     }
@@ -889,6 +936,15 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             let mut props = vec![Prop::PoolSize, Prop::PoolDepth, Prop::PoolLiquid];
             if water {
                 props.extend([Prop::PoolWaves, Prop::PoolDeep, Prop::PoolScatter, Prop::PoolClarity, Prop::PoolMurk]);
+            }
+            props
+        }
+        Part::Path => vec![Prop::PathPoints, Prop::PathClosed],
+        Part::Stream => {
+            let water = world.get::<Stream>(entity).is_some_and(|stream| stream.liquid == Liquid::Water);
+            let mut props = vec![Prop::StreamLiquid, Prop::StreamDepth, Prop::StreamSpeed];
+            if water {
+                props.extend([Prop::StreamRapids, Prop::StreamDeep, Prop::StreamScatter, Prop::StreamClarity, Prop::StreamMurk]);
             }
             props
         }
@@ -1098,6 +1154,16 @@ pub fn label(prop: &Prop) -> String {
         Prop::PoolScatter => "Scatter",
         Prop::PoolClarity => "Clarity",
         Prop::PoolMurk => "Murk",
+        Prop::PathPoints => "Points",
+        Prop::PathClosed => "Closed",
+        Prop::StreamLiquid => "Liquid",
+        Prop::StreamDepth => "Depth",
+        Prop::StreamSpeed => "Speed",
+        Prop::StreamRapids => "Rapids",
+        Prop::StreamDeep => "Deep",
+        Prop::StreamScatter => "Scatter",
+        Prop::StreamClarity => "Clarity",
+        Prop::StreamMurk => "Murk",
         Prop::DryShape => "Shape",
         Prop::DrySize => "Size",
         Prop::DryWidth => "Width",
@@ -1335,6 +1401,16 @@ pub fn add(
         Part::DryArea => {
             world.insert(entity, DryArea::default());
         }
+        Part::Path => {
+            world.insert(entity, voxear_scene::Path::default());
+        }
+        // A Stream runs along a Path: one is added with it where the Obj has none.
+        Part::Stream => {
+            if !world.has::<voxear_scene::Path>(entity) {
+                world.insert(entity, voxear_scene::Path::default());
+            }
+            world.insert(entity, Stream::default());
+        }
         Part::Seasons => {
             world.insert(entity, Seasons::default());
         }
@@ -1365,6 +1441,8 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
         Part::Ocean => drop(world.remove::<Ocean>(entity)),
         Part::Pool => drop(world.remove::<Pool>(entity)),
         Part::DryArea => drop(world.remove::<DryArea>(entity)),
+        Part::Path => drop(world.remove::<voxear_scene::Path>(entity)),
+        Part::Stream => drop(world.remove::<Stream>(entity)),
         Part::Seasons => drop(world.remove::<Seasons>(entity)),
         Part::FoliageInteraction => drop(world.remove::<FoliageInteraction>(entity)),
         Part::Foliage => {
@@ -1596,6 +1674,20 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::PoolScatter => Value::Color(world.get::<Pool>(entity)?.scatter.map(round3)),
         Prop::PoolClarity => Value::Color(world.get::<Pool>(entity)?.clarity.map(round3)),
         Prop::PoolMurk => Value::Number(world.get::<Pool>(entity)?.murk),
+        Prop::PathPoints => Value::Fixed(world.get::<voxear_scene::Path>(entity)?.points.len().to_string()),
+        Prop::PathClosed => Value::Toggle(world.get::<voxear_scene::Path>(entity)?.closed),
+        Prop::StreamLiquid => {
+            let liquid = world.get::<Stream>(entity)?.liquid;
+            let index = Liquid::ALL.iter().position(|l| *l == liquid).unwrap_or(0);
+            Value::Choice(index, Liquid::ALL.iter().map(|l| l.name().to_string()).collect())
+        }
+        Prop::StreamDepth => Value::Number(world.get::<Stream>(entity)?.depth),
+        Prop::StreamSpeed => Value::Number(world.get::<Stream>(entity)?.speed),
+        Prop::StreamRapids => Value::Number(world.get::<Stream>(entity)?.rapids),
+        Prop::StreamDeep => Value::Color(world.get::<Stream>(entity)?.deep.map(round3)),
+        Prop::StreamScatter => Value::Color(world.get::<Stream>(entity)?.scatter.map(round3)),
+        Prop::StreamClarity => Value::Color(world.get::<Stream>(entity)?.clarity.map(round3)),
+        Prop::StreamMurk => Value::Number(world.get::<Stream>(entity)?.murk),
         Prop::DryShape => {
             let shape = world.get::<DryArea>(entity)?.shape;
             let index = DryShape::ALL.iter().position(|s| *s == shape).unwrap_or(0);
@@ -2366,6 +2458,22 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
             with(world, entity, |p: &mut Pool| p.clarity = color.map(|c| c.clamp(0.0, 1.0)))
         }
         (Prop::PoolMurk, Value::Number(n)) => with(world, entity, |p: &mut Pool| p.murk = n.clamp(0.0, 20.0)),
+        (Prop::PathClosed, Value::Toggle(on)) => with(world, entity, |p: &mut voxear_scene::Path| p.closed = on),
+        (Prop::StreamLiquid, Value::Choice(index, _)) => {
+            let liquid = Liquid::ALL.get(index).copied().unwrap_or_default();
+            with(world, entity, |s: &mut Stream| s.liquid = liquid)
+        }
+        (Prop::StreamDepth, Value::Number(n)) => with(world, entity, |s: &mut Stream| s.depth = n.clamp(0.01, 100.0)),
+        (Prop::StreamSpeed, Value::Number(n)) => with(world, entity, |s: &mut Stream| s.speed = n.clamp(0.0, 20.0)),
+        (Prop::StreamRapids, Value::Number(n)) => with(world, entity, |s: &mut Stream| s.rapids = n.clamp(0.001, 10.0)),
+        (Prop::StreamDeep, Value::Color(color)) => with(world, entity, |s: &mut Stream| s.deep = color.map(|c| c.clamp(0.0, 1.0))),
+        (Prop::StreamScatter, Value::Color(color)) => {
+            with(world, entity, |s: &mut Stream| s.scatter = color.map(|c| c.clamp(0.0, 1.0)))
+        }
+        (Prop::StreamClarity, Value::Color(color)) => {
+            with(world, entity, |s: &mut Stream| s.clarity = color.map(|c| c.clamp(0.0, 1.0)))
+        }
+        (Prop::StreamMurk, Value::Number(n)) => with(world, entity, |s: &mut Stream| s.murk = n.clamp(0.0, 20.0)),
         (Prop::DryShape, Value::Choice(index, _)) => {
             let shape = DryShape::ALL.get(index).copied().unwrap_or_default();
             with(world, entity, |d: &mut DryArea| d.shape = shape)

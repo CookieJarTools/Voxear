@@ -11,4 +11,5 @@ publish.workspace = true
 voxear_core.workspace = true
 voxear_ecs.workspace = true
 bytemuck.workspace = true
+serde.workspace = true
 toml.workspace = true

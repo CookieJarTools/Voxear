@@ -1,20 +1,24 @@
 //! Water as the game asks about it: how high the sea is at a point, which
 //! way it faces, and how it flows, from the CPU's copy of its long waves
 //! (`voxear_render::OceanSampler`), the same waves the GPU draws and the same
-//! on every machine. Moved on each tick, before scripts run, from the
-//! level's first Ocean; scripts read it through `Water` in C#.
+//! on every machine; and the same of Pools and Streams. Moved on each tick,
+//! before scripts run, from the level's first Ocean, and each Stream's points
+//! along its Path made again; scripts read it through `Water` in C#.
 
 use voxear_core::math::{Quat, Vec3};
 use voxear_ecs::World;
-use voxear_render::{DryArea, Ocean, OceanSampler, Pool, SeaState};
-use voxear_scene::{Transform, WorldTransform};
+use voxear_render::{DryArea, Ocean, OceanSampler, Pool, SeaState, Stream, StreamPoint, stream_over};
+use voxear_scene::{Path, Transform, WorldTransform};
 
-/// The sea's long waves on the CPU, kept as a world resource.
+/// The sea's long waves on the CPU, and the Streams' points along their
+/// Paths, kept as a world resource.
 #[derive(Default)]
 pub struct WaterQuery {
     sampler: Option<OceanSampler>,
     /// The sea and the level the sampler was made for.
     made_for: Option<SeaState>,
+    /// Each Stream's points, in the world, and how deep it is.
+    streams: Vec<(Vec<StreamPoint>, f32)>,
 }
 
 /// The water at a point: how high its surface is above it, the way that
@@ -28,7 +32,8 @@ pub struct WaterPoint {
 
 /// Moves the sea's waves on to `time`, in the game's elapsed seconds, as
 /// the renderer draws them; makes them again when the level's first Ocean
-/// changed, and lets them go when it has none.
+/// changed, and lets them go when it has none. Lays out each Stream's points
+/// where its Path is now.
 pub fn update(world: &mut World, time: f64) {
     voxear_scripting::set_water_sampler(for_scripts);
     let first = world.query_ref::<(&Ocean, &Transform, Option<&WorldTransform>)>().into_iter().next().map(
@@ -40,12 +45,18 @@ pub fn update(world: &mut World, time: f64) {
             (ocean.sea_state(rotation), position.y)
         },
     );
+    let streams: Vec<(Vec<StreamPoint>, f32)> = world
+        .query_ref::<(&Stream, &Path, &Transform, Option<&WorldTransform>)>()
+        .into_iter()
+        .map(|(stream, path, transform, at)| (stream.points(path, at.map_or_else(|| transform.matrix(), |w| w.0)), stream.depth))
+        .collect();
     if world.resource::<WaterQuery>().is_none() {
         world.insert_resource(WaterQuery::default());
     }
     let query = world.resource_mut::<WaterQuery>().expect("inserted above");
+    query.streams = streams;
     let Some((sea, level)) = first else {
-        *query = WaterQuery::default();
+        (query.sampler, query.made_for) = (None, None);
         return;
     };
     if query.made_for != Some(sea) {
@@ -66,8 +77,8 @@ fn placed(transform: &Transform, at: Option<&WorldTransform>) -> (Vec3, Quat) {
 }
 
 /// The water at `at`, or `None` where there is no water: inside a Dry Area,
-/// or away from both the sea and every Pool. Over a Pool's footprint its
-/// surface, not the sea's.
+/// or away from the sea, every Pool and every Stream. Over a Pool's
+/// footprint its surface, not the sea's; over a Stream its, flowing.
 pub fn sample(world: &World, at: Vec3) -> Option<WaterPoint> {
     let dry = world.query_ref::<(&DryArea, &Transform, Option<&WorldTransform>)>().into_iter().any(|(area, t, w)| {
         let (position, rotation) = placed(t, w);
@@ -84,7 +95,12 @@ pub fn sample(world: &World, at: Vec3) -> Option<WaterPoint> {
     if let Some(height) = pool {
         return Some(WaterPoint { height, normal: Vec3::Y, flow: Vec3::ZERO });
     }
-    let sampler = world.resource::<WaterQuery>()?.sampler.as_ref()?;
+    let query = world.resource::<WaterQuery>()?;
+    let stream = query.streams.iter().find_map(|(points, depth)| stream_over(points, *depth, at));
+    if let Some((height, flow)) = stream {
+        return Some(WaterPoint { height, normal: Vec3::Y, flow });
+    }
+    let sampler = query.sampler.as_ref()?;
     let height = sampler.height_at(at.x, at.z);
     Some(WaterPoint { height, normal: sampler.normal_at(at.x, at.z), flow: Vec3::ZERO })
 }
@@ -134,5 +150,16 @@ mod tests {
         assert_eq!(sample(&world, Vec3::new(-19.0, 4.0, 1.0)).map(|w| w.height), Some(6.0), "the pool's surface");
         assert!(sample(&world, Vec3::new(-19.0, 0.0, 1.0)).is_some_and(|w| w.height != 6.0), "under its bottom, the sea's");
         assert!(sample(&world, Vec3::new(0.0, 0.0, 0.0)).is_some(), "the sea elsewhere");
+    }
+
+    #[test]
+    fn a_stream_has_water_flowing_along_its_path_with_no_sea() {
+        let mut world = World::new();
+        world.spawn((Stream { speed: 2.0, ..Stream::default() }, Path::default(), Transform::from_position(Vec3::new(0.0, 5.0, 0.0))));
+        update(&mut world, 1.0);
+        let water = sample(&world, Vec3::new(0.0, 4.8, 3.0)).expect("in the stream");
+        assert!((water.height - 5.0).abs() < 0.3, "its surface: {}", water.height);
+        assert!(water.flow.z > 1.5, "flowing down its Path: {}", water.flow);
+        assert!(sample(&world, Vec3::new(10.0, 4.8, 3.0)).is_none(), "beside it, dry");
     }
 }

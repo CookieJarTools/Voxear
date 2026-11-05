@@ -56,6 +56,7 @@ mod editor;
 pub mod entities_panel;
 mod field_drawers;
 mod field_handles;
+mod path_handles;
 mod fields;
 mod frame_debugger_panel;
 mod gizmos;

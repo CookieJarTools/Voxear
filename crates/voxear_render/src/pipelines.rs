@@ -116,6 +116,7 @@ pub struct Pipelines {
     pub water_depth_copy: vk::Pipeline,
     pub water: vk::Pipeline,
     pub water_pool: vk::Pipeline,
+    pub water_stream: vk::Pipeline,
     pub water_wall: vk::Pipeline,
     /// Under water: what the view shows dimmed, then the water's own light.
     pub underwater_dim: vk::Pipeline,
@@ -347,6 +348,14 @@ impl Pipelines {
                 depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
                 cull: vk::CullModeFlags::NONE,
                 ..GraphicsPipelineDesc::new("Pools", water, c"poolVertex", c"waterFragment")
+            })?,
+            water_stream: graphics(&GraphicsPipelineDesc {
+                color_formats: &[HDR_FORMAT, VELOCITY_FORMAT],
+                depth_format: Some(DEPTH_FORMAT),
+                depth_write: true,
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                cull: vk::CullModeFlags::NONE,
+                ..GraphicsPipelineDesc::new("Streams", water, c"streamVertex", c"waterFragment")
             })?,
             water_wall: graphics(&GraphicsPipelineDesc {
                 color_formats: &[HDR_FORMAT, VELOCITY_FORMAT],

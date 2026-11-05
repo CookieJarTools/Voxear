@@ -11,7 +11,7 @@ use voxear_engine::{
     physics::{CharacterController, Collider, Joint, Rigidbody, Vehicle, Wheel},
     physics2d::{Collider2D, Rigidbody2D},
 };
-use voxear_render::{Camera, DryArea, FoliageInteraction, Light, MeshRenderer, Ocean, Pool, PostVolume, Seasons, WindZone};
+use voxear_render::{Camera, DryArea, FoliageInteraction, Light, MeshRenderer, Ocean, Pool, PostVolume, Seasons, Stream, WindZone};
 use voxear_scene::BehaviourSpec;
 
 use super::Editor;
@@ -38,6 +38,8 @@ pub(super) enum Copied {
     Ocean(Ocean),
     Pool(Pool),
     DryArea(DryArea),
+    Path(voxear_scene::Path),
+    Stream(Stream),
     Seasons(Box<Seasons>),
     FoliageInteraction(FoliageInteraction),
     Behaviour(BehaviourSpec),
@@ -67,6 +69,8 @@ impl Copied {
             Part::Ocean => Self::Ocean(*world.get::<Ocean>(entity)?),
             Part::Pool => Self::Pool(*world.get::<Pool>(entity)?),
             Part::DryArea => Self::DryArea(*world.get::<DryArea>(entity)?),
+            Part::Path => Self::Path(world.get::<voxear_scene::Path>(entity)?.clone()),
+            Part::Stream => Self::Stream(*world.get::<Stream>(entity)?),
             Part::Seasons => Self::Seasons(Box::new(*world.get::<Seasons>(entity)?)),
             Part::FoliageInteraction => Self::FoliageInteraction(*world.get::<FoliageInteraction>(entity)?),
             Part::Behaviour(name) => {
@@ -87,6 +91,8 @@ impl Copied {
             Self::Ocean(ocean) => drop(world.insert(entity, *ocean)),
             Self::Pool(pool) => drop(world.insert(entity, *pool)),
             Self::DryArea(dry) => drop(world.insert(entity, *dry)),
+            Self::Path(path) => drop(world.insert(entity, path.clone())),
+            Self::Stream(stream) => drop(world.insert(entity, *stream)),
             Self::Seasons(seasons) => drop(world.insert(entity, **seasons)),
             Self::FoliageInteraction(push) => drop(world.insert(entity, *push)),
             Self::Audio(audio) => drop(world.insert(entity, **audio)),

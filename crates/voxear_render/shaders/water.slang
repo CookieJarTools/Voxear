@@ -18,6 +18,10 @@ static const uint WATER_RINGS = 12;
 static const float WATER_SPACING = 0.25;
 // A Pool's grid: this many quads along each side.
 static const uint POOL_QUADS = 64;
+// A Stream's strip: this many quads across it at each point.
+static const uint STREAM_ACROSS = 8;
+// How long a Stream's ripples drift with it before they start again (two-phase flow).
+static const float FLOW_PERIOD = 1.5;
 // What a WaterOut is the sea's rather than a Pool's.
 static const uint SEA = 0xFFFFFFFF;
 static const float GRAVITY = 9.81;
@@ -279,8 +283,13 @@ struct WaterOut
     float2 rest : REST;
     float4 currentClip : CURRENT_CLIP;
     float4 previousClip : PREVIOUS_CLIP;
-    // SEA, or the Pool it is of.
+    // SEA, or the Pool or Stream it is of.
     nointerpolation uint body : BODY;
+    // A Stream's: how it flows across the ground, in metres a second; how much it foams; and how far it is from
+    // either end, in points.
+    float4 stream : STREAM;
+    // Which way is up from the water's surface before its ripples: a Stream's as its bed slopes.
+    float3 up : UP;
 };
 
 float2 cascadeUv(Frame* frame, uint cascade, float2 rest)
@@ -354,6 +363,8 @@ WaterOut waterVertex(uint vertexId : SV_VertexID, uint ring : SV_InstanceID)
     o.currentClip = transform(frame->unjitteredViewProj, float4(world, 1.0));
     o.previousClip = transform(frame->prevViewProj, float4(before, 1.0));
     o.body = SEA;
+    o.stream = 0.0;
+    o.up = float3(0.0, 1.0, 0.0);
     return o;
 }
 
@@ -368,6 +379,8 @@ WaterOut nothing()
     o.currentClip = o.position;
     o.previousClip = o.position;
     o.body = SEA;
+    o.stream = 0.0;
+    o.up = float3(0.0, 1.0, 0.0);
     return o;
 }
 
@@ -393,7 +406,64 @@ WaterOut poolVertex(uint vertexId : SV_VertexID, uint pool : SV_InstanceID)
     o.currentClip = transform(frame->unjitteredViewProj, float4(world, 1.0));
     o.previousClip = transform(frame->prevViewProj, float4(before, 1.0));
     o.body = pool;
+    o.stream = 0.0;
+    o.up = float3(0.0, 1.0, 0.0);
     return o;
+}
+
+// A corner of a quad of Stream push.list's strip: STREAM_ACROSS quads across
+// it at each of its push.level points, as wide as each point says, flat
+// across and sloping along with its bed; flowing as fast as each point says
+// in the middle and a third of that at its banks.
+[shader("vertex")]
+WaterOut streamVertex(uint vertexId : SV_VertexID)
+{
+    Frame* frame = push.frame;
+    static const uint2 corners[6] = { uint2(0, 0), uint2(0, 1), uint2(1, 0), uint2(1, 0), uint2(0, 1), uint2(1, 1) };
+    WaterBody body = buffers()->waterBodies[push.list];
+    uint quad = vertexId / 6;
+    uint2 grid = uint2(quad % STREAM_ACROSS, quad / STREAM_ACROSS) + corners[vertexId % 6];
+    StreamPoint p = buffers()->streamPoints[body.shape + grid.y];
+    float across = float(grid.x) / float(STREAM_ACROSS) * 2.0 - 1.0;
+    float2 level = normalize(p.tangent.xz + float2(0.0, 1e-5));
+    float3 right = float3(level.y, 0.0, -level.x);
+    float3 world = p.position + right * across * p.width * 0.5;
+    float2 flow = level * p.speed * (0.3 + 0.7 * (1.0 - across * across));
+    WaterOut o;
+    o.position = transform(frame->viewProj, float4(world, 1.0));
+    o.world = world;
+    o.rest = world.xz;
+    o.currentClip = transform(frame->unjitteredViewProj, float4(world, 1.0));
+    o.previousClip = transform(frame->prevViewProj, float4(world, 1.0));
+    o.body = push.list;
+    o.stream = float4(flow, p.foam, float(min(grid.y, push.level - 1 - grid.y)));
+    o.up = normalize(cross(p.tangent, right));
+    return o;
+}
+
+// The waves at `rest`, with as much of the sea's long swell as `swell`
+// says, added in by `weight`: their slopes, the slopes too small to see
+// there as variance, how much they fold and how far they move the water.
+void addWaves(Frame* frame, float2 rest, float swell, float weight, inout float2 slope, inout float variance, inout float folded, inout float3 moved)
+{
+    for (uint c = 0; c < OCEAN_CASCADES; c++)
+    {
+        float2 uv = cascadeUv(frame, c, rest);
+        float4 s = textures[NonUniformResourceIndex(frame->ocean.slopes[c])].Sample(samplers[SAMPLER_LINEAR_REPEAT], uv);
+        float4 d = textures[NonUniformResourceIndex(frame->ocean.displacement[c])].Sample(samplers[SAMPLER_LINEAR_REPEAT], uv);
+        float share = cascadeShare(c, swell) * weight;
+        slope += s.xy * share;
+        // The slopes the mips averaged away, too small to see here, as roughness (Atlas).
+        variance += (max(s.z - s.x * s.x, 0.0) + max(s.w - s.y * s.y, 0.0)) * share * share;
+        folded += (d.w - 1.0) * share;
+        moved += d.xyz * share;
+    }
+}
+
+// Foam's bubbles at `rest`: small in the middle of each.
+float laceAt(float2 rest, float3 moved)
+{
+    return waterCells(rest * 1.3 + moved.xz * 0.5) * 0.7 + waterCells(rest * 4.1) * 0.3;
 }
 
 // How far a view from `world` away from the camera (along -`v`) goes
@@ -415,7 +485,8 @@ float poolExit(WaterBody pool, float3 world, float3 v)
 bool keptDry(Frame* frame, float3 world, uint body)
 {
     uint pools = frame->ocean.pools;
-    for (uint i = pools; i < pools + frame->ocean.dries; i++)
+    uint dries = pools + frame->ocean.streams;
+    for (uint i = dries; i < dries + frame->ocean.dries; i++)
     {
         if (dryDistance(buffers()->waterBodies[i], world) < 0.0)
         {
@@ -530,6 +601,7 @@ FragmentOut waterFragment(WaterOut input)
     }
     bool sea = input.body == SEA;
     WaterBody pool = buffers()->waterBodies[sea ? 0 : input.body];
+    bool stream = !sea && pool.kind == WATER_STREAM;
     // A Pool has the sea's waves as much as it says, and its own colours.
     float waves = sea ? 1.0 : pool.waves;
     float3 deep = sea ? frame->ocean.deep : pool.deep;
@@ -540,19 +612,25 @@ FragmentOut waterFragment(WaterOut input)
     float variance = 0.0;
     float folded = 1.0;
     float3 moved = 0.0;
-    for (uint c = 0; c < OCEAN_CASCADES; c++)
+    // A Stream's ripples drift down it (two-phase flow, after Vlachos): two sets, each carried along for a period
+    // and then started again, half a period apart, each faded out as it starts again.
+    float2 flow = input.stream.xy;
+    float phase = frac(frame->ocean.time / FLOW_PERIOD);
+    float2 restA = rest - flow * phase * FLOW_PERIOD;
+    float2 restB = rest - flow * frac(phase + 0.5) * FLOW_PERIOD;
+    float blend = abs(1.0 - 2.0 * phase);
+    if (stream)
     {
-        float2 uv = cascadeUv(frame, c, rest);
-        float4 s = textures[NonUniformResourceIndex(frame->ocean.slopes[c])].Sample(samplers[SAMPLER_LINEAR_REPEAT], uv);
-        float4 d = textures[NonUniformResourceIndex(frame->ocean.displacement[c])].Sample(samplers[SAMPLER_LINEAR_REPEAT], uv);
-        float share = cascadeShare(c, waves);
-        slope += s.xy * share;
-        // The slopes the mips averaged away, too small to see here, as roughness (Atlas).
-        variance += (max(s.z - s.x * s.x, 0.0) + max(s.w - s.y * s.y, 0.0)) * share * share;
-        folded += (d.w - 1.0) * share;
-        moved += d.xyz * share;
+        addWaves(frame, restA, 0.0, 1.0 - blend, slope, variance, folded, moved);
+        addWaves(frame, restB, 0.0, blend, slope, variance, folded, moved);
+        // Faster water is rougher.
+        slope *= 0.6 + 0.25 * length(flow);
     }
-    float3 n = normalize(float3(-slope.x, 1.0, -slope.y));
+    else
+    {
+        addWaves(frame, rest, waves, 1.0, slope, variance, folded, moved);
+    }
+    float3 n = normalize(float3(-slope.x, 0.0, -slope.y) + input.up);
     float3 v = normalize(frame->cameraPosition - input.world);
     // From under the water the surface shows its underside; from the air, a wave above the camera its front.
     if (cameraUnderwater(frame))
@@ -583,7 +661,8 @@ FragmentOut waterFragment(WaterOut input)
     // The water's own colour (Sea of Thieves, Atlas): deep blue lit by the sky, and the scatter colour where the
     // sun shines through the thin top of a wave towards the eye.
     float height = max(frame->ocean.waveHeight * max(waves, 0.2), 0.05);
-    float crest = saturate(moved.y / (height * 0.5)) + saturate(length(moved.xz) / height) * 0.5;
+    // A Stream's ripples have no crests for light to come through.
+    float crest = stream ? 0.0 : saturate(moved.y / (height * 0.5)) + saturate(length(moved.xz) / height) * 0.5;
     float towards = pow(saturate(dot(l, -v)), 4.0) * pow(saturate(0.5 - 0.5 * dot(l, n)), 3.0);
     // Sea of Thieves' crests glow through: strongly towards the sun, and a little from every side on a wave's top.
     float3 throughWave = (3.0 * crest * towards + 0.25 * crest * pow(saturate(dot(v, n)), 2.0) + 0.04 * saturate(dot(l, n))) * scatter * sunLight * shadow;
@@ -596,8 +675,8 @@ FragmentOut waterFragment(WaterOut input)
     float sceneDepth = behindDepth > 0.0 ? frame->near / behindDepth : 1e4;
     float along = max(dot(-v, frame->cameraForward), 0.05);
     float thickness = max(sceneDepth - surfaceDepth, 0.0) / along;
-    // A Pool's water ends at its sides and bottom, whatever lies past them.
-    thickness = sea ? thickness : min(thickness, poolExit(pool, input.world, v));
+    // A Pool's water ends at its sides and bottom, whatever lies past them; a Stream's at its bed.
+    thickness = sea || stream ? thickness : min(thickness, poolExit(pool, input.world, v));
     float3 through = exp(-absorb * thickness);
     float2 bend = n.xz * 0.04 * saturate(thickness);
     // As sharp as clear water shows what is under it, blurring only where it is deep or rough.
@@ -611,12 +690,29 @@ FragmentOut waterFragment(WaterOut input)
     float threshold = 0.4 + 0.45 * frame->ocean.foam;
     float breaking = frame->ocean.foam > 0.0 ? saturate((threshold - folded) / 0.3) : 0.0;
     float shore = saturate(1.0 - thickness / 0.6);
-    float lace = waterCells(rest * 1.3 + moved.xz * 0.5) * 0.7 + waterCells(rest * 4.1) * 0.3;
+    float lace = laceAt(rest, moved);
+    if (stream)
+    {
+        // A Stream's foam where it runs steep, and in lines drawn out along it the faster it runs, carried down it
+        // as its ripples are.
+        float speed = length(flow);
+        float2 along = flow / max(speed, 1e-4);
+        float2 across = float2(-along.y, along.x);
+        float2 a = float2(dot(restA, along) * 0.25, dot(restA, across));
+        float2 b = float2(dot(restB, along) * 0.25, dot(restB, across));
+        breaking = max(input.stream.z, 0.3 * saturate(speed / 4.0));
+        lace = lerp(laceAt(a, 0.0), laceAt(b, 0.0), blend);
+    }
     // What breaking crests left, carried with the water, streaked thin as it spreads (the sea's only).
     float trail = sea ? keptFoam(frame, rest) : 0.0;
     float foam = saturate((max(max(breaking, shore), trail * 1.2) * 1.4 - lace) * 6.0);
     float3 foamLit = 0.85 * (ambient + sunLight * shadow * saturate(dot(n, l)) / PI);
     color = lerp(color, foamLit, foam);
+    // A Stream fades in over its first two points and out over its last two.
+    if (stream)
+    {
+        color = lerp(glassBehind(push.texture, pixel / float2(frame->viewport), 0.0), color, saturate(input.stream.w / 2.0));
+    }
 
     if (atmosphere)
     {

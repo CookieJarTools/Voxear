@@ -382,29 +382,34 @@ pub struct GpuOcean {
     pub enabled: u32,
     /// The time the waves are at, in seconds, repeating every `ocean::REPEAT_SECONDS`.
     pub time: f32,
-    /// How many Pools, then Dry Areas, `water_bodies` holds, in that order.
+    /// How many Pools, then Dry Areas, `water_bodies` holds; the Streams
+    /// come between them.
     pub pools: u32,
     pub dries: u32,
     /// The foam round the camera (see `water`): its image, and where its
     /// first texel's corner is, across the ground.
     pub foam_texture: u32,
     pub foam_origin: [f32; 2],
+    pub streams: u32,
+    pub _pad: [u32; 3],
 }
 
-/// A Pool or a Dry Area (see `water_bodies`), as `WaterBody` in
+/// A Pool, a Stream or a Dry Area (see `water_bodies`), as `WaterBody` in
 /// `shaders/common.slang`.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct GpuWaterBody {
     pub to_world: Mat4Cols,
     pub to_local: Mat4Cols,
-    /// A Pool's footprint (x, z) or a Dry Area's size, in metres.
+    /// A Pool's footprint (x, z) and depth (y), a Dry Area's size, or a
+    /// Stream's depth (y), in metres.
     pub size: [f32; 3],
-    /// `WATER_POOL` or `WATER_DRY`.
+    /// `WATER_POOL`, `WATER_DRY` or `WATER_STREAM`.
     pub kind: u32,
-    /// A Pool's colours, linear.
+    /// A Pool's or a Stream's colours, linear.
     pub deep: [f32; 3],
-    /// A Dry Area's shape: box, sphere or capsule.
+    /// A Dry Area's shape: box, sphere or capsule; a Stream's first point
+    /// in `stream_points`.
     pub shape: u32,
     pub scatter: [f32; 3],
     /// How much of the sea's smallest waves a Pool has.
@@ -412,6 +417,20 @@ pub struct GpuWaterBody {
     pub absorb: [f32; 3],
     /// A Pool's liquid: water or lava.
     pub liquid: u32,
+}
+
+/// A place along a Stream (see `water_bodies`), as `StreamPoint` in
+/// `shaders/common.slang`: where its surface is in the middle, which way it
+/// runs, how wide it is, how fast it flows and how much it foams.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuStreamPoint {
+    pub position: [f32; 3],
+    pub width: f32,
+    pub tangent: [f32; 3],
+    pub speed: f32,
+    pub foam: f32,
+    pub _pad: [f32; 3],
 }
 
 /// Most pushers through foliage a frame takes, the nearest the camera.
@@ -739,6 +758,8 @@ pub struct GpuBuffers {
     pub ocean_fft: u64,
     /// This frame's Pools and Dry Areas.
     pub water_bodies: u64,
+    /// This frame's points along its Streams.
+    pub stream_points: u64,
 }
 
 /// A line of debug draw (see `voxear_core::debug_draw`), its colour sRGB.
@@ -891,14 +912,15 @@ mod tests {
         assert_eq!(LOCAL_SHADOW_ATLAS, [4096, 3072], "as LOCAL_SHADOW_ATLAS in the shaders");
         assert_eq!(
             size_of::<GpuFrame>(),
-            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi + 32 + 16 * MAX_PUSHERS + 4 * MAX_PUSHERS + 16 + seasons + local_shadows + 144
+            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi + 32 + 16 * MAX_PUSHERS + 4 * MAX_PUSHERS + 16 + seasons + local_shadows + 160
         );
-        assert_eq!(size_of::<GpuOcean>(), 144);
+        assert_eq!(size_of::<GpuOcean>(), 160);
+        assert_eq!(size_of::<GpuStreamPoint>(), 48);
         assert_eq!(size_of::<GpuWaterBody>(), 192);
         assert_eq!(size_of::<GpuDdgi>(), 32 * DDGI_CASCADES + 32 + 48);
         assert_eq!(size_of::<GpuLighting>(), lighting);
         assert_eq!(size_of::<GpuPost>(), post);
-        assert_eq!(size_of::<GpuBuffers>(), 33 * 8);
+        assert_eq!(size_of::<GpuBuffers>(), 34 * 8);
         assert_eq!(size_of::<GpuDebugLine>(), 48);
         assert!(size_of::<Push>() as u32 <= voxear_rhi::PUSH_CONSTANT_SIZE);
     }

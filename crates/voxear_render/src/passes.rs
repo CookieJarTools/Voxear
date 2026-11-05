@@ -284,6 +284,11 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
     if let Some(atmosphere) = frame.atmosphere {
         atmosphere::record(fg, (pipelines, push), atmosphere);
     }
+    // Where the Dry Areas shaped as meshes are, which the opaque passes read to light what is in them as dry.
+    let dry_mask = frame.water.as_ref().and_then(crate::water::Water::dry_mask);
+    if let Some(water) = &frame.water {
+        crate::water::record_dry_mask(fg, (pipelines, push), water, draws.index_buffer);
+    }
     let tables: Vec<ImageId> = frame.atmosphere.map(|atmosphere| atmosphere.all().to_vec()).unwrap_or_default();
     let shading = |color: ImageAccess| {
         let mut images =
@@ -298,6 +303,7 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
             [probes.irradiance, probes.depth, probes.states].map(|image| (image, ImageAccess::Sampled))
         }));
         images.extend(tables.iter().map(|&table| (table, ImageAccess::Sampled)));
+        images.extend(dry_mask.map(|mask| (mask, ImageAccess::Sampled)));
         images
     };
     let shading_push = Push { size: [CASCADE_RESOLUTION; 2], ..draw_push };
@@ -417,6 +423,7 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
         let mut sampled: Vec<ImageId> =
             targets.shadows.into_iter().chain(shadow_maps.iter().copied()).chain(tables.iter().copied()).collect();
         sampled.extend(frame.probes.into_iter().flat_map(|probes| [probes.irradiance, probes.depth, probes.states]));
+        sampled.extend(dry_mask);
         let index_buffer = draws.index_buffer;
         let water_targets = crate::water::WaterTargets { hdr, velocity, depth, index_buffer, sampled };
         crate::water::record(fg, (pipelines, push), water, water_targets);

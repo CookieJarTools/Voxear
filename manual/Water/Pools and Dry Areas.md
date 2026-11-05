@@ -22,10 +22,16 @@ A Pool can be anywhere, above or below the sea:
 
 ## Dry Areas
 
-A **Dry Area** keeps water out of its shape: the inside of a boat's hull, a cave under the sea, a diving bell, or a road across a parted sea. Add one with **Add Component ▸ Water ▸ Dry Area** and pick its **Shape**: a box, a ball or a capsule.
+A **Dry Area** keeps water out of its shape: the inside of a boat's hull, a cave under the sea, a diving bell, or a road across a parted sea. Add one with **Add Component ▸ Water ▸ Dry Area** and pick its **Shape**: a box, a ball, a capsule, or a mesh.
 
 The water is cut away pixel by pixel, so a Dry Area on a moving boat keeps the hull dry exactly where it is, with no lag. Where a Dry Area opens into the sea, as a hole in it, its sides show as walls of water, the waves running along their tops.
 
 Inside a Dry Area, the camera is not under water, and scripts asking about the water there find none.
 
 To keep the sea out of a hull, add a Dry Area to the boat the size of its inside. A [[Floating Objects|floating]] boat still floats, as Buoyancy does not ask Dry Areas.
+
+### Mesh
+
+A Dry Area with the **Mesh** shape keeps water out of the inside of a closed mesh, placed, turned and scaled with its Obj, so it fits a curved hull exactly. Its **Mesh** is the Obj's own Mesh Renderer's to start with; pick another for a simple closed shape of the hull's inside, up to its deck, which is not drawn. An open hull's own mesh has no inside to keep dry, so give it one of its own.
+
+The mesh's walls do not show as water, as a box's do: the hull is what shows there. Scripts asking about water inside it go by the box round the mesh.

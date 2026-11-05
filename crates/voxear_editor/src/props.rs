@@ -32,6 +32,8 @@ use crate::fields::{self, Pick, Step};
 /// The meshes every project has, as the Mesh menu lists them first.
 const BUILTIN_MESHES: [(&str, &str); 3] =
     [("Cube", "builtin:cube"), ("Sphere", "builtin:sphere"), ("Plane", "builtin:plane")];
+/// A mesh Dry Area's Mesh menu's first choice: its Obj's own Mesh Renderer's.
+const OWN_MESH: &str = "Mesh Renderer";
 /// The materials every project has, as the Material menu lists them after
 /// the default.
 pub(crate) const BUILTIN_MATERIALS: [(&str, &str); 1] = [("Glass", "builtin:glass")];
@@ -285,6 +287,8 @@ pub enum Prop {
     DrySize,
     DryWidth,
     DryHeight,
+    /// A mesh Dry Area's mesh, or its Obj's Mesh Renderer's.
+    DryMesh,
     /// A Seasons' time of year, and the season it is nearest, which the
     /// rows of a season's look below it are for.
     TimeOfYear,
@@ -491,7 +495,7 @@ impl Prop {
             | Prop::PoolMurk
             | Prop::PoolCooling
             | Prop::PoolGlow => Part::Pool,
-            Prop::DryShape | Prop::DrySize | Prop::DryWidth | Prop::DryHeight => Part::DryArea,
+            Prop::DryShape | Prop::DrySize | Prop::DryWidth | Prop::DryHeight | Prop::DryMesh => Part::DryArea,
             Prop::PathPoints | Prop::PathClosed => Part::Path,
             Prop::StreamLiquid
             | Prop::StreamDepth
@@ -681,6 +685,7 @@ impl Prop {
             Prop::StreamMurk => "murk",
             Prop::DryShape => "shape",
             Prop::DrySize | Prop::DryWidth | Prop::DryHeight => "size",
+            Prop::DryMesh => "mesh",
             Prop::TimeOfYear | Prop::Season => "time_of_year",
             Prop::SeasonColor(season) => return format!("{}.color", season_key(*season)),
             Prop::SeasonColorAmount(season) => return format!("{}.color_amount", season_key(*season)),
@@ -1013,6 +1018,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             DryShape::Box => vec![Prop::DryShape, Prop::DrySize],
             DryShape::Sphere => vec![Prop::DryShape, Prop::DryWidth],
             DryShape::Capsule => vec![Prop::DryShape, Prop::DryWidth, Prop::DryHeight],
+            DryShape::Mesh => vec![Prop::DryShape, Prop::DryMesh],
         },
         // The look of the season the year is nearest, under the choice of it.
         Part::Seasons => {
@@ -1240,6 +1246,7 @@ pub fn label(prop: &Prop) -> String {
         Prop::DrySize => "Size",
         Prop::DryWidth => "Width",
         Prop::DryHeight => "Height",
+        Prop::DryMesh => "Mesh",
         Prop::TimeOfYear => "Time of year",
         Prop::Season => "Season",
         Prop::SeasonColor(_) => "Colour",
@@ -1793,6 +1800,16 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::DrySize => Value::Vector(world.get::<DryArea>(entity)?.size.to_vec()),
         Prop::DryWidth => Value::Number(world.get::<DryArea>(entity)?.size[0]),
         Prop::DryHeight => Value::Number(world.get::<DryArea>(entity)?.size[1]),
+        Prop::DryMesh => Value::Asset(match world.get::<DryArea>(entity)?.mesh {
+            None => OWN_MESH.into(),
+            Some(mesh) => {
+                let reference = game.content.mesh_ref(mesh)?.to_string();
+                match BUILTIN_MESHES.iter().find(|(_, r)| *r == reference) {
+                    Some((label, _)) => label.to_string(),
+                    None => mesh_label(game, &reference),
+                }
+            }
+        }),
         Prop::TimeOfYear => Value::Number(round3(world.get::<Seasons>(entity)?.time_of_year)),
         Prop::Season => {
             let season = world.get::<Seasons>(entity)?.season();
@@ -1892,17 +1909,34 @@ pub fn set(
     if get(game, types, entity, prop).as_ref() == Some(&value) {
         return false;
     }
-    match (prop, value) {
+    let mut renderer = renderer;
+    let changed = match (prop, value) {
         // A mesh, material, sound or level's Obj kept after play comes back by its name, as its list has it.
-        (Prop::Mesh | Prop::Material | Prop::Sound | Prop::LightCookie | Prop::LightProfile, Value::Asset(label))
+        (Prop::Mesh | Prop::DryMesh | Prop::Material | Prop::Sound | Prop::LightCookie | Prop::LightProfile, Value::Asset(label))
         | (Prop::LodObj(..) | Prop::LodAdd(_) | Prop::JointConnected, Value::Obj(label)) => {
             let choice = choices(game, types, entity, prop).into_iter().find(|(l, _)| *l == label);
-            choice.is_some_and(|(_, choice)| pick(game, renderer, types, entity, prop, &choice))
+            choice.is_some_and(|(_, choice)| pick(game, renderer.as_deref_mut(), types, entity, prop, &choice))
         }
         (Prop::Field { behaviour, path }, value) => {
             fields::set(&mut game.engine.world, types, entity, behaviour, path, &value)
         }
         (prop, value) => set_component(&mut game.engine.world, entity, prop, value),
+    };
+    if changed && matches!(prop, Prop::DryShape | Prop::DryMesh | Prop::Mesh) {
+        dry_bounds(game, renderer.as_deref(), entity);
+    }
+    changed
+}
+
+/// Keeps a mesh Dry Area's box, which scripts asking about water take as its
+/// inside, round the mesh it now has: its own, or its Mesh Renderer's.
+fn dry_bounds(game: &mut Game, renderer: Option<&Renderer>, entity: Entity) {
+    let world = &game.engine.world;
+    let Some(dry) = world.get::<DryArea>(entity) else { return };
+    let mesh = dry.mesh.or(world.get::<MeshRenderer>(entity).map(|drawn| drawn.mesh));
+    let bounds = mesh.zip(renderer).and_then(|(mesh, renderer)| renderer.mesh_bounds(mesh)).map(|(low, high)| [low, high]);
+    if let Some(dry) = game.engine.world.get_mut::<DryArea>(entity) {
+        dry.bounds = bounds;
     }
 }
 
@@ -1934,6 +1968,18 @@ pub fn pick(
                 return false;
             };
             with(&mut game.engine.world, entity, |r: &mut MeshRenderer| r.mesh = mesh)
+        }
+        (Prop::DryMesh, Pick::Asset(None)) => with(&mut game.engine.world, entity, |d: &mut DryArea| d.mesh = None),
+        (Prop::DryMesh, Pick::Asset(Some(reference))) => {
+            let Some(renderer) = renderer else { return false };
+            let reference = match first_mesh(game, renderer, reference) {
+                Some(part) => part,
+                None => reference.clone(),
+            };
+            let Ok(mesh) = game.content.parse(&reference).and_then(|r| game.content.mesh(renderer, &r)) else {
+                return false;
+            };
+            with(&mut game.engine.world, entity, |d: &mut DryArea| d.mesh = Some(mesh))
         }
         (Prop::ModelAsset, Pick::Asset(Some(path))) => {
             let Some(renderer) = renderer else { return false };
@@ -2163,6 +2209,18 @@ pub fn set_lod_until(world: &mut World, entity: Entity, at: usize, until: f32) -
 /// empty.
 pub fn choices(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Vec<(String, Pick)> {
     match prop {
+        // The Obj's own Mesh Renderer's first, then any mesh.
+        Prop::DryMesh => {
+            let mut found = vec![(OWN_MESH.to_string(), Pick::Asset(None))];
+            found.extend(BUILTIN_MESHES.iter().map(|(label, r)| (label.to_string(), Pick::Asset(Some(r.to_string())))));
+            found.extend(model_meshes(game));
+            let mesh = game.engine.world.get::<DryArea>(entity).and_then(|d| d.mesh);
+            let reference = mesh.and_then(|mesh| game.content.mesh_ref(mesh)).map(|r| r.to_string());
+            if let Some(reference) = reference.filter(|r| !found.iter().any(|(_, pick)| matches!(pick, Pick::Asset(Some(p)) if p == r))) {
+                found.push((mesh_label(game, &reference), Pick::Asset(Some(reference))));
+            }
+            return found;
+        }
         Prop::Mesh => {
             let mut found: Vec<(String, Pick)> =
                 BUILTIN_MESHES.iter().map(|(label, r)| (label.to_string(), Pick::Asset(Some(r.to_string())))).collect();
@@ -2255,7 +2313,7 @@ pub fn why_not(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop, ch
 /// "Prefab", "Spinner" or "Obj".
 pub fn title(types: &ScriptTypes, prop: &Prop) -> String {
     match prop {
-        Prop::Mesh => "Mesh".into(),
+        Prop::Mesh | Prop::DryMesh => "Mesh".into(),
         Prop::Material => "Material".into(),
         Prop::Sound => "Sound".into(),
         Prop::LightCookie => "Texture".into(),
@@ -2838,6 +2896,7 @@ pub fn asset_path(game: &Game, entity: Entity, prop: &Prop) -> Option<String> {
     let world = &game.engine.world;
     match prop {
         Prop::Mesh => path_of(game, &game.content.mesh_ref(world.get::<MeshRenderer>(entity)?.mesh)?.to_string()),
+        Prop::DryMesh => path_of(game, &game.content.mesh_ref(world.get::<DryArea>(entity)?.mesh?)?.to_string()),
         Prop::Material => match game.content.material_source(world.get::<MeshRenderer>(entity)?.material)? {
             MaterialSource::Asset(reference) => path_of(game, &reference.to_string()),
             MaterialSource::Inline(_) => None,

@@ -379,7 +379,9 @@ fn apply_instance(root: &mut ObjData, instance: &ObjData) {
     root.wind_zone = instance.wind_zone.or(root.wind_zone);
     root.ocean = instance.ocean.or(root.ocean);
     root.pool = instance.pool.or(root.pool);
-    root.dry_area = instance.dry_area.or(root.dry_area);
+    if instance.dry_area.is_some() {
+        root.dry_area.clone_from(&instance.dry_area);
+    }
     if instance.path.is_some() {
         root.path.clone_from(&instance.path);
     }
@@ -832,6 +834,23 @@ pub(crate) fn resolve_obj(
         (Some(data), None) => Some(Box::new((None, FoliageSource(data.clone())))),
         (None, _) => None,
     };
+    // A mesh Dry Area's mesh needs a renderer to load it, and its box for scripts' questions; without one it keeps
+    // to the Obj's own.
+    let dry_area = match &data.dry_area {
+        Some(dry) => {
+            let mesh = match (&dry.mesh, gpu.as_deref_mut()) {
+                (Some(mesh), Some(renderer)) => Some(content.mesh(renderer, &content.parse(mesh)?)?),
+                _ => None,
+            };
+            let shaped = mesh.or(renderer.as_ref().map(|drawn| drawn.mesh));
+            let bounds = match (shaped, gpu.as_deref()) {
+                (Some(shaped), Some(gpu)) => gpu.mesh_bounds(shaped).map(|(low, high)| [low, high]),
+                _ => None,
+            };
+            Some(DryArea { shape: dry.shape, size: dry.size, mesh, bounds })
+        }
+        None => None,
+    };
     let model = match (&data.model, gpu) {
         (Some(data), Some(renderer)) => Some(Box::new((Some(model_renderer(content, renderer, data)?), ModelSource(data.clone())))),
         (Some(data), None) => Some(Box::new((None, ModelSource(data.clone())))),
@@ -858,7 +877,7 @@ pub(crate) fn resolve_obj(
         wind_zone: data.wind_zone,
         ocean: data.ocean,
         pool: data.pool,
-        dry_area: data.dry_area,
+        dry_area,
         curve: data.path.clone(),
         stream: data.stream,
         buoyancy: data.buoyancy,

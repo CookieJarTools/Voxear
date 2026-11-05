@@ -198,6 +198,9 @@ pub struct Water {
     /// How deep the sea is round each texel of the floor, blurred, and the
     /// image it is blurred across into first.
     floor_depth: (ImageId, ImageId),
+    /// Where along each pixel's view the Dry Areas shaped as meshes start
+    /// and end, and those Dry Areas; none when there are none.
+    dry: Option<(ImageId, Vec<DryMesh>)>,
     /// The pattern foam is made of, and whether it is to be made this frame.
     pattern: (ImageId, bool),
     /// Whether the camera is near enough water for the view under it and
@@ -224,7 +227,7 @@ impl Water {
         (buffers, slot): (&mut OceanBuffers, usize),
         (found, bodies): (Option<(Ocean, f32, Quat)>, &WaterBodies),
         (extent, time, camera): (vk::Extent2D, f32, voxear_core::math::Vec3),
-        ground: &[Ground],
+        (ground, dry_meshes): (&[Ground], Vec<DryMesh>),
     ) -> Result<Self> {
         let (ocean, level, rotation) = found.unwrap_or((Ocean::default(), 0.0, Quat::IDENTITY));
         let ocean = &ocean;
@@ -286,6 +289,14 @@ impl Water {
         let copy = fg.create_image(gpu, bindless, "water copy", copy_desc)?;
         let depth_desc = ImageDesc::new(extent.width, extent.height, vk::Format::R32_SFLOAT, usage);
         let depth_copy = fg.create_image(gpu, bindless, "water depth copy", depth_desc)?;
+        let dry = match dry_meshes.is_empty() {
+            true => None,
+            false => {
+                let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
+                let desc = ImageDesc::new(extent.width, extent.height, vk::Format::R32G32_SFLOAT, usage);
+                Some((fg.create_image(gpu, bindless, "dry meshes", desc)?, dry_meshes))
+            }
+        };
         // Lava shows nothing through it, so a layer of only lava needs no copy of the picture behind it.
         let layered = bodies.pools as usize + bodies.streams.len();
         let clear = bodies.bodies[..layered].iter().any(|body| body.liquid == crate::water_bodies::Liquid::Water as u32);
@@ -348,7 +359,8 @@ impl Water {
             floor,
             floor_depth: fg.texture(floor_depth).0,
             features: ocean.features(),
-            _pad: [0; 2],
+            dry_mask: dry.as_ref().map_or(u32::MAX, |(mask, _)| fg.texture(*mask).0),
+            _pad: 0,
         };
         Ok(Self {
             displacement,
@@ -364,6 +376,7 @@ impl Water {
             lens: (lens_now, lens_then, lens_kept),
             floor: (floor_image, floor_draws),
             floor_depth: (floor_depth, floor_across),
+            dry,
             pattern: (pattern, pattern_new),
             under,
             layered: layered > 0,
@@ -391,6 +404,28 @@ pub struct Ground {
     index_count: u32,
     low: Vec3,
     high: Vec3,
+}
+
+/// A Dry Area shaped as a mesh, as its pass draws it: its body, and its
+/// mesh's first LOD in the index buffer.
+#[derive(Clone, Copy, Debug)]
+pub struct DryMesh {
+    body: u32,
+    first_index: u32,
+    index_count: u32,
+}
+
+/// The Dry Areas shaped as meshes in `bodies`, each with its mesh's first
+/// LOD; those whose mesh is not loaded are left out.
+pub fn dry_meshes(bodies: &WaterBodies, assets: &Assets) -> Vec<DryMesh> {
+    bodies
+        .dry_meshes
+        .iter()
+        .filter_map(|&(body, mesh)| {
+            let (first_index, index_count) = assets.first_lod(mesh)?;
+            Some(DryMesh { body, first_index, index_count })
+        })
+        .collect()
 }
 
 /// The instances that are ground under the water: all of `instances` but
@@ -424,6 +459,8 @@ pub struct WaterBodies {
     pub pools: u32,
     pub streams: Vec<u32>,
     pub points: Vec<GpuStreamPoint>,
+    /// The Dry Areas shaped as meshes: each one's body and mesh.
+    pub dry_meshes: Vec<(u32, crate::MeshHandle)>,
 }
 
 impl WaterBodies {
@@ -454,10 +491,40 @@ fn compute_barrier(ctx: &crate::graph::PassContext) {
     unsafe { ctx.gpu.device.cmd_pipeline_barrier2(ctx.cmd, &dependency) };
 }
 
+impl Water {
+    /// Where along each pixel's view the Dry Areas shaped as meshes start and
+    /// end, when there are any: what the water and the opaque passes read
+    /// to keep water out of them.
+    pub fn dry_mask(&self) -> Option<ImageId> {
+        self.dry.as_ref().map(|(mask, _)| *mask)
+    }
+}
+
+/// Draws the Dry Areas shaped as meshes, before the opaque passes that read
+/// them: in red the nearest of their faces towards the camera, in green one
+/// less the farthest of their faces away from it, each as its depth (1 at
+/// the near plane), so a point between them is inside.
+pub fn record_dry_mask(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), water: &Water, index_buffer: vk::Buffer) {
+    let Some((mask, draws)) = water.dry.clone() else { return };
+    let extent = vk::Extent2D { width: water.size[0], height: water.size[1] };
+    fg.add_pass("Dry meshes", &[(mask, ImageAccess::ColorAttachment)], &[], move |ctx| {
+        let clear = vk::ClearValue { color: vk::ClearColorValue { float32: [0.0; 4] } };
+        let color = [attachment(ctx.view(mask), vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL, Some(clear))];
+        begin_rendering(ctx, extent, &color, None);
+        bind(ctx, pipelines.dry_mesh, vk::PipelineBindPoint::GRAPHICS, &push);
+        unsafe { ctx.gpu.device.cmd_bind_index_buffer(ctx.cmd, index_buffer, 0, vk::IndexType::UINT32) };
+        for draw in &draws {
+            ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { source: draw.body, ..push });
+            unsafe { ctx.gpu.device.cmd_draw_indexed(ctx.cmd, draw.index_count, 1, draw.first_index, 0, 0) };
+        }
+        unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
+    });
+}
+
 /// Records the sea's waves (the FFT, then the mips), then its surface over
 /// a copy of the picture and the depth so far.
 pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), water: Water, targets: WaterTargets) {
-    let Water { displacement, slopes, previous, fft, copy, copy_texture, copy_mips, depth_copy, second, foam, lens, floor, floor_depth, pattern, under, layered, size, sea, pools, streams, dries, frame } = water;
+    let Water { displacement, slopes, previous, fft, copy, copy_texture, copy_mips, depth_copy, second, foam, lens, floor, floor_depth, pattern, under, layered, size, sea, pools, streams, dries, frame, .. } = water;
     let on = |feature: u32| frame.features & feature != 0;
     let cascades = if on(ocean::features::FINE_RIPPLES) { CASCADES } else { CASCADES - 2 };
     let (floor_image, floor_draws) = floor;

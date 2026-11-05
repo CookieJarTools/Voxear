@@ -17,7 +17,7 @@ use voxear_physics::{
     Push,
     scene::{Collider, ColliderMesh, ColliderShape, PhysicsScene, Rigidbody},
 };
-use voxear_render::{DryArea, Ocean, OceanSampler, Pool, SeaState, Stream, StreamPoint, ocean, stream_over};
+use voxear_render::{DryArea, DryShape, Ocean, OceanSampler, Pool, SeaState, Stream, StreamPoint, ocean, stream_over};
 use voxear_scene::{Destroying, Path, Transform, WorldTransform};
 
 /// Floats its Obj on the sea, Pools and Streams. It needs a Rigidbody and a
@@ -121,7 +121,10 @@ fn placed(transform: &Transform, at: Option<&WorldTransform>) -> (Vec3, Quat) {
 pub fn sample(world: &World, at: Vec3) -> Option<WaterPoint> {
     let dry = world.query_ref::<(&DryArea, &Transform, Option<&WorldTransform>)>().into_iter().any(|(area, t, w)| {
         let (position, rotation) = placed(t, w);
-        area.contains(position, rotation, at)
+        match area.shape {
+            DryShape::Mesh => area.mesh_contains(w.map_or_else(|| t.matrix(), |w| w.0), at),
+            _ => area.contains(position, rotation, at),
+        }
     });
     if dry {
         return None;

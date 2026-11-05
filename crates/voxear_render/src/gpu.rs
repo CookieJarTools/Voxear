@@ -404,7 +404,10 @@ pub struct GpuOcean {
     pub floor_depth: u32,
     /// Which of its costlier looks are on (`ocean::features`).
     pub features: u32,
-    pub _pad: [u32; 2],
+    /// Where the Dry Areas shaped as meshes start and end along each
+    /// pixel's view (`water::record_dry_mask`), or `u32::MAX` for none.
+    pub dry_mask: u32,
+    pub _pad: u32,
 }
 
 /// A Pool, a Stream or a Dry Area (see `water_bodies`), as `WaterBody` in

@@ -341,7 +341,10 @@ struct Ocean
     // costlier looks are on (src/ocean.rs's features).
     uint floorDepth;
     uint features;
-    uint2 pad;
+    // Where the Dry Areas shaped as meshes start and end along each pixel's view (water.slang's dryMeshFragment), or
+    // NO_TEXTURE.
+    uint dryMask;
+    uint pad;
 };
 
 // A place along a Stream (src/gpu.rs, GpuStreamPoint): its surface in the middle, which way it runs, how wide it is,
@@ -371,6 +374,7 @@ static const uint LIQUID_LAVA = 1;
 static const uint DRY_BOX = 0;
 static const uint DRY_SPHERE = 1;
 static const uint DRY_CAPSULE = 2;
+static const uint DRY_MESH = 3;
 struct WaterBody
 {
     Mat4 toWorld;

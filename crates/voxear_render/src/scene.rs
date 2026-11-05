@@ -855,13 +855,22 @@ fn water_bodies(world: &World, camera: Vec3) -> crate::water::WaterBodies {
             (position.distance_squared(camera), pool.gpu(position, rotation))
         })
         .collect();
-    let mut dries: Vec<(f32, crate::gpu::GpuWaterBody)> = world
-        .query_ref::<(&DryArea, &Transform, Option<&WorldTransform>)>()
+    // A mesh Dry Area takes its own mesh or its Obj's Mesh Renderer's; with neither it keeps nothing dry.
+    let mut dries: Vec<(f32, crate::gpu::GpuWaterBody, Option<crate::MeshHandle>)> = world
+        .query_ref::<(&DryArea, &Transform, Option<&WorldTransform>, Option<&MeshRenderer>)>()
         .without::<Destroying>()
         .into_iter()
-        .map(|(dry, transform, at)| {
+        .filter_map(|(dry, transform, at, drawn)| {
             let (position, rotation) = placed(transform, at);
-            (position.distance_squared(camera), dry.gpu(position, rotation))
+            let near = position.distance_squared(camera);
+            match dry.shape {
+                crate::DryShape::Mesh => {
+                    let mesh = dry.mesh.or(drawn.map(|renderer| renderer.mesh))?;
+                    let model = at.map_or_else(|| transform.matrix(), |w| w.0);
+                    Some((near, DryArea::gpu_mesh(mesh, model), Some(mesh)))
+                }
+                _ => Some((near, dry.gpu(position, rotation), None)),
+            }
         })
         .collect();
     // Each Stream's points along its Path, by how near the nearest of them is.
@@ -892,6 +901,8 @@ fn water_bodies(world: &World, camera: Vec3) -> crate::water::WaterBodies {
         counts.push(along.len() as u32);
         points.extend(along.iter().map(|p| p.gpu()));
     }
-    bodies.extend(dries.into_iter().map(|(_, body)| body));
-    crate::water::WaterBodies { bodies, pools: pools.len() as u32, streams: counts, points }
+    let first_dry = bodies.len() as u32;
+    let dry_meshes = (first_dry..).zip(&dries).filter_map(|(body, (_, _, mesh))| mesh.map(|mesh| (body, mesh))).collect();
+    bodies.extend(dries.into_iter().map(|(_, body, _)| body));
+    crate::water::WaterBodies { bodies, pools: pools.len() as u32, streams: counts, points, dry_meshes }
 }

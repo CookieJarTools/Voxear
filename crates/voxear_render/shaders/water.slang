@@ -339,6 +339,26 @@ float floorHeight(Frame* frame, float2 xz, bool smooth = true)
     return -1e9;
 }
 
+// A corner of the mesh of Dry Area push.source, placed by its Obj.
+[shader("vertex")]
+float4 dryMeshVertex(uint vertexId : SV_VertexID) : SV_Position
+{
+    Frame* frame = push.frame;
+    WaterBody body = buffers()->waterBodies[push.source];
+    Mesh mesh = buffers()->meshes[body.liquid];
+    Vertex v = buffers()->vertices[mesh.vertexOffset + vertexId];
+    return transform(frame->viewProj, transform(body.toWorld, float4(v.position, 1.0)));
+}
+
+// Where a mesh Dry Area starts and ends along this pixel's view, kept by the
+// greater of each (water::record_dry_mask): a face towards the camera as its
+// depth in red, a face away from it as one less its depth in green.
+[shader("fragment")]
+float2 dryMeshFragment(float4 position : SV_Position, bool front : SV_IsFrontFace) : SV_Target0
+{
+    return front ? float2(position.z, 0.0) : float2(0.0, 1.0 - position.z);
+}
+
 // How deep the sea is round `xz` for how much its waves die away there: its
 // depth averaged over a few metres (floorDepthMain), so the waves calm
 // gradually where the ground drops away rather than in a step, and a rock or
@@ -1075,10 +1095,15 @@ float poolExit(WaterBody pool, float3 world, float3 v)
     return max(min(far.x, min(far.y, far.z)), 0.0);
 }
 
-// Whether water drawn at `world` is kept out: inside a Dry Area; and, for
+// Whether water drawn at `world` is kept out: inside a Dry Area, whatever
+// its shape; and, for
 // the sea, over a Pool lower than it, which is dry to the sea.
 bool keptDry(Frame* frame, float3 world, uint body)
 {
+    if (inDryMesh(frame, world))
+    {
+        return true;
+    }
     uint pools = frame->ocean.pools;
     uint dries = pools + frame->ocean.streams;
     for (uint i = dries; i < dries + frame->ocean.dries; i++)
@@ -1638,6 +1663,11 @@ WallOut wallVertex(uint vertexId : SV_VertexID, uint instance : SV_InstanceID)
     }
     else
     {
+        // A mesh's walls would be the mesh itself, which the Obj draws if it is to be seen.
+        if (water.shape == DRY_MESH)
+        {
+            return nothingWall();
+        }
         half = water.size * 0.5;
         centre = 0.0;
     }

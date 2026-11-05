@@ -15,6 +15,7 @@ use voxear_core::math::{Mat4, Quat, Vec3};
 use voxear_ecs::Component;
 use voxear_scene::Path;
 
+use crate::MeshHandle;
 use crate::gpu::{GpuStreamPoint, GpuWaterBody, cols};
 
 /// The most Pools, Streams and Dry Areas a frame draws, the nearest the
@@ -55,16 +56,20 @@ pub enum DryShape {
     Box,
     Sphere,
     Capsule,
+    /// The inside of a closed mesh, as a hull's: its own, or the Obj's Mesh
+    /// Renderer's.
+    Mesh,
 }
 
 impl DryShape {
-    pub const ALL: [Self; 3] = [Self::Box, Self::Sphere, Self::Capsule];
+    pub const ALL: [Self; 4] = [Self::Box, Self::Sphere, Self::Capsule, Self::Mesh];
 
     pub fn name(self) -> &'static str {
         match self {
             Self::Box => "Box",
             Self::Sphere => "Sphere",
             Self::Capsule => "Capsule",
+            Self::Mesh => "Mesh",
         }
     }
 }
@@ -118,20 +123,30 @@ impl Default for Pool {
 
 /// Keeps water out of its shape: a box `size` across, a ball as wide as
 /// `size.x`, or a capsule as wide as `size.x` and as tall as `size.y`,
-/// turned with its Obj.
+/// turned with its Obj; or the inside of a closed mesh, placed, turned and
+/// scaled with its Obj.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct DryArea {
     pub shape: DryShape,
     /// In metres.
     pub size: [f32; 3],
+    /// For the Mesh shape: the mesh, or `None` for the Obj's Mesh
+    /// Renderer's. Scenes write it as a Mesh Renderer's mesh is written.
+    #[serde(skip)]
+    pub mesh: Option<MeshHandle>,
+    /// For the Mesh shape: the box round its mesh, in the mesh's own space,
+    /// which scripts asking about water take as its inside; set where the
+    /// mesh is loaded or picked.
+    #[serde(skip)]
+    pub bounds: Option<[Vec3; 2]>,
 }
 
 impl Component for DryArea {}
 
 impl Default for DryArea {
     fn default() -> Self {
-        Self { shape: DryShape::Box, size: [2.0, 2.0, 4.0] }
+        Self { shape: DryShape::Box, size: [2.0, 2.0, 4.0], mesh: None, bounds: None }
     }
 }
 
@@ -151,6 +166,8 @@ impl DryArea {
                 let along = Vec3::new(local.x, local.y.clamp(-reach, reach), local.z);
                 (local - Vec3::new(0.0, along.y, 0.0)).length() - half.x
             }
+            // A mesh's inside is known only from the mesh itself (see `water::DryMesh`).
+            DryShape::Mesh => f32::INFINITY,
         }
     }
 }
@@ -202,10 +219,34 @@ impl DryArea {
         }
     }
 
+    /// The Mesh shape's body: `mesh` placed by the Obj's whole matrix,
+    /// scale and all, which the shaders read from where a Pool keeps its
+    /// liquid.
+    pub(crate) fn gpu_mesh(mesh: MeshHandle, model: Mat4) -> GpuWaterBody {
+        GpuWaterBody {
+            to_world: cols(model),
+            to_local: cols(model.inverse()),
+            size: [1.0; 3],
+            kind: WATER_DRY,
+            shape: DryShape::Mesh as u32,
+            liquid: mesh.0,
+            ..GpuWaterBody::default()
+        }
+    }
+
     /// Whether `point` is inside it, placed at `position`, turned by
     /// `rotation`.
     pub fn contains(&self, position: Vec3, rotation: Quat, point: Vec3) -> bool {
         self.distance(rotation.inverse() * (point - position)) < 0.0
+    }
+
+    /// For the Mesh shape, whether `point` is inside the box round its mesh,
+    /// placed by `model`, its Obj's whole matrix; never before its mesh's
+    /// box is known.
+    pub fn mesh_contains(&self, model: Mat4, point: Vec3) -> bool {
+        let Some([low, high]) = self.bounds else { return false };
+        let local = model.inverse().transform_point3(point);
+        local.cmpge(low).all() && local.cmple(high).all()
     }
 }
 
@@ -390,15 +431,24 @@ mod tests {
     #[test]
     fn a_dry_area_keeps_water_out_of_its_shape_turned_with_its_obj() {
         let turned = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
-        let hull = DryArea { shape: DryShape::Box, size: [2.0, 2.0, 6.0] };
+        let hull = DryArea { shape: DryShape::Box, size: [2.0, 2.0, 6.0], ..DryArea::default() };
         // Six metres long along its own z, which the turn lays along the world's x.
         assert!(hull.contains(Vec3::ZERO, turned, Vec3::new(2.5, 0.0, 0.0)));
         assert!(!hull.contains(Vec3::ZERO, turned, Vec3::new(0.0, 0.0, 2.5)));
-        let ball = DryArea { shape: DryShape::Sphere, size: [4.0, 4.0, 4.0] };
+        let ball = DryArea { shape: DryShape::Sphere, size: [4.0, 4.0, 4.0], ..DryArea::default() };
         assert!(ball.contains(Vec3::new(10.0, 0.0, 0.0), Quat::IDENTITY, Vec3::new(11.9, 0.0, 0.0)));
         assert!(!ball.contains(Vec3::new(10.0, 0.0, 0.0), Quat::IDENTITY, Vec3::new(12.1, 0.0, 0.0)));
-        let bell = DryArea { shape: DryShape::Capsule, size: [2.0, 6.0, 2.0] };
+        let bell = DryArea { shape: DryShape::Capsule, size: [2.0, 6.0, 2.0], ..DryArea::default() };
         assert!(bell.contains(Vec3::ZERO, Quat::IDENTITY, Vec3::new(0.0, 2.8, 0.0)) && !bell.contains(Vec3::ZERO, Quat::IDENTITY, Vec3::new(1.2, 0.0, 0.0)));
+    }
+
+    #[test]
+    fn a_mesh_dry_area_keeps_water_out_of_the_box_round_its_mesh_placed_by_its_obj() {
+        let hull = DryArea { shape: DryShape::Mesh, bounds: Some([Vec3::splat(-0.5), Vec3::splat(0.5)]), ..DryArea::default() };
+        let model = Mat4::from_scale_rotation_translation(Vec3::new(4.0, 2.0, 10.0), Quat::IDENTITY, Vec3::new(0.0, 1.0, 0.0));
+        assert!(hull.mesh_contains(model, Vec3::new(1.5, 0.5, 4.5)));
+        assert!(!hull.mesh_contains(model, Vec3::new(2.5, 0.5, 0.0)));
+        assert!(!DryArea { bounds: None, ..hull }.mesh_contains(model, Vec3::new(0.0, 1.0, 0.0)));
     }
 
     #[test]

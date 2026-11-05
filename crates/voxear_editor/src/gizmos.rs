@@ -200,6 +200,8 @@ fn water_body(shapes: &mut Vec<Shape>, world: &World, camera: &ViewCamera, entit
                 line(shapes, camera, position + edge + rotation * Vec3::new(0.0, -reach, 0.0), position + edge + rotation * Vec3::new(0.0, reach, 0.0), color);
             }
         }
+        // The mesh shows its own shape where the Obj draws it.
+        DryShape::Mesh => {}
     }
 }
 

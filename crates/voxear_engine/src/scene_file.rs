@@ -281,7 +281,7 @@ pub struct ObjData {
     pub pool: Option<Pool>,
     /// A Dry Area, keeping water out of its shape.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub dry_area: Option<DryArea>,
+    pub dry_area: Option<DryAreaData>,
     /// A Path, points joined by a curve through them, for a Stream to run along.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<voxear_scene::Path>,
@@ -873,6 +873,38 @@ impl voxear_ecs::Component for ModelSource {}
 pub struct FoliageSource(pub FoliageData);
 impl voxear_ecs::Component for FoliageSource {}
 
+/// A Dry Area as a scene writes it: its shape and size, and for the Mesh
+/// shape the mesh, written as a Mesh Renderer's is, or none for the Obj's own
+/// Mesh Renderer's.
+/// ```toml
+/// [obj.dry_area]
+/// shape = "mesh"
+/// mesh = "Models/Boat.glb#mesh1.0"
+/// ```
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DryAreaData {
+    pub shape: voxear_render::DryShape,
+    pub size: [f32; 3],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mesh: Option<String>,
+}
+
+impl Default for DryAreaData {
+    fn default() -> Self {
+        let area = DryArea::default();
+        Self { shape: area.shape, size: area.size, mesh: None }
+    }
+}
+
+impl DryAreaData {
+    /// `area` as a scene writes it, its mesh named as `content` knows it.
+    pub fn of(content: &Content, area: &DryArea) -> Self {
+        let mesh = area.mesh.and_then(|mesh| content.mesh_ref(mesh)).map(|reference| reference.to_string());
+        Self { shape: area.shape, size: area.size, mesh }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RendererData {
@@ -1247,7 +1279,7 @@ fn capture_instance(
         instance.pool = root.pool;
     }
     if root.dry_area.is_some() && root.dry_area != prefab_root.dry_area {
-        instance.dry_area = root.dry_area;
+        instance.dry_area.clone_from(&root.dry_area);
     }
     if root.path.is_some() && root.path != prefab_root.path {
         instance.path.clone_from(&root.path);
@@ -1378,8 +1410,8 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     if let Some(pool) = actual.pool.filter(|p| Some(*p) != expected.pool) {
         put("pool", whole(&pool, &Pool::default())?);
     }
-    if let Some(dry) = actual.dry_area.filter(|d| Some(*d) != expected.dry_area) {
-        put("dry_area", whole(&dry, &DryArea::default())?);
+    if let Some(dry) = actual.dry_area.as_ref().filter(|d| Some(*d) != expected.dry_area.as_ref()) {
+        put("dry_area", whole(dry, &DryAreaData::default())?);
     }
     if let Some(path) = actual.path.as_ref().filter(|p| Some(*p) != expected.path.as_ref()) {
         put("path", whole(path, &voxear_scene::Path::default())?);
@@ -1617,7 +1649,7 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.wind_zone = world.get::<WindZone>(entity).copied();
     obj.ocean = world.get::<Ocean>(entity).copied();
     obj.pool = world.get::<Pool>(entity).copied();
-    obj.dry_area = world.get::<DryArea>(entity).copied();
+    obj.dry_area = world.get::<DryArea>(entity).map(|area| DryAreaData::of(content, area));
     obj.path = world.get::<voxear_scene::Path>(entity).cloned();
     obj.stream = world.get::<Stream>(entity).copied();
     obj.buoyancy = world.get::<crate::water::Buoyancy>(entity).copied();
@@ -1987,7 +2019,7 @@ mod tests {
         assert_eq!(toml::from_str::<ObjData>(&toml::to_string(&obj).unwrap()).unwrap().ocean, Some(ocean));
         let obj: ObjData = toml::from_str("id = 2\n[pool]\nsize = [4.0, 8.0]\nliquid = \"lava\"\n[dry_area]\nshape = \"capsule\"").unwrap();
         assert_eq!(obj.pool.map(|p| (p.size, p.liquid)), Some(([4.0, 8.0], voxear_render::Liquid::Lava)));
-        assert_eq!(obj.dry_area.map(|d| d.shape), Some(voxear_render::DryShape::Capsule));
+        assert_eq!(obj.dry_area.as_ref().map(|d| d.shape), Some(voxear_render::DryShape::Capsule));
         let back: ObjData = toml::from_str(&toml::to_string(&obj).unwrap()).unwrap();
         assert_eq!((back.pool, back.dry_area), (obj.pool, obj.dry_area));
         let river = "id = 3\n[stream]\nspeed = 2.5\n[path]\npoints = [{ position = [0.0, 0.0, 0.0] }, { position = [0.0, -1.0, 8.0], width = 6.0 }]";
@@ -1999,6 +2031,18 @@ mod tests {
         assert_eq!((back.path, back.stream), (obj.path, obj.stream));
         let raft: ObjData = toml::from_str("id = 4\n[buoyancy]\nsubmerged = 0.3").unwrap();
         assert_eq!(raft.buoyancy.map(|b| (b.submerged, b.drag)), Some((0.3, crate::water::Buoyancy::default().drag)));
+    }
+
+    #[test]
+    fn a_mesh_dry_area_writes_its_mesh_as_a_renderer_does() {
+        let obj: ObjData = toml::from_str("id = 3\n[dry_area]\nshape = \"mesh\"\nmesh = \"builtin:sphere\"").unwrap();
+        let dry = obj.dry_area.clone().unwrap();
+        assert_eq!((dry.shape, dry.mesh.as_deref()), (voxear_render::DryShape::Mesh, Some("builtin:sphere")));
+        let back: ObjData = toml::from_str(&toml::to_string(&obj).unwrap()).unwrap();
+        assert_eq!(back.dry_area, obj.dry_area);
+        // Its own Mesh Renderer's mesh, written as none.
+        let own: ObjData = toml::from_str("id = 4\n[dry_area]\nshape = \"mesh\"").unwrap();
+        assert_eq!(own.dry_area.and_then(|d| d.mesh), None);
     }
 
     #[test]

@@ -3817,6 +3817,36 @@ fn a_dry_area_keeps_the_sea_out_and_a_pool_holds_water_above_it() {
 }
 
 #[test]
+fn a_mesh_dry_area_keeps_the_sea_out_of_its_inside() {
+    use voxear_render::{DryArea, DryShape, Ocean, Sky, Weather};
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    let (eye, look) = (Vec3::new(0.0, 6.0, -8.0), Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.0, -0.35, 1.0).normalize()));
+    world.spawn((Camera::default(), Transform::new(eye, look, Vec3::ONE)));
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.4, -0.6, 0.6).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.6, ..Sky::default() });
+    let plane = renderer.primitive(Primitive::Plane).unwrap();
+    let sand = MaterialDesc { base_color: [0.76, 0.66, 0.48, 1.0], roughness: 0.9, ..MaterialDesc::default() };
+    let sand = renderer.add_material(&sand).unwrap();
+    world.spawn((MeshRenderer::new(plane, sand), Transform::new(Vec3::new(0.0, -3.0, 0.0), Quat::IDENTITY, Vec3::splat(200.0))));
+    world.spawn((Ocean { weather: Weather::Calm, ..Ocean::default() }, Transform::default()));
+    // A ball ten metres across at the sea's level, kept dry by its mesh alone, which is not drawn.
+    let sphere = renderer.primitive(Primitive::Sphere).unwrap();
+    let hull = Vec3::new(-4.0, 0.0, 5.0);
+    let dry = DryArea { shape: DryShape::Mesh, mesh: Some(sphere), ..DryArea::default() };
+    world.spawn((dry, Transform::new(hull, Quat::IDENTITY, Vec3::splat(10.0))));
+    run(&mut renderer, &world, &mut 10.0, 20);
+    let pixels = renderer.read_pixels().unwrap().2;
+    keep_image("mesh dry area.png", &pixels);
+    // The sand three metres down inside it, seen with no water over it, warm where the sea is blue.
+    let floor = patch_rgb(&pixels, on_screen(eye, look, Vec3::new(-4.0, -3.0, 6.0)), 2);
+    assert!(floor[0] > floor[2] + 8, "the sand in the dry ball: {floor:?}");
+    let sea = patch_rgb(&pixels, on_screen(eye, look, Vec3::new(5.0, 0.0, 4.0)), 3);
+    assert!(sea[2] > sea[0], "the sea beside it: {sea:?}");
+}
+
+#[test]
 fn under_the_sea_the_water_tints_all_and_caustics_light_the_sand() {
     use voxear_render::{Ocean, Sky, Weather};
     let Some(mut renderer) = renderer() else { return };

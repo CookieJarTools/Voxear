@@ -532,6 +532,11 @@ float3 localLights(Frame* frame, Surface s, float3 position, float2 pixel)
 // How far `world` is outside Dry Area `body`, negative inside.
 float dryDistance(WaterBody body, float3 world)
 {
+    // A mesh's inside is known from where it starts and ends on screen (inDryMesh).
+    if (body.shape == DRY_MESH)
+    {
+        return 1.0;
+    }
     float3 local = transform(body.toLocal, float4(world, 1.0)).xyz;
     float3 half = body.size * 0.5;
     if (body.shape == DRY_SPHERE)
@@ -545,6 +550,34 @@ float dryDistance(WaterBody body, float3 world)
     }
     float3 q = abs(local) - half;
     return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0);
+}
+
+// Whether `world` is inside a Dry Area shaped as a mesh: past the nearest of
+// their faces towards the camera along its view and short of the farthest
+// away (water.slang's dryMeshFragment), give or take a few centimetres, so
+// a mesh's own outside is not in it and its inside floor is. At the camera
+// itself, by the middle of the near plane; off the screen, nowhere.
+bool inDryMesh(Frame* frame, float3 world)
+{
+    if (frame->ocean.dryMask == NO_TEXTURE)
+    {
+        return false;
+    }
+    float4 clip = transform(frame->viewProj, float4(world, 1.0));
+    float2 uv = clip.w > frame->near ? clip.xy / clip.w * 0.5 + 0.5 : 0.5;
+    if (any(uv < 0.0) || any(uv > 1.0))
+    {
+        return false;
+    }
+    float2 mask = textures[NonUniformResourceIndex(frame->ocean.dryMask)].Load(int3(int2(uv * float2(frame->viewport)), 0)).rg;
+    if (mask.y <= 0.0)
+    {
+        return false;
+    }
+    float along = max(clip.w, frame->near);
+    float front = mask.x > 0.0 ? frame->near / mask.x : 0.0;
+    float back = frame->near / max(1.0 - mask.y, 1e-7);
+    return along > front + 0.05 && along < back + 0.05;
 }
 
 // The water whose surface is over or under `world`: how high that surface
@@ -567,6 +600,10 @@ bool waterSurface(Frame* frame, float3 world, out float surface, out float3 abso
         {
             return false;
         }
+    }
+    if (inDryMesh(frame, world))
+    {
+        return false;
     }
     if (frame->ocean.enabled != 0)
     {

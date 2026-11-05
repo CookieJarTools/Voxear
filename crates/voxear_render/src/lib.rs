@@ -1863,11 +1863,14 @@ impl View {
                 (&mut self.ocean, slot),
                 (extracted.ocean, &extracted.water_bodies),
                 (extent, setup.time, camera),
-                &{
-                    // The sea floor is drawn from the Objs, not the plants after them.
-                    let objs = extracted.entities[..opaque_count].iter().position(|owner| owner.plant.is_some());
-                    water::ground(&extracted.instances[..objs.unwrap_or(opaque_count)], assets)
-                },
+                (
+                    &{
+                        // The sea floor is drawn from the Objs, not the plants after them.
+                        let objs = extracted.entities[..opaque_count].iter().position(|owner| owner.plant.is_some());
+                        water::ground(&extracted.instances[..objs.unwrap_or(opaque_count)], assets)
+                    },
+                    water::dry_meshes(&extracted.water_bodies, assets),
+                ),
             )?),
             false => None,
         };

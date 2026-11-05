@@ -40,6 +40,7 @@ pub(super) enum Copied {
     DryArea(DryArea),
     Path(voxear_scene::Path),
     Stream(Stream),
+    Buoyancy(voxear_engine::water::Buoyancy),
     Seasons(Box<Seasons>),
     FoliageInteraction(FoliageInteraction),
     Behaviour(BehaviourSpec),
@@ -71,6 +72,7 @@ impl Copied {
             Part::DryArea => Self::DryArea(*world.get::<DryArea>(entity)?),
             Part::Path => Self::Path(world.get::<voxear_scene::Path>(entity)?.clone()),
             Part::Stream => Self::Stream(*world.get::<Stream>(entity)?),
+            Part::Buoyancy => Self::Buoyancy(*world.get::<voxear_engine::water::Buoyancy>(entity)?),
             Part::Seasons => Self::Seasons(Box::new(*world.get::<Seasons>(entity)?)),
             Part::FoliageInteraction => Self::FoliageInteraction(*world.get::<FoliageInteraction>(entity)?),
             Part::Behaviour(name) => {
@@ -93,6 +95,7 @@ impl Copied {
             Self::DryArea(dry) => drop(world.insert(entity, *dry)),
             Self::Path(path) => drop(world.insert(entity, path.clone())),
             Self::Stream(stream) => drop(world.insert(entity, *stream)),
+            Self::Buoyancy(buoyancy) => drop(world.insert(entity, *buoyancy)),
             Self::Seasons(seasons) => drop(world.insert(entity, **seasons)),
             Self::FoliageInteraction(push) => drop(world.insert(entity, *push)),
             Self::Audio(audio) => drop(world.insert(entity, **audio)),

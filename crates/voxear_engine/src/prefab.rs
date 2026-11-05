@@ -384,6 +384,7 @@ fn apply_instance(root: &mut ObjData, instance: &ObjData) {
         root.path.clone_from(&instance.path);
     }
     root.stream = instance.stream.or(root.stream);
+    root.buoyancy = instance.buoyancy.or(root.buoyancy);
     if instance.model.is_some() {
         root.model.clone_from(&instance.model);
     }
@@ -434,6 +435,7 @@ pub struct TemplateObj {
     /// A Path component (`path` is where the Obj is in the prefab).
     pub curve: Option<Path>,
     pub stream: Option<Stream>,
+    pub buoyancy: Option<crate::water::Buoyancy>,
     pub seasons: Option<Seasons>,
     pub foliage_interaction: Option<FoliageInteraction>,
     /// A Foliage, where there is a renderer to draw it, and how it was
@@ -587,6 +589,9 @@ impl Template {
             }
             if let Some(stream) = obj.stream {
                 world.insert(entity, stream);
+            }
+            if let Some(buoyancy) = obj.buoyancy {
+                world.insert(entity, buoyancy);
             }
             if let Some(seasons) = obj.seasons {
                 world.insert(entity, seasons);
@@ -856,6 +861,7 @@ pub(crate) fn resolve_obj(
         dry_area: data.dry_area,
         curve: data.path.clone(),
         stream: data.stream,
+        buoyancy: data.buoyancy,
         seasons: data.seasons,
         foliage_interaction: data.foliage_interaction,
         layer: data.layer.clone(),

@@ -79,6 +79,8 @@ pub enum Part {
     /// A Path, and a Stream running along it.
     Path,
     Stream,
+    /// Floats its Obj's Rigidbody on water.
+    Buoyancy,
     Seasons,
     FoliageInteraction,
     Foliage,
@@ -114,6 +116,7 @@ impl Part {
             Part::DryArea => "dry_area".into(),
             Part::Path => "path".into(),
             Part::Stream => "stream".into(),
+            Part::Buoyancy => "buoyancy".into(),
             Part::Seasons => "seasons".into(),
             Part::FoliageInteraction => "foliage_interaction".into(),
             Part::Foliage => "foliage".into(),
@@ -145,6 +148,7 @@ impl Part {
             Part::DryArea => "Dry Area",
             Part::Path => "Path",
             Part::Stream => "Stream",
+            Part::Buoyancy => "Buoyancy",
             Part::Seasons => "Seasons",
             Part::FoliageInteraction => "Foliage Interaction",
             Part::Foliage => "Foliage",
@@ -175,6 +179,7 @@ impl Part {
             Part::DryArea => "box",
             Part::Path => "move",
             Part::Stream => "globe",
+            Part::Buoyancy => "move",
             Part::Seasons => "globe",
             Part::FoliageInteraction => "move",
             Part::Foliage => "cube",
@@ -262,6 +267,11 @@ pub enum Prop {
     StreamMurk,
     StreamCooling,
     StreamGlow,
+    /// How much of a floating Obj sits under still water, and how quickly
+    /// the water slows it.
+    BuoyancySubmerged,
+    BuoyancyDrag,
+    BuoyancyAngularDrag,
     /// A Dry Area's shape, and its size as that shape has it.
     DryShape,
     DrySize,
@@ -478,6 +488,7 @@ impl Prop {
             | Prop::StreamMurk
             | Prop::StreamCooling
             | Prop::StreamGlow => Part::Stream,
+            Prop::BuoyancySubmerged | Prop::BuoyancyDrag | Prop::BuoyancyAngularDrag => Part::Buoyancy,
             Prop::TimeOfYear
             | Prop::Season
             | Prop::SeasonColor(_)
@@ -633,6 +644,9 @@ impl Prop {
             Prop::PoolMurk => "murk",
             Prop::PoolCooling | Prop::StreamCooling => "cooling",
             Prop::PoolGlow | Prop::StreamGlow => "glow",
+            Prop::BuoyancySubmerged => "submerged",
+            Prop::BuoyancyDrag => "drag",
+            Prop::BuoyancyAngularDrag => "angular_drag",
             Prop::PathPoints => "points",
             Prop::PathClosed => "closed",
             Prop::StreamLiquid => "liquid",
@@ -815,6 +829,9 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     if world.has::<Stream>(entity) {
         parts.push(Part::Stream);
     }
+    if world.has::<voxear_engine::water::Buoyancy>(entity) {
+        parts.push(Part::Buoyancy);
+    }
     if world.has::<Seasons>(entity) {
         parts.push(Part::Seasons);
     }
@@ -952,6 +969,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             props
         }
         Part::Path => vec![Prop::PathPoints, Prop::PathClosed],
+        Part::Buoyancy => vec![Prop::BuoyancySubmerged, Prop::BuoyancyDrag, Prop::BuoyancyAngularDrag],
         Part::Stream => {
             let water = world.get::<Stream>(entity).is_some_and(|stream| stream.liquid == Liquid::Water);
             let mut props = vec![Prop::StreamLiquid, Prop::StreamDepth, Prop::StreamSpeed];
@@ -1169,6 +1187,9 @@ pub fn label(prop: &Prop) -> String {
         Prop::PoolMurk => "Murk",
         Prop::PoolCooling | Prop::StreamCooling => "Cooling",
         Prop::PoolGlow | Prop::StreamGlow => "Glow",
+        Prop::BuoyancySubmerged => "Submerged",
+        Prop::BuoyancyDrag => "Drag",
+        Prop::BuoyancyAngularDrag => "Angular drag",
         Prop::PathPoints => "Points",
         Prop::PathClosed => "Closed",
         Prop::StreamLiquid => "Liquid",
@@ -1419,6 +1440,16 @@ pub fn add(
         Part::Path => {
             world.insert(entity, voxear_scene::Path::default());
         }
+        // Floating needs a body physics moves, and a shape for the water to push.
+        Part::Buoyancy => {
+            if !world.has::<Collider>(entity) {
+                world.insert(entity, Collider::default());
+            }
+            if !world.has::<Rigidbody>(entity) {
+                world.insert(entity, Rigidbody::default());
+            }
+            world.insert(entity, voxear_engine::water::Buoyancy::default());
+        }
         // A Stream runs along a Path: one is added with it where the Obj has none.
         Part::Stream => {
             if !world.has::<voxear_scene::Path>(entity) {
@@ -1458,6 +1489,7 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
         Part::DryArea => drop(world.remove::<DryArea>(entity)),
         Part::Path => drop(world.remove::<voxear_scene::Path>(entity)),
         Part::Stream => drop(world.remove::<Stream>(entity)),
+        Part::Buoyancy => drop(world.remove::<voxear_engine::water::Buoyancy>(entity)),
         Part::Seasons => drop(world.remove::<Seasons>(entity)),
         Part::FoliageInteraction => drop(world.remove::<FoliageInteraction>(entity)),
         Part::Foliage => {
@@ -1707,6 +1739,9 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::StreamMurk => Value::Number(world.get::<Stream>(entity)?.murk),
         Prop::StreamCooling => Value::Number(world.get::<Stream>(entity)?.cooling),
         Prop::StreamGlow => Value::Number(world.get::<Stream>(entity)?.glow),
+        Prop::BuoyancySubmerged => Value::Number(world.get::<voxear_engine::water::Buoyancy>(entity)?.submerged),
+        Prop::BuoyancyDrag => Value::Number(world.get::<voxear_engine::water::Buoyancy>(entity)?.drag),
+        Prop::BuoyancyAngularDrag => Value::Number(world.get::<voxear_engine::water::Buoyancy>(entity)?.angular_drag),
         Prop::DryShape => {
             let shape = world.get::<DryArea>(entity)?.shape;
             let index = DryShape::ALL.iter().position(|s| *s == shape).unwrap_or(0);
@@ -2497,6 +2532,13 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         (Prop::StreamMurk, Value::Number(n)) => with(world, entity, |s: &mut Stream| s.murk = n.clamp(0.0, 20.0)),
         (Prop::StreamCooling, Value::Number(n)) => with(world, entity, |s: &mut Stream| s.cooling = n.clamp(0.1, 3600.0)),
         (Prop::StreamGlow, Value::Number(n)) => with(world, entity, |s: &mut Stream| s.glow = n.clamp(0.0, 20.0)),
+        (Prop::BuoyancySubmerged, Value::Number(n)) => {
+            with(world, entity, |b: &mut voxear_engine::water::Buoyancy| b.submerged = n.clamp(0.01, 2.0))
+        }
+        (Prop::BuoyancyDrag, Value::Number(n)) => with(world, entity, |b: &mut voxear_engine::water::Buoyancy| b.drag = n.clamp(0.0, 10.0)),
+        (Prop::BuoyancyAngularDrag, Value::Number(n)) => {
+            with(world, entity, |b: &mut voxear_engine::water::Buoyancy| b.angular_drag = n.clamp(0.0, 10.0))
+        }
         (Prop::DryShape, Value::Choice(index, _)) => {
             let shape = DryShape::ALL.get(index).copied().unwrap_or_default();
             with(world, entity, |d: &mut DryArea| d.shape = shape)

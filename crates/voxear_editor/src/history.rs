@@ -57,6 +57,7 @@ pub struct ObjState {
     pub dry_area: Option<Box<DryArea>>,
     pub path: Option<Box<voxear_scene::Path>>,
     pub stream: Option<Box<Stream>>,
+    pub buoyancy: Option<Box<voxear_engine::water::Buoyancy>>,
     pub seasons: Option<Box<Seasons>>,
     pub foliage_interaction: Option<FoliageInteraction>,
     /// A Foliage and how it was written; its plants are shared, not copied.
@@ -95,6 +96,7 @@ impl ObjState {
             dry_area: world.get::<DryArea>(entity).copied().map(Box::new),
             path: world.get::<voxear_scene::Path>(entity).cloned().map(Box::new),
             stream: world.get::<Stream>(entity).copied().map(Box::new),
+            buoyancy: world.get::<voxear_engine::water::Buoyancy>(entity).copied().map(Box::new),
             seasons: world.get::<Seasons>(entity).copied().map(Box::new),
             foliage_interaction: world.get::<FoliageInteraction>(entity).copied(),
             foliage: world
@@ -153,6 +155,7 @@ impl ObjState {
         put(world, entity, self.dry_area.as_deref().copied());
         put(world, entity, self.path.as_deref().cloned());
         put(world, entity, self.stream.as_deref().copied());
+        put(world, entity, self.buoyancy.as_deref().copied());
         put(world, entity, self.seasons.as_deref().copied());
         put(world, entity, self.foliage_interaction);
         put(world, entity, self.foliage.as_deref().map(|(foliage, _)| foliage.clone()));

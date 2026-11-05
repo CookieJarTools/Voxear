@@ -4,11 +4,47 @@
 //! on every machine; and the same of Pools and Streams. Moved on each tick,
 //! before scripts run, from the level's first Ocean, and each Stream's points
 //! along its Path made again; scripts read it through `Water` in C#.
+//!
+//! A Buoyancy floats its Obj's Rigidbody on all of it: before each physics
+//! step, upright columns across its Collider's footprint are each pushed up
+//! as much as they are under water, so waves rock it and it rights itself,
+//! and slowed against the way the water there flows, so a Stream carries it.
 
-use voxear_core::math::{Quat, Vec3};
-use voxear_ecs::World;
+use serde::{Deserialize, Serialize};
+use voxear_core::math::{Mat4, Quat, Vec3};
+use voxear_ecs::{Component, Entity, World};
+use voxear_physics::{
+    Push,
+    scene::{Collider, ColliderMesh, ColliderShape, PhysicsScene, Rigidbody},
+};
 use voxear_render::{DryArea, Ocean, OceanSampler, Pool, SeaState, Stream, StreamPoint, stream_over};
-use voxear_scene::{Path, Transform, WorldTransform};
+use voxear_scene::{Destroying, Path, Transform, WorldTransform};
+
+/// Floats its Obj on the sea, Pools and Streams. It needs a Rigidbody and a
+/// Collider beside it; how much it weighs does not change how it floats.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Buoyancy {
+    /// How much of it sits under still water, from 0 to 1: a boat's half,
+    /// a log's more. Over 1, it sinks.
+    pub submerged: f32,
+    /// How quickly the water slows it, moving and turning, against the way
+    /// the water flows, so a Stream carries it along: 1 stops it bobbing
+    /// and rocking without its overshooting, less lets it bob longer.
+    pub drag: f32,
+    pub angular_drag: f32,
+}
+
+impl Component for Buoyancy {}
+
+impl Default for Buoyancy {
+    fn default() -> Self {
+        Self { submerged: 0.5, drag: 0.4, angular_drag: 0.4 }
+    }
+}
+
+/// How many columns a side the water pushes a floating Obj up by.
+const COLUMNS: usize = 3;
 
 /// The sea's long waves on the CPU, and the Streams' points along their
 /// Paths, kept as a world resource.
@@ -87,6 +123,12 @@ pub fn sample(world: &World, at: Vec3) -> Option<WaterPoint> {
     if dry {
         return None;
     }
+    sample_wet(world, at)
+}
+
+/// The water at `at` as if there were no Dry Areas: what a hull, which is
+/// one, floats on.
+fn sample_wet(world: &World, at: Vec3) -> Option<WaterPoint> {
     let pools = world.query_ref::<(&Pool, &Transform, Option<&WorldTransform>)>();
     let pool = pools.into_iter().find_map(|(pool, t, w)| {
         let (position, rotation) = placed(t, w);
@@ -110,6 +152,78 @@ fn for_scripts(world: &World, at: [f32; 3]) -> Option<[f32; 7]> {
     let water = sample(world, Vec3::from(at))?;
     let (n, f) = (water.normal, water.flow);
     Some([water.height, n.x, n.y, n.z, f.x, f.y, f.z])
+}
+
+/// Where a Collider is in its Obj's space: its middle and how far it
+/// reaches each way, as a box round it.
+fn collider_box(world: &World, entity: Entity, collider: &Collider) -> (Vec3, Vec3) {
+    let middle = Vec3::from(collider.center);
+    let reach = match collider.shape {
+        ColliderShape::Box => Vec3::from(collider.size) * 0.5,
+        ColliderShape::Sphere => Vec3::splat(collider.radius),
+        ColliderShape::Capsule => Vec3::new(collider.radius, (collider.height * 0.5).max(collider.radius), collider.radius),
+        ColliderShape::Mesh => {
+            let points = world.get::<ColliderMesh>(entity).map(|mesh| mesh.points.clone());
+            let (low, high) = points.iter().flat_map(|p| p.iter()).fold((Vec3::INFINITY, Vec3::NEG_INFINITY), |(low, high), &p| (low.min(p), high.max(p)));
+            return match low.x.is_finite() {
+                true => ((low + high) * 0.5, (high - low) * 0.5),
+                false => (middle, Vec3::splat(0.5)),
+            };
+        }
+    };
+    (middle, reach)
+}
+
+/// Pushes each floating Obj's body up where it is under water, and slows it
+/// against the water, for the physics step about to run. A body physics has
+/// not made yet floats from the next step.
+pub fn float(world: &World, physics: &mut PhysicsScene) {
+    let floating: Vec<(Entity, Buoyancy, Collider, f32)> = world
+        .query_ref::<(Entity, &Buoyancy, &Collider, &Rigidbody)>()
+        .without::<Destroying>()
+        .into_iter()
+        .filter(|(.., body)| !body.kinematic)
+        .map(|(entity, buoyancy, collider, body)| (entity, *buoyancy, *collider, body.mass.max(1e-3)))
+        .collect();
+    let gravity = physics.gravity().length();
+    for (entity, buoyancy, collider, mass) in floating {
+        let Some(body) = physics.body(entity) else { continue };
+        let to_world: Mat4 = voxear_scene::world_matrix(world, entity);
+        let (middle, reach) = collider_box(world, entity, &collider);
+        // Each column as tall as the Collider stands, in the world.
+        let tall = to_world.transform_vector3(Vec3::new(0.0, reach.y * 2.0, 0.0)).length().max(1e-3);
+        let centre = to_world.transform_point3(middle);
+        let share = 1.0 / (COLUMNS * COLUMNS) as f32;
+        // As strong a push, wholly under, as holds it up `submerged` under.
+        let submerged = buoyancy.submerged.max(0.01);
+        let lift = mass * gravity / submerged * share;
+        // Drag measured against how it bobs: a spring as stiff as the water's push rising up it, and as much
+        // drag, at 1, as stops it with no overshoot; turning, as far out as its sides are.
+        let stiff = mass * gravity / (submerged * tall);
+        let damping = 2.0 * (stiff * mass).sqrt();
+        let across = to_world.transform_vector3(Vec3::new(reach.x, 0.0, reach.z)).length_squared() / 3.0;
+        let (moving, turning) = physics.world().velocity(body);
+        let mut under_all = 0.0;
+        for i in 0..COLUMNS {
+            for j in 0..COLUMNS {
+                let spot = |k: usize| (k as f32 + 0.5) / COLUMNS as f32 * 2.0 - 1.0;
+                let at = to_world.transform_point3(middle + Vec3::new(reach.x * spot(i), 0.0, reach.z * spot(j)));
+                let Some(water) = sample_wet(world, at) else { continue };
+                let under = ((water.height - (at.y - tall * 0.5)) / tall).clamp(0.0, 1.0);
+                if under <= 0.0 {
+                    continue;
+                }
+                under_all += under * share;
+                let along = moving + turning.cross(at - centre) - water.flow;
+                let force = Vec3::Y * lift * under - along * buoyancy.drag * damping * share * under / submerged;
+                physics.world_mut().push(body, Push::Force(force, Some(at)));
+            }
+        }
+        if under_all > 0.0 {
+            let slowing = buoyancy.angular_drag * damping * across * under_all / submerged;
+            physics.world_mut().push(body, Push::Torque(-turning * slowing));
+        }
+    }
 }
 
 /// The sea's wind, along its Obj's +Z, for what wants to know which way the
@@ -150,6 +264,39 @@ mod tests {
         assert_eq!(sample(&world, Vec3::new(-19.0, 4.0, 1.0)).map(|w| w.height), Some(6.0), "the pool's surface");
         assert!(sample(&world, Vec3::new(-19.0, 0.0, 1.0)).is_some_and(|w| w.height != 6.0), "under its bottom, the sea's");
         assert!(sample(&world, Vec3::new(0.0, 0.0, 0.0)).is_some(), "the sea elsewhere");
+    }
+
+    /// A crate a metre across, floating, dropped over water from two metres up.
+    fn crate_over(world: &mut World, at: Vec3) -> Entity {
+        let body = Rigidbody { mass: 40.0, ..Rigidbody::default() };
+        world.spawn((Buoyancy::default(), Collider::default(), body, Transform::from_position(at)))
+    }
+
+    fn play(world: &mut World, seconds: f32) {
+        let mut physics = PhysicsScene::new();
+        let dt = 1.0 / 60.0;
+        for step in 0..(seconds / dt) as usize {
+            update(world, f64::from(step as f32 * dt));
+            voxear_scene::propagate_transforms(world);
+            float(world, &mut physics);
+            physics.step(world, dt);
+        }
+    }
+
+    #[test]
+    fn a_buoyant_crate_floats_half_under_a_pool_and_a_stream_carries_another() {
+        let mut world = World::new();
+        world.spawn((Pool { size: [20.0, 20.0], depth: 5.0, ..Pool::default() }, Transform::default()));
+        let floating = crate_over(&mut world, Vec3::new(0.0, 2.0, 0.0));
+        let point = |z: f32| voxear_scene::PathPoint { position: [0.0, 0.0, z], width: 8.0 };
+        let river = Path { points: vec![point(0.0), point(40.0), point(80.0)], closed: false };
+        world.spawn((Stream { speed: 2.0, ..Stream::default() }, river, Transform::from_position(Vec3::new(40.0, 0.0, 0.0))));
+        let drifting = crate_over(&mut world, Vec3::new(40.0, 1.0, 10.0));
+        play(&mut world, 8.0);
+        let at = |entity| world.get::<Transform>(entity).unwrap().position;
+        assert!(at(floating).y.abs() < 0.08, "half under, its middle at the surface: {}", at(floating));
+        assert!(at(floating).x.abs() < 0.1 && at(floating).z.abs() < 0.1, "still water, still crate: {}", at(floating));
+        assert!(at(drifting).z > 20.0 && at(drifting).y.abs() < 0.2, "carried down the stream: {}", at(drifting));
     }
 
     #[test]

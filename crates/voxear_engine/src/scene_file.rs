@@ -288,6 +288,9 @@ pub struct ObjData {
     /// A Stream, water (or lava) running along the Obj's Path.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stream: Option<Stream>,
+    /// A Buoyancy, floating the Obj's Rigidbody on water.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub buoyancy: Option<crate::water::Buoyancy>,
     /// Seasons, turning the level's plants through the year.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seasons: Option<Seasons>,
@@ -349,6 +352,7 @@ impl ObjData {
             dry_area: None,
             path: None,
             stream: None,
+            buoyancy: None,
             seasons: None,
             foliage_interaction: None,
             foliage: None,
@@ -1251,6 +1255,9 @@ fn capture_instance(
     if root.stream.is_some() && root.stream != prefab_root.stream {
         instance.stream = root.stream;
     }
+    if root.buoyancy.is_some() && root.buoyancy != prefab_root.buoyancy {
+        instance.buoyancy = root.buoyancy;
+    }
     if root.model.is_some() && root.model != prefab_root.model {
         instance.model.clone_from(&root.model);
     }
@@ -1379,6 +1386,9 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     }
     if let Some(stream) = actual.stream.filter(|s| Some(*s) != expected.stream) {
         put("stream", whole(&stream, &Stream::default())?);
+    }
+    if let Some(buoyancy) = actual.buoyancy.filter(|b| Some(*b) != expected.buoyancy) {
+        put("buoyancy", whole(&buoyancy, &crate::water::Buoyancy::default())?);
     }
     if let Some(seasons) = actual.seasons.filter(|s| Some(*s) != expected.seasons) {
         put("seasons", whole(&seasons, &Seasons::default())?);
@@ -1610,6 +1620,7 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.dry_area = world.get::<DryArea>(entity).copied();
     obj.path = world.get::<voxear_scene::Path>(entity).cloned();
     obj.stream = world.get::<Stream>(entity).copied();
+    obj.buoyancy = world.get::<crate::water::Buoyancy>(entity).copied();
     obj.seasons = world.get::<Seasons>(entity).copied();
     obj.foliage_interaction = world.get::<FoliageInteraction>(entity).copied();
     obj.model = world.get::<ModelSource>(entity).map(|source| {
@@ -1986,6 +1997,8 @@ mod tests {
         assert_eq!(obj.stream.map(|s| s.speed), Some(2.5));
         let back: ObjData = toml::from_str(&toml::to_string(&obj).unwrap()).unwrap();
         assert_eq!((back.path, back.stream), (obj.path, obj.stream));
+        let raft: ObjData = toml::from_str("id = 4\n[buoyancy]\nsubmerged = 0.3").unwrap();
+        assert_eq!(raft.buoyancy.map(|b| (b.submerged, b.drag)), Some((0.3, crate::water::Buoyancy::default().drag)));
     }
 
     #[test]

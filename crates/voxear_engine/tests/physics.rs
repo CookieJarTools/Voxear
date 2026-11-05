@@ -231,3 +231,39 @@ fn a_joint_holds_its_obj_to_the_one_it_names_and_saves_it_by_its_id() {
     let text = toml::to_string(&scene_file::capture(&engine.world, &mut content, &entities)).unwrap();
     assert!(text.contains("type = \"distance\"") && text.contains("connected = 1"), "{text}");
 }
+
+const HARBOUR: &str = r#"
+format = 1
+
+[[obj]]
+id = 1
+name = "Harbour"
+pool = { size = [20.0, 20.0], depth = 5.0 }
+
+[[obj]]
+id = 2
+name = "Raft"
+position = [0.0, 2.0, 0.0]
+collider = { size = [2.0, 0.5, 3.0] }
+rigidbody = { mass = 120.0 }
+buoyancy = { submerged = 0.4 }
+"#;
+
+#[test]
+fn a_raft_with_buoyancy_floats_in_a_pool_as_the_game_plays() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("Scenes/Harbour.scene");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, HARBOUR).unwrap();
+    let mut content = Content::open(dir.path()).unwrap();
+    let scene = scene_file::read(&path).unwrap();
+    let mut engine = Engine::new();
+    scene_file::spawn(&mut engine, &mut content, None, &scene, &Default::default()).unwrap();
+    for _ in 0..480 {
+        engine.tick(1.0 / 60.0);
+    }
+    // Four tenths of its half a metre under: its middle five centimetres above the surface.
+    let raft = engine.world.get::<Transform>(find(&engine, "Raft")).unwrap();
+    assert!((raft.position.y - 0.05).abs() < 0.05, "afloat: {}", raft.position);
+    assert!(raft.rotation.angle_between(voxear_core::math::Quat::IDENTITY) < 0.05, "level: {:?}", raft.rotation);
+}

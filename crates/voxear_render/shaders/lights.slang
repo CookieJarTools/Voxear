@@ -300,20 +300,88 @@ float3 shadeTubeLight(Surface s, Light light, float3 position)
     return (diffuse + specular) * window;
 }
 
-// How much of a local light reaches `position` past what its shadow holds in
-// the way: 1 for a light that casts none. The view is a spot light's own, or
-// the face of its cube that `position` lies towards; the point is pushed off
-// its surface by a texel and a half there, against shadow acne, and nine
-// taps of hardware 2x2 filtering soften the edge, kept inside the view.
-float localShadow(Frame* frame, Light light, float3 position, float3 normal)
+// How far the light rough glass lets through spreads, as a share of how far
+// behind the glass it falls: frosted glass's, at smoothness 0, a patch this
+// wide; clear glass's hardly at all.
+static const float GLASS_SCATTER = 0.5;
+// The farthest, in metres, glass is looked for round a point, and its light
+// spreads.
+static const float GLASS_REACH_METRES = 1.0;
+// The coarsest of the glass shadow atlas's mips (src/glass.rs).
+static const float GLASS_COARSEST = 5.0;
+
+// The nearest pane round `uv` in the glass shadow atlas's mip `level`, by
+// the 2x2 texels a bilinear read there takes in, and the least smoothness
+// among them.
+void glassAround(Texture2D light, Texture2D smoothness, float2 uv, uint level, out float nearest, out float smooth)
 {
-    if (light.shadow == NO_SHADOW || frame->localShadows.texture == NO_TEXTURE)
+    uint2 size;
+    uint mips;
+    light.GetDimensions(level, size.x, size.y, mips);
+    int2 corner = int2(floor(uv * float2(size) - 0.5));
+    nearest = 1e30;
+    smooth = 1.0;
+    for (uint i = 0; i < 4; i++)
+    {
+        int3 at = int3(clamp(corner + int2(i % 2, i / 2), int2(0), int2(size) - 1), level);
+        nearest = min(nearest, light.Load(at).a);
+        smooth = min(smooth, smoothness.Load(at).r);
+    }
+}
+
+// What glass lets through of a light to a point: each pane between leaves
+// its own colours of the light, from the glass shadow atlas (src/glass.rs),
+// and where there is none all of it passes. `uv` is the point in the atlas,
+// inside the tile from `low` to `high`; `texelMetres` a texel's width there;
+// `depth` the point's depth as the atlas writes it, and `depthMetres` one
+// unit of it in metres. Rough glass spreads what it lets through wider the
+// farther behind it the point lies, as frosted glass scatters it: read from
+// the atlas's mip as wide as the spread, which averages the light let
+// through over it, a soft, bright patch rather than the pane's outline.
+float3 glassLight(Frame* frame, float2 uv, float2 low, float2 high, float texelMetres, float depth, float depthMetres)
+{
+    Texture2D light = textures[NonUniformResourceIndex(frame->glassShadow.x - 1)];
+    Texture2D smoothness = textures[NonUniformResourceIndex(frame->glassShadow.y - 1)];
+    // A little nearer the light than the point, so a pane does not filter the light falling on its own face.
+    float before = depth - 2.0 * texelMetres / depthMetres;
+    // Glass anywhere round the point its light could spread from: the nearest pane, and the roughest.
+    float reach = clamp(ceil(log2(max(GLASS_REACH_METRES / texelMetres, 1.0))), 0.0, GLASS_COARSEST);
+    float closest;
+    float smooth;
+    glassAround(light, smoothness, uv, uint(reach), closest, smooth);
+    if (closest >= before)
     {
         return 1.0;
     }
+    float behind = (depth - closest) * depthMetres;
+    float spread = (1.0 - smooth) * GLASS_SCATTER * behind / texelMetres;
+    float level = clamp(log2(max(spread, 1.0)), 0.0, GLASS_COARSEST);
+    float near;
+    float unused;
+    glassAround(light, smoothness, uv, uint(ceil(level)), near, unused);
+    if (near >= before)
+    {
+        return 1.0;
+    }
+    uint2 size;
+    uint mips;
+    light.GetDimensions(0, size.x, size.y, mips);
+    // Kept inside the tile, by half a texel of the mip read.
+    float2 inset = 0.5 * exp2(ceil(level)) / float2(size);
+    return light.SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], clamp(uv, low + inset, high - inset), level).rgb;
+}
+
+// Where a point falls in a local light's shadow views: the view, a spot
+// light's own or the face of its cube the point lies towards, and the point
+// there, pushed off its surface by a texel and a half against shadow acne,
+// a texel being `texelMetres` wide. False where it falls in none.
+bool localShadowAt(Frame* frame, Light light, float3 position, float3 normal, out uint view, out float3 ndc,
+    out float texelMetres)
+{
     float3 offset = position - light.position;
     float3 across = abs(offset);
-    uint view = light.shadow;
+    view = light.shadow;
+    ndc = 0.0;
     float tanHalf = 1.0;
     if (light.kind == LIGHT_SPOT)
     {
@@ -331,14 +399,29 @@ float localShadow(Frame* frame, Light light, float3 position, float3 normal)
     {
         view += offset.z >= 0.0 ? 4 : 5;
     }
-    float texelMetres = 2.0 * length(offset) * tanHalf / float(LOCAL_SHADOW_TILE);
+    texelMetres = 2.0 * length(offset) * tanHalf / float(LOCAL_SHADOW_TILE);
     float4 clip = transform(frame->localShadows.viewProj[view], float4(position + normal * texelMetres * 1.5, 1.0));
     if (clip.w <= 0.0)
     {
+        return false;
+    }
+    ndc = clip.xyz / clip.w;
+    return all(abs(ndc.xy) <= 1.0) && ndc.z <= 1.0;
+}
+
+// How much of a local light reaches `position` past what its shadow holds in
+// the way: 1 for a light that casts none. Nine taps of hardware 2x2
+// filtering soften the edge, kept inside the view.
+float localShadow(Frame* frame, Light light, float3 position, float3 normal)
+{
+    if (light.shadow == NO_SHADOW || frame->localShadows.texture == NO_TEXTURE)
+    {
         return 1.0;
     }
-    float3 ndc = clip.xyz / clip.w;
-    if (any(abs(ndc.xy) > 1.0) || ndc.z > 1.0)
+    uint view;
+    float3 ndc;
+    float texelMetres;
+    if (!localShadowAt(frame, light, position, normal, view, ndc, texelMetres))
     {
         return 1.0;
     }
@@ -361,6 +444,33 @@ float localShadow(Frame* frame, Light light, float3 position, float3 normal)
     return lit / 9.0;
 }
 
+// What glass lets through of a local light to a point (glassLight), white
+// where no glass is in the way. The atlas keeps each pane's distance from
+// the light, in metres.
+float3 localGlass(Frame* frame, Light light, float3 position, float3 normal)
+{
+    if (light.shadow == NO_SHADOW || frame->glassShadow.x == 0)
+    {
+        return 1.0;
+    }
+    uint view;
+    float3 ndc;
+    float texelMetres;
+    if (!localShadowAt(frame, light, position, normal, view, ndc, texelMetres))
+    {
+        return 1.0;
+    }
+    float tile = float(GLASS_LOCAL_TILE);
+    float2 atlas = float2(GLASS_SHADOW_ATLAS);
+    // Under the sun's part, laid out as the local shadow atlas lays its views.
+    float2 corner = float2(view % LOCAL_SHADOW_COLUMNS, view / LOCAL_SHADOW_COLUMNS) * tile;
+    corner.y += float(GLASS_SUN_SIZE);
+    float2 uv = (corner + (ndc.xy * 0.5 + 0.5) * tile) / atlas;
+    float glassTexel = texelMetres * float(LOCAL_SHADOW_TILE) / tile;
+    float distance = length(position - light.position);
+    return glassLight(frame, uv, corner / atlas, (corner + tile) / atlas, glassTexel, distance, 1.0);
+}
+
 float3 shadeLocalLight(Surface s, Light light, float3 position)
 {
     float shadow = localShadow(push.frame, light, position, s.normal);
@@ -368,16 +478,17 @@ float3 shadeLocalLight(Surface s, Light light, float3 position)
     {
         return 0.0;
     }
+    float3 through = shadow * localGlass(push.frame, light, position, s.normal);
     switch (light.kind)
     {
     case LIGHT_RECTANGLE:
-        return shadeRectangleLight(s, light, position) * shadow;
+        return shadeRectangleLight(s, light, position) * through;
     case LIGHT_DISC:
-        return shadeDiscLight(s, light, position) * shadow;
+        return shadeDiscLight(s, light, position) * through;
     case LIGHT_TUBE:
-        return shadeTubeLight(s, light, position) * shadow;
+        return shadeTubeLight(s, light, position) * through;
     default:
-        return shadePunctualLight(s, light, position) * shadow;
+        return shadePunctualLight(s, light, position) * through;
     }
 }
 

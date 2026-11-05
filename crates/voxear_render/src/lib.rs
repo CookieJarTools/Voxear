@@ -1746,6 +1746,14 @@ impl View {
             true => Vec::new(),
             false => glass::panes(&extracted.instances[..instance_count], opaque_count, assets),
         };
+        // Glass filters the light of whatever casts shadows through it.
+        let glass_shadows = match !panes.is_empty() && (shadows.is_some() || local_shadows.is_some()) {
+            true => Some((glass::Shadows::new(fg, (gpu, bindless))?, panes.clone())),
+            false => None,
+        };
+        if let Some((maps, _)) = &glass_shadows {
+            frame_data.glass_shadow = maps.frame_field(fg);
+        }
         let glass = match panes.is_empty() {
             true => None,
             false => Some(glass::Glass::new(fg, (gpu, bindless), extent, panes)?),
@@ -1849,6 +1857,7 @@ impl View {
             pyramid_size: [pyramid_desc.width, pyramid_desc.height],
             shadows,
             local_shadows: local_shadows.map(|atlas| (atlas, extracted.local_shadows.clone())),
+            glass_shadows,
         };
         let draws = passes::Draws {
             draws: fg.import_buffer(&buffers.draws),

@@ -247,7 +247,7 @@ pub struct PassContext<'c> {
     pub gpu: &'c Gpu,
     pub cmd: vk::CommandBuffer,
     pub bindless: &'c Bindless,
-    images: &'c [(vk::Image, vk::ImageView, ImageDesc)],
+    images: &'c [(vk::Image, vk::ImageView, ImageDesc, vk::ImageView)],
 }
 
 impl PassContext<'_> {
@@ -257,6 +257,11 @@ impl PassContext<'_> {
 
     pub fn view(&self, id: ImageId) -> vk::ImageView {
         self.images[id.0].1
+    }
+
+    /// A view of an image's first mip alone, to render into one with mips.
+    pub fn first_mip(&self, id: ImageId) -> vk::ImageView {
+        self.images[id.0].3
     }
 
     pub fn extent(&self, id: ImageId) -> vk::Extent2D {
@@ -466,14 +471,15 @@ impl<'a> FrameGraph<'a> {
         }
     }
 
-    fn resolve(&self) -> Vec<(vk::Image, vk::ImageView, ImageDesc)> {
+    fn resolve(&self) -> Vec<(vk::Image, vk::ImageView, ImageDesc, vk::ImageView)> {
         self.images
             .iter()
             .map(|image| match image {
-                GraphImage::Imported { image, view, desc, .. } => (*image, *view, *desc),
+                GraphImage::Imported { image, view, desc, .. } => (*image, *view, *desc, *view),
                 GraphImage::Transient { name, .. } => {
                     let t = &self.graph.transients[name];
-                    (t.image.handle, t.image.view, t.image.desc)
+                    let first = t.image.mip_views.first().copied().unwrap_or(t.image.view);
+                    (t.image.handle, t.image.view, t.image.desc, first)
                 }
             })
             .collect()
@@ -484,7 +490,7 @@ impl<'a> FrameGraph<'a> {
         gpu: &Gpu,
         cmd: vk::CommandBuffer,
         pass: &Pass,
-        resolved: &[(vk::Image, vk::ImageView, ImageDesc)],
+        resolved: &[(vk::Image, vk::ImageView, ImageDesc, vk::ImageView)],
     ) {
         let mut image_barriers = Vec::new();
         for &(id, access) in &pass.images {
@@ -497,7 +503,7 @@ impl<'a> FrameGraph<'a> {
             }
             let hazard = old.layout != new.layout || writes(old.access) || writes(new.access);
             if hazard {
-                let (image, _, desc) = resolved[id.0];
+                let (image, _, desc, _) = resolved[id.0];
                 let range = vk::ImageSubresourceRange::default()
                     .aspect_mask(desc.aspect())
                     .level_count(vk::REMAINING_MIP_LEVELS)

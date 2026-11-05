@@ -2698,6 +2698,12 @@ fn software_rays_pass_through_a_cut_out_materials_holes() {
 /// picture, seen from three metres off through a glass pane of `pane`'s
 /// material standing a metre and a half in front of them, or with no pane.
 fn glass_render(pane: Option<MaterialDesc>) -> Option<Vec<u8>> {
+    glass_panes_render(&pane.map(|desc| (desc, -1.5)).into_iter().collect::<Vec<_>>())
+}
+
+/// The glass scene with panes of these materials, each this far along +Z,
+/// towards the walls.
+fn glass_panes_render(panes: &[(MaterialDesc, f32)]) -> Option<Vec<u8>> {
     use voxear_render::Sky;
     let mut renderer = renderer()?;
     let mut world = World::new();
@@ -2711,9 +2717,9 @@ fn glass_render(pane: Option<MaterialDesc>) -> Option<Vec<u8>> {
     let wall = |x: f32| Transform::new(Vec3::new(x, 2.0, 0.0), Quat::IDENTITY, Vec3::new(4.0, 4.0, 0.2));
     world.spawn((MeshRenderer::new(cube, red), wall(-2.0)));
     world.spawn((MeshRenderer::new(cube, blue), wall(2.0)));
-    if let Some(desc) = pane {
+    for &(desc, z) in panes {
         let glass = renderer.add_material(&desc).unwrap();
-        let at = Transform::new(Vec3::new(0.0, 1.5, -1.5), Quat::IDENTITY, Vec3::new(2.0, 1.5, 0.02));
+        let at = Transform::new(Vec3::new(0.0, 1.5, z), Quat::IDENTITY, Vec3::new(2.0, 1.5, 0.02));
         world.spawn((MeshRenderer::new(cube, glass), at));
     }
     // From behind the camera and above, lighting the walls' faces.
@@ -2779,6 +2785,104 @@ fn rough_glass_blurs_what_lies_behind_it() {
     };
     let (sharp, soft) = (sharpness(&clear), sharpness(&rough));
     assert!(soft * 2 < sharp, "frosted glass softens the seam: {soft} against {sharp}");
+}
+
+#[test]
+fn glass_shows_through_glass() {
+    let green = MaterialDesc { base_color: [0.3, 1.0, 0.3, 1.0], ..clear_glass() };
+    let behind = glass_panes_render(&[(green, -0.8)]);
+    let both = glass_panes_render(&[(clear_glass(), -1.5), (green, -0.8)]);
+    let (Some(behind), Some(both)) = (behind, both) else { return };
+    keep_image("glass behind glass.png", &both);
+    let (alone, through) = (patch_rgb(&behind, (250, 180), 6), patch_rgb(&both, (250, 180), 6));
+    let greener = |rgb: [i32; 3]| rgb[1] - rgb[0];
+    assert!(greener(alone) > -40, "the green pane alone tints the red wall: {alone:?}");
+    let apart = (greener(through) - greener(alone)).abs();
+    assert!(apart < 25, "and shows through the clear pane: {through:?} for {alone:?}");
+}
+
+/// A floor in the sun, seen from above and in front, with a pane of glass
+/// standing two metres wide across the sun's light, or none: the floor
+/// where the light comes through the pane is in view, the pane itself is
+/// not in front of it.
+fn glass_light_render(pane: Option<MaterialDesc>) -> Option<Vec<u8>> {
+    use voxear_render::Sky;
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    let look = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.0, -5.0, -5.5).normalize());
+    world.spawn((Camera::default(), Transform::new(GLASS_LIGHT_CAMERA, look, Vec3::ONE)));
+    let plane = renderer.primitive(Primitive::Plane).unwrap();
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let pale = MaterialDesc { base_color: [0.7, 0.7, 0.7, 1.0], ..MaterialDesc::default() };
+    let pale = renderer.add_material(&pale).unwrap();
+    world.spawn((MeshRenderer::new(plane, pale), Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(40.0))));
+    if let Some(desc) = pane {
+        let glass = renderer.add_material(&desc).unwrap();
+        let at = Transform::new(Vec3::new(0.0, 1.5, 0.0), Quat::IDENTITY, Vec3::new(2.0, 2.0, 0.02));
+        world.spawn((MeshRenderer::new(cube, glass), at));
+    }
+    // Down through the pane towards +Z, onto the floor from a little under a metre to a little over four behind it.
+    let sun = Quat::from_rotation_arc(Vec3::Z, GLASS_SUN.normalize());
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.1, ..Sky::default() });
+    let mut post = steady_post();
+    post.ambient_occlusion.enabled = false;
+    post.contact_shadows.enabled = false;
+    world.insert_resource(post);
+    run(&mut renderer, &world, &mut 0.0, 8);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+const GLASS_LIGHT_CAMERA: Vec3 = Vec3::new(0.0, 5.0, 7.5);
+const GLASS_SUN: Vec3 = Vec3::new(0.0, -0.6, 1.0);
+
+/// The colour of the floor at `point` in the glass light picture.
+fn glass_floor_rgb(pixels: &[u8], point: Vec3) -> [i32; 3] {
+    use voxear_core::math::{Mat4, camera::lh::proj::vulkan};
+    let look = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.0, -5.0, -5.5).normalize());
+    let view = Mat4::from_rotation_translation(look, GLASS_LIGHT_CAMERA).inverse();
+    let clip = vulkan::perspective_infinite_reverse(60f32.to_radians(), 640.0 / 360.0, 0.1) * view * point.extend(1.0);
+    let (x, y) = (clip.x / clip.w * 0.5 + 0.5, clip.y / clip.w * 0.5 + 0.5);
+    assert!((0.0..1.0).contains(&x) && (0.0..1.0).contains(&y), "{point} is in view");
+    patch_rgb(pixels, ((x * 640.0) as u32, (y * 360.0) as u32), 3)
+}
+
+/// Where the sun's light through the pane at `height` up its middle, `x`
+/// across, meets the floor.
+fn through_pane(x: f32, height: f32) -> Vec3 {
+    let sun = GLASS_SUN.normalize();
+    Vec3::new(x, 1.5 + height, 0.0) + sun * ((1.5 + height) / -sun.y)
+}
+
+#[test]
+fn light_through_glass_takes_its_colour() {
+    let green = MaterialDesc { base_color: [0.3, 1.0, 0.3, 1.0], ..clear_glass() };
+    let renders = (glass_light_render(None), glass_light_render(Some(clear_glass())), glass_light_render(Some(green)));
+    let (Some(open), Some(clear), Some(tinted)) = renders else { return };
+    keep_image("glass light none.png", &open);
+    keep_image("glass light clear.png", &clear);
+    keep_image("glass light green.png", &tinted);
+    let behind = through_pane(0.0, 0.0);
+    let [lit, through, green] = [&open, &clear, &tinted].map(|pixels| glass_floor_rgb(pixels, behind));
+    assert!(lit[0] > 100, "the floor is in the sun: {lit:?}");
+    assert!(through[0] * 10 > lit[0] * 8, "clear glass lets most of the sun through: {through:?} of {lit:?}");
+    assert!(green[0] * 10 < lit[0] * 6, "green glass takes red out of it: {green:?} of {lit:?}");
+    assert!(green[1] > green[0] + 40, "and leaves the floor green: {green:?}");
+}
+
+#[test]
+fn frosted_glass_spreads_the_light_it_lets_through() {
+    let blue = MaterialDesc { base_color: [0.15, 0.3, 1.0, 1.0], ..clear_glass() };
+    let frosted = MaterialDesc { roughness: 0.9, ..blue };
+    let (Some(sharp), Some(soft)) = (glass_light_render(Some(blue)), glass_light_render(Some(frosted))) else { return };
+    keep_image("glass light blue.png", &sharp);
+    keep_image("glass light frosted.png", &soft);
+    // Just past the pane's side, far behind it, where its sharp light ends.
+    let past = through_pane(1.25, 0.5);
+    let blueness = |rgb: [i32; 3]| rgb[2] - rgb[0];
+    let (outside, spread) = (glass_floor_rgb(&sharp, past), glass_floor_rgb(&soft, past));
+    assert!(blueness(outside) < 10, "clear glass's light ends at its outline: {outside:?}");
+    assert!(blueness(spread) > blueness(outside) + 10, "frosted glass's spreads past it: {spread:?} from {outside:?}");
 }
 
 /// A dark pole standing against the sky in front of the camera, drawn with

@@ -332,7 +332,10 @@ pub struct GpuFrame {
     pub meshlet_capacity: u32,
     /// `MESHLET_CONES`, `MESHLET_RUNS` and `MESHLET_CULLING`.
     pub meshlet_flags: u32,
-    pub _pad5: [u32; 2],
+    /// The glass shadow atlas's light and smoothness (`glass::Shadows`),
+    /// each its texture's index plus one: 0, as frames from before it wrote,
+    /// for none.
+    pub glass_shadow: [u32; 2],
     pub lighting: GpuLighting,
     pub ddgi: GpuDdgi,
     pub wind: GpuWind,

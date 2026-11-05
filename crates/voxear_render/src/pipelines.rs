@@ -107,6 +107,9 @@ pub struct Pipelines {
     /// Glass: the copy of the picture it is drawn over, and its panes.
     pub glass_copy: vk::Pipeline,
     pub glass: vk::Pipeline,
+    /// Panes into the glass shadow atlas (`glass::record_shadows`).
+    pub glass_shadow: vk::Pipeline,
+    pub glass_shadow_mip: vk::Pipeline,
     /// Writes the LDR intermediate, for a finishing pass to read.
     pub composite_ldr: vk::Pipeline,
     /// Writes the output directly, when nothing follows.
@@ -306,6 +309,7 @@ impl Pipelines {
             bloom_up: fullscreen("Bloom up", c"bloomUpFragment", bloom, Blend::Additive)?,
             exposure: create_compute_pipeline(gpu, layout, "Exposure", exposure, c"exposureMain")?,
             glass_copy: create_compute_pipeline(gpu, layout, "Glass copy", glass, c"glassCopyMain")?,
+            glass_shadow_mip: create_compute_pipeline(gpu, layout, "Glass shadow mips", glass, c"glassShadowMipMain")?,
             foliage_push: create_compute_pipeline(gpu, layout, "Foliage pushes", foliage_push, c"pushMain")?,
             sky_light: create_compute_pipeline(gpu, layout, "Sky light", sky, c"skyLightMain")?,
             glass: graphics(&GraphicsPipelineDesc {
@@ -313,6 +317,14 @@ impl Pipelines {
                 depth_format: Some(DEPTH_FORMAT),
                 depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
                 ..GraphicsPipelineDesc::new("Glass", glass, c"glassVertex", c"glassFragment")
+            })?,
+            glass_shadow: graphics(&GraphicsPipelineDesc {
+                color_formats: &crate::glass::SHADOW_FORMATS,
+                cull: vk::CullModeFlags::NONE,
+                blend: Blend::Filter,
+                // A pane nearer the sun than a cascade's near plane still filters its light.
+                depth_clamp: true,
+                ..GraphicsPipelineDesc::new("Glass shadows", glass, c"glassShadowVertex", c"glassShadowFragment")
             })?,
             composite_ldr: fullscreen("Composite", c"compositeFragment", &[LDR_FORMAT], Blend::Opaque)?,
             composite: fullscreen("Composite", c"compositeFragment", output, Blend::Opaque)?,
@@ -418,6 +430,8 @@ impl Pipelines {
             self.foliage_push,
             self.sky_light,
             self.glass,
+            self.glass_shadow,
+            self.glass_shadow_mip,
             self.composite_ldr,
             self.composite,
             self.finish,

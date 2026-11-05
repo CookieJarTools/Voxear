@@ -51,6 +51,9 @@ pub struct Targets {
     /// The local lights' shadow atlas, with each light's first view and how
     /// many it takes, when any local light casts a shadow this frame.
     pub local_shadows: Option<(ImageId, Vec<(u32, u32)>)>,
+    /// The glass shadow atlas and the panes drawn into it, when glass is in
+    /// view and the sun or a local light casts shadows.
+    pub glass_shadows: Option<(glass::Shadows, Vec<glass::Pane>)>,
 }
 
 pub struct Draws {
@@ -261,7 +264,15 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
             unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
         });
     }
+    if let Some((maps, panes)) = targets.glass_shadows.clone() {
+        let lights = targets.local_shadows.as_ref().map(|(_, lights)| lights.clone()).unwrap_or_default();
+        let sources = (targets.shadows.is_some(), lights);
+        glass::record_shadows(fg, (pipelines, push), maps, panes, sources, draws.index_buffer);
+    }
     let local_atlas = targets.local_shadows.as_ref().map(|(atlas, _)| *atlas);
+    let glass_maps = targets.glass_shadows.as_ref().map(|(maps, _)| maps.images());
+    // What lights pass lamps' shadows and glass through, beside the sun's shadows.
+    let shadow_maps: Vec<ImageId> = local_atlas.into_iter().chain(glass_maps.into_iter().flatten()).collect();
 
     let ambient_occlusion = frame.ambient_occlusion;
     let contact_shadows = frame.contact_shadows;
@@ -276,7 +287,7 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
         let mut images =
             vec![(targets.hdr, color), (targets.velocity, color), (targets.depth, ImageAccess::DepthAttachment)];
         images.extend(targets.shadows.map(|atlas| (atlas, ImageAccess::Sampled)));
-        images.extend(local_atlas.map(|atlas| (atlas, ImageAccess::Sampled)));
+        images.extend(shadow_maps.iter().map(|&map| (map, ImageAccess::Sampled)));
         images.extend(ambient_occlusion.map(|ao| (ao.current, ImageAccess::Sampled)));
         images.extend(contact_shadows.map(|contact| (contact, ImageAccess::Sampled)));
         images.extend(reflections.map(|(target, _)| (target, ImageAccess::Sampled)));
@@ -350,7 +361,8 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
                 let surface = frame.surface.expect("the depth passes' surface");
                 let images = (depth, surface);
                 let probes = frame.probes;
-                ambient_occlusion::record_reflections(fg, (pipelines, push), images, history, target, probes, local_atlas);
+                let maps = &shadow_maps;
+                ambient_occlusion::record_reflections(fg, (pipelines, push), images, history, target, probes, maps);
             }
             // Both lists again, over their own depth. Task shaders cull them again, without counting them again.
             let forward = mesh.map_or(pipelines.forward_on_depth, |mesh| mesh.forward_on_depth);
@@ -367,10 +379,10 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
         }),
     }
     if let Some(probes) = frame.probes {
-        ddgi::record(fg, (pipelines, push), probes, local_atlas);
+        ddgi::record(fg, (pipelines, push), probes, &shadow_maps);
     }
     if let Some(volume) = frame.volume {
-        let shadows: Vec<ImageId> = targets.shadows.into_iter().chain(local_atlas).collect();
+        let shadows: Vec<ImageId> = targets.shadows.into_iter().chain(shadow_maps.iter().copied()).collect();
         volumetric::record(fg, (pipelines, push), volume, &shadows, &[draws.clusters]);
     }
     // Counted in GPU memory, where the culling passes' atomics are fast, then copied out at once.
@@ -401,7 +413,7 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
 
     if let Some(glass) = frame.glass.clone() {
         let mut sampled: Vec<ImageId> =
-            targets.shadows.into_iter().chain(local_atlas).chain(tables.iter().copied()).collect();
+            targets.shadows.into_iter().chain(shadow_maps.iter().copied()).chain(tables.iter().copied()).collect();
         sampled.extend(frame.probes.into_iter().flat_map(|probes| [probes.irradiance, probes.depth, probes.states]));
         let index_buffer = draws.index_buffer;
         let glass_targets =

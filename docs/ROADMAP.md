@@ -945,6 +945,14 @@ Done so far:
   tinted by the colour and dimmed by Fresnel, plus the surroundings, the sun and the lamps reflected. The editor's
   material inspector has Glass and IOR, and the Material menu lists the built-in Glass. GPU tests: clear glass
   shows what lies behind it, tinted glass colours it, rough glass blurs it.
+- **Light through glass, and glass through glass:** every pane is drawn into a glass shadow atlas from the sun's
+  cascades and the local lights' views (1024×1792: what it lets through, multiplied pane by pane, the nearest's
+  depth, and its smoothness, with five mips that average the light and keep the nearest). Shading, the fog's light
+  shafts and the GI's and reflections' rays filter the sun and the lamps by it: green glass throws green light, and
+  rough glass's light is read from the mip as wide as it spreads, a soft patch growing with distance behind it.
+  Panes are drawn in up to six layers, each over a copy made after the layers behind it, so glass shows through
+  glass. Its two texture indices use the frame's spare fields, 0 for none. GPU tests: clear and green glass's
+  light, frosted glass's spreading past its outline, and green glass seen through clear.
 - **Colour temperature on lights:** `temperature` in kelvin on every light kind, which `color` then filters, as
   Unity's Filter and Temperature; a black body's colour from Kim et al.'s Planckian locus fit, at a luminance of 1
   so only the colour changes. The light inspector's Appearance picks Colour or Filter and Temperature.

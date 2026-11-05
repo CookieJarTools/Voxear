@@ -226,7 +226,7 @@ float3 ddgiShadeHit(Frame* frame, uint id, uint primitive, float2 barycentrics,
     float3 lit = 0.0;
     if (facing > 0.0 && !ddgiBlocked(frame, position + normal * 0.02, toSun, 1e4))
     {
-        lit += albedo / PI * sunLight * facing;
+        lit += albedo / PI * sunLight * facing * glassSun(frame, position, normal);
     }
     Surface s;
     s.normal = normal;

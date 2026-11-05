@@ -79,7 +79,8 @@ float3 lightInFog(Light light, float3 position, float3 toCamera, float g)
     {
         facing = saturate(dot(-toLight, light.direction));
     }
-    float shadow = localShadow(push.frame, light, position, float3(0.0));
+    float3 shadow = localShadow(push.frame, light, position, float3(0.0));
+    shadow *= localGlass(push.frame, light, position, float3(0.0));
     return light.color * facing * shadow * window / distanceSquared * miePhase(g, dot(-toLight, toCamera));
 }
 
@@ -106,6 +107,7 @@ float4 volumeScatterFragment(VolumeOut input) : SV_Target
     bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
     float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
     float3 light = sunLight * sunShadowHard(frame, position, float3(0.0)) * sunCookieAt(frame, position)
+        * glassSun(frame, position, float3(0.0))
         * miePhase(g, dot(-frame->sunDirection, -toCamera));
     uint cluster = clusterAt(frame, uv * float2(frame->viewport), depth);
     uint clusterBase = cluster * (frame->clusterMaxLights + 1);

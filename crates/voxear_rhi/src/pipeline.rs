@@ -32,6 +32,10 @@ pub enum Blend {
     Additive,
     /// For colours already multiplied by their alpha, such as the UI's.
     Premultiplied,
+    /// Light through filters, in the first attachment: the colour multiplies
+    /// what is there, and the alpha keeps the least of the two, as the
+    /// nearest of what was drawn. Any attachments after it are written over.
+    Filter,
 }
 
 pub struct GraphicsPipelineDesc<'a> {
@@ -157,7 +161,10 @@ pub fn create_graphics_pipeline(
         .depth_write_enable(desc.depth_write)
         .depth_compare_op(desc.depth_compare);
     let attachment = blend_state(desc.blend);
-    let attachments = vec![attachment; desc.color_formats.len()];
+    let mut attachments = vec![attachment; desc.color_formats.len()];
+    if desc.blend == Blend::Filter {
+        attachments.iter_mut().skip(1).for_each(|rest| *rest = blend_state(Blend::Opaque));
+    }
     let blend = vk::PipelineColorBlendStateCreateInfo::default().attachments(&attachments);
     let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
     let dynamic = vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic_states);
@@ -225,6 +232,14 @@ fn blend_state(blend: Blend) -> vk::PipelineColorBlendAttachmentState {
             .src_alpha_blend_factor(vk::BlendFactor::ONE)
             .dst_alpha_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
             .alpha_blend_op(vk::BlendOp::ADD),
+        Blend::Filter => state
+            .blend_enable(true)
+            .src_color_blend_factor(vk::BlendFactor::ZERO)
+            .dst_color_blend_factor(vk::BlendFactor::SRC_COLOR)
+            .color_blend_op(vk::BlendOp::ADD)
+            .src_alpha_blend_factor(vk::BlendFactor::ONE)
+            .dst_alpha_blend_factor(vk::BlendFactor::ONE)
+            .alpha_blend_op(vk::BlendOp::MIN),
         Blend::Additive => state
             .blend_enable(true)
             .src_color_blend_factor(vk::BlendFactor::ONE)

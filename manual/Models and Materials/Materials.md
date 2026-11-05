@@ -60,7 +60,7 @@ Turn on **Glass** for windows, bottles, lenses and anything else you see through
 - Its surroundings and the lights reflect in it, faintly head on and strongly at a grazing angle, as real glass does.
 - A normal map ripples what you see through it, as old window glass does.
 
-Glass casts no shadow, and sunlight and bounced light pass through it, so a room behind a window is lit as if the window were open.
+Light passes through glass, taking its colour: sunlight through green glass falls green on the floor behind it, and through frosted glass it spreads into a soft patch, wider the farther behind the glass it falls. Glass casts no dark shadow, so a room behind a window is lit almost as if the window were open. You see glass through other glass, as a bottle behind a window.
 
 Every project has a clear glass material built in: pick **Glass** in a Mesh Renderer's Material menu, or write `material = "builtin:glass"` in a scene.
 

@@ -442,6 +442,31 @@ float sunShadow(Frame* frame, float3 position, float3 normal)
     return lit / float(PCSS_FILTER_TAPS);
 }
 
+// The shadow atlas's cascades, each this many texels across (src/shadows.rs).
+static const float CASCADE_RESOLUTION = 2048.0;
+
+// What glass lets through of the sun to a point (glassLight), white where
+// no glass is in the way.
+float3 glassSun(Frame* frame, float3 position, float3 normal)
+{
+    if (frame->glassShadow.x == 0)
+    {
+        return 1.0;
+    }
+    ShadowLookup lookup = shadowLookup(frame, position, normal);
+    if (!lookup.found)
+    {
+        return 1.0;
+    }
+    // The sun's part is the atlas's top square, its cascades laid out as the shadow atlas's.
+    float2 scale = float2(1.0, float(GLASS_SUN_SIZE) / float(GLASS_SHADOW_ATLAS.y));
+    float2 tile = CASCADE_TILES[lookup.cascade] * scale;
+    float shadowTexel = frame->cascadeTexel[lookup.cascade];
+    float texelMetres = shadowTexel * CASCADE_RESOLUTION / (0.5 * float(GLASS_SUN_SIZE));
+    float depthMetres = shadowTexel * CASCADE_RESOLUTION;
+    return glassLight(frame, lookup.uv * scale, tile, tile + 0.5 * scale, texelMetres, lookup.depth, depthMetres);
+}
+
 float3 debugColor(uint index)
 {
     static const float3 PALETTE[6] = {
@@ -527,6 +552,7 @@ FragmentOut fragmentMain(VertexOut input)
     // Through the atmosphere, the sun reddens as it sets.
     float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
     float3 sunThrough = sunLight * sunCookieAt(frame, input.worldPosition);
+    sunThrough *= glassSun(frame, input.worldPosition, s.normal);
     float3 color = shade(s, -frame->sunDirection, sunThrough) * shadow;
     if ((material.flags & MATERIAL_FOLIAGE) != 0)
     {

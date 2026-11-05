@@ -148,6 +148,94 @@ float4 glassFragment(VertexOut input) : SV_Target0
     return float4(color, 1.0);
 }
 
+struct GlassShadowOut
+{
+    float4 position : SV_Position;
+    float3 world : WORLD;
+    float2 uv : UV;
+    nointerpolation uint material : MATERIAL;
+};
+
+struct GlassShadowTargets
+{
+    float4 light : SV_Target0;
+    float smoothness : SV_Target1;
+};
+
+// A pane drawn into the glass shadow atlas, from the sun's cascade
+// (`list` LIST_SHADOW and after) or a local light's view (`list` its own
+// list, `level` the view); its instance in `source`.
+[shader("vertex")]
+GlassShadowOut glassShadowVertex(uint vertexId : SV_VertexID)
+{
+    Instance instance = buffers()->instances[push.source];
+    Mesh mesh = buffers()->meshes[instance.mesh];
+    Vertex v = buffers()->vertices[mesh.vertexOffset + vertexId];
+    float4 world = transform(instance.model, float4(v.position, 1.0));
+    GlassShadowOut output;
+    output.position = transform(shadowViewProj(push.frame, push.list, push.level), world);
+    output.world = world.xyz;
+    output.uv = v.uv;
+    output.material = instance.material;
+    return output;
+}
+
+// What a pane lets through of the light, which blending multiplies by what
+// the panes before it let through, and where it is, which blending keeps
+// the nearest of: its depth for the sun, its distance from a local light in
+// metres. And its smoothness, which says how far the light it lets through
+// spreads (glassLight in lights.slang).
+[shader("fragment")]
+GlassShadowTargets glassShadowFragment(GlassShadowOut input)
+{
+    Frame* frame = push.frame;
+    Material material = buffers()->materials[input.material];
+    float3 tint = (material.baseColor * sampleTexture(material.baseColorTexture, input.uv)).rgb;
+    float roughness = material.roughness * sampleTexture(material.metallicRoughnessTexture, input.uv).g;
+    float ior = max(material.ior, 1.0);
+    float r0 = (ior - 1.0) / (ior + 1.0);
+    // Reflected off as the light goes in, and again as it comes out.
+    float passes = (1.0 - r0 * r0) * (1.0 - r0 * r0);
+    float depth = input.position.z;
+    if (push.list >= LIST_LOCAL_SHADOW)
+    {
+        depth = length(input.world - frame->localShadows.casters[push.list - LIST_LOCAL_SHADOW].xyz);
+    }
+    GlassShadowTargets output;
+    output.light = float4(saturate(tint) * passes, depth);
+    output.smoothness = 1.0 - saturate(roughness);
+    return output;
+}
+
+// One mip of the glass shadow atlas from the one before, mip `level`: the
+// light let through averaged over each 2x2 texels, as it spreads over them,
+// and the nearest pane among them and the least smoothness kept.
+// textures: x the smoothness, y the storage image of this mip of it.
+[shader("compute")]
+[numthreads(8, 8, 1)]
+void glassShadowMipMain(uint3 id : SV_DispatchThreadID)
+{
+    if (any(id.xy >= push.size))
+    {
+        return;
+    }
+    Texture2D light = textures[NonUniformResourceIndex(push.texture)];
+    Texture2D smoothness = textures[NonUniformResourceIndex(push.textures.x)];
+    float3 total = 0.0;
+    float nearest = 65504.0;
+    float smooth = 1.0;
+    for (uint i = 0; i < 4; i++)
+    {
+        int3 at = int3(int2(id.xy * 2 + uint2(i % 2, i / 2)), int(push.level));
+        float4 through = light.Load(at);
+        total += through.rgb;
+        nearest = min(nearest, through.a);
+        smooth = min(smooth, smoothness.Load(at).r);
+    }
+    storageImagesRgba16f[push.output][id.xy] = float4(total * 0.25, nearest);
+    storageImagesR32f[push.textures.y][id.xy] = smooth;
+}
+
 // One mip of the copy of the picture glass is drawn over: the first the
 // picture itself, each after it the one before filtered down with the
 // thirteen reads Jimenez gives for bloom (2014), which weigh a wide tent

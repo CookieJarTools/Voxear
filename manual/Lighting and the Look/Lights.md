@@ -94,7 +94,7 @@ Each light that casts shadows draws what is round it again, so they cost more th
 
 In each frame, the eight lights nearest the camera that ask for shadows cast them, as long as their views fit the shadow atlas (48 views, so up to eight spot lights, or eight point lights). Any more light without a shadow until the camera comes nearer.
 
-Nothing within 10 centimetres of a light casts its shadow, or just past its own shape for an area or tube light, so a flame or bulb drawn round a light does not shut its light in. Glass never casts shadows. An opaque shade does, as a real one would: the light comes out of its open end.
+Nothing within 10 centimetres of a light casts its shadow, or just past its own shape for an area or tube light, so a flame or bulb drawn round a light does not shut its light in. Glass casts no dark shadow, but colours the light through it, as the sun's. An opaque shade does, as a real one would: the light comes out of its open end.
 
 ```toml
 [obj.light]

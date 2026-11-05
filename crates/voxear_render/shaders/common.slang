@@ -285,6 +285,13 @@ static const uint LOCAL_SHADOW_VIEWS = 48;
 static const uint LOCAL_SHADOW_TILE = 512;
 static const uint LOCAL_SHADOW_COLUMNS = 8;
 static const uint2 LOCAL_SHADOW_ATLAS = uint2(4096, 3072);
+// The glass shadow atlas (src/glass.rs): the sun's cascades in its top
+// GLASS_SUN_SIZE square, laid out as the shadow atlas lays them, and the
+// local lights' views under it, each GLASS_LOCAL_TILE square, as the local
+// shadow atlas lays them.
+static const uint2 GLASS_SHADOW_ATLAS = uint2(1024, 1792);
+static const uint GLASS_SUN_SIZE = 1024;
+static const uint GLASS_LOCAL_TILE = 128;
 struct LocalShadows
 {
     Mat4 viewProj[LOCAL_SHADOW_VIEWS];
@@ -572,7 +579,9 @@ struct Frame
     // the meshlet lists are laid out by it (meshletListBase).
     uint meshletCapacity;
     uint meshletFlags;
-    uint2 pad5;
+    // The glass shadow atlas's light and smoothness (glassLight), each its
+    // texture's index plus one: 0, as frames from before it wrote, for none.
+    uint2 glassShadow;
     Lighting lighting;
     Ddgi ddgi;
     Wind wind;

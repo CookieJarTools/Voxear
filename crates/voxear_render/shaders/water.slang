@@ -297,13 +297,15 @@ float sidewaysWeight(float depth)
 // Foam along a shore at `xz` where the water over the ground is `depth`
 // metres deep: a thin line at the water's edge, and bands of surf rolling
 // in towards it from a couple of metres out, broken up along the shore.
-float shoreFoam(Frame* frame, float depth, float2 xz)
+float shoreFoam(Frame* frame, float depth, float2 xz, float steep = 0.0)
 {
     float edge = pow(saturate(1.0 - depth / 0.4), 2.0);
     float along = lavaNoise(xz * 0.15) * 3.0;
     float rolling = 0.5 + 0.5 * sin(depth * 7.0 + frame->time * 1.4 + along);
-    float surf = smoothstep(0.55, 0.95, rolling) * saturate(1.0 - depth / 2.5) * saturate(depth / 0.15);
-    return max(edge, surf * 0.85);
+    // Surf rolls in over a gently shelving shore, not up the side of a rock.
+    float shelving = 1.0 - smoothstep(0.3, 1.0, steep);
+    float surf = smoothstep(0.55, 0.95, rolling) * saturate(1.0 - depth / 2.5) * saturate(depth / 0.15) * shelving;
+    return max(edge * (0.5 + 0.5 * shelving), surf * 0.85);
 }
 
 // ---------------------------------------------------------------- Foam's pattern
@@ -452,7 +454,7 @@ void oceanFoamMain(uint3 id : SV_DispatchThreadID)
     float depth = seaDepth(frame, here);
     float3 moved = oceanMoved(frame, here, FOAM_TEXEL, false, 1.0, depth);
     float ground = floorHeight(frame, here + moved.xz);
-    float shore = ground > -1e8 ? shoreFoam(frame, frame->ocean.level + moved.y - ground, here + moved.xz) * 0.6 : 0.0;
+    float shore = ground > -1e8 ? shoreFoam(frame, frame->ocean.level + moved.y - ground, here + moved.xz) * 0.2 : 0.0;
     float foam = max(kept * exp(-dt / 2.0), max(breakingAt(frame, here, depth), shore));
     storageImagesR32f[push.output][id.xy] = saturate(foam);
 }
@@ -466,7 +468,8 @@ float keptFoam(Frame* frame, float2 rest)
     {
         return 0.0;
     }
-    return textures[NonUniformResourceIndex(frame->ocean.foamTexture)].SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], uv, 0.0).r;
+    // Smoothly, so its texels' edges do not show where foam is revealed from it.
+    return smoothSample(textures[NonUniformResourceIndex(frame->ocean.foamTexture)], uv, float(FOAM_TEXELS)).r;
 }
 
 // The scene's depth before the sea is drawn into it, push.texture, into the
@@ -614,11 +617,13 @@ WaterOut poolVertex(uint vertexId : SV_VertexID, uint pool : SV_InstanceID)
     uint2 grid = uint2(quad % POOL_QUADS, quad / POOL_QUADS) + corners[vertexId % 6];
     float2 across = (float2(grid) / float(POOL_QUADS) - 0.5) * body.size.xz;
     float3 flat = transform(body.toWorld, float4(across.x, 0.0, across.y, 1.0)).xyz;
-    float spacing = max(body.size.x, body.size.z) / float(POOL_QUADS);
-    // Lava is too thick for waves.
+    float spacing = poolSpacing(body);
+    // Lava is too thick for waves. At its sides the waves only rise and fall, so it stays joined to its walls.
     float wet = body.liquid == LIQUID_LAVA ? 0.0 : 1.0;
-    float3 world = flat + oceanMoved(frame, flat.xz, spacing, false, body.waves) * wet;
-    float3 before = flat + oceanMoved(frame, flat.xz, spacing, true, body.waves) * wet;
+    float inside = min(body.size.x * 0.5 - abs(across.x), body.size.z * 0.5 - abs(across.y));
+    float3 held = float3(saturate(inside), 1.0, saturate(inside)) * wet;
+    float3 world = flat + oceanMoved(frame, flat.xz, spacing, false, body.waves) * held;
+    float3 before = flat + oceanMoved(frame, flat.xz, spacing, true, body.waves) * held;
     WaterOut o;
     o.position = transform(frame->viewProj, float4(world, 1.0));
     o.world = world;
@@ -630,6 +635,13 @@ WaterOut poolVertex(uint vertexId : SV_VertexID, uint pool : SV_InstanceID)
     o.lava = 0.0;
     o.up = float3(0.0, 1.0, 0.0);
     return o;
+}
+
+// How far apart a Pool's grid's points are, in metres, which its walls read
+// its waves as coarsely as, to meet its surface.
+float poolSpacing(WaterBody pool)
+{
+    return max(pool.size.x, pool.size.z) / float(POOL_QUADS);
 }
 
 // A corner of a quad of Stream push.list's strip: STREAM_ACROSS quads across
@@ -952,7 +964,9 @@ FragmentOut waterFragment(WaterOut input)
     float breaking = frame->ocean.foam > 0.0 ? saturate((threshold - folded) / 0.3) : 0.0;
     // Foam where the water over the ground is shallow, by its true depth under the moving surface, so it surges up
     // the shore with each wave; by how far the view goes through it where the ground is not known.
-    float shore = ground > -1e8 ? shoreFoam(frame, input.world.y - ground, input.world.xz) : saturate(1.0 - thickness / 0.6);
+    // How steeply the ground rises here, as a slope.
+    float steep = ground > -1e8 ? length(float2(ddx(ground), ddy(ground))) / max(length(fwidth(input.world.xz)), 1e-4) : 0.0;
+    float shore = ground > -1e8 ? shoreFoam(frame, input.world.y - ground, input.world.xz, steep) : saturate(1.0 - thickness / 0.6);
     // What breaking crests left, carried with the water (the sea's only).
     float trail = sea ? keptFoam(frame, rest) : 0.0;
     // Where on the foam's pattern: riding the waves; down a Stream, drawn out along it and carried with it.
@@ -1271,7 +1285,7 @@ float wallSurface(Frame* frame, WaterBody water, float3 world)
     if (water.kind == WATER_POOL)
     {
         float wet = water.liquid == LIQUID_LAVA ? 0.0 : 1.0;
-        return water.toWorld.c3.y + oceanMoved(frame, world.xz, 0.25, false, water.waves).y * wet;
+        return water.toWorld.c3.y + oceanMoved(frame, world.xz, poolSpacing(water), false, water.waves).y * wet;
     }
     return frame->ocean.level + oceanMoved(frame, world.xz, 0.25, false, 1.0, seaDepth(frame, world.xz)).y;
 }

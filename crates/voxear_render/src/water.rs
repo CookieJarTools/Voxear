@@ -124,8 +124,13 @@ impl OceanBuffers {
             let due = self.floor_frames % FLOOR_REFRESH == slice as u32 * FLOOR_REFRESH / FLOOR_SLICES as u32;
             if *kept != Some(origin) || moved_level || due {
                 *kept = Some(origin);
+                // Only what reaches down into the water: a box hanging over the sea is no ground under it.
                 let inside = |g: &&Ground| {
-                    g.high.x >= origin[0] && g.low.x <= origin[0] + size && g.high.z >= origin[1] && g.low.z <= origin[1] + size
+                    g.low.y < level
+                        && g.high.x >= origin[0]
+                        && g.low.x <= origin[0] + size
+                        && g.high.z >= origin[1]
+                        && g.low.z <= origin[1] + size
                 };
                 draws.push((slice as u32, ground.iter().filter(inside).copied().collect()));
             }

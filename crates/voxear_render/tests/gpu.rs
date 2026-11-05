@@ -2885,6 +2885,59 @@ fn frosted_glass_spreads_the_light_it_lets_through() {
     assert!(blueness(spread) > blueness(outside) + 10, "frosted glass's spreads past it: {spread:?} from {outside:?}");
 }
 
+/// The camera looking along a low sun at a small ball high above a floor,
+/// at `height`, whose shadow falls far ahead of it, cascades away.
+const BALL_CAMERA: Vec3 = Vec3::new(0.0, 3.0, -2.0);
+const BALL_LOOK: Vec3 = Vec3::new(0.0, -0.3, 1.0);
+const BALL_SUN: Vec3 = Vec3::new(0.0, -0.5, 1.0);
+
+fn high_ball_render(ball: bool) -> Option<Vec<u8>> {
+    use voxear_render::Sky;
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    let look = Quat::from_rotation_arc(Vec3::Z, BALL_LOOK.normalize());
+    world.spawn((Camera::default(), Transform::new(BALL_CAMERA, look, Vec3::ONE)));
+    let plane = renderer.primitive(Primitive::Plane).unwrap();
+    let sphere = renderer.primitive(Primitive::Sphere).unwrap();
+    let pale = MaterialDesc { base_color: [0.7, 0.7, 0.7, 1.0], ..MaterialDesc::default() };
+    let pale = renderer.add_material(&pale).unwrap();
+    world.spawn((MeshRenderer::new(plane, pale), Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(80.0))));
+    if ball {
+        let leaves = MaterialDesc { base_color: [0.2, 0.4, 0.1, 1.0], foliage: true, ..MaterialDesc::default() };
+        let leaves = renderer.add_material(&leaves).unwrap();
+        // A tree's ball of leaves: under a metre across, four up.
+        let high = Transform::new(Vec3::new(0.0, 4.0, 0.0), Quat::IDENTITY, Vec3::splat(1.3));
+        world.spawn((MeshRenderer::new(sphere, leaves), high));
+    }
+    let sun = Quat::from_rotation_arc(Vec3::Z, BALL_SUN.normalize());
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.1, ..Sky::default() });
+    let mut post = steady_post();
+    post.ambient_occlusion.enabled = false;
+    post.contact_shadows.enabled = false;
+    world.insert_resource(post);
+    run(&mut renderer, &world, &mut 0.0, 4);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+#[test]
+fn a_small_caster_high_up_shadows_the_floor_far_from_it() {
+    use voxear_core::math::{Mat4, camera::lh::proj::vulkan};
+    let (Some(open), Some(shaded)) = (high_ball_render(false), high_ball_render(true)) else { return };
+    keep_image("high ball.png", &shaded);
+    // Where the sun through the ball's middle meets the floor, eight metres on.
+    let sun = BALL_SUN.normalize();
+    let shadow = Vec3::new(0.0, 4.0, 0.0) + sun * (4.0 / -sun.y);
+    let look = Quat::from_rotation_arc(Vec3::Z, BALL_LOOK.normalize());
+    let view = Mat4::from_rotation_translation(look, BALL_CAMERA).inverse();
+    let clip = vulkan::perspective_infinite_reverse(60f32.to_radians(), 640.0 / 360.0, 0.1) * view * shadow.extend(1.0);
+    let (x, y) = (clip.x / clip.w * 0.5 + 0.5, clip.y / clip.w * 0.5 + 0.5);
+    assert!((0.0..1.0).contains(&x) && (0.0..1.0).contains(&y), "the shadow is in view");
+    let at = ((x * 640.0) as u32, (y * 360.0) as u32);
+    let (lit, dark) = (patch_rgb(&open, at, 3), patch_rgb(&shaded, at, 3));
+    assert!(dark[0] * 2 < lit[0], "the ball's shadow is there, cascades from the ball: {dark:?} against {lit:?}");
+}
+
 /// A dark pole standing against the sky in front of the camera, drawn with
 /// a material that bends in the wind, in a Wind Zone of `strength` blowing
 /// to the camera's right, or none.

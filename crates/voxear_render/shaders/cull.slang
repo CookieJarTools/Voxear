@@ -171,12 +171,15 @@ void cullShadow(Frame* frame, uint cascade, uint instance, Mesh mesh, float3 cen
     {
         return;
     }
-    // A small caster's shadow is short, so it falls only on what is round it, which shading finds in the
-    // cascade the caster stands in, or the next one over where it stands near their border. Drawing grass into
-    // every cascade it overlaps, as large casters must be, would draw each tuft three or four times.
+    // A small plant's shadow is short, as it stands on the ground, so it falls only on what is round it, which
+    // shading finds in the cascade the plant stands in, or the next one over where it stands near their border.
+    // Drawing grass into every cascade it overlaps, as other casters must be, would draw each tuft three or four
+    // times. Only a Foliage's plants: a tree's ball of leaves is as small, but stands metres up, and its shadow
+    // falls metres away, in a cascade it was not drawn into, so it came and went as the camera turned.
     static const float SMALL = 1.0;
     static const float SHADOW_REACH = 4.0;
-    if (radius < SMALL)
+    Instance drawn = buffers()->instances[instance];
+    if (radius < SMALL && drawn.fade.y > 0.0)
     {
         float depth = dot(center - frame->cameraPosition, frame->cameraForward);
         float nearest = cascade == 0 ? 0.0 : frame->cascadeFar[cascade - 1];
@@ -186,7 +189,6 @@ void cullShadow(Frame* frame, uint cascade, uint instance, Mesh mesh, float3 cen
             return;
         }
     }
-    Instance drawn = buffers()->instances[instance];
     // A plant's shadow is soft and broken up by its leaves, so a simpler LOD casts it as well: plants of a
     // Foliage, and anything drawn with a foliage material.
     bool plant = drawn.fade.y > 0.0 || (buffers()->materials[drawn.material].flags & MATERIAL_FOLIAGE) != 0;

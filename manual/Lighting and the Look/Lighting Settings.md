@@ -12,6 +12,10 @@ Rest the pointer on a setting's name, or on a tab, to read what it does. Below, 
 
 Built-in lighting cannot be changed: click **Make a Copy** for a copy in the project's Lighting folder that the scene is then lit by. A scene lit by none has **New Lighting Settings** instead, which carries the scene's own sky and post-processing over into the new settings.
 
+## A scene's lighting in the Inspector
+
+Select a scene in the Project panel and the Inspector shows its **Lighting** as the Lighting page does: the settings it is lit by, picked in the same way, and their tabs below. This works for any scene, open or not. A scene that is open keeps the change once you save it, as with the Lighting page; one that is not open has it written into its file at once.
+
 ## Making lighting settings
 
 In the Project panel, right-click a folder and pick **New Lighting Settings**. The new file starts from the Golden Hour look, with a note of what each part holds:

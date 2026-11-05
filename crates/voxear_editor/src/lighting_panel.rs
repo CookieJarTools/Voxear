@@ -16,7 +16,7 @@ use voxear_assets::{AssetKind, AssetRef};
 use voxear_engine::{
     Game,
     lighting::LightingFile,
-    scene_file::{PostTable, SkyFromLook, SkyModeData, sky_data},
+    scene_file::{self, PostTable, SkyData, SkyFromLook, SkyModeData, sky_data},
 };
 use voxear_render::{LookName, PostProcess, Sky};
 use voxear_ui::{Color, NodeId, Style, Ui};
@@ -281,6 +281,13 @@ impl LightingPanel {
     /// the project's.
     pub fn refresh(&mut self, ui: &mut Ui, game: &mut Game) {
         let current = game.levels.scene_lighting().map(str::to_string);
+        let own = world_own(game);
+        self.show_scene(ui, game, current, own);
+    }
+
+    /// Shows a scene's lighting: `current`, the lighting settings it names,
+    /// or with none, `own`, its own sky and post-processing.
+    pub fn show_scene(&mut self, ui: &mut Ui, game: &Game, current: Option<String>, own: Result<LightingFile>) {
         let mut labels = vec!["None".to_string()];
         let mut choices = vec![None];
         for (_, key, title) in LookName::ALL {
@@ -315,7 +322,10 @@ impl LightingPanel {
 
         self.shown = current.clone();
         let file = current.as_deref().and_then(|reference| project_file(game, reference));
-        let read = current.as_deref().map_or_else(|| Ok(LightingFile::default()), |reference| read(game, reference));
+        let read = match current.as_deref() {
+            Some(reference) => read(game, reference),
+            None => own,
+        };
         let note = match (&current, &file, &read) {
             (_, _, Err(error)) => format!("{error:#}"),
             (None, ..) => {
@@ -580,6 +590,52 @@ fn effective(file: &LightingFile) -> Result<toml::Table> {
     Ok(table)
 }
 
+/// What new lighting settings start with.
+const COPY_HEADER: &str = "# Voxear lighting settings. A scene names them, lighting = \"<this file>\",\n\
+                           # and scripts apply them with Lighting.Apply.\n";
+
+/// Text for new lighting settings holding a scene's own sky and
+/// post-processing, so they carry over into them.
+pub fn own_text(own: &LightingFile) -> Result<String> {
+    let mut table = toml::Table::try_from(own)?;
+    tidy(&mut table);
+    Ok(format!("{COPY_HEADER}{}", toml::to_string(&table)?))
+}
+
+/// A scene's own sky and post-processing as lighting settings: the look its
+/// `[post]` picks, which brings its sky and sun, its `[sky]`, and the rest
+/// of its `[post]`.
+pub fn own_lighting(sky: Option<SkyData>, post: Option<&toml::Table>) -> Result<LightingFile> {
+    let mut file = LightingFile { format: voxear_engine::lighting::LIGHTING_FORMAT, ..LightingFile::default() };
+    let mut post = post.cloned().unwrap_or_default();
+    file.look = post.remove("look").and_then(|look| look.as_str().map(str::to_string));
+    file.post = (!post.is_empty()).then_some(post);
+    file.sky = sky.map(|sky| toml::Table::try_from(sky)).transpose()?;
+    Ok(file)
+}
+
+/// The lighting settings the scene at `path` names, as the editor holds
+/// them while it is open, and its own sky and post-processing, from its
+/// file.
+pub fn scene_lighting(game: &Game, path: &str) -> Result<(Option<String>, LightingFile)> {
+    let scene = scene_file::read(&game.content.db().file(path))?;
+    let current = match game.levels.lighting_of(path) {
+        Some(open) => open.map(str::to_string),
+        None => scene.lighting.clone(),
+    };
+    Ok((current, own_lighting(scene.sky, scene.post.as_ref())?))
+}
+
+/// The sky and post-processing the level has from its scenes, as lighting
+/// settings: the open scene's own when it names none.
+fn world_own(game: &Game) -> Result<LightingFile> {
+    let world = &game.engine.world;
+    let post = world.resource::<PostTable>().map(|table| &table.0);
+    let sky = world.resource::<Sky>().copied().unwrap_or_default();
+    let sky = world.resource::<SkyFromLook>().is_none().then(|| sky_data(&sky));
+    own_lighting(sky, post)
+}
+
 /// Rounds every number in `table` to four decimals, so a file written from
 /// settings held in single precision reads `0.506`, not `0.5059999823570251`.
 fn tidy(table: &mut toml::Table) {
@@ -752,25 +808,9 @@ pub fn write_setting(file: &Path, path: &[&str], value: Option<toml_edit::Value>
 /// own text as it is; or with none, the scene's own sky and
 /// post-processing, so they carry over into the new lighting.
 pub fn copy_text(game: &Game, reference: Option<&str>) -> Result<String> {
-    let header = "# Voxear lighting settings. A scene names them, lighting = \"<this file>\",\n\
-                  # and scripts apply them with Lighting.Apply.\n";
-    let Some(reference) = reference else {
-        let world = &game.engine.world;
-        let mut file = LightingFile { format: voxear_engine::lighting::LIGHTING_FORMAT, ..LightingFile::default() };
-        let mut post = world.resource::<PostTable>().map(|table| table.0.clone()).unwrap_or_default();
-        // A look picked in [post] is the lighting's look, sky and sun and all.
-        file.look = post.remove("look").and_then(|look| look.as_str().map(str::to_string));
-        file.post = (!post.is_empty()).then_some(post);
-        if world.resource::<SkyFromLook>().is_none() {
-            let sky = world.resource::<Sky>().copied().unwrap_or_default();
-            file.sky = Some(toml::Table::try_from(sky_data(&sky))?);
-        }
-        let mut table = toml::Table::try_from(&file)?;
-        tidy(&mut table);
-        return Ok(format!("{header}{}", toml::to_string(&table)?));
-    };
+    let Some(reference) = reference else { return own_text(&world_own(game)?) };
     match game.content.parse(reference)? {
-        AssetRef::Builtin(name) => Ok(format!("{header}format = 1\nlook = \"{name}\"\n")),
+        AssetRef::Builtin(name) => Ok(format!("{COPY_HEADER}format = 1\nlook = \"{name}\"\n")),
         AssetRef::Asset { .. } => {
             let file = project_file(game, reference).with_context(|| format!("no lighting settings {reference}"))?;
             Ok(std::fs::read_to_string(&file)?)

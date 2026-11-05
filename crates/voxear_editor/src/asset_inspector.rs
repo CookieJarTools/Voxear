@@ -7,7 +7,9 @@
 //! `.material` assets to edit (see `editor::model_materials`). A script shows
 //! the fields of the behaviour it declares, with their starting values, as
 //! its last build describes them, then its code, coloured as a code editor
-//! colours it, as a UI document shows its markup. A prefab and a scene list their Objs. A
+//! colours it, as a UI document shows its markup. A prefab and a scene list
+//! their Objs, and a scene its lighting, as the Lighting page shows the open
+//! scene's: the lighting settings it names, and theirs to change. A
 //! level shows the level it stands on, a reference picked or dropped as a
 //! scene is, and its own scenes, each a reference to a scene with whether
 //! it is the active one, whether it is required, whether it loads again on
@@ -17,9 +19,10 @@
 //! its arrow to put another in its place, and takes a scene dropped on it;
 //! Add Scene opens the picker for a new one, and takes a scene dropped on it
 //! too (see `level_files`).
-//! Levels, scenes, prefabs and scripts have an Open button; a prefab opens
-//! on its own, to edit. A material, prefab or model shows a large preview
-//! of itself under its name, which a drag turns.
+//! Levels, scenes, prefabs, scripts and input actions have an Open button; a
+//! prefab opens on its own, to edit, and input actions on the Input page. A
+//! material, prefab or model shows a large preview of itself under its
+//! name, which a drag turns.
 //!
 //! A model, a picture and a sound show their import settings, as Unity's
 //! importers do (see `import_fields`), and a picture its size in pixels. A
@@ -35,7 +38,7 @@ use voxear_ui::{DragSource, NodeId, PickedColor, Style, Ui};
 
 use crate::{
     collection,
-    lighting_panel::{ColorClicked, LightingAction, LightingFields},
+    lighting_panel::{self, ColorClicked, LightingAction, LightingFields, LightingPanel},
     import_fields::{ImportFields, ImportSettings},
     inspector::{color_row, number, prop},
     level_files::{self, LevelEdit},
@@ -52,6 +55,9 @@ pub enum AssetAction {
     Open(ProjectItem),
     /// A setting of the lighting settings shown, written into their file.
     Lighting(LightingAction),
+    /// A change to the lighting of the scene at this path: the lighting
+    /// settings it names, a setting of theirs, or a copy of them.
+    SceneLighting(String, LightingAction),
     SaveMaterial(String, MaterialData),
     /// Change the scenes of the level at this path.
     EditLevel(String, LevelEdit),
@@ -147,6 +153,8 @@ pub struct AssetView {
     bake: Option<NodeId>,
     /// Lighting settings' every setting, changed in their file, and that file.
     lighting: Option<(LightingFields, PathBuf)>,
+    /// A scene's lighting: the lighting settings it names, and theirs.
+    scene_lighting: Option<LightingPanel>,
 }
 
 /// A sound's play button, with its icon and its words.
@@ -298,6 +306,7 @@ impl AssetView {
             strings: None,
             bake: None,
             lighting: None,
+            scene_lighting: None,
         };
         match item.kind {
             ItemKind::Asset(AssetKind::Material) => view.material = material(ui, root, &file, game.content.db()),
@@ -333,7 +342,10 @@ impl AssetView {
                 view.lighting = Some((fields, file.clone()));
             }
             ItemKind::Asset(AssetKind::Prefab) => objs(ui, root, "Objs", &file),
-            ItemKind::Asset(AssetKind::Scene) => objs(ui, root, "Objs", &file),
+            ItemKind::Asset(AssetKind::Scene) => {
+                view.scene_lighting = Some(scene_lighting(ui, root, game, &item.path));
+                objs(ui, root, "Objs", &file);
+            }
             ItemKind::Asset(AssetKind::Level) => {
                 view.level = scenes(ui, root, &file, game);
                 view.bake = Some(sound_paths(ui, root, &item.path, game));
@@ -355,7 +367,8 @@ impl AssetView {
         }
         let opens = matches!(
             item.kind,
-            ItemKind::Script | ItemKind::Asset(AssetKind::Level | AssetKind::Scene | AssetKind::Prefab)
+            ItemKind::Script
+                | ItemKind::Asset(AssetKind::Level | AssetKind::Scene | AssetKind::Prefab | AssetKind::InputActions)
         );
         if opens {
             let label = if item.kind == ItemKind::Script { "Open in Code Editor" } else { "Open" };
@@ -386,6 +399,7 @@ impl AssetView {
             strings: None,
             bake: None,
             lighting: None,
+            scene_lighting: None,
         })
     }
 
@@ -394,6 +408,9 @@ impl AssetView {
     pub fn update(&mut self, ui: &mut Ui) -> Option<AssetAction> {
         if let Some(action) = self.lighting.as_mut().and_then(|(fields, _)| fields.update(ui)) {
             return Some(AssetAction::Lighting(action));
+        }
+        if let Some(action) = self.scene_lighting.as_mut().and_then(|panel| panel.update(ui)) {
+            return Some(AssetAction::SceneLighting(self.item.path.clone(), action));
         }
         if self.open.is_some_and(|button| ui.clicked(button)) {
             return Some(AssetAction::Open(self.item.clone()));
@@ -562,14 +579,18 @@ impl AssetView {
 
     /// The colour setting of lighting settings whose swatch was clicked.
     pub fn lighting_color_clicked(&self, ui: &Ui) -> Option<ColorClicked> {
-        self.lighting.as_ref().and_then(|(fields, _)| fields.color_clicked(ui))
+        let scene = || self.scene_lighting.as_ref().and_then(|panel| panel.color_clicked(ui));
+        self.lighting.as_ref().and_then(|(fields, _)| fields.color_clicked(ui)).or_else(scene)
     }
 
-    /// Shows lighting settings again as their file now has them, after a
-    /// change to it.
-    pub fn refresh_lighting(&mut self, ui: &mut Ui) {
+    /// Shows lighting settings, or a scene's lighting, again as they now
+    /// are, after a change to them.
+    pub fn refresh_lighting(&mut self, ui: &mut Ui, game: &Game) {
         if let Some((fields, file)) = &mut self.lighting {
             fields.show_file(ui, file);
+        }
+        if let Some(panel) = &mut self.scene_lighting {
+            show_scene_lighting(ui, panel, game, &self.item.path);
         }
     }
 
@@ -864,6 +885,28 @@ fn objs(ui: &mut Ui, root: NodeId, title: &str, file: &std::path::Path) {
         let row = ui.add_label(rows, name);
         ui.add_class(row, "asset-line");
     }
+}
+
+/// A scene's lighting, as the Lighting page shows the open scene's: the
+/// lighting settings it names, picked from a menu, and below, a tab for each
+/// group of their settings.
+fn scene_lighting(ui: &mut Ui, root: NodeId, game: &Game, path: &str) -> LightingPanel {
+    let rows = part(ui, root, "Lighting", "light");
+    let top = ui.panel(rows, Style::column());
+    let tabs = ui.panel(rows, Style::row());
+    ui.add_class(tabs, "lighting-asset-tabs");
+    let body = ui.panel(rows, Style::column());
+    let mut panel = LightingPanel::new(ui, top, tabs, body);
+    show_scene_lighting(ui, &mut panel, game, path);
+    panel
+}
+
+fn show_scene_lighting(ui: &mut Ui, panel: &mut LightingPanel, game: &Game, path: &str) {
+    let (current, own) = match lighting_panel::scene_lighting(game, path) {
+        Ok((current, own)) => (current, Ok(own)),
+        Err(error) => (None, Err(error)),
+    };
+    panel.show_scene(ui, game, current, own);
 }
 
 /// The level a level stands on, and its own scenes, to change.

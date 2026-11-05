@@ -1672,8 +1672,10 @@ level in **edit mode**, in the editor's design (below), built in Voxear UI:
   kind holds. A material's colour, metallic, roughness and emission are edited in place and saved to its file,
   showing at once wherever it is drawn (`Content::save_material`, `Renderer::update_material`); its colour and
   emission have swatches that open the colour picker, the emission's with its HDR intensity; a script shows its
-  behaviour's fields with their starting values; a prefab or scene lists its Objs. Levels, scenes, prefabs and
-  scripts have an Open button.
+  behaviour's fields with their starting values; a prefab or scene lists its Objs. A scene also shows its lighting
+  as the Lighting page shows the open scene's (`LightingPanel::show_scene`): an open scene's change goes through
+  `Levels::set_lighting_of` and is saved with it, and one not open has its `lighting` written into its file. Levels,
+  scenes, prefabs, scripts and input actions have an Open button.
 - **A level's scenes in the Inspector** (`level_files`). A level shows the level it stands on and its own scenes,
   each a reference to a scene, with an Active box (one is always active: the one marked, or the first), a Required
   box and a button to take it out, and **Add Scene**. As an Obj's references do, a scene's field pings the scene in

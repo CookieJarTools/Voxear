@@ -6498,6 +6498,87 @@ fn the_lighting_page_names_the_scenes_lighting_and_edits_its_asset() {
 }
 
 #[test]
+fn a_scenes_inspector_shows_its_lighting_to_change() {
+    let Some(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()).ok() else { return };
+    let dir = hello_copy();
+    std::fs::create_dir_all(dir.path().join("Lighting")).unwrap();
+    let dusk = dir.path().join("Lighting/Dusk.lighting");
+    std::fs::write(&dusk, "format = 1\nlook = \"golden_hour\"\n").unwrap();
+    let yard = dir.path().join("Scenes/Yard.scene");
+    std::fs::write(&yard, "# The yard\nformat = 1\n\n[post]\nlook = \"storybook\"\n").unwrap();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let inspector = editor.ui.find(editor.ui.root(), "inspector").unwrap();
+    let select = |editor: &mut voxear_editor::Editor, renderer: &mut Renderer, folder: &str, name: &str| {
+        if tile(&editor.ui, name).is_none() {
+            open_folder(editor, renderer, folder);
+        }
+        let found = tile(&editor.ui, name).unwrap_or_else(|| panic!("{name} in the Project panel"));
+        click(&mut editor.ui, found);
+        frame(editor, renderer);
+    };
+    let pick = |editor: &mut voxear_editor::Editor, renderer: &mut Renderer, at: usize| {
+        let menu = first_with(&editor.ui, inspector, "value-choice").expect("the scene's lighting menu");
+        // Far down a long menu: picked with the keys, as its option may be below the window's edge.
+        editor.ui.focus(menu);
+        while editor.ui.selected_option(menu) != at {
+            let key = if editor.ui.selected_option(menu) > at { Key::Up } else { Key::Down };
+            editor.ui.key_down(key);
+        }
+        frame(editor, renderer);
+    };
+
+    // A scene that is not open: its own look shows, and the lighting picked is written into its file.
+    select(&mut editor, &mut renderer, "Scenes", "Yard.scene");
+    assert_eq!(editor.inspected_asset().map(|item| item.path.as_str()), Some("Scenes/Yard.scene"));
+    let row = |editor: &voxear_editor::Editor, title: &str| {
+        let mut rows = Vec::new();
+        with_class(&editor.ui, inspector, "setting", &mut rows);
+        rows.into_iter().find(|&row| editor.ui.children(row).first().is_some_and(|&l| editor.ui.text(l) == title))
+    };
+    let look = first_with(&editor.ui, row(&editor, "Look").unwrap(), "value-choice").unwrap();
+    use voxear_render::LookName;
+    let storybook = LookName::ALL.iter().position(|(name, ..)| *name == LookName::Storybook);
+    assert_eq!(Some(editor.ui.selected_option(look)), storybook.map(|at| at + 1), "the scene's own look");
+    let dusk_at = 1 + voxear_render::LookName::ALL.len();
+    pick(&mut editor, &mut renderer, dusk_at);
+    let text = std::fs::read_to_string(&yard).unwrap();
+    assert!(text.starts_with("# The yard\n") && text.contains("lighting = \"Lighting/Dusk.lighting\""), "{text}");
+    assert!(!editor.has_unsaved_changes(), "a scene that is not open is changed in its file");
+
+    // The settings it is lit by are changed in place, in their own file.
+    let field = first_with(&editor.ui, row(&editor, "Haze").unwrap(), "value-input").unwrap();
+    assert!(editor.ui.is_enabled(field));
+    type_into(&mut editor.ui, field, "3");
+    frame(&mut editor, &mut renderer);
+    assert!(std::fs::read_to_string(&dusk).unwrap().contains("haze = 3"));
+
+    // The open scene's lighting is changed as the Lighting page changes it, and kept once saved.
+    let active = editor.game.levels.active_scene().unwrap().to_string();
+    let name = active.rsplit('/').next().unwrap().to_string();
+    select(&mut editor, &mut renderer, "Scenes", &name);
+    pick(&mut editor, &mut renderer, 1);
+    assert_eq!(editor.game.levels.lighting_of(&active), Some(Some("builtin:golden_hour")));
+    assert!(editor.has_unsaved_changes());
+    shot(&mut renderer, "scene-inspector-lighting.png");
+
+    // None takes it out again; a copy of its own sky and post-processing is then named in its place.
+    select(&mut editor, &mut renderer, "Scenes", "Yard.scene");
+    pick(&mut editor, &mut renderer, 0);
+    assert!(!std::fs::read_to_string(&yard).unwrap().contains("lighting"));
+    let copy = first_with(&editor.ui, inspector, "lighting-copy").unwrap();
+    assert_eq!(editor.ui.text(copy), "New Lighting Settings");
+    click(&mut editor.ui, copy);
+    frame(&mut editor, &mut renderer);
+    let made = std::fs::read_to_string(dir.path().join("Lighting/New Lighting.lighting")).unwrap();
+    assert!(made.contains("look = \"storybook\""), "{made}");
+    let text = std::fs::read_to_string(&yard).unwrap();
+    assert!(text.contains("lighting = \"Lighting/New Lighting.lighting\""), "{text}");
+}
+
+#[test]
 fn an_asset_field_pings_its_file_in_every_project_panel_not_locked() {
     let Some(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()).ok() else { return };
     let dir = hello_copy();

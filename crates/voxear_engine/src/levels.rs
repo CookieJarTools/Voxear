@@ -460,12 +460,33 @@ impl Levels {
         active.lighting.as_ref().map(|(reference, _)| reference.as_str())
     }
 
+    /// The lighting settings a loaded scene names, by its project path:
+    /// `None` when it is not loaded, `Some(None)` when it names none.
+    pub fn lighting_of(&self, path: &str) -> Option<Option<&str>> {
+        let scene = self.scenes.iter().find(|s| s.path == path)?;
+        Some(scene.lighting.as_ref().map(|(reference, _)| reference.as_str()))
+    }
+
     /// Names other lighting settings in the active scene, or none, and
     /// lights the level with them. The scene keeps them when it is saved.
     pub fn set_scene_lighting(
         &mut self,
         engine: &mut Engine,
         content: &mut Content,
+        reference: Option<&str>,
+    ) -> Result<()> {
+        let path = self.active_scene().context("no scene is open")?.to_string();
+        self.set_lighting_of(engine, content, &path, reference)
+    }
+
+    /// Names other lighting settings in the loaded scene at `path`, or
+    /// none, and lights the level again. The scene keeps them when it is
+    /// saved.
+    pub fn set_lighting_of(
+        &mut self,
+        engine: &mut Engine,
+        content: &mut Content,
+        path: &str,
         reference: Option<&str>,
     ) -> Result<()> {
         let lighting = match reference {
@@ -475,9 +496,9 @@ impl Levels {
             }
             None => None,
         };
-        let active = self.scenes.iter_mut().find(|s| Some(s.guid) == self.active).context("no scene is open")?;
-        active.lighting = lighting;
-        if active.lighting.is_none() {
+        let scene = self.scenes.iter_mut().find(|s| s.path == path).with_context(|| format!("{path} is not open"))?;
+        scene.lighting = lighting;
+        if scene.lighting.is_none() {
             engine.world.remove_resource::<scene_file::SceneLighting>();
             engine.world.remove_resource::<scene_file::LightingPost>();
         }

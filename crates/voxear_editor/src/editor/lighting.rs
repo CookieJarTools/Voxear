@@ -1,7 +1,7 @@
-//! The Lighting page's changes (see `lighting_panel`): the active scene
-//! names other lighting settings, a setting of the lighting it names is
-//! written into that asset's file, or a copy is made to change. Each lights
-//! the scene again at once.
+//! The Lighting page's changes (see `lighting_panel`), and a scene's
+//! Inspector's: the scene names other lighting settings, a setting of the
+//! lighting it names is written into that asset's file, or a copy is made
+//! to change. Each lights the scene again at once.
 
 use voxear_render::Renderer;
 
@@ -36,9 +36,13 @@ impl Editor {
         self.lighting_panel.shown()
     }
 
-    /// Shows the active scene's lighting on the page as it now is.
+    /// Shows the active scene's lighting on the page as it now is, and the
+    /// lighting the Inspector shows.
     pub(super) fn refresh_lighting_page(&mut self) {
         self.lighting_panel.refresh(&mut self.ui, &mut self.game);
+        if let Some(view) = self.inspector.asset_view() {
+            view.refresh_lighting(&mut self.ui, &self.game);
+        }
     }
 
     pub(super) fn lighting_action(&mut self, action: LightingAction, renderer: &mut Renderer) {
@@ -60,6 +64,51 @@ impl Editor {
         self.refresh_lighting_page();
     }
 
+    /// A change to the lighting of the scene at `scene`, from its Inspector:
+    /// the open scene's is changed as the Lighting page changes it, and kept
+    /// when it is saved; a scene that is not open has it written into its
+    /// file.
+    pub(super) fn scene_lighting_action(&mut self, scene: &str, action: LightingAction, renderer: &mut Renderer) {
+        let done = match action {
+            LightingAction::Set { .. } => return self.lighting_action(action, renderer),
+            LightingAction::SetScene(reference) => self.set_lighting_of(scene, reference.as_deref()),
+            LightingAction::Copy => self.copy_lighting_of(scene, renderer),
+        };
+        if let Err(error) = done {
+            self.notify(&format!("Could not change the lighting of {scene}: {error:#}"));
+        }
+        self.refresh_lighting_page();
+    }
+
+    /// Names other lighting settings, or none, in the scene at `scene`.
+    fn set_lighting_of(&mut self, scene: &str, reference: Option<&str>) -> anyhow::Result<()> {
+        let game = &mut self.game;
+        if game.levels.lighting_of(scene).is_some() {
+            game.levels.set_lighting_of(&mut game.engine, &mut game.content, scene, reference)?;
+            if !self.is_playing() {
+                self.unsaved = true;
+            }
+            return Ok(());
+        }
+        let file = game.content.db().file(scene);
+        lighting_panel::write_setting(&file, &["lighting"], reference.map(toml_edit::Value::from))?;
+        self.files_seen();
+        Ok(())
+    }
+
+    /// Makes new lighting settings in the Lighting folder, a copy of those
+    /// the scene at `scene` names, or of its own sky and post-processing,
+    /// and names them in the scene in their place.
+    fn copy_lighting_of(&mut self, scene: &str, renderer: &mut Renderer) -> anyhow::Result<()> {
+        let (current, own) = lighting_panel::scene_lighting(&self.game, scene)?;
+        let text = match current {
+            Some(reference) => lighting_panel::copy_text(&self.game, Some(&reference))?,
+            None => lighting_panel::own_text(&own)?,
+        };
+        let path = self.write_new_lighting(&text, renderer)?;
+        self.set_lighting_of(scene, Some(&path))
+    }
+
     /// Names other lighting settings in the active scene, which it keeps
     /// when it is saved.
     fn set_scene_lighting(&mut self, reference: Option<&str>) -> anyhow::Result<()> {
@@ -76,13 +125,19 @@ impl Editor {
     fn copy_lighting(&mut self, renderer: &mut Renderer) -> anyhow::Result<()> {
         let current = self.game.levels.scene_lighting().map(str::to_string);
         let text = lighting_panel::copy_text(&self.game, current.as_deref())?;
-        let root = self.game.project.root.clone();
-        let folder = root.join(LIGHTING_FOLDER);
+        let path = self.write_new_lighting(&text, renderer)?;
+        self.set_scene_lighting(Some(&path))
+    }
+
+    /// Writes new lighting settings into the Lighting folder, and selects
+    /// them in the Project panel. Returns their project path.
+    fn write_new_lighting(&mut self, text: &str, renderer: &mut Renderer) -> anyhow::Result<String> {
+        let folder = self.game.project.root.join(LIGHTING_FOLDER);
         std::fs::create_dir_all(&folder)?;
         let name = unique(&folder, "New Lighting", ".lighting");
         std::fs::write(folder.join(&name), text)?;
         let path = format!("{LIGHTING_FOLDER}/{name}");
         self.project_event(ProjectEvent::Changed { select: Some(path.clone()), rename: false }, renderer);
-        self.set_scene_lighting(Some(&path))
+        Ok(path)
     }
 }

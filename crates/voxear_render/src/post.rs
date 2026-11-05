@@ -635,7 +635,7 @@ impl PostProcess {
             lut_texture: crate::gpu::NO_TEXTURE,
             _lut_pad0: 0,
             lut_contribution: self.grading.lut_contribution.clamp(0.0, 1.0),
-            _lut_pad: 0,
+            surface_texture: crate::gpu::NO_TEXTURE,
             // The renderer names the image once it has made it.
             reflection_texture: crate::gpu::NO_TEXTURE,
             reflection_distance: self.reflections.max_distance.max(0.1),
@@ -644,7 +644,7 @@ impl PostProcess {
             reflection_max_roughness: self.reflections.max_roughness.clamp(0.01, 1.0),
             exposure_low_percent: self.exposure.low_percent.clamp(0.0, 99.0),
             exposure_high_percent: self.exposure.high_percent.clamp(1.0, 100.0),
-            _exposure_pad: 0,
+            camera_motion: 0.0,
             bloom_tint: linear(self.bloom.tint),
             exposure_night: self.exposure.night.clamp(0.0, 1.0),
         }

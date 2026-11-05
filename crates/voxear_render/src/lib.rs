@@ -1239,6 +1239,8 @@ struct View {
     /// It has said its scene has more instances than it can draw.
     warned_instances: bool,
     prev_view_proj: Option<Mat4Cols>,
+    /// Last frame's camera position and forward, for how far it moved.
+    prev_camera: Option<(voxear_core::math::Vec3, voxear_core::math::Vec3)>,
     /// The size TAA's history was rendered at; `None` when it is stale.
     taa_history: Option<vk::Extent2D>,
     /// The same for ambient occlusion's.
@@ -1321,6 +1323,7 @@ impl View {
             foliage: foliage::FoliageCache::default(),
             warned_instances: false,
             prev_view_proj: None,
+            prev_camera: None,
             taa_history: None,
             ao_history: None,
             atmosphere_tables: None,
@@ -1490,6 +1493,7 @@ impl View {
         self.ddgi_history = None;
         self.prev_models.clear();
         self.prev_view_proj = None;
+        self.prev_camera = None;
     }
 
     /// Its rectangle within an output of `full`, at least a pixel each way.
@@ -1523,6 +1527,12 @@ impl View {
         self.prev_models.extend(objs.map(|(owner, instance)| (*owner, instance.model)));
         let current = extracted.frame.unjittered_view_proj;
         extracted.frame.prev_view_proj = self.prev_view_proj.replace(current).unwrap_or(current);
+        // How far the camera moved, for TAA: 2 cm, or about a quarter of a degree, counts as moving.
+        let vector = voxear_core::math::Vec3::from;
+        let camera = (vector(extracted.frame.camera_position), vector(extracted.frame.camera_forward));
+        let (before, looked) = self.prev_camera.replace(camera).unwrap_or(camera);
+        let turned = looked.dot(camera.1).clamp(-1.0, 1.0).acos();
+        extracted.frame.post.camera_motion = (before.distance(camera.0) / 0.02 + turned / 0.005).min(1.0);
     }
 
     /// Records the view's passes into its rectangle of `output`: culling,
@@ -1661,7 +1671,9 @@ impl View {
             true => {
                 let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
                 let desc = ImageDesc::new(extent.width, extent.height, pipelines::SURFACE_FORMAT, usage);
-                Some(fg.create_image(gpu, bindless, "surface", desc)?)
+                let surface = fg.create_image(gpu, bindless, "surface", desc)?;
+                frame_data.post.surface_texture = fg.texture(surface).0;
+                Some(surface)
             }
             false => None,
         };
@@ -1872,6 +1884,7 @@ impl View {
             history,
             keep_ldr: setup.keep_ldr,
             fog_volume: volume.map(|volume| volume.integrated),
+            surface,
         };
         let finished = post_passes::record(fg, gpu, bindless, &post)?;
         let backdrop = match finished.filter(|_| post.keep_ldr) {

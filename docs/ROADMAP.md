@@ -1062,6 +1062,14 @@ Foliage shading (wrap lighting, light through the leaves, a rim of the sun's col
   cards of ivy are sheets, and black there left dark patches over the chrome ball (thousands of pixels a frame, found
   by painting them magenta). One that meets the inside of the surface it left, within 5 cm (`REFLECTION_SELF`), as
   from a coarse LOD's facet just inside the full one the rays are traced against, carries on past it.
+- **Mirrors that do not crawl or streak:** a reflection's textures are read at the mip its pixel's ray cone covers
+  where it lands (Akenine-Möller et al. 2019): the pixel's width on the surface and how fast the reflection turns
+  from pixel to pixel, from screen derivatives, times how far the ray went (`REFLECTION_TEXELS_PER_METRE` 512). Read
+  near full detail, the floor's grout and stains broke into dark dots and lines over the chrome ball that crawled as
+  the camera moved. And TAA keeps less history on mirrors while the camera moves (`mirrorKeep` in `post.slang`: down
+  to 0.4 of it, by the depth passes' roughness and `post.camera_motion`): its history follows the surface, but a
+  reflection moves as what it shows, so a quick move dragged the old reflection across the new in dark streaks.
+  Still, mirrors keep it all.
 - **GI that does not change as the camera walks up:** three cascades of probes, each twice as far apart as the last
   (`DDGI_CASCADES` 3, `DDGI_CASCADE_SCALE` 2), rather than two four times apart. Past the fine grid's sixteen metres,
   probes four metres apart smeared the neon tube's light down Sponza's corridor, and it changed before the camera as

@@ -540,7 +540,9 @@ pub struct GpuPost {
     pub lut_texture: u32,
     pub _lut_pad0: u32,
     pub lut_contribution: f32,
-    pub _lut_pad: u32,
+    /// Each pixel's normal and roughness as the depth passes wrote them, or
+    /// `NO_TEXTURE`, for TAA to tell mirrors by.
+    pub surface_texture: u32,
     /// Screen-space reflections' image, or `NO_TEXTURE` without them; how
     /// far rays go and how thick things count as, in metres; the steps rays
     /// take; and the roughness past which surfaces show none.
@@ -553,7 +555,9 @@ pub struct GpuPost {
     /// percentiles.
     pub exposure_low_percent: f32,
     pub exposure_high_percent: f32,
-    pub _exposure_pad: u32,
+    /// How far the camera moved since last frame, from 0, still, to 1, a
+    /// few centimetres or a fraction of a degree or more.
+    pub camera_motion: f32,
     /// Bloom's colour, linear, multiplying its glow.
     pub bloom_tint: [f32; 3],
     /// How dark auto exposure leaves dark scenes, from 0 (as bright as day)

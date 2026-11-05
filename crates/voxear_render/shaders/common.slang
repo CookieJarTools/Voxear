@@ -341,7 +341,8 @@ struct Post
     uint lutTexture;
     uint lutPad0;
     float lutContribution;
-    uint lutPad;
+    // Each pixel's normal and roughness from the depth passes (NO_TEXTURE without them), for TAA to tell mirrors by.
+    uint surfaceTexture;
     // Screen-space reflections: their image (NO_TEXTURE without them), how
     // far rays go, how thick things count as, in metres, the steps they take,
     // and the roughness past which surfaces show none.
@@ -353,7 +354,8 @@ struct Post
     // The part of auto exposure's histogram it averages, between these percentiles.
     float exposureLowPercent;
     float exposureHighPercent;
-    uint exposurePad;
+    // How far the camera moved since last frame: 0 still, 1 a few centimetres or a fraction of a degree or more.
+    float cameraMotion;
     // Bloom's colour, multiplying its glow.
     float3 bloomTint;
     // How dark auto exposure leaves dark scenes, 0 as bright as day, 1 as the eye sees them.

@@ -62,6 +62,9 @@ pub struct PostInput {
     /// The volumetric fog's integrated volume, laid over the scene in place
     /// of the plain height fog when there is one.
     pub fog_volume: Option<ImageId>,
+    /// Each pixel's normal and roughness, when the depth passes wrote them,
+    /// which TAA reads to tell mirrors by (`post.surface_texture`).
+    pub surface: Option<ImageId>,
 }
 
 /// Steps the backdrop's blur halves the view's size by.
@@ -122,13 +125,14 @@ pub fn record(
         let previous = taa_history(fg, gpu, bindless, extent, 1 - input.history)?;
         let textures = [fg.texture(scene).0, fg.texture(previous).0, fg.texture(velocity).0, depth_texture];
         let push = Push { textures, ..push };
-        let images = [
+        let mut images = vec![
             (scene, ImageAccess::Sampled),
             (previous, ImageAccess::Sampled),
             (velocity, ImageAccess::Sampled),
             (depth, ImageAccess::Sampled),
             (current, ImageAccess::ColorAttachment),
         ];
+        images.extend(input.surface.map(|surface| (surface, ImageAccess::Sampled)));
         // Upscaling, each output pixel is built from the drawn pixels round it, by where their jittered samples fell.
         let taa = if upscaling { pipelines.taa_upscale } else { pipelines.taa };
         let name = if upscaling { "TAA upscale" } else { "TAA" };

@@ -223,6 +223,30 @@ float3 sampleHistory(uint texture, float2 uv, float2 size)
 }
 
 // textures: x current HDR, y last frame's result, z velocity, w depth.
+// How much less history TAA keeps on a mirror while the camera moves. Its
+// history follows where the surface moved, but a mirror's reflection moves
+// as what it shows, so moving, the old reflection dragged across the new in
+// streaks; still, the mirror keeps its whole history and stays steady.
+// Smooth surfaces as reflections see them, by the depth passes' roughness.
+static const float MIRROR_MOVING_KEEP = 0.4;
+
+float mirrorKeep(Frame* frame, int2 pixel)
+{
+    if (frame->post.surfaceTexture == NO_TEXTURE || frame->post.cameraMotion <= 0.0)
+    {
+        return 1.0;
+    }
+    float roughness = textures[NonUniformResourceIndex(frame->post.surfaceTexture)].Load(int3(pixel, 0)).b;
+    float mirror = saturate(1.0 - roughness / max(frame->post.reflectionMaxRoughness, 1e-3));
+    return lerp(1.0, MIRROR_MOVING_KEEP, mirror * frame->post.cameraMotion);
+}
+
+// The drawn pixel under an output pixel's middle, when TAA upscales.
+int2 mirrorPixel(Frame* frame, float2 uv)
+{
+    return int2(uv * float2(frame->viewport));
+}
+
 [shader("fragment")]
 float4 taaFragment(PostOut input) : SV_Target
 {
@@ -266,7 +290,7 @@ float4 taaFragment(PostOut input) : SV_Target
 
     // Keep less history when things move fast, so motion stays crisp.
     float speed = length(velocity * float2(frame->viewport));
-    float keep = frame->post.taaHistory * lerp(1.0, 0.8, saturate(speed / 32.0));
+    float keep = frame->post.taaHistory * lerp(1.0, 0.8, saturate(speed / 32.0)) * mirrorKeep(frame, pixel);
     return float4(expand(fromYCoCg(lerp(centre, history, keep))), 1.0);
 }
 
@@ -329,7 +353,7 @@ float4 taaUpscaleFragment(PostOut input) : SV_Target
     history = clipToBox(history, mean - 1.25 * deviation, mean + 1.25 * deviation);
 
     float speed = length(velocity * outputSize);
-    float keep = frame->post.taaHistory * lerp(1.0, 0.8, saturate(speed / 32.0));
+    float keep = frame->post.taaHistory * lerp(1.0, 0.8, saturate(speed / 32.0)) * mirrorKeep(frame, mirrorPixel(frame, input.uv));
     // A sample right on the pixel counts in full; one a pixel away, hardly.
     float fresh = (1.0 - keep) * nearestWeight;
     return float4(expand(fromYCoCg(lerp(history, current, fresh))), 1.0);

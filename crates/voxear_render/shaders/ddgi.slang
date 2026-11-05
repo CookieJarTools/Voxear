@@ -414,12 +414,17 @@ float3 worldPositionAt(uint depthTexture, int2 pixel)
 // How near a reflection's ray may meet the inside of the surface it left
 // before it is taken for having started a hair inside it, in metres.
 static const float REFLECTION_SELF = 0.05;
+// About how many texels across a metre the scene's textures have, to turn
+// how wide a pixel's reflection is where it lands into a mip.
+static const float REFLECTION_TEXELS_PER_METRE = 512.0;
 
-// The light a reflection's ray finds where `hit` stopped it.
-float3 ddgiShadeReflected(Frame* frame, Hit hit, float3 origin, float3 direction, out bool back)
+// The light a reflection's ray finds where `hit` stopped it, its textures
+// read at the mip that a pixel `width` metres wide at its start, spreading by
+// `spread` radians, covers there (a ray cone, Akenine-Möller et al. 2019).
+float3 ddgiShadeReflected(Frame* frame, Hit hit, float3 origin, float3 direction, float width, float spread, out bool back)
 {
-    // Sharper textures near, blurrier far, about as the reflection shows them.
-    float mip = clamp(log2(1.0 + hit.t * 0.5), 0.0, 4.0);
+    float footprint = width + hit.t * spread;
+    float mip = clamp(log2(max(footprint * REFLECTION_TEXELS_PER_METRE, 1.0)), 0.0, 8.0);
     float3 at = origin + direction * hit.t;
     return ddgiShadeHit(frame, hit.instance, hit.primitive, hit.barycentrics, at, direction, mip, back);
 }
@@ -441,10 +446,6 @@ float4 rayReflectionsFragment(AoOut input) : SV_Target
     float depth = loadDepth(depthTexture, pixel);
     float4 surface = textures[NonUniformResourceIndex(push.textures.z)].Load(int3(pixel, 0));
     float roughness = surface.b;
-    if (depth <= 0.0 || roughness >= frame->post.reflectionMaxRoughness)
-    {
-        return 0.0;
-    }
     // The surface's own normal, normal map and all, as the depth passes kept it.
     float3 position = worldPositionAt(depthTexture, pixel);
     float3 eye = frame->cameraPosition;
@@ -453,6 +454,18 @@ float4 rayReflectionsFragment(AoOut input) : SV_Target
     normal = dot(normal, view) < 0.0 ? -normal : normal;
     float3 centre = float3(0.0, 0.0, dot(position - eye, frame->cameraForward));
     float3 direction = reflect(-view, normal);
+    // How wide the pixel is on the surface and how fast its reflection turns from it to the next, worked out
+    // with its neighbours before any of them stops: a curved mirror shrinks what it shows, and read at full detail
+    // the floor's grout and stains broke into dark dots and lines over the chrome ball, crawling as it moved.
+    float width = max(length(ddx(position)), length(ddy(position)));
+    float spread = max(length(ddx(direction)), length(ddy(direction)));
+    if (depth <= 0.0 || roughness >= frame->post.reflectionMaxRoughness)
+    {
+        return 0.0;
+    }
+    // Where depth jumps, at an edge, the neighbours lie on another surface and say nothing of this one.
+    width = min(width, 0.05 * centre.z);
+    spread = min(spread, 0.05);
     // Off the surface by a little more the farther away it is, as its depth is less sure there.
     float3 origin = position + normal * (0.01 + 0.002 * centre.z);
     Hit hit = traceScene(frame, origin, direction, REFLECTION_REACH, false);
@@ -461,14 +474,14 @@ float4 rayReflectionsFragment(AoOut input) : SV_Target
     float3 light = 0.0;
     if (hit.found)
     {
-        light = ddgiShadeReflected(frame, hit, origin, direction, back);
+        light = ddgiShadeReflected(frame, hit, origin, direction, width, spread, back);
         // Close by and from behind, the ray started a hair inside the surface it leaves, as at a ball's rim where
         // depth is least sure, and met its inside: on past it.
         if (back && hit.t < REFLECTION_SELF)
         {
             origin += direction * (hit.t + 0.01);
             hit = traceScene(frame, origin, direction, REFLECTION_REACH, false);
-            light = hit.found ? ddgiShadeReflected(frame, hit, origin, direction, back) : 0.0;
+            light = hit.found ? ddgiShadeReflected(frame, hit, origin, direction, width, spread, back) : 0.0;
         }
     }
     if (!hit.found)

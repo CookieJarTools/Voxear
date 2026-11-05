@@ -302,10 +302,11 @@ float shoreFoam(Frame* frame, float depth, float2 xz, float steep = 0.0)
     float edge = pow(saturate(1.0 - depth / 0.4), 2.0);
     float along = lavaNoise(xz * 0.15) * 3.0;
     float rolling = 0.5 + 0.5 * sin(depth * 7.0 + frame->time * 1.4 + along);
-    // Surf rolls in over a gently shelving shore, not up the side of a rock.
+    // Surf rolls in in bands over a gently shelving shore; up the side of a rock it churns as a steady froth.
     float shelving = 1.0 - smoothstep(0.3, 1.0, steep);
-    float surf = smoothstep(0.55, 0.95, rolling) * saturate(1.0 - depth / 2.5) * saturate(depth / 0.15) * shelving;
-    return max(edge * (0.5 + 0.5 * shelving), surf * 0.85);
+    float bands = lerp(0.45, smoothstep(0.55, 0.95, rolling), shelving);
+    float surf = bands * saturate(1.0 - depth / 2.5) * saturate(depth / 0.15);
+    return max(edge, surf * 0.85);
 }
 
 // ---------------------------------------------------------------- Foam's pattern
@@ -404,6 +405,80 @@ float2 foamPatternAt(Frame* frame, float2 rest, float blur = 0.0)
     float2 near = blur > 0.0 ? pattern.SampleLevel(repeat, a, blur).xy : pattern.Sample(repeat, a).xy;
     float2 far = blur > 0.0 ? pattern.SampleLevel(repeat, b, blur).xy : pattern.Sample(repeat, b).xy;
     return near * 0.65 + far * 0.35;
+}
+
+// Foam seen as a layer of froth standing on the water: where the view
+// meets it, how it leans there, how much sun reaches it past the clumps
+// between, and how far down between them it is.
+struct Froth
+{
+    float amount;
+    float3 tilt;
+    float sun;
+    float crevice;
+};
+
+// How much froth stands at `at` on the pattern, from 0 to 1 of its layer.
+float frothHeight(Frame* frame, float2 at, float from, float edge, float coverage)
+{
+    return smoothstep(from, from + edge, foamPatternAt(frame, at).x) * saturate(coverage * 4.0);
+}
+
+// The froth over the water at `rest` (on the foam's pattern), seen along
+// `v`, lit from `l`: a layer up to a few centimetres thick, thicker the more
+// foam there is and thinning out with distance by `near`, its height the
+// pattern revealed as `from` and `edge` reveal it. The view is marched down
+// through the layer to where it first meets froth, then towards the sun to
+// see what clumps shade it.
+Froth frothAt(Frame* frame, float2 rest, float3 v, float3 l, float coverage, float from, float edge, float near)
+{
+    static const uint STEPS = 10;
+    static const uint SHADOW_STEPS = 4;
+    Froth froth;
+    froth.amount = 0.0;
+    froth.tilt = 0.0;
+    froth.sun = 1.0;
+    froth.crevice = 1.0;
+    float thick = 0.045 * (0.5 + coverage) * near;
+    // Where the view crosses the layer's top, over the water this pixel shows.
+    float2 across = v.xz / max(v.y, 0.2) * thick;
+    float before = 1.0;
+    float beforeGap = frothHeight(frame, rest + across, from, edge, coverage) - 1.0;
+    float hit = -1.0;
+    for (uint i = 1; i <= STEPS; i++)
+    {
+        float height = 1.0 - float(i) / float(STEPS);
+        float gap = frothHeight(frame, rest + across * height, from, edge, coverage) - height;
+        if (gap >= 0.0)
+        {
+            hit = lerp(before, height, beforeGap / min(beforeGap - gap, -1e-4));
+            break;
+        }
+        before = height;
+        beforeGap = gap;
+    }
+    if (hit < 0.0)
+    {
+        return froth;
+    }
+    float2 at = rest + across * hit;
+    froth.amount = smoothstep(0.0, 0.08, hit);
+    // How it leans, from how its height changes either side.
+    float e = 0.02;
+    float dx = frothHeight(frame, at + float2(e, 0.0), from, edge, coverage) - frothHeight(frame, at - float2(e, 0.0), from, edge, coverage);
+    float dz = frothHeight(frame, at + float2(0.0, e), from, edge, coverage) - frothHeight(frame, at - float2(0.0, e), from, edge, coverage);
+    froth.tilt = float3(-dx, 0.0, -dz) * thick / (2.0 * e);
+    // Clumps between it and the sun shade it, softly.
+    float2 sunward = l.xz / max(l.y, 0.2) * thick;
+    float shade = 0.0;
+    for (uint j = 1; j <= SHADOW_STEPS; j++)
+    {
+        float height = hit + (1.0 - hit) * float(j) / float(SHADOW_STEPS);
+        shade += saturate((frothHeight(frame, at + sunward * (height - hit), from, edge, coverage) - height) * 4.0);
+    }
+    froth.sun = 1.0 - 0.75 * saturate(shade / float(SHADOW_STEPS) * 2.0);
+    froth.crevice = 0.55 + 0.45 * hit;
+    return froth;
 }
 
 // How much foam a crest breaking at `rest` leaves behind: only where the
@@ -618,12 +693,10 @@ WaterOut poolVertex(uint vertexId : SV_VertexID, uint pool : SV_InstanceID)
     float2 across = (float2(grid) / float(POOL_QUADS) - 0.5) * body.size.xz;
     float3 flat = transform(body.toWorld, float4(across.x, 0.0, across.y, 1.0)).xyz;
     float spacing = poolSpacing(body);
-    // Lava is too thick for waves. At its sides the waves only rise and fall, so it stays joined to its walls.
+    // Lava is too thick for waves.
     float wet = body.liquid == LIQUID_LAVA ? 0.0 : 1.0;
-    float inside = min(body.size.x * 0.5 - abs(across.x), body.size.z * 0.5 - abs(across.y));
-    float3 held = float3(saturate(inside), 1.0, saturate(inside)) * wet;
-    float3 world = flat + oceanMoved(frame, flat.xz, spacing, false, body.waves) * held;
-    float3 before = flat + oceanMoved(frame, flat.xz, spacing, true, body.waves) * held;
+    float3 world = poolMoved(body, across, oceanMoved(frame, flat.xz, spacing, false, body.waves) * wet);
+    float3 before = poolMoved(body, across, oceanMoved(frame, flat.xz, spacing, true, body.waves) * wet);
     WaterOut o;
     o.position = transform(frame->viewProj, float4(world, 1.0));
     o.world = world;
@@ -635,6 +708,20 @@ WaterOut poolVertex(uint vertexId : SV_VertexID, uint pool : SV_InstanceID)
     o.lava = 0.0;
     o.up = float3(0.0, 1.0, 0.0);
     return o;
+}
+
+// Where the water of Pool `pool` resting `across` its footprint is moved to
+// by its waves, `moved`: up and down in full, but sideways less and less
+// towards its sides and never past them, so its surface stays inside its
+// walls however high the waves.
+float3 poolMoved(WaterBody pool, float2 across, float3 moved)
+{
+    float3 local = transform(pool.toLocal, float4(moved, 0.0)).xyz;
+    float2 half = pool.size.xz * 0.5;
+    float2 room = half - abs(across);
+    float2 held = across + local.xz * saturate(min(room.x, room.y) / max(0.15 * min(pool.size.x, pool.size.z), 0.01));
+    held = clamp(held, -half, half);
+    return transform(pool.toWorld, float4(held.x, local.y, held.y, 1.0)).xyz;
 }
 
 // How far apart a Pool's grid's points are, in metres, which its walls read
@@ -995,10 +1082,23 @@ FragmentOut waterFragment(WaterOut input)
     float edge = max(0.3, fwidth(pattern) * 1.5);
     float from = 1.0 - coverage * 1.6;
     float foam = smoothstep(from, from + edge, pattern) * saturate(coverage * 4.0);
-    // Lit as a rough white surface with a little relief, light wrapping round its bubbles.
     float3 foamNormal = bumped(input.world, n, pattern * 0.03);
+    float foamSun = 1.0;
+    float crevice = 1.0;
+    // Near the camera it stands up off the water as a layer of froth, its clumps hiding what is behind them and
+    // shading each other; further off, where a clump is smaller than a pixel, it lies flat.
+    float closeness = saturate(1.0 - length(input.world - frame->cameraPosition) / 40.0);
+    if (sea && coverage > 0.01 && closeness > 0.0)
+    {
+        Froth froth = frothAt(frame, rest + moved.xz * 0.3, v, l, coverage, from, edge, closeness);
+        foam = froth.amount;
+        foamNormal = normalize(n + froth.tilt);
+        foamSun = froth.sun;
+        crevice = froth.crevice;
+    }
+    // Lit as a rough white surface, light wrapping round its bubbles, darker down between its clumps.
     float wrapped = saturate((dot(foamNormal, l) + 0.4) / 1.4);
-    float3 foamLit = 0.9 * (ambient + sunLight * shadow * wrapped / PI);
+    float3 foamLit = 0.9 * crevice * (ambient + sunLight * shadow * foamSun * wrapped / PI);
     color = lerp(color, foamLit, foam);
     // A Stream fades in over its first two points and out over its last two.
     if (stream)
@@ -1253,14 +1353,15 @@ WallOut wallVertex(uint vertexId : SV_VertexID, uint instance : SV_InstanceID)
     float3 centre;
     if (water.kind == WATER_POOL)
     {
-        // From a little over its surface, past its highest ripples, down as deep as it is; no lid.
+        // From over its surface as high as its waves can rise, down as deep as it is; no lid.
         if (face == 2)
         {
             return nothingWall();
         }
         float depth = water.size.y;
-        half = float3(water.size.x * 0.5, (depth + 0.5) * 0.5, water.size.z * 0.5);
-        centre = float3(0.0, (0.5 - depth) * 0.5, 0.0);
+        float reach = 0.5 + frame->ocean.waveHeight * max(water.waves, 0.0);
+        half = float3(water.size.x * 0.5, (depth + reach) * 0.5, water.size.z * 0.5);
+        centre = float3(0.0, (reach - depth) * 0.5, 0.0);
     }
     else
     {

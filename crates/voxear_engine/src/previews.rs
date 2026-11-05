@@ -5,7 +5,8 @@
 //!
 //! A material shows on a sphere; a prefab as all its Objs' meshes where
 //! they sit in it; a model as all its nodes; and a mesh on its own, in the
-//! default material. The easy way to a preview is
+//! default material. A picture shows as itself, a thumbnail of it decoded
+//! on a thread of its own, so a list of large pictures does not stall. The easy way to a preview is
 //! [`AssetPreviews::image`]; the advanced one is [`preview_parts`] and
 //! [`Renderer::add_preview`] with [`PreviewOptions`] of one's own: any
 //! background, how the object is turned and moved, zoom, field of view and
@@ -14,12 +15,16 @@
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
+    sync::mpsc::{Receiver, TryRecvError},
 };
 
 use anyhow::{Context, Result, bail};
 use voxear_assets::{AssetKind, AssetRef};
 use voxear_core::math::Mat4;
-use voxear_render::{MeshRenderer, PreviewId, PreviewImage, PreviewOptions, PreviewPart, Primitive, Renderer};
+use voxear_render::{
+    MeshRenderer, PreviewId, PreviewImage, PreviewOptions, PreviewPart, Primitive, Renderer, TextureSource,
+};
+use voxear_rhi::TextureId;
 
 use crate::{
     content::{Content, MaterialSource},
@@ -107,6 +112,18 @@ fn prefab_parts(objs: &[(Option<usize>, Mat4, Option<MeshRenderer>)]) -> Vec<Pre
 pub struct AssetPreviews {
     /// `None` for an asset with nothing to show, so it is not tried again.
     made: HashMap<(String, u32), Option<PreviewId>>,
+    /// Pictures' thumbnails, by reference, at any size.
+    thumbnails: HashMap<String, Thumbnail>,
+}
+
+/// The longest side of a picture's thumbnail, in pixels.
+const THUMBNAIL: u32 = 128;
+
+/// A picture's thumbnail: being decoded, or uploaded, `None` for a picture
+/// that could not be read.
+enum Thumbnail {
+    Decoding(Receiver<Option<image::RgbaImage>>),
+    Made(Option<(TextureId, u32)>),
 }
 
 impl AssetPreviews {
@@ -119,6 +136,9 @@ impl AssetPreviews {
         reference: &str,
         size: u32,
     ) -> Option<PreviewImage> {
+        if let Some(path) = picture_path(content, reference) {
+            return self.thumbnail(renderer, reference, path);
+        }
         let key = (reference.to_string(), size);
         let id = match self.made.get(&key) {
             Some(made) => *made,
@@ -134,20 +154,51 @@ impl AssetPreviews {
         renderer.preview(id?)
     }
 
+    /// A picture's thumbnail: started on a thread the first time, and
+    /// uploaded once it is decoded.
+    fn thumbnail(&mut self, renderer: &mut Renderer, reference: &str, file: PathBuf) -> Option<PreviewImage> {
+        let thumbnail = self.thumbnails.entry(reference.to_string()).or_insert_with(|| {
+            let (send, receive) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let decoded = image::open(&file).ok().map(|picture| picture.thumbnail(THUMBNAIL, THUMBNAIL).to_rgba8());
+                let _ = send.send(decoded);
+            });
+            Thumbnail::Decoding(receive)
+        });
+        if let Thumbnail::Decoding(receive) = thumbnail {
+            let decoded = match receive.try_recv() {
+                Ok(decoded) => decoded,
+                Err(TryRecvError::Empty) => return None,
+                Err(TryRecvError::Disconnected) => None,
+            };
+            let uploaded = decoded.and_then(|picture| {
+                let (width, height) = picture.dimensions();
+                let source = TextureSource { name: reference, width, height, rgba: picture.as_raw(), srgb: true };
+                renderer.add_texture(&source).ok().map(|texture| (texture, width.max(height)))
+            });
+            *thumbnail = Thumbnail::Made(uploaded);
+        }
+        let Thumbnail::Made(Some((texture, size))) = thumbnail else { return None };
+        Some(PreviewImage { texture: *texture, uv: [0.0, 0.0, 1.0, 1.0], size: *size })
+    }
+
     /// Whether a preview of an asset at `size` was asked for already, so
     /// asking again loads nothing: for spreading new ones over frames.
     pub fn has(&self, reference: &str, size: u32) -> bool {
-        self.made.contains_key(&(reference.to_string(), size))
+        self.made.contains_key(&(reference.to_string(), size)) || self.thumbnails.contains_key(reference)
     }
 
     /// Whether an asset can have a preview, by its kind.
     pub fn shows(kind: AssetKind) -> bool {
-        matches!(kind, AssetKind::Material | AssetKind::Prefab | AssetKind::Model)
+        matches!(kind, AssetKind::Material | AssetKind::Prefab | AssetKind::Model | AssetKind::Texture)
     }
 
     /// Draws an asset's previews again, as after it changed, or lets them go
     /// when it has nothing to show any more.
     pub fn refresh(&mut self, content: &mut Content, renderer: &mut Renderer, reference: &str) {
+        if let Some(Thumbnail::Made(Some((texture, _)))) = self.thumbnails.remove(reference) {
+            renderer.free_texture(texture);
+        }
         let sizes: Vec<(u32, Option<PreviewId>)> =
             self.made.iter().filter(|((r, _), _)| r == reference).map(|((_, size), id)| (*size, *id)).collect();
         for (size, id) in sizes {
@@ -171,7 +222,19 @@ impl AssetPreviews {
         for id in self.made.drain().filter_map(|(_, id)| id) {
             renderer.free_preview(id);
         }
+        for thumbnail in self.thumbnails.drain().map(|(_, thumbnail)| thumbnail) {
+            if let Thumbnail::Made(Some((texture, _))) = thumbnail {
+                renderer.free_texture(texture);
+            }
+        }
     }
+}
+
+/// The file of the picture asset `reference` names, when it names one.
+fn picture_path(content: &Content, reference: &str) -> Option<PathBuf> {
+    let guid = content.parse(reference).ok()?.guid()?;
+    let entry = content.db().get(guid).filter(|entry| entry.kind == AssetKind::Texture)?;
+    Some(content.db().file(&entry.path))
 }
 
 /// The previews a game's scripts asked for (see `Voxear.Preview`), and

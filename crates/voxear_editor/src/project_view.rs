@@ -730,12 +730,13 @@ impl ProjectView {
         Some(contents.item(entry))
     }
 
-    /// The open folder's materials, prefabs and models, by path: what can
-    /// show a preview, at [`preview_size`](Self::preview_size). As tiles,
-    /// only those on screen, so a big folder asks for a screenful at a time.
+    /// The open folder's materials, prefabs, models and pictures, by path:
+    /// what can show a preview, at [`preview_size`](Self::preview_size). As
+    /// tiles, only those on screen, so a big folder asks for a screenful at
+    /// a time.
     pub fn previewable(&self, ui: &Ui) -> Vec<String> {
         let contents = self.contents.borrow();
-        let kinds = |kind| matches!(kind, AssetKind::Material | AssetKind::Prefab | AssetKind::Model);
+        let kinds = voxear_engine::previews::AssetPreviews::shows;
         let shown: Vec<Entry> = if contents.columns == 0 {
             contents.listing.clone()
         } else {

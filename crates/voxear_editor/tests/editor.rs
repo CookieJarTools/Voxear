@@ -3140,6 +3140,8 @@ fn assets_show_previews_in_the_project_fields_picker_and_inspector() {
     for (name, color) in [("Brick", "[0.7, 0.3, 0.2]"), ("Moss", "[0.2, 0.6, 0.25]")] {
         std::fs::write(dir.path().join(format!("Materials/{name}.material")), format!("color = {color}\n")).unwrap();
     }
+    let rust = image::RgbaImage::from_pixel(256, 256, image::Rgba([180, 90, 40, 255]));
+    rust.save(dir.path().join("Materials/Rust.png")).unwrap();
     let project = Project::open(dir.path()).unwrap();
     let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
     frame(&mut editor, &mut renderer);
@@ -3153,6 +3155,15 @@ fn assets_show_previews_in_the_project_fields_picker_and_inspector() {
     }
     assert!(tile_preview(&editor.ui, "Brick.material").is_some(), "the material on a sphere");
     assert!(tile_preview(&editor.ui, "Moss.material").is_some());
+    // A picture shows itself, once a thumbnail of it is decoded on a thread of its own.
+    for _ in 0..60 {
+        if tile_preview(&editor.ui, "Rust.png").is_some() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        frame(&mut editor, &mut renderer);
+    }
+    assert!(tile_preview(&editor.ui, "Rust.png").is_some(), "a picture's tile shows the picture");
 
     // Selected, it shows large in the Inspector, and a drag turns it.
     let brick = tile(&editor.ui, "Brick.material").unwrap();

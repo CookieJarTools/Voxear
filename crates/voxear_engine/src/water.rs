@@ -126,10 +126,21 @@ pub fn sample(world: &World, at: Vec3) -> Option<WaterPoint> {
     sample_wet(world, world.resource::<PhysicsScene>(), at)
 }
 
+/// How deep the sea is round `at` for how much its waves die away there:
+/// the deepest within a couple of metres, so a rock or post standing in
+/// deep water does not calm the waves round it as a beach would (as
+/// `seaDepth` in the water shader).
+fn sea_depth(world: &World, physics: Option<&PhysicsScene>, level: f32, at: Vec3) -> f32 {
+    [Vec3::ZERO, Vec3::X, Vec3::NEG_X, Vec3::Z, Vec3::NEG_Z]
+        .into_iter()
+        .map(|side| depth_under(world, physics, level, at + side * 2.0))
+        .fold(f32::NEG_INFINITY, f32::max)
+}
+
 /// How deep the sea is under `at`: from `level` down to the first collider
 /// under it that is not floating, by a ray from above the waves; deep where
 /// there is none, or physics has not started.
-fn sea_depth(world: &World, physics: Option<&PhysicsScene>, level: f32, at: Vec3) -> f32 {
+fn depth_under(world: &World, physics: Option<&PhysicsScene>, level: f32, at: Vec3) -> f32 {
     let Some(physics) = physics else { return f32::INFINITY };
     let mut from = Vec3::new(at.x, level + 50.0, at.z);
     for _ in 0..4 {

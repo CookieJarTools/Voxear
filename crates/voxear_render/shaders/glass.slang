@@ -14,18 +14,61 @@ static const float GLASS_BEND = 0.06;
 // How many of the copy's mips the roughest glass blurs through.
 static const float GLASS_BLUR_MIPS = 6.0;
 
+// One mip of the copy at `uv`, read as a cubic B-spline rather than
+// bilinearly: four bilinear reads weighted so the texels blend smoothly into
+// one another (Sigg and Hadwiger, GPU Gems 2, 20). Read bilinearly, a
+// coarse mip's texels showed through as squares, and a lamp behind
+// frosted glass was a block of pixels rather than a soft glow.
+float3 glassSmooth(Texture2D texture, float2 uv, float level)
+{
+    uint2 full;
+    uint mips;
+    texture.GetDimensions(0, full.x, full.y, mips);
+    float2 size = max(float2(full >> uint(level)), 1.0);
+    float2 texel = uv * size - 0.5;
+    float2 f = frac(texel);
+    float2 corner = floor(texel) + 0.5;
+    float2 f2 = f * f;
+    float2 f3 = f2 * f;
+    float2 w0 = (1.0 - 3.0 * f + 3.0 * f2 - f3) / 6.0;
+    float2 w1 = (4.0 - 6.0 * f2 + 3.0 * f3) / 6.0;
+    float2 w2 = (1.0 + 3.0 * f + 3.0 * f2 - 3.0 * f3) / 6.0;
+    float2 w3 = f3 / 6.0;
+    float2 g0 = w0 + w1;
+    float2 g1 = w2 + w3;
+    float2 t0 = (corner - 1.0 + w1 / g0) / size;
+    float2 t1 = (corner + 1.0 + w3 / g1) / size;
+    SamplerState linear = samplers[SAMPLER_LINEAR_CLAMP];
+    return (texture.SampleLevel(linear, float2(t0.x, t0.y), level).rgb * g0.x
+            + texture.SampleLevel(linear, float2(t1.x, t0.y), level).rgb * g1.x) * g0.y
+        + (texture.SampleLevel(linear, float2(t0.x, t1.y), level).rgb * g0.x
+            + texture.SampleLevel(linear, float2(t1.x, t1.y), level).rgb * g1.x) * g1.y;
+}
+
+// As glassSmooth, between the two mips either side of `blur`.
+float3 glassSmoothBetween(Texture2D texture, float2 uv, float blur)
+{
+    float below = floor(blur);
+    float3 near = glassSmooth(texture, uv, below);
+    float part = blur - below;
+    if (part < 0.01)
+    {
+        return near;
+    }
+    return lerp(near, glassSmooth(texture, uv, below + 1.0), part);
+}
+
 // What lies behind a pane at `uv`, blurred through the copy's mips as far as
 // `blur`: a ring of samples a texel of that mip apart round the middle, so a
 // coarse mip reads as a soft blur rather than as blocks.
 float3 glassBehind(uint copy, float2 uv, float blur)
 {
     Texture2D texture = textures[NonUniformResourceIndex(copy)];
-    SamplerState linear = samplers[SAMPLER_LINEAR_CLAMP];
-    float3 total = texture.SampleLevel(linear, uv, blur).rgb;
     if (blur < 0.5)
     {
-        return total;
+        return texture.SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], uv, blur).rgb;
     }
+    float3 total = glassSmoothBetween(texture, uv, blur);
     uint2 size;
     uint mips;
     texture.GetDimensions(0, size.x, size.y, mips);
@@ -34,7 +77,7 @@ float3 glassBehind(uint copy, float2 uv, float blur)
     for (uint i = 0; i < RING; i++)
     {
         float angle = (float(i) + 0.5) * (2.0 * PI / float(RING));
-        total += texture.SampleLevel(linear, uv + float2(cos(angle), sin(angle)) * step, blur).rgb;
+        total += glassSmoothBetween(texture, uv + float2(cos(angle), sin(angle)) * step, blur);
     }
     return total / float(RING + 1);
 }
@@ -106,8 +149,11 @@ float4 glassFragment(VertexOut input) : SV_Target0
 }
 
 // One mip of the copy of the picture glass is drawn over: the first the
-// picture itself, each after it the average of the four texels under it in
-// the one before.
+// picture itself, each after it the one before filtered down with the
+// thirteen reads Jimenez gives for bloom (2014), which weigh a wide tent
+// round each texel. Each the average of the four texels under it, a bright
+// lamp stayed in one texel or jumped to the next as it moved, and showed
+// through frosted glass as a square.
 [shader("compute")]
 [numthreads(8, 8, 1)]
 void glassCopyMain(uint3 id : SV_DispatchThreadID)
@@ -116,7 +162,25 @@ void glassCopyMain(uint3 id : SV_DispatchThreadID)
     {
         return;
     }
+    Texture2D texture = textures[NonUniformResourceIndex(push.texture)];
+    SamplerState linear = samplers[SAMPLER_LINEAR_CLAMP];
     float2 uv = (float2(id.xy) + 0.5) / float2(push.size);
-    float4 color = textures[NonUniformResourceIndex(push.texture)].SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], uv, float(push.level));
+    // The first mip copies the picture, which is as big as it is; each after reads the mip `level`, twice its size.
+    uint2 full;
+    uint mips;
+    texture.GetDimensions(0, full.x, full.y, mips);
+    if (all(full == push.size))
+    {
+        storageImagesRgba16f[push.output][id.xy] = texture.SampleLevel(linear, uv, 0.0);
+        return;
+    }
+    // A texel of the mip read, which is twice as fine as this one.
+    float2 t = 0.5 / float2(push.size);
+    float level = float(push.level);
+    let at = (float2 offset) => texture.SampleLevel(linear, uv + offset * t, level);
+    float4 middle = at(float2(-1.0, -1.0)) + at(float2(1.0, -1.0)) + at(float2(-1.0, 1.0)) + at(float2(1.0, 1.0));
+    float4 corners = at(float2(-2.0, -2.0)) + at(float2(2.0, -2.0)) + at(float2(-2.0, 2.0)) + at(float2(2.0, 2.0));
+    float4 sides = at(float2(0.0, -2.0)) + at(float2(-2.0, 0.0)) + at(float2(2.0, 0.0)) + at(float2(0.0, 2.0));
+    float4 color = middle * 0.125 + corners * 0.03125 + sides * 0.0625 + at(float2(0.0, 0.0)) * 0.125;
     storageImagesRgba16f[push.output][id.xy] = color;
 }

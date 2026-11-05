@@ -840,8 +840,8 @@ Done so far:
 - **The atmosphere:** `[sky] mode = "atmosphere"`, a physically based sky as Hillaire models it (2020), with
   transmittance, multiple scattering, the sky view and aerial perspective drawn as tables, so the sky reddens at
   sunset, lights the scene from its own colours and hazes what lies far off. About 0.06 ms a frame.
-- Still to come for lights: shadows from point, spot and area lights; the C# `Light` API; and the sky's settings
-  in the editor rather than only the scene file.
+- Still to come for lights: shadows from point, spot and area lights; and the C# `Light` API. (The sky's settings
+  are in the editor now, on the Lighting page.)
 - **Volumetric fog:** `[post.fog] volumetric = true` lights the height fog near the camera as a 128×72×64 froxel
   volume: the sun through its shadow cascades, so shafts show between shadows, every clustered light, and the
   sky, with Henyey-Greenstein scattering. Each froxel is sampled at a jittered depth and blended with last frame's
@@ -928,8 +928,10 @@ Done so far:
   `ray_tracing` is gone. Fog, reflections and exposure's warm-up read the probes.
 - **Glass:** a material setting, `glass = true`, with `ior`; `builtin:glass` is clear glass in every project.
   Glass instances are sorted after the opaque ones, past what culling, shadows and the GI's rays see, farthest
-  first. After the sky, the picture is copied into an image with seven mips, and each pane is drawn over it: what
-  lies behind, moved by the normal's tilt in view, blurred through the mips by roughness with a ring of samples,
+  first. After the sky, the picture is copied into an image with seven mips, each filtered down from the one before
+  with Jimenez's thirteen-read tent, and each pane is drawn over it: what lies behind, moved by the normal's tilt in
+  view, blurred through the mips by roughness with a ring of B-spline reads, so a lamp behind frosted glass is a
+  soft glow rather than a square,
   tinted by the colour and dimmed by Fresnel, plus the surroundings, the sun and the lamps reflected. The editor's
   material inspector has Glass and IOR, and the Material menu lists the built-in Glass. GPU tests: clear glass
   shows what lies behind it, tinted glass colours it, rough glass blurs it.

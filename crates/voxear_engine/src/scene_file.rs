@@ -482,7 +482,7 @@ pub enum LightData {
         #[serde(default = "default_range")]
         range: f32,
         /// Whether it casts shadows (see `Light::shadows`).
-        #[serde(default, skip_serializing_if = "is_false")]
+        #[serde(default = "yes", skip_serializing_if = "is_true")]
         shadows: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         profile: Option<String>,
@@ -498,7 +498,7 @@ pub enum LightData {
         #[serde(default = "default_range")]
         range: f32,
         /// Whether it casts shadows (see `Light::shadows`).
-        #[serde(default, skip_serializing_if = "is_false")]
+        #[serde(default = "yes", skip_serializing_if = "is_true")]
         shadows: bool,
         #[serde(default = "default_inner")]
         inner_angle: f32,
@@ -521,7 +521,7 @@ pub enum LightData {
         #[serde(default = "default_range")]
         range: f32,
         /// Whether it casts shadows (see `Light::shadows`).
-        #[serde(default, skip_serializing_if = "is_false")]
+        #[serde(default = "yes", skip_serializing_if = "is_true")]
         shadows: bool,
         #[serde(default = "one")]
         width: f32,
@@ -539,7 +539,7 @@ pub enum LightData {
         #[serde(default = "default_range")]
         range: f32,
         /// Whether it casts shadows (see `Light::shadows`).
-        #[serde(default, skip_serializing_if = "is_false")]
+        #[serde(default = "yes", skip_serializing_if = "is_true")]
         shadows: bool,
         #[serde(default = "half")]
         radius: f32,
@@ -556,7 +556,7 @@ pub enum LightData {
         #[serde(default = "default_range")]
         range: f32,
         /// Whether it casts shadows (see `Light::shadows`).
-        #[serde(default, skip_serializing_if = "is_false")]
+        #[serde(default = "yes", skip_serializing_if = "is_true")]
         shadows: bool,
         #[serde(default = "one")]
         length: f32,
@@ -1688,6 +1688,14 @@ fn is_false(v: &bool) -> bool {
     !*v
 }
 
+fn yes() -> bool {
+    true
+}
+
+fn is_true(v: &bool) -> bool {
+    *v
+}
+
 fn is_one_f32(v: &f32) -> bool {
     *v == 1.0
 }
@@ -1875,15 +1883,16 @@ mod tests {
     }
 
     #[test]
-    fn a_lights_shadows_read_and_write_back_and_are_left_out_when_off() {
+    fn a_lights_shadows_are_on_unless_turned_off_and_left_out_when_on() {
         for kind in ["point", "spot", "rectangle", "disc", "tube"] {
-            let casting: LightData = toml::from_str(&format!("type = \"{kind}\"\nshadows = true")).unwrap();
-            assert!(light_component(&casting).shadows, "{kind}");
-            assert_eq!(toml::from_str::<LightData>(&toml::to_string(&casting).unwrap()).unwrap(), casting);
             let plain: LightData = toml::from_str(&format!("type = \"{kind}\"")).unwrap();
-            assert!(!light_component(&plain).shadows, "{kind} casts none unless told to");
+            assert!(light_component(&plain).shadows, "{kind} casts shadows unless told not to");
             assert!(!toml::to_string(&plain).unwrap().contains("shadows"));
+            let none: LightData = toml::from_str(&format!("type = \"{kind}\"\nshadows = false")).unwrap();
+            assert!(!light_component(&none).shadows, "{kind}");
+            assert_eq!(toml::from_str::<LightData>(&toml::to_string(&none).unwrap()).unwrap(), none);
         }
+        assert!(default_light(LightKind::Point).shadows, "a new light casts them too");
     }
 
     #[test]

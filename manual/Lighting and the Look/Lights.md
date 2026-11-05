@@ -29,7 +29,7 @@ Select the light, and the Inspector shows:
 | Temperature | With Filter and Temperature, the light's colour temperature in kelvin, as below |
 | Intensity | How bright it is |
 | Range | How far the light reaches, in metres, from the nearest point of its shape. It fades out smoothly by then |
-| Shadows | Whether the light casts shadows, for any light but a directional one. Off by default: see below |
+| Shadows | Whether the light casts shadows, for any light but a directional one. On by default: see below |
 | Inner angle, Outer angle | A spot light's cone, in degrees: full brightness inside the inner angle, fading to nothing at the outer |
 | Width, Height | A rectangle's size, in metres |
 | Radius | A disc's or a tube's radius, in metres |
@@ -85,7 +85,7 @@ The profile's straight-ahead direction is the way the light faces, along its Obj
 
 ## Shadows from lamps
 
-Turn on a light's **Shadows** and what stands in its way casts a shadow: a candle behind a pillar lights the floor round the pillar but not behind it. Without them, a light shines through walls, curtains and everything else, which costs nothing and often looks fine for small, soft lights.
+Lights cast shadows unless you turn their **Shadows** off: what stands in a light's way casts a shadow, so a candle behind a pillar lights the floor round the pillar but not behind it. With Shadows off, a light shines through walls, curtains and everything else, which costs nothing and often looks fine for small, soft lights.
 
 Each light that casts shadows draws what is round it again, so they cost more than the light itself:
 
@@ -100,7 +100,7 @@ Nothing within 10 centimetres of a light casts its shadow, or just past its own 
 [obj.light]
 type = "point"
 temperature = 1900
-shadows = true
+shadows = false
 ```
 
 ## The sun

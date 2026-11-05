@@ -840,8 +840,8 @@ Done so far:
 - **The atmosphere:** `[sky] mode = "atmosphere"`, a physically based sky as Hillaire models it (2020), with
   transmittance, multiple scattering, the sky view and aerial perspective drawn as tables, so the sky reddens at
   sunset, lights the scene from its own colours and hazes what lies far off. About 0.06 ms a frame.
-- **Shadows from point, spot, area and tube lights:** a light's `shadows = true` (Shadows in the Inspector, off by
-  default) draws what is in its reach into views of a 4096×3072 atlas of its own, 512 texels each: a spot light one
+- **Shadows from point, spot, area and tube lights:** a light's `shadows` (Shadows in the Inspector, on by
+  default; `shadows = false` turns them off) draws what is in its reach into views of a 4096×3072 atlas of its own, 512 texels each: a spot light one
   along its cone, any other six, a cube's faces, each a little wider so the filter stays inside it at the rim. The
   eight nearest the camera, 48 views between them, cast shadows in a frame; each has a list of its own that the
   culling fills by its reach and draws into each of its views, on every culling path. Without depth clamping, so

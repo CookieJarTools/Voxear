@@ -96,8 +96,8 @@ pub struct Light {
     /// degree. Only the sun's shadows soften yet.
     pub softness: f32,
     /// Whether a point, spot, area or tube light casts shadows, as Unity's
-    /// Shadow Type. Each that does draws what is round it again (six times
-    /// over for any but a spot light), so it is off by default; the nearest
+    /// Shadow Type; on by default. Each that does draws what is round it
+    /// again (six times over for any but a spot light), so the nearest
     /// `LOCAL_SHADOW_LIGHTS` to the camera cast them in a frame. The sun
     /// always casts its own.
     pub shadows: bool,
@@ -179,7 +179,7 @@ impl Light {
             cookie: None,
             cookie_size: 10.0,
             softness: 0.5,
-            shadows: false,
+            shadows: true,
             shadow_tint: Vec3::ZERO,
             profile: None,
             body: SkyBody::Sun,

@@ -1653,7 +1653,7 @@ fn boxed_light_render(light: Light, meshlets: Meshlets) -> Option<Vec<u8>> {
 }
 
 #[test]
-fn local_lights_cast_shadows_when_told_to() {
+fn local_lights_cast_shadows_unless_told_not_to() {
     let white = Vec3::ONE;
     let kinds = [
         Light::point(white, 6.0, 10.0),
@@ -1663,8 +1663,9 @@ fn local_lights_cast_shadows_when_told_to() {
     ];
     let paths = [Meshlets::Off, Meshlets::Compute, Meshlets::MeshShaders];
     for (light, meshlets) in kinds.into_iter().flat_map(|light| paths.map(|meshlets| (light, meshlets))) {
-        let shadowing = Light { shadows: true, ..light };
-        let (Some(open), Some(shadowed)) = (boxed_light_render(light, meshlets), boxed_light_render(shadowing, meshlets))
+        assert!(light.shadows, "{:?} casts shadows by default", light.kind);
+        let unshadowed = Light { shadows: false, ..light };
+        let (Some(open), Some(shadowed)) = (boxed_light_render(unshadowed, meshlets), boxed_light_render(light, meshlets))
         else {
             continue;
         };

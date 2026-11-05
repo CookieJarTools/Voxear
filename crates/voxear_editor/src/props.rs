@@ -220,6 +220,7 @@ pub enum Prop {
     OceanWind,
     OceanFetch,
     OceanChoppiness,
+    OceanWaveScale,
     OceanDeep,
     OceanScatter,
     OceanFoam,
@@ -422,6 +423,7 @@ impl Prop {
             | Prop::OceanWind
             | Prop::OceanFetch
             | Prop::OceanChoppiness
+            | Prop::OceanWaveScale
             | Prop::OceanDeep
             | Prop::OceanScatter
             | Prop::OceanFoam
@@ -575,6 +577,7 @@ impl Prop {
             Prop::OceanWind => "wind",
             Prop::OceanFetch => "fetch",
             Prop::OceanChoppiness => "choppiness",
+            Prop::OceanWaveScale => "wave_scale",
             Prop::OceanDeep => "deep",
             Prop::OceanScatter => "scatter",
             Prop::OceanFoam => "foam",
@@ -870,6 +873,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
                 props.extend([Prop::OceanSwellWind, Prop::OceanSwellFetch, Prop::OceanWind, Prop::OceanFetch]);
             }
             props.extend([
+                Prop::OceanWaveScale,
                 Prop::OceanChoppiness,
                 Prop::OceanDeep,
                 Prop::OceanScatter,
@@ -1080,6 +1084,7 @@ pub fn label(prop: &Prop) -> String {
         Prop::OceanWind => "Wind",
         Prop::OceanFetch => "Fetch",
         Prop::OceanChoppiness => "Choppiness",
+        Prop::OceanWaveScale => "Wave scale",
         Prop::OceanDeep => "Deep",
         Prop::OceanScatter => "Scatter",
         Prop::OceanFoam => "Foam",
@@ -1573,6 +1578,7 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::OceanWind => Value::Number(world.get::<Ocean>(entity)?.wind),
         Prop::OceanFetch => Value::Number(world.get::<Ocean>(entity)?.fetch),
         Prop::OceanChoppiness => Value::Number(world.get::<Ocean>(entity)?.choppiness),
+        Prop::OceanWaveScale => Value::Number(world.get::<Ocean>(entity)?.wave_scale),
         Prop::OceanDeep => Value::Color(world.get::<Ocean>(entity)?.deep.map(round3)),
         Prop::OceanScatter => Value::Color(world.get::<Ocean>(entity)?.scatter.map(round3)),
         Prop::OceanFoam => Value::Number(world.get::<Ocean>(entity)?.foam),
@@ -2333,6 +2339,7 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         (Prop::OceanWind, Value::Number(n)) => with(world, entity, |o: &mut Ocean| o.wind = n.clamp(0.1, 40.0)),
         (Prop::OceanFetch, Value::Number(n)) => with(world, entity, |o: &mut Ocean| o.fetch = n.clamp(0.1, 2000.0)),
         (Prop::OceanChoppiness, Value::Number(n)) => with(world, entity, |o: &mut Ocean| o.choppiness = n.clamp(0.0, 1.5)),
+        (Prop::OceanWaveScale, Value::Number(n)) => with(world, entity, |o: &mut Ocean| o.wave_scale = n.clamp(0.0, 4.0)),
         (Prop::OceanDeep, Value::Color(color)) => with(world, entity, |o: &mut Ocean| o.deep = color.map(|c| c.clamp(0.0, 1.0))),
         (Prop::OceanScatter, Value::Color(color)) => {
             with(world, entity, |o: &mut Ocean| o.scatter = color.map(|c| c.clamp(0.0, 1.0)))

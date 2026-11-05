@@ -90,6 +90,10 @@ pub struct Ocean {
     pub fetch: f32,
     /// How sharp the crests are: 0 for round waves, 1 as real ones.
     pub choppiness: f32,
+    /// How much higher the waves are than real ones: 1 as the weather makes
+    /// them, 2 twice as high, as Sea of Thieves' are. Their crests fold no
+    /// harder, so they break into no more foam.
+    pub wave_scale: f32,
     /// The colour of deep water, sRGB.
     pub deep: [f32; 3],
     /// The colour light takes through the thin tops of the waves, sRGB.
@@ -113,6 +117,7 @@ impl Default for Ocean {
             wind: 7.0,
             fetch: 20.0,
             choppiness: 0.9,
+            wave_scale: 1.0,
             // Sea of Thieves' blues: deep and saturated, turquoise through the crests.
             deep: [0.0, 0.16, 0.32],
             scatter: [0.1, 0.78, 0.72],
@@ -146,6 +151,8 @@ pub struct SeaState {
     /// Unit, across the ground (x, z).
     pub direction: [f64; 2],
     pub choppiness: f32,
+    /// How much higher than the spectrum makes them every wave is.
+    pub scale: f64,
 }
 
 impl Ocean {
@@ -162,12 +169,14 @@ impl Ocean {
         let along = rotation * Vec3::Z;
         let flat = Vec3::new(along.x, 0.0, along.z).normalize_or(Vec3::Z);
         let km = |fetch: f32| f64::from(fetch.max(0.1)) * 1000.0;
+        let scale = self.wave_scale.clamp(0.0, 4.0);
         SeaState {
             swell: Waves { speed: f64::from(swell.max(0.1)), fetch: km(swell_fetch), gamma: 3.3, spread: 20.0 },
             wind: Waves { speed: f64::from(wind.max(0.1)), fetch: km(fetch), gamma: 3.3, spread: 4.0 },
             direction: [f64::from(flat.x), f64::from(flat.z)],
-            // A storm's crests sharper still.
-            choppiness: (self.choppiness * if self.weather == Weather::Stormy { 1.3 } else { 1.0 }).clamp(0.0, 1.5),
+            // A storm's crests sharper still; taller waves pinched no further sideways, so they fold as before.
+            choppiness: (self.choppiness * if self.weather == Weather::Stormy { 1.3 } else { 1.0 }).clamp(0.0, 1.5) / scale.max(1.0),
+            scale: f64::from(scale),
         }
     }
 }
@@ -293,7 +302,7 @@ pub fn initial_wave(sea: &SeaState, cascade: usize, n: i32, m: i32) -> Complex {
     let damping = (-k * k * 0.01 * 0.01).exp();
     // A quarter: half for each of the wave's two random parts, and half again as each wave is summed with its
     // mirror, h0(k) and h0*(-k), which would double its energy.
-    let amplitude = (density * damping * dk * dk * 0.25).sqrt();
+    let amplitude = (density * damping * dk * dk * 0.25).sqrt() * sea.scale;
     let (u1, u2) = uniforms(cascade, n, m);
     // Box–Muller: two normal numbers from two uniform ones.
     let radius = (-2.0 * u1.ln()).sqrt();

@@ -1862,7 +1862,7 @@ impl View {
                 (gpu, bindless),
                 (&mut self.ocean, slot),
                 (extracted.ocean, &extracted.water_bodies),
-                (extent, setup.time),
+                (extent, setup.time, camera),
             )?),
             false => None,
         };

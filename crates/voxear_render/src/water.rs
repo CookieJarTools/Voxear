@@ -34,6 +34,10 @@ const QUADS: u32 = 64;
 const RINGS: u32 = 12;
 /// A Pool's grid, as `POOL_QUADS` in `shaders/water.slang`.
 const POOL_QUADS: u32 = 64;
+/// The foam round the camera: this many texels a side, this many metres
+/// each, as `FOAM_TEXELS` and `FOAM_TEXEL` in `shaders/water.slang`.
+const FOAM_TEXELS: u32 = 512;
+const FOAM_TEXEL: f32 = 0.5;
 
 /// A view's sea: its spectrum, written when the sea changes, and the FFT's
 /// rows.
@@ -48,6 +52,8 @@ pub(crate) struct OceanBuffers {
     wave_height: f32,
     /// Which set of wave images this frame writes.
     parity: bool,
+    /// Where last frame's foam's first texel was, if there was any.
+    foam_origin: Option<[f32; 2]>,
 }
 
 impl OceanBuffers {
@@ -60,7 +66,7 @@ impl OceanBuffers {
         let bodies = (0..slots)
             .map(|slot| gpu.create_buffer(&named(&format!("water bodies {slot}")), size, usage, MemoryLocation::CpuToGpu))
             .collect::<Result<_>>()?;
-        Ok(Self { spectrum, fft, bodies, sea: None, wave_height: 0.0, parity: false })
+        Ok(Self { spectrum, fft, bodies, sea: None, wave_height: 0.0, parity: false, foam_origin: None })
     }
 
     pub fn into_buffers(self) -> Vec<Buffer> {
@@ -112,6 +118,9 @@ pub struct Water {
     second: Option<(ImageId, TextureId, Vec<StorageImageId>, ImageId)>,
     size: [u32; 2],
     pub frame: GpuOcean,
+    /// The foam round the camera: this frame's, last frame's, and where last
+    /// frame's first texel was (NaN for none).
+    foam: (ImageId, ImageId, [f32; 2]),
     /// Whether the sea is drawn, how many Pools, and how many bodies in
     /// all, each with walls of water.
     sea: bool,
@@ -130,7 +139,7 @@ impl Water {
         (gpu, bindless): (&Gpu, &mut Bindless),
         (buffers, slot): (&mut OceanBuffers, usize),
         (found, bodies): (Option<(Ocean, f32, Quat)>, &WaterBodies),
-        (extent, time): (vk::Extent2D, f32),
+        (extent, time, camera): (vk::Extent2D, f32, voxear_core::math::Vec3),
     ) -> Result<Self> {
         let (ocean, level, rotation) = found.unwrap_or((Ocean::default(), 0.0, Quat::IDENTITY));
         let ocean = &ocean;
@@ -141,11 +150,18 @@ impl Water {
         let usage = vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED;
         let mut desc = ImageDesc::new(N as u32, N as u32, WAVE_FORMAT, usage).with_mips();
         desc.mip_levels = WAVE_MIPS;
+        let foam_desc = ImageDesc::new(FOAM_TEXELS, FOAM_TEXELS, vk::Format::R32_SFLOAT, usage);
+        let (foam_a, foam_b) = (fg.history_image(gpu, bindless, "ocean foam a", foam_desc)?, fg.history_image(gpu, bindless, "ocean foam b", foam_desc)?);
+        let (foam_now, foam_then) = if buffers.parity { (foam_a, foam_b) } else { (foam_b, foam_a) };
         let mut wave = |name: &str, cascade: usize, set: bool| {
             let set = if set { "a" } else { "b" };
             fg.history_image(gpu, bindless, &format!("ocean {name} {cascade} {set}"), desc)
         };
         let (now, then) = (buffers.parity, !buffers.parity);
+        // Round the camera, on whole texels, so the foam does not swim as it follows.
+        let snap = |v: f32| (v / FOAM_TEXEL).floor() * FOAM_TEXEL - FOAM_TEXELS as f32 * FOAM_TEXEL * 0.5;
+        let foam_origin = [snap(camera.x), snap(camera.z)];
+        let previous_origin = buffers.foam_origin.replace(foam_origin).unwrap_or([f32::NAN; 2]);
         let (mut displacement, mut previous, mut slopes) = (Vec::new(), Vec::new(), Vec::new());
         for cascade in 0..CASCADES {
             displacement.push(wave("displacement", cascade, now)?);
@@ -188,7 +204,8 @@ impl Water {
             time: f64::from(time).rem_euclid(ocean::REPEAT_SECONDS) as f32,
             pools: bodies.pools,
             dries: bodies.bodies.len() as u32 - bodies.pools,
-            _pad: [0; 3],
+            foam_texture: fg.texture(foam_now).0,
+            foam_origin,
         };
         Ok(Self {
             displacement,
@@ -200,6 +217,7 @@ impl Water {
             copy_mips: (0..copy_desc.mip_levels as usize).map(|mip| fg.storage(copy, mip)).collect(),
             depth_copy,
             second,
+            foam: (foam_now, foam_then, previous_origin),
             size: [extent.width, extent.height],
             frame,
             sea: found.is_some(),
@@ -240,7 +258,7 @@ fn compute_barrier(ctx: &crate::graph::PassContext) {
 /// Records the sea's waves (the FFT, then the mips), then its surface over
 /// a copy of the picture and the depth so far.
 pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), water: Water, targets: WaterTargets) {
-    let Water { displacement, slopes, previous, fft, copy, copy_texture, copy_mips, depth_copy, second, size, sea, pools, bodies, .. } = water;
+    let Water { displacement, slopes, previous, fft, copy, copy_texture, copy_mips, depth_copy, second, foam, size, sea, pools, bodies, .. } = water;
     let storage = |fg: &mut FrameGraph<'_>, images: &[ImageId; CASCADES]| -> Vec<Vec<StorageImageId>> {
         images.iter().map(|&image| (0..WAVE_MIPS as usize).map(|mip| fg.storage(image, mip)).collect()).collect()
     };
@@ -286,8 +304,22 @@ pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), wat
         }
     });
 
+    // The foam round the camera: last frame's carried with the water, and what breaks now.
+    let (foam_now, foam_then, previous_origin) = foam;
+    let foam_storage = fg.storage(foam_now, 0);
+    let foam_then_texture = fg.texture(foam_then);
+    let mut foam_images = vec![(foam_now, ImageAccess::StorageWrite), (foam_then, ImageAccess::Sampled)];
+    foam_images.extend(displacement.iter().map(|&image| (image, ImageAccess::Sampled)));
+    fg.add_pass("Ocean foam", &foam_images, &[], move |ctx| {
+        let [x, z] = previous_origin.map(f32::to_bits);
+        let push = Push { output: foam_storage.0, textures: [foam_then_texture.0, x, z, 0], ..push };
+        bind(ctx, pipelines.ocean_foam, vk::PipelineBindPoint::COMPUTE, &push);
+        unsafe { ctx.gpu.device.cmd_dispatch(ctx.cmd, FOAM_TEXELS / 8, FOAM_TEXELS / 8, 1) };
+    });
+
     let WaterTargets { hdr, velocity, depth, sampled } = targets;
-    let waves: Vec<ImageId> = displacement.iter().chain(&slopes).chain(&previous).copied().collect();
+    let mut waves: Vec<ImageId> = displacement.iter().chain(&slopes).chain(&previous).copied().collect();
+    waves.push(foam_now);
     let layer = Layer { hdr, velocity, depth, sampled, waves, size };
     // The sea and the walls round its Dry Areas, over a copy of the picture so far.
     let dries = bodies - pools;

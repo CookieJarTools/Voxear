@@ -112,6 +112,7 @@ pub struct Pipelines {
     pub ocean_rows: vk::Pipeline,
     pub ocean_columns: vk::Pipeline,
     pub ocean_mip: vk::Pipeline,
+    pub ocean_foam: vk::Pipeline,
     pub water_depth_copy: vk::Pipeline,
     pub water: vk::Pipeline,
     pub water_pool: vk::Pipeline,
@@ -329,6 +330,7 @@ impl Pipelines {
             ocean_rows: create_compute_pipeline(gpu, layout, "Ocean rows", water, c"oceanRowsMain")?,
             ocean_columns: create_compute_pipeline(gpu, layout, "Ocean columns", water, c"oceanColumnsMain")?,
             ocean_mip: create_compute_pipeline(gpu, layout, "Ocean mips", water, c"oceanMipMain")?,
+            ocean_foam: create_compute_pipeline(gpu, layout, "Ocean foam", water, c"oceanFoamMain")?,
             water_depth_copy: create_compute_pipeline(gpu, layout, "Water depth copy", water, c"waterDepthCopyMain")?,
             water: graphics(&GraphicsPipelineDesc {
                 color_formats: &[HDR_FORMAT, VELOCITY_FORMAT],

@@ -324,7 +324,9 @@ struct Ocean
     // How many Pools, then Dry Areas, Buffers::waterBodies holds.
     uint pools;
     uint dries;
-    uint3 pad;
+    // The foam round the camera (water.slang's oceanFoamMain), and where its first texel's corner is.
+    uint foamTexture;
+    float2 foamOrigin;
 };
 
 // A Pool or a Dry Area (src/water_bodies.rs, GpuWaterBody): where it is, a Pool's footprint (x, z) or a Dry

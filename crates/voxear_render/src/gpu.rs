@@ -385,7 +385,10 @@ pub struct GpuOcean {
     /// How many Pools, then Dry Areas, `water_bodies` holds, in that order.
     pub pools: u32,
     pub dries: u32,
-    pub _pad: [u32; 3],
+    /// The foam round the camera (see `water`): its image, and where its
+    /// first texel's corner is, across the ground.
+    pub foam_texture: u32,
+    pub foam_origin: [f32; 2],
 }
 
 /// A Pool or a Dry Area (see `water_bodies`), as `WaterBody` in

@@ -190,6 +190,71 @@ void oceanMipMain(uint3 id : SV_DispatchThreadID)
     storageImagesRgba16f[push.output][id.xy] = sum * 0.25;
 }
 
+// The foam round the camera: a square of FOAM_TEXELS a side, FOAM_TEXEL
+// metres each, kept from frame to frame (as Crest's and Atlas's).
+static const uint FOAM_TEXELS = 512;
+static const float FOAM_TEXEL = 0.5;
+
+// How much foam a crest breaking at `rest` leaves behind: only where the
+// water folds well past where crest foam begins, so the big breakers trail
+// foam and the small ones' white is gone as they pass.
+float breakingAt(Frame* frame, float2 rest)
+{
+    float folded = 1.0;
+    for (uint c = 0; c < OCEAN_CASCADES; c++)
+    {
+        float4 d = textures[NonUniformResourceIndex(frame->ocean.displacement[c])].SampleLevel(samplers[SAMPLER_LINEAR_REPEAT], cascadeUv(frame, c, rest), 1.0);
+        folded += d.w - 1.0;
+    }
+    float threshold = 0.1 + 0.45 * frame->ocean.foam;
+    return frame->ocean.foam > 0.0 ? saturate((threshold - folded) / 0.3) : 0.0;
+}
+
+// One texel of the foam round the camera (storage image push.output): the
+// foam it had a frame ago, fading over a few seconds, and new foam where
+// crests break now. It is kept by where the water rests, as the surface is
+// drawn, so it rides the waves' orbits as the water does and stays behind as
+// a breaking crest runs on: a streak down the wave's back. Last frame's foam
+// in push.textures.x, its first texel's corner in the bits of
+// push.textures.yz, NaN on the first frame.
+[shader("compute")]
+[numthreads(8, 8, 1)]
+void oceanFoamMain(uint3 id : SV_DispatchThreadID)
+{
+    if (any(id.xy >= FOAM_TEXELS))
+    {
+        return;
+    }
+    Frame* frame = push.frame;
+    float2 here = frame->ocean.foamOrigin + (float2(id.xy) + 0.5) * FOAM_TEXEL;
+    float dt = max(frame->deltaTime, 1e-4);
+    float2 previousOrigin = float2(asfloat(push.textures.y), asfloat(push.textures.z));
+    float kept = 0.0;
+    if (!isnan(previousOrigin.x))
+    {
+        float2 uv = (here - previousOrigin) / (float(FOAM_TEXELS) * FOAM_TEXEL);
+        if (all(uv > 0.0) && all(uv < 1.0))
+        {
+            kept = textures[NonUniformResourceIndex(push.textures.x)].SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], uv, 0.0).r;
+        }
+    }
+    // As much as a crest breaking here makes, fading over a few seconds once it has passed.
+    float foam = max(kept * exp(-dt / 2.0), breakingAt(frame, here));
+    storageImagesR32f[push.output][id.xy] = saturate(foam);
+}
+
+// The foam round the camera at `rest`: what crests left there, carried
+// along by the water; none outside the square it keeps.
+float keptFoam(Frame* frame, float2 rest)
+{
+    float2 uv = (rest - frame->ocean.foamOrigin) / (float(FOAM_TEXELS) * FOAM_TEXEL);
+    if (any(uv <= 0.0) || any(uv >= 1.0))
+    {
+        return 0.0;
+    }
+    return textures[NonUniformResourceIndex(frame->ocean.foamTexture)].SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], uv, 0.0).r;
+}
+
 // The scene's depth before the sea is drawn into it, push.texture, into the
 // R32F storage image push.output: for how deep the water is to what lies
 // under it.
@@ -520,7 +585,8 @@ FragmentOut waterFragment(WaterOut input)
     float height = max(frame->ocean.waveHeight * max(waves, 0.2), 0.05);
     float crest = saturate(moved.y / (height * 0.5)) + saturate(length(moved.xz) / height) * 0.5;
     float towards = pow(saturate(dot(l, -v)), 4.0) * pow(saturate(0.5 - 0.5 * dot(l, n)), 3.0);
-    float3 throughWave = (1.5 * crest * towards + 0.12 * pow(saturate(dot(v, n)), 2.0) + 0.04 * saturate(dot(l, n))) * scatter * sunLight * shadow;
+    // Sea of Thieves' crests glow through: strongly towards the sun, and a little from every side on a wave's top.
+    float3 throughWave = (3.0 * crest * towards + 0.25 * crest * pow(saturate(dot(v, n)), 2.0) + 0.04 * saturate(dot(l, n))) * scatter * sunLight * shadow;
     float3 body = deep * ambient + throughWave;
 
     // What lies under it: how far through the water, bent by the waves, and dimmed a colour at a time.
@@ -546,7 +612,9 @@ FragmentOut waterFragment(WaterOut input)
     float breaking = frame->ocean.foam > 0.0 ? saturate((threshold - folded) / 0.3) : 0.0;
     float shore = saturate(1.0 - thickness / 0.6);
     float lace = waterCells(rest * 1.3 + moved.xz * 0.5) * 0.7 + waterCells(rest * 4.1) * 0.3;
-    float foam = saturate((max(breaking, shore) * 1.4 - lace) * 4.0);
+    // What breaking crests left, carried with the water, streaked thin as it spreads (the sea's only).
+    float trail = sea ? keptFoam(frame, rest) : 0.0;
+    float foam = saturate((max(max(breaking, shore), trail * 1.2) * 1.4 - lace) * 6.0);
     float3 foamLit = 0.85 * (ambient + sunLight * shadow * saturate(dot(n, l)) / PI);
     color = lerp(color, foamLit, foam);
 

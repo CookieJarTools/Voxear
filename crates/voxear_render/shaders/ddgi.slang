@@ -153,7 +153,7 @@ bool ddgiBlocked(Frame* frame, float3 origin, float3 direction, float far)
 // The light a surface sends back along a ray that hit it, where it hit, and
 // whether the ray found the surface's back, as from inside something.
 float3 ddgiShadeHit(Frame* frame, uint id, uint primitive, float2 barycentrics,
-    float3 position, float3 direction, float mip, out bool back)
+    float3 position, float3 direction, float mip, bool fromProbe, out bool back)
 {
     Instance instance = buffers()->instances[id];
     Mesh mesh = buffers()->meshes[instance.mesh];
@@ -210,7 +210,11 @@ float3 ddgiShadeHit(Frame* frame, uint id, uint primitive, float2 barycentrics,
     float up = normal.y * 0.5 + 0.5;
     float3 sky = atmosphere ? atmosphereAmbient(frame, up, sunLight)
         : lerp(frame->groundColor, lerp(frame->skyHorizon, frame->skyZenith, 0.5), up) * 0.35 * frame->ambient;
-    float3 around = ddgiIrradiance(frame, position, normal, -direction, sky);
+    // Looked up a little back along the ray for a probe's own, as shading looks towards the camera; but a
+    // reflection's ray comes from the thing reflecting, and back towards a chrome ball the probes round it are
+    // inside it or have it in their way, so straight out from the surface instead.
+    float3 towards = fromProbe ? -direction : normal;
+    float3 around = ddgiIrradiance(frame, position, normal, towards, sky);
     return lit + albedo * around + emissive;
 }
 
@@ -255,7 +259,8 @@ void ddgiRaysMain(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID)
         float3 position = origin + direction * t;
         bool back;
         // Textures blurred well down: a probe's light is an average over many rays anyway.
-        float3 light = ddgiShadeHit(frame, hit.instance, hit.primitive, hit.barycentrics, position, direction, 3.0, back);
+        float3 light =
+            ddgiShadeHit(frame, hit.instance, hit.primitive, hit.barycentrics, position, direction, 3.0, true, back);
         light *= min(1.0, DDGI_RAY_MOST / max(max(max(light.r, light.g), light.b), 1e-6));
         // The back of a surface, seen from inside it: no light, and marked by its distance's sign.
         result = back ? float4(0.0, 0.0, 0.0, -t) : float4(light, t);
@@ -426,7 +431,7 @@ float3 ddgiShadeReflected(Frame* frame, Hit hit, float3 origin, float3 direction
     float footprint = width + hit.t * spread;
     float mip = clamp(log2(max(footprint * REFLECTION_TEXELS_PER_METRE, 1.0)), 0.0, 8.0);
     float3 at = origin + direction * hit.t;
-    return ddgiShadeHit(frame, hit.instance, hit.primitive, hit.barycentrics, at, direction, mip, back);
+    return ddgiShadeHit(frame, hit.instance, hit.primitive, hit.barycentrics, at, direction, mip, false, back);
 }
 
 // Reflections by tracing the scene's triangles, as the GI's rays do, where

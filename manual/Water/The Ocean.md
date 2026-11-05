@@ -21,7 +21,7 @@ Under **Custom**, the sea is two seas at once, as a real one is: a **Swell** rai
 
 | Setting | What it does |
 | --- | --- |
-| Wave scale | How much taller the waves are than the weather makes them: 2 for Sea of Thieves' towering seas. The crests break no more for it |
+| Wave scale | How much taller the waves are than the weather makes them: 2 for towering seas. The crests break no more for it |
 | Choppiness | How sharp the crests are, from 0 for rounded waves to 1 as real ones |
 | Deep | The colour of the water seen deep down, lit by the sky |
 | Scatter | The colour sunlight takes through the thin tops of the waves, glowing turquoise towards the sun |
@@ -31,9 +31,9 @@ Under **Custom**, the sea is two seas at once, as a real one is: a **Swell** rai
 
 ## How the sea moves
 
-The waves are made the way Sea of Thieves and Atlas make theirs: hundreds of thousands of real ocean waves of every length, from a few centimetres to a kilometre, added up on the graphics card each frame by a fast Fourier transform, in four sizes laid over each other so no pattern repeats. The surface round the camera is a fine grid near it that grows coarser with distance, so the waves are sharp at your feet and the sea still reaches the horizon.
+The waves are hundreds of thousands of real ocean waves of every length, from a centimetre to a kilometre, added up on the graphics card each frame by a fast Fourier transform, in six sizes laid over each other so no pattern repeats. The surface round the camera is a fine grid near it that grows coarser with distance, so the waves are sharp at your feet and the sea still reaches the horizon.
 
-Where a crest folds over, it breaks into foam. The foam stays where the crest broke while the wave runs on, streaking down its back and fading over a couple of seconds, as Sea of Thieves' does. Only the big breakers leave trails; small waves' white is gone as they pass. Where the sea thins over a shore, it laps white too.
+Where a crest folds over, it breaks into foam. The foam stays where the crest broke while the wave runs on, streaking down its back and fading over a couple of seconds. Only the big breakers leave trails; small waves' white is gone as they pass. Where the sea thins over a shore, it laps white too.
 
 The waves are worked out the same on every machine, and the game can ask how high the sea is anywhere (see [[Floating Objects]]), so a boat rides the waves you see, alike for every player.
 

@@ -1,12 +1,11 @@
 //! The sea: an Ocean component on an Obj fills the level with water at its
-//! height, with waves made as Sea of Thieves makes its sea, by an FFT over a
-//! spectrum of real ocean waves (Tessendorf, "Simulating Ocean Water", 2001).
+//! height, with waves made by an FFT over a spectrum of real ocean waves.
 //!
-//! The spectrum is two JONSWAP spectra together, as Atlas has them (GDC
-//! 2019): a long swell from a storm far off, and a shorter sea raised by the
-//! wind here, each limited by how far the wind has blown over open water.
-//! It is split into four cascades, tiles of 1031, 257, 61 and 17 metres that
-//! never line up, each holding only its own band of wavelengths.
+//! The spectrum is two JONSWAP spectra together: a long swell from a storm
+//! far off, and a shorter sea raised by the wind here, each limited by how
+//! far the wind has blown over open water. It is split into six cascades,
+//! tiles from 1031 metres down to 1.13 that never line up, each holding only
+//! its own band of wavelengths.
 //!
 //! Each wave's random height comes from a hash of where it is in the
 //! spectrum, not from a sequence, so the GPU's 256×256 cascades and the
@@ -93,7 +92,7 @@ pub struct Ocean {
     /// How sharp the crests are: 0 for round waves, 1 as real ones.
     pub choppiness: f32,
     /// How much higher the waves are than real ones: 1 as the weather makes
-    /// them, 2 twice as high, as Sea of Thieves' are. Their crests fold no
+    /// them, 2 twice as high. Their crests fold no
     /// harder, so they break into no more foam.
     pub wave_scale: f32,
     /// The colour of deep water, sRGB.
@@ -120,7 +119,7 @@ impl Default for Ocean {
             fetch: 20.0,
             choppiness: 0.9,
             wave_scale: 1.0,
-            // Sea of Thieves' blues: deep and saturated, turquoise through the crests.
+            // Deep, saturated blue, turquoise through the crests.
             deep: [0.0, 0.16, 0.32],
             scatter: [0.1, 0.78, 0.72],
             foam: 0.5,
@@ -195,8 +194,7 @@ pub fn frequency(k: f64) -> f64 {
 /// Water's surface tension over its density, in m³/s².
 const SURFACE_TENSION: f64 = 7.4e-5;
 
-/// JONSWAP's energy at angular frequency `omega` (Hasselmann et al. 1973,
-/// as Horvath, "Empirical Directional Wave Spectra", 2015, gives it).
+/// JONSWAP's energy at angular frequency `omega`.
 fn jonswap(omega: f64, waves: &Waves) -> f64 {
     if omega <= 0.0 {
         return 0.0;
@@ -347,7 +345,7 @@ pub struct Displacement {
 
 /// The cascade's waves, moved on to `time`, as heights and choppy
 /// sideways movement over its tile: `h(k, t) = h0(k) e^{iωt} + h0*(-k)
-/// e^{-iωt}` (Tessendorf), summed by an inverse FFT.
+/// e^{-iωt}`, summed by an inverse FFT.
 pub fn displacement(initial: &[Complex], resolution: usize, cascade: usize, time: f64, choppiness: f32) -> Displacement {
     let n = resolution;
     let half = n as i32 / 2;
@@ -505,8 +503,8 @@ impl OceanSampler {
     }
 
     /// How high the sea is above `x`, `z`, in the world: the water resting
-    /// where the waves moved it from is found by stepping back three times
-    /// (Atlas), as the waves move water across as well as up.
+    /// where the waves moved it from is found by stepping back three times,
+    /// as the waves move water across as well as up.
     pub fn height_at(&self, x: f32, z: f32) -> f32 {
         let (mut rx, mut rz) = (x, z);
         for _ in 0..3 {

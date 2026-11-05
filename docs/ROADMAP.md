@@ -1189,13 +1189,13 @@ Foliage shading (wrap lighting, light through the leaves, a rim of the sun's col
 
 ## Water ✅ (done)
 
-Sea of Thieves' and Crest's water, built in, with lava on the same bodies. Manual: `manual/Water`.
+The sea, lakes, rivers and lava, built in. Manual: `manual/Water`.
 
-- **Ocean** (`voxear_render::ocean`, `water.rs`, `shaders/water.slang`): Tessendorf FFT over dual JONSWAP spectra
-  (swell and wind sea, Atlas), four cascades of 256² over 1031, 257, 61 and 17 m tiles, each its own band of waves,
+- **Ocean** (`voxear_render::ocean`, `water.rs`, `shaders/water.slang`): FFT over dual JONSWAP spectra
+  (swell and wind sea), six cascades of 256² over tiles from 1031 m down to 1.13 m, each its own band of waves,
   summed by a groupshared radix-2 inverse FFT into movement, folding and slopes with mips. Weather presets (Calm,
-  Normal, Stormy, Custom), Wave scale (taller without folding harder), choppiness and Rare's colour blend with
-  Atlas's scatter. A clipmap of 12 rings round the camera, morphing at their edges. Glints over slope-variance
+  Normal, Stormy, Custom), Wave scale (taller without folding harder), choppiness, and a colour blend of deep water and
+  light through the crests. A clipmap of 12 rings round the camera, morphing at their edges. Glints over slope-variance
   roughness, refraction and Beer–Lambert absorption over a copy of the scene and its depth, written to depth and
   velocity. Foam where crests fold, kept in a 512² square round the camera in rest space, so it stays where the
   crest broke and streaks down the wave's back; shore foam where the water thins.
@@ -1282,9 +1282,8 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   properties; New Shader and New Unlit Shader start from templates; the manual's Custom Shaders page.
 - **Built-in shaders ✅.** Toon, Storybook, Triplanar, Water, Hologram, Sway and Lava, embedded in the engine and
   picked as `builtin:toon` (`BuiltinShader`, `ShaderRef`), numbered before a project's own and compiled in only
-  once a material uses one. New Shader… offers Lit, Unlit or a copy of a built-in one. Water and lava after Sea of
-  Thieves, Atlas, Unreal's single layer water, Bruneton et al.'s distant ocean lighting, Quilez's Voronoi edges and
-  blackbody colour. For them the shader API gained `SurfaceInput.thickness` and `glass` (the glass pass reads the
+  once a material uses one. New Shader… offers Lit, Unlit or a copy of a built-in one. Lava's colour is blackbody
+  colour. For them the shader API gained `SurfaceInput.thickness` and `glass` (the glass pass reads the
   depth and tests itself against it), and `SurfaceOutput.reflectance`, `transmission` and `data`; the glass pass
   runs a custom shader's surface and light functions; bounced light is read where a moved vertex rests; and a
   material that moves its vertices always draws its full mesh, so its shadow matches it.

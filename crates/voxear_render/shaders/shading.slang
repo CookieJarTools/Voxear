@@ -162,7 +162,7 @@ void ditherLodFade(VertexOut input)
     }
 }
 
-// Specular anti-aliasing, as Kaplanyan and Tokuyoshi work it out: where the normal turns a lot from one pixel to
+// Specular anti-aliasing: where the normal turns a lot from one pixel to
 // the next, as over a normal map's fine bumps, the surface is drawn rougher by the spread of normals the pixel
 // covers. Mirror-smooth there, a highlight or reflection lands on one pixel one frame and its neighbour the next,
 // and the gold embroidery on Sponza's banners sparkled as the camera moved. Scaled by the lighting's setting,

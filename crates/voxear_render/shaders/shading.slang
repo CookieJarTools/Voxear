@@ -259,8 +259,11 @@ float3 surroundingsReflection(Frame* frame, float3 position, float3 normal, floa
     if (frame->ddgi.enabled != 0)
     {
         // With GI, the light arriving from the mirror direction as the probes see it: blurred, but never the sky
-        // through a wall.
-        sky = ddgiIrradiance(frame, position, direction, normal, sky);
+        // through a wall. Looked up a probe's spacing out from the surface, past the thing reflecting: from just
+        // off a chrome ball, the probes round it are inside it or have it in their way, and its reflection was
+        // smudged dark wherever they fell, smudges that moved as the camera did.
+        float3 outside = position + normal * ddgiSpacing(frame, 0);
+        sky = ddgiIrradianceAlong(frame, outside, direction, normal, sky);
     }
     return lerp(sky, ambient, blur);
 }

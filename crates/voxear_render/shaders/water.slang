@@ -452,6 +452,30 @@ WaterOut streamVertex(uint vertexId : SV_VertexID)
     return o;
 }
 
+// A cascade's image at `uv` through a cubic B-spline over its 4×4 nearest
+// texels, made of four bilinear reads (Sigg and Hadwiger, GPU Gems 2): smooth
+// in value and slope, so a texel's edges do not show however near it is.
+float4 smoothSample(Texture2D image, float2 uv)
+{
+    float2 texel = uv * float(OCEAN_N) - 0.5;
+    float2 f = frac(texel);
+    float2 i = floor(texel);
+    float2 f2 = f * f;
+    float2 f3 = f2 * f;
+    float2 w0 = (1.0 - 3.0 * f + 3.0 * f2 - f3) / 6.0;
+    float2 w1 = (4.0 - 6.0 * f2 + 3.0 * f3) / 6.0;
+    float2 w2 = (1.0 + 3.0 * f + 3.0 * f2 - 3.0 * f3) / 6.0;
+    float2 w3 = f3 / 6.0;
+    float2 s0 = w0 + w1;
+    float2 s1 = w2 + w3;
+    // Each pair of texels as one bilinear read between them, at their centres' weighted middle.
+    float2 p0 = (i - 1.0 + w1 / s0 + 0.5) / float(OCEAN_N);
+    float2 p1 = (i + 1.0 + w3 / s1 + 0.5) / float(OCEAN_N);
+    SamplerState linear = samplers[SAMPLER_LINEAR_REPEAT];
+    return s0.y * (s0.x * image.SampleLevel(linear, float2(p0.x, p0.y), 0.0) + s1.x * image.SampleLevel(linear, float2(p1.x, p0.y), 0.0))
+         + s1.y * (s0.x * image.SampleLevel(linear, float2(p0.x, p1.y), 0.0) + s1.x * image.SampleLevel(linear, float2(p1.x, p1.y), 0.0));
+}
+
 // The waves at `rest`, with as much of the sea's long swell as `swell`
 // says, added in by `weight`: their slopes, the slopes too small to see
 // there as variance, how much they fold and how far they move the water.
@@ -460,8 +484,26 @@ void addWaves(Frame* frame, float2 rest, float swell, float weight, inout float2
     for (uint c = 0; c < OCEAN_CASCADES; c++)
     {
         float2 uv = cascadeUv(frame, c, rest);
-        float4 s = textures[NonUniformResourceIndex(frame->ocean.slopes[c])].Sample(samplers[SAMPLER_LINEAR_REPEAT], uv);
-        float4 d = textures[NonUniformResourceIndex(frame->ocean.displacement[c])].Sample(samplers[SAMPLER_LINEAR_REPEAT], uv);
+        // How many of the cascade's texels a pixel spans: under one, they are seen magnified.
+        float2 texels = uv * float(OCEAN_N);
+        float footprint = max(length(ddx(texels)), length(ddy(texels)));
+        Texture2D slopes = textures[NonUniformResourceIndex(frame->ocean.slopes[c])];
+        Texture2D moves = textures[NonUniformResourceIndex(frame->ocean.displacement[c])];
+        float4 s = 0.0;
+        float4 d = 0.0;
+        // Magnified, a bilinear texel's kinks at its edges show in sharp reflections as a grid of squares, so a
+        // smooth cubic takes over, blended in so no line shows where it starts.
+        float smooth = 1.0 - saturate((footprint - 0.5) * 2.0);
+        if (smooth > 0.0)
+        {
+            s = smoothSample(slopes, uv) * smooth;
+            d = smoothSample(moves, uv) * smooth;
+        }
+        if (smooth < 1.0)
+        {
+            s += slopes.Sample(samplers[SAMPLER_LINEAR_REPEAT], uv) * (1.0 - smooth);
+            d += moves.Sample(samplers[SAMPLER_LINEAR_REPEAT], uv) * (1.0 - smooth);
+        }
         float share = cascadeShare(c, swell) * weight;
         slope += s.xy * share;
         // The slopes the mips averaged away, too small to see here, as roughness (Atlas).
@@ -656,7 +698,12 @@ FragmentOut waterFragment(WaterOut input)
     bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
     float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
     float shadow = sunShadow(frame, input.world, float3(0.0, 1.0, 0.0));
-    float alpha = sqrt(0.02 * 0.02 + 2.0 * variance);
+    // Rougher where the surface's normal turns fast across a pixel, so glints there spread rather than sparkle a
+    // pixel at a time (Tokuyoshi and Kaplanyan's specular anti-aliasing).
+    float3 nx = ddx(n);
+    float3 ny = ddy(n);
+    float turning = min(2.0 * 0.159 * (dot(nx, nx) + dot(ny, ny)), 0.18);
+    float alpha = sqrt(0.02 * 0.02 + 2.0 * variance + turning);
 
     Surface s;
     s.normal = n;
@@ -705,7 +752,9 @@ FragmentOut waterFragment(WaterOut input)
     float threshold = 0.4 + 0.45 * frame->ocean.foam;
     float breaking = frame->ocean.foam > 0.0 ? saturate((threshold - folded) / 0.3) : 0.0;
     float shore = saturate(1.0 - thickness / 0.6);
-    float lace = laceAt(rest, moved);
+    // Foam's finer bubbles faded to their average where they are smaller than a pixel, so they do not shimmer.
+    float bubbles = saturate(length(fwidth(rest)) * 8.0 - 0.5);
+    float lace = lerp(laceAt(rest, moved), 0.4, bubbles);
     if (stream)
     {
         // A Stream's foam where it runs steep, and in lines drawn out along it the faster it runs, carried down it
@@ -716,11 +765,13 @@ FragmentOut waterFragment(WaterOut input)
         float2 a = float2(dot(restA, along) * 0.25, dot(restA, across));
         float2 b = float2(dot(restB, along) * 0.25, dot(restB, across));
         breaking = max(input.stream.z, 0.3 * saturate(speed / 4.0));
-        lace = lerp(laceAt(a, 0.0), laceAt(b, 0.0), blend);
+        lace = lerp(lerp(laceAt(a, 0.0), laceAt(b, 0.0), blend), 0.4, bubbles);
     }
     // What breaking crests left, carried with the water, streaked thin as it spreads (the sea's only).
     float trail = sea ? keptFoam(frame, rest) : 0.0;
-    float foam = saturate((max(max(breaking, shore), trail * 1.2) * 1.4 - lace) * 6.0);
+    // Foam's edge never sharper than a pixel or two, whatever distance it is seen from.
+    float froth = max(max(breaking, shore), trail * 1.2) * 1.4 - lace;
+    float foam = smoothstep(0.0, max(1.0 / 6.0, fwidth(froth) * 1.5), froth);
     float3 foamLit = 0.85 * (ambient + sunLight * shadow * saturate(dot(n, l)) / PI);
     color = lerp(color, foamLit, foam);
     // A Stream fades in over its first two points and out over its last two.

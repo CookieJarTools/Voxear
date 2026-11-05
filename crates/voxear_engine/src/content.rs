@@ -88,6 +88,25 @@ pub struct MaterialData {
     pub glow: Glow,
     #[serde(default = "default_glow_speed", skip_serializing_if = "is_default_glow_speed")]
     pub glow_speed: f32,
+    /// A custom shader asset it is drawn with, in place of the standard
+    /// shader (see `shaders`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shader: Option<AssetGuid>,
+    /// The values it gives its custom shader's properties, by name; the
+    /// rest keep the shader's defaults.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub properties: std::collections::BTreeMap<String, PropertyValue>,
+}
+
+/// A value a material gives one of its custom shader's properties: a number
+/// or a toggle, a vector or colour, or a picture asset.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum PropertyValue {
+    Toggle(bool),
+    Number(f32),
+    Vector(Vec<f32>),
+    Picture(AssetGuid),
 }
 
 impl Default for MaterialData {
@@ -109,6 +128,8 @@ impl Default for MaterialData {
             leaves: Leaves::Turn,
             glow: Glow::Steady,
             glow_speed: default_glow_speed(),
+            shader: None,
+            properties: std::collections::BTreeMap::new(),
         }
     }
 }
@@ -219,7 +240,9 @@ impl MaterialData {
         let flags = u32::from(self.foliage) | u32::from(self.glass) << 1 | (self.leaves as u32) << 2 | (self.glow as u32) << 3;
         let wind = [self.wind_bend().to_bits(), self.wind_flutter().to_bits(), self.glow_speed.to_bits()];
         let values = [r, g, b, metallic, roughness, er, eg, eb, flags, ior, wind[0], wind[1], wind[2]];
-        (values, MaterialMap::ALL.map(|map| self.map(map)))
+        // A custom shader and its properties, as written: two materials alike in them are alike.
+        let custom = self.shader.map(|shader| format!("{shader}{:?}", self.properties)).unwrap_or_default();
+        (values, MaterialMap::ALL.map(|map| self.map(map)), custom)
     }
 
     /// How much plants drawn with it bend in the wind: as written, or 1 for
@@ -247,7 +270,7 @@ impl MaterialData {
     }
 }
 
-type MaterialKey = ([u32; 13], [Option<AssetGuid>; 4]);
+type MaterialKey = ([u32; 13], [Option<AssetGuid>; 4], String);
 
 /// What [`Content::release_unused`] freed.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -340,6 +363,8 @@ pub struct Content {
     pictures: HashMap<(AssetGuid, bool), TextureId>,
     /// IES profiles uploaded for lights, by their assets.
     light_profiles: HashMap<AssetGuid, TextureId>,
+    /// The project's custom shaders, read when the assets are scanned.
+    shaders: crate::shaders::ShaderRegistry,
     /// Colour grading lookup tables uploaded, by their pictures.
     luts: HashMap<AssetGuid, TextureId>,
     prefabs: PrefabCache,
@@ -405,7 +430,9 @@ impl Content {
         for path in &report.reassigned {
             tracing::warn!("{path} had the same GUID as another asset (copied with its .meta?); it has a new one");
         }
-        Ok(Self::with_source(db, Source::Folder(FolderReader::mounted(mounts.clone()), mounts)))
+        let mut content = Self::with_source(db, Source::Folder(FolderReader::mounted(mounts.clone()), mounts));
+        content.read_shaders();
+        Ok(content)
     }
 
     /// Reads assets from built bundles in `content_dir` (see
@@ -419,6 +446,7 @@ impl Content {
         let layers = vec![(content_dir.to_path_buf(), Arc::new(catalog))];
         let mut content = Self::with_source(db, Source::Bundles(reader, layers));
         content.cooked = Arc::new(cooked);
+        content.read_shaders();
         Ok(content)
     }
 
@@ -468,6 +496,7 @@ impl Content {
             remaps: HashMap::new(),
             pictures: HashMap::new(),
             light_profiles: HashMap::new(),
+            shaders: crate::shaders::ShaderRegistry::default(),
             luts: HashMap::new(),
             prefabs: PrefabCache::default(),
             sounds: SoundCache::default(),
@@ -599,7 +628,33 @@ impl Content {
             tracing::info!("new asset: {path}");
         }
         self.db = Arc::new(db);
+        self.read_shaders();
         Ok(())
+    }
+
+    /// Reads the project's custom shaders again, as after one was added or
+    /// changed, numbering them afresh.
+    pub fn read_shaders(&mut self) {
+        let found: Vec<(AssetGuid, String)> = self
+            .db
+            .entries()
+            .filter(|entry| entry.kind == AssetKind::Shader)
+            .map(|entry| (entry.guid, entry.path.clone()))
+            .collect();
+        let read = found.into_iter().filter_map(|(guid, path)| match self.read_text(&path) {
+            Ok(source) => Some((guid, path, source)),
+            Err(error) => {
+                tracing::error!("reading the shader {path}: {error:#}");
+                None
+            }
+        });
+        let read: Vec<_> = read.collect();
+        self.shaders = crate::shaders::ShaderRegistry::new(read);
+    }
+
+    /// The project's custom shaders, numbered as the renderer draws them.
+    pub fn shaders(&self) -> &crate::shaders::ShaderRegistry {
+        &self.shaders
     }
 
     /// Mounts the project's packages again, as they are after its
@@ -793,7 +848,46 @@ impl Content {
                 *texture = Some(self.picture(renderer, picture, map.srgb())?);
             }
         }
-        Ok(data.desc(textures))
+        let mut desc = data.desc(textures);
+        // A shader the project does not have, or that does not compile, draws as the standard one.
+        let found = data.shader.and_then(|guid| self.shaders.get(guid)).map(|(number, info)| (number, info.clone()));
+        if let Some((number, info)) = found {
+            desc.shader = number;
+            for (slot, property) in desc.properties.iter_mut().zip(&info.properties) {
+                *slot = match data.properties.get(&property.name) {
+                    Some(value) => self.property_values(renderer, value, property.kind)?,
+                    None => property.default,
+                };
+            }
+        }
+        Ok(desc)
+    }
+
+    /// A property's value as its `float4` on the GPU: a picture as its
+    /// texture's index, in the first's bits.
+    fn property_values(
+        &mut self,
+        renderer: &mut Renderer,
+        value: &PropertyValue,
+        kind: crate::shaders::PropertyKind,
+    ) -> Result<[f32; 4]> {
+        let mut values = [0.0; 4];
+        match value {
+            PropertyValue::Toggle(on) => values[0] = f32::from(u8::from(*on)),
+            PropertyValue::Number(number) => values = [*number; 4],
+            PropertyValue::Vector(numbers) => {
+                for (slot, number) in values.iter_mut().zip(numbers) {
+                    *slot = *number;
+                }
+            }
+            PropertyValue::Picture(guid) => values[0] = f32::from_bits(self.picture(renderer, *guid, true)?.0),
+        }
+        // Colours are written as they look, sRGB, and drawn in linear light.
+        if let crate::shaders::PropertyKind::Color { .. } = kind {
+            let [r, g, b] = linear([values[0], values[1], values[2]]);
+            values[..3].copy_from_slice(&[r, g, b]);
+        }
+        Ok(values)
     }
 
     /// A picture asset as a light's cookie, in its colours as they look.
@@ -1260,4 +1354,24 @@ pub fn linear(srgb: [f32; 3]) -> [f32; 3] {
 
 pub fn srgb(linear: [f32; 3]) -> [f32; 3] {
     linear.map(|c| if c <= 0.0031308 { c * 12.92 } else { 1.055 * c.powf(1.0 / 2.4) - 0.055 })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_materials_shader_and_property_values_read_and_write_back() {
+        let text = "shader = \"0000000000000000000000000000000a\"\n\n[properties]\nfoam = true\nwaveSpeed = 2.5\n\
+                    deep = [0.0, 0.2, 0.3]\nripples = \"0000000000000000000000000000000b\"\n";
+        let data: MaterialData = toml::from_str(text).unwrap();
+        assert!(data.shader.is_some());
+        assert_eq!(data.properties["foam"], PropertyValue::Toggle(true));
+        assert_eq!(data.properties["waveSpeed"], PropertyValue::Number(2.5));
+        assert_eq!(data.properties["deep"], PropertyValue::Vector(vec![0.0, 0.2, 0.3]));
+        assert!(matches!(data.properties["ripples"], PropertyValue::Picture(_)));
+        assert_eq!(toml::from_str::<MaterialData>(&toml::to_string(&data).unwrap()).unwrap(), data);
+        let plain = toml::to_string(&MaterialData::default()).unwrap();
+        assert!(!plain.contains("shader") && !plain.contains("properties"), "left out when standard: {plain}");
+    }
 }

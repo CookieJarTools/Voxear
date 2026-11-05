@@ -22,7 +22,10 @@ use crate::{
     alloc::{RangeAllocator, SlotAllocator},
     bvh::MeshHierarchies,
     cooked::{CookedModel, CookedTexture},
-    gpu::{GpuMaterial, GpuMesh, GpuMeshLod, GpuMeshlet, MATERIAL_FOLIAGE, MATERIAL_GLASS, MATERIAL_NORMAL_MAP},
+    gpu::{
+        GpuMaterial, GpuMesh, GpuMeshLod, GpuMeshlet, MATERIAL_FOLIAGE, MATERIAL_GLASS, MATERIAL_NORMAL_MAP,
+        MATERIAL_PROPERTIES, STANDARD_SHADER,
+    },
     lod::{Lod, LodInfo, MAX_LODS, build_lods},
     mesh::{MeshData, MeshTriangles, Primitive, Vertex},
     meshlets::MeshMeshlets,
@@ -116,6 +119,11 @@ pub struct MaterialDesc {
     /// A plant's impostor, whose base colour and normal textures are its
     /// atlas, its normals in the plant's own space (see `impostors`).
     pub impostor: bool,
+    /// The custom shader it is drawn with, by its number among the
+    /// project's, or `STANDARD_SHADER`, and the shader's properties, each a
+    /// `float4`, in the order the shader declares them.
+    pub shader: u32,
+    pub properties: [[f32; 4]; MATERIAL_PROPERTIES],
 }
 
 impl Default for MaterialDesc {
@@ -140,6 +148,8 @@ impl Default for MaterialDesc {
             glow: Glow::Steady,
             glow_speed: 1.0,
             impostor: false,
+            shader: STANDARD_SHADER,
+            properties: [[0.0; 4]; MATERIAL_PROPERTIES],
         }
     }
 }
@@ -232,6 +242,8 @@ pub struct Assets {
     /// Each meshlet's triangles, three bytes into its vertices a word.
     pub meshlet_triangles: Buffer,
     pub materials: Buffer,
+    /// Each material's custom shader's properties, by its slot.
+    pub material_properties: Buffer,
     /// Vertex, index, meshlet, meshlet vertex and meshlet triangle space.
     space: [RangeAllocator; 5],
     mesh_slots: SlotAllocator,
@@ -307,6 +319,8 @@ impl Assets {
             gpu.create_buffer("meshlet triangles", MAX_MESHLET_TRIANGLES * 4, storage, device_local)?;
         let materials =
             gpu.create_buffer("materials", MAX_MATERIALS * size_of::<GpuMaterial>() as u64, storage, device_local)?;
+        let property_bytes = MAX_MATERIALS * (MATERIAL_PROPERTIES * 16) as u64;
+        let material_properties = gpu.create_buffer("material properties", property_bytes, storage, device_local)?;
 
         let mut assets = Self {
             vertices,
@@ -316,6 +330,7 @@ impl Assets {
             meshlet_vertices,
             meshlet_triangles,
             materials,
+            material_properties,
             space: [MAX_VERTICES, MAX_INDICES, MAX_MESHLETS, MAX_MESHLET_VERTICES, MAX_MESHLET_TRIANGLES]
                 .map(RangeAllocator::new),
             mesh_slots: SlotAllocator::new(MAX_MESHES as u32),
@@ -849,6 +864,8 @@ impl Assets {
             wind_bend: desc.wind_bend.max(0.0),
             wind_flutter: desc.wind_flutter.max(0.0),
             glow_speed: desc.glow_speed.max(0.0),
+            shader: desc.shader,
+            _pad: [0; 3],
         };
         self.glass.retain(|&glass| glass != handle);
         if desc.glass {
@@ -860,6 +877,8 @@ impl Assets {
         }
         let offset = u64::from(slot) * size_of::<GpuMaterial>() as u64;
         gpu.upload_buffer(&self.materials, offset, bytemuck::bytes_of(&material))?;
+        let offset = u64::from(slot) * size_of::<[[f32; 4]; MATERIAL_PROPERTIES]>() as u64;
+        gpu.upload_buffer(&self.material_properties, offset, bytemuck::bytes_of(&desc.properties))?;
         Ok(())
     }
 
@@ -979,7 +998,8 @@ impl Assets {
             gpu.destroy_image(image);
         }
         let meshlets = [self.meshlets, self.meshlet_vertices, self.meshlet_triangles];
-        for buffer in [self.vertices, self.indices, self.meshes, self.materials].into_iter().chain(meshlets) {
+        let materials = [self.materials, self.material_properties];
+        for buffer in [self.vertices, self.indices, self.meshes].into_iter().chain(materials).chain(meshlets) {
             gpu.destroy_buffer(buffer);
         }
     }

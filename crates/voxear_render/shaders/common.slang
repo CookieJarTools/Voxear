@@ -218,7 +218,14 @@ struct Material
     float windFlutter;
     // How many times a second its glow goes round, when it moves (glow.slang).
     float glowSpeed;
+    // Its custom shader's number, or STANDARD_SHADER; its properties are
+    // MATERIAL_PROPERTIES float4s of Buffers' materialProperties.
+    uint shader;
+    uint3 pad;
 };
+
+static const uint STANDARD_SHADER = 0;
+static const uint MATERIAL_PROPERTIES = 16;
 
 struct Instance
 {
@@ -692,6 +699,8 @@ struct Buffers
     float2* foliagePushes;
     // Under the atmosphere, the sun's light and the sky's, once a frame (atmosphere.slang's SkyLight); else null.
     SkyLight* skyLight;
+    // Each material's custom shader's properties, MATERIAL_PROPERTIES a material.
+    float4* materialProperties;
 };
 
 struct Push

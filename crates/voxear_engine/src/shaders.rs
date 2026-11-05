@@ -23,6 +23,49 @@
 //! renderer's own shaders (see `shader_code`).
 
 use anyhow::{Context, Result, bail};
+use voxear_assets::AssetGuid;
+
+/// One of the project's shaders: its asset, its number in the renderer's
+/// dispatch (from 1; 0 is the standard shader), its source, and what it
+/// declares, or why it could not be read.
+#[derive(Clone, Debug)]
+pub struct ProjectShader {
+    pub guid: AssetGuid,
+    pub path: String,
+    pub number: u32,
+    pub source: String,
+    pub info: std::result::Result<ShaderInfo, String>,
+}
+
+/// The project's shaders, numbered in the order of their paths, so the same
+/// project numbers them the same everywhere: in the editor, and in a game
+/// built from it.
+#[derive(Clone, Debug, Default)]
+pub struct ShaderRegistry {
+    pub shaders: Vec<ProjectShader>,
+}
+
+impl ShaderRegistry {
+    /// Numbers and reads these shaders, each its asset, path and source.
+    pub fn new(mut found: Vec<(AssetGuid, String, String)>) -> Self {
+        found.sort_by(|a, b| a.1.cmp(&b.1));
+        let shaders = (1..)
+            .zip(found)
+            .map(|(number, (guid, path, source))| {
+                let info = read(&source).map_err(|error| format!("{error:#}"));
+                ProjectShader { guid, path, number, source, info }
+            })
+            .collect();
+        Self { shaders }
+    }
+
+    /// A shader's number and what it declares, when the project has it and
+    /// it reads.
+    pub fn get(&self, guid: AssetGuid) -> Option<(u32, &ShaderInfo)> {
+        let shader = self.shaders.iter().find(|shader| shader.guid == guid)?;
+        Some((shader.number, shader.info.as_ref().ok()?))
+    }
+}
 
 /// What a property holds, and so how the material Inspector edits it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -352,6 +395,20 @@ mod tests {
         assert!(read("struct Nothing { }").is_err());
         assert!(read("void surface(int a) {}").is_err(), "no properties struct");
         assert!(read("struct S { [Property] double x; }\nvoid surface(S s) {}").is_err(), "an unknown type");
+    }
+
+    #[test]
+    fn shaders_are_numbered_by_path_from_one_and_one_that_does_not_read_is_kept_with_its_error() {
+        let guid = |n: u32| format!("{n:032x}").parse::<AssetGuid>().unwrap();
+        let registry = ShaderRegistry::new(vec![
+            (guid(1), "Shaders/Water.shader".into(), WATER.into()),
+            (guid(2), "Shaders/Broken.shader".into(), "struct Nothing { }".into()),
+        ]);
+        let numbers: Vec<(&str, u32)> = registry.shaders.iter().map(|s| (s.path.as_str(), s.number)).collect();
+        assert_eq!(numbers, [("Shaders/Broken.shader", 1), ("Shaders/Water.shader", 2)]);
+        assert!(registry.shaders[0].info.is_err());
+        assert_eq!(registry.get(guid(1)).map(|(number, info)| (number, info.name.as_str())), Some((2, "Water")));
+        assert!(registry.get(guid(2)).is_none(), "one that does not read draws as the standard shader");
     }
 
     #[test]

@@ -104,7 +104,18 @@ pub struct GpuMaterial {
     /// How many times a second its glow goes round, when it moves (see
     /// `MATERIAL_GLOW_*`).
     pub glow_speed: f32,
+    /// The custom shader it is drawn with, by its number among the
+    /// project's (`custom_shaders.slang`), or `STANDARD_SHADER`; its
+    /// properties are its `MATERIAL_PROPERTIES` in `material_properties`.
+    pub shader: u32,
+    pub _pad: [u32; 3],
 }
+
+/// A material drawn with the standard shader, not a custom one.
+pub const STANDARD_SHADER: u32 = 0;
+/// How many `float4`s of properties each material has for its custom
+/// shader, each property one.
+pub const MATERIAL_PROPERTIES: usize = 16;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
@@ -661,6 +672,9 @@ pub struct GpuBuffers {
     /// Under the atmosphere, the sun's light and the sky's, worked out once
     /// a frame; 0 otherwise.
     pub sky_light: u64,
+    /// Each material's custom shader's properties, `MATERIAL_PROPERTIES`
+    /// `float4`s a material, by its slot.
+    pub material_properties: u64,
 }
 
 /// A line of debug draw (see `voxear_core::debug_draw`), its colour sRGB.
@@ -793,7 +807,7 @@ mod tests {
     fn layouts_match_the_shaders() {
         assert_eq!(size_of::<GpuMesh>(), 32 + 24 * MAX_LODS);
         assert_eq!(size_of::<GpuMeshlet>(), 48);
-        assert_eq!(size_of::<GpuMaterial>(), 80);
+        assert_eq!(size_of::<GpuMaterial>(), 96);
         // Three matrices, ids and flags, then where its LODs end.
         assert_eq!(size_of::<GpuInstance>(), 192 + 32 + 16);
         assert_eq!(size_of::<GpuLight>(), 96);
@@ -818,7 +832,7 @@ mod tests {
         assert_eq!(size_of::<GpuDdgi>(), 32 * DDGI_CASCADES + 32 + 48);
         assert_eq!(size_of::<GpuLighting>(), lighting);
         assert_eq!(size_of::<GpuPost>(), post);
-        assert_eq!(size_of::<GpuBuffers>(), 29 * 8);
+        assert_eq!(size_of::<GpuBuffers>(), 30 * 8);
         assert_eq!(size_of::<GpuDebugLine>(), 48);
         assert!(size_of::<Push>() as u32 <= voxear_rhi::PUSH_CONSTANT_SIZE);
     }

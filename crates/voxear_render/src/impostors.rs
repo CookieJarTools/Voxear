@@ -147,6 +147,7 @@ impl Bakes {
                     meshes: assets.meshes.address,
                     vertices: assets.vertices.address,
                     materials: assets.materials.address,
+                    material_properties: assets.material_properties.address,
                     ..GpuBuffers::default()
                 }],
             );

@@ -326,6 +326,7 @@ impl Previews {
             meshes: assets.meshes.address,
             vertices: assets.vertices.address,
             materials: assets.materials.address,
+            material_properties: assets.material_properties.address,
             ..Default::default()
         };
         buffers.pointers.write(0, &[pointers]);

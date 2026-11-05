@@ -75,7 +75,7 @@ pub use gltf_import::{
 pub use gpu::{
     DEBUG_VIEW_AMBIENT_OCCLUSION, DEBUG_VIEW_CASCADES, DEBUG_VIEW_GLOBAL_ILLUMINATION, DEBUG_VIEW_LIGHT_COMPLEXITY,
     DEBUG_VIEW_LIT_WIREFRAME, DEBUG_VIEW_LOD, DEBUG_VIEW_MESHLETS, DEBUG_VIEW_NONE, DEBUG_VIEW_NORMALS, DEBUG_VIEW_UNLIT,
-    DEBUG_VIEW_WIREFRAME,
+    DEBUG_VIEW_WIREFRAME, MATERIAL_PROPERTIES, STANDARD_SHADER,
 };
 pub use graph::{BufferAccess, FrameGraph, ImageAccess, ImageId, PassContext, RenderGraph};
 pub use lod::{LodInfo, MAX_LODS, lod_at, lod_at_share, screen_share};
@@ -1835,6 +1835,7 @@ impl View {
                 foliage_pushes: self.foliage_pushes.address,
                 // Only under the atmosphere, which works it out.
                 sky_light: if atmosphere.is_some() { buffers.sky_light.address } else { 0 },
+                material_properties: assets.material_properties.address,
             }],
         );
         buffers.instances.write(0, &extracted.instances[..instance_count]);

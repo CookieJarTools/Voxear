@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 38;
+pub(crate) const API_VERSION: u32 = 39;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -310,6 +310,9 @@ pub(crate) struct NativeApi {
     /// `Draw`'s solid shapes: triangles, three corners each, as `count`
     /// says, in a colour, for a while, drawn as `flags` say.
     pub debug_solid: unsafe extern "C" fn(corners: *const [f32; 3], count: i32, color: *const [f32; 4], duration: f32, flags: i32),
+    /// Reads, or with `set` writes, value `what` of an Obj's Particle
+    /// System, as `light_value` does an Obj's Light.
+    pub particle_value: unsafe extern "C" fn(entity: u64, what: i32, set: i32, value: *mut [f32; 4]) -> i32,
 }
 
 /// What answers scripts' questions about water: the engine's, set when it
@@ -322,19 +325,39 @@ pub fn set_water_sampler(sampler: WaterSampler) {
     let _ = WATER.set(sampler);
 }
 
-/// What reads, or with a value writes, a value of an Obj's Light for
-/// scripts, by number: the engine's, set when it starts (voxear_scripting
-/// cannot see the renderer's lights). `None` when the Obj has no Light.
-pub type LightValues = fn(&mut World, Entity, i32, Option<[f32; 4]>) -> Option<[f32; 4]>;
-static LIGHTS: std::sync::OnceLock<LightValues> = std::sync::OnceLock::new();
+/// What reads, or with a value writes, a value of one of an Obj's
+/// components for scripts, by number: the engine's, set when it starts
+/// (voxear_scripting cannot see the renderer's components). `None` when the
+/// Obj has none.
+pub type ComponentValues = fn(&mut World, Entity, i32, Option<[f32; 4]>) -> Option<[f32; 4]>;
+/// An Obj's Light's values (see `ComponentValues`).
+pub type LightValues = ComponentValues;
+static LIGHTS: std::sync::OnceLock<ComponentValues> = std::sync::OnceLock::new();
+static PARTICLES: std::sync::OnceLock<ComponentValues> = std::sync::OnceLock::new();
 
 /// Sets what answers `Light` in scripts; the first set is kept.
 pub fn set_light_values(values: LightValues) {
     let _ = LIGHTS.set(values);
 }
 
+/// Sets what answers `ParticleSystem` in scripts; the first set is kept.
+pub fn set_particle_values(values: ComponentValues) {
+    let _ = PARTICLES.set(values);
+}
+
 unsafe extern "C" fn light_value(entity: u64, what: i32, set: i32, value: *mut [f32; 4]) -> i32 {
-    let (Some(values), false) = (LIGHTS.get(), value.is_null()) else { return 0 };
+    unsafe { component_value(LIGHTS.get(), entity, what, set, value) }
+}
+
+unsafe extern "C" fn particle_value(entity: u64, what: i32, set: i32, value: *mut [f32; 4]) -> i32 {
+    unsafe { component_value(PARTICLES.get(), entity, what, set, value) }
+}
+
+/// Answers a script's read, or write with `set`, of value `what` through
+/// `values`: 1 when the Obj has the component, the value read put in
+/// `value`.
+unsafe fn component_value(values: Option<&ComponentValues>, entity: u64, what: i32, set: i32, value: *mut [f32; 4]) -> i32 {
+    let (Some(values), false) = (values, value.is_null()) else { return 0 };
     let value = unsafe { &mut *value };
     let written = (set != 0).then_some(*value);
     let done = with_world(|world| values(world, Entity::from_bits(entity), what, written));
@@ -1249,6 +1272,7 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         light_value,
         debug_screen_text,
         debug_solid,
+        particle_value,
     }
 }
 

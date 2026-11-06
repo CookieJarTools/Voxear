@@ -28,7 +28,7 @@ mod windows;
 
 pub use audio::{AudioAsk, BusValue, PlaySound, SoundFacts, SourceValue, VoiceValue};
 pub use display::CursorLock;
-pub use interop::{LightValues, WaterSampler, set_light_values, set_water_sampler};
+pub use interop::{ComponentValues, LightValues, WaterSampler, set_light_values, set_particle_values, set_water_sampler};
 pub use physics::PhysicsEventData;
 pub use drawers::{DrawRequest, DrawerField, Drawn, FieldStep};
 pub use gizmos::{GizmoAnswer, GizmoTarget, HandleId, HandleInput, ScriptHandle, ScriptHandleKind};

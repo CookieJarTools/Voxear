@@ -234,6 +234,16 @@ public readonly struct Obj : IEquatable<Obj>
 		return new Light(this);
 	}
 
+	/// <summary>The Obj's Particle System. Not valid when it has none.</summary>
+	public ParticleSystem Particles => new ParticleSystem(this);
+
+	/// <summary>Gives the Obj a Particle System with the usual settings, playing, unless it has one, and returns it.</summary>
+	public ParticleSystem AddParticles()
+	{
+		NativeParticles.Set(this, NativeParticles.Add, Vector4.Zero);
+		return new ParticleSystem(this);
+	}
+
 	/// <summary>The Obj's Character Controller, which walks it. Not valid when it has none.</summary>
 	public CharacterController CharacterController => new CharacterController(this);
 

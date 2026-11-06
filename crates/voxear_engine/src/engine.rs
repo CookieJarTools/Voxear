@@ -57,6 +57,7 @@ impl Default for Engine {
 impl Engine {
     pub fn new() -> Self {
         crate::lights::register();
+        crate::particles::register();
         let mut world = World::new();
         register_obj_components(&mut world);
         world.register_named_component::<PrefabInstance>("Voxear.PrefabInstance");

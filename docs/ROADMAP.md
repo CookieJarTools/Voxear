@@ -1327,8 +1327,17 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   runs a custom shader's surface and light functions; bounced light is read where a moved vertex rests; and a
   material that moves its vertices always draws its full mesh, so its shadow matches it.
 - Shader Graph with previews and sub-graphs, plus material variants, writing custom shaders.
-- Particles:
-  - the IR compiler and the stateless fast path
+- **Particle Systems, the stateless path ✅.** A `ParticleSystem` component (`voxear_render::particles`): a round
+  with a stream and a burst, looping or once; each particle's lifetime, speed and size ranges, its end size, colours
+  and opacity as it starts and dies, intensity, gravity, drag and spin; Point, Sphere, Cone or Box shapes; Alpha or
+  Additive blending, lit or glowing, soft before what they meet; a seed. Every particle is worked out where it is
+  drawn (`shaders/particles.slang`) from its slot and the system's time, its slot coming round once its last
+  particle died, so nothing is kept between frames and every machine draws the same; drawn after glass, the farthest
+  systems first. The engine starts each as it appears (`ParticlePlayback`); scenes, prefabs, the Inspector, copy and
+  paste, undo, the Hierarchy's + menu and Add Component ▸ Effects; C# `Obj.Particles`, `AddParticles`, `Play`,
+  `Stop`; the manual's Effects ▸ Particle Systems.
+- Particles, still to come:
+  - the IR compiler, which promotes a system off the stateless path when it needs state
   - the preset gallery
   - stack mode, then graph mode
   - depth collision, ribbons and flipbook baking

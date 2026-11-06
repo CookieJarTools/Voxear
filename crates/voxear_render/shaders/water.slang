@@ -304,21 +304,32 @@ float4 floorVertex(uint vertexId : SV_VertexID) : SV_Position
 // How high the ground is at `uv` across slice `slice` of the sea floor,
 // read smoothly with `smooth`, so its outline does not step from texel to
 // texel where foam follows it; as deep as the floor reaches where nothing
-// stands.
-float floorSliceHeight(Frame* frame, uint slice, float2 uv, bool smooth)
+// stands. With `under`, how high its underside is, as high as the floor
+// reaches where nothing stands.
+float floorSliceHeight(Frame* frame, uint slice, float2 uv, bool smooth, bool under = false)
 {
-    float2 tile = float2(float(slice % 2), float(slice / 2));
+    float2 tile = float2(float(slice % 2 + (under ? 2 : 0)), float(slice / 2));
     Texture2D floor = textures[NonUniformResourceIndex(frame->ocean.floorTexture)];
-    float2 at = (tile + uv) * 0.5;
-    float d = smooth ? smoothSample(floor, at, float(FLOOR_TEXELS * 2)).r : floor.SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], at, 0.0).r;
+    float2 at = (tile + uv) * 0.25;
+    float d = smooth ? smoothSample(floor, at, float(FLOOR_TEXELS * 4)).r : floor.SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], at, 0.0).r;
     return frame->ocean.level - FLOOR_REACH + d * 2.0 * FLOOR_REACH;
+}
+
+// The ground under the water at `xz`, `y` high: how high its top is, where
+// it reaches down into the water there; very far down where it does not, as
+// under an overhang, where the water carries on beneath it.
+float groundUnder(Frame* frame, float2 xz, float y, bool smooth = true)
+{
+    float top = floorHeight(frame, xz, smooth);
+    return top > y && floorHeight(frame, xz, false, true) > y ? -1e9 : top;
 }
 
 // How high the ground is under `xz`, from the finest slice of the sea floor
 // that reaches it, fading into the next one out towards its edge so no
 // seam shows where they meet; very far down beyond them all. Read smoothly
-// unless told not to, where nothing shows its outline.
-float floorHeight(Frame* frame, float2 xz, bool smooth = true)
+// unless told not to, where nothing shows its outline. With `under`, how
+// high its underside is instead, very far up beyond them all.
+float floorHeight(Frame* frame, float2 xz, bool smooth = true, bool under = false)
 {
     for (uint i = 0; i < FLOOR_SLICES; i++)
     {
@@ -328,17 +339,17 @@ float floorHeight(Frame* frame, float2 xz, bool smooth = true)
         {
             continue;
         }
-        float height = floorSliceHeight(frame, i, uv, smooth);
+        float height = floorSliceHeight(frame, i, uv, smooth, under);
         float edge = min(min(uv.x, uv.y), min(1.0 - uv.x, 1.0 - uv.y));
         float fade = saturate((0.15 - edge) / 0.12);
         if (fade > 0.0 && i + 1 < FLOOR_SLICES && frame->ocean.floor[i + 1].w > 0.0)
         {
             float4 next = frame->ocean.floor[i + 1];
-            height = lerp(height, floorSliceHeight(frame, i + 1, (xz - next.xy) / next.z, smooth), fade);
+            height = lerp(height, floorSliceHeight(frame, i + 1, (xz - next.xy) / next.z, smooth, under), fade);
         }
         return height;
     }
-    return -1e9;
+    return under ? 1e9 : -1e9;
 }
 
 // A corner of the mesh of Dry Area push.source, placed by its Obj.
@@ -425,8 +436,10 @@ void floorDepthMain(uint3 id : SV_DispatchThreadID)
         // A tap every quarter of the blur's width, within this slice.
         float offset = float(k) * FLOOR_DEPTH_BLUR * 0.25 / texel;
         float2 at = clamp(float2(id.xy) + 0.5 + (across ? float2(offset, 0.0) : float2(0.0, offset)), 0.5, float(FLOOR_TEXELS) - 0.5);
-        float value = from.SampleLevel(linear, (corner + at) / float(FLOOR_TEXELS * 2), 0.0).r;
-        float depth = across ? clamp(FLOOR_REACH - value * 2.0 * FLOOR_REACH, 0.0, SHALLOWS_DEPTH) : value;
+        float value = from.SampleLevel(linear, (corner + at) / float(across ? FLOOR_TEXELS * 4 : FLOOR_TEXELS * 2), 0.0).r;
+        // Under an overhang, whose underside is over the sea, the water is as deep as if it were not there.
+        float under = across ? from.SampleLevel(linear, (corner + at + float2(2 * FLOOR_TEXELS, 0.0)) / float(FLOOR_TEXELS * 4), 0.0).r : 0.0;
+        float depth = across ? (under > 0.5 ? SHALLOWS_DEPTH : clamp(FLOOR_REACH - value * 2.0 * FLOOR_REACH, 0.0, SHALLOWS_DEPTH)) : value;
         float weight = exp(-0.5 * pow(float(k) * 0.25, 2.0));
         total += depth * weight;
         weights += weight;
@@ -738,7 +751,7 @@ void oceanFoamMain(uint3 id : SV_DispatchThreadID)
     float rising = (moved.y - oceanMoved(frame, here, FOAM_TEXEL, true, 1.0, restingDepth).y) / dt;
     float2 at = here + moved.xz;
     float waterY = frame->ocean.level + moved.y;
-    float ground = floorHeight(frame, at, false);
+    float ground = groundUnder(frame, at, waterY, false);
     float depth = waterY - ground;
     // Ground standing out of the water a stride or so round, as round a rock or up a beach, and which way it rises.
     float land = 0.0;
@@ -746,7 +759,7 @@ void oceanFoamMain(uint3 id : SV_DispatchThreadID)
     for (uint k = 0; k < 8; k++)
     {
         float2 around = float2(cos(float(k) * PI / 4.0), sin(float(k) * PI / 4.0));
-        float there = floorHeight(frame, at + around, false);
+        float there = groundUnder(frame, at + around, waterY, false);
         land += saturate((there - waterY + 0.3) / 0.6);
         uphill += around * clamp(there - ground, -2.0, 2.0);
     }
@@ -1202,8 +1215,8 @@ FragmentOut waterFragment(WaterOut input)
         discard;
     }
     bool sea = input.body == SEA;
-    // The sea stops at the shore: none where the ground stands above it.
-    float ground = sea ? floorHeight(frame, input.world.xz) : -1e9;
+    // The sea stops at the shore: none where the ground stands above it, but on under an overhang.
+    float ground = sea ? groundUnder(frame, input.world.xz, input.world.y) : -1e9;
     if (ground > input.world.y)
     {
         discard;

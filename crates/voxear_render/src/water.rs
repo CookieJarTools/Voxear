@@ -41,7 +41,8 @@ const STREAM_ACROSS: u32 = 8;
 /// slices, each this many texels a side, the first this many metres across
 /// and each twice the last, its heights kept within this many metres of
 /// the sea's level; as `FLOOR_*` in `shaders/water.slang`. The slices share
-/// one depth image, two a side.
+/// one depth image, their tops two a side in its left half and their
+/// undersides beside them in its right.
 const FLOOR_SLICES: usize = 4;
 const FLOOR_TEXELS: u32 = 256;
 const FLOOR_FIRST: f32 = 64.0;
@@ -255,7 +256,8 @@ impl Water {
         let (lens_now, lens_then) = if buffers.parity { (lens_a, lens_b) } else { (lens_b, lens_a) };
         let lens_kept = std::mem::replace(&mut buffers.lens_kept, true);
         let floor_usage = vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
-        let floor_desc = ImageDesc::new(FLOOR_TEXELS * 2, FLOOR_TEXELS * 2, crate::pipelines::DEPTH_FORMAT, floor_usage);
+        // Each slice's tops in the left half, two a side, and its undersides beside them in the right.
+        let floor_desc = ImageDesc::new(FLOOR_TEXELS * 4, FLOOR_TEXELS * 4, crate::pipelines::DEPTH_FORMAT, floor_usage);
         let floor_image = fg.history_image(gpu, bindless, "sea floor", floor_desc)?;
         let depth_desc = ImageDesc::new(FLOOR_TEXELS * 2, FLOOR_TEXELS * 2, vk::Format::R32_SFLOAT, usage);
         let floor_depth = fg.history_image(gpu, bindless, "sea floor depth", depth_desc)?;
@@ -562,23 +564,27 @@ pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), wat
         let slices: Vec<u32> = floor_draws.iter().map(|(slice, _)| *slice).collect();
         fg.add_pass("Sea floor", &[(floor_image, ImageAccess::DepthAttachment)], &[], move |ctx| {
             let depth = attachment(ctx.view(floor_image), vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL, None);
-            let side = vk::Extent2D { width: FLOOR_TEXELS * 2, height: FLOOR_TEXELS * 2 };
+            let side = vk::Extent2D { width: FLOOR_TEXELS * 4, height: FLOOR_TEXELS * 4 };
             begin_rendering(ctx, side, &[], Some(&depth));
-            bind(ctx, pipelines.sea_floor, vk::PipelineBindPoint::GRAPHICS, &push);
             unsafe { ctx.gpu.device.cmd_bind_index_buffer(ctx.cmd, index_buffer, 0, vk::IndexType::UINT32) };
-            for (slice, items) in &floor_draws {
-                let offset = vk::Offset2D { x: (slice % 2 * FLOOR_TEXELS) as i32, y: (slice / 2 * FLOOR_TEXELS) as i32 };
-                let extent = vk::Extent2D { width: FLOOR_TEXELS, height: FLOOR_TEXELS };
-                set_viewport(ctx, offset, extent);
-                // Nothing there until something is drawn: far below the sea.
-                let clear = vk::ClearAttachment::default()
-                    .aspect_mask(vk::ImageAspectFlags::DEPTH)
-                    .clear_value(vk::ClearValue { depth_stencil: vk::ClearDepthStencilValue { depth: 0.0, stencil: 0 } });
-                let rect = vk::ClearRect { rect: vk::Rect2D { offset, extent }, base_array_layer: 0, layer_count: 1 };
-                unsafe { ctx.gpu.device.cmd_clear_attachments(ctx.cmd, &[clear], &[rect]) };
-                for g in items {
-                    ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { source: g.instance, level: *slice, ..push });
-                    unsafe { ctx.gpu.device.cmd_draw_indexed(ctx.cmd, g.index_count, 1, g.first_index, 0, 0) };
+            // The highest of what stands there, from nothing far below the sea; then beside it the lowest, from
+            // nothing far above it, so an overhang shows as ground with water under it.
+            for (pipeline, beside, nothing) in [(pipelines.sea_floor, 0, 0.0), (pipelines.sea_floor_under, 2, 1.0)] {
+                bind(ctx, pipeline, vk::PipelineBindPoint::GRAPHICS, &push);
+                for (slice, items) in &floor_draws {
+                    let tile = [slice % 2 + beside, slice / 2].map(|t| (t * FLOOR_TEXELS) as i32);
+                    let offset = vk::Offset2D { x: tile[0], y: tile[1] };
+                    let extent = vk::Extent2D { width: FLOOR_TEXELS, height: FLOOR_TEXELS };
+                    set_viewport(ctx, offset, extent);
+                    let clear = vk::ClearAttachment::default()
+                        .aspect_mask(vk::ImageAspectFlags::DEPTH)
+                        .clear_value(vk::ClearValue { depth_stencil: vk::ClearDepthStencilValue { depth: nothing, stencil: 0 } });
+                    let rect = vk::ClearRect { rect: vk::Rect2D { offset, extent }, base_array_layer: 0, layer_count: 1 };
+                    unsafe { ctx.gpu.device.cmd_clear_attachments(ctx.cmd, &[clear], &[rect]) };
+                    for g in items {
+                        ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { source: g.instance, level: *slice, ..push });
+                        unsafe { ctx.gpu.device.cmd_draw_indexed(ctx.cmd, g.index_count, 1, g.first_index, 0, 0) };
+                    }
                 }
             }
             unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };

@@ -121,6 +121,7 @@ pub struct Pipelines {
     pub water_pool: vk::Pipeline,
     pub water_stream: vk::Pipeline,
     pub sea_floor: vk::Pipeline,
+    pub sea_floor_under: vk::Pipeline,
     pub dry_mesh: vk::Pipeline,
     pub water_wall: vk::Pipeline,
     /// Under water: what the view shows dimmed, then the water's own light.
@@ -363,6 +364,12 @@ impl Pipelines {
                 depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
                 ..GraphicsPipelineDesc::depth_only("Sea floor", water, c"floorVertex", DEPTH_FORMAT)
             })?,
+            // Lower ground over higher: the undersides of what stands in the sea.
+            sea_floor_under: graphics(&GraphicsPipelineDesc {
+                cull: vk::CullModeFlags::NONE,
+                depth_compare: vk::CompareOp::LESS_OR_EQUAL,
+                ..GraphicsPipelineDesc::depth_only("Sea floor underside", water, c"floorVertex", DEPTH_FORMAT)
+            })?,
             // Each pixel keeps the nearest front face and the farthest back face drawn.
             dry_mesh: graphics(&GraphicsPipelineDesc {
                 color_formats: &[vk::Format::R32G32_SFLOAT],
@@ -523,6 +530,7 @@ impl Pipelines {
             self.water_pool,
             self.water_stream,
             self.sea_floor,
+            self.sea_floor_under,
             self.dry_mesh,
             self.water_wall,
             self.underwater,

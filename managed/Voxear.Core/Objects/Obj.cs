@@ -214,6 +214,16 @@ public readonly struct Obj : IEquatable<Obj>
 		return new Rigidbody(this);
 	}
 
+	/// <summary>The Obj's Buoyancy, which floats it on the water. Not valid when it has none.</summary>
+	public Buoyancy Buoyancy => new Buoyancy(this);
+
+	/// <summary>Gives the Obj a Buoyancy, unless it has one, and returns it. It needs a Rigidbody and a Collider too.</summary>
+	public Buoyancy AddBuoyancy()
+	{
+		NativePhysics.Set(this, NativePhysics.BuoyancyAdd, Vector4.Zero);
+		return new Buoyancy(this);
+	}
+
 	/// <summary>The Obj's Character Controller, which walks it. Not valid when it has none.</summary>
 	public CharacterController CharacterController => new CharacterController(this);
 

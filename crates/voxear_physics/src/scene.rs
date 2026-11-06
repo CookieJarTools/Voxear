@@ -227,6 +227,30 @@ impl Default for Rigidbody {
     }
 }
 
+/// Floats its Obj on the sea, Pools and Streams. It needs a Rigidbody and a
+/// Collider beside it; how much it weighs does not change how it floats.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Buoyancy {
+    /// How much of it sits under still water, from 0 to 1: a boat's half,
+    /// a log's more. Over 1, it sinks.
+    pub submerged: f32,
+    /// How quickly the water slows it, moving and turning, against the way
+    /// the water moves, so a Stream carries it along and it rides the
+    /// waves: 1 stops it bobbing and rocking without its overshooting, less
+    /// lets it bob longer.
+    pub drag: f32,
+    pub angular_drag: f32,
+}
+
+impl Component for Buoyancy {}
+
+impl Default for Buoyancy {
+    fn default() -> Self {
+        Self { submerged: 0.5, drag: 0.4, angular_drag: 0.4 }
+    }
+}
+
 impl Component for Rigidbody {}
 
 /// Walks its Obj: a capsule standing on the Obj's origin that the game

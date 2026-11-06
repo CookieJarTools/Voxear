@@ -576,6 +576,7 @@ fn has_component(world: &World, entity: Entity, name: &str) -> bool {
         "AudioSource" => world.has::<AudioSource>(entity),
         "Collider" => world.has::<Collider>(entity),
         "Rigidbody" => world.has::<Rigidbody>(entity),
+        "Buoyancy" => world.has::<voxear_engine::water::Buoyancy>(entity),
         "CharacterController" => world.has::<CharacterController>(entity),
         "Joint" => world.has::<Joint>(entity),
         "Collider2D" => world.has::<Collider2D>(entity),

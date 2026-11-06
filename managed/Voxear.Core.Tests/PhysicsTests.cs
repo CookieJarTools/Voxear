@@ -19,6 +19,11 @@ internal static class PhysicsTests
 		Check.True(body.Velocity == Vector3.Zero, "still");
 		body.AddForce(Vector3.UnitY, ForceMode.Impulse);
 		body.AddTorque(Vector3.UnitY, ForceMode.VelocityChange);
+		var floating = Obj.None.Buoyancy;
+		Check.True(!floating.IsValid && floating == Buoyancy.None, "no Buoyancy");
+		Check.Near(0.5f, floating.Submerged);
+		floating.Drag = 1f;
+		floating.Submerged += 0.1f;
 		var walker = Obj.None.CharacterController;
 		Check.True(!walker.IsValid && !walker.IsGrounded && walker.GroundNormal == Vector3.UnitY, "no character");
 		walker.Move(Vector3.UnitZ);

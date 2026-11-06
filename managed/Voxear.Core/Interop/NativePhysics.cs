@@ -4,7 +4,7 @@ using System.Numerics;
 namespace Voxear.Interop;
 
 /// <summary>
-/// The engine's physics, for Collider, Rigidbody, CharacterController and Physics: what each native call takes and
+/// The engine's physics, for Collider, Rigidbody, Buoyancy, CharacterController and Physics: what each native call takes and
 /// gives, as C# has it. Without the engine, as in tests, nothing has physics, and every value reads as missing.
 /// </summary>
 internal static unsafe class NativePhysics
@@ -35,6 +35,13 @@ internal static unsafe class NativePhysics
 	public const int BodyVelocity = 29;
 	public const int BodyAngularVelocity = 30;
 	public const int BodyAwake = 31;
+
+	public const int BuoyancyHas = 80;
+	public const int BuoyancyAdd = 81;
+	public const int BuoyancyRemove = 82;
+	public const int BuoyancySubmerged = 83;
+	public const int BuoyancyDrag = 84;
+	public const int BuoyancyAngularDrag = 85;
 
 	public const int CharacterHas = 40;
 	public const int CharacterAdd = 41;

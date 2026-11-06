@@ -17,7 +17,7 @@ use voxear_ecs::{Entity, World};
 use voxear_physics::{
     Ground, Push,
     scene::{
-        Acoustic, CharacterController, Collider, ColliderShape, Joint, JointType, PhysicsEvent, PhysicsScene, Rigidbody,
+        Acoustic, Buoyancy, CharacterController, Collider, ColliderShape, Joint, JointType, PhysicsEvent, PhysicsScene, Rigidbody,
     },
 };
 use voxear_physics2d::{
@@ -55,6 +55,12 @@ const BODY_CONTINUOUS: i32 = 28;
 const BODY_VELOCITY: i32 = 29;
 const BODY_ANGULAR_VELOCITY: i32 = 30;
 const BODY_AWAKE: i32 = 31;
+const BUOYANCY_HAS: i32 = 80;
+const BUOYANCY_ADD: i32 = 81;
+const BUOYANCY_REMOVE: i32 = 82;
+const BUOYANCY_SUBMERGED: i32 = 83;
+const BUOYANCY_DRAG: i32 = 84;
+const BUOYANCY_ANGULAR_DRAG: i32 = 85;
 // A Character Controller's:
 const CHARACTER_HAS: i32 = 40;
 const CHARACTER_ADD: i32 = 41;
@@ -293,6 +299,7 @@ fn read(world: &mut World, entity: Entity, what: i32) -> Option<[f32; 4]> {
     let collider = || world.get::<Collider>(entity);
     let body = || world.get::<Rigidbody>(entity);
     let character = || world.get::<CharacterController>(entity);
+    let buoyancy = || world.get::<Buoyancy>(entity);
     Some(match what {
         COLLIDER_HAS => flag(collider().is_some()),
         COLLIDER_SHAPE => {
@@ -311,6 +318,10 @@ fn read(world: &mut World, entity: Entity, what: i32) -> Option<[f32; 4]> {
             let acoustic = collider()?.acoustic;
             number(Acoustic::ALL.iter().position(|a| *a == acoustic).unwrap_or_default() as f32)
         }
+        BUOYANCY_HAS => flag(buoyancy().is_some()),
+        BUOYANCY_SUBMERGED => number(buoyancy()?.submerged),
+        BUOYANCY_DRAG => number(buoyancy()?.drag),
+        BUOYANCY_ANGULAR_DRAG => number(buoyancy()?.angular_drag),
         BODY_HAS => flag(body().is_some()),
         BODY_MASS => number(body()?.mass),
         BODY_KINEMATIC => flag(body()?.kinematic),
@@ -502,6 +513,13 @@ fn write(world: &mut World, entity: Entity, what: i32, value: [f32; 4]) -> bool 
             true
         }
         BODY_REMOVE => world.remove::<Rigidbody>(entity).is_some(),
+        BUOYANCY_ADD => {
+            if !world.has::<Buoyancy>(entity) {
+                world.insert(entity, Buoyancy::default());
+            }
+            true
+        }
+        BUOYANCY_REMOVE => world.remove::<Buoyancy>(entity).is_some(),
         CHARACTER_ADD => {
             if !world.has::<CharacterController>(entity) {
                 world.insert(entity, CharacterController::default());
@@ -527,6 +545,9 @@ fn write(world: &mut World, entity: Entity, what: i32, value: [f32; 4]) -> bool 
         BODY_KINEMATIC => change(world, entity, |b: &mut Rigidbody| b.kinematic = on),
         BODY_GRAVITY => change(world, entity, |b: &mut Rigidbody| b.gravity = on),
         BODY_DRAG => change(world, entity, |b: &mut Rigidbody| b.drag = n.max(0.0)),
+        BUOYANCY_SUBMERGED => change(world, entity, |b: &mut Buoyancy| b.submerged = n.max(0.01)),
+        BUOYANCY_DRAG => change(world, entity, |b: &mut Buoyancy| b.drag = n.max(0.0)),
+        BUOYANCY_ANGULAR_DRAG => change(world, entity, |b: &mut Buoyancy| b.angular_drag = n.max(0.0)),
         BODY_ANGULAR_DRAG => change(world, entity, |b: &mut Rigidbody| b.angular_drag = n.max(0.0)),
         BODY_CONTINUOUS => change(world, entity, |b: &mut Rigidbody| b.continuous = on),
         BODY_VELOCITY | BODY_ANGULAR_VELOCITY | BODY_AWAKE => {
@@ -740,6 +761,20 @@ pub(crate) unsafe extern "C" fn character_move(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_script_floats_an_obj_and_changes_how_it_floats() {
+        let mut world = World::new();
+        let crate_ = world.spawn(());
+        assert_eq!(read(&mut world, crate_, BUOYANCY_HAS), Some(flag(false)));
+        assert!(write(&mut world, crate_, BUOYANCY_ADD, [0.0; 4]));
+        assert_eq!(read(&mut world, crate_, BUOYANCY_SUBMERGED), Some(number(0.5)));
+        assert!(write(&mut world, crate_, BUOYANCY_SUBMERGED, [0.8, 0.0, 0.0, 0.0]));
+        assert!(write(&mut world, crate_, BUOYANCY_DRAG, [-1.0, 0.0, 0.0, 0.0]));
+        let floating = *world.get::<Buoyancy>(crate_).unwrap();
+        assert_eq!((floating.submerged, floating.drag), (0.8, 0.0), "no drag below none");
+        assert!(write(&mut world, crate_, BUOYANCY_REMOVE, [0.0; 4]) && !world.has::<Buoyancy>(crate_));
+    }
 
     #[test]
     fn each_obj_is_told_with_the_normal_towards_it() {

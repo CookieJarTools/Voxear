@@ -10,9 +10,8 @@
 //! as much as they are under water, so waves rock it and it rights itself,
 //! and slowed against the way the water there flows, so a Stream carries it.
 
-use serde::{Deserialize, Serialize};
 use voxear_core::math::{Mat4, Quat, Vec3};
-use voxear_ecs::{Component, Entity, World};
+use voxear_ecs::{Entity, World};
 use voxear_physics::{
     Push,
     scene::{Collider, ColliderMesh, ColliderShape, PhysicsScene, Rigidbody},
@@ -20,28 +19,7 @@ use voxear_physics::{
 use voxear_render::{DryArea, DryShape, Ocean, SeaEasing, SeaNow, WindZone, OceanSampler, Pool, SeaState, Stream, StreamPoint, ocean, stream_over};
 use voxear_scene::{Destroying, Path, Transform, WorldTransform};
 
-/// Floats its Obj on the sea, Pools and Streams. It needs a Rigidbody and a
-/// Collider beside it; how much it weighs does not change how it floats.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct Buoyancy {
-    /// How much of it sits under still water, from 0 to 1: a boat's half,
-    /// a log's more. Over 1, it sinks.
-    pub submerged: f32,
-    /// How quickly the water slows it, moving and turning, against the way
-    /// the water flows, so a Stream carries it along: 1 stops it bobbing
-    /// and rocking without its overshooting, less lets it bob longer.
-    pub drag: f32,
-    pub angular_drag: f32,
-}
-
-impl Component for Buoyancy {}
-
-impl Default for Buoyancy {
-    fn default() -> Self {
-        Self { submerged: 0.5, drag: 0.4, angular_drag: 0.4 }
-    }
-}
+pub use voxear_physics::scene::Buoyancy;
 
 /// How many columns a side the water pushes a floating Obj up by.
 const COLUMNS: usize = 3;

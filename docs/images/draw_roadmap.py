@@ -16,12 +16,14 @@ MILESTONES = [
     ("M1", "Rendering core", "Render graph, bindless, GPU culling and LODs, shadows, clustered lights", "done"),
     ("M2", "Content, scenes and levels", "Assets, prefabs, levels, post-processing, content builds, async loading", "done"),
     ("M3", "Editor and Voxear UI", "The Unity-style editor and its UI toolkit, growing all along", "ongoing"),
-    ("", "Packages", "Share code, tools and content from GitHub, as Unity's packages", "next"),
+    ("", "Packages", "Share code, tools and content from GitHub, as Unity's packages", "done"),
     ("M4", "Input, localization, audio, physics", "Input actions, string tables, the mixer, Jolt and Box2D", "now"),
-    ("M5", "Lighting", "Voxel GI, volumetric fog, soft shadows, probes, upscalers", "planned"),
+    ("M5", "Lighting", "Voxel GI, volumetric fog, soft shadows, probes, upscalers", "now"),
+    ("", "Vegetation", "Foliage swaying in the wind, pushed aside, turning with the seasons", "done"),
+    ("", "Water", "The sea, pools, rivers and lava: shores, foam, going under, buoyancy", "done"),
     ("M6", "Animation", "GPU skinning, state machines, blend trees, motion matching, IK", "planned"),
     ("", "Gameplay kits", "Guns with procedural recoil, controllers, building destruction", "planned"),
-    ("M7", "Materials and particles", "Shader Graph, material variants, and GPU particles", "planned"),
+    ("M7", "Materials and particles", "Custom shaders, Shader Graph, material variants, GPU particles", "now"),
     ("M8", "Terrain", "CDLOD terrain, layers, stamps, erosion, scatter, generators", "planned"),
     ("M9", "Navigation, cameras, Timeline", "Pathfinding and avoidance, camera rigs, Timeline", "planned"),
     ("M10", "2D and networking", "Sprites and tilemaps, replication and rollback", "planned"),
@@ -72,9 +74,10 @@ def draw(theme):
         f'<rect x="0.5" y="0.5" width="{WIDTH-1}" height="{height-1}" rx="12" fill="{c["bg"]}" stroke="{c["border"]}"/>',
         f'<text x="{LEFT-8}" y="44" font-family="{FONT}" font-size="20" font-weight="600" fill="{c["text"]}">Roadmap</text>',
     ]
-    # The legend, right-aligned.
+    # The legend, right-aligned: only the states some milestone is in.
     x = WIDTH - 36
-    for state in ["planned", "next", "now", "ongoing", "done"]:
+    used = {state for *_, state in MILESTONES}
+    for state in [state for state in ["planned", "next", "now", "ongoing", "done"] if state in used]:
         label = LABELS[state]
         width = 7.4 * len(label) + 40
         x -= width

@@ -1275,7 +1275,7 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
 - **For all of them:** input actions bound by default for keyboard, mouse and gamepad; a sample scene each to try
   it in; a VoxDocs page each; and saving and loading their state with the game.
 
-## M7 — Materials and particles
+## M7 — Materials and particles (in progress)
 
 - **Custom shaders ✅.** A `.shader` asset (`AssetKind::Shader`) in Slang: a struct of `[Property]`
   fields (numbers, vectors, `[Color]` colours, toggles, `Picture`s), each with a default, and any of:

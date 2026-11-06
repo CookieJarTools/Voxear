@@ -60,7 +60,13 @@ const FOAM_PATTERN: u32 = 1024;
 /// A view's sea: its spectrum, written when the sea changes, and the FFT's
 /// rows.
 pub(crate) struct OceanBuffers {
-    pub spectrum: Buffer,
+    /// Each frame in flight's spectrum, and the sea's waves each was last
+    /// written with, so a new spectrum goes to each as its frame comes round
+    /// rather than waiting for the frames in flight.
+    pub spectra: Vec<Buffer>,
+    written: Vec<Option<SeaState>>,
+    /// The spectrum of the sea's waves now, as the buffers hold it.
+    waves: Vec<[f32; 4]>,
     pub fft: Buffer,
     /// Each frame in flight's Pools, Streams and Dry Areas, and the points
     /// along its Streams.
@@ -92,7 +98,9 @@ impl OceanBuffers {
     pub fn new(gpu: &Gpu, named: &dyn Fn(&str) -> String, slots: usize) -> Result<Self> {
         let usage = vk::BufferUsageFlags::STORAGE_BUFFER;
         let waves = (CASCADES * N * N) as u64;
-        let spectrum = gpu.create_buffer(&named("ocean spectrum"), waves * 16, usage, MemoryLocation::CpuToGpu)?;
+        let spectra = (0..slots)
+            .map(|slot| gpu.create_buffer(&named(&format!("ocean spectrum {slot}")), waves * 16, usage, MemoryLocation::CpuToGpu))
+            .collect::<Result<_>>()?;
         let fft = gpu.create_buffer(&named("ocean fft"), waves * 4 * 8, usage, MemoryLocation::GpuOnly)?;
         let size = (MAX_WATER_BODIES * size_of::<GpuWaterBody>()) as u64;
         let bodies = (0..slots)
@@ -102,11 +110,12 @@ impl OceanBuffers {
         let stream_points = (0..slots)
             .map(|slot| gpu.create_buffer(&named(&format!("stream points {slot}")), size, usage, MemoryLocation::CpuToGpu))
             .collect::<Result<_>>()?;
-        Ok(Self { spectrum, fft, bodies, stream_points, sea: None, wave_height: 0.0, parity: false, foam_origin: None, lens_kept: false, floor_origins: [None; FLOOR_SLICES], floor_level: None, floor_frames: 0, under_until: f32::NEG_INFINITY })
+        Ok(Self { spectra, written: vec![None; slots], waves: Vec::new(), fft, bodies, stream_points, sea: None, wave_height: 0.0, parity: false, foam_origin: None, lens_kept: false, floor_origins: [None; FLOOR_SLICES], floor_level: None, floor_frames: 0, under_until: f32::NEG_INFINITY })
     }
 
     pub fn into_buffers(self) -> Vec<Buffer> {
-        let mut buffers = vec![self.spectrum, self.fft];
+        let mut buffers = self.spectra;
+        buffers.push(self.fft);
         buffers.extend(self.bodies);
         buffers.extend(self.stream_points);
         buffers
@@ -145,15 +154,23 @@ impl OceanBuffers {
         (slices, draws)
     }
 
-    /// Writes the spectrum of `sea`'s waves, when it is not the one written
-    /// already: their height and choppiness are applied as they move, so
-    /// changing only those writes nothing. Each cascade's on a thread of its
-    /// own.
-    fn prepare(&mut self, gpu: &Gpu, sea: &SeaState) {
+    /// Writes the spectrum of `sea`'s waves into frame `slot`'s buffer, when
+    /// it is not the one written there already: their height and choppiness
+    /// are applied as they move, so changing only those writes nothing. A new
+    /// spectrum is made once, each cascade's on a thread of its own.
+    fn prepare(&mut self, slot: usize, sea: &SeaState) {
         let sea = &sea.waves();
-        if self.sea.as_ref() == Some(sea) {
-            return;
+        if self.sea.as_ref() != Some(sea) {
+            self.make(sea);
         }
+        if self.written[slot].as_ref() != Some(sea) {
+            self.spectra[slot].write(0, &self.waves);
+            self.written[slot] = Some(*sea);
+        }
+    }
+
+    /// Makes the spectrum of `sea`'s waves.
+    fn make(&mut self, sea: &SeaState) {
         let spectra: Vec<Vec<Complex>> = std::thread::scope(|scope| {
             let jobs: Vec<_> = (0..CASCADES).map(|cascade| scope.spawn(move || ocean::initial_spectrum(sea, cascade, N))).collect();
             jobs.into_iter().map(|job| job.join().expect("a cascade's spectrum")).collect()
@@ -170,9 +187,7 @@ impl OceanBuffers {
                 waves.push([h.re as f32, h.im as f32, partner.re as f32, partner.im as f32]);
             }
         }
-        // Frames in flight read it.
-        gpu.wait_idle();
-        self.spectrum.write(0, &waves);
+        self.waves = waves;
         // Each wave and its mirror, h0(k) and h0*(-k), add up to twice the energy of the h0s alone.
         self.wave_height = 4.0 * (2.0 * energy).sqrt() as f32;
         self.sea = Some(*sea);
@@ -234,16 +249,15 @@ impl Water {
         fg: &mut FrameGraph<'_>,
         (gpu, bindless): (&Gpu, &mut Bindless),
         (buffers, slot): (&mut OceanBuffers, usize),
-        (found, bodies): (Option<(Ocean, f32, Quat)>, &WaterBodies),
+        (found, bodies): (Option<(Ocean, f32, SeaState)>, &WaterBodies),
         (extent, time, camera): (vk::Extent2D, f32, voxear_core::math::Vec3),
         (ground, dry_meshes): (&[Ground], Vec<DryMesh>),
     ) -> Result<Self> {
-        let (ocean, level, rotation) = found.unwrap_or((Ocean::default(), 0.0, Quat::IDENTITY));
+        let (ocean, level, sea) = found.unwrap_or_else(|| (Ocean::default(), 0.0, Ocean::default().sea_state(Quat::IDENTITY)));
         let ocean = &ocean;
-        let sea = ocean.sea_state(rotation);
         buffers.bodies[slot].write(0, &bodies.bodies);
         buffers.stream_points[slot].write(0, &bodies.points);
-        buffers.prepare(gpu, &sea);
+        buffers.prepare(slot, &sea);
         buffers.parity = !buffers.parity;
         let usage = vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED;
         let mut desc = ImageDesc::new(N as u32, N as u32, WAVE_FORMAT, usage).with_mips();

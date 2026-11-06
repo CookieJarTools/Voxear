@@ -75,8 +75,36 @@ impl Weather {
     }
 }
 
+/// Where an Ocean's wind comes from.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WindSource {
+    /// Its own: along its Obj's +Z, as its weather says.
+    #[default]
+    Own,
+    /// The level's Wind Zone: along its arrow and as hard as it blows, so one
+    /// wind sways the plants and raises the sea.
+    WindZone,
+}
+
+impl WindSource {
+    pub const ALL: [Self; 2] = [Self::Own, Self::WindZone];
+
+    /// As the editor shows it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Own => "Own",
+            Self::WindZone => "Wind Zone",
+        }
+    }
+}
+
+/// How fast a Wind Zone of strength 1 blows over the sea, in metres a second:
+/// a fresh breeze, as a Normal sea's; 3, a gale.
+pub const WIND_ZONE_SPEED: f32 = 7.0;
+
 /// The sea, filling the level at its Obj's height, its wind blowing along its
-/// Obj's +Z. The first one in the level is used.
+/// Obj's +Z, or the level's Wind Zone's. The first one in the level is used.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Ocean {
@@ -105,6 +133,11 @@ pub struct Ocean {
     pub clarity: [f32; 3],
     /// How murky it is: 1 as Clarity says, more to see less far into it.
     pub murk: f32,
+    /// Where its wind comes from: its own, or the level's Wind Zone.
+    pub wind_source: WindSource,
+    /// How many seconds its waves take to follow a change of wind, rising,
+    /// calming or turning, rather than jumping.
+    pub transition: f32,
     /// Waves calming in shallow water, the sea stopping at the land, and its
     /// surf: the ground under the sea is captured round the camera.
     pub shores: bool,
@@ -193,6 +226,8 @@ impl Default for Ocean {
             foam: 0.5,
             clarity: [0.82, 0.97, 0.98],
             murk: 1.0,
+            wind_source: WindSource::Own,
+            transition: 20.0,
             shores: true,
             foam_trails: true,
             foam_3d: true,
@@ -232,6 +267,24 @@ pub struct SeaState {
 }
 
 impl SeaState {
+    /// Part of the way from this sea's waves to `other`'s, by `t` from 0 to
+    /// 1: their winds' speeds and reaches, and their direction turned
+    /// between them. Their height and choppiness are `other`'s.
+    pub fn towards(&self, other: &Self, t: f64) -> Self {
+        let mix = |a: f64, b: f64| a + (b - a) * t;
+        let blend = |a: &Waves, b: &Waves| Waves {
+            speed: mix(a.speed, b.speed),
+            fetch: mix(a.fetch, b.fetch),
+            gamma: mix(a.gamma, b.gamma),
+            spread: mix(a.spread, b.spread),
+        };
+        let (x, z) = (mix(self.direction[0], other.direction[0]), mix(self.direction[1], other.direction[1]));
+        let length = (x * x + z * z).sqrt();
+        // Turning right round, through no direction at all, it takes the new one at once.
+        let direction = if length > 1e-3 { [x / length, z / length] } else { other.direction };
+        Self { swell: blend(&self.swell, &other.swell), wind: blend(&self.wind, &other.wind), direction, ..*other }
+    }
+
     /// The waves alone, at the height their winds raise them and unpinched:
     /// what the spectrum is made from, so a sea that differs from another
     /// only in its waves' height or choppiness needs no spectrum of its own.
@@ -241,6 +294,21 @@ impl SeaState {
 }
 
 impl Ocean {
+    /// The sea its weather makes with its wind from where it says: along
+    /// `rotation`'s +Z, its Obj's; or with Wind Source on Wind Zone, along
+    /// `zone`'s arrow, the level's Wind Zone turned by its rotation, and as
+    /// hard as its strength, when there is one.
+    pub fn sea_blown(&self, rotation: Quat, zone: Option<(Quat, f32)>) -> SeaState {
+        match (self.wind_source, zone) {
+            (WindSource::WindZone, Some((along, strength))) => {
+                let mut sea = self.sea_state(along);
+                sea.wind.speed = f64::from((strength * WIND_ZONE_SPEED).max(0.1));
+                sea
+            }
+            _ => self.sea_state(rotation),
+        }
+    }
+
     /// The sea its weather makes, its wind along `rotation`'s +Z.
     pub fn sea_state(&self, rotation: Quat) -> SeaState {
         let (swell, swell_fetch, wind, fetch) = match self.weather {
@@ -572,6 +640,58 @@ impl Displacement {
     }
 }
 
+/// A sea following its wind as it changes: its waves eased from where they
+/// were to the wind's new sea over a few seconds, a step every quarter of a
+/// second, so its spectrum is not made anew every frame. The same steps at the
+/// same times everywhere, so every machine's sea follows alike.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SeaEasing {
+    from: SeaState,
+    to: SeaState,
+    since: f64,
+}
+
+/// How often an easing sea steps towards its wind's, in seconds.
+const EASING_STEP: f64 = 0.25;
+
+impl SeaEasing {
+    /// A sea already as `sea` says.
+    pub fn new(sea: SeaState) -> Self {
+        Self { from: sea, to: sea, since: f64::NEG_INFINITY }
+    }
+
+    /// The sea at `time`, in seconds, following `target`: its waves on their
+    /// way from where they were when `target`'s last changed, taking
+    /// `seconds` to reach it; their height and choppiness `target`'s at once.
+    pub fn at(&mut self, target: SeaState, time: f64, seconds: f32) -> SeaState {
+        if target.waves() != self.to.waves() {
+            self.from = self.eased(time, seconds);
+            self.to = target;
+            self.since = time;
+        }
+        self.to = target;
+        self.eased(time, seconds)
+    }
+
+    fn eased(&self, time: f64, seconds: f32) -> SeaState {
+        let seconds = f64::from(seconds.max(0.0));
+        let steps = ((time - self.since) / EASING_STEP).floor() * EASING_STEP;
+        let t = if seconds > 0.0 { (steps / seconds).clamp(0.0, 1.0) } else { 1.0 };
+        if t >= 1.0 {
+            return self.to;
+        }
+        self.from.towards(&self.to, t * t * (3.0 - 2.0 * t))
+    }
+}
+
+/// The sea as its Ocean's wind has eased it to now, put on the Ocean's Obj
+/// each frame where the engine runs, for the sea drawn to follow the same
+/// way as the sea floating things ride.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SeaNow(pub SeaState);
+
+impl Component for SeaNow {}
+
 /// The sea's long waves on the CPU, for how high it is at a point: the two
 /// longest cascades at 64×64, moved on to a moment. Their spectrum is made
 /// from the sea's waves alone; their height and choppiness are applied as
@@ -792,6 +912,21 @@ mod tests {
         let peak = d.at(0.0, 0.0)[1];
         let past = d.at(CASCADE_SIZES[1] / 64.0 * 2.0, 0.0);
         assert!(peak > 0.0 && past[0] < 0.0, "peak {peak}, the water past it moved {}", past[0]);
+    }
+
+    #[test]
+    fn a_changed_wind_eases_the_sea_over_its_transition_in_quarter_second_steps() {
+        let calm = Ocean { weather: Weather::Calm, ..Ocean::default() }.sea_state(Quat::IDENTITY);
+        let gale = Ocean { weather: Weather::Stormy, wave_scale: 1.5, ..Ocean::default() }.sea_state(Quat::from_rotation_y(1.0));
+        let mut easing = SeaEasing::new(calm);
+        assert_eq!(easing.at(calm, 10.0, 20.0), calm);
+        // The wind changes at 10 s: at once only the waves' height and choppiness follow.
+        let started = easing.at(gale, 10.0, 20.0);
+        assert_eq!((started.waves(), started.scale), (calm.waves(), gale.scale));
+        let halfway = easing.at(gale, 20.1, 20.0);
+        assert!(halfway.wind.speed > calm.wind.speed && halfway.wind.speed < gale.wind.speed, "{halfway:?}");
+        assert_eq!(easing.at(gale, 20.2, 20.0), halfway, "the same quarter second, the same sea");
+        assert_eq!(easing.at(gale, 30.0, 20.0).waves(), gale.waves());
     }
 
     #[test]

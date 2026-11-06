@@ -268,8 +268,8 @@ pub struct ExtractedFrame {
     /// The size the scene is drawn at: the view's own, or less when TAA
     /// upscales it (see `AntiAliasing::render_scale`).
     pub render_size: (u32, u32),
-    /// The first Ocean, its Obj's height and turn.
-    pub ocean: Option<(crate::Ocean, f32, Quat)>,
+    /// The first Ocean, its Obj's height, and its sea now.
+    pub ocean: Option<(crate::Ocean, f32, crate::SeaState)>,
     /// The Pools and Dry Areas nearest the camera.
     pub water_bodies: crate::water::WaterBodies,
 }
@@ -567,16 +567,19 @@ pub fn extract(
     frame.pushes = crate::foliage::pushes(position, pushers);
     // The first Wind Zone blows over the whole level.
     let zones = world.query_ref::<(&crate::WindZone, &Transform)>().without::<Destroying>();
-    if let Some((zone, transform)) = zones.into_iter().next() {
-        frame.wind = zone.gpu(transform.rotation);
+    let zone = zones.into_iter().next().map(|(zone, transform)| (*zone, transform.rotation));
+    if let Some((zone, rotation)) = zone {
+        frame.wind = zone.gpu(rotation);
     }
-    // The first Ocean is the sea, at its Obj's height.
-    let seas = world.query_ref::<(&crate::Ocean, &Transform, Option<&WorldTransform>)>().without::<Destroying>();
-    let ocean = seas.into_iter().next().map(|(ocean, transform, at)| {
+    // The first Ocean is the sea, at its Obj's height: as its wind has eased it where the engine runs, or as its wind
+    // makes it now.
+    let seas = world.query_ref::<(&crate::Ocean, &Transform, Option<&WorldTransform>, Option<&crate::SeaNow>)>().without::<Destroying>();
+    let ocean = seas.into_iter().next().map(|(ocean, transform, at, now)| {
         let (_, rotation, position) = at.map_or((Vec3::ONE, transform.rotation, transform.position), |w| {
             w.0.to_scale_rotation_translation()
         });
-        (*ocean, position.y, rotation)
+        let blown = || ocean.sea_blown(rotation, zone.map(|(zone, along)| (along, zone.strength)));
+        (*ocean, position.y, now.map_or_else(blown, |now| now.0))
     });
     let water_bodies = water_bodies(world, position);
     // And the first Seasons turns all its plants.

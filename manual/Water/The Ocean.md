@@ -29,6 +29,12 @@ Under **Custom**, the sea is two seas at once, as a real one is: a **Swell** rai
 | Clarity | What a metre of water lets through, by colour: what lies under the water shows through it, bluer and darker the deeper it is |
 | Murk | How far you see into the water: 1 as Clarity says, more for murkier water |
 
+## Wind
+
+The sea's wind blows along the Ocean's Obj's blue arrow, as fast as its weather says. Set **Wind Source** to **Wind Zone** for the level's [[Wind|Wind Zone]] to blow it instead: along the Wind Zone's arrow, a strength of 1 a fresh breeze and 3 a gale, so one wind sways the trees and raises the waves. The long swell, which comes from storms far off, keeps to the weather.
+
+When the wind changes, turning, rising or dropping, the waves take **Transition** seconds to follow, the same waves growing, calming and turning rather than jumping to a new sea. Floating Objs ride the same sea as it changes, alike on every machine.
+
 ## Quality
 
 The sea's costlier looks can each be turned off, on the Ocean in the Inspector or from code with `Water.Features`, for slower machines or a simpler style. All are on to start with.

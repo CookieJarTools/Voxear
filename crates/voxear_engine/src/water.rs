@@ -17,7 +17,7 @@ use voxear_physics::{
     Push,
     scene::{Collider, ColliderMesh, ColliderShape, PhysicsScene, Rigidbody},
 };
-use voxear_render::{DryArea, DryShape, Ocean, OceanSampler, Pool, SeaState, Stream, StreamPoint, ocean, stream_over};
+use voxear_render::{DryArea, DryShape, Ocean, SeaEasing, SeaNow, WindZone, OceanSampler, Pool, SeaState, Stream, StreamPoint, ocean, stream_over};
 use voxear_scene::{Destroying, Path, Transform, WorldTransform};
 
 /// Floats its Obj on the sea, Pools and Streams. It needs a Rigidbody and a
@@ -57,6 +57,8 @@ pub struct WaterQuery {
     streams: Vec<(Vec<StreamPoint>, f32)>,
     /// Whether the sea's waves calm in shallow water (the Ocean's Shores).
     shores: bool,
+    /// How the sea is following its wind as it changes.
+    easing: Option<SeaEasing>,
 }
 
 /// The water at a point: how high its surface is above it, the way that
@@ -69,18 +71,21 @@ pub struct WaterPoint {
 }
 
 /// Moves the sea's waves on to `time`, in the game's elapsed seconds, as
-/// the renderer draws them; makes them again when the level's first Ocean
-/// changed, and lets them go when it has none. Lays out each Stream's points
-/// where its Path is now.
+/// the renderer draws them; eases them towards the sea the level's first
+/// Ocean's wind makes, putting the sea now on its Obj ([`SeaNow`]) for the
+/// renderer to draw the same; and lets them go when it has none. Lays out
+/// each Stream's points where its Path is now.
 pub fn update(world: &mut World, time: f64) {
     voxear_scripting::set_water_sampler(for_scripts);
-    let first = world.query_ref::<(&Ocean, &Transform, Option<&WorldTransform>)>().into_iter().next().map(
-        |(ocean, transform, at)| {
-            let (rotation, position) = at.map_or((transform.rotation, transform.position), |w| {
-                let (_, rotation, position) = w.0.to_scale_rotation_translation();
-                (rotation, position)
-            });
-            (ocean.sea_state(rotation), position.y, ocean.shores)
+    let zone = world
+        .query_ref::<(&WindZone, &Transform, Option<&WorldTransform>)>()
+        .into_iter()
+        .next()
+        .map(|(zone, transform, at)| (placed(transform, at).1, zone.strength));
+    let first = world.query_ref::<(Entity, &Ocean, &Transform, Option<&WorldTransform>)>().into_iter().next().map(
+        |(entity, ocean, transform, at)| {
+            let (position, rotation) = placed(transform, at);
+            (entity, ocean.sea_blown(rotation, zone), ocean.transition, position.y, ocean.shores)
         },
     );
     let streams: Vec<(Vec<StreamPoint>, f32)> = world
@@ -93,11 +98,12 @@ pub fn update(world: &mut World, time: f64) {
     }
     let query = world.resource_mut::<WaterQuery>().expect("inserted above");
     query.streams = streams;
-    let Some((sea, level, shores)) = first else {
-        (query.sampler, query.made_for) = (None, None);
+    let Some((entity, target, transition, level, shores)) = first else {
+        (query.sampler, query.made_for, query.easing) = (None, None, None);
         return;
     };
     query.shores = shores;
+    let sea = query.easing.get_or_insert_with(|| SeaEasing::new(target)).at(target, time, transition);
     // A change of only the waves' height or choppiness keeps the spectrum it has.
     if query.made_for != Some(sea) {
         match query.sampler.as_mut() {
@@ -109,6 +115,7 @@ pub fn update(world: &mut World, time: f64) {
     let sampler = query.sampler.as_mut().expect("made above");
     sampler.set_level(level);
     sampler.set_time(time);
+    world.insert(entity, SeaNow(sea));
 }
 
 /// Where an Obj is in the world and how it is turned.
@@ -368,6 +375,29 @@ mod tests {
         }
         let (off, rise) = ((off / count as f32).sqrt(), (rise / count as f32).sqrt());
         assert!(off < rise * 0.25, "its middle {off} m from the surface, which moves {rise} m");
+    }
+
+    #[test]
+    fn an_ocean_blown_by_the_wind_zone_turns_as_it_turns() {
+        use voxear_render::WindSource;
+        let mut world = World::new();
+        let ocean = Ocean { wind_source: WindSource::WindZone, transition: 4.0, ..Ocean::default() };
+        let sea = world.spawn((ocean, Transform::default()));
+        let east = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
+        let zone = world.spawn((WindZone { strength: 2.0, ..WindZone::default() }, Transform::new(Vec3::ZERO, east, Vec3::ONE)));
+        update(&mut world, 1.0);
+        let now = |world: &World| world.get::<SeaNow>(sea).unwrap().0;
+        assert!(now(&world).direction[0] > 0.99, "along the Wind Zone: {:?}", now(&world).direction);
+        assert!((now(&world).wind.speed - 14.0).abs() < 1e-3, "as hard as it blows: {}", now(&world).wind.speed);
+        // Turned north, the sea follows over its transition, not at once.
+        world.get_mut::<Transform>(zone).unwrap().rotation = Quat::IDENTITY;
+        update(&mut world, 2.0);
+        assert!(now(&world).direction[0] > 0.99, "not turned yet: {:?}", now(&world).direction);
+        update(&mut world, 4.0);
+        let [x, z] = now(&world).direction;
+        assert!(x > 0.1 && z > 0.1, "turning: {x} {z}");
+        update(&mut world, 6.5);
+        assert!(now(&world).direction[1] > 0.99, "turned: {:?}", now(&world).direction);
     }
 
     #[test]

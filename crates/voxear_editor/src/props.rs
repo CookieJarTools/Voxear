@@ -23,7 +23,7 @@ use voxear_engine::{
 };
 use voxear_render::{
     Camera, Foliage, FoliageInteraction, Impostors, Light, LightKind, LodGroup, LodLevel, LodMeasure, MAX_TRANSITIONS, MeshRenderer, PostVolume, Renderer,
-    ModelRenderer, Ocean, Season, Seasons, SkyBody, VolumeShape, Weather, WindZone, DryArea, DryShape, Liquid, Pool, Stream,
+    ModelRenderer, Ocean, Season, Seasons, SkyBody, VolumeShape, Weather, WindSource, WindZone, DryArea, DryShape, Liquid, Pool, Stream,
 };
 use voxear_scene::{BehaviourSpec, Behaviours, Name, Parent, SceneComponents};
 
@@ -231,6 +231,9 @@ pub enum Prop {
     /// An Ocean's weather, and for Custom weather its swell and wind; its
     /// crests, colours and foam.
     OceanWeather,
+    /// Where an Ocean's wind comes from, and how long its waves take to follow it.
+    OceanWindSource,
+    OceanTransition,
     OceanSwellWind,
     OceanSwellFetch,
     OceanWind,
@@ -467,6 +470,8 @@ impl Prop {
                 Part::WindZone
             }
             Prop::OceanWeather
+            | Prop::OceanWindSource
+            | Prop::OceanTransition
             | Prop::OceanSwellWind
             | Prop::OceanSwellFetch
             | Prop::OceanWind
@@ -642,6 +647,8 @@ impl Prop {
             Prop::WindGustSpeed => "gust_speed",
             Prop::WindTurbulence => "turbulence",
             Prop::OceanWeather => "weather",
+            Prop::OceanWindSource => "wind_source",
+            Prop::OceanTransition => "transition",
             Prop::OceanSwellWind => "swell_wind",
             Prop::OceanSwellFetch => "swell_fetch",
             Prop::OceanWind => "wind",
@@ -970,7 +977,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
         // The swell and wind only for Custom weather: the others set their own.
         Part::Ocean => {
             let custom = world.get::<Ocean>(entity).is_some_and(|ocean| ocean.weather == Weather::Custom);
-            let mut props = vec![Prop::OceanWeather];
+            let mut props = vec![Prop::OceanWeather, Prop::OceanWindSource, Prop::OceanTransition];
             if custom {
                 props.extend([Prop::OceanSwellWind, Prop::OceanSwellFetch, Prop::OceanWind, Prop::OceanFetch]);
             }
@@ -1201,6 +1208,8 @@ pub fn label(prop: &Prop) -> String {
         Prop::WindGustSpeed => "Gust speed",
         Prop::WindTurbulence => "Turbulence",
         Prop::OceanWeather => "Weather",
+        Prop::OceanWindSource => "Wind Source",
+        Prop::OceanTransition => "Transition",
         Prop::OceanSwellWind => "Swell wind",
         Prop::OceanSwellFetch => "Swell fetch",
         Prop::OceanWind => "Wind",
@@ -1741,6 +1750,12 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
             let index = Weather::ALL.iter().position(|w| *w == weather).unwrap_or(0);
             Value::Choice(index, Weather::ALL.iter().map(|w| w.name().to_string()).collect())
         }
+        Prop::OceanWindSource => {
+            let source = world.get::<Ocean>(entity)?.wind_source;
+            let index = WindSource::ALL.iter().position(|w| *w == source).unwrap_or(0);
+            Value::Choice(index, WindSource::ALL.iter().map(|w| w.name().to_string()).collect())
+        }
+        Prop::OceanTransition => Value::Number(world.get::<Ocean>(entity)?.transition),
         Prop::OceanSwellWind => Value::Number(world.get::<Ocean>(entity)?.swell_wind),
         Prop::OceanSwellFetch => Value::Number(world.get::<Ocean>(entity)?.swell_fetch),
         Prop::OceanWind => Value::Number(world.get::<Ocean>(entity)?.wind),
@@ -2581,6 +2596,11 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
             let weather = Weather::ALL.get(index).copied().unwrap_or_default();
             with(world, entity, |ocean: &mut Ocean| ocean.weather = weather)
         }
+        (Prop::OceanWindSource, Value::Choice(index, _)) => {
+            let source = WindSource::ALL.get(index).copied().unwrap_or_default();
+            with(world, entity, |ocean: &mut Ocean| ocean.wind_source = source)
+        }
+        (Prop::OceanTransition, Value::Number(n)) => with(world, entity, |o: &mut Ocean| o.transition = n.clamp(0.0, 600.0)),
         (Prop::OceanSwellWind, Value::Number(n)) => with(world, entity, |o: &mut Ocean| o.swell_wind = n.clamp(0.1, 40.0)),
         (Prop::OceanSwellFetch, Value::Number(n)) => with(world, entity, |o: &mut Ocean| o.swell_fetch = n.clamp(0.1, 2000.0)),
         (Prop::OceanWind, Value::Number(n)) => with(world, entity, |o: &mut Ocean| o.wind = n.clamp(0.1, 40.0)),

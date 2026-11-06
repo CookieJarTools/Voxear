@@ -103,7 +103,7 @@ pub use impostors::Impostor;
 pub use model_renderer::{ModelPart, ModelRenderer};
 pub use seasons::{Leaves, Season, SeasonLook, Seasons};
 pub use wind::WindZone;
-pub use ocean::{Ocean, OceanSampler, SeaState, Weather};
+pub use ocean::{Ocean, OceanSampler, SeaEasing, SeaNow, SeaState, Weather, WindSource};
 pub use water_bodies::{DryArea, DryShape, Liquid, Pool, Stream, StreamPoint, stream_over};
 pub use scene::{
     Camera, Light, LightKind, MAX_TRANSITIONS, MeshRenderer, Sky, SkyBody, SkyMode, ViewOptions, temperature_color,
@@ -1959,7 +1959,7 @@ impl View {
                 // Only under the atmosphere, which works it out.
                 sky_light: if atmosphere.is_some() { buffers.sky_light.address } else { 0 },
                 material_properties: assets.material_properties.address,
-                ocean_spectrum: self.ocean.spectrum.address,
+                ocean_spectrum: self.ocean.spectra[slot].address,
                 ocean_fft: self.ocean.fft.address,
                 water_bodies: self.ocean.bodies[slot].address,
                 stream_points: self.ocean.stream_points[slot].address,

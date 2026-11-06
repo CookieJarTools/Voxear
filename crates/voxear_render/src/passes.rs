@@ -121,6 +121,8 @@ pub struct Frame {
     pub particles: Vec<u32>,
     /// How many drops the sea's spray has, listed after the Particle Systems.
     pub spray: Option<u32>,
+    /// How many smokes there are, drawn after the fog too.
+    pub smokes: u32,
     /// The GI's probes, whose rays are traced once the opaque passes are
     /// done; shading reads last frame's.
     pub probes: Option<ddgi::Probes>,
@@ -134,7 +136,7 @@ pub fn record(
     frame: &Frame,
     targets: &Targets,
     draws: &Draws,
-) -> (Option<crate::water::UnderWater>, Option<crate::particles::Draw>) {
+) -> (Option<crate::water::UnderWater>, Option<crate::particles::Draw>, Option<crate::smoke::Draw>) {
     let culling = [
         (draws.count, BufferAccess::ComputeWrite),
         (draws.draws, BufferAccess::ComputeWrite),
@@ -455,7 +457,13 @@ pub fn record(
         glass::record(fg, (pipelines, push), glass, glass_targets);
     }
 
-    // The particles are drawn after the fog, each fogged as far off as it is (post_passes).
+    // The smokes and the particles are drawn after the fog, each fogged as far off as it is (post_passes).
+    let smoke = (frame.smokes > 0).then(|| {
+        let mut sampled: Vec<ImageId> =
+            targets.shadows.into_iter().chain(shadow_maps.iter().copied()).chain(tables.iter().copied()).collect();
+        sampled.extend(frame.probes.into_iter().flat_map(|probes| [probes.irradiance, probes.depth, probes.states]));
+        crate::smoke::Draw { count: frame.smokes, depth, sampled }
+    });
     let mut particles = None;
     if !frame.particles.is_empty() || frame.spray.is_some() {
         let mut sampled: Vec<ImageId> =
@@ -487,7 +495,7 @@ pub fn record(
             unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
         });
     }
-    (under, particles)
+    (under, particles, smoke)
 }
 
 /// Which of the opaque passes' targets they clear first: the first pass

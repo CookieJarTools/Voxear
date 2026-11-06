@@ -1344,6 +1344,14 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   values; a Particle System's size, opacity and speed over life and colour over life use them, the shaders reading
   their keys; the Inspector edits them on a graph and a strip in their rows (`curve_fields`), the field Vehicles'
   tyre curves were waiting for. Still to come: curves from C#.
+- **Smoke, stage 1 ✅.** A `Smoke` component fills a grid of 32³ cells out from its Obj, nearest first in half
+  cells across the 26 round each, as much as a ball of its size holds, against the colliders that stay put and past
+  none in the way (`voxear_engine::smoke`; in the editor, colliders made for the fill), noting how far out each cell
+  is so it spreads from its middle. The renderer marches the smokes at half size (`shaders/smoke.slang`): cells blended
+  and read through drifting noise so its edge billows, the sun through the cloud and its shadow map, the light round
+  it, fogged as far off as it starts; then lays them over the scene, each pixel from the half-size ones nearest it in
+  depth. Lasts and thins away. Still to come: holes from shots and blasts that fill back in; asking through it from
+  scripts and the C# API; drifting and pushing; smoothing its look over frames.
 - Particles, still to come:
   - the IR compiler, which promotes a system off the stateless path when it needs state
   - the preset gallery

@@ -4191,6 +4191,78 @@ fn smoke_rises_spreading_and_greys_what_is_behind_it() {
     assert!(smoky[0] > wall[0] + 15, "smoke over the wall: {smoky:?} against {wall:?}");
 }
 
+/// A ball of smoke `seconds` after it started, its cells filled by hand
+/// as the engine would in the open, two metres up and six off, before a
+/// dark wall, with a thin pale post in front of it; or none.
+fn smoke_render(seconds: Option<f32>) -> Option<Vec<u8>> {
+    use std::sync::Arc;
+    use voxear_render::{SMOKE_GRID, Sky, Smoke, SmokeFill, smoke_origin};
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 2.0, -6.0))));
+    world.insert_resource(Sky { ambient: 0.4, ..Sky::default() });
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let dark = MaterialDesc { base_color: [0.05, 0.05, 0.05, 1.0], ..MaterialDesc::default() };
+    let dark = renderer.add_material(&dark).unwrap();
+    let pale = MaterialDesc { base_color: [0.9, 0.5, 0.2, 1.0], ..MaterialDesc::default() };
+    let pale = renderer.add_material(&pale).unwrap();
+    let wall = Transform::new(Vec3::new(0.0, 4.0, 8.0), Quat::IDENTITY, Vec3::new(30.0, 10.0, 0.2));
+    world.spawn((MeshRenderer::new(cube, dark), wall));
+    let post = Transform::new(Vec3::new(0.0, 2.0, -4.5), Quat::IDENTITY, Vec3::new(0.05, 6.0, 0.05));
+    world.spawn((MeshRenderer::new(cube, pale), post));
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.3, -0.6, 1.0).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    let mut time = 10.0;
+    if let Some(seconds) = seconds {
+        let smoke = Smoke { cell: 0.4, spread: 2.0, ..Smoke::default() };
+        let middle = Vec3::new(0.0, 2.0, 0.0);
+        let n = SMOKE_GRID as i32;
+        let cells: Vec<u8> = (0..n * n * n)
+            .map(|i| {
+                let c = Vec3::new((i % n) as f32, ((i / n) % n) as f32, (i / (n * n)) as f32) - (n / 2) as f32;
+                // How far out, in half cells, as the engine counts.
+                if c.length() <= 8.0 { (c.length() * 2.0).round() as u8 + 1 } else { 0 }
+            })
+            .collect();
+        let fill = SmokeFill {
+            cells: Arc::from(cells),
+            steps: 16,
+            origin: smoke_origin(middle, 0.4),
+            filled_for: (smoke, middle),
+            started: time - seconds,
+        };
+        world.spawn((smoke, fill, Transform::from_position(middle)));
+    }
+    world.insert_resource(steady_post());
+    run(&mut renderer, &world, &mut time, 4);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+#[test]
+fn smoke_fills_its_cells_greys_the_scene_and_keeps_its_edge_on_what_stands_before_it() {
+    let Some(clear) = smoke_render(None) else { return };
+    let smoky = smoke_render(Some(4.0)).unwrap();
+    let early = smoke_render(Some(0.3)).unwrap();
+    keep_image("smoke.png", &smoky);
+    keep_image("smoke early.png", &early);
+    let middle = on_screen(Vec3::new(0.0, 2.0, -6.0), Quat::IDENTITY, Vec3::new(0.6, 2.0, 0.0));
+    let (before, after) = (patch_rgb(&clear, middle, 3), patch_rgb(&smoky, middle, 3));
+    let greyer = after.iter().sum::<i32>() > before.iter().sum::<i32>() + 90;
+    assert!(greyer, "the smoke over the dark wall: {after:?} against {before:?}");
+    // The post in front, seen sharp: its pixels as without the smoke, though those beside it are smoky.
+    let post = on_screen(Vec3::new(0.0, 2.0, -6.0), Quat::IDENTITY, Vec3::new(0.0, 2.0, -4.5));
+    let (bare, through) = (rgb_at(&clear, post), rgb_at(&smoky, post));
+    let apart = (0..3).map(|c| (bare[c] - through[c]).abs()).max().unwrap();
+    assert!(apart < 25, "the post before the smoke stays as it was: {through:?} against {bare:?}");
+    let changed = |pixels: &[u8]| {
+        (0..360u32).flat_map(|y| (0..640u32).map(move |x| (x, y))).filter(|&at| {
+            (0..3).map(|c| (rgb_at(pixels, at)[c] - rgb_at(&clear, at)[c]).abs()).max().unwrap() > 20
+        }).count()
+    };
+    let (small, full) = (changed(&early), changed(&smoky));
+    assert!(small * 2 < full, "spreading out from its middle: {small} pixels early, {full} once spread");
+}
+
 /// Where `point` is on screen in a 640×360 picture from a camera at `eye`
 /// looking along `look`, as the default camera's 60° projection puts it.
 fn on_screen(eye: Vec3, look: Quat, point: Vec3) -> (u32, u32) {

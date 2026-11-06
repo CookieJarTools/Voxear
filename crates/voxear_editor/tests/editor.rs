@@ -6530,6 +6530,20 @@ fn a_new_particle_system_plays_in_the_scene_and_saves_with_it() {
 }
 
 #[test]
+fn a_new_smoke_fills_round_it_in_the_editor() {
+    use voxear_render::{Smoke, SmokeFill};
+    let Some((mut renderer, mut editor)) = open() else { return };
+    run_command(&mut editor, &mut renderer, "new smoke");
+    let smoke = obj(&editor, "Smoke").expect("a Smoke made from the palette");
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let world = &editor.game.engine.world;
+    assert_eq!(world.get::<Smoke>(smoke).copied(), Some(Smoke::default()));
+    let fill = world.get::<SmokeFill>(smoke).expect("filled as it is edited");
+    assert!(fill.cells.iter().any(|&c| c != 0), "some cells filled");
+}
+
+#[test]
 fn a_curve_is_edited_by_pressing_and_dragging_its_keys() {
     use voxear_render::ParticleSystem;
     let Some((mut renderer, mut editor)) = open() else { return };

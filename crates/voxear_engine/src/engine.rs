@@ -441,6 +441,7 @@ impl Engine {
         // The sea's long waves, where scripts and floating Objs ask about them.
         crate::water::update(&mut self.world, self.time.elapsed);
         crate::particles::start(&mut self.world, self.time.elapsed);
+        crate::smoke::fill_smokes(&mut self.world, self.time.elapsed);
         let year = self.world.query_ref::<&Seasons>().into_iter().next().map(|seasons| seasons.time_of_year);
         let features = self.world.query_ref::<&voxear_render::Ocean>().into_iter().next().map(|ocean| ocean.features());
         if let Some(scripts) = self.scripts.as_mut() {

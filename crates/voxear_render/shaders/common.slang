@@ -774,6 +774,22 @@ struct TraceInstance
     uint2 pad;
 };
 
+// A smoke, as smoke.slang marches through it; mirrors GpuSmoke in
+// src/gpu.rs.
+struct Smoke
+{
+    float3 origin;
+    float cell;
+    float3 color;
+    float density;
+    float grown;
+    float steps;
+    float seed;
+    float age;
+    uint cells;
+    uint3 pad;
+};
+
 // A Particle System, as particles.slang works out its particles; mirrors
 // GpuParticleSystem in src/gpu.rs.
 struct ParticleSystem
@@ -860,6 +876,8 @@ struct Buffers
     StreamPoint* streamPoints;
     DebugTriangle* debugTriangles;
     ParticleSystem* particleSystems;
+    Smoke* smokes;
+    uint* smokeCells;
 };
 
 struct Push

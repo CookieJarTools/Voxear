@@ -68,6 +68,9 @@ pub struct PostInput {
     /// The particles, drawn after the fog, each fogged as far off as it is,
     /// and before the view under the water.
     pub particles: Option<crate::particles::Draw>,
+    /// The smokes, laid over the scene after the fog and before the
+    /// particles.
+    pub smoke: Option<crate::smoke::Draw>,
     /// Each pixel's normal and roughness, when the depth passes wrote them,
     /// which TAA reads to tell mirrors by (`post.surface_texture`).
     pub surface: Option<ImageId>,
@@ -104,6 +107,10 @@ pub fn record(
         let push = Push { textures: [depth_texture, 0, 0, 0], ..push };
         let images = [(depth, ImageAccess::Sampled), (hdr, ImageAccess::ColorAttachment)];
         fg.add_pass("Fog", &images, &[], move |ctx| draw(ctx, pipelines.fog, &push, hdr, true));
+    }
+    if let Some(smoke) = input.smoke.clone() {
+        let target = (smoke, hdr, render_extent);
+        crate::smoke::record(fg, (gpu, bindless), (pipelines, push), target, input.fog_volume)?;
     }
     if let Some(particles) = input.particles.clone() {
         crate::particles::record(fg, (pipelines, push), particles, input.fog_volume);
@@ -266,7 +273,7 @@ pub fn blur_for_backdrop(
 
 /// A fullscreen pass into `target`. Passes that blend keep its contents; the
 /// rest overwrite every pixel, so nothing needs loading.
-fn draw(ctx: &PassContext, pipeline: vk::Pipeline, push: &Push, target: ImageId, blend: bool) {
+pub(crate) fn draw(ctx: &PassContext, pipeline: vk::Pipeline, push: &Push, target: ImageId, blend: bool) {
     let load = if blend { vk::AttachmentLoadOp::LOAD } else { vk::AttachmentLoadOp::DONT_CARE };
     let color = [vk::RenderingAttachmentInfo::default()
         .image_view(ctx.view(target))

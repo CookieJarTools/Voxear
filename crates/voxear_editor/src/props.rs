@@ -77,6 +77,7 @@ pub enum Part {
     PostVolume,
     WindZone,
     ParticleSystem,
+    Smoke,
     Ocean,
     Pool,
     DryArea,
@@ -116,6 +117,7 @@ impl Part {
             Part::PostVolume => "post_volume".into(),
             Part::WindZone => "wind_zone".into(),
             Part::ParticleSystem => "particles".into(),
+            Part::Smoke => "smoke".into(),
             Part::Ocean => "ocean".into(),
             Part::Pool => "pool".into(),
             Part::DryArea => "dry_area".into(),
@@ -149,6 +151,7 @@ impl Part {
             Part::PostVolume => "Post Volume",
             Part::WindZone => "Wind Zone",
             Part::ParticleSystem => "Particle System",
+            Part::Smoke => "Smoke",
             Part::Ocean => "Ocean",
             Part::Pool => "Pool",
             Part::DryArea => "Dry Area",
@@ -181,6 +184,7 @@ impl Part {
             Part::PostVolume => "panels",
             Part::WindZone => "move",
             Part::ParticleSystem => "particles",
+            Part::Smoke => "particles",
             Part::Ocean => "globe",
             Part::Pool => "globe",
             Part::DryArea => "box",
@@ -270,6 +274,16 @@ pub enum Prop {
     ParticleOpacityCurve,
     ParticleSpeedCurve,
     ParticleColorGradient,
+    /// A Smoke's size and cells, how thick it is and its colour, how long it
+    /// spreads, lasts and fades, and which swirls.
+    SmokeSize,
+    SmokeCell,
+    SmokeDensity,
+    SmokeColor,
+    SmokeSpread,
+    SmokeLasts,
+    SmokeFade,
+    SmokeSeed,
     /// An Ocean's weather, and for Custom weather its swell and wind; its
     /// crests, colours and foam.
     OceanWeather,
@@ -550,6 +564,14 @@ impl Prop {
             | Prop::ParticleOpacityCurve
             | Prop::ParticleSpeedCurve
             | Prop::ParticleColorGradient => Part::ParticleSystem,
+            Prop::SmokeSize
+            | Prop::SmokeCell
+            | Prop::SmokeDensity
+            | Prop::SmokeColor
+            | Prop::SmokeSpread
+            | Prop::SmokeLasts
+            | Prop::SmokeFade
+            | Prop::SmokeSeed => Part::Smoke,
             Prop::OceanWeather
             | Prop::OceanWindSource
             | Prop::OceanTransition
@@ -761,6 +783,14 @@ impl Prop {
             Prop::ParticleOpacityCurve => "opacity_curve",
             Prop::ParticleSpeedCurve => "speed_curve",
             Prop::ParticleColorGradient => "color_gradient",
+            Prop::SmokeSize => "size",
+            Prop::SmokeCell => "cell",
+            Prop::SmokeDensity => "density",
+            Prop::SmokeColor => "color",
+            Prop::SmokeSpread => "spread",
+            Prop::SmokeLasts => "lasts",
+            Prop::SmokeFade => "fade",
+            Prop::SmokeSeed => "seed",
             Prop::OceanWeather => "weather",
             Prop::OceanWindSource => "wind_source",
             Prop::OceanTransition => "transition",
@@ -972,6 +1002,9 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     if world.has::<ParticleSystem>(entity) {
         parts.push(Part::ParticleSystem);
     }
+    if world.has::<voxear_render::Smoke>(entity) {
+        parts.push(Part::Smoke);
+    }
     if world.has::<Ocean>(entity) {
         parts.push(Part::Ocean);
     }
@@ -1110,6 +1143,16 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
                 WindShape::Box => vec![Prop::WindShape, Prop::WindStrength, Prop::WindSize, Prop::WindFalloff],
             }
         }
+        Part::Smoke => vec![
+            Prop::SmokeSize,
+            Prop::SmokeCell,
+            Prop::SmokeDensity,
+            Prop::SmokeColor,
+            Prop::SmokeSpread,
+            Prop::SmokeLasts,
+            Prop::SmokeFade,
+            Prop::SmokeSeed,
+        ],
         Part::ParticleSystem => {
             let shape = world.get::<ParticleSystem>(entity).map_or(EmitShape::Cone, |system| system.shape);
             let mut props = vec![
@@ -1411,6 +1454,14 @@ pub fn label(prop: &Prop) -> String {
         Prop::ParticleOpacityCurve => "Opacity Over Life",
         Prop::ParticleSpeedCurve => "Speed Over Life",
         Prop::ParticleColorGradient => "Colour Over Life",
+        Prop::SmokeSize => "Size",
+        Prop::SmokeCell => "Cell Size",
+        Prop::SmokeDensity => "Density",
+        Prop::SmokeColor => "Colour",
+        Prop::SmokeSpread => "Spread Time",
+        Prop::SmokeLasts => "Lasts",
+        Prop::SmokeFade => "Fade Time",
+        Prop::SmokeSeed => "Seed",
         Prop::OceanWeather => "Weather",
         Prop::OceanWindSource => "Wind Source",
         Prop::OceanTransition => "Transition",
@@ -1689,6 +1740,9 @@ pub fn add(
         Part::ParticleSystem => {
             world.insert(entity, ParticleSystem::default());
         }
+        Part::Smoke => {
+            world.insert(entity, voxear_render::Smoke::default());
+        }
         Part::Ocean => {
             world.insert(entity, Ocean::default());
         }
@@ -1745,6 +1799,10 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
         Part::Camera => drop(world.remove::<Camera>(entity)),
         Part::PostVolume => drop(world.remove::<PostVolume>(entity)),
         Part::WindZone => drop(world.remove::<WindZone>(entity)),
+        Part::Smoke => {
+            world.remove::<voxear_render::Smoke>(entity);
+            world.remove::<voxear_render::SmokeFill>(entity);
+        }
         Part::ParticleSystem => {
             world.remove::<ParticleSystem>(entity);
             world.remove::<voxear_render::ParticlePlayback>(entity);
@@ -1994,6 +2052,14 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         | Prop::ParticleOpacityCurve
         | Prop::ParticleSpeedCurve
         | Prop::ParticleColorGradient => particle_value(world.get::<ParticleSystem>(entity)?, prop)?,
+        Prop::SmokeSize
+        | Prop::SmokeCell
+        | Prop::SmokeDensity
+        | Prop::SmokeColor
+        | Prop::SmokeSpread
+        | Prop::SmokeLasts
+        | Prop::SmokeFade
+        | Prop::SmokeSeed => smoke_value(world.get::<voxear_render::Smoke>(entity)?, prop)?,
         Prop::OceanWeather => {
             let weather = world.get::<Ocean>(entity)?.weather;
             let index = Weather::ALL.iter().position(|w| *w == weather).unwrap_or(0);
@@ -2852,6 +2918,9 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         (Prop::WindTurbulence, Value::Number(n)) => {
             with(world, entity, |wind: &mut WindZone| wind.turbulence = n.max(0.0))
         }
+        (prop, value) if prop.part() == Part::Smoke => {
+            with(world, entity, |smoke: &mut voxear_render::Smoke| set_smoke(smoke, prop, value))
+        }
         (prop, value) if prop.part() == Part::ParticleSystem => {
             with(world, entity, |system: &mut ParticleSystem| set_particle(system, prop, value))
         }
@@ -3024,6 +3093,36 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
 }
 
 /// Changes a component, if the Obj has it.
+/// A Smoke's field as the Inspector shows it, its colour in sRGB.
+fn smoke_value(smoke: &voxear_render::Smoke, prop: &Prop) -> Option<Value> {
+    Some(match prop {
+        Prop::SmokeSize => Value::Number(smoke.size),
+        Prop::SmokeCell => Value::Number(smoke.cell),
+        Prop::SmokeDensity => Value::Number(smoke.density),
+        Prop::SmokeColor => Value::Color(srgb(smoke.color).map(round3)),
+        Prop::SmokeSpread => Value::Number(smoke.spread),
+        Prop::SmokeLasts => Value::Number(smoke.lasts),
+        Prop::SmokeFade => Value::Number(smoke.fade),
+        Prop::SmokeSeed => Value::Whole(i64::from(smoke.seed)),
+        _ => return None,
+    })
+}
+
+/// Sets a Smoke's field from the Inspector, kept within what it can be.
+fn set_smoke(smoke: &mut voxear_render::Smoke, prop: &Prop, value: Value) {
+    match (prop, value) {
+        (Prop::SmokeSize, Value::Number(n)) => smoke.size = n.clamp(0.1, 30.0),
+        (Prop::SmokeCell, Value::Number(n)) => smoke.cell = n.clamp(0.1, 2.0),
+        (Prop::SmokeDensity, Value::Number(n)) => smoke.density = n.max(0.0),
+        (Prop::SmokeColor, Value::Color(c)) => smoke.color = linear(c.map(|c| c.clamp(0.0, 1.0))),
+        (Prop::SmokeSpread, Value::Number(n)) => smoke.spread = n.max(0.0),
+        (Prop::SmokeLasts, Value::Number(n)) => smoke.lasts = n.max(0.0),
+        (Prop::SmokeFade, Value::Number(n)) => smoke.fade = n.max(0.0),
+        (Prop::SmokeSeed, Value::Whole(n)) => smoke.seed = n.clamp(0, i64::from(u32::MAX)) as u32,
+        _ => {}
+    }
+}
+
 /// A Particle System's field as the Inspector shows it: its colours in sRGB,
 /// their opacity apart.
 fn particle_value(system: &ParticleSystem, prop: &Prop) -> Option<Value> {

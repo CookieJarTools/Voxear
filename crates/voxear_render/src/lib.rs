@@ -41,6 +41,7 @@ mod model_renderer;
 mod impostors;
 mod particles;
 mod passes;
+mod smoke;
 mod payload;
 mod pipelines;
 mod post;
@@ -104,6 +105,7 @@ pub use impostors::Impostor;
 pub use model_renderer::{ModelPart, ModelRenderer};
 pub use seasons::{Leaves, Season, SeasonLook, Seasons};
 pub use particles::{EmitShape, ParticleBlend, ParticlePlayback, ParticleSystem};
+pub use smoke::{SMOKE_GRID, Smoke, SmokeFill, smoke_origin};
 pub use wind::{WindShape, WindZone};
 pub use ocean::{Ocean, OceanSampler, SeaEasing, SeaNow, SeaState, Weather, WindSource};
 pub use water_bodies::{DryArea, DryShape, Liquid, Pool, Stream, StreamPoint, stream_over};
@@ -294,6 +296,8 @@ struct FrameBuffers {
     debug_lines: Buffer,
     debug_triangles: Buffer,
     particle_systems: Buffer,
+    smokes: Buffer,
+    smoke_cells: Buffer,
     /// The sun's light and the sky's, worked out once a frame under the
     /// atmosphere (see `atmosphere::record`).
     sky_light: Buffer,
@@ -1458,6 +1462,8 @@ impl View {
                 debug_lines,
                 debug_triangles,
                 particle_systems,
+                smokes,
+                smoke_cells,
                 sky_light,
                 meshlet_draws,
                 meshlet_draw_instances,
@@ -1467,7 +1473,7 @@ impl View {
             } = buffers;
             let all = [frame, instances, lights, draws, draw_count, draw_instances, stats, clusters, pointers];
             let meshlets = [meshlet_draws, meshlet_draw_instances, meshlet_work];
-            let debug = [debug_lines, debug_triangles, particle_systems];
+            let debug = [debug_lines, debug_triangles, particle_systems, smokes, smoke_cells];
             for buffer in all.into_iter().chain(debug).chain([sky_light, stats_readback]).chain(meshlets) {
                 frames.retire(Retired::Buffer(buffer));
             }
@@ -1972,6 +1978,8 @@ impl View {
                 stream_points: self.ocean.stream_points[slot].address,
                 debug_triangles: buffers.debug_triangles.address,
                 particle_systems: buffers.particle_systems.address,
+                smokes: buffers.smokes.address,
+                smoke_cells: buffers.smoke_cells.address,
             }],
         );
         buffers.instances.write(0, &extracted.instances[..instance_count]);
@@ -1979,6 +1987,9 @@ impl View {
         let camera = voxear_core::math::Vec3::from(extracted.frame.camera_position);
         let (particle_systems, particles, spray) = particles::gather(world, camera, setup.time);
         buffers.particle_systems.write(0, &particle_systems);
+        let (smokes, smoke_cells) = smoke::gather(world, camera, setup.time);
+        buffers.smokes.write(0, &smokes);
+        buffers.smoke_cells.write(0, &smoke_cells);
 
         let push = Push {
             frame: buffers.frame.address,
@@ -2039,9 +2050,10 @@ impl View {
             glass,
             particles,
             spray,
+            smokes: smokes.len() as u32,
             probes,
         };
-        let (under_water, particles) = passes::record(fg, &frame_setup, &targets, &draws);
+        let (under_water, particles, smoke) = passes::record(fg, &frame_setup, &targets, &draws);
         let post = post_passes::PostInput {
             pipelines: *pipelines,
             push,
@@ -2061,6 +2073,7 @@ impl View {
             fog_volume: volume.map(|volume| volume.integrated),
             under_water,
             particles,
+            smoke,
             surface,
         };
         let finished = post_passes::record(fg, gpu, bindless, &post)?;
@@ -2183,6 +2196,18 @@ fn create_frame_buffers(gpu: &Gpu, prefix: &str, slot: usize) -> Result<FrameBuf
         particle_systems: gpu.create_buffer(
             &format!("{prefix}particle systems {slot}"),
             particles::MAX_PARTICLE_SYSTEMS as u64 * size_of::<gpu::GpuParticleSystem>() as u64,
+            storage,
+            host,
+        )?,
+        smokes: gpu.create_buffer(
+            &format!("{prefix}smokes {slot}"),
+            smoke::MAX_SMOKES as u64 * size_of::<gpu::GpuSmoke>() as u64,
+            storage,
+            host,
+        )?,
+        smoke_cells: gpu.create_buffer(
+            &format!("{prefix}smoke cells {slot}"),
+            (smoke::MAX_SMOKES * smoke::SMOKE_WORDS * 4) as u64,
             storage,
             host,
         )?,

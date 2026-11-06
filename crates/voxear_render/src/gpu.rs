@@ -788,6 +788,29 @@ pub struct GpuBuffers {
     pub debug_triangles: u64,
     /// This frame's Particle Systems (see `particles`).
     pub particle_systems: u64,
+    /// This frame's smokes, and their cells, four to a word (see `smoke`).
+    pub smokes: u64,
+    pub smoke_cells: u64,
+}
+
+/// A smoke as `shaders/smoke.slang` marches through it: its grid's first
+/// corner and how big its cells are, its colour and thickness now, how far
+/// it has spread from 0 to 1 and how many steps out its farthest cell is,
+/// a number for its swirls, how old it is, and where its cells start among
+/// this frame's.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuSmoke {
+    pub origin: [f32; 3],
+    pub cell: f32,
+    pub color: [f32; 3],
+    pub density: f32,
+    pub grown: f32,
+    pub steps: f32,
+    pub seed: f32,
+    pub age: f32,
+    pub cells: u32,
+    pub _pad: [u32; 3],
 }
 
 /// A Particle System as `shaders/particles.slang` works out its particles
@@ -1006,7 +1029,8 @@ mod tests {
         assert_eq!(size_of::<GpuDdgi>(), 32 * DDGI_CASCADES + 32 + 48);
         assert_eq!(size_of::<GpuLighting>(), lighting);
         assert_eq!(size_of::<GpuPost>(), post);
-        assert_eq!(size_of::<GpuBuffers>(), 36 * 8);
+        assert_eq!(size_of::<GpuBuffers>(), 38 * 8);
+        assert_eq!(size_of::<GpuSmoke>(), 64);
         assert_eq!(size_of::<GpuParticleSystem>(), 64 + 16 * 9 + 64 * 3 + 128 + 16);
         assert_eq!(size_of::<GpuDebugLine>(), 48);
         assert_eq!(size_of::<GpuDebugTriangle>(), 64);

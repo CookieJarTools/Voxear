@@ -125,6 +125,8 @@ pub struct Pipelines {
     pub sea_floor_walls: vk::Pipeline,
     pub particles: vk::Pipeline,
     pub sea_spray: vk::Pipeline,
+    pub smoke_march: vk::Pipeline,
+    pub smoke_composite: vk::Pipeline,
     pub dry_mesh: vk::Pipeline,
     pub water_wall: vk::Pipeline,
     /// Under water: what the view shows dimmed, then the water's own light.
@@ -186,6 +188,7 @@ impl Pipelines {
             module("foliage_push")?,
             module("water")?,
             module("particles")?,
+            module("smoke")?,
         ];
         let [
             cull,
@@ -206,6 +209,7 @@ impl Pipelines {
             foliage_push,
             water,
             particles,
+            smoke,
         ] = &modules;
         // Only a GPU with mesh shaders can load their modules.
         let meshlets = match gpu.mesh_shader {
@@ -428,6 +432,18 @@ impl Pipelines {
                 blend: Blend::Premultiplied,
                 ..GraphicsPipelineDesc::new("Particles", particles, c"particleVertex", c"particleFragment")
             })?,
+            // Smoke marched at half size, its light and how much it lets through, then laid over the scene.
+            smoke_march: graphics(&GraphicsPipelineDesc {
+                color_formats: &[vk::Format::R16G16B16A16_SFLOAT],
+                cull: vk::CullModeFlags::NONE,
+                ..GraphicsPipelineDesc::new("Smoke", smoke, c"smokeVertex", c"smokeMarchFragment")
+            })?,
+            smoke_composite: graphics(&GraphicsPipelineDesc {
+                color_formats: hdr,
+                cull: vk::CullModeFlags::NONE,
+                blend: Blend::Premultiplied,
+                ..GraphicsPipelineDesc::new("Smoke over the scene", smoke, c"smokeVertex", c"smokeCompositeFragment")
+            })?,
             // The sea's spray: particles that read the waves and the foam, so with the sea's shaders.
             sea_spray: graphics(&GraphicsPipelineDesc {
                 color_formats: hdr,
@@ -571,6 +587,8 @@ impl Pipelines {
             self.sea_floor_walls,
             self.particles,
             self.sea_spray,
+            self.smoke_march,
+            self.smoke_composite,
             self.dry_mesh,
             self.water_wall,
             self.underwater,

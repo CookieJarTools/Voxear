@@ -534,7 +534,7 @@ pub fn record_dry_mask(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, P
 
 /// Records the sea's waves (the FFT, then the mips), then its surface over
 /// a copy of the picture and the depth so far.
-pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), water: Water, targets: WaterTargets) {
+pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), water: Water, targets: WaterTargets) -> Option<UnderWater> {
     let Water { displacement, slopes, previous, fft, copy, copy_texture, copy_mips, depth_copy, second, foam, lens, floor, floor_depth, pattern, under, layered, size, sea, pools, streams, dries, frame, .. } = water;
     let on = |feature: u32| frame.features & feature != 0;
     let cascades = if on(ocean::features::FINE_RIPPLES) { CASCADES } else { CASCADES - 2 };
@@ -694,16 +694,35 @@ pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), wat
             None => record_layer(fg, (pipelines, push), &layer, (copy, copy_texture, &copy_mips, depth_copy), (draws, false)),
         }
     }
-    if !under {
-        return;
-    }
+    under.then(|| UnderWater { lens, copy: (copy, copy_texture, copy_mips), hdr, depth, size, waves: layer.waves, sampled: layer.sampled, wet_lens: on(ocean::features::WET_LENS) })
+}
+
+/// The view under the water, the waterline and the wet lens, when the camera
+/// is near water: what [`record_under`] draws them from.
+#[derive(Clone)]
+pub struct UnderWater {
+    lens: (ImageId, ImageId, bool),
+    copy: (ImageId, TextureId, Vec<StorageImageId>),
+    hdr: ImageId,
+    depth: ImageId,
+    size: [u32; 2],
+    waves: Vec<ImageId>,
+    sampled: Vec<ImageId>,
+    wet_lens: bool,
+}
+
+/// Records the view under the water, the waterline and the wet lens, after
+/// the air's fog, so the water's own fog covers it: the air's haze has no
+/// place under the water.
+pub fn record_under(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), under: UnderWater) {
+    let UnderWater { lens, copy: (copy, copy_texture, copy_mips), hdr, depth, size, waves, sampled, wet_lens } = under;
     // How wet the lens is: soaked under water, drying once out; dry without Wet Lens.
     let (lens_now, lens_then, lens_kept) = lens;
     let (lens_now_texture, lens_then_texture) = (fg.texture(lens_now), fg.texture(lens_then));
-    if on(ocean::features::WET_LENS) {
+    if wet_lens {
         let lens_storage = fg.storage(lens_now, 0);
         let mut lens_images = vec![(lens_now, ImageAccess::StorageWrite), (lens_then, ImageAccess::Sampled)];
-        lens_images.extend(layer.waves.iter().map(|&image| (image, ImageAccess::Sampled)));
+        lens_images.extend(waves.iter().map(|&image| (image, ImageAccess::Sampled)));
         fg.add_pass("Lens wetness", &lens_images, &[], move |ctx| {
             let push = Push { output: lens_storage.0, textures: [lens_then_texture.0, u32::from(!lens_kept), 0, 0], ..push };
             bind(ctx, pipelines.lens_wetness, vk::PipelineBindPoint::COMPUTE, &push);
@@ -719,8 +738,8 @@ pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), wat
         (depth, ImageAccess::Sampled),
         (lens_now, ImageAccess::Sampled),
     ];
-    images.extend(layer.waves.iter().map(|&image| (image, ImageAccess::Sampled)));
-    images.extend(layer.sampled.iter().map(|&image| (image, ImageAccess::Sampled)));
+    images.extend(waves.iter().map(|&image| (image, ImageAccess::Sampled)));
+    images.extend(sampled.iter().map(|&image| (image, ImageAccess::Sampled)));
     let depth_texture = fg.texture(depth);
     let push = Push { texture: copy_texture.0, textures: [depth_texture.0, lens_now_texture.0, 0, 0], ..push };
     let extent = vk::Extent2D { width: size[0], height: size[1] };

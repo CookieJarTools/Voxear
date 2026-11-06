@@ -121,7 +121,9 @@ pub struct Frame {
     pub probes: Option<ddgi::Probes>,
 }
 
-pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: &Draws) {
+/// Records the frame's passes up to post-processing, and gives back the view
+/// under the water, which is drawn after the air's fog (`water::record_under`).
+pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: &Draws) -> Option<crate::water::UnderWater> {
     let culling = [
         (draws.count, BufferAccess::ComputeWrite),
         (draws.draws, BufferAccess::ComputeWrite),
@@ -419,6 +421,7 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
         fullscreen(ctx, pipelines.sky, &push);
     });
 
+    let mut under = None;
     if let Some(water) = frame.water.clone() {
         let mut sampled: Vec<ImageId> =
             targets.shadows.into_iter().chain(shadow_maps.iter().copied()).chain(tables.iter().copied()).collect();
@@ -426,7 +429,7 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
         sampled.extend(dry_mask);
         let index_buffer = draws.index_buffer;
         let water_targets = crate::water::WaterTargets { hdr, velocity, depth, index_buffer, sampled };
-        crate::water::record(fg, (pipelines, push), water, water_targets);
+        under = crate::water::record(fg, (pipelines, push), water, water_targets);
     }
 
     if let Some(glass) = frame.glass.clone() {
@@ -457,6 +460,7 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
             unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
         });
     }
+    under
 }
 
 /// Which of the opaque passes' targets they clear first: the first pass

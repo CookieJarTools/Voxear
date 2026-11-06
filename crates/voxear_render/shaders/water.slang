@@ -56,6 +56,11 @@ static const float LAKE_TURNOVER = 15.0;
 // What a WaterOut is the sea's rather than a Pool's.
 static const uint SEA = 0xFFFFFFFF;
 static const float GRAVITY = 9.81;
+// How much of every colour a metre of water scatters away under it, beside
+// what it absorbs: its specks of sediment and plankton, which no water is
+// without.
+static const float UNDERWATER_SCATTERING = 0.05;
+
 // The sea repeats after this many seconds (REPEAT_SECONDS in src/ocean.rs).
 static const float OCEAN_REPEAT = 1000.0;
 
@@ -1900,7 +1905,9 @@ Under underwaterAt(Frame* frame, float2 pixel)
         float4 farH = transform(frame->invViewProj, float4(ndc, depth, 1.0));
         u.distance = length(farH.xyz / farH.w - frame->cameraPosition);
     }
-    u.through = exp(-absorb * u.distance);
+    // Lost to the water as it takes each colour, and as its specks scatter all of them, so what is far off fades into
+    // the water's own colour rather than showing through it, however clear.
+    u.through = exp(-(absorb + UNDERWATER_SCATTERING) * u.distance);
     // The water's own colours: a Pool's, or the sea's.
     float3 deep = frame->ocean.deep;
     float3 scatter = frame->ocean.scatter;
@@ -1929,10 +1936,13 @@ Under underwaterAt(Frame* frame, float2 pixel)
     float3 dim = exp(-absorb * max(surface - near.y, 0.0) * 0.5);
     float up = 0.45 + 0.55 * saturate(u.view.y * 0.5 + 0.5);
     float forward = pow(saturate(dot(u.view, -frame->sunDirection)), 4.0);
+    // The sun's light dimmed as far as it has come down through the water, longer the lower the sun.
+    float3 sunDown = refract(frame->sunDirection, float3(0.0, 1.0, 0.0), 1.0 / 1.33);
+    float3 sunDim = exp(-absorb * max(surface - near.y, 0.0) / max(-sunDown.y, 0.2));
     // The water's own colours: the sun sets how bright its light through the water is, not its hue, so a low
     // orange sun does not turn the water green.
     float sunBright = dot(sunLight, float3(0.2126, 0.7152, 0.0722));
-    float3 own = (deep * ambient * up + scatter * sunBright * (0.03 + 0.12 * forward));
+    float3 own = deep * ambient * up + scatter * sunBright * (0.03 + 0.05 * forward) * sunDim;
     u.glow = own * dim * (1.0 - u.through);
     return u;
 }

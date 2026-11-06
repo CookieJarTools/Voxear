@@ -62,6 +62,9 @@ pub struct PostInput {
     /// The volumetric fog's integrated volume, laid over the scene in place
     /// of the plain height fog when there is one.
     pub fog_volume: Option<ImageId>,
+    /// The view under the water, drawn after the fog, so the water's own fog
+    /// covers it.
+    pub under_water: Option<crate::water::UnderWater>,
     /// Each pixel's normal and roughness, when the depth passes wrote them,
     /// which TAA reads to tell mirrors by (`post.surface_texture`).
     pub surface: Option<ImageId>,
@@ -98,6 +101,9 @@ pub fn record(
         let push = Push { textures: [depth_texture, 0, 0, 0], ..push };
         let images = [(depth, ImageAccess::Sampled), (hdr, ImageAccess::ColorAttachment)];
         fg.add_pass("Fog", &images, &[], move |ctx| draw(ctx, pipelines.fog, &push, hdr, true));
+    }
+    if let Some(under) = input.under_water.clone() {
+        crate::water::record_under(fg, (pipelines, push), under);
     }
 
     // Depth of field and motion blur work on the scene as drawn, before TAA, as Unreal orders them, so

@@ -8,6 +8,7 @@ internal struct DrawState
 	public Color Color;
 	public Matrix4x4 Matrix;
 	public float Width;
+	public bool WidthInMetres;
 	public float Duration;
 	public bool OnTop;
 	public bool InGame;

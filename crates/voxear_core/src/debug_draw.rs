@@ -52,6 +52,9 @@ pub struct Line {
     pub on_top: bool,
     /// Pixels wide, or 0 for the usual width.
     pub width: f32,
+    /// `width` is in metres, so the line narrows with distance as a thing
+    /// in the world does.
+    pub in_metres: bool,
     /// Drawn by a behaviour's gizmos, which only views showing gizmos draw.
     pub gizmo: bool,
 }
@@ -64,6 +67,8 @@ pub struct LineStyle {
     pub on_top: bool,
     /// Pixels wide, or 0 for the usual width.
     pub width: f32,
+    /// `width` is in metres rather than pixels.
+    pub in_metres: bool,
     /// Part of the game, kept while debug draw is off, as in a release build.
     pub in_game: bool,
     /// Drawn by a behaviour's gizmos, for the editor's Scene views only.
@@ -256,8 +261,8 @@ fn add_lines(segments: impl IntoIterator<Item = (Vec3, Vec3)>, color: [f32; 4], 
             }
             return;
         }
-        let (on_top, width, gizmo) = (style.on_top, style.width, style.gizmo);
-        shapes.lines.push((Line { from, to, color, on_top, width, gizmo }, duration));
+        let (on_top, width, in_metres, gizmo) = (style.on_top, style.width, style.in_metres, style.gizmo);
+        shapes.lines.push((Line { from, to, color, on_top, width, in_metres, gizmo }, duration));
     }
     shapes.dropped = false;
 }
@@ -281,7 +286,7 @@ mod tests {
         advance(0.25);
         assert_eq!(
             lines(),
-            [Line { from: Vec3::ZERO, to: Vec3::Y, color: GREEN, on_top: true, width: 0.0, gizmo: false }]
+            [Line { from: Vec3::ZERO, to: Vec3::Y, color: GREEN, on_top: true, width: 0.0, in_metres: false, gizmo: false }]
         );
         assert!(texts().is_empty(), "no duration: one frame");
         advance(0.25);

@@ -11,6 +11,7 @@
 #include "common.slang"
 
 static const uint DEBUG_ON_TOP = 1;
+static const uint DEBUG_IN_METRES = 2;
 // How much of a line shows where the scene is in front of it.
 static const float DEBUG_BEHIND = 0.3;
 // Corners of a line's quad: along it (0 at `from`, 1 at `to`), and across.
@@ -23,9 +24,9 @@ struct DebugOut
 {
     float4 position : SV_Position;
     float4 color : COLOR;
-    // Pixels from the line's middle, across it.
+    // Pixels from the line's middle, across it, and how wide it is there.
     float across : ACROSS;
-    nointerpolation float width : WIDTH;
+    float width : WIDTH;
     nointerpolation uint flags : FLAGS;
 };
 
@@ -68,9 +69,17 @@ DebugOut debugVertex(uint vertexId : SV_VertexID)
     float2 direction = end.xy / end.w * halfView - start.xy / start.w * halfView;
     direction = length(direction) > 1e-4 ? normalize(direction) : float2(1.0, 0.0);
     float2 normal = float2(-direction.y, direction.x);
+    float4 p = lerp(start, end, corner.x);
+    // Metres wide: as many pixels as that is at this end's distance, never under one. The camera's up, a metre
+    // long, is this many clip units tall at a metre away.
+    if ((drawn.flags & DEBUG_IN_METRES) != 0)
+    {
+        float3 up = float3(frame->view.c0.y, frame->view.c1.y, frame->view.c2.y);
+        float tall = abs(transform(frame->unjitteredViewProj, float4(up, 0.0)).y);
+        o.width = max(drawn.width * tall * halfView.y / max(p.w, near), 1.0);
+    }
     // A pixel more than the width, for the soft edge.
     float reach = o.width * 0.5 + 1.0;
-    float4 p = lerp(start, end, corner.x);
     p.xy += normal * corner.y * reach / halfView * p.w;
     o.position = p;
     o.across = corner.y * reach;

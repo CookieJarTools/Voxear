@@ -9,7 +9,7 @@ use voxear_core::debug_draw;
 use voxear_rhi::{Buffer, vk};
 
 use crate::{
-    gpu::{DEBUG_ON_TOP, GpuDebugLine, Push},
+    gpu::{DEBUG_IN_METRES, DEBUG_ON_TOP, GpuDebugLine, Push},
     graph::{FrameGraph, ImageAccess, ImageId},
     passes::{begin_rendering_in, bind},
 };
@@ -42,7 +42,7 @@ pub(crate) fn record(
         .take(MAX_DEBUG_LINES as usize)
         .map(|line| GpuDebugLine {
             from: line.from.to_array(),
-            flags: if line.on_top { DEBUG_ON_TOP } else { 0 },
+            flags: if line.on_top { DEBUG_ON_TOP } else { 0 } | if line.in_metres { DEBUG_IN_METRES } else { 0 },
             to: line.to.to_array(),
             width: line.width,
             color: line.color,

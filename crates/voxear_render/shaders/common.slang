@@ -734,7 +734,8 @@ struct DebugLine
     float3 from;
     uint flags;
     float3 to;
-    // Pixels wide, or 0 for the pass's usual width.
+    // Pixels wide, or 0 for the pass's usual width; or with DEBUG_IN_METRES
+    // (debug.slang), metres wide.
     float width;
     float4 color;
 };

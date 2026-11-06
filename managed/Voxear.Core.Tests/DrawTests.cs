@@ -38,6 +38,24 @@ internal static class DrawTests
 	}
 
 	[Test]
+	private static void AWidthInMetresIsSentInMillimetres()
+	{
+		var lines = Record(() =>
+		{
+			using (Draw.WidthInMetres(0.25f))
+			{
+				Draw.Line(Vector3.Zero, Vector3.UnitX);
+				using (Draw.Width(2f))
+				{
+					Draw.Line(Vector3.Zero, Vector3.UnitY);
+				}
+			}
+		});
+		Check.True((lines[0].Flags & 16) == 16 && (lines[0].Flags >> 8) == 250, $"in metres, 250 mm: {lines[0].Flags}");
+		Check.True((lines[1].Flags & 16) == 0 && (lines[1].Flags >> 8) == 32, $"pixels again inside Width: {lines[1].Flags}");
+	}
+
+	[Test]
 	private static void MatricesPlaceWhatIsDrawnInsideThem()
 	{
 		var lines = Record(() =>

@@ -82,6 +82,17 @@ fn lines_dim_behind_the_scene_unless_drawn_on_top() {
     let thick = changed(&plain, &frame(&mut renderer, &world, &mut time), 0).1;
     assert!(thick > thin * 2, "a wider line covers more: {thick} pixels against {thin}");
 
+    // A line 0.2 m wide is about 6 pixels wide ten metres away, and narrows with distance.
+    let metres = debug_draw::LineStyle { width: 0.2, in_metres: true, ..Default::default() };
+    debug_draw::clear();
+    debug_draw::line(Vec3::new(2.0, 1.0, 0.0), Vec3::new(6.0, 1.0, 0.0), [1.0, 0.0, 0.0, 1.0], 10.0, metres);
+    let near = changed(&plain, &frame(&mut renderer, &world, &mut time), 0).1;
+    debug_draw::clear();
+    debug_draw::line(Vec3::new(4.0, 1.0, 10.0), Vec3::new(12.0, 1.0, 10.0), [1.0, 0.0, 0.0, 1.0], 10.0, metres);
+    let far = changed(&plain, &frame(&mut renderer, &world, &mut time), 0).1;
+    assert!(near > thin * 2, "metres wide, near: {near} pixels against {thin}");
+    assert!(far * 3 < near * 2, "as long on screen, twice as far, narrower: {far} pixels against {near}");
+
     // A gizmo's line shows only in a view showing gizmos, as the editor's Game view does not.
     debug_draw::clear();
     let gizmo = debug_draw::LineStyle { gizmo: true, ..Default::default() };

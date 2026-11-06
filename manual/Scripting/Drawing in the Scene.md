@@ -46,6 +46,7 @@ using (Draw.Width(3f))
 
 - `Color(color)` draws in that colour.
 - `Width(pixels)` draws thicker lines.
+- `WidthInMetres(metres)` draws lines as wide as something that size in the world, narrower the farther away they are: a rope, a laser, a path on the ground.
 - `Duration(seconds)` keeps drawings up for that long instead of one frame. Use it for things that happen once, such as where a bullet hit.
 - `OnTop()` draws over everything, instead of faintly behind things.
 - `InLocalSpace(obj)` draws in an Obj's own space, so a point at `(0, 1, 0)` is one unit above it, turned and scaled with it. `Matrix(matrix)` does the same with any matrix.

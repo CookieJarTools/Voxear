@@ -594,7 +594,8 @@ Next in M3:
       geometry, or on top when asked; durations; all lines in one draw
     - [x] `Draw.ScreenText`: lines of text down the view's top-right corner, over the Scene and Game views and a
       player's window
-    - [ ] still to come for drawing: solid shapes, wire meshes and widths in metres
+    - [x] `Draw.WidthInMetres`: lines as wide as something that size in the world, narrowing with distance
+    - [ ] still to come for drawing: solid shapes and wire meshes
     - [x] nestable scopes instead of global state: `using (Draw.Color(Color.Red))`, `Draw.InLocalSpace(obj)`,
       `Draw.Width(3)`, `Draw.Duration(2)`, `Draw.OnTop()` and `Draw.InGame()`
     - [x] `DrawGizmos(Gizmo gizmo)` on a behaviour, one callback in place of Unity's two, with `gizmo.IsSelected`

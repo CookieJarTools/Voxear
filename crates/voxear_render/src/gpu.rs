@@ -791,16 +791,18 @@ pub struct GpuBuffers {
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct GpuDebugLine {
     pub from: [f32; 3],
-    /// `DEBUG_ON_TOP`.
+    /// `DEBUG_ON_TOP` and `DEBUG_IN_METRES`.
     pub flags: u32,
     pub to: [f32; 3],
-    /// Pixels wide, or 0 for the pass's usual width.
+    /// Pixels wide, or 0 for the pass's usual width; or metres wide.
     pub width: f32,
     pub color: [f32; 4],
 }
 
 /// Drawn over the scene rather than hidden behind it.
 pub const DEBUG_ON_TOP: u32 = 1;
+/// Its width is in metres, narrowing with distance.
+pub const DEBUG_IN_METRES: u32 = 2;
 
 /// `VkDrawIndexedIndirectCommand`.
 pub const DRAW_COMMAND_SIZE: u64 = 20;

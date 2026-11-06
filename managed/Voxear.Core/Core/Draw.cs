@@ -34,6 +34,7 @@ public static unsafe class Draw
 	private const int HeadFlag = 2;
 	private const int InGameFlag = 4;
 	private const int GizmoFlag = 8;
+	private const int MetresFlag = 16;
 	private const int WidthShift = 8;
 
 	[ThreadStatic] private static bool started;
@@ -89,6 +90,19 @@ public static unsafe class Draw
 	{
 		var scope = new DrawScope(State);
 		State.Width = Math.Clamp(pixels, 0f, 4000f);
+		State.WidthInMetres = false;
+		return scope;
+	}
+
+	/// <summary>
+	/// Draws lines this many metres wide inside the scope, up to 65, so they narrow with distance as a rope or a
+	/// laser beam does, but never under a pixel.
+	/// </summary>
+	public static DrawScope WidthInMetres(float metres)
+	{
+		var scope = new DrawScope(State);
+		State.Width = Math.Clamp(metres, 0f, 65f);
+		State.WidthInMetres = true;
 		return scope;
 	}
 
@@ -415,7 +429,9 @@ public static unsafe class Draw
 		var b = Vector3.Transform(to, now.Matrix);
 		var shade = color ?? now.Color;
 		flags |= (now.OnTop ? OnTopFlag : 0) | (now.InGame ? InGameFlag : 0) | (now.Gizmo ? GizmoFlag : 0);
-		flags |= (int)MathF.Round(Math.Min(now.Width, 4095f) * 16f) << WidthShift;
+		flags |= now.WidthInMetres
+			? MetresFlag | (int)MathF.Round(now.Width * 1000f) << WidthShift
+			: (int)MathF.Round(Math.Min(now.Width, 4095f) * 16f) << WidthShift;
 		if (now.Gizmo)
 		{
 			GizmoLines++;

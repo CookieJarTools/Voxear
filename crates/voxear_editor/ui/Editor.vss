@@ -454,8 +454,7 @@
     flex-shrink: 0;
     padding: 4px 0px 8px 0px;
     gap: 4px;
-    border-bottom-width: 1px;
-    border-color: var(--vx-border);
+    border-bottom: 1px solid var(--vx-line);
 }
 
 .lighting-note {

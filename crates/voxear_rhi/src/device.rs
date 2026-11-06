@@ -88,6 +88,7 @@ impl Gpu {
     }
 
     unsafe fn create(window: Option<WindowHandles>) -> Result<(Self, Option<vk::SurfaceKHR>)> {
+        let loading = LOADER.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let entry = unsafe { ash::Entry::load() }.context("the Vulkan loader is not installed")?;
         let validation = wants_validation(&entry);
         let debug_utils = has_instance_extension(&entry, ext::debug_utils::NAME);
@@ -99,6 +100,7 @@ impl Gpu {
             extensions.push(ext::debug_utils::NAME.as_ptr());
         }
         let instance = create_instance(&entry, &extensions, validation)?;
+        drop(loading);
         let messenger = (validation && debug_utils).then(|| create_messenger(&entry, &instance)).transpose()?;
 
         let surface = match window {
@@ -246,10 +248,17 @@ impl Drop for Gpu {
     }
 }
 
+/// Held while the Vulkan loader is loaded and an instance made: two threads
+/// doing so at once, as GPU tests do, crashed inside the loader as it read
+/// its layers' lists of extensions.
+static LOADER: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Lists every GPU and whether it can run Voxear, without needing a window.
 pub fn enumerate_gpus() -> Result<Vec<GpuInfo>> {
+    let loading = LOADER.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let entry = unsafe { ash::Entry::load() }.context("the Vulkan loader is not installed")?;
     let instance = create_instance(&entry, &[], false)?;
+    drop(loading);
     let devices = unsafe { instance.enumerate_physical_devices() };
     let infos = devices.map(|devices| devices.into_iter().map(|d| describe(&instance, d)).collect());
     unsafe { instance.destroy_instance(None) };

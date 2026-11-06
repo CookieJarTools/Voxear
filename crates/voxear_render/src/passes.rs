@@ -127,8 +127,14 @@ pub struct Frame {
 }
 
 /// Records the frame's passes up to post-processing, and gives back the view
-/// under the water, which is drawn after the air's fog (`water::record_under`).
-pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: &Draws) -> Option<crate::water::UnderWater> {
+/// under the water, which is drawn after the air's fog (`water::record_under`),
+/// and the particles, drawn after it too.
+pub fn record(
+    fg: &mut FrameGraph<'_>,
+    frame: &Frame,
+    targets: &Targets,
+    draws: &Draws,
+) -> (Option<crate::water::UnderWater>, Option<crate::particles::Draw>) {
     let culling = [
         (draws.count, BufferAccess::ComputeWrite),
         (draws.draws, BufferAccess::ComputeWrite),
@@ -449,6 +455,8 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
         glass::record(fg, (pipelines, push), glass, glass_targets);
     }
 
+    // The particles are drawn after the fog, each fogged as far off as it is (post_passes).
+    let mut particles = None;
     if !frame.particles.is_empty() || frame.spray.is_some() {
         let mut sampled: Vec<ImageId> =
             targets.shadows.into_iter().chain(shadow_maps.iter().copied()).chain(tables.iter().copied()).collect();
@@ -458,7 +466,7 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
         sampled.extend(sea_images);
         let clusters = draws.clusters;
         let particle_targets = crate::particles::Targets { hdr, depth, sampled, clusters, extent: frame.extent };
-        crate::particles::record(fg, (pipelines, push), (frame.particles.clone(), spray), particle_targets);
+        particles = Some(crate::particles::Draw { counts: frame.particles.clone(), spray, targets: particle_targets });
     }
 
     if frame.edges {
@@ -479,7 +487,7 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
             unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
         });
     }
-    under
+    (under, particles)
 }
 
 /// Which of the opaque passes' targets they clear first: the first pass

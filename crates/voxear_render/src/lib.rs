@@ -2041,7 +2041,7 @@ impl View {
             spray,
             probes,
         };
-        let under_water = passes::record(fg, &frame_setup, &targets, &draws);
+        let (under_water, particles) = passes::record(fg, &frame_setup, &targets, &draws);
         let post = post_passes::PostInput {
             pipelines: *pipelines,
             push,
@@ -2060,6 +2060,7 @@ impl View {
             keep_ldr: setup.keep_ldr,
             fog_volume: volume.map(|volume| volume.integrated),
             under_water,
+            particles,
             surface,
         };
         let finished = post_passes::record(fg, gpu, bindless, &post)?;

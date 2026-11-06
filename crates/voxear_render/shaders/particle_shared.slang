@@ -4,6 +4,7 @@
 
 #pragma once
 #include "shading.slang"
+#include "volume.slang"
 
 // A system's flags (particles::LOOPING and the rest).
 static const uint PARTICLES_LOOPING = 1;
@@ -154,6 +155,42 @@ ParticleOut particleNone(ParticleSystem system, float2 corner)
     return output;
 }
 
+// The air between the camera and a particle at `world`, `clip` on screen:
+// in alpha how much of the particle shows through it, and the light the
+// haze and the fog add over it. The fog's volume, when the volumetric fog
+// is on, is push.textures.y; otherwise the height fog, as the post passes
+// lay it over the scene behind.
+float4 particleFog(Frame* frame, float3 world, float4 clip)
+{
+    float3 ray = world - frame->cameraPosition;
+    float distance = max(length(ray), 1e-4);
+    float2 uv = saturate(clip.xy / clip.w * 0.5 + 0.5);
+    float3 added = 0.0;
+    float through = 1.0;
+    if (frame->lighting.sky == SKY_ATMOSPHERE)
+    {
+        float4 haze = aerialPerspectiveAt(frame, uv, distance);
+        added = haze.rgb * skyLook(frame);
+        through = haze.a;
+    }
+    if (push.textures.y != NO_TEXTURE)
+    {
+        float far = frame->post.fogVolumeFar;
+        float4 fog = volumeAt(push.textures.y, uv, min(clip.w, far), far);
+        return float4(added * fog.a + fog.rgb, through * fog.a);
+    }
+    if (frame->post.fogDensity <= 0.0)
+    {
+        return float4(added, through);
+    }
+    float falloff = max(frame->post.fogHeightFalloff, 1e-4);
+    float density = frame->post.fogDensity * exp(-falloff * (frame->cameraPosition.y - frame->post.fogBaseHeight));
+    float amount = 1.0 - heightFogThrough(density, falloff, ray);
+    float glow = pow(saturate(dot(ray / distance, -frame->sunDirection)), 8.0) * frame->post.fogSunGlow;
+    float3 color = (fogColourToward(frame, ray / distance) + frame->sunColor * glow * 0.15) * fogOpenness(frame, world);
+    return float4(added * (1.0 - amount) + color * amount, through * (1.0 - amount));
+}
+
 // Places the quad of a particle at `world` that has lived `aged` of its
 // life, `age` seconds, of `system`, at `corner` of its quad, with its
 // random numbers `h`; and how bright and opaque it shows, `fade` of it.
@@ -174,7 +211,11 @@ ParticleOut particlePlace(Frame* frame, ParticleSystem system, float3 world, flo
 
     float4 color = lerp(system.color, system.colorEnd, aged);
     float3 light = (system.flags & PARTICLES_LIT) != 0 ? particleLight(frame, world, transform(frame->viewProj, float4(world, 1.0))) : 1.0;
-    output.color = float4(color.rgb * light * system.intensity, saturate(color.a * fade));
+    // Seen through the air to it: a particle that covers what is behind takes on the fog's light too, while one
+    // that adds its light only dims, as the fog's light is behind it already.
+    float4 air = particleFog(frame, world, transform(frame->viewProj, float4(world, 1.0)));
+    float3 shown = color.rgb * light * system.intensity * air.a + (output.additive != 0 ? 0.0 : air.rgb);
+    output.color = float4(shown, saturate(color.a * fade));
     output.depth = clip.w;
     output.position = clip;
     return output;

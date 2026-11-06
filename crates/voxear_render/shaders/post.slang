@@ -56,48 +56,6 @@ float luminance(float3 color)
 
 // ---------------------------------------------------------------- Fog
 
-// The share of light exponential height fog lets through along a ray from
-// the camera, where the fog's density at the camera is `density`.
-float heightFogThrough(float density, float falloff, float3 ray)
-{
-    float rise = falloff * ray.y;
-    float heightTerm = abs(rise) > 1e-4 ? (1.0 - exp(-rise)) / rise : 1.0;
-    return exp(-density * length(ray) * heightTerm);
-}
-
-// How lit the fog is between the camera and a point: with GI, dim where
-// walls keep out the sky, judged at both ends of the ray; otherwise 1.
-float fogOpenness(Frame* frame, float3 point)
-{
-    if (frame->ddgi.enabled == 0)
-    {
-        return 1.0;
-    }
-    // The open sky's light as the probes count it, from the atmosphere or the gradient.
-    float3 sky = frame->lighting.sky == SKY_ATMOSPHERE ? atmosphereAmbient(frame, 0.5, sunThroughAtmosphere(frame))
-        : lerp(frame->groundColor, lerp(frame->skyHorizon, frame->skyZenith, 0.5), 0.5) * 0.35 * frame->ambient;
-    float open = max(dot(sky, LUMA), 1e-5);
-    float3 back = normalize(frame->cameraPosition - point);
-    float atCamera = dot(ddgiLightAround(frame, frame->cameraPosition, back, sky), LUMA) / open;
-    float atPoint = dot(ddgiLightAround(frame, point, back, sky), LUMA) / open;
-    return saturate((atCamera + atPoint) * 0.5);
-}
-
-// The colour the mist takes looking along `direction`. Under the atmosphere,
-// the sky's own light at the horizon that way, so the mist darkens with the
-// night and reddens at dusk, tinted by the fog's colour; under a gradient
-// sky, the fog's colour, which the scene's sky colours already set.
-float3 fogColourToward(Frame* frame, float3 direction)
-{
-    if (frame->lighting.sky != SKY_ATMOSPHERE)
-    {
-        return frame->post.fogColor;
-    }
-    float3 level = normalize(float3(direction.x, 0.0, direction.z) + float3(0.0, 0.0, 1e-4));
-    float3 tint = frame->post.fogColor / max(dot(frame->post.fogColor, LUMA), 1e-4);
-    return skyToward(frame, level) * skyLook(frame) * frame->ambient * tint;
-}
-
 // Exponential height fog, integrated along each view ray, glowing towards the
 // sun. The sky is left alone: it already fades into the horizon.
 [shader("fragment")]

@@ -4106,6 +4106,43 @@ fn a_particle_system_sends_out_sparks_that_fall_back_and_stops_when_it_is_done()
     assert_eq!(brighter_pixels(&behind, &empty), 0, "hidden behind the wall");
 }
 
+/// Sparks in thick height fog, `near` or far off, in front of a dark wall
+/// sixty metres away; or none.
+fn fogged_sparks_render(sparks_at: Option<Vec3>) -> Option<Vec<u8>> {
+    use voxear_render::{Fog, ParticlePlayback, Sky};
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 1.5, -6.0))));
+    world.insert_resource(Sky { ambient: 0.1, ..Sky::default() });
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let dark = MaterialDesc { base_color: [0.05, 0.05, 0.05, 1.0], ..MaterialDesc::default() };
+    let dark = renderer.add_material(&dark).unwrap();
+    let wall = Transform::new(Vec3::new(0.0, 5.0, 54.0), Quat::IDENTITY, Vec3::new(200.0, 30.0, 0.2));
+    world.spawn((MeshRenderer::new(cube, dark), wall));
+    let mut time = 10.0;
+    if let Some(at) = sparks_at {
+        let playback = ParticlePlayback { started: time - 2.0, stopped: None };
+        world.spawn((sparks(), playback, Transform::from_position(at)));
+    }
+    let mut post = steady_post();
+    post.fog = Fog { enabled: true, density: 0.05, height_falloff: 0.01, color: Some([0.6, 0.6, 0.6]), ..post.fog };
+    world.insert_resource(post);
+    run(&mut renderer, &world, &mut time, 2);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+#[test]
+fn particles_are_fogged_as_far_off_as_they_are() {
+    let Some(empty) = fogged_sparks_render(None) else { return };
+    let near = fogged_sparks_render(Some(Vec3::new(-1.5, 0.5, -1.0))).unwrap();
+    let far = fogged_sparks_render(Some(Vec3::new(1.5, 0.5, 30.0))).unwrap();
+    keep_image("particles fog near.png", &near);
+    keep_image("particles fog far.png", &far);
+    let (shown_near, shown_far) = (brighter_pixels(&near, &empty), brighter_pixels(&far, &empty));
+    assert!(shown_near > 300, "sparks five metres off show through the fog: {shown_near} pixels");
+    assert!(shown_far * 4 < shown_near, "those thirty-five off fade into it: {shown_far} against {shown_near}");
+}
+
 #[test]
 fn smoke_rises_spreading_and_greys_what_is_behind_it() {
     use voxear_render::ParticleSystem;

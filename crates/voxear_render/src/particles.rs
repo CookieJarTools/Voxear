@@ -237,7 +237,18 @@ fn sea_spray(amount: f32) -> ParticleSystem {
     }
 }
 
+/// The particles a frame draws, after the fog (see `post_passes`): how many
+/// each Particle System draws, how many drops the sea's spray has, and what
+/// they draw into and read.
+#[derive(Clone)]
+pub struct Draw {
+    pub counts: Vec<u32>,
+    pub spray: Option<u32>,
+    pub targets: Targets,
+}
+
 /// What the particles' pass draws into and reads.
+#[derive(Clone)]
 pub struct Targets {
     pub hdr: ImageId,
     /// The scene's depth, which the particles test themselves against and
@@ -252,18 +263,22 @@ pub struct Targets {
 
 /// Records the Particle Systems, each drawn as `counts` says of its
 /// particles, a quad each, in the order they are listed; then the sea's
-/// spray, listed after them, with as many drops as `spray` says.
+/// spray, listed after them, with as many drops as `spray` says. Each is
+/// fogged as far off as it is, through the volumetric fog's integrated
+/// volume when there is one.
 pub(crate) fn record(
     fg: &mut FrameGraph<'_>,
     (pipelines, push): (Pipelines, Push),
-    (counts, spray): (Vec<u32>, Option<u32>),
-    targets: Targets,
+    draw: Draw,
+    fog_volume: Option<ImageId>,
 ) {
+    let Draw { counts, spray, targets } = draw;
     let Targets { hdr, depth, sampled, clusters, extent } = targets;
     let depth_texture = fg.texture(depth);
     let mut images = vec![(hdr, ImageAccess::ColorAttachment), (depth, ImageAccess::Sampled)];
-    images.extend(sampled.iter().map(|&image| (image, ImageAccess::Sampled)));
-    let push = Push { textures: [depth_texture.0, 0, 0, 0], ..push };
+    images.extend(sampled.iter().chain(&fog_volume).map(|&image| (image, ImageAccess::Sampled)));
+    let volume = fog_volume.map_or(crate::gpu::NO_TEXTURE, |volume| fg.texture(volume).0);
+    let push = Push { textures: [depth_texture.0, volume, 0, 0], ..push };
     fg.add_pass("Particles", &images, &[(clusters, BufferAccess::ShaderRead)], move |ctx| {
         let color = [vk::RenderingAttachmentInfo::default()
             .image_view(ctx.view(hdr))

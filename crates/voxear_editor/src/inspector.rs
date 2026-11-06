@@ -2547,7 +2547,8 @@ pub(crate) fn vector_row(ui: &mut Ui, rows: NodeId, label: &str) -> (NodeId, [No
     (row, [fields[0], fields[1], fields[2]])
 }
 
-/// A field for each letter, each with its coloured letter inside.
+/// A field for each letter, each with its coloured letter inside, which
+/// drags its own number as a row's label drags the first.
 fn axis_fields(ui: &mut Ui, vector: NodeId, letters: &[&str]) -> Vec<NodeId> {
     letters
         .iter()
@@ -2557,6 +2558,7 @@ fn axis_fields(ui: &mut Ui, vector: NodeId, letters: &[&str]) -> Vec<NodeId> {
             let letter = ui.add_label(cell, &axis.to_uppercase());
             ui.add_class(letter, "axis-letter");
             ui.add_class(letter, &format!("axis-{axis}"));
+            ui.add_class(letter, "scrub");
             let field = ui.text_field(cell, "");
             ui.add_class(field, "axis-input");
             field

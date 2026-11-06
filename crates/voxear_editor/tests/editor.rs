@@ -547,6 +547,38 @@ fn edits_undo_redo_and_save_to_the_scene_file() {
     assert_eq!(saved.position.map(|p| p[0]), Some(7.25), "the edit is in the file");
 }
 
+#[test]
+fn dragging_an_axis_letter_changes_that_axis_alone() {
+    let mut renderer = match Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) {
+        Ok(renderer) => renderer,
+        Err(error) => return eprintln!("skipping: no usable GPU ({error:#})"),
+    };
+    let dir = hello_copy();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    let selected = editor.first_mesh().unwrap();
+    let start = editor.game.engine.world.get::<Transform>(selected).unwrap().position;
+    editor.select(Some(selected));
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+
+    let mut letters = Vec::new();
+    with_class(&editor.ui, prop_row(&editor.ui, "Position").unwrap(), "axis-letter", &mut letters);
+    let y = letters.into_iter().find(|&l| editor.ui.text(l) == "Y").expect("a Y on the Position row");
+    let [left, top, _, height] = editor.ui.rect(y);
+    let ui = &mut editor.ui;
+    ui.pointer_move(left + 2.0, top + height / 2.0);
+    assert!(ui.wants_scrub_cursor(), "a left-right cursor over the letter");
+    ui.pointer_button(true);
+    ui.pointer_move(left + 102.0, top + height / 2.0);
+    ui.pointer_button(false);
+    frame(&mut editor, &mut renderer);
+    let moved = editor.game.engine.world.get::<Transform>(selected).unwrap().position;
+    assert!(moved.y > start.y + 1.0, "dragged right, Y goes up: {moved} from {start}");
+    assert_eq!((moved.x, moved.z), (start.x, start.z), "and X and Z stay");
+}
+
 fn frame(editor: &mut voxear_editor::Editor, renderer: &mut Renderer) {
     editor.update(renderer, SIZE, 1.0, 1.0 / 60.0).unwrap();
 }

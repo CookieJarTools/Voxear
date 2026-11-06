@@ -4195,6 +4195,12 @@ fn smoke_rises_spreading_and_greys_what_is_behind_it() {
 /// as the engine would in the open, two metres up and six off, before a
 /// dark wall, with a thin pale post in front of it; or none.
 fn smoke_render(seconds: Option<f32>) -> Option<Vec<u8>> {
+    smoke_shot_render(seconds, false)
+}
+
+/// The smoke of smoke_render, and with `shot`, a shot from the camera
+/// through it a moment before, as a player's own.
+fn smoke_shot_render(seconds: Option<f32>, shot: bool) -> Option<Vec<u8>> {
     use std::sync::Arc;
     use voxear_render::{SMOKE_GRID, Sky, Smoke, SmokeFill, smoke_origin};
     let mut renderer = renderer()?;
@@ -4231,7 +4237,11 @@ fn smoke_render(seconds: Option<f32>) -> Option<Vec<u8>> {
             filled_for: (smoke, middle),
             started: time - seconds,
         };
-        world.spawn((smoke, fill, Transform::from_position(middle)));
+        let mut holes = voxear_render::SmokeHoles::default();
+        if shot {
+            holes.shoot(Vec3::new(0.0, 2.0, -6.0), Vec3::new(1.2, 2.0, 8.0), time - 0.05);
+        }
+        world.spawn((smoke, fill, holes, Transform::from_position(middle)));
     }
     world.insert_resource(steady_post());
     run(&mut renderer, &world, &mut time, 4);
@@ -4261,6 +4271,21 @@ fn smoke_fills_its_cells_greys_the_scene_and_keeps_its_edge_on_what_stands_befor
     };
     let (small, full) = (changed(&early), changed(&smoky));
     assert!(small * 2 < full, "spreading out from its middle: {small} pixels early, {full} once spread");
+}
+
+#[test]
+fn a_shot_cuts_a_tunnel_through_smoke() {
+    let Some(clear) = smoke_shot_render(None, false) else { return };
+    let shot = smoke_shot_render(Some(4.0), true).unwrap();
+    keep_image("smoke shot.png", &shot);
+    let eye = Vec3::new(0.0, 2.0, -6.0);
+    // Down the shot's tunnel, the dark wall behind shows again; half a metre above it, the smoke stays.
+    let on = on_screen(eye, Quat::IDENTITY, Vec3::new(1.2, 2.0, 8.0));
+    let above = on_screen(eye, Quat::IDENTITY, Vec3::new(1.2, 3.0, 8.0));
+    let bright = |rgb: [i32; 3]| rgb.iter().sum::<i32>();
+    let (tunnel, smoke, wall) = (patch_rgb(&shot, on, 1), patch_rgb(&shot, above, 1), patch_rgb(&clear, on, 1));
+    assert!(bright(tunnel) + 60 < bright(smoke), "darker along the tunnel: {tunnel:?} against {smoke:?} above it");
+    assert!(bright(tunnel) < bright(wall) + 150, "the wall shows through: {tunnel:?} against {wall:?}");
 }
 
 /// Where `point` is on screen in a 640×360 picture from a camera at `eye`

@@ -791,6 +791,8 @@ pub struct GpuBuffers {
     /// This frame's smokes, and their cells, four to a word (see `smoke`).
     pub smokes: u64,
     pub smoke_cells: u64,
+    /// This frame's smokes' holes, as `smoke::gather` lays them out.
+    pub smoke_holes: u64,
 }
 
 /// A smoke as `shaders/smoke.slang` marches through it: its grid's first
@@ -810,7 +812,11 @@ pub struct GpuSmoke {
     pub seed: f32,
     pub age: f32,
     pub cells: u32,
-    pub _pad: [u32; 3],
+    /// Where its holes start among this frame's, two rows each, and how
+    /// many shots, then blasts.
+    pub holes: u32,
+    pub shots: u32,
+    pub blasts: u32,
 }
 
 /// A Particle System as `shaders/particles.slang` works out its particles
@@ -1029,7 +1035,7 @@ mod tests {
         assert_eq!(size_of::<GpuDdgi>(), 32 * DDGI_CASCADES + 32 + 48);
         assert_eq!(size_of::<GpuLighting>(), lighting);
         assert_eq!(size_of::<GpuPost>(), post);
-        assert_eq!(size_of::<GpuBuffers>(), 38 * 8);
+        assert_eq!(size_of::<GpuBuffers>(), 39 * 8);
         assert_eq!(size_of::<GpuSmoke>(), 64);
         assert_eq!(size_of::<GpuParticleSystem>(), 64 + 16 * 9 + 64 * 3 + 128 + 16);
         assert_eq!(size_of::<GpuDebugLine>(), 48);

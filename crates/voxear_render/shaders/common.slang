@@ -787,7 +787,10 @@ struct Smoke
     float seed;
     float age;
     uint cells;
-    uint3 pad;
+    // Where its holes start, two rows each, and how many shots, then blasts.
+    uint holes;
+    uint shots;
+    uint blasts;
 };
 
 // A Particle System, as particles.slang works out its particles; mirrors
@@ -878,6 +881,7 @@ struct Buffers
     ParticleSystem* particleSystems;
     Smoke* smokes;
     uint* smokeCells;
+    float4* smokeHoles;
 };
 
 struct Push

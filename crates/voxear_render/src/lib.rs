@@ -105,7 +105,7 @@ pub use impostors::Impostor;
 pub use model_renderer::{ModelPart, ModelRenderer};
 pub use seasons::{Leaves, Season, SeasonLook, Seasons};
 pub use particles::{EmitShape, ParticleBlend, ParticlePlayback, ParticleSystem};
-pub use smoke::{SMOKE_GRID, Smoke, SmokeFill, smoke_origin};
+pub use smoke::{SMOKE_GRID, Smoke, SmokeBlast, SmokeFill, SmokeHoles, SmokeShot, smoke_origin};
 pub use wind::{WindShape, WindZone};
 pub use ocean::{Ocean, OceanSampler, SeaEasing, SeaNow, SeaState, Weather, WindSource};
 pub use water_bodies::{DryArea, DryShape, Liquid, Pool, Stream, StreamPoint, stream_over};
@@ -298,6 +298,7 @@ struct FrameBuffers {
     particle_systems: Buffer,
     smokes: Buffer,
     smoke_cells: Buffer,
+    smoke_holes: Buffer,
     /// The sun's light and the sky's, worked out once a frame under the
     /// atmosphere (see `atmosphere::record`).
     sky_light: Buffer,
@@ -1464,6 +1465,7 @@ impl View {
                 particle_systems,
                 smokes,
                 smoke_cells,
+                smoke_holes,
                 sky_light,
                 meshlet_draws,
                 meshlet_draw_instances,
@@ -1473,7 +1475,7 @@ impl View {
             } = buffers;
             let all = [frame, instances, lights, draws, draw_count, draw_instances, stats, clusters, pointers];
             let meshlets = [meshlet_draws, meshlet_draw_instances, meshlet_work];
-            let debug = [debug_lines, debug_triangles, particle_systems, smokes, smoke_cells];
+            let debug = [debug_lines, debug_triangles, particle_systems, smokes, smoke_cells, smoke_holes];
             for buffer in all.into_iter().chain(debug).chain([sky_light, stats_readback]).chain(meshlets) {
                 frames.retire(Retired::Buffer(buffer));
             }
@@ -1980,6 +1982,7 @@ impl View {
                 particle_systems: buffers.particle_systems.address,
                 smokes: buffers.smokes.address,
                 smoke_cells: buffers.smoke_cells.address,
+                smoke_holes: buffers.smoke_holes.address,
             }],
         );
         buffers.instances.write(0, &extracted.instances[..instance_count]);
@@ -1987,9 +1990,10 @@ impl View {
         let camera = voxear_core::math::Vec3::from(extracted.frame.camera_position);
         let (particle_systems, particles, spray) = particles::gather(world, camera, setup.time);
         buffers.particle_systems.write(0, &particle_systems);
-        let (smokes, smoke_cells) = smoke::gather(world, camera, setup.time);
+        let (smokes, smoke_cells, smoke_holes) = smoke::gather(world, camera, setup.time);
         buffers.smokes.write(0, &smokes);
         buffers.smoke_cells.write(0, &smoke_cells);
+        buffers.smoke_holes.write(0, &smoke_holes);
 
         let push = Push {
             frame: buffers.frame.address,
@@ -2208,6 +2212,12 @@ fn create_frame_buffers(gpu: &Gpu, prefix: &str, slot: usize) -> Result<FrameBuf
         smoke_cells: gpu.create_buffer(
             &format!("{prefix}smoke cells {slot}"),
             (smoke::MAX_SMOKES * smoke::SMOKE_WORDS * 4) as u64,
+            storage,
+            host,
+        )?,
+        smoke_holes: gpu.create_buffer(
+            &format!("{prefix}smoke holes {slot}"),
+            (smoke::MAX_SMOKES * (smoke::MAX_SHOTS + smoke::MAX_BLASTS) * 2 * 16) as u64,
             storage,
             host,
         )?,

@@ -1350,8 +1350,13 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   is so it spreads from its middle. The renderer marches the smokes at half size (`shaders/smoke.slang`): cells blended
   and read through drifting noise so its edge billows, the sun through the cloud and its shadow map, the light round
   it, fogged as far off as it starts; then lays them over the scene, each pixel from the half-size ones nearest it in
-  depth. Lasts and thins away. Still to come: holes from shots and blasts that fill back in; asking through it from
-  scripts and the C# API; drifting and pushing; smoothing its look over frames.
+  depth. Lasts and thins away.
+- **Smoke, holes ✅.** Each smoke keeps its last 32 shots and 5 blasts (`SmokeHoles`): a shot opens a tunnel half a
+  metre wide along its line, filling back in over a second and a half; a blast clears a ball, all but 2%, filling
+  back in over five seconds. The shader carves them out, their edges ragged by its swirls; `voxear_engine::smoke`
+  makes them where a line or a blast meets a smoke's grid, and `see_through` adds up how thick the smoke is along a
+  line, holes and all. C# `Smokes.Shoot`, `Blast` and `SeeThrough`. Still to come: drifting and pushing, smoothing its
+  look over frames, and its shadows in it stepping less.
 - Particles, still to come:
   - the IR compiler, which promotes a system off the stateless path when it needs state
   - the preset gallery

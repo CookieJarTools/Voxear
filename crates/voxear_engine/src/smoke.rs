@@ -12,13 +12,17 @@ use std::{cmp::Reverse, collections::BinaryHeap, sync::Arc};
 use voxear_core::math::{IVec3, Vec3};
 use voxear_ecs::{Entity, World};
 use voxear_physics::scene::{PhysicsScene, Rigidbody};
-use voxear_render::{SMOKE_GRID, Smoke, SmokeFill, smoke_origin};
+use voxear_render::{SMOKE_GRID, Smoke, SmokeFill, SmokeHoles, smoke_origin};
 use voxear_scene::{Destroying, Transform, WorldTransform};
 
 /// Fills every Smoke not yet filled, or filled for other settings or
 /// another place, at `now`, the renderer's time. One filled before keeps
 /// its start, so changing it does not set it spreading again.
 pub fn fill_smokes(world: &mut World, now: f64) {
+    world.insert_resource(SmokeClock(now));
+    for holes in world.query::<&mut SmokeHoles>() {
+        holes.forget_filled(now as f32);
+    }
     let waiting = waiting(world);
     if waiting.is_empty() {
         return;
@@ -152,6 +156,126 @@ const AROUND: [IVec3; 26] = {
     ways
 };
 
+/// Sets what answers `Smokes` in scripts.
+pub(crate) fn register() {
+    voxear_scripting::set_smoke_actions(act);
+}
+
+/// A script's shot (0: from, to), blast (1: centre, radius) or asking
+/// through smoke (2: from, to), which gives back how much shows.
+fn act(world: &mut World, what: i32, v: [f32; 7]) -> f32 {
+    let (a, b) = (Vec3::new(v[0], v[1], v[2]), Vec3::new(v[3], v[4], v[5]));
+    match what {
+        0 => f32::from(u8::from(shoot(world, a, b))),
+        1 => {
+            blast(world, a, v[3]);
+            1.0
+        }
+        _ => see_through(world, a, b),
+    }
+}
+
+/// The engine's time, as the last tick had it, which shots and blasts are
+/// dated by.
+struct SmokeClock(f64);
+
+fn now(world: &World) -> f32 {
+    world.resource::<SmokeClock>().map_or(0.0, |clock| clock.0 as f32)
+}
+
+/// Each filled smoke's grid, as its first corner and far corner, and its
+/// cell size.
+fn grids(world: &World) -> Vec<(Entity, Vec3, Vec3, f32)> {
+    let query = world.query_ref::<(Entity, &SmokeFill)>();
+    query
+        .without::<Destroying>()
+        .into_iter()
+        .map(|(entity, fill)| {
+            let cell = fill.filled_for.0.cell.max(0.05);
+            (entity, fill.origin, fill.origin + Vec3::splat(cell * SMOKE_GRID as f32), cell)
+        })
+        .collect()
+}
+
+/// How far along the line from `from` to `to`, from 0 to 1, it is inside the
+/// box from `low` to `high`.
+fn inside(from: Vec3, to: Vec3, low: Vec3, high: Vec3) -> Option<(f32, f32)> {
+    let way = to - from;
+    let a = (low - from) / way;
+    let b = (high - from) / way;
+    let enter = a.min(b).max_element().max(0.0);
+    let leave = a.max(b).min_element().min(1.0);
+    (enter < leave).then_some((enter, leave))
+}
+
+/// A shot from `from` to `to`, as a bullet's: a hole along it through every
+/// smoke it passes through, filling back in over a second or so. Whether it
+/// passed through any.
+pub fn shoot(world: &mut World, from: Vec3, to: Vec3) -> bool {
+    let time = now(world);
+    let through: Vec<(Entity, f32, f32)> = grids(world)
+        .into_iter()
+        .filter_map(|(entity, low, high, _)| Some((entity, inside(from, to, low, high)?)))
+        .map(|(e, (a, b))| (e, a, b))
+        .collect();
+    for &(entity, enter, leave) in &through {
+        let (a, b) = (from.lerp(to, enter), from.lerp(to, leave));
+        let mut holes = world.get::<SmokeHoles>(entity).cloned().unwrap_or_default();
+        holes.shoot(a, b, time);
+        world.insert(entity, holes);
+    }
+    !through.is_empty()
+}
+
+/// A blast at `centre`, as a grenade's: clearing every smoke within `radius`
+/// metres of it, which fills back in over a few seconds.
+pub fn blast(world: &mut World, centre: Vec3, radius: f32) {
+    let time = now(world);
+    let near: Vec<Entity> = grids(world)
+        .into_iter()
+        .filter(|(_, low, high, _)| centre.clamp(*low, *high).distance(centre) <= radius)
+        .map(|(entity, ..)| entity)
+        .collect();
+    for entity in near {
+        let mut holes = world.get::<SmokeHoles>(entity).cloned().unwrap_or_default();
+        holes.blast(centre, radius, time);
+        world.insert(entity, holes);
+    }
+}
+
+/// How much of what is at `to` shows from `from` through the smoke between:
+/// 1 for none in the way, near 0 hidden. As thick as the smoke is drawn,
+/// though without its swirls: as far as it has spread, as it thins, with
+/// its holes.
+pub fn see_through(world: &World, from: Vec3, to: Vec3) -> f32 {
+    let time = now(world);
+    let mut depth = 0.0;
+    for (entity, low, high, cell) in grids(world) {
+        let Some((enter, leave)) = inside(from, to, low, high) else { continue };
+        let (Some(smoke), Some(fill)) = (world.get::<Smoke>(entity), world.get::<SmokeFill>(entity)) else { continue };
+        let holes = world.get::<SmokeHoles>(entity);
+        let length = from.distance(to) * (leave - enter);
+        let steps = (length / (cell * 0.5)).ceil().max(1.0);
+        let step = length / steps;
+        let age = time - fill.started;
+        let grown = (age / smoke.spread.max(1e-3)).clamp(0.0, 1.0);
+        let front = grown * (f32::from(fill.steps) + 2.0);
+        for i in 0..steps as usize {
+            let at = from.lerp(to, enter + (leave - enter) * (i as f32 + 0.5) / steps);
+            let c = ((at - low) / cell).floor().as_ivec3().clamp(IVec3::ZERO, IVec3::splat(SMOKE_GRID as i32 - 1));
+            let n = SMOKE_GRID as i32;
+            let reached = fill.cells[((c.z * n + c.y) * n + c.x) as usize];
+            if reached == 0 {
+                continue;
+            }
+            let filled = ((front - f32::from(reached - 1)) * 0.5).clamp(0.0, 1.0);
+            let left = holes.map_or(1.0, |holes| holes.left(at, time));
+            depth += filled * left * smoke.density * smoke.thickness(age) * step;
+        }
+    }
+    (-depth).exp()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -203,6 +327,34 @@ mod tests {
             straight > 0.0 && (across - straight).abs() / straight < 0.25,
             "as far out, as far along: {straight} and {across}"
         );
+    }
+
+    #[test]
+    fn a_shot_through_smoke_lets_the_eye_through_for_a_second_and_a_blast_for_longer() {
+        let mut world = World::new();
+        world.spawn((
+            Smoke { size: 6.0, cell: 0.5, spread: 0.1, ..Smoke::default() },
+            Transform::from_position(Vec3::ZERO),
+        ));
+        fill_smokes(&mut world, 0.0);
+        fill_smokes(&mut world, 2.0);
+        let (eye, target) = (Vec3::new(-10.0, 0.0, 0.0), Vec3::new(10.0, 0.0, 0.0));
+        assert!(see_through(&world, eye, target) < 0.01, "hidden by the cloud");
+        assert!(see_through(&world, Vec3::new(-10.0, 9.0, 0.0), Vec3::new(10.0, 9.0, 0.0)) == 1.0, "clear above it");
+        assert!(shoot(&mut world, eye, target), "through the smoke");
+        fill_smokes(&mut world, 2.2);
+        assert!(see_through(&world, eye, target) > 0.9, "seen along the shot's tunnel");
+        assert!(see_through(&world, eye + Vec3::Y, target + Vec3::Y) < 0.01, "but not a metre above it");
+        fill_smokes(&mut world, 4.0);
+        assert!(see_through(&world, eye, target) < 0.01, "filled back in");
+        blast(&mut world, Vec3::ZERO, 2.5);
+        fill_smokes(&mut world, 4.5);
+        assert!(
+            see_through(&world, Vec3::new(-2.0, 0.0, 0.0), Vec3::new(2.0, 0.0, 0.0)) > 0.7,
+            "mostly cleared by the blast"
+        );
+        fill_smokes(&mut world, 12.0);
+        assert!(see_through(&world, eye, target) < 0.01, "filled back in, slowly");
     }
 
     #[test]

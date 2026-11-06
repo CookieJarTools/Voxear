@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 39;
+pub(crate) const API_VERSION: u32 = 40;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -313,6 +313,10 @@ pub(crate) struct NativeApi {
     /// Reads, or with `set` writes, value `what` of an Obj's Particle
     /// System, as `light_value` does an Obj's Light.
     pub particle_value: unsafe extern "C" fn(entity: u64, what: i32, set: i32, value: *mut [f32; 4]) -> i32,
+    /// Smoke: a shot from one point to another (0), a blast at a point with
+    /// a radius (1), or how much shows from one point to another through it
+    /// (2), which it gives back.
+    pub smoke_act: unsafe extern "C" fn(what: i32, values: *const [f32; 7]) -> f32,
 }
 
 /// What answers scripts' questions about water: the engine's, set when it
@@ -343,6 +347,23 @@ pub fn set_light_values(values: LightValues) {
 /// Sets what answers `ParticleSystem` in scripts; the first set is kept.
 pub fn set_particle_values(values: ComponentValues) {
     let _ = PARTICLES.set(values);
+}
+
+/// What answers scripts' shots and blasts through smoke and their asking
+/// through it: the engine's, set when it starts. Given what to do and its
+/// numbers, as `NativeApi::smoke_act` says.
+pub type SmokeActions = fn(&mut World, i32, [f32; 7]) -> f32;
+static SMOKE: std::sync::OnceLock<SmokeActions> = std::sync::OnceLock::new();
+
+/// Sets what answers `Smokes` in scripts; the first set is kept.
+pub fn set_smoke_actions(actions: SmokeActions) {
+    let _ = SMOKE.set(actions);
+}
+
+unsafe extern "C" fn smoke_act(what: i32, values: *const [f32; 7]) -> f32 {
+    let (Some(actions), false) = (SMOKE.get(), values.is_null()) else { return 1.0 };
+    let values = unsafe { *values };
+    with_world(|world| Some(actions(world, what, values))).unwrap_or(1.0)
 }
 
 unsafe extern "C" fn light_value(entity: u64, what: i32, set: i32, value: *mut [f32; 4]) -> i32 {
@@ -1273,6 +1294,7 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         debug_screen_text,
         debug_solid,
         particle_value,
+        smoke_act,
     }
 }
 

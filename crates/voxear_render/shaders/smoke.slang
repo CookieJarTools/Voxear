@@ -61,6 +61,42 @@ float smokeNoise(float3 p)
     return lerp(lerp(x00, x10, f.y), lerp(x01, x11, f.y), f.z);
 }
 
+// How a shot's and a blast's holes open and fill back in (smoke::shot_open
+// and smoke::blast_open).
+static const float SHOT_RADIUS = 0.5;
+static const float2 SHOT_REFILL = float2(0.4, 1.6);
+static const float2 BLAST_REFILL = float2(0.5, 5.0);
+static const float BLAST_LEFT = 0.02;
+
+// How much of `smoke` at `world` its holes leave: 1 untouched, near 0 where
+// a shot or a blast has cleared it. `ragged` moves the holes' edges about.
+float smokeLeft(Smoke smoke, float3 world, float ragged)
+{
+    float left = 1.0;
+    for (uint i = 0; i < smoke.shots; i++)
+    {
+        float4 from = buffers()->smokeHoles[smoke.holes + i * 2];
+        float3 to = buffers()->smokeHoles[smoke.holes + i * 2 + 1].xyz;
+        float age = push.frame->time - from.w;
+        float3 line = to - from.xyz;
+        float along = saturate(dot(world - from.xyz, line) / max(dot(line, line), 1e-6));
+        float off = distance(world, from.xyz + line * along) + ragged;
+        float open = (1.0 - smoothstep(SHOT_RADIUS * 0.5, SHOT_RADIUS, off)) * (1.0 - smoothstep(SHOT_REFILL.x, SHOT_REFILL.y, age));
+        left *= age >= 0.0 ? 1.0 - open : 1.0;
+    }
+    for (uint i = 0; i < smoke.blasts; i++)
+    {
+        uint row = smoke.holes + smoke.shots * 2 + i * 2;
+        float4 centre = buffers()->smokeHoles[row];
+        float radius = buffers()->smokeHoles[row + 1].x;
+        float age = push.frame->time - centre.w;
+        float inside = 1.0 - smoothstep(radius * 0.8, radius, distance(world, centre.xyz) + ragged);
+        float open = inside * (1.0 - pow(smoothstep(BLAST_REFILL.x, BLAST_REFILL.y, age), 1.8)) * (1.0 - BLAST_LEFT);
+        left *= age >= 0.0 ? 1.0 - open : 1.0;
+    }
+    return left;
+}
+
 // How thick `smoke` is at `world`, as light a metre takes: its cells blended
 // smoothly, and with `swirls`, eaten into by drifting noise, most at its
 // edges, so it billows rather than showing its cells.
@@ -83,13 +119,18 @@ float smokeDensity(Smoke smoke, float3 world, bool swirls)
         float3 w = lerp(1.0 - f, f, float3(o));
         filled += smokeCell(smoke, c + o) * w.x * w.y * w.z;
     }
-    if (filled <= 1e-3 || !swirls)
+    if (filled <= 1e-3)
     {
-        return filled * smoke.density;
+        return 0.0;
+    }
+    if (!swirls)
+    {
+        return filled * smoke.density * smokeLeft(smoke, world, 0.0);
     }
     float3 q = world * 0.45 + smoke.seed + float3(0.0, -smoke.age * 0.12, 0.0);
     float n = smokeNoise(q) * 0.55 + smokeNoise(q * 2.3 + 5.3) * 0.3 + smokeNoise(q * 5.1 + 2.1) * 0.15;
-    return saturate(filled * 1.7 - (1.0 - n) * 1.1) * smoke.density;
+    // The holes' edges ragged by the same swirls.
+    return saturate(filled * 1.7 - (1.0 - n) * 1.1) * smoke.density * smokeLeft(smoke, world, (n - 0.5) * smoke.cell);
 }
 
 // The smokes' thickness at `world`, all of them together.

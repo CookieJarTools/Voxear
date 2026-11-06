@@ -1232,8 +1232,14 @@ The sea, lakes, rivers and lava, built in. Manual: `manual/Water`.
   `TrySample` in C#. Buoyancy pushes nine columns across a body's Collider up by how far each is under, with drag
   against the water's own movement as its waves carry it round, so floating things ride a storm's waves. The CPU
   finds the sea floor by casting down onto Colliders, so ground needs Colliders for floating things to feel it.
-- Still to do: Wind Zones driving the sea's wind, eased and local; flows meeting, Streams blending into the Pool or
-  sea they reach; spray and splashes (with particles, M7); a bilge in Dry Areas; and Buoyancy's settings from C#.
+- **Wind:** an Ocean's Wind Source can be the level's Wind Zone, whose arrow and strength raise its wind sea; a
+  changed wind eases over the Ocean's Transition, a step every quarter second, alike on every machine, and each frame
+  in flight has its own spectrum buffer, so a new one never waits for the GPU.
+- **Stream mouths:** from where a Stream of water reaches the sea or a Pool, it becomes that water over ten metres,
+  its surface easing to the water's height and waves and fading in from its banks; into the sea, it pours out a jet
+  of foam. `Obj.Buoyancy` gives scripts a floating Obj's settings.
+- Still to do: local Wind Zones calming or whipping up the sea's short waves in an area; Streams meeting head-on;
+  spray and splashes (with particles, M7); and a bilge in Dry Areas.
 
 ## M6 — Animation
 

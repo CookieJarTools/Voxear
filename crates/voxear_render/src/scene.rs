@@ -921,6 +921,15 @@ fn water_bodies(world: &World, camera: Vec3) -> crate::water::WaterBodies {
             (near, *stream, points, pours)
         })
         .collect();
+    // Where Streams of water run into each other.
+    let mut joining: Vec<crate::water_bodies::Joining> = streams
+        .iter_mut()
+        .map(|(_, stream, points, pours)| (stream.liquid == crate::Liquid::Water, std::mem::take(points), *pours))
+        .collect();
+    crate::water_bodies::join_streams(&mut joining);
+    for ((_, _, points, pours), (_, joined, poured)) in streams.iter_mut().zip(joining) {
+        (*points, *pours) = (joined, poured);
+    }
     pools.sort_by(|a, b| a.0.total_cmp(&b.0));
     streams.sort_by(|a, b| a.0.total_cmp(&b.0));
     dries.extend(gusts);

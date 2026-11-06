@@ -1239,7 +1239,9 @@ The sea, lakes, rivers and lava, built in. Manual: `manual/Water`.
 - **Stream mouths:** from where a Stream of water reaches the sea or a Pool, it becomes that water over ten metres,
   its surface easing to the water's height and waves and fading in from its banks; into the sea, it pours out a jet
   of foam. `Obj.Buoyancy` gives scripts a floating Obj's settings.
-- Still to do: Streams meeting head-on; spray and splashes (with particles, M7); and a bilge in Dry Areas.
+- **Streams meeting:** a Stream of water ending in another that runs on past it eases into it as a tributary, the
+  river churning white below the join; two ending in each other meet head on, fading into each other, both churning.
+- Still to do: spray and splashes (with particles, M7), and a bilge in Dry Areas.
 
 ## M6 — Animation
 

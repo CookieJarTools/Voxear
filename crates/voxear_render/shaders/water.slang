@@ -913,7 +913,8 @@ struct WaterOut
     // A Stream's: how long what flows there has taken to come from its start, in seconds; and how far across it,
     // from -1 at one bank to 1 at the other.
     float2 lava : LAVA;
-    // A Stream's: how far into its mouth it is, where it runs into the sea or a Pool, from 0 upstream to 1.
+    // A Stream's: how far into its mouth it is, where it runs into the sea, a Pool or another Stream, from 0 upstream
+    // to 1; negative unless into the sea, whose waves take over there.
     float mouth : MOUTH;
 };
 
@@ -1087,10 +1088,10 @@ WaterOut streamVertex(uint vertexId : SV_VertexID)
     float3 right = float3(level.y, 0.0, -level.x);
     float3 world = p.position + right * across * p.width * 0.5;
     // At its mouth it eases to the height of the water it runs into, rising and falling with the sea's waves there.
+    bool intoSea = p.mouth > 0.0 && frame->ocean.enabled != 0 && abs(p.meets - frame->ocean.level) < 1e-3;
     if (p.mouth > 0.0)
     {
-        bool sea = frame->ocean.enabled != 0 && abs(p.meets - frame->ocean.level) < 1e-3;
-        float waves = sea ? oceanMoved(frame, world.xz, 0.5, false, 1.0, seaDepth(frame, world.xz)).y : 0.0;
+        float waves = intoSea ? oceanMoved(frame, world.xz, 0.5, false, 1.0, seaDepth(frame, world.xz)).y : 0.0;
         world.y = lerp(world.y, p.meets + waves, p.mouth);
     }
     float2 flow = level * p.speed * (0.3 + 0.7 * (1.0 - across * across));
@@ -1104,7 +1105,7 @@ WaterOut streamVertex(uint vertexId : SV_VertexID)
     o.stream = float4(flow, p.foam, float(min(grid.y, push.level - 1 - grid.y)));
     o.up = normalize(cross(p.tangent, right));
     o.lava = float2(p.age, across);
-    o.mouth = p.mouth;
+    o.mouth = intoSea ? p.mouth : -p.mouth;
     return o;
 }
 
@@ -1325,7 +1326,7 @@ FragmentOut waterFragment(WaterOut input)
     if (stream)
     {
         // Its own ripples, carried along, giving way at its mouth to the waves of the water it runs into.
-        float own = 1.0 - input.mouth;
+        float own = 1.0 - abs(input.mouth);
         addWaves(frame, restA, 0.0, (1.0 - blend) * own, slope, variance, folded, moved);
         addWaves(frame, restB, 0.0, blend * own, slope, variance, folded, moved);
         // Faster water is rougher.
@@ -1502,7 +1503,8 @@ FragmentOut waterFragment(WaterOut input)
     if (stream)
     {
         // Its banks first, so no edge of it shows on the water.
-        float into = input.mouth > 0.0 ? saturate(input.mouth * (1.0 + 3.0 * input.lava.y * input.lava.y) + 0.05) : 0.0;
+        float mouth = abs(input.mouth);
+        float into = mouth > 0.0 ? saturate(mouth * (1.0 + 3.0 * input.lava.y * input.lava.y) + 0.05) : 0.0;
         float shown = saturate(input.stream.w / 2.0) * (1.0 - into);
         color = lerp(glassBehind(push.texture, pixel / float2(frame->viewport), 0.0), color, shown);
     }

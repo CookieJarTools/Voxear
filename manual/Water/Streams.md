@@ -28,6 +28,8 @@ Its ripples drift down it at its speed, with lines of foam drawn out along the c
 
 Where a Stream of water runs into the sea or a Pool, it becomes that water over ten metres from where it reaches it: its surface rises and falls with the waves there, its own ripples give way to them, and it fades into the water from its banks in. Running into the sea, it churns the sea white where it pours in, a jet of foam carried out as far as it runs fast.
 
+Where a Stream of water ends in another that runs on past it, as a brook joins a river, it eases into the river over its last few metres, and the river churns white below where they join. Two Streams ending in each other meet head on: each fades into the other, and both churn white where they meet.
+
 | Setting | What it does |
 | --- | --- |
 | Liquid | Water, or [[Lava]] |

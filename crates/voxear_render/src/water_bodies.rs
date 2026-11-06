@@ -319,6 +319,82 @@ pub struct StreamPoint {
     pub meets: f32,
 }
 
+/// A Stream of water, its points, and where it pours into the sea or a
+/// Pool if it does: as [`join_streams`] takes them.
+pub type Joining = (bool, Vec<StreamPoint>, Option<usize>);
+
+/// Where Streams of water meet. One ending in another that runs on past it
+/// is a tributary: it eases into the river over its mouth, as into the sea,
+/// and the river churns white below where it joins. Two ending in each
+/// other meet head on: each fades out into the other over its last points,
+/// and both churn white where they meet. A Stream already pouring into the
+/// sea or a Pool, and lava, are left as they are.
+pub fn join_streams(streams: &mut [Joining]) {
+    for a in 0..streams.len() {
+        let (water, ref points, pours) = streams[a];
+        let Some(end) = points.last().copied().filter(|_| water && pours.is_none()) else { continue };
+        let mut nearest: Option<(usize, usize, f32)> = None;
+        for (b, (other_water, others, _)) in streams.iter().enumerate() {
+            if b == a || !other_water {
+                continue;
+            }
+            for (j, p) in others.iter().enumerate() {
+                let across = (p.position - end.position).with_y(0.0).length();
+                let close = across < p.width * 0.5 + end.width * 0.25 && (p.position.y - end.position.y).abs() < 1.5;
+                if close && nearest.is_none_or(|(.., best)| across < best) {
+                    nearest = Some((b, j, across));
+                }
+            }
+        }
+        let Some((b, j, _)) = nearest else { continue };
+        if j + 2 < streams[b].1.len() {
+            // Just under the river's surface, which then covers it where they overlap.
+            let river = streams[b].1[j];
+            streams[a].2 = ease_into(&mut streams[a].1, river.position.y - 0.1, river.width * 0.5 + 2.0);
+            churn(&mut streams[b].1, j, 0.7);
+        } else {
+            let last = streams[a].1.len().saturating_sub(2);
+            churn(&mut streams[a].1, last, 0.8);
+            churn(&mut streams[b].1, j, 0.8);
+        }
+    }
+}
+
+/// Eases a Stream along `points` into water standing `level` high over its
+/// last `length` metres, as a tributary into a river: which point that
+/// starts at.
+fn ease_into(points: &mut [StreamPoint], level: f32, length: f32) -> Option<usize> {
+    let mut left = 0.0;
+    let mut from = points.len().checked_sub(1)?;
+    while from > 0 && left < length {
+        left += points[from].position.distance(points[from - 1].position);
+        from -= 1;
+    }
+    let total = left.max(1e-3);
+    let mut along = 0.0;
+    for i in from..points.len() {
+        if i > from {
+            along += points[i].position.distance(points[i - 1].position);
+        }
+        let t = (along / total).min(1.0);
+        points[i].mouth = t * t * (3.0 - 2.0 * t);
+        points[i].meets = level;
+    }
+    Some(from)
+}
+
+/// White water from point `from` of a Stream on down it, as `strength`
+/// says there and fading as it is carried.
+fn churn(points: &mut [StreamPoint], from: usize, strength: f32) {
+    let mut along = 0.0;
+    for i in from..points.len() {
+        if i > from {
+            along += points[i].position.distance(points[i - 1].position);
+        }
+        points[i].foam = points[i].foam.max(strength * (-along / FOAM_CARRIED).exp());
+    }
+}
+
 /// How long a Stream's mouth is, in metres: how far it takes, from where it
 /// reaches the water it runs into, to become that water.
 pub const MOUTH_LENGTH: f32 = 10.0;
@@ -482,6 +558,36 @@ mod tests {
         assert_eq!(points[7].mouth, 1.0, "the sea's, ten metres on");
         let mut high: Vec<StreamPoint> = (0..2).map(point).collect();
         assert_eq!(run_into(&mut high, 0.0), None, "never reaching it");
+    }
+
+    #[test]
+    fn a_brook_eases_into_the_river_it_joins_and_streams_meeting_head_on_churn() {
+        let point = |x: f32, z: f32| StreamPoint {
+            position: Vec3::new(x, 0.0, z),
+            tangent: Vec3::Z,
+            width: 4.0,
+            speed: 2.0,
+            foam: 0.0,
+            age: 0.0,
+            mouth: 0.0,
+            meets: 0.0,
+        };
+        // A river north along x = 0, and a brook from the west ending in its middle.
+        let river: Vec<StreamPoint> = (0..10).map(|i| point(0.0, i as f32 * 4.0)).collect();
+        let brook: Vec<StreamPoint> = (0..5).map(|i| point(-16.0 + i as f32 * 4.0, 18.0)).collect();
+        let mut streams = vec![(true, river, None), (true, brook, None)];
+        join_streams(&mut streams);
+        let (river, brook) = (&streams[0].1, &streams[1].1);
+        assert!(streams[1].2.is_some() && brook[4].mouth == 1.0 && brook[0].mouth == 0.0, "the brook eases in at its end");
+        assert!(brook[4].meets < 0.0, "just under the river's surface: {}", brook[4].meets);
+        assert!(river[3].foam == 0.0 && river[4].foam > 0.5 && river[9].foam < river[4].foam, "white below the join");
+        assert!(streams[0].2.is_none(), "the river runs on");
+        // Two streams ending in each other.
+        let east: Vec<StreamPoint> = (0..4).map(|i| point(i as f32 * 4.0, 0.0)).collect();
+        let west: Vec<StreamPoint> = (0..4).map(|i| point(24.0 - i as f32 * 4.0, 0.0)).collect();
+        let mut streams = vec![(true, east, None), (true, west, None)];
+        join_streams(&mut streams);
+        assert!(streams.iter().all(|(_, points, pours)| pours.is_none() && points[3].foam > 0.5), "both churn where they meet");
     }
 
     #[test]

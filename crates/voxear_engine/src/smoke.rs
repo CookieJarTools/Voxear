@@ -64,7 +64,13 @@ fn waiting(world: &World) -> Vec<(Entity, Smoke, Vec3, Option<f32>)> {
             (entity, *smoke, middle, fill)
         })
         .filter(|(_, smoke, middle, fill)| fill.is_none_or(|fill| fill.filled_for != (*smoke, *middle)))
-        .map(|(entity, smoke, middle, fill)| (entity, smoke, middle, fill.map(|fill| fill.started)))
+        // A change to when it spreads, lasts or disperses starts it again, to be seen; any other keeps its start.
+        .map(|(entity, smoke, middle, fill)| {
+            let was = fill.map(|fill| fill.filled_for.0);
+            let timed = |s: &Smoke| (s.spread, s.lasts, s.fade);
+            let started = fill.filter(|_| was.is_some_and(|was| timed(&was) == timed(&smoke))).map(|fill| fill.started);
+            (entity, smoke, middle, started)
+        })
         .collect()
 }
 

@@ -1460,7 +1460,7 @@ pub fn label(prop: &Prop) -> String {
         Prop::SmokeColor => "Colour",
         Prop::SmokeSpread => "Spread Time",
         Prop::SmokeLasts => "Lasts",
-        Prop::SmokeFade => "Fade Time",
+        Prop::SmokeFade => "Disperse Time",
         Prop::SmokeSeed => "Seed",
         Prop::OceanWeather => "Weather",
         Prop::OceanWindSource => "Wind Source",

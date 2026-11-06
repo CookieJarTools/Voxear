@@ -15,7 +15,7 @@ Smoke fills as much space as a ball of its **Size** would hold, nearest first, s
 - **Density**: how thick it is. Higher hides more.
 - **Colour**: how much of the light it scatters. Grey for smoke, white for steam, dark for soot.
 - **Spread Time**: how many seconds it takes to spread out from its Obj to its full size.
-- **Lasts** and **Fade Time**: how long it stays before it thins away, and how long it takes to thin. A Lasts of 0 keeps it for ever.
+- **Lasts** and **Disperse Time**: how long it stays, and how long it then takes to disperse. As it disperses it breaks up from its thinner swirls into wisps, rises and drifts apart, and the wisps thin away to nothing. A Lasts of 0 keeps it for ever. Changing either in the editor starts the smoke again, so you can watch it.
 - **Seed**: two smokes that are alike but for their Seed swirl differently.
 
 The sun lights it through itself, so its far side is darker, and objects in front of it cast soft shadows into it. Lamps light it round themselves, so a torch in the smoke glows. It takes the light round it from the sky and bounced light, and it sits in the scene's fog as far off as it is.

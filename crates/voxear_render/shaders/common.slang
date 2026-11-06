@@ -791,6 +791,9 @@ struct Smoke
     uint holes;
     uint shots;
     uint blasts;
+    // How far it has dispersed at the end of its life, from 0 to 1.
+    float dispersed;
+    float3 pad;
 };
 
 // A Particle System, as particles.slang works out its particles; mirrors

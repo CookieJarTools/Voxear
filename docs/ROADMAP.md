@@ -1359,7 +1359,8 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
 - **Smoke, polish ✅.** Smoothed over frames: each half-size march blended with last frame's, found where its light
   came from then and kept within the colours round it; the sun's shadow looked up a little off each step, differently
   each frame, so shadows in it soften; lamps light it; swirls through and through, thinner by the eye, so it reads
-  from inside; a fresh blast pushes it into a thicker shell. Still to come: drifting in the wind, filling again as
+  from inside; a fresh blast pushes it into a thicker shell. At the end of its life it disperses: breaking up from its thin
+  swirls into wisps, rising and drifting apart in broad slow swirls, thinning to nothing. Still to come: drifting in the wind, filling again as
   walls change.
 - Particles, still to come:
   - the IR compiler, which promotes a system off the stateless path when it needs state

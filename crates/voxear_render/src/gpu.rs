@@ -817,6 +817,9 @@ pub struct GpuSmoke {
     pub holes: u32,
     pub shots: u32,
     pub blasts: u32,
+    /// How far it has dispersed at the end of its life, from 0 to 1.
+    pub dispersed: f32,
+    pub _pad: [f32; 3],
 }
 
 /// A Particle System as `shaders/particles.slang` works out its particles
@@ -1036,7 +1039,7 @@ mod tests {
         assert_eq!(size_of::<GpuLighting>(), lighting);
         assert_eq!(size_of::<GpuPost>(), post);
         assert_eq!(size_of::<GpuBuffers>(), 39 * 8);
-        assert_eq!(size_of::<GpuSmoke>(), 64);
+        assert_eq!(size_of::<GpuSmoke>(), 80);
         assert_eq!(size_of::<GpuParticleSystem>(), 64 + 16 * 9 + 64 * 3 + 128 + 16);
         assert_eq!(size_of::<GpuDebugLine>(), 48);
         assert_eq!(size_of::<GpuDebugTriangle>(), 64);

@@ -108,12 +108,21 @@ float smokeLeft(Smoke smoke, float3 world, float ragged)
 // edges, so it billows rather than showing its cells.
 float smokeDensity(Smoke smoke, float3 world, bool swirls)
 {
-    // Read a little off where it is, by drifting noise, so the cloud's edge does not follow its cells' rows.
+    // Read a little off where it is, by drifting noise, so the cloud's edge does not follow its cells' rows; and
+    // as it disperses, from lower down, so it rises, and more off, so it drifts apart.
+    float gone = smoke.dispersed;
     if (swirls)
     {
         float3 w = world * 1.1 + smoke.seed * 0.37 + float3(0.0, -smoke.age * 0.2, 0.0);
         float3 warp = float3(smokeNoise(w), smokeNoise(w + 19.1), smokeNoise(w + 41.7)) - 0.5;
-        world += warp * smoke.cell * 1.6;
+        world += warp * smoke.cell * 1.6 - float3(0.0, 1.5 * gone * gone, 0.0);
+        if (gone > 0.0)
+        {
+            // Drifting apart in broad, slow swirls, a metre or two across.
+            float3 broad = world * 0.3 + smoke.seed * 0.11 + float3(smoke.age * 0.05, 0.0, 0.0);
+            float3 apart = float3(smokeNoise(broad), smokeNoise(broad + 7.7), smokeNoise(broad + 23.3)) - 0.5;
+            world += apart * 2.5 * gone;
+        }
     }
     float3 g = (world - smoke.origin) / smoke.cell - 0.5;
     int3 c = int3(floor(g));
@@ -131,13 +140,14 @@ float smokeDensity(Smoke smoke, float3 world, bool swirls)
     }
     if (!swirls)
     {
-        return filled * smoke.density * smokeLeft(smoke, world, 0.0);
+        return filled * smoke.density * (1.0 - gone) * smokeLeft(smoke, world, 0.0);
     }
     float3 q = world * 0.45 + smoke.seed + float3(0.0, -smoke.age * 0.12, 0.0);
     float n = smokeNoise(q) * 0.55 + smokeNoise(q * 2.3 + 5.3) * 0.3 + smokeNoise(q * 5.1 + 2.1) * 0.15;
     // The holes' edges ragged by the same swirls.
     // Thicker and thinner through and through, not only at its edge, so from inside it swirls past.
-    float swirled = saturate(filled * 1.7 - (1.0 - n) * 1.1) * (0.3 + 1.4 * n * n);
+    // Dispersing, it breaks up from its thin swirls first into wisps, and those thin away.
+    float swirled = saturate(filled * 1.7 - (1.0 - n) * (1.1 + 3.0 * gone)) * (0.3 + 1.4 * n * n) * (1.0 - gone * gone);
     return swirled * smoke.density * smokeLeft(smoke, world, (n - 0.5) * smoke.cell);
 }
 

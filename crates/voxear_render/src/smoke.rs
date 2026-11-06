@@ -74,10 +74,16 @@ impl Smoke {
     /// How thick it is `age` seconds after it started, from 0 to 1, as it
     /// thins at the end of its life.
     pub fn thickness(&self, age: f32) -> f32 {
+        1.0 - self.dispersed(age)
+    }
+
+    /// How far it has dispersed `age` seconds after it started, from 0 to
+    /// 1: none until it has lasted its time, then over its fade.
+    pub fn dispersed(&self, age: f32) -> f32 {
         if self.lasts <= 0.0 {
-            return 1.0;
+            return 0.0;
         }
-        1.0 - ((age - self.lasts) / self.fade.max(1e-3)).clamp(0.0, 1.0)
+        ((age - self.lasts) / self.fade.max(1e-3)).clamp(0.0, 1.0)
     }
 }
 
@@ -264,7 +270,7 @@ pub(crate) fn gather(world: &World, camera: Vec3, time: f32) -> (Vec<GpuSmoke>, 
                 origin: fill.origin.to_array(),
                 cell: fill.filled_for.0.cell.max(0.05),
                 color: smoke.color.map(|c| c.clamp(0.0, 1.0)),
-                density: smoke.density.max(0.0) * smoke.thickness(age),
+                density: smoke.density.max(0.0),
                 grown: (age / smoke.spread.max(1e-3)).clamp(0.0, 1.0),
                 steps: f32::from(fill.steps),
                 seed: (smoke.seed % 1024) as f32 * 17.31,
@@ -273,6 +279,8 @@ pub(crate) fn gather(world: &World, camera: Vec3, time: f32) -> (Vec<GpuSmoke>, 
                 holes: first_hole,
                 shots: shots.len() as u32,
                 blasts: blasts.len() as u32,
+                dispersed: smoke.dispersed(age),
+                _pad: [0.0; 3],
             }
         })
         .collect();

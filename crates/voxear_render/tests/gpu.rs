@@ -4198,10 +4198,26 @@ fn smoke_render(seconds: Option<f32>) -> Option<Vec<u8>> {
     smoke_shot_render(seconds, false, false)
 }
 
+/// The smoke of smoke_render, lasting two seconds and dispersing over
+/// four, `seconds` after it started.
+fn smoke_ending_render(seconds: f32) -> Option<Vec<u8>> {
+    smoke_with_render(Some(seconds), false, false, |smoke| voxear_render::Smoke { lasts: 2.0, fade: 4.0, ..smoke })
+}
+
 /// The smoke of smoke_render, and with `shot`, a shot from the camera
 /// through it a moment before, as a player's own; with `lamp`, a red lamp
 /// in it.
 fn smoke_shot_render(seconds: Option<f32>, shot: bool, lamp: bool) -> Option<Vec<u8>> {
+    smoke_with_render(seconds, shot, lamp, |smoke| smoke)
+}
+
+/// The smoke of smoke_shot_render, its settings changed by `set`.
+fn smoke_with_render(
+    seconds: Option<f32>,
+    shot: bool,
+    lamp: bool,
+    set: impl Fn(voxear_render::Smoke) -> voxear_render::Smoke,
+) -> Option<Vec<u8>> {
     use std::sync::Arc;
     use voxear_render::{SMOKE_GRID, Sky, Smoke, SmokeFill, smoke_origin};
     let mut renderer = renderer()?;
@@ -4225,7 +4241,7 @@ fn smoke_shot_render(seconds: Option<f32>, shot: bool, lamp: bool) -> Option<Vec
     }
     let mut time = 10.0;
     if let Some(seconds) = seconds {
-        let smoke = Smoke { cell: 0.4, spread: 2.0, ..Smoke::default() };
+        let smoke = set(Smoke { cell: 0.4, spread: 2.0, ..Smoke::default() });
         let middle = Vec3::new(0.0, 2.0, 0.0);
         let n = SMOKE_GRID as i32;
         let cells: Vec<u8> = (0..n * n * n)
@@ -4276,6 +4292,23 @@ fn smoke_fills_its_cells_greys_the_scene_and_keeps_its_edge_on_what_stands_befor
     };
     let (small, full) = (changed(&early), changed(&smoky));
     assert!(small * 2 < full, "spreading out from its middle: {small} pixels early, {full} once spread");
+}
+
+#[test]
+fn smoke_disperses_into_wisps_and_is_gone_at_its_end() {
+    let Some(clear) = smoke_render(None) else { return };
+    let whole = smoke_ending_render(2.0).unwrap();
+    let going = smoke_ending_render(4.5).unwrap();
+    let gone = smoke_ending_render(6.5).unwrap();
+    keep_image("smoke dispersing.png", &going);
+    let changed = |pixels: &[u8]| {
+        let all = (0..360u32).flat_map(|y| (0..640u32).map(move |x| (x, y)));
+        let apart = |at: (u32, u32)| (0..3).map(|c| (rgb_at(pixels, at)[c] - rgb_at(&clear, at)[c]).abs()).max().unwrap();
+        all.filter(|&at| apart(at) > 20).count()
+    };
+    let (a, b, c) = (changed(&whole), changed(&going), changed(&gone));
+    assert!(b * 10 < a * 9 && b > a / 10, "breaking up: {b} pixels of smoke, from {a}");
+    assert_eq!(c, 0, "gone at the end");
 }
 
 #[test]

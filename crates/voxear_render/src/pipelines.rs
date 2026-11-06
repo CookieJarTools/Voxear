@@ -127,6 +127,7 @@ pub struct Pipelines {
     pub sea_spray: vk::Pipeline,
     pub smoke_march: vk::Pipeline,
     pub smoke_composite: vk::Pipeline,
+    pub smoke_resolve: vk::Pipeline,
     pub dry_mesh: vk::Pipeline,
     pub water_wall: vk::Pipeline,
     /// Under water: what the view shows dimmed, then the water's own light.
@@ -434,9 +435,14 @@ impl Pipelines {
             })?,
             // Smoke marched at half size, its light and how much it lets through, then laid over the scene.
             smoke_march: graphics(&GraphicsPipelineDesc {
-                color_formats: &[vk::Format::R16G16B16A16_SFLOAT],
+                color_formats: &[vk::Format::R16G16B16A16_SFLOAT, vk::Format::R32_SFLOAT],
                 cull: vk::CullModeFlags::NONE,
                 ..GraphicsPipelineDesc::new("Smoke", smoke, c"smokeVertex", c"smokeMarchFragment")
+            })?,
+            smoke_resolve: graphics(&GraphicsPipelineDesc {
+                color_formats: &[vk::Format::R16G16B16A16_SFLOAT],
+                cull: vk::CullModeFlags::NONE,
+                ..GraphicsPipelineDesc::new("Smoke over frames", smoke, c"smokeVertex", c"smokeResolveFragment")
             })?,
             smoke_composite: graphics(&GraphicsPipelineDesc {
                 color_formats: hdr,
@@ -589,6 +595,7 @@ impl Pipelines {
             self.sea_spray,
             self.smoke_march,
             self.smoke_composite,
+            self.smoke_resolve,
             self.dry_mesh,
             self.water_wall,
             self.underwater,

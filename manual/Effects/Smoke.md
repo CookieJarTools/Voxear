@@ -18,14 +18,16 @@ Smoke fills as much space as a ball of its **Size** would hold, nearest first, s
 - **Lasts** and **Fade Time**: how long it stays before it thins away, and how long it takes to thin. A Lasts of 0 keeps it for ever.
 - **Seed**: two smokes that are alike but for their Seed swirl differently.
 
-The sun lights it through itself, so its far side is darker, and objects in front of it cast shadows into it. It takes the light round it from the sky and bounced light, and it sits in the scene's fog as far off as it is.
+The sun lights it through itself, so its far side is darker, and objects in front of it cast soft shadows into it. Lamps light it round themselves, so a torch in the smoke glows. It takes the light round it from the sky and bounced light, and it sits in the scene's fog as far off as it is.
+
+From inside, you can see a metre or two through it, with thicker and thinner swirls drifting past.
 
 ## Shooting through it
 
 Shots and blasts cut holes in smoke, which fill back in:
 
 - **A shot** cuts a tunnel half a metre wide along its line through every smoke it passes through. Looking down it, you see through the smoke; it fills back in over about a second and a half.
-- **A blast** clears a ball round it, all but a trace, which fills back in slowly at first, then faster, over about five seconds.
+- **A blast** clears a ball round it, all but a trace, pushing the smoke into a thicker shell just outside it. It fills back in slowly at first, then faster, over about five seconds.
 
 Holes come from your game's own code, at the moment it fires:
 
@@ -45,4 +47,4 @@ var seen = Smokes.SeeThrough(Obj.WorldPosition, player.WorldPosition) > 0.3f;
 
 ## What's coming
 
-The smoke drifting and pushing away from explosions, and smoothing its look over frames.
+The smoke drifting in the wind, and spreading again when walls change, as a door opening.

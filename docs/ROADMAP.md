@@ -1355,8 +1355,12 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   metre wide along its line, filling back in over a second and a half; a blast clears a ball, all but 2%, filling
   back in over five seconds. The shader carves them out, their edges ragged by its swirls; `voxear_engine::smoke`
   makes them where a line or a blast meets a smoke's grid, and `see_through` adds up how thick the smoke is along a
-  line, holes and all. C# `Smokes.Shoot`, `Blast` and `SeeThrough`. Still to come: drifting and pushing, smoothing its
-  look over frames, and its shadows in it stepping less.
+  line, holes and all. C# `Smokes.Shoot`, `Blast` and `SeeThrough`.
+- **Smoke, polish ✅.** Smoothed over frames: each half-size march blended with last frame's, found where its light
+  came from then and kept within the colours round it; the sun's shadow looked up a little off each step, differently
+  each frame, so shadows in it soften; lamps light it; swirls through and through, thinner by the eye, so it reads
+  from inside; a fresh blast pushes it into a thicker shell. Still to come: drifting in the wind, filling again as
+  walls change.
 - Particles, still to come:
   - the IR compiler, which promotes a system off the stateless path when it needs state
   - the preset gallery

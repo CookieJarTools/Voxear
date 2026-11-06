@@ -462,7 +462,7 @@ pub fn record(
         let mut sampled: Vec<ImageId> =
             targets.shadows.into_iter().chain(shadow_maps.iter().copied()).chain(tables.iter().copied()).collect();
         sampled.extend(frame.probes.into_iter().flat_map(|probes| [probes.irradiance, probes.depth, probes.states]));
-        crate::smoke::Draw { count: frame.smokes, depth, sampled }
+        crate::smoke::Draw { count: frame.smokes, depth, sampled, clusters: draws.clusters }
     });
     let mut particles = None;
     if !frame.particles.is_empty() || frame.spray.is_some() {

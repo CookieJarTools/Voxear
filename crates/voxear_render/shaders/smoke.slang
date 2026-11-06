@@ -67,9 +67,11 @@ static const float SHOT_RADIUS = 0.5;
 static const float2 SHOT_REFILL = float2(0.4, 1.6);
 static const float2 BLAST_REFILL = float2(0.5, 5.0);
 static const float BLAST_LEFT = 0.02;
+static const float BLAST_PUSH = 1.5;
 
 // How much of `smoke` at `world` its holes leave: 1 untouched, near 0 where
-// a shot or a blast has cleared it. `ragged` moves the holes' edges about.
+// a shot or a blast has cleared it, more than 1 in the shell a fresh blast
+// pushed it out into. `ragged` moves the holes' edges about.
 float smokeLeft(Smoke smoke, float3 world, float ragged)
 {
     float left = 1.0;
@@ -90,8 +92,12 @@ float smokeLeft(Smoke smoke, float3 world, float ragged)
         float4 centre = buffers()->smokeHoles[row];
         float radius = buffers()->smokeHoles[row + 1].x;
         float age = push.frame->time - centre.w;
-        float inside = 1.0 - smoothstep(radius * 0.8, radius, distance(world, centre.xyz) + ragged);
+        float off = distance(world, centre.xyz) + ragged;
+        float inside = 1.0 - smoothstep(radius * 0.8, radius, off);
         float open = inside * (1.0 - pow(smoothstep(BLAST_REFILL.x, BLAST_REFILL.y, age), 1.8)) * (1.0 - BLAST_LEFT);
+        // Pushed out into a thicker shell round it while it is fresh.
+        float shell = exp(-pow((off - radius * 1.15) / max(radius * 0.2, 1e-3), 2.0));
+        open -= shell * (1.0 - smoothstep(0.0, BLAST_REFILL.y * 0.6, age)) * BLAST_PUSH;
         left *= age >= 0.0 ? 1.0 - open : 1.0;
     }
     return left;
@@ -130,7 +136,9 @@ float smokeDensity(Smoke smoke, float3 world, bool swirls)
     float3 q = world * 0.45 + smoke.seed + float3(0.0, -smoke.age * 0.12, 0.0);
     float n = smokeNoise(q) * 0.55 + smokeNoise(q * 2.3 + 5.3) * 0.3 + smokeNoise(q * 5.1 + 2.1) * 0.15;
     // The holes' edges ragged by the same swirls.
-    return saturate(filled * 1.7 - (1.0 - n) * 1.1) * smoke.density * smokeLeft(smoke, world, (n - 0.5) * smoke.cell);
+    // Thicker and thinner through and through, not only at its edge, so from inside it swirls past.
+    float swirled = saturate(filled * 1.7 - (1.0 - n) * 1.1) * (0.3 + 1.4 * n * n);
+    return swirled * smoke.density * smokeLeft(smoke, world, (n - 0.5) * smoke.cell);
 }
 
 // The smokes' thickness at `world`, all of them together.
@@ -156,13 +164,22 @@ float smokePhase(float cosine, float g)
     return (1.0 - g2) / (4.0 * PI * pow(max(1.0 + g2 - 2.0 * g * cosine, 1e-4), 1.5));
 }
 
+struct SmokeMarched
+{
+    // The light the smokes send towards the eye, and in alpha how much shows through them.
+    float4 light : SV_Target0;
+    // How far into them, on average, their light comes from: where they are, for last frame's to be found.
+    float distance : SV_Target1;
+};
+
 // The smokes along this pixel's view, as far as the scene behind: the light
 // they send towards the eye, fogged as far off as they start, and in alpha
 // how much of what lies behind shows through them. push.textures: x the
 // scene's depth, y the fog's volume, z how many smokes.
 [shader("fragment")]
-float4 smokeMarchFragment(SmokeOut input) : SV_Target0
+SmokeMarched smokeMarchFragment(SmokeOut input)
 {
+    SmokeMarched none = { float4(0.0, 0.0, 0.0, 1.0), 0.0 };
     Frame* frame = push.frame;
     uint count = push.textures.z;
     float4 nearH = transform(frame->invViewProj, float4(input.uv * 2.0 - 1.0, 1.0, 1.0));
@@ -195,7 +212,7 @@ float4 smokeMarchFragment(SmokeOut input) : SV_Target0
     leave = min(leave, scene);
     if (enter >= leave)
     {
-        return float4(0.0, 0.0, 0.0, 1.0);
+        return none;
     }
     float step = max(cell * 0.5, (leave - enter) / float(SMOKE_STEPS));
     float jitter = frac(52.9829189 * frac(dot(input.position.xy, float2(0.06711056, 0.00583715)) + float(frame->frameIndex % 64) * 0.61803));
@@ -215,6 +232,8 @@ float4 smokeMarchFragment(SmokeOut input) : SV_Target0
     float through = 1.0;
     float3 light = 0.0;
     float first = -1.0;
+    float weighed = 0.0;
+    float weights = 0.0;
     for (uint i = 0; i < SMOKE_STEPS; i++)
     {
         float t = enter + (float(i) + jitter) * step;
@@ -223,7 +242,8 @@ float4 smokeMarchFragment(SmokeOut input) : SV_Target0
             break;
         }
         float3 at = eye + way * t;
-        float thick = smokesAt(frame, count, at, true);
+        // Thinner right by the eye, so from inside the view does not begin at a wall of it.
+        float thick = smokesAt(frame, count, at, true) * smoothstep(0.0, 0.8, t);
         if (thick < 1e-3)
         {
             continue;
@@ -235,19 +255,75 @@ float4 smokeMarchFragment(SmokeOut input) : SV_Target0
         {
             toward += smokesAt(frame, count, at + toSun * cell * 1.5 * float(k), false);
         }
-        float sun = exp(-toward * cell * 1.5) * sunShadowHard(frame, at, toSun);
-        float3 lit = color * (sunLight * sun * phase * 4.0 * PI * 0.25 + ambient);
+        // Looked up a little off where it is, differently each frame and step, so the shadows of what stands in
+        // the sun soften over frames rather than stepping with the shadow map's texels.
+        float3 shake = float3(frac(jitter * 7.13 + float(i) * 0.618), frac(jitter * 3.71 + float(i) * 0.382), frac(jitter * 5.37)) - 0.5;
+        float sun = exp(-toward * cell * 1.5) * sunShadowHard(frame, at + shake * cell, toSun);
+        // The lamps in this pixel's cluster, scattered as evenly every way.
+        float3 lamps = 0.0;
+        uint base = clusterAt(frame, input.position.xy * 2.0, t * dot(way, frame->cameraForward)) * (frame->clusterMaxLights + 1);
+        for (uint l = 0; l < buffers()->clusters[base]; l++)
+        {
+            Light lamp = buffers()->lights[buffers()->clusters[base + 1 + l]];
+            lamps += localLightInput(lamp, at, normalizeOr(lamp.position - at, way)).color;
+        }
+        float3 lit = color * (sunLight * sun * phase * PI + lamps * 0.25 + ambient);
         float kept = exp(-thick * step);
         light += through * lit * (1.0 - kept);
+        weighed += t * through * (1.0 - kept);
+        weights += through * (1.0 - kept);
         through *= kept;
     }
     if (first < 0.0)
     {
-        return float4(0.0, 0.0, 0.0, 1.0);
+        return none;
     }
     float3 start = eye + way * first;
     float4 air = particleFog(frame, start, transform(frame->viewProj, float4(start, 1.0)));
-    return float4(light * air.a + air.rgb * (1.0 - through), through);
+    SmokeMarched marched = { float4(light * air.a + air.rgb * (1.0 - through), through), weighed / max(weights, 1e-6) };
+    return marched;
+}
+
+// This frame's marched smoke (push.texture) blended with last frame's
+// (push.textures.y, when push.textures.z says it was drawn), found where
+// this pixel's smoke was then from how far into it its light comes
+// (push.textures.x), and kept within the colours round it now, so the
+// smoke stays smooth as it swirls and the camera moves but leaves no
+// trail.
+[shader("fragment")]
+float4 smokeResolveFragment(SmokeOut input) : SV_Target0
+{
+    Frame* frame = push.frame;
+    Texture2D current = textures[NonUniformResourceIndex(push.texture)];
+    int2 pixel = int2(input.position.xy);
+    int2 size = int2(push.size);
+    float4 now = current.Load(int3(pixel, 0));
+    float far = textures[NonUniformResourceIndex(push.textures.x)].Load(int3(pixel, 0)).r;
+    if (push.textures.z == 0 || far <= 0.0)
+    {
+        return now;
+    }
+    float4 low = now;
+    float4 high = now;
+    for (int y = -1; y <= 1; y++)
+    {
+        for (int x = -1; x <= 1; x++)
+        {
+            float4 round = current.Load(int3(clamp(pixel + int2(x, y), int2(0, 0), size - 1), 0));
+            low = min(low, round);
+            high = max(high, round);
+        }
+    }
+    float4 nearH = transform(frame->invViewProj, float4(input.uv * 2.0 - 1.0, 1.0, 1.0));
+    float3 way = normalize(nearH.xyz / nearH.w - frame->cameraPosition);
+    float4 before = transform(frame->prevViewProj, float4(frame->cameraPosition + way * far, 1.0));
+    float2 then = before.xy / before.w * 0.5 + 0.5;
+    if (before.w <= 0.0 || any(then < 0.0) || any(then > 1.0))
+    {
+        return now;
+    }
+    float4 kept = textures[NonUniformResourceIndex(push.textures.y)].SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], then, 0.0);
+    return lerp(now, clamp(kept, low, high), 0.85);
 }
 
 // The scene's depth along the view at full size, in metres; far for the sky.

@@ -109,7 +109,7 @@ pub fn record(
         fg.add_pass("Fog", &images, &[], move |ctx| draw(ctx, pipelines.fog, &push, hdr, true));
     }
     if let Some(smoke) = input.smoke.clone() {
-        let target = (smoke, hdr, render_extent);
+        let target = (smoke, hdr, render_extent, input.history);
         crate::smoke::record(fg, (gpu, bindless), (pipelines, push), target, input.fog_volume)?;
     }
     if let Some(particles) = input.particles.clone() {

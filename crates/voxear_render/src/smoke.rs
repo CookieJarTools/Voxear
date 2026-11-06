@@ -19,7 +19,7 @@ use voxear_scene::{Destroying, Transform, WorldTransform};
 
 use crate::{
     gpu::{GpuSmoke, NO_TEXTURE, Push},
-    graph::{FrameGraph, ImageAccess, ImageId},
+    graph::{BufferAccess, BufferId, FrameGraph, ImageAccess, ImageId},
     pipelines::Pipelines,
 };
 
@@ -58,7 +58,7 @@ impl Component for Smoke {}
 
 impl Default for Smoke {
     fn default() -> Self {
-        Self { size: 8.0, cell: 0.4, density: 3.0, color: [0.8, 0.8, 0.8], spread: 2.0, lasts: 0.0, fade: 3.0, seed: 0 }
+        Self { size: 8.0, cell: 0.4, density: 2.0, color: [0.8, 0.8, 0.8], spread: 2.0, lasts: 0.0, fade: 3.0, seed: 0 }
     }
 }
 
@@ -119,6 +119,8 @@ const SHOT_REFILL: [f32; 2] = [0.4, 1.6];
 /// much of the smoke it leaves while open.
 const BLAST_REFILL: [f32; 2] = [0.5, 5.0];
 const BLAST_LEFT: f32 = 0.02;
+/// How much thicker a fresh blast leaves the shell of smoke it pushed out.
+const BLAST_PUSH: f32 = 1.5;
 
 /// A shot through a smoke, from where it went in to where it came out, and
 /// when, in the renderer's time.
@@ -160,7 +162,8 @@ impl SmokeHoles {
     }
 
     /// How much of the smoke at `at` its holes leave at `now`: 1 untouched,
-    /// near 0 where a hole is open.
+    /// near 0 where a hole is open, and more than 1 in the shell a fresh
+    /// blast has pushed the smoke out into.
     pub fn left(&self, at: Vec3, now: f32) -> f32 {
         let shots = self.shots.iter().map(|shot| 1.0 - shot_open(shot, at, now));
         let blasts = self.blasts.iter().map(|blast| 1.0 - blast_open(blast, at, now));
@@ -208,9 +211,13 @@ fn blast_open(blast: &SmokeBlast, at: Vec3, now: f32) -> f32 {
     if age < 0.0 {
         return 0.0;
     }
-    let inside = 1.0 - smoothstep(blast.radius * 0.8, blast.radius, at.distance(blast.centre));
+    let off = at.distance(blast.centre);
+    let inside = 1.0 - smoothstep(blast.radius * 0.8, blast.radius, off);
     let refilled = smoothstep(BLAST_REFILL[0], BLAST_REFILL[1], age).powf(1.8);
-    inside * (1.0 - refilled) * (1.0 - BLAST_LEFT)
+    // Pushed out into a shell round it, thicker while the blast is fresh: as much less than nothing open there.
+    let shell = (-((off - blast.radius * 1.15) / (blast.radius * 0.2).max(1e-3)).powi(2)).exp();
+    let fresh = 1.0 - smoothstep(0.0, BLAST_REFILL[1] * 0.6, age);
+    inside * (1.0 - refilled) * (1.0 - BLAST_LEFT) - shell * fresh * BLAST_PUSH
 }
 
 /// The grid's first corner for a Smoke at `middle`, `cell` metres a cell,
@@ -281,36 +288,76 @@ pub struct Draw {
     /// atmosphere's tables.
     pub depth: ImageId,
     pub sampled: Vec<ImageId>,
+    /// The lamps' cluster lists, which light it.
+    pub clusters: BufferId,
 }
 
+/// The two images the smoke is smoothed over frames in, half the view's
+/// size: one written each frame, the other last frame's.
+const HISTORY_NAMES: [&str; 2] = ["smoke history 0", "smoke history 1"];
+
 /// Records the smokes: marched at half the view's size into an image of
-/// their own, then laid over `hdr`, each pixel from the half-size ones
-/// nearest it in depth, so the smoke's edge stays sharp along what stands
-/// in front of it.
+/// their own, with how far into them their light comes from; blended with
+/// last frame's where the smoke was then, so it does not shimmer; then laid
+/// over `hdr`, each pixel from the half-size ones nearest it in depth, so
+/// the smoke's edge stays sharp along what stands in front of it.
+/// `history` is which of the two history images this frame writes.
 pub(crate) fn record(
     fg: &mut FrameGraph<'_>,
     (gpu, bindless): (&voxear_rhi::Gpu, &mut voxear_rhi::Bindless),
     (pipelines, push): (Pipelines, Push),
-    (draw, hdr, extent): (Draw, ImageId, vk::Extent2D),
+    (draw, hdr, extent, history): (Draw, ImageId, vk::Extent2D, usize),
     fog_volume: Option<ImageId>,
 ) -> anyhow::Result<()> {
     let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
     let half = vk::Extent2D { width: extent.width.div_ceil(2), height: extent.height.div_ceil(2) };
-    let desc = voxear_rhi::ImageDesc::new(half.width, half.height, vk::Format::R16G16B16A16_SFLOAT, usage);
-    let marched = fg.create_image(gpu, bindless, "smoke", desc)?;
-    let Draw { count, depth, sampled } = draw;
+    let rgba = voxear_rhi::ImageDesc::new(half.width, half.height, vk::Format::R16G16B16A16_SFLOAT, usage);
+    let marched = fg.create_image(gpu, bindless, "smoke", rgba)?;
+    let far = voxear_rhi::ImageDesc::new(half.width, half.height, vk::Format::R32_SFLOAT, usage);
+    let distance = fg.create_image(gpu, bindless, "smoke distance", far)?;
+    let now = fg.history_image(gpu, bindless, HISTORY_NAMES[history], rgba)?;
+    let then = fg.history_image(gpu, bindless, HISTORY_NAMES[1 - history], rgba)?;
+    // Last frame's only when it was drawn, not on the first frame or after the smoke was last seen.
+    let kept = !fg.is_new(then);
+    let Draw { count, depth, sampled, clusters } = draw;
     let depth_texture = fg.texture(depth).0;
     let volume = fog_volume.map_or(NO_TEXTURE, |volume| fg.texture(volume).0);
-    let mut images = vec![(marched, ImageAccess::ColorAttachment), (depth, ImageAccess::Sampled)];
+    let mut images = vec![
+        (marched, ImageAccess::ColorAttachment),
+        (distance, ImageAccess::ColorAttachment),
+        (depth, ImageAccess::Sampled),
+    ];
     images.extend(sampled.iter().chain(&fog_volume).map(|&image| (image, ImageAccess::Sampled)));
     let march = Push { textures: [depth_texture, volume, count, 0], size: [half.width, half.height], ..push };
-    fg.add_pass("Smoke", &images, &[], move |ctx| {
-        crate::post_passes::draw(ctx, pipelines.smoke_march, &march, marched, false);
+    fg.add_pass("Smoke", &images, &[(clusters, BufferAccess::ShaderRead)], move |ctx| {
+        let target = |image| {
+            vk::RenderingAttachmentInfo::default()
+                .image_view(ctx.view(image))
+                .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                .load_op(vk::AttachmentLoadOp::DONT_CARE)
+                .store_op(vk::AttachmentStoreOp::STORE)
+        };
+        let color = [target(marched), target(distance)];
+        crate::passes::begin_rendering(ctx, half, &color, None);
+        crate::passes::fullscreen(ctx, pipelines.smoke_march, &march);
     });
-    let marched_texture = fg.texture(marched).0;
-    let images = [(hdr, ImageAccess::ColorAttachment), (marched, ImageAccess::Sampled), (depth, ImageAccess::Sampled)];
+    let (marched_texture, distance_texture, then_texture) =
+        (fg.texture(marched).0, fg.texture(distance).0, fg.texture(then).0);
+    let images = [
+        (now, ImageAccess::ColorAttachment),
+        (marched, ImageAccess::Sampled),
+        (distance, ImageAccess::Sampled),
+        (then, ImageAccess::Sampled),
+    ];
+    let textures = [distance_texture, then_texture, u32::from(kept), 0];
+    let resolve = Push { texture: marched_texture, textures, size: [half.width, half.height], ..push };
+    fg.add_pass("Smoke over frames", &images, &[], move |ctx| {
+        crate::post_passes::draw(ctx, pipelines.smoke_resolve, &resolve, now, false);
+    });
+    let now_texture = fg.texture(now).0;
+    let images = [(hdr, ImageAccess::ColorAttachment), (now, ImageAccess::Sampled), (depth, ImageAccess::Sampled)];
     let lay =
-        Push { texture: marched_texture, textures: [depth_texture, 0, 0, 0], size: [half.width, half.height], ..push };
+        Push { texture: now_texture, textures: [depth_texture, 0, 0, 0], size: [half.width, half.height], ..push };
     fg.add_pass("Smoke over the scene", &images, &[], move |ctx| {
         crate::post_passes::draw(ctx, pipelines.smoke_composite, &lay, hdr, true);
     });
@@ -346,7 +393,9 @@ mod tests {
         let (soon, later) = (holes.left(at, 2.0), holes.left(at, 4.0));
         assert!(soon < later && later < 1.0, "filling back: {soon} then {later}");
         assert_eq!(holes.left(at, 6.0), 1.0);
-        assert_eq!(holes.left(Vec3::new(4.0, 0.0, 0.0), 0.3), 1.0, "past its radius");
+        assert!((holes.left(Vec3::new(6.0, 0.0, 0.0), 0.3) - 1.0).abs() < 1e-3, "well past its radius");
+        assert!(holes.left(Vec3::new(3.45, 0.0, 0.0), 0.3) > 2.0, "pushed out just past it");
+        assert!(holes.left(Vec3::new(3.45, 0.0, 0.0), 4.0) < 1.01, "and even again later");
     }
 
     #[test]

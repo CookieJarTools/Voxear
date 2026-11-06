@@ -4195,12 +4195,13 @@ fn smoke_rises_spreading_and_greys_what_is_behind_it() {
 /// as the engine would in the open, two metres up and six off, before a
 /// dark wall, with a thin pale post in front of it; or none.
 fn smoke_render(seconds: Option<f32>) -> Option<Vec<u8>> {
-    smoke_shot_render(seconds, false)
+    smoke_shot_render(seconds, false, false)
 }
 
 /// The smoke of smoke_render, and with `shot`, a shot from the camera
-/// through it a moment before, as a player's own.
-fn smoke_shot_render(seconds: Option<f32>, shot: bool) -> Option<Vec<u8>> {
+/// through it a moment before, as a player's own; with `lamp`, a red lamp
+/// in it.
+fn smoke_shot_render(seconds: Option<f32>, shot: bool, lamp: bool) -> Option<Vec<u8>> {
     use std::sync::Arc;
     use voxear_render::{SMOKE_GRID, Sky, Smoke, SmokeFill, smoke_origin};
     let mut renderer = renderer()?;
@@ -4218,6 +4219,10 @@ fn smoke_shot_render(seconds: Option<f32>, shot: bool) -> Option<Vec<u8>> {
     world.spawn((MeshRenderer::new(cube, pale), post));
     let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.3, -0.6, 1.0).normalize());
     world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    if lamp {
+        let red = Light::point(Vec3::new(1.0, 0.1, 0.05), 5.0, 4.0);
+        world.spawn((red, Transform::from_position(Vec3::new(-1.0, 2.0, -1.0))));
+    }
     let mut time = 10.0;
     if let Some(seconds) = seconds {
         let smoke = Smoke { cell: 0.4, spread: 2.0, ..Smoke::default() };
@@ -4274,9 +4279,19 @@ fn smoke_fills_its_cells_greys_the_scene_and_keeps_its_edge_on_what_stands_befor
 }
 
 #[test]
+fn a_lamp_in_smoke_lights_it_round_itself() {
+    let Some(plain) = smoke_shot_render(Some(4.0), false, false) else { return };
+    let lit = smoke_shot_render(Some(4.0), false, true).unwrap();
+    keep_image("smoke lamp.png", &lit);
+    let near = on_screen(Vec3::new(0.0, 2.0, -6.0), Quat::IDENTITY, Vec3::new(-1.0, 2.0, -1.0));
+    let (before, after) = (patch_rgb(&plain, near, 3), patch_rgb(&lit, near, 3));
+    assert!(after[0] > before[0] + 30 && after[0] > after[2] + 30, "red round the lamp: {after:?} against {before:?}");
+}
+
+#[test]
 fn a_shot_cuts_a_tunnel_through_smoke() {
-    let Some(clear) = smoke_shot_render(None, false) else { return };
-    let shot = smoke_shot_render(Some(4.0), true).unwrap();
+    let Some(clear) = smoke_shot_render(None, false, false) else { return };
+    let shot = smoke_shot_render(Some(4.0), true, false).unwrap();
     keep_image("smoke shot.png", &shot);
     let eye = Vec3::new(0.0, 2.0, -6.0);
     // Down the shot's tunnel, the dark wall behind shows again; half a metre above it, the smoke stays.

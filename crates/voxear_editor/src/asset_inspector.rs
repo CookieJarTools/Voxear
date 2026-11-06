@@ -217,7 +217,10 @@ struct MaterialFields {
     /// The colour's and the emission's swatches, which open the colour picker.
     swatches: [NodeId; 2],
     /// Each map's picture, in [`MaterialMap::ALL`]'s order, with its path.
-    maps: [(Slot, Option<String>); 4],
+    maps: [(Slot, Option<String>); 5],
+    /// How far its height map moves it, and how finely it is diced.
+    displacement: NodeId,
+    detail: NodeId,
     foliage: NodeId,
     /// How much it bends in the wind, and its leaves flutter.
     wind: [NodeId; 2],
@@ -509,7 +512,7 @@ impl AssetView {
         }
         let changed = fields.color.iter().chain(&fields.emissive)
             .chain([&fields.metallic, &fields.roughness, &fields.foliage, &fields.leaves, &fields.glass, &fields.ior])
-            .chain([&fields.glow, &fields.glow_speed])
+            .chain([&fields.glow, &fields.glow_speed, &fields.displacement, &fields.detail])
             .chain(&fields.wind);
         if !changed.into_iter().any(|&field| ui.changed(field)) {
             return None;
@@ -539,6 +542,8 @@ impl AssetView {
         data.glow_speed = read(fields.glow_speed, data.glow_speed).clamp(0.0, 30.0);
         data.glass = ui.is_checked(fields.glass);
         data.ior = read(fields.ior, data.ior).clamp(1.0, 3.0);
+        data.displacement = read(fields.displacement, data.displacement).clamp(-4.0, 4.0);
+        data.detail = read(fields.detail, data.detail).clamp(1.0, 64.0);
         let data = data.clone();
         fields.show_what_applies(ui);
         Some(AssetAction::SaveMaterial(self.item.path.clone(), data))
@@ -553,6 +558,8 @@ impl AssetView {
         let (slot, path) = &mut fields.maps[at];
         *path = picture.map(|(_, path)| path);
         show_slot(ui, *slot, path.as_deref(), "Texture");
+        // A height map shows how far it moves the surface.
+        fields.show_what_applies(ui);
         Some(AssetAction::SaveMaterial(self.item.path.clone(), fields.data.clone()))
     }
 
@@ -811,7 +818,7 @@ fn material(ui: &mut Ui, root: NodeId, file: &std::path::Path, game: &Game) -> O
             ui.set_text(*field, &number(value));
         }
     }
-    let labels = ["Colour Map", "Metallic Map", "Normal Map", "Emission Map"];
+    let labels = ["Colour Map", "Metallic Map", "Normal Map", "Emission Map", "Height Map"];
     let maps = MaterialMap::ALL.map(|map| {
         let at = MaterialMap::ALL.iter().position(|&m| m == map).unwrap_or_default();
         let slot = slot(ui, rows, labels[at], "texture");
@@ -819,6 +826,7 @@ fn material(ui: &mut Ui, root: NodeId, file: &std::path::Path, game: &Game) -> O
         show_slot(ui, slot, path.as_deref(), "Texture");
         (slot, path)
     });
+    let (displacement, detail) = (one(ui, "Displacement", data.displacement), one(ui, "Detail", data.detail));
     let row = prop(ui, rows, "Foliage");
     let foliage = ui.toggle(row, "", data.foliage);
     ui.add_class(foliage, "checkbox");
@@ -841,6 +849,8 @@ fn material(ui: &mut Ui, root: NodeId, file: &std::path::Path, game: &Game) -> O
         emissive,
         swatches,
         maps,
+        displacement,
+        detail,
         foliage,
         wind,
         leaves,
@@ -912,6 +922,8 @@ impl MaterialFields {
             (self.glow_speed, self.data.glow != Glow::Steady),
             (self.leaves, self.data.foliage),
             (self.ior, self.data.glass),
+            (self.displacement, self.data.height_map.is_some()),
+            (self.detail, self.data.height_map.is_some()),
         ];
         for (field, applies) in rows {
             if let Some(row) = ui.parent(field) {

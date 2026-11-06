@@ -56,6 +56,19 @@ pub struct MaterialData {
     pub normal_map: Option<AssetGuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub emissive_map: Option<AssetGuid>,
+    /// How high each point of the surface stands, 0 to 1, which
+    /// `displacement` moves it out by.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height_map: Option<AssetGuid>,
+    /// How far the height map moves the surface, in metres, from its lowest
+    /// to its highest; 0 for none. The surface is diced finely enough to
+    /// show it near the camera, and the mesh stays its middle.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub displacement: f32,
+    /// How many pixels each diced edge spans on screen: less is finer, and
+    /// costs more.
+    #[serde(default = "default_detail", skip_serializing_if = "is_default_detail")]
+    pub detail: f32,
     /// Lit as leaves are: light wrapped round, through the leaf against the
     /// sun, and a rim of the sun's colour.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -120,6 +133,9 @@ impl Default for MaterialData {
             metallic_map: None,
             normal_map: None,
             emissive_map: None,
+            height_map: None,
+            displacement: 0.0,
+            detail: default_detail(),
             foliage: false,
             glass: false,
             ior: default_ior(),
@@ -141,10 +157,11 @@ pub enum MaterialMap {
     Metallic,
     Normal,
     Emissive,
+    Height,
 }
 
 impl MaterialMap {
-    pub const ALL: [Self; 4] = [Self::Color, Self::Metallic, Self::Normal, Self::Emissive];
+    pub const ALL: [Self; 5] = [Self::Color, Self::Metallic, Self::Normal, Self::Emissive, Self::Height];
 
     /// Whether its picture holds colours, read as sRGB, rather than values.
     pub fn srgb(self) -> bool {
@@ -184,6 +201,18 @@ fn is_turning(leaves: &Leaves) -> bool {
     *leaves == Leaves::Turn
 }
 
+fn is_zero(value: &f32) -> bool {
+    *value == 0.0
+}
+
+fn default_detail() -> f32 {
+    6.0
+}
+
+fn is_default_detail(detail: &f32) -> bool {
+    *detail == default_detail()
+}
+
 fn is_black(color: &[f32; 3]) -> bool {
     *color == [0.0; 3]
 }
@@ -196,6 +225,7 @@ impl MaterialData {
             MaterialMap::Metallic => self.metallic_map,
             MaterialMap::Normal => self.normal_map,
             MaterialMap::Emissive => self.emissive_map,
+            MaterialMap::Height => self.height_map,
         }
     }
 
@@ -205,11 +235,12 @@ impl MaterialData {
             MaterialMap::Metallic => &mut self.metallic_map,
             MaterialMap::Normal => &mut self.normal_map,
             MaterialMap::Emissive => &mut self.emissive_map,
+            MaterialMap::Height => &mut self.height_map,
         } = picture;
     }
 
     /// The GPU's material, its maps' textures in [`MaterialMap::ALL`]'s order.
-    fn desc(&self, [color, metallic, normal, emissive]: [Option<TextureId>; 4]) -> MaterialDesc {
+    fn desc(&self, [color, metallic, normal, emissive, height]: [Option<TextureId>; 5]) -> MaterialDesc {
         let [r, g, b] = linear(self.color);
         MaterialDesc {
             base_color: [r, g, b, 1.0],
@@ -228,6 +259,10 @@ impl MaterialData {
             leaves: self.leaves,
             glow: self.glow,
             glow_speed: self.glow_speed,
+            // Without a height map, nothing to move it by.
+            height_texture: height,
+            displacement: if height.is_some() { self.displacement } else { 0.0 },
+            detail: self.detail,
             ..MaterialDesc::default()
         }
     }
@@ -239,7 +274,9 @@ impl MaterialData {
         let (metallic, roughness, ior) = (self.metallic.to_bits(), self.roughness.to_bits(), self.ior.to_bits());
         let flags = u32::from(self.foliage) | u32::from(self.glass) << 1 | (self.leaves as u32) << 2 | (self.glow as u32) << 3;
         let wind = [self.wind_bend().to_bits(), self.wind_flutter().to_bits(), self.glow_speed.to_bits()];
-        let values = [r, g, b, metallic, roughness, er, eg, eb, flags, ior, wind[0], wind[1], wind[2]];
+        let (displacement, detail) = (self.displacement.to_bits(), self.detail.to_bits());
+        let values =
+            [r, g, b, metallic, roughness, er, eg, eb, flags, ior, wind[0], wind[1], wind[2], displacement, detail];
         // A custom shader and its properties, as written: two materials alike in them are alike.
         let custom = self.shader.map(|shader| format!("{shader}{:?}", self.properties)).unwrap_or_default();
         (values, MaterialMap::ALL.map(|map| self.map(map)), custom)
@@ -270,7 +307,7 @@ impl MaterialData {
     }
 }
 
-type MaterialKey = ([u32; 13], [Option<AssetGuid>; 4], String);
+type MaterialKey = ([u32; 15], [Option<AssetGuid>; 5], String);
 
 /// What [`Content::release_unused`] freed.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -903,7 +940,7 @@ impl Content {
 
     /// What the GPU draws a material with, its maps' pictures loaded.
     fn look(&mut self, renderer: &mut Renderer, data: &MaterialData) -> Result<MaterialDesc> {
-        let mut textures = [None; 4];
+        let mut textures = [None; 5];
         for (texture, map) in textures.iter_mut().zip(MaterialMap::ALL) {
             if let Some(picture) = data.map(map) {
                 *texture = Some(self.picture(renderer, picture, map.srgb())?);
@@ -1453,5 +1490,19 @@ mod tests {
         let toon: MaterialData = toml::from_str("shader = \"builtin:toon\"\n").unwrap();
         assert_eq!(toon.shader, Some(crate::shaders::ShaderRef::Builtin(crate::shaders::BuiltinShader::Toon)));
         assert!(toml::to_string(&toon).unwrap().contains("shader = \"builtin:toon\""));
+    }
+
+    #[test]
+    fn a_displaced_materials_height_map_reads_and_writes_back_and_is_left_out_unused() {
+        let text = "height_map = \"0000000000000000000000000000000c\"\ndisplacement = 0.4\ndetail = 3.0\n";
+        let data: MaterialData = toml::from_str(text).unwrap();
+        assert!(data.map(MaterialMap::Height).is_some());
+        assert_eq!((data.displacement, data.detail), (0.4, 3.0));
+        assert_eq!(toml::from_str::<MaterialData>(&toml::to_string(&data).unwrap()).unwrap(), data);
+        let plain = toml::to_string(&MaterialData::default()).unwrap();
+        assert!(!plain.contains("height") && !plain.contains("displacement") && !plain.contains("detail"), "{plain}");
+        // Without a height map, nothing moves it.
+        let unmapped = MaterialData { height_map: None, ..data };
+        assert_eq!(unmapped.desc([None; 5]).displacement, 0.0);
     }
 }

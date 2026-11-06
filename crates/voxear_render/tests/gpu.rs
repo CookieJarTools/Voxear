@@ -4565,3 +4565,144 @@ fn a_mist_trail_shows_along_its_path_thickest_where_it_was_left_last() {
     let inside = mist_render(true, head, back).unwrap();
     keep_image("mist inside.png", &inside);
 }
+
+/// A height map of round bumps, `bumps` to a side, as a displaced
+/// material's.
+fn bumps_texture(renderer: &mut Renderer, bumps: f32) -> voxear_render::TextureId {
+    let size = 256u32;
+    let rgba: Vec<u8> = (0..size * size)
+        .flat_map(|i| {
+            let (u, v) = ((i % size) as f32 / size as f32, (i / size) as f32 / size as f32);
+            let h = 0.5 + 0.5 * (u * std::f32::consts::TAU * bumps).sin() * (v * std::f32::consts::TAU * bumps).sin();
+            let h = (h * 255.0).round() as u8;
+            [h, h, h, 255]
+        })
+        .collect();
+    let source = voxear_render::TextureSource { name: "bumps", width: size, height: size, rgba: &rgba, srgb: false };
+    renderer.add_texture(&source).unwrap()
+}
+
+/// A grid lying flat, facing up, its lines along X at `xs` and along Z at
+/// the same, from -1 to 1, so its squares are as uneven as the spacing.
+fn ground_grid(xs: &[f32]) -> voxear_render::MeshData {
+    let mut mesh = voxear_render::MeshData::default();
+    let n = xs.len() as u32;
+    for &z in xs {
+        for &x in xs {
+            mesh.vertices.push(voxear_render::Vertex {
+                position: [x, 0.0, z],
+                normal: [0.0, 1.0, 0.0],
+                uv: [(x + 1.0) * 0.5, (z + 1.0) * 0.5],
+                tangent: [1.0, 0.0, 0.0, 1.0],
+                ..voxear_render::Vertex::default()
+            });
+        }
+    }
+    let at = |x: u32, z: u32| z * n + x;
+    for z in 0..n - 1 {
+        for x in 0..n - 1 {
+            mesh.indices.extend([at(x, z), at(x, z + 1), at(x + 1, z), at(x, z + 1), at(x + 1, z + 1), at(x + 1, z)]);
+        }
+    }
+    mesh
+}
+
+/// A ground of `xs`, `scale` metres across, its material displaced by
+/// `displacement` metres of bumps, seen from `eye` looking along `facing`,
+/// over a bright floor two metres under it; and the frame's stats.
+fn displaced_render(xs: &[f32], scale: f32, displacement: f32, eye: Vec3, facing: Quat) -> Option<(Vec<u8>, RenderStats)> {
+    displaced_render_with(xs, scale, displacement, (eye, facing), false)
+}
+
+/// As displaced_render, with ambient occlusion on when `occluded`, so the
+/// pieces are drawn as depth first and shaded over it.
+fn displaced_render_with(
+    xs: &[f32],
+    scale: f32,
+    displacement: f32,
+    (eye, facing): (Vec3, Quat),
+    occluded: bool,
+) -> Option<(Vec<u8>, RenderStats)> {
+    use voxear_render::Sky;
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::new(eye, facing, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.5, ..Sky::default() });
+    let height = bumps_texture(&mut renderer, 6.0);
+    let ground = renderer.add_mesh(&ground_grid(xs)).unwrap();
+    let mud = MaterialDesc {
+        base_color: [0.25, 0.18, 0.12, 1.0],
+        height_texture: Some(height),
+        displacement,
+        detail: 4.0,
+        ..MaterialDesc::default()
+    };
+    let mud = renderer.add_material(&mud).unwrap();
+    world.spawn((MeshRenderer::new(ground, mud), Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(scale))));
+    let plane = renderer.primitive(Primitive::Plane).unwrap();
+    let bright = MaterialDesc { base_color: [0.0, 0.0, 0.0, 1.0], emissive: [0.0, 40.0, 0.0], ..MaterialDesc::default() };
+    let bright = renderer.add_material(&bright).unwrap();
+    let floor = Transform::new(Vec3::new(0.0, -2.0, 0.0), Quat::IDENTITY, Vec3::splat(scale * 4.0));
+    world.spawn((MeshRenderer::new(plane, bright), floor));
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.4, -0.6, 0.7).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    let ambient_occlusion = voxear_render::AmbientOcclusion { enabled: occluded, ..voxear_render::AmbientOcclusion::default() };
+    world.insert_resource(voxear_render::PostProcess { ambient_occlusion, ..steady_post() });
+    let stats = run(&mut renderer, &world, &mut 0.0, 4);
+    Some((renderer.read_pixels().unwrap().2, stats))
+}
+
+#[test]
+fn a_displaced_ground_is_diced_and_shows_its_bumps_against_the_sky() {
+    let xs: Vec<f32> = (0..=8).map(|i| i as f32 / 4.0 - 1.0).collect();
+    let (eye, ahead) = (Vec3::new(0.0, 0.5, -9.0), Quat::from_rotation_x(0.04));
+    let Some((flat, flat_stats)) = displaced_render(&xs, 10.0, 0.0, eye, ahead) else { return };
+    let (bumpy, stats) = displaced_render(&xs, 10.0, 0.8, eye, ahead).unwrap();
+    keep_image("displaced.png", &bumpy);
+    keep_image("displaced flat.png", &flat);
+    assert_eq!(flat_stats.diced_patches, 0, "with no displacement, drawn as it is");
+    assert!(stats.diced_patches > 0 && stats.dice_overflow == 0, "{stats:?}");
+    assert!(differing_pixels(&flat, &bumpy) > 20_000, "the bumps change the ground");
+    // Its far edge against the sky rises and falls with the bumps: the first ground row from the top, by column.
+    let sky = rgb_at(&bumpy, (320, 5));
+    let edge = |x: u32| (0..360u32).find(|&y| (0..3).map(|c| (rgb_at(&bumpy, (x, y))[c] - sky[c]).abs()).max().unwrap() > 25);
+    let rows: Vec<u32> = (40..600).step_by(4).filter_map(edge).collect();
+    let (top, bottom) = (rows.iter().min().unwrap(), rows.iter().max().unwrap());
+    assert!(bottom - top >= 4, "a bumpy horizon: rows {top} to {bottom}");
+}
+
+#[test]
+fn uneven_triangles_diced_side_by_side_leave_no_crack() {
+    // Squares growing fast across the ground, so each triangle is split and cut differently from its neighbours.
+    let xs: Vec<f32> = (0..=10).map(|i| (i as f32 / 10.0).powi(3) * 2.0 - 1.0).collect();
+    let down = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2 * 0.999);
+    for (height, displacement) in [(3.0, 0.6), (8.0, 1.2)] {
+        let Some((pixels, stats)) = displaced_render(&xs, 4.0, displacement, Vec3::new(0.0, height, 0.0), down) else {
+            return;
+        };
+        keep_image(&format!("displaced cracks {height}.png"), &pixels);
+        assert!(stats.diced_patches > 0);
+        // The bright floor under it shows through nowhere within the ground.
+        let seen = (60..300u32).flat_map(|y| (180..460u32).map(move |x| (x, y)));
+        let through: Vec<(u32, u32)> = seen.filter(|&at| rgb_at(&pixels, at)[1] > 200).collect();
+        assert!(through.is_empty(), "the floor shows through at {} pixels, first {:?}", through.len(), through.first());
+    }
+}
+
+#[test]
+fn displaced_ground_drawn_as_depth_first_looks_the_same() {
+    let xs: Vec<f32> = (0..=8).map(|i| i as f32 / 4.0 - 1.0).collect();
+    let view = (Vec3::new(0.0, 0.5, -9.0), Quat::from_rotation_x(0.04));
+    let Some((plain, _)) = displaced_render_with(&xs, 10.0, 0.8, view, false) else { return };
+    let (deep, stats) = displaced_render_with(&xs, 10.0, 0.8, view, true).unwrap();
+    keep_image("displaced depth first.png", &deep);
+    assert!(stats.diced_patches > 0);
+    // Ambient occlusion darkens the dips a little; the ground is all there, nowhere the sky or floor instead.
+    let changed = differing_pixels_by(&plain, &deep, 60);
+    assert!(changed < 640 * 360 / 50, "{changed} pixels far apart");
+}
+
+/// How many pixels differ in some channel by more than `by`.
+fn differing_pixels_by(a: &[u8], b: &[u8], by: u8) -> usize {
+    a.chunks_exact(4).zip(b.chunks_exact(4)).filter(|(a, b)| a.iter().zip(*b).any(|(a, b)| a.abs_diff(*b) > by)).count()
+}

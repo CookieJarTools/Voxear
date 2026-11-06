@@ -71,6 +71,14 @@ pub struct Draws {
     pub meshlet_draws: BufferId,
     pub meshlet_instances: BufferId,
     pub meshlet_work: BufferId,
+    /// Dicing's lists, counts and draws (see `dice`).
+    pub diced_instances: BufferId,
+    pub dice_counts: BufferId,
+    pub dice_splits: BufferId,
+    pub dice_patches: BufferId,
+    pub dice_draws: BufferId,
+    pub dice_counts_handle: vk::Buffer,
+    pub dice_draws_handle: vk::Buffer,
     pub draws_handle: vk::Buffer,
     pub count_handle: vk::Buffer,
     pub stats_handle: vk::Buffer,
@@ -146,6 +154,8 @@ pub fn record(
         (draws.visibility, BufferAccess::ComputeWrite),
         (draws.lod_state, BufferAccess::ComputeWrite),
         (draws.stats, BufferAccess::ComputeWrite),
+        (draws.dice_counts, BufferAccess::ComputeWrite),
+        (draws.diced_instances, BufferAccess::ComputeWrite),
     ];
     // The count is read as the dispatch's size before the pass writes the meshlet lists' counts beside it.
     let meshlet_culling = [
@@ -187,16 +197,19 @@ pub fn record(
     drawing.extend(counted);
 
     let (count_handle, stats_handle) = (draws.count_handle, draws.stats_handle);
-    fg.add_pass(
-        "Reset",
-        &[],
-        &[(draws.count, BufferAccess::TransferWrite), (draws.stats, BufferAccess::TransferWrite)],
-        move |ctx| unsafe {
-            let counts = cleared_draw_counts();
-            ctx.gpu.device.cmd_update_buffer(ctx.cmd, count_handle, 0, bytemuck::cast_slice(&counts));
-            ctx.gpu.device.cmd_fill_buffer(ctx.cmd, stats_handle, 0, stat::COUNT as u64 * 4, 0);
-        },
-    );
+    let dice_counts_handle = draws.dice_counts_handle;
+    let reset = [
+        (draws.count, BufferAccess::TransferWrite),
+        (draws.stats, BufferAccess::TransferWrite),
+        (draws.dice_counts, BufferAccess::TransferWrite),
+    ];
+    fg.add_pass("Reset", &[], &reset, move |ctx| unsafe {
+        let counts = cleared_draw_counts();
+        ctx.gpu.device.cmd_update_buffer(ctx.cmd, count_handle, 0, bytemuck::cast_slice(&counts));
+        ctx.gpu.device.cmd_fill_buffer(ctx.cmd, stats_handle, 0, stat::COUNT as u64 * 4, 0);
+        let dice = crate::dice::CLEARED_COUNTS;
+        ctx.gpu.device.cmd_update_buffer(ctx.cmd, dice_counts_handle, 0, bytemuck::cast_slice(&dice));
+    });
 
     let push = frame.push;
     let instances = frame.instance_count;
@@ -345,12 +358,83 @@ pub fn record(
         cull(ctx, pipelines.cull, &push, LIST_EARLY, instances, 1);
     });
     meshlet_pass(fg, "Meshlets (early)", &[], [LIST_EARLY, LIST_LATE]);
+    // The displaced surfaces the cull listed, split into pieces, each piece in view sent out as a draw.
+    let dice = Dice { counts: draws.dice_counts_handle, draws: draws.dice_draws_handle };
+    let split = [
+        (draws.dice_counts, BufferAccess::IndirectRead),
+        (draws.dice_counts, BufferAccess::ComputeWrite),
+        (draws.diced_instances, BufferAccess::ComputeRead),
+        (draws.dice_splits, BufferAccess::ComputeWrite),
+    ];
+    fg.add_pass("Dice (split)", &[], &split, move |ctx| {
+        bind(ctx, pipelines.dice_split, vk::PipelineBindPoint::COMPUTE, &push);
+        unsafe { ctx.gpu.device.cmd_dispatch_indirect(ctx.cmd, dice.counts, crate::dice::SPLIT_DISPATCH) };
+    });
+    let pieces = [
+        (draws.dice_counts, BufferAccess::IndirectRead),
+        (draws.dice_counts, BufferAccess::ComputeWrite),
+        (draws.dice_splits, BufferAccess::ComputeRead),
+        (draws.dice_patches, BufferAccess::ComputeWrite),
+        (draws.dice_draws, BufferAccess::ComputeWrite),
+        (draws.stats, BufferAccess::ComputeWrite),
+    ];
+    fg.add_pass("Dice (pieces)", &[], &pieces, move |ctx| {
+        bind(ctx, pipelines.dice_patch, vk::PipelineBindPoint::COMPUTE, &push);
+        unsafe { ctx.gpu.device.cmd_dispatch_indirect(ctx.cmd, dice.counts, crate::dice::PATCH_DISPATCH) };
+    });
+    // The pieces cast the sun's shadows of the surfaces they were diced from, into each cascade.
+    if let Some(atlas) = targets.shadows {
+        let reads = [
+            (draws.dice_counts, BufferAccess::IndirectRead),
+            (draws.dice_draws, BufferAccess::IndirectRead),
+            (draws.dice_patches, BufferAccess::ShaderRead),
+            (draws.dice_splits, BufferAccess::ShaderRead),
+        ];
+        fg.add_pass("Shadows (diced)", &[(atlas, ImageAccess::DepthAttachment)], &reads, move |ctx| {
+            let size = CASCADE_RESOLUTION * 2;
+            let depth = attachment(ctx.view(atlas), vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL, None);
+            begin_rendering(ctx, vk::Extent2D { width: size, height: size }, &[], Some(&depth));
+            bind(ctx, pipelines.shadow_diced, vk::PipelineBindPoint::GRAPHICS, &draw_push);
+            for cascade in 0..CASCADES as u32 {
+                let offset = vk::Offset2D {
+                    x: (cascade % 2 * CASCADE_RESOLUTION) as i32,
+                    y: (cascade / 2 * CASCADE_RESOLUTION) as i32,
+                };
+                set_viewport(ctx, offset, vk::Extent2D { width: CASCADE_RESOLUTION, height: CASCADE_RESOLUTION });
+                ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { list: LIST_SHADOW + cascade, ..draw_push });
+                dice.draw(ctx);
+            }
+            unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
+        });
+    }
+    let diced_buffers: Vec<_> = shading_buffers
+        .iter()
+        .copied()
+        .chain([
+            (draws.dice_counts, BufferAccess::IndirectRead),
+            (draws.dice_draws, BufferAccess::IndirectRead),
+            (draws.dice_patches, BufferAccess::ShaderRead),
+            (draws.dice_splits, BufferAccess::ShaderRead),
+        ])
+        .collect();
     match depth_first {
-        true => depth_pass(fg, "Depth (early)", LIST_EARLY),
-        false => fg.add_pass("Opaque (early)", &shading(ImageAccess::ColorAttachment), &shading_buffers, move |ctx| {
-            let clear = Clear { color: true, depth: true };
-            opaque(ctx, forward, &Push { list: LIST_EARLY, ..shading_push }, indirect, scene, clear);
-        }),
+        true => {
+            depth_pass(fg, "Depth (early)", LIST_EARLY);
+            let surface = frame.surface.expect("the depth passes' surface");
+            let images = [(depth, ImageAccess::DepthAttachment), (surface, ImageAccess::ColorAttachment)];
+            fg.add_pass("Depth (diced)", &images, &diced_buffers, move |ctx| {
+                diced_depth(ctx, pipelines.depth_diced, &draw_push, dice, (depth, surface));
+            });
+        }
+        false => {
+            fg.add_pass("Opaque (early)", &shading(ImageAccess::ColorAttachment), &shading_buffers, move |ctx| {
+                let clear = Clear { color: true, depth: true };
+                opaque(ctx, forward, &Push { list: LIST_EARLY, ..shading_push }, indirect, scene, clear);
+            });
+            fg.add_pass("Opaque (diced)", &shading(ImageAccess::ColorAttachment), &diced_buffers, move |ctx| {
+                diced_opaque(ctx, pipelines.forward_diced, &shading_push, dice, scene);
+            });
+        }
     }
 
     let pyramid = targets.pyramid;
@@ -397,6 +481,9 @@ pub fn record(
                     opaque(ctx, forward, &Push { list, ..again }, indirect, scene, clear);
                 });
             }
+            fg.add_pass("Opaque (diced)", &shading(ImageAccess::ColorAttachment), &diced_buffers, move |ctx| {
+                diced_opaque(ctx, pipelines.forward_on_depth_diced, &shading_push, dice, scene);
+            });
         }
         false => fg.add_pass("Opaque (late)", &shading(ImageAccess::ColorAttachment), &shading_buffers, move |ctx| {
             opaque(ctx, forward, &Push { list: LIST_LATE, ..shading_push }, indirect, scene, Clear::default());
@@ -599,6 +686,44 @@ fn opaque(
     begin_rendering(ctx, extent, &color, Some(&depth));
     bind(ctx, pipeline, vk::PipelineBindPoint::GRAPHICS, push);
     indirect.draw(ctx, push.list);
+    unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
+}
+
+/// The pieces of the displaced surfaces dicing sent out: the counts, whose
+/// pieces' count says how many draws there are, and the draws.
+#[derive(Clone, Copy)]
+struct Dice {
+    counts: vk::Buffer,
+    draws: vk::Buffer,
+}
+
+impl Dice {
+    fn draw(self, ctx: &PassContext) {
+        let (max, stride) = (crate::dice::MAX_PATCHES as u32, crate::dice::PATCH_SIZE as u32);
+        let (draws, counts, at) = (self.draws, self.counts, crate::dice::PATCH_COUNT);
+        unsafe { ctx.gpu.device.cmd_draw_indirect_count(ctx.cmd, draws, 0, counts, at, max, stride) };
+    }
+}
+
+/// The diced pieces shaded, over what the opaque passes drew.
+fn diced_opaque(ctx: &PassContext, pipeline: vk::Pipeline, push: &Push, dice: Dice, targets: SceneTargets) {
+    let layout = vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL;
+    let color = [attachment(ctx.view(targets.hdr), layout, None), attachment(ctx.view(targets.velocity), layout, None)];
+    let depth = attachment(ctx.view(targets.depth), vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL, None);
+    begin_rendering(ctx, ctx.extent(targets.hdr), &color, Some(&depth));
+    bind(ctx, pipeline, vk::PipelineBindPoint::GRAPHICS, push);
+    dice.draw(ctx);
+    unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
+}
+
+/// The diced pieces as depth alone, over what the depth pass drew.
+fn diced_depth(ctx: &PassContext, pipeline: vk::Pipeline, push: &Push, dice: Dice, targets: (ImageId, ImageId)) {
+    let (depth, surface) = targets;
+    let target = attachment(ctx.view(depth), vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL, None);
+    let rough = [attachment(ctx.view(surface), vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL, None)];
+    begin_rendering(ctx, ctx.extent(depth), &rough, Some(&target));
+    bind(ctx, pipeline, vk::PipelineBindPoint::GRAPHICS, push);
+    dice.draw(ctx);
     unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
 }
 

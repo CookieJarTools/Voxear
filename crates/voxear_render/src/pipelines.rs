@@ -128,6 +128,15 @@ pub struct Pipelines {
     pub smoke_march: vk::Pipeline,
     pub smoke_composite: vk::Pipeline,
     pub smoke_resolve: vk::Pipeline,
+    /// Dicing displaced surfaces: splitting their triangles, sending out
+    /// each piece in view, and drawing the pieces as depth, shaded, and
+    /// shaded over the depth they drew (see `dice`).
+    pub dice_split: vk::Pipeline,
+    pub dice_patch: vk::Pipeline,
+    pub depth_diced: vk::Pipeline,
+    pub forward_diced: vk::Pipeline,
+    pub forward_on_depth_diced: vk::Pipeline,
+    pub shadow_diced: vk::Pipeline,
     pub dry_mesh: vk::Pipeline,
     pub water_wall: vk::Pipeline,
     /// Under water: what the view shows dimmed, then the water's own light.
@@ -190,6 +199,7 @@ impl Pipelines {
             module("water")?,
             module("particles")?,
             module("smoke")?,
+            module("dice")?,
         ];
         let [
             cull,
@@ -211,6 +221,7 @@ impl Pipelines {
             water,
             particles,
             smoke,
+            dice,
         ] = &modules;
         // Only a GPU with mesh shaders can load their modules.
         let meshlets = match gpu.mesh_shader {
@@ -450,6 +461,34 @@ impl Pipelines {
                 blend: Blend::Premultiplied,
                 ..GraphicsPipelineDesc::new("Smoke over the scene", smoke, c"smokeVertex", c"smokeCompositeFragment")
             })?,
+            dice_split: create_compute_pipeline(gpu, layout, "Dice (split)", dice, c"diceSplitMain")?,
+            dice_patch: create_compute_pipeline(gpu, layout, "Dice (pieces)", dice, c"dicePatchMain")?,
+            depth_diced: graphics(&GraphicsPipelineDesc {
+                color_formats: &[SURFACE_FORMAT],
+                depth_format: Some(DEPTH_FORMAT),
+                depth_write: true,
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                ..GraphicsPipelineDesc::new("Depth (diced)", dice, c"dicedVertex", c"depthFragment")
+            })?,
+            forward_diced: graphics(&GraphicsPipelineDesc {
+                color_formats: scene_formats,
+                depth_format: Some(DEPTH_FORMAT),
+                depth_write: true,
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                ..GraphicsPipelineDesc::new("Opaque (diced)", dice, c"dicedVertex", c"fragmentMain")
+            })?,
+            shadow_diced: graphics(&GraphicsPipelineDesc {
+                cull: vk::CullModeFlags::NONE,
+                depth_bias: Some(SHADOW_BIAS),
+                depth_clamp: true,
+                ..GraphicsPipelineDesc::depth_only("Shadows (diced)", dice, c"dicedShadowVertex", DEPTH_FORMAT)
+            })?,
+            forward_on_depth_diced: graphics(&GraphicsPipelineDesc {
+                color_formats: scene_formats,
+                depth_format: Some(DEPTH_FORMAT),
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                ..GraphicsPipelineDesc::new("Opaque (diced)", dice, c"dicedVertex", c"fragmentMain")
+            })?,
             // The sea's spray: particles that read the waves and the foam, so with the sea's shaders.
             sea_spray: graphics(&GraphicsPipelineDesc {
                 color_formats: hdr,
@@ -596,6 +635,12 @@ impl Pipelines {
             self.smoke_march,
             self.smoke_composite,
             self.smoke_resolve,
+            self.dice_split,
+            self.dice_patch,
+            self.depth_diced,
+            self.forward_diced,
+            self.forward_on_depth_diced,
+            self.shadow_diced,
             self.dry_mesh,
             self.water_wall,
             self.underwater,

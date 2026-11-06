@@ -127,6 +127,12 @@ pub struct MaterialDesc {
     /// How far its custom shader's vertex function may move a vertex, in
     /// metres, which culling allows for.
     pub max_offset: f32,
+    /// A height map moving the surface out along its normal, `displacement`
+    /// metres from its lowest to its highest, the mesh its middle; diced on
+    /// the GPU so each diced edge spans `detail` pixels (see `dice`).
+    pub height_texture: Option<TextureId>,
+    pub displacement: f32,
+    pub detail: f32,
 }
 
 impl Default for MaterialDesc {
@@ -154,6 +160,9 @@ impl Default for MaterialDesc {
             shader: STANDARD_SHADER,
             properties: [[0.0; 4]; MATERIAL_PROPERTIES],
             max_offset: 0.0,
+            height_texture: None,
+            displacement: 0.0,
+            detail: 6.0,
         }
     }
 }
@@ -847,6 +856,11 @@ impl Assets {
             self.foliage_materials.remove(&handle);
         }
         let texture = |t: Option<TextureId>| t.unwrap_or(self.white).0;
+        // Diced only as the standard shader, opaque and not glass, foliage or an impostor, draws it.
+        let displaced = desc.height_texture.is_some()
+            && desc.displacement != 0.0
+            && desc.shader == STANDARD_SHADER
+            && !(desc.glass || desc.foliage || desc.impostor || desc.alpha_cutoff.is_some());
         let material = GpuMaterial {
             base_color: desc.base_color,
             emissive: desc.emissive,
@@ -861,6 +875,7 @@ impl Assets {
                 | if desc.glass { MATERIAL_GLASS } else { 0 }
                 | desc.leaves.flags()
                 | if desc.impostor { crate::gpu::MATERIAL_IMPOSTOR } else { 0 }
+                | if displaced { crate::gpu::MATERIAL_DISPLACED } else { 0 }
                 | (desc.glow as u32) << crate::gpu::MATERIAL_GLOW_SHIFT,
             normal_scale: desc.normal_scale,
             alpha_cutoff: desc.alpha_cutoff.unwrap_or(0.0),
@@ -869,8 +884,12 @@ impl Assets {
             wind_flutter: desc.wind_flutter.max(0.0),
             glow_speed: desc.glow_speed.max(0.0),
             shader: desc.shader,
-            max_offset: desc.max_offset.max(0.0),
-            _pad: [0; 2],
+            // Displaced, it moves as far as half its displacement either way, which culling allows for.
+            max_offset: desc.max_offset.max(0.0) + if displaced { desc.displacement.abs() * 0.5 } else { 0.0 },
+            height_texture: texture(desc.height_texture),
+            displacement: if displaced { desc.displacement } else { 0.0 },
+            detail: desc.detail.clamp(1.0, 64.0),
+            _pad: [0; 3],
         };
         self.glass.retain(|&glass| glass != handle);
         if desc.glass {

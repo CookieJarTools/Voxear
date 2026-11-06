@@ -259,7 +259,27 @@ void cullMain(uint3 id : SV_DispatchThreadID)
             cullLocalShadow(frame, list - LIST_LOCAL_SHADOW, id.x, mesh, center, radius, scale);
             return;
         }
+        // A displaced surface's pieces cast its sun shadow, drawn once diced (dice.slang).
+        if ((material.flags & MATERIAL_DISPLACED) != 0)
+        {
+            return;
+        }
         cullShadow(frame, list - LIST_SHADOW, id.x, mesh, center, radius, scale);
+        return;
+    }
+
+    // A displaced surface in view is listed for dicing (dice.slang) and drawn from its pieces, in neither list.
+    if ((material.flags & MATERIAL_DISPLACED) != 0)
+    {
+        if (list == LIST_EARLY && insidePlanes(frame->planes, center, radius))
+        {
+            uint at;
+            InterlockedAdd(buffers()->diceCounts[0], 1, at);
+            if (at < 4096)
+            {
+                buffers()->dicedInstances[at] = id.x;
+            }
+        }
         return;
     }
 

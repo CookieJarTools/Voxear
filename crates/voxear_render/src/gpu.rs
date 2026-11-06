@@ -79,6 +79,9 @@ pub const MATERIAL_GLOW_SHIFT: u32 = 5;
 /// A plant's impostor, its emission the sphere its atlas was pictured in
 /// and its normal scale that sphere's radius (see `impostors`).
 pub const MATERIAL_IMPOSTOR: u32 = 128;
+/// Displaced by its height map: diced finely enough to show it near the
+/// camera (see `dice`).
+pub const MATERIAL_DISPLACED: u32 = 256;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
@@ -111,7 +114,13 @@ pub struct GpuMaterial {
     /// How far its custom shader's vertex function may move a vertex, in
     /// metres, which culling allows for.
     pub max_offset: f32,
-    pub _pad: [u32; 2],
+    /// What a displaced material is moved out by: its height map, how far
+    /// in metres from lowest to highest, and how many pixels each diced
+    /// edge spans.
+    pub height_texture: u32,
+    pub displacement: f32,
+    pub detail: f32,
+    pub _pad: [u32; 3],
 }
 
 /// A material drawn with the standard shader, not a custom one.
@@ -796,6 +805,13 @@ pub struct GpuBuffers {
     /// This frame's mists, and their trails' points (see `mist`).
     pub mists: u64,
     pub mist_points: u64,
+    /// Dicing: the displaced instances in view, the counts and dispatches,
+    /// the split triangles, and each piece with its draw (see `dice`).
+    pub diced_instances: u64,
+    pub dice_counts: u64,
+    pub dice_splits: u64,
+    pub dice_patches: u64,
+    pub dice_draws: u64,
 }
 
 /// A mist as `shaders/smoke.slang` draws it: the box its trail stays in, how
@@ -999,7 +1015,10 @@ pub mod stat {
     pub const MESHLETS_OCCLUSION_CULLED: usize = MESHLETS_CONE_CULLED + 1;
     pub const MESHLETS_DRAWN: usize = MESHLETS_OCCLUSION_CULLED + 1;
     pub const MESHLETS_SHADOW_DRAWN: usize = MESHLETS_DRAWN + 1;
-    pub const COUNT: usize = MESHLETS_SHADOW_DRAWN + 1;
+    /// Pieces of displaced surfaces drawn, and those that did not fit.
+    pub const DICED_PATCHES: usize = MESHLETS_SHADOW_DRAWN + 1;
+    pub const DICE_OVERFLOW: usize = DICED_PATCHES + 1;
+    pub const COUNT: usize = DICE_OVERFLOW + 1;
 }
 
 /// The frame and buffer pointers every shader reads, plus per-pass parameters.
@@ -1031,7 +1050,7 @@ mod tests {
     fn layouts_match_the_shaders() {
         assert_eq!(size_of::<GpuMesh>(), 32 + 24 * MAX_LODS);
         assert_eq!(size_of::<GpuMeshlet>(), 48);
-        assert_eq!(size_of::<GpuMaterial>(), 96);
+        assert_eq!(size_of::<GpuMaterial>(), 112);
         // Three matrices, ids and flags, then where its LODs end.
         assert_eq!(size_of::<GpuInstance>(), 192 + 32 + 16);
         assert_eq!(size_of::<GpuLight>(), 96);
@@ -1059,7 +1078,7 @@ mod tests {
         assert_eq!(size_of::<GpuDdgi>(), 32 * DDGI_CASCADES + 32 + 48);
         assert_eq!(size_of::<GpuLighting>(), lighting);
         assert_eq!(size_of::<GpuPost>(), post);
-        assert_eq!(size_of::<GpuBuffers>(), 41 * 8);
+        assert_eq!(size_of::<GpuBuffers>(), 46 * 8);
         assert_eq!(size_of::<GpuSmoke>(), 80);
         assert_eq!(size_of::<GpuMist>(), 64);
         assert_eq!(size_of::<GpuParticleSystem>(), 64 + 16 * 9 + 64 * 3 + 128 + 16);

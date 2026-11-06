@@ -18,6 +18,7 @@ Right-click in the Project panel and choose **New Material**, then type its name
 | Metallic Map | A picture of where it is metal, in blue, and how rough, in green, as glTF has them |
 | Normal Map | A picture of the surface's bumps and dents |
 | Emission Map | A picture of where it glows, tinted by **Emission** |
+| Height Map | A picture of how high each point of the surface stands, which **Displacement** raises it by. See [[Displacement]] |
 
 Every change is saved straight away, and shows at once on everything that uses the material.
 

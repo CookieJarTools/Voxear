@@ -82,6 +82,8 @@ static const uint STAT_MESHLETS_CONE_CULLED = STAT_MESHLETS_FRUSTUM_CULLED + 1;
 static const uint STAT_MESHLETS_OCCLUSION_CULLED = STAT_MESHLETS_CONE_CULLED + 1;
 static const uint STAT_MESHLETS_DRAWN = STAT_MESHLETS_OCCLUSION_CULLED + 1;
 static const uint STAT_MESHLETS_SHADOW_DRAWN = STAT_MESHLETS_DRAWN + 1;
+static const uint STAT_DICED_PATCHES = STAT_MESHLETS_SHADOW_DRAWN + 1;
+static const uint STAT_DICE_OVERFLOW = STAT_DICED_PATCHES + 1;
 
 static const uint DEBUG_VIEW_NONE = 0;
 static const uint DEBUG_VIEW_LOD = 1;
@@ -197,6 +199,7 @@ static const uint MATERIAL_LEAVES_STAY = 16;
 static const uint MATERIAL_GLOW_SHIFT = 5;
 // A plant's impostor, its base colour and normal textures its atlas (impostor.slang).
 static const uint MATERIAL_IMPOSTOR = 128;
+static const uint MATERIAL_DISPLACED = 256;
 
 struct Material
 {
@@ -224,7 +227,12 @@ struct Material
     // How far its custom shader's vertex function may move a vertex, in
     // metres, which culling allows for.
     float maxOffset;
-    uint2 pad;
+    // A displaced material's height map, how far in metres it moves the
+    // surface from lowest to highest, and how many pixels a diced edge spans (dice.slang).
+    uint heightTexture;
+    float displacement;
+    float detail;
+    uint3 pad;
 };
 
 static const uint STANDARD_SHADER = 0;
@@ -903,6 +911,13 @@ struct Buffers
     // This frame's mists, and their trails' points: where, and how old in seconds.
     Mist* mists;
     float4* mistPoints;
+    // Dicing (dice.slang): the displaced instances in view, the counts and
+    // dispatches, the split triangles, and each piece with its draw.
+    uint* dicedInstances;
+    uint* diceCounts;
+    uint4* diceSplits;
+    uint4* dicePatches;
+    uint4* diceDraws;
 };
 
 struct Push

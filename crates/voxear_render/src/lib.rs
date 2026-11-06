@@ -41,6 +41,7 @@ mod model_renderer;
 mod impostors;
 mod particles;
 mod passes;
+mod dice;
 mod mist;
 mod smoke;
 mod payload;
@@ -169,6 +170,10 @@ pub struct RenderStats {
     pub meshlets_drawn: u32,
     /// Meshlets drawn into the sun's shadow cascades.
     pub shadow_meshlets: u32,
+    /// Pieces of displaced surfaces diced and drawn, and those that did not
+    /// fit in a frame's budget.
+    pub diced_patches: u32,
+    pub dice_overflow: u32,
     /// Auto exposure's adapted EV, and the scene's metered average
     /// luminance. Both stay zero while auto exposure is off.
     pub exposure_ev: f32,
@@ -196,6 +201,8 @@ impl RenderStats {
             meshlets_occlusion_culled: counters[stat::MESHLETS_OCCLUSION_CULLED],
             meshlets_drawn: counters[stat::MESHLETS_DRAWN],
             shadow_meshlets: counters[stat::MESHLETS_SHADOW_DRAWN],
+            diced_patches: counters[stat::DICED_PATCHES],
+            dice_overflow: counters[stat::DICE_OVERFLOW],
             exposure_ev: exposure[0],
             average_luminance: exposure[2],
         }
@@ -303,6 +310,12 @@ struct FrameBuffers {
     smoke_holes: Buffer,
     mists: Buffer,
     mist_points: Buffer,
+    /// Dicing's lists, counts and draws (see `dice`).
+    diced_instances: Buffer,
+    dice_counts: Buffer,
+    dice_splits: Buffer,
+    dice_patches: Buffer,
+    dice_draws: Buffer,
     /// The sun's light and the sky's, worked out once a frame under the
     /// atmosphere (see `atmosphere::record`).
     sky_light: Buffer,
@@ -1472,6 +1485,11 @@ impl View {
                 smoke_holes,
                 mists,
                 mist_points,
+                diced_instances,
+                dice_counts,
+                dice_splits,
+                dice_patches,
+                dice_draws,
                 sky_light,
                 meshlet_draws,
                 meshlet_draw_instances,
@@ -1481,9 +1499,10 @@ impl View {
             } = buffers;
             let all = [frame, instances, lights, draws, draw_count, draw_instances, stats, clusters, pointers];
             let meshlets = [meshlet_draws, meshlet_draw_instances, meshlet_work];
+            let diced = [diced_instances, dice_counts, dice_splits, dice_patches, dice_draws];
             let debug =
                 [debug_lines, debug_triangles, particle_systems, smokes, smoke_cells, smoke_holes, mists, mist_points];
-            for buffer in all.into_iter().chain(debug).chain([sky_light, stats_readback]).chain(meshlets) {
+            for buffer in all.into_iter().chain(debug).chain([sky_light, stats_readback]).chain(meshlets).chain(diced) {
                 frames.retire(Retired::Buffer(buffer));
             }
         }
@@ -1992,6 +2011,11 @@ impl View {
                 smoke_holes: buffers.smoke_holes.address,
                 mists: buffers.mists.address,
                 mist_points: buffers.mist_points.address,
+                diced_instances: buffers.diced_instances.address,
+                dice_counts: buffers.dice_counts.address,
+                dice_splits: buffers.dice_splits.address,
+                dice_patches: buffers.dice_patches.address,
+                dice_draws: buffers.dice_draws.address,
             }],
         );
         buffers.instances.write(0, &extracted.instances[..instance_count]);
@@ -2039,6 +2063,13 @@ impl View {
             meshlet_draws: fg.import_buffer(&buffers.meshlet_draws),
             meshlet_instances: fg.import_buffer(&buffers.meshlet_draw_instances),
             meshlet_work: fg.import_buffer(&buffers.meshlet_work),
+            diced_instances: fg.import_buffer(&buffers.diced_instances),
+            dice_counts: fg.import_buffer(&buffers.dice_counts),
+            dice_splits: fg.import_buffer(&buffers.dice_splits),
+            dice_patches: fg.import_buffer(&buffers.dice_patches),
+            dice_draws: fg.import_buffer(&buffers.dice_draws),
+            dice_counts_handle: buffers.dice_counts.handle,
+            dice_draws_handle: buffers.dice_draws.handle,
             draws_handle: buffers.draws.handle,
             count_handle: buffers.draw_count.handle,
             stats_handle: buffers.stats.handle,
@@ -2245,6 +2276,36 @@ fn create_frame_buffers(gpu: &Gpu, prefix: &str, slot: usize) -> Result<FrameBuf
             (mist::MAX_MISTS * mist::MAX_MIST_POINTS * 16) as u64,
             storage,
             host,
+        )?,
+        diced_instances: gpu.create_buffer(
+            &format!("{prefix}diced instances {slot}"),
+            dice::MAX_DICED_INSTANCES * 4,
+            storage,
+            MemoryLocation::GpuOnly,
+        )?,
+        dice_counts: gpu.create_buffer(
+            &format!("{prefix}dice counts {slot}"),
+            dice::COUNTS_SIZE,
+            indirect,
+            MemoryLocation::GpuOnly,
+        )?,
+        dice_splits: gpu.create_buffer(
+            &format!("{prefix}dice splits {slot}"),
+            dice::MAX_SPLITS * 16,
+            storage,
+            MemoryLocation::GpuOnly,
+        )?,
+        dice_patches: gpu.create_buffer(
+            &format!("{prefix}dice pieces {slot}"),
+            dice::MAX_PATCHES * dice::PATCH_SIZE,
+            storage,
+            MemoryLocation::GpuOnly,
+        )?,
+        dice_draws: gpu.create_buffer(
+            &format!("{prefix}dice draws {slot}"),
+            dice::MAX_PATCHES * dice::PATCH_SIZE,
+            indirect,
+            MemoryLocation::GpuOnly,
         )?,
         sky_light: gpu.create_buffer(&format!("{prefix}sky light {slot}"), 32, storage, MemoryLocation::GpuOnly)?,
         meshlet_draws,

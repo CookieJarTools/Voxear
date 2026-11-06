@@ -6530,6 +6530,64 @@ fn a_new_particle_system_plays_in_the_scene_and_saves_with_it() {
 }
 
 #[test]
+fn a_curve_is_edited_by_pressing_and_dragging_its_keys() {
+    use voxear_render::ParticleSystem;
+    let Some((mut renderer, mut editor)) = open() else { return };
+    run_command(&mut editor, &mut renderer, "new particle system");
+    let system = obj(&editor, "Particle System").unwrap();
+    editor.select(Some(system));
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let row = prop_row(&editor.ui, "Size Over Life").expect("its size over life");
+    scroll_to(&mut editor, &mut renderer, row);
+    let graph = first_with(&editor.ui, prop_row(&editor.ui, "Size Over Life").unwrap(), "curve-field").unwrap();
+    let particles = |editor: &voxear_editor::Editor| *editor.game.engine.world.get::<ParticleSystem>(system).unwrap();
+    let curve = |editor: &voxear_editor::Editor| particles(editor).size_curve;
+    assert!(curve(&editor).is_empty());
+    let [left, top, width, height] = editor.ui.rect(graph);
+    // Pressed halfway along and a quarter of the way up: a key there, as 0 to 1 shows.
+    editor.ui.pointer_move(left + width * 0.5, top + height * 0.75);
+    editor.ui.pointer_button(true);
+    frame(&mut editor, &mut renderer);
+    let key = curve(&editor).keys()[0];
+    assert!((key[0] - 0.5).abs() < 0.03 && (key[1] - 0.25 * 1.1).abs() < 0.05, "a key where pressed: {key:?}");
+    // Dragged on to three quarters along.
+    editor.ui.pointer_move(left + width * 0.75, top + height * 0.75);
+    frame(&mut editor, &mut renderer);
+    editor.ui.pointer_button(false);
+    frame(&mut editor, &mut renderer);
+    assert!((curve(&editor).keys()[0][0] - 0.75).abs() < 0.03, "{:?}", curve(&editor).keys());
+    // Picked up again, dragged off the graph and let go: taken out.
+    editor.ui.pointer_move(left + width * 0.75, top + height * 0.75);
+    editor.ui.pointer_button(true);
+    frame(&mut editor, &mut renderer);
+    editor.ui.pointer_move(left + width * 0.75, top + height + 60.0);
+    frame(&mut editor, &mut renderer);
+    editor.ui.pointer_button(false);
+    frame(&mut editor, &mut renderer);
+    assert!(curve(&editor).is_empty(), "taken out: {:?}", curve(&editor).keys());
+
+    // A gradient: a press on its strip adds a colour there, picked, whose red is typed.
+    let row = prop_row(&editor.ui, "Colour Over Life").expect("its colour over life");
+    let strip = first_with(&editor.ui, row, "gradient-strip").expect("a strip");
+    let [left, top, width, height] = editor.ui.rect(strip);
+    editor.ui.pointer_move(left + width * 0.25, top + height * 0.5);
+    editor.ui.pointer_button(true);
+    frame(&mut editor, &mut renderer);
+    editor.ui.pointer_button(false);
+    frame(&mut editor, &mut renderer);
+    let gradient = |editor: &voxear_editor::Editor| particles(editor).color_gradient;
+    assert_eq!(gradient(&editor).keys().len(), 1, "a colour where pressed");
+    let red = first_with(&editor.ui, prop_row(&editor.ui, "Colour Over Life").unwrap(), "axis-input").unwrap();
+    type_into(&mut editor.ui, red, "0");
+    editor.ui.key_down(Key::Enter);
+    frame(&mut editor, &mut renderer);
+    let key = gradient(&editor).keys()[0];
+    assert!((key[0] - 0.25).abs() < 0.03 && key[1] == 0.0 && key[2] == 1.0, "no red, the rest white: {key:?}");
+    shot(&mut renderer, "curve-fields.png");
+}
+
+#[test]
 fn a_new_car_has_a_vehicle_on_four_wheels() {
     use voxear_engine::physics::{Rigidbody, Vehicle, Wheel};
     let Some((mut renderer, mut editor)) = open() else { return };

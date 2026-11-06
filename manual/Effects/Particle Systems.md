@@ -31,12 +31,27 @@ Settings with two numbers are a range: each particle picks somewhere between the
 - **Drag**: how quickly the air slows it. Sparks need little; smoke and dust need more.
 - **Spin**: how fast it turns, in degrees a second.
 
+## Changing over a particle's life
+
+Four settings change a particle as it ages, from when it sets out (the left of the graph) to when it dies (the right):
+
+- **Size Over Life**: how wide it is, times its Size.
+- **Opacity Over Life**: how opaque it is, times its Opacity.
+- **Speed Over Life**: how fast it flies, times the speed it set out at. Start high and fall to 0 for a puff that bursts out and hangs.
+- **Colour Over Life**: its colour, from one colour to the next.
+
+Each is empty to start with, and does nothing until you give it keys. Then it takes the place of the End Size, End Opacity or End Colour.
+
+- **Curve:** press on the graph to add a key there. Drag a key to move it, and drag it off the graph and let go to take it out.
+- **Gradient:** press on the strip to add a colour, drag its marker to move it, and type its red, green and blue under the strip.
+
 ## How particles look
 
 - **Blend**: **Alpha** particles cover what's behind them, as smoke and dust do. **Additive** particles add their light to it, as sparks, fire and magic do, and never darken anything.
 - **Intensity**: how much brighter than their colour they glow. Sparks and fire want 2 or more, so they glow and bloom.
 - **Lit**: lit by the sun, the sky and lamps, as smoke is. Turn it off for particles that make their own light, such as sparks.
 - **Softness**: how far before the ground or a wall they fade out, in metres, rather than cutting a hard line where they meet it.
+- Particles sit in the scene's fog and haze as far off as they are: near ones show clearly, far ones fade into the mist.
 - **Seed**: two systems that are alike but for their Seed send out different particles.
 
 ## From scripts

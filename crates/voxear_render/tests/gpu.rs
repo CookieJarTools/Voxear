@@ -4106,6 +4106,29 @@ fn a_particle_system_sends_out_sparks_that_fall_back_and_stops_when_it_is_done()
     assert_eq!(brighter_pixels(&behind, &empty), 0, "hidden behind the wall");
 }
 
+#[test]
+fn curves_over_life_set_a_particles_opacity_colour_and_speed() {
+    use voxear_core::curve::{Curve, Gradient};
+    use voxear_render::ParticleSystem;
+    let Some(empty) = particles_render(None, Vec3::ZERO, 0.0) else { return };
+    let render = |system: ParticleSystem| particles_render(Some(system), Vec3::ZERO, 2.0).unwrap();
+    let hidden = render(ParticleSystem { opacity_curve: Curve::flat(0.0), ..sparks() });
+    assert_eq!(brighter_pixels(&hidden, &empty), 0, "no opacity all their lives, none show");
+    let blue = render(ParticleSystem { color_gradient: Gradient::new(&[[0.0, 0.1, 0.2, 1.0]]), ..sparks() });
+    keep_image("particles blue.png", &blue);
+    let bluer = (0..360u32)
+        .flat_map(|y| (0..640u32).map(move |x| (x, y)))
+        .filter(|&at| rgb_at(&blue, at)[2] > rgb_at(&empty, at)[2] + 40 && rgb_at(&blue, at)[0] < rgb_at(&blue, at)[2])
+        .count();
+    assert!(bluer > 200, "blue all their lives: {bluer} pixels");
+    // Not flying at all, they only fall from where they set out: none above it.
+    let still = render(ParticleSystem { speed_curve: Curve::flat(0.0), ..sparks() });
+    let upper = (0..170u32).flat_map(|y| (0..640u32).map(move |x| (x, y)));
+    let above = upper.filter(|&at| rgb_at(&still, at)[0] > rgb_at(&empty, at)[0] + 40).count();
+    let flying = brighter_pixels(&render(sparks()), &empty);
+    assert!(above == 0 && flying > 300, "none rise when they do not fly: {above} pixels up, {flying} when they do");
+}
+
 /// Sparks in thick height fog, `near` or far off, in front of a dark wall
 /// sixty metres away; or none.
 fn fogged_sparks_render(sparks_at: Option<Vec3>) -> Option<Vec<u8>> {

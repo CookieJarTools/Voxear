@@ -803,6 +803,12 @@ struct ParticleSystem
     float stopped;
     float intensity;
     float2 pad;
+    // Size, opacity and speed over life, two keys to a row; colour over life, a key to a row; how many keys each.
+    float4 sizeCurve[4];
+    float4 opacityCurve[4];
+    float4 speedCurve[4];
+    float4 gradient[8];
+    uint4 curveCounts;
 };
 
 struct Buffers

@@ -2484,7 +2484,7 @@ ParticleOut sprayVertex(uint vertexId : SV_VertexID)
     float3 surface = float3(rest.x, frame->ocean.level, rest.y) + oceanMoved(frame, rest, 0.5, false, 1.0, seaDepth(frame, rest));
     float2 wind = windDirection(frame);
     float3 way = normalize(float3(wind.x * 0.6, 1.0, wind.y * 0.6) + anyWay(h) * 0.35);
-    float3 world = particleFlight(system, surface, way * lerp(system.speed.x, system.speed.y, particleRandom(h)), age);
+    float3 world = particleFlight(system, surface, way * lerp(system.speed.x, system.speed.y, particleRandom(h)), age, life);
     float fade = saturate((SPRAY_REACH - distance(surface.xz, frame->cameraPosition.xz)) / (SPRAY_REACH / 3.0));
     return particlePlace(frame, system, world, age, age / life, corner, h, fade);
 }

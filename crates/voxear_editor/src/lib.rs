@@ -51,6 +51,7 @@ pub mod audio_panel;
 mod build_window;
 mod collection;
 mod columns;
+mod curve_fields;
 mod console;
 mod editor;
 pub mod entities_panel;

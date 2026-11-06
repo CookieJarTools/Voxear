@@ -266,6 +266,10 @@ pub enum Prop {
     ParticleDrag,
     ParticleSpin,
     ParticleSeed,
+    ParticleSizeCurve,
+    ParticleOpacityCurve,
+    ParticleSpeedCurve,
+    ParticleColorGradient,
     /// An Ocean's weather, and for Custom weather its swell and wind; its
     /// crests, colours and foam.
     OceanWeather,
@@ -541,7 +545,11 @@ impl Prop {
             | Prop::ParticleGravity
             | Prop::ParticleDrag
             | Prop::ParticleSpin
-            | Prop::ParticleSeed => Part::ParticleSystem,
+            | Prop::ParticleSeed
+            | Prop::ParticleSizeCurve
+            | Prop::ParticleOpacityCurve
+            | Prop::ParticleSpeedCurve
+            | Prop::ParticleColorGradient => Part::ParticleSystem,
             Prop::OceanWeather
             | Prop::OceanWindSource
             | Prop::OceanTransition
@@ -749,6 +757,10 @@ impl Prop {
             Prop::ParticleDrag => "drag",
             Prop::ParticleSpin => "spin",
             Prop::ParticleSeed => "seed",
+            Prop::ParticleSizeCurve => "size_curve",
+            Prop::ParticleOpacityCurve => "opacity_curve",
+            Prop::ParticleSpeedCurve => "speed_curve",
+            Prop::ParticleColorGradient => "color_gradient",
             Prop::OceanWeather => "weather",
             Prop::OceanWindSource => "wind_source",
             Prop::OceanTransition => "transition",
@@ -932,6 +944,10 @@ pub enum Value {
     Group,
     /// Shown, but not edited here.
     Fixed(String),
+    /// Numbers along the way, edited on a small graph.
+    Curve(voxear_core::curve::Curve),
+    /// Colours along the way, linear, edited on a strip.
+    Gradient(voxear_core::curve::Gradient),
 }
 
 /// The components an Obj has, in the order the Inspector shows them. While
@@ -1103,12 +1119,16 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
                 Prop::ParticleBurst,
                 Prop::ParticleLifetime,
                 Prop::ParticleSpeed,
+                Prop::ParticleSpeedCurve,
                 Prop::ParticleSize,
                 Prop::ParticleSizeEnd,
+                Prop::ParticleSizeCurve,
                 Prop::ParticleColor,
                 Prop::ParticleOpacity,
                 Prop::ParticleColorEnd,
                 Prop::ParticleOpacityEnd,
+                Prop::ParticleColorGradient,
+                Prop::ParticleOpacityCurve,
                 Prop::ParticleIntensity,
                 Prop::ParticleBlend,
                 Prop::ParticleLit,
@@ -1387,6 +1407,10 @@ pub fn label(prop: &Prop) -> String {
         Prop::ParticleDrag => "Drag",
         Prop::ParticleSpin => "Spin",
         Prop::ParticleSeed => "Seed",
+        Prop::ParticleSizeCurve => "Size Over Life",
+        Prop::ParticleOpacityCurve => "Opacity Over Life",
+        Prop::ParticleSpeedCurve => "Speed Over Life",
+        Prop::ParticleColorGradient => "Colour Over Life",
         Prop::OceanWeather => "Weather",
         Prop::OceanWindSource => "Wind Source",
         Prop::OceanTransition => "Transition",
@@ -1965,9 +1989,11 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         | Prop::ParticleGravity
         | Prop::ParticleDrag
         | Prop::ParticleSpin
-        | Prop::ParticleSeed => {
-            particle_value(world.get::<ParticleSystem>(entity)?, prop)?
-        }
+        | Prop::ParticleSeed
+        | Prop::ParticleSizeCurve
+        | Prop::ParticleOpacityCurve
+        | Prop::ParticleSpeedCurve
+        | Prop::ParticleColorGradient => particle_value(world.get::<ParticleSystem>(entity)?, prop)?,
         Prop::OceanWeather => {
             let weather = world.get::<Ocean>(entity)?.weather;
             let index = Weather::ALL.iter().position(|w| *w == weather).unwrap_or(0);
@@ -3034,6 +3060,10 @@ fn particle_value(system: &ParticleSystem, prop: &Prop) -> Option<Value> {
         Prop::ParticleDrag => Value::Number(system.drag),
         Prop::ParticleSpin => Value::Number(system.spin),
         Prop::ParticleSeed => Value::Whole(i64::from(system.seed)),
+        Prop::ParticleSizeCurve => Value::Curve(system.size_curve),
+        Prop::ParticleOpacityCurve => Value::Curve(system.opacity_curve),
+        Prop::ParticleSpeedCurve => Value::Curve(system.speed_curve),
+        Prop::ParticleColorGradient => Value::Gradient(system.color_gradient),
         _ => return None,
     })
 }
@@ -3078,6 +3108,10 @@ fn set_particle(system: &mut ParticleSystem, prop: &Prop, value: Value) {
         (Prop::ParticleDrag, Value::Number(n)) => system.drag = n.max(0.0),
         (Prop::ParticleSpin, Value::Number(n)) => system.spin = n,
         (Prop::ParticleSeed, Value::Whole(n)) => system.seed = whole(n),
+        (Prop::ParticleSizeCurve, Value::Curve(curve)) => system.size_curve = curve,
+        (Prop::ParticleOpacityCurve, Value::Curve(curve)) => system.opacity_curve = curve,
+        (Prop::ParticleSpeedCurve, Value::Curve(curve)) => system.speed_curve = curve,
+        (Prop::ParticleColorGradient, Value::Gradient(gradient)) => system.color_gradient = gradient,
         _ => {}
     }
 }

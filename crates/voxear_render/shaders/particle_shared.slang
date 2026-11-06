@@ -124,19 +124,94 @@ float3 particleLight(Frame* frame, float3 world, float4 clip)
     return ambient + lit * 0.5 / PI;
 }
 
+// Key `i` of a curve kept two keys to a row: where, then what.
+float2 curveKey(float4 rows[4], uint i)
+{
+    float4 row = rows[i / 2];
+    return i % 2 == 0 ? row.xy : row.zw;
+}
+
+// A curve's value at `t`, straight between its `count` keys and flat past
+// them (voxear_core::curve::Curve::at).
+float curveAt(float4 rows[4], uint count, float t)
+{
+    float2 last = curveKey(rows, 0);
+    if (t <= last.x)
+    {
+        return last.y;
+    }
+    for (uint i = 1; i < count; i++)
+    {
+        float2 next = curveKey(rows, i);
+        if (t <= next.x)
+        {
+            return lerp(last.y, next.y, next.x > last.x ? (t - last.x) / (next.x - last.x) : 1.0);
+        }
+        last = next;
+    }
+    return last.y;
+}
+
+// What a curve adds up to from 0 to `t`, the area under it
+// (voxear_core::curve::Curve::sum_to).
+float curveSum(float4 rows[4], uint count, float t)
+{
+    t = saturate(t);
+    float2 first = curveKey(rows, 0);
+    float total = first.y * min(first.x, t);
+    float2 last = first;
+    for (uint i = 1; i < count; i++)
+    {
+        float2 next = curveKey(rows, i);
+        if (t <= last.x)
+        {
+            break;
+        }
+        float end = min(t, next.x);
+        float atEnd = next.x > last.x ? lerp(last.y, next.y, (end - last.x) / (next.x - last.x)) : next.y;
+        total += (last.y + atEnd) * 0.5 * (end - last.x);
+        last = next;
+    }
+    return total + last.y * max(t - last.x, 0.0);
+}
+
+// A gradient's colour at `t` (voxear_core::curve::Gradient::at).
+float3 gradientAt(float4 rows[8], uint count, float t)
+{
+    float4 last = rows[0];
+    if (t <= last.x)
+    {
+        return last.yzw;
+    }
+    for (uint i = 1; i < count; i++)
+    {
+        float4 next = rows[i];
+        if (t <= next.x)
+        {
+            return lerp(last.yzw, next.yzw, next.x > last.x ? (t - last.x) / (next.x - last.x) : 1.0);
+        }
+        last = next;
+    }
+    return last.yzw;
+}
+
 // Where a particle that set out from `start` at `velocity` is `age`
-// seconds on, slowed by the air and pulled down:
-// x = x0 + v0 (1 - e^-kt) / k + g (t / k - (1 - e^-kt) / k^2).
-float3 particleFlight(ParticleSystem system, float3 start, float3 velocity, float age)
+// seconds into a life of `life`, slowed by the air and pulled down:
+// x = x0 + v0 (1 - e^-kt) / k + g (t / k - (1 - e^-kt) / k^2). Its speed
+// over life, when it has one, scales how far it has flown, added up along
+// the way, and slowed by the air as much on average.
+float3 particleFlight(ParticleSystem system, float3 start, float3 velocity, float age, float life)
 {
     float3 pull = float3(0.0, -PARTICLE_GRAVITY * system.gravity, 0.0);
-    if (system.drag <= 1e-4)
-    {
-        return start + velocity * age + pull * (0.5 * age * age);
-    }
     float k = system.drag;
-    float slowed = (1.0 - exp(-k * age)) / k;
-    return start + velocity * slowed + pull * (age - slowed) / k;
+    float slowed = k > 1e-4 ? (1.0 - exp(-k * age)) / k : age;
+    float flown = slowed;
+    if (system.curveCounts.z > 0)
+    {
+        flown = curveSum(system.speedCurve, system.curveCounts.z, age / life) * life * (age > 1e-5 ? slowed / age : 1.0);
+    }
+    float3 fallen = k > 1e-4 ? pull * (age - slowed) / k : pull * (0.5 * age * age);
+    return start + velocity * flown + fallen;
 }
 
 // The corners of a particle's quad, as its six vertices take them.
@@ -200,7 +275,8 @@ ParticleOut particlePlace(Frame* frame, ParticleSystem system, float3 world, flo
     output.corner = corner;
     output.softness = system.softness;
     output.additive = (system.flags & PARTICLES_ADDITIVE) != 0 ? 1 : 0;
-    float size = lerp(system.size.x, system.size.y, particleRandom(h)) * lerp(1.0, system.sizeEnd, aged);
+    float grown = system.curveCounts.x > 0 ? curveAt(system.sizeCurve, system.curveCounts.x, aged) : lerp(1.0, system.sizeEnd, aged);
+    float size = lerp(system.size.x, system.size.y, particleRandom(h)) * grown;
     float turned = particleRandom(h) * 2.0 * PI + system.spin * age * (particleRandom(h) < 0.5 ? -1.0 : 1.0);
     float2 spun = float2(corner.x * cos(turned) - corner.y * sin(turned), corner.x * sin(turned) + corner.y * cos(turned));
     float3 forward = frame->cameraForward;
@@ -210,6 +286,14 @@ ParticleOut particlePlace(Frame* frame, ParticleSystem system, float3 world, flo
     float4 clip = transform(frame->viewProj, float4(at, 1.0));
 
     float4 color = lerp(system.color, system.colorEnd, aged);
+    if (system.curveCounts.w > 0)
+    {
+        color.rgb = gradientAt(system.gradient, system.curveCounts.w, aged);
+    }
+    if (system.curveCounts.y > 0)
+    {
+        color.a = system.color.a * curveAt(system.opacityCurve, system.curveCounts.y, aged);
+    }
     float3 light = (system.flags & PARTICLES_LIT) != 0 ? particleLight(frame, world, transform(frame->viewProj, float4(world, 1.0))) : 1.0;
     // Seen through the air to it: a particle that covers what is behind takes on the fog's light too, while one
     // that adds its light only dims, as the fog's light is behind it already.

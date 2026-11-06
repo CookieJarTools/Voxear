@@ -822,6 +822,13 @@ pub struct GpuParticleSystem {
     pub stopped: f32,
     pub intensity: f32,
     pub _pad: [f32; 2],
+    /// Size, opacity and speed over life, two keys to a row; colour over
+    /// life, a key to a row; and how many keys each has, none for no curve.
+    pub size_curve: [[f32; 4]; 4],
+    pub opacity_curve: [[f32; 4]; 4],
+    pub speed_curve: [[f32; 4]; 4],
+    pub gradient: [[f32; 4]; 8],
+    pub curve_counts: [u32; 4],
 }
 
 /// A line of debug draw (see `voxear_core::debug_draw`), its colour sRGB.
@@ -1000,7 +1007,7 @@ mod tests {
         assert_eq!(size_of::<GpuLighting>(), lighting);
         assert_eq!(size_of::<GpuPost>(), post);
         assert_eq!(size_of::<GpuBuffers>(), 36 * 8);
-        assert_eq!(size_of::<GpuParticleSystem>(), 64 + 16 * 9);
+        assert_eq!(size_of::<GpuParticleSystem>(), 64 + 16 * 9 + 64 * 3 + 128 + 16);
         assert_eq!(size_of::<GpuDebugLine>(), 48);
         assert_eq!(size_of::<GpuDebugTriangle>(), 64);
         assert!(size_of::<Push>() as u32 <= voxear_rhi::PUSH_CONSTANT_SIZE);

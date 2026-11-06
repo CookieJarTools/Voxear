@@ -10,6 +10,7 @@
 //! move with their Obj, as particles simulated in its own space do.
 
 use serde::{Deserialize, Serialize};
+use voxear_core::curve::{Curve, Gradient};
 use voxear_core::math::{Mat4, Vec3};
 use voxear_ecs::{Component, World};
 use voxear_scene::{Destroying, Transform, WorldTransform};
@@ -132,6 +133,21 @@ pub struct ParticleSystem {
     /// Which particles: two systems alike but for this send out different
     /// ones.
     pub seed: u32,
+    /// How wide each is over its life, times how wide it started: with keys,
+    /// in place of growing or shrinking to its end size.
+    #[serde(skip_serializing_if = "Curve::is_empty")]
+    pub size_curve: Curve,
+    /// How opaque each is over its life, times how opaque it started: with
+    /// keys, in place of fading to its end opacity.
+    #[serde(skip_serializing_if = "Curve::is_empty")]
+    pub opacity_curve: Curve,
+    /// How fast each flies over its life, times how fast it set out.
+    #[serde(skip_serializing_if = "Curve::is_empty")]
+    pub speed_curve: Curve,
+    /// Each one's colour over its life, linear: with keys, in place of
+    /// fading from its colour to its end colour.
+    #[serde(skip_serializing_if = "Gradient::is_empty")]
+    pub color_gradient: Gradient,
 }
 
 impl Component for ParticleSystem {}
@@ -161,6 +177,10 @@ impl Default for ParticleSystem {
             lit: true,
             softness: 0.3,
             seed: 0,
+            size_curve: Curve::default(),
+            opacity_curve: Curve::default(),
+            speed_curve: Curve::default(),
+            color_gradient: Gradient::default(),
         }
     }
 }
@@ -340,7 +360,36 @@ fn gpu(system: &ParticleSystem, model: Mat4, time: f32, playback: Option<Particl
         stopped: playback.stopped.map_or(f32::INFINITY, |stopped| stopped - playback.started),
         intensity: system.intensity.max(0.0),
         _pad: [0.0; 2],
+        size_curve: curve_keys(&system.size_curve),
+        opacity_curve: curve_keys(&system.opacity_curve),
+        speed_curve: curve_keys(&system.speed_curve),
+        gradient: gradient_keys(&system.color_gradient),
+        curve_counts: [
+            system.size_curve.keys().len() as u32,
+            system.opacity_curve.keys().len() as u32,
+            system.speed_curve.keys().len() as u32,
+            system.color_gradient.keys().len() as u32,
+        ],
     }
+}
+
+/// A curve's keys as the shaders read them, two to a row.
+fn curve_keys(curve: &Curve) -> [[f32; 4]; 4] {
+    let mut rows = [[0.0; 4]; 4];
+    for (i, key) in curve.keys().iter().enumerate() {
+        rows[i / 2][i % 2 * 2] = key[0];
+        rows[i / 2][i % 2 * 2 + 1] = key[1];
+    }
+    rows
+}
+
+/// A gradient's keys as the shaders read them, a row each.
+fn gradient_keys(gradient: &Gradient) -> [[f32; 4]; 8] {
+    let mut rows = [[0.0; 4]; 8];
+    for (row, key) in rows.iter_mut().zip(gradient.keys()) {
+        *row = *key;
+    }
+    rows
 }
 
 #[cfg(test)]

@@ -249,6 +249,10 @@ enum Control {
     Fixed(NodeId),
     /// Nothing of the Inspector's own: the scripts' drawers draw it all.
     Drawn,
+    /// A curve's graph, edited by dragging its keys.
+    Curve(crate::curve_fields::CurveField),
+    /// A gradient's strip and its picked key's colour.
+    Gradient(crate::curve_fields::GradientField),
 }
 
 /// What a behaviour's code said about the shown Obj's fields, by behaviour
@@ -2036,6 +2040,17 @@ fn control(
             ui.add_class(label, "value");
             Control::Fixed(label)
         }
+        Value::Curve(curve) => {
+            let field = crate::curve_fields::CurveField::new(ui, row);
+            field.draw(ui, curve);
+            Control::Curve(field)
+        }
+        Value::Gradient(gradient) => {
+            let rgb = |ui: &mut Ui, numbers| axis_fields(ui, numbers, &["r", "g", "b"]);
+            let field = crate::curve_fields::GradientField::new(ui, row, rgb);
+            field.draw(ui, gradient);
+            Control::Gradient(field)
+        }
     }
 }
 
@@ -2070,6 +2085,8 @@ fn read_control(ui: &Ui, control: &Control, current: &Value) -> Option<Value> {
         (Control::Range(_, field), value) if ui.changed(*field) => {
             ui.text(*field).trim().parse::<f64>().ok().map(|n| numeric(value, n))
         }
+        (Control::Curve(field), Value::Curve(curve)) => field.drag(ui, curve).map(Value::Curve),
+        (Control::Gradient(field), Value::Gradient(gradient)) => field.edit(ui, gradient).map(Value::Gradient),
         (Control::Progress(bar, _, _, [min, max]), value) if ui.is_pressed(*bar) => {
             let (x, _) = ui.pointer_position()?;
             let [left, _, width, _] = ui.rect(*bar);
@@ -2283,6 +2300,8 @@ fn refresh_control(ui: &mut Ui, control: &mut Control, value: &Value) {
                 ui.set_selected_option(*dropdown, *index);
             }
         }
+        (Control::Curve(field), Value::Curve(curve)) => field.draw(ui, curve),
+        (Control::Gradient(field), Value::Gradient(gradient)) => field.draw(ui, gradient),
         (Control::Fixed(label), value) => {
             let text = display(value);
             if ui.text(*label) != text {
@@ -2342,6 +2361,10 @@ fn display(value: &Value) -> String {
         Value::List(1) => "1 item".into(),
         Value::List(count) => format!("{count} items"),
         Value::Group => String::new(),
+        Value::Curve(curve) if curve.is_empty() => "None".into(),
+        Value::Curve(curve) => format!("{} keys", curve.keys().len()),
+        Value::Gradient(gradient) if gradient.is_empty() => "None".into(),
+        Value::Gradient(gradient) => format!("{} colours", gradient.keys().len()),
     }
 }
 

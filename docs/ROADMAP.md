@@ -1339,6 +1339,11 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   systems first. The engine starts each as it appears (`ParticlePlayback`); scenes, prefabs, the Inspector, copy and
   paste, undo, the Hierarchy's + menu and Add Component ▸ Effects; C# `Obj.Particles`, `AddParticles`, `Play`,
   `Stop`; the manual's Effects ▸ Particle Systems.
+- **Particle fog and curves ✅.** Particles are drawn after the fog, each fogged and hazed as far off as it is.
+  `voxear_core::curve` has a `Curve` and a `Gradient` of up to eight keys, kept in place so they copy as plain
+  values; a Particle System's size, opacity and speed over life and colour over life use them, the shaders reading
+  their keys; the Inspector edits them on a graph and a strip in their rows (`curve_fields`), the field Vehicles'
+  tyre curves were waiting for. Still to come: curves from C#.
 - Particles, still to come:
   - the IR compiler, which promotes a system off the stateless path when it needs state
   - the preset gallery

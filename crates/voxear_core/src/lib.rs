@@ -1,5 +1,6 @@
 //! Foundations shared by every Voxear crate.
 
+pub mod curve;
 pub mod debug_draw;
 pub mod logging;
 pub mod memory;

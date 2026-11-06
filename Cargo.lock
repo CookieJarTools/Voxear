@@ -3868,6 +3868,8 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "glam",
+ "serde",
+ "serde_json",
  "tracing",
  "tracing-subscriber",
  "tracy-client",

@@ -58,7 +58,7 @@ ParticleOut particleVertex(uint vertexId : SV_VertexID)
     float speed = lerp(system.speed.x, system.speed.y, particleRandom(h));
     float3 start = transform(system.model, float4(from, 1.0)).xyz;
     float3 velocity = transform(system.model, float4(way * speed, 0.0)).xyz;
-    float3 world = particleFlight(system, start, velocity, age);
+    float3 world = particleFlight(system, start, velocity, age, life);
     return particlePlace(frame, system, world, age, aged, corner, h, 1.0);
 }
 

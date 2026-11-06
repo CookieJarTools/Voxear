@@ -1,12 +1,11 @@
-// Water: a sea, a lake or a pond, after how Sea of Thieves, Atlas and
-// Unreal's single layer water draw theirs.
+// Water: a sea, a lake or a pond, drawn in a single layer over what is
+// under it.
 //
 // - Waves: 24 Gerstner waves across the wind, each as steep as the next and
 //   as fast as real water of its length goes; the 6 longest move the
 //   vertices, every one tilts the surface. Waves too small to see from far
 //   off fade out and leave their roughness behind, so the sea in the
-//   distance glitters rather than shimmers (Bruneton, Neyret and
-//   Holzschuch, 2010).
+//   distance glitters rather than shimmers.
 // - Light through the thin tops of the waves, in its own colour.
 // - Foam where the crests break, in lacy patches.
 // - It reflects as water does, 2% head on.

@@ -4257,6 +4257,7 @@ fn smoke_with_render(
             origin: smoke_origin(middle, 0.4),
             filled_for: (smoke, middle),
             started: time - seconds,
+            ends: None,
         };
         let mut holes = voxear_render::SmokeHoles::default();
         if shot {

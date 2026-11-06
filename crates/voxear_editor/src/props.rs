@@ -284,6 +284,7 @@ pub enum Prop {
     SmokeLasts,
     SmokeFade,
     SmokeSeed,
+    SmokePlayOnStart,
     /// An Ocean's weather, and for Custom weather its swell and wind; its
     /// crests, colours and foam.
     OceanWeather,
@@ -571,7 +572,8 @@ impl Prop {
             | Prop::SmokeSpread
             | Prop::SmokeLasts
             | Prop::SmokeFade
-            | Prop::SmokeSeed => Part::Smoke,
+            | Prop::SmokeSeed
+            | Prop::SmokePlayOnStart => Part::Smoke,
             Prop::OceanWeather
             | Prop::OceanWindSource
             | Prop::OceanTransition
@@ -791,6 +793,7 @@ impl Prop {
             Prop::SmokeLasts => "lasts",
             Prop::SmokeFade => "fade",
             Prop::SmokeSeed => "seed",
+            Prop::SmokePlayOnStart => "play_on_start",
             Prop::OceanWeather => "weather",
             Prop::OceanWindSource => "wind_source",
             Prop::OceanTransition => "transition",
@@ -1152,6 +1155,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             Prop::SmokeLasts,
             Prop::SmokeFade,
             Prop::SmokeSeed,
+            Prop::SmokePlayOnStart,
         ],
         Part::ParticleSystem => {
             let shape = world.get::<ParticleSystem>(entity).map_or(EmitShape::Cone, |system| system.shape);
@@ -1462,6 +1466,7 @@ pub fn label(prop: &Prop) -> String {
         Prop::SmokeLasts => "Lasts",
         Prop::SmokeFade => "Disperse Time",
         Prop::SmokeSeed => "Seed",
+        Prop::SmokePlayOnStart => "Play On Start",
         Prop::OceanWeather => "Weather",
         Prop::OceanWindSource => "Wind Source",
         Prop::OceanTransition => "Transition",
@@ -1802,6 +1807,7 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
         Part::Smoke => {
             world.remove::<voxear_render::Smoke>(entity);
             world.remove::<voxear_render::SmokeFill>(entity);
+            world.remove::<voxear_render::SmokeCue>(entity);
         }
         Part::ParticleSystem => {
             world.remove::<ParticleSystem>(entity);
@@ -2059,7 +2065,8 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         | Prop::SmokeSpread
         | Prop::SmokeLasts
         | Prop::SmokeFade
-        | Prop::SmokeSeed => smoke_value(world.get::<voxear_render::Smoke>(entity)?, prop)?,
+        | Prop::SmokeSeed
+        | Prop::SmokePlayOnStart => smoke_value(world.get::<voxear_render::Smoke>(entity)?, prop)?,
         Prop::OceanWeather => {
             let weather = world.get::<Ocean>(entity)?.weather;
             let index = Weather::ALL.iter().position(|w| *w == weather).unwrap_or(0);
@@ -3104,6 +3111,7 @@ fn smoke_value(smoke: &voxear_render::Smoke, prop: &Prop) -> Option<Value> {
         Prop::SmokeLasts => Value::Number(smoke.lasts),
         Prop::SmokeFade => Value::Number(smoke.fade),
         Prop::SmokeSeed => Value::Whole(i64::from(smoke.seed)),
+        Prop::SmokePlayOnStart => Value::Toggle(smoke.play_on_start),
         _ => return None,
     })
 }
@@ -3119,6 +3127,7 @@ fn set_smoke(smoke: &mut voxear_render::Smoke, prop: &Prop, value: Value) {
         (Prop::SmokeLasts, Value::Number(n)) => smoke.lasts = n.max(0.0),
         (Prop::SmokeFade, Value::Number(n)) => smoke.fade = n.max(0.0),
         (Prop::SmokeSeed, Value::Whole(n)) => smoke.seed = n.clamp(0, i64::from(u32::MAX)) as u32,
+        (Prop::SmokePlayOnStart, Value::Toggle(on)) => smoke.play_on_start = on,
         _ => {}
     }
 }

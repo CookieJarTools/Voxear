@@ -137,4 +137,5 @@ internal unsafe struct NativeApi
 	public delegate* unmanaged[Cdecl]<Vector3*, int, Color*, float, int, void> DebugSolid;
 	public delegate* unmanaged[Cdecl]<ulong, int, int, float*, int> ParticleValue;
 	public delegate* unmanaged[Cdecl]<int, float*, float> SmokeAct;
+	public delegate* unmanaged[Cdecl]<ulong, int, int, float*, int> SmokeValue;
 }

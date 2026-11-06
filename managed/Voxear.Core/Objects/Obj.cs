@@ -244,6 +244,16 @@ public readonly struct Obj : IEquatable<Obj>
 		return new ParticleSystem(this);
 	}
 
+	/// <summary>The Obj's Smoke. Not valid when it has none.</summary>
+	public Smoke Smoke => new Smoke(this);
+
+	/// <summary>Gives the Obj a Smoke with the usual settings, unless it has one, and returns it. It starts next frame; turn PlayOnStart off first to start it later with Play.</summary>
+	public Smoke AddSmoke()
+	{
+		NativeSmoke.Set(this, NativeSmoke.Add, Vector4.Zero);
+		return new Smoke(this);
+	}
+
 	/// <summary>The Obj's Character Controller, which walks it. Not valid when it has none.</summary>
 	public CharacterController CharacterController => new CharacterController(this);
 

@@ -22,6 +22,41 @@ The sun lights it through itself, so its far side is darker, and objects in fron
 
 From inside, you can see a metre or two through it, with thicker and thinner swirls drifting past.
 
+## Smoke grenades
+
+A grenade's smoke waits for its fuse. Make a prefab of the canister with a Rigidbody, a Collider and a Smoke, and turn the Smoke's **Play On Start** off. It then shows nothing until your code plays it:
+
+```csharp
+public sealed class SmokeGrenade : Behaviour
+{
+	[SerializeField] private float fuse = 1.5f;
+
+	protected override void Update()
+	{
+		if (fuse <= 0f)
+		{
+			return;
+		}
+		fuse -= Time.Delta;
+		if (fuse <= 0f)
+		{
+			Obj.Smoke.Play();
+		}
+	}
+}
+```
+
+Throw it by placing the prefab at the hand and giving its Rigidbody a velocity:
+
+```csharp
+var grenade = smokeGrenade.Instantiate(hand.WorldPosition, hand.WorldRotation);
+grenade.Rigidbody.Velocity = aim * 14f;
+```
+
+While the game runs, a smoke spreads out from where its Obj was when it started, and stays there, however far the canister rolls after. Started in the ground, as a canister lying on it is, it starts from just above. **Play** again starts it over from where the canister is now. **Disperse** starts it dispersing at once, however long it was to last. **IsPlaying** stays true until it has dispersed, so the grenade can destroy itself then.
+
+A new smoke takes a few frames to fill, so one going off never stalls the game. With Play On Start on, as it is for a smoke placed in a level, it starts as soon as it appears.
+
 ## Shooting through it
 
 Shots and blasts cut holes in smoke, which fill back in:

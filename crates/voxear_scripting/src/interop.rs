@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 40;
+pub(crate) const API_VERSION: u32 = 41;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -317,6 +317,9 @@ pub(crate) struct NativeApi {
     /// a radius (1), or how much shows from one point to another through it
     /// (2), which it gives back.
     pub smoke_act: unsafe extern "C" fn(what: i32, values: *const [f32; 7]) -> f32,
+    /// Reads, or with `set` writes, value `what` of an Obj's Smoke, as
+    /// `light_value` does an Obj's Light.
+    pub smoke_value: unsafe extern "C" fn(entity: u64, what: i32, set: i32, value: *mut [f32; 4]) -> i32,
 }
 
 /// What answers scripts' questions about water: the engine's, set when it
@@ -338,6 +341,7 @@ pub type ComponentValues = fn(&mut World, Entity, i32, Option<[f32; 4]>) -> Opti
 pub type LightValues = ComponentValues;
 static LIGHTS: std::sync::OnceLock<ComponentValues> = std::sync::OnceLock::new();
 static PARTICLES: std::sync::OnceLock<ComponentValues> = std::sync::OnceLock::new();
+static SMOKES: std::sync::OnceLock<ComponentValues> = std::sync::OnceLock::new();
 
 /// Sets what answers `Light` in scripts; the first set is kept.
 pub fn set_light_values(values: LightValues) {
@@ -347,6 +351,11 @@ pub fn set_light_values(values: LightValues) {
 /// Sets what answers `ParticleSystem` in scripts; the first set is kept.
 pub fn set_particle_values(values: ComponentValues) {
     let _ = PARTICLES.set(values);
+}
+
+/// Sets what answers `Smoke` in scripts; the first set is kept.
+pub fn set_smoke_values(values: ComponentValues) {
+    let _ = SMOKES.set(values);
 }
 
 /// What answers scripts' shots and blasts through smoke and their asking
@@ -372,6 +381,10 @@ unsafe extern "C" fn light_value(entity: u64, what: i32, set: i32, value: *mut [
 
 unsafe extern "C" fn particle_value(entity: u64, what: i32, set: i32, value: *mut [f32; 4]) -> i32 {
     unsafe { component_value(PARTICLES.get(), entity, what, set, value) }
+}
+
+unsafe extern "C" fn smoke_value(entity: u64, what: i32, set: i32, value: *mut [f32; 4]) -> i32 {
+    unsafe { component_value(SMOKES.get(), entity, what, set, value) }
 }
 
 /// Answers a script's read, or write with `set`, of value `what` through
@@ -1295,6 +1308,7 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         debug_solid,
         particle_value,
         smoke_act,
+        smoke_value,
     }
 }
 

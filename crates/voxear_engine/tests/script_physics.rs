@@ -114,6 +114,13 @@ public sealed class Swing : Behaviour
 		sparks.Color = new Color(1f, 0.5f, 0f, 0.8f);
 		sparks.Stop();
 		Log.Info($"sparks {sparks.Burst}, {sparks.Blend}, life {sparks.Lifetime.Y}, green {sparks.Color.G:0.00}, playing {sparks.IsPlaying}");
+		var cloud = Obj.AddSmoke();
+		cloud.PlayOnStart = false;
+		cloud.Size = 4f;
+		cloud.Color = new Color(0.5f, 0.5f, 0.5f);
+		Log.Info($"cloud {cloud.Size}, green {cloud.Color.G:0.00}, playing {cloud.IsPlaying}");
+		cloud.Play();
+		Log.Info($"cloud played {cloud.IsPlaying}");
 		Log.Info($"smoke shot {Smokes.Shoot(Obj.Position, Obj.Position + Vector3.UnitX)}, seen {Smokes.SeeThrough(Obj.Position, Obj.Position + Vector3.UnitX):0.0}");
 		using (Draw.Duration(60f))
 		{
@@ -236,6 +243,8 @@ fn scripts_ask_push_and_hear_physics() {
     assert!(said("joint Ball, to the world True, limits True"), "{lines:?}");
     assert!(said("lamp Spot, 4, green 0.50, outer 50"), "{lines:?}");
     assert!(said("sparks 30, Additive, life 1, green 0.50, playing False"), "{lines:?}");
+    assert!(said("cloud 4, green 0.50, playing False"), "{lines:?}");
+    assert!(said("cloud played True"), "{lines:?}");
     assert!(said("smoke shot False, seen 1.0"), "no smoke here, through the engine: {lines:?}");
     let corner = voxear_core::debug_draw::texts().into_iter().find(|text| text.on_screen);
     assert_eq!(corner.map(|text| text.text), Some("bell hung".into()), "a line in the view's corner");

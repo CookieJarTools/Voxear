@@ -52,13 +52,16 @@ pub struct Smoke {
     pub fade: f32,
     /// Which swirls: two smokes alike but for this look different.
     pub seed: u32,
+    /// Whether it starts as its Obj appears; off, it waits for a script to
+    /// play it, as a grenade's does for its fuse.
+    pub play_on_start: bool,
 }
 
 impl Component for Smoke {}
 
 impl Default for Smoke {
     fn default() -> Self {
-        Self { size: 8.0, cell: 0.4, density: 2.0, color: [0.8, 0.8, 0.8], spread: 2.0, lasts: 0.0, fade: 3.0, seed: 0 }
+        Self { size: 8.0, cell: 0.4, density: 2.0, color: [0.8, 0.8, 0.8], spread: 2.0, lasts: 0.0, fade: 3.0, seed: 0, play_on_start: true }
     }
 }
 
@@ -100,11 +103,20 @@ pub struct SmokeFill {
     pub origin: Vec3,
     pub filled_for: (Smoke, Vec3),
     pub started: f32,
+    /// When a script told it to disperse, whatever its `lasts` says.
+    pub ends: Option<f32>,
 }
 
 impl Component for SmokeFill {}
 
 impl SmokeFill {
+    /// How far `smoke` has dispersed at `time`, from 0 to 1: after it has
+    /// lasted its time, or since a script told it to.
+    pub fn dispersed(&self, smoke: &Smoke, time: f32) -> f32 {
+        let told = self.ends.map_or(0.0, |ends| ((time - ends) / smoke.fade.max(1e-3)).clamp(0.0, 1.0));
+        smoke.dispersed(time - self.started).max(told)
+    }
+
     /// The cells, four to a word, as the shaders read them.
     fn words(&self) -> impl Iterator<Item = u32> + '_ {
         self.cells
@@ -112,6 +124,15 @@ impl SmokeFill {
             .map(|four| four.iter().enumerate().fold(0u32, |word, (i, &c)| word | u32::from(c) << (i * 8)))
     }
 }
+
+/// A Smoke a script played at `at`, in the renderer's time: filled again
+/// where its Obj is then, and starting from then.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SmokeCue {
+    pub at: f32,
+}
+
+impl Component for SmokeCue {}
 
 /// The most shots and blasts a smoke keeps the holes of; a new one takes the
 /// place of the oldest.
@@ -243,7 +264,7 @@ pub(crate) fn gather(world: &World, camera: Vec3, time: f32) -> (Vec<GpuSmoke>, 
             let middle = at.map_or(transform.position, |w| w.0.w_axis.truncate());
             (middle.distance_squared(camera), smoke, fill, holes)
         })
-        .filter(|(_, smoke, fill, _)| smoke.thickness(time - fill.started) > 0.0 && fill.steps > 0)
+        .filter(|(_, smoke, fill, _)| fill.dispersed(smoke, time) < 1.0 && fill.steps > 0)
         .collect();
     smokes.sort_by(|a, b| a.0.total_cmp(&b.0));
     smokes.truncate(MAX_SMOKES);
@@ -279,7 +300,7 @@ pub(crate) fn gather(world: &World, camera: Vec3, time: f32) -> (Vec<GpuSmoke>, 
                 holes: first_hole,
                 shots: shots.len() as u32,
                 blasts: blasts.len() as u32,
-                dispersed: smoke.dispersed(age),
+                dispersed: fill.dispersed(smoke, time),
                 _pad: [0.0; 3],
             }
         })
@@ -423,6 +444,7 @@ mod tests {
             origin: Vec3::ZERO,
             filled_for: (Smoke::default(), Vec3::ZERO),
             started: 0.0,
+            ends: None,
         };
         assert_eq!(fill.words().collect::<Vec<_>>(), [0x04030201, 0x09000000]);
     }

@@ -63,7 +63,10 @@ public readonly struct Smoke : IEquatable<Smoke>, IObjComponent
 		set { Set(NativeSmoke.Color, new Vector4(value.R, value.G, value.B, 1f)); }
 	}
 
-	/// <summary>How long it takes to spread out, in seconds.</summary>
+	/// <summary>
+	/// How long it takes to spread out, in seconds: most of the way in the first third of it, as a grenade's cloud
+	/// bursts out.
+	/// </summary>
 	public float SpreadTime
 	{
 		get { return Number(NativeSmoke.Spread); }

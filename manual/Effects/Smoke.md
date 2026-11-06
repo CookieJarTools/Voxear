@@ -6,7 +6,9 @@ order: 2
 
 ## How it fills
 
-Smoke fills as much space as a ball of its **Size** would hold, nearest first, so in the open it's a ball and in a room it fills the room. What doesn't fit inside pours out of the doors and windows. Anything with a Collider that stays put stops it, however thin. Objs that physics moves, such as crates, and triggers don't.
+Smoke fills as much space as a ball of its **Size** would hold, nearest first. Rising is harder for it than spreading, so in the open it lies as a low, lumpy mound about half again as wide as it is tall, and in a room it fills the room. What doesn't fit inside pours out of the doors and windows.
+
+Anything with a Collider stops it, however thin, including crates where they lie as it fills. A grenade lying against a wall smokes on its own side. Triggers, characters and the smoke's own Obj don't stop it.
 
 **Cell Size** is how fine the smoke's cells are. Finer cells follow walls more closely, but a smoke has 32 cells along each side, so finer cells also reach less far. Half a metre or less suits a grenade.
 
@@ -14,11 +16,11 @@ Smoke fills as much space as a ball of its **Size** would hold, nearest first, s
 
 - **Density**: how thick it is. Higher hides more.
 - **Colour**: how much of the light it scatters. Grey for smoke, white for steam, dark for soot.
-- **Spread Time**: how many seconds it takes to spread out from its Obj to its full size.
+- **Spread Time**: how many seconds it takes to spread out from its Obj to its full size. It bursts out, most of the way in the first third of that, then settles.
 - **Lasts** and **Disperse Time**: how long it stays, and how long it then takes to disperse. As it disperses it breaks up from its thinner swirls into wisps, rises and drifts apart, and the wisps thin away to nothing. A Lasts of 0 keeps it for ever. Changing either in the editor starts the smoke again, so you can watch it.
 - **Seed**: two smokes that are alike but for their Seed swirl differently.
 
-The sun lights it through itself, so its far side is darker, and objects in front of it cast soft shadows into it. Lamps light it round themselves, so a torch in the smoke glows. It takes the light round it from the sky and bounced light, and it sits in the scene's fog as far off as it is.
+Its edge is round billows, puffs on puffs, each darker at its rim, so they stand out from the ones behind. The sun lights it through itself, so its far side and its underside are darker, and objects in front of it cast soft shadows into it. Lamps light it round themselves, so a torch in the smoke glows. It takes the light round it from the sky and bounced light, and it sits in the scene's fog as far off as it is.
 
 From inside, you can see a metre or two through it, with thicker and thinner swirls drifting past.
 

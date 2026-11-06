@@ -51,7 +51,8 @@ pub struct Smoke {
     pub density: f32,
     /// Its colour, linear: how much of the light it scatters, by colour.
     pub color: [f32; 3],
-    /// How long it takes to spread out, in seconds.
+    /// How long it takes to spread out, in seconds: most of the way in the
+    /// first third of it, as a grenade's cloud bursts out and then settles.
     pub spread: f32,
     /// How long it lasts before it starts to thin, in seconds; 0 for ever.
     pub lasts: f32,
@@ -71,9 +72,9 @@ impl Default for Smoke {
         Self {
             size: 8.0,
             cell: 0.4,
-            density: 2.0,
-            color: [0.8, 0.8, 0.8],
-            spread: 2.0,
+            density: 2.5,
+            color: [0.85, 0.85, 0.85],
+            spread: 1.2,
             lasts: 0.0,
             fade: 3.0,
             seed: 0,
@@ -89,6 +90,13 @@ impl Smoke {
         let cell = self.cell.max(0.05);
         let cells = (4.0 / 3.0 * std::f32::consts::PI * radius.powi(3) / cell.powi(3)).ceil() as usize;
         cells.clamp(1, SMOKE_GRID * SMOKE_GRID * SMOKE_GRID)
+    }
+
+    /// How far it has spread out `age` seconds after it started, from 0 to
+    /// 1: fast at first, slowing as it settles.
+    pub fn grown(&self, age: f32) -> f32 {
+        let t = (age / self.spread.max(1e-3)).clamp(0.0, 1.0);
+        1.0 - (1.0 - t).powi(3)
     }
 
     /// How thick it is `age` seconds after it started, from 0 to 1, as it
@@ -302,12 +310,14 @@ const NOISE_CELLS: usize = 8;
 const NOISE_TILE: usize = NOISE_SIDE + 2;
 const NOISE_TILES: usize = 8;
 
-/// The smoke's noise, baked once: four tiling gradient noises, one to each
-/// channel, `NOISE_SIDE` texels a side and `NOISE_CELLS` lattice cells across,
-/// each slice of depth a tile of an 8×8 atlas. Gradient noise has no grid in
-/// it, as value noise does; turned between octaves in `smokeNoise`, no rows
-/// show. Each channel is spread out to the same range, about 0.17 either
-/// side of a half. Gives back the atlas's side and its RGBA bytes.
+/// The smoke's noise, baked once, `NOISE_SIDE` texels a side and
+/// `NOISE_CELLS` lattice cells across, each slice of depth a tile of an 8×8
+/// atlas, tiling: three gradient noises, one to each of red, green and blue,
+/// for the swirls; and in alpha, billows, round puffs packed together, for
+/// the cloud's body. Gradient noise has no grid in it, as value noise does;
+/// turned between octaves in `smokeNoise`, no rows show. Each channel is
+/// spread out to the same range, about 0.17 either side of a half. Gives
+/// back the atlas's side and its RGBA bytes.
 pub(crate) fn noise_atlas() -> (u32, Vec<u8>) {
     let side = NOISE_TILE * NOISE_TILES;
     let n = NOISE_SIDE;
@@ -315,16 +325,18 @@ pub(crate) fn noise_atlas() -> (u32, Vec<u8>) {
     for (at, value) in values.iter_mut().enumerate() {
         let (x, y, z) = (at % n, (at / n) % n, at / (n * n));
         let p = Vec3::new(x as f32, y as f32, z as f32) * (NOISE_CELLS as f32 / n as f32);
-        for (channel, v) in value.iter_mut().enumerate() {
+        for (channel, v) in value.iter_mut().enumerate().take(3) {
             *v = gradient_noise(p, channel as u32);
         }
+        value[3] = billows(p) + 0.35 * gradient_noise(p, 3);
     }
     // Each channel spread to the same width about its middle.
     let mut spread = [0.0f32; 4];
+    let mut means = [0.0f32; 4];
     for channel in 0..4 {
         let mean = values.iter().map(|v| v[channel]).sum::<f32>() / values.len() as f32;
         let variance = values.iter().map(|v| (v[channel] - mean).powi(2)).sum::<f32>() / values.len() as f32;
-        spread[channel] = 0.17 / variance.sqrt().max(1e-6);
+        (spread[channel], means[channel]) = (0.17 / variance.sqrt().max(1e-6), mean);
     }
     let mut bytes = vec![0u8; side * side * 4];
     for z in 0..n {
@@ -337,12 +349,43 @@ pub(crate) fn noise_atlas() -> (u32, Vec<u8>) {
                 let texel = ((ty * NOISE_TILE + j) * side + tx * NOISE_TILE + i) * 4;
                 for channel in 0..4 {
                     bytes[texel + channel] =
-                        ((0.5 + value[channel] * spread[channel]).clamp(0.0, 1.0) * 255.0).round() as u8;
+                        ((0.5 + (value[channel] - means[channel]) * spread[channel]).clamp(0.0, 1.0) * 255.0).round()
+                            as u8;
                 }
             }
         }
     }
     (side as u32, bytes)
+}
+
+/// Round puffs at `p`, one in each lattice cell, tiling every `NOISE_CELLS`:
+/// 1 at a puff's middle, falling away to its edge, where it meets the next
+/// in a rounded crease, never a flat one, whose straight edges would show.
+fn billows(p: Vec3) -> f32 {
+    /// How round the creases between puffs are.
+    const ROUND: f32 = 0.12;
+    let cells = NOISE_CELLS as i32;
+    let base = p.floor();
+    let mut near = 0.0f32;
+    for k in 0..27 {
+        let c = base + Vec3::new((k % 3 - 1) as f32, ((k / 3) % 3 - 1) as f32, (k / 9 - 1) as f32);
+        let [x, y, z] = [c.x, c.y, c.z].map(|v| (v as i32).rem_euclid(cells) as u32);
+        let mut h = x.wrapping_mul(0x27d4eb2d) ^ y.wrapping_mul(0x165667b1) ^ z.wrapping_mul(0x85ebca6b);
+        let mut next = || {
+            h ^= h >> 15;
+            h = h.wrapping_mul(0x2c1b3c6d);
+            h ^= h >> 12;
+            h = h.wrapping_mul(0x297a2d39);
+            h ^= h >> 15;
+            (h & 0xFFFF) as f32 / 65535.0
+        };
+        // Kept from the cell's walls, so the puffs are evenly sized.
+        let point = c + Vec3::new(next(), next(), next()) * 0.7 + 0.15;
+        near += (-point.distance(p) / ROUND).exp();
+    }
+    // The distance to the nearest puff's middle, blended smoothly with the next nearest's.
+    let nearest = -near.max(1e-30).ln() * ROUND;
+    1.0 - nearest.clamp(0.0, 1.0)
 }
 
 /// Gradient noise at `p`, tiling every `NOISE_CELLS`, about -1 to 1, its
@@ -436,7 +479,7 @@ pub(crate) fn gather(world: &World, camera: Vec3, time: f32) -> (Vec<GpuSmoke>, 
                 cell: fill.filled_for.0.cell.max(0.05),
                 color: smoke.color.map(|c| c.clamp(0.0, 1.0)),
                 density: smoke.density.max(0.0),
-                grown: (age / smoke.spread.max(1e-3)).clamp(0.0, 1.0),
+                grown: smoke.grown(age),
                 steps: f32::from(fill.steps),
                 seed: (smoke.seed % 1024) as f32 * 17.31,
                 age,

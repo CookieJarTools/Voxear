@@ -1,11 +1,14 @@
 //! Filling Smoke: each Smoke's grid is filled out from its Obj, nearest
 //! first, to the cells round those already filled, as far as its budget, as
-//! a smoke grenade's cloud fills a room and pours out through its door. A
-//! cell is not filled where a collider that stays put stands in it, or
-//! where one stands between it and the cell it was reached from, so the
-//! smoke goes round walls, however thin. Bodies that move, as crates, and
-//! triggers do not stop it. In the editor, where physics does not run, the
-//! colliders are made for the fill.
+//! a smoke grenade's cloud fills a room and pours out through its door.
+//! Rising costs more than spreading, so a cloud in the open lies low and
+//! wide, and the cost wanders a little from place to place, so its edge
+//! bulges out in lobes rather than following a circle. A cell is not filled
+//! where a collider stands in it, or where one stands between it and the
+//! cell it was reached from, so the smoke goes round walls, however thin,
+//! and round crates where they lie as it fills. Triggers, characters and
+//! the smoke's own Obj, as a grenade's, do not stop it. In the editor, where
+//! physics does not run, the colliders are made for the fill.
 //!
 //! A Smoke starts as its Obj appears, or with Play On Start off, when a
 //! script plays it (`SmokeCue`), as a grenade's fuse does. In play, a cloud
@@ -16,7 +19,7 @@ use std::{cmp::Reverse, collections::BinaryHeap, sync::Arc};
 
 use voxear_core::math::{IVec3, Vec3};
 use voxear_ecs::{Component, Entity, World};
-use voxear_physics::scene::{PhysicsScene, Rigidbody};
+use voxear_physics::scene::{CharacterController, PhysicsScene};
 use voxear_render::{SMOKE_GRID, Smoke, SmokeCue, SmokeFill, SmokeHoles, smoke_origin};
 use voxear_scene::{Destroying, Transform, WorldTransform};
 
@@ -54,7 +57,7 @@ pub fn fill_smokes(world: &mut World, now: f64) {
         .into_iter()
         .map(|(entity, smoke, middle, timing)| {
             let Some((started, ends)) = timing else { return (entity, None) };
-            let fill = Filling::new(world, physics, &smoke, middle);
+            let fill = Filling::new(world, physics, &smoke, middle, Some(entity));
             (entity, Some(SmokeFilling { smoke, middle, started: started.unwrap_or(now as f32), ends, fill }))
         })
         .collect();
@@ -157,17 +160,18 @@ fn waiting(world: &World) -> Vec<(Entity, Smoke, Vec3, Timing)> {
 }
 
 /// A Smoke's cells filled out from `middle`, nearest first, stepping to the
-/// 26 cells round each, straight or across, so it spreads as a ball until
-/// walls bend it: for each cell, 0 where it does not reach, or 1 more than
-/// how far it is along the way it came, in half cells; and the farthest.
-pub fn fill(world: &World, physics: &PhysicsScene, smoke: &Smoke, middle: Vec3) -> (Vec<u8>, u8) {
-    let mut filling = Filling::new(world, physics, smoke, middle);
+/// 26 cells round each, straight or across, so it spreads as a low, lumpy
+/// dome until walls bend it: for each cell, 0 where it does not reach, or 1
+/// more than how far it is along the way it came, in half cells; and the
+/// farthest. `own` is the smoke's Obj, whose collider does not stop it.
+pub fn fill(world: &World, physics: &PhysicsScene, smoke: &Smoke, middle: Vec3, own: Option<Entity>) -> (Vec<u8>, u8) {
+    let mut filling = Filling::new(world, physics, smoke, middle, own);
     filling.advance(world, physics, usize::MAX);
     filling.cells()
 }
 
 /// A fill under way (see `fill`): the cells filled so far, how far each
-/// cell is, in half cells, along the shortest way found so far, whether
+/// cell is, in quarter cells, along the shortest way found so far, whether
 /// something stands in it once asked (0 not yet, 1 free, 2 blocked), and
 /// the cells to go on from.
 struct Filling {
@@ -180,11 +184,83 @@ struct Filling {
     farthest: u16,
     origin: Vec3,
     cell: f32,
+    own: Option<Entity>,
+    seed: u32,
 }
 
-/// Whether a collider that stays put, not a body physics moves, is `entity`'s.
-fn stays(world: &World, entity: Entity) -> bool {
-    world.get::<Rigidbody>(entity).is_none_or(|body| body.kinematic)
+/// How far the cost of a step wanders either side of its usual, and over how
+/// many metres, so the cloud's edge bulges out in lobes.
+const LUMPS: f32 = 0.45;
+const LUMP_SIZE: f32 = 1.8;
+
+/// Fewer filled cells than this round a filled cell, of the 26, and it is part
+/// of a thin finger, let go once filled.
+const THIN: usize = 7;
+
+/// What a step to each of the 26 cells round a cell costs, in quarter cells:
+/// as long as it is, its rise counted 1.4 times, so a cloud in the open lies
+/// about that much wider than it is tall.
+const STEP_COSTS: [u16; 26] = {
+    let mut costs = [0; 26];
+    let mut i = 0;
+    while i < 26 {
+        let way = AROUND[i];
+        let up = if way.y > 0 { 196 } else { 100 };
+        // Four times the length, in hundredths squared: x² + (RISE y)² + z².
+        let squared = (way.x * way.x * 100 + way.y * way.y * up + way.z * way.z * 100) as u32 * 16;
+        let mut root = 0;
+        while (root + 1) * (root + 1) * 100 <= squared {
+            root += 1;
+        }
+        // Rounded to the nearer.
+        if (2 * root + 1) * (2 * root + 1) * 25 <= squared {
+            root += 1;
+        }
+        costs[i] = root as u16;
+        i += 1;
+    }
+    costs
+};
+
+/// Whether `entity`'s collider stops smoke filling: any but a character's
+/// and the smoke's own Obj's.
+fn stops(world: &World, entity: Entity, own: Option<Entity>) -> bool {
+    Some(entity) != own && !world.has::<CharacterController>(entity)
+}
+
+/// How much dearer a step from cell `c` is for how near the grid's sides it
+/// is: 1 in the middle, rising steeply over the outer few cells.
+fn edging(c: IVec3) -> f32 {
+    let half = SMOKE_GRID as f32 * 0.5;
+    let out = ((c.as_vec3() + 0.5 - half).abs() / half).max_element();
+    let t = ((out - 0.65) / 0.3).clamp(0.0, 1.0);
+    1.0 + 6.0 * t * t * (3.0 - 2.0 * t)
+}
+
+/// Smooth noise about 0, from -1 to 1, `LUMP_SIZE` metres across, the same
+/// for a `seed` wherever the grid lies.
+fn lumps(at: Vec3, seed: u32) -> f32 {
+    let p = at / LUMP_SIZE;
+    let base = p.floor();
+    let f = p - base;
+    let f = f * f * (Vec3::splat(3.0) - 2.0 * f);
+    let corner = |dx: i32, dy: i32, dz: i32| {
+        let c = base.as_ivec3() + IVec3::new(dx, dy, dz);
+        let mut h = (c.x as u32).wrapping_mul(0x8da6b343)
+            ^ (c.y as u32).wrapping_mul(0xd8163841)
+            ^ (c.z as u32).wrapping_mul(0xcb1ab31f)
+            ^ seed.wrapping_mul(0x9e3779b9);
+        h ^= h >> 13;
+        h = h.wrapping_mul(0x5bd1e995);
+        h ^= h >> 15;
+        (h & 0xFFFF) as f32 / 32767.5 - 1.0
+    };
+    let lerp = |a: f32, b: f32, t: f32| a + (b - a) * t;
+    let x00 = lerp(corner(0, 0, 0), corner(1, 0, 0), f.x);
+    let x10 = lerp(corner(0, 1, 0), corner(1, 1, 0), f.x);
+    let x01 = lerp(corner(0, 0, 1), corner(1, 0, 1), f.x);
+    let x11 = lerp(corner(0, 1, 1), corner(1, 1, 1), f.x);
+    lerp(lerp(x00, x10, f.y), lerp(x01, x11, f.y), f.z)
 }
 
 fn index(c: IVec3) -> usize {
@@ -193,7 +269,7 @@ fn index(c: IVec3) -> usize {
 }
 
 impl Filling {
-    fn new(world: &World, physics: &PhysicsScene, smoke: &Smoke, middle: Vec3) -> Self {
+    fn new(world: &World, physics: &PhysicsScene, smoke: &Smoke, middle: Vec3, own: Option<Entity>) -> Self {
         let cell = smoke.cell.max(0.05);
         let size = SMOKE_GRID * SMOKE_GRID * SMOKE_GRID;
         let mut filling = Self {
@@ -206,13 +282,19 @@ impl Filling {
             farthest: 0,
             origin: smoke_origin(middle, cell),
             cell,
+            own,
+            seed: smoke.seed,
         };
         // From the middle, or where it is set down in something, as a canister resting on the ground is, the
-        // nearest free cell, above first.
+        // nearest free cell it can see, above first: never one past a wall it lies against.
         let n = SMOKE_GRID as i32;
-        let mut near: Vec<IVec3> = (0..125).map(|k| IVec3::new(k % 5 - 2, (k / 5) % 5 - 2, k / 25 - 2)).collect();
-        near.sort_by_key(|o| (o.length_squared(), -o.y));
-        let start = near.into_iter().map(|o| IVec3::splat(n / 2) + o).find(|&c| !filling.solid(world, physics, c));
+        let mut near: Vec<IVec3> =
+            (0..125).map(|k| IVec3::splat(n / 2) + IVec3::new(k % 5 - 2, (k / 5) % 5 - 2, k / 25 - 2)).collect();
+        let away = |c: &IVec3| (filling.centre(*c).distance(middle) / cell * 64.0) as i32;
+        near.sort_by_key(|c| (away(c), -c.y));
+        let start = near
+            .into_iter()
+            .find(|&c| !filling.solid(world, physics, c) && filling.clear(world, physics, middle, filling.centre(c)));
         if let Some(start) = start {
             filling.far[index(start)] = 0;
             filling.queue.push(Reverse((0, start.to_array())));
@@ -226,7 +308,14 @@ impl Filling {
 
     fn solid(&self, world: &World, physics: &PhysicsScene, c: IVec3) -> bool {
         let found = physics.overlap_sphere(self.centre(c), self.cell * 0.45, u32::MAX, false);
-        found.into_iter().any(|entity| stays(world, entity))
+        found.into_iter().any(|entity| stops(world, entity, self.own))
+    }
+
+    /// Whether nothing that stops smoke stands between `a` and `b`.
+    fn clear(&self, world: &World, physics: &PhysicsScene, a: Vec3, b: Vec3) -> bool {
+        let distance = a.distance(b);
+        distance < 1e-4
+            || physics.raycast(a, b - a, distance, u32::MAX, false).is_none_or(|hit| !stops(world, hit.obj, self.own))
     }
 
     /// Fills as many as `most` more cells: whether it is done.
@@ -246,8 +335,9 @@ impl Filling {
                 self.queue.push(Reverse((distance, at)));
                 return false;
             }
-            self.cells[index(from)] = (distance.min(253) + 1) as u8;
-            self.farthest = self.farthest.max(distance.min(253));
+            let halves = (distance / 2).min(253);
+            self.cells[index(from)] = (halves + 1) as u8;
+            self.farthest = self.farthest.max(halves);
             self.filled += 1;
             more += 1;
             // Whether the floor stands in the cell under it, so the smoke can be laid down onto it once filled.
@@ -255,7 +345,10 @@ impl Filling {
             if under.y >= 0 && self.blocked[index(under)] == 0 {
                 self.blocked[index(under)] = if self.solid(world, physics, under) { 2 } else { 1 };
             }
-            for way in AROUND {
+            // Dearer here, cheaper there, so the cloud's edge bulges out in lobes; and dearer close to the grid's
+            // sides, so it rounds off before them rather than being cut straight along them.
+            let lumpy = (1.0 + LUMPS * lumps(self.centre(from), self.seed)) * edging(from);
+            for (way, cost) in AROUND.into_iter().zip(STEP_COSTS) {
                 let to = from + way;
                 if to.cmplt(IVec3::ZERO).any()
                     || to.cmpge(IVec3::splat(n)).any()
@@ -264,13 +357,7 @@ impl Filling {
                 {
                     continue;
                 }
-                // Half cells to the next: 2 straight, 3 across a side, 3 or 4 across a corner.
-                let step = match way.abs().element_sum() {
-                    1 => 2,
-                    2 => 3,
-                    _ => 4,
-                };
-                let next = distance + step;
+                let next = distance + (f32::from(cost) * lumpy).round().max(1.0) as u16;
                 if next >= self.far[index(to)] {
                     continue;
                 }
@@ -280,9 +367,7 @@ impl Filling {
                 if self.blocked[index(to)] == 2 {
                     continue;
                 }
-                let (a, b) = (self.centre(from), self.centre(to));
-                let wall = physics.raycast(a, b - a, a.distance(b), u32::MAX, false);
-                if wall.is_some_and(|hit| stays(world, hit.obj)) {
+                if !self.clear(world, physics, self.centre(from), self.centre(to)) {
                     continue;
                 }
                 self.far[index(to)] = next;
@@ -299,6 +384,22 @@ impl Filling {
     fn cells(mut self) -> (Vec<u8>, u8) {
         let steps = if self.filled == 0 { 0 } else { self.farthest.max(1) as u8 };
         let n = SMOKE_GRID as i32;
+        // Thin fingers, a cell or so across, where the lumps opened a cheap way out, are let go: drawn, they show as
+        // rods sticking out of the cloud.
+        let at_cell = |at: usize| IVec3::new(at as i32 % n, (at as i32 / n) % n, at as i32 / (n * n));
+        let thin: Vec<usize> = (0..self.cells.len())
+            .filter(|&at| self.cells[at] != 0)
+            .filter(|&at| {
+                let c = at_cell(at);
+                let round = AROUND.iter().map(|&way| c + way).filter(|&to| {
+                    to.cmpge(IVec3::ZERO).all() && to.cmplt(IVec3::splat(n)).all() && self.cells[index(to)] != 0
+                });
+                round.count() < THIN
+            })
+            .collect();
+        for at in thin {
+            self.cells[at] = 0;
+        }
         for at in 0..self.cells.len() {
             let c = IVec3::new(at as i32 % n, (at as i32 / n) % n, at as i32 / (n * n));
             let under = c - IVec3::Y;
@@ -520,8 +621,7 @@ pub fn see_through(world: &World, from: Vec3, to: Vec3) -> f32 {
         let steps = (length / (cell * 0.5)).ceil().max(1.0);
         let step = length / steps;
         let age = time - fill.started;
-        let grown = (age / smoke.spread.max(1e-3)).clamp(0.0, 1.0);
-        let front = grown * (f32::from(fill.steps) + 2.0);
+        let front = smoke.grown(age) * (f32::from(fill.steps) + 2.0);
         for i in 0..steps as usize {
             let at = from.lerp(to, enter + (leave - enter) * (i as f32 + 0.5) / steps);
             let c = ((at - low) / cell).floor().as_ivec3().clamp(IVec3::ZERO, IVec3::splat(SMOKE_GRID as i32 - 1));
@@ -541,7 +641,7 @@ pub fn see_through(world: &World, from: Vec3, to: Vec3) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use voxear_physics::scene::Collider;
+    use voxear_physics::scene::{Collider, Rigidbody};
 
     fn spread(world: &mut World) -> SmokeFill {
         fill_smokes(world, 1.0);
@@ -558,8 +658,9 @@ mod tests {
         world.spawn((wall, Transform::from_position(Vec3::new(1.5, 1.0, 0.0))));
         let fill = spread(&mut world);
         let count = fill.cells.iter().filter(|&&c| c != 0).count();
-        // As much as its budget, and the few cells laid down onto the wall's top under it.
-        assert!((smoke.budget()..smoke.budget() + 32).contains(&count), "as much as its budget: {count}");
+        // As much as its budget, but thin fingers, and the few cells laid down onto the wall's top under it.
+        let budget = smoke.budget();
+        assert!((budget * 9 / 10..budget + 32).contains(&count), "as much as its budget: {count} of {budget}");
         let cell_at = |at: Vec3| {
             let c = ((at - fill.origin) / 0.5).floor().as_ivec3();
             fill.cells[((c.z * 32 + c.y) * 32 + c.x) as usize]
@@ -578,18 +679,44 @@ mod tests {
     }
 
     #[test]
-    fn in_the_open_smoke_spreads_as_a_ball() {
+    fn in_the_open_smoke_lies_wider_than_tall_with_a_lumpy_edge() {
         let mut world = World::new();
-        world.spawn((Smoke { size: 8.0, cell: 0.5, ..Smoke::default() }, Transform::from_position(Vec3::ZERO)));
+        world.spawn((Smoke { size: 6.0, cell: 0.4, ..Smoke::default() }, Transform::from_position(Vec3::ZERO)));
         let fill = spread(&mut world);
-        let steps_at =
-            |offset: IVec3| fill.cells[((16 + offset.z) * 32 + 16 + offset.y) as usize * 32 + (16 + offset.x) as usize];
-        // Five cells out along an axis, and as far out across a corner.
-        let (straight, across) = (f32::from(steps_at(IVec3::new(5, 0, 0))), f32::from(steps_at(IVec3::new(3, 3, 3))));
-        assert!(
-            straight > 0.0 && (across - straight).abs() / straight < 0.25,
-            "as far out, as far along: {straight} and {across}"
-        );
+        // How many cells out it reaches from the middle, each way.
+        let reach = |way: IVec3| (1..16).take_while(|&k| fill.cells[index(IVec3::splat(16) + way * k)] != 0).count();
+        let up = reach(IVec3::Y) as f32;
+        let sideways: Vec<f32> =
+            [IVec3::X, -IVec3::X, IVec3::Z, -IVec3::Z].into_iter().map(|w| reach(w) as f32).collect();
+        let wide = sideways.iter().sum::<f32>() / 4.0;
+        assert!(wide > up * 1.2, "wider than tall: {wide} across, {up} up");
+        // Lumpy: as far out round its edge, it is as many steps out here as more there.
+        let out: Vec<u8> = (0..16)
+            .map(|k| k as f32 / 16.0 * std::f32::consts::TAU)
+            .map(|angle| IVec3::new((angle.cos() * 6.0).round() as i32, 0, (angle.sin() * 6.0).round() as i32))
+            .map(|way| fill.cells[index(IVec3::splat(16) + way)])
+            .collect();
+        let (low, high) = out.iter().fold((u8::MAX, 0), |(l, h), &c| (l.min(c), h.max(c)));
+        assert!(low > 0 && f32::from(high) > f32::from(low) * 1.2, "not a circle: {out:?}");
+    }
+
+    #[test]
+    fn a_grenade_lying_against_a_wall_smokes_on_its_own_side() {
+        let smoke = Smoke { size: 4.0, cell: 0.4, ..Smoke::default() };
+        // A thin wall, too wide and high to go round, its face 0.05 to 0.3 metres from the grenade.
+        for gap in [0.05, 0.1, 0.2, 0.3] {
+            let mut world = World::new();
+            world.spawn((smoke, Transform::from_position(Vec3::new(0.0, 0.1, -gap))));
+            let wall = Collider { size: [40.0, 20.0, 0.3], ..Collider::default() };
+            world.spawn((wall, Transform::from_position(Vec3::new(0.0, 0.0, 0.15))));
+            let fill = spread(&mut world);
+            let past = (0..fill.cells.len()).filter(|&at| fill.cells[at] != 0).any(|at| {
+                let z = at / (32 * 32);
+                fill.origin.z + (z as f32 + 0.5) * 0.4 > 0.3
+            });
+            assert!(!past, "none past the wall, {gap} m from it");
+            assert!(fill.steps > 0, "but smoking on its own side, {gap} m from it");
+        }
     }
 
     #[test]
@@ -623,12 +750,17 @@ mod tests {
     }
 
     #[test]
-    fn a_crate_does_not_stop_smoke_and_none_fills_inside_a_wall() {
+    fn a_crate_stops_smoke_but_not_its_own_grenade_and_none_fills_inside_a_wall() {
         let mut world = World::new();
         let smoke = Smoke { size: 2.0, cell: 0.5, ..Smoke::default() };
-        world.spawn((smoke, Transform::from_position(Vec3::ZERO)));
-        world.spawn((Collider::default(), Rigidbody::default(), Transform::from_position(Vec3::ZERO)));
-        assert!(spread(&mut world).steps > 0, "a crate moved by physics is no wall");
+        // The grenade's own collider, and a crate lying beside it.
+        world.spawn((smoke, Collider::default(), Rigidbody::default(), Transform::from_position(Vec3::ZERO)));
+        let crate_ = Collider { size: [1.5; 3], ..Collider::default() };
+        world.spawn((crate_, Rigidbody::default(), Transform::from_position(Vec3::new(1.5, 0.0, 0.0))));
+        let fill = spread(&mut world);
+        assert!(fill.steps > 0, "its own grenade is no wall");
+        let c = ((Vec3::new(1.5, 0.0, 0.0) - fill.origin) / 0.5).floor().as_ivec3();
+        assert_eq!(fill.cells[index(c)], 0, "none inside the crate");
         let mut buried = World::new();
         buried.spawn((smoke, Transform::from_position(Vec3::ZERO)));
         buried.spawn((Collider { size: [4.0; 3], ..Collider::default() }, Transform::from_position(Vec3::ZERO)));
@@ -724,7 +856,7 @@ mod tests {
         let mut physics = PhysicsScene::new();
         physics.ready(&world);
         let started = std::time::Instant::now();
-        let (cells, _) = fill(&world, &physics, &smoke, Vec3::new(0.0, 1.0, 0.0));
+        let (cells, _) = fill(&world, &physics, &smoke, Vec3::new(0.0, 1.0, 0.0), None);
         let took = started.elapsed();
         assert!(cells.iter().any(|&c| c != 0));
         eprintln!("filled {} cells in {took:?}", cells.iter().filter(|&&c| c != 0).count());

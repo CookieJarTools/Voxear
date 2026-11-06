@@ -16,6 +16,9 @@ static const uint SMOKE_BRICKS = 8;
 // How many steps a view takes through the smoke at most, and towards the sun from each.
 static const uint SMOKE_STEPS = 80;
 static const uint SMOKE_SUN_STEPS = 3;
+// How many cells towards the sun each of its looks is, and how long a stretch it stands for.
+static const float SUN_AT[SMOKE_SUN_STEPS] = { 1.0, 3.5, 8.5 };
+static const float SUN_ALONG[SMOKE_SUN_STEPS] = { 2.0, 3.5, 6.0 };
 
 struct SmokeOut
 {
@@ -77,7 +80,8 @@ float4 smokeNoise(float3 p)
 static const float3x3 OCTAVE_TURN_A = float3x3(0.00, 0.80, 0.60, -0.80, 0.36, -0.48, -0.60, -0.48, 0.64);
 static const float3x3 OCTAVE_TURN_B = float3x3(0.64, -0.48, -0.60, 0.48, 0.86, -0.12, 0.60, -0.18, 0.78);
 
-// Three octaves of the body noise at `q`, from 0 to 1, about 0.5.
+// Three octaves of the body's billows at `q`, from 0 to 1, about 0.5: big
+// round puffs, smaller puffs on those, and fine ones on those.
 float smokeBody(float3 q)
 {
     return smokeNoise(q).a * 0.55 + smokeNoise(mul(OCTAVE_TURN_A, q) * 2.3 + 5.3).a * 0.3
@@ -139,8 +143,8 @@ float smokeDensity(Smoke smoke, float3 world, bool swirls)
     {
         float3 w = world * 1.1 + smoke.seed * 0.37 + float3(0.0, -smoke.age * 0.2, 0.0);
         float3 warp = smokeNoise(w).rgb - 0.5;
-        // Far enough, near a cell, that the cloud's edge follows no row of them.
-        world += warp * smoke.cell * 2.4 - float3(0.0, 1.5 * gone * gone, 0.0);
+        // Far enough, near a cell, that the cloud's edge follows no row of them, but not so far the puffs smear.
+        world += warp * smoke.cell * 2.0 - float3(0.0, 1.5 * gone * gone, 0.0);
         if (gone > 0.0)
         {
             // Drifting apart in broad, slow swirls, a metre or two across.
@@ -169,12 +173,14 @@ float smokeDensity(Smoke smoke, float3 world, bool swirls)
     {
         return filled * smoke.density * (1.0 - gone) * smokeLeft(smoke, world, 0.0);
     }
+    // Rolling slowly upward and over, as a fresh cloud churns.
     float3 q = world * 0.45 + smoke.seed + float3(0.0, -smoke.age * 0.12, 0.0);
     float n = smokeBody(q);
     // The holes' edges ragged by the same swirls.
-    // Thicker and thinner through and through, not only at its edge, so from inside it swirls past.
-    // Dispersing, it breaks up from its thin swirls first into wisps, and those thin away.
-    float swirled = saturate(filled * 1.7 - (1.0 - n) * (1.1 + 3.0 * gone)) * (0.3 + 1.4 * n * n) * (1.0 - gone * gone);
+    // Eaten into between its puffs at its edge, so its outline is round billows; thick through and through, a
+    // little thinner between the puffs, so from inside it swirls past. Dispersing, it breaks up from its thin
+    // swirls first into wisps, and those thin away.
+    float swirled = saturate(filled * 2.0 - (1.0 - n) * (1.5 + 3.0 * gone)) * (0.5 + 1.2 * n * n) * (1.0 - gone * gone);
     return swirled * smoke.density * smokeLeft(smoke, world, (n - 0.5) * smoke.cell);
 }
 
@@ -379,6 +385,8 @@ SmokeMarched smokeMarchFragment(SmokeOut input)
     float through = 1.0;
     float3 light = 0.0;
     float sun = 1.0;
+    float sky = 1.0;
+    float scattered = 1.0;
     bool sunSeen = false;
     float first = -1.0;
     float weighed = 0.0;
@@ -407,16 +415,33 @@ SmokeMarched smokeMarchFragment(SmokeOut input)
         // it changes slowly along the view, and on the first.
         if ((i & 1) == 0 || !sunSeen)
         {
+            // Looked for farther apart the farther off, so deep in the cloud a gap between puffs close by does not
+            // let the sun in as though from outside, and a little nearer or farther each frame, so no bands show.
             float toward = 0.0;
-            for (uint k = 1; k <= SMOKE_SUN_STEPS; k++)
+            float reach = 0.8 + 0.4 * frac(jitter * 13.7 + float(i) * 0.29);
+            for (uint k = 0; k < SMOKE_SUN_STEPS; k++)
             {
-                float3 sunward = at + toSun * cell * 1.5 * float(k);
-                toward += smokesAt(frame, count, sunward, false) + mistsAt(frame, mists, sunward, false);
+                // The nearest through the swirled puffs, as it decides where light meets shade, so the cells'
+                // boxes do not show in the shading; the farther, which only darken, through the cells.
+                float3 sunward = at + toSun * cell * SUN_AT[k] * reach;
+                float thick = smokesAt(frame, count, sunward, k == 0) + mistsAt(frame, mists, sunward, false);
+                toward += thick * SUN_ALONG[k] * reach;
             }
             // Looked up a little off where it is, differently each frame and step, so the shadows of what stands
             // in the sun soften over frames rather than stepping with the shadow map's texels.
             float3 shake = float3(frac(jitter * 7.13 + float(i) * 0.618), frac(jitter * 3.71 + float(i) * 0.382), frac(jitter * 5.37)) - 0.5;
-            sun = exp(-toward * cell * 1.5) * sunShadowHard(frame, at + shake * cell, toSun);
+            float depth = toward * cell;
+            float shadow = sunShadowHard(frame, at + shake * cell, toSun);
+            sun = exp(-depth) * shadow;
+            // Light that has scattered many times over in so thick a cloud: it reaches deeper, and comes out every
+            // way alike, so the lit side is bright from any side and the far side shaded rather than black.
+            scattered = exp(-depth * 0.45) * shadow;
+            // Under its own puffs, the sky's light is less: looked for a cell or a few above, a different height
+            // each frame, so it averages out rather than streaking down, and through the swirled puffs, not the
+            // cells, whose boxes would show in it.
+            float lift = cell * (1.0 + 2.5 * frac(jitter * 11.3 + float(i) * 0.47));
+            float over = smokesAt(frame, count, at + float3(0.0, lift, 0.0), true);
+            sky = lerp(0.35, 1.0, exp(-over * lift * 0.8));
             sunSeen = true;
         }
         // The lamps in this pixel's cluster, scattered as evenly every way.
@@ -427,7 +452,12 @@ SmokeMarched smokeMarchFragment(SmokeOut input)
             Light lamp = buffers()->lights[buffers()->clusters[base + 1 + l]];
             lamps += localLightInput(lamp, at, normalizeOr(lamp.position - at, way)).color;
         }
-        float3 lit = color * (sunLight * sun * phase * PI + lamps * 0.25 + ambient);
+        // Its thin edges catch less of the sun than its body does, so each puff is darker round its rim and
+        // stands out from the one behind.
+        float body = 1.0 - exp(-thick * cell * 2.0);
+        float rim = lerp(1.0, body, 0.6 * saturate(0.5 - 0.5 * cosine));
+        float3 sunlit = sunLight * (sun * phase * PI + scattered * 0.25 * sky) * rim;
+        float3 lit = color * (sunlit + lamps * 0.25 + ambient * sky);
         float kept = exp(-thick * stretch);
         light += through * lit * (1.0 - kept);
         weighed += t * through * (1.0 - kept);

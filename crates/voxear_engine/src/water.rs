@@ -126,28 +126,46 @@ pub fn sample(world: &World, at: Vec3) -> Option<WaterPoint> {
     sample_wet(world, world.resource::<PhysicsScene>(), at)
 }
 
-/// How deep the sea is round `at` for how much its waves die away there:
+/// How shallow the sea is round `at` for how much its waves die away there:
 /// its depth averaged over a few metres, so the waves calm gradually where
 /// the ground drops away and a rock or post in deep water barely calms them
-/// (as the shaders' blurred sea floor depth, `floorDepthMain`).
-fn sea_depth(world: &World, physics: Option<&PhysicsScene>, level: f32, at: Vec3) -> f32 {
-    let around = (0..8).map(|i| {
-        let angle = i as f32 * std::f32::consts::FRAC_PI_4;
-        at + Vec3::new(angle.cos(), 0.0, angle.sin()) * 4.0
-    });
-    let depths: Vec<f32> = std::iter::once(at)
-        .chain(around)
-        .map(|point| depth_under(world, physics, level, point).clamp(0.0, ocean::SHALLOWS_DEPTH))
-        .collect();
-    depths.iter().sum::<f32>() / depths.len() as f32
+/// (as the shaders' blurred sea floor depth, `floorDepthMain`); and, where it
+/// is shallow, how much of the waves reach it from deeper water round it.
+/// Neither looks past a wall standing out of the sea, as waves do not.
+fn sea_shallows(world: &World, physics: Option<&PhysicsScene>, level: f32, at: Vec3) -> ocean::Shallows {
+    let open = |point: Vec3| open_water(physics, level, at, point);
+    let ring = |reach: f32| {
+        (0..8).map(move |i| {
+            let angle = i as f32 * std::f32::consts::FRAC_PI_4;
+            at + Vec3::new(angle.cos(), 0.0, angle.sin()) * reach
+        })
+    };
+    let depth_at = |point: Vec3| depth_under(world, physics, level, point).clamp(0.0, ocean::SHALLOWS_DEPTH);
+    let depths: Vec<f32> = std::iter::once(at).chain(ring(4.0).filter(|&p| open(p))).map(depth_at).collect();
+    let depth = depths.iter().sum::<f32>() / depths.len() as f32;
+    if depth >= ocean::SHALLOWS_REACHED {
+        return depth.into();
+    }
+    let deepest = ring(ocean::SHALLOWS_LOOK).filter(|&p| open(p)).map(depth_at).fold(depth, f32::max);
+    ocean::Shallows { depth, reach: ocean::waves_reach(depth, deepest) }
+}
+
+/// Whether the sea runs from `at` to `point` at its level, with no collider
+/// standing out of it between them.
+fn open_water(physics: Option<&PhysicsScene>, level: f32, at: Vec3, point: Vec3) -> bool {
+    let Some(physics) = physics else { return true };
+    let (from, to) = (Vec3::new(at.x, level, at.z), Vec3::new(point.x, level, point.z));
+    let along = to - from;
+    physics.raycast(from, along.normalize_or_zero(), along.length(), u32::MAX, false).is_none()
 }
 
 /// How deep the sea is under `at`: from `level` down to the first collider
-/// under it that is not floating, by a ray from above the waves; deep where
-/// there is none, or physics has not started.
+/// under it that is not floating, by a ray from the ceiling over the sea
+/// the drawn floor is kept under, so a roof does not count; deep where there
+/// is none, or physics has not started.
 fn depth_under(world: &World, physics: Option<&PhysicsScene>, level: f32, at: Vec3) -> f32 {
     let Some(physics) = physics else { return f32::INFINITY };
-    let mut from = Vec3::new(at.x, level + 50.0, at.z);
+    let mut from = Vec3::new(at.x, level + ocean::FLOOR_CEILING, at.z);
     for _ in 0..4 {
         let Some(hit) = physics.raycast(from, Vec3::NEG_Y, 400.0, u32::MAX, false) else { return f32::INFINITY };
         if !world.get::<Rigidbody>(hit.obj).is_some_and(|body| !body.kinematic) {
@@ -176,10 +194,11 @@ fn sample_wet(world: &World, physics: Option<&PhysicsScene>, at: Vec3) -> Option
         return Some(WaterPoint { height, normal: Vec3::Y, flow });
     }
     let sampler = query.sampler.as_ref()?;
-    let depth = if query.shores { sea_depth(world, physics, sampler.level(), at) } else { f32::INFINITY };
-    let height = sampler.height_over(at.x, at.z, depth);
+    let shallows = if query.shores { sea_shallows(world, physics, sampler.level(), at) } else { f32::INFINITY.into() };
+    let height = sampler.height_over(at.x, at.z, shallows);
     // On the sea, the water flows as its waves carry it round, so what floats is slowed against that, not held back.
-    Some(WaterPoint { height, normal: sampler.normal_over(at.x, at.z, depth), flow: sampler.velocity_over(at.x, at.z, depth) })
+    let (normal, flow) = (sampler.normal_over(at.x, at.z, shallows), sampler.velocity_over(at.x, at.z, shallows));
+    Some(WaterPoint { height, normal, flow })
 }
 
 /// The water at a point as scripts take it: height, normal and flow.
@@ -399,6 +418,38 @@ mod tests {
         };
         let (shallow, open) = (swing(-30.0), swing(40.0));
         assert!(shallow < open * 0.4, "waves over the bank {shallow}, in open water {open}");
+    }
+
+    #[test]
+    fn a_flooded_room_lies_calm_under_its_roof_though_the_sea_outside_is_stormy() {
+        let mut world = World::new();
+        world.spawn((Ocean { weather: voxear_render::Weather::Stormy, ..Ocean::default() }, Transform::default()));
+        // A floor 0.4 m under the surface, walled round and roofed six metres up, the open sea outside.
+        let block = |at: Vec3, size: [f32; 3]| (Collider { size, ..Collider::default() }, Transform::from_position(at));
+        world.spawn(block(Vec3::new(0.0, -0.9, 0.0), [20.0, 1.0, 20.0]));
+        world.spawn(block(Vec3::new(0.0, 6.25, 0.0), [20.0, 0.5, 20.0]));
+        for (at, size) in [
+            (Vec3::new(0.0, 2.5, 10.0), [20.0, 6.0, 0.5]),
+            (Vec3::new(0.0, 2.5, -10.0), [20.0, 6.0, 0.5]),
+            (Vec3::new(10.0, 2.5, 0.0), [0.5, 6.0, 20.0]),
+            (Vec3::new(-10.0, 2.5, 0.0), [0.5, 6.0, 20.0]),
+        ] {
+            world.spawn(block(at, size));
+        }
+        let mut physics = PhysicsScene::new();
+        update(&mut world, 12.0);
+        voxear_scene::propagate_transforms(&mut world);
+        physics.step(&mut world, 1.0 / 60.0);
+        let shallows = sea_shallows(&world, Some(&physics), 0.0, Vec3::new(0.0, 0.0, 8.0));
+        assert!((shallows.depth - 0.4).abs() < 0.05, "as deep as the floor, not the roof: {}", shallows.depth);
+        assert!(shallows.reach < 0.1, "near the wall, the sea past it does not reach in: {}", shallows.reach);
+        let swing = |x: f32| {
+            let at = |i: i32| Vec3::new(x, 0.0, i as f32 * 0.4 - 8.0);
+            let height = |i: i32| sample_wet(&world, Some(&physics), at(i)).unwrap().height;
+            (0..40).map(|i| height(i).abs()).fold(0.0f32, f32::max)
+        };
+        let (inside, open) = (swing(0.0), swing(40.0));
+        assert!(inside < open * 0.1, "waves in the room {inside}, out at sea {open}");
     }
 
     #[test]

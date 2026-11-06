@@ -1249,6 +1249,10 @@ The sea, lakes, rivers and lava, built in. Manual: `manual/Water`.
   river churning white below the join; two ending in each other meet head on, fading into each other, both churning.
 - **Bilges:** a Dry Area's Bilge is water standing in it, level as its hull rocks: a Pool over the box round it
   that keeps to the Dry Area's inside, with no walls.
+- **Indoors:** the sea's floor counts ground only up to 4 m over its surface, so it runs on under roofs and arches;
+  walls, drawn as lines from straight above as they show edge on, stop its waves and the blur of its depth; over flat
+  shallows, which the waves broke before reaching, as a flooded floor, it lies near still; and it mirrors what is on
+  screen round it, walked across the picture, before the probes' light.
 - Still to do: spray and splashes (with particles, M7).
 
 ## M6 — Animation

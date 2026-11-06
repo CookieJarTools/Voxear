@@ -3861,6 +3861,65 @@ fn a_stormy_sea_calms_and_stops_at_the_beach() {
     assert!(sea[2] > sea[0] || sea.iter().all(|&c| c > 150), "water out at sea: {sea:?}");
 }
 
+/// A closed room with a roof six metres up, its floor flooded 0.4 m deep by
+/// a stormy sea that runs on outside its walls, lit by a lamp, at `time`;
+/// or the room alone, dry.
+fn flooded_room_render(sea: bool, time: f32) -> Option<Vec<u8>> {
+    use voxear_render::{Ocean, Sky, Weather};
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::new(ROOM_EYE, room_look(), Vec3::ONE)));
+    world.spawn((Light::point(Vec3::ONE, 40.0, 30.0), Transform::from_position(Vec3::new(0.0, 4.0, 0.0))));
+    world.insert_resource(Sky { ambient: 0.3, ..Sky::default() });
+    let (plane, cube) = (renderer.primitive(Primitive::Plane).unwrap(), renderer.primitive(Primitive::Cube).unwrap());
+    let colour = |base_color: [f32; 4]| MaterialDesc { base_color, ..MaterialDesc::default() };
+    let grey = renderer.add_material(&colour([0.5, 0.5, 0.5, 1.0])).unwrap();
+    let red = renderer.add_material(&colour([0.8, 0.1, 0.1, 1.0])).unwrap();
+    world.spawn((MeshRenderer::new(plane, grey), Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(20.0))));
+    let block = |at: Vec3, size: Vec3| Transform::new(at, Quat::IDENTITY, size);
+    for (at, size) in [
+        (Vec3::new(0.0, 3.0, 10.0), Vec3::new(20.0, 6.0, 0.5)),
+        (Vec3::new(0.0, 3.0, -10.0), Vec3::new(20.0, 6.0, 0.5)),
+        (Vec3::new(10.0, 3.0, 0.0), Vec3::new(0.5, 6.0, 20.0)),
+        (Vec3::new(-10.0, 3.0, 0.0), Vec3::new(0.5, 6.0, 20.0)),
+    ] {
+        world.spawn((MeshRenderer::new(cube, red), block(at, size)));
+    }
+    world.spawn((MeshRenderer::new(cube, grey), block(Vec3::new(0.0, 6.25, 0.0), Vec3::new(20.5, 0.5, 20.5))));
+    if sea {
+        let level = Transform::from_position(Vec3::new(0.0, 0.4, 0.0));
+        world.spawn((Ocean { weather: Weather::Stormy, ..Ocean::default() }, level));
+    }
+    let mut time = time;
+    run(&mut renderer, &world, &mut time, 20);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+const ROOM_EYE: Vec3 = Vec3::new(0.0, 1.6, -7.0);
+
+fn room_look() -> Quat {
+    Quat::from_rotation_arc(Vec3::Z, (Vec3::new(0.0, 0.4, 9.0) - ROOM_EYE).normalize())
+}
+
+#[test]
+fn a_sea_floods_a_room_under_its_roof_and_lies_calm_inside_its_walls() {
+    let (Some(dry), Some(early)) = (flooded_room_render(false, 30.0), flooded_room_render(true, 30.0)) else { return };
+    let late = flooded_room_render(true, 33.3).unwrap();
+    keep_image("flooded room.png", &early);
+    keep_image("flooded room later.png", &late);
+    // The floor halfway to the far wall, under the roof: water over it, not the ground taken for the roof.
+    let floor = on_screen(ROOM_EYE, room_look(), Vec3::new(0.0, 0.4, 2.0));
+    let (bare, flooded) = (patch_rgb(&dry, floor, 4), patch_rgb(&early, floor, 4));
+    let apart = (0..3).map(|c| (bare[c] - flooded[c]).abs()).sum::<i32>();
+    assert!(apart > 15, "water over the floor: {flooded:?} against the dry floor {bare:?}");
+    // Half a metre above the still water, on the far wall: dry wall, red, as the storm outside cannot reach in.
+    let wall = on_screen(ROOM_EYE, room_look(), Vec3::new(0.0, 0.9, 9.7));
+    for (pixels, when) in [(&early, "early"), (&late, "later")] {
+        let rgb = patch_rgb(pixels, wall, 2);
+        assert!(rgb[0] > rgb[2] + 25, "the wall above the water stays dry ({when}): {rgb:?}");
+    }
+}
+
 /// Where `point` is on screen in a 640×360 picture from a camera at `eye`
 /// looking along `look`, as the default camera's 60° projection puts it.
 fn on_screen(eye: Vec3, look: Quat, point: Vec3) -> (u32, u32) {

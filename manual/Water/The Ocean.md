@@ -62,6 +62,10 @@ Where a crest folds over, it breaks into foam. The foam stays where the crest br
 
 Over the ground under the sea, the waves feel the bottom and calm, the longest first, gradually over a few metres where the ground drops away. Near the shore they break as surf once the water is not much deeper than they are tall, and the surf runs up the beach and drains back. Round rocks the water surges white with each wave.
 
+The sea only counts ground up to 4 m above its surface. Anything higher, such as a roof, an arch or a bridge, doesn't stop it, so the sea runs on under a roof to the floor beneath. Walls stop waves as they do in the real world. Over flat shallows such as a flooded floor, the waves have already broken before reaching it, so the water lies nearly still, even with a storm outside.
+
+The water mirrors what's on screen around it, such as pillars, walls and boats. Where the reflection would come from outside the picture, it shows the sky, or the light the GI finds that way.
+
 The waves are worked out the same on every machine, and the game can ask how high the sea is anywhere (see [[Floating Objects]]), so a boat rides the waves you see, alike for every player.
 
 ## Under the sea

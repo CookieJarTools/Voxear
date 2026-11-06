@@ -348,16 +348,60 @@ const SURFACE_TENSION: f64 = 7.4e-5;
 
 /// Water deeper than this, in metres, is deep to every wave.
 pub const SHALLOWS_DEPTH: f32 = 40.0;
+/// How far over the sea's level ground still counts as the sea's floor, in
+/// metres, as `FLOOR_CEILING` in `shaders/water.slang`: a roof or an arch
+/// higher up is not, and the sea carries on under it to the ground it covers.
+pub const FLOOR_CEILING: f32 = 4.0;
 
-/// How much of cascade `cascade`'s waves water `depth` metres deep keeps: a
-/// wave feels the bottom once the water is shallower than half its length,
-/// and dies away towards the shore, the long swell first. As `shallowWeight`
+/// How the waves reach shallow water, as `SHALLOWS_*` in
+/// `shaders/water.slang`: all of them where it is this deep; and less where
+/// no water this far round, as far as the shaders' blur of its depth reaches,
+/// is deeper than the ground's rising this much a metre towards it would
+/// make it.
+pub const SHALLOWS_REACHED: f32 = 2.0;
+pub const SHALLOWS_LOOK: f32 = 8.0;
+const SHALLOWS_SLOPE: f32 = 0.03;
+
+/// How shallow the sea is at a place, for how much of its waves it keeps:
+/// how deep it is, and how much of the open sea's waves reach it
+/// (`waves_reach`). A depth alone is water the waves all reach.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Shallows {
+    pub depth: f32,
+    pub reach: f32,
+}
+
+impl From<f32> for Shallows {
+    fn from(depth: f32) -> Self {
+        Self { depth, reach: 1.0 }
+    }
+}
+
+/// How much of the open sea's waves reach water `depth` metres deep whose
+/// deepest water `SHALLOWS_LOOK` metres round is `deepest` deep, from 0 to
+/// 1: all of them where deeper water lies a few metres off, as up a beach or
+/// at the foot of a cliff; none over flat shallows, as a flooded floor,
+/// which the waves crossing them broke long before they got to. As
+/// `wavesReach` in `shaders/water.slang`.
+pub fn waves_reach(depth: f32, deepest: f32) -> f32 {
+    if depth >= SHALLOWS_REACHED {
+        return 1.0;
+    }
+    ((deepest.max(depth) - depth) / (SHALLOWS_LOOK * SHALLOWS_SLOPE)).clamp(0.0, 1.0)
+}
+
+/// How much of cascade `cascade`'s waves shallow water keeps: a wave feels
+/// the bottom once the water is shallower than half its length, and dies
+/// away towards the shore, the long swell first, to a tenth at the water's
+/// edge where the waves reach, less over flat shallows. As `shallowWeight`
 /// in `shaders/water.slang`.
-pub fn shallow_weight(cascade: usize, depth: f32) -> f32 {
+pub fn shallow_weight(cascade: usize, shallows: impl Into<Shallows>) -> f32 {
+    let Shallows { depth, reach } = shallows.into();
     let length = CASCADE_SIZES[cascade] * 0.1;
     let felt = (2.0 * depth.max(0.0) / length).min(1.0);
     let felt = felt + (1.0 - felt) * (depth / SHALLOWS_DEPTH).clamp(0.0, 1.0);
-    1.0 - 0.9 * (1.0 - felt)
+    let edge = 0.1 * reach.max((depth / SHALLOWS_REACHED).clamp(0.0, 1.0));
+    edge + (1.0 - edge) * felt
 }
 
 /// How much the waves move water sideways where it is `depth` metres deep:
@@ -770,20 +814,20 @@ impl OceanSampler {
 
     /// How far the long waves move the water resting at `x`, `z`, where
     /// the sea is `depth` metres deep.
-    fn moved(&self, x: f32, z: f32, depth: f32) -> [f32; 3] {
-        Self::moved_in(&self.surfaces, x, z, depth)
+    fn moved(&self, x: f32, z: f32, shallows: Shallows) -> [f32; 3] {
+        Self::moved_in(&self.surfaces, x, z, shallows)
     }
 
-    fn moved_in(surfaces: &[Displacement], x: f32, z: f32, depth: f32) -> [f32; 3] {
+    fn moved_in(surfaces: &[Displacement], x: f32, z: f32, shallows: Shallows) -> [f32; 3] {
         let mut total = [0.0; 3];
         for (cascade, surface) in surfaces.iter().enumerate() {
             let d = surface.smooth_at(x, z);
-            let weight = shallow_weight(cascade, depth);
+            let weight = shallow_weight(cascade, shallows);
             for i in 0..3 {
                 total[i] += d[i] * weight;
             }
         }
-        let sideways = sideways_weight(depth);
+        let sideways = sideways_weight(shallows.depth);
         [total[0] * sideways, total[1], total[2] * sideways]
     }
 
@@ -795,19 +839,20 @@ impl OceanSampler {
         self.height_over(x, z, f32::INFINITY)
     }
 
-    /// As `height_at`, where the sea is `depth` metres deep, its waves
-    /// dying away in the shallows.
-    pub fn height_over(&self, x: f32, z: f32, depth: f32) -> f32 {
-        let (rx, rz) = self.resting(x, z, depth);
-        self.level + self.moved(rx, rz, depth)[1]
+    /// As `height_at`, where the sea is as shallow as `shallows` says (a
+    /// depth in metres, or `Shallows`), its waves dying away there.
+    pub fn height_over(&self, x: f32, z: f32, shallows: impl Into<Shallows>) -> f32 {
+        let shallows = shallows.into();
+        let (rx, rz) = self.resting(x, z, shallows);
+        self.level + self.moved(rx, rz, shallows)[1]
     }
 
     /// Where the water at the surface over `x`, `z` rests, the waves' sideways
     /// movement undone by stepping back three times.
-    fn resting(&self, x: f32, z: f32, depth: f32) -> (f32, f32) {
+    fn resting(&self, x: f32, z: f32, shallows: Shallows) -> (f32, f32) {
         let (mut rx, mut rz) = (x, z);
         for _ in 0..3 {
-            let d = self.moved(rx, rz, depth);
+            let d = self.moved(rx, rz, shallows);
             rx = x - d[0];
             rz = z - d[2];
         }
@@ -818,12 +863,13 @@ impl OceanSampler {
     /// carry it round, in metres a second: up a wave's front and down its
     /// back, forwards on its crest and back in its trough. Still until it has
     /// moved on once.
-    pub fn velocity_over(&self, x: f32, z: f32, depth: f32) -> Vec3 {
+    pub fn velocity_over(&self, x: f32, z: f32, shallows: impl Into<Shallows>) -> Vec3 {
         if self.previous.is_empty() {
             return Vec3::ZERO;
         }
-        let (rx, rz) = self.resting(x, z, depth);
-        let (now, before) = (self.moved(rx, rz, depth), Self::moved_in(&self.previous, rx, rz, depth));
+        let shallows = shallows.into();
+        let (rx, rz) = self.resting(x, z, shallows);
+        let (now, before) = (self.moved(rx, rz, shallows), Self::moved_in(&self.previous, rx, rz, shallows));
         let step = self.step as f32;
         Vec3::new(now[0] - before[0], now[1] - before[1], now[2] - before[2]) / step
     }
@@ -834,11 +880,11 @@ impl OceanSampler {
         self.normal_over(x, z, f32::INFINITY)
     }
 
-    /// As `normal_at`, where the sea is `depth` metres deep.
-    pub fn normal_over(&self, x: f32, z: f32, depth: f32) -> Vec3 {
-        let e = 0.25;
-        let dx = self.height_over(x + e, z, depth) - self.height_over(x - e, z, depth);
-        let dz = self.height_over(x, z + e, depth) - self.height_over(x, z - e, depth);
+    /// As `normal_at`, where the sea is as shallow as `shallows` says.
+    pub fn normal_over(&self, x: f32, z: f32, shallows: impl Into<Shallows>) -> Vec3 {
+        let (e, shallows) = (0.25, shallows.into());
+        let dx = self.height_over(x + e, z, shallows) - self.height_over(x - e, z, shallows);
+        let dz = self.height_over(x, z + e, shallows) - self.height_over(x, z - e, shallows);
         Vec3::new(-dx, 2.0 * e, -dz).normalize()
     }
 }
@@ -954,6 +1000,17 @@ mod tests {
         let sea = OceanSampler::new(stormy(), 0.0);
         let (deep, shallow) = (sea.height_over(30.0, 40.0, 1e4).abs(), sea.height_over(30.0, 40.0, 0.5).abs());
         assert!(shallow < deep * 0.5 + 0.01, "the same place, shallower: {shallow} against {deep}");
+        // Over flat shallows, which the waves broke before crossing, as a flooded floor, less again.
+        let flat = Shallows { depth: 0.5, reach: waves_reach(0.5, 0.5) };
+        assert_eq!(waves_reach(0.5, 0.5 + SHALLOWS_LOOK * 0.05), 1.0, "up a beach, deeper water a few metres off");
+        let (calmed, reached) = (shallow_weight(0, flat), shallow_weight(0, 0.5));
+        assert!(calmed < reached * 0.5, "the swell, {calmed} against {reached}");
+        let average = |shallows: Shallows| {
+            let points = (0..64).map(|i| (i as f32 * 3.7, i as f32 * 5.3));
+            points.map(|(x, z)| (sea.height_over(x, z, shallows) - sea.level()).abs()).sum::<f32>() / 64.0
+        };
+        let (reached, calm) = (average(0.5.into()), average(flat));
+        assert!(calm < reached * 0.6, "flat shallows: {calm} against {reached}");
     }
 
     #[test]
@@ -961,7 +1018,7 @@ mod tests {
         let mut sampler = OceanSampler::new(stormy(), 2.0);
         sampler.set_time(30.0);
         // Where the water resting at (40, 10) was moved to, the height is that water's.
-        let d = sampler.moved(40.0, 10.0, f32::INFINITY);
+        let d = sampler.moved(40.0, 10.0, f32::INFINITY.into());
         let height = sampler.height_at(40.0 + d[0], 10.0 + d[2]);
         assert!((height - (2.0 + d[1])).abs() < 0.05, "{height} against {}", 2.0 + d[1]);
         let normal = sampler.normal_at(40.0, 10.0);

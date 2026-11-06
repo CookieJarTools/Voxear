@@ -122,6 +122,7 @@ pub struct Pipelines {
     pub water_stream: vk::Pipeline,
     pub sea_floor: vk::Pipeline,
     pub sea_floor_under: vk::Pipeline,
+    pub sea_floor_walls: vk::Pipeline,
     pub dry_mesh: vk::Pipeline,
     pub water_wall: vk::Pipeline,
     /// Under water: what the view shows dimmed, then the water's own light.
@@ -365,6 +366,16 @@ impl Pipelines {
                 depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
                 ..GraphicsPipelineDesc::depth_only("Sea floor", water, c"floorVertex", DEPTH_FORMAT)
             })?,
+            // Walls standing out of the sea, which straight above shows edge on: their triangles' edges, as lines,
+            // their whole length kept, though their tops are over the floor's ceiling.
+            sea_floor_walls: graphics(&GraphicsPipelineDesc {
+                fragment_entry: Some(c"floorWallFragment"),
+                cull: vk::CullModeFlags::NONE,
+                polygon_mode: vk::PolygonMode::LINE,
+                depth_clamp: true,
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                ..GraphicsPipelineDesc::depth_only("Sea floor walls", water, c"floorVertex", DEPTH_FORMAT)
+            })?,
             // Lower ground over higher: the undersides of what stands in the sea.
             sea_floor_under: graphics(&GraphicsPipelineDesc {
                 cull: vk::CullModeFlags::NONE,
@@ -538,6 +549,7 @@ impl Pipelines {
             self.water_stream,
             self.sea_floor,
             self.sea_floor_under,
+            self.sea_floor_walls,
             self.dry_mesh,
             self.water_wall,
             self.underwater,

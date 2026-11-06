@@ -273,9 +273,11 @@ impl Water {
         // Each slice's tops in the left half, two a side, and its undersides beside them in the right.
         let floor_desc = ImageDesc::new(FLOOR_TEXELS * 4, FLOOR_TEXELS * 4, crate::pipelines::DEPTH_FORMAT, floor_usage);
         let floor_image = fg.history_image(gpu, bindless, "sea floor", floor_desc)?;
-        let depth_desc = ImageDesc::new(FLOOR_TEXELS * 2, FLOOR_TEXELS * 2, vk::Format::R32_SFLOAT, usage);
+        // Blurred across, then along with how much of the waves reach each place beside it.
+        let across_desc = ImageDesc::new(FLOOR_TEXELS * 2, FLOOR_TEXELS * 2, vk::Format::R32_SFLOAT, usage);
+        let depth_desc = ImageDesc::new(FLOOR_TEXELS * 2, FLOOR_TEXELS * 2, vk::Format::R16G16B16A16_SFLOAT, usage);
         let floor_depth = fg.history_image(gpu, bindless, "sea floor depth", depth_desc)?;
-        let floor_across = fg.create_image(gpu, bindless, "sea floor depth across", depth_desc)?;
+        let floor_across = fg.create_image(gpu, bindless, "sea floor depth across", across_desc)?;
         // Without Shores no ground is captured, and all of it is drawn again when they come back.
         let (floor, floor_draws) = match ocean.shores {
             true => buffers.floor_slices(camera, level, ground),
@@ -581,22 +583,34 @@ pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), wat
             let side = vk::Extent2D { width: FLOOR_TEXELS * 4, height: FLOOR_TEXELS * 4 };
             begin_rendering(ctx, side, &[], Some(&depth));
             unsafe { ctx.gpu.device.cmd_bind_index_buffer(ctx.cmd, index_buffer, 0, vk::IndexType::UINT32) };
-            // The highest of what stands there, from nothing far below the sea; then beside it the lowest, from
-            // nothing far above it, so an overhang shows as ground with water under it.
-            for (pipeline, beside, nothing) in [(pipelines.sea_floor, 0, 0.0), (pipelines.sea_floor_under, 2, 1.0)] {
+            // The highest of what stands there, from nothing far below the sea, and over it the walls standing out of
+            // it; then beside it the lowest, from nothing far above it, so an overhang shows as ground with water
+            // under it.
+            let passes = [
+                (pipelines.sea_floor, 0, Some(0.0)),
+                (pipelines.sea_floor_walls, 0, None),
+                (pipelines.sea_floor_under, 2, Some(1.0)),
+            ];
+            for (pipeline, beside, nothing) in passes {
                 bind(ctx, pipeline, vk::PipelineBindPoint::GRAPHICS, &push);
                 for (slice, items) in &floor_draws {
                     let tile = [slice % 2 + beside, slice / 2].map(|t| (t * FLOOR_TEXELS) as i32);
                     let offset = vk::Offset2D { x: tile[0], y: tile[1] };
                     let extent = vk::Extent2D { width: FLOOR_TEXELS, height: FLOOR_TEXELS };
                     set_viewport(ctx, offset, extent);
-                    let clear = vk::ClearAttachment::default()
-                        .aspect_mask(vk::ImageAspectFlags::DEPTH)
-                        .clear_value(vk::ClearValue { depth_stencil: vk::ClearDepthStencilValue { depth: nothing, stencil: 0 } });
-                    let rect = vk::ClearRect { rect: vk::Rect2D { offset, extent }, base_array_layer: 0, layer_count: 1 };
-                    unsafe { ctx.gpu.device.cmd_clear_attachments(ctx.cmd, &[clear], &[rect]) };
+                    if let Some(nothing) = nothing {
+                        let depth_stencil = vk::ClearDepthStencilValue { depth: nothing, stencil: 0 };
+                        let clear = vk::ClearAttachment::default()
+                            .aspect_mask(vk::ImageAspectFlags::DEPTH)
+                            .clear_value(vk::ClearValue { depth_stencil });
+                        let rect = vk::Rect2D { offset, extent };
+                        let rect = vk::ClearRect { rect, base_array_layer: 0, layer_count: 1 };
+                        unsafe { ctx.gpu.device.cmd_clear_attachments(ctx.cmd, &[clear], &[rect]) };
+                    }
                     for g in items {
-                        ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { source: g.instance, level: *slice, ..push });
+                        // The walls' fragments read their triangles, from the draw's first index.
+                        let draw = Push { source: g.instance, level: *slice, output: g.first_index, ..push };
+                        ctx.bindless.push(ctx.gpu, ctx.cmd, &draw);
                         unsafe { ctx.gpu.device.cmd_draw_indexed(ctx.cmd, g.index_count, 1, g.first_index, 0, 0) };
                     }
                 }
@@ -616,7 +630,8 @@ pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), wat
                     compute_barrier(ctx);
                 }
                 for &slice in &slices {
-                    let push = Push { texture: from.0, output: to.0, level: slice, textures: [pass as u32, 0, 0, 0], ..push };
+                    let textures = [pass as u32, floor_texture.0, 0, 0];
+                    let push = Push { texture: from.0, output: to.0, level: slice, textures, ..push };
                     bind(ctx, pipelines.floor_depth, vk::PipelineBindPoint::COMPUTE, &push);
                     unsafe { ctx.gpu.device.cmd_dispatch(ctx.cmd, FLOOR_TEXELS / 8, FLOOR_TEXELS / 8, 1) };
                 }

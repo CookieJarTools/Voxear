@@ -35,12 +35,19 @@ uint oceanCascades(Frame* frame)
 // The cascades whose folding breaks into foam: the ripples' never does.
 static const uint OCEAN_BREAKING_CASCADES = 4;
 // The sea floor round the camera, seen from straight above (src/water.rs): this many slices, each this many texels a
-// side, two a side in one depth image, its heights kept within this many metres of the sea's level as its depth.
+// side, two a side in one depth image, its heights kept from this many metres under the sea's level up to the
+// ceiling over it (ocean::FLOOR_CEILING), as its depth. What stands higher, a roof or an arch, is left out, so the
+// sea carries on under it to the ground it covers.
 static const uint FLOOR_SLICES = 4;
 static const uint FLOOR_TEXELS = 256;
 static const float FLOOR_REACH = 256.0;
+static const float FLOOR_CEILING = 4.0;
 // Water deeper than this, in metres, is deep to every wave (ocean::SHALLOWS_DEPTH).
 static const float SHALLOWS_DEPTH = 40.0;
+// How the waves reach shallow water (ocean::SHALLOWS_*): all of them where it is this deep; and less where no water
+// the blur of its depth reaches is deeper than the ground's rising this much a metre towards it would make it.
+static const float SHALLOWS_REACHED = 2.0;
+static const float SHALLOWS_SLOPE = 0.03;
 // The sea's grid: rings of this many quads across, the first this many metres apart, each twice the last.
 static const uint WATER_QUADS = 64;
 static const uint WATER_RINGS = 12;
@@ -286,10 +293,17 @@ static const float FOAM_TEXEL = 0.5;
 // ---------------------------------------------------------------- The sea floor
 
 // How deep in the sea floor's depth image ground `y` high is drawn: the
-// higher, the deeper, so the highest ground over a place stays.
+// higher, the deeper, so the highest ground over a place stays. Ground past
+// the floor's reach or over its ceiling falls outside 0 to 1, and is clipped.
 float floorDepth(Frame* frame, float y)
 {
-    return saturate((y - frame->ocean.level + FLOOR_REACH) / (2.0 * FLOOR_REACH));
+    return (y - frame->ocean.level + FLOOR_REACH) / (FLOOR_REACH + FLOOR_CEILING);
+}
+
+// How high ground drawn at `depth` in the sea floor's depth image is.
+float floorDepthHeight(Frame* frame, float depth)
+{
+    return frame->ocean.level - FLOOR_REACH + depth * (FLOOR_REACH + FLOOR_CEILING);
 }
 
 // A vertex of instance push.source seen from straight above, across slice
@@ -306,6 +320,34 @@ float4 floorVertex(uint vertexId : SV_VertexID) : SV_Position
     return float4((world.xz - slice.xy) / slice.z * 2.0 - 1.0, floorDepth(frame, world.y), 1.0);
 }
 
+// A wall standing out of the sea, which from straight above shows only edge
+// on, so its face draws nothing: its triangle's edges, drawn as lines over
+// the floor (water::record), mark it as ground as high as the floor's
+// ceiling. Triangles facing up or down are the floor's and the roofs'; and
+// a wall wholly over the water or under it stands out of nothing.
+[shader("fragment")]
+float floorWallFragment(float4 position : SV_Position, uint primitive : SV_PrimitiveID) : SV_Depth
+{
+    Frame* frame = push.frame;
+    Instance instance = buffers()->instances[push.source];
+    Mesh mesh = buffers()->meshes[instance.mesh];
+    float3 corners[3];
+    for (uint k = 0; k < 3; k++)
+    {
+        uint index = buffers()->indices[push.output + primitive * 3 + k];
+        corners[k] = transform(instance.model, float4(buffers()->vertices[mesh.vertexOffset + index].position, 1.0)).xyz;
+    }
+    float3 facing = cross(corners[1] - corners[0], corners[2] - corners[0]);
+    float low = min(min(corners[0].y, corners[1].y), corners[2].y);
+    float high = max(max(corners[0].y, corners[1].y), corners[2].y);
+    float level = frame->ocean.level;
+    if (abs(facing.y) > 0.5 * length(facing) || low > level || high < level)
+    {
+        discard;
+    }
+    return saturate(floorDepth(frame, min(high, level + FLOOR_CEILING)));
+}
+
 // How high the ground is at `uv` across slice `slice` of the sea floor,
 // read smoothly with `smooth`, so its outline does not step from texel to
 // texel where foam follows it; as deep as the floor reaches where nothing
@@ -317,7 +359,7 @@ float floorSliceHeight(Frame* frame, uint slice, float2 uv, bool smooth, bool un
     Texture2D floor = textures[NonUniformResourceIndex(frame->ocean.floorTexture)];
     float2 at = (tile + uv) * 0.25;
     float d = smooth ? smoothSample(floor, at, float(FLOOR_TEXELS * 4)).r : floor.SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], at, 0.0).r;
-    return frame->ocean.level - FLOOR_REACH + d * 2.0 * FLOOR_REACH;
+    return floorDepthHeight(frame, d);
 }
 
 // The ground under the water at `xz`, `y` high: how high its top is, where
@@ -407,10 +449,11 @@ float seaGusts(Frame* frame, float2 xz)
 // How deep the sea is round `xz` for how much its waves die away there: its
 // depth averaged over a few metres (floorDepthMain), so the waves calm
 // gradually where the ground drops away rather than in a step, and a rock or
-// post in deep water barely calms them; from the finest slice that reaches
-// it, fading into the next towards its edge. Deep beyond them all, and
-// everywhere without Shores.
-float seaDepth(Frame* frame, float2 xz)
+// post in deep water barely calms them; and how much of the waves reach it
+// (wavesReach). From the finest slice that reaches it, fading into the next
+// towards its edge. Deep and reached beyond them all, and everywhere without
+// Shores.
+float2 seaFloorAt(Frame* frame, float2 xz)
 {
     Texture2D depths = textures[NonUniformResourceIndex(frame->ocean.floorDepth)];
     SamplerState linear = samplers[SAMPLER_LINEAR_CLAMP];
@@ -422,30 +465,51 @@ float seaDepth(Frame* frame, float2 xz)
         {
             continue;
         }
-        float depth = depths.SampleLevel(linear, (float2(float(i % 2), float(i / 2)) + uv) * 0.5, 0.0).r;
+        float2 here = depths.SampleLevel(linear, (float2(float(i % 2), float(i / 2)) + uv) * 0.5, 0.0).rg;
         float edge = min(min(uv.x, uv.y), min(1.0 - uv.x, 1.0 - uv.y));
         float fade = saturate((0.15 - edge) / 0.12);
         float4 next = i + 1 < FLOOR_SLICES ? frame->ocean.floor[i + 1] : 0.0;
         if (fade > 0.0 && next.w > 0.0)
         {
             float2 nextUv = (xz - next.xy) / next.z;
-            float further = depths.SampleLevel(linear, (float2(float((i + 1) % 2), float((i + 1) / 2)) + nextUv) * 0.5, 0.0).r;
-            depth = lerp(depth, further, fade);
+            float2 further = depths.SampleLevel(linear, (float2(float((i + 1) % 2), float((i + 1) / 2)) + nextUv) * 0.5, 0.0).rg;
+            here = lerp(here, further, fade);
         }
-        return depth;
+        return here;
     }
-    return SHALLOWS_DEPTH;
+    return float2(SHALLOWS_DEPTH, 1.0);
+}
+
+float seaDepth(Frame* frame, float2 xz)
+{
+    return seaFloorAt(frame, xz).x;
 }
 
 // The blur floorDepthMain spreads the sea's depth over, in metres, as a
 // Gaussian's width; its taps reach twice as far.
 static const float FLOOR_DEPTH_BLUR = 4.0;
 
+// Whether texel `at` of slice `slice` of the sea floor (push.textures.y) is
+// land standing out of the sea, which waves stop at: ground over the sea's
+// level, not an overhang over it.
+bool floorLand(Frame* frame, Texture2D floor, uint slice, int2 at)
+{
+    int2 corner = int2(int(slice % 2), int(slice / 2)) * int(FLOOR_TEXELS);
+    at = clamp(at, 0, int(FLOOR_TEXELS) - 1);
+    float top = floorDepthHeight(frame, floor.Load(int3(corner + at, 0)).r);
+    float under = floorDepthHeight(frame, floor.Load(int3(corner + at + int2(2 * FLOOR_TEXELS, 0), 0)).r);
+    return top > frame->ocean.level && under <= frame->ocean.level;
+}
+
 // One texel of slice push.level of the sea floor's depth, blurred over a few
 // metres for how much the waves calm (seaDepth): across, from the floor
 // itself (push.texture) when push.textures.x is 0, then along, from what was
 // blurred across. Depths are kept within SHALLOWS_DEPTH, past which waves
-// do not calm, so a deep trench does not count for more than open sea.
+// do not calm, so a deep trench does not count for more than open sea. The
+// blur stops at land standing out of the sea (the floor, push.textures.y),
+// as waves do: the open sea past a wall does not make the water inside it
+// deep. Along, how much of the waves reach each place (wavesReach) goes
+// beside its depth, from the deepest water the blur reaches.
 [shader("compute")]
 [numthreads(8, 8, 1)]
 void floorDepthMain(uint3 id : SV_DispatchThreadID)
@@ -460,33 +524,84 @@ void floorDepthMain(uint3 id : SV_DispatchThreadID)
     float texel = frame->ocean.floor[slice].z / float(FLOOR_TEXELS);
     float2 corner = float2(float(slice % 2), float(slice / 2)) * float(FLOOR_TEXELS);
     Texture2D from = textures[NonUniformResourceIndex(push.texture)];
+    Texture2D floor = textures[NonUniformResourceIndex(push.textures.y)];
     SamplerState linear = samplers[SAMPLER_LINEAR_CLAMP];
+    int2 way = across ? int2(1, 0) : int2(0, 1);
+    // A tap every quarter of the blur's width; between taps, every texel is looked at for land.
+    float spacing = FLOOR_DEPTH_BLUR * 0.25 / texel;
     float total = 0.0;
     float weights = 0.0;
-    for (int k = -8; k <= 8; k++)
+    float deepest = 0.0;
+    for (int side = -1; side <= 1; side += 2)
     {
-        // A tap every quarter of the blur's width, within this slice.
-        float offset = float(k) * FLOOR_DEPTH_BLUR * 0.25 / texel;
-        float2 at = clamp(float2(id.xy) + 0.5 + (across ? float2(offset, 0.0) : float2(0.0, offset)), 0.5, float(FLOOR_TEXELS) - 0.5);
-        float value = from.SampleLevel(linear, (corner + at) / float(across ? FLOOR_TEXELS * 4 : FLOOR_TEXELS * 2), 0.0).r;
-        // Under an overhang, whose underside is over the sea, the water is as deep as if it were not there.
-        float under = across ? from.SampleLevel(linear, (corner + at + float2(2 * FLOOR_TEXELS, 0.0)) / float(FLOOR_TEXELS * 4), 0.0).r : 0.0;
-        float depth = across ? (under > 0.5 ? SHALLOWS_DEPTH : clamp(FLOOR_REACH - value * 2.0 * FLOOR_REACH, 0.0, SHALLOWS_DEPTH)) : value;
-        float weight = exp(-0.5 * pow(float(k) * 0.25, 2.0));
-        total += depth * weight;
-        weights += weight;
+        int walked = 0;
+        for (int k = side < 0 ? 0 : 1; k <= 8; k++)
+        {
+            float offset = float(k) * spacing;
+            bool blocked = false;
+            for (; walked < int(ceil(offset)); walked++)
+            {
+                if (floorLand(frame, floor, slice, int2(id.xy) + way * (walked + 1) * side))
+                {
+                    blocked = true;
+                    break;
+                }
+            }
+            if (blocked)
+            {
+                break;
+            }
+            float2 at = clamp(float2(id.xy) + 0.5 + float2(way) * offset * float(side), 0.5, float(FLOOR_TEXELS) - 0.5);
+            float depth;
+            if (across)
+            {
+                float top = floorDepthHeight(frame, floor.SampleLevel(linear, (corner + at) / float(FLOOR_TEXELS * 4), 0.0).r);
+                // Under an overhang, whose underside is over the sea, the water is as deep as if it were not there.
+                float under = floorDepthHeight(frame, floor.SampleLevel(linear, (corner + at + float2(2 * FLOOR_TEXELS, 0.0)) / float(FLOOR_TEXELS * 4), 0.0).r);
+                depth = under > frame->ocean.level ? SHALLOWS_DEPTH : clamp(frame->ocean.level - top, 0.0, SHALLOWS_DEPTH);
+            }
+            else
+            {
+                depth = from.SampleLevel(linear, (corner + at) / float(FLOOR_TEXELS * 2), 0.0).r;
+            }
+            deepest = max(deepest, depth);
+            float weight = exp(-0.5 * pow(float(k) * 0.25, 2.0));
+            total += depth * weight;
+            weights += weight;
+        }
     }
-    storageImagesR32f[push.output][uint2(corner) + id.xy] = total / weights;
+    float blurred = total / weights;
+    if (across)
+    {
+        storageImagesR32f[push.output][uint2(corner) + id.xy] = blurred;
+        return;
+    }
+    float reach = blurred >= SHALLOWS_REACHED ? 1.0 : saturate((deepest - blurred) / (FLOOR_DEPTH_BLUR * 2.0 * SHALLOWS_SLOPE));
+    storageImagesRgba16f[push.output][uint2(corner) + id.xy] = float4(blurred, reach, 0.0, 0.0);
+}
+
+// How much the open sea's waves reach shallow water at `xz`, from 0 to 1:
+// all of them where deeper water lies a few metres off, as up a beach or at
+// the foot of a cliff; none over flat shallows, as a flooded floor, which
+// the waves crossing them broke long before they got to; nor past a wall
+// (floorDepthMain). Water `depth` deep or deeper is reached everywhere
+// (ocean::waves_reach).
+float wavesReach(Frame* frame, float2 xz, float depth)
+{
+    return depth >= SHALLOWS_REACHED ? 1.0 : seaFloorAt(frame, xz).y;
 }
 
 // How much of cascade `cascade`'s waves water `depth` metres deep keeps: a
 // wave feels the bottom once the water is shallower than half its length,
-// and dies away towards the shore, the long swell first (ocean::shallow_weight).
-float shallowWeight(Frame* frame, uint cascade, float depth)
+// and dies away towards the shore, the long swell first, to a tenth at the
+// water's edge where the waves reach (wavesReach), less over flat shallows
+// (ocean::shallow_weight).
+float shallowWeight(Frame* frame, uint cascade, float depth, float reach = 1.0)
 {
     float felt = min(2.0 * max(depth, 0.0) / (frame->ocean.sizes[cascade] * 0.1), 1.0);
     felt += (1.0 - felt) * saturate(depth / SHALLOWS_DEPTH);
-    return 1.0 - 0.9 * (1.0 - felt);
+    float edge = 0.1 * max(reach, saturate(depth / SHALLOWS_REACHED));
+    return edge + (1.0 - edge) * felt;
 }
 
 // How much the waves move water sideways where it is `depth` metres deep:
@@ -748,10 +863,11 @@ float breakingAt(Frame* frame, float2 rest, float depth)
 {
     float folded = 1.0;
     float gusts = seaGusts(frame, rest);
+    float reach = wavesReach(frame, rest, depth);
     for (uint c = 0; c < OCEAN_BREAKING_CASCADES; c++)
     {
         float4 d = textures[NonUniformResourceIndex(frame->ocean.displacement[c])].SampleLevel(samplers[SAMPLER_LINEAR_REPEAT], cascadeUv(frame, c, rest), 1.0);
-        folded += (d.w - 1.0) * shallowWeight(frame, c, depth) * (c >= GUSTED_CASCADES ? gusts : 1.0);
+        folded += (d.w - 1.0) * shallowWeight(frame, c, depth, reach) * (c >= GUSTED_CASCADES ? gusts : 1.0);
     }
     float threshold = 0.1 + 0.45 * frame->ocean.foam;
     return frame->ocean.foam > 0.0 ? saturate((threshold - folded) / 0.3) : 0.0;
@@ -850,18 +966,23 @@ void oceanFoamMain(uint3 id : SV_DispatchThreadID)
     // several.
     float breaking = breakingAt(frame, here, restingDepth);
     // Waves break as they reach water not much deeper than they are high: the crests the open sea would bring here,
-    // before the shallows calm them, tumble into surf down their rising fronts, in stretches along the shore.
+    // before the shallows calm them, tumble into surf down their rising fronts, in stretches along the shore. Only
+    // where they reach: over flat shallows, as a flooded floor, they broke before getting there.
     if (restingDepth > 0.0 && restingDepth < 6.0)
     {
         float crest = oceanMoved(frame, here, FOAM_TEXEL, false).y;
         float front = saturate((crest - oceanMoved(frame, here, FOAM_TEXEL, true).y) / dt * 2.0);
         float tall = saturate((crest - 0.45 * restingDepth) / (0.3 * restingDepth + 0.1));
-        breaking = max(breaking, tall * front * smoothstep(0.3, 0.7, foamNoise(here * 0.25 + frame->time * 0.05)));
+        float reach = wavesReach(frame, here, restingDepth);
+        breaking = max(breaking, tall * front * reach * smoothstep(0.3, 0.7, foamNoise(here * 0.25 + frame->time * 0.05)));
     }
-    float churn = contact * (0.2 + 1.4 * foamNoise(here * 0.4 + frame->time * 0.1)) * 3.0 * dt;
+    // Only as the waves move the water against the ground: shallow water lying still, as over a flooded floor, stays
+    // clear, however long it lies there.
     float surging = saturate(rising * 3.0);
+    float moving = 0.02 + saturate(abs(rising) * 3.0);
+    float churn = contact * moving * (0.2 + 1.4 * foamNoise(here * 0.4 + frame->time * 0.1)) * 3.0 * dt;
     float poured = pouredIn(frame, here) * 2.0 * dt;
-    float amount = saturate(max(kept.r * exp(-dt / 6.0), breaking) + churn * (0.1 + surging) + poured);
+    float amount = saturate(max(kept.r * exp(-dt / 6.0), breaking) + churn + poured);
     float fresh = min(saturate(max(kept.g * exp(-dt / 1.0), breaking) + churn * surging + poured), amount);
     storageImagesRgba16f[push.output][id.xy] = float4(amount * wet, fresh * wet, 0.0, 0.0);
 }
@@ -940,12 +1061,13 @@ float3 oceanMoved(Frame* frame, float2 rest, float spacing, bool previous, float
 {
     float3 moved = 0.0;
     float gusts = seaGusts(frame, rest);
+    float reach = wavesReach(frame, rest, depth);
     for (uint c = 0; c < oceanCascades(frame); c++)
     {
         uint image = previous ? frame->ocean.previous[c] : frame->ocean.displacement[c];
         float mip = max(log2(spacing / (frame->ocean.sizes[c] / float(OCEAN_N))), 0.0);
         float3 d = textures[NonUniformResourceIndex(image)].SampleLevel(samplers[SAMPLER_LINEAR_REPEAT], cascadeUv(frame, c, rest), mip).xyz;
-        moved += d * cascadeShare(c, swell) * shallowWeight(frame, c, depth) * (c >= GUSTED_CASCADES ? gusts : 1.0);
+        moved += d * cascadeShare(c, swell) * shallowWeight(frame, c, depth, reach) * (c >= GUSTED_CASCADES ? gusts : 1.0);
     }
     moved.xz *= sidewaysWeight(depth);
     return moved;
@@ -1140,6 +1262,7 @@ float4 smoothSample(Texture2D image, float2 uv, float texels = float(OCEAN_N))
 void addWaves(Frame* frame, float2 rest, float swell, float weight, inout float2 slope, inout float variance, inout float folded, inout float3 moved, float depth = 1e4)
 {
     float gusts = seaGusts(frame, rest);
+    float reach = wavesReach(frame, rest, depth);
     for (uint c = 0; c < oceanCascades(frame); c++)
     {
         float2 uv = cascadeUv(frame, c, rest);
@@ -1163,7 +1286,7 @@ void addWaves(Frame* frame, float2 rest, float swell, float weight, inout float2
             s += slopes.Sample(samplers[SAMPLER_LINEAR_REPEAT], uv) * (1.0 - smooth);
             d += moves.Sample(samplers[SAMPLER_LINEAR_REPEAT], uv) * (1.0 - smooth);
         }
-        float share = cascadeShare(c, swell) * weight * shallowWeight(frame, c, depth) * (c >= GUSTED_CASCADES ? gusts : 1.0);
+        float share = cascadeShare(c, swell) * weight * shallowWeight(frame, c, depth, reach) * (c >= GUSTED_CASCADES ? gusts : 1.0);
         slope += s.xy * share;
         // The slopes the mips averaged away, too small to see here, as roughness. Magnified, filtering
         // the squares apart from the slopes would make roughness of nothing, so it starts only as texels shrink
@@ -1282,6 +1405,76 @@ FragmentOut fromBelow(Frame* frame, WaterOut input, float3 n, float3 v, float3 d
     return o;
 }
 
+// What the water mirrors of the picture drawn before it, found by walking
+// the reflected ray `r` from `world` across the screen until it passes behind
+// what is there (the depth behind the water, push.textures.y): its colour,
+// blurred as the water roughens, from the copy the water is drawn over
+// (push.texture), and in alpha how sure the walk is of it, fading out
+// towards the screen's edges and the walk's end and where it found nothing,
+// where the probes' and the sky's light shows instead. Without it, water
+// under a roof mirrored the light from all round, a pale sheet, rather than
+// the pillars and curtains over it.
+float4 waterScreenReflection(Frame* frame, float3 world, float3 r, float roughness, float2 pixel)
+{
+    static const uint STEPS = 32;
+    float3 forward = frame->cameraForward;
+    float start = dot(world - frame->cameraPosition, forward);
+    float toward = dot(r, forward);
+    // Not past the camera: a ray coming back towards it ends just in front of it.
+    float reach = toward < 0.0 ? min(40.0, (start - frame->near * 4.0) / -toward) : 40.0;
+    if (reach <= 0.1)
+    {
+        return 0.0;
+    }
+    float4 from = transform(frame->viewProj, float4(world + r * 0.05, 1.0));
+    float4 to = transform(frame->viewProj, float4(world + r * reach, 1.0));
+    Texture2D depths = textures[NonUniformResourceIndex(push.textures.y)];
+    float2 size = float2(frame->viewport);
+    float jitter = frac(52.9829189 * frac(dot(pixel, float2(0.06711056, 0.00583715)) + float(frame->frameIndex % 64) * 0.61803));
+    float before = 0.0;
+    bool inFront = true;
+    for (uint i = 0; i < STEPS; i++)
+    {
+        float t = (float(i) + jitter) / float(STEPS);
+        float4 clip = lerp(from, to, t * t);
+        float2 uv = clip.xy / clip.w * 0.5 + 0.5;
+        if (clip.w <= 0.0 || any(uv <= 0.0) || any(uv >= 1.0))
+        {
+            return 0.0;
+        }
+        float behind = depths.Load(int3(int2(uv * size), 0)).r;
+        bool past = clip.w > (behind > 0.0 ? frame->near / behind : 1e4);
+        if (past && inFront)
+        {
+            // Where between the last step and this one the ray went behind the picture.
+            float low = before;
+            float high = t;
+            for (uint k = 0; k < 5; k++)
+            {
+                float mid = (low + high) * 0.5;
+                float4 c = lerp(from, to, mid * mid);
+                float b = depths.Load(int3(int2(saturate(c.xy / c.w * 0.5 + 0.5) * size), 0)).r;
+                bool further = c.w > (b > 0.0 ? frame->near / b : 1e4);
+                low = further ? low : mid;
+                high = further ? mid : high;
+            }
+            float4 c = lerp(from, to, high * high);
+            uv = saturate(c.xy / c.w * 0.5 + 0.5);
+            float b = depths.Load(int3(int2(uv * size), 0)).r;
+            // Met there, rather than gone behind something much nearer, out of sight.
+            if (c.w - (b > 0.0 ? frame->near / b : 1e4) < max(0.3, c.w * 0.04))
+            {
+                float2 edge = min(uv, 1.0 - uv);
+                float sure = saturate(min(edge.x, edge.y) / 0.08) * (1.0 - high * high);
+                return float4(glassBehind(push.texture, uv, sqrt(roughness) * 3.0), sure);
+            }
+        }
+        inFront = !past;
+        before = t;
+    }
+    return 0.0;
+}
+
 // The sea's surface: what lies under it, seen through it, bent by its
 // waves and lost a colour at a time with depth (push.texture the picture
 // behind it with mips, push.textures.y the depth behind it); the water's
@@ -1377,6 +1570,8 @@ FragmentOut waterFragment(WaterOut input)
     float fresnel = 0.02 + 0.98 * pow(1.0 - nv, 5.0 * exp(-2.69 * alpha)) / (1.0 + 22.7 * pow(alpha, 1.5));
     float3 ambient = ambientLight(frame, input.world, s, sunLight, atmosphere);
     float3 reflected = surroundingsReflection(frame, input.world, n, reflect(-v, n), s.roughness, ambient, atmosphere);
+    float4 mirrored = waterScreenReflection(frame, input.world, reflect(-v, n), s.roughness, input.position.xy);
+    reflected = lerp(reflected, mirrored.rgb, mirrored.a);
     // The sun, a little rougher than the water so its disc shows as a streak of glints rather than a point.
     Surface sunSurface = s;
     sunSurface.roughness = max(s.roughness, 0.08);
@@ -1412,9 +1607,13 @@ FragmentOut waterFragment(WaterOut input)
     {
         float3 under = input.world + refract(-v, n, 1.0 / 1.33) * min(thickness, 10.0);
         float4 clip = transform(frame->viewProj, float4(under, 1.0));
-        float2 bent = clip.xy / clip.w * 0.5 + 0.5;
-        if (clip.w > 0.0 && all(bent > 0.0) && all(bent < 1.0))
+        if (clip.w > 0.0)
         {
+            // Bent less as it nears the screen's edge, never past it: bent ray by bent ray, those that would land off
+            // the screen showed what lies straight under the water instead, along a hard line near the edge.
+            float2 shift = clip.xy / clip.w * 0.5 + 0.5 - seenAt;
+            float2 room = select(shift > 0.0, 1.0 - seenAt, seenAt) * 0.98 / max(abs(shift), 1e-6);
+            float2 bent = seenAt + shift * saturate(min(room.x, room.y));
             float there = textures[NonUniformResourceIndex(push.textures.y)].Load(int3(int2(bent * float2(frame->viewport)), 0)).r;
             seenAt = (there > 0.0 ? frame->near / there : 1e4) > surfaceDepth ? bent : seenAt;
         }

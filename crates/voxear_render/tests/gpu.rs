@@ -2847,6 +2847,68 @@ fn glass_behind_frosted_glass_shows_blurred_through_it() {
     assert!(edge < 25, "seen through the frosted pane, not drawn over it: {inside:?} against {outside:?}");
 }
 
+/// A dim room seen through a frosted pane, with a ball of light behind it
+/// `size` pixels across, as small as a highlight on a shiny ball or as big as
+/// a lamp, `shift` pixels right of the picture's middle, or none.
+fn speck_behind_frosted_render(shift: Option<f32>, size: f32) -> Option<Vec<u8>> {
+    use voxear_render::{Exposure, Sky};
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 1.5, -3.0))));
+    let plane = renderer.primitive(Primitive::Plane).unwrap();
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let sphere = renderer.primitive(Primitive::Sphere).unwrap();
+    let pale = renderer.add_material(&MaterialDesc { base_color: [0.6, 0.6, 0.6, 1.0], ..MaterialDesc::default() }).unwrap();
+    world.spawn((MeshRenderer::new(plane, pale), Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(40.0))));
+    let wall = Transform::new(Vec3::new(0.0, 2.0, 0.5), Quat::IDENTITY, Vec3::new(8.0, 4.0, 0.2));
+    world.spawn((MeshRenderer::new(cube, pale), wall));
+    let frosted = renderer.add_material(&MaterialDesc { roughness: 0.45, ..clear_glass() }).unwrap();
+    let pane = Transform::new(Vec3::new(0.0, 1.5, -1.5), Quat::IDENTITY, Vec3::new(2.0, 1.5, 0.02));
+    world.spawn((MeshRenderer::new(cube, frosted), pane));
+    if let Some(shift) = shift {
+        let bright = MaterialDesc { base_color: [0.0, 0.0, 0.0, 1.0], emissive: [40.0; 3], ..MaterialDesc::default() };
+        let bright = renderer.add_material(&bright).unwrap();
+        // A pixel three metres off is about a centimetre across, as the camera sees 60 degrees over 360 pixels.
+        let pixel = 2.0 * 3.0 * 30f32.to_radians().tan() / 360.0;
+        let at = Vec3::new(shift * pixel, 1.5, 0.0);
+        world.spawn((MeshRenderer::new(sphere, bright), Transform::new(at, Quat::IDENTITY, Vec3::splat(size * pixel))));
+    }
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.3, -0.6, 1.0).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 0.1), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.02, ..Sky::default() });
+    let mut post = steady_post();
+    post.ambient_occlusion.enabled = false;
+    post.contact_shadows.enabled = false;
+    // Exposed for a dark room, as candlelight is, so what is dim in the picture's own numbers shows.
+    post.exposure = Exposure { compensation: 5.0, ..post.exposure };
+    world.insert_resource(post);
+    run(&mut renderer, &world, &mut 0.0, 4);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+#[test]
+fn a_highlight_behind_frosted_glass_does_not_flash_as_it_moves() {
+    let Some(dark) = speck_behind_frosted_render(None, 0.0) else { return };
+    let brightness = |pixels: &[u8]| patch_rgb(pixels, (320, 180), 12).iter().sum::<i32>();
+    let shifts = [0.0, 0.25, 0.5, 0.75, 1.0];
+    let glows: Vec<i32> = shifts
+        .iter()
+        .filter_map(|&shift| speck_behind_frosted_render(Some(shift), 1.5))
+        .enumerate()
+        .map(|(n, pixels)| {
+            keep_image(&format!("speck behind frosted glass {n}.png"), &pixels);
+            brightness(&pixels) - brightness(&dark)
+        })
+        .collect();
+    let (least, most) = (*glows.iter().min().unwrap(), *glows.iter().max().unwrap());
+    assert!(most - least <= 6, "the speck's glow holds steady as it moves by quarter pixels: {glows:?}");
+    // A lamp a few dozen pixels across still glows through the pane.
+    let Some(lamp) = speck_behind_frosted_render(Some(0.0), 30.0) else { return };
+    keep_image("lamp behind frosted glass.png", &lamp);
+    let glow = brightness(&lamp) - brightness(&dark);
+    assert!(glow > 150, "a lamp behind the pane glows through it: {glow}");
+}
+
 /// A project's custom shaders as the engine writes them (`voxear_engine::
 /// shaders::dispatch_code`), by hand: 1 sets the colour, 2 is unlit, 3
 /// moves vertices up a metre, 4 lights in two flat bands.

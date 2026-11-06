@@ -52,15 +52,6 @@ static const float STAR_BRIGHTNESS = 3e-4;
 // The faintest a point can be against the sky round it and still be seen.
 static const float STAR_CONTRAST = 0.03;
 
-// What the composite multiplies the scene by to expose it, last frame's, so
-// the sky can draw things at a brightness on screen.
-float exposureScale(Frame* frame)
-{
-    Post post = frame->post;
-    float ev = post.autoExposure != 0 ? buffers()->exposure[0] : post.exposureCompensation;
-    return frame->exposure * exp2(ev);
-}
-
 float3 hash33(float3 p)
 {
     uint3 v = uint3(int3(p) + 32768);

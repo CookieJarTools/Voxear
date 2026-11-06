@@ -319,10 +319,13 @@ void glassShadowMipMain(uint3 id : SV_DispatchThreadID)
 // thirteen reads Jimenez gives for bloom (2014), which weigh a wide tent
 // round each texel. Each the average of the four texels under it, a bright
 // lamp stayed in one texel or jumped to the next as it moved, and showed
-// through frosted glass as a square. The first of them weighs each group of
-// four by how dim it is (Karis's average), as bloom does: a lamp's highlight
-// on a shiny ball, a pixel or two wide, comes and goes as the camera moves,
-// and blurred whole it flashed through frosted glass as a bright patch.
+// through frosted glass as a square. The first of them weighs each read by
+// how dim it shows on screen: a lamp's highlight on a shiny ball, a pixel or
+// two wide, comes and goes as the camera moves, and blurred whole it flashed
+// through frosted glass as a bright patch. Weighed by groups of four, as
+// bloom does, a highlight in the middle fell in every group and kept its
+// weight; and weighed by the scene's own numbers rather than as exposed, a
+// dark room's highlights were too dim to be weighed down at all.
 [shader("compute")]
 [numthreads(8, 8, 1)]
 void glassCopyMain(uint3 id : SV_DispatchThreadID)
@@ -352,16 +355,16 @@ void glassCopyMain(uint3 id : SV_DispatchThreadID)
     float4 f = at(float2(-2.0, 0.0)), g = at(float2(0.0, 0.0)), h = at(float2(2.0, 0.0));
     float4 i = at(float2(-1.0, 1.0)), j = at(float2(1.0, 1.0));
     float4 k = at(float2(-2.0, 2.0)), l = at(float2(0.0, 2.0)), m = at(float2(2.0, 2.0));
-    // The middle four, and the four groups round it, which together weigh the tent.
-    float4 groups[5] = { d + e + i + j, a + b + f + g, b + c + g + h, f + g + k + l, g + h + l + m };
-    float shares[5] = { 0.5, 0.125, 0.125, 0.125, 0.125 };
+    // The tent's share of each read: the middle four, the one at the middle, the four beside it and the corners.
+    float4 reads[13] = { d, e, i, j, g, b, f, h, l, a, c, k, m };
+    float shares[13] = { 0.125, 0.125, 0.125, 0.125, 0.125, 0.0625, 0.0625, 0.0625, 0.0625, 0.03125, 0.03125, 0.03125, 0.03125 };
+    float exposed = push.level == 0 ? exposureScale(push.frame) : 0.0;
     float4 color = 0.0;
     float total = 0.0;
-    for (uint n = 0; n < 5; n++)
+    for (uint n = 0; n < 13; n++)
     {
-        float4 group = groups[n] * 0.25;
-        float weight = shares[n] * (push.level == 0 ? 1.0 / (1.0 + dot(group.rgb, float3(0.2126, 0.7152, 0.0722))) : 1.0);
-        color += group * weight;
+        float weight = shares[n] / (1.0 + dot(reads[n].rgb, float3(0.2126, 0.7152, 0.0722)) * exposed);
+        color += reads[n] * weight;
         total += weight;
     }
     storageImagesRgba16f[push.output][id.xy] = color / total;

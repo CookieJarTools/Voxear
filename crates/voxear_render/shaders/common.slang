@@ -846,6 +846,15 @@ Buffers* buffers()
     return push.buffers;
 }
 
+// What the composite multiplies the scene by to expose it, last frame's, so a
+// pass can weigh things by how bright they show on screen.
+float exposureScale(Frame* frame)
+{
+    Post post = frame->post;
+    float ev = post.autoExposure != 0 ? buffers()->exposure[0] : post.exposureCompensation;
+    return frame->exposure * exp2(ev);
+}
+
 // A draw's instance, from the instance list or the meshlet list the pass
 // draws, with the LOD it draws and its role in a fade.
 uint drawInstance(uint drawId, out uint lod, out uint fade)

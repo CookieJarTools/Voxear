@@ -298,6 +298,8 @@ pub enum Prop {
     DryHeight,
     /// A mesh Dry Area's mesh, or its Obj's Mesh Renderer's.
     DryMesh,
+    /// How deep the water in a Dry Area stands.
+    DryBilge,
     /// A Seasons' time of year, and the season it is nearest, which the
     /// rows of a season's look below it are for.
     TimeOfYear,
@@ -514,7 +516,9 @@ impl Prop {
             | Prop::PoolMurk
             | Prop::PoolCooling
             | Prop::PoolGlow => Part::Pool,
-            Prop::DryShape | Prop::DrySize | Prop::DryWidth | Prop::DryHeight | Prop::DryMesh => Part::DryArea,
+            Prop::DryShape | Prop::DrySize | Prop::DryWidth | Prop::DryHeight | Prop::DryMesh | Prop::DryBilge => {
+                Part::DryArea
+            }
             Prop::PathPoints | Prop::PathClosed => Part::Path,
             Prop::StreamLiquid
             | Prop::StreamDepth
@@ -710,6 +714,7 @@ impl Prop {
             Prop::DryShape => "shape",
             Prop::DrySize | Prop::DryWidth | Prop::DryHeight => "size",
             Prop::DryMesh => "mesh",
+            Prop::DryBilge => "bilge",
             Prop::TimeOfYear | Prop::Season => "time_of_year",
             Prop::SeasonColor(season) => return format!("{}.color", season_key(*season)),
             Prop::SeasonColorAmount(season) => return format!("{}.color_amount", season_key(*season)),
@@ -1051,10 +1056,10 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
         }
         // Each shape's own measures: a box's three sides, a ball's width, a capsule's width and height.
         Part::DryArea => match world.get::<DryArea>(entity).map_or(DryShape::Box, |dry| dry.shape) {
-            DryShape::Box => vec![Prop::DryShape, Prop::DrySize],
-            DryShape::Sphere => vec![Prop::DryShape, Prop::DryWidth],
-            DryShape::Capsule => vec![Prop::DryShape, Prop::DryWidth, Prop::DryHeight],
-            DryShape::Mesh => vec![Prop::DryShape, Prop::DryMesh],
+            DryShape::Box => vec![Prop::DryShape, Prop::DrySize, Prop::DryBilge],
+            DryShape::Sphere => vec![Prop::DryShape, Prop::DryWidth, Prop::DryBilge],
+            DryShape::Capsule => vec![Prop::DryShape, Prop::DryWidth, Prop::DryHeight, Prop::DryBilge],
+            DryShape::Mesh => vec![Prop::DryShape, Prop::DryMesh, Prop::DryBilge],
         },
         // The look of the season the year is nearest, under the choice of it.
         Part::Seasons => {
@@ -1289,6 +1294,7 @@ pub fn label(prop: &Prop) -> String {
         Prop::DryWidth => "Width",
         Prop::DryHeight => "Height",
         Prop::DryMesh => "Mesh",
+        Prop::DryBilge => "Bilge",
         Prop::TimeOfYear => "Time of year",
         Prop::Season => "Season",
         Prop::SeasonColor(_) => "Colour",
@@ -1856,6 +1862,7 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::DrySize => Value::Vector(world.get::<DryArea>(entity)?.size.to_vec()),
         Prop::DryWidth => Value::Number(world.get::<DryArea>(entity)?.size[0]),
         Prop::DryHeight => Value::Number(world.get::<DryArea>(entity)?.size[1]),
+        Prop::DryBilge => Value::Number(world.get::<DryArea>(entity)?.bilge),
         Prop::DryMesh => Value::Asset(match world.get::<DryArea>(entity)?.mesh {
             None => OWN_MESH.into(),
             Some(mesh) => {
@@ -2726,6 +2733,7 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         }
         (Prop::DryWidth, Value::Number(n)) => with(world, entity, |d: &mut DryArea| d.size[0] = n.max(0.01)),
         (Prop::DryHeight, Value::Number(n)) => with(world, entity, |d: &mut DryArea| d.size[1] = n.max(0.01)),
+        (Prop::DryBilge, Value::Number(n)) => with(world, entity, |d: &mut DryArea| d.bilge = n.max(0.0)),
         (Prop::TimeOfYear, Value::Number(n)) => {
             with(world, entity, |seasons: &mut Seasons| seasons.time_of_year = n.rem_euclid(4.0))
         }

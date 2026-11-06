@@ -108,15 +108,20 @@ fn placed(transform: &Transform, at: Option<&WorldTransform>) -> (Vec3, Quat) {
 /// or away from the sea, every Pool and every Stream. Over a Pool's
 /// footprint its surface, not the sea's; over a Stream its, flowing.
 pub fn sample(world: &World, at: Vec3) -> Option<WaterPoint> {
-    let dry = world.query_ref::<(&DryArea, &Transform, Option<&WorldTransform>)>().into_iter().any(|(area, t, w)| {
+    let dry = world.query_ref::<(&DryArea, &Transform, Option<&WorldTransform>)>().into_iter().find_map(|(area, t, w)| {
         let (position, rotation) = placed(t, w);
-        match area.shape {
-            DryShape::Mesh => area.mesh_contains(w.map_or_else(|| t.matrix(), |w| w.0), at),
-            _ => area.contains(position, rotation, at),
-        }
+        let (inside, model) = match area.shape {
+            DryShape::Mesh => {
+                let model = w.map_or_else(|| t.matrix(), |w| w.0);
+                (area.mesh_contains(model, at), model)
+            }
+            _ => (area.contains(position, rotation, at), Mat4::from_rotation_translation(rotation, position)),
+        };
+        // Inside, only its bilge's water.
+        inside.then(|| area.bilge_over(model, at))
     });
-    if dry {
-        return None;
+    if let Some(bilge) = dry {
+        return bilge.map(|height| WaterPoint { height, normal: Vec3::Y, flow: Vec3::ZERO });
     }
     sample_wet(world, world.resource::<PhysicsScene>(), at)
 }

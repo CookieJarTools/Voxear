@@ -859,18 +859,20 @@ fn water_bodies(world: &World, camera: Vec3) -> crate::water::WaterBodies {
         })
         .collect();
     // Sphere and Box Wind Zones go with the Dry Areas, which the shaders tell apart by their kind.
-    let gusts: Vec<(f32, crate::gpu::GpuWaterBody, Option<crate::MeshHandle>)> = world
+    type Dry = (f32, crate::gpu::GpuWaterBody, Option<crate::MeshHandle>, Option<crate::gpu::GpuWaterBody>);
+    let gusts: Vec<Dry> = world
         .query_ref::<(&crate::WindZone, &Transform, Option<&WorldTransform>)>()
         .without::<Destroying>()
         .into_iter()
         .filter(|(zone, ..)| zone.shape != crate::WindShape::Global)
         .map(|(zone, transform, at)| {
             let (position, rotation) = placed(transform, at);
-            (position.distance_squared(camera), zone.gpu_local(position, rotation), None)
+            (position.distance_squared(camera), zone.gpu_local(position, rotation), None, None)
         })
         .collect();
-    // A mesh Dry Area takes its own mesh or its Obj's Mesh Renderer's; with neither it keeps nothing dry.
-    let mut dries: Vec<(f32, crate::gpu::GpuWaterBody, Option<crate::MeshHandle>)> = world
+    // A mesh Dry Area takes its own mesh or its Obj's Mesh Renderer's; with neither it keeps nothing dry. Each brings
+    // its bilge, if it has one.
+    let mut dries: Vec<Dry> = world
         .query_ref::<(&DryArea, &Transform, Option<&WorldTransform>, Option<&MeshRenderer>)>()
         .without::<Destroying>()
         .into_iter()
@@ -881,9 +883,12 @@ fn water_bodies(world: &World, camera: Vec3) -> crate::water::WaterBodies {
                 crate::DryShape::Mesh => {
                     let mesh = dry.mesh.or(drawn.map(|renderer| renderer.mesh))?;
                     let model = at.map_or_else(|| transform.matrix(), |w| w.0);
-                    Some((near, DryArea::gpu_mesh(mesh, model), Some(mesh)))
+                    Some((near, DryArea::gpu_mesh(mesh, model), Some(mesh), dry.gpu_bilge(model)))
                 }
-                _ => Some((near, dry.gpu(position, rotation), None)),
+                _ => {
+                    let bilge = dry.gpu_bilge(Mat4::from_rotation_translation(rotation, position));
+                    Some((near, dry.gpu(position, rotation), None, bilge))
+                }
             }
         })
         .collect();
@@ -936,8 +941,14 @@ fn water_bodies(world: &World, camera: Vec3) -> crate::water::WaterBodies {
     dries.sort_by(|a, b| a.0.total_cmp(&b.0));
     pools.truncate(MAX_WATER_BODIES / 2);
     streams.truncate(MAX_WATER_BODIES / 4);
-    dries.truncate(MAX_WATER_BODIES - pools.len() - streams.len());
-    let mut bodies: Vec<crate::gpu::GpuWaterBody> = pools.iter().map(|(_, body)| *body).collect();
+    // Bilges are Pools, listed after the others, and find their Dry Area once it is listed.
+    let bilges = MAX_WATER_BODIES / 2 - pools.len();
+    let mut bilges: Vec<(usize, crate::gpu::GpuWaterBody)> =
+        dries.iter().enumerate().filter_map(|(at, dry)| Some((at, dry.3?))).take(bilges).collect();
+    dries.truncate(MAX_WATER_BODIES - pools.len() - bilges.len() - streams.len());
+    bilges.retain(|(at, _)| *at < dries.len());
+    let mut bodies: Vec<crate::gpu::GpuWaterBody> = pools.iter().map(|(_, body)| *body).chain(bilges.iter().map(|(_, body)| *body)).collect();
+    let listed = (pools.len(), bodies.len());
     let (mut counts, mut points) = (Vec::new(), Vec::new());
     for (_, stream, along, pours) in &streams {
         let room = MAX_STREAM_POINTS - points.len();
@@ -949,7 +960,10 @@ fn water_bodies(world: &World, camera: Vec3) -> crate::water::WaterBodies {
         points.extend(along.iter().map(|p| p.gpu()));
     }
     let first_dry = bodies.len() as u32;
-    let dry_meshes = (first_dry..).zip(&dries).filter_map(|(body, (_, _, mesh))| mesh.map(|mesh| (body, mesh))).collect();
-    bodies.extend(dries.into_iter().map(|(_, body, _)| body));
-    crate::water::WaterBodies { bodies, pools: pools.len() as u32, streams: counts, points, dry_meshes }
+    for (body, (dry, _)) in bodies[listed.0..listed.1].iter_mut().zip(&bilges) {
+        body.shape = first_dry + *dry as u32 + 1;
+    }
+    let dry_meshes = (first_dry..).zip(&dries).filter_map(|(body, (_, _, mesh, _))| mesh.map(|mesh| (body, mesh))).collect();
+    bodies.extend(dries.into_iter().map(|(_, body, ..)| body));
+    crate::water::WaterBodies { bodies, pools: listed.1 as u32, streams: counts, points, dry_meshes }
 }

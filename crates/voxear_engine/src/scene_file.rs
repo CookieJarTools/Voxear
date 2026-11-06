@@ -888,12 +888,19 @@ pub struct DryAreaData {
     pub size: [f32; 3],
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mesh: Option<String>,
+    /// How deep the water in it stands, in metres; none when left out.
+    #[serde(skip_serializing_if = "no_bilge")]
+    pub bilge: f32,
+}
+
+fn no_bilge(depth: &f32) -> bool {
+    *depth == 0.0
 }
 
 impl Default for DryAreaData {
     fn default() -> Self {
         let area = DryArea::default();
-        Self { shape: area.shape, size: area.size, mesh: None }
+        Self { shape: area.shape, size: area.size, mesh: None, bilge: area.bilge }
     }
 }
 
@@ -901,7 +908,7 @@ impl DryAreaData {
     /// `area` as a scene writes it, its mesh named as `content` knows it.
     pub fn of(content: &Content, area: &DryArea) -> Self {
         let mesh = area.mesh.and_then(|mesh| content.mesh_ref(mesh)).map(|reference| reference.to_string());
-        Self { shape: area.shape, size: area.size, mesh }
+        Self { shape: area.shape, size: area.size, mesh, bilge: area.bilge }
     }
 }
 

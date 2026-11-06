@@ -585,10 +585,25 @@ bool inDryMesh(Frame* frame, float3 world)
     return along > front + 0.05 && along < back + 0.05;
 }
 
+// Whether a bilge, Pool `pool`, holds water at `world`: inside the Dry Area
+// it is in (its shape, less one), a little in from its sides.
+bool inBilge(Frame* frame, WaterBody pool, float3 world)
+{
+    WaterBody dry = buffers()->waterBodies[pool.shape - 1];
+    return dry.shape == DRY_MESH ? inDryMesh(frame, world) : dryDistance(dry, world) < -0.02;
+}
+
+// Whether `world` is over Pool `pool`'s footprint and above its bottom.
+bool overPool(WaterBody pool, float3 world)
+{
+    float3 local = transform(pool.toLocal, float4(world, 1.0)).xyz;
+    return all(abs(local.xz) <= pool.size.xz * 0.5) && local.y > -pool.size.y;
+}
+
 // The water whose surface is over or under `world`: how high that surface
 // is and how fast its water takes each colour, a metre; the sea at its
-// level, or a Pool over its footprint above its bottom, not in a Dry Area.
-// False where there is none.
+// level, or a Pool over its footprint above its bottom, not in a Dry Area
+// unless it is that Dry Area's bilge. False where there is none.
 bool waterSurface(Frame* frame, float3 world, out float surface, out float3 absorb)
 {
     surface = -1e9;
@@ -598,6 +613,16 @@ bool waterSurface(Frame* frame, float3 world, out float surface, out float3 abso
         return false;
     }
     uint pools = frame->ocean.pools;
+    for (uint i = 0; i < pools; i++)
+    {
+        WaterBody pool = buffers()->waterBodies[i];
+        if (pool.shape != 0 && overPool(pool, world) && inBilge(frame, pool, world))
+        {
+            surface = pool.toWorld.c3.y;
+            absorb = pool.absorb;
+            return true;
+        }
+    }
     uint dries = pools + frame->ocean.streams;
     for (uint i = dries; i < dries + frame->ocean.dries; i++)
     {
@@ -617,9 +642,8 @@ bool waterSurface(Frame* frame, float3 world, out float surface, out float3 abso
     for (uint i = 0; i < pools; i++)
     {
         WaterBody pool = buffers()->waterBodies[i];
-        float3 local = transform(pool.toLocal, float4(world, 1.0)).xyz;
         // Lava is no water to be under.
-        if (pool.liquid == LIQUID_WATER && all(abs(local.xz) <= pool.size.xz * 0.5) && local.y > -pool.size.y)
+        if (pool.liquid == LIQUID_WATER && pool.shape == 0 && overPool(pool, world))
         {
             surface = pool.toWorld.c3.y;
             absorb = pool.absorb;

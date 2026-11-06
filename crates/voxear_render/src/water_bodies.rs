@@ -140,13 +140,16 @@ pub struct DryArea {
     /// mesh is loaded or picked.
     #[serde(skip)]
     pub bounds: Option<[Vec3; 2]>,
+    /// How deep the water in it stands when it is level, in metres from its
+    /// bottom: a hull's bilge. 0 for none.
+    pub bilge: f32,
 }
 
 impl Component for DryArea {}
 
 impl Default for DryArea {
     fn default() -> Self {
-        Self { shape: DryShape::Box, size: [2.0, 2.0, 4.0], mesh: None, bounds: None }
+        Self { shape: DryShape::Box, size: [2.0, 2.0, 4.0], mesh: None, bounds: None, bilge: 0.0 }
     }
 }
 
@@ -247,6 +250,50 @@ impl DryArea {
         let Some([low, high]) = self.bounds else { return false };
         let local = model.inverse().transform_point3(point);
         local.cmpge(low).all() && local.cmple(high).all()
+    }
+
+    /// Its bilge placed by `model` (for a Mesh, the Obj's whole matrix;
+    /// else its position and rotation): the box round its water, the
+    /// surface's height in the middle of its top, as level as the sea
+    /// however the hull rocks, the water staying as high over its middle.
+    pub fn bilge(&self, model: Mat4) -> Option<[Vec3; 2]> {
+        let [low, high] = match self.shape {
+            DryShape::Mesh => self.bounds?,
+            DryShape::Box => [Vec3::from(self.size) * -0.5, Vec3::from(self.size) * 0.5],
+            DryShape::Sphere => [Vec3::splat(self.size[0] * -0.5), Vec3::splat(self.size[0] * 0.5)],
+            DryShape::Capsule => {
+                let half = Vec3::new(self.size[0], self.size[1].max(self.size[0]), self.size[0]) * 0.5;
+                [-half, half]
+            }
+        };
+        let tall = (high.y - low.y) * model.y_axis.truncate().length();
+        if self.bilge <= 0.0 || tall <= 0.0 {
+            return None;
+        }
+        let level = model.transform_point3((low + high) * 0.5).y - tall * 0.5 + self.bilge.min(tall);
+        let pick = |on: bool, high: f32, low: f32| if on { high } else { low };
+        let corners =
+            (0..8).map(|i| Vec3::new(pick(i & 1 != 0, high.x, low.x), pick(i & 2 != 0, high.y, low.y), pick(i & 4 != 0, high.z, low.z)));
+        let (bottom, top) = corners
+            .map(|corner| model.transform_point3(corner))
+            .fold((Vec3::INFINITY, Vec3::NEG_INFINITY), |(bottom, top), p| (bottom.min(p), top.max(p)));
+        (level > bottom.y).then(|| [bottom, Vec3::new(top.x, level, top.z)])
+    }
+
+    /// Its bilge as the shaders draw it: a Pool of murky water over the box
+    /// round it, which keeps to the inside of the Dry Area its `shape`
+    /// names, plus one, once the bodies are listed.
+    pub(crate) fn gpu_bilge(&self, model: Mat4) -> Option<GpuWaterBody> {
+        let [bottom, top] = self.bilge(model)?;
+        let pool = Pool { size: [top.x - bottom.x, top.z - bottom.z], depth: top.y - bottom.y, murk: 4.0, ..Pool::default() };
+        Some(pool.gpu(Vec3::new((bottom.x + top.x) * 0.5, top.y, (bottom.z + top.z) * 0.5), Quat::IDENTITY))
+    }
+
+    /// The water in its bilge at `point`, inside it, placed by `model` as
+    /// for [`DryArea::bilge`]: the surface's height, when the point is
+    /// under it.
+    pub fn bilge_over(&self, model: Mat4, point: Vec3) -> Option<f32> {
+        self.bilge(model).map(|[_, top]| top.y).filter(|&level| point.y < level)
     }
 }
 
@@ -537,6 +584,20 @@ pub const WATER_WIND: u32 = 4;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_bilge_stays_level_as_its_hull_rocks() {
+        let hull = DryArea { size: [2.0, 2.0, 6.0], bilge: 0.5, ..DryArea::default() };
+        let at = |roll: f32| Mat4::from_rotation_translation(Quat::from_rotation_z(roll), Vec3::new(0.0, 3.0, 0.0));
+        let [bottom, top] = hull.bilge(at(0.0)).unwrap();
+        assert_eq!((bottom.y, top.y), (2.0, 2.5), "half a metre over its bottom");
+        let [bottom, top] = hull.bilge(at(0.3)).unwrap();
+        assert_eq!(top.y, 2.5, "as high over its middle, rocked");
+        assert!(bottom.y < 2.0 && top.x > 1.0, "the box round it, rocked: {bottom} {top}");
+        assert_eq!(hull.bilge_over(at(0.0), Vec3::new(0.0, 2.2, 0.0)), Some(2.5));
+        assert_eq!(hull.bilge_over(at(0.0), Vec3::new(0.0, 2.7, 0.0)), None, "over its water");
+        assert!(DryArea { bilge: 0.0, ..hull }.bilge(at(0.0)).is_none());
+    }
 
     #[test]
     fn a_stream_eases_into_the_water_it_reaches_over_its_mouth() {

@@ -3848,6 +3848,40 @@ fn a_dry_area_keeps_the_sea_out_and_a_pool_holds_water_above_it() {
 }
 
 #[test]
+fn a_dry_area_with_a_bilge_holds_level_water_inside_it() {
+    use voxear_render::{DryArea, Ocean, Sky, Weather};
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    let (eye, look) = (Vec3::new(0.0, 6.0, -8.0), Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.0, -0.35, 1.0).normalize()));
+    world.spawn((Camera::default(), Transform::new(eye, look, Vec3::ONE)));
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.4, -0.6, 0.6).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.6, ..Sky::default() });
+    let plane = renderer.primitive(Primitive::Plane).unwrap();
+    let sand = MaterialDesc { base_color: [0.76, 0.66, 0.48, 1.0], roughness: 0.9, ..MaterialDesc::default() };
+    let sand = renderer.add_material(&sand).unwrap();
+    world.spawn((MeshRenderer::new(plane, sand), Transform::new(Vec3::new(0.0, -3.0, 0.0), Quat::IDENTITY, Vec3::splat(200.0))));
+    world.spawn((Ocean { weather: Weather::Calm, ..Ocean::default() }, Transform::default()));
+    // Two dry holes down past the sand, the right one rolled a little and holding water a metre and a half over the
+    // sand: its bilge two and a half metres up from its middle's bottom.
+    let (dry, wet) = (Vec3::new(-4.0, 0.0, 6.0), Vec3::new(4.0, 0.0, 6.0));
+    let hole = DryArea { size: [3.0, 8.0, 7.0], ..DryArea::default() };
+    world.spawn((hole, Transform::from_position(dry)));
+    let roll = Quat::from_rotation_z(0.15);
+    world.spawn((DryArea { bilge: 2.5, ..hole }, Transform::new(wet, roll, Vec3::ONE)));
+    run(&mut renderer, &world, &mut 10.0, 20);
+    let pixels = renderer.read_pixels().unwrap().2;
+    keep_image("bilge.png", &pixels);
+    let bare = patch_rgb(&pixels, on_screen(eye, look, dry + Vec3::new(0.0, -3.0, 3.0)), 2);
+    assert!(bare[0] > bare[2] + 8, "the sand at the bottom of the dry hole: {bare:?}");
+    // The same sand under the bilge's water, the red taken from it.
+    let under = patch_rgb(&pixels, on_screen(eye, look, wet + Vec3::new(0.0, -1.5, 2.0)), 2);
+    assert!(under[1] > under[0], "the sand under the bilge: {under:?} beside {bare:?}");
+    let sea = patch_rgb(&pixels, on_screen(eye, look, wet + Vec3::new(4.0, 0.0, -1.0)), 3);
+    assert!(sea[2] > sea[0], "the sea beside it: {sea:?}");
+}
+
+#[test]
 fn a_mesh_dry_area_keeps_the_sea_out_of_its_inside() {
     use voxear_render::{DryArea, DryShape, Ocean, Sky, Weather};
     let Some(mut renderer) = renderer() else { return };

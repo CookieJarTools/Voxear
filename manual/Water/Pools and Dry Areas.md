@@ -35,3 +35,7 @@ To keep the sea out of a hull, add a Dry Area to the boat the size of its inside
 A Dry Area with the **Mesh** shape keeps water out of the inside of a closed mesh, placed, turned and scaled with its Obj, so it fits a curved hull exactly. Its **Mesh** is the Obj's own Mesh Renderer's to start with; pick another for a simple closed shape of the hull's inside, up to its deck, which is not drawn. An open hull's own mesh has no inside to keep dry, so give it one of its own.
 
 The mesh's walls do not show as water, as a box's do: the hull is what shows there. Scripts asking about water inside it go by the box round the mesh.
+
+### Bilge
+
+Set a Dry Area's **Bilge** to the depth of water standing in it, in metres from its bottom: water shipped over the side of a boat, or a flooded cellar. It stays level as the hull rocks, as high over the Dry Area's middle as when upright, and fills only the Dry Area's inside. It has no walls of its own: the hull holds it. Scripts asking about the water in a Dry Area find its bilge, and the camera goes under it. 0 leaves it dry.

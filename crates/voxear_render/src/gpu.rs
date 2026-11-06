@@ -427,7 +427,7 @@ pub struct GpuWaterBody {
     /// A Pool's or a Stream's colours, linear.
     pub deep: [f32; 3],
     /// A Dry Area's shape: box, sphere or capsule; a Stream's first point
-    /// in `stream_points`.
+    /// in `stream_points`; for a Pool that is a bilge, its Dry Area plus one.
     pub shape: u32,
     pub scatter: [f32; 3],
     /// How much of the sea's smallest waves a Pool has.

@@ -1190,10 +1190,14 @@ float poolExit(WaterBody pool, float3 world, float3 v)
 }
 
 // Whether water drawn at `world` is kept out: inside a Dry Area, whatever
-// its shape; and, for
-// the sea, over a Pool lower than it, which is dry to the sea.
+// its shape; for the sea, over a Pool lower than it, which is dry to the
+// sea; and for a bilge, outside its Dry Area.
 bool keptDry(Frame* frame, float3 world, uint body)
 {
+    if (body < frame->ocean.pools && buffers()->waterBodies[body].shape != 0)
+    {
+        return !inBilge(frame, buffers()->waterBodies[body], world);
+    }
     if (inDryMesh(frame, world))
     {
         return true;
@@ -1215,7 +1219,7 @@ bool keptDry(Frame* frame, float3 world, uint body)
     {
         WaterBody pool = buffers()->waterBodies[i];
         float3 local = transform(pool.toLocal, float4(world, 1.0)).xyz;
-        if (pool.toWorld.c3.y < frame->ocean.level && all(abs(local.xz) <= pool.size.xz * 0.5) && local.y > -0.5)
+        if (pool.shape == 0 && pool.toWorld.c3.y < frame->ocean.level && all(abs(local.xz) <= pool.size.xz * 0.5) && local.y > -0.5)
         {
             return true;
         }
@@ -1756,8 +1760,9 @@ WallOut wallVertex(uint vertexId : SV_VertexID, uint instance : SV_InstanceID)
     float3 centre;
     if (water.kind == WATER_POOL)
     {
-        // From over its surface as high as its waves can rise, down as deep as it is; no lid.
-        if (face == 2)
+        // From over its surface as high as its waves can rise, down as deep as it is; no lid. A bilge's hull is its
+        // walls.
+        if (face == 2 || water.shape != 0)
         {
             return nothingWall();
         }
@@ -2000,7 +2005,8 @@ Under underwaterAt(Frame* frame, float2 pixel)
     {
         WaterBody pool = buffers()->waterBodies[i];
         float3 local = transform(pool.toLocal, float4(near, 1.0)).xyz;
-        if (pool.liquid == LIQUID_WATER && all(abs(local.xz) <= pool.size.xz * 0.5) && local.y < 0.0 && local.y > -pool.size.y)
+        bool held = pool.shape == 0 || inBilge(frame, pool, near);
+        if (pool.liquid == LIQUID_WATER && held && all(abs(local.xz) <= pool.size.xz * 0.5) && local.y < 0.0 && local.y > -pool.size.y)
         {
             deep = pool.deep;
             scatter = pool.scatter;

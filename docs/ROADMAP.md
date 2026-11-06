@@ -1240,7 +1240,9 @@ The sea, lakes, rivers and lava, built in. Manual: `manual/Water`.
   of foam. `Obj.Buoyancy` gives scripts a floating Obj's settings.
 - **Streams meeting:** a Stream of water ending in another that runs on past it eases into it as a tributary, the
   river churning white below the join; two ending in each other meet head on, fading into each other, both churning.
-- Still to do: spray and splashes (with particles, M7), and a bilge in Dry Areas.
+- **Bilges:** a Dry Area's Bilge is water standing in it, level as its hull rocks: a Pool over the box round it
+  that keeps to the Dry Area's inside, with no walls.
+- Still to do: spray and splashes (with particles, M7).
 
 ## M6 — Animation
 

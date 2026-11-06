@@ -97,20 +97,21 @@ bool particleSpawn(ParticleSystem system, uint slot, out float spawn, out uint r
     return true;
 }
 
-// The light falling on a puff of smoke at `world`: the sky's and the GI's,
-// and the sun's and the lamps', each as a ball takes it, lit on one side.
+// The light falling on a puff of smoke at `world`: the sky's and the GI's
+// from every way, as fog takes it, since smoke scatters light that comes
+// from anywhere; and the sun's and the lamps', each as a ball takes it, lit
+// on one side.
 float3 particleLight(Frame* frame, float3 world, float4 clip)
 {
     bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
     float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
     float3 toCamera = normalizeOr(frame->cameraPosition - world, float3(0.0, 1.0, 0.0));
-    Surface s;
-    s.normal = toCamera;
-    s.view = toCamera;
-    s.roughness = 1.0;
-    s.diffuse = 1.0;
-    s.f0 = 0.0;
-    float3 ambient = ambientLight(frame, world, s, sunLight, atmosphere);
+    float3 ambient = atmosphere ? atmosphereAmbient(frame, 0.5, sunLight)
+        : lerp(frame->groundColor, lerp(frame->skyHorizon, frame->skyZenith, 0.5), 0.5) * 0.35 * frame->ambient;
+    if (frame->ddgi.enabled != 0)
+    {
+        ambient = ddgiLightAround(frame, world, toCamera, ambient);
+    }
     float3 lit = sunLight * sunShadow(frame, world, -frame->sunDirection);
     float2 pixel = (clip.xy / clip.w * 0.5 + 0.5) * float2(frame->viewport);
     uint base = clusterAt(frame, pixel, max(clip.w, frame->near)) * (frame->clusterMaxLights + 1);

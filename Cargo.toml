@@ -27,6 +27,7 @@ voxear_physics = { path = "crates/voxear_physics" }
 voxear_physics2d = { path = "crates/voxear_physics2d" }
 voxear_localization = { path = "crates/voxear_localization" }
 voxear_packages = { path = "crates/voxear_packages" }
+voxear_net = { path = "crates/voxear_net" }
 
 anyhow = "1"
 ash = "0.38"
@@ -78,6 +79,12 @@ symphonia = { version = "0.6", default-features = false, features = ["opt-simd",
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Gamepads: XInput on Windows, evdev through udev on Linux, as SDL reads them.
 gilrs = "0.11"
+# Networking: ChaCha20-Poly1305 for every packet and the connect tokens, the system's randomness for keys,
+# sockets with large buffers, and batched sends and receives on Linux.
+chacha20poly1305 = "0.10"
+getrandom = "0.3"
+socket2 = "0.6"
+libc = "0.2"
 # 2D physics: Box2D v3, built from its C source, with ready-made bindings (no libclang needed).
 boxdd-sys = "0.6"
 # Language codes and their fallbacks (`pt-BR`, then `pt`), as ICU works them out; already in the build through

@@ -11,7 +11,7 @@
 //! so an old cook is never read as a new one.
 
 use anyhow::{Context, Result, bail, ensure};
-use voxear_core::math::{Quat, Vec3};
+use voxear_core::math::{Mat4, Quat, Vec3};
 
 use crate::{
     assets::MaterialDesc,
@@ -20,14 +20,17 @@ use crate::{
     mesh::{MeshTriangles, Vertex},
     meshlets::MeshMeshlets,
     payload::Payload,
+    skeleton::{Bone, BonePose, Clip, ModelAnimation, Skeleton, Skin},
     texture_codec,
 };
 
 /// 3: the GPU data moved into one payload, GDeflate-compressed in tiles, and
 /// every texture carries its whole mip chain. 4: each LOD's indices are in
 /// meshlet order, and its meshlets ship in the payload. 5: coarse LODs past
-/// a mesh's seams, by sloppy simplification (see `lod`).
-pub const COOKED_VERSION: u32 = 7;
+/// a mesh's seams, by sloppy simplification (see `lod`). 8: skinned meshes'
+/// skin data in the payload, nodes' skins, and the model's skeleton, skins
+/// and clips.
+pub const COOKED_VERSION: u32 = 8;
 const MAGIC: &[u8; 8] = b"VXMODEL\0";
 const NONE: u32 = u32::MAX;
 /// Where each part of the payload starts, a multiple of a compressed
@@ -41,6 +44,7 @@ pub struct CookedModel {
     pub(crate) textures: Vec<CookedTexture>,
     pub(crate) materials: Vec<PreparedMaterial>,
     pub(crate) nodes: Vec<PreparedNode>,
+    pub(crate) animation: Option<ModelAnimation>,
     pub(crate) payload: Payload,
 }
 
@@ -60,6 +64,9 @@ pub(crate) struct CookedMesh {
     /// the vertices.
     pub center: Vec3,
     pub radius: f32,
+    /// Where a skinned mesh's skin data starts in the payload, one for each
+    /// vertex; none for a rigid one.
+    pub skin: (u64, u32),
 }
 
 pub(crate) struct CookedTexture {
@@ -96,7 +103,9 @@ impl PreparedModel {
             let counts = lods.iter().zip(&gathered.counts);
             let lods = counts.map(|(lod, &meshlets)| (lod.error, lod.indices.len() as u32, meshlets)).collect();
             let (center, radius) = mesh.bounds();
+            let skin = (place(bytemuck::cast_slice(&mesh.skin)), mesh.skin.len() as u32);
             meshes.push(CookedMesh {
+                skin,
                 vertices,
                 indices,
                 lods,
@@ -133,6 +142,7 @@ impl PreparedModel {
             textures,
             materials: self.materials.clone(),
             nodes: self.nodes.clone(),
+            animation: self.animation.clone(),
             payload: Payload::compress(data)?,
         })
     }
@@ -184,7 +194,7 @@ impl CookedModel {
                 w.u32(count);
                 w.u32(meshlets);
             }
-            for (offset, count) in [mesh.meshlets, mesh.meshlet_vertices, mesh.meshlet_triangles] {
+            for (offset, count) in [mesh.meshlets, mesh.meshlet_vertices, mesh.meshlet_triangles, mesh.skin] {
                 w.u64(offset);
                 w.u32(count);
             }
@@ -231,7 +241,9 @@ impl CookedModel {
                 }
                 None => w.u32(0),
             }
+            w.option(node.skin.map(|skin| skin as u32));
         }
+        w.animation(self.animation.as_ref());
         match &self.payload {
             Payload::Raw(bytes) => {
                 w.u32(0);
@@ -277,7 +289,9 @@ fn read(path: &str, bytes: &[u8]) -> Result<CookedModel> {
         }
         let (meshlets, meshlet_vertices, meshlet_triangles) =
             ((r.u64()?, r.u32()?), (r.u64()?, r.u32()?), (r.u64()?, r.u32()?));
+        let skin = (r.u64()?, r.u32()?);
         meshes.push(CookedMesh {
+            skin,
             vertices,
             indices,
             lods,
@@ -332,8 +346,14 @@ fn read(path: &str, bytes: &[u8]) -> Result<CookedModel> {
         let material = r.option()?.map(|m| m as usize);
         let mesh_part = r.str()?;
         let material_part = if r.u32()? != 0 { Some(r.str()?) } else { None };
+        let skin = r.option()?.map(|skin| skin as usize);
         ensure!(mesh < meshes.len(), "a node uses mesh {mesh}, which is not there");
-        nodes.push(PreparedNode { name, position, rotation, scale, mesh, material, mesh_part, material_part });
+        nodes.push(PreparedNode { name, position, rotation, scale, mesh, material, mesh_part, material_part, skin });
+    }
+    let animation = r.animation()?;
+    if let Some(skin) = nodes.iter().filter_map(|node| node.skin).max() {
+        let found = animation.as_ref().is_some_and(|a| skin < a.skins.len());
+        ensure!(found, "a node uses skin {skin}, which is not there");
     }
     let payload = match r.u32()? {
         0 => {
@@ -370,6 +390,13 @@ fn read(path: &str, bytes: &[u8]) -> Result<CookedModel> {
             "a mesh's meshlets lie outside the payload"
         );
     }
+    for mesh in &meshes {
+        ensure!(
+            mesh.skin.1 == 0 || mesh.skin.1 == mesh.vertices.1,
+            "a mesh's skin data is not one for each vertex"
+        );
+        ensure!(fits((mesh.skin.0, u64::from(mesh.skin.1) * 16)), "a mesh's skin data lies outside the payload");
+    }
     for texture in &textures {
         ensure!(
             texture.mips.iter().all(|&(o, l)| fits((o, u64::from(l)))),
@@ -377,7 +404,7 @@ fn read(path: &str, bytes: &[u8]) -> Result<CookedModel> {
             texture.name
         );
     }
-    Ok(CookedModel { path: path.to_string(), meshes, textures, materials, nodes, payload })
+    Ok(CookedModel { path: path.to_string(), meshes, textures, materials, nodes, animation, payload })
 }
 
 struct Writer(Vec<u8>);
@@ -412,6 +439,38 @@ impl Writer {
 
     fn option(&mut self, value: Option<u32>) {
         self.u32(value.unwrap_or(NONE));
+    }
+
+    fn pose(&mut self, pose: &BonePose) {
+        self.f32s(&pose.translation.to_array());
+        self.f32s(&pose.rotation.to_array());
+        self.f32s(&pose.scale.to_array());
+    }
+
+    /// The model's skeleton, skins and clips, after a flag saying it has them.
+    fn animation(&mut self, animation: Option<&ModelAnimation>) {
+        let Some(animation) = animation else { return self.u32(0) };
+        self.u32(1);
+        self.u32(animation.skeleton.bones.len() as u32);
+        for bone in &animation.skeleton.bones {
+            self.str(&bone.name);
+            self.option(bone.parent.map(|p| p as u32));
+            self.pose(&bone.rest);
+        }
+        self.u32(animation.skins.len() as u32);
+        for skin in &animation.skins {
+            self.u32(skin.joints.len() as u32);
+            for (&joint, bind) in skin.joints.iter().zip(&skin.inverse_binds) {
+                self.u32(joint as u32);
+                self.f32s(&bind.to_cols_array());
+            }
+        }
+        self.u32(animation.clips.len() as u32);
+        for clip in &animation.clips {
+            self.str(&clip.name);
+            self.u32(clip.frames as u32);
+            clip.poses.iter().for_each(|pose| self.pose(pose));
+        }
     }
 }
 
@@ -456,6 +515,47 @@ impl Reader<'_> {
 
     fn option(&mut self) -> Result<Option<u32>> {
         Ok(Some(self.u32()?).filter(|&v| v != NONE))
+    }
+
+    fn pose(&mut self) -> Result<BonePose> {
+        let translation = Vec3::from_array(self.f32s()?);
+        let rotation = Quat::from_array(self.f32s()?);
+        let scale = Vec3::from_array(self.f32s()?);
+        Ok(BonePose { translation, rotation, scale })
+    }
+
+    fn animation(&mut self) -> Result<Option<ModelAnimation>> {
+        if self.u32()? == 0 {
+            return Ok(None);
+        }
+        let mut bones = Vec::new();
+        for index in 0..self.u32()? as usize {
+            let name = self.str()?;
+            let parent = self.option()?.map(|p| p as usize);
+            ensure!(parent.is_none_or(|p| p < index), "bone {name} comes before its parent");
+            bones.push(Bone { name, parent, rest: self.pose()? });
+        }
+        let mut skins = Vec::new();
+        for _ in 0..self.u32()? {
+            let mut skin = Skin::default();
+            for _ in 0..self.u32()? {
+                let joint = self.u32()? as usize;
+                ensure!(joint < bones.len(), "a skin's joint is bone {joint}, which is not there");
+                skin.joints.push(joint);
+                skin.inverse_binds.push(Mat4::from_cols_array(&self.f32s()?));
+            }
+            skins.push(skin);
+        }
+        let mut clips = Vec::new();
+        for _ in 0..self.u32()? {
+            let name = self.str()?;
+            let frames = self.u32()? as usize;
+            let count = frames.checked_mul(bones.len()).context("a clip too long to read")?;
+            ensure!(count * 40 <= self.bytes.len() - self.at, "clip {name} runs past the file's end");
+            let poses = (0..count).map(|_| self.pose()).collect::<Result<_>>()?;
+            clips.push(Clip { name, frames, poses });
+        }
+        Ok(Some(ModelAnimation { skeleton: Skeleton { bones }, skins, clips }))
     }
 }
 
@@ -502,6 +602,121 @@ pub(crate) mod tests {
             data(&png, "image/png")
         )
         .into_bytes()
+    }
+
+    /// A bar two metres tall bound to two bones, its bottom to "Root" and
+    /// its top to "Tip" a metre up, and a clip, "Bend", turning the tip a
+    /// quarter turn about Z over a second. Its mesh's node sits five metres
+    /// along X, which a skinned mesh's place ignores.
+    pub(crate) fn bent_bar() -> Vec<u8> {
+        let mut buffer = Vec::new();
+        let mut put = |values: &[f32]| values.iter().for_each(|v| buffer.extend_from_slice(&v.to_le_bytes()));
+        put(&[-0.1, 0.0, 0.0, 0.1, 0.0, 0.0, 0.1, 2.0, 0.0, -0.1, 2.0, 0.0]);
+        let mut rest = Vec::new();
+        for index in [0u16, 1, 2, 0, 2, 3] {
+            rest.extend_from_slice(&index.to_le_bytes());
+        }
+        for joints in [[0u16, 0, 0, 0], [0, 0, 0, 0], [1, 0, 0, 0], [1, 0, 0, 0]] {
+            joints.iter().for_each(|j| rest.extend_from_slice(&j.to_le_bytes()));
+        }
+        buffer.extend(rest);
+        let mut put = |values: &[f32]| values.iter().for_each(|v| buffer.extend_from_slice(&v.to_le_bytes()));
+        put(&[1.0, 0.0, 0.0, 0.0].repeat(4));
+        put(&[1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]);
+        put(&[1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, -1.0, 0.0, 1.0]);
+        put(&[0.0, 1.0]);
+        let half = std::f32::consts::FRAC_PI_4;
+        put(&[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, half.sin(), half.cos()]);
+        let data = format!("data:application/octet-stream;base64,{}", base64::encode(&buffer));
+        format!(
+            r#"{{
+              "asset": {{ "version": "2.0" }},
+              "buffers": [{{ "uri": "{data}", "byteLength": {} }}],
+              "bufferViews": [
+                {{ "buffer": 0, "byteOffset": 0, "byteLength": 48 }},
+                {{ "buffer": 0, "byteOffset": 48, "byteLength": 12 }},
+                {{ "buffer": 0, "byteOffset": 60, "byteLength": 32 }},
+                {{ "buffer": 0, "byteOffset": 92, "byteLength": 64 }},
+                {{ "buffer": 0, "byteOffset": 156, "byteLength": 128 }},
+                {{ "buffer": 0, "byteOffset": 284, "byteLength": 8 }},
+                {{ "buffer": 0, "byteOffset": 292, "byteLength": 32 }}
+              ],
+              "accessors": [
+                {{ "bufferView": 0, "componentType": 5126, "count": 4, "type": "VEC3", "min": [-0.1, 0, 0], "max": [0.1, 2, 0] }},
+                {{ "bufferView": 1, "componentType": 5123, "count": 6, "type": "SCALAR" }},
+                {{ "bufferView": 2, "componentType": 5123, "count": 4, "type": "VEC4" }},
+                {{ "bufferView": 3, "componentType": 5126, "count": 4, "type": "VEC4" }},
+                {{ "bufferView": 4, "componentType": 5126, "count": 2, "type": "MAT4" }},
+                {{ "bufferView": 5, "componentType": 5126, "count": 2, "type": "SCALAR", "min": [0], "max": [1] }},
+                {{ "bufferView": 6, "componentType": 5126, "count": 2, "type": "VEC4" }}
+              ],
+              "meshes": [{{ "primitives": [{{ "attributes": {{ "POSITION": 0, "JOINTS_0": 2, "WEIGHTS_0": 3 }}, "indices": 1 }}] }}],
+              "skins": [{{ "joints": [0, 1], "inverseBindMatrices": 4 }}],
+              "animations": [{{ "name": "Bend",
+                "samplers": [{{ "input": 5, "output": 6 }}],
+                "channels": [{{ "sampler": 0, "target": {{ "node": 1, "path": "rotation" }} }}] }}],
+              "nodes": [
+                {{ "name": "Root", "children": [1] }},
+                {{ "name": "Tip", "translation": [0, 1, 0] }},
+                {{ "name": "Bar", "mesh": 0, "skin": 0, "translation": [5, 0, 0] }}
+              ],
+              "scenes": [{{ "nodes": [0, 2] }}]
+            }}"#,
+            buffer.len()
+        )
+        .into_bytes()
+    }
+
+    #[test]
+    fn a_skinned_models_skeleton_skin_and_clip_are_read_and_cooked() {
+        let gltf = bent_bar();
+        let model = crate::gltf_import::prepare("Models/Bar.gltf", &mut |_| Ok(gltf.clone())).unwrap();
+        let animation = model.animation.as_ref().expect("a skeleton and a clip");
+        let names: Vec<_> = animation.skeleton.bones.iter().map(|b| (b.name.as_str(), b.parent)).collect();
+        assert_eq!(names, [("Root", None), ("Tip", Some(0))]);
+        assert_eq!(animation.skeleton.bones[1].rest.translation, Vec3::new(0.0, 1.0, 0.0));
+        assert_eq!(animation.skins[0].joints, [0, 1]);
+        assert_eq!(animation.skins[0].inverse_binds[1].w_axis.truncate(), Vec3::new(0.0, -1.0, 0.0));
+        let node = &model.nodes[0];
+        assert_eq!((node.skin, node.position), (Some(0), Vec3::ZERO), "placed by its bones, not its node");
+        let (mesh, _) = &model.meshes[node.mesh];
+        assert_eq!(mesh.skin.len(), mesh.vertices.len());
+        for (vertex, skin) in mesh.vertices.iter().zip(&mesh.skin) {
+            let joint = if vertex.position[1] > 1.0 { 1 } else { 0 };
+            assert_eq!((skin.joints[0], skin.weights[0]), (joint, 65535));
+        }
+        let clip = &animation.clips[0];
+        assert_eq!((clip.name.as_str(), clip.frames), ("Bend", 61));
+        // Half way, an eighth of a turn; mirrored on X, the other way about Z.
+        let half = clip.frame(30)[1].rotation;
+        assert!((half.z + (std::f32::consts::PI / 8.0).sin()).abs() < 1e-3, "{half}");
+
+        let bytes = model.cook().unwrap().to_bytes();
+        let back = CookedModel::from_bytes("Models/Bar.gltf", &bytes).unwrap();
+        assert_eq!(back.animation.as_ref(), Some(animation));
+        assert_eq!(back.nodes[0].skin, Some(0));
+        let payload = back.payload.unpack().unwrap();
+        let (offset, count) = (back.meshes[0].skin.0 as usize, back.meshes[0].skin.1 as usize);
+        assert_eq!(&payload[offset..offset + count * 16], bytemuck::cast_slice::<_, u8>(&mesh.skin));
+        assert_eq!(back.to_bytes(), bytes);
+    }
+
+    /// Reads the model at `VOXEAR_TEST_MODEL`, when set, and reports its
+    /// skeleton and clips: for checking a real file by hand.
+    #[test]
+    fn a_model_named_by_the_environment_reads_its_animation() {
+        let Ok(path) = std::env::var("VOXEAR_TEST_MODEL") else { return };
+        let model = crate::gltf_import::prepare(&path, &mut |file| Ok(std::fs::read(file)?)).unwrap();
+        let animation = model.animation.as_ref().expect("an animated model");
+        let skinned = model.meshes.iter().filter(|(mesh, _)| !mesh.skin.is_empty()).count();
+        let (bones, skins) = (animation.skeleton.bones.len(), animation.skins.len());
+        eprintln!("{bones} bones, {skins} skins, {skinned} skinned meshes");
+        for clip in &animation.clips {
+            eprintln!("  {} {:.2}s", clip.name, clip.duration());
+        }
+        let bytes = model.cook().unwrap().to_bytes();
+        assert_eq!(CookedModel::from_bytes(&path, &bytes).unwrap().animation.as_ref(), Some(animation));
+        eprintln!("cooked to {} KB", bytes.len() / 1024);
     }
 
     #[test]

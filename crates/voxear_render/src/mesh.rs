@@ -37,6 +37,9 @@ impl Default for Vertex {
 pub struct MeshData {
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
+    /// For a skinned mesh, which bones move each vertex, one for each of
+    /// `vertices`; empty for a rigid one.
+    pub skin: Vec<crate::skeleton::SkinVertex>,
 }
 
 /// A mesh's triangles, for physics and the editor's picking: its points,

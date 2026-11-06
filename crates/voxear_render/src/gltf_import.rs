@@ -27,6 +27,7 @@ use crate::{
     lod::Lod,
     mesh::{MeshData, Vertex},
     mesh_tools::{self, FromFile},
+    skeleton::{Bone, BonePose, CLIP_RATE, Clip, ModelAnimation, Skeleton, Skin, SkinVertex},
     texture_codec,
 };
 
@@ -35,6 +36,8 @@ use crate::{
 pub struct ImportedModel {
     pub nodes: Vec<ImportedNode>,
     pub textures: Vec<TextureId>,
+    /// Its skeleton, skins and clips, for a model made to animate.
+    pub animation: Option<std::sync::Arc<ModelAnimation>>,
     /// Each material part, `material<index>`, with its name in the file, in
     /// the order the parts first draw.
     pub materials: Vec<(String, String)>,
@@ -55,6 +58,9 @@ pub struct ImportedNode {
     pub mesh_part: String,
     /// `material<index>`, or `None` for glTF's default material.
     pub material_part: Option<String>,
+    /// The skin that moves its mesh, among the model's animation's skins;
+    /// its place is then the model's own, as the skin's bones place it.
+    pub skin: Option<usize>,
 }
 
 /// Reads one of a model's files by project path: the `.gltf`, `.glb` or
@@ -70,6 +76,7 @@ pub struct PreparedModel {
     pub(crate) textures: Vec<PreparedTexture>,
     pub(crate) materials: Vec<PreparedMaterial>,
     pub(crate) nodes: Vec<PreparedNode>,
+    pub(crate) animation: Option<ModelAnimation>,
 }
 
 pub(crate) struct PreparedTexture {
@@ -180,6 +187,8 @@ pub(crate) struct PreparedNode {
     pub material: Option<usize>,
     pub mesh_part: String,
     pub material_part: Option<String>,
+    /// The skin that moves its mesh (see [`ImportedNode::skin`]).
+    pub skin: Option<usize>,
 }
 
 impl PreparedModel {
@@ -302,6 +311,7 @@ fn read_model(path: &str, read: &mut ReadFile, settings: &ModelImport) -> Result
             textures: Vec::new(),
             materials: Vec::new(),
             nodes: Vec::new(),
+            animation: None,
         },
         meshes: HashMap::new(),
         textures: HashMap::new(),
@@ -311,6 +321,9 @@ fn read_model(path: &str, read: &mut ReadFile, settings: &ModelImport) -> Result
     for node in scene.nodes() {
         preparer.visit(&node, Mat4::IDENTITY).with_context(|| format!("reading {path}"))?;
     }
+    let size = preparer.size;
+    preparer.model.animation =
+        read_animation(&document, &scene, &preparer.buffers, size).with_context(|| format!("reading {path}"))?;
     Ok(preparer.model)
 }
 
@@ -322,7 +335,8 @@ pub fn upload(gpu: &Gpu, bindless: &mut Bindless, assets: &mut Assets, model: &P
     for (data, lods) in &model.meshes {
         meshes.push(assets.add_mesh_with_lods(gpu, data, lods)?);
     }
-    Ok(imported(assets, &model.materials, &model.nodes, &meshes, &materials, textures))
+    let animation = model.animation.clone().map(std::sync::Arc::new);
+    Ok(imported(assets, &model.materials, &model.nodes, &meshes, &materials, (textures, animation)))
 }
 
 /// Puts a model prepared again, as with other import settings, behind the
@@ -367,7 +381,8 @@ pub fn reupload(
         assets.set_material(gpu, handle, &material_desc(material, &textures))?;
     }
     old.textures.iter().for_each(|&texture| assets.free_texture(texture, frame));
-    Ok(imported(assets, &model.materials, &model.nodes, &meshes, &materials, textures))
+    let animation = model.animation.clone().map(std::sync::Arc::new);
+    Ok(imported(assets, &model.materials, &model.nodes, &meshes, &materials, (textures, animation)))
 }
 
 fn upload_textures(
@@ -415,7 +430,8 @@ pub fn upload_cooked(
     let device = gpu.decompression.as_ref().filter(|_| decompress);
     let (meshes, textures) = assets.add_cooked(gpu, bindless, model, device)?;
     let materials = add_materials(gpu, assets, &model.materials, &textures)?;
-    Ok(imported(assets, &model.materials, &model.nodes, &meshes, &materials, textures))
+    let animation = model.animation.clone().map(std::sync::Arc::new);
+    Ok(imported(assets, &model.materials, &model.nodes, &meshes, &materials, (textures, animation)))
 }
 
 fn add_materials(
@@ -445,7 +461,7 @@ fn imported(
     nodes: &[PreparedNode],
     meshes: &[MeshHandle],
     materials: &[MaterialHandle],
-    textures: Vec<TextureId>,
+    (textures, animation): (Vec<TextureId>, Option<std::sync::Arc<ModelAnimation>>),
 ) -> ImportedModel {
     let mut names: Vec<(String, String)> = Vec::new();
     for node in nodes {
@@ -465,9 +481,10 @@ fn imported(
             material: node.material.map_or(assets.default_material, |m| materials[m]),
             mesh_part: node.mesh_part.clone(),
             material_part: node.material_part.clone(),
+            skin: node.skin,
         })
         .collect();
-    ImportedModel { nodes, textures, materials: names }
+    ImportedModel { nodes, textures, materials: names, animation }
 }
 
 /// Reads, processes and uploads a model in one go.
@@ -505,7 +522,10 @@ impl Preparer {
         let world = parent * local;
 
         if let Some(mesh) = node.mesh() {
-            let (scale, rotation, position) = world.to_scale_rotation_translation();
+            // A skinned mesh is where its skin's bones put it, in the model's own space, whatever its node says.
+            let skin = node.skin().map(|skin| skin.index());
+            let placed = if skin.is_some() { Mat4::IDENTITY } else { world };
+            let (scale, rotation, position) = placed.to_scale_rotation_translation();
             let position = position * self.size;
             for primitive in mesh.primitives() {
                 if primitive.mode() != gltf::mesh::Mode::Triangles {
@@ -522,6 +542,7 @@ impl Preparer {
                     material,
                     mesh_part: format!("mesh{}.{}", mesh.index(), primitive.index()),
                     material_part: primitive.material().index().map(|i| format!("material{i}")),
+                    skin,
                 });
             }
         }
@@ -546,6 +567,12 @@ impl Preparer {
             Some(indices) => indices.into_u32().collect(),
             None => (0..positions.len() as u32).collect(),
         };
+        let joints: Vec<[u16; 4]> = reader.read_joints(0).map(|j| j.into_u16().collect()).unwrap_or_default();
+        let weights: Vec<[f32; 4]> = reader.read_weights(0).map(|w| w.into_f32().collect()).unwrap_or_default();
+        let skin = match joints.len() == positions.len() && weights.len() == positions.len() {
+            true => joints.iter().zip(&weights).map(|(&j, &w)| SkinVertex::new(j, w)).collect(),
+            false => Vec::new(),
+        };
 
         let vertices = positions
             .iter()
@@ -558,7 +585,7 @@ impl Preparer {
                 wind: colors.get(i).copied().unwrap_or(crate::mesh::NO_WIND_MASKS),
             })
             .collect();
-        let mut data = MeshData { vertices, indices };
+        let mut data = MeshData { vertices, indices, skin };
         data.mirror_x();
         let file = FromFile { normals: !normals.is_empty(), tangents: !tangents.is_empty(), colors: !colors.is_empty() };
         self.model.meshes.push(mesh_tools::finish(data, &self.settings, self.size, file));
@@ -764,6 +791,159 @@ fn percent_decode(text: &str) -> String {
         }
     }
     String::from_utf8_lossy(&out).into_owned()
+}
+
+/// A model's skeleton, skins and clips, in Voxear's space (mirrored on X,
+/// and `size` metres a unit): `None` for a model with neither skins nor
+/// animations. The skeleton holds every bone of the skins and every node
+/// the animations move, with the nodes above them, so each keeps its
+/// parent; in the order they are met down the scene, parents first.
+fn read_animation(
+    document: &gltf::Document,
+    scene: &gltf::Scene,
+    buffers: &[gltf::buffer::Data],
+    size: f32,
+) -> Result<Option<ModelAnimation>> {
+    if document.skins().len() == 0 && document.animations().len() == 0 {
+        return Ok(None);
+    }
+    // Each node's parent, down from the scene's.
+    let mut parents: HashMap<usize, usize> = HashMap::new();
+    let mut order = Vec::new();
+    let mut stack: Vec<gltf::Node> = scene.nodes().collect();
+    stack.reverse();
+    while let Some(node) = stack.pop() {
+        order.push(node.index());
+        let children: Vec<gltf::Node> = node.children().collect();
+        for child in children.into_iter().rev() {
+            parents.insert(child.index(), node.index());
+            stack.push(child);
+        }
+    }
+    let mut wanted: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    let skin_joints = document.skins().flat_map(|skin| skin.joints().map(|joint| joint.index()).collect::<Vec<_>>());
+    let moved = document.animations().flat_map(|a| a.channels().map(|c| c.target().node().index()).collect::<Vec<_>>());
+    for node in skin_joints.chain(moved) {
+        let mut at = Some(node);
+        while let Some(index) = at.filter(|index| wanted.insert(*index)) {
+            at = parents.get(&index).copied();
+        }
+    }
+    let nodes: Vec<gltf::Node> = document.nodes().collect();
+    let mut bone_of: HashMap<usize, usize> = HashMap::new();
+    let mut bones = Vec::new();
+    for index in order.into_iter().filter(|index| wanted.contains(index)) {
+        let node = &nodes[index];
+        let (translation, rotation, scale) = node.transform().decomposed();
+        bone_of.insert(index, bones.len());
+        bones.push(Bone {
+            name: node.name().map_or_else(|| format!("bone{index}"), str::to_string),
+            parent: parents.get(&index).and_then(|parent| bone_of.get(parent).copied()),
+            rest: BonePose {
+                translation: mirror(translation) * size,
+                rotation: mirror_rotation(rotation),
+                scale: Vec3::from(scale),
+            },
+        });
+    }
+    // Into Voxear's space and back, for the bind matrices: mirrored on X and sized.
+    let into = Mat4::from_scale(Vec3::new(-size, size, size));
+    let back = into.inverse();
+    let mut skins = Vec::new();
+    for skin in document.skins() {
+        let reader = skin.reader(|buffer| Some(&buffers[buffer.index()]));
+        let joints: Vec<usize> = skin.joints().map(|joint| bone_of[&joint.index()]).collect();
+        let binds: Vec<Mat4> = match reader.read_inverse_bind_matrices() {
+            Some(matrices) => matrices.map(|m| into * Mat4::from_cols_array_2d(&m) * back).collect(),
+            None => vec![Mat4::IDENTITY; joints.len()],
+        };
+        ensure!(binds.len() == joints.len(), "a skin has {} joints but {} bind matrices", joints.len(), binds.len());
+        skins.push(Skin { joints, inverse_binds: binds });
+    }
+    let skeleton = Skeleton { bones };
+    let mut clips = Vec::new();
+    for animation in document.animations() {
+        clips.push(read_clip(&animation, buffers, &skeleton, &bone_of, size)?);
+    }
+    Ok(Some(ModelAnimation { skeleton, skins, clips }))
+}
+
+/// One animation, every bone's pose sampled at `CLIP_RATE` from its start to
+/// its last key; a bone it does not move stays at rest.
+fn read_clip(
+    animation: &gltf::Animation,
+    buffers: &[gltf::buffer::Data],
+    skeleton: &Skeleton,
+    bone_of: &HashMap<usize, usize>,
+    size: f32,
+) -> Result<Clip> {
+    use gltf::animation::{Interpolation, util::ReadOutputs};
+    let name = animation.name().map_or_else(|| format!("clip{}", animation.index()), str::to_string);
+    let mut end = 0.0f32;
+    let mut tracks = Vec::new();
+    for channel in animation.channels() {
+        let Some(&bone) = bone_of.get(&channel.target().node().index()) else { continue };
+        let reader = channel.reader(|buffer| Some(&buffers[buffer.index()]));
+        let times: Vec<f32> = reader.read_inputs().context("a channel has no times")?.collect();
+        let values: Vec<[f32; 4]> = match reader.read_outputs().context("a channel has no values")? {
+            ReadOutputs::Translations(t) => t.map(|[x, y, z]| [x, y, z, 0.0]).collect(),
+            ReadOutputs::Rotations(r) => r.into_f32().collect(),
+            ReadOutputs::Scales(s) => s.map(|[x, y, z]| [x, y, z, 0.0]).collect(),
+            ReadOutputs::MorphTargetWeights(_) => continue,
+        };
+        // A cubic spline's keys come with a tangent either side; the value is the middle of each three.
+        let values: Vec<[f32; 4]> = match channel.sampler().interpolation() {
+            Interpolation::CubicSpline => values.chunks(3).filter_map(|key| key.get(1).copied()).collect(),
+            _ => values,
+        };
+        let step = channel.sampler().interpolation() == Interpolation::Step;
+        end = end.max(times.last().copied().unwrap_or(0.0));
+        tracks.push((bone, channel.target().property(), times, values, step));
+    }
+    let frames = (end * CLIP_RATE).round() as usize + 1;
+    let rest = skeleton.rest();
+    let mut poses = Vec::with_capacity(frames * rest.len());
+    for _ in 0..frames {
+        poses.extend_from_slice(&rest);
+    }
+    for (bone, property, times, values, step) in tracks {
+        for frame in 0..frames {
+            let value = key_at(&times, &values, frame as f32 / CLIP_RATE, step, property);
+            let pose = &mut poses[frame * rest.len() + bone];
+            match property {
+                gltf::animation::Property::Translation => {
+                    pose.translation = mirror([value[0], value[1], value[2]]) * size;
+                }
+                gltf::animation::Property::Rotation => pose.rotation = mirror_rotation(value),
+                gltf::animation::Property::Scale => pose.scale = Vec3::new(value[0], value[1], value[2]),
+                gltf::animation::Property::MorphTargetWeights => {}
+            }
+        }
+    }
+    Ok(Clip { name, frames, poses })
+}
+
+/// A track's value at `time`: between the keys either side, or the earlier
+/// for a stepped one; rotations along the shorter way round.
+fn key_at(times: &[f32], values: &[[f32; 4]], time: f32, step: bool, property: gltf::animation::Property) -> [f32; 4] {
+    let Some(&last) = values.last() else { return [0.0, 0.0, 0.0, 1.0] };
+    let after = times.partition_point(|&t| t <= time);
+    if after == 0 {
+        return values[0];
+    }
+    if after >= times.len().min(values.len()) {
+        return last;
+    }
+    let (a, b) = (values[after - 1], values[after]);
+    if step {
+        return a;
+    }
+    let t = ((time - times[after - 1]) / (times[after] - times[after - 1]).max(1e-6)).clamp(0.0, 1.0);
+    if property == gltf::animation::Property::Rotation {
+        let q = Quat::from_array(a).normalize().slerp(Quat::from_array(b).normalize(), t);
+        return q.to_array();
+    }
+    std::array::from_fn(|i| a[i] + (b[i] - a[i]) * t)
 }
 
 fn mirror(v: [f32; 3]) -> Vec3 {

@@ -43,6 +43,7 @@ mod particles;
 mod passes;
 mod dice;
 mod mist;
+mod skeleton;
 mod smoke;
 mod payload;
 mod pipelines;
@@ -89,6 +90,7 @@ pub use lod::{LodInfo, MAX_LODS, lod_at, lod_at_share, screen_share};
 pub use lod_group::{LodCamera, LodChoices, LodGroup, LodLevel, LodMeasure, LodView, default_until};
 pub use model_lods::lod_of;
 pub use mesh::{MeshData, MeshTriangles, NO_WIND_MASKS, Primitive, Vertex};
+pub use skeleton::{Bone, BonePose, CLIP_RATE, Clip, ModelAnimation, Skeleton, Skin, SkinVertex};
 pub use post::{
     AmbientOcclusion, AmbientOcclusionQuality, AntiAliasing, AntiAliasingMode, Bloom, ContactShadows, DepthOfField, Exposure, Fog,
     GlobalIllumination, Reflections,

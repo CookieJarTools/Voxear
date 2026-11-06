@@ -111,6 +111,11 @@ fn take_lods(model: &mut PreparedModel, first: usize, pieces: &[usize]) {
             moved.tangent = [tangent.x, tangent.y, tangent.z, vertex.tangent[3]];
             moved
         }));
+        // A skinned mesh's LODs bring their skin along, or are held to the first bone without one.
+        if !data.skin.is_empty() {
+            let held = (0..mesh.vertices.len()).map(|i| mesh.skin.get(i).copied().unwrap_or_default());
+            data.skin.extend(held);
+        }
         let indices: Vec<u32> = mesh.indices.iter().map(|&index| index + offset).collect();
         // Never smaller than the last, so a farther LOD is never picked before a nearer one.
         let error = lod::error_at(full, indices.len() / 3).max(lods.last().map_or(0.0, |lod: &Lod| lod.error * 1.01));
@@ -159,6 +164,7 @@ mod tests {
             material: Some(0),
             mesh_part: format!("mesh{mesh}"),
             material_part: Some("material0".into()),
+            skin: None,
         }
     }
 
@@ -177,6 +183,7 @@ mod tests {
                 part("Crate", 3, Vec3::Z),
                 part("UCX_Crate_LOD0_01", 3, Vec3::Z),
             ],
+            animation: None,
         }
     }
 

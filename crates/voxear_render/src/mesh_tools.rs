@@ -145,6 +145,7 @@ pub(crate) fn calculate_normals(data: &mut MeshData, smoothing_angle: f32) {
 
     let smooth = smoothing_angle.clamp(0.0, 180.0).to_radians().cos() - 1e-5;
     let mut vertices = Vec::with_capacity(data.vertices.len());
+    let mut skin = Vec::with_capacity(data.skin.len());
     let mut made: HashMap<(u32, [u32; 3]), u32> = HashMap::new();
     let mut indices = Vec::with_capacity(data.indices.len());
     for (face, corners) in triangles.iter().enumerate() {
@@ -156,12 +157,13 @@ pub(crate) fn calculate_normals(data: &mut MeshData, smoothing_angle: f32) {
                 let mut vertex = data.vertices[corner as usize];
                 vertex.normal = normal;
                 vertices.push(vertex);
+                skin.extend(data.skin.get(corner as usize).copied());
                 vertices.len() as u32 - 1
             });
             indices.push(index);
         }
     }
-    *data = MeshData { vertices, indices };
+    *data = MeshData { vertices, indices, skin };
 }
 
 /// Makes tangents from the normals and UVs: each along the direction U
@@ -215,7 +217,7 @@ mod tests {
             vertex([0.0, -1.0, 0.0], [1.0, 1.0]),
         ];
         // Wound so cross(b - a, c - a) points out, as mesh.rs says.
-        MeshData { vertices, indices: vec![0, 1, 2, 0, 3, 1] }
+        MeshData { vertices, indices: vec![0, 1, 2, 0, 3, 1], ..MeshData::default() }
     }
 
     fn normals_at_edge(data: &MeshData) -> Vec<[f32; 3]> {
@@ -254,7 +256,7 @@ mod tests {
             quad([1.0, -1.0, 5.0], [1.0, 1.0]),
             quad([-1.0, -1.0, 5.0], [0.0, 1.0]),
         ];
-        let mut data = MeshData { vertices, indices: vec![0, 1, 2, 0, 2, 3] };
+        let mut data = MeshData { vertices, indices: vec![0, 1, 2, 0, 2, 3], ..MeshData::default() };
         calculate_tangents(&mut data);
         for vertex in &data.vertices {
             let [x, y, z, sign] = vertex.tangent;
@@ -302,7 +304,7 @@ mod tests {
     fn tree() -> MeshData {
         let trunk = [[-0.1, 0.0, 0.0], [0.1, 0.0, 0.0], [0.1, 2.0, 0.0], [-0.1, 2.0, 0.0]];
         let vertices = trunk.iter().map(|&p| vertex(p, [0.0, 0.0])).collect();
-        let mut data = MeshData { vertices, indices: vec![0, 2, 1, 0, 3, 2] };
+        let mut data = MeshData { vertices, indices: vec![0, 2, 1, 0, 3, 2], ..MeshData::default() };
         // A long branch out to +X, in a piece of its own.
         let at = data.vertices.len() as u32;
         for p in [[0.1, 1.5, 0.0], [2.0, 1.9, 0.0], [2.0, 2.0, 0.0], [0.1, 1.6, 0.0]] {

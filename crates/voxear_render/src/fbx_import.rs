@@ -52,6 +52,7 @@ pub(crate) fn prepare(path: &str, read: &mut ReadFile, settings: &ModelImport) -
         size: mesh_tools::size(settings),
         space: space(&scene.settings.axes),
         model: PreparedModel {
+            animation: None,
             path: path.to_string(),
             meshes: Vec::new(),
             textures: Vec::new(),
@@ -182,6 +183,7 @@ impl Preparer {
         for part in mesh.material_parts.iter().filter(|part| part.num_triangles > 0) {
             let material = mesh.materials.get(part.index as usize);
             let piece = PreparedNode {
+                skin: None,
                 name: name.to_string(),
                 position,
                 rotation,
@@ -215,7 +217,7 @@ impl Preparer {
                 indices.push(index);
             }
         }
-        let mut data = MeshData { vertices, indices };
+        let mut data = MeshData { vertices, indices, ..MeshData::default() };
         into_space(&mut data, self.space);
         let file = FromFile {
             normals: mesh.vertex_normal.exists,

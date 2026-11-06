@@ -9,7 +9,10 @@
 //!
 //! The clips blended play in step, each at the same share of the way
 //! through its loop, so their feet fall together, and a little faster or
-//! slower so their feet keep pace with the ground the Obj covers.
+//! slower so their feet keep pace with the ground the Obj covers. Where
+//! the clips have a foot down, it stays where it came down, the leg bending
+//! to reach it, until the clips lift it or the body has gone too far from
+//! it; then it eases back to the clips' foot.
 //!
 //! The game moves the Obj, by a Character Controller or otherwise, and the
 //! model stands on it. The body turns, at its turn rate, the way it is
@@ -52,6 +55,11 @@ const TURN_HALFLIFE: f32 = 0.08;
 /// How long, in seconds to halve it, the hips take to settle round when the
 /// legs change way, as from forward to back.
 const FLIP_HALFLIFE: f32 = 0.15;
+/// How far, in metres, a foot held down may be from where the clips put
+/// it before it lets go.
+const REACH: f32 = 0.3;
+/// How long, in seconds, a foot let go takes to ease back to the clips'.
+const LET_GO: f32 = 0.15;
 /// How much nearer, in radians, another clip's way must be to the way
 /// it goes before the legs change to it: about 20°.
 const STICK: f32 = 0.35;
@@ -89,6 +97,9 @@ pub struct MotionMatcher {
     /// Playing clips a little faster or slower so their feet keep pace with
     /// the ground.
     pub match_speed: bool,
+    /// Holding each foot where it comes down while the clips have it down,
+    /// the leg bending to reach it.
+    pub foot_locking: bool,
     /// Drawing the velocity wanted, the clips' velocity and the body's
     /// facing, and which clips play.
     pub debug: bool,
@@ -109,6 +120,7 @@ impl Default for MotionMatcher {
             turn_to_movement: true,
             leg_turn: 90.0,
             match_speed: true,
+            foot_locking: true,
             debug: false,
         }
     }
@@ -140,12 +152,25 @@ pub struct MotionMatcherState {
     shown: Vec<BonePose>,
     before: Vec<BonePose>,
     settling: Option<Settling>,
+    /// Each foot held down, left then right, and whether the clips had it
+    /// down last frame.
+    locks: [Option<FootLock>; 2],
+    down: [bool; 2],
     /// The Obj's place last frame, and its velocity as seen.
     last: Option<Vec3>,
     velocity: Vec3,
 }
 
 impl Component for MotionMatcherState {}
+
+/// A foot held where it came down: where in the world, how much it holds,
+/// fading once let go, and whether it still holds.
+#[derive(Clone, Copy, Debug)]
+struct FootLock {
+    at: Vec3,
+    weight: f32,
+    held: bool,
+}
 
 impl MotionMatcherState {
     /// Each model clip playing and its share of the pose, the clip it
@@ -198,6 +223,7 @@ const TURN_TO_MOVEMENT: i32 = 10;
 const MATCH_SPEED: i32 = 11;
 const DEBUG: i32 = 12;
 const LEG_TURN: i32 = 13;
+const FOOT_LOCKING: i32 = 14;
 
 /// Reads value `what` of `entity`'s Motion Matcher, or with `written`,
 /// writes it: `None` when it has none, or is gone.
@@ -236,6 +262,7 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
             MATCH_SPEED => toggle(matcher.match_speed),
             DEBUG => toggle(matcher.debug),
             LEG_TURN => number(matcher.leg_turn),
+            FOOT_LOCKING => toggle(matcher.foot_locking),
             _ => return None,
         }),
         Some([x, y, z, w]) => {
@@ -253,6 +280,7 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
                 MATCH_SPEED => matcher.match_speed = x != 0.0,
                 DEBUG => matcher.debug = x != 0.0,
                 LEG_TURN => matcher.leg_turn = x.clamp(0.0, 180.0),
+                FOOT_LOCKING => matcher.foot_locking = x != 0.0,
                 _ => return None,
             }
             Some([x, y, z, w])
@@ -344,6 +372,14 @@ fn step(
         && !settling.settle(delta, &mut pose)
     {
         state.settling = None;
+    }
+    match (matcher.foot_locking, database.legs) {
+        (true, Some(legs)) => {
+            let down = down(state, database, idle);
+            let toes = database.toes.unwrap_or([legs[0][2], legs[1][2]]);
+            hold_feet(state, &animation.skeleton, legs, toes, down, &mut pose, placed, delta);
+        }
+        _ => state.locks = [None, None],
     }
     state.before = std::mem::replace(&mut state.shown, pose.clone());
     pose
@@ -576,6 +612,115 @@ fn turn_root(pose: &mut [BonePose], skeleton: &Skeleton, root: usize, turn: f32)
     pose[root] = BonePose { translation, rotation, scale };
 }
 
+/// Whether the clips playing have each foot down, by the share of them that
+/// do.
+fn down(state: &MotionMatcherState, database: &MotionDatabase, idle: Option<usize>) -> [bool; 2] {
+    let walking = 1.0 - state.idle_weight;
+    let mut share = [0.0f32; 2];
+    for (run, weight) in database.runs.iter().zip(&state.weights) {
+        let down = database.contacts(run, state.phase * run.duration());
+        for foot in 0..2 {
+            share[foot] += weight * walking * f32::from(u8::from(down[foot]));
+        }
+    }
+    // Standing on a clip it has no frames of, both feet are down.
+    let standing = idle.and_then(|idle| database.runs.iter().find(|run| run.clip == idle));
+    let still = standing.map_or([true; 2], |run| database.contacts(run, state.idle_time));
+    for foot in 0..2 {
+        share[foot] += state.idle_weight * f32::from(u8::from(still[foot]));
+    }
+    share.map(|share| share >= 0.5)
+}
+
+/// Holds each foot where it came down, by its toes, while the clips have
+/// it down, and eases it back to theirs once they lift it or the leg would
+/// have to reach too far, bending each leg to put its foot there.
+#[allow(clippy::too_many_arguments)]
+fn hold_feet(
+    state: &mut MotionMatcherState,
+    skeleton: &Skeleton,
+    legs: [[usize; 3]; 2],
+    toes: [usize; 2],
+    down: [bool; 2],
+    pose: &mut [BonePose],
+    placed: Mat4,
+    delta: f32,
+) {
+    let from_world = placed.inverse();
+    for foot in 0..2 {
+        let matrices = skeleton.model_matrices(pose);
+        let at = |bone: usize| placed.transform_point3(matrices[bone].w_axis.truncate());
+        let [hip, knee, ankle_bone] = legs[foot];
+        // The ankle goes where the toes held down need it, the foot turned as the clips turn it.
+        let (toe, ankle) = (at(toes[foot]), at(ankle_bone));
+        let leg = at(knee).distance(at(hip)) + ankle.distance(at(knee));
+        let came_down = down[foot] && !state.down[foot];
+        let lock = &mut state.locks[foot];
+        if let Some(held) = lock
+            && held.held
+            && (!down[foot] || held.at.distance(toe) > REACH || (held.at + ankle - toe).distance(at(hip)) > leg * 0.98)
+        {
+            held.held = false;
+        }
+        if came_down || (down[foot] && lock.is_none()) {
+            // Down where it shows now, so nothing jumps.
+            let shown = lock.map_or(toe, |held| toe.lerp(held.at, smooth(held.weight)));
+            *lock = Some(FootLock { at: shown, weight: 1.0, held: true });
+        }
+        if let Some(held) = lock {
+            if !held.held {
+                held.weight -= delta / LET_GO;
+            }
+            match held.weight > 0.0 {
+                true => {
+                    let target = toe.lerp(held.at, smooth(held.weight)) + (ankle - toe);
+                    reach(pose, skeleton, legs[foot], from_world.transform_point3(target));
+                }
+                false => *lock = None,
+            }
+        }
+    }
+    state.down = down;
+}
+
+/// Eases 0 to 1 in and out.
+fn smooth(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// Bends a leg, its hip, knee and ankle, so the ankle reaches `target` in
+/// the model's space, the knee bending in the plane it bends in already;
+/// the foot keeps the turn it had.
+fn reach(pose: &mut [BonePose], skeleton: &Skeleton, [hip, knee, ankle]: [usize; 3], target: Vec3) {
+    let matrices = skeleton.model_matrices(pose);
+    let at = |bone: usize| matrices[bone].w_axis.truncate();
+    let turn_of = |m: &Mat4| m.to_scale_rotation_translation().1;
+    let (a, b, c) = (at(hip), at(knee), at(ankle));
+    let (hip_turn, knee_turn, foot_turn) =
+        (turn_of(&matrices[hip]), turn_of(&matrices[knee]), turn_of(&matrices[ankle]));
+    let (upper, lower) = ((b - a).length(), (c - b).length());
+    if upper < 1e-4 || lower < 1e-4 {
+        return;
+    }
+    let span = (target - a).length().clamp(1e-3, upper + lower - 1e-3);
+    let angle = |x: Vec3, y: Vec3| x.normalize_or_zero().dot(y.normalize_or_zero()).clamp(-1.0, 1.0).acos();
+    let law = |near: f32, far: f32, opposite: f32| {
+        ((opposite * opposite - near * near - far * far) / (-2.0 * near * far)).clamp(-1.0, 1.0).acos()
+    };
+    let (hip_now, knee_now, aim_now) = (angle(c - a, b - a), angle(a - b, c - b), angle(c - a, target - a));
+    let (hip_then, knee_then) = (law(upper, span, lower), law(upper, lower, span));
+    let bend = (c - a).cross(b - a).try_normalize().unwrap_or_else(|| hip_turn * Vec3::X);
+    let swing = (c - a).cross(target - a).try_normalize();
+    let open_hip = Quat::from_axis_angle(hip_turn.inverse() * bend, hip_then - hip_now);
+    let open_knee = Quat::from_axis_angle(knee_turn.inverse() * bend, knee_then - knee_now);
+    let aim = swing.map_or(Quat::IDENTITY, |swing| Quat::from_axis_angle(hip_turn.inverse() * swing, aim_now));
+    pose[hip].rotation = (pose[hip].rotation * aim * open_hip).normalize();
+    pose[knee].rotation = (pose[knee].rotation * open_knee).normalize();
+    let knee_after = turn_of(&skeleton.model_matrices(pose)[knee]);
+    pose[ankle].rotation = (knee_after.inverse() * foot_turn).normalize();
+}
+
 /// Turns `bones`, a run of the spine from the hips up, about the up axis
 /// by `turn` between them, each its share.
 fn twist(pose: &mut [BonePose], skeleton: &Skeleton, bones: &[usize], turn: f32) {
@@ -631,23 +776,30 @@ mod tests {
     const DT: f32 = 1.0 / 60.0;
 
     /// One loop a second long of a root, hips and two feet: the root moving
-    /// at `velocity`, the feet swinging along it.
+    /// A frame's bones: the root at `root`, the hips over it, each leg's hip,
+    /// knee and ankle, the knees a little bent and the ankles at `feet` from
+    /// the hips, and the spine.
+    fn frame(root: Vec3, feet: [Vec3; 2]) -> [BonePose; 9] {
+        let at = |translation| BonePose { translation, ..BonePose::default() };
+        let leg = |side: f32, foot: Vec3| {
+            let hip = Vec3::new(0.1 * side, -0.05, 0.0);
+            let knee = Vec3::new(0.0, -0.4, 0.1);
+            [at(hip), at(knee), at(foot - hip - knee)]
+        };
+        let [l, r] = [leg(1.0, feet[0]), leg(-1.0, feet[1])];
+        [at(root), at(Vec3::new(0.0, 0.8, 0.0)), l[0], l[1], l[2], r[0], r[1], r[2], at(Vec3::new(0.0, 0.3, 0.0))]
+    }
+
+    /// One loop a second long: the root moving at `velocity`, the feet
+    /// swinging along it.
     fn clip(name: &str, velocity: Vec3) -> Clip {
-        let rest = BonePose::default();
         let frames = 61;
         let swing = velocity.normalize_or_zero() * 0.1 * velocity.length().sqrt();
         let poses = (0..frames)
             .flat_map(|f| {
                 let t = f as f32 / CLIP_RATE;
                 let stride = swing * (std::f32::consts::TAU * t).sin();
-                let at = |translation| BonePose { translation, ..rest };
-                [
-                    at(velocity * t),
-                    at(Vec3::new(0.0, 0.9, 0.0)),
-                    at(Vec3::new(0.1, -0.85, 0.0) + stride),
-                    at(Vec3::new(-0.1, -0.85, 0.0) - stride),
-                    at(Vec3::new(0.0, 0.3, 0.0)),
-                ]
+                frame(velocity * t, [Vec3::new(0.1, -0.75, 0.0) + stride, Vec3::new(-0.1, -0.75, 0.0) - stride])
             })
             .collect();
         Clip { name: name.into(), frames, poses }
@@ -657,7 +809,6 @@ mod tests {
     /// `speed`: each foot down for half the loop, then lifted and swung
     /// forward.
     fn in_place(name: &str, speed: f32) -> Clip {
-        let rest = BonePose::default();
         let frames = 61;
         let reach = speed * 0.25;
         let foot = |t: f32, side: f32| {
@@ -666,13 +817,12 @@ mod tests {
                 true => (reach - speed * t, 0.0),
                 false => (-reach + speed * (t - 0.5), 0.1),
             };
-            Vec3::new(0.1 * side, y - 0.9, z)
+            Vec3::new(0.1 * side, y - 0.8, z)
         };
         let poses = (0..frames)
             .flat_map(|f| {
                 let t = f as f32 / CLIP_RATE;
-                let at = |translation| BonePose { translation, ..rest };
-                [at(Vec3::ZERO), at(Vec3::new(0.0, 0.9, 0.0)), at(foot(t, 1.0)), at(foot(t, -1.0)), at(Vec3::Y * 0.3)]
+                frame(Vec3::ZERO, [foot(t, 1.0), foot(t, -1.0)])
             })
             .collect();
         Clip { name: name.into(), frames, poses }
@@ -685,8 +835,12 @@ mod tests {
             bones: vec![
                 bone("root", None),
                 bone("hips", Some(0)),
-                bone("foot.L", Some(1)),
-                bone("foot.R", Some(1)),
+                bone("thigh.L", Some(1)),
+                bone("shin.L", Some(2)),
+                bone("foot.L", Some(3)),
+                bone("thigh.R", Some(1)),
+                bone("shin.R", Some(5)),
+                bone("foot.R", Some(6)),
                 bone("spine", Some(1)),
             ],
         };
@@ -852,7 +1006,7 @@ mod tests {
             }
             let (playing, _) = state.playing(&matcher, &animation)[0];
             assert_eq!(animation.clips[playing].name, clip);
-            let (hips, chest) = (yaw_of(&animation, &pose, 1), yaw_of(&animation, &pose, 4));
+            let (hips, chest) = (yaw_of(&animation, &pose, 1), yaw_of(&animation, &pose, 8));
             assert!((hips - legs).abs() < 0.02, "the hips turned towards the way it goes: {hips} for {legs}");
             assert!(chest.abs() < 0.02, "the chest still ahead: {chest}");
         }
@@ -881,6 +1035,56 @@ mod tests {
                 assert!(name != "WalkBack" || weight < 0.05, "{name} at {weight} on frame {f}");
             }
         }
+    }
+
+    #[test]
+    fn a_leg_bends_to_put_its_ankle_where_asked() {
+        let animation = walker(Vec::new());
+        let skeleton = &animation.skeleton;
+        let mut pose = frame(Vec3::ZERO, [Vec3::new(0.1, -0.7, 0.1), Vec3::new(-0.1, -0.75, 0.0)]).to_vec();
+        let before = skeleton.model_matrices(&pose)[4].to_scale_rotation_translation().1;
+        let target = Vec3::new(0.15, 0.2, 0.25);
+        reach(&mut pose, skeleton, [2, 3, 4], target);
+        let after = skeleton.model_matrices(&pose);
+        assert!(after[4].w_axis.truncate().distance(target) < 1e-3, "{}", after[4].w_axis);
+        assert!(after[4].to_scale_rotation_translation().1.angle_between(before) < 1e-3, "the foot keeps its turn");
+        let lengths = |m: &[Mat4]| (m[3].w_axis.distance(m[2].w_axis), m[4].w_axis.distance(m[3].w_axis));
+        let was = lengths(&skeleton.model_matrices(&frame(Vec3::ZERO, [Vec3::new(0.1, -0.7, 0.1), Vec3::ZERO])));
+        let now = lengths(&after);
+        assert!((was.0 - now.0).abs() < 1e-4 && (was.1 - now.1).abs() < 1e-4, "bones keep their lengths");
+    }
+
+    #[test]
+    fn a_foot_down_stays_put_though_the_obj_outpaces_the_clips() {
+        let animation = walker(vec![clip("Stand", Vec3::ZERO), in_place("Treadmill", 1.4)]);
+        let database = Arc::new(MotionDatabase::build(&animation).unwrap());
+        let slide = |locking: bool| {
+            let mut matcher = MotionMatcher::default();
+            matcher.foot_locking = locking;
+            matcher.wanted_velocity = Some(Vec3::Z * 2.2);
+            let mut state = MotionMatcherState::default();
+            let (mut at, mut before, mut slides) = (Vec3::ZERO, None::<[Vec3; 2]>, Vec::new());
+            for f in 0..180 {
+                at += Vec3::Z * 2.2 * DT;
+                let placed = Mat4::from_translation(at);
+                let pose = step(&mut state, &matcher, &animation, &database, placed, DT);
+                let m = animation.skeleton.model_matrices(&pose);
+                let ankles = [4, 7].map(|bone| placed.transform_point3(m[bone].w_axis.truncate()));
+                if let (Some(then), true) = (before, f > 60) {
+                    for foot in 0..2 {
+                        if ankles[foot].y < 0.03 && then[foot].y < 0.03 {
+                            slides.push(flat(ankles[foot] - then[foot]).length() / DT);
+                        }
+                    }
+                }
+                before = Some(ankles);
+            }
+            slides.sort_by(f32::total_cmp);
+            slides[slides.len() / 2]
+        };
+        let (held, loose) = (slide(true), slide(false));
+        assert!(loose > 0.2, "without holding, the feet slide: {loose}");
+        assert!(held < 0.02, "held, they stay put: {held}");
     }
 
     #[test]
@@ -968,7 +1172,7 @@ mod tests {
         // How fast a foot on the ground slides over it, at a steady walk and run.
         let toes: Vec<usize> =
             ["DEF-toe.L", "DEF-toe.R"].iter().filter_map(|name| animation.skeleton.find(name)).collect();
-        for speed in [1.4, 5.0] {
+        for speed in [1.4, 3.0, 5.0] {
             let mut asked = matcher.clone();
             asked.wanted_velocity = Some(Vec3::Z * speed);
             let (mut at, mut before, mut slides) = (Vec3::ZERO, None::<Vec<Vec3>>, Vec::new());

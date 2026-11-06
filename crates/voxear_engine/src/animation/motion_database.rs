@@ -94,6 +94,19 @@ fn feet(skeleton: &Skeleton) -> Option<[usize; 2]> {
     Some([foot(true)?, foot(false)?])
 }
 
+/// Each leg's hip, knee and ankle, from each ankle, found by its name as a
+/// foot or ankle marked left or right, and the two bones above it.
+fn legs(skeleton: &Skeleton) -> Option<[[usize; 3]; 2]> {
+    let names: Vec<String> = skeleton.bones.iter().map(|bone| bone.name.to_lowercase()).collect();
+    let leg = |left: bool| {
+        let named = |part: &str| names.iter().position(|name| name.contains(part) && side_of(name) == Some(left));
+        let ankle = named("foot").or_else(|| named("ankle"))?;
+        let knee = skeleton.bones[ankle].parent?;
+        Some([skeleton.bones[knee].parent?, knee, ankle])
+    };
+    Some([leg(true)?, leg(false)?])
+}
+
 /// Which side a bone's lowercase name puts it on: true for left.
 fn side_of(name: &str) -> Option<bool> {
     let marked = |side: &str, letter: char| {
@@ -146,11 +159,19 @@ pub struct MotionDatabase {
     pub root: usize,
     /// The spine's bones, from the hips up, by their names.
     pub spine: Vec<usize>,
+    /// Each leg's hip, knee and ankle, left then right.
+    pub legs: Option<[[usize; 3]; 2]>,
+    /// The bone of each foot that stays down longest, its toes if it has
+    /// them, left then right.
+    pub toes: Option<[usize; 2]>,
     /// The root's turn at rest, in the model's space.
     pub rest_root: Quat,
     pub runs: Vec<ClipRun>,
     /// Each frame's place on the ground, in its clip's model space.
     grounds: Vec<Ground>,
+    /// Whether each frame has each foot, left then right, down on the
+    /// ground: low, and all but still.
+    contacts: Vec<[bool; 2]>,
     /// Each frame's features, `FEATURES` each, made comparable and weighed.
     features: Vec<f32>,
     /// What turns a raw feature into a weighed one: less `offset`, times `scale`.
@@ -166,6 +187,7 @@ impl MotionDatabase {
         let root = root_bone(skeleton)?;
         let rest_root = skeleton.model_matrices(&skeleton.rest())[root].to_scale_rotation_translation().1;
         let feet = feet(skeleton);
+        let legs = legs(skeleton);
         let spine = skeleton
             .bones
             .iter()
@@ -176,9 +198,12 @@ impl MotionDatabase {
         let mut database = Self {
             root,
             spine,
+            legs,
+            toes: feet,
             rest_root,
             runs: Vec::new(),
             grounds: Vec::new(),
+            contacts: Vec::new(),
             features: Vec::new(),
             offset: [0.0; FEATURES],
             scale: [1.0; FEATURES],
@@ -186,6 +211,7 @@ impl MotionDatabase {
         for (index, clip) in animation.clips.iter().enumerate().filter(|(_, clip)| clip.frames >= 2) {
             let start = database.grounds.len();
             let mut planted = Vec::with_capacity(clip.frames);
+
             for frame in 0..clip.frames {
                 let matrices = skeleton.model_matrices(clip.frame(frame));
                 let ground = Ground::of(matrices[root], rest_root);
@@ -209,6 +235,8 @@ impl MotionDatabase {
             }
             run.looping = loops(clip, root) && database.steps_alike(&run);
             run.steady = database.steady(&run);
+            let contacts = database.contacts_of(&run, &planted);
+            database.contacts.extend(contacts);
             database.runs.push(run);
         }
         let raw: Vec<[f32; FEATURES]> = database
@@ -315,6 +343,39 @@ impl MotionDatabase {
         place.then(at(0).to(at(frame % last)))
     }
 
+    /// Whether each foot is down at each of `run`'s frames, by where its
+    /// toes are, seen from the root: within a few centimetres of their
+    /// lowest, and moving over the ground slower than a slow step.
+    fn contacts_of(&self, run: &ClipRun, toes: &[Option<[Vec3; 2]>]) -> Vec<[bool; 2]> {
+        let Some(ankles) = toes.iter().copied().collect::<Option<Vec<[Vec3; 2]>>>() else {
+            return vec![[false; 2]; run.frames];
+        };
+        let lowest = [0, 1].map(|foot| ankles.iter().map(|a| a[foot].y).fold(f32::MAX, f32::min));
+        let at = |frame: usize, foot: usize| {
+            let ground = self.grounds[run.start + frame];
+            ground.position + ground.rotation() * ankles[frame][foot]
+        };
+        (0..run.frames)
+            .map(|frame| {
+                let (before, after) = (frame.saturating_sub(1), (frame + 1).min(run.frames - 1));
+                [0, 1].map(|foot| {
+                    let speed =
+                        flat(at(after, foot) - at(before, foot)).length() * CLIP_RATE / (after - before).max(1) as f32;
+                    ankles[frame][foot].y < lowest[foot] + 0.04 && speed < 0.5
+                })
+            })
+            .collect()
+    }
+
+    /// Whether each foot is down `time` seconds into `run`, going round a
+    /// looping clip.
+    pub fn contacts(&self, run: &ClipRun, time: f32) -> [bool; 2] {
+        let last = run.frames - 1;
+        let frame = (time * CLIP_RATE).round().max(0.0) as usize;
+        let frame = if run.looping && last > 0 { frame % last } else { frame.min(last) };
+        self.contacts[run.start + frame]
+    }
+
     /// Whether `run`'s root never slows below half its speed overall, a
     /// tenth of a second at a time.
     fn steady(&self, run: &ClipRun) -> bool {
@@ -332,6 +393,10 @@ impl MotionDatabase {
         let (first, last) = (at(0).to(at(1)), at(run.frames - 2).to(at(run.frames - 1)));
         first.position.distance(last.position) < 0.005 && (first.yaw - last.yaw).abs() < 0.005
     }
+}
+
+fn flat(v: Vec3) -> Vec3 {
+    Vec3::new(v.x, 0.0, v.z)
 }
 
 /// Raw features from a velocity and the path ahead.

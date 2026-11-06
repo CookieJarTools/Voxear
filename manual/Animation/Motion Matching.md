@@ -10,7 +10,7 @@ Add one with **Add Component ▸ Animation ▸ Motion Matcher** to an Obj whose 
 - A loop made to stay in place, as many walks are, still counts: it moves as fast as its planted foot slides back.
 - **Idle Clip** is the clip it stands with. None picks the first looping clip that stands still.
 
-The clips blended play in step, each the same share of the way through its loop, so their feet fall together. With **Match Speed** on, they play a little faster or slower so their feet keep pace with the ground the Obj covers.
+The clips blended play in step, each the same share of the way through its loop, so their feet fall together. With **Match Speed** on, they play a little faster or slower so their feet keep pace with the ground the Obj covers. With **Foot Locking** on, a foot the clips have down stays where it came down, the leg bending to reach it, until the clips lift it or the leg would have to stretch too far; then it eases back to the clips' foot.
 
 ## Moving the character
 
@@ -48,8 +48,9 @@ Going another way than it faces, the hips and legs turn towards the way it goes,
 - **Turn To Movement**: the body faces the way it goes. Off, it faces the Obj's forward, for a game that turns the Obj itself.
 - **Leg Turn**: how far, in degrees, the hips and legs may turn from the way the body faces. 0 keeps them with the body.
 - **Match Speed**: clips keep pace with the ground.
+- **Foot Locking**: feet stay where they come down.
 - **Debug**: draws the velocity wanted in blue, the clips' velocity in orange and the body's facing in white, and names the clips playing above its head.
 
 ## What it needs from the model
 
-It finds the root bone by its name, `root`, or else takes the first. The root marks where the character stands on the ground and which way it faces in each frame of each clip. For loops that stay in place, it finds the feet by their names: toes, feet or ankles, marked left and right. To twist the body as the legs turn, it finds the spine's bones by their names, `spine` or `chest`.
+It finds the root bone by its name, `root`, or else takes the first. The root marks where the character stands on the ground and which way it faces in each frame of each clip. For loops that stay in place, it finds the feet by their names: toes, feet or ankles, marked left and right. To twist the body as the legs turn, it finds the spine's bones by their names, `spine` or `chest`. To hold feet down, it finds each leg from its foot or ankle bone and the two bones above it.

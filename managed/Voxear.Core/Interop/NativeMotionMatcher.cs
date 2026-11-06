@@ -22,6 +22,7 @@ internal static unsafe class NativeMotionMatcher
 	public const int MatchSpeed = 11;
 	public const int Debug = 12;
 	public const int LegTurn = 13;
+	public const int FootLocking = 14;
 
 	/// <summary>A value of an Obj's Motion Matcher, or false when the Obj has none.</summary>
 	public static bool Get(Obj obj, int what, out Vector4 value)

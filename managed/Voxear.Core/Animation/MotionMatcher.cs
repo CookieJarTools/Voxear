@@ -103,6 +103,13 @@ public readonly struct MotionMatcher : IEquatable<MotionMatcher>, IObjComponent
 		set { Set(NativeMotionMatcher.MatchSpeed, value ? 1f : 0f); }
 	}
 
+	/// <summary>Whether each foot stays where it comes down while the clips have it down, the leg bending to reach it.</summary>
+	public bool FootLocking
+	{
+		get { return Number(NativeMotionMatcher.FootLocking) != 0f; }
+		set { Set(NativeMotionMatcher.FootLocking, value ? 1f : 0f); }
+	}
+
 	/// <summary>Whether it draws the velocity wanted, the clips' velocity and the body's facing, and names the clips.</summary>
 	public bool Debug
 	{

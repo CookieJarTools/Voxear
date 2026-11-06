@@ -323,6 +323,7 @@ pub enum Prop {
     MatcherTurnToMovement,
     MatcherLegTurn,
     MatcherMatchSpeed,
+    MatcherFootLocking,
     MatcherDebug,
     /// An Ocean's weather, and for Custom weather its swell and wind; its
     /// crests, colours and foam.
@@ -632,6 +633,7 @@ impl Prop {
             | Prop::MatcherTurnToMovement
             | Prop::MatcherLegTurn
             | Prop::MatcherMatchSpeed
+            | Prop::MatcherFootLocking
             | Prop::MatcherDebug => Part::MotionMatcher,
             Prop::OceanWeather
             | Prop::OceanWindSource
@@ -872,6 +874,7 @@ impl Prop {
             Prop::MatcherTurnToMovement => "turn_to_movement",
             Prop::MatcherLegTurn => "leg_turn",
             Prop::MatcherMatchSpeed => "match_speed",
+            Prop::MatcherFootLocking => "foot_locking",
             Prop::MatcherDebug => "debug",
             Prop::OceanWeather => "weather",
             Prop::OceanWindSource => "wind_source",
@@ -1269,6 +1272,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             Prop::MatcherTurnToMovement,
             Prop::MatcherLegTurn,
             Prop::MatcherMatchSpeed,
+            Prop::MatcherFootLocking,
             Prop::MatcherDebug,
         ],
         Part::ParticleSystem => {
@@ -1600,6 +1604,7 @@ pub fn label(prop: &Prop) -> String {
         Prop::MatcherTurnToMovement => "Turn To Movement",
         Prop::MatcherLegTurn => "Leg Turn",
         Prop::MatcherMatchSpeed => "Match Speed",
+        Prop::MatcherFootLocking => "Foot Locking",
         Prop::MatcherDebug => "Debug",
         Prop::OceanWeather => "Weather",
         Prop::OceanWindSource => "Wind Source",
@@ -2259,6 +2264,7 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         | Prop::MatcherTurnToMovement
             | Prop::MatcherLegTurn
         | Prop::MatcherMatchSpeed
+            | Prop::MatcherFootLocking
         | Prop::MatcherDebug => {
             matcher_value(world.get::<voxear_engine::animation::MotionMatcher>(entity)?, prop)?
         }
@@ -3386,6 +3392,7 @@ fn matcher_value(matcher: &voxear_engine::animation::MotionMatcher, prop: &Prop)
     Some(match prop {
         Prop::MatcherTurnToMovement => Value::Toggle(matcher.turn_to_movement),
         Prop::MatcherMatchSpeed => Value::Toggle(matcher.match_speed),
+        Prop::MatcherFootLocking => Value::Toggle(matcher.foot_locking),
         Prop::MatcherDebug => Value::Toggle(matcher.debug),
         _ => Value::Number(*matcher_number(&mut matcher.clone(), prop)?),
     })
@@ -3404,6 +3411,7 @@ fn set_matcher(matcher: &mut voxear_engine::animation::MotionMatcher, prop: &Pro
     match (prop, value) {
         (Prop::MatcherTurnToMovement, Value::Toggle(on)) => matcher.turn_to_movement = on,
         (Prop::MatcherMatchSpeed, Value::Toggle(on)) => matcher.match_speed = on,
+        (Prop::MatcherFootLocking, Value::Toggle(on)) => matcher.foot_locking = on,
         (Prop::MatcherDebug, Value::Toggle(on)) => matcher.debug = on,
         (_, Value::Number(n)) => {
             if let Some(field) = matcher_number(matcher, prop) {

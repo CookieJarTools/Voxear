@@ -1234,12 +1234,12 @@ The sea, lakes, rivers and lava, built in. Manual: `manual/Water`.
   finds the sea floor by casting down onto Colliders, so ground needs Colliders for floating things to feel it.
 - **Wind:** an Ocean's Wind Source can be the level's Wind Zone, whose arrow and strength raise its wind sea; a
   changed wind eases over the Ocean's Transition, a step every quarter second, alike on every machine, and each frame
-  in flight has its own spectrum buffer, so a new one never waits for the GPU.
+  in flight has its own spectrum buffer, so a new one never waits for the GPU. A Sphere or Box Wind Zone makes the
+  sea's short waves inside it as rough as its strength, a calm bay or a squall, fading out over its falloff.
 - **Stream mouths:** from where a Stream of water reaches the sea or a Pool, it becomes that water over ten metres,
   its surface easing to the water's height and waves and fading in from its banks; into the sea, it pours out a jet
   of foam. `Obj.Buoyancy` gives scripts a floating Obj's settings.
-- Still to do: local Wind Zones calming or whipping up the sea's short waves in an area; Streams meeting head-on;
-  spray and splashes (with particles, M7); and a bilge in Dry Areas.
+- Still to do: Streams meeting head-on; spray and splashes (with particles, M7); and a bilge in Dry Areas.
 
 ## M6 — Animation
 

@@ -303,7 +303,9 @@ pub fn place_model(
     let mut text = String::from("format = 1\n");
     // Each part's Obj, by its id in the file.
     let mut placed: Vec<(u32, Transform)> = Vec::new();
-    if let [part] = parts.as_slice() {
+    // A model made to animate keeps its skeleton with a Model Renderer, however few its parts.
+    let animated = game.content.model_animation(guid).is_some();
+    if let ([part], false) = (parts.as_slice(), animated) {
         text += &model_obj(path, 1, name, None, Some(part));
         placed.push((1, part.transform));
     } else {

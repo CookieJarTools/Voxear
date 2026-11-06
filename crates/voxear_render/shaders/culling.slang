@@ -117,7 +117,7 @@ MeshletCuller meshletCuller(Frame* frame, Instance instance, uint list)
     // An impostor's quad turns to the camera in its vertex shader, so it faces no way its cone could tell.
     bool turns = (instance.flags & INSTANCE_IMPOSTOR) != 0;
     // Nor can a cone tell which way a custom shader's moved vertices face.
-    culler.grow = buffers()->materials[instance.material].maxOffset;
+    culler.grow = buffers()->materials[instance.material].maxOffset + instance.reach;
     bool moved = culler.grow > 0.0;
     culler.cones = list < LIST_SHADOW && (frame->meshletFlags & MESHLET_CONES) != 0 && uniform && !turns && !moved;
     culler.list = list;

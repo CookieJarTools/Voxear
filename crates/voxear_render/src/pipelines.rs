@@ -136,6 +136,8 @@ pub struct Pipelines {
     pub depth_diced: vk::Pipeline,
     pub forward_diced: vk::Pipeline,
     pub forward_on_depth_diced: vk::Pipeline,
+    /// Moves skinned parts' vertices by their bones (see `skinning`).
+    pub skinning: vk::Pipeline,
     pub shadow_diced: vk::Pipeline,
     pub dry_mesh: vk::Pipeline,
     pub water_wall: vk::Pipeline,
@@ -200,6 +202,7 @@ impl Pipelines {
             module("particles")?,
             module("smoke")?,
             module("dice")?,
+            module("skinning")?,
         ];
         let [
             cull,
@@ -222,6 +225,7 @@ impl Pipelines {
             particles,
             smoke,
             dice,
+            skinning,
         ] = &modules;
         // Only a GPU with mesh shaders can load their modules.
         let meshlets = match gpu.mesh_shader {
@@ -462,6 +466,7 @@ impl Pipelines {
                 ..GraphicsPipelineDesc::new("Smoke over the scene", smoke, c"smokeVertex", c"smokeCompositeFragment")
             })?,
             dice_split: create_compute_pipeline(gpu, layout, "Dice (split)", dice, c"diceSplitMain")?,
+            skinning: create_compute_pipeline(gpu, layout, "Skinning", skinning, c"skinMain")?,
             dice_patch: create_compute_pipeline(gpu, layout, "Dice (pieces)", dice, c"dicePatchMain")?,
             depth_diced: graphics(&GraphicsPipelineDesc {
                 color_formats: &[SURFACE_FORMAT],
@@ -640,6 +645,7 @@ impl Pipelines {
             self.depth_diced,
             self.forward_diced,
             self.forward_on_depth_diced,
+            self.skinning,
             self.shadow_diced,
             self.dry_mesh,
             self.water_wall,

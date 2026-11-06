@@ -44,6 +44,7 @@ mod passes;
 mod dice;
 mod mist;
 mod skeleton;
+mod skinning;
 mod smoke;
 mod payload;
 mod pipelines;
@@ -90,6 +91,7 @@ pub use lod::{LodInfo, MAX_LODS, lod_at, lod_at_share, screen_share};
 pub use lod_group::{LodCamera, LodChoices, LodGroup, LodLevel, LodMeasure, LodView, default_until};
 pub use model_lods::lod_of;
 pub use mesh::{MeshData, MeshTriangles, NO_WIND_MASKS, Primitive, Vertex};
+pub use skinning::Pose;
 pub use skeleton::{Bone, BonePose, CLIP_RATE, Clip, ModelAnimation, Skeleton, Skin, SkinVertex};
 pub use post::{
     AmbientOcclusion, AmbientOcclusionQuality, AntiAliasing, AntiAliasingMode, Bloom, ContactShadows, DepthOfField, Exposure, Fog,
@@ -386,6 +388,8 @@ pub struct Renderer {
     previews: previews::Previews,
     /// Plants' impostors waiting to be baked, and what bakes drew from.
     impostor_bakes: impostors::Bakes,
+    /// This frame's skinned parts, posed once for every view.
+    skinning: skinning::Skinning,
     gpu_decompression: bool,
     /// Meshlet culling draws with task and mesh shaders, where the GPU has them.
     mesh_shaders: bool,
@@ -460,6 +464,7 @@ impl Renderer {
             ui_buffers,
             previews: previews::Previews::default(),
             impostor_bakes: impostors::Bakes::default(),
+            skinning: skinning::Skinning::default(),
             gpu_decompression: true,
             mesh_shaders: true,
             clear: [0.0, 0.0, 0.0, 1.0],
@@ -1006,6 +1011,8 @@ impl Renderer {
         assets.collect(&self.gpu, &mut self.bindless, self.frame_index);
         // Impostors asked for last frame are made, to bake before this frame's views draw them.
         self.impostor_bakes.prepare(assets, &self.gpu, &mut self.bindless)?;
+        // Every posed model's skinned parts, for all the views.
+        self.skinning.prepare(&self.gpu, assets, world, self.frame_index, frame.slot)?;
         self.captures.finish(&self.gpu, frame.slot);
         // This slot's previous frame has finished, so its counters are final.
         let first = &self.views[0];
@@ -1042,6 +1049,7 @@ impl Renderer {
             ui_buffers,
             previews,
             impostor_bakes,
+            skinning,
             frame_debugger,
             captures,
             clear,
@@ -1053,6 +1061,7 @@ impl Renderer {
         let timings = if frame_debugger.on { graph.timings().to_vec() } else { Vec::new() };
         let mut fg = graph.begin(gpu, frame.slot);
         impostor_bakes.record(&mut fg, pipelines, assets, gpu, bindless)?;
+        skinning.record(&mut fg, *pipelines, frame.slot);
         // Each output drawn this frame, as the graph knows it.
         let images: Vec<Option<(ImageId, ImageDesc)>> = outputs
             .iter()
@@ -1102,6 +1111,7 @@ impl Renderer {
                 keep_ldr,
                 mesh_shaders,
                 software_rays,
+                posed: skinning.posed.clone(),
             };
             let recorded =
                 view.record(&mut fg, (gpu, bindless, pipelines, assets), world, &setup, output, frame.slot)?;
@@ -1308,6 +1318,7 @@ impl Drop for Renderer {
         self.gpu.wait_idle();
         let gpu = &self.gpu;
         self.pipelines.destroy(gpu);
+        self.skinning.destroy(gpu);
         for view in std::mem::take(&mut self.views) {
             view.retire(&mut self.frames);
         }
@@ -1406,6 +1417,8 @@ struct ViewSetup {
     mesh_shaders: bool,
     /// The GI's rays are traced in a compute shader, not by ray tracing.
     software_rays: bool,
+    /// This frame's posed parts, whose instances draw their posed vertices.
+    posed: std::sync::Arc<HashMap<scene::Owner, skinning::Posed>>,
 }
 
 /// What a view gives the frame after it: its push constants, which the UI
@@ -1724,6 +1737,11 @@ impl View {
         let instance_count = extracted.instances.len().min(MAX_INSTANCES as usize);
         let opaque_count = opaque.min(instance_count);
         self.track_motion(&mut extracted);
+        for (instance, owner) in extracted.instances.iter_mut().zip(&extracted.entities) {
+            if let Some(posed) = setup.posed.get(owner) {
+                posed.apply(instance);
+            }
+        }
         let taa = extracted.post.anti_aliasing.mode == AntiAliasingMode::Taa;
         let taa_reset = self.taa_history != Some(extent);
         self.taa_history = taa.then_some(extent);
@@ -2018,6 +2036,8 @@ impl View {
                 dice_splits: buffers.dice_splits.address,
                 dice_patches: buffers.dice_patches.address,
                 dice_draws: buffers.dice_draws.address,
+                skins: assets.skins.address,
+                skin_matrices: 0,
             }],
         );
         buffers.instances.write(0, &extracted.instances[..instance_count]);

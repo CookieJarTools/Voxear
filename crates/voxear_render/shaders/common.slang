@@ -256,7 +256,25 @@ struct Instance
     // From how far from the camera it fades out, by dithering, and how far it is gone; y 0 for never.
     // z: a plant's tint, RGBA8 in its bits, 0 for none.
     float4 fade;
+    // A skinned instance's posed vertices, this frame's and last frame's starts plus one; 0 for a rigid one.
+    uint posed;
+    uint posedBefore;
+    // How far its pose may reach past its mesh's bounds, in metres.
+    float reach;
+    uint pad;
 };
+
+// Where an instance's vertices start in the vertex buffer: its posed ones
+// when skinned, its mesh's otherwise; and last frame's, for its motion.
+uint instanceVertices(Instance instance, Mesh mesh)
+{
+    return instance.posed != 0 ? instance.posed - 1 : mesh.vertexOffset;
+}
+
+uint instanceVerticesBefore(Instance instance, Mesh mesh)
+{
+    return instance.posedBefore != 0 ? instance.posedBefore - 1 : instanceVertices(instance, mesh);
+}
 
 // An instance whose place in the list another Obj held last frame.
 static const uint INSTANCE_NEW = 1;
@@ -919,6 +937,10 @@ struct Buffers
     uint4* diceSplits;
     uint4* dicePatches;
     uint4* diceDraws;
+    // Skinned meshes' vertices' bones, two joints or two weights to a word; and the frame's bones' matrices,
+    // three rows each (skinning.slang).
+    uint4* skins;
+    float4* skinMatrices;
 };
 
 struct Push

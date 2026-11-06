@@ -11,7 +11,7 @@ float4 shadowVertex(uint vertexId : SV_VertexID, uint drawId : SV_DrawIndex) : S
     uint fade;
     Instance instance = buffers()->instances[drawInstance(drawId, lod, fade)];
     Mesh mesh = buffers()->meshes[instance.mesh];
-    Vertex v = buffers()->vertices[mesh.vertexOffset + vertexId];
+    Vertex v = buffers()->vertices[instanceVertices(instance, mesh) + vertexId];
     float4 world = transform(instance.model, float4(v.position, 1.0));
     Material material = buffers()->materials[instance.material];
     float3 normal = normalize(instance.normal0.xyz * v.normal.x + instance.normal1.xyz * v.normal.y + instance.normal2.xyz * v.normal.z);

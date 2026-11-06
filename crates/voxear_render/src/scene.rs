@@ -627,6 +627,7 @@ pub fn extract(
                 lod_bias: renderer.lod_bits().1,
                 lod_screen: renderer.lod_bits().2,
                 fade: [0.0; 4],
+                ..GpuInstance::default()
             }
         })
         .collect();
@@ -657,6 +658,7 @@ pub fn extract(
                 lod_bias,
                 lod_screen,
                 fade: [0.0; 4],
+                ..GpuInstance::default()
             });
         }
     }

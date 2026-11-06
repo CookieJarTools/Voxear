@@ -815,6 +815,12 @@ impl Content {
         Ok(&self.models[&guid].nodes)
     }
 
+    /// A loaded model's skeleton, skins and clips, when it is made to
+    /// animate (see [`model`](Self::model)).
+    pub fn model_animation(&self, guid: AssetGuid) -> Option<std::sync::Arc<voxear_render::ModelAnimation>> {
+        self.models.get(&guid)?.animation.clone()
+    }
+
     /// Imports a loaded model again, as after its import settings or its
     /// file changed. With the same parts as before, it goes behind the
     /// handles its meshes and materials have, so whatever draws them shows

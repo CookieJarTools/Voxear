@@ -447,6 +447,7 @@ impl Previews {
                     lod_bias: 0.0,
                     lod_screen: [[0.0; 4]; 2],
                     fade: [0.0; 4],
+                    ..GpuInstance::default()
                 });
                 draws.push((draws.len(), *lod));
             }

@@ -19,6 +19,9 @@ pub struct ModelPart {
     pub material: MaterialHandle,
     pub transform: Mat4,
     pub node: u32,
+    /// The skin among its model's animation's that moves it, for a skinned
+    /// part; it then sits where its bones put it, at the model's own place.
+    pub skin: Option<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -27,13 +30,16 @@ pub struct ModelRenderer {
     pub parts: Arc<[ModelPart]>,
     /// As a Mesh Renderer's: shifts which LOD each part draws.
     pub lod_bias: f32,
+    /// The model's skeleton, skins and clips, for a model made to animate,
+    /// whose skinned parts a `Pose` moves.
+    pub animation: Option<Arc<crate::ModelAnimation>>,
 }
 
 impl Component for ModelRenderer {}
 
 impl ModelRenderer {
     pub fn new(parts: Vec<ModelPart>) -> Self {
-        Self { parts: parts.into(), lod_bias: 0.0 }
+        Self { parts: parts.into(), lod_bias: 0.0, animation: None }
     }
 
     /// Each part's box in the Obj's space, as the part's mesh's corners

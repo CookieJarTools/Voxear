@@ -248,7 +248,7 @@ GlassShadowOut glassShadowVertex(uint vertexId : SV_VertexID)
 {
     Instance instance = buffers()->instances[push.source];
     Mesh mesh = buffers()->meshes[instance.mesh];
-    Vertex v = buffers()->vertices[mesh.vertexOffset + vertexId];
+    Vertex v = buffers()->vertices[instanceVertices(instance, mesh) + vertexId];
     float4 world = transform(instance.model, float4(v.position, 1.0));
     GlassShadowOut output;
     output.position = transform(shadowViewProj(push.frame, push.list, push.level), world);

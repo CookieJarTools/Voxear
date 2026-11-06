@@ -27,7 +27,7 @@ void shadowMesh(
     uint triangleCount = drawn.meshlet.counts >> 8;
     SetMeshOutputCounts(vertexCount, triangleCount);
     Mesh mesh = buffers()->meshes[drawn.data.mesh];
-    uint vertexOffset = mesh.vertexOffset;
+    uint vertexOffset = instanceVertices(drawn.data, mesh);
     Material material = buffers()->materials[drawn.data.material];
     float height = plantHeight(drawn.data, mesh);
     for (uint i = thread.x; i < vertexCount; i += MESHLET_ROUND)

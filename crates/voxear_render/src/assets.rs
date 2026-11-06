@@ -31,6 +31,7 @@ use crate::{
     meshlets::MeshMeshlets,
     payload::{Payload, tile_len},
     seasons::Leaves,
+    skeleton::SkinVertex,
 };
 
 /// How a material's emission moves.
@@ -62,6 +63,8 @@ impl Glow {
 }
 
 const MAX_VERTICES: u64 = 2 * 1024 * 1024;
+/// How many skinned vertices' bones all meshes may keep (see `skeleton::SkinVertex`).
+const MAX_SKIN_VERTICES: u64 = 1024 * 1024;
 const MAX_INDICES: u64 = 8 * 1024 * 1024;
 const MAX_MESHES: u64 = 16 * 1024;
 /// Enough for every index in meshlets of 64 triangles, half the most they hold.
@@ -257,6 +260,11 @@ pub struct Assets {
     pub materials: Buffer,
     /// Each material's custom shader's properties, by its slot.
     pub material_properties: Buffer,
+    /// Each skinned mesh's vertices' bones, one for each of its vertices,
+    /// where its skin starts (see `skin_of`).
+    pub skins: Buffer,
+    skin_space: RangeAllocator,
+    skin_ranges: HashMap<MeshHandle, (u64, u64)>,
     /// Vertex, index, meshlet, meshlet vertex and meshlet triangle space.
     space: [RangeAllocator; 5],
     mesh_slots: SlotAllocator,
@@ -326,6 +334,7 @@ impl Assets {
             device_local,
         )?;
         let meshes = gpu.create_buffer("meshes", MAX_MESHES * size_of::<GpuMesh>() as u64, storage, device_local)?;
+        let skins = gpu.create_buffer("skins", MAX_SKIN_VERTICES * size_of::<SkinVertex>() as u64, storage, device_local)?;
         let meshlets =
             gpu.create_buffer("meshlets", MAX_MESHLETS * size_of::<GpuMeshlet>() as u64, storage, device_local)?;
         let meshlet_vertices =
@@ -346,6 +355,9 @@ impl Assets {
             meshlet_triangles,
             materials,
             material_properties,
+            skins,
+            skin_space: RangeAllocator::new(MAX_SKIN_VERTICES),
+            skin_ranges: HashMap::new(),
             space: [MAX_VERTICES, MAX_INDICES, MAX_MESHLETS, MAX_MESHLET_VERTICES, MAX_MESHLET_TRIANGLES]
                 .map(RangeAllocator::new),
             mesh_slots: SlotAllocator::new(MAX_MESHES as u32),
@@ -451,6 +463,7 @@ impl Assets {
             bytemuck::cast_slice(&mesh.vertices),
         )?;
 
+        self.keep_skin(gpu, handle, &mesh.skin)?;
         let (center, radius) = mesh.bounds();
         let lods_drawn =
             lods.iter().zip(&meshlets.counts).map(|(lod, &count)| (lod.error, lod.indices.len() as u32, count));
@@ -755,6 +768,15 @@ impl Assets {
         for (handle, _) in &meshes {
             self.build_bottom_level(gpu, *handle)?;
         }
+        // Skinned meshes' bones, read out of the model's data.
+        if model.meshes.iter().any(|mesh| mesh.skin.1 > 0) {
+            let bytes = model.payload.unpack()?;
+            for (mesh, (handle, _)) in model.meshes.iter().zip(&meshes) {
+                let (offset, count) = (mesh.skin.0 as usize, mesh.skin.1 as usize);
+                let slice = bytes.get(offset..offset + count * size_of::<SkinVertex>()).context("a mesh's skin")?;
+                self.keep_skin(gpu, *handle, bytemuck::cast_slice(slice))?;
+            }
+        }
         if self.hierarchies.is_some() {
             // Read back out of the model's data, which the GPU may have decompressed itself.
             let bytes = match &unpacked {
@@ -926,6 +948,51 @@ impl Assets {
         self.cut_out.contains(&material)
     }
 
+    /// Keeps a mesh's skin, one for each of its vertices, in place of any it
+    /// had; none for a rigid mesh.
+    fn keep_skin(&mut self, gpu: &Gpu, mesh: MeshHandle, skin: &[SkinVertex]) -> Result<()> {
+        if let Some((offset, count)) = self.skin_ranges.remove(&mesh) {
+            self.skin_space.free(offset, count);
+        }
+        if skin.is_empty() {
+            return Ok(());
+        }
+        let count = skin.len() as u64;
+        let offset = self.skin_space.alloc(count).context("out of skin space")?;
+        gpu.upload_buffer(&self.skins, offset * size_of::<SkinVertex>() as u64, bytemuck::cast_slice(skin))?;
+        self.skin_ranges.insert(mesh, (offset, count));
+        Ok(())
+    }
+
+    /// Where a skinned mesh's skin starts in `skins` and how many vertices
+    /// it has; `None` for a rigid mesh.
+    pub(crate) fn skin_of(&self, mesh: MeshHandle) -> Option<(u32, u32)> {
+        self.skin_ranges.get(&mesh).map(|&(offset, count)| (offset as u32, count as u32))
+    }
+
+    /// Where a mesh's vertices start in `vertices`.
+    pub(crate) fn vertices_of(&self, mesh: MeshHandle) -> Option<u32> {
+        self.mesh_ranges.get(&mesh).map(|ranges| ranges.space.vertices.0 as u32)
+    }
+
+    /// Room for `count` posed vertices in `vertices`, which a skinned
+    /// instance's skinning writes each frame; `None` when there is none.
+    pub(crate) fn reserve_posed(&mut self, count: u64) -> Option<u64> {
+        self.space[0].alloc(count)
+    }
+
+    /// Gives back posed vertices' room once frames in flight are done with it.
+    pub(crate) fn release_posed(&mut self, offset: u64, count: u64, frame: u64) {
+        let space = Space {
+            vertices: (offset, count),
+            indices: (0, 0),
+            meshlets: (0, 0),
+            meshlet_vertices: (0, 0),
+            meshlet_triangles: (0, 0),
+        };
+        self.retire(frame, Retiring::Space(space));
+    }
+
     /// Frees a mesh once frames in flight are done with it. Built-in meshes
     /// stay.
     pub fn free_mesh(&mut self, mesh: MeshHandle, frame: u64) {
@@ -983,6 +1050,9 @@ impl Assets {
                 if let Some(level) = self.bottom_levels.remove(&mesh) {
                     self.bottom_level_changes += 1;
                     gpu.destroy_acceleration_structure(level);
+                }
+                if let Some((offset, count)) = self.skin_ranges.remove(&mesh) {
+                    self.skin_space.free(offset, count);
                 }
                 if let Some(ranges) = self.mesh_ranges.remove(&mesh) {
                     self.free_space(ranges.space);

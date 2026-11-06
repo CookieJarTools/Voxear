@@ -53,13 +53,15 @@ VertexOut forwardVertex(uint instanceIndex, uint lod, uint fade, uint cluster, u
 {
     Instance instance = buffers()->instances[instanceIndex];
     Mesh mesh = buffers()->meshes[instance.mesh];
-    Vertex v = buffers()->vertices[mesh.vertexOffset + vertexIndex];
+    Vertex v = buffers()->vertices[instanceVertices(instance, mesh) + vertexIndex];
     if (isImpostor(instance))
     {
         return impostorVertex(instance, instanceIndex, v.position.xy, cluster);
     }
     float4 world = transform(instance.model, float4(v.position, 1.0));
-    float4 previous = transform(instance.prevModel, float4(v.position, 1.0));
+    // A skinned instance's vertex where last frame's pose had it.
+    float3 before = buffers()->vertices[instanceVerticesBefore(instance, mesh) + vertexIndex].position;
+    float4 previous = transform(instance.prevModel, float4(before, 1.0));
     // Plants move in the wind, now and as they were a frame ago, for their motion.
     Material material = buffers()->materials[instance.material];
     float3 normal = normalize(instance.normal0.xyz * v.normal.x + instance.normal1.xyz * v.normal.y + instance.normal2.xyz * v.normal.z);

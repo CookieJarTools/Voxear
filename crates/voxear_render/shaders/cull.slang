@@ -244,8 +244,8 @@ void cullMain(uint3 id : SV_DispatchThreadID)
     {
         radius *= 1.0 + 0.1 * material.windBend * frame->wind.strength * (1.0 + frame->wind.gusts);
     }
-    // A custom shader's vertex function moves it this far at most.
-    radius += material.maxOffset;
+    // A custom shader's vertex function moves it this far at most, and a skinned one's pose as far as it reaches.
+    radius += material.maxOffset + instance.reach;
     uint list = push.list + id.y;
 
     if (list >= LIST_SHADOW)

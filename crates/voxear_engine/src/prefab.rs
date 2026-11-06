@@ -770,7 +770,8 @@ pub fn model_renderer(content: &mut Content, renderer: &mut Renderer, data: &Mod
     let guid = content.parse(&data.model)?.guid().with_context(|| format!("{} is not a model asset", data.model))?;
     let nodes = content.model(renderer, guid)?.to_vec();
     let parts = model_parts(content, renderer, &nodes, data)?;
-    Ok(ModelRenderer { lod_bias: data.lod_bias, ..ModelRenderer::new(parts) })
+    let animation = content.model_animation(guid);
+    Ok(ModelRenderer { lod_bias: data.lod_bias, animation, ..ModelRenderer::new(parts) })
 }
 
 /// A loaded model's parts as a Model Renderer draws them, as `data`
@@ -795,7 +796,8 @@ pub fn model_parts(
             None => part.material,
         };
         let transform = voxear_core::math::Mat4::from_scale_rotation_translation(scale, rotation, position);
-        parts.push(ModelPart { mesh: part.mesh, material, transform, node });
+        let skin = part.skin.map(|skin| skin as u32);
+        parts.push(ModelPart { mesh: part.mesh, material, transform, node, skin });
     }
     Ok(parts)
 }

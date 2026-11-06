@@ -155,6 +155,15 @@ pub struct GpuInstance {
     /// and how far it is gone; both 0 for never (see `foliage`). z holds a
     /// plant's tint, RGBA8 in its bits, 0 for none.
     pub fade: [f32; 4],
+    /// For a skinned instance, where its posed vertices start in the vertex
+    /// buffer this frame and last, each plus one; 0 for a rigid one, whose
+    /// mesh's own are drawn (see `skinning`).
+    pub posed: u32,
+    pub posed_before: u32,
+    /// How far, in metres, its pose may reach past its mesh's bounds, which
+    /// culling allows for.
+    pub reach: f32,
+    pub _pad: u32,
 }
 
 /// An instance whose place in the list another Obj held last frame, so the
@@ -815,6 +824,10 @@ pub struct GpuBuffers {
     pub dice_splits: u64,
     pub dice_patches: u64,
     pub dice_draws: u64,
+    /// Skinned meshes' vertices' bones, and this frame's bones' matrices
+    /// (see `skinning`).
+    pub skins: u64,
+    pub skin_matrices: u64,
 }
 
 /// A mist as `shaders/smoke.slang` draws it: the box its trail stays in, how
@@ -1055,7 +1068,7 @@ mod tests {
         assert_eq!(size_of::<GpuMeshlet>(), 48);
         assert_eq!(size_of::<GpuMaterial>(), 112);
         // Three matrices, ids and flags, then where its LODs end.
-        assert_eq!(size_of::<GpuInstance>(), 192 + 32 + 16);
+        assert_eq!(size_of::<GpuInstance>(), 192 + 32 + 16 + 16);
         assert_eq!(size_of::<GpuLight>(), 96);
         // Two matrices, six planes, nine 16-byte rows, the cascades, then the
         // view matrix and three rows of clustering and timing.
@@ -1081,7 +1094,7 @@ mod tests {
         assert_eq!(size_of::<GpuDdgi>(), 32 * DDGI_CASCADES + 32 + 48);
         assert_eq!(size_of::<GpuLighting>(), lighting);
         assert_eq!(size_of::<GpuPost>(), post);
-        assert_eq!(size_of::<GpuBuffers>(), 46 * 8);
+        assert_eq!(size_of::<GpuBuffers>(), 48 * 8);
         assert_eq!(size_of::<GpuSmoke>(), 80);
         assert_eq!(size_of::<GpuMist>(), 64);
         assert_eq!(size_of::<GpuParticleSystem>(), 64 + 16 * 9 + 64 * 3 + 128 + 16);

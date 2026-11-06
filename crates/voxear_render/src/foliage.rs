@@ -342,6 +342,7 @@ fn build(
             lod_bias: 0.0,
             lod_screen: [[0.0; 4]; 2],
             fade: [near, far, tint, 0.0],
+            ..GpuInstance::default()
         }
     };
     // Each plant's chunk, by where it stands in the world.

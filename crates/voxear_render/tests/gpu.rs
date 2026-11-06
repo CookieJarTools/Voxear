@@ -3304,6 +3304,7 @@ fn one_obj_draws_a_whole_model_each_part_where_the_model_puts_it() {
         material,
         transform: voxear_core::math::Mat4::from_translation(Vec3::new(x, 0.0, 0.0)),
         node: 0,
+        skin: None,
     };
     // Half again as large, so its parts sit a half again as far apart.
     let model = world.spawn((ModelRenderer::new(vec![part(red, -1.0), part(green, 1.0)]), Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(1.5))));
@@ -4705,4 +4706,133 @@ fn displaced_ground_drawn_as_depth_first_looks_the_same() {
 /// How many pixels differ in some channel by more than `by`.
 fn differing_pixels_by(a: &[u8], b: &[u8], by: u8) -> usize {
     a.chunks_exact(4).zip(b.chunks_exact(4)).filter(|(a, b)| a.iter().zip(*b).any(|(a, b)| a.abs_diff(*b) > by)).count()
+}
+
+/// The bent bar (two bones, a skin and a clip) from its glTF, uploaded, and
+/// drawn bright before a dark wall: at rest, or with its tip's bone turned
+/// a quarter about Z, and a cooked copy too.
+fn bent_bar() -> Vec<u8> {
+    let mut buffer = Vec::new();
+    let mut put = |values: &[f32]| values.iter().for_each(|v| buffer.extend_from_slice(&v.to_le_bytes()));
+    put(&[-0.1, 0.0, 0.0, 0.1, 0.0, 0.0, 0.1, 2.0, 0.0, -0.1, 2.0, 0.0]);
+    let mut rest = Vec::new();
+    for index in [0u16, 1, 2, 0, 2, 3] {
+        rest.extend_from_slice(&index.to_le_bytes());
+    }
+    for joints in [[0u16, 0, 0, 0], [0, 0, 0, 0], [1, 0, 0, 0], [1, 0, 0, 0]] {
+        joints.iter().for_each(|j| rest.extend_from_slice(&j.to_le_bytes()));
+    }
+    buffer.extend(rest);
+    let mut put = |values: &[f32]| values.iter().for_each(|v| buffer.extend_from_slice(&v.to_le_bytes()));
+    put(&[1.0, 0.0, 0.0, 0.0].repeat(4));
+    put(&[1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]);
+    put(&[1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, -1.0, 0.0, 1.0]);
+    put(&[0.0, 1.0]);
+    let half = std::f32::consts::FRAC_PI_4;
+    put(&[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, half.sin(), half.cos()]);
+    let data = format!("data:application/octet-stream;base64,{}", base64::encode(&buffer));
+    format!(
+        r#"{{
+          "asset": {{ "version": "2.0" }},
+          "buffers": [{{ "uri": "{data}", "byteLength": {} }}],
+          "bufferViews": [
+            {{ "buffer": 0, "byteOffset": 0, "byteLength": 48 }},
+            {{ "buffer": 0, "byteOffset": 48, "byteLength": 12 }},
+            {{ "buffer": 0, "byteOffset": 60, "byteLength": 32 }},
+            {{ "buffer": 0, "byteOffset": 92, "byteLength": 64 }},
+            {{ "buffer": 0, "byteOffset": 156, "byteLength": 128 }},
+            {{ "buffer": 0, "byteOffset": 284, "byteLength": 8 }},
+            {{ "buffer": 0, "byteOffset": 292, "byteLength": 32 }}
+          ],
+          "accessors": [
+            {{ "bufferView": 0, "componentType": 5126, "count": 4, "type": "VEC3", "min": [-0.1, 0, 0], "max": [0.1, 2, 0] }},
+            {{ "bufferView": 1, "componentType": 5123, "count": 6, "type": "SCALAR" }},
+            {{ "bufferView": 2, "componentType": 5123, "count": 4, "type": "VEC4" }},
+            {{ "bufferView": 3, "componentType": 5126, "count": 4, "type": "VEC4" }},
+            {{ "bufferView": 4, "componentType": 5126, "count": 2, "type": "MAT4" }},
+            {{ "bufferView": 5, "componentType": 5126, "count": 2, "type": "SCALAR", "min": [0], "max": [1] }},
+            {{ "bufferView": 6, "componentType": 5126, "count": 2, "type": "VEC4" }}
+          ],
+          "meshes": [{{ "primitives": [{{ "attributes": {{ "POSITION": 0, "JOINTS_0": 2, "WEIGHTS_0": 3 }}, "indices": 1 }}] }}],
+          "skins": [{{ "joints": [0, 1], "inverseBindMatrices": 4 }}],
+          "animations": [{{ "name": "Bend",
+            "samplers": [{{ "input": 5, "output": 6 }}],
+            "channels": [{{ "sampler": 0, "target": {{ "node": 1, "path": "rotation" }} }}] }}],
+          "nodes": [
+            {{ "name": "Root", "children": [1] }},
+            {{ "name": "Tip", "translation": [0, 1, 0] }},
+            {{ "name": "Bar", "mesh": 0, "skin": 0, "translation": [5, 0, 0] }}
+          ],
+          "scenes": [{{ "nodes": [0, 2] }}]
+        }}"#,
+        buffer.len()
+    )
+    .into_bytes()
+}
+
+
+fn bar_render(cooked: bool, bent: bool) -> Option<Vec<u8>> {
+    use std::sync::Arc;
+    use voxear_render::{ModelPart, ModelRenderer, Pose, Sky};
+    let mut renderer = renderer()?;
+    let gltf = bent_bar();
+    let model = voxear_render::prepare_model("Bar.gltf", &mut |_| Ok(gltf.clone())).unwrap();
+    let imported = match cooked {
+        true => {
+            let bytes = model.cook().unwrap().to_bytes();
+            renderer.upload_cooked(&CookedModel::from_bytes("Bar.gltf", &bytes).unwrap()).unwrap()
+        }
+        false => renderer.upload_model(&model).unwrap(),
+    };
+    let mut world = World::new();
+    // From the side the bar faces.
+    let turned = Quat::from_rotation_y(std::f32::consts::PI);
+    world.spawn((Camera::default(), Transform::new(Vec3::new(0.0, 1.0, 4.0), turned, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 1.0, ..Sky::default() });
+    let bright = renderer.add_material(&MaterialDesc { emissive: [4.0, 4.0, 4.0], ..MaterialDesc::default() }).unwrap();
+    let parts = imported
+        .nodes
+        .iter()
+        .map(|node| ModelPart {
+            mesh: node.mesh,
+            material: bright,
+            transform: voxear_core::math::Mat4::IDENTITY,
+            node: 0,
+            skin: node.skin.map(|s| s as u32),
+        })
+        .collect();
+    let animation = imported.animation.clone().unwrap();
+    let mut pose = animation.skeleton.rest();
+    if bent {
+        pose[1].rotation = Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
+    }
+    let bones: Arc<[voxear_core::math::Mat4]> = animation.skeleton.model_matrices(&pose).into();
+    let drawn = ModelRenderer { animation: Some(animation), ..ModelRenderer::new(parts) };
+    world.spawn((drawn, Pose { bones }, Transform::default()));
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let dark = renderer.add_material(&MaterialDesc { base_color: [0.02, 0.02, 0.02, 1.0], ..MaterialDesc::default() }).unwrap();
+    world.spawn((MeshRenderer::new(cube, dark), Transform::new(Vec3::new(0.0, 1.0, -3.0), Quat::IDENTITY, Vec3::new(20.0, 20.0, 0.2))));
+    world.insert_resource(steady_post());
+    run(&mut renderer, &world, &mut 0.0, 4);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+#[test]
+fn a_skinned_bar_bends_where_its_bone_turns() {
+    let Some(rest) = bar_render(false, false) else { return };
+    let bent = bar_render(false, true).unwrap();
+    let cooked = bar_render(true, true).unwrap();
+    keep_image("bar rest.png", &rest);
+    keep_image("bar bent.png", &bent);
+    let (eye, ahead) = (Vec3::new(0.0, 1.0, 4.0), Quat::from_rotation_y(std::f32::consts::PI));
+    let lit = |pixels: &[u8], at: Vec3| rgb_at(pixels, on_screen(eye, ahead, at))[0] > 150;
+    // At rest the bar stands straight up. Bent, its top corners, bound to the tip's bone, swing a quarter turn
+    // about the joint a metre up, to a metre out to one side; its four corners make it lean from its foot to
+    // there.
+    assert!(lit(&rest, Vec3::new(0.0, 1.7, 0.0)) && lit(&rest, Vec3::new(0.0, 0.5, 0.0)));
+    assert!(lit(&bent, Vec3::new(0.0, 0.05, 0.0)), "its foot stays");
+    assert!(!lit(&bent, Vec3::new(0.0, 1.7, 0.0)), "its top no longer stands up");
+    let leaning = [-0.5f32, 0.5].map(|x| lit(&bent, Vec3::new(x, 0.5, 0.0)));
+    assert!(leaning[0] ^ leaning[1], "it leans to one side: {leaning:?}");
+    assert_eq!(differing_pixels(&bent, &cooked), 0, "cooked, the same");
 }

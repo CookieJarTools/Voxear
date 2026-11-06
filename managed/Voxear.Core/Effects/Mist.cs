@@ -10,10 +10,11 @@ namespace Voxear;
 /// Obj one with Obj.AddMist.
 /// <code>
 /// // A dash in a cloud of mist: the body hidden, the trail left behind it.
+/// var mist = Obj.Mist;
 /// Obj.Visible = false;
-/// Obj.Mist.Emitting = true;
+/// mist.Emitting = true;
 /// // ... the dash over:
-/// Obj.Mist.Emitting = false;
+/// mist.Emitting = false;
 /// Obj.Visible = true;
 /// </code>
 /// </summary>

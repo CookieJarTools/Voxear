@@ -50,7 +50,8 @@ Throw it by placing the prefab at the hand and giving its Rigidbody a velocity:
 
 ```csharp
 var grenade = smokeGrenade.Instantiate(hand.WorldPosition, hand.WorldRotation);
-grenade.Rigidbody.Velocity = aim * 14f;
+var body = grenade.Rigidbody;
+body.Velocity = aim * 14f;
 ```
 
 While the game runs, a smoke spreads out from where its Obj was when it started, and stays there, however far the canister rolls after. Started in the ground, as a canister lying on it is, it starts from just above. **Play** again starts it over from where the canister is now. **Disperse** starts it dispersing at once, however long it was to last. **IsPlaying** stays true until it has dispersed, so the grenade can destroy itself then.

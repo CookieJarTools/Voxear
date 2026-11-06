@@ -12,7 +12,8 @@ namespace Voxear;
 /// <code>
 /// // A smoke grenade: thrown, and after its fuse, smoking where it lies.
 /// var grenade = smokeGrenade.Instantiate(hand.WorldPosition, hand.WorldRotation);
-/// grenade.Rigidbody.Velocity = aim * 14f;
+/// var body = grenade.Rigidbody;
+/// body.Velocity = aim * 14f;
 /// // ... after the fuse:
 /// grenade.Smoke.Play();
 /// </code>

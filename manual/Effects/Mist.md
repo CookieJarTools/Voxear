@@ -23,18 +23,20 @@ Hide the body with `Obj.Visible`, leave mist behind, and push the Character Cont
 ```csharp
 public sealed class MistDash : Behaviour
 {
-	[SerializeField] private float speed = 18f;
+	[SerializeField] private float speed = 20f;
 	[SerializeField] private float length = 0.35f;
 
 	private float left;
 	private Vector3 way;
 
-	public void Dash(Vector3 direction)
+	/// <summary>Rushes the way the player aims, along the ground: never up or down.</summary>
+	public void Dash(Vector3 aim)
 	{
-		way = Vector3.Normalize(direction);
+		way = Vector3.Normalize(new Vector3(aim.X, 0f, aim.Z));
 		left = length;
+		var mist = Obj.Mist;
+		mist.Emitting = true;
 		Obj.Visible = false;
-		Obj.Mist.Emitting = true;
 	}
 
 	protected override void Update()
@@ -43,11 +45,13 @@ public sealed class MistDash : Behaviour
 		{
 			return;
 		}
-		Obj.CharacterController.Move(way * speed * Time.Delta);
+		var controller = Obj.CharacterController;
+		controller.Move((way * speed - Vector3.UnitY) * Time.Delta);
 		left -= Time.Delta;
 		if (left <= 0f)
 		{
-			Obj.Mist.Emitting = false;
+			var mist = Obj.Mist;
+			mist.Emitting = false;
 			Obj.Visible = true;
 		}
 	}

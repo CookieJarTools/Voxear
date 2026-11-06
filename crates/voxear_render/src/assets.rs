@@ -452,7 +452,8 @@ impl Assets {
         let (center, radius) = mesh.bounds();
         let lods_drawn =
             lods.iter().zip(&meshlets.counts).map(|(lod, &count)| (lod.error, lod.indices.len() as u32, count));
-        let entry = mesh_entry(space, lods_drawn, (center, radius));
+        let span = lods.first().map_or(0.0, |lod| uv_span(&mesh.vertices, &lod.indices));
+        let entry = mesh_entry(space, lods_drawn, (center, radius), span);
         let indices: Vec<u32> = lods.iter().flat_map(|lod| lod.indices.iter().copied()).collect();
         debug_assert_eq!(indices.len() as u64, index_count);
         gpu.upload_buffer(&self.indices, index_start * 4, bytemuck::cast_slice(&indices))?;
@@ -655,7 +656,9 @@ impl Assets {
             .meshes
             .iter()
             .zip(&meshes)
-            .map(|(mesh, (_, ranges))| mesh_entry(ranges.space, mesh.lods.iter().copied(), (mesh.center, mesh.radius)))
+            .map(|(mesh, (_, ranges))| {
+                mesh_entry(ranges.space, mesh.lods.iter().copied(), (mesh.center, mesh.radius), 0.0)
+            })
             .collect();
         for (mesh, (handle, _)) in model.meshes.iter().zip(&meshes) {
             let reach = Vec3::splat(mesh.radius);
@@ -1043,9 +1046,36 @@ fn sizes(mesh: &MeshData, lods: &[Lod], meshlets: &MeshMeshlets) -> [u64; 5] {
         .map(|count| count as u64)
 }
 
+/// How far, in mesh space, a mesh's UVs run over a whole picture: the
+/// middling of its triangles', each the square root of its area over its
+/// UVs' area. 0 for a mesh without UVs.
+fn uv_span(vertices: &[Vertex], indices: &[u32]) -> f32 {
+    let mut spans: Vec<f32> = indices
+        .chunks_exact(3)
+        .filter_map(|t| {
+            let [a, b, c] = [t[0], t[1], t[2]].map(|i| vertices.get(i as usize).copied().unwrap_or_default());
+            let (pa, pb, pc) = (Vec3::from(a.position), Vec3::from(b.position), Vec3::from(c.position));
+            let area = (pb - pa).cross(pc - pa).length();
+            let (ub, uc) = ([b.uv[0] - a.uv[0], b.uv[1] - a.uv[1]], [c.uv[0] - a.uv[0], c.uv[1] - a.uv[1]]);
+            let uv_area = (ub[0] * uc[1] - ub[1] * uc[0]).abs();
+            (uv_area > 1e-12 && area > 0.0).then(|| (area / uv_area).sqrt())
+        })
+        .collect();
+    if spans.is_empty() {
+        return 0.0;
+    }
+    let middle = spans.len() / 2;
+    *spans.select_nth_unstable_by(middle, f32::total_cmp).1
+}
+
 /// A mesh's table entry, once its space is known, from its LODs' errors,
 /// index counts and meshlet counts, finest first, and its bounding sphere.
-fn mesh_entry(space: Space, lods: impl Iterator<Item = (f32, u32, u32)>, (center, radius): (Vec3, f32)) -> GpuMesh {
+fn mesh_entry(
+    space: Space,
+    lods: impl Iterator<Item = (f32, u32, u32)>,
+    (center, radius): (Vec3, f32),
+    uv_span: f32,
+) -> GpuMesh {
     let mut entry = GpuMesh {
         vertex_offset: space.vertices.0 as u32,
         meshlet_vertex_offset: space.meshlet_vertices.0 as u32,
@@ -1056,7 +1086,7 @@ fn mesh_entry(space: Space, lods: impl Iterator<Item = (f32, u32, u32)>, (center
     };
     let (mut index_offset, mut meshlet_offset) = (space.indices.0 as u32, space.meshlets.0 as u32);
     for (slot, (error, index_count, meshlet_count)) in entry.lods.iter_mut().zip(lods) {
-        *slot = GpuMeshLod { index_offset, index_count, error, meshlet_offset, meshlet_count, _pad: 0 };
+        *slot = GpuMeshLod { index_offset, index_count, error, meshlet_offset, meshlet_count, uv_span };
         index_offset += index_count;
         meshlet_offset += meshlet_count;
         entry.lod_count += 1;
@@ -1123,4 +1153,20 @@ fn copy_mips(gpu: &Gpu, cmd: vk::CommandBuffer, from: vk::Buffer, texture: &Cook
         gpu.device.cmd_copy_buffer_to_image(cmd, from, image.handle, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &regions);
     }
     mip_barrier(gpu, cmd, image.handle, 0, count, Transition::DstToShaderRead);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_meshs_uv_span_is_how_far_its_uvs_run_over_a_whole_picture() {
+        let plane = MeshData::primitive(Primitive::Plane);
+        let first = uv_span(&plane.vertices, &plane.indices);
+        assert!((first - 1.0).abs() < 1e-5, "a unit plane spans one picture: {first}");
+        let wide: Vec<Vertex> = plane.vertices.iter().map(|v| Vertex { position: v.position.map(|p| p * 40.0), ..*v }).collect();
+        assert!((uv_span(&wide, &plane.indices) - 40.0).abs() < 1e-3);
+        let flat: Vec<Vertex> = plane.vertices.iter().map(|v| Vertex { uv: [0.0; 2], ..*v }).collect();
+        assert_eq!(uv_span(&flat, &plane.indices), 0.0, "without UVs, not known");
+    }
 }

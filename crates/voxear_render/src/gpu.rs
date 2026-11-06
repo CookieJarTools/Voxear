@@ -29,7 +29,10 @@ pub struct GpuMeshLod {
     /// turn from `index_offset`.
     pub meshlet_offset: u32,
     pub meshlet_count: u32,
-    pub _pad: u32,
+    /// How far, in mesh space, its UVs run over a whole picture, typically:
+    /// how finely a displaced material's height map is read across it (see
+    /// `dice`); 0 when not known.
+    pub uv_span: f32,
 }
 
 #[repr(C)]

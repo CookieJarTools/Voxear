@@ -398,20 +398,25 @@ VertexOut dicedPoint(uint vertexId, uint drawId)
     uint width;
     uint height;
     textures[NonUniformResourceIndex(material.heightTexture)].GetDimensions(width, height);
+    // How many metres a whole picture spans across this mesh, the same for all of an Obj's triangles so they read
+    // their edges alike; for a mesh that does not know, worked out from this triangle.
+    float2 duv1 = v1.uv - v0.uv;
+    float2 duv2 = v2.uv - v0.uv;
+    float3 dp1 = v1.position - v0.position;
+    float3 dp2 = v2.position - v0.position;
+    float area = duv1.x * duv2.y - duv1.y * duv2.x;
+    float own = abs(area) > 1e-10 ? sqrt(length(cross(dp1, dp2)) / abs(area)) : 1.0;
+    float metresAUv = mesh.lods[0].uvSpan > 0.0 ? mesh.lods[0].uvSpan : own;
+    float scale = max(length(instance.model.c0.xyz), max(length(instance.model.c1.xyz), length(instance.model.c2.xyz)));
     float metresAPixel = away / frame->lodScale;
-    float level = max(log2(max(metresAPixel * material.detail * float(width) * 0.5, 1.0)), 0.0);
+    float texelsAnEdge = metresAPixel * material.detail * float(width) / max(metresAUv * scale, 1e-6);
+    float level = max(log2(max(texelsAnEdge, 1.0)), 0.0);
     float rise = diceHeight(material, here.uv, level);
 
     // Bent by the height's slope along the triangle's surface, as far as its UVs stretch over it.
     float3 normal = normalizeOr(here.normal, float3(0.0, 1.0, 0.0));
     float3 tangent = normalizeOr(here.tangent.xyz - normal * dot(here.tangent.xyz, normal), float3(1.0, 0.0, 0.0));
     float3 bitangent = cross(normal, tangent) * (here.tangent.w < 0.0 ? -1.0 : 1.0);
-    float2 duv1 = v1.uv - v0.uv;
-    float2 duv2 = v2.uv - v0.uv;
-    float3 dp1 = v1.position - v0.position;
-    float3 dp2 = v2.position - v0.position;
-    float area = duv1.x * duv2.y - duv1.y * duv2.x;
-    float metresAUv = abs(area) > 1e-10 ? sqrt(length(cross(dp1, dp2)) / abs(area)) : 1.0;
     float step = exp2(level) / float(max(width, 1u));
     float slopeU = (diceHeight(material, here.uv + float2(step, 0.0), level) - diceHeight(material, here.uv - float2(step, 0.0), level)) / (2.0 * step * metresAUv);
     float slopeV = (diceHeight(material, here.uv + float2(0.0, step), level) - diceHeight(material, here.uv - float2(0.0, step), level)) / (2.0 * step * metresAUv);

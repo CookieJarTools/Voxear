@@ -155,7 +155,8 @@ struct MeshLod
     // Its meshlets in the meshlet table, which hold its indices in turn.
     uint meshletOffset;
     uint meshletCount;
-    uint pad;
+    // How far, in mesh space, its UVs run over a whole picture, typically; 0 when not known.
+    float uvSpan;
 };
 
 struct Mesh

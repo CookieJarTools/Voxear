@@ -359,7 +359,10 @@ struct StreamPoint
     float foam;
     // How long what flows there has taken to come from the Stream's start, in seconds.
     float age;
-    float2 pad;
+    // How far into its mouth it is, where it runs into the sea or a Pool, and how high that water stands
+    // (src/water_bodies.rs's run_into).
+    float mouth;
+    float meets;
 };
 
 // A Pool or a Dry Area (src/water_bodies.rs, GpuWaterBody): where it is, a Pool's footprint (x, z) or a Dry

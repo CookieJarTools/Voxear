@@ -729,6 +729,35 @@ float breakingAt(Frame* frame, float2 rest, float depth)
     return frame->ocean.foam > 0.0 ? saturate((threshold - folded) / 0.3) : 0.0;
 }
 
+// How hard the Streams running into the sea churn it at `xz`: white where
+// each pours in, the point a Stream's water body's size.z names, carried on
+// out in a jet as wide as it, reaching further the faster it runs.
+float pouredIn(Frame* frame, float2 xz)
+{
+    float churned = 0.0;
+    for (uint i = frame->ocean.pools; i < frame->ocean.pools + frame->ocean.streams; i++)
+    {
+        WaterBody body = buffers()->waterBodies[i];
+        if (body.liquid != LIQUID_WATER || body.size.z < 0.0)
+        {
+            continue;
+        }
+        StreamPoint end = buffers()->streamPoints[body.shape + uint(body.size.z)];
+        if (abs(end.meets - frame->ocean.level) > 1e-3)
+        {
+            continue;
+        }
+        float2 along = normalize(end.tangent.xz + float2(0.0, 1e-5));
+        float2 off = xz - end.position.xz;
+        float ahead = dot(off, along);
+        float aside = abs(dot(off, float2(-along.y, along.x)));
+        float reach = 1.0 + end.speed * 2.5;
+        float jet = saturate(1.0 - aside / (end.width * 0.5 + max(ahead, 0.0) * 0.3)) * saturate(1.0 + ahead) * saturate(1.0 - ahead / reach);
+        churned += jet * saturate(end.speed / 3.0);
+    }
+    return churned;
+}
+
 // One texel of the foam round the camera (storage image push.output), kept
 // by where the water rests, as the surface is drawn, so it rides the waves'
 // orbits as the water does and stays behind as a breaking crest runs on: a
@@ -803,8 +832,9 @@ void oceanFoamMain(uint3 id : SV_DispatchThreadID)
     }
     float churn = contact * (0.2 + 1.4 * foamNoise(here * 0.4 + frame->time * 0.1)) * 3.0 * dt;
     float surging = saturate(rising * 3.0);
-    float amount = saturate(max(kept.r * exp(-dt / 6.0), breaking) + churn * (0.1 + surging));
-    float fresh = min(saturate(max(kept.g * exp(-dt / 1.0), breaking) + churn * surging), amount);
+    float poured = pouredIn(frame, here) * 2.0 * dt;
+    float amount = saturate(max(kept.r * exp(-dt / 6.0), breaking) + churn * (0.1 + surging) + poured);
+    float fresh = min(saturate(max(kept.g * exp(-dt / 1.0), breaking) + churn * surging + poured), amount);
     storageImagesRgba16f[push.output][id.xy] = float4(amount * wet, fresh * wet, 0.0, 0.0);
 }
 
@@ -855,6 +885,8 @@ struct WaterOut
     // A Stream's: how long what flows there has taken to come from its start, in seconds; and how far across it,
     // from -1 at one bank to 1 at the other.
     float2 lava : LAVA;
+    // A Stream's: how far into its mouth it is, where it runs into the sea or a Pool, from 0 upstream to 1.
+    float mouth : MOUTH;
 };
 
 float2 cascadeUv(Frame* frame, uint cascade, float2 rest)
@@ -933,6 +965,7 @@ WaterOut waterVertex(uint vertexId : SV_VertexID, uint ring : SV_InstanceID)
     o.body = SEA;
     o.stream = 0.0;
     o.lava = 0.0;
+    o.mouth = 0.0;
     o.up = float3(0.0, 1.0, 0.0);
     return o;
 }
@@ -950,6 +983,7 @@ WaterOut nothing()
     o.body = SEA;
     o.stream = 0.0;
     o.lava = 0.0;
+    o.mouth = 0.0;
     o.up = float3(0.0, 1.0, 0.0);
     return o;
 }
@@ -980,6 +1014,7 @@ WaterOut poolVertex(uint vertexId : SV_VertexID, uint pool : SV_InstanceID)
     o.body = pool;
     o.stream = 0.0;
     o.lava = 0.0;
+    o.mouth = 0.0;
     o.up = float3(0.0, 1.0, 0.0);
     return o;
 }
@@ -1022,6 +1057,13 @@ WaterOut streamVertex(uint vertexId : SV_VertexID)
     float2 level = normalize(p.tangent.xz + float2(0.0, 1e-5));
     float3 right = float3(level.y, 0.0, -level.x);
     float3 world = p.position + right * across * p.width * 0.5;
+    // At its mouth it eases to the height of the water it runs into, rising and falling with the sea's waves there.
+    if (p.mouth > 0.0)
+    {
+        bool sea = frame->ocean.enabled != 0 && abs(p.meets - frame->ocean.level) < 1e-3;
+        float waves = sea ? oceanMoved(frame, world.xz, 0.5, false, 1.0, seaDepth(frame, world.xz)).y : 0.0;
+        world.y = lerp(world.y, p.meets + waves, p.mouth);
+    }
     float2 flow = level * p.speed * (0.3 + 0.7 * (1.0 - across * across));
     WaterOut o;
     o.position = transform(frame->viewProj, float4(world, 1.0));
@@ -1033,6 +1075,7 @@ WaterOut streamVertex(uint vertexId : SV_VertexID)
     o.stream = float4(flow, p.foam, float(min(grid.y, push.level - 1 - grid.y)));
     o.up = normalize(cross(p.tangent, right));
     o.lava = float2(p.age, across);
+    o.mouth = p.mouth;
     return o;
 }
 
@@ -1251,10 +1294,16 @@ FragmentOut waterFragment(WaterOut input)
     float blend = abs(1.0 - 2.0 * phase);
     if (stream)
     {
-        addWaves(frame, restA, 0.0, 1.0 - blend, slope, variance, folded, moved);
-        addWaves(frame, restB, 0.0, blend, slope, variance, folded, moved);
+        // Its own ripples, carried along, giving way at its mouth to the waves of the water it runs into.
+        float own = 1.0 - input.mouth;
+        addWaves(frame, restA, 0.0, (1.0 - blend) * own, slope, variance, folded, moved);
+        addWaves(frame, restB, 0.0, blend * own, slope, variance, folded, moved);
         // Faster water is rougher.
-        slope *= 0.6 + 0.25 * length(flow);
+        slope *= 0.6 + 0.25 * length(flow) * own;
+        if (input.mouth > 0.0)
+        {
+            addWaves(frame, rest, 1.0, input.mouth, slope, variance, folded, moved);
+        }
     }
     else
     {
@@ -1418,10 +1467,14 @@ FragmentOut waterFragment(WaterOut input)
     float3 foamLit = foamColor * crevice * (ambient + sunLight * shadow * foamSun * wrapped / PI) + sunLight * shadow * glint * 0.6;
     float sparse = stream ? 1.0 : lerp(0.75, 1.0, saturate(pattern * 1.4));
     color = lerp(color, foamLit, foam * (1.0 - 0.35 * spot.age) * sparse);
-    // A Stream fades in over its first two points and out over its last two.
+    // A Stream fades in over its first two points and out over its last two, and across its mouth into the water it
+    // runs into, drawn under it, so it becomes that water rather than lying on it.
     if (stream)
     {
-        color = lerp(glassBehind(push.texture, pixel / float2(frame->viewport), 0.0), color, saturate(input.stream.w / 2.0));
+        // Its banks first, so no edge of it shows on the water.
+        float into = input.mouth > 0.0 ? saturate(input.mouth * (1.0 + 3.0 * input.lava.y * input.lava.y) + 0.05) : 0.0;
+        float shown = saturate(input.stream.w / 2.0) * (1.0 - into);
+        color = lerp(glassBehind(push.texture, pixel / float2(frame->viewport), 0.0), color, shown);
     }
 
     if (atmosphere)

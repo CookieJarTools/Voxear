@@ -876,15 +876,38 @@ fn water_bodies(world: &World, camera: Vec3) -> crate::water::WaterBodies {
             }
         })
         .collect();
-    // Each Stream's points along its Path, by how near the nearest of them is.
-    let mut streams: Vec<(f32, Stream, Vec<crate::water_bodies::StreamPoint>)> = world
+    // The water a Stream can run into: the sea, at its level, and each Pool of water.
+    let sea = world.query_ref::<(&crate::Ocean, &Transform, Option<&WorldTransform>)>().into_iter().next().map(|(_, t, at)| placed(t, at).0.y);
+    let ponds: Vec<(Pool, Vec3, Quat)> = world
+        .query_ref::<(&Pool, &Transform, Option<&WorldTransform>)>()
+        .without::<Destroying>()
+        .into_iter()
+        .filter(|(pool, ..)| pool.liquid == crate::Liquid::Water)
+        .map(|(pool, t, at)| {
+            let (position, rotation) = placed(t, at);
+            (*pool, position, rotation)
+        })
+        .collect();
+    // Each Stream's points along its Path, by how near the nearest of them is; a Stream of water running into a Pool
+    // or the sea eases into it at its mouth.
+    let mut streams: Vec<(f32, Stream, Vec<crate::water_bodies::StreamPoint>, Option<usize>)> = world
         .query_ref::<(&Stream, &voxear_scene::Path, &Transform, Option<&WorldTransform>)>()
         .without::<Destroying>()
         .into_iter()
         .map(|(stream, path, transform, at)| {
-            let points = stream.points(path, at.map_or_else(|| transform.matrix(), |w| w.0));
+            let mut points = stream.points(path, at.map_or_else(|| transform.matrix(), |w| w.0));
+            let mut pours = None;
+            if let Some(end) = points.last().map(|p| p.position).filter(|_| stream.liquid == crate::Liquid::Water) {
+                let pond = ponds.iter().find_map(|(pool, position, rotation)| {
+                    pool.surface_over(*position, *rotation, end).filter(|surface| end.y < surface + 1.0)
+                });
+                let meets = pond.or(sea.filter(|level| end.y < level + 1.0));
+                if let Some(level) = meets {
+                    pours = crate::water_bodies::run_into(&mut points, level);
+                }
+            }
             let near = points.iter().map(|p| p.position.distance_squared(camera)).fold(f32::INFINITY, f32::min);
-            (near, *stream, points)
+            (near, *stream, points, pours)
         })
         .collect();
     pools.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -895,12 +918,12 @@ fn water_bodies(world: &World, camera: Vec3) -> crate::water::WaterBodies {
     dries.truncate(MAX_WATER_BODIES - pools.len() - streams.len());
     let mut bodies: Vec<crate::gpu::GpuWaterBody> = pools.iter().map(|(_, body)| *body).collect();
     let (mut counts, mut points) = (Vec::new(), Vec::new());
-    for (_, stream, along) in &streams {
+    for (_, stream, along, pours) in &streams {
         let room = MAX_STREAM_POINTS - points.len();
         if along.len() < 2 || along.len() > room {
             continue;
         }
-        bodies.push(stream.gpu(points.len() as u32));
+        bodies.push(stream.gpu(points.len() as u32, along.len() as u32, *pours));
         counts.push(along.len() as u32);
         points.extend(along.iter().map(|p| p.gpu()));
     }

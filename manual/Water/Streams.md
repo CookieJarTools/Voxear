@@ -24,7 +24,9 @@ A Stream flows down its Path from the first point to the last, at **Speed** wher
 
 Where it falls more steeply than **Rapids**, a slope (0.1 is a metre's drop every ten metres), it breaks white, and the white water churns on past the foot of the rapids before it clears.
 
-Its ripples drift down it at its speed, with lines of foam drawn out along the current the faster it runs. Where a Stream runs into the sea or a Pool, it simply runs under their surface.
+Its ripples drift down it at its speed, with lines of foam drawn out along the current the faster it runs.
+
+Where a Stream of water runs into the sea or a Pool, it becomes that water over ten metres from where it reaches it: its surface rises and falls with the waves there, its own ripples give way to them, and it fades into the water from its banks in. Running into the sea, it churns the sea white where it pours in, a jet of foam carried out as far as it runs fast.
 
 | Setting | What it does |
 | --- | --- |

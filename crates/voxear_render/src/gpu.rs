@@ -452,7 +452,9 @@ pub struct GpuStreamPoint {
     pub foam: f32,
     /// How long what flows there has taken to come from the Stream's start, in seconds.
     pub age: f32,
-    pub _pad: [f32; 2],
+    /// How far into its mouth it is, and how high the water it runs into stands (`water_bodies::run_into`).
+    pub mouth: f32,
+    pub meets: f32,
 }
 
 /// Most pushers through foliage a frame takes, the nearest the camera.

@@ -312,6 +312,32 @@ pub struct StreamPoint {
     pub speed: f32,
     pub foam: f32,
     pub age: f32,
+    /// Where it runs into the sea or a Pool at its end, how far into its
+    /// mouth this point is, from 0 upstream to 1 at the end, and how high the
+    /// water it runs into stands.
+    pub mouth: f32,
+    pub meets: f32,
+}
+
+/// How long a Stream's mouth is, in metres: how far it takes, from where it
+/// reaches the water it runs into, to become that water.
+pub const MOUTH_LENGTH: f32 = 10.0;
+
+/// Eases a Stream along `points` into water standing `level` high, from the
+/// first point that reaches it on, over [`MOUTH_LENGTH`] metres; which point
+/// that is, where it pours in, if any does.
+pub fn run_into(points: &mut [StreamPoint], level: f32) -> Option<usize> {
+    let reaches = points.iter().position(|p| p.position.y < level + 1.0)?;
+    let mut along = 0.0;
+    for i in reaches..points.len() {
+        if i > reaches {
+            along += points[i].position.distance(points[i - 1].position);
+        }
+        let t = (along / MOUTH_LENGTH).min(1.0);
+        points[i].mouth = t * t * (3.0 - 2.0 * t);
+        points[i].meets = level;
+    }
+    Some(reaches)
 }
 
 /// How rough a river's bed is, in Manning's formula: a natural channel's;
@@ -346,6 +372,8 @@ impl Stream {
                     speed: self.speed.max(0.0).max(downhill).min(20.0),
                     foam: if lava { 0.0 } else { ((slope - rapids) / rapids).clamp(0.0, 1.0) },
                     age: 0.0,
+                    mouth: 0.0,
+                    meets: 0.0,
                 }
             })
             .collect();
@@ -362,12 +390,14 @@ impl Stream {
         points
     }
 
-    pub(crate) fn gpu(&self, first: u32) -> GpuWaterBody {
+    /// As the shaders read it, its `count` points from point `first`, and
+    /// which of them it pours into the sea or a Pool at, if it does.
+    pub(crate) fn gpu(&self, first: u32, count: u32, pours: Option<usize>) -> GpuWaterBody {
         let linear = |srgb: [f32; 3]| srgb.map(|c| if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) });
         GpuWaterBody {
             to_world: cols(Mat4::IDENTITY),
             to_local: cols(Mat4::IDENTITY),
-            size: [0.0, self.depth.max(0.01), 0.0],
+            size: [count as f32, self.depth.max(0.01), pours.map_or(-1.0, |at| at as f32)],
             kind: WATER_STREAM,
             deep: linear(self.deep),
             shape: first,
@@ -389,7 +419,8 @@ impl StreamPoint {
             speed: self.speed,
             foam: self.foam,
             age: self.age,
-            _pad: [0.0; 2],
+            mouth: self.mouth,
+            meets: self.meets,
         }
     }
 }
@@ -427,6 +458,28 @@ pub const WATER_STREAM: u32 = 3;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_stream_eases_into_the_water_it_reaches_over_its_mouth() {
+        // Down a slope, a point every 4 m, reaching the sea at its level of 0 on its fourth point.
+        let point = |i: usize| StreamPoint {
+            position: Vec3::new(0.0, 6.0 - 2.0 * i as f32, 4.0 * i as f32),
+            tangent: Vec3::Z,
+            width: 4.0,
+            speed: 2.0,
+            foam: 0.0,
+            age: 0.0,
+            mouth: 0.0,
+            meets: 0.0,
+        };
+        let mut points: Vec<StreamPoint> = (0..8).map(point).collect();
+        assert_eq!(run_into(&mut points, 0.0), Some(3), "where it first comes within a metre of the sea");
+        assert!(points[..3].iter().all(|p| p.mouth == 0.0), "upstream, its own");
+        assert!(points[4].mouth > 0.0 && points[4].mouth < 1.0 && points[4].meets == 0.0, "{:?}", points[4]);
+        assert_eq!(points[7].mouth, 1.0, "the sea's, ten metres on");
+        let mut high: Vec<StreamPoint> = (0..2).map(point).collect();
+        assert_eq!(run_into(&mut high, 0.0), None, "never reaching it");
+    }
 
     #[test]
     fn a_dry_area_keeps_water_out_of_its_shape_turned_with_its_obj() {

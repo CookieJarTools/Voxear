@@ -9,6 +9,7 @@ use voxear_core::math::Vec3;
 use voxear_ecs::{Entity, World};
 use voxear_engine::{
     EditBehaviours, Game, MaterialSource,
+    animation::BoneAttachment,
     audio::{AudioBus, AudioListener, AudioSource, SoundOcclusion, SoundSpace},
     physics::{
         Acoustic, CharacterController, Collider, ColliderShape, Joint, JointType, Rigidbody, Vehicle, VehicleKind,
@@ -2281,13 +2282,15 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
             // The parent's model's bones, none first.
             let attachment = world.get::<voxear_engine::animation::BoneAttachment>(entity)?;
             let parent = world.get::<voxear_scene::Parent>(entity).map(|parent| parent.0);
-            let model = parent.and_then(|p| world.get::<voxear_render::ModelRenderer>(p)).and_then(|m| m.animation.clone());
+            let model = parent
+                .and_then(|p| world.get::<voxear_render::ModelRenderer>(p))
+                .and_then(|m| m.animation.clone());
             let mut names = vec!["None".to_string()];
             names.extend(model.iter().flat_map(|a| a.skeleton.bones.iter().map(|bone| bone.name.clone())));
             let index = names.iter().skip(1).position(|name| *name == attachment.bone).map_or(0, |i| i + 1);
             Value::Choice(index, names)
         }
-        Prop::AttachOffset => Value::Vector(world.get::<voxear_engine::animation::BoneAttachment>(entity)?.offset.to_vec()),
+        Prop::AttachOffset => Value::Vector(world.get::<BoneAttachment>(entity)?.offset.to_vec()),
         Prop::AttachTurn => Value::Toggle(world.get::<voxear_engine::animation::BoneAttachment>(entity)?.turn),
         Prop::AttachHide => Value::Toggle(world.get::<voxear_engine::animation::BoneAttachment>(entity)?.hide),
         Prop::MatcherIdle => {
@@ -3188,15 +3191,17 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         }
         (Prop::AttachBone, Value::Choice(index, _)) => {
             let parent = world.get::<voxear_scene::Parent>(entity).map(|parent| parent.0);
-            let model = parent.and_then(|p| world.get::<voxear_render::ModelRenderer>(p)).and_then(|m| m.animation.clone());
+            let model = parent
+                .and_then(|p| world.get::<voxear_render::ModelRenderer>(p))
+                .and_then(|m| m.animation.clone());
             let name = index.checked_sub(1).and_then(|i| model?.skeleton.bones.get(i).map(|bone| bone.name.clone()));
-            with(world, entity, |attachment: &mut voxear_engine::animation::BoneAttachment| attachment.bone = name.unwrap_or_default())
+            with(world, entity, |attachment: &mut BoneAttachment| attachment.bone = name.unwrap_or_default())
         }
         (Prop::AttachOffset, Value::Vector(v)) if v.len() == 3 => {
-            with(world, entity, |attachment: &mut voxear_engine::animation::BoneAttachment| attachment.offset = [v[0], v[1], v[2]])
+            with(world, entity, |attachment: &mut BoneAttachment| attachment.offset = [v[0], v[1], v[2]])
         }
-        (Prop::AttachTurn, Value::Toggle(on)) => with(world, entity, |attachment: &mut voxear_engine::animation::BoneAttachment| attachment.turn = on),
-        (Prop::AttachHide, Value::Toggle(on)) => with(world, entity, |attachment: &mut voxear_engine::animation::BoneAttachment| attachment.hide = on),
+        (Prop::AttachTurn, Value::Toggle(on)) => with(world, entity, |it: &mut BoneAttachment| it.turn = on),
+        (Prop::AttachHide, Value::Toggle(on)) => with(world, entity, |it: &mut BoneAttachment| it.hide = on),
         (Prop::MatcherIdle, Value::Choice(index, _)) => {
             let model = world.get::<voxear_render::ModelRenderer>(entity).and_then(|m| m.animation.clone());
             let name = index.checked_sub(1).and_then(|i| model?.clips.get(i).map(|clip| clip.name.clone()));

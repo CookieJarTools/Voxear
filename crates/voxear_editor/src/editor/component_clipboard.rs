@@ -77,7 +77,9 @@ impl Copied {
             Part::Smoke => Self::Smoke(*world.get::<voxear_render::Smoke>(entity)?),
             Part::Mist => Self::Mist(*world.get::<voxear_render::Mist>(entity)?),
             Part::Animator => Self::Animator(world.get::<voxear_engine::animation::Animator>(entity)?.clone()),
-            Part::BoneAttachment => Self::BoneAttachment(Box::new(world.get::<voxear_engine::animation::BoneAttachment>(entity)?.clone())),
+            Part::BoneAttachment => {
+                Self::BoneAttachment(Box::new(world.get::<voxear_engine::animation::BoneAttachment>(entity)?.clone()))
+            }
             Part::MotionMatcher => {
                 Self::MotionMatcher(Box::new(world.get::<voxear_engine::animation::MotionMatcher>(entity)?.clone()))
             }

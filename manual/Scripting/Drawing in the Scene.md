@@ -27,6 +27,7 @@ A drawing lasts one frame, so code that draws every frame always shows what is t
 | `Bezier(start, startHandle, endHandle, end)` | A smooth curve, as a path or a cable |
 | `Grid(center, size, cells)` | A grid on the ground |
 | `Label(position, text)` | Text that faces the camera |
+| `ScreenText(text)` | A line of text in the view's top-right corner, under the ones before it: a value to watch, as `Draw.ScreenText($"speed {speed:0.0}")` |
 
 Every shape takes a colour last, if you want one: `Draw.Line(a, b, Color.Red)`.
 

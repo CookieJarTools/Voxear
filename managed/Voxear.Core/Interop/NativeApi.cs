@@ -133,4 +133,5 @@ internal unsafe struct NativeApi
 	public delegate* unmanaged[Cdecl]<int> WaterFeatures;
 	public delegate* unmanaged[Cdecl]<int, void> WaterSetFeatures;
 	public delegate* unmanaged[Cdecl]<ulong, int, int, float*, int> LightValue;
+	public delegate* unmanaged[Cdecl]<byte*, int, Color*, float, void> DebugScreenText;
 }

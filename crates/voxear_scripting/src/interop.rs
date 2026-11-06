@@ -26,7 +26,7 @@ use voxear_scene::{
 };
 
 use crate::audio::{PlaySound, SoundFacts, audio_bus, sound_info, sound_load, sound_play, source_value, voice_value};
-use crate::debug::{debug_box, debug_line, debug_sphere, debug_text};
+use crate::debug::{debug_box, debug_line, debug_screen_text, debug_sphere, debug_text};
 use crate::display;
 use crate::ecs::{
     self, CURRENT_WORLD, QueryDesc, change_tick, chunk_written, commands_defer, component_add, component_get,
@@ -304,6 +304,9 @@ pub(crate) struct NativeApi {
     /// `Light`: reads or writes a value of an Obj's Light, by number (as
     /// `NativeLights` in Voxear.Core), up to four floats; 1 when it did.
     pub light_value: unsafe extern "C" fn(entity: u64, what: i32, set: i32, value: *mut [f32; 4]) -> i32,
+    /// `Draw.ScreenText`: a line of text in the view's corner, its colour
+    /// and how long it shows.
+    pub debug_screen_text: unsafe extern "C" fn(text: *const u8, len: i32, color: *const [f32; 4], duration: f32),
 }
 
 /// What answers scripts' questions about water: the engine's, set when it
@@ -1241,6 +1244,7 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         water_features,
         water_set_features,
         light_value,
+        debug_screen_text,
     }
 }
 

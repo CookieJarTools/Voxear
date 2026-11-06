@@ -359,6 +359,26 @@ public static unsafe class Draw
 		}
 	}
 
+	/// <summary>
+	/// A line of text in the view's top-right corner, under the lines drawn before it, in the scope's colour unless
+	/// given one: a value to watch while playing, as Draw.ScreenText($"speed {speed:0.0}").
+	/// </summary>
+	public static void ScreenText(string text, Color? color = null)
+	{
+		ref var now = ref State;
+		var shade = color ?? now.Color;
+		if (Sink != null || !Native.IsConnected)
+		{
+			return;
+		}
+
+		var bytes = Encoding.UTF8.GetBytes(text);
+		fixed (byte* written = bytes)
+		{
+			Native.Api->DebugScreenText(written, bytes.Length, &shade, now.Duration);
+		}
+	}
+
 	internal static void Restore(DrawState before)
 	{
 		State = before;

@@ -1,5 +1,6 @@
-//! Debug draw: lines, boxes, spheres, arrows and text in the 3D view, from
-//! any code, Rust or C#, for as long as asked, as Unity's `Debug.DrawLine`.
+//! Debug draw: lines, boxes, spheres, arrows and text in the 3D view, and
+//! lines of text in its corner, from any code, Rust or C#, for as long as
+//! asked, as Unity's `Debug.DrawLine`.
 //!
 //! ```
 //! use voxear_core::{debug_draw, math::Vec3};
@@ -75,12 +76,16 @@ impl From<bool> for LineStyle {
     }
 }
 
-/// Text at a point in the world, its colour sRGB with alpha.
+/// Text at a point in the world, or in the view's corner, its colour sRGB
+/// with alpha.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Text {
     pub at: Vec3,
     pub text: String,
     pub color: [f32; 4],
+    /// In the view's top-right corner, a line under the one drawn before,
+    /// rather than at `at`.
+    pub on_screen: bool,
 }
 
 struct Shapes {
@@ -171,7 +176,19 @@ pub fn text(at: Vec3, text: &str, color: [f32; 4], duration: f32) {
     }
     let mut shapes = shapes();
     if shapes.texts.len() < MAX_TEXTS {
-        shapes.texts.push((Text { at, text: text.to_owned(), color }, duration.max(0.0)));
+        shapes.texts.push((Text { at, text: text.to_owned(), color, on_screen: false }, duration.max(0.0)));
+    }
+}
+
+/// A line of text in the view's top-right corner, under the lines drawn
+/// before it, as a game prints a value it is watching.
+pub fn screen_text(text: &str, color: [f32; 4], duration: f32) {
+    if !enabled() {
+        return;
+    }
+    let mut shapes = shapes();
+    if shapes.texts.len() < MAX_TEXTS {
+        shapes.texts.push((Text { at: Vec3::ZERO, text: text.to_owned(), color, on_screen: true }, duration.max(0.0)));
     }
 }
 

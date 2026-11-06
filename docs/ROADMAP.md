@@ -592,8 +592,9 @@ Next in M3:
       `Debug.Line`, `Box`, `Sphere`, `Arrow` and `Text`: polyline, ray, cross, circle, arc, capsule, cylinder,
       cone, frustum, bezier, grid and labels; lines of any width in pixels, dimmed rather than hidden behind
       geometry, or on top when asked; durations; all lines in one draw
-    - [ ] still to come for drawing: solid shapes, wire meshes, widths in metres, and labels in a corner of the
-      screen
+    - [x] `Draw.ScreenText`: lines of text down the view's top-right corner, over the Scene and Game views and a
+      player's window
+    - [ ] still to come for drawing: solid shapes, wire meshes and widths in metres
     - [x] nestable scopes instead of global state: `using (Draw.Color(Color.Red))`, `Draw.InLocalSpace(obj)`,
       `Draw.Width(3)`, `Draw.Duration(2)`, `Draw.OnTop()` and `Draw.InGame()`
     - [x] `DrawGizmos(Gizmo gizmo)` on a behaviour, one callback in place of Unity's two, with `gizmo.IsSelected`

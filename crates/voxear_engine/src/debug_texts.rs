@@ -1,5 +1,6 @@
 //! Debug draw's texts (`Debug.Text`) as labels over the 3D view, each at the
-//! point it names as the camera sees it, in its colour. The renderer draws
+//! point it names as the camera sees it, in its colour, and its screen texts
+//! (`Draw.ScreenText`) one under another in the view's top-right corner. The renderer draws
 //! debug draw's lines; texts are labels because the UI has the fonts. The
 //! editor shows them over its Scene and Game views, and a player over its
 //! window, both through [`DebugTexts`].
@@ -17,12 +18,17 @@ use voxear_ui::{NodeId, StyleSheet, Ui};
 const NUDGE: f32 = 4.0;
 /// How a text and the layer holding them look, wherever they are shown.
 const SHEET: &str = ".debug-texts { position: absolute; left: 0px; top: 0px; right: 0px; bottom: 0px; pointer-events: none; }
-.debug-text { position: absolute; padding: 1px 4px; border-radius: 3px; background-color: rgba(0, 0, 0, 0.45); font-family: mono; font-size: 11px; pointer-events: none; }";
+.debug-text { position: absolute; padding: 1px 4px; border-radius: 3px; background-color: rgba(0, 0, 0, 0.45); font-family: mono; font-size: 11px; pointer-events: none; }
+.debug-corner { position: absolute; flex-direction: column; align-items: flex-end; padding: 8px; gap: 2px; pointer-events: none; }
+.debug-corner .debug-text { position: relative; }";
 
 /// The labels showing debug draw's texts, in a layer of their own.
 pub struct DebugTexts {
     layer: NodeId,
     labels: Vec<NodeId>,
+    /// The column in the view's corner, and its lines.
+    corner: NodeId,
+    lines: Vec<NodeId>,
 }
 
 impl DebugTexts {
@@ -31,7 +37,9 @@ impl DebugTexts {
     pub fn new(ui: &mut Ui, layer: NodeId) -> Self {
         ui.add_class(layer, "debug-texts");
         ui.add_sheet(layer, StyleSheet::parse("DebugTexts.vss", SHEET));
-        Self { layer, labels: Vec::new() }
+        let corner = ui.panel(layer, voxear_ui::Style::default());
+        ui.add_class(corner, "debug-corner");
+        Self { layer, labels: Vec::new(), corner, lines: Vec::new() }
     }
 
     /// Shows this frame's texts where `project` puts their points, those
@@ -39,8 +47,10 @@ impl DebugTexts {
     /// pixels); with no projection, none.
     pub fn update(&mut self, ui: &mut Ui, project: Option<&dyn Fn(Vec3) -> Option<[f32; 2]>>, rect: [f32; 4]) {
         let [x, y, w, h] = rect;
+        let (on_screen, in_world): (Vec<_>, Vec<_>) = debug_draw::texts().into_iter().partition(|text| text.on_screen);
+        self.show_corner(ui, rect, on_screen);
         let shown: Vec<(String, [f32; 2], [f32; 4])> = match project {
-            Some(project) => debug_draw::texts()
+            Some(project) => in_world
                 .into_iter()
                 .filter_map(|text| {
                     let at = project(text.at)?;
@@ -63,22 +73,46 @@ impl DebugTexts {
             if ui.text(label) != *text {
                 ui.set_text(label, text);
             }
-            let [r, g, b, a] = color.map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u8);
-            let style = format!(
-                "left: {}px; top: {}px; color: rgba({r}, {g}, {b}, {})",
-                x + NUDGE,
-                y - NUDGE - 14.0,
-                f32::from(a) / 255.0
-            );
+            let style = format!("left: {}px; top: {}px; {}", x + NUDGE, y - NUDGE - 14.0, css_color(*color));
             ui.set_inline_style(label, &style);
             ui.set_visible(label, true);
         }
     }
 
-    /// How many texts show.
-    pub fn shown(&self, ui: &Ui) -> usize {
-        self.labels.iter().filter(|&&label| ui.is_visible(label)).count()
+    /// The screen texts, one under another down the corner of `rect`, as
+    /// many as fit.
+    fn show_corner(&mut self, ui: &mut Ui, [x, y, w, h]: [f32; 4], texts: Vec<debug_draw::Text>) {
+        let fit = ((h - 16.0) / 18.0).max(0.0) as usize;
+        let texts = &texts[..texts.len().min(fit)];
+        ui.set_inline_style(self.corner, &format!("left: {x}px; top: {y}px; width: {w}px; height: {h}px"));
+        while self.lines.len() < texts.len() {
+            let line = ui.add_label(self.corner, "");
+            ui.add_class(line, "debug-text");
+            self.lines.push(line);
+        }
+        for (index, &line) in self.lines.iter().enumerate() {
+            let Some(text) = texts.get(index) else {
+                ui.set_visible(line, false);
+                continue;
+            };
+            if ui.text(line) != text.text {
+                ui.set_text(line, &text.text);
+            }
+            ui.set_inline_style(line, &css_color(text.color));
+            ui.set_visible(line, true);
+        }
     }
+
+    /// How many texts show, at their points and in the corner.
+    pub fn shown(&self, ui: &Ui) -> usize {
+        self.labels.iter().chain(&self.lines).filter(|&&label| ui.is_visible(label)).count()
+    }
+}
+
+/// `color` (sRGB with alpha) as a style's text colour.
+fn css_color(color: [f32; 4]) -> String {
+    let [r, g, b, a] = color.map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u8);
+    format!("color: rgba({r}, {g}, {b}, {})", f32::from(a) / 255.0)
 }
 
 /// Where points in the world show in `rect` (left, top, width and height),
@@ -138,8 +172,14 @@ mod tests {
         assert_eq!([x, y], [400.0 + NUDGE, 300.0 - NUDGE - 14.0], "beside its point");
         assert_eq!(ui.text_style(label).unwrap().color, voxear_ui::Color::rgba(255, 128, 0, 255), "in its colour");
 
+        // A screen text, in the corner whether or not there is a camera, right against its right edge.
+        debug_draw::screen_text("speed 12", [1.0; 4], 0.0);
         texts.update(&mut ui, None, rect);
-        assert_eq!(texts.shown(&ui), 0, "with no camera, none");
+        ui.frame(800, 600, 1.0);
+        assert_eq!(texts.shown(&ui), 1, "with no camera, only the screen text");
+        let [x, y, w, _] = ui.rect(texts.lines[0]);
+        assert!(x + w > 780.0 && x + w <= 800.0 && y < 20.0, "in the top-right corner: {x} {y} {w}");
+        debug_draw::clear();
         assert!(camera_projection(&World::new(), None, rect).is_none());
     }
 }

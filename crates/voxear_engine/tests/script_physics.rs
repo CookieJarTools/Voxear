@@ -1,7 +1,8 @@
 //! Scripts and physics: a crate a script kicks sideways falls through a
 //! trigger onto the floor, its behaviour told of each, after a ray and a
 //! sphere asked what is where; a character walks across the floor; in 2D, a
-//! ball kicked up lands on a ledge; and a script hangs a lamp on a bell.
+//! ball kicked up lands on a ledge; and a script hangs a lamp on a bell,
+//! saying so in the view's corner.
 //! Builds a copy of Hello with these added; skips itself without .NET and
 //! the managed build.
 
@@ -106,6 +107,10 @@ public sealed class Swing : Behaviour
 		lamp.Color = new Color(1f, 0.5f, 0f);
 		lamp.OuterSpotAngle = 50f;
 		Log.Info($"lamp {lamp.Kind}, {lamp.Intensity}, green {lamp.Color.G:0.00}, outer {lamp.OuterSpotAngle}");
+		using (Draw.Duration(60f))
+		{
+			Draw.ScreenText("bell hung");
+		}
 	}
 }
 "#;
@@ -221,6 +226,8 @@ fn scripts_ask_push_and_hear_physics() {
     assert!(said("2D hit Ledge, pushed up 1"), "the ball came down on the ledge: {lines:?}");
     assert!(said("joint Ball, to the world True, limits True"), "{lines:?}");
     assert!(said("lamp Spot, 4, green 0.50, outer 50"), "{lines:?}");
+    let corner = voxear_core::debug_draw::texts().into_iter().find(|text| text.on_screen);
+    assert_eq!(corner.map(|text| text.text), Some("bell hung".into()), "a line in the view's corner");
 
     // The kick sideways moved the crate along X as it fell.
     let world = &game.engine.world;

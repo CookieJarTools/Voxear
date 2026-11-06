@@ -85,3 +85,9 @@ pub(crate) unsafe extern "C" fn debug_text(
     let (at, color, text) = unsafe { (vec3(at), color(color_at), utf8(text, len)) };
     debug_draw::text(at, &text, color, duration);
 }
+
+/// `Draw.ScreenText`: a line of text in the view's corner.
+pub(crate) unsafe extern "C" fn debug_screen_text(text: *const u8, len: i32, color_at: *const [f32; 4], duration: f32) {
+    let (color, text) = unsafe { (color(color_at), utf8(text, len)) };
+    debug_draw::screen_text(&text, color, duration);
+}

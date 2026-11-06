@@ -101,6 +101,7 @@ public sealed class DrawSystem : SystemBase
 		Debug.Line(Vector3.Zero, Vector3.UnitY, Color.Red);
 		Debug.Sphere(Vector3.One, 0.5f, Color.Hex("#00ff00"), 0f, true);
 		Debug.Text(Vector3.UnitY, "spun", Color.Yellow);
+		Draw.ScreenText("frames on", Color.Cyan);
 		using (Draw.Width(4f))
 		using (Draw.InGame())
 		{
@@ -264,6 +265,7 @@ fn csharp_systems_work_on_the_engines_own_chunks() {
     );
     assert!(lines[1..].iter().all(|l| l.on_top && l.color == [0.0, 1.0, 0.0, 1.0]));
     let texts = voxear_core::debug_draw::texts();
-    assert_eq!(texts.len(), 1);
-    assert_eq!(texts[0].text, "spun");
+    assert_eq!(texts.len(), 2);
+    assert_eq!((texts[0].text.as_str(), texts[0].on_screen), ("spun", false));
+    assert_eq!((texts[1].text.as_str(), texts[1].on_screen), ("frames on", true), "in the corner");
 }

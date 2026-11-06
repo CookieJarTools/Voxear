@@ -486,6 +486,11 @@ impl Engine {
             self.run_stage("Update");
             self.flush();
         }
+        {
+            // Posed after Update, so LateUpdate sees this frame's bones.
+            profile_scope!("Animation");
+            crate::animation::animate(&mut self.world, self.time.delta);
+        }
 
         {
             profile_scope!("LateUpdate");

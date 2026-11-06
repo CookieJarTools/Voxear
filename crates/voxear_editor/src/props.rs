@@ -79,6 +79,7 @@ pub enum Part {
     ParticleSystem,
     Smoke,
     Mist,
+    Animator,
     Ocean,
     Pool,
     DryArea,
@@ -120,6 +121,7 @@ impl Part {
             Part::ParticleSystem => "particles".into(),
             Part::Smoke => "smoke".into(),
             Part::Mist => "mist".into(),
+            Part::Animator => "animator".into(),
             Part::Ocean => "ocean".into(),
             Part::Pool => "pool".into(),
             Part::DryArea => "dry_area".into(),
@@ -155,6 +157,7 @@ impl Part {
             Part::ParticleSystem => "Particle System",
             Part::Smoke => "Smoke",
             Part::Mist => "Mist",
+            Part::Animator => "Animator",
             Part::Ocean => "Ocean",
             Part::Pool => "Pool",
             Part::DryArea => "Dry Area",
@@ -189,6 +192,7 @@ impl Part {
             Part::ParticleSystem => "particles",
             Part::Smoke => "particles",
             Part::Mist => "particles",
+            Part::Animator => "play",
             Part::Ocean => "globe",
             Part::Pool => "globe",
             Part::DryArea => "box",
@@ -297,6 +301,13 @@ pub enum Prop {
     MistColor,
     MistLinger,
     MistSeed,
+    /// An Animator's clip, how fast and whether it loops, how long a change
+    /// of clip blends, and whether its root moves the Obj.
+    AnimatorClip,
+    AnimatorSpeed,
+    AnimatorLooping,
+    AnimatorBlend,
+    AnimatorRootMotion,
     /// An Ocean's weather, and for Custom weather its swell and wind; its
     /// crests, colours and foam.
     OceanWeather,
@@ -592,6 +603,11 @@ impl Prop {
             | Prop::MistColor
             | Prop::MistLinger
             | Prop::MistSeed => Part::Mist,
+            Prop::AnimatorClip
+            | Prop::AnimatorSpeed
+            | Prop::AnimatorLooping
+            | Prop::AnimatorBlend
+            | Prop::AnimatorRootMotion => Part::Animator,
             Prop::OceanWeather
             | Prop::OceanWindSource
             | Prop::OceanTransition
@@ -818,6 +834,11 @@ impl Prop {
             Prop::MistColor => "color",
             Prop::MistLinger => "linger",
             Prop::MistSeed => "seed",
+            Prop::AnimatorClip => "clip",
+            Prop::AnimatorSpeed => "speed",
+            Prop::AnimatorLooping => "looping",
+            Prop::AnimatorBlend => "blend",
+            Prop::AnimatorRootMotion => "root_motion",
             Prop::OceanWeather => "weather",
             Prop::OceanWindSource => "wind_source",
             Prop::OceanTransition => "transition",
@@ -1035,6 +1056,9 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     if world.has::<voxear_render::Mist>(entity) {
         parts.push(Part::Mist);
     }
+    if world.has::<voxear_engine::animation::Animator>(entity) {
+        parts.push(Part::Animator);
+    }
     if world.has::<Ocean>(entity) {
         parts.push(Part::Ocean);
     }
@@ -1191,6 +1215,13 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             Prop::MistColor,
             Prop::MistLinger,
             Prop::MistSeed,
+        ],
+        Part::Animator => vec![
+            Prop::AnimatorClip,
+            Prop::AnimatorSpeed,
+            Prop::AnimatorLooping,
+            Prop::AnimatorBlend,
+            Prop::AnimatorRootMotion,
         ],
         Part::ParticleSystem => {
             let shape = world.get::<ParticleSystem>(entity).map_or(EmitShape::Cone, |system| system.shape);
@@ -1508,6 +1539,11 @@ pub fn label(prop: &Prop) -> String {
         Prop::MistColor => "Colour",
         Prop::MistLinger => "Linger",
         Prop::MistSeed => "Seed",
+        Prop::AnimatorClip => "Clip",
+        Prop::AnimatorSpeed => "Speed",
+        Prop::AnimatorLooping => "Looping",
+        Prop::AnimatorBlend => "Blend Time",
+        Prop::AnimatorRootMotion => "Root Motion",
         Prop::OceanWeather => "Weather",
         Prop::OceanWindSource => "Wind Source",
         Prop::OceanTransition => "Transition",
@@ -1792,6 +1828,9 @@ pub fn add(
         Part::Mist => {
             world.insert(entity, voxear_render::Mist::default());
         }
+        Part::Animator => {
+            world.insert(entity, voxear_engine::animation::Animator::default());
+        }
         Part::Ocean => {
             world.insert(entity, Ocean::default());
         }
@@ -1856,6 +1895,11 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
         Part::Mist => {
             world.remove::<voxear_render::Mist>(entity);
             world.remove::<voxear_render::MistTrail>(entity);
+        }
+        Part::Animator => {
+            world.remove::<voxear_engine::animation::Animator>(entity);
+            world.remove::<voxear_engine::animation::AnimatorState>(entity);
+            world.remove::<voxear_render::Pose>(entity);
         }
         Part::ParticleSystem => {
             world.remove::<ParticleSystem>(entity);
@@ -2121,6 +2165,19 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         | Prop::MistColor
         | Prop::MistLinger
         | Prop::MistSeed => mist_value(world.get::<voxear_render::Mist>(entity)?, prop)?,
+        Prop::AnimatorClip => {
+            // The model's clips, none first, holding it at rest.
+            let animator = world.get::<voxear_engine::animation::Animator>(entity)?;
+            let model = world.get::<voxear_render::ModelRenderer>(entity).and_then(|m| m.animation.clone());
+            let mut names = vec!["None".to_string()];
+            names.extend(model.iter().flat_map(|a| a.clips.iter().map(|clip| clip.name.clone())));
+            let index = names.iter().skip(1).position(|name| *name == animator.clip).map_or(0, |i| i + 1);
+            Value::Choice(index, names)
+        }
+        Prop::AnimatorSpeed => Value::Number(world.get::<voxear_engine::animation::Animator>(entity)?.speed),
+        Prop::AnimatorLooping => Value::Toggle(world.get::<voxear_engine::animation::Animator>(entity)?.looping),
+        Prop::AnimatorBlend => Value::Number(world.get::<voxear_engine::animation::Animator>(entity)?.blend),
+        Prop::AnimatorRootMotion => Value::Toggle(world.get::<voxear_engine::animation::Animator>(entity)?.root_motion),
         Prop::OceanWeather => {
             let weather = world.get::<Ocean>(entity)?.weather;
             let index = Weather::ALL.iter().position(|w| *w == weather).unwrap_or(0);
@@ -2981,6 +3038,21 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         }
         (prop, value) if prop.part() == Part::Smoke => {
             with(world, entity, |smoke: &mut voxear_render::Smoke| set_smoke(smoke, prop, value))
+        }
+        (Prop::AnimatorClip, Value::Choice(index, _)) => {
+            let model = world.get::<voxear_render::ModelRenderer>(entity).and_then(|m| m.animation.clone());
+            let name = index.checked_sub(1).and_then(|i| model?.clips.get(i).map(|clip| clip.name.clone()));
+            with(world, entity, |animator: &mut voxear_engine::animation::Animator| animator.clip = name.unwrap_or_default())
+        }
+        (Prop::AnimatorSpeed, Value::Number(n)) => {
+            with(world, entity, |animator: &mut voxear_engine::animation::Animator| animator.speed = n.clamp(-10.0, 10.0))
+        }
+        (Prop::AnimatorLooping, Value::Toggle(on)) => with(world, entity, |animator: &mut voxear_engine::animation::Animator| animator.looping = on),
+        (Prop::AnimatorBlend, Value::Number(n)) => {
+            with(world, entity, |animator: &mut voxear_engine::animation::Animator| animator.blend = n.clamp(0.0, 5.0))
+        }
+        (Prop::AnimatorRootMotion, Value::Toggle(on)) => {
+            with(world, entity, |animator: &mut voxear_engine::animation::Animator| animator.root_motion = on)
         }
         (prop, value) if prop.part() == Part::Mist => {
             with(world, entity, |mist: &mut voxear_render::Mist| set_mist(mist, prop, value))

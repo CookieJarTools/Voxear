@@ -2,6 +2,7 @@
 //! scripts, content, levels and the renderer, either in a window or headless.
 
 pub mod acoustics;
+pub mod animation;
 pub mod audio;
 pub mod build_profile;
 mod content;

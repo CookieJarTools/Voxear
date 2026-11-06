@@ -282,6 +282,9 @@ pub struct ObjData {
     /// A trail of mist left behind the Obj as it moves.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mist: Option<voxear_render::Mist>,
+    /// Plays one of the Obj's model's clips.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub animator: Option<crate::animation::Animator>,
     /// An Ocean, the sea filling the level at the Obj's height.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ocean: Option<Ocean>,
@@ -359,6 +362,7 @@ impl ObjData {
             particles: None,
             smoke: None,
             mist: None,
+            animator: None,
             ocean: None,
             pool: None,
             dry_area: None,
@@ -1300,6 +1304,9 @@ fn capture_instance(
     if root.mist.is_some() && root.mist != prefab_root.mist {
         instance.mist = root.mist;
     }
+    if root.animator.is_some() && root.animator != prefab_root.animator {
+        instance.animator = root.animator.clone();
+    }
     if root.ocean.is_some() && root.ocean != prefab_root.ocean {
         instance.ocean = root.ocean;
     }
@@ -1440,6 +1447,9 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     }
     if let Some(mist) = actual.mist.filter(|m| Some(*m) != expected.mist) {
         put("mist", whole(&mist, &voxear_render::Mist::default())?);
+    }
+    if let Some(animator) = actual.animator.as_ref().filter(|a| Some(*a) != expected.animator.as_ref()) {
+        put("animator", whole(animator, &crate::animation::Animator::default())?);
     }
     if let Some(ocean) = actual.ocean.filter(|o| Some(*o) != expected.ocean) {
         put("ocean", whole(&ocean, &Ocean::default())?);
@@ -1687,6 +1697,7 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.particles = world.get::<ParticleSystem>(entity).copied();
     obj.smoke = world.get::<voxear_render::Smoke>(entity).copied();
     obj.mist = world.get::<voxear_render::Mist>(entity).copied();
+    obj.animator = world.get::<crate::animation::Animator>(entity).cloned();
     obj.ocean = world.get::<Ocean>(entity).copied();
     obj.pool = world.get::<Pool>(entity).copied();
     obj.dry_area = world.get::<DryArea>(entity).map(|area| DryAreaData::of(content, area));

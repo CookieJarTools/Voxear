@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 47;
+pub(crate) const API_VERSION: u32 = 48;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -329,6 +329,9 @@ pub(crate) struct NativeApi {
     /// Reads, or with `set` writes, value `what` of an Obj's Motion
     /// Matcher, as `light_value` does an Obj's Light.
     pub motion_matcher_value: unsafe extern "C" fn(entity: u64, what: i32, set: i32, value: *mut [f32; 4]) -> i32,
+    /// Reads, or with `set` writes, value `what` of an Obj's Bone
+    /// Attachment, as `light_value` does an Obj's Light.
+    pub bone_attachment_value: unsafe extern "C" fn(entity: u64, what: i32, set: i32, value: *mut [f32; 4]) -> i32,
 }
 
 /// What answers scripts' questions about water: the engine's, set when it
@@ -353,6 +356,7 @@ static PARTICLES: std::sync::OnceLock<ComponentValues> = std::sync::OnceLock::ne
 static SMOKES: std::sync::OnceLock<ComponentValues> = std::sync::OnceLock::new();
 static MISTS: std::sync::OnceLock<ComponentValues> = std::sync::OnceLock::new();
 static MATCHERS: std::sync::OnceLock<ComponentValues> = std::sync::OnceLock::new();
+static ATTACHMENTS: std::sync::OnceLock<ComponentValues> = std::sync::OnceLock::new();
 
 /// Sets what answers `Light` in scripts; the first set is kept.
 pub fn set_light_values(values: LightValues) {
@@ -377,6 +381,11 @@ pub fn set_mist_values(values: ComponentValues) {
 /// Sets what answers `MotionMatcher` in scripts; the first set is kept.
 pub fn set_motion_matcher_values(values: ComponentValues) {
     let _ = MATCHERS.set(values);
+}
+
+/// Sets what answers `BoneAttachment` in scripts; the first set is kept.
+pub fn set_bone_attachment_values(values: ComponentValues) {
+    let _ = ATTACHMENTS.set(values);
 }
 
 /// What answers scripts' shots and blasts through smoke and their asking
@@ -414,6 +423,10 @@ unsafe extern "C" fn mist_value(entity: u64, what: i32, set: i32, value: *mut [f
 
 unsafe extern "C" fn motion_matcher_value(entity: u64, what: i32, set: i32, value: *mut [f32; 4]) -> i32 {
     unsafe { component_value(MATCHERS.get(), entity, what, set, value) }
+}
+
+unsafe extern "C" fn bone_attachment_value(entity: u64, what: i32, set: i32, value: *mut [f32; 4]) -> i32 {
+    unsafe { component_value(ATTACHMENTS.get(), entity, what, set, value) }
 }
 
 /// Answers a script's read, or write with `set`, of value `what` through
@@ -1341,6 +1354,7 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         obj_visible: crate::layers::obj_visible,
         mist_value,
         motion_matcher_value,
+        bone_attachment_value,
     }
 }
 

@@ -5,6 +5,7 @@
 //! blend time, as a spring settling (inertialization). With root motion,
 //! the clip's root bone's travel along the ground moves the Obj itself.
 
+mod bone_attachment;
 mod motion_database;
 mod motion_matching;
 mod settling;
@@ -15,6 +16,7 @@ use voxear_ecs::{Component, Entity, World};
 use voxear_render::{BonePose, ModelAnimation, ModelRenderer, Pose};
 use voxear_scene::{Destroying, Transform};
 
+pub use bone_attachment::{BoneAttachment, attach_to_bones, register as register_bone_attachments};
 pub use motion_database::MotionDatabase;
 pub use motion_matching::{MotionMatcher, MotionMatcherState, match_motion, register};
 use settling::Settling;

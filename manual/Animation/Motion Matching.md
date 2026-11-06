@@ -36,6 +36,8 @@ public sealed class Walker : Behaviour
 
 The body turns the way it goes, at its **Turn Rate**. To keep it facing one way, as when aiming, set `WantedFacing`; set it to zero to face the way it goes again. `FollowObj()` forgets both.
 
+`AimPitch` bends the spine a little to look up or down, down positive: set it to the view's pitch. For a first-person camera on the body, see [[Bone Attachments]].
+
 Going another way than it faces, the hips and legs turn towards the way it goes, up to **Leg Turn**, and the spine twists back so the chest still faces ahead. With only a forward and a backward walk, it walks forward and to the side, or backs away to the side, turning smoothly from one to the next. Steps to each side, if the model has them, take over once they fit better.
 
 ## Settings

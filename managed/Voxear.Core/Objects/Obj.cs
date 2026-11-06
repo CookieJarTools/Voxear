@@ -274,6 +274,16 @@ public readonly struct Obj : IEquatable<Obj>
 		return new MotionMatcher(this);
 	}
 
+	/// <summary>The Obj's Bone Attachment, which keeps it on a bone of its parent's model. Not valid when it has none.</summary>
+	public BoneAttachment BoneAttachment => new BoneAttachment(this);
+
+	/// <summary>Gives the Obj a Bone Attachment, unless it has one, and returns it; choose its bone in the Inspector.</summary>
+	public BoneAttachment AddBoneAttachment()
+	{
+		NativeBoneAttachment.Set(this, NativeBoneAttachment.Add, Vector4.Zero);
+		return new BoneAttachment(this);
+	}
+
 	/// <summary>The Obj's Character Controller, which walks it. Not valid when it has none.</summary>
 	public CharacterController CharacterController => new CharacterController(this);
 

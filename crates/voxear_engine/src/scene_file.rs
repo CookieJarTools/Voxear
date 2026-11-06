@@ -288,6 +288,9 @@ pub struct ObjData {
     /// Animates the Obj's model by motion matching over its clips.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub motion_matcher: Option<crate::animation::MotionMatcher>,
+    /// Keeps the Obj on a bone of its parent's model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bone_attachment: Option<crate::animation::BoneAttachment>,
     /// An Ocean, the sea filling the level at the Obj's height.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ocean: Option<Ocean>,
@@ -367,6 +370,7 @@ impl ObjData {
             mist: None,
             animator: None,
             motion_matcher: None,
+            bone_attachment: None,
             ocean: None,
             pool: None,
             dry_area: None,
@@ -1314,6 +1318,9 @@ fn capture_instance(
     if root.motion_matcher.is_some() && root.motion_matcher != prefab_root.motion_matcher {
         instance.motion_matcher = root.motion_matcher.clone();
     }
+    if root.bone_attachment.is_some() && root.bone_attachment != prefab_root.bone_attachment {
+        instance.bone_attachment = root.bone_attachment.clone();
+    }
     if root.ocean.is_some() && root.ocean != prefab_root.ocean {
         instance.ocean = root.ocean;
     }
@@ -1461,6 +1468,10 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     let matcher = actual.motion_matcher.as_ref().filter(|m| Some(*m) != expected.motion_matcher.as_ref());
     if let Some(matcher) = matcher {
         put("motion_matcher", whole(matcher, &crate::animation::MotionMatcher::default())?);
+    }
+    let attachment = actual.bone_attachment.as_ref().filter(|a| Some(*a) != expected.bone_attachment.as_ref());
+    if let Some(attachment) = attachment {
+        put("bone_attachment", whole(attachment, &crate::animation::BoneAttachment::default())?);
     }
     if let Some(ocean) = actual.ocean.filter(|o| Some(*o) != expected.ocean) {
         put("ocean", whole(&ocean, &Ocean::default())?);
@@ -1710,6 +1721,7 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.mist = world.get::<voxear_render::Mist>(entity).copied();
     obj.animator = world.get::<crate::animation::Animator>(entity).cloned();
     obj.motion_matcher = world.get::<crate::animation::MotionMatcher>(entity).cloned();
+    obj.bone_attachment = world.get::<crate::animation::BoneAttachment>(entity).cloned();
     obj.ocean = world.get::<Ocean>(entity).copied();
     obj.pool = world.get::<Pool>(entity).copied();
     obj.dry_area = world.get::<DryArea>(entity).map(|area| DryAreaData::of(content, area));

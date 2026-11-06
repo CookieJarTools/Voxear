@@ -58,6 +58,10 @@ const FLIP_HALFLIFE: f32 = 0.15;
 /// How far, in metres, a foot held down may be from where the clips put
 /// it before it lets go.
 const REACH: f32 = 0.3;
+/// How much of a look up or down the spine bends, the neck taking the
+/// rest, and how far, in degrees, at most.
+const AIM_SHARE: f32 = 0.3;
+const AIM_BEND: f32 = 20.0;
 /// How long, in seconds, a foot let go takes to ease back to the clips'.
 const LET_GO: f32 = 0.15;
 /// How much nearer, in radians, another clip's way must be to the way
@@ -77,6 +81,10 @@ pub struct MotionMatcher {
     /// stepping aside or back; none faces the way it goes.
     #[serde(skip)]
     pub wanted_facing: Option<Vec3>,
+    /// How far, in degrees, the game wants the body to bend at the spine to
+    /// look up or down, down positive, so its arms aim where it looks.
+    #[serde(skip)]
+    pub aim_pitch: f32,
     /// The clip it stands with, by its name in the model; none, the first
     /// loop that stands still.
     pub idle: String,
@@ -112,6 +120,7 @@ impl Default for MotionMatcher {
         Self {
             wanted_velocity: None,
             wanted_facing: None,
+            aim_pitch: 0.0,
             idle: String::new(),
             idle_speed: 0.15,
             search_every: 0.1,
@@ -224,6 +233,7 @@ const MATCH_SPEED: i32 = 11;
 const DEBUG: i32 = 12;
 const LEG_TURN: i32 = 13;
 const FOOT_LOCKING: i32 = 14;
+const AIM_PITCH: i32 = 15;
 
 /// Reads value `what` of `entity`'s Motion Matcher, or with `written`,
 /// writes it: `None` when it has none, or is gone.
@@ -263,6 +273,7 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
             DEBUG => toggle(matcher.debug),
             LEG_TURN => number(matcher.leg_turn),
             FOOT_LOCKING => toggle(matcher.foot_locking),
+            AIM_PITCH => number(matcher.aim_pitch),
             _ => return None,
         }),
         Some([x, y, z, w]) => {
@@ -281,6 +292,7 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
                 DEBUG => matcher.debug = x != 0.0,
                 LEG_TURN => matcher.leg_turn = x.clamp(0.0, 180.0),
                 FOOT_LOCKING => matcher.foot_locking = x != 0.0,
+                AIM_PITCH => matcher.aim_pitch = x.clamp(-90.0, 90.0),
                 _ => return None,
             }
             Some([x, y, z, w])
@@ -364,6 +376,10 @@ fn step(
     play_on(state, matcher, database, delta);
     let mut pose = pose(state, matcher, animation, database, idle, body);
     turn_root(&mut pose, &animation.skeleton, database.root, wrap(body - obj.yaw));
+    // Looking up or down, the spine bends about the body's right.
+    let right = Quat::from_rotation_y(wrap(body - obj.yaw)) * Vec3::X;
+    let pitch = (matcher.aim_pitch * AIM_SHARE).clamp(-AIM_BEND, AIM_BEND).to_radians();
+    twist(&mut pose, &animation.skeleton, &database.spine, right, pitch);
     if flipped && delta > 0.0 && state.shown.len() == pose.len() {
         let old = [state.shown.as_slice(), &state.before];
         state.settling = Some(Settling::between(old, [&pose, &pose], delta, FLIP_HALFLIFE));
@@ -563,7 +579,7 @@ fn pose(
             if let Some(heading) = state.heading {
                 let turned = legs(matcher, wrap(heading - body), facing(run.velocity));
                 turn_root(&mut pose, &animation.skeleton, database.root, turned);
-                twist(&mut pose, &animation.skeleton, &database.spine, -turned);
+                twist(&mut pose, &animation.skeleton, &database.spine, Vec3::Y, -turned);
             }
             (pose, w * walking)
         })
@@ -721,13 +737,13 @@ fn reach(pose: &mut [BonePose], skeleton: &Skeleton, [hip, knee, ankle]: [usize;
     pose[ankle].rotation = (knee_after.inverse() * foot_turn).normalize();
 }
 
-/// Turns `bones`, a run of the spine from the hips up, about the up axis
-/// by `turn` between them, each its share.
-fn twist(pose: &mut [BonePose], skeleton: &Skeleton, bones: &[usize], turn: f32) {
+/// Turns `bones`, a run of the spine from the hips up, about `axis` in the
+/// model's space by `turn` between them, each its share.
+fn twist(pose: &mut [BonePose], skeleton: &Skeleton, bones: &[usize], axis: Vec3, turn: f32) {
     if bones.is_empty() || turn.abs() < 1e-5 {
         return;
     }
-    let share = Quat::from_rotation_y(turn / bones.len() as f32);
+    let share = Quat::from_axis_angle(axis, turn / bones.len() as f32);
     for &bone in bones {
         let matrices = skeleton.model_matrices(pose);
         let parent =

@@ -6,3 +6,4 @@ Animation brings models made to animate to life: a character walking, a door swi
 
 1. [[Animator]]: plays one of a model's clips
 2. [[Motion Matching]]: a character that walks, runs, stops and turns as the game moves it, from its clips alone
+3. [[Bone Attachments]]: an Obj kept on a bone, as eyes on a head or a gun in a hand

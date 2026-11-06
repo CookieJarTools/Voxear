@@ -57,6 +57,7 @@ pub struct ObjState {
     pub mist: Option<Box<voxear_render::Mist>>,
     pub animator: Option<Box<voxear_engine::animation::Animator>>,
     pub motion_matcher: Option<Box<voxear_engine::animation::MotionMatcher>>,
+    pub bone_attachment: Option<Box<voxear_engine::animation::BoneAttachment>>,
     pub ocean: Option<Box<Ocean>>,
     pub pool: Option<Box<Pool>>,
     pub dry_area: Option<Box<DryArea>>,
@@ -101,6 +102,7 @@ impl ObjState {
             mist: world.get::<voxear_render::Mist>(entity).copied().map(Box::new),
             animator: world.get::<voxear_engine::animation::Animator>(entity).cloned().map(Box::new),
             motion_matcher: world.get::<voxear_engine::animation::MotionMatcher>(entity).cloned().map(Box::new),
+            bone_attachment: world.get::<voxear_engine::animation::BoneAttachment>(entity).cloned().map(Box::new),
             ocean: world.get::<Ocean>(entity).copied().map(Box::new),
             pool: world.get::<Pool>(entity).copied().map(Box::new),
             dry_area: world.get::<DryArea>(entity).copied().map(Box::new),
@@ -165,6 +167,7 @@ impl ObjState {
         put(world, entity, self.mist.as_deref().copied());
         put(world, entity, self.animator.as_deref().cloned());
         put(world, entity, self.motion_matcher.as_deref().cloned());
+        put(world, entity, self.bone_attachment.as_deref().cloned());
         put(world, entity, self.ocean.as_deref().copied());
         put(world, entity, self.pool.as_deref().copied());
         put(world, entity, self.dry_area.as_deref().copied());

@@ -51,6 +51,16 @@ public readonly struct MotionMatcher : IEquatable<MotionMatcher>, IObjComponent
 		set { Set(NativeMotionMatcher.WantedFacing, new Vector4(value, 0f)); }
 	}
 
+	/// <summary>
+	/// How far, in degrees, the body bends at the spine to look up or down, down positive, as the view's pitch: its
+	/// arms aim where it looks.
+	/// </summary>
+	public float AimPitch
+	{
+		get { return Number(NativeMotionMatcher.AimPitch); }
+		set { Set(NativeMotionMatcher.AimPitch, value); }
+	}
+
 	/// <summary>Below this many metres a second wanted, it stands.</summary>
 	public float IdleSpeed
 	{

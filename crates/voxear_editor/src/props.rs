@@ -81,6 +81,7 @@ pub enum Part {
     Mist,
     Animator,
     MotionMatcher,
+    BoneAttachment,
     Ocean,
     Pool,
     DryArea,
@@ -124,6 +125,7 @@ impl Part {
             Part::Mist => "mist".into(),
             Part::Animator => "animator".into(),
             Part::MotionMatcher => "motion_matcher".into(),
+            Part::BoneAttachment => "bone_attachment".into(),
             Part::Ocean => "ocean".into(),
             Part::Pool => "pool".into(),
             Part::DryArea => "dry_area".into(),
@@ -161,6 +163,7 @@ impl Part {
             Part::Mist => "Mist",
             Part::Animator => "Animator",
             Part::MotionMatcher => "Motion Matcher",
+            Part::BoneAttachment => "Bone Attachment",
             Part::Ocean => "Ocean",
             Part::Pool => "Pool",
             Part::DryArea => "Dry Area",
@@ -197,6 +200,7 @@ impl Part {
             Part::Mist => "particles",
             Part::Animator => "play",
             Part::MotionMatcher => "play",
+            Part::BoneAttachment => "play",
             Part::Ocean => "globe",
             Part::Pool => "globe",
             Part::DryArea => "box",
@@ -325,6 +329,12 @@ pub enum Prop {
     MatcherMatchSpeed,
     MatcherFootLocking,
     MatcherDebug,
+    /// A Bone Attachment's bone, where it sits from it, whether it turns
+    /// with it, and whether it hides it.
+    AttachBone,
+    AttachOffset,
+    AttachTurn,
+    AttachHide,
     /// An Ocean's weather, and for Custom weather its swell and wind; its
     /// crests, colours and foam.
     OceanWeather,
@@ -635,6 +645,7 @@ impl Prop {
             | Prop::MatcherMatchSpeed
             | Prop::MatcherFootLocking
             | Prop::MatcherDebug => Part::MotionMatcher,
+            Prop::AttachBone | Prop::AttachOffset | Prop::AttachTurn | Prop::AttachHide => Part::BoneAttachment,
             Prop::OceanWeather
             | Prop::OceanWindSource
             | Prop::OceanTransition
@@ -876,6 +887,10 @@ impl Prop {
             Prop::MatcherMatchSpeed => "match_speed",
             Prop::MatcherFootLocking => "foot_locking",
             Prop::MatcherDebug => "debug",
+            Prop::AttachBone => "bone",
+            Prop::AttachOffset => "offset",
+            Prop::AttachTurn => "turn",
+            Prop::AttachHide => "hide",
             Prop::OceanWeather => "weather",
             Prop::OceanWindSource => "wind_source",
             Prop::OceanTransition => "transition",
@@ -1099,6 +1114,9 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     if world.has::<voxear_engine::animation::MotionMatcher>(entity) {
         parts.push(Part::MotionMatcher);
     }
+    if world.has::<voxear_engine::animation::BoneAttachment>(entity) {
+        parts.push(Part::BoneAttachment);
+    }
     if world.has::<Ocean>(entity) {
         parts.push(Part::Ocean);
     }
@@ -1275,6 +1293,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             Prop::MatcherFootLocking,
             Prop::MatcherDebug,
         ],
+        Part::BoneAttachment => vec![Prop::AttachBone, Prop::AttachOffset, Prop::AttachTurn, Prop::AttachHide],
         Part::ParticleSystem => {
             let shape = world.get::<ParticleSystem>(entity).map_or(EmitShape::Cone, |system| system.shape);
             let mut props = vec![
@@ -1606,6 +1625,10 @@ pub fn label(prop: &Prop) -> String {
         Prop::MatcherMatchSpeed => "Match Speed",
         Prop::MatcherFootLocking => "Foot Locking",
         Prop::MatcherDebug => "Debug",
+        Prop::AttachBone => "Bone",
+        Prop::AttachOffset => "Offset",
+        Prop::AttachTurn => "Turn With Bone",
+        Prop::AttachHide => "Hide Bone",
         Prop::OceanWeather => "Weather",
         Prop::OceanWindSource => "Wind Source",
         Prop::OceanTransition => "Transition",
@@ -1896,6 +1919,9 @@ pub fn add(
         Part::MotionMatcher => {
             world.insert(entity, voxear_engine::animation::MotionMatcher::default());
         }
+        Part::BoneAttachment => {
+            world.insert(entity, voxear_engine::animation::BoneAttachment::default());
+        }
         Part::Ocean => {
             world.insert(entity, Ocean::default());
         }
@@ -1970,6 +1996,9 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
             world.remove::<voxear_engine::animation::MotionMatcher>(entity);
             world.remove::<voxear_engine::animation::MotionMatcherState>(entity);
             world.remove::<voxear_render::Pose>(entity);
+        }
+        Part::BoneAttachment => {
+            world.remove::<voxear_engine::animation::BoneAttachment>(entity);
         }
         Part::ParticleSystem => {
             world.remove::<ParticleSystem>(entity);
@@ -2248,6 +2277,19 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::AnimatorLooping => Value::Toggle(world.get::<voxear_engine::animation::Animator>(entity)?.looping),
         Prop::AnimatorBlend => Value::Number(world.get::<voxear_engine::animation::Animator>(entity)?.blend),
         Prop::AnimatorRootMotion => Value::Toggle(world.get::<voxear_engine::animation::Animator>(entity)?.root_motion),
+        Prop::AttachBone => {
+            // The parent's model's bones, none first.
+            let attachment = world.get::<voxear_engine::animation::BoneAttachment>(entity)?;
+            let parent = world.get::<voxear_scene::Parent>(entity).map(|parent| parent.0);
+            let model = parent.and_then(|p| world.get::<voxear_render::ModelRenderer>(p)).and_then(|m| m.animation.clone());
+            let mut names = vec!["None".to_string()];
+            names.extend(model.iter().flat_map(|a| a.skeleton.bones.iter().map(|bone| bone.name.clone())));
+            let index = names.iter().skip(1).position(|name| *name == attachment.bone).map_or(0, |i| i + 1);
+            Value::Choice(index, names)
+        }
+        Prop::AttachOffset => Value::Vector(world.get::<voxear_engine::animation::BoneAttachment>(entity)?.offset.to_vec()),
+        Prop::AttachTurn => Value::Toggle(world.get::<voxear_engine::animation::BoneAttachment>(entity)?.turn),
+        Prop::AttachHide => Value::Toggle(world.get::<voxear_engine::animation::BoneAttachment>(entity)?.hide),
         Prop::MatcherIdle => {
             // The model's clips, none first, standing with the first loop that stands still.
             let matcher = world.get::<voxear_engine::animation::MotionMatcher>(entity)?;
@@ -3144,6 +3186,17 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         (Prop::AnimatorRootMotion, Value::Toggle(on)) => {
             with(world, entity, |animator: &mut voxear_engine::animation::Animator| animator.root_motion = on)
         }
+        (Prop::AttachBone, Value::Choice(index, _)) => {
+            let parent = world.get::<voxear_scene::Parent>(entity).map(|parent| parent.0);
+            let model = parent.and_then(|p| world.get::<voxear_render::ModelRenderer>(p)).and_then(|m| m.animation.clone());
+            let name = index.checked_sub(1).and_then(|i| model?.skeleton.bones.get(i).map(|bone| bone.name.clone()));
+            with(world, entity, |attachment: &mut voxear_engine::animation::BoneAttachment| attachment.bone = name.unwrap_or_default())
+        }
+        (Prop::AttachOffset, Value::Vector(v)) if v.len() == 3 => {
+            with(world, entity, |attachment: &mut voxear_engine::animation::BoneAttachment| attachment.offset = [v[0], v[1], v[2]])
+        }
+        (Prop::AttachTurn, Value::Toggle(on)) => with(world, entity, |attachment: &mut voxear_engine::animation::BoneAttachment| attachment.turn = on),
+        (Prop::AttachHide, Value::Toggle(on)) => with(world, entity, |attachment: &mut voxear_engine::animation::BoneAttachment| attachment.hide = on),
         (Prop::MatcherIdle, Value::Choice(index, _)) => {
             let model = world.get::<voxear_render::ModelRenderer>(entity).and_then(|m| m.animation.clone());
             let name = index.checked_sub(1).and_then(|i| model?.clips.get(i).map(|clip| clip.name.clone()));

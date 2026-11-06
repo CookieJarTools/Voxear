@@ -1,9 +1,11 @@
-//! Motion databases: every frame of a model's clips described by a few
-//! numbers, for motion matching to search. Each frame says where the feet
-//! are and how they move, how the hips move, and where the character will
-//! be, and which way it will face, a third of a second, two thirds and a
-//! second on: all as seen from where it stands at that frame, the place on
-//! the ground its root bone marks.
+//! Motion databases: every frame of a model's looping clips described by
+//! how its root moves along the ground there, as seen from where it stands
+//! and faces: its velocity, its direction, and where it will be a third of
+//! a second, two thirds and a second on. A Motion Matcher searches them for
+//! the clips that move as the character is wanted to.
+//!
+//! A clip that stays in place, as many walking loops are made, moves as
+//! fast as its planted foot slides back, and the other way.
 
 use std::sync::{Arc, Weak};
 
@@ -12,48 +14,14 @@ use voxear_ecs::World;
 use voxear_render::{CLIP_RATE, Clip, ModelAnimation, Skeleton};
 
 /// How many numbers describe a frame.
-pub const FEATURES: usize = 27;
+pub const FEATURES: usize = 10;
 /// How far ahead, in frames, the path is described.
 pub const AHEAD: [usize; 3] = [20, 40, 60];
-/// Frames a box of the search's holds.
-const BOX: usize = 16;
-/// The last frames of a clip that does not loop a search never lands on:
-/// there would be nothing left to play.
-const ENDING: usize = 20;
-
-/// How much each part of a frame's description counts in a search.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct MotionWeights {
-    pub foot_position: f32,
-    pub foot_velocity: f32,
-    pub hip_velocity: f32,
-    pub path_position: f32,
-    pub path_facing: f32,
-}
-
-impl Default for MotionWeights {
-    fn default() -> Self {
-        Self { foot_position: 0.75, foot_velocity: 1.0, hip_velocity: 1.0, path_position: 1.0, path_facing: 1.5 }
-    }
-}
-
-impl MotionWeights {
-    /// Each run of the features, and its weight.
-    fn groups(&self) -> [(std::ops::Range<usize>, f32); 5] {
-        [
-            (0..6, self.foot_position),
-            (6..12, self.foot_velocity),
-            (12..15, self.hip_velocity),
-            (15..21, self.path_position),
-            (21..27, self.path_facing),
-        ]
-    }
-
-    fn key(&self) -> [u32; 5] {
-        [self.foot_position, self.foot_velocity, self.hip_velocity, self.path_position, self.path_facing]
-            .map(f32::to_bits)
-    }
-}
+/// How much more speed, and the path it makes, counts than direction: it
+/// is what tells a walk from a run.
+const SPEED_WEIGHT: f32 = 3.0;
+/// Below this many metres a second a clip stands still.
+pub const STILL: f32 = 0.1;
 
 /// A place on the ground and which way it faces, as a turn about Y from +Z.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -76,10 +44,6 @@ impl Ground {
 
     pub fn rotation(&self) -> Quat {
         Quat::from_rotation_y(self.yaw)
-    }
-
-    pub fn matrix(&self) -> Mat4 {
-        Mat4::from_rotation_translation(self.rotation(), self.position)
     }
 
     /// `point` as seen from here.
@@ -113,28 +77,21 @@ pub fn wrap(angle: f32) -> f32 {
     (angle + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI
 }
 
-/// The bones motion matching follows.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct MotionBones {
-    pub root: usize,
-    pub hips: usize,
-    pub left_foot: usize,
-    pub right_foot: usize,
+/// The root bone: the one named "root", or else the first.
+fn root_bone(skeleton: &Skeleton) -> Option<usize> {
+    let bones = &skeleton.bones;
+    bones.iter().position(|bone| bone.name.eq_ignore_ascii_case("root")).or((!bones.is_empty()).then_some(0))
 }
 
-impl MotionBones {
-    /// Found by their names as most rigs give them: "root" (or the first
-    /// bone), the hips or pelvis, and each foot or ankle.
-    pub fn find(skeleton: &Skeleton) -> Option<Self> {
-        let names: Vec<String> = skeleton.bones.iter().map(|bone| bone.name.to_lowercase()).collect();
-        let named = |part: &str, side: Option<bool>| {
-            names.iter().position(|name| name.contains(part) && side.is_none_or(|left| side_of(name) == Some(left)))
-        };
-        let root = names.iter().position(|name| name == "root").or((!names.is_empty()).then_some(0))?;
-        let hips = named("hips", None).or_else(|| named("pelvis", None))?;
-        let foot = |left| named("foot", Some(left)).or_else(|| named("ankle", Some(left)));
-        Some(Self { root, hips, left_foot: foot(true)?, right_foot: foot(false)? })
-    }
+/// Each foot, found by its name as most rigs give it: its toes, which stay
+/// down longest, or else the foot or ankle, marked left or right.
+fn feet(skeleton: &Skeleton) -> Option<[usize; 2]> {
+    let names: Vec<String> = skeleton.bones.iter().map(|bone| bone.name.to_lowercase()).collect();
+    let foot = |left: bool| {
+        let named = |part: &str| names.iter().position(|name| name.contains(part) && side_of(name) == Some(left));
+        named("toe").or_else(|| named("foot")).or_else(|| named("ankle"))
+    };
+    Some([foot(true)?, foot(false)?])
 }
 
 /// Which side a bone's lowercase name puts it on: true for left.
@@ -151,7 +108,7 @@ fn side_of(name: &str) -> Option<bool> {
     }
 }
 
-/// One clip's frames among the database's.
+/// One clip's frames among the database's, and how it moves overall.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ClipRun {
     /// The model's clip.
@@ -160,17 +117,33 @@ pub struct ClipRun {
     pub frames: usize,
     /// Its last frame is its first again, so it plays round.
     pub looping: bool,
+    /// How it moves along the ground, in metres a second, as seen from
+    /// where it starts.
+    pub velocity: Vec3,
+    /// It moves at much the same speed all the way through, as walking
+    /// does, rather than lunging or stopping.
+    pub steady: bool,
 }
 
 impl ClipRun {
     pub fn duration(&self) -> f32 {
         (self.frames - 1) as f32 / CLIP_RATE
     }
+
+    /// A loop that moves steadily: one a Motion Matcher may walk with.
+    pub fn moves(&self) -> bool {
+        self.looping && self.steady && self.velocity.length() >= STILL
+    }
+
+    /// A loop that stands still: one it may stand with.
+    pub fn stands(&self) -> bool {
+        self.looping && self.velocity.length() < STILL
+    }
 }
 
 /// Every frame of a model's clips, described for searching.
 pub struct MotionDatabase {
-    pub bones: MotionBones,
+    pub root: usize,
     /// The root's turn at rest, in the model's space.
     pub rest_root: Quat,
     pub runs: Vec<ClipRun>,
@@ -181,110 +154,97 @@ pub struct MotionDatabase {
     /// What turns a raw feature into a weighed one: less `offset`, times `scale`.
     offset: [f32; FEATURES],
     scale: [f32; FEATURES],
-    /// Whether a search may land on each frame.
-    landable: Vec<bool>,
-    /// The least and most of each feature over each `BOX` frames.
-    boxes: Vec<([f32; FEATURES], [f32; FEATURES])>,
 }
 
 impl MotionDatabase {
     /// Describes every clip of `animation` of two frames or more; `None`
-    /// when its skeleton has no hips or feet to follow.
-    pub fn build(animation: &ModelAnimation, weights: &MotionWeights) -> Option<Self> {
-        let bones = MotionBones::find(&animation.skeleton)?;
-        let rest = animation.skeleton.rest();
-        let rest_root = animation.skeleton.model_matrices(&rest)[bones.root].to_scale_rotation_translation().1;
+    /// for a model with no bones.
+    pub fn build(animation: &ModelAnimation) -> Option<Self> {
+        let skeleton = &animation.skeleton;
+        let root = root_bone(skeleton)?;
+        let rest_root = skeleton.model_matrices(&skeleton.rest())[root].to_scale_rotation_translation().1;
+        let feet = feet(skeleton);
         let mut database = Self {
-            bones,
+            root,
             rest_root,
             runs: Vec::new(),
             grounds: Vec::new(),
             features: Vec::new(),
             offset: [0.0; FEATURES],
             scale: [1.0; FEATURES],
-            landable: Vec::new(),
-            boxes: Vec::new(),
         };
-        let mut raw = Vec::new();
-        let mut places = Vec::new();
         for (index, clip) in animation.clips.iter().enumerate().filter(|(_, clip)| clip.frames >= 2) {
-            let mut run = ClipRun { clip: index, start: database.grounds.len(), frames: clip.frames, looping: false };
-            let mut feet = Vec::with_capacity(clip.frames);
+            let start = database.grounds.len();
+            let mut planted = Vec::with_capacity(clip.frames);
             for frame in 0..clip.frames {
-                let matrices = animation.skeleton.model_matrices(clip.frame(frame));
-                let at = |bone: usize| matrices[bone].w_axis.truncate();
-                database.grounds.push(Ground::of(matrices[bones.root], rest_root));
-                feet.push([at(bones.left_foot), at(bones.right_foot), at(bones.hips)]);
+                let matrices = skeleton.model_matrices(clip.frame(frame));
+                let ground = Ground::of(matrices[root], rest_root);
+                database.grounds.push(ground);
+                planted.push(feet.map(|[l, r]| [l, r].map(|foot| ground.local(matrices[foot].w_axis.truncate()))));
             }
-            run.looping = loops(clip, bones.root) && database.steps_alike(&run);
-            places.push(feet);
+            let mut run =
+                ClipRun { clip: index, start, frames: clip.frames, looping: false, velocity: Vec3::ZERO, steady: true };
+            let travelled = database.grounds[start].to(database.grounds[start + clip.frames - 1]).position;
+            run.velocity = travelled / run.duration().max(1e-3);
+            // A clip made to stay in place moves as its planted foot slides back.
+            if run.velocity.length() < STILL
+                && let Some(slide) = slide(&planted)
+            {
+                run.velocity = -slide;
+                let first = database.grounds[start];
+                for frame in 0..clip.frames {
+                    let carried = Ground { position: run.velocity * (frame as f32 / CLIP_RATE), yaw: 0.0 };
+                    database.grounds[start + frame] = first.then(carried);
+                }
+            }
+            run.looping = loops(clip, root) && database.steps_alike(&run);
+            run.steady = database.steady(&run);
             database.runs.push(run);
         }
-        for (run, feet) in database.runs.clone().iter().zip(&places) {
-            for frame in 0..run.frames {
-                raw.push(database.describe(run, feet, frame));
-                database.landable.push(run.looping || frame + ENDING < run.frames);
-            }
-        }
-        database.weigh(&raw, weights);
+        let raw: Vec<[f32; FEATURES]> = database
+            .runs
+            .iter()
+            .flat_map(|run| (0..run.frames).map(move |frame| (run, frame)))
+            .map(|(run, frame)| database.describe(run, frame))
+            .collect();
+        database.weigh(&raw);
         Some(database)
     }
 
-    /// A frame's raw features: feet, their speed, the hips' speed, and the
-    /// path ahead, as seen from where the frame stands.
-    fn describe(&self, run: &ClipRun, places: &[[Vec3; 3]], frame: usize) -> [f32; FEATURES] {
+    /// A frame's raw features: its velocity, its direction and the path
+    /// ahead, as seen from where it stands.
+    fn describe(&self, run: &ClipRun, frame: usize) -> [f32; FEATURES] {
         let ground = self.grounds[run.start + frame];
-        let (before, after) = (frame.saturating_sub(1), (frame + 1).min(run.frames - 1));
-        let speed = |part: usize| {
-            let moved = places[after][part] - places[before][part];
-            ground.rotation().inverse() * moved * (CLIP_RATE / (after - before) as f32)
-        };
-        let mut out = [0.0; FEATURES];
-        let parts = [ground.local(places[frame][0]), ground.local(places[frame][1]), speed(0), speed(1), speed(2)];
-        for (k, part) in parts.iter().enumerate() {
-            out[k * 3..k * 3 + 3].copy_from_slice(&part.to_array());
-        }
-        for (k, &ahead) in AHEAD.iter().enumerate() {
-            let there = ground.to(self.ground_at(run, (frame + ahead) as f32));
-            out[15 + k * 2] = there.position.x;
-            out[16 + k * 2] = there.position.z;
-            out[21 + k * 2] = there.yaw.sin();
-            out[22 + k * 2] = there.yaw.cos();
-        }
-        out
+        let soon = ground.to(self.ground_at(run, (frame + 6) as f32)).position * (CLIP_RATE / 6.0);
+        let path = AHEAD.map(|ahead| ground.to(self.ground_at(run, (frame + ahead) as f32)).position);
+        describe(soon, path)
     }
 
-    /// Makes each run of features comparable, by its spread over every
-    /// frame, and weighs it.
-    fn weigh(&mut self, raw: &[[f32; FEATURES]], weights: &MotionWeights) {
-        let count = raw.len().max(1) as f32;
+    /// Makes the features comparable, by their spread over the frames that
+    /// move, each direction's run alike, and weighs speed above direction.
+    fn weigh(&mut self, raw: &[[f32; FEATURES]]) {
+        let moving: Vec<&[f32; FEATURES]> = self
+            .runs
+            .iter()
+            .filter(|run| run.moves())
+            .flat_map(|run| raw[run.start..run.start + run.frames].iter())
+            .collect();
+        let count = moving.len().max(1) as f32;
         for d in 0..FEATURES {
-            self.offset[d] = raw.iter().map(|f| f[d]).sum::<f32>() / count;
+            self.offset[d] = moving.iter().map(|f| f[d]).sum::<f32>() / count;
         }
         let spread: Vec<f32> = (0..FEATURES)
-            .map(|d| (raw.iter().map(|f| (f[d] - self.offset[d]).powi(2)).sum::<f32>() / count).sqrt())
+            .map(|d| (moving.iter().map(|f| (f[d] - self.offset[d]).powi(2)).sum::<f32>() / count).sqrt())
             .collect();
-        for (range, weight) in weights.groups() {
-            let group = (spread[range.clone()].iter().sum::<f32>() / range.len() as f32).max(1e-4);
+        let groups =
+            [(0..2, SPEED_WEIGHT), (2..4, 1.0), (4..6, SPEED_WEIGHT), (6..8, SPEED_WEIGHT), (8..10, SPEED_WEIGHT)];
+        for (range, weight) in groups {
+            let group = spread[range.clone()].iter().copied().fold(0.0f32, f32::max);
             for d in range {
-                self.scale[d] = weight / group;
+                self.scale[d] = if group > 1e-6 { weight / group } else { weight };
             }
         }
         self.features = raw.iter().flat_map(|f| self.normalise(f)).collect();
-        self.boxes = self
-            .features
-            .chunks(FEATURES * BOX)
-            .map(|chunk| {
-                let (mut low, mut high) = ([f32::MAX; FEATURES], [f32::MIN; FEATURES]);
-                for frame in chunk.chunks(FEATURES) {
-                    for d in 0..FEATURES {
-                        low[d] = low[d].min(frame[d]);
-                        high[d] = high[d].max(frame[d]);
-                    }
-                }
-                (low, high)
-            })
-            .collect();
     }
 
     /// Raw features made comparable and weighed, as the database's are.
@@ -292,51 +252,33 @@ impl MotionDatabase {
         std::array::from_fn(|d| (raw[d] - self.offset[d]) * self.scale[d])
     }
 
-    /// A frame's raw features again.
-    pub fn raw(&self, frame: usize) -> [f32; FEATURES] {
-        let f = self.features(frame);
-        std::array::from_fn(|d| f[d] / self.scale[d] + self.offset[d])
-    }
-
     pub fn features(&self, frame: usize) -> &[f32] {
         &self.features[frame * FEATURES..(frame + 1) * FEATURES]
     }
 
-    pub fn frames(&self) -> usize {
-        self.grounds.len()
+    /// The features of moving at `velocity`, as seen from the body, and on
+    /// at it.
+    pub fn query(&self, velocity: Vec3) -> [f32; FEATURES] {
+        let path = AHEAD.map(|ahead| velocity * (ahead as f32 / CLIP_RATE));
+        self.normalise(&describe(velocity, path))
     }
 
-    /// The run a frame is in.
-    pub fn run_of(&self, frame: usize) -> usize {
-        self.runs.partition_point(|run| run.start + run.frames <= frame)
-    }
-
-    pub fn landable(&self, frame: usize) -> bool {
-        self.landable.get(frame).copied().unwrap_or(false)
-    }
-
-    /// The frame nearest `query`, and how far it is, or `best` if none is
-    /// nearer than it.
-    pub fn search(&self, query: &[f32; FEATURES], mut best: (usize, f32)) -> (usize, f32) {
-        for (b, (low, high)) in self.boxes.iter().enumerate() {
-            let mut bound = 0.0;
-            for d in 0..FEATURES {
-                let outside = (low[d] - query[d]).max(query[d] - high[d]).max(0.0);
-                bound += outside * outside;
-            }
-            if bound >= best.1 {
-                continue;
-            }
-            for frame in b * BOX..((b + 1) * BOX).min(self.frames()) {
-                if !self.landable[frame] {
-                    continue;
-                }
-                let cost = distance(self.features(frame), query, best.1);
-                if cost < best.1 {
-                    best = (frame, cost);
-                }
-            }
-        }
+    /// The best frame of each clip that moves, and how far it is from
+    /// `query`, nearest first.
+    pub fn search(&self, query: &[f32; FEATURES]) -> Vec<(usize, f32)> {
+        let mut best: Vec<(usize, f32)> = self
+            .runs
+            .iter()
+            .enumerate()
+            .filter(|(_, run)| run.moves())
+            .map(|(index, run)| {
+                let cost = (run.start..run.start + run.frames)
+                    .map(|frame| distance(self.features(frame), query))
+                    .fold(f32::MAX, f32::min);
+                (index, cost)
+            })
+            .collect();
+        best.sort_by(|a, b| a.1.total_cmp(&b.1));
         best
     }
 
@@ -363,14 +305,16 @@ impl MotionDatabase {
         place.then(at(0).to(at(frame % last)))
     }
 
-    /// How `run`'s root moves from `from` to `to` seconds in, as seen from
-    /// where it stood at `from`.
-    pub fn travel(&self, run: &ClipRun, from: f32, to: f32) -> Ground {
-        self.ground_at(run, from * CLIP_RATE).to(self.ground_at(run, to * CLIP_RATE))
+    /// Whether `run`'s root never slows below half its speed overall, a
+    /// tenth of a second at a time.
+    fn steady(&self, run: &ClipRun) -> bool {
+        let speed = run.velocity.length();
+        (0..run.frames.saturating_sub(6)).step_by(6).all(|frame| {
+            let at = |f: usize| self.grounds[run.start + f];
+            at(frame).to(at(frame + 6)).position.length() * (CLIP_RATE / 6.0) >= speed * 0.5
+        })
     }
-}
 
-impl MotionDatabase {
     /// Whether `run`'s root moves the same over its first frame as over its
     /// last, as a loop's does.
     fn steps_alike(&self, run: &ClipRun) -> bool {
@@ -378,6 +322,47 @@ impl MotionDatabase {
         let (first, last) = (at(0).to(at(1)), at(run.frames - 2).to(at(run.frames - 1)));
         first.position.distance(last.position) < 0.005 && (first.yaw - last.yaw).abs() < 0.005
     }
+}
+
+/// Raw features from a velocity and the path ahead.
+fn describe(velocity: Vec3, path: [Vec3; 3]) -> [f32; FEATURES] {
+    let direction = velocity.normalize_or_zero();
+    let mut out = [velocity.x, velocity.z, direction.x, direction.z, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+    for (k, step) in path.iter().enumerate() {
+        out[4 + k * 2] = step.x;
+        out[5 + k * 2] = step.z;
+    }
+    out
+}
+
+/// How fast, and which way, the planted foot slides along the ground, in
+/// metres a second, seen from the root: none for feet that stay put, or
+/// never come down to the ground, as a swimmer's.
+fn slide(planted: &[Option<[Vec3; 2]>]) -> Option<Vec3> {
+    let feet: Vec<[Vec3; 2]> = planted.iter().copied().collect::<Option<_>>()?;
+    let low = feet.iter().map(|[l, r]| l.y.min(r.y)).fold(f32::MAX, f32::min);
+    if low > 0.2 {
+        return None;
+    }
+    let down = |f: &[Vec3; 2]| usize::from(f[0].y >= f[1].y);
+    let mut slides: Vec<Vec3> = feet
+        .windows(2)
+        .filter_map(|pair| {
+            let foot = down(&pair[0]);
+            let held = pair[0][foot].y < low + 0.02 && down(&pair[1]) == foot;
+            held.then(|| (pair[1][foot] - pair[0][foot]) * CLIP_RATE)
+        })
+        .collect();
+    if slides.len() < 3 {
+        return None;
+    }
+    let middle = slides.len() / 2;
+    let mut median = |pick: fn(&Vec3) -> f32| {
+        slides.sort_by(|a, b| pick(a).total_cmp(&pick(b)));
+        pick(&slides[middle])
+    };
+    let slid = Vec3::new(median(|v| v.x), 0.0, median(|v| v.z));
+    (slid.length() >= STILL).then_some(slid)
 }
 
 /// Whether a clip ends as it starts, every bone but its root within a few
@@ -392,46 +377,30 @@ fn loops(clip: &Clip, root: usize) -> bool {
         .all(|(_, (a, b))| a.rotation.angle_between(b.rotation) < 0.05 && a.translation.distance(b.translation) < 0.02)
 }
 
-/// The squared distance between two frames' features, given up once past
-/// `limit`.
-fn distance(a: &[f32], b: &[f32; FEATURES], limit: f32) -> f32 {
-    let mut sum = 0.0;
-    for d in 0..FEATURES {
-        let gap = a[d] - b[d];
-        sum += gap * gap;
-        if sum >= limit {
-            return sum;
-        }
-    }
-    sum
+/// The squared distance between two frames' features.
+fn distance(a: &[f32], b: &[f32; FEATURES]) -> f32 {
+    a.iter().zip(b).map(|(a, b)| (a - b) * (a - b)).sum()
 }
 
-/// The databases built, each shared by every Obj whose model and weights
-/// are the same; none for a model with nothing to follow.
+/// The databases built, each shared by every Obj whose model is the same;
+/// none for a model with nothing to follow.
 #[derive(Default)]
 struct Databases {
-    built: Vec<(Weak<ModelAnimation>, [u32; 5], Option<Arc<MotionDatabase>>)>,
+    built: Vec<(Weak<ModelAnimation>, Option<Arc<MotionDatabase>>)>,
 }
 
-/// The database for a model's clips and weights, built the first time it is
-/// asked for.
-pub fn database_for(
-    world: &mut World,
-    animation: &Arc<ModelAnimation>,
-    weights: &MotionWeights,
-) -> Option<Arc<MotionDatabase>> {
+/// The database for a model's clips, built the first time it is asked for.
+pub fn database_for(world: &mut World, animation: &Arc<ModelAnimation>) -> Option<Arc<MotionDatabase>> {
     if world.resource::<Databases>().is_none() {
         world.insert_resource(Databases::default());
     }
     let databases = world.resource_mut::<Databases>()?;
-    databases.built.retain(|(model, _, _)| model.strong_count() > 0);
-    let key = weights.key();
-    let found =
-        databases.built.iter().find(|(model, k, _)| *k == key && Weak::ptr_eq(model, &Arc::downgrade(animation)));
-    if let Some((_, _, database)) = found {
+    databases.built.retain(|(model, _)| model.strong_count() > 0);
+    let found = databases.built.iter().find(|(model, _)| Weak::ptr_eq(model, &Arc::downgrade(animation)));
+    if let Some((_, database)) = found {
         return database.clone();
     }
-    let database = MotionDatabase::build(animation, weights).map(Arc::new);
-    databases.built.push((Arc::downgrade(animation), key, database.clone()));
+    let database = MotionDatabase::build(animation).map(Arc::new);
+    databases.built.push((Arc::downgrade(animation), database.clone()));
     database
 }

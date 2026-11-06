@@ -312,18 +312,16 @@ pub enum Prop {
     AnimatorLooping,
     AnimatorBlend,
     AnimatorRootMotion,
-    /// A Motion Matcher's settings: how it follows, searches and settles,
-    /// how far the body may stray, and what counts in a search.
-    MatcherResponse,
+    /// A Motion Matcher's settings: the clip it stands with and below what
+    /// speed, how often it searches, how its clips fade and pace, and how
+    /// its body turns.
+    MatcherIdle,
+    MatcherIdleSpeed,
     MatcherSearchEvery,
     MatcherBlend,
-    MatcherMaxDrift,
-    MatcherMaxTurn,
-    MatcherFootPosition,
-    MatcherFootVelocity,
-    MatcherHipVelocity,
-    MatcherPathPosition,
-    MatcherPathFacing,
+    MatcherTurnRate,
+    MatcherTurnToMovement,
+    MatcherMatchSpeed,
     MatcherDebug,
     /// An Ocean's weather, and for Custom weather its swell and wind; its
     /// crests, colours and foam.
@@ -625,16 +623,13 @@ impl Prop {
             | Prop::AnimatorLooping
             | Prop::AnimatorBlend
             | Prop::AnimatorRootMotion => Part::Animator,
-            Prop::MatcherResponse
+            Prop::MatcherIdle
+            | Prop::MatcherIdleSpeed
             | Prop::MatcherSearchEvery
             | Prop::MatcherBlend
-            | Prop::MatcherMaxDrift
-            | Prop::MatcherMaxTurn
-            | Prop::MatcherFootPosition
-            | Prop::MatcherFootVelocity
-            | Prop::MatcherHipVelocity
-            | Prop::MatcherPathPosition
-            | Prop::MatcherPathFacing
+            | Prop::MatcherTurnRate
+            | Prop::MatcherTurnToMovement
+            | Prop::MatcherMatchSpeed
             | Prop::MatcherDebug => Part::MotionMatcher,
             Prop::OceanWeather
             | Prop::OceanWindSource
@@ -867,16 +862,13 @@ impl Prop {
             Prop::AnimatorLooping => "looping",
             Prop::AnimatorBlend => "blend",
             Prop::AnimatorRootMotion => "root_motion",
-            Prop::MatcherResponse => "response",
+            Prop::MatcherIdle => "idle",
+            Prop::MatcherIdleSpeed => "idle_speed",
             Prop::MatcherSearchEvery => "search_every",
             Prop::MatcherBlend => "blend",
-            Prop::MatcherMaxDrift => "max_drift",
-            Prop::MatcherMaxTurn => "max_turn",
-            Prop::MatcherFootPosition => "foot_position",
-            Prop::MatcherFootVelocity => "foot_velocity",
-            Prop::MatcherHipVelocity => "hip_velocity",
-            Prop::MatcherPathPosition => "path_position",
-            Prop::MatcherPathFacing => "path_facing",
+            Prop::MatcherTurnRate => "turn_rate",
+            Prop::MatcherTurnToMovement => "turn_to_movement",
+            Prop::MatcherMatchSpeed => "match_speed",
             Prop::MatcherDebug => "debug",
             Prop::OceanWeather => "weather",
             Prop::OceanWindSource => "wind_source",
@@ -1266,16 +1258,13 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             Prop::AnimatorRootMotion,
         ],
         Part::MotionMatcher => vec![
-            Prop::MatcherResponse,
+            Prop::MatcherIdle,
+            Prop::MatcherIdleSpeed,
             Prop::MatcherSearchEvery,
             Prop::MatcherBlend,
-            Prop::MatcherMaxDrift,
-            Prop::MatcherMaxTurn,
-            Prop::MatcherFootPosition,
-            Prop::MatcherFootVelocity,
-            Prop::MatcherHipVelocity,
-            Prop::MatcherPathPosition,
-            Prop::MatcherPathFacing,
+            Prop::MatcherTurnRate,
+            Prop::MatcherTurnToMovement,
+            Prop::MatcherMatchSpeed,
             Prop::MatcherDebug,
         ],
         Part::ParticleSystem => {
@@ -1599,16 +1588,13 @@ pub fn label(prop: &Prop) -> String {
         Prop::AnimatorLooping => "Looping",
         Prop::AnimatorBlend => "Blend Time",
         Prop::AnimatorRootMotion => "Root Motion",
-        Prop::MatcherResponse => "Response",
+        Prop::MatcherIdle => "Idle Clip",
+        Prop::MatcherIdleSpeed => "Idle Speed",
         Prop::MatcherSearchEvery => "Search Every",
         Prop::MatcherBlend => "Blend Time",
-        Prop::MatcherMaxDrift => "Max Drift",
-        Prop::MatcherMaxTurn => "Max Turn",
-        Prop::MatcherFootPosition => "Foot Position",
-        Prop::MatcherFootVelocity => "Foot Velocity",
-        Prop::MatcherHipVelocity => "Hip Velocity",
-        Prop::MatcherPathPosition => "Path Position",
-        Prop::MatcherPathFacing => "Path Facing",
+        Prop::MatcherTurnRate => "Turn Rate",
+        Prop::MatcherTurnToMovement => "Turn To Movement",
+        Prop::MatcherMatchSpeed => "Match Speed",
         Prop::MatcherDebug => "Debug",
         Prop::OceanWeather => "Weather",
         Prop::OceanWindSource => "Wind Source",
@@ -2252,16 +2238,21 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::AnimatorLooping => Value::Toggle(world.get::<voxear_engine::animation::Animator>(entity)?.looping),
         Prop::AnimatorBlend => Value::Number(world.get::<voxear_engine::animation::Animator>(entity)?.blend),
         Prop::AnimatorRootMotion => Value::Toggle(world.get::<voxear_engine::animation::Animator>(entity)?.root_motion),
-        Prop::MatcherResponse
+        Prop::MatcherIdle => {
+            // The model's clips, none first, standing with the first loop that stands still.
+            let matcher = world.get::<voxear_engine::animation::MotionMatcher>(entity)?;
+            let model = world.get::<voxear_render::ModelRenderer>(entity).and_then(|m| m.animation.clone());
+            let mut names = vec!["None".to_string()];
+            names.extend(model.iter().flat_map(|a| a.clips.iter().map(|clip| clip.name.clone())));
+            let index = names.iter().skip(1).position(|name| *name == matcher.idle).map_or(0, |i| i + 1);
+            Value::Choice(index, names)
+        }
+        Prop::MatcherIdleSpeed
         | Prop::MatcherSearchEvery
         | Prop::MatcherBlend
-        | Prop::MatcherMaxDrift
-        | Prop::MatcherMaxTurn
-        | Prop::MatcherFootPosition
-        | Prop::MatcherFootVelocity
-        | Prop::MatcherHipVelocity
-        | Prop::MatcherPathPosition
-        | Prop::MatcherPathFacing
+        | Prop::MatcherTurnRate
+        | Prop::MatcherTurnToMovement
+        | Prop::MatcherMatchSpeed
         | Prop::MatcherDebug => {
             matcher_value(world.get::<voxear_engine::animation::MotionMatcher>(entity)?, prop)?
         }
@@ -3141,6 +3132,12 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         (Prop::AnimatorRootMotion, Value::Toggle(on)) => {
             with(world, entity, |animator: &mut voxear_engine::animation::Animator| animator.root_motion = on)
         }
+        (Prop::MatcherIdle, Value::Choice(index, _)) => {
+            let model = world.get::<voxear_render::ModelRenderer>(entity).and_then(|m| m.animation.clone());
+            let name = index.checked_sub(1).and_then(|i| model?.clips.get(i).map(|clip| clip.name.clone()));
+            let set = |matcher: &mut voxear_engine::animation::MotionMatcher| matcher.idle = name.unwrap_or_default();
+            with(world, entity, set)
+        }
         (prop, value) if prop.part() == Part::MotionMatcher => {
             let set = |matcher: &mut voxear_engine::animation::MotionMatcher| set_matcher(matcher, prop, value);
             with(world, entity, set)
@@ -3381,6 +3378,8 @@ fn set_mist(mist: &mut voxear_render::Mist, prop: &Prop, value: Value) {
 /// A Motion Matcher's field as the Inspector shows it.
 fn matcher_value(matcher: &voxear_engine::animation::MotionMatcher, prop: &Prop) -> Option<Value> {
     Some(match prop {
+        Prop::MatcherTurnToMovement => Value::Toggle(matcher.turn_to_movement),
+        Prop::MatcherMatchSpeed => Value::Toggle(matcher.match_speed),
         Prop::MatcherDebug => Value::Toggle(matcher.debug),
         _ => Value::Number(*matcher_number(&mut matcher.clone(), prop)?),
     })
@@ -3390,15 +3389,16 @@ fn matcher_value(matcher: &voxear_engine::animation::MotionMatcher, prop: &Prop)
 /// can be.
 fn set_matcher(matcher: &mut voxear_engine::animation::MotionMatcher, prop: &Prop, value: Value) {
     let (low, high) = match prop {
-        Prop::MatcherResponse => (0.01, 2.0),
+        Prop::MatcherIdleSpeed => (0.0, 5.0),
         Prop::MatcherSearchEvery => (0.02, 1.0),
-        Prop::MatcherBlend | Prop::MatcherMaxDrift => (0.0, 2.0),
-        Prop::MatcherMaxTurn => (0.0, 180.0),
-        _ => (0.0, 10.0),
+        Prop::MatcherBlend => (0.0, 2.0),
+        _ => (0.0, 3600.0),
     };
-    match value {
-        Value::Toggle(on) if *prop == Prop::MatcherDebug => matcher.debug = on,
-        Value::Number(n) => {
+    match (prop, value) {
+        (Prop::MatcherTurnToMovement, Value::Toggle(on)) => matcher.turn_to_movement = on,
+        (Prop::MatcherMatchSpeed, Value::Toggle(on)) => matcher.match_speed = on,
+        (Prop::MatcherDebug, Value::Toggle(on)) => matcher.debug = on,
+        (_, Value::Number(n)) => {
             if let Some(field) = matcher_number(matcher, prop) {
                 *field = n.clamp(low, high);
             }
@@ -3410,16 +3410,10 @@ fn set_matcher(matcher: &mut voxear_engine::animation::MotionMatcher, prop: &Pro
 /// A Motion Matcher's number a prop shows.
 fn matcher_number<'a>(matcher: &'a mut voxear_engine::animation::MotionMatcher, prop: &Prop) -> Option<&'a mut f32> {
     Some(match prop {
-        Prop::MatcherResponse => &mut matcher.response,
+        Prop::MatcherIdleSpeed => &mut matcher.idle_speed,
         Prop::MatcherSearchEvery => &mut matcher.search_every,
         Prop::MatcherBlend => &mut matcher.blend,
-        Prop::MatcherMaxDrift => &mut matcher.max_drift,
-        Prop::MatcherMaxTurn => &mut matcher.max_turn,
-        Prop::MatcherFootPosition => &mut matcher.foot_position,
-        Prop::MatcherFootVelocity => &mut matcher.foot_velocity,
-        Prop::MatcherHipVelocity => &mut matcher.hip_velocity,
-        Prop::MatcherPathPosition => &mut matcher.path_position,
-        Prop::MatcherPathFacing => &mut matcher.path_facing,
+        Prop::MatcherTurnRate => &mut matcher.turn_rate,
         _ => return None,
     })
 }

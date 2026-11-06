@@ -14,13 +14,13 @@ internal static unsafe class NativeMotionMatcher
 	public const int WantedVelocity = 3;
 	public const int WantedFacing = 4;
 	public const int Follow = 5;
-	public const int Response = 6;
+	public const int IdleSpeed = 6;
 	public const int SearchEvery = 7;
 	public const int Blend = 8;
-	public const int MaxDrift = 9;
-	public const int MaxTurn = 10;
-	public const int Debug = 11;
-	public const int Drift = 12;
+	public const int TurnRate = 9;
+	public const int TurnToMovement = 10;
+	public const int MatchSpeed = 11;
+	public const int Debug = 12;
 
 	/// <summary>A value of an Obj's Motion Matcher, or false when the Obj has none.</summary>
 	public static bool Get(Obj obj, int what, out Vector4 value)

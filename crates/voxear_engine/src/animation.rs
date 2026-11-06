@@ -15,7 +15,7 @@ use voxear_ecs::{Component, Entity, World};
 use voxear_render::{BonePose, ModelAnimation, ModelRenderer, Pose};
 use voxear_scene::{Destroying, Transform};
 
-pub use motion_database::{MotionDatabase, MotionWeights};
+pub use motion_database::MotionDatabase;
 pub use motion_matching::{MotionMatcher, MotionMatcherState, match_motion, register};
 use settling::Settling;
 

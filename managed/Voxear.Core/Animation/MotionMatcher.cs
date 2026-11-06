@@ -5,11 +5,12 @@ using Voxear.Interop;
 namespace Voxear;
 
 /// <summary>
-/// An Obj's Motion Matcher: it animates the Obj's model by playing whichever frame of the model's clips best carries
-/// on from its pose into the path the character is about to take. The game moves the Obj, with a Character
-/// Controller or otherwise, and the body follows. Left alone it expects the Obj to carry on as it moves; tell it
-/// where the player is heading with WantedVelocity, and it turns and slows before the Obj does. Get it with
-/// Obj.MotionMatcher, or give an Obj one with Obj.AddMotionMatcher.
+/// An Obj's Motion Matcher: it animates the Obj's model by blending whichever of the model's looping clips move as
+/// the character is wanted to, by speed and direction, and stands with a still clip below a walk. The game moves the
+/// Obj, with a Character Controller or otherwise, and the model stands on it, its body turning the way it goes. Left
+/// alone it follows how the Obj moves; tell it where the player is heading with WantedVelocity, and where to face with
+/// WantedFacing to step aside or back while aiming. Get it with Obj.MotionMatcher, or give an Obj one with
+/// Obj.AddMotionMatcher.
 /// <code>
 /// // Walking at 1.4 metres a second where the keys point.
 /// var ahead = (Keyboard.IsDown(Key.W) ? 1f : 0f) - (Keyboard.IsDown(Key.S) ? 1f : 0f);
@@ -40,59 +41,66 @@ public readonly struct MotionMatcher : IEquatable<MotionMatcher>, IObjComponent
 		set { Set(NativeMotionMatcher.WantedVelocity, new Vector4(value, 0f)); }
 	}
 
-	/// <summary>The way the game wants the character to face. Zero until set, the Obj's forward meanwhile.</summary>
+	/// <summary>
+	/// The way the game wants the body to face, as when aiming while stepping aside or back. Zero faces the way it
+	/// goes.
+	/// </summary>
 	public Vector3 WantedFacing
 	{
 		get { return Vector(NativeMotionMatcher.WantedFacing); }
 		set { Set(NativeMotionMatcher.WantedFacing, new Vector4(value, 0f)); }
 	}
 
-	/// <summary>How quickly the character is expected to reach what is wanted, in seconds to halve the gap.</summary>
-	public float Response
+	/// <summary>Below this many metres a second wanted, it stands.</summary>
+	public float IdleSpeed
 	{
-		get { return Number(NativeMotionMatcher.Response); }
-		set { Set(NativeMotionMatcher.Response, value); }
+		get { return Number(NativeMotionMatcher.IdleSpeed); }
+		set { Set(NativeMotionMatcher.IdleSpeed, value); }
 	}
 
-	/// <summary>Seconds between searches for a better frame.</summary>
+	/// <summary>Seconds between searches for the clips to blend.</summary>
 	public float SearchEvery
 	{
 		get { return Number(NativeMotionMatcher.SearchEvery); }
 		set { Set(NativeMotionMatcher.SearchEvery, value); }
 	}
 
-	/// <summary>How long, in seconds, a jump to a new frame takes to settle.</summary>
+	/// <summary>How long, in seconds, a change of clips takes to fade in.</summary>
 	public float BlendTime
 	{
 		get { return Number(NativeMotionMatcher.Blend); }
 		set { Set(NativeMotionMatcher.Blend, value); }
 	}
 
-	/// <summary>How far, in metres, the body may stray from the Obj.</summary>
-	public float MaxDrift
+	/// <summary>How fast the body turns, in degrees a second; 0 turns at once.</summary>
+	public float TurnRate
 	{
-		get { return Number(NativeMotionMatcher.MaxDrift); }
-		set { Set(NativeMotionMatcher.MaxDrift, value); }
+		get { return Number(NativeMotionMatcher.TurnRate); }
+		set { Set(NativeMotionMatcher.TurnRate, value); }
 	}
 
-	/// <summary>How far, in degrees, the body may turn from the Obj's facing.</summary>
-	public float MaxTurn
+	/// <summary>Whether the body faces the way it goes when no WantedFacing is set, rather than the Obj's forward.</summary>
+	public bool TurnToMovement
 	{
-		get { return Number(NativeMotionMatcher.MaxTurn); }
-		set { Set(NativeMotionMatcher.MaxTurn, value); }
+		get { return Number(NativeMotionMatcher.TurnToMovement) != 0f; }
+		set { Set(NativeMotionMatcher.TurnToMovement, value ? 1f : 0f); }
 	}
 
-	/// <summary>Whether it draws the path wanted, the path of the frame playing, and the body's place.</summary>
+	/// <summary>Whether clips play a little faster or slower so their feet keep pace with the ground.</summary>
+	public bool MatchSpeed
+	{
+		get { return Number(NativeMotionMatcher.MatchSpeed) != 0f; }
+		set { Set(NativeMotionMatcher.MatchSpeed, value ? 1f : 0f); }
+	}
+
+	/// <summary>Whether it draws the velocity wanted, the clips' velocity and the body's facing, and names the clips.</summary>
 	public bool Debug
 	{
 		get { return Number(NativeMotionMatcher.Debug) != 0f; }
 		set { Set(NativeMotionMatcher.Debug, value ? 1f : 0f); }
 	}
 
-	/// <summary>How far, in metres, the body stands from the Obj now.</summary>
-	public float Drift => Number(NativeMotionMatcher.Drift);
-
-	/// <summary>Forgets WantedVelocity and WantedFacing, expecting the Obj to carry on as it moves.</summary>
+	/// <summary>Forgets WantedVelocity and WantedFacing, following how the Obj moves.</summary>
 	public void FollowObj()
 	{
 		Set(NativeMotionMatcher.Follow, Vector4.Zero);

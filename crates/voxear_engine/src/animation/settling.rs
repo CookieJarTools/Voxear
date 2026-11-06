@@ -33,13 +33,6 @@ impl Settling {
         Self { offsets, since: 0.0, halflife: halflife.max(1e-3) }
     }
 
-    /// Leaves `bone` to whoever places it, with no offset of its own.
-    pub fn still(&mut self, bone: usize) {
-        if let Some(offset) = self.offsets.get_mut(bone) {
-            *offset = (Vec3::ZERO, Vec3::ZERO, Vec3::ZERO, Vec3::ZERO);
-        }
-    }
-
     /// Moves on by `delta` and adds what is left of each bone's offset to
     /// `pose`; false once the offsets have died away.
     pub fn settle(&mut self, delta: f32, pose: &mut [BonePose]) -> bool {

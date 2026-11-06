@@ -2,15 +2,19 @@
 order: 2
 ---
 
-A **Motion Matcher** animates a character from its clips without a graph of states to wire up. Many times a second it looks through every frame of the model's clips for the one that best carries on from the pose it shows into where the character is heading, and plays on from there. A start, a stop, a turn on the spot or a step back each come from whichever moment of the clips fits best, and each change of frame settles in without a pop.
+A **Motion Matcher** animates a character from its clips, with no graph of states to wire up. Ten times a second, and at once whenever the movement wanted changes, it searches its model's looping clips for the ones that move as the character should: as fast, the same way, along the same path. It blends the few that match best, fading each one's share in and out so nothing pops. Below a walk, a clip that stands still fades in instead.
 
-Add one with **Add Component ▸ Animation ▸ Motion Matcher** to an Obj whose model was made to animate. Its clips are what it has to choose from. Long, unbroken takes of someone walking about, starting, stopping and turning give it far more to choose from than short loops.
+Add one with **Add Component ▸ Animation ▸ Motion Matcher** to an Obj whose model was made to animate. Its clips are what it has to choose from:
+
+- Looping clips that move steadily are what it walks, runs and steps aside with. A walk forward, a jog, a run, steps to each side and back give it the most to work with.
+- A loop made to stay in place, as many walks are, still counts: it moves as fast as its planted foot slides back.
+- **Idle Clip** is the clip it stands with. None picks the first looping clip that stands still.
+
+The clips blended play in step, each the same share of the way through its loop, so their feet fall together. With **Match Speed** on, they play a little faster or slower so their feet keep pace with the ground the Obj covers.
 
 ## Moving the character
 
-The game moves the Obj, with a Character Controller or by setting its position, and turns it to face where the character faces. The body follows: it moves as its clips carry it, pulled towards the Obj and never further from it than **Max Drift**.
-
-Left alone, the Motion Matcher expects the Obj to carry on as it is moving. Tell it where the player wants to go and it turns, starts and slows before the Obj does:
+The game moves the Obj, with a Character Controller or by setting its position, and the model stands on it. Left alone, the Motion Matcher follows how the Obj moves. Tell it where the player wants to go and it changes pace as soon as the keys do:
 
 ```csharp
 public sealed class Walker : Behaviour
@@ -30,18 +34,19 @@ public sealed class Walker : Behaviour
 }
 ```
 
-`WantedFacing` does the same for the way the character should face. `FollowObj()` forgets both.
+The body turns the way it goes, at its **Turn Rate**. To keep it facing one way while it steps aside or back, as when aiming, set `WantedFacing`; set it to zero to face the way it goes again. `FollowObj()` forgets both.
 
 ## Settings
 
-- **Response**: how quickly the character is expected to reach what is wanted, in seconds to halve the gap. Match it to how quickly the game's movement eases in.
+- **Idle Clip**: the clip it stands with.
+- **Idle Speed**: below this many metres a second wanted, it stands.
 - **Search Every**: seconds between searches.
-- **Blend Time**: how long a jump to a new frame takes to settle.
-- **Max Drift**: how far, in metres, the body may stray from the Obj.
-- **Max Turn**: how far, in degrees, the body may turn from the Obj's facing.
-- **Foot Position**, **Foot Velocity**, **Hip Velocity**, **Path Position** and **Path Facing**: how much each counts in a search. Raise the path's to follow the player more closely, the feet's for smoother steps.
-- **Debug**: draws the path wanted in blue, the path of the frame playing in orange, and a white line from the Obj to the body.
+- **Blend Time**: how long a change of clips takes to fade in.
+- **Turn Rate**: how fast the body turns, in degrees a second. 0 turns at once.
+- **Turn To Movement**: the body faces the way it goes. Off, it faces the Obj's forward, for a game that turns the Obj itself.
+- **Match Speed**: clips keep pace with the ground.
+- **Debug**: draws the velocity wanted in blue, the clips' velocity in orange and the body's facing in white, and names the clips playing above its head.
 
 ## What it needs from the model
 
-It finds the bones it follows by their names: the root (a bone named `root`, or else the first), the hips (or pelvis), and each foot (or ankle), marked left and right. The root bone marks where the character stands on the ground and which way it faces in each frame of each clip.
+It finds the root bone by its name, `root`, or else takes the first. The root marks where the character stands on the ground and which way it faces in each frame of each clip. For loops that stay in place, it finds the feet by their names: toes, feet or ankles, marked left and right.

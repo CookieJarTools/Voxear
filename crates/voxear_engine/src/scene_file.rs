@@ -279,6 +279,9 @@ pub struct ObjData {
     /// Smoke filling the space round the Obj.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub smoke: Option<voxear_render::Smoke>,
+    /// A trail of mist left behind the Obj as it moves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mist: Option<voxear_render::Mist>,
     /// An Ocean, the sea filling the level at the Obj's height.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ocean: Option<Ocean>,
@@ -355,6 +358,7 @@ impl ObjData {
             wind_zone: None,
             particles: None,
             smoke: None,
+            mist: None,
             ocean: None,
             pool: None,
             dry_area: None,
@@ -1293,6 +1297,9 @@ fn capture_instance(
     if root.smoke.is_some() && root.smoke != prefab_root.smoke {
         instance.smoke = root.smoke;
     }
+    if root.mist.is_some() && root.mist != prefab_root.mist {
+        instance.mist = root.mist;
+    }
     if root.ocean.is_some() && root.ocean != prefab_root.ocean {
         instance.ocean = root.ocean;
     }
@@ -1430,6 +1437,9 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     }
     if let Some(smoke) = actual.smoke.filter(|s| Some(*s) != expected.smoke) {
         put("smoke", whole(&smoke, &voxear_render::Smoke::default())?);
+    }
+    if let Some(mist) = actual.mist.filter(|m| Some(*m) != expected.mist) {
+        put("mist", whole(&mist, &voxear_render::Mist::default())?);
     }
     if let Some(ocean) = actual.ocean.filter(|o| Some(*o) != expected.ocean) {
         put("ocean", whole(&ocean, &Ocean::default())?);
@@ -1676,6 +1686,7 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.wind_zone = world.get::<WindZone>(entity).copied();
     obj.particles = world.get::<ParticleSystem>(entity).copied();
     obj.smoke = world.get::<voxear_render::Smoke>(entity).copied();
+    obj.mist = world.get::<voxear_render::Mist>(entity).copied();
     obj.ocean = world.get::<Ocean>(entity).copied();
     obj.pool = world.get::<Pool>(entity).copied();
     obj.dry_area = world.get::<DryArea>(entity).map(|area| DryAreaData::of(content, area));

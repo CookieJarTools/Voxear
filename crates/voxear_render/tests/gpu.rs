@@ -4507,3 +4507,61 @@ fn a_hidden_obj_and_those_under_it_leave_no_pixels_and_no_shadow() {
     assert!(differing_pixels(&none, &shown) > 2000, "the box shows, and its shadow");
     assert_eq!(differing_pixels(&none, &hidden), 0, "hidden, nothing of it");
 }
+
+/// Where each point of the test mist's trail is: an arc across the view,
+/// six metres off, from its oldest, made 1.2 seconds ago, to its newest.
+fn mist_point(i: usize) -> (Vec3, f32) {
+    let t = i as f32 / 15.0;
+    let at = Vec3::new(-4.0 + 7.0 * t, 1.5 + 0.6 * (t * 3.0).sin(), 2.0 - t);
+    (at, 1.2 * (1.0 - t))
+}
+
+/// The smoke scene with the test mist in it, or none, seen from `eye`
+/// looking along `facing`.
+fn mist_render(mist: bool, eye: Vec3, facing: Quat) -> Option<Vec<u8>> {
+    use voxear_render::{Mist, MistTrail, Sky};
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::new(eye, facing, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.4, ..Sky::default() });
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let dark = MaterialDesc { base_color: [0.05, 0.05, 0.05, 1.0], ..MaterialDesc::default() };
+    let dark = renderer.add_material(&dark).unwrap();
+    let wall = Transform::new(Vec3::new(0.0, 4.0, 8.0), Quat::IDENTITY, Vec3::new(30.0, 10.0, 0.2));
+    world.spawn((MeshRenderer::new(cube, dark), wall));
+    let floor = Transform::new(Vec3::new(0.0, -0.1, 0.0), Quat::IDENTITY, Vec3::new(30.0, 0.2, 30.0));
+    world.spawn((MeshRenderer::new(cube, dark), floor));
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.3, -0.6, 1.0).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    let mut time = 10.0;
+    if mist {
+        let points = (0..=15).map(mist_point).map(|(at, age)| (at, time - age)).collect();
+        world.spawn((Mist { emitting: false, ..Mist::default() }, MistTrail { points }, Transform::default()));
+    }
+    world.insert_resource(steady_post());
+    run(&mut renderer, &world, &mut time, 4);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+#[test]
+fn a_mist_trail_shows_along_its_path_thickest_where_it_was_left_last() {
+    let (eye, ahead) = (Vec3::new(0.0, 2.0, -6.0), Quat::IDENTITY);
+    let Some(clear) = mist_render(false, eye, ahead) else { return };
+    let misty = mist_render(true, eye, ahead).unwrap();
+    keep_image("mist.png", &misty);
+    let change = |world: Vec3| {
+        let at = on_screen(eye, ahead, world);
+        let (before, after) = (patch_rgb(&clear, at, 3), patch_rgb(&misty, at, 3));
+        (0..3).map(|c| after[c] - before[c]).sum::<i32>()
+    };
+    let (head, _) = mist_point(14);
+    let (tail, _) = mist_point(1);
+    let (newest, oldest) = (change(head), change(tail + Vec3::Y * 0.4 * 1.1));
+    assert!(newest > 60, "the mist where it was left last: {newest}");
+    assert!(oldest < newest / 2, "thinner where it is older: {oldest} against {newest}");
+    assert!(change(Vec3::new(0.0, 4.5, 1.5)).abs() < 10, "none well above it");
+    // From inside its newest end, looking back along it.
+    let back = Quat::from_rotation_arc(Vec3::Z, (mist_point(0).0 - head).normalize());
+    let inside = mist_render(true, head, back).unwrap();
+    keep_image("mist inside.png", &inside);
+}

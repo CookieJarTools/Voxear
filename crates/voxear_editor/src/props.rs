@@ -78,6 +78,7 @@ pub enum Part {
     WindZone,
     ParticleSystem,
     Smoke,
+    Mist,
     Ocean,
     Pool,
     DryArea,
@@ -118,6 +119,7 @@ impl Part {
             Part::WindZone => "wind_zone".into(),
             Part::ParticleSystem => "particles".into(),
             Part::Smoke => "smoke".into(),
+            Part::Mist => "mist".into(),
             Part::Ocean => "ocean".into(),
             Part::Pool => "pool".into(),
             Part::DryArea => "dry_area".into(),
@@ -152,6 +154,7 @@ impl Part {
             Part::WindZone => "Wind Zone",
             Part::ParticleSystem => "Particle System",
             Part::Smoke => "Smoke",
+            Part::Mist => "Mist",
             Part::Ocean => "Ocean",
             Part::Pool => "Pool",
             Part::DryArea => "Dry Area",
@@ -185,6 +188,7 @@ impl Part {
             Part::WindZone => "move",
             Part::ParticleSystem => "particles",
             Part::Smoke => "particles",
+            Part::Mist => "particles",
             Part::Ocean => "globe",
             Part::Pool => "globe",
             Part::DryArea => "box",
@@ -285,6 +289,14 @@ pub enum Prop {
     SmokeFade,
     SmokeSeed,
     SmokePlayOnStart,
+    /// A Mist's trail: whether it is left now, how wide and thick it is, its
+    /// colour, how long it lingers, and which swirls.
+    MistEmitting,
+    MistWidth,
+    MistDensity,
+    MistColor,
+    MistLinger,
+    MistSeed,
     /// An Ocean's weather, and for Custom weather its swell and wind; its
     /// crests, colours and foam.
     OceanWeather,
@@ -574,6 +586,12 @@ impl Prop {
             | Prop::SmokeFade
             | Prop::SmokeSeed
             | Prop::SmokePlayOnStart => Part::Smoke,
+            Prop::MistEmitting
+            | Prop::MistWidth
+            | Prop::MistDensity
+            | Prop::MistColor
+            | Prop::MistLinger
+            | Prop::MistSeed => Part::Mist,
             Prop::OceanWeather
             | Prop::OceanWindSource
             | Prop::OceanTransition
@@ -794,6 +812,12 @@ impl Prop {
             Prop::SmokeFade => "fade",
             Prop::SmokeSeed => "seed",
             Prop::SmokePlayOnStart => "play_on_start",
+            Prop::MistEmitting => "emitting",
+            Prop::MistWidth => "width",
+            Prop::MistDensity => "density",
+            Prop::MistColor => "color",
+            Prop::MistLinger => "linger",
+            Prop::MistSeed => "seed",
             Prop::OceanWeather => "weather",
             Prop::OceanWindSource => "wind_source",
             Prop::OceanTransition => "transition",
@@ -1008,6 +1032,9 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     if world.has::<voxear_render::Smoke>(entity) {
         parts.push(Part::Smoke);
     }
+    if world.has::<voxear_render::Mist>(entity) {
+        parts.push(Part::Mist);
+    }
     if world.has::<Ocean>(entity) {
         parts.push(Part::Ocean);
     }
@@ -1156,6 +1183,14 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             Prop::SmokeFade,
             Prop::SmokeSeed,
             Prop::SmokePlayOnStart,
+        ],
+        Part::Mist => vec![
+            Prop::MistEmitting,
+            Prop::MistWidth,
+            Prop::MistDensity,
+            Prop::MistColor,
+            Prop::MistLinger,
+            Prop::MistSeed,
         ],
         Part::ParticleSystem => {
             let shape = world.get::<ParticleSystem>(entity).map_or(EmitShape::Cone, |system| system.shape);
@@ -1467,6 +1502,12 @@ pub fn label(prop: &Prop) -> String {
         Prop::SmokeFade => "Disperse Time",
         Prop::SmokeSeed => "Seed",
         Prop::SmokePlayOnStart => "Play On Start",
+        Prop::MistEmitting => "Emitting",
+        Prop::MistWidth => "Width",
+        Prop::MistDensity => "Density",
+        Prop::MistColor => "Colour",
+        Prop::MistLinger => "Linger",
+        Prop::MistSeed => "Seed",
         Prop::OceanWeather => "Weather",
         Prop::OceanWindSource => "Wind Source",
         Prop::OceanTransition => "Transition",
@@ -1748,6 +1789,9 @@ pub fn add(
         Part::Smoke => {
             world.insert(entity, voxear_render::Smoke::default());
         }
+        Part::Mist => {
+            world.insert(entity, voxear_render::Mist::default());
+        }
         Part::Ocean => {
             world.insert(entity, Ocean::default());
         }
@@ -1808,6 +1852,10 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
             world.remove::<voxear_render::Smoke>(entity);
             world.remove::<voxear_render::SmokeFill>(entity);
             world.remove::<voxear_render::SmokeCue>(entity);
+        }
+        Part::Mist => {
+            world.remove::<voxear_render::Mist>(entity);
+            world.remove::<voxear_render::MistTrail>(entity);
         }
         Part::ParticleSystem => {
             world.remove::<ParticleSystem>(entity);
@@ -2067,6 +2115,12 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         | Prop::SmokeFade
         | Prop::SmokeSeed
         | Prop::SmokePlayOnStart => smoke_value(world.get::<voxear_render::Smoke>(entity)?, prop)?,
+        Prop::MistEmitting
+        | Prop::MistWidth
+        | Prop::MistDensity
+        | Prop::MistColor
+        | Prop::MistLinger
+        | Prop::MistSeed => mist_value(world.get::<voxear_render::Mist>(entity)?, prop)?,
         Prop::OceanWeather => {
             let weather = world.get::<Ocean>(entity)?.weather;
             let index = Weather::ALL.iter().position(|w| *w == weather).unwrap_or(0);
@@ -2928,6 +2982,9 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         (prop, value) if prop.part() == Part::Smoke => {
             with(world, entity, |smoke: &mut voxear_render::Smoke| set_smoke(smoke, prop, value))
         }
+        (prop, value) if prop.part() == Part::Mist => {
+            with(world, entity, |mist: &mut voxear_render::Mist| set_mist(mist, prop, value))
+        }
         (prop, value) if prop.part() == Part::ParticleSystem => {
             with(world, entity, |system: &mut ParticleSystem| set_particle(system, prop, value))
         }
@@ -3128,6 +3185,32 @@ fn set_smoke(smoke: &mut voxear_render::Smoke, prop: &Prop, value: Value) {
         (Prop::SmokeFade, Value::Number(n)) => smoke.fade = n.max(0.0),
         (Prop::SmokeSeed, Value::Whole(n)) => smoke.seed = n.clamp(0, i64::from(u32::MAX)) as u32,
         (Prop::SmokePlayOnStart, Value::Toggle(on)) => smoke.play_on_start = on,
+        _ => {}
+    }
+}
+
+/// A Mist's field as the Inspector shows it, its colour in sRGB.
+fn mist_value(mist: &voxear_render::Mist, prop: &Prop) -> Option<Value> {
+    Some(match prop {
+        Prop::MistEmitting => Value::Toggle(mist.emitting),
+        Prop::MistWidth => Value::Number(mist.width),
+        Prop::MistDensity => Value::Number(mist.density),
+        Prop::MistColor => Value::Color(srgb(mist.color).map(round3)),
+        Prop::MistLinger => Value::Number(mist.linger),
+        Prop::MistSeed => Value::Whole(i64::from(mist.seed)),
+        _ => return None,
+    })
+}
+
+/// Sets a Mist's field from the Inspector, kept within what it can be.
+fn set_mist(mist: &mut voxear_render::Mist, prop: &Prop, value: Value) {
+    match (prop, value) {
+        (Prop::MistEmitting, Value::Toggle(on)) => mist.emitting = on,
+        (Prop::MistWidth, Value::Number(n)) => mist.width = n.clamp(0.05, 10.0),
+        (Prop::MistDensity, Value::Number(n)) => mist.density = n.max(0.0),
+        (Prop::MistColor, Value::Color(c)) => mist.color = linear(c.map(|c| c.clamp(0.0, 1.0))),
+        (Prop::MistLinger, Value::Number(n)) => mist.linger = n.clamp(0.05, 30.0),
+        (Prop::MistSeed, Value::Whole(n)) => mist.seed = n.clamp(0, i64::from(u32::MAX)) as u32,
         _ => {}
     }
 }

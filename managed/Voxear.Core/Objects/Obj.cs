@@ -254,6 +254,16 @@ public readonly struct Obj : IEquatable<Obj>
 		return new Smoke(this);
 	}
 
+	/// <summary>The Obj's Mist. Not valid when it has none.</summary>
+	public Mist Mist => new Mist(this);
+
+	/// <summary>Gives the Obj a Mist with the usual settings, emitting, unless it has one, and returns it.</summary>
+	public Mist AddMist()
+	{
+		NativeMist.Set(this, NativeMist.Add, Vector4.Zero);
+		return new Mist(this);
+	}
+
 	/// <summary>The Obj's Character Controller, which walks it. Not valid when it has none.</summary>
 	public CharacterController CharacterController => new CharacterController(this);
 

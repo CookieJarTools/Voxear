@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 42;
+pub(crate) const API_VERSION: u32 = 43;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -323,6 +323,9 @@ pub(crate) struct NativeApi {
     /// `Obj.Visible`: whether an Obj is drawn, set first when `set`; -1 for
     /// one that is gone.
     pub obj_visible: unsafe extern "C" fn(entity: u64, set: i32, visible: i32) -> i32,
+    /// Reads, or with `set` writes, value `what` of an Obj's Mist, as
+    /// `light_value` does an Obj's Light.
+    pub mist_value: unsafe extern "C" fn(entity: u64, what: i32, set: i32, value: *mut [f32; 4]) -> i32,
 }
 
 /// What answers scripts' questions about water: the engine's, set when it
@@ -345,6 +348,7 @@ pub type LightValues = ComponentValues;
 static LIGHTS: std::sync::OnceLock<ComponentValues> = std::sync::OnceLock::new();
 static PARTICLES: std::sync::OnceLock<ComponentValues> = std::sync::OnceLock::new();
 static SMOKES: std::sync::OnceLock<ComponentValues> = std::sync::OnceLock::new();
+static MISTS: std::sync::OnceLock<ComponentValues> = std::sync::OnceLock::new();
 
 /// Sets what answers `Light` in scripts; the first set is kept.
 pub fn set_light_values(values: LightValues) {
@@ -359,6 +363,11 @@ pub fn set_particle_values(values: ComponentValues) {
 /// Sets what answers `Smoke` in scripts; the first set is kept.
 pub fn set_smoke_values(values: ComponentValues) {
     let _ = SMOKES.set(values);
+}
+
+/// Sets what answers `Mist` in scripts; the first set is kept.
+pub fn set_mist_values(values: ComponentValues) {
+    let _ = MISTS.set(values);
 }
 
 /// What answers scripts' shots and blasts through smoke and their asking
@@ -388,6 +397,10 @@ unsafe extern "C" fn particle_value(entity: u64, what: i32, set: i32, value: *mu
 
 unsafe extern "C" fn smoke_value(entity: u64, what: i32, set: i32, value: *mut [f32; 4]) -> i32 {
     unsafe { component_value(SMOKES.get(), entity, what, set, value) }
+}
+
+unsafe extern "C" fn mist_value(entity: u64, what: i32, set: i32, value: *mut [f32; 4]) -> i32 {
+    unsafe { component_value(MISTS.get(), entity, what, set, value) }
 }
 
 /// Answers a script's read, or write with `set`, of value `what` through
@@ -1313,6 +1326,7 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         smoke_act,
         smoke_value,
         obj_visible: crate::layers::obj_visible,
+        mist_value,
     }
 }
 

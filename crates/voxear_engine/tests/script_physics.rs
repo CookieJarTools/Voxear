@@ -124,6 +124,10 @@ public sealed class Swing : Behaviour
 		Obj.Visible = false;
 		Log.Info($"visible {Obj.Visible}");
 		Obj.Visible = true;
+		var trail = Obj.AddMist();
+		trail.Width = 1.2f;
+		trail.Emitting = false;
+		Log.Info($"mist {trail.Width}, emitting {trail.Emitting}, linger {trail.Linger}");
 		Log.Info($"smoke shot {Smokes.Shoot(Obj.Position, Obj.Position + Vector3.UnitX)}, seen {Smokes.SeeThrough(Obj.Position, Obj.Position + Vector3.UnitX):0.0}");
 		using (Draw.Duration(60f))
 		{
@@ -249,6 +253,7 @@ fn scripts_ask_push_and_hear_physics() {
     assert!(said("cloud 4, green 0.50, playing False"), "{lines:?}");
     assert!(said("cloud played True"), "{lines:?}");
     assert!(said("visible False"), "{lines:?}");
+    assert!(said("mist 1.2, emitting False, linger 1.5"), "{lines:?}");
     assert!(said("smoke shot False, seen 1.0"), "no smoke here, through the engine: {lines:?}");
     let corner = voxear_core::debug_draw::texts().into_iter().find(|text| text.on_screen);
     assert_eq!(corner.map(|text| text.text), Some("bell hung".into()), "a line in the view's corner");

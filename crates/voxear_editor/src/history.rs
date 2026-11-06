@@ -54,6 +54,7 @@ pub struct ObjState {
     pub wind_zone: Option<Box<WindZone>>,
     pub particles: Option<Box<ParticleSystem>>,
     pub smoke: Option<Box<voxear_render::Smoke>>,
+    pub mist: Option<Box<voxear_render::Mist>>,
     pub ocean: Option<Box<Ocean>>,
     pub pool: Option<Box<Pool>>,
     pub dry_area: Option<Box<DryArea>>,
@@ -95,6 +96,7 @@ impl ObjState {
             wind_zone: world.get::<WindZone>(entity).copied().map(Box::new),
             particles: world.get::<ParticleSystem>(entity).copied().map(Box::new),
             smoke: world.get::<voxear_render::Smoke>(entity).copied().map(Box::new),
+            mist: world.get::<voxear_render::Mist>(entity).copied().map(Box::new),
             ocean: world.get::<Ocean>(entity).copied().map(Box::new),
             pool: world.get::<Pool>(entity).copied().map(Box::new),
             dry_area: world.get::<DryArea>(entity).copied().map(Box::new),
@@ -156,6 +158,7 @@ impl ObjState {
         put(world, entity, self.wind_zone.as_deref().copied());
         put(world, entity, self.particles.as_deref().copied());
         put(world, entity, self.smoke.as_deref().copied());
+        put(world, entity, self.mist.as_deref().copied());
         put(world, entity, self.ocean.as_deref().copied());
         put(world, entity, self.pool.as_deref().copied());
         put(world, entity, self.dry_area.as_deref().copied());

@@ -25,6 +25,7 @@ pub mod new_project;
 pub mod package_assets;
 pub mod package_scripts;
 pub mod packages;
+mod mist;
 mod particles;
 pub mod smoke;
 pub use voxear_localization as localization;

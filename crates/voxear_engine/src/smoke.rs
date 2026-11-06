@@ -519,7 +519,7 @@ pub fn see_through(world: &World, from: Vec3, to: Vec3) -> f32 {
             depth += filled * left * smoke.density * smoke.thickness(age) * step;
         }
     }
-    (-depth).exp()
+    (-(depth + crate::mist::depth_through(world, from, to))).exp()
 }
 
 #[cfg(test)]

@@ -796,6 +796,21 @@ struct Smoke
     float3 pad;
 };
 
+// A mist's trail, as smoke.slang draws it; mirrors GpuMist in src/gpu.rs.
+struct Mist
+{
+    float3 low;
+    float width;
+    float3 high;
+    float density;
+    float3 color;
+    float linger;
+    uint points;
+    uint count;
+    float seed;
+    float pad;
+};
+
 // A Particle System, as particles.slang works out its particles; mirrors
 // GpuParticleSystem in src/gpu.rs.
 struct ParticleSystem
@@ -885,6 +900,9 @@ struct Buffers
     Smoke* smokes;
     uint* smokeCells;
     float4* smokeHoles;
+    // This frame's mists, and their trails' points: where, and how old in seconds.
+    Mist* mists;
+    float4* mistPoints;
 };
 
 struct Push

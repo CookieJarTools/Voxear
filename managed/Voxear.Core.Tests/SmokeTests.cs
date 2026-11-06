@@ -2,7 +2,7 @@ using System.Numerics;
 
 namespace Voxear.Tests;
 
-/// <summary>Smoke with no engine behind it: nothing in the way, and nothing throws.</summary>
+/// <summary>Smoke and mist with no engine behind them: nothing in the way, and nothing throws.</summary>
 internal static class SmokeTests
 {
 	[Test]
@@ -24,5 +24,16 @@ internal static class SmokeTests
 		smoke.Disperse();
 		Check.Near(0f, smoke.Size);
 		Check.True(Obj.None.AddSmoke() == Smoke.None, "nothing to add it to");
+	}
+
+	[Test]
+	private static void AnObjWithoutMistReadsAsNotEmitting()
+	{
+		var mist = Obj.None.Mist;
+		Check.True(!mist.IsValid && mist == Mist.None && !mist.Emitting, "no Mist on None");
+		mist.Width = 2f;
+		mist.Emitting = true;
+		Check.Near(0f, mist.Width);
+		Check.True(Obj.None.AddMist() == Mist.None, "nothing to add it to");
 	}
 }

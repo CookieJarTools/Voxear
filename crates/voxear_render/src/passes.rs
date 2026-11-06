@@ -121,8 +121,9 @@ pub struct Frame {
     pub particles: Vec<u32>,
     /// How many drops the sea's spray has, listed after the Particle Systems.
     pub spray: Option<u32>,
-    /// How many smokes there are, drawn after the fog too.
+    /// How many smokes and mists there are, drawn after the fog too.
     pub smokes: u32,
+    pub mists: u32,
     /// The GI's probes, whose rays are traced once the opaque passes are
     /// done; shading reads last frame's.
     pub probes: Option<ddgi::Probes>,
@@ -458,11 +459,11 @@ pub fn record(
     }
 
     // The smokes and the particles are drawn after the fog, each fogged as far off as it is (post_passes).
-    let smoke = (frame.smokes > 0).then(|| {
+    let smoke = (frame.smokes > 0 || frame.mists > 0).then(|| {
         let mut sampled: Vec<ImageId> =
             targets.shadows.into_iter().chain(shadow_maps.iter().copied()).chain(tables.iter().copied()).collect();
         sampled.extend(frame.probes.into_iter().flat_map(|probes| [probes.irradiance, probes.depth, probes.states]));
-        crate::smoke::Draw { count: frame.smokes, depth, sampled, clusters: draws.clusters }
+        crate::smoke::Draw { count: frame.smokes, mists: frame.mists, depth, sampled, clusters: draws.clusters }
     });
     let mut particles = None;
     if !frame.particles.is_empty() || frame.spray.is_some() {

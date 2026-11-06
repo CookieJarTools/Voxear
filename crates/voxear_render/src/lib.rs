@@ -41,6 +41,7 @@ mod model_renderer;
 mod impostors;
 mod particles;
 mod passes;
+mod mist;
 mod smoke;
 mod payload;
 mod pipelines;
@@ -105,6 +106,7 @@ pub use impostors::Impostor;
 pub use model_renderer::{ModelPart, ModelRenderer};
 pub use seasons::{Leaves, Season, SeasonLook, Seasons};
 pub use particles::{EmitShape, ParticleBlend, ParticlePlayback, ParticleSystem};
+pub use mist::{MAX_MIST_POINTS, MIST_RISE, Mist, MistTrail};
 pub use smoke::{SMOKE_GRID, Smoke, SmokeBlast, SmokeCue, SmokeFill, SmokeHoles, SmokeShot, smoke_origin};
 pub use wind::{WindShape, WindZone};
 pub use ocean::{Ocean, OceanSampler, SeaEasing, SeaNow, SeaState, Weather, WindSource};
@@ -299,6 +301,8 @@ struct FrameBuffers {
     smokes: Buffer,
     smoke_cells: Buffer,
     smoke_holes: Buffer,
+    mists: Buffer,
+    mist_points: Buffer,
     /// The sun's light and the sky's, worked out once a frame under the
     /// atmosphere (see `atmosphere::record`).
     sky_light: Buffer,
@@ -1466,6 +1470,8 @@ impl View {
                 smokes,
                 smoke_cells,
                 smoke_holes,
+                mists,
+                mist_points,
                 sky_light,
                 meshlet_draws,
                 meshlet_draw_instances,
@@ -1475,7 +1481,8 @@ impl View {
             } = buffers;
             let all = [frame, instances, lights, draws, draw_count, draw_instances, stats, clusters, pointers];
             let meshlets = [meshlet_draws, meshlet_draw_instances, meshlet_work];
-            let debug = [debug_lines, debug_triangles, particle_systems, smokes, smoke_cells, smoke_holes];
+            let debug =
+                [debug_lines, debug_triangles, particle_systems, smokes, smoke_cells, smoke_holes, mists, mist_points];
             for buffer in all.into_iter().chain(debug).chain([sky_light, stats_readback]).chain(meshlets) {
                 frames.retire(Retired::Buffer(buffer));
             }
@@ -1983,6 +1990,8 @@ impl View {
                 smokes: buffers.smokes.address,
                 smoke_cells: buffers.smoke_cells.address,
                 smoke_holes: buffers.smoke_holes.address,
+                mists: buffers.mists.address,
+                mist_points: buffers.mist_points.address,
             }],
         );
         buffers.instances.write(0, &extracted.instances[..instance_count]);
@@ -1994,6 +2003,9 @@ impl View {
         buffers.smokes.write(0, &smokes);
         buffers.smoke_cells.write(0, &smoke_cells);
         buffers.smoke_holes.write(0, &smoke_holes);
+        let (mists, mist_points) = mist::gather(world, camera, setup.time);
+        buffers.mists.write(0, &mists);
+        buffers.mist_points.write(0, &mist_points);
 
         let push = Push {
             frame: buffers.frame.address,
@@ -2055,6 +2067,7 @@ impl View {
             particles,
             spray,
             smokes: smokes.len() as u32,
+            mists: mists.len() as u32,
             probes,
         };
         let (under_water, particles, smoke) = passes::record(fg, &frame_setup, &targets, &draws);
@@ -2218,6 +2231,18 @@ fn create_frame_buffers(gpu: &Gpu, prefix: &str, slot: usize) -> Result<FrameBuf
         smoke_holes: gpu.create_buffer(
             &format!("{prefix}smoke holes {slot}"),
             (smoke::MAX_SMOKES * (smoke::MAX_SHOTS + smoke::MAX_BLASTS) * 2 * 16) as u64,
+            storage,
+            host,
+        )?,
+        mists: gpu.create_buffer(
+            &format!("{prefix}mists {slot}"),
+            mist::MAX_MISTS as u64 * size_of::<gpu::GpuMist>() as u64,
+            storage,
+            host,
+        )?,
+        mist_points: gpu.create_buffer(
+            &format!("{prefix}mist points {slot}"),
+            (mist::MAX_MISTS * mist::MAX_MIST_POINTS * 16) as u64,
             storage,
             host,
         )?,

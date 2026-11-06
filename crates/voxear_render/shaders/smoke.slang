@@ -1,8 +1,9 @@
 // Smoke (src/smoke.rs): clouds filling the space round their Objs, each a
 // grid of cells the engine filled out from its middle against the level's
-// colliders. Marched at half the view's size, lit by the sun through the
-// cloud and by the light round it, then laid over the scene at full size,
-// each pixel from the half-size ones nearest it in depth.
+// colliders; and mists (src/mist.rs), trails of fog left behind moving
+// Objs. Marched at half the view's size, lit by the sun through the cloud
+// and by the light round it, then laid over the scene at full size, each
+// pixel from the half-size ones nearest it in depth.
 
 #include "particle_shared.slang"
 
@@ -167,6 +168,70 @@ float smokesAt(Frame* frame, uint count, float3 world, bool swirls)
     return total;
 }
 
+// How far each piece of a mist's trail rises as it ages, in metres a second (mist::MIST_RISE).
+static const float MIST_RISE = 0.4;
+
+// How thick `mist`'s trail is at `world` at `time`: round the nearest piece
+// of its line, as wide as that piece has widened and as thick as it has
+// yet to thin; with `swirls`, eaten into by drifting noise as smoke is,
+// more as it ages, so it breaks into wisps.
+float mistDensity(Mist mist, float3 world, float time, bool swirls)
+{
+    if (swirls)
+    {
+        // Swirls as fine as the trail is narrow.
+        float3 w = world * (1.6 / mist.width) + mist.seed * 0.37 + float3(0.0, -time * 0.6, 0.0);
+        float3 warp = float3(smokeNoise(w), smokeNoise(w + 19.1), smokeNoise(w + 41.7)) - 0.5;
+        world += warp * mist.width * 0.7;
+    }
+    // How far off the nearest piece, against how wide it is there, squared; and how far that piece has aged.
+    float nearest = 1e9;
+    float aged = 1.0;
+    for (uint i = 0; i < mist.count; i++)
+    {
+        float4 a = buffers()->mistPoints[mist.points + i];
+        float4 b = buffers()->mistPoints[mist.points + min(i + 1, mist.count - 1)];
+        float3 from = a.xyz + float3(0.0, MIST_RISE * a.w, 0.0);
+        float3 line = b.xyz + float3(0.0, MIST_RISE * b.w, 0.0) - from;
+        float along = saturate(dot(world - from, line) / max(dot(line, line), 1e-6));
+        float age = saturate(lerp(a.w, b.w, along) / mist.linger);
+        float radius = mist.width * 0.5 * (1.0 + age);
+        float3 off = world - (from + line * along);
+        float share = dot(off, off) / (radius * radius);
+        aged = share < nearest ? age : aged;
+        nearest = min(nearest, share);
+    }
+    if (nearest >= 1.0)
+    {
+        return 0.0;
+    }
+    float shape = (1.0 - nearest) * pow(1.0 - aged, 1.5);
+    if (!swirls)
+    {
+        return shape * mist.density;
+    }
+    float3 q = world * (2.2 / mist.width) + mist.seed + float3(0.0, -time * 0.9, 0.0);
+    float n = smokeNoise(q) * 0.55 + smokeNoise(q * 2.3 + 5.3) * 0.3 + smokeNoise(q * 5.1 + 2.1) * 0.15;
+    // Eaten into from its edge most, and more as it ages, so it frays into wisps.
+    float frayed = saturate((1.0 - nearest) * 2.4 - (1.0 - n) * (1.0 + 1.8 * aged)) * pow(1.0 - aged, 1.5);
+    return frayed * (0.3 + 1.6 * n * n) * mist.density;
+}
+
+// The mists' thickness at `world`, all of them together.
+float mistsAt(Frame* frame, uint count, float3 world, bool swirls)
+{
+    float total = 0.0;
+    for (uint i = 0; i < count; i++)
+    {
+        Mist mist = buffers()->mists[i];
+        if (all(world >= mist.low) && all(world <= mist.high))
+        {
+            total += mistDensity(mist, world, frame->time, swirls);
+        }
+    }
+    return total;
+}
+
 // Henyey–Greenstein: how much light going along one way scatters by `cosine` off it.
 float smokePhase(float cosine, float g)
 {
@@ -185,13 +250,14 @@ struct SmokeMarched
 // The smokes along this pixel's view, as far as the scene behind: the light
 // they send towards the eye, fogged as far off as they start, and in alpha
 // how much of what lies behind shows through them. push.textures: x the
-// scene's depth, y the fog's volume, z how many smokes.
+// scene's depth, y the fog's volume, z how many smokes, w how many mists.
 [shader("fragment")]
 SmokeMarched smokeMarchFragment(SmokeOut input)
 {
     SmokeMarched none = { float4(0.0, 0.0, 0.0, 1.0), 0.0 };
     Frame* frame = push.frame;
     uint count = push.textures.z;
+    uint mists = push.textures.w;
     float4 nearH = transform(frame->invViewProj, float4(input.uv * 2.0 - 1.0, 1.0, 1.0));
     float3 eye = frame->cameraPosition;
     float3 way = normalize(nearH.xyz / nearH.w - eye);
@@ -216,6 +282,21 @@ SmokeMarched smokeMarchFragment(SmokeOut input)
             enter = min(enter, near);
             leave = max(leave, far);
             cell = min(cell, smoke.cell);
+        }
+    }
+    for (uint i = 0; i < mists; i++)
+    {
+        Mist mist = buffers()->mists[i];
+        float3 low = (mist.low - eye) / way;
+        float3 high = (mist.high - eye) / way;
+        float near = max(max(min(low.x, high.x), min(low.y, high.y)), min(low.z, high.z));
+        float far = min(min(max(low.x, high.x), max(low.y, high.y)), max(low.z, high.z));
+        if (far > max(near, 0.0))
+        {
+            color = near < enter ? mist.color : color;
+            enter = min(enter, near);
+            leave = max(leave, far);
+            cell = min(cell, mist.width * 0.5);
         }
     }
     enter = max(enter, 0.0);
@@ -253,7 +334,7 @@ SmokeMarched smokeMarchFragment(SmokeOut input)
         }
         float3 at = eye + way * t;
         // Thinner right by the eye, so from inside the view does not begin at a wall of it.
-        float thick = smokesAt(frame, count, at, true) * smoothstep(0.0, 0.8, t);
+        float thick = (smokesAt(frame, count, at, true) + mistsAt(frame, mists, at, true)) * smoothstep(0.0, 0.8, t);
         if (thick < 1e-3)
         {
             continue;
@@ -263,7 +344,8 @@ SmokeMarched smokeMarchFragment(SmokeOut input)
         float toward = 0.0;
         for (uint k = 1; k <= SMOKE_SUN_STEPS; k++)
         {
-            toward += smokesAt(frame, count, at + toSun * cell * 1.5 * float(k), false);
+            float3 sunward = at + toSun * cell * 1.5 * float(k);
+            toward += smokesAt(frame, count, sunward, false) + mistsAt(frame, mists, sunward, false);
         }
         // Looked up a little off where it is, differently each frame and step, so the shadows of what stands in
         // the sun soften over frames rather than stepping with the shadow map's texels.

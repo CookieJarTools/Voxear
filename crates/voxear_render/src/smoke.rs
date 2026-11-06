@@ -313,6 +313,7 @@ pub(crate) fn gather(world: &World, camera: Vec3, time: f32) -> (Vec<GpuSmoke>, 
 #[derive(Clone)]
 pub struct Draw {
     pub count: u32,
+    pub mists: u32,
     /// The scene's depth, and the shadow atlas, the GI's probes and the
     /// atmosphere's tables.
     pub depth: ImageId,
@@ -348,7 +349,7 @@ pub(crate) fn record(
     let then = fg.history_image(gpu, bindless, HISTORY_NAMES[1 - history], rgba)?;
     // Last frame's only when it was drawn, not on the first frame or after the smoke was last seen.
     let kept = !fg.is_new(then);
-    let Draw { count, depth, sampled, clusters } = draw;
+    let Draw { count, mists, depth, sampled, clusters } = draw;
     let depth_texture = fg.texture(depth).0;
     let volume = fog_volume.map_or(NO_TEXTURE, |volume| fg.texture(volume).0);
     let mut images = vec![
@@ -357,7 +358,7 @@ pub(crate) fn record(
         (depth, ImageAccess::Sampled),
     ];
     images.extend(sampled.iter().chain(&fog_volume).map(|&image| (image, ImageAccess::Sampled)));
-    let march = Push { textures: [depth_texture, volume, count, 0], size: [half.width, half.height], ..push };
+    let march = Push { textures: [depth_texture, volume, count, mists], size: [half.width, half.height], ..push };
     fg.add_pass("Smoke", &images, &[(clusters, BufferAccess::ShaderRead)], move |ctx| {
         let target = |image| {
             vk::RenderingAttachmentInfo::default()

@@ -793,6 +793,27 @@ pub struct GpuBuffers {
     pub smoke_cells: u64,
     /// This frame's smokes' holes, as `smoke::gather` lays them out.
     pub smoke_holes: u64,
+    /// This frame's mists, and their trails' points (see `mist`).
+    pub mists: u64,
+    pub mist_points: u64,
+}
+
+/// A mist as `shaders/smoke.slang` draws it: the box its trail stays in, how
+/// wide it leaves its Obj and how long each piece lasts, its colour and
+/// thickness, and where its points start among this frame's and how many.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuMist {
+    pub low: [f32; 3],
+    pub width: f32,
+    pub high: [f32; 3],
+    pub density: f32,
+    pub color: [f32; 3],
+    pub linger: f32,
+    pub points: u32,
+    pub count: u32,
+    pub seed: f32,
+    pub _pad: f32,
 }
 
 /// A smoke as `shaders/smoke.slang` marches through it: its grid's first
@@ -1038,8 +1059,9 @@ mod tests {
         assert_eq!(size_of::<GpuDdgi>(), 32 * DDGI_CASCADES + 32 + 48);
         assert_eq!(size_of::<GpuLighting>(), lighting);
         assert_eq!(size_of::<GpuPost>(), post);
-        assert_eq!(size_of::<GpuBuffers>(), 39 * 8);
+        assert_eq!(size_of::<GpuBuffers>(), 41 * 8);
         assert_eq!(size_of::<GpuSmoke>(), 80);
+        assert_eq!(size_of::<GpuMist>(), 64);
         assert_eq!(size_of::<GpuParticleSystem>(), 64 + 16 * 9 + 64 * 3 + 128 + 16);
         assert_eq!(size_of::<GpuDebugLine>(), 48);
         assert_eq!(size_of::<GpuDebugTriangle>(), 64);

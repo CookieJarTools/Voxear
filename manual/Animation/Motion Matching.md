@@ -34,7 +34,9 @@ public sealed class Walker : Behaviour
 }
 ```
 
-The body turns the way it goes, at its **Turn Rate**. To keep it facing one way while it steps aside or back, as when aiming, set `WantedFacing`; set it to zero to face the way it goes again. `FollowObj()` forgets both.
+The body turns the way it goes, at its **Turn Rate**. To keep it facing one way, as when aiming, set `WantedFacing`; set it to zero to face the way it goes again. `FollowObj()` forgets both.
+
+Going another way than it faces, the hips and legs turn towards the way it goes, up to **Leg Turn**, and the spine twists back so the chest still faces ahead. With only a forward and a backward walk, it walks forward and to the side, or backs away to the side, turning smoothly from one to the next. Steps to each side, if the model has them, take over once they fit better.
 
 ## Settings
 
@@ -44,9 +46,10 @@ The body turns the way it goes, at its **Turn Rate**. To keep it facing one way 
 - **Blend Time**: how long a change of clips takes to fade in.
 - **Turn Rate**: how fast the body turns, in degrees a second. 0 turns at once.
 - **Turn To Movement**: the body faces the way it goes. Off, it faces the Obj's forward, for a game that turns the Obj itself.
+- **Leg Turn**: how far, in degrees, the hips and legs may turn from the way the body faces. 0 keeps them with the body.
 - **Match Speed**: clips keep pace with the ground.
 - **Debug**: draws the velocity wanted in blue, the clips' velocity in orange and the body's facing in white, and names the clips playing above its head.
 
 ## What it needs from the model
 
-It finds the root bone by its name, `root`, or else takes the first. The root marks where the character stands on the ground and which way it faces in each frame of each clip. For loops that stay in place, it finds the feet by their names: toes, feet or ankles, marked left and right.
+It finds the root bone by its name, `root`, or else takes the first. The root marks where the character stands on the ground and which way it faces in each frame of each clip. For loops that stay in place, it finds the feet by their names: toes, feet or ankles, marked left and right. To twist the body as the legs turn, it finds the spine's bones by their names, `spine` or `chest`.

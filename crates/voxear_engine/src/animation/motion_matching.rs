@@ -13,7 +13,11 @@
 //!
 //! The game moves the Obj, by a Character Controller or otherwise, and the
 //! model stands on it. The body turns, at its turn rate, the way it is
-//! wanted to face, or the way it goes.
+//! wanted to face, or the way it goes. Going another way than it faces,
+//! its hips and legs turn towards the way it goes, as far as its leg turn
+//! allows, and its spine twists back so its chest still faces ahead: so a
+//! walk forward carries it forward and to the side, and a walk back, back
+//! and to the side, turning smoothly between them.
 
 use std::sync::Arc;
 
@@ -23,7 +27,10 @@ use voxear_ecs::{Component, Entity, World};
 use voxear_render::{BonePose, ModelAnimation, ModelRenderer, Pose, Skeleton};
 use voxear_scene::Destroying;
 
-use super::motion_database::{ClipRun, Ground, MotionDatabase, database_for, facing, wrap};
+use super::{
+    motion_database::{ClipRun, Ground, MotionDatabase, database_for, facing, wrap},
+    settling::Settling,
+};
 
 /// How quickly the Obj's seen velocity follows its movement, in seconds to
 /// halve the gap: enough to smooth a frame's jitter.
@@ -39,6 +46,15 @@ const ALIGNED: f32 = 0.95;
 const CHANGED: f32 = 0.25;
 /// How much faster or slower clips may play to keep pace with the ground.
 const PACE: (f32, f32) = (0.75, 1.33);
+/// How quickly the body, and its legs, ease round to a new way, in seconds
+/// to halve the gap.
+const TURN_HALFLIFE: f32 = 0.08;
+/// How long, in seconds to halve it, the hips take to settle round when the
+/// legs change way, as from forward to back.
+const FLIP_HALFLIFE: f32 = 0.15;
+/// How much nearer, in radians, another clip's way must be to the way
+/// it goes before the legs change to it: about 20°.
+const STICK: f32 = 0.35;
 
 /// Animates its Obj's model by motion matching over the model's looping
 /// clips.
@@ -67,6 +83,9 @@ pub struct MotionMatcher {
     /// Facing the way it goes when nothing else is wanted, rather than the
     /// Obj's forward.
     pub turn_to_movement: bool,
+    /// How far, in degrees, the hips and legs may turn from the way the
+    /// body faces, towards the way it goes; 0 keeps them with the body.
+    pub leg_turn: f32,
     /// Playing clips a little faster or slower so their feet keep pace with
     /// the ground.
     pub match_speed: bool,
@@ -88,6 +107,7 @@ impl Default for MotionMatcher {
             blend: 0.15,
             turn_rate: 540.0,
             turn_to_movement: true,
+            leg_turn: 90.0,
             match_speed: true,
             debug: false,
         }
@@ -111,6 +131,15 @@ pub struct MotionMatcherState {
     searched: Option<Vec3>,
     /// The way the body faces in the world.
     body_yaw: Option<f32>,
+    /// The way it goes in the world, eased, and the way, as seen from their
+    /// roots, of the clips its legs take it there with.
+    heading: Option<f32>,
+    stride: Option<f32>,
+    /// The last two poses shown, and the offset a change of the legs' way
+    /// is still settling.
+    shown: Vec<BonePose>,
+    before: Vec<BonePose>,
+    settling: Option<Settling>,
     /// The Obj's place last frame, and its velocity as seen.
     last: Option<Vec3>,
     velocity: Vec3,
@@ -168,6 +197,7 @@ const TURN_RATE: i32 = 9;
 const TURN_TO_MOVEMENT: i32 = 10;
 const MATCH_SPEED: i32 = 11;
 const DEBUG: i32 = 12;
+const LEG_TURN: i32 = 13;
 
 /// Reads value `what` of `entity`'s Motion Matcher, or with `written`,
 /// writes it: `None` when it has none, or is gone.
@@ -205,6 +235,7 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
             TURN_TO_MOVEMENT => toggle(matcher.turn_to_movement),
             MATCH_SPEED => toggle(matcher.match_speed),
             DEBUG => toggle(matcher.debug),
+            LEG_TURN => number(matcher.leg_turn),
             _ => return None,
         }),
         Some([x, y, z, w]) => {
@@ -221,6 +252,7 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
                 TURN_TO_MOVEMENT => matcher.turn_to_movement = x != 0.0,
                 MATCH_SPEED => matcher.match_speed = x != 0.0,
                 DEBUG => matcher.debug = x != 0.0,
+                LEG_TURN => matcher.leg_turn = x.clamp(0.0, 180.0),
                 _ => return None,
             }
             Some([x, y, z, w])
@@ -282,21 +314,38 @@ fn step(
     }
     let wanted = matcher.wanted_velocity.map_or(state.velocity, flat);
     let body = turn(state, matcher, obj, wanted, delta);
-    let local = Quat::from_rotation_y(-body) * wanted;
     let idle = idle_clip(matcher, animation, database);
     let standing = idle.is_some() && wanted.length() <= matcher.idle_speed;
+    let stride = state.stride;
+    let local = head(state, matcher, database, wanted, body, delta);
+    // Changing the way its legs take it, as from forward to back, the hips
+    // turn round: straight to the new clips, the old pose settling into them.
+    let flipped = !standing && stride.is_some() && state.stride != stride;
     state.since_search += delta;
     let changed = state.searched.is_none_or(|searched| searched.distance(local) >= CHANGED);
     let unset = state.targets.iter().all(|&w| w <= 0.0);
-    if !standing && (state.since_search >= matcher.search_every || changed || unset) {
+    if !standing && (state.since_search >= matcher.search_every || changed || unset || flipped) {
         aim(state, database, local);
         state.since_search = 0.0;
         state.searched = Some(local);
+        if flipped {
+            state.weights.copy_from_slice(&state.targets);
+        }
     }
     fade(state, matcher, standing && idle.is_some(), delta);
     play_on(state, matcher, database, delta);
-    let mut pose = pose(state, animation, database, idle);
+    let mut pose = pose(state, matcher, animation, database, idle, body);
     turn_root(&mut pose, &animation.skeleton, database.root, wrap(body - obj.yaw));
+    if flipped && delta > 0.0 && state.shown.len() == pose.len() {
+        let old = [state.shown.as_slice(), &state.before];
+        state.settling = Some(Settling::between(old, [&pose, &pose], delta, FLIP_HALFLIFE));
+    }
+    if let Some(settling) = &mut state.settling
+        && !settling.settle(delta, &mut pose)
+    {
+        state.settling = None;
+    }
+    state.before = std::mem::replace(&mut state.shown, pose.clone());
     pose
 }
 
@@ -313,14 +362,60 @@ fn turn(state: &mut MotionMatcherState, matcher: &MotionMatcher, obj: Ground, wa
         .or_else(|| (matcher.turn_to_movement && moving).then(|| facing(wanted)))
         .or_else(|| (!matcher.turn_to_movement).then_some(obj.yaw));
     if let Some(target) = target {
-        let gap = wrap(target - *body);
+        let eased = wrap(target - *body) * (1.0 - 0.5f32.powf(delta / TURN_HALFLIFE));
         let most = matcher.turn_rate.to_radians() * delta;
         *body = match matcher.turn_rate > 0.0 {
-            true => wrap(*body + gap.clamp(-most, most)),
+            true => wrap(*body + eased.clamp(-most, most)),
             false => target,
         };
     }
     *body
+}
+
+/// Eases the way it goes towards the way wanted, and picks the way, among
+/// its clips', its legs take it there with: the nearest, kept until
+/// another is clearly nearer. Returns the velocity to search for, as seen
+/// from that clip's root: along the clip's way, but for whatever of the
+/// turn is past what the legs may make.
+fn head(
+    state: &mut MotionMatcherState,
+    matcher: &MotionMatcher,
+    database: &MotionDatabase,
+    wanted: Vec3,
+    body: f32,
+    delta: f32,
+) -> Vec3 {
+    if wanted.length() > matcher.idle_speed {
+        let way = facing(wanted);
+        let heading = state.heading.get_or_insert(way);
+        *heading = wrap(*heading + wrap(way - *heading) * (1.0 - 0.5f32.powf(delta / TURN_HALFLIFE)));
+    }
+    let Some(heading) = state.heading else { return Vec3::ZERO };
+    let aside = wrap(heading - body);
+    let gap = |way: f32| wrap(aside - way).abs();
+    let nearest = database
+        .runs
+        .iter()
+        .filter(|run| run.moves())
+        .map(|run| facing(run.velocity))
+        .min_by(|a, b| gap(*a).total_cmp(&gap(*b)));
+    if let Some(nearest) = nearest {
+        state.stride = Some(match state.stride {
+            Some(kept) if gap(kept) <= gap(nearest) + STICK => kept,
+            _ => nearest,
+        });
+    }
+    let stride = state.stride.unwrap_or(aside);
+    let past = wrap(aside - stride) - legs(matcher, aside, stride);
+    Quat::from_rotation_y(stride + past) * Vec3::Z * wanted.length()
+}
+
+/// How far the legs turn from the body for a clip whose root goes
+/// `stride`, seen from it, when the body goes `aside`, seen from the way it
+/// faces: as far towards it as they may.
+fn legs(matcher: &MotionMatcher, aside: f32, stride: f32) -> f32 {
+    let limit = matcher.leg_turn.to_radians();
+    wrap(aside - stride).clamp(-limit, limit)
 }
 
 /// The model clip it stands with: the one named, or the first loop that
@@ -349,9 +444,15 @@ fn aim(state: &mut MotionMatcherState, database: &MotionDatabase, local: Vec3) {
     let total: f32 = state.targets.iter().sum();
     match total > 1e-6 {
         true => state.targets.iter_mut().for_each(|w| *w /= total),
-        // None heads the way wanted: the best of them all, rather than none.
+        // None heads the way wanted: keep playing what was fading in, or else
+        // the clip heading most nearly that way.
         false => {
-            if let Some(&(run, _)) = found.first() {
+            if state.weights.iter().any(|&w| w > 0.0) {
+                state.targets.copy_from_slice(&state.weights);
+            } else if let Some(&(run, _)) = found.iter().max_by(|a, b| {
+                let along = |run: usize| database.runs[run].velocity.normalize_or_zero().dot(way);
+                along(a.0).total_cmp(&along(b.0))
+            }) {
                 state.targets[run] = 1.0;
             }
         }
@@ -397,9 +498,11 @@ fn play_on(state: &mut MotionMatcherState, matcher: &MotionMatcher, database: &M
 /// the clip it stands with over them.
 fn pose(
     state: &MotionMatcherState,
+    matcher: &MotionMatcher,
     animation: &ModelAnimation,
     database: &MotionDatabase,
     idle: Option<usize>,
+    body: f32,
 ) -> Vec<BonePose> {
     let rest = animation.skeleton.rest();
     let sample = |clip: usize, time: f32| {
@@ -419,7 +522,15 @@ fn pose(
         .iter()
         .zip(&state.weights)
         .filter(|(_, w)| **w * walking > 1e-3)
-        .map(|(run, w)| (sample(run.clip, state.phase * run.duration()), w * walking))
+        .map(|(run, w)| {
+            let mut pose = sample(run.clip, state.phase * run.duration());
+            if let Some(heading) = state.heading {
+                let turned = legs(matcher, wrap(heading - body), facing(run.velocity));
+                turn_root(&mut pose, &animation.skeleton, database.root, turned);
+                twist(&mut pose, &animation.skeleton, &database.spine, -turned);
+            }
+            (pose, w * walking)
+        })
         .collect();
     if let Some(idle) = idle.filter(|_| state.idle_weight > 1e-3) {
         poses.push((sample(idle, state.idle_time), state.idle_weight));
@@ -463,6 +574,21 @@ fn turn_root(pose: &mut [BonePose], skeleton: &Skeleton, root: usize, turn: f32)
     let parent = skeleton.bones[root].parent.map_or(Mat4::IDENTITY, |parent| matrices[parent]);
     let (scale, rotation, translation) = (parent.inverse() * wanted).to_scale_rotation_translation();
     pose[root] = BonePose { translation, rotation, scale };
+}
+
+/// Turns `bones`, a run of the spine from the hips up, about the up axis
+/// by `turn` between them, each its share.
+fn twist(pose: &mut [BonePose], skeleton: &Skeleton, bones: &[usize], turn: f32) {
+    if bones.is_empty() || turn.abs() < 1e-5 {
+        return;
+    }
+    let share = Quat::from_rotation_y(turn / bones.len() as f32);
+    for &bone in bones {
+        let matrices = skeleton.model_matrices(pose);
+        let parent =
+            skeleton.bones[bone].parent.map_or(Quat::IDENTITY, |p| matrices[p].to_scale_rotation_translation().1);
+        pose[bone].rotation = (parent.inverse() * share * parent * pose[bone].rotation).normalize();
+    }
 }
 
 /// Draws the velocity wanted, the clips' velocity and the body's facing,
@@ -520,6 +646,7 @@ mod tests {
                     at(Vec3::new(0.0, 0.9, 0.0)),
                     at(Vec3::new(0.1, -0.85, 0.0) + stride),
                     at(Vec3::new(-0.1, -0.85, 0.0) - stride),
+                    at(Vec3::new(0.0, 0.3, 0.0)),
                 ]
             })
             .collect();
@@ -545,7 +672,7 @@ mod tests {
             .flat_map(|f| {
                 let t = f as f32 / CLIP_RATE;
                 let at = |translation| BonePose { translation, ..rest };
-                [at(Vec3::ZERO), at(Vec3::new(0.0, 0.9, 0.0)), at(foot(t, 1.0)), at(foot(t, -1.0))]
+                [at(Vec3::ZERO), at(Vec3::new(0.0, 0.9, 0.0)), at(foot(t, 1.0)), at(foot(t, -1.0)), at(Vec3::Y * 0.3)]
             })
             .collect();
         Clip { name: name.into(), frames, poses }
@@ -555,7 +682,13 @@ mod tests {
         let rest = BonePose::default();
         let bone = |name: &str, parent| Bone { name: name.into(), parent, rest };
         let skeleton = Skeleton {
-            bones: vec![bone("root", None), bone("hips", Some(0)), bone("foot.L", Some(1)), bone("foot.R", Some(1))],
+            bones: vec![
+                bone("root", None),
+                bone("hips", Some(0)),
+                bone("foot.L", Some(1)),
+                bone("foot.R", Some(1)),
+                bone("spine", Some(1)),
+            ],
         };
         ModelAnimation { skeleton, skins: Vec::new(), clips }
     }
@@ -636,13 +769,13 @@ mod tests {
         asked.wanted_velocity = Some(Vec3::X * 1.4);
         let most = matcher.turn_rate.to_radians() * DT;
         let mut before = 0.0;
-        for _ in 0..30 {
+        for _ in 0..90 {
             step(&mut state, &asked, &animation, &database, Mat4::IDENTITY, DT);
             let yaw = state.body_yaw().unwrap();
             assert!(wrap(yaw - before).abs() <= most + 1e-4, "{before} to {yaw}");
             before = yaw;
         }
-        assert!((before - std::f32::consts::FRAC_PI_2).abs() < 1e-3, "facing the way it goes: {before}");
+        assert!((before - std::f32::consts::FRAC_PI_2).abs() < 1e-2, "facing the way it goes: {before}");
         let (clip, _) = state.playing(&matcher, &animation)[0];
         assert_eq!(animation.clips[clip].name, "Walk", "walking forward that way");
     }
@@ -687,6 +820,69 @@ mod tests {
         }
     }
 
+    /// The yaw a bone faces in the model, after a step.
+    fn yaw_of(animation: &ModelAnimation, pose: &[BonePose], bone: usize) -> f32 {
+        let rotation = animation.skeleton.model_matrices(pose)[bone].to_scale_rotation_translation().1;
+        facing(rotation * Vec3::Z)
+    }
+
+    #[test]
+    fn going_aside_turns_the_legs_and_keeps_the_chest_ahead() {
+        let animation =
+            walker(vec![clip("Stand", Vec3::ZERO), clip("Walk", Vec3::Z * 1.4), clip("WalkBack", Vec3::NEG_Z * 1.2)]);
+        let database = Arc::new(MotionDatabase::build(&animation).unwrap());
+        let mut matcher = MotionMatcher::default();
+        matcher.wanted_facing = Some(Vec3::Z);
+        let quarter = std::f32::consts::FRAC_PI_4;
+        for (way, clip, legs) in [(quarter, "Walk", quarter), (3.0 * quarter, "WalkBack", -quarter)] {
+            let mut state = MotionMatcherState::default();
+            let velocity = Quat::from_rotation_y(way) * Vec3::Z * 1.3;
+            let mut asked = matcher.clone();
+            asked.wanted_velocity = Some(velocity);
+            let mut pose = Vec::new();
+            for f in 0..90 {
+                pose = step(
+                    &mut state,
+                    &asked,
+                    &animation,
+                    &database,
+                    Mat4::from_translation(velocity * f as f32 * DT),
+                    DT,
+                );
+            }
+            let (playing, _) = state.playing(&matcher, &animation)[0];
+            assert_eq!(animation.clips[playing].name, clip);
+            let (hips, chest) = (yaw_of(&animation, &pose, 1), yaw_of(&animation, &pose, 4));
+            assert!((hips - legs).abs() < 0.02, "the hips turned towards the way it goes: {hips} for {legs}");
+            assert!(chest.abs() < 0.02, "the chest still ahead: {chest}");
+        }
+    }
+
+    #[test]
+    fn turning_round_never_plays_a_clip_heading_away() {
+        let animation = moves();
+        let database = Arc::new(MotionDatabase::build(&animation).unwrap());
+        let matcher = MotionMatcher::default();
+        let mut state = MotionMatcherState::default();
+        let mut at = Vec3::ZERO;
+        for f in 0..240 {
+            let velocity = match f / 60 {
+                0 => Vec3::Z,
+                1 => Vec3::NEG_X,
+                2 => Vec3::NEG_Z,
+                _ => Vec3::X,
+            } * 1.4;
+            let mut asked = matcher.clone();
+            asked.wanted_velocity = Some(velocity);
+            at += velocity * DT;
+            step(&mut state, &asked, &animation, &database, Mat4::from_translation(at), DT);
+            for (clip, weight) in state.playing(&matcher, &animation) {
+                let name = &animation.clips[clip].name;
+                assert!(name != "WalkBack" || weight < 0.05, "{name} at {weight} on frame {f}");
+            }
+        }
+    }
+
     #[test]
     fn clips_keep_pace_with_the_ground() {
         let animation = walker(vec![clip("Stand", Vec3::ZERO), clip("Walk", Vec3::Z * 1.4)]);
@@ -727,6 +923,48 @@ mod tests {
                 .collect();
             eprintln!("{velocity}: {} ×{:.2}", playing.join(", "), state.rate());
         }
+        // As an aiming player would, facing ahead: forward, forward-right, right, back-right, back, left.
+        let mut player = MotionMatcherState::default();
+        let (mut at, mut shown) = (Vec3::ZERO, String::new());
+        let mut aiming = matcher.clone();
+        aiming.wanted_facing = Some(Vec3::Z);
+        let mut worst = (0.0f32, 0.0f32);
+        let mut before: Option<Vec<Vec3>> = None;
+        for f in 0..420 {
+            let t = f as f32 * DT;
+            let way = [Some(0.0f32), Some(45.0), Some(90.0), Some(135.0), Some(180.0), Some(-90.0), None][f / 60];
+            let velocity = way.map_or(Vec3::ZERO, |deg| Quat::from_rotation_y(deg.to_radians()) * Vec3::Z * 5.0);
+            aiming.wanted_velocity = Some(velocity);
+            at += velocity * DT;
+            let placed = Mat4::from_translation(at);
+            let pose = step(&mut player, &aiming, &animation, &database, placed, DT);
+            let bones: Vec<Vec3> = animation
+                .skeleton
+                .model_matrices(&pose)
+                .iter()
+                .map(|m| placed.transform_point3(m.w_axis.truncate()))
+                .collect();
+            if let Some(then) = &before {
+                let jump = bones.iter().zip(then).map(|(a, b)| a.distance(*b)).fold(0.0f32, f32::max);
+                if jump > worst.0 {
+                    worst = (jump, t);
+                }
+            }
+            before = Some(bones);
+            let playing: Vec<String> = player
+                .playing(&matcher, &animation)
+                .iter()
+                .filter(|(_, w)| *w > 0.05)
+                .map(|&(clip, w)| format!("{} {:.0}%", animation.clips[clip].name, w * 100.0))
+                .collect();
+            let now = playing.iter().map(|p| p.split(' ').next().unwrap_or_default()).collect::<Vec<_>>().join("+");
+            if now != shown {
+                let heading = player.heading.unwrap_or_default().to_degrees();
+                eprintln!("{t:.2}s going {heading:.0}° {}", playing.join(", "));
+                shown = now;
+            }
+        }
+        eprintln!("bones moved at most {:.3} m in a frame, at {:.2}s", worst.0, worst.1);
         // How fast a foot on the ground slides over it, at a steady walk and run.
         let toes: Vec<usize> =
             ["DEF-toe.L", "DEF-toe.R"].iter().filter_map(|name| animation.skeleton.find(name)).collect();

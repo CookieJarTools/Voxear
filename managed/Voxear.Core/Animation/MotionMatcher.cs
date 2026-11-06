@@ -86,6 +86,16 @@ public readonly struct MotionMatcher : IEquatable<MotionMatcher>, IObjComponent
 		set { Set(NativeMotionMatcher.TurnToMovement, value ? 1f : 0f); }
 	}
 
+	/// <summary>
+	/// How far, in degrees, the hips and legs may turn from the way the body faces, towards the way it goes, its spine
+	/// twisting back so the chest still faces ahead; 0 keeps them with the body.
+	/// </summary>
+	public float LegTurn
+	{
+		get { return Number(NativeMotionMatcher.LegTurn); }
+		set { Set(NativeMotionMatcher.LegTurn, value); }
+	}
+
 	/// <summary>Whether clips play a little faster or slower so their feet keep pace with the ground.</summary>
 	public bool MatchSpeed
 	{

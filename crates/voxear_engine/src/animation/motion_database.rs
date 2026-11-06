@@ -144,6 +144,8 @@ impl ClipRun {
 /// Every frame of a model's clips, described for searching.
 pub struct MotionDatabase {
     pub root: usize,
+    /// The spine's bones, from the hips up, by their names.
+    pub spine: Vec<usize>,
     /// The root's turn at rest, in the model's space.
     pub rest_root: Quat,
     pub runs: Vec<ClipRun>,
@@ -164,8 +166,16 @@ impl MotionDatabase {
         let root = root_bone(skeleton)?;
         let rest_root = skeleton.model_matrices(&skeleton.rest())[root].to_scale_rotation_translation().1;
         let feet = feet(skeleton);
+        let spine = skeleton
+            .bones
+            .iter()
+            .enumerate()
+            .filter(|(_, bone)| ["spine", "chest"].iter().any(|part| bone.name.to_lowercase().contains(part)))
+            .map(|(index, _)| index)
+            .collect();
         let mut database = Self {
             root,
+            spine,
             rest_root,
             runs: Vec::new(),
             grounds: Vec::new(),

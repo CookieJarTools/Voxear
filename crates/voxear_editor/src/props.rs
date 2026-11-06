@@ -321,6 +321,7 @@ pub enum Prop {
     MatcherBlend,
     MatcherTurnRate,
     MatcherTurnToMovement,
+    MatcherLegTurn,
     MatcherMatchSpeed,
     MatcherDebug,
     /// An Ocean's weather, and for Custom weather its swell and wind; its
@@ -629,6 +630,7 @@ impl Prop {
             | Prop::MatcherBlend
             | Prop::MatcherTurnRate
             | Prop::MatcherTurnToMovement
+            | Prop::MatcherLegTurn
             | Prop::MatcherMatchSpeed
             | Prop::MatcherDebug => Part::MotionMatcher,
             Prop::OceanWeather
@@ -868,6 +870,7 @@ impl Prop {
             Prop::MatcherBlend => "blend",
             Prop::MatcherTurnRate => "turn_rate",
             Prop::MatcherTurnToMovement => "turn_to_movement",
+            Prop::MatcherLegTurn => "leg_turn",
             Prop::MatcherMatchSpeed => "match_speed",
             Prop::MatcherDebug => "debug",
             Prop::OceanWeather => "weather",
@@ -1264,6 +1267,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             Prop::MatcherBlend,
             Prop::MatcherTurnRate,
             Prop::MatcherTurnToMovement,
+            Prop::MatcherLegTurn,
             Prop::MatcherMatchSpeed,
             Prop::MatcherDebug,
         ],
@@ -1594,6 +1598,7 @@ pub fn label(prop: &Prop) -> String {
         Prop::MatcherBlend => "Blend Time",
         Prop::MatcherTurnRate => "Turn Rate",
         Prop::MatcherTurnToMovement => "Turn To Movement",
+        Prop::MatcherLegTurn => "Leg Turn",
         Prop::MatcherMatchSpeed => "Match Speed",
         Prop::MatcherDebug => "Debug",
         Prop::OceanWeather => "Weather",
@@ -2252,6 +2257,7 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         | Prop::MatcherBlend
         | Prop::MatcherTurnRate
         | Prop::MatcherTurnToMovement
+            | Prop::MatcherLegTurn
         | Prop::MatcherMatchSpeed
         | Prop::MatcherDebug => {
             matcher_value(world.get::<voxear_engine::animation::MotionMatcher>(entity)?, prop)?
@@ -3392,6 +3398,7 @@ fn set_matcher(matcher: &mut voxear_engine::animation::MotionMatcher, prop: &Pro
         Prop::MatcherIdleSpeed => (0.0, 5.0),
         Prop::MatcherSearchEvery => (0.02, 1.0),
         Prop::MatcherBlend => (0.0, 2.0),
+        Prop::MatcherLegTurn => (0.0, 180.0),
         _ => (0.0, 3600.0),
     };
     match (prop, value) {
@@ -3414,6 +3421,7 @@ fn matcher_number<'a>(matcher: &'a mut voxear_engine::animation::MotionMatcher, 
         Prop::MatcherSearchEvery => &mut matcher.search_every,
         Prop::MatcherBlend => &mut matcher.blend,
         Prop::MatcherTurnRate => &mut matcher.turn_rate,
+        Prop::MatcherLegTurn => &mut matcher.leg_turn,
         _ => return None,
     })
 }

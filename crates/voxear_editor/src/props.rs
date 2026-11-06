@@ -281,6 +281,7 @@ pub enum Prop {
     OceanDeep,
     OceanScatter,
     OceanFoam,
+    OceanSpray,
     OceanClarity,
     OceanMurk,
     /// An Ocean's costlier looks, each turned on or off.
@@ -553,6 +554,7 @@ impl Prop {
             | Prop::OceanDeep
             | Prop::OceanScatter
             | Prop::OceanFoam
+            | Prop::OceanSpray
             | Prop::OceanClarity
             | Prop::OceanMurk
             | Prop::OceanShores
@@ -759,6 +761,7 @@ impl Prop {
             Prop::OceanDeep => "deep",
             Prop::OceanScatter => "scatter",
             Prop::OceanFoam => "foam",
+            Prop::OceanSpray => "spray",
             Prop::OceanClarity => "clarity",
             Prop::OceanMurk => "murk",
             Prop::OceanShores => "shores",
@@ -1135,6 +1138,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
                 Prop::OceanDeep,
                 Prop::OceanScatter,
                 Prop::OceanFoam,
+                Prop::OceanSpray,
                 Prop::OceanClarity,
                 Prop::OceanMurk,
                 Prop::OceanShores,
@@ -1395,6 +1399,7 @@ pub fn label(prop: &Prop) -> String {
         Prop::OceanDeep => "Deep",
         Prop::OceanScatter => "Scatter",
         Prop::OceanFoam => "Foam",
+        Prop::OceanSpray => "Spray",
         Prop::OceanClarity => "Clarity",
         Prop::OceanMurk => "Murk",
         Prop::OceanShores => "Shores",
@@ -1983,6 +1988,7 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::OceanDeep => Value::Color(world.get::<Ocean>(entity)?.deep.map(round3)),
         Prop::OceanScatter => Value::Color(world.get::<Ocean>(entity)?.scatter.map(round3)),
         Prop::OceanFoam => Value::Number(world.get::<Ocean>(entity)?.foam),
+        Prop::OceanSpray => Value::Number(world.get::<Ocean>(entity)?.spray),
         Prop::OceanClarity => Value::Color(world.get::<Ocean>(entity)?.clarity.map(round3)),
         Prop::OceanMurk => Value::Number(world.get::<Ocean>(entity)?.murk),
         Prop::OceanShores => Value::Toggle(world.get::<Ocean>(entity)?.shores),
@@ -2843,6 +2849,7 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
             with(world, entity, |o: &mut Ocean| o.scatter = color.map(|c| c.clamp(0.0, 1.0)))
         }
         (Prop::OceanFoam, Value::Number(n)) => with(world, entity, |o: &mut Ocean| o.foam = n.clamp(0.0, 1.0)),
+        (Prop::OceanSpray, Value::Number(n)) => with(world, entity, |o: &mut Ocean| o.spray = n.clamp(0.0, 2.0)),
         (Prop::OceanClarity, Value::Color(color)) => {
             with(world, entity, |o: &mut Ocean| o.clarity = color.map(|c| c.clamp(0.0, 1.0)))
         }

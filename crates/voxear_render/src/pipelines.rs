@@ -124,6 +124,7 @@ pub struct Pipelines {
     pub sea_floor_under: vk::Pipeline,
     pub sea_floor_walls: vk::Pipeline,
     pub particles: vk::Pipeline,
+    pub sea_spray: vk::Pipeline,
     pub dry_mesh: vk::Pipeline,
     pub water_wall: vk::Pipeline,
     /// Under water: what the view shows dimmed, then the water's own light.
@@ -427,6 +428,13 @@ impl Pipelines {
                 blend: Blend::Premultiplied,
                 ..GraphicsPipelineDesc::new("Particles", particles, c"particleVertex", c"particleFragment")
             })?,
+            // The sea's spray: particles that read the waves and the foam, so with the sea's shaders.
+            sea_spray: graphics(&GraphicsPipelineDesc {
+                color_formats: hdr,
+                cull: vk::CullModeFlags::NONE,
+                blend: Blend::Premultiplied,
+                ..GraphicsPipelineDesc::new("Sea spray", water, c"sprayVertex", c"particleFragment")
+            })?,
             glass_shadow: graphics(&GraphicsPipelineDesc {
                 color_formats: &crate::glass::SHADOW_FORMATS,
                 cull: vk::CullModeFlags::NONE,
@@ -562,6 +570,7 @@ impl Pipelines {
             self.sea_floor_under,
             self.sea_floor_walls,
             self.particles,
+            self.sea_spray,
             self.dry_mesh,
             self.water_wall,
             self.underwater,

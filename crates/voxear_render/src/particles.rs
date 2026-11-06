@@ -186,8 +186,10 @@ pub struct ParticlePlayback {
 impl Component for ParticlePlayback {}
 
 /// This frame's Particle Systems, the farthest from `camera` first, so the
-/// nearer draw over them, and how many particles each draws.
-pub(crate) fn gather(world: &World, camera: Vec3, time: f32) -> (Vec<GpuParticleSystem>, Vec<u32>) {
+/// nearer draw over them, and how many particles each draws; then, listed
+/// after them, the sea's spray and how many drops it has, when the first
+/// Ocean has any.
+pub(crate) fn gather(world: &World, camera: Vec3, time: f32) -> (Vec<GpuParticleSystem>, Vec<u32>, Option<u32>) {
     let query = world.query_ref::<(&ParticleSystem, &Transform, Option<&WorldTransform>, Option<&ParticlePlayback>)>();
     let mut systems: Vec<(f32, GpuParticleSystem, u32)> = query
         .without::<Destroying>()
@@ -200,8 +202,39 @@ pub(crate) fn gather(world: &World, camera: Vec3, time: f32) -> (Vec<GpuParticle
         })
         .collect();
     systems.sort_by(|a, b| b.0.total_cmp(&a.0));
-    systems.truncate(MAX_PARTICLE_SYSTEMS);
-    systems.into_iter().map(|(_, gpu, slots)| (gpu, slots)).unzip()
+    systems.truncate(MAX_PARTICLE_SYSTEMS - 1);
+    let (mut gpus, counts): (Vec<GpuParticleSystem>, Vec<u32>) =
+        systems.into_iter().map(|(_, gpu, slots)| (gpu, slots)).unzip();
+    let seas = world.query_ref::<(&crate::Ocean, &Transform, Option<&WorldTransform>)>();
+    let sea = seas.without::<Destroying>().into_iter().next().map(|(ocean, transform, at)| {
+        (ocean.spray, at.map_or(transform.position.y, |w| w.0.w_axis.y))
+    });
+    let spray = sea.filter(|(amount, _)| *amount > 0.0).map(|(amount, level)| {
+        let drops = sea_spray(amount);
+        gpus.push(gpu(&drops, Mat4::from_translation(Vec3::new(0.0, level, 0.0)), time, None));
+        drops.slots()
+    });
+    (gpus, counts, spray)
+}
+
+/// The sea's spray as a system, as much as an Ocean's Spray says: puffs of
+/// fine drops thrown up a few metres, spreading into mist as they fall back,
+/// lit, fading.
+fn sea_spray(amount: f32) -> ParticleSystem {
+    ParticleSystem {
+        rate: 600.0 * amount,
+        lifetime: [0.8, 1.6],
+        speed: [1.5, 4.0],
+        size: [0.15, 0.4],
+        size_end: 3.0,
+        color: [1.0, 1.0, 1.0, 0.4],
+        color_end: [1.0, 1.0, 1.0, 0.0],
+        gravity: 1.0,
+        drag: 0.8,
+        softness: 0.1,
+        seed: 0x5EA,
+        ..ParticleSystem::default()
+    }
 }
 
 /// What the particles' pass draws into and reads.
@@ -218,11 +251,12 @@ pub struct Targets {
 }
 
 /// Records the Particle Systems, each drawn as `counts` says of its
-/// particles, a quad each, in the order they are listed.
+/// particles, a quad each, in the order they are listed; then the sea's
+/// spray, listed after them, with as many drops as `spray` says.
 pub(crate) fn record(
     fg: &mut FrameGraph<'_>,
     (pipelines, push): (Pipelines, Push),
-    counts: Vec<u32>,
+    (counts, spray): (Vec<u32>, Option<u32>),
     targets: Targets,
 ) {
     let Targets { hdr, depth, sampled, clusters, extent } = targets;
@@ -241,6 +275,11 @@ pub(crate) fn record(
         for (system, &count) in counts.iter().enumerate() {
             ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { source: system as u32, ..push });
             unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, count * 6, 1, 0, 0) };
+        }
+        if let Some(drops) = spray {
+            bind(ctx, pipelines.sea_spray, vk::PipelineBindPoint::GRAPHICS, &push);
+            ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { source: counts.len() as u32, ..push });
+            unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, drops * 6, 1, 0, 0) };
         }
         unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
     });
@@ -307,7 +346,8 @@ mod tests {
         world.spawn((ParticleSystem::default(), Transform::from_position(Vec3::new(0.0, 0.0, 2.0))));
         let far = world.spawn((ParticleSystem::default(), Transform::from_position(Vec3::new(0.0, 0.0, 20.0))));
         world.insert(far, ParticlePlayback { started: 3.0, stopped: Some(5.0) });
-        let (systems, slots) = gather(&world, Vec3::ZERO, 10.0);
+        let (systems, slots, spray) = gather(&world, Vec3::ZERO, 10.0);
+        assert_eq!(spray, None, "no sea, no spray");
         assert_eq!(slots.len(), 2);
         assert_eq!(systems[0].model[3][2], 20.0, "the far one first");
         assert_eq!((systems[0].time, systems[0].stopped), (7.0, 2.0), "seven seconds in, stopped at two");

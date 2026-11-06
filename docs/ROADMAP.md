@@ -1256,7 +1256,10 @@ The sea, lakes, rivers and lava, built in. Manual: `manual/Water`.
 - **Lamps:** their glints on the water and their light in its own colour; under it, their glow in the water along
   the view (each lamp's light added up exactly along it), and their light dimmed by the water on its way to what
   they light.
-- Still to do: spray and splashes (with particles, M7).
+- **Spray and splashes:** an Ocean's Spray throws drops off where its foam is fresh, breaking crests and surf, as a
+  particle system the renderer adds of itself (`sprayVertex`): each drop tries a few places in a square tiled over
+  the sea round the camera, so drops stay put as it moves. A floating body that goes into the water fast enough
+  throws up a burst of drops, as big as it is fast and wide, cleared once they have fallen (`water::splash`).
 
 ## M6 — Animation
 

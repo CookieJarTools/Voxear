@@ -119,6 +119,8 @@ pub struct Frame {
     /// How many particles each Particle System draws, in the order they are
     /// listed, drawn after glass.
     pub particles: Vec<u32>,
+    /// How many drops the sea's spray has, listed after the Particle Systems.
+    pub spray: Option<u32>,
     /// The GI's probes, whose rays are traced once the opaque passes are
     /// done; shading reads last frame's.
     pub probes: Option<ddgi::Probes>,
@@ -425,6 +427,8 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
     });
 
     let mut under = None;
+    // The images the sea's shading reads, which its spray reads too.
+    let mut sea_images = Vec::new();
     if let Some(water) = frame.water.clone() {
         let mut sampled: Vec<ImageId> =
             targets.shadows.into_iter().chain(shadow_maps.iter().copied()).chain(tables.iter().copied()).collect();
@@ -432,7 +436,7 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
         sampled.extend(dry_mask);
         let index_buffer = draws.index_buffer;
         let water_targets = crate::water::WaterTargets { hdr, velocity, depth, index_buffer, sampled };
-        under = crate::water::record(fg, (pipelines, push), water, water_targets);
+        (under, sea_images) = crate::water::record(fg, (pipelines, push), water, water_targets);
     }
 
     if let Some(glass) = frame.glass.clone() {
@@ -445,13 +449,16 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
         glass::record(fg, (pipelines, push), glass, glass_targets);
     }
 
-    if !frame.particles.is_empty() {
+    if !frame.particles.is_empty() || frame.spray.is_some() {
         let mut sampled: Vec<ImageId> =
             targets.shadows.into_iter().chain(shadow_maps.iter().copied()).chain(tables.iter().copied()).collect();
         sampled.extend(frame.probes.into_iter().flat_map(|probes| [probes.irradiance, probes.depth, probes.states]));
+        // The spray only with the sea drawn this frame, whose waves and foam it reads.
+        let spray = frame.spray.filter(|_| !sea_images.is_empty());
+        sampled.extend(sea_images);
         let clusters = draws.clusters;
         let particle_targets = crate::particles::Targets { hdr, depth, sampled, clusters, extent: frame.extent };
-        crate::particles::record(fg, (pipelines, push), frame.particles.clone(), particle_targets);
+        crate::particles::record(fg, (pipelines, push), (frame.particles.clone(), spray), particle_targets);
     }
 
     if frame.edges {

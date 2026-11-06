@@ -29,6 +29,10 @@ protected override void FixedUpdate()
 }
 ```
 
+## Splashes
+
+A floating Obj that falls into the water fast enough throws up a splash where it goes in. Faster and wider Objs make bigger splashes. Nothing needs setting up: any Obj with Buoyancy splashes.
+
 ## Asking about the water from scripts
 
 The `Water` class asks about the water anywhere in the level: the sea's waves exactly as they are drawn, worked out the same on every machine, and Pools and Streams:

@@ -7,6 +7,7 @@
 // (waterVertex), lit in waterFragment.
 
 #include "glass.slang"
+#include "particle_shared.slang"
 
 // The cascades' resolution and how many there are (OCEAN_CASCADES in src/ocean.rs).
 static const uint OCEAN_N = 256;
@@ -2427,4 +2428,63 @@ void lensWetnessMain(uint3 id : SV_DispatchThreadID)
     float before = push.textures.y != 0 ? 0.0 : textures[NonUniformResourceIndex(push.textures.x)].Load(int3(0, 0, 0)).r;
     float now = cameraUnderwater(frame) ? 1.0 : before * exp(-frame->deltaTime / 1.2);
     storageImagesR32f[push.output][uint2(0, 0)] = saturate(now);
+}
+
+// ---------------------------------------------------------------- Spray
+
+// How far round the camera spray flies, in metres; it fades out over the
+// last third of it.
+static const float SPRAY_REACH = 30.0;
+// How many places a drop tries for fresh foam to fly from.
+static const uint SPRAY_TRIES = 4;
+
+// A vertex of the sea's spray (particles::gather adds it as a system of its
+// own): drops thrown up where foam is freshly made, by breaking crests and
+// the surf, blown downwind and falling back. Each drop's place is in a
+// square tiled over the sea, the copy of it nearest the camera, so a drop
+// stays where it is as the camera moves; it flies only where the foam there
+// is fresh now, the fresher the likelier, trying a few places.
+[shader("vertex")]
+ParticleOut sprayVertex(uint vertexId : SV_VertexID)
+{
+    Frame* frame = push.frame;
+    ParticleSystem system = buffers()->particleSystems[push.source];
+    uint slot = vertexId / 6;
+    float2 corner = PARTICLE_CORNERS[vertexId % 6];
+    ParticleOut none = particleNone(system, corner);
+    float spawn;
+    uint turn;
+    if (!particleSpawn(system, slot, spawn, turn))
+    {
+        return none;
+    }
+    uint h = particleHash(system.seed ^ particleHash(slot ^ particleHash(turn * 7919u + 17u)));
+    float life = lerp(system.lifetime.x, system.lifetime.y, particleRandom(h));
+    float age = system.time - spawn;
+    if (age > life)
+    {
+        return none;
+    }
+    // A few tries at a place with fresh foam, so the drops gather where the crests break rather than mostly
+    // finding none.
+    float tile = SPRAY_REACH * 2.0;
+    float2 rest = 0.0;
+    bool found = false;
+    for (uint attempt = 0; attempt < SPRAY_TRIES && !found; attempt++)
+    {
+        float2 cell = float2(particleRandom(h), particleRandom(h)) * tile;
+        rest = cell + tile * round((frame->cameraPosition.xz - cell) / tile);
+        float fresh = saturate(keptFoam(frame, rest).g * 1.5);
+        found = particleRandom(h) < fresh;
+    }
+    if (!found)
+    {
+        return none;
+    }
+    float3 surface = float3(rest.x, frame->ocean.level, rest.y) + oceanMoved(frame, rest, 0.5, false, 1.0, seaDepth(frame, rest));
+    float2 wind = windDirection(frame);
+    float3 way = normalize(float3(wind.x * 0.6, 1.0, wind.y * 0.6) + anyWay(h) * 0.35);
+    float3 world = particleFlight(system, surface, way * lerp(system.speed.x, system.speed.y, particleRandom(h)), age);
+    float fade = saturate((SPRAY_REACH - distance(surface.xz, frame->cameraPosition.xz)) / (SPRAY_REACH / 3.0));
+    return particlePlace(frame, system, world, age, age / life, corner, h, fade);
 }

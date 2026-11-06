@@ -1977,7 +1977,7 @@ impl View {
         buffers.instances.write(0, &extracted.instances[..instance_count]);
         buffers.lights.write(0, &extracted.lights[..light_count]);
         let camera = voxear_core::math::Vec3::from(extracted.frame.camera_position);
-        let (particle_systems, particles) = particles::gather(world, camera, setup.time);
+        let (particle_systems, particles, spray) = particles::gather(world, camera, setup.time);
         buffers.particle_systems.write(0, &particle_systems);
 
         let push = Push {
@@ -2038,6 +2038,7 @@ impl View {
             water,
             glass,
             particles,
+            spray,
             probes,
         };
         let under_water = passes::record(fg, &frame_setup, &targets, &draws);

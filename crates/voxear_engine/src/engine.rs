@@ -541,8 +541,9 @@ impl Engine {
         if let Some(mut physics) = scene.or_else(|| PhysicsScene::wanted(&self.world).then(PhysicsScene::new)) {
             {
                 profile_scope!("Physics");
-                crate::water::float(&self.world, &mut physics);
+                let floating = crate::water::float(&self.world, &mut physics);
                 physics.step(&mut self.world, dt);
+                crate::water::splash(&mut self.world, floating, self.time.elapsed);
             }
             let events = physics.take_events();
             self.world.insert_resource(physics);

@@ -3615,6 +3615,11 @@ fn wind_masks_sway_branches_further_than_the_trunk() {
 
 /// The sea in `weather`, seen from four metres up, the sun low ahead.
 fn ocean_render(weather: voxear_render::Weather) -> Option<Vec<u8>> {
+    ocean_spray_render(weather, voxear_render::Ocean::default().spray)
+}
+
+/// The sea of ocean_render, with as much spray as `spray` says.
+fn ocean_spray_render(weather: voxear_render::Weather, spray: f32) -> Option<Vec<u8>> {
     use voxear_render::{Ocean, Sky};
     let mut renderer = renderer()?;
     let mut world = World::new();
@@ -3623,7 +3628,8 @@ fn ocean_render(weather: voxear_render::Weather) -> Option<Vec<u8>> {
     let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.3, -0.35, -1.0).normalize());
     world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
     world.insert_resource(Sky { ambient: 0.6, ..Sky::default() });
-    world.spawn((Ocean { weather, ..Ocean::default() }, Transform::new(Vec3::ZERO, Quat::from_rotation_y(0.4), Vec3::ONE)));
+    let turned = Transform::new(Vec3::ZERO, Quat::from_rotation_y(0.4), Vec3::ONE);
+    world.spawn((Ocean { weather, spray, ..Ocean::default() }, turned));
     let mut time = 40.0;
     run(&mut renderer, &world, &mut time, 20);
     Some(renderer.read_pixels().unwrap().2)
@@ -3651,6 +3657,20 @@ fn the_sea_is_blue_water_and_a_storm_breaks_into_whitecaps() {
     };
     let (calm_foam, storm_foam) = (foam(&calm), foam(&stormy));
     assert!(storm_foam > calm_foam * 2 + 50, "a storm's whitecaps: {storm_foam} pixels against {calm_foam} when calm");
+}
+
+#[test]
+fn a_storm_throws_spray_off_its_breaking_crests() {
+    use voxear_render::Weather;
+    let Some(bare) = ocean_spray_render(Weather::Stormy, 0.0) else { return };
+    let spray = ocean_spray_render(Weather::Stormy, 2.0).unwrap();
+    keep_image("ocean spray.png", &spray);
+    // Pale drops where the bare sea was darker, below the horizon.
+    let paler = (200..360u32)
+        .flat_map(|y| (0..640u32).map(move |x| (x, y)))
+        .filter(|&at| rgb_at(&spray, at).iter().sum::<i32>() > rgb_at(&bare, at).iter().sum::<i32>() + 45)
+        .count();
+    assert!(paler > 40, "spray off the crests: {paler} pixels");
 }
 
 #[test]

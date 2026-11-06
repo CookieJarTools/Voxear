@@ -26,6 +26,7 @@ Under **Custom**, the sea is two seas at once, as a real one is: a **Swell** rai
 | Deep | The colour of the water seen deep down, lit by the sky |
 | Scatter | The colour sunlight takes through the thin tops of the waves, glowing turquoise towards the sun |
 | Foam | How much foam breaking crests make |
+| Spray | How much spray flies off breaking crests and the surf, 0 for none |
 | Clarity | What a metre of water lets through, by colour: what lies under the water shows through it, bluer and darker the deeper it is |
 | Murk | How far you see into the water: 1 as Clarity says, more for murkier water |
 

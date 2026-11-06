@@ -129,6 +129,9 @@ pub struct Ocean {
     pub scatter: [f32; 3],
     /// How much foam the breaking crests have, from 0 for none.
     pub foam: f32,
+    /// How much spray flies off the breaking crests and the surf, from 0
+    /// for none.
+    pub spray: f32,
     /// What a metre of water lets through, by colour, sRGB.
     pub clarity: [f32; 3],
     /// How murky it is: 1 as Clarity says, more to see less far into it.
@@ -224,6 +227,7 @@ impl Default for Ocean {
             deep: [0.0, 0.16, 0.32],
             scatter: [0.1, 0.78, 0.72],
             foam: 0.5,
+            spray: 0.5,
             clarity: [0.82, 0.97, 0.98],
             murk: 1.0,
             wind_source: WindSource::Own,

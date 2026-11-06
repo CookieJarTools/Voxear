@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 43;
+pub(crate) const API_VERSION: u32 = 44;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -326,6 +326,10 @@ pub(crate) struct NativeApi {
     /// Reads, or with `set` writes, value `what` of an Obj's Mist, as
     /// `light_value` does an Obj's Light.
     pub mist_value: unsafe extern "C" fn(entity: u64, what: i32, set: i32, value: *mut [f32; 4]) -> i32,
+    /// Craters: a blast at a point with a radius and depth (0), which gives
+    /// back whether there was a Crater Field to dig into, or every crater
+    /// filled back in (1).
+    pub craters_act: unsafe extern "C" fn(what: i32, values: *const [f32; 7]) -> f32,
 }
 
 /// What answers scripts' questions about water: the engine's, set when it
@@ -375,6 +379,20 @@ pub fn set_mist_values(values: ComponentValues) {
 /// numbers, as `NativeApi::smoke_act` says.
 pub type SmokeActions = fn(&mut World, i32, [f32; 7]) -> f32;
 static SMOKE: std::sync::OnceLock<SmokeActions> = std::sync::OnceLock::new();
+
+static CRATERS: std::sync::OnceLock<SmokeActions> = std::sync::OnceLock::new();
+
+/// Sets what answers `Craters` in scripts, as `set_smoke_actions` does
+/// `Smokes`; the first set is kept.
+pub fn set_crater_actions(actions: SmokeActions) {
+    let _ = CRATERS.set(actions);
+}
+
+unsafe extern "C" fn craters_act(what: i32, values: *const [f32; 7]) -> f32 {
+    let (Some(actions), false) = (CRATERS.get(), values.is_null()) else { return 0.0 };
+    let values = unsafe { *values };
+    with_world(|world| Some(actions(world, what, values))).unwrap_or(0.0)
+}
 
 /// Sets what answers `Smokes` in scripts; the first set is kept.
 pub fn set_smoke_actions(actions: SmokeActions) {
@@ -1327,6 +1345,7 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         smoke_value,
         obj_visible: crate::layers::obj_visible,
         mist_value,
+        craters_act,
     }
 }
 

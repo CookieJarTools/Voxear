@@ -5,6 +5,7 @@ pub mod acoustics;
 pub mod audio;
 pub mod build_profile;
 mod content;
+pub mod craters;
 pub mod content_build;
 pub mod debug_texts;
 pub mod field_checks;

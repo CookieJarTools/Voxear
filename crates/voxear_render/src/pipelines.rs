@@ -137,6 +137,8 @@ pub struct Pipelines {
     pub forward_diced: vk::Pipeline,
     pub forward_on_depth_diced: vk::Pipeline,
     pub shadow_diced: vk::Pipeline,
+    /// Stamps craters into the Crater Field's picture (see `craters`).
+    pub crater_stamp: vk::Pipeline,
     pub dry_mesh: vk::Pipeline,
     pub water_wall: vk::Pipeline,
     /// Under water: what the view shows dimmed, then the water's own light.
@@ -463,6 +465,7 @@ impl Pipelines {
             })?,
             dice_split: create_compute_pipeline(gpu, layout, "Dice (split)", dice, c"diceSplitMain")?,
             dice_patch: create_compute_pipeline(gpu, layout, "Dice (pieces)", dice, c"dicePatchMain")?,
+            crater_stamp: create_compute_pipeline(gpu, layout, "Craters", dice, c"craterStampMain")?,
             depth_diced: graphics(&GraphicsPipelineDesc {
                 color_formats: &[SURFACE_FORMAT],
                 depth_format: Some(DEPTH_FORMAT),
@@ -641,6 +644,7 @@ impl Pipelines {
             self.forward_diced,
             self.forward_on_depth_diced,
             self.shadow_diced,
+            self.crater_stamp,
             self.dry_mesh,
             self.water_wall,
             self.underwater,

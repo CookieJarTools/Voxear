@@ -200,6 +200,7 @@ static const uint MATERIAL_GLOW_SHIFT = 5;
 // A plant's impostor, its base colour and normal textures its atlas (impostor.slang).
 static const uint MATERIAL_IMPOSTOR = 128;
 static const uint MATERIAL_DISPLACED = 256;
+static const uint MATERIAL_CRATERS = 512;
 
 struct Material
 {
@@ -643,6 +644,15 @@ struct Ddgi
     float4 rotation[3];
 };
 
+// The level's Crater Field (src/craters.rs): its first corner in X and Z,
+// its size, and its picture of how far down craters dig, or NO_TEXTURE.
+struct CraterField
+{
+    float2 corner;
+    float size;
+    uint texture;
+};
+
 struct Frame
 {
     Mat4 viewProj;
@@ -703,6 +713,7 @@ struct Frame
     Seasons seasons;
     LocalShadows localShadows;
     Ocean ocean;
+    CraterField craters;
 };
 
 // The projection a shadow draw puts its vertices through: a cascade's, or
@@ -918,6 +929,8 @@ struct Buffers
     uint4* diceSplits;
     uint4* dicePatches;
     uint4* diceDraws;
+    // The Crater Field's craters: where in X and Z, how wide and how deep.
+    float4* craters;
 };
 
 struct Push

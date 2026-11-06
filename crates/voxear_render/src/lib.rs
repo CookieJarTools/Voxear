@@ -41,6 +41,7 @@ mod model_renderer;
 mod impostors;
 mod particles;
 mod passes;
+mod craters;
 mod dice;
 mod mist;
 mod smoke;
@@ -107,6 +108,7 @@ pub use impostors::Impostor;
 pub use model_renderer::{ModelPart, ModelRenderer};
 pub use seasons::{Leaves, Season, SeasonLook, Seasons};
 pub use particles::{EmitShape, ParticleBlend, ParticlePlayback, ParticleSystem};
+pub use craters::{Crater, CraterField, CraterMarks, MAX_CRATER_DEPTH, MAX_CRATERS, crater_depth};
 pub use mist::{MAX_MIST_POINTS, MIST_RISE, Mist, MistTrail};
 pub use smoke::{SMOKE_GRID, Smoke, SmokeBlast, SmokeCue, SmokeFill, SmokeHoles, SmokeShot, smoke_origin};
 pub use wind::{WindShape, WindZone};
@@ -316,6 +318,8 @@ struct FrameBuffers {
     dice_splits: Buffer,
     dice_patches: Buffer,
     dice_draws: Buffer,
+    /// The Crater Field's craters (see `craters`).
+    craters: Buffer,
     /// The sun's light and the sky's, worked out once a frame under the
     /// atmosphere (see `atmosphere::record`).
     sky_light: Buffer,
@@ -1378,6 +1382,8 @@ struct View {
     atmosphere_tables: Option<gpu::GpuAtmosphere>,
     /// Whether last frame drew a fog volume this one can carry on from.
     fog_history: bool,
+    /// What this view last stamped into its Crater Field's picture.
+    craters_stamped: craters::Stamped,
     /// The sea's spectrum and FFT rows (see `water`).
     ocean: water::OceanBuffers,
     /// The ray-traced GI's origins last frame, its spacing, and how many
@@ -1458,6 +1464,7 @@ impl View {
             ao_history: None,
             atmosphere_tables: None,
             fog_history: false,
+            craters_stamped: None,
             ocean: water::OceanBuffers::new(gpu, &named, FRAMES_IN_FLIGHT)?,
             ddgi_history: None,
             warned_meshlets: false,
@@ -1490,6 +1497,7 @@ impl View {
                 dice_splits,
                 dice_patches,
                 dice_draws,
+                craters,
                 sky_light,
                 meshlet_draws,
                 meshlet_draw_instances,
@@ -1499,7 +1507,7 @@ impl View {
             } = buffers;
             let all = [frame, instances, lights, draws, draw_count, draw_instances, stats, clusters, pointers];
             let meshlets = [meshlet_draws, meshlet_draw_instances, meshlet_work];
-            let diced = [diced_instances, dice_counts, dice_splits, dice_patches, dice_draws];
+            let diced = [diced_instances, dice_counts, dice_splits, dice_patches, dice_draws, craters];
             let debug =
                 [debug_lines, debug_triangles, particle_systems, smokes, smoke_cells, smoke_holes, mists, mist_points];
             for buffer in all.into_iter().chain(debug).chain([sky_light, stats_readback]).chain(meshlets).chain(diced) {
@@ -1949,6 +1957,26 @@ impl View {
             frame_data.lighting.sky_view = fg.texture(tables.sky_view).0;
             frame_data.lighting.aerial_perspective = fg.texture(tables.aerial_perspective).0;
         }
+        // The Crater Field's picture, with the craters blasted since it was last stamped.
+        let field = craters::gather(world);
+        let craters_image = match &field {
+            Some(field) => {
+                buffers.craters.write(0, &field.craters);
+                let craters = fg.import_buffer(&buffers.craters);
+                let (frame, pointers) = (buffers.frame.address, buffers.pointers.address);
+                let field_push = Push { frame, buffers: pointers, ..Push::default() };
+                let stamped = self.craters_stamped;
+                let (image, stamped) =
+                    craters::record(fg, (gpu, bindless), (*pipelines, field_push), (field, craters), stamped)?;
+                self.craters_stamped = stamped;
+                Some(fg.texture(image).0)
+            }
+            None => {
+                self.craters_stamped = None;
+                None
+            }
+        };
+        frame_data.craters = craters::gpu_field(field.as_ref(), craters_image);
         frame_data.instance_count = opaque_count as u32;
         frame_data.light_count = light_count as u32;
         frame_data.hiz_texture = fg.texture(pyramid).0;
@@ -2016,6 +2044,7 @@ impl View {
                 dice_splits: buffers.dice_splits.address,
                 dice_patches: buffers.dice_patches.address,
                 dice_draws: buffers.dice_draws.address,
+                craters: buffers.craters.address,
             }],
         );
         buffers.instances.write(0, &extracted.instances[..instance_count]);
@@ -2306,6 +2335,12 @@ fn create_frame_buffers(gpu: &Gpu, prefix: &str, slot: usize) -> Result<FrameBuf
             dice::MAX_PATCHES * dice::PATCH_SIZE,
             indirect,
             MemoryLocation::GpuOnly,
+        )?,
+        craters: gpu.create_buffer(
+            &format!("{prefix}craters {slot}"),
+            (craters::MAX_CRATERS * 16) as u64,
+            storage,
+            host,
         )?,
         sky_light: gpu.create_buffer(&format!("{prefix}sky light {slot}"), 32, storage, MemoryLocation::GpuOnly)?,
         meshlet_draws,

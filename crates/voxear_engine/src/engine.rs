@@ -60,6 +60,7 @@ impl Engine {
         crate::particles::register();
         crate::smoke::register();
         crate::mist::register();
+        crate::craters::register();
         let mut world = World::new();
         register_obj_components(&mut world);
         world.register_named_component::<PrefabInstance>("Voxear.PrefabInstance");

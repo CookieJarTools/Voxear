@@ -4706,3 +4706,49 @@ fn displaced_ground_drawn_as_depth_first_looks_the_same() {
 fn differing_pixels_by(a: &[u8], b: &[u8], by: u8) -> usize {
     a.chunks_exact(4).zip(b.chunks_exact(4)).filter(|(a, b)| a.iter().zip(*b).any(|(a, b)| a.abs_diff(*b) > by)).count()
 }
+
+/// A flat ground whose material takes craters, or not, in a Crater Field,
+/// with a crater two and a half metres wide and a metre deep blasted in its
+/// middle, or none, seen from above at a slant in a low sun.
+fn crater_render(takes: bool, blasted: bool) -> Option<(Vec<u8>, RenderStats)> {
+    use voxear_render::{Crater, CraterField, CraterMarks, Sky};
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    let eye = Vec3::new(0.0, 6.0, -8.0);
+    world.spawn((Camera::default(), Transform::new(eye, Quat::from_rotation_x(0.6), Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.3, ..Sky::default() });
+    let plane = renderer.primitive(Primitive::Plane).unwrap();
+    let mud = MaterialDesc { base_color: [0.4, 0.3, 0.2, 1.0], craters: takes, ..MaterialDesc::default() };
+    let mud = renderer.add_material(&mud).unwrap();
+    world.spawn((MeshRenderer::new(plane, mud), Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(30.0))));
+    let mut marks = CraterMarks::default();
+    if blasted {
+        marks.blast(Crater { centre: Vec3::ZERO, radius: 2.5, depth: 1.0 });
+    }
+    world.spawn((CraterField { size: 64.0, resolution: 512 }, marks, Transform::default()));
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.7, -0.4, 0.3).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(steady_post());
+    let stats = run(&mut renderer, &world, &mut 0.0, 4);
+    Some((renderer.read_pixels().unwrap().2, stats))
+}
+
+#[test]
+fn a_blast_digs_a_crater_into_ground_that_takes_them_and_no_other() {
+    let Some((smooth, _)) = crater_render(true, false) else { return };
+    let (dug, stats) = crater_render(true, true).unwrap();
+    keep_image("crater.png", &dug);
+    assert!(stats.diced_patches > 0, "ground that takes craters is diced");
+    let middle = on_screen(Vec3::new(0.0, 6.0, -8.0), Quat::from_rotation_x(0.6), Vec3::ZERO);
+    let changed = (0..360u32)
+        .flat_map(|y| (0..640u32).map(move |x| (x, y)))
+        .filter(|&at| (0..3).map(|c| (rgb_at(&dug, at)[c] - rgb_at(&smooth, at)[c]).abs()).max().unwrap() > 12)
+        .collect::<Vec<_>>();
+    assert!(changed.len() > 2000, "the crater shows: {} pixels", changed.len());
+    let near = changed.iter().filter(|&&(x, y)| x.abs_diff(middle.0) < 120 && y.abs_diff(middle.1) < 90).count();
+    assert!(near * 10 > changed.len() * 9, "round where it was blasted");
+    let (plain, plain_stats) = crater_render(false, true).unwrap();
+    let (plain_smooth, _) = crater_render(false, false).unwrap();
+    assert_eq!(plain_stats.diced_patches, 0);
+    assert_eq!(differing_pixels(&plain, &plain_smooth), 0, "ground that takes no craters is untouched");
+}

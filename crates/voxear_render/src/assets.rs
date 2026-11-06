@@ -133,6 +133,9 @@ pub struct MaterialDesc {
     pub height_texture: Option<TextureId>,
     pub displacement: f32,
     pub detail: f32,
+    /// Sinks into the level's Crater Field where it faces up, diced as a
+    /// displaced material is (see `craters`).
+    pub craters: bool,
 }
 
 impl Default for MaterialDesc {
@@ -163,6 +166,7 @@ impl Default for MaterialDesc {
             height_texture: None,
             displacement: 0.0,
             detail: 6.0,
+            craters: false,
         }
     }
 }
@@ -857,8 +861,8 @@ impl Assets {
         }
         let texture = |t: Option<TextureId>| t.unwrap_or(self.white).0;
         // Diced only as the standard shader, opaque and not glass, foliage or an impostor, draws it.
-        let displaced = desc.height_texture.is_some()
-            && desc.displacement != 0.0
+        let bumped = desc.height_texture.is_some() && desc.displacement != 0.0;
+        let displaced = (bumped || desc.craters)
             && desc.shader == STANDARD_SHADER
             && !(desc.glass || desc.foliage || desc.impostor || desc.alpha_cutoff.is_some());
         let material = GpuMaterial {
@@ -876,6 +880,7 @@ impl Assets {
                 | desc.leaves.flags()
                 | if desc.impostor { crate::gpu::MATERIAL_IMPOSTOR } else { 0 }
                 | if displaced { crate::gpu::MATERIAL_DISPLACED } else { 0 }
+                | if displaced && desc.craters { crate::gpu::MATERIAL_CRATERS } else { 0 }
                 | (desc.glow as u32) << crate::gpu::MATERIAL_GLOW_SHIFT,
             normal_scale: desc.normal_scale,
             alpha_cutoff: desc.alpha_cutoff.unwrap_or(0.0),
@@ -885,9 +890,11 @@ impl Assets {
             glow_speed: desc.glow_speed.max(0.0),
             shader: desc.shader,
             // Displaced, it moves as far as half its displacement either way, which culling allows for.
-            max_offset: desc.max_offset.max(0.0) + if displaced { desc.displacement.abs() * 0.5 } else { 0.0 },
+            max_offset: desc.max_offset.max(0.0)
+                + if displaced { desc.displacement.abs() * 0.5 } else { 0.0 }
+                + if displaced && desc.craters { crate::craters::MAX_CRATER_DEPTH } else { 0.0 },
             height_texture: texture(desc.height_texture),
-            displacement: if displaced { desc.displacement } else { 0.0 },
+            displacement: if displaced && bumped { desc.displacement } else { 0.0 },
             detail: desc.detail.clamp(1.0, 64.0),
             _pad: [0; 3],
         };

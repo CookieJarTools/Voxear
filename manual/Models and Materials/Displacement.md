@@ -25,3 +25,5 @@ Any mesh works, from a single big quad for a field to a detailed model. Far-off 
 - Bounced light and ray-traced reflections see the flat mesh, not the bumps.
 - Lamps' shadows come from the flat mesh. The sun's shadows come from the bumps, for the ground the camera can see.
 - Colliders stay the shape of the mesh, so players walk on the flat surface. Keep Displacement modest where they walk.
+
+Turn on **Takes Craters** as well, and blasts dig into the surface too: see [[Craters]].

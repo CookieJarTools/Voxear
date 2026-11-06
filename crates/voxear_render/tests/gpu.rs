@@ -3920,6 +3920,103 @@ fn a_sea_floods_a_room_under_its_roof_and_lies_calm_inside_its_walls() {
     }
 }
 
+/// A calm sea at night over sand three metres down, with a lamp a metre
+/// under its surface, `lamp`, or none; with the sea or without it; seen from
+/// `eye`, looking at the sand under the lamp.
+fn lamp_in_water_render(sea: bool, lamp: bool, eye: Vec3) -> Option<Vec<u8>> {
+    use voxear_render::{Ocean, Sky, Weather};
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    let look = Quat::from_rotation_arc(Vec3::Z, (LAMP_SAND - eye).normalize());
+    world.spawn((Camera::default(), Transform::new(eye, look, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.02, ..Sky::default() });
+    let plane = renderer.primitive(Primitive::Plane).unwrap();
+    let sand = MaterialDesc { base_color: [0.76, 0.66, 0.48, 1.0], roughness: 0.9, ..MaterialDesc::default() };
+    let sand = renderer.add_material(&sand).unwrap();
+    let floor = Transform::new(Vec3::new(0.0, -3.0, 0.0), Quat::IDENTITY, Vec3::splat(60.0));
+    world.spawn((MeshRenderer::new(plane, sand), floor));
+    if lamp {
+        let light = Transform::from_position(LAMP_SAND + Vec3::new(0.0, 2.0, 0.0));
+        world.spawn((Light::point(Vec3::ONE, 30.0, 12.0), light));
+    }
+    if sea {
+        world.spawn((Ocean { weather: Weather::Calm, ..Ocean::default() }, Transform::default()));
+    }
+    let mut post = steady_post();
+    post.exposure = voxear_render::Exposure { compensation: 2.0, ..post.exposure };
+    world.insert_resource(post);
+    run(&mut renderer, &world, &mut 20.0, 20);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+const LAMP_SAND: Vec3 = Vec3::new(0.0, -3.0, 6.0);
+
+#[test]
+fn a_lamp_under_water_glows_in_it_and_lights_the_sand_through_it() {
+    let above = Vec3::new(0.0, 3.0, -2.0);
+    let render = |sea: bool, lamp: bool| lamp_in_water_render(sea, lamp, above);
+    let (Some(dry), Some(wet), Some(dark)) = (render(false, true), render(true, true), render(true, false)) else {
+        return;
+    };
+    let under = Vec3::new(0.0, -1.5, -2.0);
+    let below = lamp_in_water_render(true, true, under).unwrap();
+    keep_image("lamp in air.png", &dry);
+    keep_image("lamp in water.png", &wet);
+    keep_image("lamp in water from under.png", &below);
+    let at = |eye: Vec3, point: Vec3| {
+        on_screen(eye, Quat::from_rotation_arc(Vec3::Z, (LAMP_SAND - eye).normalize()), point)
+    };
+    // The sand under the lamp, lit through two metres of water: dimmer, and its red taken first.
+    let sand = at(above, LAMP_SAND);
+    let (in_air, in_water) = (patch_rgb(&dry, sand, 4), patch_rgb(&wet, sand, 4));
+    assert!(in_water[0] * 10 < in_air[0] * 7, "the water dims the lamp's light: {in_water:?} against {in_air:?}");
+    assert!(in_water[1] > in_water[0], "and takes its red first: {in_water:?}");
+    // Seen from under the water, the water round the lamp glows, more than further off.
+    let lamp = LAMP_SAND + Vec3::new(0.0, 2.0, 0.0);
+    let round = patch_rgb(&below, at(under, lamp), 3);
+    let off = patch_rgb(&below, at(under, lamp + Vec3::new(6.0, 0.0, 0.0)), 3);
+    let bright = |rgb: [i32; 3]| rgb.iter().sum::<i32>();
+    assert!(bright(round) > bright(off) + 60, "a glow round the lamp: {round:?} against {off:?} further off");
+    // From above, the water over it is brighter than with no lamp.
+    let over = at(above, lamp);
+    let (unlit, lit) = (patch_rgb(&dark, over, 4), patch_rgb(&wet, over, 4));
+    assert!(bright(lit) > bright(unlit) + 60, "the water over it lit: {lit:?} against {unlit:?}");
+}
+
+#[test]
+fn a_lamp_over_the_water_glints_on_it() {
+    let above = Vec3::new(0.0, 3.0, -2.0);
+    let (Some(dark), Some(lit)) = (lamp_over_water_render(false), lamp_over_water_render(true)) else { return };
+    keep_image("lamp over water.png", &lit);
+    let look = Quat::from_rotation_arc(Vec3::Z, (LAMP_SAND - above).normalize());
+    // Where the lamp half a metre over the water shows in it: the water straight under it, seen from the camera.
+    let under = on_screen(above, look, Vec3::new(0.0, 0.0, 6.0));
+    let bright = |rgb: [i32; 3]| rgb.iter().sum::<i32>();
+    let (before, after) = (patch_rgb(&dark, under, 6), patch_rgb(&lit, under, 6));
+    assert!(bright(after) > bright(before) + 60, "the lamp lights the water under it: {after:?} against {before:?}");
+}
+
+/// The calm night sea of lamp_in_water_render, with a lamp half a metre
+/// over its surface, or none.
+fn lamp_over_water_render(lamp: bool) -> Option<Vec<u8>> {
+    use voxear_render::{Ocean, Sky, Weather};
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    let eye = Vec3::new(0.0, 3.0, -2.0);
+    let look = Quat::from_rotation_arc(Vec3::Z, (LAMP_SAND - eye).normalize());
+    world.spawn((Camera::default(), Transform::new(eye, look, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.02, ..Sky::default() });
+    if lamp {
+        world.spawn((Light::point(Vec3::ONE, 10.0, 12.0), Transform::from_position(Vec3::new(0.0, 0.5, 6.0))));
+    }
+    world.spawn((Ocean { weather: Weather::Calm, ..Ocean::default() }, Transform::default()));
+    let mut post = steady_post();
+    post.exposure = voxear_render::Exposure { compensation: 2.0, ..post.exposure };
+    world.insert_resource(post);
+    run(&mut renderer, &world, &mut 20.0, 20);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
 /// Where `point` is on screen in a 640×360 picture from a camera at `eye`
 /// looking along `look`, as the default camera's 60° projection puts it.
 fn on_screen(eye: Vec3, look: Quat, point: Vec3) -> (u32, u32) {

@@ -1405,6 +1405,55 @@ FragmentOut fromBelow(Frame* frame, WaterOut input, float3 n, float3 v, float3 d
     return o;
 }
 
+// How much of a lamp's light the water scatters towards the eye, for each
+// metre of view past it (lampsInWater).
+static const float LAMP_SCATTER = 0.004;
+
+// One lamp's part of lampsInWater, over the view from `a` to `b` metres along
+// it: 1/r² added up along the view, as it passes the lamp `h` away at its
+// nearest; within the lamp's range and its cone where the view passes
+// nearest.
+float3 lampInWater(Light lamp, float3 from, float3 way, float a, float b, float3 absorb)
+{
+    float3 toLamp = lamp.position - from;
+    float closest = dot(toLamp, way);
+    float h = max(length(toLamp - way * closest), 0.1);
+    float seen = (atan((b - closest) / h) - atan((a - closest) / h)) / h;
+    float along = clamp(closest, a, b);
+    float3 out = from + way * along - lamp.position;
+    float distanceSquared = max(dot(out, out), 1e-4);
+    float reach = rangeWindow(distanceSquared, lamp.range);
+    if (lamp.kind == LIGHT_SPOT)
+    {
+        reach *= smoothstep(lamp.cosOuter, lamp.cosInner, dot(out * rsqrt(distanceSquared), lamp.direction));
+    }
+    return lamp.color * seen * reach * exp(-absorb * (sqrt(distanceSquared) + along));
+}
+
+// The light lamps send towards the eye along a view through water, from
+// `from` along `way` for `span` metres, in the water's `scatter` colour: each
+// lamp's light scattered all along the view, its falloff with distance
+// added up exactly for a point of light in clear water, then dimmed by the
+// water it crosses, out from the lamp to the view and along it to `from`.
+// Lamps are found in the clusters along the view, a part of it for each.
+float3 lampsInWater(Frame* frame, float3 from, float3 way, float span, float2 pixel, float3 absorb, float3 scatter)
+{
+    static const uint PARTS = 6;
+    float3 total = 0.0;
+    for (uint part = 0; part < PARTS; part++)
+    {
+        float a = span * float(part) / float(PARTS);
+        float b = span * float(part + 1) / float(PARTS);
+        float viewDepth = dot(from + way * (a + b) * 0.5 - frame->cameraPosition, frame->cameraForward);
+        uint base = clusterAt(frame, pixel, max(viewDepth, frame->near)) * (frame->clusterMaxLights + 1);
+        for (uint i = 0; i < buffers()->clusters[base]; i++)
+        {
+            total += lampInWater(buffers()->lights[buffers()->clusters[base + 1 + i]], from, way, a, b, absorb);
+        }
+    }
+    return total * scatter * LAMP_SCATTER;
+}
+
 // What the water mirrors of the picture drawn before it, found by walking
 // the reflected ray `r` from `world` across the screen until it passes behind
 // what is there (the depth behind the water, push.textures.y): its colour,
@@ -1576,6 +1625,21 @@ FragmentOut waterFragment(WaterOut input)
     Surface sunSurface = s;
     sunSurface.roughness = max(s.roughness, 0.08);
     float3 glints = shade(sunSurface, l, sunLight) * shadow;
+    // Lamps over the water: their glints on it, and their light, which the water gives back in its own colour as it
+    // does the sun's, and which lights its foam. Those under it light the water round them instead (lampsInWater).
+    float3 lamps = 0.0;
+    uint lampBase = clusterAt(frame, input.position.xy, dot(input.world - frame->cameraPosition, frame->cameraForward)) * (frame->clusterMaxLights + 1);
+    for (uint i = 0; i < buffers()->clusters[lampBase]; i++)
+    {
+        Light lamp = buffers()->lights[buffers()->clusters[lampBase + 1 + i]];
+        if (lamp.position.y < input.world.y)
+        {
+            continue;
+        }
+        glints += shadeLocalLight(sunSurface, lamp, input.world);
+        LightInput reaching = localLightInput(lamp, input.world, n);
+        lamps += reaching.color * saturate((dot(reaching.direction, n) + 0.5) / 1.5);
+    }
 
     // The water's own colour: deep blue lit by the sky, and the scatter colour where the
     // sun shines through the thin top of a wave towards the eye.
@@ -1587,7 +1651,7 @@ FragmentOut waterFragment(WaterOut input)
     float towards = pow(saturate(dot(l, -v)), 4.0) * pow(saturate(0.5 - 0.5 * dot(l, n)), 3.0);
     // Crests glow through: strongly towards the sun, and a little from every side on a wave's top.
     float3 throughWave = (3.0 * crest * towards + 0.12 * crest * pow(saturate(dot(v, n)), 2.0) + 0.04 * saturate(dot(l, n))) * scatter * sunLight * shadow;
-    float3 body = deep * ambient + throughWave;
+    float3 body = deep * ambient + throughWave + scatter * lamps * 0.05;
 
     // What lies under it: how far through the water, bent by the waves, and dimmed a colour at a time.
     float2 pixel = input.position.xy;
@@ -1662,6 +1726,8 @@ FragmentOut waterFragment(WaterOut input)
     float bubbles = coverage > 0.1 ? smoothstep(0.1, 0.5, coverage) * foamPatternAt(frame, bubbleAt, 4.0).y * (0.3 + 0.4 * spot.age) : 0.0;
     float3 bubbleLit = (scatter * 0.6 + 0.2) * (ambient + sunLight * shadow * 0.25);
     float3 under = behind * through + body * (1.0 - through) + bubbleLit * bubbles * 0.25;
+    // Lamps under the water, glowing in it along the bent view down through it.
+    under += lampsInWater(frame, input.world, refract(-v, n, 1.0 / 1.33), min(thickness, 30.0), pixel, absorb, scatter);
     float3 color = (1.0 - fresnel) * under + fresnel * reflected + glints;
     // Thinning to nothing where it meets the ground, rather than ending in a hard bright edge.
     color = lerp(glassBehind(push.texture, pixel / float2(frame->viewport), 0.0), color, saturate(thickness / 0.1));
@@ -1698,7 +1764,7 @@ FragmentOut waterFragment(WaterOut input)
     // along it, is too fine to show either.
     float speckle = stream ? 1.0 : (0.8 + 0.25 * saturate(pattern)) * (0.93 + 0.07 * domes);
     float3 foamColor = 0.9 * lerp(tint * 0.7, 1.0, density) * speckle;
-    float3 foamLit = foamColor * crevice * (ambient + sunLight * shadow * foamSun * wrapped / PI) + sunLight * shadow * glint * 0.6;
+    float3 foamLit = foamColor * crevice * (ambient + sunLight * shadow * foamSun * wrapped / PI + lamps / PI) + sunLight * shadow * glint * 0.6;
     float sparse = stream ? 1.0 : lerp(0.75, 1.0, saturate(pattern * 1.4));
     color = lerp(color, foamLit, foam * (1.0 - 0.35 * spot.age) * sparse);
     // A Stream fades in over its first two points and out over its last two, and across its mouth into the water it
@@ -2233,7 +2299,7 @@ Under underwaterAt(Frame* frame, float2 pixel)
     // orange sun does not turn the water green.
     float sunBright = dot(sunLight, float3(0.2126, 0.7152, 0.0722));
     float3 own = deep * ambient * up + scatter * sunBright * (0.03 + 0.05 * forward) * sunDim;
-    u.glow = own * dim * (1.0 - u.through);
+    u.glow = own * dim * (1.0 - u.through) + lampsInWater(frame, near, u.view, min(u.distance, 40.0), pixel, absorb, scatter);
     return u;
 }
 

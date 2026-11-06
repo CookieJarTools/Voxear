@@ -676,6 +676,56 @@ float causticWeb(float2 p, float time)
     return pow(saturate(lines / 3.0), 6.0) * 2.5;
 }
 
+// The water over `world`, for the light coming down to it: whether it is
+// under water, how high the surface is and how the water takes each colour.
+struct WaterOver
+{
+    bool under;
+    float surface;
+    float3 absorb;
+};
+
+WaterOver waterOverAt(Frame* frame, float3 world)
+{
+    WaterOver over;
+#ifdef NO_UNDERWATER_LIGHT
+    over.under = false;
+    over.surface = -1e9;
+    over.absorb = 0.0;
+#else
+    over.under = waterOver(frame, world, over.surface, over.absorb);
+#endif
+    return over;
+}
+
+// How much of a lamp at `lamp` reaches `world` past the water between them,
+// dimmed a colour at a time over as much of the way as lies under it: the
+// water over `world` (`over`), or the sea's level where `world` is out of
+// the water. None of the way counts where `world` is below the sea's level
+// but out of it, as in a hull's Dry Area, as the lamp is taken to be too.
+float3 lampThroughWater(Frame* frame, float3 lamp, float3 world, WaterOver over)
+{
+    float surface = over.surface;
+    float3 absorb = over.absorb;
+    if (!over.under)
+    {
+        if (frame->ocean.enabled == 0 || world.y < frame->ocean.level)
+        {
+            return 1.0;
+        }
+        surface = frame->ocean.level;
+        absorb = frame->ocean.absorb;
+    }
+    float low = min(lamp.y, world.y);
+    if (low >= surface)
+    {
+        return 1.0;
+    }
+    float high = max(lamp.y, world.y);
+    float share = high <= surface ? 1.0 : (surface - low) / (high - low);
+    return exp(-absorb * length(lamp - world) * share);
+}
+
 // How much of the sun reaches `world` under water: dimmed a colour at a
 // time by the water it comes down through, and broken into caustics, which
 // blur away with depth; and in `sky`, how much of the sky's light does. One
@@ -683,13 +733,19 @@ float causticWeb(float2 p, float time)
 // here, Slang stops with an internal error in the ray-traced GI module).
 float3 underwaterSun(Frame* frame, float3 world, float time, out float3 sky)
 {
+    return underwaterSunUnder(frame, world, time, waterOverAt(frame, world), sky);
+}
+
+// As underwaterSun, with the water over `world` already found.
+float3 underwaterSunUnder(Frame* frame, float3 world, float time, WaterOver over, out float3 sky)
+{
     sky = 1.0;
 #ifdef NO_UNDERWATER_LIGHT
     return 1.0;
 #else
-    float surface;
-    float3 absorb;
-    if (!waterOver(frame, world, surface, absorb))
+    float surface = over.surface;
+    float3 absorb = over.absorb;
+    if (!over.under)
     {
         return 1.0;
     }
@@ -806,7 +862,8 @@ FragmentOut fragmentMain(VertexOut input)
     sunThrough *= glassSun(frame, input.worldPosition, s.normal);
     // Under water, the sun comes down through it in caustics, and the sky's light is dimmed.
     float3 skyUnder;
-    sunThrough *= underwaterSun(frame, input.worldPosition, frame->time, skyUnder);
+    WaterOver water = waterOverAt(frame, input.worldPosition);
+    sunThrough *= underwaterSunUnder(frame, input.worldPosition, frame->time, water, skyUnder);
     float3 color = shade(s, -frame->sunDirection, sunThrough) * shadow;
     if (customLit)
     {
@@ -831,14 +888,17 @@ FragmentOut fragmentMain(VertexOut input)
     for (uint i = 0; i < clusterLights; i++)
     {
         uint light = buffers()->clusters[clusterBase + 1 + i];
+        // Dimmed by the water between, where either is under it.
+        float3 wet = lampThroughWater(frame, buffers()->lights[light].position, input.worldPosition, water);
         if (customLit)
         {
             LightInput lamp = localLightInput(buffers()->lights[light], input.worldPosition, s.normal);
             lamp.view = s.view;
+            lamp.color *= wet;
             color += customLight(input.material, lamp, surface);
             continue;
         }
-        color += shadeLocalLight(s, buffers()->lights[light], input.worldPosition);
+        color += shadeLocalLight(s, buffers()->lights[light], input.worldPosition) * wet;
     }
 
     // The bounced light where the mesh has the surface, as the rays that gather it see it: moved by its vertex

@@ -72,6 +72,10 @@ The waves are worked out the same on every machine, and the game can ask how hig
 
 When the camera goes under the surface, the world turns blue and dim with distance, as the water takes the light a colour at a time. Sunlight comes down through the waves in a moving web of caustics on everything below, and fades with depth. Looking up, you see the sky through a bright circle overhead, Snell's window, and past its edge the surface turns to a mirror of the water below. Where the camera is half in, a waterline runs across the view.
 
+## Lamps and water
+
+A lamp over the water glints on its ripples in a streak, as the sun does, and lights the water's own colour round it. A lamp under the water glows in the water round it, seen from above or below, and lights what's near it. Its light fades with distance through the water, red first, so a light a few metres down turns everything it lights blue-green.
+
 ## Water shader or Ocean?
 
 The built-in **Water** shader (see [[Custom Shaders]]) draws water on a mesh you make, for a fountain, a puddle or a stylised sea of your own shape. An Ocean is the whole sea: endless, its waves real ones that the game can ask about, with foam, Pools, Dry Areas and floating Objs. Use an Ocean for a sea, and a Pool for a lake or a pond.

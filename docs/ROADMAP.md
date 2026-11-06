@@ -1253,6 +1253,9 @@ The sea, lakes, rivers and lava, built in. Manual: `manual/Water`.
   walls, drawn as lines from straight above as they show edge on, stop its waves and the blur of its depth; over flat
   shallows, which the waves broke before reaching, as a flooded floor, it lies near still; and it mirrors what is on
   screen round it, walked across the picture, before the probes' light.
+- **Lamps:** their glints on the water and their light in its own colour; under it, their glow in the water along
+  the view (each lamp's light added up exactly along it), and their light dimmed by the water on its way to what
+  they light.
 - Still to do: spray and splashes (with particles, M7).
 
 ## M6 — Animation

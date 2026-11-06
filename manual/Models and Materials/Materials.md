@@ -19,7 +19,6 @@ Right-click in the Project panel and choose **New Material**, then type its name
 | Normal Map | A picture of the surface's bumps and dents |
 | Emission Map | A picture of where it glows, tinted by **Emission** |
 | Height Map | A picture of how high each point of the surface stands, which **Displacement** raises it by. See [[Displacement]] |
-| Takes Craters | Blasts dig craters into it where it faces up. See [[Craters]] |
 
 Every change is saved straight away, and shows at once on everything that uses the material.
 

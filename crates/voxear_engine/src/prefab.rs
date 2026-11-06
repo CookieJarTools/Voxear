@@ -380,7 +380,6 @@ fn apply_instance(root: &mut ObjData, instance: &ObjData) {
     root.particles = instance.particles.or(root.particles);
     root.smoke = instance.smoke.or(root.smoke);
     root.mist = instance.mist.or(root.mist);
-    root.crater_field = instance.crater_field.or(root.crater_field);
     root.ocean = instance.ocean.or(root.ocean);
     root.pool = instance.pool.or(root.pool);
     if instance.dry_area.is_some() {
@@ -438,7 +437,6 @@ pub struct TemplateObj {
     pub particles: Option<ParticleSystem>,
     pub smoke: Option<voxear_render::Smoke>,
     pub mist: Option<voxear_render::Mist>,
-    pub crater_field: Option<voxear_render::CraterField>,
     pub ocean: Option<Ocean>,
     pub pool: Option<Pool>,
     pub dry_area: Option<DryArea>,
@@ -593,9 +591,6 @@ impl Template {
             }
             if let Some(mist) = obj.mist {
                 world.insert(entity, mist);
-            }
-            if let Some(field) = obj.crater_field {
-                world.insert(entity, field);
             }
             if let Some(ocean) = obj.ocean {
                 world.insert(entity, ocean);
@@ -898,7 +893,6 @@ pub(crate) fn resolve_obj(
         particles: data.particles,
         smoke: data.smoke,
         mist: data.mist,
-        crater_field: data.crater_field,
         ocean: data.ocean,
         pool: data.pool,
         dry_area,

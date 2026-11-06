@@ -282,9 +282,6 @@ pub struct ObjData {
     /// A trail of mist left behind the Obj as it moves.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mist: Option<voxear_render::Mist>,
-    /// The square of ground blasts dig craters into, round the Obj.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub crater_field: Option<voxear_render::CraterField>,
     /// An Ocean, the sea filling the level at the Obj's height.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ocean: Option<Ocean>,
@@ -362,7 +359,6 @@ impl ObjData {
             particles: None,
             smoke: None,
             mist: None,
-            crater_field: None,
             ocean: None,
             pool: None,
             dry_area: None,
@@ -1304,9 +1300,6 @@ fn capture_instance(
     if root.mist.is_some() && root.mist != prefab_root.mist {
         instance.mist = root.mist;
     }
-    if root.crater_field.is_some() && root.crater_field != prefab_root.crater_field {
-        instance.crater_field = root.crater_field;
-    }
     if root.ocean.is_some() && root.ocean != prefab_root.ocean {
         instance.ocean = root.ocean;
     }
@@ -1447,9 +1440,6 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     }
     if let Some(mist) = actual.mist.filter(|m| Some(*m) != expected.mist) {
         put("mist", whole(&mist, &voxear_render::Mist::default())?);
-    }
-    if let Some(field) = actual.crater_field.filter(|f| Some(*f) != expected.crater_field) {
-        put("crater_field", whole(&field, &voxear_render::CraterField::default())?);
     }
     if let Some(ocean) = actual.ocean.filter(|o| Some(*o) != expected.ocean) {
         put("ocean", whole(&ocean, &Ocean::default())?);
@@ -1697,7 +1687,6 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.particles = world.get::<ParticleSystem>(entity).copied();
     obj.smoke = world.get::<voxear_render::Smoke>(entity).copied();
     obj.mist = world.get::<voxear_render::Mist>(entity).copied();
-    obj.crater_field = world.get::<voxear_render::CraterField>(entity).copied();
     obj.ocean = world.get::<Ocean>(entity).copied();
     obj.pool = world.get::<Pool>(entity).copied();
     obj.dry_area = world.get::<DryArea>(entity).map(|area| DryAreaData::of(content, area));

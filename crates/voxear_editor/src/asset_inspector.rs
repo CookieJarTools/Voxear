@@ -221,8 +221,6 @@ struct MaterialFields {
     /// How far its height map moves it, and how finely it is diced.
     displacement: NodeId,
     detail: NodeId,
-    /// Whether blasts dig craters into it.
-    craters: NodeId,
     foliage: NodeId,
     /// How much it bends in the wind, and its leaves flutter.
     wind: [NodeId; 2],
@@ -514,7 +512,7 @@ impl AssetView {
         }
         let changed = fields.color.iter().chain(&fields.emissive)
             .chain([&fields.metallic, &fields.roughness, &fields.foliage, &fields.leaves, &fields.glass, &fields.ior])
-            .chain([&fields.glow, &fields.glow_speed, &fields.displacement, &fields.detail, &fields.craters])
+            .chain([&fields.glow, &fields.glow_speed, &fields.displacement, &fields.detail])
             .chain(&fields.wind);
         if !changed.into_iter().any(|&field| ui.changed(field)) {
             return None;
@@ -546,7 +544,6 @@ impl AssetView {
         data.ior = read(fields.ior, data.ior).clamp(1.0, 3.0);
         data.displacement = read(fields.displacement, data.displacement).clamp(-4.0, 4.0);
         data.detail = read(fields.detail, data.detail).clamp(1.0, 64.0);
-        data.craters = ui.is_checked(fields.craters);
         let data = data.clone();
         fields.show_what_applies(ui);
         Some(AssetAction::SaveMaterial(self.item.path.clone(), data))
@@ -830,9 +827,6 @@ fn material(ui: &mut Ui, root: NodeId, file: &std::path::Path, game: &Game) -> O
         (slot, path)
     });
     let (displacement, detail) = (one(ui, "Displacement", data.displacement), one(ui, "Detail", data.detail));
-    let row = prop(ui, rows, "Takes Craters");
-    let craters = ui.toggle(row, "", data.craters);
-    ui.add_class(craters, "checkbox");
     let row = prop(ui, rows, "Foliage");
     let foliage = ui.toggle(row, "", data.foliage);
     ui.add_class(foliage, "checkbox");
@@ -857,7 +851,6 @@ fn material(ui: &mut Ui, root: NodeId, file: &std::path::Path, game: &Game) -> O
         maps,
         displacement,
         detail,
-        craters,
         foliage,
         wind,
         leaves,

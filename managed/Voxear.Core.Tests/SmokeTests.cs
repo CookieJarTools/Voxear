@@ -36,11 +36,4 @@ internal static class SmokeTests
 		Check.Near(0f, mist.Width);
 		Check.True(Obj.None.AddMist() == Mist.None, "nothing to add it to");
 	}
-
-	[Test]
-	private static void WithNoEngineNoCraterIsDug()
-	{
-		Check.True(!Craters.Blast(Vector3.Zero, 2f, 1f), "no field to dig into");
-		Craters.Clear();
-	}
 }

@@ -69,10 +69,6 @@ pub struct MaterialData {
     /// costs more.
     #[serde(default = "default_detail", skip_serializing_if = "is_default_detail")]
     pub detail: f32,
-    /// Sinks into the level's Crater Field where it faces up, so blasts dig
-    /// craters into it.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub craters: bool,
     /// Lit as leaves are: light wrapped round, through the leaf against the
     /// sun, and a rim of the sun's colour.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -140,7 +136,6 @@ impl Default for MaterialData {
             height_map: None,
             displacement: 0.0,
             detail: default_detail(),
-            craters: false,
             foliage: false,
             glass: false,
             ior: default_ior(),
@@ -268,7 +263,6 @@ impl MaterialData {
             height_texture: height,
             displacement: if height.is_some() { self.displacement } else { 0.0 },
             detail: self.detail,
-            craters: self.craters,
             ..MaterialDesc::default()
         }
     }
@@ -278,11 +272,7 @@ impl MaterialData {
         let [r, g, b] = self.color.map(f32::to_bits);
         let [er, eg, eb] = self.emissive.map(f32::to_bits);
         let (metallic, roughness, ior) = (self.metallic.to_bits(), self.roughness.to_bits(), self.ior.to_bits());
-        let flags = u32::from(self.foliage)
-            | u32::from(self.glass) << 1
-            | (self.leaves as u32) << 2
-            | (self.glow as u32) << 3
-            | u32::from(self.craters) << 6;
+        let flags = u32::from(self.foliage) | u32::from(self.glass) << 1 | (self.leaves as u32) << 2 | (self.glow as u32) << 3;
         let wind = [self.wind_bend().to_bits(), self.wind_flutter().to_bits(), self.glow_speed.to_bits()];
         let (displacement, detail) = (self.displacement.to_bits(), self.detail.to_bits());
         let values =

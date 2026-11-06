@@ -76,8 +76,7 @@ void diceSplitMain(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID)
     Instance instance = buffers()->instances[index];
     Mesh mesh = buffers()->meshes[instance.mesh];
     Material material = buffers()->materials[instance.material];
-    // As far as its height map and craters can move it.
-    float margin = material.maxOffset;
+    float margin = abs(material.displacement) * 0.5;
     uint triangles = mesh.lods[0].indexCount / 3;
     for (uint t = thread.x; t < triangles; t += 64)
     {
@@ -199,8 +198,7 @@ void dicePatchMain(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID)
     uint3 factors = uint3(record.z >> 16, record.w & 0xFFFF, record.w >> 16);
     uint3 v = diceTriangle(mesh, record.y);
     float3 corners[3] = { buffers()->vertices[v.x].position, buffers()->vertices[v.y].position, buffers()->vertices[v.z].position };
-    // As far as its height map and craters can move it.
-    float margin = material.maxOffset;
+    float margin = abs(material.displacement) * 0.5;
     for (uint piece = thread.x; piece < split * split; piece += 64)
     {
         int2 a;
@@ -428,31 +426,11 @@ VertexOut dicedPoint(uint vertexId, uint drawId)
     float3 moved = here.position + normal * rise * reach;
     float4 now = transform(instance.model, float4(moved, 1.0));
     float4 before = transform(instance.prevModel, float4(moved, 1.0));
-    float3 worldNormal = instance.normal0.xyz * bent.x + instance.normal1.xyz * bent.y + instance.normal2.xyz * bent.z;
-    // Sunk into the Crater Field where it faces up, its normal bent by the craters' slopes.
-    CraterField field = frame->craters;
-    if ((material.flags & MATERIAL_CRATERS) != 0 && field.texture != NO_TEXTURE)
-    {
-        float up = saturate(normalizeOr(worldNormal, float3(0.0, 1.0, 0.0)).y);
-        float2 at = (now.xz - field.corner) / field.size;
-        uint across;
-        uint down;
-        textures[NonUniformResourceIndex(field.texture)].GetDimensions(across, down);
-        float texel = 1.0 / float(max(across, 1u));
-        let dug = (float2 p) => textures[NonUniformResourceIndex(field.texture)].SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], p, 0.0).r;
-        float sunk = dug(at) * up;
-        now.y += sunk;
-        before.y += sunk;
-        float metres = texel * field.size * 2.0;
-        float slopeX = (dug(at + float2(texel, 0.0)) - dug(at - float2(texel, 0.0))) / metres * up;
-        float slopeZ = (dug(at + float2(0.0, texel)) - dug(at - float2(0.0, texel))) / metres * up;
-        worldNormal = normalizeOr(normalizeOr(worldNormal, float3(0.0, 1.0, 0.0)) - float3(slopeX, 0.0, slopeZ), worldNormal);
-    }
 
     VertexOut o;
     o.position = transform(frame->viewProj, now);
     o.worldPosition = now.xyz;
-    o.normal = worldNormal;
+    o.normal = instance.normal0.xyz * bent.x + instance.normal1.xyz * bent.y + instance.normal2.xyz * bent.z;
     o.tangent = float4(transform(instance.model, float4(tangent, 0.0)).xyz, here.tangent.w);
     o.uv = here.uv;
     o.material = instance.material;
@@ -479,42 +457,4 @@ float4 dicedShadowVertex(uint vertexId : SV_VertexID, uint drawId : SV_DrawIndex
 {
     VertexOut o = dicedPoint(vertexId, drawId);
     return transform(shadowViewProj(push.frame, push.list, push.level), float4(o.worldPosition, 1.0));
-}
-
-// How far down a crater of `radius` and `depth` digs `off` metres from its
-// middle: a bowl, with a lip thrown up round it (craters::crater_depth).
-float craterDepth(float off, float radius, float depth)
-{
-    float r = off / max(radius, 1e-3);
-    float bowl = r < 1.0 ? -depth * (1.0 - r * r) * (1.0 - r * r) : 0.0;
-    float lip = 0.2 * depth * exp(-((r - 1.0) / 0.3) * ((r - 1.0) / 0.3));
-    return bowl + lip;
-}
-
-// Stamps craters push.textures.x up to push.textures.y into the Crater
-// Field's picture (push.output, push.size texels a side), clearing it first
-// when push.textures.z says.
-[shader("compute")]
-[numthreads(8, 8, 1)]
-void craterStampMain(uint3 id : SV_DispatchThreadID)
-{
-    if (any(id.xy >= push.size))
-    {
-        return;
-    }
-    CraterField field = push.frame->craters;
-    float2 world = field.corner + (float2(id.xy) + 0.5) / float2(push.size) * field.size;
-    RWTexture2D<float> picture = storageImagesR32f[NonUniformResourceIndex(push.output)];
-    float dug = push.textures.z != 0 ? 0.0 : picture[id.xy];
-    for (uint i = push.textures.x; i < push.textures.y; i++)
-    {
-        float4 crater = buffers()->craters[i];
-        float off = length(world - crater.xy);
-        if (off < crater.z * 2.0)
-        {
-            dug += craterDepth(off, crater.z, crater.w);
-        }
-    }
-    // No deeper than the deepest crater, however many land on one place.
-    picture[id.xy] = max(dug, -3.0 * 2.0);
 }

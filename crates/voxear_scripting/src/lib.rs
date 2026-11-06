@@ -29,8 +29,8 @@ mod windows;
 pub use audio::{AudioAsk, BusValue, PlaySound, SoundFacts, SourceValue, VoiceValue};
 pub use display::CursorLock;
 pub use interop::{
-    ComponentValues, LightValues, SmokeActions, WaterSampler, set_crater_actions, set_light_values, set_mist_values,
-    set_particle_values, set_smoke_actions, set_smoke_values, set_water_sampler,
+    ComponentValues, LightValues, SmokeActions, WaterSampler, set_light_values, set_mist_values, set_particle_values,
+    set_smoke_actions, set_smoke_values, set_water_sampler,
 };
 pub use physics::PhysicsEventData;
 pub use drawers::{DrawRequest, DrawerField, Drawn, FieldStep};

@@ -85,8 +85,6 @@ pub const MATERIAL_IMPOSTOR: u32 = 128;
 /// Displaced by its height map: diced finely enough to show it near the
 /// camera (see `dice`).
 pub const MATERIAL_DISPLACED: u32 = 256;
-/// Sinks into the level's Crater Field where it faces up (see `craters`).
-pub const MATERIAL_CRATERS: u32 = 512;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
@@ -371,18 +369,6 @@ pub struct GpuFrame {
     pub seasons: GpuSeasons,
     pub local_shadows: GpuLocalShadows,
     pub ocean: GpuOcean,
-    pub craters: GpuCraterField,
-}
-
-/// The level's Crater Field as `shaders/dice.slang` reads it: its first
-/// corner in X and Z, its size in metres, and its picture of how far down
-/// the craters dig, or `NO_TEXTURE` without one.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct GpuCraterField {
-    pub corner: [f32; 2],
-    pub size: f32,
-    pub texture: u32,
 }
 
 /// The sea, as `Ocean` in `shaders/common.slang` (see `ocean`).
@@ -829,8 +815,6 @@ pub struct GpuBuffers {
     pub dice_splits: u64,
     pub dice_patches: u64,
     pub dice_draws: u64,
-    /// The Crater Field's craters: where in X and Z, how wide and how deep.
-    pub craters: u64,
 }
 
 /// A mist as `shaders/smoke.slang` draws it: the box its trail stays in, how
@@ -1089,7 +1073,7 @@ mod tests {
         assert_eq!(LOCAL_SHADOW_ATLAS, [4096, 3072], "as LOCAL_SHADOW_ATLAS in the shaders");
         assert_eq!(
             size_of::<GpuFrame>(),
-            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi + 32 + 16 * MAX_PUSHERS + 4 * MAX_PUSHERS + 16 + seasons + local_shadows + 272 + 16
+            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi + 32 + 16 * MAX_PUSHERS + 4 * MAX_PUSHERS + 16 + seasons + local_shadows + 272
         );
         assert_eq!(size_of::<GpuOcean>(), 272);
         assert_eq!(size_of::<GpuStreamPoint>(), 48);
@@ -1097,7 +1081,7 @@ mod tests {
         assert_eq!(size_of::<GpuDdgi>(), 32 * DDGI_CASCADES + 32 + 48);
         assert_eq!(size_of::<GpuLighting>(), lighting);
         assert_eq!(size_of::<GpuPost>(), post);
-        assert_eq!(size_of::<GpuBuffers>(), 47 * 8);
+        assert_eq!(size_of::<GpuBuffers>(), 46 * 8);
         assert_eq!(size_of::<GpuSmoke>(), 80);
         assert_eq!(size_of::<GpuMist>(), 64);
         assert_eq!(size_of::<GpuParticleSystem>(), 64 + 16 * 9 + 64 * 3 + 128 + 16);

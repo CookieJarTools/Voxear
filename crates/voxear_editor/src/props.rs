@@ -79,7 +79,6 @@ pub enum Part {
     ParticleSystem,
     Smoke,
     Mist,
-    CraterField,
     Ocean,
     Pool,
     DryArea,
@@ -121,7 +120,6 @@ impl Part {
             Part::ParticleSystem => "particles".into(),
             Part::Smoke => "smoke".into(),
             Part::Mist => "mist".into(),
-            Part::CraterField => "crater_field".into(),
             Part::Ocean => "ocean".into(),
             Part::Pool => "pool".into(),
             Part::DryArea => "dry_area".into(),
@@ -157,7 +155,6 @@ impl Part {
             Part::ParticleSystem => "Particle System",
             Part::Smoke => "Smoke",
             Part::Mist => "Mist",
-            Part::CraterField => "Crater Field",
             Part::Ocean => "Ocean",
             Part::Pool => "Pool",
             Part::DryArea => "Dry Area",
@@ -192,7 +189,6 @@ impl Part {
             Part::ParticleSystem => "particles",
             Part::Smoke => "particles",
             Part::Mist => "particles",
-            Part::CraterField => "particles",
             Part::Ocean => "globe",
             Part::Pool => "globe",
             Part::DryArea => "box",
@@ -301,9 +297,6 @@ pub enum Prop {
     MistColor,
     MistLinger,
     MistSeed,
-    /// A Crater Field's size and how finely it keeps its craters.
-    CraterSize,
-    CraterResolution,
     /// An Ocean's weather, and for Custom weather its swell and wind; its
     /// crests, colours and foam.
     OceanWeather,
@@ -599,7 +592,6 @@ impl Prop {
             | Prop::MistColor
             | Prop::MistLinger
             | Prop::MistSeed => Part::Mist,
-            Prop::CraterSize | Prop::CraterResolution => Part::CraterField,
             Prop::OceanWeather
             | Prop::OceanWindSource
             | Prop::OceanTransition
@@ -826,8 +818,6 @@ impl Prop {
             Prop::MistColor => "color",
             Prop::MistLinger => "linger",
             Prop::MistSeed => "seed",
-            Prop::CraterSize => "size",
-            Prop::CraterResolution => "resolution",
             Prop::OceanWeather => "weather",
             Prop::OceanWindSource => "wind_source",
             Prop::OceanTransition => "transition",
@@ -1045,9 +1035,6 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     if world.has::<voxear_render::Mist>(entity) {
         parts.push(Part::Mist);
     }
-    if world.has::<voxear_render::CraterField>(entity) {
-        parts.push(Part::CraterField);
-    }
     if world.has::<Ocean>(entity) {
         parts.push(Part::Ocean);
     }
@@ -1205,7 +1192,6 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             Prop::MistLinger,
             Prop::MistSeed,
         ],
-        Part::CraterField => vec![Prop::CraterSize, Prop::CraterResolution],
         Part::ParticleSystem => {
             let shape = world.get::<ParticleSystem>(entity).map_or(EmitShape::Cone, |system| system.shape);
             let mut props = vec![
@@ -1522,8 +1508,6 @@ pub fn label(prop: &Prop) -> String {
         Prop::MistColor => "Colour",
         Prop::MistLinger => "Linger",
         Prop::MistSeed => "Seed",
-        Prop::CraterSize => "Size",
-        Prop::CraterResolution => "Resolution",
         Prop::OceanWeather => "Weather",
         Prop::OceanWindSource => "Wind Source",
         Prop::OceanTransition => "Transition",
@@ -1808,9 +1792,6 @@ pub fn add(
         Part::Mist => {
             world.insert(entity, voxear_render::Mist::default());
         }
-        Part::CraterField => {
-            world.insert(entity, voxear_render::CraterField::default());
-        }
         Part::Ocean => {
             world.insert(entity, Ocean::default());
         }
@@ -1875,10 +1856,6 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
         Part::Mist => {
             world.remove::<voxear_render::Mist>(entity);
             world.remove::<voxear_render::MistTrail>(entity);
-        }
-        Part::CraterField => {
-            world.remove::<voxear_render::CraterField>(entity);
-            world.remove::<voxear_render::CraterMarks>(entity);
         }
         Part::ParticleSystem => {
             world.remove::<ParticleSystem>(entity);
@@ -2144,8 +2121,6 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         | Prop::MistColor
         | Prop::MistLinger
         | Prop::MistSeed => mist_value(world.get::<voxear_render::Mist>(entity)?, prop)?,
-        Prop::CraterSize => Value::Number(world.get::<voxear_render::CraterField>(entity)?.size),
-        Prop::CraterResolution => Value::Whole(i64::from(world.get::<voxear_render::CraterField>(entity)?.resolution)),
         Prop::OceanWeather => {
             let weather = world.get::<Ocean>(entity)?.weather;
             let index = Weather::ALL.iter().position(|w| *w == weather).unwrap_or(0);
@@ -3006,12 +2981,6 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         }
         (prop, value) if prop.part() == Part::Smoke => {
             with(world, entity, |smoke: &mut voxear_render::Smoke| set_smoke(smoke, prop, value))
-        }
-        (Prop::CraterSize, Value::Number(n)) => {
-            with(world, entity, |field: &mut voxear_render::CraterField| field.size = n.clamp(1.0, 4096.0))
-        }
-        (Prop::CraterResolution, Value::Whole(n)) => {
-            with(world, entity, |field: &mut voxear_render::CraterField| field.resolution = n.clamp(64, 4096) as u32)
         }
         (prop, value) if prop.part() == Part::Mist => {
             with(world, entity, |mist: &mut voxear_render::Mist| set_mist(mist, prop, value))

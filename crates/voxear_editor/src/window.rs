@@ -24,6 +24,7 @@ use voxear_core::logging::LogCapture;
 use voxear_engine::Project;
 use voxear_render::{OutputId, Renderer, RendererSettings};
 use voxear_rhi::WindowHandles;
+use voxear_scripting::CursorLock;
 use voxear_ui::{DesktopWindow, DockWindow};
 use winit::{
     application::ApplicationHandler,
@@ -62,6 +63,7 @@ pub fn run_editor(project: Project, settings: RendererSettings, log: LogCapture)
         focused: HashSet::new(),
         drawn: false,
         scrub_cursor: false,
+        game_cursor: None,
         last: None,
         error: None,
     };
@@ -102,6 +104,9 @@ struct App {
     /// The windows show a left-right cursor, over a number's label that
     /// drags to change it.
     scrub_cursor: bool,
+    /// How the mouse was last made to show and be held for the game, or
+    /// `None` when it should be made again.
+    game_cursor: Option<(bool, CursorLock)>,
     last: Option<Instant>,
     error: Option<anyhow::Error>,
 }
@@ -178,7 +183,39 @@ impl App {
                 window.set_cursor(icon);
             }
         }
+        self.apply_game_cursor();
         Ok(())
+    }
+
+    /// Shows or hides the mouse, and holds it, in the window the game's
+    /// pointer is in, as the game's scripts asked, while its view has the
+    /// focus; the mouse is left alone while it flies the Scene camera.
+    fn apply_game_cursor(&mut self) {
+        let Some(editor) = &self.editor else { return };
+        if editor.fly().is_looking() {
+            self.game_cursor = None;
+            return;
+        }
+        let wanted = editor.game_cursor().unwrap_or((true, CursorLock::None));
+        if self.game_cursor == Some(wanted) {
+            return;
+        }
+        let Some(window) = self.pointer_in.and_then(|id| self.from(id)).and_then(|from| self.os_window(from)) else {
+            return;
+        };
+        let (visible, lock) = wanted;
+        let grab = match lock {
+            CursorLock::None => CursorGrabMode::None,
+            CursorLock::Locked => CursorGrabMode::Locked,
+            CursorLock::Confined => CursorGrabMode::Confined,
+        };
+        // Some systems lock only by confining, and some confine only by locking.
+        if window.set_cursor_grab(grab).is_err() {
+            let other = if grab == CursorGrabMode::Locked { CursorGrabMode::Confined } else { CursorGrabMode::Locked };
+            let _ = window.set_cursor_grab(other);
+        }
+        window.set_cursor_visible(visible && lock != CursorLock::Locked);
+        self.game_cursor = Some(wanted);
     }
 
     /// Hands the editor what drags did on Wayland, as winit hands over a

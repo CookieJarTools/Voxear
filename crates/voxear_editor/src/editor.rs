@@ -333,6 +333,9 @@ pub struct Editor {
     /// The Game view has the focus while playing, so the game's input hears
     /// the keyboard and the mouse.
     game_focused: bool,
+    /// Esc, or the focus going elsewhere, let go of a mouse the game holds,
+    /// until a press on the Game view gives it back.
+    cursor_freed: bool,
     /// A material shown on an Obj while it is dragged over it from the Project.
     material_preview: Option<material_drops::MaterialPreview>,
     /// The Obj selected, which every Inspector not locked shows: the active
@@ -608,6 +611,7 @@ impl Editor {
             glide: None,
             copied: None,
             game_focused: false,
+            cursor_freed: false,
             material_preview: None,
             selection: None,
             selected_part: None,
@@ -2406,6 +2410,7 @@ impl Editor {
             WindowEvent::MouseInput { state, .. } => {
                 if *state == ElementState::Pressed {
                     self.game_focused = pointer.is_some();
+                    self.cursor_freed = false;
                 }
                 if self.game_focused {
                     self.game.input.handle(event);
@@ -2416,16 +2421,30 @@ impl Editor {
                 self.game.input.handle(event);
                 true
             }
-            WindowEvent::KeyboardInput { .. } if self.game_focused && !self.ui.wants_keyboard() => {
+            WindowEvent::KeyboardInput { event: key, .. } if self.game_focused && !self.ui.wants_keyboard() => {
+                use winit::keyboard::{KeyCode, PhysicalKey};
+                if key.physical_key == PhysicalKey::Code(KeyCode::Escape) && key.state == ElementState::Pressed {
+                    self.cursor_freed = true;
+                }
                 self.game.input.handle(event);
                 !self.control
             }
             WindowEvent::Focused(false) => {
+                self.cursor_freed = true;
                 self.game.input.release_all();
                 false
             }
             _ => false,
         }
+    }
+
+    /// Whether the mouse shows, and how it is held, as the game's scripts
+    /// asked, while the Game view has the focus; `None` leaves it the
+    /// editor's, free.
+    pub fn game_cursor(&self) -> Option<(bool, voxear_scripting::CursorLock)> {
+        let display = &self.game.display;
+        (self.game_focused && !self.cursor_freed && self.is_playing())
+            .then_some((display.cursor_visible, display.cursor_lock))
     }
 
     /// The mouse's moves from the device, which the game hears while its

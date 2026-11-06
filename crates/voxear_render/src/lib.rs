@@ -39,6 +39,7 @@ mod meshlets;
 mod model_lods;
 mod model_renderer;
 mod impostors;
+mod particles;
 mod passes;
 mod payload;
 mod pipelines;
@@ -102,6 +103,7 @@ pub use assets::Glow;
 pub use impostors::Impostor;
 pub use model_renderer::{ModelPart, ModelRenderer};
 pub use seasons::{Leaves, Season, SeasonLook, Seasons};
+pub use particles::{EmitShape, ParticleBlend, ParticlePlayback, ParticleSystem};
 pub use wind::{WindShape, WindZone};
 pub use ocean::{Ocean, OceanSampler, SeaEasing, SeaNow, SeaState, Weather, WindSource};
 pub use water_bodies::{DryArea, DryShape, Liquid, Pool, Stream, StreamPoint, stream_over};
@@ -291,6 +293,7 @@ struct FrameBuffers {
     pointers: Buffer,
     debug_lines: Buffer,
     debug_triangles: Buffer,
+    particle_systems: Buffer,
     /// The sun's light and the sky's, worked out once a frame under the
     /// atmosphere (see `atmosphere::record`).
     sky_light: Buffer,
@@ -1454,6 +1457,7 @@ impl View {
                 pointers,
                 debug_lines,
                 debug_triangles,
+                particle_systems,
                 sky_light,
                 meshlet_draws,
                 meshlet_draw_instances,
@@ -1463,7 +1467,8 @@ impl View {
             } = buffers;
             let all = [frame, instances, lights, draws, draw_count, draw_instances, stats, clusters, pointers];
             let meshlets = [meshlet_draws, meshlet_draw_instances, meshlet_work];
-            for buffer in all.into_iter().chain([debug_lines, debug_triangles, sky_light, stats_readback]).chain(meshlets) {
+            let debug = [debug_lines, debug_triangles, particle_systems];
+            for buffer in all.into_iter().chain(debug).chain([sky_light, stats_readback]).chain(meshlets) {
                 frames.retire(Retired::Buffer(buffer));
             }
         }
@@ -1966,10 +1971,14 @@ impl View {
                 water_bodies: self.ocean.bodies[slot].address,
                 stream_points: self.ocean.stream_points[slot].address,
                 debug_triangles: buffers.debug_triangles.address,
+                particle_systems: buffers.particle_systems.address,
             }],
         );
         buffers.instances.write(0, &extracted.instances[..instance_count]);
         buffers.lights.write(0, &extracted.lights[..light_count]);
+        let camera = voxear_core::math::Vec3::from(extracted.frame.camera_position);
+        let (particle_systems, particles) = particles::gather(world, camera, setup.time);
+        buffers.particle_systems.write(0, &particle_systems);
 
         let push = Push {
             frame: buffers.frame.address,
@@ -2028,6 +2037,7 @@ impl View {
             volume,
             water,
             glass,
+            particles,
             probes,
         };
         let under_water = passes::record(fg, &frame_setup, &targets, &draws);
@@ -2165,6 +2175,12 @@ fn create_frame_buffers(gpu: &Gpu, prefix: &str, slot: usize) -> Result<FrameBuf
         debug_triangles: gpu.create_buffer(
             &format!("{prefix}debug triangles {slot}"),
             debug_pass::MAX_DEBUG_TRIANGLES * size_of::<gpu::GpuDebugTriangle>() as u64,
+            storage,
+            host,
+        )?,
+        particle_systems: gpu.create_buffer(
+            &format!("{prefix}particle systems {slot}"),
+            particles::MAX_PARTICLE_SYSTEMS as u64 * size_of::<gpu::GpuParticleSystem>() as u64,
             storage,
             host,
         )?,

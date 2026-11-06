@@ -774,6 +774,37 @@ struct TraceInstance
     uint2 pad;
 };
 
+// A Particle System, as particles.slang works out its particles; mirrors
+// GpuParticleSystem in src/gpu.rs.
+struct ParticleSystem
+{
+    Mat4 model;
+    float4 color;
+    float4 colorEnd;
+    float2 lifetime;
+    float2 speed;
+    float2 size;
+    float sizeEnd;
+    float gravity;
+    float drag;
+    float rate;
+    float duration;
+    float time;
+    uint shape;
+    float radius;
+    float angle;
+    float spin;
+    float3 boxSize;
+    float softness;
+    uint burst;
+    uint slots;
+    uint seed;
+    uint flags;
+    float stopped;
+    float intensity;
+    float2 pad;
+};
+
 struct Buffers
 {
     Instance* instances;
@@ -822,6 +853,7 @@ struct Buffers
     WaterBody* waterBodies;
     StreamPoint* streamPoints;
     DebugTriangle* debugTriangles;
+    ParticleSystem* particleSystems;
 };
 
 struct Push

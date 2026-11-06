@@ -4017,6 +4017,100 @@ fn lamp_over_water_render(lamp: bool) -> Option<Vec<u8>> {
     Some(renderer.read_pixels().unwrap().2)
 }
 
+/// A Particle System, `system`, at `at`, before a grey wall standing three
+/// metres along +Z, seen from six metres off, `seconds` after it started;
+/// or none.
+fn particles_render(system: Option<voxear_render::ParticleSystem>, at: Vec3, seconds: f32) -> Option<Vec<u8>> {
+    use voxear_render::{ParticlePlayback, Sky};
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 1.5, -6.0))));
+    world.insert_resource(Sky { ambient: 0.1, ..Sky::default() });
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let grey = MaterialDesc { base_color: [0.3, 0.3, 0.3, 1.0], ..MaterialDesc::default() };
+    let grey = renderer.add_material(&grey).unwrap();
+    let wall = Transform::new(Vec3::new(0.0, 2.0, 3.0), Quat::IDENTITY, Vec3::new(12.0, 6.0, 0.2));
+    world.spawn((MeshRenderer::new(cube, grey), wall));
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.3, -0.6, 1.0).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 1.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    let mut time = 10.0;
+    if let Some(system) = system {
+        let playback = ParticlePlayback { started: time - seconds, stopped: None };
+        world.spawn((system, playback, Transform::from_position(at)));
+    }
+    world.insert_resource(steady_post());
+    run(&mut renderer, &world, &mut time, 2);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+/// Sparks: bright, added to what is behind them, shooting up out of a cone.
+fn sparks() -> voxear_render::ParticleSystem {
+    use voxear_render::{ParticleBlend, ParticleSystem};
+    ParticleSystem {
+        rate: 200.0,
+        lifetime: [1.0, 1.5],
+        speed: [3.0, 4.0],
+        size: [0.08, 0.12],
+        angle: 25.0,
+        gravity: 1.0,
+        color: [1.0, 0.6, 0.2, 1.0],
+        color_end: [1.0, 0.3, 0.1, 1.0],
+        intensity: 4.0,
+        blend: ParticleBlend::Additive,
+        lit: false,
+        ..ParticleSystem::default()
+    }
+}
+
+/// How many pixels of `pixels` are much brighter in red than in `before`.
+fn brighter_pixels(pixels: &[u8], before: &[u8]) -> usize {
+    let all = (0..360u32).flat_map(|y| (0..640u32).map(move |x| (x, y)));
+    all.filter(|&at| rgb_at(pixels, at)[0] > rgb_at(before, at)[0] + 40).count()
+}
+
+#[test]
+fn a_particle_system_sends_out_sparks_that_fall_back_and_stops_when_it_is_done() {
+    use voxear_render::ParticleSystem;
+    let Some(empty) = particles_render(None, Vec3::ZERO, 0.0) else { return };
+    let going = particles_render(Some(sparks()), Vec3::ZERO, 2.0).unwrap();
+    keep_image("particles sparks.png", &going);
+    let shown = brighter_pixels(&going, &empty);
+    assert!(shown > 300, "sparks over the wall: {shown} pixels");
+    // A round of one second that does not loop, three seconds on: every spark has died.
+    let once = ParticleSystem { looping: false, duration: 1.0, ..sparks() };
+    let done = particles_render(Some(once), Vec3::ZERO, 3.0).unwrap();
+    assert_eq!(brighter_pixels(&done, &empty), 0, "nothing once it is done");
+    // Behind the wall, rising slowly, none show over it.
+    let slow = ParticleSystem { gravity: 0.0, speed: [0.5, 1.0], ..sparks() };
+    let behind = particles_render(Some(slow), Vec3::new(0.0, 0.5, 5.0), 2.0).unwrap();
+    assert_eq!(brighter_pixels(&behind, &empty), 0, "hidden behind the wall");
+}
+
+#[test]
+fn smoke_rises_spreading_and_greys_what_is_behind_it() {
+    use voxear_render::ParticleSystem;
+    let Some(empty) = particles_render(None, Vec3::ZERO, 0.0) else { return };
+    let smoke = ParticleSystem {
+        rate: 30.0,
+        lifetime: [3.0, 4.0],
+        speed: [0.6, 0.9],
+        size: [0.4, 0.6],
+        size_end: 3.0,
+        angle: 15.0,
+        gravity: -0.05,
+        drag: 0.3,
+        spin: 30.0,
+        color: [0.8, 0.8, 0.8, 0.6],
+        color_end: [0.6, 0.6, 0.6, 0.0],
+        ..ParticleSystem::default()
+    };
+    let rising = particles_render(Some(smoke), Vec3::ZERO, 5.0).unwrap();
+    keep_image("particles smoke.png", &rising);
+    // Over the wall above the source, the smoke paler than the dark wall.
+    let (wall, smoky) = (patch_rgb(&empty, (320, 200), 6), patch_rgb(&rising, (320, 200), 6));
+    assert!(smoky[0] > wall[0] + 15, "smoke over the wall: {smoky:?} against {wall:?}");
+}
+
 /// Where `point` is on screen in a 640×360 picture from a camera at `eye`
 /// looking along `look`, as the default camera's 60° projection puts it.
 fn on_screen(eye: Vec3, look: Quat, point: Vec3) -> (u32, u32) {

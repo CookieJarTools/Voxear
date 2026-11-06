@@ -116,6 +116,9 @@ pub struct Frame {
     pub water: Option<crate::water::Water>,
     /// The glass in view, drawn after the sky.
     pub glass: Option<glass::Glass>,
+    /// How many particles each Particle System draws, in the order they are
+    /// listed, drawn after glass.
+    pub particles: Vec<u32>,
     /// The GI's probes, whose rays are traced once the opaque passes are
     /// done; shading reads last frame's.
     pub probes: Option<ddgi::Probes>,
@@ -440,6 +443,15 @@ pub fn record(fg: &mut FrameGraph<'_>, frame: &Frame, targets: &Targets, draws: 
         let glass_targets =
             glass::GlassTargets { hdr, depth, sampled, clusters: draws.clusters, pushes: draws.foliage_pushes, index_buffer };
         glass::record(fg, (pipelines, push), glass, glass_targets);
+    }
+
+    if !frame.particles.is_empty() {
+        let mut sampled: Vec<ImageId> =
+            targets.shadows.into_iter().chain(shadow_maps.iter().copied()).chain(tables.iter().copied()).collect();
+        sampled.extend(frame.probes.into_iter().flat_map(|probes| [probes.irradiance, probes.depth, probes.states]));
+        let clusters = draws.clusters;
+        let particle_targets = crate::particles::Targets { hdr, depth, sampled, clusters, extent: frame.extent };
+        crate::particles::record(fg, (pipelines, push), frame.particles.clone(), particle_targets);
     }
 
     if frame.edges {

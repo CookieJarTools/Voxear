@@ -786,6 +786,42 @@ pub struct GpuBuffers {
     pub stream_points: u64,
     /// This frame's triangles of debug draw's solid shapes.
     pub debug_triangles: u64,
+    /// This frame's Particle Systems (see `particles`).
+    pub particle_systems: u64,
+}
+
+/// A Particle System as `shaders/particles.slang` works out its particles
+/// from it: its Obj's matrix and its settings, ranges least and most, the
+/// angle and spin in radians, how long it has been going and when it
+/// stopped, both in seconds since it started.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuParticleSystem {
+    pub model: Mat4Cols,
+    pub color: [f32; 4],
+    pub color_end: [f32; 4],
+    pub lifetime: [f32; 2],
+    pub speed: [f32; 2],
+    pub size: [f32; 2],
+    pub size_end: f32,
+    pub gravity: f32,
+    pub drag: f32,
+    pub rate: f32,
+    pub duration: f32,
+    pub time: f32,
+    pub shape: u32,
+    pub radius: f32,
+    pub angle: f32,
+    pub spin: f32,
+    pub box_size: [f32; 3],
+    pub softness: f32,
+    pub burst: u32,
+    pub slots: u32,
+    pub seed: u32,
+    pub flags: u32,
+    pub stopped: f32,
+    pub intensity: f32,
+    pub _pad: [f32; 2],
 }
 
 /// A line of debug draw (see `voxear_core::debug_draw`), its colour sRGB.
@@ -963,7 +999,8 @@ mod tests {
         assert_eq!(size_of::<GpuDdgi>(), 32 * DDGI_CASCADES + 32 + 48);
         assert_eq!(size_of::<GpuLighting>(), lighting);
         assert_eq!(size_of::<GpuPost>(), post);
-        assert_eq!(size_of::<GpuBuffers>(), 35 * 8);
+        assert_eq!(size_of::<GpuBuffers>(), 36 * 8);
+        assert_eq!(size_of::<GpuParticleSystem>(), 64 + 16 * 9);
         assert_eq!(size_of::<GpuDebugLine>(), 48);
         assert_eq!(size_of::<GpuDebugTriangle>(), 64);
         assert!(size_of::<Push>() as u32 <= voxear_rhi::PUSH_CONSTANT_SIZE);

@@ -1197,14 +1197,29 @@ The sea, lakes, rivers and lava, built in. Manual: `manual/Water`.
   Normal, Stormy, Custom), Wave scale (taller without folding harder), choppiness, and a colour blend of deep water and
   light through the crests. A clipmap of 12 rings round the camera, morphing at their edges. Glints over slope-variance
   roughness, refraction and Beer–Lambert absorption over a copy of the scene and its depth, written to depth and
-  velocity. Foam where crests fold, kept in a 512² square round the camera in rest space, so it stays where the
-  crest broke and streaks down the wave's back; shore foam where the water thins.
+  velocity. Changing Wave scale or choppiness rebuilds nothing, as both are applied as the waves move; a new
+  spectrum (weather, winds) takes a few milliseconds, its cascades built on threads.
+- **Shores:** the ground under the sea captured round the camera from above and below, in four slices, its depth
+  blurred over a few metres. Waves calm by that depth, the longest first, so they ease off over a drop-off rather than
+  stepping into a wall, and a rock in deep water barely calms them. Water is cut away where the ground reaches down
+  into it, and carries on under overhangs. Waves break into surf where they are about as tall as the water is deep.
+  Refraction bends the view under the water by Snell's law.
+- **Foam:** a simulation round the camera in rest space, made where crests break and where water surges against the
+  ground, drifting downwind, running up the shore and draining back, spreading, and ageing from fresh froth to lace.
+  Its look comes from a generated pattern of gradient noise: froth in clumps of fine bubbles, lace in thin streaks,
+  bubble domes, standing up off the water near the camera with self-shadowing, flat further off.
 - **Under the sea:** `underwaterSun` dims and tints lit surfaces with a caustic web, the under-water pass fogs the
-  view by distance with a waterline meniscus, and the surface from below shows Snell's window and total internal
-  reflection.
+  view by distance, absorbing a colour at a time and scattering all of them, with light shafts, a waterline that
+  follows the waves, and drops on the lens after surfacing; it runs after the air's fog, so no haze shows under the
+  water. The surface from below shows Snell's window and total internal reflection.
+- **Quality:** the Ocean's costlier looks (Shores, Foam Trails, 3D Foam, Light Bending, Light Shafts, Wet Lens, Fine
+  Ripples) each turn off in the Inspector or from C# as `Water.Features`, skipping their passes.
 - **Pools and Dry Areas** (`water_bodies.rs`): a Pool is water (or lava) over a box at its Obj's height, its walls
   and bottom drawn as walls of water, below the sea dry to it, with as much of the sea's swell as it says. A Dry
-  Area (box, ball or capsule) is cut out of every surface per pixel, its sides walls of water.
+  Area (box, ball or capsule) is cut out of every surface per pixel, its sides walls of water. A Dry Area shaped as a
+  closed mesh, its own or its Obj's Mesh Renderer's, keeps a hull dry exactly: each frame the meshes are drawn into
+  a mask of where they start and end along each pixel's view, which the water, the view under it and underwater
+  lighting read.
 - **Paths and Streams:** `voxear_scene::Path` (centripetal Catmull-Rom, widths per point), edited in the Scene view
   (`path_handles.rs`: drag, width, insert, extend, Shift-click to remove, one undo step each). A Stream samples its
   Path each frame into world points with Manning speed, rapids foam carried downstream and travel time; drawn as a
@@ -1215,9 +1230,10 @@ The sea, lakes, rivers and lava, built in. Manual: `manual/Water`.
 - **Queries and Buoyancy:** `voxear_engine::water` keeps a CPU copy of the two longest cascades (the same waves, on
   every machine) and the Streams' points, for `Water.HeightAt`, `NormalAt`, `FlowAt`, `IsUnderwater` and
   `TrySample` in C#. Buoyancy pushes nine columns across a body's Collider up by how far each is under, with drag
-  against the water's flow measured against the body's own bobbing.
-- Still to do: spray and splashes (with particles, M7), a bilge in Dry Areas, hull-shaped Dry Areas from meshes,
-  Streams blending into the Pool or sea they reach, and Buoyancy's settings from C#.
+  against the water's own movement as its waves carry it round, so floating things ride a storm's waves. The CPU
+  finds the sea floor by casting down onto Colliders, so ground needs Colliders for floating things to feel it.
+- Still to do: Wind Zones driving the sea's wind, eased and local; flows meeting, Streams blending into the Pool or
+  sea they reach; spray and splashes (with particles, M7); a bilge in Dry Areas; and Buoyancy's settings from C#.
 
 ## M6 — Animation
 

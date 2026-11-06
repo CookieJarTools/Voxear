@@ -12,4 +12,7 @@ internal sealed class TestShelf : Behaviour
 
 	[ColorPalette("#e63946", "#457b9d")]
 	public Color Paint = Color.White;
+
+	[ColorUsage(hdr: true)]
+	public Color Glow = Color.Red.WithIntensity(2f);
 }

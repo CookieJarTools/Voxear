@@ -188,6 +188,9 @@ internal static class InspectorMetadata
 				Array.ForEach(palette.Colors, json.WriteStringValue);
 				json.WriteEndArray();
 				break;
+			case ColorUsageAttribute usage when usage.Hdr:
+				json.WriteBoolean("hdr", true);
+				break;
 			case ValidateInputAttribute validate:
 				json.WriteStartObject("validate");
 				json.WriteString("method", validate.Method);

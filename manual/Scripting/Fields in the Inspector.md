@@ -77,12 +77,15 @@ public float OpenTime = 1f;
 | `[ReadOnly]` | Shows the value, greyed out |
 | `[HideInInspector]` | Hides the field |
 | `[Multiline(lines)]` | A taller box for long text |
+| `[ColorUsage(hdr: true)]` | A `Color` that can glow brighter than white: its picker adds an Intensity in stops |
 | `[FoldoutGroup("name")]`, `[BoxGroup("name")]` | Puts fields together in a section that folds, or a box |
 | `[TabGroup("name")]` | Puts fields on tabs |
 | `[ShowIf(nameof(Field))]`, `[HideIf(…)]` | Shows the field only when another field is set |
 | `[InfoBox("…")]` | A note above the field |
 | `[Required]` | Shows an error while the field is empty. Builds warn about it too |
 | `[Button]` | On a method that takes nothing: a button that runs it while you edit |
+
+An HDR colour keeps its intensity in its channels, times two to that many stops, so its brightest channel is over 1 once it glows. `Color.Red.WithIntensity(2f)` is red four times as bright, and `Intensity` reads the stops back.
 
 The Code Reference, in VoxDocs, has a page for every attribute: look in the **Inspector** folder under **Voxear**. When no attribute shows a field the way you want, write your own drawer, or an inspector that draws the whole behaviour: see [[Custom Drawers]].
 

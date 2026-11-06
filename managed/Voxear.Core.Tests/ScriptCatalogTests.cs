@@ -84,6 +84,8 @@ internal static class ScriptCatalogTests
 		Check.True(list.GetProperty("per_page").GetInt32() == 3 && list.GetProperty("index_labels").GetBoolean(), "[ListDrawerSettings]");
 		var palette = fields["Paint"].GetProperty("inspector").GetProperty("palette").EnumerateArray().Select(c => c.GetString()).ToList();
 		Check.True(palette.SequenceEqual(new[] { "#e63946", "#457b9d" }), "[ColorPalette]");
+		Check.True(fields["Glow"].GetProperty("inspector").GetProperty("hdr").GetBoolean(), "[ColorUsage(hdr: true)]");
+		Check.True(!fields["Paint"].GetProperty("inspector").TryGetProperty("hdr", out _), "no hdr without [ColorUsage]");
 	}
 
 	[Test]

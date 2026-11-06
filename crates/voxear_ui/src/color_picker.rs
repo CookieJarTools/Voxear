@@ -40,6 +40,22 @@ impl PickedColor {
         Self { srgb: scaled.map(|c| to_srgb(c.max(0.0))), intensity }
     }
 
+    /// An HDR colour as scripts keep one: sRGB times two to its intensity,
+    /// so past white its brightest channel is over 1.
+    pub fn brightened(srgb: [f32; 3]) -> Self {
+        let brightest = srgb.into_iter().fold(0.0, f32::max);
+        if brightest <= 1.0 {
+            return Self::srgb(srgb);
+        }
+        Self { srgb: srgb.map(|c| (c / brightest).max(0.0)), intensity: brightest.log2() }
+    }
+
+    /// As scripts keep it, its intensity applied in sRGB.
+    pub fn to_brightened(self) -> [f32; 3] {
+        let gain = self.intensity.exp2();
+        self.srgb.map(|c| c * gain)
+    }
+
     /// As linear light, its intensity applied.
     pub fn to_linear(self) -> [f32; 3] {
         let gain = self.intensity.exp2();
@@ -342,5 +358,14 @@ mod tests {
         assert_eq!(PickedColor::srgb([1.0, 0.5, 0.0]).hex(), "#FF8000");
         assert_eq!(parse_hex("#ff8000"), Some([1.0, 128.0 / 255.0, 0.0]));
         assert_eq!(parse_hex("ff80"), None);
+    }
+
+    #[test]
+    fn script_hdr_colours_keep_their_intensity_in_srgb() {
+        let glow = [4.0, 2.0, 0.0];
+        let picked = PickedColor::brightened(glow);
+        assert_eq!((picked.srgb, picked.intensity), ([1.0, 0.5, 0.0], 2.0));
+        assert_eq!(picked.to_brightened(), glow);
+        assert_eq!(PickedColor::brightened([0.2, 0.4, 0.6]).intensity, 0.0);
     }
 }

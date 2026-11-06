@@ -4,8 +4,8 @@ using System.Globalization;
 namespace Voxear;
 
 /// <summary>
-/// A colour as it looks on screen (sRGB), with alpha, each from 0 to 1, as Unity's Color. Debug draw takes one, and
-/// it is plain data, so components can hold one too.
+/// A colour as it looks on screen (sRGB), with alpha, each from 0 to 1, or past 1 for an HDR colour that glows. Debug
+/// draw takes one, and it is plain data, so components can hold one too.
 /// </summary>
 public readonly struct Color : IEquatable<Color>
 {
@@ -58,9 +58,27 @@ public readonly struct Color : IEquatable<Color>
 		return new Color(a.R + (b.R - a.R) * t, a.G + (b.G - a.G) * t, a.B + (b.B - a.B) * t, a.A + (b.A - a.A) * t);
 	}
 
+	/// <summary>
+	/// How many stops brighter than white an HDR colour is, as its picker shows it: 0 for a colour within 0 to 1,
+	/// 1 for one whose brightest channel is 2.
+	/// </summary>
+	public float Intensity => MathF.Max(MathF.Log2(Brightest), 0f);
+
+	private float Brightest => MathF.Max(R, MathF.Max(G, B));
+
 	public Color WithAlpha(float alpha)
 	{
 		return new Color(R, G, B, alpha);
+	}
+
+	/// <summary>
+	/// The same colour at this intensity, in stops: Color.Red.WithIntensity(2) is four times as bright as red, for an
+	/// HDR field to glow. 0 brings an HDR colour back within 0 to 1.
+	/// </summary>
+	public Color WithIntensity(float stops)
+	{
+		var gain = MathF.Pow(2f, stops) / MathF.Max(Brightest, 1f);
+		return new Color(R * gain, G * gain, B * gain, A);
 	}
 
 	public static bool operator ==(Color left, Color right)

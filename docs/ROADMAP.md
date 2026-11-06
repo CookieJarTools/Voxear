@@ -999,8 +999,7 @@ Next:
 - **Ray-traced audio** as an optional setting: GPU rays against the GI's acceleration structures, fed to Steam
   Audio, with baked reverb probes as the fallback.
 - **HDR colour, end to end.** Rendering is HDR already: a float target, emissive and lights above 1, exposure and
-  tonemapping. Still to come:
-  - a C# `Color` type, with HDR intensity for fields such as `[ColorUsage(hdr: true)]`
+  tonemapping, and script colours go past white with `[ColorUsage(hdr: true)]`. Still to come:
   - HDR textures (`.exr` and `.hdr`) imported as half floats and cooked to BC6H, for skies, light probes and
     emissive maps
   - HDR display output: HDR10 and scRGB swapchains with paper-white and peak-brightness settings, and tonemapping

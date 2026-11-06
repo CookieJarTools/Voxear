@@ -307,6 +307,8 @@ pub struct FieldInspector {
     pub list: Option<ListSettings>,
     /// Colours `[ColorPalette]` offers, as hex.
     pub palette: Vec<String>,
+    /// A colour `[ColorUsage(hdr: true)]` lets go brighter than white.
+    pub hdr: bool,
     /// The drawers scripts draw its value with, by type, outermost first:
     /// an `AttributeDrawer` for each of its attributes that has one, then the
     /// `ValueDrawer` of its type.

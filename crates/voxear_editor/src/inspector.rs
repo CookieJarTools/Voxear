@@ -2260,7 +2260,9 @@ fn refresh_control(ui: &mut Ui, control: &mut Control, value: &Value) {
         (Control::Axes(fields, swatch), Value::Vector(_) | Value::Color(_)) => {
             write_numbers(ui, fields, &numbers(value));
             if let (Some(swatch), Value::Color(rgb)) = (swatch, value) {
-                let [r, g, b] = rgb.map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u8);
+                // An HDR colour past white shows its hue, brought back within 0 to 1.
+                let brightest = rgb.iter().copied().fold(1.0, f32::max);
+                let [r, g, b] = rgb.map(|c| (c / brightest).clamp(0.0, 1.0) * 255.0).map(|c| c.round() as u8);
                 ui.set_inline_style(*swatch, &format!("background-color: #{r:02x}{g:02x}{b:02x}"));
             }
         }

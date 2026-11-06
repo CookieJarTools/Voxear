@@ -1,7 +1,8 @@
-//! The colour picker, opened from a colour's swatch: a Light's colour in the
-//! Inspector, a material's Colour or Emission in the asset view or on a
-//! VoxDocs page, the emission being HDR, so the picker adds its intensity,
-//! or a colour in Settings, such as the theme's. It opens under the
+//! The colour picker, opened from a colour's swatch: a Light's colour or a
+//! script's in the Inspector, a material's Colour or Emission in the asset
+//! view or on a VoxDocs page, the emission and a script's
+//! `[ColorUsage(hdr: true)]` colour being HDR, so the picker adds their
+//! intensity, or a colour in Settings, such as the theme's. It opens under the
 //! swatch, what is picked shows at once, and an Obj's changes over the whole
 //! visit are one step to undo. A press outside it, or Escape, closes it.
 
@@ -22,8 +23,9 @@ const MARGIN: f32 = 8.0;
 
 /// What the picker is open for.
 enum Target {
-    /// An Obj's colour, and the Obj as it was when the picker opened, for undo.
-    Prop { entity: Entity, prop: Prop, before: Box<ObjState> },
+    /// An Obj's colour, and the Obj as it was when the picker opened, for
+    /// undo. An HDR script colour keeps its intensity in its channels.
+    Prop { entity: Entity, prop: Prop, before: Box<ObjState>, hdr: bool },
     /// A colour of the material the Inspector shows.
     Material(MaterialColor),
     /// A colour of a material on a VoxDocs page, by the place its fields
@@ -58,8 +60,10 @@ impl Editor {
         let Some(Value::Color(srgb)) = props::get(&self.game, self.inspector.types(), entity, &prop) else { return };
         let Some(before) = ObjState::of(&self.game.engine.world, entity) else { return };
         let title = props::label(&prop);
-        let target = Target::Prop { entity, prop, before: Box::new(before) };
-        self.open_color(target, swatch, &title, (PickedColor::srgb(srgb), false));
+        let hdr = crate::attributes::of(self.inspector.types(), &prop).hdr;
+        let color = if hdr { PickedColor::brightened(srgb) } else { PickedColor::srgb(srgb) };
+        let target = Target::Prop { entity, prop, before: Box::new(before), hdr };
+        self.open_color(target, swatch, &title, (color, hdr));
     }
 
     /// Whether the colour picker is open.
@@ -113,15 +117,16 @@ impl Editor {
         self.place_color(swatch);
         let Some(color) = self.color_popup.picker.update(&mut self.ui) else { return };
         match &self.color_popup.open {
-            Some((Target::Prop { entity, prop, .. }, _)) => {
+            Some((Target::Prop { entity, prop, hdr, .. }, _)) => {
                 let (entity, prop) = (*entity, prop.clone());
+                let picked = if *hdr { color.to_brightened() } else { color.srgb };
                 props::set(
                     &mut self.game,
                     Some(renderer),
                     self.inspector.types(),
                     entity,
                     &prop,
-                    Value::Color(color.srgb),
+                    Value::Color(picked),
                 );
             }
             Some((Target::Material(which), _)) => {

@@ -2212,7 +2212,8 @@ still reads no assembly; a source generator can take its place later without the
   of their fields and a row for each item, with a button on each row to take it out. `[ListDrawerSettings]` shows a
   list a page at a time (`NumberOfItemsPerPage`), with buttons to turn the page, and labels each item by its index
   (`ShowIndexLabels`) or not at all. `[ColorPalette("#e63946", "#457b9d")]` puts swatches under a `Color` field,
-  and a click picks one. A list's item is dragged by its label onto another of the same list, which moves it to that
+  and a click picks one. `[ColorUsage(hdr: true)]` lets one go past white: the picker adds an Intensity in stops,
+  kept as the sRGB colour times 2^stops, and the swatch shows its hue. A list's item is dragged by its label onto another of the same list, which moves it to that
   place, as a step to undo; an item with no label, and a table's rows, are not dragged yet.
 - **The build's check:** before its content, a build checks every scene and prefab for a `[Required]` field left
   empty and a value a `[ValidateInput]` method says is wrong, asking the method through the scripts it has just

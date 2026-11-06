@@ -95,8 +95,10 @@ pub(crate) fn gather(world: &World, camera: Vec3, time: f32) -> (Vec<GpuMist>, V
                 let index = trail.points.len() - kept.len() + i;
                 let (risen, radius, _) = trail.piece(mist, index, time);
                 // Drifting a little off its line as it swirls apart.
-                low = low.min(risen - radius * 1.6);
-                high = high.max(risen + radius * 1.6);
+                // And as far again as the swirls carry what is read there (`mistDensity`'s warp).
+                let reach = radius * 1.6 + mist.width.max(0.01) * 0.8;
+                low = low.min(risen - reach);
+                high = high.max(risen + reach);
                 points.push([at.x, at.y, at.z, time - made]);
             }
             GpuMist {

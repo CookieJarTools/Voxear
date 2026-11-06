@@ -29,6 +29,13 @@ pub const SMOKE_GRID: usize = 32;
 pub const MAX_SMOKES: usize = 16;
 /// How many 32-bit words of cells a smoke takes, four cells to a word.
 pub const SMOKE_WORDS: usize = SMOKE_GRID * SMOKE_GRID * SMOKE_GRID / 4;
+/// How many bricks of 4×4×4 cells a smoke's grid has along each side, and
+/// how many words their map takes, after the cells (see `SmokeFill::bricks`).
+const SMOKE_BRICKS: usize = SMOKE_GRID / 4;
+const BRICK_WORDS: usize = SMOKE_BRICKS * SMOKE_BRICKS * SMOKE_BRICKS / 32;
+/// How many words each smoke takes in this frame's cells: its cells, then
+/// its bricks' map.
+pub const SMOKE_STRIDE: usize = SMOKE_WORDS + BRICK_WORDS;
 
 /// A cloud of smoke filling the space round its Obj, as a smoke grenade's:
 /// as much as a ball `size` across would hold, spreading round walls.
@@ -61,7 +68,17 @@ impl Component for Smoke {}
 
 impl Default for Smoke {
     fn default() -> Self {
-        Self { size: 8.0, cell: 0.4, density: 2.0, color: [0.8, 0.8, 0.8], spread: 2.0, lasts: 0.0, fade: 3.0, seed: 0, play_on_start: true }
+        Self {
+            size: 8.0,
+            cell: 0.4,
+            density: 2.0,
+            color: [0.8, 0.8, 0.8],
+            spread: 2.0,
+            lasts: 0.0,
+            fade: 3.0,
+            seed: 0,
+            play_on_start: true,
+        }
     }
 }
 
@@ -117,6 +134,34 @@ impl SmokeFill {
         smoke.dispersed(time - self.started).max(told)
     }
 
+    /// Which bricks of 4×4×4 cells have smoke in them or in a brick next to
+    /// them, a bit each, `SMOKE_BRICKS`³ of them: the march reads no cell in
+    /// the others, so it passes empty space cheaply. Next to as well, as the
+    /// swirls read cells up to a cell or so away.
+    fn bricks(&self) -> [u32; BRICK_WORDS] {
+        let n = SMOKE_GRID as i32;
+        let side = SMOKE_BRICKS as i32;
+        let mut full = [false; SMOKE_BRICKS * SMOKE_BRICKS * SMOKE_BRICKS];
+        for (at, _) in self.cells.iter().enumerate().filter(|(_, c)| **c != 0) {
+            let at = at as i32;
+            let (x, y, z) = (at % n / 4, (at / n) % n / 4, at / (n * n) / 4);
+            full[((z * side + y) * side + x) as usize] = true;
+        }
+        let mut words = [0u32; BRICK_WORDS];
+        for (bit, word) in (0..full.len()).map(|b| (b, b / 32)) {
+            let (x, y, z) = (bit as i32 % side, (bit as i32 / side) % side, bit as i32 / (side * side));
+            let near = (-1..=1).flat_map(|dz| (-1..=1).flat_map(move |dy| (-1..=1).map(move |dx| (dx, dy, dz))));
+            let filled = near.map(|(dx, dy, dz)| (x + dx, y + dy, z + dz)).any(|(x, y, z)| {
+                (0..side).contains(&x)
+                    && (0..side).contains(&y)
+                    && (0..side).contains(&z)
+                    && full[((z * side + y) * side + x) as usize]
+            });
+            words[word] |= u32::from(filled) << (bit % 32);
+        }
+        words
+    }
+
     /// The cells, four to a word, as the shaders read them.
     fn words(&self) -> impl Iterator<Item = u32> + '_ {
         self.cells
@@ -141,10 +186,12 @@ pub const MAX_BLASTS: usize = 5;
 /// How wide a shot's hole opens, in metres, and when it starts and ends
 /// filling back in, in seconds.
 const SHOT_RADIUS: f32 = 0.5;
-const SHOT_REFILL: [f32; 2] = [0.4, 1.6];
+const SHOT_REFILL: [f32; 2] = [2.0, 5.0];
 /// When a blast's hole starts and ends filling back in, in seconds, and how
 /// much of the smoke it leaves while open.
-const BLAST_REFILL: [f32; 2] = [0.5, 5.0];
+const BLAST_REFILL: [f32; 2] = [3.0, 10.0];
+/// How long a fresh blast's shell of pushed-out smoke lasts, in seconds.
+const BLAST_SHELL: f32 = 3.0;
 const BLAST_LEFT: f32 = 0.02;
 /// How much thicker a fresh blast leaves the shell of smoke it pushed out.
 const BLAST_PUSH: f32 = 1.5;
@@ -243,8 +290,104 @@ fn blast_open(blast: &SmokeBlast, at: Vec3, now: f32) -> f32 {
     let refilled = smoothstep(BLAST_REFILL[0], BLAST_REFILL[1], age).powf(1.8);
     // Pushed out into a shell round it, thicker while the blast is fresh: as much less than nothing open there.
     let shell = (-((off - blast.radius * 1.15) / (blast.radius * 0.2).max(1e-3)).powi(2)).exp();
-    let fresh = 1.0 - smoothstep(0.0, BLAST_REFILL[1] * 0.6, age);
+    let fresh = 1.0 - smoothstep(0.0, BLAST_SHELL, age);
     inside * (1.0 - refilled) * (1.0 - BLAST_LEFT) - shell * fresh * BLAST_PUSH
+}
+
+/// How many texels the noise has along each side of its tile, how many
+/// lattice cells, and how wide each tile is laid out in the atlas, with a
+/// texel of the opposite side round it so filtering wraps.
+const NOISE_SIDE: usize = 64;
+const NOISE_CELLS: usize = 8;
+const NOISE_TILE: usize = NOISE_SIDE + 2;
+const NOISE_TILES: usize = 8;
+
+/// The smoke's noise, baked once: four tiling gradient noises, one to each
+/// channel, `NOISE_SIDE` texels a side and `NOISE_CELLS` lattice cells across,
+/// each slice of depth a tile of an 8×8 atlas. Gradient noise has no grid in
+/// it, as value noise does; turned between octaves in `smokeNoise`, no rows
+/// show. Each channel is spread out to the same range, about 0.17 either
+/// side of a half. Gives back the atlas's side and its RGBA bytes.
+pub(crate) fn noise_atlas() -> (u32, Vec<u8>) {
+    let side = NOISE_TILE * NOISE_TILES;
+    let n = NOISE_SIDE;
+    let mut values = vec![[0.0f32; 4]; n * n * n];
+    for (at, value) in values.iter_mut().enumerate() {
+        let (x, y, z) = (at % n, (at / n) % n, at / (n * n));
+        let p = Vec3::new(x as f32, y as f32, z as f32) * (NOISE_CELLS as f32 / n as f32);
+        for (channel, v) in value.iter_mut().enumerate() {
+            *v = gradient_noise(p, channel as u32);
+        }
+    }
+    // Each channel spread to the same width about its middle.
+    let mut spread = [0.0f32; 4];
+    for channel in 0..4 {
+        let mean = values.iter().map(|v| v[channel]).sum::<f32>() / values.len() as f32;
+        let variance = values.iter().map(|v| (v[channel] - mean).powi(2)).sum::<f32>() / values.len() as f32;
+        spread[channel] = 0.17 / variance.sqrt().max(1e-6);
+    }
+    let mut bytes = vec![0u8; side * side * 4];
+    for z in 0..n {
+        let (tx, ty) = (z % NOISE_TILES, z / NOISE_TILES);
+        for j in 0..NOISE_TILE {
+            for i in 0..NOISE_TILE {
+                // The tile's own texels, with the opposite side's round it.
+                let (x, y) = ((i + n - 1) % n, (j + n - 1) % n);
+                let value = values[(z * n + y) * n + x];
+                let texel = ((ty * NOISE_TILE + j) * side + tx * NOISE_TILE + i) * 4;
+                for channel in 0..4 {
+                    bytes[texel + channel] =
+                        ((0.5 + value[channel] * spread[channel]).clamp(0.0, 1.0) * 255.0).round() as u8;
+                }
+            }
+        }
+    }
+    (side as u32, bytes)
+}
+
+/// Gradient noise at `p`, tiling every `NOISE_CELLS`, about -1 to 1, its
+/// gradients chosen by `seed`.
+fn gradient_noise(p: Vec3, seed: u32) -> f32 {
+    let cells = NOISE_CELLS as i32;
+    let base = p.floor();
+    let f = p - base;
+    let fade = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+    let gradient = |c: [i32; 3]| {
+        let [x, y, z] = c.map(|v| v.rem_euclid(cells) as u32);
+        let mut h = x.wrapping_mul(0x8da6b343)
+            ^ y.wrapping_mul(0xd8163841)
+            ^ z.wrapping_mul(0xcb1ab31f)
+            ^ seed.wrapping_mul(0x9e3779b9);
+        h ^= h >> 13;
+        h = h.wrapping_mul(0x5bd1e995);
+        h ^= h >> 15;
+        // One of twelve edge directions of a cube, as is usual for gradient noise.
+        const WAYS: [[f32; 3]; 12] = [
+            [1.0, 1.0, 0.0],
+            [-1.0, 1.0, 0.0],
+            [1.0, -1.0, 0.0],
+            [-1.0, -1.0, 0.0],
+            [1.0, 0.0, 1.0],
+            [-1.0, 0.0, 1.0],
+            [1.0, 0.0, -1.0],
+            [-1.0, 0.0, -1.0],
+            [0.0, 1.0, 1.0],
+            [0.0, -1.0, 1.0],
+            [0.0, 1.0, -1.0],
+            [0.0, -1.0, -1.0],
+        ];
+        Vec3::from(WAYS[(h % 12) as usize])
+    };
+    let corner = |o: [i32; 3]| {
+        let c = [base.x as i32 + o[0], base.y as i32 + o[1], base.z as i32 + o[2]];
+        gradient(c).dot(f - Vec3::new(o[0] as f32, o[1] as f32, o[2] as f32))
+    };
+    let lerp = |a: f32, b: f32, t: f32| a + (b - a) * t;
+    let x00 = lerp(corner([0, 0, 0]), corner([1, 0, 0]), fade.x);
+    let x10 = lerp(corner([0, 1, 0]), corner([1, 1, 0]), fade.x);
+    let x01 = lerp(corner([0, 0, 1]), corner([1, 0, 1]), fade.x);
+    let x11 = lerp(corner([0, 1, 1]), corner([1, 1, 1]), fade.x);
+    lerp(lerp(x00, x10, fade.y), lerp(x01, x11, fade.y), fade.z)
 }
 
 /// The grid's first corner for a Smoke at `middle`, `cell` metres a cell,
@@ -268,13 +411,14 @@ pub(crate) fn gather(world: &World, camera: Vec3, time: f32) -> (Vec<GpuSmoke>, 
         .collect();
     smokes.sort_by(|a, b| a.0.total_cmp(&b.0));
     smokes.truncate(MAX_SMOKES);
-    let mut cells = Vec::with_capacity(smokes.len() * SMOKE_WORDS);
+    let mut cells = Vec::with_capacity(smokes.len() * SMOKE_STRIDE);
     let mut holes = Vec::new();
     let gpu = smokes
         .into_iter()
         .map(|(_, smoke, fill, made)| {
             let first = cells.len() as u32;
             cells.extend(fill.words());
+            cells.extend(fill.bricks());
             // Each shot two rows, where from and when, then where to; each blast where and when, then how far.
             let first_hole = holes.len() as u32;
             let (shots, blasts) = made.map_or((&[][..], &[][..]), |h| (&h.shots[..], &h.blasts[..]));
@@ -314,6 +458,8 @@ pub(crate) fn gather(world: &World, camera: Vec3, time: f32) -> (Vec<GpuSmoke>, 
 pub struct Draw {
     pub count: u32,
     pub mists: u32,
+    /// The baked noise (`noise_atlas`), as a texture.
+    pub noise: u32,
     /// The scene's depth, and the shadow atlas, the GI's probes and the
     /// atmosphere's tables.
     pub depth: ImageId,
@@ -326,9 +472,10 @@ pub struct Draw {
 /// size: one written each frame, the other last frame's.
 const HISTORY_NAMES: [&str; 2] = ["smoke history 0", "smoke history 1"];
 
-/// Records the smokes: marched at half the view's size into an image of
-/// their own, with how far into them their light comes from; blended with
-/// last frame's where the smoke was then, so it does not shimmer; then laid
+/// Records the smokes: marched into an image of their own, with how far
+/// into them their light comes from, one of each 2×2 of the view's
+/// half-size pixels a frame, in turn; put together at half size with last
+/// frame's where the smoke was then, so it does not shimmer; then laid
 /// over `hdr`, each pixel from the half-size ones nearest it in depth, so
 /// the smoke's edge stays sharp along what stands in front of it.
 /// `history` is which of the two history images this frame writes.
@@ -341,15 +488,19 @@ pub(crate) fn record(
 ) -> anyhow::Result<()> {
     let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
     let half = vk::Extent2D { width: extent.width.div_ceil(2), height: extent.height.div_ceil(2) };
+    // Marched at a quarter of the half size, a different pixel of each 2×2 each frame.
+    let quarter = vk::Extent2D { width: half.width.div_ceil(2), height: half.height.div_ceil(2) };
     let rgba = voxear_rhi::ImageDesc::new(half.width, half.height, vk::Format::R16G16B16A16_SFLOAT, usage);
-    let marched = fg.create_image(gpu, bindless, "smoke", rgba)?;
-    let far = voxear_rhi::ImageDesc::new(half.width, half.height, vk::Format::R32_SFLOAT, usage);
+    let marched_desc =
+        voxear_rhi::ImageDesc::new(quarter.width, quarter.height, vk::Format::R16G16B16A16_SFLOAT, usage);
+    let marched = fg.create_image(gpu, bindless, "smoke", marched_desc)?;
+    let far = voxear_rhi::ImageDesc::new(quarter.width, quarter.height, vk::Format::R32_SFLOAT, usage);
     let distance = fg.create_image(gpu, bindless, "smoke distance", far)?;
     let now = fg.history_image(gpu, bindless, HISTORY_NAMES[history], rgba)?;
     let then = fg.history_image(gpu, bindless, HISTORY_NAMES[1 - history], rgba)?;
     // Last frame's only when it was drawn, not on the first frame or after the smoke was last seen.
     let kept = !fg.is_new(then);
-    let Draw { count, mists, depth, sampled, clusters } = draw;
+    let Draw { count, mists, noise, depth, sampled, clusters } = draw;
     let depth_texture = fg.texture(depth).0;
     let volume = fog_volume.map_or(NO_TEXTURE, |volume| fg.texture(volume).0);
     let mut images = vec![
@@ -358,7 +509,12 @@ pub(crate) fn record(
         (depth, ImageAccess::Sampled),
     ];
     images.extend(sampled.iter().chain(&fog_volume).map(|&image| (image, ImageAccess::Sampled)));
-    let march = Push { textures: [depth_texture, volume, count, mists], size: [half.width, half.height], ..push };
+    let march = Push {
+        texture: noise,
+        textures: [depth_texture, volume, count, mists],
+        size: [half.width, half.height],
+        ..push
+    };
     fg.add_pass("Smoke", &images, &[(clusters, BufferAccess::ShaderRead)], move |ctx| {
         let target = |image| {
             vk::RenderingAttachmentInfo::default()
@@ -368,7 +524,7 @@ pub(crate) fn record(
                 .store_op(vk::AttachmentStoreOp::STORE)
         };
         let color = [target(marched), target(distance)];
-        crate::passes::begin_rendering(ctx, half, &color, None);
+        crate::passes::begin_rendering(ctx, quarter, &color, None);
         crate::passes::fullscreen(ctx, pipelines.smoke_march, &march);
     });
     let (marched_texture, distance_texture, then_texture) =
@@ -380,14 +536,19 @@ pub(crate) fn record(
         (then, ImageAccess::Sampled),
     ];
     let textures = [distance_texture, then_texture, u32::from(kept), 0];
-    let resolve = Push { texture: marched_texture, textures, size: [half.width, half.height], ..push };
+    let resolve = Push { texture: marched_texture, textures, size: [quarter.width, quarter.height], ..push };
     fg.add_pass("Smoke over frames", &images, &[], move |ctx| {
         crate::post_passes::draw(ctx, pipelines.smoke_resolve, &resolve, now, false);
     });
     let now_texture = fg.texture(now).0;
-    let images = [(hdr, ImageAccess::ColorAttachment), (now, ImageAccess::Sampled), (depth, ImageAccess::Sampled)];
-    let lay =
-        Push { texture: now_texture, textures: [depth_texture, 0, 0, 0], size: [half.width, half.height], ..push };
+    let images = [
+        (hdr, ImageAccess::ColorAttachment),
+        (now, ImageAccess::Sampled),
+        (depth, ImageAccess::Sampled),
+        (distance, ImageAccess::Sampled),
+    ];
+    let textures = [depth_texture, distance_texture, 0, 0];
+    let lay = Push { texture: now_texture, textures, size: [half.width, half.height], ..push };
     fg.add_pass("Smoke over the scene", &images, &[], move |ctx| {
         crate::post_passes::draw(ctx, pipelines.smoke_composite, &lay, hdr, true);
     });
@@ -404,7 +565,8 @@ mod tests {
         holes.shoot(Vec3::new(-5.0, 1.0, 0.0), Vec3::new(5.0, 1.0, 0.0), 10.0);
         assert!(holes.left(Vec3::new(2.0, 1.0, 0.0), 10.1) < 0.01, "open along its line");
         assert_eq!(holes.left(Vec3::new(2.0, 2.0, 0.0), 10.1), 1.0, "a metre off it, untouched");
-        assert_eq!(holes.left(Vec3::new(2.0, 1.0, 0.0), 12.0), 1.0, "filled back in");
+        assert!(holes.left(Vec3::new(2.0, 1.0, 0.0), 11.9) < 0.01, "still open two seconds on");
+        assert_eq!(holes.left(Vec3::new(2.0, 1.0, 0.0), 15.0), 1.0, "filled back in");
         assert_eq!(holes.left(Vec3::new(2.0, 1.0, 0.0), 9.0), 1.0, "not before it");
         for i in 0..40 {
             holes.shoot(Vec3::ZERO, Vec3::X, 20.0 + i as f32);
@@ -422,7 +584,7 @@ mod tests {
         assert!((holes.left(at, 0.3) - BLAST_LEFT).abs() < 1e-3, "a little left in it");
         let (soon, later) = (holes.left(at, 2.0), holes.left(at, 4.0));
         assert!(soon < later && later < 1.0, "filling back: {soon} then {later}");
-        assert_eq!(holes.left(at, 6.0), 1.0);
+        assert_eq!(holes.left(at, 10.0), 1.0);
         assert!((holes.left(Vec3::new(6.0, 0.0, 0.0), 0.3) - 1.0).abs() < 1e-3, "well past its radius");
         assert!(holes.left(Vec3::new(3.45, 0.0, 0.0), 0.3) > 2.0, "pushed out just past it");
         assert!(holes.left(Vec3::new(3.45, 0.0, 0.0), 4.0) < 1.01, "and even again later");

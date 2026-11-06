@@ -2098,6 +2098,7 @@ impl View {
             particles,
             spray,
             smokes: smokes.len() as u32,
+            smoke_noise: assets.smoke_noise.0,
             mists: mists.len() as u32,
             probes,
         };
@@ -2255,7 +2256,7 @@ fn create_frame_buffers(gpu: &Gpu, prefix: &str, slot: usize) -> Result<FrameBuf
         )?,
         smoke_cells: gpu.create_buffer(
             &format!("{prefix}smoke cells {slot}"),
-            (smoke::MAX_SMOKES * smoke::SMOKE_WORDS * 4) as u64,
+            (smoke::MAX_SMOKES * smoke::SMOKE_STRIDE * 4) as u64,
             storage,
             host,
         )?,

@@ -4266,7 +4266,7 @@ fn smoke_with_render(
         world.spawn((smoke, fill, holes, Transform::from_position(middle)));
     }
     world.insert_resource(steady_post());
-    run(&mut renderer, &world, &mut time, 4);
+    run(&mut renderer, &world, &mut time, 16);
     Some(renderer.read_pixels().unwrap().2)
 }
 
@@ -4539,7 +4539,7 @@ fn mist_render(mist: bool, eye: Vec3, facing: Quat) -> Option<Vec<u8>> {
         world.spawn((Mist { emitting: false, ..Mist::default() }, MistTrail { points }, Transform::default()));
     }
     world.insert_resource(steady_post());
-    run(&mut renderer, &world, &mut time, 4);
+    run(&mut renderer, &world, &mut time, 16);
     Some(renderer.read_pixels().unwrap().2)
 }
 

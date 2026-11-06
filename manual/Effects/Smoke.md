@@ -62,8 +62,8 @@ A new smoke takes a few frames to fill, so one going off never stalls the game. 
 
 Shots and blasts cut holes in smoke, which fill back in:
 
-- **A shot** cuts a tunnel half a metre wide along its line through every smoke it passes through. Looking down it, you see through the smoke; it fills back in over about a second and a half.
-- **A blast** clears a ball round it, all but a trace, pushing the smoke into a thicker shell just outside it. It fills back in slowly at first, then faster, over about five seconds.
+- **A shot** cuts a tunnel half a metre wide along its line through every smoke it passes through. Looking down it, you see through the smoke. It stays open for about two seconds, then fills back in over about three more.
+- **A blast** clears a ball round it, all but a trace, pushing the smoke into a thicker shell just outside it. It stays open for about three seconds, then fills back in, slowly at first and then faster, by about ten.
 
 Holes come from your game's own code, at the moment it fires:
 

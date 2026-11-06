@@ -250,6 +250,11 @@ impl Filling {
             self.farthest = self.farthest.max(distance.min(253));
             self.filled += 1;
             more += 1;
+            // Whether the floor stands in the cell under it, so the smoke can be laid down onto it once filled.
+            let under = from - IVec3::Y;
+            if under.y >= 0 && self.blocked[index(under)] == 0 {
+                self.blocked[index(under)] = if self.solid(world, physics, under) { 2 } else { 1 };
+            }
             for way in AROUND {
                 let to = from + way;
                 if to.cmplt(IVec3::ZERO).any()
@@ -287,9 +292,20 @@ impl Filling {
         true
     }
 
-    /// The cells filled and the farthest, 0 when none could be.
-    fn cells(self) -> (Vec<u8>, u8) {
+    /// The cells filled and the farthest, 0 when none could be. Each filled
+    /// cell over the floor reaches one cell down into it, as far out as
+    /// itself, so the smoke lies on the floor rather than half a cell above
+    /// it; what is inside the floor is hidden behind it.
+    fn cells(mut self) -> (Vec<u8>, u8) {
         let steps = if self.filled == 0 { 0 } else { self.farthest.max(1) as u8 };
+        let n = SMOKE_GRID as i32;
+        for at in 0..self.cells.len() {
+            let c = IVec3::new(at as i32 % n, (at as i32 / n) % n, at as i32 / (n * n));
+            let under = c - IVec3::Y;
+            if self.cells[at] != 0 && under.y >= 0 && self.blocked[index(under)] == 2 && self.cells[index(under)] == 0 {
+                self.cells[index(under)] = self.cells[at];
+            }
+        }
         (self.cells, steps)
     }
 }
@@ -542,7 +558,8 @@ mod tests {
         world.spawn((wall, Transform::from_position(Vec3::new(1.5, 1.0, 0.0))));
         let fill = spread(&mut world);
         let count = fill.cells.iter().filter(|&&c| c != 0).count();
-        assert_eq!(count, smoke.budget(), "as much as its budget");
+        // As much as its budget, and the few cells laid down onto the wall's top under it.
+        assert!((smoke.budget()..smoke.budget() + 32).contains(&count), "as much as its budget: {count}");
         let cell_at = |at: Vec3| {
             let c = ((at - fill.origin) / 0.5).floor().as_ivec3();
             fill.cells[((c.z * 32 + c.y) * 32 + c.x) as usize]
@@ -591,15 +608,17 @@ mod tests {
         fill_smokes(&mut world, 2.2);
         assert!(see_through(&world, eye, target) > 0.9, "seen along the shot's tunnel");
         assert!(see_through(&world, eye + Vec3::Y, target + Vec3::Y) < 0.01, "but not a metre above it");
-        fill_smokes(&mut world, 4.0);
+        fill_smokes(&mut world, 3.9);
+        assert!(see_through(&world, eye, target) > 0.9, "still open two seconds on");
+        fill_smokes(&mut world, 7.5);
         assert!(see_through(&world, eye, target) < 0.01, "filled back in");
         blast(&mut world, Vec3::ZERO, 2.5);
-        fill_smokes(&mut world, 4.5);
+        fill_smokes(&mut world, 8.0);
         assert!(
             see_through(&world, Vec3::new(-2.0, 0.0, 0.0), Vec3::new(2.0, 0.0, 0.0)) > 0.7,
             "mostly cleared by the blast"
         );
-        fill_smokes(&mut world, 12.0);
+        fill_smokes(&mut world, 18.0);
         assert!(see_through(&world, eye, target) < 0.01, "filled back in, slowly");
     }
 
@@ -614,6 +633,25 @@ mod tests {
         buried.spawn((smoke, Transform::from_position(Vec3::ZERO)));
         buried.spawn((Collider { size: [4.0; 3], ..Collider::default() }, Transform::from_position(Vec3::ZERO)));
         assert!(spread(&mut buried).cells.iter().all(|&c| c == 0), "none inside a wall");
+    }
+
+    #[test]
+    fn smoke_lies_on_the_floor_it_fills_over() {
+        let mut world = World::new();
+        world.spawn((
+            Smoke { size: 3.0, cell: 0.4, ..Smoke::default() },
+            Transform::from_position(Vec3::new(0.0, 0.3, 0.0)),
+        ));
+        // The floor's top at 0, through the cell under the middle's.
+        let floor = Collider { size: [20.0, 1.0, 20.0], ..Collider::default() };
+        world.spawn((floor, Transform::from_position(Vec3::new(0.0, -0.5, 0.0))));
+        let fill = spread(&mut world);
+        let at = |p: Vec3| {
+            let c = ((p - fill.origin) / 0.4).floor().as_ivec3();
+            fill.cells[((c.z * 32 + c.y) * 32 + c.x) as usize]
+        };
+        assert!(at(Vec3::new(0.0, -0.05, 0.0)) != 0, "reaching down into the floor's top");
+        assert_eq!(at(Vec3::new(0.0, -0.9, 0.0)), 0, "but no deeper");
     }
 
     #[test]

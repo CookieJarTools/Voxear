@@ -9,6 +9,10 @@
 
 // How many cells a smoke's grid has along each side (smoke::SMOKE_GRID).
 static const uint SMOKE_GRID = 32;
+// How many 32-bit words a smoke's cells take, and how many bricks of 4×4×4
+// cells its grid has along each side, whose map follows its cells.
+static const uint SMOKE_WORDS = SMOKE_GRID * SMOKE_GRID * SMOKE_GRID / 4;
+static const uint SMOKE_BRICKS = 8;
 // How many steps a view takes through the smoke at most, and towards the sun from each.
 static const uint SMOKE_STEPS = 80;
 static const uint SMOKE_SUN_STEPS = 3;
@@ -48,25 +52,44 @@ float smokeCell(Smoke smoke, int3 c)
     return saturate((front - float(step - 1)) * 0.5);
 }
 
-// Smooth noise in 3D, from 0 to 1.
-float smokeNoise(float3 p)
+// The baked noise (smoke::noise_atlas, push.texture in the march): four
+// tiling gradient noises, one to a channel, about 0.5 each, period 8 in
+// `p`. Each slice of depth is a tile of the atlas, read twice and blended,
+// so a read costs two filtered texture reads rather than a lattice of
+// hashes.
+static const float NOISE_SIDE = 64.0;
+static const float NOISE_TILE = 66.0;
+static const float NOISE_ATLAS = 528.0;
+static const float NOISE_CELLS = 8.0;
+
+float4 smokeNoise(float3 p)
 {
-    float3 i = floor(p);
-    float3 f = frac(p);
-    f = f * f * (3.0 - 2.0 * f);
-    let corner = (float3 o) => frac(sin(dot(i + o, float3(127.1, 311.7, 74.7))) * 43758.5453);
-    float x00 = lerp(corner(float3(0, 0, 0)), corner(float3(1, 0, 0)), f.x);
-    float x10 = lerp(corner(float3(0, 1, 0)), corner(float3(1, 1, 0)), f.x);
-    float x01 = lerp(corner(float3(0, 0, 1)), corner(float3(1, 0, 1)), f.x);
-    float x11 = lerp(corner(float3(0, 1, 1)), corner(float3(1, 1, 1)), f.x);
-    return lerp(lerp(x00, x10, f.y), lerp(x01, x11, f.y), f.z);
+    Texture2D atlas = textures[NonUniformResourceIndex(push.texture)];
+    float3 t = frac(p / NOISE_CELLS) * NOISE_SIDE;
+    float slice = floor(t.z);
+    float next = fmod(slice + 1.0, NOISE_SIDE);
+    let read = (float s) => atlas.SampleLevel(samplers[SAMPLER_LINEAR_CLAMP],
+        (float2(fmod(s, 8.0), floor(s / 8.0)) * NOISE_TILE + 1.0 + t.xy + 0.5) / NOISE_ATLAS, 0.0);
+    return lerp(read(slice), read(next), t.z - slice);
+}
+
+// Turns between octaves, so no octave's rows line up with another's.
+static const float3x3 OCTAVE_TURN_A = float3x3(0.00, 0.80, 0.60, -0.80, 0.36, -0.48, -0.60, -0.48, 0.64);
+static const float3x3 OCTAVE_TURN_B = float3x3(0.64, -0.48, -0.60, 0.48, 0.86, -0.12, 0.60, -0.18, 0.78);
+
+// Three octaves of the body noise at `q`, from 0 to 1, about 0.5.
+float smokeBody(float3 q)
+{
+    return smokeNoise(q).a * 0.55 + smokeNoise(mul(OCTAVE_TURN_A, q) * 2.3 + 5.3).a * 0.3
+        + smokeNoise(mul(OCTAVE_TURN_B, q) * 5.1 + 2.1).a * 0.15;
 }
 
 // How a shot's and a blast's holes open and fill back in (smoke::shot_open
 // and smoke::blast_open).
 static const float SHOT_RADIUS = 0.5;
-static const float2 SHOT_REFILL = float2(0.4, 1.6);
-static const float2 BLAST_REFILL = float2(0.5, 5.0);
+static const float2 SHOT_REFILL = float2(2.0, 5.0);
+static const float2 BLAST_REFILL = float2(3.0, 10.0);
+static const float BLAST_SHELL = 3.0;
 static const float BLAST_LEFT = 0.02;
 static const float BLAST_PUSH = 1.5;
 
@@ -98,7 +121,7 @@ float smokeLeft(Smoke smoke, float3 world, float ragged)
         float open = inside * (1.0 - pow(smoothstep(BLAST_REFILL.x, BLAST_REFILL.y, age), 1.8)) * (1.0 - BLAST_LEFT);
         // Pushed out into a thicker shell round it while it is fresh.
         float shell = exp(-pow((off - radius * 1.15) / max(radius * 0.2, 1e-3), 2.0));
-        open -= shell * (1.0 - smoothstep(0.0, BLAST_REFILL.y * 0.6, age)) * BLAST_PUSH;
+        open -= shell * (1.0 - smoothstep(0.0, BLAST_SHELL, age)) * BLAST_PUSH;
         left *= age >= 0.0 ? 1.0 - open : 1.0;
     }
     return left;
@@ -115,19 +138,22 @@ float smokeDensity(Smoke smoke, float3 world, bool swirls)
     if (swirls)
     {
         float3 w = world * 1.1 + smoke.seed * 0.37 + float3(0.0, -smoke.age * 0.2, 0.0);
-        float3 warp = float3(smokeNoise(w), smokeNoise(w + 19.1), smokeNoise(w + 41.7)) - 0.5;
-        world += warp * smoke.cell * 1.6 - float3(0.0, 1.5 * gone * gone, 0.0);
+        float3 warp = smokeNoise(w).rgb - 0.5;
+        // Far enough, near a cell, that the cloud's edge follows no row of them.
+        world += warp * smoke.cell * 2.4 - float3(0.0, 1.5 * gone * gone, 0.0);
         if (gone > 0.0)
         {
             // Drifting apart in broad, slow swirls, a metre or two across.
             float3 broad = world * 0.3 + smoke.seed * 0.11 + float3(smoke.age * 0.05, 0.0, 0.0);
-            float3 apart = float3(smokeNoise(broad), smokeNoise(broad + 7.7), smokeNoise(broad + 23.3)) - 0.5;
+            float3 apart = smokeNoise(broad + 7.7).rgb - 0.5;
             world += apart * 2.5 * gone;
         }
     }
     float3 g = (world - smoke.origin) / smoke.cell - 0.5;
     int3 c = int3(floor(g));
     float3 f = g - float3(c);
+    // Blended smoothly from cell to cell, so no crease runs along their edges.
+    f = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
     float filled = 0.0;
     for (uint k = 0; k < 8; k++)
     {
@@ -144,7 +170,7 @@ float smokeDensity(Smoke smoke, float3 world, bool swirls)
         return filled * smoke.density * (1.0 - gone) * smokeLeft(smoke, world, 0.0);
     }
     float3 q = world * 0.45 + smoke.seed + float3(0.0, -smoke.age * 0.12, 0.0);
-    float n = smokeNoise(q) * 0.55 + smokeNoise(q * 2.3 + 5.3) * 0.3 + smokeNoise(q * 5.1 + 2.1) * 0.15;
+    float n = smokeBody(q);
     // The holes' edges ragged by the same swirls.
     // Thicker and thinner through and through, not only at its edge, so from inside it swirls past.
     // Dispersing, it breaks up from its thin swirls first into wisps, and those thin away.
@@ -160,7 +186,14 @@ float smokesAt(Frame* frame, uint count, float3 world, bool swirls)
     {
         Smoke smoke = buffers()->smokes[i];
         float3 local = (world - smoke.origin) / (smoke.cell * float(SMOKE_GRID));
-        if (all(local >= 0.0) && all(local <= 1.0))
+        if (any(local < 0.0) || any(local > 1.0))
+        {
+            continue;
+        }
+        // Nothing to read in a brick with no smoke in it or round it (smoke::SmokeFill::bricks).
+        uint3 b = uint3(clamp(local * float(SMOKE_BRICKS), 0.0, float(SMOKE_BRICKS - 1)));
+        uint bit = (b.z * SMOKE_BRICKS + b.y) * SMOKE_BRICKS + b.x;
+        if (((buffers()->smokeCells[smoke.cells + SMOKE_WORDS + bit / 32] >> (bit % 32)) & 1) != 0)
         {
             total += smokeDensity(smoke, world, swirls);
         }
@@ -181,8 +214,8 @@ float mistDensity(Mist mist, float3 world, float time, bool swirls)
     {
         // Swirls as fine as the trail is narrow.
         float3 w = world * (1.6 / mist.width) + mist.seed * 0.37 + float3(0.0, -time * 0.6, 0.0);
-        float3 warp = float3(smokeNoise(w), smokeNoise(w + 19.1), smokeNoise(w + 41.7)) - 0.5;
-        world += warp * mist.width * 0.7;
+        float3 warp = smokeNoise(w).rgb - 0.5;
+        world += warp * mist.width * 1.5;
     }
     // How far off the nearest piece, against how wide it is there, squared; and how far that piece has aged.
     float nearest = 1e9;
@@ -211,9 +244,11 @@ float mistDensity(Mist mist, float3 world, float time, bool swirls)
         return shape * mist.density;
     }
     float3 q = world * (2.2 / mist.width) + mist.seed + float3(0.0, -time * 0.9, 0.0);
-    float n = smokeNoise(q) * 0.55 + smokeNoise(q * 2.3 + 5.3) * 0.3 + smokeNoise(q * 5.1 + 2.1) * 0.15;
+    float n = smokeBody(q);
     // Eaten into from its edge most, and more as it ages, so it frays into wisps.
-    float frayed = saturate((1.0 - nearest) * 2.4 - (1.0 - n) * (1.0 + 1.8 * aged)) * pow(1.0 - aged, 1.5);
+    // Whole where it was left last, round whatever is in it, and fraying fast as it ages.
+    float fray = lerp(0.35, 1.25, saturate(aged * 4.0)) + 1.8 * aged;
+    float frayed = saturate((1.0 - nearest) * 2.6 - (1.0 - n) * fray) * pow(1.0 - aged, 1.5);
     return frayed * (0.3 + 1.6 * n * n) * mist.density;
 }
 
@@ -247,6 +282,14 @@ struct SmokeMarched
     float distance : SV_Target1;
 };
 
+// Which of each 2×2 of half-size pixels the march works out this frame,
+// one in turn over four frames.
+int2 smokeTurn(Frame* frame)
+{
+    uint k = frame->frameIndex % 4;
+    return k == 0 ? int2(0, 0) : (k == 1 ? int2(1, 1) : (k == 2 ? int2(1, 0) : int2(0, 1)));
+}
+
 // The smokes along this pixel's view, as far as the scene behind: the light
 // they send towards the eye, fogged as far off as they start, and in alpha
 // how much of what lies behind shows through them. push.textures: x the
@@ -258,10 +301,14 @@ SmokeMarched smokeMarchFragment(SmokeOut input)
     Frame* frame = push.frame;
     uint count = push.textures.z;
     uint mists = push.textures.w;
-    float4 nearH = transform(frame->invViewProj, float4(input.uv * 2.0 - 1.0, 1.0, 1.0));
+    // Marched a quarter of the half-size pixels a frame, a different one of each 2×2 each frame (push.size the
+    // half size), the resolve putting them together.
+    float2 halfPixel = float2(int2(input.position.xy) * 2 + smokeTurn(frame)) + 0.5;
+    float2 uv = halfPixel / float2(push.size);
+    float4 nearH = transform(frame->invViewProj, float4(uv * 2.0 - 1.0, 1.0, 1.0));
     float3 eye = frame->cameraPosition;
     float3 way = normalize(nearH.xyz / nearH.w - eye);
-    float behind = textures[NonUniformResourceIndex(push.textures.x)].Load(int3(int2(input.uv * float2(frame->viewport)), 0)).r;
+    float behind = textures[NonUniformResourceIndex(push.textures.x)].Load(int3(int2(uv * float2(frame->viewport)), 0)).r;
     float scene = behind > 0.0 ? frame->near / behind / max(dot(way, frame->cameraForward), 1e-3) : 1e9;
 
     // Where the view is inside any smoke's grid, and the finest cells it meets.
@@ -306,7 +353,16 @@ SmokeMarched smokeMarchFragment(SmokeOut input)
         return none;
     }
     float step = max(cell * 0.5, (leave - enter) / float(SMOKE_STEPS));
-    float jitter = frac(52.9829189 * frac(dot(input.position.xy, float2(0.06711056, 0.00583715)) + float(frame->frameIndex % 64) * 0.61803));
+    // Where in each step it samples, different for each pixel and frame and with no pattern across the view,
+    // so over frames it averages to the smooth whole.
+    uint2 seed = uint2(input.position.xy);
+    uint mixed = (seed.x * 1973u + seed.y * 9277u + frame->frameIndex * 26699u) | 1u;
+    mixed ^= mixed >> 16;
+    mixed *= 0x7feb352du;
+    mixed ^= mixed >> 15;
+    mixed *= 0x846ca68bu;
+    mixed ^= mixed >> 16;
+    float jitter = float(mixed & 0xFFFFFFu) / 16777216.0;
 
     bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
     float3 toSun = -frame->sunDirection;
@@ -322,16 +378,23 @@ SmokeMarched smokeMarchFragment(SmokeOut input)
 
     float through = 1.0;
     float3 light = 0.0;
+    float sun = 1.0;
+    bool sunSeen = false;
     float first = -1.0;
     float weighed = 0.0;
     float weights = 0.0;
     for (uint i = 0; i < SMOKE_STEPS; i++)
     {
-        float t = enter + (float(i) + jitter) * step;
-        if (t > leave || through < 0.01)
+        // Each step's stretch counted for as long as it is, the last cut short where the scene or the smoke
+        // ends; the jitter moves only where in it the sample is, so what stands close behind thin smoke shows
+        // no pattern of steps.
+        float from = enter + float(i) * step;
+        if (from >= leave || through < 0.01)
         {
             break;
         }
+        float stretch = min(step, leave - from);
+        float t = from + jitter * stretch;
         float3 at = eye + way * t;
         // Thinner right by the eye, so from inside the view does not begin at a wall of it.
         float thick = (smokesAt(frame, count, at, true) + mistsAt(frame, mists, at, true)) * smoothstep(0.0, 0.8, t);
@@ -340,27 +403,32 @@ SmokeMarched smokeMarchFragment(SmokeOut input)
             continue;
         }
         first = first < 0.0 ? t : first;
-        // The sun's light through the cloud between it and here, and past what shadows it.
-        float toward = 0.0;
-        for (uint k = 1; k <= SMOKE_SUN_STEPS; k++)
+        // The sun's light through the cloud between it and here, and past what shadows it: every other step, as
+        // it changes slowly along the view, and on the first.
+        if ((i & 1) == 0 || !sunSeen)
         {
-            float3 sunward = at + toSun * cell * 1.5 * float(k);
-            toward += smokesAt(frame, count, sunward, false) + mistsAt(frame, mists, sunward, false);
+            float toward = 0.0;
+            for (uint k = 1; k <= SMOKE_SUN_STEPS; k++)
+            {
+                float3 sunward = at + toSun * cell * 1.5 * float(k);
+                toward += smokesAt(frame, count, sunward, false) + mistsAt(frame, mists, sunward, false);
+            }
+            // Looked up a little off where it is, differently each frame and step, so the shadows of what stands
+            // in the sun soften over frames rather than stepping with the shadow map's texels.
+            float3 shake = float3(frac(jitter * 7.13 + float(i) * 0.618), frac(jitter * 3.71 + float(i) * 0.382), frac(jitter * 5.37)) - 0.5;
+            sun = exp(-toward * cell * 1.5) * sunShadowHard(frame, at + shake * cell, toSun);
+            sunSeen = true;
         }
-        // Looked up a little off where it is, differently each frame and step, so the shadows of what stands in
-        // the sun soften over frames rather than stepping with the shadow map's texels.
-        float3 shake = float3(frac(jitter * 7.13 + float(i) * 0.618), frac(jitter * 3.71 + float(i) * 0.382), frac(jitter * 5.37)) - 0.5;
-        float sun = exp(-toward * cell * 1.5) * sunShadowHard(frame, at + shake * cell, toSun);
         // The lamps in this pixel's cluster, scattered as evenly every way.
         float3 lamps = 0.0;
-        uint base = clusterAt(frame, input.position.xy * 2.0, t * dot(way, frame->cameraForward)) * (frame->clusterMaxLights + 1);
+        uint base = clusterAt(frame, halfPixel * 2.0, t * dot(way, frame->cameraForward)) * (frame->clusterMaxLights + 1);
         for (uint l = 0; l < buffers()->clusters[base]; l++)
         {
             Light lamp = buffers()->lights[buffers()->clusters[base + 1 + l]];
             lamps += localLightInput(lamp, at, normalizeOr(lamp.position - at, way)).color;
         }
         float3 lit = color * (sunLight * sun * phase * PI + lamps * 0.25 + ambient);
-        float kept = exp(-thick * step);
+        float kept = exp(-thick * stretch);
         light += through * lit * (1.0 - kept);
         weighed += t * through * (1.0 - kept);
         weights += through * (1.0 - kept);
@@ -386,25 +454,42 @@ SmokeMarched smokeMarchFragment(SmokeOut input)
 float4 smokeResolveFragment(SmokeOut input) : SV_Target0
 {
     Frame* frame = push.frame;
-    Texture2D current = textures[NonUniformResourceIndex(push.texture)];
+    Texture2D marched = textures[NonUniformResourceIndex(push.texture)];
+    Texture2D into = textures[NonUniformResourceIndex(push.textures.x)];
     int2 pixel = int2(input.position.xy);
-    int2 size = int2(push.size);
-    float4 now = current.Load(int3(pixel, 0));
-    float far = textures[NonUniformResourceIndex(push.textures.x)].Load(int3(pixel, 0)).r;
-    if (push.textures.z == 0 || far <= 0.0)
+    int2 quarter = int2(push.size);
+    int2 q = min(pixel / 2, quarter - 1);
+    // This frame's smoke here: as marched, for the pixel marched this frame; the others blended from the four
+    // marched round them.
+    int2 turn = smokeTurn(frame);
+    float2 g = (float2(pixel) - float2(turn)) * 0.5;
+    int2 base = int2(floor(g));
+    float2 f = g - float2(base);
+    float4 fresh = 0.0;
+    for (uint k = 0; k < 4; k++)
     {
-        return now;
+        int2 o = int2(k & 1, k >> 1);
+        float2 w = lerp(1.0 - f, f, float2(o));
+        fresh += marched.Load(int3(clamp(base + o, int2(0, 0), quarter - 1), 0)) * (w.x * w.y);
     }
-    float4 low = now;
-    float4 high = now;
+    // Kept within the colours of the marched pixels round it, as far as any of them reaches into smoke.
+    float4 low = fresh;
+    float4 high = fresh;
+    float far = into.Load(int3(q, 0)).r;
     for (int y = -1; y <= 1; y++)
     {
         for (int x = -1; x <= 1; x++)
         {
-            float4 round = current.Load(int3(clamp(pixel + int2(x, y), int2(0, 0), size - 1), 0));
-            low = min(low, round);
-            high = max(high, round);
+            int2 round = clamp(q + int2(x, y), int2(0, 0), quarter - 1);
+            float4 there = marched.Load(int3(round, 0));
+            low = min(low, there);
+            high = max(high, there);
+            far = far > 0.0 ? far : into.Load(int3(round, 0)).r;
         }
+    }
+    if (push.textures.z == 0 || far <= 0.0)
+    {
+        return fresh;
     }
     float4 nearH = transform(frame->invViewProj, float4(input.uv * 2.0 - 1.0, 1.0, 1.0));
     float3 way = normalize(nearH.xyz / nearH.w - frame->cameraPosition);
@@ -412,10 +497,14 @@ float4 smokeResolveFragment(SmokeOut input) : SV_Target0
     float2 then = before.xy / before.w * 0.5 + 0.5;
     if (before.w <= 0.0 || any(then < 0.0) || any(then > 1.0))
     {
-        return now;
+        return fresh;
     }
     float4 kept = textures[NonUniformResourceIndex(push.textures.y)].SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], then, 0.0);
-    return lerp(now, clamp(kept, low, high), 0.85);
+    // Well past the colours round it, so the march's step jitter, different each frame, averages away over
+    // frames rather than being clamped back in; only last frame's that is plainly something else, as smoke a
+    // moving camera has left behind, is pulled back.
+    float4 slack = (high - low) + 0.1;
+    return lerp(fresh, clamp(kept, low - slack, high + slack), 0.9);
 }
 
 // The scene's depth along the view at full size, in metres; far for the sky.
@@ -426,14 +515,18 @@ float smokeSceneDepth(Frame* frame, int2 pixel)
 }
 
 // The marched smoke (push.texture, push.size across) laid over the scene:
-// each pixel from the four half-size ones round it, weighted most to those
-// whose scene lies as deep as its own, so the smoke's edge follows what
-// stands in front of it sharply.
+// each pixel from the four half-size ones round it. Where what the scene
+// has there stands in front of the smoke, weighted most to those whose
+// scene lies as deep as its own, so the smoke's edge follows it sharply;
+// where the scene lies behind the smoke, blended evenly, so its edges do
+// not show through. push.textures.y is how far into the smoke its light
+// comes from.
 [shader("fragment")]
 float4 smokeCompositeFragment(SmokeOut input) : SV_Target0
 {
     Frame* frame = push.frame;
     Texture2D marched = textures[NonUniformResourceIndex(push.texture)];
+    Texture2D into = textures[NonUniformResourceIndex(push.textures.y)];
     int2 half = int2(push.size);
     float own = smokeSceneDepth(frame, int2(input.position.xy));
     float2 at = input.uv * float2(half) - 0.5;
@@ -448,7 +541,9 @@ float4 smokeCompositeFragment(SmokeOut input) : SV_Target0
         float2 centre = (float2(c) + 0.5) / float2(half);
         float theirs = smokeSceneDepth(frame, int2(centre * float2(frame->viewport)));
         float2 w = lerp(1.0 - f, f, float2(o));
-        float weight = w.x * w.y / (1e-3 + abs(theirs - own) / max(own, 1e-3));
+        float smoke = into.Load(int3(c / 2, 0)).r;
+        bool before = smoke > 0.0 && min(theirs, own) < smoke;
+        float weight = w.x * w.y / (before ? 1e-3 + abs(theirs - own) / max(own, 1e-3) : 1.0);
         total += marched.Load(int3(c, 0)) * weight;
         weights += weight;
     }

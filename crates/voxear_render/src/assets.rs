@@ -295,6 +295,8 @@ pub struct Assets {
     /// The LTC tables area lights shade with, matrices then amplitudes (see
     /// `ltc`).
     pub ltc: [TextureId; 2],
+    /// The smoke's and mist's noise, baked once (see `smoke::noise_atlas`).
+    pub smoke_noise: TextureId,
     /// Plants' impostors, baked and asked for (see `impostors`).
     pub impostors: crate::impostors::ImpostorTable,
     /// Materials drawn as leaves are, so an impostor of a plant is too.
@@ -367,6 +369,7 @@ impl Assets {
             impostors: Default::default(),
             foliage_materials: Default::default(),
             ltc: [TextureId(0); 2],
+            smoke_noise: TextureId(0),
         };
         let white = TextureSource { name: "white", width: 1, height: 1, rgba: &[255; 4], srgb: false };
         assets.white = assets.add_texture(gpu, bindless, &white)?;
@@ -378,6 +381,9 @@ impl Assets {
             let bytes = bytemuck::cast_slice(&texels).to_vec();
             assets.ltc[slot] = assets.add_texture_mips(gpu, bindless, name, size, format, &[bytes])?;
         }
+        let (side, noise) = crate::smoke::noise_atlas();
+        let format = vk::Format::R8G8B8A8_UNORM;
+        assets.smoke_noise = assets.add_texture_mips(gpu, bindless, "smoke noise", (side, side), format, &[noise])?;
         Ok(assets)
     }
 

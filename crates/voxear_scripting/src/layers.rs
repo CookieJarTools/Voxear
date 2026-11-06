@@ -1,9 +1,10 @@
 //! Layers for C#: an Obj's layer, read and set, the project's layers'
 //! names, for `Obj.Layer` and `LayerMask`, and which layers collide, for
-//! `Physics.IgnoreLayerCollision` (see `voxear_scene::Layers`).
+//! `Physics.IgnoreLayerCollision` (see `voxear_scene::Layers`); and
+//! whether an Obj is drawn, for `Obj.Visible`.
 
 use voxear_ecs::Entity;
-use voxear_scene::{LAYER_COUNT, Layer, Layers};
+use voxear_scene::{Hidden, LAYER_COUNT, Layer, Layers};
 
 use crate::interop::{utf8, with_world};
 
@@ -22,6 +23,24 @@ pub(crate) unsafe extern "C" fn obj_layer(entity: u64, set: i32, layer: i32) -> 
             }
         }
         Some(world.get::<Layer>(entity).map_or(0, |layer| i32::from(layer.0)))
+    });
+    found.unwrap_or(-1)
+}
+
+/// Whether an Obj is drawn, set to `visible` first when `set` (see
+/// `voxear_scene::Hidden`); -1 for an Obj that is gone.
+pub(crate) unsafe extern "C" fn obj_visible(entity: u64, set: i32, visible: i32) -> i32 {
+    let entity = Entity::from_bits(entity);
+    let found = with_world(|world| {
+        if !world.is_alive(entity) {
+            return None;
+        }
+        match (set != 0, visible != 0) {
+            (true, true) => drop(world.remove::<Hidden>(entity)),
+            (true, false) => drop(world.insert(entity, Hidden)),
+            _ => {}
+        }
+        Some(i32::from(!world.has::<Hidden>(entity)))
     });
     found.unwrap_or(-1)
 }

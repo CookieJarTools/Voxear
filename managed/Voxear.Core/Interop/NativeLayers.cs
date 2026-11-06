@@ -3,8 +3,8 @@ using System.Text;
 namespace Voxear.Interop;
 
 /// <summary>
-/// The engine's layers, for Obj.Layer and LayerMask. Without the engine, as in tests, every Obj is on Default and only
-/// Default is named.
+/// The engine's layers, for Obj.Layer and LayerMask, and whether an Obj is drawn, for Obj.Visible. Without the engine,
+/// as in tests, every Obj is on Default and drawn, and only Default is named.
 /// </summary>
 internal static unsafe class NativeLayers
 {
@@ -18,6 +18,20 @@ internal static unsafe class NativeLayers
 		if (Native.IsConnected)
 		{
 			Native.Api->ObjLayer(obj.Id, 1, layer);
+		}
+	}
+
+	/// <summary>Whether an Obj is drawn: true without the engine.</summary>
+	public static bool Visible(Obj obj)
+	{
+		return !Native.IsConnected || Native.Api->ObjVisible(obj.Id, 0, 0) != 0;
+	}
+
+	public static void SetVisible(Obj obj, bool visible)
+	{
+		if (Native.IsConnected)
+		{
+			Native.Api->ObjVisible(obj.Id, 1, visible ? 1 : 0);
 		}
 	}
 

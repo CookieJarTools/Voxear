@@ -274,6 +274,16 @@ public readonly struct Obj : IEquatable<Obj>
 		set { NativeLayers.Set(this, value); }
 	}
 
+	/// <summary>
+	/// Whether the Obj is drawn. False hides its meshes and models, and those of every Obj under it, as a wizard
+	/// turned to mist is; its lights, effects, colliders and scripts carry on.
+	/// </summary>
+	public bool Visible
+	{
+		get { return NativeLayers.Visible(this); }
+		set { NativeLayers.SetVisible(this, value); }
+	}
+
 	/// <summary>The Obj's Joint, which holds its Rigidbody to another or to the world. Not valid when it has none.</summary>
 	public Joint Joint => new Joint(this);
 

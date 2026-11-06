@@ -79,6 +79,7 @@ internal static class PhysicsTests
 	private static void LayerMasksHoldLayersByNumber()
 	{
 		Check.True(Obj.None.Layer == 0 && LayerMask.LayerToName(0) == "Default", "Default without the engine");
+		Check.True(Obj.None.Visible, "drawn without the engine");
 		Check.True(LayerMask.NameToLayer("Nobody") == -1 && LayerMask.GetMask("Default", "Nobody").Value == 1, "unknown names are left out");
 		LayerMask mask = (1 << 3) | (1 << 5);
 		Check.True(mask.Contains(5) && !mask.Contains(4) && !mask.Contains(40), "by bit");

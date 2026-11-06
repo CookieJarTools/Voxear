@@ -4,7 +4,7 @@
 use voxear_core::math::{Mat3, Mat4, Quat, Vec3, Vec4, camera::lh::proj::vulkan};
 use voxear_ecs::{Component, Entity, World};
 use voxear_rhi::TextureId;
-use voxear_scene::{Destroying, Transform, WorldTransform};
+use voxear_scene::{Destroying, Hidden, Parent, Transform, WorldTransform};
 
 use crate::{
     assets::{MaterialHandle, MeshHandle},
@@ -603,11 +603,13 @@ pub fn extract(
     }
 
     let mut entities = Vec::new();
+    let any_hidden = world.query_ref::<&Hidden>().into_iter().next().is_some();
+    let shown = |entity: Entity| !lods.hidden.contains(&entity) && !(any_hidden && hidden(world, entity));
     let instances: Vec<GpuInstance> = world
         .query_ref::<(Entity, &MeshRenderer, &Transform, Option<&WorldTransform>)>()
         .without::<Destroying>()
         .into_iter()
-        .filter(|(entity, ..)| !lods.hidden.contains(entity))
+        .filter(|(entity, ..)| shown(*entity))
         .map(|(entity, renderer, transform, world_transform)| {
             entities.push(Owner { entity, plant: None, part: None });
             let model = world_transform.map_or_else(
@@ -632,7 +634,7 @@ pub fn extract(
     // Each part of a model an Obj draws whole, where the model puts it.
     let models = world.query_ref::<(Entity, &crate::ModelRenderer, &Transform, Option<&WorldTransform>)>();
     for (entity, drawn, transform, world_transform) in models.without::<Destroying>() {
-        if lods.hidden.contains(&entity) {
+        if !shown(entity) {
             continue;
         }
         let obj = world_transform.map_or_else(
@@ -675,6 +677,20 @@ pub fn extract(
 }
 
 /// Inward-facing side and near planes of an infinite perspective frustum.
+/// Whether `entity` or an Obj it is under is `Hidden`.
+fn hidden(world: &World, entity: Entity) -> bool {
+    let mut at = Some(entity);
+    // As deep as any hierarchy goes, and no further should one loop.
+    for _ in 0..64 {
+        let Some(here) = at else { return false };
+        if world.has::<Hidden>(here) {
+            return true;
+        }
+        at = world.get::<Parent>(here).map(|parent| parent.0);
+    }
+    false
+}
+
 fn frustum_planes(position: Vec3, rotation: Quat, fov_y: f32, aspect: f32, near: f32) -> [[f32; 4]; 6] {
     let forward = rotation * Vec3::Z;
     let right = rotation * Vec3::X;

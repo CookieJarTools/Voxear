@@ -15,6 +15,6 @@ pub use layers::{LAYER_COUNT, Layer, Layers};
 pub use lifecycle::{Adopted, BehaviourHandle, BehaviourHost, Callbacks, Lifecycle, Phase, Registration, Request};
 pub use path::{Path, PathPoint, PathSample};
 pub use obj::{
-    AttachedBehaviour, BehaviourSpec, Behaviours, Destroying, EditorOnly, InstanceMarker, Name, Placement,
+    AttachedBehaviour, BehaviourSpec, Behaviours, Destroying, EditorOnly, Hidden, InstanceMarker, Name, Placement,
     SceneComponents, ScenePersistence, Transform, register_obj_components,
 };

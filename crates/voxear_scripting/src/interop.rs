@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 41;
+pub(crate) const API_VERSION: u32 = 42;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -320,6 +320,9 @@ pub(crate) struct NativeApi {
     /// Reads, or with `set` writes, value `what` of an Obj's Smoke, as
     /// `light_value` does an Obj's Light.
     pub smoke_value: unsafe extern "C" fn(entity: u64, what: i32, set: i32, value: *mut [f32; 4]) -> i32,
+    /// `Obj.Visible`: whether an Obj is drawn, set first when `set`; -1 for
+    /// one that is gone.
+    pub obj_visible: unsafe extern "C" fn(entity: u64, set: i32, visible: i32) -> i32,
 }
 
 /// What answers scripts' questions about water: the engine's, set when it
@@ -1309,6 +1312,7 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         particle_value,
         smoke_act,
         smoke_value,
+        obj_visible: crate::layers::obj_visible,
     }
 }
 

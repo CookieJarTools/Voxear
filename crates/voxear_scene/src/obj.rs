@@ -149,6 +149,13 @@ impl Component for Destroying {}
 pub struct InstanceMarker;
 impl Component for InstanceMarker {}
 
+/// Not drawn: the Obj's meshes and models, and those of every Obj under it,
+/// are hidden, as a wizard turned to mist is. Its lights, effects,
+/// colliders and scripts carry on.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Hidden;
+impl Component for Hidden {}
+
 /// Survives level and scene changes (Unity's `DontDestroyOnLoad`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ScenePersistence;

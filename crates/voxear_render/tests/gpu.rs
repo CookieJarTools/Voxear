@@ -4476,3 +4476,34 @@ fn under_the_sea_the_water_tints_all_and_caustics_light_the_sand() {
     let (low, high) = (lights.iter().min().unwrap(), lights.iter().max().unwrap());
     assert!(high - low > 25, "caustics light the sand unevenly: from {low} to {high}");
 }
+
+/// The corner scene in the sun with a box standing in the open, its parent
+/// hidden or not, or with no box at all.
+fn hidden_render(box_hidden: Option<bool>) -> Option<Vec<u8>> {
+    let mut renderer = renderer()?;
+    let mut world = corner_scene(&mut renderer, voxear_render::AmbientOcclusion::default());
+    let sun = Quat::from_rotation_y(0.6) * Quat::from_rotation_x(0.9);
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    if let Some(hidden) = box_hidden {
+        let parent = world.spawn((Transform::from_position(Vec3::new(1.0, 0.0, 0.5)),));
+        if hidden {
+            world.insert(parent, voxear_scene::Hidden);
+        }
+        let cube = renderer.primitive(Primitive::Cube).unwrap();
+        let material = renderer.add_material(&MaterialDesc::default()).unwrap();
+        let place = Transform::from_position(Vec3::new(0.0, 0.5, 0.0));
+        world.spawn((MeshRenderer::new(cube, material), place, voxear_scene::Parent(parent)));
+        voxear_scene::propagate_transforms(&mut world);
+    }
+    run(&mut renderer, &world, &mut 0.0, 6);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+#[test]
+fn a_hidden_obj_and_those_under_it_leave_no_pixels_and_no_shadow() {
+    let renders = (hidden_render(None), hidden_render(Some(false)), hidden_render(Some(true)));
+    let (Some(none), Some(shown), Some(hidden)) = renders else { return };
+    keep_image("hidden_shown.png", &shown);
+    assert!(differing_pixels(&none, &shown) > 2000, "the box shows, and its shadow");
+    assert_eq!(differing_pixels(&none, &hidden), 0, "hidden, nothing of it");
+}

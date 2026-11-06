@@ -577,6 +577,7 @@ fn has_component(world: &World, entity: Entity, name: &str) -> bool {
         "Collider" => world.has::<Collider>(entity),
         "Rigidbody" => world.has::<Rigidbody>(entity),
         "Buoyancy" => world.has::<voxear_engine::water::Buoyancy>(entity),
+        "Light" => world.has::<voxear_render::Light>(entity),
         "CharacterController" => world.has::<CharacterController>(entity),
         "Joint" => world.has::<Joint>(entity),
         "Collider2D" => world.has::<Collider2D>(entity),

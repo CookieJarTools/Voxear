@@ -1,7 +1,7 @@
 //! Scripts and physics: a crate a script kicks sideways falls through a
 //! trigger onto the floor, its behaviour told of each, after a ray and a
-//! sphere asked what is where; a character walks across the floor; and in
-//! 2D, a ball kicked up lands on a ledge.
+//! sphere asked what is where; a character walks across the floor; in 2D, a
+//! ball kicked up lands on a ledge; and a script hangs a lamp on a bell.
 //! Builds a copy of Hello with these added; skips itself without .NET and
 //! the managed build.
 
@@ -101,6 +101,11 @@ public sealed class Swing : Behaviour
 		joint.Anchor = new Vector3(1f, 1f, 0f);
 		joint.SetLimits(0f, 1f);
 		Log.Info($"joint {joint.Type}, to the world {!joint.ConnectedBody.IsValid}, limits {joint.UseLimits}");
+		var lamp = Obj.AddLight(LightKind.Spot);
+		lamp.Intensity = 4f;
+		lamp.Color = new Color(1f, 0.5f, 0f);
+		lamp.OuterSpotAngle = 50f;
+		Log.Info($"lamp {lamp.Kind}, {lamp.Intensity}, green {lamp.Color.G:0.00}, outer {lamp.OuterSpotAngle}");
 	}
 }
 "#;
@@ -215,6 +220,7 @@ fn scripts_ask_push_and_hear_physics() {
     assert!(said("2D ray met Pip at 1.3"), "{lines:?}");
     assert!(said("2D hit Ledge, pushed up 1"), "the ball came down on the ledge: {lines:?}");
     assert!(said("joint Ball, to the world True, limits True"), "{lines:?}");
+    assert!(said("lamp Spot, 4, green 0.50, outer 50"), "{lines:?}");
 
     // The kick sideways moved the crate along X as it fell.
     let world = &game.engine.world;

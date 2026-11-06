@@ -159,9 +159,34 @@ thickness = 0.15  # how thick things count as, in metres
 
 Contact shadows work beyond the 80 metres shadows reach, so distant things still sit on the ground. They cost about a quarter of a millisecond at 1440p.
 
+## Lights from scripts
+
+A script reaches an Obj's Light through `Obj.Light`, and gives an Obj one with `Obj.AddLight()`:
+
+```csharp
+// A lamp that flickers.
+protected override void Update()
+{
+    var lamp = Obj.Light;
+    var time = (float)Time.Elapsed;
+    lamp.Intensity = 2f + 0.4f * MathF.Sin(time * 23f) * MathF.Sin(time * 7f);
+}
+```
+
+| Member | What it is |
+| --- | --- |
+| `Kind` | Directional, Point, Spot, Rectangle, Disc or Tube. Another kind starts from its own settings, keeping the colour, temperature, intensity and shadows |
+| `Color`, `Temperature` | Its colour, as it looks on screen, and its temperature in kelvin, or `null` for none |
+| `Intensity`, `Range` | How bright it is, and how far it reaches in metres |
+| `InnerSpotAngle`, `OuterSpotAngle` | A spot light's cone, in degrees |
+| `Shadows` | Whether it casts shadows |
+| `Size`, `Radius`, `Length` | A rectangle's size, a disc's or tube's radius, and a tube's length, in metres |
+| `Softness` | How wide the sun looks, in degrees, for soft shadows |
+| `Remove()` | Takes the Light off its Obj |
+
 ## Using many lights
 
-Point and spot lights are cheap, so a level can have hundreds. Area lights cost a little more each. Each part of the screen is lit by up to 128 lights at once. Only the sun casts shadows yet.
+Point and spot lights are cheap, so a level can have hundreds. Area lights cost a little more each. Each part of the screen is lit by up to 128 lights at once.
 
 > [!NOTE]
 > Unless you turn on bounced light, light does not bounce from one surface to the next: a room lit through a window is lit only where the light falls, plus the soft light of the sky. See [[Bounced Light]].

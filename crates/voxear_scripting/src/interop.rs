@@ -301,6 +301,9 @@ pub(crate) struct NativeApi {
     /// -1 without an Ocean, and setting them.
     pub water_features: unsafe extern "C" fn() -> i32,
     pub water_set_features: unsafe extern "C" fn(features: i32),
+    /// `Light`: reads or writes a value of an Obj's Light, by number (as
+    /// `NativeLights` in Voxear.Core), up to four floats; 1 when it did.
+    pub light_value: unsafe extern "C" fn(entity: u64, what: i32, set: i32, value: *mut [f32; 4]) -> i32,
 }
 
 /// What answers scripts' questions about water: the engine's, set when it
@@ -311,6 +314,33 @@ static WATER: std::sync::OnceLock<WaterSampler> = std::sync::OnceLock::new();
 /// Sets what answers `Water` in scripts; the first set is kept.
 pub fn set_water_sampler(sampler: WaterSampler) {
     let _ = WATER.set(sampler);
+}
+
+/// What reads, or with a value writes, a value of an Obj's Light for
+/// scripts, by number: the engine's, set when it starts (voxear_scripting
+/// cannot see the renderer's lights). `None` when the Obj has no Light.
+pub type LightValues = fn(&mut World, Entity, i32, Option<[f32; 4]>) -> Option<[f32; 4]>;
+static LIGHTS: std::sync::OnceLock<LightValues> = std::sync::OnceLock::new();
+
+/// Sets what answers `Light` in scripts; the first set is kept.
+pub fn set_light_values(values: LightValues) {
+    let _ = LIGHTS.set(values);
+}
+
+unsafe extern "C" fn light_value(entity: u64, what: i32, set: i32, value: *mut [f32; 4]) -> i32 {
+    let (Some(values), false) = (LIGHTS.get(), value.is_null()) else { return 0 };
+    let value = unsafe { &mut *value };
+    let written = (set != 0).then_some(*value);
+    let done = with_world(|world| values(world, Entity::from_bits(entity), what, written));
+    match done {
+        Some(read) => {
+            if written.is_none() {
+                *value = read;
+            }
+            1
+        }
+        None => 0,
+    }
 }
 
 unsafe extern "C" fn water_sample(at: *const [f32; 3], out: *mut [f32; 7]) -> i32 {
@@ -1210,6 +1240,7 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         water_sample,
         water_features,
         water_set_features,
+        light_value,
     }
 }
 

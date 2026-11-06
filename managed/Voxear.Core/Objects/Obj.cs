@@ -224,6 +224,16 @@ public readonly struct Obj : IEquatable<Obj>
 		return new Buoyancy(this);
 	}
 
+	/// <summary>The Obj's Light. Not valid when it has none.</summary>
+	public Light Light => new Light(this);
+
+	/// <summary>Gives the Obj a Light of a kind, with that kind's usual settings, unless it has one, and returns it.</summary>
+	public Light AddLight(LightKind kind = LightKind.Point)
+	{
+		NativeLights.Set(this, NativeLights.Add, new Vector4((int)kind, 0f, 0f, 0f));
+		return new Light(this);
+	}
+
 	/// <summary>The Obj's Character Controller, which walks it. Not valid when it has none.</summary>
 	public CharacterController CharacterController => new CharacterController(this);
 

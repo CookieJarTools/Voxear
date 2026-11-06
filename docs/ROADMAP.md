@@ -850,8 +850,9 @@ Done so far:
   offset. In Sponza's demo, its five candles, the Cold Lamp and the Neon Tube cost about 0.16 ms on an RTX 3070.
   GPU test: a point, spot, rectangle and tube light each shade the floor behind a box with a flame round it, on
   every culling path.
-- Still to come for lights: the C# `Light` API; caching local shadows of what does not move, and soft
-  shadows from area lights.
+- **The C# `Light` API:** `Obj.Light` and `Obj.AddLight(kind)`, with its kind, colour (sRGB, kept linear),
+  temperature, intensity, range, spot angles, shadows, shape and softness.
+- Still to come for lights: caching local shadows of what does not move, and soft shadows from area lights.
 - **Volumetric fog:** `[post.fog] volumetric = true` lights the height fog near the camera as a 128×72×64 froxel
   volume: the sun through its shadow cascades, so shafts show between shadows, every clustered light, and the
   sky, with Henyey-Greenstein scattering. Each froxel is sampled at a jittered depth and blended with last frame's

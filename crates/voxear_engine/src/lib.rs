@@ -18,6 +18,7 @@ pub mod keymaps;
 pub mod lod_groups;
 mod levels;
 pub mod lighting;
+mod lights;
 mod loading;
 pub mod memory;
 pub mod new_project;

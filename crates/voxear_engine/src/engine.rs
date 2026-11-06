@@ -60,6 +60,7 @@ impl Engine {
         crate::particles::register();
         crate::smoke::register();
         crate::mist::register();
+        crate::animation::register();
         let mut world = World::new();
         register_obj_components(&mut world);
         world.register_named_component::<PrefabInstance>("Voxear.PrefabInstance");
@@ -490,6 +491,7 @@ impl Engine {
             // Posed after Update, so LateUpdate sees this frame's bones.
             profile_scope!("Animation");
             crate::animation::animate(&mut self.world, self.time.delta);
+            crate::animation::match_motion(&mut self.world, self.time.delta);
         }
 
         {

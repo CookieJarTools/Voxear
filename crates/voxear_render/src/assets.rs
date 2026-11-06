@@ -1102,7 +1102,8 @@ impl Assets {
         }
         let meshlets = [self.meshlets, self.meshlet_vertices, self.meshlet_triangles];
         let materials = [self.materials, self.material_properties];
-        for buffer in [self.vertices, self.indices, self.meshes].into_iter().chain(materials).chain(meshlets) {
+        let shared = [self.vertices, self.indices, self.meshes, self.skins];
+        for buffer in shared.into_iter().chain(materials).chain(meshlets) {
             gpu.destroy_buffer(buffer);
         }
     }

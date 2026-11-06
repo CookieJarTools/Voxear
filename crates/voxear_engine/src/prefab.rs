@@ -381,6 +381,7 @@ fn apply_instance(root: &mut ObjData, instance: &ObjData) {
     root.smoke = instance.smoke.or(root.smoke);
     root.mist = instance.mist.or(root.mist);
     root.animator = instance.animator.clone().or(root.animator.clone());
+    root.motion_matcher = instance.motion_matcher.clone().or(root.motion_matcher.clone());
     root.ocean = instance.ocean.or(root.ocean);
     root.pool = instance.pool.or(root.pool);
     if instance.dry_area.is_some() {
@@ -439,6 +440,7 @@ pub struct TemplateObj {
     pub smoke: Option<voxear_render::Smoke>,
     pub mist: Option<voxear_render::Mist>,
     pub animator: Option<crate::animation::Animator>,
+    pub motion_matcher: Option<crate::animation::MotionMatcher>,
     pub ocean: Option<Ocean>,
     pub pool: Option<Pool>,
     pub dry_area: Option<DryArea>,
@@ -596,6 +598,9 @@ impl Template {
             }
             if let Some(animator) = obj.animator.clone() {
                 world.insert(entity, animator);
+            }
+            if let Some(matcher) = obj.motion_matcher.clone() {
+                world.insert(entity, matcher);
             }
             if let Some(ocean) = obj.ocean {
                 world.insert(entity, ocean);
@@ -901,6 +906,7 @@ pub(crate) fn resolve_obj(
         smoke: data.smoke,
         mist: data.mist,
         animator: data.animator.clone(),
+        motion_matcher: data.motion_matcher.clone(),
         ocean: data.ocean,
         pool: data.pool,
         dry_area,

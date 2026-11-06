@@ -80,6 +80,7 @@ pub enum Part {
     Smoke,
     Mist,
     Animator,
+    MotionMatcher,
     Ocean,
     Pool,
     DryArea,
@@ -122,6 +123,7 @@ impl Part {
             Part::Smoke => "smoke".into(),
             Part::Mist => "mist".into(),
             Part::Animator => "animator".into(),
+            Part::MotionMatcher => "motion_matcher".into(),
             Part::Ocean => "ocean".into(),
             Part::Pool => "pool".into(),
             Part::DryArea => "dry_area".into(),
@@ -158,6 +160,7 @@ impl Part {
             Part::Smoke => "Smoke",
             Part::Mist => "Mist",
             Part::Animator => "Animator",
+            Part::MotionMatcher => "Motion Matcher",
             Part::Ocean => "Ocean",
             Part::Pool => "Pool",
             Part::DryArea => "Dry Area",
@@ -193,6 +196,7 @@ impl Part {
             Part::Smoke => "particles",
             Part::Mist => "particles",
             Part::Animator => "play",
+            Part::MotionMatcher => "play",
             Part::Ocean => "globe",
             Part::Pool => "globe",
             Part::DryArea => "box",
@@ -308,6 +312,19 @@ pub enum Prop {
     AnimatorLooping,
     AnimatorBlend,
     AnimatorRootMotion,
+    /// A Motion Matcher's settings: how it follows, searches and settles,
+    /// how far the body may stray, and what counts in a search.
+    MatcherResponse,
+    MatcherSearchEvery,
+    MatcherBlend,
+    MatcherMaxDrift,
+    MatcherMaxTurn,
+    MatcherFootPosition,
+    MatcherFootVelocity,
+    MatcherHipVelocity,
+    MatcherPathPosition,
+    MatcherPathFacing,
+    MatcherDebug,
     /// An Ocean's weather, and for Custom weather its swell and wind; its
     /// crests, colours and foam.
     OceanWeather,
@@ -608,6 +625,17 @@ impl Prop {
             | Prop::AnimatorLooping
             | Prop::AnimatorBlend
             | Prop::AnimatorRootMotion => Part::Animator,
+            Prop::MatcherResponse
+            | Prop::MatcherSearchEvery
+            | Prop::MatcherBlend
+            | Prop::MatcherMaxDrift
+            | Prop::MatcherMaxTurn
+            | Prop::MatcherFootPosition
+            | Prop::MatcherFootVelocity
+            | Prop::MatcherHipVelocity
+            | Prop::MatcherPathPosition
+            | Prop::MatcherPathFacing
+            | Prop::MatcherDebug => Part::MotionMatcher,
             Prop::OceanWeather
             | Prop::OceanWindSource
             | Prop::OceanTransition
@@ -839,6 +867,17 @@ impl Prop {
             Prop::AnimatorLooping => "looping",
             Prop::AnimatorBlend => "blend",
             Prop::AnimatorRootMotion => "root_motion",
+            Prop::MatcherResponse => "response",
+            Prop::MatcherSearchEvery => "search_every",
+            Prop::MatcherBlend => "blend",
+            Prop::MatcherMaxDrift => "max_drift",
+            Prop::MatcherMaxTurn => "max_turn",
+            Prop::MatcherFootPosition => "foot_position",
+            Prop::MatcherFootVelocity => "foot_velocity",
+            Prop::MatcherHipVelocity => "hip_velocity",
+            Prop::MatcherPathPosition => "path_position",
+            Prop::MatcherPathFacing => "path_facing",
+            Prop::MatcherDebug => "debug",
             Prop::OceanWeather => "weather",
             Prop::OceanWindSource => "wind_source",
             Prop::OceanTransition => "transition",
@@ -1059,6 +1098,9 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     if world.has::<voxear_engine::animation::Animator>(entity) {
         parts.push(Part::Animator);
     }
+    if world.has::<voxear_engine::animation::MotionMatcher>(entity) {
+        parts.push(Part::MotionMatcher);
+    }
     if world.has::<Ocean>(entity) {
         parts.push(Part::Ocean);
     }
@@ -1222,6 +1264,19 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             Prop::AnimatorLooping,
             Prop::AnimatorBlend,
             Prop::AnimatorRootMotion,
+        ],
+        Part::MotionMatcher => vec![
+            Prop::MatcherResponse,
+            Prop::MatcherSearchEvery,
+            Prop::MatcherBlend,
+            Prop::MatcherMaxDrift,
+            Prop::MatcherMaxTurn,
+            Prop::MatcherFootPosition,
+            Prop::MatcherFootVelocity,
+            Prop::MatcherHipVelocity,
+            Prop::MatcherPathPosition,
+            Prop::MatcherPathFacing,
+            Prop::MatcherDebug,
         ],
         Part::ParticleSystem => {
             let shape = world.get::<ParticleSystem>(entity).map_or(EmitShape::Cone, |system| system.shape);
@@ -1544,6 +1599,17 @@ pub fn label(prop: &Prop) -> String {
         Prop::AnimatorLooping => "Looping",
         Prop::AnimatorBlend => "Blend Time",
         Prop::AnimatorRootMotion => "Root Motion",
+        Prop::MatcherResponse => "Response",
+        Prop::MatcherSearchEvery => "Search Every",
+        Prop::MatcherBlend => "Blend Time",
+        Prop::MatcherMaxDrift => "Max Drift",
+        Prop::MatcherMaxTurn => "Max Turn",
+        Prop::MatcherFootPosition => "Foot Position",
+        Prop::MatcherFootVelocity => "Foot Velocity",
+        Prop::MatcherHipVelocity => "Hip Velocity",
+        Prop::MatcherPathPosition => "Path Position",
+        Prop::MatcherPathFacing => "Path Facing",
+        Prop::MatcherDebug => "Debug",
         Prop::OceanWeather => "Weather",
         Prop::OceanWindSource => "Wind Source",
         Prop::OceanTransition => "Transition",
@@ -1831,6 +1897,9 @@ pub fn add(
         Part::Animator => {
             world.insert(entity, voxear_engine::animation::Animator::default());
         }
+        Part::MotionMatcher => {
+            world.insert(entity, voxear_engine::animation::MotionMatcher::default());
+        }
         Part::Ocean => {
             world.insert(entity, Ocean::default());
         }
@@ -1899,6 +1968,11 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
         Part::Animator => {
             world.remove::<voxear_engine::animation::Animator>(entity);
             world.remove::<voxear_engine::animation::AnimatorState>(entity);
+            world.remove::<voxear_render::Pose>(entity);
+        }
+        Part::MotionMatcher => {
+            world.remove::<voxear_engine::animation::MotionMatcher>(entity);
+            world.remove::<voxear_engine::animation::MotionMatcherState>(entity);
             world.remove::<voxear_render::Pose>(entity);
         }
         Part::ParticleSystem => {
@@ -2178,6 +2252,19 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::AnimatorLooping => Value::Toggle(world.get::<voxear_engine::animation::Animator>(entity)?.looping),
         Prop::AnimatorBlend => Value::Number(world.get::<voxear_engine::animation::Animator>(entity)?.blend),
         Prop::AnimatorRootMotion => Value::Toggle(world.get::<voxear_engine::animation::Animator>(entity)?.root_motion),
+        Prop::MatcherResponse
+        | Prop::MatcherSearchEvery
+        | Prop::MatcherBlend
+        | Prop::MatcherMaxDrift
+        | Prop::MatcherMaxTurn
+        | Prop::MatcherFootPosition
+        | Prop::MatcherFootVelocity
+        | Prop::MatcherHipVelocity
+        | Prop::MatcherPathPosition
+        | Prop::MatcherPathFacing
+        | Prop::MatcherDebug => {
+            matcher_value(world.get::<voxear_engine::animation::MotionMatcher>(entity)?, prop)?
+        }
         Prop::OceanWeather => {
             let weather = world.get::<Ocean>(entity)?.weather;
             let index = Weather::ALL.iter().position(|w| *w == weather).unwrap_or(0);
@@ -3054,6 +3141,10 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         (Prop::AnimatorRootMotion, Value::Toggle(on)) => {
             with(world, entity, |animator: &mut voxear_engine::animation::Animator| animator.root_motion = on)
         }
+        (prop, value) if prop.part() == Part::MotionMatcher => {
+            let set = |matcher: &mut voxear_engine::animation::MotionMatcher| set_matcher(matcher, prop, value);
+            with(world, entity, set)
+        }
         (prop, value) if prop.part() == Part::Mist => {
             with(world, entity, |mist: &mut voxear_render::Mist| set_mist(mist, prop, value))
         }
@@ -3285,6 +3376,52 @@ fn set_mist(mist: &mut voxear_render::Mist, prop: &Prop, value: Value) {
         (Prop::MistSeed, Value::Whole(n)) => mist.seed = n.clamp(0, i64::from(u32::MAX)) as u32,
         _ => {}
     }
+}
+
+/// A Motion Matcher's field as the Inspector shows it.
+fn matcher_value(matcher: &voxear_engine::animation::MotionMatcher, prop: &Prop) -> Option<Value> {
+    Some(match prop {
+        Prop::MatcherDebug => Value::Toggle(matcher.debug),
+        _ => Value::Number(*matcher_number(&mut matcher.clone(), prop)?),
+    })
+}
+
+/// Sets a Motion Matcher's field from the Inspector, kept within what it
+/// can be.
+fn set_matcher(matcher: &mut voxear_engine::animation::MotionMatcher, prop: &Prop, value: Value) {
+    let (low, high) = match prop {
+        Prop::MatcherResponse => (0.01, 2.0),
+        Prop::MatcherSearchEvery => (0.02, 1.0),
+        Prop::MatcherBlend | Prop::MatcherMaxDrift => (0.0, 2.0),
+        Prop::MatcherMaxTurn => (0.0, 180.0),
+        _ => (0.0, 10.0),
+    };
+    match value {
+        Value::Toggle(on) if *prop == Prop::MatcherDebug => matcher.debug = on,
+        Value::Number(n) => {
+            if let Some(field) = matcher_number(matcher, prop) {
+                *field = n.clamp(low, high);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// A Motion Matcher's number a prop shows.
+fn matcher_number<'a>(matcher: &'a mut voxear_engine::animation::MotionMatcher, prop: &Prop) -> Option<&'a mut f32> {
+    Some(match prop {
+        Prop::MatcherResponse => &mut matcher.response,
+        Prop::MatcherSearchEvery => &mut matcher.search_every,
+        Prop::MatcherBlend => &mut matcher.blend,
+        Prop::MatcherMaxDrift => &mut matcher.max_drift,
+        Prop::MatcherMaxTurn => &mut matcher.max_turn,
+        Prop::MatcherFootPosition => &mut matcher.foot_position,
+        Prop::MatcherFootVelocity => &mut matcher.foot_velocity,
+        Prop::MatcherHipVelocity => &mut matcher.hip_velocity,
+        Prop::MatcherPathPosition => &mut matcher.path_position,
+        Prop::MatcherPathFacing => &mut matcher.path_facing,
+        _ => return None,
+    })
 }
 
 /// A Particle System's field as the Inspector shows it: its colours in sRGB,

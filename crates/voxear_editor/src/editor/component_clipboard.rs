@@ -39,6 +39,7 @@ pub(super) enum Copied {
     Smoke(voxear_render::Smoke),
     Mist(voxear_render::Mist),
     Animator(voxear_engine::animation::Animator),
+    MotionMatcher(Box<voxear_engine::animation::MotionMatcher>),
     Ocean(Ocean),
     Pool(Pool),
     DryArea(DryArea),
@@ -75,6 +76,9 @@ impl Copied {
             Part::Smoke => Self::Smoke(*world.get::<voxear_render::Smoke>(entity)?),
             Part::Mist => Self::Mist(*world.get::<voxear_render::Mist>(entity)?),
             Part::Animator => Self::Animator(world.get::<voxear_engine::animation::Animator>(entity)?.clone()),
+            Part::MotionMatcher => {
+                Self::MotionMatcher(Box::new(world.get::<voxear_engine::animation::MotionMatcher>(entity)?.clone()))
+            }
             Part::Ocean => Self::Ocean(*world.get::<Ocean>(entity)?),
             Part::Pool => Self::Pool(*world.get::<Pool>(entity)?),
             Part::DryArea => Self::DryArea(*world.get::<DryArea>(entity)?),
@@ -102,6 +106,7 @@ impl Copied {
             Self::Smoke(smoke) => drop(world.insert(entity, *smoke)),
             Self::Mist(mist) => drop(world.insert(entity, *mist)),
             Self::Animator(animator) => drop(world.insert(entity, animator.clone())),
+            Self::MotionMatcher(matcher) => drop(world.insert(entity, (**matcher).clone())),
             Self::Ocean(ocean) => drop(world.insert(entity, *ocean)),
             Self::Pool(pool) => drop(world.insert(entity, *pool)),
             Self::DryArea(dry) => drop(world.insert(entity, *dry)),

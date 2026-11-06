@@ -140,4 +140,5 @@ internal unsafe struct NativeApi
 	public delegate* unmanaged[Cdecl]<ulong, int, int, float*, int> SmokeValue;
 	public delegate* unmanaged[Cdecl]<ulong, int, int, int> ObjVisible;
 	public delegate* unmanaged[Cdecl]<ulong, int, int, float*, int> MistValue;
+	public delegate* unmanaged[Cdecl]<ulong, int, int, float*, int> MotionMatcherValue;
 }

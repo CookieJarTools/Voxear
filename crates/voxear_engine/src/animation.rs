@@ -5,11 +5,19 @@
 //! blend time, as a spring settling (inertialization). With root motion,
 //! the clip's root bone's travel along the ground moves the Obj itself.
 
+mod motion_database;
+mod motion_matching;
+mod settling;
+
 use serde::{Deserialize, Serialize};
 use voxear_core::math::{Quat, Vec3};
 use voxear_ecs::{Component, Entity, World};
 use voxear_render::{BonePose, ModelAnimation, ModelRenderer, Pose};
 use voxear_scene::{Destroying, Transform};
+
+pub use motion_database::{MotionDatabase, MotionWeights};
+pub use motion_matching::{MotionMatcher, MotionMatcherState, match_motion, register};
+use settling::Settling;
 
 /// Plays one of its Obj's model's clips.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -51,20 +59,13 @@ pub struct AnimatorState {
 
 impl Component for AnimatorState {}
 
-/// Each bone's offset from the new clip, and how fast it was changing, when
-/// the clip changed, and how long ago.
-#[derive(Clone, Debug)]
-struct Settling {
-    offsets: Vec<(Vec3, Vec3, Vec3, Vec3)>,
-    since: f32,
-    halflife: f32,
-}
-
-/// Plays every Animator `delta` seconds on, and poses its model.
+/// Plays every Animator `delta` seconds on, and poses its model, but for
+/// Objs a Motion Matcher animates.
 pub fn animate(world: &mut World, delta: f32) {
     let animators: Vec<(Entity, Animator, std::sync::Arc<ModelAnimation>)> = world
         .query_ref::<(Entity, &Animator, &ModelRenderer)>()
         .without::<Destroying>()
+        .without::<MotionMatcher>()
         .into_iter()
         .filter_map(|(entity, animator, model)| Some((entity, animator.clone(), model.animation.clone()?)))
         .collect();
@@ -102,12 +103,14 @@ fn step(
     }
     // A change of clip starts the new one, settling from where the old one was.
     if wanted != state.playing {
-        let mut target = rest.clone();
+        let (mut target, mut target_before) = (rest.clone(), rest.clone());
         if let Some(clip) = wanted.and_then(|w| animation.clips.get(w)) {
             clip.sample(0.0, animator.looping, &mut target);
+            clip.sample(-delta, animator.looping, &mut target_before);
         }
+        let old = [state.shown.as_slice(), &state.before];
         state.settling = (animator.blend > 0.0 && delta > 0.0)
-            .then(|| Settling::between(&state.shown, &state.before, &target, delta, animator.blend * 0.5));
+            .then(|| Settling::between(old, [&target, &target_before], delta, animator.blend * 0.5));
         state.playing = wanted;
         state.time = 0.0;
     }
@@ -128,12 +131,10 @@ fn step(
             pose[root].rotation = rest[root].rotation;
         }
     }
-    if let Some(settling) = &mut state.settling {
-        settling.since += delta;
-        settling.apply(&mut pose);
-        if settling.since > settling.halflife * 8.0 {
-            state.settling = None;
-        }
+    if let Some(settling) = &mut state.settling
+        && !settling.settle(delta, &mut pose)
+    {
+        state.settling = None;
     }
     state.before = std::mem::replace(&mut state.shown, pose);
     travelled
@@ -166,48 +167,6 @@ fn root_travel(clip: &voxear_render::Clip, root: usize, from: f32, to: f32, loop
     let (start, end) = (at(0.0), at(duration));
     let (a, b) = (at(from.rem_euclid(duration)), at(to.rem_euclid(duration)));
     ((end.0 - a.0) + (b.0 - start.0), (end.1 - a.1) + (b.1 - start.1))
-}
-
-impl Settling {
-    /// Each bone's offset from `target` and how fast it was changing,
-    /// from the last two poses shown, `delta` apart.
-    fn between(shown: &[BonePose], before: &[BonePose], target: &[BonePose], delta: f32, halflife: f32) -> Self {
-        let offsets = shown
-            .iter()
-            .zip(before)
-            .zip(target)
-            .map(|((now, then), target)| {
-                let moved = now.translation - target.translation;
-                let speed = (now.translation - then.translation) / delta;
-                let turned = turn(now.rotation, target.rotation);
-                let spin = turn(now.rotation, then.rotation) / delta;
-                (moved, speed, turned, spin)
-            })
-            .collect();
-        Self { offsets, since: 0.0, halflife: halflife.max(1e-3) }
-    }
-
-    /// Adds what is left of each bone's offset to `pose`, the offsets dying
-    /// away as a critically damped spring does.
-    fn apply(&self, pose: &mut [BonePose]) {
-        let y = 4.0 * std::f32::consts::LN_2 / self.halflife;
-        let t = self.since;
-        let fade = |x: Vec3, v: Vec3| (x + (v + x * y) * t) * (-y * t).exp();
-        for (bone, &(moved, speed, turned, spin)) in pose.iter_mut().zip(&self.offsets) {
-            bone.translation += fade(moved, speed);
-            bone.rotation = (Quat::from_scaled_axis(fade(turned, spin)) * bone.rotation).normalize();
-        }
-    }
-}
-
-/// The turn from `to` to `from`, as an axis scaled by its angle, the
-/// shorter way round.
-fn turn(from: Quat, to: Quat) -> Vec3 {
-    let mut q = from * to.inverse();
-    if q.w < 0.0 {
-        q = -q;
-    }
-    q.to_scaled_axis()
 }
 
 #[cfg(test)]

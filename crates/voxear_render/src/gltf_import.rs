@@ -196,6 +196,11 @@ impl PreparedModel {
         &self.path
     }
 
+    /// Its skeleton, skins and clips, for a model made to animate.
+    pub fn animation(&self) -> Option<&ModelAnimation> {
+        self.animation.as_ref()
+    }
+
     /// The triangles of a part's mesh, by its name (`mesh0.0`), or of the
     /// first part's for none, for a Mesh collider.
     pub fn triangles(&self, part: Option<&str>) -> Option<crate::MeshTriangles> {

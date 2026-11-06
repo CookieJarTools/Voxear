@@ -264,6 +264,16 @@ public readonly struct Obj : IEquatable<Obj>
 		return new Mist(this);
 	}
 
+	/// <summary>The Obj's Motion Matcher, which animates its model. Not valid when it has none.</summary>
+	public MotionMatcher MotionMatcher => new MotionMatcher(this);
+
+	/// <summary>Gives the Obj a Motion Matcher with the usual settings, unless it has one, and returns it.</summary>
+	public MotionMatcher AddMotionMatcher()
+	{
+		NativeMotionMatcher.Set(this, NativeMotionMatcher.Add, Vector4.Zero);
+		return new MotionMatcher(this);
+	}
+
 	/// <summary>The Obj's Character Controller, which walks it. Not valid when it has none.</summary>
 	public CharacterController CharacterController => new CharacterController(this);
 

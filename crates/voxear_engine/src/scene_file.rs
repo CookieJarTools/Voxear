@@ -285,6 +285,9 @@ pub struct ObjData {
     /// Plays one of the Obj's model's clips.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub animator: Option<crate::animation::Animator>,
+    /// Animates the Obj's model by motion matching over its clips.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub motion_matcher: Option<crate::animation::MotionMatcher>,
     /// An Ocean, the sea filling the level at the Obj's height.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ocean: Option<Ocean>,
@@ -363,6 +366,7 @@ impl ObjData {
             smoke: None,
             mist: None,
             animator: None,
+            motion_matcher: None,
             ocean: None,
             pool: None,
             dry_area: None,
@@ -1307,6 +1311,9 @@ fn capture_instance(
     if root.animator.is_some() && root.animator != prefab_root.animator {
         instance.animator = root.animator.clone();
     }
+    if root.motion_matcher.is_some() && root.motion_matcher != prefab_root.motion_matcher {
+        instance.motion_matcher = root.motion_matcher.clone();
+    }
     if root.ocean.is_some() && root.ocean != prefab_root.ocean {
         instance.ocean = root.ocean;
     }
@@ -1450,6 +1457,10 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     }
     if let Some(animator) = actual.animator.as_ref().filter(|a| Some(*a) != expected.animator.as_ref()) {
         put("animator", whole(animator, &crate::animation::Animator::default())?);
+    }
+    let matcher = actual.motion_matcher.as_ref().filter(|m| Some(*m) != expected.motion_matcher.as_ref());
+    if let Some(matcher) = matcher {
+        put("motion_matcher", whole(matcher, &crate::animation::MotionMatcher::default())?);
     }
     if let Some(ocean) = actual.ocean.filter(|o| Some(*o) != expected.ocean) {
         put("ocean", whole(&ocean, &Ocean::default())?);
@@ -1698,6 +1709,7 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.smoke = world.get::<voxear_render::Smoke>(entity).copied();
     obj.mist = world.get::<voxear_render::Mist>(entity).copied();
     obj.animator = world.get::<crate::animation::Animator>(entity).cloned();
+    obj.motion_matcher = world.get::<crate::animation::MotionMatcher>(entity).cloned();
     obj.ocean = world.get::<Ocean>(entity).copied();
     obj.pool = world.get::<Pool>(entity).copied();
     obj.dry_area = world.get::<DryArea>(entity).map(|area| DryAreaData::of(content, area));

@@ -150,8 +150,9 @@ A picture packed inside a model file has no `.meta` of its own, so it is always 
 - The shape, its normals (which way each surface faces) and its texture coordinates. If the file has no normals, Voxear works them out.
 - Its materials: colour, metal and roughness, normal map, and glow, each with its picture.
 - Cut-outs, such as leaves on a flat card, where the material says to cut them out.
+- Its skeleton, the bones each mesh moves with, and its clips, for a model made to animate. See [[Animator]].
 
-Not yet read: animation, skinning, vertex colours, see-through materials (they are drawn solid), and the cameras and lights in the file.
+Not yet read: vertex colours, see-through materials (they are drawn solid), and the cameras and lights in the file.
 
 ## What is read from an FBX file
 

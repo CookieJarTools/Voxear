@@ -2848,7 +2848,9 @@ fn add_component_is_a_search_with_folders() {
     frame(&mut editor, &mut renderer);
     frame(&mut editor, &mut renderer);
     let labels = |ui: &Ui| picker_rows(ui).into_iter().map(|(label, _)| label).collect::<Vec<_>>();
-    assert_eq!(labels(&editor.ui), ["Rendering", "Water", "Paths", "Audio", "Physics", "Physics 2D", "Scripts", "Effects"], "folders first, as in Unity");
+    // The scripts' Effects folder is the built-in one, with the Particle System.
+    let folders = ["Rendering", "Effects", "Water", "Paths", "Audio", "Physics", "Physics 2D", "Scripts"];
+    assert_eq!(labels(&editor.ui), folders, "folders first, as in Unity");
     shot(&mut renderer, "add-component.png");
 
     // A folder opens on a click, its scripts past the namespace they share, with a back button.
@@ -6498,6 +6500,33 @@ fn a_string_table_goes_out_to_a_sheet_and_comes_back_from_one() {
     let table = StringTable::parse(&std::fs::read_to_string(dir.path().join("Menu.strings")).unwrap()).unwrap();
     assert_eq!(table.entries.len(), 2);
     assert_eq!(table.entries[0].text("fr"), Some("Jouer"));
+}
+
+#[test]
+fn a_new_particle_system_plays_in_the_scene_and_saves_with_it() {
+    use voxear_render::{ParticlePlayback, ParticleSystem};
+    let mut renderer = match Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) {
+        Ok(renderer) => renderer,
+        Err(error) => return eprintln!("skipping: no usable GPU ({error:#})"),
+    };
+    // A copy of Hello, as this saves.
+    let dir = hello_copy();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    run_command(&mut editor, &mut renderer, "new particle system");
+    let system = obj(&editor, "Particle System").expect("a Particle System made from the palette");
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let world = &editor.game.engine.world;
+    assert_eq!(world.get::<ParticleSystem>(system).copied(), Some(ParticleSystem::default()));
+    assert!(world.has::<ParticlePlayback>(system), "playing as it is edited");
+    editor.save();
+    let scenes = std::fs::read_dir(dir.path().join("Scenes")).unwrap();
+    let saved = scenes
+        .filter_map(|entry| std::fs::read_to_string(entry.ok()?.path()).ok())
+        .any(|text| text.contains("name = \"Particle System\"") && text.contains("[obj.particles]"));
+    assert!(saved, "saved with its scene");
 }
 
 #[test]

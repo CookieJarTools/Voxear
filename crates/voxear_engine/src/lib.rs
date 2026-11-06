@@ -25,6 +25,7 @@ pub mod new_project;
 pub mod package_assets;
 pub mod package_scripts;
 pub mod packages;
+mod particles;
 pub use voxear_localization as localization;
 pub use voxear_physics::scene as physics;
 pub use voxear_physics2d::scene as physics2d;

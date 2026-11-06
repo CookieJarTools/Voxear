@@ -11,7 +11,7 @@ use voxear_engine::{
     physics::{CharacterController, Collider, Joint, Rigidbody, Vehicle, Wheel},
     physics2d::{Collider2D, Rigidbody2D},
 };
-use voxear_render::{Camera, DryArea, FoliageInteraction, Light, MeshRenderer, Ocean, Pool, PostVolume, Seasons, Stream, WindZone};
+use voxear_render::{Camera, DryArea, FoliageInteraction, Light, MeshRenderer, Ocean, ParticleSystem, Pool, PostVolume, Seasons, Stream, WindZone};
 use voxear_scene::BehaviourSpec;
 
 use super::Editor;
@@ -35,6 +35,7 @@ pub(super) enum Copied {
     Wheel(Wheel),
     PostVolume(Box<PostVolume>),
     WindZone(WindZone),
+    ParticleSystem(Box<ParticleSystem>),
     Ocean(Ocean),
     Pool(Pool),
     DryArea(DryArea),
@@ -67,6 +68,7 @@ impl Copied {
             Part::Wheel => Self::Wheel(*world.get::<Wheel>(entity)?),
             Part::PostVolume => Self::PostVolume(Box::new(world.get::<PostVolume>(entity)?.clone())),
             Part::WindZone => Self::WindZone(*world.get::<WindZone>(entity)?),
+            Part::ParticleSystem => Self::ParticleSystem(Box::new(*world.get::<ParticleSystem>(entity)?)),
             Part::Ocean => Self::Ocean(*world.get::<Ocean>(entity)?),
             Part::Pool => Self::Pool(*world.get::<Pool>(entity)?),
             Part::DryArea => Self::DryArea(*world.get::<DryArea>(entity)?),
@@ -90,6 +92,7 @@ impl Copied {
             Self::Camera(camera) => drop(world.insert(entity, *camera)),
             Self::PostVolume(volume) => drop(world.insert(entity, (**volume).clone())),
             Self::WindZone(wind) => drop(world.insert(entity, *wind)),
+            Self::ParticleSystem(system) => drop(world.insert(entity, **system)),
             Self::Ocean(ocean) => drop(world.insert(entity, *ocean)),
             Self::Pool(pool) => drop(world.insert(entity, *pool)),
             Self::DryArea(dry) => drop(world.insert(entity, *dry)),

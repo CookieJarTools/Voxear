@@ -58,7 +58,7 @@ use voxear_core::math::{EulerRot, Quat, Vec3};
 use voxear_ecs::{Entity, World};
 use voxear_render::{
     Camera, Foliage, FoliageInteraction, Light, LightKind, LodGroup, Look, LookName, MAX_TRANSITIONS, MeshRenderer, PostProcess, PostVolume, Renderer,
-    DryArea, Ocean, Plant, Pool, Seasons, Sky, SkyBody, SkyMode, Stream, SunLook, VolumeShape, WindZone, scatter,
+    DryArea, Ocean, ParticleSystem, Plant, Pool, Seasons, Sky, SkyBody, SkyMode, Stream, SunLook, VolumeShape, WindZone, scatter,
 };
 use voxear_scene::{
     BehaviourSpec, Behaviours, Layer, Layers, Name, Parent, SceneComponents, ScenePersistence, Transform,
@@ -273,6 +273,9 @@ pub struct ObjData {
     /// A Wind Zone, blowing along the Obj's +Z over the whole level.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wind_zone: Option<WindZone>,
+    /// A Particle System, sending out particles from the Obj.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub particles: Option<ParticleSystem>,
     /// An Ocean, the sea filling the level at the Obj's height.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ocean: Option<Ocean>,
@@ -347,6 +350,7 @@ impl ObjData {
             layer: None,
             collider: None,
             wind_zone: None,
+            particles: None,
             ocean: None,
             pool: None,
             dry_area: None,
@@ -1279,6 +1283,9 @@ fn capture_instance(
     if root.wind_zone.is_some() && root.wind_zone != prefab_root.wind_zone {
         instance.wind_zone = root.wind_zone;
     }
+    if root.particles.is_some() && root.particles != prefab_root.particles {
+        instance.particles = root.particles;
+    }
     if root.ocean.is_some() && root.ocean != prefab_root.ocean {
         instance.ocean = root.ocean;
     }
@@ -1410,6 +1417,9 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     }
     if let Some(wind) = actual.wind_zone.filter(|w| Some(*w) != expected.wind_zone) {
         put("wind_zone", whole(&wind, &WindZone::default())?);
+    }
+    if let Some(particles) = actual.particles.filter(|p| Some(*p) != expected.particles) {
+        put("particles", whole(&particles, &ParticleSystem::default())?);
     }
     if let Some(ocean) = actual.ocean.filter(|o| Some(*o) != expected.ocean) {
         put("ocean", whole(&ocean, &Ocean::default())?);
@@ -1654,6 +1664,7 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.layer = world.get::<Layer>(entity).filter(|layer| layer.0 != 0).map(|layer| LayerRef::Number(layer.0));
     obj.collider = world.get::<Collider>(entity).copied();
     obj.wind_zone = world.get::<WindZone>(entity).copied();
+    obj.particles = world.get::<ParticleSystem>(entity).copied();
     obj.ocean = world.get::<Ocean>(entity).copied();
     obj.pool = world.get::<Pool>(entity).copied();
     obj.dry_area = world.get::<DryArea>(entity).map(|area| DryAreaData::of(content, area));
@@ -2050,6 +2061,17 @@ mod tests {
         // Its own Mesh Renderer's mesh, written as none.
         let own: ObjData = toml::from_str("id = 4\n[dry_area]\nshape = \"mesh\"").unwrap();
         assert_eq!(own.dry_area.and_then(|d| d.mesh), None);
+    }
+
+    #[test]
+    fn a_particle_system_reads_and_writes_back() {
+        let text = "id = 1\nname = \"Sparks\"\n[particles]\nrate = 40.0\nblend = \"additive\"\nshape = \"sphere\"";
+        let obj: ObjData = toml::from_str(text).unwrap();
+        let system = obj.particles.expect("the system is read");
+        use voxear_render::{EmitShape, ParticleBlend};
+        assert_eq!((system.rate, system.blend, system.shape), (40.0, ParticleBlend::Additive, EmitShape::Sphere));
+        assert_eq!(system.lifetime, ParticleSystem::default().lifetime, "the rest as a new one has");
+        assert_eq!(toml::from_str::<ObjData>(&toml::to_string(&obj).unwrap()).unwrap().particles, Some(system));
     }
 
     #[test]

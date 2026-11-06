@@ -20,7 +20,7 @@ use voxear_engine::{
     scene_file::{FoliageSource, ModelSource},
 };
 use voxear_render::{
-    Camera, Foliage, FoliageInteraction, Light, LodGroup, MeshRenderer, ModelRenderer, Ocean, Renderer, Seasons, WindZone, DryArea, Pool, Stream,
+    Camera, Foliage, FoliageInteraction, Light, LodGroup, MeshRenderer, ModelRenderer, Ocean, ParticleSystem, Renderer, Seasons, WindZone, DryArea, Pool, Stream,
 };
 use voxear_scene::{Layer, Name, ScenePersistence, Transform};
 
@@ -52,6 +52,7 @@ pub struct ObjState {
     pub rigidbody: Option<Box<Rigidbody>>,
     pub character: Option<Box<CharacterController>>,
     pub wind_zone: Option<Box<WindZone>>,
+    pub particles: Option<Box<ParticleSystem>>,
     pub ocean: Option<Box<Ocean>>,
     pub pool: Option<Box<Pool>>,
     pub dry_area: Option<Box<DryArea>>,
@@ -91,6 +92,7 @@ impl ObjState {
             rigidbody: world.get::<Rigidbody>(entity).copied().map(Box::new),
             character: world.get::<CharacterController>(entity).copied().map(Box::new),
             wind_zone: world.get::<WindZone>(entity).copied().map(Box::new),
+            particles: world.get::<ParticleSystem>(entity).copied().map(Box::new),
             ocean: world.get::<Ocean>(entity).copied().map(Box::new),
             pool: world.get::<Pool>(entity).copied().map(Box::new),
             dry_area: world.get::<DryArea>(entity).copied().map(Box::new),
@@ -150,6 +152,7 @@ impl ObjState {
         put(world, entity, self.rigidbody.as_deref().copied());
         put(world, entity, self.character.as_deref().copied());
         put(world, entity, self.wind_zone.as_deref().copied());
+        put(world, entity, self.particles.as_deref().copied());
         put(world, entity, self.ocean.as_deref().copied());
         put(world, entity, self.pool.as_deref().copied());
         put(world, entity, self.dry_area.as_deref().copied());

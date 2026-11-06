@@ -24,6 +24,7 @@ use voxear_engine::{
 use voxear_render::{
     Camera, Foliage, FoliageInteraction, Impostors, Light, LightKind, LodGroup, LodLevel, LodMeasure, MAX_TRANSITIONS, MeshRenderer, PostVolume, Renderer,
     ModelRenderer, Ocean, Season, Seasons, SkyBody, VolumeShape, Weather, WindShape, WindSource, WindZone, DryArea, DryShape, Liquid, Pool, Stream,
+    EmitShape, ParticleBlend, ParticleSystem,
 };
 use voxear_scene::{BehaviourSpec, Behaviours, Name, Parent, SceneComponents};
 
@@ -75,6 +76,7 @@ pub enum Part {
     Wheel,
     PostVolume,
     WindZone,
+    ParticleSystem,
     Ocean,
     Pool,
     DryArea,
@@ -113,6 +115,7 @@ impl Part {
             Part::Wheel => "wheel".into(),
             Part::PostVolume => "post_volume".into(),
             Part::WindZone => "wind_zone".into(),
+            Part::ParticleSystem => "particles".into(),
             Part::Ocean => "ocean".into(),
             Part::Pool => "pool".into(),
             Part::DryArea => "dry_area".into(),
@@ -145,6 +148,7 @@ impl Part {
             Part::Wheel => "Wheel",
             Part::PostVolume => "Post Volume",
             Part::WindZone => "Wind Zone",
+            Part::ParticleSystem => "Particle System",
             Part::Ocean => "Ocean",
             Part::Pool => "Pool",
             Part::DryArea => "Dry Area",
@@ -176,6 +180,7 @@ impl Part {
             Part::Wheel => "rotate",
             Part::PostVolume => "panels",
             Part::WindZone => "move",
+            Part::ParticleSystem => "particles",
             Part::Ocean => "globe",
             Part::Pool => "globe",
             Part::DryArea => "box",
@@ -234,6 +239,33 @@ pub enum Prop {
     WindSize,
     WindWidth,
     WindFalloff,
+    /// A Particle System's round, its stream and burst; each particle's life,
+    /// speed and size; its colours, as it starts and as it dies, how it
+    /// blends and is lit; where it starts from; what pulls and turns it.
+    ParticleDuration,
+    ParticleLooping,
+    ParticleRate,
+    ParticleBurst,
+    ParticleLifetime,
+    ParticleSpeed,
+    ParticleSize,
+    ParticleSizeEnd,
+    ParticleColor,
+    ParticleOpacity,
+    ParticleColorEnd,
+    ParticleOpacityEnd,
+    ParticleIntensity,
+    ParticleBlend,
+    ParticleLit,
+    ParticleSoftness,
+    ParticleShape,
+    ParticleRadius,
+    ParticleAngle,
+    ParticleBoxSize,
+    ParticleGravity,
+    ParticleDrag,
+    ParticleSpin,
+    ParticleSeed,
     /// An Ocean's weather, and for Custom weather its swell and wind; its
     /// crests, colours and foam.
     OceanWeather,
@@ -485,6 +517,30 @@ impl Prop {
             | Prop::WindFalloff => {
                 Part::WindZone
             }
+            Prop::ParticleDuration
+            | Prop::ParticleLooping
+            | Prop::ParticleRate
+            | Prop::ParticleBurst
+            | Prop::ParticleLifetime
+            | Prop::ParticleSpeed
+            | Prop::ParticleSize
+            | Prop::ParticleSizeEnd
+            | Prop::ParticleColor
+            | Prop::ParticleOpacity
+            | Prop::ParticleColorEnd
+            | Prop::ParticleOpacityEnd
+            | Prop::ParticleIntensity
+            | Prop::ParticleBlend
+            | Prop::ParticleLit
+            | Prop::ParticleSoftness
+            | Prop::ParticleShape
+            | Prop::ParticleRadius
+            | Prop::ParticleAngle
+            | Prop::ParticleBoxSize
+            | Prop::ParticleGravity
+            | Prop::ParticleDrag
+            | Prop::ParticleSpin
+            | Prop::ParticleSeed => Part::ParticleSystem,
             Prop::OceanWeather
             | Prop::OceanWindSource
             | Prop::OceanTransition
@@ -667,6 +723,30 @@ impl Prop {
             Prop::WindShape => "shape",
             Prop::WindSize | Prop::WindWidth => "size",
             Prop::WindFalloff => "falloff",
+            Prop::ParticleDuration => "duration",
+            Prop::ParticleLooping => "looping",
+            Prop::ParticleRate => "rate",
+            Prop::ParticleBurst => "burst",
+            Prop::ParticleLifetime => "lifetime",
+            Prop::ParticleSpeed => "speed",
+            Prop::ParticleSize => "size",
+            Prop::ParticleSizeEnd => "size_end",
+            Prop::ParticleColor => "color",
+            Prop::ParticleOpacity => "color",
+            Prop::ParticleColorEnd => "color_end",
+            Prop::ParticleOpacityEnd => "color_end",
+            Prop::ParticleIntensity => "intensity",
+            Prop::ParticleBlend => "blend",
+            Prop::ParticleLit => "lit",
+            Prop::ParticleSoftness => "softness",
+            Prop::ParticleShape => "shape",
+            Prop::ParticleRadius => "radius",
+            Prop::ParticleAngle => "angle",
+            Prop::ParticleBoxSize => "box_size",
+            Prop::ParticleGravity => "gravity",
+            Prop::ParticleDrag => "drag",
+            Prop::ParticleSpin => "spin",
+            Prop::ParticleSeed => "seed",
             Prop::OceanWeather => "weather",
             Prop::OceanWindSource => "wind_source",
             Prop::OceanTransition => "transition",
@@ -870,6 +950,9 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     if world.has::<WindZone>(entity) {
         parts.push(Part::WindZone);
     }
+    if world.has::<ParticleSystem>(entity) {
+        parts.push(Part::ParticleSystem);
+    }
     if world.has::<Ocean>(entity) {
         parts.push(Part::Ocean);
     }
@@ -1007,6 +1090,37 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
                 WindShape::Sphere => vec![Prop::WindShape, Prop::WindStrength, Prop::WindWidth, Prop::WindFalloff],
                 WindShape::Box => vec![Prop::WindShape, Prop::WindStrength, Prop::WindSize, Prop::WindFalloff],
             }
+        }
+        Part::ParticleSystem => {
+            let shape = world.get::<ParticleSystem>(entity).map_or(EmitShape::Cone, |system| system.shape);
+            let mut props = vec![
+                Prop::ParticleDuration,
+                Prop::ParticleLooping,
+                Prop::ParticleRate,
+                Prop::ParticleBurst,
+                Prop::ParticleLifetime,
+                Prop::ParticleSpeed,
+                Prop::ParticleSize,
+                Prop::ParticleSizeEnd,
+                Prop::ParticleColor,
+                Prop::ParticleOpacity,
+                Prop::ParticleColorEnd,
+                Prop::ParticleOpacityEnd,
+                Prop::ParticleIntensity,
+                Prop::ParticleBlend,
+                Prop::ParticleLit,
+                Prop::ParticleSoftness,
+                Prop::ParticleShape,
+            ];
+            // Only what its shape uses.
+            props.extend(match shape {
+                EmitShape::Point => vec![],
+                EmitShape::Sphere => vec![Prop::ParticleRadius],
+                EmitShape::Cone => vec![Prop::ParticleRadius, Prop::ParticleAngle],
+                EmitShape::Box => vec![Prop::ParticleBoxSize],
+            });
+            props.extend([Prop::ParticleGravity, Prop::ParticleDrag, Prop::ParticleSpin, Prop::ParticleSeed]);
+            props
         }
         // The swell and wind only for Custom weather: the others set their own.
         Part::Ocean => {
@@ -1245,6 +1359,30 @@ pub fn label(prop: &Prop) -> String {
         Prop::WindWidth => "Width",
         Prop::WindFalloff => "Falloff",
         Prop::WindTurbulence => "Turbulence",
+        Prop::ParticleDuration => "Duration",
+        Prop::ParticleLooping => "Looping",
+        Prop::ParticleRate => "Rate",
+        Prop::ParticleBurst => "Burst",
+        Prop::ParticleLifetime => "Lifetime",
+        Prop::ParticleSpeed => "Speed",
+        Prop::ParticleSize => "Size",
+        Prop::ParticleSizeEnd => "End Size",
+        Prop::ParticleColor => "Colour",
+        Prop::ParticleOpacity => "Opacity",
+        Prop::ParticleColorEnd => "End Colour",
+        Prop::ParticleOpacityEnd => "End Opacity",
+        Prop::ParticleIntensity => "Intensity",
+        Prop::ParticleBlend => "Blend",
+        Prop::ParticleLit => "Lit",
+        Prop::ParticleSoftness => "Softness",
+        Prop::ParticleShape => "Shape",
+        Prop::ParticleRadius => "Radius",
+        Prop::ParticleAngle => "Angle",
+        Prop::ParticleBoxSize => "Box Size",
+        Prop::ParticleGravity => "Gravity",
+        Prop::ParticleDrag => "Drag",
+        Prop::ParticleSpin => "Spin",
+        Prop::ParticleSeed => "Seed",
         Prop::OceanWeather => "Weather",
         Prop::OceanWindSource => "Wind Source",
         Prop::OceanTransition => "Transition",
@@ -1519,6 +1657,9 @@ pub fn add(
         Part::WindZone => {
             world.insert(entity, WindZone::default());
         }
+        Part::ParticleSystem => {
+            world.insert(entity, ParticleSystem::default());
+        }
         Part::Ocean => {
             world.insert(entity, Ocean::default());
         }
@@ -1575,6 +1716,10 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
         Part::Camera => drop(world.remove::<Camera>(entity)),
         Part::PostVolume => drop(world.remove::<PostVolume>(entity)),
         Part::WindZone => drop(world.remove::<WindZone>(entity)),
+        Part::ParticleSystem => {
+            world.remove::<ParticleSystem>(entity);
+            world.remove::<voxear_render::ParticlePlayback>(entity);
+        }
         Part::Ocean => drop(world.remove::<Ocean>(entity)),
         Part::Pool => drop(world.remove::<Pool>(entity)),
         Part::DryArea => drop(world.remove::<DryArea>(entity)),
@@ -1792,6 +1937,32 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::WindWidth => Value::Number(world.get::<WindZone>(entity)?.size[0]),
         Prop::WindFalloff => Value::Number(world.get::<WindZone>(entity)?.falloff),
         Prop::WindTurbulence => Value::Number(world.get::<WindZone>(entity)?.turbulence),
+        Prop::ParticleDuration
+        | Prop::ParticleLooping
+        | Prop::ParticleRate
+        | Prop::ParticleBurst
+        | Prop::ParticleLifetime
+        | Prop::ParticleSpeed
+        | Prop::ParticleSize
+        | Prop::ParticleSizeEnd
+        | Prop::ParticleColor
+        | Prop::ParticleOpacity
+        | Prop::ParticleColorEnd
+        | Prop::ParticleOpacityEnd
+        | Prop::ParticleIntensity
+        | Prop::ParticleBlend
+        | Prop::ParticleLit
+        | Prop::ParticleSoftness
+        | Prop::ParticleShape
+        | Prop::ParticleRadius
+        | Prop::ParticleAngle
+        | Prop::ParticleBoxSize
+        | Prop::ParticleGravity
+        | Prop::ParticleDrag
+        | Prop::ParticleSpin
+        | Prop::ParticleSeed => {
+            particle_value(world.get::<ParticleSystem>(entity)?, prop)?
+        }
         Prop::OceanWeather => {
             let weather = world.get::<Ocean>(entity)?.weather;
             let index = Weather::ALL.iter().position(|w| *w == weather).unwrap_or(0);
@@ -2649,6 +2820,9 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         (Prop::WindTurbulence, Value::Number(n)) => {
             with(world, entity, |wind: &mut WindZone| wind.turbulence = n.max(0.0))
         }
+        (prop, value) if prop.part() == Part::ParticleSystem => {
+            with(world, entity, |system: &mut ParticleSystem| set_particle(system, prop, value))
+        }
         (Prop::OceanWeather, Value::Choice(index, _)) => {
             let weather = Weather::ALL.get(index).copied().unwrap_or_default();
             with(world, entity, |ocean: &mut Ocean| ocean.weather = weather)
@@ -2817,6 +2991,90 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
 }
 
 /// Changes a component, if the Obj has it.
+/// A Particle System's field as the Inspector shows it: its colours in sRGB,
+/// their opacity apart.
+fn particle_value(system: &ParticleSystem, prop: &Prop) -> Option<Value> {
+    let choice = |index: usize, names: Vec<&str>| Value::Choice(index, names.into_iter().map(String::from).collect());
+    let color = |c: [f32; 4]| Value::Color(srgb([c[0], c[1], c[2]]).map(round3));
+    Some(match prop {
+        Prop::ParticleDuration => Value::Number(system.duration),
+        Prop::ParticleLooping => Value::Toggle(system.looping),
+        Prop::ParticleRate => Value::Number(system.rate),
+        Prop::ParticleBurst => Value::Whole(i64::from(system.burst)),
+        Prop::ParticleLifetime => Value::Vector(system.lifetime.to_vec()),
+        Prop::ParticleSpeed => Value::Vector(system.speed.to_vec()),
+        Prop::ParticleSize => Value::Vector(system.size.to_vec()),
+        Prop::ParticleSizeEnd => Value::Number(system.size_end),
+        Prop::ParticleColor => color(system.color),
+        Prop::ParticleOpacity => Value::Number(round3(system.color[3])),
+        Prop::ParticleColorEnd => color(system.color_end),
+        Prop::ParticleOpacityEnd => Value::Number(round3(system.color_end[3])),
+        Prop::ParticleIntensity => Value::Number(system.intensity),
+        Prop::ParticleBlend => {
+            let index = ParticleBlend::ALL.iter().position(|b| *b == system.blend).unwrap_or(0);
+            choice(index, ParticleBlend::ALL.iter().map(|b| b.name()).collect())
+        }
+        Prop::ParticleLit => Value::Toggle(system.lit),
+        Prop::ParticleSoftness => Value::Number(system.softness),
+        Prop::ParticleShape => {
+            let index = EmitShape::ALL.iter().position(|s| *s == system.shape).unwrap_or(0);
+            choice(index, EmitShape::ALL.iter().map(|s| s.name()).collect())
+        }
+        Prop::ParticleRadius => Value::Number(system.radius),
+        Prop::ParticleAngle => Value::Number(system.angle),
+        Prop::ParticleBoxSize => Value::Vector(system.box_size.to_vec()),
+        Prop::ParticleGravity => Value::Number(system.gravity),
+        Prop::ParticleDrag => Value::Number(system.drag),
+        Prop::ParticleSpin => Value::Number(system.spin),
+        Prop::ParticleSeed => Value::Whole(i64::from(system.seed)),
+        _ => return None,
+    })
+}
+
+/// Sets a Particle System's field from the Inspector, kept within what it
+/// can be.
+fn set_particle(system: &mut ParticleSystem, prop: &Prop, value: Value) {
+    let pair = |v: &[f32], least: f32| [v[0].max(least), v[1].max(least)];
+    let whole = |n: i64| n.clamp(0, i64::from(u32::MAX)) as u32;
+    let rgb = |c: [f32; 3], alpha: f32| {
+        let [r, g, b] = linear(c.map(|c| c.clamp(0.0, 1.0)));
+        [r, g, b, alpha]
+    };
+    match (prop, value) {
+        (Prop::ParticleDuration, Value::Number(n)) => system.duration = n.max(0.01),
+        (Prop::ParticleLooping, Value::Toggle(on)) => system.looping = on,
+        (Prop::ParticleRate, Value::Number(n)) => system.rate = n.max(0.0),
+        (Prop::ParticleBurst, Value::Whole(n)) => system.burst = whole(n),
+        (Prop::ParticleLifetime, Value::Vector(v)) if v.len() == 2 => system.lifetime = pair(&v, 0.01),
+        (Prop::ParticleSpeed, Value::Vector(v)) if v.len() == 2 => system.speed = [v[0], v[1]],
+        (Prop::ParticleSize, Value::Vector(v)) if v.len() == 2 => system.size = pair(&v, 0.0),
+        (Prop::ParticleSizeEnd, Value::Number(n)) => system.size_end = n.max(0.0),
+        (Prop::ParticleColor, Value::Color(c)) => system.color = rgb(c, system.color[3]),
+        (Prop::ParticleOpacity, Value::Number(n)) => system.color[3] = n.clamp(0.0, 1.0),
+        (Prop::ParticleColorEnd, Value::Color(c)) => system.color_end = rgb(c, system.color_end[3]),
+        (Prop::ParticleOpacityEnd, Value::Number(n)) => system.color_end[3] = n.clamp(0.0, 1.0),
+        (Prop::ParticleIntensity, Value::Number(n)) => system.intensity = n.max(0.0),
+        (Prop::ParticleBlend, Value::Choice(index, _)) => {
+            system.blend = ParticleBlend::ALL.get(index).copied().unwrap_or_default();
+        }
+        (Prop::ParticleLit, Value::Toggle(on)) => system.lit = on,
+        (Prop::ParticleSoftness, Value::Number(n)) => system.softness = n.max(0.0),
+        (Prop::ParticleShape, Value::Choice(index, _)) => {
+            system.shape = EmitShape::ALL.get(index).copied().unwrap_or_default();
+        }
+        (Prop::ParticleRadius, Value::Number(n)) => system.radius = n.max(0.0),
+        (Prop::ParticleAngle, Value::Number(n)) => system.angle = n.clamp(0.0, 180.0),
+        (Prop::ParticleBoxSize, Value::Vector(v)) if v.len() == 3 => {
+            system.box_size = [v[0], v[1], v[2]].map(|s| s.max(0.0));
+        }
+        (Prop::ParticleGravity, Value::Number(n)) => system.gravity = n,
+        (Prop::ParticleDrag, Value::Number(n)) => system.drag = n.max(0.0),
+        (Prop::ParticleSpin, Value::Number(n)) => system.spin = n,
+        (Prop::ParticleSeed, Value::Whole(n)) => system.seed = whole(n),
+        _ => {}
+    }
+}
+
 fn with<T: voxear_ecs::Component>(world: &mut World, entity: Entity, change: impl FnOnce(&mut T)) -> bool {
     let Some(component) = world.get_mut::<T>(entity) else { return false };
     change(component);
@@ -3023,6 +3281,32 @@ mod tests {
         assert!(set_component(&mut world, entity, &Prop::SeasonColorAmount(Season::Autumn), Value::Number(0.4)));
         assert_eq!(world.get::<Seasons>(entity).unwrap().autumn.color_amount, 0.4);
         assert_eq!(Prop::SeasonColorAmount(Season::Autumn).lock_key(), "autumn.color_amount");
+    }
+
+    #[test]
+    fn a_particle_systems_rows_follow_its_shape_and_its_colours_show_in_srgb() {
+        let mut world = World::new();
+        let entity = world.spawn((ParticleSystem::default(),));
+        let types = ScriptTypes::default();
+        let shown = |world: &World| props(world, entity, &Part::ParticleSystem, &types);
+        assert!(shown(&world).contains(&Prop::ParticleAngle), "a Cone's angle");
+        assert!(set_component(&mut world, entity, &Prop::ParticleShape, Value::Choice(3, Vec::new())));
+        assert_eq!(world.get::<ParticleSystem>(entity).unwrap().shape, EmitShape::Box);
+        assert!(shown(&world).contains(&Prop::ParticleBoxSize) && !shown(&world).contains(&Prop::ParticleAngle));
+        // Mid grey as picked is a fifth of white's light, and keeps its opacity.
+        assert!(set_component(&mut world, entity, &Prop::ParticleOpacity, Value::Number(0.25)));
+        assert!(set_component(&mut world, entity, &Prop::ParticleColor, Value::Color([0.5; 3])));
+        let color = world.get::<ParticleSystem>(entity).unwrap().color;
+        assert!((color[0] - 0.214).abs() < 0.01 && color[3] == 0.25, "{color:?}");
+        assert!(set_component(&mut world, entity, &Prop::ParticleLifetime, Value::Vector(vec![-1.0, 4.0])));
+        assert_eq!(world.get::<ParticleSystem>(entity).unwrap().lifetime, [0.01, 4.0], "never less than a moment");
+        assert!(set_component(&mut world, entity, &Prop::ParticleBurst, Value::Whole(12)));
+        assert_eq!(get_particle(&world, entity, Prop::ParticleBurst), Some(Value::Whole(12)));
+        assert_eq!(Prop::ParticleOpacityEnd.lock_key(), "color_end");
+    }
+
+    fn get_particle(world: &World, entity: Entity, prop: Prop) -> Option<Value> {
+        particle_value(world.get::<ParticleSystem>(entity)?, &prop)
     }
 
     #[test]

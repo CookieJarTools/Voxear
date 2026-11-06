@@ -43,6 +43,32 @@ internal static class HandlesTests
 	}
 
 	[Test]
+	private static void ADiscTurnsAndArrowsMoveAlongTheirAxis()
+	{
+		Draw.Sink = (_, _, _, _, _) => { };
+		try
+		{
+			// The dot of a ring round Y starts out along +X, and is dragged a quarter turn round to +Z.
+			Handles.BeginFrame(new HandleDrag(7, "Hello.Guard", 0, new Vector3(0f, 0f, 2f), 0f), null);
+			Handles.BeginOwner(7, "Hello.Guard");
+			var turned = Handles.Disc(Vector3.Zero, Quaternion.Identity, Vector3.UnitY, 2f);
+			Check.Near(new Vector3(0f, 0f, 1f), Vector3.Transform(Vector3.UnitX, turned), 1e-5f);
+			Check.Near(new Vector3(0f, 0f, 1f), Handles.Shown[0].Toward, 1e-5f);
+			// The Y arrow, after the point and the X arrow, dragged so its tip is at 3.5 up.
+			Handles.BeginFrame(new HandleDrag(7, "Hello.Guard", 2, new Vector3(1f, 3.5f, 1f), 2.5f), null);
+			Handles.BeginOwner(7, "Hello.Guard");
+			var moved = Handles.Position(new Vector3(1f, 1f, 1f), null, arrows: true);
+			Check.Near(new Vector3(1f, 2.5f, 1f), moved, 1e-5f);
+			Check.True(Handles.Shown.Count == 4 && Handles.Shown[3].At == moved, "the point and three arrows, the last from where it went");
+		}
+		finally
+		{
+			Draw.Sink = null;
+			Handles.BeginFrame(null, null);
+		}
+	}
+
+	[Test]
 	private static void AButtonIsTrueWhenClicked()
 	{
 		Handles.BeginFrame(null, new HandleClick(7, "Hello.Guard", 1));

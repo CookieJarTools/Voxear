@@ -53,10 +53,14 @@ pub enum ScriptHandleKind {
     Radius,
     Slider,
     Button,
+    /// A dot on a ring round `direction`, `number` out from `at`, dragged
+    /// round it to turn.
+    Disc,
 }
 
-/// A handle the gizmos showed: where it is, and for a radius or slider, how
-/// far out and along what.
+/// A handle the gizmos showed: where it is, and for a radius, slider or
+/// disc, how far out and along or round what; for a disc, which way its dot
+/// is from its middle.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ScriptHandle {
     pub id: HandleId,
@@ -64,6 +68,7 @@ pub struct ScriptHandle {
     pub at: Vec3,
     pub direction: Vec3,
     pub number: f32,
+    pub toward: Vec3,
     pub color: Option<[f32; 4]>,
 }
 
@@ -156,6 +161,7 @@ fn read_answer(mut answer: serde_json::Value) -> GizmoAnswer {
             1 => ScriptHandleKind::Radius,
             2 => ScriptHandleKind::Slider,
             3 => ScriptHandleKind::Button,
+            4 => ScriptHandleKind::Disc,
             _ => return None,
         };
         let id = HandleId {
@@ -173,6 +179,7 @@ fn read_answer(mut answer: serde_json::Value) -> GizmoAnswer {
             at: vector(&shown["at"]),
             direction: vector(&shown["direction"]),
             number: shown["number"].as_f64().unwrap_or_default() as f32,
+            toward: vector(&shown["toward"]),
             color,
         })
     });

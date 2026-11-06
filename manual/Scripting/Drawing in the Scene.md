@@ -134,11 +134,13 @@ public sealed class Patrol : Behaviour
 | Handle | What you drag | What it gives back |
 | --- | --- | --- |
 | `Handles.Position(point)` | A dot, across the view | The point it was dragged to |
+| `Handles.Position(point, arrows: true)` | The dot, or a red, green or blue arrow to move it along one axis | The point it was dragged to |
 | `Handles.Radius(center, radius)` | A dot on the edge of a sphere, which it draws | The new radius |
 | `Handles.Slider(origin, direction, distance)` | A dot along a line, which it draws | How far along the line it is |
 | `Handles.Button(point)` | A square you click | `true` in the frame it was clicked |
+| `Handles.Disc(center, rotation, axis, radius)` | A dot round a ring about the axis, which it draws | The rotation, turned as far round the axis |
 
-Points are in the world. Each handle also takes a colour. Holding Ctrl while you drag snaps a point to the grid's snap distance, and a radius or distance to tenths of a metre.
+Points are in the world. Each handle also takes a colour. Holding Ctrl while you drag snaps a point to the grid's snap distance, a radius or distance to tenths of a metre, and a disc to 15° turns.
 
 While you edit, a drag changes the behaviour's values in the scene, just as typing them into the Inspector would: the whole drag is one step to undo, and a field's `[OnValueChanged]` method runs when a handle changes it. So does a click on a button, so adding a point with the button above can be undone too. While the game plays, a drag changes the running behaviour, and stopping the game puts it back as it was.
 

@@ -612,7 +612,8 @@ Next in M3:
     - [x] for custom tools, handles that return the new value, with undo and `[OnValueChanged]` built in:
       `Target = Handles.Position(Target)` (dragged across the view, so it is also Unity's `FreeMove`),
       `Handles.Radius`, `Handles.Slider` and `Handles.Button`, in `DrawGizmos`, while editing and while playing
-    - [ ] `Handles.Disc` for turning, and `Handles.Position` with move arrows along each axis
+    - [x] `Handles.Disc` for turning, a dot dragged round a ring (15° steps with Ctrl), and
+      `Handles.Position(p, arrows: true)` with a move arrow along each axis
     - [x] in development builds, drawing shows in the game; release builds leave it out unless asked to keep it
     - [ ] later: physics queries drawn with their hits, and a recorder to scrub back through what was drawn
   - [x] several Hierarchies and Project panels, opened from a window's menu (Add Hierarchy, Add Project), and a click

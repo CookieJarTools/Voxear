@@ -164,6 +164,7 @@ internal static class SceneGizmos
 			WriteVector(json, "at", handle.At);
 			WriteVector(json, "direction", handle.Direction);
 			json.WriteNumber("number", handle.Number);
+			WriteVector(json, "toward", handle.Toward);
 			if (handle.Color is { } color)
 			{
 				json.WriteStartArray("color");

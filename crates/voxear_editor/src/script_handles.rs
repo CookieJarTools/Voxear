@@ -2,11 +2,11 @@
 //! Voxear.Core), which the editor draws and drags in the Scene view: a
 //! point to drag in the plane of the view; a radius's dot on its rim, to
 //! the right on screen; a slider's dot at its distance along its line; and
-//! a button. Each frame the gizmos say which handles they show, and are
+//! a button; and a disc's dot on its ring, dragged round it. Each frame the gizmos say which handles they show, and are
 //! told which one the pointer holds and where it has dragged it to, or
 //! which button it clicked, and give back the value as the drag left it.
-//! Holding Ctrl snaps a point to the snap distance, and a radius or
-//! distance to tenths of a metre.
+//! Holding Ctrl snaps a point to the snap distance, a radius or distance to
+//! tenths of a metre, and a disc to 15° turns.
 
 use voxear_core::math::Vec3;
 use voxear_ecs::Entity;
@@ -17,6 +17,8 @@ use crate::scene_tools::{ViewCamera, along_axis, on_plane, snapped};
 
 /// How near the pointer must be to a dot to take it, in logical pixels.
 const REACH: f32 = 9.0;
+/// How far a disc turns in a step while Ctrl is held, in degrees.
+const DISC_STEP: f32 = 15.0;
 /// A dot's radius on screen, a button's half width, and the colour they take unless told.
 const DOT: f32 = 4.5;
 const BUTTON: f32 = 6.0;
@@ -49,7 +51,24 @@ fn grip(handle: &ScriptHandle, camera: &ViewCamera) -> Vec3 {
         ScriptHandleKind::Position | ScriptHandleKind::Button => handle.at,
         ScriptHandleKind::Radius => handle.at + camera.right * handle.number,
         ScriptHandleKind::Slider => handle.at + handle.direction * handle.number,
+        ScriptHandleKind::Disc => handle.at + handle.toward * handle.number,
     }
+}
+
+/// Where a disc's dot goes for a pointer over `hit` in its plane: round its
+/// ring to there, in 15° steps from where it was taken when `snap`.
+fn round_disc(handle: &ScriptHandle, hit: Vec3, snap: bool) -> Option<Vec3> {
+    let axis = handle.direction.normalize_or_zero();
+    let flat = hit - handle.at;
+    let way = (flat - axis * flat.dot(axis)).try_normalize()?;
+    if !snap {
+        return Some(handle.at + way * handle.number);
+    }
+    let start = handle.toward;
+    let angle = start.cross(way).dot(axis).atan2(start.dot(way));
+    let step = DISC_STEP.to_radians();
+    let turned = voxear_core::math::Quat::from_axis_angle(axis, (angle / step).round() * step) * start;
+    Some(handle.at + turned * handle.number)
 }
 
 impl ScriptHandles {
@@ -116,7 +135,10 @@ impl ScriptHandles {
                 on_plane(ray, handle.at, drag.facing).map(|hit| (hit, tenth(hit.distance(handle.at))))
             }
             ScriptHandleKind::Slider => along_axis(ray, handle.at, handle.direction)
-                .map(|along| (handle.at + handle.direction * along, tenth(along))),
+                .map(|along| (handle.at + handle.direction * tenth(along), tenth(along))),
+            ScriptHandleKind::Disc => on_plane(ray, handle.at, handle.direction)
+                .and_then(|hit| round_disc(handle, hit, snap))
+                .map(|dot| (dot, handle.number)),
             ScriptHandleKind::Button => None,
         }
         .or(drag.to);
@@ -186,7 +208,20 @@ mod tests {
 
     fn handle(kind: ScriptHandleKind, at: Vec3, number: f32) -> ScriptHandle {
         let id = HandleId { entity: Entity::from_bits(7), behaviour: "Hello.Guard".into(), id: 0 };
-        ScriptHandle { id, kind, at, direction: Vec3::Y, number, color: None }
+        ScriptHandle { id, kind, at, direction: Vec3::Y, number, toward: Vec3::X, color: None }
+    }
+
+    #[test]
+    fn a_disc_turns_round_its_ring_in_steps_with_ctrl() {
+        let disc = handle(ScriptHandleKind::Disc, Vec3::ZERO, 2.0);
+        assert_eq!(grip(&disc, &camera()), Vec3::new(2.0, 0.0, 0.0), "its dot out along its way");
+        // A pointer a little over 40° round towards +Z, and off the ring.
+        let hit = Vec3::new(3.0, 0.0, 2.6);
+        let free = round_disc(&disc, hit, false).unwrap();
+        assert!((free.length() - 2.0).abs() < 1e-5 && free.z > 1.0, "on the ring: {free}");
+        let snapped = round_disc(&disc, hit, true).unwrap();
+        let expected = Vec3::new(45f32.to_radians().cos(), 0.0, 45f32.to_radians().sin()) * 2.0;
+        assert!(snapped.distance(expected) < 1e-4, "45° round: {snapped}");
     }
 
     #[test]

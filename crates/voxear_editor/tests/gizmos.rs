@@ -25,6 +25,7 @@ public sealed class Beacon : Behaviour
 	[OnValueChanged(nameof(Moved))] public Vector3 Target = new(0f, 2f, 0f);
 	public int Pings;
 	public int Moves;
+	public Quaternion Turn = Quaternion.Identity;
 
 	protected override void DrawGizmos(Gizmo gizmo)
 	{
@@ -39,6 +40,7 @@ public sealed class Beacon : Behaviour
 		{
 			Pings++;
 		}
+		Turn = Handles.Disc(Obj.WorldPosition - new Vector3(0f, 1.5f, 0f), Turn, Vector3.UnitY, 1.2f);
 	}
 
 	private void Moved() => Moves++;
@@ -250,6 +252,24 @@ fn behaviours_draw_their_gizmos_while_editing_and_while_playing() {
     drag(&mut editor, &mut renderer, button, button);
     let pings = beacon_field(&editor, beacon, "pings").and_then(|value| value.as_integer());
     assert_eq!(pings, Some(1), "one click, one ping");
+
+    // The disc's dot, out along X under the Obj, dragged a quarter turn round to Z turns it a quarter round Y.
+    let disc = centre - Vec3::Y * 1.5;
+    let (dot, to) = (on_screen(&editor, disc + Vec3::X * 1.2), on_screen(&editor, disc + Vec3::Z * 1.2));
+    drag(&mut editor, &mut renderer, dot, to);
+    let turn = beacon_field(&editor, beacon, "turn").expect("the drag set the turn");
+    let parts: Vec<f32> = turn.as_array().unwrap().iter().map(number).collect();
+    let turned = match parts[..] {
+        [x, y, z, w] => voxear_core::math::Quat::from_xyzw(x, y, z, w),
+        [x, y, z] => voxear_core::math::Quat::from_euler(
+            voxear_core::math::EulerRot::YXZ,
+            y.to_radians(),
+            x.to_radians(),
+            z.to_radians(),
+        ),
+        _ => panic!("a rotation: {turn:?}"),
+    };
+    assert!((turned * Vec3::X).distance(Vec3::Z) < 0.05, "X turned to Z: {parts:?}");
 
     // A click on the gizmo's sphere selects the Obj it is drawn for, though nothing else is there.
     editor.select(None);

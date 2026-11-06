@@ -548,7 +548,8 @@ Next in M3:
     were destroyed, and Objs scripts made from prefabs, made again with their parents, places and values, in
     `Save.WriteScene` and `await Save.LoadScene`, or `SceneState` as a part of a `SaveFile`
   - [x] `SavedTransform` for where a scene's Obj stands, and `Save.IsLoadingScene` for spawners
-  - [ ] C# components (`IComponent`) marked to be kept in a save of the scene
+  - [x] C# components (`IComponent`) marked `[Saved]`, kept whole in a save of the scene for each Obj it can find
+    again
   - [ ] a picture of the game with each save, for load menus (the file already has room for one)
   - [ ] a Saves window in the editor, to look into, change and delete the project's saves
   - Later: a store for cloud saves, with Steam's in M11.

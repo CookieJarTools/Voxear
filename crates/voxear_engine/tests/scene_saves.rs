@@ -1,7 +1,8 @@
 //! Saves of the scene from C#, on a copy of Hello with scripts and a prefab
 //! of its own: a door opened and a ball moved through values marked
 //! [Saved], a lamp destroyed, and crates made from a prefab, one stacked on
-//! another and one on the ball, with a keeper that lists them. The scene is
+//! another and one on the ball, with a keeper that lists them, and a C#
+//! component marked [Saved] on the ball. The scene is
 //! saved, changed again, and loaded back, and everything is as it was
 //! saved. A file of its own, so it runs in a process of its own, since .NET
 //! starts only once per process. Skips itself without .NET.
@@ -37,6 +38,12 @@ public sealed class Lid : Behaviour
 	[Saved] public bool Open;
 }
 
+[Saved]
+public struct Charge : IComponent
+{
+	public float Amount;
+}
+
 public sealed class Keeper : Behaviour
 {
 	[Saved] private List<Obj> crates = [];
@@ -53,6 +60,11 @@ public sealed class SceneCheck : SystemBase
 	protected override void Update()
 	{
 		frame++;
+		// Added a frame ahead, as adding waits for the systems to finish.
+		if (frame == 1)
+		{
+			Obj.Find("Chrome Ball").Entity.Add(new Charge { Amount = 1 });
+		}
 		if (frame == 2)
 		{
 			Change();
@@ -68,6 +80,7 @@ public sealed class SceneCheck : SystemBase
 		var ball = Obj.Find("Chrome Ball");
 		ball.GetBehaviour<Door>()!.IsOpen = true;
 		ball.Position = new Vector3(5, 1, 0);
+		ball.Entity.Set(new Charge { Amount = 3 });
 		Obj.Find("Lamp").Destroy();
 
 		var crate = Prefab.Load("Prefabs/Crate.prefab");
@@ -95,6 +108,7 @@ public sealed class SceneCheck : SystemBase
 	{
 		// Changes after the save, which loading it undoes.
 		Obj.Find("Chrome Ball").GetBehaviour<Door>()!.IsOpen = false;
+		Obj.Find("Chrome Ball").Entity.Set(new Charge { Amount = 9 });
 		Prefab.Load("Prefabs/Crate.prefab").Instantiate().GetBehaviour<Crate>()!.Label = "extra";
 		await Save.LoadScene("world");
 		Log.Info("loaded the scene");
@@ -115,6 +129,7 @@ public sealed class SceneCheck : SystemBase
 		Log.Info($"stacked at {stacked.WorldPosition}, on the ball at {onBall.WorldPosition}");
 		var open = Obj.FindAll("Lid").Where(lid => lid.GetBehaviour<Lid>()!.Open).Select(lid => lid.WorldPosition);
 		Log.Info($"open lids at {string.Join(", ", open)}");
+		Log.Info($"charge {(ball.Entity.TryGet(out Charge charge) ? charge.Amount : -1)}");
 	}
 }
 "#;
@@ -216,6 +231,7 @@ fn a_save_of_the_scene_puts_it_back_as_it_was() {
     assert_eq!(report("kept "), "kept 10, 11, favourite crate 1", "references to the copies made again: {lines:#?}");
     assert_eq!(report("stacked "), "stacked at <0, 2, 3>, on the ball at <5, 1, 0>", "under their parents: {lines:#?}");
     assert_eq!(report("open lids "), "open lids at <0, 0.5, 3>", "an Obj inside a copy: {lines:#?}");
+    assert_eq!(report("charge "), "charge 3", "the component as saved, on the ball loaded afresh: {lines:#?}");
     let starts: Vec<&String> = lines.iter().filter(|line| line.starts_with("door starts")).collect();
     assert_eq!(starts.first().map(|s| s.as_str()), Some("door starts shut, loading False"), "{lines:#?}");
     assert_eq!(

@@ -179,6 +179,7 @@ await Save.LoadScene("slot1");
 `[Saved]` works on private fields and on properties too. A save of the scene keeps:
 
 - every `[Saved]` value, on every behaviour in the open scenes
+- every component of a struct marked `[Saved]`, whole, on each Obj in a scene file or made from a prefab, as `[Saved] public struct Charge : IComponent { public float Amount; }` keeps every Obj's charge. Plain entities with no Obj are not kept
 - which of the Objs loaded from scene files have been destroyed, so a coin the player picked up stays gone, with nothing to mark
 - every Obj your scripts made from a prefab, with its parent, position, rotation and scale, and its own `[Saved]` values
 

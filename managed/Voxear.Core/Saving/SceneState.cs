@@ -9,10 +9,11 @@ using Voxear.Scripting;
 namespace Voxear;
 
 /// <summary>
-/// The open scenes as the player left them: the values behaviours marked [Saved], the Objs the scenes loaded that
-/// have been destroyed since, and the Objs scripts made from prefabs, with where each one is. Capture takes it now,
-/// and it saves like any value, so it can be one part of a SaveFile. LoadAsync loads its level again and puts it
-/// back; Save.WriteScene and Save.LoadScene do both in one call.
+/// The open scenes as the player left them: the values behaviours marked [Saved] and the components of structs
+/// marked [Saved], the Objs the scenes loaded that have been destroyed since, and the Objs scripts made from
+/// prefabs, with where each one is. Capture takes it now, and it saves like any value, so it can be one part of a
+/// SaveFile. LoadAsync loads its level again and puts it back; Save.WriteScene and Save.LoadScene do both in one
+/// call.
 /// </summary>
 public sealed class SceneState
 {
@@ -49,6 +50,7 @@ public sealed class SceneState
 			root["gone"] = SaveNode.From(gone);
 			root["spawned"] = SaveNode.NewList(copies.Select(Copy));
 			root["saved"] = SaveNode.NewList(BehaviourTable.Live().Select(Values).OfType<SaveNode>());
+			root["components"] = SaveNode.NewList(SceneComponents.Capture());
 		}
 		return new SceneState(root);
 	}
@@ -56,7 +58,7 @@ public sealed class SceneState
 	/// <summary>
 	/// Puts the state back into the open scenes, as they are after their level has loaded afresh: the Objs that were
 	/// destroyed are destroyed, the Objs scripts made since the level loaded give way to the ones the state made,
-	/// which are made again, and every [Saved] value is set. LoadAsync loads the level first, which is what a
+	/// which are made again, and every [Saved] value and component is set. LoadAsync loads the level first, which is what a
 	/// Continue button wants.
 	/// </summary>
 	public void Apply()
@@ -83,6 +85,10 @@ public sealed class SceneState
 			foreach (var values in Root["saved"].Items)
 			{
 				Restore(values);
+			}
+			foreach (var component in Root["components"].Items)
+			{
+				SceneComponents.Restore(component);
 			}
 		}
 	}

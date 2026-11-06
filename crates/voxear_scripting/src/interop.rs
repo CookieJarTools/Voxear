@@ -26,7 +26,7 @@ use voxear_scene::{
 };
 
 use crate::audio::{PlaySound, SoundFacts, audio_bus, sound_info, sound_load, sound_play, source_value, voice_value};
-use crate::debug::{debug_box, debug_line, debug_screen_text, debug_sphere, debug_text};
+use crate::debug::{debug_box, debug_line, debug_screen_text, debug_solid, debug_sphere, debug_text};
 use crate::display;
 use crate::ecs::{
     self, CURRENT_WORLD, QueryDesc, change_tick, chunk_written, commands_defer, component_add, component_get,
@@ -307,6 +307,9 @@ pub(crate) struct NativeApi {
     /// `Draw.ScreenText`: a line of text in the view's corner, its colour
     /// and how long it shows.
     pub debug_screen_text: unsafe extern "C" fn(text: *const u8, len: i32, color: *const [f32; 4], duration: f32),
+    /// `Draw`'s solid shapes: triangles, three corners each, as `count`
+    /// says, in a colour, for a while, drawn as `flags` say.
+    pub debug_solid: unsafe extern "C" fn(corners: *const [f32; 3], count: i32, color: *const [f32; 4], duration: f32, flags: i32),
 }
 
 /// What answers scripts' questions about water: the engine's, set when it
@@ -1245,6 +1248,7 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         water_set_features,
         light_value,
         debug_screen_text,
+        debug_solid,
     }
 }
 

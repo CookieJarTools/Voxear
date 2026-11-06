@@ -1,5 +1,5 @@
-//! Debug draw: lines, boxes, spheres, arrows and text in the 3D view, and
-//! lines of text in its corner, from any code, Rust or C#, for as long as
+//! Debug draw: lines, boxes, spheres, arrows, solid shapes and text in the
+//! 3D view, and lines of text in its corner, from any code, Rust or C#, for as long as
 //! asked, as Unity's `Debug.DrawLine`.
 //!
 //! ```
@@ -31,6 +31,11 @@ use crate::math::{Quat, Vec3};
 pub const MAX_LINES: usize = 64 * 1024;
 /// Texts kept at most.
 pub const MAX_TEXTS: usize = 1024;
+/// Triangles of solid shapes kept at most.
+pub const MAX_TRIANGLES: usize = 64 * 1024;
+/// Rings and segments round a solid sphere.
+const SPHERE_RINGS: usize = 12;
+const SPHERE_SEGMENTS: usize = 24;
 /// Segments in each circle of a sphere.
 const CIRCLE_SEGMENTS: usize = 24;
 
@@ -93,13 +98,26 @@ pub struct Text {
     pub on_screen: bool,
 }
 
+/// A triangle of a solid shape, its colour sRGB with alpha.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Triangle {
+    pub corners: [Vec3; 3],
+    pub color: [f32; 4],
+    /// Drawn over the scene rather than dimmed behind it.
+    pub on_top: bool,
+    /// Drawn by a behaviour's gizmos, which only views showing gizmos draw.
+    pub gizmo: bool,
+}
+
 struct Shapes {
     lines: Vec<(Line, f32)>,
+    triangles: Vec<(Triangle, f32)>,
     texts: Vec<(Text, f32)>,
     dropped: bool,
 }
 
-static SHAPES: Mutex<Shapes> = Mutex::new(Shapes { lines: Vec::new(), texts: Vec::new(), dropped: false });
+static SHAPES: Mutex<Shapes> =
+    Mutex::new(Shapes { lines: Vec::new(), triangles: Vec::new(), texts: Vec::new(), dropped: false });
 static ENABLED: AtomicBool = AtomicBool::new(true);
 
 fn shapes() -> MutexGuard<'static, Shapes> {
@@ -174,6 +192,63 @@ pub fn sphere(center: Vec3, radius: f32, color: [f32; 4], duration: f32, style: 
     add_lines(segments.map(|(axes, i)| (point(axes, i), point(axes, i + 1))), color, duration, style.into());
 }
 
+/// Solid triangles, each three corners, shaded by which way they face so a
+/// shape's sides tell apart, as `style` says (its width is not used). Each
+/// shows from the side its corners go anticlockwise round, so a closed
+/// shape wound outwards shows only its near side.
+pub fn solid(triangles: impl IntoIterator<Item = [Vec3; 3]>, color: [f32; 4], duration: f32, style: impl Into<LineStyle>) {
+    let style = style.into();
+    if !enabled() && !style.in_game {
+        return;
+    }
+    let mut shapes = shapes();
+    let duration = duration.max(0.0);
+    for corners in triangles {
+        if shapes.triangles.len() == MAX_TRIANGLES {
+            return;
+        }
+        shapes.triangles.push((Triangle { corners, color, on_top: style.on_top, gizmo: style.gizmo }, duration));
+    }
+}
+
+/// A solid box, `half_size` from its centre on each axis, turned by
+/// `rotation`.
+pub fn solid_box(
+    center: Vec3,
+    half_size: Vec3,
+    rotation: Quat,
+    color: [f32; 4],
+    duration: f32,
+    style: impl Into<LineStyle>,
+) {
+    // Each face by its axis and side: its middle, and two edges across it.
+    let faces = (0..3).flat_map(|axis| [-1.0f32, 1.0].map(|side| (axis, side))).map(|(axis, side)| {
+        let mut normal = Vec3::ZERO;
+        normal[axis] = side;
+        let (mut u, mut v) = (Vec3::ZERO, Vec3::ZERO);
+        u[(axis + 1) % 3] = 1.0;
+        v[(axis + 2) % 3] = side;
+        let at = |du: f32, dv: f32| center + rotation * ((normal + u * du + v * dv) * half_size);
+        let [a, b, c, d] = [at(-1.0, -1.0), at(1.0, -1.0), at(1.0, 1.0), at(-1.0, 1.0)];
+        [[a, b, c], [a, c, d]]
+    });
+    solid(faces.flatten(), color, duration, style);
+}
+
+/// A solid sphere, in rings round its height.
+pub fn solid_sphere(center: Vec3, radius: f32, color: [f32; 4], duration: f32, style: impl Into<LineStyle>) {
+    let point = |ring: usize, segment: usize| {
+        let (up, round) = (ring as f32 / SPHERE_RINGS as f32 * std::f32::consts::PI, segment as f32 / SPHERE_SEGMENTS as f32 * std::f32::consts::TAU);
+        center + Vec3::new(up.sin() * round.cos(), up.cos(), up.sin() * round.sin()) * radius
+    };
+    let quads = (0..SPHERE_RINGS).flat_map(|ring| (0..SPHERE_SEGMENTS).map(move |segment| (ring, segment)));
+    let triangles = quads.flat_map(|(ring, segment)| {
+        let [a, b, c, d] = [point(ring, segment), point(ring, segment + 1), point(ring + 1, segment + 1), point(ring + 1, segment)];
+        [[a, b, c], [a, c, d]]
+    });
+    solid(triangles, color, duration, style);
+}
+
 /// Text at a point in the world, facing the camera at a fixed size.
 pub fn text(at: Vec3, text: &str, color: [f32; 4], duration: f32) {
     if !enabled() {
@@ -208,6 +283,10 @@ pub fn advance(delta: f32) {
         *left -= delta;
         *left > 0.0
     });
+    shapes.triangles.retain_mut(|(_, left)| {
+        *left -= delta;
+        *left > 0.0
+    });
     shapes.texts.retain_mut(|(_, left)| {
         *left -= delta;
         *left > 0.0
@@ -230,6 +309,11 @@ pub fn lines_from(start: usize) -> Vec<Line> {
     shapes().lines.iter().skip(start).map(|(line, _)| *line).collect()
 }
 
+/// The triangles of solid shapes to draw now.
+pub fn triangles() -> Vec<Triangle> {
+    shapes().triangles.iter().map(|(triangle, _)| *triangle).collect()
+}
+
 /// The texts to draw now.
 pub fn texts() -> Vec<Text> {
     shapes().texts.iter().map(|(text, _)| text.clone()).collect()
@@ -239,6 +323,7 @@ pub fn texts() -> Vec<Text> {
 pub fn clear() {
     let mut shapes = shapes();
     shapes.lines.clear();
+    shapes.triangles.clear();
     shapes.texts.clear();
 }
 
@@ -291,6 +376,28 @@ mod tests {
         assert!(texts().is_empty(), "no duration: one frame");
         advance(0.25);
         assert!(lines().is_empty());
+    }
+
+    #[test]
+    fn solid_shapes_are_their_triangles() {
+        let _one = TESTS.lock().unwrap_or_else(|p| p.into_inner());
+        clear();
+        solid_box(Vec3::ZERO, Vec3::ONE, Quat::IDENTITY, WHITE, 0.0, false);
+        let sides = triangles();
+        assert_eq!(sides.len(), 12, "two to each face");
+        // Each faces out of the box, wound the same way round.
+        for [a, b, c] in sides.iter().map(|t| t.corners) {
+            let middle = (a + b + c) / 3.0;
+            assert!((b - a).cross(c - a).dot(middle) > 0.0, "{a} {b} {c}");
+        }
+        clear();
+        solid_sphere(Vec3::Y, 2.0, WHITE, 0.0, false);
+        let shell = triangles();
+        assert_eq!(shell.len(), SPHERE_RINGS * SPHERE_SEGMENTS * 2);
+        assert!(shell.iter().flat_map(|t| t.corners).all(|p| (p.distance(Vec3::Y) - 2.0).abs() < 1e-4));
+        let outward = |[a, b, c]: [Vec3; 3]| (b - a).cross(c - a).dot((a + b + c) / 3.0 - Vec3::Y) >= -1e-4;
+        assert!(shell.iter().all(|t| outward(t.corners)), "wound outwards, poles and all");
+        clear();
     }
 
     #[test]

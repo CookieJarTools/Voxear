@@ -2,7 +2,7 @@
 //! trigger onto the floor, its behaviour told of each, after a ray and a
 //! sphere asked what is where; a character walks across the floor; in 2D, a
 //! ball kicked up lands on a ledge; and a script hangs a lamp on a bell,
-//! saying so in the view's corner.
+//! saying so in the view's corner and drawing a solid box round it.
 //! Builds a copy of Hello with these added; skips itself without .NET and
 //! the managed build.
 
@@ -110,6 +110,7 @@ public sealed class Swing : Behaviour
 		using (Draw.Duration(60f))
 		{
 			Draw.ScreenText("bell hung");
+			Draw.SolidBox(Obj.Position, Vector3.One);
 		}
 	}
 }
@@ -228,6 +229,7 @@ fn scripts_ask_push_and_hear_physics() {
     assert!(said("lamp Spot, 4, green 0.50, outer 50"), "{lines:?}");
     let corner = voxear_core::debug_draw::texts().into_iter().find(|text| text.on_screen);
     assert_eq!(corner.map(|text| text.text), Some("bell hung".into()), "a line in the view's corner");
+    assert_eq!(voxear_core::debug_draw::triangles().len(), 12, "a solid box round the bell");
 
     // The kick sideways moved the crate along X as it fell.
     let world = &game.engine.world;

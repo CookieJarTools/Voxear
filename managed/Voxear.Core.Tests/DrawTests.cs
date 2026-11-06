@@ -56,6 +56,44 @@ internal static class DrawTests
 	}
 
 	[Test]
+	private static void SolidShapesAreTrianglesWoundOutwards()
+	{
+		var drawn = new List<(Vector3[] Corners, int Flags)>();
+		Draw.SolidSink = (corners, flags) => drawn.Add((corners, flags));
+		try
+		{
+			using (Draw.OnTop())
+			{
+				Draw.SolidBox(Vector3.One, new Vector3(2f));
+			}
+			Draw.SolidSphere(Vector3.Zero, 1f);
+			Draw.Triangle(Vector3.Zero, Vector3.UnitX, Vector3.UnitY);
+		}
+		finally
+		{
+			Draw.SolidSink = null;
+		}
+		var (box, boxFlags) = drawn[0];
+		Check.True(box.Length == 36 && boxFlags == 1, $"twelve triangles, on top: {box.Length}, {boxFlags}");
+		Check.True(Outwards(box, Vector3.One), "the box's faces wound outwards");
+		Check.True(Outwards(drawn[1].Corners, Vector3.Zero), "the sphere's too");
+		Check.True(drawn[2].Corners.Length == 6, "a triangle shows from both sides");
+	}
+
+	private static bool Outwards(Vector3[] corners, Vector3 middle)
+	{
+		for (var i = 0; i < corners.Length; i += 3)
+		{
+			var (a, b, c) = (corners[i], corners[i + 1], corners[i + 2]);
+			if (Vector3.Dot(Vector3.Cross(b - a, c - a), (a + b + c) / 3f - middle) < -1e-4f)
+			{
+				return false;
+			}
+		}
+		return true;
+	}
+
+	[Test]
 	private static void MatricesPlaceWhatIsDrawnInsideThem()
 	{
 		var lines = Record(() =>

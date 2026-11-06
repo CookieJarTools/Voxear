@@ -595,7 +595,9 @@ Next in M3:
     - [x] `Draw.ScreenText`: lines of text down the view's top-right corner, over the Scene and Game views and a
       player's window
     - [x] `Draw.WidthInMetres`: lines as wide as something that size in the world, narrowing with distance
-    - [ ] still to come for drawing: solid shapes and wire meshes
+    - [x] solid shapes: `Draw.SolidBox`, `SolidSphere` and `Triangle`, their sides shaded apart, only their near
+      side drawn, fainter than lines behind the scene
+    - [ ] still to come for drawing: wire meshes
     - [x] nestable scopes instead of global state: `using (Draw.Color(Color.Red))`, `Draw.InLocalSpace(obj)`,
       `Draw.Width(3)`, `Draw.Duration(2)`, `Draw.OnTop()` and `Draw.InGame()`
     - [x] `DrawGizmos(Gizmo gizmo)` on a behaviour, one callback in place of Unity's two, with `gizmo.IsSelected`

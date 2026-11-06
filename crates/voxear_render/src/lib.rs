@@ -290,6 +290,7 @@ struct FrameBuffers {
     clusters: Buffer,
     pointers: Buffer,
     debug_lines: Buffer,
+    debug_triangles: Buffer,
     /// The sun's light and the sky's, worked out once a frame under the
     /// atmosphere (see `atmosphere::record`).
     sky_light: Buffer,
@@ -1452,6 +1453,7 @@ impl View {
                 clusters,
                 pointers,
                 debug_lines,
+                debug_triangles,
                 sky_light,
                 meshlet_draws,
                 meshlet_draw_instances,
@@ -1461,7 +1463,7 @@ impl View {
             } = buffers;
             let all = [frame, instances, lights, draws, draw_count, draw_instances, stats, clusters, pointers];
             let meshlets = [meshlet_draws, meshlet_draw_instances, meshlet_work];
-            for buffer in all.into_iter().chain([debug_lines, sky_light, stats_readback]).chain(meshlets) {
+            for buffer in all.into_iter().chain([debug_lines, debug_triangles, sky_light, stats_readback]).chain(meshlets) {
                 frames.retire(Retired::Buffer(buffer));
             }
         }
@@ -1963,6 +1965,7 @@ impl View {
                 ocean_fft: self.ocean.fft.address,
                 water_bodies: self.ocean.bodies[slot].address,
                 stream_points: self.ocean.stream_points[slot].address,
+                debug_triangles: buffers.debug_triangles.address,
             }],
         );
         buffers.instances.write(0, &extracted.instances[..instance_count]);
@@ -2058,7 +2061,8 @@ impl View {
             None => None,
         };
         let gizmos = self.options.gizmos;
-        debug_pass::record(fg, (pipelines.debug, push), &buffers.debug_lines, (output, view), depth, gizmos);
+        let debug = (pipelines.debug, pipelines.debug_solid, push);
+        debug_pass::record(fg, debug, (&buffers.debug_lines, &buffers.debug_triangles), (output, view), depth, gizmos);
         Ok(ViewRecorded { push, backdrop })
     }
 }
@@ -2155,6 +2159,12 @@ fn create_frame_buffers(gpu: &Gpu, prefix: &str, slot: usize) -> Result<FrameBuf
         debug_lines: gpu.create_buffer(
             &format!("{prefix}debug lines {slot}"),
             debug_pass::MAX_DEBUG_LINES * size_of::<gpu::GpuDebugLine>() as u64,
+            storage,
+            host,
+        )?,
+        debug_triangles: gpu.create_buffer(
+            &format!("{prefix}debug triangles {slot}"),
+            debug_pass::MAX_DEBUG_TRIANGLES * size_of::<gpu::GpuDebugTriangle>() as u64,
             storage,
             host,
         )?,

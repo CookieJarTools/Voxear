@@ -93,6 +93,18 @@ fn lines_dim_behind_the_scene_unless_drawn_on_top() {
     assert!(near > thin * 2, "metres wide, near: {near} pixels against {thin}");
     assert!(far * 3 < near * 2, "as long on screen, twice as far, narrower: {far} pixels against {near}");
 
+    // A solid box in plain view, its faces shaded apart, and one behind the wall only faint through it.
+    debug_draw::clear();
+    debug_draw::solid_box(Vec3::new(4.0, 1.0, 0.0), Vec3::splat(0.5), Quat::from_rotation_y(0.6), [1.0, 0.0, 0.0, 1.0], 10.0, false);
+    let solid = frame(&mut renderer, &world, &mut time);
+    let shown = changed(&plain, &solid, 0).1;
+    debug_draw::clear();
+    debug_draw::solid_box(Vec3::new(-6.0, 1.0, 6.0), Vec3::splat(0.5), Quat::IDENTITY, [1.0, 0.0, 0.0, 1.0], 10.0, false);
+    let behind = frame(&mut renderer, &world, &mut time);
+    let (hidden, _) = changed(&plain, &behind, 0);
+    assert!(shown > 400, "a solid box covers its area: {shown} pixels");
+    assert_eq!(hidden, 0, "behind the wall, never strong");
+
     // A gizmo's line shows only in a view showing gizmos, as the editor's Game view does not.
     debug_draw::clear();
     let gizmo = debug_draw::LineStyle { gizmo: true, ..Default::default() };

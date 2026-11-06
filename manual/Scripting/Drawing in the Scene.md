@@ -26,6 +26,8 @@ A drawing lasts one frame, so code that draws every frame always shows what is t
 | `Frustum(position, rotation, fov, aspect, near, far)` | What a camera sees |
 | `Bezier(start, startHandle, endHandle, end)` | A smooth curve, as a path or a cable |
 | `Grid(center, size, cells)` | A grid on the ground |
+| `SolidBox(center, size, rotation)`, `SolidSphere(center, radius)` | A solid box or ball, its sides shaded apart |
+| `Triangle(a, b, c)` | A solid triangle, seen from both sides |
 | `Label(position, text)` | Text that faces the camera |
 | `ScreenText(text)` | A line of text in the view's top-right corner, under the ones before it: a value to watch, as `Draw.ScreenText($"speed {speed:0.0}")` |
 

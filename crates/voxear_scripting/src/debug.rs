@@ -90,6 +90,22 @@ pub(crate) unsafe extern "C" fn debug_text(
     debug_draw::text(at, &text, color, duration);
 }
 
+/// `Draw`'s solid shapes: `count` triangles, three corners each.
+pub(crate) unsafe extern "C" fn debug_solid(
+    corners: *const [f32; 3],
+    count: i32,
+    color_at: *const [f32; 4],
+    duration: f32,
+    flags: i32,
+) {
+    if corners.is_null() || count <= 0 {
+        return;
+    }
+    let corners = unsafe { std::slice::from_raw_parts(corners, count as usize * 3) };
+    let triangles = corners.chunks_exact(3).map(|t| [t[0], t[1], t[2]].map(Vec3::from_array));
+    debug_draw::solid(triangles, unsafe { color(color_at) }, duration, style(flags));
+}
+
 /// `Draw.ScreenText`: a line of text in the view's corner.
 pub(crate) unsafe extern "C" fn debug_screen_text(text: *const u8, len: i32, color_at: *const [f32; 4], duration: f32) {
     let (color, text) = unsafe { (color(color_at), utf8(text, len)) };

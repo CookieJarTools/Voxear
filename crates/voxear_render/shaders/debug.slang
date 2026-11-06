@@ -1,7 +1,8 @@
-// Debug draw's lines over the finished frame (see src/debug_pass.rs and
-// voxear_core::debug_draw). Each line is a quad as wide as it asks, with
-// soft edges, six vertices pulled from buffers().debugLines. A line is
-// dimmed where the scene is in front of it, unless it is drawn on top, by
+// Debug draw's lines and solid shapes over the finished frame (see
+// src/debug_pass.rs and voxear_core::debug_draw). Each line is a quad as
+// wide as it asks, with soft edges, six vertices pulled from
+// buffers().debugLines; each solid triangle three from debugTriangles. Both
+// are dimmed where the scene is in front of them, unless drawn on top, by
 // reading the scene's depth rather than testing against a depth attachment,
 // since the view can be a rectangle of a larger output.
 //
@@ -12,8 +13,10 @@
 
 static const uint DEBUG_ON_TOP = 1;
 static const uint DEBUG_IN_METRES = 2;
-// How much of a line shows where the scene is in front of it.
+// How much of a line shows where the scene is in front of it, and of a
+// solid, whose whole faces would otherwise read as in front.
 static const float DEBUG_BEHIND = 0.3;
+static const float DEBUG_SOLID_BEHIND = 0.15;
 // Corners of a line's quad: along it (0 at `from`, 1 at `to`), and across.
 static const float2 DEBUG_CORNERS[6] = {
     float2(0, -1), float2(1, -1), float2(0, 1),
@@ -107,5 +110,59 @@ float4 debugFragment(DebugOut i) : SV_Target
     float3 c = i.color.rgb;
     float3 linearColor = select(c <= 0.04045, c / 12.92, pow((c + 0.055) / 1.055, 2.4));
     float alpha = i.color.a * coverage;
+    return float4(linearColor * alpha, alpha);
+}
+
+// A corner of one of debug draw's solid triangles, and which way it faces.
+struct SolidOut
+{
+    float4 position : SV_Position;
+    float4 color : COLOR;
+    float3 world : WORLD;
+    nointerpolation float3 normal : NORMAL;
+    nointerpolation uint flags : FLAGS;
+};
+
+[shader("vertex")]
+SolidOut debugSolidVertex(uint vertexId : SV_VertexID)
+{
+    DebugTriangle drawn = buffers()->debugTriangles[vertexId / 3];
+    float3 corners[3] = { drawn.a, drawn.b, drawn.c };
+    float3 world = corners[vertexId % 3];
+    SolidOut o;
+    o.position = transform(push.frame->unjitteredViewProj, float4(world, 1.0));
+    o.color = drawn.color;
+    o.world = world;
+    float3 n = cross(drawn.b - drawn.a, drawn.c - drawn.a);
+    o.normal = length(n) > 1e-12 ? normalize(n) : float3(0.0, 1.0, 0.0);
+    o.flags = drawn.flags;
+    return o;
+}
+
+// A solid side, lit from the camera so each face of a shape tells apart, and
+// dimmed where the scene is in front of it, as lines are. Its back is not
+// drawn, so a closed shape's far side never shows over its near one with no
+// depth to sort them.
+[shader("fragment")]
+float4 debugSolidFragment(SolidOut i) : SV_Target
+{
+    float facing = dot(i.normal, normalize(push.frame->cameraPosition - i.world));
+    if (facing < 0.0)
+    {
+        discard;
+    }
+    float shown = 1.0;
+    if ((i.flags & DEBUG_ON_TOP) == 0)
+    {
+        int2 pixel = int2(i.position.xy) - int2(push.textures.yz);
+        float scene = textures[NonUniformResourceIndex(push.textures.x)].Load(int3(pixel, 0)).r;
+        if (i.position.z < scene * 0.999)
+        {
+            shown = DEBUG_SOLID_BEHIND;
+        }
+    }
+    float3 c = i.color.rgb * (0.55 + 0.45 * facing);
+    float3 linearColor = select(c <= 0.04045, c / 12.92, pow((c + 0.055) / 1.055, 2.4));
+    float alpha = i.color.a * shown;
     return float4(linearColor * alpha, alpha);
 }

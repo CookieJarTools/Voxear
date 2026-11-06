@@ -740,6 +740,19 @@ struct DebugLine
     float4 color;
 };
 
+// A triangle of debug draw's solid shapes. Mirrors `GpuDebugTriangle` in
+// src/gpu.rs.
+struct DebugTriangle
+{
+    float3 a;
+    uint flags;
+    float3 b;
+    uint pad;
+    float3 c;
+    uint pad2;
+    float4 color;
+};
+
 // A node of a hierarchy for tracing rays without ray tracing (src/bvh.rs):
 // its box, and its first child (the second follows) or, with count above 0,
 // its first primitive in the hierarchy's order.
@@ -808,6 +821,7 @@ struct Buffers
     // This frame's Pools, Streams, then Dry Areas; and the points along its Streams.
     WaterBody* waterBodies;
     StreamPoint* streamPoints;
+    DebugTriangle* debugTriangles;
 };
 
 struct Push

@@ -784,6 +784,8 @@ pub struct GpuBuffers {
     pub water_bodies: u64,
     /// This frame's points along its Streams.
     pub stream_points: u64,
+    /// This frame's triangles of debug draw's solid shapes.
+    pub debug_triangles: u64,
 }
 
 /// A line of debug draw (see `voxear_core::debug_draw`), its colour sRGB.
@@ -796,6 +798,21 @@ pub struct GpuDebugLine {
     pub to: [f32; 3],
     /// Pixels wide, or 0 for the pass's usual width; or metres wide.
     pub width: f32,
+    pub color: [f32; 4],
+}
+
+/// A triangle of debug draw's solid shapes, its colour sRGB, as
+/// `DebugTriangle` in `shaders/common.slang`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuDebugTriangle {
+    pub a: [f32; 3],
+    /// `DEBUG_ON_TOP`.
+    pub flags: u32,
+    pub b: [f32; 3],
+    pub _pad: u32,
+    pub c: [f32; 3],
+    pub _pad2: u32,
     pub color: [f32; 4],
 }
 
@@ -946,8 +963,9 @@ mod tests {
         assert_eq!(size_of::<GpuDdgi>(), 32 * DDGI_CASCADES + 32 + 48);
         assert_eq!(size_of::<GpuLighting>(), lighting);
         assert_eq!(size_of::<GpuPost>(), post);
-        assert_eq!(size_of::<GpuBuffers>(), 34 * 8);
+        assert_eq!(size_of::<GpuBuffers>(), 35 * 8);
         assert_eq!(size_of::<GpuDebugLine>(), 48);
+        assert_eq!(size_of::<GpuDebugTriangle>(), 64);
         assert!(size_of::<Push>() as u32 <= voxear_rhi::PUSH_CONSTANT_SIZE);
     }
 

@@ -138,8 +138,9 @@ pub struct Pipelines {
     /// The frame debugger's view of an image.
     pub frame_debug: vk::Pipeline,
     pub ui: vk::Pipeline,
-    /// Debug draw's lines, over the finished frame.
+    /// Debug draw's lines, and its solid shapes, over the finished frame.
     pub debug: vk::Pipeline,
+    pub debug_solid: vk::Pipeline,
     /// An object on its own, for its preview, and its resolve into the
     /// preview atlas.
     pub preview: vk::Pipeline,
@@ -428,6 +429,12 @@ impl Pipelines {
                 blend: Blend::Premultiplied,
                 ..GraphicsPipelineDesc::new("Debug draw", debug, c"debugVertex", c"debugFragment")
             })?,
+            debug_solid: graphics(&GraphicsPipelineDesc {
+                color_formats: output,
+                cull: vk::CullModeFlags::NONE,
+                blend: Blend::Premultiplied,
+                ..GraphicsPipelineDesc::new("Debug draw solids", debug, c"debugSolidVertex", c"debugSolidFragment")
+            })?,
             preview: graphics(&GraphicsPipelineDesc {
                 color_formats: hdr,
                 depth_format: Some(DEPTH_FORMAT),
@@ -541,6 +548,7 @@ impl Pipelines {
             self.frame_debug,
             self.ui,
             self.debug,
+            self.debug_solid,
             self.preview,
             self.preview_resolve,
             self.impostor_bake,

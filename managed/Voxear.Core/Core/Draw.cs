@@ -43,6 +43,9 @@ public static unsafe class Draw
 	/// <summary>Where lines go instead of the engine, for tests: from, to, colour, duration and flags.</summary>
 	internal static Action<Vector3, Vector3, Color, float, int>? Sink { get; set; }
 
+	/// <summary>Where solid shapes' triangles go instead of the engine, for tests: their corners, three each, and flags.</summary>
+	internal static Action<Vector3[], int>? SolidSink { get; set; }
+
 	/// <summary>How many lines have been drawn as gizmos, so the editor can tell whose gizmo a click is on.</summary>
 	[field: ThreadStatic] internal static int GizmoLines { get; private set; }
 
@@ -355,6 +358,52 @@ public static unsafe class Draw
 		}
 	}
 
+	/// <summary>A solid triangle, seen from both sides.</summary>
+	public static void Triangle(Vector3 a, Vector3 b, Vector3 c, Color? color = null)
+	{
+		Solid([a, b, c, a, c, b], color);
+	}
+
+	/// <summary>A solid box, its faces shaded apart, as WireBox's edges.</summary>
+	public static void SolidBox(Vector3 center, Vector3 size, Quaternion? rotation = null, Color? color = null)
+	{
+		var turn = rotation ?? Quaternion.Identity;
+		var half = size * 0.5f;
+		var corners = new Vector3[36];
+		for (var face = 0; face < 6; face++)
+		{
+			var axis = face / 2;
+			var side = face % 2 == 0 ? -1f : 1f;
+			var normal = Axis(axis) * side;
+			var u = Axis((axis + 1) % 3);
+			var v = Axis((axis + 2) % 3) * side;
+			Vector3 Corner(float du, float dv) => center + Vector3.Transform((normal + u * du + v * dv) * half, turn);
+			Quad(corners, face * 6, Corner(-1f, -1f), Corner(1f, -1f), Corner(1f, 1f), Corner(-1f, 1f));
+		}
+		Solid(corners, color);
+	}
+
+	/// <summary>A solid sphere.</summary>
+	public static void SolidSphere(Vector3 center, float radius, Color? color = null)
+	{
+		const int rings = 12;
+		var corners = new Vector3[rings * Segments * 6];
+		for (var quad = 0; quad < rings * Segments; quad++)
+		{
+			var (ring, segment) = (quad / Segments, quad % Segments);
+			var (p, q) = (Around(ring, segment), Around(ring, segment + 1));
+			Quad(corners, quad * 6, p, q, Around(ring + 1, segment + 1), Around(ring + 1, segment));
+		}
+		Solid(corners, color);
+
+		Vector3 Around(int ring, int segment)
+		{
+			var up = ring / (float)rings * MathF.PI;
+			var round = segment / (float)Segments * MathF.Tau;
+			return center + new Vector3(MathF.Sin(up) * MathF.Cos(round), MathF.Cos(up), MathF.Sin(up) * MathF.Sin(round)) * radius;
+		}
+	}
+
 	/// <summary>Text at a point, facing the camera at a fixed size, in the scope's colour unless given one.</summary>
 	public static void Label(Vector3 position, string text, Color? color = null)
 	{
@@ -391,6 +440,51 @@ public static unsafe class Draw
 		{
 			Native.Api->DebugScreenText(written, bytes.Length, &shade, now.Duration);
 		}
+	}
+
+	/// <summary>
+	/// Triangles, three corners each, placed by the scope's matrix: each shows from the side its corners go
+	/// anticlockwise round, so a closed shape wound outwards shows only its near side.
+	/// </summary>
+	private static void Solid(Vector3[] corners, Color? color)
+	{
+		ref var now = ref State;
+		for (var i = 0; i < corners.Length; i++)
+		{
+			corners[i] = Vector3.Transform(corners[i], now.Matrix);
+		}
+		var shade = color ?? now.Color;
+		var flags = (now.OnTop ? OnTopFlag : 0) | (now.InGame ? InGameFlag : 0) | (now.Gizmo ? GizmoFlag : 0);
+		if (SolidSink != null)
+		{
+			SolidSink(corners, flags);
+			return;
+		}
+		if (!Native.IsConnected)
+		{
+			return;
+		}
+		fixed (Vector3* first = corners)
+		{
+			Native.Api->DebugSolid(first, corners.Length / 3, &shade, now.Duration, flags);
+		}
+	}
+
+	/// <summary>Two triangles from p round to s, written into corners from at.</summary>
+	private static void Quad(Vector3[] corners, int at, Vector3 p, Vector3 q, Vector3 r, Vector3 s)
+	{
+		(corners[at], corners[at + 1], corners[at + 2]) = (p, q, r);
+		(corners[at + 3], corners[at + 4], corners[at + 5]) = (p, r, s);
+	}
+
+	private static Vector3 Axis(int axis)
+	{
+		return axis switch
+		{
+			0 => Vector3.UnitX,
+			1 => Vector3.UnitY,
+			_ => Vector3.UnitZ,
+		};
 	}
 
 	internal static void Restore(DrawState before)

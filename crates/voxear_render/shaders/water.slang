@@ -377,6 +377,33 @@ float2 dryMeshFragment(float4 position : SV_Position, bool front : SV_IsFrontFac
     return front ? float2(position.z, 0.0) : float2(0.0, 1.0 - position.z);
 }
 
+// The cascades a Sphere or Box Wind Zone changes: all but the two longest,
+// the swell, which no wind over a small patch of sea can raise or calm.
+static const uint GUSTED_CASCADES = 2;
+
+// How rough the sea's short waves are at `xz` for the Sphere and Box Wind
+// Zones over it, kept among the Dry Areas: 1 as the sea is, and inside each
+// zone as its strength says, fading back to the sea's over its falloff.
+float seaGusts(Frame* frame, float2 xz)
+{
+    float gusts = 1.0;
+    uint first = frame->ocean.pools + frame->ocean.streams;
+    for (uint i = first; i < first + frame->ocean.dries; i++)
+    {
+        WaterBody zone = buffers()->waterBodies[i];
+        if (zone.kind != WATER_WIND)
+        {
+            continue;
+        }
+        float3 local = transform(zone.toLocal, float4(xz.x, frame->ocean.level, xz.y, 1.0)).xyz;
+        float3 half = zone.size * 0.5;
+        float3 q = abs(local) - half;
+        float outside = zone.shape == 1 ? length(local) - half.x : length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0);
+        gusts = lerp(gusts, zone.waves, saturate(1.0 - max(outside, 0.0) / zone.lava.x));
+    }
+    return gusts;
+}
+
 // How deep the sea is round `xz` for how much its waves die away there: its
 // depth averaged over a few metres (floorDepthMain), so the waves calm
 // gradually where the ground drops away rather than in a step, and a rock or
@@ -720,10 +747,11 @@ Froth frothAt(Frame* frame, float2 rest, float3 v, float3 l, float coverage, flo
 float breakingAt(Frame* frame, float2 rest, float depth)
 {
     float folded = 1.0;
+    float gusts = seaGusts(frame, rest);
     for (uint c = 0; c < OCEAN_BREAKING_CASCADES; c++)
     {
         float4 d = textures[NonUniformResourceIndex(frame->ocean.displacement[c])].SampleLevel(samplers[SAMPLER_LINEAR_REPEAT], cascadeUv(frame, c, rest), 1.0);
-        folded += (d.w - 1.0) * shallowWeight(frame, c, depth);
+        folded += (d.w - 1.0) * shallowWeight(frame, c, depth) * (c >= GUSTED_CASCADES ? gusts : 1.0);
     }
     float threshold = 0.1 + 0.45 * frame->ocean.foam;
     return frame->ocean.foam > 0.0 ? saturate((threshold - folded) / 0.3) : 0.0;
@@ -910,12 +938,13 @@ float cascadeShare(uint cascade, float swell)
 float3 oceanMoved(Frame* frame, float2 rest, float spacing, bool previous, float swell = 1.0, float depth = 1e4)
 {
     float3 moved = 0.0;
+    float gusts = seaGusts(frame, rest);
     for (uint c = 0; c < oceanCascades(frame); c++)
     {
         uint image = previous ? frame->ocean.previous[c] : frame->ocean.displacement[c];
         float mip = max(log2(spacing / (frame->ocean.sizes[c] / float(OCEAN_N))), 0.0);
         float3 d = textures[NonUniformResourceIndex(image)].SampleLevel(samplers[SAMPLER_LINEAR_REPEAT], cascadeUv(frame, c, rest), mip).xyz;
-        moved += d * cascadeShare(c, swell) * shallowWeight(frame, c, depth);
+        moved += d * cascadeShare(c, swell) * shallowWeight(frame, c, depth) * (c >= GUSTED_CASCADES ? gusts : 1.0);
     }
     moved.xz *= sidewaysWeight(depth);
     return moved;
@@ -1109,6 +1138,7 @@ float4 smoothSample(Texture2D image, float2 uv, float texels = float(OCEAN_N))
 // there as variance, how much they fold and how far they move the water.
 void addWaves(Frame* frame, float2 rest, float swell, float weight, inout float2 slope, inout float variance, inout float folded, inout float3 moved, float depth = 1e4)
 {
+    float gusts = seaGusts(frame, rest);
     for (uint c = 0; c < oceanCascades(frame); c++)
     {
         float2 uv = cascadeUv(frame, c, rest);
@@ -1132,7 +1162,7 @@ void addWaves(Frame* frame, float2 rest, float swell, float weight, inout float2
             s += slopes.Sample(samplers[SAMPLER_LINEAR_REPEAT], uv) * (1.0 - smooth);
             d += moves.Sample(samplers[SAMPLER_LINEAR_REPEAT], uv) * (1.0 - smooth);
         }
-        float share = cascadeShare(c, swell) * weight * shallowWeight(frame, c, depth);
+        float share = cascadeShare(c, swell) * weight * shallowWeight(frame, c, depth) * (c >= GUSTED_CASCADES ? gusts : 1.0);
         slope += s.xy * share;
         // The slopes the mips averaged away, too small to see here, as roughness. Magnified, filtering
         // the squares apart from the slopes would make roughness of nothing, so it starts only as texels shrink
@@ -1736,8 +1766,8 @@ WallOut wallVertex(uint vertexId : SV_VertexID, uint instance : SV_InstanceID)
     }
     else
     {
-        // A mesh's walls would be the mesh itself, which the Obj draws if it is to be seen.
-        if (water.shape == DRY_MESH)
+        // A mesh's walls would be the mesh itself, which the Obj draws if it is to be seen; a Wind Zone has none.
+        if (water.kind != WATER_DRY || water.shape == DRY_MESH)
         {
             return nothingWall();
         }

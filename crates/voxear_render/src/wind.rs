@@ -16,8 +16,37 @@ use voxear_ecs::Component;
 
 use crate::gpu::GpuWind;
 
-/// Wind over the whole level, blowing along its Obj's +Z. The first one in
-/// the level is used, as Unity's directional Wind Zone.
+/// Where a Wind Zone blows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WindShape {
+    /// Over the whole level: the first one sways the plants and can blow the
+    /// sea's wind (an Ocean's Wind Source).
+    #[default]
+    Global,
+    /// Only inside a ball or a box, turned with its Obj, where it makes the
+    /// sea's short waves as rough as its strength says.
+    Sphere,
+    Box,
+}
+
+impl WindShape {
+    pub const ALL: [Self; 3] = [Self::Global, Self::Sphere, Self::Box];
+
+    /// As the editor shows it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Global => "Global",
+            Self::Sphere => "Sphere",
+            Self::Box => "Box",
+        }
+    }
+}
+
+/// Wind blowing along its Obj's +Z: over the whole level, the first Global
+/// one used, as Unity's directional Wind Zone; or a gust of its own over
+/// part of the sea, a calm bay behind an island or a squall out at sea,
+/// inside a Sphere or a Box.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct WindZone {
@@ -32,17 +61,50 @@ pub struct WindZone {
     /// How much plants sway back and forth and across the wind, rather than
     /// lean steadily with it.
     pub turbulence: f32,
+    /// Where it blows: everywhere, or inside a ball or a box, where the sea's
+    /// short waves are as rough as its strength says, 0 calm and 1 as the sea
+    /// is.
+    pub shape: WindShape,
+    /// A Box's size, or a Sphere's width (x), in metres.
+    pub size: [f32; 3],
+    /// How far outside its shape its roughness fades into the sea's, in metres.
+    pub falloff: f32,
 }
 
 impl Component for WindZone {}
 
 impl Default for WindZone {
     fn default() -> Self {
-        Self { strength: 1.0, gusts: 0.5, gust_size: 20.0, gust_speed: 6.0, turbulence: 0.5 }
+        Self {
+            strength: 1.0,
+            gusts: 0.5,
+            gust_size: 20.0,
+            gust_speed: 6.0,
+            turbulence: 0.5,
+            shape: WindShape::Global,
+            size: [60.0, 20.0, 60.0],
+            falloff: 15.0,
+        }
     }
 }
 
 impl WindZone {
+    /// A Sphere or Box's sway over the sea's short waves, as the shaders read
+    /// it among the water bodies: placed at `position`, turned by `rotation`.
+    pub(crate) fn gpu_local(&self, position: Vec3, rotation: Quat) -> crate::gpu::GpuWaterBody {
+        let to_world = voxear_core::math::Mat4::from_rotation_translation(rotation, position);
+        crate::gpu::GpuWaterBody {
+            to_world: crate::gpu::cols(to_world),
+            to_local: crate::gpu::cols(to_world.inverse()),
+            size: self.size.map(|s| s.max(0.01)),
+            kind: crate::water_bodies::WATER_WIND,
+            shape: if self.shape == WindShape::Sphere { 1 } else { 0 },
+            waves: self.strength.max(0.0),
+            lava: [self.falloff.max(0.01), 0.0, 0.0, 0.0],
+            ..crate::gpu::GpuWaterBody::default()
+        }
+    }
+
     /// The wind as shaders read it, blowing along `rotation`'s +Z.
     pub(crate) fn gpu(&self, rotation: Quat) -> GpuWind {
         let along = rotation * Vec3::Z;

@@ -3591,6 +3591,37 @@ fn the_sea_is_blue_water_and_a_storm_breaks_into_whitecaps() {
     assert!(storm_foam > calm_foam * 2 + 50, "a storm's whitecaps: {storm_foam} pixels against {calm_foam} when calm");
 }
 
+#[test]
+fn a_calm_wind_zone_smooths_the_sea_inside_it() {
+    use voxear_render::{Ocean, Sky, Weather, WindShape, WindZone};
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    // From high over the sea, looking down, the left half under a calm Box.
+    let (eye, look) = (Vec3::new(0.0, 40.0, 0.0), Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.0, -1.0, 0.001).normalize()));
+    world.spawn((Camera::default(), Transform::new(eye, look, Vec3::ONE)));
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.3, -0.6, -1.0).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.6, ..Sky::default() });
+    world.spawn((Ocean { weather: Weather::Stormy, ..Ocean::default() }, Transform::default()));
+    let calm = WindZone { shape: WindShape::Box, strength: 0.0, size: [60.0, 20.0, 120.0], falloff: 2.0, ..WindZone::default() };
+    world.spawn((calm, Transform::from_position(Vec3::new(-32.0, 0.0, 0.0))));
+    run(&mut renderer, &world, &mut 40.0, 20);
+    let pixels = renderer.read_pixels().unwrap().2;
+    keep_image("calm wind zone.png", &pixels);
+    // How much the sea's brightness varies over a patch: its waves and their foam.
+    let rough = |centre: Vec3| {
+        let (x, y) = on_screen(eye, look, centre);
+        let values: Vec<f32> = (0..24u32)
+            .flat_map(|dy| (0..24u32).map(move |dx| (x - 12 + dx, y - 12 + dy)))
+            .map(|at| rgb_at(&pixels, at).iter().sum::<i32>() as f32)
+            .collect();
+        let mean = values.iter().sum::<f32>() / values.len() as f32;
+        (values.iter().map(|v| (v - mean).powi(2)).sum::<f32>() / values.len() as f32).sqrt()
+    };
+    let (inside, outside) = (rough(Vec3::new(-12.0, 0.0, 0.0)), rough(Vec3::new(12.0, 0.0, 0.0)));
+    assert!(inside < outside * 0.6, "the sea's roughness inside the calm zone {inside}, outside it {outside}");
+}
+
 /// A stream over sand, level, then down through rapids, then level again.
 fn stream_render(time: f32) -> Option<(Vec<u8>, Vec3, Quat)> {
     use voxear_render::{Sky, Stream};

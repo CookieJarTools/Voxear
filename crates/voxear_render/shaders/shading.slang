@@ -532,6 +532,11 @@ float3 localLights(Frame* frame, Surface s, float3 position, float2 pixel)
 // How far `world` is outside Dry Area `body`, negative inside.
 float dryDistance(WaterBody body, float3 world)
 {
+    // A Wind Zone kept among the Dry Areas keeps no water out.
+    if (body.kind != WATER_DRY)
+    {
+        return 1.0;
+    }
     // A mesh's inside is known from where it starts and ends on screen (inDryMesh).
     if (body.shape == DRY_MESH)
     {

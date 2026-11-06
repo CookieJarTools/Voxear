@@ -17,7 +17,7 @@ use voxear_engine::{
     physics::{CharacterController, Collider, ColliderMesh, ColliderShape, Joint, JointType, Vehicle, Wheel},
     physics2d::{Collider2D, ColliderShape2D},
 };
-use voxear_render::{Camera, DryArea, DryShape, Light, LightKind, Pool, PostVolume, VolumeShape, WindZone};
+use voxear_render::{Camera, DryArea, DryShape, Light, LightKind, Pool, PostVolume, VolumeShape, WindShape, WindZone};
 use voxear_scene::{Destroying, EditorOnly, Transform, WorldTransform};
 use voxear_ui::{Color, Shape};
 
@@ -156,6 +156,17 @@ fn path_curve(shapes: &mut Vec<Shape>, world: &World, camera: &ViewCamera, entit
 fn wind_zone(shapes: &mut Vec<Shape>, world: &World, camera: &ViewCamera, entity: Entity) {
     let Some(wind) = world.get::<WindZone>(entity) else { return };
     let (_, rotation, position) = voxear_scene::world_matrix(world, entity).to_scale_rotation_translation();
+    // A Sphere's or a Box's reach over the sea.
+    let half = Vec3::from(wind.size) * 0.5;
+    match wind.shape {
+        WindShape::Global => {}
+        WindShape::Sphere => {
+            for axis in [Vec3::X, Vec3::Y, Vec3::Z] {
+                polyline(shapes, camera, &ring(camera, position, rotation * axis, half.x), Color::hex(REACH));
+            }
+        }
+        WindShape::Box => wire_box(shapes, camera, position, rotation, half, Color::hex(REACH)),
+    }
     let along = rotation * Vec3::Z;
     let along = Vec3::new(along.x, 0.0, along.z).normalize_or(Vec3::Z);
     let across = Vec3::new(-along.z, 0.0, along.x);

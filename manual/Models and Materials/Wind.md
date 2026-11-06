@@ -16,7 +16,17 @@ Add a **Wind Zone** to any Obj (Add Component, then Rendering). The wind blows a
 | Gust speed | How fast gusts travel downwind, in metres a second |
 | Turbulence | How much plants sway back and forth and across the wind, rather than lean steadily with it |
 
-Only the level's first Wind Zone blows. Without one, nothing moves.
+Only the level's first Global Wind Zone blows over the whole level. Without one, nothing moves. It can also blow the sea's wind: see [[The Ocean]].
+
+### Wind over part of the sea
+
+Set **Shape** to **Sphere** or **Box** for a Wind Zone that works only inside it, on the sea's shorter waves: a calm bay in the lee of an island, or a squall out at sea. Inside it the short waves are as rough as its **Strength** says, 0 glassy calm, 1 as the rest of the sea, 2 twice as rough, fading back to the sea's over **Falloff** metres outside it. The long swell rolls through unchanged, as no wind over a small patch of sea can raise or calm it. Plants take no notice of these.
+
+| Setting | What it does |
+| --- | --- |
+| Shape | Global, over the whole level; or Sphere or Box, over part of the sea |
+| Width, Size | A Sphere's width, or a Box's size, in metres, turned with its Obj |
+| Falloff | How far outside it its roughness fades back into the sea's, in metres |
 
 In a scene file:
 

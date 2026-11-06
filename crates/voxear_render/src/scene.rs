@@ -565,9 +565,9 @@ pub fn extract(
         .map(|(push, transform, at)| (at.map_or(transform.position, |w| w.0.w_axis.truncate()), *push))
         .collect();
     frame.pushes = crate::foliage::pushes(position, pushers);
-    // The first Wind Zone blows over the whole level.
+    // The first Global Wind Zone blows over the whole level.
     let zones = world.query_ref::<(&crate::WindZone, &Transform)>().without::<Destroying>();
-    let zone = zones.into_iter().next().map(|(zone, transform)| (*zone, transform.rotation));
+    let zone = zones.into_iter().find(|(zone, _)| zone.shape == crate::WindShape::Global).map(|(zone, transform)| (*zone, transform.rotation));
     if let Some((zone, rotation)) = zone {
         frame.wind = zone.gpu(rotation);
     }
@@ -858,6 +858,17 @@ fn water_bodies(world: &World, camera: Vec3) -> crate::water::WaterBodies {
             (position.distance_squared(camera), pool.gpu(position, rotation))
         })
         .collect();
+    // Sphere and Box Wind Zones go with the Dry Areas, which the shaders tell apart by their kind.
+    let gusts: Vec<(f32, crate::gpu::GpuWaterBody, Option<crate::MeshHandle>)> = world
+        .query_ref::<(&crate::WindZone, &Transform, Option<&WorldTransform>)>()
+        .without::<Destroying>()
+        .into_iter()
+        .filter(|(zone, ..)| zone.shape != crate::WindShape::Global)
+        .map(|(zone, transform, at)| {
+            let (position, rotation) = placed(transform, at);
+            (position.distance_squared(camera), zone.gpu_local(position, rotation), None)
+        })
+        .collect();
     // A mesh Dry Area takes its own mesh or its Obj's Mesh Renderer's; with neither it keeps nothing dry.
     let mut dries: Vec<(f32, crate::gpu::GpuWaterBody, Option<crate::MeshHandle>)> = world
         .query_ref::<(&DryArea, &Transform, Option<&WorldTransform>, Option<&MeshRenderer>)>()
@@ -912,6 +923,7 @@ fn water_bodies(world: &World, camera: Vec3) -> crate::water::WaterBodies {
         .collect();
     pools.sort_by(|a, b| a.0.total_cmp(&b.0));
     streams.sort_by(|a, b| a.0.total_cmp(&b.0));
+    dries.extend(gusts);
     dries.sort_by(|a, b| a.0.total_cmp(&b.0));
     pools.truncate(MAX_WATER_BODIES / 2);
     streams.truncate(MAX_WATER_BODIES / 4);

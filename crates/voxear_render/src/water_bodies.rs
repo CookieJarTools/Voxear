@@ -449,11 +449,14 @@ pub fn stream_over(points: &[StreamPoint], depth: f32, point: Vec3) -> Option<(f
     best.filter(|&(_, height, _)| point.y >= height - depth).map(|(_, height, flow)| (height, flow))
 }
 
-/// A body's kind, as `WATER_POOL`, `WATER_DRY` and `WATER_STREAM` in
+/// A body's kind, as `WATER_POOL`, `WATER_DRY`, `WATER_STREAM` and `WATER_WIND` in
 /// `shaders/water.slang`.
 pub const WATER_POOL: u32 = 1;
 pub const WATER_DRY: u32 = 2;
 pub const WATER_STREAM: u32 = 3;
+/// A Sphere or Box Wind Zone, among the Dry Areas, making the sea's short
+/// waves rougher or calmer inside it (`WATER_WIND`).
+pub const WATER_WIND: u32 = 4;
 
 #[cfg(test)]
 mod tests {

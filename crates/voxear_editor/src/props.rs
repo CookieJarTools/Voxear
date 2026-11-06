@@ -23,7 +23,7 @@ use voxear_engine::{
 };
 use voxear_render::{
     Camera, Foliage, FoliageInteraction, Impostors, Light, LightKind, LodGroup, LodLevel, LodMeasure, MAX_TRANSITIONS, MeshRenderer, PostVolume, Renderer,
-    ModelRenderer, Ocean, Season, Seasons, SkyBody, VolumeShape, Weather, WindSource, WindZone, DryArea, DryShape, Liquid, Pool, Stream,
+    ModelRenderer, Ocean, Season, Seasons, SkyBody, VolumeShape, Weather, WindShape, WindSource, WindZone, DryArea, DryShape, Liquid, Pool, Stream,
 };
 use voxear_scene::{BehaviourSpec, Behaviours, Name, Parent, SceneComponents};
 
@@ -228,6 +228,12 @@ pub enum Prop {
     WindGustSize,
     WindGustSpeed,
     WindTurbulence,
+    /// A Wind Zone's shape, and a Sphere's width or a Box's size, and how far
+    /// out it fades.
+    WindShape,
+    WindSize,
+    WindWidth,
+    WindFalloff,
     /// An Ocean's weather, and for Custom weather its swell and wind; its
     /// crests, colours and foam.
     OceanWeather,
@@ -466,7 +472,15 @@ impl Prop {
             }
             Prop::FieldOfView | Prop::Near | Prop::Exposure => Part::Camera,
             Prop::VolumeShape | Prop::VolumeBlend | Prop::VolumeWeight | Prop::VolumePriority => Part::PostVolume,
-            Prop::WindStrength | Prop::WindGusts | Prop::WindGustSize | Prop::WindGustSpeed | Prop::WindTurbulence => {
+            Prop::WindStrength
+            | Prop::WindGusts
+            | Prop::WindGustSize
+            | Prop::WindGustSpeed
+            | Prop::WindTurbulence
+            | Prop::WindShape
+            | Prop::WindSize
+            | Prop::WindWidth
+            | Prop::WindFalloff => {
                 Part::WindZone
             }
             Prop::OceanWeather
@@ -646,6 +660,9 @@ impl Prop {
             Prop::WindGustSize => "gust_size",
             Prop::WindGustSpeed => "gust_speed",
             Prop::WindTurbulence => "turbulence",
+            Prop::WindShape => "shape",
+            Prop::WindSize | Prop::WindWidth => "size",
+            Prop::WindFalloff => "falloff",
             Prop::OceanWeather => "weather",
             Prop::OceanWindSource => "wind_source",
             Prop::OceanTransition => "transition",
@@ -972,7 +989,19 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
         Part::Camera => vec![Prop::FieldOfView, Prop::Near, Prop::Exposure],
         Part::PostVolume => vec![Prop::VolumeShape, Prop::VolumeBlend, Prop::VolumeWeight, Prop::VolumePriority],
         Part::WindZone => {
-            vec![Prop::WindStrength, Prop::WindGusts, Prop::WindGustSize, Prop::WindGustSpeed, Prop::WindTurbulence]
+            // A Global one's gusts for the plants; a Sphere's or a Box's size over the sea.
+            match world.get::<WindZone>(entity).map_or(WindShape::Global, |wind| wind.shape) {
+                WindShape::Global => vec![
+                    Prop::WindShape,
+                    Prop::WindStrength,
+                    Prop::WindGusts,
+                    Prop::WindGustSize,
+                    Prop::WindGustSpeed,
+                    Prop::WindTurbulence,
+                ],
+                WindShape::Sphere => vec![Prop::WindShape, Prop::WindStrength, Prop::WindWidth, Prop::WindFalloff],
+                WindShape::Box => vec![Prop::WindShape, Prop::WindStrength, Prop::WindSize, Prop::WindFalloff],
+            }
         }
         // The swell and wind only for Custom weather: the others set their own.
         Part::Ocean => {
@@ -1206,6 +1235,10 @@ pub fn label(prop: &Prop) -> String {
         Prop::WindGusts => "Gusts",
         Prop::WindGustSize => "Gust size",
         Prop::WindGustSpeed => "Gust speed",
+        Prop::WindShape => "Shape",
+        Prop::WindSize => "Size",
+        Prop::WindWidth => "Width",
+        Prop::WindFalloff => "Falloff",
         Prop::WindTurbulence => "Turbulence",
         Prop::OceanWeather => "Weather",
         Prop::OceanWindSource => "Wind Source",
@@ -1744,6 +1777,14 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::WindGusts => Value::Number(world.get::<WindZone>(entity)?.gusts),
         Prop::WindGustSize => Value::Number(world.get::<WindZone>(entity)?.gust_size),
         Prop::WindGustSpeed => Value::Number(world.get::<WindZone>(entity)?.gust_speed),
+        Prop::WindShape => {
+            let shape = world.get::<WindZone>(entity)?.shape;
+            let index = WindShape::ALL.iter().position(|s| *s == shape).unwrap_or(0);
+            Value::Choice(index, WindShape::ALL.iter().map(|s| s.name().to_string()).collect())
+        }
+        Prop::WindSize => Value::Vector(world.get::<WindZone>(entity)?.size.to_vec()),
+        Prop::WindWidth => Value::Number(world.get::<WindZone>(entity)?.size[0]),
+        Prop::WindFalloff => Value::Number(world.get::<WindZone>(entity)?.falloff),
         Prop::WindTurbulence => Value::Number(world.get::<WindZone>(entity)?.turbulence),
         Prop::OceanWeather => {
             let weather = world.get::<Ocean>(entity)?.weather;
@@ -2561,6 +2602,15 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         (Prop::WindGusts, Value::Number(n)) => with(world, entity, |wind: &mut WindZone| wind.gusts = n.max(0.0)),
         (Prop::WindGustSize, Value::Number(n)) => with(world, entity, |wind: &mut WindZone| wind.gust_size = n.max(0.1)),
         (Prop::WindGustSpeed, Value::Number(n)) => with(world, entity, |wind: &mut WindZone| wind.gust_speed = n),
+        (Prop::WindShape, Value::Choice(index, _)) => {
+            let shape = WindShape::ALL.get(index).copied().unwrap_or_default();
+            with(world, entity, |wind: &mut WindZone| wind.shape = shape)
+        }
+        (Prop::WindSize, Value::Vector(v)) if v.len() == 3 => {
+            with(world, entity, |wind: &mut WindZone| wind.size = [v[0], v[1], v[2]].map(|s| s.max(0.01)))
+        }
+        (Prop::WindWidth, Value::Number(n)) => with(world, entity, |wind: &mut WindZone| wind.size[0] = n.max(0.01)),
+        (Prop::WindFalloff, Value::Number(n)) => with(world, entity, |wind: &mut WindZone| wind.falloff = n.max(0.01)),
         (Prop::ModelLodBias, Value::Number(n)) => {
             with(world, entity, |model: &mut ModelRenderer| model.lod_bias = n.clamp(-4.0, 4.0))
         }

@@ -372,6 +372,9 @@ struct StreamPoint
 static const uint WATER_POOL = 1;
 static const uint WATER_DRY = 2;
 static const uint WATER_STREAM = 3;
+// A Sphere or Box Wind Zone, kept among the Dry Areas: the sea's short waves inside it as rough as `waves` says,
+// fading out over lava.x metres outside it (src/wind.rs).
+static const uint WATER_WIND = 4;
 // What fills a Pool or a Stream (Liquid in src/water_bodies.rs).
 static const uint LIQUID_WATER = 0;
 static const uint LIQUID_LAVA = 1;

@@ -58,7 +58,7 @@ pub fn update(world: &mut World, time: f64) {
     let zone = world
         .query_ref::<(&WindZone, &Transform, Option<&WorldTransform>)>()
         .into_iter()
-        .next()
+        .find(|(zone, ..)| zone.shape == voxear_render::WindShape::Global)
         .map(|(zone, transform, at)| (placed(transform, at).1, zone.strength));
     let first = world.query_ref::<(Entity, &Ocean, &Transform, Option<&WorldTransform>)>().into_iter().next().map(
         |(entity, ocean, transform, at)| {

@@ -3620,7 +3620,7 @@ fn material_assets(game: &Game) -> Vec<String> {
 /// Each clip of the project's model files that have been read, by its name,
 /// and each file not read yet whole, as a clip field picks from them.
 /// Listing them reads nothing, so a picker opens at once.
-fn model_clips(game: &Game) -> Vec<(String, Pick)> {
+pub(crate) fn model_clips(game: &Game) -> Vec<(String, Pick)> {
     let db = game.content.db();
     let models = db.entries().filter(|e| e.kind == AssetKind::Model);
     let mut models: Vec<_> = models.map(|e| (e.path.clone(), e.guid)).collect();
@@ -3641,7 +3641,7 @@ fn model_clips(game: &Game) -> Vec<(String, Pick)> {
 /// A clip picked, as the reference a clip field keeps: the file's GUID and
 /// the clip, `…#clip:Walk_Loop`. A file picked whole gives its first clip,
 /// reading it. `None` for a file without clips.
-fn clip_reference(game: &mut Game, choice: &str) -> Option<String> {
+pub(crate) fn clip_reference(game: &mut Game, choice: &str) -> Option<String> {
     let reference = game.content.parse(choice).ok()?;
     if reference.part().is_some() {
         return Some(reference.to_string());
@@ -3653,13 +3653,21 @@ fn clip_reference(game: &mut Game, choice: &str) -> Option<String> {
 
 /// A clip as a field shows it: its name, then its file, `Walk_Loop ·
 /// Walks.glb`; "None" for none.
-fn clip_label(game: &Game, reference: &str) -> String {
+pub(crate) fn clip_label(game: &Game, reference: &str) -> String {
     if reference.is_empty() {
         return "None".into();
     }
     let Some((file, clip)) = reference.split_once(&format!("#{CLIP_PART}")) else { return reference.to_string() };
     let path = game.content.parse(file).ok().and_then(|r| r.guid()).and_then(|guid| game.content.db().get(guid));
     format!("{clip} · {}", file_name(path.map_or(file, |entry| entry.path.as_str())))
+}
+
+/// The bones of a clip's skeleton, when its file has been read; none
+/// before.
+pub(crate) fn clip_bones(game: &Game, reference: &str) -> Vec<String> {
+    let guid = game.content.parse(reference).ok().and_then(|parsed| parsed.guid());
+    let animation = guid.and_then(|guid| game.content.known_clip_file(guid));
+    animation.map_or_else(Vec::new, |animation| animation.skeleton.bones.iter().map(|bone| bone.name.clone()).collect())
 }
 
 /// Each mesh of the project's models that is loaded, by the name its model

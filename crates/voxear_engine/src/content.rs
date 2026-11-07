@@ -897,6 +897,15 @@ impl Content {
         Some(crate::animation::ClipSource { animation, index, settings })
     }
 
+    /// A model file's skeleton, skins and clips, when they have been read:
+    /// for one loaded, or one a clip was played from.
+    pub fn known_clip_file(&self, guid: AssetGuid) -> Option<Arc<ModelAnimation>> {
+        match self.models.get(&guid) {
+            Some(model) => model.animation.clone(),
+            None => self.clip_files.get(&guid)?.clone(),
+        }
+    }
+
     /// The names of a model file's clips, when they have been read: for one
     /// loaded, or one a clip was played from. `None` for a file not read yet.
     pub fn known_clips(&self, guid: AssetGuid) -> Option<Vec<String>> {

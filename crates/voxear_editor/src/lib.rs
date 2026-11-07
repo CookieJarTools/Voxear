@@ -92,6 +92,7 @@ mod script_handles;
 mod settings;
 mod settings_panel;
 mod shader_fields;
+mod motion_set_inspector;
 mod strings_inspector;
 #[cfg(target_os = "linux")]
 mod wayland_drops;

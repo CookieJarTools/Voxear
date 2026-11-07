@@ -22,6 +22,7 @@ mod level_edits;
 mod material_drops;
 mod material_shaders;
 mod model_clips;
+mod motion_sets;
 mod model_materials;
 mod model_parts;
 mod multiplayer;
@@ -1161,6 +1162,9 @@ impl Editor {
             AssetAction::Notice(text) => self.notify(&text),
             AssetAction::Import(path, settings) => self.apply_import_settings(&path, &settings, renderer),
             AssetAction::SaveClips(path, settings) => self.apply_clip_settings(&path, &settings),
+            AssetAction::SaveMotionSet { path, set, rebuild } => self.save_motion_set(&path, &set, rebuild),
+            AssetAction::BrowseClip { set, slot, anchor } => self.browse_clip(&set, slot, anchor),
+            AssetAction::DropClip { set, slot, source } => self.drop_clip(&set, slot, &source),
             AssetAction::BrowseScene { level, at, anchor } => self.browse_level_scene(&level, at, anchor),
             AssetAction::DropScene { level, at, source } => self.drop_level_scene(&level, at, &source, renderer),
             AssetAction::BrowseStandsOn { level, anchor } => self.browse_stands_on(&level, anchor),
@@ -2292,6 +2296,9 @@ impl Editor {
                     self.pick_level_scene(&level, at, &pick, renderer);
                 }
                 (PickFor::StandsOn { level }, Chosen::Value(pick)) => self.pick_stands_on(&level, &pick, renderer),
+                (PickFor::MotionSetClip { set, slot }, Chosen::Value(pick)) => {
+                    self.pick_motion_set_clip(&set, &slot, &pick);
+                }
                 (PickFor::MaterialMap { material, map }, Chosen::Value(pick)) => {
                     self.pick_material_map(&material, map, &pick, renderer);
                 }

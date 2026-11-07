@@ -44,6 +44,7 @@ use crate::{
     level_files::{self, LevelEdit},
     project_view::{ItemKind, ProjectItem},
     shader_fields::{ShaderEdit, ShaderFields},
+    motion_set_inspector::{ClipSlot, MotionSetFields, SetChange},
     strings_inspector::{StringsChange, StringsFields},
 };
 
@@ -73,6 +74,26 @@ pub enum AssetAction {
     /// Write these clip settings for the model at this path, and play its
     /// clips with them.
     SaveClips(String, ClipSettings),
+    /// Write the Motion Set at this path as this, and when `rebuild`, show
+    /// it again.
+    SaveMotionSet {
+        path: String,
+        set: voxear_engine::animation::MotionSet,
+        rebuild: bool,
+    },
+    /// Open the object picker under `anchor` for a clip field of the Motion
+    /// Set at this path.
+    BrowseClip {
+        set: String,
+        slot: ClipSlot,
+        anchor: NodeId,
+    },
+    /// Something was dragged onto a clip field of the Motion Set at this path.
+    DropClip {
+        set: String,
+        slot: ClipSlot,
+        source: DragSource,
+    },
     /// Open the object picker under `anchor` for the scene at this place in
     /// the level at this path, or for a new one.
     BrowseScene {
@@ -167,6 +188,8 @@ pub struct AssetView {
     /// section's rows, whether it is filled, and the fields when it has
     /// clips.
     clips: Option<(NodeId, bool, Option<ClipFields>)>,
+    /// A Motion Set's states and actions.
+    motion_set: Option<MotionSetFields>,
     /// The preview's frame, which takes drags, and its image.
     preview: Option<(NodeId, NodeId)>,
     /// A sound's play button, and whether it shows that the sound plays.
@@ -337,6 +360,7 @@ impl AssetView {
             import: None,
             remaps: None,
             clips: None,
+            motion_set: None,
             preview,
             listen: None,
             strings: None,
@@ -348,6 +372,13 @@ impl AssetView {
         };
         match item.kind {
             ItemKind::Asset(AssetKind::Material) => view.material = material(ui, root, &file, game),
+            ItemKind::Asset(AssetKind::MotionSet) => {
+                let text = std::fs::read_to_string(&file).unwrap_or_default();
+                let set = toml::from_str(&text).unwrap_or_default();
+                let label = |clip: &str| crate::props::clip_label(game, clip);
+                let bones = |clip: &str| crate::props::clip_bones(game, clip);
+                view.motion_set = Some(MotionSetFields::new(ui, root, set, &label, &bones));
+            }
             ItemKind::Asset(AssetKind::Model) => {
                 let rows = part(ui, root, "Import Settings", "box");
                 view.import = Some(ImportFields::model(ui, rows, &meta));
@@ -448,6 +479,7 @@ impl AssetView {
             import: None,
             remaps: None,
             clips: None,
+            motion_set: None,
             preview: None,
             listen: None,
             strings: None,
@@ -500,6 +532,17 @@ impl AssetView {
         }
         if let Some(action) = self.remaps.as_ref().and_then(|remaps| remaps.update(ui, &self.item.path)) {
             return Some(action);
+        }
+        if let Some(fields) = self.motion_set.as_mut()
+            && let Some(change) = fields.update(ui)
+        {
+            let (path, set) = (self.item.path.clone(), fields.set.clone());
+            return Some(match change {
+                SetChange::Typed => AssetAction::SaveMotionSet { path, set, rebuild: false },
+                SetChange::Shape => AssetAction::SaveMotionSet { path, set, rebuild: true },
+                SetChange::Browse(slot, anchor) => AssetAction::BrowseClip { set: path, slot, anchor },
+                SetChange::Drop(slot, source) => AssetAction::DropClip { set: path, slot, source },
+            });
         }
         if let Some(settings) = self.clips.as_mut().and_then(|(_, _, fields)| fields.as_mut()?.update(ui)) {
             return Some(AssetAction::SaveClips(self.item.path.clone(), settings));

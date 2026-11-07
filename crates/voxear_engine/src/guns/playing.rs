@@ -21,8 +21,10 @@ pub struct ActionPlay {
     pub index: usize,
     /// Seconds into the beat.
     pub t: f32,
-    /// Where the beat's hand started, in the gun's space.
+    /// Where the beat's hand started, in the gun's space, and whether it
+    /// set out from its hold.
     pub from: Option<Vec3>,
+    pub rested: bool,
     /// Where each hand was last, left then right.
     pub hands: [Option<Vec3>; 2],
     /// Whether the magazine taken out was empty and dropped, so the hand
@@ -52,6 +54,7 @@ impl ActionPlay {
             index: 0,
             t: 0.0,
             from: None,
+            rested: false,
             hands: [None; 2],
             dropped: false,
             knock: (Vec3::ZERO, Vec3::ZERO),
@@ -64,12 +67,16 @@ impl ActionPlay {
 }
 
 /// Where a hand working goes this frame, in the gun's space: the point its
-/// fingers hold, and how they close.
+/// fingers hold, how far they may close, how far the hand is settled into
+/// its hold on the gun, 0 working to 1 holding as it does at rest, and the
+/// way it comes in to what it holds, out from it; none for a pouch.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct HandAim {
     pub hand: Hand,
     pub at: Vec3,
     pub grip: Grip,
+    pub settle: f32,
+    pub toward: Vec3,
 }
 
 /// The hand's place at rest on the gun, in the gun's space.
@@ -104,6 +111,7 @@ fn goal_at(world: &World, gun: &Gun, state: &GunState, goal: Goal, hand: Hand, p
 /// Plays `dt` seconds of an action: its parts driven and carried, its
 /// events happening as beats end. Gives back the working hand's aim and
 /// the gun's tilt, or `None` once the action is over.
+#[allow(clippy::too_many_arguments)]
 pub fn advance(
     world: &mut World,
     play: &mut ActionPlay,
@@ -133,19 +141,22 @@ pub fn advance(
         play.t -= beat.length();
         play.index += 1;
         play.from = None;
-        if play.beat().is_none() {
-            return None;
-        }
+        play.beat()?;
     }
     let beat = *play.beat()?;
     let goal = goal_at(world, gun, state, beat.goal, beat.hand, pouches);
+    if play.from.is_none() {
+        play.rested = play.hands[beat.hand as usize].is_none();
+    }
+    let toward = approach(beat.goal, gun, beat.hand);
     let from =
         *play.from.get_or_insert_with(|| play.hands[beat.hand as usize].unwrap_or_else(|| socket(gun, beat.hand)));
     let at = if play.t < beat.reach {
-        // A reach: straight for its goal on a slight arc out from the gun, timed as a person's reach is.
+        // A reach: out from the gun on a slight arc, timed as a person's reach is, and the last few centimetres
+        // straight in along the way the goal is come at, so the hand does not cut through the gun.
         let s = minimum_jerk(play.t / beat.reach.max(1e-4));
-        let out = Vec3::new(if beat.hand == Hand::Right { 1.0 } else { -1.0 }, 0.4, 0.0) * 0.05;
-        from.lerp(goal, s) + out * (s * std::f32::consts::PI).sin()
+        let out = Vec3::new(if beat.hand == Hand::Right { 1.0 } else { -1.0 }, 0.4, 0.0) * 0.06;
+        curve([from, from + out, goal + toward * 0.08, goal], s)
     } else {
         let work = minimum_jerk((play.t - beat.reach) / beat.work.max(1e-4));
         if let Some((role, start, end)) = beat.drive
@@ -157,7 +168,32 @@ pub fn advance(
     };
     play.hands[beat.hand as usize] = Some(at);
     let grip = if play.t < beat.reach * 0.7 { Grip::OPEN.lerp(beat.grip, 0.3) } else { beat.grip };
-    Some((HandAim { hand: beat.hand, at, grip }, beat.tilt))
+    // A hand leaving its hold eases out of it over the first half of its reach.
+    let settle = if play.rested { 1.0 - minimum_jerk(play.t / (beat.reach * 0.5).max(1e-4)) } else { 0.0 };
+    Some((HandAim { hand: beat.hand, at, grip, settle, toward }, beat.tilt))
+}
+
+/// The way a hand comes in to a goal, in the gun's space, out from it: to
+/// a magazine from below, to a part's handle from its side and above, to a
+/// feed from the side it opens on, to the port from the side; to a pouch
+/// or its hold, from wherever it is.
+fn approach(goal: Goal, gun: &Gun, hand: Hand) -> Vec3 {
+    let side = if hand == Hand::Right { 1.0 } else { -1.0 };
+    match goal {
+        Goal::Part(PartRole::Magazine) => Vec3::NEG_Y,
+        Goal::Part(_) => Vec3::new(side * 0.7, 0.6, -0.2).normalize(),
+        Goal::Feed if gun.feed[1] < 0.0 => Vec3::NEG_Y,
+        Goal::Feed => Vec3::new(side * 0.15, 1.0, 0.0).normalize(),
+        Goal::Port => Vec3::new(side, 0.3, 0.0).normalize(),
+        Goal::Pouch | Goal::Hold => Vec3::ZERO,
+    }
+}
+
+/// A smooth path through four points, from the first to the last, leaving
+/// toward the second and coming in from the third, `s` of the way along.
+pub fn curve([a, b, c, d]: [Vec3; 4], s: f32) -> Vec3 {
+    let r = 1.0 - s;
+    a * (r * r * r) + b * (3.0 * r * r * s) + c * (3.0 * r * s * s) + d * (s * s * s)
 }
 
 /// Puts the part the beat under way carries where its hand is now.

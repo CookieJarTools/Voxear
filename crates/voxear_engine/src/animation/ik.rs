@@ -55,6 +55,11 @@ impl<'a> PoseEdit<'a> {
         *local = (parent.inverse() * turn * parent * *local).normalize();
     }
 
+    /// Turns a bone back as it stands at rest, in its parent's space.
+    pub fn rest(&mut self, bone: usize) {
+        self.local[bone].rotation = self.skeleton.bones[bone].rest.rotation;
+    }
+
     /// Sets a bone's turn in the model's space.
     pub fn set_rotation(&mut self, bone: usize, rotation: Quat) {
         let parent = self.parent_rotation(bone);
@@ -83,8 +88,14 @@ pub fn two_bone(edit: &mut PoseEdit, [top, middle, end]: [usize; 3], target: Vec
     let law = |near: f32, far: f32, opposite: f32| {
         ((opposite * opposite - near * near - far * far) / (-2.0 * near * far)).clamp(-1.0, 1.0).acos()
     };
-    // Open or close the two joints in the plane they bend in, so the limb spans as far as the target is.
-    let bend = (c - a).cross(b - a).try_normalize().unwrap_or_else(|| (b - a).any_orthonormal_vector());
+    // Open or close the two joints in the plane they bend in, so the limb spans as far as the target is. A limb
+    // all but straight bends in no plane of its own, so it takes the pole's: else a few thousandths of a turn
+    // decide which way it bends, and the hand lands elsewhere.
+    let bent = (c - a).cross(b - a);
+    let bend = match bent.length() > 0.02 * (c - a).length() * upper {
+        true => bent.normalize(),
+        false => (c - a).cross(pole - a).try_normalize().unwrap_or_else(|| (b - a).any_orthonormal_vector()),
+    };
     let (top_now, middle_now) = (angle(c - a, b - a), angle(a - b, c - b));
     let (top_then, middle_then) = (law(upper, span, lower), law(upper, lower, span));
     edit.turn(top, Quat::from_axis_angle(bend, top_then - top_now));
@@ -146,7 +157,15 @@ pub fn hand_axes(edit: &PoseEdit, arm: &Arm) -> Option<(Vec3, Vec3)> {
 /// Turns a hand so its fingers point along `fingers` and its palm faces
 /// `palm`, in the model's space.
 pub fn aim_hand(edit: &mut PoseEdit, arm: &Arm, fingers: Vec3, palm: Vec3) {
-    let Some((along, facing)) = hand_axes(edit, arm) else { return };
+    let Some(turn) = aim_turn(edit, arm, fingers, palm) else { return };
+    let rotation = edit.rotation(arm.hand);
+    edit.set_rotation(arm.hand, turn * rotation);
+}
+
+/// The turn, in the model's space, that would point a hand's fingers along
+/// `fingers` with its palm facing `palm`.
+pub fn aim_turn(edit: &PoseEdit, arm: &Arm, fingers: Vec3, palm: Vec3) -> Option<Quat> {
+    let (along, facing) = hand_axes(edit, arm)?;
     let frame = |a: Vec3, p: Vec3| {
         let a = a.normalize_or_zero();
         let p = (p - a * p.dot(a)).normalize_or_zero();
@@ -154,11 +173,9 @@ pub fn aim_hand(edit: &mut PoseEdit, arm: &Arm, fingers: Vec3, palm: Vec3) {
     };
     let (now, wanted) = (frame(along, facing), frame(fingers, palm));
     if now.determinant().abs() < 0.5 || wanted.determinant().abs() < 0.5 {
-        return;
+        return None;
     }
-    let turn = Quat::from_mat3(&(wanted * now.transpose())).normalize();
-    let rotation = edit.rotation(arm.hand);
-    edit.set_rotation(arm.hand, turn * rotation);
+    Some(Quat::from_mat3(&(wanted * now.transpose())).normalize())
 }
 
 /// Turns a run of the spine, from the bottom up, by `turn` in the model's

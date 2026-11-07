@@ -89,10 +89,12 @@ impl Socket {
     /// space: as a hand of `role` holds it, turned by the socket's turn.
     pub fn hand(&self, role: HandRole) -> (Vec3, Vec3) {
         let (fingers, palm) = match role {
-            // The shooting hand round the grip: fingers forward and down, before they curl, palm to the left.
-            HandRole::Grip => (Vec3::new(-0.15, -0.55, 0.82), Vec3::NEG_X),
-            // The other hand under the fore-end, from the left: fingers across to the right, palm up.
-            HandRole::Support => (Vec3::new(0.7, 0.15, 0.7), Vec3::Y),
+            // The shooting hand round the grip: fingers down and a little forward, before they curl round under
+            // it, palm to the left.
+            HandRole::Grip => (Vec3::new(-0.1, -0.8, 0.55), Vec3::NEG_X),
+            // The other hand under the fore-end, from the left: fingers across to the right, palm up, so the
+            // thumb lies forward along the left side.
+            HandRole::Support => (Vec3::new(0.85, 0.15, 0.5), Vec3::Y),
             // The other hand round the shooting hand on a handgun: palm to the right.
             HandRole::HandgunSupport => (Vec3::new(0.15, -0.55, 0.82), Vec3::X),
         };
@@ -161,8 +163,8 @@ impl Gun {
             length,
             fire_rate,
             recoil,
-            grip: Socket::at([0.03, -0.03, -0.07]),
-            support: Socket::at([-0.035, -0.045, support]),
+            grip: Socket::at([0.0, -0.03, -0.07]),
+            support: Socket::at([0.0, -0.01, support]),
             rear_sight: [0.0, 0.07, rear],
             front_sight: [0.0, 0.075, length - 0.15],
             eye_relief: relief,
@@ -178,7 +180,7 @@ impl Gun {
             length,
             fire_rate,
             recoil,
-            grip: Socket::at([0.03, -0.035, -0.06]),
+            grip: Socket::at([0.0, -0.035, -0.06]),
             support: Socket::at([-0.035, -0.06, -0.04]),
             rear_sight: [0.0, 0.055, 0.0],
             front_sight: [0.0, 0.055, length - 0.03],
@@ -193,7 +195,7 @@ impl Gun {
             GunKind::BoltActionRifle => rifle(3.9, 1.11, 15.0, 1.0, 0.26, 0.2, 0.24),
             GunKind::SemiAutoRifle => rifle(4.3, 1.1, 40.0, 1.0, 0.26, -0.03, 0.08),
             GunKind::OpenBoltSmg => Gun {
-                support: Socket::at([-0.03, -0.08, 0.16]),
+                support: Socket::at([0.0, -0.06, 0.16]),
                 feed: [0.0, -0.12, 0.12],
                 ..rifle(4.0, 0.83, 550.0, 0.35, 0.2, 0.0, 0.12)
             },

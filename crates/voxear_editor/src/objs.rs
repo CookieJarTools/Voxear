@@ -140,9 +140,9 @@ mesh = "builtin:sphere"
 
 /// A bolt-action rifle to make other guns from: a Gun with the preset's
 /// sockets, and blocks where its parts go, each of which can have its look
-/// swapped for a model's. The bolt turns up and slides back, a stripper
-/// clip shows while a hand has it, and spent cases are copied from the
-/// case.
+/// swapped for a model's. Its stock is thin at the wrist, where the hand
+/// wraps it. The bolt turns up and slides back, a stripper clip shows while
+/// a hand has it, and spent cases are copied from the case.
 const RIFLE: &str = r#"[obj.gun]
 kind = "bolt_action_rifle"
 
@@ -150,8 +150,18 @@ kind = "bolt_action_rifle"
 id = 2
 name = "Stock"
 parent = 1
-position = [0.0, -0.03, -0.19]
-scale = [0.045, 0.12, 0.34]
+position = [0.0, -0.035, -0.28]
+scale = [0.042, 0.13, 0.16]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.36, 0.22, 0.12], roughness = 0.6 }
+
+[[obj]]
+id = 11
+name = "Wrist"
+parent = 1
+position = [0.0, -0.03, -0.11]
+scale = [0.03, 0.042, 0.18]
 [obj.renderer]
 mesh = "builtin:cube"
 material = { color = [0.36, 0.22, 0.12], roughness = 0.6 }

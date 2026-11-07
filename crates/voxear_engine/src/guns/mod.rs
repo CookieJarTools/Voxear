@@ -5,6 +5,7 @@
 //! pulls back from walls (see [`holder`]).
 
 pub mod actions;
+pub mod contact;
 pub mod gun;
 pub mod hands;
 pub mod holder;

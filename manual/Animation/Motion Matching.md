@@ -14,7 +14,7 @@ The clips blended play in step, each the same share of the way through its loop,
 
 ## Moving the character
 
-The game moves the Obj, with a Character Controller or by setting its position, and the model stands on it. Left alone, the Motion Matcher follows how the Obj moves. Tell it where the player wants to go and it changes pace as soon as the keys do:
+The Motion Matcher moves nothing itself and needs no particular movement code. The game moves the Obj however it likes, with a Character Controller, a Rigidbody, by setting its position or along a path, and the model stands on it. Left alone, the Motion Matcher follows how the Obj moves. Tell it where the character wants to go, from keys, a stick, an AI or anything else, and it changes pace as soon as that does:
 
 ```csharp
 public sealed class Walker : Behaviour
@@ -36,6 +36,12 @@ public sealed class Walker : Behaviour
 
 The body turns the way it goes, at its **Turn Rate**. To keep it facing one way, as when aiming, set `WantedFacing`; set it to zero to face the way it goes again. `FollowObj()` forgets both.
 
+## Moving by the clips
+
+To have the clips move the character instead, turn on **Root Motion**: they move it through the Character Controller on the matcher's Obj or the nearest Obj above it, as on a player whose model is a child, and else move the Obj itself. To move the character your own way by them, leave Root Motion off and read `ClipVelocity`: how fast and which way the clips playing carry the body, in metres a second.
+
+While an action stands the character still or moves it itself, as a sit or a roll, `ActionTakesMovement` is true. A game moving the character itself should leave it to `ClipVelocity` meanwhile.
+
 `AimPitch` bends the spine a little to look up or down, down positive: set it to the view's pitch. For a first-person camera on the body, see [[Bone Attachments]].
 
 Going another way than it faces, the hips and legs turn towards the way it goes, up to **Leg Turn**, and the spine twists back so the chest still faces ahead. With only a forward and a backward walk, it walks forward and to the side, or backs away to the side, turning smoothly from one to the next. Steps to each side, if the model has them, take over once they fit better.
@@ -43,7 +49,7 @@ Going another way than it faces, the hips and legs turn towards the way it goes,
 ## Settings
 
 - **Motion Set**: its states and actions. None plays the model's own clips, standing with the first loop that stands still.
-- **Root Motion**: the clips move the Obj, through its Character Controller when it has one, rather than the game moving it.
+- **Root Motion**: the clips move the character, rather than the game moving it.
 - **Idle Speed**: below this many metres a second wanted, it stands.
 - **Search Every**: seconds between searches.
 - **Blend Time**: how long a change of clips takes to fade in.

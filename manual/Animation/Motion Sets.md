@@ -44,7 +44,7 @@ private void Sit()
 
 ## Root motion
 
-With **Root Motion** on the Motion Matcher, the clips move the character rather than the game: through its Character Controller when it has one, else straight. A clip set to move at a Speed and Direction (see [[Animation Clips]]) moves it at exactly those.
+With **Root Motion** on the Motion Matcher, the clips move the character rather than the game: through the Character Controller on the matcher's Obj or the nearest Obj above it, else the Obj itself. A clip set to move at a Speed and Direction (see [[Animation Clips]]) moves it at exactly those.
 
 ## In the file
 

@@ -5,12 +5,13 @@ using Voxear.Interop;
 namespace Voxear;
 
 /// <summary>
-/// An Obj's Motion Matcher: it animates the Obj's model by blending whichever of the model's looping clips move as
-/// the character is wanted to, by speed and direction, and stands with a still clip below a walk. The game moves the
-/// Obj, with a Character Controller or otherwise, and the model stands on it, its body turning the way it goes. Left
-/// alone it follows how the Obj moves; tell it where the player is heading with WantedVelocity, and where to face with
-/// WantedFacing to step aside or back while aiming. Get it with Obj.MotionMatcher, or give an Obj one with
-/// Obj.AddMotionMatcher.
+/// An Obj's Motion Matcher: it animates the Obj's model by blending whichever of its clips move as the character is
+/// wanted to, by speed and direction, and stands with a still clip below a walk. It moves nothing on its own: the
+/// game moves the character however it likes, and the model stands on it, its body turning the way it goes. Left
+/// alone it follows how the Obj moves; tell it where the character is heading with WantedVelocity, from input, an AI
+/// or anything else, and where to face with WantedFacing to step aside or back while aiming. To let the clips move
+/// the character instead, turn on RootMotion, or move it yourself by ClipVelocity. Get it with Obj.MotionMatcher, or
+/// give an Obj one with Obj.AddMotionMatcher.
 /// <code>
 /// // Walking at 1.4 metres a second where the keys point.
 /// var ahead = (Keyboard.IsDown(Key.W) ? 1f : 0f) - (Keyboard.IsDown(Key.S) ? 1f : 0f);
@@ -105,8 +106,22 @@ public readonly struct MotionMatcher : IEquatable<MotionMatcher>, IObjComponent
 	public float ActionTime => Number(NativeMotionMatcher.ActionTime);
 
 	/// <summary>
-	/// Whether the clips move the Obj as they travel, through its Character Controller when it has one, rather than
-	/// the game moving it. A clip set to move at a speed and direction moves it at those.
+	/// Whether the action playing stands the character still or moves it itself, as a sit, a roll or a lunge. A game
+	/// moving the character itself leaves it to ClipVelocity meanwhile.
+	/// </summary>
+	public bool ActionTakesMovement => Number(NativeMotionMatcher.ActionTakesMovement) != 0f;
+
+	/// <summary>
+	/// How fast, and which way, the clips playing carry the body this frame, in metres a second in the world, its
+	/// action's travel included. With RootMotion off nothing moves by it: a game can move the character by it
+	/// itself.
+	/// </summary>
+	public Vector3 ClipVelocity => Vector(NativeMotionMatcher.ClipVelocity);
+
+	/// <summary>
+	/// Whether the clips move the character as they travel, rather than the game moving it: through the Character
+	/// Controller on the Obj or the nearest Obj above it, else the Obj itself. A clip set to move at a speed and
+	/// direction moves it at those.
 	/// </summary>
 	public bool RootMotion
 	{

@@ -199,6 +199,11 @@ pub struct MotionMatcherState {
     /// The Obj's place last frame, and its velocity as seen.
     last: Option<Vec3>,
     velocity: Vec3,
+    /// How the clips carry the body this frame, in the world, in metres a
+    /// second, whether or not they move the Obj.
+    travel: Vec3,
+    /// Whether the action playing stands the character or moves it itself.
+    taken: bool,
 }
 
 impl Component for MotionMatcherState {}
@@ -276,6 +281,8 @@ const AIM_PITCH: i32 = 15;
 const STATE_ROLE: i32 = 16;
 const ROOT_MOTION: i32 = 17;
 const ACTION_TIME: i32 = 18;
+const CLIP_VELOCITY: i32 = 19;
+const ACTION_TAKES_MOVEMENT: i32 = 20;
 
 // What `texts` reads or does, as `NativeMotionMatcher` in Voxear.Core numbers them.
 const MOTION_SET: i32 = 0;
@@ -315,6 +322,14 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
             let role = playing_state(world, entity).map(|(set, state)| set.states[state].role);
             let index = StateRole::ALL.iter().position(|r| Some(*r) == role).map_or(-1.0, |i| i as f32);
             return Some(number(index));
+        }
+        (CLIP_VELOCITY, None) => {
+            world.get::<MotionMatcher>(entity)?;
+            return Some(vector(world.get::<MotionMatcherState>(entity).map(|state| state.travel)));
+        }
+        (ACTION_TAKES_MOVEMENT, None) => {
+            world.get::<MotionMatcher>(entity)?;
+            return Some(toggle(world.get::<MotionMatcherState>(entity).is_some_and(|state| state.taken)));
         }
         (ACTION_TIME, None) => {
             let pending = world.get::<MotionMatcher>(entity)?.commands.iter().any(|c| matches!(c, ActionCommand::Play(_)));
@@ -459,9 +474,12 @@ pub fn match_motion(world: &mut World, delta: f32) {
         if matcher.debug {
             draw(&state, &matcher, &play, placed);
         }
+        // An action that stands the character or moves it itself is all that carries it.
+        let turned = Quat::from_rotation_y(state.body_yaw.unwrap_or_default());
+        let walked = if state.taken { Vec3::ZERO } else { carried(&state, &play) };
+        state.travel = walked + turned * moved;
         if (matcher.root_motion || moved != Vec3::ZERO) && delta > 0.0 {
-            let walked = if matcher.root_motion { carried(&state, &play) } else { Vec3::ZERO };
-            let turned = Quat::from_rotation_y(state.body_yaw.unwrap_or_default());
+            let walked = if matcher.root_motion { walked } else { Vec3::ZERO };
             carry(world, entity, walked + turned * moved, delta);
         }
         let bones = play.animation.skeleton.model_matrices(&pose).into();
@@ -487,6 +505,7 @@ fn act(
     delta: f32,
 ) -> (MotionMatcher, Vec3) {
     let mut asked = matcher.clone();
+    state.taken = false;
     let Some(set) = set else { return (asked, Vec3::ZERO) };
     for command in commands {
         match command {
@@ -528,10 +547,13 @@ fn act(
         state.action = None;
         return (asked, Vec3::ZERO);
     }
+    // Standing or carried by the action, the body holds its facing once Turn Until is past.
+    state.taken = made.movement != ActionMovement::Keep && !action.ending;
     if made.movement != ActionMovement::Keep {
         asked.wanted_velocity = Some(Vec3::ZERO);
     }
-    if action.time > made.turn_until
+    if made.movement != ActionMovement::Keep
+        && action.time > made.turn_until
         && let Some(body) = state.body_yaw
     {
         asked.wanted_facing = Some(Quat::from_rotation_y(body) * Vec3::Z);
@@ -561,15 +583,20 @@ fn carried(state: &MotionMatcherState, play: &StatePlay) -> Vec3 {
     Quat::from_rotation_y(state.body_yaw.unwrap_or_default()) * along * walking * state.rate
 }
 
-/// Moves an Obj along the ground at `velocity` for `delta` seconds: by its
-/// Character Controller when it has one, so walls and steps hold it, else
-/// straight.
+/// Moves the character along the ground at `velocity` for `delta` seconds:
+/// the nearest Obj with a Character Controller at or above the matcher's,
+/// so walls and steps hold it, as a player above its model; else the
+/// matcher's own, straight.
 fn carry(world: &mut World, entity: Entity, velocity: Vec3, delta: f32) {
-    if world.has::<crate::physics::CharacterController>(entity)
+    let mut at = Some(entity);
+    while let Some(obj) = at.filter(|obj| !world.has::<crate::physics::CharacterController>(*obj)) {
+        at = world.get::<voxear_scene::Parent>(obj).map(|parent| parent.0);
+    }
+    if let Some(mover) = at
         && let Some(mut physics) = world.remove_resource::<crate::physics::PhysicsScene>()
     {
         // A little down too, to keep it on the ground.
-        physics.move_character(world, entity, velocity + Vec3::NEG_Y * 2.0, delta);
+        physics.move_character(world, mover, velocity + Vec3::NEG_Y * 2.0, delta);
         world.insert_resource(physics);
         return;
     }
@@ -748,18 +775,24 @@ fn legs(matcher: &MotionMatcher, aside: f32, stride: f32) -> f32 {
 }
 
 /// Sets the weights to fade towards from the clips that best move at
-/// `local`, seen from the body: the few best, weighed by how well each
-/// matched, but only those heading the way wanted.
+/// `local`, seen from the body: the few best, weighed by how much worse
+/// each matched than the best of them, but only those heading the way
+/// wanted.
 fn aim(state: &mut MotionMatcherState, database: &MotionDatabase, local: Vec3) {
     let found = database.search(&database.query(local));
     let way = local.normalize_or_zero();
-    state.targets.fill(0.0);
-    for &(run, cost) in found.iter().take(CANDIDATES) {
+    let aligned = |run: usize| {
         let heading = database.runs[run].velocity.normalize_or_zero();
-        if way != Vec3::ZERO && heading.dot(way) < ALIGNED {
-            continue;
-        }
-        state.targets[run] += (-cost * SHARPNESS).exp();
+        way == Vec3::ZERO || heading.dot(way) >= ALIGNED
+    };
+    let candidates: Vec<(usize, f32)> =
+        found.iter().take(CANDIDATES).copied().filter(|&(run, _)| aligned(run)).collect();
+    // Against the best, not on their own: a state whose clips differ little
+    // has every cost large, far from any of its speeds.
+    let best = candidates.iter().map(|&(_, cost)| cost).fold(f32::MAX, f32::min);
+    state.targets.fill(0.0);
+    for (run, cost) in candidates {
+        state.targets[run] += (-(cost - best) * SHARPNESS).exp();
     }
     let total: f32 = state.targets.iter().sum();
     match total > 1e-6 {

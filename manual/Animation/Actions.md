@@ -17,7 +17,7 @@ An action is a clip a [[Motion Sets|Motion Set]] plays once over its state: swin
   - **Freeze**: stands still, as for sitting down.
   - **Root Motion**: goes where the clip's root goes, as for a roll.
   - **Lunge**: goes ahead **Lunge Distance** metres, starting **Lunge Start** seconds in and taking **Lunge Length** seconds, as for a sword thrust.
-- **Turn Until**: the body does not turn until this many seconds in.
+- **Turn Until**: for an action that stands the character or moves it, the body may still turn for this many seconds from its start, then holds the way it faces. An action that keeps moving turns as the character does.
 - **Cancel From** and **Moving Cancels**: wanting to move after this many seconds in ends it, as for a landing a player can run out of.
 - **Marks**: named moments, as the moment a grenade leaves the hand.
 
@@ -39,7 +39,7 @@ protected override void Update()
 }
 ```
 
-One action plays at a time: playing another takes its place. `StopAction()` fades out the one playing. `ActionPlaying` is the action playing, and `ActionTime` how far into it it is.
+One action plays at a time: playing another takes its place. `StopAction()` fades out the one playing. `ActionPlaying` is the action playing, and `ActionTime` how far into it it is. While one stands the character or moves it, `ActionTakesMovement` is true, for a game that moves the character itself (see [[Motion Matching]]).
 
 ## Marks
 

@@ -167,6 +167,34 @@ fn a_motion_set_plays_its_states_loops_and_backwards_ones_going_back() {
     assert_eq!(world.get::<MotionMatcherState>(hero).unwrap().state(), 1);
 }
 
+/// A state of slow clips alone, as crouching: asked to go faster back than
+/// any of them, it still sneaks backwards.
+const SNEAKING: &str = r#"
+[[state]]
+name = "Sneaking"
+role = "grounded"
+[[state.clip]]
+clip = "Models/Walks.gltf#clip:Sneak"
+[[state.clip]]
+clip = "Models/Walks.gltf#clip:Sneak"
+backwards = true
+"#;
+
+#[test]
+fn a_state_of_slow_clips_goes_back_when_asked_faster_than_them() {
+    let dir = project();
+    std::fs::write(dir.path().join("Sneak.motionset"), SNEAKING).unwrap();
+    let mut content = Content::open(dir.path()).unwrap();
+    let walks = content.parse("Models/Walks.gltf").unwrap().guid().unwrap();
+    let model = ModelRenderer { animation: content.clip_file(walks), ..ModelRenderer::new(Vec::new()) };
+    let mut world = World::new();
+    let matcher =
+        MotionMatcher { motion_set: "Sneak.motionset".into(), turn_to_movement: false, ..MotionMatcher::default() };
+    let hero = world.spawn((Transform::from_position(Vec3::ZERO), model, matcher));
+    assert_eq!(walk(&mut world, &mut content, hero, Vec3::Z * 1.2, 1.0), "Sneak");
+    assert_eq!(walk(&mut world, &mut content, hero, Vec3::NEG_Z * 1.2, 1.0), "Sneak (backwards)");
+}
+
 #[test]
 fn with_root_motion_the_clips_carry_the_character() {
     let dir = project();

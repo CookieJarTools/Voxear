@@ -1,6 +1,7 @@
 //! Scripts and Motion Sets: a character's script plays an action of its
-//! body's set, crouches, and hears the action's mark through the body's
-//! parent; marks and actions picked as fields compare with what it is told.
+//! body's set, reads how it carries the character, crouches, and hears the
+//! action's mark through the body's parent; marks and actions picked as
+//! fields compare with what it is told.
 //! Builds a copy of Hello with these added; skips itself without .NET and
 //! the managed build.
 
@@ -26,6 +27,7 @@ clip = "Models/Walks.gltf#clip:Sneak"
 [[action]]
 name = "Lunge"
 clip = "Models/Walks.gltf#clip:Walk"
+movement = "root"
 blend_in = 0.0
 [[action.mark]]
 name = "Strike"
@@ -86,6 +88,7 @@ public sealed class Fighter : Behaviour
 		if (frames == 20)
 		{
 			Log.Info($"in {matcher.CurrentState.Name}, {matcher.State}, {matcher.ActionTime:0.00}s in");
+			Log.Info($"taken {matcher.ActionTakesMovement}, carried {matcher.ClipVelocity.Z:0.0} m/s");
 			matcher.State = MotionState.Crouched;
 			Log.Info($"now {matcher.CurrentState.Name}");
 		}
@@ -185,5 +188,6 @@ fn scripts_play_actions_change_state_and_hear_marks() {
     assert_eq!(said("playing Lunge, same True, root True"), 1, "{lines:?}");
     assert_eq!(said("in Walking, Grounded, 0.25s in"), 1, "{lines:?}");
     assert_eq!(said("now Crouching"), 1, "{lines:?}");
+    assert_eq!(said("taken True, carried 1.5 m/s"), 1, "the lunge carries it as its clip travels: {lines:?}");
     assert_eq!(said("mark Strike, the strike True"), 1, "told once, on the body's parent: {lines:?}");
 }

@@ -100,12 +100,13 @@ pub fn settle(world: &mut World, now: f64) {
     }
 }
 
-/// Hides the template parts a gun copies leftovers from, which are not part
-/// of the gun's look themselves.
+/// Hides the parts that are no part of the gun's look at rest: the case
+/// leftovers are copied from, and a clip, which shows only while an
+/// action's hand has it.
 pub fn hide_templates(world: &mut World, state: &GunState) {
     for &(entity, ..) in &state.parts {
-        if world.get::<GunPart>(entity).is_some_and(|part| part.role == PartRole::Case) && !world.has::<Hidden>(entity)
-        {
+        let role = world.get::<GunPart>(entity).map(|part| part.role);
+        if matches!(role, Some(PartRole::Case | PartRole::Clip)) && !world.has::<Hidden>(entity) {
             world.insert(entity, Hidden);
         }
     }

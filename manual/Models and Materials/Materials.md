@@ -72,6 +72,8 @@ Each face of a mesh is drawn from the side its normal points to only, so the bac
 
 The back is lit as if it faced the other way, so a leaf with the sun behind the camera is as bright from behind as from the front. A two-sided surface casts the same shadow either way. It costs more to draw than a one-sided one, as nothing of it is skipped for facing away, so keep it for what needs it. A two-sided material is not raised by its height map: see [[Displacement]]. In a material file, `two_sided = true`.
 
+A model's own material is two-sided when its glTF file marks it double-sided, and stays so when you extract it with **Extract Materials**.
+
 ## Glass
 
 Turn on **Glass** for windows, bottles, lenses and anything else you see through. What lies behind glass shows through it:

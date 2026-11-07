@@ -715,6 +715,7 @@ impl Preparer {
             emissive: material.emissive_factor().map(|c| c * material.emissive_strength().unwrap_or(1.0)),
             normal_scale,
             alpha_cutoff,
+            two_sided: material.double_sided(),
             ..MaterialDesc::default()
         };
         let name = name.to_string();
@@ -1070,7 +1071,19 @@ fn to_rgba8(image: &gltf::image::Data) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cooked::tests::quad;
+    use crate::cooked::tests::{quad, quad_and_leaf};
+
+    #[test]
+    fn a_material_the_file_marks_double_sided_is_drawn_from_both_sides() {
+        let gltf = quad_and_leaf();
+        let model = prepare("Models/Leaf.gltf", &mut |_| Ok(gltf.clone())).unwrap();
+        let sides: Vec<_> = model.materials.iter().map(|m| (m.name.as_str(), m.desc.two_sided)).collect();
+        assert_eq!(sides, [("Painted", false), ("Leaf", true)]);
+
+        // Extract Materials writes each with what the file says.
+        let extracted: Vec<_> = model.file_materials().into_iter().map(|m| (m.part, m.desc.two_sided)).collect();
+        assert_eq!(extracted, [("material0".to_string(), false), ("material1".to_string(), true)]);
+    }
 
     #[test]
     fn a_pictures_meta_shrinks_it_and_can_keep_it_uncompressed() {

@@ -51,6 +51,8 @@ const FLOW_MARKS: f32 = 4.0;
 /// slow the Scene view; the rest are left out.
 const MESH_TRIANGLES: usize = 4096;
 const JOINT: u32 = 0xf2a14c;
+/// A gun's sockets and parts.
+const GUN: u32 = 0xe86f6f;
 /// How big a joint's anchor and a hinge's axis are drawn, on screen.
 const ANCHOR: f32 = 8.0;
 const AXIS: f32 = 36.0;
@@ -111,8 +113,51 @@ pub fn shapes(
         wind_zone(&mut shapes, world, camera, entity);
         water_body(&mut shapes, world, camera, entity);
         path_curve(&mut shapes, world, camera, entity);
+        gun_marks(&mut shapes, world, camera, entity);
     }
     shapes
+}
+
+/// The selected Gun's sockets, or a Gun Part's travel. A gun's grip and
+/// support are drawn as crosses where the wrists go, its sight line from
+/// the rear sight on past the front, and its muzzle, magazine well and
+/// port as dots; a part's handle is drawn along the path it moves, all the
+/// way.
+fn gun_marks(shapes: &mut Vec<Shape>, world: &World, camera: &ViewCamera, entity: Entity) {
+    use voxear_engine::guns::{Gun, mechanism::GunPart};
+    let color = Color::hex(GUN);
+    let placed = voxear_scene::world_matrix(world, entity);
+    if let Some(gun) = world.get::<Gun>(entity) {
+        let point = |p: [f32; 3]| placed.transform_point3(Vec3::from(p));
+        for wrist in [gun.grip.position, gun.support.position] {
+            let at = point(wrist);
+            let size = camera.world_size(at, ANCHOR);
+            for axis in [Vec3::X, Vec3::Y, Vec3::Z] {
+                line(shapes, camera, at - axis * size, at + axis * size, color);
+            }
+        }
+        let (rear, front) = (point(gun.rear_sight), point(gun.front_sight));
+        line(shapes, camera, rear, front + (front - rear) * 0.6, color.with_alpha(200));
+        for dot in [gun.muzzle, gun.feed, gun.port] {
+            let at = point(dot);
+            if let Some(on) = camera.project(at) {
+                let local = [on[0] - camera.rect[0], on[1] - camera.rect[1]];
+                shapes.push(Shape::Circle { center: local, radius: 3.0, fill: color, border: None });
+            }
+        }
+    }
+    // A part's handle moves with the part, through every place it can stand.
+    let Some(part) = world.get::<GunPart>(entity) else { return };
+    let Some(gun) = world.get::<voxear_scene::Parent>(entity).map(|parent| parent.0) else { return };
+    let into_world = voxear_scene::world_matrix(world, gun);
+    let steps = 24;
+    let path: Vec<[f32; 2]> = (0..=steps)
+        .filter_map(|step| {
+            let place = part.full() * step as f32 / steps as f32;
+            camera.project(into_world.transform_point3(part.moved(place).transform_point3(Vec3::from(part.handle))))
+        })
+        .collect();
+    polyline(shapes, camera, &path, color);
 }
 
 /// The selected Obj's Path: its curve, and its edges as wide as it is; on a
@@ -616,6 +661,22 @@ mod tests {
         assert!(rings(&world) > 0);
         world.get_mut::<AudioSource>(obj).unwrap().space = SoundSpace::TwoD;
         assert_eq!(rings(&world), 0);
+    }
+
+    #[test]
+    fn a_selected_gun_shows_its_sockets_and_a_part_its_handles_path() {
+        use voxear_engine::guns::{Gun, mechanism::GunPart};
+        let (mut world, camera, obj) = looking_at_an_obj();
+        world.insert(obj, Gun::default());
+        let red = Color::hex(GUN);
+        let marks = |drawn: &[Shape]| {
+            drawn.iter().filter(|shape| matches!(shape, Shape::Line { color, .. } | Shape::Circle { fill: color, .. } if color.r == red.r && color.g == red.g)).count()
+        };
+        let drawn = shapes(&world, &camera, Some(obj), Markers::NONE, &|_| false);
+        assert_eq!(marks(&drawn), 3 + 3 + 1 + 3, "two crosses, the sight line and three dots");
+        assert_eq!(marks(&shapes(&world, &camera, None, Markers::NONE, &|_| false)), 0, "only the selected gun's");
+        let bolt = world.spawn((Transform::IDENTITY, voxear_scene::Parent(obj), GunPart::turn_bolt([0.05, 0.05, 0.1])));
+        assert_eq!(marks(&shapes(&world, &camera, Some(bolt), Markers::NONE, &|_| false)), 24, "its handle's path");
     }
 
     #[test]

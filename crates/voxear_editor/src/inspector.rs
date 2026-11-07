@@ -967,6 +967,19 @@ impl Inspector {
                 self.module_buttons.push((button, module));
                 continue;
             }
+            // A gun says which parts its kind is worked by that it has no Obj for.
+            if *part == Part::Gun
+                && let Some(gun) = world.get::<voxear_engine::guns::Gun>(entity)
+            {
+                let missing = voxear_engine::guns::mechanism::missing_parts(world, entity, gun.kind);
+                if !missing.is_empty() {
+                    let names: Vec<String> = missing.iter().map(|role| format!("{role:?}")).collect();
+                    let row = ui.panel(rows, Style::default());
+                    ui.add_class(row, "needs-module-row");
+                    let note = ui.add_label(row, &format!("No {} part: add a Gun Part to a piece of its model", names.join(" or ")));
+                    ui.add_class(note, "needs-module-note");
+                }
+            }
             // A behaviour its inspector draws gets a slot for it, its usual fields built in a panel after,
             // which goes into the inspector's "next" once it is built. While playing, it shows its fields.
             let inspector = match part {

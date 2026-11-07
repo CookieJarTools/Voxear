@@ -191,6 +191,19 @@ impl GunKind {
         }
     }
 
+    /// The parts a gun of the kind is worked by, which its actions move.
+    pub fn parts(self) -> &'static [PartRole] {
+        match self {
+            GunKind::BoltActionRifle | GunKind::SemiAutoRifle => &[PartRole::Bolt, PartRole::Clip],
+            GunKind::OpenBoltSmg => &[PartRole::Bolt, PartRole::Magazine],
+            GunKind::SlidePistol => &[PartRole::Slide, PartRole::Magazine],
+            GunKind::TogglePistol => &[PartRole::Toggle, PartRole::Magazine],
+            GunKind::BeltFedMg => &[PartRole::Bolt, PartRole::Cover],
+            GunKind::PumpShotgun => &[PartRole::Pump],
+            GunKind::TopBreakRevolver => &[PartRole::Barrel],
+        }
+    }
+
     /// Whether firing works the action, rather than the shooter's hand.
     pub fn self_loading(self) -> bool {
         !matches!(self, GunKind::BoltActionRifle | GunKind::PumpShotgun)
@@ -311,6 +324,13 @@ pub fn find_parts(world: &World, gun: Entity) -> Vec<(Entity, f32, Mat4)> {
         .collect();
     parts.sort_by_key(|(entity, ..)| entity.index());
     parts
+}
+
+/// The parts a gun's kind is worked by that it has no Obj for.
+pub fn missing_parts(world: &World, gun: Entity, kind: GunKind) -> Vec<PartRole> {
+    let have: Vec<PartRole> =
+        find_parts(world, gun).iter().filter_map(|(e, ..)| world.get::<GunPart>(*e).map(|p| p.role)).collect();
+    kind.parts().iter().copied().filter(|role| !have.contains(role)).collect()
 }
 
 /// Moves each part's Obj to its place.

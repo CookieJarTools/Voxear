@@ -21,7 +21,7 @@ impl Editor {
             tracing::error!("{error:#}");
         }
         let modules = self.game.project.modules();
-        self.game.engine.world.insert_resource(modules);
+        voxear_engine::modules::put(&mut self.game.engine.world, modules);
         self.project_settings.show(&mut self.ui, &modules);
         self.files_seen();
         // The scripts build against the modules' assemblies, so they build again with the new set.

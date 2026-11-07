@@ -472,7 +472,9 @@ impl Engine {
         voxear_core::debug_draw::advance(self.time.delta);
         self.sync_script_time(self.time.delta);
         // The sea's long waves, where scripts and floating Objs ask about them.
-        crate::water::update(&mut self.world, self.time.elapsed);
+        if crate::modules::has(&self.world, crate::modules::Module::Water) {
+            crate::water::update(&mut self.world, self.time.elapsed);
+        }
         crate::particles::start(&mut self.world, self.time.elapsed);
         crate::smoke::fill_smokes(&mut self.world, self.time.elapsed);
         crate::mist::trail_mists(&mut self.world, self.time.elapsed);
@@ -603,7 +605,8 @@ impl Engine {
         if let Some(mut physics) = scene.or_else(|| PhysicsScene::wanted(&self.world).then(PhysicsScene::new)) {
             {
                 profile_scope!("Physics");
-                let floating = crate::water::float(&self.world, &mut physics);
+                let wet = crate::modules::has(&self.world, crate::modules::Module::Water);
+                let floating = if wet { crate::water::float(&self.world, &mut physics) } else { Default::default() };
                 physics.step(&mut self.world, dt);
                 crate::water::splash(&mut self.world, floating, self.time.elapsed);
             }
@@ -613,7 +616,9 @@ impl Engine {
             self.physics_events.extend(events);
         }
         let scene = self.world.remove_resource::<PhysicsScene2D>();
-        if let Some(mut physics) = scene.or_else(|| PhysicsScene2D::wanted(&self.world).then(PhysicsScene2D::new)) {
+        let flat = crate::modules::has(&self.world, crate::modules::Module::Physics2D);
+        let wanted = || (flat && PhysicsScene2D::wanted(&self.world)).then(PhysicsScene2D::new);
+        if let Some(mut physics) = scene.filter(|_| flat).or_else(wanted) {
             {
                 profile_scope!("Physics 2D");
                 physics.step(&mut self.world, dt);

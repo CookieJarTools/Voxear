@@ -3953,6 +3953,7 @@ dependencies = [
  "tracing",
  "voxear_assets",
  "voxear_core",
+ "voxear_ecs",
  "voxear_editor",
  "voxear_engine",
  "voxear_localization",

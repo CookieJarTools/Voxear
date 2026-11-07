@@ -377,7 +377,7 @@ fn copy_managed(project: &Project, configuration: &str, symbols: bool, managed: 
 /// 3D sound.
 fn copy_steam_audio(project: &Project, output: &Path) -> Result<()> {
     use voxear_audio::steam_audio;
-    if !project.file.audio.steam_audio {
+    if !project.file.audio.steam_audio || !project.modules().has(crate::modules::Module::SteamAudio) {
         return Ok(());
     }
     let Some(library) = steam_audio::library_paths().into_iter().find(|path| path.is_file()) else {

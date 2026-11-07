@@ -154,6 +154,14 @@ impl Modules {
     }
 }
 
+/// Puts a project's modules into a game's world: for its systems to ask,
+/// and for the renderer, which leaves out what vegetation and water draw
+/// without them.
+pub fn put(world: &mut voxear_ecs::World, modules: Modules) {
+    world.insert_resource(modules);
+    world.insert_resource(voxear_render::RenderFeatures { vegetation: modules.vegetation, water: modules.water });
+}
+
 /// Whether a world's game has a module: the project's choice, which the
 /// game keeps as a resource, or every module where there is no project, as
 /// in a test's world.

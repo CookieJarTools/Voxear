@@ -117,7 +117,8 @@ pub use wind::{WindShape, WindZone};
 pub use ocean::{Ocean, OceanSampler, SeaEasing, SeaNow, SeaState, Weather, WindSource};
 pub use water_bodies::{DryArea, DryShape, Liquid, Pool, Stream, StreamPoint, stream_over};
 pub use scene::{
-    Camera, Light, LightKind, MAX_TRANSITIONS, MeshRenderer, Sky, SkyBody, SkyMode, ViewOptions, temperature_color,
+    Camera, Light, LightKind, MAX_TRANSITIONS, MeshRenderer, RenderFeatures, Sky, SkyBody, SkyMode, ViewOptions,
+    temperature_color,
 };
 pub use voxear_rhi::TextureId;
 pub use hot_reload::{compile_custom_shaders, engine_shader_dir};
@@ -1718,6 +1719,12 @@ impl View {
             scene::extract(world, (extent.width, extent.height), (setup.time, setup.frame_index), &self.options, &|mesh| {
                 assets.mesh_sphere(mesh)
             });
+        // What the project's modules leave out is not drawn.
+        let features = world.resource::<RenderFeatures>().copied().unwrap_or_default();
+        if !features.water {
+            extracted.ocean = None;
+            extracted.water_bodies = Default::default();
+        }
         // The scene is drawn at its render size, which TAA upscales to the view's.
         let output_extent = extent;
         let extent = vk::Extent2D { width: extracted.render_size.0, height: extracted.render_size.1 };
@@ -1727,7 +1734,9 @@ impl View {
         if extracted.ocean.is_some_and(|(_, level, _)| camera.y < level) {
             extracted.post.fog.enabled = false;
         }
-        self.foliage.gather(world, camera, &mut extracted, &|mesh| assets.mesh_sphere(mesh), &assets.impostors);
+        if features.vegetation {
+            self.foliage.gather(world, camera, &mut extracted, &|mesh| assets.mesh_sphere(mesh), &assets.impostors);
+        }
         if extracted.instances.len() > MAX_INSTANCES as usize && !std::mem::replace(&mut self.warned_instances, true) {
             let count = extracted.instances.len();
             tracing::warn!("{count} instances are more than the {MAX_INSTANCES} a view draws; the rest are left out");

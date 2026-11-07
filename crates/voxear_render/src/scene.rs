@@ -284,6 +284,22 @@ pub struct Owner {
     pub part: Option<u32>,
 }
 
+/// What the game draws of what it may leave out, as its project's modules
+/// decide: a world's resource, all of it when there is none.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RenderFeatures {
+    /// Foliage's plants.
+    pub vegetation: bool,
+    /// Oceans, Pools and Streams.
+    pub water: bool,
+}
+
+impl Default for RenderFeatures {
+    fn default() -> Self {
+        Self { vegetation: true, water: true }
+    }
+}
+
 /// Per-view settings that are not part of the scene.
 #[derive(Clone, Copy, Debug)]
 pub struct ViewOptions {

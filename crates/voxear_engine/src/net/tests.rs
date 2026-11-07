@@ -459,3 +459,20 @@ fn with_shared_authority_players_run_their_own_objs_claim_others_and_lose_them_o
     assert_eq!(clients[1].get::<Networked>(theirs).unwrap().owner, None);
     assert!(has_authority(&server, crate_));
 }
+
+#[test]
+fn a_players_aim_reaches_the_server_with_their_input() {
+    let network = MemoryNetwork::new();
+    let (mut server, mut clients) = session(&network, 1, Conditions::GOOD);
+    for _ in 0..60 {
+        frame(&mut server, &mut clients, &[(false, false)]);
+    }
+    set_aim(&mut clients[0], [135.0, -20.0]);
+    for _ in 0..20 {
+        frame(&mut server, &mut clients, &[(true, false)]);
+    }
+    let session = session_of(&server);
+    assert_eq!(session.aim(PlayerId(1)), [135.0, -20.0]);
+    assert!(session.input(PlayerId(1), 0).held, "the actions read as before, the aim after them");
+    assert_eq!(session.input(PlayerId(1), 1), ActionState::default(), "the aim is not an action");
+}

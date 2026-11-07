@@ -174,6 +174,9 @@ pub fn replay_tick(world: &mut World) -> bool {
     let tick = session.tick;
     let command = session.commands.iter().find(|(t, _)| *t == tick).map(|(_, c)| c.clone()).unwrap_or_default();
     if let Some(local) = session.local {
+        if let Some(aim) = command.last() {
+            session.aims.insert(local, aim.value);
+        }
         session.inputs.insert(local, command);
     }
     true
@@ -188,6 +191,9 @@ pub fn end_replay(world: &mut World, correction: &Correction) {
     session.tick = until;
     let command = session.commands.iter().find(|(t, _)| *t == until).map(|(_, c)| c.clone()).unwrap_or_default();
     if let Some(local) = session.local {
+        if let Some(aim) = command.last() {
+            session.aims.insert(local, aim.value);
+        }
         session.inputs.insert(local, command);
     }
     let offset = session.prediction.offsets.entry(correction.entity).or_insert(Vec3::ZERO);

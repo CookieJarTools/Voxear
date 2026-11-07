@@ -61,6 +61,19 @@ public readonly struct NetPlayer : IEquatable<NetPlayer>
 		return new Vector2(state.X, state.Y);
 	}
 
+	/// <summary>
+	/// Where they aimed this tick, as their machine set it with Net.Aim: two numbers of the game's choosing, such as
+	/// a turn and a tilt in degrees. It comes with their input, so it is where they aimed when they pressed.
+	/// </summary>
+	public Vector2 Aim
+	{
+		get
+		{
+			NativeNet.Call(NativeNet.Aim, Id, 0, out var aim);
+			return new Vector2(aim.X, aim.Y);
+		}
+	}
+
 	public bool Equals(NetPlayer other)
 	{
 		return Id == other.Id;

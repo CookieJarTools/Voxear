@@ -49,6 +49,22 @@ public sealed class Movement : SystemBase
 
 Read players' input in FixedUpdate. A press shorter than a tick is still seen, once. While a player's input is late, their last input carries on, without pressing anything again; after a tenth of a second, they let go of everything.
 
+### Aim
+
+Where a player looks goes with their input too, as two numbers of your choosing, such as a turn and a tilt in degrees. Their machine sets `Net.Aim` as the mouse moves, and the server reads `player.Aim`, as it was on the tick they pressed:
+
+```csharp
+// On the player's machine:
+yaw += Mouse.Delta.X * sensitivity;
+pitch = Mathf.Clamp(pitch + Mouse.Delta.Y * sensitivity, -85f, 85f);
+Net.Aim = new Vector2(yaw, pitch);
+
+// On the server, in FixedUpdate:
+var look = Quaternion.Euler(player.Aim.Y, player.Aim.X, 0f);
+```
+
+Mouse movement is better sent as where it ended up than as an action: a lost tick of movement would leave the aim off for good. When input is lost, the aim stays where it last was.
+
 `Net.LocalPlayer` is the player this machine plays, if any: a host's own, or a client's once it has joined.
 
 ## Ticks

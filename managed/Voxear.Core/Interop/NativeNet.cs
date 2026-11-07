@@ -28,6 +28,8 @@ internal static unsafe class NativeNet
 	public const int ObjGeneration = 16;
 	public const int Replaying = 17;
 	public const int Authority = 18;
+	public const int Aim = 19;
+	public const int SetAim = 20;
 
 	public const int ConnectedEvent = 1;
 	public const int DisconnectedEvent = 2;

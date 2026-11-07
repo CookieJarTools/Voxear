@@ -10,6 +10,9 @@ use super::replication::{FIELDS, Fields, NetId, ObjState, Origin, read_fields, r
 /// project's input actions, with what went down or up since the tick before.
 pub type Command = Vec<ActionState>;
 
+/// How far ahead a client's commands come, when none has come yet.
+pub const UNHEARD: i16 = i16::MIN;
+
 /// The most ticks of input one message carries: each is sent this many
 /// times, so a few lost packets lose none.
 pub const REPEATS: usize = 4;

@@ -62,17 +62,21 @@ pub struct InputBuffer {
 
 impl InputBuffer {
     /// Keeps a command for `tick`, unless that tick has passed or is
-    /// implausibly far off.
+    /// implausibly far off. One too late still counts towards how far
+    /// ahead commands come, so a client behind hears it is.
     pub fn put(&mut self, tick: u64, command: Command, server_tick: u64) {
-        if self.taken.is_some_and(|taken| tick <= taken) || tick > server_tick + AHEAD_AT_MOST {
+        if tick > server_tick + AHEAD_AT_MOST {
             return;
         }
         self.newest = Some(self.newest.map_or(tick, |n| n.max(tick)));
-        self.commands.entry(tick).or_insert(command);
+        if self.taken.is_none_or(|taken| tick > taken) {
+            self.commands.entry(tick).or_insert(command);
+        }
     }
 
     /// The command for `tick`: its own, or the last one again, without its
-    /// presses, while it is missing, or nothing held after a while.
+    /// presses, while it is missing, or nothing held after a while. The
+    /// aim, the command's last value, stays where it was.
     pub fn take(&mut self, tick: u64) -> Command {
         self.taken = Some(tick);
         let own = self.commands.remove(&tick);
@@ -84,7 +88,8 @@ impl InputBuffer {
             }
             None => {
                 self.missed += 1;
-                for state in &mut self.last {
+                let actions = self.last.len().saturating_sub(1);
+                for state in &mut self.last[..actions] {
                     (state.pressed, state.released, state.performed) = (false, false, false);
                     if self.missed > HOLD_FOR {
                         *state = ActionState::default();
@@ -99,6 +104,12 @@ impl InputBuffer {
     /// How many ticks ahead of `tick` this player's commands come.
     pub fn ahead(&self, tick: u64) -> i64 {
         self.newest.map_or(0, |newest| newest as i64 - tick as i64)
+    }
+
+    /// Whether any command has come yet, for how far ahead they come to
+    /// mean anything.
+    pub fn heard(&self) -> bool {
+        self.newest.is_some()
     }
 }
 
@@ -124,16 +135,19 @@ mod tests {
     #[test]
     fn missing_commands_repeat_the_last_then_let_go() {
         let mut buffer = InputBuffer::default();
-        buffer.put(10, vec![press(true, true)], 10);
-        buffer.put(9, vec![press(false, false)], 10);
+        let aim = ActionState { value: [90.0, -5.0], ..ActionState::default() };
+        buffer.put(10, vec![press(true, true), aim], 10);
+        buffer.put(9, vec![press(false, false), aim], 10);
         assert!(buffer.take(10)[0].pressed);
-        buffer.put(10, vec![press(false, false)], 11);
+        buffer.put(10, vec![press(false, false), aim], 11);
         let repeated = buffer.take(11);
         assert!(repeated[0].held && !repeated[0].pressed, "held on, not pressed again");
         for tick in 12..20 {
             buffer.take(tick);
         }
-        assert!(!buffer.take(20)[0].held, "let go after a while");
+        let late = buffer.take(20);
+        assert!(!late[0].held, "let go after a while");
+        assert_eq!(late[1].value, aim.value, "but aiming where they last aimed");
         buffer.put(25, vec![press(true, false)], 21);
         assert_eq!(buffer.ahead(21), 4);
     }

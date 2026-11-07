@@ -105,6 +105,21 @@ public static unsafe class Net
 		get { return NativeNet.Call(NativeNet.Replaying) == 1; }
 	}
 
+	/// <summary>
+	/// Where this machine's player aims, sent with their input each tick: two numbers of the game's choosing, such as
+	/// a turn and a tilt in degrees, which the server reads as NetPlayer.Aim. Mouse movement is better sent this way,
+	/// as where it ended up, than as an action, since a lost tick of movement would leave the aim off for good.
+	/// <code>
+	/// yaw += Mouse.Delta.X * sensitivity;
+	/// Net.Aim = new Vector2(yaw, pitch);
+	/// </code>
+	/// </summary>
+	public static Vector2 Aim
+	{
+		get { return LocalPlayer?.Aim ?? Vector2.Zero; }
+		set { NativeNet.Call(NativeNet.SetAim, BitConverter.SingleToInt32Bits(value.X), BitConverter.SingleToInt32Bits(value.Y)); }
+	}
+
 	/// <summary>The player whose [ServerRpc] is running, on the server; null otherwise.</summary>
 	public static NetPlayer? Caller
 	{

@@ -226,8 +226,14 @@ pub struct NetSession {
     local: Option<PlayerId>,
     players: Vec<PlayerId>,
     events: VecDeque<NetEvent>,
-    /// This tick's command of each player, the local one's too.
+    /// This tick's command of each player, the local one's too: their
+    /// actions, then their aim.
     inputs: HashMap<PlayerId, Command>,
+    /// Where this machine's player aims, sent with their input.
+    aim: [f32; 2],
+    /// Each player's aim on this tick, kept through ticks their input was
+    /// lost.
+    aims: HashMap<PlayerId, [f32; 2]>,
     latch: Latch,
     // The server's.
     by_client: HashMap<ClientId, PlayerId>,
@@ -239,6 +245,11 @@ pub struct NetSession {
     welcomed: bool,
     ended: bool,
     scale: f32,
+    /// Ticks after joining in which a client puts its pace right at once.
+    settling: u32,
+    /// The tick before which a client heeds no word of its pace, after
+    /// jumping, as what the server said before the jump is still coming.
+    pace_hold: u64,
     level_request: Option<String>,
     replication: Replication,
     rpcs: rpcs::Rpcs,
@@ -266,6 +277,8 @@ impl NetSession {
             players: Vec::new(),
             events: VecDeque::new(),
             inputs: HashMap::new(),
+            aim: [0.0; 2],
+            aims: HashMap::new(),
             latch: Latch::default(),
             by_client: HashMap::new(),
             buffers: HashMap::new(),
@@ -275,6 +288,8 @@ impl NetSession {
             welcomed: false,
             ended: false,
             scale: 1.0,
+            settling: 0,
+            pace_hold: 0,
             level_request: None,
             replication: Replication::default(),
             rpcs: rpcs::Rpcs::default(),
@@ -326,7 +341,25 @@ impl NetSession {
     /// A player's input this tick, by an action's place in the project's
     /// input actions.
     pub fn input(&self, player: PlayerId, action: usize) -> ActionState {
-        self.inputs.get(&player).and_then(|command| command.get(action)).copied().unwrap_or_default()
+        let actions = self.inputs.get(&player).map_or(&[][..], |command| &command[..command.len().saturating_sub(1)]);
+        actions.get(action).copied().unwrap_or_default()
+    }
+
+    /// Where a player aimed this tick, as their machine set it with
+    /// [`set_aim`]: two numbers of the game's choosing, such as a turn and
+    /// a tilt in degrees.
+    pub fn aim(&self, player: PlayerId) -> [f32; 2] {
+        self.aims.get(&player).copied().unwrap_or_default()
+    }
+
+    /// Notes each player's aim from this tick's commands, keeping the last
+    /// where a command is missing.
+    fn note_aims(&mut self) {
+        for (player, command) in &self.inputs {
+            if let Some(aim) = command.last() {
+                self.aims.insert(*player, aim.value);
+            }
+        }
     }
 
     pub fn stats(&self) -> NetStats {
@@ -481,6 +514,7 @@ impl NetSession {
                     // Ahead by half the round trip and a little more, which syncing then trims.
                     let ahead = (rtt * 0.5 * f64::from(rate)).ceil() as u64 + AHEAD as u64;
                     (self.local, self.tick, self.welcomed) = (Some(player), tick + ahead, true);
+                    self.settling = rate as u32;
                     self.settings.tick_rate = u32::from(rate);
                     self.players.push(player);
                     self.events.push_back(NetEvent::Connected);
@@ -494,7 +528,7 @@ impl NetSession {
                     self.events.push_back(NetEvent::PlayerLeft(player));
                 }
                 Message::Level(level) => self.level_request = Some(level),
-                Message::Sync { tick, ahead } => self.keep_pace(tick, i64::from(ahead)),
+                Message::Sync { tick, ahead } if ahead != messages::UNHEARD => self.keep_pace(tick, i64::from(ahead), rtt),
                 Message::Spawn { id, owner, origin, tick, state, fields } => {
                     self.replication.note(id, tick, state);
                     self.replication.early_fields.insert(id, fields);
@@ -669,15 +703,19 @@ impl NetSession {
     }
 
     /// Runs a little faster while commands arrive late, a little slower
-    /// while they arrive too early, and jumps when far out.
-    fn keep_pace(&mut self, server_tick: u64, ahead: i64) {
-        if !self.welcomed {
+    /// while they arrive too early, and jumps when far out, or when late
+    /// just after joining, which has only a guess to start from.
+    fn keep_pace(&mut self, server_tick: u64, ahead: i64, rtt: f64) {
+        if !self.welcomed || self.tick < self.pace_hold {
             return;
         }
-        if !(-10..=30).contains(&ahead) {
+        let late = self.settling > 0 && ahead < 1;
+        if late || !(-10..=30).contains(&ahead) {
             let behind = ahead - AHEAD;
             self.tick = (self.tick as i64 - behind).max(server_tick as i64) as u64;
             self.scale = 1.0;
+            let round_trip = (rtt * f64::from(self.settings.tick_rate)).ceil() as u64;
+            self.pace_hold = self.tick + round_trip + 4;
             return;
         }
         self.scale = match ahead {
@@ -701,11 +739,14 @@ impl NetSession {
                 if let Some(local) = self.local {
                     self.inputs.insert(local, self.latch.take());
                 }
+                self.note_aims();
             }
             NetRole::Client => {
+                self.settling = self.settling.saturating_sub(1);
                 let command = self.latch.take();
                 if let Some(local) = self.local {
                     self.inputs.insert(local, command.clone());
+                    self.aims.insert(local, command.last().map_or(self.aim, |aim| aim.value));
                 }
                 self.sent.push_back((self.tick, command.clone()));
                 while self.sent.len() > REPEATS {
@@ -724,8 +765,9 @@ impl NetSession {
             End::Server(server) => {
                 let tick = self.tick;
                 for (&client, player) in &self.by_client {
-                    let ahead = self.buffers.get(player).map_or(0, |b| b.ahead(tick)).clamp(-30_000, 30_000);
-                    let sync = Message::Sync { tick, ahead: ahead as i16 };
+                    let buffer = self.buffers.get(player).filter(|b| b.heard());
+                    let ahead = buffer.map_or(messages::UNHEARD, |b| b.ahead(tick).clamp(-30_000, 30_000) as i16);
+                    let sync = Message::Sync { tick, ahead };
                     let _ = server.send(client, Channel::UNRELIABLE, &sync.encode());
                 }
                 server.flush(self.now);
@@ -877,7 +919,10 @@ pub fn frame_begin(world: &mut World, delta: f32, local: &[ActionState]) {
     let Some(mut session) = world.remove_resource::<NetSession>() else { return };
     prediction::unshow(world, delta, &mut session.prediction);
     session.now += f64::from(delta);
-    session.latch.note(local);
+    // The aim goes last, after the actions, as one more value.
+    let mut frame = local.to_vec();
+    frame.push(ActionState { value: session.aim, ..ActionState::default() });
+    session.latch.note(&frame);
     session.receive_server();
     session.receive_client();
     session.rpcs.expire(session.now);
@@ -1084,6 +1129,14 @@ pub fn take_rpc(world: &mut World) -> Option<Rpc> {
 pub fn after_tick(world: &mut World) {
     prediction::record(world);
     rewind::remember(world);
+}
+
+/// Sets where this machine's player aims, sent with their input each tick
+/// for the server to read as [`NetSession::aim`].
+pub fn set_aim(world: &mut World, aim: [f32; 2]) {
+    if let Some(session) = world.resource_mut::<NetSession>() {
+        session.aim = aim;
+    }
 }
 
 /// Whether a client is running its predicted ticks again.

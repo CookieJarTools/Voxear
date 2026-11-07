@@ -142,6 +142,8 @@ const OBJ_INDEX: i32 = 15;
 const OBJ_GENERATION: i32 = 16;
 const REPLAYING: i32 = 17;
 const AUTHORITY: i32 = 18;
+const AIM: i32 = 19;
+const SET_AIM: i32 = 20;
 
 // Events, as TAKE_EVENT gives them.
 const CONNECTED_EVENT: i32 = 1;
@@ -165,6 +167,16 @@ fn call(world: &mut World, what: i32, a: i32, b: i32, text: &str, out: &mut [f32
         TICK => session.map_or(0, |s| s.tick() as i32),
         RPC_TICK => super::rpc_tick(world) as i32,
         REPLAYING => i32::from(super::replaying(world)),
+        AIM => {
+            let aim = session.map_or([0.0; 2], |s| s.aim(PlayerId(a as u16)));
+            *out = [aim[0], aim[1], 0.0, 0.0];
+            1
+        }
+        // The aim's two numbers come as their bits.
+        SET_AIM => {
+            super::set_aim(world, [f32::from_bits(a as u32), f32::from_bits(b as u32)]);
+            1
+        }
         AUTHORITY => i32::from(session.is_some_and(|s| s.settings.authority == super::NetAuthority::Shared)),
         // An Obj, as its handle's two halves, by its id in the session; and back.
         NET_ID => {

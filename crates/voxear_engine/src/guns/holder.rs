@@ -15,7 +15,7 @@ use voxear_physics::scene::PhysicsScene;
 use voxear_render::{ModelRenderer, Pose};
 use voxear_scene::{Parent, world_matrix};
 
-use super::actions::{ActionKind, Hand};
+use super::actions::{ActionId, ActionKind, Hand};
 use super::contact::{Shape, surface};
 use super::gun::{Gun, GunKind, HandRole, Socket};
 use super::handling::Poses;
@@ -60,7 +60,7 @@ pub struct GunHolder {
     pub auto_cycle: bool,
     /// An action asked for, which starts when nothing else is under way.
     #[serde(skip)]
-    pub request: Option<ActionKind>,
+    pub request: Option<ActionId>,
 }
 
 impl Component for GunHolder {}
@@ -185,9 +185,15 @@ impl GunHolderState {
         self.aim.value.clamp(0.0, 1.0)
     }
 
-    /// The action under way, if any.
+    /// The built-in action under way, or the one the gun's own action
+    /// under way takes the place of.
     pub fn acting(&self) -> Option<ActionKind> {
-        self.play.as_ref().map(|play| play.kind)
+        self.play.as_ref().and_then(|play| play.kind)
+    }
+
+    /// The action under way, as it was asked for.
+    pub fn doing(&self) -> Option<&ActionId> {
+        self.play.as_ref().map(|play| &play.id)
     }
 
     /// Stops the action under way where it is: the hands ease back to the
@@ -336,11 +342,11 @@ pub fn hold(world: &mut World) {
             *after -= delta;
             if *after <= 0.0 {
                 state.cycle_after = None;
-                holder.request = holder.request.or(Some(ActionKind::Cycle));
+                holder.request = holder.request.or(Some(ActionKind::Cycle.into()));
             }
         }
-        if let Some(kind) = holder.request.take().filter(|_| state.play.is_none())
-            && let Some(play) = ActionPlay::start(kind, gun.kind, &handling, &mechanism, holder.spare)
+        if let Some(id) = holder.request.take().filter(|_| state.play.is_none())
+            && let Some(play) = ActionPlay::start(&id, gun.kind, &handling, &mechanism, holder.spare)
         {
             state.play = Some(play);
             state.returning = [None; 2];
@@ -1412,7 +1418,7 @@ mod acting {
         if let Some(state) = scene.world.get_mut::<GunState>(scene.gun) {
             (state.rounds, state.chamber) = (0, Chamber::Empty);
         }
-        scene.world.get_mut::<GunHolder>(scene.player).unwrap().request = Some(ActionKind::Reload);
+        scene.world.get_mut::<GunHolder>(scene.player).unwrap().request = Some(ActionKind::Reload.into());
         let skeleton = scene.world.get::<ModelRenderer>(scene.body).unwrap().animation.clone().unwrap();
         let rig = Rig::find(&skeleton.skeleton).unwrap();
         let mut worst: f32 = 0.0;
@@ -1493,7 +1499,7 @@ mod acting {
         }
         let state = scene.world.get::<GunState>(scene.gun).unwrap().clone();
         assert!(!state.ready(GunKind::BoltActionRifle) && state.rounds == 0, "{state:?}");
-        scene.world.get_mut::<GunHolder>(scene.player).unwrap().request = Some(ActionKind::Reload);
+        scene.world.get_mut::<GunHolder>(scene.player).unwrap().request = Some(ActionKind::Reload.into());
         step(&mut scene, &rest, &mut time);
         assert_eq!(scene.world.get::<GunHolderState>(scene.player).unwrap().acting(), Some(ActionKind::Reload));
         // The works come up before the eyes, which glance down at them: where the camera shows them, as a slope.
@@ -1541,7 +1547,7 @@ mod acting {
             step(&mut scene, &rest, &mut time);
         }
         scene.world.get_mut::<GunState>(scene.gun).unwrap().known_feed = Known::Unknown;
-        scene.world.get_mut::<GunHolder>(scene.player).unwrap().request = Some(ActionKind::CheckMagazine);
+        scene.world.get_mut::<GunHolder>(scene.player).unwrap().request = Some(ActionKind::CheckMagazine.into());
         for _ in 0..15 {
             step(&mut scene, &rest, &mut time);
         }
@@ -1553,7 +1559,7 @@ mod acting {
             Known::Unknown,
             "stopped before the look"
         );
-        scene.world.get_mut::<GunHolder>(scene.player).unwrap().request = Some(ActionKind::CheckMagazine);
+        scene.world.get_mut::<GunHolder>(scene.player).unwrap().request = Some(ActionKind::CheckMagazine.into());
         for _ in 0..90 {
             step(&mut scene, &rest, &mut time);
         }

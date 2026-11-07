@@ -8,7 +8,7 @@ use voxear_core::math::{Mat4, Quat, Vec3};
 use voxear_ecs::{Entity, World};
 use voxear_scene::{Hidden, Transform};
 
-use super::actions::{ActionKind, Beat, Goal, Hand, apply};
+use super::actions::{ActionId, ActionKind, Beat, Goal, Hand, apply};
 use super::gun::Gun;
 use super::hands::Grip;
 use super::mechanism::{GunPart, GunState, PartRole};
@@ -16,7 +16,10 @@ use super::mechanism::{GunPart, GunState, PartRole};
 /// An action under way.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ActionPlay {
-    pub kind: ActionKind,
+    /// What was asked for, and the built-in action it is or takes the
+    /// place of, if any.
+    pub id: ActionId,
+    pub kind: Option<ActionKind>,
     pub beats: Vec<Beat>,
     pub index: usize,
     /// Seconds into the beat.
@@ -52,25 +55,36 @@ pub struct Throwing {
 }
 
 impl ActionPlay {
-    /// A built-in action started on a gun of `gun` in `state`, as its
-    /// handling has it, its holder having `spare` rounds; none when it has
-    /// nothing to do.
+    /// An action started on a gun of `gun` in `state`, as its handling has
+    /// it, its holder having `spare` rounds; none when it has nothing to
+    /// do, or the handling has no action of the gun's own by that name.
     pub fn start(
-        kind: ActionKind,
+        id: &ActionId,
         gun: super::gun::GunKind,
         handling: &super::handling::GunHandling,
         state: &GunState,
         spare: u32,
     ) -> Option<Self> {
-        let spec = handling.spec(gun, kind);
+        let (spec, kind) = match id {
+            ActionId::Builtin(kind) => (handling.spec(gun, *kind), Some(*kind)),
+            ActionId::Own(name) => handling.action(name).map(|own| (own.spec(), own.replaces))?,
+        };
         let beats = super::actions::expand(&spec, gun, state, spare);
-        let started = Self { lift: spec.lift, lowers_aim: spec.lowers_aim, work: spec.work, ..Self::new(kind, beats) };
+        let started = Self {
+            id: id.clone(),
+            kind,
+            lift: spec.lift,
+            lowers_aim: spec.lowers_aim,
+            work: spec.work,
+            ..Self::new(beats)
+        };
         (!started.beats.is_empty()).then_some(started)
     }
 
-    pub fn new(kind: ActionKind, beats: Vec<Beat>) -> Self {
+    pub fn new(beats: Vec<Beat>) -> Self {
         Self {
-            kind,
+            id: ActionId::Builtin(ActionKind::Cycle),
+            kind: None,
             beats,
             index: 0,
             t: 0.0,

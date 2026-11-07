@@ -1,5 +1,6 @@
 //! A script and the Guns module: it gives one Obj a Gun of a kind and
-//! another a Gun Holder holding it, aiming. Builds a copy of Hello with the
+//! another a Gun Holder holding it, aiming, picks the gun a handling and
+//! does an action of the handling's own. Builds a copy of Hello with the
 //! module on and one more script; skips itself without .NET and the
 //! managed build.
 
@@ -13,6 +14,8 @@ namespace Hello;
 
 public sealed class Armourer : SystemBase
 {
+	private int frames;
+
 	protected override void OnCreate()
 	{
 		var gun = Obj.Find("Ground").AddGun();
@@ -28,12 +31,35 @@ public sealed class Armourer : SystemBase
 		gun.Rounds = 3;
 		holder.Reload();
 		Log.Info($"ammo {gun.Rounds} {gun.Capacity} {gun.Estimate} {holder.Spare}");
+		gun.Handling = GunHandling.Load("Smg.gunhandling");
+		Log.Info($"handling {gun.Handling == GunHandling.Load("Smg.gunhandling")}");
 	}
 
 	protected override void Update()
 	{
+		frames++;
+		var holder = Obj.Find("Main Camera").GunHolder;
+		if (frames == 160)
+		{
+			holder.Do(GunHandlingAction.Load("Smg.gunhandling#action:Inspect"));
+		}
+		if (frames == 170)
+		{
+			Log.Info($"doing {holder.Doing.Name} {holder.Acting}");
+		}
 	}
 }
+"#;
+
+/// A handling with an action of its own, looking the magazine over.
+const SMG: &str = r#"kind = "open_bolt_smg"
+[[action]]
+name = "Inspect"
+[[action.beat]]
+key = "look"
+hand = "left"
+goal = "feed"
+work = 0.5
 "#;
 
 #[test]
@@ -45,6 +71,7 @@ fn with_the_guns_module_a_script_arms_a_holder() {
     let _logging = tracing::subscriber::set_default(voxear_core::logging::capturing_only(log.clone()));
     let dir = hello_copy();
     std::fs::write(dir.path().join("Scripts/Armourer.cs"), ARMOURER).unwrap();
+    std::fs::write(dir.path().join("Smg.gunhandling"), SMG).unwrap();
     let mut project = Project::open(dir.path()).unwrap();
     project.set_module(voxear_engine::modules::Module::Guns, true).unwrap();
     if let Err(error) = scripts::build(&project) {
@@ -55,13 +82,15 @@ fn with_the_guns_module_a_script_arms_a_holder() {
     engine.set_scripts(scripts::start(&project).unwrap().expect("Hello has scripts"));
     let mut game = Game::new(project, engine).unwrap();
     game.start(None).unwrap();
-    for _ in 0..150 {
+    for _ in 0..180 {
         game.tick(1.0 / 60.0, None);
     }
     let lines: Vec<String> = log.lock().unwrap().lines.iter().map(|l| l.message.clone()).collect();
     assert!(lines.iter().any(|l| l == "gun OpenBoltSmg 4 550 True True 0.5"), "{lines:#?}");
     assert!(lines.iter().any(|l| l == "fired True 1 False"), "once, then not again so soon: {lines:#?}");
     assert!(lines.iter().any(|l| l == "ammo 3 32 UnderHalf 90"), "{lines:#?}");
+    assert!(lines.iter().any(|l| l == "handling True"), "the gun picks its handling: {lines:#?}");
+    assert!(lines.iter().any(|l| l == "doing Inspect "), "an action of its handling's own, no built-in: {lines:#?}");
     let states: Vec<voxear_engine::guns::mechanism::GunState> =
         game.engine.world.query_ref::<&voxear_engine::guns::mechanism::GunState>().into_iter().cloned().collect();
     assert_eq!(states[0].rounds, 32, "reloaded: {:?}", states[0]);

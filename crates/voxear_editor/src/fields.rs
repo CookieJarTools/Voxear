@@ -505,6 +505,8 @@ pub fn asset_choices(game: &Game, kind: &FieldKind) -> Vec<(String, Pick)> {
         Some("MotionSetState") => return set_parts(game, STATE_PART),
         Some("MotionAction") => return set_parts(game, ACTION_PART),
         Some("MotionMark") => return set_parts(game, MARK_PART),
+        Some("GunHandling") => Some(AssetKind::GunHandling),
+        Some("GunHandlingAction") => return handling_actions(game),
         _ => None,
     };
     assets_of(game, wanted)
@@ -530,6 +532,26 @@ fn set_parts(game: &Game, part: &str) -> Vec<(String, Pick)> {
         let mut seen = std::collections::HashSet::new();
         for name in names.into_iter().filter(|name| !name.is_empty() && seen.insert(name.clone())) {
             found.push((format!("{name} · {file}"), Pick::Asset(Some(format!("{path}#{part}{name}")))));
+        }
+    }
+    found
+}
+
+/// The actions of the project's Gun Handlings' own, as
+/// `Guns/Rifle.gunhandling#action:Inspect`, each named with its handling,
+/// with nothing first.
+fn handling_actions(game: &Game) -> Vec<(String, Pick)> {
+    let db = game.content.db();
+    let mut handlings: Vec<_> =
+        db.entries().filter(|e| e.kind == AssetKind::GunHandling).map(|e| (e.path.clone(), e.guid)).collect();
+    handlings.sort();
+    let mut found = vec![("None".to_string(), Pick::Asset(None))];
+    for (path, guid) in handlings {
+        let Some(handling) = game.content.peek_gun_handling(guid) else { continue };
+        let file = path.rsplit('/').next().unwrap_or(&path).trim_end_matches(".gunhandling").to_string();
+        for action in handling.actions.iter().filter(|action| !action.name.is_empty()) {
+            let name = &action.name;
+            found.push((format!("{name} · {file}"), Pick::Asset(Some(format!("{path}#{ACTION_PART}{name}")))));
         }
     }
     found

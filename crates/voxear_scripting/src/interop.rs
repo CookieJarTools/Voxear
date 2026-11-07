@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 55;
+pub(crate) const API_VERSION: u32 = 56;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -372,6 +372,18 @@ pub(crate) struct NativeApi {
     /// [`ComponentKind`]), as `smoke_value` does a Smoke's: 1 when the Obj
     /// has one.
     pub kind_value: unsafe extern "C" fn(kind: i32, entity: u64, what: i32, set: i32, value: *mut [f32; 4]) -> i32,
+    /// Reads text `what` of an Obj's component of a kind, or does what it
+    /// asks with some text, as `motion_matcher_text` does a Motion
+    /// Matcher's: the answer's length, written when it fits, or -1.
+    pub kind_text: unsafe extern "C" fn(
+        kind: i32,
+        entity: u64,
+        what: i32,
+        text: *const u8,
+        len: i32,
+        buffer: *mut u8,
+        capacity: i32,
+    ) -> i32,
 }
 
 /// The kinds of component scripts reach through one entry, `kind_value`,
@@ -399,6 +411,36 @@ pub fn set_kind_values(kind: ComponentKind, values: ComponentValues) {
 unsafe extern "C" fn kind_value(kind: i32, entity: u64, what: i32, set: i32, value: *mut [f32; 4]) -> i32 {
     let values = usize::try_from(kind).ok().and_then(|kind| KIND_VALUES.get(kind)).and_then(|cell| cell.get());
     unsafe { component_value(values, entity, what, set, value) }
+}
+
+/// What answers a kind of component's calls with text in scripts: `None`
+/// for no component, or nothing to give back.
+pub type ComponentTexts = fn(&mut World, Entity, i32, &str) -> Option<String>;
+static KIND_TEXTS: [std::sync::OnceLock<ComponentTexts>; KINDS] = [const { std::sync::OnceLock::new() }; KINDS];
+
+/// Sets what answers a kind of component's calls with text; the first set
+/// is kept.
+pub fn set_kind_texts(kind: ComponentKind, texts: ComponentTexts) {
+    let _ = KIND_TEXTS[kind as usize].set(texts);
+}
+
+unsafe extern "C" fn kind_text(
+    kind: i32,
+    entity: u64,
+    what: i32,
+    text: *const u8,
+    len: i32,
+    buffer: *mut u8,
+    capacity: i32,
+) -> i32 {
+    let texts = usize::try_from(kind).ok().and_then(|kind| KIND_TEXTS.get(kind)).and_then(|cell| cell.get());
+    let Some(texts) = texts else { return -1 };
+    let text = unsafe { utf8(text, len) };
+    let Some(answer) = with_world(|world| texts(world, Entity::from_bits(entity), what, &text)) else { return -1 };
+    if !buffer.is_null() && answer.len() <= capacity.max(0) as usize {
+        unsafe { ptr::copy_nonoverlapping(answer.as_ptr(), buffer, answer.len()) };
+    }
+    answer.len() as i32
 }
 
 /// What answers scripts' questions about water: the engine's, set when it
@@ -1638,6 +1680,7 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         net_rpc,
         net_raycast,
         kind_value,
+        kind_text,
     }
 }
 

@@ -35,6 +35,8 @@ internal static class ModuleNames
 		["GunAction"] = "Guns",
 		["AmmoKnowledge"] = "Guns",
 		["AmmoEstimate"] = "Guns",
+		["GunHandling"] = "Guns",
+		["GunHandlingAction"] = "Guns",
 	};
 
 	/// <summary>The module a name is part of, or null for a name no module gives.</summary>

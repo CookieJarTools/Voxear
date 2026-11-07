@@ -35,6 +35,8 @@ public readonly struct Gun : IEquatable<Gun>, IObjComponent
 	private const int CapacityValue = 19;
 	private const int OpenValue = 20;
 
+	private const int HandlingText = 0;
+
 	public static readonly Gun None = default;
 
 	internal Gun(Obj obj)
@@ -53,6 +55,13 @@ public readonly struct Gun : IEquatable<Gun>, IObjComponent
 	{
 		get { return (GunKind)(int)Number(KindValue); }
 		set { Set(KindValue, (int)value); }
+	}
+
+	/// <summary>How it is held and how its actions go, or None for as its kind usually is.</summary>
+	public GunHandling Handling
+	{
+		get { return GunHandling.FromKey(NativeComponent.Text(NativeComponent.Gun, Obj, HandlingText) ?? string.Empty); }
+		set { NativeComponent.Tell(NativeComponent.Gun, Obj, HandlingText, value.IsValid ? value.Key : "-"); }
 	}
 
 	/// <summary>How heavy it is, in kilograms: heavier guns sway more and settle slower.</summary>

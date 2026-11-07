@@ -37,6 +37,9 @@ public readonly struct GunHolder : IEquatable<GunHolder>, IObjComponent
 	private const int SpareValue = 18;
 	private const int AutoCycleValue = 19;
 
+	private const int DoOwnText = 0;
+	private const int DoingText = 1;
+
 	public static readonly GunHolder None = default;
 
 	internal GunHolder(Obj obj)
@@ -178,6 +181,21 @@ public readonly struct GunHolder : IEquatable<GunHolder>, IObjComponent
 	{
 		Set(RequestValue, (int)action);
 	}
+
+	/// <summary>
+	/// Starts an action of the gun's own handling as soon as nothing else is under way. An action of another
+	/// handling than the gun picks is not done, and a warning says so.
+	/// </summary>
+	public void Do(GunHandlingAction action)
+	{
+		if (action.IsValid)
+		{
+			NativeComponent.Tell(NativeComponent.GunHolder, Obj, DoOwnText, action.Reference);
+		}
+	}
+
+	/// <summary>The action of the gun's own handling under way, or None for none or a built-in one.</summary>
+	public GunHandlingAction Doing => GunHandlingAction.FromReference(NativeComponent.Text(NativeComponent.GunHolder, Obj, DoingText));
 
 	/// <summary>Reloads the gun as its kind is reloaded, from <see cref="Spare"/>.</summary>
 	public void Reload()

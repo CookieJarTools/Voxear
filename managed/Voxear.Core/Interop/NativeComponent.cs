@@ -1,5 +1,6 @@
 using System;
 using System.Numerics;
+using System.Text;
 
 namespace Voxear.Interop;
 
@@ -57,5 +58,39 @@ internal static unsafe class NativeComponent
 	public static bool Set(int kind, Obj obj, int what, Vector4 value)
 	{
 		return Native.IsConnected && Native.Api->KindValue(kind, obj.Id, what, 1, (float*)&value) == 1;
+	}
+
+	/// <summary>Asks an Obj's component of a kind something with some text: false when the Obj has none.</summary>
+	public static bool Tell(int kind, Obj obj, int what, string text)
+	{
+		if (!Native.IsConnected)
+		{
+			return false;
+		}
+		var bytes = Encoding.UTF8.GetBytes(text);
+		fixed (byte* written = bytes)
+		{
+			return Native.Api->KindText(kind, obj.Id, what, written, bytes.Length, null, 0) >= 0;
+		}
+	}
+
+	/// <summary>A text of an Obj's component of a kind: null with none, or no component.</summary>
+	public static string? Text(int kind, Obj obj, int what)
+	{
+		if (!Native.IsConnected)
+		{
+			return null;
+		}
+		var length = Native.Api->KindText(kind, obj.Id, what, null, 0, null, 0);
+		if (length < 0)
+		{
+			return null;
+		}
+		var bytes = new byte[length];
+		fixed (byte* buffer = bytes)
+		{
+			Native.Api->KindText(kind, obj.Id, what, null, 0, buffer, length);
+		}
+		return Encoding.UTF8.GetString(bytes);
 	}
 }

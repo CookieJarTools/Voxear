@@ -41,6 +41,20 @@ impl ActionKind {
     }
 }
 
+/// An action a holder is asked to do: one of every gun's built-in ones,
+/// or one of the gun's own, by its name in the gun's handling.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ActionId {
+    Builtin(ActionKind),
+    Own(std::sync::Arc<str>),
+}
+
+impl From<ActionKind> for ActionId {
+    fn from(kind: ActionKind) -> Self {
+        ActionId::Builtin(kind)
+    }
+}
+
 /// A hand.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

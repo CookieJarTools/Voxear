@@ -5,7 +5,7 @@
 use voxear_ecs::{Entity, World};
 use voxear_scripting::ComponentKind;
 
-use super::actions::ActionKind;
+use super::actions::{ActionId, ActionKind};
 use super::gun::{Gun, GunKind};
 use super::holder::{GunHolder, GunHolderState};
 use super::mechanism::{Chamber, GunState, Known};
@@ -66,9 +66,56 @@ fn known(known: Known) -> f32 {
     }
 }
 
+// Their texts: a Gun's handling, and the action of the gun's own a holder
+// is asked to do or is doing, as `{handling}#action:{name}`.
+const HANDLING: i32 = 0;
+const DO_OWN: i32 = 0;
+const DOING: i32 = 1;
+
+/// How an action of a gun's own is named after its handling.
+const OWN: &str = "#action:";
+
 pub(crate) fn register() {
     voxear_scripting::set_kind_values(ComponentKind::Gun, gun_values);
     voxear_scripting::set_kind_values(ComponentKind::GunHolder, holder_values);
+    voxear_scripting::set_kind_texts(ComponentKind::Gun, gun_texts);
+    voxear_scripting::set_kind_texts(ComponentKind::GunHolder, holder_texts);
+}
+
+fn gun_texts(world: &mut World, entity: Entity, what: i32, text: &str) -> Option<String> {
+    let gun = world.get_mut::<Gun>(entity)?;
+    match (what, text.is_empty()) {
+        (HANDLING, true) => Some(gun.handling.clone()),
+        (HANDLING, false) => {
+            gun.handling = if text == "-" { String::new() } else { text.to_string() };
+            Some(String::new())
+        }
+        _ => None,
+    }
+}
+
+/// A holder asked to do an action of its gun's own, named after the
+/// handling it is in: done only when the gun picks that handling.
+fn holder_texts(world: &mut World, entity: Entity, what: i32, text: &str) -> Option<String> {
+    let held = world.get::<GunHolder>(entity)?.gun;
+    let gun = held.or_else(|| crate::first_person::first_under(world, entity, |w, e| w.has::<Gun>(e)));
+    let handling = gun.and_then(|gun| world.get::<Gun>(gun)).map(|gun| gun.handling.clone()).unwrap_or_default();
+    match what {
+        DO_OWN => {
+            let (picked, name) = text.split_once(OWN)?;
+            if handling.is_empty() || picked != handling {
+                tracing::warn!("{text} is not an action of the gun's handling, {handling:?}");
+                return Some(String::new());
+            }
+            world.get_mut::<GunHolder>(entity)?.request = Some(ActionId::Own(name.into()));
+            Some(String::new())
+        }
+        DOING => match world.get::<GunHolderState>(entity)?.doing()? {
+            ActionId::Own(name) => Some(format!("{handling}{OWN}{name}")),
+            ActionId::Builtin(_) => None,
+        },
+        _ => None,
+    }
 }
 
 fn number(n: f32) -> [f32; 4] {
@@ -182,7 +229,7 @@ fn holder_values(world: &mut World, entity: Entity, what: i32, written: Option<[
         (FIRE, Some(_)) => return super::holder::fire(world, entity).map(|_| [1.0, 0.0, 0.0, 0.0]),
         (REQUEST, Some(v)) => {
             let action = ACTIONS.get(v[0].max(0.0) as usize).copied()?;
-            world.get_mut::<GunHolder>(entity)?.request = Some(action);
+            world.get_mut::<GunHolder>(entity)?.request = Some(action.into());
             return Some([0.0; 4]);
         }
         (CANCEL, Some(_)) => {

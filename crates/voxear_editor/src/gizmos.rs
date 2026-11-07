@@ -138,7 +138,7 @@ fn gun_marks(shapes: &mut Vec<Shape>, world: &World, camera: &ViewCamera, entity
         }
         let (rear, front) = (point(gun.rear_sight), point(gun.front_sight));
         line(shapes, camera, rear, front + (front - rear) * 0.6, color.with_alpha(200));
-        for dot in [gun.muzzle, gun.feed, gun.port] {
+        for dot in [gun.muzzle, gun.feed, gun.port, gun.butt] {
             let at = point(dot);
             if let Some(on) = camera.project(at) {
                 let local = [on[0] - camera.rect[0], on[1] - camera.rect[1]];
@@ -673,7 +673,7 @@ mod tests {
             drawn.iter().filter(|shape| matches!(shape, Shape::Line { color, .. } | Shape::Circle { fill: color, .. } if color.r == red.r && color.g == red.g)).count()
         };
         let drawn = shapes(&world, &camera, Some(obj), Markers::NONE, &|_| false);
-        assert_eq!(marks(&drawn), 3 + 3 + 1 + 3, "two crosses, the sight line and three dots");
+        assert_eq!(marks(&drawn), 3 + 3 + 1 + 4, "two crosses, the sight line and four dots");
         assert_eq!(marks(&shapes(&world, &camera, None, Markers::NONE, &|_| false)), 0, "only the selected gun's");
         let bolt = world.spawn((Transform::IDENTITY, voxear_scene::Parent(obj), GunPart::turn_bolt([0.05, 0.05, 0.1])));
         assert_eq!(marks(&shapes(&world, &camera, Some(bolt), Markers::NONE, &|_| false)), 24, "its handle's path");

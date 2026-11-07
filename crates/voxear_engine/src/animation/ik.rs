@@ -125,8 +125,8 @@ pub fn reach_hand(edit: &mut PoseEdit, arm: &Arm, at: Vec3, pole: Vec3, clavicle
 }
 
 /// The way a hand's fingers point and its palm faces, in the model's
-/// space, from its bones: toward its middle finger, and to the side its
-/// thumb sits on, square to its fingers and across its knuckles.
+/// space, from its bones: toward its middle finger, and square to that and
+/// to the line of its knuckles, on the side a hand of its side's palm is.
 pub fn hand_axes(edit: &PoseEdit, arm: &Arm) -> Option<(Vec3, Vec3)> {
     let hand = edit.position(arm.hand);
     let knuckle = |finger: usize| arm.fingers[finger].first().map(|&bone| edit.position(bone));
@@ -137,12 +137,9 @@ pub fn hand_axes(edit: &PoseEdit, arm: &Arm) -> Option<(Vec3, Vec3)> {
         _ => return None,
     };
     let across = (across - along * across.dot(along)).try_normalize()?;
-    let mut palm = along.cross(across);
-    // The thumb sits a little on the palm's side, which tells a left hand from a right.
-    let thumb = knuckle(0).map(|thumb| thumb - hand).unwrap_or(palm);
-    if palm.dot(thumb) < 0.0 {
-        palm = -palm;
-    }
+    // The model's space is the engine's, left-handed: a right hand palm down, fingers forward, has its index finger
+    // to the left, so its palm is along × across; a left hand's is the other way round.
+    let palm = if arm.left { across.cross(along) } else { along.cross(across) };
     Some((along, palm))
 }
 

@@ -17,6 +17,9 @@ use crate::animation::rig::Rig;
 
 /// The most the upper body leans into the view, in degrees.
 const MOST_LEAN: f32 = 40.0;
+/// The most the upper body turns from the legs to face the view, in
+/// radians: about 80 degrees.
+const MOST_TWIST: f32 = 1.4;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -47,6 +50,9 @@ pub struct FirstPersonView {
     pub turn_obj: bool,
     /// How much of the tilt the upper body leans into, 0 to 1.
     pub lean: f32,
+    /// How much of the way the upper body turns to face where the view
+    /// looks when the legs have not yet, 0 to 1.
+    pub twist: f32,
     /// Whether the head is hidden, so the camera does not see inside it.
     pub hide_head: bool,
 }
@@ -67,6 +73,7 @@ impl Default for FirstPersonView {
             eyes: [0.0, 0.07, 0.11],
             turn_obj: true,
             lean: 0.5,
+            twist: 1.0,
             hide_head: true,
         }
     }
@@ -168,6 +175,18 @@ pub fn place(world: &mut World) {
         let mut edit = PoseEdit::new(&animation.skeleton, &pose.bones);
         let placed = world_matrix(world, body);
         let into_body = placed.inverse();
+        // The upper body turns to face where the view looks, though the legs, turning at their own pace, lag
+        // behind: the chest, its arms and what they hold stay with the eyes.
+        let up = into_body.transform_vector3(Vec3::Y).normalize_or_zero();
+        let looking = into_body.transform_vector3(view.rotation() * Vec3::Z);
+        let shoulders = edit.position(rig.arms[1].upper) - edit.position(rig.arms[0].upper);
+        let facing = shoulders.cross(up);
+        let flat = |v: Vec3| (v - up * v.dot(up)).normalize_or_zero();
+        let (facing, looking) = (flat(facing), flat(looking));
+        if facing != Vec3::ZERO && looking != Vec3::ZERO {
+            let behind = facing.cross(looking).dot(up).atan2(facing.dot(looking)) * view.twist.clamp(0.0, 1.0);
+            turn_spine(&mut edit, &rig.spine, Quat::from_axis_angle(up, behind.clamp(-MOST_TWIST, MOST_TWIST)));
+        }
         // The upper body leans about the body's own across, so it bends forward and back.
         let across = into_body.transform_vector3(view.rotation() * Vec3::X).normalize_or_zero();
         let lean = (-view.pitch * view.lean.clamp(0.0, 1.0)).clamp(-MOST_LEAN, MOST_LEAN).to_radians();
@@ -384,6 +403,24 @@ mod tests {
         let head =
             Rig::find(&world.get::<ModelRenderer>(body).unwrap().animation.as_ref().unwrap().skeleton).unwrap().head;
         assert!(bones[head].x_axis.length() < 1e-3, "the head is hidden");
+    }
+
+    #[test]
+    fn the_upper_body_turns_to_face_the_view_though_the_legs_lag() {
+        let mut world = World::new();
+        let (player, body, _) = player(&mut world);
+        world.get_mut::<FirstPersonView>(player).unwrap().turn_obj = false;
+        // The legs, and all above them, still turned 50 degrees aside, as a body turning at its own pace is.
+        let animation = world.get::<ModelRenderer>(body).unwrap().animation.clone().unwrap();
+        let mut skewed = animation.skeleton.rest();
+        skewed[0].rotation = Quat::from_rotation_y(50f32.to_radians());
+        world.insert(body, Pose { bones: animation.skeleton.model_matrices(&skewed).into() });
+        place(&mut world);
+        let rig = Rig::find(&animation.skeleton).unwrap();
+        let bones = &world.get::<Pose>(body).unwrap().bones;
+        let across = bones[rig.arms[1].upper].w_axis.truncate() - bones[rig.arms[0].upper].w_axis.truncate();
+        let facing = across.cross(Vec3::Y).normalize();
+        assert!(facing.dot(Vec3::Z) > 0.99, "the shoulders face where the view looks: {facing}");
     }
 
     #[test]

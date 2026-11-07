@@ -134,6 +134,8 @@ pub struct Gun {
     /// degrees; 0 leaves it.
     pub aim_fov: f32,
     pub muzzle: [f32; 3],
+    /// Where a long gun's stock meets the shoulder: the middle of its butt.
+    pub butt: [f32; 3],
     /// Where rounds go in: the magazine well, the clip guide or the top of
     /// the receiver, and the ejection port, where spent cases leave and a
     /// look shows the chamber.
@@ -166,6 +168,7 @@ impl Gun {
             eye_relief: relief,
             aim_fov: 55.0,
             muzzle: [0.0, 0.04, length - 0.12],
+            butt: [0.0, -0.03, -0.4],
             feed: [0.0, 0.06, 0.12],
             port: [0.03, 0.05, 0.12],
         };
@@ -182,6 +185,7 @@ impl Gun {
             eye_relief: 0.45,
             aim_fov: 60.0,
             muzzle: [0.0, 0.035, length - 0.01],
+            butt: [0.0, 0.0, 0.0],
             feed: [0.0, -0.09, -0.03],
             port: [0.015, 0.045, 0.07],
         };

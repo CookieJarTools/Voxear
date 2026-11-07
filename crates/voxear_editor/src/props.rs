@@ -398,6 +398,7 @@ pub enum Prop {
     ViewEyes,
     ViewTurnObj,
     ViewLean,
+    ViewTwist,
     ViewHideHead,
     /// A Gun's kind, weight, length, rate of fire and kick; its grip and
     /// support sockets, sights and muzzle.
@@ -415,10 +416,12 @@ pub enum Prop {
     GunEyeRelief,
     GunAimFov,
     GunMuzzle,
+    GunButt,
     /// A Gun Holder's hip hold, how long aiming takes, how much it sways,
     /// bobs and breathes, and whether it pulls back from walls.
     HolderHip,
     HolderHipTurn,
+    HolderShoulder,
     HolderAimTime,
     HolderSway,
     HolderBob,
@@ -754,6 +757,7 @@ impl Prop {
             | Prop::ViewEyes
             | Prop::ViewTurnObj
             | Prop::ViewLean
+            | Prop::ViewTwist
             | Prop::ViewHideHead => Part::FirstPersonView,
             Prop::GunKind
             | Prop::GunMass
@@ -768,9 +772,11 @@ impl Prop {
             | Prop::GunFrontSight
             | Prop::GunEyeRelief
             | Prop::GunAimFov
-            | Prop::GunMuzzle => Part::Gun,
+            | Prop::GunMuzzle
+            | Prop::GunButt => Part::Gun,
             Prop::HolderHip
             | Prop::HolderHipTurn
+            | Prop::HolderShoulder
             | Prop::HolderAimTime
             | Prop::HolderSway
             | Prop::HolderBob
@@ -1038,6 +1044,7 @@ impl Prop {
             Prop::ViewEyes => "eyes",
             Prop::ViewTurnObj => "turn_obj",
             Prop::ViewLean => "lean",
+            Prop::ViewTwist => "twist",
             Prop::ViewHideHead => "hide_head",
             Prop::GunKind => "kind",
             Prop::GunMass => "mass",
@@ -1053,8 +1060,10 @@ impl Prop {
             Prop::GunEyeRelief => "eye_relief",
             Prop::GunAimFov => "aim_fov",
             Prop::GunMuzzle => "muzzle",
+            Prop::GunButt => "butt",
             Prop::HolderHip => "hip",
             Prop::HolderHipTurn => "hip_turn",
+            Prop::HolderShoulder => "shoulder",
             Prop::HolderAimTime => "aim_time",
             Prop::HolderSway => "sway",
             Prop::HolderBob => "bob",
@@ -1495,6 +1504,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             Prop::ViewEyes,
             Prop::ViewTurnObj,
             Prop::ViewLean,
+            Prop::ViewTwist,
             Prop::ViewHideHead,
         ],
         Part::Gun => vec![
@@ -1512,10 +1522,12 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             Prop::GunEyeRelief,
             Prop::GunAimFov,
             Prop::GunMuzzle,
+            Prop::GunButt,
         ],
         Part::GunHolder => vec![
             Prop::HolderHip,
             Prop::HolderHipTurn,
+            Prop::HolderShoulder,
             Prop::HolderAimTime,
             Prop::HolderSway,
             Prop::HolderBob,
@@ -1876,6 +1888,7 @@ pub fn label(prop: &Prop) -> String {
         Prop::ViewEyes => "Eyes",
         Prop::ViewTurnObj => "Turn Obj",
         Prop::ViewLean => "Lean",
+        Prop::ViewTwist => "Twist",
         Prop::ViewHideHead => "Hide Head",
         Prop::GunKind => "Kind",
         Prop::GunMass => "Mass",
@@ -1891,8 +1904,10 @@ pub fn label(prop: &Prop) -> String {
         Prop::GunEyeRelief => "Eye Relief",
         Prop::GunAimFov => "Aim FOV",
         Prop::GunMuzzle => "Muzzle",
+        Prop::GunButt => "Butt",
         Prop::HolderHip => "Hip",
         Prop::HolderHipTurn => "Hip Turn",
+        Prop::HolderShoulder => "Shoulder",
         Prop::HolderAimTime => "Aim Time",
         Prop::HolderSway => "Sway",
         Prop::HolderBob => "Bob",
@@ -2602,6 +2617,7 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::ViewEyes => Value::Vector(world.get::<FirstPersonView>(entity)?.eyes.to_vec()),
         Prop::ViewTurnObj => Value::Toggle(world.get::<FirstPersonView>(entity)?.turn_obj),
         Prop::ViewLean => Value::Number(world.get::<FirstPersonView>(entity)?.lean),
+        Prop::ViewTwist => Value::Number(world.get::<FirstPersonView>(entity)?.twist),
         Prop::ViewHideHead => Value::Toggle(world.get::<FirstPersonView>(entity)?.hide_head),
         Prop::GunKind => {
             let kind = world.get::<Gun>(entity)?.kind;
@@ -2621,8 +2637,10 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::GunEyeRelief => Value::Number(world.get::<Gun>(entity)?.eye_relief),
         Prop::GunAimFov => Value::Number(world.get::<Gun>(entity)?.aim_fov),
         Prop::GunMuzzle => Value::Vector(world.get::<Gun>(entity)?.muzzle.to_vec()),
+        Prop::GunButt => Value::Vector(world.get::<Gun>(entity)?.butt.to_vec()),
         Prop::HolderHip => Value::Vector(world.get::<GunHolder>(entity)?.hip.to_vec()),
         Prop::HolderHipTurn => Value::Vector(world.get::<GunHolder>(entity)?.hip_turn.to_vec()),
+        Prop::HolderShoulder => Value::Vector(world.get::<GunHolder>(entity)?.shoulder.to_vec()),
         Prop::HolderAimTime => Value::Number(world.get::<GunHolder>(entity)?.aim_time),
         Prop::HolderSway => Value::Number(world.get::<GunHolder>(entity)?.sway),
         Prop::HolderBob => Value::Number(world.get::<GunHolder>(entity)?.bob),
@@ -3595,6 +3613,7 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         }
         (Prop::ViewTurnObj, Value::Toggle(on)) => with(world, entity, |it: &mut FirstPersonView| it.turn_obj = on),
         (Prop::ViewLean, Value::Number(n)) => with(world, entity, |it: &mut FirstPersonView| it.lean = n.clamp(0.0, 1.0)),
+        (Prop::ViewTwist, Value::Number(n)) => with(world, entity, |it: &mut FirstPersonView| it.twist = n.clamp(0.0, 1.0)),
         (Prop::ViewHideHead, Value::Toggle(on)) => with(world, entity, |it: &mut FirstPersonView| it.hide_head = on),
         // A kind fills in its typical numbers and sockets.
         (Prop::GunKind, Value::Choice(index, _)) => {
@@ -3614,7 +3633,8 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
             | Prop::GunSupportTurn
             | Prop::GunRearSight
             | Prop::GunFrontSight
-            | Prop::GunMuzzle,
+            | Prop::GunMuzzle
+            | Prop::GunButt,
             Value::Vector(v),
         ) if v.len() == 3 => {
             let v = [v[0], v[1], v[2]];
@@ -3625,11 +3645,15 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
                 Prop::GunSupportTurn => gun.support.rotation = v,
                 Prop::GunRearSight => gun.rear_sight = v,
                 Prop::GunFrontSight => gun.front_sight = v,
+                Prop::GunButt => gun.butt = v,
                 _ => gun.muzzle = v,
             })
         }
         (Prop::HolderHip, Value::Vector(v)) if v.len() == 3 => {
             with(world, entity, |holder: &mut GunHolder| holder.hip = [v[0], v[1], v[2]])
+        }
+        (Prop::HolderShoulder, Value::Vector(v)) if v.len() == 3 => {
+            with(world, entity, |holder: &mut GunHolder| holder.shoulder = [v[0], v[1], v[2]])
         }
         (Prop::HolderHipTurn, Value::Vector(v)) if v.len() == 3 => {
             with(world, entity, |holder: &mut GunHolder| holder.hip_turn = [v[0], v[1], v[2]])

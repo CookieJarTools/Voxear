@@ -13,6 +13,8 @@ pub const FINGERS: [&str; 5] = ["thumb", "index", "middle", "ring", "pinky"];
 /// One arm's bones.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Arm {
+    /// Whether it is the left arm.
+    pub left: bool,
     /// The collarbone, when the rig has one.
     pub clavicle: Option<usize>,
     pub upper: usize,
@@ -89,7 +91,7 @@ fn arm(skeleton: &Skeleton, names: &[String], left: bool) -> Option<Arm> {
         chain.sort_by_key(|&bone| depth(skeleton, bone));
         chain
     });
-    Some(Arm { clavicle, upper, forearm, hand, fingers })
+    Some(Arm { left, clavicle, upper, forearm, hand, fingers })
 }
 
 /// Whether a bone's name makes it this finger: the little finger goes by

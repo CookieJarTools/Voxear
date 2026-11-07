@@ -34,11 +34,15 @@ pub struct GunHolder {
     /// Whether it aims down the sights, rather than holding at the hip.
     #[serde(skip)]
     pub aiming: bool,
-    /// Where a long gun's grip is held at the hip, from the camera, in
-    /// metres: right, up, forward, its stock near the shoulder; a handgun
-    /// is held further out. And its turn there, in degrees.
+    /// Where a handgun's grip is held, from the camera, in metres: right, up
+    /// and forward, the arms out. And how a gun is turned when held at the
+    /// hip, in degrees.
     pub hip: [f32; 3],
     pub hip_turn: [f32; 3],
+    /// Where a long gun's butt sits from the shooting shoulder, in metres in
+    /// the body's space: in toward the chest, up and forward, so its stock
+    /// rests in the shoulder in both first and third person.
+    pub shoulder: [f32; 3],
     /// How long raising the gun to the eye takes, in seconds.
     pub aim_time: f32,
     /// How much it sways and lags, bobs with the steps and breathes: 1 as
@@ -65,7 +69,8 @@ impl Default for GunHolder {
             gun: None,
             aiming: false,
             hip: [0.16, -0.22, 0.2],
-            hip_turn: [2.0, -3.0, -6.0],
+            hip_turn: [7.0, -2.0, -5.0],
+            shoulder: [-0.06, -0.03, 0.06],
             aim_time: 0.22,
             sway: 1.0,
             bob: 1.0,
@@ -364,6 +369,9 @@ pub fn hold(world: &mut World) {
         }
         state.tilt.update(tilt, delta);
 
+        if let Some(body) = body {
+            blade(world, body, &gun);
+        }
         let held = place_gun(world, entity, &holder, &gun, &view, eye, body, &mut state, delta);
         state.held = Some(held);
         set_world(world, gun_entity, held.w_axis.truncate(), held.to_scale_rotation_translation().1);
@@ -426,8 +434,11 @@ fn place_gun(
     let hip = Mat4::from_rotation_translation(Quat::from_euler(EulerRot::XYZ, x, y, z), Vec3::from(holder.hip));
     let sighted = Mat4::from_translation(Vec3::Z * gun.eye_relief) * gun.sight_frame().inverse();
     let (_, hip_turn, mut hip_at) = hip.to_scale_rotation_translation();
-    if gun.kind.is_handgun() {
-        hip_at.z += 0.18;
+    // A long gun's butt sits in the shoulder; a handgun is held out in front.
+    let shouldered = body.filter(|_| !gun.kind.is_handgun()).and_then(|body| pocket(world, body, holder));
+    match shouldered {
+        Some(pocket) => hip_at = eye.inverse().transform_point3(pocket) - hip_turn * Vec3::from(gun.butt),
+        None => hip_at.z += 0.18,
     }
     let (_, aim_turn, aim_at) = sighted.to_scale_rotation_translation();
     let mut at = hip_at.lerp(aim_at, ease(aim)) + Vec3::Y * (-0.012 * (aim * std::f32::consts::PI).sin());
@@ -612,6 +623,33 @@ fn hand_aims(gun: &Gun, working: Option<HandAim>, state: &mut GunHolderState, de
     aims
 }
 
+/// Turns the chest for a long gun, its fore-end far out, bringing the
+/// support shoulder forward to meet it: before the gun is placed, so its
+/// butt goes to the shoulder where the shoulder ends up.
+fn blade(world: &mut World, body: Entity, gun: &Gun) {
+    if gun.kind.is_handgun() {
+        return;
+    }
+    let Some(animation) = world.get::<ModelRenderer>(body).and_then(|model| model.animation.clone()) else { return };
+    let (Some(pose), Some(rig)) = (world.get::<Pose>(body).cloned(), Rig::find(&animation.skeleton)) else { return };
+    let mut edit = PoseEdit::new(&animation.skeleton, &pose.bones);
+    let up = world_matrix(world, body).inverse().transform_vector3(Vec3::Y).normalize_or_zero();
+    let bladed = (gun.support.position[2] - gun.grip.position[2]).clamp(0.0, 0.6) * 40.0;
+    turn_spine(&mut edit, &rig.spine, Quat::from_axis_angle(up, bladed.to_radians()));
+    world.insert(body, Pose { bones: edit.matrices().into() });
+}
+
+/// Where a long gun's butt goes, in the world: the body's shooting
+/// shoulder, as posed now, moved by the holder's `shoulder` in the body's
+/// space.
+fn pocket(world: &World, body: Entity, holder: &GunHolder) -> Option<Vec3> {
+    let animation = world.get::<ModelRenderer>(body)?.animation.clone()?;
+    let rig = Rig::find(&animation.skeleton)?;
+    let pose = world.get::<Pose>(body)?;
+    let shoulder = pose.bones.get(rig.arms[1].upper)?.w_axis.truncate();
+    Some(world_matrix(world, body).transform_point3(shoulder + Vec3::from(holder.shoulder)))
+}
+
 /// Puts the body's hands on the gun held at `held`: the shooting hand on
 /// its grip, the other on its support, elbows down and out, fingers
 /// closed. Gives back how far short the arms fell.
@@ -625,12 +663,6 @@ fn hands_on(world: &mut World, body: Entity, gun: &Gun, held: Mat4, eye: Mat4, a
     let into_body = world_matrix(world, body).inverse();
     let mut edit = PoseEdit::new(&animation.skeleton, &pose.bones);
     let (right, left) = (&rig.arms[1], &rig.arms[0]);
-    // A long gun's fore-end is far out: the chest turns, bringing the support shoulder forward to meet it.
-    if !gun.kind.is_handgun() {
-        let up = into_body.transform_vector3(Vec3::Y).normalize_or_zero();
-        let bladed = (gun.support.position[2] - gun.grip.position[2]).clamp(0.0, 0.6) * 45.0;
-        turn_spine(&mut edit, &rig.spine, Quat::from_axis_angle(up, bladed.to_radians()));
-    }
     let down = into_body.transform_vector3(eye.transform_vector3(Vec3::NEG_Y));
     let out = into_body.transform_vector3(eye.transform_vector3(Vec3::X));
     let back = into_body.transform_vector3(eye.transform_vector3(Vec3::NEG_Z));
@@ -745,7 +777,7 @@ pub(super) mod tests {
         let player = world.spawn((Transform::default(),));
         let model = ModelRenderer { animation: Some(animation), ..ModelRenderer::new(Vec::new()) };
         let body = world.spawn((Transform::default(), Parent(player), model, Pose { bones: rest.into() }));
-        let camera = world.spawn((Transform::default(), Parent(player), Camera::default()));
+        let camera = world.spawn((Transform::default(), Parent(player), voxear_render::Camera::default()));
         let gun = world.spawn((Transform::default(), Parent(player), Gun::preset(kind)));
         world.insert(
             player,
@@ -779,11 +811,16 @@ pub(super) mod tests {
         }
         let eye = world_matrix(&scene.world, scene.camera);
         let held = world_matrix(&scene.world, scene.gun);
-        let at_hip = (eye.inverse() * held).w_axis.truncate();
-        let hip = Vec3::from(GunHolder::default().hip);
-        // Where the hip hold puts it, but as near the body as the arms need to reach it.
-        assert!((at_hip.x - hip.x).abs() < 0.02 && (at_hip.y - hip.y).abs() < 0.08, "at the hip: {at_hip}");
-        assert!(at_hip.z <= hip.z + 0.01 && at_hip.z > 0.05, "at the hip: {at_hip}");
+        // An SMG's butt sits at the right shoulder, its muzzle out in front of the eye.
+        let gun_now = scene.world.get::<Gun>(scene.gun).unwrap().clone();
+        let butt = held.transform_point3(Vec3::from(gun_now.butt));
+        let body_skeleton = scene.world.get::<ModelRenderer>(scene.body).unwrap().animation.clone().unwrap();
+        let right = Rig::find(&body_skeleton.skeleton).unwrap().arms[1].upper;
+        let shoulder = world_matrix(&scene.world, scene.body)
+            .transform_point3(scene.world.get::<Pose>(scene.body).unwrap().bones[right].w_axis.truncate());
+        assert!(butt.distance(shoulder) < 0.15, "the butt at the shoulder: {butt} {shoulder}");
+        let muzzle = (eye.inverse() * held).transform_point3(Vec3::from(gun_now.muzzle));
+        assert!(muzzle.z > 0.3, "the muzzle out in front: {muzzle}");
         // Both wrists are on their sockets.
         let gun = scene.world.get::<Gun>(scene.gun).unwrap().clone();
         let skeleton = scene.world.get::<ModelRenderer>(scene.body).unwrap().animation.clone().unwrap();

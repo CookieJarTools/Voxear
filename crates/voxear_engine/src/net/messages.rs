@@ -35,7 +35,14 @@ pub enum Message {
     /// Objs' states on a server tick: each Obj's parts that changed, as a
     /// mask, over a state with the rest left as they were.
     Snapshot { tick: u64, entries: Vec<(NetId, u8, ObjState, Option<Fields>)> },
+    /// A script's call of a method on a networked Obj's behaviour, by a key:
+    /// to the server from a player, or to players from the server, with the
+    /// tick it was made on.
+    Rpc { id: NetId, key: u32, tick: u64, bytes: Vec<u8> },
 }
+
+/// The most bytes an RPC's arguments take.
+pub const MOST_RPC_BYTES: usize = 8192;
 
 /// A state with nothing set, for parts a snapshot does not carry.
 pub const BLANK: ObjState = ObjState {
@@ -54,6 +61,7 @@ const SYNC: u32 = 5;
 const SPAWN: u32 = 6;
 const DESPAWN: u32 = 7;
 pub const SNAPSHOT: u32 = 8;
+const RPC: u32 = 9;
 /// Bits a message's kind takes.
 pub const KIND_BITS: u32 = 4;
 
@@ -130,6 +138,14 @@ impl Message {
                 }
                 w.write_bool(false);
             }
+            Message::Rpc { id, key, tick, bytes } => {
+                w.write_bits(RPC, KIND_BITS);
+                w.write_varint(u64::from(id.0));
+                w.write_bits(*key, 32);
+                w.write_varint(*tick);
+                w.write_varint(bytes.len() as u64);
+                w.write_bytes(bytes);
+            }
         }
         w.finish()
     }
@@ -187,6 +203,18 @@ impl Message {
                     entries.push((id, mask, state, fields));
                 }
                 Message::Snapshot { tick, entries }
+            }
+            RPC => {
+                let id = NetId(r.read_varint()? as u32);
+                let key = r.read_bits(32)?;
+                let tick = r.read_varint()?;
+                let length = r.read_varint()? as usize;
+                if length > MOST_RPC_BYTES {
+                    return None;
+                }
+                let mut bytes = vec![0u8; length];
+                r.read_bytes(&mut bytes)?;
+                Message::Rpc { id, key, tick, bytes }
             }
             _ => return None,
         })
@@ -255,6 +283,7 @@ mod tests {
             Message::Level("0123456789abcdef0123456789abcdef".into()),
             Message::Inputs { first: 99, commands: vec![vec![jump, look], vec![ActionState::default(); 2]] },
             Message::Sync { tick: 5, ahead: -3 },
+            Message::Rpc { id: NetId(12), key: 0xdead_beef, tick: 77, bytes: vec![1, 2, 3] },
         ];
         for message in messages {
             assert_eq!(Message::decode(&message.encode()), Some(message.clone()), "{message:?}");

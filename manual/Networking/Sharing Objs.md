@@ -51,6 +51,6 @@ public sealed partial class Health : Behaviour
 }
 ```
 
-Voxear writes the property for you. Set it on the server, and it changes on every player's machine shortly after. Only what changed is sent, and only when it changes. `bool`, `int`, `long`, `float`, `double`, `string`, `Vector2`, `Vector3`, `Quaternion` and enums can be replicated.
+Voxear writes the property for you. Set it on the server, and it changes on every player's machine shortly after. Only what changed is sent, and only when it changes. `bool`, `int`, `long`, `float`, `double`, `string`, `Vector2`, `Vector3`, `Quaternion`, enums, `Obj` and `NetPlayer` can be replicated. An `Obj` reads as `Obj.None` on a machine that does not have it yet.
 
 Set replicated properties on the server only: a player's machine takes them from the server, and its own changes are not sent anywhere.

@@ -1,8 +1,10 @@
 //! Networked play between two processes on this machine, as `vox run` plays
 //! it: a server without a window and a client joining it, on a copy of
-//! Hello. The server makes a ball for the player who joins, and sets its
-//! score, a `[Replicated]` property; the client's own copy of the ball takes
-//! it, as its script logs. Skips itself without .NET.
+//! Hello. The server makes a ball for the player who joins, theirs, and a
+//! spare, and sets their scores, a `[Replicated]` property; the client's own
+//! copies take them, as its script logs. The client then asks for more on
+//! both with a `[ServerRpc]`: the server gives it only for the player's own,
+//! and cheers with a `[ClientRpc]`. Skips itself without .NET.
 
 use std::io::{BufRead, BufReader};
 use std::path::Path;
@@ -19,14 +21,36 @@ public sealed partial class Score : Behaviour
 	public partial int Points { get; set; }
 
 	private int shown = -1;
+	private bool asked;
 
 	protected override void Update()
 	{
-		if (!Net.IsServer && Points != shown)
+		if (Net.IsServer || Points == shown)
 		{
-			shown = Points;
-			Log.Info($"points {Points}");
+			return;
 		}
+		shown = Points;
+		Log.Info($"points {Points}");
+		if (Points == 7 && !asked)
+		{
+			asked = true;
+			AskOnServer(3);
+		}
+	}
+
+	[ServerRpc]
+	private void Ask(int more)
+	{
+		Points += more;
+		var whose = Obj.NetObject.Owner is null ? "the spare" : "their own";
+		Log.Info($"{Net.Caller?.Id} asked for {more} on {whose}");
+		CheeredOnClients($"now {Points}");
+	}
+
+	[ClientRpc]
+	private void Cheered(string text)
+	{
+		Log.Info($"cheered {text}");
 	}
 }
 "#;
@@ -46,8 +70,12 @@ public sealed class Arena : SystemBase
 			{
 				return;
 			}
-			var ball = Prefab.Load("Prefabs/Ball.prefab").Instantiate(new Vector3(0f, 1f, 0f), Quaternion.Identity);
+			var prefab = Prefab.Load("Prefabs/Ball.prefab");
+			var ball = prefab.Instantiate(new Vector3(0f, 1f, 0f), Quaternion.Identity);
+			var net = ball.NetObject;
+			net.Owner = player;
 			ball.GetBehaviour<Score>()!.Points = 7;
+			prefab.Instantiate(new Vector3(2f, 1f, 0f), Quaternion.Identity).GetBehaviour<Score>()!.Points = 7;
 			Log.Info($"ball made for {player.Id}");
 		};
 	}
@@ -61,7 +89,7 @@ public sealed class Arena : SystemBase
 const BALL: &str = "format = 1\n[[obj]]\nid = 1\nname = \"Ball\"\nbehaviours = [\"Hello.Score\"]\nnet = {}\n";
 
 #[test]
-fn a_client_joins_a_server_and_takes_a_replicated_property() {
+fn a_client_joins_a_server_takes_replicated_properties_and_makes_rpcs() {
     if voxear_scripting::find_dotnet().is_none() {
         return eprintln!("skipping: needs .NET");
     }
@@ -105,6 +133,9 @@ fn a_client_joins_a_server_and_takes_a_replicated_property() {
     let out = String::from_utf8_lossy(&client.stdout).into_owned() + &String::from_utf8_lossy(&client.stderr);
     assert!(said("player 1 joined") && said("ball made for 1"), "the server: {:?}", lines.lock().unwrap());
     assert!(out.contains("points 7"), "the client took the ball's score: {out}");
+    assert!(said("1 asked for 3 on their own"), "the server ran the owner's RPC: {:?}", lines.lock().unwrap());
+    assert!(!said("on the spare"), "but not one on an Obj not theirs: {:?}", lines.lock().unwrap());
+    assert!(out.contains("cheered now 10") && out.contains("points 10"), "the server's RPC, and the score after: {out}");
 }
 
 /// A copy of Hello, inside the repository, where its scripts find the

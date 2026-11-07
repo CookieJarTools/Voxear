@@ -22,6 +22,10 @@ internal static unsafe class NativeNet
 	public const int Input = 10;
 	public const int Tick = 11;
 	public const int RoundTrip = 12;
+	public const int RpcTick = 13;
+	public const int NetId = 14;
+	public const int ObjIndex = 15;
+	public const int ObjGeneration = 16;
 
 	public const int ConnectedEvent = 1;
 	public const int DisconnectedEvent = 2;

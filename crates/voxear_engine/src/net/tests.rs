@@ -244,3 +244,41 @@ fn a_crowd_too_big_for_a_snapshot_is_shared_by_turns_within_the_budget() {
     let sent = session_of(&server).stats().sent_bytes_per_second;
     assert!(sent < 64.0 * 1024.0 * 1.3, "within the budget: {sent} bytes a second");
 }
+
+#[test]
+fn rpcs_reach_the_server_from_a_player_and_players_from_the_server() {
+    let network = MemoryNetwork::new();
+    let (mut server, mut clients) = session(&network, 2, Conditions::AVERAGE);
+    for _ in 0..60 {
+        frame(&mut server, &mut clients, &[(false, false); 2]);
+    }
+    let ball = shared(&mut server, voxear_core::math::Vec3::ZERO, NetObject::default());
+    // One made in the same tick as the Obj still reaches those it is for.
+    assert!(rpc(&mut server, ball, 7, vec![1], RpcTarget::Players, true));
+    for _ in 0..30 {
+        frame(&mut server, &mut clients, &[(false, false); 2]);
+        make_spawns(&mut clients);
+    }
+    for client in &mut clients {
+        let came = take_rpc(client).expect("the server's RPC");
+        assert_eq!((came.key, came.caller, came.bytes), (7, None, vec![1]));
+        assert_eq!(Some(came.entity), entity_of(client, NetId(1)));
+    }
+
+    // To the server, with the tick it was made on; then to one player only.
+    let on_client = entity_of(&clients[1], NetId(1)).unwrap();
+    let made_on = session_of(&clients[1]).tick;
+    assert!(rpc(&mut clients[1], on_client, 9, vec![2, 3], RpcTarget::Server, true));
+    assert!(!rpc(&mut clients[1], on_client, 9, Vec::new(), RpcTarget::Players, true), "only the server calls players");
+    let first = session_of(&clients[0]).local_player().unwrap();
+    let second = session_of(&clients[1]).local_player();
+    assert!(rpc(&mut server, ball, 8, Vec::new(), RpcTarget::Player(first), true));
+    for _ in 0..30 {
+        frame(&mut server, &mut clients, &[(false, false); 2]);
+    }
+    let came = take_rpc(&mut server).expect("the player's RPC");
+    assert_eq!((came.entity, came.key, came.caller, came.tick), (ball, 9, second, made_on));
+    assert_eq!(take_rpc(&mut server), None);
+    assert_eq!(take_rpc(&mut clients[0]).map(|r| r.key), Some(8));
+    assert_eq!(take_rpc(&mut clients[1]), None, "not for them");
+}

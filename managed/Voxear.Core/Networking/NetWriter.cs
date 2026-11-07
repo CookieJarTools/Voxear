@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 using System.Text;
+using Voxear.Interop;
 
 namespace Voxear;
 
@@ -65,6 +66,18 @@ public sealed class NetWriter
 		Write(value.Y);
 		Write(value.Z);
 		Write(value.W);
+	}
+
+	/// <summary>A networked Obj, by its id in the session; any other as None.</summary>
+	public void Write(Obj value)
+	{
+		var bits = value.Id;
+		Write(value.IsValid ? NativeNet.Call(NativeNet.NetId, (int)(uint)bits, (int)(uint)(bits >> 32)) : 0);
+	}
+
+	public void Write(NetPlayer value)
+	{
+		Write(value.Id);
 	}
 
 	/// <summary>Everything written, as bytes.</summary>

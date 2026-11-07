@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 51;
+pub(crate) const API_VERSION: u32 = 52;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -349,6 +349,13 @@ pub(crate) struct NativeApi {
     /// server, into `entity`, `key` and up to `capacity` bytes, its length
     /// given back, or -1 for none.
     pub net_fields: unsafe extern "C" fn(take: i32, entity: *mut u64, key: *mut u32, bytes: *mut u8, len: i32) -> i32,
+    /// RPCs: with `what` 0 a behaviour's method to run on the server, 1 on
+    /// players' machines (`player` one of them, or -1 for all), 2 and 3 the
+    /// same but allowed to be lost, by `entity`, `key` and `len` bytes of
+    /// arguments, giving back 1 if it went. With 4, the next that came, into
+    /// `entity`, `key`, `player` (who made it, -1 for the server) and up to
+    /// `len` bytes: its length, or -1 for none.
+    pub net_rpc: unsafe extern "C" fn(what: i32, entity: *mut u64, key: *mut u32, player: *mut i32, bytes: *mut u8, len: i32) -> i32,
 }
 
 /// What answers scripts' questions about water: the engine's, set when it
@@ -403,6 +410,74 @@ unsafe extern "C" fn net_fields(take: i32, entity: *mut u64, key: *mut u32, byte
         *entity = from.to_bits();
         *key = at;
         std::ptr::copy_nonoverlapping(value.as_ptr(), bytes, copied);
+    }
+    copied as i32
+}
+
+/// An RPC a script makes: a behaviour's method on an Obj, by a key, with
+/// its arguments as bytes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RpcSend {
+    pub entity: Entity,
+    pub key: u32,
+    /// To players' machines rather than the server.
+    pub to_players: bool,
+    /// One player, or every player for `None`.
+    pub player: Option<u16>,
+    pub reliable: bool,
+    pub bytes: Vec<u8>,
+}
+
+/// An RPC that came for a script to run: `caller` is the player who made
+/// it, `None` for the server.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RpcTaken {
+    pub entity: Entity,
+    pub key: u32,
+    pub caller: Option<u16>,
+    pub bytes: Vec<u8>,
+}
+
+/// What sends scripts' RPCs, and hands them those that came.
+#[derive(Clone, Copy)]
+pub struct NetRpcs {
+    pub send: fn(&mut World, RpcSend) -> bool,
+    pub take: fn(&mut World) -> Option<RpcTaken>,
+}
+static NET_RPCS: std::sync::OnceLock<NetRpcs> = std::sync::OnceLock::new();
+
+/// Sets what sends RPCs; the first set is kept.
+pub fn set_net_rpcs(rpcs: NetRpcs) {
+    let _ = NET_RPCS.set(rpcs);
+}
+
+unsafe extern "C" fn net_rpc(what: i32, entity: *mut u64, key: *mut u32, player: *mut i32, bytes: *mut u8, len: i32) -> i32 {
+    let Some(rpcs) = NET_RPCS.get().copied() else { return -1 };
+    if entity.is_null() || key.is_null() || player.is_null() || len < 0 || (bytes.is_null() && len > 0) {
+        return -1;
+    }
+    if (0..4).contains(&what) {
+        let given = if len == 0 { Vec::new() } else { unsafe { std::slice::from_raw_parts(bytes, len as usize) }.to_vec() };
+        let (entity, key, player) = unsafe { (Entity::from_bits(*entity), *key, *player) };
+        let send = RpcSend {
+            entity,
+            key,
+            to_players: what & 1 == 1,
+            player: u16::try_from(player).ok(),
+            reliable: what < 2,
+            bytes: given,
+        };
+        return i32::from(with_world(|world| Some((rpcs.send)(world, send))).unwrap_or(false));
+    }
+    let Some(taken) = with_world(|world| (rpcs.take)(world)) else { return -1 };
+    let copied = taken.bytes.len().min(len as usize);
+    unsafe {
+        *entity = taken.entity.to_bits();
+        *key = taken.key;
+        *player = taken.caller.map_or(-1, i32::from);
+        if copied > 0 {
+            std::ptr::copy_nonoverlapping(taken.bytes.as_ptr(), bytes, copied);
+        }
     }
     copied as i32
 }
@@ -1468,6 +1543,7 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         motion_matcher_text,
         net_object_value,
         net_fields,
+        net_rpc,
     }
 }
 

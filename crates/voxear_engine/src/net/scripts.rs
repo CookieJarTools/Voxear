@@ -5,7 +5,7 @@ use std::net::SocketAddr;
 
 use voxear_ecs::World;
 
-use super::{NetEvent, NetRole, NetSession, NetSettings, PlayerId};
+use super::{NetEvent, NetId, NetRole, NetSession, NetSettings, PlayerId, RpcTarget};
 
 /// The project's network settings, kept in the world for scripts that
 /// start a session.
@@ -16,6 +16,21 @@ pub(crate) fn register() {
     voxear_scripting::set_net_calls(call);
     voxear_scripting::set_net_object_values(net_object);
     voxear_scripting::set_net_fields(fields);
+    voxear_scripting::set_net_rpcs(voxear_scripting::NetRpcs { send: send_rpc, take: take_rpc });
+}
+
+fn send_rpc(world: &mut World, rpc: voxear_scripting::RpcSend) -> bool {
+    let target = match (rpc.to_players, rpc.player) {
+        (false, _) => RpcTarget::Server,
+        (true, None) => RpcTarget::Players,
+        (true, Some(player)) => RpcTarget::Player(PlayerId(player)),
+    };
+    super::rpc(world, rpc.entity, rpc.key, rpc.bytes, target, rpc.reliable)
+}
+
+fn take_rpc(world: &mut World) -> Option<voxear_scripting::RpcTaken> {
+    let rpc = super::take_rpc(world)?;
+    Some(voxear_scripting::RpcTaken { entity: rpc.entity, key: rpc.key, caller: rpc.caller.map(|p| p.0), bytes: rpc.bytes })
 }
 
 /// The most bytes one behaviour's replicated fields take.
@@ -111,6 +126,10 @@ const TAKE_EVENT: i32 = 9;
 const INPUT: i32 = 10;
 const TICK: i32 = 11;
 const ROUND_TRIP: i32 = 12;
+const RPC_TICK: i32 = 13;
+const NET_ID: i32 = 14;
+const OBJ_INDEX: i32 = 15;
+const OBJ_GENERATION: i32 = 16;
 
 // Events, as TAKE_EVENT gives them.
 const CONNECTED_EVENT: i32 = 1;
@@ -132,6 +151,16 @@ fn call(world: &mut World, what: i32, a: i32, b: i32, text: &str, out: &mut [f32
         PLAYER_COUNT => session.map_or(0, |s| s.players().len() as i32),
         PLAYER_AT => session.and_then(|s| s.players().get(a as usize)).map_or(-1, |p| i32::from(p.0)),
         TICK => session.map_or(0, |s| s.tick() as i32),
+        RPC_TICK => super::rpc_tick(world) as i32,
+        // An Obj, as its handle's two halves, by its id in the session; and back.
+        NET_ID => {
+            let entity = voxear_ecs::Entity::from_bits(u64::from(b as u32) << 32 | u64::from(a as u32));
+            world.get::<super::Networked>(entity).map_or(0, |n| n.id.0 as i32)
+        }
+        OBJ_INDEX | OBJ_GENERATION => {
+            let Some(entity) = super::entity_of(world, NetId(a as u32)) else { return 0 };
+            if what == OBJ_INDEX { entity.index() as i32 } else { entity.generation() as i32 }
+        }
         ROUND_TRIP => {
             out[0] = session.map_or(0.0, |s| s.round_trip() as f32);
             1

@@ -42,7 +42,22 @@ internal static class Diagnostics
 
 	public static readonly DiagnosticDescriptor NotReplicable = new DiagnosticDescriptor(
 		"VOX0010", "[Replicated] on a property of a type that cannot be replicated",
-		"[Replicated] is on {0}, a {1}; bool, int, long, float, double, string, Vector2, Vector3, Quaternion and enums can be replicated",
+		"[Replicated] is on {0}, a {1}; bool, int, long, float, double, string, Vector2, Vector3, Quaternion, enums, Obj and NetPlayer can be replicated",
+		"Voxear.Networking", DiagnosticSeverity.Error, isEnabledByDefault: true);
+
+	public static readonly DiagnosticDescriptor BadRpc = new DiagnosticDescriptor(
+		"VOX0011", "An RPC on a method Voxear cannot write a sender for",
+		"[{0}] is on {1} of {2}; make it a method that returns void, with no type or ref parameters, of a partial class that is neither nested nor generic",
+		"Voxear.Networking", DiagnosticSeverity.Error, isEnabledByDefault: true);
+
+	public static readonly DiagnosticDescriptor NotSendable = new DiagnosticDescriptor(
+		"VOX0012", "An RPC takes something that cannot be sent",
+		"{0} of {1} is a {2}; bool, int, long, float, double, string, Vector2, Vector3, Quaternion, enums, Obj and NetPlayer can be sent",
+		"Voxear.Networking", DiagnosticSeverity.Error, isEnabledByDefault: true);
+
+	public static readonly DiagnosticDescriptor SameRpcName = new DiagnosticDescriptor(
+		"VOX0013", "Two RPCs with one name",
+		"{1} has more than one RPC named {0}; RPCs are told apart by name, so give each its own",
 		"Voxear.Networking", DiagnosticSeverity.Error, isEnabledByDefault: true);
 
 	private static DiagnosticDescriptor Error(string id, string title, string message)

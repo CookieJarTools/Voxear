@@ -18,6 +18,7 @@
 mod inputs;
 mod messages;
 mod replication;
+mod rpcs;
 mod scripts;
 
 use std::collections::{HashMap, VecDeque};
@@ -36,6 +37,7 @@ use inputs::{InputBuffer, Latch};
 pub use messages::Command;
 pub use replication::{NetId, NetObject, Networked, ObjState, Origin, SpawnRequest};
 use replication::{Replication, Tracked, Viewer};
+pub use rpcs::{Rpc, RpcTarget};
 pub(crate) use scripts::register;
 pub use scripts::NetDefaults;
 use messages::{Message, REPEATS};
@@ -214,6 +216,7 @@ pub struct NetSession {
     scale: f32,
     level_request: Option<String>,
     replication: Replication,
+    rpcs: rpcs::Rpcs,
 }
 
 /// Ticks ahead of the server a client aims for its commands to arrive.
@@ -244,6 +247,7 @@ impl NetSession {
             scale: 1.0,
             level_request: None,
             replication: Replication::default(),
+            rpcs: rpcs::Rpcs::default(),
         }
     }
 
@@ -342,6 +346,7 @@ impl NetSession {
                     self.buffers.remove(&player);
                     self.inputs.remove(&player);
                     self.replication.viewers.remove(&player);
+                    self.rpcs.forget(player);
                     self.send_all(&Message::Left(player), None);
                     self.events.push_back(NetEvent::PlayerLeft(player));
                 }
@@ -349,16 +354,30 @@ impl NetSession {
         }
         let End::Server(server) = &mut self.end else { return };
         for (&client, &player) in &self.by_client {
+            let mut messages = Vec::new();
             while let Some(bytes) = server.receive(client, Channel::UNRELIABLE) {
-                if let Some(Message::Inputs { first, commands }) = Message::decode(&bytes) {
-                    let buffer = self.buffers.entry(player).or_default();
-                    for (offset, command) in commands.into_iter().enumerate() {
-                        buffer.put(first + offset as u64, command, self.tick);
+                messages.extend(Message::decode(&bytes));
+            }
+            while let Some(bytes) = server.receive(client, Channel::RELIABLE) {
+                messages.extend(Message::decode(&bytes));
+            }
+            for message in messages {
+                match message {
+                    Message::Inputs { first, commands } => {
+                        let buffer = self.buffers.entry(player).or_default();
+                        for (offset, command) in commands.into_iter().enumerate() {
+                            buffer.put(first + offset as u64, command, self.tick);
+                        }
                     }
+                    Message::Rpc { id, key, tick, bytes } if self.rpcs.allow(player, self.now) => {
+                        let Some(tracked) = self.replication.objects.get(&id) else { continue };
+                        let rpc = Rpc { entity: tracked.entity, key, caller: Some(player), tick, bytes };
+                        self.rpcs.incoming.push_back(rpc);
+                    }
+                    // Anything else from a client is dropped.
+                    _ => {}
                 }
             }
-            // Clients have nothing to say reliably yet; anything there is dropped.
-            while server.receive(client, Channel::RELIABLE).is_some() {}
         }
     }
 
@@ -425,6 +444,10 @@ impl NetSession {
                     }
                 }
                 Message::Snapshot { tick, entries } => self.take_snapshot(tick, entries),
+                Message::Rpc { id, key, tick, bytes } => match self.replication.remote.get(&id).and_then(|r| r.entity) {
+                    Some(entity) => self.rpcs.incoming.push_back(Rpc { entity, key, caller: None, tick, bytes }),
+                    None => self.rpcs.early.push((self.now, id, key, tick, bytes)),
+                },
                 _ => {}
             }
         }
@@ -493,6 +516,7 @@ impl NetSession {
         let End::Server(server) = &mut self.end else { return };
         let replication = &mut self.replication;
         let gone = replication.capture(world);
+        let outgoing = std::mem::take(&mut self.rpcs.outgoing);
         let tick = self.tick;
         for (&client, player) in &self.by_client {
             let at = replication.viewpoint(*player);
@@ -547,6 +571,15 @@ impl NetSession {
             }
             for message in reliable {
                 let _ = server.send(client, Channel::RELIABLE, &message.encode());
+            }
+            // RPCs reach those who have the Obj, just made or not.
+            for rpc in &outgoing {
+                let to_them = rpc.target == RpcTarget::Players || rpc.target == RpcTarget::Player(*player);
+                if to_them && viewer.known.contains_key(&rpc.id) {
+                    let message = Message::Rpc { id: rpc.id, key: rpc.key, tick, bytes: rpc.bytes.clone() };
+                    let channel = if rpc.reliable { Channel::RELIABLE } else { Channel::UNRELIABLE };
+                    let _ = server.send(client, channel, &message.encode());
+                }
             }
             let snapshot = snapshot(tick, viewer, &replication.objects);
             if let Some((bytes, carried)) = snapshot {
@@ -762,6 +795,7 @@ pub fn frame_begin(world: &mut World, delta: f32, local: &[ActionState]) {
     session.latch.note(local);
     session.receive_server();
     session.receive_client();
+    session.rpcs.expire(session.now);
     while session.events.len() > MOST_EVENTS {
         session.events.pop_front();
     }
@@ -890,6 +924,72 @@ pub fn bind(world: &mut World, request: &SpawnRequest, entity: voxear_ecs::Entit
         }
         let early = replication.early_fields.remove(&request.id).unwrap_or_default();
         replication.field_updates.extend(early.into_iter().map(|(key, bytes)| (entity, key, bytes)));
+        session.rpcs.arrived(request.id, entity);
+    }
+}
+
+/// Sends an RPC: a method of a networked Obj's behaviour, by a key, with
+/// its arguments as bytes, to run on the server from a player's machine,
+/// or on players' machines from the server. A host runs its own at home.
+/// Gives back whether it went.
+pub fn rpc(world: &mut World, entity: voxear_ecs::Entity, key: u32, bytes: Vec<u8>, target: RpcTarget, reliable: bool) -> bool {
+    let Some(id) = world.get::<Networked>(entity).map(|n| n.id).filter(|id| id.0 != 0) else {
+        tracing::warn!(target: "script", "an RPC on an Obj not shared yet, or without a Net Object, goes nowhere");
+        return false;
+    };
+    let Some(session) = world.resource_mut::<NetSession>() else { return false };
+    if bytes.len() > messages::MOST_RPC_BYTES {
+        tracing::error!(target: "script", "an RPC's arguments come to more than {} bytes", messages::MOST_RPC_BYTES);
+        return false;
+    }
+    let reliable = reliable || bytes.len() > rpcs::MOST_UNRELIABLE_BYTES;
+    let tick = session.tick;
+    match (&mut session.end, target) {
+        (End::Client(client), RpcTarget::Server) => {
+            let channel = if reliable { Channel::RELIABLE } else { Channel::UNRELIABLE };
+            client.send(channel, &Message::Rpc { id, key, tick, bytes }.encode()).is_ok()
+        }
+        (End::Client(_), _) => {
+            tracing::warn!(target: "script", "only the server runs RPCs on players' machines");
+            false
+        }
+        (End::Server(_), RpcTarget::Server) => {
+            let Some(local) = session.local else {
+                tracing::warn!(target: "script", "a dedicated server has no player to make an RPC to itself");
+                return false;
+            };
+            session.rpcs.incoming.push_back(Rpc { entity, key, caller: Some(local), tick, bytes });
+            true
+        }
+        (End::Server(_), target) => {
+            if session.local.is_some_and(|local| target == RpcTarget::Players || target == RpcTarget::Player(local)) {
+                session.rpcs.incoming.push_back(Rpc { entity, key, caller: None, tick, bytes: bytes.clone() });
+            }
+            session.rpcs.outgoing.push(rpcs::Outgoing { id, key, target, reliable, bytes });
+            true
+        }
+    }
+}
+
+/// The next RPC that came, for scripts to run.
+pub fn take_rpc(world: &mut World) -> Option<Rpc> {
+    let session = world.resource_mut::<NetSession>()?;
+    let rpc = session.rpcs.incoming.pop_front()?;
+    session.rpcs.tick = rpc.tick;
+    Some(rpc)
+}
+
+/// The tick the RPC scripts took last was made on.
+pub fn rpc_tick(world: &World) -> u64 {
+    world.resource::<NetSession>().map_or(0, |session| session.rpcs.tick)
+}
+
+/// The networked Obj with `id` on this machine.
+pub fn entity_of(world: &World, id: NetId) -> Option<voxear_ecs::Entity> {
+    let session = world.resource::<NetSession>()?;
+    match &session.end {
+        End::Server(_) => session.replication.objects.get(&id).map(|tracked| tracked.entity),
+        End::Client(_) => session.replication.remote.get(&id).and_then(|remote| remote.entity),
     }
 }
 

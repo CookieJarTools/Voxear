@@ -36,55 +36,17 @@ public sealed class ReplicatedGenerator : IIncrementalGenerator
 		var partial = syntax.Modifiers.Any(m => m.IsKind(SyntaxKind.PartialKeyword));
 		var type = property.ContainingType;
 		var space = type.ContainingNamespace.IsGlobalNamespace ? string.Empty : type.ContainingNamespace.ToDisplayString();
-		var kind = Kind(property.Type);
+		var kind = NetTypes.Kind(property.Type);
 		return new ReplicatedProperty(
 			space,
 			type.Name,
 			type.ToDisplayString(),
 			property.Name,
 			property.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-			Accessibility(property.DeclaredAccessibility),
+			NetTypes.Accessibility(property.DeclaredAccessibility),
 			kind,
 			partial && type.ContainingType == null && type.TypeParameters.IsEmpty,
 			syntax.GetLocation());
-	}
-
-	/// <summary>How a value of this type is read, by the NetReader method, or null for one that cannot be replicated.</summary>
-	private static string? Kind(ITypeSymbol type)
-	{
-		if (type.TypeKind == TypeKind.Enum)
-		{
-			return "enum";
-		}
-		return type.SpecialType switch
-		{
-			SpecialType.System_Boolean => "ReadBool",
-			SpecialType.System_Int32 => "ReadInt",
-			SpecialType.System_Int64 => "ReadLong",
-			SpecialType.System_Single => "ReadFloat",
-			SpecialType.System_Double => "ReadDouble",
-			SpecialType.System_String => "ReadString",
-			_ => type.ToDisplayString() switch
-			{
-				"System.Numerics.Vector2" => "ReadVector2",
-				"System.Numerics.Vector3" => "ReadVector3",
-				"System.Numerics.Quaternion" => "ReadQuaternion",
-				_ => null,
-			},
-		};
-	}
-
-	private static string Accessibility(Accessibility accessibility)
-	{
-		return accessibility switch
-		{
-			Microsoft.CodeAnalysis.Accessibility.Public => "public",
-			Microsoft.CodeAnalysis.Accessibility.Internal => "internal",
-			Microsoft.CodeAnalysis.Accessibility.Protected => "protected",
-			Microsoft.CodeAnalysis.Accessibility.ProtectedOrInternal => "protected internal",
-			Microsoft.CodeAnalysis.Accessibility.ProtectedAndInternal => "private protected",
-			_ => "private",
-		};
 	}
 
 	private static void Generate(SourceProductionContext context, ImmutableArray<ReplicatedProperty?> found)
@@ -143,8 +105,7 @@ public sealed class ReplicatedGenerator : IIncrementalGenerator
 		text.AppendLine("\t{");
 		foreach (var property in properties)
 		{
-			var value = property.Kind == "enum" ? $"(int){Field(property)}" : Field(property);
-			text.AppendLine($"\t\twriter.Write({value});");
+			text.AppendLine($"\t\twriter.Write({NetTypes.Written(property.Kind!, Field(property))});");
 		}
 		text.AppendLine("\t}");
 		text.AppendLine();
@@ -152,8 +113,7 @@ public sealed class ReplicatedGenerator : IIncrementalGenerator
 		text.AppendLine("\t{");
 		foreach (var property in properties)
 		{
-			var read = property.Kind == "enum" ? $"({property.Type})reader.ReadInt()" : $"reader.{property.Kind}()";
-			text.AppendLine($"\t\t{Field(property)} = {read};");
+			text.AppendLine($"\t\t{Field(property)} = {NetTypes.Read(property.Kind!, property.Type)};");
 		}
 		text.AppendLine("\t}");
 		text.AppendLine("}");

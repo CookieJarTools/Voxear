@@ -1,6 +1,7 @@
 using System;
 using System.Numerics;
 using System.Text;
+using Voxear.Interop;
 
 namespace Voxear;
 
@@ -61,6 +62,24 @@ public sealed class NetReader
 	public Quaternion ReadQuaternion()
 	{
 		return new Quaternion(ReadFloat(), ReadFloat(), ReadFloat(), ReadFloat());
+	}
+
+	/// <summary>A networked Obj, as this machine has it; None for one it does not have yet.</summary>
+	public Obj ReadObj()
+	{
+		var id = ReadInt();
+		if (id == 0)
+		{
+			return Obj.None;
+		}
+		var index = (uint)NativeNet.Call(NativeNet.ObjIndex, id);
+		var generation = (uint)NativeNet.Call(NativeNet.ObjGeneration, id);
+		return new Obj((ulong)generation << 32 | index);
+	}
+
+	public NetPlayer ReadPlayer()
+	{
+		return new NetPlayer(ReadInt());
 	}
 
 	private ReadOnlySpan<byte> Take(int count)

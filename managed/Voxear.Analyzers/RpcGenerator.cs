@@ -1,0 +1,210 @@
+using System.Collections.Generic;
+using System.Collections.Immutable;
+using System.Linq;
+using System.Text;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
+
+namespace Voxear.Analyzers;
+
+/// <summary>
+/// Writes the senders of [ServerRpc] and [ClientRpc] methods: Fire gets FireOnServer, Exploded gets ExplodedOnClients
+/// and ExplodedOnClient, each writing its arguments in order and handing them to Rpc. The behaviour gets IRpcs too,
+/// running each that came by its key once the checks its attribute asks for pass. A method cannot be rewritten, so
+/// the method itself stays what runs where the RPC arrives.
+/// </summary>
+[Generator(LanguageNames.CSharp)]
+public sealed class RpcGenerator : IIncrementalGenerator
+{
+	private const string ServerAttribute = "Voxear.ServerRpcAttribute";
+	private const string ClientAttribute = "Voxear.ClientRpcAttribute";
+
+	public void Initialize(IncrementalGeneratorInitializationContext context)
+	{
+		var server = context.SyntaxProvider.ForAttributeWithMetadataName(
+			ServerAttribute,
+			static (node, _) => node is MethodDeclarationSyntax,
+			static (found, _) => Read(found, true));
+		var client = context.SyntaxProvider.ForAttributeWithMetadataName(
+			ClientAttribute,
+			static (node, _) => node is MethodDeclarationSyntax,
+			static (found, _) => Read(found, false));
+		var both = server.Collect().Combine(client.Collect());
+		context.RegisterSourceOutput(both, static (output, found) => Generate(output, found.Left.AddRange(found.Right)));
+	}
+
+	private static RpcMethod? Read(GeneratorAttributeSyntaxContext found, bool server)
+	{
+		if (found.TargetSymbol is not IMethodSymbol method || found.TargetNode is not MethodDeclarationSyntax syntax)
+		{
+			return null;
+		}
+		var type = method.ContainingType;
+		var space = type.ContainingNamespace.IsGlobalNamespace ? string.Empty : type.ContainingNamespace.ToDisplayString();
+		var rpc = new RpcMethod(
+			space,
+			type.Name,
+			type.ToDisplayString(),
+			method.Name,
+			NetTypes.Accessibility(method.DeclaredAccessibility),
+			server,
+			syntax.GetLocation());
+		var partial = type.DeclaringSyntaxReferences
+			.Select(r => r.GetSyntax())
+			.OfType<TypeDeclarationSyntax>()
+			.Any(t => t.Modifiers.Any(m => m.IsKind(SyntaxKind.PartialKeyword)));
+		var plain = method.ReturnsVoid && !method.IsStatic && method.TypeParameters.IsEmpty;
+		var byValue = method.Parameters.All(p => p.RefKind == RefKind.None && !p.IsParams);
+		rpc.Writable = partial && plain && byValue && type.ContainingType == null && type.TypeParameters.IsEmpty;
+		foreach (var (parameter, written) in method.Parameters.Zip(syntax.ParameterList.Parameters, (p, s) => (p, s)))
+		{
+			var sent = parameter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+			rpc.Parameters.Add(new RpcParameter(parameter.Name, sent, NetTypes.Kind(parameter.Type), written.Default?.Value.ToString()));
+		}
+		foreach (var named in found.Attributes[0].NamedArguments)
+		{
+			Apply(rpc, named.Key, named.Value.Value);
+		}
+		return rpc;
+	}
+
+	private static void Apply(RpcMethod rpc, string name, object? value)
+	{
+		switch (name, value)
+		{
+			case ("AnyPlayer", bool any):
+				rpc.AnyPlayer = any;
+				break;
+			case ("Unreliable", bool unreliable):
+				rpc.Unreliable = unreliable;
+				break;
+			case ("PerSecond", int perSecond):
+				rpc.PerSecond = perSecond;
+				break;
+		}
+	}
+
+	private static void Generate(SourceProductionContext context, ImmutableArray<RpcMethod?> found)
+	{
+		var methods = found.Where(m => m != null).Select(m => m!).ToList();
+		foreach (var wrong in methods.Where(m => !m.Writable))
+		{
+			context.ReportDiagnostic(Diagnostic.Create(Diagnostics.BadRpc, wrong.Location, wrong.Attribute, wrong.Name, wrong.TypeName));
+		}
+		foreach (var method in methods)
+		{
+			foreach (var wrong in method.Parameters.Where(p => p.Kind == null))
+			{
+				context.ReportDiagnostic(Diagnostic.Create(Diagnostics.NotSendable, method.Location, wrong.Name, method.Name, wrong.Type));
+			}
+		}
+		var usable = methods.Where(m => m.Writable && m.Parameters.All(p => p.Kind != null));
+		foreach (var type in usable.GroupBy(m => m.FullTypeName))
+		{
+			var list = Distinct(context, type.ToList());
+			context.AddSource($"{type.Key}.Rpcs.g.cs", Source(list));
+		}
+	}
+
+	/// <summary>The RPCs of a type, one of each name: a second of a name is reported, since keys come from names.</summary>
+	private static List<RpcMethod> Distinct(SourceProductionContext context, List<RpcMethod> methods)
+	{
+		var named = new HashSet<string>();
+		var kept = new List<RpcMethod>();
+		foreach (var method in methods)
+		{
+			if (named.Add(method.Name))
+			{
+				kept.Add(method);
+				continue;
+			}
+			context.ReportDiagnostic(Diagnostic.Create(Diagnostics.SameRpcName, method.Location, method.Name, method.TypeName));
+		}
+		return kept;
+	}
+
+	private static string Source(List<RpcMethod> methods)
+	{
+		var first = methods[0];
+		var text = new StringBuilder();
+		text.AppendLine("// <auto-generated/>");
+		text.AppendLine("#nullable enable");
+		if (first.Namespace.Length > 0)
+		{
+			text.AppendLine($"namespace {first.Namespace};");
+		}
+		text.AppendLine();
+		text.AppendLine($"partial class {first.TypeName} : global::Voxear.IRpcs");
+		text.AppendLine("{");
+		foreach (var method in methods)
+		{
+			Senders(text, method);
+		}
+		text.AppendLine("\tbool global::Voxear.IRpcs.ReceiveRpc(uint key, global::Voxear.NetReader reader)");
+		text.AppendLine("\t{");
+		text.AppendLine("\t\tswitch (key)");
+		text.AppendLine("\t\t{");
+		foreach (var method in methods)
+		{
+			Receiver(text, method);
+		}
+		text.AppendLine("\t\t\tdefault:");
+		text.AppendLine("\t\t\t\treturn false;");
+		text.AppendLine("\t\t}");
+		text.AppendLine("\t}");
+		text.AppendLine("}");
+		return text.ToString();
+	}
+
+	private static void Senders(StringBuilder text, RpcMethod method)
+	{
+		var reliable = method.Unreliable ? "false" : "true";
+		if (method.Server)
+		{
+			Sender(text, method, "OnServer", string.Empty, $"global::Voxear.Rpc.Server(this, {method.Key}u, writer, {reliable});");
+			return;
+		}
+		Sender(text, method, "OnClients", string.Empty, $"global::Voxear.Rpc.Players(this, {method.Key}u, writer, {reliable});");
+		Sender(text, method, "OnClient", "global::Voxear.NetPlayer player", $"global::Voxear.Rpc.Player(this, player, {method.Key}u, writer, {reliable});");
+	}
+
+	private static void Sender(StringBuilder text, RpcMethod method, string suffix, string first, string send)
+	{
+		var parameters = method.Parameters.Select(p => p.Default == null ? $"{p.Type} @{p.Name}" : $"{p.Type} @{p.Name} = {p.Default}").ToList();
+		if (first.Length > 0)
+		{
+			parameters.Insert(0, first);
+		}
+		var all = string.Join(", ", parameters);
+		text.AppendLine($"\t{method.Access} void {method.Name}{suffix}({all})");
+		text.AppendLine("\t{");
+		text.AppendLine("\t\tvar writer = new global::Voxear.NetWriter();");
+		foreach (var parameter in method.Parameters)
+		{
+			text.AppendLine($"\t\twriter.Write({NetTypes.Written(parameter.Kind!, "@" + parameter.Name)});");
+		}
+		text.AppendLine($"\t\t{send}");
+		text.AppendLine("\t}");
+		text.AppendLine();
+	}
+
+	private static void Receiver(StringBuilder text, RpcMethod method)
+	{
+		var check = method.Server
+			? $"global::Voxear.Rpc.MayRunOnServer(this, key, {Bool(method.AnyPlayer)}, {method.PerSecond})"
+			: "global::Voxear.Rpc.MayRunOnPlayer()";
+		var arguments = string.Join(", ", method.Parameters.Select(p => NetTypes.Read(p.Kind!, p.Type)));
+		text.AppendLine($"\t\t\tcase {method.Key}u:");
+		text.AppendLine($"\t\t\t\tif ({check})");
+		text.AppendLine("\t\t\t\t{");
+		text.AppendLine($"\t\t\t\t\t{method.Name}({arguments});");
+		text.AppendLine("\t\t\t\t}");
+		text.AppendLine("\t\t\t\treturn true;");
+	}
+
+	private static string Bool(bool value)
+	{
+		return value ? "true" : "false";
+	}
+}

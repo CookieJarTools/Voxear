@@ -89,6 +89,18 @@ public static class Net
 		get { return NativeNet.Call(NativeNet.Tick); }
 	}
 
+	/// <summary>The player whose [ServerRpc] is running, on the server; null otherwise.</summary>
+	public static NetPlayer? Caller
+	{
+		get { return Rpc.Caller; }
+	}
+
+	/// <summary>The tick the running RPC was made on, by the clock of the machine that made it.</summary>
+	public static int CallTick
+	{
+		get { return NativeNet.Call(NativeNet.RpcTick); }
+	}
+
 	/// <summary>How long a message takes to the server and back, in seconds, on a client.</summary>
 	public static float RoundTrip
 	{
@@ -138,10 +150,11 @@ public static class Net
 		PlayerLeft = GameCode.Without(PlayerLeft, old);
 	}
 
-	/// <summary>Raises what happened in the session since last frame, and carries replicated properties.</summary>
+	/// <summary>Raises what happened in the session since last frame, carries replicated properties and runs RPCs.</summary>
 	internal static void Dispatch()
 	{
 		Replication.Update();
+		Rpc.Receive();
 		while (true)
 		{
 			var kind = NativeNet.Call(NativeNet.TakeEvent, 0, 0, out var values);

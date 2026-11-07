@@ -12,7 +12,7 @@ use voxear_core::spring::{Spring, SpringFeel};
 use voxear_core::time::Time;
 use voxear_ecs::{Component, Entity, World};
 use voxear_physics::scene::PhysicsScene;
-use voxear_render::{Camera, ModelRenderer, Pose};
+use voxear_render::{ModelRenderer, Pose};
 use voxear_scene::{Parent, world_matrix};
 
 use super::actions::{ActionKind, Hand, plan};
@@ -270,11 +270,9 @@ pub fn fire(world: &mut World, entity: Entity) -> Option<Shot> {
     let rotation = view.rotation();
 
     // The line: from the camera, along the view, within a cone that narrows as the gun comes up to the eye.
-    let camera = view.camera.or_else(|| first_under(world, entity, |w, e| w.has::<Camera>(e)));
-    let origin = camera.map_or_else(
-        || world_matrix(world, entity).w_axis.truncate(),
-        |camera| world_matrix(world, camera).w_axis.truncate(),
-    );
+    // From the view's eyes, which the camera is at for this machine's player and others' heads are for theirs.
+    let eye = world.get::<crate::first_person::FirstPersonState>(entity).map(|state| state.eye.w_axis.truncate());
+    let origin = eye.unwrap_or_else(|| world_matrix(world, entity).w_axis.truncate() + Vec3::Y * 1.6);
     let spread = (2.2 - 2.05 * aimed).to_radians();
     let (a, b) = (state.random(), state.random());
     let off = Quat::from_euler(EulerRot::YXZ, a * spread, b * spread, 0.0);

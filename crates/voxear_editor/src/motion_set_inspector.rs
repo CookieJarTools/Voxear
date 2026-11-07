@@ -61,6 +61,8 @@ struct StateRow {
     clip_items: NodeId,
     clips: Vec<(Slot, NodeId, NodeId)>,
     add_clip: NodeId,
+    /// The whole state, taking clips dropped on it to fill it.
+    body: NodeId,
 }
 
 struct ActionRow {
@@ -163,6 +165,9 @@ impl MotionSetFields {
         }
         if ui.clicked(row.add_clip) {
             return Some(SetChange::Browse(ClipSlot::NewLoop(at), row.add_clip));
+        }
+        if let Some(source) = ui.dropped_onto(row.add_clip).or_else(|| ui.dropped_onto(row.body)) {
+            return Some(SetChange::Drop(ClipSlot::NewLoop(at), source));
         }
         if let Some((from, to)) = collection::moved(ui, row.clip_items) {
             let clip = state.clips.remove(from);
@@ -313,6 +318,7 @@ fn state_row(
         state.clips.iter().enumerate().map(|(place, clip)| loop_row(ui, list.items, place, clip, label)).collect();
     let add_clip = list.add.expect("a state takes clips");
     ui.accept_drops(add_clip, true);
+    ui.accept_drops(rows, true);
     StateRow {
         remove: item.remove.expect("states can be taken out"),
         name,
@@ -323,6 +329,7 @@ fn state_row(
         clip_items: list.items,
         clips,
         add_clip,
+        body: rows,
     }
 }
 

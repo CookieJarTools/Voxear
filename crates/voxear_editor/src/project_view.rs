@@ -185,7 +185,7 @@ struct File {
     read_only: bool,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum Entry {
     Folder(usize),
     File(usize),
@@ -202,7 +202,10 @@ struct Contents {
     /// Tiles across a row, or 0 for rows, and how big a tile's picture is.
     columns: usize,
     picture: f32,
+    /// The entry the Inspector shows.
     selected: Option<Entry>,
+    /// Entries selected besides it with Ctrl or Shift, dragged with it.
+    also: Vec<Entry>,
     /// The entry lit by a ping, as a log line about it asks.
     pinged: Option<Entry>,
     /// Each tile made, with the place in `listing` it shows, for clicks.
@@ -351,6 +354,44 @@ impl Contents {
 
     /// The project path of a file or folder, but not of the project's own
     /// folder or of a part of a file.
+    fn is_selected(&self, entry: Entry) -> bool {
+        self.selected == Some(entry) || self.also.contains(&entry)
+    }
+
+    /// What a field takes of an entry: a file's asset path, or a part's
+    /// reference. Not a folder or a script.
+    fn reference(&self, entry: Entry) -> Option<String> {
+        match entry {
+            Entry::File(file) => {
+                let file = &self.files[file];
+                matches!(file.kind, FileKind::Asset(_)).then(|| file.path.clone())
+            }
+            Entry::Part(file, part) => self.part(file, part)?.reference.clone(),
+            Entry::Folder(_) => None,
+        }
+    }
+
+    /// Selects `entry` with Ctrl or Shift held on a tile: Ctrl adds or takes
+    /// it out, Shift selects every entry from the one shown to it.
+    fn extend_selection(&mut self, entry: Entry, range: bool) {
+        let Some(shown) = self.selected else {
+            self.selected = Some(entry);
+            return;
+        };
+        let place = |entry: Entry| self.listing.iter().position(|&e| e == entry);
+        if let (true, Some(from), Some(to)) = (range, place(shown), place(entry)) {
+            let between = self.listing[from.min(to)..=from.max(to)].iter().copied();
+            self.also = between.filter(|&e| e != shown).collect();
+            return;
+        }
+        match self.also.iter().position(|&e| e == entry) {
+            Some(at) => drop(self.also.remove(at)),
+            None if entry == shown && !self.also.is_empty() => self.selected = Some(self.also.remove(0)),
+            None if entry != shown => self.also.push(entry),
+            None => {}
+        }
+    }
+
     fn entry_path(&self, entry: Entry) -> Option<String> {
         match entry {
             Entry::Folder(folder) => Some(self.folders[folder].path.clone()).filter(|path| !path.is_empty()),
@@ -493,7 +534,7 @@ impl ListItems for TileRows {
             let parts = ui.children(tile);
             contents.show_thumb(ui, parts[0], entry);
             ui.set_text(parts[1], contents.name(entry));
-            ui.set_checked(tile, contents.selected == Some(entry));
+            ui.set_checked(tile, contents.is_selected(entry));
             ui.set_class(tile, "pinged", contents.pinged == Some(entry));
             ui.set_class(tile, "part", matches!(entry, Entry::Part(..)));
             contents.bind_arrow(ui, parts[2], entry, at);
@@ -605,14 +646,34 @@ impl ProjectView {
             events.extend(self.open_out(ui, file));
         }
         let picked = if columns == 0 { self.row_clicks(ui) } else { self.tile_clicks(ui) };
+        if columns == 0 && ui.selection_changed(self.files) {
+            self.rows_selected(ui);
+        }
+        let held = ui.modifiers();
         if let Some((entry, twice)) = picked.filter(|_| arrow.is_none()) {
             match (twice, entry) {
+                (false, _) if columns > 0 && (held.control || held.shift) => {
+                    let shown = self.contents.borrow().selected;
+                    self.contents.borrow_mut().extend_selection(entry, held.shift);
+                    ui.refresh_list(self.files);
+                    let now = self.contents.borrow().selected;
+                    if let Some(entry) = now.filter(|&now| Some(now) != shown) {
+                        events.push(ProjectEvent::Selected(self.contents.borrow().item(entry)));
+                    }
+                }
                 (true, Entry::Folder(folder)) => self.open(ui, folder),
                 (true, Entry::File(_)) => events.push(ProjectEvent::Open(self.contents.borrow().item(entry))),
                 _ if self.contents.borrow().selected != Some(entry) => {
                     self.contents.borrow_mut().selected = Some(entry);
+                    if columns > 0 {
+                        self.contents.borrow_mut().also.clear();
+                    }
                     ui.refresh_list(self.files);
                     events.push(ProjectEvent::Selected(self.contents.borrow().item(entry)));
+                }
+                _ if columns > 0 && !self.contents.borrow().also.is_empty() => {
+                    self.contents.borrow_mut().also.clear();
+                    ui.refresh_list(self.files);
                 }
                 _ => {}
             }
@@ -849,7 +910,12 @@ impl ProjectView {
             clicked.and_then(|(_, at)| contents.listing.get((*at)?).copied())
         };
         let target = if let Some(entry) = tile {
-            self.contents.borrow_mut().selected = Some(entry);
+            let mut contents = self.contents.borrow_mut();
+            if !contents.is_selected(entry) {
+                contents.also.clear();
+            }
+            contents.selected = Some(entry);
+            drop(contents);
             ui.refresh_list(self.files);
             Some((self.files, Some(entry)))
         } else if ui.context_clicked(self.files) {
@@ -1001,6 +1067,7 @@ impl ProjectView {
         let Some((index, entry)) = self.open_folder_of(ui, path) else { return };
         let columns = self.contents.borrow().columns;
         self.contents.borrow_mut().selected = Some(entry);
+        self.contents.borrow_mut().also.clear();
         if columns == 0 {
             ui.set_selection(self.files, &[index]);
         }
@@ -1074,6 +1141,7 @@ impl ProjectView {
         let mut contents = self.contents.borrow_mut();
         contents.listing = contents.list(folder);
         contents.selected = None;
+        contents.also.clear();
         let mut crumbs = vec![contents.folders[folder].name.clone()];
         let (mut parent, mut above) = (contents.folders[folder].parent, Vec::new());
         while let Some(at) = parent {
@@ -1157,19 +1225,29 @@ impl ProjectView {
     /// script, which no field takes.
     pub fn dragged(&self, source: &DragSource) -> Option<String> {
         let contents = self.contents.borrow();
+        contents.reference(self.dragged_at(source)?)
+    }
+
+    /// Every asset being dragged: the one picked up, and when it is
+    /// selected, every other selected with it, in the folder's order.
+    pub fn dragged_all(&self, source: &DragSource) -> Vec<String> {
+        let contents = self.contents.borrow();
+        let Some(entry) = self.dragged_at(source) else { return Vec::new() };
+        if !contents.is_selected(entry) {
+            return contents.reference(entry).into_iter().collect();
+        }
+        let selected = contents.listing.iter().copied().filter(|&entry| contents.is_selected(entry));
+        selected.filter_map(|entry| contents.reference(entry)).collect()
+    }
+
+    fn dragged_at(&self, source: &DragSource) -> Option<Entry> {
+        let contents = self.contents.borrow();
         let at = match *source {
             DragSource::Row { list, index, .. } if list == self.files && contents.columns == 0 => index,
             DragSource::Element(tile) => contents.tiles.iter().find(|(node, _)| *node == tile)?.1?,
             _ => return None,
         };
-        match *contents.listing.get(at)? {
-            Entry::File(file) => {
-                let file = &contents.files[file];
-                matches!(file.kind, FileKind::Asset(_)).then(|| file.path.clone())
-            }
-            Entry::Part(file, part) => contents.part(file, part)?.reference.clone(),
-            Entry::Folder(_) => None,
-        }
+        contents.listing.get(at).copied()
     }
 
     /// Shows a model's or prefab's parts, by its path, as the editor read
@@ -1225,14 +1303,25 @@ impl ProjectView {
         let mut contents = self.contents.borrow_mut();
         contents.listing = contents.list(self.open);
         let rows = contents.rows();
-        let selected = contents.selected.and_then(|s| contents.listing.iter().position(|&e| e == s));
+        let listed = contents.listing.clone();
+        contents.also.retain(|entry| listed.contains(entry));
+        let selected: Vec<usize> = (0..listed.len()).filter(|&at| contents.is_selected(listed[at])).collect();
         let columns = contents.columns;
         drop(contents);
         ui.set_list_count(self.files, rows);
         if columns == 0 {
-            ui.set_selection(self.files, &selected.into_iter().collect::<Vec<_>>());
+            ui.set_selection(self.files, &selected);
         }
         ui.refresh_list(self.files);
+    }
+
+    /// Keeps the rows selected with Ctrl or Shift besides the first, the one
+    /// the Inspector shows, to drag with it.
+    fn rows_selected(&mut self, ui: &Ui) {
+        let mut contents = self.contents.borrow_mut();
+        let rows = ui.selection(self.files);
+        let entries: Vec<Entry> = rows.iter().filter_map(|&at| contents.listing.get(at).copied()).collect();
+        contents.also = entries.into_iter().skip(1).collect();
     }
 
     /// A row picked in the list, and whether it was a double click.
@@ -1281,6 +1370,7 @@ fn scan(name: &str, root: &Path, db: &AssetDb) -> Contents {
         columns: 0,
         picture: 0.0,
         selected: None,
+        also: Vec::new(),
         pinged: None,
         tiles: Vec::new(),
         previews: HashMap::new(),
@@ -1488,6 +1578,39 @@ mod tests {
         let path = root.join(file);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, "").unwrap();
+    }
+
+    #[test]
+    fn ctrl_adds_shift_reaches_and_the_selection_drags_in_order() {
+        let project = tempfile::tempdir().unwrap();
+        for file in ["Clips/A.material", "Clips/B.material", "Clips/C.material", "Clips/D.material"] {
+            touch(project.path(), file);
+        }
+        let (db, _) = AssetDb::scan_mounted(Mounts::new(project.path(), Vec::new())).unwrap();
+        let mut contents = scan("Game", project.path(), &db);
+        let folder = contents.folders.iter().position(|f| f.name == "Clips").unwrap();
+        contents.listing = contents.list(folder);
+        let at = |contents: &Contents, name: &str| {
+            let path = format!("Clips/{name}.material");
+            *contents.listing.iter().find(|&&e| contents.reference(e) == Some(path.clone())).expect("listed")
+        };
+        let (a, b, c, d) = (at(&contents, "A"), at(&contents, "B"), at(&contents, "C"), at(&contents, "D"));
+        let chosen = |contents: &Contents| -> Vec<String> {
+            let selected = contents.listing.iter().copied().filter(|&e| contents.is_selected(e));
+            selected.filter_map(|e| contents.reference(e)).collect()
+        };
+
+        contents.extend_selection(c, false);
+        assert_eq!(contents.selected, Some(c), "with nothing selected, the first is the one shown");
+        contents.extend_selection(a, false);
+        assert_eq!(chosen(&contents), ["Clips/A.material", "Clips/C.material"], "Ctrl adds, in the folder's order");
+        contents.extend_selection(a, false);
+        assert_eq!(chosen(&contents), ["Clips/C.material"], "and takes out again");
+        contents.extend_selection(b, true);
+        assert_eq!(chosen(&contents), ["Clips/B.material", "Clips/C.material"], "Shift reaches from the one shown");
+        contents.extend_selection(d, true);
+        assert_eq!(chosen(&contents), ["Clips/C.material", "Clips/D.material"]);
+        assert_eq!(contents.selected, Some(c), "the Inspector still shows the first picked");
     }
 
     #[test]

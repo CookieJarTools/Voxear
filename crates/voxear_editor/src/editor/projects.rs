@@ -166,6 +166,14 @@ impl Editor {
         std::iter::once(&self.project).chain(extras).find_map(|project| project.dragged(source))
     }
 
+    /// Every file and part being dragged from any Project panel: the one
+    /// picked up, and the others selected with it.
+    pub(super) fn dragged_assets(&self, source: &DragSource) -> Vec<String> {
+        let extras = self.extra_projects.iter().map(|extra| &extra.project);
+        let panels = std::iter::once(&self.project).chain(extras);
+        panels.map(|project| project.dragged_all(source)).find(|dragged| !dragged.is_empty()).unwrap_or_default()
+    }
+
     /// The folder under a point in any Project panel, as a drop from
     /// outside lands in it.
     pub(super) fn folder_at(&self, point: [f32; 2]) -> Option<String> {

@@ -28,7 +28,7 @@ use voxear_scene::{Destroying, Transform};
 pub use actions::{ActionCommand, MotionMarks, take_marks};
 pub use bone_attachment::{BoneAttachment, attach_to_bones, register as register_bone_attachments};
 pub use clips::{CLIP_PART, ClipSource, Clips, give_clips};
-pub use motion_database::MotionDatabase;
+pub use motion_database::{ClipRun, MotionDatabase};
 pub use motion_matching::{MotionMatcher, MotionMatcherState, StateChoice, match_motion, register};
 pub use states::StatePlay;
 pub use motion_set::{

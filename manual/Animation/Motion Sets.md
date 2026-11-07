@@ -19,6 +19,17 @@ A state is one way the character gets about. Each has:
 
 The first state that is **Grounded** plays to begin with. A state change fades the old pose into the new one over the new state's Blend Time.
 
+## Filling a state
+
+Select a state's clips in the Project panel, holding **Ctrl** or **Shift**, and drag them onto the state, or onto its **Add Clip**:
+
+- Loops that move go in its **Clips**.
+- The first loop that stands still becomes its **Idle Clip**, when it has none.
+- When none of its loops goes back, each forward loop is added again with **Backwards** on.
+- Clips that do not loop, as a jump, are left out.
+
+The status bar says what went where. One clip dropped on a field goes in that field.
+
 ## Choosing a state
 
 From a script, set the Motion Matcher's `State` to a role, and the set's first state for it plays:

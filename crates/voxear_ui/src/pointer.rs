@@ -92,6 +92,11 @@ impl Ui {
         self.modifiers = modifiers;
     }
 
+    /// Which keys are held, as a click on tiles of one's own reads them.
+    pub fn modifiers(&self) -> Modifiers {
+        self.modifiers
+    }
+
     /// The pointer left the window.
     pub fn pointer_leave(&mut self) {
         self.pointer.position = None;

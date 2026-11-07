@@ -807,6 +807,14 @@ pub fn model_renderer(content: &mut Content, renderer: &mut Renderer, data: &Mod
     Ok(ModelRenderer { lod_bias: data.lod_bias, animation, ..ModelRenderer::new(parts) })
 }
 
+/// A Model Renderer with no parts to draw but the model's skeleton and
+/// clips, read without the GPU: `None` for a model without any.
+fn animated(content: &mut Content, data: &ModelData) -> Option<ModelRenderer> {
+    let guid = content.parse(&data.model).ok()?.guid()?;
+    let animation = content.clip_file(guid)?;
+    Some(ModelRenderer { animation: Some(animation), ..ModelRenderer::new(Vec::new()) })
+}
+
 /// A loaded model's parts as a Model Renderer draws them, as `data`
 /// changes them: moved, drawn with another material, or left out where an
 /// Obj of their own draws them.
@@ -910,7 +918,9 @@ pub(crate) fn resolve_obj(
     };
     let model = match (&data.model, gpu) {
         (Some(data), Some(renderer)) => Some(Box::new((Some(model_renderer(content, renderer, data)?), ModelSource(data.clone())))),
-        (Some(data), None) => Some(Box::new((None, ModelSource(data.clone())))),
+        // Without a GPU nothing is drawn, but an animated model still has its skeleton and clips, for a server's
+        // characters to move, pose and pass their actions' marks.
+        (Some(data), None) => Some(Box::new((animated(content, data), ModelSource(data.clone())))),
         (None, _) => None,
     };
     Ok(TemplateObj {

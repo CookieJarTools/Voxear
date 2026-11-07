@@ -7,6 +7,7 @@
 use voxear_assets::AssetKind;
 use voxear_core::math::Vec3;
 use voxear_ecs::{Entity, World};
+use voxear_engine::modules::Module;
 use voxear_engine::{
     EditBehaviours, Game, MaterialSource,
     animation::{BoneAttachment, CLIP_PART},
@@ -140,6 +141,18 @@ impl Part {
             Part::Foliage => "foliage".into(),
             Part::Model => "model".into(),
             Part::Behaviour(name) => name.clone(),
+        }
+    }
+
+    /// The optional module it belongs to, if any: a project without that
+    /// module is not offered it.
+    pub fn module(&self) -> Option<Module> {
+        match self {
+            Part::NetObject => Some(Module::Networking),
+            Part::Collider2D | Part::Rigidbody2D => Some(Module::Physics2D),
+            Part::Seasons | Part::FoliageInteraction | Part::Foliage => Some(Module::Vegetation),
+            Part::Ocean | Part::Pool | Part::DryArea | Part::Stream | Part::Buoyancy => Some(Module::Water),
+            _ => None,
         }
     }
 

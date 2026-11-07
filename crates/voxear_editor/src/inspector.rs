@@ -35,6 +35,7 @@ use voxear_scene::{Layer, Layers, Name, ScenePersistence, Transform};
 use voxear_ui::{DragSource, MenuItem, NodeId, Style, Ui};
 
 use voxear_engine::prefab::{FromPrefab, Locks, PrefabInstance};
+use voxear_engine::modules::{Module, Modules};
 
 use voxear_scripting::{DrawRequest, Drawn};
 
@@ -330,6 +331,9 @@ pub struct Inspector {
     /// The book buttons `[Documentation]` puts on sections and fields, with
     /// the VoxDocs page each opens.
     doc_buttons: Vec<(NodeId, String)>,
+    /// The Turn On buttons on components whose module the project is
+    /// without, with the module each switches on.
+    module_buttons: Vec<(NodeId, Module)>,
     /// The `[Excerpt]` folds shown, and the fields whose folds are open.
     excerpts: Vec<ExcerptFold>,
     open_excerpts: std::collections::HashSet<String>,
@@ -416,6 +420,7 @@ impl Inspector {
             closed_groups: std::collections::HashSet::new(),
             previews: Vec::new(),
             doc_buttons: Vec::new(),
+            module_buttons: Vec::new(),
             excerpts: Vec::new(),
             open_excerpts: std::collections::HashSet::new(),
             buttons: Vec::new(),
@@ -639,6 +644,11 @@ impl Inspector {
             return Some(PrefabAction::Open(buttons.path.clone()));
         }
         ui.clicked(buttons.select).then(|| PrefabAction::Select(buttons.path.clone()))
+    }
+
+    /// A module a component's Turn On button asked for this frame.
+    pub fn module_wanted(&self, ui: &Ui) -> Option<Module> {
+        self.module_buttons.iter().find(|(button, _)| ui.clicked(*button)).map(|(_, module)| *module)
     }
 
     pub fn clicked_documentation(&self, ui: &Ui) -> Option<&str> {
@@ -900,6 +910,7 @@ impl Inspector {
         self.rows.clear();
         self.previews.clear();
         self.doc_buttons.clear();
+        self.module_buttons.clear();
         self.excerpts.clear();
         self.buttons.clear();
         self.validation_boxes.clear();
@@ -945,6 +956,17 @@ impl Inspector {
             };
             let (header, rows, _) = section(ui, self.root, part.title(), icon, true);
             self.headers.push((Some(part.clone()), header));
+            // A component whose module the project is without keeps its values, but shows only how to get it back.
+            if let Some(module) = part.module().filter(|module| !game.project.modules().has(*module)) {
+                ui.add_class(header, "needs-module");
+                let row = ui.panel(rows, Style::default());
+                ui.add_class(row, "needs-module-row");
+                let note = ui.add_label(row, &format!("Needs the {} module", module.title()));
+                ui.add_class(note, "needs-module-note");
+                let button = ui.button(row, "Turn On");
+                self.module_buttons.push((button, module));
+                continue;
+            }
             // A behaviour its inspector draws gets a slot for it, its usual fields built in a panel after,
             // which goes into the inspector's "next" once it is built. While playing, it shows its fields.
             let inspector = match part {
@@ -1798,7 +1820,7 @@ impl Inspector {
     /// Rendering, Audio, Physics and Physics 2D, then in edit mode the project's scripts not on
     /// it, where their `[AddComponentMenu]` puts them or else under Scripts,
     /// by namespace past the one every script shares.
-    pub fn component_choices(&self, playing: bool) -> Vec<Choice> {
+    pub fn component_choices(&self, playing: bool, modules: &Modules) -> Vec<Choice> {
         let has = |part: &Part| self.built.0.iter().any(|(p, _)| p == part);
         let choice = |part: Part, label: &str, folder: &str, icon: &'static str| Choice {
             label: label.to_string(),
@@ -1844,7 +1866,7 @@ impl Inspector {
         ];
         let mut choices: Vec<Choice> = built_in
             .into_iter()
-            .filter(|(part, _)| !has(part))
+            .filter(|(part, _)| !has(part) && part.module().is_none_or(|module| modules.has(module)))
             .map(|(part, folder)| choice(part.clone(), part.title(), folder, part.icon()))
             .collect();
         if playing {

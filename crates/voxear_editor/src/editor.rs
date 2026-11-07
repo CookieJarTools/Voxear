@@ -25,6 +25,7 @@ mod model_clips;
 mod motion_sets;
 mod model_materials;
 mod model_parts;
+mod modules;
 mod multiplayer;
 mod path_bakes;
 mod placing;
@@ -100,6 +101,7 @@ use crate::{
     script_handles::ScriptHandles,
     settings::{self, Memory, SNAPS, SettingKind, SettingValue, Settings},
     lighting_panel::LightingPanel,
+    project_settings::ProjectSettingsPanel,
     settings_panel::SettingsPanel,
 };
 
@@ -151,6 +153,7 @@ struct Nodes {
     /// button and pages.
     rail_levels: NodeId,
     rail_lighting: NodeId,
+    rail_project: NodeId,
     rail_settings: NodeId,
     /// Where the game's own side bar buttons and items go.
     rail_scripts: NodeId,
@@ -159,6 +162,7 @@ struct Nodes {
     drawer_close: NodeId,
     drawer_levels: NodeId,
     drawer_lighting: NodeId,
+    drawer_project: NodeId,
     drawer_settings: NodeId,
     /// The top bar's Layout menu button and the name on it, the box that
     /// asks for a new layout's name with its field and Save button, and the
@@ -240,6 +244,7 @@ pub struct Editor {
     /// the panel that shows the settings.
     memory: Memory,
     settings_panel: SettingsPanel,
+    project_settings: ProjectSettingsPanel,
     /// The Lighting page, in the drawer.
     lighting_panel: LightingPanel,
     /// The theme the editor wears, which the default theme's own colours are
@@ -463,6 +468,7 @@ impl Editor {
             windows: find(&ui, "windows"),
             rail_levels: find(&ui, "rail-levels"),
             rail_lighting: find(&ui, "rail-lighting"),
+            rail_project: find(&ui, "rail-project"),
             rail_settings: find(&ui, "rail-settings"),
             rail_scripts: find(&ui, "rail-scripts"),
             drawer: find(&ui, "drawer"),
@@ -470,6 +476,7 @@ impl Editor {
             drawer_close: find(&ui, "drawer-close"),
             drawer_levels: find(&ui, "drawer-levels"),
             drawer_lighting: find(&ui, "drawer-lighting"),
+            drawer_project: find(&ui, "drawer-project"),
             drawer_settings: find(&ui, "drawer-settings"),
             layouts: find(&ui, "layouts"),
             layout_name: find(&ui, "layout-name"),
@@ -526,6 +533,8 @@ impl Editor {
         let palette = Palette::new(&mut ui, nodes.command, panel, list, empty);
         let (tabs, view, filter) = (find(&ui, "settings-tabs"), find(&ui, "settings"), find(&ui, "settings-filter"));
         let settings_panel = SettingsPanel::new(&mut ui, tabs, view, filter, &memory.settings);
+        let (tabs, view) = (find(&ui, "project-tabs"), find(&ui, "project-settings"));
+        let project_settings = ProjectSettingsPanel::new(&mut ui, tabs, view, &game.project.modules());
         let (top, tabs, view) = (find(&ui, "lighting-scene"), find(&ui, "lighting-tabs"), find(&ui, "lighting"));
         let lighting_panel = LightingPanel::new(&mut ui, top, tabs, view);
         let profiler = Profiler::new(&mut ui, nodes.profiler_panel);
@@ -568,6 +577,7 @@ impl Editor {
             fly_speed: memory.settings.fly_speed.clamp(0.25, 250.0),
             memory,
             settings_panel,
+            project_settings,
             lighting_panel,
             theme: Theme::DARK,
             levels,
@@ -702,6 +712,12 @@ impl Editor {
             world.query_ref::<(Entity, &MeshRenderer)>().without::<EditorOnly>().into_iter().map(|(e, _)| e).collect();
         meshes.sort_by_key(|e| e.index());
         meshes.first().copied()
+    }
+
+    /// What Add Component offers the Obj the Inspector shows, by name.
+    pub fn component_offers(&self) -> Vec<String> {
+        let choices = self.inspector.component_choices(self.is_playing(), &self.game.project.modules());
+        choices.into_iter().map(|choice| choice.label).collect()
     }
 
     /// One frame: input already given to the UI, then play mode, the game
@@ -853,6 +869,7 @@ impl Editor {
             self.update_packages(renderer);
         }
         self.update_drawer();
+        self.update_modules();
         self.update_lighting(renderer);
         self.update_side_bar();
         self.update_prefab_mode(renderer);
@@ -1675,7 +1692,7 @@ impl Editor {
             return self.view_lod(entity, level, renderer);
         }
         if let RowAction::BrowseComponents(anchor) = action {
-            let choices = self.inspector.component_choices(self.is_playing());
+            let choices = self.inspector.component_choices(self.is_playing(), &self.game.project.modules());
             let target = (PickFor::AddComponent(entity), anchor);
             return self.picker.open(&mut self.ui, target, "Add Component", choices, "");
         }

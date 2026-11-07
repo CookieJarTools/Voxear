@@ -1,4 +1,4 @@
-//! The rail's drawer: Levels, Lighting or Settings, which open over the left of the
+//! The rail's drawer: Levels, Lighting, Project Settings or Settings, which open over the left of the
 //! dock from the rail's buttons, a third of the window wide. The same button,
 //! or the drawer's close button, closes it.
 
@@ -9,6 +9,7 @@ use super::Editor;
 pub enum Drawer {
     Levels,
     Lighting,
+    Project,
     Settings,
 }
 
@@ -19,6 +20,8 @@ impl Editor {
             Some(Drawer::Levels)
         } else if self.ui.clicked(nodes.rail_lighting) {
             Some(Drawer::Lighting)
+        } else if self.ui.clicked(nodes.rail_project) {
+            Some(Drawer::Project)
         } else if self.ui.clicked(nodes.rail_settings) {
             Some(Drawer::Settings)
         } else {
@@ -39,13 +42,16 @@ impl Editor {
         self.ui.set_visible(nodes.drawer, drawer.is_some());
         self.ui.set_visible(nodes.drawer_levels, drawer == Some(Drawer::Levels));
         self.ui.set_visible(nodes.drawer_lighting, drawer == Some(Drawer::Lighting));
+        self.ui.set_visible(nodes.drawer_project, drawer == Some(Drawer::Project));
         self.ui.set_visible(nodes.drawer_settings, drawer == Some(Drawer::Settings));
         self.ui.set_checked(nodes.rail_levels, drawer == Some(Drawer::Levels));
         self.ui.set_checked(nodes.rail_lighting, drawer == Some(Drawer::Lighting));
+        self.ui.set_checked(nodes.rail_project, drawer == Some(Drawer::Project));
         self.ui.set_checked(nodes.rail_settings, drawer == Some(Drawer::Settings));
         let title = match drawer {
             Some(Drawer::Levels) => "Levels",
             Some(Drawer::Lighting) => "Lighting",
+            Some(Drawer::Project) => "Project Settings",
             Some(Drawer::Settings) => "Settings",
             None => "",
         };
@@ -60,12 +66,13 @@ impl Editor {
         self.drawer
     }
 
-    /// Shows a panel by id: Levels and Settings in the drawer, and the rest
+    /// Shows a panel by id: Levels, Lighting, Project Settings and Settings in the drawer, and the rest
     /// in the dock, opened again if it was closed.
     pub(super) fn show_panel(&mut self, id: &str) {
         match id {
             "levels" => self.open_drawer(Some(Drawer::Levels)),
             "lighting" => self.open_drawer(Some(Drawer::Lighting)),
+            "project" => self.open_drawer(Some(Drawer::Project)),
             "settings" => self.open_drawer(Some(Drawer::Settings)),
             _ => self.open_panel(id),
         }

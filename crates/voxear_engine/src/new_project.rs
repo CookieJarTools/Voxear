@@ -205,8 +205,10 @@ fn project_file(name: &str, namespace: &str) -> String {
     let name = name.replace('\\', "\\\\").replace('"', "\\\"");
     format!(
         "[project]\nname = \"{name}\"\nscripts = \"Scripts/{namespace}.Scripts.csproj\"\nstart_level = \"Levels/Main.level\"\n\
-         # The Voxear version this project uses, which the launcher opens it with.\nengine = \"{}\"\n",
-        engine_version()
+         # The Voxear version this project uses, which the launcher opens it with.\nengine = \"{}\"\n\n\
+         # The engine's optional systems, switched on in Project Settings.\n[modules]\n{}",
+        engine_version(),
+        crate::modules::Module::ALL.map(|module| format!("{} = false\n", module.key())).concat()
     )
 }
 

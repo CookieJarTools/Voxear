@@ -22,6 +22,7 @@ pub mod lighting;
 mod lights;
 mod loading;
 pub mod memory;
+pub mod modules;
 pub mod new_project;
 pub mod package_assets;
 pub mod package_scripts;

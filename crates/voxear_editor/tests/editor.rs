@@ -7092,3 +7092,55 @@ fn the_play_menu_button_fits_what_it_says_beside_step() {
         shot(&mut renderer, &format!("play-menu-{players}.png"));
     }
 }
+
+#[test]
+fn project_settings_switch_a_module_off_in_the_project_file_and_add_component() {
+    use voxear_engine::modules::Module;
+    let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {
+        return eprintln!("skipping: no usable GPU");
+    };
+    let dir = hello_copy();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    editor.select(editor.first_mesh());
+    frame(&mut editor, &mut renderer);
+    let offers = |editor: &voxear_editor::Editor, title: &str| editor.component_offers().iter().any(|t| t == title);
+    // Hello was made before modules, so it has Water: an Ocean goes on.
+    assert!(offers(&editor, "Ocean"), "Hello predates modules, so Ocean is offered");
+    let selected = editor.selected().unwrap();
+    editor.game.engine.world.insert(selected, voxear_render::Ocean::default());
+    editor.select(None);
+    frame(&mut editor, &mut renderer);
+    editor.select(Some(selected));
+    frame(&mut editor, &mut renderer);
+
+    editor.open_drawer(Some(voxear_editor::Drawer::Project));
+    frame(&mut editor, &mut renderer);
+    let mut rows = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "module-row", &mut rows);
+    let water = rows.iter().copied().find(|&row| label_starting(&editor.ui, row, "Water").is_some()).unwrap();
+    let mut toggles = Vec::new();
+    with_class(&editor.ui, water, "checkbox", &mut toggles);
+    click(&mut editor.ui, toggles[0]);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    shot(&mut renderer, "project-settings.png");
+    let written = Project::open(dir.path()).unwrap();
+    assert!(!written.modules().has(Module::Water), "voxear.toml has water off");
+    assert!(written.modules().has(Module::Networking), "and the rest as they were");
+
+    editor.open_drawer(None);
+    frame(&mut editor, &mut renderer);
+    assert!(!offers(&editor, "Pool"), "no Pool without Water");
+    let note = label_starting(&editor.ui, editor.ui.root(), "Needs the Water module");
+    assert!(note.is_some(), "the Ocean says what it needs");
+    shot(&mut renderer, "needs-module.png");
+    let button = editor.ui.children(editor.ui.parent(note.unwrap()).unwrap())[1];
+    click(&mut editor.ui, button);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(Project::open(dir.path()).unwrap().modules().has(Module::Water), "Turn On switches Water back on");
+    assert!(label_starting(&editor.ui, editor.ui.root(), "Needs the Water module").is_none());
+    assert!(offers(&editor, "Pool"));
+}

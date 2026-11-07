@@ -25,6 +25,9 @@ pub struct ProjectFile {
     pub audio: AudioSettings,
     #[serde(default)]
     pub network: crate::net::NetworkSettings,
+    /// The modules the project has, or none for a project made before
+    /// there were modules (see [`crate::modules`]).
+    pub modules: Option<crate::modules::Modules>,
 }
 
 /// Sound for the whole project: whether 3D sounds start out heard as
@@ -233,6 +236,29 @@ impl Project {
         Ok(())
     }
 
+    /// The modules the project has.
+    pub fn modules(&self) -> crate::modules::Modules {
+        self.file.modules.unwrap_or_else(crate::modules::Modules::older_project)
+    }
+
+    /// Switches a module on or off in `voxear.toml`, writing out every
+    /// module's choice so the file says plainly what the project has. The
+    /// rest of the file is kept as it is, comments and all.
+    pub fn set_module(&mut self, module: crate::modules::Module, on: bool) -> Result<()> {
+        let path = self.root.join(PROJECT_FILE);
+        let text = std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+        let mut document: toml_edit::DocumentMut =
+            text.parse().with_context(|| format!("reading {}", path.display()))?;
+        let mut modules = self.modules();
+        modules.set(module, on);
+        for each in crate::modules::Module::ALL {
+            set_key(&mut document, "modules", each.key(), Some(toml_edit::value(modules.has(each))));
+        }
+        std::fs::write(&path, document.to_string()).with_context(|| format!("writing {}", path.display()))?;
+        self.file.modules = Some(modules);
+        Ok(())
+    }
+
     pub fn scripts_project(&self) -> Option<PathBuf> {
         self.file.project.scripts.as_ref().map(|p| self.root.join(p))
     }
@@ -321,6 +347,24 @@ fn set_key(document: &mut toml_edit::DocumentMut, table: &str, key: &str, value:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn switching_a_module_writes_every_modules_choice_and_keeps_the_rest_of_the_file() {
+        use crate::modules::Module;
+        let folder = tempfile::tempdir().unwrap();
+        let text = "# Orbit\n[project]\nname = \"Orbit\"\n";
+        std::fs::write(folder.path().join(PROJECT_FILE), text).unwrap();
+        let mut project = Project::open(folder.path()).unwrap();
+        assert!(project.modules().has(Module::Water) && !project.modules().has(Module::Guns), "made before modules");
+        project.set_module(Module::Guns, true).unwrap();
+        project.set_module(Module::Water, false).unwrap();
+        let written = std::fs::read_to_string(folder.path().join(PROJECT_FILE)).unwrap();
+        assert!(written.starts_with("# Orbit\n"), "{written}");
+        let reopened = Project::open(folder.path()).unwrap();
+        assert_eq!(reopened.modules(), project.modules());
+        assert!(reopened.modules().has(Module::Guns) && !reopened.modules().has(Module::Water));
+        assert_eq!(written.matches(" = ").count(), 1 + Module::ALL.len(), "the name and every module: {written}");
+    }
 
     #[test]
     fn a_project_pinned_by_the_launcher_opens_and_an_install_is_told_by_its_engine_file() {

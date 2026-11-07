@@ -91,6 +91,9 @@ pub struct PlayerSettings {
     pub reverb: bool,
     #[serde(default, with = "crate::project::ReverbModeName", skip_serializing_if = "is_parametric")]
     pub reverb_mode: voxear_audio::ReverbMode,
+    /// The modules the project has.
+    #[serde(default = "crate::modules::Modules::older_project")]
+    pub modules: crate::modules::Modules,
 }
 
 fn is_parametric(mode: &voxear_audio::ReverbMode) -> bool {
@@ -225,6 +228,7 @@ pub fn run_player(data: &Path, args: &PlayerArgs) -> Result<()> {
                 steam_audio: true,
             },
             network: settings.network.clone(),
+            modules: Some(settings.modules),
         },
     };
     let mut game = Game::with_content(project, engine, content);

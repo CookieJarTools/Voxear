@@ -193,6 +193,40 @@
     grid-template-columns: minmax(0px, 1fr) 132px;
 }
 
+/* A component whose module the project is without: dimmed, with a way to get it back. */
+.needs-module {
+    opacity: 0.6;
+}
+
+.needs-module-row {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 4px 0px;
+}
+
+.needs-module-note {
+    font-size: 11px;
+    color: var(--vx-muted);
+}
+
+/* A module's name over what it adds, beside its toggle. */
+.prop.module-row {
+    grid-template-columns: minmax(0px, 1fr) 24px;
+    height: auto;
+    padding: 6px 0px;
+}
+
+.module-words {
+    gap: 2px;
+}
+
+.module-summary {
+    font-size: 11px;
+    color: var(--vx-muted);
+}
+
 .setting-unit {
     flex-shrink: 0;
     font-size: 11px;

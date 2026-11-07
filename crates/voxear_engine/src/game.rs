@@ -123,6 +123,7 @@ impl Game {
         game.load_input_actions();
         game.load_strings();
         game.engine.world.insert_resource(game.project.layers());
+        game.engine.world.insert_resource(game.project.modules());
         game
     }
 

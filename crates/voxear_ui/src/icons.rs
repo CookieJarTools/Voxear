@@ -37,6 +37,7 @@ pub const NAMES: &[&str] = &[
     "logo-right",
     "cube",
     "box",
+    "modules",
     "code",
     "audio",
     "gamepad",
@@ -114,6 +115,8 @@ fn shapes(name: &str) -> Option<&'static [Part]> {
         "logo-left" => &[("M3.5 7.25L12 12v9.5l-8.5-4.75Z", FILL)],
         "logo-right" => &[("M20.5 7.25L12 12v9.5l8.5-4.75Z", FILL)],
         "cube" => &[("M12 2.75l8.25 4.6v9.3L12 21.25l-8.25-4.6v-9.3ZM3.75 7.35L12 12l8.25-4.65M12 12v9.25", STROKE)],
+        // Three blocks and a fourth being added: the engine's optional systems.
+        "modules" => &[("M4.5 4.5h6v6h-6ZM13.5 4.5h6v6h-6ZM4.5 13.5h6v6h-6ZM16.5 13.5v6M13.5 16.5h6", STROKE)],
         "box" => &[("M4 8.5h16V19a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1ZM3 4.5h18v4H3ZM10 12.5h4", STROKE)],
         "code" => &[("M8.5 7l-5 5 5 5M15.5 7l5 5-5 5M13.5 4.5l-3 15", STROKE)],
         "audio" => &[("M4 9.5h3.5L12 5.5v13l-4.5-4H4ZM15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11", STROKE)],

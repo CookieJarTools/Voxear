@@ -90,6 +90,7 @@ mod props;
 pub mod scene_tools;
 mod script_handles;
 mod settings;
+mod project_settings;
 mod settings_panel;
 mod shader_fields;
 mod motion_set_inspector;

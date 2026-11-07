@@ -232,6 +232,7 @@ pub fn build(
         headphones: project.file.audio.headphones,
         reverb: project.file.audio.reverb,
         reverb_mode: project.file.audio.reverb_mode,
+        modules: project.modules(),
     };
     settings.write(&data)?;
     timed("player", stage);

@@ -35,6 +35,7 @@
                 <!-- The game's own buttons and items, from its scripts. -->
                 <Panel name="rail-scripts" class="rail-scripts" />
                 <Panel class="spacer" />
+                <Button name="rail-project" class="icon-button rail-button"><Icon icon="modules" /></Button>
                 <Button name="rail-settings" class="icon-button rail-button"><Icon icon="settings" /></Button>
             </Panel>
             <DockSpace name="dock" class="dock">
@@ -102,7 +103,7 @@
         </Panel>
         <!-- Debug draw's texts, at the points in the 3D view they name. Under the drawer and menus. -->
         <Panel name="debug-texts" class="debug-texts" />
-        <!-- Opens from the rail over the dock's left side: Levels, Lighting, or Settings. -->
+        <!-- Opens from the rail over the dock's left side: Levels, Lighting, Project Settings, or Settings. -->
         <Panel name="drawer" class="drawer">
             <Panel class="drawer-header">
                 <Label name="drawer-title" class="drawer-title">Levels</Label>
@@ -127,6 +128,14 @@
                     <Panel class="settings-main">
                         <Panel name="lighting-scene" class="lighting-scene" />
                         <ScrollView name="lighting" class="fill settings" />
+                    </Panel>
+                </Panel>
+            </Panel>
+            <Panel name="drawer-project" class="fill drawer-page">
+                <Panel class="fill settings-root">
+                    <Panel name="project-tabs" class="settings-tabs" />
+                    <Panel class="settings-main">
+                        <ScrollView name="project-settings" class="fill settings" />
                     </Panel>
                 </Panel>
             </Panel>

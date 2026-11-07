@@ -916,11 +916,13 @@ pub(crate) fn resolve_obj(
         }
         None => None,
     };
+    // Without a GPU nothing is drawn, but a model something animates still has its skeleton and clips, for a server's
+    // characters to move, pose and pass their actions' marks. Reading a model is costly, so only those are read.
+    let animates = data.animator.is_some() || data.motion_matcher.is_some();
     let model = match (&data.model, gpu) {
         (Some(data), Some(renderer)) => Some(Box::new((Some(model_renderer(content, renderer, data)?), ModelSource(data.clone())))),
-        // Without a GPU nothing is drawn, but an animated model still has its skeleton and clips, for a server's
-        // characters to move, pose and pass their actions' marks.
-        (Some(data), None) => Some(Box::new((animated(content, data), ModelSource(data.clone())))),
+        (Some(data), None) if animates => Some(Box::new((animated(content, data), ModelSource(data.clone())))),
+        (Some(data), None) => Some(Box::new((None, ModelSource(data.clone())))),
         (None, _) => None,
     };
     Ok(TemplateObj {

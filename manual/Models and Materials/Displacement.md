@@ -21,7 +21,7 @@ Any mesh works, from a single big quad for a field to a detailed model. Far-off 
 ## Things to know
 
 - **UV seams** can open small cracks where the two sides of a seam read different parts of the height map. Keep seams where the map is the same on both sides, or flat.
-- Displaced materials can't also be glass, foliage, cut out, or use a custom shader. Those draw as usual, without displacement.
+- Displaced materials can't also be glass, foliage, cut out, two-sided, or use a custom shader. Those draw as usual, without displacement.
 - Bounced light and ray-traced reflections see the flat mesh, not the bumps.
 - Lamps' shadows come from the flat mesh. The sun's shadows come from the bumps, for the ground the camera can see.
 - Colliders stay the shape of the mesh, so players walk on the flat surface. Keep Displacement modest where they walk.

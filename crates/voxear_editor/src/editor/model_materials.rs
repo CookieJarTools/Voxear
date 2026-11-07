@@ -224,6 +224,7 @@ fn material_data(material: &FileMaterial, maps: [Option<voxear_assets::AssetGuid
         emissive_map,
         foliage: material.desc.foliage,
         cutout: material.desc.alpha_cutoff,
+        two_sided: material.desc.two_sided,
         glass: material.desc.glass,
         ior: material.desc.ior,
         wind_bend: None,

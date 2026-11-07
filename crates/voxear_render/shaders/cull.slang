@@ -10,6 +10,9 @@
 //   A light whose still part is kept (src/shadow_cache.rs) lists only what
 //   moves; with push.level LOCAL_CULL_STILL, its list takes only what stands
 //   still, for the lights push.output names, to draw into the kept atlas.
+// - Two-sided (LIST_TWO_SIDED, then + 1 for late): what early and late
+//   draw of instances whose material is two-sided, drawn whole by passes
+//   that cull no backs. Shadows cull no backs, so they list them as usual.
 //
 // Each draw also picks the coarsest LOD whose error stays under a pixel. When
 // an instance's LOD changes, both LODs are drawn for a moment with
@@ -17,7 +20,8 @@
 //
 // With meshlet culling, a draw is not written but its meshlets are queued,
 // and the meshlet pass (meshletMain) after each list draws those that
-// survive the same tests, for the passes to draw instead.
+// survive the same tests, for the passes to draw instead. A two-sided draw
+// is always written whole: a meshlet's normal cone says nothing of its back.
 
 #include "culling.slang"
 
@@ -95,7 +99,7 @@ void queueMeshlets(Frame* frame, uint list, uint packed, MeshLod lod)
 void emit(uint list, uint instance, Mesh mesh, uint lod, uint fade)
 {
     uint packed = fade | (lod << DRAW_LOD_SHIFT) | instance;
-    if ((push.frame->meshletFlags & MESHLET_CULLING) != 0)
+    if ((push.frame->meshletFlags & MESHLET_CULLING) != 0 && list < MESHLET_LIST_COUNT)
     {
         queueMeshlets(push.frame, list, packed, mesh.lods[lod]);
         return;
@@ -340,12 +344,13 @@ void cullMain(uint3 id : SV_DispatchThreadID)
     float distance = max(length(center - frame->cameraPosition) - radius, frame->near);
     uint lod = instanceLod(frame, instance, mesh, center, radius, scale, frame->lodScale / distance, frame->lodThreshold);
     bool inFrustum = insidePlanes(frame->planes, center, radius);
+    bool twoSided = (material.flags & MATERIAL_TWO_SIDED) != 0;
 
     if (list == LIST_EARLY)
     {
         if (inFrustum && buffers()->visibility[id.x] != 0)
         {
-            emitFading(frame, LIST_EARLY, id.x, mesh, lod);
+            emitFading(frame, twoSided ? LIST_TWO_SIDED : LIST_EARLY, id.x, mesh, lod);
             count(STAT_DRAWN_EARLY);
         }
         return;
@@ -363,7 +368,7 @@ void cullMain(uint3 id : SV_DispatchThreadID)
     }
     if (visible && buffers()->visibility[id.x] == 0)
     {
-        emitFading(frame, LIST_LATE, id.x, mesh, lod);
+        emitFading(frame, twoSided ? LIST_TWO_SIDED + 1 : LIST_LATE, id.x, mesh, lod);
         count(STAT_DRAWN_LATE);
     }
     if (!visible)

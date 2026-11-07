@@ -10,7 +10,7 @@ Fab has no way for another program to sign in or download for you, so you downlo
 
 1. Right-click in the Project panel and choose **Open Fab**. Fab's Megascans page opens in your browser.
 2. Pick an asset and add it to your Fab library. Adding it is what gives you the licence to use it, even when it is free.
-3. Download it as **FBX** or **glTF**; either works. For the quality, High (4K textures) suits most things. Raw (8K) takes far more memory and is slower to import.
+3. Download it as **FBX** or **glTF**; either works. For the quality, **High** suits most things: 4K textures, and a model for each level of detail. **Raw** is the scan as it was made: one very detailed model with 8K textures, which takes far more memory and is slower to import, and which can be open behind, scanned from the front only.
 
 ## Importing a download
 
@@ -29,7 +29,7 @@ Importing the same asset again makes a second folder, `Mossy Rock 1`, beside the
 
 | File | What it is |
 | --- | --- |
-| `Mossy Rock.material` | The asset's material, reading the textures below |
+| `Mossy Rock.material` | The asset's material, reading the textures below. **Two sided** for a plant, and for a model open behind |
 | `Textures/Mossy Rock Colour.jpg` | Its colour. For a plant, a `.png` with its see-through parts in the alpha |
 | `Textures/Mossy Rock Normal.jpg` | Its normal map |
 | `Textures/Mossy Rock Metallic.png` | Its roughness, metalness and ambient occlusion in one picture, as a material's **Metallic Map** reads them |
@@ -45,9 +45,11 @@ Drag `Mossy Rock.prefab` into the Scene view. Its **LOD Group** shows the most d
 
 A model that comes as one file gets no prefab: drag the model itself into the scene, and Voxear makes its LODs as it does for any model.
 
+Some scans are only the front of something, such as a window frame cut from a wall, with nothing behind. Seen from behind, such a model would show only its outline, so the import turns on **Two sided** in its material, and its back is drawn as the inside of its front. A model closed all round keeps its material one-sided, which costs less to draw.
+
 ### Plants
 
-A plant's leaves are cut out of their cards by the plant's opacity. Its material has **Alpha clip** on, at a **Threshold** of 0.5, and **Foliage** on, so the leaves are lit as leaves and sway in the wind; see [[Foliage]] and [[Wind]]. Its models have **Wind masks** set to **Generate**.
+A plant's leaves are cut out of their cards by the plant's opacity. Its material has **Alpha clip** on, at a **Threshold** of 0.5, **Two sided** on, so each card shows from behind too, and **Foliage** on, so the leaves are lit as leaves and sway in the wind; see [[Foliage]] and [[Wind]]. Its models have **Wind masks** set to **Generate**.
 
 A plant with several variations, such as `VarA` and `VarB` in the download, gets a prefab for each: `Tufted Grass A.prefab`, `Tufted Grass B.prefab`. Scatter them with a Foliage to make a meadow.
 

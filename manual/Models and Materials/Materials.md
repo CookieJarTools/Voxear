@@ -23,6 +23,7 @@ Right-click in the Project panel and choose **New Material**, then type its name
 | Connected tiles | Its maps are five tiles side by side, and a block's faces drawn with it join those of its kind beside them. See [Pictures for blocks](#pictures-for-blocks) |
 | Ground blend | How many metres up from where a model meets a terrain it takes on the ground's own look, so rocks and walls sit in the ground. 0 for not at all. See [[Blending Models into Terrain]] |
 | Alpha clip | Cuts the surface out where the Colour Map's alpha is below **Threshold**, as leaves on a card |
+| Two sided | Draws the surface from behind too, lit as its front is |
 
 Every change is saved straight away, and shows at once on everything that uses the material.
 
@@ -61,6 +62,15 @@ In a level with [[Seasons]], **Leaves** says what foliage does through the year:
 ## Cutting out leaves
 
 Leaves and grass are often drawn as flat cards with a picture of the leaves on them, see-through around each leaf. Turn on **Alpha clip** to cut the card away there: where the alpha of the **Colour Map** is below **Threshold**, nothing is drawn, and nothing casts a shadow. A threshold of 0.5 suits most pictures; lower keeps more of a leaf's soft edge. In a material file, `cutout = 0.5`.
+
+## Seen from both sides
+
+Each face of a mesh is drawn from the side its normal points to only, so the back of a flat card, or the inside of a mesh with a hole in it, shows nothing. Turn on **Two sided** for anything that is seen from behind but has no back of its own:
+
+- leaves and grass on flat cards, seen from both sides as they sway;
+- scans of only the front of something, such as a stretch of wall, whose back was never scanned.
+
+The back is lit as if it faced the other way, so a leaf with the sun behind the camera is as bright from behind as from the front. A two-sided surface casts the same shadow either way. It costs more to draw than a one-sided one, as nothing of it is skipped for facing away, so keep it for what needs it. A two-sided material is not raised by its height map: see [[Displacement]]. In a material file, `two_sided = true`.
 
 ## Glass
 
@@ -112,6 +122,7 @@ normal_map = "c81f3e0a9b2d4c6e8f1a3b5d7e9f0a2c"
 - `cutout = 0.5` cuts the surface out where its colour map's alpha is under 0.5, as leaves and grass cards are cut from their pictures. Leave it out for solid surfaces, which draw faster.
 - `pixels = true` draws its colour map's pixels sharp, and `connected = true` reads its maps as the five tiles of a block's face that joins.
 - `ground_blend = 0.4` blends a model into the terrain it stands on, 0.4 m up from the ground.
+- `two_sided = true` draws it from both sides, as above.
 - `glass = true` makes it glass, as above, and `ior` sets its index of refraction, 1.5 unless written.
 - `color_map`, `metallic_map`, `normal_map` and `emissive_map` name pictures by their IDs, from their `.meta` files, so the link survives a picture being renamed.
 - `shader` names a custom shader by its ID, and `[properties]` holds the values the material gives it. See [[Custom Shaders]].

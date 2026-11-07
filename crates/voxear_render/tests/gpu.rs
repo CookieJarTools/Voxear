@@ -314,6 +314,53 @@ fn meshlets_facing_away_are_culled() {
     }
 }
 
+/// A card two units wide in front of the camera, lit by a sun shining the
+/// way the camera looks, drawn with a two-sided material or not, its front
+/// towards the camera or its back, and scaled by `scale`, its meshlets
+/// culled as `meshlets` says: the colour in the middle of the view.
+fn card(meshlets: Meshlets, front: bool, two_sided: bool, scale: Vec3) -> Option<[u8; 4]> {
+    let mut renderer = renderer_culling(meshlets, ViewOptions::default())?;
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 0.0, -3.0))));
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::default()));
+    let plane = renderer.primitive(Primitive::Plane).unwrap();
+    let desc = MaterialDesc { base_color: [0.9, 0.35, 0.1, 1.0], two_sided, ..MaterialDesc::default() };
+    let material = renderer.add_material(&desc).unwrap();
+    // The plane faces +Y: a quarter turn about X faces it towards the camera, or away.
+    let turn = Quat::from_rotation_x(if front { -std::f32::consts::FRAC_PI_2 } else { std::f32::consts::FRAC_PI_2 });
+    world.spawn((MeshRenderer::new(plane, material), Transform::new(Vec3::ZERO, turn, scale * 2.0)));
+    run(&mut renderer, &world, &mut 0.0, 4);
+    let (width, height, pixels) = renderer.read_pixels().unwrap();
+    let at = ((height / 2 * width + width / 2) * 4) as usize;
+    Some(pixels[at..at + 4].try_into().unwrap())
+}
+
+/// The most two colours differ by in any channel.
+fn colour_difference(a: [u8; 4], b: [u8; 4]) -> u8 {
+    a.iter().zip(&b).map(|(a, b)| a.abs_diff(*b)).max().unwrap_or(0)
+}
+
+#[test]
+fn a_two_sided_material_draws_a_cards_back_lit_as_its_front() {
+    let mirror = Vec3::new(-1.0, 1.0, 1.0);
+    for meshlets in [Meshlets::Off, Meshlets::Compute, Meshlets::MeshShaders] {
+        let Some(front) = card(meshlets, true, false, Vec3::ONE) else { continue };
+        let back = card(meshlets, false, false, Vec3::ONE).unwrap();
+        assert!(
+            colour_difference(back, front) > 30,
+            "{meshlets:?}: one-sided, its back is not drawn: {back:?} {front:?}"
+        );
+        // Its back faces the sun as the front did, its normal turned round with it, so it is lit alike.
+        for (seen, scale) in [("front", Vec3::ONE), ("back", Vec3::ONE), ("back", mirror)] {
+            let drawn = card(meshlets, seen == "front", true, scale).unwrap();
+            assert!(
+                colour_difference(drawn, front) <= 6,
+                "{meshlets:?}: two-sided, its {seen} at {scale} is lit as the front: {drawn:?} {front:?}"
+            );
+        }
+    }
+}
+
 /// A flat grid of `n` by `n` quads a unit wide, in the XY plane and facing
 /// -Z, towards a camera behind it.
 fn grid(n: u32) -> voxear_render::MeshData {

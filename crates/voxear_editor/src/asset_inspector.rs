@@ -395,6 +395,8 @@ struct MaterialFields {
     /// Whether it clips by its colour map's alpha, and where.
     alpha_clip: NodeId,
     threshold: NodeId,
+    /// Whether it is drawn from both sides.
+    two_sided: NodeId,
     glass: NodeId,
     ior: NodeId,
     /// How far up a model's foot it blends into the ground.
@@ -911,7 +913,7 @@ impl AssetView {
             .chain([&fields.metallic, &fields.roughness, &fields.foliage, &fields.leaves, &fields.glass, &fields.ior])
             .chain([&fields.glow, &fields.glow_speed, &fields.displacement, &fields.detail])
             .chain([&fields.pixels, &fields.connected, &fields.acoustic])
-            .chain([&fields.alpha_clip, &fields.threshold])
+            .chain([&fields.alpha_clip, &fields.threshold, &fields.two_sided])
             .chain(&fields.wind);
         if !changed.into_iter().any(|&field| ui.changed(field)) {
             return None;
@@ -942,6 +944,7 @@ impl AssetView {
         data.cutout = ui
             .is_checked(fields.alpha_clip)
             .then(|| read(fields.threshold, data.cutout.unwrap_or(ALPHA_THRESHOLD)).clamp(0.01, 1.0));
+        data.two_sided = ui.is_checked(fields.two_sided);
         data.glass = ui.is_checked(fields.glass);
         (data.pixels, data.connected) = (ui.is_checked(fields.pixels), ui.is_checked(fields.connected));
         data.ior = read(fields.ior, data.ior).clamp(1.0, 3.0);
@@ -1434,6 +1437,9 @@ fn material(ui: &mut Ui, root: NodeId, file: &std::path::Path, game: &Game) -> O
     let alpha_clip = ui.toggle(row, "", data.cutout.is_some());
     ui.add_class(alpha_clip, "checkbox");
     let threshold = one(ui, "Threshold", data.cutout.unwrap_or(ALPHA_THRESHOLD));
+    let row = prop(ui, rows, "Two sided");
+    let two_sided = ui.toggle(row, "", data.two_sided);
+    ui.add_class(two_sided, "checkbox");
     let row = prop(ui, rows, "Glass");
     let glass = ui.toggle(row, "", data.glass);
     ui.add_class(glass, "checkbox");
@@ -1467,6 +1473,7 @@ fn material(ui: &mut Ui, root: NodeId, file: &std::path::Path, game: &Game) -> O
         glow_speed,
         alpha_clip,
         threshold,
+        two_sided,
         glass,
         ior,
         ground,

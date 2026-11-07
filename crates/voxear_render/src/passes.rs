@@ -30,9 +30,9 @@ use crate::{
     ambient_occlusion, atmosphere, ddgi, glass,
     gpu::{
         CLUSTER_COUNT, DRAW_COMMAND_SIZE, DRAWS_AGAIN, DRAWS_INSTANCES, DRAWS_MESHLETS, LIST_EARLY, LIST_LATE,
-        LAMP_PAGE_VIEW, LIST_LOCAL_SHADOW, LIST_SHADOW, LOCAL_SHADOW_ATLAS, LOCAL_SHADOW_COLUMNS, LOCAL_SHADOW_TILE, Push, VSM_CULL,
-        VSM_CULL_MOVING, VSM_PAGE_VIEW, cleared_draw_counts, draw_count_offset, meshlet_count_offset, meshlet_list,
-        stat,
+        LAMP_PAGE_VIEW, LIST_LOCAL_SHADOW, LIST_SHADOW, LIST_TWO_SIDED, LOCAL_SHADOW_ATLAS, LOCAL_SHADOW_COLUMNS,
+        LOCAL_SHADOW_TILE, Push, VSM_CULL, VSM_CULL_MOVING, VSM_PAGE_VIEW, cleared_draw_counts, draw_count_offset,
+        meshlet_count_offset, meshlet_list, stat,
     },
     graph::{BufferAccess, BufferId, FrameGraph, ImageAccess, ImageId, PassContext},
     pipelines::Pipelines,
@@ -615,6 +615,11 @@ pub fn record(
         (None, true) => pipelines.wireframe,
         (None, false) => pipelines.forward,
     };
+    // The wireframe culls no backs already.
+    let forward = Drawing {
+        pipeline: forward,
+        two_sided: if frame.wireframe { pipelines.wireframe } else { pipelines.forward_two_sided },
+    };
     let (hdr, velocity, depth) = (targets.hdr, targets.velocity, targets.depth);
     let scene = SceneTargets { hdr, velocity, depth };
     // The Portals' openings, drawn into the depth as any surface: nothing of the view's own world behind one is
@@ -636,7 +641,8 @@ pub fn record(
         });
     };
     let depth_pass = |fg: &mut FrameGraph<'_>, name: &str, list: u32| {
-        let pipeline = mesh.map_or(pipelines.depth, |mesh| mesh.depth);
+        let pipeline =
+            Drawing { pipeline: mesh.map_or(pipelines.depth, |mesh| mesh.depth), two_sided: pipelines.depth_two_sided };
         let push = Push { list, ..draw_push };
         let surface = frame.surface.expect("the depth passes' surface");
         let images = [(depth, ImageAccess::DepthAttachment), (surface, ImageAccess::ColorAttachment)];
@@ -858,7 +864,10 @@ pub fn record(
             // After what reads the depth for the view's own world, and before any of it is shaded.
             portal_surfaces(fg);
             // Both lists again, over their own depth. Task shaders cull them again, without counting them again.
-            let forward = mesh.map_or(pipelines.forward_on_depth, |mesh| mesh.forward_on_depth);
+            let forward = Drawing {
+                pipeline: mesh.map_or(pipelines.forward_on_depth, |mesh| mesh.forward_on_depth),
+                two_sided: pipelines.forward_on_depth_two_sided,
+            };
             let again = if mesh.is_some() { Push { source: DRAWS_AGAIN, ..shading_push } } else { shading_push };
             for (name, list) in [("Opaque (early)", LIST_EARLY), ("Opaque (late)", LIST_LATE)] {
                 // A view through a Portal draws over what the view it is seen in drew.
@@ -1008,6 +1017,9 @@ pub fn record(
                 ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { list, ..edges_push });
                 indirect.draw(ctx, list);
             }
+            for list in [LIST_EARLY, LIST_LATE] {
+                indirect.draw_two_sided(ctx, list, pipelines.edges, &edges_push);
+            }
             unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
         });
     }
@@ -1044,7 +1056,22 @@ struct Indirect {
     tasks: bool,
 }
 
+/// A pass's pipeline, and the one that draws its list's two-sided draws.
+#[derive(Clone, Copy)]
+struct Drawing {
+    pipeline: vk::Pipeline,
+    two_sided: vk::Pipeline,
+}
+
 impl Indirect {
+    /// The two-sided draws of the early or late list, with `pipeline`, which
+    /// culls no backs: always whole LODs, from the instance lists.
+    fn draw_two_sided(self, ctx: &PassContext, list: u32, pipeline: vk::Pipeline, push: &Push) {
+        let list = LIST_TWO_SIDED + list - LIST_EARLY;
+        bind(ctx, pipeline, vk::PipelineBindPoint::GRAPHICS, &Push { list, source: DRAWS_INSTANCES, ..*push });
+        Self { meshlets: None, tasks: false, ..self }.draw(ctx, list);
+    }
+
     fn draw(self, ctx: &PassContext, list: u32) {
         if let Some(mesh) = ctx.gpu.mesh_shader.as_ref().filter(|_| self.tasks) {
             let stride = 3 * size_of::<u32>() as u32;
@@ -1385,7 +1412,7 @@ fn cull_meshlets(
 
 fn opaque(
     ctx: &PassContext,
-    pipeline: vk::Pipeline,
+    pipeline: Drawing,
     push: &Push,
     indirect: Indirect,
     targets: SceneTargets,
@@ -1400,8 +1427,9 @@ fn opaque(
     let depth_layout = vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL;
     let depth = attachment(ctx.view(targets.depth), depth_layout, clear.depth.then(|| clear_depth(0.0)));
     begin_rendering(ctx, extent, &color, Some(&depth));
-    bind(ctx, pipeline, vk::PipelineBindPoint::GRAPHICS, push);
+    bind(ctx, pipeline.pipeline, vk::PipelineBindPoint::GRAPHICS, push);
     indirect.draw(ctx, push.list);
+    indirect.draw_two_sided(ctx, push.list, pipeline.two_sided, push);
     unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
 }
 
@@ -1446,7 +1474,7 @@ fn diced_depth(ctx: &PassContext, pipeline: vk::Pipeline, push: &Push, dice: Dic
 /// One opaque list as depth alone, the first clearing it.
 fn depth_only(
     ctx: &PassContext,
-    pipeline: vk::Pipeline,
+    pipeline: Drawing,
     push: &Push,
     indirect: Indirect,
     (depth, surface): (ImageId, ImageId),
@@ -1461,8 +1489,9 @@ fn depth_only(
         clear.then(|| clear_color([1.0; 4])),
     )];
     begin_rendering(ctx, ctx.extent(depth), &rough, Some(&target));
-    bind(ctx, pipeline, vk::PipelineBindPoint::GRAPHICS, push);
+    bind(ctx, pipeline.pipeline, vk::PipelineBindPoint::GRAPHICS, push);
     indirect.draw(ctx, push.list);
+    indirect.draw_two_sided(ctx, push.list, pipeline.two_sided, push);
     unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
 }
 

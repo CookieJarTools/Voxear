@@ -89,6 +89,10 @@ pub const MATERIAL_DISPLACED: u32 = 256;
 pub const MATERIAL_PIXELS: u32 = 512;
 /// Its pictures are the five tiles of a block's face that joins those beside it.
 pub const MATERIAL_CONNECTED: u32 = 1024;
+/// Drawn from both sides, its back lit as a front is: for leaves on cards
+/// and scans open behind. Its instances are drawn whole, in lists of their
+/// own (`LIST_TWO_SIDED`), as their backs are not culled.
+pub const MATERIAL_TWO_SIDED: u32 = 2048;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
@@ -1509,7 +1513,13 @@ pub const LIST_LATE: u32 = 1;
 pub const LIST_SHADOW: u32 = 2;
 /// One list for each local light casting a shadow, drawn into each of its views.
 pub const LIST_LOCAL_SHADOW: u32 = LIST_SHADOW + CASCADES as u32;
-pub const LIST_COUNT: u32 = LIST_LOCAL_SHADOW + LOCAL_SHADOW_LIGHTS as u32;
+/// The lists with meshlets, which meshlet culling queues for: all but the
+/// two-sided lists.
+pub const MESHLET_LIST_COUNT: u32 = LIST_LOCAL_SHADOW + LOCAL_SHADOW_LIGHTS as u32;
+/// The main view's two-sided draws, early then late: whole LODs, without
+/// meshlet culling, drawn without culling their backs.
+pub const LIST_TWO_SIDED: u32 = MESHLET_LIST_COUNT;
+pub const LIST_COUNT: u32 = LIST_TWO_SIDED + 2;
 
 /// The draw count buffer holds each instance list's count at the head of a
 /// dispatch's arguments, (count, 1, 1), and a fourth word. With meshlet
@@ -1557,7 +1567,7 @@ pub fn meshlet_list(list: u32, capacity: u32) -> (u64, u32) {
 
 /// Entries in all the meshlet lists together.
 pub fn meshlet_lists_len(capacity: u32) -> u64 {
-    (4 + u64::from(LIST_COUNT - LIST_SHADOW)) * u64::from(capacity)
+    (4 + u64::from(MESHLET_LIST_COUNT - LIST_SHADOW)) * u64::from(capacity)
 }
 
 /// Counters the culling pass writes, read back a few frames later.
@@ -1682,7 +1692,7 @@ mod tests {
     fn meshlet_lists_lie_end_to_end() {
         let capacity = 100;
         let mut next = 0;
-        for list in 0..LIST_COUNT {
+        for list in 0..MESHLET_LIST_COUNT {
             let (base, held) = meshlet_list(list, capacity);
             assert_eq!(base, next, "list {list} starts where the one before ends");
             assert_eq!(held, if list < LIST_SHADOW { 200 } else { 100 });

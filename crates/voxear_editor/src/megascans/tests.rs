@@ -122,6 +122,20 @@ fn pictures_and_models_are_read_by_their_names_as_fab_and_older_downloads_write_
 }
 
 #[test]
+fn a_mesh_open_behind_is_told_from_a_closed_one() {
+    let points = [Vec3::ZERO, Vec3::X, Vec3::Y, Vec3::Z].to_vec();
+    // A tetrahedron, each face wound to face out.
+    let faces = [[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]];
+    let closed = MeshTriangles { points: points.clone(), indices: faces.concat() };
+    assert!(!open_behind(&closed), "a closed mesh's faces cancel out");
+    let without_its_base = MeshTriangles { points: points.clone(), indices: faces[1..].concat() };
+    assert!(open_behind(&without_its_base), "open where its base was");
+    let card = MeshTriangles { points, indices: vec![0, 1, 2] };
+    assert!(open_behind(&card), "a card is all front");
+    assert!(!open_behind(&MeshTriangles::default()), "nothing is not open");
+}
+
+#[test]
 fn a_model_with_a_file_for_each_lod_becomes_a_prefab_with_a_lod_group() {
     let project = tempfile::tempdir().unwrap();
     let into = project.path().join(FOLDER);
@@ -161,6 +175,7 @@ fn a_model_with_a_file_for_each_lod_becomes_a_prefab_with_a_lod_group() {
     assert_eq!((data.height_map, data.displacement), (None, 0.0));
     assert_eq!((data.color, data.roughness, data.metallic), ([1.0; 3], 1.0, 0.0), "the maps as they are");
     assert!(!data.foliage && data.cutout.is_none());
+    assert!(data.two_sided, "its models, a card and a triangle, are open behind, so drawn from both sides");
 
     let [occlusion, roughness, metalness, _] = pixel(&asset.join("Textures/Fake Boulder Metallic.png"), 3, 3);
     assert!(near(occlusion, 100) && near(roughness, 200) && metalness == 0, "{occlusion} {roughness} {metalness}");
@@ -236,6 +251,7 @@ fn a_zipped_plant_is_cut_out_by_its_opacity_and_sways() {
     let data = material(&asset.join("Fake Fern.material"));
     assert!(data.foliage, "lit as leaves");
     assert_eq!(data.cutout, Some(CUTOFF), "cut out by its opacity");
+    assert!(data.two_sided, "its leaves seen from both sides");
     let colour = asset.join("Textures/Fake Fern Colour.png");
     let ([.., clear], [r, g, b, solid]) = (pixel(&colour, 1, 1), pixel(&colour, 6, 1));
     assert!(near(clear, 0) && near(solid, 255), "the opacity is the colour's alpha: {clear} {solid}");

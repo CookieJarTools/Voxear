@@ -43,10 +43,11 @@ Occlusion ambientOcclusion(Frame* frame, float2 pixel, float nv, float roughness
 // smooth normal, and in alpha 0 where two LODs crossfade, 1 elsewhere
 // (SURFACE_FORMAT in src/pipelines.rs).
 [shader("fragment")]
-float4 depthFragment(VertexOut input) : SV_Target0
+float4 depthFragment(VertexOut input, bool frontFacing : SV_IsFrontFace) : SV_Target0
 {
     ditherLodFade(input);
     Material material = buffers()->materials[input.material];
+    turnToSeenSide(input, material, frontFacing);
     bool custom = material.shader != STANDARD_SHADER;
     if (material.alphaCutoff > 0.0 && !custom)
     {

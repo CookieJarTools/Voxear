@@ -22,7 +22,8 @@
 //!   red, as a material's metallic map has them. A surface keeps its height
 //!   map too.
 //! - a `.material` reading them, clipped by alpha where the asset has
-//!   opacity, and as foliage for a plant;
+//!   opacity, as foliage for a plant, and two-sided for a plant's cards and
+//!   for a scan open behind, as a raw scan of a wall's face is;
 //! - its models, drawn with that material, and for one that comes as a model
 //!   for each LOD, a prefab with a LOD Group showing them in turn: what to
 //!   drag into a scene.
@@ -43,9 +44,9 @@ use anyhow::{Context, Result, ensure};
 use image::{DynamicImage, GrayImage, RgbImage, RgbaImage, codecs::png, imageops};
 use serde_json::Value;
 use voxear_assets::{AssetGuid, MaterialRemap, ModelImport, WindMasks, meta_path};
-use voxear_core::math::{EulerRot, Quat, Vec3};
+use voxear_core::math::{DVec3, EulerRot, Quat, Vec3};
 use voxear_engine::MaterialData;
-use voxear_render::{LodMeasure, PartPlace};
+use voxear_render::{LodMeasure, MeshTriangles, PartPlace};
 
 use crate::project_files;
 
@@ -58,6 +59,11 @@ pub const FOLDER: &str = "Megascans";
 
 /// The alpha a material with opacity clips below.
 const CUTOFF: f32 = 0.5;
+
+/// How much of a mesh's area its faces may face one way more than the
+/// other before it is open behind, as a scan of a wall's face alone is. A
+/// closed mesh's faces cancel out, whichever way it is seen from.
+const OPEN: f64 = 0.1;
 
 /// The furthest a surface's height map is taken to reach from a
 /// download's `.json`, in metres: past it, the size is not its depth.
@@ -125,7 +131,11 @@ pub fn import(path: &Path, into: &Path) -> Result<Imported> {
         }
         false => None,
     };
-    let select = download.write_models(&stage.path, &name, kind, &material, billboard.as_ref())?;
+    let (select, open) = download.write_models(&stage.path, &name, kind, &material, billboard.as_ref())?;
+    // Seen from behind, a model open there would show nothing but its rim.
+    if open && kind != ScanKind::Plant {
+        make_two_sided(&stage.path.join(&material.file))?;
+    }
     let select = select.unwrap_or(material.file);
     let folder = stage.finish(into, &name)?;
     Ok(Imported { select: format!("{folder}/{select}"), folder, skipped })
@@ -546,7 +556,8 @@ impl Download {
     /// Writes the models, drawn with `material`, or a billboard with
     /// `billboard`'s, and for each set of them that has a model for each
     /// LOD, a prefab with a LOD Group showing them in turn. Returns what to
-    /// select: the first prefab, or else the first model.
+    /// select, the first prefab or else the first model, and whether a
+    /// model drawn with `material` is open behind.
     fn write_models(
         &mut self,
         stage: &Path,
@@ -554,7 +565,7 @@ impl Download {
         kind: ScanKind,
         material: &Written,
         billboard: Option<&Written>,
-    ) -> Result<Option<String>> {
+    ) -> Result<(Option<String>, bool)> {
         let (boards, models): (Vec<ModelFile>, Vec<ModelFile>) =
             self.chosen_models().into_iter().partition(|model| model.billboard);
         let mut sets: BTreeMap<Option<String>, Vec<ModelFile>> = BTreeMap::new();
@@ -571,7 +582,7 @@ impl Download {
                 _ => sets.values_mut().for_each(|set| set.push(board.clone())),
             }
         }
-        let mut select = None;
+        let (mut select, mut open) = (None, false);
         for (variation, mut models) in sets {
             models.sort_by_key(|model| (model.billboard, model.lod.unwrap_or(0)));
             let base = variation.map_or_else(|| name.to_string(), |variation| format!("{name} {variation}"));
@@ -584,7 +595,9 @@ impl Download {
                     (false, false) => base.clone(),
                 };
                 let draws = if model.billboard { billboard.unwrap_or(material) } else { material };
-                levels.push(self.write_model(stage, model, &stem, draws, kind, grouped)?);
+                let level = self.write_model(stage, model, &stem, draws, kind, grouped)?;
+                open |= level.open && !model.billboard;
+                levels.push(level);
             }
             let picked = match grouped {
                 true => write_prefab(stage, &base, &levels)?.file,
@@ -592,7 +605,7 @@ impl Download {
             };
             select.get_or_insert(picked);
         }
-        Ok(select)
+        Ok((select, open))
     }
 
     /// Writes a model as `stem`, drawn with `material`, its import settings
@@ -631,7 +644,9 @@ impl Download {
         let parts: Vec<Part> = prepared.part_places().map(Part::from).collect();
         let remap = parts.iter().filter_map(|part| Some((part.material.clone()?, material.guid))).collect();
         MaterialRemap(remap).write(&to)?;
-        Ok(Level { written: Written { file, guid }, obj: stem.to_string(), parts, material: material.clone() })
+        let open = parts.iter().any(|part| prepared.triangles(Some(&part.mesh)).is_some_and(|mesh| open_behind(&mesh)));
+        let (written, obj, material) = (Written { file, guid }, stem.to_string(), material.clone());
+        Ok(Level { written, obj, parts, material, open })
     }
 
     /// Writes a `.gltf` to `to`, with its buffers beside it and the
@@ -704,13 +719,14 @@ struct Written {
     guid: AssetGuid,
 }
 
-/// A model written as one level of a LOD Group, the Obj it shows as, and
-/// the material its parts draw with.
+/// A model written as one level of a LOD Group, the Obj it shows as, the
+/// material its parts draw with, and whether any of them is open behind.
 struct Level {
     written: Written,
     obj: String,
     parts: Vec<Part>,
     material: Written,
+    open: bool,
 }
 
 /// A part of a model and where the model puts it.
@@ -773,8 +789,9 @@ impl Drop for Stage {
 
 /// Writes `base.material`, reading `maps`: white, so its colour map shows
 /// as it is; its roughness and metalness from the metallic map where it
-/// holds them; clipped by alpha where the colour holds opacity; foliage for
-/// a plant; and moved out by `displacement` metres by its height map.
+/// holds them; clipped by alpha where the colour holds opacity; foliage,
+/// two-sided, for a plant; and moved out by `displacement` metres by its
+/// height map.
 fn write_material(stage: &Path, base: &str, maps: &Maps, kind: ScanKind, displacement: f32) -> Result<Written> {
     let defaults = MaterialData::default();
     let data = MaterialData {
@@ -790,12 +807,35 @@ fn write_material(stage: &Path, base: &str, maps: &Maps, kind: ScanKind, displac
         displacement: if maps.height.is_some() { displacement } else { 0.0 },
         foliage: kind == ScanKind::Plant,
         cutout: maps.alpha.then_some(CUTOFF),
+        two_sided: kind == ScanKind::Plant,
         ..defaults
     };
     let file = format!("{base}.material");
     let to = stage.join(&file);
     std::fs::write(&to, toml::to_string(&data)?).with_context(|| format!("writing {file}"))?;
     Ok(Written { file, guid: write_meta(&to)? })
+}
+
+/// Turns on two-sided drawing in the material file at `path`.
+fn make_two_sided(path: &Path) -> Result<()> {
+    let mut data: MaterialData = toml::from_str(&std::fs::read_to_string(path)?)?;
+    data.two_sided = true;
+    std::fs::write(path, toml::to_string(&data)?).with_context(|| format!("writing {}", path.display()))
+}
+
+/// Whether a mesh is open behind, as a scan of a face alone is: its
+/// triangles' areas, each along the way it faces, add up to a share of its
+/// whole area, where a closed mesh's cancel out.
+fn open_behind(mesh: &MeshTriangles) -> bool {
+    let (mut facing, mut area) = (DVec3::ZERO, 0.0);
+    for corners in mesh.indices.chunks_exact(3) {
+        let corner = |at: usize| mesh.points.get(corners[at] as usize).map(|point| point.as_dvec3());
+        let (Some(a), Some(b), Some(c)) = (corner(0), corner(1), corner(2)) else { continue };
+        let face = (b - a).cross(c - a);
+        facing += face;
+        area += face.length();
+    }
+    area > 0.0 && facing.length() > OPEN * area
 }
 
 /// Writes `base.prefab`: an Obj with a LOD Group whose levels are an Obj

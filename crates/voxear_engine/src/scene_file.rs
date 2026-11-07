@@ -294,6 +294,9 @@ pub struct ObjData {
     /// Keeps the Obj on a bone of its parent's model.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bone_attachment: Option<crate::animation::BoneAttachment>,
+    /// A First-Person View, a camera in a character's own head.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_person: Option<crate::first_person::FirstPersonView>,
     /// An Ocean, the sea filling the level at the Obj's height.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ocean: Option<Ocean>,
@@ -375,6 +378,7 @@ impl ObjData {
             animator: None,
             motion_matcher: None,
             bone_attachment: None,
+            first_person: None,
             ocean: None,
             pool: None,
             dry_area: None,
@@ -1328,6 +1332,9 @@ fn capture_instance(
     if root.bone_attachment.is_some() && root.bone_attachment != prefab_root.bone_attachment {
         instance.bone_attachment = root.bone_attachment.clone();
     }
+    if root.first_person.is_some() && root.first_person != prefab_root.first_person {
+        instance.first_person = root.first_person.clone();
+    }
     if root.ocean.is_some() && root.ocean != prefab_root.ocean {
         instance.ocean = root.ocean;
     }
@@ -1478,6 +1485,10 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     let matcher = actual.motion_matcher.as_ref().filter(|m| Some(*m) != expected.motion_matcher.as_ref());
     if let Some(matcher) = matcher {
         put("motion_matcher", whole(matcher, &crate::animation::MotionMatcher::default())?);
+    }
+    let view = actual.first_person.as_ref().filter(|v| Some(*v) != expected.first_person.as_ref());
+    if let Some(view) = view {
+        put("first_person", whole(view, &crate::first_person::FirstPersonView::default())?);
     }
     let attachment = actual.bone_attachment.as_ref().filter(|a| Some(*a) != expected.bone_attachment.as_ref());
     if let Some(attachment) = attachment {
@@ -1733,6 +1744,7 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.animator = world.get::<crate::animation::Animator>(entity).cloned();
     obj.motion_matcher = world.get::<crate::animation::MotionMatcher>(entity).cloned();
     obj.bone_attachment = world.get::<crate::animation::BoneAttachment>(entity).cloned();
+    obj.first_person = world.get::<crate::first_person::FirstPersonView>(entity).cloned();
     obj.ocean = world.get::<Ocean>(entity).copied();
     obj.pool = world.get::<Pool>(entity).copied();
     obj.dry_area = world.get::<DryArea>(entity).map(|area| DryAreaData::of(content, area));

@@ -391,6 +391,7 @@ fn apply_instance(root: &mut ObjData, instance: &ObjData) {
     root.animator = instance.animator.clone().or(root.animator.clone());
     root.motion_matcher = instance.motion_matcher.clone().or(root.motion_matcher.clone());
     root.bone_attachment = instance.bone_attachment.clone().or(root.bone_attachment.clone());
+    root.first_person = instance.first_person.clone().or(root.first_person.clone());
     root.ocean = instance.ocean.or(root.ocean);
     root.pool = instance.pool.or(root.pool);
     if instance.dry_area.is_some() {
@@ -455,6 +456,7 @@ pub struct TemplateObj {
     pub animator: Option<crate::animation::Animator>,
     pub motion_matcher: Option<crate::animation::MotionMatcher>,
     pub bone_attachment: Option<crate::animation::BoneAttachment>,
+    pub first_person: Option<crate::first_person::FirstPersonView>,
     pub ocean: Option<Ocean>,
     pub pool: Option<Pool>,
     pub dry_area: Option<DryArea>,
@@ -624,6 +626,9 @@ impl Template {
             }
             if let Some(attachment) = obj.bone_attachment.clone() {
                 world.insert(entity, attachment);
+            }
+            if let Some(view) = obj.first_person.clone() {
+                world.insert(entity, view);
             }
             if let Some(ocean) = obj.ocean {
                 world.insert(entity, ocean);
@@ -952,6 +957,7 @@ pub(crate) fn resolve_obj(
         animator: data.animator.clone(),
         motion_matcher: data.motion_matcher.clone(),
         bone_attachment: data.bone_attachment.clone(),
+        first_person: data.first_person.clone(),
         ocean: data.ocean,
         pool: data.pool,
         dry_area,

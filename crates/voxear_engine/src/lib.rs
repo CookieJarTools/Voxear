@@ -5,6 +5,7 @@ pub mod acoustics;
 pub mod animation;
 pub mod audio;
 pub mod build_profile;
+mod cameras;
 mod content;
 pub mod content_build;
 pub mod debug_texts;

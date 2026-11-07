@@ -4,6 +4,7 @@
 //! bone, steadied so the head's bob reaches it only in part, and the head
 //! itself is hidden so the camera does not see inside it.
 
+use serde::{Deserialize, Serialize};
 use voxear_core::math::{Mat4, Quat, Vec2, Vec3};
 use voxear_core::spring::{Spring, SpringFeel};
 use voxear_core::time::Time;
@@ -17,13 +18,16 @@ use crate::animation::rig::Rig;
 /// The most the upper body leans into the view, in degrees.
 const MOST_LEAN: f32 = 40.0;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct FirstPersonView {
     /// The Obj whose model is the body; the first Model Renderer under
-    /// the Obj when none.
+    /// the Obj when none. Set by scripts.
+    #[serde(skip)]
     pub body: Option<Entity>,
     /// The camera it places; the first Camera under the Obj, or else the
-    /// first anywhere, when none.
+    /// first anywhere, when none. Set by scripts.
+    #[serde(skip)]
     pub camera: Option<Entity>,
     /// Where it looks, in degrees: the turn about up from +Z, and the tilt,
     /// up positive.
@@ -173,6 +177,81 @@ pub fn place(world: &mut World) {
             set_world(world, camera, obj.transform_point3(shown), view.rotation());
         }
     }
+}
+
+// What `values` reads or writes, as `FirstPersonView` in Voxear.Core numbers them.
+const HAS: i32 = 0;
+const ADD: i32 = 1;
+const REMOVE: i32 = 2;
+const YAW: i32 = 3;
+const PITCH: i32 = 4;
+const MOUSE_LOOK: i32 = 5;
+const SENSITIVITY: i32 = 6;
+const PITCH_LIMITS: i32 = 7;
+const BOB: i32 = 8;
+const EYES: i32 = 9;
+const TURN_OBJ: i32 = 10;
+const LEAN: i32 = 11;
+const HIDE_HEAD: i32 = 12;
+const BODY: i32 = 13;
+const CAMERA: i32 = 14;
+
+pub(crate) fn register() {
+    voxear_scripting::set_kind_values(voxear_scripting::ComponentKind::FirstPersonView, values);
+}
+
+fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]>) -> Option<[f32; 4]> {
+    use crate::cameras::{obj_value, value_obj};
+    if !world.is_alive(entity) {
+        return None;
+    }
+    let number = |n: f32| [n, 0.0, 0.0, 0.0];
+    let flag = |on: bool| number(f32::from(u8::from(on)));
+    match (what, written) {
+        (HAS, None) => return Some(flag(world.has::<FirstPersonView>(entity))),
+        (ADD, Some(_)) => {
+            if !world.has::<FirstPersonView>(entity) {
+                world.insert(entity, FirstPersonView::default());
+            }
+            return Some([0.0; 4]);
+        }
+        (REMOVE, Some(_)) => return world.remove::<FirstPersonView>(entity).map(|_| [0.0; 4]),
+        _ => {}
+    }
+    let view = world.get_mut::<FirstPersonView>(entity)?;
+    let Some(v) = written else {
+        return match what {
+            YAW => Some(number(view.yaw)),
+            PITCH => Some(number(view.pitch)),
+            MOUSE_LOOK => Some(flag(view.mouse_look)),
+            SENSITIVITY => Some(number(view.sensitivity)),
+            PITCH_LIMITS => Some([view.pitch_limits[0], view.pitch_limits[1], 0.0, 0.0]),
+            BOB => Some(number(view.bob)),
+            EYES => Some([view.eyes[0], view.eyes[1], view.eyes[2], 0.0]),
+            TURN_OBJ => Some(flag(view.turn_obj)),
+            LEAN => Some(number(view.lean)),
+            HIDE_HEAD => Some(flag(view.hide_head)),
+            BODY => Some(obj_value(view.body)),
+            CAMERA => Some(obj_value(view.camera)),
+            _ => None,
+        };
+    };
+    match what {
+        YAW => view.yaw = v[0],
+        PITCH => view.pitch = v[0].clamp(view.pitch_limits[0], view.pitch_limits[1]),
+        MOUSE_LOOK => view.mouse_look = v[0] != 0.0,
+        SENSITIVITY => view.sensitivity = v[0].max(0.0),
+        PITCH_LIMITS => view.pitch_limits = [v[0].clamp(-90.0, 0.0), v[1].clamp(0.0, 90.0)],
+        BOB => view.bob = v[0].clamp(0.0, 1.0),
+        EYES => view.eyes = [v[0], v[1], v[2]],
+        TURN_OBJ => view.turn_obj = v[0] != 0.0,
+        LEAN => view.lean = v[0].clamp(0.0, 1.0),
+        HIDE_HEAD => view.hide_head = v[0] != 0.0,
+        BODY => view.body = value_obj(v),
+        CAMERA => view.camera = value_obj(v),
+        _ => return None,
+    }
+    Some([0.0; 4])
 }
 
 /// Puts an Obj at a place and turn in the world, through its parent.

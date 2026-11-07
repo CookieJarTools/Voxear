@@ -7,6 +7,7 @@
 use voxear_assets::AssetKind;
 use voxear_core::math::Vec3;
 use voxear_ecs::{Entity, World};
+use voxear_engine::first_person::FirstPersonView;
 use voxear_engine::modules::Module;
 use voxear_engine::{
     EditBehaviours, Game, MaterialSource,
@@ -85,6 +86,7 @@ pub enum Part {
     Animator,
     MotionMatcher,
     BoneAttachment,
+    FirstPersonView,
     Ocean,
     Pool,
     DryArea,
@@ -130,6 +132,7 @@ impl Part {
             Part::Animator => "animator".into(),
             Part::MotionMatcher => "motion_matcher".into(),
             Part::BoneAttachment => "bone_attachment".into(),
+            Part::FirstPersonView => "first_person".into(),
             Part::Ocean => "ocean".into(),
             Part::Pool => "pool".into(),
             Part::DryArea => "dry_area".into(),
@@ -181,6 +184,7 @@ impl Part {
             Part::Animator => "Animator",
             Part::MotionMatcher => "Motion Matcher",
             Part::BoneAttachment => "Bone Attachment",
+            Part::FirstPersonView => "First-Person View",
             Part::Ocean => "Ocean",
             Part::Pool => "Pool",
             Part::DryArea => "Dry Area",
@@ -219,6 +223,7 @@ impl Part {
             Part::Animator => "play",
             Part::MotionMatcher => "play",
             Part::BoneAttachment => "play",
+            Part::FirstPersonView => "camera",
             Part::Ocean => "globe",
             Part::Pool => "globe",
             Part::DryArea => "box",
@@ -357,6 +362,17 @@ pub enum Prop {
     AttachOffset,
     AttachTurn,
     AttachHide,
+    /// A First-Person View's mouse look and how quick it is, how far it
+    /// tilts, how much bob reaches the camera, where the eyes are, and
+    /// whether it turns the Obj, leans the body and hides the head.
+    ViewMouseLook,
+    ViewSensitivity,
+    ViewPitchLimits,
+    ViewBob,
+    ViewEyes,
+    ViewTurnObj,
+    ViewLean,
+    ViewHideHead,
     /// An Ocean's weather, and for Custom weather its swell and wind; its
     /// crests, colours and foam.
     OceanWeather,
@@ -670,6 +686,14 @@ impl Prop {
             | Prop::MatcherFootLocking
             | Prop::MatcherDebug => Part::MotionMatcher,
             Prop::AttachBone | Prop::AttachOffset | Prop::AttachTurn | Prop::AttachHide => Part::BoneAttachment,
+            Prop::ViewMouseLook
+            | Prop::ViewSensitivity
+            | Prop::ViewPitchLimits
+            | Prop::ViewBob
+            | Prop::ViewEyes
+            | Prop::ViewTurnObj
+            | Prop::ViewLean
+            | Prop::ViewHideHead => Part::FirstPersonView,
             Prop::OceanWeather
             | Prop::OceanWindSource
             | Prop::OceanTransition
@@ -918,6 +942,14 @@ impl Prop {
             Prop::AttachOffset => "offset",
             Prop::AttachTurn => "turn",
             Prop::AttachHide => "hide",
+            Prop::ViewMouseLook => "mouse_look",
+            Prop::ViewSensitivity => "sensitivity",
+            Prop::ViewPitchLimits => "pitch_limits",
+            Prop::ViewBob => "bob",
+            Prop::ViewEyes => "eyes",
+            Prop::ViewTurnObj => "turn_obj",
+            Prop::ViewLean => "lean",
+            Prop::ViewHideHead => "hide_head",
             Prop::OceanWeather => "weather",
             Prop::OceanWindSource => "wind_source",
             Prop::OceanTransition => "transition",
@@ -1147,6 +1179,9 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     if world.has::<voxear_engine::animation::BoneAttachment>(entity) {
         parts.push(Part::BoneAttachment);
     }
+    if world.has::<FirstPersonView>(entity) {
+        parts.push(Part::FirstPersonView);
+    }
     if world.has::<Ocean>(entity) {
         parts.push(Part::Ocean);
     }
@@ -1326,6 +1361,16 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             Prop::MatcherDebug,
         ],
         Part::BoneAttachment => vec![Prop::AttachBone, Prop::AttachOffset, Prop::AttachTurn, Prop::AttachHide],
+        Part::FirstPersonView => vec![
+            Prop::ViewMouseLook,
+            Prop::ViewSensitivity,
+            Prop::ViewPitchLimits,
+            Prop::ViewBob,
+            Prop::ViewEyes,
+            Prop::ViewTurnObj,
+            Prop::ViewLean,
+            Prop::ViewHideHead,
+        ],
         Part::ParticleSystem => {
             let shape = world.get::<ParticleSystem>(entity).map_or(EmitShape::Cone, |system| system.shape);
             let mut props = vec![
@@ -1664,6 +1709,14 @@ pub fn label(prop: &Prop) -> String {
         Prop::AttachOffset => "Offset",
         Prop::AttachTurn => "Turn With Bone",
         Prop::AttachHide => "Hide Bone",
+        Prop::ViewMouseLook => "Mouse Look",
+        Prop::ViewSensitivity => "Sensitivity",
+        Prop::ViewPitchLimits => "Tilt Limits",
+        Prop::ViewBob => "Head Bob",
+        Prop::ViewEyes => "Eyes",
+        Prop::ViewTurnObj => "Turn Obj",
+        Prop::ViewLean => "Lean",
+        Prop::ViewHideHead => "Hide Head",
         Prop::OceanWeather => "Weather",
         Prop::OceanWindSource => "Wind Source",
         Prop::OceanTransition => "Transition",
@@ -1960,6 +2013,9 @@ pub fn add(
         Part::BoneAttachment => {
             world.insert(entity, voxear_engine::animation::BoneAttachment::default());
         }
+        Part::FirstPersonView => {
+            world.insert(entity, FirstPersonView::default());
+        }
         Part::Ocean => {
             world.insert(entity, Ocean::default());
         }
@@ -2040,6 +2096,9 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
         }
         Part::BoneAttachment => {
             world.remove::<voxear_engine::animation::BoneAttachment>(entity);
+        }
+        Part::FirstPersonView => {
+            world.remove::<FirstPersonView>(entity);
         }
         Part::ParticleSystem => {
             world.remove::<ParticleSystem>(entity);
@@ -2329,6 +2388,14 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::AttachOffset => Value::Vector(world.get::<BoneAttachment>(entity)?.offset.to_vec()),
         Prop::AttachTurn => Value::Toggle(world.get::<voxear_engine::animation::BoneAttachment>(entity)?.turn),
         Prop::AttachHide => Value::Toggle(world.get::<voxear_engine::animation::BoneAttachment>(entity)?.hide),
+        Prop::ViewMouseLook => Value::Toggle(world.get::<FirstPersonView>(entity)?.mouse_look),
+        Prop::ViewSensitivity => Value::Number(world.get::<FirstPersonView>(entity)?.sensitivity),
+        Prop::ViewPitchLimits => Value::Vector(world.get::<FirstPersonView>(entity)?.pitch_limits.to_vec()),
+        Prop::ViewBob => Value::Number(world.get::<FirstPersonView>(entity)?.bob),
+        Prop::ViewEyes => Value::Vector(world.get::<FirstPersonView>(entity)?.eyes.to_vec()),
+        Prop::ViewTurnObj => Value::Toggle(world.get::<FirstPersonView>(entity)?.turn_obj),
+        Prop::ViewLean => Value::Number(world.get::<FirstPersonView>(entity)?.lean),
+        Prop::ViewHideHead => Value::Toggle(world.get::<FirstPersonView>(entity)?.hide_head),
         Prop::MatcherMotionSet => {
             let set = &world.get::<voxear_engine::animation::MotionMatcher>(entity)?.motion_set;
             let guid = game.content.parse(set).ok().and_then(|reference| reference.guid());
@@ -3258,6 +3325,20 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         }
         (Prop::AttachTurn, Value::Toggle(on)) => with(world, entity, |it: &mut BoneAttachment| it.turn = on),
         (Prop::AttachHide, Value::Toggle(on)) => with(world, entity, |it: &mut BoneAttachment| it.hide = on),
+        (Prop::ViewMouseLook, Value::Toggle(on)) => with(world, entity, |it: &mut FirstPersonView| it.mouse_look = on),
+        (Prop::ViewSensitivity, Value::Number(n)) => {
+            with(world, entity, |it: &mut FirstPersonView| it.sensitivity = n.max(0.0))
+        }
+        (Prop::ViewPitchLimits, Value::Vector(v)) if v.len() == 2 => {
+            with(world, entity, |it: &mut FirstPersonView| it.pitch_limits = [v[0].clamp(-90.0, 0.0), v[1].clamp(0.0, 90.0)])
+        }
+        (Prop::ViewBob, Value::Number(n)) => with(world, entity, |it: &mut FirstPersonView| it.bob = n.clamp(0.0, 1.0)),
+        (Prop::ViewEyes, Value::Vector(v)) if v.len() == 3 => {
+            with(world, entity, |it: &mut FirstPersonView| it.eyes = [v[0], v[1], v[2]])
+        }
+        (Prop::ViewTurnObj, Value::Toggle(on)) => with(world, entity, |it: &mut FirstPersonView| it.turn_obj = on),
+        (Prop::ViewLean, Value::Number(n)) => with(world, entity, |it: &mut FirstPersonView| it.lean = n.clamp(0.0, 1.0)),
+        (Prop::ViewHideHead, Value::Toggle(on)) => with(world, entity, |it: &mut FirstPersonView| it.hide_head = on),
         (prop, value) if prop.part() == Part::MotionMatcher => {
             let set = |matcher: &mut voxear_engine::animation::MotionMatcher| set_matcher(matcher, prop, value);
             with(world, entity, set)

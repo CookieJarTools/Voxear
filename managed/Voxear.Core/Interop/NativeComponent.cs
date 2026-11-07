@@ -1,3 +1,4 @@
+using System;
 using System.Numerics;
 
 namespace Voxear.Interop;
@@ -36,6 +37,20 @@ internal static unsafe class NativeComponent
 	public static float Number(int kind, Obj obj, int what, float otherwise)
 	{
 		return Get(kind, obj, what, out var value) ? value.X : otherwise;
+	}
+
+	/// <summary>An Obj as a value: its id's two halves, bit for bit.</summary>
+	public static Vector4 ValueOf(Obj obj)
+	{
+		var id = obj.Id;
+		return new Vector4(BitConverter.UInt32BitsToSingle((uint)id), BitConverter.UInt32BitsToSingle((uint)(id >> 32)), 0f, 0f);
+	}
+
+	/// <summary>The Obj a value names, or None.</summary>
+	public static Obj ObjOf(Vector4 value)
+	{
+		var id = BitConverter.SingleToUInt32Bits(value.X) | (ulong)BitConverter.SingleToUInt32Bits(value.Y) << 32;
+		return id == 0 ? Obj.None : new Obj(id);
 	}
 
 	/// <summary>Writes a value of an Obj's component of a kind: false when the Obj has none.</summary>

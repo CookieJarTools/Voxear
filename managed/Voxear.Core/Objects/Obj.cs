@@ -258,6 +258,26 @@ public readonly struct Obj : IEquatable<Obj>
 		return new Smoke(this);
 	}
 
+	/// <summary>The Obj's Camera. Not valid when it has none.</summary>
+	public Camera Camera => new Camera(this);
+
+	/// <summary>Gives the Obj a Camera, unless it has one, and returns it.</summary>
+	public Camera AddCamera()
+	{
+		NativeComponent.Set(NativeComponent.Camera, this, NativeComponent.Add, Vector4.Zero);
+		return new Camera(this);
+	}
+
+	/// <summary>The Obj's First-Person View. Not valid when it has none.</summary>
+	public FirstPersonView FirstPersonView => new FirstPersonView(this);
+
+	/// <summary>Gives the Obj a First-Person View, unless it has one, and returns it.</summary>
+	public FirstPersonView AddFirstPersonView()
+	{
+		NativeComponent.Set(NativeComponent.FirstPersonView, this, NativeComponent.Add, Vector4.Zero);
+		return new FirstPersonView(this);
+	}
+
 	/// <summary>The Obj's Mist. Not valid when it has none.</summary>
 	public Mist Mist => new Mist(this);
 

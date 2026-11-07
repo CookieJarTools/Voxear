@@ -10,8 +10,11 @@ pub mod gun;
 pub mod hands;
 pub mod holder;
 pub mod leftovers;
+#[cfg(test)]
+mod legacy_plan;
 pub mod mechanism;
 pub mod playing;
+pub mod templates;
 mod values;
 
 pub(crate) use values::register;

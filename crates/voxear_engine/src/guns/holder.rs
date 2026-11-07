@@ -15,7 +15,7 @@ use voxear_physics::scene::PhysicsScene;
 use voxear_render::{ModelRenderer, Pose};
 use voxear_scene::{Parent, world_matrix};
 
-use super::actions::{ActionKind, Hand, plan};
+use super::actions::{ActionKind, Hand};
 use super::contact::{Shape, surface};
 use super::gun::{Gun, GunKind, HandRole, Socket};
 use super::hands::{Grip, close, keep_out, palm_of, seat_hand};
@@ -336,12 +336,11 @@ pub fn hold(world: &mut World) {
                 holder.request = holder.request.or(Some(ActionKind::Cycle));
             }
         }
-        if let Some(kind) = holder.request.take().filter(|_| state.play.is_none()) {
-            let beats = plan(kind, gun.kind, &mechanism, holder.spare);
-            if !beats.is_empty() {
-                state.play = Some(ActionPlay::new(kind, beats));
-                state.returning = [None; 2];
-            }
+        if let Some(kind) = holder.request.take().filter(|_| state.play.is_none())
+            && let Some(play) = ActionPlay::start(kind, gun.kind, &mechanism, holder.spare)
+        {
+            state.play = Some(play);
+            state.returning = [None; 2];
         }
         if let Some(stored) = world.get_mut::<GunHolder>(entity) {
             stored.request = None;
@@ -459,15 +458,10 @@ fn place_gun(
     let reach = holder.hip[2] + gun.muzzle[2] + 0.1;
     let blocked = if holder.wall_check { wall(world, entity, eye, reach) } else { 0.0 };
     let wall = state.wall.update(blocked, delta).clamp(0.0, 1.0);
-    // An action other than working the bolt takes the gun down from the eye; working the bolt only half lifts it.
-    let acting = state.play.as_ref().map(|play| play.kind);
-    let busy = acting.is_some_and(|kind| kind != ActionKind::Cycle);
+    // An action takes the gun down from the eye and lifts it before them, as far as it says: working the bolt
+    // keeps it at the eye and only half lifts it.
+    let (lift, busy) = state.play.as_ref().map_or((0.0, false), |play| (play.lift, play.lowers_aim));
     let aim = state.aim.update(if holder.aiming && !busy { 1.0 - wall } else { 0.0 }, delta).clamp(0.0, 1.0);
-    let lift = match acting {
-        None => 0.0,
-        Some(ActionKind::Cycle) => 0.4,
-        Some(_) => 1.0,
-    };
     let working = state.working.update(lift * (1.0 - aim), delta).max(0.0);
 
     // At the hip, and up to the eye with the sights on the camera's line, blended; it dips a little on the way up.
@@ -794,7 +788,7 @@ fn hands_on(
 /// one it carries.
 fn in_hand(world: &World, mechanism: &GunState, play: Option<&ActionPlay>) -> Vec<Entity> {
     let Some(beat) = play.and_then(ActionPlay::beat) else { return Vec::new() };
-    let roles = [beat.carry, beat.drive.map(|(role, ..)| role)];
+    let roles = [beat.carry, beat.drive.map(|drive| drive.part)];
     let has = |entity: Entity| world.get::<GunPart>(entity).is_some_and(|part| roles.contains(&Some(part.role)));
     mechanism.parts.iter().map(|&(entity, ..)| entity).filter(|&entity| has(entity)).collect()
 }

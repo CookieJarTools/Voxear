@@ -6,6 +6,7 @@
 //! grip of any size and never pass through it. A grip says how far each
 //! finger may curl at most, thumb first.
 
+use serde::{Deserialize, Serialize};
 use voxear_core::math::{Quat, Vec3};
 
 use super::contact::{Shape, nearest, push_out};
@@ -24,8 +25,10 @@ const STEPS: usize = 24;
 const BENDING: f32 = 0.05;
 
 /// A hand's grip: how far each finger curls at most, from 0 straight to 1
-/// a fist, thumb first.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// a fist, thumb first. Written as the name of one of its presets, or as
+/// five curls.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(from = "GripText", into = "GripText")]
 pub struct Grip(pub [f32; 5]);
 
 impl Grip {
@@ -41,6 +44,51 @@ impl Grip {
     /// `t` of the way to `other`.
     pub fn lerp(self, other: Grip, t: f32) -> Grip {
         Grip(std::array::from_fn(|i| self.0[i] + (other.0[i] - self.0[i]) * t))
+    }
+
+    /// The presets, as they are written.
+    const NAMED: [(GripName, Grip); 4] = [
+        (GripName::Trigger, Grip::TRIGGER),
+        (GripName::Support, Grip::SUPPORT),
+        (GripName::Pinch, Grip::PINCH),
+        (GripName::Open, Grip::OPEN),
+    ];
+}
+
+/// A grip as written: a preset's name, or five curls.
+#[derive(Clone, Copy, Serialize, Deserialize)]
+#[serde(untagged)]
+enum GripText {
+    Named(GripName),
+    Curls { curl: [f32; 5] },
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum GripName {
+    Trigger,
+    Support,
+    Pinch,
+    Open,
+}
+
+impl From<GripText> for Grip {
+    fn from(text: GripText) -> Self {
+        match text {
+            GripText::Named(name) => {
+                Grip::NAMED.iter().find(|(named, _)| *named == name).map_or(Grip::PINCH, |(_, grip)| *grip)
+            }
+            GripText::Curls { curl } => Grip(curl),
+        }
+    }
+}
+
+impl From<Grip> for GripText {
+    fn from(grip: Grip) -> Self {
+        match Grip::NAMED.iter().find(|(_, named)| *named == grip) {
+            Some((name, _)) => GripText::Named(*name),
+            None => GripText::Curls { curl: grip.0 },
+        }
     }
 }
 

@@ -33,6 +33,10 @@ pub struct ActionPlay {
     /// Knocks the gun took as beats ended, for its holder to give it: a
     /// spin of its sway, and a push of its lag, since last asked.
     pub knock: (Vec3, Vec3),
+    /// How far the action lifts the gun up before the eyes, and whether it
+    /// takes the gun down from them.
+    pub lift: f32,
+    pub lowers_aim: bool,
 }
 
 /// What a beat throwing something away needs: the gun's place and turn in
@@ -47,6 +51,14 @@ pub struct Throwing {
 }
 
 impl ActionPlay {
+    /// A built-in action started on a gun of `gun` in `state`, its holder
+    /// having `spare` rounds; none when it has nothing to do.
+    pub fn start(kind: ActionKind, gun: super::gun::GunKind, state: &GunState, spare: u32) -> Option<Self> {
+        let spec = super::templates::template(gun, kind);
+        let beats = super::actions::expand(&spec, gun, state, spare);
+        (!beats.is_empty()).then(|| Self { lift: spec.lift, lowers_aim: spec.lowers_aim, ..Self::new(kind, beats) })
+    }
+
     pub fn new(kind: ActionKind, beats: Vec<Beat>) -> Self {
         Self {
             kind,
@@ -58,6 +70,8 @@ impl ActionPlay {
             hands: [None; 2],
             dropped: false,
             knock: (Vec3::ZERO, Vec3::ZERO),
+            lift: 1.0,
+            lowers_aim: true,
         }
     }
 
@@ -129,10 +143,10 @@ pub fn advance(
             break;
         }
         // The beat is done: its part comes to rest where it was driven to, and what it does happens.
-        if let Some((role, _, to)) = beat.drive
-            && let Some((index, ..)) = part(world, state, role)
+        if let Some(drive) = beat.drive
+            && let Some((index, ..)) = part(world, state, drive.part)
         {
-            state.parts[index].1 = to;
+            state.parts[index].1 = drive.to;
         }
         let (chamber, rounds) = (state.chamber, state.rounds);
         apply(beat.then, gun.kind, state, spare);
@@ -161,10 +175,10 @@ pub fn advance(
         curve([from, from + out, goal + toward * 0.08, goal], s)
     } else {
         let work = minimum_jerk((play.t - beat.reach) / beat.work.max(1e-4));
-        if let Some((role, start, end)) = beat.drive
-            && let Some((index, ..)) = part(world, state, role)
+        if let Some(drive) = beat.drive
+            && let Some((index, ..)) = part(world, state, drive.part)
         {
-            state.parts[index].1 = start + (end - start) * work;
+            state.parts[index].1 = drive.from + (drive.to - drive.from) * work;
         }
         goal_at(world, gun, state, beat.goal, beat.hand, pouches)
     };
@@ -172,7 +186,7 @@ pub fn advance(
     let grip = if play.t < beat.reach * 0.7 { Grip::OPEN.lerp(beat.grip, 0.3) } else { beat.grip };
     // A hand leaving its hold eases out of it over the first half of its reach.
     let settle = if play.rested { 1.0 - minimum_jerk(play.t / (beat.reach * 0.5).max(1e-4)) } else { 0.0 };
-    Some((HandAim { hand: beat.hand, at, grip, settle, toward }, beat.tilt))
+    Some((HandAim { hand: beat.hand, at, grip, settle, toward }, Vec3::from(beat.tilt)))
 }
 
 /// The way a hand comes in to a goal, in the gun's space, out from it: to
@@ -210,12 +224,12 @@ pub fn carry_now(world: &mut World, state: &GunState, play: &ActionPlay) {
 /// while a hand has one.
 fn carry(world: &mut World, state: &GunState, play: &ActionPlay, at: Vec3) {
     let carried = play.beat().and_then(|beat| beat.carry);
-    let driven = play.beat().and_then(|beat| beat.drive.map(|(role, ..)| role));
+    let driven = play.beat().and_then(|beat| beat.drive.map(|drive| drive.part));
     for &(entity, place, rest) in &state.parts {
         let Some(part) = world.get::<GunPart>(entity).cloned() else { continue };
         // An empty magazine dropped leaves the hand empty on its way to the pouch.
         if part.role == PartRole::Magazine {
-            let away = play.dropped && play.beat().is_some_and(|beat| beat.name == "to pouch");
+            let away = play.dropped && play.beat().is_some_and(|beat| beat.stow);
             match away {
                 true => drop(world.insert(entity, Hidden)),
                 false => drop(world.remove::<Hidden>(entity)),
@@ -244,14 +258,14 @@ fn carry(world: &mut World, state: &GunState, play: &ActionPlay, at: Vec3) {
 /// yanked back, a clip pressed down, a magazine seated, a cover slapped
 /// shut. Each is a spin (up, aside, roll) and a push along the gun.
 fn knock(play: &mut ActionPlay, beat: &Beat) {
-    use super::actions::Event;
-    let (spin, push) = match (beat.then, beat.name) {
-        (Event::Chamber, _) => (Vec3::new(-1.2, 0.3, 0.6), Vec3::new(0.0, 0.0, 0.05)),
-        (Event::Eject, _) => (Vec3::new(0.6, -0.2, -0.8), Vec3::new(0.01, 0.0, -0.06)),
-        (Event::AddRounds(_), "press") => (Vec3::new(1.4, 0.0, 0.0), Vec3::new(0.0, -0.06, 0.0)),
-        (Event::Load, _) => (Vec3::new(-1.6, 0.2, 0.0), Vec3::new(0.0, 0.07, 0.0)),
-        (_, "cover down") => (Vec3::new(1.8, 0.0, 0.0), Vec3::new(0.0, -0.06, 0.0)),
-        _ => return,
+    use super::actions::Knock;
+    let (spin, push) = match beat.knock.of(beat.then) {
+        Knock::SlamHome => (Vec3::new(-1.2, 0.3, 0.6), Vec3::new(0.0, 0.0, 0.05)),
+        Knock::YankBack => (Vec3::new(0.6, -0.2, -0.8), Vec3::new(0.01, 0.0, -0.06)),
+        Knock::PressDown => (Vec3::new(1.4, 0.0, 0.0), Vec3::new(0.0, -0.06, 0.0)),
+        Knock::Seat => (Vec3::new(-1.6, 0.2, 0.0), Vec3::new(0.0, 0.07, 0.0)),
+        Knock::SlapShut => (Vec3::new(1.8, 0.0, 0.0), Vec3::new(0.0, -0.06, 0.0)),
+        Knock::ByEvent | Knock::Nothing => return,
     };
     play.knock.0 += spin;
     play.knock.1 += push;
@@ -269,16 +283,16 @@ fn throw_away(
     (chamber, rounds): (super::mechanism::Chamber, u32),
     throwing: Throwing,
 ) {
-    use super::actions::Event;
+    use super::actions::{Event, Throw};
     use super::leftovers::{throw, throw_case};
     use super::mechanism::{Chamber, Feed};
     let Throwing { held, velocity, now, seed } = throwing;
     let (right, up) = (held.transform_vector3(Vec3::X), held.transform_vector3(Vec3::Y));
-    match beat.then {
-        Event::Eject if chamber != Chamber::Empty => {
-            throw_case(world, state, held, velocity, now, seed);
-        }
-        Event::Unload if gun.kind.feed() == Feed::Magazine && rounds == 0 => {
+    if beat.then == Event::Eject && chamber != Chamber::Empty {
+        throw_case(world, state, held, velocity, now, seed);
+    }
+    match beat.throw {
+        Throw::EmptyMagazine if rounds == 0 => {
             play.dropped = true;
             let down = velocity - up * 1.2 + right * seed * 0.3;
             throw(
@@ -292,20 +306,9 @@ fn throw_away(
                 now,
             );
         }
-        Event::Chamber if beat.name == "push" && play.kind == super::actions::ActionKind::Reload => {
-            if matches!(gun.kind.feed(), Feed::Clips(_)) {
-                let flick = velocity + right * 1.8 + up * 1.5;
-                throw(
-                    world,
-                    state,
-                    PartRole::Clip,
-                    "Stripper Clip",
-                    flick,
-                    up * 12.0,
-                    Vec3::new(0.012, 0.05, 0.06),
-                    now,
-                );
-            }
+        Throw::Clip if matches!(gun.kind.feed(), Feed::Clips(_)) => {
+            let flick = velocity + right * 1.8 + up * 1.5;
+            throw(world, state, PartRole::Clip, "Stripper Clip", flick, up * 12.0, Vec3::new(0.012, 0.05, 0.06), now);
         }
         _ => {}
     }

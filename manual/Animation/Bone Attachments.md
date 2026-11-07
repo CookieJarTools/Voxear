@@ -1,5 +1,5 @@
 ---
-order: 3
+order: 6
 ---
 
 A **Bone Attachment** keeps its Obj on a bone of its parent's model as the model is posed: eyes on a character's head, a gun in its hand, a torch on its belt. Put the Obj under the model's Obj, then add one with **Add Component ▸ Animation ▸ Bone Attachment** and pick its **Bone**.

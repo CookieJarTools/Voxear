@@ -1,14 +1,14 @@
 ---
-order: 2
+order: 3
 ---
 
-A **Motion Matcher** animates a character from its clips, with no graph of states to wire up. Ten times a second, and at once whenever the movement wanted changes, it searches its model's looping clips for the ones that move as the character should: as fast, the same way, along the same path. It blends the few that match best, fading each one's share in and out so nothing pops. Below a walk, a clip that stands still fades in instead.
+A **Motion Matcher** animates a character from its clips, with no graph of states to wire up. Ten times a second, and at once whenever the movement wanted changes, it searches its looping clips for the ones that move as the character should: as fast, the same way, along the same path. It blends the few that match best, fading each one's share in and out so nothing pops. Below a walk, a clip that stands still fades in instead.
 
-Add one with **Add Component ▸ Animation ▸ Motion Matcher** to an Obj whose model was made to animate. Its clips are what it has to choose from:
+Add one with **Add Component ▸ Animation ▸ Motion Matcher** to an Obj whose model was made to animate, and give it a [[Motion Sets|Motion Set]]: the clips of the state playing are what it has to choose from. With no Motion Set, it plays the model's own clips.
 
 - Looping clips that move steadily are what it walks, runs and steps aside with. A walk forward, a jog, a run, steps to each side and back give it the most to work with.
-- A loop made to stay in place, as many walks are, still counts: it moves as fast as its planted foot slides back.
-- **Idle Clip** is the clip it stands with. None picks the first looping clip that stands still.
+- A loop made to stay in place, as many walks are, still counts: it moves as fast as its planted foot slides back, or as its clip settings say (see [[Animation Clips]]).
+- The state's **Idle Clip** is the clip it stands with.
 
 The clips blended play in step, each the same share of the way through its loop, so their feet fall together. With **Match Speed** on, they play a little faster or slower so their feet keep pace with the ground the Obj covers. With **Foot Locking** on, a foot the clips have down stays where it came down, the leg bending to reach it, until the clips lift it or the leg would have to stretch too far; then it eases back to the clips' foot.
 
@@ -42,7 +42,8 @@ Going another way than it faces, the hips and legs turn towards the way it goes,
 
 ## Settings
 
-- **Idle Clip**: the clip it stands with.
+- **Motion Set**: its states and actions. None plays the model's own clips, standing with the first loop that stands still.
+- **Root Motion**: the clips move the Obj, through its Character Controller when it has one, rather than the game moving it.
 - **Idle Speed**: below this many metres a second wanted, it stands.
 - **Search Every**: seconds between searches.
 - **Blend Time**: how long a change of clips takes to fade in.

@@ -150,7 +150,7 @@ A picture packed inside a model file has no `.meta` of its own, so it is always 
 - The shape, its normals (which way each surface faces) and its texture coordinates. If the file has no normals, Voxear works them out.
 - Its materials: colour, metal and roughness, normal map, and glow, each with its picture.
 - Cut-outs, such as leaves on a flat card, where the material says to cut them out.
-- Its skeleton, the bones each mesh moves with, and its clips, for a model made to animate. See [[Animator]].
+- Its skeleton, the bones each mesh moves with, and its clips, for a model made to animate. See [[Animation Clips]].
 
 Not yet read: vertex colours, see-through materials (they are drawn solid), and the cameras and lights in the file.
 
@@ -160,10 +160,11 @@ Not yet read: vertex colours, see-through materials (they are drawn solid), and 
 - Its size and which way is up. A model made in centimetres comes in at the right size, and a model from a program where Z is up comes in standing up. Its Objs show no extra turn to undo.
 - Its materials: colour, metal, roughness and glow, and the pictures for colour, normal map and glow. Older FBX materials (Phong and Lambert) work too. A colour picture takes the place of the colour.
 - A mesh with several materials becomes one part for each material.
+- Its skeleton, the bones each mesh moves with, and its clips, one for each animation the file holds, for a model made to animate. See [[Animation Clips]].
 
 Pictures can be packed inside the FBX file, or kept beside it. FBX files often name a picture by a full path on the computer that made them, such as `C:\Art\wood.png`. Voxear looks for a picture with that name in the model's folder, so keep the pictures beside the model. A picture Voxear cannot find, or cannot read, is left out, and the model loads without it. Voxear reads PNG, JPEG and GIF pictures.
 
-Not yet read: animation, skinning, vertex colours, see-through materials, metal and roughness pictures, and the cameras and lights in the file.
+Not yet read: vertex colours, see-through materials, metal and roughness pictures, and the cameras and lights in the file.
 
 ## The built-in shapes
 

@@ -34,6 +34,8 @@ public sealed class Walker : Behaviour
 }
 ```
 
+Give it the velocity asked for, not how far the Obj moved this frame. An Obj moved in `FixedUpdate` moves only on ticks, so on a fast display most frames see it stand still, and the clips stutter between standing and walking.
+
 The body turns the way it goes, at its **Turn Rate**. To keep it facing one way, as when aiming, set `WantedFacing`; set it to zero to face the way it goes again. `FollowObj()` forgets both.
 
 ## Moving by the clips

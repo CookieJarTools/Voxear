@@ -540,6 +540,10 @@ fn place_gun(
         body.filter(|_| !gun.kind.is_handgun()).and_then(|body| pocket(world, body, holder, poses)).map(|pocket| {
             let seen = eye.inverse().transform_point3(pocket);
             let steadied = state.pocket.get_or_insert_with(|| Spring::new(seen, SpringFeel::halflife(0.3)));
+            // Far off, as when landing or spawning, it is a move to follow at once, not a bob to steady.
+            if seen.distance(steadied.value) > 0.12 {
+                steadied.snap(seen);
+            }
             steadied.update(seen, delta)
         });
     match shouldered {
@@ -1065,12 +1069,19 @@ impl Placing<'_> {
 
 /// Where the support hand holds, as far back along the gun as it is
 /// planted: it stays there while the arm can reach, so it does not creep
-/// as the body moves, and goes back only as far as it must. It plants
-/// afresh, as far forward as it can, each time it comes back from an
-/// action.
+/// as the body moves, goes back only as far as it must, and forward again
+/// only once it could hold well forward of where it is, as after a stumble
+/// that pulled it back.
 fn planted(support: &mut Option<Spring<f32>>, needed: f32, delta: f32) -> f32 {
     let spring = support.get_or_insert_with(|| Spring::new(0.0, SpringFeel::halflife(0.08)));
-    let goal = if needed > spring.goal() + 0.01 { needed } else { spring.goal() };
+    let held = spring.goal();
+    let goal = if needed > held + 0.01 {
+        needed
+    } else if needed < held - 0.06 {
+        needed + 0.02
+    } else {
+        held
+    };
     spring.update(goal, delta)
 }
 
@@ -1344,6 +1355,44 @@ pub(super) mod tests {
         assert_eq!((rounds, acting), (4, None), "past its end it shows the gun reloaded, the hands back on it");
         let leftovers = scene.world.query_ref::<&super::super::leftovers::Leftover>().into_iter().count();
         assert_eq!(leftovers, 0, "a preview throws nothing away");
+    }
+
+    #[test]
+    fn the_support_hand_stays_planted_and_comes_forward_again_once_a_stumble_that_pulled_it_back_is_over() {
+        let mut support = None;
+        let settle = |support: &mut Option<Spring<f32>>, needed: f32| {
+            (0..60).map(|_| planted(support, needed, 1.0 / 60.0)).last()
+        };
+        assert!(settle(&mut support, 0.05).unwrap() > 0.045, "back as far as the arm needs");
+        assert!((settle(&mut support, 0.03).unwrap() - 0.05).abs() < 1e-3, "and planted there, not creeping forward");
+        assert!(settle(&mut support, 0.25).unwrap() > 0.24, "a stumble pulls it far back");
+        assert!(settle(&mut support, 0.03).unwrap() < 0.06, "and once it is over it comes forward again: {support:?}");
+    }
+
+    #[test]
+    fn after_the_body_drops_as_on_landing_the_gun_is_back_at_the_shoulder_and_the_support_hand_forward() {
+        let mut scene = scene();
+        let rest = rest_of(&scene);
+        // Half a metre up, as when spawned in the air, then down.
+        let raised: Vec<Mat4> = rest.iter().map(|bone| Mat4::from_translation(Vec3::Y * 0.5) * *bone).collect();
+        for _ in 0..20 {
+            frame(&mut scene, &raised);
+        }
+        for _ in 0..90 {
+            frame(&mut scene, &rest);
+        }
+        let held = world_matrix(&scene.world, scene.gun);
+        let gun = scene.world.get::<Gun>(scene.gun).unwrap().clone();
+        let skeleton = scene.world.get::<ModelRenderer>(scene.body).unwrap().animation.clone().unwrap();
+        let rig = Rig::find(&skeleton.skeleton).unwrap();
+        let bones = scene.world.get::<Pose>(scene.body).unwrap().bones.clone();
+        let placed = world_matrix(&scene.world, scene.body);
+        let shoulder = placed.transform_point3(bones[rig.arms[1].upper].w_axis.truncate());
+        let butt = held.transform_point3(Vec3::from(gun.butt));
+        assert!(butt.distance(shoulder) < 0.15, "the butt back at the shoulder: {butt} {shoulder}");
+        let slide = scene.world.get::<GunHolderState>(scene.player).unwrap().hands.support.map_or(0.0, |s| s.value);
+        // Stuck where the drop pulled it, it would be as far back as it goes, 0.25.
+        assert!(slide < 0.2, "the support hand forward on the fore-end again: {slide}");
     }
 
     #[test]

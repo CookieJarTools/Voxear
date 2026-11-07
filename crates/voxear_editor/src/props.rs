@@ -12,7 +12,7 @@ use voxear_engine::guns::mechanism::{GunPart, PartMotion, PartRole};
 use voxear_engine::guns::{Gun, GunHolder, GunKind};
 
 /// A Gun Part's roles as the Inspector names them, in its menu's order.
-const PART_ROLES: [(PartRole, &str); 8] = [
+const PART_ROLES: [(PartRole, &str); 9] = [
     (PartRole::Bolt, "Bolt"),
     (PartRole::Slide, "Slide"),
     (PartRole::Toggle, "Toggle"),
@@ -21,6 +21,7 @@ const PART_ROLES: [(PartRole, &str); 8] = [
     (PartRole::Clip, "Clip"),
     (PartRole::Cover, "Cover"),
     (PartRole::Barrel, "Barrel"),
+    (PartRole::Case, "Case"),
 ];
 use voxear_engine::modules::Module;
 use voxear_engine::{

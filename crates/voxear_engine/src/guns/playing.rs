@@ -25,11 +25,25 @@ pub struct ActionPlay {
     pub from: Option<Vec3>,
     /// Where each hand was last, left then right.
     pub hands: [Option<Vec3>; 2],
+    /// Whether the magazine taken out was empty and dropped, so the hand
+    /// goes to the pouch with nothing in it.
+    pub dropped: bool,
+}
+
+/// What a beat throwing something away needs: the gun's place and turn in
+/// the world, the velocity it carries, the time, and a number from -1 to 1
+/// so no two throws are alike.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Throwing {
+    pub held: Mat4,
+    pub velocity: Vec3,
+    pub now: f64,
+    pub seed: f32,
 }
 
 impl ActionPlay {
     pub fn new(kind: ActionKind, beats: Vec<Beat>) -> Self {
-        Self { kind, beats, index: 0, t: 0.0, from: None, hands: [None; 2] }
+        Self { kind, beats, index: 0, t: 0.0, from: None, hands: [None; 2], dropped: false }
     }
 
     pub fn beat(&self) -> Option<&Beat> {
@@ -85,6 +99,7 @@ pub fn advance(
     state: &mut GunState,
     spare: &mut u32,
     pouches: [Vec3; 2],
+    throwing: Throwing,
     dt: f32,
 ) -> Option<(HandAim, Vec3)> {
     play.t += dt;
@@ -99,7 +114,9 @@ pub fn advance(
         {
             state.parts[index].1 = to;
         }
+        let (chamber, rounds) = (state.chamber, state.rounds);
         apply(beat.then, gun.kind, state, spare);
+        throw_away(world, play, &beat, gun, state, (chamber, rounds), throwing);
         play.t -= beat.length();
         play.index += 1;
         play.from = None;
@@ -145,6 +162,14 @@ fn carry(world: &mut World, state: &GunState, play: &ActionPlay, at: Vec3) {
     let driven = play.beat().and_then(|beat| beat.drive.map(|(role, ..)| role));
     for &(entity, place, rest) in &state.parts {
         let Some(part) = world.get::<GunPart>(entity).cloned() else { continue };
+        // An empty magazine dropped leaves the hand empty on its way to the pouch.
+        if part.role == PartRole::Magazine {
+            let away = play.dropped && play.beat().is_some_and(|beat| beat.name == "to pouch");
+            match away {
+                true => drop(world.insert(entity, Hidden)),
+                false => drop(world.remove::<Hidden>(entity)),
+            }
+        }
         if part.role == PartRole::Clip {
             let shown = carried == Some(PartRole::Clip) || driven == Some(PartRole::Clip);
             match shown {
@@ -161,6 +186,60 @@ fn carry(world: &mut World, state: &GunState, play: &ActionPlay, at: Vec3) {
         if let Some(transform) = world.get_mut::<Transform>(entity) {
             (transform.position, transform.rotation, transform.scale) = (position, rotation, scale);
         }
+    }
+}
+
+/// Throws away what a beat that just ended leaves: a case ejected by hand,
+/// an empty magazine dropped, a stripper clip flicked off as the bolt
+/// closes over it.
+fn throw_away(
+    world: &mut World,
+    play: &mut ActionPlay,
+    beat: &Beat,
+    gun: &Gun,
+    state: &GunState,
+    (chamber, rounds): (super::mechanism::Chamber, u32),
+    throwing: Throwing,
+) {
+    use super::actions::Event;
+    use super::leftovers::{throw, throw_case};
+    use super::mechanism::{Chamber, Feed};
+    let Throwing { held, velocity, now, seed } = throwing;
+    let (right, up) = (held.transform_vector3(Vec3::X), held.transform_vector3(Vec3::Y));
+    match beat.then {
+        Event::Eject if chamber != Chamber::Empty => {
+            throw_case(world, state, held, velocity, now, seed);
+        }
+        Event::Unload if gun.kind.feed() == Feed::Magazine && rounds == 0 => {
+            play.dropped = true;
+            let down = velocity - up * 1.2 + right * seed * 0.3;
+            throw(
+                world,
+                state,
+                PartRole::Magazine,
+                "Empty Magazine",
+                down,
+                right * 4.0,
+                Vec3::new(0.03, 0.18, 0.07),
+                now,
+            );
+        }
+        Event::Chamber if beat.name == "push" && play.kind == super::actions::ActionKind::Reload => {
+            if matches!(gun.kind.feed(), Feed::Clips(_)) {
+                let flick = velocity + right * 1.8 + up * 1.5;
+                throw(
+                    world,
+                    state,
+                    PartRole::Clip,
+                    "Stripper Clip",
+                    flick,
+                    up * 12.0,
+                    Vec3::new(0.012, 0.05, 0.06),
+                    now,
+                );
+            }
+        }
+        _ => {}
     }
 }
 

@@ -19,7 +19,7 @@ use super::actions::{ActionKind, Hand, plan};
 use super::gun::{Gun, GunKind, HandRole, Socket};
 use super::hands::{Grip, close};
 use super::mechanism::{GunPart, GunState, Known, PartRole};
-use super::playing::{ActionPlay, HandAim, advance, minimum_jerk};
+use super::playing::{ActionPlay, HandAim, Throwing, advance, minimum_jerk};
 use crate::animation::MotionMatcherState;
 use crate::animation::ik::{PoseEdit, aim_hand, reach_hand, turn_spine};
 use crate::animation::rig::Rig;
@@ -224,7 +224,19 @@ pub fn fire(world: &mut World, entity: Entity) -> Option<Shot> {
     if !mechanism.ready(gun.kind) {
         return None;
     }
-    mechanism.shoot(gun.kind);
+    let dry = mechanism.shoot(gun.kind);
+    // A self-loader throws its case out as it works; an en-bloc clip pings out after the last round.
+    if gun.kind.self_loading() && gun.kind != GunKind::TopBreakRevolver {
+        let (held, seed) = (state.held.unwrap_or(Mat4::IDENTITY), state.random());
+        super::leftovers::throw_case(world, &mechanism, held, state.velocity, now, seed);
+    }
+    if dry && gun.kind.feed() == super::mechanism::Feed::EnBloc {
+        let held = state.held.unwrap_or(Mat4::IDENTITY);
+        let (up, right) = (held.transform_vector3(Vec3::Y), held.transform_vector3(Vec3::X));
+        let ping = state.velocity + up * 3.2 + right * 0.6;
+        let size = Vec3::new(0.012, 0.05, 0.06);
+        super::leftovers::throw(world, &mechanism, PartRole::Clip, "En-Bloc Clip", ping, right * 15.0, size, now);
+    }
     mechanism.known_chamber = if gun.kind.self_loading() { mechanism.known_chamber } else { Known::Exact };
     world.insert(gun_entity, mechanism);
     state.cycling = gun.kind.self_loading().then_some(0.0);
@@ -326,7 +338,10 @@ pub fn hold(world: &mut World) {
         let mut aim = None;
         let mut tilt = Vec3::ZERO;
         if let Some(mut play) = state.play.take() {
-            match advance(world, &mut play, &gun, &mut mechanism, &mut spare, pouches, delta) {
+            let now = world.resource::<Time>().map_or(0.0, |time| time.elapsed);
+            let throwing =
+                Throwing { held: state.held.unwrap_or(eye), velocity: state.velocity, now, seed: state.random() };
+            match advance(world, &mut play, &gun, &mut mechanism, &mut spare, pouches, throwing, delta) {
                 Some((hand, angle)) => {
                     (aim, tilt) = (Some(hand), angle);
                     state.play = Some(play);
@@ -342,6 +357,8 @@ pub fn hold(world: &mut World) {
             stored.spare = spare;
         }
         cycle(world, &gun, &mut mechanism, &mut state, delta);
+        super::leftovers::hide_templates(world, &mechanism);
+        super::leftovers::settle(world, world.resource::<Time>().map_or(0.0, |time| time.elapsed));
         world.insert(gun_entity, mechanism.clone());
         super::mechanism::show_parts(world, &mechanism);
         if let Some(play) = &state.play {
@@ -902,9 +919,17 @@ mod acting {
         frame(scene, rest);
     }
 
-    /// A rifle with a turn-bolt and a stripper clip under it.
+    /// A rifle with a turn-bolt, a stripper clip and a case under it, each
+    /// a cube to look at.
     fn rifle() -> (Scene, Entity) {
         let mut scene = scene_with(GunKind::BoltActionRifle);
+        let look = voxear_render::MeshRenderer::new(voxear_render::MeshHandle(0), voxear_render::MaterialHandle(0));
+        scene.world.spawn((
+            Transform::from_position(Vec3::new(0.03, 0.05, 0.12)),
+            Parent(scene.gun),
+            GunPart::of(PartRole::Case, [0.03, 0.05, 0.12]),
+            look,
+        ));
         let bolt = scene.world.spawn((
             Transform::from_position(Vec3::new(0.0, 0.05, 0.1)),
             Parent(scene.gun),
@@ -914,6 +939,7 @@ mod acting {
             Transform::from_position(Vec3::new(0.0, 0.08, 0.12)),
             Parent(scene.gun),
             GunPart::of(PartRole::Clip, [0.0, 0.09, 0.12]),
+            look,
         ));
         (scene, bolt)
     }
@@ -937,6 +963,14 @@ mod acting {
         assert!(furthest > 1.9, "the bolt went all the way back: {furthest}");
         let state = scene.world.get::<GunState>(scene.gun).unwrap();
         assert!(state.ready(GunKind::BoltActionRifle) && state.rounds == 4, "{state:?}");
+        let named = |world: &World, name: &str| {
+            world
+                .query_ref::<(&voxear_scene::Name, &super::super::leftovers::Leftover)>()
+                .into_iter()
+                .filter(|(n, _)| n.0 == name)
+                .count()
+        };
+        assert_eq!(named(&scene.world, "Spent Case"), 1, "the bolt threw the case out");
         assert_eq!(state.parts.iter().find(|(e, ..)| *e == bolt).unwrap().1, 0.0, "the bolt home");
 
         // Shot dry, then reloaded: a clip's five rounds from the spare.
@@ -962,6 +996,12 @@ mod acting {
             "{state:?}"
         );
         assert_eq!(scene.world.get::<GunHolder>(scene.player).unwrap().spare, 85);
+        assert_eq!(named(&scene.world, "Stripper Clip"), 1, "the emptied clip was flicked off");
+        assert_eq!(
+            named(&scene.world, "Spent Case"),
+            6,
+            "a case for each of the five shots, and the last ejected by the reload"
+        );
         assert_eq!(scene.world.get::<GunHolderState>(scene.player).unwrap().acting(), None);
     }
 

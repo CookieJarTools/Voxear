@@ -35,6 +35,9 @@ pub enum PartRole {
     Cover,
     /// A top-break revolver's barrel and cylinder, tipped down to load.
     Barrel,
+    /// A spent case, at the ejection port: hidden, and copied for each case
+    /// the gun throws out.
+    Case,
 }
 
 /// How a part moves from rest, in the gun's space.
@@ -99,6 +102,7 @@ impl GunPart {
             PartRole::Barrel => {
                 (PartMotion::Turn { axis: [1.0, 0.0, 0.0], pivot: [0.0, -0.02, 0.05], angle: 55.0 }, None)
             }
+            PartRole::Case => (slide(0.0), None),
         };
         Self { role, motion, then, handle }
     }

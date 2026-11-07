@@ -478,12 +478,20 @@ impl Default for KeptSceneView {
 
 /// The Gun Editor as it was left: the Gun Handling it had open and the
 /// character holding it, by their paths, and its view, by index.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct KeptGunEditor {
     pub handling: Option<String>,
     pub character: Option<String>,
     pub view: usize,
+}
+
+impl Default for KeptGunEditor {
+    /// From the side at first, where both hands and the gun can be taken
+    /// hold of: at the hip, its own eyes see little but the barrel.
+    fn default() -> Self {
+        Self { handling: None, character: None, view: 1 }
+    }
 }
 
 /// What the editor remembers of a project: its settings, the keys of what

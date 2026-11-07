@@ -7325,6 +7325,43 @@ fn the_gun_editor_shows_a_character_holding_its_gun_and_edits_its_handling() {
     frame(&mut editor, &mut renderer);
     assert_eq!(editor.gun_handling_open().unwrap().poses.hip.at, [0.0; 3], "the whole drag goes in one undo");
 
+    // From outside, the view stays put as the cross is dragged slowly, so the gun follows the pointer, and
+    // holding still moves nothing. The reload from before is let finish, as the gun at work is lifted from the
+    // hip hold.
+    let orbit = segment(&editor.ui, "gun-view", "Orbit").unwrap();
+    click(&mut editor.ui, orbit);
+    let acting = |editor: &voxear_editor::Editor| {
+        editor.game.engine.world.get::<GunHolderState>(holder).is_some_and(|state| state.doing().is_some())
+    };
+    for _ in 0..600 {
+        if !acting(&editor) {
+            break;
+        }
+        frame(&mut editor, &mut renderer);
+    }
+    for _ in 0..60 {
+        frame(&mut editor, &mut renderer);
+    }
+    let [x, y] = editor.gun_handle_at(None).unwrap();
+    pointer_to(&mut editor, [x, y]);
+    left_button(&mut editor, true);
+    frame(&mut editor, &mut renderer);
+    let hip = |editor: &voxear_editor::Editor| Vec3::from(editor.gun_handling_open().unwrap().poses.hip.at);
+    for step in 1..=40 {
+        pointer_to(&mut editor, [x + step as f32, y + step as f32 * 0.5]);
+        frame(&mut editor, &mut renderer);
+    }
+    let moved = hip(&editor);
+    for _ in 0..30 {
+        frame(&mut editor, &mut renderer);
+    }
+    assert!(hip(&editor).distance(moved) < 1e-5, "still while held still: {moved} then {}", hip(&editor));
+    assert!(moved.length() > 0.02 && moved.length() < 0.5, "as far as the pointer went: {moved}");
+    let [cx, cy] = editor.gun_handle_at(None).unwrap();
+    assert!((cx - (x + 40.0)).hypot(cy - (y + 20.0)) < 4.0, "the cross is under the pointer: {cx}, {cy}");
+    left_button(&mut editor, false);
+    frame(&mut editor, &mut renderer);
+
     // Hidden, it takes its Objs away; the level is as it was.
     let root = editor.ui.root();
     let dock = editor.ui.find(root, "dock").unwrap();

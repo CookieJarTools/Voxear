@@ -1,11 +1,12 @@
 //! The Gun Editor's handles in its view: a ring on each hand, and a cross
 //! on the gun. Dragging a hand slides it over the gun: the line from the
-//! eye through the pointer meets the gun's surfaces, and the hand holds
-//! there, its palm put on the surface and its fingers closed round what is
-//! under them by the game's own hands, so the view shows just what the
-//! game will. With Alt held it moves freely instead, in the plane facing
-//! the view, as to a pouch. Dragging the cross moves where the gun is held.
-//! What a drag changes is the editor's to say: see `editor::gun_handlings`.
+//! eye through the pointer meets the face of the gun it is on, and the hand
+//! holds there, on its own side of the gun, its palm put on the surface and
+//! its fingers closed round what is under them by the game's own hands, so
+//! the view shows just what the game will. With Alt held it moves freely
+//! instead, in the plane facing the view, as to a pouch. Dragging the cross
+//! moves where the gun is held. What a drag changes is the editor's to say:
+//! see `editor::gun_handlings`.
 
 use voxear_core::math::{Mat4, Vec3};
 use voxear_engine::guns::{
@@ -22,6 +23,13 @@ const RING: f32 = 9.0;
 const RIGHT: u32 = 0x6f9bff;
 const LEFT: u32 = 0x58c49a;
 const GUN: u32 = 0xffb44a;
+/// How square to the view a face must be for a hand to slide in its plane:
+/// the cosine of the angle between them. One more edge on than this, it
+/// moves across the view, held to the gun all the same.
+const EDGE_ON: f32 = 0.2;
+/// How near the gun, in metres, a hand must be as a drag begins for it to
+/// slide over the gun.
+const ON_THE_GUN: f32 = 0.03;
 
 /// What a handle moves.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -41,15 +49,23 @@ pub(crate) struct Seen {
     pub eye: Mat4,
 }
 
-/// A drag under way: what it holds, the value it changes as it began,
-/// and where the pointer's point began, in the gun's space for a hand and
-/// the world for the gun, with the plane a free move keeps to.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// A drag under way: what it holds and the value it changes as it began,
+/// and all it goes by as that was then: the view's camera, where the gun
+/// was and its surfaces, and the eyes. What a drag changes moves the gun,
+/// and the view with it; going by them as they move would feed each move
+/// into the next, and the hand or gun would run away from the pointer.
+#[derive(Clone, Debug)]
 struct Held {
     grab: Grab,
     from: [f32; 3],
+    camera: ViewCamera,
+    gun: Mat4,
+    shapes: Vec<Shape>,
+    eye: Mat4,
+    /// Where the pointer's point began, in the gun's space for a hand and
+    /// the world for the gun, and where it was last.
     start: Vec3,
-    plane: (Vec3, Vec3),
+    last: Vec3,
     /// The way out of the gun's face a hand started on, in the gun's space.
     face: Option<Vec3>,
 }
@@ -93,38 +109,36 @@ impl HandHandles {
             self.held = self.grab(seen, &handles, [x, y], &value);
         }
         self.draw(ui, layer, seen, &handles);
-        let held = self.held?;
         if !pressed {
-            self.held = None;
-            return Some(HandleEdit::Done);
+            return self.held.take().map(|_| HandleEdit::Done);
         }
+        let held = self.held.as_mut()?;
         let (x, y) = pointer?;
-        let (origin, way) = seen.camera.ray([x, y]);
+        let (origin, way) = held.camera.ray([x, y]);
         let moved = match held.grab {
             Grab::Hand(_) => {
-                let into = seen.gun.inverse();
+                let into = held.gun.inverse();
                 let (from, along) = (into.transform_point3(origin), into.transform_vector3(way));
-                let on = if free { None } else { contact::hit(&seen.shapes, from, along) };
-                let point = match (on, held.face) {
-                    // On a face that way too: there, as the hand slides over the gun.
-                    (Some((point, facing)), Some(face)) if facing.dot(face) > 0.7 => point,
-                    // On another face: along the one it started on, and across the view only, so it does not
-                    // jump to another side of the gun.
-                    (Some((point, _)), Some(face)) => {
-                        let moved = point - held.start;
-                        let moved = moved - face * moved.dot(face);
-                        let deep = into.transform_vector3(seen.camera.forward);
-                        let deep = (deep - face * deep.dot(face)).normalize_or_zero();
-                        held.start + moved - deep * moved.dot(deep)
+                let deep = into.transform_vector3(held.camera.forward);
+                // Where the line meets the plane of the face the hand began on, or across the view as deep as
+                // it was last when that face is seen edge on, put onto the gun: so the hand slides over its own
+                // side of the gun under the pointer, even on the side away from the view, and onto the next part
+                // as it comes to it. Moving freely, it stays across the view.
+                let across = |last: Vec3| meet((last, deep), from, along);
+                let point = match held.face.filter(|_| !free) {
+                    Some(face) => {
+                        let square = along.normalize_or_zero().dot(face).abs() > EDGE_ON;
+                        let on = if square { meet((held.start, face), from, along) } else { across(held.last) };
+                        contact::onto(&held.shapes, on?, face)
                     }
-                    (Some((point, _)), None) => point,
-                    (None, _) => into.transform_point3(meet(held.plane, origin, way)?),
+                    None => across(held.last)?,
                 };
+                held.last = point;
                 Vec3::from(held.from) + point - held.start
             }
             Grab::Gun => {
-                let point = meet(held.plane, origin, way)?;
-                Vec3::from(held.from) + seen.eye.inverse().transform_vector3(point - held.start)
+                let point = meet((held.start, held.camera.forward), origin, way)?;
+                Vec3::from(held.from) + held.eye.inverse().transform_vector3(point - held.start)
             }
         };
         Some(HandleEdit::Moved(held.grab, moved.to_array()))
@@ -145,13 +159,26 @@ impl HandHandles {
             .filter(|(.., distance)| *distance <= PICK)
             .min_by(|a, b| a.2.total_cmp(&b.2))
             .map(|(grab, at, _)| (grab, at))?;
-        let plane = (at, seen.camera.forward);
         let start = match grab {
             Grab::Hand(_) => seen.gun.inverse().transform_point3(at),
             Grab::Gun => at,
         };
-        let face = matches!(grab, Grab::Hand(_)).then(|| contact::facing(&seen.shapes, start)).flatten();
-        Some(Held { grab, from: value(grab)?, start, plane, face })
+        // A hand on the gun slides over it; one off it, as at a pouch, moves across the view.
+        let on = matches!(grab, Grab::Hand(_)) && contact::nearest(&seen.shapes, start) < ON_THE_GUN;
+        let face = on.then(|| contact::facing(&seen.shapes, start)).flatten();
+        // A palm is on the surface to a few millimetres; from just on it, it does not jump as the drag begins.
+        let start = face.map_or(start, |face| contact::onto(&seen.shapes, start, face));
+        Some(Held {
+            grab,
+            from: value(grab)?,
+            camera: seen.camera,
+            gun: seen.gun,
+            shapes: seen.shapes.clone(),
+            eye: seen.eye,
+            start,
+            last: start,
+            face,
+        })
     }
 
     fn draw(&self, ui: &mut Ui, layer: NodeId, seen: &Seen, handles: &[(Grab, Vec3)]) {
@@ -160,7 +187,7 @@ impl HandHandles {
         for &(grab, at) in handles {
             let Some([x, y]) = seen.camera.project(at) else { continue };
             let center = [x - left, y - top];
-            let lit = self.held.is_some_and(|held| held.grab == grab);
+            let lit = self.held.as_ref().is_some_and(|held| held.grab == grab);
             let color = Color::hex(match grab {
                 Grab::Hand(Hand::Right) => RIGHT,
                 Grab::Hand(Hand::Left) => LEFT,

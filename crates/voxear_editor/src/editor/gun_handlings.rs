@@ -49,6 +49,14 @@ const HEADER: &str =
 const WALK_SPEED: f32 = 1.4;
 /// How often the character menu looks for prefabs again, in frames.
 const LOOK_FOR_CHARACTERS: u64 = 300;
+/// How many frames a character shown stands before the views from outside
+/// settle on where it holds its gun, and where that is from its eyes:
+/// right, up and forward, in metres.
+const SETTLE_FRAMES: u32 = 20;
+const HELD_AT: Vec3 = Vec3::new(0.1, -0.17, 0.4);
+/// How far into the gun, in metres, a hand is before the Problems strip
+/// says so: a hand closing round a gun touches it all over.
+const IN_THE_GUN: f32 = 0.012;
 
 impl Editor {
     /// The character the Gun Editor's view shows, its holder and the gun
@@ -467,7 +475,20 @@ impl Editor {
         }
         let handling = String::new();
         let character = character.to_string();
-        Ok(Preview { character, source, handling, root, holder, gun, camera, head_hiders, spot: SPOT, facing })
+        Ok(Preview {
+            character,
+            source,
+            handling,
+            root,
+            holder,
+            gun,
+            camera,
+            head_hiders,
+            spot: SPOT,
+            facing,
+            focus: None,
+            frames: 0,
+        })
     }
 
     /// Takes away what the Gun Editor's view shows.
@@ -523,13 +544,22 @@ impl Editor {
                 attachment.hide = first_person;
             }
         }
+        // The views from outside look at where a gun is held before the eyes, once the character has stood a
+        // moment.
+        let eye = world.get::<FirstPersonState>(holder).map(|state| state.eye);
+        let Some(preview) = self.gun_editor.preview.as_mut() else { return };
+        preview.frames += 1;
+        if preview.frames == SETTLE_FRAMES {
+            preview.focus = eye.map(|eye| eye.transform_point3(HELD_AT));
+        }
         if first_person {
             return;
         }
-        let gun = world_matrix(world, self.gun_editor.preview.as_ref().map_or(holder, |p| p.gun));
+        let focus = preview.focus.unwrap_or_else(|| world_matrix(world, preview.gun).w_axis.truncate());
+        let focus = voxear_core::math::Mat4::from_rotation_translation(facing, focus);
         let (position, rotation) = match view {
-            View::Orbit => orbit.camera(gun.w_axis.truncate(), facing),
-            _ => gun_editor::fixed_camera(view, gun, facing),
+            View::Orbit => orbit.camera(focus.w_axis.truncate(), facing),
+            _ => gun_editor::fixed_camera(view, focus, facing),
         };
         if let Some(transform) = world.get_mut::<Transform>(camera) {
             (transform.position, transform.rotation) = (position, rotation);
@@ -755,11 +785,9 @@ impl Editor {
                 problems.push(format!("No {} part", crate::gun_timeline::part_title(part)));
             }
             if let Some(seen) = self.gun_seen() {
-                let into = seen.gun.inverse();
-                for (hand, palm) in ["Left", "Right"].into_iter().zip(seen.palms) {
-                    let inside = palm
-                        .is_some_and(|palm| guns::contact::nearest(&seen.shapes, into.transform_point3(palm)) == 0.0);
-                    if inside {
+                let depths = guns::hands_in_gun(world, holder).unwrap_or_default();
+                for (hand, depth) in ["Left", "Right"].into_iter().zip(depths) {
+                    if depth > IN_THE_GUN {
                         problems.push(format!("{hand} hand in the gun"));
                     }
                 }

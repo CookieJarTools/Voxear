@@ -882,6 +882,28 @@ fn hands_on(
     if aims[1].is_some() { 0.0 } else { short }
 }
 
+/// How far into its gun each of a holder's hands is, left then right, as
+/// it was last held: how far its palm, knuckles and wrist would have to
+/// move to be clear, leaving out the parts it has in hand. A palm on the
+/// gun's surface is not in it, nor are fingers closed round it.
+pub fn hands_in_gun(world: &World, entity: Entity) -> Option<[f32; 2]> {
+    let holder = world.get::<GunHolder>(entity)?;
+    let state = world.get::<GunHolderState>(entity)?;
+    let gun = holder.gun.or_else(|| first_under(world, entity, |w, e| w.has::<Gun>(e)))?;
+    let view = world.get::<FirstPersonView>(entity)?;
+    let body = view.body.or_else(|| first_under(world, entity, |w, e| w.has::<ModelRenderer>(e)))?;
+    let animation = world.get::<ModelRenderer>(body)?.animation.clone()?;
+    let rig = Rig::find(&animation.skeleton)?;
+    let edit = PoseEdit::new(&animation.skeleton, &world.get::<Pose>(body)?.bones);
+    let mechanism = world.get::<GunState>(gun)?;
+    let to_body = world_matrix(world, body).inverse() * world_matrix(world, gun);
+    let avoid = super::contact::shapes_now(world, gun, &in_hand(world, mechanism, state.play.as_ref()));
+    let avoid: Vec<Shape> = avoid.iter().map(|shape| shape.moved(to_body)).collect();
+    let side = to_body.transform_vector3(Vec3::X).normalize_or_zero();
+    let [left, right] = &rig.arms;
+    Some([(left, -side), (right, side)].map(|(arm, side)| keep_out(&edit, arm, &avoid, side).length()))
+}
+
 /// The parts a hand has now: the one the beat under way drives, and the
 /// one it carries.
 fn in_hand(world: &World, mechanism: &GunState, play: Option<&ActionPlay>) -> Vec<Entity> {

@@ -83,39 +83,6 @@ impl Shape {
         way * (depth + room)
     }
 
-    /// Where a line from `from` along `way` comes into the box, how far
-    /// along, and the way out of the face it comes in through; none when it
-    /// misses, or starts inside.
-    fn hit(&self, from: Vec3, way: Vec3) -> Option<(f32, Vec3, Vec3)> {
-        let into = self.frame.inverse();
-        let (start, step) = (into.transform_point3(from), into.transform_vector3(way));
-        let (mut near, mut far, mut face) = (f32::NEG_INFINITY, f32::INFINITY, (0, 0.0));
-        for axis in 0..3 {
-            if step[axis].abs() < 1e-9 {
-                if start[axis] < self.least[axis] || start[axis] > self.most[axis] {
-                    return None;
-                }
-                continue;
-            }
-            let (to_least, to_most) =
-                ((self.least[axis] - start[axis]) / step[axis], (self.most[axis] - start[axis]) / step[axis]);
-            let (enter, leave, side) =
-                if to_least < to_most { (to_least, to_most, -1.0) } else { (to_most, to_least, 1.0) };
-            if enter > near {
-                (near, face) = (enter, (axis, side));
-            }
-            far = far.min(leave);
-        }
-        if near < 0.0 || near > far {
-            return None;
-        }
-        let mut normal = Vec3::ZERO;
-        normal[face.0] = face.1;
-        // A box scaled unevenly turns its faces' normals by the inverse of its scale.
-        let normal = into.transpose().transform_vector3(normal).normalize_or_zero();
-        Some((near * way.length(), from + way * near, normal))
-    }
-
     /// The way out of the face of the box nearest `point`, and how far
     /// `point` is from that face, in metres.
     fn face(&self, point: Vec3) -> (Vec3, f32) {
@@ -129,6 +96,12 @@ impl Shape {
             (way, (off * self.frame.transform_vector3(normal).length()).abs())
         });
         faces.min_by(|a, b| a.1.total_cmp(&b.1)).unwrap_or((Vec3::Y, 0.0))
+    }
+
+    /// The nearest point to `point` on or in the box.
+    fn nearest(&self, point: Vec3) -> Vec3 {
+        let local = self.frame.inverse().transform_point3(point);
+        self.frame.transform_point3(local.clamp(self.least, self.most))
     }
 
     /// The box carried by `to`.
@@ -191,11 +164,16 @@ pub fn push_out(shapes: &[Shape], point: Vec3, room: f32, side: Vec3) -> Vec3 {
         .unwrap_or(Vec3::ZERO)
 }
 
-/// Where a line from `from` along `way` first meets the boxes, and the way
-/// out of the face it meets; none when it misses them all.
-pub fn hit(shapes: &[Shape], from: Vec3, way: Vec3) -> Option<(Vec3, Vec3)> {
-    let hits = shapes.iter().filter_map(|shape| shape.hit(from, way));
-    hits.min_by(|a, b| a.0.total_cmp(&b.0)).map(|(_, point, normal)| (point, normal))
+/// The nearest point to `point` on the boxes' surfaces: from inside, out
+/// of the box it is deepest in, never out of the far side from `side`;
+/// from outside, onto the nearest box.
+pub fn onto(shapes: &[Shape], point: Vec3, side: Vec3) -> Vec3 {
+    let out = push_out(shapes, point, 0.0, side);
+    if out.length() > 1e-6 {
+        return point + out;
+    }
+    let near = shapes.iter().map(|shape| shape.nearest(point));
+    near.min_by(|a, b| a.distance(point).total_cmp(&b.distance(point))).unwrap_or(point)
 }
 
 /// The way out of the face nearest `point`, of the box nearest it; none
@@ -248,16 +226,11 @@ mod tests {
         let pushed = push_out(&shapes, Vec3::new(0.0, 0.065, 0.0), 0.01, Vec3::X);
         assert!((pushed - Vec3::new(0.0, 0.005, 0.0)).length() < 1e-5, "{pushed}");
         assert_eq!(push_out(&shapes, Vec3::new(0.0, 0.2, 0.0), 0.01, Vec3::X), Vec3::ZERO);
-        // A line from the right meets the right side, and from above, the top, turned with the box.
-        let (point, normal) = hit(&shapes, Vec3::new(1.0, 0.01, 0.0), Vec3::NEG_X).unwrap();
-        assert!((point - Vec3::new(0.0225, 0.01, 0.0)).length() < 1e-5 && (normal - Vec3::X).length() < 1e-5);
-        let turned = [stock().moved(Mat4::from_rotation_z(0.3))];
-        let (point, normal) = hit(&turned, Vec3::new(0.0, 1.0, 0.0), Vec3::NEG_Y).unwrap();
-        let up = Mat4::from_rotation_z(0.3).transform_vector3(Vec3::Y);
-        assert!((normal - up).length() < 1e-4, "{normal}");
-        assert!(nearest(&turned, point) < 1e-5, "on its surface");
-        assert_eq!(hit(&shapes, Vec3::new(1.0, 0.5, 0.0), Vec3::NEG_X), None, "passing over it misses");
-        assert_eq!(hit(&shapes, Vec3::ZERO, Vec3::X), None, "starting inside is no hit");
+        // From outside, onto the nearest side; from inside a little past the middle, out on its own side.
+        let onto_side = onto(&shapes, Vec3::new(0.1, 0.01, 0.0), Vec3::X);
+        assert!((onto_side - Vec3::new(0.0225, 0.01, 0.0)).length() < 1e-5, "{onto_side}");
+        let out = onto(&shapes, Vec3::new(-0.002, 0.01, 0.0), Vec3::X);
+        assert!((out - Vec3::new(0.0225, 0.01, 0.0)).length() < 1e-5, "{out}");
         // Just under the bottom, and just inside the side: the bottom faces down, the side out.
         assert!((facing(&shapes, Vec3::new(0.0, -0.065, 0.0)).unwrap() - Vec3::NEG_Y).length() < 1e-5);
         assert!((facing(&shapes, Vec3::new(0.02, 0.0, 0.0)).unwrap() - Vec3::X).length() < 1e-5);

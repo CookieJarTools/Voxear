@@ -8,7 +8,7 @@ The **Gun Editor** is where a [[Gun Handling]] is worked on, with a character ho
 
 - **Handling**: the Gun Handling open, and **+** to make a new one.
 - **Character**: who holds the gun. Any prefab with a Gun Holder at its top can, holding its own gun, or a stand-in rifle when it has none.
-- **First Person**, **Side**, **Front** and **Orbit**: how the view looks. Orbit turns as you drag and comes nearer with the wheel.
+- **First Person**, **Side**, **Front** and **Orbit**: how the view looks. First Person is what the player sees, which at the hip is little more than the barrel; the views from outside show both hands. They look at where the gun is held and stay put, so what you change shows as a move. Orbit turns as you drag and comes nearer with the wheel.
 - **Undo** and **Redo**, which Ctrl+Z and Ctrl+Y do too while the pointer is over the Gun Editor.
 
 The character is made for the editor alone, far from your level, and never saved. It shows while editing. While the game plays, the timeline and details still work, and their changes reach the game as they are made.
@@ -42,10 +42,10 @@ Built-in actions show **Make Editable Copy** and **Reset to Built-in**. Actions 
 
 Each hand has a ring in the view, and the gun a cross:
 
-- Drag a hand's ring and the hand slides over the gun. Its palm stays on the surface under the pointer and its fingers close round the shape there, just as they will in the game. Hold **Alt** to move it freely instead, as to a pouch.
+- Drag a hand's ring and the hand slides over the gun on the side it is on, even the side away from you. Its palm stays on the surface under the pointer and its fingers close round the shape there, just as they will in the game. Hold **Alt** to move it freely instead, as to a pouch. A hand dragged further than the arm reaches stays short of the pointer.
 - A hand working in the beat showing moves that beat's hold. At rest, it moves where that hand holds the gun.
 - Drag the cross to move where the gun is held: for the action showing, at the eye while aiming, or else at the hip.
 
 ## Problems
 
-The strip under the timeline lists what is wrong: parts the gun's kind needs that it has no Obj for, a hand in the gun, sights off the eye's line while aiming, and offsets that do nothing, with a button to remove those.
+The strip under the timeline lists what is wrong: parts the gun's kind needs that it has no Obj for, a hand more than a centimetre into the gun, sights off the eye's line while aiming, and offsets that do nothing, with a button to remove those. A palm on the gun and fingers closed round it touch it all over, which is not a problem.

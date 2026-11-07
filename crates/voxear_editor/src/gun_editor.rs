@@ -115,8 +115,8 @@ pub(crate) fn look_along(way: Vec3) -> Quat {
     Quat::from_rotation_y(yaw) * Quat::from_rotation_x(-pitch)
 }
 
-/// Where a fixed view's camera is, and which way it looks, about the gun
-/// held at `gun` by a character facing `facing`: from its right side, or
+/// Where a fixed view's camera is, and which way it looks, about where a
+/// gun is held, `gun`, by a character facing `facing`: from its right side, or
 /// from in front of it.
 pub(crate) fn fixed_camera(view: View, gun: Mat4, facing: Quat) -> (Vec3, Quat) {
     let target = gun.w_axis.truncate();
@@ -243,6 +243,12 @@ pub(crate) struct Preview {
     /// Where it stands, which way it faces.
     pub spot: Vec3,
     pub facing: Quat,
+    /// What the views from outside look at: where a gun is held before the
+    /// character's eyes, once it has stood a moment. They do not follow the
+    /// gun, so a change to where it is held shows as a move.
+    pub focus: Option<Vec3>,
+    /// How many frames it has been shown.
+    pub frames: u32,
 }
 
 /// The Gun Editor's panel.

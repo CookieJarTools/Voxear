@@ -12,4 +12,4 @@ mod values;
 pub(crate) use values::register;
 
 pub use gun::{Gun, GunKind, HandRole, Socket};
-pub use holder::{GunHolder, GunHolderState};
+pub use holder::{GunHolder, GunHolderState, Shot, fire};

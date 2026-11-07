@@ -28,6 +28,9 @@ public readonly struct GunHolder : IEquatable<GunHolder>, IObjComponent
 	private const int BobValue = 9;
 	private const int BreathingValue = 10;
 	private const int WallCheckValue = 11;
+	private const int FireValue = 12;
+	private const int ShotOriginValue = 13;
+	private const int ShotDirectionValue = 14;
 
 	public static readonly GunHolder None = default;
 
@@ -107,6 +110,38 @@ public readonly struct GunHolder : IEquatable<GunHolder>, IObjComponent
 	{
 		get { return Number(WallCheckValue) != 0f; }
 		set { Set(WallCheckValue, value ? 1f : 0f); }
+	}
+
+	/// <summary>
+	/// Fires the gun, when it is ready to fire again by its rate and not held against a wall: the view climbs by its
+	/// recoil, and the gun and camera kick. False when it did not fire. Call it each frame the trigger is held for
+	/// automatic fire, or when it is pressed for single shots.
+	/// <code>
+	/// if (Input.Held("Fire") &amp;&amp; holder.Fire(out var shot)
+	/// 	&amp;&amp; Physics.Raycast(shot.Origin, shot.Direction, out var hit, 300f))
+	/// {
+	/// 	Log.Info($"hit {hit.Obj}");
+	/// }
+	/// </code>
+	/// </summary>
+	public bool Fire(out Shot shot)
+	{
+		if (!NativeComponent.Set(NativeComponent.GunHolder, Obj, FireValue, Vector4.One))
+		{
+			shot = default;
+			return false;
+		}
+
+		NativeComponent.Get(NativeComponent.GunHolder, Obj, ShotOriginValue, out var origin);
+		NativeComponent.Get(NativeComponent.GunHolder, Obj, ShotDirectionValue, out var direction);
+		shot = new Shot(origin.AsVector3(), direction.AsVector3());
+		return true;
+	}
+
+	/// <summary>Fires the gun, as <see cref="Fire(out Shot)"/> does, for when where the shot goes is not wanted.</summary>
+	public bool Fire()
+	{
+		return Fire(out _);
 	}
 
 	/// <summary>Takes the Gun Holder off its Obj.</summary>

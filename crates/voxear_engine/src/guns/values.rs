@@ -37,6 +37,9 @@ const SWAY: i32 = 8;
 const BOB: i32 = 9;
 const BREATHING: i32 = 10;
 const WALL_CHECK: i32 = 11;
+const FIRE: i32 = 12;
+const SHOT_ORIGIN: i32 = 13;
+const SHOT_DIRECTION: i32 = 14;
 
 pub(crate) fn register() {
     voxear_scripting::set_kind_values(ComponentKind::Gun, gun_values);
@@ -125,6 +128,10 @@ fn holder_values(world: &mut World, entity: Entity, what: i32, written: Option<[
     if let Some(answer) = presence::<GunHolder>(world, entity, what, written) {
         return answer;
     }
+    if (what, written.is_some()) == (FIRE, true) {
+        return super::holder::fire(world, entity).map(|_| [1.0, 0.0, 0.0, 0.0]);
+    }
+    let shot = world.get::<GunHolderState>(entity).and_then(|state| state.shot);
     let aimed = world.get::<GunHolderState>(entity).map_or(0.0, GunHolderState::aimed);
     let held = world.get::<GunHolder>(entity)?.gun;
     let held = held.or_else(|| crate::first_person::first_under(world, entity, |w, e| w.has::<Gun>(e)));
@@ -140,6 +147,8 @@ fn holder_values(world: &mut World, entity: Entity, what: i32, written: Option<[
             BOB => Some(number(holder.bob)),
             BREATHING => Some(number(holder.breathing)),
             WALL_CHECK => Some(flag(holder.wall_check)),
+            SHOT_ORIGIN => shot.map(|shot| point(shot.origin.into())),
+            SHOT_DIRECTION => shot.map(|shot| point(shot.direction.into())),
             _ => None,
         };
     };

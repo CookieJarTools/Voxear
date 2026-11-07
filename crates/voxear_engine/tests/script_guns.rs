@@ -6,7 +6,8 @@
 use voxear_core::logging::LogCapture;
 use voxear_engine::{Engine, Game, Project, scripts};
 
-const ARMOURER: &str = r#"using Voxear;
+const ARMOURER: &str = r#"using System;
+using Voxear;
 
 namespace Hello;
 
@@ -21,6 +22,9 @@ public sealed class Armourer : SystemBase
 		holder.Aiming = true;
 		holder.Sway = 0.5f;
 		Log.Info($"gun {gun.Kind} {gun.Mass} {gun.FireRate} {holder.Gun == gun} {holder.Aiming} {holder.Sway}");
+		Obj.Find("Main Camera").AddFirstPersonView();
+		var fired = holder.Fire(out var shot);
+		Log.Info($"fired {fired} {MathF.Round(shot.Direction.Length(), 3)} {holder.Fire()}");
 	}
 
 	protected override void Update()
@@ -51,6 +55,7 @@ fn with_the_guns_module_a_script_arms_a_holder() {
     game.tick(1.0 / 60.0, None);
     let lines: Vec<String> = log.lock().unwrap().lines.iter().map(|l| l.message.clone()).collect();
     assert!(lines.iter().any(|l| l == "gun OpenBoltSmg 4 550 True True 0.5"), "{lines:#?}");
+    assert!(lines.iter().any(|l| l == "fired True 1 False"), "once, then not again so soon: {lines:#?}");
     let world = &game.engine.world;
     let holders: Vec<voxear_engine::guns::GunHolder> =
         world.query_ref::<&voxear_engine::guns::GunHolder>().into_iter().cloned().collect();

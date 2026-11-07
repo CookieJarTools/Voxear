@@ -84,7 +84,27 @@ impl FirstPersonView {
 pub struct FirstPersonState {
     /// The eyes' place relative to the Obj, following the head on a spring.
     eyes: Spring<Vec3>,
+    /// A jolt to the camera's turn, as a shot's kick gives it, springing back:
+    /// angles about its across, up and forward, in radians.
+    punch: Spring<Vec3>,
     started: bool,
+}
+
+impl FirstPersonState {
+    fn new(eyes: Vec3) -> Self {
+        Self {
+            eyes: Spring::new(eyes, SpringFeel::halflife(0.06)),
+            punch: Spring::new(Vec3::ZERO, SpringFeel::new(5.0, 0.55, 0.0)),
+            started: false,
+        }
+    }
+}
+
+/// Jolts a view's camera by a spin, angles a second about its across, up
+/// and forward, which springs back: a shot's kick, a landing, a blast.
+pub fn punch(world: &mut World, entity: Entity, spin: Vec3) {
+    let Some(state) = world.get_mut::<FirstPersonState>(entity) else { return };
+    state.punch.push(spin, 0.03);
 }
 
 impl Component for FirstPersonState {}
@@ -161,20 +181,22 @@ pub fn place(world: &mut World) {
         let eyes_now = obj.inverse().transform_point3(placed.transform_point3(eyes_in_body));
         let state = world.get::<FirstPersonState>(entity).copied();
         let mut state = state
-            .unwrap_or(FirstPersonState { eyes: Spring::new(eyes_now, SpringFeel::halflife(0.06)), started: false });
+            .unwrap_or_else(|| FirstPersonState::new(eyes_now));
         if !state.started {
             state.eyes.snap(eyes_now);
             state.started = true;
         }
         let steadied = state.eyes.update(eyes_now, delta);
         let shown = steadied.lerp(eyes_now, view.bob.clamp(0.0, 1.0));
+        let jolt = state.punch.update(Vec3::ZERO, delta);
+        let jolt = Quat::from_euler(voxear_core::math::EulerRot::XYZ, jolt.x, jolt.y, jolt.z);
         world.insert(entity, state);
         let camera = view
             .camera
             .or_else(|| first_under(world, entity, |w, e| w.has::<Camera>(e)))
             .or_else(|| world.query_ref::<(Entity, &Camera)>().into_iter().map(|(e, _)| e).next());
         if let Some(camera) = camera {
-            set_world(world, camera, obj.transform_point3(shown), view.rotation());
+            set_world(world, camera, obj.transform_point3(shown), view.rotation() * jolt);
         }
     }
 }

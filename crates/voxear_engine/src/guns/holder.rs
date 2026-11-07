@@ -80,6 +80,21 @@ pub struct GunHolderState {
     /// How much nearer the body the gun comes so the arms can reach it.
     reach: Spring<f32>,
     view: Option<(f32, f32)>,
+    /// Shots: when the last left, in the game's time, how many in this
+    /// burst, the kicks still to show, and the pattern's way, wandering
+    /// shot to shot.
+    last_shot: Option<f64>,
+    burst: u32,
+    kicks: u32,
+    pattern: f32,
+    /// How far the shots have climbed the view, in degrees, not yet
+    /// recovered; and the tilt the view was left at, to tell the player's
+    /// own pull-down from it.
+    climb: f32,
+    left_pitch: Option<f32>,
+    /// The last shot's line, for scripts to read after firing.
+    pub(crate) shot: Option<Shot>,
+    seed: u64,
     at: Option<Vec3>,
     velocity: Vec3,
     feet: [bool; 2],
@@ -100,6 +115,14 @@ impl GunHolderState {
             wall: Spring::new(0.0, SpringFeel::halflife(0.06)),
             reach: Spring::new(0.0, SpringFeel::halflife(0.08)),
             view: None,
+            last_shot: None,
+            burst: 0,
+            kicks: 0,
+            pattern: 0.0,
+            climb: 0.0,
+            left_pitch: None,
+            shot: None,
+            seed: 0x9e37_79b9_7f4a_7c15,
             at: None,
             velocity: Vec3::ZERO,
             feet: [false; 2],
@@ -113,6 +136,79 @@ impl GunHolderState {
     pub fn aimed(&self) -> f32 {
         self.aim.value.clamp(0.0, 1.0)
     }
+
+    /// A number from -1 to 1, the next of the holder's own run.
+    fn random(&mut self) -> f32 {
+        self.seed ^= self.seed << 13;
+        self.seed ^= self.seed >> 7;
+        self.seed ^= self.seed << 17;
+        (self.seed >> 40) as f32 / (1u64 << 23) as f32 - 1.0
+    }
+}
+
+/// A shot's line: where it starts, at the eye, and the way it goes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Shot {
+    pub origin: Vec3,
+    pub direction: Vec3,
+}
+
+/// Fires the holder's gun, when it is ready to fire again by its rate and
+/// not held against a wall: the view climbs by the gun's recoil, the gun
+/// and camera kick, and the shot's line comes back, from the eye along the
+/// view, spread as much as the hold is loose.
+pub fn fire(world: &mut World, entity: Entity) -> Option<Shot> {
+    if !crate::modules::has(world, crate::modules::Module::Guns) {
+        return None;
+    }
+    let holder = world.get::<GunHolder>(entity)?.clone();
+    let gun_entity = holder.gun.or_else(|| first_under(world, entity, |w, e| w.has::<Gun>(e)))?;
+    let gun = world.get::<Gun>(gun_entity)?.clone();
+    let now = world.resource::<Time>().map_or(0.0, |time| time.elapsed);
+    let mut state = world.get::<GunHolderState>(entity).copied().unwrap_or_else(GunHolderState::new);
+    let interval = 60.0 / f64::from(gun.fire_rate.max(1.0));
+    if state.last_shot.is_some_and(|last| now - last < interval - 1e-4) || state.wall.value > 0.6 {
+        return None;
+    }
+    // A burst runs on while shots follow close behind one another.
+    if state.last_shot.is_none_or(|last| now - last > interval * 2.5 + 0.1) {
+        state.burst = 0;
+    }
+    state.last_shot = Some(now);
+    state.burst += 1;
+    state.kicks += 1;
+
+    // Where shots go climbs as the gun kicks, the first shot hardest, and wanders aside in a pattern of its own.
+    let heft = gun.heft();
+    let first = if state.burst == 1 { 1.35 } else { 1.0 };
+    let up = 2.4 * gun.recoil * (1.0 - 0.55 * heft) * first;
+    state.pattern = (state.pattern + state.random() * 0.45).clamp(-1.2, 1.2);
+    let aside = state.pattern.sin() * up * 0.45;
+    let aimed = state.aimed();
+    let view = world.get_mut::<FirstPersonView>(entity)?;
+    view.pitch = (view.pitch + up).clamp(view.pitch_limits[0], view.pitch_limits[1]);
+    view.yaw += aside;
+    state.climb += up;
+    state.left_pitch = Some(view.pitch);
+    // The climb is the shot's, not a turn of the view the gun should lag.
+    if let Some((yaw, pitch)) = state.view {
+        state.view = Some((yaw + aside, pitch + up));
+    }
+    let rotation = view.rotation();
+
+    // The line: from the camera, along the view, within a cone that narrows as the gun comes up to the eye.
+    let camera = view.camera.or_else(|| first_under(world, entity, |w, e| w.has::<Camera>(e)));
+    let origin = camera.map_or_else(
+        || world_matrix(world, entity).w_axis.truncate(),
+        |camera| world_matrix(world, camera).w_axis.truncate(),
+    );
+    let spread = (2.2 - 2.05 * aimed).to_radians();
+    let (a, b) = (state.random(), state.random());
+    let off = Quat::from_euler(EulerRot::YXZ, a * spread, b * spread, 0.0);
+    let shot = Shot { origin, direction: (rotation * off * Vec3::Z).normalize() };
+    state.shot = Some(shot);
+    world.insert(entity, state);
+    Some(shot)
 }
 
 /// Holds every holder's gun and puts its hands on it: run in the pose
@@ -137,6 +233,13 @@ pub fn hold(world: &mut World) {
         let Some(camera) = camera else { continue };
         let eye = world_matrix(world, camera);
         let mut state = world.get::<GunHolderState>(entity).copied().unwrap_or_else(GunHolderState::new);
+        recover(world, entity, &gun, &mut state, delta);
+        for _ in 0..state.kicks {
+            let kick = gun.recoil * (1.0 - 0.5 * gun.heft());
+            let aside = state.random() * 0.25 * kick;
+            crate::first_person::punch(world, entity, Vec3::new(-0.9 * kick, aside, 0.0));
+        }
+        let view = world.get::<FirstPersonView>(entity).cloned().unwrap_or(view);
         let body = view.body.or_else(|| first_under(world, entity, |w, e| w.has::<ModelRenderer>(e)));
         let held = place_gun(world, entity, &holder, &gun, &view, eye, body, &mut state, delta);
         set_world(world, gun_entity, held.w_axis.truncate(), held.to_scale_rotation_translation().1);
@@ -148,6 +251,27 @@ pub fn hold(world: &mut World) {
         }
         world.insert(entity, state);
     }
+}
+
+/// Brings the view back down from the shots' climb once they stop, all but
+/// what the player pulled down themself; a bolt-action recovers none, as
+/// its shooter takes aim again for each shot.
+fn recover(world: &mut World, entity: Entity, gun: &Gun, state: &mut GunHolderState, delta: f32) {
+    let now = world.resource::<Time>().map_or(0.0, |time| time.elapsed);
+    let quiet = state.last_shot.is_none_or(|last| now - last > 60.0 / f64::from(gun.fire_rate.max(1.0)) + 0.08);
+    let Some(view) = world.get_mut::<FirstPersonView>(entity) else { return };
+    if let Some(left) = state.left_pitch {
+        let own = view.pitch - left;
+        if own < 0.0 {
+            state.climb = (state.climb + own).max(0.0);
+        }
+    }
+    if quiet && gun.kind != super::GunKind::BoltActionRifle && state.climb > 0.0 {
+        let back = state.climb * (1.0 - (-delta * 9.0).exp());
+        view.pitch -= back;
+        state.climb -= back;
+    }
+    state.left_pitch = Some(view.pitch);
 }
 
 /// Where the gun goes this frame, in the world.
@@ -186,8 +310,16 @@ fn place_gun(
     turn = Quat::from_rotation_x(-55f32.to_radians() * smooth((wall - 0.4) / 0.6)) * turn;
     at.z -= state.reach.value;
 
-    // Sway: the gun lags the view's turns, heavier guns more, yaw rolling it too; aiming steadies it.
+    // Each shot kicks the gun up and back about the grip, rolling it the other way each time.
     let steady = 1.0 - 0.72 * aim;
+    let kick = gun.recoil * (1.0 - 0.5 * heft);
+    for _ in 0..std::mem::take(&mut state.kicks) {
+        let roll = if state.burst % 2 == 0 { 1.0 } else { -1.0 };
+        let aside = state.random() * 1.5 * kick;
+        state.sway.kick(Vec3::new(-7.0 * kick, aside, roll * 3.0 * kick) * (1.0 - 0.35 * aim));
+        state.lag.push(Vec3::new(0.0, 0.01, -0.09) * kick, 0.025);
+    }
+    // Sway: the gun lags the view's turns, heavier guns more, yaw rolling it too; aiming steadies it.
     let (yaw, pitch) = (view.yaw, view.pitch);
     if let Some((last_yaw, last_pitch)) = state.view {
         let turned = Vec3::new(pitch - last_pitch, wrap(yaw - last_yaw), 0.0) * std::f32::consts::PI / 180.0;
@@ -368,7 +500,12 @@ fn wrap(angle: f32) -> f32 {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests_support {
+    pub use super::tests::{Scene, frame, rest_of, scene_with};
+}
+
+#[cfg(test)]
+pub(super) mod tests {
     use std::sync::Arc;
 
     use voxear_render::ModelAnimation;
@@ -379,16 +516,16 @@ mod tests {
     use crate::first_person::{self, MouseLook};
     use crate::guns::GunKind;
 
-    struct Scene {
-        world: World,
-        player: Entity,
-        body: Entity,
-        camera: Entity,
-        gun: Entity,
+    pub struct Scene {
+        pub world: World,
+        pub player: Entity,
+        pub body: Entity,
+        pub camera: Entity,
+        pub gun: Entity,
     }
 
     /// A player with a body, a view, a camera and a gun of `kind` under it.
-    fn scene_with(kind: GunKind) -> Scene {
+    pub fn scene_with(kind: GunKind) -> Scene {
         let mut world = World::new();
         let skeleton = body(|part, side| match side {
             Some(left) => format!("{part}.{}", if left { "L" } else { "R" }),
@@ -413,14 +550,14 @@ mod tests {
         scene_with(GunKind::BoltActionRifle)
     }
 
-    fn frame(scene: &mut Scene, rest: &[Mat4]) {
+    pub fn frame(scene: &mut Scene, rest: &[Mat4]) {
         scene.world.insert(scene.body, Pose { bones: rest.to_vec().into() });
         first_person::look(&mut scene.world);
         first_person::place(&mut scene.world);
         hold(&mut scene.world);
     }
 
-    fn rest_of(scene: &Scene) -> Vec<Mat4> {
+    pub fn rest_of(scene: &Scene) -> Vec<Mat4> {
         scene.world.get::<Pose>(scene.body).unwrap().bones.to_vec()
     }
 
@@ -491,5 +628,67 @@ mod tests {
             frame(&mut scene, &rest);
         }
         assert!(held(&scene).angle_between(settled) < 0.01, "and settles");
+    }
+}
+
+#[cfg(test)]
+mod firing {
+    use super::tests_support::*;
+    use super::*;
+    use crate::guns::GunKind;
+
+    #[test]
+    fn shots_come_at_the_guns_rate_climb_the_view_and_an_smg_recovers_what_the_player_left() {
+        let mut scene = scene_with(GunKind::OpenBoltSmg);
+        let rest = rest_of(&scene);
+        let mut time = Time { delta: 1.0 / 60.0, ..Time::default() };
+        let mut step = |scene: &mut Scene, time: &mut Time| {
+            time.elapsed += f64::from(time.delta);
+            scene.world.insert_resource(*time);
+            frame(scene, &rest);
+        };
+        for _ in 0..20 {
+            step(&mut scene, &mut time);
+        }
+        let start = scene.world.get::<FirstPersonView>(scene.player).unwrap().pitch;
+        // Held for half a second at 550 a minute: about 4 shots, not 30.
+        let mut shots = 0;
+        for _ in 0..30 {
+            if let Some(shot) = fire(&mut scene.world, scene.player) {
+                shots += 1;
+                assert!((shot.direction.length() - 1.0).abs() < 1e-4);
+            }
+            step(&mut scene, &mut time);
+        }
+        assert!((4..=6).contains(&shots), "{shots} shots");
+        let climbed = scene.world.get::<FirstPersonView>(scene.player).unwrap().pitch;
+        assert!(climbed > start + 2.0, "the view climbs: {start} to {climbed}");
+        for _ in 0..90 {
+            step(&mut scene, &mut time);
+        }
+        let back = scene.world.get::<FirstPersonView>(scene.player).unwrap().pitch;
+        assert!((back - start).abs() < 0.2, "and comes back down: {back} from {start}");
+    }
+
+    #[test]
+    fn a_bolt_action_keeps_its_climb_and_the_players_pull_down_is_theirs() {
+        let mut scene = scene_with(GunKind::BoltActionRifle);
+        let rest = rest_of(&scene);
+        let mut time = Time { delta: 1.0 / 60.0, ..Time::default() };
+        for _ in 0..10 {
+            time.elapsed += f64::from(time.delta);
+            scene.world.insert_resource(time);
+            frame(&mut scene, &rest);
+        }
+        let start = scene.world.get::<FirstPersonView>(scene.player).unwrap().pitch;
+        assert!(fire(&mut scene.world, scene.player).is_some());
+        assert!(fire(&mut scene.world, scene.player).is_none(), "not again until the bolt is worked");
+        for _ in 0..60 {
+            time.elapsed += f64::from(time.delta);
+            scene.world.insert_resource(time);
+            frame(&mut scene, &rest);
+        }
+        let after = scene.world.get::<FirstPersonView>(scene.player).unwrap().pitch;
+        assert!(after > start + 1.5, "a bolt-action does not bring the view back: {start} {after}");
     }
 }

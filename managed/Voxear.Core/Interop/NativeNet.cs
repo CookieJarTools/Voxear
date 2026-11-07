@@ -26,6 +26,7 @@ internal static unsafe class NativeNet
 	public const int NetId = 14;
 	public const int ObjIndex = 15;
 	public const int ObjGeneration = 16;
+	public const int Replaying = 17;
 
 	public const int ConnectedEvent = 1;
 	public const int DisconnectedEvent = 2;

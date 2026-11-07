@@ -4,7 +4,7 @@ use anyhow::{Context, Result, bail};
 use voxear_core::{profile_scope, profiling, time::Time};
 use voxear_ecs::{Entity, Schedule, World};
 use voxear_scene::{
-    AttachedBehaviour, BehaviourHandle, BehaviourHost, BehaviourSpec, Behaviours, Destroying, InstanceMarker,
+    AttachedBehaviour, BehaviourHandle, Callbacks, BehaviourHost, BehaviourSpec, Behaviours, Destroying, InstanceMarker,
     Lifecycle, Name, Parent, Phase, Placement, SceneComponents, Transform, propagate_transforms,
     register_obj_components,
 };
@@ -479,10 +479,11 @@ impl Engine {
             profile_scope!("FixedUpdate");
             crate::net::fixed_tick(&mut self.world);
             self.sync_script_time(self.time.fixed_delta);
-            self.run_phase(Phase::FixedUpdate);
+            self.run_fixed_update();
             self.run_stage("FixedUpdate");
             self.flush();
             self.step_physics();
+            crate::net::record(&mut self.world);
             self.fixed_accumulator -= self.time.fixed_delta;
             steps += 1;
         }
@@ -635,6 +636,42 @@ impl Engine {
 
     fn run_phase(&mut self, phase: Phase) {
         self.with_host(|lifecycle, host| lifecycle.run(phase, host));
+    }
+
+    /// FixedUpdate behaviours. On a networked client, `[Predicted]` ones
+    /// run only on its own predicted Objs: others' move as the server says.
+    fn run_fixed_update(&mut self) {
+        let client = self.world.resource::<crate::net::NetSession>().is_some_and(|s| s.role() == crate::net::NetRole::Client);
+        if !client {
+            return self.run_phase(Phase::FixedUpdate);
+        }
+        let predicted: std::collections::HashSet<Entity> =
+            self.world.query_ref::<Entity>().with::<crate::net::Predicting>().into_iter().collect();
+        let keep = move |entity: Entity, callbacks: Callbacks| !callbacks.has(Callbacks::PREDICTED) || predicted.contains(&entity);
+        self.with_host(|lifecycle, host| lifecycle.run_where(Phase::FixedUpdate, host, &keep));
+    }
+
+    /// On a networked client, marks its player's predicted Objs, and puts
+    /// right those the server disagrees with: back as the server had them on
+    /// a tick, with their replicated properties, and their `[Predicted]`
+    /// behaviours' ticks since run again.
+    pub fn reconcile(&mut self) {
+        let lifecycle = &self.lifecycle;
+        crate::net::mark_predicting(&mut self.world, &|entity| lifecycle.has_marked(entity, Callbacks::PREDICTED));
+        for correction in crate::net::corrections(&mut self.world) {
+            crate::net::begin_replay(&mut self.world, &correction);
+            if let Some(scripts) = self.scripts.as_mut() {
+                scripts.take_net_fields(&mut self.world);
+            }
+            self.sync_script_time(self.time.fixed_delta);
+            while crate::net::replay_tick(&mut self.world) {
+                let entity = correction.entity;
+                self.with_host(|lifecycle, host| lifecycle.run_marked(Phase::FixedUpdate, entity, Callbacks::PREDICTED, host));
+                crate::net::record(&mut self.world);
+            }
+            crate::net::end_replay(&mut self.world, &correction);
+            self.sync_script_time(self.time.delta);
+        }
     }
 
     /// Scripts see `Time.Delta` as the fixed step inside FixedUpdate, as in Unity.

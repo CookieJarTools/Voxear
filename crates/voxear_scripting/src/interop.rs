@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 52;
+pub(crate) const API_VERSION: u32 = 53;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -727,6 +727,10 @@ pub(crate) struct ManagedApi {
     /// Tells behaviours of the marks actions passed (`OnMotionMark`): each
     /// mark's Obj, and the marks one to a line.
     pub motion_marks: Option<unsafe extern "C" fn(entities: *const u64, count: i32, text: *const u8, len: i32)>,
+    /// Sets the replicated properties that came from the server on their
+    /// behaviours now, rather than with the next frame's events, as a
+    /// predicted Obj put right needs before its ticks run again.
+    pub take_net_fields: Option<unsafe extern "C" fn()>,
 }
 
 pub(crate) type RunCheck = unsafe extern "C" fn(

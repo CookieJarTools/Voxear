@@ -89,6 +89,15 @@ public static class Net
 		get { return NativeNet.Call(NativeNet.Tick); }
 	}
 
+	/// <summary>
+	/// Whether this machine is running its [Predicted] ticks again, after the server put its player's Obj right: an
+	/// effect such as a sound should play only when this is false, as it played the first time.
+	/// </summary>
+	public static bool IsReplaying
+	{
+		get { return NativeNet.Call(NativeNet.Replaying) == 1; }
+	}
+
 	/// <summary>The player whose [ServerRpc] is running, on the server; null otherwise.</summary>
 	public static NetPlayer? Caller
 	{

@@ -282,3 +282,75 @@ fn rpcs_reach_the_server_from_a_player_and_players_from_the_server() {
     assert_eq!(take_rpc(&mut clients[0]).map(|r| r.key), Some(8));
     assert_eq!(take_rpc(&mut clients[1]), None, "not for them");
 }
+
+/// Moves a ball a centimetre along x, as a `[Predicted]` behaviour would each tick.
+fn roll(world: &mut World, ball: voxear_ecs::Entity) {
+    if let Some(transform) = world.get_mut::<voxear_scene::Transform>(ball) {
+        transform.position.x += 0.01;
+    }
+}
+
+/// A client's frame with its own ball predicted: corrections first, as the engine makes them, then its ticks.
+fn predicted_frame(client: &mut World) {
+    frame_begin(client, TICK, &[]);
+    make_spawns(std::slice::from_mut(client));
+    mark_predicting(client, &|_| true);
+    for correction in corrections(client) {
+        begin_replay(client, &correction);
+        while replay_tick(client) {
+            roll(client, correction.entity);
+            record(client);
+        }
+        end_replay(client, &correction);
+    }
+    let saved = client.resource::<Pace>().map_or(0.0, |pace| pace.0) + TICK * time_scale(client);
+    let mut saved = saved;
+    while saved >= TICK - 1e-6 {
+        fixed_tick(client);
+        if let Some(ball) = entity_of(client, NetId(1)).filter(|ball| client.has::<Predicting>(*ball)) {
+            roll(client, ball);
+        }
+        record(client);
+        saved -= TICK;
+    }
+    client.insert_resource(Pace(saved));
+    frame_end(client);
+}
+
+#[test]
+fn a_players_own_obj_moves_at_once_and_is_put_right_when_the_server_disagrees() {
+    let network = MemoryNetwork::new();
+    let (mut server, mut clients) = session(&network, 1, Conditions::GOOD);
+    for _ in 0..60 {
+        frame(&mut server, &mut clients, &[(false, false)]);
+    }
+    let ball = shared(&mut server, voxear_core::math::Vec3::ZERO, NetObject::default());
+    set_owner(&mut server, ball, Some(PlayerId(1)));
+    let client = &mut clients[0];
+    let mut put_right = Vec::new();
+    for n in 0..400 {
+        frame_begin(&mut server, TICK, &[]);
+        fixed_tick(&mut server);
+        roll(&mut server, ball);
+        // The server has its own idea once: the ball jumps.
+        if n == 200 {
+            server.get_mut::<voxear_scene::Transform>(ball).unwrap().position.x += 5.0;
+        }
+        frame_end(&mut server);
+        predicted_frame(client);
+        put_right.push(session_of(client).stats().corrections);
+    }
+    let on_client = entity_of(client, NetId(1)).expect("the ball, made on the client");
+    assert!(client.has::<Predicting>(on_client));
+    let (server_x, server_tick) = (server.get::<voxear_scene::Transform>(ball).unwrap().position.x, session_of(&server).tick);
+    let client_tick = session_of(client).tick;
+    let client_x = session_of(client).prediction.history[&NetId(1)].back().unwrap().1.position.x;
+    // Ahead of the server by as many ticks as it runs ahead, not behind it by a round trip.
+    let expected = server_x + (client_tick - server_tick) as f32 * 0.01;
+    assert!((client_x - expected).abs() < 0.02, "{client_x} where the server will have {expected}");
+    let before = put_right[190];
+    let after = put_right[399] - before;
+    assert!(before <= 2, "put right at most as it joined: {before}");
+    assert!((1..=3).contains(&after), "put right once the ball jumped: {after}");
+    assert!(session_of(client).prediction.ids.contains(&NetId(1)));
+}

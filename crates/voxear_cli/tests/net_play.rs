@@ -138,6 +138,141 @@ fn a_client_joins_a_server_takes_replicated_properties_and_makes_rpcs() {
     assert!(out.contains("cheered now 10") && out.contains("points 10"), "the server's RPC, and the score after: {out}");
 }
 
+const RUNNER: &str = r#"using System.Numerics;
+using Voxear;
+
+namespace Hello;
+
+[Predicted]
+public sealed partial class Runner : Behaviour
+{
+	[Replicated]
+	public partial float Speed { get; set; }
+
+	private int ticks;
+
+	protected override void FixedUpdate()
+	{
+		if (Obj.NetObject.Owner is null)
+		{
+			return;
+		}
+		// The server has its own idea after two seconds, which the player's machine cannot guess.
+		if (Net.IsServer && ++ticks == 120)
+		{
+			Speed = 2f;
+			Log.Info($"faster from tick {Net.Tick}");
+		}
+		Obj.Position += new Vector3(Speed == 0f ? 1f : Speed, 0f, 0f) * Time.Delta;
+		if (Net.Tick % 30 == 0)
+		{
+			Log.Info($"tick {Net.Tick} x {Obj.Position.X:F3}");
+		}
+	}
+}
+"#;
+
+const START: &str = r#"using System.Numerics;
+using Voxear;
+
+namespace Hello;
+
+public sealed class Start : SystemBase
+{
+	protected override void OnCreate()
+	{
+		Net.PlayerJoined += player =>
+		{
+			if (!Net.IsServer)
+			{
+				return;
+			}
+			var runner = Prefab.Load("Prefabs/Runner.prefab").Instantiate(Vector3.Zero, Quaternion.Identity);
+			var net = runner.NetObject;
+			net.Owner = player;
+		};
+	}
+
+	protected override void Update()
+	{
+	}
+}
+"#;
+
+const RUNNER_PREFAB: &str = "format = 1\n[[obj]]\nid = 1\nname = \"Runner\"\nbehaviours = [\"Hello.Runner\"]\nnet = {}\n";
+
+#[test]
+fn a_players_own_obj_is_predicted_and_put_right_with_its_replicated_properties() {
+    if voxear_scripting::find_dotnet().is_none() {
+        return eprintln!("skipping: needs .NET");
+    }
+    let dir = hello_copy();
+    std::fs::write(dir.path().join("Scripts/Runner.cs"), RUNNER).unwrap();
+    std::fs::write(dir.path().join("Scripts/Start.cs"), START).unwrap();
+    std::fs::write(dir.path().join("Prefabs/Runner.prefab"), RUNNER_PREFAB).unwrap();
+    let (server, client) = play(dir.path(), 47794, 480);
+    // Where the runner was on each tick both logged, the client's last word on it, after a replay.
+    let at = |lines: &[String]| -> std::collections::BTreeMap<u64, f32> {
+        lines
+            .iter()
+            .filter_map(|line| {
+                let rest = &line[line.find("tick ")? + 5..];
+                let (tick, x) = rest.split_once(" x ")?;
+                Some((tick.trim().parse().ok()?, x.trim().parse().ok()?))
+            })
+            .collect()
+    };
+    let faster = server.iter().find_map(|l| l.split("faster from tick ").nth(1)?.trim().parse::<u64>().ok());
+    let faster = faster.unwrap_or_else(|| panic!("the server changed speed: {server:?}"));
+    let (on_server, on_client) = (at(&server), at(&client));
+    let late: Vec<(u64, f32, f32)> =
+        on_client.iter().filter(|(t, _)| **t > faster + 60).filter_map(|(t, x)| Some((*t, *x, *on_server.get(t)?))).collect();
+    assert!(late.len() >= 3, "ticks both logged after the change: {late:?}\n{client:?}");
+    for (tick, client_x, server_x) in late {
+        assert!((client_x - server_x).abs() < 0.01, "tick {tick}: the client had {client_x}, the server {server_x}");
+    }
+}
+
+/// Plays a server and a client of the project at `dir` on `port`, the client for `frames` frames: each one's log.
+fn play(dir: &Path, port: u16, frames: u32) -> (Vec<String>, Vec<String>) {
+    let vox = env!("CARGO_BIN_EXE_vox");
+    let project = dir.to_string_lossy().into_owned();
+    let port = port.to_string();
+    let mut server = Command::new(vox)
+        .args(["run", &project, "--server", "--port", &port, "--frames", "3000"])
+        .env("NO_COLOR", "1")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let lines = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    for pipe in [Box::new(server.stdout.take().unwrap()) as Box<dyn std::io::Read + Send>, Box::new(server.stderr.take().unwrap())] {
+        let lines = lines.clone();
+        std::thread::spawn(move || {
+            for line in BufReader::new(pipe).lines().map_while(Result::ok) {
+                lines.lock().unwrap().push(line);
+            }
+        });
+    }
+    let started = Instant::now();
+    while !lines.lock().unwrap().iter().any(|line| line.contains("ready:")) {
+        assert!(started.elapsed() < Duration::from_secs(120), "the server never got ready: {:?}", lines.lock().unwrap());
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let address = format!("127.0.0.1:{port}");
+    let frames = frames.to_string();
+    let client = Command::new(vox)
+        .args(["run", &project, "--headless", "--no-build", "--connect", &address, "--frames", &frames])
+        .env("NO_COLOR", "1")
+        .output()
+        .unwrap();
+    let _ = server.kill();
+    let _ = server.wait();
+    let out = String::from_utf8_lossy(&client.stdout).into_owned() + &String::from_utf8_lossy(&client.stderr);
+    let server = lines.lock().unwrap().clone();
+    (server, out.lines().map(str::to_string).collect())
+}
+
 /// A copy of Hello, inside the repository, where its scripts find the
 /// engine to build against.
 fn hello_copy() -> tempfile::TempDir {

@@ -214,7 +214,7 @@ impl StatsOverlay {
         let role = match stats.role {
             Some(crate::net::NetRole::Server) => format!("Server · {} players", stats.players),
             Some(crate::net::NetRole::Host) => format!("Host · {} players", stats.players),
-            _ => format!("Client · tick {}", stats.tick),
+            _ => format!("Client · tick {} · {} corrected", stats.tick, stats.corrections),
         };
         let texts = [
             role,

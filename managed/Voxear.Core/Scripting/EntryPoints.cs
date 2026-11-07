@@ -219,6 +219,20 @@ internal static unsafe class EntryPoints
 		MotionMessages.Dispatch(new ReadOnlySpan<ulong>(objs, count), Encoding.UTF8.GetString(text, length));
 	}
 
+	/// <summary>Sets the replicated properties that came from the server now, for a predicted Obj put right.</summary>
+	[UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+	public static void TakeNetFields()
+	{
+		try
+		{
+			Replication.TakeIn();
+		}
+		catch (Exception exception)
+		{
+			Log.Exception(exception);
+		}
+	}
+
 	[UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
 	public static int ContentRoots(byte* buffer, int capacity)
 	{

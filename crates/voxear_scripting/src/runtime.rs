@@ -110,7 +110,8 @@ impl ScriptRuntime {
                 && managed.inspector_call.is_some()
                 && managed.managed_memory.is_some()
                 && managed.physics_events.is_some()
-                && managed.motion_marks.is_some(),
+                && managed.motion_marks.is_some()
+                && managed.take_net_fields.is_some(),
             "Voxear.Core left part of its interop table empty"
         );
         interop::set_create_behaviour(
@@ -390,6 +391,14 @@ impl ScriptRuntime {
         let text = marks.iter().map(|(_, mark)| mark.as_str()).collect::<Vec<_>>().join("\n");
         let _scope = WorldScope::enter(world);
         unsafe { send(entities.as_ptr(), entities.len() as i32, text.as_ptr(), text.len() as i32) };
+    }
+
+    /// Sets the replicated properties that came from the server on their
+    /// behaviours now.
+    pub fn take_net_fields(&mut self, world: &mut World) {
+        let take = self.managed.take_net_fields.expect("validated at start");
+        let _scope = WorldScope::enter(world);
+        unsafe { take() };
     }
 
     /// Objs scripts asked to destroy since the last call.

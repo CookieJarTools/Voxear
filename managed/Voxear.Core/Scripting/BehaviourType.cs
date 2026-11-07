@@ -11,6 +11,9 @@ internal sealed class BehaviourType
 {
 	private const BindingFlags MethodFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
 
+	/// <summary>A mark beside the callbacks, as the engine's Callbacks::PREDICTED has it, for a [Predicted] behaviour.</summary>
+	private const uint PredictedMark = 1u << 16;
+
 	public BehaviourType(Type type)
 	{
 		Type = type;
@@ -41,6 +44,10 @@ internal sealed class BehaviourType
 			{
 				callbacks |= 1u << (int)phase;
 			}
+		}
+		if (type.GetCustomAttribute<PredictedAttribute>() != null)
+		{
+			callbacks |= PredictedMark;
 		}
 		return callbacks;
 	}

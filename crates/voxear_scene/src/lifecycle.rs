@@ -47,6 +47,14 @@ pub struct Callbacks(pub u32);
 impl Callbacks {
     pub const NONE: Callbacks = Callbacks(0);
     pub const ALL: Callbacks = Callbacks(0xff);
+    /// Not a callback but a mark beside them: a `[Predicted]` behaviour,
+    /// whose FixedUpdate a networked player's machine runs again for its
+    /// own Objs when the server disagrees.
+    pub const PREDICTED: u32 = 1 << 16;
+
+    pub const fn has(self, mark: u32) -> bool {
+        self.0 & mark != 0
+    }
 
     pub const fn of(phase: Phase) -> Self {
         Self(1 << phase as u32)
@@ -282,6 +290,34 @@ impl Lifecycle {
     /// Runs a per-frame phase on every started, enabled behaviour.
     pub fn run(&mut self, phase: Phase, host: &mut dyn BehaviourHost) {
         debug_assert!(matches!(phase, Phase::FixedUpdate | Phase::Update | Phase::LateUpdate));
+        self.run_dirty();
+        let running = std::mem::take(&mut self.running);
+        self.dispatch(host, phase, &running);
+        self.running = running;
+        self.collect_requests(host);
+    }
+
+    /// [`run`](Self::run), but only for the behaviours `keep` keeps, by
+    /// their Obj and callbacks.
+    pub fn run_where(&mut self, phase: Phase, host: &mut dyn BehaviourHost, keep: &dyn Fn(Entity, Callbacks) -> bool) {
+        self.run_dirty();
+        let kept = self.filtered(&self.running, |r| keep(r.entity, r.callbacks));
+        self.dispatch(host, phase, &kept);
+        self.collect_requests(host);
+    }
+
+    /// Runs `phase` on `entity`'s running behaviours with `mark` in their
+    /// callbacks, in their order.
+    pub fn run_marked(&mut self, phase: Phase, entity: Entity, mark: u32, host: &mut dyn BehaviourHost) {
+        self.run_where(phase, host, &|of, callbacks| of == entity && callbacks.has(mark));
+    }
+
+    /// Whether any of `entity`'s behaviours has `mark` in its callbacks.
+    pub fn has_marked(&self, entity: Entity, mark: u32) -> bool {
+        self.records.values().any(|r| r.entity == entity && !r.destroying && r.callbacks.has(mark))
+    }
+
+    fn run_dirty(&mut self) {
         if self.running_dirty {
             self.running.clear();
             self.running
@@ -289,10 +325,6 @@ impl Lifecycle {
             sort_by_order(&self.records, &mut self.running);
             self.running_dirty = false;
         }
-        let running = std::mem::take(&mut self.running);
-        self.dispatch(host, phase, &running);
-        self.running = running;
-        self.collect_requests(host);
     }
 
     /// Destroys everything queued with [`destroy`](Self::destroy): OnDisable

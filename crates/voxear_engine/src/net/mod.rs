@@ -17,6 +17,7 @@
 
 mod inputs;
 mod messages;
+mod prediction;
 mod replication;
 mod rpcs;
 mod scripts;
@@ -37,6 +38,7 @@ use inputs::{InputBuffer, Latch};
 pub use messages::Command;
 pub use replication::{NetId, NetObject, Networked, ObjState, Origin, SpawnRequest};
 use replication::{Replication, Tracked, Viewer};
+pub use prediction::{Correction, Predicting, begin_replay, corrections, end_replay, mark_predicting, record, replay_tick};
 pub use rpcs::{Rpc, RpcTarget};
 pub(crate) use scripts::register;
 pub use scripts::NetDefaults;
@@ -55,6 +57,8 @@ pub struct NetStats {
     pub received_bytes_per_second: f64,
     pub players: usize,
     pub tick: u64,
+    /// Times this client's predicted Objs were put right by the server.
+    pub corrections: u64,
 }
 
 /// A player in a session, numbered by the server: 0 is a host's own.
@@ -217,6 +221,9 @@ pub struct NetSession {
     level_request: Option<String>,
     replication: Replication,
     rpcs: rpcs::Rpcs,
+    prediction: prediction::Prediction,
+    /// The client's own commands, by tick, for predicted ticks to run again.
+    commands: VecDeque<(u64, Command)>,
 }
 
 /// Ticks ahead of the server a client aims for its commands to arrive.
@@ -248,6 +255,8 @@ impl NetSession {
             level_request: None,
             replication: Replication::default(),
             rpcs: rpcs::Rpcs::default(),
+            prediction: prediction::Prediction::default(),
+            commands: VecDeque::new(),
         }
     }
 
@@ -296,7 +305,13 @@ impl NetSession {
     }
 
     pub fn stats(&self) -> NetStats {
-        let mut stats = NetStats { role: Some(self.role), players: self.players.len(), tick: self.tick, ..NetStats::default() };
+        let mut stats = NetStats {
+            role: Some(self.role),
+            players: self.players.len(),
+            tick: self.tick,
+            corrections: self.prediction.corrections,
+            ..NetStats::default()
+        };
         let each: Vec<voxear_net::Stats> = match &self.end {
             End::Client(client) => vec![client.stats()],
             End::Server(server) => server.clients().into_iter().filter_map(|c| server.stats(c)).collect(),
@@ -471,9 +486,11 @@ impl NetSession {
         replication.last_arrival = Some(self.now);
         replication.newest = replication.newest.max(tick);
         for (id, mask, parts, fields) in entries {
-            // Fields come in at once, for scripts to take in; those for an Obj not made yet wait for it.
+            // Fields come in at once, for scripts to take in; those for an Obj not made yet wait for it,
+            // and a predicted Obj's are kept for when it is put right.
             if let Some(fields) = fields {
                 match replication.remote.get(&id).and_then(|r| r.entity) {
+                    _ if self.prediction.ids.contains(&id) => self.prediction.fields.entry(id).or_default().extend(fields),
                     Some(entity) => replication.field_updates.extend(fields.into_iter().map(|(k, v)| (entity, k, v))),
                     None => drop(replication.early_fields.insert(id, fields)),
                 }
@@ -560,6 +577,10 @@ impl NetSession {
                             let distance = at.map_or(0.0, |at| at.distance(tracked.state.position));
                             let near = (1.0 - (distance - 10.0) / 40.0).clamp(0.2, 1.0);
                             *waited += tracked.object.priority.max(0.01) * near;
+                            // A player's own go first, every tick, for their machine to check its predictions.
+                            if tracked.owner == Some(*player) {
+                                *waited += 1000.0;
+                            }
                         }
                     }
                     (false, Some(_)) => {
@@ -630,9 +651,13 @@ impl NetSession {
                 if let Some(local) = self.local {
                     self.inputs.insert(local, command.clone());
                 }
-                self.sent.push_back((self.tick, command));
+                self.sent.push_back((self.tick, command.clone()));
                 while self.sent.len() > REPEATS {
                     self.sent.pop_front();
+                }
+                self.commands.push_back((self.tick, command));
+                while self.commands.len() > prediction::HISTORY {
+                    self.commands.pop_front();
                 }
             }
         }
@@ -791,6 +816,7 @@ pub fn stop(world: &mut World) {
 /// moment ago on the server.
 pub fn frame_begin(world: &mut World, delta: f32, local: &[ActionState]) {
     let Some(mut session) = world.remove_resource::<NetSession>() else { return };
+    prediction::unshow(world, delta, &mut session.prediction);
     session.now += f64::from(delta);
     session.latch.note(local);
     session.receive_server();
@@ -801,7 +827,7 @@ pub fn frame_begin(world: &mut World, delta: f32, local: &[ActionState]) {
     }
     if session.role == NetRole::Client {
         session.advance_shown(delta);
-        session.replication.show(world);
+        session.replication.show(world, &session.prediction.ids);
     }
     world.insert_resource(session);
 }
@@ -820,6 +846,7 @@ pub fn frame_end(world: &mut World) {
     let Some(mut session) = world.remove_resource::<NetSession>() else { return };
     session.replicate(world);
     session.flush();
+    prediction::show(world, &session.prediction);
     world.insert_resource(session);
 }
 
@@ -938,6 +965,10 @@ pub fn rpc(world: &mut World, entity: voxear_ecs::Entity, key: u32, bytes: Vec<u
         return false;
     };
     let Some(session) = world.resource_mut::<NetSession>() else { return false };
+    // Ticks run again were run once already, RPCs and all.
+    if session.prediction.replaying() {
+        return false;
+    }
     if bytes.len() > messages::MOST_RPC_BYTES {
         tracing::error!(target: "script", "an RPC's arguments come to more than {} bytes", messages::MOST_RPC_BYTES);
         return false;
@@ -977,6 +1008,11 @@ pub fn take_rpc(world: &mut World) -> Option<Rpc> {
     let rpc = session.rpcs.incoming.pop_front()?;
     session.rpcs.tick = rpc.tick;
     Some(rpc)
+}
+
+/// Whether a client is running its predicted ticks again.
+pub fn replaying(world: &World) -> bool {
+    world.resource::<NetSession>().is_some_and(|session| session.prediction.replaying())
 }
 
 /// The tick the RPC scripts took last was made on.

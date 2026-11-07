@@ -44,7 +44,7 @@ public static unsafe class Replication
 			return;
 		}
 		Send();
-		Receive();
+		TakeIn();
 	}
 
 	private static void Send()
@@ -68,7 +68,8 @@ public static unsafe class Replication
 		changed.Clear();
 	}
 
-	private static void Receive()
+	/// <summary>Sets the replicated properties that came on their behaviours.</summary>
+	internal static void TakeIn()
 	{
 		var buffer = new byte[MostBytes];
 		while (true)

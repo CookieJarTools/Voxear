@@ -84,7 +84,7 @@ impl ObjState {
     }
 
     /// Puts the state on the Obj.
-    fn apply(&self, world: &mut World, entity: Entity) {
+    pub fn apply(&self, world: &mut World, entity: Entity) {
         if let Some(transform) = world.get_mut::<Transform>(entity) {
             (transform.position, transform.rotation, transform.scale) = (self.position, self.rotation, self.scale);
         }
@@ -348,8 +348,12 @@ impl Replication {
 
     /// Moves every remote Obj to where it was `delay` ticks ago on the
     /// server, as the snapshots tell it.
-    pub fn show(&self, world: &mut World) {
-        for remote in self.remote.values() {
+    /// Those this machine predicts are left where it moved them.
+    pub fn show(&self, world: &mut World, predicted: &std::collections::HashSet<NetId>) {
+        for (id, remote) in &self.remote {
+            if predicted.contains(id) {
+                continue;
+            }
             let (Some(entity), Some(state)) = (remote.entity, Self::sample(&remote.samples, self.shown)) else {
                 continue;
             };

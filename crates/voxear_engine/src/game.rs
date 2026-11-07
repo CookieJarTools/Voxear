@@ -649,6 +649,7 @@ impl Game {
             tracing::error!("could not load the server's level {level}: {error:#}");
         }
         self.make_net_objects(renderer);
+        self.engine.reconcile();
     }
 
     /// On a server, shares each networked Obj not yet shared: one its

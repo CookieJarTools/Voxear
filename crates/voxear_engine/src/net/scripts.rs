@@ -130,6 +130,7 @@ const RPC_TICK: i32 = 13;
 const NET_ID: i32 = 14;
 const OBJ_INDEX: i32 = 15;
 const OBJ_GENERATION: i32 = 16;
+const REPLAYING: i32 = 17;
 
 // Events, as TAKE_EVENT gives them.
 const CONNECTED_EVENT: i32 = 1;
@@ -152,6 +153,7 @@ fn call(world: &mut World, what: i32, a: i32, b: i32, text: &str, out: &mut [f32
         PLAYER_AT => session.and_then(|s| s.players().get(a as usize)).map_or(-1, |p| i32::from(p.0)),
         TICK => session.map_or(0, |s| s.tick() as i32),
         RPC_TICK => super::rpc_tick(world) as i32,
+        REPLAYING => i32::from(super::replaying(world)),
         // An Obj, as its handle's two halves, by its id in the session; and back.
         NET_ID => {
             let entity = voxear_ecs::Entity::from_bits(u64::from(b as u32) << 32 | u64::from(a as u32));

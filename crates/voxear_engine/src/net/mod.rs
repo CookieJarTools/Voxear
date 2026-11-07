@@ -918,6 +918,7 @@ pub fn stop(world: &mut World) {
 pub fn frame_begin(world: &mut World, delta: f32, local: &[ActionState]) {
     let Some(mut session) = world.remove_resource::<NetSession>() else { return };
     prediction::unshow(world, delta, &mut session.prediction);
+    crate::tick_smoothing::hide(world);
     session.now += f64::from(delta);
     // The aim goes last, after the actions, as one more value.
     let mut frame = local.to_vec();
@@ -950,9 +951,14 @@ pub fn fixed_tick(world: &mut World) {
 /// changed on the networked Objs.
 pub fn frame_end(world: &mut World) {
     let Some(mut session) = world.remove_resource::<NetSession>() else { return };
+    // What is sent is where the ticks left each Obj, not where it is shown between them.
+    let smoothed = crate::tick_smoothing::hide(world);
     authority::send_owned(world, &mut session);
     session.replicate(world);
     session.flush();
+    if smoothed {
+        crate::tick_smoothing::show(world);
+    }
     prediction::show(world, &session.prediction);
     world.insert_resource(session);
 }

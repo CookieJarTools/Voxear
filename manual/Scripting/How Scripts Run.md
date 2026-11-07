@@ -19,6 +19,12 @@ A behaviour has methods the engine calls at set times: when it first appears, ev
 
 Use `Awake` to set the behaviour itself up, and `Start` for anything that needs other behaviours to be ready. Use `FixedUpdate` for movement that must not depend on how fast the computer is, and `LateUpdate` for things that follow others, such as a camera following the player.
 
+## Movement between fixed steps
+
+On a display faster than the fixed steps, most frames have no FixedUpdate. So whatever FixedUpdate or physics moves is shown part-way between where the last two steps left it: it moves evenly every frame, a step behind. Update, LateUpdate and drawing see it there; FixedUpdate always sees where the steps left it.
+
+An Obj placed in Update, as a teleport, is there at once, and the next step moves it on from there.
+
 ## The order behaviours start in
 
 When a level loads, or a prefab is spawned, all its behaviours arrive together:

@@ -29,6 +29,7 @@ pub mod packages;
 mod mist;
 mod particles;
 pub mod smoke;
+pub mod tick_smoothing;
 pub use voxear_localization as localization;
 pub use voxear_physics::scene as physics;
 pub use voxear_physics2d::scene as physics2d;

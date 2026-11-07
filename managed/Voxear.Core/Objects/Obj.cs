@@ -39,7 +39,11 @@ public readonly struct Obj : IEquatable<Obj>
 		return Array.ConvertAll(Native.FindObjs(name), id => new Obj(id));
 	}
 
-	/// <summary>Position, rotation and scale relative to the parent, or to the world for an Obj without one.</summary>
+	/// <summary>
+	/// Position, rotation and scale relative to the parent, or to the world for an Obj without one. An Obj that
+	/// FixedUpdate or physics moves is, outside FixedUpdate, part-way between where the last two fixed steps left it,
+	/// so it moves evenly on a display faster than they come; inside FixedUpdate it is where they left it.
+	/// </summary>
 	public Transform Transform
 	{
 		get { return Native.GetTransform(Id); }

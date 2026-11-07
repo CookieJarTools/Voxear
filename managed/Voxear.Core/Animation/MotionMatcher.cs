@@ -35,11 +35,7 @@ public readonly struct MotionMatcher : IEquatable<MotionMatcher>, IObjComponent
 	/// <summary>False when its Obj has no Motion Matcher, or is gone.</summary>
 	public bool IsValid => Obj.IsValid && NativeMotionMatcher.Number(Obj, NativeMotionMatcher.Has, 0f) != 0f;
 
-	/// <summary>
-	/// The velocity the game wants, in metres a second: what the character is asked to do, not how far it moved this
-	/// frame, since an Obj moved in FixedUpdate stands still on frames between ticks. Zero until set; FollowObj forgets
-	/// it.
-	/// </summary>
+	/// <summary>The velocity the game wants, in metres a second. Zero until set; FollowObj forgets it.</summary>
 	public Vector3 WantedVelocity
 	{
 		get { return Vector(NativeMotionMatcher.WantedVelocity); }

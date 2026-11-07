@@ -309,6 +309,10 @@ enum Commands {
         /// watching what changes over time, such as the eye adapting.
         #[arg(long, value_name = "FRAMES")]
         every: Option<u64>,
+        /// Frames a second to simulate, as on a display this fast: above the tick rate, what ticks move is shown
+        /// between ticks.
+        #[arg(long, value_name = "HZ", default_value_t = 60.0)]
+        rate: f32,
         /// Trace the GI's rays in a compute shader, as GPUs without ray tracing do, even on one that has it.
         #[arg(long)]
         software_rays: bool,
@@ -434,6 +438,7 @@ fn main() -> Result<()> {
             no_mesh_shaders,
             render_scale,
             every,
+            rate,
             software_rays,
         } => {
             let debug_view = match debug_view.as_str() {
@@ -452,7 +457,9 @@ fn main() -> Result<()> {
                 ViewOptions { debug_view, post_override, meshlet_culling, render_scale, ..ViewOptions::default() };
             let prepare = Prepare { build: !no_build, bundles, overlays };
             let mesh_shaders = !no_mesh_shaders;
-            let shot = Shot { out, size: (width, height), frames, every, options, stats, mesh_shaders, software_rays };
+            let delta = 1.0 / rate.clamp(1.0, 1000.0);
+            let size = (width, height);
+            let shot = Shot { out, size, frames, every, delta, options, stats, mesh_shaders, software_rays };
             render(&project, shot, prepare, renderdoc)
         }
     }
@@ -564,6 +571,8 @@ struct Shot {
     frames: u64,
     /// Save every this many frames too, as a numbered sequence.
     every: Option<u64>,
+    /// Seconds each frame simulates.
+    delta: f32,
     options: ViewOptions,
     /// Draw the stats overlay over the image.
     stats: bool,
@@ -606,7 +615,7 @@ impl TimingAverage {
 }
 
 fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<()> {
-    let Shot { out, size: (width, height), frames, every, options, stats, mesh_shaders, software_rays } = shot;
+    let Shot { out, size: (width, height), frames, every, delta, options, stats, mesh_shaders, software_rays } = shot;
     let project = Project::open(path)?;
     let settings = RendererSettings { software_rays, ..renderer_settings(&project, renderdoc) };
     let mut game = start_game(project, prepare)?;
@@ -620,10 +629,10 @@ fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<
     let mut timed = TimingAverage::default();
     let mut frame_gpu = Vec::new();
     for frame in 1..=frames {
-        game.tick(1.0 / 60.0, Some(&mut renderer));
+        game.tick(delta, Some(&mut renderer));
         if stats {
             // Refreshed every frame, since a render is over too soon to wait.
-            overlay.update(1.0 / 60.0, &renderer);
+            overlay.update(delta, &renderer);
             overlay.refresh(&renderer);
             overlay.draw(&mut renderer, (width, height), 1.0)?;
         }

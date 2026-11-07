@@ -103,6 +103,7 @@ impl Engine {
         if edit_mode != self.edit_mode {
             self.world.remove_resource::<PhysicsScene>();
             self.world.remove_resource::<PhysicsScene2D>();
+            self.world.remove_resource::<crate::tick_smoothing::TickSmoothing>();
         }
         self.edit_mode = edit_mode;
     }
@@ -475,8 +476,16 @@ impl Engine {
         // A networked client runs its ticks a little faster or slower to keep pace with its server.
         self.fixed_accumulator += self.time.delta * crate::net::time_scale(&self.world);
         let mut steps = 0;
+        // Shown between ticks while playing, Objs go back where the ticks left them for the ticks to move.
+        let smoothing = !self.edit_mode;
+        if smoothing {
+            crate::tick_smoothing::begin_ticks(&mut self.world);
+        }
         while self.fixed_accumulator >= self.time.fixed_delta && steps < MAX_FIXED_STEPS {
             profile_scope!("FixedUpdate");
+            if smoothing {
+                crate::tick_smoothing::before_tick(&mut self.world);
+            }
             crate::net::fixed_tick(&mut self.world);
             self.sync_script_time(self.time.fixed_delta);
             self.run_fixed_update();
@@ -490,6 +499,10 @@ impl Engine {
         // Ticks a slow frame could not run are dropped, but never while networked: each is a tick of the session.
         if steps == MAX_FIXED_STEPS && self.world.resource::<crate::net::NetSession>().is_none() {
             self.fixed_accumulator = 0.0;
+        }
+        if smoothing {
+            let share = self.fixed_accumulator / self.time.fixed_delta;
+            crate::tick_smoothing::end_ticks(&mut self.world, steps > 0, share);
         }
         self.sync_script_time(self.time.delta);
 

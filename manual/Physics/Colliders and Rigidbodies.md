@@ -50,7 +50,7 @@ Turn on **Convex** to wrap the mesh in its convex hull instead: the smallest sha
 
 A body that has come to rest goes to sleep and costs nothing until something hits it, or your code moves it. It still counts as touching what it rests on.
 
-Physics moves bodies in fixed steps, 50 times a second, straight after each `FixedUpdate`, so physics code belongs in `FixedUpdate` as it does in Unity. Between steps, the Obj's Transform shows where physics last put it.
+Physics moves bodies in fixed steps, 50 times a second, straight after each `FixedUpdate`, so physics code belongs in `FixedUpdate` as it does in Unity. Between steps, the Obj is shown part-way between where the last two steps put it, so it moves evenly on any display (see [[How Scripts Run]]).
 
 ## Character Controllers
 

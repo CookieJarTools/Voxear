@@ -561,6 +561,8 @@ fn newest_source(project: &Project) -> Option<SystemTime> {
         source_files(&folder, &mut sources);
     }
     sources.push(project.root.join(crate::packages::PACKAGES_FILE));
+    // The modules switched on decide which of the engine's assemblies the scripts use.
+    sources.push(project.root.join(crate::PROJECT_FILE));
     sources.push(project.root.join(crate::packages::LOCK_FILE));
     sources.iter().filter_map(|path| modified(path)).max()
 }
@@ -711,6 +713,8 @@ mod tests {
         };
         let manifest = "[project]\nname = \"Tables\"\nscripts = \"Scripts/T.csproj\"\n";
         std::fs::write(dir.path().join("voxear.toml"), manifest).unwrap();
+        let file = std::fs::File::options().write(true).open(dir.path().join("voxear.toml")).unwrap();
+        file.set_modified(long_ago).unwrap();
         write("Scripts/T.csproj", Some(long_ago));
         write(".voxear/Cache/Copy.strings", None);
         write("Docs/Page.strings", None);

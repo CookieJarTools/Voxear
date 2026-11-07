@@ -35,6 +35,11 @@
 		project sets VoxearPackage, so it uses only the packages it needs.
 	-->
 	<Import Project="$(VoxearProjectFolder).voxear/Packages.props" Condition="'$(VoxearPackage)' == '' and Exists('$(VoxearProjectFolder).voxear/Packages.props')" />
+	<!--
+		The project's modules, as .voxear/Modules.props has them: VoxearNetworking and the rest are true for the modules
+		its Project Settings switch on, and their assemblies are used as Voxear.Core is.
+	-->
+	<Import Project="$(VoxearProjectFolder).voxear/Modules.props" Condition="Exists('$(VoxearProjectFolder).voxear/Modules.props')" />
 	<ItemGroup>
 		<CompilerVisibleProperty Include="RootNamespace" />
 		<VoxearStringTable Include="$(VoxearProjectFolder)**/*.strings" Exclude="$(VoxearProjectFolder)**/.*/**;$(VoxearProjectFolder)**/bin/**;$(VoxearProjectFolder)**/obj/**;$(VoxearProjectFolder)**/target/**;$(VoxearProjectFolder)**/node_modules/**;$(VoxearProjectFolder)Docs/**" />
@@ -48,6 +53,15 @@
 			<Private>false</Private>
 		</Reference>
 		<Analyzer Include="$(MSBuildThisFileDirectory)Voxear.Analyzers.dll" Condition="Exists('$(MSBuildThisFileDirectory)Voxear.Analyzers.dll')" />
+	</ItemGroup>
+	<ItemGroup Condition="'$(VoxearNetworking)' == 'true' and Exists('$(MSBuildThisFileDirectory)Voxear.Networking.dll')">
+		<Reference Include="Voxear.Networking">
+			<HintPath>$(MSBuildThisFileDirectory)Voxear.Networking.dll</HintPath>
+			<Private>false</Private>
+		</Reference>
+	</ItemGroup>
+	<ItemGroup Condition="'$(VoxearNetworking)' == 'true' and !Exists('$(MSBuildThisFileDirectory)Voxear.Core.dll')">
+		<ProjectReference Include="$(MSBuildThisFileDirectory)Voxear.Networking/Voxear.Networking.csproj" Private="false" GlobalPropertiesToRemove="OutputPath;IntermediateOutputPath" />
 	</ItemGroup>
 	<ItemGroup Condition="!Exists('$(MSBuildThisFileDirectory)Voxear.Core.dll')">
 		<!-- A build's own output folder, which vox passes for the scripts alone, is not the engine's. -->

@@ -72,6 +72,15 @@ impl Module {
         }
     }
 
+    /// Its C# assembly, beside `Voxear.Core`, which a project's scripts
+    /// reference only when the project has the module.
+    pub fn assembly(self) -> Option<&'static str> {
+        match self {
+            Module::Networking => Some("Voxear.Networking"),
+            _ => None,
+        }
+    }
+
     /// The module whose key this is.
     pub fn from_key(key: &str) -> Option<Module> {
         Module::ALL.into_iter().find(|module| module.key() == key)

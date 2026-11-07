@@ -19,7 +19,7 @@ internal sealed class GameLoadContext : AssemblyLoadContext
 
 	protected override Assembly? Load(AssemblyName name)
 	{
-		if (name.Name == typeof(Behaviour).Assembly.GetName().Name)
+		if (name.Name == typeof(Behaviour).Assembly.GetName().Name || ModuleAssemblies.IsEngine(name))
 		{
 			return null;
 		}

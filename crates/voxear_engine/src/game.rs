@@ -251,6 +251,11 @@ impl Game {
         conditions: voxear_net::Conditions,
     ) -> Result<std::net::SocketAddr> {
         use crate::net::{self, NetDefaults, NetSettings, NetStart};
+        anyhow::ensure!(
+            crate::modules::has(&self.engine.world, crate::modules::Module::Networking),
+            "{} does not have the Networking module; switch it on in Project Settings",
+            self.project.name()
+        );
         let mut settings = NetSettings::for_project(self.project.name(), crate::engine_version(), &self.project.file.network);
         settings.conditions = conditions;
         // Scripts that start another session later start it the same way.

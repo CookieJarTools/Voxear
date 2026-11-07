@@ -85,6 +85,9 @@ pub fn upgrade(folder: &Path, from: Option<&str>, report: &mut dyn FnMut(Event))
         std::fs::create_dir_all(root.join(".voxear"))?;
         std::fs::write(&props, crate::scripts::engine_props())
             .with_context(|| format!("writing {}", props.display()))?;
+        let modules = root.join(".voxear").join("Modules.props");
+        std::fs::write(&modules, crate::scripts::modules_props(&project.modules()))
+            .with_context(|| format!("writing {}", modules.display()))?;
         report(Event::Change(format!("The scripts now build against Voxear {version}")));
     }
 

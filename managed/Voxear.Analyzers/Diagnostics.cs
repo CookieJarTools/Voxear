@@ -60,6 +60,11 @@ internal static class Diagnostics
 		"{1} has more than one RPC named {0}; RPCs are told apart by name, so give each its own",
 		"Voxear.Networking", DiagnosticSeverity.Error, isEnabledByDefault: true);
 
+	public static readonly DiagnosticDescriptor ModuleOff = new DiagnosticDescriptor(
+		"VOX0014", "A module's API in a project without the module",
+		"{0} is part of the {1} module, which this project does not have; switch it on in Project Settings",
+		"Voxear.Modules", DiagnosticSeverity.Error, isEnabledByDefault: true);
+
 	private static DiagnosticDescriptor Error(string id, string title, string message)
 	{
 		return new DiagnosticDescriptor(id, title, message, Category, DiagnosticSeverity.Error, isEnabledByDefault: true);

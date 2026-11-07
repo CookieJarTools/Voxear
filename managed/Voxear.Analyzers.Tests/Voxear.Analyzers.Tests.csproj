@@ -16,5 +16,6 @@
 		<PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" />
 		<ProjectReference Include="../Voxear.Analyzers/Voxear.Analyzers.csproj" />
 		<ProjectReference Include="../Voxear.Core/Voxear.Core.csproj" />
+		<ProjectReference Include="../Voxear.Networking/Voxear.Networking.csproj" />
 	</ItemGroup>
 </Project>

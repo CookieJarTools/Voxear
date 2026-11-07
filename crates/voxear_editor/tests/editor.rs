@@ -7143,4 +7143,12 @@ fn project_settings_switch_a_module_off_in_the_project_file_and_add_component() 
     assert!(Project::open(dir.path()).unwrap().modules().has(Module::Water), "Turn On switches Water back on");
     assert!(label_starting(&editor.ui, editor.ui.root(), "Needs the Water module").is_none());
     assert!(offers(&editor, "Pool"));
+
+    // Without Networking, Play plays offline, with no button to say otherwise.
+    let button = editor.ui.find(editor.ui.root(), "multiplayer").unwrap();
+    assert!(editor.ui.is_visible(button));
+    editor.set_module(Module::Networking, false);
+    frame(&mut editor, &mut renderer);
+    assert!(!editor.ui.is_visible(button), "no networked Play without Networking");
+    assert!(!offers(&editor, "Net Object"));
 }

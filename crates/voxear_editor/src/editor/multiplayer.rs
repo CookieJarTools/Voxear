@@ -9,7 +9,7 @@ use std::io::{BufRead, BufReader, Read};
 use std::net::{SocketAddr, UdpSocket};
 use std::process::{Child, Command, Stdio};
 
-use voxear_engine::net::NetStart;
+use voxear_engine::{modules::Module, net::NetStart};
 use voxear_ui::MenuItem;
 
 use super::Editor;
@@ -80,6 +80,14 @@ impl Editor {
     /// players, and through what network.
     pub(super) fn update_multiplayer(&mut self) {
         let button = self.nodes.multiplayer;
+        // A project without the Networking module plays offline, with no button to say otherwise.
+        let networking = self.game.project.modules().has(Module::Networking);
+        if self.ui.is_visible(button) != networking {
+            self.ui.set_visible(button, networking);
+        }
+        if !networking {
+            return;
+        }
         let settings = &self.memory.settings;
         let label = match settings.multiplayer {
             PlayAs::Offline => "Offline".to_string(),
@@ -146,7 +154,7 @@ impl Editor {
     pub(super) fn start_multiplayer(&mut self) {
         let settings = &self.memory.settings;
         let (play_as, count, network) = (settings.multiplayer, settings.test_players, settings.test_network);
-        if play_as == PlayAs::Offline {
+        if play_as == PlayAs::Offline || !self.game.project.modules().has(Module::Networking) {
             return;
         }
         let port = free_port();

@@ -59,7 +59,7 @@ const SERVER: &str = "voxear-server";
 
 /// The managed assemblies an install carries in `managed/`, each with its
 /// symbols, documentation and runtime files where it has them.
-const ASSEMBLIES: [&str; 3] = ["Voxear.Core", "Voxear.ScriptInfo", "Voxear.Analyzers"];
+const ASSEMBLIES: [&str; 4] = ["Voxear.Core", "Voxear.Networking", "Voxear.ScriptInfo", "Voxear.Analyzers"];
 
 #[derive(Parser)]
 #[command(name = "voxear-dist", about = "Package this checkout as a Voxear engine release")]
@@ -214,10 +214,11 @@ fn build_programs(root: &Path, version: &str) -> Result<()> {
     Ok(())
 }
 
-/// `Voxear.Core` and `Voxear.ScriptInfo`, built in release.
+/// `Voxear.Core`, the modules' assemblies, `Voxear.ScriptInfo` and the analyzers, built in release.
 fn build_managed(root: &Path) -> Result<()> {
     let projects = [
         "managed/Voxear.Core/Voxear.Core.csproj",
+        "managed/Voxear.Networking/Voxear.Networking.csproj",
         "managed/Voxear.ScriptInfo/Voxear.ScriptInfo.csproj",
         "managed/Voxear.Analyzers/Voxear.Analyzers.csproj",
     ];

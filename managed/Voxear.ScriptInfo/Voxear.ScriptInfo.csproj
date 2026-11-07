@@ -11,5 +11,7 @@
 	</PropertyGroup>
 	<ItemGroup>
 		<ProjectReference Include="../Voxear.Core/Voxear.Core.csproj" />
+		<!-- The modules, so a game built with one has it to load beside Voxear.Core. -->
+		<ProjectReference Include="../Voxear.Networking/Voxear.Networking.csproj" />
 	</ItemGroup>
 </Project>

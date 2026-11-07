@@ -119,6 +119,7 @@ pub fn create(request: &NewProject, step: &mut dyn FnMut(&str)) -> Result<PathBu
     write(folder, &format!("Scripts/{namespace}.Scripts.csproj"), &scripts_project(&namespace))?;
     write(folder, &format!("{namespace}.slnx"), &solution(&namespace))?;
     write(folder, ".voxear/Engine.props", &crate::scripts::engine_props())?;
+    write(folder, ".voxear/Modules.props", &crate::scripts::modules_props(&crate::modules::Modules::default()))?;
     if has("sample-scene") {
         write(folder, "Scripts/Turner.cs", &turner(&namespace))?;
     }

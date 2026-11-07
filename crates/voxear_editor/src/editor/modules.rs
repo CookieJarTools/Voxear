@@ -24,6 +24,8 @@ impl Editor {
         self.game.engine.world.insert_resource(modules);
         self.project_settings.show(&mut self.ui, &modules);
         self.files_seen();
+        // The scripts build against the modules' assemblies, so they build again with the new set.
+        self.rebuild_scripts = true;
         // Components of a module switched off or on show it at once.
         let (shown, playing) = (self.inspector.shown(), self.is_playing());
         self.inspector.show(&mut self.ui, &self.game, shown, playing);

@@ -9,7 +9,7 @@ internal static class Program
 {
 	private static int Main()
 	{
-		var tests = new[] { typeof(AnalyzerTests), typeof(RpcTests), typeof(StringKeysTests) }
+		var tests = new[] { typeof(AnalyzerTests), typeof(ModuleTests), typeof(RpcTests), typeof(StringKeysTests) }
 			.SelectMany(type => type.GetMethods(BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public)
 				.Where(method => method.Name.StartsWith("Test", StringComparison.Ordinal))
 				.OrderBy(method => method.Name))

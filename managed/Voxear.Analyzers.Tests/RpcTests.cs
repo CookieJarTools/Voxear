@@ -75,7 +75,8 @@ internal static class RpcTests
 		var references = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!)
 			.Split(Path.PathSeparator)
 			.Select(path => MetadataReference.CreateFromFile(path))
-			.Append(MetadataReference.CreateFromFile(typeof(Voxear.Behaviour).Assembly.Location));
+			.Append(MetadataReference.CreateFromFile(typeof(Voxear.Behaviour).Assembly.Location))
+			.Append(MetadataReference.CreateFromFile(typeof(Voxear.Net).Assembly.Location));
 		var compilation = CSharpCompilation.Create(
 			"Game",
 			[CSharpSyntaxTree.ParseText(code, new CSharpParseOptions(LanguageVersion.Latest))],

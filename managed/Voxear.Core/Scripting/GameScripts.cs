@@ -131,6 +131,10 @@ internal static class GameScripts
 			loaded.Add(LoadInto(target, package));
 		}
 		loaded.Add(LoadInto(target, path));
+		foreach (var assembly in loaded)
+		{
+			ModuleAssemblies.LoadFor(assembly);
+		}
 		return loaded;
 	}
 
@@ -198,7 +202,7 @@ internal static class GameScripts
 		}
 
 		Level.Forget(previous);
-		Net.Forget(previous);
+		ModuleHooks.Forget?.Invoke(previous);
 		SaveTypes.Forget(previous);
 		MainThreadContext.Instance.Forget(previous);
 		previous.Unload();

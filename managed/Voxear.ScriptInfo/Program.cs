@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Runtime.Loader;
 using Voxear.Scripting;
@@ -38,10 +39,22 @@ internal static class Program
 		Write(args[1], ScriptCatalog.Describe(scripts));
 		if (args.Length == 3)
 		{
-			Write(args[2], CodeReference.Describe([.. scripts, typeof(SerializeFieldAttribute).Assembly]));
+			Write(args[2], CodeReference.Describe([.. scripts, typeof(SerializeFieldAttribute).Assembly, .. Modules(scripts)]));
 		}
 
 		return 0;
+	}
+
+	/// <summary>The engine's modules the scripts use, such as Voxear.Networking, whose types the reference shows too.</summary>
+	private static IEnumerable<Assembly> Modules(IEnumerable<Assembly> scripts)
+	{
+		var core = typeof(SerializeFieldAttribute).Assembly.GetName().Name;
+		return scripts
+			.SelectMany(assembly => assembly.GetReferencedAssemblies())
+			.Where(name => name.Name != null && name.Name.StartsWith("Voxear.", StringComparison.Ordinal) && name.Name != core)
+			.Select(name => name.Name!)
+			.Distinct()
+			.Select(name => Assembly.Load(new AssemblyName(name)));
 	}
 
 	/// <summary>Written beside its path and moved over it, so a reader never sees half a file.</summary>

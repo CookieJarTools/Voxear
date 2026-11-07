@@ -76,7 +76,7 @@ internal static unsafe class EntryPoints
 		{
 			Loading.Update();
 			InputEvents.Dispatch();
-			Net.Dispatch();
+			ModuleHooks.Dispatch?.Invoke();
 			Localized.Dispatch();
 			SaveWrite.Update();
 			SceneState.Update();
@@ -225,7 +225,7 @@ internal static unsafe class EntryPoints
 	{
 		try
 		{
-			Replication.TakeIn();
+			ModuleHooks.TakeNetFields?.Invoke();
 		}
 		catch (Exception exception)
 		{

@@ -117,7 +117,7 @@ pub fn build_for(project: &Project, configuration: &str, defines: &[String]) -> 
     let Some(csproj) = project.scripts_project() else { return Ok(None) };
     let assembly = project.built_scripts_assembly(configuration).context("scripts project has no file name")?;
     let folder = assembly.parent().unwrap_or(&project.root);
-    write_engine_props(project)?;
+    write_props(project)?;
     let packages = package_scripts::write(project)?;
     build_csproj(&dotnet()?, &csproj, configuration, defines, Some(BuildFolder { folder, configuration }))?;
     package_scripts::write_list(folder, &packages)?;
@@ -140,17 +140,23 @@ pub(crate) fn lock() -> MutexGuard<'static, ()> {
 pub(crate) fn build_unlocked(project: &Project) -> Result<()> {
     let Some(csproj) = project.scripts_project() else { return Ok(()) };
     let assembly = project.scripts_assembly(CONFIGURATION).context("scripts project has no file name")?;
-    write_engine_props(project)?;
+    write_props(project)?;
     let packages = package_scripts::write(project)?;
     let defines = built_in_defines(engine_version(), host_platform(), ScriptsFor::Editor);
     build_csproj(&dotnet()?, &csproj, CONFIGURATION, &defines, None)?;
     package_scripts::write_list(assembly.parent().unwrap_or(&project.root), &packages)
 }
 
-fn write_engine_props(project: &Project) -> Result<()> {
-    let props = project.root.join(".voxear").join("Engine.props");
-    std::fs::create_dir_all(project.root.join(".voxear"))?;
-    std::fs::write(&props, engine_props()).with_context(|| format!("writing {}", props.display()))
+/// Writes `.voxear/Engine.props` and `.voxear/Modules.props`, which the
+/// scripts' build reads through `Voxear.Scripts.props`.
+fn write_props(project: &Project) -> Result<()> {
+    let folder = project.root.join(".voxear");
+    std::fs::create_dir_all(&folder)?;
+    for (name, text) in [("Engine.props", engine_props()), ("Modules.props", modules_props(&project.modules()))] {
+        let props = folder.join(name);
+        std::fs::write(&props, text).with_context(|| format!("writing {}", props.display()))?;
+    }
+    Ok(())
 }
 
 /// The `dotnet` command, from the install that runs the scripts.
@@ -280,6 +286,23 @@ pub fn engine_props() -> String {
     format!(
         "<Project>\n\t<!-- Written by Voxear on each build of the scripts: the engine they build with, for an IDE. -->\n\
          \t<PropertyGroup>\n\t\t<VoxearHome>{home}</VoxearHome>\n\t</PropertyGroup>\n</Project>\n"
+    )
+}
+
+/// A project's `.voxear/Modules.props`: which of the engine's modules its
+/// scripts use, each a property `Voxear.Scripts.props` references that
+/// module's assembly by. Every build of the scripts writes it.
+pub fn modules_props(modules: &crate::modules::Modules) -> String {
+    let properties: String = crate::modules::Module::ALL
+        .into_iter()
+        .map(|module| {
+            let name = module.title().replace(' ', "");
+            format!("\t\t<Voxear{name}>{}</Voxear{name}>\n", modules.has(module))
+        })
+        .collect();
+    format!(
+        "<Project>\n\t<!-- Written by Voxear on each build of the scripts: the project's modules. -->\n\
+         \t<PropertyGroup>\n{properties}\t</PropertyGroup>\n</Project>\n"
     )
 }
 

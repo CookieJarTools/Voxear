@@ -45,11 +45,24 @@ internal sealed class BehaviourType
 				callbacks |= 1u << (int)phase;
 			}
 		}
-		if (type.GetCustomAttribute<PredictedAttribute>() != null)
+		if (IsPredicted(type))
 		{
 			callbacks |= PredictedMark;
 		}
 		return callbacks;
+	}
+
+	/// <summary>Whether a class has the Networking module's [Predicted], which Voxear.Core knows only by name.</summary>
+	private static bool IsPredicted(Type type)
+	{
+		foreach (var attribute in type.GetCustomAttributesData())
+		{
+			if (attribute.AttributeType.FullName == "Voxear.PredictedAttribute")
+			{
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private static bool Overrides(Type type, string name)

@@ -4,6 +4,8 @@ order: 16
 
 Voxear plays games over the network with a server in charge: it runs the game, players send it what they press, and it decides what happens. One machine can host and play at once, or a dedicated server can run the game for everyone.
 
+Networking is a module: switch it on in **Project Settings** first (see [[Modules]]).
+
 1. [[Playing over the Network]]: hosting, joining, players and their input, and ticks
 2. [[Sharing Objs]]: Net Objects, owners, priority and range, and replicated properties
 3. [[RPCs]]: asking the server to do something, and telling players something happened

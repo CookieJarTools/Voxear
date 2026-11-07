@@ -103,3 +103,28 @@ fn hello_copy() -> tempfile::TempDir {
     copy(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/Hello"), dir.path());
     dir
 }
+
+#[test]
+fn without_the_networking_module_scripts_using_it_are_told_and_play_stays_offline() {
+    if voxear_scripting::find_dotnet().is_none() || !voxear_engine::core_assembly("Debug").is_file() {
+        return eprintln!("skipping: needs .NET and the managed build");
+    }
+    let dir = hello_copy();
+    let file = dir.path().join(voxear_engine::PROJECT_FILE);
+    let text = std::fs::read_to_string(&file).unwrap();
+    let off = voxear_engine::modules::Module::ALL.map(|m| format!("{} = {}\n", m.key(), m.key() != "networking"));
+    std::fs::write(&file, format!("{text}\n[modules]\n{}", off.concat())).unwrap();
+    std::fs::write(dir.path().join("Scripts/Lobby.cs"), LOBBY).unwrap();
+    let project = Project::open(dir.path()).unwrap();
+    let log = LogCapture::default();
+    let logging = tracing::subscriber::set_default(voxear_core::logging::capturing_only(log.clone()));
+    scripts::build(&project).expect_err("Net is not there to use");
+    drop(logging);
+    let lines: Vec<String> = log.lock().unwrap().lines.iter().map(|l| l.message.clone()).collect();
+    assert!(lines.iter().any(|line| line.contains("Net is part of the Networking module")), "{lines:#?}");
+
+    std::fs::remove_file(dir.path().join("Scripts/Lobby.cs")).unwrap();
+    let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
+    let refused = game.start_session(net::NetStart::Host(0), voxear_net::Conditions::GOOD).expect_err("offline only");
+    assert!(format!("{refused:#}").contains("Networking module"), "{refused:#}");
+}

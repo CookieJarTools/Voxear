@@ -18,3 +18,4 @@ VOX0010 | Voxear.Networking | Error | Diagnostics
 VOX0011 | Voxear.Networking | Error | Diagnostics
 VOX0012 | Voxear.Networking | Error | Diagnostics
 VOX0013 | Voxear.Networking | Error | Diagnostics
+VOX0014 | Voxear.Modules | Error | Diagnostics

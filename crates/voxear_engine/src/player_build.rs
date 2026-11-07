@@ -151,6 +151,10 @@ pub fn build(
         .clone()
         .or_else(|| project.file.project.start_level.clone())
         .with_context(|| format!("`{name}` names no start level, and neither does voxear.toml"))?;
+    ensure!(
+        profile.target != build_profile::Target::Server || project.modules().has(crate::modules::Module::Networking),
+        "`{name}` builds a dedicated server, which needs the Networking module; switch it on in Project Settings"
+    );
     let configuration = if profile.development.enabled { "Debug" } else { "Release" };
     let output = profile.output_dir(&project.root, name);
     let data = output.join(DATA_FOLDER);
@@ -342,6 +346,13 @@ fn copy_managed(project: &Project, configuration: &str, symbols: bool, managed: 
     }
     if symbols {
         copy(&core.with_extension("pdb"), &managed.join("Voxear.Core.pdb"))?;
+    }
+    // The modules' assemblies the scripts use, which are shared from the engine as Voxear.Core is.
+    for module in project.modules().on().filter_map(|module| module.assembly()) {
+        copy(&core.with_file_name(format!("{module}.dll")), &managed.join(format!("{module}.dll")))?;
+        if symbols {
+            copy(&core.with_file_name(format!("{module}.pdb")), &managed.join(format!("{module}.pdb")))?;
+        }
     }
     // The scripts' folder holds their own build, the packages' assemblies with the list of them, and any library
     // they use.

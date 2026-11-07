@@ -13,7 +13,7 @@ When a project opens, the editor shows its first level, ready to change. Nothing
 - **Project** and **Console**, under the Scene: the files in your project, and the messages your game and the editor write.
 - **Inspector**, on the right: everything about the Obj or file you have selected, ready to change.
 
-Along the top are the **command bar**, the **Play**, **Pause** and **Step** buttons, the **Window** button that lists every panel, and **Build**. The narrow strip on the far left, the side bar, opens **Levels**, to open another level, and **Settings**, and holds any buttons your game adds (see [[Side Bar Items]]).
+Along the top are the **command bar**, the **Play**, **Pause** and **Step** buttons, the **Window** button that lists every panel, and **Build**. The narrow strip on the far left, the side bar, opens **Levels**, to open another level, **Project Settings**, for the systems the project has (see [[Modules]]), and **Settings**, and holds any buttons your game adds (see [[Side Bar Items]]).
 
 The bar at the bottom says what the editor is doing: building your scripts, playing, or that you have changes to save.
 

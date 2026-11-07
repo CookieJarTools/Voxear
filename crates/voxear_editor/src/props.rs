@@ -8,7 +8,20 @@ use voxear_assets::AssetKind;
 use voxear_core::math::Vec3;
 use voxear_ecs::{Entity, World};
 use voxear_engine::first_person::FirstPersonView;
+use voxear_engine::guns::mechanism::{GunPart, PartMotion, PartRole};
 use voxear_engine::guns::{Gun, GunHolder, GunKind};
+
+/// A Gun Part's roles as the Inspector names them, in its menu's order.
+const PART_ROLES: [(PartRole, &str); 8] = [
+    (PartRole::Bolt, "Bolt"),
+    (PartRole::Slide, "Slide"),
+    (PartRole::Toggle, "Toggle"),
+    (PartRole::Pump, "Pump"),
+    (PartRole::Magazine, "Magazine"),
+    (PartRole::Clip, "Clip"),
+    (PartRole::Cover, "Cover"),
+    (PartRole::Barrel, "Barrel"),
+];
 use voxear_engine::modules::Module;
 use voxear_engine::{
     EditBehaviours, Game, MaterialSource,
@@ -90,6 +103,7 @@ pub enum Part {
     FirstPersonView,
     Gun,
     GunHolder,
+    GunPart,
     Ocean,
     Pool,
     DryArea,
@@ -138,6 +152,7 @@ impl Part {
             Part::FirstPersonView => "first_person".into(),
             Part::Gun => "gun".into(),
             Part::GunHolder => "gun_holder".into(),
+            Part::GunPart => "gun_part".into(),
             Part::Ocean => "ocean".into(),
             Part::Pool => "pool".into(),
             Part::DryArea => "dry_area".into(),
@@ -157,7 +172,7 @@ impl Part {
     pub fn module(&self) -> Option<Module> {
         match self {
             Part::NetObject => Some(Module::Networking),
-            Part::Gun | Part::GunHolder => Some(Module::Guns),
+            Part::Gun | Part::GunHolder | Part::GunPart => Some(Module::Guns),
             Part::Collider2D | Part::Rigidbody2D => Some(Module::Physics2D),
             Part::Seasons | Part::FoliageInteraction | Part::Foliage => Some(Module::Vegetation),
             Part::Ocean | Part::Pool | Part::DryArea | Part::Stream | Part::Buoyancy => Some(Module::Water),
@@ -193,6 +208,7 @@ impl Part {
             Part::FirstPersonView => "First-Person View",
             Part::Gun => "Gun",
             Part::GunHolder => "Gun Holder",
+            Part::GunPart => "Gun Part",
             Part::Ocean => "Ocean",
             Part::Pool => "Pool",
             Part::DryArea => "Dry Area",
@@ -232,7 +248,7 @@ impl Part {
             Part::MotionMatcher => "play",
             Part::BoneAttachment => "play",
             Part::FirstPersonView => "camera",
-            Part::Gun | Part::GunHolder => "crosshair",
+            Part::Gun | Part::GunHolder | Part::GunPart => "crosshair",
             Part::Ocean => "globe",
             Part::Pool => "globe",
             Part::DryArea => "box",
@@ -407,6 +423,16 @@ pub enum Prop {
     HolderBob,
     HolderBreathing,
     HolderWallCheck,
+    /// A Gun Part's role, how it moves (sliding or turning, along or about
+    /// an axis, by how much, through what), where a hand takes it, and the
+    /// pull back after a turn that a turn-bolt has.
+    PartRole,
+    PartMotion,
+    PartAxis,
+    PartAmount,
+    PartPivot,
+    PartHandle,
+    PartThenPull,
     /// An Ocean's weather, and for Custom weather its swell and wind; its
     /// crests, colours and foam.
     OceanWeather,
@@ -749,6 +775,13 @@ impl Prop {
             | Prop::HolderBob
             | Prop::HolderBreathing
             | Prop::HolderWallCheck => Part::GunHolder,
+            Prop::PartRole
+            | Prop::PartMotion
+            | Prop::PartAxis
+            | Prop::PartAmount
+            | Prop::PartPivot
+            | Prop::PartHandle
+            | Prop::PartThenPull => Part::GunPart,
             Prop::OceanWeather
             | Prop::OceanWindSource
             | Prop::OceanTransition
@@ -1026,6 +1059,13 @@ impl Prop {
             Prop::HolderBob => "bob",
             Prop::HolderBreathing => "breathing",
             Prop::HolderWallCheck => "wall_check",
+            Prop::PartRole => "role",
+            Prop::PartMotion => "motion.type",
+            Prop::PartAxis => "motion.axis",
+            Prop::PartAmount => "motion.amount",
+            Prop::PartPivot => "motion.pivot",
+            Prop::PartHandle => "handle",
+            Prop::PartThenPull => "then",
             Prop::OceanWeather => "weather",
             Prop::OceanWindSource => "wind_source",
             Prop::OceanTransition => "transition",
@@ -1264,6 +1304,9 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     if world.has::<GunHolder>(entity) {
         parts.push(Part::GunHolder);
     }
+    if world.has::<GunPart>(entity) {
+        parts.push(Part::GunPart);
+    }
     if world.has::<Ocean>(entity) {
         parts.push(Part::Ocean);
     }
@@ -1477,6 +1520,15 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             Prop::HolderBob,
             Prop::HolderBreathing,
             Prop::HolderWallCheck,
+        ],
+        Part::GunPart => vec![
+            Prop::PartRole,
+            Prop::PartMotion,
+            Prop::PartAxis,
+            Prop::PartAmount,
+            Prop::PartPivot,
+            Prop::PartHandle,
+            Prop::PartThenPull,
         ],
         Part::ParticleSystem => {
             let shape = world.get::<ParticleSystem>(entity).map_or(EmitShape::Cone, |system| system.shape);
@@ -1845,6 +1897,13 @@ pub fn label(prop: &Prop) -> String {
         Prop::HolderBob => "Bob",
         Prop::HolderBreathing => "Breathing",
         Prop::HolderWallCheck => "Wall Check",
+        Prop::PartRole => "Role",
+        Prop::PartMotion => "Moves",
+        Prop::PartAxis => "Axis",
+        Prop::PartAmount => "Amount",
+        Prop::PartPivot => "Pivot",
+        Prop::PartHandle => "Handle",
+        Prop::PartThenPull => "Then Pull",
         Prop::OceanWeather => "Weather",
         Prop::OceanWindSource => "Wind Source",
         Prop::OceanTransition => "Transition",
@@ -2150,6 +2209,9 @@ pub fn add(
         Part::GunHolder => {
             world.insert(entity, GunHolder::default());
         }
+        Part::GunPart => {
+            world.insert(entity, GunPart::default());
+        }
         Part::Ocean => {
             world.insert(entity, Ocean::default());
         }
@@ -2240,6 +2302,9 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
         Part::GunHolder => {
             world.remove::<GunHolder>(entity);
             world.remove::<voxear_engine::guns::GunHolderState>(entity);
+        }
+        Part::GunPart => {
+            world.remove::<GunPart>(entity);
         }
         Part::ParticleSystem => {
             world.remove::<ParticleSystem>(entity);
@@ -2562,6 +2627,31 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::HolderBob => Value::Number(world.get::<GunHolder>(entity)?.bob),
         Prop::HolderBreathing => Value::Number(world.get::<GunHolder>(entity)?.breathing),
         Prop::HolderWallCheck => Value::Toggle(world.get::<GunHolder>(entity)?.wall_check),
+        Prop::PartRole => {
+            let role = world.get::<GunPart>(entity)?.role;
+            let at = PART_ROLES.iter().position(|(r, _)| *r == role).unwrap_or(0);
+            Value::Choice(at, PART_ROLES.iter().map(|(_, name)| name.to_string()).collect())
+        }
+        Prop::PartMotion => {
+            let turns = matches!(world.get::<GunPart>(entity)?.motion, PartMotion::Turn { .. });
+            Value::Choice(usize::from(turns), vec!["Slide".into(), "Turn".into()])
+        }
+        Prop::PartAxis => Value::Vector(match world.get::<GunPart>(entity)?.motion {
+            PartMotion::Slide { axis, .. } | PartMotion::Turn { axis, .. } => axis.to_vec(),
+        }),
+        Prop::PartAmount => Value::Number(match world.get::<GunPart>(entity)?.motion {
+            PartMotion::Slide { travel, .. } => travel,
+            PartMotion::Turn { angle, .. } => angle,
+        }),
+        Prop::PartPivot => Value::Vector(match world.get::<GunPart>(entity)?.motion {
+            PartMotion::Turn { pivot, .. } => pivot.to_vec(),
+            PartMotion::Slide { .. } => vec![0.0; 3],
+        }),
+        Prop::PartHandle => Value::Vector(world.get::<GunPart>(entity)?.handle.to_vec()),
+        Prop::PartThenPull => Value::Number(match world.get::<GunPart>(entity)?.then {
+            Some(PartMotion::Slide { travel, .. }) => travel,
+            _ => 0.0,
+        }),
         Prop::MatcherMotionSet => {
             let set = &world.get::<voxear_engine::animation::MotionMatcher>(entity)?.motion_set;
             let guid = game.content.parse(set).ok().and_then(|reference| reference.guid());
@@ -3548,6 +3638,38 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         (Prop::HolderBob, Value::Number(n)) => with(world, entity, |h: &mut GunHolder| h.bob = n.max(0.0)),
         (Prop::HolderBreathing, Value::Number(n)) => with(world, entity, |h: &mut GunHolder| h.breathing = n.max(0.0)),
         (Prop::HolderWallCheck, Value::Toggle(on)) => with(world, entity, |h: &mut GunHolder| h.wall_check = on),
+        // A role moves as most such parts do, from where its handle is.
+        (Prop::PartRole, Value::Choice(index, _)) => {
+            let role = PART_ROLES.get(index).map_or(PartRole::Bolt, |(role, _)| *role);
+            with(world, entity, |part: &mut GunPart| *part = GunPart::of(role, part.handle))
+        }
+        (Prop::PartMotion, Value::Choice(index, _)) => with(world, entity, |part: &mut GunPart| {
+            let axis = match part.motion {
+                PartMotion::Slide { axis, .. } | PartMotion::Turn { axis, .. } => axis,
+            };
+            part.motion = match index {
+                0 => PartMotion::Slide { axis, travel: 0.08 },
+                _ => PartMotion::Turn { axis, pivot: part.handle, angle: 60.0 },
+            };
+        }),
+        (Prop::PartAxis, Value::Vector(v)) if v.len() == 3 => with(world, entity, |part: &mut GunPart| match &mut part.motion {
+            PartMotion::Slide { axis, .. } | PartMotion::Turn { axis, .. } => *axis = [v[0], v[1], v[2]],
+        }),
+        (Prop::PartAmount, Value::Number(n)) => with(world, entity, |part: &mut GunPart| match &mut part.motion {
+            PartMotion::Slide { travel, .. } => *travel = n,
+            PartMotion::Turn { angle, .. } => *angle = n,
+        }),
+        (Prop::PartPivot, Value::Vector(v)) if v.len() == 3 => with(world, entity, |part: &mut GunPart| {
+            if let PartMotion::Turn { pivot, .. } = &mut part.motion {
+                *pivot = [v[0], v[1], v[2]];
+            }
+        }),
+        (Prop::PartHandle, Value::Vector(v)) if v.len() == 3 => {
+            with(world, entity, |part: &mut GunPart| part.handle = [v[0], v[1], v[2]])
+        }
+        (Prop::PartThenPull, Value::Number(n)) => with(world, entity, |part: &mut GunPart| {
+            part.then = (n > 0.0).then_some(PartMotion::Slide { axis: [0.0, 0.0, -1.0], travel: n });
+        }),
         (prop, value) if prop.part() == Part::MotionMatcher => {
             let set = |matcher: &mut voxear_engine::animation::MotionMatcher| set_matcher(matcher, prop, value);
             with(world, entity, set)

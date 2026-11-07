@@ -15,8 +15,11 @@ use voxear_physics::scene::PhysicsScene;
 use voxear_render::{Camera, ModelRenderer, Pose};
 use voxear_scene::{Parent, world_matrix};
 
-use super::gun::{Gun, HandRole, Socket};
+use super::actions::{ActionKind, Hand, plan};
+use super::gun::{Gun, GunKind, HandRole, Socket};
 use super::hands::{Grip, close};
+use super::mechanism::{GunPart, GunState, Known, PartRole};
+use super::playing::{ActionPlay, HandAim, advance, minimum_jerk};
 use crate::animation::MotionMatcherState;
 use crate::animation::ik::{PoseEdit, aim_hand, reach_hand, turn_spine};
 use crate::animation::rig::Rig;
@@ -44,6 +47,13 @@ pub struct GunHolder {
     pub breathing: f32,
     /// Whether it pulls back from walls.
     pub wall_check: bool,
+    /// Rounds it carries for reloading.
+    pub spare: u32,
+    /// Whether a bolt-action or pump is worked by itself after each shot.
+    pub auto_cycle: bool,
+    /// An action asked for, which starts when nothing else is under way.
+    #[serde(skip)]
+    pub request: Option<ActionKind>,
 }
 
 impl Component for GunHolder {}
@@ -60,13 +70,27 @@ impl Default for GunHolder {
             bob: 1.0,
             breathing: 1.0,
             wall_check: true,
+            spare: 90,
+            auto_cycle: true,
+            request: None,
         }
     }
 }
 
 /// What a holder keeps from frame to frame.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct GunHolderState {
+    /// The action under way, the gun's tilt for it, and where each hand
+    /// eases back to its hold from once an action ends.
+    play: Option<ActionPlay>,
+    tilt: Spring<Vec3>,
+    returning: [Option<(Vec3, f32)>; 2],
+    /// Where the gun was last frame, for finding the pouches on it.
+    held: Option<Mat4>,
+    /// Seconds since a self-loader's last shot worked its action, and
+    /// seconds until a manual action is worked after one.
+    cycling: Option<f32>,
+    cycle_after: Option<f32>,
     aim: Spring<f32>,
     /// The turn the gun lags the view by, as angles about the camera's
     /// across, up and forward, in radians.
@@ -108,6 +132,12 @@ impl Component for GunHolderState {}
 impl GunHolderState {
     fn new() -> Self {
         Self {
+            play: None,
+            tilt: Spring::new(Vec3::ZERO, SpringFeel::new(2.4, 0.7, 0.0)),
+            returning: [None; 2],
+            held: None,
+            cycling: None,
+            cycle_after: None,
             aim: Spring::new(0.0, SpringFeel::halflife(0.05)),
             sway: Spring::new(Vec3::ZERO, SpringFeel::new(2.2, 0.45, 0.0)),
             lag: Spring::new(Vec3::ZERO, SpringFeel::new(2.0, 0.55, 0.0)),
@@ -135,6 +165,21 @@ impl GunHolderState {
     /// How far raised to the eye it is, 0 at the hip to 1 aiming.
     pub fn aimed(&self) -> f32 {
         self.aim.value.clamp(0.0, 1.0)
+    }
+
+    /// The action under way, if any.
+    pub fn acting(&self) -> Option<ActionKind> {
+        self.play.as_ref().map(|play| play.kind)
+    }
+
+    /// Stops the action under way where it is: the hands ease back to the
+    /// gun from wherever they were.
+    pub fn cancel(&mut self) {
+        if let Some(play) = self.play.take() {
+            for (hand, at) in play.hands.iter().enumerate() {
+                self.returning[hand] = at.map(|at| (at, 0.0));
+            }
+        }
     }
 
     /// A number from -1 to 1, the next of the holder's own run.
@@ -165,10 +210,25 @@ pub fn fire(world: &mut World, entity: Entity) -> Option<Shot> {
     let gun_entity = holder.gun.or_else(|| first_under(world, entity, |w, e| w.has::<Gun>(e)))?;
     let gun = world.get::<Gun>(gun_entity)?.clone();
     let now = world.resource::<Time>().map_or(0.0, |time| time.elapsed);
-    let mut state = world.get::<GunHolderState>(entity).copied().unwrap_or_else(GunHolderState::new);
+    let mut state = world.get::<GunHolderState>(entity).cloned().unwrap_or_else(GunHolderState::new);
     let interval = 60.0 / f64::from(gun.fire_rate.max(1.0));
-    if state.last_shot.is_some_and(|last| now - last < interval - 1e-4) || state.wall.value > 0.6 {
+    if state.last_shot.is_some_and(|last| now - last < interval - 1e-4)
+        || state.wall.value > 0.6
+        || state.play.is_some()
+    {
         return None;
+    }
+    // Only a gun ready to fire fires: a round chambered, or an open bolt cocked over a fed magazine.
+    let mut mechanism = super::mechanism::state_of(world, gun_entity)?;
+    if !mechanism.ready(gun.kind) {
+        return None;
+    }
+    mechanism.shoot(gun.kind);
+    mechanism.known_chamber = if gun.kind.self_loading() { mechanism.known_chamber } else { Known::Exact };
+    world.insert(gun_entity, mechanism);
+    state.cycling = gun.kind.self_loading().then_some(0.0);
+    if !gun.kind.self_loading() && holder.auto_cycle {
+        state.cycle_after = Some(0.16);
     }
     // A burst runs on while shots follow close behind one another.
     if state.last_shot.is_none_or(|last| now - last > interval * 2.5 + 0.1) {
@@ -232,7 +292,7 @@ pub fn hold(world: &mut World) {
             .or_else(|| world.query_ref::<(Entity, &Camera)>().into_iter().map(|(e, _)| e).next());
         let Some(camera) = camera else { continue };
         let eye = world_matrix(world, camera);
-        let mut state = world.get::<GunHolderState>(entity).copied().unwrap_or_else(GunHolderState::new);
+        let mut state = world.get::<GunHolderState>(entity).cloned().unwrap_or_else(GunHolderState::new);
         recover(world, entity, &gun, &mut state, delta);
         for _ in 0..state.kicks {
             let kick = gun.recoil * (1.0 - 0.5 * gun.heft());
@@ -241,11 +301,62 @@ pub fn hold(world: &mut World) {
         }
         let view = world.get::<FirstPersonView>(entity).cloned().unwrap_or(view);
         let body = view.body.or_else(|| first_under(world, entity, |w, e| w.has::<ModelRenderer>(e)));
+
+        // The action asked for starts, if there is one to do; a manual action is worked a moment after a shot.
+        let Some(mut mechanism) = super::mechanism::state_of(world, gun_entity) else { continue };
+        let mut holder = holder;
+        if let Some(after) = state.cycle_after.as_mut() {
+            *after -= delta;
+            if *after <= 0.0 {
+                state.cycle_after = None;
+                holder.request = holder.request.or(Some(ActionKind::Cycle));
+            }
+        }
+        if let Some(kind) = holder.request.take().filter(|_| state.play.is_none()) {
+            let beats = plan(kind, gun.kind, &mechanism, holder.spare);
+            if !beats.is_empty() {
+                state.play = Some(ActionPlay::new(kind, beats));
+                state.returning = [None; 2];
+            }
+        }
+        if let Some(stored) = world.get_mut::<GunHolder>(entity) {
+            stored.request = None;
+        }
+        let pouches = pouches(world, body, state.held);
+        let mut spare = holder.spare;
+        let mut aim = None;
+        let mut tilt = Vec3::ZERO;
+        if let Some(mut play) = state.play.take() {
+            match advance(world, &mut play, &gun, &mut mechanism, &mut spare, pouches, delta) {
+                Some((hand, angle)) => {
+                    (aim, tilt) = (Some(hand), angle);
+                    state.play = Some(play);
+                }
+                None => {
+                    for (hand, at) in play.hands.iter().enumerate() {
+                        state.returning[hand] = at.map(|at| (at, 0.0));
+                    }
+                }
+            }
+        }
+        if let Some(stored) = world.get_mut::<GunHolder>(entity) {
+            stored.spare = spare;
+        }
+        cycle(world, &gun, &mut mechanism, &mut state, delta);
+        world.insert(gun_entity, mechanism.clone());
+        super::mechanism::show_parts(world, &mechanism);
+        if let Some(play) = &state.play {
+            super::playing::carry_now(world, &mechanism, play);
+        }
+        state.tilt.update(tilt, delta);
+
         let held = place_gun(world, entity, &holder, &gun, &view, eye, body, &mut state, delta);
+        state.held = Some(held);
         set_world(world, gun_entity, held.w_axis.truncate(), held.to_scale_rotation_translation().1);
         if let Some(body) = body {
+            let aims = hand_aims(&gun, aim, &mut state, delta);
             // Short of reach, the gun comes nearer until the hands meet it, and drifts back out slowly once they do.
-            let short = hands_on(world, body, &gun, held, eye);
+            let short = hands_on(world, body, &gun, held, eye, aims);
             let wanted = (state.reach.goal() + short - 0.05 * delta).clamp(0.0, 0.45);
             state.reach.update(wanted, delta);
         }
@@ -381,8 +492,12 @@ fn place_gun(
         * (1.0 - 0.6 * aim);
     let tremor_turn = Quat::from_euler(EulerRot::XYZ, tremor.x, tremor.y, 0.0);
 
+    // An action tilts the gun toward the work: rolled, turned and tipped up toward the eye.
+    let tilt = state.tilt.value * (std::f32::consts::PI / 180.0);
+    let worked = Quat::from_euler(EulerRot::ZYX, tilt.x, tilt.y, -tilt.z);
+    at += Vec3::new(-0.03, 0.03, -0.05) * (state.tilt.value.length() / 30.0).min(1.0);
     let local = Mat4::from_rotation_translation(
-        bob_roll * sway_turn * tremor_turn * turn,
+        bob_roll * sway_turn * tremor_turn * turn * worked,
         at + lag + bob * 0.25 + Vec3::Y * breath,
     );
     eye * local
@@ -421,10 +536,69 @@ fn is_under(world: &World, obj: Entity, owner: Entity) -> bool {
     false
 }
 
+/// Works a self-loader's action after each shot, its bolt or slide flying
+/// back and home again, held back if the gun ran dry.
+fn cycle(world: &World, gun: &Gun, mechanism: &mut GunState, state: &mut GunHolderState, delta: f32) {
+    let Some(t) = state.cycling.as_mut() else { return };
+    *t += delta;
+    let period = (60.0 / gun.fire_rate.max(60.0)).min(0.12) * 0.9;
+    let s = (*t / period).min(1.0);
+    let place = if mechanism.open { s.min(0.5) * 2.0 } else { (s * std::f32::consts::PI).sin() };
+    let role = match gun.kind {
+        GunKind::SlidePistol => PartRole::Slide,
+        GunKind::TogglePistol => PartRole::Toggle,
+        _ => PartRole::Bolt,
+    };
+    if let Some(entry) =
+        mechanism.parts.iter_mut().find(|(e, ..)| world.get::<GunPart>(*e).is_some_and(|p| p.role == role))
+    {
+        entry.1 = place;
+    }
+    if s >= 1.0 {
+        state.cycling = None;
+    }
+}
+
+/// Where each hand's pouch is, in the gun's space as it was last frame:
+/// at the front of each hip.
+fn pouches(world: &World, body: Option<Entity>, held: Option<Mat4>) -> [Vec3; 2] {
+    let fallback = [Vec3::new(-0.25, -0.35, -0.25), Vec3::new(0.2, -0.35, -0.3)];
+    let (Some(body), Some(held)) = (body, held) else { return fallback };
+    let Some(animation) = world.get::<ModelRenderer>(body).and_then(|model| model.animation.clone()) else {
+        return fallback;
+    };
+    let (Some(pose), Some(rig)) = (world.get::<Pose>(body), Rig::find(&animation.skeleton)) else { return fallback };
+    let into_gun = held.inverse() * world_matrix(world, body);
+    let hips = pose.bones[rig.hips].w_axis.truncate();
+    [Vec3::new(-0.17, -0.02, 0.12), Vec3::new(0.17, -0.02, 0.12)].map(|side| into_gun.transform_point3(hips + side))
+}
+
+/// Each hand's aim this frame, left then right: the working hand's, and a
+/// hand easing back to its hold after an action.
+fn hand_aims(gun: &Gun, working: Option<HandAim>, state: &mut GunHolderState, delta: f32) -> [Option<HandAim>; 2] {
+    let mut aims = [None; 2];
+    for (index, hand) in [Hand::Left, Hand::Right].into_iter().enumerate() {
+        if let Some(aim) = working.filter(|aim| aim.hand == hand) {
+            aims[index] = Some(aim);
+            continue;
+        }
+        if let Some((from, t)) = state.returning[index].as_mut() {
+            *t += delta / 0.2;
+            let home = super::playing::socket(gun, hand);
+            let grip = if hand == Hand::Right { Grip::TRIGGER } else { Grip::SUPPORT };
+            aims[index] = Some(HandAim { hand, at: from.lerp(home, minimum_jerk(*t)), grip });
+            if *t >= 1.0 {
+                state.returning[index] = None;
+            }
+        }
+    }
+    aims
+}
+
 /// Puts the body's hands on the gun held at `held`: the shooting hand on
 /// its grip, the other on its support, elbows down and out, fingers
 /// closed. Gives back how far short the arms fell.
-fn hands_on(world: &mut World, body: Entity, gun: &Gun, held: Mat4, eye: Mat4) -> f32 {
+fn hands_on(world: &mut World, body: Entity, gun: &Gun, held: Mat4, eye: Mat4, aims: [Option<HandAim>; 2]) -> f32 {
     let Some(animation) = world.get::<ModelRenderer>(body).and_then(|model| model.animation.clone()) else {
         return 0.0;
     };
@@ -453,11 +627,29 @@ fn hands_on(world: &mut World, body: Entity, gun: &Gun, held: Mat4, eye: Mat4) -
             to_body.transform_vector3(palm),
         )
     };
-    let (at, fingers, palm) = place(&gun.grip, HandRole::Grip);
+    // A hand working holds a part or a round where its aim says, fingers along the gun and palm toward its bore.
+    let working = |aim: HandAim| {
+        let contact = Vec3::new(0.0, 0.03, aim.at.z);
+        let side = if aim.hand == Hand::Right { Vec3::NEG_X } else { Vec3::X };
+        let palm = (contact - aim.at).try_normalize().unwrap_or(side);
+        let fingers = (Vec3::Z - palm * palm.z).normalize_or(Vec3::Z);
+        let wrist = aim.at - fingers * 0.07 - palm * 0.03;
+        (to_body.transform_point3(wrist), to_body.transform_vector3(fingers), to_body.transform_vector3(palm))
+    };
+    let (at, fingers, palm) = aims[1].map_or_else(|| place(&gun.grip, HandRole::Grip), working);
     let shoulder = edit.position(right.upper);
     let short_right = reach_hand(&mut edit, right, at, shoulder + down * 0.6 + out * 0.5 + back * 0.2, 0.35);
     aim_hand(&mut edit, right, fingers, palm);
-    close(&mut edit, right, Grip::TRIGGER);
+    close(&mut edit, right, aims[1].map_or(Grip::TRIGGER, |aim| aim.grip));
+    if let Some(aim) = aims[0] {
+        let (at, fingers, palm) = working(aim);
+        let shoulder = edit.position(left.upper);
+        reach_hand(&mut edit, left, at, shoulder + down * 0.7 - out * 0.4 + back * 0.1, 0.45);
+        aim_hand(&mut edit, left, fingers, palm);
+        close(&mut edit, left, aim.grip);
+        world.insert(body, Pose { bones: edit.matrices().into() });
+        return if aims[1].is_some() { 0.0 } else { short_right };
+    }
     let role = if gun.kind.is_handgun() { HandRole::HandgunSupport } else { HandRole::Support };
     let (at, fingers, palm) = place(&gun.support, role);
     // Out of reach, the support hand slides back along the barrel, as far as the grip, to where it can hold.
@@ -481,7 +673,7 @@ fn hands_on(world: &mut World, body: Entity, gun: &Gun, held: Mat4, eye: Mat4) -
     aim_hand(&mut edit, left, fingers, palm);
     close(&mut edit, left, Grip::SUPPORT);
     world.insert(body, Pose { bones: edit.matrices().into() });
-    short_right
+    if aims[1].is_some() { 0.0 } else { short_right }
 }
 
 /// Eases 0 to 1 in and out.
@@ -690,5 +882,117 @@ mod firing {
         }
         let after = scene.world.get::<FirstPersonView>(scene.player).unwrap().pitch;
         assert!(after > start + 1.5, "a bolt-action does not bring the view back: {start} {after}");
+    }
+}
+
+#[cfg(test)]
+mod acting {
+    use voxear_scene::Transform;
+
+    use super::tests_support::*;
+    use super::*;
+    use crate::guns::GunKind;
+    use crate::guns::mechanism::{Chamber, GunPart, PartRole};
+
+    fn step(scene: &mut Scene, rest: &[Mat4], time: &mut Time) {
+        time.elapsed += f64::from(time.delta);
+        scene.world.insert_resource(*time);
+        frame(scene, rest);
+    }
+
+    /// A rifle with a turn-bolt and a stripper clip under it.
+    fn rifle() -> (Scene, Entity) {
+        let mut scene = scene_with(GunKind::BoltActionRifle);
+        let bolt = scene.world.spawn((
+            Transform::from_position(Vec3::new(0.0, 0.05, 0.1)),
+            Parent(scene.gun),
+            GunPart::turn_bolt([0.05, 0.05, 0.1]),
+        ));
+        scene.world.spawn((
+            Transform::from_position(Vec3::new(0.0, 0.08, 0.12)),
+            Parent(scene.gun),
+            GunPart::of(PartRole::Clip, [0.0, 0.09, 0.12]),
+        ));
+        (scene, bolt)
+    }
+
+    #[test]
+    fn a_bolt_action_works_its_bolt_after_each_shot_and_reloads_from_a_clip_when_empty() {
+        let (mut scene, bolt) = rifle();
+        let rest = rest_of(&scene);
+        let mut time = Time { delta: 1.0 / 60.0, ..Time::default() };
+        for _ in 0..10 {
+            step(&mut scene, &rest, &mut time);
+        }
+        assert!(fire(&mut scene.world, scene.player).is_some());
+        // The bolt works by itself: it lifts and moves back, then all comes home.
+        let mut furthest: f32 = 0.0;
+        for _ in 0..70 {
+            step(&mut scene, &rest, &mut time);
+            let state = scene.world.get::<GunState>(scene.gun).unwrap();
+            furthest = furthest.max(state.parts.iter().find(|(e, ..)| *e == bolt).unwrap().1);
+        }
+        assert!(furthest > 1.9, "the bolt went all the way back: {furthest}");
+        let state = scene.world.get::<GunState>(scene.gun).unwrap();
+        assert!(state.ready(GunKind::BoltActionRifle) && state.rounds == 4, "{state:?}");
+        assert_eq!(state.parts.iter().find(|(e, ..)| *e == bolt).unwrap().1, 0.0, "the bolt home");
+
+        // Shot dry, then reloaded: a clip's five rounds from the spare.
+        for _ in 0..5 {
+            while fire(&mut scene.world, scene.player).is_none() {
+                step(&mut scene, &rest, &mut time);
+            }
+            for _ in 0..70 {
+                step(&mut scene, &rest, &mut time);
+            }
+        }
+        let state = scene.world.get::<GunState>(scene.gun).unwrap().clone();
+        assert!(!state.ready(GunKind::BoltActionRifle) && state.rounds == 0, "{state:?}");
+        scene.world.get_mut::<GunHolder>(scene.player).unwrap().request = Some(ActionKind::Reload);
+        step(&mut scene, &rest, &mut time);
+        assert_eq!(scene.world.get::<GunHolderState>(scene.player).unwrap().acting(), Some(ActionKind::Reload));
+        for _ in 0..240 {
+            step(&mut scene, &rest, &mut time);
+        }
+        let state = scene.world.get::<GunState>(scene.gun).unwrap();
+        assert!(
+            state.ready(GunKind::BoltActionRifle) && state.rounds == 4 && state.chamber == Chamber::Live,
+            "{state:?}"
+        );
+        assert_eq!(scene.world.get::<GunHolder>(scene.player).unwrap().spare, 85);
+        assert_eq!(scene.world.get::<GunHolderState>(scene.player).unwrap().acting(), None);
+    }
+
+    #[test]
+    fn a_magazine_check_shows_the_holder_roughly_what_is_left_and_can_be_stopped() {
+        let mut scene = scene_with(GunKind::OpenBoltSmg);
+        scene.world.spawn((
+            Transform::from_position(Vec3::new(0.0, -0.1, 0.12)),
+            Parent(scene.gun),
+            GunPart::of(PartRole::Magazine, [0.0, -0.15, 0.12]),
+        ));
+        let rest = rest_of(&scene);
+        let mut time = Time { delta: 1.0 / 60.0, ..Time::default() };
+        for _ in 0..5 {
+            step(&mut scene, &rest, &mut time);
+        }
+        scene.world.get_mut::<GunState>(scene.gun).unwrap().known_feed = Known::Unknown;
+        scene.world.get_mut::<GunHolder>(scene.player).unwrap().request = Some(ActionKind::CheckMagazine);
+        for _ in 0..15 {
+            step(&mut scene, &rest, &mut time);
+        }
+        assert!(fire(&mut scene.world, scene.player).is_none(), "no firing mid-check");
+        scene.world.get_mut::<GunHolderState>(scene.player).unwrap().cancel();
+        step(&mut scene, &rest, &mut time);
+        assert_eq!(
+            scene.world.get::<GunState>(scene.gun).unwrap().known_feed,
+            Known::Unknown,
+            "stopped before the look"
+        );
+        scene.world.get_mut::<GunHolder>(scene.player).unwrap().request = Some(ActionKind::CheckMagazine);
+        for _ in 0..90 {
+            step(&mut scene, &rest, &mut time);
+        }
+        assert_eq!(scene.world.get::<GunState>(scene.gun).unwrap().known_feed, Known::Rough);
     }
 }

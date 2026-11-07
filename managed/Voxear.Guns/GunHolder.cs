@@ -31,6 +31,11 @@ public readonly struct GunHolder : IEquatable<GunHolder>, IObjComponent
 	private const int FireValue = 12;
 	private const int ShotOriginValue = 13;
 	private const int ShotDirectionValue = 14;
+	private const int RequestValue = 15;
+	private const int CancelValue = 16;
+	private const int ActingValue = 17;
+	private const int SpareValue = 18;
+	private const int AutoCycleValue = 19;
 
 	public static readonly GunHolder None = default;
 
@@ -142,6 +147,60 @@ public readonly struct GunHolder : IEquatable<GunHolder>, IObjComponent
 	public bool Fire()
 	{
 		return Fire(out _);
+	}
+
+	/// <summary>Rounds it carries for reloading; a reload takes from them, and a part-used magazine goes back.</summary>
+	public int Spare
+	{
+		get { return (int)Number(SpareValue); }
+		set { Set(SpareValue, value); }
+	}
+
+	/// <summary>Whether a bolt-action or pump is worked by itself just after each shot.</summary>
+	public bool AutoCycle
+	{
+		get { return Number(AutoCycleValue) != 0f; }
+		set { Set(AutoCycleValue, value ? 1f : 0f); }
+	}
+
+	/// <summary>The action under way, or null when the hands are on the gun.</summary>
+	public GunAction? Acting
+	{
+		get
+		{
+			var acting = (int)Number(ActingValue);
+			return acting < 0 ? null : (GunAction)acting;
+		}
+	}
+
+	/// <summary>Starts an action as soon as nothing else is under way. A full gun is not reloaded.</summary>
+	public void Do(GunAction action)
+	{
+		Set(RequestValue, (int)action);
+	}
+
+	/// <summary>Reloads the gun as its kind is reloaded, from <see cref="Spare"/>.</summary>
+	public void Reload()
+	{
+		Do(GunAction.Reload);
+	}
+
+	/// <summary>Looks at how much is left in the feed: <see cref="Gun.Estimate"/> says what was seen.</summary>
+	public void CheckMagazine()
+	{
+		Do(GunAction.CheckMagazine);
+	}
+
+	/// <summary>Opens the action a little to see whether a round is chambered.</summary>
+	public void CheckChamber()
+	{
+		Do(GunAction.CheckChamber);
+	}
+
+	/// <summary>Stops the action under way where it is, as sprinting or a sudden shot cuts in; the hands go back to the gun.</summary>
+	public void Cancel()
+	{
+		Set(CancelValue, 1f);
 	}
 
 	/// <summary>Takes the Gun Holder off its Obj.</summary>

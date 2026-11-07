@@ -45,6 +45,7 @@ pub(super) enum Copied {
     FirstPersonView(Box<voxear_engine::first_person::FirstPersonView>),
     Gun(Box<voxear_engine::guns::Gun>),
     GunHolder(Box<voxear_engine::guns::GunHolder>),
+    GunPart(Box<voxear_engine::guns::mechanism::GunPart>),
     Ocean(Ocean),
     Pool(Pool),
     DryArea(DryArea),
@@ -84,6 +85,9 @@ impl Copied {
             Part::Animator => Self::Animator(world.get::<voxear_engine::animation::Animator>(entity)?.clone()),
             Part::Gun => Self::Gun(Box::new(world.get::<voxear_engine::guns::Gun>(entity)?.clone())),
             Part::GunHolder => Self::GunHolder(Box::new(world.get::<voxear_engine::guns::GunHolder>(entity)?.clone())),
+            Part::GunPart => {
+                Self::GunPart(Box::new(world.get::<voxear_engine::guns::mechanism::GunPart>(entity)?.clone()))
+            }
             Part::FirstPersonView => {
                 Self::FirstPersonView(Box::new(world.get::<voxear_engine::first_person::FirstPersonView>(entity)?.clone()))
             }
@@ -126,6 +130,7 @@ impl Copied {
             Self::FirstPersonView(view) => drop(world.insert(entity, (**view).clone())),
             Self::Gun(gun) => drop(world.insert(entity, (**gun).clone())),
             Self::GunHolder(holder) => drop(world.insert(entity, (**holder).clone())),
+            Self::GunPart(part) => drop(world.insert(entity, (**part).clone())),
             Self::Ocean(ocean) => drop(world.insert(entity, *ocean)),
             Self::Pool(pool) => drop(world.insert(entity, *pool)),
             Self::DryArea(dry) => drop(world.insert(entity, *dry)),

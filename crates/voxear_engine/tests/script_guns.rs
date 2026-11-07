@@ -25,6 +25,9 @@ public sealed class Armourer : SystemBase
 		Obj.Find("Main Camera").AddFirstPersonView();
 		var fired = holder.Fire(out var shot);
 		Log.Info($"fired {fired} {MathF.Round(shot.Direction.Length(), 3)} {holder.Fire()}");
+		gun.Rounds = 3;
+		holder.Reload();
+		Log.Info($"ammo {gun.Rounds} {gun.Capacity} {gun.Estimate} {holder.Spare}");
 	}
 
 	protected override void Update()
@@ -52,10 +55,16 @@ fn with_the_guns_module_a_script_arms_a_holder() {
     engine.set_scripts(scripts::start(&project).unwrap().expect("Hello has scripts"));
     let mut game = Game::new(project, engine).unwrap();
     game.start(None).unwrap();
-    game.tick(1.0 / 60.0, None);
+    for _ in 0..150 {
+        game.tick(1.0 / 60.0, None);
+    }
     let lines: Vec<String> = log.lock().unwrap().lines.iter().map(|l| l.message.clone()).collect();
     assert!(lines.iter().any(|l| l == "gun OpenBoltSmg 4 550 True True 0.5"), "{lines:#?}");
     assert!(lines.iter().any(|l| l == "fired True 1 False"), "once, then not again so soon: {lines:#?}");
+    assert!(lines.iter().any(|l| l == "ammo 3 32 UnderHalf 90"), "{lines:#?}");
+    let states: Vec<voxear_engine::guns::mechanism::GunState> =
+        game.engine.world.query_ref::<&voxear_engine::guns::mechanism::GunState>().into_iter().cloned().collect();
+    assert_eq!(states[0].rounds, 32, "reloaded: {:?}", states[0]);
     let world = &game.engine.world;
     let holders: Vec<voxear_engine::guns::GunHolder> =
         world.query_ref::<&voxear_engine::guns::GunHolder>().into_iter().cloned().collect();

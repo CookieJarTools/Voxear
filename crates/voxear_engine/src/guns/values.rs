@@ -5,8 +5,10 @@
 use voxear_ecs::{Entity, World};
 use voxear_scripting::ComponentKind;
 
+use super::actions::ActionKind;
 use super::gun::{Gun, GunKind};
 use super::holder::{GunHolder, GunHolderState};
+use super::mechanism::{Chamber, GunState, Known};
 use crate::cameras::{obj_value, value_obj};
 
 const HAS: i32 = 0;
@@ -26,6 +28,12 @@ const FRONT_SIGHT: i32 = 11;
 const EYE_RELIEF: i32 = 12;
 const AIM_FOV: i32 = 13;
 const MUZZLE: i32 = 14;
+const ROUNDS: i32 = 15;
+const CHAMBER: i32 = 16;
+const FEED_KNOWN: i32 = 17;
+const CHAMBER_KNOWN: i32 = 18;
+const CAPACITY: i32 = 19;
+const OPEN: i32 = 20;
 
 // A Gun Holder's values.
 const GUN: i32 = 3;
@@ -40,6 +48,23 @@ const WALL_CHECK: i32 = 11;
 const FIRE: i32 = 12;
 const SHOT_ORIGIN: i32 = 13;
 const SHOT_DIRECTION: i32 = 14;
+const REQUEST: i32 = 15;
+const CANCEL: i32 = 16;
+const ACTING: i32 = 17;
+const SPARE: i32 = 18;
+const AUTO_CYCLE: i32 = 19;
+
+/// The actions in the order Voxear.Guns numbers them.
+const ACTIONS: [ActionKind; 4] =
+    [ActionKind::Reload, ActionKind::Cycle, ActionKind::CheckMagazine, ActionKind::CheckChamber];
+
+fn known(known: Known) -> f32 {
+    match known {
+        Known::Unknown => 0.0,
+        Known::Rough => 1.0,
+        Known::Exact => 2.0,
+    }
+}
 
 pub(crate) fn register() {
     voxear_scripting::set_kind_values(ComponentKind::Gun, gun_values);
@@ -86,6 +111,28 @@ fn gun_values(world: &mut World, entity: Entity, what: i32, written: Option<[f32
     if let Some(answer) = presence::<Gun>(world, entity, what, written) {
         return answer;
     }
+    if (CHAMBER..=OPEN).contains(&what) || what == ROUNDS {
+        let state = super::mechanism::state_of(world, entity)?;
+        let kind = world.get::<Gun>(entity)?.kind;
+        return match (what, written) {
+            (ROUNDS, None) => Some(number(state.rounds as f32)),
+            (ROUNDS, Some(v)) => {
+                let rounds = (v[0].max(0.0) as u32).min(kind.capacity());
+                world.get_mut::<GunState>(entity)?.rounds = rounds;
+                Some([0.0; 4])
+            }
+            (CHAMBER, None) => Some(number(match state.chamber {
+                Chamber::Empty => 0.0,
+                Chamber::Live => 1.0,
+                Chamber::Spent => 2.0,
+            })),
+            (FEED_KNOWN, None) => Some(number(known(state.known_feed))),
+            (CHAMBER_KNOWN, None) => Some(number(known(state.known_chamber))),
+            (CAPACITY, None) => Some(number(kind.capacity() as f32)),
+            (OPEN, None) => Some(flag(state.open)),
+            _ => None,
+        };
+    }
     let gun = world.get_mut::<Gun>(entity)?;
     let Some(v) = written else {
         return match what {
@@ -128,8 +175,22 @@ fn holder_values(world: &mut World, entity: Entity, what: i32, written: Option<[
     if let Some(answer) = presence::<GunHolder>(world, entity, what, written) {
         return answer;
     }
-    if (what, written.is_some()) == (FIRE, true) {
-        return super::holder::fire(world, entity).map(|_| [1.0, 0.0, 0.0, 0.0]);
+    match (what, written) {
+        (FIRE, Some(_)) => return super::holder::fire(world, entity).map(|_| [1.0, 0.0, 0.0, 0.0]),
+        (REQUEST, Some(v)) => {
+            let action = ACTIONS.get(v[0].max(0.0) as usize).copied()?;
+            world.get_mut::<GunHolder>(entity)?.request = Some(action);
+            return Some([0.0; 4]);
+        }
+        (CANCEL, Some(_)) => {
+            world.get_mut::<GunHolderState>(entity)?.cancel();
+            return Some([0.0; 4]);
+        }
+        (ACTING, None) => {
+            let acting = world.get::<GunHolderState>(entity).and_then(GunHolderState::acting);
+            return Some(number(acting.and_then(|a| ACTIONS.iter().position(|k| *k == a)).map_or(-1.0, |i| i as f32)));
+        }
+        _ => {}
     }
     let shot = world.get::<GunHolderState>(entity).and_then(|state| state.shot);
     let aimed = world.get::<GunHolderState>(entity).map_or(0.0, GunHolderState::aimed);
@@ -147,6 +208,8 @@ fn holder_values(world: &mut World, entity: Entity, what: i32, written: Option<[
             BOB => Some(number(holder.bob)),
             BREATHING => Some(number(holder.breathing)),
             WALL_CHECK => Some(flag(holder.wall_check)),
+            SPARE => Some(number(holder.spare as f32)),
+            AUTO_CYCLE => Some(flag(holder.auto_cycle)),
             SHOT_ORIGIN => shot.map(|shot| point(shot.origin.into())),
             SHOT_DIRECTION => shot.map(|shot| point(shot.direction.into())),
             _ => None,
@@ -161,6 +224,8 @@ fn holder_values(world: &mut World, entity: Entity, what: i32, written: Option<[
         BOB => holder.bob = v[0].max(0.0),
         BREATHING => holder.breathing = v[0].max(0.0),
         WALL_CHECK => holder.wall_check = v[0] != 0.0,
+        SPARE => holder.spare = v[0].max(0.0) as u32,
+        AUTO_CYCLE => holder.auto_cycle = v[0] != 0.0,
         _ => return None,
     }
     Some([0.0; 4])

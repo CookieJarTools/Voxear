@@ -4,9 +4,12 @@
 //! in front of its First-Person View, and aims, sways, bobs, breathes and
 //! pulls back from walls (see [`holder`]).
 
+pub mod actions;
 pub mod gun;
 pub mod hands;
 pub mod holder;
+pub mod mechanism;
+pub mod playing;
 mod values;
 
 pub(crate) use values::register;

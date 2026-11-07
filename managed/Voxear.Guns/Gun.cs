@@ -28,6 +28,12 @@ public readonly struct Gun : IEquatable<Gun>, IObjComponent
 	private const int EyeReliefValue = 12;
 	private const int AimFovValue = 13;
 	private const int MuzzleValue = 14;
+	private const int RoundsValue = 15;
+	private const int ChamberValue = 16;
+	private const int FeedKnownValue = 17;
+	private const int ChamberKnownValue = 18;
+	private const int CapacityValue = 19;
+	private const int OpenValue = 20;
 
 	public static readonly Gun None = default;
 
@@ -124,6 +130,61 @@ public readonly struct Gun : IEquatable<Gun>, IObjComponent
 	{
 		get { return Point(MuzzleValue); }
 		set { Set(MuzzleValue, value); }
+	}
+
+	/// <summary>Rounds in the feed now, the chambered one apart: the truth, whatever the holder knows of it.</summary>
+	public int Rounds
+	{
+		get { return (int)Number(RoundsValue); }
+		set { Set(RoundsValue, value); }
+	}
+
+	/// <summary>How many rounds the feed holds.</summary>
+	public int Capacity => (int)Number(CapacityValue);
+
+	/// <summary>Whether a live round is in the chamber.</summary>
+	public bool Chambered => Number(ChamberValue) == 1f;
+
+	/// <summary>Whether the action is held open: a slide locked back on empty, or an open bolt cocked.</summary>
+	public bool IsOpen => Number(OpenValue) != 0f;
+
+	/// <summary>What the holder knows of the rounds in the feed.</summary>
+	public AmmoKnowledge FeedKnown => (AmmoKnowledge)(int)Number(FeedKnownValue);
+
+	/// <summary>What the holder knows of the chamber.</summary>
+	public AmmoKnowledge ChamberKnown => (AmmoKnowledge)(int)Number(ChamberKnownValue);
+
+	/// <summary>
+	/// About how full the feed is, as the holder last saw it, or null when they have not looked since firing from it.
+	/// <code>
+	/// ammoLabel.Text = gun.Estimate switch
+	/// {
+	/// 	AmmoEstimate.Full => "Full",
+	/// 	AmmoEstimate.Empty => "Empty",
+	/// 	null => "?",
+	/// 	_ => "Some left",
+	/// };
+	/// </code>
+	/// </summary>
+	public AmmoEstimate? Estimate
+	{
+		get
+		{
+			if (FeedKnown == AmmoKnowledge.Unknown || Capacity == 0)
+			{
+				return null;
+			}
+
+			var share = (float)Rounds / Capacity;
+			return share switch
+			{
+				<= 0.05f => AmmoEstimate.Empty,
+				< 0.4f => AmmoEstimate.UnderHalf,
+				<= 0.6f => AmmoEstimate.Half,
+				< 0.95f => AmmoEstimate.OverHalf,
+				_ => AmmoEstimate.Full,
+			};
+		}
 	}
 
 	/// <summary>Where the muzzle is in the world now.</summary>

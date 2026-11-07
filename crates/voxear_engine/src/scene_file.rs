@@ -302,6 +302,9 @@ pub struct ObjData {
     pub gun: Option<crate::guns::Gun>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gun_holder: Option<crate::guns::GunHolder>,
+    /// A moving part of the gun this Obj is under (the Guns module).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gun_part: Option<crate::guns::mechanism::GunPart>,
     /// An Ocean, the sea filling the level at the Obj's height.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ocean: Option<Ocean>,
@@ -386,6 +389,7 @@ impl ObjData {
             first_person: None,
             gun: None,
             gun_holder: None,
+            gun_part: None,
             ocean: None,
             pool: None,
             dry_area: None,
@@ -1348,6 +1352,9 @@ fn capture_instance(
     if root.gun_holder.is_some() && root.gun_holder != prefab_root.gun_holder {
         instance.gun_holder = root.gun_holder.clone();
     }
+    if root.gun_part.is_some() && root.gun_part != prefab_root.gun_part {
+        instance.gun_part = root.gun_part.clone();
+    }
     if root.ocean.is_some() && root.ocean != prefab_root.ocean {
         instance.ocean = root.ocean;
     }
@@ -1504,6 +1511,9 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     }
     if let Some(holder) = actual.gun_holder.as_ref().filter(|h| Some(*h) != expected.gun_holder.as_ref()) {
         put("gun_holder", whole(holder, &crate::guns::GunHolder::default())?);
+    }
+    if let Some(part) = actual.gun_part.as_ref().filter(|p| Some(*p) != expected.gun_part.as_ref()) {
+        put("gun_part", whole(part, &crate::guns::mechanism::GunPart::default())?);
     }
     let view = actual.first_person.as_ref().filter(|v| Some(*v) != expected.first_person.as_ref());
     if let Some(view) = view {
@@ -1766,6 +1776,7 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.first_person = world.get::<crate::first_person::FirstPersonView>(entity).cloned();
     obj.gun = world.get::<crate::guns::Gun>(entity).cloned();
     obj.gun_holder = world.get::<crate::guns::GunHolder>(entity).cloned();
+    obj.gun_part = world.get::<crate::guns::mechanism::GunPart>(entity).cloned();
     obj.ocean = world.get::<Ocean>(entity).copied();
     obj.pool = world.get::<Pool>(entity).copied();
     obj.dry_area = world.get::<DryArea>(entity).map(|area| DryAreaData::of(content, area));

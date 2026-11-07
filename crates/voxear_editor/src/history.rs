@@ -62,6 +62,7 @@ pub struct ObjState {
     pub first_person: Option<Box<voxear_engine::first_person::FirstPersonView>>,
     pub gun: Option<Box<voxear_engine::guns::Gun>>,
     pub gun_holder: Option<Box<voxear_engine::guns::GunHolder>>,
+    pub gun_part: Option<Box<voxear_engine::guns::mechanism::GunPart>>,
     pub ocean: Option<Box<Ocean>>,
     pub pool: Option<Box<Pool>>,
     pub dry_area: Option<Box<DryArea>>,
@@ -111,6 +112,7 @@ impl ObjState {
             first_person: world.get::<voxear_engine::first_person::FirstPersonView>(entity).cloned().map(Box::new),
             gun: world.get::<voxear_engine::guns::Gun>(entity).cloned().map(Box::new),
             gun_holder: world.get::<voxear_engine::guns::GunHolder>(entity).cloned().map(Box::new),
+            gun_part: world.get::<voxear_engine::guns::mechanism::GunPart>(entity).cloned().map(Box::new),
             ocean: world.get::<Ocean>(entity).copied().map(Box::new),
             pool: world.get::<Pool>(entity).copied().map(Box::new),
             dry_area: world.get::<DryArea>(entity).copied().map(Box::new),
@@ -180,6 +182,7 @@ impl ObjState {
         put(world, entity, self.first_person.as_deref().cloned());
         put(world, entity, self.gun.as_deref().cloned());
         put(world, entity, self.gun_holder.as_deref().cloned());
+        put(world, entity, self.gun_part.as_deref().cloned());
         put(world, entity, self.ocean.as_deref().copied());
         put(world, entity, self.pool.as_deref().copied());
         put(world, entity, self.dry_area.as_deref().copied());

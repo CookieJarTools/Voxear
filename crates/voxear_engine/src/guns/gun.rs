@@ -134,6 +134,11 @@ pub struct Gun {
     /// degrees; 0 leaves it.
     pub aim_fov: f32,
     pub muzzle: [f32; 3],
+    /// Where rounds go in: the magazine well, the clip guide or the top of
+    /// the receiver, and the ejection port, where spent cases leave and a
+    /// look shows the chamber.
+    pub feed: [f32; 3],
+    pub port: [f32; 3],
 }
 
 impl Component for Gun {}
@@ -161,6 +166,8 @@ impl Gun {
             eye_relief: relief,
             aim_fov: 55.0,
             muzzle: [0.0, 0.04, length - 0.12],
+            feed: [0.0, 0.06, 0.12],
+            port: [0.03, 0.05, 0.12],
         };
         let handgun = |mass, length: f32, fire_rate, recoil| Self {
             kind,
@@ -175,13 +182,17 @@ impl Gun {
             eye_relief: 0.45,
             aim_fov: 60.0,
             muzzle: [0.0, 0.035, length - 0.01],
+            feed: [0.0, -0.09, -0.03],
+            port: [0.015, 0.045, 0.07],
         };
         match kind {
             GunKind::BoltActionRifle => rifle(3.9, 1.11, 15.0, 1.0, 0.42, 0.2, 0.24),
             GunKind::SemiAutoRifle => rifle(4.3, 1.1, 40.0, 1.0, 0.4, -0.03, 0.08),
-            GunKind::OpenBoltSmg => {
-                Gun { support: Socket::at([-0.03, -0.08, 0.16]), ..rifle(4.0, 0.83, 550.0, 0.35, 0.2, 0.0, 0.12) }
-            }
+            GunKind::OpenBoltSmg => Gun {
+                support: Socket::at([-0.03, -0.08, 0.16]),
+                feed: [0.0, -0.12, 0.12],
+                ..rifle(4.0, 0.83, 550.0, 0.35, 0.2, 0.0, 0.12)
+            },
             GunKind::SlidePistol => handgun(1.1, 0.22, 120.0, 0.45),
             GunKind::TogglePistol => handgun(0.87, 0.22, 120.0, 0.35),
             GunKind::BeltFedMg => rifle(11.6, 1.22, 1200.0, 0.9, 0.35, 0.05, 0.15),

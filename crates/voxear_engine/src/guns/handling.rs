@@ -1,5 +1,5 @@
 //! A gun's handling: how it is held and how its actions go, as a designer
-//! sets them in the Gun Editor, saved in a `.gunhandling` file the Gun
+//! sets them in its Inspector, saved in a `.gunhandling` file the Gun
 //! picks. Its poses are offsets on how every gun is held. Its built-in
 //! actions are offsets on the gun kind's templates, finding their beats by
 //! key, so the templates can improve under them. And it can have actions
@@ -28,6 +28,7 @@ use voxear_core::math::{EulerRot, Mat4, Quat, Vec3};
 use voxear_ecs::World;
 
 use super::actions::{ActionKind, ActionSpec, Beat, BeatKey, When};
+use super::base_clip::BaseClip;
 use super::gun::{Gun, GunKind, Socket};
 use super::hands::Grip;
 use crate::content::Content;
@@ -131,11 +132,15 @@ pub struct ActionOffsets {
     pub work: Place,
     #[serde(rename = "beat", skip_serializing_if = "Vec::is_empty")]
     pub beats: Vec<BeatOffset>,
+    /// The clip it is based on, if any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub clip: Option<BaseClip>,
 }
 
 impl Default for ActionOffsets {
     fn default() -> Self {
-        Self { action: ActionKind::Reload, speed: 1.0, lift: None, work: Place::default(), beats: Vec::new() }
+        let work = Place::default();
+        Self { action: ActionKind::Reload, speed: 1.0, lift: None, work, beats: Vec::new(), clip: None }
     }
 }
 
@@ -200,6 +205,8 @@ pub struct CustomAction {
     pub work: Place,
     #[serde(rename = "beat")]
     pub beats: Vec<Beat>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub clip: Option<BaseClip>,
 }
 
 impl Default for CustomAction {
@@ -213,6 +220,7 @@ impl Default for CustomAction {
             lowers_aim: spec.lowers_aim,
             work: Place::default(),
             beats: Vec::new(),
+            clip: None,
         }
     }
 }
@@ -225,6 +233,7 @@ impl CustomAction {
             lowers_aim: self.lowers_aim,
             work: self.work,
             beats: self.beats.clone(),
+            clip: self.clip.clone(),
         }
     }
 }
@@ -285,7 +294,15 @@ impl GunHandling {
             lowers_aim: spec.lowers_aim,
             work: spec.work,
             beats: spec.beats,
+            clip: spec.clip,
         }
+    }
+
+    /// The clips its actions are based on.
+    pub fn clips(&self) -> impl Iterator<Item = &str> {
+        let built_in = self.offsets.iter().filter_map(|offsets| offsets.clip.as_ref());
+        let own = self.actions.iter().filter_map(|own| own.clip.as_ref());
+        built_in.chain(own).map(|base| base.clip.as_str()).filter(|clip| !clip.is_empty())
     }
 
     /// Offsets on beats a built-in action of `kind` no longer has, or by
@@ -310,6 +327,7 @@ fn offset(spec: &mut ActionSpec, offsets: &ActionOffsets) {
     let speed = offsets.speed.max(0.05);
     spec.lift = offsets.lift.unwrap_or(spec.lift);
     spec.work = offsets.work;
+    spec.clip.clone_from(&offsets.clip);
     for beat in &mut spec.beats {
         (beat.reach, beat.work) = (beat.reach / speed, beat.work / speed);
         let Some(by) = offsets.beats.iter().find(|by| by.beat == BeatSlot::Known(beat.key)) else { continue };
@@ -358,7 +376,7 @@ pub fn give_handlings(world: &mut World, content: &mut Content) {
 }
 
 /// Gives guns that pick `reference` this handling, until one is saved: as
-/// the Gun Editor shows its edits before they are saved.
+/// a tool may show edits before they are saved.
 pub fn put_handling(world: &mut World, reference: &str, handling: Arc<GunHandling>) {
     if world.resource::<Handlings>().is_none() {
         world.insert_resource(Handlings::default());
@@ -366,6 +384,13 @@ pub fn put_handling(world: &mut World, reference: &str, handling: Arc<GunHandlin
     if let Some(handlings) = world.resource_mut::<Handlings>() {
         handlings.found.insert(reference.to_string(), Some(handling));
     }
+}
+
+/// The clips the world's guns' handlings base their actions on, to be read
+/// before they play.
+pub fn clips_wanted(world: &World) -> Vec<String> {
+    let guns = world.query_ref::<&Gun>().into_iter();
+    guns.flat_map(|gun| handling_of(world, gun).clips().map(str::to_string).collect::<Vec<_>>()).collect()
 }
 
 /// The handling a gun picks, or how every gun is handled when it picks

@@ -21,7 +21,7 @@ use voxear_engine::{
     scene_file::{self, ModelSource, PartData, SceneFile},
 };
 use voxear_render::{LodGroup, Renderer};
-use voxear_scene::{Destroying, EditorOnly, Name, Parent, Transform};
+use voxear_scene::{Destroying, Name, Parent, Transform};
 
 use crate::project_view::AssetPart;
 
@@ -402,52 +402,6 @@ pub fn place_prefab(
     let made = made.context("the instance was made")?;
     settle(&mut game.engine.world, made, parent, position);
     Ok(made)
-}
-
-/// Makes Objs from a scene file's text for the editor itself, as it makes
-/// what it previews: no scene holds them, and each is Editor Only. Returns
-/// them, the first written first.
-pub fn spawn_editor_only(game: &mut Game, renderer: Option<&mut Renderer>, text: &str) -> Result<Vec<Entity>> {
-    let file = scene_file::parse(&format!("format = 1\n\n{text}\n"), "the editor")?;
-    let mut spawned = scene_file::spawn(&mut game.engine, &mut game.content, renderer, &file, &HashSet::new())?;
-    spawned.sort_by_key(|(path, _)| *path != ObjPath::new(1));
-    let made: Vec<Entity> = spawned.into_iter().map(|(_, entity)| entity).collect();
-    if let Some(&root) = made.first() {
-        for entity in family(&game.engine.world, root) {
-            game.engine.world.insert(entity, EditorOnly);
-        }
-    }
-    Ok(made)
-}
-
-/// An instance of the prefab at `path` for the editor itself, as
-/// [`spawn_editor_only`] makes Objs. Returns its root.
-pub fn prefab_editor_only(game: &mut Game, renderer: Option<&mut Renderer>, path: &str) -> Result<Entity> {
-    let reference = toml::Value::String(path.to_string());
-    let made = spawn_editor_only(game, renderer, &format!("[[obj]]\nid = 1\nprefab = {reference}"))?;
-    made.first().copied().context("the instance was made")
-}
-
-/// A copy of an Obj and everything under it for the editor itself, as
-/// [`spawn_editor_only`] makes Objs. Returns the copy.
-pub fn copy_editor_only(game: &mut Game, renderer: Option<&mut Renderer>, root: Entity) -> Result<Entity> {
-    let objs: Vec<(ObjPath, Entity)> =
-        family(&game.engine.world, root).into_iter().map(|entity| (ObjPath::default(), entity)).collect();
-    let (mut file, ids) = scene_file::capture_scene_with_ids(&game.engine.world, &mut game.content, &objs);
-    (file.sky, file.post) = (None, None);
-    let id = ids.get(&root).copied().context("the Obj can be copied")?;
-    let spawned = scene_file::spawn(&mut game.engine, &mut game.content, renderer, &file, &HashSet::new())?;
-    let copy = spawned.iter().find(|(path, _)| *path == ObjPath::new(id)).map(|(_, e)| *e);
-    let copy = copy.context("the copy was made")?;
-    for entity in family(&game.engine.world, copy) {
-        game.engine.world.insert(entity, EditorOnly);
-    }
-    Ok(copy)
-}
-
-/// What the Hierarchy's + makes as a Rifle, as a scene file's Obj entry.
-pub fn rifle_text() -> String {
-    format!("[[obj]]\nid = 1\nname = \"Rifle\"\n{RIFLE}")
 }
 
 /// Places the model at `path` (from the project's folder) as one Obj named

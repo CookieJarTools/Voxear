@@ -31,7 +31,7 @@ Sockets are places on the gun, in the model's own space. Select the gun and they
 
 ## Handling
 
-**Handling** picks the gun's [[Gun Handling]]: its own poses and actions, worked on in [[The Gun Editor]] with **Open in Gun Editor** at the top of the Gun. With none, the gun is held and handled as its kind's built-ins have it.
+**Handling** picks the gun's [[Gun Handling]]: how it is held, and the clips its actions are based on, set in the Inspector when the `.gunhandling` file is selected. With none, the gun is held and handled as its kind's built-ins have it.
 
 ## Parts
 

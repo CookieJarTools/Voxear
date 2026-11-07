@@ -2,7 +2,7 @@
 order: 17
 ---
 
-Guns are held, aimed, fired and reloaded in your character's own hands, with no animation clips. Everything a gun does is worked out as it happens, from what the gun is: its kind, its weight, where its sights and grip are, and how its parts move. A Kar98k's bolt is lifted, pulled and pushed home because that is how its bolt moves, not because someone animated it.
+Guns are held, aimed, fired and reloaded in your character's own hands. Everything a gun does is worked out as it happens, from what the gun is: its kind, its weight, where its sights and grip are, and how its parts move. A Kar98k's bolt is lifted, pulled and pushed home because that is how its bolt moves, not because someone animated it. An action can also be based on a clip of your own, which moves the body and carries the gun while the hands stay on it.
 
 Guns is a module: switch it on in **Project Settings** first (see [[Modules]]). It needs a character with a [[First-Person View]].
 
@@ -11,5 +11,4 @@ Guns is a module: switch it on in **Project Settings** first (see [[Modules]]). 
 3. [[Firing and Recoil]]: shots, their spread, and how the view climbs and comes back
 4. [[Reloads and Checks]]: reloading, working the bolt, and looking at how much is left
 5. [[Guns over the Network]]: who decides what, in networked play
-6. [[Gun Handling]]: a gun's own poses and actions, kept in a file
-7. [[The Gun Editor]]: posing the hands and timing the actions with the gun held
+6. [[Gun Handling]]: how a gun is held, and its actions based on clips

@@ -14,7 +14,7 @@ pub mod ik;
 mod motion_database;
 mod motion_matching;
 mod motion_set;
-mod retarget;
+pub(crate) mod retarget;
 pub mod rig;
 mod settling;
 mod states;

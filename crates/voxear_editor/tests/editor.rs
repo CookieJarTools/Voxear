@@ -7186,188 +7186,90 @@ fn project_settings_switch_a_module_off_in_the_project_file_and_add_component() 
     assert!(!offers(&editor, "Net Object"));
 }
 
-/// A character for the Gun Editor to show: a holder looking out of its own
-/// eyes, holding a rifle whose bolt turns up and slides back.
-const SOLDIER: &str = r#"format = 1
 
-[[obj]]
-id = 1
-name = "Soldier"
-[obj.first_person]
-[obj.gun_holder]
+/// A model file with two clips, Walk and Sneak, on a two-bone skeleton, its
+/// data beside it.
+const WALKS: &str = r#"{
+  "asset": { "version": "2.0" },
+  "buffers": [{ "uri": "Walks.bin", "byteLength": 56 }],
+  "bufferViews": [
+    { "buffer": 0, "byteOffset": 0, "byteLength": 8 },
+    { "buffer": 0, "byteOffset": 8, "byteLength": 24 },
+    { "buffer": 0, "byteOffset": 32, "byteLength": 24 }
+  ],
+  "accessors": [
+    { "bufferView": 0, "componentType": 5126, "count": 2, "type": "SCALAR", "min": [0], "max": [1] },
+    { "bufferView": 1, "componentType": 5126, "count": 2, "type": "VEC3" },
+    { "bufferView": 2, "componentType": 5126, "count": 2, "type": "VEC3" }
+  ],
+  "nodes": [{ "name": "root", "children": [1] }, { "name": "hips", "translation": [0, 0.9, 0] }],
+  "animations": [
+    {
+      "name": "Walk",
+      "samplers": [{ "input": 0, "output": 1 }],
+      "channels": [{ "sampler": 0, "target": { "node": 0, "path": "translation" } }]
+    },
+    {
+      "name": "Sneak",
+      "samplers": [{ "input": 0, "output": 2 }],
+      "channels": [{ "sampler": 0, "target": { "node": 0, "path": "translation" } }]
+    }
+  ],
+  "scenes": [{ "nodes": [0] }]
+}"#;
 
-[[obj]]
-id = 2
-name = "Rifle"
-parent = 1
-[obj.gun]
-kind = "bolt_action_rifle"
-
-[[obj]]
-id = 3
-name = "Bolt"
-parent = 2
-position = [0.045, 0.05, 0.1]
-scale = [0.06, 0.015, 0.015]
-[obj.renderer]
-mesh = "builtin:cube"
-[obj.gun_part]
-role = "bolt"
-handle = [0.075, 0.05, 0.1]
-motion = { type = "turn", axis = [0.0, 0.0, 1.0], pivot = [0.0, 0.05, 0.0], angle = 80.0 }
-then = { type = "slide", axis = [0.0, 0.0, -1.0], travel = 0.1 }
-"#;
-
-/// The Gun Editor's button that says `label`, among its actions.
-fn gun_action(ui: &Ui, label: &str) -> Option<NodeId> {
-    let actions = ui.find(ui.root(), "gun-actions")?;
-    ui.children(actions).into_iter().find(|&button| ui.text(button) == label)
-}
-
-/// The segment of a Segmented element that says `label`.
-fn segment(ui: &Ui, segmented: &str, label: &str) -> Option<NodeId> {
-    let segmented = ui.find(ui.root(), segmented)?;
-    ui.children(segmented).into_iter().find(|&part| ui.text(part) == label || ui.children(part).iter().any(|&t| ui.text(t) == label))
+fn write_walks(dir: &std::path::Path) {
+    std::fs::create_dir_all(dir.join("Models")).unwrap();
+    std::fs::write(dir.join("Models/Walks.gltf"), WALKS).unwrap();
+    let values = [0.0f32, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5];
+    std::fs::write(dir.join("Models/Walks.bin"), values.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>())
+        .unwrap();
 }
 
 #[test]
-fn the_gun_editor_shows_a_character_holding_its_gun_and_edits_its_handling() {
-    use voxear_engine::guns::{actions::ActionKind, holder::GunHolderState};
+fn a_gun_handlings_actions_are_based_on_clips_in_its_inspector() {
     let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {
         return eprintln!("skipping: no usable GPU");
     };
     let dir = hello_copy();
-    std::fs::write(dir.path().join("Prefabs/Soldier.prefab"), SOLDIER).unwrap();
+    write_walks(dir.path());
     let file = dir.path().join("voxear.toml");
-    let modules = "\n[modules]\nguns = true\nwater = true\nvegetation = true\n";
-    std::fs::write(&file, std::fs::read_to_string(&file).unwrap() + modules).unwrap();
-    std::fs::write(dir.path().join("Prefabs/Rifle.gunhandling"), "").unwrap();
+    std::fs::write(&file, std::fs::read_to_string(&file).unwrap() + "\n[modules]\nguns = true\n").unwrap();
+    let handling = dir.path().join("Prefabs/Rifle.gunhandling");
+    std::fs::write(&handling, "kind = \"bolt_action_rifle\"\n").unwrap();
     let project = Project::open(dir.path()).unwrap();
     let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
     frame(&mut editor, &mut renderer);
-    let objs_before = editor.game.engine.world.query_ref::<&Name>().into_iter().count();
-    let hierarchy_before = hierarchy_names(&editor.ui);
-    editor.open_gun_editor("Prefabs/Rifle.gunhandling");
-    for _ in 0..3 {
-        frame(&mut editor, &mut renderer);
-    }
-    let (holder, gun) = editor.gun_preview().expect("the Soldier is shown holding its rifle");
-    let world = &editor.game.engine.world;
-    assert!(world.has::<voxear_scene::EditorOnly>(holder) && world.has::<voxear_scene::EditorOnly>(gun));
-    assert_eq!(hierarchy_names(&editor.ui), hierarchy_before, "nothing of it shows in the Hierarchy");
-    let handling = world.get::<voxear_engine::guns::Gun>(gun).unwrap().handling.clone();
-    assert!(!handling.is_empty(), "its gun is given the handling open");
+    assert!(editor.inspect_path("Prefabs/Rifle.gunhandling"));
+    frame(&mut editor, &mut renderer);
+    assert!(prop_row(&editor.ui, "Gun Kind").is_some() && prop_row(&editor.ui, "Hip").is_some(), "its kind and holds");
+    assert!(prop_row(&editor.ui, "Gun").is_none(), "no clip yet, so nothing to follow");
 
-    // From empty, Reload plays, and the timeline's time runs on.
-    let empty = segment(&editor.ui, "gun-ammo", "Empty").unwrap();
-    click(&mut editor.ui, empty);
+    // The reload's clip field picks a clip, which the file then bases the reload on.
+    let picker = first_with(&editor.ui, prop_row(&editor.ui, "Clip").unwrap(), "value-picker").unwrap();
+    let arrow = first_with(&editor.ui, picker, "picker-arrow").unwrap();
+    click(&mut editor.ui, arrow);
     frame(&mut editor, &mut renderer);
-    let reload = gun_action(&editor.ui, "Reload").unwrap();
-    click(&mut editor.ui, reload);
-    for _ in 0..30 {
-        frame(&mut editor, &mut renderer);
-    }
-    let acting = editor.game.engine.world.get::<GunHolderState>(holder).and_then(|state| state.acting());
-    assert_eq!(acting, Some(ActionKind::Reload), "the reload plays in the view");
-    let names = |ui: &Ui| {
-        let mut found = Vec::new();
-        with_class(ui, ui.root(), "gun-timeline-name", &mut found);
-        found.into_iter().filter(|&n| ui.is_visible(n)).map(|n| ui.text(n)).collect::<Vec<_>>()
-    };
-    assert!(names(&editor.ui).iter().any(|name| name == "Right Hand"), "{:?}", names(&editor.ui));
-    assert!(names(&editor.ui).iter().any(|name| name == "Take Clip"), "its beats are on the timeline: {:?}", names(&editor.ui));
+    frame(&mut editor, &mut renderer);
+    assert!(editor.picker_open());
+    editor.ui.text_input("walks");
+    frame(&mut editor, &mut renderer);
+    editor.picker_key(voxear_editor::PaletteKey::Enter);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let read = || toml::from_str::<voxear_engine::guns::handling::GunHandling>(&std::fs::read_to_string(&handling).unwrap()).unwrap();
+    let reload = read().offsets(voxear_engine::guns::actions::ActionKind::Reload).and_then(|o| o.clip.clone());
+    let reload = reload.expect("the reload is based on the clip");
+    assert!(reload.clip.ends_with("#clip:Walk"), "the file's first clip: {}", reload.clip);
+    let shown = first_with(&editor.ui, prop_row(&editor.ui, "Clip").unwrap(), "picker-label").unwrap();
+    assert_eq!(editor.ui.text(shown), "Walk · Walks.gltf");
 
-    // The action's details: its speed typed in is written to the file once typing is done, and undo takes it back.
-    let speed = prop_field(&editor.ui, "Speed").expect("the reload's details show");
-    type_into(&mut editor.ui, speed, "0.5");
+    // Based on a clip, how much the gun follows it is typed in, and saved.
+    let gun = prop_field(&editor.ui, "Gun").expect("the clip's weights show");
+    type_into(&mut editor.ui, gun, "0.5");
     frame(&mut editor, &mut renderer);
-    editor.ui.blur();
+    let reload = read().offsets(voxear_engine::guns::actions::ActionKind::Reload).and_then(|o| o.clip.clone()).unwrap();
+    assert_eq!((reload.gun, reload.body), (0.5, 1.0), "the gun half, the body as the clip");
     frame(&mut editor, &mut renderer);
-    let file = || std::fs::read_to_string(dir.path().join("Prefabs/Rifle.gunhandling")).unwrap();
-    assert!(file().contains("speed = 0.5"), "{}", file());
-    let reload = |editor: &voxear_editor::Editor| editor.gun_handling_open().unwrap().offsets(ActionKind::Reload).map(|o| o.speed);
-    assert_eq!(reload(&editor), Some(0.5));
-    let speed = prop_field(&editor.ui, "Speed").unwrap();
-    let [x, y, w, h] = editor.ui.rect(speed);
-    pointer_to(&mut editor, [x + w / 2.0, y + h / 2.0]);
-    frame(&mut editor, &mut renderer);
-    editor.undo(&mut renderer);
-    frame(&mut editor, &mut renderer);
-    frame(&mut editor, &mut renderer);
-    assert_eq!(reload(&editor), None, "undo over the Gun Editor takes back its step");
-    assert!(!file().contains("speed"), "and the file is written again: {}", file());
-
-    // Opened again, nothing plays; from the side, dragging the cross on the gun moves where it is held at the
-    // hip, as one step.
-    let views = editor.ui.find(editor.ui.root(), "gun-view").unwrap();
-    editor.ui.set_segment(views, 1);
-    editor.open_gun_editor("Prefabs/Rifle.gunhandling");
-    for _ in 0..5 {
-        frame(&mut editor, &mut renderer);
-    }
-    let [x, y] = editor.gun_handle_at(None).expect("the cross shows on the gun");
-    pointer_to(&mut editor, [x, y]);
-    left_button(&mut editor, true);
-    frame(&mut editor, &mut renderer);
-    for step in 1..=10 {
-        pointer_to(&mut editor, [x + step as f32 * 3.0, y - step as f32]);
-        frame(&mut editor, &mut renderer);
-    }
-    left_button(&mut editor, false);
-    frame(&mut editor, &mut renderer);
-    let hip = editor.gun_handling_open().unwrap().poses.hip.at;
-    assert!(Vec3::from(hip).length() > 0.01, "the hip hold moved: {hip:?}");
-    assert!(file().contains("hip"), "{}", file());
-    let [x, y, w, h] = editor.ui.rect(views);
-    pointer_to(&mut editor, [x + w / 2.0, y + h / 2.0]);
-    frame(&mut editor, &mut renderer);
-    editor.undo(&mut renderer);
-    frame(&mut editor, &mut renderer);
-    assert_eq!(editor.gun_handling_open().unwrap().poses.hip.at, [0.0; 3], "the whole drag goes in one undo");
-
-    // From outside, the view stays put as the cross is dragged slowly, so the gun follows the pointer, and
-    // holding still moves nothing. The reload from before is let finish, as the gun at work is lifted from the
-    // hip hold.
-    let orbit = segment(&editor.ui, "gun-view", "Orbit").unwrap();
-    click(&mut editor.ui, orbit);
-    let acting = |editor: &voxear_editor::Editor| {
-        editor.game.engine.world.get::<GunHolderState>(holder).is_some_and(|state| state.doing().is_some())
-    };
-    for _ in 0..600 {
-        if !acting(&editor) {
-            break;
-        }
-        frame(&mut editor, &mut renderer);
-    }
-    for _ in 0..60 {
-        frame(&mut editor, &mut renderer);
-    }
-    let [x, y] = editor.gun_handle_at(None).unwrap();
-    pointer_to(&mut editor, [x, y]);
-    left_button(&mut editor, true);
-    frame(&mut editor, &mut renderer);
-    let hip = |editor: &voxear_editor::Editor| Vec3::from(editor.gun_handling_open().unwrap().poses.hip.at);
-    for step in 1..=40 {
-        pointer_to(&mut editor, [x + step as f32, y + step as f32 * 0.5]);
-        frame(&mut editor, &mut renderer);
-    }
-    let moved = hip(&editor);
-    for _ in 0..30 {
-        frame(&mut editor, &mut renderer);
-    }
-    assert!(hip(&editor).distance(moved) < 1e-5, "still while held still: {moved} then {}", hip(&editor));
-    assert!(moved.length() > 0.02 && moved.length() < 0.5, "as far as the pointer went: {moved}");
-    let [cx, cy] = editor.gun_handle_at(None).unwrap();
-    assert!((cx - (x + 40.0)).hypot(cy - (y + 20.0)) < 4.0, "the cross is under the pointer: {cx}, {cy}");
-    left_button(&mut editor, false);
-    frame(&mut editor, &mut renderer);
-
-    // Hidden, it takes its Objs away; the level is as it was.
-    let root = editor.ui.root();
-    let dock = editor.ui.find(root, "dock").unwrap();
-    editor.ui.close_dock_panel(dock, "gun-editor");
-    frame(&mut editor, &mut renderer);
-    assert!(editor.gun_preview().is_none());
-    assert!(!editor.game.engine.world.is_alive(holder));
-    assert_eq!(editor.game.engine.world.query_ref::<&Name>().into_iter().count(), objs_before);
+    shot(&mut renderer, "gun-handling-inspector.png");
 }

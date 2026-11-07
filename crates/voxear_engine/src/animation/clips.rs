@@ -1,7 +1,8 @@
 //! Clips as assets: a clip is a part of the model file that holds it,
 //! referenced as `Models/Walks.glb#clip:Walk_Loop`, as meshes and materials
 //! are. The world's Animators name the clips they play, and its Motion
-//! Matchers the Motion Sets they play; before each tick the game resolves
+//! Matchers the Motion Sets they play, and gun actions the clips they are
+//! based on; before each tick the game resolves
 //! those it has not yet (`give_clips`), and the animation code reads them
 //! from [`Clips`], made to fit each character's own skeleton by
 //! [`retarget`](super::retarget).
@@ -55,6 +56,12 @@ impl Clips {
         self.sets.get(reference)?.as_ref()
     }
 
+    /// Gives a clip by a reference, as tests do without a file.
+    #[cfg(test)]
+    pub(crate) fn put(&mut self, reference: &str, source: ClipSource) {
+        self.found.insert(reference.to_string(), Some(source));
+    }
+
     /// Goes up as the content's clips' version does: what is made from
     /// clips is made again when it changes.
     pub fn version(&self) -> u64 {
@@ -78,6 +85,7 @@ pub fn give_clips(world: &mut World, content: &mut Content) {
         .map(|matcher| matcher.motion_set.clone())
         .filter(|set| !set.is_empty())
         .collect();
+    wanted.extend(crate::guns::handling::clips_wanted(world));
     if world.resource::<Clips>().is_none() {
         world.insert_resource(Clips::default());
     }

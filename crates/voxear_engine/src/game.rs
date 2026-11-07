@@ -537,11 +537,12 @@ impl Game {
         self.net_begin(delta, renderer.as_deref_mut());
         self.models = ModelWork::for_renderer(renderer.as_deref());
         give_collider_meshes(&mut self.engine.world, &mut self.content);
-        crate::animation::give_clips(&mut self.engine.world, &mut self.content);
         if crate::modules::has(&self.engine.world, crate::modules::Module::Guns) {
             crate::guns::contact::give_shapes(&mut self.engine.world, renderer.as_deref());
             crate::guns::handling::give_handlings(&mut self.engine.world, &mut self.content);
         }
+        // After the handlings, whose actions may be based on clips.
+        crate::animation::give_clips(&mut self.engine.world, &mut self.content);
         {
             let renderer = renderer.as_deref_mut();
             let models = self.models;

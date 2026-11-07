@@ -10,6 +10,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::base_clip::BaseClip;
 use super::gun::GunKind;
 use super::handling::Place;
 use super::hands::Grip;
@@ -506,7 +507,7 @@ impl Beat {
 
 /// An action as data: when it can play at all, how far it lifts the gun
 /// up before the eyes, whether it takes the gun down from them, an offset
-/// on where it brings the gun, and its beats.
+/// on where it brings the gun, its beats, and the clip it is based on.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ActionSpec {
@@ -518,11 +519,14 @@ pub struct ActionSpec {
     pub work: Place,
     #[serde(rename = "beat")]
     pub beats: Vec<Beat>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub clip: Option<BaseClip>,
 }
 
 impl Default for ActionSpec {
     fn default() -> Self {
-        Self { when: When::default(), lift: 1.0, lowers_aim: true, work: Place::default(), beats: Vec::new() }
+        let work = Place::default();
+        Self { when: When::default(), lift: 1.0, lowers_aim: true, work, beats: Vec::new(), clip: None }
     }
 }
 
@@ -535,22 +539,6 @@ fn is_nothing(v: &[f32; 3]) -> bool {
 /// reloaded; each beat that plays in this state, and each run of beats
 /// that repeat the same way as many times as they do.
 pub fn expand(spec: &ActionSpec, kind: GunKind, state: &GunState, spare: u32) -> Vec<Beat> {
-    expand_marked(spec, kind, state, spare).into_iter().map(|(beat, _)| beat).collect()
-}
-
-/// Where a beat played came from, as the Gun Editor's timeline shows it:
-/// its place in the action's beats, the place of the first beat of the run
-/// it repeats with, and which time round it is, of how many.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct BeatMark {
-    pub index: usize,
-    pub run: usize,
-    pub round: u32,
-    pub rounds: u32,
-}
-
-/// The beats [`expand`] gives, each with where it came from.
-pub fn expand_marked(spec: &ActionSpec, kind: GunKind, state: &GunState, spare: u32) -> Vec<(Beat, BeatMark)> {
     if !spec.when.holds(kind, state, spare) {
         return Vec::new();
     }
@@ -559,13 +547,8 @@ pub fn expand_marked(spec: &ActionSpec, kind: GunKind, state: &GunState, spare: 
     while start < spec.beats.len() {
         let repeat = spec.beats[start].repeat;
         let end = (start..spec.beats.len()).find(|&at| spec.beats[at].repeat != repeat).unwrap_or(spec.beats.len());
-        let rounds = repeat.count(kind, state, spare);
-        for round in 0..rounds {
-            for (index, beat) in spec.beats.iter().enumerate().take(end).skip(start) {
-                if beat.when.holds(kind, state, spare) {
-                    beats.push((*beat, BeatMark { index, run: start, round, rounds }));
-                }
-            }
+        for _ in 0..repeat.count(kind, state, spare) {
+            beats.extend(spec.beats[start..end].iter().filter(|beat| beat.when.holds(kind, state, spare)));
         }
         start = end;
     }

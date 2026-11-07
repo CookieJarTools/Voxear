@@ -22,7 +22,7 @@ fn a_gun_picks_its_handling_from_the_project_and_takes_it_up_again_once_saved() 
     assert_eq!(handling(&world, picked).poses.hip.at, [0.0, -0.02, 0.0]);
     assert_eq!(handling(&world, usual).poses.hip.at, [0.0; 3], "a gun picking none is handled as usual");
 
-    // Saved, as the Gun Editor does: forgotten, and read again.
+    // Saved, as its Inspector does: forgotten, and read again.
     std::fs::write(dir.path().join("Rifle.gunhandling"), TUNED.replace("-0.02", "-0.05")).unwrap();
     let guid = content.parse(&reference).unwrap().guid().unwrap();
     content.forget_gun_handling(guid);

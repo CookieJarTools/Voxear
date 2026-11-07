@@ -183,8 +183,8 @@ pub fn create(root: &Path, folder: &str, kind: NewFile, namespace: &str) -> Resu
 const NEW_MOTION_SET: &str = "# Voxear Motion Set: what a character can do, its states' looping clips and its actions.\n[[state]]\nname = \"Walking\"\nrole = \"grounded\"\n";
 
 /// A new Gun Handling: the gun held and its actions played as its kind's
-/// built-ins have them, until the Gun Editor offsets them.
-const NEW_GUN_HANDLING: &str =
+/// built-ins have them, until its Inspector bases them on clips.
+pub(crate) const NEW_GUN_HANDLING: &str =
     "# Voxear Gun Handling: how a gun is held and how its actions go, as offsets on its kind's built-ins.\n";
 
 /// A new shader, its struct named for its file: the file's name without

@@ -90,9 +90,6 @@ pub const NAMES: &[&str] = &[
     "mouse-right",
     "mouse-middle",
     "keyboard",
-    "undo",
-    "redo",
-    "loop",
 ];
 
 fn shapes(name: &str) -> Option<&'static [Part]> {
@@ -253,10 +250,6 @@ fn shapes(name: &str) -> Option<&'static [Part]> {
              M16 10h.01M18 10h.01M7.5 13h.01M10.5 13h.01M13.5 13h.01M16.5 13h.01M8 14.5h8",
             STROKE,
         )],
-        "undo" => &[("M9 14L4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11", STROKE)],
-        "redo" => &[("M15 14l5-5-5-5M20 9H9.5a5.5 5.5 0 0 0 0 11H13", STROKE)],
-        // Round again: two arrows chasing each other.
-        "loop" => &[("M17 2.5l3.5 3.5-3.5 3.5M3.5 11v-1a4 4 0 0 1 4-4h13M7 21.5L3.5 18 7 14.5M20.5 13v1a4 4 0 0 1-4 4h-13", STROKE)],
         _ => return None,
     })
 }

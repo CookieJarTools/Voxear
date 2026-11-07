@@ -44,6 +44,7 @@ use crate::{
     level_files::{self, LevelEdit},
     project_view::{ItemKind, ProjectItem},
     shader_fields::{ShaderEdit, ShaderFields},
+    gun_handling_inspector::{GunHandlingFields, HandlingAction, HandlingChange},
     motion_set_inspector::{ClipSlot, MotionSetFields, SetChange},
     strings_inspector::{StringsChange, StringsFields},
 };
@@ -92,6 +93,25 @@ pub enum AssetAction {
     DropClip {
         set: String,
         slot: ClipSlot,
+        source: DragSource,
+    },
+    /// Write the Gun Handling at this path as this, and when `rebuild`, show
+    /// it again.
+    SaveGunHandling {
+        path: String,
+        handling: voxear_engine::guns::handling::GunHandling,
+        rebuild: bool,
+    },
+    /// Open the object picker under `anchor` for the clip an action of the
+    /// Gun Handling at this path is based on, or take one dragged onto it.
+    BrowseGunClip {
+        handling: String,
+        action: HandlingAction,
+        anchor: NodeId,
+    },
+    DropGunClip {
+        handling: String,
+        action: HandlingAction,
         source: DragSource,
     },
     /// Open the object picker under `anchor` for the scene at this place in
@@ -190,6 +210,8 @@ pub struct AssetView {
     clips: Option<(NodeId, bool, Option<ClipFields>)>,
     /// A Motion Set's states and actions.
     motion_set: Option<MotionSetFields>,
+    /// A Gun Handling's holds and actions.
+    gun_handling: Option<GunHandlingFields>,
     /// The preview's frame, which takes drags, and its image.
     preview: Option<(NodeId, NodeId)>,
     /// A sound's play button, and whether it shows that the sound plays.
@@ -361,6 +383,7 @@ impl AssetView {
             remaps: None,
             clips: None,
             motion_set: None,
+            gun_handling: None,
             preview,
             listen: None,
             strings: None,
@@ -378,6 +401,12 @@ impl AssetView {
                 let label = |clip: &str| crate::props::clip_label(game, clip);
                 let bones = |clip: &str| crate::props::clip_bones(game, clip);
                 view.motion_set = Some(MotionSetFields::new(ui, root, set, &label, &bones));
+            }
+            ItemKind::Asset(AssetKind::GunHandling) => {
+                let text = std::fs::read_to_string(&file).unwrap_or_default();
+                let handling = toml::from_str(&text).unwrap_or_default();
+                let label = |clip: &str| crate::props::clip_label(game, clip);
+                view.gun_handling = Some(GunHandlingFields::new(ui, root, handling, &label));
             }
             ItemKind::Asset(AssetKind::Model) => {
                 let rows = part(ui, root, "Import Settings", "box");
@@ -480,6 +509,7 @@ impl AssetView {
             remaps: None,
             clips: None,
             motion_set: None,
+            gun_handling: None,
             preview: None,
             listen: None,
             strings: None,
@@ -542,6 +572,17 @@ impl AssetView {
                 SetChange::Shape => AssetAction::SaveMotionSet { path, set, rebuild: true },
                 SetChange::Browse(slot, anchor) => AssetAction::BrowseClip { set: path, slot, anchor },
                 SetChange::Drop(slot, source) => AssetAction::DropClip { set: path, slot, source },
+            });
+        }
+        if let Some(fields) = self.gun_handling.as_mut()
+            && let Some(change) = fields.update(ui)
+        {
+            let (path, handling) = (self.item.path.clone(), fields.handling.clone());
+            return Some(match change {
+                HandlingChange::Typed => AssetAction::SaveGunHandling { path, handling, rebuild: false },
+                HandlingChange::Shape => AssetAction::SaveGunHandling { path, handling, rebuild: true },
+                HandlingChange::Browse(action, anchor) => AssetAction::BrowseGunClip { handling: path, action, anchor },
+                HandlingChange::Drop(action, source) => AssetAction::DropGunClip { handling: path, action, source },
             });
         }
         if let Some(settings) = self.clips.as_mut().and_then(|(_, _, fields)| fields.as_mut()?.update(ui)) {

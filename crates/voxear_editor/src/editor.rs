@@ -88,7 +88,6 @@ use crate::{
     history::{Edit, History, ObjState},
     inspector::{Field, Inspector, RowAction},
     levels_panel::{LevelAction, LevelsPanel},
-    gun_editor::GunEditor,
     input_panel::InputPanel,
     localization_panel::{LocalizationPanel, TablesAction},
     memory_panel::MemoryPanel,
@@ -324,7 +323,6 @@ pub struct Editor {
     audio: AudioPanel,
     localization: LocalizationPanel,
     input_actions: InputPanel,
-    gun_editor: GunEditor,
     build_window: BuildWindow,
     packages: PackageManager,
     /// A reference field's search, and what its keys picked, done next frame.
@@ -547,9 +545,6 @@ impl Editor {
         let audio = AudioPanel::new(&mut ui, nodes.audio_panel);
         let localization = LocalizationPanel::new(&mut ui, nodes.localization_panel);
         let input_actions = InputPanel::new(&mut ui, nodes.input_panel);
-        let gun_editor_panel = find(&ui, "gun-editor-panel");
-        let gun_editor = GunEditor::new(&mut ui, gun_editor_panel);
-        ui.set_segment(gun_editor.view, memory.gun_editor.view);
         let debug_texts = DebugTexts::new(&mut ui, nodes.debug_texts);
         let build_window = BuildWindow::new(&mut ui, nodes.build_panel);
         let packages = PackageManager::new(&mut ui, nodes.packages_panel);
@@ -625,7 +620,6 @@ impl Editor {
             audio,
             localization,
             input_actions,
-            gun_editor,
             build_window,
             packages,
             picker,
@@ -871,10 +865,6 @@ impl Editor {
             }
         }
         self.update_input_actions();
-        {
-            profile_scope!("Gun Editor");
-            self.update_gun_editor(renderer, delta);
-        }
         {
             profile_scope!("Package Manager");
             self.update_packages(renderer);
@@ -1166,7 +1156,6 @@ impl Editor {
                 self.open_source(&file, 1);
             }
             ItemKind::Asset(AssetKind::InputActions) => self.show_panel("input"),
-            ItemKind::Asset(AssetKind::GunHandling) => self.open_gun_editor(&item.path.clone()),
             _ => self.inspect_asset(item),
         }
     }
@@ -1194,6 +1183,11 @@ impl Editor {
             AssetAction::SaveMotionSet { path, set, rebuild } => self.save_motion_set(&path, &set, rebuild),
             AssetAction::BrowseClip { set, slot, anchor } => self.browse_clip(&set, slot, anchor),
             AssetAction::DropClip { set, slot, source } => self.drop_clip(&set, slot, &source),
+            AssetAction::SaveGunHandling { path, handling, rebuild } => {
+                self.save_gun_handling(&path, &handling, rebuild);
+            }
+            AssetAction::BrowseGunClip { handling, action, anchor } => self.browse_gun_clip(&handling, action, anchor),
+            AssetAction::DropGunClip { handling, action, source } => self.drop_gun_clip(&handling, action, &source),
             AssetAction::BrowseScene { level, at, anchor } => self.browse_level_scene(&level, at, anchor),
             AssetAction::DropScene { level, at, source } => self.drop_level_scene(&level, at, &source, renderer),
             AssetAction::BrowseStandsOn { level, anchor } => self.browse_stands_on(&level, anchor),
@@ -1703,9 +1697,6 @@ impl Editor {
         if let RowAction::ViewLod(level) = action {
             return self.view_lod(entity, level, renderer);
         }
-        if let RowAction::OpenGunEditor = action {
-            return self.open_gun_editor_on(entity, renderer);
-        }
         if let RowAction::BrowseComponents(anchor) = action {
             let choices = self.inspector.component_choices(self.is_playing(), &self.game.project.modules());
             let target = (PickFor::AddComponent(entity), anchor);
@@ -1757,7 +1748,6 @@ impl Editor {
             }
             RowAction::Remove(part) => props::remove(&mut self.game.engine.world, entity, &part),
             RowAction::Browse(..) | RowAction::EditColor(..) | RowAction::Ping(_) | RowAction::SelectTarget(_) => {}
-            RowAction::OpenGunEditor => {}
             RowAction::Pick(prop, pick) => {
                 props::pick(&mut self.game, Some(renderer), self.inspector.types(), entity, &prop, &pick);
             }
@@ -1989,9 +1979,6 @@ impl Editor {
             Command::Layers => self.inspect_layers(),
             Command::PseudoText => self.toggle_pseudo_text(),
             Command::BakePaths => self.bake_paths(),
-            // Over the Gun Editor, its handling's steps, while playing as well: they reach the game as made.
-            Command::Undo if self.gun_editor_history(true) => {}
-            Command::Redo if self.gun_editor_history(false) => {}
             Command::Delete if self.delete_many() => {}
             Command::Delete => {
                 if let Some(entity) = selected {
@@ -2084,7 +2071,7 @@ impl Editor {
     fn active_views(&self) -> Vec<(NodeId, Entity)> {
         let game = self.game_camera().filter(|_| self.shown(self.nodes.game_viewport));
         let game = game.map(|camera| (self.nodes.game_viewport, camera));
-        let mut views: Vec<_> = self.shown_scene_views().into_iter().chain(game).chain(self.gun_editor_view()).collect();
+        let mut views: Vec<_> = self.shown_scene_views().into_iter().chain(game).collect();
         // Those in floating windows draw last, over the docked ones.
         views.sort_by_key(|&(viewport, _)| self.floats(viewport));
         views
@@ -2335,6 +2322,9 @@ impl Editor {
                 (PickFor::MotionSetClip { set, slot }, Chosen::Value(pick)) => {
                     self.pick_motion_set_clip(&set, &slot, &pick);
                 }
+                (PickFor::GunHandlingClip { handling, action }, Chosen::Value(pick)) => {
+                    self.pick_gun_handling_clip(&handling, action, &pick);
+                }
                 (PickFor::MaterialMap { material, map }, Chosen::Value(pick)) => {
                     self.pick_material_map(&material, map, &pick, renderer);
                 }
@@ -2353,7 +2343,6 @@ impl Editor {
                     self.row_action_on(entity, RowAction::Add(part), renderer);
                 }
                 (PickFor::InputControl | PickFor::ActionIcon, picked) => self.pick_for_input(picked),
-                (PickFor::GunEditorHandling, Chosen::Value(pick)) => self.pick_gun_editor_handling(&pick),
                 _ => {}
             }
         }
@@ -2565,7 +2554,7 @@ impl Editor {
     /// the Scene view's gizmos, does not show through it.
     fn mark_viewport_areas(&mut self, views: &[(NodeId, Entity)]) {
         let viewports: Vec<NodeId> = self.all_scene_views().map(|view| view.viewport).collect();
-        for viewport in viewports.into_iter().chain([self.nodes.game_viewport, self.gun_editor.viewport]) {
+        for viewport in viewports.into_iter().chain([self.nodes.game_viewport]) {
             self.ui.set_see_through(viewport, views.iter().any(|&(shown, _)| shown == viewport));
         }
         let areas: Vec<NodeId> = views.iter().filter_map(|&(viewport, _)| self.area_of(viewport)).collect();

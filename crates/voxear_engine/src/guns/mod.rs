@@ -5,6 +5,7 @@
 //! pulls back from walls (see [`holder`]).
 
 pub mod actions;
+pub mod base_clip;
 pub mod contact;
 pub mod gun;
 pub mod handling;
@@ -22,4 +23,4 @@ mod values;
 pub(crate) use values::register;
 
 pub use gun::{Gun, GunKind, HandRole, Socket};
-pub use holder::{GunHolder, GunHolderState, Shot, fire, hands_in_gun};
+pub use holder::{GunHolder, GunHolderState, Shot, fire};

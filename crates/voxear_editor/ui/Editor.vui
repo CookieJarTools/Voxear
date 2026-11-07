@@ -74,8 +74,6 @@
                 <DockPanel id="input" title="Input Actions" icon="gamepad" class="dock-content">
                     <Panel name="input-panel" class="fill input-panel" />
                 </DockPanel>
-                <!-- Built from GunEditor.vui. Listed in the Window menu while the project has the Guns module. -->
-                <DockPanel id="gun-editor" title="Gun Editor" icon="crosshair" name="gun-editor-panel" />
                 <DockPanel id="packages" title="Package Manager" icon="box" class="dock-content">
                     <Panel name="packages-panel" class="fill packages-panel" />
                 </DockPanel>

@@ -4,35 +4,49 @@ order: 6
 
 A **Gun Handling** is how one gun is held and how its actions go, kept in a `.gunhandling` file that the Gun picks in its **Handling** field. Guns that share a design can share one. A Gun with no handling is held and handled as its kind's built-ins have it.
 
-Make one with **+ ▸ New Gun Handling** in the Project panel, with the **+** in the [[The Gun Editor|Gun Editor]], or with **Open in Gun Editor** on a Gun that has none. Work on it in the Gun Editor rather than by hand.
+Make one with **+ ▸ New Gun Handling** in the Project panel, and select it to work on it in the Inspector.
 
-## Poses
+## Gun Kind
 
-Poses are offsets on how every gun is held, all nothing in a new handling:
+**Gun Kind** is the kind of gun the handling is for. The Inspector then lists only the built-in actions that kind has: a pump shotgun has a pump to work, a pistol has none. With **Any**, every built-in action is listed.
+
+## Holding
+
+Holding is offsets on how every gun is held, all 0 in a new handling:
 
 - **Hip** and **Hip Turn**: where the gun is held at the hip, from the eyes.
-- **Shoulder**: where a long gun's butt sits on the shoulder.
 - **Aim**, **Aim Turn** and **Cant**: where the gun is held at the eye, in the sights' own space, and how far its top leans right.
-- **Grip Hand**, **Support Hand** and their turns: where each hand holds at rest, on the grip and under the fore-end.
-- **Rest Grip** and **Support Grip**: how the fingers close at rest, instead of the usual.
-- **Work** and **Work Turn**: where actions bring the gun before the eyes.
-- **Return Pace**: how quickly a hand goes back to its hold after an action.
-- **Left Pouch** and **Right Pouch**: where spare magazines and clips are taken from.
+- **Shoulder**: where a long gun's butt sits on the shoulder.
+- **Grip Hand**, **Support Hand** and their turns: where each palm holds at rest, on the grip and under the fore-end.
 
-## Built-in actions
+Places are in metres, turns in degrees.
 
-Reload, Cycle, Check Magazine and Check Chamber are built into each kind of gun as a run of beats. A handling keeps offsets on them, never copies, so improvements to the built-ins still reach your guns:
+## Basing an action on a clip
 
-- On the whole action: **Speed**, **Lift** (how far the gun comes up before the eyes) and **Work**.
-- On each beat, found by its name: **Pace**, **Delay**, where the hand holds (**Hand**, **Hand Turn**), the gun's **Tilt**, and the **Grip**.
+Each action can be based on a clip from your project, such as a reload from an animation pack. The action still plays as it always does. The clip goes on top of it:
 
-An offset on a beat the built-in no longer has is kept and does nothing. The Gun Editor lists these and can remove them.
+- **Clip**: the clip, picked from the project's model files or dragged onto the field from the Project panel. **None** takes it away.
+- **Start** and **End**: the part of the clip the action plays, in seconds. An **End** of 0 plays to the clip's end. That part is stretched over the action, so a slower action plays it slower.
+- **Body**: how much the spine, neck, head and collarbones turn as the clip turns them.
+- **Gun**: how much the gun goes where the clip's gun hand takes it, in place of the action's own lift and tilt.
+- **Arms**: how much the elbows bend the way the clip bends them.
+- **Blend**: how long the clip takes to come in as the action starts, and to go as it ends, in seconds.
 
-## Actions of the gun's own
+Each weight runs from 0, not at all, to 1, as the clip does. What the clip gives is measured from its first frame, so a clip that starts from its own idle hold adds only its movement, never its stance.
 
-When offsets aren't enough, **Make Editable Copy** turns a built-in action into an action of the gun's own that takes its place: every beat, its timing, goal, grip, the part it drives or carries, and what it does to the gun, all yours to change. Beats still play only in the states they did, and repeat as they did (once per clip, per missing round or per chamber).
+The hands still hold the gun where the action has them, the fingers close round it and the hands stay out of it. So a clip made for a different gun, or for no gun at all, still holds this one.
 
-An action of its own can also stand alone, such as an **Inspect**. Scripts play it with a typed reference:
+The clip plays on the character by bone names, so its skeleton must name its bones as the character's does. Bones the character doesn't have are left as they are.
+
+**Speed** sets how fast a built-in action plays, and with it the clip.
+
+Voxear comes with no animation clips. The clips you base actions on live in your own project.
+
+## What else a handling keeps
+
+A handling can also keep offsets on a built-in action's beats, found by their names: **Pace**, **Delay**, where the hand holds, the gun's **Tilt** and the **Grip**. And it can have actions of its own, such as an **Inspect**, with beats of their own. These are written in the file as TOML. An offset on a beat the built-in no longer has is kept and does nothing.
+
+Scripts play an action of the gun's own with a typed reference:
 
 ```csharp
 namespace Soldiers;
@@ -53,6 +67,6 @@ public sealed class Soldier : Behaviour
 
 The Inspect field offers the actions of the project's handlings. `holder.Doing` says which action is under way, as it was asked for.
 
-## Saving and changes while playing
+## Changes while playing
 
-The Gun Editor writes the file as each change is made. A game playing in the editor reads it again at once: poses change on the next frame, and an action changes the next time it starts.
+The Inspector writes the file as each change is made. A game playing in the editor reads it again at once: holding changes on the next frame, and an action changes the next time it starts.

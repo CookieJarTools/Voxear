@@ -43,6 +43,8 @@ pub struct ActionPlay {
     pub work: super::handling::Place,
     /// Whether it throws nothing away, as in the editor's preview.
     pub quiet: bool,
+    /// The clip it is based on, if any.
+    pub clip: Option<super::base_clip::BaseClip>,
 }
 
 /// What a beat throwing something away needs: the gun's place and turn in
@@ -78,6 +80,7 @@ impl ActionPlay {
             lift: spec.lift,
             lowers_aim: spec.lowers_aim,
             work: spec.work,
+            clip: spec.clip,
             ..Self::new(beats)
         };
         (!started.beats.is_empty()).then_some(started)
@@ -99,11 +102,18 @@ impl ActionPlay {
             lowers_aim: true,
             work: super::handling::Place::default(),
             quiet: false,
+            clip: None,
         }
     }
 
     pub fn beat(&self) -> Option<&Beat> {
         self.beats.get(self.index)
+    }
+
+    /// How far into the action it is, and how long it lasts, in seconds.
+    pub fn progress(&self) -> (f32, f32) {
+        let done: f32 = self.beats.iter().take(self.index).map(Beat::length).sum();
+        (done + self.t, self.beats.iter().map(Beat::length).sum())
     }
 }
 

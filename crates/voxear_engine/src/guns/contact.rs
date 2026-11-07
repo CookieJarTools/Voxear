@@ -83,27 +83,6 @@ impl Shape {
         way * (depth + room)
     }
 
-    /// The way out of the face of the box nearest `point`, and how far
-    /// `point` is from that face, in metres.
-    fn face(&self, point: Vec3) -> (Vec3, f32) {
-        let local = self.frame.inverse().transform_point3(point);
-        let faces = (0..6).map(|face| {
-            let (axis, most) = (face / 2, face % 2 == 1);
-            let mut normal = Vec3::ZERO;
-            normal[axis] = if most { 1.0 } else { -1.0 };
-            let off = if most { local[axis] - self.most[axis] } else { self.least[axis] - local[axis] };
-            let way = self.frame.inverse().transpose().transform_vector3(normal).normalize_or_zero();
-            (way, (off * self.frame.transform_vector3(normal).length()).abs())
-        });
-        faces.min_by(|a, b| a.1.total_cmp(&b.1)).unwrap_or((Vec3::Y, 0.0))
-    }
-
-    /// The nearest point to `point` on or in the box.
-    fn nearest(&self, point: Vec3) -> Vec3 {
-        let local = self.frame.inverse().transform_point3(point);
-        self.frame.transform_point3(local.clamp(self.least, self.most))
-    }
-
     /// The box carried by `to`.
     pub fn moved(&self, to: Mat4) -> Shape {
         Shape { frame: to * self.frame, ..*self }
@@ -164,26 +143,6 @@ pub fn push_out(shapes: &[Shape], point: Vec3, room: f32, side: Vec3) -> Vec3 {
         .unwrap_or(Vec3::ZERO)
 }
 
-/// The nearest point to `point` on the boxes' surfaces: from inside, out
-/// of the box it is deepest in, never out of the far side from `side`;
-/// from outside, onto the nearest box.
-pub fn onto(shapes: &[Shape], point: Vec3, side: Vec3) -> Vec3 {
-    let out = push_out(shapes, point, 0.0, side);
-    if out.length() > 1e-6 {
-        return point + out;
-    }
-    let near = shapes.iter().map(|shape| shape.nearest(point));
-    near.min_by(|a, b| a.distance(point).total_cmp(&b.distance(point))).unwrap_or(point)
-}
-
-/// The way out of the face nearest `point`, of the box nearest it; none
-/// with no boxes.
-pub fn facing(shapes: &[Shape], point: Vec3) -> Option<Vec3> {
-    let nearest = shapes.iter().min_by(|a, b| a.distance(point).total_cmp(&b.distance(point)))?;
-    let faces = shapes.iter().filter(|shape| shape.distance(point) <= nearest.distance(point) + 1e-4);
-    faces.map(|shape| shape.face(point)).min_by(|a, b| a.1.total_cmp(&b.1)).map(|(way, _)| way)
-}
-
 /// How far `point` is from the nearest box.
 pub fn nearest(shapes: &[Shape], point: Vec3) -> f32 {
     shapes.iter().map(|shape| shape.distance(point)).fold(f32::INFINITY, f32::min)
@@ -226,14 +185,6 @@ mod tests {
         let pushed = push_out(&shapes, Vec3::new(0.0, 0.065, 0.0), 0.01, Vec3::X);
         assert!((pushed - Vec3::new(0.0, 0.005, 0.0)).length() < 1e-5, "{pushed}");
         assert_eq!(push_out(&shapes, Vec3::new(0.0, 0.2, 0.0), 0.01, Vec3::X), Vec3::ZERO);
-        // From outside, onto the nearest side; from inside a little past the middle, out on its own side.
-        let onto_side = onto(&shapes, Vec3::new(0.1, 0.01, 0.0), Vec3::X);
-        assert!((onto_side - Vec3::new(0.0225, 0.01, 0.0)).length() < 1e-5, "{onto_side}");
-        let out = onto(&shapes, Vec3::new(-0.002, 0.01, 0.0), Vec3::X);
-        assert!((out - Vec3::new(0.0225, 0.01, 0.0)).length() < 1e-5, "{out}");
-        // Just under the bottom, and just inside the side: the bottom faces down, the side out.
-        assert!((facing(&shapes, Vec3::new(0.0, -0.065, 0.0)).unwrap() - Vec3::NEG_Y).length() < 1e-5);
-        assert!((facing(&shapes, Vec3::new(0.02, 0.0, 0.0)).unwrap() - Vec3::X).length() < 1e-5);
         // Just past the middle toward the left, a hand from the right still goes out on the right.
         let pushed = push_out(&shapes, Vec3::new(-0.002, 0.0, 0.0), 0.01, Vec3::X);
         assert!(pushed.x > 0.02, "{pushed}");

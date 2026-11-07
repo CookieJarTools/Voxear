@@ -9,6 +9,7 @@ mod content;
 pub mod content_build;
 pub mod debug_texts;
 pub mod field_checks;
+pub mod first_person;
 mod dev_console;
 mod engine;
 mod fly_camera;
@@ -57,7 +58,7 @@ pub use content::{
     Content, ContentUsage, MaterialData, MaterialMap, MaterialSource, MovedPart, PropertyValue, Reimported, Released,
     default_on_gpu, linear, srgb,
 };
-pub use engine::{EditBehaviours, Engine, STAGES};
+pub use engine::{EditBehaviours, EditMode, Engine, POSE, STAGES, editing};
 pub use fly_camera::FlyCamera;
 pub use game::{Display, Game};
 pub use levels::{

@@ -1,0 +1,279 @@
+//! The First-Person View: a camera in a character's own head. The mouse,
+//! or a script, turns the view; the Obj it is on turns with it, and the
+//! upper body leans into where the view looks. The camera rides the head
+//! bone, steadied so the head's bob reaches it only in part, and the head
+//! itself is hidden so the camera does not see inside it.
+
+use voxear_core::math::{Mat4, Quat, Vec2, Vec3};
+use voxear_core::spring::{Spring, SpringFeel};
+use voxear_core::time::Time;
+use voxear_ecs::{Component, Entity, World};
+use voxear_render::{Camera, ModelRenderer, Pose};
+use voxear_scene::{Parent, Transform, world_matrix};
+
+use crate::animation::ik::{PoseEdit, turn_spine};
+use crate::animation::rig::Rig;
+
+/// The most the upper body leans into the view, in degrees.
+const MOST_LEAN: f32 = 40.0;
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FirstPersonView {
+    /// The Obj whose model is the body; the first Model Renderer under
+    /// the Obj when none.
+    pub body: Option<Entity>,
+    /// The camera it places; the first Camera under the Obj, or else the
+    /// first anywhere, when none.
+    pub camera: Option<Entity>,
+    /// Where it looks, in degrees: the turn about up from +Z, and the tilt,
+    /// up positive.
+    pub yaw: f32,
+    pub pitch: f32,
+    /// Whether the mouse turns it, by `sensitivity` degrees a pixel.
+    pub mouse_look: bool,
+    pub sensitivity: f32,
+    /// How far it may tilt down and up, in degrees.
+    pub pitch_limits: [f32; 2],
+    /// How much of the head's bob reaches the camera: 0 none, 1 all of it.
+    pub bob: f32,
+    /// Where the eyes are from the head bone, in metres, in the body's
+    /// space: up and forward.
+    pub eyes: [f32; 3],
+    /// Whether the Obj it is on turns to face where the view does.
+    pub turn_obj: bool,
+    /// How much of the tilt the upper body leans into, 0 to 1.
+    pub lean: f32,
+    /// Whether the head is hidden, so the camera does not see inside it.
+    pub hide_head: bool,
+}
+
+impl Component for FirstPersonView {}
+
+impl Default for FirstPersonView {
+    fn default() -> Self {
+        Self {
+            body: None,
+            camera: None,
+            yaw: 0.0,
+            pitch: 0.0,
+            mouse_look: true,
+            sensitivity: 0.12,
+            pitch_limits: [-85.0, 85.0],
+            bob: 0.35,
+            eyes: [0.0, 0.07, 0.11],
+            turn_obj: true,
+            lean: 0.5,
+            hide_head: true,
+        }
+    }
+}
+
+impl FirstPersonView {
+    /// Where it looks, as a turn in the world.
+    pub fn rotation(&self) -> Quat {
+        Quat::from_rotation_y(self.yaw.to_radians()) * Quat::from_rotation_x(-self.pitch.to_radians())
+    }
+}
+
+/// What the view keeps from frame to frame: where the eyes were, steadied.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FirstPersonState {
+    /// The eyes' place relative to the Obj, following the head on a spring.
+    eyes: Spring<Vec3>,
+    started: bool,
+}
+
+impl Component for FirstPersonState {}
+
+/// The mouse as this frame moved it, for views that look with it: the game
+/// puts it in the world each frame.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct MouseLook {
+    pub delta: Vec2,
+}
+
+/// Turns each view by the mouse, and the Obj it is on with it: run in
+/// Update, after the behaviours, so a script can turn it first and the
+/// body faces where it looks this frame.
+pub fn look(world: &mut World) {
+    if crate::editing(world) {
+        return;
+    }
+    let delta = world.resource::<MouseLook>().map_or(Vec2::ZERO, |mouse| mouse.delta);
+    let views: Vec<Entity> = world.query_ref::<(Entity, &FirstPersonView)>().into_iter().map(|(e, _)| e).collect();
+    for entity in views {
+        let Some(view) = world.get_mut::<FirstPersonView>(entity) else { continue };
+        if view.mouse_look {
+            view.yaw += delta.x * view.sensitivity;
+            view.pitch -= delta.y * view.sensitivity;
+        }
+        view.yaw = (view.yaw + 180.0).rem_euclid(360.0) - 180.0;
+        view.pitch = view.pitch.clamp(view.pitch_limits[0], view.pitch_limits[1]);
+        let (turn, yaw) = (view.turn_obj, view.yaw);
+        if turn && let Some(transform) = world.get_mut::<Transform>(entity) {
+            transform.rotation = Quat::from_rotation_y(yaw.to_radians());
+        }
+    }
+}
+
+/// Leans each view's upper body into its tilt, places its camera in the
+/// head and hides the head: run in the pose stage.
+pub fn place(world: &mut World) {
+    if crate::editing(world) {
+        return;
+    }
+    let delta = world.resource::<Time>().map_or(1.0 / 60.0, |time| time.delta);
+    let views: Vec<(Entity, FirstPersonView)> =
+        world.query_ref::<(Entity, &FirstPersonView)>().into_iter().map(|(e, v)| (e, v.clone())).collect();
+    for (entity, view) in views {
+        let Some(body) = view.body.or_else(|| first_under(world, entity, |w, e| w.has::<ModelRenderer>(e))) else {
+            continue;
+        };
+        let Some(animation) = world.get::<ModelRenderer>(body).and_then(|model| model.animation.clone()) else {
+            continue;
+        };
+        let (Some(pose), Some(rig)) = (world.get::<Pose>(body).cloned(), Rig::find(&animation.skeleton)) else {
+            continue;
+        };
+        let mut edit = PoseEdit::new(&animation.skeleton, &pose.bones);
+        let placed = world_matrix(world, body);
+        let into_body = placed.inverse();
+        // The upper body leans about the body's own across, so it bends forward and back.
+        let across = into_body.transform_vector3(view.rotation() * Vec3::X).normalize_or_zero();
+        let lean = (-view.pitch * view.lean.clamp(0.0, 1.0)).clamp(-MOST_LEAN, MOST_LEAN).to_radians();
+        if across != Vec3::ZERO {
+            turn_spine(&mut edit, &rig.spine, Quat::from_axis_angle(across, lean));
+        }
+        let head = edit.matrices()[rig.head];
+        let eyes_in_body = head.w_axis.truncate() + Vec3::from(view.eyes);
+        let mut bones = edit.matrices();
+        if view.hide_head {
+            bones = crate::animation::hidden(&animation.skeleton, rig.head, &bones);
+        }
+        world.insert(body, Pose { bones: bones.into() });
+
+        // The eyes follow the head on a spring from where the Obj is, so the head's bob is steadied.
+        let obj = world_matrix(world, entity);
+        let eyes_now = obj.inverse().transform_point3(placed.transform_point3(eyes_in_body));
+        let state = world.get::<FirstPersonState>(entity).copied();
+        let mut state = state
+            .unwrap_or(FirstPersonState { eyes: Spring::new(eyes_now, SpringFeel::halflife(0.06)), started: false });
+        if !state.started {
+            state.eyes.snap(eyes_now);
+            state.started = true;
+        }
+        let steadied = state.eyes.update(eyes_now, delta);
+        let shown = steadied.lerp(eyes_now, view.bob.clamp(0.0, 1.0));
+        world.insert(entity, state);
+        let camera = view
+            .camera
+            .or_else(|| first_under(world, entity, |w, e| w.has::<Camera>(e)))
+            .or_else(|| world.query_ref::<(Entity, &Camera)>().into_iter().map(|(e, _)| e).next());
+        if let Some(camera) = camera {
+            set_world(world, camera, obj.transform_point3(shown), view.rotation());
+        }
+    }
+}
+
+/// Puts an Obj at a place and turn in the world, through its parent.
+pub(crate) fn set_world(world: &mut World, entity: Entity, position: Vec3, rotation: Quat) {
+    let parent = world.get::<Parent>(entity).map(|parent| parent.0);
+    let into_parent = parent.map_or(Mat4::IDENTITY, |parent| world_matrix(world, parent).inverse());
+    let local = into_parent * Mat4::from_rotation_translation(rotation, position);
+    if let Some(transform) = world.get_mut::<Transform>(entity) {
+        let (_, rotation, position) = local.to_scale_rotation_translation();
+        (transform.position, transform.rotation) = (position, rotation);
+    }
+}
+
+/// The first Obj under `entity`, itself included, that `is` picks, going
+/// down by children in order.
+pub(crate) fn first_under(world: &World, entity: Entity, is: impl Fn(&World, Entity) -> bool + Copy) -> Option<Entity> {
+    if is(world, entity) {
+        return Some(entity);
+    }
+    let mut children: Vec<Entity> = world
+        .query_ref::<(Entity, &Parent)>()
+        .into_iter()
+        .filter(|(_, parent)| parent.0 == entity)
+        .map(|(child, _)| child)
+        .collect();
+    children.sort_by_key(|child| child.index());
+    children.into_iter().find_map(|child| first_under(world, child, is))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use voxear_render::ModelAnimation;
+    use voxear_scene::Name;
+
+    use super::*;
+    use crate::animation::rig::tests::body;
+
+    /// A player Obj with a body under it and a camera, and a view on the player.
+    fn player(world: &mut World) -> (Entity, Entity, Entity) {
+        let skeleton = body(|part, side| match side {
+            Some(left) => format!("{part}.{}", if left { "L" } else { "R" }),
+            None => part.to_string(),
+        });
+        let rest = skeleton.model_matrices(&skeleton.rest());
+        let animation = Arc::new(ModelAnimation { skeleton, skins: Vec::new(), clips: Vec::new() });
+        let player = world.spawn((Name("Player".into()), Transform::from_position(Vec3::new(2.0, 0.0, 0.0))));
+        let model = ModelRenderer { animation: Some(animation), ..ModelRenderer::new(Vec::new()) };
+        let body = world.spawn((Transform::default(), Parent(player), model, Pose { bones: rest.into() }));
+        let camera = world.spawn((Transform::default(), Camera::default()));
+        world.insert(player, FirstPersonView::default());
+        (player, body, camera)
+    }
+
+    #[test]
+    fn the_mouse_turns_the_view_and_the_obj_and_the_camera_rides_the_head() {
+        let mut world = World::new();
+        let (player, body, camera) = player(&mut world);
+        world.insert_resource(MouseLook { delta: Vec2::new(750.0, -200.0) });
+        look(&mut world);
+        let view = world.get::<FirstPersonView>(player).unwrap().clone();
+        assert!((view.yaw - 90.0).abs() < 1e-3 && (view.pitch - 24.0).abs() < 1e-3, "{} {}", view.yaw, view.pitch);
+        let turned = world.get::<Transform>(player).unwrap().rotation;
+        assert!(
+            turned.angle_between(Quat::from_rotation_y(90f32.to_radians())) < 1e-3,
+            "the player faces the view: {turned}"
+        );
+
+        world.insert_resource(MouseLook { delta: Vec2::ZERO });
+        place(&mut world);
+        let eye = world.get::<Transform>(camera).unwrap();
+        let skeleton_head = world_matrix(&world, body).transform_point3(Vec3::new(0.0, 1.65, 0.0));
+        assert!(
+            eye.position.distance(skeleton_head) < 0.2,
+            "the camera is at the head: {} {}",
+            eye.position,
+            skeleton_head
+        );
+        assert!(eye.rotation.angle_between(view.rotation()) < 1e-4, "and looks where the view does");
+        let bones = &world.get::<Pose>(body).unwrap().bones;
+        let head =
+            Rig::find(&world.get::<ModelRenderer>(body).unwrap().animation.as_ref().unwrap().skeleton).unwrap().head;
+        assert!(bones[head].x_axis.length() < 1e-3, "the head is hidden");
+    }
+
+    #[test]
+    fn the_upper_body_leans_into_the_tilt_and_nothing_moves_while_editing() {
+        let mut world = World::new();
+        let (player, body, _) = player(&mut world);
+        world.get_mut::<FirstPersonView>(player).unwrap().pitch = -40.0;
+        world.get_mut::<FirstPersonView>(player).unwrap().hide_head = false;
+        let before = world.get::<Pose>(body).unwrap().bones[4].w_axis.truncate();
+        place(&mut world);
+        let after = world.get::<Pose>(body).unwrap().bones[4].w_axis.truncate();
+        assert!(after.z > before.z + 0.05, "looking down leans forward: {before} {after}");
+
+        world.insert_resource(crate::EditMode(true));
+        world.insert_resource(MouseLook { delta: Vec2::new(500.0, 0.0) });
+        let yaw = world.get::<FirstPersonView>(player).unwrap().yaw;
+        look(&mut world);
+        assert_eq!(world.get::<FirstPersonView>(player).unwrap().yaw, yaw, "the editor's mouse is its own");
+    }
+}

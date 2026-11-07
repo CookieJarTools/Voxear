@@ -121,7 +121,7 @@ pub fn attach_to_bones(world: &mut World) {
 
 /// The bones of a pose with `bone`, and every bone under it, shrunk to
 /// nothing where `bone` is.
-fn hidden(skeleton: &Skeleton, bone: usize, bones: &[Mat4]) -> Vec<Mat4> {
+pub(crate) fn hidden(skeleton: &Skeleton, bone: usize, bones: &[Mat4]) -> Vec<Mat4> {
     let at = bones[bone].w_axis.truncate();
     let shrink = Mat4::from_translation(at) * Mat4::from_scale(Vec3::splat(1e-4)) * Mat4::from_translation(-at);
     let mut under = vec![false; bones.len()];

@@ -29,10 +29,10 @@ mod windows;
 pub use audio::{AudioAsk, BusValue, PlaySound, SoundFacts, SourceValue, VoiceValue};
 pub use display::CursorLock;
 pub use interop::{
-    ComponentValues, LightValues, MotionMatcherTexts, NetCalls, NetFields, NetRaycast, NetRpcs, RpcSend, RpcTaken, SmokeActions,
+    ComponentKind, ComponentValues, LightValues, MotionMatcherTexts, NetCalls, NetFields, NetRaycast, NetRpcs, RpcSend, RpcTaken, SmokeActions,
     WaterSampler, set_bone_attachment_values, set_light_values, set_mist_values, set_motion_matcher_texts,
     set_motion_matcher_values, set_net_calls, set_net_fields, set_net_object_values, set_net_raycast, set_net_rpcs,
-    set_particle_values, set_smoke_actions, set_smoke_values, set_water_sampler,
+    set_kind_values, set_particle_values, set_smoke_actions, set_smoke_values, set_water_sampler,
 };
 pub use physics::PhysicsEventData;
 pub use drawers::{DrawRequest, DrawerField, Drawn, FieldStep};

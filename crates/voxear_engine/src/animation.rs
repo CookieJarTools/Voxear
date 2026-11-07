@@ -10,10 +10,12 @@
 mod actions;
 mod bone_attachment;
 mod clips;
+pub mod ik;
 mod motion_database;
 mod motion_matching;
 mod motion_set;
 mod retarget;
+pub mod rig;
 mod settling;
 mod states;
 
@@ -27,6 +29,7 @@ use voxear_scene::{Destroying, Transform};
 
 pub use actions::{ActionCommand, MotionMarks, take_marks};
 pub use bone_attachment::{BoneAttachment, attach_to_bones, register as register_bone_attachments};
+pub(crate) use bone_attachment::hidden;
 pub use clips::{CLIP_PART, ClipSource, Clips, give_clips};
 pub use motion_database::{ClipRun, MotionDatabase};
 pub use motion_matching::{MotionMatcher, MotionMatcherState, StateChoice, match_motion, register};

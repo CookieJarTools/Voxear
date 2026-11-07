@@ -148,4 +148,5 @@ internal unsafe struct NativeApi
 	public delegate* unmanaged[Cdecl]<int, ulong*, uint*, byte*, int, int> NetFields;
 	public delegate* unmanaged[Cdecl]<int, ulong*, uint*, int*, byte*, int, int> NetRpc;
 	public delegate* unmanaged[Cdecl]<int, int, float*, float*, float, uint, int, RaycastHitData*, int> NetRaycast;
+	public delegate* unmanaged[Cdecl]<int, ulong, int, int, float*, int> KindValue;
 }

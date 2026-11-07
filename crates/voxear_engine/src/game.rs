@@ -532,6 +532,8 @@ impl Game {
         }
         // Read once, before the scripts that ask about it.
         self.input.update(delta);
+        let mouse = self.input.devices().mouse().delta;
+        self.engine.world.insert_resource(crate::first_person::MouseLook { delta: mouse.into() });
         self.net_begin(delta, renderer.as_deref_mut());
         self.models = ModelWork::for_renderer(renderer.as_deref());
         give_collider_meshes(&mut self.engine.world, &mut self.content);

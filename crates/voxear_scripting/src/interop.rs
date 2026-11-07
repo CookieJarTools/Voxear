@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 54;
+pub(crate) const API_VERSION: u32 = 55;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -368,6 +368,37 @@ pub(crate) struct NativeApi {
         flags: i32,
         hit: *mut crate::physics::RaycastHitData,
     ) -> i32,
+    /// Reads or writes a value of an Obj's component of a kind (see
+    /// [`ComponentKind`]), as `smoke_value` does a Smoke's: 1 when the Obj
+    /// has one.
+    pub kind_value: unsafe extern "C" fn(kind: i32, entity: u64, what: i32, set: i32, value: *mut [f32; 4]) -> i32,
+}
+
+/// The kinds of component scripts reach through one entry, `kind_value`,
+/// each answered by whatever set it with [`set_kind_values`]: a module's
+/// components among them, which answer nothing in a game without it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(i32)]
+pub enum ComponentKind {
+    Camera = 1,
+    FirstPersonView = 2,
+    LimbIk = 3,
+    Gun = 16,
+    GunHolder = 17,
+}
+
+/// The most kinds `kind_value` answers.
+const KINDS: usize = 32;
+static KIND_VALUES: [std::sync::OnceLock<ComponentValues>; KINDS] = [const { std::sync::OnceLock::new() }; KINDS];
+
+/// Sets what answers a kind of component in scripts; the first set is kept.
+pub fn set_kind_values(kind: ComponentKind, values: ComponentValues) {
+    let _ = KIND_VALUES[kind as usize].set(values);
+}
+
+unsafe extern "C" fn kind_value(kind: i32, entity: u64, what: i32, set: i32, value: *mut [f32; 4]) -> i32 {
+    let values = usize::try_from(kind).ok().and_then(|kind| KIND_VALUES.get(kind)).and_then(|cell| cell.get());
+    unsafe { component_value(values, entity, what, set, value) }
 }
 
 /// What answers scripts' questions about water: the engine's, set when it
@@ -1606,6 +1637,7 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         net_fields,
         net_rpc,
         net_raycast,
+        kind_value,
     }
 }
 

@@ -20,6 +20,20 @@ use crate::{
 /// Engine stages in run order. Behaviour callbacks run alongside them: see
 /// [`Engine::tick`].
 pub const STAGES: &[&str] = &["First", "FixedUpdate", "Update", "PostUpdate", "Last"];
+/// Whether the world is being edited rather than played, for the engine's
+/// own systems that only run in play, such as a First-Person View's.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct EditMode(pub bool);
+
+/// Whether a world is being edited rather than played.
+pub fn editing(world: &World) -> bool {
+    world.resource::<EditMode>().is_some_and(|mode| mode.0)
+}
+
+/// The stage after animation where Rust systems change the pose: inverse
+/// kinematics, a first-person view, guns held. Scripts have no systems
+/// here, so it is not one of [`STAGES`].
+pub const POSE: &str = "Pose";
 
 /// Fixed steps allowed per frame, so a slow frame cannot snowball into
 /// ever more catch-up work.
@@ -67,7 +81,7 @@ impl Engine {
         register_obj_components(&mut world);
         world.register_named_component::<PrefabInstance>("Voxear.PrefabInstance");
         world.register_named_component::<FromPrefab>("Voxear.FromPrefab");
-        let mut schedule = Schedule::new(STAGES);
+        let mut schedule = Schedule::new(&[STAGES, &[POSE]].concat());
         // Each system is a profiling sample by its name, begun and ended alike.
         schedule.set_system_timer(Some((
             |name| {
@@ -81,6 +95,8 @@ impl Engine {
                 }
             },
         )));
+        schedule.add_system("Update", "first-person look", crate::first_person::look);
+        schedule.add_system(POSE, "first-person view", crate::first_person::place);
         schedule.add_system("PostUpdate", "propagate transforms", propagate_transforms);
         Self {
             world,
@@ -106,6 +122,7 @@ impl Engine {
             self.world.remove_resource::<crate::tick_smoothing::TickSmoothing>();
         }
         self.edit_mode = edit_mode;
+        self.world.insert_resource(EditMode(edit_mode));
     }
 
     pub fn is_edit_mode(&self) -> bool {
@@ -517,6 +534,9 @@ impl Engine {
             profile_scope!("Animation");
             crate::animation::animate(&mut self.world, self.time.delta);
             crate::animation::match_motion(&mut self.world, self.time.delta);
+            // The pose stage's systems read the frame's time from the world.
+            self.world.insert_resource(self.time);
+            self.schedule.run_stage(POSE, &mut self.world);
             crate::animation::attach_to_bones(&mut self.world);
         }
         self.tell_motion_marks();

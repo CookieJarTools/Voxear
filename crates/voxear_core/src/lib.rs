@@ -5,6 +5,7 @@ pub mod debug_draw;
 pub mod logging;
 pub mod memory;
 pub mod profiling;
+pub mod spring;
 pub mod time;
 
 pub use glam as math;

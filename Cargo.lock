@@ -4033,6 +4033,7 @@ dependencies = [
  "voxear_engine",
  "voxear_input",
  "voxear_localization",
+ "voxear_net",
  "voxear_render",
  "voxear_rhi",
  "voxear_scene",

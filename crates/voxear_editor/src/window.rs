@@ -200,9 +200,9 @@ impl App {
         if self.game_cursor == Some(wanted) {
             return;
         }
-        let Some(window) = self.pointer_in.and_then(|id| self.from(id)).and_then(|from| self.os_window(from)) else {
-            return;
-        };
+        let middle = editor.game_view_middle();
+        let Some(from) = self.pointer_in.and_then(|id| self.from(id)) else { return };
+        let Some(window) = self.os_window(from).cloned() else { return };
         let (visible, lock) = wanted;
         let grab = match lock {
             CursorLock::None => CursorGrabMode::None,
@@ -216,6 +216,15 @@ impl App {
         }
         window.set_cursor_visible(visible && lock != CursorLock::Locked);
         self.game_cursor = Some(wanted);
+        // A locked mouse goes to the middle of the Game view, off the Play button it was over, and shows there
+        // when let go.
+        let Some((x, y)) = middle.filter(|_| lock == CursorLock::Locked) else { return };
+        let position = PhysicalPosition::new(f64::from(x), f64::from(y));
+        if window.set_cursor_position(position).is_ok()
+            && let Some(editor) = self.editor.as_mut()
+        {
+            editor.handle_in(from.desktop(), &WindowEvent::CursorMoved { device_id: DeviceId::dummy(), position });
+        }
     }
 
     /// Hands the editor what drags did on Wayland, as winit hands over a

@@ -2444,6 +2444,12 @@ impl Editor {
                 }
                 false
             }
+            // While the game holds the mouse, its presses are the game's wherever the hidden pointer was left: on the
+            // Play button, a shot would stop the game.
+            WindowEvent::MouseInput { .. } | WindowEvent::MouseWheel { .. } if self.game_holds_mouse() => {
+                self.game.input.handle(event);
+                true
+            }
             WindowEvent::MouseInput { state, .. } => {
                 if *state == ElementState::Pressed {
                     self.game_focused = pointer.is_some();
@@ -2482,6 +2488,24 @@ impl Editor {
         let display = &self.game.display;
         (self.game_focused && !self.cursor_freed && self.is_playing())
             .then_some((display.cursor_visible, display.cursor_lock))
+    }
+
+    /// Whether the game has the mouse locked to itself, hidden, as a shooter
+    /// has it.
+    fn game_holds_mouse(&self) -> bool {
+        self.game_cursor().is_some_and(|(_, lock)| lock == voxear_scripting::CursorLock::Locked)
+    }
+
+    /// The middle of the Game view, in physical pixels of the window the
+    /// pointer is in, where a mouse the game locks is put; none when the
+    /// view is not showing there.
+    pub fn game_view_middle(&self) -> Option<(f32, f32)> {
+        let view = self.nodes.game_viewport;
+        if !self.shown(view) || self.ui.window_of(view) != self.ui.pointer_window() {
+            return None;
+        }
+        let [x, y, w, h] = self.ui.rect(view).map(|v| v * self.scale);
+        Some((x + w / 2.0, y + h / 2.0))
     }
 
     /// The mouse's moves from the device, which the game hears while its

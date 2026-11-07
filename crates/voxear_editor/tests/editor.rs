@@ -7094,6 +7094,39 @@ fn the_play_menu_button_fits_what_it_says_beside_step() {
 }
 
 #[test]
+fn a_shot_with_the_mouse_locked_stays_in_the_game_though_the_pointer_was_on_play() {
+    if voxear_scripting::find_dotnet().is_none() || !voxear_engine::core_assembly("Debug").is_file() {
+        return eprintln!("skipping: needs .NET and the managed build");
+    }
+    let Some((mut renderer, mut editor)) = open() else { return };
+    let root = editor.ui.root();
+    let play = editor.ui.find(root, "play").unwrap();
+    let [x, y, w, h] = editor.ui.rect(play);
+    pointer_to(&mut editor, [x + w / 2.0, y + h / 2.0]);
+    editor.play(&mut renderer);
+    let started = std::time::Instant::now();
+    while !editor.is_playing() {
+        assert_eq!(editor.play_error(), None, "the scripts build and start");
+        assert!(started.elapsed().as_secs() < 300, "the scripts take too long to build");
+        frame(&mut editor, &mut renderer);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    // The game locks the mouse, as a shooter does, with the pointer still on the Play button.
+    editor.game.display.cursor_lock = voxear_scripting::CursorLock::Locked;
+    frame(&mut editor, &mut renderer);
+    let middle = editor.game_view_middle().expect("the Game view shows as play starts");
+    assert!(
+        (middle.0 - (x + w / 2.0)).abs() > 1.0 || (middle.1 - (y + h / 2.0)).abs() > 1.0,
+        "the middle is elsewhere"
+    );
+    left_button(&mut editor, true);
+    left_button(&mut editor, false);
+    frame(&mut editor, &mut renderer);
+    assert!(editor.is_playing(), "the press was the game's, not the Play button's");
+    assert_eq!(editor.game_cursor().map(|(_, lock)| lock), Some(voxear_scripting::CursorLock::Locked), "still held");
+}
+
+#[test]
 fn project_settings_switch_a_module_off_in_the_project_file_and_add_component() {
     use voxear_engine::modules::Module;
     let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {

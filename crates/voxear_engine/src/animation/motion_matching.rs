@@ -22,13 +22,14 @@
 //! walk forward carries it forward and to the side, and a walk back, back
 //! and to the side, turning smoothly between them.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use voxear_core::math::{Mat4, Quat, Vec3};
 use voxear_ecs::{Component, Entity, World};
 use voxear_render::{BonePose, ModelAnimation, ModelRenderer, Pose, Skeleton};
-use voxear_scene::{Destroying, Transform};
+use voxear_scene::{Destroying, Name, Transform};
 
 use super::{
     actions::{self, ActionCommand, ActionPlay, MotionMarks},
@@ -460,11 +461,34 @@ pub fn match_motion(world: &mut World, delta: f32) {
         let set = world.resource::<Clips>().and_then(|clips| clips.set(&matcher.motion_set)).cloned();
         // A set named but not read yet: nothing to play until it is.
         if !matcher.motion_set.is_empty() && set.is_none() {
+            let why = format!("its Motion Set {} has not been read", matcher.motion_set);
+            nothing_to_play(world, entity, &why);
             continue;
         }
         let mut state = world.get::<MotionMatcherState>(entity).cloned().unwrap_or_default();
         let wanted = set.as_deref().map_or(0, |set| chosen(set, &matcher, &state));
-        let Some(play) = state_play(world, &matcher.motion_set, set.as_deref(), wanted, &animation) else { continue };
+        let Some(play) = state_play(world, &matcher.motion_set, set.as_deref(), wanted, &animation) else {
+            let why = match set.as_deref().and_then(|set| set.states.get(wanted)) {
+                Some(made) => {
+                    let found =
+                        |clip: &String| world.resource::<Clips>().is_some_and(|clips| clips.get(clip).is_some());
+                    let missing: Vec<&str> = made
+                        .clips
+                        .iter()
+                        .map(|entry| &entry.clip)
+                        .filter(|clip| !found(clip))
+                        .map(String::as_str)
+                        .collect();
+                    format!("its state {} could not be made; clips not found: {missing:?}", made.name)
+                }
+                None => "its model has no clips to match over".to_string(),
+            };
+            nothing_to_play(world, entity, &why);
+            continue;
+        };
+        if let Some(unplayable) = world.resource_mut::<Unplayable>() {
+            unplayable.0.remove(&entity);
+        }
         // Into another state, its enter action plays.
         let taken = world.get_mut::<MotionMatcher>(entity).map(|m| std::mem::take(&mut m.commands));
         let mut commands = taken.unwrap_or_default();
@@ -491,6 +515,26 @@ pub fn match_motion(world: &mut World, delta: f32) {
         let bones = play.animation.skeleton.model_matrices(&pose).into();
         world.insert(entity, Pose { bones });
         world.insert(entity, state);
+    }
+}
+
+/// Motion Matchers with nothing to play, and for how many frames.
+#[derive(Default)]
+struct Unplayable(HashMap<Entity, u32>);
+
+/// Counts a frame a Motion Matcher had nothing to play, telling of it once
+/// it has had nothing for a second and a half: its body stands in its rest
+/// pose meanwhile, and nothing else would say why.
+fn nothing_to_play(world: &mut World, entity: Entity, why: &str) {
+    let name = world.get::<Name>(entity).map_or_else(|| format!("{entity:?}"), |name| name.0.clone());
+    if world.resource::<Unplayable>().is_none() {
+        world.insert_resource(Unplayable::default());
+    }
+    let Some(unplayable) = world.resource_mut::<Unplayable>() else { return };
+    let frames = unplayable.0.entry(entity).or_default();
+    *frames += 1;
+    if *frames == 90 {
+        tracing::warn!("{name}'s Motion Matcher has had nothing to play for 90 frames, so it stands at rest: {why}");
     }
 }
 

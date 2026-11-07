@@ -20,6 +20,9 @@ const THUMB_BEND: [f32; 3] = [25.0, 35.0, 40.0];
 /// How many steps fingers close in, each joint its share of the way.
 const STEPS: usize = 24;
 
+/// How long a finger takes to bend half way to a new bend, in seconds.
+const BENDING: f32 = 0.05;
+
 /// A hand's grip: how far each finger curls at most, from 0 straight to 1
 /// a fist, thumb first.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -82,10 +85,11 @@ pub fn seat_hand(edit: &mut PoseEdit, arm: &Arm, contact: Vec3, axes: (Vec3, Vec
 }
 
 /// How far a hand must move for it to be clear of `shapes`, in the
-/// model's space: its body, from the wrist to the knuckles and across
-/// them, as thick as it is, and its forearm just behind the wrist. Its
-/// fingers close round what they touch instead.
-pub fn keep_out(edit: &PoseEdit, arm: &Arm, shapes: &[Shape]) -> Vec3 {
+/// model's space, staying on the gun's `side` it is on: its body, from the
+/// wrist to the knuckles and across them, as thick as it is, and its
+/// forearm just behind the wrist. Its fingers close round what they touch
+/// instead.
+pub fn keep_out(edit: &PoseEdit, arm: &Arm, shapes: &[Shape], side: Vec3) -> Vec3 {
     let (Some(palm), Some((along, facing))) = (palm_of(edit, arm), hand_axes(edit, arm)) else { return Vec3::ZERO };
     let wrist = edit.position(arm.hand);
     let Some(&middle) = arm.fingers[2].first().or_else(|| arm.fingers[1].first()) else { return Vec3::ZERO };
@@ -97,14 +101,23 @@ pub fn keep_out(edit: &PoseEdit, arm: &Arm, shapes: &[Shape]) -> Vec3 {
     let back = (wrist - edit.position(arm.forearm)).normalize_or_zero();
     let forearm = [0.05, 0.1].map(|d| (wrist - back * d, span * 0.3));
     body.chain(forearm)
-        .map(|(point, room)| push_out(shapes, point, room))
+        .map(|(point, room)| push_out(shapes, point, room, side))
         .max_by(|a, b| a.length().total_cmp(&b.length()))
         .unwrap_or(Vec3::ZERO)
 }
 
 /// Closes an arm's fingers by a grip, from straight, round `shapes` in
-/// the model's space; with none they curl all the way the grip says.
-pub fn close(edit: &mut PoseEdit, arm: &Arm, grip: Grip, shapes: &[Shape]) {
+/// the model's space; with none they curl all the way the grip says. They
+/// bend from how they were, `was`, toward that over `delta` seconds, but
+/// never further in than a joint that touches.
+pub fn close(
+    edit: &mut PoseEdit,
+    arm: &Arm,
+    grip: Grip,
+    shapes: &[Shape],
+    was: &mut Option<[[f32; 3]; 5]>,
+    delta: f32,
+) {
     for bones in &arm.fingers {
         for &bone in bones.iter().take(3) {
             edit.rest(bone);
@@ -115,9 +128,15 @@ pub fn close(edit: &mut PoseEdit, arm: &Arm, grip: Grip, shapes: &[Shape]) {
         let (bends, thickness) =
             if finger == 0 { (THUMB_BEND, palm.finger * 1.15) } else { (FINGER_BEND, palm.finger) };
         let most = bends.map(|bend| (bend * grip.0[finger].clamp(0.0, 1.0)).to_radians());
-        let Some(finger) = Finger::of(edit, bones, palm.facing) else { continue };
-        let angles = finger.close(most, shapes, thickness);
-        finger.bend(edit, bones, angles);
+        let Some(shape) = Finger::of(edit, bones, palm.facing) else { continue };
+        let (wanted, touching) = shape.close(most, shapes, thickness);
+        let shown = was.get_or_insert([[0.0; 3]; 5]);
+        let fade = 0.5f32.powf(delta / BENDING);
+        for joint in 0..3 {
+            let eased = wanted[joint] + (shown[finger][joint] - wanted[joint]) * fade;
+            shown[finger][joint] = if touching[joint] { eased.min(wanted[joint]) } else { eased };
+        }
+        shape.bend(edit, bones, shown[finger]);
     }
 }
 
@@ -172,8 +191,8 @@ impl Finger {
     }
 
     /// How far each joint bends, closing on `shapes` no further than
-    /// `most`.
-    fn close(&self, most: [f32; 3], shapes: &[Shape], thickness: f32) -> [f32; 3] {
+    /// `most`, and which were stopped by touching one.
+    fn close(&self, most: [f32; 3], shapes: &[Shape], thickness: f32) -> ([f32; 3], [bool; 3]) {
         let mut angles = [0.0; 3];
         let mut stopped = [false; 3];
         for step in 1..=STEPS {
@@ -194,7 +213,7 @@ impl Finger {
             }
             angles = trial;
         }
-        angles
+        (angles, stopped)
     }
 
     /// Bends the finger's bones by `angles`, each about its axis as the

@@ -155,7 +155,9 @@ pub fn advance(
         // A reach: out from the gun on a slight arc, timed as a person's reach is, and the last few centimetres
         // straight in along the way the goal is come at, so the hand does not cut through the gun.
         let s = minimum_jerk(play.t / beat.reach.max(1e-4));
-        let out = Vec3::new(if beat.hand == Hand::Right { 1.0 } else { -1.0 }, 0.4, 0.0) * 0.06;
+        // Out to the hand's side first, further for a pouch on the body, so it goes round the gun, not through it.
+        let side = if beat.hand == Hand::Right { 1.0 } else { -1.0 };
+        let out = Vec3::new(side, 0.4, 0.0) * if beat.goal == Goal::Pouch { 0.16 } else { 0.06 };
         curve([from, from + out, goal + toward * 0.08, goal], s)
     } else {
         let work = minimum_jerk((play.t - beat.reach) / beat.work.max(1e-4));

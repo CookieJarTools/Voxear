@@ -58,9 +58,10 @@ impl Shape {
     }
 
     /// How far and which way `point` must move to be `room` out of the
-    /// box: out through its nearest face from inside, straight away from
-    /// it from outside; nothing when it is that far out already.
-    fn push(&self, point: Vec3, room: f32) -> Vec3 {
+    /// box: from inside, out through its nearest face but those facing
+    /// against `side`; from outside, straight away from it; nothing when it
+    /// is that far out already.
+    fn push(&self, point: Vec3, room: f32, side: Vec3) -> Vec3 {
         let into = self.frame.inverse();
         let local = into.transform_point3(point);
         let nearest = local.clamp(self.least, self.most);
@@ -77,7 +78,8 @@ impl Shape {
             let way = self.frame.transform_vector3(normal);
             (way.normalize_or_zero(), depth * way.length())
         });
-        let (way, depth) = faces.min_by(|a, b| a.1.total_cmp(&b.1)).unwrap_or((Vec3::Y, 0.0));
+        let faces = faces.filter(|(way, _)| way.dot(side) > -0.3);
+        let (way, depth) = faces.min_by(|a, b| a.1.total_cmp(&b.1)).unwrap_or((side, 0.0));
         way * (depth + room)
     }
 
@@ -130,11 +132,13 @@ pub fn surface(shapes: &[Shape], from: Vec3, way: Vec3) -> Vec3 {
 }
 
 /// The move that takes `point` `room` clear of every box, pushing it out
-/// of the one it is deepest in.
-pub fn push_out(shapes: &[Shape], point: Vec3, room: f32) -> Vec3 {
+/// of the one it is deepest in, never out of the far side from `side`: a
+/// hand moving through the gun stays on its own side of it, rather than
+/// coming out of whichever side is nearer as it passes the middle.
+pub fn push_out(shapes: &[Shape], point: Vec3, room: f32, side: Vec3) -> Vec3 {
     shapes
         .iter()
-        .map(|shape| shape.push(point, room))
+        .map(|shape| shape.push(point, room, side))
         .max_by(|a, b| a.length().total_cmp(&b.length()))
         .unwrap_or(Vec3::ZERO)
 }
@@ -176,10 +180,13 @@ mod tests {
         assert!((nearest(&shapes, Vec3::new(0.0425, 0.0, 0.0)) - 0.02).abs() < 1e-5);
         assert_eq!(nearest(&shapes, Vec3::ZERO), 0.0);
         // Inside, out through the nearest side; outside but too near, out to the room asked for.
-        let pushed = push_out(&shapes, Vec3::new(0.015, 0.0, 0.0), 0.01);
+        let pushed = push_out(&shapes, Vec3::new(0.015, 0.0, 0.0), 0.01, Vec3::X);
         assert!((pushed - Vec3::new(0.0175, 0.0, 0.0)).length() < 1e-5, "{pushed}");
-        let pushed = push_out(&shapes, Vec3::new(0.0, 0.065, 0.0), 0.01);
+        let pushed = push_out(&shapes, Vec3::new(0.0, 0.065, 0.0), 0.01, Vec3::X);
         assert!((pushed - Vec3::new(0.0, 0.005, 0.0)).length() < 1e-5, "{pushed}");
-        assert_eq!(push_out(&shapes, Vec3::new(0.0, 0.2, 0.0), 0.01), Vec3::ZERO);
+        assert_eq!(push_out(&shapes, Vec3::new(0.0, 0.2, 0.0), 0.01, Vec3::X), Vec3::ZERO);
+        // Just past the middle toward the left, a hand from the right still goes out on the right.
+        let pushed = push_out(&shapes, Vec3::new(-0.002, 0.0, 0.0), 0.01, Vec3::X);
+        assert!(pushed.x > 0.02, "{pushed}");
     }
 }

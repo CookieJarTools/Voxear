@@ -28,11 +28,14 @@ use serde::{Deserialize, Serialize};
 use voxear_core::math::{Mat4, Quat, Vec3};
 use voxear_ecs::{Component, Entity, World};
 use voxear_render::{BonePose, ModelAnimation, ModelRenderer, Pose, Skeleton};
-use voxear_scene::Destroying;
+use voxear_scene::{Destroying, Transform};
 
 use super::{
-    motion_database::{ClipRun, Ground, MotionDatabase, database_for, facing, wrap},
+    clips::Clips,
+    motion_database::{ClipRun, Ground, MotionDatabase, facing, wrap},
+    motion_set::{MotionSet, StateRole},
     settling::Settling,
+    states::{StatePlay, state_play},
 };
 
 /// How quickly the Obj's seen velocity follows its movement, in seconds to
@@ -85,9 +88,16 @@ pub struct MotionMatcher {
     /// look up or down, down positive, so its arms aim where it looks.
     #[serde(skip)]
     pub aim_pitch: f32,
-    /// The clip it stands with, by its name in the model; none, the first
-    /// loop that stands still.
-    pub idle: String,
+    /// The state the game wants it in, by its role or its name in the set;
+    /// none keeps it in the one it is in, from the set's first walking one.
+    #[serde(skip)]
+    pub state: Option<StateChoice>,
+    /// What it can do: its Motion Set, `Characters/Wizard.motionset`; none
+    /// plays the model's own loops.
+    pub motion_set: String,
+    /// Moving the Obj as its clips carry it, rather than the game moving it
+    /// and the clips following.
+    pub root_motion: bool,
     /// Below this many metres a second wanted, it stands.
     pub idle_speed: f32,
     /// Seconds between searches.
@@ -115,13 +125,24 @@ pub struct MotionMatcher {
 
 impl Component for MotionMatcher {}
 
+/// A state of a Motion Set a game asks for.
+#[derive(Clone, Debug, PartialEq)]
+pub enum StateChoice {
+    /// The first with this role.
+    Role(StateRole),
+    /// The one with this name.
+    Named(String),
+}
+
 impl Default for MotionMatcher {
     fn default() -> Self {
         Self {
             wanted_velocity: None,
             wanted_facing: None,
             aim_pitch: 0.0,
-            idle: String::new(),
+            state: None,
+            motion_set: String::new(),
+            root_motion: false,
             idle_speed: 0.15,
             search_every: 0.1,
             blend: 0.15,
@@ -138,7 +159,9 @@ impl Default for MotionMatcher {
 /// What a Motion Matcher is doing, kept by the engine.
 #[derive(Clone, Default)]
 pub struct MotionMatcherState {
-    database: Option<Arc<MotionDatabase>>,
+    /// The state playing, by its place in the set, ready to play.
+    state: usize,
+    play: Option<Arc<StatePlay>>,
     /// Each run of the database's weight, and the weight it fades towards.
     weights: Vec<f32>,
     targets: Vec<f32>,
@@ -182,23 +205,30 @@ struct FootLock {
 }
 
 impl MotionMatcherState {
-    /// Each model clip playing and its share of the pose, the clip it
-    /// stands with included, most first.
-    pub fn playing(&self, matcher: &MotionMatcher, animation: &ModelAnimation) -> Vec<(usize, f32)> {
-        let Some(database) = &self.database else { return Vec::new() };
+    /// Each clip playing, by its name, and its share of the pose, the clip
+    /// it stands with included, most first.
+    pub fn playing(&self) -> Vec<(String, f32)> {
+        let Some(play) = &self.play else { return Vec::new() };
         let walking = 1.0 - self.idle_weight;
-        let mut out: Vec<(usize, f32)> = database
+        let name = |clip: usize| play.animation.clips[clip].name.clone();
+        let mut out: Vec<(String, f32)> = play
+            .database
             .runs
             .iter()
             .zip(&self.weights)
             .filter(|(_, w)| **w * walking > 1e-3)
-            .map(|(run, w)| (run.clip, w * walking))
+            .map(|(run, w)| (name(run.clip), w * walking))
             .collect();
-        if let Some(idle) = idle_clip(matcher, animation, database).filter(|_| self.idle_weight > 1e-3) {
-            out.push((idle, self.idle_weight));
+        if let Some(idle) = play.idle.filter(|_| self.idle_weight > 1e-3) {
+            out.push((name(idle), self.idle_weight));
         }
         out.sort_by(|a, b| b.1.total_cmp(&a.1));
         out
+    }
+
+    /// The state playing, by its place in its set.
+    pub fn state(&self) -> usize {
+        self.state
     }
 
     /// The way the body faces in the world, as a turn about Y from +Z.
@@ -300,7 +330,8 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
     }
 }
 
-/// Moves every Motion Matcher on by `delta` seconds and poses its model.
+/// Moves every Motion Matcher on by `delta` seconds and poses its model,
+/// and with root motion, moves its Obj as its clips carry it.
 pub fn match_motion(world: &mut World, delta: f32) {
     let matchers: Vec<(Entity, MotionMatcher, Arc<ModelAnimation>)> = world
         .query_ref::<(Entity, &MotionMatcher, &ModelRenderer)>()
@@ -309,16 +340,65 @@ pub fn match_motion(world: &mut World, delta: f32) {
         .filter_map(|(entity, matcher, model)| Some((entity, matcher.clone(), model.animation.clone()?)))
         .collect();
     for (entity, matcher, animation) in matchers {
-        let Some(database) = database_for(world, &animation) else { continue };
-        let placed = voxear_scene::world_matrix(world, entity);
-        let mut state = world.get::<MotionMatcherState>(entity).cloned().unwrap_or_default();
-        let pose = step(&mut state, &matcher, &animation, &database, placed, delta);
-        if matcher.debug {
-            draw(&state, &matcher, &animation, &database, placed);
+        let set = world.resource::<Clips>().and_then(|clips| clips.set(&matcher.motion_set)).cloned();
+        // A set named but not read yet: nothing to play until it is.
+        if !matcher.motion_set.is_empty() && set.is_none() {
+            continue;
         }
-        let bones = animation.skeleton.model_matrices(&pose).into();
+        let mut state = world.get::<MotionMatcherState>(entity).cloned().unwrap_or_default();
+        let wanted = set.as_deref().map_or(0, |set| chosen(set, &matcher, &state));
+        let Some(play) = state_play(world, &matcher.motion_set, set.as_deref(), wanted, &animation) else { continue };
+        state.state = wanted;
+        let placed = voxear_scene::world_matrix(world, entity);
+        let pose = step(&mut state, &matcher, &play, placed, delta);
+        if matcher.debug {
+            draw(&state, &matcher, &play, placed);
+        }
+        if matcher.root_motion && delta > 0.0 {
+            carry(world, entity, carried(&state, &play), delta);
+        }
+        let bones = play.animation.skeleton.model_matrices(&pose).into();
         world.insert(entity, Pose { bones });
         world.insert(entity, state);
+    }
+}
+
+/// The state a matcher plays: the one its game asks for, else the one it
+/// plays, else the set's first walking one.
+fn chosen(set: &MotionSet, matcher: &MotionMatcher, state: &MotionMatcherState) -> usize {
+    let asked = match &matcher.state {
+        Some(StateChoice::Role(role)) => set.state_for(*role),
+        Some(StateChoice::Named(name)) => set.state_named(name),
+        None => None,
+    };
+    let playing = state.play.is_some().then_some(state.state).filter(|&s| s < set.states.len());
+    asked.or(playing).or_else(|| set.state_for(StateRole::Grounded)).unwrap_or(0)
+}
+
+/// How fast the clips playing carry the body along the ground, in the
+/// world, in metres a second.
+fn carried(state: &MotionMatcherState, play: &StatePlay) -> Vec3 {
+    let walking = 1.0 - state.idle_weight;
+    let along: Vec3 = play.database.runs.iter().zip(&state.weights).map(|(run, w)| run.velocity * *w).sum();
+    Quat::from_rotation_y(state.body_yaw.unwrap_or_default()) * along * walking * state.rate
+}
+
+/// Moves an Obj along the ground at `velocity` for `delta` seconds: by its
+/// Character Controller when it has one, so walls and steps hold it, else
+/// straight.
+fn carry(world: &mut World, entity: Entity, velocity: Vec3, delta: f32) {
+    if world.has::<crate::physics::CharacterController>(entity)
+        && let Some(mut physics) = world.remove_resource::<crate::physics::PhysicsScene>()
+    {
+        // A little down too, to keep it on the ground.
+        physics.move_character(world, entity, velocity + Vec3::NEG_Y * 2.0, delta);
+        world.insert_resource(physics);
+        return;
+    }
+    let parent = world.get::<voxear_scene::Parent>(entity).map(|parent| voxear_scene::world_matrix(world, parent.0));
+    let moved = parent.map_or(velocity, |parent| parent.inverse().transform_vector3(velocity)) * delta;
+    if let Some(transform) = world.get_mut::<Transform>(entity) {
+        transform.position += moved;
     }
 }
 
@@ -328,22 +408,33 @@ pub fn match_motion(world: &mut World, delta: f32) {
 fn step(
     state: &mut MotionMatcherState,
     matcher: &MotionMatcher,
-    animation: &ModelAnimation,
-    database: &Arc<MotionDatabase>,
+    play: &Arc<StatePlay>,
     placed: Mat4,
     delta: f32,
 ) -> Vec<BonePose> {
+    let (animation, database) = (&*play.animation, &play.database);
     let obj = Ground::new(placed.w_axis.truncate(), facing(placed.transform_vector3(Vec3::Z)));
-    if !state.database.as_ref().is_some_and(|d| Arc::ptr_eq(d, database)) {
+    // Into another state, its clips start from nothing, the old pose settling into theirs.
+    let changed_state = state.play.as_ref().is_some_and(|was| !Arc::ptr_eq(was, play));
+    if !state.play.as_ref().is_some_and(|was| Arc::ptr_eq(was, play)) {
         let runs = database.runs.len();
-        *state = MotionMatcherState {
-            database: Some(database.clone()),
-            weights: vec![0.0; runs],
-            targets: vec![0.0; runs],
-            idle_weight: 1.0,
-            rate: 1.0,
-            ..MotionMatcherState::default()
-        };
+        match state.play.is_some() {
+            true => {
+                (state.weights, state.targets) = (vec![0.0; runs], vec![0.0; runs]);
+                (state.searched, state.stride) = (None, None);
+            }
+            false => {
+                *state = MotionMatcherState {
+                    weights: vec![0.0; runs],
+                    targets: vec![0.0; runs],
+                    idle_weight: 1.0,
+                    rate: 1.0,
+                    state: state.state,
+                    ..MotionMatcherState::default()
+                }
+            }
+        }
+        state.play = Some(play.clone());
     }
     if delta > 0.0 {
         if let Some(last) = state.last {
@@ -354,7 +445,7 @@ fn step(
     }
     let wanted = matcher.wanted_velocity.map_or(state.velocity, flat);
     let body = turn(state, matcher, obj, wanted, delta);
-    let idle = idle_clip(matcher, animation, database);
+    let idle = play.idle;
     let standing = idle.is_some() && wanted.length() <= matcher.idle_speed;
     let stride = state.stride;
     let local = head(state, matcher, database, wanted, body, delta);
@@ -380,9 +471,10 @@ fn step(
     let right = Quat::from_rotation_y(wrap(body - obj.yaw)) * Vec3::X;
     let pitch = (matcher.aim_pitch * AIM_SHARE).clamp(-AIM_BEND, AIM_BEND).to_radians();
     twist(&mut pose, &animation.skeleton, &database.spine, right, pitch);
-    if flipped && delta > 0.0 && state.shown.len() == pose.len() {
+    if (flipped || changed_state) && delta > 0.0 && state.shown.len() == pose.len() {
         let old = [state.shown.as_slice(), &state.before];
-        state.settling = Some(Settling::between(old, [&pose, &pose], delta, FLIP_HALFLIFE));
+        let halflife = if changed_state { play.blend * 0.5 } else { FLIP_HALFLIFE };
+        state.settling = Some(Settling::between(old, [&pose, &pose], delta, halflife.max(1e-3)));
     }
     if let Some(settling) = &mut state.settling
         && !settling.settle(delta, &mut pose)
@@ -468,15 +560,6 @@ fn head(
 fn legs(matcher: &MotionMatcher, aside: f32, stride: f32) -> f32 {
     let limit = matcher.leg_turn.to_radians();
     wrap(aside - stride).clamp(-limit, limit)
-}
-
-/// The model clip it stands with: the one named, or the first loop that
-/// stands still.
-fn idle_clip(matcher: &MotionMatcher, animation: &ModelAnimation, database: &MotionDatabase) -> Option<usize> {
-    if !matcher.idle.is_empty() {
-        return animation.clips.iter().position(|clip| clip.name == matcher.idle);
-    }
-    database.runs.iter().find(|run| run.stands()).map(|run| run.clip)
 }
 
 /// Sets the weights to fade towards from the clips that best move at
@@ -754,29 +837,17 @@ fn twist(pose: &mut [BonePose], skeleton: &Skeleton, bones: &[usize], axis: Vec3
 
 /// Draws the velocity wanted, the clips' velocity and the body's facing,
 /// and names the clips playing.
-fn draw(
-    state: &MotionMatcherState,
-    matcher: &MotionMatcher,
-    animation: &ModelAnimation,
-    database: &MotionDatabase,
-    placed: Mat4,
-) {
+fn draw(state: &MotionMatcherState, matcher: &MotionMatcher, play: &StatePlay, placed: Mat4) {
     use voxear_core::debug_draw::{arrow, text};
     let Some(body) = state.body_yaw else { return };
     let at = placed.w_axis.truncate() + Vec3::Y * 0.05;
     let wanted = matcher.wanted_velocity.map_or(state.velocity, flat);
-    let walking = 1.0 - state.idle_weight;
-    let clips: Vec3 = database.runs.iter().zip(&state.weights).map(|(run, w)| run.velocity * w * walking).sum();
-    let turned = Quat::from_rotation_y(body);
+    let clips = carried(state, play) / state.rate.max(1e-3);
     arrow(at, at + wanted * 0.5, [0.3, 0.8, 1.0, 1.0], 0.0, true);
-    arrow(at, at + turned * clips * 0.5, [1.0, 0.6, 0.2, 1.0], 0.0, true);
-    arrow(at, at + turned * Vec3::Z * 0.6, [1.0, 1.0, 1.0, 1.0], 0.0, true);
-    let names: Vec<String> = state
-        .playing(matcher, animation)
-        .iter()
-        .take(3)
-        .map(|&(clip, w)| format!("{} {:.0}%", animation.clips[clip].name, w * 100.0))
-        .collect();
+    arrow(at, at + clips * 0.5, [1.0, 0.6, 0.2, 1.0], 0.0, true);
+    arrow(at, at + Quat::from_rotation_y(body) * Vec3::Z * 0.6, [1.0, 1.0, 1.0, 1.0], 0.0, true);
+    let names: Vec<String> =
+        state.playing().iter().take(3).map(|(name, w)| format!("{name} {:.0}%", w * 100.0)).collect();
     text(at + Vec3::Y * 2.1, &format!("{}  ×{:.2}", names.join("  "), state.rate), [1.0, 1.0, 1.0, 1.0], 0.0);
 }
 
@@ -878,8 +949,7 @@ mod tests {
     fn drive(
         state: &mut MotionMatcherState,
         matcher: &MotionMatcher,
-        animation: &ModelAnimation,
-        database: &Arc<MotionDatabase>,
+        play: &Arc<StatePlay>,
         seconds: f32,
         velocity: Vec3,
     ) -> (String, f32) {
@@ -888,17 +958,16 @@ mod tests {
         let mut at = state.last.unwrap_or_default();
         for _ in 0..(seconds / DT).round() as usize {
             at += velocity * DT;
-            step(state, &asked, animation, database, Mat4::from_translation(at), DT);
+            step(state, &asked, play, Mat4::from_translation(at), DT);
         }
-        let (clip, weight) = state.playing(matcher, animation)[0];
-        (animation.clips[clip].name.clone(), weight)
+        state.playing()[0].clone()
     }
 
     #[test]
     fn clips_move_as_their_roots_or_planted_feet_carry_them() {
         let animation =
             walker(vec![clip("Stand", Vec3::ZERO), clip("Walk", Vec3::Z * 1.4), in_place("Treadmill", 1.4)]);
-        let database = MotionDatabase::build(&animation).unwrap();
+        let database = MotionDatabase::build(&animation, &[]).unwrap();
         let [stand, walk, treadmill] = [0, 1, 2].map(|run| database.runs[run]);
         assert!(stand.stands() && walk.moves(), "{stand:?} {walk:?}");
         assert!(walk.velocity.distance(Vec3::Z * 1.4) < 0.01, "{:?}", walk.velocity);
@@ -911,28 +980,43 @@ mod tests {
     }
 
     #[test]
+    fn a_clip_moves_and_loops_as_its_settings_say() {
+        use voxear_assets::{ClipImport, ClipLoop, ClipMotion};
+        let animation = walker(vec![clip("Stand", Vec3::ZERO), clip("Walk", Vec3::Z * 1.4)]);
+        let right = ClipImport { motion: ClipMotion::Set, direction: 90.0, speed: 2.0, looping: ClipLoop::Auto };
+        let once = ClipImport { looping: ClipLoop::Off, ..ClipImport::default() };
+        let database = MotionDatabase::build(&animation, &[right, once]).unwrap();
+        let [stand, walk] = [0, 1].map(|run| database.runs[run]);
+        assert!(stand.velocity.distance(Vec3::X * 2.0) < 1e-4, "set to step right: {:?}", stand.velocity);
+        assert!(stand.moves(), "and so a loop it walks with");
+        assert!(!walk.looping, "set not to loop");
+    }
+
+    #[test]
     fn the_speed_wanted_picks_its_clips() {
         let animation = moves();
-        let database = Arc::new(MotionDatabase::build(&animation).unwrap());
+        let database = Arc::new(MotionDatabase::build(&animation, &[]).unwrap());
+        let play = Arc::new(StatePlay::own(Arc::new(animation.clone()), database.clone()));
         let matcher = MotionMatcher::default();
         let mut state = MotionMatcherState::default();
-        let (name, weight) = drive(&mut state, &matcher, &animation, &database, 1.0, Vec3::ZERO);
+        let (name, weight) = drive(&mut state, &matcher, &play, 1.0, Vec3::ZERO);
         assert_eq!((name.as_str(), weight > 0.95), ("Stand", true));
-        let (name, weight) = drive(&mut state, &matcher, &animation, &database, 1.0, Vec3::Z * 1.4);
+        let (name, weight) = drive(&mut state, &matcher, &play, 1.0, Vec3::Z * 1.4);
         assert_eq!((name.as_str(), weight > 0.9), ("Walk", true), "{weight}");
-        let (name, _) = drive(&mut state, &matcher, &animation, &database, 1.0, Vec3::Z * 3.5);
+        let (name, _) = drive(&mut state, &matcher, &play, 1.0, Vec3::Z * 3.5);
         assert_eq!(name, "Jog");
         // Stepping back while facing ahead.
         let mut aiming = matcher.clone();
         aiming.wanted_facing = Some(Vec3::Z);
-        let (name, _) = drive(&mut state, &aiming, &animation, &database, 1.0, Vec3::NEG_Z * 1.2);
+        let (name, _) = drive(&mut state, &aiming, &play, 1.0, Vec3::NEG_Z * 1.2);
         assert_eq!(name, "WalkBack");
     }
 
     #[test]
     fn the_body_turns_to_its_way_at_its_rate() {
         let animation = moves();
-        let database = Arc::new(MotionDatabase::build(&animation).unwrap());
+        let database = Arc::new(MotionDatabase::build(&animation, &[]).unwrap());
+        let play = Arc::new(StatePlay::own(Arc::new(animation.clone()), database.clone()));
         let matcher = MotionMatcher::default();
         let mut state = MotionMatcherState::default();
         let mut asked = matcher.clone();
@@ -940,20 +1024,20 @@ mod tests {
         let most = matcher.turn_rate.to_radians() * DT;
         let mut before = 0.0;
         for _ in 0..90 {
-            step(&mut state, &asked, &animation, &database, Mat4::IDENTITY, DT);
+            step(&mut state, &asked, &play, Mat4::IDENTITY, DT);
             let yaw = state.body_yaw().unwrap();
             assert!(wrap(yaw - before).abs() <= most + 1e-4, "{before} to {yaw}");
             before = yaw;
         }
         assert!((before - std::f32::consts::FRAC_PI_2).abs() < 1e-2, "facing the way it goes: {before}");
-        let (clip, _) = state.playing(&matcher, &animation)[0];
-        assert_eq!(animation.clips[clip].name, "Walk", "walking forward that way");
+        assert_eq!(state.playing()[0].0, "Walk", "walking forward that way");
     }
 
     #[test]
     fn starting_stopping_and_changing_pace_never_pop() {
         let animation = moves();
-        let database = Arc::new(MotionDatabase::build(&animation).unwrap());
+        let database = Arc::new(MotionDatabase::build(&animation, &[]).unwrap());
+        let play = Arc::new(StatePlay::own(Arc::new(animation.clone()), database.clone()));
         let mut matcher = MotionMatcher::default();
         matcher.wanted_facing = Some(Vec3::Z);
         let mut state = MotionMatcherState::default();
@@ -972,7 +1056,7 @@ mod tests {
             matcher.wanted_velocity = Some(velocity);
             at += velocity * DT;
             let placed = Mat4::from_translation(at);
-            let pose = step(&mut state, &matcher, &animation, &database, placed, DT);
+            let pose = step(&mut state, &matcher, &play, placed, DT);
             let bones: Vec<Vec3> = animation
                 .skeleton
                 .model_matrices(&pose)
@@ -1000,7 +1084,8 @@ mod tests {
     fn going_aside_turns_the_legs_and_keeps_the_chest_ahead() {
         let animation =
             walker(vec![clip("Stand", Vec3::ZERO), clip("Walk", Vec3::Z * 1.4), clip("WalkBack", Vec3::NEG_Z * 1.2)]);
-        let database = Arc::new(MotionDatabase::build(&animation).unwrap());
+        let database = Arc::new(MotionDatabase::build(&animation, &[]).unwrap());
+        let play = Arc::new(StatePlay::own(Arc::new(animation.clone()), database.clone()));
         let mut matcher = MotionMatcher::default();
         matcher.wanted_facing = Some(Vec3::Z);
         let quarter = std::f32::consts::FRAC_PI_4;
@@ -1011,17 +1096,10 @@ mod tests {
             asked.wanted_velocity = Some(velocity);
             let mut pose = Vec::new();
             for f in 0..90 {
-                pose = step(
-                    &mut state,
-                    &asked,
-                    &animation,
-                    &database,
-                    Mat4::from_translation(velocity * f as f32 * DT),
-                    DT,
-                );
+                pose = step(&mut state, &asked, &play, Mat4::from_translation(velocity * f as f32 * DT), DT);
             }
-            let (playing, _) = state.playing(&matcher, &animation)[0];
-            assert_eq!(animation.clips[playing].name, clip);
+            let playing = state.playing()[0].0.clone();
+            assert_eq!(playing, clip);
             let (hips, chest) = (yaw_of(&animation, &pose, 1), yaw_of(&animation, &pose, 8));
             assert!((hips - legs).abs() < 0.02, "the hips turned towards the way it goes: {hips} for {legs}");
             assert!(chest.abs() < 0.02, "the chest still ahead: {chest}");
@@ -1031,7 +1109,8 @@ mod tests {
     #[test]
     fn turning_round_never_plays_a_clip_heading_away() {
         let animation = moves();
-        let database = Arc::new(MotionDatabase::build(&animation).unwrap());
+        let database = Arc::new(MotionDatabase::build(&animation, &[]).unwrap());
+        let play = Arc::new(StatePlay::own(Arc::new(animation.clone()), database.clone()));
         let matcher = MotionMatcher::default();
         let mut state = MotionMatcherState::default();
         let mut at = Vec3::ZERO;
@@ -1045,9 +1124,8 @@ mod tests {
             let mut asked = matcher.clone();
             asked.wanted_velocity = Some(velocity);
             at += velocity * DT;
-            step(&mut state, &asked, &animation, &database, Mat4::from_translation(at), DT);
-            for (clip, weight) in state.playing(&matcher, &animation) {
-                let name = &animation.clips[clip].name;
+            step(&mut state, &asked, &play, Mat4::from_translation(at), DT);
+            for (name, weight) in state.playing() {
                 assert!(name != "WalkBack" || weight < 0.05, "{name} at {weight} on frame {f}");
             }
         }
@@ -1073,7 +1151,8 @@ mod tests {
     #[test]
     fn a_foot_down_stays_put_though_the_obj_outpaces_the_clips() {
         let animation = walker(vec![clip("Stand", Vec3::ZERO), in_place("Treadmill", 1.4)]);
-        let database = Arc::new(MotionDatabase::build(&animation).unwrap());
+        let database = Arc::new(MotionDatabase::build(&animation, &[]).unwrap());
+        let play = Arc::new(StatePlay::own(Arc::new(animation.clone()), database.clone()));
         let slide = |locking: bool| {
             let mut matcher = MotionMatcher::default();
             matcher.foot_locking = locking;
@@ -1083,7 +1162,7 @@ mod tests {
             for f in 0..180 {
                 at += Vec3::Z * 2.2 * DT;
                 let placed = Mat4::from_translation(at);
-                let pose = step(&mut state, &matcher, &animation, &database, placed, DT);
+                let pose = step(&mut state, &matcher, &play, placed, DT);
                 let m = animation.skeleton.model_matrices(&pose);
                 let ankles = [4, 7].map(|bone| placed.transform_point3(m[bone].w_axis.truncate()));
                 if let (Some(then), true) = (before, f > 60) {
@@ -1106,14 +1185,15 @@ mod tests {
     #[test]
     fn clips_keep_pace_with_the_ground() {
         let animation = walker(vec![clip("Stand", Vec3::ZERO), clip("Walk", Vec3::Z * 1.4)]);
-        let database = Arc::new(MotionDatabase::build(&animation).unwrap());
+        let database = Arc::new(MotionDatabase::build(&animation, &[]).unwrap());
+        let play = Arc::new(StatePlay::own(Arc::new(animation.clone()), database.clone()));
         let matcher = MotionMatcher::default();
         let mut state = MotionMatcherState::default();
-        drive(&mut state, &matcher, &animation, &database, 1.5, Vec3::Z * 1.6);
+        drive(&mut state, &matcher, &play, 1.5, Vec3::Z * 1.6);
         assert!((state.rate() - 1.6 / 1.4).abs() < 0.02, "a little faster: {}", state.rate());
         let mut steady = matcher.clone();
         steady.match_speed = false;
-        drive(&mut state, &steady, &animation, &database, 0.1, Vec3::Z * 1.6);
+        drive(&mut state, &steady, &play, 0.1, Vec3::Z * 1.6);
         assert_eq!(state.rate(), 1.0);
     }
 
@@ -1125,7 +1205,8 @@ mod tests {
         let Ok(path) = std::env::var("VOXEAR_TEST_MODEL") else { return };
         let model = voxear_render::prepare_model(&path, &mut |file| Ok(std::fs::read(file)?)).unwrap();
         let animation = model.animation().cloned().expect("an animated model");
-        let database = Arc::new(MotionDatabase::build(&animation).expect("a root"));
+        let database = Arc::new(MotionDatabase::build(&animation, &[]).expect("a root"));
+        let play = Arc::new(StatePlay::own(Arc::new(animation.clone()), database.clone()));
         for run in &database.runs {
             let name = &animation.clips[run.clip].name;
             eprintln!("  {name} {:.2}s {:?} loops {}", run.duration(), run.velocity, run.looping);
@@ -1135,12 +1216,9 @@ mod tests {
         for (seconds, velocity) in
             [(1.0, Vec3::ZERO), (2.0, Vec3::Z * 1.4), (2.0, Vec3::Z * 5.0), (1.0, Vec3::ZERO), (2.0, Vec3::X * 3.0)]
         {
-            drive(&mut state, &matcher, &animation, &database, seconds, velocity);
-            let playing: Vec<String> = state
-                .playing(&matcher, &animation)
-                .iter()
-                .map(|&(clip, w)| format!("{} {:.0}%", animation.clips[clip].name, w * 100.0))
-                .collect();
+            drive(&mut state, &matcher, &play, seconds, velocity);
+            let playing: Vec<String> =
+                state.playing().iter().map(|(name, w)| format!("{name} {:.0}%", w * 100.0)).collect();
             eprintln!("{velocity}: {} ×{:.2}", playing.join(", "), state.rate());
         }
         // As an aiming player would, facing ahead: forward, forward-right, right, back-right, back, left.
@@ -1157,7 +1235,7 @@ mod tests {
             aiming.wanted_velocity = Some(velocity);
             at += velocity * DT;
             let placed = Mat4::from_translation(at);
-            let pose = step(&mut player, &aiming, &animation, &database, placed, DT);
+            let pose = step(&mut player, &aiming, &play, placed, DT);
             let bones: Vec<Vec3> = animation
                 .skeleton
                 .model_matrices(&pose)
@@ -1172,10 +1250,10 @@ mod tests {
             }
             before = Some(bones);
             let playing: Vec<String> = player
-                .playing(&matcher, &animation)
+                .playing()
                 .iter()
                 .filter(|(_, w)| *w > 0.05)
-                .map(|&(clip, w)| format!("{} {:.0}%", animation.clips[clip].name, w * 100.0))
+                .map(|(name, w)| format!("{name} {:.0}%", w * 100.0))
                 .collect();
             let now = playing.iter().map(|p| p.split(' ').next().unwrap_or_default()).collect::<Vec<_>>().join("+");
             if now != shown {
@@ -1195,7 +1273,7 @@ mod tests {
             for f in 0..240 {
                 at += Vec3::Z * speed * DT;
                 let placed = Mat4::from_translation(at);
-                let pose = step(&mut state, &asked, &animation, &database, placed, DT);
+                let pose = step(&mut state, &asked, &play, placed, DT);
                 let matrices = animation.skeleton.model_matrices(&pose);
                 let feet: Vec<Vec3> =
                     toes.iter().map(|&t| placed.transform_point3(matrices[t].w_axis.truncate())).collect();

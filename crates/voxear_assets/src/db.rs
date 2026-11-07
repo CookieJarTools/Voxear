@@ -58,6 +58,9 @@ pub enum AssetKind {
     /// works out a surface, moves vertices or takes light, which materials
     /// pick.
     Shader,
+    /// A `.motionset` file: what a character can do, its states' looping
+    /// clips and its actions, for a Motion Matcher to play.
+    MotionSet,
 }
 
 impl AssetKind {
@@ -79,6 +82,7 @@ impl AssetKind {
             "ies" => Self::LightProfile,
             "lighting" => Self::Lighting,
             "shader" => Self::Shader,
+            "motionset" => Self::MotionSet,
             _ => return None,
         })
     }

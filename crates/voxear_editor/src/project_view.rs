@@ -243,6 +243,7 @@ impl Contents {
                 FileKind::Asset(AssetKind::Paths) => "branch",
                 FileKind::Asset(AssetKind::LightProfile) => "light",
                 FileKind::Asset(AssetKind::Shader) => "shader",
+                FileKind::Asset(AssetKind::MotionSet) => "play",
                 FileKind::Asset(AssetKind::Lighting) => "light",
             },
         }

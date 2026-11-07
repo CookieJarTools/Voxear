@@ -425,6 +425,7 @@ fn assets(game: &Game) -> Vec<Entry> {
                 AssetKind::Paths => ("Sound paths", "branch"),
                 AssetKind::LightProfile => ("IES light profile", "light"),
                 AssetKind::Shader => ("Shader", "shader"),
+                AssetKind::MotionSet => ("Motion Set", "play"),
                 AssetKind::Lighting => ("Lighting settings", "light"),
             };
             let (action, key) = match kind {

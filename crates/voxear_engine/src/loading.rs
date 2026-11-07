@@ -409,7 +409,8 @@ fn gather(
                 | AssetKind::Prefab
                 | AssetKind::Material
                 | AssetKind::Sound
-                | AssetKind::Lighting => true,
+                | AssetKind::Lighting
+                | AssetKind::MotionSet => true,
                 // A source model reads its own buffers and images as it is prepared.
                 AssetKind::Model => models.work != ModelWork::Skip && models.cooked.contains(&guid),
                 // Textures load with their models and lights, as light profiles do, scripts load

@@ -509,6 +509,7 @@ fn asset(game: &Game, path: &str) -> (&'static str, String) {
         Some(AssetKind::Paths) => "branch",
         Some(AssetKind::LightProfile) => "light",
         Some(AssetKind::Shader) => "shader",
+        Some(AssetKind::MotionSet) => "play",
         Some(AssetKind::Lighting) => "light",
         None => "obj",
     };

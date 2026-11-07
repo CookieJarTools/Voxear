@@ -405,6 +405,8 @@ pub struct Content {
     clip_settings: HashMap<AssetGuid, ClipSettings>,
     /// Goes up whenever a clip file or its settings change.
     clips_version: u64,
+    /// Motion Sets read, by GUID; `None` for one that could not be.
+    motion_sets: HashMap<AssetGuid, Option<Arc<crate::animation::MotionSet>>>,
     /// Pictures materials read, by GUID and whether they are read as sRGB.
     pictures: HashMap<(AssetGuid, bool), TextureId>,
     /// IES profiles uploaded for lights, by their assets.
@@ -552,6 +554,7 @@ impl Content {
             clip_files: HashMap::new(),
             clip_settings: HashMap::new(),
             clips_version: 0,
+            motion_sets: HashMap::new(),
             pictures: HashMap::new(),
             light_profiles: HashMap::new(),
             shaders: crate::shaders::ShaderRegistry::default(),
@@ -922,6 +925,32 @@ impl Content {
     pub fn forget_clips(&mut self, guid: AssetGuid) {
         self.clip_files.remove(&guid);
         self.clip_settings.remove(&guid);
+        self.clips_version += 1;
+    }
+
+    /// The Motion Set at `guid`, read once.
+    pub fn motion_set(&mut self, guid: AssetGuid) -> Option<Arc<crate::animation::MotionSet>> {
+        if let Some(found) = self.motion_sets.get(&guid) {
+            return found.clone();
+        }
+        let found = self.read_motion_set(guid).map(Arc::new).map_err(|error| {
+            tracing::warn!("could not read the Motion Set {guid}: {error:#}");
+        });
+        self.motion_sets.insert(guid, found.clone().ok());
+        found.ok()
+    }
+
+    fn read_motion_set(&mut self, guid: AssetGuid) -> Result<crate::animation::MotionSet> {
+        let entry = self.db.get(guid).with_context(|| format!("no asset with GUID {guid}"))?;
+        ensure!(entry.kind == AssetKind::MotionSet, "{} is not a Motion Set", entry.path);
+        let path = entry.path.clone();
+        Ok(toml::from_str(&self.read_text(&path)?).with_context(|| format!("reading {path}"))?)
+    }
+
+    /// Forgets a Motion Set, read again when next asked for, as after it
+    /// changed.
+    pub fn forget_motion_set(&mut self, guid: AssetGuid) {
+        self.motion_sets.remove(&guid);
         self.clips_version += 1;
     }
 

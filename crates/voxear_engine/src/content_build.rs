@@ -341,7 +341,8 @@ pub fn server_reads(kind: AssetKind) -> bool {
         | AssetKind::Model
         | AssetKind::InputActions
         | AssetKind::Strings
-        | AssetKind::AssetTable => true,
+        | AssetKind::AssetTable
+        | AssetKind::MotionSet => true,
         AssetKind::Texture
         | AssetKind::Material
         | AssetKind::Ui
@@ -557,7 +558,8 @@ fn find_needs(db: &AssetDb, guid: AssetGuid, kind: AssetKind, path: &str) -> Res
         | AssetKind::Prefab
         | AssetKind::Material
         | AssetKind::AssetTable
-        | AssetKind::Lighting => {
+        | AssetKind::Lighting
+        | AssetKind::MotionSet => {
             let text = std::fs::read_to_string(db.file(path))?;
             let table: toml::Table = toml::from_str(&text)?;
             for (key, value) in &table {

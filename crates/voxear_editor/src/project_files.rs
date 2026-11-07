@@ -99,10 +99,11 @@ pub enum NewFile {
     Shader,
     UnlitShader,
     Script,
+    MotionSet,
 }
 
 impl NewFile {
-    pub const ALL: [NewFile; 8] = [
+    pub const ALL: [NewFile; 9] = [
         NewFile::Folder,
         NewFile::Scene,
         NewFile::Level,
@@ -111,6 +112,7 @@ impl NewFile {
         NewFile::Shader,
         NewFile::UnlitShader,
         NewFile::Script,
+        NewFile::MotionSet,
     ];
 
     /// As the menu offers it.
@@ -124,6 +126,7 @@ impl NewFile {
             NewFile::Shader => "New Shader",
             NewFile::UnlitShader => "New Unlit Shader",
             NewFile::Script => "New C# Script",
+            NewFile::MotionSet => "New Motion Set",
         }
     }
 
@@ -139,6 +142,7 @@ impl NewFile {
             NewFile::Shader => ("New Shader", ".shader"),
             NewFile::UnlitShader => ("New Unlit Shader", ".shader"),
             NewFile::Script => ("NewBehaviour", ".cs"),
+            NewFile::MotionSet => ("New Motion Set", ".motionset"),
         }
     }
 }
@@ -159,10 +163,14 @@ pub fn create(root: &Path, folder: &str, kind: NewFile, namespace: &str) -> Resu
         NewFile::Shader => std::fs::write(&file, shader(NEW_SHADER, &name[..name.len() - extension.len()])),
         NewFile::UnlitShader => std::fs::write(&file, shader(NEW_UNLIT_SHADER, &name[..name.len() - extension.len()])),
         NewFile::Script => std::fs::write(&file, script(namespace, &name[..name.len() - extension.len()])),
+        NewFile::MotionSet => std::fs::write(&file, NEW_MOTION_SET),
     }
     .with_context(|| format!("making {}", file.display()))?;
     Ok(path)
 }
+
+/// A new Motion Set: a state to walk about in, its clips to be picked.
+const NEW_MOTION_SET: &str = "# Voxear Motion Set: what a character can do, its states' looping clips and its actions.\n[[state]]\nname = \"Walking\"\nrole = \"grounded\"\n";
 
 /// A new shader, its struct named for its file: the file's name without
 /// what a name in code cannot have.

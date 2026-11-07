@@ -320,7 +320,7 @@ pub enum Prop {
     /// A Motion Matcher's settings: the clip it stands with and below what
     /// speed, how often it searches, how its clips fade and pace, and how
     /// its body turns.
-    MatcherIdle,
+    MatcherMotionSet,
     MatcherIdleSpeed,
     MatcherSearchEvery,
     MatcherBlend,
@@ -328,6 +328,7 @@ pub enum Prop {
     MatcherTurnToMovement,
     MatcherLegTurn,
     MatcherMatchSpeed,
+    MatcherRootMotion,
     MatcherFootLocking,
     MatcherDebug,
     /// A Bone Attachment's bone, where it sits from it, whether it turns
@@ -636,7 +637,7 @@ impl Prop {
             | Prop::AnimatorLooping
             | Prop::AnimatorBlend
             | Prop::AnimatorRootMotion => Part::Animator,
-            Prop::MatcherIdle
+            Prop::MatcherMotionSet
             | Prop::MatcherIdleSpeed
             | Prop::MatcherSearchEvery
             | Prop::MatcherBlend
@@ -644,6 +645,7 @@ impl Prop {
             | Prop::MatcherTurnToMovement
             | Prop::MatcherLegTurn
             | Prop::MatcherMatchSpeed
+            | Prop::MatcherRootMotion
             | Prop::MatcherFootLocking
             | Prop::MatcherDebug => Part::MotionMatcher,
             Prop::AttachBone | Prop::AttachOffset | Prop::AttachTurn | Prop::AttachHide => Part::BoneAttachment,
@@ -878,7 +880,7 @@ impl Prop {
             Prop::AnimatorLooping => "looping",
             Prop::AnimatorBlend => "blend",
             Prop::AnimatorRootMotion => "root_motion",
-            Prop::MatcherIdle => "idle",
+            Prop::MatcherMotionSet => "motion_set",
             Prop::MatcherIdleSpeed => "idle_speed",
             Prop::MatcherSearchEvery => "search_every",
             Prop::MatcherBlend => "blend",
@@ -886,6 +888,7 @@ impl Prop {
             Prop::MatcherTurnToMovement => "turn_to_movement",
             Prop::MatcherLegTurn => "leg_turn",
             Prop::MatcherMatchSpeed => "match_speed",
+            Prop::MatcherRootMotion => "root_motion",
             Prop::MatcherFootLocking => "foot_locking",
             Prop::MatcherDebug => "debug",
             Prop::AttachBone => "bone",
@@ -1283,7 +1286,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             Prop::AnimatorRootMotion,
         ],
         Part::MotionMatcher => vec![
-            Prop::MatcherIdle,
+            Prop::MatcherMotionSet,
             Prop::MatcherIdleSpeed,
             Prop::MatcherSearchEvery,
             Prop::MatcherBlend,
@@ -1291,6 +1294,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             Prop::MatcherTurnToMovement,
             Prop::MatcherLegTurn,
             Prop::MatcherMatchSpeed,
+            Prop::MatcherRootMotion,
             Prop::MatcherFootLocking,
             Prop::MatcherDebug,
         ],
@@ -1616,7 +1620,8 @@ pub fn label(prop: &Prop) -> String {
         Prop::AnimatorLooping => "Looping",
         Prop::AnimatorBlend => "Blend Time",
         Prop::AnimatorRootMotion => "Root Motion",
-        Prop::MatcherIdle => "Idle Clip",
+        Prop::MatcherMotionSet => "Motion Set",
+        Prop::MatcherRootMotion => "Root Motion",
         Prop::MatcherIdleSpeed => "Idle Speed",
         Prop::MatcherSearchEvery => "Search Every",
         Prop::MatcherBlend => "Blend Time",
@@ -2287,14 +2292,10 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::AttachOffset => Value::Vector(world.get::<BoneAttachment>(entity)?.offset.to_vec()),
         Prop::AttachTurn => Value::Toggle(world.get::<voxear_engine::animation::BoneAttachment>(entity)?.turn),
         Prop::AttachHide => Value::Toggle(world.get::<voxear_engine::animation::BoneAttachment>(entity)?.hide),
-        Prop::MatcherIdle => {
-            // The model's clips, none first, standing with the first loop that stands still.
-            let matcher = world.get::<voxear_engine::animation::MotionMatcher>(entity)?;
-            let model = world.get::<voxear_render::ModelRenderer>(entity).and_then(|m| m.animation.clone());
-            let mut names = vec!["None".to_string()];
-            names.extend(model.iter().flat_map(|a| a.clips.iter().map(|clip| clip.name.clone())));
-            let index = names.iter().skip(1).position(|name| *name == matcher.idle).map_or(0, |i| i + 1);
-            Value::Choice(index, names)
+        Prop::MatcherMotionSet => {
+            let set = &world.get::<voxear_engine::animation::MotionMatcher>(entity)?.motion_set;
+            let guid = game.content.parse(set).ok().and_then(|reference| reference.guid());
+            Value::Asset(guid.and_then(|guid| game.content.db().get(guid)).map_or("None".into(), |e| e.path.clone()))
         }
         Prop::MatcherIdleSpeed
         | Prop::MatcherSearchEvery
@@ -2303,7 +2304,8 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         | Prop::MatcherTurnToMovement
             | Prop::MatcherLegTurn
         | Prop::MatcherMatchSpeed
-            | Prop::MatcherFootLocking
+        | Prop::MatcherRootMotion
+        | Prop::MatcherFootLocking
         | Prop::MatcherDebug => {
             matcher_value(world.get::<voxear_engine::animation::MotionMatcher>(entity)?, prop)?
         }
@@ -2615,6 +2617,17 @@ pub fn pick(
                 false => light.profile = texture,
             })
         }
+        (Prop::MatcherMotionSet, Pick::Asset(choice)) => {
+            let set = match choice {
+                None => String::new(),
+                Some(path) => match game.content.parse(path) {
+                    Ok(reference) => reference.to_string(),
+                    Err(_) => return false,
+                },
+            };
+            let put = |matcher: &mut voxear_engine::animation::MotionMatcher| matcher.motion_set = set;
+            with(&mut game.engine.world, entity, put)
+        }
         (Prop::AnimatorClip, Pick::Asset(choice)) => {
             let clip = match choice {
                 None => String::new(),
@@ -2835,6 +2848,11 @@ pub fn choices(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) ->
         Prop::Sound => {
             let kind = voxear_engine::script_types::FieldKind::Asset { asset: "Voxear.Sound".into() };
             return fields::asset_choices(game, &kind);
+        }
+        Prop::MatcherMotionSet => {
+            let mut found = vec![("None".to_string(), Pick::Asset(None))];
+            found.extend(fields::assets_of(game, Some(AssetKind::MotionSet)));
+            return found;
         }
         Prop::AnimatorClip => {
             let mut found = vec![("None".to_string(), Pick::Asset(None))];
@@ -3207,12 +3225,6 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         }
         (Prop::AttachTurn, Value::Toggle(on)) => with(world, entity, |it: &mut BoneAttachment| it.turn = on),
         (Prop::AttachHide, Value::Toggle(on)) => with(world, entity, |it: &mut BoneAttachment| it.hide = on),
-        (Prop::MatcherIdle, Value::Choice(index, _)) => {
-            let model = world.get::<voxear_render::ModelRenderer>(entity).and_then(|m| m.animation.clone());
-            let name = index.checked_sub(1).and_then(|i| model?.clips.get(i).map(|clip| clip.name.clone()));
-            let set = |matcher: &mut voxear_engine::animation::MotionMatcher| matcher.idle = name.unwrap_or_default();
-            with(world, entity, set)
-        }
         (prop, value) if prop.part() == Part::MotionMatcher => {
             let set = |matcher: &mut voxear_engine::animation::MotionMatcher| set_matcher(matcher, prop, value);
             with(world, entity, set)
@@ -3455,6 +3467,7 @@ fn matcher_value(matcher: &voxear_engine::animation::MotionMatcher, prop: &Prop)
     Some(match prop {
         Prop::MatcherTurnToMovement => Value::Toggle(matcher.turn_to_movement),
         Prop::MatcherMatchSpeed => Value::Toggle(matcher.match_speed),
+        Prop::MatcherRootMotion => Value::Toggle(matcher.root_motion),
         Prop::MatcherFootLocking => Value::Toggle(matcher.foot_locking),
         Prop::MatcherDebug => Value::Toggle(matcher.debug),
         _ => Value::Number(*matcher_number(&mut matcher.clone(), prop)?),
@@ -3474,6 +3487,7 @@ fn set_matcher(matcher: &mut voxear_engine::animation::MotionMatcher, prop: &Pro
     match (prop, value) {
         (Prop::MatcherTurnToMovement, Value::Toggle(on)) => matcher.turn_to_movement = on,
         (Prop::MatcherMatchSpeed, Value::Toggle(on)) => matcher.match_speed = on,
+        (Prop::MatcherRootMotion, Value::Toggle(on)) => matcher.root_motion = on,
         (Prop::MatcherFootLocking, Value::Toggle(on)) => matcher.foot_locking = on,
         (Prop::MatcherDebug, Value::Toggle(on)) => matcher.debug = on,
         (_, Value::Number(n)) => {

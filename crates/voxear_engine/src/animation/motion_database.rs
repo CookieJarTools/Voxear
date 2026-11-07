@@ -9,6 +9,7 @@
 
 use std::sync::{Arc, Weak};
 
+use voxear_assets::{ClipImport, ClipLoop, ClipMotion};
 use voxear_core::math::{Mat4, Quat, Vec3};
 use voxear_ecs::World;
 use voxear_render::{CLIP_RATE, Clip, ModelAnimation, Skeleton};
@@ -180,9 +181,11 @@ pub struct MotionDatabase {
 }
 
 impl MotionDatabase {
-    /// Describes every clip of `animation` of two frames or more; `None`
-    /// for a model with no bones.
-    pub fn build(animation: &ModelAnimation) -> Option<Self> {
+    /// Describes every clip of `animation` of two frames or more, each as
+    /// its settings in `settings`, by its place, say it moves and loops, or
+    /// as worked out from it past their end; `None` for a model with no
+    /// bones.
+    pub fn build(animation: &ModelAnimation, settings: &[ClipImport]) -> Option<Self> {
         let skeleton = &animation.skeleton;
         let root = root_bone(skeleton)?;
         let rest_root = skeleton.model_matrices(&skeleton.rest())[root].to_scale_rotation_translation().1;
@@ -221,19 +224,28 @@ impl MotionDatabase {
             let mut run =
                 ClipRun { clip: index, start, frames: clip.frames, looping: false, velocity: Vec3::ZERO, steady: true };
             let travelled = database.grounds[start].to(database.grounds[start + clip.frames - 1]).position;
-            run.velocity = travelled / run.duration().max(1e-3);
-            // A clip made to stay in place moves as its planted foot slides back.
-            if run.velocity.length() < STILL
-                && let Some(slide) = slide(&planted)
-            {
-                run.velocity = -slide;
+            let rooted = travelled / run.duration().max(1e-3);
+            let set = settings.get(index).copied().unwrap_or_default();
+            // A clip made to stay in place moves as its planted foot slides back; one set to, as it is set to.
+            let carried = match set.motion {
+                ClipMotion::Auto if rooted.length() < STILL => slide(&planted).map(|slide| -slide),
+                ClipMotion::Auto | ClipMotion::Root => None,
+                ClipMotion::Feet => Some(slide(&planted).map_or(Vec3::ZERO, |slide| -slide)),
+                ClipMotion::Set => Some(Quat::from_rotation_y(set.direction.to_radians()) * Vec3::Z * set.speed),
+            };
+            run.velocity = carried.unwrap_or(rooted);
+            if let Some(velocity) = carried {
                 let first = database.grounds[start];
                 for frame in 0..clip.frames {
-                    let carried = Ground { position: run.velocity * (frame as f32 / CLIP_RATE), yaw: 0.0 };
-                    database.grounds[start + frame] = first.then(carried);
+                    let along = Ground { position: velocity * (frame as f32 / CLIP_RATE), yaw: 0.0 };
+                    database.grounds[start + frame] = first.then(along);
                 }
             }
-            run.looping = loops(clip, root) && database.steps_alike(&run);
+            run.looping = match set.looping {
+                ClipLoop::Auto => loops(clip, root) && database.steps_alike(&run),
+                ClipLoop::On => true,
+                ClipLoop::Off => false,
+            };
             run.steady = database.steady(&run);
             let contacts = database.contacts_of(&run, &planted);
             database.contacts.extend(contacts);
@@ -464,7 +476,8 @@ struct Databases {
     built: Vec<(Weak<ModelAnimation>, Option<Arc<MotionDatabase>>)>,
 }
 
-/// The database for a model's clips, built the first time it is asked for.
+/// The database for a model's own clips, built the first time it is asked
+/// for.
 pub fn database_for(world: &mut World, animation: &Arc<ModelAnimation>) -> Option<Arc<MotionDatabase>> {
     if world.resource::<Databases>().is_none() {
         world.insert_resource(Databases::default());
@@ -475,7 +488,7 @@ pub fn database_for(world: &mut World, animation: &Arc<ModelAnimation>) -> Optio
     if let Some((_, database)) = found {
         return database.clone();
     }
-    let database = MotionDatabase::build(animation).map(Arc::new);
+    let database = MotionDatabase::build(animation, &[]).map(Arc::new);
     databases.built.push((Arc::downgrade(animation), database.clone()));
     database
 }

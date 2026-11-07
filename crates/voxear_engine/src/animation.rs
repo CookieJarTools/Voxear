@@ -11,8 +11,10 @@ mod bone_attachment;
 mod clips;
 mod motion_database;
 mod motion_matching;
+mod motion_set;
 mod retarget;
 mod settling;
+mod states;
 
 use std::sync::Arc;
 
@@ -25,7 +27,9 @@ use voxear_scene::{Destroying, Transform};
 pub use bone_attachment::{BoneAttachment, attach_to_bones, register as register_bone_attachments};
 pub use clips::{CLIP_PART, ClipSource, Clips, give_clips};
 pub use motion_database::MotionDatabase;
-pub use motion_matching::{MotionMatcher, MotionMatcherState, match_motion, register};
+pub use motion_matching::{MotionMatcher, MotionMatcherState, StateChoice, match_motion, register};
+pub use states::StatePlay;
+pub use motion_set::{ActionMark, ActionMovement, BodyPart, MotionAction, MotionSet, MotionState, StateClip, StateRole};
 use settling::Settling;
 
 /// Plays a clip on its Obj's model.

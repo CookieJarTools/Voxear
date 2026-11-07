@@ -1,8 +1,9 @@
 //! Clips as assets: a clip is a part of the model file that holds it,
 //! referenced as `Models/Walks.glb#clip:Walk_Loop`, as meshes and materials
-//! are. The world's Animators name the clips they play; before each tick the
-//! game resolves those it has not yet (`give_clips`), and the animation code
-//! reads them from [`Clips`], made to fit each character's own skeleton by
+//! are. The world's Animators name the clips they play, and its Motion
+//! Matchers the Motion Sets they play; before each tick the game resolves
+//! those it has not yet (`give_clips`), and the animation code reads them
+//! from [`Clips`], made to fit each character's own skeleton by
 //! [`retarget`](super::retarget).
 
 use std::{collections::HashMap, sync::Arc};
@@ -11,7 +12,7 @@ use voxear_assets::ClipImport;
 use voxear_ecs::World;
 use voxear_render::{Clip, ModelAnimation};
 
-use super::Animator;
+use super::{Animator, MotionMatcher, MotionSet};
 use crate::content::Content;
 
 /// What a clip reference's part starts with.
@@ -41,22 +42,41 @@ pub struct Clips {
     /// its clip settings change, they are resolved again.
     version: u64,
     found: HashMap<String, Option<ClipSource>>,
+    /// Motion Sets, by reference.
+    sets: HashMap<String, Option<Arc<MotionSet>>>,
 }
 
 impl Clips {
     pub fn get(&self, reference: &str) -> Option<&ClipSource> {
         self.found.get(reference)?.as_ref()
     }
+
+    pub fn set(&self, reference: &str) -> Option<&Arc<MotionSet>> {
+        self.sets.get(reference)?.as_ref()
+    }
+
+    /// Goes up as the content's clips' version does: what is made from
+    /// clips is made again when it changes.
+    pub fn version(&self) -> u64 {
+        self.version
+    }
 }
 
-/// Resolves the clips the world's Objs play that it has not yet, and every
-/// one again after a clip file or its settings changed.
+/// Resolves the clips and Motion Sets the world's Objs play that it has
+/// not yet, and every one again after a clip file, its settings or a set
+/// changed.
 pub fn give_clips(world: &mut World, content: &mut Content) {
-    let wanted: Vec<String> = world
+    let mut wanted: Vec<String> = world
         .query_ref::<&Animator>()
         .into_iter()
         .map(|animator| animator.clip.clone())
         .filter(|clip| !clip.is_empty())
+        .collect();
+    let sets: Vec<String> = world
+        .query_ref::<&MotionMatcher>()
+        .into_iter()
+        .map(|matcher| matcher.motion_set.clone())
+        .filter(|set| !set.is_empty())
         .collect();
     if world.resource::<Clips>().is_none() {
         world.insert_resource(Clips::default());
@@ -64,7 +84,15 @@ pub fn give_clips(world: &mut World, content: &mut Content) {
     let Some(clips) = world.resource_mut::<Clips>() else { return };
     if clips.version != content.clips_version() {
         clips.found.clear();
+        clips.sets.clear();
         clips.version = content.clips_version();
+    }
+    for reference in sets {
+        let set = clips.sets.entry(reference.clone()).or_insert_with(|| {
+            let guid = content.parse(&reference).ok().and_then(|parsed| parsed.guid());
+            guid.and_then(|guid| content.motion_set(guid))
+        });
+        wanted.extend(set.iter().flat_map(|set| set.clips()).map(str::to_string));
     }
     for reference in wanted {
         if clips.found.contains_key(&reference) {

@@ -1287,6 +1287,7 @@ fn kind_name(kind: ItemKind) -> &'static str {
         ItemKind::Asset(AssetKind::LightProfile) => "IES light profile",
         ItemKind::Asset(AssetKind::Lighting) => "Lighting settings",
         ItemKind::Asset(AssetKind::Shader) => "Shader",
+        ItemKind::Asset(AssetKind::MotionSet) => "Motion Set",
     }
 }
 
@@ -1308,6 +1309,7 @@ fn icon(kind: ItemKind) -> &'static str {
         ItemKind::Asset(AssetKind::LightProfile) => "light",
         ItemKind::Asset(AssetKind::Lighting) => "light",
         ItemKind::Asset(AssetKind::Shader) => "shader",
+        ItemKind::Asset(AssetKind::MotionSet) => "play",
     }
 }
 

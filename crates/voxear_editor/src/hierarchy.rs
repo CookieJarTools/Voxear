@@ -41,6 +41,7 @@ use voxear_ecs::{Entity, World};
 use voxear_engine::{
     Content, EditBehaviours, Levels,
     audio::AudioSource,
+    modules::Modules,
     prefab::{FromPrefab, PrefabInstance},
     script_types::ScriptTypes,
 };
@@ -233,6 +234,8 @@ pub struct Hierarchy {
     part_buttons: Rc<RefCell<Vec<(NodeId, Option<u64>)>>>,
     /// The Objs whose models' parts are listed.
     showing_parts: HashSet<Entity>,
+    /// The project's modules, whose Objs the menu offers.
+    modules: Modules,
 }
 
 impl Hierarchy {
@@ -243,7 +246,8 @@ impl Hierarchy {
         ui.bind_tree(tree, Items(shown.clone(), pinged.clone(), part_buttons.clone()));
         ui.set_rows_draggable(tree, true);
         let (opened, menu, showing_parts) = (HashSet::new(), Vec::new(), HashSet::new());
-        Self { tree, filter, add, shown, pinged, ping_left: 0.0, opened, menu, part_buttons, showing_parts }
+        let modules = Modules::all();
+        Self { tree, filter, add, shown, pinged, ping_left: 0.0, opened, menu, part_buttons, showing_parts, modules }
     }
 
     /// What the + button, a context click or a dropped row asks for.
@@ -376,9 +380,11 @@ impl Hierarchy {
             items.push(MenuItem::new(&format!("New in {name}")).enabled(false));
             self.menu.push(None);
         }
-        for (kind, (label, ..)) in NEW_OBJS.iter().enumerate() {
-            items.push(MenuItem::new(label));
-            self.menu.push(Some(ObjAction::Create { kind, parent, scene }));
+        for (kind, (label, .., module)) in NEW_OBJS.iter().enumerate() {
+            if module.is_none_or(|module| self.modules.has(module)) {
+                items.push(MenuItem::new(label));
+                self.menu.push(Some(ObjAction::Create { kind, parent, scene }));
+            }
         }
         ui.open_menu(owner, at, &items);
     }
@@ -386,6 +392,7 @@ impl Hierarchy {
     /// Shows the world as it is now, if anything changed. `types` say which
     /// scripts are `IInstance`s while their behaviours are not running.
     pub fn update(&mut self, ui: &mut Ui, world: &World, (levels, content): (&Levels, &Content), types: &ScriptTypes) {
+        self.modules = world.resource::<Modules>().copied().unwrap_or_else(Modules::all);
         let filter = ui.text(self.filter).to_lowercase();
         self.showing_parts.retain(|&owner| world.has::<ModelRenderer>(owner));
         let snapshot = snapshot(world, (levels, content), types, (&filter, &self.showing_parts));

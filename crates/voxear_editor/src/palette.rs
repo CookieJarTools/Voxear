@@ -18,7 +18,7 @@ use std::{cell::RefCell, rc::Rc};
 
 use voxear_assets::AssetKind;
 use voxear_ecs::Entity;
-use voxear_engine::Game;
+use voxear_engine::{Game, modules::Modules};
 use voxear_scene::{Destroying, EditorOnly, Name};
 use voxear_ui::{ItemFns, NodeId, Ui};
 
@@ -334,7 +334,7 @@ pub fn command_titles(sources: &Sources) -> Vec<String> {
 /// Everything the palette offers: the commands first, those added by code,
 /// the settings, then Objs, levels, assets, and the VoxDocs pages.
 fn gather(sources: &Sources) -> Vec<Entry> {
-    let mut every = commands(sources.playing);
+    let mut every = commands(sources.playing, &sources.game.project.modules());
     every.extend(sources.added.iter().map(|added| Entry {
         title: added.title.clone(),
         detail: added.keys.clone(),
@@ -439,7 +439,7 @@ fn assets(game: &Game) -> Vec<Entry> {
 }
 
 /// The editor's commands, with the keys that do the same.
-fn commands(playing: bool) -> Vec<Entry> {
+fn commands(playing: bool, modules: &Modules) -> Vec<Entry> {
     let command = |title: &str, keys: &str, icon: &'static str, action: PaletteAction, key: String| Entry {
         title: title.to_string(),
         detail: keys.to_string(),
@@ -472,7 +472,10 @@ fn commands(playing: bool) -> Vec<Entry> {
     for (index, (name, keys, icon)) in tools.into_iter().enumerate() {
         commands.push(command(&format!("{name} tool"), keys, icon, PaletteAction::Tool(index), format!("tool:{name}")));
     }
-    for (kind, (label, ..)) in NEW_OBJS.iter().enumerate() {
+    for (kind, (label, .., module)) in NEW_OBJS.iter().enumerate() {
+        if module.is_some_and(|module| !modules.has(module)) {
+            continue;
+        }
         commands.push(command(
             &format!("New {label}"),
             "",

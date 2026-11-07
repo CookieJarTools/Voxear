@@ -16,6 +16,7 @@ use voxear_core::math::{Mat4, Vec3};
 use voxear_ecs::{Entity, World};
 use voxear_engine::{
     Game, ObjPath, Tracked,
+    modules::Module,
     prefab::{PREFAB_FORMAT, PrefabFile},
     scene_file::{self, ModelSource, PartData, SceneFile},
 };
@@ -25,25 +26,32 @@ use voxear_scene::{Destroying, Name, Parent, Transform};
 use crate::project_view::AssetPart;
 
 /// What the Hierarchy's + makes, as Unity's GameObject menu: what the menu
-/// says, the new Obj's name, and the rest of its scene file entry.
-pub const NEW_OBJS: [(&str, &str, &str); 17] = [
-    ("Empty", "Obj", ""),
-    ("Cube", "Cube", "[obj.renderer]\nmesh = \"builtin:cube\""),
-    ("Sphere", "Sphere", "[obj.renderer]\nmesh = \"builtin:sphere\""),
-    ("Plane", "Plane", "[obj.renderer]\nmesh = \"builtin:plane\""),
-    ("Directional Light", "Directional Light", "rotation = [50.0, -30.0, 0.0]\n[obj.light]\ntype = \"directional\""),
-    ("Point Light", "Point Light", "[obj.light]\ntype = \"point\""),
-    ("Spot Light", "Spot Light", "rotation = [90.0, 0.0, 0.0]\n[obj.light]\ntype = \"spot\""),
-    ("Rectangle Light", "Rectangle Light", "rotation = [90.0, 0.0, 0.0]\n[obj.light]\ntype = \"rectangle\""),
-    ("Disc Light", "Disc Light", "rotation = [90.0, 0.0, 0.0]\n[obj.light]\ntype = \"disc\""),
-    ("Tube Light", "Tube Light", "[obj.light]\ntype = \"tube\""),
-    ("Camera", "Camera", "[obj.camera]"),
-    ("Post Volume", "Post Volume", "scale = [10.0, 4.0, 10.0]\n[obj.post_volume]"),
-    ("Audio Source", "Audio Source", "[obj.audio]"),
-    ("Particle System", "Particle System", "[obj.particles]"),
-    ("Smoke", "Smoke", "[obj.smoke]"),
-    ("Mist", "Mist", "[obj.mist]"),
-    ("Car", "Car", CAR),
+/// says, the new Obj's name, the rest of its scene file entry, and the
+/// module it needs, without which the menus leave it out.
+pub const NEW_OBJS: [(&str, &str, &str, Option<Module>); 18] = [
+    ("Empty", "Obj", "", None),
+    ("Cube", "Cube", "[obj.renderer]\nmesh = \"builtin:cube\"", None),
+    ("Sphere", "Sphere", "[obj.renderer]\nmesh = \"builtin:sphere\"", None),
+    ("Plane", "Plane", "[obj.renderer]\nmesh = \"builtin:plane\"", None),
+    (
+        "Directional Light",
+        "Directional Light",
+        "rotation = [50.0, -30.0, 0.0]\n[obj.light]\ntype = \"directional\"",
+        None,
+    ),
+    ("Point Light", "Point Light", "[obj.light]\ntype = \"point\"", None),
+    ("Spot Light", "Spot Light", "rotation = [90.0, 0.0, 0.0]\n[obj.light]\ntype = \"spot\"", None),
+    ("Rectangle Light", "Rectangle Light", "rotation = [90.0, 0.0, 0.0]\n[obj.light]\ntype = \"rectangle\"", None),
+    ("Disc Light", "Disc Light", "rotation = [90.0, 0.0, 0.0]\n[obj.light]\ntype = \"disc\"", None),
+    ("Tube Light", "Tube Light", "[obj.light]\ntype = \"tube\"", None),
+    ("Camera", "Camera", "[obj.camera]", None),
+    ("Post Volume", "Post Volume", "scale = [10.0, 4.0, 10.0]\n[obj.post_volume]", None),
+    ("Audio Source", "Audio Source", "[obj.audio]", None),
+    ("Particle System", "Particle System", "[obj.particles]", None),
+    ("Smoke", "Smoke", "[obj.smoke]", None),
+    ("Mist", "Mist", "[obj.mist]", None),
+    ("Car", "Car", CAR, None),
+    ("Rifle", "Rifle", RIFLE, Some(Module::Guns)),
 ];
 
 /// A car ready to drive: a body that physics moves, with a Vehicle, and
@@ -128,6 +136,117 @@ parent = 6
 scale = [0.25, 0.7, 0.7]
 [obj.renderer]
 mesh = "builtin:sphere"
+"#;
+
+/// A bolt-action rifle to make other guns from: a Gun with the preset's
+/// sockets, and blocks where its parts go, each of which can have its look
+/// swapped for a model's. The bolt turns up and slides back, a stripper
+/// clip shows while a hand has it, and spent cases are copied from the
+/// case.
+const RIFLE: &str = r#"[obj.gun]
+kind = "bolt_action_rifle"
+
+[[obj]]
+id = 2
+name = "Stock"
+parent = 1
+position = [0.0, -0.03, -0.19]
+scale = [0.045, 0.12, 0.34]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.36, 0.22, 0.12], roughness = 0.6 }
+
+[[obj]]
+id = 3
+name = "Fore-end"
+parent = 1
+position = [0.0, -0.005, 0.32]
+scale = [0.045, 0.06, 0.72]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.36, 0.22, 0.12], roughness = 0.6 }
+
+[[obj]]
+id = 4
+name = "Receiver"
+parent = 1
+position = [0.0, 0.04, 0.08]
+scale = [0.034, 0.034, 0.22]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.12, 0.12, 0.13], metallic = 1.0, roughness = 0.45 }
+
+[[obj]]
+id = 5
+name = "Barrel"
+parent = 1
+position = [0.0, 0.045, 0.585]
+scale = [0.018, 0.018, 0.81]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.12, 0.12, 0.13], metallic = 1.0, roughness = 0.45 }
+
+[[obj]]
+id = 6
+name = "Bolt"
+parent = 1
+position = [0.045, 0.05, 0.1]
+scale = [0.06, 0.015, 0.015]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.12, 0.12, 0.13], metallic = 1.0, roughness = 0.45 }
+[obj.gun_part]
+role = "bolt"
+handle = [0.075, 0.05, 0.1]
+motion = { type = "turn", axis = [0.0, 0.0, 1.0], pivot = [0.0, 0.05, 0.0], angle = 80.0 }
+then = { type = "slide", axis = [0.0, 0.0, -1.0], travel = 0.1 }
+
+[[obj]]
+id = 7
+name = "Rear Sight"
+parent = 1
+position = [0.0, 0.065, 0.2]
+scale = [0.03, 0.015, 0.01]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.12, 0.12, 0.13], roughness = 0.6 }
+
+[[obj]]
+id = 8
+name = "Front Sight"
+parent = 1
+position = [0.0, 0.07, 0.96]
+scale = [0.006, 0.03, 0.006]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.12, 0.12, 0.13], roughness = 0.6 }
+
+[[obj]]
+id = 9
+name = "Clip"
+parent = 1
+position = [0.0, 0.1, 0.12]
+scale = [0.012, 0.05, 0.06]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.7, 0.6, 0.3], metallic = 1.0, roughness = 0.4 }
+[obj.gun_part]
+role = "clip"
+handle = [0.0, 0.13, 0.12]
+motion = { type = "slide", axis = [0.0, -1.0, 0.0], travel = 0.25 }
+
+[[obj]]
+id = 10
+name = "Case"
+parent = 1
+position = [0.03, 0.05, 0.12]
+scale = [0.011, 0.011, 0.05]
+[obj.renderer]
+mesh = "builtin:cube"
+material = { color = [0.85, 0.65, 0.3], metallic = 1.0, roughness = 0.35 }
+[obj.gun_part]
+role = "case"
+handle = [0.03, 0.05, 0.12]
 "#;
 
 /// Objs taken out of the world, ready to bring back exactly: the top one,
@@ -237,7 +356,7 @@ pub fn create(
     scene: Option<AssetGuid>,
     position: Vec3,
 ) -> Result<Entity> {
-    let (_, name, rest) = NEW_OBJS[kind.min(NEW_OBJS.len() - 1)];
+    let (_, name, rest, _) = NEW_OBJS[kind.min(NEW_OBJS.len() - 1)];
     let mut file = scene_file::parse(&format!("format = 1\n\n[[obj]]\nid = 1\nname = \"{name}\"\n{rest}\n"), name)?;
     if parent.is_none() {
         file.objs[0].position = Some(position.to_array());
@@ -889,6 +1008,33 @@ pub(crate) mod tests {
             assert_eq!(text.matches(&format!("id = {id}\n")).count(), 1, "one Obj has id {id}:\n{text}");
         }
         assert!(text.contains("name = \"Point Light\""));
+    }
+
+    #[test]
+    fn every_new_obj_is_made_and_the_rifle_has_what_a_bolt_action_needs() {
+        let (_dir, mut game) = game();
+        for kind in 0..NEW_OBJS.len() {
+            create(&mut game, None, kind, None, None, Vec3::ZERO).unwrap();
+        }
+        let world = &game.engine.world;
+        let rifle = named(&game, "Rifle").unwrap();
+        let gun = world.get::<voxear_engine::guns::Gun>(rifle).unwrap().clone();
+        let missing = voxear_engine::guns::mechanism::missing_parts(world, rifle, gun.kind);
+        assert!(missing.is_empty(), "every part: {missing:?}");
+        // The blocks are where the preset's sockets say: the butt at the stock's back, the muzzle at the barrel's
+        // end, the front sight's top on the sight line.
+        let block = |name: &str| {
+            let entity =
+                world.query_ref::<(Entity, &Name, &Parent)>().into_iter().find(|(_, n, p)| n.0 == name && p.0 == rifle);
+            let transform = world.get::<Transform>(entity.unwrap().0).unwrap();
+            (transform.position, transform.scale)
+        };
+        let ((stock, stock_size), (barrel, barrel_size)) = (block("Stock"), block("Barrel"));
+        assert!((stock.z - stock_size.z / 2.0 - gun.butt[2]).abs() < 0.01, "butt: {stock} {stock_size}");
+        assert!((barrel.z + barrel_size.z / 2.0 - gun.muzzle[2]).abs() < 0.01, "muzzle: {barrel} {barrel_size}");
+        let (front, front_size) = block("Front Sight");
+        assert!((front.y + front_size.y / 2.0 - gun.front_sight[1]).abs() < 0.01, "front sight: {front}");
+        assert!((front.z - gun.front_sight[2]).abs() < 0.01, "front sight: {front}");
     }
 
     /// The Objs' names in their scene's order.

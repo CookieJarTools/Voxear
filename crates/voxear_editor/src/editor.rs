@@ -24,6 +24,7 @@ mod material_shaders;
 mod model_clips;
 mod model_materials;
 mod model_parts;
+mod multiplayer;
 mod path_bakes;
 mod placing;
 mod play;
@@ -139,6 +140,9 @@ struct Nodes {
     status_memory: NodeId,
     /// Play, Pause and Step.
     play_buttons: [NodeId; 3],
+    /// How Play plays, offline or networked, and its label.
+    multiplayer: NodeId,
+    multiplayer_label: NodeId,
     build: NodeId,
     /// The top bar's Window menu button.
     windows: NodeId,
@@ -334,6 +338,8 @@ pub struct Editor {
     /// The Game view has the focus while playing, so the game's input hears
     /// the keyboard and the mouse.
     game_focused: bool,
+    /// The games networked Play started besides the editor's own.
+    test_players: multiplayer::TestPlayers,
     /// Esc, or the focus going elsewhere, let go of a mouse the game holds,
     /// until a press on the Game view gives it back.
     cursor_freed: bool,
@@ -450,6 +456,8 @@ impl Editor {
             status_fps: find(&ui, "status-fps"),
             status_memory: find(&ui, "status-memory"),
             play_buttons: [find(&ui, "play"), find(&ui, "pause"), find(&ui, "step")],
+            multiplayer: find(&ui, "multiplayer"),
+            multiplayer_label: find(&ui, "multiplayer-label"),
             build: find(&ui, "build"),
             windows: find(&ui, "windows"),
             rail_levels: find(&ui, "rail-levels"),
@@ -612,6 +620,7 @@ impl Editor {
             glide: None,
             copied: None,
             game_focused: false,
+            test_players: multiplayer::TestPlayers::default(),
             cursor_freed: false,
             material_preview: None,
             selection: None,
@@ -705,6 +714,7 @@ impl Editor {
         {
             profile_scope!("Game");
             self.update_play(renderer);
+            self.update_multiplayer();
             self.follow_pointer();
             if let Some(transform) = self.game.engine.world.get_mut::<Transform>(self.scene.camera) {
                 self.scene.fly.update_transform(transform, delta);

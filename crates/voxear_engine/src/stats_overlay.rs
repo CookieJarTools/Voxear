@@ -45,6 +45,9 @@ pub struct StatsOverlay {
     times: VecDeque<f32>,
     header: NodeId,
     values: Vec<NodeId>,
+    /// The network's rows, shown while networked, and their values.
+    network: NodeId,
+    network_values: [NodeId; 4],
     frames: u32,
     seconds: f32,
     /// The time the frames since the last refresh spent waiting on the GPU
@@ -69,6 +72,9 @@ impl StatsOverlay {
         let find = |name: &str| ui.find(document, name).unwrap_or_else(|| panic!("StatsOverlay.vui has no {name}"));
         let (panel, header, graph) = (find("stats"), find("header"), find("graph"));
         let values = VALUES.iter().map(|name| find(name)).collect();
+        let network = find("network");
+        let network_values = ["net-role", "net-ping", "net-loss", "net-rate"].map(find);
+        ui.set_visible(network, false);
         ui.set_visible(panel, visible);
         let console = DevConsole::new(&mut ui, document);
         Self {
@@ -79,6 +85,8 @@ impl StatsOverlay {
             times: VecDeque::with_capacity(GRAPHED),
             header,
             values,
+            network,
+            network_values,
             frames: 0,
             seconds: 0.0,
             waited_ms: 0.0,
@@ -197,6 +205,26 @@ impl StatsOverlay {
             self.ui.set_text(*node, text);
         }
         (self.frames, self.seconds, self.waited_ms) = (0, 0.0, 0.0);
+    }
+
+    /// Shows how networked play is going, or hides its rows without it.
+    pub fn show_network(&mut self, stats: Option<crate::net::NetStats>) {
+        self.ui.set_visible(self.network, stats.is_some());
+        let Some(stats) = stats else { return };
+        let role = match stats.role {
+            Some(crate::net::NetRole::Server) => format!("Server · {} players", stats.players),
+            Some(crate::net::NetRole::Host) => format!("Host · {} players", stats.players),
+            _ => format!("Client · tick {}", stats.tick),
+        };
+        let texts = [
+            role,
+            format!("{:.0} ms", stats.round_trip * 1000.0),
+            format!("{:.1}%", stats.loss * 100.0),
+            format!("{:.1} / {:.1} kB/s", stats.sent_bytes_per_second / 1024.0, stats.received_bytes_per_second / 1024.0),
+        ];
+        for (node, text) in self.network_values.iter().zip(&texts) {
+            self.ui.set_text(*node, text);
+        }
     }
 
     /// Hands the renderer the overlay for an output of `width` by `height`

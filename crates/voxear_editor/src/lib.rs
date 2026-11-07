@@ -92,6 +92,7 @@ mod script_handles;
 mod settings;
 mod settings_panel;
 mod shader_fields;
+mod motion_set_inspector;
 mod strings_inspector;
 #[cfg(target_os = "linux")]
 mod wayland_drops;
@@ -109,7 +110,7 @@ pub use hierarchy::EditorOnly;
 pub use palette::{PaletteCommand, PaletteKey};
 pub use profiler::{Profiler, Sample};
 pub use project_view::{ItemKind, ProjectItem};
-pub use settings::{SETTINGS, SettingInfo, SettingKind, SettingValue, Settings};
+pub use settings::{PlayAs, SETTINGS, SettingInfo, SettingKind, SettingValue, Settings, TestNetwork};
 pub use window::run_editor;
 
 /// Renders the editor offscreen after `frames` frames, with the first Obj

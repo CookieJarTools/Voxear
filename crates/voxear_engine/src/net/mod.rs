@@ -37,6 +37,21 @@ pub(crate) use scripts::register;
 pub use scripts::NetDefaults;
 use messages::{Message, REPEATS};
 
+/// How a session's connections are doing, for the stats overlay: a
+/// client's to its server, or a server's to its clients on average.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct NetStats {
+    pub role: Option<NetRole>,
+    /// Seconds there and back.
+    pub round_trip: f64,
+    /// The share of packets lost.
+    pub loss: f64,
+    pub sent_bytes_per_second: f64,
+    pub received_bytes_per_second: f64,
+    pub players: usize,
+    pub tick: u64,
+}
+
 /// A player in a session, numbered by the server: 0 is a host's own.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PlayerId(pub u16);
@@ -269,6 +284,21 @@ impl NetSession {
     /// input actions.
     pub fn input(&self, player: PlayerId, action: usize) -> ActionState {
         self.inputs.get(&player).and_then(|command| command.get(action)).copied().unwrap_or_default()
+    }
+
+    pub fn stats(&self) -> NetStats {
+        let mut stats = NetStats { role: Some(self.role), players: self.players.len(), tick: self.tick, ..NetStats::default() };
+        let each: Vec<voxear_net::Stats> = match &self.end {
+            End::Client(client) => vec![client.stats()],
+            End::Server(server) => server.clients().into_iter().filter_map(|c| server.stats(c)).collect(),
+        };
+        for one in &each {
+            stats.sent_bytes_per_second += one.sent_bytes_per_second;
+            stats.received_bytes_per_second += one.received_bytes_per_second;
+            stats.round_trip += one.rtt / each.len() as f64;
+            stats.loss += one.loss / each.len() as f64;
+        }
+        stats
     }
 
     /// The round trip to the server, in seconds, on a client.

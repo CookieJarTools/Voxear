@@ -312,6 +312,7 @@ impl Editor {
     /// brings back the level as it was edited.
     pub fn stop(&mut self, renderer: &mut Renderer) {
         let Mode::Playing(run) = std::mem::replace(&mut self.play.mode, Mode::Editing) else { return };
+        self.stop_multiplayer();
         // What the game drew goes with it, and its UI and sound.
         voxear_core::debug_draw::clear();
         self.game.ui = voxear_engine::game_ui::GameUi::default();
@@ -518,6 +519,7 @@ impl Editor {
         self.after_swap(selected, "game");
         self.show_locked(locked);
         tracing::info!("playing {}", self.game.levels.current().unwrap_or("the level"));
+        self.start_multiplayer();
     }
 
     /// Shows the world just swapped in, keeping the selection where it has a

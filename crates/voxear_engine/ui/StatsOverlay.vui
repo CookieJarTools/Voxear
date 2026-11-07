@@ -22,6 +22,14 @@
             <Panel class="divider" />
             <Panel class="row"><Label>Lights per cluster</Label><Label name="lights" class="value">–</Label></Panel>
             <Panel class="row"><Label>Exposure</Label><Label name="exposure" class="value">–</Label></Panel>
+            <!-- While networked: the session, its round trip and loss, and what goes each way. -->
+            <Panel name="network" class="network">
+                <Panel class="divider" />
+                <Panel class="row"><Label>Network</Label><Label name="net-role" class="value">–</Label></Panel>
+                <Panel class="row"><Label>Ping</Label><Label name="net-ping" class="value">–</Label></Panel>
+                <Panel class="row"><Label>Loss</Label><Label name="net-loss" class="value">–</Label></Panel>
+                <Panel class="row"><Label>Up / down</Label><Label name="net-rate" class="value">–</Label></Panel>
+            </Panel>
         </Panel>
     </Panel>
     <!-- The console, on the key left of 1: the log, and a line to run commands from. -->

@@ -20,6 +20,8 @@
                 <Button name="play" class="icon-button play-button"><Icon icon="play" /></Button>
                 <Button name="pause" class="icon-button"><Icon icon="pause" /></Button>
                 <Button name="step" class="icon-button"><Icon icon="step" /></Button>
+                <!-- Offline, or networked as a host or a server's player, with test players' windows. -->
+                <Button name="multiplayer" class="layouts-button multiplayer-button"><Icon icon="globe" /><Label name="multiplayer-label">Offline</Label><Icon icon="chevron-down" class="layouts-arrow" /></Button>
             </Panel>
             <Panel class="topbar-right">
                 <Button name="windows" class="icon-button"><Icon icon="panels" /></Button>

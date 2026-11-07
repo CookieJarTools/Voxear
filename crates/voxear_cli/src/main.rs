@@ -234,6 +234,9 @@ enum Commands {
         /// Play through a simulated network this bad, to test with.
         #[arg(long, value_enum, default_value_t = Network::Perfect)]
         network: Network,
+        /// The window's title, such as the editor's "Player 2"; the project's name when not given.
+        #[arg(long)]
+        title: Option<String>,
     },
     /// Open a project in the editor.
     Editor {
@@ -402,6 +405,7 @@ fn main() -> Result<()> {
             connect,
             port,
             network,
+            title,
         } => {
             let prepare = Prepare { build: !no_build, bundles, overlays };
             let net = match (server, host, connect) {
@@ -410,7 +414,8 @@ fn main() -> Result<()> {
                 (.., Some(address)) => Some(NetStart::Connect(address)),
                 _ => None,
             };
-            run(&project, headless, frames, prepare, renderdoc, stats, net.map(|start| (start, network.conditions())))
+            let net = net.map(|start| (start, network.conditions()));
+            run(&project, headless, frames, prepare, (renderdoc, stats), net, title)
         }
         Commands::Render {
             project,
@@ -475,13 +480,16 @@ fn run(
     headless: bool,
     frames: Option<u64>,
     prepare: Prepare,
-    renderdoc: bool,
-    stats: bool,
+    (renderdoc, stats): (bool, bool),
     net: Option<(NetStart, Conditions)>,
+    title: Option<String>,
 ) -> Result<()> {
     let project = Project::open(path)?;
     let settings = RendererSettings { hot_reload: shaders_reload(), ..renderer_settings(&project, renderdoc) };
-    let title = format!("{} — Voxear", project.name());
+    let title = match title {
+        Some(title) => format!("{title} — {}", project.name()),
+        None => format!("{} — Voxear", project.name()),
+    };
     let mut game = start_game(project, prepare)?;
     let serving = matches!(net, Some((NetStart::Server(_), _)));
 

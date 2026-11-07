@@ -148,6 +148,51 @@ pub enum SettingValue {
     Color(u32),
 }
 
+/// How the editor's Play plays.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PlayAs {
+    #[default]
+    Offline,
+    /// The editor hosts: it runs the game and plays it.
+    Host,
+    /// A dedicated server runs the game, with the editor its first player.
+    Server,
+}
+
+/// The network the editor's networked Play goes through.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TestNetwork {
+    #[default]
+    Perfect,
+    Good,
+    Average,
+    Bad,
+}
+
+impl TestNetwork {
+    pub const ALL: [TestNetwork; 4] = [TestNetwork::Perfect, TestNetwork::Good, TestNetwork::Average, TestNetwork::Bad];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            TestNetwork::Perfect => "Perfect",
+            TestNetwork::Good => "Good",
+            TestNetwork::Average => "Average",
+            TestNetwork::Bad => "Bad",
+        }
+    }
+
+    pub fn conditions(self) -> voxear_net::Conditions {
+        match self {
+            TestNetwork::Perfect => voxear_net::Conditions::PERFECT,
+            TestNetwork::Good => voxear_net::Conditions::GOOD,
+            TestNetwork::Average => voxear_net::Conditions::AVERAGE,
+            TestNetwork::Bad => voxear_net::Conditions::BAD,
+        }
+    }
+}
+
 /// The editor's settings.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -179,6 +224,13 @@ pub struct Settings {
     pub prefab_parts: bool,
     /// Play starts paused, to step through the first frames.
     pub start_paused: bool,
+    /// How Play plays: offline, or networked as a host or a server's first
+    /// player, with test players in windows of their own.
+    pub multiplayer: PlayAs,
+    /// How many test players' windows open with networked Play.
+    pub test_players: u32,
+    /// The network networked Play goes through, made as bad as asked.
+    pub test_network: TestNetwork,
     pub save_before_play: bool,
     pub clear_console_on_play: bool,
     /// Play pauses when an error is logged, as Unity's Error Pause does.
@@ -252,6 +304,9 @@ impl Default for Settings {
             scene_shading: 0,
             prefab_parts: false,
             start_paused: false,
+            multiplayer: PlayAs::Offline,
+            test_players: 1,
+            test_network: TestNetwork::Perfect,
             save_before_play: false,
             clear_console_on_play: false,
             error_pause: false,

@@ -67,6 +67,17 @@ max_players = 64
 kilobytes_per_second = 64
 ```
 
+## Testing in the editor
+
+The button beside Play, **Offline** until you change it, picks how Play plays:
+
+- **Host**: the editor runs the game and plays it, and test players join it.
+- **Dedicated server**: a server starts without a window, and the editor joins it as the first player, then the test players.
+
+Below that, pick how many **test players** join, up to seven. Each is a game of its own in a window titled "Player 2", "Player 3" and so on, which you can play side by side with the editor's. Their log lines come into the Console with their names in front. Pick a **network** too: Good, Average or Bad play through a network that delays, jumbles and loses packets as a real one would. Stop closes the test players' windows and the server.
+
+The **F1** stats show the session in each window: the round trip, how many packets are lost, and what goes each way.
+
 ## From the command line
 
 `vox run` plays the project networked:

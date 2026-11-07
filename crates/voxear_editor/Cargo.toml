@@ -15,6 +15,7 @@ voxear_rhi.workspace = true
 voxear_render.workspace = true
 voxear_ui.workspace = true
 voxear_engine.workspace = true
+voxear_net.workspace = true
 # Its sheets fetched from their links.
 voxear_localization = { workspace = true, features = ["fetch"] }
 voxear_assets.workspace = true

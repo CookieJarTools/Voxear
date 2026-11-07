@@ -230,6 +230,8 @@ impl App {
             }
         }
         if let (Some(renderer), Some(window)) = (self.renderer.as_mut(), &self.window) {
+            let network = self.game.engine.world.resource::<crate::net::NetSession>().map(|s| s.stats());
+            self.overlay.show_network(network);
             self.overlay.update(delta, renderer);
             let size = window.inner_size();
             let scale = window.scale_factor() as f32;

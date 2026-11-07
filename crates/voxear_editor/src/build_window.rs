@@ -1163,6 +1163,18 @@ pub(crate) fn log_player_line(text: &str, errors: bool) {
     }
 }
 
+/// A line a game started from the editor printed, into the editor's log
+/// with the game's name before it, as "Player 2".
+pub(crate) fn log_named_line(name: &str, text: &str, errors: bool) {
+    let Some((level, message)) = player_line(text, errors) else { return };
+    match level {
+        Level::ERROR => tracing::error!(target: "player", "{name}: {message}"),
+        Level::WARN => tracing::warn!(target: "player", "{name}: {message}"),
+        Level::INFO => tracing::info!(target: "player", "{name}: {message}"),
+        _ => tracing::debug!(target: "player", "{name}: {message}"),
+    }
+}
+
 /// A line the game printed, as its level and message. The player's log lines
 /// start with a time and a level, which are read off, as are any terminal
 /// colours; what the game wrote to its errors is an error unless it says

@@ -141,7 +141,8 @@ pub(crate) mod tests {
         let neck = add("neck", None, Some(chest), Vec3::new(0.0, 0.2, 0.0));
         add("head", None, Some(neck), Vec3::new(0.0, 0.1, 0.0));
         for left in [true, false] {
-            let out = if left { 1.0 } else { -1.0 };
+            // The engine is left-handed: facing +Z, the left hand is toward -X.
+            let out = if left { -1.0 } else { 1.0 };
             let clavicle = add("shoulder", Some(left), Some(chest), Vec3::new(0.05 * out, 0.15, 0.0));
             let upper = add("upper_arm", Some(left), Some(clavicle), Vec3::new(0.15 * out, 0.0, 0.0));
             let twist = add("upper_arm_twist", Some(left), Some(upper), Vec3::new(0.14 * out, 0.0, 0.0));
@@ -149,7 +150,9 @@ pub(crate) mod tests {
             let hand = add("hand", Some(left), Some(forearm), Vec3::new(0.26 * out, 0.0, 0.0));
             let index = add("index_01", Some(left), Some(hand), Vec3::new(0.08 * out, 0.0, 0.02));
             add("index_02", Some(left), Some(index), Vec3::new(0.03 * out, 0.0, 0.0));
-            add("thumb_01", Some(left), Some(hand), Vec3::new(0.03 * out, 0.0, 0.04));
+            add("thumb_01", Some(left), Some(hand), Vec3::new(0.03 * out, -0.02, 0.04));
+            add("middle_01", Some(left), Some(hand), Vec3::new(0.085 * out, 0.0, 0.0));
+            add("pinky_01", Some(left), Some(hand), Vec3::new(0.075 * out, 0.0, -0.035));
         }
         Skeleton { bones }
     }
@@ -179,7 +182,8 @@ pub(crate) mod tests {
             assert!(left.clavicle.is_some_and(|bone| name(bone).contains("shoulder")));
             assert_eq!(left.fingers[1].len(), 2, "the index finger's two bones");
             assert_eq!(left.fingers[0].len(), 1);
-            assert!(left.fingers[2].is_empty());
+            assert_eq!(left.fingers[2].len(), 1);
+            assert!(left.fingers[3].is_empty(), "no ring finger");
         }
     }
 }

@@ -218,6 +218,12 @@ struct FootLock {
 }
 
 impl MotionMatcherState {
+    /// Which feet the clips have down, left then right: a foot coming down
+    /// is a footfall, for what bobs with the steps.
+    pub fn feet_down(&self) -> [bool; 2] {
+        self.down
+    }
+
     /// Each clip playing, by its name, and its share of the pose, the clip
     /// it stands with included, most first.
     pub fn playing(&self) -> Vec<(String, f32)> {

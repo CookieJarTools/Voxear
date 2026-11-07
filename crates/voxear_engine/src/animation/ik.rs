@@ -3,7 +3,7 @@
 //! turns as it is told, its elbow bending toward a pole, its collarbone
 //! taking a share of a long reach; and the upper body turns as a whole.
 
-use voxear_core::math::{Mat4, Quat, Vec3};
+use voxear_core::math::{Mat3, Mat4, Quat, Vec3};
 use voxear_render::{BonePose, Skeleton};
 
 use super::rig::Arm;
@@ -106,12 +106,11 @@ pub fn two_bone(edit: &mut PoseEdit, [top, middle, end]: [usize; 3], target: Vec
     (wanted - span).max(0.0)
 }
 
-/// Puts a hand at `target`, a place and turn in the model's space, its
-/// elbow bending toward `pole`: the collarbone first takes `clavicle` of
-/// the turn toward the target, up to 25 degrees, then the arm bends, then
-/// the hand turns. Gives back how far short of the target the hand fell.
-pub fn reach_hand(edit: &mut PoseEdit, arm: &Arm, target: Mat4, pole: Vec3, clavicle: f32) -> f32 {
-    let (_, turn, at) = target.to_scale_rotation_translation();
+/// Puts a hand's wrist at `at` in the model's space, its elbow bending
+/// toward `pole`: the collarbone first takes `clavicle` of the turn toward
+/// it, up to 25 degrees, then the arm bends. Gives back how far short the
+/// hand fell.
+pub fn reach_hand(edit: &mut PoseEdit, arm: &Arm, at: Vec3, pole: Vec3, clavicle: f32) -> f32 {
     if let Some(collar) = arm.clavicle.filter(|_| clavicle > 0.0) {
         let from = edit.position(collar);
         let (now, wish) = ((edit.position(arm.upper) - from).normalize_or_zero(), (at - from).normalize_or_zero());
@@ -122,9 +121,47 @@ pub fn reach_hand(edit: &mut PoseEdit, arm: &Arm, target: Mat4, pole: Vec3, clav
             edit.turn(collar, Quat::from_axis_angle(axis, share));
         }
     }
-    let short = two_bone(edit, [arm.upper, arm.forearm, arm.hand], at, pole);
-    edit.set_rotation(arm.hand, turn);
-    short
+    two_bone(edit, [arm.upper, arm.forearm, arm.hand], at, pole)
+}
+
+/// The way a hand's fingers point and its palm faces, in the model's
+/// space, from its bones: toward its middle finger, and to the side its
+/// thumb sits on, square to its fingers and across its knuckles.
+pub fn hand_axes(edit: &PoseEdit, arm: &Arm) -> Option<(Vec3, Vec3)> {
+    let hand = edit.position(arm.hand);
+    let knuckle = |finger: usize| arm.fingers[finger].first().map(|&bone| edit.position(bone));
+    let middle = knuckle(2).or_else(|| knuckle(1))?;
+    let along = (middle - hand).try_normalize()?;
+    let across = match (knuckle(1), knuckle(4).or_else(|| knuckle(3))) {
+        (Some(index), Some(little)) => index - little,
+        _ => return None,
+    };
+    let across = (across - along * across.dot(along)).try_normalize()?;
+    let mut palm = along.cross(across);
+    // The thumb sits a little on the palm's side, which tells a left hand from a right.
+    let thumb = knuckle(0).map(|thumb| thumb - hand).unwrap_or(palm);
+    if palm.dot(thumb) < 0.0 {
+        palm = -palm;
+    }
+    Some((along, palm))
+}
+
+/// Turns a hand so its fingers point along `fingers` and its palm faces
+/// `palm`, in the model's space.
+pub fn aim_hand(edit: &mut PoseEdit, arm: &Arm, fingers: Vec3, palm: Vec3) {
+    let Some((along, facing)) = hand_axes(edit, arm) else { return };
+    let frame = |a: Vec3, p: Vec3| {
+        let a = a.normalize_or_zero();
+        let p = (p - a * p.dot(a)).normalize_or_zero();
+        Mat3::from_cols(a, p, a.cross(p))
+    };
+    let (now, wanted) = (frame(along, facing), frame(fingers, palm));
+    if now.determinant().abs() < 0.5 || wanted.determinant().abs() < 0.5 {
+        return;
+    }
+    let turn = Quat::from_mat3(&(wanted * now.transpose())).normalize();
+    let rotation = edit.rotation(arm.hand);
+    edit.set_rotation(arm.hand, turn * rotation);
 }
 
 /// Turns a run of the spine, from the bottom up, by `turn` in the model's
@@ -162,13 +199,16 @@ mod tests {
         let rest = skeleton.model_matrices(&skeleton.rest());
         let mut edit = PoseEdit::new(&skeleton, &rest);
         let arm = &rig.arms[1];
-        let target = Vec3::new(-0.15, 1.35, 0.35);
-        let turn = Quat::from_rotation_x(-1.2);
-        let pole = Vec3::new(-0.6, 0.6, -0.2);
-        let short = reach_hand(&mut edit, arm, Mat4::from_rotation_translation(turn, target), pole, 0.3);
+        let target = Vec3::new(0.15, 1.35, 0.35);
+        let pole = Vec3::new(0.6, 0.6, -0.2);
+        let short = reach_hand(&mut edit, arm, target, pole, 0.3);
         assert!(short < 1e-4, "within reach: {short}");
         assert!(edit.position(arm.hand).distance(target) < 1e-3, "{}", edit.position(arm.hand));
-        assert!(edit.rotation(arm.hand).angle_between(turn) < 1e-3);
+        let (fingers, palm) = (Vec3::new(0.3, -0.2, 1.0).normalize(), Vec3::X);
+        aim_hand(&mut edit, arm, fingers, palm);
+        let (along, facing) = hand_axes(&edit, arm).unwrap();
+        assert!(along.distance(fingers) < 1e-3, "{along} {fingers}");
+        assert!(facing.dot(palm) > 0.9, "the palm faces as told: {facing}");
         // The elbow sits on the pole's side of the line from shoulder to hand.
         let (shoulder, elbow) = (edit.position(arm.upper), edit.position(arm.forearm));
         let line = (target - shoulder).normalize();
@@ -192,7 +232,7 @@ mod tests {
         let mut edit = PoseEdit::new(&skeleton, &skeleton.model_matrices(&skeleton.rest()));
         let arm = &rig.arms[0];
         let target = Vec3::new(2.0, 1.4, 1.0);
-        let short = reach_hand(&mut edit, arm, Mat4::from_translation(target), Vec3::new(1.0, 0.0, -1.0), 0.0);
+        let short = reach_hand(&mut edit, arm, target, Vec3::new(1.0, 0.0, -1.0), 0.0);
         assert!(short > 1.0, "{short}");
         let toward = (target - edit.position(arm.upper)).normalize();
         let pointing = (edit.position(arm.hand) - edit.position(arm.upper)).normalize();

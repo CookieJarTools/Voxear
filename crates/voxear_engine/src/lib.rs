@@ -15,6 +15,7 @@ mod dev_console;
 mod engine;
 mod fly_camera;
 mod game;
+pub mod guns;
 pub mod game_ui;
 pub mod joints;
 pub mod keymaps;

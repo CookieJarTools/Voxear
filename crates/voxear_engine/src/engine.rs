@@ -99,6 +99,7 @@ impl Engine {
         )));
         schedule.add_system("Update", "first-person look", crate::first_person::look);
         schedule.add_system(POSE, "first-person view", crate::first_person::place);
+        schedule.add_system(POSE, "guns held", crate::guns::holder::hold);
         schedule.add_system("PostUpdate", "propagate transforms", propagate_transforms);
         Self {
             world,

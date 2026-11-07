@@ -143,6 +143,10 @@ pub struct Gun {
     /// look shows the chamber.
     pub feed: [f32; 3],
     pub port: [f32; 3],
+    /// How it is held and how its actions go: a Gun Handling asset, or the
+    /// usual for its kind when none.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub handling: String,
 }
 
 impl Component for Gun {}
@@ -173,6 +177,7 @@ impl Gun {
             butt: [0.0, -0.03, -0.36],
             feed: [0.0, 0.06, 0.12],
             port: [0.03, 0.05, 0.12],
+            handling: String::new(),
         };
         let handgun = |mass, length: f32, fire_rate, recoil| Self {
             kind,
@@ -190,6 +195,7 @@ impl Gun {
             butt: [0.0, 0.0, 0.0],
             feed: [0.0, -0.09, -0.03],
             port: [0.015, 0.045, 0.07],
+            handling: String::new(),
         };
         match kind {
             GunKind::BoltActionRifle => rifle(3.9, 1.11, 15.0, 1.0, 0.26, 0.2, 0.24),

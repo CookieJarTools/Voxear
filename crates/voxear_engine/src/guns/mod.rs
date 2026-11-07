@@ -7,6 +7,7 @@
 pub mod actions;
 pub mod contact;
 pub mod gun;
+pub mod handling;
 pub mod hands;
 pub mod holder;
 pub mod leftovers;

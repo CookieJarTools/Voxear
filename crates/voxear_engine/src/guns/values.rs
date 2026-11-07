@@ -154,7 +154,10 @@ fn gun_values(world: &mut World, entity: Entity, what: i32, written: Option<[f32
     let at = [v[0], v[1], v[2]];
     match what {
         // A kind fills in its typical numbers, as in the Inspector.
-        KIND => *gun = Gun::preset(GunKind::ALL.get(v[0].max(0.0) as usize).copied().unwrap_or_default()),
+        KIND => {
+            let kind = GunKind::ALL.get(v[0].max(0.0) as usize).copied().unwrap_or_default();
+            *gun = Gun { handling: std::mem::take(&mut gun.handling), ..Gun::preset(kind) };
+        }
         MASS => gun.mass = v[0].max(0.1),
         LENGTH => gun.length = v[0].max(0.05),
         FIRE_RATE => gun.fire_rate = v[0].max(1.0),

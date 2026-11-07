@@ -407,6 +407,10 @@ pub struct Content {
     clips_version: u64,
     /// Motion Sets read, by GUID; `None` for one that could not be.
     motion_sets: HashMap<AssetGuid, Option<Arc<crate::animation::MotionSet>>>,
+    /// Gun Handlings read, by GUID; `None` for one that could not be. And
+    /// how many times one was saved, for what resolved them to ask again.
+    gun_handlings: HashMap<AssetGuid, Option<Arc<crate::guns::handling::GunHandling>>>,
+    handlings_version: u64,
     /// Pictures materials read, by GUID and whether they are read as sRGB.
     pictures: HashMap<(AssetGuid, bool), TextureId>,
     /// IES profiles uploaded for lights, by their assets.
@@ -555,6 +559,8 @@ impl Content {
             clip_settings: HashMap::new(),
             clips_version: 0,
             motion_sets: HashMap::new(),
+            gun_handlings: HashMap::new(),
+            handlings_version: 0,
             pictures: HashMap::new(),
             light_profiles: HashMap::new(),
             shaders: crate::shaders::ShaderRegistry::default(),
@@ -974,6 +980,49 @@ impl Content {
     pub fn forget_motion_set(&mut self, guid: AssetGuid) {
         self.motion_sets.remove(&guid);
         self.clips_version += 1;
+    }
+
+    /// The Gun Handling at `guid`, read once.
+    pub fn gun_handling(&mut self, guid: AssetGuid) -> Option<Arc<crate::guns::handling::GunHandling>> {
+        if let Some(found) = self.gun_handlings.get(&guid) {
+            return found.clone();
+        }
+        let found = self.read_gun_handling(guid).map(Arc::new).map_err(|error| {
+            tracing::warn!("could not read the Gun Handling {guid}: {error:#}");
+        });
+        self.gun_handlings.insert(guid, found.clone().ok());
+        found.ok()
+    }
+
+    fn read_gun_handling(&mut self, guid: AssetGuid) -> Result<crate::guns::handling::GunHandling> {
+        let entry = self.db.get(guid).with_context(|| format!("no asset with GUID {guid}"))?;
+        ensure!(entry.kind == AssetKind::GunHandling, "{} is not a Gun Handling", entry.path);
+        let path = entry.path.clone();
+        Ok(toml::from_str(&self.read_text(&path)?).with_context(|| format!("reading {path}"))?)
+    }
+
+    /// The Gun Handling at `guid`, as read already, or else as its file in
+    /// the project's folder has it, without keeping it: for the editor.
+    pub fn peek_gun_handling(&self, guid: AssetGuid) -> Option<Arc<crate::guns::handling::GunHandling>> {
+        if let Some(found) = self.gun_handlings.get(&guid) {
+            return found.clone();
+        }
+        let Source::Folder(_, mounts) = &self.source else { return None };
+        let entry = self.db.get(guid).filter(|entry| entry.kind == AssetKind::GunHandling)?;
+        let text = std::fs::read_to_string(mounts.file(&entry.path)).ok()?;
+        toml::from_str(&text).ok().map(Arc::new)
+    }
+
+    /// Forgets a Gun Handling, read again when next asked for, as after it
+    /// was saved: a game playing takes it up at once.
+    pub fn forget_gun_handling(&mut self, guid: AssetGuid) {
+        self.gun_handlings.remove(&guid);
+        self.handlings_version += 1;
+    }
+
+    /// Goes up whenever a Gun Handling is saved.
+    pub fn handlings_version(&self) -> u64 {
+        self.handlings_version
     }
 
     /// Goes up whenever a clip file or its settings change, so what holds

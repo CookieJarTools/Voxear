@@ -247,6 +247,7 @@ impl Contents {
                 FileKind::Asset(AssetKind::LightProfile) => "light",
                 FileKind::Asset(AssetKind::Shader) => "shader",
                 FileKind::Asset(AssetKind::MotionSet) => "play",
+                FileKind::Asset(AssetKind::GunHandling) => "crosshair",
                 FileKind::Asset(AssetKind::Lighting) => "light",
             },
         }
@@ -574,6 +575,8 @@ pub struct ProjectView {
     /// folder, and pings pass it by.
     lock: NodeId,
     locked: bool,
+    /// The project's modules, whose files the menu offers to make.
+    modules: voxear_engine::modules::Modules,
 }
 
 impl ProjectView {
@@ -616,6 +619,7 @@ impl ProjectView {
             ping_left: 0.0,
             lock,
             locked: false,
+            modules: voxear_engine::modules::Modules::all(),
             size,
         };
         view.open(ui, 0);
@@ -624,6 +628,11 @@ impl ProjectView {
 
     /// Follows clicks and menus, and shows tiles or rows for the room there
     /// is. Returns what the editor is asked to do.
+    /// Tells it the project's modules, whose files its menu offers.
+    pub fn set_modules(&mut self, modules: voxear_engine::modules::Modules) {
+        self.modules = modules;
+    }
+
     pub fn update(&mut self, ui: &mut Ui) -> Vec<ProjectEvent> {
         let mut events = Vec::new();
         if ui.clicked(self.lock) {
@@ -978,6 +987,7 @@ impl ProjectView {
             match kind {
                 NewFile::Shader => add(MenuItem::new("New Shader…").enabled(open_to_new), Some(MenuAction::NewShader)),
                 NewFile::UnlitShader => {}
+                _ if kind.module().is_some_and(|module| !self.modules.has(module)) => {}
                 _ => add(MenuItem::new(kind.label()).enabled(open_to_new), Some(MenuAction::New(kind))),
             }
         }

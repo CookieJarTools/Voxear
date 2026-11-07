@@ -16,7 +16,7 @@ use super::mechanism::PartRole;
 pub fn template(kind: GunKind, action: ActionKind) -> ActionSpec {
     let when = if action == ActionKind::Reload { When::all([Fact::NotFull, Fact::Spare]) } else { When::default() };
     let (lift, lowers_aim) = if action == ActionKind::Cycle { (0.4, false) } else { (1.0, true) };
-    ActionSpec { when, lift, lowers_aim, beats: beats(kind, action) }
+    ActionSpec { when, lift, lowers_aim, beats: beats(kind, action), ..ActionSpec::default() }
 }
 
 fn bolt(key: K, from: f32, to: f32) -> Beat {

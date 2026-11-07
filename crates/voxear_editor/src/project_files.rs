@@ -100,10 +100,11 @@ pub enum NewFile {
     UnlitShader,
     Script,
     MotionSet,
+    GunHandling,
 }
 
 impl NewFile {
-    pub const ALL: [NewFile; 9] = [
+    pub const ALL: [NewFile; 10] = [
         NewFile::Folder,
         NewFile::Scene,
         NewFile::Level,
@@ -113,7 +114,13 @@ impl NewFile {
         NewFile::UnlitShader,
         NewFile::Script,
         NewFile::MotionSet,
+        NewFile::GunHandling,
     ];
+
+    /// The module it belongs to, without which the menu leaves it out.
+    pub fn module(self) -> Option<voxear_engine::modules::Module> {
+        (self == NewFile::GunHandling).then_some(voxear_engine::modules::Module::Guns)
+    }
 
     /// As the menu offers it.
     pub fn label(self) -> &'static str {
@@ -127,6 +134,7 @@ impl NewFile {
             NewFile::UnlitShader => "New Unlit Shader",
             NewFile::Script => "New C# Script",
             NewFile::MotionSet => "New Motion Set",
+            NewFile::GunHandling => "New Gun Handling",
         }
     }
 
@@ -143,6 +151,7 @@ impl NewFile {
             NewFile::UnlitShader => ("New Unlit Shader", ".shader"),
             NewFile::Script => ("NewBehaviour", ".cs"),
             NewFile::MotionSet => ("New Motion Set", ".motionset"),
+            NewFile::GunHandling => ("New Gun Handling", ".gunhandling"),
         }
     }
 }
@@ -164,6 +173,7 @@ pub fn create(root: &Path, folder: &str, kind: NewFile, namespace: &str) -> Resu
         NewFile::UnlitShader => std::fs::write(&file, shader(NEW_UNLIT_SHADER, &name[..name.len() - extension.len()])),
         NewFile::Script => std::fs::write(&file, script(namespace, &name[..name.len() - extension.len()])),
         NewFile::MotionSet => std::fs::write(&file, NEW_MOTION_SET),
+        NewFile::GunHandling => std::fs::write(&file, NEW_GUN_HANDLING),
     }
     .with_context(|| format!("making {}", file.display()))?;
     Ok(path)
@@ -171,6 +181,11 @@ pub fn create(root: &Path, folder: &str, kind: NewFile, namespace: &str) -> Resu
 
 /// A new Motion Set: a state to walk about in, its clips to be picked.
 const NEW_MOTION_SET: &str = "# Voxear Motion Set: what a character can do, its states' looping clips and its actions.\n[[state]]\nname = \"Walking\"\nrole = \"grounded\"\n";
+
+/// A new Gun Handling: the gun held and its actions played as its kind's
+/// built-ins have them, until the Gun Editor offsets them.
+const NEW_GUN_HANDLING: &str =
+    "# Voxear Gun Handling: how a gun is held and how its actions go, as offsets on its kind's built-ins.\n";
 
 /// A new shader, its struct named for its file: the file's name without
 /// what a name in code cannot have.

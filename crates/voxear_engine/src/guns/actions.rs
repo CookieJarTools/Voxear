@@ -11,6 +11,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::gun::GunKind;
+use super::handling::Place;
 use super::hands::Grip;
 use super::mechanism::{Chamber, Feed, GunState, Known, PartRole};
 
@@ -382,6 +383,12 @@ pub struct Beat {
     /// empty if that part was thrown away instead.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub stow: bool,
+    /// Where its hand holds, from its goal, in the gun's space, in metres,
+    /// and how much more the hand is turned, in degrees about X, Y and Z.
+    #[serde(skip_serializing_if = "is_nothing")]
+    pub at: [f32; 3],
+    #[serde(skip_serializing_if = "is_nothing")]
+    pub turn: [f32; 3],
     /// How the gun is held meanwhile, in degrees: rolled, its top to the
     /// right; turned, its muzzle to the right; and tipped, its muzzle up.
     pub tilt: [f32; 3],
@@ -411,6 +418,8 @@ impl Beat {
             drive: None,
             carry: None,
             stow: false,
+            at: [0.0; 3],
+            turn: [0.0; 3],
             tilt: [0.0; 3],
             grip: Grip::PINCH,
             then: Event::None,
@@ -482,8 +491,8 @@ impl Beat {
 }
 
 /// An action as data: when it can play at all, how far it lifts the gun
-/// up before the eyes, whether it takes the gun down from them, and its
-/// beats.
+/// up before the eyes, whether it takes the gun down from them, an offset
+/// on where it brings the gun, and its beats.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ActionSpec {
@@ -491,14 +500,20 @@ pub struct ActionSpec {
     pub when: When,
     pub lift: f32,
     pub lowers_aim: bool,
+    #[serde(skip_serializing_if = "Place::is_zero")]
+    pub work: Place,
     #[serde(rename = "beat")]
     pub beats: Vec<Beat>,
 }
 
 impl Default for ActionSpec {
     fn default() -> Self {
-        Self { when: When::default(), lift: 1.0, lowers_aim: true, beats: Vec::new() }
+        Self { when: When::default(), lift: 1.0, lowers_aim: true, work: Place::default(), beats: Vec::new() }
     }
+}
+
+fn is_nothing(v: &[f32; 3]) -> bool {
+    *v == [0.0; 3]
 }
 
 /// The beats an action plays for a gun of `kind` in `state`, its holder

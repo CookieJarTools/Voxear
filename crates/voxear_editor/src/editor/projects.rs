@@ -111,6 +111,7 @@ impl Editor {
     /// folder dragged from a Project panel, to move there.
     fn project_frame(&mut self, renderer: &mut Renderer, delta: f32) {
         self.project.fade_ping(&mut self.ui, delta);
+        self.project.set_modules(self.game.project.modules());
         for event in self.project.update(&mut self.ui) {
             self.project_event(event, renderer);
         }

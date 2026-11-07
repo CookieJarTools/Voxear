@@ -18,6 +18,7 @@ use voxear_scene::{Parent, world_matrix};
 use super::actions::{ActionKind, Hand};
 use super::contact::{Shape, surface};
 use super::gun::{Gun, GunKind, HandRole, Socket};
+use super::handling::Poses;
 use super::hands::{Grip, close, keep_out, palm_of, seat_hand};
 use super::mechanism::{GunPart, GunState, Known, PartRole};
 use super::playing::{ActionPlay, HandAim, Throwing, advance, curve, minimum_jerk};
@@ -312,6 +313,8 @@ pub fn hold(world: &mut World) {
         };
         let Some(gun) = world.get::<Gun>(gun_entity).cloned() else { continue };
         let Some(view) = world.get::<FirstPersonView>(entity).cloned() else { continue };
+        let handling = super::handling::handling_of(world, &gun);
+        let poses = &handling.poses;
         // The gun is held before the view's eyes: the camera for this machine's player, their head for others.
         let Some(eye) = world.get::<crate::first_person::FirstPersonState>(entity).map(|state| state.eye) else {
             continue;
@@ -337,7 +340,7 @@ pub fn hold(world: &mut World) {
             }
         }
         if let Some(kind) = holder.request.take().filter(|_| state.play.is_none())
-            && let Some(play) = ActionPlay::start(kind, gun.kind, &mechanism, holder.spare)
+            && let Some(play) = ActionPlay::start(kind, gun.kind, &handling, &mechanism, holder.spare)
         {
             state.play = Some(play);
             state.returning = [None; 2];
@@ -345,7 +348,7 @@ pub fn hold(world: &mut World) {
         if let Some(stored) = world.get_mut::<GunHolder>(entity) {
             stored.request = None;
         }
-        let pouches = pouches(world, body, state.held);
+        let pouches = pouches(world, body, state.held, poses);
         let mut spare = holder.spare;
         let mut aim = None;
         let mut tilt = Vec3::ZERO;
@@ -390,14 +393,14 @@ pub fn hold(world: &mut World) {
         if let Some(body) = body {
             blade(world, body, &gun);
         }
-        let mut held = place_gun(world, entity, &holder, &gun, &view, eye, body, &mut state, delta);
+        let mut held = place_gun(world, entity, (&holder, poses), &gun, &view, eye, body, &mut state, delta);
         set_world(world, gun_entity, held.w_axis.truncate(), held.to_scale_rotation_translation().1);
         if let Some(body) = body {
-            let aims = hand_aims(&gun, aim, &mut state, delta);
+            let aims = hand_aims(&gun, aim, poses, &mut state, delta);
             let shapes = super::contact::shapes_now(world, gun_entity, &[]);
             let avoid = super::contact::shapes_now(world, gun_entity, &in_hand(world, &mechanism, state.play.as_ref()));
             let (posed, planted) = (world.get::<Pose>(body).cloned(), state.hands);
-            let hold = |at| Held { gun: &gun, at, shapes: &shapes, avoid: &avoid };
+            let hold = |at| Held { gun: &gun, at, shapes: &shapes, avoid: &avoid, poses };
             let short = hands_on(world, body, &hold(held), eye, aims, &mut state.hands, delta);
             // Short of reach, the gun comes nearer at once, so the hands never let go of it; it stays nearer,
             // drifting back out slowly once they meet it.
@@ -443,7 +446,7 @@ fn recover(world: &mut World, entity: Entity, gun: &Gun, state: &mut GunHolderSt
 fn place_gun(
     world: &World,
     entity: Entity,
-    holder: &GunHolder,
+    (holder, poses): (&GunHolder, &Poses),
     gun: &Gun,
     view: &FirstPersonView,
     eye: Mat4,
@@ -465,21 +468,28 @@ fn place_gun(
     let working = state.working.update(lift * (1.0 - aim), delta).max(0.0);
 
     // At the hip, and up to the eye with the sights on the camera's line, blended; it dips a little on the way up.
-    let [x, y, z] = holder.hip_turn.map(f32::to_radians);
-    let hip = Mat4::from_rotation_translation(Quat::from_euler(EulerRot::XYZ, x, y, z), Vec3::from(holder.hip));
-    let sighted = Mat4::from_translation(Vec3::Z * gun.eye_relief) * gun.sight_frame().inverse();
+    // The handling's poses are offsets: on the hip hold, and on the hold at the eye, about the eye, so its cant
+    // turns the gun about the line of the sights.
+    let add = |a: [f32; 3], b: [f32; 3]| Vec3::from(a) + Vec3::from(b);
+    let [x, y, z] = add(holder.hip_turn, poses.hip.turn).to_array().map(f32::to_radians);
+    let hip = Mat4::from_rotation_translation(Quat::from_euler(EulerRot::XYZ, x, y, z), add(holder.hip, poses.hip.at));
+    let aimed = Mat4::from_rotation_translation(
+        poses.aim.rotation() * Quat::from_rotation_z(-poses.cant.to_radians()),
+        Vec3::from(poses.aim.at),
+    );
+    let sighted = aimed * Mat4::from_translation(Vec3::Z * gun.eye_relief) * gun.sight_frame().inverse();
     let (_, hip_turn, mut hip_at) = hip.to_scale_rotation_translation();
     // A long gun's butt sits in the shoulder; a handgun is held out in front.
     // The shoulder as the eyes see it, steadied: the body's steps and landings move it far more than the eyes,
     // which are steadied too, and the gun would bob in the view with it.
     let shouldered =
-        body.filter(|_| !gun.kind.is_handgun()).and_then(|body| pocket(world, body, holder)).map(|pocket| {
+        body.filter(|_| !gun.kind.is_handgun()).and_then(|body| pocket(world, body, holder, poses)).map(|pocket| {
             let seen = eye.inverse().transform_point3(pocket);
             let steadied = state.pocket.get_or_insert_with(|| Spring::new(seen, SpringFeel::halflife(0.3)));
             steadied.update(seen, delta)
         });
     match shouldered {
-        Some(pocket) => hip_at = pocket - hip_turn * Vec3::from(gun.butt),
+        Some(pocket) => hip_at = pocket - hip_turn * Vec3::from(gun.butt) + Vec3::from(poses.hip.at),
         None => hip_at.z += 0.18,
     }
     let (_, aim_turn, aim_at) = sighted.to_scale_rotation_translation();
@@ -494,9 +504,12 @@ fn place_gun(
     // chest, and tilts the gun toward the work about them.
     let tilt = state.tilt.value * (std::f32::consts::PI / 180.0);
     let worked = Quat::from_euler(EulerRot::ZYX, -tilt.x, tilt.y, -tilt.z);
-    let shown = Quat::from_euler(EulerRot::YXZ, -0.32 * working, -0.1 * working, 0.0);
+    let action = state.play.as_ref().map(|play| play.work).unwrap_or_default();
+    let offset = Quat::IDENTITY.slerp(poses.work.rotation() * action.rotation(), working.min(1.0));
+    let shown = Quat::from_euler(EulerRot::YXZ, -0.32 * working, -0.1 * working, 0.0) * offset;
+    let work_at = WORK_AT + Vec3::from(poses.work.at) + Vec3::from(action.at);
     let works = turn * shown * worked * gun.works();
-    at += (WORK_AT - works - at) * working;
+    at += (work_at - works - at) * working;
     turn = turn * shown * worked;
     at.z -= state.reach.value;
 
@@ -647,7 +660,7 @@ fn cycle(world: &World, gun: &Gun, mechanism: &mut GunState, state: &mut GunHold
 
 /// Where each hand's pouch is, in the gun's space as it was last frame:
 /// at the front of each hip.
-fn pouches(world: &World, body: Option<Entity>, held: Option<Mat4>) -> [Vec3; 2] {
+fn pouches(world: &World, body: Option<Entity>, held: Option<Mat4>, poses: &Poses) -> [Vec3; 2] {
     let fallback = [Vec3::new(-0.25, -0.35, -0.25), Vec3::new(0.2, -0.35, -0.3)];
     let (Some(body), Some(held)) = (body, held) else { return fallback };
     let Some(animation) = world.get::<ModelRenderer>(body).and_then(|model| model.animation.clone()) else {
@@ -656,12 +669,19 @@ fn pouches(world: &World, body: Option<Entity>, held: Option<Mat4>) -> [Vec3; 2]
     let (Some(pose), Some(rig)) = (world.get::<Pose>(body), Rig::find(&animation.skeleton)) else { return fallback };
     let into_gun = held.inverse() * world_matrix(world, body);
     let hips = pose.bones[rig.hips].w_axis.truncate();
-    [Vec3::new(-0.17, -0.02, 0.12), Vec3::new(0.17, -0.02, 0.12)].map(|side| into_gun.transform_point3(hips + side))
+    let sides = [Vec3::new(-0.17, -0.02, 0.12), Vec3::new(0.17, -0.02, 0.12)];
+    std::array::from_fn(|hand| into_gun.transform_point3(hips + sides[hand] + Vec3::from(poses.pouches[hand])))
 }
 
 /// Each hand's aim this frame, left then right: the working hand's, and a
 /// hand easing back to its hold after an action.
-fn hand_aims(gun: &Gun, working: Option<HandAim>, state: &mut GunHolderState, delta: f32) -> [Option<HandAim>; 2] {
+fn hand_aims(
+    gun: &Gun,
+    working: Option<HandAim>,
+    poses: &Poses,
+    state: &mut GunHolderState,
+    delta: f32,
+) -> [Option<HandAim>; 2] {
     let mut aims = [None; 2];
     for (index, hand) in [Hand::Left, Hand::Right].into_iter().enumerate() {
         if let Some(aim) = working.filter(|aim| aim.hand == hand) {
@@ -669,14 +689,17 @@ fn hand_aims(gun: &Gun, working: Option<HandAim>, state: &mut GunHolderState, de
             continue;
         }
         if let Some((from, t)) = state.returning[index].as_mut() {
-            *t += delta / 0.28;
+            *t += delta * poses.return_pace.max(0.05) / 0.28;
             // Back to its hold, coming in to the grip from the side and to a fore-end from below, settling into it.
             let home = super::playing::socket(gun, hand);
-            let (grip, towards) =
-                if hand == Hand::Right { (Grip::TRIGGER, Vec3::X) } else { (Grip::SUPPORT, Vec3::NEG_Y) };
+            let (grip, towards) = if hand == Hand::Right {
+                (rest_grip(poses, hand), Vec3::X)
+            } else {
+                (rest_grip(poses, hand), Vec3::NEG_Y)
+            };
             let s = minimum_jerk(*t);
             let at = curve([*from, *from, home + towards * 0.06, home], s);
-            aims[index] = Some(HandAim { hand, at, grip, settle: s, toward: towards });
+            aims[index] = Some(HandAim { hand, at, grip, settle: s, toward: towards, turn: Quat::IDENTITY });
             if *t >= 1.0 {
                 state.returning[index] = None;
             }
@@ -704,12 +727,22 @@ fn blade(world: &mut World, body: Entity, gun: &Gun) {
 /// Where a long gun's butt goes, in the world: the body's shooting
 /// shoulder, as posed now, moved by the holder's `shoulder` in the body's
 /// space.
-fn pocket(world: &World, body: Entity, holder: &GunHolder) -> Option<Vec3> {
+fn pocket(world: &World, body: Entity, holder: &GunHolder, poses: &Poses) -> Option<Vec3> {
     let animation = world.get::<ModelRenderer>(body)?.animation.clone()?;
     let rig = Rig::find(&animation.skeleton)?;
     let pose = world.get::<Pose>(body)?;
     let shoulder = pose.bones.get(rig.arms[1].upper)?.w_axis.truncate();
-    Some(world_matrix(world, body).transform_point3(shoulder + Vec3::from(holder.shoulder)))
+    let offset = Vec3::from(holder.shoulder) + Vec3::from(poses.shoulder);
+    Some(world_matrix(world, body).transform_point3(shoulder + offset))
+}
+
+/// The grip a hand holds the gun with at rest: as the handling has it, or
+/// round the grip and under the fore-end as usual.
+fn rest_grip(poses: &Poses, hand: Hand) -> Grip {
+    match hand {
+        Hand::Right => poses.rest_grip.unwrap_or(Grip::TRIGGER),
+        Hand::Left => poses.rest_support.unwrap_or(Grip::SUPPORT),
+    }
 }
 
 /// What a body's hands hold this frame: the gun, where it is held, and its
@@ -720,6 +753,7 @@ struct Held<'a> {
     at: Mat4,
     shapes: &'a [Shape],
     avoid: &'a [Shape],
+    poses: &'a Poses,
 }
 
 /// Puts the body's hands on the gun: the shooting hand's palm on its grip,
@@ -764,7 +798,8 @@ fn hands_on(
     let pole = shoulder + down * 0.6 + out * 0.5 + back * 0.2;
     let side = to_body.transform_vector3(Vec3::X).normalize_or_zero();
     let short = seat_clear(&mut edit, right, (contact, axes), (pole, 0.15), (&avoid, side), working(aims[1]));
-    close(&mut edit, right, aims[1].map_or(Grip::TRIGGER, |aim| aim.grip), &shapes, &mut hands.fingers[1], delta);
+    let grip = aims[1].map_or(rest_grip(held.poses, Hand::Right), |aim| aim.grip);
+    close(&mut edit, right, grip, &shapes, &mut hands.fingers[1], delta);
 
     let shoulder = edit.position(left.upper);
     let pole = shoulder + down * 0.7 - out * 0.4 + back * 0.1;
@@ -779,7 +814,8 @@ fn hands_on(
     };
     let (contact, axes) = eased(0, placing.aimed(aims[0], &held.gun.support, role, slide));
     seat_clear(&mut edit, left, (contact, axes), (pole, 0.2), (&avoid, -side), working(aims[0]));
-    close(&mut edit, left, aims[0].map_or(Grip::SUPPORT, |aim| aim.grip), &shapes, &mut hands.fingers[0], delta);
+    let grip = aims[0].map_or(rest_grip(held.poses, Hand::Left), |aim| aim.grip);
+    close(&mut edit, left, grip, &shapes, &mut hands.fingers[0], delta);
     world.insert(body, Pose { bones: edit.matrices().into() });
     if aims[1].is_some() { 0.0 } else { short }
 }
@@ -906,17 +942,20 @@ impl Placing<'_> {
     /// the gun; with no way in, fingers along the gun and palm toward its
     /// bore.
     fn working(&self, aim: HandAim) -> (Vec3, (Vec3, Vec3)) {
-        if let Some(toward) = aim.toward.try_normalize() {
+        let (fingers, palm, contact) = if let Some(toward) = aim.toward.try_normalize() {
             let palm = -toward;
             let fingers = palm.cross(Vec3::Z).try_normalize().unwrap_or(Vec3::Z);
-            let contact = aim.at + toward * 0.02 - fingers * 0.05;
-            return (self.to_body.transform_point3(contact), self.axes(fingers, palm));
-        }
-        let bore = Vec3::new(0.0, 0.03, aim.at.z);
-        let side = if aim.hand == Hand::Right { Vec3::NEG_X } else { Vec3::X };
-        let palm = (bore - aim.at).try_normalize().unwrap_or(side);
-        let fingers = (Vec3::Z - palm * palm.z).normalize_or(Vec3::Z);
-        let contact = aim.at - fingers * 0.06 - palm * 0.015;
+            (fingers, palm, aim.at + toward * 0.02 - fingers * 0.05)
+        } else {
+            let bore = Vec3::new(0.0, 0.03, aim.at.z);
+            let side = if aim.hand == Hand::Right { Vec3::NEG_X } else { Vec3::X };
+            let palm = (bore - aim.at).try_normalize().unwrap_or(side);
+            let fingers = (Vec3::Z - palm * palm.z).normalize_or(Vec3::Z);
+            (fingers, palm, aim.at - fingers * 0.06 - palm * 0.015)
+        };
+        // Turned as the beat says, about the point it holds.
+        let (fingers, palm) = (aim.turn * fingers, aim.turn * palm);
+        let contact = aim.at + aim.turn * (contact - aim.at);
         (self.to_body.transform_point3(contact), self.axes(fingers, palm))
     }
 
@@ -1183,6 +1222,42 @@ pub(super) mod tests {
             }
             assert!(off.iter().all(|&off| off < 0.003) && deepest > 0.0, "step {step}: {off:?} {deepest}");
         }
+    }
+
+    #[test]
+    fn a_handlings_poses_move_the_hold_by_exactly_their_offsets() {
+        use crate::guns::handling::{GunHandling, Place, put_handling};
+        let mut scene = scene();
+        let rest = rest_of(&scene);
+        let seen =
+            |scene: &Scene| world_matrix(&scene.world, scene.camera).inverse() * world_matrix(&scene.world, scene.gun);
+        // Still, not breathing, so where it is held is all that moves it.
+        scene.world.get_mut::<GunHolder>(scene.player).unwrap().breathing = 0.0;
+        for _ in 0..90 {
+            frame(&mut scene, &rest);
+        }
+        let usual = seen(&scene);
+        let mut handling = GunHandling::default();
+        handling.poses.hip = Place { at: [0.02, -0.03, 0.01], turn: [0.0; 3] };
+        handling.poses.cant = 12.0;
+        put_handling(&mut scene.world, "Tuned", std::sync::Arc::new(handling));
+        scene.world.get_mut::<Gun>(scene.gun).unwrap().handling = "Tuned".into();
+        for _ in 0..90 {
+            frame(&mut scene, &rest);
+        }
+        let moved = seen(&scene).w_axis.truncate() - usual.w_axis.truncate();
+        assert!((moved - Vec3::new(0.02, -0.03, 0.01)).length() < 0.002, "the hip hold moves by its offset: {moved}");
+        // Raised to the eye, it cants its top to the right about the sights' line, which stays on the eye's.
+        scene.world.get_mut::<GunHolder>(scene.player).unwrap().aiming = true;
+        for _ in 0..90 {
+            frame(&mut scene, &rest);
+        }
+        let gun = scene.world.get::<Gun>(scene.gun).unwrap().clone();
+        let sights = seen(&scene) * gun.sight_frame();
+        let up = sights.transform_vector3(Vec3::Y).normalize();
+        assert!((up.x.atan2(up.y).to_degrees() - 12.0).abs() < 0.5, "canted twelve degrees: {up}");
+        let rear = sights.w_axis.truncate();
+        assert!(rear.truncate().length() < 0.01, "the sights still on the eye's line: {rear}");
     }
 
     #[test]

@@ -4,7 +4,7 @@
 //! part it drives moves with the hand, and the part it carries goes where
 //! the hand goes. As each beat ends, what it does happens to the gun.
 
-use voxear_core::math::{Mat4, Vec3};
+use voxear_core::math::{Mat4, Quat, Vec3};
 use voxear_ecs::{Entity, World};
 use voxear_scene::{Hidden, Transform};
 
@@ -33,10 +33,11 @@ pub struct ActionPlay {
     /// Knocks the gun took as beats ended, for its holder to give it: a
     /// spin of its sway, and a push of its lag, since last asked.
     pub knock: (Vec3, Vec3),
-    /// How far the action lifts the gun up before the eyes, and whether it
-    /// takes the gun down from them.
+    /// How far the action lifts the gun up before the eyes, whether it
+    /// takes the gun down from them, and an offset on where it brings it.
     pub lift: f32,
     pub lowers_aim: bool,
+    pub work: super::handling::Place,
 }
 
 /// What a beat throwing something away needs: the gun's place and turn in
@@ -51,12 +52,20 @@ pub struct Throwing {
 }
 
 impl ActionPlay {
-    /// A built-in action started on a gun of `gun` in `state`, its holder
-    /// having `spare` rounds; none when it has nothing to do.
-    pub fn start(kind: ActionKind, gun: super::gun::GunKind, state: &GunState, spare: u32) -> Option<Self> {
-        let spec = super::templates::template(gun, kind);
+    /// A built-in action started on a gun of `gun` in `state`, as its
+    /// handling has it, its holder having `spare` rounds; none when it has
+    /// nothing to do.
+    pub fn start(
+        kind: ActionKind,
+        gun: super::gun::GunKind,
+        handling: &super::handling::GunHandling,
+        state: &GunState,
+        spare: u32,
+    ) -> Option<Self> {
+        let spec = handling.spec(gun, kind);
         let beats = super::actions::expand(&spec, gun, state, spare);
-        (!beats.is_empty()).then(|| Self { lift: spec.lift, lowers_aim: spec.lowers_aim, ..Self::new(kind, beats) })
+        let started = Self { lift: spec.lift, lowers_aim: spec.lowers_aim, work: spec.work, ..Self::new(kind, beats) };
+        (!started.beats.is_empty()).then_some(started)
     }
 
     pub fn new(kind: ActionKind, beats: Vec<Beat>) -> Self {
@@ -72,6 +81,7 @@ impl ActionPlay {
             knock: (Vec3::ZERO, Vec3::ZERO),
             lift: 1.0,
             lowers_aim: true,
+            work: super::handling::Place::default(),
         }
     }
 
@@ -82,8 +92,9 @@ impl ActionPlay {
 
 /// Where a hand working goes this frame, in the gun's space: the point its
 /// fingers hold, how far they may close, how far the hand is settled into
-/// its hold on the gun, 0 working to 1 holding as it does at rest, and the
-/// way it comes in to what it holds, out from it; none for a pouch.
+/// its hold on the gun, 0 working to 1 holding as it does at rest, the way
+/// it comes in to what it holds, out from it, none for a pouch, and how
+/// much more it is turned than it would be.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct HandAim {
     pub hand: Hand,
@@ -91,6 +102,7 @@ pub struct HandAim {
     pub grip: Grip,
     pub settle: f32,
     pub toward: Vec3,
+    pub turn: Quat,
 }
 
 /// The hand's place at rest on the gun, in the gun's space.
@@ -158,7 +170,7 @@ pub fn advance(
         play.beat()?;
     }
     let beat = *play.beat()?;
-    let goal = goal_at(world, gun, state, beat.goal, beat.hand, pouches);
+    let goal = goal_at(world, gun, state, beat.goal, beat.hand, pouches) + Vec3::from(beat.at);
     if play.from.is_none() {
         play.rested = play.hands[beat.hand as usize].is_none();
     }
@@ -180,13 +192,15 @@ pub fn advance(
         {
             state.parts[index].1 = drive.from + (drive.to - drive.from) * work;
         }
-        goal_at(world, gun, state, beat.goal, beat.hand, pouches)
+        goal_at(world, gun, state, beat.goal, beat.hand, pouches) + Vec3::from(beat.at)
     };
     play.hands[beat.hand as usize] = Some(at);
     let grip = if play.t < beat.reach * 0.7 { Grip::OPEN.lerp(beat.grip, 0.3) } else { beat.grip };
     // A hand leaving its hold eases out of it over the first half of its reach.
     let settle = if play.rested { 1.0 - minimum_jerk(play.t / (beat.reach * 0.5).max(1e-4)) } else { 0.0 };
-    Some((HandAim { hand: beat.hand, at, grip, settle, toward }, Vec3::from(beat.tilt)))
+    let [x, y, z] = beat.turn.map(f32::to_radians);
+    let turn = Quat::from_euler(voxear_core::math::EulerRot::XYZ, x, y, z);
+    Some((HandAim { hand: beat.hand, at, grip, settle, toward, turn }, Vec3::from(beat.tilt)))
 }
 
 /// The way a hand comes in to a goal, in the gun's space, out from it: to

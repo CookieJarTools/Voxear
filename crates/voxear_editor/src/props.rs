@@ -403,6 +403,7 @@ pub enum Prop {
     /// A Gun's kind, weight, length, rate of fire and kick; its grip and
     /// support sockets, sights and muzzle.
     GunKind,
+    GunHandling,
     GunMass,
     GunLength,
     GunFireRate,
@@ -760,6 +761,7 @@ impl Prop {
             | Prop::ViewTwist
             | Prop::ViewHideHead => Part::FirstPersonView,
             Prop::GunKind
+            | Prop::GunHandling
             | Prop::GunMass
             | Prop::GunLength
             | Prop::GunFireRate
@@ -1047,6 +1049,7 @@ impl Prop {
             Prop::ViewTwist => "twist",
             Prop::ViewHideHead => "hide_head",
             Prop::GunKind => "kind",
+            Prop::GunHandling => "handling",
             Prop::GunMass => "mass",
             Prop::GunLength => "length",
             Prop::GunFireRate => "fire_rate",
@@ -1509,6 +1512,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
         ],
         Part::Gun => vec![
             Prop::GunKind,
+            Prop::GunHandling,
             Prop::GunMass,
             Prop::GunLength,
             Prop::GunFireRate,
@@ -1891,6 +1895,7 @@ pub fn label(prop: &Prop) -> String {
         Prop::ViewTwist => "Twist",
         Prop::ViewHideHead => "Hide Head",
         Prop::GunKind => "Kind",
+        Prop::GunHandling => "Handling",
         Prop::GunMass => "Mass",
         Prop::GunLength => "Length",
         Prop::GunFireRate => "Fire Rate",
@@ -2671,6 +2676,11 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
             Some(PartMotion::Slide { travel, .. }) => travel,
             _ => 0.0,
         }),
+        Prop::GunHandling => {
+            let handling = &world.get::<Gun>(entity)?.handling;
+            let guid = game.content.parse(handling).ok().and_then(|reference| reference.guid());
+            Value::Asset(guid.and_then(|guid| game.content.db().get(guid)).map_or("None".into(), |e| e.path.clone()))
+        }
         Prop::MatcherMotionSet => {
             let set = &world.get::<voxear_engine::animation::MotionMatcher>(entity)?.motion_set;
             let guid = game.content.parse(set).ok().and_then(|reference| reference.guid());
@@ -2996,6 +3006,16 @@ pub fn pick(
                 false => light.profile = texture,
             })
         }
+        (Prop::GunHandling, Pick::Asset(choice)) => {
+            let handling = match choice {
+                None => String::new(),
+                Some(path) => match game.content.parse(path) {
+                    Ok(reference) => reference.to_string(),
+                    Err(_) => return false,
+                },
+            };
+            with(&mut game.engine.world, entity, |gun: &mut Gun| gun.handling = handling)
+        }
         (Prop::MatcherMotionSet, Pick::Asset(choice)) => {
             let set = match choice {
                 None => String::new(),
@@ -3229,6 +3249,7 @@ pub fn choices(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) ->
             return fields::asset_choices(game, &kind);
         }
         Prop::MatcherMotionSet => return fields::assets_of(game, Some(AssetKind::MotionSet)),
+        Prop::GunHandling => return fields::assets_of(game, Some(AssetKind::GunHandling)),
         Prop::AnimatorClip => {
             let mut found = vec![("None".to_string(), Pick::Asset(None))];
             found.extend(model_clips(game));
@@ -3615,10 +3636,12 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         (Prop::ViewLean, Value::Number(n)) => with(world, entity, |it: &mut FirstPersonView| it.lean = n.clamp(0.0, 1.0)),
         (Prop::ViewTwist, Value::Number(n)) => with(world, entity, |it: &mut FirstPersonView| it.twist = n.clamp(0.0, 1.0)),
         (Prop::ViewHideHead, Value::Toggle(on)) => with(world, entity, |it: &mut FirstPersonView| it.hide_head = on),
-        // A kind fills in its typical numbers and sockets.
+        // A kind fills in its typical numbers and sockets, and keeps the handling picked.
         (Prop::GunKind, Value::Choice(index, _)) => {
             let kind = GunKind::ALL.get(index).copied().unwrap_or_default();
-            with(world, entity, |gun: &mut Gun| *gun = Gun::preset(kind))
+            with(world, entity, |gun: &mut Gun| {
+                *gun = Gun { handling: std::mem::take(&mut gun.handling), ..Gun::preset(kind) }
+            })
         }
         (Prop::GunMass, Value::Number(n)) => with(world, entity, |gun: &mut Gun| gun.mass = n.max(0.1)),
         (Prop::GunLength, Value::Number(n)) => with(world, entity, |gun: &mut Gun| gun.length = n.max(0.05)),

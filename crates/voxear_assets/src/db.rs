@@ -61,6 +61,9 @@ pub enum AssetKind {
     /// A `.motionset` file: what a character can do, its states' looping
     /// clips and its actions, for a Motion Matcher to play.
     MotionSet,
+    /// A `.gunhandling` file: how a gun is held and how its actions go,
+    /// which a Gun picks.
+    GunHandling,
 }
 
 impl AssetKind {
@@ -83,6 +86,7 @@ impl AssetKind {
             "lighting" => Self::Lighting,
             "shader" => Self::Shader,
             "motionset" => Self::MotionSet,
+            "gunhandling" => Self::GunHandling,
             _ => return None,
         })
     }

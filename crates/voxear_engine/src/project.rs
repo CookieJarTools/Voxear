@@ -23,6 +23,8 @@ pub struct ProjectFile {
     pub localization: LocalizationSettings,
     #[serde(default)]
     pub audio: AudioSettings,
+    #[serde(default)]
+    pub network: crate::net::NetworkSettings,
 }
 
 /// Sound for the whole project: whether 3D sounds start out heard as

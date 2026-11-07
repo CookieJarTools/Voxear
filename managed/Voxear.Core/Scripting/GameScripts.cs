@@ -198,6 +198,7 @@ internal static class GameScripts
 		}
 
 		Level.Forget(previous);
+		Net.Forget(previous);
 		SaveTypes.Forget(previous);
 		MainThreadContext.Instance.Forget(previous);
 		previous.Unload();

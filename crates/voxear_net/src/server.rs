@@ -54,6 +54,8 @@ pub struct ServerConfig {
     pub private_key: Key,
     pub max_clients: usize,
     /// Where clients reach this server; a token must name one of these.
+    /// None lets a token name any, for a game whose clients join by address
+    /// with tokens they make themselves.
     pub public_addresses: Vec<SocketAddr>,
     pub connection: ConnectionConfig,
 }
@@ -179,7 +181,8 @@ impl Server {
         ) else {
             return;
         };
-        if !token.servers.iter().any(|s| self.config.public_addresses.contains(s)) {
+        let named = |s: &SocketAddr| self.config.public_addresses.contains(s);
+        if !self.config.public_addresses.is_empty() && !token.servers.iter().any(named) {
             return;
         }
         if self.by_address.contains_key(&from) || self.slots.iter().flatten().any(|s| s.id.0 == token.client_id) {

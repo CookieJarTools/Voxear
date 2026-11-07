@@ -34,6 +34,7 @@ pub use voxear_physics::scene as physics;
 pub use voxear_physics2d::scene as physics2d;
 pub mod player;
 pub mod player_build;
+pub mod net;
 pub mod prefab;
 pub mod prefab_overrides;
 pub mod previews;

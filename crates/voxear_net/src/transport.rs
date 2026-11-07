@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 /// The largest datagram anything sends.
 pub const MAX_DATAGRAM: usize = 1200;
 
-pub trait Transport: Send {
+pub trait Transport: Send + Sync {
     /// Queues a datagram to `to`; it goes by the next [`Transport::flush`].
     fn send(&mut self, to: SocketAddr, packet: &[u8]);
     /// The next datagram that came, into `buffer`: its length and sender.
@@ -21,6 +21,30 @@ pub trait Transport: Send {
     fn local_addr(&self) -> SocketAddr;
     /// The time now, in seconds, for transports that hold packets back.
     fn update(&mut self, _now: f64) {}
+}
+
+/// A boxed transport, so one chosen while running can be wrapped, as in a
+/// [`Simulated`](crate::Simulated) network.
+impl Transport for Box<dyn Transport> {
+    fn send(&mut self, to: SocketAddr, packet: &[u8]) {
+        (**self).send(to, packet);
+    }
+
+    fn receive(&mut self, buffer: &mut [u8]) -> Option<(usize, SocketAddr)> {
+        (**self).receive(buffer)
+    }
+
+    fn flush(&mut self) {
+        (**self).flush();
+    }
+
+    fn local_addr(&self) -> SocketAddr {
+        (**self).local_addr()
+    }
+
+    fn update(&mut self, now: f64) {
+        (**self).update(now);
+    }
 }
 
 /// A UDP socket that never blocks, with large buffers so a burst of packets

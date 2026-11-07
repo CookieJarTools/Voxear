@@ -201,6 +201,7 @@ pub fn build(
         scripts: assembly,
         development: profile.development.enabled,
         server: profile.target == build_profile::Target::Server,
+        network: project.file.network.clone(),
         validation_layers: profile.development.validation_layers,
         fullscreen: profile.player.window == "fullscreen",
         width: profile.player.width,

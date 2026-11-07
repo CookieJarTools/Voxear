@@ -13,6 +13,7 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::net::NetStart;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use voxear_render::{Renderer, RendererSettings};
@@ -59,6 +60,9 @@ pub struct PlayerSettings {
     /// until it is stopped.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub server: bool,
+    /// The project's `[network]` settings.
+    #[serde(default)]
+    pub network: crate::net::NetworkSettings,
     /// Vulkan's validation layers, when installed.
     pub validation_layers: bool,
     pub fullscreen: bool,
@@ -170,6 +174,10 @@ pub struct PlayerArgs {
     pub headless: bool,
     /// Stop after this many frames.
     pub frames: Option<u64>,
+    /// Networked play to start with: a server, a host or joining one.
+    pub net: Option<NetStart>,
+    /// The port a server or host listens on; 0 for the project's.
+    pub port: u16,
 }
 
 /// The `Data` folder beside the running program.
@@ -216,6 +224,7 @@ pub fn run_player(data: &Path, args: &PlayerArgs) -> Result<()> {
                 reverb_mode: settings.reverb_mode,
                 steam_audio: true,
             },
+            network: settings.network.clone(),
         },
     };
     let mut game = Game::with_content(project, engine, content);
@@ -224,22 +233,27 @@ pub fn run_player(data: &Path, args: &PlayerArgs) -> Result<()> {
         localization.set_mark_missing(settings.development);
     }
 
-    if args.headless || settings.server {
+    // A server build serves unless told otherwise; a port given applies to whichever.
+    let net = args.net.or(settings.server.then_some(NetStart::Server(0))).map(|start| match start {
+        NetStart::Server(_) => NetStart::Server(args.port),
+        NetStart::Host(_) => NetStart::Host(args.port),
+        joining => joining,
+    });
+    let serving = matches!(net, Some(NetStart::Server(_)));
+    if args.headless || serving {
         // Without a window, sound plays out in silence.
         game.audio = crate::audio::GameAudio::new(crate::audio::Audio::quiet());
         game.start(None)?;
-        // A server runs until stopped, sixty ticks a second; headless otherwise, a few frames as fast as it can.
-        let frames = args.frames.or((!settings.server).then_some(3));
-        if settings.server {
-            tracing::info!("serving {}", settings.start_level);
+        if let Some(start) = net {
+            game.start_session(start, voxear_net::Conditions::PERFECT)?;
         }
-        let tick = std::time::Duration::from_secs_f64(1.0 / 60.0);
-        let mut next = std::time::Instant::now();
-        while frames.is_none_or(|frames| game.engine.time().frame < frames) {
-            game.tick(tick.as_secs_f32(), None);
-            if frames.is_none() {
-                next += tick;
-                std::thread::sleep(next.saturating_duration_since(std::time::Instant::now()));
+        match (serving, net.is_some()) {
+            (true, _) => run_server(&mut game, args.frames),
+            (false, true) => run_on_time(&mut game, args.frames),
+            (false, false) => {
+                for _ in 0..args.frames.unwrap_or(3) {
+                    game.tick(1.0 / 60.0, None);
+                }
             }
         }
         tracing::info!("ran {} frames", game.engine.time().frame);
@@ -255,8 +269,55 @@ pub fn run_player(data: &Path, args: &PlayerArgs) -> Result<()> {
         console: settings.development.then(|| data.to_path_buf()),
     };
     let renderer = RendererSettings { renderdoc: false, capture_folder: None, hot_reload: false, software_rays: false };
-    let setup = Box::new(|game: &mut Game, renderer: &mut Renderer| game.start(Some(renderer)));
+    let setup = Box::new(move |game: &mut Game, renderer: &mut Renderer| {
+        game.start(Some(renderer))?;
+        if let Some(start) = net {
+            game.start_session(start, voxear_net::Conditions::PERFECT)?;
+        }
+        Ok(())
+    });
     run_windowed(game, options, renderer, setup)
+}
+
+/// Runs a server's game until it is stopped, or for `frames` ticks, saying
+/// first that it is ready (see [`run_on_time`]).
+pub fn run_server(game: &mut Game, frames: Option<u64>) {
+    let session = game.engine.world.resource::<crate::net::NetSession>();
+    let (rate, address) = session.map_or((60, None), |s| (s.tick_rate(), Some(s.address())));
+    tracing::info!(
+        "ready: {} on {}, {rate} ticks a second",
+        game.levels.current().unwrap_or("no level"),
+        address.map_or("no port".into(), |a| a.to_string())
+    );
+    run_on_time(game, frames);
+}
+
+/// Runs a game without a window a tick at a time, in real time, until it is
+/// stopped or for `frames` ticks, as a networked game must. Each tick waits
+/// for its own moment rather than for a length of time, so ticks never
+/// drift; on Linux the system is asked to wake it within a microsecond of
+/// that moment rather than its usual fifty. One that falls far behind
+/// starts afresh rather than rushing.
+pub fn run_on_time(game: &mut Game, frames: Option<u64>) {
+    use std::time::{Duration, Instant};
+    #[cfg(target_os = "linux")]
+    // SAFETY: changing this thread's timer slack touches nothing else.
+    unsafe {
+        libc::prctl(libc::PR_SET_TIMERSLACK, 1000 as libc::c_ulong);
+    }
+    let rate = game.engine.world.resource::<crate::net::NetSession>().map_or(60, |s| s.tick_rate());
+    let tick = Duration::from_secs_f64(1.0 / f64::from(rate));
+    let mut next = Instant::now();
+    while frames.is_none_or(|frames| game.engine.time().frame < frames) {
+        game.tick(tick.as_secs_f32(), None);
+        next += tick;
+        let now = Instant::now();
+        if next > now {
+            std::thread::sleep(next - now);
+        } else if now - next > Duration::from_millis(250) {
+            next = now;
+        }
+    }
 }
 
 /// Whether Vulkan's validation layers run, unless `VOXEAR_VALIDATION` says.

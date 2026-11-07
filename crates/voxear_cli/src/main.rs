@@ -11,6 +11,8 @@ use std::{
     time::Instant,
 };
 
+use voxear_engine::net::NetStart;
+use voxear_net::Conditions;
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use voxear_assets::AssetKind;
@@ -217,6 +219,21 @@ enum Commands {
         /// Show the stats overlay (F1 in a window).
         #[arg(long)]
         stats: bool,
+        /// Serve the game without a window, until stopped.
+        #[arg(long, conflicts_with_all = ["host", "connect"])]
+        server: bool,
+        /// Host the game: serve it and play it too.
+        #[arg(long, conflicts_with = "connect")]
+        host: bool,
+        /// Join the server at this address, such as 127.0.0.1:7777.
+        #[arg(long, value_name = "ADDRESS")]
+        connect: Option<std::net::SocketAddr>,
+        /// The port a server or host listens on; the project's `[network]` port when not given.
+        #[arg(long, default_value_t = 0)]
+        port: u16,
+        /// Play through a simulated network this bad, to test with.
+        #[arg(long, value_enum, default_value_t = Network::Perfect)]
+        network: Network,
     },
     /// Open a project in the editor.
     Editor {
@@ -371,9 +388,29 @@ fn main() -> Result<()> {
         Commands::Loc { command: LocCommand::Import { sheet, table, apply } } => import_strings(&sheet, &table, apply),
         Commands::Package { command } => package::run(command),
         Commands::Lut { command: LutCommand::Neutral { out, size } } => write_neutral_lut(&out, size),
-        Commands::Run { project, headless, frames, no_build, renderdoc, bundles, overlays, stats } => {
+        Commands::Run {
+            project,
+            headless,
+            frames,
+            no_build,
+            renderdoc,
+            bundles,
+            overlays,
+            stats,
+            server,
+            host,
+            connect,
+            port,
+            network,
+        } => {
             let prepare = Prepare { build: !no_build, bundles, overlays };
-            run(&project, headless, frames, prepare, renderdoc, stats)
+            let net = match (server, host, connect) {
+                (true, ..) => Some(NetStart::Server(port)),
+                (_, true, _) => Some(NetStart::Host(port)),
+                (.., Some(address)) => Some(NetStart::Connect(address)),
+                _ => None,
+            };
+            run(&project, headless, frames, prepare, renderdoc, stats, net.map(|start| (start, network.conditions())))
         }
         Commands::Render {
             project,
@@ -433,16 +470,31 @@ fn console(line: &str, project: &Path, player: Option<&Path>) -> Result<()> {
     Ok(())
 }
 
-fn run(path: &Path, headless: bool, frames: Option<u64>, prepare: Prepare, renderdoc: bool, stats: bool) -> Result<()> {
+fn run(
+    path: &Path,
+    headless: bool,
+    frames: Option<u64>,
+    prepare: Prepare,
+    renderdoc: bool,
+    stats: bool,
+    net: Option<(NetStart, Conditions)>,
+) -> Result<()> {
     let project = Project::open(path)?;
     let settings = RendererSettings { hot_reload: shaders_reload(), ..renderer_settings(&project, renderdoc) };
     let title = format!("{} — Voxear", project.name());
     let mut game = start_game(project, prepare)?;
+    let serving = matches!(net, Some((NetStart::Server(_), _)));
 
-    if !headless {
+    if !headless && !serving {
         // A window is for playing while working on the game, so changed scripts reload into it.
         game.watch_scripts();
-        let setup = Box::new(|game: &mut Game, renderer: &mut Renderer| game.start(Some(renderer)));
+        let setup = Box::new(move |game: &mut Game, renderer: &mut Renderer| {
+            game.start(Some(renderer))?;
+            if let Some((start, conditions)) = net {
+                game.start_session(start, conditions)?;
+            }
+            Ok(())
+        });
         let console = Some(project_console(&game.project.root));
         let options = WindowOptions { frames, stats, console, ..WindowOptions::tools(&title) };
         return run_windowed(game, options, settings, setup);
@@ -450,11 +502,43 @@ fn run(path: &Path, headless: bool, frames: Option<u64>, prepare: Prepare, rende
     // Without a window, sound plays out in silence.
     game.audio = voxear_engine::audio::GameAudio::new(voxear_engine::audio::Audio::quiet());
     game.start(None)?;
+    if let Some((start, conditions)) = net {
+        game.start_session(start, conditions)?;
+    }
+    if serving {
+        voxear_engine::player::run_server(&mut game, frames);
+        return Ok(());
+    }
+    if net.is_some() {
+        voxear_engine::player::run_on_time(&mut game, frames);
+        print_objs(&game.engine);
+        return Ok(());
+    }
     for _ in 0..frames.unwrap_or(3) {
         game.tick(1.0 / 60.0, None);
     }
     print_objs(&game.engine);
     Ok(())
+}
+
+/// How bad a network `vox run` plays through, to test with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+enum Network {
+    Perfect,
+    Good,
+    Average,
+    Bad,
+}
+
+impl Network {
+    fn conditions(self) -> Conditions {
+        match self {
+            Network::Perfect => Conditions::PERFECT,
+            Network::Good => Conditions::GOOD,
+            Network::Average => Conditions::AVERAGE,
+            Network::Bad => Conditions::BAD,
+        }
+    }
 }
 
 /// Where frame `frame` of a sequence saved beside `out` goes: `out`'s name
@@ -924,6 +1008,7 @@ fn assets(path: &Path) -> Result<()> {
             AssetKind::LightProfile => "ies",
             AssetKind::Lighting => "lighting",
             AssetKind::Shader => "shader",
+            AssetKind::MotionSet => "motion set",
         };
         println!("  {:<9} {}  {}", kind, entry.guid, entry.path);
     }

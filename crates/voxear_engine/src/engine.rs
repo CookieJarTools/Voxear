@@ -60,6 +60,7 @@ impl Engine {
         crate::particles::register();
         crate::smoke::register();
         crate::mist::register();
+        crate::net::register();
         crate::animation::register();
         crate::animation::register_bone_attachments();
         let mut world = World::new();
@@ -296,6 +297,12 @@ impl Engine {
         &self.time
     }
 
+    /// Sets how long a fixed step is, in seconds, as a networked game's tick
+    /// rate does.
+    pub fn set_fixed_delta(&mut self, seconds: f32) {
+        self.time.fixed_delta = seconds.clamp(1.0 / 480.0, 0.5);
+    }
+
     /// Creates an Obj and attaches behaviours by C# type name. Behaviours get
     /// their first callbacks at the next flush, as one batch.
     pub fn spawn_obj(&mut self, name: &str, transform: Transform, behaviours: &[String]) -> Result<Entity> {
@@ -465,10 +472,12 @@ impl Engine {
             self.flush();
         }
 
-        self.fixed_accumulator += self.time.delta;
+        // A networked client runs its ticks a little faster or slower to keep pace with its server.
+        self.fixed_accumulator += self.time.delta * crate::net::time_scale(&self.world);
         let mut steps = 0;
         while self.fixed_accumulator >= self.time.fixed_delta && steps < MAX_FIXED_STEPS {
             profile_scope!("FixedUpdate");
+            crate::net::fixed_tick(&mut self.world);
             self.sync_script_time(self.time.fixed_delta);
             self.run_phase(Phase::FixedUpdate);
             self.run_stage("FixedUpdate");
@@ -477,7 +486,8 @@ impl Engine {
             self.fixed_accumulator -= self.time.fixed_delta;
             steps += 1;
         }
-        if steps == MAX_FIXED_STEPS {
+        // Ticks a slow frame could not run are dropped, but never while networked: each is a tick of the session.
+        if steps == MAX_FIXED_STEPS && self.world.resource::<crate::net::NetSession>().is_none() {
             self.fixed_accumulator = 0.0;
         }
         self.sync_script_time(self.time.delta);

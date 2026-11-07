@@ -242,8 +242,32 @@ impl Game {
     }
 
     /// Loads the project's `start_level`.
+    /// Starts networked play as `start` says, through a network as bad as
+    /// `conditions`, and gives back where its server is.
+    pub fn start_session(
+        &mut self,
+        start: crate::net::NetStart,
+        conditions: voxear_net::Conditions,
+    ) -> Result<std::net::SocketAddr> {
+        use crate::net::{self, NetDefaults, NetSettings, NetStart};
+        let mut settings = NetSettings::for_project(self.project.name(), crate::engine_version(), &self.project.file.network);
+        settings.conditions = conditions;
+        // Scripts that start another session later start it the same way.
+        self.engine.world.insert_resource(NetDefaults(settings.clone()));
+        self.engine.set_fixed_delta(1.0 / settings.tick_rate as f32);
+        let port = |port: u16| if port == 0 { settings.port } else { port };
+        match start {
+            NetStart::Server(at) => net::serve(&mut self.engine.world, settings.clone(), port(at), false),
+            NetStart::Host(at) => net::serve(&mut self.engine.world, settings.clone(), port(at), true),
+            NetStart::Connect(address) => net::connect(&mut self.engine.world, settings, address).map(|()| address),
+        }
+    }
+
     pub fn start(&mut self, mut renderer: Option<&mut Renderer>) -> Result<()> {
         self.audio.start_game();
+        // For scripts that start networked play.
+        let defaults = crate::net::NetSettings::for_project(self.project.name(), crate::engine_version(), &self.project.file.network);
+        self.engine.world.insert_resource(crate::net::NetDefaults(defaults));
         // The project's shaders first, so its materials are uploaded with them.
         if let Some(renderer) = renderer.as_deref_mut() {
             self.apply_custom_shaders(renderer);
@@ -502,6 +526,7 @@ impl Game {
         }
         // Read once, before the scripts that ask about it.
         self.input.update(delta);
+        self.net_begin(delta, renderer.as_deref_mut());
         self.models = ModelWork::for_renderer(renderer.as_deref());
         give_collider_meshes(&mut self.engine.world, &mut self.content);
         crate::animation::give_clips(&mut self.engine.world, &mut self.content);
@@ -596,8 +621,29 @@ impl Game {
             }
             self.audio.update(&self.engine.world, &mut self.content, running, delta);
         }
+        // A server tells its clients the level it plays, then whatever this frame left to send goes.
+        crate::net::set_level(&mut self.engine.world, self.levels.current());
+        crate::net::frame_end(&mut self.engine.world);
         if std::mem::take(&mut self.unload_requested) {
             self.release_unused(renderer);
+        }
+    }
+
+    /// Networked play's start of a frame: what arrived, this frame's input
+    /// for the local player, the session's tick rate for the fixed steps,
+    /// and on a client the level its server plays.
+    fn net_begin(&mut self, delta: f32, renderer: Option<&mut Renderer>) {
+        let Some(rate) = self.engine.world.resource::<crate::net::NetSession>().map(|s| s.tick_rate()) else { return };
+        let actions = self.input.actions().len();
+        let local: Vec<voxear_input::ActionState> =
+            (0..actions).map(|action| self.input.state(voxear_input::ActionId(action))).collect();
+        crate::net::frame_begin(&mut self.engine.world, delta, &local);
+        self.engine.set_fixed_delta(1.0 / rate as f32);
+        if let Some(level) = crate::net::take_level_request(&mut self.engine.world)
+            && self.levels.current() != Some(level.as_str())
+            && let Err(error) = self.load_level(&level, renderer)
+        {
+            tracing::error!("could not load the server's level {level}: {error:#}");
         }
     }
 }

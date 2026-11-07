@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 48;
+pub(crate) const API_VERSION: u32 = 49;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -332,6 +332,10 @@ pub(crate) struct NativeApi {
     /// Reads, or with `set` writes, value `what` of an Obj's Bone
     /// Attachment, as `light_value` does an Obj's Light.
     pub bone_attachment_value: unsafe extern "C" fn(entity: u64, what: i32, set: i32, value: *mut [f32; 4]) -> i32,
+    /// `Net`: networked play, by number (as `NativeNet` in Voxear.Core),
+    /// with two whole numbers, some text and four floats for what it gives
+    /// back besides its answer.
+    pub net_call: unsafe extern "C" fn(what: i32, a: i32, b: i32, text: *const u8, len: i32, out: *mut [f32; 4]) -> i32,
 }
 
 /// What answers scripts' questions about water: the engine's, set when it
@@ -386,6 +390,27 @@ pub fn set_motion_matcher_values(values: ComponentValues) {
 /// Sets what answers `BoneAttachment` in scripts; the first set is kept.
 pub fn set_bone_attachment_values(values: ComponentValues) {
     let _ = ATTACHMENTS.set(values);
+}
+
+/// What answers `Net` in scripts: the engine's, set when it starts. Given
+/// what to do, two numbers, some text and room for floats to give back.
+pub type NetCalls = fn(&mut World, i32, i32, i32, &str, &mut [f32; 4]) -> i32;
+static NET: std::sync::OnceLock<NetCalls> = std::sync::OnceLock::new();
+
+/// Sets what answers `Net` in scripts; the first set is kept.
+pub fn set_net_calls(calls: NetCalls) {
+    let _ = NET.set(calls);
+}
+
+unsafe extern "C" fn net_call(what: i32, a: i32, b: i32, text: *const u8, len: i32, out: *mut [f32; 4]) -> i32 {
+    let Some(calls) = NET.get() else { return 0 };
+    let text = unsafe { utf8(text, len) };
+    let mut values = [0.0f32; 4];
+    let answer = with_world(|world| Some(calls(world, what, a, b, &text, &mut values))).unwrap_or(0);
+    if !out.is_null() {
+        unsafe { *out = values };
+    }
+    answer
 }
 
 /// What answers scripts' shots and blasts through smoke and their asking
@@ -1355,6 +1380,7 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         mist_value,
         motion_matcher_value,
         bone_attachment_value,
+        net_call,
     }
 }
 

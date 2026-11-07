@@ -38,6 +38,7 @@ pub(super) enum Copied {
     ParticleSystem(Box<ParticleSystem>),
     Smoke(voxear_render::Smoke),
     Mist(voxear_render::Mist),
+    NetObject(voxear_engine::net::NetObject),
     Animator(voxear_engine::animation::Animator),
     MotionMatcher(Box<voxear_engine::animation::MotionMatcher>),
     BoneAttachment(Box<voxear_engine::animation::BoneAttachment>),
@@ -76,6 +77,7 @@ impl Copied {
             Part::ParticleSystem => Self::ParticleSystem(Box::new(*world.get::<ParticleSystem>(entity)?)),
             Part::Smoke => Self::Smoke(*world.get::<voxear_render::Smoke>(entity)?),
             Part::Mist => Self::Mist(*world.get::<voxear_render::Mist>(entity)?),
+            Part::NetObject => Self::NetObject(*world.get::<voxear_engine::net::NetObject>(entity)?),
             Part::Animator => Self::Animator(world.get::<voxear_engine::animation::Animator>(entity)?.clone()),
             Part::BoneAttachment => {
                 Self::BoneAttachment(Box::new(world.get::<voxear_engine::animation::BoneAttachment>(entity)?.clone()))
@@ -109,6 +111,7 @@ impl Copied {
             Self::ParticleSystem(system) => drop(world.insert(entity, **system)),
             Self::Smoke(smoke) => drop(world.insert(entity, *smoke)),
             Self::Mist(mist) => drop(world.insert(entity, *mist)),
+            Self::NetObject(net) => drop(world.insert(entity, *net)),
             Self::Animator(animator) => drop(world.insert(entity, animator.clone())),
             Self::MotionMatcher(matcher) => drop(world.insert(entity, (**matcher).clone())),
             Self::BoneAttachment(attachment) => drop(world.insert(entity, (**attachment).clone())),

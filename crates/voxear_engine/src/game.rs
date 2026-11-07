@@ -621,8 +621,10 @@ impl Game {
             }
             self.audio.update(&self.engine.world, &mut self.content, running, delta);
         }
-        // A server tells its clients the level it plays, then whatever this frame left to send goes.
+        // A server tells its clients the level it plays and shares new networked Objs, then whatever this
+        // frame left to send goes.
         crate::net::set_level(&mut self.engine.world, self.levels.current());
+        self.share_net_objects();
         crate::net::frame_end(&mut self.engine.world);
         if std::mem::take(&mut self.unload_requested) {
             self.release_unused(renderer);
@@ -639,11 +641,74 @@ impl Game {
             (0..actions).map(|action| self.input.state(voxear_input::ActionId(action))).collect();
         crate::net::frame_begin(&mut self.engine.world, delta, &local);
         self.engine.set_fixed_delta(1.0 / rate as f32);
+        let mut renderer = renderer;
         if let Some(level) = crate::net::take_level_request(&mut self.engine.world)
             && self.levels.current() != Some(level.as_str())
-            && let Err(error) = self.load_level(&level, renderer)
+            && let Err(error) = self.load_level(&level, renderer.as_deref_mut())
         {
             tracing::error!("could not load the server's level {level}: {error:#}");
+        }
+        self.make_net_objects(renderer);
+    }
+
+    /// On a server, shares each networked Obj not yet shared: one its
+    /// scene placed, found on players' machines where their scene placed
+    /// it, or a prefab's copy, made there from the prefab. Any other is
+    /// left unshared, with a warning, as players could not make it.
+    fn share_net_objects(&mut self) {
+        use crate::net::{NetId, NetObject, NetRole, NetSession, Networked, Origin};
+        let world = &mut self.engine.world;
+        let serving = world.resource::<NetSession>().is_some_and(|s| matches!(s.role(), NetRole::Server | NetRole::Host));
+        if !serving {
+            return;
+        }
+        let new: Vec<Entity> = world
+            .query_ref::<(Entity, &NetObject)>()
+            .without::<Networked>()
+            .without::<Destroying>()
+            .into_iter()
+            .map(|(entity, _)| entity)
+            .collect();
+        for entity in new {
+            let origin = match self.levels.place_of(entity) {
+                Some((scene, path)) => Some(Origin::Placed { scene: scene.to_string(), path: path.to_string() }),
+                None => world.get::<Spawned>(entity).filter(|s| s.root == entity).map(|s| Origin::Prefab(s.prefab.to_string())),
+            };
+            match origin {
+                Some(origin) => drop(crate::net::track(world, entity, origin)),
+                None => {
+                    let name = world.get::<voxear_scene::Name>(entity).map_or("An Obj".into(), |n| n.0.clone());
+                    tracing::warn!("{name} has a Net Object but is neither placed in a scene nor a prefab's root, so players cannot make it");
+                    world.insert(entity, Networked { id: NetId(0), owner: None });
+                }
+            }
+        }
+    }
+
+    /// On a client, finds or makes the networked Objs the server shared,
+    /// and destroys those it took away.
+    fn make_net_objects(&mut self, mut renderer: Option<&mut Renderer>) {
+        use crate::net::Origin;
+        for request in crate::net::take_spawns(&mut self.engine.world) {
+            let entity = match &request.origin {
+                Origin::Placed { scene, path } => {
+                    let place = scene.parse().ok().zip(ObjPath::parse(path).ok());
+                    place.and_then(|(scene, path)| self.levels.entity_at(scene, &path))
+                }
+                Origin::Prefab(prefab) => {
+                    let placement = Placement { position: request.state.position, rotation: request.state.rotation };
+                    let made = self.instantiate(prefab, None, Some(placement), renderer.as_deref_mut());
+                    made.inspect_err(|error| tracing::error!("could not make the server's {prefab}: {error:#}")).ok()
+                }
+            };
+            match entity {
+                Some(entity) => crate::net::bind(&mut self.engine.world, &request, entity),
+                None => tracing::warn!("the server shared {:?}, which is not here", request.origin),
+            }
+        }
+        let gone = crate::net::take_despawns(&mut self.engine.world);
+        if !gone.is_empty() {
+            self.engine.destroy_objs(&gone);
         }
     }
 }

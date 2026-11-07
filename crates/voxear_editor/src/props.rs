@@ -80,6 +80,7 @@ pub enum Part {
     ParticleSystem,
     Smoke,
     Mist,
+    NetObject,
     Animator,
     MotionMatcher,
     BoneAttachment,
@@ -124,6 +125,7 @@ impl Part {
             Part::ParticleSystem => "particles".into(),
             Part::Smoke => "smoke".into(),
             Part::Mist => "mist".into(),
+            Part::NetObject => "net".into(),
             Part::Animator => "animator".into(),
             Part::MotionMatcher => "motion_matcher".into(),
             Part::BoneAttachment => "bone_attachment".into(),
@@ -162,6 +164,7 @@ impl Part {
             Part::ParticleSystem => "Particle System",
             Part::Smoke => "Smoke",
             Part::Mist => "Mist",
+            Part::NetObject => "Net Object",
             Part::Animator => "Animator",
             Part::MotionMatcher => "Motion Matcher",
             Part::BoneAttachment => "Bone Attachment",
@@ -199,6 +202,7 @@ impl Part {
             Part::ParticleSystem => "particles",
             Part::Smoke => "particles",
             Part::Mist => "particles",
+            Part::NetObject => "globe",
             Part::Animator => "play",
             Part::MotionMatcher => "play",
             Part::BoneAttachment => "play",
@@ -310,6 +314,9 @@ pub enum Prop {
     MistColor,
     MistLinger,
     MistSeed,
+    /// A Net Object's priority and range.
+    NetPriority,
+    NetRange,
     /// An Animator's clip, how fast and whether it loops, how long a change
     /// of clip blends, and whether its root moves the Obj.
     AnimatorClip,
@@ -632,6 +639,7 @@ impl Prop {
             | Prop::MistColor
             | Prop::MistLinger
             | Prop::MistSeed => Part::Mist,
+            Prop::NetPriority | Prop::NetRange => Part::NetObject,
             Prop::AnimatorClip
             | Prop::AnimatorSpeed
             | Prop::AnimatorLooping
@@ -870,6 +878,8 @@ impl Prop {
             Prop::SmokeSeed => "seed",
             Prop::SmokePlayOnStart => "play_on_start",
             Prop::MistEmitting => "emitting",
+            Prop::NetPriority => "priority",
+            Prop::NetRange => "range",
             Prop::MistWidth => "width",
             Prop::MistDensity => "density",
             Prop::MistColor => "color",
@@ -1112,6 +1122,9 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     if world.has::<voxear_render::Mist>(entity) {
         parts.push(Part::Mist);
     }
+    if world.has::<voxear_engine::net::NetObject>(entity) {
+        parts.push(Part::NetObject);
+    }
     if world.has::<voxear_engine::animation::Animator>(entity) {
         parts.push(Part::Animator);
     }
@@ -1278,6 +1291,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             Prop::MistLinger,
             Prop::MistSeed,
         ],
+        Part::NetObject => vec![Prop::NetPriority, Prop::NetRange],
         Part::Animator => vec![
             Prop::AnimatorClip,
             Prop::AnimatorSpeed,
@@ -1610,6 +1624,8 @@ pub fn label(prop: &Prop) -> String {
         Prop::SmokeSeed => "Seed",
         Prop::SmokePlayOnStart => "Play On Start",
         Prop::MistEmitting => "Emitting",
+        Prop::NetPriority => "Priority",
+        Prop::NetRange => "Range",
         Prop::MistWidth => "Width",
         Prop::MistDensity => "Density",
         Prop::MistColor => "Colour",
@@ -1811,7 +1827,7 @@ pub fn unit_on(world: &World, entity: Entity, prop: &Prop) -> Option<&'static st
     match (prop, world.get::<LodGroup>(entity).map(|group| group.measure)) {
         (Prop::LodUntil(_), Some(LodMeasure::ScreenSize)) => Some("%"),
         (Prop::LodUntil(_), Some(LodMeasure::Distance)) => Some("m"),
-        (Prop::SeasonPatchSize | Prop::FoliageSpread | Prop::FoliageImpostorDistance, _) => Some("m"),
+        (Prop::SeasonPatchSize | Prop::FoliageSpread | Prop::FoliageImpostorDistance | Prop::NetRange, _) => Some("m"),
         (Prop::JointMin | Prop::JointMax, _) => match world.get::<Joint>(entity)?.kind {
             JointType::Hinge => Some("°"),
             _ => Some("m"),
@@ -1919,6 +1935,9 @@ pub fn add(
         Part::Mist => {
             world.insert(entity, voxear_render::Mist::default());
         }
+        Part::NetObject => {
+            world.insert(entity, voxear_engine::net::NetObject::default());
+        }
         Part::Animator => {
             world.insert(entity, voxear_engine::animation::Animator::default());
         }
@@ -1992,6 +2011,9 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
         Part::Mist => {
             world.remove::<voxear_render::Mist>(entity);
             world.remove::<voxear_render::MistTrail>(entity);
+        }
+        Part::NetObject => {
+            world.remove::<voxear_engine::net::NetObject>(entity);
         }
         Part::Animator => {
             world.remove::<voxear_engine::animation::Animator>(entity);
@@ -2270,6 +2292,8 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         | Prop::MistColor
         | Prop::MistLinger
         | Prop::MistSeed => mist_value(world.get::<voxear_render::Mist>(entity)?, prop)?,
+        Prop::NetPriority => Value::Number(world.get::<voxear_engine::net::NetObject>(entity)?.priority),
+        Prop::NetRange => Value::Number(world.get::<voxear_engine::net::NetObject>(entity)?.range),
         Prop::AnimatorClip => {
             Value::Asset(clip_label(game, &world.get::<voxear_engine::animation::Animator>(entity)?.clip))
         }
@@ -3227,6 +3251,12 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         }
         (prop, value) if prop.part() == Part::Mist => {
             with(world, entity, |mist: &mut voxear_render::Mist| set_mist(mist, prop, value))
+        }
+        (Prop::NetPriority, Value::Number(n)) => {
+            with(world, entity, |net: &mut voxear_engine::net::NetObject| net.priority = n.max(0.0))
+        }
+        (Prop::NetRange, Value::Number(n)) => {
+            with(world, entity, |net: &mut voxear_engine::net::NetObject| net.range = n.max(0.0))
         }
         (prop, value) if prop.part() == Part::ParticleSystem => {
             with(world, entity, |system: &mut ParticleSystem| set_particle(system, prop, value))

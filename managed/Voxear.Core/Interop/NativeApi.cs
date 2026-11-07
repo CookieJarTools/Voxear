@@ -144,4 +144,6 @@ internal unsafe struct NativeApi
 	public delegate* unmanaged[Cdecl]<ulong, int, int, float*, int> BoneAttachmentValue;
 	public delegate* unmanaged[Cdecl]<int, int, int, byte*, int, float*, int> NetCall;
 	public delegate* unmanaged[Cdecl]<ulong, int, byte*, int, byte*, int, int> MotionMatcherText;
+	public delegate* unmanaged[Cdecl]<ulong, int, int, float*, int> NetObjectValue;
+	public delegate* unmanaged[Cdecl]<int, ulong*, uint*, byte*, int, int> NetFields;
 }

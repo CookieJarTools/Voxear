@@ -4,6 +4,7 @@ use voxear_input::ActionState;
 use voxear_net::{BitReader, BitWriter};
 
 use super::PlayerId;
+use super::replication::{FIELDS, Fields, NetId, ObjState, Origin, read_fields, read_state, write_fields, write_state};
 
 /// A client's input on one tick: every action, by its place in the
 /// project's input actions, with what went down or up since the tick before.
@@ -28,7 +29,21 @@ pub enum Message {
     /// arrives, so the client can run a little faster or slower to keep it
     /// a tick or two ahead.
     Sync { tick: u64, ahead: i16 },
+    /// An Obj to make, its state on a tick.
+    Spawn { id: NetId, owner: Option<PlayerId>, origin: Origin, tick: u64, state: ObjState, fields: Fields },
+    Despawn(NetId),
+    /// Objs' states on a server tick: each Obj's parts that changed, as a
+    /// mask, over a state with the rest left as they were.
+    Snapshot { tick: u64, entries: Vec<(NetId, u8, ObjState, Option<Fields>)> },
 }
+
+/// A state with nothing set, for parts a snapshot does not carry.
+pub const BLANK: ObjState = ObjState {
+    position: voxear_core::math::Vec3::ZERO,
+    rotation: voxear_core::math::Quat::IDENTITY,
+    scale: voxear_core::math::Vec3::ONE,
+    mist: None,
+};
 
 const WELCOME: u32 = 0;
 const JOINED: u32 = 1;
@@ -36,32 +51,37 @@ const LEFT: u32 = 2;
 const LEVEL: u32 = 3;
 const INPUTS: u32 = 4;
 const SYNC: u32 = 5;
+const SPAWN: u32 = 6;
+const DESPAWN: u32 = 7;
+pub const SNAPSHOT: u32 = 8;
+/// Bits a message's kind takes.
+pub const KIND_BITS: u32 = 4;
 
 impl Message {
     pub fn encode(&self) -> Vec<u8> {
         let mut w = BitWriter::new();
         match self {
             Message::Welcome { player, tick, rate } => {
-                w.write_bits(WELCOME, 3);
+                w.write_bits(WELCOME, KIND_BITS);
                 w.write_bits(u32::from(player.0), 16);
                 w.write_varint(*tick);
                 w.write_bits(u32::from(*rate), 16);
             }
             Message::Joined(player) => {
-                w.write_bits(JOINED, 3);
+                w.write_bits(JOINED, KIND_BITS);
                 w.write_bits(u32::from(player.0), 16);
             }
             Message::Left(player) => {
-                w.write_bits(LEFT, 3);
+                w.write_bits(LEFT, KIND_BITS);
                 w.write_bits(u32::from(player.0), 16);
             }
             Message::Level(level) => {
-                w.write_bits(LEVEL, 3);
+                w.write_bits(LEVEL, KIND_BITS);
                 w.write_varint(level.len() as u64);
                 w.write_bytes(level.as_bytes());
             }
             Message::Inputs { first, commands } => {
-                w.write_bits(INPUTS, 3);
+                w.write_bits(INPUTS, KIND_BITS);
                 w.write_varint(*first);
                 w.write_bits(commands.len() as u32, 4);
                 for command in commands {
@@ -69,9 +89,46 @@ impl Message {
                 }
             }
             Message::Sync { tick, ahead } => {
-                w.write_bits(SYNC, 3);
+                w.write_bits(SYNC, KIND_BITS);
                 w.write_varint(*tick);
                 w.write_bits(*ahead as u16 as u32, 16);
+            }
+            Message::Spawn { id, owner, origin, tick, state, fields } => {
+                w.write_bits(SPAWN, KIND_BITS);
+                w.write_varint(u64::from(id.0));
+                w.write_bool(owner.is_some());
+                w.write_bits(u32::from(owner.map_or(0, |p| p.0)), 16);
+                match origin {
+                    Origin::Placed { scene, path } => {
+                        w.write_bool(true);
+                        write_text(&mut w, scene);
+                        write_text(&mut w, path);
+                    }
+                    Origin::Prefab(prefab) => {
+                        w.write_bool(false);
+                        write_text(&mut w, prefab);
+                    }
+                }
+                w.write_varint(*tick);
+                write_state(&mut w, state, super::replication::ALL);
+                write_fields(&mut w, fields);
+            }
+            Message::Despawn(id) => {
+                w.write_bits(DESPAWN, KIND_BITS);
+                w.write_varint(u64::from(id.0));
+            }
+            Message::Snapshot { tick, entries } => {
+                w.write_bits(SNAPSHOT, KIND_BITS);
+                w.write_varint(*tick);
+                for (id, mask, state, fields) in entries {
+                    w.write_bool(true);
+                    w.write_varint(u64::from(id.0));
+                    write_state(&mut w, state, *mask);
+                    if mask & FIELDS != 0 {
+                        write_fields(&mut w, fields.as_ref().unwrap_or(&Fields::new()));
+                    }
+                }
+                w.write_bool(false);
             }
         }
         w.finish()
@@ -80,7 +137,7 @@ impl Message {
     /// The message in `bytes`, or `None` for anything malformed.
     pub fn decode(bytes: &[u8]) -> Option<Message> {
         let mut r = BitReader::new(bytes);
-        Some(match r.read_bits(3)? {
+        Some(match r.read_bits(KIND_BITS)? {
             WELCOME => Message::Welcome {
                 player: PlayerId(r.read_bits(16)? as u16),
                 tick: r.read_varint()?,
@@ -104,9 +161,51 @@ impl Message {
                 Message::Inputs { first, commands }
             }
             SYNC => Message::Sync { tick: r.read_varint()?, ahead: r.read_bits(16)? as u16 as i16 },
+            SPAWN => {
+                let id = NetId(r.read_varint()? as u32);
+                let has_owner = r.read_bool()?;
+                let owner = PlayerId(r.read_bits(16)? as u16);
+                let origin = match r.read_bool()? {
+                    true => Origin::Placed { scene: read_text(&mut r)?, path: read_text(&mut r)? },
+                    false => Origin::Prefab(read_text(&mut r)?),
+                };
+                let tick = r.read_varint()?;
+                let mut state = BLANK;
+                read_state(&mut r, &mut state)?;
+                let fields = read_fields(&mut r)?;
+                Message::Spawn { id, owner: has_owner.then_some(owner), origin, tick, state, fields }
+            }
+            DESPAWN => Message::Despawn(NetId(r.read_varint()? as u32)),
+            SNAPSHOT => {
+                let tick = r.read_varint()?;
+                let mut entries = Vec::new();
+                while r.read_bool()? {
+                    let id = NetId(r.read_varint()? as u32);
+                    let mut state = BLANK;
+                    let mask = read_state(&mut r, &mut state)?;
+                    let fields = if mask & FIELDS != 0 { Some(read_fields(&mut r)?) } else { None };
+                    entries.push((id, mask, state, fields));
+                }
+                Message::Snapshot { tick, entries }
+            }
             _ => return None,
         })
     }
+}
+
+fn write_text(w: &mut BitWriter, text: &str) {
+    w.write_varint(text.len() as u64);
+    w.write_bytes(text.as_bytes());
+}
+
+fn read_text(r: &mut BitReader) -> Option<String> {
+    let length = r.read_varint()? as usize;
+    if length > 4096 {
+        return None;
+    }
+    let mut text = vec![0u8; length];
+    r.read_bytes(&mut text)?;
+    String::from_utf8(text).ok()
 }
 
 /// An action costs five bits when still, and its values when it has them.

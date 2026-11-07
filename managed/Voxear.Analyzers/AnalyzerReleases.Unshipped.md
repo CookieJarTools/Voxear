@@ -13,3 +13,5 @@ VOX0005 | Voxear.Inspector | Error | Diagnostics
 VOX0006 | Voxear.Inspector | Warning | Diagnostics
 VOX0007 | Voxear.Inspector | Error | Diagnostics
 VOX0008 | Voxear.Localization | Warning | Diagnostics
+VOX0009 | Voxear.Networking | Error | Diagnostics
+VOX0010 | Voxear.Networking | Error | Diagnostics

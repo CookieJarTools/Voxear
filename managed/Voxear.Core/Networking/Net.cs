@@ -138,9 +138,10 @@ public static class Net
 		PlayerLeft = GameCode.Without(PlayerLeft, old);
 	}
 
-	/// <summary>Raises what happened in the session since last frame.</summary>
+	/// <summary>Raises what happened in the session since last frame, and carries replicated properties.</summary>
 	internal static void Dispatch()
 	{
+		Replication.Update();
 		while (true)
 		{
 			var kind = NativeNet.Call(NativeNet.TakeEvent, 0, 0, out var values);

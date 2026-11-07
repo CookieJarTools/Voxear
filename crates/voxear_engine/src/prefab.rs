@@ -387,6 +387,7 @@ fn apply_instance(root: &mut ObjData, instance: &ObjData) {
     root.particles = instance.particles.or(root.particles);
     root.smoke = instance.smoke.or(root.smoke);
     root.mist = instance.mist.or(root.mist);
+    root.net = instance.net.or(root.net);
     root.animator = instance.animator.clone().or(root.animator.clone());
     root.motion_matcher = instance.motion_matcher.clone().or(root.motion_matcher.clone());
     root.bone_attachment = instance.bone_attachment.clone().or(root.bone_attachment.clone());
@@ -450,6 +451,7 @@ pub struct TemplateObj {
     pub particles: Option<ParticleSystem>,
     pub smoke: Option<voxear_render::Smoke>,
     pub mist: Option<voxear_render::Mist>,
+    pub net: Option<crate::net::NetObject>,
     pub animator: Option<crate::animation::Animator>,
     pub motion_matcher: Option<crate::animation::MotionMatcher>,
     pub bone_attachment: Option<crate::animation::BoneAttachment>,
@@ -610,6 +612,9 @@ impl Template {
             }
             if let Some(mist) = obj.mist {
                 world.insert(entity, mist);
+            }
+            if let Some(net) = obj.net {
+                world.insert(entity, net);
             }
             if let Some(animator) = obj.animator.clone() {
                 world.insert(entity, animator);
@@ -931,6 +936,7 @@ pub(crate) fn resolve_obj(
         particles: data.particles,
         smoke: data.smoke,
         mist: data.mist,
+        net: data.net,
         animator: data.animator.clone(),
         motion_matcher: data.motion_matcher.clone(),
         bone_attachment: data.bone_attachment.clone(),

@@ -595,6 +595,13 @@ impl Levels {
         scene.objs.iter().find(|(p, _)| p == path).map(|(_, e)| *e)
     }
 
+    /// The Obj a loaded scene placed at `path`, as [`place_of`](Self::place_of)
+    /// names it, if it is still there.
+    pub fn entity_at(&self, scene: AssetGuid, path: &ObjPath) -> Option<Entity> {
+        let loaded = self.scenes.iter().find(|loaded| loaded.guid == scene)?;
+        loaded.objs.iter().find(|(p, _)| p == path).map(|(_, entity)| *entity)
+    }
+
     /// Where an Obj was loaded from: its scene and its path in that scene's
     /// file, the same in every run, as a save names it. None for an Obj made
     /// while the game runs.

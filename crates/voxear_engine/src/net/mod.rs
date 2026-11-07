@@ -17,6 +17,7 @@
 
 mod inputs;
 mod messages;
+mod replication;
 mod scripts;
 
 use std::collections::{HashMap, VecDeque};
@@ -33,6 +34,8 @@ use voxear_net::{
 
 use inputs::{InputBuffer, Latch};
 pub use messages::Command;
+pub use replication::{NetId, NetObject, Networked, ObjState, Origin, SpawnRequest};
+use replication::{Replication, Tracked, Viewer};
 pub(crate) use scripts::register;
 pub use scripts::NetDefaults;
 use messages::{Message, REPEATS};
@@ -210,6 +213,7 @@ pub struct NetSession {
     ended: bool,
     scale: f32,
     level_request: Option<String>,
+    replication: Replication,
 }
 
 /// Ticks ahead of the server a client aims for its commands to arrive.
@@ -239,6 +243,7 @@ impl NetSession {
             ended: false,
             scale: 1.0,
             level_request: None,
+            replication: Replication::default(),
         }
     }
 
@@ -336,6 +341,7 @@ impl NetSession {
                     self.players.retain(|p| *p != player);
                     self.buffers.remove(&player);
                     self.inputs.remove(&player);
+                    self.replication.viewers.remove(&player);
                     self.send_all(&Message::Left(player), None);
                     self.events.push_back(NetEvent::PlayerLeft(player));
                 }
@@ -372,6 +378,7 @@ impl NetSession {
         self.by_client.insert(client, player);
         self.players.push(player);
         self.buffers.insert(player, InputBuffer::default());
+        self.replication.viewers.insert(player, Viewer::default());
         self.events.push_back(NetEvent::PlayerJoined(player));
     }
 
@@ -407,6 +414,17 @@ impl NetSession {
                 }
                 Message::Level(level) => self.level_request = Some(level),
                 Message::Sync { tick, ahead } => self.keep_pace(tick, i64::from(ahead)),
+                Message::Spawn { id, owner, origin, tick, state, fields } => {
+                    self.replication.note(id, tick, state);
+                    self.replication.early_fields.insert(id, fields);
+                    self.replication.spawns.push(SpawnRequest { id, origin, owner, state });
+                }
+                Message::Despawn(id) => {
+                    if let Some(entity) = self.replication.remote.remove(&id).and_then(|remote| remote.entity) {
+                        self.replication.despawns.push(entity);
+                    }
+                }
+                Message::Snapshot { tick, entries } => self.take_snapshot(tick, entries),
                 _ => {}
             }
         }
@@ -414,6 +432,129 @@ impl NetSession {
             tracing::info!("left the session: {state:?}");
             self.events.push_back(NetEvent::Disconnected);
             (self.welcomed, self.ended) = (false, true);
+        }
+    }
+
+    /// Takes in a snapshot: each Obj's parts that changed, over its last
+    /// state, noted for its tick.
+    fn take_snapshot(&mut self, tick: u64, entries: Vec<(NetId, u8, ObjState, Option<replication::Fields>)>) {
+        let replication = &mut self.replication;
+        // How unevenly snapshots come: their spacing against a tick's, smoothed.
+        if let Some(last) = replication.last_arrival {
+            let spacing = (self.now - last) * f64::from(self.settings.tick_rate);
+            let late = (spacing - (tick.saturating_sub(replication.newest)) as f64).abs();
+            replication.jitter += (late - replication.jitter) * 0.1;
+        }
+        replication.last_arrival = Some(self.now);
+        replication.newest = replication.newest.max(tick);
+        for (id, mask, parts, fields) in entries {
+            // Fields come in at once, for scripts to take in; those for an Obj not made yet wait for it.
+            if let Some(fields) = fields {
+                match replication.remote.get(&id).and_then(|r| r.entity) {
+                    Some(entity) => replication.field_updates.extend(fields.into_iter().map(|(k, v)| (entity, k, v))),
+                    None => drop(replication.early_fields.insert(id, fields)),
+                }
+            }
+            let base = replication.remote.get(&id).and_then(|r| r.samples.back()).map_or(messages::BLANK, |(_, s)| *s);
+            let state = ObjState {
+                position: if mask & 1 != 0 { parts.position } else { base.position },
+                rotation: if mask & 2 != 0 { parts.rotation } else { base.rotation },
+                scale: if mask & 4 != 0 { parts.scale } else { base.scale },
+                mist: if mask & 8 != 0 { parts.mist } else { base.mist },
+            };
+            replication.note(id, tick, state);
+        }
+    }
+
+    /// Moves the server's tick this player's machine shows on by `delta`
+    /// seconds, a little behind the newest snapshot: two ticks and as much
+    /// again as snapshots come unevenly, so one or two late or lost still
+    /// leave a pair to move between.
+    fn advance_shown(&mut self, delta: f32) {
+        let replication = &mut self.replication;
+        if replication.newest == 0 {
+            return;
+        }
+        let delay = (2.0 + 2.0 * replication.jitter).clamp(2.0, 8.0);
+        let target = replication.newest as f64 - delay;
+        replication.shown += f64::from(delta) * f64::from(self.settings.tick_rate);
+        let off = target - replication.shown;
+        if off.abs() > 10.0 {
+            replication.shown = target;
+        } else {
+            replication.shown += off * 0.05;
+        }
+    }
+
+    /// The server's tick: what changed on every networked Obj, and each
+    /// player's share of it, the Objs to make and take away on their
+    /// machine and a snapshot of as much as fits.
+    fn replicate(&mut self, world: &World) {
+        let End::Server(server) = &mut self.end else { return };
+        let replication = &mut self.replication;
+        let gone = replication.capture(world);
+        let tick = self.tick;
+        for (&client, player) in &self.by_client {
+            let at = replication.viewpoint(*player);
+            let Some(viewer) = replication.viewers.get_mut(player) else { continue };
+            // What a lost snapshot carried goes again, as it is now.
+            for delivery in server.take_deliveries(client) {
+                let voxear_net::Delivery::Lost(tag) = delivery else {
+                    if let voxear_net::Delivery::Acked(tag) = delivery {
+                        viewer.carried.remove(&tag);
+                    }
+                    continue;
+                };
+                for (id, mask) in viewer.carried.remove(&tag).unwrap_or_default() {
+                    if let Some((pending, _)) = viewer.known.get_mut(&id) {
+                        *pending |= mask;
+                    }
+                }
+            }
+            let mut reliable = Vec::new();
+            for id in &gone {
+                if viewer.known.remove(id).is_some() {
+                    reliable.push(Message::Despawn(*id));
+                }
+            }
+            let mut spawned = 0;
+            for (&id, tracked) in &replication.objects {
+                let near = at.is_none_or(|at| at.distance(tracked.state.position) <= tracked.object.range);
+                let wanted = tracked.object.range <= 0.0 || near || tracked.owner == Some(*player);
+                match (wanted, viewer.known.get_mut(&id)) {
+                    (true, None) if spawned < replication::SPAWNS_A_TICK => {
+                        spawned += 1;
+                        viewer.known.insert(id, (0, 0.0));
+                        let (owner, origin, state) = (tracked.owner, tracked.origin.clone(), tracked.state);
+                        let fields = tracked.fields.clone();
+                        reliable.push(Message::Spawn { id, owner, origin, tick, state, fields });
+                    }
+                    (true, Some((pending, waited))) => {
+                        *pending |= tracked.changed;
+                        if *pending != 0 {
+                            // Nearer counts for more: full within ten metres, a fifth beyond fifty.
+                            let distance = at.map_or(0.0, |at| at.distance(tracked.state.position));
+                            let near = (1.0 - (distance - 10.0) / 40.0).clamp(0.2, 1.0);
+                            *waited += tracked.object.priority.max(0.01) * near;
+                        }
+                    }
+                    (false, Some(_)) => {
+                        viewer.known.remove(&id);
+                        reliable.push(Message::Despawn(id));
+                    }
+                    _ => {}
+                }
+            }
+            for message in reliable {
+                let _ = server.send(client, Channel::RELIABLE, &message.encode());
+            }
+            let snapshot = snapshot(tick, viewer, &replication.objects);
+            if let Some((bytes, carried)) = snapshot {
+                let tag = viewer.next_tag;
+                viewer.next_tag = viewer.next_tag.wrapping_add(1);
+                viewer.carried.insert(tag, carried);
+                let _ = server.send_tagged(client, Channel::UNRELIABLE, &bytes, tag);
+            }
         }
     }
 
@@ -485,6 +626,42 @@ impl NetSession {
             }
         }
     }
+}
+
+/// A player's snapshot this tick: the Objs that changed, the longest
+/// waiting first, as many as fit; with what it carried. `None` when
+/// nothing changed.
+fn snapshot(tick: u64, viewer: &mut Viewer, objects: &std::collections::BTreeMap<NetId, Tracked>) -> Option<(Vec<u8>, Vec<(NetId, u8)>)> {
+    let mut waiting: Vec<(NetId, f32)> =
+        viewer.known.iter().filter(|(_, (pending, _))| *pending != 0).map(|(id, (_, waited))| (*id, *waited)).collect();
+    if waiting.is_empty() {
+        return None;
+    }
+    waiting.sort_by(|a, b| b.1.total_cmp(&a.1));
+    let mut w = voxear_net::BitWriter::new();
+    w.write_bits(messages::SNAPSHOT, messages::KIND_BITS);
+    w.write_varint(tick);
+    let mut carried = Vec::new();
+    for (id, _) in waiting {
+        let Some(tracked) = objects.get(&id) else { continue };
+        let Some((pending, waited)) = viewer.known.get_mut(&id) else { continue };
+        let before = w.clone();
+        w.write_bool(true);
+        w.write_varint(u64::from(id.0));
+        replication::write_state(&mut w, &tracked.state, *pending);
+        if *pending & replication::FIELDS != 0 {
+            replication::write_fields(&mut w, &tracked.fields);
+        }
+        if w.bits() / 8 + 1 > replication::SNAPSHOT_BYTES {
+            // Full: this one waits, and gains in priority meanwhile.
+            w = before;
+            break;
+        }
+        carried.push((id, *pending));
+        (*pending, *waited) = (0, 0.0);
+    }
+    w.write_bool(false);
+    (!carried.is_empty()).then(|| (w.finish(), carried))
 }
 
 /// Starts serving on `port` (0 lets the system choose), as a host with a
@@ -577,9 +754,10 @@ pub fn stop(world: &mut World) {
 }
 
 /// Takes in what arrived, and the local player's input this frame, `delta`
-/// seconds long.
+/// seconds long; on a client, networked Objs move to where they were a
+/// moment ago on the server.
 pub fn frame_begin(world: &mut World, delta: f32, local: &[ActionState]) {
-    let Some(session) = world.resource_mut::<NetSession>() else { return };
+    let Some(mut session) = world.remove_resource::<NetSession>() else { return };
     session.now += f64::from(delta);
     session.latch.note(local);
     session.receive_server();
@@ -587,6 +765,11 @@ pub fn frame_begin(world: &mut World, delta: f32, local: &[ActionState]) {
     while session.events.len() > MOST_EVENTS {
         session.events.pop_front();
     }
+    if session.role == NetRole::Client {
+        session.advance_shown(delta);
+        session.replication.show(world);
+    }
+    world.insert_resource(session);
 }
 
 /// Moves the session on a tick, before the tick's FixedUpdate: the server
@@ -597,10 +780,116 @@ pub fn fixed_tick(world: &mut World) {
     }
 }
 
-/// Sends what is waiting.
+/// Sends what is waiting: on a server, each player's share of what
+/// changed on the networked Objs.
 pub fn frame_end(world: &mut World) {
+    let Some(mut session) = world.remove_resource::<NetSession>() else { return };
+    session.replicate(world);
+    session.flush();
+    world.insert_resource(session);
+}
+
+/// Shares an Obj with the session's players, on a server: `origin` says
+/// how their machines find or make their own. Gives back its id.
+pub fn track(world: &mut World, entity: voxear_ecs::Entity, origin: Origin) -> Option<NetId> {
+    let state = ObjState::of(world, entity)?;
+    let object = world.get::<NetObject>(entity).copied().unwrap_or_default();
+    let session = world.resource_mut::<NetSession>().filter(|s| matches!(s.end, End::Server(_)))?;
+    let replication = &mut session.replication;
+    replication.next_id += 1;
+    let id = NetId(replication.next_id);
+    // An owner and fields given before it was shared.
+    let owner = world.remove::<WaitingOwner>(entity).and_then(|waiting| waiting.0);
+    let fields = world.remove::<WaitingFields>(entity).map(|waiting| waiting.0).unwrap_or_default();
+    let session = world.resource_mut::<NetSession>()?;
+    let tracked = Tracked { entity, origin, owner, object, state, changed: 0, fields_changed: false, fields };
+    session.replication.objects.insert(id, tracked);
+    world.insert(entity, Networked { id, owner });
+    Some(id)
+}
+
+/// Replicated fields a networked Obj's scripts wrote before the server
+/// shared it, kept until it does.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct WaitingFields(pub replication::Fields);
+
+impl voxear_ecs::Component for WaitingFields {}
+
+/// Takes a behaviour's replicated fields from its script, on a server, to
+/// send to players: the behaviour's type by a key, its fields as bytes.
+pub fn set_fields(world: &mut World, entity: voxear_ecs::Entity, key: u32, bytes: Vec<u8>) {
+    let Some(id) = world.get::<Networked>(entity).map(|n| n.id) else {
+        // Not shared yet: kept until it is.
+        if world.has::<NetObject>(entity) {
+            let mut waiting = world.get::<WaitingFields>(entity).cloned().unwrap_or_default();
+            waiting.0.insert(key, bytes);
+            world.insert(entity, waiting);
+        }
+        return;
+    };
+    let tracked = world.resource_mut::<NetSession>().and_then(|s| s.replication.objects.get_mut(&id));
+    if let Some(tracked) = tracked
+        && tracked.fields.get(&key) != Some(&bytes)
+    {
+        tracked.fields.insert(key, bytes);
+        tracked.fields_changed = true;
+    }
+}
+
+/// Behaviours' replicated fields that came from the server, for scripts to
+/// take in: each Obj, its behaviour's type by a key, and its fields.
+pub fn take_field_updates(world: &mut World) -> Vec<(voxear_ecs::Entity, u32, Vec<u8>)> {
+    world.resource_mut::<NetSession>().map(|s| std::mem::take(&mut s.replication.field_updates)).unwrap_or_default()
+}
+
+/// An owner given to a networked Obj before the server shared it, kept
+/// until it does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WaitingOwner(pub Option<PlayerId>);
+
+impl voxear_ecs::Component for WaitingOwner {}
+
+/// Gives a networked Obj to a player, on a server: theirs is sent to them
+/// wherever it is, and where it is counts as where they are.
+pub fn set_owner(world: &mut World, entity: voxear_ecs::Entity, owner: Option<PlayerId>) {
+    let Some(networked) = world.get_mut::<Networked>(entity) else {
+        world.insert(entity, WaitingOwner(owner));
+        return;
+    };
+    networked.owner = owner;
+    let id = networked.id;
+    if let Some(session) = world.resource_mut::<NetSession>()
+        && let Some(tracked) = session.replication.objects.get_mut(&id)
+    {
+        tracked.owner = owner;
+    }
+}
+
+/// The Objs the server told this client to make, for the game to find or
+/// make and [`bind`].
+pub fn take_spawns(world: &mut World) -> Vec<SpawnRequest> {
+    world.resource_mut::<NetSession>().map(|s| std::mem::take(&mut s.replication.spawns)).unwrap_or_default()
+}
+
+/// The Objs the server took away, for the game to destroy.
+pub fn take_despawns(world: &mut World) -> Vec<voxear_ecs::Entity> {
+    world.resource_mut::<NetSession>().map(|s| std::mem::take(&mut s.replication.despawns)).unwrap_or_default()
+}
+
+/// Ties a networked Obj's id to the Obj found or made for it on this
+/// client. Physics no longer moves it here: the server does.
+pub fn bind(world: &mut World, request: &SpawnRequest, entity: voxear_ecs::Entity) {
+    world.insert(entity, Networked { id: request.id, owner: request.owner });
+    if let Some(body) = world.get_mut::<voxear_physics::scene::Rigidbody>(entity) {
+        body.kinematic = true;
+    }
     if let Some(session) = world.resource_mut::<NetSession>() {
-        session.flush();
+        let replication = &mut session.replication;
+        if let Some(remote) = replication.remote.get_mut(&request.id) {
+            remote.entity = Some(entity);
+        }
+        let early = replication.early_fields.remove(&request.id).unwrap_or_default();
+        replication.field_updates.extend(early.into_iter().map(|(key, bytes)| (entity, key, bytes)));
     }
 }
 

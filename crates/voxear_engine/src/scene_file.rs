@@ -282,6 +282,9 @@ pub struct ObjData {
     /// A trail of mist left behind the Obj as it moves.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mist: Option<voxear_render::Mist>,
+    /// Shared with a networked game's players.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub net: Option<crate::net::NetObject>,
     /// Plays one of the Obj's model's clips.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub animator: Option<crate::animation::Animator>,
@@ -368,6 +371,7 @@ impl ObjData {
             particles: None,
             smoke: None,
             mist: None,
+            net: None,
             animator: None,
             motion_matcher: None,
             bone_attachment: None,
@@ -1312,6 +1316,9 @@ fn capture_instance(
     if root.mist.is_some() && root.mist != prefab_root.mist {
         instance.mist = root.mist;
     }
+    if root.net.is_some() && root.net != prefab_root.net {
+        instance.net = root.net;
+    }
     if root.animator.is_some() && root.animator != prefab_root.animator {
         instance.animator = root.animator.clone();
     }
@@ -1461,6 +1468,9 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     }
     if let Some(mist) = actual.mist.filter(|m| Some(*m) != expected.mist) {
         put("mist", whole(&mist, &voxear_render::Mist::default())?);
+    }
+    if let Some(net) = actual.net.filter(|n| Some(*n) != expected.net) {
+        put("net", whole(&net, &crate::net::NetObject::default())?);
     }
     if let Some(animator) = actual.animator.as_ref().filter(|a| Some(*a) != expected.animator.as_ref()) {
         put("animator", whole(animator, &crate::animation::Animator::default())?);
@@ -1719,6 +1729,7 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.particles = world.get::<ParticleSystem>(entity).copied();
     obj.smoke = world.get::<voxear_render::Smoke>(entity).copied();
     obj.mist = world.get::<voxear_render::Mist>(entity).copied();
+    obj.net = world.get::<crate::net::NetObject>(entity).copied();
     obj.animator = world.get::<crate::animation::Animator>(entity).cloned();
     obj.motion_matcher = world.get::<crate::animation::MotionMatcher>(entity).cloned();
     obj.bone_attachment = world.get::<crate::animation::BoneAttachment>(entity).cloned();

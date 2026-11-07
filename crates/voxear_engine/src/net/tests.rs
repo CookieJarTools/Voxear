@@ -118,3 +118,129 @@ fn a_client_keeps_a_tick_or_two_ahead_through_a_bad_network() {
     assert!((1..=4).contains(&median), "commands arrive about two ticks early: {median}");
     assert!(taps >= 9, "every tap reached the server but those at the very end: {taps} of 10");
 }
+
+/// A server Obj with a NetObject, shared with players.
+fn shared(server: &mut World, position: voxear_core::math::Vec3, object: NetObject) -> voxear_ecs::Entity {
+    let entity = server.spawn((voxear_scene::Transform::from_position(position), object));
+    track(server, entity, Origin::Prefab("test".into())).unwrap();
+    entity
+}
+
+/// Makes what the server asked each client to make, as the game does.
+fn make_spawns(clients: &mut [World]) {
+    for client in clients {
+        for request in take_spawns(client) {
+            let entity = client.spawn((voxear_scene::Transform::from_position(request.state.position),));
+            bind(client, &request, entity);
+        }
+        for entity in take_despawns(client) {
+            client.despawn(entity);
+        }
+    }
+}
+
+fn position_of(world: &World, id: NetId) -> Option<voxear_core::math::Vec3> {
+    world
+        .query_ref::<(&Networked, &voxear_scene::Transform)>()
+        .into_iter()
+        .find(|(n, _)| n.id == id)
+        .map(|(_, t)| t.position)
+}
+
+#[test]
+fn a_shared_obj_is_made_on_each_client_and_follows_the_servers_smoothly() {
+    let network = MemoryNetwork::new();
+    let (mut server, mut clients) = session(&network, 2, Conditions::AVERAGE);
+    let mover = shared(&mut server, voxear_core::math::Vec3::ZERO, NetObject::default());
+    let id = server.get::<Networked>(mover).unwrap().id;
+    let mut seen = Vec::new();
+    for n in 0..300 {
+        // A metre a second along X.
+        server.get_mut::<voxear_scene::Transform>(mover).unwrap().position.x = n as f32 / 60.0;
+        frame(&mut server, &mut clients, &[(false, false); 2]);
+        make_spawns(&mut clients);
+        if n > 120 {
+            seen.push(position_of(&clients[0], id).expect("made on the client").x);
+        }
+    }
+    let at = position_of(&clients[1], id).unwrap().x;
+    let now = 299.0 / 60.0;
+    assert!(now - at > 0.02 && now - at < 0.25, "a little behind the server, as shown: {at} against {now}");
+    // Smooth: it moves forward every frame by about a frame's worth, never jumping or stalling long.
+    let steps: Vec<f32> = seen.windows(2).map(|w| w[1] - w[0]).collect();
+    assert!(steps.iter().all(|s| *s > -0.001 && *s < 0.06), "smooth: {steps:?}");
+    assert!(steps.iter().filter(|s| **s < 0.002).count() < 20, "rarely still");
+
+    // Taken away on the server, gone on the clients.
+    server.despawn(mover);
+    for _ in 0..30 {
+        frame(&mut server, &mut clients, &[(false, false); 2]);
+        make_spawns(&mut clients);
+    }
+    assert!(position_of(&clients[0], id).is_none());
+}
+
+#[test]
+fn a_player_is_sent_only_what_is_in_range_of_their_own() {
+    let network = MemoryNetwork::new();
+    let (mut server, mut clients) = session(&network, 1, Conditions::PERFECT);
+    for _ in 0..30 {
+        frame(&mut server, &mut clients, &[(false, false)]);
+    }
+    let me = shared(&mut server, voxear_core::math::Vec3::ZERO, NetObject::default());
+    set_owner(&mut server, me, Some(PlayerId(1)));
+    let near = shared(&mut server, voxear_core::math::Vec3::new(5.0, 0.0, 0.0), NetObject { range: 20.0, ..NetObject::default() });
+    let far = shared(&mut server, voxear_core::math::Vec3::new(50.0, 0.0, 0.0), NetObject { range: 20.0, ..NetObject::default() });
+    let id = |e| server.get::<Networked>(e).unwrap().id;
+    let (near, far) = (id(near), id(far));
+    for _ in 0..30 {
+        frame(&mut server, &mut clients, &[(false, false)]);
+        make_spawns(&mut clients);
+    }
+    assert!(position_of(&clients[0], near).is_some(), "in range");
+    assert!(position_of(&clients[0], far).is_none(), "out of range");
+    // Walking over brings it, walking back takes it away.
+    server.get_mut::<voxear_scene::Transform>(me).unwrap().position.x = 45.0;
+    for _ in 0..30 {
+        frame(&mut server, &mut clients, &[(false, false)]);
+        make_spawns(&mut clients);
+    }
+    assert!(position_of(&clients[0], far).is_some() && position_of(&clients[0], near).is_none());
+}
+
+#[test]
+fn a_crowd_too_big_for_a_snapshot_is_shared_by_turns_within_the_budget() {
+    let network = MemoryNetwork::new();
+    let (mut server, mut clients) = session(&network, 1, Conditions::PERFECT);
+    for _ in 0..30 {
+        frame(&mut server, &mut clients, &[(false, false)]);
+    }
+    let crowd: Vec<_> =
+        (0..300).map(|n| shared(&mut server, voxear_core::math::Vec3::new(n as f32, 0.0, 0.0), NetObject::default())).collect();
+    let mut last_moved = std::collections::HashMap::new();
+    for frame_number in 0..240u32 {
+        for (n, &entity) in crowd.iter().enumerate() {
+            server.get_mut::<voxear_scene::Transform>(entity).unwrap().position.z = frame_number as f32 * 0.1 + n as f32;
+        }
+        frame(&mut server, &mut clients, &[(false, false)]);
+        make_spawns(&mut clients);
+        if frame_number >= 120 {
+            for &entity in &crowd {
+                let id = server.get::<Networked>(entity).unwrap().id;
+                let z = position_of(&clients[0], id).map(|p| p.z);
+                if let Some(z) = z {
+                    let entry = last_moved.entry(id).or_insert((z, frame_number, 0u32));
+                    if (z - entry.0).abs() > 1e-4 {
+                        entry.2 = entry.2.max(frame_number - entry.1);
+                        (entry.0, entry.1) = (z, frame_number);
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(last_moved.len(), 300, "every one made");
+    let longest = last_moved.values().map(|(_, _, gap)| *gap).max().unwrap();
+    assert!(longest < 30, "none waits more than half a second for news: {longest} frames");
+    let sent = session_of(&server).stats().sent_bytes_per_second;
+    assert!(sent < 64.0 * 1024.0 * 1.3, "within the budget: {sent} bytes a second");
+}

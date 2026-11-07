@@ -35,6 +35,16 @@ internal static class Diagnostics
 		"VOX0008", "A string table's key is left out of Strings", "\"{0}\" is left out of Strings, {1}",
 		"Voxear.Localization", DiagnosticSeverity.Warning, isEnabledByDefault: true);
 
+	public static readonly DiagnosticDescriptor NotPartial = new DiagnosticDescriptor(
+		"VOX0009", "[Replicated] on a property Voxear cannot write",
+		"[Replicated] is on {0} of {1}; make it a partial property, of a partial class that is neither nested nor generic",
+		"Voxear.Networking", DiagnosticSeverity.Error, isEnabledByDefault: true);
+
+	public static readonly DiagnosticDescriptor NotReplicable = new DiagnosticDescriptor(
+		"VOX0010", "[Replicated] on a property of a type that cannot be replicated",
+		"[Replicated] is on {0}, a {1}; bool, int, long, float, double, string, Vector2, Vector3, Quaternion and enums can be replicated",
+		"Voxear.Networking", DiagnosticSeverity.Error, isEnabledByDefault: true);
+
 	private static DiagnosticDescriptor Error(string id, string title, string message)
 	{
 		return new DiagnosticDescriptor(id, title, message, Category, DiagnosticSeverity.Error, isEnabledByDefault: true);

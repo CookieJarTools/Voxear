@@ -14,6 +14,88 @@ pub struct NetDefaults(pub NetSettings);
 
 pub(crate) fn register() {
     voxear_scripting::set_net_calls(call);
+    voxear_scripting::set_net_object_values(net_object);
+    voxear_scripting::set_net_fields(fields);
+}
+
+/// The most bytes one behaviour's replicated fields take.
+const MOST_FIELD_BYTES: usize = 4096;
+
+/// A behaviour's replicated fields given on a server, or with `None`, the
+/// next that came from the server.
+fn fields(
+    world: &mut World,
+    given: Option<(voxear_ecs::Entity, u32, Vec<u8>)>,
+) -> Option<(voxear_ecs::Entity, u32, Vec<u8>)> {
+    match given {
+        Some((entity, key, bytes)) if bytes.len() <= MOST_FIELD_BYTES => {
+            super::set_fields(world, entity, key, bytes);
+            None
+        }
+        Some(_) => {
+            tracing::error!(target: "script", "a behaviour's replicated fields come to more than {MOST_FIELD_BYTES} bytes");
+            None
+        }
+        None => {
+            let updates = &mut world.resource_mut::<NetSession>()?.replication.field_updates;
+            (!updates.is_empty()).then(|| updates.remove(0))
+        }
+    }
+}
+
+// What `net_object` reads or writes, as `NativeNetObject` in Voxear.Core numbers them.
+const HAS: i32 = 0;
+const ADD: i32 = 1;
+const REMOVE: i32 = 2;
+const PRIORITY: i32 = 3;
+const RANGE: i32 = 4;
+const ID: i32 = 5;
+const OWNER: i32 = 6;
+
+/// Reads value `what` of `entity`'s Net Object, or with `written` writes
+/// it: `None` when it has none, or is gone.
+fn net_object(world: &mut World, entity: voxear_ecs::Entity, what: i32, written: Option<[f32; 4]>) -> Option<[f32; 4]> {
+    use super::{NetObject, Networked};
+    if !world.is_alive(entity) {
+        return None;
+    }
+    let number = |n: f32| [n, 0.0, 0.0, 0.0];
+    match (what, written) {
+        (HAS, None) => return Some(number(f32::from(u8::from(world.has::<NetObject>(entity))))),
+        (ADD, Some(_)) => {
+            if !world.has::<NetObject>(entity) {
+                world.insert(entity, NetObject::default());
+            }
+            return Some([0.0; 4]);
+        }
+        (REMOVE, Some(_)) => return world.remove::<NetObject>(entity).map(|_| [0.0; 4]),
+        (ID, None) => return Some(number(world.get::<Networked>(entity).map_or(0.0, |n| n.id.0 as f32))),
+        (OWNER, None) => {
+            let waiting = world.get::<super::WaitingOwner>(entity).and_then(|w| w.0);
+            let owner = world.get::<Networked>(entity).and_then(|n| n.owner).or(waiting);
+            return Some(number(owner.map_or(-1.0, |p| f32::from(p.0))));
+        }
+        (OWNER, Some([x, ..])) => {
+            let owner = (x >= 0.0).then(|| PlayerId(x as u16));
+            super::set_owner(world, entity, owner);
+            return Some([0.0; 4]);
+        }
+        _ => {}
+    }
+    let object = world.get_mut::<NetObject>(entity)?;
+    match (what, written) {
+        (PRIORITY, None) => Some(number(object.priority)),
+        (RANGE, None) => Some(number(object.range)),
+        (PRIORITY, Some([x, ..])) => {
+            object.priority = x.max(0.0);
+            Some([0.0; 4])
+        }
+        (RANGE, Some([x, ..])) => {
+            object.range = x.max(0.0);
+            Some([0.0; 4])
+        }
+        _ => None,
+    }
 }
 
 const ROLE: i32 = 0;

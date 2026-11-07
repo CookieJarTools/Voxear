@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 50;
+pub(crate) const API_VERSION: u32 = 51;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -341,6 +341,14 @@ pub(crate) struct NativeApi {
     /// length, written when it fits, or -1.
     pub motion_matcher_text:
         unsafe extern "C" fn(entity: u64, what: i32, text: *const u8, len: i32, buffer: *mut u8, capacity: i32) -> i32,
+    /// Reads, or with `set` writes, value `what` of an Obj's Net Object, as
+    /// `light_value` does an Obj's Light.
+    pub net_object_value: unsafe extern "C" fn(entity: u64, what: i32, set: i32, value: *mut [f32; 4]) -> i32,
+    /// `[Replicated]` fields: a behaviour's, on a server, handed over by
+    /// its type's key as bytes; with `take`, the next that came from the
+    /// server, into `entity`, `key` and up to `capacity` bytes, its length
+    /// given back, or -1 for none.
+    pub net_fields: unsafe extern "C" fn(take: i32, entity: *mut u64, key: *mut u32, bytes: *mut u8, len: i32) -> i32,
 }
 
 /// What answers scripts' questions about water: the engine's, set when it
@@ -366,6 +374,47 @@ static SMOKES: std::sync::OnceLock<ComponentValues> = std::sync::OnceLock::new()
 static MISTS: std::sync::OnceLock<ComponentValues> = std::sync::OnceLock::new();
 static MATCHERS: std::sync::OnceLock<ComponentValues> = std::sync::OnceLock::new();
 static ATTACHMENTS: std::sync::OnceLock<ComponentValues> = std::sync::OnceLock::new();
+static NET_OBJECTS: std::sync::OnceLock<ComponentValues> = std::sync::OnceLock::new();
+
+/// What hands `[Replicated]` fields between scripts and the engine: given a
+/// behaviour's on a server, or with `None`, the next from the server.
+pub type NetFields = fn(&mut World, Option<(Entity, u32, Vec<u8>)>) -> Option<(Entity, u32, Vec<u8>)>;
+static NET_FIELDS: std::sync::OnceLock<NetFields> = std::sync::OnceLock::new();
+
+/// Sets what hands `[Replicated]` fields over; the first set is kept.
+pub fn set_net_fields(fields: NetFields) {
+    let _ = NET_FIELDS.set(fields);
+}
+
+unsafe extern "C" fn net_fields(take: i32, entity: *mut u64, key: *mut u32, bytes: *mut u8, len: i32) -> i32 {
+    let Some(fields) = NET_FIELDS.get() else { return -1 };
+    if entity.is_null() || key.is_null() || bytes.is_null() || len < 0 {
+        return -1;
+    }
+    if take == 0 {
+        let given = unsafe { std::slice::from_raw_parts(bytes, len as usize) }.to_vec();
+        let (entity, key) = unsafe { (Entity::from_bits(*entity), *key) };
+        with_world(|world| fields(world, Some((entity, key, given))));
+        return 0;
+    }
+    let Some((from, at, value)) = with_world(|world| fields(world, None)) else { return -1 };
+    let copied = value.len().min(len as usize);
+    unsafe {
+        *entity = from.to_bits();
+        *key = at;
+        std::ptr::copy_nonoverlapping(value.as_ptr(), bytes, copied);
+    }
+    copied as i32
+}
+
+/// Sets what answers `NetObject` in scripts; the first set is kept.
+pub fn set_net_object_values(values: ComponentValues) {
+    let _ = NET_OBJECTS.set(values);
+}
+
+unsafe extern "C" fn net_object_value(entity: u64, what: i32, set: i32, value: *mut [f32; 4]) -> i32 {
+    unsafe { component_value(NET_OBJECTS.get(), entity, what, set, value) }
+}
 
 /// Sets what answers `Light` in scripts; the first set is kept.
 pub fn set_light_values(values: LightValues) {
@@ -1417,6 +1466,8 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         bone_attachment_value,
         net_call,
         motion_matcher_text,
+        net_object_value,
+        net_fields,
     }
 }
 

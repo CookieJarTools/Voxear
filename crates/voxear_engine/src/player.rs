@@ -296,8 +296,10 @@ pub fn run_server(game: &mut Game, frames: Option<u64>) {
 /// stopped or for `frames` ticks, as a networked game must. Each tick waits
 /// for its own moment rather than for a length of time, so ticks never
 /// drift; on Linux the system is asked to wake it within a microsecond of
-/// that moment rather than its usual fifty. One that falls far behind
-/// starts afresh rather than rushing.
+/// that moment rather than its usual fifty. On Windows the standard
+/// library's sleep already uses the system's high-resolution timer, so it
+/// wakes within a millisecond rather than the usual 15.6. One that falls far
+/// behind starts afresh rather than rushing.
 pub fn run_on_time(game: &mut Game, frames: Option<u64>) {
     use std::time::{Duration, Instant};
     #[cfg(target_os = "linux")]

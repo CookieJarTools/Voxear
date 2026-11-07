@@ -20,7 +20,13 @@ Build it as any other profile, in the Build window or with:
 vox build MyGame --profile "Linux Server"
 ```
 
-Run the program in the build's folder to start the server. `--frames 600` stops it after that many ticks, which is handy for checking a build.
+Run the program in the build's folder to start the server. `--port 7777` picks the port it listens on, the project's otherwise, and `--frames 600` stops it after that many ticks, which is handy for checking a build.
+
+## The server program
+
+A server build ships the server program rather than the player. It never opens a window or touches a GPU, so it runs on a machine with neither, and it comes without the debug information the player carries, at about a seventh of the size. It is the **Dedicated Server** part of an engine install, which the launcher installs on its own and can add to an install later. Without it, a server build ships the player program, which serves just as well, and the build says so.
+
+One core serves about eight full matches of 64 players at 60 ticks a second.
 
 ## What a server leaves out
 

@@ -105,3 +105,39 @@ fn a_profile_builds_a_player_that_runs_the_game() {
         assert!(kept.join("player-prev.log").is_file(), "the run before's is kept beside it");
     }
 }
+
+#[test]
+fn a_server_profile_builds_the_server_program_that_serves_the_game() {
+    if voxear_scripting::find_dotnet().is_none() {
+        return eprintln!("skipping: needs .NET");
+    }
+    let dir = hello_copy();
+    build_profile::write_default_profiles(dir.path()).unwrap();
+    let base = if cfg!(windows) { "Windows Release" } else { "Linux Release" };
+    let server = format!("format = 1\nbase = \"{base}\"\ntarget = \"server\"\n[player]\nproduct_name = \"Hello Server\"\n");
+    std::fs::write(build_profile::profile_path(dir.path(), "Server"), server).unwrap();
+    let built = Command::new(env!("CARGO_BIN_EXE_vox"))
+        .arg("build")
+        .arg(dir.path())
+        .args(["--profile", "Server", "--progress", "json"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&built.stdout);
+    assert!(built.status.success(), "{stdout}{}", String::from_utf8_lossy(&built.stderr));
+    let finished: Value = serde_json::from_str(stdout.lines().last().unwrap()).unwrap();
+    let program = Path::new(finished["program"].as_str().unwrap());
+    let shipped = std::fs::metadata(program).unwrap().len();
+    let server = std::fs::metadata(env!("CARGO_BIN_EXE_voxear-server")).unwrap().len();
+    assert_eq!(shipped, server, "the server program, not the player");
+
+    let data = tempfile::tempdir().unwrap();
+    let ran = Command::new(program)
+        .args(["--port", "47796", "--frames", "30"])
+        .env("XDG_DATA_HOME", data.path())
+        .output()
+        .unwrap();
+    let log = String::from_utf8_lossy(&ran.stdout).into_owned() + &String::from_utf8_lossy(&ran.stderr);
+    assert!(ran.status.success(), "{log}");
+    assert!(log.contains("ready:") && log.contains("0.0.0.0:47796"), "it serves, on the port given: {log}");
+    assert!(log.contains("ran 30 frames"), "{log}");
+}

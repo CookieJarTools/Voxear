@@ -19,6 +19,10 @@ path = "src/editor_main.rs"
 name = "voxear-player"
 path = "src/player_main.rs"
 
+[[bin]]
+name = "voxear-server"
+path = "src/server_main.rs"
+
 [dependencies]
 voxear_editor.workspace = true
 voxear_core.workspace = true

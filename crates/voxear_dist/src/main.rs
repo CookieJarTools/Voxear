@@ -6,7 +6,9 @@
 //! `.tar.zst` of it with every entry at the root, all but the manual, which
 //! goes in an archive of its own, `voxear-<version>-manual.tar.zst`, its
 //! entries under `manual/`, so the launcher can offer it as an optional part
-//! of an install. `voxear-release engine add` then signs the archive and lists it.
+//! of an install, and the Dedicated Server, the program server builds ship,
+//! which goes in `voxear-<version>-<platform>-server.tar.zst` as
+//! `bin/voxear-server` for the same reason. `voxear-release engine add` then signs the archive and lists it.
 //!
 //! ```bash
 //! cargo run -p voxear_dist -- --channel nightly
@@ -51,6 +53,9 @@ const MANUAL: &str = "manual";
 /// The programs an install carries in `bin/`: the command line, the editor,
 /// and the player `vox build` copies into each build.
 const PROGRAMS: [&str; 3] = ["vox", "voxear-editor", "voxear-player"];
+/// The Dedicated Server part: the program a server build ships, in an
+/// archive of its own for the launcher to offer as an optional part.
+const SERVER: &str = "voxear-server";
 
 /// The managed assemblies an install carries in `managed/`, each with its
 /// symbols, documentation and runtime files where it has them.
@@ -102,19 +107,25 @@ fn main() -> Result<()> {
     let install = out.join(&name);
     let files = gather(&root, &target_dir(&root), &engine_file(&version, args.channel, &commit))?;
     stage(&install, &files)?;
-    // The manual is an archive of its own, for the launcher to offer as an optional part of an install.
+    // The manual and the Dedicated Server are archives of their own, for the launcher to offer as optional parts.
     let (manual, engine): (Vec<Packed>, Vec<Packed>) =
         files.into_iter().partition(|file| file.path.starts_with(MANUAL));
+    let server_file = Path::new("bin").join(format!("{SERVER}{}", std::env::consts::EXE_SUFFIX));
+    let (server, engine): (Vec<Packed>, Vec<Packed>) = engine.into_iter().partition(|file| file.path == server_file);
     let archive = out.join(format!("{name}.tar.zst"));
     pack(&archive, &engine)?;
     check(&archive, &engine)?;
     let manual_archive = out.join(format!("voxear-{version}-manual.tar.zst"));
     pack(&manual_archive, &manual)?;
     check(&manual_archive, &manual)?;
+    let server_archive = out.join(format!("{name}-server.tar.zst"));
+    pack(&server_archive, &server)?;
+    check(&server_archive, &server)?;
 
     println!("Install folder: {}", install.display());
     println!("Archive: {} ({})", archive.display(), size(&archive)?);
     println!("The manual: {} ({})", manual_archive.display(), size(&manual_archive)?);
+    println!("The Dedicated Server: {} ({})", server_archive.display(), size(&server_archive)?);
     Ok(())
 }
 
@@ -189,6 +200,17 @@ fn build_programs(root: &Path, version: &str) -> Result<()> {
     }
     let status = command.status().context("running cargo")?;
     ensure!(status.success(), "building the programs failed");
+    // The server program without its debug information, which is most of its size: it ships in every server build.
+    let mut command = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));
+    command
+        .current_dir(root)
+        .args(["rustc", "--release", "-p", "voxear_cli", "--bin", SERVER, "--", "-C", "strip=debuginfo"])
+        .env("VOXEAR_VERSION", version);
+    if cfg!(windows) && !flags.contains("crt-static") {
+        command.env("RUSTFLAGS", format!("{flags} -C target-feature=+crt-static").trim());
+    }
+    let status = command.status().context("running cargo")?;
+    ensure!(status.success(), "building the server program failed");
     Ok(())
 }
 
@@ -246,7 +268,7 @@ fn gather(root: &Path, target: &Path, engine: &str) -> Result<Vec<Packed>> {
         Ok(())
     };
     add(&root.join("LICENSE.md"), "LICENSE.md".into(), false)?;
-    for program in PROGRAMS {
+    for program in PROGRAMS.into_iter().chain([SERVER]) {
         let file = format!("{program}{}", std::env::consts::EXE_SUFFIX);
         add(&target.join("release").join(&file), Path::new("bin").join(&file), true)?;
     }

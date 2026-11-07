@@ -51,6 +51,22 @@ pub fn sibling_program(name: &str) -> PathBuf {
     }
 }
 
+/// The program a build ships: the player, or for a dedicated server the
+/// server program beside it, which never opens a window or touches a GPU.
+/// An install without its Dedicated Server part ships the player instead,
+/// which serves as well, since a server build tells it to.
+fn program_for(player: &Path, target: build_profile::Target) -> PathBuf {
+    if target != build_profile::Target::Server {
+        return player.to_path_buf();
+    }
+    let server = player.with_file_name(format!("voxear-server{}", std::env::consts::EXE_SUFFIX));
+    if server.is_file() {
+        return server;
+    }
+    tracing::warn!("this install has no Dedicated Server part, so the server build runs the player program; add it in the launcher");
+    player.to_path_buf()
+}
+
 /// The stages of a build, in order.
 pub const BUILD_STAGES: [&str; 3] = ["scripts", "content", "player"];
 /// Where a build's report goes, in its folder.
@@ -188,7 +204,8 @@ pub fn build(
     events(BuildEvent::Stage { stage: "player", index: 2 })?;
     let product_name = profile.player.product_name.clone().unwrap_or_else(|| project.name().to_string());
     let program = output.join(format!("{}{}", file_name(&product_name), std::env::consts::EXE_SUFFIX));
-    std::fs::copy(player, &program).with_context(|| format!("copying the player to {}", program.display()))?;
+    let source = program_for(player, profile.target);
+    std::fs::copy(&source, &program).with_context(|| format!("copying {} to {}", source.display(), program.display()))?;
     let assembly = copy_managed(project, configuration, profile.development.enabled, &data.join(MANAGED_FOLDER))?;
     copy_steam_audio(project, &output)?;
     let commit = git_commit(&project.root);

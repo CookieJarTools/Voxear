@@ -13,6 +13,8 @@ It moves after the bones are posed and before `LateUpdate`, so a script there se
 
 ## A first-person camera on the body
 
+A [[First-Person View]] does all of this for you. To do it yourself instead:
+
 Put an Obj called Eyes under the character's model, attach it to the head, and tick **Turn With Bone** off and **Hide Bone** on. Then place the camera a little up and forward of it each frame, the offset turned as the view looks up and down, so looking down swings the eyes out in front of the chest rather than into it:
 
 ```csharp

@@ -10,3 +10,4 @@ Animation brings models made to animate to life: a character walking, a door swi
 4. [[Motion Sets]]: the states a character gets about in and the actions it plays
 5. [[Actions]]: clips played once over a state, as jumping, throwing or dying, with marks scripts hear
 6. [[Bone Attachments]]: an Obj kept on a bone, as eyes on a head or a gun in a hand
+7. [[First-Person View]]: a camera in a character's own head

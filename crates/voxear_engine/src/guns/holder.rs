@@ -22,6 +22,7 @@ use super::handling::Poses;
 use super::hands::{Grip, close, keep_out, palm_of, seat_hand};
 use super::mechanism::{GunPart, GunState, Known, PartRole};
 use super::playing::{ActionPlay, HandAim, Throwing, advance, curve, minimum_jerk};
+use super::preview::HoldPreview;
 use crate::animation::MotionMatcherState;
 use crate::animation::ik::{PoseEdit, aim_turn, turn_spine};
 use crate::animation::rig::{Arm, Rig};
@@ -247,12 +248,14 @@ pub fn fire(world: &mut World, entity: Entity) -> Option<Shot> {
         return None;
     }
     let dry = mechanism.shoot(gun.kind);
+    // A preview throws nothing away, to lie about the edited level.
+    let quiet = world.has::<HoldPreview>(entity);
     // A self-loader throws its case out as it works; an en-bloc clip pings out after the last round.
-    if gun.kind.self_loading() && gun.kind != GunKind::TopBreakRevolver {
+    if !quiet && gun.kind.self_loading() && gun.kind != GunKind::TopBreakRevolver {
         let (held, seed) = (state.held.unwrap_or(Mat4::IDENTITY), state.random());
         super::leftovers::throw_case(world, &mechanism, held, state.velocity, now, seed);
     }
-    if dry && gun.kind.feed() == super::mechanism::Feed::EnBloc {
+    if !quiet && dry && gun.kind.feed() == super::mechanism::Feed::EnBloc {
         let held = state.held.unwrap_or(Mat4::IDENTITY);
         let (up, right) = (held.transform_vector3(Vec3::Y), held.transform_vector3(Vec3::X));
         let ping = state.velocity + up * 3.2 + right * 0.6;
@@ -307,18 +310,23 @@ pub fn fire(world: &mut World, entity: Entity) -> Option<Shot> {
 /// Holds every holder's gun and puts its hands on it: run in the pose
 /// stage, after the First-Person View has placed the camera.
 pub fn hold(world: &mut World) {
-    if crate::editing(world) || !crate::modules::has(world, crate::modules::Module::Guns) {
+    if !crate::modules::has(world, crate::modules::Module::Guns) {
         return;
     }
     let delta = world.resource::<Time>().map_or(1.0 / 60.0, |time| time.delta).max(1e-4);
-    let holders: Vec<(Entity, GunHolder)> =
-        world.query_ref::<(Entity, &GunHolder)>().into_iter().map(|(e, h)| (e, h.clone())).collect();
+    let holders: Vec<(Entity, GunHolder)> = world
+        .query_ref::<(Entity, &GunHolder)>()
+        .into_iter()
+        .filter(|(entity, _)| super::preview::runs(world, *entity))
+        .map(|(e, h)| (e, h.clone()))
+        .collect();
     for (entity, holder) in holders {
         let Some(gun_entity) = holder.gun.or_else(|| first_under(world, entity, |w, e| w.has::<Gun>(e))) else {
             continue;
         };
         let Some(gun) = world.get::<Gun>(gun_entity).cloned() else { continue };
         let Some(view) = world.get::<FirstPersonView>(entity).cloned() else { continue };
+        let preview = world.get::<HoldPreview>(entity).cloned();
         let handling = super::handling::handling_of(world, &gun);
         let poses = &handling.poses;
         // The gun is held before the view's eyes: the camera for this machine's player, their head for others.
@@ -348,7 +356,7 @@ pub fn hold(world: &mut World) {
         if let Some(id) = holder.request.take().filter(|_| state.play.is_none())
             && let Some(play) = ActionPlay::start(&id, gun.kind, &handling, &mechanism, holder.spare)
         {
-            state.play = Some(play);
+            state.play = Some(ActionPlay { quiet: preview.is_some(), ..play });
             state.returning = [None; 2];
         }
         if let Some(stored) = world.get_mut::<GunHolder>(entity) {
@@ -358,7 +366,24 @@ pub fn hold(world: &mut World) {
         let mut spare = holder.spare;
         let mut aim = None;
         let mut tilt = Vec3::ZERO;
-        if let Some(mut play) = state.play.take() {
+        // A preview shown at a time in an action is that action replayed from its start to then, every frame, with
+        // every spring at rest where it is going: so the same time always looks the same.
+        let mut delta = delta;
+        if let Some(HoldPreview { start, at: Some((id, t)) }) = &preview {
+            mechanism = start.state(gun.kind, &mechanism);
+            let played = ActionPlay::start(id, gun.kind, &handling, &mechanism, spare);
+            state.play = played.map(|play| ActionPlay { quiet: true, ..play });
+            let shown = state.play.as_mut().and_then(|play| {
+                scrub(world, play, (&gun, &mut mechanism, &mut spare), pouches, state.held.unwrap_or(eye), *t)
+            });
+            if let Some((hand, angle)) = shown {
+                (aim, tilt) = (Some(hand), angle);
+            } else {
+                state.play = None;
+            }
+            (state.returning, delta) = ([None; 2], 10.0);
+            state.time = t - delta;
+        } else if let Some(mut play) = state.play.take() {
             let now = world.resource::<Time>().map_or(0.0, |time| time.elapsed);
             let throwing =
                 Throwing { held: state.held.unwrap_or(eye), velocity: state.velocity, now, seed: state.random() };
@@ -423,6 +448,29 @@ pub fn hold(world: &mut World) {
         }
         state.held = Some(held);
         world.insert(entity, state);
+    }
+}
+
+/// Plays an action from its start to `t` seconds in, in small steps, as it
+/// would have played: where its hand is then and how the gun is tilted, or
+/// none once it is over.
+fn scrub(
+    world: &mut World,
+    play: &mut ActionPlay,
+    (gun, mechanism, spare): (&Gun, &mut GunState, &mut u32),
+    pouches: [Vec3; 2],
+    held: Mat4,
+    t: f32,
+) -> Option<(HandAim, Vec3)> {
+    let throwing = Throwing { held, velocity: Vec3::ZERO, now: 0.0, seed: 0.0 };
+    let mut left = t.max(0.0);
+    loop {
+        let step = left.min(1.0 / 120.0);
+        let shown = advance(world, play, gun, mechanism, spare, pouches, throwing, step);
+        left -= step;
+        if shown.is_none() || left <= 1e-6 {
+            return shown;
+        }
     }
 }
 
@@ -1264,6 +1312,38 @@ pub(super) mod tests {
         assert!((up.x.atan2(up.y).to_degrees() - 12.0).abs() < 0.5, "canted twelve degrees: {up}");
         let rear = sights.w_axis.truncate();
         assert!(rear.truncate().length() < 0.01, "the sights still on the eye's line: {rear}");
+    }
+
+    #[test]
+    fn while_editing_only_a_previewed_holder_is_held_and_it_shows_a_time_in_an_action_the_same_each_time() {
+        use crate::guns::preview::{HoldPreview, PreviewStart};
+        let mut scene = scene();
+        let rest = rest_of(&scene);
+        scene.world.insert_resource(crate::EditMode(true));
+        let was = *scene.world.get::<voxear_scene::Transform>(scene.gun).unwrap();
+        for _ in 0..5 {
+            frame(&mut scene, &rest);
+        }
+        assert!(!scene.world.has::<GunHolderState>(scene.player), "a level's own holder is left alone while editing");
+        assert_eq!(*scene.world.get::<voxear_scene::Transform>(scene.gun).unwrap(), was);
+
+        let shown_at = |scene: &mut Scene, t: f32| {
+            let at = Some((ActionId::Builtin(ActionKind::Reload), t));
+            scene.world.insert(scene.player, HoldPreview { start: PreviewStart::Dry, at });
+            frame(scene, &rest);
+            let gun = world_matrix(&scene.world, scene.gun);
+            let parts = scene.world.get::<GunState>(scene.gun).unwrap().clone();
+            (gun, parts.rounds, scene.world.get::<GunHolderState>(scene.player).unwrap().acting())
+        };
+        let (first, rounds, acting) = shown_at(&mut scene, 0.6);
+        assert_eq!((rounds, acting), (0, Some(ActionKind::Reload)), "partway through reloading from dry");
+        shown_at(&mut scene, 1.4);
+        let (again, ..) = shown_at(&mut scene, 0.6);
+        assert!(again.abs_diff_eq(first, 1e-4), "the same time looks the same: {first} {again}");
+        let (_, rounds, acting) = shown_at(&mut scene, 20.0);
+        assert_eq!((rounds, acting), (4, None), "past its end it shows the gun reloaded, the hands back on it");
+        let leftovers = scene.world.query_ref::<&super::super::leftovers::Leftover>().into_iter().count();
+        assert_eq!(leftovers, 0, "a preview throws nothing away");
     }
 
     #[test]

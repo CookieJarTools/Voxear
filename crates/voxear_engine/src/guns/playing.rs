@@ -41,6 +41,8 @@ pub struct ActionPlay {
     pub lift: f32,
     pub lowers_aim: bool,
     pub work: super::handling::Place,
+    /// Whether it throws nothing away, as in the editor's preview.
+    pub quiet: bool,
 }
 
 /// What a beat throwing something away needs: the gun's place and turn in
@@ -96,6 +98,7 @@ impl ActionPlay {
             lift: 1.0,
             lowers_aim: true,
             work: super::handling::Place::default(),
+            quiet: false,
         }
     }
 
@@ -176,7 +179,9 @@ pub fn advance(
         }
         let (chamber, rounds) = (state.chamber, state.rounds);
         apply(beat.then, gun.kind, state, spare);
-        throw_away(world, play, &beat, gun, state, (chamber, rounds), throwing);
+        if !play.quiet {
+            throw_away(world, play, &beat, gun, state, (chamber, rounds), throwing);
+        }
         knock(play, &beat);
         play.t -= beat.length();
         play.index += 1;

@@ -15,6 +15,7 @@ pub mod leftovers;
 mod legacy_plan;
 pub mod mechanism;
 pub mod playing;
+pub mod preview;
 pub mod templates;
 mod values;
 

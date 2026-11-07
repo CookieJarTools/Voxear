@@ -171,12 +171,14 @@ pub fn look(world: &mut World) {
 /// Leans each view's upper body into its tilt, places its camera in the
 /// head and hides the head: run in the pose stage.
 pub fn place(world: &mut World) {
-    if crate::editing(world) {
-        return;
-    }
     let delta = world.resource::<Time>().map_or(1.0 / 60.0, |time| time.delta);
-    let views: Vec<(Entity, FirstPersonView)> =
-        world.query_ref::<(Entity, &FirstPersonView)>().into_iter().map(|(e, v)| (e, v.clone())).collect();
+    let editing = crate::editing(world);
+    let views: Vec<(Entity, FirstPersonView)> = world
+        .query_ref::<(Entity, &FirstPersonView)>()
+        .into_iter()
+        .filter(|(entity, _)| crate::guns::preview::runs(world, *entity))
+        .map(|(e, v)| (e, v.clone()))
+        .collect();
     for (entity, view) in views {
         // Only this machine's own player looks out of their head; anyone else's keeps it.
         let own = is_own(world, entity);
@@ -203,10 +205,13 @@ pub fn place(world: &mut World) {
         if !own {
             continue;
         }
-        let camera = view
-            .camera
-            .or_else(|| first_under(world, entity, |w, e| w.has::<Camera>(e)))
-            .or_else(|| world.query_ref::<(Entity, &Camera)>().into_iter().map(|(e, _)| e).next());
+        // While editing, only a camera the view names is moved: never the level's own.
+        let camera = view.camera.or_else(|| {
+            let under = (!editing).then(|| first_under(world, entity, |w, e| w.has::<Camera>(e))).flatten();
+            under.or_else(|| {
+                (!editing).then(|| world.query_ref::<(Entity, &Camera)>().into_iter().map(|(e, _)| e).next()).flatten()
+            })
+        });
         if let Some(camera) = camera {
             set_world(world, camera, obj.transform_point3(shown), view.rotation() * jolt);
         }

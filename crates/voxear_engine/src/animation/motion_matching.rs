@@ -31,9 +31,11 @@ use voxear_render::{BonePose, ModelAnimation, ModelRenderer, Pose, Skeleton};
 use voxear_scene::{Destroying, Transform};
 
 use super::{
+    actions::{self, ActionCommand, ActionPlay, MotionMarks},
     clips::Clips,
     motion_database::{ClipRun, Ground, MotionDatabase, facing, wrap},
-    motion_set::{MotionSet, StateRole},
+    motion_set::{ActionMovement, MotionSet, StateRole},
+    retarget::fitted,
     settling::Settling,
     states::{StatePlay, state_play},
 };
@@ -95,6 +97,9 @@ pub struct MotionMatcher {
     /// What it can do: its Motion Set, `Characters/Wizard.motionset`; none
     /// plays the model's own loops.
     pub motion_set: String,
+    /// Actions the game asked to play or stop since the last frame.
+    #[serde(skip)]
+    pub commands: Vec<ActionCommand>,
     /// Moving the Obj as its clips carry it, rather than the game moving it
     /// and the clips following.
     pub root_motion: bool,
@@ -142,6 +147,7 @@ impl Default for MotionMatcher {
             aim_pitch: 0.0,
             state: None,
             motion_set: String::new(),
+            commands: Vec::new(),
             root_motion: false,
             idle_speed: 0.15,
             search_every: 0.1,
@@ -188,6 +194,8 @@ pub struct MotionMatcherState {
     /// down last frame.
     locks: [Option<FootLock>; 2],
     down: [bool; 2],
+    /// The action playing over the state's clips.
+    action: Option<ActionPlay>,
     /// The Obj's place last frame, and its velocity as seen.
     last: Option<Vec3>,
     velocity: Vec3,
@@ -348,19 +356,100 @@ pub fn match_motion(world: &mut World, delta: f32) {
         let mut state = world.get::<MotionMatcherState>(entity).cloned().unwrap_or_default();
         let wanted = set.as_deref().map_or(0, |set| chosen(set, &matcher, &state));
         let Some(play) = state_play(world, &matcher.motion_set, set.as_deref(), wanted, &animation) else { continue };
+        // Into another state, its enter action plays.
+        let taken = world.get_mut::<MotionMatcher>(entity).map(|m| std::mem::take(&mut m.commands));
+        let mut commands = taken.unwrap_or_default();
+        let entered =
+            set.as_deref().and_then(|set| set.states.get(wanted)).map(|s| s.enter.clone()).unwrap_or_default();
+        if state.play.is_some() && wanted != state.state && !entered.is_empty() {
+            commands.insert(0, ActionCommand::Play(entered));
+        }
         state.state = wanted;
         let placed = voxear_scene::world_matrix(world, entity);
-        let pose = step(&mut state, &matcher, &play, placed, delta);
+        let (asked, moved) = act(world, entity, &mut state, &matcher, set.as_deref(), &play, commands, delta);
+        let pose = step(&mut state, &asked, &play, placed, delta);
         if matcher.debug {
             draw(&state, &matcher, &play, placed);
         }
-        if matcher.root_motion && delta > 0.0 {
-            carry(world, entity, carried(&state, &play), delta);
+        if (matcher.root_motion || moved != Vec3::ZERO) && delta > 0.0 {
+            let walked = if matcher.root_motion { carried(&state, &play) } else { Vec3::ZERO };
+            let turned = Quat::from_rotation_y(state.body_yaw.unwrap_or_default());
+            carry(world, entity, walked + turned * moved, delta);
         }
         let bones = play.animation.skeleton.model_matrices(&pose).into();
         world.insert(entity, Pose { bones });
         world.insert(entity, state);
     }
+}
+
+/// Plays the actions the game asked for, and the one playing on: fades it,
+/// tells scripts of the marks it passed, and asks the matcher to stand or
+/// stop turning as it says. Returns the matcher as the state's clips are to
+/// play this frame, and how the action carries the character, as seen from
+/// the body.
+#[allow(clippy::too_many_arguments)]
+fn act(
+    world: &mut World,
+    entity: Entity,
+    state: &mut MotionMatcherState,
+    matcher: &MotionMatcher,
+    set: Option<&MotionSet>,
+    play: &StatePlay,
+    commands: Vec<ActionCommand>,
+    delta: f32,
+) -> (MotionMatcher, Vec3) {
+    let mut asked = matcher.clone();
+    let Some(set) = set else { return (asked, Vec3::ZERO) };
+    for command in commands {
+        match command {
+            ActionCommand::Stop => {
+                if let Some(action) = &mut state.action {
+                    action.ending = true;
+                }
+            }
+            ActionCommand::Play(name) => {
+                let Some(index) = set.action_named(&name) else { continue };
+                let action = &set.actions[index];
+                let source = world.resource::<Clips>().and_then(|clips| clips.get(&action.clip)).cloned();
+                let Some(source) = source else { continue };
+                let clip = fitted(world, &source, &play.animation);
+                let mask = actions::mask(&play.animation.skeleton, &play.database.spine, action.body, &action.bone);
+                let (mask, looping) = (mask.into(), action.looping);
+                state.action = Some(ActionPlay { index, clip, mask, time: 0.0, weight: 0.0, ending: false, looping });
+            }
+        }
+    }
+    let Some(action) = &mut state.action else { return (asked, Vec3::ZERO) };
+    let Some(made) = set.actions.get(action.index) else {
+        state.action = None;
+        return (asked, Vec3::ZERO);
+    };
+    let wanting = matcher.wanted_velocity.map_or(state.velocity, flat).length() > matcher.idle_speed;
+    let was = action.time;
+    let (playing, passed) = action.advance(made, wanting, delta);
+    if !passed.is_empty() {
+        if world.resource::<MotionMarks>().is_none() {
+            world.insert_resource(MotionMarks::default());
+        }
+        if let Some(marks) = world.resource_mut::<MotionMarks>() {
+            marks.0.extend(passed.into_iter().map(|name| (entity, format!("{}#mark:{name}", matcher.motion_set))));
+        }
+    }
+    if !playing {
+        state.action = None;
+        return (asked, Vec3::ZERO);
+    }
+    if made.movement != ActionMovement::Keep {
+        asked.wanted_velocity = Some(Vec3::ZERO);
+    }
+    if action.time > made.turn_until
+        && let Some(body) = state.body_yaw
+    {
+        asked.wanted_facing = Some(Quat::from_rotation_y(body) * Vec3::Z);
+    }
+    let skeleton = &play.animation.skeleton;
+    let moved = action.carried(made, skeleton, play.database.root, play.database.rest_root, was);
+    (asked, moved)
 }
 
 /// The state a matcher plays: the one its game asks for, else the one it
@@ -430,6 +519,7 @@ fn step(
                     idle_weight: 1.0,
                     rate: 1.0,
                     state: state.state,
+                    action: state.action.take(),
                     ..MotionMatcherState::default()
                 }
             }
@@ -466,6 +556,9 @@ fn step(
     fade(state, matcher, standing && idle.is_some(), delta);
     play_on(state, matcher, database, delta);
     let mut pose = pose(state, matcher, animation, database, idle, body);
+    if let Some(action) = &state.action {
+        action.lay_over(&mut pose, &animation.skeleton.rest(), database.root);
+    }
     turn_root(&mut pose, &animation.skeleton, database.root, wrap(body - obj.yaw));
     // Looking up or down, the spine bends about the body's right.
     let right = Quat::from_rotation_y(wrap(body - obj.yaw)) * Vec3::X;
@@ -481,7 +574,10 @@ fn step(
     {
         state.settling = None;
     }
-    match (matcher.foot_locking, database.legs) {
+    // Feet are held as the state's clips have them, not where an action's legs take them.
+    let ankles = database.legs.map(|legs| [legs[0][2], legs[1][2]]);
+    let legs_taken = state.action.as_ref().zip(ankles).map_or(0.0, |(action, ankles)| action.legs_taken(ankles));
+    match (matcher.foot_locking && legs_taken < 0.5, database.legs) {
         (true, Some(legs)) => {
             let down = down(state, database, idle);
             let toes = database.toes.unwrap_or([legs[0][2], legs[1][2]]);

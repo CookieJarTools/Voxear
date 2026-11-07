@@ -6,7 +6,10 @@ use voxear_core::math::Vec3;
 use voxear_ecs::{Entity, World};
 use voxear_engine::{
     Content,
-    animation::{Animator, Clips, MotionMatcher, MotionMatcherState, StateChoice, StateRole, give_clips, match_motion},
+    animation::{
+        ActionCommand, Animator, Clips, MotionMarks, MotionMatcher, MotionMatcherState, StateChoice, StateRole,
+        give_clips, match_motion,
+    },
 };
 use voxear_render::ModelRenderer;
 use voxear_scene::Transform;
@@ -28,6 +31,15 @@ name = "Crouching"
 role = "crouched"
 [[state.clip]]
 clip = "Models/Walks.gltf#clip:Sneak"
+
+[[action]]
+name = "Lunge"
+clip = "Models/Walks.gltf#clip:Walk"
+movement = "root"
+blend_in = 0.0
+[[action.mark]]
+name = "Strike"
+time = 0.5
 "#;
 
 /// A glTF of a root with hips under it and two clips a second long, "Walk",
@@ -176,4 +188,32 @@ fn with_root_motion_the_clips_carry_the_character() {
     }
     let at = world.get::<Transform>(hero).unwrap().position;
     assert!(at.z > 2.0 && at.z < 3.0, "walked on at the walk's pace, once it faded in: {at}");
+}
+
+#[test]
+fn an_action_carries_the_character_with_its_clip_and_tells_of_its_marks() {
+    let dir = project();
+    std::fs::write(dir.path().join("Hero.motionset"), HERO).unwrap();
+    let mut content = Content::open(dir.path()).unwrap();
+    let walks = content.parse("Models/Walks.gltf").unwrap().guid().unwrap();
+    let model = ModelRenderer { animation: content.clip_file(walks), ..ModelRenderer::new(Vec::new()) };
+    let mut world = World::new();
+    let matcher = MotionMatcher {
+        motion_set: "Hero.motionset".into(),
+        wanted_velocity: Some(Vec3::ZERO),
+        commands: vec![ActionCommand::Play("Lunge".into())],
+        ..MotionMatcher::default()
+    };
+    let hero = world.spawn((Transform::from_position(Vec3::ZERO), model, matcher));
+    let mut marks = Vec::new();
+    for _ in 0..90 {
+        give_clips(&mut world, &mut content);
+        match_motion(&mut world, 1.0 / 60.0);
+        if let Some(passed) = world.resource_mut::<MotionMarks>() {
+            marks.append(&mut passed.0);
+        }
+    }
+    let at = world.get::<Transform>(hero).unwrap().position;
+    assert!(at.z > 1.2 && at.z < 1.6, "the Walk's travel carried it, as the game stood still: {at}");
+    assert_eq!(marks, [(hero, "Hero.motionset#mark:Strike".to_string())], "its mark, once");
 }

@@ -109,7 +109,7 @@ fn legs(skeleton: &Skeleton) -> Option<[[usize; 3]; 2]> {
 }
 
 /// Which side a bone's lowercase name puts it on: true for left.
-fn side_of(name: &str) -> Option<bool> {
+pub(super) fn side_of(name: &str) -> Option<bool> {
     let marked = |side: &str, letter: char| {
         name.contains(side)
             || [".", "_", " ", "-"].iter().any(|mark| name.ends_with(&format!("{mark}{letter}")))

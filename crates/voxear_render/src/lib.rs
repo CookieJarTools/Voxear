@@ -118,7 +118,7 @@ pub use cooked_picture::{COOKED_PICTURE_VERSION, CookedPicture, PictureUse, read
 pub use ui_panels::{MAX_UI_PANELS, PanelRect, UiPanel, UiPanelFrame, panels as ui_panel_rects};
 pub use frame_debugger::{Channels, FrameImage, FrameLook, FramePass};
 pub use gltf_import::{
-    FilePicture, FileMaterial, ImportedModel, ImportedNode, PreparedModel, ReadFile, companion_files,
+    FilePicture, FileMaterial, ImportedModel, ImportedNode, PartPlace, PreparedModel, ReadFile, companion_files,
     prepare as prepare_model,
 };
 pub use gpu::{

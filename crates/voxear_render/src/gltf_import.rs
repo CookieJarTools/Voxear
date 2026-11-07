@@ -206,6 +206,19 @@ pub(crate) struct PreparedNode {
     pub skin: Option<usize>,
 }
 
+/// A drawable part of a model and where it sits in the model.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PartPlace<'a> {
+    pub name: &'a str,
+    /// `mesh0.0`, as asset references name it.
+    pub mesh: &'a str,
+    /// `material0`, or `None` for glTF's default material.
+    pub material: Option<&'a str>,
+    pub position: Vec3,
+    pub rotation: Quat,
+    pub scale: Vec3,
+}
+
 impl PreparedModel {
     pub fn path(&self) -> &str {
         &self.path
@@ -235,6 +248,19 @@ impl PreparedModel {
     /// [`reupload`] needs to match an earlier import.
     pub fn parts(&self) -> impl Iterator<Item = (&str, Option<&str>)> {
         self.nodes.iter().map(|node| (node.mesh_part.as_str(), node.material_part.as_deref()))
+    }
+
+    /// Each drawable part with where the model puts it, in order: what an
+    /// Obj of its own drawing the part is placed by.
+    pub fn part_places(&self) -> impl Iterator<Item = PartPlace<'_>> {
+        self.nodes.iter().map(|node| PartPlace {
+            name: &node.name,
+            mesh: &node.mesh_part,
+            material: node.material_part.as_deref(),
+            position: node.position,
+            rotation: node.rotation,
+            scale: node.scale,
+        })
     }
 
     /// Each of its materials that a part draws with, as its file has it, in

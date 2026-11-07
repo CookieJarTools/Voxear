@@ -58,6 +58,9 @@ const EMBEDDED_TIP: &str =
 /// How many lines of a file's code the Inspector shows.
 const CODE_LINES: usize = 200;
 
+/// The alpha a material clips below when alpha clipping is first turned on.
+const ALPHA_THRESHOLD: f32 = 0.5;
+
 /// What the asset view asks of the editor.
 #[derive(Clone, Debug, PartialEq)]
 pub enum AssetAction {
@@ -389,6 +392,9 @@ struct MaterialFields {
     /// How its emission moves, and how fast.
     glow: NodeId,
     glow_speed: NodeId,
+    /// Whether it clips by its colour map's alpha, and where.
+    alpha_clip: NodeId,
+    threshold: NodeId,
     glass: NodeId,
     ior: NodeId,
     /// How far up a model's foot it blends into the ground.
@@ -905,6 +911,7 @@ impl AssetView {
             .chain([&fields.metallic, &fields.roughness, &fields.foliage, &fields.leaves, &fields.glass, &fields.ior])
             .chain([&fields.glow, &fields.glow_speed, &fields.displacement, &fields.detail])
             .chain([&fields.pixels, &fields.connected, &fields.acoustic])
+            .chain([&fields.alpha_clip, &fields.threshold])
             .chain(&fields.wind);
         if !changed.into_iter().any(|&field| ui.changed(field)) {
             return None;
@@ -932,6 +939,9 @@ impl AssetView {
         data.leaves = Leaves::ALL[ui.selected_option(fields.leaves).min(Leaves::ALL.len() - 1)];
         data.glow = Glow::ALL[ui.selected_option(fields.glow).min(Glow::ALL.len() - 1)];
         data.glow_speed = read(fields.glow_speed, data.glow_speed).clamp(0.0, 30.0);
+        data.cutout = ui
+            .is_checked(fields.alpha_clip)
+            .then(|| read(fields.threshold, data.cutout.unwrap_or(ALPHA_THRESHOLD)).clamp(0.01, 1.0));
         data.glass = ui.is_checked(fields.glass);
         (data.pixels, data.connected) = (ui.is_checked(fields.pixels), ui.is_checked(fields.connected));
         data.ior = read(fields.ior, data.ior).clamp(1.0, 3.0);
@@ -1420,6 +1430,10 @@ fn material(ui: &mut Ui, root: NodeId, file: &std::path::Path, game: &Game) -> O
     let names = Leaves::ALL.map(Leaves::name);
     let leaves = ui.dropdown(row, &names, Leaves::ALL.iter().position(|&l| l == data.leaves).unwrap_or_default());
     ui.add_class(leaves, "value-input");
+    let row = prop(ui, rows, "Alpha clip");
+    let alpha_clip = ui.toggle(row, "", data.cutout.is_some());
+    ui.add_class(alpha_clip, "checkbox");
+    let threshold = one(ui, "Threshold", data.cutout.unwrap_or(ALPHA_THRESHOLD));
     let row = prop(ui, rows, "Glass");
     let glass = ui.toggle(row, "", data.glass);
     ui.add_class(glass, "checkbox");
@@ -1451,6 +1465,8 @@ fn material(ui: &mut Ui, root: NodeId, file: &std::path::Path, game: &Game) -> O
         leaves,
         glow,
         glow_speed,
+        alpha_clip,
+        threshold,
         glass,
         ior,
         ground,
@@ -1512,12 +1528,13 @@ impl ModelMaterials {
 
 impl MaterialFields {
     /// Hides the rows that do nothing as the material stands: glow speed
-    /// for a steady glow, leaves for what is not foliage, and the index of
-    /// refraction for what is not glass.
+    /// for a steady glow, leaves for what is not foliage, the threshold for
+    /// what does not clip, and the index of refraction for what is not glass.
     fn show_what_applies(&self, ui: &mut Ui) {
         let rows = [
             (self.glow_speed, self.data.glow != Glow::Steady),
             (self.leaves, self.data.foliage),
+            (self.threshold, self.data.cutout.is_some()),
             (self.ior, self.data.glass),
             (self.displacement, self.data.height_map.is_some()),
             (self.detail, self.data.height_map.is_some()),

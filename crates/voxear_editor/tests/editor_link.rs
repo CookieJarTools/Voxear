@@ -269,6 +269,22 @@ fn calls_are_refused_with_a_reason_a_tool_can_read() {
 }
 
 #[test]
+fn a_folder_setting_is_set_by_its_path_and_listed_with_it() {
+    let dir = hello_copy();
+    let Some((mut renderer, mut editor)) = open(dir.path()) else { return };
+    let folder = dir.path().join("Models").display().to_string();
+    let set = json!({ "key": "fab_downloads", "value": folder });
+    assert_eq!(done(&mut editor, &mut renderer, "settings.set", set)["value"], folder.as_str());
+    let listed = done(&mut editor, &mut renderer, "settings.get", json!({}));
+    let watched = listed["settings"].as_array().unwrap().iter().find(|s| s["key"] == "fab_downloads").unwrap().clone();
+    assert_eq!((watched["type"].as_str(), watched["value"].as_str()), (Some("folder"), Some(folder.as_str())));
+    let missing = json!({ "key": "fab_downloads", "value": dir.path().join("Nowhere").display().to_string() });
+    assert_eq!(ask(&mut editor, &mut renderer, "settings.set", missing).unwrap_err().kind, ErrorKind::WrongValue);
+    let cleared = done(&mut editor, &mut renderer, "settings.set", json!({ "key": "fab_downloads", "value": null }));
+    assert_eq!(cleared["value"], "None", "null watches nothing");
+}
+
+#[test]
 fn a_scene_a_tool_writes_is_read_again_unless_edits_wait() {
     let dir = hello_copy();
     let Some((mut renderer, mut editor)) = open(dir.path()) else { return };

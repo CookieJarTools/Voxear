@@ -3,7 +3,8 @@
 //! settings, each changed in place. Searching shows the settings from every
 //! group whose names match, as the command palette matches. A setting the
 //! palette opens is shown in its group, scrolled to and marked (`found`) for
-//! a moment. A colour's swatch opens the colour picker (`color_popup`).
+//! a moment. A colour's swatch opens the colour picker (`color_popup`), and
+//! a folder's button the desktop's folder chooser (`importing`).
 
 use std::time::{Duration, Instant};
 
@@ -35,6 +36,12 @@ enum Control {
     Number(NodeId),
     /// A swatch.
     Color(NodeId),
+    /// A button naming the folder, which picks another, and one that
+    /// clears it.
+    Folder {
+        choose: NodeId,
+        clear: NodeId,
+    },
 }
 
 pub struct SettingsPanel {
@@ -114,6 +121,13 @@ impl SettingsPanel {
         }
         let mut changed = false;
         for row in &self.rows {
+            if let Control::Folder { choose, clear } = row.control {
+                if ui.clicked(clear) {
+                    changed |= settings.set_folder(row.key, None);
+                }
+                show_folder(ui, choose, clear, settings.folder(row.key));
+                continue;
+            }
             if let Some(value) = read(ui, &row.control) {
                 changed |= settings.set(row.key, value);
             }
@@ -135,6 +149,15 @@ impl SettingsPanel {
     pub fn color_clicked(&self, ui: &Ui) -> Option<(&'static str, NodeId)> {
         self.rows.iter().find_map(|row| match row.control {
             Control::Color(swatch) if ui.clicked(swatch) => Some((row.key, swatch)),
+            _ => None,
+        })
+    }
+
+    /// The folder setting whose button was clicked this frame, to pick its
+    /// folder.
+    pub fn folder_clicked(&self, ui: &Ui) -> Option<&'static str> {
+        self.rows.iter().find_map(|row| match row.control {
+            Control::Folder { choose, .. } if ui.clicked(choose) => Some(row.key),
             _ => None,
         })
     }
@@ -221,6 +244,31 @@ fn control(ui: &mut Ui, row: NodeId, kind: SettingKind, value: Option<SettingVal
             ui.add_class(swatch, "swatch");
             Control::Color(swatch)
         }
+        (SettingKind::Folder, _) => {
+            let holder = ui.panel(row, Style::row());
+            ui.add_class(holder, "prop-value");
+            let choose = ui.button(holder, "Choose…");
+            ui.add_class(choose, "setting-folder");
+            let clear = ui.icon_button(holder, "close");
+            ui.add_class(clear, "setting-clear");
+            ui.set_tooltip(clear, "Stop watching", None);
+            Control::Folder { choose, clear }
+        }
+    }
+}
+
+/// Shows a folder setting's folder on its button by name, with the whole
+/// path as its tooltip, and its clear button only while there is one.
+fn show_folder(ui: &mut Ui, choose: NodeId, clear: NodeId, folder: Option<&std::path::Path>) {
+    let name = folder.map(|folder| folder.file_name().map_or(folder.as_os_str(), |name| name).to_string_lossy());
+    let text = name.as_deref().unwrap_or("Choose…");
+    if ui.text(choose) != text {
+        ui.set_text(choose, text);
+        let tip = folder.map_or("Pick a folder".to_string(), |folder| folder.display().to_string());
+        ui.set_tooltip(choose, &tip, None);
+    }
+    if ui.is_visible(clear) != folder.is_some() {
+        ui.set_visible(clear, folder.is_some());
     }
 }
 

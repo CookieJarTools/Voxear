@@ -35,6 +35,7 @@ toml_edit.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 regex.workspace = true
+zip.workspace = true
 
 # Files dragged onto the window on Wayland, which winit does not pass on there.
 [target.'cfg(target_os = "linux")'.dependencies]

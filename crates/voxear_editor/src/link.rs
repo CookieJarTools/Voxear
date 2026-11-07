@@ -735,7 +735,7 @@ pub const CALLS: &[CallInfo] = &[
     },
     CallInfo {
         name: "settings.set",
-        about: "Changes one of the editor's settings, by its key.",
+        about: "Changes one of the editor's settings, by its key; a folder's value is its path, or null for none.",
         args: &[arg("key", ArgKind::Text, ""), arg("value", ArgKind::Value, "")],
         changes: false,
         returns: "{ value }",

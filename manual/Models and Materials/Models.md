@@ -17,6 +17,8 @@ You can also right-click a folder, or the space around the files, and choose **I
 
 On Linux, some desktops cannot pass a drag from an X11 program to the editor. If a drop does nothing, open your file manager on its own, not from another program such as the Unity editor, and drag from there, or use **Import New Asset…**.
 
+A Megascans download from Fab, dropped as its zip, comes in whole: its textures, a material and its models, in a folder of its own. See [[Megascans from Fab]].
+
 You can also copy files into the project's folder yourself. The editor sees them when you come back to it. In the same way, when you export a model again over its file, Voxear imports it again when you come back to the editor, and everything drawing it shows the change.
 
 Select the model in the Project panel to see it in the Inspector. Drag the preview to turn it.

@@ -22,6 +22,7 @@ Right-click in the Project panel and choose **New Material**, then type its name
 | Sharp pixels | Draws the colour map's pixels sharp however near, each a square of one colour, as pixel art is |
 | Connected tiles | Its maps are five tiles side by side, and a block's faces drawn with it join those of its kind beside them. See [Pictures for blocks](#pictures-for-blocks) |
 | Ground blend | How many metres up from where a model meets a terrain it takes on the ground's own look, so rocks and walls sit in the ground. 0 for not at all. See [[Blending Models into Terrain]] |
+| Alpha clip | Cuts the surface out where the Colour Map's alpha is below **Threshold**, as leaves on a card |
 
 Every change is saved straight away, and shows at once on everything that uses the material.
 
@@ -56,6 +57,10 @@ Turn on **Foliage** for leaves, grass and anything else thin that light shines t
 Only the sun lights foliage this way. A leaf's shaded side takes the light of its sunlit side, so a leaf in a canopy's shade stays in shade, but a leaf on its own lights up from behind.
 
 In a level with [[Seasons]], **Leaves** says what foliage does through the year: **Turn** takes each season's colour, and **Stay** stays as made, as a pine does. In a material file, `leaves = "stay"`.
+
+## Cutting out leaves
+
+Leaves and grass are often drawn as flat cards with a picture of the leaves on them, see-through around each leaf. Turn on **Alpha clip** to cut the card away there: where the alpha of the **Colour Map** is below **Threshold**, nothing is drawn, and nothing casts a shadow. A threshold of 0.5 suits most pictures; lower keeps more of a leaf's soft edge. In a material file, `cutout = 0.5`.
 
 ## Glass
 

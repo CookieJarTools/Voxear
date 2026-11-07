@@ -135,7 +135,7 @@ fn a_live_materials_fields_change_it_on_the_page() {
     let mut labels = Vec::new();
     with_class(&editor.ui, places[0], "prop-label", &mut labels);
     let rows: Vec<String> = labels.iter().map(|&l| editor.ui.text(l)).collect();
-    let fields = ["Shader", "Colour", "Emission", "Glow", "Glow speed", "Metallic", "Roughness", "Colour Map", "Metallic Map", "Normal Map", "Emission Map", "Height Map", "Displacement", "Detail", "Sharp pixels", "Connected tiles", "Foliage", "Wind bend", "Leaf flutter", "Leaves", "Glass", "IOR", "Ground blend"];
+    let fields = ["Shader", "Colour", "Emission", "Glow", "Glow speed", "Metallic", "Roughness", "Colour Map", "Metallic Map", "Normal Map", "Emission Map", "Height Map", "Displacement", "Detail", "Sharp pixels", "Connected tiles", "Foliage", "Wind bend", "Leaf flutter", "Leaves", "Alpha clip", "Threshold", "Glass", "IOR", "Ground blend", "Acoustic"];
     assert_eq!(rows, fields, "its fields, as the Inspector has them");
 
     let roughness_label = labels.iter().copied().find(|&l| editor.ui.text(l) == "Roughness").unwrap();
@@ -150,6 +150,28 @@ fn a_live_materials_fields_change_it_on_the_page() {
     frame(&mut editor, &mut renderer);
     let saved = std::fs::read_to_string(&material).unwrap();
     assert!(saved.contains("roughness = 0.9"), "saved to the material: {saved}");
+
+    // Alpha clip, as leaves cut out of their cards, is saved as the alpha it clips below.
+    let mut places = Vec::new();
+    with_class(&editor.ui, root, "md-live-fields", &mut places);
+    let mut labels = Vec::new();
+    with_class(&editor.ui, places[0], "prop-label", &mut labels);
+    let clip_label = labels.iter().copied().find(|&l| editor.ui.text(l) == "Alpha clip").unwrap();
+    let mut toggles = Vec::new();
+    with_class(&editor.ui, editor.ui.parent(clip_label).unwrap(), "checkbox", &mut toggles);
+    let page = editor.ui.find(root, "cb-page").unwrap();
+    let down = editor.ui.rect(toggles[0])[1] - editor.ui.rect(page)[1] - 40.0;
+    editor.ui.set_scroll(page, [0.0, down.max(0.0)]);
+    frame(&mut editor, &mut renderer);
+    let [x, y, w, h] = editor.ui.rect(toggles[0]);
+    editor.ui.pointer_move(x + w / 2.0, y + h / 2.0);
+    editor.ui.pointer_button(true);
+    editor.ui.pointer_button(false);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let saved = std::fs::read_to_string(&material).unwrap();
+    assert!(saved.contains("cutout = 0.5"), "clipped where the colour map's alpha is below half: {saved}");
+    editor.ui.set_scroll(page, [0.0, 0.0]);
 
     // Its colour's swatch opens the colour picker, as in the Inspector. The page drew again with the new
     // preview, and its fields with it.

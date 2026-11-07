@@ -1675,6 +1675,9 @@ impl Editor {
                     }
                     (Some(SettingValue::Number(number)), _) => ("number", json!(number), None),
                     (Some(SettingValue::Color(color)), _) => ("color", json!(format!("#{color:06x}")), None),
+                    (None, SettingKind::Folder) => {
+                        ("folder", json!(settings.folder(info.key).map(|folder| folder.display().to_string())), None)
+                    }
                     _ => ("none", Json::Null, None),
                 };
                 let mut shown =
@@ -1692,7 +1695,11 @@ impl Editor {
         let key = need_text(args, "key")?;
         let info = settings::info(key)
             .ok_or_else(|| bad(format!("no setting has the key `{key}`; `settings.get` lists them")))?;
-        let value = need(args, "value")?;
+        // A folder's value may be null, for none.
+        let value = match info.kind {
+            SettingKind::Folder => args.get("value").unwrap_or(&Json::Null),
+            _ => need(args, "value")?,
+        };
         let wrong = || refuse(ErrorKind::WrongValue, format!("{value} is not a value for {}", info.title));
         let setting = match info.kind {
             SettingKind::Toggle => SettingValue::Toggle(value.as_bool().ok_or_else(wrong)?),
@@ -1704,6 +1711,21 @@ impl Editor {
             SettingKind::Color => {
                 let hex = value.as_str().and_then(|text| text.strip_prefix('#')).ok_or_else(wrong)?;
                 SettingValue::Color(u32::from_str_radix(hex, 16).map_err(|_| wrong())?)
+            }
+            // A folder is its path, which must be there, or null for none.
+            SettingKind::Folder => {
+                let folder = match value {
+                    Json::Null => None,
+                    _ => Some(PathBuf::from(value.as_str().ok_or_else(wrong)?)).filter(|folder| folder.is_dir()),
+                };
+                if folder.is_none() && !value.is_null() {
+                    return Err(refuse(ErrorKind::WrongValue, format!("no folder at {value}")));
+                }
+                if self.memory.settings.set_folder(key, folder) {
+                    self.memory.save();
+                }
+                tracing::info!("[Tools] settings.set {key}");
+                return done(json!({ "value": self.memory.settings.describe(info) }));
             }
         };
         // Tools may let themselves read only, but not give themselves leave to change.

@@ -103,7 +103,7 @@ impl ObjState {
         u8::from(position) | u8::from(rotation) << 1 | u8::from(scale) << 2 | u8::from(mist) << 3
     }
 
-    fn lerp(&self, other: &Self, t: f32) -> Self {
+    pub fn lerp(&self, other: &Self, t: f32) -> Self {
         Self {
             position: self.position.lerp(other.position, t),
             rotation: self.rotation.slerp(other.rotation, t),

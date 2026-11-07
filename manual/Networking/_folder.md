@@ -8,5 +8,6 @@ Voxear plays games over the network with a server in charge: it runs the game, p
 2. [[Sharing Objs]]: Net Objects, owners, priority and range, and replicated properties
 3. [[RPCs]]: asking the server to do something, and telling players something happened
 4. [[Predicting Movement]]: a player's own Objs moving at once, and put right when the server disagrees
+5. [[Lag Compensation]]: checking a player's shots against the world as they saw it
 
 For a dedicated server's own build, see [[Server Builds]].

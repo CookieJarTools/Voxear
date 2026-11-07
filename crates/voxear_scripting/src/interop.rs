@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 53;
+pub(crate) const API_VERSION: u32 = 54;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -356,6 +356,18 @@ pub(crate) struct NativeApi {
     /// `entity`, `key`, `player` (who made it, -1 for the server) and up to
     /// `len` bytes: its length, or -1 for none.
     pub net_rpc: unsafe extern "C" fn(what: i32, entity: *mut u64, key: *mut u32, player: *mut i32, bytes: *mut u8, len: i32) -> i32,
+    /// A ray as `player` saw the world when they made their input for
+    /// `tick`, as `physics_raycast` casts one now.
+    pub net_raycast: unsafe extern "C" fn(
+        player: i32,
+        tick: i32,
+        origin: *const [f32; 3],
+        direction: *const [f32; 3],
+        distance: f32,
+        mask: u32,
+        flags: i32,
+        hit: *mut crate::physics::RaycastHitData,
+    ) -> i32,
 }
 
 /// What answers scripts' questions about water: the engine's, set when it
@@ -480,6 +492,51 @@ unsafe extern "C" fn net_rpc(what: i32, entity: *mut u64, key: *mut u32, player:
         }
     }
     copied as i32
+}
+
+/// What casts a ray as a player saw the world: the player, the tick of
+/// their input, the ray and its reach, the layers, and whether triggers
+/// count.
+pub type NetRaycast = fn(&mut World, u16, u64, voxear_core::math::Vec3, voxear_core::math::Vec3, f32, u32, bool) -> Option<voxear_physics::scene::SceneHit>;
+static NET_RAYCAST: std::sync::OnceLock<NetRaycast> = std::sync::OnceLock::new();
+
+/// Sets what casts rays as players saw the world; the first set is kept.
+pub fn set_net_raycast(raycast: NetRaycast) {
+    let _ = NET_RAYCAST.set(raycast);
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe extern "C" fn net_raycast(
+    player: i32,
+    tick: i32,
+    origin: *const [f32; 3],
+    direction: *const [f32; 3],
+    distance: f32,
+    mask: u32,
+    flags: i32,
+    hit: *mut crate::physics::RaycastHitData,
+) -> i32 {
+    let Some(raycast) = NET_RAYCAST.get().copied() else { return 0 };
+    let (Ok(player), Ok(tick)) = (u16::try_from(player), u64::try_from(tick)) else { return 0 };
+    if origin.is_null() || direction.is_null() || hit.is_null() {
+        return 0;
+    }
+    let (origin, direction) = unsafe { (*origin, *direction) };
+    let (origin, direction) = (voxear_core::math::Vec3::from_array(origin), voxear_core::math::Vec3::from_array(direction));
+    let triggers = flags & 1 != 0;
+    let Some(found) = with_world(|world| raycast(world, player, tick, origin, direction, distance, mask, triggers)) else {
+        return 0;
+    };
+    unsafe {
+        *hit = crate::physics::RaycastHitData {
+            obj: found.obj.to_bits(),
+            point: found.point.to_array(),
+            normal: found.normal.to_array(),
+            distance: found.distance,
+            _pad: 0,
+        };
+    }
+    1
 }
 
 /// Sets what answers `NetObject` in scripts; the first set is kept.
@@ -1548,6 +1605,7 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         net_object_value,
         net_fields,
         net_rpc,
+        net_raycast,
     }
 }
 

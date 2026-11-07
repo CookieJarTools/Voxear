@@ -19,6 +19,7 @@ mod inputs;
 mod messages;
 mod prediction;
 mod replication;
+mod rewind;
 mod rpcs;
 mod scripts;
 
@@ -39,6 +40,7 @@ pub use messages::Command;
 pub use replication::{NetId, NetObject, Networked, ObjState, Origin, SpawnRequest};
 use replication::{Replication, Tracked, Viewer};
 pub use prediction::{Correction, Predicting, begin_replay, corrections, end_replay, mark_predicting, record, replay_tick};
+pub use rewind::{MOST_REWIND, raycast_as_seen_by};
 pub use rpcs::{Rpc, RpcTarget};
 pub(crate) use scripts::register;
 pub use scripts::NetDefaults;
@@ -222,6 +224,7 @@ pub struct NetSession {
     replication: Replication,
     rpcs: rpcs::Rpcs,
     prediction: prediction::Prediction,
+    rewind: rewind::Rewind,
     /// The client's own commands, by tick, for predicted ticks to run again.
     commands: VecDeque<(u64, Command)>,
 }
@@ -256,6 +259,7 @@ impl NetSession {
             replication: Replication::default(),
             rpcs: rpcs::Rpcs::default(),
             prediction: prediction::Prediction::default(),
+            rewind: rewind::Rewind::default(),
             commands: VecDeque::new(),
         }
     }
@@ -362,6 +366,7 @@ impl NetSession {
                     self.inputs.remove(&player);
                     self.replication.viewers.remove(&player);
                     self.rpcs.forget(player);
+                    self.rewind.forget(player);
                     self.send_all(&Message::Left(player), None);
                     self.events.push_back(NetEvent::PlayerLeft(player));
                 }
@@ -378,7 +383,9 @@ impl NetSession {
             }
             for message in messages {
                 match message {
-                    Message::Inputs { first, commands } => {
+                    Message::Inputs { first, commands, behind } => {
+                        let newest = first + commands.len().saturating_sub(1) as u64;
+                        self.rewind.saw(player, newest, newest as f64 - f64::from(behind));
                         let buffer = self.buffers.entry(player).or_default();
                         for (offset, command) in commands.into_iter().enumerate() {
                             buffer.put(first + offset as u64, command, self.tick);
@@ -678,7 +685,10 @@ impl NetSession {
                 if self.welcomed && client.is_connected() && !self.sent.is_empty() {
                     let first = self.sent.front().map_or(0, |(tick, _)| *tick);
                     let commands = self.sent.iter().map(|(_, command)| command.clone()).collect();
-                    let _ = client.send(Channel::UNRELIABLE, &Message::Inputs { first, commands }.encode());
+                    // What the player sees, as far behind their newest command as the server's world shows.
+                    let newest = self.sent.back().map_or(0, |(tick, _)| *tick);
+                    let behind = (newest as f64 - self.replication.shown).clamp(0.0, 63.0) as f32;
+                    let _ = client.send(Channel::UNRELIABLE, &Message::Inputs { first, commands, behind }.encode());
                 }
                 client.flush(self.now);
             }
@@ -1008,6 +1018,13 @@ pub fn take_rpc(world: &mut World) -> Option<Rpc> {
     let rpc = session.rpcs.incoming.pop_front()?;
     session.rpcs.tick = rpc.tick;
     Some(rpc)
+}
+
+/// Keeps what this tick left: on a client, where its predicted Objs are;
+/// on a server, where every shared Obj is, for rays as players saw them.
+pub fn after_tick(world: &mut World) {
+    prediction::record(world);
+    rewind::remember(world);
 }
 
 /// Whether a client is running its predicted ticks again.

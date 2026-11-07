@@ -23,8 +23,10 @@ pub enum Message {
     Left(PlayerId),
     /// The level the server plays, by GUID, for the client to load.
     Level(String),
-    /// A client's last few ticks of input, the oldest first.
-    Inputs { first: u64, commands: Vec<Command> },
+    /// A client's last few ticks of input, the oldest first, and how many
+    /// ticks behind the newest the server's world it showed was, for the
+    /// server to see what the player saw.
+    Inputs { first: u64, commands: Vec<Command>, behind: f32 },
     /// The server's tick, and how many ticks ahead of it the client's input
     /// arrives, so the client can run a little faster or slower to keep it
     /// a tick or two ahead.
@@ -88,13 +90,15 @@ impl Message {
                 w.write_varint(level.len() as u64);
                 w.write_bytes(level.as_bytes());
             }
-            Message::Inputs { first, commands } => {
+            Message::Inputs { first, commands, behind } => {
                 w.write_bits(INPUTS, KIND_BITS);
                 w.write_varint(*first);
                 w.write_bits(commands.len() as u32, 4);
                 for command in commands {
                     write_command(&mut w, command);
                 }
+                // Sixteenths of a tick, up to 64 ticks.
+                w.write_bits((behind * 16.0).round().clamp(0.0, 1023.0) as u32, 10);
             }
             Message::Sync { tick, ahead } => {
                 w.write_bits(SYNC, KIND_BITS);
@@ -174,7 +178,8 @@ impl Message {
                 let first = r.read_varint()?;
                 let count = r.read_bits(4)? as usize;
                 let commands = (0..count).map(|_| read_command(&mut r)).collect::<Option<_>>()?;
-                Message::Inputs { first, commands }
+                let behind = r.read_bits(10)? as f32 / 16.0;
+                Message::Inputs { first, commands, behind }
             }
             SYNC => Message::Sync { tick: r.read_varint()?, ahead: r.read_bits(16)? as u16 as i16 },
             SPAWN => {
@@ -281,15 +286,15 @@ mod tests {
             Message::Joined(PlayerId(7)),
             Message::Left(PlayerId(7)),
             Message::Level("0123456789abcdef0123456789abcdef".into()),
-            Message::Inputs { first: 99, commands: vec![vec![jump, look], vec![ActionState::default(); 2]] },
+            Message::Inputs { first: 99, commands: vec![vec![jump, look], vec![ActionState::default(); 2]], behind: 4.5 },
             Message::Sync { tick: 5, ahead: -3 },
             Message::Rpc { id: NetId(12), key: 0xdead_beef, tick: 77, bytes: vec![1, 2, 3] },
         ];
         for message in messages {
             assert_eq!(Message::decode(&message.encode()), Some(message.clone()), "{message:?}");
         }
-        let still = Message::Inputs { first: 0, commands: vec![vec![ActionState::default(); 20]] }.encode();
-        assert!(still.len() <= 16, "twenty still actions in {} bytes", still.len());
+        let still = Message::Inputs { first: 0, commands: vec![vec![ActionState::default(); 20]], behind: 0.0 }.encode();
+        assert!(still.len() <= 18, "twenty still actions, and what the player saw, in {} bytes", still.len());
         assert_eq!(Message::decode(&[0xFF]), None);
         assert_eq!(Message::decode(&[]), None);
     }

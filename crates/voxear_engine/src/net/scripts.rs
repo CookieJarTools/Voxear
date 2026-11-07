@@ -17,6 +17,9 @@ pub(crate) fn register() {
     voxear_scripting::set_net_object_values(net_object);
     voxear_scripting::set_net_fields(fields);
     voxear_scripting::set_net_rpcs(voxear_scripting::NetRpcs { send: send_rpc, take: take_rpc });
+    voxear_scripting::set_net_raycast(|world, player, tick, origin, direction, distance, mask, triggers| {
+        super::raycast_as_seen_by(world, PlayerId(player), tick, origin, direction, distance, mask, triggers)
+    });
 }
 
 fn send_rpc(world: &mut World, rpc: voxear_scripting::RpcSend) -> bool {

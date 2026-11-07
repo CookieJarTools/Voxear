@@ -44,6 +44,8 @@ public sealed partial class Score : Behaviour
 		Points += more;
 		var whose = Obj.NetObject.Owner is null ? "the spare" : "their own";
 		Log.Info($"{Net.Caller?.Id} asked for {more} on {whose}");
+		var ray = Net.RaycastAsSeenBy(Net.Caller!.Value, new System.Numerics.Vector3(0f, 50f, 0f), -System.Numerics.Vector3.UnitY, out _, 100f);
+		Log.Info($"a ray as they saw it: {ray}");
 		CheeredOnClients($"now {Points}");
 	}
 
@@ -135,6 +137,7 @@ fn a_client_joins_a_server_takes_replicated_properties_and_makes_rpcs() {
     assert!(out.contains("points 7"), "the client took the ball's score: {out}");
     assert!(said("1 asked for 3 on their own"), "the server ran the owner's RPC: {:?}", lines.lock().unwrap());
     assert!(!said("on the spare"), "but not one on an Obj not theirs: {:?}", lines.lock().unwrap());
+    assert!(said("a ray as they saw it:"), "a ray as the caller saw it: {:?}", lines.lock().unwrap());
     assert!(out.contains("cheered now 10") && out.contains("points 10"), "the server's RPC, and the score after: {out}");
 }
 

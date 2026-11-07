@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Numerics;
 using System.Runtime.Loader;
 using Voxear.Interop;
 using Voxear.Scripting;
@@ -18,7 +19,7 @@ namespace Voxear;
 /// The game then runs in ticks, its FixedUpdate, at the project's tick rate. On the server each player's input
 /// reads through their NetPlayer as they pressed it, and the server decides what happens.
 /// </summary>
-public static class Net
+public static unsafe class Net
 {
 	/// <summary>This client joined its server.</summary>
 	public static event Action? Connected;
@@ -118,6 +119,41 @@ public static class Net
 			NativeNet.Call(NativeNet.RoundTrip, 0, 0, out var values);
 			return values.X;
 		}
+	}
+
+	/// <summary>
+	/// The first collider a ray meets as a player's machine showed the world, on the server: other players and shared
+	/// Objs where that player saw them, a moment in the past, rather than where they have got to since. Check a
+	/// player's shot this way, in a [ServerRpc], so that one aimed true hits:
+	/// <code>
+	/// [ServerRpc]
+	/// private void Fire(Vector3 aim)
+	/// {
+	/// 	if (Net.RaycastAsSeenBy(Net.Caller!.Value, Obj.WorldPosition, aim, out var hit, 200f))
+	/// 	{
+	/// 		hit.Obj.GetBehaviour&lt;Health&gt;()?.Hurt(20);
+	/// 	}
+	/// }
+	/// </code>
+	/// The world is put back no more than 0.2 seconds, so a player with a slow connection cannot hit someone long
+	/// since behind a wall. Their own Objs stay where they are. Elsewhere, and for a host's own player, it casts as
+	/// Physics.Raycast does.
+	/// </summary>
+	public static bool RaycastAsSeenBy(NetPlayer player, Vector3 origin, Vector3 direction, out RaycastHit hit, float maxDistance = float.PositiveInfinity, int layerMask = -1, bool hitTriggers = false)
+	{
+		var tick = Caller?.Id == player.Id ? CallTick : Tick;
+		var found = default(RaycastHitData);
+		var met = Native.IsConnected
+			&& Native.Api->NetRaycast(player.Id, tick, (float*)&origin, (float*)&direction, maxDistance, (uint)layerMask, hitTriggers ? 1 : 0, &found) == 1;
+		if (!met)
+		{
+			hit = default;
+			return false;
+		}
+		var point = new Vector3(found.PointX, found.PointY, found.PointZ);
+		var normal = new Vector3(found.NormalX, found.NormalY, found.NormalZ);
+		hit = new RaycastHit(new Obj(found.Obj), point, normal, found.Distance);
+		return true;
 	}
 
 	/// <summary>Hosts the game on a port, the project's when 0: it runs here and is played here too.</summary>

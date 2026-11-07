@@ -354,3 +354,50 @@ fn a_players_own_obj_moves_at_once_and_is_put_right_when_the_server_disagrees() 
     assert!((1..=3).contains(&after), "put right once the ball jumped: {after}");
     assert!(session_of(client).prediction.ids.contains(&NetId(1)));
 }
+
+#[test]
+fn a_ray_as_a_player_saw_it_meets_what_they_saw_where_they_saw_it() {
+    use voxear_physics::scene::{Collider, PhysicsScene};
+    let network = MemoryNetwork::new();
+    let (mut server, mut clients) = session(&network, 1, Conditions::AVERAGE);
+    for _ in 0..60 {
+        frame(&mut server, &mut clients, &[(false, false)]);
+    }
+    // A box running across, twelve metres a second, which the player sees a moment late.
+    let target = shared(&mut server, voxear_core::math::Vec3::new(-30.0, 1.0, 0.0), NetObject::default());
+    server.insert(target, Collider::default());
+    server.insert_resource(PhysicsScene::default());
+    let mut xs = HashMap::new();
+    for _ in 0..240 {
+        frame_begin(&mut server, TICK, &[]);
+        fixed_tick(&mut server);
+        server.get_mut::<voxear_scene::Transform>(target).unwrap().position.x += 0.2;
+        let tick = session_of(&server).tick;
+        xs.insert(tick, server.get::<voxear_scene::Transform>(target).unwrap().position.x);
+        after_tick(&mut server);
+        frame_end(&mut server);
+        frame(&mut World::new(), &mut clients, &[(false, false)]);
+        make_spawns(&mut clients);
+    }
+    let now = session_of(&server).tick;
+    let seen = session_of(&server).rewind.view(PlayerId(1), now).expect("what the player saw");
+    let seen = seen.max(now as f64 - MOST_REWIND * 60.0);
+    assert!(now as f64 - seen >= 4.0, "the player sees the world a few ticks late: {} ticks", now as f64 - seen);
+    let then = xs[&(seen.floor() as u64)] + 0.2 * seen.fract() as f32;
+    let x = xs[&now];
+    let at = |x: f32| voxear_core::math::Vec3::new(x, 1.0, -5.0);
+    let plain = |world: &mut World, x: f32| {
+        let mut scene = world.remove_resource::<PhysicsScene>().unwrap();
+        scene.ready(world);
+        let hit = scene.raycast(at(x), voxear_core::math::Vec3::Z, 10.0, u32::MAX, false).map(|hit| hit.obj);
+        world.insert_resource(scene);
+        hit
+    };
+    let seen_by = |world: &mut World, x: f32| {
+        raycast_as_seen_by(world, PlayerId(1), now, at(x), voxear_core::math::Vec3::Z, 10.0, u32::MAX, false).map(|hit| hit.obj)
+    };
+    assert_eq!(plain(&mut server, then), None, "where they saw it, it has gone by now");
+    assert_eq!(seen_by(&mut server, then), Some(target), "but as they saw it, it was there");
+    assert_eq!(seen_by(&mut server, x), None, "and as they saw it, it had not got here yet");
+    assert_eq!(plain(&mut server, x), Some(target), "and it is put back where it is");
+}

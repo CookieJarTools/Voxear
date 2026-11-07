@@ -483,7 +483,7 @@ impl Engine {
             self.run_stage("FixedUpdate");
             self.flush();
             self.step_physics();
-            crate::net::record(&mut self.world);
+            crate::net::after_tick(&mut self.world);
             self.fixed_accumulator -= self.time.fixed_delta;
             steps += 1;
         }
@@ -667,7 +667,7 @@ impl Engine {
             while crate::net::replay_tick(&mut self.world) {
                 let entity = correction.entity;
                 self.with_host(|lifecycle, host| lifecycle.run_marked(Phase::FixedUpdate, entity, Callbacks::PREDICTED, host));
-                crate::net::record(&mut self.world);
+                crate::net::after_tick(&mut self.world);
             }
             crate::net::end_replay(&mut self.world, &correction);
             self.sync_script_time(self.time.delta);

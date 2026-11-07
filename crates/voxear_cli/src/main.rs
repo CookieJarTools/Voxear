@@ -313,6 +313,9 @@ enum Commands {
         /// between ticks.
         #[arg(long, value_name = "HZ", default_value_t = 60.0)]
         rate: f32,
+        /// Look through the camera on the Obj with this name, rather than the first camera found.
+        #[arg(long, value_name = "OBJ")]
+        camera: Option<String>,
         /// Trace the GI's rays in a compute shader, as GPUs without ray tracing do, even on one that has it.
         #[arg(long)]
         software_rays: bool,
@@ -440,6 +443,7 @@ fn main() -> Result<()> {
             every,
             rate,
             software_rays,
+            camera,
         } => {
             let debug_view = match debug_view.as_str() {
                 "lod" => DEBUG_VIEW_LOD,
@@ -459,7 +463,7 @@ fn main() -> Result<()> {
             let mesh_shaders = !no_mesh_shaders;
             let delta = 1.0 / rate.clamp(1.0, 1000.0);
             let size = (width, height);
-            let shot = Shot { out, size, frames, every, delta, options, stats, mesh_shaders, software_rays };
+            let shot = Shot { out, size, frames, every, delta, options, stats, mesh_shaders, software_rays, camera };
             render(&project, shot, prepare, renderdoc)
         }
     }
@@ -578,6 +582,8 @@ struct Shot {
     stats: bool,
     /// Cull meshlets with task and mesh shaders, where the GPU has them.
     mesh_shaders: bool,
+    /// The Obj whose camera to look through, by name.
+    camera: Option<String>,
     /// Trace the GI's rays in a compute shader even on a GPU with ray tracing.
     software_rays: bool,
 }
@@ -615,7 +621,8 @@ impl TimingAverage {
 }
 
 fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<()> {
-    let Shot { out, size: (width, height), frames, every, delta, options, stats, mesh_shaders, software_rays } = shot;
+    let Shot { out, size: (width, height), frames, every, delta, options, stats, mesh_shaders, software_rays, camera } =
+        shot;
     let project = Project::open(path)?;
     let settings = RendererSettings { software_rays, ..renderer_settings(&project, renderdoc) };
     let mut game = start_game(project, prepare)?;
@@ -623,6 +630,12 @@ fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<
     renderer.set_view_options(options);
     renderer.set_mesh_shaders(mesh_shaders);
     game.start(Some(&mut renderer))?;
+    if let Some(name) = &camera {
+        let world = &game.engine.world;
+        let named = world.query_ref::<(voxear_ecs::Entity, &voxear_scene::Name)>().into_iter().find(|(_, n)| n.0 == *name);
+        let (found, _) = named.with_context(|| format!("no Obj named {name} to look through"))?;
+        renderer.set_view_options(ViewOptions { camera: Some(found), ..options });
+    }
     let mut overlay = StatsOverlay::new(stats);
     let frames = frames.max(1);
     // Each pass's time over the last frames, averaged, as one frame's alone varies by a lot.

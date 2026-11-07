@@ -254,3 +254,36 @@ mod tests {
         assert!(edit.rotation(rig.head).angle_between(Quat::from_rotation_x(0.4)) < 1e-3);
     }
 }
+
+#[cfg(test)]
+mod real {
+    use super::*;
+    use crate::animation::rig::Rig;
+
+    /// Reaches the model at `VOXEAR_TEST_MODEL`'s right hand to a point
+    /// before its chest with the elbow toward a pole below, and reports
+    /// where the elbow went: for checking a real rig by hand.
+    #[test]
+    fn a_real_rig_bends_its_elbow_toward_the_pole() {
+        let Ok(path) = std::env::var("VOXEAR_TEST_MODEL") else { return };
+        let model = voxear_render::prepare_model(&path, &mut |file| Ok(std::fs::read(file)?)).unwrap();
+        let animation = model.animation().cloned().expect("an animated model");
+        let skeleton = &animation.skeleton;
+        let rig = Rig::find(skeleton).unwrap();
+        let rest = skeleton.model_matrices(&skeleton.rest());
+        let mut edit = PoseEdit::new(skeleton, &rest);
+        let arm = &rig.arms[1];
+        let shoulder = edit.position(arm.upper);
+        eprintln!("shoulder {shoulder} hand {} chest {}", edit.position(arm.hand), edit.position(rig.chest()));
+        let target = shoulder + Vec3::new(-0.15, -0.15, 0.3);
+        let pole = shoulder + Vec3::new(0.3, -0.6, -0.1);
+        let short = reach_hand(&mut edit, arm, target, pole, 0.35);
+        let elbow = edit.position(arm.forearm);
+        eprintln!(
+            "short {short} hand {} elbow {elbow} (shoulder {})",
+            edit.position(arm.hand),
+            edit.position(arm.upper)
+        );
+        assert!(elbow.y < edit.position(arm.upper).y - 0.1, "the elbow hangs below the shoulder: {elbow}");
+    }
+}

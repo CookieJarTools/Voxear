@@ -88,6 +88,10 @@ pub struct FirstPersonState {
     /// angles about its across, up and forward, in radians.
     punch: Spring<Vec3>,
     started: bool,
+    /// Where the eyes are and look this frame, in the world: the camera's
+    /// place for the player's own view, and for anyone else's, what their
+    /// gun is held before.
+    pub eye: Mat4,
 }
 
 impl FirstPersonState {
@@ -96,6 +100,7 @@ impl FirstPersonState {
             eyes: Spring::new(eyes, SpringFeel::halflife(0.06)),
             punch: Spring::new(Vec3::ZERO, SpringFeel::new(5.0, 0.55, 0.0)),
             started: false,
+            eye: Mat4::IDENTITY,
         }
     }
 }
@@ -125,6 +130,7 @@ pub fn look(world: &mut World) {
     }
     let delta = world.resource::<MouseLook>().map_or(Vec2::ZERO, |mouse| mouse.delta);
     let views: Vec<Entity> = world.query_ref::<(Entity, &FirstPersonView)>().into_iter().map(|(e, _)| e).collect();
+    let views: Vec<Entity> = views.into_iter().filter(|&entity| is_own(world, entity)).collect();
     for entity in views {
         let Some(view) = world.get_mut::<FirstPersonView>(entity) else { continue };
         if view.mouse_look {
@@ -171,7 +177,9 @@ pub fn place(world: &mut World) {
         let head = edit.matrices()[rig.head];
         let eyes_in_body = head.w_axis.truncate() + Vec3::from(view.eyes);
         let mut bones = edit.matrices();
-        if view.hide_head {
+        // Only this machine's own player looks out of their head; anyone else's keeps it.
+        let own = is_own(world, entity);
+        if view.hide_head && own {
             bones = crate::animation::hidden(&animation.skeleton, rig.head, &bones);
         }
         world.insert(body, Pose { bones: bones.into() });
@@ -180,8 +188,7 @@ pub fn place(world: &mut World) {
         let obj = world_matrix(world, entity);
         let eyes_now = obj.inverse().transform_point3(placed.transform_point3(eyes_in_body));
         let state = world.get::<FirstPersonState>(entity).copied();
-        let mut state = state
-            .unwrap_or_else(|| FirstPersonState::new(eyes_now));
+        let mut state = state.unwrap_or_else(|| FirstPersonState::new(eyes_now));
         if !state.started {
             state.eyes.snap(eyes_now);
             state.started = true;
@@ -190,7 +197,11 @@ pub fn place(world: &mut World) {
         let shown = steadied.lerp(eyes_now, view.bob.clamp(0.0, 1.0));
         let jolt = state.punch.update(Vec3::ZERO, delta);
         let jolt = Quat::from_euler(voxear_core::math::EulerRot::XYZ, jolt.x, jolt.y, jolt.z);
+        state.eye = Mat4::from_rotation_translation(view.rotation() * jolt, obj.transform_point3(shown));
         world.insert(entity, state);
+        if !own {
+            continue;
+        }
         let camera = view
             .camera
             .or_else(|| first_under(world, entity, |w, e| w.has::<Camera>(e)))
@@ -274,6 +285,21 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
         _ => return None,
     }
     Some([0.0; 4])
+}
+
+/// Whether a view is this machine's own player's: always offline, and in
+/// networked play, a view on an Obj this machine's player owns, or on one
+/// not shared at all.
+pub fn is_own(world: &World, entity: Entity) -> bool {
+    let Some(session) = world.resource::<crate::net::NetSession>() else { return true };
+    let mut at = Some(entity);
+    while let Some(here) = at {
+        if let Some(networked) = world.get::<crate::net::Networked>(here) {
+            return networked.owner.is_some() && networked.owner == session.local_player();
+        }
+        at = world.get::<Parent>(here).map(|parent| parent.0);
+    }
+    true
 }
 
 /// Puts an Obj at a place and turn in the world, through its parent.

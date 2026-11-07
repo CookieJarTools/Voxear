@@ -36,6 +36,7 @@ anyhow.workspace = true
 serde_json.workspace = true
 clap.workspace = true
 voxear_scene.workspace = true
+voxear_ecs.workspace = true
 tracing.workspace = true
 voxear_render.workspace = true
 png.workspace = true

@@ -34,8 +34,9 @@ pub struct GunHolder {
     /// Whether it aims down the sights, rather than holding at the hip.
     #[serde(skip)]
     pub aiming: bool,
-    /// Where the gun's grip is held at the hip, from the camera, in metres:
-    /// right, up, forward. And its turn there, in degrees.
+    /// Where a long gun's grip is held at the hip, from the camera, in
+    /// metres: right, up, forward, its stock near the shoulder; a handgun
+    /// is held further out. And its turn there, in degrees.
     pub hip: [f32; 3],
     pub hip_turn: [f32; 3],
     /// How long raising the gun to the eye takes, in seconds.
@@ -63,7 +64,7 @@ impl Default for GunHolder {
         Self {
             gun: None,
             aiming: false,
-            hip: [0.17, -0.2, 0.36],
+            hip: [0.16, -0.22, 0.2],
             hip_turn: [2.0, -3.0, -6.0],
             aim_time: 0.22,
             sway: 1.0,
@@ -286,12 +287,10 @@ pub fn hold(world: &mut World) {
         };
         let Some(gun) = world.get::<Gun>(gun_entity).cloned() else { continue };
         let Some(view) = world.get::<FirstPersonView>(entity).cloned() else { continue };
-        let camera = view
-            .camera
-            .or_else(|| first_under(world, entity, |w, e| w.has::<Camera>(e)))
-            .or_else(|| world.query_ref::<(Entity, &Camera)>().into_iter().map(|(e, _)| e).next());
-        let Some(camera) = camera else { continue };
-        let eye = world_matrix(world, camera);
+        // The gun is held before the view's eyes: the camera for this machine's player, their head for others.
+        let Some(eye) = world.get::<crate::first_person::FirstPersonState>(entity).map(|state| state.eye) else {
+            continue;
+        };
         let mut state = world.get::<GunHolderState>(entity).cloned().unwrap_or_else(GunHolderState::new);
         recover(world, entity, &gun, &mut state, delta);
         for _ in 0..state.kicks {
@@ -411,7 +410,10 @@ fn place_gun(
     let [x, y, z] = holder.hip_turn.map(f32::to_radians);
     let hip = Mat4::from_rotation_translation(Quat::from_euler(EulerRot::XYZ, x, y, z), Vec3::from(holder.hip));
     let sighted = Mat4::from_translation(Vec3::Z * gun.eye_relief) * gun.sight_frame().inverse();
-    let (_, hip_turn, hip_at) = hip.to_scale_rotation_translation();
+    let (_, hip_turn, mut hip_at) = hip.to_scale_rotation_translation();
+    if gun.kind.is_handgun() {
+        hip_at.z += 0.18;
+    }
     let (_, aim_turn, aim_at) = sighted.to_scale_rotation_translation();
     let mut at = hip_at.lerp(aim_at, ease(aim)) + Vec3::Y * (-0.012 * (aim * std::f32::consts::PI).sin());
     let mut turn = hip_turn.slerp(aim_turn, ease(aim));
@@ -834,7 +836,7 @@ mod firing {
         let mut scene = scene_with(GunKind::OpenBoltSmg);
         let rest = rest_of(&scene);
         let mut time = Time { delta: 1.0 / 60.0, ..Time::default() };
-        let mut step = |scene: &mut Scene, time: &mut Time| {
+        let step = |scene: &mut Scene, time: &mut Time| {
             time.elapsed += f64::from(time.delta);
             scene.world.insert_resource(*time);
             frame(scene, &rest);

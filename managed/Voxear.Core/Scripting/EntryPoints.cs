@@ -212,6 +212,13 @@ internal static unsafe class EntryPoints
 		PhysicsMessages.Dispatch(new ReadOnlySpan<PhysicsEventData>(events, count));
 	}
 
+	/// <summary>Tells each Obj's behaviours of the marks its characters' actions passed this frame.</summary>
+	[UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+	public static void MotionMarks(ulong* objs, int count, byte* text, int length)
+	{
+		MotionMessages.Dispatch(new ReadOnlySpan<ulong>(objs, count), Encoding.UTF8.GetString(text, length));
+	}
+
 	[UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
 	public static int ContentRoots(byte* buffer, int capacity)
 	{

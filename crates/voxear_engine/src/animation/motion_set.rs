@@ -31,6 +31,12 @@
 
 use serde::{Deserialize, Serialize};
 
+/// What a reference to a set's state, action or mark has after the set's
+/// file, as `Sets/Hero.motionset#action:Cast`: scripts name them so.
+pub const STATE_PART: &str = "state:";
+pub const ACTION_PART: &str = "action:";
+pub const MARK_PART: &str = "mark:";
+
 /// What a character can do: its states, and its actions.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]

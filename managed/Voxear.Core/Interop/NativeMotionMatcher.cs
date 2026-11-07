@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Text;
 
 namespace Voxear.Interop;
 
@@ -24,6 +25,17 @@ internal static unsafe class NativeMotionMatcher
 	public const int LegTurn = 13;
 	public const int FootLocking = 14;
 	public const int AimPitch = 15;
+	public const int StateRole = 16;
+	public const int RootMotion = 17;
+	public const int ActionTime = 18;
+
+	public const int MotionSetText = 0;
+	public const int SetMotionSet = 1;
+	public const int Play = 2;
+	public const int Stop = 3;
+	public const int StateName = 4;
+	public const int SetState = 5;
+	public const int ActionName = 6;
 
 	/// <summary>A value of an Obj's Motion Matcher, or false when the Obj has none.</summary>
 	public static bool Get(Obj obj, int what, out Vector4 value)
@@ -43,5 +55,39 @@ internal static unsafe class NativeMotionMatcher
 	public static float Number(Obj obj, int what, float missing)
 	{
 		return Get(obj, what, out var value) ? value.X : missing;
+	}
+
+	/// <summary>Asks the matcher with some text, as to play an action by its name: false when the Obj has none.</summary>
+	public static bool Tell(Obj obj, int what, string text)
+	{
+		if (!Native.IsConnected)
+		{
+			return false;
+		}
+		var bytes = Encoding.UTF8.GetBytes(text);
+		fixed (byte* written = bytes)
+		{
+			return Native.Api->MotionMatcherText(obj.Id, what, written, bytes.Length, null, 0) >= 0;
+		}
+	}
+
+	/// <summary>A text of the matcher, as the name of the action it plays: null with none, or no matcher.</summary>
+	public static string? Text(Obj obj, int what)
+	{
+		if (!Native.IsConnected)
+		{
+			return null;
+		}
+		var length = Native.Api->MotionMatcherText(obj.Id, what, null, 0, null, 0);
+		if (length < 0)
+		{
+			return null;
+		}
+		var bytes = new byte[length];
+		fixed (byte* buffer = bytes)
+		{
+			Native.Api->MotionMatcherText(obj.Id, what, null, 0, buffer, length);
+		}
+		return Encoding.UTF8.GetString(bytes);
 	}
 }

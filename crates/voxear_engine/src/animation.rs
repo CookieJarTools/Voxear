@@ -25,13 +25,16 @@ use voxear_ecs::{Component, Entity, World};
 use voxear_render::{BonePose, Clip, ModelAnimation, ModelRenderer, Pose};
 use voxear_scene::{Destroying, Transform};
 
-pub use actions::{ActionCommand, MotionMarks};
+pub use actions::{ActionCommand, MotionMarks, take_marks};
 pub use bone_attachment::{BoneAttachment, attach_to_bones, register as register_bone_attachments};
 pub use clips::{CLIP_PART, ClipSource, Clips, give_clips};
 pub use motion_database::MotionDatabase;
 pub use motion_matching::{MotionMatcher, MotionMatcherState, StateChoice, match_motion, register};
 pub use states::StatePlay;
-pub use motion_set::{ActionMark, ActionMovement, BodyPart, MotionAction, MotionSet, MotionState, StateClip, StateRole};
+pub use motion_set::{
+    ACTION_PART, ActionMark, ActionMovement, BodyPart, MARK_PART, MotionAction, MotionSet, MotionState, STATE_PART,
+    StateClip, StateRole,
+};
 use settling::Settling;
 
 /// Plays a clip on its Obj's model.

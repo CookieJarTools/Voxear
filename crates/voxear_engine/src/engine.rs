@@ -505,6 +505,7 @@ impl Engine {
             crate::animation::match_motion(&mut self.world, self.time.delta);
             crate::animation::attach_to_bones(&mut self.world);
         }
+        self.tell_motion_marks();
 
         {
             profile_scope!("LateUpdate");
@@ -588,6 +589,18 @@ impl Engine {
         if let Some(scripts) = self.scripts.as_mut().filter(|_| !told.is_empty()) {
             profile_scope!("Physics Messages");
             scripts.physics_events(&mut self.world, &told);
+            self.with_host(|lifecycle, host| lifecycle.apply_requests(host));
+            self.flush();
+        }
+    }
+
+    /// Tells scripts of the marks their characters' actions passed this
+    /// frame, before LateUpdate, as `OnMotionMark`.
+    fn tell_motion_marks(&mut self) {
+        let marks = crate::animation::take_marks(&mut self.world);
+        if let Some(scripts) = self.scripts.as_mut().filter(|_| !marks.is_empty()) {
+            profile_scope!("Motion Marks");
+            scripts.motion_marks(&mut self.world, &marks);
             self.with_host(|lifecycle, host| lifecycle.apply_requests(host));
             self.flush();
         }

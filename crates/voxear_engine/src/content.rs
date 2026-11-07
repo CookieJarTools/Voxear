@@ -956,6 +956,19 @@ impl Content {
         Ok(toml::from_str(&self.read_text(&path)?).with_context(|| format!("reading {path}"))?)
     }
 
+    /// The Motion Set at `guid`, as read already, or else as its file in the
+    /// project's folder has it, without keeping it: for listing its states
+    /// and actions.
+    pub fn peek_motion_set(&self, guid: AssetGuid) -> Option<Arc<crate::animation::MotionSet>> {
+        if let Some(found) = self.motion_sets.get(&guid) {
+            return found.clone();
+        }
+        let Source::Folder(_, mounts) = &self.source else { return None };
+        let entry = self.db.get(guid).filter(|entry| entry.kind == AssetKind::MotionSet)?;
+        let text = std::fs::read_to_string(mounts.file(&entry.path)).ok()?;
+        toml::from_str(&text).ok().map(Arc::new)
+    }
+
     /// Forgets a Motion Set, read again when next asked for, as after it
     /// changed.
     pub fn forget_motion_set(&mut self, guid: AssetGuid) {

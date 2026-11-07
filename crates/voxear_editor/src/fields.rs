@@ -12,6 +12,7 @@ use voxear_core::math::{EulerRot, Quat};
 use voxear_ecs::{Entity, World};
 use voxear_engine::{
     EditBehaviours, Game,
+    animation::{ACTION_PART, MARK_PART, STATE_PART},
     audio::AudioSource,
     physics::{CharacterController, Collider, Joint, Rigidbody, Vehicle, Wheel},
     physics2d::{Collider2D, Rigidbody2D},
@@ -500,9 +501,38 @@ pub fn asset_choices(game: &Game, kind: &FieldKind) -> Vec<(String, Pick)> {
         Some("Level" | "LevelAsset") => Some(AssetKind::Level),
         Some("Sound") => Some(AssetKind::Sound),
         Some("LightingSettings") => Some(AssetKind::Lighting),
+        Some("MotionSet") => Some(AssetKind::MotionSet),
+        Some("MotionSetState") => return set_parts(game, STATE_PART),
+        Some("MotionAction") => return set_parts(game, ACTION_PART),
+        Some("MotionMark") => return set_parts(game, MARK_PART),
         _ => None,
     };
     assets_of(game, wanted)
+}
+
+/// The states, actions or marks of the project's Motion Sets, as
+/// `Sets/Hero.motionset#action:Cast`, each named with its set, with
+/// nothing first.
+fn set_parts(game: &Game, part: &str) -> Vec<(String, Pick)> {
+    let db = game.content.db();
+    let sets = db.entries().filter(|e| e.kind == AssetKind::MotionSet);
+    let mut sets: Vec<_> = sets.map(|e| (e.path.clone(), e.guid)).collect();
+    sets.sort();
+    let mut found = vec![("None".to_string(), Pick::Asset(None))];
+    for (path, guid) in sets {
+        let Some(set) = game.content.peek_motion_set(guid) else { continue };
+        let names: Vec<String> = match part {
+            STATE_PART => set.states.iter().map(|state| state.name.clone()).collect(),
+            ACTION_PART => set.actions.iter().map(|action| action.name.clone()).collect(),
+            _ => set.actions.iter().flat_map(|action| action.marks.iter().map(|mark| mark.name.clone())).collect(),
+        };
+        let file = path.rsplit('/').next().unwrap_or(&path).trim_end_matches(".motionset").to_string();
+        let mut seen = std::collections::HashSet::new();
+        for name in names.into_iter().filter(|name| !name.is_empty() && seen.insert(name.clone())) {
+            found.push((format!("{name} · {file}"), Pick::Asset(Some(format!("{path}#{part}{name}")))));
+        }
+    }
+    found
 }
 
 /// The project's assets of a kind, or of every kind, by path, with nothing

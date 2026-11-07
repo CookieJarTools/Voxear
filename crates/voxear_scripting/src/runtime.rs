@@ -109,7 +109,8 @@ impl ScriptRuntime {
                 && managed.run_check.is_some()
                 && managed.inspector_call.is_some()
                 && managed.managed_memory.is_some()
-                && managed.physics_events.is_some(),
+                && managed.physics_events.is_some()
+                && managed.motion_marks.is_some(),
             "Voxear.Core left part of its interop table empty"
         );
         interop::set_create_behaviour(
@@ -376,6 +377,19 @@ impl ScriptRuntime {
         let send = self.managed.physics_events.expect("validated at start");
         let _scope = WorldScope::enter(world);
         unsafe { send(events.as_ptr(), events.len() as i32) };
+    }
+
+    /// Tells behaviours of the marks actions passed, as `OnMotionMark`:
+    /// each Obj told of its marks.
+    pub fn motion_marks(&mut self, world: &mut World, marks: &[(Entity, String)]) {
+        if marks.is_empty() {
+            return;
+        }
+        let send = self.managed.motion_marks.expect("validated at start");
+        let entities: Vec<u64> = marks.iter().map(|(entity, _)| entity.to_bits()).collect();
+        let text = marks.iter().map(|(_, mark)| mark.as_str()).collect::<Vec<_>>().join("\n");
+        let _scope = WorldScope::enter(world);
+        unsafe { send(entities.as_ptr(), entities.len() as i32, text.as_ptr(), text.len() as i32) };
     }
 
     /// Objs scripts asked to destroy since the last call.

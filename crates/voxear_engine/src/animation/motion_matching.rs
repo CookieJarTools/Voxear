@@ -34,7 +34,7 @@ use super::{
     actions::{self, ActionCommand, ActionPlay, MotionMarks},
     clips::Clips,
     motion_database::{ClipRun, Ground, MotionDatabase, facing, wrap},
-    motion_set::{ActionMovement, MotionSet, StateRole},
+    motion_set::{ActionMovement, MARK_PART, MotionSet, StateRole},
     retarget::fitted,
     settling::Settling,
     states::{StatePlay, state_play},
@@ -253,6 +253,7 @@ impl MotionMatcherState {
 /// Sets what answers `MotionMatcher` in scripts.
 pub fn register() {
     voxear_scripting::set_motion_matcher_values(values);
+    voxear_scripting::set_motion_matcher_texts(texts);
 }
 
 // What `values` reads or writes, as `NativeMotionMatcher` in Voxear.Core numbers them.
@@ -272,6 +273,18 @@ const DEBUG: i32 = 12;
 const LEG_TURN: i32 = 13;
 const FOOT_LOCKING: i32 = 14;
 const AIM_PITCH: i32 = 15;
+const STATE_ROLE: i32 = 16;
+const ROOT_MOTION: i32 = 17;
+const ACTION_TIME: i32 = 18;
+
+// What `texts` reads or does, as `NativeMotionMatcher` in Voxear.Core numbers them.
+const MOTION_SET: i32 = 0;
+const SET_MOTION_SET: i32 = 1;
+const PLAY: i32 = 2;
+const STOP: i32 = 3;
+const STATE_NAME: i32 = 4;
+const SET_STATE: i32 = 5;
+const ACTION_NAME: i32 = 6;
 
 /// Reads value `what` of `entity`'s Motion Matcher, or with `written`,
 /// writes it: `None` when it has none, or is gone.
@@ -297,6 +310,19 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
         }
         _ => {}
     }
+    match (what, written) {
+        (STATE_ROLE, None) => {
+            let role = playing_state(world, entity).map(|(set, state)| set.states[state].role);
+            let index = StateRole::ALL.iter().position(|r| Some(*r) == role).map_or(-1.0, |i| i as f32);
+            return Some(number(index));
+        }
+        (ACTION_TIME, None) => {
+            let pending = world.get::<MotionMatcher>(entity)?.commands.iter().any(|c| matches!(c, ActionCommand::Play(_)));
+            let action = world.get::<MotionMatcherState>(entity).and_then(|state| state.action.as_ref());
+            return Some(number(action.filter(|_| !pending).map_or(0.0, |action| action.time)));
+        }
+        _ => {}
+    }
     let matcher = world.get_mut::<MotionMatcher>(entity)?;
     match written {
         None => Some(match what {
@@ -312,6 +338,7 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
             LEG_TURN => number(matcher.leg_turn),
             FOOT_LOCKING => toggle(matcher.foot_locking),
             AIM_PITCH => number(matcher.aim_pitch),
+            ROOT_MOTION => toggle(matcher.root_motion),
             _ => return None,
         }),
         Some([x, y, z, w]) => {
@@ -331,11 +358,72 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
                 LEG_TURN => matcher.leg_turn = x.clamp(0.0, 180.0),
                 FOOT_LOCKING => matcher.foot_locking = x != 0.0,
                 AIM_PITCH => matcher.aim_pitch = x.clamp(-90.0, 90.0),
+                ROOT_MOTION => matcher.root_motion = x != 0.0,
+                STATE_ROLE => {
+                    let role = StateRole::ALL.get(x.max(0.0) as usize).copied().unwrap_or_default();
+                    matcher.state = Some(StateChoice::Role(role));
+                }
                 _ => return None,
             }
             Some([x, y, z, w])
         }
     }
+}
+
+/// Reads text `what` of `entity`'s Motion Matcher, or does what it asks with
+/// `text`: an empty answer for done, `None` when it has no matcher, or no
+/// such action or state is playing.
+fn texts(world: &mut World, entity: Entity, what: i32, text: &str) -> Option<String> {
+    if !world.is_alive(entity) {
+        return None;
+    }
+    match what {
+        STATE_NAME => return playing_state(world, entity).map(|(set, state)| set.states[state].name.clone()),
+        ACTION_NAME => return action_name(world, entity),
+        _ => {}
+    }
+    let matcher = world.get_mut::<MotionMatcher>(entity)?;
+    match what {
+        MOTION_SET => return Some(matcher.motion_set.clone()),
+        SET_MOTION_SET if matcher.motion_set != text => {
+            matcher.motion_set = text.to_string();
+            (matcher.state, matcher.commands) = (None, Vec::new());
+            // The old set's state and action mean nothing in the new one.
+            if let Some(state) = world.get_mut::<MotionMatcherState>(entity) {
+                (state.state, state.action) = (usize::MAX, None);
+            }
+        }
+        SET_MOTION_SET => {}
+        PLAY => matcher.commands.push(ActionCommand::Play(text.to_string())),
+        STOP => matcher.commands.push(ActionCommand::Stop),
+        SET_STATE => matcher.state = Some(StateChoice::Named(text.to_string())),
+        _ => return None,
+    }
+    Some(String::new())
+}
+
+/// The set an Obj's Motion Matcher plays and the state of it playing, or to
+/// play from the next frame as the game asked.
+fn playing_state(world: &World, entity: Entity) -> Option<(Arc<MotionSet>, usize)> {
+    let matcher = world.get::<MotionMatcher>(entity)?;
+    let set = world.resource::<Clips>()?.set(&matcher.motion_set)?.clone();
+    let state = world.get::<MotionMatcherState>(entity).cloned().unwrap_or_default();
+    let index = chosen(&set, matcher, &state);
+    (index < set.states.len()).then_some((set, index))
+}
+
+/// The name of the action an Obj's Motion Matcher plays, or plays from the
+/// next frame as the game asked: `None` with none, or one stopped.
+fn action_name(world: &World, entity: Entity) -> Option<String> {
+    let matcher = world.get::<MotionMatcher>(entity)?;
+    match matcher.commands.last() {
+        Some(ActionCommand::Play(name)) => return Some(name.clone()),
+        Some(ActionCommand::Stop) => return None,
+        None => {}
+    }
+    let action = world.get::<MotionMatcherState>(entity)?.action.as_ref().filter(|action| !action.ending)?;
+    let set = world.resource::<Clips>()?.set(&matcher.motion_set)?;
+    Some(set.actions.get(action.index)?.name.clone())
 }
 
 /// Moves every Motion Matcher on by `delta` seconds and poses its model,
@@ -432,7 +520,8 @@ fn act(
             world.insert_resource(MotionMarks::default());
         }
         if let Some(marks) = world.resource_mut::<MotionMarks>() {
-            marks.0.extend(passed.into_iter().map(|name| (entity, format!("{}#mark:{name}", matcher.motion_set))));
+            let set = &matcher.motion_set;
+            marks.0.extend(passed.into_iter().map(|name| (entity, format!("{set}#{MARK_PART}{name}"))));
         }
     }
     if !playing {

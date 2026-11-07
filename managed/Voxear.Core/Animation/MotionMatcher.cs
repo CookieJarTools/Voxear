@@ -61,6 +61,59 @@ public readonly struct MotionMatcher : IEquatable<MotionMatcher>, IObjComponent
 		set { Set(NativeMotionMatcher.AimPitch, value); }
 	}
 
+	/// <summary>The Motion Set it plays, its states and actions. None plays the model's own clips.</summary>
+	public MotionSet MotionSet
+	{
+		get { return MotionSet.Load(NativeMotionMatcher.Text(Obj, NativeMotionMatcher.MotionSetText) ?? string.Empty); }
+		set { Tell(NativeMotionMatcher.SetMotionSet, value.Key); }
+	}
+
+	/// <summary>
+	/// What the state it plays is for, as walking about or crouching. Setting it plays the set's first state for that,
+	/// changing over the state's Blend Time and playing its Enter Action, from the next frame.
+	/// </summary>
+	public MotionState State
+	{
+		get { return (MotionState)Math.Max((int)Number(NativeMotionMatcher.StateRole), 0); }
+		set { Set(NativeMotionMatcher.StateRole, (int)value); }
+	}
+
+	/// <summary>The set's state it plays, or from the next frame plays as asked.</summary>
+	public MotionSetState CurrentState
+	{
+		get
+		{
+			var name = NativeMotionMatcher.Text(Obj, NativeMotionMatcher.StateName);
+			return name == null ? MotionSetState.None : new MotionSetState(MotionSet.Key, name);
+		}
+	}
+
+	/// <summary>
+	/// The action it plays, or plays from the next frame as asked: None with none, or once it is stopped and fading
+	/// out.
+	/// </summary>
+	public MotionAction ActionPlaying
+	{
+		get
+		{
+			var name = NativeMotionMatcher.Text(Obj, NativeMotionMatcher.ActionName);
+			return name == null ? MotionAction.None : new MotionAction(MotionSet.Key, name);
+		}
+	}
+
+	/// <summary>How far into the action it plays it is, in seconds; 0 with none.</summary>
+	public float ActionTime => Number(NativeMotionMatcher.ActionTime);
+
+	/// <summary>
+	/// Whether the clips move the Obj as they travel, through its Character Controller when it has one, rather than
+	/// the game moving it. A clip set to move at a speed and direction moves it at those.
+	/// </summary>
+	public bool RootMotion
+	{
+		get { return Number(NativeMotionMatcher.RootMotion) != 0f; }
+		set { Set(NativeMotionMatcher.RootMotion, value ? 1f : 0f); }
+	}
+
 	/// <summary>Below this many metres a second wanted, it stands.</summary>
 	public float IdleSpeed
 	{
@@ -127,6 +180,33 @@ public readonly struct MotionMatcher : IEquatable<MotionMatcher>, IObjComponent
 		set { Set(NativeMotionMatcher.Debug, value ? 1f : 0f); }
 	}
 
+	/// <summary>
+	/// Plays an action of its Motion Set from the next frame, in place of any playing: it fades in over the state,
+	/// plays once, and fades out at its end, unless it loops or holds its last frame.
+	/// </summary>
+	public void Play(MotionAction action)
+	{
+		if (InSet(action.Set, action.IsValid, "action"))
+		{
+			Tell(NativeMotionMatcher.Play, action.Name);
+		}
+	}
+
+	/// <summary>Fades out the action playing, as one held at its end.</summary>
+	public void StopAction()
+	{
+		Tell(NativeMotionMatcher.Stop, string.Empty);
+	}
+
+	/// <summary>Plays a state of its Motion Set from the next frame, as a custom state, changing over its Blend Time.</summary>
+	public void SetState(MotionSetState state)
+	{
+		if (InSet(state.Set, state.IsValid, "state"))
+		{
+			Tell(NativeMotionMatcher.SetState, state.Name);
+		}
+	}
+
 	/// <summary>Forgets WantedVelocity and WantedFacing, following how the Obj moves.</summary>
 	public void FollowObj()
 	{
@@ -177,6 +257,32 @@ public readonly struct MotionMatcher : IEquatable<MotionMatcher>, IObjComponent
 	private Vector3 Vector(int what)
 	{
 		return NativeMotionMatcher.Get(Obj, what, out var value) ? new Vector3(value.X, value.Y, value.Z) : Vector3.Zero;
+	}
+
+	/// <summary>Whether a part named is of the set it plays, logging why not.</summary>
+	private bool InSet(MotionSet set, bool named, string part)
+	{
+		if (!named)
+		{
+			Log.Error($"No {part} is set to play on {Obj}'s Motion Matcher.");
+			return false;
+		}
+
+		var playing = MotionSet;
+		if (set != playing && Native.IsConnected)
+		{
+			Log.Error($"That {part} is of another Motion Set than {Obj}'s Motion Matcher plays.");
+			return false;
+		}
+		return true;
+	}
+
+	private void Tell(int what, string text)
+	{
+		if (!NativeMotionMatcher.Tell(Obj, what, text) && Native.IsConnected)
+		{
+			Log.Error($"{Obj} has no Motion Matcher; give it one with AddMotionMatcher.");
+		}
 	}
 
 	private void Set(int what, float value)

@@ -9,8 +9,9 @@
 use std::sync::Arc;
 
 use voxear_core::math::{Quat, Vec3};
-use voxear_ecs::Entity;
+use voxear_ecs::{Entity, World};
 use voxear_render::{BonePose, Clip, Skeleton};
+use voxear_scene::Parent;
 
 use super::{
     motion_database::{Ground, side_of},
@@ -44,6 +45,23 @@ pub enum ActionCommand {
 /// `<set>#mark:<name>`; for scripts to be told of.
 #[derive(Default)]
 pub struct MotionMarks(pub Vec<(Entity, String)>);
+
+/// Takes the marks passed this frame, each once for its Obj and once for
+/// each of the Obj's parents, as scripts are told of them: a character's
+/// script is often on the Obj above its model.
+pub fn take_marks(world: &mut World) -> Vec<(Entity, String)> {
+    let Some(marks) = world.resource_mut::<MotionMarks>() else { return Vec::new() };
+    let passed = std::mem::take(&mut marks.0);
+    let mut told = Vec::new();
+    for (entity, mark) in passed {
+        let mut at = Some(entity);
+        while let Some(obj) = at {
+            told.push((obj, mark.clone()));
+            at = world.get::<Parent>(obj).map(|parent| parent.0);
+        }
+    }
+    told
+}
 
 impl ActionPlay {
     /// Moves the action on by `delta`: fades it in, or out once it ends or

@@ -2849,11 +2849,7 @@ pub fn choices(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) ->
             let kind = voxear_engine::script_types::FieldKind::Asset { asset: "Voxear.Sound".into() };
             return fields::asset_choices(game, &kind);
         }
-        Prop::MatcherMotionSet => {
-            let mut found = vec![("None".to_string(), Pick::Asset(None))];
-            found.extend(fields::assets_of(game, Some(AssetKind::MotionSet)));
-            return found;
-        }
+        Prop::MatcherMotionSet => return fields::assets_of(game, Some(AssetKind::MotionSet)),
         Prop::AnimatorClip => {
             let mut found = vec![("None".to_string(), Pick::Asset(None))];
             found.extend(model_clips(game));

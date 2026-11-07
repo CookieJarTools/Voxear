@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 49;
+pub(crate) const API_VERSION: u32 = 50;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -336,6 +336,11 @@ pub(crate) struct NativeApi {
     /// with two whole numbers, some text and four floats for what it gives
     /// back besides its answer.
     pub net_call: unsafe extern "C" fn(what: i32, a: i32, b: i32, text: *const u8, len: i32, out: *mut [f32; 4]) -> i32,
+    /// Reads text `what` of an Obj's Motion Matcher, or does what it asks
+    /// with some text, as playing an action by its name: the answer's
+    /// length, written when it fits, or -1.
+    pub motion_matcher_text:
+        unsafe extern "C" fn(entity: u64, what: i32, text: *const u8, len: i32, buffer: *mut u8, capacity: i32) -> i32,
 }
 
 /// What answers scripts' questions about water: the engine's, set when it
@@ -385,6 +390,33 @@ pub fn set_mist_values(values: ComponentValues) {
 /// Sets what answers `MotionMatcher` in scripts; the first set is kept.
 pub fn set_motion_matcher_values(values: ComponentValues) {
     let _ = MATCHERS.set(values);
+}
+
+/// What answers `MotionMatcher`'s calls with text in scripts: the engine's,
+/// set when it starts. `None` for no matcher, or nothing to give back.
+pub type MotionMatcherTexts = fn(&mut World, Entity, i32, &str) -> Option<String>;
+static MATCHER_TEXTS: std::sync::OnceLock<MotionMatcherTexts> = std::sync::OnceLock::new();
+
+/// Sets what answers `MotionMatcher`'s calls with text; the first set is kept.
+pub fn set_motion_matcher_texts(texts: MotionMatcherTexts) {
+    let _ = MATCHER_TEXTS.set(texts);
+}
+
+unsafe extern "C" fn motion_matcher_text(
+    entity: u64,
+    what: i32,
+    text: *const u8,
+    len: i32,
+    buffer: *mut u8,
+    capacity: i32,
+) -> i32 {
+    let Some(texts) = MATCHER_TEXTS.get() else { return -1 };
+    let text = unsafe { utf8(text, len) };
+    let Some(answer) = with_world(|world| texts(world, Entity::from_bits(entity), what, &text)) else { return -1 };
+    if !buffer.is_null() && answer.len() <= capacity.max(0) as usize {
+        unsafe { ptr::copy_nonoverlapping(answer.as_ptr(), buffer, answer.len()) };
+    }
+    answer.len() as i32
 }
 
 /// Sets what answers `BoneAttachment` in scripts; the first set is kept.
@@ -568,6 +600,9 @@ pub(crate) struct ManagedApi {
     /// trigger crossings (`OnCollisionEnter` and the rest), each event
     /// once for each Obj in it.
     pub physics_events: Option<unsafe extern "C" fn(events: *const crate::physics::PhysicsEventData, count: i32)>,
+    /// Tells behaviours of the marks actions passed (`OnMotionMark`): each
+    /// mark's Obj, and the marks one to a line.
+    pub motion_marks: Option<unsafe extern "C" fn(entities: *const u64, count: i32, text: *const u8, len: i32)>,
 }
 
 pub(crate) type RunCheck = unsafe extern "C" fn(
@@ -1381,6 +1416,7 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         motion_matcher_value,
         bone_attachment_value,
         net_call,
+        motion_matcher_text,
     }
 }
 

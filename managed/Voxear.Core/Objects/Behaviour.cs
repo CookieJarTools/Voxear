@@ -144,6 +144,20 @@ public abstract class Behaviour
 	{
 	}
 
+	/// <summary>
+	/// Called when an action of the Obj's Motion Matcher, or of one on an Obj under it, passes one of its marks: the
+	/// moment a grenade leaves the hand, or a spell is cast. It comes before LateUpdate, the frame the action passes
+	/// it. Compare the mark with one picked in the Inspector.
+	/// </summary>
+	protected virtual void OnMotionMark(MotionMark mark)
+	{
+	}
+
+	internal void PassMark(MotionMark mark)
+	{
+		OnMotionMark(mark);
+	}
+
 	internal void Collide(uint kind, Collision collision)
 	{
 		var (point, normal) = (collision.Point, collision.Normal);

@@ -15,6 +15,8 @@ internal static unsafe class NativeNetObject
 	public const int Range = 4;
 	public const int Id = 5;
 	public const int Owner = 6;
+	public const int HasAuthority = 7;
+	public const int Claim = 8;
 
 	public static bool Get(Obj obj, int what, out Vector4 value)
 	{

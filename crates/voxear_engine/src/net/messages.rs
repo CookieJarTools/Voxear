@@ -16,9 +16,10 @@ pub const REPEATS: usize = 4;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Message {
-    /// To a client that has joined: who it is, the server's tick, and how
-    /// many ticks a second the server runs.
-    Welcome { player: PlayerId, tick: u64, rate: u16 },
+    /// To a client that has joined: who it is, the server's tick, how many
+    /// ticks a second the server runs, and whether players' own Objs are
+    /// theirs to run.
+    Welcome { player: PlayerId, tick: u64, rate: u16, shared: bool },
     Joined(PlayerId),
     Left(PlayerId),
     /// The level the server plays, by GUID, for the client to load.
@@ -41,6 +42,13 @@ pub enum Message {
     /// to the server from a player, or to players from the server, with the
     /// tick it was made on.
     Rpc { id: NetId, key: u32, tick: u64, bytes: Vec<u8> },
+    /// A player's own Obj's replicated properties, from their machine, when
+    /// players run their own.
+    Fields { id: NetId, fields: Fields },
+    /// A player asking for an Obj no one owns, when players run their own.
+    Claim(NetId),
+    /// An Obj's new owner, from the server.
+    Owner { id: NetId, owner: Option<PlayerId> },
 }
 
 /// The most bytes an RPC's arguments take.
@@ -64,6 +72,9 @@ const SPAWN: u32 = 6;
 const DESPAWN: u32 = 7;
 pub const SNAPSHOT: u32 = 8;
 const RPC: u32 = 9;
+const FIELDS_MESSAGE: u32 = 10;
+const CLAIM: u32 = 11;
+const OWNER: u32 = 12;
 /// Bits a message's kind takes.
 pub const KIND_BITS: u32 = 4;
 
@@ -71,11 +82,12 @@ impl Message {
     pub fn encode(&self) -> Vec<u8> {
         let mut w = BitWriter::new();
         match self {
-            Message::Welcome { player, tick, rate } => {
+            Message::Welcome { player, tick, rate, shared } => {
                 w.write_bits(WELCOME, KIND_BITS);
                 w.write_bits(u32::from(player.0), 16);
                 w.write_varint(*tick);
                 w.write_bits(u32::from(*rate), 16);
+                w.write_bool(*shared);
             }
             Message::Joined(player) => {
                 w.write_bits(JOINED, KIND_BITS);
@@ -142,6 +154,21 @@ impl Message {
                 }
                 w.write_bool(false);
             }
+            Message::Fields { id, fields } => {
+                w.write_bits(FIELDS_MESSAGE, KIND_BITS);
+                w.write_varint(u64::from(id.0));
+                write_fields(&mut w, fields);
+            }
+            Message::Claim(id) => {
+                w.write_bits(CLAIM, KIND_BITS);
+                w.write_varint(u64::from(id.0));
+            }
+            Message::Owner { id, owner } => {
+                w.write_bits(OWNER, KIND_BITS);
+                w.write_varint(u64::from(id.0));
+                w.write_bool(owner.is_some());
+                w.write_bits(u32::from(owner.map_or(0, |p| p.0)), 16);
+            }
             Message::Rpc { id, key, tick, bytes } => {
                 w.write_bits(RPC, KIND_BITS);
                 w.write_varint(u64::from(id.0));
@@ -162,7 +189,16 @@ impl Message {
                 player: PlayerId(r.read_bits(16)? as u16),
                 tick: r.read_varint()?,
                 rate: r.read_bits(16)? as u16,
+                shared: r.read_bool()?,
             },
+            FIELDS_MESSAGE => Message::Fields { id: NetId(r.read_varint()? as u32), fields: read_fields(&mut r)? },
+            CLAIM => Message::Claim(NetId(r.read_varint()? as u32)),
+            OWNER => {
+                let id = NetId(r.read_varint()? as u32);
+                let has_owner = r.read_bool()?;
+                let owner = PlayerId(r.read_bits(16)? as u16);
+                Message::Owner { id, owner: has_owner.then_some(owner) }
+            }
             JOINED => Message::Joined(PlayerId(r.read_bits(16)? as u16)),
             LEFT => Message::Left(PlayerId(r.read_bits(16)? as u16)),
             LEVEL => {
@@ -282,7 +318,11 @@ mod tests {
         let jump = ActionState { held: true, pressed: true, ..ActionState::default() };
         let look = ActionState { value: [0.25, -3.5], ..ActionState::default() };
         let messages = [
-            Message::Welcome { player: PlayerId(3), tick: 123_456, rate: 60 },
+            Message::Welcome { player: PlayerId(3), tick: 123_456, rate: 60, shared: true },
+            Message::Fields { id: NetId(4), fields: [(9, vec![1, 2])].into_iter().collect() },
+            Message::Claim(NetId(5)),
+            Message::Owner { id: NetId(5), owner: Some(PlayerId(2)) },
+            Message::Owner { id: NetId(5), owner: None },
             Message::Joined(PlayerId(7)),
             Message::Left(PlayerId(7)),
             Message::Level("0123456789abcdef0123456789abcdef".into()),

@@ -72,6 +72,24 @@ public readonly struct NetObject : IEquatable<NetObject>, IObjComponent
 		}
 	}
 
+	/// <summary>
+	/// Whether this machine decides what the Obj does: the server, except that with shared authority a player's own
+	/// Objs are their machine's to run. Move it, push it and change its replicated properties only where this is true.
+	/// </summary>
+	public bool HasAuthority
+	{
+		get { return NativeNetObject.Number(Obj, NativeNetObject.HasAuthority, 1f) != 0f; }
+	}
+
+	/// <summary>
+	/// Asks for the Obj for this machine's player, with shared authority, as to pick it up: the server gives it to
+	/// them if no one owns it. Owner says when it is theirs.
+	/// </summary>
+	public void Claim()
+	{
+		NativeNetObject.Set(Obj, NativeNetObject.Claim, Vector4.Zero);
+	}
+
 	/// <summary>Takes the Net Object off its Obj; players' copies stay as they are.</summary>
 	public void Remove()
 	{

@@ -16,10 +16,13 @@ public static unsafe class Replication
 
 	private static readonly HashSet<Behaviour> changed = new HashSet<Behaviour>();
 
-	/// <summary>Notes that a behaviour's replicated property changed, on the server, to send this frame.</summary>
+	/// <summary>
+	/// Notes that a behaviour's replicated property changed, to send this frame: on the server, or on its owner's machine
+	/// with shared authority.
+	/// </summary>
 	public static void Changed(Behaviour behaviour)
 	{
-		if (Net.IsServer)
+		if (Net.IsServer || Net.Authority == NetAuthority.Shared && behaviour.Obj.NetObject.IsMine)
 		{
 			changed.Add(behaviour);
 		}

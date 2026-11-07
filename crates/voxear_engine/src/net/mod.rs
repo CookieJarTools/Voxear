@@ -15,6 +15,7 @@
 //! frame's input, the engine's fixed steps call [`fixed_tick`], and
 //! [`frame_end`] sends what is waiting.
 
+mod authority;
 mod inputs;
 mod messages;
 mod prediction;
@@ -39,6 +40,7 @@ use inputs::{InputBuffer, Latch};
 pub use messages::Command;
 pub use replication::{NetId, NetObject, Networked, ObjState, Origin, SpawnRequest};
 use replication::{Replication, Tracked, Viewer};
+pub use authority::{HeldBody, claim, has_authority};
 pub use prediction::{Correction, Predicting, begin_replay, corrections, end_replay, mark_predicting, record, replay_tick};
 pub use rewind::{MOST_REWIND, raycast_as_seen_by};
 pub use rpcs::{Rpc, RpcTarget};
@@ -87,6 +89,20 @@ pub enum NetEvent {
     PlayerLeft(PlayerId),
 }
 
+/// Who decides what a player's own Objs do.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NetAuthority {
+    /// The server decides everything; players' machines send what they
+    /// press. Cheating is hard, so it suits games played against others.
+    #[default]
+    Server,
+    /// Each player's machine runs their own Objs and tells the server how
+    /// they are, which passes it on. Nothing waits on the server, so it
+    /// suits games played together, where cheating matters less.
+    Shared,
+}
+
 /// `[network]` in `voxear.toml`.
 #[derive(Clone, Debug, PartialEq, Deserialize, serde::Serialize)]
 #[serde(default, deny_unknown_fields)]
@@ -98,11 +114,12 @@ pub struct NetworkSettings {
     pub max_players: usize,
     /// The most each end sends each other, in kilobytes a second.
     pub kilobytes_per_second: f64,
+    pub authority: NetAuthority,
 }
 
 impl Default for NetworkSettings {
     fn default() -> Self {
-        Self { tick_rate: 60, port: 7777, max_players: 64, kilobytes_per_second: 64.0 }
+        Self { tick_rate: 60, port: 7777, max_players: 64, kilobytes_per_second: 64.0, authority: NetAuthority::Server }
     }
 }
 
@@ -129,6 +146,7 @@ pub struct NetSettings {
     pub port: u16,
     pub max_players: usize,
     pub bytes_per_second: f64,
+    pub authority: NetAuthority,
     /// A network to test through, worse than the real one.
     pub conditions: Conditions,
 }
@@ -153,6 +171,7 @@ impl NetSettings {
             port: network.port,
             max_players: network.max_players.max(1),
             bytes_per_second: network.kilobytes_per_second.max(4.0) * 1024.0,
+            authority: network.authority,
             conditions: Conditions::PERFECT,
         }
     }
@@ -225,6 +244,7 @@ pub struct NetSession {
     rpcs: rpcs::Rpcs,
     prediction: prediction::Prediction,
     rewind: rewind::Rewind,
+    authority: authority::Authority,
     /// The client's own commands, by tick, for predicted ticks to run again.
     commands: VecDeque<(u64, Command)>,
 }
@@ -260,6 +280,7 @@ impl NetSession {
             rpcs: rpcs::Rpcs::default(),
             prediction: prediction::Prediction::default(),
             rewind: rewind::Rewind::default(),
+            authority: authority::Authority::default(),
             commands: VecDeque::new(),
         }
     }
@@ -367,6 +388,9 @@ impl NetSession {
                     self.replication.viewers.remove(&player);
                     self.rpcs.forget(player);
                     self.rewind.forget(player);
+                    if self.settings.authority == NetAuthority::Shared {
+                        self.authority.left.push(player);
+                    }
                     self.send_all(&Message::Left(player), None);
                     self.events.push_back(NetEvent::PlayerLeft(player));
                 }
@@ -391,6 +415,20 @@ impl NetSession {
                             buffer.put(first + offset as u64, command, self.tick);
                         }
                     }
+                    // A player's word on their own Objs, when they run them.
+                    Message::Snapshot { tick, entries } if self.settings.authority == NetAuthority::Shared => {
+                        self.authority.states_from(player, tick, entries, &self.replication.objects);
+                    }
+                    Message::Fields { id, fields } if self.settings.authority == NetAuthority::Shared => {
+                        let Some(tracked) = self.replication.objects.get_mut(&id).filter(|t| t.owner == Some(player)) else {
+                            continue;
+                        };
+                        let entity = tracked.entity;
+                        tracked.fields.extend(fields.clone());
+                        tracked.fields_changed = true;
+                        self.replication.field_updates.extend(fields.into_iter().map(|(key, bytes)| (entity, key, bytes)));
+                    }
+                    Message::Claim(id) if self.settings.authority == NetAuthority::Shared => self.authority.claims.push((id, player)),
                     Message::Rpc { id, key, tick, bytes } if self.rpcs.allow(player, self.now) => {
                         let Some(tracked) = self.replication.objects.get(&id) else { continue };
                         let rpc = Rpc { entity: tracked.entity, key, caller: Some(player), tick, bytes };
@@ -407,7 +445,8 @@ impl NetSession {
         let player = PlayerId(self.next_player);
         self.next_player = self.next_player.wrapping_add(1).max(1);
         tracing::info!("player {} joined", player.0);
-        let welcome = Message::Welcome { player, tick: self.tick, rate: self.settings.tick_rate as u16 };
+        let shared = self.settings.authority == NetAuthority::Shared;
+        let welcome = Message::Welcome { player, tick: self.tick, rate: self.settings.tick_rate as u16, shared };
         self.send(client, Channel::RELIABLE, &welcome);
         for other in self.players.clone() {
             self.send(client, Channel::RELIABLE, &Message::Joined(other));
@@ -437,7 +476,8 @@ impl NetSession {
         let rtt = client.stats().rtt;
         for message in messages {
             match message {
-                Message::Welcome { player, tick, rate } => {
+                Message::Welcome { player, tick, rate, shared } => {
+                    self.settings.authority = if shared { NetAuthority::Shared } else { NetAuthority::Server };
                     // Ahead by half the round trip and a little more, which syncing then trims.
                     let ahead = (rtt * 0.5 * f64::from(rate)).ceil() as u64 + AHEAD as u64;
                     (self.local, self.tick, self.welcomed) = (Some(player), tick + ahead, true);
@@ -466,6 +506,7 @@ impl NetSession {
                     }
                 }
                 Message::Snapshot { tick, entries } => self.take_snapshot(tick, entries),
+                Message::Owner { id, owner } => self.authority.owners.push((id, owner)),
                 Message::Rpc { id, key, tick, bytes } => match self.replication.remote.get(&id).and_then(|r| r.entity) {
                     Some(entity) => self.rpcs.incoming.push_back(Rpc { entity, key, caller: None, tick, bytes }),
                     None => self.rpcs.early.push((self.now, id, key, tick, bytes)),
@@ -541,6 +582,8 @@ impl NetSession {
         let replication = &mut self.replication;
         let gone = replication.capture(world);
         let outgoing = std::mem::take(&mut self.rpcs.outgoing);
+        let owners = std::mem::take(&mut self.authority.changed_owners);
+        let shared = self.settings.authority == NetAuthority::Shared;
         let tick = self.tick;
         for (&client, player) in &self.by_client {
             let at = replication.viewpoint(*player);
@@ -577,6 +620,7 @@ impl NetSession {
                         let fields = tracked.fields.clone();
                         reliable.push(Message::Spawn { id, owner, origin, tick, state, fields });
                     }
+                    (true, Some(_)) if shared && tracked.owner == Some(*player) => {}
                     (true, Some((pending, waited))) => {
                         *pending |= tracked.changed;
                         if *pending != 0 {
@@ -599,6 +643,11 @@ impl NetSession {
             }
             for message in reliable {
                 let _ = server.send(client, Channel::RELIABLE, &message.encode());
+            }
+            for &(id, owner) in &owners {
+                if viewer.known.contains_key(&id) {
+                    let _ = server.send(client, Channel::RELIABLE, &Message::Owner { id, owner }.encode());
+                }
             }
             // RPCs reach those who have the Obj, just made or not.
             for rpc in &outgoing {
@@ -837,8 +886,10 @@ pub fn frame_begin(world: &mut World, delta: f32, local: &[ActionState]) {
     }
     if session.role == NetRole::Client {
         session.advance_shown(delta);
-        session.replication.show(world, &session.prediction.ids);
+        let theirs: std::collections::HashSet<NetId> = session.prediction.ids.union(&session.authority.owned).copied().collect();
+        session.replication.show(world, &theirs);
     }
+    authority::take_in(world, &mut session);
     world.insert_resource(session);
 }
 
@@ -854,6 +905,7 @@ pub fn fixed_tick(world: &mut World) {
 /// changed on the networked Objs.
 pub fn frame_end(world: &mut World) {
     let Some(mut session) = world.remove_resource::<NetSession>() else { return };
+    authority::send_owned(world, &mut session);
     session.replicate(world);
     session.flush();
     prediction::show(world, &session.prediction);
@@ -898,6 +950,11 @@ pub fn set_fields(world: &mut World, entity: voxear_ecs::Entity, key: u32, bytes
         }
         return;
     };
+    // A player's own, from their machine, when players run their own.
+    if let Some(session) = world.resource_mut::<NetSession>().filter(|s| matches!(s.end, End::Client(_))) {
+        authority::send_fields(session, id, key, bytes);
+        return;
+    }
     let tracked = world.resource_mut::<NetSession>().and_then(|s| s.replication.objects.get_mut(&id));
     if let Some(tracked) = tracked
         && tracked.fields.get(&key) != Some(&bytes)
@@ -927,12 +984,16 @@ pub fn set_owner(world: &mut World, entity: voxear_ecs::Entity, owner: Option<Pl
         world.insert(entity, WaitingOwner(owner));
         return;
     };
+    let changed = networked.owner != owner;
     networked.owner = owner;
     let id = networked.id;
     if let Some(session) = world.resource_mut::<NetSession>()
         && let Some(tracked) = session.replication.objects.get_mut(&id)
     {
         tracked.owner = owner;
+        if changed {
+            session.authority.changed_owners.push((id, owner));
+        }
     }
 }
 
@@ -951,9 +1012,7 @@ pub fn take_despawns(world: &mut World) -> Vec<voxear_ecs::Entity> {
 /// client. Physics no longer moves it here: the server does.
 pub fn bind(world: &mut World, request: &SpawnRequest, entity: voxear_ecs::Entity) {
     world.insert(entity, Networked { id: request.id, owner: request.owner });
-    if let Some(body) = world.get_mut::<voxear_physics::scene::Rigidbody>(entity) {
-        body.kinematic = true;
-    }
+    authority::hold_body(world, entity);
     if let Some(session) = world.resource_mut::<NetSession>() {
         let replication = &mut session.replication;
         if let Some(remote) = replication.remote.get_mut(&request.id) {

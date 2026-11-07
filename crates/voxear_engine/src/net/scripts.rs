@@ -69,6 +69,8 @@ const PRIORITY: i32 = 3;
 const RANGE: i32 = 4;
 const ID: i32 = 5;
 const OWNER: i32 = 6;
+const HAS_AUTHORITY: i32 = 7;
+const CLAIM: i32 = 8;
 
 /// Reads value `what` of `entity`'s Net Object, or with `written` writes
 /// it: `None` when it has none, or is gone.
@@ -92,6 +94,11 @@ fn net_object(world: &mut World, entity: voxear_ecs::Entity, what: i32, written:
             let waiting = world.get::<super::WaitingOwner>(entity).and_then(|w| w.0);
             let owner = world.get::<Networked>(entity).and_then(|n| n.owner).or(waiting);
             return Some(number(owner.map_or(-1.0, |p| f32::from(p.0))));
+        }
+        (HAS_AUTHORITY, None) => return Some(number(f32::from(u8::from(super::has_authority(world, entity))))),
+        (CLAIM, Some(_)) => {
+            super::claim(world, entity);
+            return Some([0.0; 4]);
         }
         (OWNER, Some([x, ..])) => {
             let owner = (x >= 0.0).then(|| PlayerId(x as u16));
@@ -134,6 +141,7 @@ const NET_ID: i32 = 14;
 const OBJ_INDEX: i32 = 15;
 const OBJ_GENERATION: i32 = 16;
 const REPLAYING: i32 = 17;
+const AUTHORITY: i32 = 18;
 
 // Events, as TAKE_EVENT gives them.
 const CONNECTED_EVENT: i32 = 1;
@@ -157,6 +165,7 @@ fn call(world: &mut World, what: i32, a: i32, b: i32, text: &str, out: &mut [f32
         TICK => session.map_or(0, |s| s.tick() as i32),
         RPC_TICK => super::rpc_tick(world) as i32,
         REPLAYING => i32::from(super::replaying(world)),
+        AUTHORITY => i32::from(session.is_some_and(|s| s.settings.authority == super::NetAuthority::Shared)),
         // An Obj, as its handle's two halves, by its id in the session; and back.
         NET_ID => {
             let entity = voxear_ecs::Entity::from_bits(u64::from(b as u32) << 32 | u64::from(a as u32));

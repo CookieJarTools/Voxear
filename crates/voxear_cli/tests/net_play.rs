@@ -236,6 +236,54 @@ fn a_players_own_obj_is_predicted_and_put_right_with_its_replicated_properties()
     }
 }
 
+const CARRIER: &str = r#"using System.Numerics;
+using Voxear;
+
+namespace Hello;
+
+public sealed partial class Carrier : Behaviour
+{
+	[Replicated]
+	public partial int Load { get; set; }
+
+	private bool told;
+
+	protected override void Update()
+	{
+		// Its owner's machine runs it, and the server hears how it is.
+		if (Obj.NetObject.HasAuthority && !Net.IsServer)
+		{
+			Obj.Position += new Vector3(Time.Delta, 0f, 0f);
+			Load = 5;
+		}
+		if (Net.IsServer && !told && Obj.Position.X > 1f && Load == 5)
+		{
+			told = true;
+			Log.Info($"carried by {Obj.NetObject.Owner?.Id} with {Load}, authority here {Obj.NetObject.HasAuthority}");
+		}
+	}
+}
+"#;
+
+#[test]
+fn with_shared_authority_a_players_machine_runs_their_own_obj() {
+    if voxear_scripting::find_dotnet().is_none() {
+        return eprintln!("skipping: needs .NET");
+    }
+    let dir = hello_copy();
+    std::fs::write(dir.path().join("Scripts/Carrier.cs"), CARRIER).unwrap();
+    std::fs::write(dir.path().join("Scripts/Start.cs"), START.replace("Runner", "Carrier")).unwrap();
+    std::fs::write(dir.path().join("Prefabs/Carrier.prefab"), RUNNER_PREFAB.replace("Runner", "Carrier")).unwrap();
+    let toml = dir.path().join("voxear.toml");
+    let shared = std::fs::read_to_string(&toml).unwrap() + "\n[network]\nauthority = \"shared\"\n";
+    std::fs::write(&toml, shared).unwrap();
+    let (server, client) = play(dir.path(), 47795, 240);
+    assert!(
+        server.iter().any(|line| line.contains("carried by 1 with 5, authority here False")),
+        "the server took the player's word on their crate: {server:?}\n{client:?}"
+    );
+}
+
 /// Plays a server and a client of the project at `dir` on `port`, the client for `frames` frames: each one's log.
 fn play(dir: &Path, port: u16, frames: u32) -> (Vec<String>, Vec<String>) {
     let vox = env!("CARGO_BIN_EXE_vox");

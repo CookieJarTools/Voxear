@@ -57,7 +57,7 @@ While networked, the game moves in **ticks**: its fixed steps, 60 a second unles
 
 ## Network settings
 
-`[network]` in `voxear.toml` sets the tick rate, the port, how many may play and how much each end sends:
+`[network]` in `voxear.toml` sets the tick rate, the port, how many may play, how much each end sends, and who decides what players' own Objs do ([[Shared Authority|server or shared]]):
 
 ```toml
 [network]
@@ -65,6 +65,7 @@ tick_rate = 60
 port = 7777
 max_players = 64
 kilobytes_per_second = 64
+authority = "server"
 ```
 
 ## Testing in the editor

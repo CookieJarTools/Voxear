@@ -37,6 +37,12 @@ public static unsafe class Net
 		get { return (NetRole)NativeNet.Call(NativeNet.Role); }
 	}
 
+	/// <summary>Who decides what a player's own Objs do, as the project's [network] settings say: the server, or shared.</summary>
+	public static NetAuthority Authority
+	{
+		get { return (NetAuthority)NativeNet.Call(NativeNet.Authority); }
+	}
+
 	/// <summary>Whether this machine runs the game: a server or a host.</summary>
 	public static bool IsServer
 	{

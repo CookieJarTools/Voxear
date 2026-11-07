@@ -13,9 +13,14 @@ fn settings(conditions: Conditions) -> NetSettings {
 /// A server, and clients joined to it through `network`, each in its own
 /// world.
 fn session(network: &MemoryNetwork, clients: usize, conditions: Conditions) -> (World, Vec<World>) {
+    session_with(network, clients, conditions, NetAuthority::Server)
+}
+
+fn session_with(network: &MemoryNetwork, clients: usize, conditions: Conditions, authority: NetAuthority) -> (World, Vec<World>) {
     let mut server = World::new();
     let address: SocketAddr = "10.0.0.1:7777".parse().unwrap();
-    serve_on(&mut server, settings(conditions), Box::new(network.bind(address)), false).unwrap();
+    let served = NetSettings { authority, ..settings(conditions) };
+    serve_on(&mut server, served, Box::new(network.bind(address)), false).unwrap();
     let clients = (0..clients)
         .map(|n| {
             let mut world = World::new();
@@ -400,4 +405,57 @@ fn a_ray_as_a_player_saw_it_meets_what_they_saw_where_they_saw_it() {
     assert_eq!(seen_by(&mut server, then), Some(target), "but as they saw it, it was there");
     assert_eq!(seen_by(&mut server, x), None, "and as they saw it, it had not got here yet");
     assert_eq!(plain(&mut server, x), Some(target), "and it is put back where it is");
+}
+
+#[test]
+fn with_shared_authority_players_run_their_own_objs_claim_others_and_lose_them_on_leaving() {
+    let network = MemoryNetwork::new();
+    let (mut server, mut clients) = session_with(&network, 2, Conditions::GOOD, NetAuthority::Shared);
+    for _ in 0..60 {
+        frame(&mut server, &mut clients, &[(false, false); 2]);
+    }
+    let (first, second) = (session_of(&clients[0]).local_player(), session_of(&clients[1]).local_player());
+    let crate_ = shared(&mut server, voxear_core::math::Vec3::ZERO, NetObject::default());
+    set_owner(&mut server, crate_, first);
+    let spare = shared(&mut server, voxear_core::math::Vec3::new(5.0, 0.0, 0.0), NetObject::default());
+    for _ in 0..30 {
+        frame(&mut server, &mut clients, &[(false, false); 2]);
+        make_spawns(&mut clients);
+    }
+    // The first player moves their crate on their own machine; the server and the other player follow.
+    let mine = entity_of(&clients[0], NetId(1)).unwrap();
+    for _ in 0..60 {
+        clients[0].get_mut::<voxear_scene::Transform>(mine).unwrap().position.x += 0.05;
+        frame(&mut server, &mut clients, &[(false, false); 2]);
+    }
+    let x = |world: &World, entity| world.get::<voxear_scene::Transform>(entity).unwrap().position.x;
+    let theirs = entity_of(&clients[1], NetId(1)).unwrap();
+    assert!((x(&clients[0], mine) - 3.0).abs() < 1e-3, "the owner's machine moved it, and nothing moved it back");
+    assert!((x(&server, crate_) - 3.0).abs() < 0.3, "the server follows its owner: {}", x(&server, crate_));
+    assert!(x(&clients[1], theirs) > 2.0, "and so does the other player: {}", x(&clients[1], theirs));
+    assert!(has_authority(&clients[0], mine) && !has_authority(&server, crate_) && !has_authority(&clients[1], theirs));
+
+    // The second claims the spare, and everyone hears it is theirs.
+    let wanted = entity_of(&clients[1], NetId(2)).unwrap();
+    claim(&mut clients[1], wanted);
+    for _ in 0..30 {
+        frame(&mut server, &mut clients, &[(false, false); 2]);
+    }
+    assert_eq!(server.get::<Networked>(spare).unwrap().owner, second);
+    assert_eq!(clients[0].get::<Networked>(entity_of(&clients[0], NetId(2)).unwrap()).unwrap().owner, second);
+
+    // The first leaves, and the server takes their crate back: as soon as it hears, or once they time out.
+    stop(&mut clients[0]);
+    for _ in 0..600 {
+        frame(&mut server, &mut clients[1..], &[(false, false)]);
+        if !session_of(&server).players().contains(&first.unwrap()) {
+            break;
+        }
+    }
+    for _ in 0..10 {
+        frame(&mut server, &mut clients[1..], &[(false, false)]);
+    }
+    assert_eq!(server.get::<Networked>(crate_).unwrap().owner, None);
+    assert_eq!(clients[1].get::<Networked>(theirs).unwrap().owner, None);
+    assert!(has_authority(&server, crate_));
 }

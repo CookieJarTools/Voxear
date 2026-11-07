@@ -13,19 +13,20 @@ It moves after the bones are posed and before `LateUpdate`, so a script there se
 
 ## A first-person camera on the body
 
-Put an Obj called Eyes under the character's model, attach it to the head with a small offset up and forward, and tick **Turn With Bone** off and **Hide Bone** on. Then place the camera there each frame:
+Put an Obj called Eyes under the character's model, attach it to the head, and tick **Turn With Bone** off and **Hide Bone** on. Then place the camera a little up and forward of it each frame, the offset turned as the view looks up and down, so looking down swings the eyes out in front of the chest rather than into it:
 
 ```csharp
 public sealed class FirstPerson : Behaviour
 {
 	[SerializeField] private Obj view;
 	[SerializeField] private Obj eyes;
+	[SerializeField] private Vector3 eyeOffset = new Vector3(0f, 0.08f, 0.08f);
 
 	protected override void LateUpdate()
 	{
-		view.Position = eyes.Position;
+		view.Position = eyes.Position + Vector3.Transform(eyeOffset, view.Rotation);
 	}
 }
 ```
 
-The camera here is under the player's Obj, as the model is, so the Eyes' place under the model is the camera's place too. Set the Motion Matcher's `AimPitch` to the view's pitch and the body bends a little to look up and down with it.
+The camera here is under the player's Obj, as the model is, so the Eyes' place under the model is the camera's place too, and the camera's own turn is the view's pitch. Set the Motion Matcher's `AimPitch` to the view's pitch and the body bends a little to look up and down with it.

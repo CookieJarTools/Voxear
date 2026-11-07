@@ -92,6 +92,10 @@ struct MeshletCuller
     // -1 when the instance is mirrored, which turns its triangles' winding
     // round on screen, so the cone points the other way.
     float facing;
+    // A skinned instance's meshlets are wherever its pose puts them, not
+    // where their bounds were made: once the whole instance is seen, every
+    // one of them draws.
+    bool whole;
     // Whether back-facing meshlets go. Only where the rasterizer would cull
     // their triangles anyway, and only under a uniform scale, which keeps
     // a cone a cone.
@@ -120,6 +124,7 @@ MeshletCuller meshletCuller(Frame* frame, Instance instance, uint list)
     culler.grow = buffers()->materials[instance.material].maxOffset + instance.reach;
     bool moved = culler.grow > 0.0;
     culler.cones = list < LIST_SHADOW && (frame->meshletFlags & MESHLET_CONES) != 0 && uniform && !turns && !moved;
+    culler.whole = instance.posed != 0;
     culler.list = list;
     return culler;
 }
@@ -130,6 +135,10 @@ MeshletCuller meshletCuller(Frame* frame, Instance instance, uint list)
 // last frame without asking the pyramid, which is not built yet.
 uint cullMeshlet(Frame* frame, MeshletCuller culler, Meshlet meshlet)
 {
+    if (culler.whole)
+    {
+        return MESHLET_VISIBLE;
+    }
     float3 center = transform(culler.model, float4(meshlet.center, 1.0)).xyz;
     float radius = meshlet.radius * culler.scale + culler.grow;
     if (culler.list >= LIST_LOCAL_SHADOW)

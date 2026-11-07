@@ -535,6 +535,22 @@ fn is_nothing(v: &[f32; 3]) -> bool {
 /// reloaded; each beat that plays in this state, and each run of beats
 /// that repeat the same way as many times as they do.
 pub fn expand(spec: &ActionSpec, kind: GunKind, state: &GunState, spare: u32) -> Vec<Beat> {
+    expand_marked(spec, kind, state, spare).into_iter().map(|(beat, _)| beat).collect()
+}
+
+/// Where a beat played came from, as the Gun Editor's timeline shows it:
+/// its place in the action's beats, the place of the first beat of the run
+/// it repeats with, and which time round it is, of how many.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BeatMark {
+    pub index: usize,
+    pub run: usize,
+    pub round: u32,
+    pub rounds: u32,
+}
+
+/// The beats [`expand`] gives, each with where it came from.
+pub fn expand_marked(spec: &ActionSpec, kind: GunKind, state: &GunState, spare: u32) -> Vec<(Beat, BeatMark)> {
     if !spec.when.holds(kind, state, spare) {
         return Vec::new();
     }
@@ -543,8 +559,13 @@ pub fn expand(spec: &ActionSpec, kind: GunKind, state: &GunState, spare: u32) ->
     while start < spec.beats.len() {
         let repeat = spec.beats[start].repeat;
         let end = (start..spec.beats.len()).find(|&at| spec.beats[at].repeat != repeat).unwrap_or(spec.beats.len());
-        for _ in 0..repeat.count(kind, state, spare) {
-            beats.extend(spec.beats[start..end].iter().filter(|beat| beat.when.holds(kind, state, spare)));
+        let rounds = repeat.count(kind, state, spare);
+        for round in 0..rounds {
+            for (index, beat) in spec.beats.iter().enumerate().take(end).skip(start) {
+                if beat.when.holds(kind, state, spare) {
+                    beats.push((*beat, BeatMark { index, run: start, round, rounds }));
+                }
+            }
         }
         start = end;
     }

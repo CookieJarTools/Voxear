@@ -103,6 +103,8 @@ pub enum PickFor {
     InputControl,
     /// The icon of the action picked in the Input Actions window.
     ActionIcon,
+    /// The Gun Handling the Gun Editor opens.
+    GunEditorHandling,
 }
 
 /// What the picker is open for, and the field it opened from.

@@ -28,7 +28,7 @@ use voxear_core::math::{EulerRot, Mat4, Quat, Vec3};
 use voxear_ecs::World;
 
 use super::actions::{ActionKind, ActionSpec, Beat, BeatKey, When};
-use super::gun::{Gun, GunKind};
+use super::gun::{Gun, GunKind, Socket};
 use super::hands::Grip;
 use crate::content::Content;
 
@@ -79,6 +79,23 @@ pub struct Poses {
     pub return_pace: f32,
     /// On each pouch, left then right, in the body's space.
     pub pouches: [[f32; 3]; 2],
+    /// On where the hands hold at rest, on the grip and under the
+    /// fore-end, in the gun's space.
+    #[serde(skip_serializing_if = "Place::is_zero")]
+    pub grip: Place,
+    #[serde(skip_serializing_if = "Place::is_zero")]
+    pub support: Place,
+}
+
+impl Poses {
+    /// `gun` with its hands' sockets moved by these poses.
+    pub fn held(&self, gun: &Gun) -> Gun {
+        let moved = |socket: Socket, by: Place| {
+            let add = |a: [f32; 3], b: [f32; 3]| std::array::from_fn(|i| a[i] + b[i]);
+            Socket { position: add(socket.position, by.at), rotation: add(socket.rotation, by.turn) }
+        };
+        Gun { grip: moved(gun.grip, self.grip), support: moved(gun.support, self.support), ..gun.clone() }
+    }
 }
 
 impl Default for Poses {
@@ -93,6 +110,8 @@ impl Default for Poses {
             rest_support: None,
             return_pace: 1.0,
             pouches: [[0.0; 3]; 2],
+            grip: Place::default(),
+            support: Place::default(),
         }
     }
 }
@@ -374,6 +393,23 @@ mod tests {
             state.cycle();
         }
         (kind, state)
+    }
+
+    #[test]
+    fn the_hands_hold_where_the_poses_move_the_sockets_and_nowhere_else_moves() {
+        let gun = Gun::default();
+        let poses = Poses {
+            grip: Place { at: [0.0, 0.01, -0.02], turn: [0.0, 0.0, 5.0] },
+            support: Place { at: [0.0, 0.0, 0.05], turn: [0.0; 3] },
+            ..Poses::default()
+        };
+        let held = poses.held(&gun);
+        let moved = |a: [f32; 3], b: [f32; 3], by: Vec3| (Vec3::from(b) - Vec3::from(a)).abs_diff_eq(by, 1e-6);
+        assert!(moved(gun.grip.position, held.grip.position, Vec3::new(0.0, 0.01, -0.02)));
+        assert!(moved(gun.grip.rotation, held.grip.rotation, Vec3::new(0.0, 0.0, 5.0)));
+        assert!(moved(gun.support.position, held.support.position, Vec3::new(0.0, 0.0, 0.05)));
+        assert_eq!(Gun { grip: gun.grip, support: gun.support, ..held }, gun, "nothing else changes");
+        assert_eq!(Poses::default().held(&gun), gun);
     }
 
     #[test]

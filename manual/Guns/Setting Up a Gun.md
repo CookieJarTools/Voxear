@@ -25,9 +25,13 @@ A gun is a model with a **Gun** component on it. Put the gun's model in the char
 
 Sockets are places on the gun, in the model's own space. Select the gun and they show in the Scene view:
 
-- **Grip** and **Support**: where the shooting hand's wrist goes, and the other hand's. **Grip Turn** and **Support Turn** turn the hands there if they hold it at the wrong angle. On a long gun, the other hand slides back along the barrel when it can't reach the support.
+- **Grip** and **Support**: where the shooting hand's palm goes, and the other hand's. **Grip Turn** and **Support Turn** turn the hands there if they hold it at the wrong angle. On a long gun, the other hand slides back along the barrel when it can't reach the support.
 - **Rear Sight** and **Front Sight**: the line the gun is aimed along. **Eye Relief** is how far the eye is from the rear sight when aiming, and **Aim FOV** the field of view then.
 - **Muzzle**, where shots leave; **Feed**, where magazines, clips and rounds go in; and **Port**, where cases come out.
+
+## Handling
+
+**Handling** picks the gun's [[Gun Handling]]: its own poses and actions, worked on in [[The Gun Editor]] with **Open in Gun Editor** at the top of the Gun. With none, the gun is held and handled as its kind's built-ins have it.
 
 ## Parts
 

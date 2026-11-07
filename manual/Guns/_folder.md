@@ -11,3 +11,5 @@ Guns is a module: switch it on in **Project Settings** first (see [[Modules]]). 
 3. [[Firing and Recoil]]: shots, their spread, and how the view climbs and comes back
 4. [[Reloads and Checks]]: reloading, working the bolt, and looking at how much is left
 5. [[Guns over the Network]]: who decides what, in networked play
+6. [[Gun Handling]]: a gun's own poses and actions, kept in a file
+7. [[The Gun Editor]]: posing the hands and timing the actions with the gun held

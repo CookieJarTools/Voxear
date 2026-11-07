@@ -485,7 +485,8 @@ fn commands(playing: bool, modules: &Modules) -> Vec<Entry> {
             format!("new:{label}"),
         ));
     }
-    for (title, id) in PANELS {
+    let guns = modules.has(voxear_engine::modules::Module::Guns);
+    for (title, id) in PANELS.into_iter().chain(guns.then_some(("Gun Editor", "gun-editor"))) {
         commands.push(command(
             &format!("Show {title}"),
             "",

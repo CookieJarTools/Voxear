@@ -154,6 +154,8 @@ pub enum RowAction {
     /// after its last; or take the level at this place out.
     InsertLodLevel(usize),
     DeleteLodLevel(usize),
+    /// Open the Gun Editor on the Gun's handling, showing the Gun held.
+    OpenGunEditor,
     /// Move the Scene view to where it draws this LOD of the mesh.
     ViewLod(usize),
     /// Open Add Component's search under its button.
@@ -379,6 +381,8 @@ pub struct Inspector {
     /// and the camera they say it of.
     mesh_lods: Option<MeshLods>,
     group_lods: Option<GroupLods>,
+    /// The Gun section's button opening the Gun Editor.
+    gun_editor_button: Option<NodeId>,
     lod_eye: Option<LodEye>,
     /// The LOD bar's edge dragged this frame, for the Scene view to follow.
     lod_edge: Option<LodEdge>,
@@ -440,6 +444,7 @@ impl Inspector {
             also: Vec::new(),
             mesh_lods: None,
             group_lods: None,
+            gun_editor_button: None,
             lod_eye: None,
             lod_edge: None,
             lod_level: 0,
@@ -922,7 +927,7 @@ impl Inspector {
         self.inspected.clear();
         self.group_tabs.clear();
         self.group_foldouts.clear();
-        (self.mesh_lods, self.group_lods) = (None, None);
+        (self.mesh_lods, self.group_lods, self.gun_editor_button) = (None, None, None);
         let Some(entity) = self.shown else {
             let hint = ui.add_label(self.root, "Select an Obj in the Hierarchy to see it here.");
             ui.add_class(hint, "placeholder");
@@ -1031,6 +1036,14 @@ impl Inspector {
             {
                 self.lod_level = self.lod_level.min(group.levels.len().saturating_sub(1));
                 self.group_lods = Some(GroupLods::new(ui, rows, group, self.lod_level));
+            }
+            // A Gun opens in the Gun Editor, where its handling is worked on with it held.
+            if *part == Part::Gun {
+                let row = ui.panel(rows, Style::row());
+                ui.add_class(row, "prop");
+                let button = ui.button(row, "Open in Gun Editor");
+                ui.add_class(button, "gun-open");
+                self.gun_editor_button = Some(button);
             }
             let values = attributes::ordered(&self.types, values);
             let mut groups = attributes::Groups::new(rows);
@@ -1728,6 +1741,9 @@ impl Inspector {
         }
         if let Some(level) = self.mesh_lods.as_ref().and_then(|lods| lods.clicked(ui)) {
             return Some(RowAction::ViewLod(level));
+        }
+        if self.gun_editor_button.is_some_and(|button| ui.clicked(button)) {
+            return Some(RowAction::OpenGunEditor);
         }
         let at = ui.pointer_position().unwrap_or_default();
         let mut items: Vec<(MenuItem, Option<RowAction>)>;

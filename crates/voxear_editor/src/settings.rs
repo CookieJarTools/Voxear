@@ -476,6 +476,16 @@ impl Default for KeptSceneView {
     }
 }
 
+/// The Gun Editor as it was left: the Gun Handling it had open and the
+/// character holding it, by their paths, and its view, by index.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct KeptGunEditor {
+    pub handling: Option<String>,
+    pub character: Option<String>,
+    pub view: usize,
+}
+
 /// What the editor remembers of a project: its settings, the keys of what
 /// the palette ran, most recent first, and how its panels were laid out.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -497,6 +507,8 @@ pub struct Memory {
     /// How big the Project panel's tiles are, as its slider was left, from
     /// 0 for rows to 1; `None` for the starting size.
     pub tile_size: Option<f32>,
+    /// What the Gun Editor last worked on, and how it looked.
+    pub gun_editor: KeptGunEditor,
     /// Where it is kept, or `None` for an editor that remembers nothing.
     #[serde(skip)]
     path: Option<PathBuf>,

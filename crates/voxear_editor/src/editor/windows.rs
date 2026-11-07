@@ -93,12 +93,12 @@ impl Editor {
         if self.ui.clicked(windows) {
             let [x, y, width, height] = self.ui.rect(windows);
             let mut items: Vec<MenuItem> =
-                self.ui.dock_panels(dock).iter().map(|(_, title, open)| MenuItem::new(title).checked(*open)).collect();
+                self.listed_panels().iter().map(|(_, title, open)| MenuItem::new(title).checked(*open)).collect();
             items.extend([MenuItem::separator(), MenuItem::new("Reset Layout")]);
             self.ui.open_menu(windows, (x + width, y + height + 4.0), &items);
         }
         if let Some(choice) = self.ui.menu_choice(windows) {
-            match self.ui.dock_panels(dock).get(choice) {
+            match self.listed_panels().get(choice) {
                 // The game's own windows go for good, as closing them from their menu does.
                 Some((id, _, true)) if self.remove_script_window(&id.clone()) => {}
                 Some((id, _, true)) => self.ui.close_dock_panel(dock, id),
@@ -106,6 +106,15 @@ impl Editor {
                 None => self.reset_layout(),
             }
         }
+    }
+
+    /// The panels the Window menu lists: every one the dock has but those
+    /// of modules the project leaves out, unless open.
+    fn listed_panels(&mut self) -> Vec<(String, String, bool)> {
+        let guns = voxear_engine::modules::has(&self.game.engine.world, voxear_engine::modules::Module::Guns);
+        let mut panels = self.ui.dock_panels(self.nodes.dock);
+        panels.retain(|(id, _, open)| *open || guns || id != "gun-editor");
+        panels
     }
 
     /// A window's menu, from its options button or a context click on its
@@ -215,7 +224,7 @@ impl Editor {
     pub(super) fn open_panel(&mut self, id: &str) {
         match id {
             // Wide windows open over the Scene view.
-            "build" | "input" | "audio" | "localization" | "packages" => {
+            "build" | "input" | "audio" | "localization" | "packages" | "gun-editor" => {
                 self.ui.open_dock_panel_beside(self.nodes.dock, id, "scene")
             }
             _ => self.ui.open_dock_panel(self.nodes.dock, id),

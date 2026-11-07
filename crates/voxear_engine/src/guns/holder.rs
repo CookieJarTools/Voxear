@@ -329,6 +329,8 @@ pub fn hold(world: &mut World) {
         let preview = world.get::<HoldPreview>(entity).cloned();
         let handling = super::handling::handling_of(world, &gun);
         let poses = &handling.poses;
+        // The hands hold where the handling moves them to.
+        let gun = poses.held(&gun);
         // The gun is held before the view's eyes: the camera for this machine's player, their head for others.
         let Some(eye) = world.get::<crate::first_person::FirstPersonState>(entity).map(|state| state.eye) else {
             continue;
@@ -373,8 +375,10 @@ pub fn hold(world: &mut World) {
             mechanism = start.state(gun.kind, &mechanism);
             let played = ActionPlay::start(id, gun.kind, &handling, &mechanism, spare);
             state.play = played.map(|play| ActionPlay { quiet: true, ..play });
+            // Replayed every frame, so the rounds it loads come from spares of its own, not the holder's.
+            let mut spent = spare;
             let shown = state.play.as_mut().and_then(|play| {
-                scrub(world, play, (&gun, &mut mechanism, &mut spare), pouches, state.held.unwrap_or(eye), *t)
+                scrub(world, play, (&gun, &mut mechanism, &mut spent), pouches, state.held.unwrap_or(eye), *t)
             });
             if let Some((hand, angle)) = shown {
                 (aim, tilt) = (Some(hand), angle);
@@ -1355,6 +1359,8 @@ pub(super) mod tests {
         assert_eq!((rounds, acting), (4, None), "past its end it shows the gun reloaded, the hands back on it");
         let leftovers = scene.world.query_ref::<&super::super::leftovers::Leftover>().into_iter().count();
         assert_eq!(leftovers, 0, "a preview throws nothing away");
+        let spare = scene.world.get::<GunHolder>(scene.player).unwrap().spare;
+        assert_eq!(spare, GunHolder::default().spare, "nor spends the holder's rounds, however often it is shown");
     }
 
     #[test]

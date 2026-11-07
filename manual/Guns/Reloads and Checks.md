@@ -18,6 +18,8 @@ if (Input.Pressed("Reload"))
 
 `holder.Acting` says which action is under way. The gun doesn't fire during one.
 
+How each action goes, and actions of a gun's own such as an inspect, are set in its [[Gun Handling]].
+
 ## How much is left
 
 `gun.Rounds` is the truth. What the player knows is another matter:

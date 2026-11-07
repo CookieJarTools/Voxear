@@ -43,6 +43,8 @@ pub(super) enum Copied {
     MotionMatcher(Box<voxear_engine::animation::MotionMatcher>),
     BoneAttachment(Box<voxear_engine::animation::BoneAttachment>),
     FirstPersonView(Box<voxear_engine::first_person::FirstPersonView>),
+    Gun(Box<voxear_engine::guns::Gun>),
+    GunHolder(Box<voxear_engine::guns::GunHolder>),
     Ocean(Ocean),
     Pool(Pool),
     DryArea(DryArea),
@@ -80,6 +82,8 @@ impl Copied {
             Part::Mist => Self::Mist(*world.get::<voxear_render::Mist>(entity)?),
             Part::NetObject => Self::NetObject(*world.get::<voxear_engine::net::NetObject>(entity)?),
             Part::Animator => Self::Animator(world.get::<voxear_engine::animation::Animator>(entity)?.clone()),
+            Part::Gun => Self::Gun(Box::new(world.get::<voxear_engine::guns::Gun>(entity)?.clone())),
+            Part::GunHolder => Self::GunHolder(Box::new(world.get::<voxear_engine::guns::GunHolder>(entity)?.clone())),
             Part::FirstPersonView => {
                 Self::FirstPersonView(Box::new(world.get::<voxear_engine::first_person::FirstPersonView>(entity)?.clone()))
             }
@@ -120,6 +124,8 @@ impl Copied {
             Self::MotionMatcher(matcher) => drop(world.insert(entity, (**matcher).clone())),
             Self::BoneAttachment(attachment) => drop(world.insert(entity, (**attachment).clone())),
             Self::FirstPersonView(view) => drop(world.insert(entity, (**view).clone())),
+            Self::Gun(gun) => drop(world.insert(entity, (**gun).clone())),
+            Self::GunHolder(holder) => drop(world.insert(entity, (**holder).clone())),
             Self::Ocean(ocean) => drop(world.insert(entity, *ocean)),
             Self::Pool(pool) => drop(world.insert(entity, *pool)),
             Self::DryArea(dry) => drop(world.insert(entity, *dry)),

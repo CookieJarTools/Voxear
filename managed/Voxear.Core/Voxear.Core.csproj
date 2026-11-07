@@ -15,5 +15,6 @@
 		<InternalsVisibleTo Include="Voxear.ScriptInfo" />
 		<!-- The engine's optional modules, each an assembly of its own that games without it never reference. -->
 		<InternalsVisibleTo Include="Voxear.Networking" />
+		<InternalsVisibleTo Include="Voxear.Guns" />
 	</ItemGroup>
 </Project>

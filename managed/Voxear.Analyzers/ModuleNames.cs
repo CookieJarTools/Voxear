@@ -26,6 +26,11 @@ internal static class ModuleNames
 		["ClientRpcAttribute"] = "Networking",
 		["Predicted"] = "Networking",
 		["PredictedAttribute"] = "Networking",
+		["Gun"] = "Guns",
+		["AddGun"] = "Guns",
+		["GunHolder"] = "Guns",
+		["AddGunHolder"] = "Guns",
+		["GunKind"] = "Guns",
 	};
 
 	/// <summary>The module a name is part of, or null for a name no module gives.</summary>

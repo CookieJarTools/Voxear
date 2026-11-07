@@ -63,6 +63,15 @@
 	<ItemGroup Condition="'$(VoxearNetworking)' == 'true' and !Exists('$(MSBuildThisFileDirectory)Voxear.Core.dll')">
 		<ProjectReference Include="$(MSBuildThisFileDirectory)Voxear.Networking/Voxear.Networking.csproj" Private="false" GlobalPropertiesToRemove="OutputPath;IntermediateOutputPath" />
 	</ItemGroup>
+	<ItemGroup Condition="'$(VoxearGuns)' == 'true' and Exists('$(MSBuildThisFileDirectory)Voxear.Guns.dll')">
+		<Reference Include="Voxear.Guns">
+			<HintPath>$(MSBuildThisFileDirectory)Voxear.Guns.dll</HintPath>
+			<Private>false</Private>
+		</Reference>
+	</ItemGroup>
+	<ItemGroup Condition="'$(VoxearGuns)' == 'true' and !Exists('$(MSBuildThisFileDirectory)Voxear.Core.dll')">
+		<ProjectReference Include="$(MSBuildThisFileDirectory)Voxear.Guns/Voxear.Guns.csproj" Private="false" GlobalPropertiesToRemove="OutputPath;IntermediateOutputPath" />
+	</ItemGroup>
 	<ItemGroup Condition="!Exists('$(MSBuildThisFileDirectory)Voxear.Core.dll')">
 		<!-- A build's own output folder, which vox passes for the scripts alone, is not the engine's. -->
 		<ProjectReference Include="$(MSBuildThisFileDirectory)Voxear.Core/Voxear.Core.csproj" Private="false" GlobalPropertiesToRemove="OutputPath;IntermediateOutputPath" />

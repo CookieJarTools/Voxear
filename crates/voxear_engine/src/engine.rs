@@ -76,6 +76,7 @@ impl Engine {
         crate::mist::register();
         crate::cameras::register();
         crate::first_person::register();
+        crate::guns::register();
         crate::net::register();
         crate::animation::register();
         crate::animation::register_bone_attachments();

@@ -392,6 +392,8 @@ fn apply_instance(root: &mut ObjData, instance: &ObjData) {
     root.motion_matcher = instance.motion_matcher.clone().or(root.motion_matcher.clone());
     root.bone_attachment = instance.bone_attachment.clone().or(root.bone_attachment.clone());
     root.first_person = instance.first_person.clone().or(root.first_person.clone());
+    root.gun = instance.gun.clone().or(root.gun.clone());
+    root.gun_holder = instance.gun_holder.clone().or(root.gun_holder.clone());
     root.ocean = instance.ocean.or(root.ocean);
     root.pool = instance.pool.or(root.pool);
     if instance.dry_area.is_some() {
@@ -457,6 +459,8 @@ pub struct TemplateObj {
     pub motion_matcher: Option<crate::animation::MotionMatcher>,
     pub bone_attachment: Option<crate::animation::BoneAttachment>,
     pub first_person: Option<crate::first_person::FirstPersonView>,
+    pub gun: Option<crate::guns::Gun>,
+    pub gun_holder: Option<crate::guns::GunHolder>,
     pub ocean: Option<Ocean>,
     pub pool: Option<Pool>,
     pub dry_area: Option<DryArea>,
@@ -629,6 +633,12 @@ impl Template {
             }
             if let Some(view) = obj.first_person.clone() {
                 world.insert(entity, view);
+            }
+            if let Some(gun) = obj.gun.clone() {
+                world.insert(entity, gun);
+            }
+            if let Some(holder) = obj.gun_holder.clone() {
+                world.insert(entity, holder);
             }
             if let Some(ocean) = obj.ocean {
                 world.insert(entity, ocean);
@@ -958,6 +968,8 @@ pub(crate) fn resolve_obj(
         motion_matcher: data.motion_matcher.clone(),
         bone_attachment: data.bone_attachment.clone(),
         first_person: data.first_person.clone(),
+        gun: data.gun.clone(),
+        gun_holder: data.gun_holder.clone(),
         ocean: data.ocean,
         pool: data.pool,
         dry_area,

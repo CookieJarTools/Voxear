@@ -77,6 +77,7 @@ impl Module {
     pub fn assembly(self) -> Option<&'static str> {
         match self {
             Module::Networking => Some("Voxear.Networking"),
+            Module::Guns => Some("Voxear.Guns"),
             _ => None,
         }
     }

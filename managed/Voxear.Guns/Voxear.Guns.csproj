@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+	<!--
+		The Guns module: guns held, aimed, fired and reloaded in a character's own hands, with no animation clips. A
+		game's scripts reference it only when its project has the module, through Voxear.Scripts.props.
+	-->
+	<PropertyGroup>
+		<RootNamespace>Voxear</RootNamespace>
+		<OutputPath>$(VoxearRoot)target/managed/$(Configuration)/</OutputPath>
+		<GenerateDocumentationFile>true</GenerateDocumentationFile>
+		<NoWarn>$(NoWarn);CS1591</NoWarn>
+	</PropertyGroup>
+	<ItemGroup>
+		<ProjectReference Include="../Voxear.Core/Voxear.Core.csproj" Private="false" />
+	</ItemGroup>
+</Project>

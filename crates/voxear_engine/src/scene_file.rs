@@ -297,6 +297,11 @@ pub struct ObjData {
     /// A First-Person View, a camera in a character's own head.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub first_person: Option<crate::first_person::FirstPersonView>,
+    /// A Gun, and a Gun Holder holding one (the Guns module).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gun: Option<crate::guns::Gun>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gun_holder: Option<crate::guns::GunHolder>,
     /// An Ocean, the sea filling the level at the Obj's height.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ocean: Option<Ocean>,
@@ -379,6 +384,8 @@ impl ObjData {
             motion_matcher: None,
             bone_attachment: None,
             first_person: None,
+            gun: None,
+            gun_holder: None,
             ocean: None,
             pool: None,
             dry_area: None,
@@ -1335,6 +1342,12 @@ fn capture_instance(
     if root.first_person.is_some() && root.first_person != prefab_root.first_person {
         instance.first_person = root.first_person.clone();
     }
+    if root.gun.is_some() && root.gun != prefab_root.gun {
+        instance.gun = root.gun.clone();
+    }
+    if root.gun_holder.is_some() && root.gun_holder != prefab_root.gun_holder {
+        instance.gun_holder = root.gun_holder.clone();
+    }
     if root.ocean.is_some() && root.ocean != prefab_root.ocean {
         instance.ocean = root.ocean;
     }
@@ -1485,6 +1498,12 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     let matcher = actual.motion_matcher.as_ref().filter(|m| Some(*m) != expected.motion_matcher.as_ref());
     if let Some(matcher) = matcher {
         put("motion_matcher", whole(matcher, &crate::animation::MotionMatcher::default())?);
+    }
+    if let Some(gun) = actual.gun.as_ref().filter(|g| Some(*g) != expected.gun.as_ref()) {
+        put("gun", whole(gun, &crate::guns::Gun::default())?);
+    }
+    if let Some(holder) = actual.gun_holder.as_ref().filter(|h| Some(*h) != expected.gun_holder.as_ref()) {
+        put("gun_holder", whole(holder, &crate::guns::GunHolder::default())?);
     }
     let view = actual.first_person.as_ref().filter(|v| Some(*v) != expected.first_person.as_ref());
     if let Some(view) = view {
@@ -1745,6 +1764,8 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.motion_matcher = world.get::<crate::animation::MotionMatcher>(entity).cloned();
     obj.bone_attachment = world.get::<crate::animation::BoneAttachment>(entity).cloned();
     obj.first_person = world.get::<crate::first_person::FirstPersonView>(entity).cloned();
+    obj.gun = world.get::<crate::guns::Gun>(entity).cloned();
+    obj.gun_holder = world.get::<crate::guns::GunHolder>(entity).cloned();
     obj.ocean = world.get::<Ocean>(entity).copied();
     obj.pool = world.get::<Pool>(entity).copied();
     obj.dry_area = world.get::<DryArea>(entity).map(|area| DryAreaData::of(content, area));

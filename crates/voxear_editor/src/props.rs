@@ -8,6 +8,7 @@ use voxear_assets::AssetKind;
 use voxear_core::math::Vec3;
 use voxear_ecs::{Entity, World};
 use voxear_engine::first_person::FirstPersonView;
+use voxear_engine::guns::{Gun, GunHolder, GunKind};
 use voxear_engine::modules::Module;
 use voxear_engine::{
     EditBehaviours, Game, MaterialSource,
@@ -87,6 +88,8 @@ pub enum Part {
     MotionMatcher,
     BoneAttachment,
     FirstPersonView,
+    Gun,
+    GunHolder,
     Ocean,
     Pool,
     DryArea,
@@ -133,6 +136,8 @@ impl Part {
             Part::MotionMatcher => "motion_matcher".into(),
             Part::BoneAttachment => "bone_attachment".into(),
             Part::FirstPersonView => "first_person".into(),
+            Part::Gun => "gun".into(),
+            Part::GunHolder => "gun_holder".into(),
             Part::Ocean => "ocean".into(),
             Part::Pool => "pool".into(),
             Part::DryArea => "dry_area".into(),
@@ -152,6 +157,7 @@ impl Part {
     pub fn module(&self) -> Option<Module> {
         match self {
             Part::NetObject => Some(Module::Networking),
+            Part::Gun | Part::GunHolder => Some(Module::Guns),
             Part::Collider2D | Part::Rigidbody2D => Some(Module::Physics2D),
             Part::Seasons | Part::FoliageInteraction | Part::Foliage => Some(Module::Vegetation),
             Part::Ocean | Part::Pool | Part::DryArea | Part::Stream | Part::Buoyancy => Some(Module::Water),
@@ -185,6 +191,8 @@ impl Part {
             Part::MotionMatcher => "Motion Matcher",
             Part::BoneAttachment => "Bone Attachment",
             Part::FirstPersonView => "First-Person View",
+            Part::Gun => "Gun",
+            Part::GunHolder => "Gun Holder",
             Part::Ocean => "Ocean",
             Part::Pool => "Pool",
             Part::DryArea => "Dry Area",
@@ -224,6 +232,7 @@ impl Part {
             Part::MotionMatcher => "play",
             Part::BoneAttachment => "play",
             Part::FirstPersonView => "camera",
+            Part::Gun | Part::GunHolder => "crosshair",
             Part::Ocean => "globe",
             Part::Pool => "globe",
             Part::DryArea => "box",
@@ -373,6 +382,31 @@ pub enum Prop {
     ViewTurnObj,
     ViewLean,
     ViewHideHead,
+    /// A Gun's kind, weight, length, rate of fire and kick; its grip and
+    /// support sockets, sights and muzzle.
+    GunKind,
+    GunMass,
+    GunLength,
+    GunFireRate,
+    GunRecoil,
+    GunGripAt,
+    GunGripTurn,
+    GunSupportAt,
+    GunSupportTurn,
+    GunRearSight,
+    GunFrontSight,
+    GunEyeRelief,
+    GunAimFov,
+    GunMuzzle,
+    /// A Gun Holder's hip hold, how long aiming takes, how much it sways,
+    /// bobs and breathes, and whether it pulls back from walls.
+    HolderHip,
+    HolderHipTurn,
+    HolderAimTime,
+    HolderSway,
+    HolderBob,
+    HolderBreathing,
+    HolderWallCheck,
     /// An Ocean's weather, and for Custom weather its swell and wind; its
     /// crests, colours and foam.
     OceanWeather,
@@ -694,6 +728,27 @@ impl Prop {
             | Prop::ViewTurnObj
             | Prop::ViewLean
             | Prop::ViewHideHead => Part::FirstPersonView,
+            Prop::GunKind
+            | Prop::GunMass
+            | Prop::GunLength
+            | Prop::GunFireRate
+            | Prop::GunRecoil
+            | Prop::GunGripAt
+            | Prop::GunGripTurn
+            | Prop::GunSupportAt
+            | Prop::GunSupportTurn
+            | Prop::GunRearSight
+            | Prop::GunFrontSight
+            | Prop::GunEyeRelief
+            | Prop::GunAimFov
+            | Prop::GunMuzzle => Part::Gun,
+            Prop::HolderHip
+            | Prop::HolderHipTurn
+            | Prop::HolderAimTime
+            | Prop::HolderSway
+            | Prop::HolderBob
+            | Prop::HolderBreathing
+            | Prop::HolderWallCheck => Part::GunHolder,
             Prop::OceanWeather
             | Prop::OceanWindSource
             | Prop::OceanTransition
@@ -950,6 +1005,27 @@ impl Prop {
             Prop::ViewTurnObj => "turn_obj",
             Prop::ViewLean => "lean",
             Prop::ViewHideHead => "hide_head",
+            Prop::GunKind => "kind",
+            Prop::GunMass => "mass",
+            Prop::GunLength => "length",
+            Prop::GunFireRate => "fire_rate",
+            Prop::GunRecoil => "recoil",
+            Prop::GunGripAt => "grip.position",
+            Prop::GunGripTurn => "grip.rotation",
+            Prop::GunSupportAt => "support.position",
+            Prop::GunSupportTurn => "support.rotation",
+            Prop::GunRearSight => "rear_sight",
+            Prop::GunFrontSight => "front_sight",
+            Prop::GunEyeRelief => "eye_relief",
+            Prop::GunAimFov => "aim_fov",
+            Prop::GunMuzzle => "muzzle",
+            Prop::HolderHip => "hip",
+            Prop::HolderHipTurn => "hip_turn",
+            Prop::HolderAimTime => "aim_time",
+            Prop::HolderSway => "sway",
+            Prop::HolderBob => "bob",
+            Prop::HolderBreathing => "breathing",
+            Prop::HolderWallCheck => "wall_check",
             Prop::OceanWeather => "weather",
             Prop::OceanWindSource => "wind_source",
             Prop::OceanTransition => "transition",
@@ -1182,6 +1258,12 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     if world.has::<FirstPersonView>(entity) {
         parts.push(Part::FirstPersonView);
     }
+    if world.has::<Gun>(entity) {
+        parts.push(Part::Gun);
+    }
+    if world.has::<GunHolder>(entity) {
+        parts.push(Part::GunHolder);
+    }
     if world.has::<Ocean>(entity) {
         parts.push(Part::Ocean);
     }
@@ -1370,6 +1452,31 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             Prop::ViewTurnObj,
             Prop::ViewLean,
             Prop::ViewHideHead,
+        ],
+        Part::Gun => vec![
+            Prop::GunKind,
+            Prop::GunMass,
+            Prop::GunLength,
+            Prop::GunFireRate,
+            Prop::GunRecoil,
+            Prop::GunGripAt,
+            Prop::GunGripTurn,
+            Prop::GunSupportAt,
+            Prop::GunSupportTurn,
+            Prop::GunRearSight,
+            Prop::GunFrontSight,
+            Prop::GunEyeRelief,
+            Prop::GunAimFov,
+            Prop::GunMuzzle,
+        ],
+        Part::GunHolder => vec![
+            Prop::HolderHip,
+            Prop::HolderHipTurn,
+            Prop::HolderAimTime,
+            Prop::HolderSway,
+            Prop::HolderBob,
+            Prop::HolderBreathing,
+            Prop::HolderWallCheck,
         ],
         Part::ParticleSystem => {
             let shape = world.get::<ParticleSystem>(entity).map_or(EmitShape::Cone, |system| system.shape);
@@ -1717,6 +1824,27 @@ pub fn label(prop: &Prop) -> String {
         Prop::ViewTurnObj => "Turn Obj",
         Prop::ViewLean => "Lean",
         Prop::ViewHideHead => "Hide Head",
+        Prop::GunKind => "Kind",
+        Prop::GunMass => "Mass",
+        Prop::GunLength => "Length",
+        Prop::GunFireRate => "Fire Rate",
+        Prop::GunRecoil => "Recoil",
+        Prop::GunGripAt => "Grip",
+        Prop::GunGripTurn => "Grip Turn",
+        Prop::GunSupportAt => "Support",
+        Prop::GunSupportTurn => "Support Turn",
+        Prop::GunRearSight => "Rear Sight",
+        Prop::GunFrontSight => "Front Sight",
+        Prop::GunEyeRelief => "Eye Relief",
+        Prop::GunAimFov => "Aim FOV",
+        Prop::GunMuzzle => "Muzzle",
+        Prop::HolderHip => "Hip",
+        Prop::HolderHipTurn => "Hip Turn",
+        Prop::HolderAimTime => "Aim Time",
+        Prop::HolderSway => "Sway",
+        Prop::HolderBob => "Bob",
+        Prop::HolderBreathing => "Breathing",
+        Prop::HolderWallCheck => "Wall Check",
         Prop::OceanWeather => "Weather",
         Prop::OceanWindSource => "Wind Source",
         Prop::OceanTransition => "Transition",
@@ -2016,6 +2144,12 @@ pub fn add(
         Part::FirstPersonView => {
             world.insert(entity, FirstPersonView::default());
         }
+        Part::Gun => {
+            world.insert(entity, Gun::default());
+        }
+        Part::GunHolder => {
+            world.insert(entity, GunHolder::default());
+        }
         Part::Ocean => {
             world.insert(entity, Ocean::default());
         }
@@ -2099,6 +2233,13 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
         }
         Part::FirstPersonView => {
             world.remove::<FirstPersonView>(entity);
+        }
+        Part::Gun => {
+            world.remove::<Gun>(entity);
+        }
+        Part::GunHolder => {
+            world.remove::<GunHolder>(entity);
+            world.remove::<voxear_engine::guns::GunHolderState>(entity);
         }
         Part::ParticleSystem => {
             world.remove::<ParticleSystem>(entity);
@@ -2396,6 +2537,31 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::ViewTurnObj => Value::Toggle(world.get::<FirstPersonView>(entity)?.turn_obj),
         Prop::ViewLean => Value::Number(world.get::<FirstPersonView>(entity)?.lean),
         Prop::ViewHideHead => Value::Toggle(world.get::<FirstPersonView>(entity)?.hide_head),
+        Prop::GunKind => {
+            let kind = world.get::<Gun>(entity)?.kind;
+            let at = GunKind::ALL.iter().position(|k| *k == kind).unwrap_or(0);
+            Value::Choice(at, GunKind::ALL.iter().map(|k| k.title().to_string()).collect())
+        }
+        Prop::GunMass => Value::Number(world.get::<Gun>(entity)?.mass),
+        Prop::GunLength => Value::Number(world.get::<Gun>(entity)?.length),
+        Prop::GunFireRate => Value::Number(world.get::<Gun>(entity)?.fire_rate),
+        Prop::GunRecoil => Value::Number(world.get::<Gun>(entity)?.recoil),
+        Prop::GunGripAt => Value::Vector(world.get::<Gun>(entity)?.grip.position.to_vec()),
+        Prop::GunGripTurn => Value::Vector(world.get::<Gun>(entity)?.grip.rotation.to_vec()),
+        Prop::GunSupportAt => Value::Vector(world.get::<Gun>(entity)?.support.position.to_vec()),
+        Prop::GunSupportTurn => Value::Vector(world.get::<Gun>(entity)?.support.rotation.to_vec()),
+        Prop::GunRearSight => Value::Vector(world.get::<Gun>(entity)?.rear_sight.to_vec()),
+        Prop::GunFrontSight => Value::Vector(world.get::<Gun>(entity)?.front_sight.to_vec()),
+        Prop::GunEyeRelief => Value::Number(world.get::<Gun>(entity)?.eye_relief),
+        Prop::GunAimFov => Value::Number(world.get::<Gun>(entity)?.aim_fov),
+        Prop::GunMuzzle => Value::Vector(world.get::<Gun>(entity)?.muzzle.to_vec()),
+        Prop::HolderHip => Value::Vector(world.get::<GunHolder>(entity)?.hip.to_vec()),
+        Prop::HolderHipTurn => Value::Vector(world.get::<GunHolder>(entity)?.hip_turn.to_vec()),
+        Prop::HolderAimTime => Value::Number(world.get::<GunHolder>(entity)?.aim_time),
+        Prop::HolderSway => Value::Number(world.get::<GunHolder>(entity)?.sway),
+        Prop::HolderBob => Value::Number(world.get::<GunHolder>(entity)?.bob),
+        Prop::HolderBreathing => Value::Number(world.get::<GunHolder>(entity)?.breathing),
+        Prop::HolderWallCheck => Value::Toggle(world.get::<GunHolder>(entity)?.wall_check),
         Prop::MatcherMotionSet => {
             let set = &world.get::<voxear_engine::animation::MotionMatcher>(entity)?.motion_set;
             let guid = game.content.parse(set).ok().and_then(|reference| reference.guid());
@@ -3339,6 +3505,49 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         (Prop::ViewTurnObj, Value::Toggle(on)) => with(world, entity, |it: &mut FirstPersonView| it.turn_obj = on),
         (Prop::ViewLean, Value::Number(n)) => with(world, entity, |it: &mut FirstPersonView| it.lean = n.clamp(0.0, 1.0)),
         (Prop::ViewHideHead, Value::Toggle(on)) => with(world, entity, |it: &mut FirstPersonView| it.hide_head = on),
+        // A kind fills in its typical numbers and sockets.
+        (Prop::GunKind, Value::Choice(index, _)) => {
+            let kind = GunKind::ALL.get(index).copied().unwrap_or_default();
+            with(world, entity, |gun: &mut Gun| *gun = Gun::preset(kind))
+        }
+        (Prop::GunMass, Value::Number(n)) => with(world, entity, |gun: &mut Gun| gun.mass = n.max(0.1)),
+        (Prop::GunLength, Value::Number(n)) => with(world, entity, |gun: &mut Gun| gun.length = n.max(0.05)),
+        (Prop::GunFireRate, Value::Number(n)) => with(world, entity, |gun: &mut Gun| gun.fire_rate = n.max(1.0)),
+        (Prop::GunRecoil, Value::Number(n)) => with(world, entity, |gun: &mut Gun| gun.recoil = n.max(0.0)),
+        (Prop::GunEyeRelief, Value::Number(n)) => with(world, entity, |gun: &mut Gun| gun.eye_relief = n.max(0.0)),
+        (Prop::GunAimFov, Value::Number(n)) => with(world, entity, |gun: &mut Gun| gun.aim_fov = n.clamp(0.0, 120.0)),
+        (
+            Prop::GunGripAt
+            | Prop::GunGripTurn
+            | Prop::GunSupportAt
+            | Prop::GunSupportTurn
+            | Prop::GunRearSight
+            | Prop::GunFrontSight
+            | Prop::GunMuzzle,
+            Value::Vector(v),
+        ) if v.len() == 3 => {
+            let v = [v[0], v[1], v[2]];
+            with(world, entity, |gun: &mut Gun| match prop {
+                Prop::GunGripAt => gun.grip.position = v,
+                Prop::GunGripTurn => gun.grip.rotation = v,
+                Prop::GunSupportAt => gun.support.position = v,
+                Prop::GunSupportTurn => gun.support.rotation = v,
+                Prop::GunRearSight => gun.rear_sight = v,
+                Prop::GunFrontSight => gun.front_sight = v,
+                _ => gun.muzzle = v,
+            })
+        }
+        (Prop::HolderHip, Value::Vector(v)) if v.len() == 3 => {
+            with(world, entity, |holder: &mut GunHolder| holder.hip = [v[0], v[1], v[2]])
+        }
+        (Prop::HolderHipTurn, Value::Vector(v)) if v.len() == 3 => {
+            with(world, entity, |holder: &mut GunHolder| holder.hip_turn = [v[0], v[1], v[2]])
+        }
+        (Prop::HolderAimTime, Value::Number(n)) => with(world, entity, |h: &mut GunHolder| h.aim_time = n.max(0.02)),
+        (Prop::HolderSway, Value::Number(n)) => with(world, entity, |h: &mut GunHolder| h.sway = n.max(0.0)),
+        (Prop::HolderBob, Value::Number(n)) => with(world, entity, |h: &mut GunHolder| h.bob = n.max(0.0)),
+        (Prop::HolderBreathing, Value::Number(n)) => with(world, entity, |h: &mut GunHolder| h.breathing = n.max(0.0)),
+        (Prop::HolderWallCheck, Value::Toggle(on)) => with(world, entity, |h: &mut GunHolder| h.wall_check = on),
         (prop, value) if prop.part() == Part::MotionMatcher => {
             let set = |matcher: &mut voxear_engine::animation::MotionMatcher| set_matcher(matcher, prop, value);
             with(world, entity, set)

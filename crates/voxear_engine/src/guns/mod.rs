@@ -7,6 +7,9 @@
 pub mod gun;
 pub mod hands;
 pub mod holder;
+mod values;
+
+pub(crate) use values::register;
 
 pub use gun::{Gun, GunKind, HandRole, Socket};
 pub use holder::{GunHolder, GunHolderState};

@@ -90,6 +90,9 @@ pub struct GunHolderState {
     /// eases back to its hold from once an action ends.
     play: Option<ActionPlay>,
     tilt: Spring<Vec3>,
+    /// How far an action has brought the gun up from its hold to show its
+    /// works, 0 to 1.
+    working: Spring<f32>,
     returning: [Option<(Vec3, f32)>; 2],
     /// Where the gun was last frame, for finding the pouches on it.
     held: Option<Mat4>,
@@ -140,6 +143,7 @@ impl GunHolderState {
         Self {
             play: None,
             tilt: Spring::new(Vec3::ZERO, SpringFeel::new(2.4, 0.7, 0.0)),
+            working: Spring::new(0.0, SpringFeel::new(1.7, 0.78, 0.0)),
             returning: [None; 2],
             held: None,
             cycling: None,
@@ -347,9 +351,18 @@ pub fn hold(world: &mut World) {
             match advance(world, &mut play, &gun, &mut mechanism, &mut spare, pouches, throwing, delta) {
                 Some((hand, angle)) => {
                     (aim, tilt) = (Some(hand), angle);
+                    // The beats' knocks shake the gun, and the eyes glance down at what the hands are doing.
+                    let (spin, push) = std::mem::take(&mut play.knock);
+                    state.sway.kick(spin);
+                    state.lag.push(push, 0.03);
+                    let down = state.held.map_or(0.0, |held| glance_at(eye, held, &gun));
+                    crate::first_person::glance(world, entity, down);
                     state.play = Some(play);
                 }
                 None => {
+                    let (spin, push) = std::mem::take(&mut play.knock);
+                    state.sway.kick(spin);
+                    state.lag.push(push, 0.03);
                     for (hand, at) in play.hands.iter().enumerate() {
                         state.returning[hand] = at.map(|at| (at, 0.0));
                     }
@@ -427,7 +440,16 @@ fn place_gun(
     let reach = holder.hip[2] + gun.muzzle[2] + 0.1;
     let blocked = if holder.wall_check { wall(world, entity, eye, reach) } else { 0.0 };
     let wall = state.wall.update(blocked, delta).clamp(0.0, 1.0);
-    let aim = state.aim.update(if holder.aiming { 1.0 - wall } else { 0.0 }, delta).clamp(0.0, 1.0);
+    // An action other than working the bolt takes the gun down from the eye; working the bolt only half lifts it.
+    let acting = state.play.as_ref().map(|play| play.kind);
+    let busy = acting.is_some_and(|kind| kind != ActionKind::Cycle);
+    let aim = state.aim.update(if holder.aiming && !busy { 1.0 - wall } else { 0.0 }, delta).clamp(0.0, 1.0);
+    let lift = match acting {
+        None => 0.0,
+        Some(ActionKind::Cycle) => 0.4,
+        Some(_) => 1.0,
+    };
+    let working = state.working.update(lift * (1.0 - aim), delta).max(0.0);
 
     // At the hip, and up to the eye with the sights on the camera's line, blended; it dips a little on the way up.
     let [x, y, z] = holder.hip_turn.map(f32::to_radians);
@@ -447,6 +469,15 @@ fn place_gun(
     // Near a wall it comes back toward the body, and closer still lifts to high ready.
     at += Vec3::new(0.0, 0.06, -0.22) * wall;
     turn = Quat::from_rotation_x(-55f32.to_radians() * smooth((wall - 0.4) / 0.6)) * turn;
+
+    // An action brings the works up before the eyes, the muzzle tipped up and aside so the butt clears the
+    // chest, and tilts the gun toward the work about them.
+    let tilt = state.tilt.value * (std::f32::consts::PI / 180.0);
+    let worked = Quat::from_euler(EulerRot::ZYX, -tilt.x, tilt.y, -tilt.z);
+    let shown = Quat::from_euler(EulerRot::YXZ, -0.32 * working, -0.1 * working, 0.0);
+    let works = turn * shown * worked * gun.works();
+    at += (WORK_AT - works - at) * working;
+    turn = turn * shown * worked;
     at.z -= state.reach.value;
 
     // Each shot kicks the gun up and back about the grip, rolling it the other way each time.
@@ -520,15 +551,22 @@ fn place_gun(
         * (1.0 - 0.6 * aim);
     let tremor_turn = Quat::from_euler(EulerRot::XYZ, tremor.x, tremor.y, 0.0);
 
-    // An action tilts the gun toward the work: rolled, turned and tipped up toward the eye.
-    let tilt = state.tilt.value * (std::f32::consts::PI / 180.0);
-    let worked = Quat::from_euler(EulerRot::ZYX, tilt.x, tilt.y, -tilt.z);
-    at += Vec3::new(-0.03, 0.03, -0.05) * (state.tilt.value.length() / 30.0).min(1.0);
     let local = Mat4::from_rotation_translation(
-        bob_roll * sway_turn * tremor_turn * turn * worked,
+        bob_roll * sway_turn * tremor_turn * turn,
         at + lag + bob * 0.25 + Vec3::Y * breath,
     );
     eye * local
+}
+
+/// Where an action brings a gun's works, from the eyes: right, up and
+/// forward, in metres.
+const WORK_AT: Vec3 = Vec3::new(0.07, -0.2, 0.42);
+
+/// How far the eyes glance down to see a gun's works, held at `held`:
+/// enough to bring them well up from the bottom of the view.
+fn glance_at(eye: Mat4, held: Mat4, gun: &Gun) -> f32 {
+    let works = eye.inverse().transform_point3(held.transform_point3(gun.works()));
+    ((-works.y).atan2(works.z.max(0.05)) - 0.3).clamp(0.0, 0.3)
 }
 
 /// How far into a wall the gun held out `reach` from the eye would go, 0
@@ -687,13 +725,13 @@ fn hands_on(world: &mut World, body: Entity, gun: &Gun, held: Mat4, eye: Mat4, a
     };
     let (at, fingers, palm) = aims[1].map_or_else(|| place(&gun.grip, HandRole::Grip), working);
     let shoulder = edit.position(right.upper);
-    let short_right = reach_hand(&mut edit, right, at, shoulder + down * 0.6 + out * 0.5 + back * 0.2, 0.35);
+    let short_right = reach_hand(&mut edit, right, at, shoulder + down * 0.6 + out * 0.5 + back * 0.2, 0.15);
     aim_hand(&mut edit, right, fingers, palm);
     close(&mut edit, right, aims[1].map_or(Grip::TRIGGER, |aim| aim.grip));
     if let Some(aim) = aims[0] {
         let (at, fingers, palm) = working(aim);
         let shoulder = edit.position(left.upper);
-        reach_hand(&mut edit, left, at, shoulder + down * 0.7 - out * 0.4 + back * 0.1, 0.45);
+        reach_hand(&mut edit, left, at, shoulder + down * 0.7 - out * 0.4 + back * 0.1, 0.2);
         aim_hand(&mut edit, left, fingers, palm);
         close(&mut edit, left, aim.grip);
         world.insert(body, Pose { bones: edit.matrices().into() });
@@ -718,7 +756,7 @@ fn hands_on(world: &mut World, body: Entity, gun: &Gun, held: Mat4, eye: Mat4, a
         }
     });
     let at = at + back_along * slide.1;
-    reach_hand(&mut edit, left, at, shoulder + down * 0.7 - out * 0.4 + back * 0.1, 0.45);
+    reach_hand(&mut edit, left, at, shoulder + down * 0.7 - out * 0.4 + back * 0.1, 0.2);
     aim_hand(&mut edit, left, fingers, palm);
     close(&mut edit, left, Grip::SUPPORT);
     world.insert(body, Pose { bones: edit.matrices().into() });
@@ -1022,7 +1060,20 @@ mod acting {
         scene.world.get_mut::<GunHolder>(scene.player).unwrap().request = Some(ActionKind::Reload);
         step(&mut scene, &rest, &mut time);
         assert_eq!(scene.world.get::<GunHolderState>(scene.player).unwrap().acting(), Some(ActionKind::Reload));
-        for _ in 0..240 {
+        // The works come up before the eyes, which glance down at them: where the camera shows them, as a slope.
+        let shown = |scene: &Scene| {
+            let works = scene.world.get::<Gun>(scene.gun).unwrap().works();
+            let local = world_matrix(&scene.world, scene.camera).inverse() * world_matrix(&scene.world, scene.gun);
+            let works = local.transform_point3(works);
+            voxear_core::math::Vec2::new(works.x, works.y) / works.z
+        };
+        let held = shown(&scene);
+        for _ in 0..40 {
+            step(&mut scene, &rest, &mut time);
+        }
+        let working = shown(&scene);
+        assert!(working.y > held.y + 0.15 && working.length() < 0.45, "in view: {held} {working}");
+        for _ in 0..200 {
             step(&mut scene, &rest, &mut time);
         }
         let state = scene.world.get::<GunState>(scene.gun).unwrap();

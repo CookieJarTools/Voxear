@@ -108,7 +108,7 @@ pub fn two_bone(edit: &mut PoseEdit, [top, middle, end]: [usize; 3], target: Vec
 
 /// Puts a hand's wrist at `at` in the model's space, its elbow bending
 /// toward `pole`: the collarbone first takes `clavicle` of the turn toward
-/// it, up to 25 degrees, then the arm bends. Gives back how far short the
+/// it, up to 12 degrees, then the arm bends. Gives back how far short the
 /// hand fell.
 pub fn reach_hand(edit: &mut PoseEdit, arm: &Arm, at: Vec3, pole: Vec3, clavicle: f32) -> f32 {
     if let Some(collar) = arm.clavicle.filter(|_| clavicle > 0.0) {
@@ -116,7 +116,7 @@ pub fn reach_hand(edit: &mut PoseEdit, arm: &Arm, at: Vec3, pole: Vec3, clavicle
         let (now, wish) = ((edit.position(arm.upper) - from).normalize_or_zero(), (at - from).normalize_or_zero());
         let full = Quat::from_rotation_arc(now, wish);
         let (axis, angle) = full.to_axis_angle();
-        let share = (angle * clavicle.clamp(0.0, 1.0)).min(25f32.to_radians());
+        let share = (angle * clavicle.clamp(0.0, 1.0)).min(12f32.to_radians());
         if axis.is_finite() && share > 1e-4 {
             edit.turn(collar, Quat::from_axis_angle(axis, share));
         }

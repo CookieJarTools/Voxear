@@ -28,6 +28,9 @@ pub struct ActionPlay {
     /// Whether the magazine taken out was empty and dropped, so the hand
     /// goes to the pouch with nothing in it.
     pub dropped: bool,
+    /// Knocks the gun took as beats ended, for its holder to give it: a
+    /// spin of its sway, and a push of its lag, since last asked.
+    pub knock: (Vec3, Vec3),
 }
 
 /// What a beat throwing something away needs: the gun's place and turn in
@@ -43,7 +46,16 @@ pub struct Throwing {
 
 impl ActionPlay {
     pub fn new(kind: ActionKind, beats: Vec<Beat>) -> Self {
-        Self { kind, beats, index: 0, t: 0.0, from: None, hands: [None; 2], dropped: false }
+        Self {
+            kind,
+            beats,
+            index: 0,
+            t: 0.0,
+            from: None,
+            hands: [None; 2],
+            dropped: false,
+            knock: (Vec3::ZERO, Vec3::ZERO),
+        }
     }
 
     pub fn beat(&self) -> Option<&Beat> {
@@ -117,6 +129,7 @@ pub fn advance(
         let (chamber, rounds) = (state.chamber, state.rounds);
         apply(beat.then, gun.kind, state, spare);
         throw_away(world, play, &beat, gun, state, (chamber, rounds), throwing);
+        knock(play, &beat);
         play.t -= beat.length();
         play.index += 1;
         play.from = None;
@@ -187,6 +200,23 @@ fn carry(world: &mut World, state: &GunState, play: &ActionPlay, at: Vec3) {
             (transform.position, transform.rotation, transform.scale) = (position, rotation, scale);
         }
     }
+}
+
+/// The knock a beat gives the gun as it ends: a bolt slammed home or
+/// yanked back, a clip pressed down, a magazine seated, a cover slapped
+/// shut. Each is a spin (up, aside, roll) and a push along the gun.
+fn knock(play: &mut ActionPlay, beat: &Beat) {
+    use super::actions::Event;
+    let (spin, push) = match (beat.then, beat.name) {
+        (Event::Chamber, _) => (Vec3::new(-1.2, 0.3, 0.6), Vec3::new(0.0, 0.0, 0.05)),
+        (Event::Eject, _) => (Vec3::new(0.6, -0.2, -0.8), Vec3::new(0.01, 0.0, -0.06)),
+        (Event::AddRounds(_), "press") => (Vec3::new(1.4, 0.0, 0.0), Vec3::new(0.0, -0.06, 0.0)),
+        (Event::Load, _) => (Vec3::new(-1.6, 0.2, 0.0), Vec3::new(0.0, 0.07, 0.0)),
+        (_, "cover down") => (Vec3::new(1.8, 0.0, 0.0), Vec3::new(0.0, -0.06, 0.0)),
+        _ => return,
+    };
+    play.knock.0 += spin;
+    play.knock.1 += push;
 }
 
 /// Throws away what a beat that just ended leaves: a case ejected by hand,

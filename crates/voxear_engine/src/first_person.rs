@@ -94,10 +94,14 @@ pub struct FirstPersonState {
     /// A jolt to the camera's turn, as a shot's kick gives it, springing back:
     /// angles about its across, up and forward, in radians.
     punch: Spring<Vec3>,
+    /// How far the eyes glance down from where the view looks, toward what
+    /// the hands are doing, in radians, and how far they are asked to.
+    glance: Spring<f32>,
+    glance_goal: f32,
     started: bool,
-    /// Where the eyes are and look this frame, in the world: the camera's
-    /// place for the player's own view, and for anyone else's, what their
-    /// gun is held before.
+    /// Where the eyes are and look this frame, in the world, glances aside:
+    /// the camera's place for the player's own view, and for anyone else's,
+    /// what their gun is held before.
     pub eye: Mat4,
 }
 
@@ -106,9 +110,20 @@ impl FirstPersonState {
         Self {
             eyes: Spring::new(eyes, SpringFeel::halflife(0.06)),
             punch: Spring::new(Vec3::ZERO, SpringFeel::new(5.0, 0.55, 0.0)),
+            glance: Spring::new(0.0, SpringFeel::new(1.6, 0.9, 0.0)),
+            glance_goal: 0.0,
             started: false,
             eye: Mat4::IDENTITY,
         }
+    }
+}
+
+/// Has a view's eyes glance down by `angle` radians next frame, toward
+/// what its hands are doing, easing back once it is no longer asked to;
+/// where it aims is left as it was.
+pub fn glance(world: &mut World, entity: Entity, angle: f32) {
+    if let Some(state) = world.get_mut::<FirstPersonState>(entity) {
+        state.glance_goal = angle;
     }
 }
 
@@ -163,49 +178,13 @@ pub fn place(world: &mut World) {
     let views: Vec<(Entity, FirstPersonView)> =
         world.query_ref::<(Entity, &FirstPersonView)>().into_iter().map(|(e, v)| (e, v.clone())).collect();
     for (entity, view) in views {
-        let Some(body) = view.body.or_else(|| first_under(world, entity, |w, e| w.has::<ModelRenderer>(e))) else {
-            continue;
-        };
-        let Some(animation) = world.get::<ModelRenderer>(body).and_then(|model| model.animation.clone()) else {
-            continue;
-        };
-        let (Some(pose), Some(rig)) = (world.get::<Pose>(body).cloned(), Rig::find(&animation.skeleton)) else {
-            continue;
-        };
-        let mut edit = PoseEdit::new(&animation.skeleton, &pose.bones);
-        let placed = world_matrix(world, body);
-        let into_body = placed.inverse();
-        // The upper body turns to face where the view looks, though the legs, turning at their own pace, lag
-        // behind: the chest, its arms and what they hold stay with the eyes.
-        let up = into_body.transform_vector3(Vec3::Y).normalize_or_zero();
-        let looking = into_body.transform_vector3(view.rotation() * Vec3::Z);
-        let shoulders = edit.position(rig.arms[1].upper) - edit.position(rig.arms[0].upper);
-        let facing = shoulders.cross(up);
-        let flat = |v: Vec3| (v - up * v.dot(up)).normalize_or_zero();
-        let (facing, looking) = (flat(facing), flat(looking));
-        if facing != Vec3::ZERO && looking != Vec3::ZERO {
-            let behind = facing.cross(looking).dot(up).atan2(facing.dot(looking)) * view.twist.clamp(0.0, 1.0);
-            turn_spine(&mut edit, &rig.spine, Quat::from_axis_angle(up, behind.clamp(-MOST_TWIST, MOST_TWIST)));
-        }
-        // The upper body leans about the body's own across, so it bends forward and back.
-        let across = into_body.transform_vector3(view.rotation() * Vec3::X).normalize_or_zero();
-        let lean = (-view.pitch * view.lean.clamp(0.0, 1.0)).clamp(-MOST_LEAN, MOST_LEAN).to_radians();
-        if across != Vec3::ZERO {
-            turn_spine(&mut edit, &rig.spine, Quat::from_axis_angle(across, lean));
-        }
-        let head = edit.matrices()[rig.head];
-        let eyes_in_body = head.w_axis.truncate() + Vec3::from(view.eyes);
-        let mut bones = edit.matrices();
         // Only this machine's own player looks out of their head; anyone else's keeps it.
         let own = is_own(world, entity);
-        if view.hide_head && own {
-            bones = crate::animation::hidden(&animation.skeleton, rig.head, &bones);
-        }
-        world.insert(body, Pose { bones: bones.into() });
-
-        // The eyes follow the head on a spring from where the Obj is, so the head's bob is steadied.
+        // The eyes follow the head on a spring from where the Obj is, so the head's bob is steadied; a view with
+        // no body looks from the Obj itself.
         let obj = world_matrix(world, entity);
-        let eyes_now = obj.inverse().transform_point3(placed.transform_point3(eyes_in_body));
+        let eyes_now =
+            pose_body(world, entity, &view, own).map_or(Vec3::ZERO, |eyes| obj.inverse().transform_point3(eyes));
         let state = world.get::<FirstPersonState>(entity).copied();
         let mut state = state.unwrap_or_else(|| FirstPersonState::new(eyes_now));
         if !state.started {
@@ -216,7 +195,10 @@ pub fn place(world: &mut World) {
         let shown = steadied.lerp(eyes_now, view.bob.clamp(0.0, 1.0));
         let jolt = state.punch.update(Vec3::ZERO, delta);
         let jolt = Quat::from_euler(voxear_core::math::EulerRot::XYZ, jolt.x, jolt.y, jolt.z);
+        // A glance turns the camera alone: the gun stays where it is held, and the eyes look down at it.
+        let down = state.glance.update(std::mem::take(&mut state.glance_goal), delta);
         state.eye = Mat4::from_rotation_translation(view.rotation() * jolt, obj.transform_point3(shown));
+        let jolt = Quat::from_rotation_x(down) * jolt;
         world.insert(entity, state);
         if !own {
             continue;
@@ -229,6 +211,44 @@ pub fn place(world: &mut World) {
             set_world(world, camera, obj.transform_point3(shown), view.rotation() * jolt);
         }
     }
+}
+
+/// Turns a view's body's upper body toward where the view looks and leans
+/// it, hiding its head for this machine's own player, and gives back where
+/// its eyes are in the world; none for a view with no body.
+fn pose_body(world: &mut World, entity: Entity, view: &FirstPersonView, own: bool) -> Option<Vec3> {
+    let body = view.body.or_else(|| first_under(world, entity, |w, e| w.has::<ModelRenderer>(e)))?;
+    let animation = world.get::<ModelRenderer>(body).and_then(|model| model.animation.clone())?;
+    let (pose, rig) = (world.get::<Pose>(body).cloned()?, Rig::find(&animation.skeleton)?);
+    let mut edit = PoseEdit::new(&animation.skeleton, &pose.bones);
+    let placed = world_matrix(world, body);
+    let into_body = placed.inverse();
+    // The upper body turns to face where the view looks, though the legs, turning at their own pace, lag
+    // behind: the chest, its arms and what they hold stay with the eyes.
+    let up = into_body.transform_vector3(Vec3::Y).normalize_or_zero();
+    let looking = into_body.transform_vector3(view.rotation() * Vec3::Z);
+    let shoulders = edit.position(rig.arms[1].upper) - edit.position(rig.arms[0].upper);
+    let facing = shoulders.cross(up);
+    let flat = |v: Vec3| (v - up * v.dot(up)).normalize_or_zero();
+    let (facing, looking) = (flat(facing), flat(looking));
+    if facing != Vec3::ZERO && looking != Vec3::ZERO {
+        let behind = facing.cross(looking).dot(up).atan2(facing.dot(looking)) * view.twist.clamp(0.0, 1.0);
+        turn_spine(&mut edit, &rig.spine, Quat::from_axis_angle(up, behind.clamp(-MOST_TWIST, MOST_TWIST)));
+    }
+    // The upper body leans about the body's own across, so it bends forward and back.
+    let across = into_body.transform_vector3(view.rotation() * Vec3::X).normalize_or_zero();
+    let lean = (-view.pitch * view.lean.clamp(0.0, 1.0)).clamp(-MOST_LEAN, MOST_LEAN).to_radians();
+    if across != Vec3::ZERO {
+        turn_spine(&mut edit, &rig.spine, Quat::from_axis_angle(across, lean));
+    }
+    let head = edit.matrices()[rig.head];
+    let eyes_in_body = head.w_axis.truncate() + Vec3::from(view.eyes);
+    let mut bones = edit.matrices();
+    if view.hide_head && own {
+        bones = crate::animation::hidden(&animation.skeleton, rig.head, &bones);
+    }
+    world.insert(body, Pose { bones: bones.into() });
+    Some(placed.transform_point3(eyes_in_body))
 }
 
 // What `values` reads or writes, as `FirstPersonView` in Voxear.Core numbers them.

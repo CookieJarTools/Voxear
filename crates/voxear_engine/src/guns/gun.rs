@@ -168,7 +168,7 @@ impl Gun {
             eye_relief: relief,
             aim_fov: 55.0,
             muzzle: [0.0, 0.04, length - 0.12],
-            butt: [0.0, -0.03, -0.4],
+            butt: [0.0, -0.03, -0.36],
             feed: [0.0, 0.06, 0.12],
             port: [0.03, 0.05, 0.12],
         };
@@ -190,8 +190,8 @@ impl Gun {
             port: [0.015, 0.045, 0.07],
         };
         match kind {
-            GunKind::BoltActionRifle => rifle(3.9, 1.11, 15.0, 1.0, 0.42, 0.2, 0.24),
-            GunKind::SemiAutoRifle => rifle(4.3, 1.1, 40.0, 1.0, 0.4, -0.03, 0.08),
+            GunKind::BoltActionRifle => rifle(3.9, 1.11, 15.0, 1.0, 0.26, 0.2, 0.24),
+            GunKind::SemiAutoRifle => rifle(4.3, 1.1, 40.0, 1.0, 0.26, -0.03, 0.08),
             GunKind::OpenBoltSmg => Gun {
                 support: Socket::at([-0.03, -0.08, 0.16]),
                 feed: [0.0, -0.12, 0.12],
@@ -199,10 +199,16 @@ impl Gun {
             },
             GunKind::SlidePistol => handgun(1.1, 0.22, 120.0, 0.45),
             GunKind::TogglePistol => handgun(0.87, 0.22, 120.0, 0.35),
-            GunKind::BeltFedMg => rifle(11.6, 1.22, 1200.0, 0.9, 0.35, 0.05, 0.15),
-            GunKind::PumpShotgun => rifle(3.6, 1.0, 40.0, 1.3, 0.38, 0.1, 0.35),
+            GunKind::BeltFedMg => rifle(11.6, 1.22, 1200.0, 0.9, 0.3, 0.05, 0.15),
+            GunKind::PumpShotgun => rifle(3.6, 1.0, 40.0, 1.3, 0.3, 0.1, 0.35),
             GunKind::TopBreakRevolver => handgun(1.1, 0.28, 60.0, 0.6),
         }
+    }
+
+    /// Its works, which an action brings into view: between the feed and
+    /// the port.
+    pub fn works(&self) -> Vec3 {
+        (Vec3::from(self.feed) + Vec3::from(self.port)) * 0.5
     }
 
     /// The sights as a place and turn on the gun: at the rear sight, facing

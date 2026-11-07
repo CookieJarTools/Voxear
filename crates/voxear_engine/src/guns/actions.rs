@@ -80,7 +80,8 @@ pub struct Beat {
     pub drive: Option<(PartRole, f32, f32)>,
     /// A part the hand carries while the beat lasts, as a magazine out.
     pub carry: Option<PartRole>,
-    /// How the gun is held meanwhile: rolled, turned and tipped, degrees.
+    /// How the gun is held meanwhile, in degrees: rolled, its top to the
+    /// right; turned, its muzzle to the right; and tipped, its muzzle up.
     pub tilt: Vec3,
     pub grip: Grip,
     pub then: Event,

@@ -7065,3 +7065,30 @@ fn a_plant_picks_its_foliage_and_things_dropped_land_among_plants() {
     let landing = surface_at(&editor.game.engine.world, &renderer, &camera, on_plant).expect("somewhere to land");
     assert!(landing.y.abs() < 0.05, "on the ground among the plants, not on top of them: {landing}");
 }
+
+#[test]
+fn the_play_menu_button_fits_what_it_says_beside_step() {
+    let Some((mut renderer, mut editor)) = open() else { return };
+    let root = editor.ui.root();
+    let find = |ui: &Ui, name: &str| ui.find(root, name).unwrap();
+    for (play_as, players) in [(voxear_editor::PlayAs::Offline, 0), (voxear_editor::PlayAs::Server, 7)] {
+        editor.set_networked_play(play_as, players, voxear_editor::TestNetwork::Good);
+        frame(&mut editor, &mut renderer);
+        frame(&mut editor, &mut renderer);
+        let ui = &editor.ui;
+        let [step_x, _, step_w, _] = ui.rect(find(ui, "step"));
+        let [x, y, w, h] = ui.rect(find(ui, "multiplayer"));
+        let [label_x, label_y, label_w, label_h] = ui.rect(find(ui, "multiplayer-label"));
+        let label = ui.text(find(ui, "multiplayer-label"));
+        assert!(step_x + step_w <= x, "{label}: the button starts after Step");
+        assert!(
+            label_x >= x && label_x + label_w <= x + w && label_y >= y && label_y + label_h <= y + h,
+            "{label}: the button holds what it says"
+        );
+        let mut pills = Vec::new();
+        with_class(ui, root, "play", &mut pills);
+        let [pill_x, _, pill_w, _] = ui.rect(pills[0]);
+        assert!(x + w <= pill_x + pill_w, "{label}: the button sits in the pill");
+        shot(&mut renderer, &format!("play-menu-{players}.png"));
+    }
+}

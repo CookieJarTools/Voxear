@@ -254,7 +254,7 @@
     color: var(--vx-muted);
 }
 
-/* Play, pause and step in a pill; play is the accent. */
+/* Play, pause and step in a pill, with how Play plays beside them; play is the accent. */
 .play {
     flex-direction: row;
     align-items: center;
@@ -265,12 +265,12 @@
     border: 1px solid var(--vx-field-line);
 }
 
-.play > Button {
+.play > .icon-button {
     width: 28px;
     height: 22px;
 }
 
-.play Icon {
+.play > .icon-button > Icon {
     width: 11px;
     height: 11px;
 }
@@ -281,6 +281,28 @@
 
 .play-button:hover {
     color: var(--vx-accent-hover);
+}
+
+/* As wide as what it says, and quiet as the icons beside it. */
+.multiplayer-button {
+    height: 22px;
+    border-color: transparent;
+}
+
+.multiplayer-button:hover {
+    background-color: var(--vx-hover);
+    border-color: transparent;
+}
+
+.multiplayer-button > Icon {
+    width: 13px;
+    height: 13px;
+    color: var(--vx-muted);
+}
+
+.multiplayer-button > .layouts-arrow {
+    width: 12px;
+    height: 12px;
 }
 
 .topbar-right {

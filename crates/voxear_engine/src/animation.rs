@@ -1,32 +1,39 @@
-//! Animators: an Obj drawing a model made to animate plays one of the
-//! model's clips, posing the model's skinned parts (`voxear_render::Pose`).
+//! Animators: an Obj drawing a model made to animate plays a clip, from any
+//! model file whose skeleton names its bones as the model's does (see
+//! [`clips`] and [`retarget`]), posing the model's skinned parts
+//! (`voxear_render::Pose`).
 //! A change of clip never pops: the pose the Obj had and how it was moving
 //! are kept as an offset from the new clip's, which dies away over the
 //! blend time, as a spring settling (inertialization). With root motion,
 //! the clip's root bone's travel along the ground moves the Obj itself.
 
 mod bone_attachment;
+mod clips;
 mod motion_database;
 mod motion_matching;
+mod retarget;
 mod settling;
+
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use voxear_core::math::{Quat, Vec3};
 use voxear_ecs::{Component, Entity, World};
-use voxear_render::{BonePose, ModelAnimation, ModelRenderer, Pose};
+use voxear_render::{BonePose, Clip, ModelAnimation, ModelRenderer, Pose};
 use voxear_scene::{Destroying, Transform};
 
 pub use bone_attachment::{BoneAttachment, attach_to_bones, register as register_bone_attachments};
+pub use clips::{CLIP_PART, ClipSource, Clips, give_clips};
 pub use motion_database::MotionDatabase;
 pub use motion_matching::{MotionMatcher, MotionMatcherState, match_motion, register};
 use settling::Settling;
 
-/// Plays one of its Obj's model's clips.
+/// Plays a clip on its Obj's model.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Animator {
-    /// The clip it plays, by its name in the model; none holds the model at
-    /// rest.
+    /// The clip it plays, `Models/Walks.glb#clip:Walk_Loop`, or one of the
+    /// model's own by its name alone; none holds the model at rest.
     pub clip: String,
     /// How fast it plays: 1 as made, 2 twice as fast.
     pub speed: f32,
@@ -52,7 +59,8 @@ impl Default for Animator {
 /// still settling.
 #[derive(Clone, Debug, Default)]
 pub struct AnimatorState {
-    pub playing: Option<usize>,
+    /// The clip playing, as its reference names it.
+    pub playing: Option<String>,
     pub time: f32,
     shown: Vec<BonePose>,
     before: Vec<BonePose>,
@@ -64,7 +72,7 @@ impl Component for AnimatorState {}
 /// Plays every Animator `delta` seconds on, and poses its model, but for
 /// Objs a Motion Matcher animates.
 pub fn animate(world: &mut World, delta: f32) {
-    let animators: Vec<(Entity, Animator, std::sync::Arc<ModelAnimation>)> = world
+    let animators: Vec<(Entity, Animator, Arc<ModelAnimation>)> = world
         .query_ref::<(Entity, &Animator, &ModelRenderer)>()
         .without::<Destroying>()
         .without::<MotionMatcher>()
@@ -73,7 +81,8 @@ pub fn animate(world: &mut World, delta: f32) {
         .collect();
     for (entity, animator, animation) in animators {
         let mut state = world.get::<AnimatorState>(entity).cloned().unwrap_or_default();
-        let wanted = animation.clips.iter().position(|clip| clip.name == animator.clip);
+        let clip = clip_for(world, &animator.clip, &animation);
+        let wanted = clip.as_ref().map(|clip| (animator.clip.as_str(), clip.as_ref()));
         let travelled = step(&mut state, &animator, &animation, wanted, delta);
         if animator.root_motion && travelled != (Vec3::ZERO, 0.0) {
             if let Some(transform) = world.get_mut::<Transform>(entity) {
@@ -88,14 +97,28 @@ pub fn animate(world: &mut World, delta: f32) {
     }
 }
 
-/// Moves `state` on by `delta`, to `wanted` among the model's clips: its
+/// The clip a reference names, made to fit `model`'s skeleton: a clip
+/// asset the game resolved, or one of the model's own by its name alone.
+fn clip_for(world: &mut World, reference: &str, model: &Arc<ModelAnimation>) -> Option<Arc<Clip>> {
+    if reference.is_empty() {
+        return None;
+    }
+    if let Some(source) = world.resource::<Clips>().and_then(|clips| clips.get(reference)).cloned() {
+        return Some(retarget::fitted(world, &source, model));
+    }
+    let index = model.clips.iter().position(|clip| clip.name == reference)?;
+    let own = ClipSource { animation: model.clone(), index, settings: Default::default() };
+    Some(retarget::fitted(world, &own, model))
+}
+
+/// Moves `state` on by `delta`, to the `wanted` clip, by its reference: its
 /// new pose in `state.shown`, and with root motion, how far its root
 /// travelled along the ground in the model's space, and turned about Y.
 fn step(
     state: &mut AnimatorState,
     animator: &Animator,
     animation: &ModelAnimation,
-    wanted: Option<usize>,
+    wanted: Option<(&str, &Clip)>,
     delta: f32,
 ) -> (Vec3, f32) {
     let rest = animation.skeleton.rest();
@@ -104,22 +127,22 @@ fn step(
         state.before = rest.clone();
     }
     // A change of clip starts the new one, settling from where the old one was.
-    if wanted != state.playing {
+    if wanted.map(|(reference, _)| reference) != state.playing.as_deref() {
         let (mut target, mut target_before) = (rest.clone(), rest.clone());
-        if let Some(clip) = wanted.and_then(|w| animation.clips.get(w)) {
+        if let Some((_, clip)) = wanted {
             clip.sample(0.0, animator.looping, &mut target);
             clip.sample(-delta, animator.looping, &mut target_before);
         }
         let old = [state.shown.as_slice(), &state.before];
         state.settling = (animator.blend > 0.0 && delta > 0.0)
             .then(|| Settling::between(old, [&target, &target_before], delta, animator.blend * 0.5));
-        state.playing = wanted;
+        state.playing = wanted.map(|(reference, _)| reference.to_string());
         state.time = 0.0;
     }
     let root = root_bone(animation);
     let mut pose = rest.clone();
     let mut travelled = (Vec3::ZERO, 0.0);
-    if let Some(clip) = state.playing.and_then(|p| animation.clips.get(p)) {
+    if let Some((_, clip)) = wanted {
         let was = state.time;
         state.time += delta * animator.speed;
         clip.sample(state.time, animator.looping, &mut pose);
@@ -196,16 +219,16 @@ mod tests {
         let mut animator = Animator { clip: "Walk".into(), ..Animator::default() };
         let dt = 1.0 / 60.0;
         for _ in 0..30 {
-            step(&mut state, &animator, &animation, Some(1), dt);
+            step(&mut state, &animator, &animation, Some(("Walk", &animation.clips[1])), dt);
         }
         let before = state.shown[0].translation.z;
         assert!((before - 0.5).abs() < 0.02, "half way along: {before}");
         animator.clip = "Still".into();
-        step(&mut state, &animator, &animation, Some(0), dt);
+        step(&mut state, &animator, &animation, Some(("Still", &animation.clips[0])), dt);
         let after = state.shown[0].translation.z;
         assert!((after - before).abs() < 0.03, "no jump back to the start: {before} then {after}");
         for _ in 0..60 {
-            step(&mut state, &animator, &animation, Some(0), dt);
+            step(&mut state, &animator, &animation, Some(("Still", &animation.clips[0])), dt);
         }
         assert!(state.shown[0].translation.z.abs() < 0.01, "settled into the new clip");
     }
@@ -217,7 +240,7 @@ mod tests {
         let animator = Animator { clip: "Walk".into(), root_motion: true, blend: 0.0, ..Animator::default() };
         let mut travelled = Vec3::ZERO;
         for _ in 0..90 {
-            travelled += step(&mut state, &animator, &animation, Some(1), 1.0 / 60.0).0;
+            travelled += step(&mut state, &animator, &animation, Some(("Walk", &animation.clips[1])), 1.0 / 60.0).0;
         }
         assert!((travelled.z - 1.5).abs() < 0.03, "a metre and a half, round the loop: {travelled}");
         assert!(state.shown[0].translation.z.abs() < 1e-5, "the root stays over the Obj");

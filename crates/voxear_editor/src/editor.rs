@@ -21,6 +21,7 @@ mod lighting;
 mod level_edits;
 mod material_drops;
 mod material_shaders;
+mod model_clips;
 mod model_materials;
 mod model_parts;
 mod path_bakes;
@@ -871,6 +872,7 @@ impl Editor {
                 self.asset_action(action, renderer);
             }
             self.fill_model_materials(renderer);
+            self.fill_model_clips();
             let listening = self.game.audio.previewing().map(str::to_string);
             if let Some(view) = self.inspector.asset_view() {
                 view.show_listening(&mut self.ui, listening.as_deref());
@@ -1148,6 +1150,7 @@ impl Editor {
             AssetAction::SaveStrings { path, table, rebuild } => self.save_strings(&path, &table, rebuild),
             AssetAction::Notice(text) => self.notify(&text),
             AssetAction::Import(path, settings) => self.apply_import_settings(&path, &settings, renderer),
+            AssetAction::SaveClips(path, settings) => self.apply_clip_settings(&path, &settings),
             AssetAction::BrowseScene { level, at, anchor } => self.browse_level_scene(&level, at, anchor),
             AssetAction::DropScene { level, at, source } => self.drop_level_scene(&level, at, &source, renderer),
             AssetAction::BrowseStandsOn { level, anchor } => self.browse_stands_on(&level, anchor),

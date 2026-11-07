@@ -9,7 +9,7 @@ use voxear_core::math::Vec3;
 use voxear_ecs::{Entity, World};
 use voxear_engine::{
     EditBehaviours, Game, MaterialSource,
-    animation::BoneAttachment,
+    animation::{BoneAttachment, CLIP_PART},
     audio::{AudioBus, AudioListener, AudioSource, SoundOcclusion, SoundSpace},
     physics::{
         Acoustic, CharacterController, Collider, ColliderShape, Joint, JointType, Rigidbody, Vehicle, VehicleKind,
@@ -2266,13 +2266,7 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         | Prop::MistLinger
         | Prop::MistSeed => mist_value(world.get::<voxear_render::Mist>(entity)?, prop)?,
         Prop::AnimatorClip => {
-            // The model's clips, none first, holding it at rest.
-            let animator = world.get::<voxear_engine::animation::Animator>(entity)?;
-            let model = world.get::<voxear_render::ModelRenderer>(entity).and_then(|m| m.animation.clone());
-            let mut names = vec!["None".to_string()];
-            names.extend(model.iter().flat_map(|a| a.clips.iter().map(|clip| clip.name.clone())));
-            let index = names.iter().skip(1).position(|name| *name == animator.clip).map_or(0, |i| i + 1);
-            Value::Choice(index, names)
+            Value::Asset(clip_label(game, &world.get::<voxear_engine::animation::Animator>(entity)?.clip))
         }
         Prop::AnimatorSpeed => Value::Number(world.get::<voxear_engine::animation::Animator>(entity)?.speed),
         Prop::AnimatorLooping => Value::Toggle(world.get::<voxear_engine::animation::Animator>(entity)?.looping),
@@ -2621,6 +2615,17 @@ pub fn pick(
                 false => light.profile = texture,
             })
         }
+        (Prop::AnimatorClip, Pick::Asset(choice)) => {
+            let clip = match choice {
+                None => String::new(),
+                Some(choice) => match clip_reference(game, choice) {
+                    Some(reference) => reference,
+                    None => return false,
+                },
+            };
+            let set = |animator: &mut voxear_engine::animation::Animator| animator.clip = clip;
+            with(&mut game.engine.world, entity, set)
+        }
         (Prop::Sound, Pick::Asset(path)) => {
             let sound = match path {
                 None => None,
@@ -2830,6 +2835,11 @@ pub fn choices(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) ->
         Prop::Sound => {
             let kind = voxear_engine::script_types::FieldKind::Asset { asset: "Voxear.Sound".into() };
             return fields::asset_choices(game, &kind);
+        }
+        Prop::AnimatorClip => {
+            let mut found = vec![("None".to_string(), Pick::Asset(None))];
+            found.extend(model_clips(game));
+            return found;
         }
         Prop::LightCookie => return fields::assets_of(game, Some(AssetKind::Texture)),
         Prop::LightProfile => return fields::assets_of(game, Some(AssetKind::LightProfile)),
@@ -3173,11 +3183,6 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         }
         (prop, value) if prop.part() == Part::Smoke => {
             with(world, entity, |smoke: &mut voxear_render::Smoke| set_smoke(smoke, prop, value))
-        }
-        (Prop::AnimatorClip, Value::Choice(index, _)) => {
-            let model = world.get::<voxear_render::ModelRenderer>(entity).and_then(|m| m.animation.clone());
-            let name = index.checked_sub(1).and_then(|i| model?.clips.get(i).map(|clip| clip.name.clone()));
-            with(world, entity, |animator: &mut voxear_engine::animation::Animator| animator.clip = name.unwrap_or_default())
         }
         (Prop::AnimatorSpeed, Value::Number(n)) => {
             with(world, entity, |animator: &mut voxear_engine::animation::Animator| animator.speed = n.clamp(-10.0, 10.0))
@@ -3596,6 +3601,51 @@ fn material_assets(game: &Game) -> Vec<String> {
         game.content.db().entries().filter(|e| e.kind == AssetKind::Material).map(|e| e.path.clone()).collect();
     paths.sort();
     paths
+}
+
+/// Each clip of the project's model files that have been read, by its name,
+/// and each file not read yet whole, as a clip field picks from them.
+/// Listing them reads nothing, so a picker opens at once.
+fn model_clips(game: &Game) -> Vec<(String, Pick)> {
+    let db = game.content.db();
+    let models = db.entries().filter(|e| e.kind == AssetKind::Model);
+    let mut models: Vec<_> = models.map(|e| (e.path.clone(), e.guid)).collect();
+    models.sort();
+    let mut found = Vec::new();
+    for (path, guid) in models {
+        match game.content.known_clips(guid) {
+            Some(clips) => {
+                let reference = |clip: &String| format!("{path}#{CLIP_PART}{clip}");
+                found.extend(clips.iter().map(|clip| (clip.clone(), Pick::Asset(Some(reference(clip))))));
+            }
+            None => found.push((file_name(&path).to_string(), Pick::Asset(Some(path)))),
+        }
+    }
+    found
+}
+
+/// A clip picked, as the reference a clip field keeps: the file's GUID and
+/// the clip, `…#clip:Walk_Loop`. A file picked whole gives its first clip,
+/// reading it. `None` for a file without clips.
+fn clip_reference(game: &mut Game, choice: &str) -> Option<String> {
+    let reference = game.content.parse(choice).ok()?;
+    if reference.part().is_some() {
+        return Some(reference.to_string());
+    }
+    let guid = reference.guid()?;
+    let first = game.content.clip_file(guid)?.clips.first()?.name.clone();
+    Some(format!("{guid}#{CLIP_PART}{first}"))
+}
+
+/// A clip as a field shows it: its name, then its file, `Walk_Loop ·
+/// Walks.glb`; "None" for none.
+fn clip_label(game: &Game, reference: &str) -> String {
+    if reference.is_empty() {
+        return "None".into();
+    }
+    let Some((file, clip)) = reference.split_once(&format!("#{CLIP_PART}")) else { return reference.to_string() };
+    let path = game.content.parse(file).ok().and_then(|r| r.guid()).and_then(|guid| game.content.db().get(guid));
+    format!("{clip} · {}", file_name(path.map_or(file, |entry| entry.path.as_str())))
 }
 
 /// Each mesh of the project's models that is loaded, by the name its model

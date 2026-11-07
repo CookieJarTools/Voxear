@@ -160,6 +160,119 @@ impl MaterialRemap {
     }
 }
 
+/// How each of a model's clips moves and loops, where that should not be
+/// worked out from the clip itself: each by its name. In the model's
+/// `.meta`:
+///
+/// ```toml
+/// [clips.Walk_Loop]
+/// motion = "set"
+/// direction = 90.0
+/// speed = 1.4
+/// ```
+///
+/// A clip left out, or at the defaults, is worked out as it is.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ClipSettings(pub BTreeMap<String, ClipImport>);
+
+impl ClipSettings {
+    const TABLE: &str = "clips";
+
+    /// The settings in a `.meta` file's text, or none.
+    pub fn from_meta(text: &str) -> Self {
+        section(text, Self::TABLE)
+    }
+
+    /// The settings in the `.meta` file at `meta`, or none.
+    pub fn read_meta(meta: &Path) -> Self {
+        std::fs::read_to_string(meta).map(|text| Self::from_meta(&text)).unwrap_or_default()
+    }
+
+    /// Writes them into the `.meta` file at `meta`, leaving out clips at the
+    /// defaults, and the table when every clip is.
+    pub fn write_meta(&self, meta: &Path) -> Result<()> {
+        let set = self.0.iter().filter(|(_, clip)| **clip != ClipImport::default());
+        let kept = Self(set.map(|(name, clip)| (name.clone(), *clip)).collect());
+        write_section(meta, Self::TABLE, &kept, &Self::default())
+    }
+
+    /// A clip's settings, the defaults when it has none.
+    pub fn get(&self, clip: &str) -> ClipImport {
+        self.0.get(clip).copied().unwrap_or_default()
+    }
+}
+
+/// How a clip moves and loops.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ClipImport {
+    pub motion: ClipMotion,
+    /// With `motion` set: which way it goes, in degrees from ahead, right
+    /// positive, and how fast, in metres a second.
+    pub direction: f32,
+    pub speed: f32,
+    pub looping: ClipLoop,
+}
+
+impl Default for ClipImport {
+    fn default() -> Self {
+        Self { motion: ClipMotion::Auto, direction: 0.0, speed: 0.0, looping: ClipLoop::Auto }
+    }
+}
+
+/// Where a clip's movement along the ground comes from.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ClipMotion {
+    /// Its root bone's travel, or for a clip that stays in place, how fast
+    /// its planted foot slides back.
+    #[default]
+    Auto,
+    /// Its root bone's travel only.
+    Root,
+    /// How fast its planted foot slides back only.
+    Feet,
+    /// The direction and speed set with it.
+    Set,
+}
+
+impl ClipMotion {
+    pub const ALL: [Self; 4] = [Self::Auto, Self::Root, Self::Feet, Self::Set];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Auto => "Auto",
+            Self::Root => "From Root",
+            Self::Feet => "From Feet",
+            Self::Set => "Set",
+        }
+    }
+}
+
+/// Whether a clip plays round from its end to its start.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ClipLoop {
+    /// When it ends as it starts.
+    #[default]
+    Auto,
+    On,
+    Off,
+}
+
+impl ClipLoop {
+    pub const ALL: [Self; 3] = [Self::Auto, Self::On, Self::Off];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Auto => "Auto",
+            Self::On => "On",
+            Self::Off => "Off",
+        }
+    }
+}
+
 /// How a picture file (`.png` or `.jpg`) is imported, where it is used: as
 /// a texture a model reads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -465,6 +578,26 @@ mod tests {
         MaterialRemap::default().write(&model).unwrap();
         let text = std::fs::read_to_string(meta_path(&model)).unwrap();
         assert!(!text.contains("[materials]"), "{text}");
+    }
+
+    #[test]
+    fn a_models_clip_settings_are_written_by_clip_and_left_out_at_the_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let model = dir.path().join("Walks.glb");
+        std::fs::write(&model, "").unwrap();
+        let meta = meta_path(&model);
+        std::fs::write(&meta, "guid = \"abc\"\n").unwrap();
+        let set = ClipImport { motion: ClipMotion::Set, direction: 90.0, speed: 1.4, looping: ClipLoop::On };
+        let settings = ClipSettings([("Walk".to_string(), set), ("Idle".to_string(), ClipImport::default())].into());
+        settings.write_meta(&meta).unwrap();
+        let text = std::fs::read_to_string(&meta).unwrap();
+        assert!(text.contains("[clips.Walk]") && !text.contains("Idle"), "{text}");
+        let back = ClipSettings::read_meta(&meta);
+        assert_eq!(back.get("Walk"), set);
+        assert_eq!(back.get("Idle"), ClipImport::default(), "a clip left out has the defaults");
+
+        ClipSettings::default().write_meta(&meta).unwrap();
+        assert!(!std::fs::read_to_string(&meta).unwrap().contains("[clips"), "none left, the table goes");
     }
 
     #[test]

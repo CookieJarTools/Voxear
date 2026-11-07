@@ -504,6 +504,7 @@ impl Game {
         self.input.update(delta);
         self.models = ModelWork::for_renderer(renderer.as_deref());
         give_collider_meshes(&mut self.engine.world, &mut self.content);
+        crate::animation::give_clips(&mut self.engine.world, &mut self.content);
         {
             let renderer = renderer.as_deref_mut();
             let models = self.models;

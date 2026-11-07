@@ -462,9 +462,10 @@ fn stem(path: &str) -> &str {
     name.rsplit_once('.').map_or(name, |(stem, _)| stem)
 }
 
-/// A model's meshes and materials, as the Project panel shows them when the
-/// model is opened out: each mesh by the name the model gives it, then each
-/// material it uses, each with what a Mesh Renderer's field takes for it.
+/// A model's meshes, materials and clips, as the Project panel shows them
+/// when the model is opened out: each mesh by the name the model gives it,
+/// then each material it uses, then each clip, each with what a field takes
+/// for it.
 /// Nothing when the model cannot be read.
 pub fn model_parts(game: &mut Game, renderer: &mut Renderer, path: &str) -> Vec<AssetPart> {
     let Some(guid) = game.content.db().guid_of(path) else { return Vec::new() };
@@ -490,7 +491,13 @@ pub fn model_parts(game: &mut Game, renderer: &mut Renderer, path: &str) -> Vec<
         icon: "material",
         reference: Some(format!("{path}#{material}")),
     });
-    meshes.into_iter().chain(materials).collect()
+    let clips = game.content.model_animation(guid).map_or_else(Vec::new, |animation| {
+        let clip = |name: &String| {
+            AssetPart { name: name.clone(), icon: "play", reference: Some(format!("{path}#clip:{name}")) }
+        };
+        animation.clips.iter().map(|c| clip(&c.name)).collect()
+    });
+    meshes.into_iter().chain(materials).chain(clips).collect()
 }
 
 /// A part of a model, as placing it needs: its name, where the model puts

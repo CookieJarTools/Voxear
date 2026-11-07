@@ -8,7 +8,10 @@
 
 use std::path::Path;
 
-use voxear_assets::{ModelImport, Normals, SoundImport, SoundLoad, Tangents, TextureImport, Units, WindMasks};
+use voxear_assets::{
+    ClipImport, ClipLoop, ClipMotion, ClipSettings, ModelImport, Normals, SoundImport, SoundLoad, Tangents,
+    TextureImport, Units, WindMasks,
+};
 use voxear_ui::{NodeId, Style, Ui};
 
 use crate::inspector::{number, prop};
@@ -143,6 +146,104 @@ impl ModelFields {
             Some(Click::Revert) => self.show(ui, &self.applied.clone()),
             Some(Click::Apply) if shown != self.applied => {
                 self.applied = shown;
+                self.show(ui, &shown);
+                return Some(shown);
+            }
+            _ => self.enable(ui, &shown),
+        }
+        None
+    }
+}
+
+/// How each of a model's clips moves and loops, and the settings last
+/// applied: each clip by its name, its Motion, then the Direction and Speed
+/// that Set takes, and Loop.
+pub struct ClipFields {
+    applied: ClipSettings,
+    clips: Vec<(String, ClipRow)>,
+    buttons: Buttons,
+}
+
+/// One clip's fields.
+struct ClipRow {
+    motion: NodeId,
+    direction: NodeId,
+    speed: NodeId,
+    looping: NodeId,
+}
+
+impl ClipFields {
+    /// The fields for the clips named, showing `applied`.
+    pub fn build(ui: &mut Ui, rows: NodeId, names: &[String], applied: ClipSettings) -> Self {
+        let motions = ClipMotion::ALL.map(ClipMotion::label);
+        let loops = ClipLoop::ALL.map(ClipLoop::label);
+        let clips = names
+            .iter()
+            .map(|name| {
+                let row = ClipRow {
+                    motion: choice(ui, rows, name, &motions),
+                    direction: number_field(ui, rows, "Direction"),
+                    speed: number_field(ui, rows, "Speed"),
+                    looping: choice(ui, rows, "Loop", &loops),
+                };
+                (name.clone(), row)
+            })
+            .collect();
+        let fields = Self { applied: applied.clone(), clips, buttons: Buttons::new(ui, rows) };
+        fields.show(ui, &applied);
+        fields
+    }
+
+    fn show(&self, ui: &mut Ui, settings: &ClipSettings) {
+        for (name, row) in &self.clips {
+            let clip = settings.get(name);
+            let at = |all: &[ClipMotion], of: ClipMotion| all.iter().position(|&m| m == of).unwrap_or(0);
+            ui.set_selected_option(row.motion, at(&ClipMotion::ALL, clip.motion));
+            ui.set_text(row.direction, &number(clip.direction));
+            ui.set_text(row.speed, &number(clip.speed));
+            ui.set_selected_option(row.looping, ClipLoop::ALL.iter().position(|&l| l == clip.looping).unwrap_or(0));
+        }
+        self.enable(ui, settings);
+    }
+
+    /// The settings as the fields show them; a number that does not read
+    /// keeps the value applied.
+    fn shown(&self, ui: &Ui) -> ClipSettings {
+        let read = |field: NodeId, was: f32| {
+            ui.text(field).trim().parse::<f32>().ok().filter(|v| v.is_finite()).unwrap_or(was)
+        };
+        let clips = self.clips.iter().map(|(name, row)| {
+            let was = self.applied.get(name);
+            let clip = ClipImport {
+                motion: ClipMotion::ALL.get(ui.selected_option(row.motion)).copied().unwrap_or_default(),
+                direction: read(row.direction, was.direction).clamp(-360.0, 360.0),
+                speed: read(row.speed, was.speed).clamp(0.0, 50.0),
+                looping: ClipLoop::ALL.get(ui.selected_option(row.looping)).copied().unwrap_or_default(),
+            };
+            (name.clone(), clip)
+        });
+        ClipSettings(clips.collect())
+    }
+
+    /// Revert and Apply while the fields differ from what is applied;
+    /// Direction and Speed only for a clip whose motion is set.
+    fn enable(&self, ui: &mut Ui, shown: &ClipSettings) {
+        let differs = self.clips.iter().any(|(name, _)| shown.get(name) != self.applied.get(name));
+        self.buttons.enable(ui, differs);
+        for (name, row) in &self.clips {
+            let set = shown.get(name).motion == ClipMotion::Set;
+            ui.set_enabled(row.direction, set);
+            ui.set_enabled(row.speed, set);
+        }
+    }
+
+    /// The settings to apply, when Apply was clicked.
+    pub fn update(&mut self, ui: &mut Ui) -> Option<ClipSettings> {
+        let shown = self.shown(ui);
+        match self.buttons.clicked(ui) {
+            Some(Click::Revert) => self.show(ui, &self.applied.clone()),
+            Some(Click::Apply) => {
+                self.applied = shown.clone();
                 self.show(ui, &shown);
                 return Some(shown);
             }

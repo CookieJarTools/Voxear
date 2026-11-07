@@ -27,7 +27,8 @@ mod reference;
 pub use db::{AssetDb, AssetEntry, AssetKind, META_EXTENSION, ScanReport};
 pub use guid::AssetGuid;
 pub use import::{
-    BuildInclusion, MaterialRemap, ModelImport, Normals, SoundImport, SoundLoad, Tangents, TextureImport, Units, WindMasks, meta_path,
+    BuildInclusion, ClipImport, ClipLoop, ClipMotion, ClipSettings, MaterialRemap, ModelImport, Normals, SoundImport,
+    SoundLoad, Tangents, TextureImport, Units, WindMasks, meta_path,
 };
 pub use mount::{Access, Mount, Mounts, PACKAGES_FOLDER, PackageMount};
 pub use reader::{AssetReader, FolderReader};

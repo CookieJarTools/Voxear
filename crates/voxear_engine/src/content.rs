@@ -14,15 +14,15 @@ use std::{
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use voxear_assets::{
-    Access, AssetDb, AssetGuid, AssetKind, AssetReader, AssetRef, FolderReader, MaterialRemap, Mounts, SoundImport,
-    TextureImport,
+    Access, AssetDb, AssetGuid, AssetKind, AssetReader, AssetRef, ClipSettings, FolderReader, MaterialRemap, Mounts,
+    SoundImport, TextureImport,
     bundle::{BundleInfo, BundleReader, Catalog},
 };
 use voxear_core::math::{Quat, Vec3};
 use voxear_ecs::World;
 use voxear_render::{
     CookedModel, Glow, ImportedModel, Leaves, ImportedNode, MaterialDesc, MaterialHandle, MeshData, MeshHandle, MeshRenderer,
-    IesProfile, MeshTriangles, Primitive, Renderer, TextureId, TextureSource,
+    IesProfile, MeshTriangles, ModelAnimation, Primitive, Renderer, TextureId, TextureSource,
 };
 use voxear_scene::Destroying;
 
@@ -398,6 +398,13 @@ pub struct Content {
     material_sources: HashMap<MaterialHandle, MaterialSource>,
     /// Each loaded model's materials drawn with `.material` assets.
     remaps: HashMap<AssetGuid, MaterialRemap>,
+    /// Model files' skeletons, skins and clips read without the GPU, for
+    /// clips played from files not loaded to draw; `None` for one without.
+    clip_files: HashMap<AssetGuid, Option<Arc<ModelAnimation>>>,
+    /// Each clip file's clip settings, from its `.meta`.
+    clip_settings: HashMap<AssetGuid, ClipSettings>,
+    /// Goes up whenever a clip file or its settings change.
+    clips_version: u64,
     /// Pictures materials read, by GUID and whether they are read as sRGB.
     pictures: HashMap<(AssetGuid, bool), TextureId>,
     /// IES profiles uploaded for lights, by their assets.
@@ -542,6 +549,9 @@ impl Content {
             inline_materials: HashMap::new(),
             material_sources: HashMap::new(),
             remaps: HashMap::new(),
+            clip_files: HashMap::new(),
+            clip_settings: HashMap::new(),
+            clips_version: 0,
             pictures: HashMap::new(),
             light_profiles: HashMap::new(),
             shaders: crate::shaders::ShaderRegistry::default(),
@@ -842,6 +852,85 @@ impl Content {
         self.models.get(&guid)?.animation.clone()
     }
 
+    /// A model file's skeleton, skins and clips: the loaded model's, or read
+    /// without the GPU for one not loaded to draw. `None` for a file without
+    /// any, or not a model.
+    pub fn clip_file(&mut self, guid: AssetGuid) -> Option<Arc<ModelAnimation>> {
+        if let Some(model) = self.models.get(&guid) {
+            return model.animation.clone();
+        }
+        if let Some(found) = self.clip_files.get(&guid) {
+            return found.clone();
+        }
+        let found = self.read_clip_file(guid).unwrap_or_else(|error| {
+            tracing::warn!("no clips from {guid}: {error:#}");
+            None
+        });
+        self.clip_files.insert(guid, found.clone());
+        found
+    }
+
+    fn read_clip_file(&mut self, guid: AssetGuid) -> Result<Option<Arc<ModelAnimation>>> {
+        let entry = self.db.get(guid).with_context(|| format!("no asset with GUID {guid}"))?;
+        ensure!(entry.kind == AssetKind::Model, "{} is not a model", entry.path);
+        let path = entry.path.clone();
+        if self.cooked.contains(&guid) {
+            let cooked = CookedModel::from_bytes(&path, &self.read(&path)?)?;
+            return Ok(cooked.animation().cloned().map(Arc::new));
+        }
+        let reader = self.reader();
+        let model = voxear_render::prepare_model(&path, &mut |file| reader.read(file))?;
+        Ok(model.animation().cloned().map(Arc::new))
+    }
+
+    /// The clip a reference names, `Models/Walks.glb#clip:Walk_Loop`, with
+    /// the settings its file's `.meta` gives it.
+    pub fn clip(&mut self, reference: &AssetRef) -> Option<crate::animation::ClipSource> {
+        let name = reference.part()?.strip_prefix(crate::animation::CLIP_PART)?;
+        let guid = reference.guid()?;
+        let animation = self.clip_file(guid)?;
+        let index = animation.clips.iter().position(|clip| clip.name == name)?;
+        let settings = self.clip_settings_of(guid).get(name);
+        Some(crate::animation::ClipSource { animation, index, settings })
+    }
+
+    /// The names of a model file's clips, when they have been read: for one
+    /// loaded, or one a clip was played from. `None` for a file not read yet.
+    pub fn known_clips(&self, guid: AssetGuid) -> Option<Vec<String>> {
+        let animation = match self.models.get(&guid) {
+            Some(model) => model.animation.clone(),
+            None => self.clip_files.get(&guid)?.clone(),
+        };
+        let names = |animation: Arc<ModelAnimation>| animation.clips.iter().map(|clip| clip.name.clone()).collect();
+        Some(animation.map_or_else(Vec::new, names))
+    }
+
+    /// A clip file's clip settings, read from its `.meta` once.
+    pub fn clip_settings_of(&mut self, guid: AssetGuid) -> ClipSettings {
+        if let Some(settings) = self.clip_settings.get(&guid) {
+            return settings.clone();
+        }
+        let Some(path) = self.db.get(guid).map(|entry| entry.path.clone()) else { return ClipSettings::default() };
+        let meta = format!("{path}.{}", voxear_assets::META_EXTENSION);
+        let settings = self.read_text(&meta).map(|text| ClipSettings::from_meta(&text)).unwrap_or_default();
+        self.clip_settings.insert(guid, settings.clone());
+        settings
+    }
+
+    /// Forgets a clip file's clips and settings, read again when next asked
+    /// for, as after the file or its `.meta` changed.
+    pub fn forget_clips(&mut self, guid: AssetGuid) {
+        self.clip_files.remove(&guid);
+        self.clip_settings.remove(&guid);
+        self.clips_version += 1;
+    }
+
+    /// Goes up whenever a clip file or its settings change, so what holds
+    /// clips knows to ask for them again.
+    pub fn clips_version(&self) -> u64 {
+        self.clips_version
+    }
+
     /// Imports a loaded model again, as after its import settings or its
     /// file changed. With the same parts as before, it goes behind the
     /// handles its meshes and materials have, so whatever draws them shows
@@ -854,6 +943,7 @@ impl Content {
             return Ok(Reimported::default());
         }
         ensure!(!self.cooked.contains(&guid), "a model in built content cannot be imported again");
+        self.forget_clips(guid);
         let path = self.db.get(guid).with_context(|| format!("no asset with GUID {guid}"))?.path.clone();
         // Its colliders take the new triangles, under new keys, so their bodies are made again.
         self.triangles.retain(|reference, _| !matches!(reference, AssetRef::Asset { guid: of, .. } if *of == guid));

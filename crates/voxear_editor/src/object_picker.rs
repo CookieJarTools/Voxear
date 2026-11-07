@@ -448,6 +448,11 @@ pub fn decorate(game: &Game, choices: Vec<(String, Pick)>) -> Vec<Choice> {
                     ("shader", "Built in".into())
                 }
                 Pick::Asset(Some(reference)) if reference.starts_with("builtin:") => ("cube", "Built in".into()),
+                // A clip, beside the model file it is in.
+                Pick::Asset(Some(reference)) if reference.contains("#clip:") => {
+                    let model = reference.split_once('#').map_or("", |(model, _)| model);
+                    ("play", file_name(model).to_string())
+                }
                 // A part of a model, as a mesh, beside the model it is in.
                 Pick::Asset(Some(reference)) if reference.contains('#') => {
                     let model = reference.split_once('#').map_or("", |(model, _)| model);

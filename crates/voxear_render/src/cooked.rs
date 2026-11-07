@@ -149,6 +149,11 @@ impl PreparedModel {
 }
 
 impl CookedModel {
+    /// Its skeleton, skins and clips, for a model made to animate.
+    pub fn animation(&self) -> Option<&ModelAnimation> {
+        self.animation.as_ref()
+    }
+
     pub fn path(&self) -> &str {
         &self.path
     }

@@ -31,7 +31,7 @@
 
 use std::path::PathBuf;
 
-use voxear_assets::{AssetDb, AssetGuid, AssetKind, MaterialRemap};
+use voxear_assets::{AssetDb, AssetGuid, AssetKind, ClipSettings, MaterialRemap};
 use voxear_engine::{Game, MaterialData, MaterialMap, localization::StringTable, script_types::ScriptTypes};
 use voxear_render::{Glow, Leaves};
 use voxear_ui::{DragSource, NodeId, PickedColor, Style, Ui};
@@ -39,7 +39,7 @@ use voxear_ui::{DragSource, NodeId, PickedColor, Style, Ui};
 use crate::{
     collection,
     lighting_panel::{self, ColorClicked, LightingAction, LightingFields, LightingPanel},
-    import_fields::{ImportFields, ImportSettings},
+    import_fields::{ClipFields, ImportFields, ImportSettings},
     inspector::{color_row, number, prop},
     level_files::{self, LevelEdit},
     project_view::{ItemKind, ProjectItem},
@@ -70,6 +70,9 @@ pub enum AssetAction {
     /// Write these import settings for the asset at this path, and import
     /// it, and what reads it, again.
     Import(String, ImportSettings),
+    /// Write these clip settings for the model at this path, and play its
+    /// clips with them.
+    SaveClips(String, ClipSettings),
     /// Open the object picker under `anchor` for the scene at this place in
     /// the level at this path, or for a new one.
     BrowseScene {
@@ -160,6 +163,10 @@ pub struct AssetView {
     import: Option<ImportFields>,
     /// A model's materials, filled once the model is loaded.
     remaps: Option<ModelMaterials>,
+    /// A model's clips' settings, filled once its clips are read: the
+    /// section's rows, whether it is filled, and the fields when it has
+    /// clips.
+    clips: Option<(NodeId, bool, Option<ClipFields>)>,
     /// The preview's frame, which takes drags, and its image.
     preview: Option<(NodeId, NodeId)>,
     /// A sound's play button, and whether it shows that the sound plays.
@@ -329,6 +336,7 @@ impl AssetView {
             level: None,
             import: None,
             remaps: None,
+            clips: None,
             preview,
             listen: None,
             strings: None,
@@ -345,6 +353,7 @@ impl AssetView {
                 view.import = Some(ImportFields::model(ui, rows, &meta));
                 let rows = part(ui, root, "Materials", "material");
                 view.remaps = Some(ModelMaterials { rows, filled: false, parts: Vec::new(), extract: None });
+                view.clips = Some((part(ui, root, "Clips", "play"), false, None));
             }
             ItemKind::Asset(AssetKind::Texture) => {
                 let rows = part(ui, root, "Import Settings", "texture");
@@ -438,6 +447,7 @@ impl AssetView {
             level: None,
             import: None,
             remaps: None,
+            clips: None,
             preview: None,
             listen: None,
             strings: None,
@@ -490,6 +500,9 @@ impl AssetView {
         }
         if let Some(action) = self.remaps.as_ref().and_then(|remaps| remaps.update(ui, &self.item.path)) {
             return Some(action);
+        }
+        if let Some(settings) = self.clips.as_mut().and_then(|(_, _, fields)| fields.as_mut()?.update(ui)) {
+            return Some(AssetAction::SaveClips(self.item.path.clone(), settings));
         }
         if let Some(strings) = self.strings.as_mut() {
             let path = self.item.path.clone();
@@ -585,6 +598,21 @@ impl AssetView {
         // A height map shows how far it moves the surface.
         fields.show_what_applies(ui);
         Some(AssetAction::SaveMaterial(self.item.path.clone(), fields.data.clone()))
+    }
+
+    /// Whether a model is shown whose clips wait to be read.
+    pub fn wants_clips(&self) -> bool {
+        self.clips.as_ref().is_some_and(|(_, filled, _)| !filled)
+    }
+
+    /// Lists the model's clips, each with how it moves and loops.
+    pub fn fill_clips(&mut self, ui: &mut Ui, names: &[String], settings: ClipSettings) {
+        let Some((rows, filled, fields)) = self.clips.as_mut() else { return };
+        match names.is_empty() {
+            true => text_row(ui, *rows, "Clips", "None"),
+            false => *fields = Some(ClipFields::build(ui, *rows, names, settings)),
+        }
+        *filled = true;
     }
 
     /// Whether a model is shown whose materials wait for it to load.

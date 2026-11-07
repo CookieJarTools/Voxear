@@ -73,6 +73,8 @@ pub struct Report {
     pub profile: String,
     pub platform: String,
     pub development: bool,
+    /// For players or a dedicated server.
+    pub target: build_profile::Target,
     pub engine: String,
     pub version: Option<String>,
     pub commit: Option<String>,
@@ -84,6 +86,10 @@ pub struct Report {
     /// How the bundles were compressed.
     pub compression: Compression,
     pub bundles: Vec<BundleSize>,
+    /// What a server build left out, and the bytes of files that saved.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub stripped: Vec<String>,
+    pub stripped_bytes: u64,
     /// The size of everything in the build's folder, in bytes.
     pub size: u64,
     pub stages: Vec<StageTime>,
@@ -140,7 +146,8 @@ pub fn build(
     events(BuildEvent::Stage { stage: "scripts", index: 0 })?;
     let (code_roots, problems) = match project.scripts_project() {
         Some(_) => {
-            let place = ScriptsFor::Build { development: profile.development.enabled };
+            let server = profile.target == build_profile::Target::Server;
+            let place = ScriptsFor::Build { development: profile.development.enabled, server };
             let mut defines = scripts::built_in_defines(engine_version(), &platform, place);
             defines.extend(profile.scripting.defines.iter().cloned());
             let assembly =
@@ -193,6 +200,7 @@ pub fn build(
         start_level: start_level.clone(),
         scripts: assembly,
         development: profile.development.enabled,
+        server: profile.target == build_profile::Target::Server,
         validation_layers: profile.development.validation_layers,
         fullscreen: profile.player.window == "fullscreen",
         width: profile.player.width,
@@ -216,6 +224,7 @@ pub fn build(
         profile: name.to_string(),
         platform,
         development: profile.development.enabled,
+        target: profile.target,
         engine: engine_version().to_string(),
         version: profile.version.version.clone(),
         commit,
@@ -228,6 +237,8 @@ pub fn build(
             .iter()
             .map(|b| BundleSize { file: b.file.clone(), size: b.size, roots: b.roots.clone(), assets: b.assets.len() })
             .collect(),
+        stripped: content.stripped.clone(),
+        stripped_bytes: content.stripped_bytes,
         size: folder_size(&output),
         stages,
         seconds: seconds(started),
@@ -274,6 +285,7 @@ fn content_settings(
         merge_below_kb: own.merge_below_kb,
         split_above_mb: own.split_above_mb,
         compression: profile.content.compression.unwrap_or(own.compression),
+        server: profile.target == build_profile::Target::Server,
     };
     let (db, _) = AssetDb::scan(&project.root)?;
     let start = db.guid_of(start_level).or_else(|| start_level.parse().ok()).and_then(|guid| db.get(guid));

@@ -892,11 +892,20 @@ impl ScriptServices for GameServices<'_> {
 /// makes its shape from, and takes them from one that has none now.
 fn give_collider_meshes(world: &mut World, content: &mut Content) {
     let meshes = world.query_ref::<(Entity, &Collider, &MeshRenderer)>().without::<Destroying>().into_iter();
-    let wanted: Vec<(Entity, MeshHandle)> =
-        meshes.filter(|(_, collider, _)| collider.shape == ColliderShape::Mesh).map(|(e, _, r)| (e, r.mesh)).collect();
-    for &(entity, mesh) in &wanted {
+    let drawn = meshes.filter(|(_, collider, _)| collider.shape == ColliderShape::Mesh).map(|(e, _, r)| (e, Ok(r.mesh)));
+    // Where nothing draws the mesh, as on a server, by the mesh it names.
+    let named = world.query_ref::<(Entity, &Collider, &crate::prefab::ColliderMeshSource)>().without::<Destroying>();
+    let named = named.into_iter().filter(|(_, collider, _)| collider.shape == ColliderShape::Mesh);
+    let wanted: Vec<(Entity, Result<MeshHandle, voxear_assets::AssetRef>)> =
+        drawn.chain(named.map(|(e, _, source)| (e, Err(source.0.clone())))).collect();
+    for (entity, mesh) in &wanted {
+        let entity = *entity;
         let given = world.get::<ColliderMesh>(entity).map(|given| given.key);
-        match content.triangles(mesh) {
+        let triangles = match mesh {
+            Ok(mesh) => content.triangles(*mesh),
+            Err(reference) => content.triangles_of(reference),
+        };
+        match triangles {
             Some(triangles) if given != Some(triangles.key) => drop(world.insert(entity, triangles)),
             None if given.is_some() => drop(world.remove::<ColliderMesh>(entity)),
             _ => {}

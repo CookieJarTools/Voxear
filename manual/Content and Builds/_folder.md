@@ -6,5 +6,6 @@ Your project's files are not shipped to players as they are. A build packs them 
 
 1. [[What Goes into a Build]]
 2. [[Loading and Memory]]
+3. [[Server Builds]]
 
 To make a build, see [[Making a Build]].

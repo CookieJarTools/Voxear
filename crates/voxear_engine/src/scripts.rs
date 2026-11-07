@@ -53,8 +53,9 @@ pub fn build(project: &Project) -> Result<()> {
 pub enum ScriptsFor {
     /// From the project, in the editor or `vox run`.
     Editor,
-    /// In a build: a development one, or one for players.
-    Build { development: bool },
+    /// In a build: a development one or one to ship, for players or for a
+    /// dedicated server.
+    Build { development: bool, server: bool },
 }
 
 /// The symbols every build of the scripts gets for C#'s `#if`, as Unity's
@@ -66,7 +67,9 @@ pub enum ScriptsFor {
 ///   the like for each major version from 1;
 /// - the platform they run on, `VOXEAR_LINUX` or `VOXEAR_WINDOWS`;
 /// - `VOXEAR_EDITOR` when they run from the project, in the editor or `vox
-///   run`, and `VOXEAR_DEVELOPMENT` in a development build.
+///   run`, and `VOXEAR_DEVELOPMENT` in a development build;
+/// - `VOXEAR_SERVER` in a dedicated server's build, so code only players
+///   need can be left out of it with `#if !VOXEAR_SERVER`.
 pub fn built_in_defines(version: &str, platform: &str, place: ScriptsFor) -> Vec<String> {
     let mut defines = vec!["VOXEAR".to_string()];
     let mut numbers = version.split(['.', '-', '+']).map(|part| part.parse::<u32>().ok());
@@ -83,8 +86,14 @@ pub fn built_in_defines(version: &str, platform: &str, place: ScriptsFor) -> Vec
     }
     match place {
         ScriptsFor::Editor => defines.push("VOXEAR_EDITOR".into()),
-        ScriptsFor::Build { development: true } => defines.push("VOXEAR_DEVELOPMENT".into()),
-        ScriptsFor::Build { development: false } => {}
+        ScriptsFor::Build { development, server } => {
+            if development {
+                defines.push("VOXEAR_DEVELOPMENT".into());
+            }
+            if server {
+                defines.push("VOXEAR_SERVER".into());
+            }
+        }
     }
     defines
 }
@@ -340,7 +349,7 @@ mod defines {
                 "VOXEAR_EDITOR"
             ]
         );
-        let release = built_in_defines("1.2.0", "windows-x64", ScriptsFor::Build { development: false });
+        let release = built_in_defines("1.2.0", "windows-x64", ScriptsFor::Build { development: false, server: false });
         assert_eq!(
             release,
             [
@@ -353,11 +362,15 @@ mod defines {
                 "VOXEAR_WINDOWS"
             ]
         );
-        let development = built_in_defines("0.1.0", "linux-x64", ScriptsFor::Build { development: true });
+        let development =
+            built_in_defines("0.1.0", "linux-x64", ScriptsFor::Build { development: true, server: false });
         assert!(
             development.contains(&"VOXEAR_DEVELOPMENT".to_string())
                 && !development.contains(&"VOXEAR_EDITOR".to_string())
+                && !development.contains(&"VOXEAR_SERVER".to_string())
         );
+        let server = built_in_defines("0.1.0", "linux-x64", ScriptsFor::Build { development: false, server: true });
+        assert!(server.contains(&"VOXEAR_SERVER".to_string()));
     }
 }
 

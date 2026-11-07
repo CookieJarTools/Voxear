@@ -220,6 +220,35 @@ impl TextureImport {
     }
 }
 
+/// Which builds take an asset beyond those that would anyway: a server
+/// build leaves out what only shows or sounds, such as pictures, materials
+/// and sounds, unless the asset says it is needed there, as a sound file a
+/// server reads the length of.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BuildInclusion {
+    /// Kept whole in server builds.
+    pub server: bool,
+}
+
+impl BuildInclusion {
+    const TABLE: &str = "build";
+
+    pub fn from_meta(text: &str) -> Self {
+        section(text, Self::TABLE)
+    }
+
+    /// The settings in the `.meta` file at `meta`, or the defaults.
+    pub fn read_meta(meta: &Path) -> Self {
+        std::fs::read_to_string(meta).map(|text| Self::from_meta(&text)).unwrap_or_default()
+    }
+
+    /// Writes them into the `.meta` file at `meta`, keeping the rest of it.
+    pub fn write_meta(&self, meta: &Path) -> Result<()> {
+        write_section(meta, Self::TABLE, self, &Self::default())
+    }
+}
+
 /// How a sound file (`.wav`, `.ogg`, `.flac` or `.mp3`) is imported.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]

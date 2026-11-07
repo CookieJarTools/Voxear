@@ -16,7 +16,7 @@ The build runs in a program of its own, so the editor stays usable while it work
 
 ## Build profiles
 
-A profile is a set of choices for one kind of build. New projects come with four, kept in `Settings/BuildProfiles/`:
+A profile is a set of choices for one kind of build. New projects come with six, kept in `Settings/BuildProfiles/`:
 
 | Profile | What it is for |
 | --- | --- |
@@ -24,6 +24,8 @@ A profile is a set of choices for one kind of build. New projects come with four
 | Linux Development | Testing: adds a stats overlay on F1, debug views and a free camera |
 | Windows Release | The game as players get it |
 | Windows Development | Testing, as above |
+| Linux Server | A dedicated server: no window or sound (see [[Server Builds]]) |
+| Windows Server | A dedicated server, as above |
 
 Select a profile to change it: the platform, which levels go in and which one starts, the product name, company and version, whether the game starts in a window or full screen, and where the build goes.
 

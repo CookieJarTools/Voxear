@@ -36,6 +36,20 @@ pub struct Catalog {
     pub bundles: Vec<BundleInfo>,
     #[serde(default, rename = "asset")]
     pub assets: Vec<CatalogAsset>,
+    /// Assets a server build leaves out, still listed so references to
+    /// them resolve, and the server knows to go without them.
+    #[serde(default, rename = "stripped", skip_serializing_if = "Vec::is_empty")]
+    pub stripped: Vec<StrippedAsset>,
+}
+
+/// An asset a server build left out: what it was, but none of its bytes.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct StrippedAsset {
+    pub guid: String,
+    pub path: String,
+    pub kind: AssetKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -131,15 +145,22 @@ impl Catalog {
     }
 
     /// The assets as database entries, so references resolve by path or GUID
-    /// as they do in a project.
+    /// as they do in a project: those left out of a server build too.
     pub fn entries(&self) -> Result<Vec<AssetEntry>> {
-        self.assets
-            .iter()
-            .map(|a| {
-                let mount = a.package.clone().map_or(Mount::Project, Mount::Package);
-                Ok(AssetEntry { guid: a.guid.parse::<AssetGuid>()?, path: a.path.clone(), kind: a.kind, mount })
+        let shipped = self.assets.iter().map(|a| (&a.guid, &a.path, a.kind, &a.package));
+        let stripped = self.stripped.iter().map(|a| (&a.guid, &a.path, a.kind, &a.package));
+        shipped
+            .chain(stripped)
+            .map(|(guid, path, kind, package)| {
+                let mount = package.clone().map_or(Mount::Project, Mount::Package);
+                Ok(AssetEntry { guid: guid.parse::<AssetGuid>()?, path: path.clone(), kind, mount })
             })
             .collect()
+    }
+
+    /// The assets a server build left out.
+    pub fn stripped_guids(&self) -> Result<Vec<AssetGuid>> {
+        self.stripped.iter().map(|a| a.guid.parse::<AssetGuid>()).collect()
     }
 }
 
@@ -337,7 +358,7 @@ mod tests {
                 package: None,
             };
             // Through the catalog's own text, as a player reads it.
-            Catalog { format: CATALOG_FORMAT, bundles: vec![bundle], assets: vec![asset] }.write(dir.path()).unwrap();
+            Catalog { format: CATALOG_FORMAT, bundles: vec![bundle], assets: vec![asset], ..Catalog::default() }.write(dir.path()).unwrap();
             let mut reader = BundleReader::new(dir.path(), &Catalog::read(dir.path()).unwrap());
             assert_eq!(reader.read("Levels/Main.level").unwrap(), level.as_bytes(), "{compression:?}");
             assert_eq!(reader.read("tiny.txt").unwrap(), b"x");

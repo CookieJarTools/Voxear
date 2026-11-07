@@ -46,6 +46,8 @@ pub struct BuildProfile {
     pub base: Option<String>,
     /// `linux-x64` or `windows-x64`; the machine building, when not set.
     pub platform: Option<String>,
+    /// For players, or for a dedicated server.
+    pub target: Target,
     pub levels: Levels,
     pub development: Development,
     pub scripting: Scripting,
@@ -53,6 +55,18 @@ pub struct BuildProfile {
     pub player: Player,
     pub version: Version,
     pub output: Output,
+}
+
+/// What a build is for.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Target {
+    /// A game for players, with its window, pictures and sound.
+    #[default]
+    Client,
+    /// A dedicated server: no window and no sound, and none of the assets
+    /// that only show or sound, unless an asset says a server needs it.
+    Server,
 }
 
 /// Which levels ship, and which starts.
@@ -344,9 +358,9 @@ fn merge(into: &mut toml::Table, over: toml::Table) {
     }
 }
 
-/// The profiles a new project starts with: a Release and a Development
-/// profile for each platform, Development changing Release. File names and
-/// what each holds.
+/// The profiles a new project starts with: a Release, a Development and a
+/// Server profile for each platform, Development and Server changing
+/// Release. File names and what each holds.
 pub fn default_profiles() -> Vec<(String, String)> {
     let mut profiles = Vec::new();
     for (platform, label) in [("linux-x64", "Linux"), ("windows-x64", "Windows")] {
@@ -358,8 +372,13 @@ pub fn default_profiles() -> Vec<(String, String)> {
             "# A {label} build to work on: scripts in Debug, and the stats overlay on F1.\n\
              format = 1\nbase = \"{label} Release\"\n\n[development]\nenabled = true\n"
         );
+        let server = format!(
+            "# A {label} dedicated server: no window or sound, and only the assets a server needs.\n\
+             format = 1\nbase = \"{label} Release\"\ntarget = \"server\"\n"
+        );
         profiles.push((format!("{label} Release.{PROFILE_EXTENSION}"), release));
         profiles.push((format!("{label} Development.{PROFILE_EXTENSION}"), development));
+        profiles.push((format!("{label} Server.{PROFILE_EXTENSION}"), server));
     }
     profiles
 }
@@ -404,10 +423,20 @@ mod tests {
         write_default_profiles(dir.path()).unwrap();
         assert_eq!(
             profile_names(dir.path()),
-            ["Linux Development", "Linux Release", "Windows Development", "Windows Release"]
+            [
+                "Linux Development",
+                "Linux Release",
+                "Linux Server",
+                "Windows Development",
+                "Windows Release",
+                "Windows Server"
+            ]
         );
         let release = load_profile(dir.path(), "Linux Release").unwrap();
         assert!(!release.development.enabled);
+        assert_eq!(release.target, Target::Client);
+        let server = load_profile(dir.path(), "Windows Server").unwrap();
+        assert_eq!((server.target, server.platform()), (Target::Server, "windows-x64"), "a server, through its base");
         assert_eq!((release.platform(), release.player.width), ("linux-x64", 1600));
 
         let development = load_profile(dir.path(), "Linux Development").unwrap();

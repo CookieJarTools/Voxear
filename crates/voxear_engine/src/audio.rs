@@ -362,7 +362,14 @@ impl From<AudioSourceData> for AudioSource {
 /// An Audio Source from a scene's data, with its sound loaded.
 pub fn audio_source(content: &mut Content, data: &AudioSourceData) -> Result<AudioSource> {
     let sound = match &data.sound {
-        Some(reference) => Some(content.sound(&content.parse(reference)?)?),
+        Some(reference) => {
+            let reference = content.parse(reference)?;
+            // A server build leaves sounds out, and a server plays none.
+            match reference.guid().is_some_and(|guid| content.is_stripped(guid)) {
+                true => None,
+                false => Some(content.sound(&reference)?),
+            }
+        }
         None => None,
     };
     Ok(AudioSource { sound, ..AudioSource::from(data.clone()) })

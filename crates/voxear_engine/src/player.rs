@@ -55,6 +55,10 @@ pub struct PlayerSettings {
     pub scripts: Option<String>,
     /// A development build, with the tools `vox run` has.
     pub development: bool,
+    /// A dedicated server's build, which runs without a window or sound
+    /// until it is stopped.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub server: bool,
     /// Vulkan's validation layers, when installed.
     pub validation_layers: bool,
     pub fullscreen: bool,
@@ -220,12 +224,23 @@ pub fn run_player(data: &Path, args: &PlayerArgs) -> Result<()> {
         localization.set_mark_missing(settings.development);
     }
 
-    if args.headless {
+    if args.headless || settings.server {
         // Without a window, sound plays out in silence.
         game.audio = crate::audio::GameAudio::new(crate::audio::Audio::quiet());
         game.start(None)?;
-        for _ in 0..args.frames.unwrap_or(3) {
-            game.tick(1.0 / 60.0, None);
+        // A server runs until stopped, sixty ticks a second; headless otherwise, a few frames as fast as it can.
+        let frames = args.frames.or((!settings.server).then_some(3));
+        if settings.server {
+            tracing::info!("serving {}", settings.start_level);
+        }
+        let tick = std::time::Duration::from_secs_f64(1.0 / 60.0);
+        let mut next = std::time::Instant::now();
+        while frames.is_none_or(|frames| game.engine.time().frame < frames) {
+            game.tick(tick.as_secs_f32(), None);
+            if frames.is_none() {
+                next += tick;
+                std::thread::sleep(next.saturating_duration_since(std::time::Instant::now()));
+            }
         }
         tracing::info!("ran {} frames", game.engine.time().frame);
         return Ok(());

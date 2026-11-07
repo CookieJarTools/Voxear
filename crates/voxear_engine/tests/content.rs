@@ -414,3 +414,81 @@ fn custom_shaders_ship_compiled_and_compile_again_only_when_changed() {
     content_build::build(dir.path(), &output, &unmerged(), &[]).unwrap();
     assert!(!shaders.exists(), "a game without custom shaders has none compiled");
 }
+
+/// A 16-bit mono WAV of silence, a tenth of a second long.
+fn wav() -> Vec<u8> {
+    let (rate, frames) = (48_000u32, 4_800u32);
+    let mut file = Vec::new();
+    file.extend_from_slice(b"RIFF");
+    file.extend_from_slice(&(36 + frames * 2).to_le_bytes());
+    file.extend_from_slice(b"WAVEfmt ");
+    for value in [16u32.to_le_bytes(), [1, 0, 1, 0], rate.to_le_bytes(), (rate * 2).to_le_bytes(), [2, 0, 16, 0]] {
+        file.extend_from_slice(&value);
+    }
+    file.extend_from_slice(b"data");
+    file.extend_from_slice(&(frames * 2).to_le_bytes());
+    file.resize(file.len() + frames as usize * 2, 0);
+    file
+}
+
+#[test]
+fn a_server_build_leaves_out_what_only_shows_or_sounds() {
+    let dir = project();
+    let write = |path: &str, bytes: &[u8]| std::fs::write(dir.path().join(path), bytes).unwrap();
+    std::fs::create_dir_all(dir.path().join("Sounds")).unwrap();
+    std::fs::create_dir_all(dir.path().join("Textures")).unwrap();
+    std::fs::create_dir_all(dir.path().join("Lighting")).unwrap();
+    // The bark has a picture, the forest a lighting asset, the wind blows and a horn sounds, which the server
+    // needs, so its `.meta` keeps it whole there.
+    write("Textures/Bark.png", &[0u8; 4096]);
+    write("Textures/Bark.png.meta", b"guid = \"000000000000000000000000000000b1\"\n");
+    write("Materials/Bark.material", b"color_map = \"000000000000000000000000000000b1\"\n");
+    write("Lighting/Dusk.lighting", b"");
+    write("Sounds/Wind.wav", &wav());
+    write("Sounds/Horn.wav", &wav());
+    write("Sounds/Horn.wav.meta", b"guid = \"000000000000000000000000000000c1\"\n\n[build]\nserver = true\n");
+    let forest = FOREST.split("[[obj]]\nid = 2").next().unwrap().replace("format = 1\n", "");
+    let forest = format!(
+        "format = 1\nlighting = \"Lighting/Dusk.lighting\"\n{forest}[obj.collider]\nshape = \"mesh\"\n\
+         [[obj]]\nid = 3\nname = \"Wind\"\n[obj.audio]\nsound = \"Sounds/Wind.wav\"\n\
+         [[obj]]\nid = 4\nname = \"Horn\"\n[obj.audio]\nsound = \"Sounds/Horn.wav\"\n"
+    );
+    write("Scenes/Forest.scene", forest.as_bytes());
+
+    let client = content_build::build(dir.path(), &dir.path().join("Client"), &unmerged(), &[]).unwrap();
+    assert!(client.stripped.is_empty(), "a client build keeps everything");
+    let output = dir.path().join("Server");
+    let settings = ContentSettings { server: true, ..unmerged() };
+    let server = content_build::build(dir.path(), &output, &settings, &[]).unwrap();
+    assert_eq!(
+        server.stripped,
+        [
+            "Lighting/Dusk.lighting",
+            "Materials/Bark.material",
+            "Materials/Stone.material",
+            "Sounds/Wind.wav",
+            "Textures/Bark.png"
+        ]
+    );
+    assert!(server.stripped_bytes > 4096 + 9600, "{} bytes left out", server.stripped_bytes);
+    let size = |report: &content_build::BuildReport| report.bundles.iter().map(|b| b.size).sum::<u64>();
+    assert!(size(&server) < size(&client), "smaller: {} against {}", size(&server), size(&client));
+    let catalog = Catalog::read(&output).unwrap();
+    assert!(catalog.assets.iter().any(|a| a.path == "Sounds/Horn.wav"), "the horn, kept by its .meta");
+    assert_eq!(catalog.stripped.len(), 5, "what was left out is still listed");
+
+    // The server loads the forest all the same: no lighting, no wind, but the horn, and the tree's collider
+    // with its mesh's shape though nothing draws it.
+    let mut content = Content::open_bundles(dir.path(), &output).unwrap();
+    let mut engine = Engine::new();
+    let mut levels = Levels::default();
+    levels.load(&mut engine, &mut content, None, "Levels/Forest.level").unwrap();
+    engine.tick(1.0 / 60.0);
+    let named = |name: &str| engine.world.query_ref::<(voxear_ecs::Entity, &Name)>().into_iter().find(|(_, n)| n.0 == name).unwrap().0;
+    let source = engine.world.get::<voxear_engine::prefab::ColliderMeshSource>(named("Tree")).expect("the tree's mesh, for its collider").clone();
+    let triangles = content.triangles_of(&source.0).expect("the tree's triangles");
+    assert_eq!(triangles.indices.len(), 3);
+    let sound = |name: &str| engine.world.get::<voxear_engine::audio::AudioSource>(named(name)).unwrap().sound;
+    assert!(sound("Wind").is_none(), "left out, so it goes without");
+    assert!(sound("Horn").is_some());
+}

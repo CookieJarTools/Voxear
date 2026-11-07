@@ -265,6 +265,16 @@ impl PreparedModel {
     /// the rest, each with its whole mip chain. A quarter of RGBA8's memory
     /// and bundle size. Textures whose sides are not multiples of 4 stay
     /// RGBA8, as do those whose import settings say not to compress them.
+    /// Leaves out every picture, for a build that draws nothing, as a
+    /// dedicated server's: its meshes, for colliders, and its skeleton and
+    /// clips stay.
+    pub fn drop_pictures(&mut self) {
+        self.textures.clear();
+        for material in &mut self.materials {
+            (material.base_color, material.metallic_roughness, material.normal, material.emissive) = (None, None, None, None);
+        }
+    }
+
     pub fn compress_textures(&mut self) {
         let normals: Vec<usize> = self.materials.iter().filter_map(|m| m.normal).collect();
         for (index, texture) in self.textures.iter_mut().enumerate() {

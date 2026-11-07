@@ -127,6 +127,11 @@ pub struct ContentSettings {
     pub split_above_mb: u64,
     /// How bundles are compressed: LZ4, quick to load, by default.
     pub compression: Compression,
+    /// For a dedicated server: what only shows or sounds is left out, unless
+    /// its `.meta` keeps it (see `BuildInclusion`), and models ship without
+    /// their pictures. Set by a server build profile, not `voxear.toml`.
+    #[serde(skip)]
+    pub server: bool,
 }
 
 impl Default for ContentSettings {
@@ -137,6 +142,7 @@ impl Default for ContentSettings {
             merge_below_kb: 16,
             split_above_mb: 64,
             compression: Compression::default(),
+            server: false,
         }
     }
 }

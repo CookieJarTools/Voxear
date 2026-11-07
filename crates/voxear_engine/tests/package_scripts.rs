@@ -172,7 +172,7 @@ fn packages_scripts_build_load_and_reload_with_the_games() {
     assert!(code.contains("OrbitCore.OrbitMath") && code.contains("Sums for things that go round."), "Code Reference");
 
     // A player build's scripts, built apart from the editor's, carry the packages' with them.
-    let release = ScriptsFor::Build { development: false };
+    let release = ScriptsFor::Build { development: false, server: false };
     let defines = scripts::built_in_defines(voxear_engine::engine_version(), "linux-x64", release);
     let assembly = scripts::build_for(&project, "Release", &defines).unwrap().expect("Orbits has scripts");
     let folder = assembly.parent().unwrap();

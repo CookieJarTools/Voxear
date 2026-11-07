@@ -26,6 +26,13 @@
 //! 5. Bundles are named by a hash of their contents, so an unchanged bundle
 //!    is not written again.
 //!
+//! A **server** build ([`ContentSettings::server`]) leaves out what only
+//! shows or sounds: pictures, materials, shaders, sounds and the paths sound
+//! takes, light profiles, lighting and UI documents. Models ship without
+//! their pictures, for their colliders' shapes and their skeletons. What is
+//! left out stays listed in the catalog, so references to it still resolve.
+//! An asset whose `.meta` says `[build] server = true` ships whole.
+//!
 //! The project's packages' assets are part of the build, under
 //! `Packages/<name>/` (see [`crate::package_assets`]). A package's levels,
 //! prefabs and UI documents are not roots of their own: they ship when
@@ -39,8 +46,8 @@ use std::{
 
 use anyhow::{Context, Result};
 use voxear_assets::{
-    AssetDb, AssetGuid, AssetKind, AssetRef, MaterialRemap, Mount, Mounts,
-    bundle::{BundleInfo, BundleWriter, CATALOG_FORMAT, Catalog, CatalogAsset, content_hash},
+    AssetDb, AssetGuid, AssetKind, AssetRef, BuildInclusion, MaterialRemap, Mount, Mounts,
+    bundle::{BundleInfo, BundleWriter, CATALOG_FORMAT, Catalog, CatalogAsset, StrippedAsset, content_hash},
 };
 
 use crate::project::ContentSettings;
@@ -57,6 +64,9 @@ pub struct BuildReport {
     pub cached: usize,
     /// Code roots that match no asset, which is most likely a typo.
     pub unmatched: Vec<CodeRoot>,
+    /// What a server build left out, and how many bytes of files that was.
+    pub stripped: Vec<String>,
+    pub stripped_bytes: u64,
 }
 
 /// A `[ContentRoot]` in the game's scripts: assets that code loads by a path
@@ -144,7 +154,22 @@ pub fn build_mounted(
         needs.insert(entry.guid, found);
     }
 
-    let usage = usage_sets(&db, &needs, settings, code_roots);
+    let mut usage = usage_sets(&db, &needs, settings, code_roots);
+    // A server goes without what only shows or sounds, unless an asset says it needs it.
+    let mut stripped = Vec::new();
+    if settings.server {
+        usage.retain(|guid, _| {
+            let entry = db.get(*guid).expect("from the database");
+            let keep = server_reads(entry.kind) || included(db.mounts(), &entry.path).server;
+            if !keep {
+                stripped.push(entry.clone());
+            }
+            keep
+        });
+        stripped.sort_by(|a, b| a.path.cmp(&b.path));
+    }
+    let file_size = |path: &str| db.mounts().file(path).metadata().map_or(0, |m| m.len());
+    let mut stripped_bytes: u64 = stripped.iter().map(|e| file_size(&e.path)).sum();
     let unmatched = code_roots.iter().filter(|r| !db.entries().any(|e| r.matches(e.guid, &e.path))).cloned().collect();
     let mut excluded: Vec<String> =
         db.entries().filter(|e| !usage.contains_key(&e.guid)).map(|e| e.path.clone()).collect();
@@ -160,7 +185,13 @@ pub fn build_mounted(
         let entry = db.get(*guid).expect("from the database");
         progress(done, usage.len(), &entry.path)?;
         let bytes = if entry.kind == AssetKind::Model {
-            cooker.cook(&entry.path, &needs[guid].companions).with_context(|| format!("cooking {}", entry.path))?
+            let pictures = !settings.server || included(db.mounts(), &entry.path).server;
+            // The pictures a model reads, which a server's cook goes without.
+            if !pictures {
+                let picture = |file: &&String| AssetKind::from_path(Path::new(file.as_str())) == Some(AssetKind::Texture);
+                stripped_bytes += needs[guid].companions.iter().filter(picture).map(|file| file_size(file)).sum::<u64>();
+            }
+            cooker.cook(&entry.path, &needs[guid].companions, pictures).with_context(|| format!("cooking {}", entry.path))?
         } else {
             read(db.mounts(), &entry.path)?
         };
@@ -252,6 +283,15 @@ pub fn build_mounted(
 
     link_bundles(&mut catalog, &needs, &bundle_of);
     catalog.assets.sort_by(|a, b| a.path.cmp(&b.path));
+    catalog.stripped = stripped
+        .iter()
+        .map(|e| StrippedAsset {
+            guid: e.guid.to_string(),
+            path: e.path.clone(),
+            kind: e.kind,
+            package: e.mount.package().map(str::to_string),
+        })
+        .collect();
     let shaders: Vec<(AssetGuid, String, String)> = usage
         .keys()
         .filter_map(|guid| db.get(*guid).filter(|entry| entry.kind == AssetKind::Shader))
@@ -267,14 +307,55 @@ pub fn build_mounted(
         })
         .collect();
     let used = crate::shaders::builtins_used(picked);
-    progress(usage.len(), usage.len(), "custom shaders")?;
-    let scratch = root.join(".voxear").join("ShaderBuild");
-    compile_shaders(shaders, &used, &scratch, output).context("compiling the project's custom shaders")?;
+    // A server draws nothing, so its shaders are left out.
+    if !settings.server {
+        progress(usage.len(), usage.len(), "custom shaders")?;
+        let scratch = root.join(".voxear").join("ShaderBuild");
+        compile_shaders(shaders, &used, &scratch, output).context("compiling the project's custom shaders")?;
+    }
     catalog.write(output)?;
     remove_stale(output, &catalog)?;
     cooker.prune()?;
     let (cooked, cached) = (cooker.cooked, cooker.cached);
-    Ok(BuildReport { output: output.to_path_buf(), bundles: reports, excluded, cooked, cached, unmatched })
+    let stripped = stripped.into_iter().map(|e| e.path).collect();
+    Ok(BuildReport {
+        output: output.to_path_buf(),
+        bundles: reports,
+        excluded,
+        cooked,
+        cached,
+        unmatched,
+        stripped,
+        stripped_bytes,
+    })
+}
+
+/// Whether a dedicated server reads assets of this kind: what makes up its
+/// levels and their Objs, its input and data. What only shows or sounds it
+/// goes without.
+pub fn server_reads(kind: AssetKind) -> bool {
+    match kind {
+        AssetKind::Level
+        | AssetKind::Scene
+        | AssetKind::Prefab
+        | AssetKind::Model
+        | AssetKind::InputActions
+        | AssetKind::Strings
+        | AssetKind::AssetTable => true,
+        AssetKind::Texture
+        | AssetKind::Material
+        | AssetKind::Ui
+        | AssetKind::Sound
+        | AssetKind::Paths
+        | AssetKind::LightProfile
+        | AssetKind::Lighting
+        | AssetKind::Shader => false,
+    }
+}
+
+/// Which builds an asset's `.meta` asks to take it whole.
+fn included(mounts: &Mounts, path: &str) -> BuildInclusion {
+    BuildInclusion::read_meta(&mounts.meta_file(path))
 }
 
 /// A bundle to write: the roots that need it, and its assets in path order.
@@ -572,12 +653,16 @@ impl Cooker {
         Ok(Self { mounts: mounts.clone(), dir, used: Vec::new(), cooked: 0, cached: 0 })
     }
 
-    /// The cooked model. Its cache key covers every file it reads with its
-    /// `.meta`, for the model's import settings and its pictures', and the
-    /// format version, so changing any of them cooks again.
-    fn cook(&mut self, path: &str, companions: &[String]) -> Result<Vec<u8>> {
+    /// The cooked model, with its pictures or, for a server, without. Its
+    /// cache key covers every file it reads with its `.meta`, for the
+    /// model's import settings and its pictures', the format version and
+    /// whether it has pictures, so changing any of them cooks again.
+    fn cook(&mut self, path: &str, companions: &[String], pictures: bool) -> Result<Vec<u8>> {
         let meta = self.mounts.meta_file(path);
         let mut inputs = vec![voxear_render::COOKED_VERSION.to_le_bytes().to_vec(), read(&self.mounts, path)?];
+        if !pictures {
+            inputs.push(b"without pictures".to_vec());
+        }
         inputs.push(std::fs::read(meta).unwrap_or_default());
         for file in companions {
             inputs.push(file.as_bytes().to_vec());
@@ -595,7 +680,11 @@ impl Cooker {
         }
         let mounts = &self.mounts;
         let mut model = voxear_render::prepare_model(path, &mut |file| read(mounts, file))?;
-        model.compress_textures();
+        if pictures {
+            model.compress_textures();
+        } else {
+            model.drop_pictures();
+        }
         let bytes = model.cook()?.to_bytes();
         std::fs::write(&cached, &bytes).with_context(|| format!("writing {}", cached.display()))?;
         self.cooked += 1;

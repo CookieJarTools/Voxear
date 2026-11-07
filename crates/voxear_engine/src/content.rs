@@ -380,6 +380,8 @@ pub struct Content {
     texts: HashMap<AssetGuid, Arc<str>>,
     /// Models the content build cooked, which load without import work.
     cooked: Arc<HashSet<AssetGuid>>,
+    /// Assets a server build left out, which the server goes without.
+    stripped: Arc<HashSet<AssetGuid>>,
     models: HashMap<AssetGuid, ImportedModel>,
     /// Models replaced by an import with other parts, kept for the undo
     /// steps that may still draw them.
@@ -480,9 +482,11 @@ impl Content {
         let db = AssetDb::from_entries(root, catalog.entries()?);
         let reader = BundleReader::new(content_dir, &catalog);
         let cooked = catalog.assets.iter().filter(|a| a.cooked).map(|a| a.guid.parse()).collect::<Result<_>>()?;
+        let stripped = catalog.stripped_guids()?.into_iter().collect();
         let layers = vec![(content_dir.to_path_buf(), Arc::new(catalog))];
         let mut content = Self::with_source(db, Source::Bundles(reader, layers));
         content.cooked = Arc::new(cooked);
+        content.stripped = Arc::new(stripped);
         content.read_shaders();
         Ok(content)
     }
@@ -500,16 +504,22 @@ impl Content {
         reader.mount(content_dir, &catalog);
         let mut db = (*self.db).clone();
         let mut cooked = (*self.cooked).clone();
-        for (asset, entry) in catalog.assets.iter().zip(catalog.entries()?) {
-            if asset.cooked {
-                cooked.insert(entry.guid);
-            } else {
-                cooked.remove(&entry.guid);
+        let mut stripped = (*self.stripped).clone();
+        let entries = catalog.entries()?;
+        for (index, entry) in entries.into_iter().enumerate() {
+            match catalog.assets.get(index) {
+                Some(asset) if asset.cooked => drop(cooked.insert(entry.guid)),
+                Some(_) => drop(cooked.remove(&entry.guid)),
+                None => drop(stripped.insert(entry.guid)),
+            }
+            if index < catalog.assets.len() {
+                stripped.remove(&entry.guid);
             }
             db.insert(entry);
         }
         self.db = Arc::new(db);
         self.cooked = Arc::new(cooked);
+        self.stripped = Arc::new(stripped);
         layers.push((content_dir.to_path_buf(), Arc::new(catalog)));
         tracing::info!("mounted {} over the content", content_dir.display());
         Ok(())
@@ -521,6 +531,7 @@ impl Content {
             source,
             texts: HashMap::new(),
             cooked: Arc::default(),
+            stripped: Arc::default(),
             models: HashMap::new(),
             stale_models: Vec::new(),
             meshes: HashMap::new(),
@@ -596,6 +607,16 @@ impl Content {
             return Ok((text.to_string(), path));
         }
         Ok((self.read_text(&path)?, path))
+    }
+
+    /// Whether a server build left this asset out.
+    pub fn is_stripped(&self, guid: AssetGuid) -> bool {
+        self.stripped.contains(&guid)
+    }
+
+    /// The assets a server build left out, for a background load to pass by.
+    pub(crate) fn stripped_assets(&self) -> Arc<HashSet<AssetGuid>> {
+        self.stripped.clone()
     }
 
     /// Assets that are loaded already, which a background load can skip.
@@ -1010,6 +1031,8 @@ impl Content {
     pub fn lighting(&mut self, reference: &AssetRef) -> Result<crate::lighting::Lighting> {
         let file = match reference {
             AssetRef::Builtin(name) => crate::lighting::LightingFile::builtin(name)?,
+            // A server build leaves lighting out: nothing is drawn, so the default does.
+            AssetRef::Asset { guid, .. } if self.is_stripped(*guid) => crate::lighting::LightingFile::default(),
             AssetRef::Asset { guid, .. } => {
                 let (text, path) = self.asset_text(*guid, AssetKind::Lighting)?;
                 toml::from_str(&text).with_context(|| format!("reading {path}"))?
@@ -1348,6 +1371,13 @@ impl Content {
     /// content, or a model that cannot be read, which is logged.
     pub fn triangles(&mut self, mesh: MeshHandle) -> Option<ColliderMesh> {
         let reference = self.mesh_refs.get(&mesh)?.clone();
+        self.triangles_of(&reference)
+    }
+
+    /// A mesh's triangles by its reference, for a collider whose mesh
+    /// nothing draws, as on a server.
+    pub fn triangles_of(&mut self, reference: &AssetRef) -> Option<ColliderMesh> {
+        let reference = reference.clone();
         if let Some(found) = self.triangles.get(&reference) {
             return found.clone();
         }

@@ -173,6 +173,9 @@ pub struct AssetView {
     shader_state: Option<(NodeId, voxear_render::CustomShaderState)>,
     /// A scene's lighting: the lighting settings it names, and theirs.
     scene_lighting: Option<LightingPanel>,
+    /// Whether server builds take it whole, for what they leave out or
+    /// trim, and the `.meta` that says so.
+    server: Option<(NodeId, PathBuf)>,
 }
 
 /// A sound's play button, with its icon and its words.
@@ -333,6 +336,7 @@ impl AssetView {
             lighting: None,
             scene_lighting: None,
             shader_state: None,
+            server: None,
         };
         match item.kind {
             ItemKind::Asset(AssetKind::Material) => view.material = material(ui, root, &file, game),
@@ -395,6 +399,16 @@ impl AssetView {
             }
             _ => {}
         }
+        // What a server build leaves out, or ships without its pictures, can be kept whole there.
+        if let ItemKind::Asset(kind) = item.kind
+            && (kind == AssetKind::Model || !voxear_engine::content_build::server_reads(kind))
+        {
+            let rows = part(ui, root, "Builds", "globe");
+            let row = prop(ui, rows, "Server builds");
+            let toggle = ui.toggle(row, "", voxear_assets::BuildInclusion::read_meta(&meta).server);
+            ui.set_tooltip(toggle, "Ship whole in dedicated server builds, which leave it out or trim it otherwise", None);
+            view.server = Some((toggle, meta.clone()));
+        }
         let opens = matches!(
             item.kind,
             ItemKind::Script
@@ -431,6 +445,7 @@ impl AssetView {
             lighting: None,
             scene_lighting: None,
             shader_state: None,
+            server: None,
         })
     }
 
@@ -445,6 +460,15 @@ impl AssetView {
         }
         if self.open.is_some_and(|button| ui.clicked(button)) {
             return Some(AssetAction::Open(self.item.clone()));
+        }
+        if let Some((toggle, meta)) = self.server.as_ref().filter(|(toggle, _)| ui.changed(*toggle)) {
+            let server = ui.is_checked(*toggle);
+            let written = voxear_assets::BuildInclusion { server }.write_meta(meta);
+            return Some(AssetAction::Notice(match written {
+                Ok(()) if server => format!("{} ships whole in server builds", self.item.path),
+                Ok(()) => format!("Server builds go without {}", self.item.path),
+                Err(error) => format!("Could not change {}: {error:#}", meta.display()),
+            }));
         }
         if self.bake.is_some_and(|button| ui.clicked(button)) {
             return Some(AssetAction::BakePaths(self.item.path.clone()));

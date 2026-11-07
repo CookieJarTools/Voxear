@@ -187,13 +187,14 @@ impl Loads {
         let mut reader = content.worker_reader();
         let loaded = content.loaded();
         let cooked = content.cooked_models();
+        let stripped = content.stripped_assets();
         let progress = Arc::new(Progress::default());
         let counter = progress.clone();
         let job = std::thread::Builder::new().name(format!("load {reference}")).spawn(move || {
             // The Profiler shows this thread's samples beside the main thread's.
             voxear_core::profiling::register_thread("Loading");
             voxear_core::profile_scope!("Load");
-            let models = Models { work: models, cooked: &cooked };
+            let models = Models { work: models, cooked: &cooked, stripped: &stripped };
             gather(&db, reader.as_mut(), root, &loaded, models, &counter)
         })?;
 
@@ -358,6 +359,8 @@ struct Models<'a> {
     work: ModelWork,
     /// Those the content build cooked, which only need reading.
     cooked: &'a HashSet<AssetGuid>,
+    /// What a server build left out, which is not there to read.
+    stripped: &'a HashSet<AssetGuid>,
 }
 
 /// The weight a level file gives each of its scenes.
@@ -421,7 +424,7 @@ fn gather(
                 | AssetKind::Strings
                 | AssetKind::AssetTable
                 | AssetKind::Paths => false,
-            };
+            } && !models.stripped.contains(&guid);
             if owner == Some(guid) {
                 progress.scenes.lock().expect("never poisoned").entry(guid).or_insert((1.0, 0, 0));
             }

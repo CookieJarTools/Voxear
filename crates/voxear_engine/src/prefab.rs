@@ -77,6 +77,13 @@ use crate::{
 
 pub const PREFAB_FORMAT: u32 = 1;
 
+/// The mesh an Obj's mesh collider takes its shape from, kept where nothing
+/// draws it, as on a server, so the collider has its triangles all the same.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ColliderMeshSource(pub voxear_assets::AssetRef);
+
+impl voxear_ecs::Component for ColliderMeshSource {}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PrefabFile {
@@ -431,6 +438,9 @@ pub struct TemplateObj {
     pub light: Option<Light>,
     pub post_volume: Option<PostVolume>,
     pub renderer: Option<MeshRenderer>,
+    /// The mesh a mesh collider takes its shape from, where there is no
+    /// renderer to draw it, as on a server.
+    pub collider_mesh: Option<ColliderMeshSource>,
     pub audio: Option<AudioSource>,
     pub audio_listener: bool,
     pub collider: Option<Collider>,
@@ -576,6 +586,9 @@ impl Template {
             }
             if let Some(renderer) = obj.renderer {
                 world.insert(entity, renderer);
+            }
+            if let Some(source) = obj.collider_mesh.clone() {
+                world.insert(entity, source);
             }
             if let Some(audio) = obj.audio {
                 world.insert(entity, audio);
@@ -857,6 +870,13 @@ pub(crate) fn resolve_obj(
         }
         _ => None,
     };
+    // Without a renderer, as on a server, a mesh collider still needs its mesh's shape.
+    let collider_mesh = match (&data.renderer, &renderer, &data.collider) {
+        (Some(drawn), None, Some(collider)) if collider.shape == crate::physics::ColliderShape::Mesh => {
+            Some(ColliderMeshSource(content.parse(&drawn.mesh)?))
+        }
+        _ => None,
+    };
     // Without a renderer, as when only checking a scene, foliage is not drawn, as meshes are not, but is kept to save.
     let foliage = match (&data.foliage, gpu.as_deref_mut()) {
         (Some(data), Some(renderer)) => {
@@ -901,6 +921,7 @@ pub(crate) fn resolve_obj(
         light,
         post_volume: data.post_volume.as_ref().map(PostVolumeData::component).transpose()?,
         renderer,
+        collider_mesh,
         audio: data.audio.as_ref().map(|audio| audio_source(content, audio)).transpose()?,
         audio_listener: data.audio_listener,
         collider: data.collider,

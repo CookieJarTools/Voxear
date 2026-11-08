@@ -35,9 +35,16 @@ Select the gun's handling, and in its **Clips** part:
 - Put the shot's arms clips in **Fire** and **Aimed Fire**, and the gun's own in **Gun Fire**.
 - **Carrier** finds the bone the gun rides by itself when it is called `gun_carrier`. For another, pick it from the list. If the gun sits off that bone in the pack, as when it is attached with an offset, set **Carrier At** and **Carrier Turn**.
 
-Clips made for a camera at the head bone, as most are, look right with **Eyes** left at 0. If the gun shows too low or too far away, the pack's camera sat in front of the head: move **Eyes** up and forward until it shows as the pack's own videos do.
+**Eyes** is where the camera the clips were filmed from sat, from the clips' head bone: right, up and forward, in metres. At 0 the gun is framed for a camera at the head bone itself, but packs are often filmed from a little lower. Compare your view with the pack's own videos:
+
+- The gun shows lower than in the videos: move **Eyes** down.
+- The gun shows smaller and farther off: move **Eyes** forward.
+
+The camera's **Field of view** matters as much. Packs are usually filmed 90° across, which on a wide screen is about 59° on a Camera, whose field of view is measured from top to bottom (see [[Cameras]]).
 
 A pack's clips seldom aim. Aiming brings the gun's sights to the eye from wherever the clips hold it, as it does for any gun, so set the sockets carefully. The gun still sways as the view turns and kicks as it fires, and the hands go with it. Where your character's arms are shorter than the pack's, the gun comes nearer and the other hand slides back along it.
+
+The clips bob and breathe with the gun themselves, so while they hold it the Gun Holder adds no bob, breathing or tremor of its own. While an action plays from clips, the view does not glance down at the work either: the clips bring it into view. Up at the eye, where the clips no longer hold it, the gun bobs and breathes as any gun does.
 
 Sprinting is your game's to say, as aiming is:
 

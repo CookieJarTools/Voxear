@@ -408,11 +408,13 @@ pub fn hold(world: &mut World) {
             match advance(world, &mut play, &gun, &mut mechanism, &mut spare, pouches, throwing, delta) {
                 Some((hand, angle)) => {
                     (aim, tilt) = (hand, angle);
-                    // The beats' knocks shake the gun, and the eyes glance down at what the hands are doing.
+                    // The beats' knocks shake the gun, and the eyes glance down at what the hands are doing; a
+                    // part played from clips brings the work before the eyes itself, framed as its clips are.
                     let (spin, push) = std::mem::take(&mut play.knock);
                     state.sway.kick(spin);
                     state.lag.push(push, 0.03);
-                    let down = state.held.map_or(0.0, |held| glance_at(eye, held, &gun));
+                    let glances = play.part().is_none();
+                    let down = state.held.filter(|_| glances).map_or(0.0, |held| glance_at(eye, held, &gun));
                     crate::first_person::glance(world, entity, down);
                     state.play = Some(play);
                 }
@@ -674,6 +676,10 @@ fn place_gun(
     let lag = state.lag.update(wanted, delta);
     state.velocity = velocity;
 
+    // Clips that hold the gun bob and breathe with it themselves; up at the eye, which they do not hold it at, it
+    // bobs and breathes as its own.
+    let own = 1.0 - by_clips.gun.map_or(0.0, |(_, weight)| weight) * (1.0 - aim);
+
     // Bob: a kick at each footfall, alternating sides, as hard as the walk is quick.
     let speed = Vec3::new(velocity.x, 0.0, velocity.z).length();
     let feet = body.and_then(|body| world.get::<MotionMatcherState>(body)).map(MotionMatcherState::feet_down);
@@ -694,7 +700,7 @@ fn place_gun(
     };
     if let Some(left) = footfall {
         let side = if left { 1.0 } else { -1.0 };
-        let hard = (speed / 4.0).clamp(0.15, 1.2) * holder.bob * (1.0 - 0.6 * aim);
+        let hard = (speed / 4.0).clamp(0.15, 1.2) * holder.bob * own * (1.0 - 0.6 * aim);
         state.bob.kick(Vec3::new(side * 0.04, -0.16, -0.03) * hard);
     }
     let bob = state.bob.update(Vec3::ZERO, delta);
@@ -702,13 +708,14 @@ fn place_gun(
 
     // Breathing, slow and mostly up and down, and a faint tremor of sines that never line up.
     let t = state.time;
-    let breath = (t * std::f32::consts::TAU * 0.24).sin() * 0.0022 * holder.breathing * (1.0 - 0.5 * aim);
+    let breathing = holder.breathing * own;
+    let breath = (t * std::f32::consts::TAU * 0.24).sin() * 0.0022 * breathing * (1.0 - 0.5 * aim);
     let tremor = Vec3::new(
         (t * 1.3).sin() * 0.6 + (t * 3.1).sin() * 0.25 + (t * 7.3).sin() * 0.08,
         (t * 0.9).sin() * 0.5 + (t * 2.3).sin() * 0.3 + (t * 5.9).sin() * 0.1,
         0.0,
     ) * (0.0012 + 0.0025 * heft)
-        * holder.breathing
+        * breathing
         * (1.0 - 0.6 * aim);
     let tremor_turn = Quat::from_euler(EulerRot::XYZ, tremor.x, tremor.y, 0.0);
 

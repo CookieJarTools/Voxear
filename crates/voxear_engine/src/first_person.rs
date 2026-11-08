@@ -185,11 +185,13 @@ pub fn place(world: &mut World) {
         // The eyes follow the head on a spring from where the Obj is, so the head's bob is steadied; a view with
         // no body looks from the Obj itself.
         let obj = world_matrix(world, entity);
-        let eyes_now =
-            pose_body(world, entity, &view, own).map_or(Vec3::ZERO, |eyes| obj.inverse().transform_point3(eyes));
+        let posed = pose_body(world, entity, &view, own).map(|eyes| obj.inverse().transform_point3(eyes));
+        let eyes_now = posed.unwrap_or(Vec3::ZERO);
         let state = world.get::<FirstPersonState>(entity).copied();
         let mut state = state.unwrap_or_else(|| FirstPersonState::new(eyes_now));
-        if !state.started {
+        // The eyes start in the head the first time the body is posed, not on a spring up from the Obj's feet,
+        // which would leave the gun held before them far below the shoulders.
+        if !state.started && posed.is_some() {
             state.eyes.snap(eyes_now);
             state.started = true;
         }
@@ -446,6 +448,20 @@ mod tests {
         let head =
             Rig::find(&world.get::<ModelRenderer>(body).unwrap().animation.as_ref().unwrap().skeleton).unwrap().head;
         assert!(bones[head].x_axis.length() < 1e-3, "the head is hidden");
+    }
+
+    #[test]
+    fn the_eyes_start_at_the_head_once_the_body_is_posed() {
+        let mut world = World::new();
+        let (_, body, camera) = player(&mut world);
+        // A body not posed yet, as on the frame it is made: the eyes have no head to be in.
+        let posed = world.remove::<Pose>(body).unwrap();
+        place(&mut world);
+        world.insert(body, posed);
+        place(&mut world);
+        let eye = world.get::<Transform>(camera).unwrap().position;
+        let head = world_matrix(&world, body).transform_point3(Vec3::new(0.0, 1.65, 0.0));
+        assert!(eye.distance(head) < 0.2, "the camera is at the head at once, not rising from the feet: {eye} {head}");
     }
 
     #[test]

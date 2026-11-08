@@ -178,6 +178,10 @@ fn working_the_bolt_on_an_empty_chamber_plays_the_clip_that_throws_nothing() {
         highest = highest.max(bone(&scene.world, scene.gun, BOLT).w_axis.y - at_rest[BOLT].w_axis.y);
     }
     assert!(highest > 0.015, "the bolt went up, as the no-round clip takes it: {highest}");
+    let acting = scene.world.get::<GunHolderState>(scene.player).unwrap().acting().is_some();
+    let view = scene.world.get::<crate::first_person::FirstPersonView>(scene.player).unwrap().rotation();
+    let looks = voxear_scene::world_matrix(&scene.world, scene.camera).to_scale_rotation_translation().1;
+    assert!(acting && looks.angle_between(view) < 1e-3, "the camera looks where the view does, as the clips' did");
     assert_eq!(cases(&scene.world), 0);
     for _ in 0..40 {
         step(&mut scene, &rest, &mut time);
@@ -333,6 +337,34 @@ fn an_arms_clip_holds_the_gun_where_it_has_it_and_puts_the_palms_where_its_are()
         let off = palm_on_gun(&scene, arm).distance(palms[arm]);
         assert!(off < 0.006, "aimed and kicking, palm {arm} stays on the gun: {off} m off");
     }
+}
+
+#[test]
+fn a_gun_held_by_clips_neither_bobs_nor_breathes_as_its_clips_do_that_themselves() {
+    let mut own = scene_with(GunKind::BoltActionRifle);
+    steady(&mut own);
+    settle(&mut own, 40);
+    let (arms, _) = clip_of_hold(&mut own);
+
+    // Bob and breathing on, as a holder has them; sway off, so walking on does not lag the gun.
+    let mut scene = scene_with(GunKind::BoltActionRifle);
+    steady(&mut scene);
+    let holder = scene.world.get_mut::<GunHolder>(scene.player).unwrap();
+    (holder.bob, holder.breathing) = (1.0, 1.0);
+    held_by(&mut scene, &arms);
+    settle(&mut scene, 40);
+    let still = gun_from_eye(&scene).w_axis.truncate();
+
+    // Two seconds walking at 3 metres a second: a footfall every 0.75 m, and breathing all along.
+    let rest = rest_of(&scene);
+    let mut time = Time { delta: 1.0 / 60.0, ..Time::default() };
+    let mut most: f32 = 0.0;
+    for _ in 0..120 {
+        scene.world.get_mut::<Transform>(scene.player).unwrap().position.z += 3.0 / 60.0;
+        step(&mut scene, &rest, &mut time);
+        most = most.max(gun_from_eye(&scene).w_axis.truncate().distance(still));
+    }
+    assert!(most < 0.0005, "the gun stays where the clip has it before the eyes: {most} m off");
 }
 
 #[test]

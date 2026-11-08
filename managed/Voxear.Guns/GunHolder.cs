@@ -36,6 +36,7 @@ public readonly struct GunHolder : IEquatable<GunHolder>, IObjComponent
 	private const int ActingValue = 17;
 	private const int SpareValue = 18;
 	private const int AutoCycleValue = 19;
+	private const int SprintingValue = 20;
 
 	private const int DoOwnText = 0;
 	private const int DoingText = 1;
@@ -69,6 +70,16 @@ public readonly struct GunHolder : IEquatable<GunHolder>, IObjComponent
 	{
 		get { return Number(AimingValue) != 0f; }
 		set { Set(AimingValue, value ? 1f : 0f); }
+	}
+
+	/// <summary>
+	/// Whether it sprints, for a gun held by its handling's clips: its sprint clip then holds the gun. Set it from the
+	/// input, as Aiming is, so every machine sees it.
+	/// </summary>
+	public bool Sprinting
+	{
+		get { return Number(SprintingValue) != 0f; }
+		set { Set(SprintingValue, value ? 1f : 0f); }
 	}
 
 	/// <summary>How far raised to the eye the gun is now, from 0 at the hip to 1 aiming.</summary>

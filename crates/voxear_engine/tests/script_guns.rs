@@ -1,6 +1,7 @@
 //! A script and the Guns module: it gives one Obj a Gun of a kind and
 //! another a Gun Holder holding it, aiming, picks the gun a handling and
-//! does an action of the handling's own. Builds a copy of Hello with the
+//! does an action of the handling's own, and one played from clips, and
+//! sprints. Builds a copy of Hello with the
 //! module on and one more script; skips itself without .NET and the
 //! managed build.
 
@@ -23,6 +24,7 @@ public sealed class Armourer : SystemBase
 		var holder = Obj.Find("Main Camera").AddGunHolder();
 		holder.Gun = gun;
 		holder.Aiming = true;
+		holder.Sprinting = true;
 		holder.Sway = 0.5f;
 		Log.Info($"gun {gun.Kind} {gun.Mass} {gun.FireRate} {holder.Gun == gun} {holder.Aiming} {holder.Sway}");
 		Obj.Find("Main Camera").AddFirstPersonView();
@@ -33,6 +35,7 @@ public sealed class Armourer : SystemBase
 		Log.Info($"ammo {gun.Rounds} {gun.Capacity} {gun.Estimate} {holder.Spare}");
 		gun.Handling = GunHandling.Load("Smg.gunhandling");
 		Log.Info($"handling {gun.Handling == GunHandling.Load("Smg.gunhandling")}");
+		Log.Info($"sprinting {holder.Sprinting}");
 	}
 
 	protected override void Update()
@@ -44,6 +47,14 @@ public sealed class Armourer : SystemBase
 			holder.Do(GunHandlingAction.Load("Smg.gunhandling#action:Inspect"));
 		}
 		if (frames == 170)
+		{
+			Log.Info($"doing {holder.Doing.Name} {holder.Acting}");
+		}
+		if (frames == 260)
+		{
+			holder.Do(GunHandlingAction.Load("Smg.gunhandling#action:Look"));
+		}
+		if (frames == 290)
 		{
 			Log.Info($"doing {holder.Doing.Name} {holder.Acting}");
 		}
@@ -60,6 +71,12 @@ key = "look"
 hand = "left"
 goal = "feed"
 work = 0.5
+
+[[action]]
+name = "Look"
+[[action.part]]
+end = 2.0
+marks = [{ at = 0.5, event = "see_feed" }]
 "#;
 
 #[test]
@@ -82,7 +99,7 @@ fn with_the_guns_module_a_script_arms_a_holder() {
     engine.set_scripts(scripts::start(&project).unwrap().expect("Hello has scripts"));
     let mut game = Game::new(project, engine).unwrap();
     game.start(None).unwrap();
-    for _ in 0..180 {
+    for _ in 0..300 {
         game.tick(1.0 / 60.0, None);
     }
     let lines: Vec<String> = log.lock().unwrap().lines.iter().map(|l| l.message.clone()).collect();
@@ -91,6 +108,8 @@ fn with_the_guns_module_a_script_arms_a_holder() {
     assert!(lines.iter().any(|l| l == "ammo 3 32 UnderHalf 90"), "{lines:#?}");
     assert!(lines.iter().any(|l| l == "handling True"), "the gun picks its handling: {lines:#?}");
     assert!(lines.iter().any(|l| l == "doing Inspect "), "an action of its handling's own, no built-in: {lines:#?}");
+    assert!(lines.iter().any(|l| l == "doing Look "), "one played from clips, two seconds long: {lines:#?}");
+    assert!(lines.iter().any(|l| l == "sprinting True"), "{lines:#?}");
     let states: Vec<voxear_engine::guns::mechanism::GunState> =
         game.engine.world.query_ref::<&voxear_engine::guns::mechanism::GunState>().into_iter().cloned().collect();
     assert_eq!(states[0].rounds, 32, "reloaded: {:?}", states[0]);

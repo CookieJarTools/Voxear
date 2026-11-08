@@ -53,6 +53,7 @@ const CANCEL: i32 = 16;
 const ACTING: i32 = 17;
 const SPARE: i32 = 18;
 const AUTO_CYCLE: i32 = 19;
+const SPRINTING: i32 = 20;
 
 /// The actions in the order Voxear.Guns numbers them.
 const ACTIONS: [ActionKind; 4] =
@@ -260,6 +261,7 @@ fn holder_values(world: &mut World, entity: Entity, what: i32, written: Option<[
             WALL_CHECK => Some(flag(holder.wall_check)),
             SPARE => Some(number(holder.spare as f32)),
             AUTO_CYCLE => Some(flag(holder.auto_cycle)),
+            SPRINTING => Some(flag(holder.sprinting)),
             SHOT_ORIGIN => shot.map(|shot| point(shot.origin.into())),
             SHOT_DIRECTION => shot.map(|shot| point(shot.direction.into())),
             _ => None,
@@ -276,6 +278,7 @@ fn holder_values(world: &mut World, entity: Entity, what: i32, written: Option<[
         WALL_CHECK => holder.wall_check = v[0] != 0.0,
         SPARE => holder.spare = v[0].max(0.0) as u32,
         AUTO_CYCLE => holder.auto_cycle = v[0] != 0.0,
+        SPRINTING => holder.sprinting = v[0] != 0.0,
         _ => return None,
     }
     Some([0.0; 4])

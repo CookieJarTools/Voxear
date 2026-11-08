@@ -3,8 +3,8 @@ using System;
 namespace Voxear;
 
 /// <summary>
-/// An action of a Gun Handling's own, as the Gun Editor makes it: looking a rifle over, clearing a jam, or a
-/// built-in action made over. Do one with a Gun Holder's Do; pick it in the Inspector from the project's handlings.
+/// An action of a Gun Handling's own: looking a rifle over, clearing a jam, or a built-in action made over, played
+/// from its beats or from clips. Do one with a Gun Holder's Do; pick it in the Inspector from the project's handlings.
 /// <code>
 /// [SerializeField] private GunHandlingAction inspect;
 ///

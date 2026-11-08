@@ -3,8 +3,8 @@ using System;
 namespace Voxear;
 
 /// <summary>
-/// A Gun Handling: a .gunhandling file of how a gun is held and how its actions go, as the Gun Editor sets them,
-/// shared by every gun that picks it. Its poses and its offsets on the gun kind's built-in actions apply by
+/// A Gun Handling: a .gunhandling file of how a gun is held and how its actions go, as its Inspector sets them,
+/// shared by every gun that picks it. Its poses, its offsets on the gun kind's built-in actions and its clips apply by
 /// themselves; its own actions are done with a Gun Holder's Do. Give one to a Gun with its Handling, or in the
 /// Inspector.
 /// </summary>

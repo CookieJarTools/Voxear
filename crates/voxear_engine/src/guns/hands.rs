@@ -248,6 +248,31 @@ fn hand_frame(edit: &PoseEdit, arm: &Arm) -> Option<Quat> {
     Some(Quat::from_mat3(&Mat3::from_cols(along, palm, along.cross(palm))))
 }
 
+/// The frame of a hand whose fingers point along `fingers` and whose palm
+/// faces `palm`, as [`hand_frame`] measures one.
+pub fn frame_of(fingers: Vec3, palm: Vec3) -> Quat {
+    let along = fingers.normalize_or(Vec3::X);
+    let palm = (palm - along * palm.dot(along)).normalize_or(along.any_orthonormal_vector());
+    Quat::from_mat3(&Mat3::from_cols(along, palm, along.cross(palm)))
+}
+
+/// The middle of a hand's knuckles, where its fingers start: between the
+/// first and the last finger's first bones, or the middle finger's.
+pub fn knuckles(edit: &PoseEdit, arm: &Arm) -> Option<Vec3> {
+    let first = |finger: usize| arm.fingers[finger].first().map(|&bone| edit.position(bone));
+    match (first(1), first(4).or_else(|| first(3))) {
+        (Some(index), Some(little)) => Some((index + little) * 0.5),
+        _ => first(2),
+    }
+}
+
+/// Where a hand's knuckles are from the middle of its palm, in the hand's
+/// own frame: the same however the hand is turned.
+pub fn knuckles_from_palm(edit: &PoseEdit, arm: &Arm) -> Option<Vec3> {
+    let (frame, palm) = (hand_frame(edit, arm)?, palm_of(edit, arm)?.point);
+    Some(frame.inverse() * (knuckles(edit, arm)? - palm))
+}
+
 /// The way a finger's joint points: to the next joint, or past the last to
 /// a bone at the tip where the finger has one, else the way the link before
 /// it pointed at rest, turned as the joint has turned since.

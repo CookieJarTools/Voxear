@@ -20,7 +20,7 @@ use voxear_ecs::World;
 use voxear_render::Skeleton;
 
 use super::handling::{PackClips, Place};
-use super::hands::{arm_reach, finger_bends, finger_ways, palm_of};
+use super::hands::{arm_reach, finger_bends, finger_ways, knuckles, palm_of};
 use crate::animation::Clips;
 use crate::animation::ik::{PoseEdit, hand_axes};
 use crate::animation::rig::Rig;
@@ -36,7 +36,7 @@ pub struct ClipPose {
     pub shoulders: [Vec3; 2],
 }
 
-/// A hand as a clip has it: the middle of its palm, the way its fingers
+/// A hand as a clip has it: the middle of its palm and of its knuckles, the way its fingers
 /// point and its palm faces, in the gun's space; the way its elbow is from
 /// its shoulder, in the eyes' space; and how far each finger's joints bend
 /// toward the palm, thumb first, in radians (see `finger_bends`), and the
@@ -45,6 +45,7 @@ pub struct ClipPose {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ClipHand {
     pub contact: Vec3,
+    pub knuckles: Vec3,
     pub fingers: Vec3,
     pub palm: Vec3,
     pub elbow: Vec3,
@@ -70,6 +71,7 @@ impl ClipHand {
         let way = |a: Vec3, b: Vec3| a.lerp(b, t).normalize_or(a);
         ClipHand {
             contact: self.contact.lerp(other.contact, t),
+            knuckles: self.knuckles.lerp(other.knuckles, t),
             fingers: way(self.fingers, other.fingers),
             palm: way(self.palm, other.palm),
             elbow: way(self.elbow, other.elbow),
@@ -114,6 +116,7 @@ pub fn clip_pose(
         let elbow = (edit.position(arm.forearm) - edit.position(arm.upper)).normalize_or_zero();
         Some(ClipHand {
             contact: into_gun.transform_point3(palm.point),
+            knuckles: into_gun.transform_point3(knuckles(&edit, arm)?),
             fingers: into_gun.transform_vector3(fingers).normalize_or_zero(),
             palm: into_gun.transform_vector3(facing).normalize_or_zero(),
             elbow,
@@ -173,6 +176,26 @@ pub fn within_reach(pose: &ClipPose, arms: &Arms, framed: f32) -> (Mat4, f32) {
         low
     };
     (Mat4::from_translation(toward * (1.0 - share)) * pose.gun, share)
+}
+
+/// The gun at `gun` in the eyes' space, brought toward the shoulders as far
+/// as `arms` need to hold it where `pose` has the hands on it, and no
+/// further: where they reach it already, it stays.
+pub fn kept_within(gun: Mat4, pose: &ClipPose, arms: &Arms) -> Mat4 {
+    let palms = [0, 1].map(|hand| gun.transform_point3(pose.hands[hand].contact));
+    let toward = (arms.shoulders[0] + arms.shoulders[1] - palms[0] - palms[1]) * 0.5;
+    let reaches = |share: f32| {
+        (0..2).all(|hand| (palms[hand] + toward * share).distance(arms.shoulders[hand]) <= arms.reach[hand] * STRAIGHT)
+    };
+    if reaches(0.0) {
+        return gun;
+    }
+    let (mut low, mut high) = (0.0, 1.0);
+    for _ in 0..12 {
+        let middle = (low + high) * 0.5;
+        if reaches(middle) { high = middle } else { low = middle }
+    }
+    Mat4::from_translation(toward * high) * gun
 }
 
 /// The bone that carries the gun: the one named, else one named

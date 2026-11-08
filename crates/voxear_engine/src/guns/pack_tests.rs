@@ -472,6 +472,59 @@ fn seen_as_filmed_a_body_built_otherwise_holds_the_gun_as_the_clip_does_fingers_
     }
 }
 
+/// The middle of a body's knuckles, left or right, in the gun's space.
+fn knuckles_on_gun(scene: &Scene, arm: usize) -> Vec3 {
+    use crate::animation::ik::PoseEdit;
+    use crate::animation::rig::Rig;
+    let animation = scene.world.get::<ModelRenderer>(scene.body).unwrap().animation.clone().unwrap();
+    let rig = Rig::find(&animation.skeleton).unwrap();
+    let edit = PoseEdit::new(&animation.skeleton, &scene.world.get::<Pose>(scene.body).unwrap().bones);
+    let knuckles = super::hands::knuckles(&edit, &rig.arms[arm]).unwrap();
+    let world = voxear_scene::world_matrix(&scene.world, scene.body).transform_point3(knuckles);
+    voxear_scene::world_matrix(&scene.world, scene.gun).inverse().transform_point3(world)
+}
+
+#[test]
+fn hands_with_longer_palms_close_where_the_clips_do_and_hold_on_through_a_fast_turn() {
+    let mut own = scene_with(GunKind::BoltActionRifle);
+    steady(&mut own);
+    settle(&mut own, 40);
+    let (arms, _) = clip_of_hold(&mut own);
+    let knuckles = [knuckles_on_gun(&own, 0), knuckles_on_gun(&own, 1)];
+
+    // A tenth shorter, but with palms a quarter longer: the fingers start further from the wrist.
+    let mut body = crate::animation::rig::tests::body(|part, side| match side {
+        Some(left) => format!("DEF-{part}.{}", if left { "L" } else { "R" }),
+        None => format!("DEF-{part}"),
+    });
+    body.bones.iter_mut().for_each(|bone| bone.rest.translation *= 0.9);
+    let hands: Vec<usize> = (0..body.bones.len()).filter(|&bone| body.bones[bone].name.contains("hand")).collect();
+    for bone in body.bones.iter_mut().filter(|bone| bone.parent.is_some_and(|parent| hands.contains(&parent))) {
+        bone.rest.translation *= 1.25;
+    }
+    let mut scene = scene_with_body(body);
+    steady(&mut scene);
+    held_by(&mut scene, &arms);
+    settle(&mut scene, 40);
+    // Swaying as a held gun does, turning fast: the gun lags the turn, and the arms still hold it as the clip does.
+    scene.world.get_mut::<GunHolder>(scene.player).unwrap().sway = 1.0;
+    let rest = rest_of(&scene);
+    let mut time = Time { delta: 1.0 / 60.0, ..Time::default() };
+    let mut worst: f32 = 0.0;
+    for frame in 0..60 {
+        let turn = if frame < 30 { 4.0 } else { -4.0 };
+        scene.world.get_mut::<crate::first_person::FirstPersonView>(scene.player).unwrap().yaw += turn;
+        step(&mut scene, &rest, &mut time);
+        for arm in 0..2 {
+            worst = worst.max(knuckles_on_gun(&scene, arm).distance(knuckles[arm]));
+        }
+    }
+    assert!(
+        worst < 0.006,
+        "the knuckles where the clip's are on the gun, all through the turn: {worst} m off at worst"
+    );
+}
+
 #[test]
 fn holding_clips_share_the_hold_by_how_fast_the_holder_goes() {
     use super::clip_hold::holding_weights;

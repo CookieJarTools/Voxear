@@ -494,6 +494,12 @@ pub fn hold(world: &mut World) {
             &mut state,
             delta,
         );
+        // Whatever moved it on top, sway or a kick or aiming, it stays where the arms reach it as the clips hold it.
+        if let Some(((pose, _), body)) = clipped.as_ref().zip(body)
+            && let Some(arms) = body_arms(world, body, eye)
+        {
+            held = eye * super::clip_hold::kept_within(eye.inverse() * held, pose, &arms);
+        }
         set_world(world, gun_entity, held.w_axis.truncate(), held.to_scale_rotation_translation().1);
         if let Some(body) = body {
             let aims = hand_aims(&gun, aim, poses, &mut state, delta);
@@ -663,8 +669,11 @@ fn place_gun(
         (_, turn, at) = kicked.to_scale_rotation_translation();
     }
 
+    // Clips that hold the gun bob and breathe with it themselves, and hold it as one with the eyes; up at the
+    // eye, which they do not hold it at, it is the gun's own.
+    let own = 1.0 - by_clips.gun.map_or(0.0, |(_, weight)| weight) * (1.0 - aim);
     // Each shot kicks the gun up and back about the grip, rolling it the other way each time.
-    let steady = 1.0 - 0.72 * aim;
+    let steady = (1.0 - 0.72 * aim) * (CLIPS_SWAY + (1.0 - CLIPS_SWAY) * own);
     let kick = gun.recoil * (1.0 - 0.5 * heft);
     let kicks = std::mem::take(&mut state.kicks);
     for _ in 0..if by_clips.kicks { 0 } else { kicks } {
@@ -696,10 +705,6 @@ fn place_gun(
     let wanted = (-moved * (0.006 + 0.01 * heft) * holder.sway * steady).clamp_length_max(0.05);
     let lag = state.lag.update(wanted, delta);
     state.velocity = velocity;
-
-    // Clips that hold the gun bob and breathe with it themselves; up at the eye, which they do not hold it at, it
-    // bobs and breathes as its own.
-    let own = 1.0 - by_clips.gun.map_or(0.0, |(_, weight)| weight) * (1.0 - aim);
 
     // Bob: a kick at each footfall, alternating sides, as hard as the walk is quick.
     let speed = Vec3::new(velocity.x, 0.0, velocity.z).length();
@@ -746,6 +751,10 @@ fn place_gun(
     );
     eye * local
 }
+
+/// How much of its sway and lag a gun held by clips keeps: they hold it
+/// as one with the eyes, as the camera they were filmed from did.
+const CLIPS_SWAY: f32 = 0.3;
 
 /// Where an action brings a gun's works, from the eyes: right, up and
 /// forward, in metres.
@@ -1040,11 +1049,20 @@ fn hands_on(
         let way = |v: Vec3| to_body.transform_vector3(turn * v).normalize_or_zero();
         (to_body.transform_point3(at), (way(Vec3::X), way(Vec3::Y)))
     };
+    // A hand built otherwise than the clip's holds with its knuckles where the clip's are, so its fingers close
+    // on what the clip's close on: the middle of its palm goes as far from there as it is on this hand.
+    let palm_to_knuckles = [0, 1].map(|hand| super::hands::knuckles_from_palm(&edit, &rig.arms[hand]));
     let by_clip = |hand: usize, (contact, (fingers, palm)): (Vec3, (Vec3, Vec3))| match clipped(hand) {
         Some((by, weight)) => {
             let way = |own: Vec3, clip: Vec3| own.lerp(to_body.transform_vector3(clip), weight).normalize_or(own);
-            let at = contact.lerp(to_body.transform_point3(by.contact), weight);
-            (at, (way(fingers, by.fingers), way(palm, by.palm)))
+            let (clip_fingers, clip_palm) = (to_body.transform_vector3(by.fingers), to_body.transform_vector3(by.palm));
+            let held_at = match palm_to_knuckles[hand] {
+                Some(offset) => {
+                    to_body.transform_point3(by.knuckles) - super::hands::frame_of(clip_fingers, clip_palm) * offset
+                }
+                None => to_body.transform_point3(by.contact),
+            };
+            (contact.lerp(held_at, weight), (way(fingers, by.fingers), way(palm, by.palm)))
         }
         None => (contact, (fingers, palm)),
     };

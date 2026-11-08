@@ -278,7 +278,7 @@ fn pose_body(world: &mut World, entity: Entity, view: &FirstPersonView, own: boo
     let eyes_in_body = head.w_axis.truncate() + Vec3::from(view.eyes);
     let mut bones = edit.matrices();
     if view.hide_head && own {
-        bones = crate::animation::hidden(&animation.skeleton, rig.head, &bones);
+        bones = crate::animation::hidden(&animation.skeleton, rig.head, &bones, eyes_in_body);
     }
     world.insert(body, Pose { bones: bones.into() });
     Some(placed.transform_point3(eyes_in_body))

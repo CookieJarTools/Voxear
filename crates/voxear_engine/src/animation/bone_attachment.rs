@@ -8,8 +8,8 @@
 use serde::{Deserialize, Serialize};
 use voxear_core::math::{Mat4, Vec3};
 use voxear_ecs::{Component, Entity, World};
-use voxear_render::{Camera, ModelRenderer, Pose, Skeleton};
-use voxear_scene::{Destroying, Parent, Transform, world_matrix};
+use voxear_render::{ModelRenderer, Pose, Skeleton};
+use voxear_scene::{Destroying, Parent, Transform};
 
 /// Keeps its Obj on a bone of its parent's model.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -113,37 +113,16 @@ pub fn attach_to_bones(world: &mut World) {
             }
         }
         if attachment.hide {
-            // Into the camera that sits in it, if one does, so nothing of it is left round that camera.
-            let model = world_matrix(world, parent);
-            let into = camera_near(world, model.transform_point3(on.w_axis.truncate()))
-                .map_or(on.w_axis.truncate(), |camera| model.inverse().transform_point3(camera));
-            let bones = hidden(&animation.skeleton, bone, &pose.bones, into);
+            let bones = hidden(&animation.skeleton, bone, &pose.bones);
             world.insert(parent, Pose { bones: bones.into() });
         }
     }
 }
 
-/// How near a hidden bone a camera is taken to sit in what it hides, in
-/// metres.
-const IN_IT: f32 = 0.5;
-
-/// Where the camera nearest `at` is, when one is within [`IN_IT`] of it.
-fn camera_near(world: &World, at: Vec3) -> Option<Vec3> {
-    let cameras = world.query_ref::<(Entity, &Camera)>().into_iter().map(|(entity, _)| entity).collect::<Vec<_>>();
-    let places = cameras.into_iter().map(|camera| world_matrix(world, camera).w_axis.truncate());
-    places.filter(|place| place.distance(at) < IN_IT).min_by(|a, b| a.distance(at).total_cmp(&b.distance(at)))
-}
-
 /// The bones of a pose with `bone`, and every bone under it, shrunk to
-/// nothing at `into`, in the model's space. For a part a camera sits in, as
-/// a head, `into` is the camera: the skin bound partly to it and partly to
-/// the bone above, as round a neck, is drawn part of the way toward the
-/// camera, along the very line the camera sees it on, so it covers what it
-/// would have covered and is seen from inside, as the neck round the camera
-/// is, which is not drawn; anywhere else, it would be left in a ring or
-/// drawn out in slivers round the camera.
-pub(crate) fn hidden(skeleton: &Skeleton, bone: usize, bones: &[Mat4], into: Vec3) -> Vec<Mat4> {
-    let at = into;
+/// nothing where `bone` is.
+pub(crate) fn hidden(skeleton: &Skeleton, bone: usize, bones: &[Mat4]) -> Vec<Mat4> {
+    let at = bones[bone].w_axis.truncate();
     let shrink = Mat4::from_translation(at) * Mat4::from_scale(Vec3::splat(1e-4)) * Mat4::from_translation(-at);
     let mut under = vec![false; bones.len()];
     let mut out = bones.to_vec();
@@ -223,19 +202,6 @@ mod tests {
             let size = bones[hidden].x_axis.truncate().length();
             assert!(size < 1e-3, "bone {hidden} shrunk: {size}");
             assert!(bones[hidden].w_axis.truncate().distance(Vec3::Y) < 1e-3, "into the head");
-        }
-
-        // With a camera sitting in the head, the head shrinks into the camera; one far off makes no odds.
-        world.spawn((Transform::from_position(Vec3::new(5.0, 1.0, 0.0)), Camera::default()));
-        let inside = Vec3::new(0.0, 0.95, 0.06);
-        world.spawn((Transform::from_position(inside), Camera::default()));
-        let up = |y: f32| Mat4::from_translation(Vec3::Y * y);
-        world.insert(model, Pose { bones: vec![Mat4::IDENTITY, up(1.0), up(1.1)].into() });
-        attach_to_bones(&mut world);
-        let bones = world.get::<Pose>(model).unwrap().bones.clone();
-        for hidden in [1, 2] {
-            let at = bones[hidden].w_axis.truncate();
-            assert!(at.distance(inside) < 1e-3, "bone {hidden} into the camera in the head: {at}");
         }
     }
 }

@@ -115,6 +115,11 @@ pub struct Skin {
     /// space as it was bound, least and most: what hands holding a skinned
     /// gun stop at. A joint that moves none has its least above its most.
     pub bounds: Vec<(Vec3, Vec3)>,
+    /// For each joint, those vertices cut into slices along their box's
+    /// longest side, about 4 cm each, and the box round each slice: a
+    /// closer fit than the one box for a long bone, as a gun's whose stock,
+    /// action and barrel all move as one. None for a joint that moves none.
+    pub slices: Vec<Vec<(Vec3, Vec3)>>,
 }
 
 /// An animation: every bone's pose at each of its frames, `CLIP_RATE` a

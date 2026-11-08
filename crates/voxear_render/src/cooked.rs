@@ -30,7 +30,7 @@ use crate::{
 /// a mesh's seams, by sloppy simplification (see `lod`). 8: skinned meshes'
 /// skin data in the payload, nodes' skins, and the model's skeleton, skins
 /// and clips.
-pub const COOKED_VERSION: u32 = 10;
+pub const COOKED_VERSION: u32 = 11;
 const MAGIC: &[u8; 8] = b"VXMODEL\0";
 const NONE: u32 = u32::MAX;
 /// Where each part of the payload starts, a multiple of a compressed
@@ -471,6 +471,12 @@ impl Writer {
                 let (least, most) = skin.bounds.get(index).copied().unwrap_or((Vec3::INFINITY, Vec3::NEG_INFINITY));
                 self.f32s(&least.to_array());
                 self.f32s(&most.to_array());
+                let slices = skin.slices.get(index).map_or(&[][..], Vec::as_slice);
+                self.u32(slices.len() as u32);
+                for (least, most) in slices {
+                    self.f32s(&least.to_array());
+                    self.f32s(&most.to_array());
+                }
             }
         }
         self.u32(animation.clips.len() as u32);
@@ -552,6 +558,11 @@ impl Reader<'_> {
                 skin.joints.push(joint);
                 skin.inverse_binds.push(Mat4::from_cols_array(&self.f32s()?));
                 skin.bounds.push((Vec3::from_array(self.f32s()?), Vec3::from_array(self.f32s()?)));
+                let mut slices = Vec::new();
+                for _ in 0..self.u32()? {
+                    slices.push((Vec3::from_array(self.f32s()?), Vec3::from_array(self.f32s()?)));
+                }
+                skin.slices.push(slices);
             }
             skins.push(skin);
         }
@@ -691,6 +702,11 @@ pub(crate) mod tests {
         let [(root_least, root_most), (tip_least, tip_most)] = animation.skins[0].bounds[..] else { panic!() };
         assert!(near(root_least, Vec3::new(-0.1, 0.0, 0.0)) && near(root_most, Vec3::new(0.1, 0.0, 0.0)));
         assert!(near(tip_least, Vec3::new(-0.1, 1.0, 0.0)) && near(tip_most, Vec3::new(0.1, 1.0, 0.0)));
+        // Cut along the box's 20 cm into 4 cm slices, the two with corners in them each round its corner.
+        let root = &animation.skins[0].slices[0];
+        assert_eq!(root.len(), 2, "{root:?}");
+        assert!(near(root[0].0, root_least) && near(root[0].1, root_least), "{root:?}");
+        assert!(near(root[1].0, root_most) && near(root[1].1, root_most), "{root:?}");
         let node = &model.nodes[0];
         assert_eq!((node.skin, node.position), (Some(0), Vec3::ZERO), "placed by its bones, not its node");
         let (mesh, _) = &model.meshes[node.mesh];

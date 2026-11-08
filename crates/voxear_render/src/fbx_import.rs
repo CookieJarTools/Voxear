@@ -384,7 +384,7 @@ fn read_animation(scene: &ufbx::Scene, space: Mat4, size: f32) -> (Option<ModelA
         let joints = deformer.clusters.iter().map(|cluster| bone(cluster).copied().unwrap_or(0)).collect();
         let inverse_binds = deformer.clusters.iter().map(|cluster| into * matrix(&cluster.geometry_to_bone) * back);
         skin_of.insert(deformer.element.typed_id, skins.len());
-        skins.push(Skin { joints, inverse_binds: inverse_binds.collect(), bounds: Vec::new() });
+        skins.push(Skin { joints, inverse_binds: inverse_binds.collect(), ..Skin::default() });
     }
     let rest = skeleton.rest();
     let clips = scene.anim_stacks.iter().map(|stack| {

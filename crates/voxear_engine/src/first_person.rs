@@ -98,6 +98,10 @@ pub struct FirstPersonState {
     /// the hands are doing, in radians, and how far they are asked to.
     glance: Spring<f32>,
     glance_goal: f32,
+    /// Where the eyes are asked to be next frame instead of in the head,
+    /// relative to the Obj, and how much: by clips holding a gun, filmed
+    /// from somewhere else.
+    framed: Option<(Vec3, f32)>,
     started: bool,
     /// Where the eyes are and look this frame, in the world, glances aside:
     /// the camera's place for the player's own view, and for anyone else's,
@@ -112,6 +116,7 @@ impl FirstPersonState {
             punch: Spring::new(Vec3::ZERO, SpringFeel::new(5.0, 0.55, 0.0)),
             glance: Spring::new(0.0, SpringFeel::new(1.6, 0.9, 0.0)),
             glance_goal: 0.0,
+            framed: None,
             started: false,
             eye: Mat4::IDENTITY,
         }
@@ -124,6 +129,16 @@ impl FirstPersonState {
 pub fn glance(world: &mut World, entity: Entity, angle: f32) {
     if let Some(state) = world.get_mut::<FirstPersonState>(entity) {
         state.glance_goal = angle;
+    }
+}
+
+/// Has a view's eyes go to `at` next frame, relative to its Obj, `weight`
+/// of the way from the head, easing there and back: where the clips
+/// holding a gun were filmed from. Once it is no longer asked to, they go
+/// back to the head.
+pub fn frame_eyes(world: &mut World, entity: Entity, at: Vec3, weight: f32) {
+    if let Some(state) = world.get_mut::<FirstPersonState>(entity) {
+        state.framed = Some((at, weight.clamp(0.0, 1.0)));
     }
 }
 
@@ -186,9 +201,12 @@ pub fn place(world: &mut World) {
         // no body looks from the Obj itself.
         let obj = world_matrix(world, entity);
         let posed = pose_body(world, entity, &view, own).map(|eyes| obj.inverse().transform_point3(eyes));
-        let eyes_now = posed.unwrap_or(Vec3::ZERO);
         let state = world.get::<FirstPersonState>(entity).copied();
-        let mut state = state.unwrap_or_else(|| FirstPersonState::new(eyes_now));
+        let mut state = state.unwrap_or_else(|| FirstPersonState::new(posed.unwrap_or(Vec3::ZERO)));
+        let eyes_now = match (posed, state.framed.take()) {
+            (Some(eyes), Some((framed, weight))) => eyes.lerp(framed, weight),
+            (posed, _) => posed.unwrap_or(Vec3::ZERO),
+        };
         // The eyes start in the head the first time the body is posed, not on a spring up from the Obj's feet,
         // which would leave the gun held before them far below the shoulders.
         if !state.started && posed.is_some() {

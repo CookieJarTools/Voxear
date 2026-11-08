@@ -7336,5 +7336,18 @@ fn a_gun_handlings_actions_are_based_on_clips_in_its_inspector() {
     assert!(named.first().is_some_and(|first| first == "Auto") && named.len() > 1, "Auto, then the bones: {named:?}");
     click(&mut editor.ui, options[0]);
     frame(&mut editor, &mut renderer);
+
+    // The camera looks from where the clips were filmed, or from the eyes when picked.
+    let camera = first_with(&editor.ui, prop_row(&editor.ui, "Camera").unwrap(), "value-choice").unwrap();
+    scroll_to(&mut editor, &mut renderer, camera);
+    click(&mut editor.ui, camera);
+    frame(&mut editor, &mut renderer);
+    let mut options = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "dropdown-option", &mut options);
+    let named: Vec<String> = options.iter().map(|&option| texts_in(&editor.ui, option).concat()).collect();
+    assert_eq!(named, ["As Filmed", "At the Eyes"]);
+    click(&mut editor.ui, options[1]);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(read().pack.camera, voxear_engine::guns::handling::PackCamera::Eyes);
     shot(&mut renderer, "gun-handling-inspector.png");
 }

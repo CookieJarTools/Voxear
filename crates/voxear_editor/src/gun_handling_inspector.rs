@@ -12,7 +12,7 @@ use voxear_engine::guns::{
     GunKind,
     actions::{ActionKind, ClipPart, Event, Fact, Mark, Repeat, When},
     base_clip::BaseClip,
-    handling::{ActionOffsets, GunHandling, PackClips, Poses},
+    handling::{ActionOffsets, GunHandling, PackCamera, PackClips, Poses},
     templates,
 };
 use voxear_ui::{DragSource, NodeId, Style, Ui};
@@ -218,6 +218,10 @@ pub struct GunHandlingFields {
     actions: Vec<ActionRow>,
 }
 
+/// Where the camera looks from while clips hold the gun, as its menu names
+/// each.
+const CAMERAS: [(PackCamera, &str); 2] = [(PackCamera::Filmed, "As Filmed"), (PackCamera::Eyes, "At the Eyes")];
+
 /// The clips the gun is held by: the carrier's menu and the bones it
 /// offers after "Auto", where it sits from it, each clip, and the numbers.
 struct HeldRows {
@@ -225,6 +229,7 @@ struct HeldRows {
     carrier_at: [NodeId; 3],
     carrier_turn: [NodeId; 3],
     eyes: [NodeId; 3],
+    camera: NodeId,
     clips: Vec<(HeldClip, Slot)>,
     walk_speed: NodeId,
     run_speed: NodeId,
@@ -362,6 +367,10 @@ impl GunHandlingFields {
         }
         if let Some(eyes) = changed_vector(ui, held.eyes) {
             (pack.eyes, typed) = (eyes, true);
+        }
+        if ui.changed(held.camera) {
+            pack.camera = CAMERAS[ui.selected_option(held.camera).min(CAMERAS.len() - 1)].0;
+            typed = true;
         }
         for (field, value) in [
             (held.walk_speed, &mut pack.walk_speed),
@@ -562,12 +571,14 @@ fn held_rows(
     let carrier_at = vector(ui, rows, "Carrier At", pack.carrier_offset.at);
     let carrier_turn = vector(ui, rows, "Carrier Turn", pack.carrier_offset.turn);
     let eyes = vector(ui, rows, "Eyes", pack.eyes);
+    let names: Vec<&str> = CAMERAS.iter().map(|(_, name)| *name).collect();
+    let camera = choice(ui, rows, "Camera", &names, CAMERAS.iter().position(|(at, _)| *at == pack.camera).unwrap_or(0));
     let clips =
         HELD_CLIPS.iter().map(|&(clip, title)| (clip, clip_slot(ui, rows, title, clip.clip(pack), label))).collect();
     let walk_speed = number_field(ui, rows, "Walk Speed", pack.walk_speed);
     let run_speed = number_field(ui, rows, "Run Speed", pack.run_speed);
     let blend = number_field(ui, rows, "Blend", pack.blend);
-    HeldRows { carrier, carrier_at, carrier_turn, eyes, clips, walk_speed, run_speed, blend }
+    HeldRows { carrier, carrier_at, carrier_turn, eyes, camera, clips, walk_speed, run_speed, blend }
 }
 
 fn action_row(

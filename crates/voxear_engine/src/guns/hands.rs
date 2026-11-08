@@ -7,7 +7,7 @@
 //! finger may curl at most, thumb first.
 
 use serde::{Deserialize, Serialize};
-use voxear_core::math::{Quat, Vec3};
+use voxear_core::math::{Mat3, Quat, Vec3};
 
 use super::contact::{Shape, nearest, push_out};
 use crate::animation::ik::{PoseEdit, aim_hand, aim_turn, hand_axes, reach_hand};
@@ -239,6 +239,53 @@ pub fn finger_bends(edit: &PoseEdit, arm: &Arm) -> [[f32; 3]; 5] {
             angle
         })
     })
+}
+
+/// A hand's own frame: along its fingers, out of its palm, and across it.
+fn hand_frame(edit: &PoseEdit, arm: &Arm) -> Option<Quat> {
+    let (along, palm) = hand_axes(edit, arm)?;
+    let palm = (palm - along * palm.dot(along)).try_normalize()?;
+    Some(Quat::from_mat3(&Mat3::from_cols(along, palm, along.cross(palm))))
+}
+
+/// The way a finger's joint points: to the next joint, or past the last to
+/// a bone at the tip where the finger has one, else the way the link before
+/// it pointed at rest, turned as the joint has turned since.
+fn link_way(edit: &PoseEdit, rest: &PoseEdit, bones: &[usize], joint: usize) -> Option<Vec3> {
+    let bone = *bones.get(joint)?;
+    if let Some(&next) = bones.get(joint + 1) {
+        return (edit.position(next) - edit.position(bone)).try_normalize();
+    }
+    let before = *bones.get(joint.checked_sub(1)?)?;
+    let at_rest = (rest.position(bone) - rest.position(before)).try_normalize()?;
+    Some(edit.rotation(bone) * rest.rotation(bone).inverse() * at_rest)
+}
+
+/// The way each of a hand's finger joints points, from the knuckle out, in
+/// the hand's own frame, thumb first; zero for a joint the finger lacks.
+pub fn finger_ways(edit: &PoseEdit, rest: &PoseEdit, arm: &Arm) -> [[Vec3; 3]; 5] {
+    let Some(frame) = hand_frame(edit, arm) else { return [[Vec3::ZERO; 3]; 5] };
+    let into = frame.inverse();
+    std::array::from_fn(|finger| {
+        std::array::from_fn(|joint| {
+            link_way(edit, rest, &arm.fingers[finger], joint).map_or(Vec3::ZERO, |way| into * way)
+        })
+    })
+}
+
+/// Turns each of a hand's finger joints, from the knuckle out, `weight` of
+/// the way to point as `ways` has them in the hand's own frame: a clip's
+/// hand's, so a hand built otherwise, or whose bones are turned otherwise
+/// at rest, shapes its fingers as the clip's do, spread and thumb and all.
+pub fn point_fingers(edit: &mut PoseEdit, rest: &PoseEdit, arm: &Arm, ways: &[[Vec3; 3]; 5], weight: f32) {
+    let Some(frame) = hand_frame(edit, arm) else { return };
+    for (bones, ways) in arm.fingers.iter().zip(ways) {
+        for (joint, way) in ways.iter().enumerate().filter(|(joint, way)| **way != Vec3::ZERO && *joint < bones.len()) {
+            let Some(now) = link_way(edit, rest, bones, joint) else { continue };
+            let wanted = (frame * *way).normalize();
+            edit.turn(bones[joint], Quat::IDENTITY.slerp(Quat::from_rotation_arc(now, wanted), weight));
+        }
+    }
 }
 
 /// A finger as it stands straight: its joints, from the knuckle out, and

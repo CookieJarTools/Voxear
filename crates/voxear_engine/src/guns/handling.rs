@@ -261,7 +261,8 @@ impl CustomAction {
 /// held by as its holder stands, walks, runs and sprints, blended by how
 /// fast it goes; the arms clips a shot plays, from the hip and aimed, and
 /// the gun's own clip for it; and how long a clip takes to come in and go,
-/// in seconds. Each clip is a reference, empty for none.
+/// in seconds; and where the camera looks from while they hold it. Each
+/// clip is a reference, empty for none.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct PackClips {
@@ -290,6 +291,28 @@ pub struct PackClips {
     #[serde(skip_serializing_if = "String::is_empty")]
     pub gun_fire: String,
     pub blend: f32,
+    #[serde(skip_serializing_if = "PackCamera::is_filmed")]
+    pub camera: PackCamera,
+}
+
+/// Where the camera looks from while clips hold the gun.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PackCamera {
+    /// Where the clips were filmed from, as far from the holder's
+    /// shoulders as it was from the clip's: the arms hold the gun as the
+    /// clips have it, and it shows as they show it.
+    #[default]
+    Filmed,
+    /// At the holder's eyes. The arms hold the gun as the clips have it
+    /// as far as they reach it from there, and it shows lower.
+    Eyes,
+}
+
+impl PackCamera {
+    fn is_filmed(&self) -> bool {
+        *self == PackCamera::Filmed
+    }
 }
 
 impl Default for PackClips {
@@ -309,6 +332,7 @@ impl Default for PackClips {
             aimed_fire: String::new(),
             gun_fire: String::new(),
             blend: 0.2,
+            camera: PackCamera::Filmed,
         }
     }
 }

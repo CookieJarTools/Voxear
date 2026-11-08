@@ -20,7 +20,7 @@ use super::contact::{Shape, surface};
 use super::gun::{Gun, GunKind, HandRole, Socket};
 use super::clip_hold::ClipPose;
 use super::handling::{PackClips, Poses};
-use super::hands::{Grip, close_by, keep_out, palm_of, seat_hand};
+use super::hands::{Grip, close_by, keep_out, palm_of, point_fingers, seat_hand};
 use super::mechanism::{GunPart, GunState, Known, PartRole};
 use super::playing::{ActionPlay, HandAim, Throwing, advance, curve, minimum_jerk};
 use super::preview::HoldPreview;
@@ -459,6 +459,13 @@ pub fn hold(world: &mut World) {
         };
         // A gun from an animation pack is held where its clips have it, and kicks as its shot's clip does.
         let clipped = held_by_clips(world, &handling.pack, &holder, &mut state, delta);
+        // Seen from where the clips were filmed, as far from the shoulders, the gun shows as they show it.
+        if handling.pack.camera == super::handling::PackCamera::Filmed
+            && let Some(((pose, weight), body)) = clipped.as_ref().zip(body)
+            && let Some(at) = filmed_eyes(world, entity, body, pose, &view)
+        {
+            crate::first_person::frame_eyes(world, entity, at, *weight);
+        }
         // As near where they carry it as the body's arms reach, the hands holding where the clips have them.
         let reached = clipped.as_ref().zip(body).and_then(|((pose, _), body)| {
             let arms = body_arms(world, body, eye)?;
@@ -910,6 +917,26 @@ struct Held<'a> {
     clip: Option<&'a (ClipPose, f32)>,
 }
 
+/// Where the eyes go relative to the holder's Obj to see as the clips of
+/// `pose` were filmed: as far from the body's shoulders, level with where
+/// the view looks, as the camera was from the clip's, scaled to its arms.
+fn filmed_eyes(world: &World, entity: Entity, body: Entity, pose: &ClipPose, view: &FirstPersonView) -> Option<Vec3> {
+    let animation = world.get::<ModelRenderer>(body)?.animation.clone()?;
+    let (posed, rig) = (world.get::<Pose>(body)?, Rig::find(&animation.skeleton)?);
+    let placed = world_matrix(world, body);
+    let shoulder = |arm: usize| placed.transform_point3(posed.bones[rig.arms[arm].upper].w_axis.truncate());
+    let middle = (shoulder(0) + shoulder(1)) * 0.5;
+    let skeleton = &animation.skeleton;
+    let rest = PoseEdit::new(skeleton, &skeleton.model_matrices(&skeleton.rest()));
+    let reach = |arm: usize| super::hands::arm_reach(&rest, &rig.arms[arm]);
+    let scale = placed.x_axis.truncate().length() * (reach(0)? + reach(1)?)
+        / (pose.hands[0].reach + pose.hands[1].reach).max(1e-3);
+    // The clip's eyes are its space's origin: from its shoulders, they are back the way the shoulders are.
+    let from_shoulders = -(pose.shoulders[0] + pose.shoulders[1]) * 0.5 * scale;
+    let eyes = middle + Quat::from_rotation_y(view.yaw.to_radians()) * from_shoulders;
+    Some(world_matrix(world, entity).inverse().transform_point3(eyes))
+}
+
 /// A body's arms as the eyes at `eye` see them: its shoulders, and how far
 /// each arm reaches.
 fn body_arms(world: &World, body: Entity, eye: Mat4) -> Option<super::clip_hold::Arms> {
@@ -1043,6 +1070,10 @@ fn hands_on(
     let short = seat_clear(&mut edit, right, (contact, axes), (pole, 0.15), (&avoid, side), working(aims[1]));
     let grip = aims[1].map_or(rest_grip(held.poses, Hand::Right), |aim| aim.grip);
     close_by(&mut edit, right, fingers(1, grip), &shapes, &mut hands.fingers[1], delta);
+    // Clips have the fingers as they shape them, spread and thumb and all, not only as far as they close.
+    if let Some((by, weight)) = clipped(1) {
+        point_fingers(&mut edit, &at_rest, right, &by.ways, weight);
+    }
 
     let shoulder = edit.position(left.upper);
     let pole = elbow(0, shoulder, bent(held, 0, shoulder, shoulder + down * 0.7 - out * 0.4 + back * 0.1));
@@ -1062,6 +1093,9 @@ fn hands_on(
     seat_clear(&mut edit, left, (contact, axes), (pole, 0.2), (&avoid, -side), working(aims[0]));
     let grip = aims[0].map_or(rest_grip(held.poses, Hand::Left), |aim| aim.grip);
     close_by(&mut edit, left, fingers(0, grip), &shapes, &mut hands.fingers[0], delta);
+    if let Some((by, weight)) = clipped(0) {
+        point_fingers(&mut edit, &at_rest, left, &by.ways, weight);
+    }
     world.insert(body, Pose { bones: edit.matrices().into() });
     if aims[1].is_some() { 0.0 } else { short }
 }

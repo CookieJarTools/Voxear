@@ -261,6 +261,11 @@ fn scene_with_body(skeleton: Skeleton) -> Scene {
 
 /// Holds the gun by the arms clip `arms` alone.
 fn held_by(scene: &mut Scene, arms: &Arc<ModelAnimation>) {
+    held_from(scene, arms, super::handling::PackCamera::Filmed);
+}
+
+/// Holds the gun by the arms clip `arms` alone, looking from `camera`.
+fn held_from(scene: &mut Scene, arms: &Arc<ModelAnimation>, camera: super::handling::PackCamera) {
     let mut clips = Clips::default();
     clips.put("Arms#clip:Hold", ClipSource { animation: arms.clone(), index: 0, settings: Default::default() });
     scene.world.insert_resource(clips);
@@ -268,6 +273,7 @@ fn held_by(scene: &mut Scene, arms: &Arc<ModelAnimation>) {
     handling.pack.idle = "Arms#clip:Hold".into();
     // The clip was made with the holder's own eyes, which sit up and forward of its head.
     handling.pack.eyes = crate::first_person::FirstPersonView::default().eyes;
+    handling.pack.camera = camera;
     put_handling(&mut scene.world, "Held", Arc::new(handling));
     scene.world.get_mut::<Gun>(scene.gun).unwrap().handling = "Held".into();
 }
@@ -371,6 +377,97 @@ fn a_gun_held_by_clips_neither_bobs_nor_breathes_as_its_clips_do_that_themselves
         most = most.max(gun_from_eye(&scene).w_axis.truncate().distance(still));
     }
     assert!(most < 0.0005, "the gun stays where the clip has it before the eyes: {most} m off");
+}
+
+/// `skeleton` with every bone's axes turned otherwise at rest, each by its
+/// own turn, its joints where they were.
+fn turned(mut skeleton: Skeleton) -> Skeleton {
+    let at: Vec<Vec3> = skeleton.model_matrices(&skeleton.rest()).iter().map(|m| m.w_axis.truncate()).collect();
+    let turn = |bone: usize| {
+        let bone = bone as f32;
+        Quat::from_euler(voxear_core::math::EulerRot::XYZ, bone * 0.7, bone * 1.3, -0.4)
+    };
+    for bone in 0..skeleton.bones.len() {
+        let parent = skeleton.bones[bone].parent;
+        let above = parent.map_or(Quat::IDENTITY, turn);
+        skeleton.bones[bone].rest.rotation = above.inverse() * turn(bone);
+        skeleton.bones[bone].rest.translation =
+            parent.map_or(at[bone], |parent| above.inverse() * (at[bone] - at[parent]));
+    }
+    skeleton
+}
+
+/// The way each finger joint of a body's hand points, in the hand's frame.
+fn finger_ways(scene: &Scene, arm: usize) -> [[Vec3; 3]; 5] {
+    use crate::animation::ik::PoseEdit;
+    use crate::animation::rig::Rig;
+    let animation = scene.world.get::<ModelRenderer>(scene.body).unwrap().animation.clone().unwrap();
+    let skeleton = &animation.skeleton;
+    let rig = Rig::find(skeleton).unwrap();
+    let edit = PoseEdit::new(skeleton, &scene.world.get::<Pose>(scene.body).unwrap().bones);
+    let rest = PoseEdit::new(skeleton, &skeleton.model_matrices(&skeleton.rest()));
+    super::hands::finger_ways(&edit, &rest, &rig.arms[arm])
+}
+
+/// Where a body's camera is from its head, in metres.
+fn camera_from_head(scene: &Scene) -> Vec3 {
+    use crate::animation::rig::Rig;
+    let animation = scene.world.get::<ModelRenderer>(scene.body).unwrap().animation.clone().unwrap();
+    let head = Rig::find(&animation.skeleton).unwrap().head;
+    let head = scene.world.get::<Pose>(scene.body).unwrap().bones[head].w_axis.truncate();
+    let head = voxear_scene::world_matrix(&scene.world, scene.body).transform_point3(head);
+    voxear_scene::world_matrix(&scene.world, scene.camera).w_axis.truncate() - head
+}
+
+#[test]
+fn seen_as_filmed_a_body_built_otherwise_holds_the_gun_as_the_clip_does_fingers_and_all() {
+    let mut own = scene_with(GunKind::BoltActionRifle);
+    steady(&mut own);
+    settle(&mut own, 40);
+    let (arms, palms) = clip_of_hold(&mut own);
+    let shown = gun_from_eye(&own).w_axis.truncate();
+    let ways = finger_ways(&own, 1);
+
+    // A tenth shorter, named otherwise, and every bone's axes turned otherwise at rest.
+    let body = crate::animation::rig::tests::body(|part, side| match side {
+        Some(left) => format!("DEF-{part}.{}", if left { "L" } else { "R" }),
+        None => format!("DEF-{part}"),
+    });
+    let mut body = turned(body);
+    body.bones.iter_mut().for_each(|bone| bone.rest.translation *= 0.9);
+
+    // Seen as filmed, the camera comes to where the clip's was from the shoulders: the gun shows near where it
+    // shows in the clip, both hands hold where the clip's do, and the fingers point as the clip's.
+    let mut filmed = scene_with_body(body.clone());
+    steady(&mut filmed);
+    held_by(&mut filmed, &arms);
+    settle(&mut filmed, 60);
+    for arm in 0..2 {
+        let off = palm_on_gun(&filmed, arm).distance(palms[arm]);
+        assert!(off < 0.005, "seen as filmed, palm {arm}: {off} m off");
+    }
+    let off = gun_from_eye(&filmed).w_axis.truncate().distance(shown);
+    assert!(off < 0.04, "the gun shows near where the clip shows it: {off} m off");
+    let held = finger_ways(&filmed, 1);
+    for joint in 0..2 {
+        let off = held[1][joint].angle_between(ways[1][joint]).to_degrees();
+        assert!(off < 3.0, "the index finger's joint {joint} points as the clip's: {off} degrees off");
+    }
+    let moved = camera_from_head(&filmed);
+
+    // At the eyes, the camera stays at the head where the view has it, and the hands still hold where the clip's do.
+    let mut eyes = scene_with_body(body);
+    steady(&mut eyes);
+    held_from(&mut eyes, &arms, super::handling::PackCamera::Eyes);
+    settle(&mut eyes, 60);
+    let at_eyes = camera_from_head(&eyes);
+    let view = Vec3::from(crate::first_person::FirstPersonView::default().eyes);
+    assert!(at_eyes.distance(view) < 0.01, "at the eyes: {at_eyes} {view}");
+    assert!(moved.distance(view) > 0.01, "as filmed, it moved: {moved} {view}");
+    for arm in 0..2 {
+        let off = palm_on_gun(&eyes, arm).distance(palms[arm]);
+        assert!(off < 0.005, "at the eyes, palm {arm}: {off} m off");
+    }
 }
 
 #[test]

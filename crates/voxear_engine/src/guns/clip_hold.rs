@@ -20,7 +20,7 @@ use voxear_ecs::World;
 use voxear_render::Skeleton;
 
 use super::handling::{PackClips, Place};
-use super::hands::{arm_reach, finger_bends, palm_of};
+use super::hands::{arm_reach, finger_bends, finger_ways, palm_of};
 use crate::animation::Clips;
 use crate::animation::ik::{PoseEdit, hand_axes};
 use crate::animation::rig::Rig;
@@ -39,8 +39,9 @@ pub struct ClipPose {
 /// A hand as a clip has it: the middle of its palm, the way its fingers
 /// point and its palm faces, in the gun's space; the way its elbow is from
 /// its shoulder, in the eyes' space; and how far each finger's joints bend
-/// toward the palm, thumb first, in radians (see `finger_bends`); and how
-/// far its arm reaches, from the shoulder to the middle of the palm.
+/// toward the palm, thumb first, in radians (see `finger_bends`), and the
+/// way each points in the hand's own frame (see `finger_ways`); and how far
+/// its arm reaches, from the shoulder to the middle of the palm.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ClipHand {
     pub contact: Vec3,
@@ -48,6 +49,7 @@ pub struct ClipHand {
     pub palm: Vec3,
     pub elbow: Vec3,
     pub bends: [[f32; 3]; 5],
+    pub ways: [[Vec3; 3]; 5],
     pub reach: f32,
 }
 
@@ -74,6 +76,7 @@ impl ClipHand {
             bends: std::array::from_fn(|f| {
                 std::array::from_fn(|j| self.bends[f][j] * (1.0 - t) + other.bends[f][j] * t)
             }),
+            ways: std::array::from_fn(|f| std::array::from_fn(|j| way(self.ways[f][j], other.ways[f][j]))),
             reach: self.reach + (other.reach - self.reach) * t,
         }
     }
@@ -115,6 +118,7 @@ pub fn clip_pose(
             palm: into_gun.transform_vector3(facing).normalize_or_zero(),
             elbow,
             bends: finger_bends(&edit, arm),
+            ways: finger_ways(&edit, &at_rest, arm),
             reach: arm_reach(&at_rest, arm)?,
         })
     };

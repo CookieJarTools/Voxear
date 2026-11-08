@@ -6,8 +6,10 @@
 
 pub mod actions;
 pub mod base_clip;
+pub mod clip_hold;
 pub mod contact;
 pub mod gun;
+pub mod gun_clips;
 pub mod handling;
 pub mod hands;
 pub mod holder;
@@ -15,6 +17,8 @@ pub mod leftovers;
 #[cfg(test)]
 mod legacy_plan;
 pub mod mechanism;
+#[cfg(test)]
+mod pack_tests;
 pub mod playing;
 pub mod preview;
 pub mod templates;

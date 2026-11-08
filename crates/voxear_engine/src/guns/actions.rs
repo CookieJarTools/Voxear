@@ -143,6 +143,8 @@ pub enum BeatKey {
     RoundIn,
     Spin,
     Tap,
+    /// A part of an action played from clips.
+    Clip,
     #[default]
     Wait,
 }
@@ -182,6 +184,7 @@ impl BeatKey {
             BeatKey::RoundIn => "Round In",
             BeatKey::Spin => "Spin",
             BeatKey::Tap => "Tap",
+            BeatKey::Clip => "Clip",
             BeatKey::Wait => "Wait",
         }
     }
@@ -250,10 +253,13 @@ pub enum Fact {
     NotFull,
     Spare,
     NoSpare,
+    /// Something in the chamber, a live round or a spent case.
+    ChamberFilled,
+    ChamberEmpty,
 }
 
 impl Fact {
-    const ALL: [Fact; 10] = [
+    pub const ALL: [Fact; 12] = [
         Fact::Fed,
         Fact::NotFed,
         Fact::ChamberLive,
@@ -264,6 +270,8 @@ impl Fact {
         Fact::NotFull,
         Fact::Spare,
         Fact::NoSpare,
+        Fact::ChamberFilled,
+        Fact::ChamberEmpty,
     ];
 
     /// Whether it is so of a gun of `kind` in `state`, its holder having
@@ -282,6 +290,8 @@ impl Fact {
             Fact::NotFull => !full,
             Fact::Spare => spare > 0,
             Fact::NoSpare => spare == 0,
+            Fact::ChamberFilled => state.chamber != Chamber::Empty,
+            Fact::ChamberEmpty => state.chamber == Chamber::Empty,
         }
     }
 }
@@ -349,7 +359,9 @@ impl When {
 
 /// How many times a beat plays, with the beats either side of it that
 /// repeat the same way: once for each stripper clip the gun takes, each
-/// round it lacks, each chamber of its cylinder, or a set number of times.
+/// round it lacks, each chamber of its cylinder, a set number of times, or
+/// again and again until the rounds the beats before and the beats so far
+/// put in fill the feed.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Repeat {
@@ -359,6 +371,7 @@ pub enum Repeat {
     PerMissingRound,
     PerChamber,
     Times(u8),
+    UntilFull,
 }
 
 impl Repeat {
@@ -374,6 +387,7 @@ impl Repeat {
             Repeat::PerMissingRound => missing.min(spare),
             Repeat::PerChamber => kind.capacity().min(spare + state.rounds + u32::from(state.chamber == Chamber::Live)),
             Repeat::Times(times) => u32::from(times),
+            Repeat::UntilFull => missing.min(spare),
         }
     }
 }
@@ -414,6 +428,10 @@ pub struct Beat {
     #[serde(skip_serializing_if = "When::is_always")]
     pub when: When,
     pub repeat: Repeat,
+    /// For a part of an action played from clips, which of its spec's
+    /// parts it is (see [`ActionSpec::played`]).
+    #[serde(skip)]
+    pub played: Option<u16>,
 }
 
 impl Default for Beat {
@@ -442,6 +460,7 @@ impl Beat {
             throw: Throw::Nothing,
             when: When::default(),
             repeat: Repeat::Once,
+            played: None,
         }
     }
 
@@ -505,6 +524,52 @@ impl Beat {
     }
 }
 
+/// Something that happens to the gun a set time into a clip part, in
+/// seconds from the part's start, as the clip plays at its own speed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Mark {
+    pub at: f32,
+    pub event: Event,
+}
+
+/// A part of an action played from clips, for a gun from an animation
+/// pack: the arms clip the hands and the gun go by, the gun's own clip its
+/// parts move by, the stretch of them it plays, in seconds (an end at or
+/// before the start plays to the clip's end), what happens to the gun when,
+/// and when the part plays and how often, as a beat does.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ClipPart {
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub arms: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub gun: String,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub start: f32,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub end: f32,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub marks: Vec<Mark>,
+    #[serde(skip_serializing_if = "When::is_always")]
+    pub when: When,
+    pub repeat: Repeat,
+}
+
+impl ClipPart {
+    /// As a beat, which the action's planning repeats and picks as it
+    /// does any: `index` among its spec's parts, its length not yet known.
+    pub fn beat(&self, index: usize) -> Beat {
+        let played = Some(index as u16);
+        let beat = Beat { when: self.when, repeat: self.repeat, knock: Knock::Nothing, played, ..Beat::default() };
+        Beat { key: BeatKey::Clip, ..beat.timed(0.0, 0.0) }
+    }
+}
+
+fn is_zero(value: &f32) -> bool {
+    *value == 0.0
+}
+
 /// An action as data: when it can play at all, how far it lifts the gun
 /// up before the eyes, whether it takes the gun down from them, an offset
 /// on where it brings the gun, its beats, and the clip it is based on.
@@ -521,12 +586,43 @@ pub struct ActionSpec {
     pub beats: Vec<Beat>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub clip: Option<BaseClip>,
+    /// The parts it plays from clips, which its beats name, and how fast
+    /// they play, 1 as the clips go.
+    #[serde(skip)]
+    pub played: Vec<ClipPart>,
+    #[serde(skip)]
+    pub speed: f32,
 }
 
 impl Default for ActionSpec {
     fn default() -> Self {
         let work = Place::default();
-        Self { when: When::default(), lift: 1.0, lowers_aim: true, work, beats: Vec::new(), clip: None }
+        Self {
+            when: When::default(),
+            lift: 1.0,
+            lowers_aim: true,
+            work,
+            beats: Vec::new(),
+            clip: None,
+            played: Vec::new(),
+            speed: 1.0,
+        }
+    }
+}
+
+impl ActionSpec {
+    /// Played from `parts` in place of its beats, the clips carrying the gun
+    /// where its beats would lift it.
+    pub fn play(&mut self, parts: &[ClipPart], speed: f32) {
+        self.lift = 0.0;
+        self.beats = parts.iter().enumerate().map(|(index, part)| part.beat(index)).collect();
+        self.played = parts.to_vec();
+        self.speed = speed.max(0.05);
+    }
+
+    /// The marks of a beat that is a clip part, none for any other.
+    pub fn marks(&self, beat: &Beat) -> &[Mark] {
+        beat.played.and_then(|index| self.played.get(usize::from(index))).map_or(&[], |part| part.marks.as_slice())
     }
 }
 
@@ -543,16 +639,45 @@ pub fn expand(spec: &ActionSpec, kind: GunKind, state: &GunState, spare: u32) ->
         return Vec::new();
     }
     let mut beats = Vec::new();
+    // What the beats so far will have done, for the runs that repeat until the feed is full.
+    let (mut planned, mut left) = (state.clone(), spare);
     let mut start = 0;
     while start < spec.beats.len() {
         let repeat = spec.beats[start].repeat;
         let end = (start..spec.beats.len()).find(|&at| spec.beats[at].repeat != repeat).unwrap_or(spec.beats.len());
-        for _ in 0..repeat.count(kind, state, spare) {
-            beats.extend(spec.beats[start..end].iter().filter(|beat| beat.when.holds(kind, state, spare)));
+        let run = &spec.beats[start..end];
+        if repeat == Repeat::UntilFull {
+            while planned.rounds < kind.capacity() && left > 0 {
+                let before = planned.rounds;
+                for beat in run {
+                    if beat.when.holds(kind, &planned, left) {
+                        beats.push(*beat);
+                        plan_beat(spec, beat, kind, &mut planned, &mut left);
+                    }
+                }
+                if planned.rounds <= before {
+                    break;
+                }
+            }
+        } else {
+            for _ in 0..repeat.count(kind, state, spare) {
+                for beat in run.iter().filter(|beat| beat.when.holds(kind, state, spare)) {
+                    beats.push(*beat);
+                    plan_beat(spec, beat, kind, &mut planned, &mut left);
+                }
+            }
         }
         start = end;
     }
     beats
+}
+
+/// Puts what a planned beat will do into the state planned so far.
+fn plan_beat(spec: &ActionSpec, beat: &Beat, kind: GunKind, planned: &mut GunState, left: &mut u32) {
+    for mark in spec.marks(beat) {
+        apply(mark.event, kind, planned, left);
+    }
+    apply(beat.then, kind, planned, left);
 }
 
 /// The beats a built-in action takes for a gun in this state.
@@ -734,5 +859,62 @@ mod tests {
         play(&plan(ActionKind::CheckChamber, kind, &state, 0), kind, &mut state, &mut spare);
         assert_eq!(state.known_chamber, Known::Exact);
         assert!(state.ready(kind), "a press check leaves the round chambered");
+    }
+
+    /// A reload played from clips, a round at a time: the first part opens
+    /// the bolt and puts one in, the loop one more each time until the feed
+    /// is full, and the last chambers one and shuts the bolt.
+    fn round_by_round() -> ActionSpec {
+        let mark = |at, event| Mark { at, event };
+        let first =
+            ClipPart { marks: vec![mark(0.9, Event::Open), mark(2.0, Event::AddRounds(1))], ..ClipPart::default() };
+        let pass =
+            ClipPart { marks: vec![mark(0.7, Event::AddRounds(1))], repeat: Repeat::UntilFull, ..ClipPart::default() };
+        let last = ClipPart { marks: vec![mark(0.6, Event::Chamber)], ..ClipPart::default() };
+        let mut spec = ActionSpec::default();
+        spec.play(&[first, pass, last], 1.0);
+        spec
+    }
+
+    /// Plays a plan's marks and events, as its parts would.
+    fn play_parts(spec: &ActionSpec, beats: &[Beat], kind: GunKind, state: &mut GunState, spare: &mut u32) {
+        for beat in beats {
+            spec.marks(beat).iter().for_each(|mark| apply(mark.event, kind, state, spare));
+            apply(beat.then, kind, state, spare);
+        }
+    }
+
+    #[test]
+    fn a_part_repeated_until_full_loads_the_rounds_the_parts_before_it_left_to_load() {
+        let (kind, spec) = (GunKind::BoltActionRifle, round_by_round());
+        let parts = |beats: &[Beat]| beats.iter().map(|beat| beat.played.unwrap()).collect::<Vec<_>>();
+        let mut empty = GunState::loaded(kind);
+        (empty.rounds, empty.chamber) = (0, Chamber::Empty);
+        let beats = expand(&spec, kind, &empty, 20);
+        assert_eq!(parts(&beats), [0, 1, 1, 1, 1, 2], "one in first, four more, then shut");
+        let mut spare = 20;
+        play_parts(&spec, &beats, kind, &mut empty, &mut spare);
+        assert!(empty.chamber == Chamber::Live && empty.rounds == 4 && spare == 15, "{empty:?}");
+
+        let mut three = GunState::loaded(kind);
+        three.rounds = 3;
+        assert_eq!(parts(&expand(&spec, kind, &three, 20)), [0, 1, 2], "two missing: the first part's and one more");
+        assert_eq!(parts(&expand(&spec, kind, &three, 1)), [0, 2], "one spare: the first part takes it");
+        assert!(spec.beats.iter().all(|beat| beat.key == BeatKey::Clip && beat.length() == 0.0));
+    }
+
+    #[test]
+    fn a_parts_when_picks_it_by_what_is_in_the_chamber() {
+        let kind = GunKind::BoltActionRifle;
+        let throws = ClipPart { gun: "Hammer".into(), when: When::all([Fact::ChamberFilled]), ..ClipPart::default() };
+        let empty = ClipPart { gun: "No Bullet".into(), when: When::all([Fact::ChamberEmpty]), ..ClipPart::default() };
+        let mut spec = ActionSpec::default();
+        spec.play(&[throws, empty], 1.0);
+        let mut state = GunState::loaded(kind);
+        state.shoot(kind);
+        assert_eq!(state.chamber, Chamber::Spent);
+        assert_eq!(expand(&spec, kind, &state, 0).iter().map(|b| b.played).collect::<Vec<_>>(), [Some(0)]);
+        state.chamber = Chamber::Empty;
+        assert_eq!(expand(&spec, kind, &state, 0).iter().map(|b| b.played).collect::<Vec<_>>(), [Some(1)]);
     }
 }

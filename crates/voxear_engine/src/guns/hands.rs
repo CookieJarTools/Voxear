@@ -166,6 +166,29 @@ pub fn close(
     was: &mut Option<[[f32; 3]; 5]>,
     delta: f32,
 ) {
+    close_by(edit, arm, bends_of(grip), shapes, was, delta);
+}
+
+/// How far a grip lets each finger's joints bend from rest, in radians,
+/// thumb first.
+pub fn bends_of(grip: Grip) -> [[f32; 3]; 5] {
+    std::array::from_fn(|finger| {
+        let bends = if finger == 0 { THUMB_BEND } else { FINGER_BEND };
+        bends.map(|bend| (bend * grip.0[finger].clamp(0.0, 1.0)).to_radians())
+    })
+}
+
+/// Closes an arm's fingers as [`close`] does, each joint bending at most
+/// `most` from how it stands at rest, in radians, thumb first: as a clip's
+/// fingers are bent (see [`bends`]).
+pub fn close_by(
+    edit: &mut PoseEdit,
+    arm: &Arm,
+    most: [[f32; 3]; 5],
+    shapes: &[Shape],
+    was: &mut Option<[[f32; 3]; 5]>,
+    delta: f32,
+) {
     for bones in &arm.fingers {
         for &bone in bones.iter().take(3) {
             edit.rest(bone);
@@ -173,11 +196,9 @@ pub fn close(
     }
     let Some(palm) = palm_of(edit, arm) else { return };
     for (finger, bones) in arm.fingers.iter().enumerate() {
-        let (bends, thickness) =
-            if finger == 0 { (THUMB_BEND, palm.finger * 1.15) } else { (FINGER_BEND, palm.finger) };
-        let most = bends.map(|bend| (bend * grip.0[finger].clamp(0.0, 1.0)).to_radians());
+        let thickness = if finger == 0 { palm.finger * 1.15 } else { palm.finger };
         let Some(shape) = Finger::of(edit, bones, palm.facing) else { continue };
-        let (wanted, touching) = shape.close(most, shapes, thickness);
+        let (wanted, touching) = shape.close(most[finger], shapes, thickness);
         let shown = was.get_or_insert([[0.0; 3]; 5]);
         let fade = 0.5f32.powf(delta / BENDING);
         for joint in 0..3 {
@@ -185,6 +206,35 @@ pub fn close(
             shown[finger][joint] = if touching[joint] { eased.min(wanted[joint]) } else { eased };
         }
         shape.bend(edit, bones, shown[finger]);
+    }
+}
+
+/// How far each of a posed hand's fingers' first three joints is bent from
+/// how it stands at `rest`, toward the palm, in radians, thumb first: each
+/// joint's turn from the line before it, the first's from the way the
+/// fingers point. What [`close_by`] bends a hand's fingers by, so a hand of
+/// another build curls as this one does.
+pub fn bends(edit: &PoseEdit, rest: &PoseEdit, arm: &Arm) -> [[f32; 3]; 5] {
+    let angles = |edit: &PoseEdit| -> Option<[[f32; 3]; 5]> {
+        let (along, palm) = hand_axes(edit, arm)?;
+        Some(std::array::from_fn(|finger| {
+            let Some(shape) = Finger::of(edit, &arm.fingers[finger], palm) else { return [0.0; 3] };
+            let mut before = along;
+            std::array::from_fn(|joint| {
+                if joint >= shape.joints {
+                    return 0.0;
+                }
+                let link = shape.points[joint + 1] - shape.points[joint];
+                let axis = before.cross(palm).normalize_or_zero();
+                let angle = before.cross(link).dot(axis).atan2(before.dot(link));
+                before = link;
+                angle
+            })
+        }))
+    };
+    match (angles(edit), angles(rest)) {
+        (Some(now), Some(rest)) => std::array::from_fn(|f| std::array::from_fn(|j| now[f][j] - rest[f][j])),
+        _ => [[0.0; 3]; 5],
     }
 }
 

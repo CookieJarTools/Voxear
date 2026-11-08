@@ -1249,6 +1249,10 @@ fn a_pictures_import_settings_apply_to_the_models_that_read_it() {
     let max_size = first_with(&editor.ui, prop_row(&editor.ui, "Max size").unwrap(), "value-choice").unwrap();
     assert_eq!(editor.ui.selected_option(max_size), 0, "its own size, to start with");
     choose(&mut editor, &mut renderer, max_size, 9);
+    let flip = editor.ui.children(prop_row(&editor.ui, "Flip Green").expect("a Flip Green row"))[1];
+    click(&mut editor.ui, flip);
+    frame(&mut editor, &mut renderer);
+    assert!(editor.ui.is_checked(flip));
     let apply = editor.ui.find(editor.ui.root(), "import-apply").unwrap();
     click(&mut editor.ui, apply);
     frame(&mut editor, &mut renderer);
@@ -1256,6 +1260,7 @@ fn a_pictures_import_settings_apply_to_the_models_that_read_it() {
 
     let meta = std::fs::read_to_string(dir.path().join("Models/Bricks.png.meta")).unwrap();
     assert!(meta.contains("[texture]") && meta.contains("max_size = 32"), "Apply writes them to the .meta: {meta}");
+    assert!(meta.contains("flip_green = true"), "{meta}");
     let status = editor.ui.text(editor.ui.find(editor.ui.root(), "status-left").unwrap());
     assert!(status.contains("Imported Pyramid.gltf again"), "the model reading it is imported again: {status}");
 }

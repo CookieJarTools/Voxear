@@ -4,7 +4,8 @@
 //! actions are offsets on the gun kind's templates, finding their beats by
 //! key, so the templates can improve under them. And it can have actions
 //! of its own, one of which may take a built-in's place: an editable copy
-//! of a built-in is one.
+//! of a built-in is one. For a gun from an animation pack, its clips hold
+//! the gun, and any action can be played from clips, part by part.
 //!
 //! ```toml
 //! kind = "bolt_action_rifle"
@@ -27,7 +28,7 @@ use serde::{Deserialize, Serialize};
 use voxear_core::math::{EulerRot, Mat4, Quat, Vec3};
 use voxear_ecs::World;
 
-use super::actions::{ActionKind, ActionSpec, Beat, BeatKey, When};
+use super::actions::{ActionKind, ActionSpec, Beat, BeatKey, ClipPart, When};
 use super::base_clip::BaseClip;
 use super::gun::{Gun, GunKind, Socket};
 use super::hands::Grip;
@@ -135,12 +136,16 @@ pub struct ActionOffsets {
     /// The clip it is based on, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub clip: Option<BaseClip>,
+    /// The parts it plays from clips in place of its beats, if any.
+    #[serde(rename = "part", skip_serializing_if = "Vec::is_empty")]
+    pub parts: Vec<ClipPart>,
 }
 
 impl Default for ActionOffsets {
     fn default() -> Self {
         let work = Place::default();
-        Self { action: ActionKind::Reload, speed: 1.0, lift: None, work, beats: Vec::new(), clip: None }
+        let (beats, parts) = (Vec::new(), Vec::new());
+        Self { action: ActionKind::Reload, speed: 1.0, lift: None, work, beats, clip: None, parts }
     }
 }
 
@@ -207,6 +212,9 @@ pub struct CustomAction {
     pub beats: Vec<Beat>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub clip: Option<BaseClip>,
+    /// The parts it plays from clips in place of its beats, if any.
+    #[serde(rename = "part", skip_serializing_if = "Vec::is_empty")]
+    pub parts: Vec<ClipPart>,
 }
 
 impl Default for CustomAction {
@@ -221,20 +229,98 @@ impl Default for CustomAction {
             work: Place::default(),
             beats: Vec::new(),
             clip: None,
+            parts: Vec::new(),
         }
     }
 }
 
 impl CustomAction {
     pub fn spec(&self) -> ActionSpec {
-        ActionSpec {
+        let mut spec = ActionSpec {
             when: self.when,
             lift: self.lift,
             lowers_aim: self.lowers_aim,
             work: self.work,
             beats: self.beats.clone(),
             clip: self.clip.clone(),
+            ..ActionSpec::default()
+        };
+        if !self.parts.is_empty() {
+            spec.play(&self.parts, 1.0);
         }
+        spec
+    }
+}
+
+/// The clips a gun from an animation pack is held by: the bone of the arms
+/// clips' skeleton that carries the gun, and where the gun sits from it;
+/// the gun's own clip it stands in between actions; the arms clips it is
+/// held by as its holder stands, walks, runs and sprints, blended by how
+/// fast it goes; the arms clips a shot plays, from the hip and aimed, and
+/// the gun's own clip for it; and how long a clip takes to come in and go,
+/// in seconds. Each clip is a reference, empty for none.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PackClips {
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub carrier: String,
+    #[serde(skip_serializing_if = "Place::is_zero")]
+    pub carrier_offset: Place,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub rest: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub idle: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub walk: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub run: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub sprint: String,
+    pub walk_speed: f32,
+    pub run_speed: f32,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub fire: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub aimed_fire: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub gun_fire: String,
+    pub blend: f32,
+}
+
+impl Default for PackClips {
+    fn default() -> Self {
+        Self {
+            carrier: String::new(),
+            carrier_offset: Place::default(),
+            rest: String::new(),
+            idle: String::new(),
+            walk: String::new(),
+            run: String::new(),
+            sprint: String::new(),
+            walk_speed: 1.4,
+            run_speed: 4.0,
+            fire: String::new(),
+            aimed_fire: String::new(),
+            gun_fire: String::new(),
+            blend: 0.2,
+        }
+    }
+}
+
+impl PackClips {
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// Whether arms clips hold the gun: with none, it is held as every gun is.
+    pub fn holds(&self) -> bool {
+        [&self.idle, &self.walk, &self.run, &self.sprint].iter().any(|clip| !clip.is_empty())
+    }
+
+    /// Every clip it names.
+    pub fn clips(&self) -> impl Iterator<Item = &str> {
+        let all = [&self.rest, &self.idle, &self.walk, &self.run, &self.sprint, &self.fire, &self.aimed_fire];
+        all.into_iter().chain([&self.gun_fire]).map(String::as_str).filter(|clip| !clip.is_empty())
     }
 }
 
@@ -250,6 +336,9 @@ pub struct GunHandling {
     pub offsets: Vec<ActionOffsets>,
     #[serde(rename = "action", skip_serializing_if = "Vec::is_empty")]
     pub actions: Vec<CustomAction>,
+    /// The clips a gun from an animation pack is held by.
+    #[serde(rename = "clips", skip_serializing_if = "PackClips::is_default")]
+    pub pack: PackClips,
 }
 
 impl GunHandling {
@@ -293,16 +382,22 @@ impl GunHandling {
             lift: spec.lift,
             lowers_aim: spec.lowers_aim,
             work: spec.work,
-            beats: spec.beats,
+            beats: if spec.played.is_empty() { spec.beats } else { Vec::new() },
             clip: spec.clip,
+            parts: spec.played,
         }
     }
 
-    /// The clips its actions are based on.
+    /// The clips its actions are based on and played from, and those it is
+    /// held by.
     pub fn clips(&self) -> impl Iterator<Item = &str> {
         let built_in = self.offsets.iter().filter_map(|offsets| offsets.clip.as_ref());
         let own = self.actions.iter().filter_map(|own| own.clip.as_ref());
-        built_in.chain(own).map(|base| base.clip.as_str()).filter(|clip| !clip.is_empty())
+        let based = built_in.chain(own).map(|base| base.clip.as_str());
+        let parts = self.offsets.iter().flat_map(|offsets| &offsets.parts);
+        let parts = parts.chain(self.actions.iter().flat_map(|own| &own.parts));
+        let played = parts.flat_map(|part| [part.arms.as_str(), part.gun.as_str()]);
+        based.chain(played).chain(self.pack.clips()).filter(|clip| !clip.is_empty())
     }
 
     /// Offsets on beats a built-in action of `kind` no longer has, or by
@@ -328,6 +423,10 @@ fn offset(spec: &mut ActionSpec, offsets: &ActionOffsets) {
     spec.lift = offsets.lift.unwrap_or(spec.lift);
     spec.work = offsets.work;
     spec.clip.clone_from(&offsets.clip);
+    if !offsets.parts.is_empty() {
+        spec.play(&offsets.parts, speed);
+        return;
+    }
     for beat in &mut spec.beats {
         (beat.reach, beat.work) = (beat.reach / speed, beat.work / speed);
         let Some(by) = offsets.beats.iter().find(|by| by.beat == BeatSlot::Known(beat.key)) else { continue };

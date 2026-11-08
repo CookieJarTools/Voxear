@@ -2,13 +2,15 @@
 //! goal timed as a person's reach is, quick to start and soft to arrive,
 //! from wherever the hand was, so nothing jumps. While a beat works, the
 //! part it drives moves with the hand, and the part it carries goes where
-//! the hand goes. As each beat ends, what it does happens to the gun.
+//! the hand goes. As each beat ends, what it does happens to the gun. A
+//! part played from clips lasts as long as its stretch of clip, its marks
+//! happening to the gun as the clip passes them.
 
 use voxear_core::math::{Mat4, Quat, Vec3};
 use voxear_ecs::{Entity, World};
 use voxear_scene::{Hidden, Transform};
 
-use super::actions::{ActionId, ActionKind, Beat, Goal, Hand, apply};
+use super::actions::{ActionId, ActionKind, Beat, ClipPart, Goal, Hand, apply};
 use super::gun::Gun;
 use super::hands::Grip;
 use super::mechanism::{GunPart, GunState, PartRole};
@@ -45,6 +47,9 @@ pub struct ActionPlay {
     pub quiet: bool,
     /// The clip it is based on, if any.
     pub clip: Option<super::base_clip::BaseClip>,
+    /// The parts it plays from clips, which its beats name, and how fast.
+    pub played: Vec<ClipPart>,
+    pub speed: f32,
 }
 
 /// What a beat throwing something away needs: the gun's place and turn in
@@ -61,19 +66,26 @@ pub struct Throwing {
 impl ActionPlay {
     /// An action started on a gun of `gun` in `state`, as its handling has
     /// it, its holder having `spare` rounds; none when it has nothing to
-    /// do, or the handling has no action of the gun's own by that name.
+    /// do, or the handling has no action of the gun's own by that name. A
+    /// part played from clips lasts as long as its stretch of `clips`.
     pub fn start(
         id: &ActionId,
         gun: super::gun::GunKind,
         handling: &super::handling::GunHandling,
         state: &GunState,
         spare: u32,
+        clips: Option<&crate::animation::Clips>,
     ) -> Option<Self> {
         let (spec, kind) = match id {
             ActionId::Builtin(kind) => (handling.spec(gun, *kind), Some(*kind)),
             ActionId::Own(name) => handling.action(name).map(|own| (own.spec(), own.replaces))?,
         };
-        let beats = super::actions::expand(&spec, gun, state, spare);
+        let mut beats = super::actions::expand(&spec, gun, state, spare);
+        for beat in &mut beats {
+            if let Some(part) = beat.played.and_then(|index| spec.played.get(usize::from(index))) {
+                beat.work = part_length(part, clips) / spec.speed;
+            }
+        }
         let started = Self {
             id: id.clone(),
             kind,
@@ -81,6 +93,8 @@ impl ActionPlay {
             lowers_aim: spec.lowers_aim,
             work: spec.work,
             clip: spec.clip,
+            played: spec.played,
+            speed: spec.speed,
             ..Self::new(beats)
         };
         (!started.beats.is_empty()).then_some(started)
@@ -103,11 +117,20 @@ impl ActionPlay {
             work: super::handling::Place::default(),
             quiet: false,
             clip: None,
+            played: Vec::new(),
+            speed: 1.0,
         }
     }
 
     pub fn beat(&self) -> Option<&Beat> {
         self.beats.get(self.index)
+    }
+
+    /// The part played from clips under way, and how far into its stretch
+    /// of clip it is, in the clip's own seconds.
+    pub fn part(&self) -> Option<(&ClipPart, f32)> {
+        let part = self.beat()?.played.and_then(|index| self.played.get(usize::from(index)))?;
+        Some((part, part.start + self.t * self.speed))
     }
 
     /// How far into the action it is, and how long it lasts, in seconds.
@@ -130,6 +153,16 @@ pub struct HandAim {
     pub settle: f32,
     pub toward: Vec3,
     pub turn: Quat,
+}
+
+/// How long a clip part's stretch of clip is, in the clip's own seconds:
+/// its arms clip's, or its gun clip's without one; none before either is
+/// read.
+fn part_length(part: &ClipPart, clips: Option<&crate::animation::Clips>) -> f32 {
+    let clip = [&part.arms, &part.gun].into_iter().find(|clip| !clip.is_empty());
+    let found = clip.and_then(|clip| clips?.get(clip)).map_or(0.0, |source| source.clip().duration());
+    let end = if part.end > part.start { part.end } else { found };
+    (end - part.start).max(0.0)
 }
 
 /// The hand's place at rest on the gun, in the gun's space.
@@ -162,8 +195,9 @@ fn goal_at(world: &World, gun: &Gun, state: &GunState, goal: Goal, hand: Hand, p
 }
 
 /// Plays `dt` seconds of an action: its parts driven and carried, its
-/// events happening as beats end. Gives back the working hand's aim and
-/// the gun's tilt, or `None` once the action is over.
+/// events happening as beats end and as clip parts pass their marks. Gives
+/// back the working hand's aim, none in a clip part, whose clip has the
+/// hands, and the gun's tilt; or `None` once the action is over.
 #[allow(clippy::too_many_arguments)]
 pub fn advance(
     world: &mut World,
@@ -174,11 +208,17 @@ pub fn advance(
     pouches: [Vec3; 2],
     throwing: Throwing,
     dt: f32,
-) -> Option<(HandAim, Vec3)> {
+) -> Option<(Option<HandAim>, Vec3)> {
+    let mut since = play.t;
     play.t += dt;
     loop {
         let beat = *play.beat()?;
-        if play.t < beat.length() {
+        let ended = play.t >= beat.length();
+        if beat.played.is_some() {
+            let until = if ended { f32::INFINITY } else { play.t };
+            pass_marks(world, play, &beat, gun, state, spare, throwing, since..until);
+        }
+        if !ended {
             break;
         }
         // The beat is done: its part comes to rest where it was driven to, and what it does happens.
@@ -196,9 +236,13 @@ pub fn advance(
         play.t -= beat.length();
         play.index += 1;
         play.from = None;
+        since = 0.0;
         play.beat()?;
     }
     let beat = *play.beat()?;
+    if beat.played.is_some() {
+        return Some((None, Vec3::ZERO));
+    }
     let goal = goal_at(world, gun, state, beat.goal, beat.hand, pouches) + Vec3::from(beat.at);
     if play.from.is_none() {
         play.rested = play.hands[beat.hand as usize].is_none();
@@ -229,7 +273,36 @@ pub fn advance(
     let settle = if play.rested { 1.0 - minimum_jerk(play.t / (beat.reach * 0.5).max(1e-4)) } else { 0.0 };
     let [x, y, z] = beat.turn.map(f32::to_radians);
     let turn = Quat::from_euler(voxear_core::math::EulerRot::XYZ, x, y, z);
-    Some((HandAim { hand: beat.hand, at, grip, settle, toward, turn }, Vec3::from(beat.tilt)))
+    Some((Some(HandAim { hand: beat.hand, at, grip, settle, toward, turn }), Vec3::from(beat.tilt)))
+}
+
+/// What happens to the gun at the marks of a clip part that it passes
+/// between `during`'s start and end, in seconds into the part, the start
+/// taken and the end not: what was in the chamber thrown out at an Eject,
+/// as a beat's end throws it.
+#[allow(clippy::too_many_arguments)]
+fn pass_marks(
+    world: &mut World,
+    play: &mut ActionPlay,
+    beat: &Beat,
+    gun: &Gun,
+    state: &mut GunState,
+    spare: &mut u32,
+    throwing: Throwing,
+    during: std::ops::Range<f32>,
+) {
+    let Some(part) = beat.played.and_then(|index| play.played.get(usize::from(index))) else { return };
+    let (start, speed) = (part.start, play.speed);
+    let marks: Vec<_> =
+        part.marks.iter().filter(|mark| during.contains(&((mark.at - start) / speed))).copied().collect();
+    for mark in marks {
+        let (chamber, rounds) = (state.chamber, state.rounds);
+        apply(mark.event, gun.kind, state, spare);
+        if !play.quiet {
+            let marked = Beat { then: mark.event, throw: super::actions::Throw::Nothing, ..*beat };
+            throw_away(world, play, &marked, gun, state, (chamber, rounds), throwing);
+        }
+    }
 }
 
 /// The way a hand comes in to a goal, in the gun's space, out from it: to

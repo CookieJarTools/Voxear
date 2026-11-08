@@ -222,7 +222,7 @@ pub fn place(world: &mut World) {
 /// it, hiding its head for this machine's own player, and gives back where
 /// its eyes are in the world; none for a view with no body.
 fn pose_body(world: &mut World, entity: Entity, view: &FirstPersonView, own: bool) -> Option<Vec3> {
-    let body = view.body.or_else(|| first_under(world, entity, |w, e| w.has::<ModelRenderer>(e)))?;
+    let body = body_of(world, entity, view)?;
     let animation = world.get::<ModelRenderer>(body).and_then(|model| model.animation.clone())?;
     let (pose, rig) = (world.get::<Pose>(body).cloned()?, Rig::find(&animation.skeleton)?);
     let mut edit = PoseEdit::new(&animation.skeleton, &pose.bones);
@@ -355,6 +355,24 @@ pub(crate) fn set_world(world: &mut World, entity: Entity, position: Vec3, rotat
         let (_, rotation, position) = local.to_scale_rotation_translation();
         (transform.position, transform.rotation) = (position, rotation);
     }
+}
+
+/// The body a view looks out of: the one it names, or else the first model
+/// under its Obj that is neither a gun nor on one, as a gun drawn by a
+/// skinned model is not.
+pub(crate) fn body_of(world: &World, entity: Entity, view: &FirstPersonView) -> Option<Entity> {
+    view.body.or_else(|| {
+        let on_a_gun = |world: &World, mut at: Entity| loop {
+            if world.has::<crate::guns::Gun>(at) {
+                return true;
+            }
+            match world.get::<Parent>(at) {
+                Some(parent) if at != entity => at = parent.0,
+                _ => return false,
+            }
+        };
+        first_under(world, entity, |w, e| w.has::<ModelRenderer>(e) && !on_a_gun(w, e))
+    })
 }
 
 /// The first Obj under `entity`, itself included, that `is` picks, going

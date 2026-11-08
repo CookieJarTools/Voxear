@@ -1285,7 +1285,8 @@ impl Content {
         let bytes = self.read(&path)?;
         let meta = format!("{path}.{}", voxear_assets::META_EXTENSION);
         let settings = self.read_text(&meta).map(|text| TextureImport::from_meta(&text)).unwrap_or_default();
-        let picture = image::load_from_memory(&bytes).with_context(|| format!("reading {path}"))?.to_rgba8();
+        let mut picture = image::load_from_memory(&bytes).with_context(|| format!("reading {path}"))?.to_rgba8();
+        settings.apply_flip(&mut picture);
         let (width, height) = settings.size(picture.width(), picture.height());
         let picture = match (width, height) == picture.dimensions() {
             true => picture,

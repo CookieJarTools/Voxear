@@ -30,7 +30,7 @@ use crate::{
 /// a mesh's seams, by sloppy simplification (see `lod`). 8: skinned meshes'
 /// skin data in the payload, nodes' skins, and the model's skeleton, skins
 /// and clips.
-pub const COOKED_VERSION: u32 = 8;
+pub const COOKED_VERSION: u32 = 10;
 const MAGIC: &[u8; 8] = b"VXMODEL\0";
 const NONE: u32 = u32::MAX;
 /// Where each part of the payload starts, a multiple of a compressed
@@ -465,9 +465,12 @@ impl Writer {
         self.u32(animation.skins.len() as u32);
         for skin in &animation.skins {
             self.u32(skin.joints.len() as u32);
-            for (&joint, bind) in skin.joints.iter().zip(&skin.inverse_binds) {
+            for (index, (&joint, bind)) in skin.joints.iter().zip(&skin.inverse_binds).enumerate() {
                 self.u32(joint as u32);
                 self.f32s(&bind.to_cols_array());
+                let (least, most) = skin.bounds.get(index).copied().unwrap_or((Vec3::INFINITY, Vec3::NEG_INFINITY));
+                self.f32s(&least.to_array());
+                self.f32s(&most.to_array());
             }
         }
         self.u32(animation.clips.len() as u32);
@@ -548,6 +551,7 @@ impl Reader<'_> {
                 ensure!(joint < bones.len(), "a skin's joint is bone {joint}, which is not there");
                 skin.joints.push(joint);
                 skin.inverse_binds.push(Mat4::from_cols_array(&self.f32s()?));
+                skin.bounds.push((Vec3::from_array(self.f32s()?), Vec3::from_array(self.f32s()?)));
             }
             skins.push(skin);
         }
@@ -682,6 +686,11 @@ pub(crate) mod tests {
         assert_eq!(animation.skeleton.bones[1].rest.translation, Vec3::new(0.0, 1.0, 0.0));
         assert_eq!(animation.skins[0].joints, [0, 1]);
         assert_eq!(animation.skins[0].inverse_binds[1].w_axis.truncate(), Vec3::new(0.0, -1.0, 0.0));
+        // Each joint's box round the corners it moves, the tip's in its own space, a metre up.
+        let near = |a: Vec3, b: Vec3| (a - b).length() < 1e-5;
+        let [(root_least, root_most), (tip_least, tip_most)] = animation.skins[0].bounds[..] else { panic!() };
+        assert!(near(root_least, Vec3::new(-0.1, 0.0, 0.0)) && near(root_most, Vec3::new(0.1, 0.0, 0.0)));
+        assert!(near(tip_least, Vec3::new(-0.1, 1.0, 0.0)) && near(tip_most, Vec3::new(0.1, 1.0, 0.0)));
         let node = &model.nodes[0];
         assert_eq!((node.skin, node.position), (Some(0), Vec3::ZERO), "placed by its bones, not its node");
         let (mesh, _) = &model.meshes[node.mesh];

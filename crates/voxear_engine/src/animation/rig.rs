@@ -84,9 +84,11 @@ fn arm(skeleton: &Skeleton, names: &[String], left: bool) -> Option<Arm> {
     let forearm = above(hand)?;
     let upper = above(forearm)?;
     let clavicle = above(upper).filter(|&bone| names[bone].contains("shoulder") || names[bone].contains("clavicle"));
+    // A finger starts at its knuckle: the bones in the palm before it, where a rig has them, are not its own.
     let fingers = FINGERS.map(|finger| {
         let mut chain: Vec<usize> = (0..names.len())
             .filter(|&bone| sided(&names[bone]) && finger_named(&names[bone], finger) && under(skeleton, bone, hand))
+            .filter(|&bone| !names[bone].contains("metacarpal"))
             .collect();
         chain.sort_by_key(|&bone| depth(skeleton, bone));
         chain

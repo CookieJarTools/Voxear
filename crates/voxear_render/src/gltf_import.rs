@@ -303,8 +303,31 @@ pub fn prepare(path: &str, read: &mut ReadFile) -> Result<PreparedModel> {
 /// parts named `Rock_LOD0` and on, become its meshes' LODs (see `model_lods`).
 pub(crate) fn prepare_with(path: &str, read: &mut ReadFile, settings: &ModelImport) -> Result<PreparedModel> {
     let mut model = read_model(path, read, settings)?;
+    bound_skins(&mut model);
     crate::model_lods::fold(&mut model, settings);
     Ok(model)
+}
+
+/// Bounds each skin's joints by the vertices each moves most, at full
+/// detail (see [`Skin::bounds`](crate::Skin::bounds)).
+fn bound_skins(model: &mut PreparedModel) {
+    let PreparedModel { animation: Some(animation), nodes, meshes, .. } = model else { return };
+    for skin in &mut animation.skins {
+        skin.bounds = vec![(Vec3::INFINITY, Vec3::NEG_INFINITY); skin.joints.len()];
+    }
+    for node in nodes.iter() {
+        let (Some(skin), Some((data, _))) = (node.skin, meshes.get(node.mesh)) else { continue };
+        let Some(skin) = animation.skins.get_mut(skin) else { continue };
+        for (vertex, weights) in data.vertices.iter().zip(&data.skin) {
+            let heaviest = (0..4).max_by_key(|&i| weights.weights[i]).unwrap_or(0);
+            let joint = usize::from(weights.joints[heaviest]);
+            let (Some(bind), Some(bounds)) = (skin.inverse_binds.get(joint), skin.bounds.get_mut(joint)) else {
+                continue;
+            };
+            let at = bind.transform_point3(Vec3::from(vertex.position));
+            *bounds = (bounds.0.min(at), bounds.1.max(at));
+        }
+    }
 }
 
 fn read_model(path: &str, read: &mut ReadFile, settings: &ModelImport) -> Result<PreparedModel> {
@@ -746,8 +769,10 @@ pub(crate) fn texture_settings(path: &str, read: &mut ReadFile) -> TextureImport
     read(&meta).map(|bytes| TextureImport::from_meta(&String::from_utf8_lossy(&bytes))).unwrap_or_default()
 }
 
-/// A picture shrunk to the largest size its settings allow, keeping its shape.
-pub(crate) fn sized(picture: image::RgbaImage, settings: &TextureImport) -> image::RgbaImage {
+/// A picture shrunk to the largest size its settings allow, keeping its
+/// shape, its green turned over if they say so.
+pub(crate) fn sized(mut picture: image::RgbaImage, settings: &TextureImport) -> image::RgbaImage {
+    settings.apply_flip(&mut picture);
     let (width, height) = settings.size(picture.width(), picture.height());
     if (width, height) == picture.dimensions() {
         return picture;
@@ -873,7 +898,7 @@ fn read_animation(
             None => vec![Mat4::IDENTITY; joints.len()],
         };
         ensure!(binds.len() == joints.len(), "a skin has {} joints but {} bind matrices", joints.len(), binds.len());
-        skins.push(Skin { joints, inverse_binds: binds });
+        skins.push(Skin { joints, inverse_binds: binds, bounds: Vec::new() });
     }
     let skeleton = Skeleton { bones };
     let mut clips = Vec::new();

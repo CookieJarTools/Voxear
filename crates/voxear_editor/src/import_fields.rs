@@ -258,6 +258,7 @@ pub struct TextureFields {
     applied: TextureImport,
     max_size: NodeId,
     compress: NodeId,
+    flip_green: NodeId,
     buttons: Buttons,
 }
 
@@ -272,6 +273,7 @@ impl TextureFields {
             applied,
             max_size: choice(ui, rows, "Max size", &options),
             compress: toggle(ui, rows, "Compress in builds"),
+            flip_green: toggle(ui, rows, "Flip Green"),
             buttons: Buttons::new(ui, rows),
         };
         fields.show(ui, &applied);
@@ -288,6 +290,7 @@ impl TextureFields {
     fn show(&self, ui: &mut Ui, settings: &TextureImport) {
         ui.set_selected_option(self.max_size, Self::option(settings.max_size));
         ui.set_checked(self.compress, settings.compress);
+        ui.set_checked(self.flip_green, settings.flip_green);
         self.buttons.enable(ui, *settings != self.applied);
     }
 
@@ -299,7 +302,7 @@ impl TextureFields {
             true => self.applied.max_size,
             false => picked.checked_sub(1).and_then(|at| Self::SIZES.get(at).copied()),
         };
-        TextureImport { max_size, compress: ui.is_checked(self.compress) }
+        TextureImport { max_size, compress: ui.is_checked(self.compress), flip_green: ui.is_checked(self.flip_green) }
     }
 
     fn update(&mut self, ui: &mut Ui) -> Option<TextureImport> {

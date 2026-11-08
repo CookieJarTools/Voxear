@@ -9,6 +9,7 @@
 use serde::{Deserialize, Serialize};
 use voxear_core::math::{Mat4, Quat, Vec3};
 use voxear_ecs::{Component, Entity, World};
+use voxear_render::{ModelRenderer, Pose};
 use voxear_scene::{Parent, Transform};
 
 use super::gun::{Gun, GunKind};
@@ -82,6 +83,11 @@ pub struct GunPart {
     pub then: Option<PartMotion>,
     /// Where a hand takes hold of it, in the gun's space at rest.
     pub handle: [f32; 3],
+    /// The bone of the gun's model it is, for a gun drawn by one skinned
+    /// model: the part then moves the bone, and the bones under it, rather
+    /// than its own Obj. Empty for a part that is an Obj of its own.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub bone: String,
 }
 
 impl Component for GunPart {}
@@ -104,7 +110,7 @@ impl GunPart {
             }
             PartRole::Case => (slide(0.0), None),
         };
-        Self { role, motion, then, handle }
+        Self { role, motion, then, handle, bone: String::new() }
     }
 
     /// A turn-bolt: lifted about the bore, then pulled back.
@@ -114,6 +120,7 @@ impl GunPart {
             motion: PartMotion::Turn { axis: [0.0, 0.0, 1.0], pivot: [0.0, handle[1], 0.0], angle: 80.0 },
             then: Some(PartMotion::Slide { axis: [0.0, 0.0, -1.0], travel: 0.1 }),
             handle,
+            bone: String::new(),
         }
     }
 
@@ -337,15 +344,65 @@ pub fn missing_parts(world: &World, gun: Entity, kind: GunKind) -> Vec<PartRole>
     kind.parts().iter().copied().filter(|role| !have.contains(role)).collect()
 }
 
-/// Moves each part's Obj to its place.
-pub fn show_parts(world: &mut World, state: &GunState) {
+/// Moves each part's Obj to its place, and each part on a bone, the bone,
+/// on the pose the gun's model has this frame.
+pub fn show_parts(world: &mut World, gun: Entity, state: &GunState) {
+    let mut on_bones = Vec::new();
     for &(entity, place, rest) in &state.parts {
         let Some(part) = world.get::<GunPart>(entity).cloned() else { continue };
+        if !part.bone.is_empty() {
+            on_bones.push((part.bone.clone(), part.moved(place)));
+            continue;
+        }
         let (scale, rotation, position) = (part.moved(place) * rest).to_scale_rotation_translation();
         if let Some(transform) = world.get_mut::<Transform>(entity) {
             (transform.position, transform.rotation, transform.scale) = (position, rotation, scale);
         }
     }
+    move_bones(world, gun, &on_bones);
+}
+
+/// Moves bones of the gun's model by moves in its space, each bone carrying
+/// the bones under it; a part's move under another's goes on inside it, so a
+/// handle on a bolt turns about where it is at rest, then slides with the bolt.
+fn move_bones(world: &mut World, gun: Entity, moves: &[(String, Mat4)]) {
+    if moves.is_empty() {
+        return;
+    }
+    let Some(animation) = world.get::<ModelRenderer>(gun).and_then(|model| model.animation.clone()) else { return };
+    let skeleton = &animation.skeleton;
+    let base = match world.get::<Pose>(gun) {
+        Some(pose) if pose.bones.len() == skeleton.bones.len() => pose.bones.to_vec(),
+        _ => skeleton.model_matrices(&skeleton.rest()),
+    };
+    let mut carried = vec![Mat4::IDENTITY; skeleton.bones.len()];
+    for (index, bone) in skeleton.bones.iter().enumerate() {
+        let parent = bone.parent.map_or(Mat4::IDENTITY, |parent| carried[parent]);
+        let own = moves.iter().find(|(name, _)| *name == bone.name).map_or(Mat4::IDENTITY, |(_, moved)| *moved);
+        carried[index] = parent * own;
+    }
+    let bones: Vec<Mat4> = carried.iter().zip(&base).map(|(moved, at)| *moved * *at).collect();
+    world.insert(gun, Pose { bones: bones.into() });
+}
+
+/// The bones of the gun's model that `parts` are on, with the bones under
+/// them, which move with them.
+pub fn bones_of(world: &World, gun: Entity, parts: &[Entity]) -> Vec<usize> {
+    let Some(animation) = world.get::<ModelRenderer>(gun).and_then(|model| model.animation.as_ref()) else {
+        return Vec::new();
+    };
+    let skeleton = &animation.skeleton;
+    let named: Vec<usize> = parts
+        .iter()
+        .filter_map(|part| world.get::<GunPart>(*part))
+        .filter_map(|part| skeleton.find(&part.bone))
+        .collect();
+    let mut under = vec![false; skeleton.bones.len()];
+    for (index, bone) in skeleton.bones.iter().enumerate() {
+        let carried = bone.parent.is_some_and(|parent| under[parent]);
+        under[index] = carried || named.contains(&index);
+    }
+    (0..under.len()).filter(|&index| under[index]).collect()
 }
 
 /// The state of a gun, made the first time it is needed.
@@ -415,5 +472,48 @@ mod tests {
             "pulled back: {pulled}"
         );
         assert_eq!(bolt.full(), 2.0);
+    }
+
+    /// A gun drawn by one skinned model, its bolt a bone with the handle's
+    /// knob under it: the part on the bolt's bone lifts and pulls the bone,
+    /// carrying the knob, while the part's own Obj stays where it is.
+    #[test]
+    fn a_part_on_a_bone_moves_the_bone_and_what_is_under_it() {
+        use std::sync::Arc;
+        use voxear_render::{Bone, BonePose, ModelAnimation, Skeleton};
+
+        let at = |translation| BonePose { translation, ..BonePose::default() };
+        let skeleton = Skeleton {
+            bones: vec![
+                Bone { name: "Root".into(), parent: None, rest: at(Vec3::ZERO) },
+                Bone { name: "charging_handle".into(), parent: Some(0), rest: at(Vec3::new(0.0, 0.045, 0.04)) },
+                Bone { name: "BoltHandle".into(), parent: Some(1), rest: at(Vec3::new(0.04, 0.0, 0.09)) },
+            ],
+        };
+        let animation = Arc::new(ModelAnimation { skeleton, skins: Vec::new(), clips: Vec::new() });
+        let mut world = World::new();
+        let model = ModelRenderer { animation: Some(animation), ..ModelRenderer::new(Vec::new()) };
+        let gun = world.spawn((Transform::default(), Gun::preset(GunKind::BoltActionRifle), model));
+        let knob = Vec3::new(0.04, 0.045, 0.13);
+        let part = GunPart { bone: "charging_handle".into(), ..GunPart::turn_bolt(knob.to_array()) };
+        let bolt = world.spawn((Transform::default(), Parent(gun), part.clone()));
+        let mut state = state_of(&mut world, gun).unwrap();
+        state.parts[0].1 = 2.0;
+
+        crate::guns::gun_clips::pose_gun(&mut world, gun, &Default::default(), None, None);
+        show_parts(&mut world, gun, &state);
+        let bones = world.get::<Pose>(gun).unwrap().bones.clone();
+        let moved = part.moved(2.0);
+        let near = |a: Vec3, b: Vec3| (a - b).length() < 1e-5;
+        assert!(near(bones[1].w_axis.truncate(), moved.transform_point3(Vec3::new(0.0, 0.045, 0.04))), "the bolt");
+        assert!(near(bones[2].w_axis.truncate(), moved.transform_point3(knob)), "the knob, carried");
+        assert!(!near(bones[2].w_axis.truncate(), knob + Vec3::new(0.0, 0.0, -0.1)), "lifted as well as pulled");
+        assert_eq!(world.get::<Transform>(bolt).unwrap().position, Vec3::ZERO, "the part's own Obj stays");
+        assert_eq!(bones_of(&world, gun, &[bolt]), [1, 2], "in hand, the bolt and the knob under it");
+
+        // The next frame moves from rest again, not from where it was moved to.
+        crate::guns::gun_clips::pose_gun(&mut world, gun, &Default::default(), None, None);
+        show_parts(&mut world, gun, &state);
+        assert_eq!(world.get::<Pose>(gun).unwrap().bones, bones);
     }
 }

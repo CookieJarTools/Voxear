@@ -2,8 +2,9 @@
 //! another's with the same rig, bone by bone. Each bone the two share by
 //! name turns as the clip turns it; it keeps the character's own length, but
 //! for the root and hips, whose travel and height the clip gives, scaled
-//! by how much taller or shorter the character stands. Bones the clip does
-//! not have stay at rest.
+//! by how much taller or shorter the character stands, and for bones that
+//! sit where the clip's do, which move as the clip moves them. Bones the
+//! clip does not have stay at rest.
 //!
 //! Rigs that name or turn their bones differently need retargeting through
 //! a humanoid's parts instead, which this is not.
@@ -58,10 +59,21 @@ struct Made {
     clip: Arc<Clip>,
 }
 
-/// `clip`, made for `source`, made to play on `target`.
+/// `clip`, made for `source`, made to play on `target`. A bone that sits
+/// where it does in the clip's skeleton, to a millimetre, moves as the clip
+/// moves it, as a gun's bolt or a carried gun's bone keyed in another file
+/// of the same rig.
 pub fn retarget(source: &Skeleton, clip: &Clip, target: &Skeleton) -> Clip {
     let rest = target.rest();
     let from: Vec<Option<usize>> = target.bones.iter().map(|bone| source.find(&bone.name)).collect();
+    let source_rest = source.rest();
+    let alike: Vec<bool> = from
+        .iter()
+        .zip(&rest)
+        .map(|(from, at_rest)| {
+            from.is_some_and(|from| source_rest[from].translation.distance(at_rest.translation) < 1e-3)
+        })
+        .collect();
     let (hips, root) =
         (named(target, &["hips", "pelvis"]), target.bones.iter().position(|b| b.name.eq_ignore_ascii_case("root")));
     let scale = height(target).zip(height(source)).filter(|(_, was)| *was > 1e-3).map_or(1.0, |(now, was)| now / was);
@@ -71,11 +83,12 @@ pub fn retarget(source: &Skeleton, clip: &Clip, target: &Skeleton) -> Clip {
         poses.extend(rest.iter().enumerate().map(|(bone, at_rest)| {
             let Some(pose) = from[bone].and_then(|source| posed.get(source)) else { return *at_rest };
             let travels = Some(bone) == hips || Some(bone) == root;
-            BonePose {
-                translation: if travels { pose.translation * scale } else { at_rest.translation },
-                rotation: pose.rotation,
-                scale: at_rest.scale,
-            }
+            let translation = match (travels, alike[bone]) {
+                (true, _) => pose.translation * scale,
+                (false, true) => pose.translation,
+                (false, false) => at_rest.translation,
+            };
+            BonePose { translation, rotation: pose.rotation, scale: at_rest.scale }
         }));
     }
     Clip { name: clip.name.clone(), frames: clip.frames, poses }
@@ -142,5 +155,29 @@ mod tests {
         target.bones.push(Bone { name: "tail".into(), parent: Some(1), rest });
         let clip = Clip { name: "Still".into(), frames: 1, poses: source.rest() };
         assert_eq!(retarget(&source, &clip, &target).frame(0)[4], rest);
+    }
+
+    /// A gun's bolt keyed in a clip file of the gun's own rig slides as the
+    /// clip slides it, though the clip is not from the gun's own file.
+    #[test]
+    fn a_bone_where_the_clips_is_moves_as_the_clip_moves_it() {
+        let gun = |bolt: Vec3| Skeleton {
+            bones: vec![
+                Bone { name: "Root".into(), parent: None, rest: BonePose::default() },
+                Bone {
+                    name: "bolt".into(),
+                    parent: Some(0),
+                    rest: BonePose { translation: bolt, ..BonePose::default() },
+                },
+            ],
+        };
+        let source = gun(Vec3::new(0.0, 0.045, 0.04));
+        let mut frame = source.rest();
+        frame[1].translation.z -= 0.08;
+        let clip = Clip { name: "Cycle".into(), frames: 1, poses: frame };
+        let pose = retarget(&source, &clip, &gun(Vec3::new(0.0, 0.0453, 0.04))).frame(0).to_vec();
+        assert!((pose[1].translation.z + 0.04).abs() < 1e-6, "the bolt slides back: {}", pose[1].translation);
+        let pose = retarget(&source, &clip, &gun(Vec3::new(0.0, 0.06, 0.04))).frame(0).to_vec();
+        assert_eq!(pose[1].translation, Vec3::new(0.0, 0.06, 0.04), "one built otherwise keeps its own place");
     }
 }

@@ -285,11 +285,16 @@ pub struct TextureImport {
     /// Whether a build ships it compressed, a quarter of the memory. Off,
     /// it ships as it is, as sharp edges and pixel art need.
     pub compress: bool,
+    /// Whether its green is turned over as it is read: a normal map made
+    /// with its green pointing down, as some programs make them, then
+    /// lights the right way up.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub flip_green: bool,
 }
 
 impl Default for TextureImport {
     fn default() -> Self {
-        Self { max_size: None, compress: true }
+        Self { max_size: None, compress: true, flip_green: false }
     }
 }
 
@@ -330,6 +335,14 @@ impl TextureImport {
         };
         let shrink = |side: u32| ((u64::from(side) * u64::from(max)) / u64::from(width.max(height))).max(1) as u32;
         (shrink(width), shrink(height))
+    }
+
+    /// Turns over the green of `rgba`, four bytes a pixel, when the
+    /// settings say to.
+    pub fn apply_flip(&self, rgba: &mut [u8]) {
+        if self.flip_green {
+            rgba.chunks_exact_mut(4).for_each(|pixel| pixel[1] = 255 - pixel[1]);
+        }
     }
 }
 
@@ -628,16 +641,34 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let picture = dir.path().join("Bricks.png");
         std::fs::write(meta_path(&picture), "guid = \"abc\"\n").unwrap();
-        let settings = TextureImport { max_size: Some(256), compress: false };
+        let settings = TextureImport { max_size: Some(256), compress: false, flip_green: false };
         settings.write(&picture).unwrap();
         let text = std::fs::read_to_string(meta_path(&picture)).unwrap();
         assert!(text.contains("[texture]") && text.contains("max_size = 256") && text.contains("compress = false"));
+        assert!(!text.contains("flip_green"), "off, it is not written: {text}");
         assert_eq!(TextureImport::read(&picture), settings);
 
         assert_eq!(settings.size(1024, 512), (256, 128));
         assert_eq!(settings.size(100, 3000), (8, 256));
         assert_eq!(settings.size(200, 100), (200, 100), "a smaller picture keeps its size");
         assert_eq!(TextureImport::default().size(8192, 8192), (8192, 8192));
+    }
+
+    #[test]
+    fn flip_green_turns_over_a_pictures_green_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let picture = dir.path().join("Stock_Normal.png");
+        std::fs::write(meta_path(&picture), "guid = \"abc\"\n").unwrap();
+        let settings = TextureImport { flip_green: true, ..TextureImport::default() };
+        settings.write(&picture).unwrap();
+        assert!(std::fs::read_to_string(meta_path(&picture)).unwrap().contains("flip_green = true"));
+        assert_eq!(TextureImport::read(&picture), settings);
+
+        let mut rgba = [128, 200, 255, 255, 10, 0, 20, 128];
+        settings.apply_flip(&mut rgba);
+        assert_eq!(rgba, [128, 55, 255, 255, 10, 255, 20, 128]);
+        TextureImport::default().apply_flip(&mut rgba);
+        assert_eq!(rgba, [128, 55, 255, 255, 10, 255, 20, 128], "off, nothing changes");
     }
 
     #[test]

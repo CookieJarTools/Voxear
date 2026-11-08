@@ -111,6 +111,10 @@ pub struct Skin {
     /// The skeleton's bone for each of the skin's joints.
     pub joints: Vec<usize>,
     pub inverse_binds: Vec<Mat4>,
+    /// For each joint, the box round the vertices it moves most, in its own
+    /// space as it was bound, least and most: what hands holding a skinned
+    /// gun stop at. A joint that moves none has its least above its most.
+    pub bounds: Vec<(Vec3, Vec3)>,
 }
 
 /// An animation: every bone's pose at each of its frames, `CLIP_RATE` a

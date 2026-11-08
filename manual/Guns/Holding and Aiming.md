@@ -30,7 +30,7 @@ Everything below happens on springs, so it settles rather than stops:
 - **Bob**: a kick at each footfall, left and right in turn, from the Motion Matcher's feet.
 - **Breathing**: a slow rise and fall, and a faint tremor.
 
-**Sway**, **Bob** and **Breathing** scale each, 1 as the gun's weight has it and 0 not at all. Aiming steadies them all. A gun held by its pack's clips takes its bob and breathing from them instead (see [[Guns from Animation Packs]]).
+**Sway**, **Bob** and **Breathing** scale each, 1 as the gun's weight has it and 0 not at all. Aiming steadies them all. A gun held by its pack's clips has each as much as its handling says on top of them, and **Base Only** shows such a gun as its clips alone have it, with nothing on top (see [[Guns from Animation Packs]]).
 
 ## Walls
 

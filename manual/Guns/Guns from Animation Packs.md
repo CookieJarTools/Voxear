@@ -46,21 +46,35 @@ The camera's **Field of view** matters as much. Packs are usually filmed 90° ac
 
 | Camera | What you see |
 | --- | --- |
-| **As Filmed** | The camera moves to where the pack's camera was, as far from your character's shoulders as it was from the clips', scaled to its arms. The arms hold the gun as the clips do, and it shows as in the pack's videos. |
-| **At the Eyes** | The camera stays at your character's eyes. Those sit higher above the shoulders than a pack's camera usually does, so the gun shows lower and nearer. |
+| **As Filmed** | The camera is where the pack's camera was, as far from your character's shoulders as it was from the clips', scaled to its arms. The arms hold the gun as the clips do, and it shows as in the pack's videos. |
+| **At the Eyes** | The camera is at your character's eyes. Those sit higher above the shoulders than a pack's camera usually does, so the gun shows lower and nearer, and a short arm may not quite reach it. |
 
-The pack's camera is often lower than real eyes, near the neck, so **As Filmed** looks from a little lower than your character's eyes. Put the gun away and the camera goes back to the eyes.
+Either way, the camera is worked out on your character standing at rest and then stays put on it: a pack films its clips from a camera held still, and your character's walk and run don't carry the camera up and down with them. The pack's camera is often lower than real eyes, near the neck, so **As Filmed** looks from a little lower than your character's eyes. Put the gun away and the camera goes back to the eyes.
 
-Each hand stays where the clips have it on the gun, its knuckles where the clips' knuckles are, so a hand with a longer palm still closes on the bolt handle or the grip as the clips' hand does. Its fingers take the clips' shape, spread and thumb included. Where your character's arms cannot reach the gun where the clips carry it, the gun comes nearer, as far as the arms need. The hands never slide along it, and no arm is ever drawn out past its length.
+Looking up or down, the gun turns with the view but swings about the shoulders rather than the eyes, so the arms reach it just as well however far the view tips. It moves a little in the view as it does: up and nearer when looking far up.
+
+Each hand stays where the clips have it on the gun, its knuckles where the clips' knuckles are, so a hand with a longer palm still closes on the bolt handle or the grip as the clips' hand does. Its fingers take the clips' shape, spread and thumb included. Nothing moves the gun from where the clips have it but the layers below; an arm that can't quite reach falls short of it rather than the gun coming to the hand.
 
 A pack's clips seldom aim. Aiming brings the gun's sights to the eye from wherever the clips hold it, as it does for any gun, so set the sockets carefully:
 
 - Put **Rear Sight** and **Front Sight** on the tops of the sights, not on their bones, which often sit lower, level with the action.
 - Set **Eye Relief** so the eye is behind the action, over the stock. A rifle whose rear sight is far out on the barrel needs much more than one whose rear sight sits on the action; otherwise the camera ends up inside the gun.
 
-The gun still sways as the view turns, lags as your character moves and kicks as it fires, and the hands go with it. While the clips hold it, it sways and lags a third as much as another gun, since the clips hold it steady before the camera they were filmed from.
+## Layers on top
 
-The clips bob and breathe with the gun themselves, so while they hold it the Gun Holder adds no bob, breathing or tremor of its own. While an action plays from clips, the view does not glance down at the work either: the clips bring it into view. Up at the eye, where the clips no longer hold it, the gun bobs and breathes as any gun does.
+The clips are the base. On top of them go layers of the Gun Holder's own, each as much as the **Clips** part says: 1 as for any gun, 0 not at all. The gun and both hands move together with each, so the hands stay where the clips have them on it.
+
+| Setting | What it adds | As a pack gun starts |
+| --- | --- | --- |
+| **Look Sway** | The gun lags the view as it turns. | 0.3 |
+| **Move Sway** | The gun trails your character's moves. | 0.3 |
+| **Bob** | A kick at each footfall. | 0.3 |
+| **Breathing** | A slow rise and fall, and a faint tremor. Packs' idle clips usually breathe of their own. | 0 |
+| **Head Bob** | The camera itself bobs with the steps. | 0 |
+
+The Gun Holder's own **Sway**, **Bob** and **Breathing** scale these again, as they do for every gun. A shot's clip kicks the gun as it plays, and the camera kicks too. Up at the eye, where the clips don't hold the gun, it sways, bobs and breathes as any gun does. While an action plays from clips, the view doesn't glance down at the work: the clips bring it into view.
+
+To see the clips as they were made, tick the Gun Holder's **Base Only**: nothing goes on top, not the layers, the camera's kick or the pull back from walls. Compare your view with the pack's own videos this way, then untick it.
 
 Sprinting is your game's to say, as aiming is:
 

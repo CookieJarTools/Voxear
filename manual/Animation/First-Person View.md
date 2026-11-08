@@ -9,7 +9,7 @@ A **First-Person View** puts the camera in a character's own head. Add it to the
 - **Lean**: how much of the tilt the upper body leans into, so looking down bends the character over rather than only the camera.
 - **Head Bob**: how much of the head's bob reaches the camera. A camera that follows the head exactly is hard to look through, so it is steadied.
 - **Eyes**: where the eyes are from the head bone.
-- **Hide Head**: the head is left out of what the camera sees, so it doesn't see inside it, but it still casts its shadow (see [[Bone Attachments]]).
+- **Hide Head**: the head and neck are left out of what the camera sees, so it doesn't see inside them, but they still cast their shadow (see [[Bone Attachments]]). While a gun's clips hold it, the camera sits low, near the neck, and the upper chest and collarbones round it are left out too, as the steps carry them up past the camera; the arms stay.
 
 ```csharp
 var view = Obj.FirstPersonView;

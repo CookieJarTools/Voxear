@@ -309,9 +309,9 @@ fn an_arms_clip_holds_the_gun_where_it_has_it_and_puts_the_palms_where_its_are()
         assert!(off < 3.0, "the index finger bends as the clip's, joint {joint}: {off} degrees off");
     }
 
-    // On a body named otherwise and a tenth shorter, the palms go where the clip's are on the gun all the same:
-    // the shooting hand's exactly, the gun coming nearer for it, and the other's slid back along the gun as far
-    // as its shorter arm needs.
+    // On a body named otherwise and a tenth shorter, both palms stay where the clip's are on the gun, the gun
+    // coming as much nearer as the shorter arms need; and so they do with the view tipped well down or up, which
+    // swings the gun about the eyes, away from where the shoulders reach.
     let mut shorter = crate::animation::rig::tests::body(|part, side| match side {
         Some(left) => format!("DEF-{part}.{}", if left { "L" } else { "R" }),
         None => format!("DEF-{part}"),
@@ -320,12 +320,18 @@ fn an_arms_clip_holds_the_gun_where_it_has_it_and_puts_the_palms_where_its_are()
     let mut other = scene_with_body(shorter);
     steady(&mut other);
     held_by(&mut other, &arms);
-    settle(&mut other, 40);
-    let off = palm_on_gun(&other, 1).distance(palms[1]);
-    assert!(off < 0.005, "on the shorter body, the shooting palm: {off} m off");
-    let moved = palm_on_gun(&other, 0) - palms[0];
-    let aside = Vec3::new(moved.x, moved.y, 0.0).length();
-    assert!(aside < 0.005 && moved.z <= 0.003 && moved.z > -0.1, "the support palm, slid back along the gun: {moved}");
+    for pitch in [0.0, -55.0, 50.0] {
+        other.world.get_mut::<crate::first_person::FirstPersonView>(other.player).unwrap().pitch = pitch;
+        settle(&mut other, 40);
+        for arm in 0..2 {
+            let off = palm_on_gun(&other, arm).distance(palms[arm]);
+            assert!(off < 0.005, "on the shorter body, looking {pitch} degrees up, palm {arm}: {off} m off");
+        }
+        if pitch == 0.0 {
+            let (near, far) = (gun_from_eye(&other).w_axis.truncate(), shown.w_axis.truncate());
+            assert!(near.length() < far.length() - 0.01, "the gun nearer for the shorter arms: {near} {far}");
+        }
+    }
 
     // Aimed, and shot, the gun moves, and the hands stay on it.
     scene.world.get_mut::<GunHolder>(scene.player).unwrap().aiming = true;

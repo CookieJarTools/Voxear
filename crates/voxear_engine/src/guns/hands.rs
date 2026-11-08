@@ -117,6 +117,14 @@ pub fn palm_of(edit: &PoseEdit, arm: &Arm) -> Option<Palm> {
     Some(Palm { point: wrist + along * reach * 0.6 + facing * span * 0.22, facing, finger: span * 0.16 })
 }
 
+/// How far an arm reaches from its shoulder to the middle of its palm,
+/// held out straight, from a pose of it at rest.
+pub fn arm_reach(rest: &PoseEdit, arm: &Arm) -> Option<f32> {
+    let (shoulder, elbow, wrist) = (rest.position(arm.upper), rest.position(arm.forearm), rest.position(arm.hand));
+    let palm = palm_of(rest, arm)?.point;
+    Some(shoulder.distance(elbow) + elbow.distance(wrist) + wrist.distance(palm))
+}
+
 /// Puts a hand on what it holds: turned so its fingers point along the
 /// first of `axes` and its palm faces the second, with the middle of its
 /// palm at `contact`, its elbow bending toward `pole` and its collarbone

@@ -149,6 +149,9 @@ pub struct GunHolderState {
     /// How much each holding clip holds the gun now: idle, walking,
     /// running and sprinting.
     held_by: [f32; 4],
+    /// How near where its clips carry it before the eyes a gun held by clips
+    /// is, 0 to 1, as far as the arms reach (see `clip_hold::within_reach`).
+    framed: Option<f32>,
 }
 
 impl Component for GunHolderState {}
@@ -187,6 +190,7 @@ impl GunHolderState {
             left_foot: false,
             time: 0.0,
             held_by: [0.0; 4],
+            framed: None,
         }
     }
 
@@ -455,10 +459,20 @@ pub fn hold(world: &mut World) {
         };
         // A gun from an animation pack is held where its clips have it, and kicks as its shot's clip does.
         let clipped = held_by_clips(world, &handling.pack, &holder, &mut state, delta);
+        // As near where they carry it as the body's arms reach, the hands holding where the clips have them.
+        let reached = clipped.as_ref().zip(body).and_then(|((pose, _), body)| {
+            let arms = body_arms(world, body, eye)?;
+            let (_, reaches) = super::clip_hold::within_reach(pose, &arms, 1.0);
+            // Away at once, so the hands never let go; back slowly, as far as they reach.
+            let shown = state.framed.unwrap_or(reaches);
+            let framed = if reaches < shown { reaches } else { (shown + delta * 1.5).min(reaches) };
+            state.framed = Some(framed);
+            Some(super::clip_hold::within_reach(pose, &arms, framed).0)
+        });
         let aimed = state.aimed() > 0.5;
         let kick = since_shot.and_then(|since| super::clip_hold::fire_kick(world, &handling.pack, since, aimed));
         let by_clips = ByClips {
-            gun: clipped.as_ref().map(|(pose, weight)| (pose.gun, *weight)),
+            gun: clipped.as_ref().map(|(pose, weight)| (reached.unwrap_or(pose.gun), *weight)),
             kick,
             kicks: !handling.pack.fire.is_empty(),
         };
@@ -896,6 +910,20 @@ struct Held<'a> {
     clip: Option<&'a (ClipPose, f32)>,
 }
 
+/// A body's arms as the eyes at `eye` see them: its shoulders, and how far
+/// each arm reaches.
+fn body_arms(world: &World, body: Entity, eye: Mat4) -> Option<super::clip_hold::Arms> {
+    let animation = world.get::<ModelRenderer>(body)?.animation.clone()?;
+    let (pose, rig) = (world.get::<Pose>(body)?, Rig::find(&animation.skeleton)?);
+    let placed = world_matrix(world, body);
+    let (into_eye, scale) = (eye.inverse() * placed, placed.x_axis.truncate().length());
+    let skeleton = &animation.skeleton;
+    let rest = PoseEdit::new(skeleton, &skeleton.model_matrices(&skeleton.rest()));
+    let shoulders = [0, 1].map(|arm| into_eye.transform_point3(pose.bones[rig.arms[arm].upper].w_axis.truncate()));
+    let reach = |arm: usize| super::hands::arm_reach(&rest, &rig.arms[arm]).map(|reach| reach * scale);
+    Some(super::clip_hold::Arms { shoulders, reach: [reach(0)?, reach(1)?] })
+}
+
 /// What clips holding the gun give its place: where they carry it in the
 /// eyes' space, and how much; how a shot's clip moves it now, in its own
 /// space; and whether a shot's clip kicks it in place of its own kick.
@@ -967,19 +995,23 @@ fn hands_on(
     let shapes: Vec<Shape> = held.shapes.iter().map(|shape| shape.moved(to_body)).collect();
     let avoid: Vec<Shape> = held.avoid.iter().map(|shape| shape.moved(to_body)).collect();
     let placing = Placing { gun: held.gun, to_body, shapes: held.shapes };
-    // Each hand comes into a new hold or beat rather than jumping to it, in the gun's space.
-    let to_gun = to_body.inverse();
-    let mut eased = |hand: usize, (contact, (fingers, palm)): (Vec3, (Vec3, Vec3))| {
-        let turn = hand_turn(to_gun.transform_vector3(fingers), to_gun.transform_vector3(palm));
-        let (at, turn) = come_into(&mut hands.placed[hand], to_gun.transform_point3(contact), turn, delta);
-        let way = |v: Vec3| to_body.transform_vector3(turn * v).normalize_or_zero();
-        (to_body.transform_point3(at), (way(Vec3::X), way(Vec3::Y)))
-    };
-
     // Clips holding the gun have each hand where they say, but a hand working an action of beats.
     let clipped = |hand: usize| {
         let held = held.clip.filter(|_| aims[hand].is_none());
         held.map(|(pose, weight)| (pose.hands[hand], *weight))
+    };
+    // Each hand comes into a new hold or beat rather than jumping to it, in the gun's space; a hand the clips
+    // hold follows them as they have it, however fast they move it, as they ease from one to another themselves.
+    let to_gun = to_body.inverse();
+    let mut eased = |hand: usize, (contact, (fingers, palm)): (Vec3, (Vec3, Vec3))| {
+        let turn = hand_turn(to_gun.transform_vector3(fingers), to_gun.transform_vector3(palm));
+        let at = to_gun.transform_point3(contact);
+        let (at, turn) = match clipped(hand) {
+            Some((_, weight)) if weight > 0.999 => follow(&mut hands.placed[hand], at, turn, delta),
+            _ => come_into(&mut hands.placed[hand], at, turn, delta),
+        };
+        let way = |v: Vec3| to_body.transform_vector3(turn * v).normalize_or_zero();
+        (to_body.transform_point3(at), (way(Vec3::X), way(Vec3::Y)))
     };
     let by_clip = |hand: usize, (contact, (fingers, palm)): (Vec3, (Vec3, Vec3))| match clipped(hand) {
         Some((by, weight)) => {
@@ -1024,13 +1056,8 @@ fn hands_on(
         None if clipped(0).is_some() => 0.0,
         None => planted(&mut hands.support, placing.slide_needed(&edit, left, role, shoulder), delta),
     };
-    let mut target = by_clip(0, placing.aimed(aims[0], &held.gun.support, role, slide));
-    // Where clips have the support hand further out than the arm reaches, it slides back along the gun.
-    if clipped(0).is_some() {
-        let back = to_body.transform_vector3(Vec3::NEG_Z).normalize_or_zero();
-        let slide = planted(&mut hands.support, reach_slide(&edit, left, shoulder, target, back), delta);
-        target.0 += back * slide;
-    }
+    // Where clips hold the gun, the support hand stays where they have it: the gun comes within its reach.
+    let target = by_clip(0, placing.aimed(aims[0], &held.gun.support, role, slide));
     let (contact, axes) = eased(0, target);
     seat_clear(&mut edit, left, (contact, axes), (pole, 0.2), (&avoid, -side), working(aims[0]));
     let grip = aims[0].map_or(rest_grip(held.poses, Hand::Left), |aim| aim.grip);
@@ -1102,6 +1129,14 @@ fn come_into(eased: &mut Option<Eased>, at: Vec3, turn: Quat, delta: f32) -> (Ve
     (last.at, last.turn, last.offset, last.turned) =
         (at, turn, last.offset * fade, last.turned.slerp(Quat::IDENTITY, 1.0 - fade));
     (at + last.offset, (last.turned * turn).normalize())
+}
+
+/// Where a hand is shown when it goes where it is to be, kept so a later
+/// jump eases from there.
+fn follow(eased: &mut Option<Eased>, at: Vec3, turn: Quat, delta: f32) -> (Vec3, Quat) {
+    let velocity = eased.map_or(Vec3::ZERO, |last| (at - last.at) / delta.max(1e-4));
+    *eased = Some(Eased { at, velocity, turn, offset: Vec3::ZERO, turned: Quat::IDENTITY });
+    (at, turn)
 }
 
 /// The turn that points X along `fingers` and Y along `palm`.
@@ -1234,32 +1269,6 @@ impl Placing<'_> {
         }
         high
     }
-}
-
-/// How far back along the gun, `back`, a hand to hold at `target` slides
-/// for its arm to reach it from `shoulder`, up to 30 cm.
-fn reach_slide(edit: &PoseEdit, arm: &Arm, shoulder: Vec3, target: (Vec3, (Vec3, Vec3)), back: Vec3) -> f32 {
-    let (contact, (fingers, palm)) = target;
-    let length =
-        edit.position(arm.forearm).distance(shoulder) + edit.position(arm.hand).distance(edit.position(arm.forearm));
-    let offset = match (aim_turn(edit, arm, fingers, palm), palm_of(edit, arm)) {
-        (Some(turn), Some(now)) => turn * (now.point - edit.position(arm.hand)),
-        _ => Vec3::ZERO,
-    };
-    let reaches = |slide: f32| (contact + back * slide - offset).distance(shoulder) <= length * 0.97;
-    if reaches(0.0) {
-        return 0.0;
-    }
-    let (mut low, mut high) = (0.0, 0.3);
-    for _ in 0..14 {
-        let middle = (low + high) / 2.0;
-        if reaches(middle) {
-            high = middle;
-        } else {
-            low = middle;
-        }
-    }
-    high
 }
 
 /// Where the support hand holds, as far back along the gun as it is

@@ -7,13 +7,20 @@
 //! its palm faces, on the gun; the way each elbow bends; and how far each
 //! finger's joints bend. The holder's arms then reach as they always do,
 //! so aiming, sway and recoil still move the gun, and the hands with it.
+//!
+//! A body with shorter arms than the clip's, or eyes higher above its
+//! shoulders than the camera the clip was filmed from, cannot reach where
+//! the clip carries the gun before the eyes. The hands still hold where the
+//! clip has them on the gun: it is the gun that comes as near where the
+//! clip carries it as the arms reach, and otherwise where the clip has it
+//! from the shoulders, as much nearer them as the arms are shorter.
 
 use voxear_core::math::{Mat4, Vec3};
 use voxear_ecs::World;
 use voxear_render::Skeleton;
 
 use super::handling::{PackClips, Place};
-use super::hands::{finger_bends, palm_of};
+use super::hands::{arm_reach, finger_bends, palm_of};
 use crate::animation::Clips;
 use crate::animation::ik::{PoseEdit, hand_axes};
 use crate::animation::rig::Rig;
@@ -25,12 +32,15 @@ pub struct ClipPose {
     pub gun: Mat4,
     /// The left hand, then the right.
     pub hands: [ClipHand; 2],
+    /// Each shoulder, left then right, in the eyes' space.
+    pub shoulders: [Vec3; 2],
 }
 
 /// A hand as a clip has it: the middle of its palm, the way its fingers
 /// point and its palm faces, in the gun's space; the way its elbow is from
 /// its shoulder, in the eyes' space; and how far each finger's joints bend
-/// toward the palm, thumb first, in radians (see `finger_bends`).
+/// toward the palm, thumb first, in radians (see `finger_bends`); and how
+/// far its arm reaches, from the shoulder to the middle of the palm.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ClipHand {
     pub contact: Vec3,
@@ -38,6 +48,7 @@ pub struct ClipHand {
     pub palm: Vec3,
     pub elbow: Vec3,
     pub bends: [[f32; 3]; 5],
+    pub reach: f32,
 }
 
 impl ClipPose {
@@ -47,7 +58,8 @@ impl ClipPose {
         let (_, other_turn, other_at) = other.gun.to_scale_rotation_translation();
         let gun = Mat4::from_rotation_translation(turn.slerp(other_turn, t), at.lerp(other_at, t));
         let hands = std::array::from_fn(|hand| self.hands[hand].lerp(&other.hands[hand], t));
-        ClipPose { gun, hands }
+        let shoulders = std::array::from_fn(|arm| self.shoulders[arm].lerp(other.shoulders[arm], t));
+        ClipPose { gun, hands, shoulders }
     }
 }
 
@@ -62,6 +74,7 @@ impl ClipHand {
             bends: std::array::from_fn(|f| {
                 std::array::from_fn(|j| self.bends[f][j] * (1.0 - t) + other.bends[f][j] * t)
             }),
+            reach: self.reach + (other.reach - self.reach) * t,
         }
     }
 }
@@ -91,6 +104,7 @@ pub fn clip_pose(
         * Mat4::from_rotation_translation(offset.rotation(), Vec3::from(offset.at));
     let eye = Mat4::from_translation(posed[rig.head].w_axis.truncate() + eyes);
     let into_gun = carried.inverse();
+    let at_rest = PoseEdit::new(skeleton, &skeleton.model_matrices(&skeleton.rest()));
     let hand = |arm: usize| -> Option<ClipHand> {
         let arm = &rig.arms[arm];
         let (palm, (fingers, facing)) = (palm_of(&edit, arm)?, hand_axes(&edit, arm)?);
@@ -101,9 +115,60 @@ pub fn clip_pose(
             palm: into_gun.transform_vector3(facing).normalize_or_zero(),
             elbow,
             bends: finger_bends(&edit, arm),
+            reach: arm_reach(&at_rest, arm)?,
         })
     };
-    Some(ClipPose { gun: eye.inverse() * carried, hands: [hand(0)?, hand(1)?] })
+    let into_eye = eye.inverse();
+    let shoulders = [0, 1].map(|arm| into_eye.transform_point3(edit.position(rig.arms[arm].upper)));
+    Some(ClipPose { gun: into_eye * carried, hands: [hand(0)?, hand(1)?], shoulders })
+}
+
+/// A body's arms as the eyes see them: each shoulder, left then right, in
+/// the eyes' space, and how far each arm reaches from it to the middle of
+/// its palm.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Arms {
+    pub shoulders: [Vec3; 2],
+    pub reach: [f32; 2],
+}
+
+/// How much of an arm's reach a hand may use: a little short of straight,
+/// so the elbow keeps a bend.
+const STRAIGHT: f32 = 0.97;
+
+/// Where the gun goes in the eyes' space so `arms` hold it where `pose` has
+/// the hands on it, and how near where the clip carries it that is, 0 to 1:
+/// as near as both arms reach, at most `framed`. The rest of the way it is
+/// where the clip has it from the shoulders, as much nearer them as the
+/// arms are shorter than the clip's.
+pub fn within_reach(pose: &ClipPose, arms: &Arms, framed: f32) -> (Mat4, f32) {
+    let palms = [0, 1].map(|hand| pose.gun.transform_point3(pose.hands[hand].contact));
+    // From the shoulders: each palm where the clip has it from its shoulder, scaled to the arm, met halfway
+    // between the two, as the gun keeps the hands as far apart as they are on it.
+    let wanted = |hand: usize| {
+        let scale = arms.reach[hand] / pose.hands[hand].reach.max(1e-3);
+        arms.shoulders[hand] + (palms[hand] - pose.shoulders[hand]) * scale - palms[hand]
+    };
+    let toward = (wanted(0) + wanted(1)) * 0.5;
+    let reaches = |share: f32| {
+        (0..2).all(|hand| {
+            let palm = palms[hand] + toward * (1.0 - share);
+            palm.distance(arms.shoulders[hand]) <= arms.reach[hand] * STRAIGHT
+        })
+    };
+    let framed = framed.clamp(0.0, 1.0);
+    let share = if reaches(framed) {
+        framed
+    } else {
+        // The nearest it reaches, halving the way between what reaches and what does not.
+        let (mut low, mut high) = (0.0, framed);
+        for _ in 0..12 {
+            let middle = (low + high) * 0.5;
+            if reaches(middle) { low = middle } else { high = middle }
+        }
+        low
+    };
+    (Mat4::from_translation(toward * (1.0 - share)) * pose.gun, share)
 }
 
 /// The bone that carries the gun: the one named, else one named

@@ -4846,13 +4846,14 @@ fn a_skinned_bar_bends_where_its_bone_turns() {
 }
 
 #[test]
-fn skin_bound_mostly_to_a_hidden_bone_is_left_out_where_the_camera_sees() {
-    // The bar's top corners are bound to its tip's bone, its foot's to the root: hidden, the tip leaves out the
-    // half of the bar bound more to it than to the root, cut across where they share it, and moves nothing.
+fn skin_bound_to_a_hidden_bone_is_left_out_where_the_camera_sees() {
+    // The bar's top corners are bound to its tip's bone, its foot's to the root, so how much it is bound to the tip
+    // rises along it: hidden, the tip leaves out all of the bar from where it is a quarter bound to the tip, half a
+    // metre up, and moves nothing.
     let Some(hidden) = bar_render_hiding(false, false, true) else { return };
     keep_image("bar hidden.png", &hidden);
     let (eye, ahead) = (Vec3::new(0.0, 1.0, 4.0), Quat::from_rotation_y(std::f32::consts::PI));
     let lit = |at: Vec3| rgb_at(&hidden, on_screen(eye, ahead, at))[0] > 150;
-    assert!(lit(Vec3::new(0.0, 0.3, 0.0)) && lit(Vec3::new(0.0, 0.85, 0.0)), "the half bound to the root stays");
-    assert!(!lit(Vec3::new(0.0, 1.15, 0.0)) && !lit(Vec3::new(0.0, 1.7, 0.0)), "the half bound to the tip is left out");
+    assert!(lit(Vec3::new(0.0, 0.15, 0.0)) && lit(Vec3::new(0.0, 0.38, 0.0)), "the foot stays");
+    assert!(!lit(Vec3::new(0.0, 0.65, 0.0)) && !lit(Vec3::new(0.0, 1.5, 0.0)), "the rest is left out");
 }

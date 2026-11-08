@@ -41,8 +41,8 @@ pub struct Pose {
 impl Component for Pose {}
 
 /// The bones of a model's skeleton hidden from the cameras that draw it, in
-/// its skeleton's order: skin bound mostly to them is left out of what a
-/// camera sees, though it still casts its shadow. Set each frame by what
+/// its skeleton's order: skin bound a quarter or more to them is left out of
+/// what a camera sees, though it still casts its shadow. Set each frame by what
 /// hides them, as a First-Person View hides the head its camera looks out
 /// of, and gone the next unless set again. The bones themselves stay where
 /// the pose has them.

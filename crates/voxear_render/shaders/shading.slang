@@ -147,8 +147,9 @@ float bayer4(uint2 pixel)
 void ditherLodFade(VertexOut input)
 {
     // A skinned part's hidden skin, as a head a first-person camera looks out of, is left out where a camera
-    // sees; the shadow passes draw it all, so it still casts its shadow.
-    if (input.hidden > 0.5)
+    // sees, from where it is a quarter bound to the hidden bones, so the chin above a camera in the neck goes
+    // with the head; the shadow passes draw it all, so it still casts its shadow.
+    if (input.hidden > 0.25)
     {
         discard;
     }

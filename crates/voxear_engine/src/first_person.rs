@@ -22,8 +22,9 @@ const MOST_LEAN: f32 = 40.0;
 const MOST_TWIST: f32 = 1.4;
 /// How near a first-person camera sees, in metres: the gun held at the eye
 /// and the hands working before it come closer than a camera usually
-/// looks, and would be cut off.
-const NEAR: f32 = 0.01;
+/// looks, and would be cut off; but no nearer than the body round the
+/// camera, the neck and shoulders, as they move.
+const NEAR: f32 = 0.05;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -470,7 +471,7 @@ mod tests {
         );
         assert!(eye.rotation.angle_between(view.rotation()) < 1e-4, "and looks where the view does");
         let near = world.get::<Camera>(camera).unwrap().near;
-        assert!(near <= 0.01, "and sees from close enough not to cut off the hands: {near}");
+        assert!(near <= 0.05, "and sees from close enough not to cut off the hands: {near}");
         let head =
             Rig::find(&world.get::<ModelRenderer>(body).unwrap().animation.as_ref().unwrap().skeleton).unwrap().head;
         let hidden = world.get::<voxear_render::HiddenBones>(body).expect("the head is hidden");

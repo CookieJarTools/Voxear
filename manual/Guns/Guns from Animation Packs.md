@@ -54,7 +54,7 @@ Either way, the camera is worked out on your character standing at rest and then
 
 Looking up or down, the gun turns with the view but swings about the shoulders rather than the eyes, so the arms reach it just as well however far the view tips. It moves a little in the view as it does: up and nearer when looking far up.
 
-Your character's arms take the clips' own pose, bone by bone, as its walk takes the walk clips': the upper arm, forearm, wrist and every finger turn as the clips turn them, twist included. Each hand is then brought the rest of the way onto the gun, its knuckles where the clips' knuckles are, only as far as your character's build needs, with the elbow where the clips' pose has it. So a hand with a longer palm still closes on the bolt handle or the grip as the clips' hand does. A finger that would go into the gun, as a larger hand's thumb pressing rounds in, swings back out at its knuckle until it rests on the gun. Nothing moves the gun from where the clips have it but the layers below; an arm that can't quite reach falls short of it rather than the gun coming to the hand.
+Your character's arms take the clips' own pose, bone by bone, as its walk takes the walk clips': the upper arm, forearm, wrist and every finger turn as the clips turn them, twist included. Each hand is then brought the rest of the way onto the gun, its knuckles where the clips' knuckles are, only as far as your character's build needs, with the elbow where the clips' pose has it. So a hand with a longer palm still closes on the bolt handle or the grip as the clips' hand does. Nothing moves the gun from where the clips have it but the layers below; an arm that can't quite reach falls short of it rather than the gun coming to the hand.
 
 A pack's clips seldom aim. Aiming brings the gun's sights onto the camera's line, as it does for any gun, but no nearer the eye than the clips hold it: the gun comes across rather than back, as the pack's own camera would come down onto the sights. So the hands stay as far ahead of the eye as the clips have them, and the elbows bend as the clips bend them. Set the sockets carefully:
 
@@ -105,7 +105,7 @@ For each action the pack has clips for, set its **Mode** to **Clips** and give i
 | | one more round, Repeat **Until Full** | **Round In** |
 | | the bolt shut | **Chamber**, **Close** |
 
-A pack's action clips often snap the hand back onto the grip in their last few frames. As an action ends on such a clip, the hold lets go of it as the hand sets off, and the hand eases back over **Hand Return**, in seconds (0.35 to start with), round the gun rather than through it. Raise it for a slower return. A clip whose hand comes back slower than that plays to its end as made.
+A pack's action clips often snap the hand back onto the grip in their last few frames. As an action ends on such a clip, the hold lets go of it as the hand sets off, and the hand eases back over **Hand Return**, in seconds (0.35 to start with). Raise it for a slower return. A clip whose hand comes back slower than that plays to its end as made.
 
 An action the pack has no clips for still plays as built, on the same gun. Give the gun's bolt a Gun Part on its bone so it moves there (see [[Setting Up a Gun]]).
 

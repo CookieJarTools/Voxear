@@ -1,8 +1,7 @@
 //! What a gun's surfaces are to the hands holding it: a box for each of its
 //! parts' meshes, as the renderer bounds them, which moves with its part,
-//! and for a gun drawn by a skinned model, boxes for each of its bones
-//! round the vertices the bone moves, in slices along it so they hug a long
-//! stock, action and barrel, which move as the bone is posed.
+//! and for a gun drawn by a skinned model, a box for each of its bones
+//! round the vertices the bone moves, which moves as the bone is posed.
 //! A palm is put on the surface under a socket, and fingers close until
 //! they touch it, so neither goes into the gun.
 
@@ -123,14 +122,8 @@ fn bone_boxes(world: &World, gun: Entity) -> Vec<(Entity, usize, Vec3, Vec3)> {
         let Some(animation) = model.animation.as_ref().filter(|_| under(world, entity, gun)) else { continue };
         let skins = model.parts.iter().filter_map(|part| part.skin).collect::<std::collections::BTreeSet<_>>();
         for skin in skins.into_iter().filter_map(|skin| animation.skins.get(skin as usize)) {
-            // Each joint's slices where the skin has them, a closer fit than its one box.
-            for (index, (&bone, &(least, most))) in skin.joints.iter().zip(&skin.bounds).enumerate() {
-                match skin.slices.get(index).filter(|slices| !slices.is_empty()) {
-                    Some(slices) => boxes.extend(slices.iter().map(|&(least, most)| (entity, bone, least, most))),
-                    None if least.cmple(most).all() => boxes.push((entity, bone, least, most)),
-                    None => {}
-                }
-            }
+            let joints = skin.joints.iter().zip(&skin.bounds).filter(|(_, (least, most))| least.cmple(*most).all());
+            boxes.extend(joints.map(|(&bone, &(least, most))| (entity, bone, least, most)));
         }
     }
     boxes
@@ -158,45 +151,6 @@ pub fn shapes_now(world: &World, gun: Entity, leaving: &[Entity], leaving_bones:
 
 /// Where `bone` of the model `entity` draws is, in the model's space: as
 /// its Pose has it, or at rest without one.
-/// The gun's body as hands find it now, in the gun's space: its boxes but
-/// those of the parts that move, as a bolt, a round or a trigger, which
-/// fingers take hold of or press. For a skinned gun, the bones none of its
-/// model's own clips move.
-pub fn body_shapes(world: &World, gun: Entity) -> Vec<Shape> {
-    let Some(shapes) = world.get::<GunShapes>(gun) else { return Vec::new() };
-    let into_gun = world_matrix(world, gun).inverse();
-    let body = |entity: Entity| !world.has::<Hidden>(entity) && !world.has::<GunPart>(entity);
-    let parts = shapes
-        .pieces
-        .iter()
-        .filter(|(entity, ..)| body(*entity))
-        .map(|&(entity, least, most)| Shape { frame: into_gun * world_matrix(world, entity), least, most });
-    let still = |entity: Entity, bone: usize| {
-        let animation = world.get::<ModelRenderer>(entity).and_then(|model| model.animation.as_ref());
-        animation.is_some_and(|animation| !moved_by_clips(animation, bone))
-    };
-    let bones = shapes.bones.iter().filter(|&&(entity, bone, ..)| still(entity, bone)).filter_map(
-        |&(entity, bone, least, most)| {
-            let placed = posed(world, entity, bone)?;
-            Some(Shape { frame: into_gun * world_matrix(world, entity) * placed, least, most })
-        },
-    );
-    parts.chain(bones).collect()
-}
-
-/// Whether any of a model's own clips moves `bone` from where it stands at
-/// their first frame: a gun's bolt, trigger or rounds, not its stock.
-fn moved_by_clips(animation: &voxear_render::ModelAnimation, bone: usize) -> bool {
-    let bones = animation.skeleton.bones.len();
-    animation.clips.iter().any(|clip| {
-        let at = |frame: usize| clip.poses.get(frame * bones + bone).copied();
-        let Some(first) = at(0) else { return false };
-        (1..clip.frames).filter_map(at).any(|pose| {
-            pose.translation.distance(first.translation) > 1e-3 || pose.rotation.angle_between(first.rotation) > 0.01
-        })
-    })
-}
-
 fn posed(world: &World, entity: Entity, bone: usize) -> Option<Mat4> {
     if let Some(pose) = world.get::<Pose>(entity) {
         return pose.bones.get(bone).copied();
@@ -264,7 +218,7 @@ mod tests {
         };
         let binds = skeleton.model_matrices(&skeleton.rest()).iter().map(|bone| bone.inverse()).collect();
         let bounds = vec![(Vec3::splat(-0.02), Vec3::splat(0.02)), (Vec3::splat(-0.01), Vec3::splat(0.01))];
-        let skin = Skin { joints: vec![0, 1], inverse_binds: binds, bounds, slices: Vec::new() };
+        let skin = Skin { joints: vec![0, 1], inverse_binds: binds, bounds };
         let animation = Arc::new(ModelAnimation { skeleton, skins: vec![skin], clips: Vec::new() });
         let part = ModelPart {
             mesh: MeshHandle(0),

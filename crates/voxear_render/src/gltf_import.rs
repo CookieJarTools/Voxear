@@ -308,64 +308,25 @@ pub(crate) fn prepare_with(path: &str, read: &mut ReadFile, settings: &ModelImpo
     Ok(model)
 }
 
-/// How long a slice of a joint's vertices is, at most, in metres, and how
-/// many slices a joint is cut into at most (see [`Skin::slices`](crate::Skin::slices)).
-const SLICE: f32 = 0.04;
-const SLICES: usize = 32;
-
 /// Bounds each skin's joints by the vertices each moves most, at full
-/// detail, as one box and in slices along it (see
-/// [`Skin::bounds`](crate::Skin::bounds)).
+/// detail (see [`Skin::bounds`](crate::Skin::bounds)).
 fn bound_skins(model: &mut PreparedModel) {
     let PreparedModel { animation: Some(animation), nodes, meshes, .. } = model else { return };
     for skin in &mut animation.skins {
         skin.bounds = vec![(Vec3::INFINITY, Vec3::NEG_INFINITY); skin.joints.len()];
     }
-    // Each vertex of the nodes skin `index` binds, in its heaviest joint's space as it was bound.
-    let bound = |index: usize, skin: &crate::Skin, mut each: Box<dyn FnMut(usize, Vec3) + '_>| {
-        for node in nodes.iter().filter(|node| node.skin == Some(index)) {
-            let Some((data, _)) = meshes.get(node.mesh) else { continue };
-            for (vertex, weights) in data.vertices.iter().zip(&data.skin) {
-                let heaviest = (0..4).max_by_key(|&i| weights.weights[i]).unwrap_or(0);
-                let joint = usize::from(weights.joints[heaviest]);
-                if let Some(bind) = skin.inverse_binds.get(joint) {
-                    each(joint, bind.transform_point3(Vec3::from(vertex.position)));
-                }
-            }
+    for node in nodes.iter() {
+        let (Some(skin), Some((data, _))) = (node.skin, meshes.get(node.mesh)) else { continue };
+        let Some(skin) = animation.skins.get_mut(skin) else { continue };
+        for (vertex, weights) in data.vertices.iter().zip(&data.skin) {
+            let heaviest = (0..4).max_by_key(|&i| weights.weights[i]).unwrap_or(0);
+            let joint = usize::from(weights.joints[heaviest]);
+            let (Some(bind), Some(bounds)) = (skin.inverse_binds.get(joint), skin.bounds.get_mut(joint)) else {
+                continue;
+            };
+            let at = bind.transform_point3(Vec3::from(vertex.position));
+            *bounds = (bounds.0.min(at), bounds.1.max(at));
         }
-    };
-    for (index, skin) in animation.skins.iter_mut().enumerate() {
-        let mut bounds = skin.bounds.clone();
-        bound(index, skin, Box::new(|joint, at| {
-            if let Some(bounds) = bounds.get_mut(joint) {
-                *bounds = (bounds.0.min(at), bounds.1.max(at));
-            }
-        }));
-        // Cut along each box's longest side into slices, and bound what falls in each.
-        let cuts: Vec<(usize, f32, usize)> = bounds
-            .iter()
-            .map(|(least, most)| {
-                let size = *most - *least;
-                let axis = if size.x >= size.y && size.x >= size.z { 0 } else if size.y >= size.z { 1 } else { 2 };
-                let count = ((size[axis] / SLICE).ceil() as usize).clamp(1, SLICES);
-                (axis, size[axis] / count as f32, count)
-            })
-            .collect();
-        let mut slices: Vec<Vec<(Vec3, Vec3)>> =
-            cuts.iter().map(|&(_, _, count)| vec![(Vec3::INFINITY, Vec3::NEG_INFINITY); count]).collect();
-        bound(index, skin, Box::new(|joint, at| {
-            let (Some(&(axis, width, count)), Some(&(least, _))) = (cuts.get(joint), bounds.get(joint)) else { return };
-            let slice = (((at[axis] - least[axis]) / width.max(1e-6)) as usize).min(count - 1);
-            let slice = &mut slices[joint][slice];
-            *slice = (slice.0.min(at), slice.1.max(at));
-        }));
-        for (joint, cut) in slices.iter_mut().enumerate() {
-            cut.retain(|(least, most)| least.cmple(*most).all());
-            if bounds[joint].0.cmpgt(bounds[joint].1).any() {
-                cut.clear();
-            }
-        }
-        (skin.bounds, skin.slices) = (bounds, slices);
     }
 }
 
@@ -937,7 +898,7 @@ fn read_animation(
             None => vec![Mat4::IDENTITY; joints.len()],
         };
         ensure!(binds.len() == joints.len(), "a skin has {} joints but {} bind matrices", joints.len(), binds.len());
-        skins.push(Skin { joints, inverse_binds: binds, ..Skin::default() });
+        skins.push(Skin { joints, inverse_binds: binds, bounds: Vec::new() });
     }
     let skeleton = Skeleton { bones };
     let mut clips = Vec::new();

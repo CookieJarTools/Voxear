@@ -696,9 +696,8 @@ fn a_clip_that_snaps_a_hand_back_at_its_very_end_is_found_letting_go_as_the_hand
         let reference = format!("{name}#clip:Lifted");
         super::clip_hold::snaps_back_at(&own.world, &reference, ("", &place), Vec3::ZERO, 0.35).expect("read")
     };
-    let (snaps, hands) = found("Snaps").expect("a snap back");
+    let snaps = found("Snaps").expect("a snap back");
     assert!((snaps - 0.9).abs() < 0.03, "found as the hands set off: {snaps} s");
-    assert_eq!(hands, [true, true], "both hands, which the gun jumps away from alike");
     assert_eq!(found("Slow"), None, "a hand coming back slower than the Hand Return is left as the clip has it");
 }
 

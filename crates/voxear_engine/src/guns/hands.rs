@@ -217,57 +217,6 @@ pub fn close_by(
     }
 }
 
-/// Swings each of a posed hand's fingers about its first joint, a few small
-/// steps at most, out of `shapes` where its links past that joint go in:
-/// a clip's fingers, made for a smaller hand, close on the gun rather than
-/// into it, still curled as the clip has them. Each step takes the deepest
-/// point of the finger out of the box it is in, toward the back of the
-/// hand, and the finger swings no more than 35 degrees in all.
-pub fn keep_fingers_out(edit: &mut PoseEdit, arm: &Arm, shapes: &[Shape]) {
-    let Some(palm) = palm_of(edit, arm) else { return };
-    let back = -palm.facing;
-    for (finger, bones) in arm.fingers.iter().enumerate() {
-        let joints = bones.len().min(3);
-        if joints < 2 {
-            continue;
-        }
-        let thickness = if finger == 0 { palm.finger * 1.15 } else { palm.finger };
-        let mut swung = 0.0;
-        for _ in 0..6 {
-            let points = finger_points(edit, bones, joints);
-            let samples = points.windows(2).skip(1).flat_map(|link| [0.4, 0.7, 1.0].map(|t| link[0].lerp(link[1], t)));
-            let deepest = samples
-                .map(|point| (point, push_out(shapes, point, thickness, back)))
-                .max_by(|a, b| a.1.length().total_cmp(&b.1.length()));
-            let Some((point, push)) = deepest.filter(|(_, push)| push.length() > 1e-4) else { break };
-            let root = points[0];
-            let (from, to) = ((point - root).normalize_or_zero(), (point + push - root).normalize_or_zero());
-            let turn = Quat::from_rotation_arc(from, to);
-            let angle = turn.angle_between(Quat::IDENTITY).min(35f32.to_radians() - swung);
-            if angle <= 1e-4 {
-                break;
-            }
-            let (axis, _) = turn.to_axis_angle();
-            edit.turn(bones[0], Quat::from_axis_angle(axis, angle));
-            swung += angle;
-        }
-    }
-}
-
-/// A finger's first `joints` bones and its tip: the bone past the last
-/// joint, or as far on again as most of the link before.
-fn finger_points(edit: &PoseEdit, bones: &[usize], joints: usize) -> Vec<Vec3> {
-    let matrices = edit.matrices();
-    let at = |bone: usize| matrices[bone].w_axis.truncate();
-    let mut points: Vec<Vec3> = bones[..joints].iter().map(|&bone| at(bone)).collect();
-    let tip = match bones.get(joints) {
-        Some(&tip) => at(tip),
-        None => points[joints - 1] + (points[joints - 1] - points[joints - 2]) * 0.8,
-    };
-    points.push(tip);
-    points
-}
-
 /// How far each of a posed hand's fingers' first three joints is bent
 /// toward the palm, in radians, thumb first: each joint's turn from the
 /// line before it, the first's from the way the fingers point. Taken from
@@ -436,49 +385,5 @@ impl Finger {
             edit.turn(bones[joint], Quat::from_axis_angle(turn * self.axes[joint], angles[joint]));
             turn *= Quat::from_axis_angle(self.axes[joint], angles[joint]);
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::animation::rig::Rig;
-    use voxear_core::math::Mat4;
-
-    #[test]
-    fn a_posed_finger_swings_out_of_the_gun_only_as_far_as_it_must() {
-        let skeleton = crate::animation::rig::tests::body(|part, side| match side {
-            Some(left) => format!("{part}_{}", if left { "l" } else { "r" }),
-            None => part.to_string(),
-        });
-        let arm = Rig::find(&skeleton).expect("a humanoid").arms[1].clone();
-        let mut edit = PoseEdit::new(&skeleton, &skeleton.model_matrices(&skeleton.rest()));
-        let (index, middle) = (arm.fingers[1][0], arm.fingers[2][0]);
-        // The index finger curled down at its knuckle, into a box below the hand that it clears held straight.
-        let knuckle = edit.position(index);
-        edit.turn(index, Quat::from_rotation_z(-70f32.to_radians()));
-        let curled = edit.local[index].rotation;
-        let at_rest = skeleton.bones[index].rest.rotation;
-        let shape = Shape {
-            frame: Mat4::from_translation(knuckle + Vec3::new(0.03, -0.045, 0.0)),
-            least: Vec3::splat(-0.02),
-            most: Vec3::splat(0.02),
-        };
-        let thickness = palm_of(&edit, &arm).unwrap().finger;
-        let deepest = |edit: &PoseEdit| {
-            let points = finger_points(edit, &arm.fingers[1], 2);
-            let along = |l: &[Vec3]| [0.4, 0.7, 1.0].map(|t| nearest(&[shape], l[0].lerp(l[1], t)));
-            points.windows(2).skip(1).flat_map(along).fold(f32::INFINITY, f32::min)
-        };
-        assert!(deepest(&edit) < thickness, "the curled finger goes in");
-        let untouched = edit.local[middle].rotation;
-
-        keep_fingers_out(&mut edit, &arm, &[shape]);
-        assert!(deepest(&edit) > thickness * 0.9, "the finger is out of the box: {}", deepest(&edit));
-        let swung = edit.local[index].rotation;
-        let (from_rest, from_curled) = (swung.angle_between(at_rest), swung.angle_between(curled));
-        let part = format!("swung part of the way: {from_rest} from rest, {from_curled} from curled");
-        assert!(from_curled > 0.05 && from_rest > 0.2, "{part}");
-        assert_eq!(edit.local[middle].rotation, untouched, "a finger clear of the box is left as posed");
     }
 }

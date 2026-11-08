@@ -18,6 +18,8 @@ var aim = view.Forward;
 
 In networked play, only this machine's own player's view moves the camera, hides the head and takes the mouse. Everyone else's keeps their head on.
 
+While playing, the camera it places sees from 1 cm away rather than the usual 10 cm, so the gun held at the eye and the hands working right before it are never cut off. A hidden head shrinks up and behind the head bone, out of the camera's way.
+
 ## Guns
 
 A [[Holding and Aiming|Gun Holder]] holds its gun in front of the view's eyes.

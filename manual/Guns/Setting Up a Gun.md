@@ -29,6 +29,8 @@ Sockets are places on the gun, in the model's own space. Select the gun and they
 - **Rear Sight** and **Front Sight**: the line the gun is aimed along. **Eye Relief** is how far the eye is from the rear sight when aiming, and **Aim FOV** the field of view then.
 - **Muzzle**, where shots leave; **Feed**, where magazines, clips and rounds go in; and **Port**, where cases come out.
 
+A gun whose model has bones, as a gun from an animation pack has, can put a socket where one of them is: right-click the socket's row and choose **Put on** and the bone. The socket takes the bone's place at rest, so the sights and the muzzle come straight from the model.
+
 ## Handling
 
 **Handling** picks the gun's [[Gun Handling]]: how it is held, and the clips its actions are based on, set in the Inspector when the `.gunhandling` file is selected. With none, the gun is held and handled as its kind's built-ins have it.
@@ -45,3 +47,7 @@ The gun's moving pieces are Objs of their own under the gun's model, each with a
 **Moves** says whether the part slides or turns, along or about its **Axis**, by its **Amount** in metres or degrees, through its **Pivot**. **Then Pull** gives a turn-bolt its pull back after its lift. **Handle** is where a hand takes hold of it. Select a part and the path its handle moves along shows in the Scene view.
 
 The Gun's section in the Inspector says when a part its kind is worked by is missing. Without one, the hand still goes through the motions, with nothing moving under it.
+
+### Parts on bones
+
+A gun drawn by one skinned model, as guns from animation packs are, has its moving pieces as the model's bones rather than as Objs. Its parts are still Objs with a Gun Part, under the gun, but with no model of their own: pick the bone in the part's **Bone**. The part then moves that bone, and every bone under it, as it would move an Obj, so a bolt's handle goes with the bolt. A gun drawn so also has a box for each of its bones, for the hands to hold on to and keep out of.

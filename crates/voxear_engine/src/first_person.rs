@@ -209,8 +209,7 @@ pub fn place(world: &mut World) {
         // While clips hold a gun the eyes stay put on the body and the upper body does not lean, so the shoulders
         // keep their place under them, as the clips' were under their camera.
         let framed = world.get::<FirstPersonState>(entity).is_some_and(|state| state.framed.is_some());
-        let lean = if framed { 0.0 } else { view.lean };
-        let posed = pose_body(world, entity, &view, own, lean).map(|eyes| obj.inverse().transform_point3(eyes));
+        let posed = pose_body(world, entity, &view, own, framed).map(|eyes| obj.inverse().transform_point3(eyes));
         let state = world.get::<FirstPersonState>(entity).copied();
         let mut state = state.unwrap_or_else(|| FirstPersonState::new(posed.unwrap_or(Vec3::ZERO)));
         let eyes_now = match (posed, state.framed.take()) {
@@ -254,8 +253,13 @@ pub fn place(world: &mut World) {
 
 /// Turns a view's body's upper body toward where the view looks and leans
 /// it, hiding its head for this machine's own player, and gives back where
-/// its eyes are in the world; none for a view with no body.
-fn pose_body(world: &mut World, entity: Entity, view: &FirstPersonView, own: bool, lean: f32) -> Option<Vec3> {
+/// its eyes are in the world; none for a view with no body. While clips
+/// hold a gun, `framed`, the eyes stay put low in the head and the upper
+/// body does not lean, so the shoulders keep their place under them, as the
+/// clips' did under their camera; and the upper chest and collarbones round
+/// the eyes are hidden too, as the steps carry them up past the eyes.
+fn pose_body(world: &mut World, entity: Entity, view: &FirstPersonView, own: bool, framed: bool) -> Option<Vec3> {
+    let lean = if framed { 0.0 } else { view.lean };
     let body = body_of(world, entity, view)?;
     let animation = world.get::<ModelRenderer>(body).and_then(|model| model.animation.clone())?;
     let (pose, rig) = (world.get::<Pose>(body).cloned()?, Rig::find(&animation.skeleton)?);
@@ -287,6 +291,10 @@ fn pose_body(world: &mut World, entity: Entity, view: &FirstPersonView, own: boo
     // were filmed from, sits nearer the neck than the head.
     if view.hide_head && own {
         crate::animation::hide(world, body, &animation.skeleton, rig.neck.unwrap_or(rig.head));
+        if framed {
+            let round: Vec<usize> = rig.arms.iter().filter_map(|arm| arm.clavicle).chain([rig.chest()]).collect();
+            crate::animation::hide_only(world, body, &animation.skeleton, &round);
+        }
     }
     Some(placed.transform_point3(eyes_in_body))
 }

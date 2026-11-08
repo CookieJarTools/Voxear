@@ -131,6 +131,18 @@ pub(crate) fn hide(world: &mut World, model: Entity, skeleton: &Skeleton, bone: 
     world.insert(model, hidden);
 }
 
+/// Hides only the bones `bones` of the model `model` from the cameras that
+/// draw it this frame, not those under them: so the upper chest and
+/// collarbones round a camera can go while the arms hanging from them stay.
+pub(crate) fn hide_only(world: &mut World, model: Entity, skeleton: &Skeleton, bones: &[usize]) {
+    let mut hidden = world.get::<HiddenBones>(model).cloned().unwrap_or_default();
+    hidden.bones.resize(skeleton.bones.len(), false);
+    for &bone in bones.iter().filter(|&&bone| bone < skeleton.bones.len()) {
+        hidden.bones[bone] = true;
+    }
+    world.insert(model, hidden);
+}
+
 /// Whether `bone` hangs somewhere under `above`.
 fn is_under(skeleton: &Skeleton, bone: usize, above: usize) -> bool {
     let mut at = skeleton.bones[bone].parent;

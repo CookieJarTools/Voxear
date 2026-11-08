@@ -584,6 +584,16 @@ fn the_camera_stays_put_on_the_body_while_clips_hold_the_gun_however_the_body_bo
         most = most.max(camera(&scene).distance(still));
     }
     assert!(most < 0.001, "the camera where it was on the body: {most} m off at most");
+
+    // With the head hidden, the upper chest and collarbones round the low camera go too, but not the arms on them.
+    scene.world.get_mut::<crate::first_person::FirstPersonView>(scene.player).unwrap().hide_head = true;
+    step(&mut scene, &rest, &mut time);
+    let animation = scene.world.get::<ModelRenderer>(scene.body).unwrap().animation.clone().unwrap();
+    let rig = crate::animation::rig::Rig::find(&animation.skeleton).unwrap();
+    let hidden = &scene.world.get::<voxear_render::HiddenBones>(scene.body).expect("bones hidden").bones;
+    let clavicles = rig.arms.iter().filter_map(|arm| arm.clavicle);
+    assert!(hidden[rig.head] && hidden[rig.chest()] && clavicles.into_iter().all(|bone| hidden[bone]));
+    assert!(rig.arms.iter().all(|arm| !hidden[arm.upper] && !hidden[arm.hand]), "the arms stay");
 }
 
 #[test]

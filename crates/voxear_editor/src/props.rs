@@ -527,12 +527,17 @@ pub enum Prop {
     ForceKind,
     ForceStrength,
     ForceRadius,
-    /// A Smoke's size and cells, how thick it is and its colour, how long it
-    /// spreads, lasts and fades, and which swirls.
+    /// A Smoke's size and cells, how thick it is and its colour, how soft,
+    /// wispy, billowy and self-shadowed it looks, how long it spreads, lasts
+    /// and fades, and which swirls.
     SmokeSize,
     SmokeCell,
     SmokeDensity,
     SmokeColor,
+    SmokeSoftness,
+    SmokeWisps,
+    SmokeBillows,
+    SmokeSelfShadow,
     SmokeSpread,
     SmokeLasts,
     SmokeFade,
@@ -1061,6 +1066,10 @@ impl Prop {
             | Prop::SmokeCell
             | Prop::SmokeDensity
             | Prop::SmokeColor
+            | Prop::SmokeSoftness
+            | Prop::SmokeWisps
+            | Prop::SmokeBillows
+            | Prop::SmokeSelfShadow
             | Prop::SmokeSpread
             | Prop::SmokeLasts
             | Prop::SmokeFade
@@ -1442,6 +1451,10 @@ impl Prop {
             Prop::SmokeCell => "cell",
             Prop::SmokeDensity => "density",
             Prop::SmokeColor => "color",
+            Prop::SmokeSoftness => "softness",
+            Prop::SmokeWisps => "wisps",
+            Prop::SmokeBillows => "billows",
+            Prop::SmokeSelfShadow => "self_shadow",
             Prop::SmokeSpread => "spread",
             Prop::SmokeLasts => "lasts",
             Prop::SmokeFade => "fade",
@@ -2036,6 +2049,10 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             Prop::SmokeCell,
             Prop::SmokeDensity,
             Prop::SmokeColor,
+            Prop::SmokeSoftness,
+            Prop::SmokeWisps,
+            Prop::SmokeBillows,
+            Prop::SmokeSelfShadow,
             Prop::SmokeSpread,
             Prop::SmokeLasts,
             Prop::SmokeFade,
@@ -2594,6 +2611,10 @@ pub fn label(prop: &Prop) -> String {
         Prop::SmokeCell => "Cell Size",
         Prop::SmokeDensity => "Density",
         Prop::SmokeColor => "Colour",
+        Prop::SmokeSoftness => "Softness",
+        Prop::SmokeWisps => "Wisps",
+        Prop::SmokeBillows => "Billows",
+        Prop::SmokeSelfShadow => "Self Shadow",
         Prop::SmokeSpread => "Spread Time",
         Prop::SmokeLasts => "Lasts",
         Prop::SmokeFade => "Disperse Time",
@@ -3602,6 +3623,10 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         | Prop::SmokeCell
         | Prop::SmokeDensity
         | Prop::SmokeColor
+        | Prop::SmokeSoftness
+        | Prop::SmokeWisps
+        | Prop::SmokeBillows
+        | Prop::SmokeSelfShadow
         | Prop::SmokeSpread
         | Prop::SmokeLasts
         | Prop::SmokeFade
@@ -5431,6 +5456,10 @@ fn smoke_value(smoke: &voxear_render::Smoke, prop: &Prop) -> Option<Value> {
         Prop::SmokeCell => Value::Number(smoke.cell),
         Prop::SmokeDensity => Value::Number(smoke.density),
         Prop::SmokeColor => Value::Color(srgb(smoke.color).map(round3)),
+        Prop::SmokeSoftness => Value::Number(smoke.softness),
+        Prop::SmokeWisps => Value::Number(smoke.wisps),
+        Prop::SmokeBillows => Value::Number(smoke.billows),
+        Prop::SmokeSelfShadow => Value::Number(smoke.self_shadow),
         Prop::SmokeSpread => Value::Number(smoke.spread),
         Prop::SmokeLasts => Value::Number(smoke.lasts),
         Prop::SmokeFade => Value::Number(smoke.fade),
@@ -5447,6 +5476,10 @@ fn set_smoke(smoke: &mut voxear_render::Smoke, prop: &Prop, value: Value) {
         (Prop::SmokeCell, Value::Number(n)) => smoke.cell = n.clamp(0.1, 2.0),
         (Prop::SmokeDensity, Value::Number(n)) => smoke.density = n.max(0.0),
         (Prop::SmokeColor, Value::Color(c)) => smoke.color = linear(c.map(|c| c.clamp(0.0, 1.0))),
+        (Prop::SmokeSoftness, Value::Number(n)) => smoke.softness = n.clamp(0.0, 1.0),
+        (Prop::SmokeWisps, Value::Number(n)) => smoke.wisps = n.clamp(0.0, 1.0),
+        (Prop::SmokeBillows, Value::Number(n)) => smoke.billows = n.clamp(0.0, 1.0),
+        (Prop::SmokeSelfShadow, Value::Number(n)) => smoke.self_shadow = n.clamp(0.0, 1.0),
         (Prop::SmokeSpread, Value::Number(n)) => smoke.spread = n.max(0.0),
         (Prop::SmokeLasts, Value::Number(n)) => smoke.lasts = n.max(0.0),
         (Prop::SmokeFade, Value::Number(n)) => smoke.fade = n.max(0.0),

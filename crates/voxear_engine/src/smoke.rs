@@ -94,9 +94,9 @@ pub fn fill_smokes(world: &mut World, now: f64) {
             continue;
         }
         let origin = fill.origin;
-        let (cells, steps) = fill.cells();
-        let filled_for = (smoke, middle);
-        world.insert(entity, SmokeFill { cells: Arc::from(cells), steps, origin, filled_for, started, ends });
+        let (cells, inside, steps) = fill.cells();
+        let (cells, inside, filled_for) = (Arc::from(cells), Arc::from(inside), (smoke, middle));
+        world.insert(entity, SmokeFill { cells, inside, steps, origin, filled_for, started, ends });
     }
 }
 
@@ -185,9 +185,16 @@ pub(crate) fn shift(world: &mut World, by: Vec3) {
 /// A Smoke's cells filled out from `middle`, nearest first, stepping to the
 /// 26 cells round each, straight or across, so it spreads as a low, lumpy
 /// dome until walls bend it: for each cell, 0 where it does not reach, or 1
-/// more than how far it is along the way it came, in half cells; and the
-/// farthest. `own` is the smoke's Obj, whose collider does not stop it.
-pub fn fill(world: &World, physics: &PhysicsScene, smoke: &Smoke, middle: Vec3, own: Option<Entity>) -> (Vec<u8>, u8) {
+/// more than how far it is along the way it came, in half cells; how deep
+/// inside the smoke each lies (`SmokeFill::inside`); and the farthest. `own`
+/// is the smoke's Obj, whose collider does not stop it.
+pub fn fill(
+    world: &World,
+    physics: &PhysicsScene,
+    smoke: &Smoke,
+    middle: Vec3,
+    own: Option<Entity>,
+) -> (Vec<u8>, Vec<u8>, u8) {
     let mut filling = Filling::new(world, physics, smoke, middle, own);
     filling.advance(world, physics, usize::MAX);
     filling.cells()
@@ -400,11 +407,12 @@ impl Filling {
         true
     }
 
-    /// The cells filled and the farthest, 0 when none could be. Each filled
-    /// cell over the floor reaches one cell down into it, as far out as
-    /// itself, so the smoke lies on the floor rather than half a cell above
-    /// it; what is inside the floor is hidden behind it.
-    fn cells(mut self) -> (Vec<u8>, u8) {
+    /// The cells filled, how deep inside the smoke each lies, and the
+    /// farthest, 0 when none could be. Each filled cell over the floor
+    /// reaches one cell down into it, as far out as itself, so the smoke lies
+    /// on the floor rather than half a cell above it; what is inside the
+    /// floor is hidden behind it.
+    fn cells(mut self) -> (Vec<u8>, Vec<u8>, u8) {
         let steps = if self.filled == 0 { 0 } else { self.farthest.max(1) as u8 };
         let n = SMOKE_GRID as i32;
         // Thin fingers, a cell or so across, where the lumps opened a cheap way out, are let go: drawn, they show as
@@ -430,8 +438,63 @@ impl Filling {
                 self.cells[index(under)] = self.cells[at];
             }
         }
-        (self.cells, steps)
+        let inside = depths(&self.cells, &self.blocked);
+        (self.cells, inside, steps)
     }
+}
+
+/// How deep inside the smoke each filled cell of `cells` lies, from 1 at its
+/// edge to 255 at its deepest, and 0 for the cells it does not fill: how far
+/// it is from the nearest cell found free of colliders, or past the grid's
+/// sides, by way of filled cells only. Walls, the floor and the cells never
+/// looked at are no edge, so the smoke thins only towards open air and stays
+/// thick against walls and down to the floor.
+fn depths(cells: &[u8], blocked: &[u8]) -> Vec<u8> {
+    let n = SMOKE_GRID as i32;
+    let at_cell = |at: usize| IVec3::new(at as i32 % n, (at as i32 / n) % n, at as i32 / (n * n));
+    let outside = |c: IVec3| c.cmplt(IVec3::ZERO).any() || c.cmpge(IVec3::splat(n)).any();
+    // How far each is, in tenths of a cell: open air nothing, the rest as far as found so far.
+    let mut far: Vec<u16> =
+        (0..cells.len()).map(|at| if cells[at] == 0 && blocked[at] == 1 { 0 } else { u16::MAX }).collect();
+    // Twice over the grid, once each way, each cell from those round it already passed.
+    for backward in [false, true] {
+        for k in 0..cells.len() {
+            let at = if backward { cells.len() - 1 - k } else { k };
+            if cells[at] == 0 {
+                continue;
+            }
+            let c = at_cell(at);
+            for way in AROUND {
+                let before = (way.z, way.y, way.x) < (0, 0, 0);
+                if before == backward {
+                    continue;
+                }
+                let to = c + way;
+                // Unfilled cells are open air, 0, or never passed through.
+                let there = if outside(to) { 0 } else { far[index(to)] };
+                if there == u16::MAX {
+                    continue;
+                }
+                let length = match way.abs().element_sum() {
+                    1 => 10,
+                    2 => 14,
+                    _ => 17,
+                };
+                far[at] = far[at].min(there + length);
+            }
+        }
+    }
+    // Against the deepest, so a small smoke thins as far in, for its size, as a big one.
+    let deepest = (0..cells.len()).filter(|&at| cells[at] != 0 && far[at] != u16::MAX).map(|at| far[at]).max();
+    (0..cells.len())
+        .map(|at| match (cells[at], deepest) {
+            (0, _) => 0,
+            (_, Some(deepest)) if far[at] != u16::MAX => {
+                1 + (254.0 * f32::from(far[at].min(deepest)) / f32::from(deepest.max(1))).round() as u8
+            }
+            _ => 255,
+        })
+        .collect()
 }
 
 /// The 26 cells round a cell.
@@ -472,6 +535,10 @@ const LASTS: i32 = 11;
 const FADE: i32 = 12;
 const SEED: i32 = 13;
 const PLAY_ON_START: i32 = 14;
+const SOFTNESS: i32 = 15;
+const WISPS: i32 = 16;
+const BILLOWS: i32 = 17;
+const SELF_SHADOW: i32 = 18;
 
 /// Reads value `what` of `entity`'s Smoke, or with `written`, writes it:
 /// `None` when it has none, or is gone.
@@ -525,6 +592,10 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
                 FADE => number(smoke.fade),
                 SEED => number(smoke.seed as f32),
                 PLAY_ON_START => flag(smoke.play_on_start),
+                SOFTNESS => number(smoke.softness),
+                WISPS => number(smoke.wisps),
+                BILLOWS => number(smoke.billows),
+                SELF_SHADOW => number(smoke.self_shadow),
                 _ => return None,
             });
         }
@@ -540,6 +611,10 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
                 FADE => smoke.fade = x.max(0.0),
                 SEED => smoke.seed = x.max(0.0) as u32,
                 PLAY_ON_START => smoke.play_on_start = x != 0.0,
+                SOFTNESS => smoke.softness = x.clamp(0.0, 1.0),
+                WISPS => smoke.wisps = x.clamp(0.0, 1.0),
+                BILLOWS => smoke.billows = x.clamp(0.0, 1.0),
+                SELF_SHADOW => smoke.self_shadow = x.clamp(0.0, 1.0),
                 _ => return None,
             }
         }
@@ -644,16 +719,16 @@ pub fn see_through(world: &World, from: Vec3, to: Vec3) -> f32 {
         let steps = (length / (cell * 0.5)).ceil().max(1.0);
         let step = length / steps;
         let age = time - fill.started;
-        let front = smoke.grown(age) * (f32::from(fill.steps) + 2.0);
+        let grown = smoke.grown(age);
         for i in 0..steps as usize {
             let at = from.lerp(to, enter + (leave - enter) * (i as f32 + 0.5) / steps);
             let c = ((at - low) / cell).floor().as_ivec3().clamp(IVec3::ZERO, IVec3::splat(SMOKE_GRID as i32 - 1));
             let n = SMOKE_GRID as i32;
-            let reached = fill.cells[((c.z * n + c.y) * n + c.x) as usize];
-            if reached == 0 {
+            let which = ((c.z * n + c.y) * n + c.x) as usize;
+            let filled = smoke.filled(grown, fill.steps, fill.cells[which], fill.inside[which]);
+            if filled <= 0.0 {
                 continue;
             }
-            let filled = ((front - f32::from(reached - 1)) * 0.5).clamp(0.0, 1.0);
             let left = holes.map_or(1.0, |holes| holes.left(at, time));
             depth += filled * left * smoke.density * smoke.thickness(age) * step;
         }
@@ -810,6 +885,37 @@ mod tests {
     }
 
     #[test]
+    fn smoke_thins_towards_open_air_but_stays_thick_against_a_wall_and_the_floor() {
+        let mut world = World::new();
+        world.spawn((
+            Smoke { size: 5.0, cell: 0.4, ..Smoke::default() },
+            Transform::from_position(Vec3::new(0.0, 0.3, 0.0)),
+        ));
+        // The floor's top at 0, and a wall too high and wide to go round, its face 1.2 metres along +X.
+        let floor = Collider { size: [20.0, 1.0, 20.0], ..Collider::default() };
+        world.spawn((floor, Transform::from_position(Vec3::new(0.0, -0.5, 0.0))));
+        let wall = Collider { size: [0.4, 6.0, 20.0], ..Collider::default() };
+        world.spawn((wall, Transform::from_position(Vec3::new(1.4, 3.0, 0.0))));
+        let fill = spread(&mut world);
+        let at = |p: Vec3| {
+            let c = ((p - fill.origin) / 0.4).floor().as_ivec3();
+            (fill.cells[index(c)], fill.inside[index(c)])
+        };
+        // How deep the last filled cell is, going out from just over the middle of the floor along `way`.
+        let rim = |way: Vec3| {
+            let along = (0..40).map(|k| at(Vec3::new(0.0, 0.2, 0.0) + way * (k as f32 * 0.4)));
+            along.take_while(|&(c, _)| c != 0).last().expect("filled").1
+        };
+        let (open, top) = (rim(-Vec3::X), rim(Vec3::Y));
+        let (low, by_wall) = (at(Vec3::new(0.0, 0.2, 0.0)).1, at(Vec3::new(0.8, 0.2, 0.0)).1);
+        assert!(open < 70 && top < 70, "thin at its edge in the open: {open} out to the side, {top} on top");
+        assert!(low > 120, "thick down on the floor in its middle: {low}");
+        assert!(by_wall > open * 3, "thick against the wall: {by_wall}, against {open} in the open");
+        let matched = fill.cells.iter().zip(fill.inside.iter()).all(|(&c, &d)| (c == 0) == (d == 0));
+        assert!(matched, "a depth for every filled cell, and none for the rest");
+    }
+
+    #[test]
     fn a_grenade_smokes_only_when_played_and_stays_where_it_started() {
         let mut world = World::new();
         let smoke = Smoke { size: 3.0, cell: 0.5, play_on_start: false, ..Smoke::default() };
@@ -879,7 +985,7 @@ mod tests {
         let mut physics = PhysicsScene::new();
         physics.ready(&world);
         let started = std::time::Instant::now();
-        let (cells, _) = fill(&world, &physics, &smoke, Vec3::new(0.0, 1.0, 0.0), None);
+        let (cells, ..) = fill(&world, &physics, &smoke, Vec3::new(0.0, 1.0, 0.0), None);
         let took = started.elapsed();
         assert!(cells.iter().any(|&c| c != 0));
         eprintln!("filled {} cells in {took:?}", cells.iter().filter(|&&c| c != 0).count());

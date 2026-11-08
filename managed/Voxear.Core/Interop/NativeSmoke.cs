@@ -23,6 +23,10 @@ internal static unsafe class NativeSmoke
 	public const int Fade = 12;
 	public const int Seed = 13;
 	public const int PlayOnStart = 14;
+	public const int Softness = 15;
+	public const int Wisps = 16;
+	public const int Billows = 17;
+	public const int SelfShadow = 18;
 
 	/// <summary>A value of an Obj's Smoke, or false when the Obj has none.</summary>
 	public static bool Get(Obj obj, int what, out Vector4 value)

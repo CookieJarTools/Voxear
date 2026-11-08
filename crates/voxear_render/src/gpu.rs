@@ -1113,6 +1113,13 @@ pub struct GpuSmoke {
     pub blasts: u32,
     /// How far it has dispersed at the end of its life, from 0 to 1.
     pub dispersed: f32,
+    /// How it looks, each from 0 to 1 (see `Smoke`): how far in from its
+    /// edge it thins, how much its edge frays, how much it rolls in round
+    /// puffs, and how dark it shades itself.
+    pub softness: f32,
+    pub wisps: f32,
+    pub billows: f32,
+    pub self_shadow: f32,
     pub _pad: [f32; 3],
 }
 
@@ -1457,7 +1464,7 @@ mod tests {
         // their place, reach and band.
         assert_eq!(size_of::<crate::blocks::GpuBlockWorld>(), 16 + 24 + 16 + 8 + 8 + 16 + 8 + 16 + 16 + 16 + 32);
         assert_eq!(size_of::<GpuUiPanel>(), 48);
-        assert_eq!(size_of::<GpuSmoke>(), 80);
+        assert_eq!(size_of::<GpuSmoke>(), 96);
         assert_eq!(size_of::<GpuMist>(), 64);
         assert_eq!(size_of::<GpuParticleSystem>(), 64 + 16 * 9 + 64 * 3 + 128 + 16 + 64 + 16 * 9);
         assert_eq!(size_of::<GpuParticle>(), 36);

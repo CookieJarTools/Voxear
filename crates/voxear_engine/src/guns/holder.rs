@@ -158,6 +158,9 @@ pub struct GunHolderState {
     /// handling: the handling's path, the middle of the body's shoulders at
     /// rest in its model's space, and the eyes from there, level.
     seen_from: Option<(String, Vec3, Vec3)>,
+    /// Where the last action played from clips left the gun and hands, and
+    /// how long ago it ended, to blend back from to the holding clips.
+    left_off: Option<(ClipPose, f32)>,
 }
 
 impl Component for GunHolderState {}
@@ -197,6 +200,7 @@ impl GunHolderState {
             time: 0.0,
             held_by: [0.0; 4],
             seen_from: None,
+            left_off: None,
         }
     }
 
@@ -454,7 +458,8 @@ pub fn hold(world: &mut World) {
         }
         state.tilt.update(tilt, delta);
 
-        if let Some(body) = body {
+        // A gun held by clips stands as they hold it, the upper body still under the eyes: not bladed.
+        if let Some(body) = body.filter(|_| !handling.pack.holds()) {
             blade(world, body, &gun);
         }
         // A clip the action is based on moves the body, before the gun is placed by it, and gives how the gun is
@@ -465,6 +470,11 @@ pub fn hold(world: &mut World) {
         };
         // A gun from an animation pack is held where its clips have it, and kicks as its shot's clip does.
         let clipped = held_by_clips(world, &handling.pack, &holder, &mut state, delta);
+        // The upper body stands as the clips' stance has it, still under the eyes: the idle and the walk move the hips
+        // and legs alone, so the arms hang from shoulders where the clips' were.
+        if let Some(((pose, _), body)) = clipped.as_ref().zip(body) {
+            stand_body(world, body, &pose.stance);
+        }
         // While clips hold it, the eyes stay put on the body, as still as the camera the clips were filmed from:
         // where it was from the clip's shoulders, or at the eyes, worked out on the body at rest.
         if let Some(((_, weight), body)) = clipped.as_ref().zip(body)
@@ -927,6 +937,17 @@ struct Held<'a> {
     clip: Option<&'a (ClipPose, f32)>,
 }
 
+/// Stands a body's upper body as a clip's stance has it, for this frame.
+fn stand_body(world: &mut World, body: Entity, stance: &[Quat; 3]) {
+    let Some(animation) = world.get::<ModelRenderer>(body).and_then(|model| model.animation.clone()) else { return };
+    let (Some(pose), Some(rig)) = (world.get::<Pose>(body).cloned(), Rig::find(&animation.skeleton)) else { return };
+    let skeleton = &animation.skeleton;
+    let rest = PoseEdit::new(skeleton, &skeleton.model_matrices(&skeleton.rest()));
+    let mut edit = PoseEdit::new(skeleton, &pose.bones);
+    super::clip_hold::stand(&mut edit, &rig, &rest, stance);
+    world.insert(body, Pose { bones: edit.matrices().into() });
+}
+
 /// Where the eyes stay relative to the holder's Obj while clips hold the
 /// gun, turned with where the view looks: for a handling seen as filmed,
 /// as far from the middle of the body's shoulders as the clips' camera was
@@ -947,14 +968,16 @@ fn steady_eyes(
         let skeleton = &animation.skeleton;
         let rig = Rig::find(skeleton)?;
         let rest = PoseEdit::new(skeleton, &skeleton.model_matrices(&skeleton.rest()));
-        let middle = (rest.position(rig.arms[0].upper) + rest.position(rig.arms[1].upper)) * 0.5;
+        // The clips' eyes, from the first clip that holds the gun as it stands, and the body at rest standing as it does.
+        let clip = [&pack.idle, &pack.walk, &pack.run, &pack.sprint].into_iter().find(|clip| !clip.is_empty())?;
+        let carrier = (pack.carrier.as_str(), &pack.carrier_offset);
+        let filmed = super::clip_hold::clip_pose(world, clip, 0.0, true, carrier, Vec3::from(pack.eyes))?;
+        let mut standing = PoseEdit::new(skeleton, &skeleton.model_matrices(&skeleton.rest()));
+        super::clip_hold::stand(&mut standing, &rig, &rest, &filmed.stance);
+        let middle = (standing.position(rig.arms[0].upper) + standing.position(rig.arms[1].upper)) * 0.5;
         let from_middle = match pack.camera {
             super::handling::PackCamera::Filmed => {
-                // The clips' eyes, from the first clip that holds the gun as it stands: their space's origin, so
-                // back from their shoulders the way the shoulders are from it.
-                let clip = [&pack.idle, &pack.walk, &pack.run, &pack.sprint].into_iter().find(|clip| !clip.is_empty())?;
-                let carrier = (pack.carrier.as_str(), &pack.carrier_offset);
-                let filmed = super::clip_hold::clip_pose(world, clip, 0.0, true, carrier, Vec3::from(pack.eyes))?;
+                // Their space's origin, so back from their shoulders the way the shoulders are from it.
                 let reach = |arm: usize| super::hands::arm_reach(&rest, &rig.arms[arm]);
                 let scale = (reach(0)? + reach(1)?) / (filmed.hands[0].reach + filmed.hands[1].reach).max(1e-3);
                 -(filmed.shoulders[0] + filmed.shoulders[1]) * 0.5 * scale
@@ -1004,9 +1027,24 @@ fn held_by_clips(
         let (part, at) = play.part().filter(|(part, _)| !part.arms.is_empty())?;
         let carrier = (pack.carrier.as_str(), &pack.carrier_offset);
         let pose = super::clip_hold::clip_pose(world, &part.arms, at, false, carrier, eyes)?;
-        let (elapsed, length) = play.progress();
-        Some((pose, super::clip_hold::smooth(elapsed.min(length - elapsed) / pack.blend.max(0.01))))
+        Some((pose, super::clip_hold::comes_in(play.progress().0, pack.blend)))
     });
+    // A pack's clips end as they began, held as the holding clips hold the gun: each plays to its very end, and only
+    // once it is over does the hold blend back from where it left the gun and hands, so its last moves keep their pace.
+    let part = match part {
+        Some((pose, weight)) => {
+            state.left_off = Some((pose, 0.0));
+            Some((pose, weight))
+        }
+        None => state.left_off.as_mut().and_then(|(pose, since)| {
+            *since += delta;
+            let weight = super::clip_hold::goes_out(*since, pack.blend);
+            (weight > 0.0).then_some((*pose, weight))
+        }),
+    };
+    if part.is_none() {
+        state.left_off = None;
+    }
     match (holding, part) {
         (Some(holding), Some((part, fade))) => Some((holding.lerp(&part, fade), 1.0)),
         (Some(holding), None) => Some((holding, 1.0)),

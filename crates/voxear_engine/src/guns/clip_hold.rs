@@ -13,7 +13,7 @@
 //! stays where the clips' camera was from the body's shoulders, so the
 //! body's arms reach the gun as the clip's do.
 
-use voxear_core::math::{Mat4, Vec3};
+use voxear_core::math::{Mat4, Quat, Vec3};
 use voxear_ecs::World;
 use voxear_render::Skeleton;
 
@@ -32,6 +32,10 @@ pub struct ClipPose {
     pub hands: [ClipHand; 2],
     /// Each shoulder, left then right, in the eyes' space.
     pub shoulders: [Vec3; 2],
+    /// How the clip's chest, then its left and right collarbones, are turned
+    /// from how they stand at rest, in its model's space: the stance its arms
+    /// hold the gun from.
+    pub stance: [Quat; 3],
 }
 
 /// A hand as a clip has it: the middle of its palm and of its knuckles, the way its fingers
@@ -60,7 +64,8 @@ impl ClipPose {
         let gun = Mat4::from_rotation_translation(turn.slerp(other_turn, t), at.lerp(other_at, t));
         let hands = std::array::from_fn(|hand| self.hands[hand].lerp(&other.hands[hand], t));
         let shoulders = std::array::from_fn(|arm| self.shoulders[arm].lerp(other.shoulders[arm], t));
-        ClipPose { gun, hands, shoulders }
+        let stance = std::array::from_fn(|k| self.stance[k].slerp(other.stance[k], t));
+        ClipPose { gun, hands, shoulders, stance }
     }
 }
 
@@ -125,7 +130,11 @@ pub fn clip_pose(
     };
     let into_eye = eye.inverse();
     let shoulders = [0, 1].map(|arm| into_eye.transform_point3(edit.position(rig.arms[arm].upper)));
-    Some(ClipPose { gun: into_eye * carried, hands: [hand(0)?, hand(1)?], shoulders })
+    let turned = |bone: Option<usize>| {
+        bone.map_or(Quat::IDENTITY, |bone| (edit.rotation(bone) * at_rest.rotation(bone).inverse()).normalize())
+    };
+    let stance = [turned(Some(rig.chest())), turned(rig.arms[0].clavicle), turned(rig.arms[1].clavicle)];
+    Some(ClipPose { gun: into_eye * carried, hands: [hand(0)?, hand(1)?], shoulders, stance })
 }
 
 /// The bone that carries the gun: the one named, else one named
@@ -195,8 +204,53 @@ pub fn fire_kick(world: &World, pack: &PackClips, since: f32, aimed: bool) -> Op
     Some(first.gun.inverse() * now.gun)
 }
 
+/// Stands a body's upper body as a clip's stance has it (see `ClipPose`):
+/// the spine below the chest upright as at rest, the chest and collarbones
+/// turned from rest as the clip's are, whatever its own idle or walk did.
+pub fn stand(edit: &mut PoseEdit, rig: &Rig, rest: &PoseEdit, stance: &[Quat; 3]) {
+    let chest = rig.chest();
+    for &bone in rig.spine.iter().filter(|&&bone| bone != chest) {
+        edit.set_rotation(bone, rest.rotation(bone));
+    }
+    let turned = [Some(chest), rig.arms[0].clavicle, rig.arms[1].clavicle];
+    for (bone, turn) in turned.into_iter().zip(stance) {
+        if let Some(bone) = bone {
+            edit.set_rotation(bone, (*turn * rest.rotation(bone)).normalize());
+        }
+    }
+}
+
+/// How much an action played from clips holds the gun `elapsed` seconds in:
+/// coming in over `blend`, then wholly, to its very end.
+pub fn comes_in(elapsed: f32, blend: f32) -> f32 {
+    smooth(elapsed / blend.max(0.01))
+}
+
+/// How much an action played from clips still holds the gun `since`
+/// seconds after it ended, going out over `blend`.
+pub fn goes_out(since: f32, blend: f32) -> f32 {
+    1.0 - smooth(since / blend.max(0.01))
+}
+
 /// `t` from 0 to 1, eased in and out.
 pub fn smooth(t: f32) -> f32 {
     let t = t.clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_action_plays_wholly_to_its_end_and_goes_out_only_once_it_is_over() {
+        assert_eq!(comes_in(0.0, 0.2), 0.0);
+        assert_eq!(comes_in(0.2, 0.2), 1.0);
+        for elapsed in [0.3, 1.0, 1.47, 5.0] {
+            assert_eq!(comes_in(elapsed, 0.2), 1.0, "wholly at {elapsed} s, however near its end");
+        }
+        assert_eq!(goes_out(0.0, 0.2), 1.0);
+        assert!(goes_out(0.1, 0.2) > 0.0 && goes_out(0.1, 0.2) < 1.0);
+        assert_eq!(goes_out(0.2, 0.2), 0.0);
+    }
 }

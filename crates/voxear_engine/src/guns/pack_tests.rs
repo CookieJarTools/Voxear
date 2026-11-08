@@ -594,6 +594,24 @@ fn the_camera_stays_put_on_the_body_while_clips_hold_the_gun_however_the_body_bo
     let clavicles = rig.arms.iter().filter_map(|arm| arm.clavicle);
     assert!(hidden[rig.head] && hidden[rig.chest()] && clavicles.into_iter().all(|bone| hidden[bone]));
     assert!(rig.arms.iter().all(|arm| !hidden[arm.upper] && !hidden[arm.hand]), "the arms stay");
+
+    // The body's own idle turns its chest and drops a shoulder; while the clips hold the gun the upper body stands as
+    // their stance has it all the same, so the arms hang from shoulders that stay put.
+    let skeleton = &animation.skeleton;
+    let (chest, clavicle) = (rig.chest(), rig.arms[0].clavicle.unwrap());
+    let turns = |scene: &Scene| {
+        let posed = &scene.world.get::<Pose>(scene.body).unwrap().bones;
+        [chest, clavicle].map(|bone| posed[bone].to_scale_rotation_translation().1)
+    };
+    step(&mut scene, &rest, &mut time);
+    let standing = turns(&scene);
+    let mut swaying = skeleton.rest();
+    swaying[chest].rotation = Quat::from_rotation_y(0.3) * Quat::from_rotation_x(0.1);
+    swaying[clavicle].rotation = Quat::from_rotation_z(0.25);
+    step(&mut scene, &skeleton.model_matrices(&swaying), &mut time);
+    for (now, was) in turns(&scene).into_iter().zip(standing) {
+        assert!(now.angle_between(was) < 0.01, "stands as before: {} degrees off", now.angle_between(was).to_degrees());
+    }
 }
 
 #[test]

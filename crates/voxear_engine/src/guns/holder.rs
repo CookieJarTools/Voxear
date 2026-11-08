@@ -520,8 +520,8 @@ pub fn hold(world: &mut World) {
             let avoid = super::contact::shapes_now(world, gun_entity, &leaving, &leaving_bones);
             let (posed, planted) = (world.get::<Pose>(body).cloned(), state.hands);
             let elbows = given.elbows;
-            let clip = clipped.as_ref();
-            let hold = |at| Held { gun: &gun, at, shapes: &shapes, avoid: &avoid, poses, elbows, clip };
+            let (clip, aimed) = (clipped.as_ref(), state.aimed());
+            let hold = |at| Held { gun: &gun, at, shapes: &shapes, avoid: &avoid, poses, elbows, clip, aimed };
             let short = hands_on(world, body, &hold(held), eye, aims, &mut state.hands, delta);
             // Short of reach, the gun comes nearer at once, so the hands never let go of it; it stays nearer,
             // drifting back out slowly once they meet it. Held by clips it stays where they have it: the arms reach
@@ -935,6 +935,8 @@ struct Held<'a> {
     elbows: Option<([Vec3; 2], f32)>,
     /// Where clips holding the gun have the hands, and how much they hold it.
     clip: Option<&'a (ClipPose, f32)>,
+    /// How far the gun is raised to the eye, 0 to 1.
+    aimed: f32,
 }
 
 /// Stands a body's upper body as a clip's stance has it, for this frame.
@@ -1116,8 +1118,12 @@ fn hands_on(
         }
         None => (contact, (fingers, palm)),
     };
+    // The elbows bend the clip's way, but up at the eye, where a pack's clips seldom hold the gun, they go out and
+    // down as for any gun aimed, so the shooting arm's forearm isn't brought up under the eye.
     let elbow = |hand: usize, shoulder: Vec3, pole: Vec3| match clipped(hand) {
-        Some((by, weight)) => pole.lerp(shoulder + way(by.elbow) * (pole - shoulder).length(), weight),
+        Some((by, weight)) => {
+            pole.lerp(shoulder + way(by.elbow) * (pole - shoulder).length(), weight * (1.0 - held.aimed))
+        }
         None => pole,
     };
     // The clip's fingers, measured from straight, less how this hand's stand at rest, which they bend from.

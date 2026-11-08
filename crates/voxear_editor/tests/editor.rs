@@ -7248,10 +7248,19 @@ fn a_gun_handlings_actions_are_based_on_clips_in_its_inspector() {
     assert!(editor.inspect_path("Prefabs/Rifle.gunhandling"));
     frame(&mut editor, &mut renderer);
     assert!(prop_row(&editor.ui, "Gun Kind").is_some() && prop_row(&editor.ui, "Hip").is_some(), "its kind and holds");
-    assert!(prop_row(&editor.ui, "Gun").is_none(), "no clip yet, so nothing to follow");
+    assert!(prop_row(&editor.ui, "Clip").is_none() && prop_row(&editor.ui, "Gun").is_none(), "each action as built");
+    let mode = |editor: &voxear_editor::Editor, at: usize| {
+        first_with(&editor.ui, prop_rows(&editor.ui, "Mode")[at], "value-choice").unwrap()
+    };
 
-    // The reload's clip field picks a clip, which the file then bases the reload on.
+    // Based on a clip, the reload's clip field picks a clip, which the file then bases the reload on.
+    let dropdown = mode(&editor, 0);
+    scroll_to(&mut editor, &mut renderer, dropdown);
+    let dropdown = mode(&editor, 0);
+    choose(&mut editor, &mut renderer, dropdown, 1);
+    frame(&mut editor, &mut renderer);
     let picker = first_with(&editor.ui, prop_row(&editor.ui, "Clip").unwrap(), "value-picker").unwrap();
+    scroll_to(&mut editor, &mut renderer, picker);
     let arrow = first_with(&editor.ui, picker, "picker-arrow").unwrap();
     click(&mut editor.ui, arrow);
     frame(&mut editor, &mut renderer);
@@ -7271,10 +7280,61 @@ fn a_gun_handlings_actions_are_based_on_clips_in_its_inspector() {
 
     // Based on a clip, how much the gun follows it is typed in, and saved.
     let gun = prop_field(&editor.ui, "Gun").expect("the clip's weights show");
+    scroll_to(&mut editor, &mut renderer, gun);
     type_into(&mut editor.ui, gun, "0.5");
     frame(&mut editor, &mut renderer);
     let reload = read().offsets(voxear_engine::guns::actions::ActionKind::Reload).and_then(|o| o.clip.clone()).unwrap();
     assert_eq!((reload.gun, reload.body), (0.5, 1.0), "the gun half, the body as the clip");
+
+    // Played from clips, working the bolt starts with a part, whose arms clip is picked, and takes a mark.
+    let dropdown = mode(&editor, 1);
+    scroll_to(&mut editor, &mut renderer, dropdown);
+    let dropdown = mode(&editor, 1);
+    choose(&mut editor, &mut renderer, dropdown, 2);
+    frame(&mut editor, &mut renderer);
+    let cycle = |handling: voxear_engine::guns::handling::GunHandling| {
+        handling.offsets(voxear_engine::guns::actions::ActionKind::Cycle).map(|o| o.parts.clone()).unwrap_or_default()
+    };
+    assert_eq!(cycle(read()).len(), 1, "a part to start with");
+    // The part's Arms clip field, not the reload's Arms weight.
+    let arms = prop_rows(&editor.ui, "Arms").into_iter().find_map(|row| first_with(&editor.ui, row, "picker-arrow"));
+    let arms = arms.expect("the part's Arms field");
+    scroll_to(&mut editor, &mut renderer, arms);
+    click(&mut editor.ui, arms);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    editor.ui.text_input("walks");
+    frame(&mut editor, &mut renderer);
+    editor.picker_key(voxear_editor::PaletteKey::Enter);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(cycle(read())[0].arms.ends_with("#clip:Walk"), "{:?}", cycle(read()));
+    let mut adds = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "collection-add", &mut adds);
+    let add_mark = adds.into_iter().find(|&add| texts_in(&editor.ui, add).iter().any(|t| t == "Add Mark"));
+    let add_mark = add_mark.expect("the part's Add Mark button");
+    scroll_to(&mut editor, &mut renderer, add_mark);
+    click(&mut editor.ui, add_mark);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let time = prop_field(&editor.ui, "Time").expect("the mark's time");
+    scroll_to(&mut editor, &mut renderer, time);
+    type_into(&mut editor.ui, time, "0.77");
+    frame(&mut editor, &mut renderer);
+    let marks = cycle(read())[0].marks.clone();
+    assert_eq!(marks.len(), 1);
+    assert_eq!((marks[0].at, marks[0].event), (0.77, voxear_engine::guns::actions::Event::Eject), "{marks:?}");
+
+    // The carrier is a bone of the arms clips' skeleton, offered from the clip.
+    let carrier = first_with(&editor.ui, prop_row(&editor.ui, "Carrier").unwrap(), "value-choice").unwrap();
+    scroll_to(&mut editor, &mut renderer, carrier);
+    click(&mut editor.ui, carrier);
+    frame(&mut editor, &mut renderer);
+    let mut options = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "dropdown-option", &mut options);
+    let named: Vec<String> = options.iter().map(|&option| texts_in(&editor.ui, option).concat()).collect();
+    assert!(named.first().is_some_and(|first| first == "Auto") && named.len() > 1, "Auto, then the bones: {named:?}");
+    click(&mut editor.ui, options[0]);
     frame(&mut editor, &mut renderer);
     shot(&mut renderer, "gun-handling-inspector.png");
 }

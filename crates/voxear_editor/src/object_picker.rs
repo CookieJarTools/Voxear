@@ -104,7 +104,7 @@ pub enum PickFor {
     /// The icon of the action picked in the Input Actions window.
     ActionIcon,
     /// The clip an action of the Gun Handling at this path is based on.
-    GunHandlingClip { handling: String, action: crate::gun_handling_inspector::HandlingAction },
+    GunHandlingClip { handling: String, field: crate::gun_handling_inspector::HandlingClip },
 }
 
 /// What the picker is open for, and the field it opened from.

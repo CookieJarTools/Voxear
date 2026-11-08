@@ -1,8 +1,8 @@
 //! Gun Handlings in the Inspector (see `gun_handling_inspector`): saved as
 //! they are typed into, so a game playing in the editor holds and acts as
-//! they say at once; shown again when the kind or a clip is picked; their
-//! clip fields filled from the object picker or by clips dropped from the
-//! Project panel.
+//! they say at once; shown again when the kind, a mode or a clip is picked;
+//! their clip fields filled from the object picker or by clips dropped from
+//! the Project panel.
 
 use voxear_engine::guns::handling::GunHandling;
 use voxear_ui::{DragSource, NodeId};
@@ -10,7 +10,7 @@ use voxear_ui::{DragSource, NodeId};
 use super::Editor;
 use crate::{
     fields::Pick,
-    gun_handling_inspector::{HandlingAction, set_clip},
+    gun_handling_inspector::{HandlingClip, set_clip},
     object_picker::{self, PickFor},
     project_files::NEW_GUN_HANDLING,
     props,
@@ -36,26 +36,26 @@ impl Editor {
         }
     }
 
-    /// Opens the object picker under `anchor` for the clip `action` of the
-    /// handling at `handling` is based on.
-    pub(super) fn browse_gun_clip(&mut self, handling: &str, action: HandlingAction, anchor: NodeId) {
+    /// Opens the object picker under `anchor` for the clip field `field` of
+    /// the handling at `handling`.
+    pub(super) fn browse_gun_clip(&mut self, handling: &str, field: HandlingClip, anchor: NodeId) {
         let mut choices = vec![("None".to_string(), Pick::Asset(None))];
         choices.extend(props::model_clips(&self.game));
         let choices = object_picker::decorate(&self.game, choices);
-        let target = PickFor::GunHandlingClip { handling: handling.to_string(), action };
+        let target = PickFor::GunHandlingClip { handling: handling.to_string(), field };
         self.picker.open(&mut self.ui, (target, anchor), "Select Clip", choices, "");
     }
 
-    /// Bases `action` on the first clip dragged onto its field.
-    pub(super) fn drop_gun_clip(&mut self, handling: &str, action: HandlingAction, source: &DragSource) {
+    /// Puts the first clip dragged onto a field in it.
+    pub(super) fn drop_gun_clip(&mut self, handling: &str, field: HandlingClip, source: &DragSource) {
         if let Some(first) = self.dragged_assets(source).into_iter().next() {
-            self.pick_gun_handling_clip(handling, action, &Pick::Asset(Some(first)));
+            self.pick_gun_handling_clip(handling, field, &Pick::Asset(Some(first)));
         }
     }
 
-    /// Bases `action` of the handling at `handling` on the clip picked, or
-    /// on none, and saves it.
-    pub(super) fn pick_gun_handling_clip(&mut self, handling: &str, action: HandlingAction, pick: &Pick) {
+    /// Puts the clip picked, or none, in a clip field of the handling at
+    /// `handling`, and saves it.
+    pub(super) fn pick_gun_handling_clip(&mut self, handling: &str, field: HandlingClip, pick: &Pick) {
         let Pick::Asset(choice) = pick else { return };
         let clip = match choice {
             None => String::new(),
@@ -66,7 +66,7 @@ impl Editor {
         };
         let text = std::fs::read_to_string(self.game.project.root.join(handling)).unwrap_or_default();
         let mut based: GunHandling = toml::from_str(&text).unwrap_or_default();
-        set_clip(&mut based, action, clip);
+        set_clip(&mut based, field, clip);
         self.save_gun_handling(handling, &based, true);
     }
 }

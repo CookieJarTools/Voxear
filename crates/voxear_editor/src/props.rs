@@ -428,10 +428,12 @@ pub enum Prop {
     HolderBob,
     HolderBreathing,
     HolderWallCheck,
-    /// A Gun Part's role, how it moves (sliding or turning, along or about
-    /// an axis, by how much, through what), where a hand takes it, and the
-    /// pull back after a turn that a turn-bolt has.
+    /// A Gun Part's role, the bone of the gun's model it is, if any, how it
+    /// moves (sliding or turning, along or about an axis, by how much,
+    /// through what), where a hand takes it, and the pull back after a turn
+    /// that a turn-bolt has.
     PartRole,
+    PartBone,
     PartMotion,
     PartAxis,
     PartAmount,
@@ -785,6 +787,7 @@ impl Prop {
             | Prop::HolderBreathing
             | Prop::HolderWallCheck => Part::GunHolder,
             Prop::PartRole
+            | Prop::PartBone
             | Prop::PartMotion
             | Prop::PartAxis
             | Prop::PartAmount
@@ -1073,6 +1076,7 @@ impl Prop {
             Prop::HolderBreathing => "breathing",
             Prop::HolderWallCheck => "wall_check",
             Prop::PartRole => "role",
+            Prop::PartBone => "bone",
             Prop::PartMotion => "motion.type",
             Prop::PartAxis => "motion.axis",
             Prop::PartAmount => "motion.amount",
@@ -1540,6 +1544,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
         ],
         Part::GunPart => vec![
             Prop::PartRole,
+            Prop::PartBone,
             Prop::PartMotion,
             Prop::PartAxis,
             Prop::PartAmount,
@@ -1919,6 +1924,7 @@ pub fn label(prop: &Prop) -> String {
         Prop::HolderBreathing => "Breathing",
         Prop::HolderWallCheck => "Wall Check",
         Prop::PartRole => "Role",
+        Prop::PartBone => "Bone",
         Prop::PartMotion => "Moves",
         Prop::PartAxis => "Axis",
         Prop::PartAmount => "Amount",
@@ -2655,6 +2661,14 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
             let role = world.get::<GunPart>(entity)?.role;
             let at = PART_ROLES.iter().position(|(r, _)| *r == role).unwrap_or(0);
             Value::Choice(at, PART_ROLES.iter().map(|(_, name)| name.to_string()).collect())
+        }
+        Prop::PartBone => {
+            // The gun's model's bones, none first: a part on a bone moves the bone.
+            let part = world.get::<GunPart>(entity)?;
+            let mut names = vec!["None".to_string()];
+            names.extend(parent_bones(world, entity));
+            let index = names.iter().skip(1).position(|name| *name == part.bone).map_or(0, |i| i + 1);
+            Value::Choice(index, names)
         }
         Prop::PartMotion => {
             let turns = matches!(world.get::<GunPart>(entity)?.motion, PartMotion::Turn { .. });
@@ -3689,7 +3703,13 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         // A role moves as most such parts do, from where its handle is.
         (Prop::PartRole, Value::Choice(index, _)) => {
             let role = PART_ROLES.get(index).map_or(PartRole::Bolt, |(role, _)| *role);
-            with(world, entity, |part: &mut GunPart| *part = GunPart::of(role, part.handle))
+            with(world, entity, |part: &mut GunPart| {
+                *part = GunPart { bone: std::mem::take(&mut part.bone), ..GunPart::of(role, part.handle) }
+            })
+        }
+        (Prop::PartBone, Value::Choice(index, _)) => {
+            let name = index.checked_sub(1).and_then(|i| parent_bones(world, entity).get(i).cloned());
+            with(world, entity, |part: &mut GunPart| part.bone = name.unwrap_or_default())
         }
         (Prop::PartMotion, Value::Choice(index, _)) => with(world, entity, |part: &mut GunPart| {
             let axis = match part.motion {
@@ -4161,6 +4181,42 @@ pub(crate) fn clip_label(game: &Game, reference: &str) -> String {
     format!("{clip} · {}", file_name(path.map_or(file, |entry| entry.path.as_str())))
 }
 
+/// Whether a prop is a Gun's socket, which can be put on a bone.
+pub(crate) fn on_bones(prop: &Prop) -> bool {
+    matches!(
+        prop,
+        Prop::GunGripAt
+            | Prop::GunSupportAt
+            | Prop::GunRearSight
+            | Prop::GunFrontSight
+            | Prop::GunMuzzle
+            | Prop::GunButt
+    )
+}
+
+/// The bones of the animated model `entity` draws, none for one that draws
+/// none.
+pub(crate) fn model_bones(world: &World, entity: Entity) -> Vec<String> {
+    let model = world.get::<voxear_render::ModelRenderer>(entity).and_then(|m| m.animation.clone());
+    model.map_or_else(Vec::new, |model| model.skeleton.bones.iter().map(|bone| bone.name.clone()).collect())
+}
+
+/// Where the bone at `bone` of the model `entity` draws is at rest, in the
+/// model's space.
+pub(crate) fn bone_place(world: &World, entity: Entity, bone: usize) -> Option<[f32; 3]> {
+    let model = world.get::<voxear_render::ModelRenderer>(entity)?.animation.clone()?;
+    let rest = model.skeleton.model_matrices(&model.skeleton.rest());
+    Some(rest.get(bone)?.w_axis.truncate().to_array())
+}
+
+/// The bones of the model the parent of `entity` draws, none for a parent
+/// that draws no animated model.
+fn parent_bones(world: &World, entity: Entity) -> Vec<String> {
+    let parent = world.get::<voxear_scene::Parent>(entity).map(|parent| parent.0);
+    let model = parent.and_then(|p| world.get::<voxear_render::ModelRenderer>(p)).and_then(|m| m.animation.clone());
+    model.map_or_else(Vec::new, |model| model.skeleton.bones.iter().map(|bone| bone.name.clone()).collect())
+}
+
 /// The bones of a clip's skeleton, when its file has been read; none
 /// before.
 pub(crate) fn clip_bones(game: &Game, reference: &str) -> Vec<String> {
@@ -4338,6 +4394,32 @@ fn season_key(season: Season) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A gun drawn by a skinned model of two bones, its bolt 4.5 cm up,
+    /// with a part under it: the part's Bone menu and the sockets' Put on
+    /// items offer the model's bones, and a socket put on the bolt goes
+    /// where it is.
+    #[test]
+    fn a_guns_parts_and_sockets_are_offered_its_models_bones() {
+        use std::sync::Arc;
+        use voxear_render::{Bone, BonePose, ModelAnimation, ModelRenderer, Skeleton};
+        let at = |translation| BonePose { translation, ..BonePose::default() };
+        let skeleton = Skeleton {
+            bones: vec![
+                Bone { name: "Root".into(), parent: None, rest: at(voxear_core::math::Vec3::ZERO) },
+                Bone { name: "bolt".into(), parent: Some(0), rest: at(voxear_core::math::Vec3::new(0.0, 0.045, 0.04)) },
+            ],
+        };
+        let animation = Arc::new(ModelAnimation { skeleton, skins: Vec::new(), clips: Vec::new() });
+        let mut world = World::new();
+        let model = ModelRenderer { animation: Some(animation), ..ModelRenderer::new(Vec::new()) };
+        let gun = world.spawn((voxear_scene::Transform::IDENTITY, model));
+        let part = world.spawn((voxear_scene::Transform::IDENTITY, voxear_scene::Parent(gun), GunPart::default()));
+        assert_eq!(parent_bones(&world, part), ["Root", "bolt"]);
+        assert_eq!(model_bones(&world, gun), ["Root", "bolt"]);
+        assert_eq!(bone_place(&world, gun, 1), Some([0.0, 0.045, 0.04]));
+        assert!(on_bones(&Prop::GunRearSight) && !on_bones(&Prop::GunMass));
+    }
 
     #[test]
     fn field_names_read_as_unity_shows_them() {

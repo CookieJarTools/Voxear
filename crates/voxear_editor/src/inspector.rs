@@ -154,6 +154,8 @@ pub enum RowAction {
     /// after its last; or take the level at this place out.
     InsertLodLevel(usize),
     DeleteLodLevel(usize),
+    /// Put a Gun's socket where a bone of its model is at rest.
+    PutOnBone(Prop, usize),
     /// Move the Scene view to where it draws this LOD of the mesh.
     ViewLod(usize),
     /// Open Add Component's search under its button.
@@ -1780,6 +1782,19 @@ impl Inspector {
             (*header, at)
         } else if let Some((field, row)) = rows.iter().find(|(_, row)| ui.context_clicked(*row)) {
             items = row_items(field, playing, can_keep, kept.contains(field));
+            // A Gun's socket can be put where one of its model's bones is.
+            if let Field::Prop(prop) = field
+                && props::on_bones(prop)
+                && let Some(bones) = self.shown.map(|entity| props::model_bones(&game.engine.world, entity))
+            {
+                if !items.is_empty() && !bones.is_empty() {
+                    items.push((MenuItem::separator(), None));
+                }
+                for (at, bone) in bones.iter().enumerate() {
+                    let put = RowAction::PutOnBone(prop.clone(), at);
+                    items.push((MenuItem::new(&format!("Put on {bone}")), Some(put)));
+                }
+            }
             if let (true, Field::Prop(prop)) = (self.prefab_mode, field)
                 && let Some(shown) = self.shown.and_then(|e| self.designer_fields(game, e, &prop.part()))
             {

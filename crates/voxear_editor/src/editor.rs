@@ -1186,8 +1186,8 @@ impl Editor {
             AssetAction::SaveGunHandling { path, handling, rebuild } => {
                 self.save_gun_handling(&path, &handling, rebuild);
             }
-            AssetAction::BrowseGunClip { handling, action, anchor } => self.browse_gun_clip(&handling, action, anchor),
-            AssetAction::DropGunClip { handling, action, source } => self.drop_gun_clip(&handling, action, &source),
+            AssetAction::BrowseGunClip { handling, field, anchor } => self.browse_gun_clip(&handling, field, anchor),
+            AssetAction::DropGunClip { handling, field, source } => self.drop_gun_clip(&handling, field, &source),
             AssetAction::BrowseScene { level, at, anchor } => self.browse_level_scene(&level, at, anchor),
             AssetAction::DropScene { level, at, source } => self.drop_level_scene(&level, at, &source, renderer),
             AssetAction::BrowseStandsOn { level, anchor } => self.browse_stands_on(&level, anchor),
@@ -1767,6 +1767,13 @@ impl Editor {
             RowAction::ResetLodTransitions => {
                 props::set_lod_transitions(&mut self.game.engine.world, entity, None);
             }
+            RowAction::PutOnBone(prop, bone) => {
+                if let Some(at) = props::bone_place(&self.game.engine.world, entity, bone) {
+                    let types = self.inspector.types().clone();
+                    let placed = props::Value::Vector(at.to_vec());
+                    props::set(&mut self.game, Some(renderer), &types, entity, &prop, placed);
+                }
+            }
             // The Obj dragged, or every Obj selected when it is one of them.
             RowAction::DropOnLodLevel(level, source) => {
                 if let Some(obj) = self.dragged_obj(&source) {
@@ -2322,8 +2329,8 @@ impl Editor {
                 (PickFor::MotionSetClip { set, slot }, Chosen::Value(pick)) => {
                     self.pick_motion_set_clip(&set, &slot, &pick);
                 }
-                (PickFor::GunHandlingClip { handling, action }, Chosen::Value(pick)) => {
-                    self.pick_gun_handling_clip(&handling, action, &pick);
+                (PickFor::GunHandlingClip { handling, field }, Chosen::Value(pick)) => {
+                    self.pick_gun_handling_clip(&handling, field, &pick);
                 }
                 (PickFor::MaterialMap { material, map }, Chosen::Value(pick)) => {
                     self.pick_material_map(&material, map, &pick, renderer);

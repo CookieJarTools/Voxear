@@ -44,7 +44,7 @@ use crate::{
     level_files::{self, LevelEdit},
     project_view::{ItemKind, ProjectItem},
     shader_fields::{ShaderEdit, ShaderFields},
-    gun_handling_inspector::{GunHandlingFields, HandlingAction, HandlingChange},
+    gun_handling_inspector::{GunHandlingFields, HandlingChange, HandlingClip},
     motion_set_inspector::{ClipSlot, MotionSetFields, SetChange},
     strings_inspector::{StringsChange, StringsFields},
 };
@@ -102,16 +102,16 @@ pub enum AssetAction {
         handling: voxear_engine::guns::handling::GunHandling,
         rebuild: bool,
     },
-    /// Open the object picker under `anchor` for the clip an action of the
-    /// Gun Handling at this path is based on, or take one dragged onto it.
+    /// Open the object picker under `anchor` for one of the clip fields of
+    /// the Gun Handling at this path, or take one dragged onto it.
     BrowseGunClip {
         handling: String,
-        action: HandlingAction,
+        field: HandlingClip,
         anchor: NodeId,
     },
     DropGunClip {
         handling: String,
-        action: HandlingAction,
+        field: HandlingClip,
         source: DragSource,
     },
     /// Open the object picker under `anchor` for the scene at this place in
@@ -406,7 +406,8 @@ impl AssetView {
                 let text = std::fs::read_to_string(&file).unwrap_or_default();
                 let handling = toml::from_str(&text).unwrap_or_default();
                 let label = |clip: &str| crate::props::clip_label(game, clip);
-                view.gun_handling = Some(GunHandlingFields::new(ui, root, handling, &label));
+                let bones = |clip: &str| crate::props::clip_bones(game, clip);
+                view.gun_handling = Some(GunHandlingFields::new(ui, root, handling, &label, &bones));
             }
             ItemKind::Asset(AssetKind::Model) => {
                 let rows = part(ui, root, "Import Settings", "box");
@@ -581,8 +582,8 @@ impl AssetView {
             return Some(match change {
                 HandlingChange::Typed => AssetAction::SaveGunHandling { path, handling, rebuild: false },
                 HandlingChange::Shape => AssetAction::SaveGunHandling { path, handling, rebuild: true },
-                HandlingChange::Browse(action, anchor) => AssetAction::BrowseGunClip { handling: path, action, anchor },
-                HandlingChange::Drop(action, source) => AssetAction::DropGunClip { handling: path, action, source },
+                HandlingChange::Browse(field, anchor) => AssetAction::BrowseGunClip { handling: path, field, anchor },
+                HandlingChange::Drop(field, source) => AssetAction::DropGunClip { handling: path, field, source },
             });
         }
         if let Some(settings) = self.clips.as_mut().and_then(|(_, _, fields)| fields.as_mut()?.update(ui)) {

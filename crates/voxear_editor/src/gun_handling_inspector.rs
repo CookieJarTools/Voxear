@@ -1,22 +1,25 @@
 //! A Gun Handling in the Inspector: the kind of gun it is for, how the gun
-//! is held, as offsets on how every gun is, and each of its actions, which
-//! can be based on a clip: the clip, the part of it the action plays, and
-//! how much the body, the gun and the arms follow it. Typing or sliding
-//! changes a value as it is; picking a clip or the kind redraws the
-//! fields. Clip fields open the object picker, and take clips dropped from
-//! the Project panel.
+//! is held, as offsets on how every gun is, the clips a gun from an
+//! animation pack is held by, and each of its actions. An action plays as
+//! built, based on a clip (the clip, the part of it the action plays, and
+//! how much the body, the gun and the arms follow it), or from clips, part
+//! by part, each with its marks. Typing, sliding or picking from a menu
+//! changes a value as it is; picking a clip or the kind, a mode, or adding
+//! or taking out a part or a mark redraws the fields. Clip fields open the
+//! object picker, and take clips dropped from the Project panel.
 
 use voxear_engine::guns::{
     GunKind,
-    actions::ActionKind,
+    actions::{ActionKind, ClipPart, Event, Fact, Mark, Repeat, When},
     base_clip::BaseClip,
-    handling::{ActionOffsets, GunHandling, Poses},
+    handling::{ActionOffsets, GunHandling, PackClips, Poses},
     templates,
 };
 use voxear_ui::{DragSource, NodeId, Style, Ui};
 
 use crate::{
     asset_inspector::{Slot, part, slot},
+    collection,
     inspector::{number, prop, vector_row},
 };
 
@@ -28,17 +31,126 @@ pub enum HandlingAction {
     Own(usize),
 }
 
+/// One of a handling's clip fields: the clip an action is based on, the
+/// arms or the gun clip of one of an action's parts by its place, or one
+/// of the clips the gun is held by.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HandlingClip {
+    Based(HandlingAction),
+    Arms(HandlingAction, usize),
+    Gun(HandlingAction, usize),
+    Held(HeldClip),
+}
+
+/// One of the clips a gun from an animation pack is held by.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HeldClip {
+    Rest,
+    Idle,
+    Walk,
+    Run,
+    Sprint,
+    Fire,
+    AimedFire,
+    GunFire,
+}
+
+const HELD_CLIPS: [(HeldClip, &str); 8] = [
+    (HeldClip::Rest, "Rest"),
+    (HeldClip::Idle, "Idle"),
+    (HeldClip::Walk, "Walk"),
+    (HeldClip::Run, "Run"),
+    (HeldClip::Sprint, "Sprint"),
+    (HeldClip::Fire, "Fire"),
+    (HeldClip::AimedFire, "Aimed Fire"),
+    (HeldClip::GunFire, "Gun Fire"),
+];
+
+impl HeldClip {
+    fn slot(self, pack: &mut PackClips) -> &mut String {
+        match self {
+            HeldClip::Rest => &mut pack.rest,
+            HeldClip::Idle => &mut pack.idle,
+            HeldClip::Walk => &mut pack.walk,
+            HeldClip::Run => &mut pack.run,
+            HeldClip::Sprint => &mut pack.sprint,
+            HeldClip::Fire => &mut pack.fire,
+            HeldClip::AimedFire => &mut pack.aimed_fire,
+            HeldClip::GunFire => &mut pack.gun_fire,
+        }
+    }
+
+    fn clip(self, pack: &PackClips) -> &str {
+        match self {
+            HeldClip::Rest => &pack.rest,
+            HeldClip::Idle => &pack.idle,
+            HeldClip::Walk => &pack.walk,
+            HeldClip::Run => &pack.run,
+            HeldClip::Sprint => &pack.sprint,
+            HeldClip::Fire => &pack.fire,
+            HeldClip::AimedFire => &pack.aimed_fire,
+            HeldClip::GunFire => &pack.gun_fire,
+        }
+    }
+}
+
 /// What was done to a handling's fields this frame.
 pub enum HandlingChange {
     /// A value typed or slid: the handling is to be saved as it is shown.
     Typed,
-    /// The kind picked: saved, and shown again.
+    /// The kind or a mode picked, or a part or mark added or taken out:
+    /// saved, and shown again.
     Shape,
-    /// An action's clip field clicked, under this node.
-    Browse(HandlingAction, NodeId),
-    /// Something dropped onto an action's clip field.
-    Drop(HandlingAction, DragSource),
+    /// A clip field clicked, under this node.
+    Browse(HandlingClip, NodeId),
+    /// Something dropped onto a clip field.
+    Drop(HandlingClip, DragSource),
 }
+
+/// How an action plays: as built, based on a clip, or from clips.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Mode {
+    Built,
+    Based,
+    Clips,
+}
+
+const MODES: [(Mode, &str); 3] = [(Mode::Built, "Built-in"), (Mode::Based, "Based on Clip"), (Mode::Clips, "Clips")];
+
+/// When a part plays, as its menu offers it.
+const WHENS: [(Option<Fact>, &str); 11] = [
+    (None, "Always"),
+    (Some(Fact::ChamberFilled), "Chamber Filled"),
+    (Some(Fact::ChamberEmpty), "Chamber Empty"),
+    (Some(Fact::ChamberLive), "Round Chambered"),
+    (Some(Fact::ChamberNotLive), "No Round Chambered"),
+    (Some(Fact::Fed), "Fed"),
+    (Some(Fact::NotFed), "Not Fed"),
+    (Some(Fact::Open), "Open"),
+    (Some(Fact::Closed), "Closed"),
+    (Some(Fact::Full), "Full"),
+    (Some(Fact::NotFull), "Not Full"),
+];
+
+const REPEATS: [(Repeat, &str); 5] = [
+    (Repeat::Once, "Once"),
+    (Repeat::PerClip, "Per Clip"),
+    (Repeat::PerMissingRound, "Per Missing Round"),
+    (Repeat::PerChamber, "Per Chamber"),
+    (Repeat::UntilFull, "Until Full"),
+];
+
+const EVENTS: [(Event, &str); 9] = [
+    (Event::Eject, "Eject"),
+    (Event::Chamber, "Chamber"),
+    (Event::AddRounds(1), "Round In"),
+    (Event::Open, "Open"),
+    (Event::Close, "Close"),
+    (Event::Unload, "Unload"),
+    (Event::Load, "Load"),
+    (Event::SeeFeed, "See Feed"),
+    (Event::SeeChamber, "See Chamber"),
+];
 
 /// An offset on how every gun is held, as a row shows it.
 #[derive(Clone, Copy)]
@@ -102,16 +214,32 @@ pub struct GunHandlingFields {
     kind: NodeId,
     holds: Vec<(Hold, [NodeId; 3])>,
     cant: NodeId,
+    held: HeldRows,
     actions: Vec<ActionRow>,
+}
+
+/// The clips the gun is held by: the carrier's menu and the bones it
+/// offers after "Auto", where it sits from it, each clip, and the numbers.
+struct HeldRows {
+    carrier: (NodeId, Vec<String>),
+    carrier_at: [NodeId; 3],
+    carrier_turn: [NodeId; 3],
+    clips: Vec<(HeldClip, Slot)>,
+    walk_speed: NodeId,
+    run_speed: NodeId,
+    blend: NodeId,
 }
 
 struct ActionRow {
     action: HandlingAction,
+    mode: NodeId,
     /// A built-in action's speed.
     speed: Option<NodeId>,
-    clip: Slot,
-    /// Its clip's fields, while it is based on one.
+    /// The clip it is based on, and its fields once it has one.
+    clip: Option<Slot>,
     based: Option<Based>,
+    /// Its parts, played from clips.
+    parts: Option<Parts>,
 }
 
 struct Based {
@@ -124,10 +252,36 @@ struct Based {
     blend: NodeId,
 }
 
+struct Parts {
+    items: NodeId,
+    add: NodeId,
+    rows: Vec<PartRow>,
+}
+
+struct PartRow {
+    remove: NodeId,
+    arms: Slot,
+    gun: Slot,
+    start: NodeId,
+    end: NodeId,
+    when: NodeId,
+    repeat: NodeId,
+    mark_items: NodeId,
+    add_mark: NodeId,
+    /// Each mark's event menu, time and remove button.
+    marks: Vec<(NodeId, NodeId, NodeId)>,
+}
+
 impl GunHandlingFields {
     /// The fields of `handling` under `root`; `label` names a clip as
-    /// fields show it.
-    pub fn new(ui: &mut Ui, root: NodeId, handling: GunHandling, label: &dyn Fn(&str) -> String) -> Self {
+    /// fields show it, and `bones` gives the bones of a clip's skeleton.
+    pub fn new(
+        ui: &mut Ui,
+        root: NodeId,
+        handling: GunHandling,
+        label: &dyn Fn(&str) -> String,
+        bones: &dyn Fn(&str) -> Vec<String>,
+    ) -> Self {
         let rows = part(ui, root, "Gun Handling", "crosshair");
         let kinds: Vec<&str> = std::iter::once("Any").chain(GunKind::ALL.iter().map(|kind| kind.title())).collect();
         let picked = handling.kind.and_then(|kind| GunKind::ALL.iter().position(|&k| k == kind)).map_or(0, |at| at + 1);
@@ -137,20 +291,18 @@ impl GunHandlingFields {
         let holds = HOLDS
             .iter()
             .map(|&(hold, title)| {
-                let (_, fields) = vector_row(ui, rows, title);
-                for (field, n) in fields.iter().zip(hold.value(&handling.poses)) {
-                    ui.set_text(*field, &number(n));
-                }
+                let fields = vector(ui, rows, title, hold.value(&handling.poses));
                 (hold, fields)
             })
             .collect();
         let cant = number_field(ui, rows, "Cant", handling.poses.cant);
+        let held = held_rows(ui, root, &handling, label, bones);
 
         let actions = actions_of(&handling)
             .into_iter()
             .map(|(action, title)| action_row(ui, root, &handling, action, &title, label))
             .collect();
-        Self { handling, kind, holds, cant, actions }
+        Self { handling, kind, holds, cant, held, actions }
     }
 
     /// What was done this frame, the handling changed to match.
@@ -161,10 +313,8 @@ impl GunHandlingFields {
         }
         let mut typed = false;
         for (hold, fields) in &self.holds {
-            if fields.iter().any(|&field| ui.changed(field))
-                && let [Some(x), Some(y), Some(z)] = fields.map(|field| parsed(ui, field))
-            {
-                *hold.slot(&mut self.handling.poses) = [x, y, z];
+            if let Some(value) = changed_vector(ui, *fields) {
+                *hold.slot(&mut self.handling.poses) = value;
                 typed = true;
             }
         }
@@ -172,27 +322,91 @@ impl GunHandlingFields {
             self.handling.poses.cant = cant;
             typed = true;
         }
-        for row in &self.actions {
-            if let Some(source) = ui.dropped_onto(row.clip.field) {
-                return Some(HandlingChange::Drop(row.action, source));
-            }
-            if ui.clicked(row.clip.arrow) || ui.clicked(row.clip.field) {
-                return Some(HandlingChange::Browse(row.action, row.clip.field));
-            }
-            if let Some(speed) = row.speed.and_then(|field| changed_number(ui, field))
-                && let HandlingAction::Builtin(kind) = row.action
-            {
-                offsets_of(&mut self.handling, kind).speed = speed.max(0.05);
-                tidy(&mut self.handling);
-                typed = true;
-            }
-            if let Some(based) = &row.based
-                && let Some(base) = base_of(&mut self.handling, row.action)
-            {
-                typed |= based.update(ui, base);
+        match self.update_held(ui) {
+            Some(Some(change)) => return Some(change),
+            Some(None) => typed = true,
+            None => {}
+        }
+        for at in 0..self.actions.len() {
+            match self.update_action(ui, at) {
+                Some(Some(change)) => return Some(change),
+                Some(None) => typed = true,
+                None => {}
             }
         }
         typed.then_some(HandlingChange::Typed)
+    }
+
+    /// What was done to the clips the gun is held by: a change that is
+    /// more than a value, or `Some(None)` for a value typed or picked.
+    fn update_held(&mut self, ui: &mut Ui) -> Option<Option<HandlingChange>> {
+        let (held, pack) = (&self.held, &mut self.handling.pack);
+        for &(clip, slot) in &held.clips {
+            if let Some(change) = clip_field(ui, slot, HandlingClip::Held(clip)) {
+                return Some(Some(change));
+            }
+        }
+        let mut typed = false;
+        let (carrier, bones) = &held.carrier;
+        if ui.changed(*carrier) {
+            pack.carrier =
+                ui.selected_option(*carrier).checked_sub(1).and_then(|at| bones.get(at)).cloned().unwrap_or_default();
+            typed = true;
+        }
+        if let Some(at) = changed_vector(ui, held.carrier_at) {
+            (pack.carrier_offset.at, typed) = (at, true);
+        }
+        if let Some(turn) = changed_vector(ui, held.carrier_turn) {
+            (pack.carrier_offset.turn, typed) = (turn, true);
+        }
+        for (field, value) in [
+            (held.walk_speed, &mut pack.walk_speed),
+            (held.run_speed, &mut pack.run_speed),
+            (held.blend, &mut pack.blend),
+        ] {
+            if let Some(n) = changed_number(ui, field) {
+                (*value, typed) = (n.max(0.0), true);
+            }
+        }
+        typed.then_some(None)
+    }
+
+    /// What was done to an action's fields, as [`Self::update_held`] says.
+    fn update_action(&mut self, ui: &mut Ui, at: usize) -> Option<Option<HandlingChange>> {
+        let row = &self.actions[at];
+        let action = row.action;
+        if ui.changed(row.mode) {
+            let mode = MODES.get(ui.selected_option(row.mode)).map_or(Mode::Built, |(mode, _)| *mode);
+            set_mode(&mut self.handling, action, mode);
+            return Some(Some(HandlingChange::Shape));
+        }
+        if let Some(change) = row.clip.and_then(|slot| clip_field(ui, slot, HandlingClip::Based(action))) {
+            return Some(Some(change));
+        }
+        let mut typed = false;
+        if let Some(speed) = row.speed.and_then(|field| changed_number(ui, field))
+            && let HandlingAction::Builtin(kind) = action
+        {
+            offsets_of(&mut self.handling, kind).speed = speed.max(0.05);
+            tidy(&mut self.handling);
+            typed = true;
+        }
+        if let Some(based) = &row.based
+            && let Some(base) = base_of(&mut self.handling, action)
+        {
+            typed |= based.update(ui, base);
+        }
+        if let Some(parts) = &row.parts {
+            match update_parts(ui, parts, action, parts_of(&mut self.handling, action)) {
+                Some(Some(change)) => {
+                    tidy(&mut self.handling);
+                    return Some(Some(change));
+                }
+                Some(None) => typed = true,
+                None => {}
+            }
+        }
+        typed.then_some(None)
     }
 }
 
@@ -223,6 +437,89 @@ impl Based {
     }
 }
 
+/// What was done to an action's parts, as [`GunHandlingFields::update_held`]
+/// says.
+fn update_parts(
+    ui: &mut Ui,
+    parts: &Parts,
+    action: HandlingAction,
+    played: Option<&mut Vec<ClipPart>>,
+) -> Option<Option<HandlingChange>> {
+    let played = played?;
+    if ui.clicked(parts.add) {
+        played.push(ClipPart::default());
+        return Some(Some(HandlingChange::Shape));
+    }
+    if let Some((from, to)) = collection::moved(ui, parts.items) {
+        let moved = played.remove(from);
+        played.insert(to, moved);
+        return Some(Some(HandlingChange::Shape));
+    }
+    let mut typed = false;
+    for (place, row) in parts.rows.iter().enumerate() {
+        if ui.clicked(row.remove) {
+            played.remove(place);
+            return Some(Some(HandlingChange::Shape));
+        }
+        for (slot, field) in
+            [(row.arms, HandlingClip::Arms(action, place)), (row.gun, HandlingClip::Gun(action, place))]
+        {
+            if let Some(change) = clip_field(ui, slot, field) {
+                return Some(Some(change));
+            }
+        }
+        let part = &mut played[place];
+        if ui.clicked(row.add_mark) {
+            part.marks.push(Mark { at: 0.0, event: Event::Eject });
+            return Some(Some(HandlingChange::Shape));
+        }
+        if let Some((from, to)) = collection::moved(ui, row.mark_items) {
+            let moved = part.marks.remove(from);
+            part.marks.insert(to, moved);
+            return Some(Some(HandlingChange::Shape));
+        }
+        for (field, value) in [(row.start, &mut part.start), (row.end, &mut part.end)] {
+            if let Some(n) = changed_number(ui, field) {
+                (*value, typed) = (n.max(0.0), true);
+            }
+        }
+        if ui.changed(row.when)
+            && let Some((fact, _)) = WHENS.get(ui.selected_option(row.when))
+        {
+            (part.when, typed) = (fact.map_or_else(When::default, |fact| When::all([fact])), true);
+        }
+        if ui.changed(row.repeat)
+            && let Some((repeat, _)) = REPEATS.get(ui.selected_option(row.repeat))
+        {
+            (part.repeat, typed) = (*repeat, true);
+        }
+        for (mark, &(event, time, remove)) in row.marks.iter().enumerate() {
+            if ui.clicked(remove) {
+                part.marks.remove(mark);
+                return Some(Some(HandlingChange::Shape));
+            }
+            let mark = &mut part.marks[mark];
+            if ui.changed(event)
+                && let Some((picked, _)) = EVENTS.get(ui.selected_option(event))
+            {
+                (mark.event, typed) = (*picked, true);
+            }
+            if let Some(n) = changed_number(ui, time) {
+                (mark.at, typed) = (n.max(0.0), true);
+            }
+        }
+    }
+    typed.then_some(None)
+}
+
+/// A clip field clicked, or something dropped on it.
+fn clip_field(ui: &mut Ui, slot: Slot, field: HandlingClip) -> Option<HandlingChange> {
+    if let Some(source) = ui.dropped_onto(slot.field) {
+        return Some(HandlingChange::Drop(field, source));
+    }
+    (ui.clicked(slot.arrow) || ui.clicked(slot.field)).then_some(HandlingChange::Browse(field, slot.field))
+}
+
 /// The actions a handling shows: the built-in ones its kind does, every
 /// one when it is for any kind, then its own, each with its title.
 fn actions_of(handling: &GunHandling) -> Vec<(HandlingAction, String)> {
@@ -234,6 +531,40 @@ fn actions_of(handling: &GunHandling) -> Vec<(HandlingAction, String)> {
     built_in.chain(own).collect()
 }
 
+/// The clips the gun is held by, as a part of their own.
+fn held_rows(
+    ui: &mut Ui,
+    root: NodeId,
+    handling: &GunHandling,
+    label: &dyn Fn(&str) -> String,
+    bones: &dyn Fn(&str) -> Vec<String>,
+) -> HeldRows {
+    let pack = &handling.pack;
+    let rows = part(ui, root, "Clips", "play");
+    // The carrier is a bone of the arms clips' skeleton, offered from the first arms clip there is.
+    let first_arms = [&pack.idle, &pack.walk, &pack.run, &pack.sprint, &pack.fire, &pack.aimed_fire]
+        .into_iter()
+        .map(String::as_str)
+        .chain(handling.offsets.iter().flat_map(|offsets| offsets.parts.iter().map(|part| part.arms.as_str())))
+        .chain(handling.actions.iter().flat_map(|own| own.parts.iter().map(|part| part.arms.as_str())))
+        .find(|clip| !clip.is_empty());
+    let mut named = first_arms.map(bones).unwrap_or_default();
+    if !pack.carrier.is_empty() && !named.contains(&pack.carrier) {
+        named.insert(0, pack.carrier.clone());
+    }
+    let options: Vec<&str> = std::iter::once("Auto").chain(named.iter().map(String::as_str)).collect();
+    let picked = named.iter().position(|bone| *bone == pack.carrier).map_or(0, |at| at + 1);
+    let carrier = (choice(ui, rows, "Carrier", &options, picked), named.clone());
+    let carrier_at = vector(ui, rows, "Carrier At", pack.carrier_offset.at);
+    let carrier_turn = vector(ui, rows, "Carrier Turn", pack.carrier_offset.turn);
+    let clips =
+        HELD_CLIPS.iter().map(|&(clip, title)| (clip, clip_slot(ui, rows, title, clip.clip(pack), label))).collect();
+    let walk_speed = number_field(ui, rows, "Walk Speed", pack.walk_speed);
+    let run_speed = number_field(ui, rows, "Run Speed", pack.run_speed);
+    let blend = number_field(ui, rows, "Blend", pack.blend);
+    HeldRows { carrier, carrier_at, carrier_turn, clips, walk_speed, run_speed, blend }
+}
+
 fn action_row(
     ui: &mut Ui,
     root: NodeId,
@@ -243,6 +574,10 @@ fn action_row(
     label: &dyn Fn(&str) -> String,
 ) -> ActionRow {
     let rows = part(ui, root, title, "play");
+    let mode = mode_of(handling, action);
+    let titles = MODES.map(|(_, title)| title);
+    let picked = MODES.iter().position(|(m, _)| *m == mode).unwrap_or(0);
+    let mode_field = choice(ui, rows, "Mode", &titles, picked);
     let speed = match action {
         HandlingAction::Builtin(kind) => {
             let speed = handling.offsets(kind).map_or(1.0, |offsets| offsets.speed);
@@ -251,11 +586,9 @@ fn action_row(
         HandlingAction::Own(_) => None,
     };
     let base = clip_of(handling, action);
-    let clip = slot(ui, rows, "Clip", "play");
-    let named = base.map(|base| base.clip.as_str()).filter(|clip| !clip.is_empty());
-    ui.set_text(clip.label, &named.map_or_else(|| "None (Clip)".to_string(), label));
-    ui.set_visible(clip.icon, named.is_some());
-    let based = base.filter(|base| !base.clip.is_empty()).map(|base| Based {
+    let clip =
+        (mode == Mode::Based).then(|| clip_slot(ui, rows, "Clip", base.map_or("", |base| base.clip.as_str()), label));
+    let based = base.filter(|base| mode == Mode::Based && !base.clip.is_empty()).map(|base| Based {
         start: number_field(ui, rows, "Start", base.start),
         end: number_field(ui, rows, "End", base.end),
         body: weight(ui, rows, "Body", base.body),
@@ -263,7 +596,121 @@ fn action_row(
         arms: weight(ui, rows, "Arms", base.arms),
         blend: number_field(ui, rows, "Blend", base.blend),
     });
-    ActionRow { action, speed, clip, based }
+    let parts = (mode == Mode::Clips).then(|| parts_rows(ui, rows, played(handling, action), label));
+    ActionRow { action, mode: mode_field, speed, clip, based, parts }
+}
+
+/// An action's parts, in a list, each with its marks in a list of its own.
+fn parts_rows(ui: &mut Ui, rows: NodeId, parts: &[ClipPart], label: &dyn Fn(&str) -> String) -> Parts {
+    let listed = prop(ui, rows, "Parts");
+    let list = collection::collection(ui, listed, parts.len(), true, Some("Add Part"));
+    let rows = parts
+        .iter()
+        .enumerate()
+        .map(|(place, part)| {
+            let item = collection::item(ui, list.items, place, true);
+            let body = item.body;
+            let arms = clip_slot(ui, body, "Arms", &part.arms, label);
+            let gun = clip_slot(ui, body, "Gun", &part.gun, label);
+            let start = number_field(ui, body, "Start", part.start);
+            let end = number_field(ui, body, "End", part.end);
+            let when = when_choice(ui, body, part.when);
+            let repeat = repeat_choice(ui, body, part.repeat);
+            let marked = prop(ui, body, "Marks");
+            let marks_list = collection::collection(ui, marked, part.marks.len(), true, Some("Add Mark"));
+            let marks = part
+                .marks
+                .iter()
+                .enumerate()
+                .map(|(at, mark)| {
+                    let item = collection::item(ui, marks_list.items, at, true);
+                    let event = event_choice(ui, item.body, mark.event);
+                    let time = number_field(ui, item.body, "Time", mark.at);
+                    (event, time, item.remove.expect("marks can be taken out"))
+                })
+                .collect();
+            PartRow {
+                remove: item.remove.expect("parts can be taken out"),
+                arms,
+                gun,
+                start,
+                end,
+                when,
+                repeat,
+                mark_items: marks_list.items,
+                add_mark: marks_list.add.expect("a part takes marks"),
+                marks,
+            }
+        })
+        .collect();
+    Parts { items: list.items, add: list.add.expect("an action takes parts"), rows }
+}
+
+/// A part's When menu: one fact, or always; a When written otherwise by
+/// hand shows as it is, after them, until another is picked.
+fn when_choice(ui: &mut Ui, rows: NodeId, when: When) -> NodeId {
+    let facts: Vec<Fact> = when.all.into();
+    let shown = match (when.is_always(), facts.as_slice(), when.any.is_empty()) {
+        (true, ..) => Some(0),
+        (false, [fact], true) => WHENS.iter().position(|(f, _)| *f == Some(*fact)),
+        _ => None,
+    };
+    let mut titles: Vec<&str> = WHENS.iter().map(|(_, title)| *title).collect();
+    if shown.is_none() {
+        titles.push("Written");
+    }
+    choice(ui, rows, "When", &titles, shown.unwrap_or(WHENS.len()))
+}
+
+fn repeat_choice(ui: &mut Ui, rows: NodeId, repeat: Repeat) -> NodeId {
+    let mut titles: Vec<String> = REPEATS.iter().map(|(_, title)| title.to_string()).collect();
+    let shown = REPEATS.iter().position(|(r, _)| *r == repeat).unwrap_or_else(|| {
+        let Repeat::Times(times) = repeat else { return 0 };
+        titles.push(format!("{times} Times"));
+        REPEATS.len()
+    });
+    let titles: Vec<&str> = titles.iter().map(String::as_str).collect();
+    choice(ui, rows, "Repeat", &titles, shown)
+}
+
+fn event_choice(ui: &mut Ui, rows: NodeId, event: Event) -> NodeId {
+    let titles = EVENTS.map(|(_, title)| title);
+    let shown = EVENTS
+        .iter()
+        .position(|(e, _)| *e == event || matches!((e, event), (Event::AddRounds(_), Event::AddRounds(_))))
+        .unwrap_or(0);
+    choice(ui, rows, "Event", &titles, shown)
+}
+
+/// How an action plays now.
+fn mode_of(handling: &GunHandling, action: HandlingAction) -> Mode {
+    match (played(handling, action).is_empty(), clip_of(handling, action)) {
+        (false, _) => Mode::Clips,
+        (true, Some(_)) => Mode::Based,
+        (true, None) => Mode::Built,
+    }
+}
+
+/// Has an action play as `mode` says: as built, with nothing on it; based
+/// on a clip, none picked yet; or from clips, with a part to start with.
+fn set_mode(handling: &mut GunHandling, action: HandlingAction, mode: Mode) {
+    let based = (mode == Mode::Based).then(|| clip_of(handling, action).cloned().unwrap_or_default());
+    match action {
+        HandlingAction::Builtin(kind) => offsets_of(handling, kind).clip = based,
+        HandlingAction::Own(at) => {
+            if let Some(own) = handling.actions.get_mut(at) {
+                own.clip = based;
+            }
+        }
+    }
+    if let Some(parts) = parts_of(handling, action) {
+        match mode {
+            Mode::Clips if parts.is_empty() => parts.push(ClipPart::default()),
+            Mode::Clips => {}
+            Mode::Built | Mode::Based => parts.clear(),
+        }
+    }
+    tidy(handling);
 }
 
 /// The clip an action is based on, if any.
@@ -278,6 +725,23 @@ fn base_of(handling: &mut GunHandling, action: HandlingAction) -> Option<&mut Ba
     match action {
         HandlingAction::Builtin(kind) => handling.offsets.iter_mut().find(|o| o.action == kind)?.clip.as_mut(),
         HandlingAction::Own(at) => handling.actions.get_mut(at)?.clip.as_mut(),
+    }
+}
+
+/// The parts an action plays from clips, none when it plays otherwise.
+fn played(handling: &GunHandling, action: HandlingAction) -> &[ClipPart] {
+    match action {
+        HandlingAction::Builtin(kind) => handling.offsets(kind).map_or(&[], |offsets| offsets.parts.as_slice()),
+        HandlingAction::Own(at) => handling.actions.get(at).map_or(&[], |own| own.parts.as_slice()),
+    }
+}
+
+/// An action's parts to change, a built-in's offsets made when it has
+/// none.
+fn parts_of(handling: &mut GunHandling, action: HandlingAction) -> Option<&mut Vec<ClipPart>> {
+    match action {
+        HandlingAction::Builtin(kind) => Some(&mut offsets_of(handling, kind).parts),
+        HandlingAction::Own(at) => handling.actions.get_mut(at).map(|own| &mut own.parts),
     }
 }
 
@@ -298,22 +762,42 @@ fn tidy(handling: &mut GunHandling) {
     handling.offsets.retain(|offsets| *offsets != ActionOffsets { action: offsets.action, ..ActionOffsets::default() });
 }
 
-/// Bases `action` on the clip `clip` refers to, keeping how much it was
-/// followed, or on none for an empty one.
-pub fn set_clip(handling: &mut GunHandling, action: HandlingAction, clip: String) {
-    let based = (!clip.is_empty()).then(|| {
-        let was = clip_of(handling, action).cloned().unwrap_or_default();
-        BaseClip { clip, ..was }
-    });
-    match action {
-        HandlingAction::Builtin(kind) => offsets_of(handling, kind).clip = based,
-        HandlingAction::Own(at) => {
-            if let Some(own) = handling.actions.get_mut(at) {
-                own.clip = based;
+/// Sets one of a handling's clip fields to the clip `clip` refers to, or
+/// to none for an empty one: an action based on a clip keeps how much it
+/// was followed, and with none plays as built again.
+pub fn set_clip(handling: &mut GunHandling, field: HandlingClip, clip: String) {
+    match field {
+        HandlingClip::Based(action) => {
+            let based = (!clip.is_empty()).then(|| {
+                let was = clip_of(handling, action).cloned().unwrap_or_default();
+                BaseClip { clip, ..was }
+            });
+            match action {
+                HandlingAction::Builtin(kind) => offsets_of(handling, kind).clip = based,
+                HandlingAction::Own(at) => {
+                    if let Some(own) = handling.actions.get_mut(at) {
+                        own.clip = based;
+                    }
+                }
             }
         }
+        HandlingClip::Arms(action, place) | HandlingClip::Gun(action, place) => {
+            let part = parts_of(handling, action).and_then(|parts| parts.get_mut(place));
+            if let Some(part) = part {
+                *if matches!(field, HandlingClip::Arms(..)) { &mut part.arms } else { &mut part.gun } = clip;
+            }
+        }
+        HandlingClip::Held(held) => *held.slot(&mut handling.pack) = clip,
     }
     tidy(handling);
+}
+
+/// A clip field, showing the clip by its name and file.
+fn clip_slot(ui: &mut Ui, rows: NodeId, name: &str, clip: &str, label: &dyn Fn(&str) -> String) -> Slot {
+    let field = slot(ui, rows, name, "play");
+    ui.set_text(field.label, &if clip.is_empty() { "None (Clip)".to_string() } else { label(clip) });
+    ui.set_visible(field.icon, !clip.is_empty());
+    field
 }
 
 fn choice(ui: &mut Ui, rows: NodeId, label: &str, options: &[&str], selected: usize) -> NodeId {
@@ -329,6 +813,14 @@ fn number_field(ui: &mut Ui, rows: NodeId, label: &str, value: f32) -> NodeId {
     ui.add_class(field, "value-input");
     ui.add_class(field, "number-input");
     field
+}
+
+fn vector(ui: &mut Ui, rows: NodeId, label: &str, value: [f32; 3]) -> [NodeId; 3] {
+    let (_, fields) = vector_row(ui, rows, label);
+    for (field, n) in fields.iter().zip(value) {
+        ui.set_text(*field, &number(n));
+    }
+    fields
 }
 
 /// A row with a slider from 0 to 1 and its number beside it.
@@ -353,6 +845,14 @@ fn changed_number(ui: &Ui, field: NodeId) -> Option<f32> {
     ui.changed(field).then(|| parsed(ui, field)).flatten()
 }
 
+fn changed_vector(ui: &Ui, fields: [NodeId; 3]) -> Option<[f32; 3]> {
+    if !fields.iter().any(|&field| ui.changed(field)) {
+        return None;
+    }
+    let [x, y, z] = fields.map(|field| parsed(ui, field));
+    Some([x?, y?, z?])
+}
+
 #[cfg(test)]
 mod tests {
     use voxear_engine::guns::handling::CustomAction;
@@ -363,12 +863,12 @@ mod tests {
     fn a_built_in_action_based_on_a_clip_keeps_how_much_it_was_followed_and_none_takes_it_away() {
         let mut handling = GunHandling::default();
         let reload = HandlingAction::Builtin(ActionKind::Reload);
-        set_clip(&mut handling, reload, "Anims#clip:Reload".into());
+        set_clip(&mut handling, HandlingClip::Based(reload), "Anims#clip:Reload".into());
         base_of(&mut handling, reload).unwrap().gun = 0.5;
-        set_clip(&mut handling, reload, "Anims#clip:Reload_Fast".into());
+        set_clip(&mut handling, HandlingClip::Based(reload), "Anims#clip:Reload_Fast".into());
         let base = clip_of(&handling, reload).unwrap();
         assert_eq!((base.clip.as_str(), base.gun), ("Anims#clip:Reload_Fast", 0.5));
-        set_clip(&mut handling, reload, String::new());
+        set_clip(&mut handling, HandlingClip::Based(reload), String::new());
         assert!(handling.offsets.is_empty(), "with no clip and nothing else, no offsets are left");
     }
 
@@ -379,5 +879,21 @@ mod tests {
         let shown = actions_of(&handling);
         assert_eq!(shown.len(), ActionKind::ALL.len() + 1, "for any kind, every built-in, and its own");
         assert_eq!(shown.last(), Some(&(HandlingAction::Own(0), "Inspect".to_string())));
+    }
+
+    #[test]
+    fn an_action_played_from_clips_starts_with_a_part_and_as_built_again_has_none() {
+        let mut handling = GunHandling::default();
+        let cycle = HandlingAction::Builtin(ActionKind::Cycle);
+        set_mode(&mut handling, cycle, Mode::Clips);
+        assert_eq!((mode_of(&handling, cycle), played(&handling, cycle).len()), (Mode::Clips, 1));
+        set_clip(&mut handling, HandlingClip::Gun(cycle, 0), "Gun#clip:Hammer".into());
+        assert_eq!(played(&handling, cycle)[0].gun, "Gun#clip:Hammer");
+        set_mode(&mut handling, cycle, Mode::Based);
+        assert_eq!(mode_of(&handling, cycle), Mode::Based, "based on a clip, none picked yet");
+        set_mode(&mut handling, cycle, Mode::Built);
+        assert!(handling.offsets.is_empty(), "as built, nothing is left on it");
+        set_clip(&mut handling, HandlingClip::Held(HeldClip::Idle), "Arms#clip:idle".into());
+        assert_eq!(handling.pack.idle, "Arms#clip:idle");
     }
 }

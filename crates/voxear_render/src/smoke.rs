@@ -630,8 +630,9 @@ pub(crate) fn record(
         (marched, ImageAccess::Sampled),
         (distance, ImageAccess::Sampled),
         (then, ImageAccess::Sampled),
+        (depth, ImageAccess::Sampled),
     ];
-    let textures = [distance_texture, then_texture, u32::from(kept), 0];
+    let textures = [distance_texture, then_texture, u32::from(kept), depth_texture];
     let resolve = Push { texture: marched_texture, textures, size: [quarter.width, quarter.height], ..push };
     fg.add_pass("Smoke over frames", &images, &[], move |ctx| {
         crate::post_passes::draw(ctx, pipelines.smoke_resolve, &resolve, now, false);

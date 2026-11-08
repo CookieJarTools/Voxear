@@ -22,6 +22,11 @@ static const float SUN_AT[SMOKE_SUN_STEPS] = { 1.0, 3.5, 8.5 };
 static const float SUN_ALONG[SMOKE_SUN_STEPS] = { 2.0, 3.5, 6.0 };
 // How many times over the sun's light is counted scattering in the cloud.
 static const uint SMOKE_ORDERS = 3;
+// How near the eye, in metres, the smoke thins away to nothing. What stands
+// nearer, as a gun held up, the march goes on past, so the smoke round it
+// has no hole in it for its edge to show in as it moves; over it is laid
+// only the thin smoke between it and the eye.
+static const float SMOKE_NEAR = 1.0;
 // How a mist shades itself and billows (Smoke::self_shadow, Smoke::billows).
 static const float MIST_SELF_SHADOW = 0.5;
 static const float MIST_BILLOWS = 1.0;
@@ -413,7 +418,8 @@ SmokeMarched smokeMarchFragment(SmokeOut input)
     float3 eye = frame->cameraPosition;
     float3 way = normalize(nearH.xyz / nearH.w - eye);
     float behind = textures[NonUniformResourceIndex(push.textures.x)].Load(int3(int2(uv * float2(frame->viewport)), 0)).r;
-    float scene = behind > 0.0 ? frame->near / behind / max(dot(way, frame->cameraForward), 1e-3) : 1e9;
+    float depth = behind > 0.0 ? frame->near / behind : 1e9;
+    float scene = depth >= SMOKE_NEAR ? depth / max(dot(way, frame->cameraForward), 1e-3) : 1e9;
 
     // Where the view is inside any smoke's grid, and the finest cells it meets.
     float enter = 1e9;
@@ -506,7 +512,7 @@ SmokeMarched smokeMarchFragment(SmokeOut input)
         float3 at = eye + way * t;
         // Thinner right by the eye, so from inside the view does not begin at a wall of it.
         SmokeLook look = smokeLookAt(frame, count, mists, at);
-        float thick = look.thick * smoothstep(0.0, 0.8, t);
+        float thick = look.thick * smoothstep(0.0, SMOKE_NEAR, t);
         if (thick < 1e-3)
         {
             continue;
@@ -598,19 +604,29 @@ float smokeSceneDepth(Frame* frame, uint texture, int2 pixel)
     return depth > 0.0 ? frame->near / depth : 1e4;
 }
 
+// How far the march went along the view at full-size `pixel`: to the scene,
+// or on past what stands nearer than SMOKE_NEAR, as far as the sky.
+float smokeMarchedDepth(Frame* frame, uint texture, int2 pixel)
+{
+    float scene = smokeSceneDepth(frame, texture, pixel);
+    return scene < SMOKE_NEAR ? 1e4 : scene;
+}
+
 // Whether something stands in front of the smoke, whose light comes from
 // `smoke` metres in, at a pixel whose scene lies `own` metres off or at one
-// whose scene lies `theirs` off, as a gun held up before it.
+// whose scene lies `theirs` off, as a post standing before it. With no
+// smoke found round about, as where every pixel marched round a post's edge
+// fell on the post, whatever stands there may be.
 bool smokeBefore(float own, float theirs, float smoke)
 {
-    return smoke > 0.0 && min(theirs, own) < smoke;
+    return smoke <= 0.0 || min(theirs, own) < smoke;
 }
 
 // How much a pixel whose scene lies `theirs` metres off stands for one whose
 // scene lies `own` off: alike where both lie behind the smoke, so the
 // scene's edges do not show through it; where something stands in front of
 // it, as far as their scenes lie as deep, so the smoke's edge follows what
-// stands before it sharply rather than in half-size blocks.
+// stands before it, as a post, sharply rather than in half-size blocks.
 float smokeAlike(float own, float theirs, float smoke)
 {
     return smokeBefore(own, theirs, smoke) ? 1.0 / (1e-3 + abs(theirs - own) / max(own, 1e-3)) : 1.0;
@@ -622,8 +638,8 @@ float smokeAlike(float own, float theirs, float smoke)
 // (push.textures.x), and kept within the colours round it now, so the
 // smoke stays smooth as it swirls and the camera moves but leaves no
 // trail. Each pixel is made from those marched round it whose scene lies
-// as deep (push.textures.w the scene's depth), so a gun held up before the
-// smoke keeps none of it, and the smoke beside the gun none of the gun's.
+// as deep (push.textures.w the scene's depth), so a post standing before the
+// smoke keeps none of it, and the smoke beside the post none of the post's.
 [shader("fragment")]
 float4 smokeResolveFragment(SmokeOut input) : SV_Target0
 {
@@ -636,7 +652,7 @@ float4 smokeResolveFragment(SmokeOut input) : SV_Target0
     int2 turn = smokeTurn(frame);
     // The scene's depth at the middle of a half-size pixel.
     int2 half = int2((frame->viewport + 1) / 2);
-    let depthAt = (int2 p) => smokeSceneDepth(frame, push.textures.w, int2((float2(p) + 0.5) / float2(half) * float2(frame->viewport)));
+    let depthAt = (int2 p) => smokeMarchedDepth(frame, push.textures.w, int2((float2(p) + 0.5) / float2(half) * float2(frame->viewport)));
     float own = depthAt(pixel);
     // This frame's smoke here: as marched, for the pixel marched this frame; the others blended from the four
     // marched round them, those whose scene lies as deep counted most.
@@ -648,23 +664,49 @@ float4 smokeResolveFragment(SmokeOut input) : SV_Target0
     {
         smoke = max(smoke, into.Load(int3(clamp(base + int2(k & 1, k >> 1), int2(0, 0), quarter - 1), 0)).r);
     }
+    // Whether a marched pixel's scene lies about as deep as this one's, or both lie behind the smoke.
+    let same = (float theirs) => !smokeBefore(own, theirs, smoke) || abs(theirs - own) <= 0.25 * own;
     float4 fresh = 0.0;
     float weights = 0.0;
+    bool found = false;
     for (uint k = 0; k < 4; k++)
     {
         int2 o = int2(k & 1, k >> 1);
         int2 c = clamp(base + o, int2(0, 0), quarter - 1);
+        float theirs = depthAt(c * 2 + turn);
         float2 w = lerp(1.0 - f, f, float2(o));
-        float weight = w.x * w.y * smokeAlike(own, depthAt(c * 2 + turn), smoke);
+        float weight = w.x * w.y * smokeAlike(own, theirs, smoke);
         fresh += marched.Load(int3(c, 0)) * weight;
         weights += weight;
+        found = found || same(theirs);
     }
     fresh /= max(weights, 1e-6);
+    if (!found)
+    {
+        // By the edge of something standing before the smoke, none of the four marched round it lies as deep, as
+        // smoke just beside a post whose four all fell on the post: from those a little farther round that do.
+        float4 near = 0.0;
+        float nears = 0.0;
+        for (int y = -1; y <= 2; y++)
+        {
+            for (int x = -1; x <= 2; x++)
+            {
+                int2 c = clamp(base + int2(x, y), int2(0, 0), quarter - 1);
+                if (same(depthAt(c * 2 + turn)))
+                {
+                    near += marched.Load(int3(c, 0));
+                    nears += 1.0;
+                }
+            }
+        }
+        fresh = nears > 0.0 ? near / nears : fresh;
+    }
     // Kept within the colours of the marched pixels round it whose scene lies about as deep, as far as any of
     // them reaches into smoke.
     float4 low = fresh;
     float4 high = fresh;
     float far = into.Load(int3(q, 0)).r;
+    bool edge = false;
     for (int y = -1; y <= 1; y++)
     {
         for (int x = -1; x <= 1; x++)
@@ -673,6 +715,7 @@ float4 smokeResolveFragment(SmokeOut input) : SV_Target0
             float theirs = depthAt(round * 2 + turn);
             if (smokeBefore(own, theirs, smoke) && abs(theirs - own) > 0.25 * own)
             {
+                edge = true;
                 continue;
             }
             float4 there = marched.Load(int3(round, 0));
@@ -696,9 +739,13 @@ float4 smokeResolveFragment(SmokeOut input) : SV_Target0
     float4 kept = textures[NonUniformResourceIndex(push.textures.y)].SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], then, 0.0);
     // Well past the colours round it, so the march's step jitter, different each frame, averages away over
     // frames rather than being clamped back in; only last frame's that is plainly something else, as smoke a
-    // moving camera has left behind, is pulled back.
-    float4 slack = (high - low) + 0.1;
-    return lerp(fresh, clamp(kept, low - slack, high + slack), 0.9);
+    // moving camera has left behind, is pulled back. By the edge of something standing before the smoke, though,
+    // and where something stands before it where it was last frame, last frame's there may be that thing rather
+    // than this smoke: kept within the colours round it, and counted for less, so no rim of it shows.
+    float there = smokeMarchedDepth(frame, push.textures.w, int2(then * float2(frame->viewport)));
+    bool unsure = edge || (there < far * 0.75 && own >= far * 0.75);
+    float4 slack = unsure ? 0.0 : (high - low) + 0.1;
+    return lerp(fresh, clamp(kept, low - slack, high + slack), unsure ? 0.75 : 0.9);
 }
 
 // The marched smoke (push.texture, push.size across) laid over the scene:
@@ -719,6 +766,26 @@ float4 smokeCompositeFragment(SmokeOut input) : SV_Target0
     float2 at = input.uv * float2(half) - 0.5;
     int2 base = int2(floor(at));
     float2 f = at - float2(base);
+    if (own < SMOKE_NEAR)
+    {
+        // Something held right before the eye, as a gun, which the march went on past: only the smoke between it
+        // and the eye, thinned there as the march thins it, and as thick as the smoke round about, whose light
+        // comes from about as far in as one over the smoke's thickness.
+        float4 around = 0.0;
+        float far = 0.0;
+        for (uint k = 0; k < 4; k++)
+        {
+            int2 o = int2(k & 1, k >> 1);
+            int2 c = clamp(base + o, int2(0, 0), half - 1);
+            float2 w = lerp(1.0 - f, f, float2(o));
+            around += marched.Load(int3(c, 0)) * (w.x * w.y);
+            far += into.Load(int3(c / 2, 0)).r * (w.x * w.y);
+        }
+        float x = own / SMOKE_NEAR;
+        float depth = SMOKE_NEAR * x * x * x * (1.0 - 0.5 * x) / max(far, 0.05);
+        float alpha = min(1.0 - exp(-depth), 1.0 - around.a);
+        return float4(around.rgb / max(1.0 - around.a, 1e-3) * alpha, alpha);
+    }
     // How far in the smoke's light comes from round here: the farthest of the four, as one with something
     // standing before the smoke has none of its own.
     float smoke = 0.0;
@@ -726,7 +793,7 @@ float4 smokeCompositeFragment(SmokeOut input) : SV_Target0
     {
         smoke = max(smoke, into.Load(int3(clamp(base + int2(k & 1, k >> 1), int2(0, 0), half - 1) / 2, 0)).r);
     }
-    let depthAt = (int2 c) => smokeSceneDepth(frame, push.textures.x, int2((float2(c) + 0.5) / float2(half) * float2(frame->viewport)));
+    let depthAt = (int2 c) => smokeMarchedDepth(frame, push.textures.x, int2((float2(c) + 0.5) / float2(half) * float2(frame->viewport)));
     // Whether a half-size pixel's scene lies about as deep as this one's, or both lie behind the smoke.
     let same = (float theirs) => !smokeBefore(own, theirs, smoke) || abs(theirs - own) <= 0.25 * own;
     float4 total = 0.0;
@@ -746,7 +813,7 @@ float4 smokeCompositeFragment(SmokeOut input) : SV_Target0
     float4 laid = total / max(weights, 1e-6);
     if (!found)
     {
-        // The edge of something thin before the smoke, as a gun's, that none of the four lies on: from those a
+        // The edge of something thin before the smoke, as a pole's, that none of the four lies on: from those a
         // little farther round that lie as deep; failing those, with only as much of the smoke as could lie before
         // it, little where it stands well nearer than where the smoke's light comes from.
         float4 near = 0.0;

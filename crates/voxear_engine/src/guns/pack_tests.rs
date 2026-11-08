@@ -190,10 +190,12 @@ fn working_the_bolt_on_an_empty_chamber_plays_the_clip_that_throws_nothing() {
     assert!(gun.chamber == Chamber::Live && gun.rounds == 4, "chambered at its mark: {gun:?}");
 }
 
-/// Holds still: no sway, bob or breath, so a hold can be compared.
+/// Holds still: no sway, bob or breath, so a hold can be compared; and with
+/// the head shown, so a hold made into a clip has its head where it is.
 fn steady(scene: &mut Scene) {
     let holder = &mut scene.world.get_mut::<GunHolder>(scene.player).unwrap();
     (holder.sway, holder.bob, holder.breathing, holder.wall_check) = (0.0, 0.0, 0.0, false);
+    scene.world.get_mut::<crate::first_person::FirstPersonView>(scene.player).unwrap().hide_head = false;
 }
 
 /// The middle of a body's palm, left or right, in the gun's space.

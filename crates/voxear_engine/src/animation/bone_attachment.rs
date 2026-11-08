@@ -119,10 +119,17 @@ pub fn attach_to_bones(world: &mut World) {
     }
 }
 
+/// How far up and back from a hidden bone its part shrinks to, in metres,
+/// in the model's space.
+const OUT_OF_THE_WAY: Vec3 = Vec3::new(0.0, 0.3, -0.3);
+
 /// The bones of a pose with `bone`, and every bone under it, shrunk to
-/// nothing where `bone` is.
+/// nothing up and behind where `bone` is. A part hidden so a camera can sit
+/// in it, as a head, shrinks out of that camera's way: the skin bound
+/// partly to it and partly to the bone above, as round a neck, is drawn
+/// part of the way there rather than in a ring round the camera.
 pub(crate) fn hidden(skeleton: &Skeleton, bone: usize, bones: &[Mat4]) -> Vec<Mat4> {
-    let at = bones[bone].w_axis.truncate();
+    let at = bones[bone].w_axis.truncate() + OUT_OF_THE_WAY;
     let shrink = Mat4::from_translation(at) * Mat4::from_scale(Vec3::splat(1e-4)) * Mat4::from_translation(-at);
     let mut under = vec![false; bones.len()];
     let mut out = bones.to_vec();
@@ -201,7 +208,8 @@ mod tests {
         for hidden in [1, 2] {
             let size = bones[hidden].x_axis.truncate().length();
             assert!(size < 1e-3, "bone {hidden} shrunk: {size}");
-            assert!(bones[hidden].w_axis.truncate().distance(Vec3::Y) < 1e-3, "into the head");
+            let into = Vec3::Y + OUT_OF_THE_WAY;
+            assert!(bones[hidden].w_axis.truncate().distance(into) < 1e-3, "up and behind the head");
         }
     }
 }

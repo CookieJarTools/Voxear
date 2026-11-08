@@ -224,6 +224,7 @@ struct HeldRows {
     carrier: (NodeId, Vec<String>),
     carrier_at: [NodeId; 3],
     carrier_turn: [NodeId; 3],
+    eyes: [NodeId; 3],
     clips: Vec<(HeldClip, Slot)>,
     walk_speed: NodeId,
     run_speed: NodeId,
@@ -358,6 +359,9 @@ impl GunHandlingFields {
         }
         if let Some(turn) = changed_vector(ui, held.carrier_turn) {
             (pack.carrier_offset.turn, typed) = (turn, true);
+        }
+        if let Some(eyes) = changed_vector(ui, held.eyes) {
+            (pack.eyes, typed) = (eyes, true);
         }
         for (field, value) in [
             (held.walk_speed, &mut pack.walk_speed),
@@ -557,12 +561,13 @@ fn held_rows(
     let carrier = (choice(ui, rows, "Carrier", &options, picked), named.clone());
     let carrier_at = vector(ui, rows, "Carrier At", pack.carrier_offset.at);
     let carrier_turn = vector(ui, rows, "Carrier Turn", pack.carrier_offset.turn);
+    let eyes = vector(ui, rows, "Eyes", pack.eyes);
     let clips =
         HELD_CLIPS.iter().map(|&(clip, title)| (clip, clip_slot(ui, rows, title, clip.clip(pack), label))).collect();
     let walk_speed = number_field(ui, rows, "Walk Speed", pack.walk_speed);
     let run_speed = number_field(ui, rows, "Run Speed", pack.run_speed);
     let blend = number_field(ui, rows, "Blend", pack.blend);
-    HeldRows { carrier, carrier_at, carrier_turn, clips, walk_speed, run_speed, blend }
+    HeldRows { carrier, carrier_at, carrier_turn, eyes, clips, walk_speed, run_speed, blend }
 }
 
 fn action_row(

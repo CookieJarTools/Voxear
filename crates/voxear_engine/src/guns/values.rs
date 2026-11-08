@@ -104,7 +104,7 @@ fn holder_texts(world: &mut World, entity: Entity, what: i32, text: &str) -> Opt
     match what {
         DO_OWN => {
             let (picked, name) = text.split_once(OWN)?;
-            if handling.is_empty() || picked != handling {
+            if handling.is_empty() || !super::handling::same_handling(world, picked, &handling) {
                 tracing::warn!("{text} is not an action of the gun's handling, {handling:?}");
                 return Some(String::new());
             }

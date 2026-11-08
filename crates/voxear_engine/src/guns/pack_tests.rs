@@ -252,6 +252,8 @@ fn held_by(scene: &mut Scene, arms: &Arc<ModelAnimation>) {
     scene.world.insert_resource(clips);
     let mut handling = GunHandling::default();
     handling.pack.idle = "Arms#clip:Hold".into();
+    // The clip was made with the holder's own eyes, which sit up and forward of its head.
+    handling.pack.eyes = crate::first_person::FirstPersonView::default().eyes;
     put_handling(&mut scene.world, "Held", Arc::new(handling));
     scene.world.get_mut::<Gun>(scene.gun).unwrap().handling = "Held".into();
 }

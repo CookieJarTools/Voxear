@@ -254,6 +254,9 @@ impl CustomAction {
 
 /// The clips a gun from an animation pack is held by: the bone of the arms
 /// clips' skeleton that carries the gun, and where the gun sits from it;
+/// where the eyes the clips were made for are from their head, in metres,
+/// as the holder's eyes are from its own: none for clips framed for a
+/// camera at the head itself;
 /// the gun's own clip it stands in between actions; the arms clips it is
 /// held by as its holder stands, walks, runs and sprints, blended by how
 /// fast it goes; the arms clips a shot plays, from the hip and aimed, and
@@ -266,6 +269,8 @@ pub struct PackClips {
     pub carrier: String,
     #[serde(skip_serializing_if = "Place::is_zero")]
     pub carrier_offset: Place,
+    #[serde(skip_serializing_if = "is_origin")]
+    pub eyes: [f32; 3],
     #[serde(skip_serializing_if = "String::is_empty")]
     pub rest: String,
     #[serde(skip_serializing_if = "String::is_empty")]
@@ -292,6 +297,7 @@ impl Default for PackClips {
         Self {
             carrier: String::new(),
             carrier_offset: Place::default(),
+            eyes: [0.0; 3],
             rest: String::new(),
             idle: String::new(),
             walk: String::new(),
@@ -305,6 +311,10 @@ impl Default for PackClips {
             blend: 0.2,
         }
     }
+}
+
+fn is_origin(at: &[f32; 3]) -> bool {
+    *at == [0.0; 3]
 }
 
 impl PackClips {
@@ -444,6 +454,9 @@ fn offset(spec: &mut ActionSpec, offsets: &ActionOffsets) {
 pub struct Handlings {
     version: u64,
     found: HashMap<String, Option<Arc<GunHandling>>>,
+    /// The asset each reference resolved names, by its ID, so a handling
+    /// named by its path and by its ID is known as one.
+    ids: HashMap<String, String>,
 }
 
 /// Resolves the handlings the world's guns pick that it has not yet, and
@@ -464,14 +477,30 @@ pub fn give_handlings(world: &mut World, content: &mut Content) {
     let Some(handlings) = world.resource_mut::<Handlings>() else { return };
     if handlings.version != content.handlings_version() {
         handlings.found.clear();
+        handlings.ids.clear();
         handlings.version = content.handlings_version();
     }
     for reference in wanted {
-        handlings.found.entry(reference.clone()).or_insert_with(|| {
-            let guid = content.parse(&reference).ok().and_then(|parsed| parsed.guid());
-            guid.and_then(|guid| content.gun_handling(guid))
-        });
+        if handlings.found.contains_key(&reference) {
+            continue;
+        }
+        let guid = content.parse(&reference).ok().and_then(|parsed| parsed.guid());
+        if let Some(guid) = guid {
+            handlings.ids.insert(reference.clone(), guid.to_string());
+        }
+        handlings.found.insert(reference, guid.and_then(|guid| content.gun_handling(guid)));
     }
+}
+
+/// Whether two references name the same handling: alike, or the one a
+/// gun picks by its path and the other by its asset's ID, as a script's
+/// typed reference does.
+pub fn same_handling(world: &World, a: &str, b: &str) -> bool {
+    let id = |reference: &str| {
+        let resolved = world.resource::<Handlings>().and_then(|handlings| handlings.ids.get(reference).cloned());
+        resolved.unwrap_or_else(|| reference.to_string())
+    };
+    a == b || id(a) == id(b)
 }
 
 /// Gives guns that pick `reference` this handling, until one is saved: as
@@ -506,6 +535,17 @@ pub fn handling_of(world: &World, gun: &Gun) -> Arc<GunHandling> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_handling_named_by_its_path_and_by_its_id_is_one() {
+        let mut world = World::new();
+        let mut handlings = Handlings::default();
+        handlings.ids.insert("Guns/Lebel.gunhandling".into(), "63d2f37b09594ceab7e51b9719a46daa".into());
+        world.insert_resource(handlings);
+        assert!(same_handling(&world, "Guns/Lebel.gunhandling", "63d2f37b09594ceab7e51b9719a46daa"));
+        assert!(same_handling(&world, "Guns/Lebel.gunhandling", "Guns/Lebel.gunhandling"));
+        assert!(!same_handling(&world, "Guns/Lebel.gunhandling", "0000000000000000000000000000beef"));
+    }
     use crate::guns::actions::expand;
     use crate::guns::mechanism::GunState;
 

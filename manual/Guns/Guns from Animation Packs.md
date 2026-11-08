@@ -35,6 +35,8 @@ Select the gun's handling, and in its **Clips** part:
 - Put the shot's arms clips in **Fire** and **Aimed Fire**, and the gun's own in **Gun Fire**.
 - **Carrier** finds the bone the gun rides by itself when it is called `gun_carrier`. For another, pick it from the list. If the gun sits off that bone in the pack, as when it is attached with an offset, set **Carrier At** and **Carrier Turn**.
 
+Clips made for a camera at the head bone, as most are, look right with **Eyes** left at 0. If the gun shows too low or too far away, the pack's camera sat in front of the head: move **Eyes** up and forward until it shows as the pack's own videos do.
+
 A pack's clips seldom aim. Aiming brings the gun's sights to the eye from wherever the clips hold it, as it does for any gun, so set the sockets carefully. The gun still sways as the view turns and kicks as it fires, and the hands go with it. Where your character's arms are shorter than the pack's, the gun comes nearer and the other hand slides back along it.
 
 Sprinting is your game's to say, as aiming is:

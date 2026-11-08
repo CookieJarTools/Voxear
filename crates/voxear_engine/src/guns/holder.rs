@@ -452,10 +452,9 @@ pub fn hold(world: &mut World) {
             _ => Default::default(),
         };
         // A gun from an animation pack is held where its clips have it, and kicks as its shot's clip does.
-        let eyes = Vec3::from(view.eyes);
-        let clipped = held_by_clips(world, &handling.pack, &holder, &mut state, eyes, delta);
+        let clipped = held_by_clips(world, &handling.pack, &holder, &mut state, delta);
         let aimed = state.aimed() > 0.5;
-        let kick = since_shot.and_then(|since| super::clip_hold::fire_kick(world, &handling.pack, since, aimed, eyes));
+        let kick = since_shot.and_then(|since| super::clip_hold::fire_kick(world, &handling.pack, since, aimed));
         let by_clips = ByClips {
             gun: clipped.as_ref().map(|(pose, weight)| (pose.gun, *weight)),
             kick,
@@ -908,16 +907,16 @@ fn held_by_clips(
     pack: &PackClips,
     holder: &GunHolder,
     state: &mut GunHolderState,
-    eyes: Vec3,
     delta: f32,
 ) -> Option<(ClipPose, f32)> {
+    let eyes = Vec3::from(pack.eyes);
     let speed = Vec3::new(state.velocity.x, 0.0, state.velocity.z).length();
     let wanted = super::clip_hold::holding_weights(pack, speed, holder.sprinting);
     let ease = 1.0 - 0.5f32.powf(delta / (pack.blend.max(0.01) * 0.5));
     for (shown, wanted) in state.held_by.iter_mut().zip(wanted) {
         *shown += (wanted - *shown) * ease;
     }
-    let holding = super::clip_hold::holding_pose(world, pack, state.held_by, state.time, eyes);
+    let holding = super::clip_hold::holding_pose(world, pack, state.held_by, state.time);
     let part = state.play.as_ref().and_then(|play| {
         let (part, at) = play.part().filter(|(part, _)| !part.arms.is_empty())?;
         let carrier = (pack.carrier.as_str(), &pack.carrier_offset);

@@ -26,6 +26,7 @@ Places are in metres, turns in degrees.
 For a gun from an animation pack, its clips can hold it instead (see [[Guns from Animation Packs]]). With none set, the gun is held as every gun is.
 
 - **Carrier**: the bone of the arms clips' skeleton that carries the gun, picked from the first arms clip set. **Auto** takes a bone named `gun_carrier`, or else the right hand. **Carrier At** and **Carrier Turn** are where the gun sits from it.
+- **Eyes**: where the eyes the clips were made for are from their skeleton's head bone, in metres: up and forward. They go where your character's eyes are. All 0, for clips framed for a camera at the head bone itself, holds the gun higher and nearer than clips made with eyes in front of it.
 - **Rest**: the gun's own clip it stands in between actions.
 - **Idle**, **Walk**, **Run** and **Sprint**: the arms clips the gun is held by as its holder stands, walks, runs and sprints. They blend by how fast the holder goes, against **Walk Speed** and **Run Speed** in metres a second, and Sprint while the holder sprints. A clip not set gives its share to the nearest one that is.
 - **Fire** and **Aimed Fire**: the arms clips a shot plays, from the hip and aimed. The gun kicks as they move it, in place of its own kick. **Gun Fire**: the gun's own clip a shot plays, such as its trigger. A bolt-action works its bolt once they are over.

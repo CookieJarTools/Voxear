@@ -69,7 +69,8 @@ impl ClipHand {
 /// Where the clip `reference` holds the gun and has the hands `at` seconds
 /// in, looping or not: the gun carried by the bone `carrier` of its
 /// skeleton, or by one named `gun_carrier`, or by the right hand, and sitting
-/// `offset` from it; the eyes `eyes` from its head, in its space. None
+/// `offset` from it; its eyes `eyes` from its head, in its space, which go
+/// where the holder's eyes are. None
 /// before the clip is read, or for a skeleton the rig finds no arms in.
 pub fn clip_pose(
     world: &World,
@@ -140,7 +141,8 @@ pub fn holding_weights(pack: &PackClips, speed: f32, sprinting: bool) -> [f32; 4
 }
 
 /// The holding clips blended by `weights`, each looped at `time`.
-pub fn holding_pose(world: &World, pack: &PackClips, weights: [f32; 4], time: f32, eyes: Vec3) -> Option<ClipPose> {
+pub fn holding_pose(world: &World, pack: &PackClips, weights: [f32; 4], time: f32) -> Option<ClipPose> {
+    let eyes = Vec3::from(pack.eyes);
     let clips = [&pack.idle, &pack.walk, &pack.run, &pack.sprint];
     let mut blended: Option<(ClipPose, f32)> = None;
     for (clip, weight) in clips.into_iter().zip(weights).filter(|(clip, weight)| !clip.is_empty() && *weight > 1e-3) {
@@ -160,7 +162,8 @@ pub fn holding_pose(world: &World, pack: &PackClips, weights: [f32; 4], time: f3
 /// How a shot's clip moves the gun `since` seconds after it, from the
 /// clip's first frame, in the gun's own space, so it kicks about the gun
 /// wherever it is held; none once the clip is over.
-pub fn fire_kick(world: &World, pack: &PackClips, since: f32, aimed: bool, eyes: Vec3) -> Option<Mat4> {
+pub fn fire_kick(world: &World, pack: &PackClips, since: f32, aimed: bool) -> Option<Mat4> {
+    let eyes = Vec3::from(pack.eyes);
     let clip = if aimed && !pack.aimed_fire.is_empty() { &pack.aimed_fire } else { &pack.fire };
     if clip.is_empty() || since >= super::gun_clips::length(world, clip) {
         return None;

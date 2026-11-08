@@ -155,7 +155,14 @@ pub struct GunHolderState {
     time: f32,
     /// How much each holding clip holds the gun now: idle, walking,
     /// running and sprinting.
-    held_by: [f32; 4],
+    held_by: [Spring<f32>; 4],
+    /// How far into its loop each holding clip is, from its first frame
+    /// when it came in.
+    clocks: [f32; 4],
+    /// Which holding clip leads now, and the clip starting a run or a
+    /// sprint while it plays.
+    leading: usize,
+    starting: Option<Starting>,
     /// Where the eyes stay while clips hold the gun, and how far out they
     /// hold it, worked out once for its handling.
     seen_from: Option<SeenFrom>,
@@ -199,7 +206,10 @@ impl GunHolderState {
             stepped: 0.0,
             left_foot: false,
             time: 0.0,
-            held_by: [0.0; 4],
+            held_by: [Spring::new(0.0, SpringFeel::halflife(0.2)); 4],
+            clocks: [0.0; 4],
+            leading: 0,
+            starting: None,
             seen_from: None,
             left_off: None,
         }
@@ -1041,6 +1051,16 @@ impl SeenFrom {
     }
 }
 
+/// A clip starting a run or a sprint, playing over the holding clips: which
+/// of them it starts, how far into it it is, and once it is over or left,
+/// how long it has been going out and over how long.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Starting {
+    held: usize,
+    at: f32,
+    out: Option<(f32, f32)>,
+}
+
 /// What clips holding the gun give its place: where they carry it in the
 /// eyes' space, and how much; how a shot's clip moves it now, in its own
 /// space; whether a shot's clip kicks it in place of its own kick; and how
@@ -1071,14 +1091,67 @@ fn held_by_clips(
     let eyes = Vec3::from(pack.eyes);
     let speed = Vec3::new(state.velocity.x, 0.0, state.velocity.z).length();
     let wanted = super::clip_hold::holding_weights(pack, speed, holder.sprinting);
-    let ease = 1.0 - 0.5f32.powf(delta / (pack.blend.max(0.01) * 0.5));
+    // The holding clips ease from one to another on springs, setting off and settling smoothly; held by none yet,
+    // they hold as wanted at once.
+    let held = state.held_by.iter().map(|weight| weight.value).sum::<f32>() > 1e-3;
     for (shown, wanted) in state.held_by.iter_mut().zip(wanted) {
-        *shown += (wanted - *shown) * ease;
+        shown.feel = SpringFeel::halflife(pack.blend.max(0.01));
+        match held {
+            true => _ = shown.update(wanted, delta),
+            false => shown.snap(wanted),
+        }
     }
-    let holding = super::clip_hold::holding_pose(world, pack, state.held_by, state.time, body);
+    let weights = state.held_by.map(|weight| weight.value.clamp(0.0, 1.0));
+    // Setting off into a run or a sprint from standing or walking, its start clip plays over the holding clips where
+    // the pack has one, and its loop starts from the first frame once the start is over, where the start leaves off.
+    let leading = (0..4).max_by(|&a, &b| wanted[a].total_cmp(&wanted[b])).unwrap_or(0);
+    if leading != state.leading {
+        let starts = leading >= 2 && state.leading < 2 && !super::clip_hold::start_of(pack, leading).is_empty();
+        match state.starting.as_mut() {
+            _ if starts => state.starting = Some(Starting { held: leading, at: 0.0, out: None }),
+            // Left before it is over, it goes out as slowly as any clip.
+            Some(start) if start.out.is_none() => start.out = Some((0.0, pack.blend)),
+            _ => {}
+        }
+        state.leading = leading;
+    }
+    let carrier = (pack.carrier.as_str(), &pack.carrier_offset);
+    let start = state.starting.as_mut().and_then(|start| {
+        let reference = super::clip_hold::start_of(pack, start.held);
+        let length = super::gun_clips::length(world, reference);
+        match start.out.as_mut() {
+            None => {
+                start.at += delta;
+                // Over, it gives way at once to its loop's first frame, the pose it ends in.
+                if start.at >= length {
+                    start.out = Some((0.0, pack.blend * 0.25));
+                }
+            }
+            Some((since, _)) => *since += delta,
+        }
+        let weight = match start.out {
+            None => super::clip_hold::comes_in(start.at, pack.blend * 0.5),
+            Some((since, over)) => super::clip_hold::goes_out(since, over),
+        };
+        let pose = super::clip_hold::clip_pose(world, reference, start.at.min(length), false, carrier, eyes, body)?;
+        Some((pose, weight))
+    });
+    if state.starting.is_some_and(|start| start.out.is_some_and(|(since, over)| since >= over)) {
+        state.starting = None;
+    }
+    // Each holding clip plays from its first frame as it comes in, a loop being started held there until its start
+    // is over.
+    for (held, clock) in state.clocks.iter_mut().enumerate() {
+        let waiting = state.starting.is_some_and(|start| start.held == held && start.out.is_none());
+        *clock = if weights[held] < 0.01 || waiting { 0.0 } else { *clock + delta };
+    }
+    let holding = super::clip_hold::holding_pose(world, pack, weights, state.clocks, body);
+    let holding = match (holding, start) {
+        (Some(holding), Some((start, weight))) => Some(holding.lerp(&start, weight)),
+        (holding, _) => holding,
+    };
     let part = state.play.as_ref().and_then(|play| {
         let (part, at) = play.part().filter(|(part, _)| !part.arms.is_empty())?;
-        let carrier = (pack.carrier.as_str(), &pack.carrier_offset);
         let pose = super::clip_hold::clip_pose(world, &part.arms, at, false, carrier, eyes, body)?;
         Some((pose, super::clip_hold::comes_in(play.progress().0, pack.blend)))
     });

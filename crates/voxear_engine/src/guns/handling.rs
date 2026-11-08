@@ -259,7 +259,8 @@ impl CustomAction {
 /// camera at the head itself;
 /// the gun's own clip it stands in between actions; the arms clips it is
 /// held by as its holder stands, walks, runs and sprints, blended by how
-/// fast it goes; the arms clips a shot plays, from the hip and aimed, and
+/// fast it goes, and those that start a run and a sprint from standing or
+/// walking; the arms clips a shot plays, from the hip and aimed, and
 /// the gun's own clip for it; and how long a clip takes to come in and go,
 /// in seconds; where the camera looks from while they hold it; and how much
 /// of each layer the holder puts on top of them: the gun's sway as the view
@@ -284,7 +285,11 @@ pub struct PackClips {
     #[serde(skip_serializing_if = "String::is_empty")]
     pub run: String,
     #[serde(skip_serializing_if = "String::is_empty")]
+    pub run_start: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub sprint: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub sprint_start: String,
     pub walk_speed: f32,
     pub run_speed: f32,
     #[serde(skip_serializing_if = "String::is_empty")]
@@ -333,7 +338,9 @@ impl Default for PackClips {
             idle: String::new(),
             walk: String::new(),
             run: String::new(),
+            run_start: String::new(),
             sprint: String::new(),
+            sprint_start: String::new(),
             walk_speed: 1.4,
             run_speed: 4.0,
             fire: String::new(),

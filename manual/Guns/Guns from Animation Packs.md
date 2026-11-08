@@ -31,6 +31,7 @@ A gun clip may move a round or case of its own out of the port. Leave the Case p
 Select the gun's handling, and in its **Clips** part:
 
 - Put the arms clips the gun is held by in **Idle**, **Walk**, **Run** and **Sprint**, and set **Walk Speed** and **Run Speed** to how fast your character walks and runs.
+- Put the clips that start a run and a sprint, if the pack has them, in **Run Start** and **Sprint Start**. Setting off from standing or walking, the start plays first, and the run or sprint carries on from its first frame, where the start leaves off. Without one, the hold blends into the run.
 - Put the gun's clip it stands still in, if it has one, in **Rest**.
 - Put the shot's arms clips in **Fire** and **Aimed Fire**, and the gun's own in **Gun Fire**.
 - **Carrier** finds the bone the gun rides by itself when it is called `gun_carrier`. For another, pick it from the list. If the gun sits off that bone in the pack, as when it is attached with an offset, set **Carrier At** and **Carrier Turn**.

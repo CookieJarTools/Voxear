@@ -659,6 +659,64 @@ fn shown_as_its_clips_alone_have_it_the_gun_stays_where_they_show_it_walking_and
     assert!(most < 0.0005, "the gun where the clip shows it, all along: {most} m off at most");
 }
 
+/// The clip of `arms` remade as `seconds` long, its gun lifted `up(t)`
+/// metres `t` seconds in.
+fn lifted(arms: &Arc<ModelAnimation>, seconds: f32, up: impl Fn(f32) -> f32) -> Arc<ModelAnimation> {
+    let carrier = arms.skeleton.bones.len() - 1;
+    let still = arms.clips[0].frame(0).to_vec();
+    let frames = (seconds * voxear_render::CLIP_RATE).round() as usize + 1;
+    let poses = (0..frames)
+        .flat_map(|frame| {
+            let mut pose = still.clone();
+            pose[carrier].translation.y += up(frame as f32 / voxear_render::CLIP_RATE);
+            pose
+        })
+        .collect();
+    let clip = Clip { name: "Lifted".into(), frames, poses };
+    Arc::new(ModelAnimation { skeleton: arms.skeleton.clone(), skins: Vec::new(), clips: vec![clip] })
+}
+
+#[test]
+fn setting_off_into_a_run_plays_its_start_clip_then_the_run_from_its_first_frame() {
+    let mut own = scene_with(GunKind::BoltActionRifle);
+    steady(&mut own);
+    settle(&mut own, 40);
+    let (arms, _) = clip_of_hold(&mut own);
+    // The run holds the gun 10 cm up; its start lifts it 20 cm and brings it back down to there, over half a second.
+    let start = |t: f32| if t < 0.25 { 0.8 * t } else { 0.2 - 0.4 * (t - 0.25) };
+    let mut clips = Clips::default();
+    let files = [("Idle", arms.clone()), ("Run", lifted(&arms, 1.0, |_| 0.1)), ("Start", lifted(&arms, 0.5, start))];
+    for (name, file) in files {
+        let source = ClipSource { animation: file, index: 0, settings: Default::default() };
+        clips.put(&format!("{name}#clip:Lifted"), source);
+    }
+    let mut handling = GunHandling::default();
+    handling.pack.idle = "Idle#clip:Lifted".into();
+    handling.pack.run = "Run#clip:Lifted".into();
+    handling.pack.run_start = "Start#clip:Lifted".into();
+    (handling.pack.walk_speed, handling.pack.run_speed) = (0.5, 1.0);
+    handling.pack.eyes = crate::first_person::FirstPersonView::default().eyes;
+
+    let mut scene = scene_with(GunKind::BoltActionRifle);
+    steady(&mut scene);
+    scene.world.insert_resource(clips);
+    put_handling(&mut scene.world, "Held", Arc::new(handling));
+    scene.world.get_mut::<Gun>(scene.gun).unwrap().handling = "Held".into();
+    settle(&mut scene, 40);
+    let standing = gun_from_eye(&scene).w_axis.y;
+    let rest = rest_of(&scene);
+    let mut time = Time { delta: 1.0 / 60.0, ..Time::default() };
+    let mut highest: f32 = 0.0;
+    for _ in 0..80 {
+        scene.world.get_mut::<Transform>(scene.player).unwrap().position.z += 3.0 / 60.0;
+        step(&mut scene, &rest, &mut time);
+        highest = highest.max(gun_from_eye(&scene).w_axis.y - standing);
+    }
+    assert!(highest > 0.17, "the start lifts the gun as high as it does: {highest} m");
+    let running = gun_from_eye(&scene).w_axis.y - standing;
+    assert!((running - 0.1).abs() < 0.01, "then the run holds it where the start left it: {running} m");
+}
+
 #[test]
 fn the_camera_stays_put_on_the_body_while_clips_hold_the_gun_however_the_body_bobs() {
     let mut own = scene_with(GunKind::BoltActionRifle);

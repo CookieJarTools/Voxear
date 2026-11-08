@@ -183,11 +183,12 @@ fn arms_on(
 }
 
 /// Makes every arms clip that may hold the gun now fit the body `body`, so
-/// `clip_pose` can pose its arms there: the holding clips, and the arms
-/// clip of the part of `play` under way.
+/// `clip_pose` can pose its arms there: the holding clips and those that
+/// start them, and the arms clip of the part of `play` under way.
 pub fn fit_clips(world: &mut World, pack: &PackClips, play: Option<&ActionPlay>, body: &Arc<ModelAnimation>) {
     let part = play.and_then(|play| play.part()).map(|(part, _)| part.arms.clone());
-    let references = [&pack.idle, &pack.walk, &pack.run, &pack.sprint].into_iter().cloned().chain(part);
+    let held = [&pack.idle, &pack.walk, &pack.run, &pack.sprint, &pack.run_start, &pack.sprint_start];
+    let references = held.into_iter().cloned().chain(part);
     for reference in references.filter(|reference| !reference.is_empty()) {
         if let Some(source) = world.resource::<Clips>().and_then(|clips| clips.get(&reference)).cloned() {
             crate::animation::retarget::fitted(world, &source, body);
@@ -255,19 +256,20 @@ pub fn holding_weights(pack: &PackClips, speed: f32, sprinting: bool) -> [f32; 4
     wanted
 }
 
-/// The holding clips blended by `weights`, each looped at `time`, with
-/// their arms as they pose them on `body`.
+/// The holding clips blended by `weights`, each looped at its own time of
+/// `times`, with their arms as they pose them on `body`.
 pub fn holding_pose(
     world: &World,
     pack: &PackClips,
     weights: [f32; 4],
-    time: f32,
+    times: [f32; 4],
     body: Option<&Arc<ModelAnimation>>,
 ) -> Option<ClipPose> {
     let eyes = Vec3::from(pack.eyes);
     let clips = [&pack.idle, &pack.walk, &pack.run, &pack.sprint];
     let mut blended: Option<(ClipPose, f32)> = None;
-    for (clip, weight) in clips.into_iter().zip(weights).filter(|(clip, weight)| !clip.is_empty() && *weight > 1e-3) {
+    let held = clips.into_iter().zip(weights).zip(times);
+    for ((clip, weight), time) in held.filter(|((clip, weight), _)| !clip.is_empty() && *weight > 1e-3) {
         let length = super::gun_clips::length(world, clip).max(1e-3);
         let carrier = (pack.carrier.as_str(), &pack.carrier_offset);
         let Some(pose) = clip_pose(world, clip, time % length, true, carrier, eyes, body) else {
@@ -311,6 +313,16 @@ pub fn stand(edit: &mut PoseEdit, rig: &Rig, rest: &PoseEdit, stance: &[Quat; 3]
         if let Some(bone) = bone {
             edit.set_rotation(bone, (*turn * rest.rotation(bone)).normalize());
         }
+    }
+}
+
+/// The clip that starts the holding clip `held`, a run (2) or a sprint (3),
+/// from standing or walking: empty for none.
+pub fn start_of(pack: &PackClips, held: usize) -> &str {
+    match held {
+        2 => &pack.run_start,
+        3 => &pack.sprint_start,
+        _ => "",
     }
 }
 

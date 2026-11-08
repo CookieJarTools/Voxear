@@ -7,7 +7,7 @@ A **Bone Attachment** keeps its Obj on a bone of its parent's model as the model
 - **Bone**: the bone it follows, from the parent's model.
 - **Offset**: where it sits from the bone, in metres. In the parent's space, or the bone's when it turns with it.
 - **Turn With Bone**: it turns as the bone turns. Off, it keeps its own turn, as a camera that turns with the mouse wants.
-- **Hide Bone**: the bone, and every bone under it, shrinks to nothing. A first-person camera inside the head sees out of it this way; the body's shadow loses its head too.
+- **Hide Bone**: the bone, and every bone under it, is left out of what cameras see. The skin goes from where it is bound a quarter or more to those bones, cut cleanly through skin bound to both them and the rest, as round a neck. It still casts its shadow, and the bones stay where they are, so whatever is attached to them stays put. A first-person camera inside the head sees out of it this way, and the body's shadow keeps its head.
 
 It moves after the bones are posed and before `LateUpdate`, so a script there sees it where the bone is this frame.
 

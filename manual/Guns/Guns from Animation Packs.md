@@ -42,7 +42,23 @@ Select the gun's handling, and in its **Clips** part:
 
 The camera's **Field of view** matters as much. Packs are usually filmed 90° across, which on a wide screen is about 59° on a Camera, whose field of view is measured from top to bottom (see [[Cameras]]).
 
-A pack's clips seldom aim. Aiming brings the gun's sights to the eye from wherever the clips hold it, as it does for any gun, so set the sockets carefully. The gun still sways as the view turns and kicks as it fires, and the hands go with it. Where your character's arms are shorter than the pack's, the gun comes nearer and the other hand slides back along it.
+**Camera** says where your character looks from while the clips hold the gun:
+
+| Camera | What you see |
+| --- | --- |
+| **As Filmed** | The camera moves to where the pack's camera was, as far from your character's shoulders as it was from the clips', scaled to its arms. The arms hold the gun as the clips do, and it shows as in the pack's videos. |
+| **At the Eyes** | The camera stays at your character's eyes. Those sit higher above the shoulders than a pack's camera usually does, so the gun shows lower and nearer. |
+
+The pack's camera is often lower than real eyes, near the neck, so **As Filmed** looks from a little lower than your character's eyes. Put the gun away and the camera goes back to the eyes.
+
+Each hand stays where the clips have it on the gun, and its fingers take the clips' shape, spread and thumb included, on any hand. Where your character's arms cannot reach the gun where the clips carry it, the gun comes nearer, as far as the arms need. The hands never slide along it.
+
+A pack's clips seldom aim. Aiming brings the gun's sights to the eye from wherever the clips hold it, as it does for any gun, so set the sockets carefully:
+
+- Put **Rear Sight** and **Front Sight** on the tops of the sights, not on their bones, which often sit lower, level with the action.
+- Set **Eye Relief** so the eye is behind the action, over the stock. A rifle whose rear sight is far out on the barrel needs much more than one whose rear sight sits on the action; otherwise the camera ends up inside the gun.
+
+The gun still sways as the view turns and kicks as it fires, and the hands go with it.
 
 The clips bob and breathe with the gun themselves, so while they hold it the Gun Holder adds no bob, breathing or tremor of its own. While an action plays from clips, the view does not glance down at the work either: the clips bring it into view. Up at the eye, where the clips no longer hold it, the gun bobs and breathes as any gun does.
 

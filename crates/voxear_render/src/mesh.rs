@@ -18,8 +18,9 @@ pub struct Vertex {
     pub tangent: [f32; 4],
     /// How the wind moves it, 0 to 255 each (see `shaders/wind.slang`): how
     /// much its leaf flutters, its own phase, and how far its branch sways
-    /// apart from the trunk; the fourth is unused. `NO_WIND_MASKS` leaves
-    /// the plant to bend as one.
+    /// apart from the trunk; the fourth is left for skinning, which writes
+    /// how much of a posed vertex is bound to hidden bones (see
+    /// `HiddenBones`). `NO_WIND_MASKS` leaves the plant to bend as one.
     pub wind: [u8; 4],
 }
 

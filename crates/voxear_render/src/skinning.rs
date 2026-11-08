@@ -40,6 +40,19 @@ pub struct Pose {
 
 impl Component for Pose {}
 
+/// The bones of a model's skeleton hidden from the cameras that draw it, in
+/// its skeleton's order: skin bound mostly to them is left out of what a
+/// camera sees, though it still casts its shadow. Set each frame by what
+/// hides them, as a First-Person View hides the head its camera looks out
+/// of, and gone the next unless set again. The bones themselves stay where
+/// the pose has them.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct HiddenBones {
+    pub bones: Vec<bool>,
+}
+
+impl Component for HiddenBones {}
+
 /// Where a part's posed vertices are this frame and last, and how far its
 /// pose reaches past its mesh's bounds.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -81,8 +94,9 @@ pub(crate) struct Skinning {
     jobs: Vec<Job>,
     /// This frame's posed parts, for each view to mark its instances.
     pub posed: Arc<HashMap<Owner, Posed>>,
-    /// Each frame in flight's bone matrices, three rows each, and the
-    /// pointers the skinning shader reads.
+    /// Each frame in flight's bone matrices, three rows each and a fourth
+    /// saying whether the bone is hidden, and the pointers the skinning
+    /// shader reads.
     matrices: Vec<(Buffer, Buffer)>,
 }
 
@@ -94,7 +108,7 @@ impl Skinning {
         while self.matrices.len() <= slot {
             let host = MemoryLocation::CpuToGpu;
             let storage = vk::BufferUsageFlags::STORAGE_BUFFER;
-            let size = MAX_SKIN_MATRICES * 48;
+            let size = MAX_SKIN_MATRICES * 64;
             let matrices = gpu.create_buffer(&format!("bone matrices {}", self.matrices.len()), size, storage, host)?;
             let pointers = gpu.create_buffer(
                 &format!("skinning pointers {}", self.matrices.len()),
@@ -110,6 +124,8 @@ impl Skinning {
         let query = world.query_ref::<(Entity, &ModelRenderer, &Pose)>();
         for (entity, model, pose) in query.without::<Destroying>() {
             let Some(animation) = &model.animation else { continue };
+            let hidden = world.get::<HiddenBones>(entity);
+            let hidden = |joint: usize| hidden.is_some_and(|hidden| hidden.bones.get(joint).copied().unwrap_or(false));
             for (index, part) in model.parts.iter().enumerate() {
                 let Some(skin) = part.skin.and_then(|skin| animation.skins.get(skin as usize)) else { continue };
                 let (Some((skin_offset, count)), Some(source)) =
@@ -117,19 +133,25 @@ impl Skinning {
                 else {
                     continue;
                 };
-                if rows.len() / 3 + skin.joints.len() > MAX_SKIN_MATRICES as usize {
+                if rows.len() / 4 + skin.joints.len() > MAX_SKIN_MATRICES as usize {
                     break;
                 }
                 let owner = Owner { entity, plant: None, part: Some(index as u32) };
                 let Some(kept) = self.slot(assets, owner, u64::from(count), frame) else { continue };
                 // Each joint's matrix: where its bone is now, from where it was when the mesh was bound to it.
-                let matrices = (rows.len() / 3) as u32;
+                let matrices = (rows.len() / 4) as u32;
                 let mut far = 0.0f32;
                 let (centre, radius) = assets.mesh_sphere(part.mesh).unwrap_or((Vec3::ZERO, 0.0));
                 for (&joint, bind) in skin.joints.iter().zip(&skin.inverse_binds) {
                     let bone = pose.bones.get(joint).copied().unwrap_or(Mat4::IDENTITY);
                     let m = (bone * *bind).transpose();
-                    rows.extend([m.x_axis.to_array(), m.y_axis.to_array(), m.z_axis.to_array()]);
+                    let shown = if hidden(joint) { 1.0 } else { 0.0 };
+                    rows.extend([
+                        m.x_axis.to_array(),
+                        m.y_axis.to_array(),
+                        m.z_axis.to_array(),
+                        [shown, 0.0, 0.0, 0.0],
+                    ]);
                     far = far.max(bone.w_axis.truncate().distance(centre));
                 }
                 let run = |k: u64| (kept.offset + (k % 3) * kept.count) as u32;

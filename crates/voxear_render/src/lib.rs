@@ -91,7 +91,7 @@ pub use lod::{LodInfo, MAX_LODS, lod_at, lod_at_share, screen_share};
 pub use lod_group::{LodCamera, LodChoices, LodGroup, LodLevel, LodMeasure, LodView, default_until};
 pub use model_lods::lod_of;
 pub use mesh::{MeshData, MeshTriangles, NO_WIND_MASKS, Primitive, Vertex};
-pub use skinning::Pose;
+pub use skinning::{HiddenBones, Pose};
 pub use skeleton::{Bone, BonePose, CLIP_RATE, Clip, ModelAnimation, Skeleton, Skin, SkinVertex};
 pub use post::{
     AmbientOcclusion, AmbientOcclusionQuality, AntiAliasing, AntiAliasingMode, Bloom, ContactShadows, DepthOfField, Exposure, Fog,

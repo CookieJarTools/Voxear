@@ -33,6 +33,8 @@ struct VertexOut
     float4 previousClip : PREVIOUS_CLIP;
     // How far a custom shader's vertex function moved it from where the mesh has it.
     float3 moved : MOVED;
+    // How much of it is bound to hidden bones (skinning.slang): what is mostly hidden is left out.
+    float hidden : HIDDEN;
 };
 
 struct FragmentOut
@@ -95,6 +97,7 @@ VertexOut forwardVertex(uint instanceIndex, uint lod, uint fade, uint cluster, u
     o.currentClip = transform(push.frame->unjitteredViewProj, world);
     o.previousClip = transform(push.frame->prevViewProj, previous);
     o.moved = moved;
+    o.hidden = float(v.wind >> 24) / 255.0;
     return o;
 }
 
@@ -118,6 +121,7 @@ VertexOut impostorVertex(Instance instance, uint instanceIndex, float2 corner, u
     o.currentClip = transform(frame->unjitteredViewProj, float4(c.world, 1.0));
     o.previousClip = transform(frame->prevViewProj, float4(c.world, 1.0));
     o.moved = 0.0;
+    o.hidden = 0.0;
     return o;
 }
 
@@ -142,6 +146,12 @@ float bayer4(uint2 pixel)
 // and less of its pixels towards where it is gone.
 void ditherLodFade(VertexOut input)
 {
+    // A skinned part's hidden skin, as a head a first-person camera looks out of, is left out where a camera
+    // sees; the shadow passes draw it all, so it still casts its shadow.
+    if (input.hidden > 0.5)
+    {
+        discard;
+    }
     float4 fadeOut = buffers()->instances[input.instance].fade;
     if (fadeOut.y > 0.0)
     {

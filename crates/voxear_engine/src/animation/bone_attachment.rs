@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize};
 use voxear_core::math::{Mat4, Vec3};
 use voxear_ecs::{Component, Entity, World};
-use voxear_render::{ModelRenderer, Pose, Skeleton};
+use voxear_render::{HiddenBones, ModelRenderer, Pose, Skeleton};
 use voxear_scene::{Destroying, Parent, Transform};
 
 /// Keeps its Obj on a bone of its parent's model.
@@ -113,27 +113,43 @@ pub fn attach_to_bones(world: &mut World) {
             }
         }
         if attachment.hide {
-            let bones = hidden(&animation.skeleton, bone, &pose.bones);
-            world.insert(parent, Pose { bones: bones.into() });
+            hide(world, parent, &animation.skeleton, bone);
         }
     }
 }
 
-/// The bones of a pose with `bone`, and every bone under it, shrunk to
-/// nothing where `bone` is.
-pub(crate) fn hidden(skeleton: &Skeleton, bone: usize, bones: &[Mat4]) -> Vec<Mat4> {
-    let at = bones[bone].w_axis.truncate();
-    let shrink = Mat4::from_translation(at) * Mat4::from_scale(Vec3::splat(1e-4)) * Mat4::from_translation(-at);
-    let mut under = vec![false; bones.len()];
-    let mut out = bones.to_vec();
-    // Parents come before their children, so one pass finds them all.
-    for (index, matrix) in out.iter_mut().enumerate() {
-        under[index] = index == bone || skeleton.bones[index].parent.is_some_and(|parent| under[parent]);
-        if under[index] {
-            *matrix = shrink * *matrix;
-        }
+/// Hides `bone` of the model `model`, and every bone under it, from the
+/// cameras that draw it this frame: the skin bound mostly to them is left out
+/// of what a camera sees, cut where the skin is bound as much to them as to
+/// the rest, but still casts its shadow, and the bones stay where they are.
+pub(crate) fn hide(world: &mut World, model: Entity, skeleton: &Skeleton, bone: usize) {
+    let mut hidden = world.get::<HiddenBones>(model).cloned().unwrap_or_default();
+    hidden.bones.resize(skeleton.bones.len(), false);
+    for index in (0..skeleton.bones.len()).filter(|&index| index == bone || is_under(skeleton, index, bone)) {
+        hidden.bones[index] = true;
     }
-    out
+    world.insert(model, hidden);
+}
+
+/// Whether `bone` hangs somewhere under `above`.
+fn is_under(skeleton: &Skeleton, bone: usize, above: usize) -> bool {
+    let mut at = skeleton.bones[bone].parent;
+    while let Some(parent) = at {
+        if parent == above {
+            return true;
+        }
+        at = skeleton.bones[parent].parent;
+    }
+    false
+}
+
+/// Shows every bone again, before what hides them this frame hides them.
+pub(crate) fn show_all(world: &mut World) {
+    let hidden: Vec<Entity> =
+        world.query_ref::<(Entity, &HiddenBones)>().into_iter().map(|(entity, _)| entity).collect();
+    for entity in hidden {
+        world.remove::<HiddenBones>(entity);
+    }
 }
 
 #[cfg(test)]
@@ -192,16 +208,15 @@ mod tests {
     }
 
     #[test]
-    fn hiding_shrinks_the_bone_and_those_under_it() {
+    fn hiding_hides_the_bone_and_those_under_it_where_they_are() {
         let (mut world, model, eyes) = posed();
+        let posed = world.get::<Pose>(model).unwrap().clone();
         world.insert(eyes, BoneAttachment { bone: "head".into(), hide: true, ..BoneAttachment::default() });
         attach_to_bones(&mut world);
-        let bones = world.get::<Pose>(model).unwrap().bones.clone();
-        assert_eq!(bones[0], Mat4::IDENTITY, "the neck as it was");
-        for hidden in [1, 2] {
-            let size = bones[hidden].x_axis.truncate().length();
-            assert!(size < 1e-3, "bone {hidden} shrunk: {size}");
-            assert!(bones[hidden].w_axis.truncate().distance(Vec3::Y) < 1e-3, "into the head");
-        }
+        let hidden = world.get::<HiddenBones>(model).expect("bones hidden").bones.clone();
+        assert_eq!(hidden, [false, true, true], "the head and the jaw under it, not the neck");
+        assert_eq!(*world.get::<Pose>(model).unwrap(), posed, "every bone where the pose has it");
+        show_all(&mut world);
+        assert!(world.get::<HiddenBones>(model).is_none(), "shown again until hidden again");
     }
 }

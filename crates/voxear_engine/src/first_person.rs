@@ -276,11 +276,10 @@ fn pose_body(world: &mut World, entity: Entity, view: &FirstPersonView, own: boo
     }
     let head = edit.matrices()[rig.head];
     let eyes_in_body = head.w_axis.truncate() + Vec3::from(view.eyes);
-    let mut bones = edit.matrices();
+    world.insert(body, Pose { bones: edit.matrices().into() });
     if view.hide_head && own {
-        bones = crate::animation::hidden(&animation.skeleton, rig.head, &bones);
+        crate::animation::hide(world, body, &animation.skeleton, rig.head);
     }
-    world.insert(body, Pose { bones: bones.into() });
     Some(placed.transform_point3(eyes_in_body))
 }
 
@@ -472,10 +471,11 @@ mod tests {
         assert!(eye.rotation.angle_between(view.rotation()) < 1e-4, "and looks where the view does");
         let near = world.get::<Camera>(camera).unwrap().near;
         assert!(near <= 0.01, "and sees from close enough not to cut off the hands: {near}");
-        let bones = &world.get::<Pose>(body).unwrap().bones;
         let head =
             Rig::find(&world.get::<ModelRenderer>(body).unwrap().animation.as_ref().unwrap().skeleton).unwrap().head;
-        assert!(bones[head].x_axis.length() < 1e-3, "the head is hidden");
+        let hidden = world.get::<voxear_render::HiddenBones>(body).expect("the head is hidden");
+        assert!(hidden.bones[head], "the head is hidden from the camera");
+        assert!(world.get::<Pose>(body).unwrap().bones[head].x_axis.length() > 0.5, "though it stays where it is");
     }
 
     #[test]

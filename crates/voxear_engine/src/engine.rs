@@ -538,6 +538,8 @@ impl Engine {
         {
             // Posed after Update, so LateUpdate sees this frame's bones.
             profile_scope!("Animation");
+            // What was hidden last frame shows, unless hidden again as the pose stage and the attachments pose it.
+            crate::animation::show_all(&mut self.world);
             crate::animation::animate(&mut self.world, self.time.delta);
             crate::animation::match_motion(&mut self.world, self.time.delta);
             // The pose stage's systems read the frame's time from the world.

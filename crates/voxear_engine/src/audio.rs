@@ -125,8 +125,15 @@ impl SoundCache {
 }
 
 /// Reads a sound file as its import settings say: whole, or kept to stream.
+/// A build ships it in Voxear's own wrapping, which comes off first.
 pub(crate) fn load_sound(bytes: Vec<u8>, path: &str, settings: SoundImport) -> Result<Sound> {
-    let extension = path.rsplit_once('.').map(|(_, extension)| extension.to_ascii_lowercase());
+    let (bytes, extension) = match bytes.starts_with(voxear_assets::packed::SOUND_MAGIC) {
+        true => {
+            let (extension, file) = voxear_assets::packed::unwrap_sound(&bytes, path)?;
+            (file, Some(extension))
+        }
+        false => (bytes, path.rsplit_once('.').map(|(_, extension)| extension.to_ascii_lowercase())),
+    };
     let mut sound = Sound::open(bytes.into(), extension.as_deref(), |info| settings.streams(info.seconds()))
         .with_context(|| format!("reading {path}"))?;
     sound.volume = settings.volume.max(0.0);

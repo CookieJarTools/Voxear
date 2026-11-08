@@ -5,7 +5,9 @@
 //!    build, with the profile's defines.
 //! 2. **Content**: the bundles the profile's levels need, into `Data/Bundles`.
 //!    The scripts' `[ContentRoot]`s come along, so they are read from the
-//!    build just made.
+//!    build just made. Only a development build stores files uncompressed:
+//!    any other packs with LZ4 when its settings say `"none"`, so nothing
+//!    ships as it was made.
 //! 3. **Player**: the player program, named after the game, with
 //!    `Voxear.Core`, the scripts and their packages' assemblies in
 //!    `Data/Managed`, and what to run in `Data/player.toml`.
@@ -307,7 +309,7 @@ fn content_settings(
         exclude: own.exclude.clone(),
         merge_below_kb: own.merge_below_kb,
         split_above_mb: own.split_above_mb,
-        compression: profile.content.compression.unwrap_or(own.compression),
+        compression: packing(profile.content.compression.unwrap_or(own.compression), profile.development.enabled),
         server: profile.target == build_profile::Target::Server,
     };
     let (db, _) = AssetDb::scan(&project.root)?;
@@ -330,6 +332,19 @@ fn content_settings(
     }
     levels.sort();
     Ok((settings, levels))
+}
+
+/// How a build packs its bundles: as its settings say, except that only a
+/// development build stores files as they are, for quick builds while
+/// working. Any other packs with LZ4 instead.
+fn packing(asked: Compression, development: bool) -> Compression {
+    match asked {
+        Compression::None if !development => {
+            tracing::info!("compression \"none\" is for development builds: this one packs with LZ4");
+            Compression::Lz4
+        }
+        asked => asked,
+    }
 }
 
 /// Copies `Voxear.Core` and the game's scripts into `managed`, with their
@@ -429,5 +444,12 @@ mod tests {
         assert_eq!(file_name("Orbit Run"), "Orbit Run");
         assert_eq!(file_name("What? Now: 2"), "What_ Now_ 2");
         assert_eq!(file_name(" ... "), "Game");
+    }
+
+    #[test]
+    fn only_a_development_build_stores_files_uncompressed() {
+        assert_eq!(packing(Compression::None, false), Compression::Lz4);
+        assert_eq!(packing(Compression::None, true), Compression::None);
+        assert_eq!(packing(Compression::Zstd, false), Compression::Zstd);
     }
 }

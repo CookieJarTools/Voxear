@@ -21,6 +21,7 @@ mod guid;
 mod import;
 pub mod io;
 pub mod mount;
+pub mod packed;
 mod reader;
 mod reference;
 

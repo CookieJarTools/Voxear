@@ -15,6 +15,7 @@ mod atmosphere;
 mod bvh;
 mod capture;
 mod cooked;
+mod cooked_picture;
 mod debug_pass;
 mod fbx_import;
 mod foliage;
@@ -76,6 +77,7 @@ pub use assets::AssetUsage;
 pub use assets::{MaterialDesc, MaterialHandle, MeshHandle, TextureSource};
 pub use capture::{Capture, CapturedImage};
 pub use cooked::{COOKED_VERSION, CookedModel};
+pub use cooked_picture::{COOKED_PICTURE_VERSION, CookedPicture, PictureUse};
 pub use frame_debugger::{Channels, FrameImage, FrameLook, FramePass};
 pub use gltf_import::{
     FilePicture, FileMaterial, ImportedModel, ImportedNode, PreparedModel, ReadFile, companion_files,
@@ -765,6 +767,24 @@ impl Renderer {
     pub fn add_texture(&mut self, source: &TextureSource) -> Result<TextureId> {
         let assets = self.assets.as_mut().expect("assets live until drop");
         assets.add_texture(&self.gpu, &mut self.bindless, source)
+    }
+
+    /// Uploads a picture a build cooked (see [`CookedPicture`]), its colours
+    /// read as sRGB or as the values they are. Freed with
+    /// [`free_texture`](Self::free_texture).
+    pub fn add_cooked_picture(&mut self, name: &str, picture: &CookedPicture, srgb: bool) -> Result<TextureId> {
+        let assets = self.assets.as_mut().expect("assets live until drop");
+        let (width, height) = picture.size();
+        match picture.rgba() {
+            Some(rgba) => {
+                let source = TextureSource { name, width, height, rgba, srgb };
+                assets.add_texture(&self.gpu, &mut self.bindless, &source)
+            }
+            None => {
+                let format = picture.format().vulkan(srgb);
+                assets.add_texture_mips(&self.gpu, &mut self.bindless, name, (width, height), format, picture.mips())
+            }
+        }
     }
 
     /// Uploads a colour grading lookup table (see `Grading::lut`) as it is:

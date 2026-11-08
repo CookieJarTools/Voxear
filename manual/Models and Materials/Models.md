@@ -128,12 +128,12 @@ A build uses the same settings, and builds the model again when they change.
 
 ## A picture's import settings
 
-Select a picture (`.png` or `.jpg`) in the Project panel, and the Inspector shows its size in pixels and its **Import Settings**. They apply wherever a model reads the picture, as a colour, a normal map or glow. Click **Apply**, and every model in use that reads the picture is imported again.
+Select a picture (`.png` or `.jpg`) in the Project panel, and the Inspector shows its size in pixels and its **Import Settings**. They apply wherever the picture is used: by a model, a material, a light's cookie or a shader. Click **Apply**, and every model in use that reads the picture is imported again.
 
 | Setting | What it does |
 | --- | --- |
 | **Max size** | The most pixels the picture's longer side keeps. A larger picture is shrunk, keeping its shape. **Its own size** keeps every pixel. |
-| **Compress in builds** | Whether a build ships the picture compressed, in a quarter of the memory. Turn it off for pixel art and sharp edges, which compression softens. The editor never compresses pictures. |
+| **Compress in builds** | Whether a build ships the picture compressed, in a quarter of the memory. Turn it off for pixel art and sharp edges, which compression softens. The editor never compresses pictures, and a colour lookup table always keeps its pixels as they are. |
 | **Flip Green** | Turns the picture's green over as it is read. Some programs make normal maps with green pointing down, which light a surface as if from below; turn it on for those. |
 
 The settings are kept in the picture's `.meta` file, as a model's are:

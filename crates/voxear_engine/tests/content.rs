@@ -440,7 +440,11 @@ fn a_server_build_leaves_out_what_only_shows_or_sounds() {
     std::fs::create_dir_all(dir.path().join("Lighting")).unwrap();
     // The bark has a picture, the forest a lighting asset, the wind blows and a horn sounds, which the server
     // needs, so its `.meta` keeps it whole there.
-    write("Textures/Bark.png", &[0u8; 4096]);
+    let mut bark = std::io::Cursor::new(Vec::new());
+    let noise = |x: u32, y: u32| image::Rgba([(x * 7919 + y * 104_729) as u8, (x ^ y) as u8, (x * y) as u8, 255]);
+    image::RgbaImage::from_fn(64, 64, noise).write_to(&mut bark, image::ImageFormat::Png).unwrap();
+    let bark = bark.into_inner();
+    write("Textures/Bark.png", &bark);
     write("Textures/Bark.png.meta", b"guid = \"000000000000000000000000000000b1\"\n");
     write("Materials/Bark.material", b"color_map = \"000000000000000000000000000000b1\"\n");
     write("Lighting/Dusk.lighting", b"");
@@ -470,7 +474,7 @@ fn a_server_build_leaves_out_what_only_shows_or_sounds() {
             "Textures/Bark.png"
         ]
     );
-    assert!(server.stripped_bytes > 4096 + 9600, "{} bytes left out", server.stripped_bytes);
+    assert!(server.stripped_bytes > bark.len() as u64 + 9600, "{} bytes left out", server.stripped_bytes);
     let size = |report: &content_build::BuildReport| report.bundles.iter().map(|b| b.size).sum::<u64>();
     assert!(size(&server) < size(&client), "smaller: {} against {}", size(&server), size(&client));
     let catalog = Catalog::read(&output).unwrap();
@@ -491,4 +495,62 @@ fn a_server_build_leaves_out_what_only_shows_or_sounds() {
     let sound = |name: &str| engine.world.get::<voxear_engine::audio::AudioSource>(named(name)).unwrap().sound;
     assert!(sound("Wind").is_none(), "left out, so it goes without");
     assert!(sound("Horn").is_some());
+}
+
+/// A PNG file of noise, different for each `seed`.
+fn noise_png(seed: u32) -> Vec<u8> {
+    let pixel = |x: u32, y: u32| image::Rgba([(x * 7919 + y * seed) as u8, (x ^ y ^ seed) as u8, (x * y) as u8, 255]);
+    let mut file = std::io::Cursor::new(Vec::new());
+    image::RgbaImage::from_fn(32, 32, pixel).write_to(&mut file, image::ImageFormat::Png).unwrap();
+    file.into_inner()
+}
+
+#[test]
+fn nothing_ships_as_the_file_it_was_made_as() {
+    let dir = project();
+    let write = |path: &str, bytes: &[u8]| {
+        let path = dir.path().join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, bytes).unwrap();
+    };
+    let (stone, bumps) = (noise_png(31), noise_png(97));
+    write("Textures/Stone.png", &stone);
+    write("Textures/Stone.png.meta", b"guid = \"000000000000000000000000000000d1\"\n");
+    write("Textures/Bumps.png", &bumps);
+    write("Textures/Bumps.png.meta", b"guid = \"000000000000000000000000000000d2\"\n");
+    let maps = "color_map = \"000000000000000000000000000000d1\"\nnormal_map = \"000000000000000000000000000000d2\"\n";
+    write("Materials/Stone.material", maps.as_bytes());
+    write("Sounds/Wind.wav", &wav());
+    let wind = "[[obj]]\nid = 2\nname = \"Wind\"\n[obj.audio]\nsound = \"Sounds/Wind.wav\"\n";
+    write("Scenes/Shared.scene", format!("{SHARED}{wind}").as_bytes());
+    let output = dir.path().join("Built");
+    content_build::build(dir.path(), &output, &unmerged(), &[]).unwrap();
+
+    // No file in the build is a picture or sound file, and the catalog is not text.
+    let mut everything = Vec::new();
+    for entry in std::fs::read_dir(&output).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_file() {
+            everything.extend(std::fs::read(path).unwrap());
+        }
+    }
+    let shows = |needle: &[u8]| everything.windows(needle.len()).any(|window| window == needle);
+    for needle in [&b"\x89PNG"[..], b"IHDR", b"RIFF", b"WAVEfmt", b"Bumps.png"] {
+        assert!(!shows(needle), "{} shows in the build", String::from_utf8_lossy(needle));
+    }
+    assert!(!output.join("catalog.toml").exists());
+
+    // Each picture is cooked for how the materials use it: the normal map for a normal map's two channels.
+    let catalog = Catalog::read(&output).unwrap();
+    assert!(catalog.assets.iter().find(|a| a.path == "Textures/Stone.png").unwrap().cooked);
+    let mut reader = voxear_assets::bundle::BundleReader::new(&output, &catalog);
+    let cooked = |file: &[u8], usage| voxear_render::CookedPicture::cook(file, &Default::default(), usage).unwrap().to_bytes();
+    assert_eq!(reader.read("Textures/Bumps.png").unwrap(), cooked(&bumps, voxear_render::PictureUse::Normal));
+    assert_eq!(reader.read("Textures/Stone.png").unwrap(), cooked(&stone, voxear_render::PictureUse::Colour));
+
+    // And the sound plays from the build as it did from its file.
+    let mut content = Content::open_bundles(dir.path(), &output).unwrap();
+    let wind = content.parse("Sounds/Wind.wav").unwrap();
+    let id = content.sound(&wind).unwrap();
+    assert_eq!(content.loaded_sound(id).unwrap().info().frames, 4800);
 }

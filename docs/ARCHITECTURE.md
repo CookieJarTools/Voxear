@@ -763,8 +763,15 @@ build. Its code is in `crates/voxear_engine/src/content_build.rs`, and the bundl
      catalog notes each file's codec). Cooked models are stored as
      they are, since they compress their own GPU data (below). A bundle is named after a hash of
      its bytes, so a rebuild that changes nothing writes nothing, and bundles no longer listed are deleted.
-   - The **catalog** (`catalog.toml`, readable on purpose) maps each asset's GUID and path to its bundle, offsets
-     and sizes. It also lists each bundle's usage set and the bundles it depends on.
+   - The **catalog** (`catalog.bin`) maps each asset's GUID and path to its bundle, offsets and sizes. It also
+     lists each bundle's usage set and the bundles it depends on. It is TOML inside Voxear's own wrapping
+     (`crates/voxear_assets/src/packed.rs`): Zstd, then XORed with a SplitMix64 keystream salted by the bytes'
+     own hash, so no path can be read from a build and an unchanged catalog wraps the same. `vox content build`
+     prints what it holds. A `catalog.toml` from an older build still reads.
+   - **Nothing ships in its source format**, as asset licences usually ask. Models and pictures are cooked
+     (below), sounds keep their encoded stream inside the same wrapping (a WAV is LZ4- or Zstd-compressed
+     first), and only development builds may store bundles uncompressed (`compression = "none"` becomes LZ4
+     otherwise). This is obfuscation, not encryption.
    - **Models are cooked**: stored ready for the GPU in Voxear's own format (`crates/voxear_render/src/cooked.rs`).
      - A cooked model holds its meshes with their LOD chains, its textures, its materials and its node layout.
      - **Its GPU data is one payload**: every vertex, index and texture mip, 16-byte aligned, compressed with
@@ -788,8 +795,12 @@ build. Its code is in `crates/voxear_engine/src/content_build.rs`, and the bundl
      - Cooks are cached in `.voxear/ContentCache`, keyed on a hash of every file the model reads plus the format
        version. An unchanged model is never cooked twice, and unused cooks are pruned.
      - Hello renders from cooked bundles within 13 levels of its source files, the difference being BC7.
-     - *Planned:* the other BC7 modes for sharper colour, BC6H for HDR textures, and cooking for other asset
-       kinds.
+     - *Planned:* the other BC7 modes for sharper colour, and BC6H for HDR textures.
+   - **Pictures used on their own** (material maps, cookies, shader properties, lookup tables) are cooked too
+     (`crates/voxear_render/src/cooked_picture.rs`): their import settings applied, then BC7 with CPU mips, or BC5
+     for one the shipped content uses only as a normal map. The build learns each picture's use from the key that
+     names it (`normal_map`, `metallic_map` and so on). One left uncompressed ships its RGBA8 pixels, and one
+     shaped as a lookup table keeps them exactly. Their cooks are cached beside the models'.
    - Other assets (levels, scenes, prefabs, materials) ship as their source text, compressed as the build asks.
 
 **Runtime** *(implemented: reading through a catalog, opening bundles on first use, batched async IO, GPU

@@ -4,9 +4,11 @@
 //!
 //! A bundle is `VXBUNDLE`, a format number, then each file's bytes,
 //! compressed where that makes them smaller: with LZ4, quick to load, or
-//! Zstd, smaller, as the build asks ([`Compression`]). `catalog.toml` says
+//! Zstd, smaller, as the build asks ([`Compression`]). The catalog says
 //! which bundle holds each asset, where its files sit, and which roots
-//! (levels, prefabs) need each bundle. A bundle is named after a hash of its
+//! (levels, prefabs) need each bundle. It ships as `catalog.bin`, in
+//! Voxear's own wrapping (see [`crate::packed`]), so no list of the game's
+//! files can be read out of a build. A bundle is named after a hash of its
 //! contents, so a rebuild that changes nothing rewrites nothing.
 
 use std::{
@@ -23,7 +25,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::{AssetEntry, AssetGuid, AssetKind, Mount, reader::AssetReader};
 
-pub const CATALOG_FILE: &str = "catalog.toml";
+pub const CATALOG_FILE: &str = "catalog.bin";
+/// The catalog as builds before [`CATALOG_FILE`] wrote it, as text.
+const TEXT_CATALOG_FILE: &str = "catalog.toml";
+/// What [`CATALOG_FILE`] starts with.
+const CATALOG_MAGIC: &[u8; 8] = b"VXCATLOG";
 pub const CATALOG_FORMAT: u32 = 1;
 const MAGIC: &[u8; 8] = b"VXBUNDLE";
 const BUNDLE_FORMAT: u32 = 1;
@@ -73,7 +79,8 @@ pub struct CatalogAsset {
     /// The asset's own file, then any it reads beside it.
     pub files: Vec<PackedFile>,
     /// Stored ready for the GPU rather than as its source file: a model's
-    /// meshes, LODs, textures and materials in Voxear's own format.
+    /// meshes, LODs, textures and materials, or a picture with its mips, in
+    /// Voxear's own format.
     #[serde(default, skip_serializing_if = "is_false")]
     pub cooked: bool,
     /// The package it is from, by name, for one of a package's assets.
@@ -106,7 +113,8 @@ pub enum Compression {
     Lz4,
     /// Smaller, for downloads, and slower to build.
     Zstd,
-    /// Stored as they are.
+    /// Stored as they are, for quick development builds: any other build
+    /// packs with LZ4 instead.
     None,
 }
 
@@ -129,19 +137,39 @@ impl Codec {
 const ZSTD_LEVEL: i32 = 19;
 
 impl Catalog {
+    /// The catalog in `dir`: its `catalog.bin`, or the `catalog.toml` an
+    /// older build wrote.
     pub fn read(dir: &Path) -> Result<Self> {
-        let path = dir.join(CATALOG_FILE);
-        let text = std::fs::read_to_string(&path)
-            .with_context(|| format!("reading {}; run `vox content build` first", path.display()))?;
+        let (path, old) = (dir.join(CATALOG_FILE), dir.join(TEXT_CATALOG_FILE));
+        let text = match std::fs::read(&path) {
+            Ok(bytes) => {
+                let shown = path.display().to_string();
+                String::from_utf8(crate::packed::unwrap(CATALOG_MAGIC, &bytes, &shown)?)
+                    .with_context(|| format!("reading {shown}"))?
+            }
+            Err(_) if old.is_file() => {
+                std::fs::read_to_string(&old).with_context(|| format!("reading {}", old.display()))?
+            }
+            Err(error) => {
+                return Err(error).with_context(|| format!("reading {}; run `vox content build` first", path.display()));
+            }
+        };
         let catalog: Catalog = toml::from_str(&text).with_context(|| format!("reading {}", path.display()))?;
         ensure!(catalog.format == CATALOG_FORMAT, "{} uses catalog format {}", path.display(), catalog.format);
         Ok(catalog)
     }
 
+    /// Writes the catalog into `dir` as `catalog.bin`, taking away a
+    /// `catalog.toml` an older build left there.
     pub fn write(&self, dir: &Path) -> Result<()> {
         let path = dir.join(CATALOG_FILE);
-        let text = format!("# Voxear content catalog, written by `vox content build`\n{}", toml::to_string(self)?);
-        std::fs::write(&path, text).with_context(|| format!("writing {}", path.display()))
+        let bytes = crate::packed::wrap(CATALOG_MAGIC, toml::to_string(self)?.as_bytes(), Compression::Zstd);
+        std::fs::write(&path, bytes).with_context(|| format!("writing {}", path.display()))?;
+        let old = dir.join(TEXT_CATALOG_FILE);
+        if old.is_file() {
+            std::fs::remove_file(&old).with_context(|| format!("removing {}", old.display()))?;
+        }
+        Ok(())
     }
 
     /// The assets as database entries, so references resolve by path or GUID
@@ -357,7 +385,7 @@ mod tests {
                 cooked: false,
                 package: None,
             };
-            // Through the catalog's own text, as a player reads it.
+            // Through the catalog's own file, as a player reads it.
             Catalog { format: CATALOG_FORMAT, bundles: vec![bundle], assets: vec![asset], ..Catalog::default() }.write(dir.path()).unwrap();
             let mut reader = BundleReader::new(dir.path(), &Catalog::read(dir.path()).unwrap());
             assert_eq!(reader.read("Levels/Main.level").unwrap(), level.as_bytes(), "{compression:?}");
@@ -367,5 +395,50 @@ mod tests {
         }
         let [lz4, zstd, none] = stored[..] else { unreachable!() };
         assert!(zstd < lz4 && lz4 < none, "Zstd packs smallest: {zstd} {lz4} {none}");
+    }
+
+    #[test]
+    fn the_catalog_ships_with_no_path_in_it_that_can_be_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let asset = |path: &str| CatalogAsset {
+            guid: AssetGuid::new_random().to_string(),
+            path: path.into(),
+            kind: AssetKind::Texture,
+            bundle: 0,
+            files: vec![PackedFile { path: path.into(), offset: 12, size: 5, stored: 5, codec: Codec::Lz4 }],
+            cooked: true,
+            package: None,
+        };
+        let paths = ["Textures/Gate_Albedo.png", "Sounds/Rain on the Roof.wav", "Levels/Coast.level"];
+        let bundle = BundleInfo { file: "one.bundle".into(), size: 17, roots: vec!["Levels/Coast.level".into()], dependencies: vec![] };
+        let catalog = Catalog {
+            format: CATALOG_FORMAT,
+            bundles: vec![bundle],
+            assets: paths.iter().map(|path| asset(path)).collect(),
+            ..Catalog::default()
+        };
+        std::fs::write(dir.path().join(TEXT_CATALOG_FILE), "left by an older build").unwrap();
+        catalog.write(dir.path()).unwrap();
+
+        let bytes = std::fs::read(dir.path().join(CATALOG_FILE)).unwrap();
+        for path in paths {
+            let name = path.rsplit('/').next().unwrap().split('.').next().unwrap();
+            assert!(!bytes.windows(name.len()).any(|w| w == name.as_bytes()), "{name} shows in the catalog");
+        }
+        assert!(!bytes.windows(4).any(|w| w == b"guid"), "nor do its keys");
+        assert!(!dir.path().join(TEXT_CATALOG_FILE).exists(), "an older build's text catalog goes");
+        let read = Catalog::read(dir.path()).unwrap();
+        assert_eq!(read.assets, catalog.assets);
+        assert_eq!(read.bundles, catalog.bundles);
+    }
+
+    #[test]
+    fn an_older_builds_text_catalog_still_reads() {
+        let dir = tempfile::tempdir().unwrap();
+        let text = "format = 1\n\n[[bundle]]\nfile = \"one.bundle\"\nsize = 12\nroots = [\"Levels/Main.level\"]\n";
+        std::fs::write(dir.path().join(TEXT_CATALOG_FILE), text).unwrap();
+        let catalog = Catalog::read(dir.path()).unwrap();
+        assert_eq!(catalog.bundles[0].file, "one.bundle");
+        assert!(Catalog::read(tempfile::tempdir().unwrap().path()).is_err(), "no catalog at all");
     }
 }

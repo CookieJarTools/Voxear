@@ -852,7 +852,7 @@ fn build_content(path: &Path) -> Result<()> {
         started.elapsed().as_secs_f32(),
         report.bundles.len() - written
     );
-    println!("  cooked {} models, {} more from the cache", report.cooked, report.cached);
+    println!("  cooked {} models and pictures, {} more from the cache", report.cooked, report.cached);
     for bundle in &report.bundles {
         println!("\n  {}  {:>8}  used by {}", &bundle.file[..8], size(bundle.size), bundle.roots.join(", "));
         for asset in &bundle.assets {

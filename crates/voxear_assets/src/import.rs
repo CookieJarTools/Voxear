@@ -273,8 +273,8 @@ impl ClipLoop {
     }
 }
 
-/// How a picture file (`.png` or `.jpg`) is imported, where it is used: as
-/// a texture a model reads.
+/// How a picture file (`.png` or `.jpg`) is imported, wherever it is used:
+/// by a model, a material, a light's cookie or a shader.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TextureImport {
@@ -283,7 +283,7 @@ pub struct TextureImport {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_size: Option<u32>,
     /// Whether a build ships it compressed, a quarter of the memory. Off,
-    /// it ships as it is, as sharp edges and pixel art need.
+    /// its pixels ship uncompressed, as sharp edges and pixel art need.
     pub compress: bool,
     /// Whether its green is turned over as it is read: a normal map made
     /// with its green pointing down, as some programs make them, then

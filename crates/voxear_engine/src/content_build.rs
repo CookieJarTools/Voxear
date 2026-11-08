@@ -21,8 +21,12 @@
 //!    Assets no root reaches are left out.
 //! 4. Models are **cooked**: stored ready for the GPU, with their meshes,
 //!    LODs, materials and textures (BC7, or BC5 for normal maps, with their
-//!    mips), so loading one is a read and an upload. Cooks are cached by a hash of their inputs, so an unchanged
-//!    model is not cooked again.
+//!    mips), so loading one is a read and an upload. So are pictures used on
+//!    their own, as their import settings say, BC7 or BC5 by how the shipped
+//!    materials use them. Cooks are cached by a hash of their inputs, so an
+//!    unchanged model or picture is not cooked again. Sounds ship in
+//!    Voxear's own wrapping (see [`voxear_assets::packed`]): no asset ships
+//!    as the file it was made as.
 //! 5. Bundles are named by a hash of their contents, so an unchanged bundle
 //!    is not written again.
 //!
@@ -46,11 +50,12 @@ use std::{
 
 use anyhow::{Context, Result};
 use voxear_assets::{
-    AssetDb, AssetGuid, AssetKind, AssetRef, BuildInclusion, MaterialRemap, Mount, Mounts,
-    bundle::{BundleInfo, BundleWriter, CATALOG_FORMAT, Catalog, CatalogAsset, StrippedAsset, content_hash},
+    AssetDb, AssetGuid, AssetKind, AssetRef, BuildInclusion, MaterialRemap, Mount, Mounts, TextureImport,
+    bundle::{BundleInfo, BundleWriter, CATALOG_FORMAT, Catalog, CatalogAsset, Compression, StrippedAsset, content_hash},
 };
+use voxear_render::{CookedPicture, PictureUse};
 
-use crate::project::ContentSettings;
+use crate::{MaterialMap, project::ContentSettings};
 
 /// What a build produced, for `vox content build` to print.
 #[derive(Debug)]
@@ -59,7 +64,8 @@ pub struct BuildReport {
     pub bundles: Vec<BundleReport>,
     /// Assets no root reaches, which the build left out.
     pub excluded: Vec<String>,
-    /// Models cooked this time, and models whose cook came from the cache.
+    /// Models and pictures cooked this time, and those whose cook came from
+    /// the cache.
     pub cooked: usize,
     pub cached: usize,
     /// Code roots that match no asset, which is most likely a typo.
@@ -116,6 +122,8 @@ struct Needs {
     /// are cooked into it, or a UI document's sheets and a level's baked
     /// paths, which ship with it.
     companions: Vec<String>,
+    /// The pictures it names, each with how it uses it.
+    pictures: Vec<(AssetGuid, PictureUse)>,
 }
 
 pub fn build(root: &Path, output: &Path, settings: &ContentSettings, code_roots: &[CodeRoot]) -> Result<BuildReport> {
@@ -170,14 +178,20 @@ pub fn build_mounted(
     }
     let file_size = |path: &str| db.mounts().file(path).metadata().map_or(0, |m| m.len());
     let mut stripped_bytes: u64 = stripped.iter().map(|e| file_size(&e.path)).sum();
+    // How what ships uses each picture, which says how the picture is cooked.
+    let mut uses: HashMap<AssetGuid, PictureUse> = HashMap::new();
+    let shipped = needs.iter().filter(|(owner, _)| usage.contains_key(*owner));
+    for &(picture, how) in shipped.flat_map(|(_, found)| &found.pictures) {
+        uses.entry(picture).and_modify(|was| *was = was.and(how)).or_insert(how);
+    }
     let unmatched = code_roots.iter().filter(|r| !db.entries().any(|e| r.matches(e.guid, &e.path))).cloned().collect();
     let mut excluded: Vec<String> =
         db.entries().filter(|e| !usage.contains_key(&e.guid)).map(|e| e.path.clone()).collect();
     excluded.sort();
 
-    // Every asset as it will ship: models cooked, everything else as written,
-    // and a UI document's sheets, a sound's import settings and a level's
-    // baked paths beside it.
+    // Every asset as it will ship: models and pictures cooked, sounds wrapped,
+    // everything else as written, and a UI document's sheets, a sound's import
+    // settings and a level's baked paths beside it.
     let mut cooker = Cooker::open(root, db.mounts())?;
     let mut stored = HashMap::with_capacity(usage.len());
     let mut beside: HashMap<AssetGuid, Vec<(String, Vec<u8>)>> = HashMap::new();
@@ -192,6 +206,15 @@ pub fn build_mounted(
                 stripped_bytes += needs[guid].companions.iter().filter(picture).map(|file| file_size(file)).sum::<u64>();
             }
             cooker.cook(&entry.path, &needs[guid].companions, pictures).with_context(|| format!("cooking {}", entry.path))?
+        } else if entry.kind == AssetKind::Texture {
+            // A picture nothing shipped names, as one code loads by path, is taken for colours.
+            let how = uses.get(guid).copied().unwrap_or(PictureUse::Colour);
+            cooker.cook_picture(&entry.path, how).with_context(|| format!("cooking {}", entry.path))?
+        } else if entry.kind == AssetKind::Sound {
+            // A sound file compressed already would only grow.
+            let compression = if compressed_sound(&entry.path) { Compression::None } else { settings.compression };
+            let extension = entry.path.rsplit_once('.').map_or("", |(_, extension)| extension).to_ascii_lowercase();
+            voxear_assets::packed::wrap_sound(&extension, &read(db.mounts(), &entry.path)?, compression)
         } else {
             read(db.mounts(), &entry.path)?
         };
@@ -236,9 +259,9 @@ pub fn build_mounted(
         let mut writer = BundleWriter::new(settings.compression);
         for &guid in &assets {
             let entry = db.get(guid).expect("from the database");
-            // A cooked model compressed its own GPU data, as GDeflate the GPU unpacks, and
-            // a compressed sound file would only grow.
-            let as_is = entry.kind == AssetKind::Model || compressed_sound(&entry.path);
+            // A cooked model compressed its own GPU data, as GDeflate the GPU unpacks, and a
+            // wrapped sound was compressed as it was wrapped.
+            let as_is = matches!(entry.kind, AssetKind::Model | AssetKind::Sound);
             let mut files = vec![if as_is {
                 writer.add_as_is(&entry.path, &stored[&guid])
             } else {
@@ -253,7 +276,7 @@ pub fn build_mounted(
                 kind: entry.kind,
                 bundle: index,
                 files,
-                cooked: entry.kind == AssetKind::Model,
+                cooked: matches!(entry.kind, AssetKind::Model | AssetKind::Texture),
                 package: entry.mount.package().map(str::to_string),
             });
             bundle_of.insert(guid, index);
@@ -565,7 +588,7 @@ fn find_needs(db: &AssetDb, guid: AssetGuid, kind: AssetKind, path: &str) -> Res
             let text = std::fs::read_to_string(db.file(path))?;
             let table: toml::Table = toml::from_str(&text)?;
             for (key, value) in &table {
-                collect(db, key == "fields", value, &mut needs);
+                collect(db, key == "fields", key, value, &mut needs);
             }
             // A level's baked paths go with it, for its sound to follow round the walls.
             let paths = crate::acoustics::paths_file(path);
@@ -611,7 +634,7 @@ fn compressed_sound(path: &str) -> bool {
 pub(crate) fn direct_needs(db: &AssetDb, table: &toml::Table) -> BTreeSet<AssetGuid> {
     let mut needs = Needs::default();
     for (key, value) in table {
-        collect(db, key == "fields", value, &mut needs);
+        collect(db, key == "fields", key, value, &mut needs);
     }
     needs.direct
 }
@@ -619,28 +642,41 @@ pub(crate) fn direct_needs(db: &AssetDb, table: &toml::Table) -> BTreeSet<AssetG
 /// Every string in a file that names an asset. Those inside behaviour
 /// `fields` are named rather than direct, since a `Ref<T>` loads its asset
 /// only when asked. Strings that name nothing, such as Obj names, are
-/// skipped.
-fn collect(db: &AssetDb, in_fields: bool, value: &toml::Value, needs: &mut Needs) {
+/// skipped. A picture is noted with how it is used, from the `key` it is
+/// named under.
+fn collect(db: &AssetDb, in_fields: bool, key: &str, value: &toml::Value, needs: &mut Needs) {
     match value {
         toml::Value::String(text) => {
             let Some(guid) = AssetRef::parse(text, db).ok().and_then(|r| r.guid()) else { return };
-            if db.get(guid).is_none() {
-                return;
+            let Some(entry) = db.get(guid) else { return };
+            if entry.kind == AssetKind::Texture {
+                needs.pictures.push((guid, picture_use(key)));
             }
             let target = if in_fields { &mut needs.named } else { &mut needs.direct };
             target.insert(guid);
         }
-        toml::Value::Array(items) => items.iter().for_each(|v| collect(db, in_fields, v, needs)),
+        toml::Value::Array(items) => items.iter().for_each(|v| collect(db, in_fields, key, v, needs)),
         toml::Value::Table(table) => {
             for (key, value) in table {
-                collect(db, in_fields || key == "fields", value, needs);
+                collect(db, in_fields || key == "fields", key, value, needs);
             }
         }
         _ => {}
     }
 }
 
-/// Cooks models, reusing earlier cooks of the same inputs.
+/// How a file uses a picture it names under `key`: a material's normal map,
+/// its other maps of values, and anything else, a colour map, a light's
+/// cookie or a shader's property, for colours.
+fn picture_use(key: &str) -> PictureUse {
+    match MaterialMap::ALL.into_iter().find(|map| map.key() == key) {
+        Some(MaterialMap::Normal) => PictureUse::Normal,
+        Some(map) if !map.srgb() => PictureUse::Values,
+        _ => PictureUse::Colour,
+    }
+}
+
+/// Cooks models and pictures, reusing earlier cooks of the same inputs.
 struct Cooker {
     /// The project's folder and its packages', which models are read from.
     mounts: Mounts,
@@ -690,6 +726,26 @@ impl Cooker {
             model.drop_pictures();
         }
         let bytes = model.cook()?.to_bytes();
+        std::fs::write(&cached, &bytes).with_context(|| format!("writing {}", cached.display()))?;
+        self.cooked += 1;
+        Ok(bytes)
+    }
+
+    /// The picture cooked as its import settings say, for how the shipped
+    /// content uses it. Its cache key covers its bytes, its `.meta`, its use
+    /// and the format version.
+    fn cook_picture(&mut self, path: &str, usage: PictureUse) -> Result<Vec<u8>> {
+        let file = read(&self.mounts, path)?;
+        let meta = std::fs::read(self.mounts.meta_file(path)).unwrap_or_default();
+        let version = voxear_render::COOKED_PICTURE_VERSION.to_le_bytes();
+        let cached = self.dir.join(format!("{}.picture", content_hash(&[&version, &[usage.key()], &file, &meta])));
+        self.used.push(cached.clone());
+        if let Ok(bytes) = std::fs::read(&cached) {
+            self.cached += 1;
+            return Ok(bytes);
+        }
+        let settings = TextureImport::from_meta(&String::from_utf8_lossy(&meta));
+        let bytes = CookedPicture::cook(&file, &settings, usage)?.to_bytes();
         std::fs::write(&cached, &bytes).with_context(|| format!("writing {}", cached.display()))?;
         self.cooked += 1;
         Ok(bytes)

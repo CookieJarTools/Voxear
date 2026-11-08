@@ -21,7 +21,7 @@ use voxear_assets::{
 use voxear_core::math::{Quat, Vec3};
 use voxear_ecs::World;
 use voxear_render::{
-    CookedModel, Glow, ImportedModel, Leaves, ImportedNode, MaterialDesc, MaterialHandle, MeshData, MeshHandle, MeshRenderer,
+    CookedModel, CookedPicture, Glow, ImportedModel, Leaves, ImportedNode, MaterialDesc, MaterialHandle, MeshData, MeshHandle, MeshRenderer,
     IesProfile, MeshTriangles, ModelAnimation, Primitive, Renderer, TextureId, TextureSource,
 };
 use voxear_scene::Destroying;
@@ -166,6 +166,17 @@ impl MaterialMap {
     /// Whether its picture holds colours, read as sRGB, rather than values.
     pub fn srgb(self) -> bool {
         matches!(self, Self::Color | Self::Emissive)
+    }
+
+    /// The key a material's file names its picture under.
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Color => "color_map",
+            Self::Metallic => "metallic_map",
+            Self::Normal => "normal_map",
+            Self::Emissive => "emissive_map",
+            Self::Height => "height_map",
+        }
     }
 }
 
@@ -1257,13 +1268,23 @@ impl Content {
         ensure!(entry.kind == AssetKind::Texture, "{} is not a picture", entry.path);
         let path = entry.path.clone();
         let bytes = self.read(&path)?;
-        let picture = image::load_from_memory(&bytes).with_context(|| format!("reading {path}"))?.to_rgba8();
-        let (width, height) = picture.dimensions();
+        // A build cooks a picture shaped as a lookup table with its pixels as they were.
+        let ((width, height), rgba) = match CookedPicture::is_cooked(&bytes) {
+            true => {
+                let cooked = CookedPicture::from_bytes(&bytes, &path)?;
+                let rgba = cooked.rgba().with_context(|| format!("{path} is not shaped as a lookup table"))?;
+                (cooked.size(), rgba.to_vec())
+            }
+            false => {
+                let picture = image::load_from_memory(&bytes).with_context(|| format!("reading {path}"))?.to_rgba8();
+                (picture.dimensions(), picture.into_raw())
+            }
+        };
         ensure!(
             width == height * height,
             "{path} is {width}×{height}: a lookup table is as many squares wide as it is high, as 256×16 or 1024×32"
         );
-        let texture = renderer.add_lut(picture.as_raw(), height)?;
+        let texture = renderer.add_lut(&rgba, height)?;
         self.luts.insert(guid, texture);
         Ok(texture)
     }
@@ -1283,6 +1304,12 @@ impl Content {
         ensure!(entry.kind == AssetKind::Texture, "{} is not a picture", entry.path);
         let path = entry.path.clone();
         let bytes = self.read(&path)?;
+        // A build ships the picture cooked, as its import settings said.
+        if CookedPicture::is_cooked(&bytes) {
+            let texture = renderer.add_cooked_picture(&path, &CookedPicture::from_bytes(&bytes, &path)?, srgb)?;
+            self.pictures.insert((guid, srgb), texture);
+            return Ok(texture);
+        }
         let meta = format!("{path}.{}", voxear_assets::META_EXTENSION);
         let settings = self.read_text(&meta).map(|text| TextureImport::from_meta(&text)).unwrap_or_default();
         let mut picture = image::load_from_memory(&bytes).with_context(|| format!("reading {path}"))?.to_rgba8();

@@ -55,6 +55,17 @@ pub fn fitted(world: &mut World, source: &ClipSource, target: &Arc<ModelAnimatio
     clip
 }
 
+/// The clip `source` as made to fit `target`, if `fitted` has made it.
+pub fn fitted_already(world: &World, source: &ClipSource, target: &Arc<ModelAnimation>) -> Option<Arc<Clip>> {
+    let fitted = world.resource::<Fitted>()?;
+    let found = fitted.made.iter().find(|made| {
+        made.index == source.index
+            && Weak::ptr_eq(&made.source, &Arc::downgrade(&source.animation))
+            && Weak::ptr_eq(&made.target, &Arc::downgrade(target))
+    });
+    found.map(|made| made.clip.clone())
+}
+
 /// Clips made to fit skeletons other than their own.
 #[derive(Default)]
 struct Fitted {

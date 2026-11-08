@@ -318,8 +318,9 @@ fn an_arms_clip_holds_the_gun_where_it_has_it_and_puts_the_palms_where_its_are()
     }
 
     // On a body named otherwise and a tenth shorter, both palms stay where the clip's are on the gun, which shows
-    // just where the clip shows it: the camera comes to where the clip's was from the shorter body's shoulders, not
-    // the gun to the shoulders; and so they do with the view tipped well down or up.
+    // just where the clip shows it but a tenth nearer: the camera comes to where the clip's was from the shorter
+    // body's shoulders, and the hold as much nearer the eyes, so the arms reach it as bent as the clip's; and so they
+    // do with the view tipped well down or up.
     let mut shorter = crate::animation::rig::tests::body(|part, side| match side {
         Some(left) => format!("DEF-{part}.{}", if left { "L" } else { "R" }),
         None => format!("DEF-{part}"),
@@ -336,8 +337,8 @@ fn an_arms_clip_holds_the_gun_where_it_has_it_and_puts_the_palms_where_its_are()
             assert!(off < 0.005, "on the shorter body, looking {pitch} degrees up, palm {arm}: {off} m off");
         }
         if pitch == 0.0 {
-            let off = gun_from_eye(&other).w_axis.truncate().distance(shown.w_axis.truncate());
-            assert!(off < 0.003, "the gun where the clip shows it: {off} m off");
+            let off = gun_from_eye(&other).w_axis.truncate().distance(shown.w_axis.truncate() * 0.9);
+            assert!(off < 0.003, "the gun where the clip shows it, a tenth nearer: {off} m off");
         }
     }
 
@@ -426,6 +427,78 @@ fn turned(mut skeleton: Skeleton) -> Skeleton {
             parent.map_or(at[bone], |parent| above.inverse() * (at[bone] - at[parent]));
     }
     skeleton
+}
+
+/// The clip of `arms` with its right forearm rolled `degrees` about its own
+/// length and its hand turned back as it was, so the hand sits and turns
+/// just as before: a twist only the forearm shows. Gives the clip's file,
+/// and how far its forearm is then rolled from its upper arm.
+fn rolled(arms: &Arc<ModelAnimation>, degrees: f32) -> (Arc<ModelAnimation>, f32) {
+    use crate::animation::ik::PoseEdit;
+    use crate::animation::rig::Rig;
+    let skeleton = &arms.skeleton;
+    let arm = Rig::find(skeleton).unwrap().arms[1].clone();
+    let mut edit = PoseEdit::new(skeleton, &skeleton.model_matrices(arms.clips[0].frame(0)));
+    let (along, hand) = ((edit.position(arm.hand) - edit.position(arm.forearm)).normalize(), edit.rotation(arm.hand));
+    edit.turn(arm.forearm, Quat::from_axis_angle(along, degrees.to_radians()));
+    edit.set_rotation(arm.hand, hand);
+    let roll = forearm_roll(&edit, &arm);
+    let frame = edit.local.clone();
+    let clip = Clip { name: "Hold".into(), frames: 61, poses: (0..61).flat_map(|_| frame.clone()).collect() };
+    (Arc::new(ModelAnimation { skeleton: skeleton.clone(), skins: Vec::new(), clips: vec![clip] }), roll)
+}
+
+/// How far an arm's forearm is rolled about its own length from how its
+/// upper arm holds it, in radians: the twist of its turn from the upper
+/// arm's about the line to the wrist.
+fn forearm_roll(edit: &crate::animation::ik::PoseEdit, arm: &crate::animation::rig::Arm) -> f32 {
+    let turn = edit.rotation(arm.upper).inverse() * edit.rotation(arm.forearm);
+    // The same turn either way round, taken the short way, so a roll reads within half a turn.
+    let turn = if turn.w < 0.0 { -turn } else { turn };
+    let length = edit.local[arm.hand].translation.normalize();
+    let along = Vec3::new(turn.x, turn.y, turn.z).dot(length);
+    2.0 * along.atan2(turn.w)
+}
+
+/// How far a body's right forearm is rolled from its upper arm, in radians.
+fn body_roll(scene: &Scene) -> f32 {
+    use crate::animation::ik::PoseEdit;
+    use crate::animation::rig::Rig;
+    let animation = scene.world.get::<ModelRenderer>(scene.body).unwrap().animation.clone().unwrap();
+    let arm = Rig::find(&animation.skeleton).unwrap().arms[1].clone();
+    let edit = PoseEdit::new(&animation.skeleton, &scene.world.get::<Pose>(scene.body).unwrap().bones);
+    forearm_roll(&edit, &arm)
+}
+
+#[test]
+fn an_arm_the_clips_hold_turns_as_theirs_does_twist_and_all() {
+    let mut own = scene_with(GunKind::BoltActionRifle);
+    steady(&mut own);
+    settle(&mut own, 40);
+    let (arms, palms) = clip_of_hold(&mut own);
+    let (arms, roll) = rolled(&arms, 40.0);
+    assert!(roll.to_degrees().abs() > 30.0, "the clip's forearm is rolled: {} degrees", roll.to_degrees());
+
+    // The forearm rolls as the clip's, on the same body and on one a tenth shorter named otherwise, a twist no
+    // place of the hand shows; and both palms still hold where the clip's do.
+    let mut shorter = crate::animation::rig::tests::body(|part, side| match side {
+        Some(left) => format!("DEF-{part}.{}", if left { "L" } else { "R" }),
+        None => format!("DEF-{part}"),
+    });
+    shorter.bones.iter_mut().for_each(|bone| bone.rest.translation *= 0.9);
+    let same = own.world.get::<ModelRenderer>(own.body).unwrap().animation.clone().unwrap().skeleton.clone();
+    for (name, body) in [("the same body", same), ("the shorter body", shorter)] {
+        let mut scene = scene_with_body(body);
+        steady(&mut scene);
+        held_by(&mut scene, &arms);
+        settle(&mut scene, 40);
+        let off = (body_roll(&scene) - roll).to_degrees().abs();
+        assert!(off < 3.0, "on {name}, the forearm rolls as the clip's: {off} degrees off");
+        for arm in 0..2 {
+            let off = palm_on_gun(&scene, arm).distance(palms[arm]);
+            assert!(off < 0.005, "on {name}, palm {arm} where the clip's is: {off} m off");
+        }
+    }
 }
 
 /// The way each finger joint of a body's hand points, in the hand's frame.

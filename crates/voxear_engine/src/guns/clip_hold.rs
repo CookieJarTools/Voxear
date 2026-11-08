@@ -1,30 +1,35 @@
 //! A gun held by clips, for a gun from an animation pack: its arms clips
-//! say where the gun and the hands go, and the holder's own body reaches
-//! there. A clip is read on its own skeleton, so it holds the gun alike on
-//! any body with arms, hands and fingers the rig finds. From each frame it
-//! gives the gun's place before the eyes, as the bone carrying it is from
-//! the clip's head; each hand's palm and the ways its fingers point and
-//! its palm faces, on the gun; the way each elbow bends; and how far each
-//! finger's joints bend. The holder's arms then reach as they always do,
-//! so aiming, sway and recoil still move the gun, and the hands with it.
+//! say where the gun goes and how the arms hold it. A clip is read on its
+//! own skeleton, for the gun's place before the eyes, as the bone carrying
+//! it is from the clip's head, and each hand's palm, knuckles and the ways
+//! its fingers point and its palm faces, on the gun. It is also played on
+//! the holder's own body, as any clip is made to fit another skeleton, for
+//! its arms: each bone from the upper arm out to the fingertips turns as
+//! the clip turns it, twist and all. The holder's hands are then brought
+//! the rest of the way onto the gun, only as far as a body built otherwise
+//! needs, and as aiming, sway and recoil move the gun.
 //!
 //! The clips hold the gun where they have it before the eyes, and nothing
 //! moves it from there but the layers the holder adds on top: the camera
-//! stays where the clips' camera was from the body's shoulders, so the
-//! body's arms reach the gun as the clip's do.
+//! stays where the clips' camera was from the body's shoulders, and the gun
+//! as far before it, both scaled to the body's arms, so they reach the gun
+//! bent as the clip's do.
+
+use std::sync::Arc;
 
 use voxear_core::math::{Mat4, Quat, Vec3};
 use voxear_ecs::World;
-use voxear_render::Skeleton;
+use voxear_render::{ModelAnimation, Skeleton};
 
 use super::handling::{PackClips, Place};
-use super::hands::{arm_reach, finger_bends, finger_ways, knuckles, palm_of};
-use crate::animation::Clips;
+use super::hands::{arm_reach, knuckles, palm_of};
+use super::playing::ActionPlay;
+use crate::animation::{ClipSource, Clips};
 use crate::animation::ik::{PoseEdit, hand_axes};
-use crate::animation::rig::Rig;
+use crate::animation::rig::{Arm, Rig};
 
 /// Where a clip holds the gun and has the hands, at one moment.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ClipPose {
     /// The gun's place in the eyes' space.
     pub gun: Mat4,
@@ -36,23 +41,29 @@ pub struct ClipPose {
     /// from how they stand at rest, in its model's space: the stance its arms
     /// hold the gun from.
     pub stance: [Quat; 3],
+    /// The left arm, then the right, as the clip poses them on the holder's
+    /// body; none until the clip is made to fit it (see `fit_clips`).
+    pub arms: Option<[ArmPose; 2]>,
 }
 
-/// A hand as a clip has it: the middle of its palm and of its knuckles, the way its fingers
-/// point and its palm faces, in the gun's space; the way its elbow is from
-/// its shoulder, in the eyes' space; and how far each finger's joints bend
-/// toward the palm, thumb first, in radians (see `finger_bends`), and the
-/// way each points in the hand's own frame (see `finger_ways`); and how far
-/// its arm reaches, from the shoulder to the middle of the palm.
+/// An arm as a clip poses it on the holder's body: its upper arm's turn in
+/// the eyes' space, and the turn of each bone under it, as the body's
+/// skeleton orders them, in its parent's.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ArmPose {
+    pub upper: Quat,
+    pub under: Vec<Quat>,
+}
+
+/// A hand as a clip has it: the middle of its palm and of its knuckles,
+/// the way its fingers point and its palm faces, in the gun's space; and
+/// how far its arm reaches, from the shoulder to the middle of the palm.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ClipHand {
     pub contact: Vec3,
     pub knuckles: Vec3,
     pub fingers: Vec3,
     pub palm: Vec3,
-    pub elbow: Vec3,
-    pub bends: [[f32; 3]; 5],
-    pub ways: [[Vec3; 3]; 5],
     pub reach: f32,
 }
 
@@ -65,7 +76,18 @@ impl ClipPose {
         let hands = std::array::from_fn(|hand| self.hands[hand].lerp(&other.hands[hand], t));
         let shoulders = std::array::from_fn(|arm| self.shoulders[arm].lerp(other.shoulders[arm], t));
         let stance = std::array::from_fn(|k| self.stance[k].slerp(other.stance[k], t));
-        ClipPose { gun, hands, shoulders, stance }
+        let arms = match (&self.arms, &other.arms) {
+            (Some(arms), Some(others)) => Some(std::array::from_fn(|arm| arms[arm].lerp(&others[arm], t))),
+            (arms, others) => arms.clone().or_else(|| others.clone()),
+        };
+        ClipPose { gun, hands, shoulders, stance, arms }
+    }
+}
+
+impl ArmPose {
+    fn lerp(&self, other: &ArmPose, t: f32) -> ArmPose {
+        let under = self.under.iter().zip(&other.under).map(|(a, b)| a.slerp(*b, t)).collect();
+        ArmPose { upper: self.upper.slerp(other.upper, t), under }
     }
 }
 
@@ -77,11 +99,6 @@ impl ClipHand {
             knuckles: self.knuckles.lerp(other.knuckles, t),
             fingers: way(self.fingers, other.fingers),
             palm: way(self.palm, other.palm),
-            elbow: way(self.elbow, other.elbow),
-            bends: std::array::from_fn(|f| {
-                std::array::from_fn(|j| self.bends[f][j] * (1.0 - t) + other.bends[f][j] * t)
-            }),
-            ways: std::array::from_fn(|f| std::array::from_fn(|j| way(self.ways[f][j], other.ways[f][j]))),
             reach: self.reach + (other.reach - self.reach) * t,
         }
     }
@@ -91,8 +108,9 @@ impl ClipHand {
 /// in, looping or not: the gun carried by the bone `carrier` of its
 /// skeleton, or by one named `gun_carrier`, or by the right hand, and sitting
 /// `offset` from it; its eyes `eyes` from its head, in its space, which go
-/// where the holder's eyes are. None
-/// before the clip is read, or for a skeleton the rig finds no arms in.
+/// where the holder's eyes are; and with the holder's `body`, its arms as
+/// it poses them there. None before the clip is read, or for a skeleton
+/// the rig finds no arms in.
 pub fn clip_pose(
     world: &World,
     reference: &str,
@@ -100,6 +118,7 @@ pub fn clip_pose(
     looping: bool,
     (carrier, offset): (&str, &Place),
     eyes: Vec3,
+    body: Option<&Arc<ModelAnimation>>,
 ) -> Option<ClipPose> {
     let source = world.resource::<Clips>()?.get(reference)?;
     let skeleton = &source.animation.skeleton;
@@ -116,15 +135,11 @@ pub fn clip_pose(
     let hand = |arm: usize| -> Option<ClipHand> {
         let arm = &rig.arms[arm];
         let (palm, (fingers, facing)) = (palm_of(&edit, arm)?, hand_axes(&edit, arm)?);
-        let elbow = (edit.position(arm.forearm) - edit.position(arm.upper)).normalize_or_zero();
         Some(ClipHand {
             contact: into_gun.transform_point3(palm.point),
             knuckles: into_gun.transform_point3(knuckles(&edit, arm)?),
             fingers: into_gun.transform_vector3(fingers).normalize_or_zero(),
             palm: into_gun.transform_vector3(facing).normalize_or_zero(),
-            elbow,
-            bends: finger_bends(&edit, arm),
-            ways: finger_ways(&edit, &at_rest, arm),
             reach: arm_reach(&at_rest, arm)?,
         })
     };
@@ -134,7 +149,72 @@ pub fn clip_pose(
         bone.map_or(Quat::IDENTITY, |bone| (edit.rotation(bone) * at_rest.rotation(bone).inverse()).normalize())
     };
     let stance = [turned(Some(rig.chest())), turned(rig.arms[0].clavicle), turned(rig.arms[1].clavicle)];
-    Some(ClipPose { gun: into_eye * carried, hands: [hand(0)?, hand(1)?], shoulders, stance })
+    let arms = body.and_then(|body| arms_on(world, source, at, looping, body));
+    Some(ClipPose { gun: into_eye * carried, hands: [hand(0)?, hand(1)?], shoulders, stance, arms })
+}
+
+/// The arms of the clip `source` as it poses them on `body` `at` seconds
+/// in (see `ArmPose`): none until `fit_clips` has made it fit the body.
+/// The fitted clip turns each bone in the model's space as the clip turns
+/// its own, so the upper arm's turn there is its turn in the clip's eyes'.
+fn arms_on(
+    world: &World,
+    source: &ClipSource,
+    at: f32,
+    looping: bool,
+    body: &Arc<ModelAnimation>,
+) -> Option<[ArmPose; 2]> {
+    let clip = crate::animation::retarget::fitted_already(world, source, body)?;
+    let skeleton = &body.skeleton;
+    let rig = Rig::find(skeleton)?;
+    let mut pose = skeleton.rest();
+    clip.sample(at, looping, &mut pose);
+    let posed = skeleton.model_matrices(&pose);
+    let arm = |arm: &Arm| ArmPose {
+        upper: posed[arm.upper].to_scale_rotation_translation().1,
+        under: under(skeleton, arm.upper).into_iter().map(|bone| pose[bone].rotation).collect(),
+    };
+    Some([arm(&rig.arms[0]), arm(&rig.arms[1])])
+}
+
+/// Makes every arms clip that may hold the gun now fit the body `body`, so
+/// `clip_pose` can pose its arms there: the holding clips, and the arms
+/// clip of the part of `play` under way.
+pub fn fit_clips(world: &mut World, pack: &PackClips, play: Option<&ActionPlay>, body: &Arc<ModelAnimation>) {
+    let part = play.and_then(|play| play.part()).map(|(part, _)| part.arms.clone());
+    let references = [&pack.idle, &pack.walk, &pack.run, &pack.sprint].into_iter().cloned().chain(part);
+    for reference in references.filter(|reference| !reference.is_empty()) {
+        if let Some(source) = world.resource::<Clips>().and_then(|clips| clips.get(&reference)).cloned() {
+            crate::animation::retarget::fitted(world, &source, body);
+        }
+    }
+}
+
+/// Poses `arm` of a body as a clip poses it (see `ArmPose`): its upper arm
+/// turned in the model's space by `eyes`, the eyes' turn there, and every
+/// bone under it as the clip turns it in its parent's; each `weight` of
+/// the way from how it stands.
+pub fn pose_arm(edit: &mut PoseEdit, skeleton: &Skeleton, arm: &Arm, pose: &ArmPose, eyes: Quat, weight: f32) {
+    let now = edit.rotation(arm.upper);
+    edit.set_rotation(arm.upper, now.slerp(eyes * pose.upper, weight));
+    for (bone, turn) in under(skeleton, arm.upper).into_iter().zip(&pose.under) {
+        let local = &mut edit.local[bone].rotation;
+        *local = local.slerp(*turn, weight).normalize();
+    }
+}
+
+/// Every bone under `bone`, in the skeleton's order, parents before their
+/// children.
+fn under(skeleton: &Skeleton, bone: usize) -> Vec<usize> {
+    let mut within = vec![false; skeleton.bones.len()];
+    let mut found = Vec::new();
+    for (index, named) in skeleton.bones.iter().enumerate() {
+        if named.parent.is_some_and(|parent| parent == bone || within[parent]) {
+            within[index] = true;
+            found.push(index);
+        }
+    }
+    found
 }
 
 /// The bone that carries the gun: the one named, else one named
@@ -170,15 +250,22 @@ pub fn holding_weights(pack: &PackClips, speed: f32, sprinting: bool) -> [f32; 4
     wanted
 }
 
-/// The holding clips blended by `weights`, each looped at `time`.
-pub fn holding_pose(world: &World, pack: &PackClips, weights: [f32; 4], time: f32) -> Option<ClipPose> {
+/// The holding clips blended by `weights`, each looped at `time`, with
+/// their arms as they pose them on `body`.
+pub fn holding_pose(
+    world: &World,
+    pack: &PackClips,
+    weights: [f32; 4],
+    time: f32,
+    body: Option<&Arc<ModelAnimation>>,
+) -> Option<ClipPose> {
     let eyes = Vec3::from(pack.eyes);
     let clips = [&pack.idle, &pack.walk, &pack.run, &pack.sprint];
     let mut blended: Option<(ClipPose, f32)> = None;
     for (clip, weight) in clips.into_iter().zip(weights).filter(|(clip, weight)| !clip.is_empty() && *weight > 1e-3) {
         let length = super::gun_clips::length(world, clip).max(1e-3);
-        let Some(pose) = clip_pose(world, clip, time % length, true, (&pack.carrier, &pack.carrier_offset), eyes)
-        else {
+        let carrier = (pack.carrier.as_str(), &pack.carrier_offset);
+        let Some(pose) = clip_pose(world, clip, time % length, true, carrier, eyes, body) else {
             continue;
         };
         blended = Some(match blended {
@@ -199,8 +286,10 @@ pub fn fire_kick(world: &World, pack: &PackClips, since: f32, aimed: bool) -> Op
         return None;
     }
     let carrier = (pack.carrier.as_str(), &pack.carrier_offset);
-    let (first, now) =
-        (clip_pose(world, clip, 0.0, false, carrier, eyes)?, clip_pose(world, clip, since, false, carrier, eyes)?);
+    let (first, now) = (
+        clip_pose(world, clip, 0.0, false, carrier, eyes, None)?,
+        clip_pose(world, clip, since, false, carrier, eyes, None)?,
+    );
     Some(first.gun.inverse() * now.gun)
 }
 

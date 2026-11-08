@@ -46,14 +46,14 @@ The camera's **Field of view** matters as much. Packs are usually filmed 90° ac
 
 | Camera | What you see |
 | --- | --- |
-| **As Filmed** | The camera is where the pack's camera was, as far from your character's shoulders as it was from the clips', scaled to its arms. The arms hold the gun as the clips do, and it shows as in the pack's videos. |
+| **As Filmed** | The camera is where the pack's camera was, as far from your character's shoulders as it was from the clips', scaled to its arms, and the gun comes as much nearer or further. The arms hold the gun bent as the clips' are, and it shows as in the pack's videos, a little larger for shorter arms. |
 | **At the Eyes** | The camera is at your character's eyes. Those sit higher above the shoulders than a pack's camera usually does, so the gun shows lower and nearer, and a short arm may not quite reach it. |
 
 Either way, the camera is worked out on your character standing at rest and then stays put on it: a pack films its clips from a camera held still, and your character's walk and run don't carry the camera up and down with them. The pack's camera is often lower than real eyes, near the neck, so **As Filmed** looks from a little lower than your character's eyes. Put the gun away and the camera goes back to the eyes.
 
 Looking up or down, the gun turns with the view but swings about the shoulders rather than the eyes, so the arms reach it just as well however far the view tips. It moves a little in the view as it does: up and nearer when looking far up.
 
-Each hand stays where the clips have it on the gun, its knuckles where the clips' knuckles are, so a hand with a longer palm still closes on the bolt handle or the grip as the clips' hand does. Its fingers take the clips' shape, spread and thumb included. Nothing moves the gun from where the clips have it but the layers below; an arm that can't quite reach falls short of it rather than the gun coming to the hand.
+Your character's arms take the clips' own pose, bone by bone, as its walk takes the walk clips': the upper arm, forearm, wrist and every finger turn as the clips turn them, twist included. Each hand is then brought the rest of the way onto the gun, its knuckles where the clips' knuckles are, only as far as your character's build needs, with the elbow where the clips' pose has it. So a hand with a longer palm still closes on the bolt handle or the grip as the clips' hand does. Nothing moves the gun from where the clips have it but the layers below; an arm that can't quite reach falls short of it rather than the gun coming to the hand.
 
 A pack's clips seldom aim. Aiming brings the gun's sights onto the camera's line, as it does for any gun, but no nearer the eye than the clips hold it: the gun comes across rather than back, as the pack's own camera would come down onto the sights. So the hands stay as far ahead of the eye as the clips have them, and the elbows bend as the clips bend them. Set the sockets carefully:
 

@@ -276,6 +276,7 @@ pub fn knuckles_from_palm(edit: &PoseEdit, arm: &Arm) -> Option<Vec3> {
 /// The way a finger's joint points: to the next joint, or past the last to
 /// a bone at the tip where the finger has one, else the way the link before
 /// it pointed at rest, turned as the joint has turned since.
+#[cfg(test)]
 fn link_way(edit: &PoseEdit, rest: &PoseEdit, bones: &[usize], joint: usize) -> Option<Vec3> {
     let bone = *bones.get(joint)?;
     if let Some(&next) = bones.get(joint + 1) {
@@ -287,7 +288,9 @@ fn link_way(edit: &PoseEdit, rest: &PoseEdit, bones: &[usize], joint: usize) -> 
 }
 
 /// The way each of a hand's finger joints points, from the knuckle out, in
-/// the hand's own frame, thumb first; zero for a joint the finger lacks.
+/// the hand's own frame, thumb first; zero for a joint the finger lacks:
+/// for tests to compare a hand's fingers' shape with a clip's.
+#[cfg(test)]
 pub fn finger_ways(edit: &PoseEdit, rest: &PoseEdit, arm: &Arm) -> [[Vec3; 3]; 5] {
     let Some(frame) = hand_frame(edit, arm) else { return [[Vec3::ZERO; 3]; 5] };
     let into = frame.inverse();
@@ -296,21 +299,6 @@ pub fn finger_ways(edit: &PoseEdit, rest: &PoseEdit, arm: &Arm) -> [[Vec3; 3]; 5
             link_way(edit, rest, &arm.fingers[finger], joint).map_or(Vec3::ZERO, |way| into * way)
         })
     })
-}
-
-/// Turns each of a hand's finger joints, from the knuckle out, `weight` of
-/// the way to point as `ways` has them in the hand's own frame: a clip's
-/// hand's, so a hand built otherwise, or whose bones are turned otherwise
-/// at rest, shapes its fingers as the clip's do, spread and thumb and all.
-pub fn point_fingers(edit: &mut PoseEdit, rest: &PoseEdit, arm: &Arm, ways: &[[Vec3; 3]; 5], weight: f32) {
-    let Some(frame) = hand_frame(edit, arm) else { return };
-    for (bones, ways) in arm.fingers.iter().zip(ways) {
-        for (joint, way) in ways.iter().enumerate().filter(|(joint, way)| **way != Vec3::ZERO && *joint < bones.len()) {
-            let Some(now) = link_way(edit, rest, bones, joint) else { continue };
-            let wanted = (frame * *way).normalize();
-            edit.turn(bones[joint], Quat::IDENTITY.slerp(Quat::from_rotation_arc(now, wanted), weight));
-        }
-    }
 }
 
 /// A finger as it stands straight: its joints, from the knuckle out, and

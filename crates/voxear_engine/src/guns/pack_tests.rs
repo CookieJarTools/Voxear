@@ -354,6 +354,35 @@ fn an_arms_clip_holds_the_gun_where_it_has_it_and_puts_the_palms_where_its_are()
 }
 
 #[test]
+fn aimed_a_gun_held_by_clips_comes_up_no_nearer_than_they_hold_it() {
+    let mut own = scene_with(GunKind::BoltActionRifle);
+    steady(&mut own);
+    settle(&mut own, 40);
+    let (arms, _) = clip_of_hold(&mut own);
+    let mut scene = scene_with(GunKind::BoltActionRifle);
+    steady(&mut scene);
+    held_by(&mut scene, &arms);
+    settle(&mut scene, 40);
+    let rear = Vec3::from(scene.world.get::<Gun>(scene.gun).unwrap().rear_sight);
+    let held = gun_from_eye(&scene).transform_point3(rear).z;
+
+    // Its eye relief nearer than the clips hold it: the sights come onto the camera's line as far out as the clips
+    // have them, the hands no nearer the eye.
+    scene.world.get_mut::<Gun>(scene.gun).unwrap().eye_relief = held - 0.15;
+    scene.world.get_mut::<GunHolder>(scene.player).unwrap().aiming = true;
+    settle(&mut scene, 60);
+    let sighted = gun_from_eye(&scene).transform_point3(rear);
+    assert!(sighted.truncate().length() < 0.003, "the rear sight on the camera's line: {sighted}");
+    assert!((sighted.z - held).abs() < 0.005, "as far out as the clips hold it, {held} m: {sighted}");
+
+    // Further than they hold it: as far as its eye relief says.
+    scene.world.get_mut::<Gun>(scene.gun).unwrap().eye_relief = held + 0.1;
+    settle(&mut scene, 60);
+    let sighted = gun_from_eye(&scene).transform_point3(rear);
+    assert!((sighted.z - (held + 0.1)).abs() < 0.005, "at the eye relief: {sighted}");
+}
+
+#[test]
 fn a_gun_held_by_clips_neither_bobs_nor_breathes_as_its_clips_do_that_themselves() {
     let mut own = scene_with(GunKind::BoltActionRifle);
     steady(&mut own);

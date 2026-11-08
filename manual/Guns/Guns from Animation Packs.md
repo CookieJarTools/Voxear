@@ -55,10 +55,10 @@ Looking up or down, the gun turns with the view but swings about the shoulders r
 
 Each hand stays where the clips have it on the gun, its knuckles where the clips' knuckles are, so a hand with a longer palm still closes on the bolt handle or the grip as the clips' hand does. Its fingers take the clips' shape, spread and thumb included. Nothing moves the gun from where the clips have it but the layers below; an arm that can't quite reach falls short of it rather than the gun coming to the hand.
 
-A pack's clips seldom aim. Aiming brings the gun's sights to the eye from wherever the clips hold it, as it does for any gun, so set the sockets carefully:
+A pack's clips seldom aim. Aiming brings the gun's sights onto the camera's line, as it does for any gun, but no nearer the eye than the clips hold it: the gun comes across rather than back, as the pack's own camera would come down onto the sights. So the hands stay as far ahead of the eye as the clips have them, and the elbows bend as the clips bend them. Set the sockets carefully:
 
 - Put **Rear Sight** and **Front Sight** on the tops of the sights, not on their bones, which often sit lower, level with the action.
-- Set **Eye Relief** so the eye is behind the action, over the stock. A rifle whose rear sight is far out on the barrel needs much more than one whose rear sight sits on the action; otherwise the camera ends up inside the gun.
+- **Eye Relief** only matters when it is more than the clips' own distance: it then holds the gun further out. Raise it for a pack whose camera would end up inside the gun's action.
 
 ## Layers on top
 

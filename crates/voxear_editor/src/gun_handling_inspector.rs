@@ -892,8 +892,8 @@ mod tests {
         let cycle = HandlingAction::Builtin(ActionKind::Cycle);
         set_mode(&mut handling, cycle, Mode::Clips);
         assert_eq!((mode_of(&handling, cycle), played(&handling, cycle).len()), (Mode::Clips, 1));
-        set_clip(&mut handling, HandlingClip::Gun(cycle, 0), "Gun#clip:Hammer".into());
-        assert_eq!(played(&handling, cycle)[0].gun, "Gun#clip:Hammer");
+        set_clip(&mut handling, HandlingClip::Gun(cycle, 0), "Gun#clip:Cycle".into());
+        assert_eq!(played(&handling, cycle)[0].gun, "Gun#clip:Cycle");
         set_mode(&mut handling, cycle, Mode::Based);
         assert_eq!(mode_of(&handling, cycle), Mode::Based, "based on a clip, none picked yet");
         set_mode(&mut handling, cycle, Mode::Built);

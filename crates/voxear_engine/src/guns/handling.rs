@@ -540,11 +540,11 @@ mod tests {
     fn a_handling_named_by_its_path_and_by_its_id_is_one() {
         let mut world = World::new();
         let mut handlings = Handlings::default();
-        handlings.ids.insert("Guns/Lebel.gunhandling".into(), "63d2f37b09594ceab7e51b9719a46daa".into());
+        handlings.ids.insert("Guns/Rifle.gunhandling".into(), "63d2f37b09594ceab7e51b9719a46daa".into());
         world.insert_resource(handlings);
-        assert!(same_handling(&world, "Guns/Lebel.gunhandling", "63d2f37b09594ceab7e51b9719a46daa"));
-        assert!(same_handling(&world, "Guns/Lebel.gunhandling", "Guns/Lebel.gunhandling"));
-        assert!(!same_handling(&world, "Guns/Lebel.gunhandling", "0000000000000000000000000000beef"));
+        assert!(same_handling(&world, "Guns/Rifle.gunhandling", "63d2f37b09594ceab7e51b9719a46daa"));
+        assert!(same_handling(&world, "Guns/Rifle.gunhandling", "Guns/Rifle.gunhandling"));
+        assert!(!same_handling(&world, "Guns/Rifle.gunhandling", "0000000000000000000000000000beef"));
     }
     use crate::guns::actions::expand;
     use crate::guns::mechanism::GunState;

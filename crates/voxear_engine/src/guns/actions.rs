@@ -906,7 +906,7 @@ mod tests {
     #[test]
     fn a_parts_when_picks_it_by_what_is_in_the_chamber() {
         let kind = GunKind::BoltActionRifle;
-        let throws = ClipPart { gun: "Hammer".into(), when: When::all([Fact::ChamberFilled]), ..ClipPart::default() };
+        let throws = ClipPart { gun: "Cycle".into(), when: When::all([Fact::ChamberFilled]), ..ClipPart::default() };
         let empty = ClipPart { gun: "No Bullet".into(), when: When::all([Fact::ChamberEmpty]), ..ClipPart::default() };
         let mut spec = ActionSpec::default();
         spec.play(&[throws, empty], 1.0);

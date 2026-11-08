@@ -486,8 +486,8 @@ mod tests {
         let skeleton = Skeleton {
             bones: vec![
                 Bone { name: "Root".into(), parent: None, rest: at(Vec3::ZERO) },
-                Bone { name: "charging_handle".into(), parent: Some(0), rest: at(Vec3::new(0.0, 0.045, 0.04)) },
-                Bone { name: "BoltHandle".into(), parent: Some(1), rest: at(Vec3::new(0.04, 0.0, 0.09)) },
+                Bone { name: "bolt".into(), parent: Some(0), rest: at(Vec3::new(0.0, 0.045, 0.04)) },
+                Bone { name: "knob".into(), parent: Some(1), rest: at(Vec3::new(0.04, 0.0, 0.09)) },
             ],
         };
         let animation = Arc::new(ModelAnimation { skeleton, skins: Vec::new(), clips: Vec::new() });
@@ -495,7 +495,7 @@ mod tests {
         let model = ModelRenderer { animation: Some(animation), ..ModelRenderer::new(Vec::new()) };
         let gun = world.spawn((Transform::default(), Gun::preset(GunKind::BoltActionRifle), model));
         let knob = Vec3::new(0.04, 0.045, 0.13);
-        let part = GunPart { bone: "charging_handle".into(), ..GunPart::turn_bolt(knob.to_array()) };
+        let part = GunPart { bone: "bolt".into(), ..GunPart::turn_bolt(knob.to_array()) };
         let bolt = world.spawn((Transform::default(), Parent(gun), part.clone()));
         let mut state = state_of(&mut world, gun).unwrap();
         state.parts[0].1 = 2.0;

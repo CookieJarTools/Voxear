@@ -55,8 +55,8 @@ fn pack_rifle() -> (Scene, Arc<ModelAnimation>) {
     let mut scene = scene_with(GunKind::BoltActionRifle);
     let half = |share: f32| (std::f32::consts::PI * share).sin();
     let clips = vec![
-        gun_clip("Hammer", 1.0, |share, pose| pose[BOLT].translation.z -= 0.08 * half(share)),
-        gun_clip("Hammer_No_Bullet", 1.0, |share, pose| pose[BOLT].translation.y += 0.02 * half(share)),
+        gun_clip("Cycle", 1.0, |share, pose| pose[BOLT].translation.z -= 0.08 * half(share)),
+        gun_clip("Cycle_Empty", 1.0, |share, pose| pose[BOLT].translation.y += 0.02 * half(share)),
         gun_clip("Fire", 0.5, |share, pose| {
             pose[TRIGGER].rotation = Quat::from_rotation_x(40f32.to_radians() * half(share))
         }),
@@ -78,13 +78,13 @@ fn pack_rifle() -> (Scene, Arc<ModelAnimation>) {
 
     let mark = |at, event| Mark { at, event };
     let throws = ClipPart {
-        gun: "Gun#clip:Hammer".into(),
+        gun: "Gun#clip:Cycle".into(),
         marks: vec![mark(0.5, Event::Eject), mark(0.8, Event::Chamber)],
         when: When::all([Fact::ChamberFilled]),
         ..ClipPart::default()
     };
     let empty = ClipPart {
-        gun: "Gun#clip:Hammer_No_Bullet".into(),
+        gun: "Gun#clip:Cycle_Empty".into(),
         marks: vec![mark(0.8, Event::Chamber)],
         when: When::all([Fact::ChamberEmpty]),
         ..ClipPart::default()

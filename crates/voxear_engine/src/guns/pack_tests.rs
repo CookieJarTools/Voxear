@@ -677,6 +677,31 @@ fn lifted(arms: &Arc<ModelAnimation>, seconds: f32, up: impl Fn(f32) -> f32) -> 
 }
 
 #[test]
+fn a_clip_that_snaps_a_hand_back_at_its_very_end_is_found_letting_go_as_the_hand_sets_off() {
+    let mut own = scene_with(GunKind::BoltActionRifle);
+    steady(&mut own);
+    settle(&mut own, 40);
+    let (arms, _) = clip_of_hold(&mut own);
+    // The gun jumps 10 cm against the hands in the last tenth of a second of one clip, and over the last 0.6 s of
+    // the other: on the gun, the hands snap back in the first and come back slowly in the second.
+    let jump = |over: f32| move |t: f32| ((t - (1.0 - over)) / over).clamp(0.0, 1.0) * 0.1;
+    let mut clips = Clips::default();
+    for (name, file) in [("Snaps", lifted(&arms, 1.0, jump(0.1))), ("Slow", lifted(&arms, 1.0, jump(0.6)))] {
+        let source = ClipSource { animation: file, index: 0, settings: Default::default() };
+        clips.put(&format!("{name}#clip:Lifted"), source);
+    }
+    own.world.insert_resource(clips);
+    let place = super::handling::Place::default();
+    let found = |name: &str| {
+        let reference = format!("{name}#clip:Lifted");
+        super::clip_hold::snaps_back_at(&own.world, &reference, ("", &place), Vec3::ZERO, 0.35).expect("read")
+    };
+    let snaps = found("Snaps").expect("a snap back");
+    assert!((snaps - 0.9).abs() < 0.03, "found as the hands set off: {snaps} s");
+    assert_eq!(found("Slow"), None, "a hand coming back slower than the Hand Return is left as the clip has it");
+}
+
+#[test]
 fn setting_off_into_a_run_plays_its_start_clip_then_the_run_from_its_first_frame() {
     let mut own = scene_with(GunKind::BoltActionRifle);
     steady(&mut own);

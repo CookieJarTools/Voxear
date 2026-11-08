@@ -261,8 +261,9 @@ impl CustomAction {
 /// held by as its holder stands, walks, runs and sprints, blended by how
 /// fast it goes, and those that start a run and a sprint from standing or
 /// walking; the arms clips a shot plays, from the hip and aimed, and
-/// the gun's own clip for it; and how long a clip takes to come in and go,
-/// in seconds; where the camera looks from while they hold it; and how much
+/// the gun's own clip for it; how long a clip takes to come in and go, and
+/// how long at least a hand takes back to its hold as an action ends, in
+/// seconds; where the camera looks from while they hold it; and how much
 /// of each layer the holder puts on top of them: the gun's sway as the view
 /// turns, its lag as the holder moves, its bob with the steps and its
 /// breathing, 1 as for any gun and 0 none, and the camera's own bob with
@@ -299,6 +300,7 @@ pub struct PackClips {
     #[serde(skip_serializing_if = "String::is_empty")]
     pub gun_fire: String,
     pub blend: f32,
+    pub hand_return: f32,
     #[serde(skip_serializing_if = "PackCamera::is_filmed")]
     pub camera: PackCamera,
     pub look_sway: f32,
@@ -347,6 +349,7 @@ impl Default for PackClips {
             aimed_fire: String::new(),
             gun_fire: String::new(),
             blend: 0.2,
+            hand_return: 0.35,
             camera: PackCamera::Filmed,
             // Packs film their clips from a camera held still, the gun all but still in it as the arms walk: what
             // they leave out is put back lightly, and the breathing their idle clips have of their own not at all.

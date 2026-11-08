@@ -166,9 +166,13 @@ pub struct GunHolderState {
     /// Where the eyes stay while clips hold the gun, and how far out they
     /// hold it, worked out once for its handling.
     seen_from: Option<SeenFrom>,
-    /// Where the last action played from clips left the gun and hands, and
-    /// how long ago it ended, to blend back from to the holding clips.
-    left_off: Option<(ClipPose, f32)>,
+    /// Where the last action played from clips left the gun and hands, how
+    /// long ago it let go of them, and over how long the hold blends back
+    /// from there to the holding clips.
+    left_off: Option<(ClipPose, f32, f32)>,
+    /// Where each arms clip played as an action's last part lets go, a hand
+    /// snapping back onto its hold, at the Hand Return it was found for.
+    snaps: Vec<(String, f32, Option<f32>)>,
 }
 
 impl Component for GunHolderState {}
@@ -212,6 +216,7 @@ impl GunHolderState {
             starting: None,
             seen_from: None,
             left_off: None,
+            snaps: Vec::new(),
         }
     }
 
@@ -1051,6 +1056,20 @@ impl SeenFrom {
     }
 }
 
+/// Where the arms clip `arms` lets go as an action's last part, a hand
+/// snapping back onto its hold (see `clip_hold::snaps_back_at`): found once
+/// for each clip and Hand Return, once the clip is read.
+fn snap_of(state: &mut GunHolderState, world: &World, pack: &PackClips, arms: &str) -> Option<f32> {
+    let least = pack.hand_return;
+    if let Some((_, _, at)) = state.snaps.iter().find(|(known, was, _)| known == arms && *was == least) {
+        return *at;
+    }
+    let carrier = (pack.carrier.as_str(), &pack.carrier_offset);
+    let at = super::clip_hold::snaps_back_at(world, arms, carrier, Vec3::from(pack.eyes), least)?;
+    state.snaps.push((arms.to_string(), least, at));
+    at
+}
+
 /// A clip starting a run or a sprint, playing over the holding clips: which
 /// of them it starts, how far into it it is, and once it is over or left,
 /// how long it has been going out and over how long.
@@ -1150,21 +1169,32 @@ fn held_by_clips(
         (Some(holding), Some((start, weight))) => Some(holding.lerp(&start, weight)),
         (holding, _) => holding,
     };
-    let part = state.play.as_ref().and_then(|play| {
+    let now = state.play.as_ref().and_then(|play| {
         let (part, at) = play.part().filter(|(part, _)| !part.arms.is_empty())?;
-        let pose = super::clip_hold::clip_pose(world, &part.arms, at, false, carrier, eyes, body)?;
-        Some((pose, super::clip_hold::comes_in(play.progress().0, pack.blend)))
+        Some((part.arms.clone(), at, play.on_last_beat(), play.progress().0))
     });
     // A pack's clips end as they began, held as the holding clips hold the gun: each plays to its very end, and only
     // once it is over does the hold blend back from where it left the gun and hands, so its last moves keep their pace.
+    // But an action's last clip that snaps a hand back onto its hold at its very end lets go as the hand sets off,
+    // and the hand eases back over the Hand Return instead.
+    let part = now.and_then(|(arms, at, last, elapsed)| {
+        let snaps = if last { snap_of(state, world, pack, &arms) } else { None };
+        let (from, since, over) = match snaps {
+            Some(from) if at >= from => (from, at - from, pack.hand_return.max(pack.blend)),
+            _ => (at, 0.0, pack.blend),
+        };
+        let pose = super::clip_hold::clip_pose(world, &arms, from, false, carrier, eyes, body)?;
+        let weight = super::clip_hold::comes_in(elapsed, pack.blend) * super::clip_hold::goes_out(since, over);
+        Some((pose, since, over, weight))
+    });
     let part = match part {
-        Some((pose, weight)) => {
-            state.left_off = Some((pose.clone(), 0.0));
+        Some((pose, since, over, weight)) => {
+            state.left_off = Some((pose.clone(), since, over));
             Some((pose, weight))
         }
-        None => state.left_off.as_mut().and_then(|(pose, since)| {
+        None => state.left_off.as_mut().and_then(|(pose, since, over)| {
             *since += delta;
-            let weight = super::clip_hold::goes_out(*since, pack.blend);
+            let weight = super::clip_hold::goes_out(*since, *over);
             (weight > 0.0).then(|| (pose.clone(), weight))
         }),
     };

@@ -105,6 +105,8 @@ For each action the pack has clips for, set its **Mode** to **Clips** and give i
 | | one more round, Repeat **Until Full** | **Round In** |
 | | the bolt shut | **Chamber**, **Close** |
 
+A pack's action clips often snap the hand back onto the grip in their last few frames. As an action ends on such a clip, the hold lets go of it as the hand sets off, and the hand eases back over **Hand Return**, in seconds (0.35 to start with). Raise it for a slower return. A clip whose hand comes back slower than that plays to its end as made.
+
 An action the pack has no clips for still plays as built, on the same gun. Give the gun's bolt a Gun Part on its bone so it moves there (see [[Setting Up a Gun]]).
 
 Extra clips, such as inspecting the gun, drawing and putting it away, are actions of the handling's own, played from clips, which scripts do with a Gun Holder's **Do**.

@@ -126,6 +126,11 @@ impl ActionPlay {
         self.beats.get(self.index)
     }
 
+    /// Whether the beat under way is the action's last.
+    pub fn on_last_beat(&self) -> bool {
+        self.index + 1 >= self.beats.len()
+    }
+
     /// The part played from clips under way, and how far into its stretch
     /// of clip it is, in the clip's own seconds.
     pub fn part(&self) -> Option<(&ClipPart, f32)> {

@@ -242,6 +242,7 @@ struct HeldRows {
     walk_speed: NodeId,
     run_speed: NodeId,
     blend: NodeId,
+    hand_return: NodeId,
     /// How much of each layer goes on top of the clips: Look Sway, Move
     /// Sway, Bob, Breathing and Head Bob.
     layers: [NodeId; 5],
@@ -388,6 +389,7 @@ impl GunHandlingFields {
             (held.walk_speed, &mut pack.walk_speed),
             (held.run_speed, &mut pack.run_speed),
             (held.blend, &mut pack.blend),
+            (held.hand_return, &mut pack.hand_return),
             (look, &mut pack.look_sway),
             (moving, &mut pack.move_sway),
             (bob, &mut pack.bob),
@@ -595,6 +597,7 @@ fn held_rows(
     let walk_speed = number_field(ui, rows, "Walk Speed", pack.walk_speed);
     let run_speed = number_field(ui, rows, "Run Speed", pack.run_speed);
     let blend = number_field(ui, rows, "Blend", pack.blend);
+    let hand_return = number_field(ui, rows, "Hand Return", pack.hand_return);
     let layers = [
         ("Look Sway", pack.look_sway),
         ("Move Sway", pack.move_sway),
@@ -603,7 +606,19 @@ fn held_rows(
         ("Head Bob", pack.head_bob),
     ]
     .map(|(name, value)| number_field(ui, rows, name, value));
-    HeldRows { carrier, carrier_at, carrier_turn, eyes, camera, clips, walk_speed, run_speed, blend, layers }
+    HeldRows {
+        carrier,
+        carrier_at,
+        carrier_turn,
+        eyes,
+        camera,
+        clips,
+        walk_speed,
+        run_speed,
+        blend,
+        hand_return,
+        layers,
+    }
 }
 
 fn action_row(

@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use voxear_core::math::{Mat4, Quat, Vec3};
 use voxear_ecs::World;
-use voxear_render::{ModelAnimation, Skeleton};
+use voxear_render::{CLIP_RATE, ModelAnimation, Skeleton};
 
 use super::handling::{PackClips, Place};
 use super::hands::{arm_reach, knuckles, palm_of};
@@ -314,6 +314,43 @@ pub fn stand(edit: &mut PoseEdit, rig: &Rig, rest: &PoseEdit, stance: &[Quat; 3]
             edit.set_rotation(bone, (*turn * rest.rotation(bone)).normalize());
         }
     }
+}
+
+/// Where in the clip `reference` a hand sets off on its last move, back to
+/// where the clip leaves it, when that move is quicker than `least`
+/// seconds: a clip that snaps a hand back onto its hold at its very end.
+/// The move is the run of frames up to the end in which the hand, on the
+/// gun, goes faster than 30 cm a second, and covers more than 5 cm. None
+/// for a clip that has no such move; nothing before the clip is read.
+pub fn snaps_back_at(
+    world: &World,
+    reference: &str,
+    carrier: (&str, &Place),
+    eyes: Vec3,
+    least: f32,
+) -> Option<Option<f32>> {
+    let length = super::gun_clips::length(world, reference);
+    let frames = (length * CLIP_RATE).round() as usize;
+    if frames < 2 {
+        return None;
+    }
+    let at = |frame: usize| (frame as f32 / CLIP_RATE).min(length);
+    let pose = |frame: usize| clip_pose(world, reference, at(frame), false, carrier, eyes, None);
+    let poses: Vec<ClipPose> = (0..=frames).map(pose).collect::<Option<_>>()?;
+    let mut sets_off: Option<f32> = None;
+    for hand in 0..2 {
+        let knuckles: Vec<Vec3> = poses.iter().map(|pose| pose.hands[hand].knuckles).collect();
+        let fast = |frame: usize| knuckles[frame].distance(knuckles[frame - 1]) * CLIP_RATE > 0.3;
+        let mut start = frames;
+        while start > 0 && fast(start) {
+            start -= 1;
+        }
+        let (quick, far) = (at(frames) - at(start) < least, knuckles[start].distance(knuckles[frames]) > 0.05);
+        if start < frames && quick && far {
+            sets_off = Some(sets_off.map_or(at(start), |earlier| earlier.min(at(start))));
+        }
+    }
+    Some(sets_off)
 }
 
 /// The clip that starts the holding clip `held`, a run (2) or a sprint (3),

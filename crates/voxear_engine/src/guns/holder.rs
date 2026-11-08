@@ -59,6 +59,10 @@ pub struct GunHolder {
     pub breathing: f32,
     /// Whether it pulls back from walls.
     pub wall_check: bool,
+    /// Whether a gun held by clips is shown as its clips alone have it, with
+    /// nothing on top: no sway, bob, breathing, kick of the camera or pull
+    /// back from walls. For comparing with the clips as made.
+    pub base_only: bool,
     /// Rounds it carries for reloading.
     pub spare: u32,
     /// Whether a bolt-action or pump is worked by itself after each shot.
@@ -84,6 +88,7 @@ impl Default for GunHolder {
             bob: 1.0,
             breathing: 1.0,
             wall_check: true,
+            base_only: false,
             spare: 90,
             auto_cycle: true,
             request: None,
@@ -149,9 +154,10 @@ pub struct GunHolderState {
     /// How much each holding clip holds the gun now: idle, walking,
     /// running and sprinting.
     held_by: [f32; 4],
-    /// How near where its clips carry it before the eyes a gun held by clips
-    /// is, 0 to 1, as far as the arms reach (see `clip_hold::within_reach`).
-    framed: Option<f32>,
+    /// Where the eyes stay while clips hold the gun, worked out once for its
+    /// handling: the handling's path, the middle of the body's shoulders at
+    /// rest in its model's space, and the eyes from there, level.
+    seen_from: Option<(String, Vec3, Vec3)>,
 }
 
 impl Component for GunHolderState {}
@@ -190,7 +196,7 @@ impl GunHolderState {
             left_foot: false,
             time: 0.0,
             held_by: [0.0; 4],
-            framed: None,
+            seen_from: None,
         }
     }
 
@@ -353,7 +359,7 @@ pub fn hold(world: &mut World) {
         };
         let mut state = world.get::<GunHolderState>(entity).cloned().unwrap_or_else(GunHolderState::new);
         recover(world, entity, &gun, &mut state, delta);
-        for _ in 0..state.kicks {
+        for _ in 0..if holder.base_only { 0 } else { state.kicks } {
             let kick = gun.recoil * (1.0 - 0.5 * gun.heft());
             let aside = state.random() * 0.25 * kick;
             crate::first_person::punch(world, entity, Vec3::new(-0.9 * kick, aside, 0.0));
@@ -459,29 +465,30 @@ pub fn hold(world: &mut World) {
         };
         // A gun from an animation pack is held where its clips have it, and kicks as its shot's clip does.
         let clipped = held_by_clips(world, &handling.pack, &holder, &mut state, delta);
-        // Seen from where the clips were filmed, as far from the shoulders, the gun shows as they show it.
-        if handling.pack.camera == super::handling::PackCamera::Filmed
-            && let Some(((pose, weight), body)) = clipped.as_ref().zip(body)
-            && let Some(at) = filmed_eyes(world, entity, body, pose, &view)
+        // While clips hold it, the eyes stay put on the body, as still as the camera the clips were filmed from:
+        // where it was from the clip's shoulders, or at the eyes, worked out on the body at rest.
+        if let Some(((_, weight), body)) = clipped.as_ref().zip(body)
+            && let Some(at) = steady_eyes(world, entity, body, &gun.handling, &handling.pack, &view, &mut state)
         {
-            crate::first_person::frame_eyes(world, entity, at, *weight);
+            // The camera's own bob with the steps, as much as the handling says, none shown as the clips alone.
+            let amount = if holder.base_only { 0.0 } else { handling.pack.head_bob };
+            let obj = world_matrix(world, entity).to_scale_rotation_translation().1;
+            let bobbed = obj.inverse() * eye.transform_vector3(state.bob.value * amount);
+            crate::first_person::frame_eyes(world, entity, at + bobbed, *weight);
         }
-        // As near where they carry it as the body's arms reach, the hands holding where the clips have them.
-        let reached = clipped.as_ref().zip(body).and_then(|((pose, _), body)| {
-            let arms = body_arms(world, body, eye)?;
-            let (_, reaches) = super::clip_hold::within_reach(pose, &arms, 1.0);
-            // Away at once, so the hands never let go; back slowly, as far as they reach.
-            let shown = state.framed.unwrap_or(reaches);
-            let framed = if reaches < shown { reaches } else { (shown + delta * 1.5).min(reaches) };
-            state.framed = Some(framed);
-            Some(super::clip_hold::within_reach(pose, &arms, framed).0)
-        });
         let aimed = state.aimed() > 0.5;
         let kick = since_shot.and_then(|since| super::clip_hold::fire_kick(world, &handling.pack, since, aimed));
+        // Tipped up or down, the gun turns with the view but swings about the shoulders, which it is held from, not
+        // about the eyes above them: so the arms reach it alike however far the view tips.
+        let swung = state.seen_from.as_ref().map_or(Vec3::ZERO, |(_, _, from_middle)| {
+            let tipped = Quat::from_rotation_x(-view.pitch.to_radians());
+            tipped.inverse() * -*from_middle + *from_middle
+        });
         let by_clips = ByClips {
-            gun: clipped.as_ref().map(|(pose, weight)| (reached.unwrap_or(pose.gun), *weight)),
+            gun: clipped.as_ref().map(|(pose, weight)| (Mat4::from_translation(swung) * pose.gun, *weight)),
             kick,
             kicks: !handling.pack.fire.is_empty(),
+            layers: [handling.pack.look_sway, handling.pack.move_sway, handling.pack.bob, handling.pack.breathing],
         };
         let mut held = place_gun(
             world,
@@ -494,12 +501,6 @@ pub fn hold(world: &mut World) {
             &mut state,
             delta,
         );
-        // Whatever moved it on top, sway or a kick or aiming, it stays where the arms reach it as the clips hold it.
-        if let Some(((pose, _), body)) = clipped.as_ref().zip(body)
-            && let Some(arms) = body_arms(world, body, eye)
-        {
-            held = eye * super::clip_hold::kept_within(eye.inverse() * held, pose, &arms);
-        }
         set_world(world, gun_entity, held.w_axis.truncate(), held.to_scale_rotation_translation().1);
         if let Some(body) = body {
             let aims = hand_aims(&gun, aim, poses, &mut state, delta);
@@ -513,7 +514,9 @@ pub fn hold(world: &mut World) {
             let hold = |at| Held { gun: &gun, at, shapes: &shapes, avoid: &avoid, poses, elbows, clip };
             let short = hands_on(world, body, &hold(held), eye, aims, &mut state.hands, delta);
             // Short of reach, the gun comes nearer at once, so the hands never let go of it; it stays nearer,
-            // drifting back out slowly once they meet it.
+            // drifting back out slowly once they meet it. Held by clips it stays where they have it: the arms reach
+            // for it, and a hand short of it stops short.
+            let short = if clip.is_some() { 0.0 } else { short };
             if short > 0.002
                 && let Some(posed) = posed
             {
@@ -592,7 +595,7 @@ fn place_gun(
     let heft = gun.heft();
     // Into a wall: how far along the barrel something is.
     let reach = holder.hip[2] + gun.muzzle[2] + 0.1;
-    let blocked = if holder.wall_check { wall(world, entity, eye, reach) } else { 0.0 };
+    let blocked = if holder.wall_check && !holder.base_only { wall(world, entity, eye, reach) } else { 0.0 };
     let wall = state.wall.update(blocked, delta).clamp(0.0, 1.0);
     // An action takes the gun down from the eye and lifts it before them, as far as it says: working the bolt
     // keeps it at the eye and only half lifts it.
@@ -629,10 +632,9 @@ fn place_gun(
         Some(pocket) => hip_at = pocket - hip_turn * Vec3::from(gun.butt) + Vec3::from(poses.hip.at),
         None => hip_at.z += 0.18,
     }
-    // Held by clips, it is where they carry it, as much as they hold it, the handling's hip offsets on that.
+    // Held by clips, it is where they carry it, as much as they hold it.
     if let Some((clipped, weight)) = by_clips.gun {
-        let offset = Mat4::from_rotation_translation(poses.hip.rotation(), Vec3::from(poses.hip.at));
-        let (_, turn, at) = (clipped * offset).to_scale_rotation_translation();
+        let (_, turn, at) = clipped.to_scale_rotation_translation();
         (hip_at, hip_turn) = (hip_at.lerp(at, weight), hip_turn.slerp(turn, weight));
     }
     let (_, aim_turn, aim_at) = sighted.to_scale_rotation_translation();
@@ -669,14 +671,16 @@ fn place_gun(
         (_, turn, at) = kicked.to_scale_rotation_translation();
     }
 
-    // Clips that hold the gun bob and breathe with it themselves, and hold it as one with the eyes; up at the
-    // eye, which they do not hold it at, it is the gun's own.
-    let own = 1.0 - by_clips.gun.map_or(0.0, |(_, weight)| weight) * (1.0 - aim);
+    // Each layer on top as much as the clips holding the gun say, the gun's own up at the eye, where they do not
+    // hold it; none at all shown as the clips alone have it.
+    let held = by_clips.gun.map_or(0.0, |(_, weight)| weight) * (1.0 - aim);
+    let layer = |amount: f32| if holder.base_only { 0.0 } else { 1.0 + (amount - 1.0) * held };
+    let [looking, moving, bobbing, breathing] = by_clips.layers.map(layer);
     // Each shot kicks the gun up and back about the grip, rolling it the other way each time.
-    let steady = (1.0 - 0.72 * aim) * (CLIPS_SWAY + (1.0 - CLIPS_SWAY) * own);
+    let steady = 1.0 - 0.72 * aim;
     let kick = gun.recoil * (1.0 - 0.5 * heft);
     let kicks = std::mem::take(&mut state.kicks);
-    for _ in 0..if by_clips.kicks { 0 } else { kicks } {
+    for _ in 0..if by_clips.kicks || holder.base_only { 0 } else { kicks } {
         let roll = if state.burst.is_multiple_of(2) { 1.0 } else { -1.0 };
         let aside = state.random() * 1.5 * kick;
         state.sway.kick(Vec3::new(-7.0 * kick, aside, roll * 3.0 * kick) * (1.0 - 0.35 * aim));
@@ -687,7 +691,7 @@ fn place_gun(
     if let Some((last_yaw, last_pitch)) = state.view {
         let turned = Vec3::new(pitch - last_pitch, wrap(yaw - last_yaw), 0.0) * std::f32::consts::PI / 180.0;
         let spin = turned / delta;
-        let push = (0.016 + 0.024 * heft) * holder.sway * steady;
+        let push = (0.016 + 0.024 * heft) * holder.sway * steady * looking;
         state.sway.kick(Vec3::new(spin.x, -spin.y, spin.y * 0.6) * push);
     }
     state.view = Some((yaw, pitch));
@@ -702,7 +706,7 @@ fn place_gun(
     state.at = Some(here);
     let into_eye = eye.inverse();
     let moved = into_eye.transform_vector3(velocity);
-    let wanted = (-moved * (0.006 + 0.01 * heft) * holder.sway * steady).clamp_length_max(0.05);
+    let wanted = (-moved * (0.006 + 0.01 * heft) * holder.sway * steady * moving).clamp_length_max(0.05);
     let lag = state.lag.update(wanted, delta);
     state.velocity = velocity;
 
@@ -726,15 +730,16 @@ fn place_gun(
     };
     if let Some(left) = footfall {
         let side = if left { 1.0 } else { -1.0 };
-        let hard = (speed / 4.0).clamp(0.15, 1.2) * holder.bob * own * (1.0 - 0.6 * aim);
+        let hard = (speed / 4.0).clamp(0.15, 1.2) * holder.bob * (1.0 - 0.6 * aim);
         state.bob.kick(Vec3::new(side * 0.04, -0.16, -0.03) * hard);
     }
-    let bob = state.bob.update(Vec3::ZERO, delta);
+    // The steps' bob as a whole, which the camera's own bob reads too; the gun bobs as much as its layer says.
+    let bob = state.bob.update(Vec3::ZERO, delta) * bobbing;
     let bob_roll = Quat::from_rotation_z(-bob.x * 2.5);
 
     // Breathing, slow and mostly up and down, and a faint tremor of sines that never line up.
     let t = state.time;
-    let breathing = holder.breathing * own;
+    let breathing = holder.breathing * breathing;
     let breath = (t * std::f32::consts::TAU * 0.24).sin() * 0.0022 * breathing * (1.0 - 0.5 * aim);
     let tremor = Vec3::new(
         (t * 1.3).sin() * 0.6 + (t * 3.1).sin() * 0.25 + (t * 7.3).sin() * 0.08,
@@ -751,10 +756,6 @@ fn place_gun(
     );
     eye * local
 }
-
-/// How much of its sway and lag a gun held by clips keeps: they hold it
-/// as one with the eyes, as the camera they were filmed from did.
-const CLIPS_SWAY: f32 = 0.3;
 
 /// Where an action brings a gun's works, from the eyes: right, up and
 /// forward, in metres.
@@ -926,38 +927,46 @@ struct Held<'a> {
     clip: Option<&'a (ClipPose, f32)>,
 }
 
-/// Where the eyes go relative to the holder's Obj to see as the clips of
-/// `pose` were filmed: as far from the body's shoulders, level with where
-/// the view looks, as the camera was from the clip's, scaled to its arms.
-fn filmed_eyes(world: &World, entity: Entity, body: Entity, pose: &ClipPose, view: &FirstPersonView) -> Option<Vec3> {
-    let animation = world.get::<ModelRenderer>(body)?.animation.clone()?;
-    let (posed, rig) = (world.get::<Pose>(body)?, Rig::find(&animation.skeleton)?);
-    let placed = world_matrix(world, body);
-    let shoulder = |arm: usize| placed.transform_point3(posed.bones[rig.arms[arm].upper].w_axis.truncate());
-    let middle = (shoulder(0) + shoulder(1)) * 0.5;
-    let skeleton = &animation.skeleton;
-    let rest = PoseEdit::new(skeleton, &skeleton.model_matrices(&skeleton.rest()));
-    let reach = |arm: usize| super::hands::arm_reach(&rest, &rig.arms[arm]);
-    let scale = placed.x_axis.truncate().length() * (reach(0)? + reach(1)?)
-        / (pose.hands[0].reach + pose.hands[1].reach).max(1e-3);
-    // The clip's eyes are its space's origin: from its shoulders, they are back the way the shoulders are.
-    let from_shoulders = -(pose.shoulders[0] + pose.shoulders[1]) * 0.5 * scale;
-    let eyes = middle + Quat::from_rotation_y(view.yaw.to_radians()) * from_shoulders;
-    Some(world_matrix(world, entity).inverse().transform_point3(eyes))
-}
-
-/// A body's arms as the eyes at `eye` see them: its shoulders, and how far
-/// each arm reaches.
-fn body_arms(world: &World, body: Entity, eye: Mat4) -> Option<super::clip_hold::Arms> {
-    let animation = world.get::<ModelRenderer>(body)?.animation.clone()?;
-    let (pose, rig) = (world.get::<Pose>(body)?, Rig::find(&animation.skeleton)?);
-    let placed = world_matrix(world, body);
-    let (into_eye, scale) = (eye.inverse() * placed, placed.x_axis.truncate().length());
-    let skeleton = &animation.skeleton;
-    let rest = PoseEdit::new(skeleton, &skeleton.model_matrices(&skeleton.rest()));
-    let shoulders = [0, 1].map(|arm| into_eye.transform_point3(pose.bones[rig.arms[arm].upper].w_axis.truncate()));
-    let reach = |arm: usize| super::hands::arm_reach(&rest, &rig.arms[arm]).map(|reach| reach * scale);
-    Some(super::clip_hold::Arms { shoulders, reach: [reach(0)?, reach(1)?] })
+/// Where the eyes stay relative to the holder's Obj while clips hold the
+/// gun, turned with where the view looks: for a handling seen as filmed,
+/// as far from the middle of the body's shoulders as the clips' camera was
+/// from theirs, scaled to the body's arms; otherwise at the eyes. Both are
+/// worked out on the body at rest, once for the handling `handling`, so the
+/// body's walk and run do not carry the camera.
+fn steady_eyes(
+    world: &World,
+    entity: Entity,
+    body: Entity,
+    handling: &str,
+    pack: &PackClips,
+    view: &FirstPersonView,
+    state: &mut GunHolderState,
+) -> Option<Vec3> {
+    if state.seen_from.as_ref().is_none_or(|(known, ..)| known != handling) {
+        let animation = world.get::<ModelRenderer>(body)?.animation.clone()?;
+        let skeleton = &animation.skeleton;
+        let rig = Rig::find(skeleton)?;
+        let rest = PoseEdit::new(skeleton, &skeleton.model_matrices(&skeleton.rest()));
+        let middle = (rest.position(rig.arms[0].upper) + rest.position(rig.arms[1].upper)) * 0.5;
+        let from_middle = match pack.camera {
+            super::handling::PackCamera::Filmed => {
+                // The clips' eyes, from the first clip that holds the gun as it stands: their space's origin, so
+                // back from their shoulders the way the shoulders are from it.
+                let clip = [&pack.idle, &pack.walk, &pack.run, &pack.sprint].into_iter().find(|clip| !clip.is_empty())?;
+                let carrier = (pack.carrier.as_str(), &pack.carrier_offset);
+                let filmed = super::clip_hold::clip_pose(world, clip, 0.0, true, carrier, Vec3::from(pack.eyes))?;
+                let reach = |arm: usize| super::hands::arm_reach(&rest, &rig.arms[arm]);
+                let scale = (reach(0)? + reach(1)?) / (filmed.hands[0].reach + filmed.hands[1].reach).max(1e-3);
+                -(filmed.shoulders[0] + filmed.shoulders[1]) * 0.5 * scale
+            }
+            super::handling::PackCamera::Eyes => rest.position(rig.head) + Vec3::from(view.eyes) - middle,
+        };
+        state.seen_from = Some((handling.to_string(), middle, from_middle));
+    }
+    let (_, middle, from_middle) = state.seen_from.clone()?;
+    let (obj, placed) = (world_matrix(world, entity), world_matrix(world, body));
+    let eyes = placed.transform_point3(middle) + Quat::from_rotation_y(view.yaw.to_radians()) * from_middle;
+    Some(obj.inverse().transform_point3(eyes))
 }
 
 /// What clips holding the gun give its place: where they carry it in the
@@ -967,6 +976,9 @@ struct ByClips {
     gun: Option<(Mat4, f32)>,
     kick: Option<Mat4>,
     kicks: bool,
+    /// How much the gun sways as the view turns, lags as the holder moves,
+    /// bobs with the steps and breathes while clips hold it (see `PackClips`).
+    layers: [f32; 4],
 }
 
 /// Where a gun from an animation pack is held now, and how much its clips

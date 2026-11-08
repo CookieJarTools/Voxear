@@ -58,7 +58,8 @@ pub struct FirstPersonView {
     /// How much of the way the upper body turns to face where the view
     /// looks when the legs have not yet, 0 to 1.
     pub twist: f32,
-    /// Whether the head is hidden, so the camera does not see inside it.
+    /// Whether the head and neck are hidden from the camera, so it does not
+    /// see inside them; they still cast their shadow.
     pub hide_head: bool,
 }
 
@@ -205,7 +206,11 @@ pub fn place(world: &mut World) {
         // The eyes follow the head on a spring from where the Obj is, so the head's bob is steadied; a view with
         // no body looks from the Obj itself.
         let obj = world_matrix(world, entity);
-        let posed = pose_body(world, entity, &view, own).map(|eyes| obj.inverse().transform_point3(eyes));
+        // While clips hold a gun the eyes stay put on the body and the upper body does not lean, so the shoulders
+        // keep their place under them, as the clips' were under their camera.
+        let framed = world.get::<FirstPersonState>(entity).is_some_and(|state| state.framed.is_some());
+        let lean = if framed { 0.0 } else { view.lean };
+        let posed = pose_body(world, entity, &view, own, lean).map(|eyes| obj.inverse().transform_point3(eyes));
         let state = world.get::<FirstPersonState>(entity).copied();
         let mut state = state.unwrap_or_else(|| FirstPersonState::new(posed.unwrap_or(Vec3::ZERO)));
         let eyes_now = match (posed, state.framed.take()) {
@@ -250,7 +255,7 @@ pub fn place(world: &mut World) {
 /// Turns a view's body's upper body toward where the view looks and leans
 /// it, hiding its head for this machine's own player, and gives back where
 /// its eyes are in the world; none for a view with no body.
-fn pose_body(world: &mut World, entity: Entity, view: &FirstPersonView, own: bool) -> Option<Vec3> {
+fn pose_body(world: &mut World, entity: Entity, view: &FirstPersonView, own: bool, lean: f32) -> Option<Vec3> {
     let body = body_of(world, entity, view)?;
     let animation = world.get::<ModelRenderer>(body).and_then(|model| model.animation.clone())?;
     let (pose, rig) = (world.get::<Pose>(body).cloned()?, Rig::find(&animation.skeleton)?);
@@ -271,15 +276,17 @@ fn pose_body(world: &mut World, entity: Entity, view: &FirstPersonView, own: boo
     }
     // The upper body leans about the body's own across, so it bends forward and back.
     let across = into_body.transform_vector3(view.rotation() * Vec3::X).normalize_or_zero();
-    let lean = (-view.pitch * view.lean.clamp(0.0, 1.0)).clamp(-MOST_LEAN, MOST_LEAN).to_radians();
+    let lean = (-view.pitch * lean.clamp(0.0, 1.0)).clamp(-MOST_LEAN, MOST_LEAN).to_radians();
     if across != Vec3::ZERO {
         turn_spine(&mut edit, &rig.spine, Quat::from_axis_angle(across, lean));
     }
     let head = edit.matrices()[rig.head];
     let eyes_in_body = head.w_axis.truncate() + Vec3::from(view.eyes);
     world.insert(body, Pose { bones: edit.matrices().into() });
+    // The neck goes with the head where the rig has one: a camera low in the head, as one held where a gun's clips
+    // were filmed from, sits nearer the neck than the head.
     if view.hide_head && own {
-        crate::animation::hide(world, body, &animation.skeleton, rig.head);
+        crate::animation::hide(world, body, &animation.skeleton, rig.neck.unwrap_or(rig.head));
     }
     Some(placed.transform_point3(eyes_in_body))
 }
@@ -475,7 +482,8 @@ mod tests {
         let head =
             Rig::find(&world.get::<ModelRenderer>(body).unwrap().animation.as_ref().unwrap().skeleton).unwrap().head;
         let hidden = world.get::<voxear_render::HiddenBones>(body).expect("the head is hidden");
-        assert!(hidden.bones[head], "the head is hidden from the camera");
+        let rig = Rig::find(&world.get::<ModelRenderer>(body).unwrap().animation.as_ref().unwrap().skeleton).unwrap();
+        assert!(hidden.bones[head] && hidden.bones[rig.neck.unwrap()], "the head and neck are hidden from the camera");
         assert!(world.get::<Pose>(body).unwrap().bones[head].x_axis.length() > 0.5, "though it stays where it is");
     }
 

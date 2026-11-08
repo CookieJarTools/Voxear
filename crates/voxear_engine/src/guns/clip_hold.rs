@@ -8,12 +8,10 @@
 //! finger's joints bend. The holder's arms then reach as they always do,
 //! so aiming, sway and recoil still move the gun, and the hands with it.
 //!
-//! A body with shorter arms than the clip's, or eyes higher above its
-//! shoulders than the camera the clip was filmed from, cannot reach where
-//! the clip carries the gun before the eyes. The hands still hold where the
-//! clip has them on the gun: it is the gun that comes as near where the
-//! clip carries it as the arms reach, and otherwise where the clip has it
-//! from the shoulders, as much nearer them as the arms are shorter.
+//! The clips hold the gun where they have it before the eyes, and nothing
+//! moves it from there but the layers the holder adds on top: the camera
+//! stays where the clips' camera was from the body's shoulders, so the
+//! body's arms reach the gun as the clip's do.
 
 use voxear_core::math::{Mat4, Vec3};
 use voxear_ecs::World;
@@ -128,74 +126,6 @@ pub fn clip_pose(
     let into_eye = eye.inverse();
     let shoulders = [0, 1].map(|arm| into_eye.transform_point3(edit.position(rig.arms[arm].upper)));
     Some(ClipPose { gun: into_eye * carried, hands: [hand(0)?, hand(1)?], shoulders })
-}
-
-/// A body's arms as the eyes see them: each shoulder, left then right, in
-/// the eyes' space, and how far each arm reaches from it to the middle of
-/// its palm.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Arms {
-    pub shoulders: [Vec3; 2],
-    pub reach: [f32; 2],
-}
-
-/// How much of an arm's reach a hand may use: a little short of straight,
-/// so the elbow keeps a bend.
-const STRAIGHT: f32 = 0.97;
-
-/// Where the gun goes in the eyes' space so `arms` hold it where `pose` has
-/// the hands on it, and how near where the clip carries it that is, 0 to 1:
-/// as near as both arms reach, at most `framed`. The rest of the way it is
-/// where the clip has it from the shoulders, as much nearer them as the
-/// arms are shorter than the clip's.
-pub fn within_reach(pose: &ClipPose, arms: &Arms, framed: f32) -> (Mat4, f32) {
-    let palms = [0, 1].map(|hand| pose.gun.transform_point3(pose.hands[hand].contact));
-    // From the shoulders: each palm where the clip has it from its shoulder, scaled to the arm, met halfway
-    // between the two, as the gun keeps the hands as far apart as they are on it.
-    let wanted = |hand: usize| {
-        let scale = arms.reach[hand] / pose.hands[hand].reach.max(1e-3);
-        arms.shoulders[hand] + (palms[hand] - pose.shoulders[hand]) * scale - palms[hand]
-    };
-    let toward = (wanted(0) + wanted(1)) * 0.5;
-    let reaches = |share: f32| {
-        (0..2).all(|hand| {
-            let palm = palms[hand] + toward * (1.0 - share);
-            palm.distance(arms.shoulders[hand]) <= arms.reach[hand] * STRAIGHT
-        })
-    };
-    let framed = framed.clamp(0.0, 1.0);
-    let share = if reaches(framed) {
-        framed
-    } else {
-        // The nearest it reaches, halving the way between what reaches and what does not.
-        let (mut low, mut high) = (0.0, framed);
-        for _ in 0..12 {
-            let middle = (low + high) * 0.5;
-            if reaches(middle) { low = middle } else { high = middle }
-        }
-        low
-    };
-    (Mat4::from_translation(toward * (1.0 - share)) * pose.gun, share)
-}
-
-/// The gun at `gun` in the eyes' space, brought toward the shoulders as far
-/// as `arms` need to hold it where `pose` has the hands on it, and no
-/// further: where they reach it already, it stays.
-pub fn kept_within(gun: Mat4, pose: &ClipPose, arms: &Arms) -> Mat4 {
-    let palms = [0, 1].map(|hand| gun.transform_point3(pose.hands[hand].contact));
-    let toward = (arms.shoulders[0] + arms.shoulders[1] - palms[0] - palms[1]) * 0.5;
-    let reaches = |share: f32| {
-        (0..2).all(|hand| (palms[hand] + toward * share).distance(arms.shoulders[hand]) <= arms.reach[hand] * STRAIGHT)
-    };
-    if reaches(0.0) {
-        return gun;
-    }
-    let (mut low, mut high) = (0.0, 1.0);
-    for _ in 0..12 {
-        let middle = (low + high) * 0.5;
-        if reaches(middle) { high = middle } else { low = middle }
-    }
-    Mat4::from_translation(toward * high) * gun
 }
 
 /// The bone that carries the gun: the one named, else one named

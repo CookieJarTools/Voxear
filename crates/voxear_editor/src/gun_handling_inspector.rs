@@ -234,6 +234,9 @@ struct HeldRows {
     walk_speed: NodeId,
     run_speed: NodeId,
     blend: NodeId,
+    /// How much of each layer goes on top of the clips: Look Sway, Move
+    /// Sway, Bob, Breathing and Head Bob.
+    layers: [NodeId; 5],
 }
 
 struct ActionRow {
@@ -372,10 +375,16 @@ impl GunHandlingFields {
             pack.camera = CAMERAS[ui.selected_option(held.camera).min(CAMERAS.len() - 1)].0;
             typed = true;
         }
+        let [look, moving, bob, breathing, head] = held.layers;
         for (field, value) in [
             (held.walk_speed, &mut pack.walk_speed),
             (held.run_speed, &mut pack.run_speed),
             (held.blend, &mut pack.blend),
+            (look, &mut pack.look_sway),
+            (moving, &mut pack.move_sway),
+            (bob, &mut pack.bob),
+            (breathing, &mut pack.breathing),
+            (head, &mut pack.head_bob),
         ] {
             if let Some(n) = changed_number(ui, field) {
                 (*value, typed) = (n.max(0.0), true);
@@ -578,7 +587,15 @@ fn held_rows(
     let walk_speed = number_field(ui, rows, "Walk Speed", pack.walk_speed);
     let run_speed = number_field(ui, rows, "Run Speed", pack.run_speed);
     let blend = number_field(ui, rows, "Blend", pack.blend);
-    HeldRows { carrier, carrier_at, carrier_turn, eyes, camera, clips, walk_speed, run_speed, blend }
+    let layers = [
+        ("Look Sway", pack.look_sway),
+        ("Move Sway", pack.move_sway),
+        ("Bob", pack.bob),
+        ("Breathing", pack.breathing),
+        ("Head Bob", pack.head_bob),
+    ]
+    .map(|(name, value)| number_field(ui, rows, name, value));
+    HeldRows { carrier, carrier_at, carrier_turn, eyes, camera, clips, walk_speed, run_speed, blend, layers }
 }
 
 fn action_row(

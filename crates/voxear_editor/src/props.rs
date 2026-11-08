@@ -428,6 +428,7 @@ pub enum Prop {
     HolderBob,
     HolderBreathing,
     HolderWallCheck,
+    HolderBaseOnly,
     /// A Gun Part's role, the bone of the gun's model it is, if any, how it
     /// moves (sliding or turning, along or about an axis, by how much,
     /// through what), where a hand takes it, and the pull back after a turn
@@ -785,7 +786,8 @@ impl Prop {
             | Prop::HolderSway
             | Prop::HolderBob
             | Prop::HolderBreathing
-            | Prop::HolderWallCheck => Part::GunHolder,
+            | Prop::HolderWallCheck
+            | Prop::HolderBaseOnly => Part::GunHolder,
             Prop::PartRole
             | Prop::PartBone
             | Prop::PartMotion
@@ -1075,6 +1077,7 @@ impl Prop {
             Prop::HolderBob => "bob",
             Prop::HolderBreathing => "breathing",
             Prop::HolderWallCheck => "wall_check",
+            Prop::HolderBaseOnly => "base_only",
             Prop::PartRole => "role",
             Prop::PartBone => "bone",
             Prop::PartMotion => "motion.type",
@@ -1541,6 +1544,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             Prop::HolderBob,
             Prop::HolderBreathing,
             Prop::HolderWallCheck,
+            Prop::HolderBaseOnly,
         ],
         Part::GunPart => vec![
             Prop::PartRole,
@@ -1923,6 +1927,7 @@ pub fn label(prop: &Prop) -> String {
         Prop::HolderBob => "Bob",
         Prop::HolderBreathing => "Breathing",
         Prop::HolderWallCheck => "Wall Check",
+        Prop::HolderBaseOnly => "Base Only",
         Prop::PartRole => "Role",
         Prop::PartBone => "Bone",
         Prop::PartMotion => "Moves",
@@ -2657,6 +2662,7 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::HolderBob => Value::Number(world.get::<GunHolder>(entity)?.bob),
         Prop::HolderBreathing => Value::Number(world.get::<GunHolder>(entity)?.breathing),
         Prop::HolderWallCheck => Value::Toggle(world.get::<GunHolder>(entity)?.wall_check),
+        Prop::HolderBaseOnly => Value::Toggle(world.get::<GunHolder>(entity)?.base_only),
         Prop::PartRole => {
             let role = world.get::<GunPart>(entity)?.role;
             let at = PART_ROLES.iter().position(|(r, _)| *r == role).unwrap_or(0);
@@ -3700,6 +3706,7 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         (Prop::HolderBob, Value::Number(n)) => with(world, entity, |h: &mut GunHolder| h.bob = n.max(0.0)),
         (Prop::HolderBreathing, Value::Number(n)) => with(world, entity, |h: &mut GunHolder| h.breathing = n.max(0.0)),
         (Prop::HolderWallCheck, Value::Toggle(on)) => with(world, entity, |h: &mut GunHolder| h.wall_check = on),
+        (Prop::HolderBaseOnly, Value::Toggle(on)) => with(world, entity, |h: &mut GunHolder| h.base_only = on),
         // A role moves as most such parts do, from where its handle is.
         (Prop::PartRole, Value::Choice(index, _)) => {
             let role = PART_ROLES.get(index).map_or(PartRole::Bolt, |(role, _)| *role);

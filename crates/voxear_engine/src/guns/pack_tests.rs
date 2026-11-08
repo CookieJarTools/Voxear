@@ -317,9 +317,9 @@ fn an_arms_clip_holds_the_gun_where_it_has_it_and_puts_the_palms_where_its_are()
         assert!(off < 3.0, "the index finger bends as the clip's, joint {joint}: {off} degrees off");
     }
 
-    // On a body named otherwise and a tenth shorter, both palms stay where the clip's are on the gun, the gun
-    // coming as much nearer as the shorter arms need; and so they do with the view tipped well down or up, which
-    // swings the gun about the eyes, away from where the shoulders reach.
+    // On a body named otherwise and a tenth shorter, both palms stay where the clip's are on the gun, which shows
+    // just where the clip shows it: the camera comes to where the clip's was from the shorter body's shoulders, not
+    // the gun to the shoulders; and so they do with the view tipped well down or up.
     let mut shorter = crate::animation::rig::tests::body(|part, side| match side {
         Some(left) => format!("DEF-{part}.{}", if left { "L" } else { "R" }),
         None => format!("DEF-{part}"),
@@ -336,8 +336,8 @@ fn an_arms_clip_holds_the_gun_where_it_has_it_and_puts_the_palms_where_its_are()
             assert!(off < 0.005, "on the shorter body, looking {pitch} degrees up, palm {arm}: {off} m off");
         }
         if pitch == 0.0 {
-            let (near, far) = (gun_from_eye(&other).w_axis.truncate(), shown.w_axis.truncate());
-            assert!(near.length() < far.length() - 0.01, "the gun nearer for the shorter arms: {near} {far}");
+            let off = gun_from_eye(&other).w_axis.truncate().distance(shown.w_axis.truncate());
+            assert!(off < 0.003, "the gun where the clip shows it: {off} m off");
         }
     }
 
@@ -457,7 +457,9 @@ fn seen_as_filmed_a_body_built_otherwise_holds_the_gun_as_the_clip_does_fingers_
     }
     let moved = camera_from_head(&filmed);
 
-    // At the eyes, the camera stays at the head where the view has it, and the hands still hold where the clip's do.
+    // At the eyes, the camera stays at the head where the view has it, the gun where the clip shows it from there,
+    // and the arms reach for it as far as they go: higher above the shoulders than the clip's camera, the eyes put
+    // it a little out of the support hand's reach, which stops short rather than move the gun.
     let mut eyes = scene_with_body(body);
     steady(&mut eyes);
     held_from(&mut eyes, &arms, super::handling::PackCamera::Eyes);
@@ -466,9 +468,11 @@ fn seen_as_filmed_a_body_built_otherwise_holds_the_gun_as_the_clip_does_fingers_
     let view = Vec3::from(crate::first_person::FirstPersonView::default().eyes);
     assert!(at_eyes.distance(view) < 0.01, "at the eyes: {at_eyes} {view}");
     assert!(moved.distance(view) > 0.01, "as filmed, it moved: {moved} {view}");
-    for arm in 0..2 {
+    let off = gun_from_eye(&eyes).w_axis.truncate().distance(shown);
+    assert!(off < 0.003, "at the eyes, the gun where the clip shows it: {off} m off");
+    for (arm, most) in [(0, 0.02), (1, 0.005)] {
         let off = palm_on_gun(&eyes, arm).distance(palms[arm]);
-        assert!(off < 0.005, "at the eyes, palm {arm}: {off} m off");
+        assert!(off < most, "at the eyes, palm {arm}: {off} m off");
     }
 }
 
@@ -523,6 +527,63 @@ fn hands_with_longer_palms_close_where_the_clips_do_and_hold_on_through_a_fast_t
         worst < 0.006,
         "the knuckles where the clip's are on the gun, all through the turn: {worst} m off at worst"
     );
+}
+
+#[test]
+fn shown_as_its_clips_alone_have_it_the_gun_stays_where_they_show_it_walking_and_turning() {
+    let mut own = scene_with(GunKind::BoltActionRifle);
+    steady(&mut own);
+    settle(&mut own, 40);
+    let (arms, _) = clip_of_hold(&mut own);
+    let shown = gun_from_eye(&own).w_axis.truncate();
+
+    // Every layer on, as a holder has them, but shown as the clips alone have it.
+    let mut scene = scene_with(GunKind::BoltActionRifle);
+    steady(&mut scene);
+    let holder = scene.world.get_mut::<GunHolder>(scene.player).unwrap();
+    (holder.sway, holder.bob, holder.breathing, holder.base_only) = (1.0, 1.0, 1.0, true);
+    held_by(&mut scene, &arms);
+    settle(&mut scene, 40);
+    let rest = rest_of(&scene);
+    let mut time = Time { delta: 1.0 / 60.0, ..Time::default() };
+    let mut most: f32 = 0.0;
+    for frame in 0..90 {
+        scene.world.get_mut::<Transform>(scene.player).unwrap().position.z += 3.0 / 60.0;
+        scene.world.get_mut::<crate::first_person::FirstPersonView>(scene.player).unwrap().yaw +=
+            if frame < 45 { 3.0 } else { -3.0 };
+        step(&mut scene, &rest, &mut time);
+        most = most.max(gun_from_eye(&scene).w_axis.truncate().distance(shown));
+    }
+    assert!(most < 0.0005, "the gun where the clip shows it, all along: {most} m off at most");
+}
+
+#[test]
+fn the_camera_stays_put_on_the_body_while_clips_hold_the_gun_however_the_body_bobs() {
+    let mut own = scene_with(GunKind::BoltActionRifle);
+    steady(&mut own);
+    settle(&mut own, 40);
+    let (arms, _) = clip_of_hold(&mut own);
+    let mut scene = scene_with(GunKind::BoltActionRifle);
+    steady(&mut scene);
+    held_by(&mut scene, &arms);
+    settle(&mut scene, 40);
+    let camera = |scene: &Scene| {
+        let obj = voxear_scene::world_matrix(&scene.world, scene.player);
+        obj.inverse().transform_point3(voxear_scene::world_matrix(&scene.world, scene.camera).w_axis.truncate())
+    };
+    let still = camera(&scene);
+    // The body bobs four centimetres up and down and sways aside as a walk has it, a step every half second.
+    let rest = rest_of(&scene);
+    let mut time = Time { delta: 1.0 / 60.0, ..Time::default() };
+    let mut most: f32 = 0.0;
+    for frame in 0..60 {
+        let phase = frame as f32 / 30.0 * std::f32::consts::TAU;
+        let bobbed = Mat4::from_translation(Vec3::new(phase.sin() * 0.02, (phase * 2.0).sin() * 0.02, 0.0));
+        let walking: Vec<Mat4> = rest.iter().map(|bone| bobbed * *bone).collect();
+        step(&mut scene, &walking, &mut time);
+        most = most.max(camera(&scene).distance(still));
+    }
+    assert!(most < 0.001, "the camera where it was on the body: {most} m off at most");
 }
 
 #[test]

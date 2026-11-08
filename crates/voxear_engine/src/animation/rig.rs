@@ -1,7 +1,9 @@
-//! A humanoid's bones by what they are: the spine, the head, and each arm
-//! with its hand and fingers, found by the names most rigs give them, as
-//! `DEF-upper_arm.L`, `upperarm_l` or `LeftArm`. What procedural posing
-//! needs to reach a hand somewhere or turn the upper body.
+//! A humanoid's bones by what they are: the spine, the head, each arm with
+//! its hand and fingers, and each leg with its foot, found by the names
+//! most rigs give them, as `DEF-upper_arm.L`, `upperarm_l` or `LeftArm`.
+//! What procedural posing needs to reach a hand somewhere or turn the upper
+//! body, and what lets a clip play on a humanoid whose rig names its bones
+//! otherwise (see `retarget`).
 
 use voxear_render::Skeleton;
 
@@ -25,6 +27,18 @@ pub struct Arm {
     pub fingers: [Vec<usize>; 5],
 }
 
+/// One leg's bones.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Leg {
+    /// Whether it is the left leg.
+    pub left: bool,
+    pub thigh: usize,
+    pub shin: usize,
+    pub foot: usize,
+    /// The toes, when the rig has them.
+    pub toe: Option<usize>,
+}
+
 /// A humanoid's bones.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Rig {
@@ -35,6 +49,9 @@ pub struct Rig {
     pub head: usize,
     /// The left arm, then the right.
     pub arms: [Arm; 2],
+    /// The left leg, then the right, for a rig with legs: an arms rig has
+    /// none.
+    pub legs: Option<[Leg; 2]>,
 }
 
 impl Rig {
@@ -58,7 +75,8 @@ impl Rig {
         }
         spine.reverse();
         let arms = [arm(skeleton, &names, true)?, arm(skeleton, &names, false)?];
-        Some(Rig { hips, spine, neck, head, arms })
+        let legs = leg(skeleton, &names, true).zip(leg(skeleton, &names, false)).map(|(left, right)| [left, right]);
+        Some(Rig { hips, spine, neck, head, arms, legs })
     }
 
     /// The chest: the top of the spine, where the arms hang from.
@@ -94,6 +112,31 @@ fn arm(skeleton: &Skeleton, names: &[String], left: bool) -> Option<Arm> {
         chain
     });
     Some(Arm { left, clavicle, upper, forearm, hand, fingers })
+}
+
+/// A leg, from its foot: the shin and thigh above it, passing over any
+/// twist bones, and the toes under it. A bone for an IK target, or the
+/// end of a chain, is not the foot.
+fn leg(skeleton: &Skeleton, names: &[String], left: bool) -> Option<Leg> {
+    let sided = |name: &String| side_of(name) == Some(left);
+    let not_a_bone = |name: &String| ["ik", "toe", "ball", "leaf", "end"].iter().any(|word| name.contains(word));
+    let foot = names.iter().position(|name| sided(name) && name.contains("foot") && !not_a_bone(name))?;
+    let above = |bone: usize| {
+        let mut at = skeleton.bones[bone].parent?;
+        while names[at].contains("twist") {
+            at = skeleton.bones[at].parent?;
+        }
+        Some(at)
+    };
+    let shin = above(foot)?;
+    let thigh = above(shin)?;
+    let toe = (0..names.len()).find(|&bone| {
+        let name = &names[bone];
+        skeleton.bones[bone].parent == Some(foot)
+            && (name.contains("toe") || name.contains("ball"))
+            && !name.contains("leaf")
+    });
+    Some(Leg { left, thigh, shin, foot, toe })
 }
 
 /// Whether a bone's name makes it this finger: the little finger goes by
@@ -158,6 +201,13 @@ pub(crate) mod tests {
             add("middle_01", Some(left), Some(hand), Vec3::new(0.085 * out, 0.0, 0.0));
             add("pinky_01", Some(left), Some(hand), Vec3::new(0.075 * out, 0.0, -0.035));
         }
+        for left in [true, false] {
+            let out = if left { -1.0 } else { 1.0 };
+            let thigh = add("thigh", Some(left), Some(hips), Vec3::new(0.1 * out, -0.05, 0.0));
+            let shin = add("shin", Some(left), Some(thigh), Vec3::new(0.0, -0.45, 0.0));
+            let foot = add("foot", Some(left), Some(shin), Vec3::new(0.0, -0.42, 0.0));
+            add("toe", Some(left), Some(foot), Vec3::new(0.0, -0.06, 0.12));
+        }
         Skeleton { bones }
     }
 
@@ -188,6 +238,10 @@ pub(crate) mod tests {
             assert_eq!(left.fingers[0].len(), 1);
             assert_eq!(left.fingers[2].len(), 1);
             assert!(left.fingers[3].is_empty(), "no ring finger");
+            let [leg, right_leg] = rig.legs.as_ref().expect("legs");
+            assert!(name(leg.foot).contains("foot") && side_of(&name(leg.foot)) == Some(true));
+            assert!(name(leg.shin).contains("shin") && name(leg.thigh).contains("thigh"));
+            assert!(leg.toe.is_some_and(|toe| name(toe).contains("toe")) && !right_leg.left);
         }
     }
 }

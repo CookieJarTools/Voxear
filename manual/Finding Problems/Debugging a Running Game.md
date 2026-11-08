@@ -23,6 +23,7 @@ Release builds have none of these tools, so players never see them.
 | F3 | Colours the shadows by which part of the shadow map they come from |
 | F4 | Shows how many lights reach each part of the screen, from blue for few to red for many |
 | F5 | Shows which way each surface faces, as colours |
+| F8 | Frees the camera to fly, or gives the mouse back to the game |
 | The key left of 1 | Opens the console |
 | F12 | Takes a RenderDoc capture (see below) |
 
@@ -35,6 +36,8 @@ F1 shows a panel with the frame rate, how long each frame takes on the processor
 ## Flying the camera
 
 Hold the right mouse button to fly the game's camera, as in the editor's Scene view: W, A, S and D to move, Q and E to go down and up, Shift to go faster, and the mouse wheel to change speed.
+
+In a game with scripts, the right mouse button is the game's at first, so a gun still aims with it. Press F8 to free the camera and fly it, and F8 again to give the mouse back. A project with no scripts starts with the camera free. While you fly, the game hears none of your keys or buttons, and lets go of any it had held.
 
 ## The game's console
 

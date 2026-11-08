@@ -422,6 +422,16 @@ impl Devices {
         }
         self.last = Scheme::KeyboardMouse;
     }
+
+    /// Presses or lets go of a mouse button, as a mouse would.
+    pub fn set_mouse_button(&mut self, button: MouseButton, down: bool) {
+        let Some(name) = mouse_button(button) else { return };
+        match down {
+            true => drop(self.buttons.insert(name)),
+            false => drop(self.buttons.remove(name)),
+        }
+        self.last = Scheme::KeyboardMouse;
+    }
 }
 
 /// gilrs's buttons by their names in paths. Its `LeftTrigger` is the

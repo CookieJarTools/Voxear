@@ -427,6 +427,8 @@ pub fn extract(
     let fov = camera.fov_y_degrees.to_radians();
     let view = Mat4::from_rotation_translation(rotation, position).inverse();
     let projection = vulkan::perspective_infinite_reverse(fov, aspect, camera.near);
+    // The lights' depth slices start from a usual near distance even for a camera seeing from very close.
+    let cluster_near = camera.near.max(0.1);
     let unjittered = projection * view;
     // Debug views show their colours as they are, the ambient occlusion view
     // the scene's own occlusion, on even where the scene turns it off.
@@ -488,8 +490,8 @@ pub fn extract(
         post: gpu_post,
         cluster_grid: CLUSTER_GRID,
         cluster_max_lights: MAX_CLUSTER_LIGHTS,
-        cluster_scale: CLUSTER_GRID[2] as f32 / (CLUSTER_FAR / camera.near).ln(),
-        cluster_bias: CLUSTER_GRID[2] as f32 * camera.near.ln() / (CLUSTER_FAR / camera.near).ln(),
+        cluster_scale: CLUSTER_GRID[2] as f32 / (CLUSTER_FAR / cluster_near).ln(),
+        cluster_bias: CLUSTER_GRID[2] as f32 * cluster_near.ln() / (CLUSTER_FAR / cluster_near).ln(),
         tile_size: [width as f32 / CLUSTER_GRID[0] as f32, height as f32 / CLUSTER_GRID[1] as f32],
         lod_fade_speed: options.lod_fade_speed,
         time,

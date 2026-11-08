@@ -104,9 +104,12 @@ pub fn cascades(view: &View, light_direction: Vec3, distance: f32, split: f32) -
     let light_up = if direction.y.abs() > 0.99 { Vec3::Z } else { Vec3::Y };
     let rotation_only = look_to_mat4(Vec3::ZERO, direction, light_up);
 
+    // A camera seeing from very close, as a first-person one does, splits its cascades from a usual near
+    // distance, not from in front of its nose.
+    let start = view.near.max(SPLIT_NEAR);
     let mut near = view.near;
     std::array::from_fn(|i| {
-        let far = split_at(view.near, i + 1, distance, split);
+        let far = split_at(start, i + 1, distance, split);
         let corners = [near, far].into_iter().flat_map(|d| {
             [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
                 .map(|(sx, sy)| view.position + forward * d + right * (sx * d * tan_h) + up * (sy * d * tan_v))
@@ -149,6 +152,9 @@ pub fn cascades(view: &View, light_direction: Vec3, distance: f32, split: f32) -
 
 /// "Practical" split scheme: mostly logarithmic, so near cascades are small
 /// and sharp, with some even spacing so the far ones are not starved.
+/// The nearest a camera's cascades split from, in metres.
+const SPLIT_NEAR: f32 = 0.1;
+
 fn split_at(near: f32, index: usize, distance: f32, split: f32) -> f32 {
     let distance = distance.max(near * 2.0);
     let t = index as f32 / CASCADES as f32;

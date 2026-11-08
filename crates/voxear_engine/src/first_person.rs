@@ -20,6 +20,10 @@ const MOST_LEAN: f32 = 40.0;
 /// The most the upper body turns from the legs to face the view, in
 /// radians: about 80 degrees.
 const MOST_TWIST: f32 = 1.4;
+/// How near a first-person camera sees, in metres: the gun held at the eye
+/// and the hands working before it come closer than a camera usually
+/// looks, and would be cut off.
+const NEAR: f32 = 0.01;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -234,6 +238,10 @@ pub fn place(world: &mut World) {
         });
         if let Some(camera) = camera {
             set_world(world, camera, obj.transform_point3(shown), view.rotation() * jolt);
+            // In play only, so a saved level keeps its camera as it was set.
+            if let Some(lens) = world.get_mut::<Camera>(camera).filter(|_| !editing) {
+                lens.near = lens.near.min(NEAR);
+            }
         }
     }
 }
@@ -462,6 +470,8 @@ mod tests {
             skeleton_head
         );
         assert!(eye.rotation.angle_between(view.rotation()) < 1e-4, "and looks where the view does");
+        let near = world.get::<Camera>(camera).unwrap().near;
+        assert!(near <= 0.01, "and sees from close enough not to cut off the hands: {near}");
         let bones = &world.get::<Pose>(body).unwrap().bones;
         let head =
             Rig::find(&world.get::<ModelRenderer>(body).unwrap().animation.as_ref().unwrap().skeleton).unwrap().head;

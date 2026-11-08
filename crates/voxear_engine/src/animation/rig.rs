@@ -65,7 +65,14 @@ impl Rig {
         let head = names.iter().position(|name| {
             name.contains("head") && side_of(name).is_none() && !name.contains("end") && !name.contains("top")
         })?;
-        let neck = central("neck").filter(|&neck| skeleton.bones[head].parent == Some(neck));
+        // The neck: the lowest of the bones named so that the head hangs from, one above another, as a rig with two
+        // neck bones has; else the spine would reach up into the neck, and its top, the chest, nod with the head.
+        let mut neck = None;
+        let mut below = skeleton.bones[head].parent;
+        while let Some(bone) = below.filter(|&bone| names[bone].contains("neck") && side_of(&names[bone]).is_none()) {
+            neck = Some(bone);
+            below = skeleton.bones[bone].parent;
+        }
         // The spine is what lies between the hips and the neck, or the head.
         let mut spine = Vec::new();
         let mut at = skeleton.bones[neck.unwrap_or(head)].parent;
@@ -209,6 +216,24 @@ pub(crate) mod tests {
             add("toe", Some(left), Some(foot), Vec3::new(0.0, -0.06, 0.12));
         }
         Skeleton { bones }
+    }
+
+    #[test]
+    fn a_rig_with_two_neck_bones_ends_its_spine_below_them() {
+        let mut skeleton = body(|part, side| match side {
+            Some(left) => format!("{part}_{}", if left { "l" } else { "r" }),
+            None => part.to_string(),
+        });
+        let find = |skeleton: &Skeleton, name: &str| skeleton.bones.iter().position(|bone| bone.name == name).unwrap();
+        let (neck, head) = (find(&skeleton, "neck"), find(&skeleton, "head"));
+        skeleton.bones[neck].name = "neck_01".into();
+        let rest = BonePose { translation: Vec3::new(0.0, 0.05, 0.0), ..BonePose::default() };
+        skeleton.bones.push(Bone { name: "neck_02".into(), parent: Some(neck), rest });
+        skeleton.bones[head].parent = Some(skeleton.bones.len() - 1);
+        let rig = Rig::find(&skeleton).expect("a humanoid");
+        assert_eq!(rig.neck, Some(neck), "the lower neck bone");
+        assert_eq!(skeleton.bones[rig.chest()].name, "chest", "the spine stops below the neck");
+        assert_eq!(rig.spine.len(), 2);
     }
 
     #[test]

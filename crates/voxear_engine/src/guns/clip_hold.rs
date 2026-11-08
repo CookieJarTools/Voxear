@@ -107,9 +107,9 @@ impl ClipHand {
 /// Where the clip `reference` holds the gun and has the hands `at` seconds
 /// in, looping or not: the gun carried by the bone `carrier` of its
 /// skeleton, or by one named `gun_carrier`, or by the right hand, and sitting
-/// `offset` from it; its eyes `eyes` from its head, in its space, which go
-/// where the holder's eyes are; and with the holder's `body`, its arms as
-/// it poses them there. None before the clip is read, or for a skeleton
+/// `offset` from it; its eyes `eyes` from its head as the clip starts, in
+/// its space, which go where the holder's eyes are; and with the holder's
+/// `body`, its arms as it poses them there. None before the clip is read, or for a skeleton
 /// the rig finds no arms in.
 pub fn clip_pose(
     world: &World,
@@ -129,7 +129,12 @@ pub fn clip_pose(
     let edit = PoseEdit::new(skeleton, &posed);
     let carried = posed[carried_by(skeleton, &rig, carrier)]
         * Mat4::from_rotation_translation(offset.rotation(), Vec3::from(offset.at));
-    let eye = Mat4::from_translation(posed[rig.head].w_axis.truncate() + eyes);
+    // The eyes stay where the clip's head starts, as the holder's camera stays put on the body: a clip whose head
+    // leans back as the bolt is worked moves the gun against the body as it has it, not against the leaning head.
+    let mut first = skeleton.rest();
+    source.clip().sample(0.0, false, &mut first);
+    let head = skeleton.model_matrices(&first)[rig.head].w_axis.truncate();
+    let eye = Mat4::from_translation(head + eyes);
     let into_gun = carried.inverse();
     let at_rest = PoseEdit::new(skeleton, &skeleton.model_matrices(&skeleton.rest()));
     let hand = |arm: usize| -> Option<ClipHand> {

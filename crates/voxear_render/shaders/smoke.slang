@@ -726,19 +726,45 @@ float4 smokeCompositeFragment(SmokeOut input) : SV_Target0
     {
         smoke = max(smoke, into.Load(int3(clamp(base + int2(k & 1, k >> 1), int2(0, 0), half - 1) / 2, 0)).r);
     }
+    let depthAt = (int2 c) => smokeSceneDepth(frame, push.textures.x, int2((float2(c) + 0.5) / float2(half) * float2(frame->viewport)));
+    // Whether a half-size pixel's scene lies about as deep as this one's, or both lie behind the smoke.
+    let same = (float theirs) => !smokeBefore(own, theirs, smoke) || abs(theirs - own) <= 0.25 * own;
     float4 total = 0.0;
     float weights = 0.0;
+    bool found = false;
     for (uint k = 0; k < 4; k++)
     {
         int2 o = int2(k & 1, k >> 1);
         int2 c = clamp(base + o, int2(0, 0), half - 1);
-        float2 centre = (float2(c) + 0.5) / float2(half);
-        float theirs = smokeSceneDepth(frame, push.textures.x, int2(centre * float2(frame->viewport)));
+        float theirs = depthAt(c);
         float2 w = lerp(1.0 - f, f, float2(o));
         float weight = w.x * w.y * smokeAlike(own, theirs, smoke);
         total += marched.Load(int3(c, 0)) * weight;
         weights += weight;
+        found = found || same(theirs);
     }
     float4 laid = total / max(weights, 1e-6);
+    if (!found)
+    {
+        // The edge of something thin before the smoke, as a gun's, that none of the four lies on: from those a
+        // little farther round that lie as deep; failing those, with only as much of the smoke as could lie before
+        // it, little where it stands well nearer than where the smoke's light comes from.
+        float4 near = 0.0;
+        float nears = 0.0;
+        for (int y = -1; y <= 2; y++)
+        {
+            for (int x = -1; x <= 2; x++)
+            {
+                int2 c = clamp(base + int2(x, y), int2(0, 0), half - 1);
+                if (same(depthAt(c)))
+                {
+                    near += marched.Load(int3(c, 0));
+                    nears += 1.0;
+                }
+            }
+        }
+        float before = saturate(own / max(smoke, 1e-3));
+        laid = nears > 0.0 ? near / nears : lerp(float4(0.0, 0.0, 0.0, 1.0), laid, before * before);
+    }
     return float4(laid.rgb, 1.0 - laid.a);
 }

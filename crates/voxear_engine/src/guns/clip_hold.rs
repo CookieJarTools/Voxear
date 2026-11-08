@@ -13,7 +13,7 @@ use voxear_ecs::World;
 use voxear_render::Skeleton;
 
 use super::handling::{PackClips, Place};
-use super::hands::{bends, palm_of};
+use super::hands::{finger_bends, palm_of};
 use crate::animation::Clips;
 use crate::animation::ik::{PoseEdit, hand_axes};
 use crate::animation::rig::Rig;
@@ -30,7 +30,7 @@ pub struct ClipPose {
 /// A hand as a clip has it: the middle of its palm, the way its fingers
 /// point and its palm faces, in the gun's space; the way its elbow is from
 /// its shoulder, in the eyes' space; and how far each finger's joints bend
-/// from rest, thumb first, in radians.
+/// toward the palm, thumb first, in radians (see `finger_bends`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ClipHand {
     pub contact: Vec3,
@@ -86,8 +86,7 @@ pub fn clip_pose(
     let mut pose = skeleton.rest();
     source.clip().sample(at, looping, &mut pose);
     let posed = skeleton.model_matrices(&pose);
-    let (edit, rest) =
-        (PoseEdit::new(skeleton, &posed), PoseEdit::new(skeleton, &skeleton.model_matrices(&skeleton.rest())));
+    let edit = PoseEdit::new(skeleton, &posed);
     let carried = posed[carried_by(skeleton, &rig, carrier)]
         * Mat4::from_rotation_translation(offset.rotation(), Vec3::from(offset.at));
     let eye = Mat4::from_translation(posed[rig.head].w_axis.truncate() + eyes);
@@ -101,7 +100,7 @@ pub fn clip_pose(
             fingers: into_gun.transform_vector3(fingers).normalize_or_zero(),
             palm: into_gun.transform_vector3(facing).normalize_or_zero(),
             elbow,
-            bends: bends(&edit, &rest, arm),
+            bends: finger_bends(&edit, arm),
         })
     };
     Some(ClipPose { gun: eye.inverse() * carried, hands: [hand(0)?, hand(1)?] })

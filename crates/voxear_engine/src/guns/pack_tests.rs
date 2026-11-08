@@ -204,6 +204,16 @@ fn palm_on_gun(scene: &Scene, arm: usize) -> Vec3 {
     voxear_scene::world_matrix(&scene.world, scene.gun).inverse().transform_point3(world)
 }
 
+/// How far a body's hand's fingers bend toward its palm, from straight.
+fn fingers(scene: &Scene, arm: usize) -> [[f32; 3]; 5] {
+    use crate::animation::ik::PoseEdit;
+    use crate::animation::rig::Rig;
+    let animation = scene.world.get::<ModelRenderer>(scene.body).unwrap().animation.clone().unwrap();
+    let rig = Rig::find(&animation.skeleton).unwrap();
+    let edit = PoseEdit::new(&animation.skeleton, &scene.world.get::<Pose>(scene.body).unwrap().bones);
+    super::hands::finger_bends(&edit, &rig.arms[arm])
+}
+
 /// The gun's place in the camera's space.
 fn gun_from_eye(scene: &Scene) -> Mat4 {
     voxear_scene::world_matrix(&scene.world, scene.camera).inverse()
@@ -274,6 +284,7 @@ fn an_arms_clip_holds_the_gun_where_it_has_it_and_puts_the_palms_where_its_are()
     settle(&mut own, 40);
     let (arms, palms) = clip_of_hold(&mut own);
     let shown = gun_from_eye(&own);
+    let curled = fingers(&own, 1);
 
     // Held by the clip alone, on the same body: the gun where the clip has it, and each palm where its was.
     let mut scene = scene_with(GunKind::BoltActionRifle);
@@ -286,6 +297,12 @@ fn an_arms_clip_holds_the_gun_where_it_has_it_and_puts_the_palms_where_its_are()
     for arm in 0..2 {
         let off = palm_on_gun(&scene, arm).distance(palms[arm]);
         assert!(off < 0.005, "palm {arm} on the gun where the clip's is: {off} m off");
+    }
+    let (index, clip_index) = (fingers(&scene, 1)[1], curled[1]);
+    assert!(clip_index[0] > 0.3, "the clip's trigger finger is bent: {clip_index:?}");
+    for joint in 0..2 {
+        let off = (index[joint] - clip_index[joint]).abs().to_degrees();
+        assert!(off < 3.0, "the index finger bends as the clip's, joint {joint}: {off} degrees off");
     }
 
     // On a body named otherwise and a tenth shorter, the palms go where the clip's are on the gun all the same:

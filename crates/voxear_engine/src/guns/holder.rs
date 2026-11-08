@@ -986,10 +986,13 @@ fn hands_on(
         Some((by, weight)) => pole.lerp(shoulder + way(by.elbow) * (pole - shoulder).length(), weight),
         None => pole,
     };
+    // The clip's fingers, measured from straight, less how this hand's stand at rest, which they bend from.
+    let at_rest = PoseEdit::new(&animation.skeleton, &animation.skeleton.model_matrices(&animation.skeleton.rest()));
     let fingers = |hand: usize, grip: Grip| match clipped(hand) {
         Some((by, weight)) => {
-            let own = super::hands::bends_of(grip);
-            std::array::from_fn(|f| std::array::from_fn(|j| own[f][j] + (by.bends[f][j] - own[f][j]) * weight))
+            let (own, rest) = (super::hands::bends_of(grip), super::hands::finger_bends(&at_rest, &rig.arms[hand]));
+            let wanted = |f: usize, j: usize| by.bends[f][j] - rest[f][j];
+            std::array::from_fn(|f| std::array::from_fn(|j| own[f][j] + (wanted(f, j) - own[f][j]) * weight))
         }
         None => super::hands::bends_of(grip),
     };

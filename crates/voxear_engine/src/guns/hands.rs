@@ -209,33 +209,28 @@ pub fn close_by(
     }
 }
 
-/// How far each of a posed hand's fingers' first three joints is bent from
-/// how it stands at `rest`, toward the palm, in radians, thumb first: each
-/// joint's turn from the line before it, the first's from the way the
-/// fingers point. What [`close_by`] bends a hand's fingers by, so a hand of
-/// another build curls as this one does.
-pub fn bends(edit: &PoseEdit, rest: &PoseEdit, arm: &Arm) -> [[f32; 3]; 5] {
-    let angles = |edit: &PoseEdit| -> Option<[[f32; 3]; 5]> {
-        let (along, palm) = hand_axes(edit, arm)?;
-        Some(std::array::from_fn(|finger| {
-            let Some(shape) = Finger::of(edit, &arm.fingers[finger], palm) else { return [0.0; 3] };
-            let mut before = along;
-            std::array::from_fn(|joint| {
-                if joint >= shape.joints {
-                    return 0.0;
-                }
-                let link = shape.points[joint + 1] - shape.points[joint];
-                let axis = before.cross(palm).normalize_or_zero();
-                let angle = before.cross(link).dot(axis).atan2(before.dot(link));
-                before = link;
-                angle
-            })
-        }))
-    };
-    match (angles(edit), angles(rest)) {
-        (Some(now), Some(rest)) => std::array::from_fn(|f| std::array::from_fn(|j| now[f][j] - rest[f][j])),
-        _ => [[0.0; 3]; 5],
-    }
+/// How far each of a posed hand's fingers' first three joints is bent
+/// toward the palm, in radians, thumb first: each joint's turn from the
+/// line before it, the first's from the way the fingers point. Taken from
+/// a clip's hand, less a hand's own at rest, it is what [`close_by`] bends
+/// that hand's fingers by, so a hand of another build, or that stands
+/// otherwise at rest, curls as the clip's does.
+pub fn finger_bends(edit: &PoseEdit, arm: &Arm) -> [[f32; 3]; 5] {
+    let Some((along, palm)) = hand_axes(edit, arm) else { return [[0.0; 3]; 5] };
+    std::array::from_fn(|finger| {
+        let Some(shape) = Finger::of(edit, &arm.fingers[finger], palm) else { return [0.0; 3] };
+        let mut before = along;
+        std::array::from_fn(|joint| {
+            if joint >= shape.joints {
+                return 0.0;
+            }
+            let link = shape.points[joint + 1] - shape.points[joint];
+            let axis = before.cross(palm).normalize_or_zero();
+            let angle = before.cross(link).dot(axis).atan2(before.dot(link));
+            before = link;
+            angle
+        })
+    })
 }
 
 /// A finger as it stands straight: its joints, from the knuckle out, and

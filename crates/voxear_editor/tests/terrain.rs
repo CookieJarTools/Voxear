@@ -624,6 +624,30 @@ fn the_dig_brush_and_a_trench_layer_dig_into_the_ground_each_a_step_to_undo() {
         "into a new Dig layer, a stroke: {:?}",
         layers(&editor)
     );
+
+    // Smooth begun on the dug ground evens it out, into the same Dig layer, a step to undo of its own.
+    let brushes = first_with(&editor.ui, prop_rows(&editor.ui, "Brush")[0], "value-choice").expect("the brushes");
+    choose(&mut editor, &mut renderer, brushes, 1);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(row_text(&editor.ui, prop_rows(&editor.ui, "Brush")[0]), "Smooth");
+    let dug_ground =
+        |editor: &voxear_editor::Editor| editor.game.engine.world.get::<Terrain>(field).unwrap().dug.clone();
+    let before = dug_ground(&editor);
+    stroke(&mut editor, &mut renderer, point, false);
+    let strokes = |editor: &voxear_editor::Editor| match layers(editor).as_slice() {
+        [voxear_terrain::layers::Layer { kind: voxear_terrain::layers::LayerKind::Dig { strokes }, .. }] => {
+            strokes.clone()
+        }
+        _ => Vec::new(),
+    };
+    let smoothed = strokes(&editor);
+    assert!(smoothed.len() == 2 && smoothed[1].smooth > 0.0, "a stroke that smooths: {smoothed:?}");
+    assert!(dug_ground(&editor) != before, "the dug ground evened out");
+    editor.undo(&mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(strokes(&editor).len(), 1, "the smoothing undone");
+    assert!(dug_ground(&editor) == before, "back as it was dug");
+
     editor.undo(&mut renderer);
     frame(&mut editor, &mut renderer);
     assert!(floor(&editor, local.0, local.1).is_none() && layers(&editor).is_empty(), "the dig undone");

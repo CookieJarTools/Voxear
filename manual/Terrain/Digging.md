@@ -17,7 +17,9 @@ private void Landed(Vector3 at)
 
 The **Sculpt** tool's **Dig** brush digs a ball the brush's **Size** round out of the ground where you click, and one after another along where you drag. Click again in the same place to dig deeper, and hold **Shift** to fill instead. **Strength** sets how deep each ball sits: at 0.5 it is half under the ground, so a click digs a bowl as deep as the brush is wide; at 1 deeper, at 0 shallower. **Bares** picks the surface laid on what it digs open. The **Fill** brush heaps ground up instead, as high as its strength.
 
-What the brushes dig goes in a **Dig** layer, made on top of the list the first time and picked after, and each stroke is one step to undo.
+The **Smooth** brush, begun on dug ground, evens it out: it rounds off the sharp lip of a trench or a pit, and the steps a run of clicks leaves, a little each time it passes, more at a higher **Strength**. It smooths only where the ground is dug, so the ground beside the dug columns stays as it is.
+
+What the brushes dig, fill and smooth goes in a **Dig** layer, made on top of the list the first time and picked after, and each stroke is one step to undo.
 
 ### Trenches
 

@@ -11,7 +11,7 @@ The brush paints into a **Sculpt** layer (see [[Layers]]): the one picked when i
 | Brush | What it does |
 | --- | --- |
 | Raise or Lower | Raises the ground while held; hold **Shift** to lower it |
-| Smooth | Evens out bumps |
+| Smooth | Evens out bumps. Begun on dug ground, it evens that out instead, rounding a trench's or a pit's sharp edges, into the Dig layer |
 | Flatten | Brings the ground to the height under the brush where the stroke began |
 | Set Height | Brings the ground to its **Height**; **Ctrl**+click takes the height under the pointer |
 | Terrace | Cuts the ground into steps **Step** metres high |

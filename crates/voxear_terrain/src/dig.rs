@@ -127,17 +127,35 @@ impl Default for Trench {
     }
 }
 
-/// One stroke of the Dig or Fill brush: a ball `[x, y, z]` in metres from
-/// the terrain's corner, `radius` round, filling or digging, and for a dig
-/// the surface laid on what it bares (its number, or none).
+/// One stroke of the Dig, Fill or Smooth brush: a ball `[x, y, z]` in
+/// metres from the terrain's corner, `radius` round, filling, smoothing
+/// `smooth` (0 to 1) of the way, or digging, and for a dig the surface laid
+/// on what it bares (its number, or none).
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct DigStroke {
     pub at: [f32; 3],
     pub radius: f32,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub fill: bool,
+    #[serde(default, skip_serializing_if = "is_nothing")]
+    pub smooth: f32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub surface: Option<u8>,
+}
+
+fn is_nothing(value: &f32) -> bool {
+    *value == 0.0
+}
+
+impl DigStroke {
+    /// How it carves the ground.
+    pub fn carve(&self) -> Carve {
+        match (self.smooth > 0.0, self.fill) {
+            (true, _) => Carve::Smooth { amount: self.smooth },
+            (false, true) => Carve::Fill,
+            (false, false) => Carve::Dig,
+        }
+    }
 }
 
 /// How far `p` is outside a convex polygon `corners`, wound
@@ -306,12 +324,18 @@ impl Shape {
     }
 }
 
-/// Whether a shape takes the ground away or puts it back.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Whether a shape takes the ground away, puts it back, or evens out the
+/// dug ground inside it, `amount` (0 to 1) of the way to the ground round
+/// each point at a time.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Carve {
     Dig,
     Fill,
+    Smooth { amount: f32 },
 }
+
+/// How many times a smoothing evens the ground out, each over the last.
+const SMOOTH_PASSES: usize = 3;
 
 /// How a terrain's voxels lie: how wide each is, and how tall a chunk.
 #[derive(Clone, Copy, Debug)]
@@ -359,10 +383,7 @@ pub fn dig_layers(layers: &[crate::layers::Layer], heights: &Heightmap) -> (Opti
         let carves: Vec<(Shape, Carve, Option<u8>)> = match &layer.kind {
             LayerKind::Dig { strokes } => strokes
                 .iter()
-                .map(|stroke| {
-                    let carve = if stroke.fill { Carve::Fill } else { Carve::Dig };
-                    (Shape::Ball { at: stroke.at, radius: stroke.radius }, carve, stroke.surface)
-                })
+                .map(|stroke| (Shape::Ball { at: stroke.at, radius: stroke.radius }, stroke.carve(), stroke.surface))
                 .collect(),
             LayerKind::Spline { points, width, dig: Some(trench), .. } => {
                 let shapes = Shape::trench(holed.as_ref().unwrap_or(heights), points, *width, *trench);
@@ -591,6 +612,9 @@ impl Excavation {
         if !shape.is_sound() {
             return None;
         }
+        if let Carve::Smooth { amount } = carve {
+            return self.smooth(heights, shape, amount).map(|changed| (None, changed));
+        }
         let grid = Grid::of(heights);
         let (low, high) = shape.bounds();
         let (low, high) = (low - grid.voxel, high + grid.voxel);
@@ -641,12 +665,12 @@ impl Excavation {
                         let at = corner(x, y, z);
                         let was = chunk.density[at];
                         let now = on_step(match carve {
-                            Carve::Dig => was.min(distance.max(-band)),
                             Carve::Fill => was.max((-distance).min(band)),
+                            _ => was.min(distance.max(-band)),
                         });
                         let now = match carve {
-                            Carve::Dig => now.min(was),
                             Carve::Fill => now.max(was),
+                            _ => now.min(was),
                         };
                         if now != was {
                             chunk.density[at] = now;
@@ -667,6 +691,151 @@ impl Excavation {
         }
         let holed = (!newly.is_empty()).then(|| cut_columns(heights, self, &newly));
         Some((holed, changed))
+    }
+
+    /// Corner `(x, y, z)` of the whole terrain's voxels as a dug chunk holds
+    /// it: its density and the surface digging laid there. None where no
+    /// chunk does.
+    fn held(&self, x: i64, y: i64, z: i64) -> Option<(f32, u8)> {
+        let cells = CELLS as i64;
+        // In the chunk it starts, or on the far face of the one before it each way.
+        let holders = |v: i64| {
+            let (chunk, at) = (v.div_euclid(cells), v.rem_euclid(cells) as usize);
+            [(chunk, at), (chunk - 1, if at == 0 { CELLS } else { usize::MAX })]
+        };
+        for (cx, ix) in holders(x) {
+            for (cy, iy) in holders(y) {
+                for (cz, iz) in holders(z) {
+                    if ix > CELLS || iy > CELLS || iz > CELLS {
+                        continue;
+                    }
+                    let key = ChunkKey { x: cx as i32, y: cy as i32, z: cz as i32 };
+                    if let Some(chunk) = self.chunks.get(&key) {
+                        let at = corner(ix, iy, iz);
+                        return Some((chunk.density[at], chunk.dug[at]));
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Sets corner `(x, y, z)` in every chunk holding it, noting each in
+    /// `changed`.
+    fn set_corner(&mut self, (x, y, z): (i64, i64, i64), density: f32, laid: u8, changed: &mut Vec<ChunkKey>) {
+        let cells = CELLS as i64;
+        let holders = |v: i64| {
+            let (chunk, at) = (v.div_euclid(cells), v.rem_euclid(cells) as usize);
+            [(chunk, at), (chunk - 1, if at == 0 { CELLS } else { usize::MAX })]
+        };
+        for (cx, ix) in holders(x) {
+            for (cy, iy) in holders(y) {
+                for (cz, iz) in holders(z) {
+                    if ix > CELLS || iy > CELLS || iz > CELLS {
+                        continue;
+                    }
+                    let key = ChunkKey { x: cx as i32, y: cy as i32, z: cz as i32 };
+                    if let Some(chunk) = self.chunks.get_mut(&key) {
+                        let chunk = Arc::make_mut(chunk);
+                        let at = corner(ix, iy, iz);
+                        (chunk.density[at], chunk.dug[at]) = (density, laid);
+                        if !changed.contains(&key) {
+                            changed.push(key);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Whether the corners at `(x, z)` of the whole terrain's voxels are
+    /// inside dug ground, every column they are a corner of dug: those on
+    /// a face shared with ground not dug stay as the heights have them, so
+    /// the voxels still meet the heights there.
+    fn inside_dug(&self, x: i64, z: i64) -> bool {
+        let cells = CELLS as i64;
+        let columns = |v: i64| {
+            let column = v.div_euclid(cells) as i32;
+            if v.rem_euclid(cells) == 0 { [column - 1, column] } else { [column, column] }
+        };
+        columns(x).iter().all(|&cx| columns(z).iter().all(|&cz| self.is_dug(cx, cz)))
+    }
+
+    /// Evens out the dug ground inside `shape`, each corner near its surface
+    /// `amount` of the way to the average of the six round it, fully more
+    /// than a metre inside the shape and less towards its edge, a few times
+    /// over. Only dug ground changes, and none of it on a face it shares
+    /// with ground not dug. The chunks changed, none where the shape misses
+    /// the terrain.
+    fn smooth(&mut self, heights: &Heightmap, shape: &Shape, amount: f32) -> Option<Vec<ChunkKey>> {
+        if !amount.is_finite() || amount <= 0.0 {
+            return None;
+        }
+        let amount = amount.min(1.0);
+        let grid = Grid::of(heights);
+        let band = grid.voxel * 2.0;
+        let on_step = |v: f32| (v * 1024.0).round() / 1024.0;
+        let (low, high) = shape.bounds();
+        let first = |v: f32| (v / grid.voxel).floor() as i64;
+        let last = |v: f32| (v / grid.voxel).ceil() as i64;
+        let [qx, qz] = heights.quads().map(|q| i64::from(q) * 2);
+        let (x0, x1) = (first(low.x).max(0), last(high.x).min(qx));
+        let (z0, z1) = (first(low.z).max(0), last(high.z).min(qz));
+        let (y0, y1) = (first(low.y), last(high.y));
+        if x0 > x1 || z0 > z1 {
+            return None;
+        }
+        let value = |dug: &Excavation, x: i64, y: i64, z: i64| {
+            dug.held(x, y, z).map_or_else(|| dug.density(heights, grid, x, y, z), |(density, _)| density)
+        };
+        const AROUND: [(i64, i64, i64); 6] = [(1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)];
+        let mut changed = Vec::new();
+        for _ in 0..SMOOTH_PASSES {
+            // Each pass reads the ground as the last left it, then changes it.
+            let mut moves = Vec::new();
+            for z in z0..=z1 {
+                for x in x0..=x1 {
+                    if !self.inside_dug(x, z) {
+                        continue;
+                    }
+                    for y in y0..=y1 {
+                        let Some((was, laid)) = self.held(x, y, z) else { continue };
+                        if was.abs() >= band {
+                            continue;
+                        }
+                        let p = Vec3::new(x as f32, y as f32, z as f32) * grid.voxel;
+                        let weight = amount * (-shape.distance(p) / (band * 2.0)).clamp(0.0, 1.0);
+                        if weight <= 0.0 {
+                            continue;
+                        }
+                        let round: f32 =
+                            AROUND.iter().map(|&(dx, dy, dz)| value(self, x + dx, y + dy, z + dz)).sum::<f32>() / 6.0;
+                        let now = on_step((was + (round - was) * weight).clamp(-band, band));
+                        if now == was {
+                            continue;
+                        }
+                        // Opened, it bares what digging laid beside it.
+                        let laid = match was > 0.0 && now <= 0.0 {
+                            true => AROUND
+                                .iter()
+                                .filter_map(|&(dx, dy, dz)| self.held(x + dx, y + dy, z + dz).map(|(_, laid)| laid))
+                                .max()
+                                .unwrap_or(laid),
+                            false => laid,
+                        };
+                        moves.push(((x, y, z), now, laid));
+                    }
+                }
+            }
+            if moves.is_empty() {
+                break;
+            }
+            for (at, density, laid) in moves {
+                self.set_corner(at, density, laid, &mut changed);
+            }
+        }
+        changed.sort_unstable();
+        Some(changed)
     }
 }
 
@@ -1081,8 +1250,9 @@ mod tests {
         let heights = field();
         let ground = heights.height_at(30.0, 30.0);
         let strokes = vec![
-            DigStroke { at: [30.0, ground, 30.0], radius: 1.5, fill: false, surface: Some(1) },
-            DigStroke { at: [31.0, ground - 0.5, 30.0], radius: 0.8, fill: true, surface: None },
+            DigStroke { at: [30.0, ground, 30.0], radius: 1.5, fill: false, smooth: 0.0, surface: Some(1) },
+            DigStroke { at: [31.0, ground - 0.5, 30.0], radius: 0.8, fill: true, smooth: 0.0, surface: None },
+            DigStroke { at: [30.5, ground, 30.0], radius: 1.5, fill: false, smooth: 0.7, surface: None },
         ];
         let strokes_kept = strokes.clone();
         let layer = Layer::new(LayerKind::Dig { strokes: strokes.clone() });
@@ -1091,8 +1261,8 @@ mod tests {
         let (_, by_layer) = dig_layers(&[layer], &heights);
         let mut by_hand = Excavation::default();
         for stroke in strokes {
-            let carve = if stroke.fill { Carve::Fill } else { Carve::Dig };
-            by_hand.carve(&heights, &Shape::Ball { at: stroke.at, radius: stroke.radius }, carve, stroke.surface);
+            let ball = Shape::Ball { at: stroke.at, radius: stroke.radius };
+            by_hand.carve(&heights, &ball, stroke.carve(), stroke.surface);
         }
         assert_eq!(by_layer, Some(by_hand));
         // Kept in a file without the holes it cut, which digging cuts again as it loads.
@@ -1107,6 +1277,64 @@ mod tests {
         let plain = crate::layers::hash_layers(0.0, &[]);
         let dug = Layer::new(LayerKind::Dig { strokes: Vec::new() });
         assert_eq!(crate::layers::hash_layers(0.0, &[dug]), plain);
+    }
+
+    #[test]
+    fn smoothing_rounds_a_trenchs_lip_and_leaves_the_ground_not_dug_as_it_was() {
+        let heights = Heightmap::flat(1, 1, 0.5, 0.1);
+        let mut dug = Excavation::default();
+        // Straight walls 2 m deep from x 61.5 to 63.5 m, all in the column from 56 to 64 m: the one beyond not dug.
+        let profile = Trench {
+            batter: 0.0,
+            step_height: 0.0,
+            step_width: 0.0,
+            parapet: 0.0,
+            surface: Some(3),
+            ..Trench::default()
+        };
+        let trench = Shape::Trench { from: [62.5, 0.1, 50.0], to: [62.5, 0.1, 70.0], floor: 2.0, profile };
+        dug.carve(&heights, &trench, Carve::Dig, profile.surface);
+        assert!(dug.is_dug(7, 7) && !dug.is_dug(8, 7));
+        let top = |dug: &Excavation, x: f32| dug.surface_at(&heights, x, 60.0).map_or(f32::NAN, |(h, _)| h);
+        assert!((top(&dug, 63.75) - 0.1).abs() < 1e-3, "a sharp lip: {}", top(&dug, 63.75));
+        // The corners on the face it shares with the column not dug, at 64 m.
+        let face = |dug: &Excavation| -> Vec<f32> {
+            let corners = (-12..4).flat_map(|y| (200..280).map(move |z| (y, z)));
+            corners.map(|(y, z)| dug.held(256, y, z).expect("held by the dug column").0).collect()
+        };
+        let (face_before, before) = (face(&dug), dug.clone());
+        let ball = Shape::Ball { at: [63.5, 0.1, 60.0], radius: 2.0 };
+        for _ in 0..4 {
+            let (holed, changed) = dug.carve(&heights, &ball, Carve::Smooth { amount: 1.0 }, None).expect("reached");
+            assert!(holed.is_none() && !changed.is_empty(), "smoothing digs no more columns");
+        }
+        assert!(top(&dug, 63.75) < 0.07, "the lip rounded off: {}", top(&dug, 63.75));
+        assert!((top(&dug, 62.5) + 1.9).abs() < 0.05, "the floor beyond its reach as it was: {}", top(&dug, 62.5));
+        assert_eq!(face(&dug), face_before, "the face shared with ground not dug untouched");
+        assert!(!dug.is_dug(8, 7));
+        // Smoothing nothing dug changes nothing.
+        let mut plain = before.clone();
+        let away = Shape::Ball { at: [20.0, 0.1, 20.0], radius: 2.0 };
+        assert_eq!(plain.carve(&heights, &away, Carve::Smooth { amount: 1.0 }, None).map(|(_, c)| c), Some(Vec::new()));
+        assert_eq!(plain, before);
+        // Still whole: every edge inside the dug column shared, as a dig leaves it.
+        let mut edges: HashMap<([u32; 3], [u32; 3]), i32> = HashMap::new();
+        for &key in dug.chunks().keys() {
+            let mesh = mesh(&dug, &heights, key);
+            for [a, b, c] in mesh.indices.chunks(3).map(|t| [t[0], t[1], t[2]]) {
+                for (from, to) in [(a, b), (b, c), (c, a)] {
+                    let (p, q) = (mesh.positions[from as usize], mesh.positions[to as usize]);
+                    let (p, q) = (p.map(f32::to_bits), q.map(f32::to_bits));
+                    *edges.entry((p, q)).or_default() += 1;
+                    *edges.entry((q, p)).or_default() -= 1;
+                }
+            }
+        }
+        for ((p, _), count) in edges.iter().filter(|(_, count)| **count != 0) {
+            let p = p.map(f32::from_bits);
+            let edge = [p[0], p[2]].iter().any(|v| (v / 8.0 - (v / 8.0).round()).abs() < 1e-4);
+            assert!(edge, "an open edge at {p:?} ({count}) inside the dug columns");
+        }
     }
 
     #[test]

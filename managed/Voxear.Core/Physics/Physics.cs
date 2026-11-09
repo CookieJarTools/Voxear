@@ -44,7 +44,7 @@ public static class Physics
 
 		var point = new Vector3(found.PointX, found.PointY, found.PointZ);
 		var normal = new Vector3(found.NormalX, found.NormalY, found.NormalZ);
-		hit = new RaycastHit(new Obj(found.Obj), point, normal, found.Distance);
+		hit = new RaycastHit(new Obj(found.Obj), point, normal, found.Distance, found.Plant);
 		return true;
 	}
 

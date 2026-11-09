@@ -20,7 +20,7 @@ Add a **Foliage** to an Obj (Add Component, then Rendering). It starts as small 
 
 ## Where plants grow
 
-Plants grow in the Obj's space, so moving, turning or scaling the Obj moves all of them. They grow in two ways, which you can use together.
+Plants grow in the Obj's space, so moving, turning or scaling the Obj moves all of them. They grow in three ways: **painted** onto the ground in the Scene view with the Foliage's **Paint** tool, each dropped onto the terrain or mesh below it and leaning with it (see [[Painting and Cutting Plants]]); scattered; and placed one by one.
 
 **Scattered** over an area round the Obj, evenly but not in rows, each turned its own way and sized at random within a range:
 
@@ -36,19 +36,19 @@ seed = 0              # another seed scatters them another way
 scale = [0.8, 1.2]    # the smallest and largest
 ```
 
-**Placed** one by one, each as `[x, y, z, turn, size]`, its place in the Obj's space, its turn in degrees and its size:
+**Placed** one by one, each as `[x, y, z, turn, size]`, its place in the Obj's space, its turn in degrees and its size, and for a plant leaning with a slope two numbers more, the x and z of the way its top points:
 
 ```toml
-plants = [[1.0, 0.0, 2.0, 45.0, 1.1], [3.5, 0.0, -1.0, 200.0, 0.9]]
+plants = [[1.0, 0.0, 2.0, 45.0, 1.1], [3.5, 0.0, -1.0, 200.0, 0.9, 0.2, 0.0]]
 ```
 
-Scattered plants stand on the Obj's level, so scatter over flat ground, or use several Foliage Objs at different heights.
+Scattered plants stand on the Obj's level, so scatter over flat ground, or paint plants instead, which find the ground themselves. Painting turns a Foliage's scattered plants into placed ones, to paint among them.
 
 ## How many
 
 A view draws up to 65,536 meshes, Objs and plants together. Plants are counted only within their draw distance of the camera, so a grass clump to a square metre drawn out to 60 metres is about 11,000 plants however large the field. A plant mesh can be a whole clump of blades: fewer, larger plants draw faster than many small ones.
 
-Clicking a plant in the Scene view selects its Foliage's Obj. Something dragged into the Scene view over plants lands on the ground among them, not on top of them.
+Clicking a plant in the Scene view selects its Foliage's Obj. Trees that collide, what one becomes when it is cut down, and plants in scripts are in [[Painting and Cutting Plants]]. Something dragged into the Scene view over plants lands on the ground among them, not on top of them.
 
 ## Far trees
 

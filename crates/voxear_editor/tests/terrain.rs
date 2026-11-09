@@ -494,3 +494,56 @@ fn surfaces_are_added_painted_and_holes_cut_in_the_scene_view_each_a_step_to_und
     frame(&mut editor, &mut renderer);
     assert!(cut(&editor), "the filling undone");
 }
+
+#[test]
+fn foliage_paints_plants_onto_the_terrain_and_shift_takes_them_away_each_a_step_to_undo() {
+    let Some((_dir, mut renderer, mut editor, field)) = editor_with_a_terrain() else { return };
+    add_component(&mut editor, &mut renderer, "Foliage");
+    let strip = first_with(&editor.ui, editor.ui.root(), "foliage-tools").expect("the Foliage's tools");
+    let paint = editor.ui.children(strip).into_iter().find(|&s| editor.ui.text(s) == "Paint").expect("Paint");
+    click(&mut editor.ui, paint);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    for label in ["Density", "Sizes", "Lean with ground", "Steepest ground", "Spacing"] {
+        assert_eq!(prop_rows(&editor.ui, label).len(), 1, "the Paint tool's {label}");
+    }
+    type_number(&mut editor, &mut renderer, "Density", "40");
+    let plants = |editor: &voxear_editor::Editor| {
+        editor.game.engine.world.get::<voxear_scene::Plants>(field).unwrap().plants.as_ref().clone()
+    };
+    let before = plants(&editor).len();
+    assert!(before > 100, "Add Component's cubes scattered: {before}");
+
+    // Painted where the pointer holds, on the terrain, which the field's Obj also is.
+    let camera = editor.scene_camera().expect("the Scene view");
+    let [x, y, w, h] = camera.rect;
+    let point = [x + w / 2.0, y + h * 0.85];
+    let at =
+        voxear_editor::scene_tools::surface_at(&editor.game.engine.world, &renderer, &camera, point).expect("ground");
+    stroke(&mut editor, &mut renderer, point, false);
+    let painted = plants(&editor);
+    let radius = 8.0;
+    let corner = voxear_core::math::Vec3::new(-256.0, 0.5, -256.0);
+    let in_brush: Vec<_> = painted
+        .iter()
+        .map(|plant| voxear_core::math::Vec3::from(plant.position) + corner)
+        .filter(|place| (place.x - at.x).hypot(place.z - at.z) <= radius)
+        .collect();
+    assert!(painted.len() > before && !in_brush.is_empty(), "plants painted: {} then {}", before, painted.len());
+    for place in &in_brush {
+        assert!((place.y - 0.5).abs() < 0.05, "standing on the terrain: {place}");
+    }
+    let source = editor.game.engine.world.get::<voxear_engine::scene_file::FoliageSource>(field).unwrap().0.clone();
+    assert!(source.scatter.is_none() && source.plants.len() == painted.len(), "written as placed plants");
+
+    // Shift takes those under the brush away; each stroke undoes on its own.
+    stroke(&mut editor, &mut renderer, point, true);
+    let erased = plants(&editor);
+    assert!(erased.len() < painted.len(), "taken away: {} then {}", painted.len(), erased.len());
+    editor.undo(&mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(plants(&editor).len(), painted.len(), "the erasing undone");
+    editor.undo(&mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(plants(&editor).len(), before, "the painting undone");
+}

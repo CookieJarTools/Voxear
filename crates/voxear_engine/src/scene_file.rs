@@ -743,10 +743,17 @@ impl LightData {
 /// material = "Materials/Grass.material"
 /// draw_distance = 60.0
 /// plants = [[1.0, 0.0, 2.0, 45.0, 1.1]]   # x, y, z, turn in degrees, size
+/// cut = "Prefabs/Felled Tree.prefab"      # what a plant cut down becomes
+/// [obj.foliage.trunk]                     # plants' trunks collide
+/// radius = 0.3
+/// height = 5.0
 /// [obj.foliage.scatter]
 /// size = [40.0, 40.0]   # metres across, centred on the Obj
 /// density = 2.0         # plants to a square metre
 /// ```
+///
+/// A plant leaning with the ground it was painted on has two numbers more,
+/// the x and z of the way its up points.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FoliageData {
@@ -776,13 +783,83 @@ pub struct FoliageData {
     pub impostors: voxear_render::Impostors,
     #[serde(default = "default_impostor_distance", skip_serializing_if = "is_default_impostor_distance")]
     pub impostor_distance: f32,
-    /// Plants placed one by one: x, y and z in the Obj's space, a turn in
-    /// degrees, and a size.
+    /// Plants placed one by one, or painted: x, y and z in the Obj's space,
+    /// a turn in degrees, a size, and for a leaning plant the x and z of
+    /// its up.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub plants: Vec<[f32; 5]>,
+    pub plants: Vec<PlantRow>,
     /// Plants scattered over an area, besides those placed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scatter: Option<ScatterData>,
+    /// The plants' trunks, which collide; none for plants walked through.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trunk: Option<voxear_scene::Trunk>,
+    /// The prefab a plant becomes when it is cut down: a falling trunk and
+    /// a stump, say. None leaves nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cut: Option<String>,
+    /// How the Scene view's brush paints its plants.
+    #[serde(default, skip_serializing_if = "PaintData::is_default")]
+    pub paint: PaintData,
+}
+
+/// One placed plant as written: x, y, z, a turn in degrees and a size, and
+/// for a leaning one the x and z of its up.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum PlantRow {
+    Upright([f32; 5]),
+    Leaning([f32; 7]),
+}
+
+impl PlantRow {
+    pub fn plant(&self) -> Plant {
+        let (row, lean) = match *self {
+            PlantRow::Upright(row) => (row, [0.0; 2]),
+            PlantRow::Leaning([x, y, z, turn, size, lx, lz]) => ([x, y, z, turn, size], [lx, lz]),
+        };
+        let [x, y, z, turn, scale] = row;
+        Plant { position: [x, y, z], yaw: turn.to_radians(), scale, lean }
+    }
+
+    /// A plant as written, to a millimetre and a tenth of a degree, which
+    /// keeps a scene of thousands small.
+    pub fn of(plant: &Plant) -> Self {
+        let round = |v: f32, by: f32| (v * by).round() / by;
+        let [x, y, z] = plant.position.map(|v| round(v, 1000.0));
+        let turn = round(plant.yaw.to_degrees().rem_euclid(360.0), 10.0);
+        let size = round(plant.scale, 1000.0);
+        match plant.lean.map(|v| round(v, 1000.0)) {
+            [0.0, 0.0] => PlantRow::Upright([x, y, z, turn, size]),
+            [lx, lz] => PlantRow::Leaning([x, y, z, turn, size, lx, lz]),
+        }
+    }
+}
+
+/// How a Foliage's plants are painted: how many to a hundred square metres
+/// under a full brush, the smallest and largest size, how far each leans
+/// with the ground (0 upright, 1 square to it), the steepest ground they
+/// grow on in degrees, and how near two may stand, in metres.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PaintData {
+    pub density: f32,
+    pub scale: [f32; 2],
+    pub lean: f32,
+    pub steepest: f32,
+    pub spacing: f32,
+}
+
+impl Default for PaintData {
+    fn default() -> Self {
+        Self { density: 10.0, scale: [0.8, 1.2], lean: 0.3, steepest: 35.0, spacing: 1.0 }
+    }
+}
+
+impl PaintData {
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 fn default_color_spread() -> f32 {
@@ -841,13 +918,14 @@ fn plain_scale() -> [f32; 2] {
 impl FoliageData {
     /// Every plant: those placed, then those scattered.
     pub fn plants(&self) -> Vec<Plant> {
-        let placed = self.plants.iter().map(|&[x, y, z, turn, scale]| Plant {
-            position: [x, y, z],
-            yaw: turn.to_radians(),
-            scale,
-        });
+        let placed = self.plants.iter().map(PlantRow::plant);
         let scattered = self.scatter.map(|s| scatter(s.size, s.density, s.seed, s.scale)).unwrap_or_default();
         placed.chain(scattered).collect()
+    }
+
+    /// Its plants as the game has them, with their trunks.
+    pub fn grown(&self) -> voxear_scene::Plants {
+        voxear_scene::Plants { trunk: self.trunk, cut: self.cut.clone(), ..voxear_scene::Plants::new(self.plants()) }
     }
 }
 
@@ -2484,5 +2562,28 @@ mod tests {
         assert_eq!(ends.transitions(), Some([0.5, 0.25, 0.0, 0.0, 0.0]), "LODs not written end at nothing");
         assert_eq!(written_transitions(ends.transitions()), [0.5, 0.25], "and are left out again");
         assert_eq!(written_transitions(None), Vec::<f32>::new());
+    }
+
+    #[test]
+    fn painted_plants_trunks_and_what_a_plant_cut_down_becomes_read_and_write_back() {
+        let text = r#"
+mesh = "builtin:cube"
+plants = [[1.0, 0.0, 2.0, 90.0, 1.5], [3.0, 1.0, 4.0, 0.0, 1.0, 0.6, 0.0]]
+cut = "Prefabs/Stump.prefab"
+trunk = { radius = 0.3, height = 5.0 }
+paint = { density = 25.0, spacing = 2.0 }
+"#;
+        let data: FoliageData = toml::from_str(text).expect("foliage");
+        let grown = data.grown();
+        assert_eq!(grown.plants.len(), 2);
+        assert_eq!(grown.plants[1].lean, [0.6, 0.0], "the second leans");
+        assert_eq!((grown.trunk.map(|t| t.height), grown.cut.as_deref()), (Some(5.0), Some("Prefabs/Stump.prefab")));
+        assert_eq!((data.paint.density, data.paint.spacing, data.paint.lean), (25.0, 2.0, PaintData::default().lean));
+        let again: FoliageData = toml::from_str(&toml::to_string(&data).unwrap()).unwrap();
+        assert_eq!(again, data);
+        // Written to a millimetre and a tenth of a degree, upright plants with five numbers.
+        let plant = Plant { position: [1.23456, 0.0, -2.0], yaw: 1.0, scale: 1.0, lean: [0.0; 2] };
+        assert_eq!(PlantRow::of(&plant), PlantRow::Upright([1.235, 0.0, -2.0, 57.3, 1.0]));
+        assert!(!toml::to_string(&FoliageData { paint: PaintData::default(), ..data }).unwrap().contains("paint"));
     }
 }

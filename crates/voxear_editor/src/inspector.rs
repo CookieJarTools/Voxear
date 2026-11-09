@@ -406,6 +406,8 @@ pub struct Inspector {
     group_lods: Option<GroupLods>,
     /// A Terrain's tools and its layers (see `terrain_panel`).
     terrain_panel: Option<crate::terrain_panel::TerrainPanel>,
+    /// A Foliage's tools (see `plants_panel`).
+    plants_panel: Option<crate::plants_panel::PlantsPanel>,
     lod_eye: Option<LodEye>,
     /// The LOD bar's edge dragged this frame, for the Scene view to follow.
     lod_edge: Option<LodEdge>,
@@ -471,6 +473,7 @@ impl Inspector {
             mesh_lods: None,
             group_lods: None,
             terrain_panel: None,
+            plants_panel: None,
             lod_eye: None,
             lod_edge: None,
             lod_level: 0,
@@ -977,7 +980,7 @@ impl Inspector {
         self.inspected.clear();
         self.group_tabs.clear();
         self.group_foldouts.clear();
-        (self.mesh_lods, self.group_lods, self.terrain_panel) = (None, None, None);
+        (self.mesh_lods, self.group_lods, self.terrain_panel, self.plants_panel) = (None, None, None, None);
         let Some(entity) = self.shown else {
             let hint = ui.add_label(self.root, "Select an Obj in the Hierarchy to see it here.");
             ui.add_class(hint, "placeholder");
@@ -1091,6 +1094,9 @@ impl Inspector {
             if *part == Part::Terrain {
                 self.terrain_panel = Some(crate::terrain_panel::TerrainPanel::new(ui, rows, game, entity));
             }
+            if *part == Part::Foliage {
+                self.plants_panel = Some(crate::plants_panel::PlantsPanel::new(ui, rows, world));
+            }
             // A LOD Group's bar of its levels comes first, as in Unity, and only the selected level's settings show.
             if *part == Part::LodGroup
                 && let Some(group) = world.get::<LodGroup>(entity)
@@ -1120,6 +1126,9 @@ impl Inspector {
                     continue;
                 }
                 let mut meta = attributes::of(&self.types, value).clone();
+                if let Prop::Plants(field) = value {
+                    meta.range = crate::plants_props::range(*field).map(|r| r.map(f64::from));
+                }
                 if let Prop::Terrain(field) = value {
                     meta.range = crate::terrain_props::range(&game.engine.world, entity, *field).map(|r| r.map(f64::from));
                 }
@@ -1555,7 +1564,8 @@ impl Inspector {
         // A LOD Group measured another way labels where its levels end another way.
         let measure = game.engine.world.get::<LodGroup>(entity).map(|group| group.measure);
         let remeasured = self.group_lods.as_ref().is_some_and(|lods| Some(lods.measure) != measure);
-        let restacked = self.terrain_panel.as_ref().is_some_and(|panel| panel.stale(&game.engine.world, entity));
+        let restacked = self.terrain_panel.as_ref().is_some_and(|panel| panel.stale(&game.engine.world, entity))
+            || self.plants_panel.as_ref().is_some_and(|panel| panel.stale(&game.engine.world));
         if layout != self.built.0
             || playing != self.built.1
             || locks != self.built.2
@@ -1572,6 +1582,7 @@ impl Inspector {
             self.also.iter().filter_map(|&other| Some((other, ObjState::of(world, other)?))).collect();
         if self.update_lists(ui, game, entity, renderer.as_deref_mut())
             || self.terrain_panel.as_ref().is_some_and(|panel| panel.update(ui, game, entity))
+            || self.plants_panel.as_ref().is_some_and(|panel| panel.update(ui, game))
         {
             self.show(ui, game, Some(entity), playing);
             let (before, after) = (before?, ObjState::of(&game.engine.world, entity)?);

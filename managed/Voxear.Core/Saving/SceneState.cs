@@ -51,6 +51,7 @@ public sealed class SceneState
 			root["spawned"] = SaveNode.NewList(copies.Select(Copy));
 			root["saved"] = SaveNode.NewList(BehaviourTable.Live().Select(Values).OfType<SaveNode>());
 			root["components"] = SaveNode.NewList(SceneComponents.Capture());
+			root["plants"] = SaveNode.NewList(RemovedPlants().Select(PlantsNode));
 		}
 		return new SceneState(root);
 	}
@@ -75,6 +76,19 @@ public sealed class SceneState
 			if (obj.IsValid)
 			{
 				obj.Destroy();
+			}
+		}
+
+		// The plants scripts took away, each by its Foliage's Obj and its number.
+		foreach (var entry in Root["plants"].Items)
+		{
+			var obj = NativeSaves.FindObj(entry["obj"].AsString() ?? string.Empty);
+			foreach (var number in entry["gone"].Items)
+			{
+				if (obj.IsValid)
+				{
+					new Plant(obj, number.AsInt()).Remove();
+				}
 			}
 		}
 
@@ -142,6 +156,37 @@ public sealed class SceneState
 			copies.Add((copy.GetProperty("root").GetUInt64(), copy.GetProperty("prefab").GetString()!, copy.GetProperty("parent").GetString()));
 		}
 		return (state.GetProperty("level").GetString(), gone, copies);
+	}
+
+	/// <summary>What the engine says of the plants scripts took away: each Foliage's Obj's key and the plants' numbers.</summary>
+	private static List<(string Obj, List<int> Gone)> RemovedPlants()
+	{
+		var found = new List<(string Obj, List<int> Gone)>();
+		var json = NativeSaves.SceneState();
+		if (json == null)
+		{
+			return found;
+		}
+
+		using var document = JsonDocument.Parse(json);
+		if (!document.RootElement.TryGetProperty("plants", out var plants))
+		{
+			return found;
+		}
+		foreach (var entry in plants.EnumerateArray())
+		{
+			var gone = entry.GetProperty("gone").EnumerateArray().Select(number => number.GetInt32()).ToList();
+			found.Add((entry.GetProperty("obj").GetString()!, gone));
+		}
+		return found;
+	}
+
+	private static SaveNode PlantsNode((string Obj, List<int> Gone) entry)
+	{
+		var node = SaveNode.NewTable();
+		node["obj"] = entry.Obj;
+		node["gone"] = SaveNode.From(entry.Gone);
+		return node;
 	}
 
 	private static SaveNode Copy((ulong Root, string Prefab, string? Parent) copy)

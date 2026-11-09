@@ -14,5 +14,6 @@ internal struct RaycastHitData
 	public float NormalY;
 	public float NormalZ;
 	public float Distance;
-	public uint Pad;
+	/// <summary>The plant whose trunk it met, its number and one; 0 for none.</summary>
+	public uint Plant;
 }

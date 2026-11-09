@@ -136,7 +136,8 @@ pub struct RaycastHitData {
     pub point: [f32; 3],
     pub normal: [f32; 3],
     pub distance: f32,
-    pub _pad: u32,
+    /// The plant whose trunk it met, its number and one; 0 for none.
+    pub plant: u32,
 }
 
 const _: () = assert!(size_of::<RaycastHitData>() == 40, "RaycastHitData in Voxear.Core is 40 bytes");
@@ -676,6 +677,7 @@ pub(crate) unsafe extern "C" fn physics_raycast(
                 point: found.point.extend(0.0),
                 normal: found.normal.extend(0.0),
                 distance: found.distance,
+                plant: None,
             })
         }),
     });
@@ -686,7 +688,7 @@ pub(crate) unsafe extern "C" fn physics_raycast(
             point: found.point.to_array(),
             normal: found.normal.to_array(),
             distance: found.distance,
-            _pad: 0,
+            plant: found.plant.map_or(0, |number| number + 1),
         };
     }
     1

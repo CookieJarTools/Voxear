@@ -45,7 +45,7 @@ use std::{
 use glam::{Mat4, Quat, Vec3};
 use serde::{Deserialize, Serialize};
 use voxear_ecs::{Component, Entity, World};
-use voxear_scene::{Destroying, Layer, Layers, Parent, Transform};
+use voxear_scene::{Destroying, Layer, Layers, Parent, Plant, PlantSet, Plants, Transform, Trunk, WorldTransform};
 
 mod vehicles;
 
@@ -553,6 +553,8 @@ pub struct SceneHit {
     pub normal: Vec3,
     /// How far from where the ray started, in metres.
     pub distance: f32,
+    /// The plant whose trunk it met, by its number in the Obj's plants.
+    pub plant: Option<u32>,
 }
 
 /// How far a ray reaches when it is told to reach forever.
@@ -599,6 +601,9 @@ pub struct PhysicsScene {
     unsure: HashMap<(Entity, Entity), u8>,
     /// Each terrain's bodies, a height field for each of its tiles.
     terrains: HashMap<Entity, TerrainBodies>,
+    plants: HashMap<Entity, PlantBodies>,
+    /// Each plant trunk's body's plant, by its number in its Obj's plants.
+    plant_bodies: HashMap<BodyId, u32>,
 }
 
 /// A terrain's bodies: which heights they were made from, where its corner
@@ -609,6 +614,18 @@ struct TerrainBodies {
     corner: Vec3,
     layer: u8,
     tiles: Vec<Option<(Arc<voxear_terrain::HeightTile>, BodyId, ShapeId)>>,
+}
+
+/// An Obj's plants' trunks: what they were made from (the plants, where the
+/// Obj was, the trunk's shape, its layer, the plants taken away), and each
+/// plant's body and shape while it stands.
+struct PlantBodies {
+    plants: Arc<Vec<Plant>>,
+    model: Mat4,
+    trunk: Trunk,
+    layer: u8,
+    removed: Arc<PlantSet>,
+    bodies: Vec<Option<(BodyId, ShapeId)>>,
 }
 
 /// The layer an Obj is on, 0 without one.
@@ -644,6 +661,8 @@ impl PhysicsScene {
             touching: HashSet::new(),
             unsure: HashMap::new(),
             terrains: HashMap::new(),
+            plants: HashMap::new(),
+            plant_bodies: HashMap::new(),
         }
     }
 
@@ -653,6 +672,7 @@ impl PhysicsScene {
         world.query_ref::<&Collider>().into_iter().next().is_some()
             || world.query_ref::<&CharacterController>().into_iter().next().is_some()
             || world.query_ref::<&voxear_terrain::Terrain>().into_iter().next().is_some()
+            || world.query_ref::<&Plants>().into_iter().any(|plants| plants.trunk.is_some())
     }
 
     /// Which way and how hard everything falls, in metres per second per second.
@@ -694,7 +714,8 @@ impl PhysicsScene {
         let reach = distance.min(FOREVER);
         let hit = self.world.raycast(origin, direction * reach, mask, None, triggers)?;
         let obj = self.owner(hit.body)?;
-        Some(SceneHit { obj, point: hit.point, normal: hit.normal, distance: hit.fraction * reach })
+        let plant = self.plant_bodies.get(&hit.body).copied();
+        Some(SceneHit { obj, point: hit.point, normal: hit.normal, distance: hit.fraction * reach, plant })
     }
 
     /// The Objs on layers in `mask` whose colliders a sphere overlaps, each
@@ -779,6 +800,7 @@ impl PhysicsScene {
             self.sync_body(world, entity, collider, dt);
         }
         self.sync_terrains(world);
+        self.sync_plants(world);
         self.sync_characters(world);
         self.sync_joints(world);
         self.sync_vehicles(world);
@@ -848,6 +870,95 @@ impl PhysicsScene {
             }
             self.terrains.get_mut(&entity).expect("kept").corner = corner;
         }
+    }
+
+    /// Stands a static capsule up for the trunk of each plant still there,
+    /// on Objs whose plants have trunks; a plant taken away takes only its
+    /// own body with it.
+    fn sync_plants(&mut self, world: &World) {
+        let found: Vec<(Entity, Plants, Mat4)> = world
+            .query_ref::<(Entity, &Plants, &Transform, Option<&WorldTransform>)>()
+            .without::<Destroying>()
+            .into_iter()
+            .filter(|(_, plants, ..)| plants.trunk.is_some())
+            .map(|(entity, plants, transform, placed)| {
+                let model = placed.map_or_else(
+                    || Mat4::from_scale_rotation_translation(transform.scale, transform.rotation, transform.position),
+                    |w| w.0,
+                );
+                (entity, plants.clone(), model)
+            })
+            .collect();
+        let gone: Vec<Entity> =
+            self.plants.keys().copied().filter(|entity| !found.iter().any(|(e, ..)| e == entity)).collect();
+        for entity in gone {
+            self.remove_plants(entity);
+        }
+        for (entity, plants, model) in found {
+            let trunk = plants.trunk.expect("filtered for trunks");
+            let layer = layer(world, entity);
+            let kept = self.plants.get(&entity);
+            let same = kept.is_some_and(|kept| {
+                Arc::ptr_eq(&kept.plants, &plants.plants) && kept.model == model && kept.trunk == trunk && kept.layer == layer
+            });
+            // Plants are only ever taken away while a game runs; any back again (an undo) stands every trunk again.
+            let only_taken = same
+                && kept.is_some_and(|kept| kept.removed.iter().all(|number| plants.removed.contains(number)));
+            if only_taken {
+                if Arc::ptr_eq(&self.plants[&entity].removed, &plants.removed) {
+                    continue;
+                }
+                let taken: Vec<u32> = plants.removed.iter().filter(|&n| !self.plants[&entity].removed.contains(n)).collect();
+                for number in taken {
+                    let place = self.plants.get_mut(&entity).expect("kept").bodies.get_mut(number as usize);
+                    if let Some((body, shape)) = place.and_then(Option::take) {
+                        self.world.remove_body(body);
+                        self.world.release_shape(shape);
+                        self.owners.remove(&body);
+                        self.plant_bodies.remove(&body);
+                    }
+                }
+                self.plants.get_mut(&entity).expect("kept").removed = plants.removed.clone();
+                continue;
+            }
+            self.remove_plants(entity);
+            let scale = model.to_scale_rotation_translation().0.max_element();
+            let mut bodies = vec![None; plants.plants.len()];
+            for (number, plant) in plants.standing() {
+                let placed = plant.matrix(model);
+                let (_, rotation, _) = placed.to_scale_rotation_translation();
+                let size = plant.scale * scale;
+                let radius = trunk.radius * size;
+                let half_height = (trunk.height * size * 0.5 - radius).max(0.01);
+                let centre = placed.transform_point3(Vec3::new(0.0, trunk.height * 0.5, 0.0));
+                let shape = self.world.capsule_shape(half_height, radius);
+                let mut desc = BodyDesc::new(shape, Motion::Static).at(centre, rotation);
+                desc.friction = Collider::default().friction;
+                desc.user_data = entity.to_bits();
+                desc.layer = layer;
+                let Some(body) = self.world.add_body(&desc) else {
+                    self.world.release_shape(shape);
+                    tracing::warn!("physics is full; plants' trunks are left out");
+                    break;
+                };
+                self.owners.insert(body, entity);
+                self.plant_bodies.insert(body, number);
+                bodies[number as usize] = Some((body, shape));
+            }
+            let removed = plants.removed.clone();
+            self.plants.insert(entity, PlantBodies { plants: plants.plants, model, trunk, layer, removed, bodies });
+        }
+    }
+
+    fn remove_plants(&mut self, entity: Entity) {
+        let Some(kept) = self.plants.remove(&entity) else { return };
+        for (body, shape) in kept.bodies.into_iter().flatten() {
+            self.world.remove_body(body);
+            self.world.release_shape(shape);
+            self.owners.remove(&body);
+            self.plant_bodies.remove(&body);
+        }
+        self.forget(entity);
     }
 
     fn remove_terrain(&mut self, entity: Entity) {
@@ -1099,7 +1210,11 @@ impl PhysicsScene {
     /// Lets go of what a gone Obj touched, unless it still has physics:
     /// Unity tells nothing of an Obj's contacts ending as it goes.
     fn forget(&mut self, entity: Entity) {
-        if self.bodies.contains_key(&entity) || self.characters.contains_key(&entity) || self.terrains.contains_key(&entity) {
+        if self.bodies.contains_key(&entity)
+            || self.characters.contains_key(&entity)
+            || self.terrains.contains_key(&entity)
+            || self.plants.contains_key(&entity)
+        {
             return;
         }
         self.touching.retain(|(a, b)| *a != entity && *b != entity);

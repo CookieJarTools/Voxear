@@ -17,6 +17,7 @@ mod inspector;
 mod interop;
 mod layers;
 mod physics;
+mod plants;
 mod playing;
 mod runtime;
 mod saves;

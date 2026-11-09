@@ -989,7 +989,17 @@ impl ScriptServices for GameServices<'_> {
                 serde_json::json!({ "root": root.to_bits(), "prefab": prefab.to_string(), "parent": parent })
             })
             .collect();
-        Some(serde_json::json!({ "level": level, "gone": gone, "spawned": spawned }).to_string())
+        // The plants scripts took away, by their Obj's key and their numbers.
+        let mut plants: Vec<(String, Vec<u32>)> = world
+            .query_ref::<(Entity, &voxear_scene::Plants)>()
+            .into_iter()
+            .filter(|(entity, plants)| !plants.removed.is_empty() && !is_doomed(world, doomed, *entity))
+            .filter_map(|(entity, plants)| Some((self.obj_key(world, entity)?, plants.removed.iter().collect())))
+            .collect();
+        plants.sort();
+        let plants: Vec<serde_json::Value> =
+            plants.into_iter().map(|(key, gone)| serde_json::json!({ "obj": key, "gone": gone })).collect();
+        Some(serde_json::json!({ "level": level, "gone": gone, "spawned": spawned, "plants": plants }).to_string())
     }
 
     fn asset_guid(&self, asset: AssetName<'_>) -> Option<String> {

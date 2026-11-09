@@ -495,7 +495,7 @@ pub struct TemplateObj {
     pub foliage_interaction: Option<FoliageInteraction>,
     /// A Foliage, where there is a renderer to draw it, and how it was
     /// written, which few Objs have.
-    pub foliage: Option<Box<(Option<Foliage>, FoliageSource)>>,
+    pub foliage: Option<Box<(Option<Foliage>, voxear_scene::Plants, FoliageSource)>>,
     /// A Terrain, which few Objs have.
     pub terrain: Option<Box<TerrainParts>>,
     /// A whole model it draws, where there is a renderer to draw it, and how
@@ -700,6 +700,7 @@ impl Template {
                     world.insert(entity, drawn.clone());
                 }
                 world.insert(entity, foliage.1.clone());
+                world.insert(entity, foliage.2.clone());
             }
             if let Some(model) = &obj.model {
                 if let Some(drawn) = &model.0 {
@@ -840,15 +841,18 @@ fn link_instances(world: &mut World, objs: &[TemplateObj], entities: &[Entity]) 
     }
 }
 
-/// A Foliage as a scene writes it, its mesh and material loaded and its
-/// plants placed and scattered, and how it was written, for saving.
-pub fn foliage(content: &mut Content, renderer: &mut Renderer, data: &FoliageData) -> Result<(Foliage, FoliageSource)> {
+/// A Foliage as a scene writes it, its mesh and material loaded, its plants
+/// placed and scattered, and how it was written, for saving.
+pub fn foliage(
+    content: &mut Content,
+    renderer: &mut Renderer,
+    data: &FoliageData,
+) -> Result<(Foliage, voxear_scene::Plants, FoliageSource)> {
     let mesh = content.mesh(renderer, &content.parse(&data.mesh)?)?;
     let material = material_of(content, renderer, data.material.as_ref())?;
     let foliage = Foliage {
         mesh,
         material,
-        plants: std::sync::Arc::new(data.plants()),
         draw_distance: data.draw_distance.max(0.0),
         fade_distance: data.fade_distance.max(0.0),
         shadow_distance: data.shadow_distance.max(0.0),
@@ -858,7 +862,7 @@ pub fn foliage(content: &mut Content, renderer: &mut Renderer, data: &FoliageDat
         impostors: data.impostors,
         impostor_distance: data.impostor_distance.max(0.0),
     };
-    Ok((foliage, FoliageSource(data.clone())))
+    Ok((foliage, data.grown(), FoliageSource(data.clone())))
 }
 
 /// What a Terrain is made of: its ground, its look where there is a
@@ -1036,13 +1040,14 @@ pub(crate) fn resolve_obj(
         }
         _ => None,
     };
-    // Without a renderer, as when only checking a scene, foliage is not drawn, as meshes are not, but is kept to save.
+    // Without a renderer, as on a server, foliage is not drawn, as meshes are not, but its plants grow: trunks
+    // collide, and scripts cut them down.
     let foliage = match (&data.foliage, gpu.as_deref_mut()) {
         (Some(data), Some(renderer)) => {
-            let (foliage, source) = foliage(content, renderer, data)?;
-            Some(Box::new((Some(foliage), source)))
+            let (foliage, plants, source) = foliage(content, renderer, data)?;
+            Some(Box::new((Some(foliage), plants, source)))
         }
-        (Some(data), None) => Some(Box::new((None, FoliageSource(data.clone())))),
+        (Some(data), None) => Some(Box::new((None, data.grown(), FoliageSource(data.clone())))),
         (None, _) => None,
     };
     // A terrain's heights are read with or without a renderer: physics stands things on them.

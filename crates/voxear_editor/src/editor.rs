@@ -286,6 +286,8 @@ pub struct Editor {
     path_handles: PathHandles,
     /// The selected Terrain's brush and layer handles (see `terrain_tools`).
     terrain_tools: crate::terrain_tools::TerrainTools,
+    /// The selected Foliage's brush (see `plants_tools`).
+    plants_tools: crate::plants_tools::PlantsTools,
     field_drag_start: Option<ObjState>,
     /// The handles behaviours' gizmos show for tools of their own.
     script_handles: ScriptHandles,
@@ -602,6 +604,7 @@ impl Editor {
             field_handles: FieldHandles::default(),
             path_handles: PathHandles::default(),
             terrain_tools: Default::default(),
+            plants_tools: Default::default(),
             field_drag_start: None,
             script_handles: ScriptHandles::default(),
             hovered_obj: None,
@@ -1519,6 +1522,11 @@ impl Editor {
                 if self.terrain_tools.begin(&mut self.game, &camera, entity, point, (self.shift, self.control)) {
                     self.field_drag_start = before;
                 }
+            } else if let Some(entity) = editing.filter(|_| self.plants_tools.is_hovered()) {
+                let before = ObjState::of(world, entity);
+                if self.plants_tools.begin(&mut self.game, renderer, entity, self.shift) {
+                    self.field_drag_start = before;
+                }
             } else if let Some(entity) = editing {
                 // A Path's dots add or take away points as they are taken, so the step starts before.
                 let before = ObjState::of(world, entity);
@@ -1556,6 +1564,11 @@ impl Editor {
         {
             self.terrain_tools.drag_to(&mut self.game, &camera, point, self.shift);
         }
+        if self.plants_tools.is_dragging()
+            && let Some(point) = point
+        {
+            self.plants_tools.drag_to(&mut self.game, renderer, &camera, point);
+        }
         if std::mem::take(&mut self.released_handle) {
             self.end_drag();
         }
@@ -1572,6 +1585,8 @@ impl Editor {
             self.script_handles.hover(&camera, over_field.filter(|_| free));
             let free = free && !self.script_handles.is_hovered();
             self.terrain_tools.hover(&self.game, &camera, editing, over_field.filter(|_| free));
+            let free = free && !self.terrain_tools.is_hovered();
+            self.plants_tools.hover(&self.game, renderer, &camera, editing, over_field.filter(|_| free));
             let world = &self.game.engine.world;
             let markers = self.markers(self.scene.show_gizmos);
             self.hovered_obj = over.and_then(|point| pick(world, renderer, &camera, point, markers));
@@ -1591,6 +1606,7 @@ impl Editor {
         shapes.extend(self.field_handles.shapes(world, self.inspector.types(), &camera, editing));
         shapes.extend(self.path_handles.shapes(world, &camera, editing));
         shapes.extend(self.terrain_tools.shapes(&self.game, &camera, editing));
+        shapes.extend(self.plants_tools.shapes(&self.game, renderer, &camera, editing));
         shapes.extend(self.script_handles.shapes(&camera));
         shapes.extend(self.selection_shapes(renderer, &camera));
         shapes.extend(self.tools.shapes(world, renderer, &camera, self.selected()));
@@ -1638,7 +1654,7 @@ impl Editor {
     /// Lets go of a handle; the drag is one step to undo.
     fn end_drag(&mut self) {
         let held = self.field_handles.end().or_else(|| self.script_handles.end()).or_else(|| self.path_handles.end());
-        let held = held.or_else(|| self.terrain_tools.end());
+        let held = held.or_else(|| self.terrain_tools.end()).or_else(|| self.plants_tools.end());
         if let Some(entity) = held {
             return self.end_field_drag(entity);
         }
@@ -2209,7 +2225,8 @@ impl Editor {
                 || self.field_handles.is_hovered()
                 || self.path_handles.is_hovered()
                 || self.script_handles.is_hovered()
-                || self.terrain_tools.is_hovered();
+                || self.terrain_tools.is_hovered()
+                || self.plants_tools.is_hovered();
             if pressed && over_handle && self.over_viewport() {
                 self.pressed_handle = self.pointer.map(|(x, y)| [x / self.scale, y / self.scale]);
                 return true;
@@ -2219,7 +2236,8 @@ impl Editor {
                 || self.field_handles.is_dragging()
                 || self.path_handles.is_dragging()
                 || self.script_handles.is_dragging()
-                || self.terrain_tools.is_dragging();
+                || self.terrain_tools.is_dragging()
+                || self.plants_tools.is_dragging();
             if !pressed && (dragging || self.pressed_handle.is_some()) {
                 self.released_handle = true;
                 return true;
@@ -2293,7 +2311,8 @@ impl Editor {
             && !self.ui.wants_keyboard()
             && let winit::keyboard::Key::Character(text) = &key.logical_key
             && matches!(text.as_str(), "[" | "]" | "{" | "}")
-            && crate::terrain_props::ui(&self.game.engine.world).tool.brushes()
+            && (crate::terrain_props::ui(&self.game.engine.world).tool.brushes()
+                || crate::plants_props::ui(&self.game.engine.world).tool == crate::plants_props::FoliageTool::Paint)
         {
             // [ and ] size the terrain brush, and with Shift its strength, as painting tools do.
             let brush = &mut crate::terrain_props::ui_mut(&mut self.game.engine.world).brush;

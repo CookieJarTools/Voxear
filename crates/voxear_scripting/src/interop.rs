@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 62;
+pub(crate) const API_VERSION: u32 = 63;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -427,6 +427,20 @@ pub(crate) struct NativeApi {
         parent: u64,
         out_root: *mut u64,
     ) -> i32,
+    /// `Plant`: whether one of a Foliage's plants stands, where and how
+    /// large (see `plants`).
+    pub plant_info: unsafe extern "C" fn(obj: u64, number: u32, at: *mut [f32; 3], size: *mut f32) -> i32,
+    /// `Plant.Remove`: takes a plant away.
+    pub plant_remove: unsafe extern "C" fn(obj: u64, number: u32) -> i32,
+    /// `Plant.CutDown`: takes a plant away and makes its Cut prefab there.
+    pub plant_cut: unsafe extern "C" fn(obj: u64, number: u32, out_root: *mut u64) -> i32,
+    /// `Plants.Query`: the plants standing near a point, nearest first.
+    pub plants_near: unsafe extern "C" fn(
+        centre: *const [f32; 3],
+        radius: f32,
+        out: *mut crate::plants::PlantRef,
+        capacity: i32,
+    ) -> i32,
 }
 
 /// The kinds of component scripts reach through one entry, `kind_value`,
@@ -704,7 +718,7 @@ unsafe extern "C" fn net_raycast(
             point: found.point.to_array(),
             normal: found.normal.to_array(),
             distance: found.distance,
-            _pad: 0,
+            plant: found.plant.map_or(0, |number| number + 1),
         };
     }
     1
@@ -1511,7 +1525,7 @@ unsafe extern "C" fn obj_instantiate(
 /// `parent` at `placement`, given in the world when `world_space` is set,
 /// and creates their behaviours. Returns how many, for `batch_handles`, or
 /// -1 when nothing was made.
-unsafe fn instantiate(
+pub(crate) unsafe fn instantiate(
     only_while: &str,
     placement: *const Transform,
     world_space: i32,
@@ -1829,6 +1843,10 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         terrain_raycast: crate::terrain::terrain_raycast,
         obj_switch: crate::switches::obj_switch,
         obj_instantiate,
+        plant_info: crate::plants::plant_info,
+        plant_remove: crate::plants::plant_remove,
+        plant_cut: crate::plants::plant_cut,
+        plants_near: crate::plants::plants_near,
     }
 }
 

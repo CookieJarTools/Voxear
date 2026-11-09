@@ -926,7 +926,6 @@ struct Terrain
     uint surfaceCount;
     // TERRAIN_HOLES when any tile has holes.
     uint flags;
-    uint2 pad;
 };
 
 // One of a terrain's surfaces: its material, one over its pictures' size in metres, how sharply it meets the

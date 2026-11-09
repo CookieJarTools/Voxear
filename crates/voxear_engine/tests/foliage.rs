@@ -34,15 +34,12 @@ fn foliage_loads_its_plants_and_saves_as_written() {
     game.start(renderer.as_mut()).unwrap();
     let world = &game.engine.world;
     let meadow = world.query_ref::<(voxear_ecs::Entity, &FoliageSource)>().into_iter().next().expect("the meadow").0;
+    let plants = &world.get::<voxear_scene::Plants>(meadow).expect("its plants, drawn or not").plants;
+    assert!((190..=211).contains(&plants.len()), "the placed plant and about 200 scattered: {}", plants.len());
+    assert_eq!(plants[0].scale, 1.5, "the placed plant first");
+    assert!((plants[0].yaw - std::f32::consts::FRAC_PI_2).abs() < 1e-5, "turned in degrees");
     if renderer.is_some() {
         let foliage = world.get::<Foliage>(meadow).expect("drawn where there is a renderer");
-        assert!(
-            (190..=211).contains(&foliage.plants.len()),
-            "the placed plant and about 200 scattered: {}",
-            foliage.plants.len()
-        );
-        assert_eq!(foliage.plants[0].scale, 1.5, "the placed plant first");
-        assert!((foliage.plants[0].yaw - std::f32::consts::FRAC_PI_2).abs() < 1e-5, "turned in degrees");
         assert_eq!(foliage.draw_distance, 40.0);
     }
     let saved = scene_file::capture(&game.engine.world, &mut game.content, &[meadow]);
@@ -59,6 +56,7 @@ fn foliage_is_kept_to_save_without_a_renderer() {
     let world = &game.engine.world;
     let meadow = world.query_ref::<(voxear_ecs::Entity, &FoliageSource)>().into_iter().next().expect("kept").0;
     assert!(world.get::<Foliage>(meadow).is_none(), "nothing to draw it with");
+    assert!(world.get::<voxear_scene::Plants>(meadow).is_some_and(|p| p.plants.len() > 100), "but its plants grow");
     let saved = scene_file::capture(&game.engine.world, &mut game.content, &[meadow]);
     assert!(saved.objs[0].foliage.is_some(), "but a save keeps it");
 }

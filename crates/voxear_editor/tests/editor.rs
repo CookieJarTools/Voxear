@@ -7207,11 +7207,10 @@ fn a_plant_picks_its_foliage_and_things_dropped_land_among_plants() {
     let ahead = camera.position + camera.forward * 6.0;
     let base = Vec3::new(ahead.x, 0.0, ahead.z);
     let plants: Vec<Plant> =
-        (-2..=2).map(|i| Plant { position: [i as f32 * 0.6, 1.0, 0.0], yaw: 0.0, scale: 0.4 }).collect();
+        (-2..=2).map(|i| Plant::new([i as f32 * 0.6, 1.0, 0.0], 0.0, 0.4)).collect();
     let foliage = Foliage {
         mesh: cube,
         material,
-        plants: std::sync::Arc::new(plants),
         draw_distance: 50.0,
         fade_distance: 2.0,
         shadow_distance: 10.0,
@@ -7221,7 +7220,8 @@ fn a_plant_picks_its_foliage_and_things_dropped_land_among_plants() {
         impostors: voxear_render::Impostors::Auto,
         impostor_distance: 60.0,
     };
-    let field = editor.game.engine.world.spawn((Name("Field".into()), foliage, Transform::from_position(base)));
+    let grown = voxear_scene::Plants::new(plants);
+    let field = editor.game.engine.world.spawn((Name("Field".into()), foliage, grown, Transform::from_position(base)));
     frame(&mut editor, &mut renderer);
     let camera = editor.scene_camera().unwrap();
     let on_plant = camera.project(base + Vec3::Y).expect("the plants are in view");

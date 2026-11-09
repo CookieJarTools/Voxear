@@ -75,8 +75,9 @@ pub struct ObjState {
     pub buoyancy: Option<Box<voxear_engine::water::Buoyancy>>,
     pub seasons: Option<Box<Seasons>>,
     pub foliage_interaction: Option<FoliageInteraction>,
-    /// A Foliage and how it was written; its plants are shared, not copied.
-    pub foliage: Option<Box<(Foliage, FoliageSource)>>,
+    /// A Foliage, its plants and how it was written; the plants are shared,
+    /// not copied.
+    pub foliage: Option<Box<(Foliage, voxear_scene::Plants, FoliageSource)>>,
     /// A Model Renderer and how it was written; its parts are shared.
     pub model: Option<Box<(ModelRenderer, ModelSource)>>,
     /// A Terrain, its look, its asset and how it was written; its tiles are
@@ -152,11 +153,16 @@ impl ObjState {
             buoyancy: world.get::<voxear_engine::water::Buoyancy>(entity).copied().map(Box::new),
             seasons: world.get::<Seasons>(entity).copied().map(Box::new),
             foliage_interaction: world.get::<FoliageInteraction>(entity).copied(),
-            foliage: world
-                .get::<Foliage>(entity)
-                .cloned()
-                .zip(world.get::<FoliageSource>(entity).cloned())
-                .map(Box::new),
+            foliage: match (
+                world.get::<Foliage>(entity),
+                world.get::<voxear_scene::Plants>(entity),
+                world.get::<FoliageSource>(entity),
+            ) {
+                (Some(foliage), Some(plants), Some(source)) => {
+                    Some(Box::new((foliage.clone(), plants.clone(), source.clone())))
+                }
+                _ => None,
+            },
             model: world
                 .get::<ModelRenderer>(entity)
                 .cloned()
@@ -226,8 +232,9 @@ impl ObjState {
         put(world, entity, self.buoyancy.as_deref().copied());
         put(world, entity, self.seasons.as_deref().copied());
         put(world, entity, self.foliage_interaction);
-        put(world, entity, self.foliage.as_deref().map(|(foliage, _)| foliage.clone()));
-        put(world, entity, self.foliage.as_deref().map(|(_, source)| source.clone()));
+        put(world, entity, self.foliage.as_deref().map(|(foliage, ..)| foliage.clone()));
+        put(world, entity, self.foliage.as_deref().map(|(_, plants, _)| plants.clone()));
+        put(world, entity, self.foliage.as_deref().map(|(.., source)| source.clone()));
         put(world, entity, self.model.as_deref().map(|(drawn, _)| drawn.clone()));
         put(world, entity, self.model.as_deref().map(|(_, source)| source.clone()));
         let terrain = self.terrain.as_deref();

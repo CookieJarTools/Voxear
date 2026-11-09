@@ -3621,7 +3621,7 @@ fn foliage_render(draw: f32) -> Option<(Vec<u8>, RenderStats)> {
 
 /// The same field, its plants `color` and tinted between two colours.
 fn foliage_tinted(draw: f32, color: [f32; 3], (healthy, dry): ([f32; 3], [f32; 3])) -> Option<(Vec<u8>, RenderStats)> {
-    use voxear_render::{Foliage, Sky, scatter};
+    use voxear_render::{Foliage, Plants, Sky, scatter};
     let mut renderer = renderer()?;
     let mut world = World::new();
     let looking = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.0, -0.25, 1.0).normalize());
@@ -3637,7 +3637,6 @@ fn foliage_tinted(draw: f32, color: [f32; 3], (healthy, dry): ([f32; 3], [f32; 3
     let foliage = Foliage {
         mesh: cube,
         material: dark,
-        plants: std::sync::Arc::new(plants),
         draw_distance: draw,
         fade_distance: 3.0,
         shadow_distance: 15.0,
@@ -3647,7 +3646,7 @@ fn foliage_tinted(draw: f32, color: [f32; 3], (healthy, dry): ([f32; 3], [f32; 3
         impostors: voxear_render::Impostors::Auto,
         impostor_distance: 60.0,
     };
-    world.spawn((foliage, Transform::from_position(Vec3::new(0.0, 0.1, 40.0))));
+    world.spawn((foliage, Plants::new(plants), Transform::from_position(Vec3::new(0.0, 0.1, 40.0))));
     let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.3, -0.8, 0.4).normalize());
     world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
     world.insert_resource(Sky::default());
@@ -3718,17 +3717,16 @@ fn leaning_spire() -> voxear_render::MeshData {
 /// One spire, red, as a Foliage's single plant turned a quarter round, 18
 /// metres in front of the camera, drawn as itself or as its impostor.
 fn spire_render(impostors: voxear_render::Impostors) -> Option<Vec<u8>> {
-    use voxear_render::{Foliage, Plant, Sky};
+    use voxear_render::{Foliage, Plant, Plants, Sky};
     let mut renderer = renderer()?;
     let mut world = World::new();
     world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 1.5, -18.0))));
     let spire = renderer.add_mesh(&leaning_spire()).unwrap();
     let red = renderer.add_material(&MaterialDesc { base_color: [0.8, 0.05, 0.03, 1.0], ..MaterialDesc::default() }).unwrap();
-    let plants = vec![Plant { position: [0.0, 0.0, 0.0], yaw: 90.0, scale: 1.0 }];
+    let plants = vec![Plant::new([0.0, 0.0, 0.0], 90.0, 1.0)];
     let foliage = Foliage {
         mesh: spire,
         material: red,
-        plants: std::sync::Arc::new(plants),
         draw_distance: 100.0,
         fade_distance: 2.0,
         shadow_distance: 0.0,
@@ -3739,7 +3737,7 @@ fn spire_render(impostors: voxear_render::Impostors) -> Option<Vec<u8>> {
         impostor_distance: 5.0,
     };
     // The Obj turned too, so the impostor follows the plant's turn and its Obj's together.
-    world.spawn((foliage, Transform::new(Vec3::ZERO, Quat::from_rotation_y(0.6), Vec3::ONE)));
+    world.spawn((foliage, Plants::new(plants), Transform::new(Vec3::ZERO, Quat::from_rotation_y(0.6), Vec3::ONE)));
     let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.3, -0.8, 0.4).normalize());
     world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
     world.insert_resource(Sky::default());

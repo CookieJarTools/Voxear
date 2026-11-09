@@ -590,6 +590,8 @@ pub enum Prop {
     /// A Terrain's settings, its picked layer's values, or its brush's (see
     /// `terrain_props`).
     Terrain(crate::terrain_props::TerrainField),
+    /// A Foliage's plants: their trunks, Cut prefab, and how they are painted (see `plants_props`).
+    Plants(crate::plants_props::PlantsField),
     FieldOfView,
     Near,
     Exposure,
@@ -712,6 +714,7 @@ impl Prop {
         match self {
             Prop::Mesh | Prop::Material | Prop::LodBias => Part::Renderer,
             Prop::Terrain(_) => Part::Terrain,
+            Prop::Plants(_) => Part::Foliage,
             Prop::LightKind
             | Prop::LightAppearance
             | Prop::LightTemperature
@@ -1007,6 +1010,7 @@ impl Prop {
     pub fn lock_key(&self) -> String {
         let name = match self {
             Prop::Terrain(field) => crate::terrain_props::key(*field),
+            Prop::Plants(field) => crate::plants_props::key(*field),
             Prop::Mesh => "mesh",
             Prop::Material => "material",
             Prop::LodBias => "lod_bias",
@@ -1756,7 +1760,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
                 props.push(Prop::FoliageImpostorDistance);
             }
             props.extend([Prop::FoliageHealthy, Prop::FoliageDry, Prop::FoliageSpread]);
-            props
+            crate::plants_props::props(world, entity, props)
         }
         Part::Model => vec![Prop::ModelAsset, Prop::ModelLodBias, Prop::ModelParts],
         Part::Audio => {
@@ -1882,6 +1886,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
 pub fn label(prop: &Prop) -> String {
     let label = match prop {
         Prop::Terrain(field) => crate::terrain_props::label(*field),
+        Prop::Plants(field) => crate::plants_props::label(*field),
         Prop::Mesh => "Mesh",
         Prop::Material => "Material",
         Prop::LodBias => "LOD Bias",
@@ -2210,6 +2215,7 @@ pub fn unit_on(world: &World, entity: Entity, prop: &Prop) -> Option<&'static st
         (Prop::LodUntil(_), Some(LodMeasure::Distance)) => Some("m"),
         (Prop::SeasonPatchSize | Prop::FoliageSpread | Prop::FoliageImpostorDistance | Prop::NetRange, _) => Some("m"),
         (Prop::Terrain(field), _) => crate::terrain_props::unit(world, entity, *field),
+        (Prop::Plants(field), _) => crate::plants_props::unit(*field),
         (Prop::JointMin | Prop::JointMax, _) => match world.get::<Joint>(entity)?.kind {
             JointType::Hinge => Some("°"),
             _ => Some("m"),
@@ -2252,8 +2258,9 @@ pub fn add(
         let scatter = ScatterData { size: [10.0, 10.0], density: 2.0, seed: 0, scale: [0.15, 0.3] };
         let data: FoliageData = toml::from_str(&format!("mesh = \"{}\"", BUILTIN_MESHES[0].1))?;
         let data = FoliageData { scatter: Some(scatter), ..data };
-        let (foliage, source) = voxear_engine::prefab::foliage(&mut game.content, renderer, &data)?;
+        let (foliage, plants, source) = voxear_engine::prefab::foliage(&mut game.content, renderer, &data)?;
         game.engine.world.insert(entity, foliage);
+        game.engine.world.insert(entity, plants);
         game.engine.world.insert(entity, source);
         return Ok(());
     }
@@ -2460,6 +2467,7 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
         Part::FoliageInteraction => drop(world.remove::<FoliageInteraction>(entity)),
         Part::Foliage => {
             world.remove::<Foliage>(entity);
+            world.remove::<voxear_scene::Plants>(entity);
             drop(world.remove::<FoliageSource>(entity));
         }
         Part::Model => {
@@ -2504,6 +2512,7 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
     let wheel = || world.get::<Wheel>(entity);
     Some(match prop {
         Prop::Terrain(field) => return crate::terrain_props::get(game, entity, *field),
+        Prop::Plants(field) => return crate::plants_props::get(game, entity, *field),
         Prop::Shape2D => {
             let shape = collider2d()?.shape;
             let index = ColliderShape2D::ALL.iter().position(|s| *s == shape).unwrap_or_default();
@@ -3045,6 +3054,11 @@ pub fn set(
             choice.is_some_and(|(_, choice)| crate::terrain_props::pick(game, renderer, entity, *field, &choice))
         }
         (Prop::Terrain(field), value) => crate::terrain_props::set(game, entity, *field, value),
+        (Prop::Plants(field), Value::Asset(label)) if crate::plants_props::is_picked(*field) => {
+            let choice = crate::plants_props::choices(game, *field).into_iter().find(|(l, _)| *l == label);
+            choice.is_some_and(|(_, choice)| crate::plants_props::pick(game, entity, *field, &choice))
+        }
+        (Prop::Plants(field), value) => crate::plants_props::set(game, entity, *field, value),
         (prop, value) => set_component(&mut game.engine.world, entity, prop, value),
     };
     if changed && matches!(prop, Prop::DryShape | Prop::DryMesh | Prop::Mesh) {
@@ -3083,6 +3097,9 @@ pub fn pick(
 ) -> bool {
     if let Prop::Terrain(field) = prop {
         return crate::terrain_props::pick(game, renderer, entity, *field, choice);
+    }
+    if let Prop::Plants(field) = prop {
+        return crate::plants_props::pick(game, entity, *field, choice);
     }
     match (prop, choice) {
         (Prop::Mesh, Pick::Asset(Some(reference))) => {
@@ -3394,6 +3411,7 @@ pub fn set_lod_until(world: &mut World, entity: Entity, at: usize, until: f32) -
 pub fn choices(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Vec<(String, Pick)> {
     match prop {
         Prop::Terrain(field) => return crate::terrain_props::choices(game, *field),
+        Prop::Plants(field) => return crate::plants_props::choices(game, *field),
         // The Obj's own Mesh Renderer's first, then any mesh.
         Prop::DryMesh => {
             let mut found = vec![(OWN_MESH.to_string(), Pick::Asset(None))];
@@ -3521,6 +3539,7 @@ pub fn title(types: &ScriptTypes, prop: &Prop) -> String {
         Prop::LodObj(..) | Prop::LodAdd(_) => "Obj".into(),
         Prop::JointConnected => "Rigidbody".into(),
         Prop::Terrain(field) if crate::terrain_props::is_picked(*field) => crate::terrain_props::label(*field).into(),
+        Prop::Plants(field) if crate::plants_props::is_picked(*field) => "Prefab".into(),
         Prop::Field { behaviour, path } => fields::kind_at(types, behaviour, path)
             .map_or_else(|| "Obj".into(), |kind| fields::takes(&kind).to_string()),
         _ => String::new(),
@@ -4709,7 +4728,6 @@ mod tests {
         let foliage = Foliage {
             mesh: voxear_render::MeshHandle(0),
             material: voxear_render::MaterialHandle(0),
-            plants: Default::default(),
             draw_distance: 200.0,
             fade_distance: 5.0,
             shadow_distance: 30.0,

@@ -248,6 +248,28 @@ pub fn surface_past(
     (along > 0.0 && along < GROUND_REACH).then_some(ground)
 }
 
+/// The ground straight below `(x, z)`, from `top` metres up down, on any
+/// mesh or terrain but plants and the Objs in `skip`: where it is, and the
+/// way it faces there, from the ground half a metre round.
+pub(crate) fn ground_below(
+    world: &World,
+    renderer: &Renderer,
+    (x, z, top): (f32, f32, f32),
+    skip: &[Entity],
+) -> Option<(Vec3, Vec3)> {
+    let down = |x: f32, z: f32| {
+        let ray = (Vec3::new(x, top, z), Vec3::NEG_Y);
+        let hits = mesh_hits(world, renderer, ray, false).into_iter().filter(|(_, _, obj)| !skip.contains(obj));
+        hits.min_by(|a, b| a.0.total_cmp(&b.0)).map(|(_, hit, _)| hit)
+    };
+    let at = down(x, z)?;
+    const ROUND: f32 = 0.5;
+    let [east, west, north, south] = [(ROUND, 0.0), (-ROUND, 0.0), (0.0, ROUND), (0.0, -ROUND)]
+        .map(|(dx, dz)| down(x + dx, z + dz).filter(|hit| (hit.y - at.y).abs() < 4.0).unwrap_or(at));
+    let normal = (north - south).cross(east - west).normalize_or(Vec3::Y);
+    Some((at, if normal.y < 0.0 { -normal } else { normal }))
+}
+
 /// Each mesh a ray meets: how far along the ray, where, and its Obj. A ray
 /// that enters a mesh's box is tried against its triangles, as a box alone
 /// let a building's parts, which the camera stands inside, take every click.
@@ -309,20 +331,15 @@ fn mesh_hits(
         }
     }
     let foliage = world
-        .query_ref::<(Entity, &Foliage, &Transform, Option<&WorldTransform>)>()
+        .query_ref::<(Entity, &Foliage, &voxear_scene::Plants, &Transform, Option<&WorldTransform>)>()
         .without::<EditorOnly>()
         .without::<Destroying>();
     let foliage = foliage.into_iter().filter(|(e, ..)| plants && drawn(*e, Switch::Foliage));
-    for (entity, foliage, transform, placed) in foliage {
+    for (entity, foliage, grown, transform, placed) in foliage {
         let Some(bounds) = renderer.mesh_bounds(foliage.mesh) else { continue };
         let obj = placed.map_or_else(|| transform.matrix(), |w| w.0);
-        for plant in foliage.plants.iter() {
-            let local = Mat4::from_scale_rotation_translation(
-                Vec3::splat(plant.scale),
-                Quat::from_rotation_y(plant.yaw),
-                Vec3::from(plant.position),
-            );
-            try_box(entity, obj * local, bounds, None);
+        for (_, plant) in grown.standing() {
+            try_box(entity, plant.matrix(obj), bounds, None);
         }
     }
     hits.extend(grounds);

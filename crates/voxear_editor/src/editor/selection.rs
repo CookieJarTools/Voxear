@@ -303,7 +303,8 @@ pub(crate) fn drawn_bounds(world: &World, renderer: &Renderer, entity: Entity) -
     let reach = min.abs().max(max.abs());
     let reach = Vec3::new(reach.x.max(reach.z), reach.y, reach.x.max(reach.z));
     let mut found: Option<(Vec3, Vec3)> = None;
-    for plant in foliage.plants.iter() {
+    let plants = world.get::<voxear_scene::Plants>(entity)?;
+    for (_, plant) in plants.standing() {
         let at = Vec3::from(plant.position);
         let (low, high) = (at - reach * plant.scale, at + reach * plant.scale);
         found = Some(found.map_or((low, high), |(a, b)| (a.min(low), b.max(high))));

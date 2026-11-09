@@ -28,9 +28,10 @@
 use std::{collections::HashMap, ops::Range, sync::Arc};
 
 use serde::{Deserialize, Serialize};
-use voxear_core::math::{Mat3, Mat4, Quat, Vec3, Vec4};
+use voxear_core::math::{Mat3, Mat4, Vec3, Vec4};
 use voxear_ecs::{Component, Entity, World};
 use voxear_rhi::vk;
+pub use voxear_scene::plants::{Plant, PlantSet, Plants, scatter};
 use voxear_scene::{Destroying, Transform, WorldTransform};
 
 use crate::{
@@ -46,16 +47,14 @@ use crate::{
 /// frame, and cast shadows or not, a chunk at a time.
 const CHUNK: f32 = 16.0;
 
-/// One plant, many times over: a mesh and a material, and every place it
-/// grows in the Obj's space. The plants share one LOD, wind and push
-/// setting each, from their mesh and material.
+/// One plant, many times over: a mesh and a material, drawn wherever the
+/// Obj's `Plants` grow (see `voxear_scene::plants`), but for those taken
+/// away, which are skipped, so nothing is built again. The plants share
+/// one LOD, wind and push setting each, from their mesh and material.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Foliage {
     pub mesh: MeshHandle,
     pub material: MaterialHandle,
-    /// Each plant, in the Obj's space. Shared, so a frame can tell the list
-    /// is the same by its pointer alone.
-    pub plants: Arc<Vec<Plant>>,
     /// How far from the camera plants are drawn, in metres.
     pub draw_distance: f32,
     /// Over how many metres short of the draw distance they fade out.
@@ -112,12 +111,12 @@ impl Foliage {
     /// From how far its plants are impostors, if at all: as it says, or
     /// where the engine chooses, plants `AUTO_IMPOSTOR_SIZE` across or more
     /// from `AUTO_IMPOSTOR_DISTANCE` or past a third of the draw distance.
-    fn impostors_from(&self, mesh_radius: f32) -> Option<f32> {
+    fn impostors_from(&self, plants: &[Plant], mesh_radius: f32) -> Option<f32> {
         match self.impostors {
             Impostors::Off => None,
             Impostors::From => Some(self.impostor_distance.max(0.0)),
             Impostors::Auto => {
-                let typical = self.plants.iter().map(|plant| plant.scale).sum::<f32>() / self.plants.len().max(1) as f32;
+                let typical = plants.iter().map(|plant| plant.scale).sum::<f32>() / plants.len().max(1) as f32;
                 (mesh_radius * 2.0 * typical >= AUTO_IMPOSTOR_SIZE)
                     .then(|| AUTO_IMPOSTOR_DISTANCE.max(self.draw_distance / 3.0))
             }
@@ -164,47 +163,6 @@ fn smooth_noise(x: f32, z: f32) -> f32 {
     let top = lerp(hash(cx, cz), hash(cx + 1.0, cz), ux);
     let bottom = lerp(hash(cx, cz + 1.0), hash(cx + 1.0, cz + 1.0), ux);
     lerp(top, bottom, uz)
-}
-
-/// Where one plant grows: its place in the Obj's space, its turn about its
-/// up axis in radians, and its size.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Plant {
-    pub position: [f32; 3],
-    pub yaw: f32,
-    pub scale: f32,
-}
-
-/// Plants scattered over an area `size` metres across, centred on the
-/// Obj, `density` to a square metre, evenly but not in rows: one in each
-/// cell of a grid, somewhere in it, each turned its own way and sized
-/// between `scale`'s two. The same `seed` scatters them the same way.
-pub fn scatter(size: [f32; 2], density: f32, seed: u32, scale: [f32; 2]) -> Vec<Plant> {
-    let step = 1.0 / density.max(1e-4).sqrt();
-    let (across, deep) = ((size[0] / step).ceil() as u32, (size[1] / step).ceil() as u32);
-    let mut plants = Vec::with_capacity((across * deep) as usize);
-    let mut state = u64::from(seed) ^ 0x9e37_79b9_7f4a_7c15;
-    let mut next = || {
-        // SplitMix64: quick, and the same everywhere.
-        state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
-        let mut z = state;
-        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-        ((z ^ (z >> 31)) >> 40) as f32 / (1u64 << 24) as f32
-    };
-    for row in 0..deep {
-        for column in 0..across {
-            let x = (column as f32 + next()) * step - size[0] * 0.5;
-            let z = (row as f32 + next()) * step - size[1] * 0.5;
-            if x.abs() > size[0] * 0.5 || z.abs() > size[1] * 0.5 {
-                continue;
-            }
-            let yaw = next() * std::f32::consts::TAU;
-            let scale = scale[0] + (scale[1] - scale[0]) * next();
-            plants.push(Plant { position: [x, 0.0, z], yaw, scale });
-        }
-    }
-    plants
 }
 
 /// One chunk of a Foliage's plants: where it is, how far round it they
@@ -254,13 +212,14 @@ impl FoliageCache {
         impostors: &crate::impostors::ImpostorTable,
     ) {
         let mut seen = Vec::new();
-        let found =
-            world.query_ref::<(Entity, &Foliage, &Transform, Option<&WorldTransform>)>().without::<Destroying>();
+        let found = world
+            .query_ref::<(Entity, &Foliage, &Plants, &Transform, Option<&WorldTransform>)>()
+            .without::<Destroying>();
         // A Foliage switched off grows nothing, and what it had built goes, as for one taken away.
         let switched = voxear_scene::Switched::of(world);
         let on = |entity: Entity| switched.is_on(world, entity, voxear_scene::Switch::Foliage);
         let found = found.into_iter().filter(|(entity, ..)| on(*entity));
-        for (entity, foliage, transform, placed) in found {
+        for (entity, foliage, plants, transform, placed) in found {
             seen.push(entity);
             let model = placed.map_or_else(
                 || Mat4::from_scale_rotation_translation(transform.scale, transform.rotation, transform.position),
@@ -268,20 +227,20 @@ impl FoliageCache {
             );
             let look = foliage.look();
             let Some(bounds) = sphere(foliage.mesh) else { continue };
-            let impostor_from = foliage.impostors_from(bounds.1);
+            let impostor_from = foliage.impostors_from(&plants.plants, bounds.1);
             let impostor = match (impostor_from, impostors.quad) {
                 (Some(_), quad) => impostors.get_or_ask(foliage.mesh, foliage.material).zip(quad),
                 (None, _) => None,
             };
             let stale = self.built.get(&entity).is_none_or(|built| {
-                !Arc::ptr_eq(&built.plants, &foliage.plants)
+                !Arc::ptr_eq(&built.plants, &plants.plants)
                     || built.model != model
                     || built.look != look
                     || built.impostor != impostor.map(|(i, _)| i)
                     || built.impostor_from != impostor_from.unwrap_or(f32::MAX)
             });
             if stale {
-                let made = build(foliage, model, look, bounds, impostor, impostor_from.unwrap_or(f32::MAX));
+                let made = build(foliage, &plants.plants, model, look, bounds, impostor, impostor_from.unwrap_or(f32::MAX));
                 self.built.insert(entity, made);
             }
             let built = &self.built[&entity];
@@ -296,6 +255,9 @@ impl FoliageCache {
                 // Where the whole chunk is nearer than impostors start, no plant needs looking at on its own.
                 let mixed = !built.impostors.is_empty() && far > built.impostor_from;
                 for index in chunk.plants.clone() {
+                    if plants.removed.contains(built.numbers[index]) {
+                        continue;
+                    }
                     let mut instance = built.instances[index];
                     if mixed {
                         let at = Vec3::new(instance.model[3][0], instance.model[3][1], instance.model[3][2]);
@@ -318,6 +280,7 @@ impl FoliageCache {
 /// A Foliage's instances, sorted into chunks.
 fn build(
     foliage: &Foliage,
+    plants: &Arc<Vec<Plant>>,
     model: Mat4,
     look: (MeshHandle, MaterialHandle, [u32; 10]),
     bounds: (Vec3, f32),
@@ -327,12 +290,7 @@ fn build(
     let (mesh_centre, mesh_radius) = bounds;
     let fade = [(foliage.draw_distance - foliage.fade_distance).max(0.0), foliage.draw_distance.max(0.0), 0.0, 0.0];
     let instance = |plant: &Plant| {
-        let local = Mat4::from_scale_rotation_translation(
-            Vec3::splat(plant.scale),
-            Quat::from_rotation_y(plant.yaw),
-            Vec3::from(plant.position),
-        );
-        let placed = model * local;
+        let placed = plant.matrix(model);
         let normal = Mat3::from_mat4(placed).inverse().transpose();
         let tint = f32::from_bits(foliage.tint(placed.w_axis.truncate()));
         let [near, far, ..] = fade;
@@ -350,8 +308,7 @@ fn build(
         }
     };
     // Each plant's chunk, by where it stands in the world.
-    let placed: Vec<(usize, Vec3)> = foliage
-        .plants
+    let placed: Vec<(usize, Vec3)> = plants
         .iter()
         .enumerate()
         .map(|(number, plant)| (number, model.transform_point3(Vec3::from(plant.position))))
@@ -363,7 +320,7 @@ fn build(
     keyed.sort_unstable();
     let scale = model.to_scale_rotation_translation().0.max_element();
     let mut built = Built {
-        plants: foliage.plants.clone(),
+        plants: plants.clone(),
         model,
         look,
         chunks: Vec::new(),
@@ -379,7 +336,7 @@ fn build(
         let mut high = Vec3::splat(f32::MIN);
         let mut reach: f32 = 0.0;
         for &(_, number) in group {
-            let plant = &foliage.plants[number];
+            let plant = &plants[number];
             let instance = instance(plant);
             let centre = Mat4::from_cols_array_2d(&instance.model).transform_point3(mesh_centre);
             reach = reach.max(mesh_radius * plant.scale * scale);

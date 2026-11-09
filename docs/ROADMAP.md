@@ -1437,11 +1437,16 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   written and worked out again when the surfaces change. Manual: Surfaces, Painting, Holes. Still to come:
   distance resampling, a basemap far off, variants and hex tiling against repeats; curvature and flow rules;
   materials dropped onto the list.
-- **Plants on terrain:** a scatter brush (from Vegetation), painting Foliage plants onto terrain and any other
-  surface with density, scale and slope limits, and erasing; scatter layers by rule using the same instances;
-  Foliage's own scatter dropped onto the ground and tilted to its slope. Every plant can be cut down, dug up or
-  replaced by a prefab, kept in saves; grass and details scattered on the GPU from density maps, past the CPU's
-  instance cap.
+- **Plants on terrain:** placed plants done: a plant's place, turn, size and lean are a `Plants` component of
+  its own (in `voxear_scene`), so a server with no renderer has them; the Foliage's Paint tool paints its plant
+  onto whatever is below the brush, terrain or mesh, to a density, between two sizes, leaning with the ground as
+  far as asked, off ground too steep and no nearer than its spacing, Shift to erase, each stroke one step to undo.
+  A plant taken away is only marked gone, so nothing is built again and the rest keep their numbers; trunks
+  collide as a static capsule each, which a ray names the plant of; a Cut prefab is made where a plant cut down
+  stood. C#: `RaycastHit.Plant`, `Plant.CutDown`, `Remove`, `Exists`, `Position`, `Size`, `Plants.Query`; a save of
+  the scene keeps which plants are gone (native API 63). Manual: Painting and Cutting Plants. Still to come: grass
+  and details scattered on the GPU from density maps, past the CPU's instance cap, and dug up; scatter layers by
+  rule.
 - **Runtime edits and the ground's looks:** the runtime delta layer (heights, surfaces, holes, plants) with its C#
   API, easy and advanced, saved and sent as compact commands or per-tile deltas; tracks and deformable snow and mud;
   wetness, puddles, streams and lava painted on the ground and flowing downhill; wind and glitter; models blending

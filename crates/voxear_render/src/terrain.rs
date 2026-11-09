@@ -133,7 +133,6 @@ pub struct GpuTerrain {
     pub surface_count: u32,
     /// `TERRAIN_HOLES` when any of its tiles has holes.
     pub flags: u32,
-    pub pad: [u32; 2],
 }
 
 /// A terrain's flag for having holes, so the shaders look for them.
@@ -594,7 +593,6 @@ pub(crate) fn gather(
             surfaces: buffer.address + surfaces_at,
             surface_count: looks.len() as u32,
             flags: if terrain.has_holes { TERRAIN_HOLES } else { 0 },
-            pad: [0; 2],
         });
         let local = camera - terrain.corner;
         let pack = |patch: &Patch| GpuTerrainPatch {

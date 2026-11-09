@@ -48,7 +48,7 @@ pub(crate) unsafe extern "C" fn terrain_raycast(
             point: ground.point.into(),
             normal: ground.normal.into(),
             distance: ground.distance,
-            _pad: 0,
+            plant: 0,
         };
     }
     1

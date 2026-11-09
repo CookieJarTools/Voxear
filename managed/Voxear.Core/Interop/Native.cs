@@ -321,6 +321,18 @@ internal static unsafe class Native
 		return count < 0 ? Obj.None : new Obj(root);
 	}
 
+	/// <summary>
+	/// Cuts a plant down into its Foliage's Cut prefab, whose behaviours' handles come back in creation order, as
+	/// Instantiate does a prefab's. Returns the prefab's root, or None when there is none or the plant was not there.
+	/// </summary>
+	public static Obj CutPlant(Obj obj, int number, out uint[] handles)
+	{
+		ulong root = 0;
+		var count = Api->PlantCut(obj.Id, (uint)number, &root);
+		handles = count > 0 ? TakeBatch(count) : Array.Empty<uint>();
+		return count < 0 ? Obj.None : new Obj(root);
+	}
+
 	public static void Adopt(uint[] handles, uint[] states)
 	{
 		fixed (uint* handleBuffer = handles)

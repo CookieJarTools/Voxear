@@ -36,14 +36,14 @@ use crate::ecs::{
 use crate::saves::{save_change, save_info, save_read, save_wait, save_write};
 use crate::services::{
     AssetName, ContentStats, LevelInfo, LevelLoadOptions, LoadProgress, PreviewOptions, PreviewSource, PreviewState,
-    SceneLoadOptions, SceneRequest, SpawnedPrefab, with_services,
+    SceneLoadOptions, SceneRequest, ScriptServices, SpawnedPrefab, with_services,
 };
 use crate::ui::{
     ui_changed, ui_class, ui_clicked, ui_close, ui_create, ui_find, ui_items, ui_load, ui_new, ui_remove, ui_set_text,
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 61;
+pub(crate) const API_VERSION: u32 = 62;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -418,6 +418,15 @@ pub(crate) struct NativeApi {
     ) -> i32,
     /// `Obj.Active` and a component's `Enabled` (see `switches`).
     pub obj_switch: unsafe extern "C" fn(entity: u64, what: i32, set: i32) -> i32,
+    /// Copies an Obj and every Obj under it, as `prefab_instantiate` makes
+    /// a prefab's, with their behaviours' handles for `batch_handles`.
+    pub obj_instantiate: unsafe extern "C" fn(
+        original: u64,
+        placement: *const Transform,
+        world_space: i32,
+        parent: u64,
+        out_root: *mut u64,
+    ) -> i32,
 }
 
 /// The kinds of component scripts reach through one entry, `kind_value`,
@@ -1476,6 +1485,38 @@ unsafe extern "C" fn prefab_instantiate(
     parent: u64,
     out_root: *mut u64,
 ) -> i32 {
+    let spawn = |services: &mut dyn ScriptServices, world: &mut World, parent, placement| {
+        services.spawn_prefab(world, prefab as u32, parent, placement)
+    };
+    unsafe { instantiate("prefabs can only be instantiated", placement, world_space, parent, out_root, spawn) }
+}
+
+unsafe extern "C" fn obj_instantiate(
+    original: u64,
+    placement: *const Transform,
+    world_space: i32,
+    parent: u64,
+    out_root: *mut u64,
+) -> i32 {
+    let original = Entity::from_bits(original);
+    let copy = |services: &mut dyn ScriptServices, world: &mut World, parent, placement| {
+        services.copy_obj(world, original, parent, placement)
+    };
+    unsafe { instantiate("Objs can only be copied", placement, world_space, parent, out_root, copy) }
+}
+
+/// Makes Objs through `spawn`, a prefab's or a copy of an Obj, under
+/// `parent` at `placement`, given in the world when `world_space` is set,
+/// and creates their behaviours. Returns how many, for `batch_handles`, or
+/// -1 when nothing was made.
+unsafe fn instantiate(
+    only_while: &str,
+    placement: *const Transform,
+    world_space: i32,
+    parent: u64,
+    out_root: *mut u64,
+    spawn: impl FnOnce(&mut dyn ScriptServices, &mut World, Option<Entity>, Option<Placement>) -> anyhow::Result<SpawnedPrefab>,
+) -> i32 {
     // Generation zero is the null entity, which is Obj.None.
     let parent = (parent >> 32 != 0).then(|| Entity::from_bits(parent));
     let placement = (!placement.is_null()).then(|| {
@@ -1488,7 +1529,7 @@ unsafe extern "C" fn prefab_instantiate(
                 (Some(placement), Some(parent)) if world_space != 0 => Some(to_local(world, parent, placement)),
                 (placement, _) => placement,
             };
-            Some(services.spawn_prefab(world, prefab as u32, parent, placement))
+            Some(spawn(services, world, parent, placement))
         })
     })
     .flatten();
@@ -1499,7 +1540,7 @@ unsafe extern "C" fn prefab_instantiate(
             return -1;
         }
         None => {
-            tracing::error!(target: "script", "Instantiate: prefabs can only be instantiated while scripts run");
+            tracing::error!(target: "script", "Instantiate: {only_while} while scripts run");
             return -1;
         }
     };
@@ -1785,6 +1826,7 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         terrain_ground: crate::terrain::terrain_ground,
         terrain_raycast: crate::terrain::terrain_raycast,
         obj_switch: crate::switches::obj_switch,
+        obj_instantiate,
     }
 }
 

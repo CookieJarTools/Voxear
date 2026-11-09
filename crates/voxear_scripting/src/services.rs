@@ -36,6 +36,19 @@ pub trait ScriptServices {
         anyhow::bail!("there are no prefabs to make here")
     }
 
+    /// Copies an Obj and every Obj under it, without behaviours, as
+    /// [`spawn_prefab`](Self::spawn_prefab) makes a prefab's: the copy's
+    /// behaviours are the original's as its scene or prefab gave them.
+    fn copy_obj(
+        &mut self,
+        _world: &mut World,
+        _original: Entity,
+        _parent: Option<Entity>,
+        _placement: Option<Placement>,
+    ) -> Result<SpawnedPrefab> {
+        anyhow::bail!("there are no Objs to copy here")
+    }
+
     /// Starts loading a level in the background that changes over as
     /// `options` say.
     fn load_level(&mut self, reference: &str, _options: LevelLoadOptions) -> Result<u32> {

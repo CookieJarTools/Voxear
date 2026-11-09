@@ -40,6 +40,34 @@ public readonly struct Obj : IEquatable<Obj>
 	}
 
 	/// <summary>
+	/// A copy of an Obj and every Obj under it, where the original is in the world, at the top of the hierarchy. Its
+	/// components are copied as they are now; its behaviours start afresh, with their fields as the original's scene or
+	/// prefab set them, and an Obj field pointing inside the original points inside the copy.
+	/// </summary>
+	public static Obj Instantiate(Obj original)
+	{
+		return original.IsValid ? Copy(original, Placement(original.WorldPosition, original.WorldRotation), true, None) : None;
+	}
+
+	/// <summary>A copy under a parent, placed relative to it as the original is to its own.</summary>
+	public static Obj Instantiate(Obj original, Obj parent)
+	{
+		return Copy(original, null, false, parent);
+	}
+
+	/// <summary>A copy at a position and rotation in the world. Its root keeps the original's scale.</summary>
+	public static Obj Instantiate(Obj original, Vector3 position, Quaternion rotation)
+	{
+		return Copy(original, Placement(position, rotation), true, None);
+	}
+
+	/// <summary>A copy under a parent, at a position and rotation in the world.</summary>
+	public static Obj Instantiate(Obj original, Vector3 position, Quaternion rotation, Obj parent)
+	{
+		return Copy(original, Placement(position, rotation), true, parent);
+	}
+
+	/// <summary>
 	/// The Obj's own switch, as Unity's activeSelf and SetActive. Off, the Obj and everything under it do nothing: they
 	/// neither draw nor collide nor play, and their behaviours get OnDisable, then OnEnable once it is back on.
 	/// </summary>
@@ -487,5 +515,24 @@ public readonly struct Obj : IEquatable<Obj>
 	public override string ToString()
 	{
 		return IsValid ? $"Obj({Name})" : "Obj(None)";
+	}
+
+	private static unsafe Obj Copy(Obj original, Transform? placement, bool worldSpace, Obj parent)
+	{
+		if (!original.IsValid)
+		{
+			Log.Error("Instantiate was given an Obj that is gone.");
+			return None;
+		}
+
+		var value = placement.GetValueOrDefault();
+		var copy = Native.Copy(original, placement.HasValue ? &value : null, worldSpace, parent, out var handles);
+		Activation.Run(handles);
+		return copy;
+	}
+
+	private static Transform Placement(Vector3 position, Quaternion rotation)
+	{
+		return Transform.Identity with { Position = position, Rotation = rotation };
 	}
 }

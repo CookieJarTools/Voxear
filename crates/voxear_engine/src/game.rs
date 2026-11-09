@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use anyhow::{Context, Result};
 use voxear_assets::{AssetGuid, AssetKind};
 use voxear_core::{
@@ -743,6 +745,21 @@ const SPAWNED_KEY: &str = "spawned:";
 
 /// What scripts reach through native calls while the game runs: content,
 /// and the renderer to upload what they load.
+/// An Obj and every Obj under it, parents first.
+fn family(world: &World, root: Entity) -> Vec<Entity> {
+    let mut children: HashMap<Entity, Vec<Entity>> = HashMap::new();
+    for (child, parent) in world.query_ref::<(Entity, &Parent)>().without::<Destroying>() {
+        children.entry(parent.0).or_default().push(child);
+    }
+    let mut family = vec![root];
+    let mut at = 0;
+    while let Some(&entity) = family.get(at) {
+        family.extend(children.get(&entity).into_iter().flatten().copied());
+        at += 1;
+    }
+    family
+}
+
 struct GameServices<'a> {
     content: &'a mut Content,
     loads: &'a mut Loads,
@@ -855,6 +872,27 @@ impl ScriptServices for GameServices<'_> {
         }
         let objs =
             entities.iter().enumerate().map(|(i, &entity)| (entity, template.behaviours(i, &entities))).collect();
+        Ok(SpawnedPrefab { root: entities[root], objs })
+    }
+
+    fn copy_obj(
+        &mut self,
+        world: &mut World,
+        original: Entity,
+        parent: Option<Entity>,
+        placement: Option<Placement>,
+    ) -> Result<SpawnedPrefab> {
+        anyhow::ensure!(world.is_alive(original), "the Obj to copy is gone");
+        // Captured as a scene saves it, then made again as a prefab's Objs are, references between them kept.
+        let objs: Vec<(ObjPath, Entity)> =
+            family(world, original).into_iter().map(|entity| (ObjPath::default(), entity)).collect();
+        let (file, ids) = crate::scene_file::capture_copy(world, self.content, &objs);
+        let flat = crate::prefab::expand(self.content, &file.objs)?;
+        let template = crate::prefab::Template::resolve(self.content, self.renderer.as_deref_mut(), &flat)?;
+        let root = ids.get(&original).and_then(|id| flat.iter().position(|obj| obj.path == ObjPath::new(*id)));
+        let root = root.or(template.root()).context("the Obj could not be copied")?;
+        let entities = template.spawn_objs(world, parent, placement);
+        let objs = entities.iter().enumerate().map(|(i, &entity)| (entity, template.behaviours(i, &entities))).collect();
         Ok(SpawnedPrefab { root: entities[root], objs })
     }
 

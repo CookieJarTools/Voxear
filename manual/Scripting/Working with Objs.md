@@ -107,6 +107,15 @@ private void Fire()
 
 To load a prefab by its path instead, use `Prefab.Load("Prefabs/Bullet.prefab")`. Loading it again costs nothing.
 
+`Obj.Instantiate` copies an Obj that is already in the level, with everything inside it:
+
+```csharp
+var copy = Obj.Instantiate(crate);                          // where the crate is
+var shell = Obj.Instantiate(shellCase, port, Quaternion.Identity);  // somewhere else
+```
+
+The copy's components are as the original's are now: where it is, what it draws, its collider. Its behaviours start afresh, with their fields as the original's scene or prefab set them, and get `Awake` and `OnEnable` before `Instantiate` returns, as a prefab's do. A field that points at an Obj inside the original points at the same Obj inside the copy. One that points elsewhere keeps pointing there.
+
 ```csharp
 Obj.Destroy();
 ```

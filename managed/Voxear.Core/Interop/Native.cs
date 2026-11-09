@@ -309,6 +309,18 @@ internal static unsafe class Native
 		return count < 0 ? Obj.None : new Obj(root);
 	}
 
+	/// <summary>
+	/// Copies an Obj and every Obj under it, with their behaviours, whose handles come back in creation order, as
+	/// Instantiate does a prefab's. Returns the copy, or None when it could not be made.
+	/// </summary>
+	public static Obj Copy(Obj original, Transform* placement, bool worldSpace, Obj parent, out uint[] handles)
+	{
+		ulong root = 0;
+		var count = Api->ObjInstantiate(original.Id, placement, worldSpace ? 1 : 0, parent.Id, &root);
+		handles = count > 0 ? TakeBatch(count) : Array.Empty<uint>();
+		return count < 0 ? Obj.None : new Obj(root);
+	}
+
 	public static void Adopt(uint[] handles, uint[] states)
 	{
 		fixed (uint* handleBuffer = handles)

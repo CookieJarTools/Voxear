@@ -1280,6 +1280,31 @@ pub fn capture_scene(world: &World, content: &mut Content, objs: &[(ObjPath, Ent
     capture_scene_with_ids(world, content, objs).0
 }
 
+thread_local! {
+    /// Whether what is being captured is a copy made at once, whose
+    /// references to Objs outside it keep pointing at them.
+    static KEEPING_OUTSIDE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// [`capture_scene_with_ids`] for a copy of Objs made at once: a behaviour
+/// field pointing at an Obj not being copied keeps pointing at it, where a
+/// scene saved would drop it.
+pub fn capture_copy(
+    world: &World,
+    content: &mut Content,
+    objs: &[(ObjPath, Entity)],
+) -> (SceneFile, HashMap<Entity, u32>) {
+    struct Keeping;
+    impl Drop for Keeping {
+        fn drop(&mut self) {
+            KEEPING_OUTSIDE.set(false);
+        }
+    }
+    KEEPING_OUTSIDE.set(true);
+    let _keeping = Keeping;
+    capture_scene_with_ids(world, content, objs)
+}
+
 /// [`capture_scene`], and the id each Obj that is not inside a prefab
 /// instance was given, for keeping track of Objs that had none.
 pub fn capture_scene_with_ids(
@@ -1748,6 +1773,11 @@ fn unbind_value(world: &World, ids: &HashMap<Entity, u32>, value: &mut toml::Val
                 *table = match file_path(world, ids, entity) {
                     Some(path) => toml::Table::from_iter(
                         std::iter::once(("obj".to_string(), prefab::ref_value(&path))).chain(bone),
+                    ),
+                    // Bound as it was, so the copy points at the same Obj.
+                    None if KEEPING_OUTSIDE.get() => toml::Table::from_iter(
+                        std::iter::once(("entity".to_string(), toml::Value::Integer(entity.to_bits() as i64)))
+                            .chain(bone),
                     ),
                     None => {
                         tracing::warn!(

@@ -156,4 +156,5 @@ internal unsafe struct NativeApi
 	public delegate* unmanaged[Cdecl]<Vector3*, float*, ulong*, int> TerrainGround;
 	public delegate* unmanaged[Cdecl]<Vector3*, Vector3*, float, RaycastHitData*, int> TerrainRaycast;
 	public delegate* unmanaged[Cdecl]<ulong, int, int, int> ObjSwitch;
+	public delegate* unmanaged[Cdecl]<ulong, Transform*, int, ulong, ulong*, int> ObjInstantiate;
 }

@@ -19,6 +19,13 @@
 //! the ground everywhere. Every field is read through the same bending of
 //! the world (its warp), so coasts and ranges wind rather than run straight.
 //!
+//! Then water cuts gullies down its slopes (`eroded`): in each of a few
+//! octaves, stripes run down the slope the ground has there, cut deeper the
+//! steeper it is, each octave finer and following the ground as the last
+//! left it, so small gullies run down the walls of larger ones and join
+//! them, as streams join a river. Ridges and valley floors, where the
+//! ground is level across, are left as they were.
+//!
 //! It is all sums, products, square roots and `floor`, with no trigonometry
 //! or powers, so a seed makes the same ground on every machine, and a world
 //! made from one need only send its seed.
@@ -60,6 +67,7 @@ pub struct WorldGen {
     pub peaks: Curve,
     /// How rough high peaks are, as a share of `height`.
     pub crags: f32,
+    pub erosion: Erosion,
     /// How high the small bumps over all the ground are, in metres.
     pub bumps: f32,
 }
@@ -69,6 +77,17 @@ pub struct WorldGen {
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Field {
     pub size: f32,
+    pub octaves: u32,
+}
+
+/// How deeply water cuts gullies down a generator's slopes: 0 for none, 1
+/// for gullies a quarter as deep as they are apart on steep ground; how far
+/// apart its largest gullies are, in metres; and in how many octaves, each
+/// half as far apart.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Erosion {
+    pub strength: f32,
+    pub spacing: f32,
     pub octaves: u32,
 }
 
@@ -126,6 +145,7 @@ impl Preset {
     pub fn world(self) -> WorldGen {
         let field = |size: f32, octaves: u32| Field { size, octaves };
         let warp = |size: f32, strength: f32| Warp { size, strength };
+        let erosion = |strength: f32, spacing: f32, octaves: u32| Erosion { strength, spacing, octaves };
         let base = WorldGen {
             seed: 1,
             scale: 1.0,
@@ -141,6 +161,7 @@ impl Preset {
             relief: Curve::new(&[[0.0, 0.15], [0.5, 0.45], [1.0, 0.8]]),
             peaks: Curve::new(&[[0.0, -0.4], [0.5, 0.1], [1.0, 0.6]]),
             crags: 0.0,
+            erosion: erosion(0.35, 160.0, 3),
             bumps: 1.5,
         };
         match self {
@@ -154,6 +175,7 @@ impl Preset {
                 coast: Curve::new(&[[0.0, 0.2], [1.0, 0.3]]),
                 relief: Curve::new(&[[0.0, 0.05], [0.6, 0.2], [1.0, 0.4]]),
                 peaks: Curve::new(&[[0.0, -0.3], [0.5, 0.0], [1.0, 0.4]]),
+                erosion: erosion(0.15, 120.0, 2),
                 bumps: 0.8,
                 ..base
             },
@@ -169,6 +191,7 @@ impl Preset {
                 relief: Curve::new(&[[0.0, 0.2], [0.4, 0.5], [1.0, 1.0]]),
                 peaks: Curve::new(&[[0.0, -0.12], [0.3, -0.05], [0.6, 0.35], [0.85, 0.75], [1.0, 0.85]]),
                 crags: 0.12,
+                erosion: erosion(0.7, 260.0, 4),
                 bumps: 2.0,
                 ..base
             },
@@ -184,6 +207,7 @@ impl Preset {
                 relief: Curve::new(&[[0.0, 0.3], [1.0, 0.8]]),
                 peaks: Curve::new(&[[0.0, -0.2], [0.5, 0.1], [1.0, 0.6]]),
                 crags: 0.03,
+                erosion: erosion(0.5, 160.0, 4),
                 bumps: 1.0,
                 ..base
             },
@@ -197,6 +221,7 @@ impl Preset {
                 coast: Curve::new(&[[0.0, 0.9], [1.0, 1.0]]),
                 relief: Curve::new(&[[0.0, 0.4], [1.0, 0.9]]),
                 peaks: Curve::new(&[[0.0, 0.2], [0.6, 0.15], [0.72, -0.2], [0.85, -0.9], [1.0, -1.0]]),
+                erosion: erosion(0.6, 120.0, 3),
                 bumps: 1.0,
                 ..base
             },
@@ -242,6 +267,67 @@ fn ridged(x: f32, z: f32, octaves: u32, seed: u32, soft: f32) -> f32 {
         frequency *= 2.0;
     }
     (sum / total).clamp(0.0, 1.0)
+}
+
+/// A number for lattice cell `(x, z)`, well mixed.
+fn cell_hash(x: i32, z: i32, seed: u32) -> u32 {
+    let mut h = seed ^ (x as u32).wrapping_mul(0x8DA6_B343) ^ (z as u32).wrapping_mul(0xD816_3841);
+    h ^= h >> 16;
+    h = h.wrapping_mul(0x7FEB_352D);
+    h ^= h >> 15;
+    h = h.wrapping_mul(0x846C_A68B);
+    h ^ (h >> 16)
+}
+
+/// How far, in cells, a cell's gullies reach round its point.
+const GULLY_REACH: f32 = 1.5;
+
+/// Gullies at `(x, z)` (in cells, a gully's width each) running along
+/// `along`, a direction in x and z: -1 on their floors, rising to 1 between
+/// them, V-shaped at the floor and rounded between; and how that changes
+/// along x and z, per cell. Each cell has a point of its own, its gullies'
+/// stripes laid round it at a phase of its own, and blended with its
+/// neighbours' as they reach, so gullies wander and end rather than run in
+/// rows.
+fn gullies(x: f32, z: f32, along: [f32; 2], seed: u32) -> (f32, f32, f32) {
+    let across = [-along[1], along[0]];
+    let reach2 = GULLY_REACH * GULLY_REACH;
+    let (mut sum, mut weights) = (0.0f32, 0.0f32);
+    let (mut dsum, mut dweights) = ([0.0f32; 2], [0.0f32; 2]);
+    let (x0, x1) = ((x - GULLY_REACH).floor() as i32, (x + GULLY_REACH).floor() as i32);
+    let (z0, z1) = ((z - GULLY_REACH).floor() as i32, (z + GULLY_REACH).floor() as i32);
+    for cz in z0..=z1 {
+        for cx in x0..=x1 {
+            let h = cell_hash(cx, cz, seed);
+            let jitter = |bits: u32| (bits & 0xFFFF) as f32 / 65536.0;
+            let (px, pz) = (cx as f32 + jitter(h), cz as f32 + jitter(h >> 16));
+            let (dx, dz) = (x - px, z - pz);
+            let r2 = dx * dx + dz * dz;
+            if r2 >= reach2 {
+                continue;
+            }
+            let t = 1.0 - r2 / reach2;
+            let w = t * t * t;
+            let dw = [-6.0 * t * t * dx / reach2, -6.0 * t * t * dz / reach2];
+            let phase = jitter(cell_hash(cx, cz, seed ^ 0x5bd1_e995));
+            let s = dx * across[0] + dz * across[1] + phase;
+            let u = s - s.floor();
+            let wave = 8.0 * u * (1.0 - u) - 1.0;
+            let slope = 8.0 - 16.0 * u;
+            sum += w * wave;
+            weights += w;
+            for axis in 0..2 {
+                dsum[axis] += dw[axis] * wave + w * slope * across[axis];
+                dweights[axis] += dw[axis];
+            }
+        }
+    }
+    if weights <= 1e-6 {
+        return (0.0, 0.0, 0.0);
+    }
+    let value = sum / weights;
+    let d = |axis: usize| (dsum[axis] * weights - sum * dweights[axis]) / (weights * weights);
+    (value, d(0), d(1))
 }
 
 /// The seed of a generator's part `part`, from its own.
@@ -335,6 +421,22 @@ impl WorldGen {
 
     /// What it reads and makes at `(x, z)`, in metres in its own world.
     pub fn sample(&self, x: f32, z: f32) -> Sample {
+        let (mut sample, relief) = self.shaped(x, z);
+        if self.erosion.strength > 0.0 && self.erosion.octaves > 0 {
+            sample.height = self.eroded(x, z, sample.height);
+        }
+        if self.bumps != 0.0 {
+            let scale = self.scale.max(0.01);
+            let size = 30.0 * scale;
+            let bump = signed(noise::fractal(NoiseStyle::Fractal, x / size, z / size, 4, seed_of(self.seed, 7)));
+            sample.height += self.bumps * bump * (0.3 + 0.7 * relief);
+        }
+        sample
+    }
+
+    /// Its ground at `(x, z)` before water cuts it and bumps roughen it: its
+    /// fields there and its height, and how much relief the ground has.
+    fn shaped(&self, x: f32, z: f32) -> (Sample, f32) {
         let scale = self.scale.max(0.01);
         let fractal = |style: NoiseStyle, size: f32, octaves: u32, part: u32, (x, z): (f32, f32)| {
             let size = (size * scale).max(1.0);
@@ -369,12 +471,43 @@ impl WorldGen {
             let crag = fractal(NoiseStyle::Ridged, self.ridges.size / 8.0, 3, 6, (wx, wz));
             share += self.crags * relief * peaks * peaks * crag;
         }
-        let mut height = self.sea_level + share * self.height;
-        if self.bumps != 0.0 {
-            let bump = signed(fractal(NoiseStyle::Fractal, 30.0, 4, 7, (x, z)));
-            height += self.bumps * bump * (0.3 + 0.7 * relief);
+        let height = self.sea_level + share * self.height;
+        (Sample { continents, ruggedness, peaks, height }, relief)
+    }
+
+    /// `height`, the ground at `(x, z)`, with gullies cut down its slopes:
+    /// in each octave, stripes run down the slope as the octaves before left
+    /// it, cut deeper the steeper it is. None under the sea, and shallower
+    /// towards it.
+    fn eroded(&self, x: f32, z: f32, height: f32) -> f32 {
+        let scale = self.scale.max(0.01);
+        let mut spacing = (self.erosion.spacing * scale).max(1.0);
+        // The ground's slope round the point, from its height a little way off each way.
+        let step = spacing * 0.15;
+        let at = |dx: f32, dz: f32| self.shaped(x + dx, z + dz).0.height;
+        let (mut gx, mut gz) =
+            ((at(step, 0.0) - at(-step, 0.0)) / (2.0 * step), (at(0.0, step) - at(0.0, -step)) / (2.0 * step));
+        let mut cut = 0.0;
+        for octave in 0..self.erosion.octaves.min(8) {
+            let slope = (gx * gx + gz * gz).sqrt();
+            if slope > 1e-4 {
+                let along = [gx / slope, gz / slope];
+                let (value, dx, dz) = gullies(x / spacing, z / spacing, along, seed_of(self.seed, 20 + octave));
+                // From nothing between gullies to their whole depth on their floors, deepest from about 30° up.
+                let depth = self.erosion.strength * spacing * 0.25 * crate::layers::smoothstep(0.0, 0.6, slope);
+                let share = (value - 1.0) * 0.5;
+                cut += depth * share;
+                // The next octave runs down the slope as this one left it: off a gully's walls, into it.
+                gx += depth * 0.5 * dx / spacing;
+                gz += depth * 0.5 * dz / spacing;
+            }
+            spacing *= 0.5;
         }
-        Sample { continents, ruggedness, peaks, height }
+        // None under the sea: gullies grow shallower towards the shore, over as many metres as they are deep.
+        let deepest = self.erosion.strength * self.erosion.spacing * scale * 0.25;
+        let above = crate::layers::smoothstep(self.sea_level, self.sea_level + deepest.max(1.0), height);
+        // And never below the sea from above it, so no pools are left along the shore.
+        (height + cut * above).max(height.min(self.sea_level))
     }
 
     /// The ground's height at `(x, z)`, in metres in its own world.
@@ -407,9 +540,36 @@ mod tests {
         assert_eq!(heights, again);
         // The same bits on every machine: a hash of them as they were made here.
         let hash = crate::layers::stable_hash(bytemuck::cast_slice(&heights));
-        assert_eq!(hash, 0x6820014bf4529923, "the ground changed: was it meant to? {hash:#x}");
+        assert_eq!(hash, 0x121a7f7a90c39192, "the ground changed: was it meant to? {hash:#x}");
         let other = WorldGen { seed: 2, ..world.clone() };
         assert_ne!(other.height_at(100.0, 100.0), world.height_at(100.0, 100.0));
+    }
+
+    #[test]
+    fn gullies_only_cut_run_down_the_slope_and_leave_level_ground_alone() {
+        let world = Preset::Alpine.world();
+        let dry = WorldGen { erosion: Erosion { strength: 0.0, ..world.erosion }, ..world.clone() };
+        let (mut lower, mut points) = (0.0, 0);
+        for i in 0..2000 {
+            let (x, z) = ((i % 50) as f32 * 37.0 + 3000.0, (i / 50) as f32 * 41.0 + 3000.0);
+            let (cut, was) = (world.height_at(x, z), dry.height_at(x, z));
+            assert!(cut <= was + 1e-3, "at {x}, {z}: raised from {was} to {cut}");
+            lower += was - cut;
+            points += 1;
+        }
+        assert!(lower / points as f32 > 0.5, "cut into the mountains: {} m on average", lower / points as f32);
+        // Level ground, with no relief, is left as it is.
+        let level = WorldGen { coast: Curve::flat(0.2), relief: Curve::flat(0.0), bumps: 0.0, ..world.clone() };
+        let flat = WorldGen { erosion: Erosion { strength: 0.0, ..level.erosion }, ..level.clone() };
+        assert_eq!(level.height_at(5000.0, 5000.0), flat.height_at(5000.0, 5000.0));
+        // Running along x, they change far more across them than along them.
+        let (mut along, mut across) = (0.0, 0.0);
+        for i in 0..4000 {
+            let (x, z) = ((i % 64) as f32 * 0.173, (i / 64) as f32 * 0.191);
+            let (_, dx, dz) = gullies(x, z, [1.0, 0.0], 7);
+            (along, across) = (along + dx.abs(), across + dz.abs());
+        }
+        assert!(across > along * 3.0, "across {across}, along {along}");
     }
 
     #[test]

@@ -87,6 +87,8 @@ pub struct WorldGenFields {
     warp: [NodeId; 2],
     curves: Vec<(Shaping, CurveField)>,
     crags: NodeId,
+    /// How deeply water cuts gullies, how far apart, and in how many octaves.
+    erosion: [NodeId; 3],
     bumps: NodeId,
 }
 
@@ -131,8 +133,13 @@ impl WorldGenFields {
             curves.push((shaping, field));
         }
         let crags = number_field(ui, advanced, "Crags", world.crags);
+        let erosion = [
+            number_field(ui, advanced, "Erosion", world.erosion.strength),
+            number_field(ui, advanced, "Gully spacing", world.erosion.spacing),
+            number_field(ui, advanced, "Gully octaves", world.erosion.octaves as f32),
+        ];
         let bumps = number_field(ui, advanced, "Bumps", world.bumps);
-        Self { world, preset, seed, scale, sea_level, height, fields, sharpness, warp, curves, crags, bumps }
+        Self { world, preset, seed, scale, sea_level, height, fields, sharpness, warp, curves, crags, erosion, bumps }
     }
 
     /// What was done this frame, the generator changed to match; and its
@@ -159,6 +166,8 @@ impl WorldGenFields {
             (self.warp[0], &mut world.warp.size, 1.0),
             (self.warp[1], &mut world.warp.strength, 0.0),
             (self.crags, &mut world.crags, 0.0),
+            (self.erosion[0], &mut world.erosion.strength, 0.0),
+            (self.erosion[1], &mut world.erosion.spacing, 1.0),
             (self.bumps, &mut world.bumps, 0.0),
         ] {
             if let Some(value) = changed_number(ui, field) {
@@ -166,6 +175,9 @@ impl WorldGenFields {
             }
         }
         world.sharpness = world.sharpness.min(1.0);
+        if let Some(value) = changed_number(ui, self.erosion[2]) {
+            (world.erosion.octaves, typed) = (value.clamp(0.0, 8.0) as u32, true);
+        }
         for &(which, size, octaves) in &self.fields {
             if let Some(value) = changed_number(ui, size) {
                 (which.field(world).size, typed) = (value.max(1.0), true);

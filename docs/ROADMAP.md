@@ -1544,9 +1544,15 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   sprout icon. Tests: the same bits for a seed (a hash), smooth curves through their keys, fields filling their
   range, presets found by shape, a layer across a tile's edge, the editor (a Generate layer, a preset picked).
   Manual: Generating Terrain. Chose four curves combined over nested ones: easier to edit, coasts into ranges alike.
+- ~~**Gullies in generated ground:**~~ done: a generator's Erosion, Gully spacing and Gully octaves: in each octave,
+  stripes laid round jittered points run down the slope the ground has after the octaves before (its slope from
+  four nearby heights, each octave's own adding to it), V-shaped on their floors, cut deeper the steeper the ground
+  up to about 30°, never raising it, so small gullies run down the walls of large ones and into them; ridges and
+  valley floors left; shallower towards the sea and never below it. Polynomials only, still the same bits for a
+  seed. Tests: only cutting, gullies across the slope, level ground left, the hash. Manual: Generating Terrain.
 - **More terrain generation:** feeding the layer stack so it can be painted and stamped over afterwards:
   - temperature and humidity fields, for biomes
-  - a per-point erosion filter, GPU hydraulic and thermal erosion, and stream-power erosion for ranges
+  - GPU hydraulic and thermal erosion as an Erosion layer, and stream-power erosion for ranges
   - rivers and lakes carved by flow, as Streams and Pools
   - biomes and climate choosing surfaces and scatter
   - generation at runtime, in chunks, for endless worlds, as well as baked in the editor

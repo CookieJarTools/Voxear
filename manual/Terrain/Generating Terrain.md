@@ -69,7 +69,16 @@ The ground stands at the **Coast** curve's height and rises or falls from there 
 | Sharpness | How sharp ridges' crests are: 0 rounded, for hills; 1 knife-edged, for mountains |
 | Warp size, Warp strength | How the world is bent before the fields are read, so coasts and ranges wind rather than run straight: over how many metres, and by how many metres at most |
 | Crags | How rough the highest peaks are, as a share of **Height** |
+| Erosion | How deeply water cuts gullies down the slopes: 0 for none, 1 for gullies a quarter as deep as they are apart on steep ground |
+| Gully spacing | How far apart the largest gullies are, in metres |
+| Gully octaves | In how many sizes gullies are cut, each half as far apart as the last |
 | Bumps | How high the small bumps over all the ground are, in metres |
+
+## Gullies
+
+Water running off ground cuts gullies down its slopes, and the gullies join as they go down, as streams join a river. A generator cuts them in a few sizes, the largest first: each size runs down the slope the ground has after the sizes before cut it, so small gullies run down the walls of larger ones and into them. Steep ground is cut deepest; ridges and valley floors, level across, are left as they are, so peaks stay sharp and valleys flat-bottomed. Gullies grow shallower towards the sea and stop at its edge.
+
+Gullies make mountains look worn by weather rather than stretched noise, and canyon walls fluted. For the ground a river carves, and the fans of what it washes down, add an **Erosion** layer above the Generate layer.
 
 ## The same ground everywhere
 

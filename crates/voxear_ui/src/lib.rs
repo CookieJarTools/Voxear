@@ -42,6 +42,7 @@ mod desktop;
 mod dock;
 mod drag;
 mod draw;
+mod fields;
 mod icons;
 mod input;
 mod keymap;
@@ -121,7 +122,7 @@ pub struct Quad {
     pub radius: f32,
     pub border: f32,
     /// [`Quad::SHAPE`], [`Quad::GLYPH`], [`Quad::SHADOW`], [`Quad::LINE`],
-    /// [`Quad::IMAGE`] or [`Quad::GRADIENT`].
+    /// [`Quad::IMAGE`], [`Quad::GRADIENT`] or [`Quad::FIELD_GLYPH`].
     pub kind: u32,
     /// For shapes, [`Quad::DASHED`] and [`Quad::BACKDROP`]; for an image,
     /// its texture; for a gradient, [`Quad::FADES_DOWN`].
@@ -147,6 +148,12 @@ impl Quad {
     /// `uv` at the bottom. These colours are sRGB with straight alpha, and
     /// blend as people see them.
     pub const GRADIENT: u32 = 5;
+    /// A glyph drawn from the frame's distance fields ([`UiFrame::fields`]),
+    /// sharp at whatever size it shows: `uv` is its place there, and
+    /// `border` how far its distances reach either side of its edge, in the
+    /// fields' texels. A UI drawn at many sizes draws its text so (see
+    /// [`Ui::set_scalable`]).
+    pub const FIELD_GLYPH: u32 = 6;
     /// For a gradient: it fades down to `uv`.
     pub const FADES_DOWN: u32 = 1;
     /// The border is drawn in dashes.
@@ -202,4 +209,8 @@ pub struct UiFrame {
     /// The atlas as the glyphs in `quads` need it. Shared, so a frame costs
     /// no copy of it; `None` when no text was ever drawn.
     pub atlas: Option<std::sync::Arc<AtlasImage>>,
+    /// The distance fields as [`Quad::FIELD_GLYPH`]s need them, each
+    /// texel's distance from its glyph's edge, 128 on it; `None` when none
+    /// was ever drawn.
+    pub fields: Option<std::sync::Arc<AtlasImage>>,
 }

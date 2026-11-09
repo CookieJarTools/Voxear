@@ -26,7 +26,8 @@ pub const MAX_UI_QUADS: u64 = 32 * 1024;
 /// and UI panel together, four numbers each.
 pub const MAX_UI_VALUES: u64 = 64 * 1024;
 
-/// One UI's quads and glyph atlas, and where its area starts in the output.
+/// One UI's quads, glyph atlas and distance fields, and where its area
+/// starts in the output.
 #[derive(Default)]
 pub(crate) struct Layer {
     pub(crate) quads: Vec<Quad>,
@@ -35,6 +36,9 @@ pub(crate) struct Layer {
     atlas: Option<(Image, TextureId)>,
     /// The version of the atlas on the GPU.
     pub(crate) version: u64,
+    /// Its glyphs as distance fields, with mips, and the version on the GPU.
+    fields: Option<(Image, TextureId)>,
+    pub(crate) fields_version: u64,
     origin: [u32; 2],
 }
 
@@ -56,42 +60,84 @@ impl Layer {
         self.values.clear();
         self.values.extend(frame.values.iter().take(MAX_UI_VALUES as usize / 2));
         if let Some(atlas) = frame.atlas.as_deref().filter(|a| a.version != self.version) {
-            self.upload(gpu, bindless, atlas)?;
+            upload(gpu, bindless, &mut self.atlas, ("glyph atlas", atlas), vec![atlas.pixels.clone()])?;
             self.version = atlas.version;
         }
-        Ok(())
-    }
-
-    /// The atlas changes only when glyphs appear for the first time, so the
-    /// GPU simply finishes the frames that sample the old one first.
-    fn upload(&mut self, gpu: &Gpu, bindless: &mut Bindless, atlas: &AtlasImage) -> Result<()> {
-        gpu.wait_idle();
-        let fits = self
-            .atlas
-            .as_ref()
-            .is_some_and(|(image, _)| (image.desc.width, image.desc.height) == (atlas.width, atlas.height));
-        if !fits {
-            self.destroy(gpu, bindless);
-            let usage = vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST;
-            let image = gpu
-                .create_image("glyph atlas", ImageDesc::new(atlas.width, atlas.height, vk::Format::R8_UNORM, usage))?;
-            let texture = bindless.add_texture(gpu, image.view);
-            self.atlas = Some((image, texture));
+        if let Some(fields) = frame.fields.as_deref().filter(|f| f.version != self.fields_version) {
+            upload(gpu, bindless, &mut self.fields, ("glyph distance fields", fields), mips(fields))?;
+            self.fields_version = fields.version;
         }
-        let (image, _) = self.atlas.as_ref().expect("created above");
-        gpu.upload_mips(image, std::slice::from_ref(&atlas.pixels))
+        Ok(())
     }
 
     pub(crate) fn texture(&self) -> u32 {
         self.atlas.as_ref().map_or(NO_TEXTURE, |(_, texture)| texture.0)
     }
 
+    /// Its distance fields' texture, which `ui.slang` reads from
+    /// `push.source`.
+    pub(crate) fn fields_texture(&self) -> u32 {
+        self.fields.as_ref().map_or(NO_TEXTURE, |(_, texture)| texture.0)
+    }
+
     pub(crate) fn destroy(&mut self, gpu: &Gpu, bindless: &mut Bindless) {
-        if let Some((image, texture)) = self.atlas.take() {
+        for (image, texture) in [self.atlas.take(), self.fields.take()].into_iter().flatten() {
             bindless.remove_texture(texture);
             gpu.destroy_image(image);
         }
     }
+}
+
+/// Puts `levels` of an atlas into `slot`'s image, made anew when its size
+/// or mips differ. An atlas changes only when glyphs appear for the first
+/// time, so the GPU simply finishes the frames that sample the old one
+/// first.
+fn upload(
+    gpu: &Gpu,
+    bindless: &mut Bindless,
+    slot: &mut Option<(Image, TextureId)>,
+    (name, atlas): (&str, &AtlasImage),
+    levels: Vec<Vec<u8>>,
+) -> Result<()> {
+    gpu.wait_idle();
+    let fits = slot.as_ref().is_some_and(|(image, _)| {
+        (image.desc.width, image.desc.height, image.desc.mip_levels) == (atlas.width, atlas.height, levels.len() as u32)
+    });
+    if !fits {
+        if let Some((image, texture)) = slot.take() {
+            bindless.remove_texture(texture);
+            gpu.destroy_image(image);
+        }
+        let usage = vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST;
+        let desc = ImageDesc { mip_levels: levels.len() as u32, ..ImageDesc::new(atlas.width, atlas.height, vk::Format::R8_UNORM, usage) };
+        let image = gpu.create_image(name, desc)?;
+        let texture = bindless.add_texture(gpu, image.view);
+        *slot = Some((image, texture));
+    }
+    let (image, _) = slot.as_ref().expect("made above");
+    gpu.upload_mips(image, &levels)
+}
+
+/// An atlas and its mips down to one texel, each the average of the four
+/// under it: distances averaged, so text drawn far smaller than its fields
+/// fades rather than sparkles.
+fn mips(atlas: &AtlasImage) -> Vec<Vec<u8>> {
+    let mut levels = vec![atlas.pixels.clone()];
+    let (mut width, mut height) = (atlas.width as usize, atlas.height as usize);
+    while width > 1 || height > 1 {
+        let (half_w, half_h) = ((width / 2).max(1), (height / 2).max(1));
+        let above = levels.last().expect("the first level");
+        let texel = |x: usize, y: usize| u32::from(above[y.min(height - 1) * width + x.min(width - 1)]);
+        let level = (0..half_w * half_h)
+            .map(|at| {
+                let (x, y) = (at % half_w * 2, at / half_w * 2);
+                ((texel(x, y) + texel(x + 1, y) + texel(x, y + 1) + texel(x + 1, y + 1) + 2) / 4) as u8
+            })
+            .collect();
+        levels.push(level);
+        (width, height) = (half_w, half_h);
+    }
+    levels
 }
 
 impl UiGpu {
@@ -164,8 +210,10 @@ impl UiGpu {
         // first quad in `level`, and where its shaded backgrounds' values start in `max_draws`.
         let base = Push { size: [extent.width, extent.height], textures, ..push };
         let list = pack(self.game.origin[0], self.game.origin[1]);
+        // Each layer's distance fields in `source`.
         let game = Push {
             texture: self.game.texture(),
+            source: self.game.fields_texture(),
             list,
             level: first as u32,
             max_draws: first_value as u32,
@@ -173,6 +221,7 @@ impl UiGpu {
         };
         let window = Push {
             texture: self.window.texture(),
+            source: self.window.fields_texture(),
             list: 0,
             level: (first + games) as u32,
             max_draws: (first_value + game_values) as u32,

@@ -5490,6 +5490,108 @@ fn a_ui_panel_shows_its_ui_unstretched_when_its_texture_reaches_past_it() {
     assert!(above.abs_diff(below) <= 2, "red from row {top} to {bottom}, not about the middle at {}", height / 2);
 }
 
+/// How many pixels each edge along `row` of an image `width` wide takes to
+/// go from dark to light or back, in its red, between `columns`: the runs of
+/// pixels between a fifth and four fifths of the way.
+fn edge_widths(pixels: &[u8], width: u32, row: u32, columns: std::ops::Range<u32>) -> Vec<u32> {
+    let red = |x: u32| pixels[((row * width + x) * 4) as usize];
+    let (mut widths, mut run) = (Vec::new(), 0);
+    for x in columns {
+        match red(x) {
+            51..=204 => run += 1,
+            _ if run > 0 => {
+                widths.push(run);
+                run = 0;
+            }
+            _ => {}
+        }
+    }
+    widths
+}
+
+/// A UI Panel's text drawn from distance fields is sharp however much
+/// larger the panel shows than its texture was drawn: its edges a pixel or
+/// so wide on screen, where the same text drawn into the texture blurs over
+/// several.
+#[test]
+fn a_ui_panels_text_stays_sharp_shown_larger_than_its_texture() {
+    use voxear_render::{UiPanel, UiPanelFrame};
+    use voxear_ui::{Color, Style, TextStyle, Ui};
+
+    let Some(mut renderer) = renderer() else { return };
+    let (width, height) = (640u32, 360u32);
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::IDENTITY));
+    // Two metres wide, just over a metre ahead: about 520 pixels wide, four times the texture's 125.
+    let ahead = Transform::from_position(Vec3::new(0.0, 0.0, 1.2));
+    let panel = world.spawn((ahead, UiPanel { size: [2.0, 1.0], ..UiPanel::default() }));
+    let text = |scalable: bool| {
+        let mut ui = Ui::new();
+        ui.set_scalable(scalable);
+        ui.set_layout_size(Some([1000.0, 500.0]));
+        let root = ui.root();
+        ui.panel(root, Style::default().at(0.0, 0.0).width(1000.0).height(500.0).background(Color::hex(0x000000)));
+        let words = ui.panel(root, Style::default().at(100.0, 120.0));
+        ui.label(words, "HIH", TextStyle { size: 220.0, color: Color::hex(0xffffff), ..TextStyle::default() });
+        ui.frame(125, 63, 0.125)
+    };
+    // Along the row through the panel, which is about 270 pixels high round the middle, crossing the most
+    // edges: through the letters' stems, not the H's bars.
+    let mut drawn = |frame: &voxear_ui::UiFrame| {
+        let shown = UiPanelFrame { entity: panel, frame, size: [125, 63], drawn: [125.0, 62.5] };
+        renderer.set_ui_panels(&[shown]).unwrap();
+        run(&mut renderer, &world, &mut 0.0, 1);
+        let (_, _, pixels) = renderer.read_pixels().unwrap();
+        let across = width / 2 - 240..width / 2 + 240;
+        let rows = (height / 2 - 100..height / 2 + 100).map(|row| edge_widths(&pixels, width, row, across.clone()));
+        rows.max_by_key(|widths| widths.len()).unwrap_or_default()
+    };
+    let sharp = drawn(&text(true));
+    assert!(sharp.len() >= 6, "the H, I and H's stems: {sharp:?}");
+    assert!(sharp.iter().all(|&w| w <= 2), "edges a pixel or two wide: {sharp:?}");
+    let blurred = drawn(&text(false));
+    assert!(blurred.iter().any(|&w| w >= 3), "drawn into the texture, they blur: {blurred:?}");
+}
+
+/// A UI Panel's text that something drawn after it covers stays under it,
+/// as an open menu over a label: drawn into the panel's texture, not over
+/// it with the rest of its text.
+#[test]
+fn a_ui_panels_text_stays_under_what_is_drawn_over_it() {
+    use voxear_render::{UiPanel, UiPanelFrame};
+    use voxear_ui::{Color, Style, TextStyle, Ui};
+
+    let Some(mut renderer) = renderer() else { return };
+    let (width, height) = (640u32, 360u32);
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::IDENTITY));
+    let ahead = Transform::from_position(Vec3::new(0.0, 0.0, 1.2));
+    let panel = world.spawn((ahead, UiPanel { size: [2.0, 1.0], ..UiPanel::default() }));
+    let mut ui = Ui::new();
+    ui.set_scalable(true);
+    ui.set_layout_size(Some([1000.0, 500.0]));
+    let root = ui.root();
+    ui.panel(root, Style::default().at(0.0, 0.0).width(1000.0).height(500.0).background(Color::hex(0x000000)));
+    // White words across the middle, their right half under a red box drawn after them.
+    let words = ui.panel(root, Style::default().at(100.0, 150.0));
+    ui.label(words, "HHHHHH", TextStyle { size: 200.0, color: Color::hex(0xffffff), ..TextStyle::default() });
+    ui.panel(root, Style::default().at(500.0, 0.0).width(500.0).height(500.0).background(Color::hex(0xff0000)));
+    let frame = ui.frame(1000, 500, 1.0);
+    let shown = UiPanelFrame { entity: panel, frame: &frame, size: [1000, 500], drawn: [1000.0, 500.0] };
+    renderer.set_ui_panels(&[shown]).unwrap();
+    run(&mut renderer, &world, &mut 0.0, 1);
+    let (_, _, pixels) = renderer.read_pixels().unwrap();
+    let at = |x: u32| {
+        let i = (((height / 2) * width + x) * 4) as usize;
+        [pixels[i], pixels[i + 1], pixels[i + 2]]
+    };
+    // The panel is about 520 pixels wide round the middle; its left half from 60 pixels in, its right after.
+    let left: Vec<[u8; 3]> = (width / 2 - 200..width / 2 - 20).map(at).collect();
+    assert!(left.iter().any(|p| p[1] > 200), "the uncovered words show, white: {left:?}");
+    let right: Vec<[u8; 3]> = (width / 2 + 20..width / 2 + 200).map(at).collect();
+    assert!(right.iter().all(|p| p[0] > 200 && p[1] < 40), "under the red box, only red: {right:?}");
+}
+
 /// A UI whose element's background is striped by a built-in effect, `stripes`
 /// white on black, `left` pixels from the left of its area.
 fn striped_ui(left: f32) -> voxear_ui::Ui {

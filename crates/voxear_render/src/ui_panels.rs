@@ -11,9 +11,16 @@
 //! them, it works out how large each shows, which the engine reads back
 //! ([`crate::Renderer::ui_panel_sizes`]) to size the next drawing.
 //!
+//! A panel's text is drawn from distance fields ([`Quad::FIELD_GLYPH`]),
+//! and not into its texture: each view draws it straight onto the panel
+//! after the panel itself, reading the fields for each pixel on screen, so
+//! it is sharp however near, far or slanted the panel is. Only text that
+//! something drawn after it covers, as an open menu over a label, goes into
+//! the texture under it.
+//!
 //! The shaders are `uiVertex` and `uiFragment` for a panel's texture, and
-//! `uiPanelVertex`, `uiPanelFragment` and `uiPanelMipMain`, in
-//! `shaders/ui.slang`.
+//! `uiPanelVertex`, `uiPanelFragment`, `uiPanelTextVertex`,
+//! `uiPanelTextFragment` and `uiPanelMipMain`, in `shaders/ui.slang`.
 
 use std::collections::HashMap;
 
@@ -210,25 +217,32 @@ pub struct UiPanelFrame<'a> {
     pub drawn: [f32; 2],
 }
 
-/// One panel's UI on the GPU: its quads and glyph atlas, the size of its
-/// texture and how much of it the UI covers, and whether its texture needs
-/// drawing again.
+/// One panel's UI on the GPU: the quads drawn into its texture, its glyph
+/// atlas and distance fields, the text drawn straight onto it, the size of
+/// its texture and how much of it the UI covers, and whether its texture
+/// needs drawing again.
 #[derive(Default)]
 struct PanelGpu {
     layer: Layer,
+    text: Vec<Quad>,
     size: [u32; 2],
     drawn: [f32; 2],
     stale: bool,
 }
 
-/// This frame's texture for a panel, for the views to draw it with, and how
-/// far it reaches past the panel, across and down, in panels.
+/// This frame's texture for a panel, for the views to draw it with, how far
+/// it reaches past the panel, across and down, in panels, and its texture's
+/// size; and its text: its first quad and how many in this frame's buffer,
+/// and the distance fields they read.
 #[derive(Clone, Copy)]
 pub(crate) struct PanelTexture {
     pub entity: Entity,
     pub image: ImageId,
     pub texture: TextureId,
     pub reach: [f32; 2],
+    pub size: [u32; 2],
+    pub text: (u32, u32),
+    pub fields: u32,
 }
 
 /// Every panel's UI, kept until the engine hands over the next, and how
@@ -267,17 +281,25 @@ impl UiPanels {
         }
         for frame in frames {
             let panel = self.panels.entry(frame.entity).or_default();
+            let room = MAX_UI_QUADS as usize / 2;
+            let quads = &frame.frame.quads[..frame.frame.quads.len().min(room)];
+            let fields_size = frame.frame.fields.as_ref().map_or(1, |fields| fields.width);
+            let (texture, text) = split_text(quads, fields_size);
             let atlas = frame.frame.atlas.as_ref().map(|atlas| atlas.version);
+            let fields = frame.frame.fields.as_ref().map(|fields| fields.version);
             // A shaded background may change every frame with the time, so its panel is drawn every frame.
-            let shaded = frame.frame.quads.iter().any(|quad| quad.flags & Quad::SHADED != 0);
+            let shaded = quads.iter().any(|quad| quad.flags & Quad::SHADED != 0);
             let changed = shaded
                 || panel.size != frame.size
-                || panel.layer.quads != frame.frame.quads
-                || atlas.is_some_and(|version| version != panel.layer.version);
+                || panel.layer.quads != texture
+                || atlas.is_some_and(|version| version != panel.layer.version)
+                || fields.is_some_and(|version| version != panel.layer.fields_version);
             panel.stale |= changed;
             panel.size = frame.size;
             panel.drawn = frame.drawn;
-            panel.layer.set(gpu, bindless, frame.frame, MAX_UI_QUADS as usize / 2)?;
+            panel.layer.set(gpu, bindless, frame.frame, room)?;
+            panel.layer.quads = texture;
+            panel.text = text;
         }
         Ok(())
     }
@@ -323,7 +345,13 @@ impl UiPanels {
             let image = fg.history_image(gpu, bindless, &image_name(entity), desc)?;
             let texture = fg.texture(image);
             let reach = [0, 1].map(|axis| panel.size[axis] as f32 / panel.drawn[axis].max(1.0));
-            textures.push(PanelTexture { entity, image, texture, reach });
+            // Its text, which the views draw every frame.
+            let at = first + written;
+            let text = panel.text.len().min((MAX_UI_QUADS as usize).saturating_sub(at));
+            buffer.write((at * size_of::<Quad>()) as u64, &panel.text[..text]);
+            written += text;
+            let (size, text, fields) = (panel.size, (at as u32, text as u32), panel.layer.fields_texture());
+            textures.push(PanelTexture { entity, image, texture, reach, size, text, fields });
             let room = (MAX_UI_QUADS as usize).saturating_sub(first + written);
             if !(panel.stale || fg.is_new(image)) || room == 0 {
                 continue;
@@ -338,8 +366,14 @@ impl UiPanels {
             value_buffer.write((value_at * size_of::<[f32; 4]>()) as u64, &panel.layer.values[..values]);
             values_written += values;
             let base = Push { size: [width, height], textures: [NO_TEXTURE, 0, 0, 0], ..push };
-            let drawn =
-                Push { texture: panel.layer.texture(), list: 0, level: at as u32, max_draws: value_at as u32, ..base };
+            let drawn = Push {
+                texture: panel.layer.texture(),
+                source: panel.layer.fields_texture(),
+                list: 0,
+                level: at as u32,
+                max_draws: value_at as u32,
+                ..base
+            };
             let area = vk::Rect2D { offset: vk::Offset2D::default(), extent: desc.extent() };
             fg.add_pass("UI panel", &[(image, ImageAccess::ColorAttachment)], &[], move |ctx| {
                 let color = [vk::RenderingAttachmentInfo::default()
@@ -397,13 +431,45 @@ pub(crate) struct PanelView<'a> {
     pub render: vk::Extent2D,
 }
 
+/// Splits a panel's quads into those drawn into its texture and the glyphs
+/// drawn straight onto it in the world: every distance-field glyph that
+/// nothing drawn after it covers. One that something later overlaps, as an
+/// open menu over a label, stays in the texture, under it. A glyph's quad
+/// reaches past its ink by how far its distances reach, which is left out,
+/// the fields being `fields_size` texels square.
+fn split_text(quads: &[Quad], fields_size: u32) -> (Vec<Quad>, Vec<Quad>) {
+    let shown = |quad: &Quad, inset: f32| {
+        let [x, y, w, h] = quad.rect;
+        let [l, t, r, b] = quad.clip;
+        [(x + inset).max(l), (y + inset).max(t), (x + w - inset).min(r), (y + h - inset).min(b)]
+    };
+    let overlap = |a: &[f32; 4], b: &[f32; 4]| a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3];
+    let (mut texture, mut text, mut later) = (Vec::with_capacity(quads.len()), Vec::new(), Vec::new());
+    for quad in quads.iter().rev() {
+        if quad.kind != Quad::FIELD_GLYPH {
+            later.push(shown(quad, 0.0));
+            texture.push(*quad);
+            continue;
+        }
+        let texels = (quad.uv[2] - quad.uv[0]) * fields_size as f32;
+        let ink = shown(quad, quad.border * quad.rect[2] / texels.max(1e-6));
+        match later.iter().any(|over| overlap(&ink, over)) {
+            true => texture.push(*quad),
+            false => text.push(*quad),
+        }
+    }
+    texture.reverse();
+    text.reverse();
+    (texture, text)
+}
+
 /// Writes the panels `world` holds that have a texture, the farthest first,
 /// into `buffer`, and adds the pass that draws them onto `output` over the
-/// view's finished picture, hidden where `depth` is in front. Returns how
-/// large each showed, in pixels.
+/// view's finished picture, each with its text straight after it, hidden
+/// where `depth` is in front. Returns how large each showed, in pixels.
 pub(crate) fn draw(
     fg: &mut FrameGraph<'_>,
-    (pipeline, push): (vk::Pipeline, Push),
+    (pipeline, text_pipeline, push): (vk::Pipeline, vk::Pipeline, Push),
     buffer: &Buffer,
     world: &World,
     panels: &PanelView<'_>,
@@ -452,7 +518,18 @@ pub(crate) fn draw(
     };
     let mut images = vec![(output, ImageAccess::ColorAttachment), (depth, ImageAccess::Sampled)];
     images.extend(shown.iter().map(|(.., texture)| (texture.image, ImageAccess::Sampled)));
-    let vertices = gpu.len() as u32 * 6;
+    // Each panel's text: the panel in `list`, its first quad in `level`, its texture's size, which the quads
+    // are laid out in, in `max_draws`, and its distance fields in `texture`.
+    let texts: Vec<(Push, u32)> = shown
+        .iter()
+        .enumerate()
+        .map(|(index, (.., texture))| {
+            let size = pack(texture.size[0], texture.size[1]);
+            let (first, count) = texture.text;
+            let text = Push { texture: texture.fields, list: index as u32, level: first, max_draws: size, ..push };
+            (text, count)
+        })
+        .collect();
     fg.add_pass("UI panels", &images, &[], move |ctx| {
         let color = [vk::RenderingAttachmentInfo::default()
             .image_view(ctx.view(output))
@@ -460,8 +537,14 @@ pub(crate) fn draw(
             .load_op(vk::AttachmentLoadOp::LOAD)
             .store_op(vk::AttachmentStoreOp::STORE)];
         begin_rendering_in(ctx, view, &color);
-        bind(ctx, pipeline, vk::PipelineBindPoint::GRAPHICS, &push);
-        unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, vertices, 1, 0, 0) };
+        for (index, (text, count)) in texts.iter().enumerate() {
+            bind(ctx, pipeline, vk::PipelineBindPoint::GRAPHICS, &push);
+            unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, 6, 1, index as u32 * 6, 0) };
+            if *count > 0 {
+                bind(ctx, text_pipeline, vk::PipelineBindPoint::GRAPHICS, text);
+                unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, count * 6, 1, 0, 0) };
+            }
+        }
         unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
     });
     sizes

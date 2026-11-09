@@ -259,55 +259,69 @@ fn a_ui_drawn_at_any_scale_lays_out_alike() {
     }
 }
 
-/// The middle of each glyph's ink, where a scalable UI drawn at `step`, as
-/// a panel is, puts it, in logical pixels, and its boxes' edges: drawn
-/// `2^(step / 2)` times its layout of 800 by 450, its width a whole number
-/// of pixels and its height rounded up to one, laid out at its own size.
-fn terminal_drawn_at(step: i32) -> (f32, Vec<[f32; 2]>, Vec<[f32; 4]>) {
+/// Where a scalable UI drawn at `step`, as a panel is, puts its glyphs and
+/// its boxes, in logical pixels: drawn `2^(step / 2)` times its layout of
+/// 800 by 450, its width a whole number of pixels and its height rounded up
+/// to one, laid out at its own size.
+fn terminal_drawn_at(step: i32) -> (f32, Vec<[f32; 4]>, Vec<[f32; 4]>) {
     let (mut ui, _) = terminal();
     let layout = [800.0, 450.0];
     ui.set_layout_size(Some(layout));
     let width = (layout[0] * 2f32.powf(step as f32 / 2.0)).ceil();
     let scale = width / layout[0];
     let frame = ui.frame(width as u32, (layout[1] * scale).ceil() as u32, scale);
-    let atlas = frame.atlas.expect("it has text");
-    let ink = |quad: &Quad| {
-        let corner = [quad.uv[0] * atlas.width as f32, quad.uv[1] * atlas.height as f32].map(|at| at as usize);
-        let (mut sum, mut middle) = (0.0, [0.0; 2]);
-        for y in 0..quad.rect[3] as usize {
-            for x in 0..quad.rect[2] as usize {
-                let coverage = f32::from(atlas.pixels[(corner[1] + y) * atlas.width as usize + corner[0] + x]);
-                sum += coverage;
-                middle = [middle[0] + coverage * (x as f32 + 0.5), middle[1] + coverage * (y as f32 + 0.5)];
-            }
-        }
-        [(quad.rect[0] + middle[0] / sum) / scale, (quad.rect[1] + middle[1] / sum) / scale]
-    };
-    let inks = frame.quads.iter().filter(|q| q.kind == Quad::GLYPH).map(ink).collect();
-    let boxes = shapes(&frame.quads).iter().map(|q| q.rect.map(|at| at / scale)).collect();
-    (scale, inks, boxes)
+    let logical = |quad: &&Quad| quad.rect.map(|at| at / scale);
+    let glyphs = frame.quads.iter().filter(|q| q.kind == Quad::FIELD_GLYPH).map(|q| logical(&q)).collect();
+    let boxes = shapes(&frame.quads).iter().map(logical).collect();
+    (scale, glyphs, boxes)
 }
 
 /// A scalable UI draws its text and boxes in the same place at every size,
 /// as a panel in the world must, or it shifts each time it is drawn at the
-/// next size as the camera moves: its glyphs unhinted and placed to a
-/// quarter of a pixel, and its edges not rounded to whole ones.
+/// next size as the camera moves: its glyphs are distance fields where its
+/// layout puts them, and its edges are not rounded to whole pixels.
 #[test]
 fn a_scalable_ui_draws_its_text_and_boxes_in_the_same_place_at_every_size() {
-    let (_, near, near_boxes) = terminal_drawn_at(2);
+    let (_, near_glyphs, near_boxes) = terminal_drawn_at(2);
+    assert!(near_glyphs.len() > 50, "its text is drawn from distance fields");
     for step in -6..=1 {
-        let (scale, inks, boxes) = terminal_drawn_at(step);
-        assert_eq!(inks.len(), near.len(), "at step {step}, as many glyphs");
-        // How far each moved, in pixels as drawn at this size.
-        let moved: Vec<[f32; 2]> = near.iter().zip(&inks).map(|(a, b)| [0, 1].map(|i| (b[i] - a[i]) * scale)).collect();
-        let worst = moved.iter().flatten().fold(0.0f32, |worst, d| worst.max(d.abs()));
-        assert!(worst < 0.5, "at step {step}, a glyph moved {worst} pixels");
-        let mean = [0, 1].map(|i| moved.iter().map(|d| d[i]).sum::<f32>() / moved.len() as f32);
-        assert!(mean.iter().all(|d| d.abs() < 0.1), "at step {step}, the text moved {mean:?} pixels");
-        assert_eq!(boxes.len(), near_boxes.len());
-        for (a, b) in near_boxes.iter().zip(&boxes) {
-            let off = a.iter().zip(b).map(|(a, b)| (a - b).abs() * scale).fold(0.0, f32::max);
-            assert!(off < 0.01, "at step {step}, a box moved {off} pixels: {a:?} became {b:?}");
+        let (scale, glyphs, boxes) = terminal_drawn_at(step);
+        for (what, near, far) in [("glyph", &near_glyphs, &glyphs), ("box", &near_boxes, &boxes)] {
+            assert_eq!(far.len(), near.len(), "at step {step}, as many of each");
+            for (a, b) in near.iter().zip(far) {
+                let off = a.iter().zip(b).map(|(a, b)| (a - b).abs() * scale).fold(0.0, f32::max);
+                assert!(off < 0.01, "at step {step}, a {what} moved {off} pixels: {a:?} became {b:?}");
+            }
         }
     }
+}
+
+/// A scalable UI's glyphs come from distance fields made once, whatever
+/// size they are drawn at: high inside the glyph, 128 at its edge, and
+/// nothing past how far the distances reach.
+#[test]
+fn a_scalable_uis_text_is_drawn_from_one_distance_field_at_every_size() {
+    let mut ui = Ui::new();
+    ui.set_scalable(true);
+    let root = ui.root();
+    ui.label(root, "I", TextStyle { size: 20.0, ..TextStyle::default() });
+    ui.label(root, "I", TextStyle { size: 90.0, ..TextStyle::default() });
+    let frame = ui.frame(WIDTH, HEIGHT, 1.0);
+    let glyphs: Vec<&Quad> = frame.quads.iter().filter(|q| q.kind == Quad::FIELD_GLYPH).collect();
+    assert_eq!(glyphs.len(), 2);
+    assert_eq!(glyphs[0].uv, glyphs[1].uv, "one field for both sizes");
+    assert!(glyphs[1].rect[3] > glyphs[0].rect[3] * 4.0, "drawn as large as each is");
+    let fields = frame.fields.expect("its distance fields");
+    let texel = |u: f32, v: f32| {
+        let [x, y] = [u, v].map(|at| (at * fields.width as f32) as usize);
+        fields.pixels[y * fields.width as usize + x]
+    };
+    let [u0, v0, u1, v1] = glyphs[0].uv;
+    let middle = texel((u0 + u1) / 2.0, (v0 + v1) / 2.0);
+    assert!(middle > 150, "inside the I's stroke: {middle}");
+    assert_eq!(texel(u0, v0), 0, "its corner, past how far the distances reach");
+    // Along the middle row, from outside to inside, the distance only rises until the stroke's middle.
+    let row: Vec<u8> = (0..20).map(|i| texel(u0 + (u1 - u0) * i as f32 / 40.0, (v0 + v1) / 2.0)).collect();
+    assert!(row.windows(2).all(|pair| pair[0] <= pair[1]), "rising into the stroke: {row:?}");
+    assert!(row.iter().any(|&t| (100..156).contains(&t)), "and through its edge: {row:?}");
 }

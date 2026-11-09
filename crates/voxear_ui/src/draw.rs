@@ -5,7 +5,8 @@ use taffy::{AvailableSpace, Display, LayoutInput, LayoutOutput, Size, TaffyTree}
 
 use crate::{
     Animated, Color, Overflow, Quad, Style, TextAlign, animation,
-    atlas::{GlyphAtlas, SUBPIXELS, Subpixel},
+    atlas::GlyphAtlas,
+    fields::{FIELD_SIZE, SPREAD},
     controls::Control,
     scroll::{BAR, BAR_INSET, thumb},
     tree::{Element, Kind},
@@ -287,10 +288,16 @@ impl Draw<'_> {
                 && let Some((_, shaped)) = &mut text.shaped
             {
                 // Broken again at the width it ended up, which the last
-                // measure may not have been, rounded up to a whole pixel
-                // but by less than a logical one, as a UI drawn small, a
-                // panel far off, would otherwise fit more on a line.
-                let width = (inner * self.scale).ceil().min((inner + 1.0) * self.scale);
+                // measure may not have been, and aligned in it. Kept to
+                // whole pixels, it is rounded up to one, but by less than a
+                // logical pixel, as a UI drawn small would otherwise fit
+                // more on a line. Otherwise it is the width itself, so
+                // centred text sits where its layout puts it at any size,
+                // and a hair over, so float error breaks no line early.
+                let width = match pixels.whole {
+                    true => (inner * self.scale).ceil().min((inner + 1.0) * self.scale),
+                    false => inner * self.scale * (1.0 + 1e-4),
+                };
                 let width = element.text_style.wrap.then_some(width);
                 shaped.break_all_lines(width);
                 // Right to left, the start is the right, whichever way the text itself runs.
@@ -365,8 +372,8 @@ impl Draw<'_> {
 /// it, which a UI drawn at one size looks crisper for. A UI drawn at many
 /// sizes, as a panel in the world is as it nears and recedes, puts edges,
 /// borders and text where its layout does instead, so nothing in it moves
-/// when the size it is drawn at changes: its glyphs are unhinted and
-/// placed to a quarter of a pixel.
+/// when the size it is drawn at changes: its glyphs are distance fields,
+/// unhinted, which draw sharp at any size.
 #[derive(Clone, Copy)]
 pub(crate) struct Pixels {
     pub scale: f32,
@@ -390,19 +397,6 @@ impl Pixels {
         if self.whole { (logical * self.scale).round().max(1.0) } else { logical * self.scale }
     }
 
-    /// Where a glyph whose pen is at `pen` is drawn from, and where between
-    /// pixels: hinted, on the nearest whole pixel, or unhinted, on the
-    /// whole pixel below the nearest quarter and that many quarters on.
-    fn place(self, pen: [f32; 2]) -> ([f32; 2], Option<Subpixel>) {
-        if self.whole {
-            return (pen.map(f32::round), None);
-        }
-        let step = f32::from(SUBPIXELS);
-        let quarters = pen.map(|at| (at * step).round());
-        let whole = quarters.map(|q| (q / step).floor());
-        let between = [0, 1].map(|axis| (quarters[axis] - whole[axis] * step) as u8);
-        (whole, Some(between))
-    }
 }
 
 /// The colours of a box as drawn this frame, linear and premultiplied:
@@ -685,9 +679,10 @@ impl Paint<'_> {
     }
 }
 
-/// Every glyph of a shaped text, hinted on whole pixels or placed between
-/// them as `paint` keeps to (see [`Pixels`]). Rich text's grounds go under
-/// its glyphs, and its lines through or under them.
+/// Every glyph of a shaped text: hinted on whole pixels, or as distance
+/// fields where its layout puts them, as `paint` keeps to (see [`Pixels`]).
+/// Rich text's grounds go under its glyphs, and its lines through or under
+/// them.
 fn glyph_quads(
     layout: &Layout<u16>,
     origin: [f32; 2],
@@ -732,8 +727,16 @@ fn glyph_quads(
             let synthesis = run.synthesis();
             let synthesis = crate::atlas::Synthesis { skew: synthesis.skew(), embolden: synthesis.embolden() };
             for glyph in glyph_run.positioned_glyphs() {
-                let (pen, between) = paint.pixels.place([origin[0] + glyph.x, origin[1] + glyph.y]);
-                let found = atlas.glyph(font, glyph.id as u16, (run.font_size(), between), &coords, synthesis);
+                let pen = [origin[0] + glyph.x, origin[1] + glyph.y];
+                if !paint.pixels.whole {
+                    let found = atlas.field_glyph(font, glyph.id as u16, &coords, synthesis);
+                    let size = atlas.fields_size() as f32;
+                    let field = found.map(|found| field_quad(found, pen, run.font_size(), size));
+                    quads.extend(field.map(|quad| Quad { color, clip, ..quad }));
+                    continue;
+                }
+                let pen = pen.map(f32::round);
+                let found = atlas.glyph(font, glyph.id as u16, run.font_size(), &coords, synthesis);
                 let Some(found) = found else { continue };
                 let (x, y) = (found.x as f32, found.y as f32);
                 let (w, h) = (found.width as f32, found.height as f32);
@@ -760,6 +763,20 @@ fn glyph_quads(
                 quads.push(Quad { rect, color, clip, kind: Quad::SHAPE, ..Quad::default() });
             }
         }
+    }
+}
+
+/// A glyph from the distance fields with its pen at `pen`, `font_size`
+/// pixels to the em, from an atlas `atlas` texels square.
+fn field_quad(found: crate::fields::FieldGlyph, pen: [f32; 2], font_size: f32, atlas: f32) -> Quad {
+    let scale = font_size / FIELD_SIZE;
+    let (x, y, w, h) = (found.x as f32, found.y as f32, found.width as f32, found.height as f32);
+    Quad {
+        rect: [pen[0] + found.left * scale, pen[1] - found.top * scale, w * scale, h * scale],
+        uv: [x / atlas, y / atlas, (x + w) / atlas, (y + h) / atlas],
+        border: SPREAD,
+        kind: Quad::FIELD_GLYPH,
+        ..Quad::default()
     }
 }
 

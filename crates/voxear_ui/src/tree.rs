@@ -1068,7 +1068,7 @@ impl Ui {
         self.row_landings.clear();
         self.clear_selection_changes();
         self.clear_input_events();
-        UiFrame { quads, values, atlas: self.atlas.snapshot() }
+        UiFrame { quads, values, atlas: self.atlas.snapshot(), fields: self.atlas.fields_snapshot() }
     }
 
     /// Lays the tree out and lets each list make and bind the rows now on

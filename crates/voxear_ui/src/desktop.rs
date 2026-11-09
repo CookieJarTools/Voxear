@@ -181,7 +181,7 @@ impl Ui {
             }
         }
         self.warn_unknown_shaders(unknown);
-        UiFrame { quads, values, atlas: self.atlas.snapshot() }
+        UiFrame { quads, values, atlas: self.atlas.snapshot(), fields: self.atlas.fields_snapshot() }
     }
 
     /// The size of the screen an element is on, in logical pixels: its

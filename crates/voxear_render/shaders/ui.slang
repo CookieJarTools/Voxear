@@ -7,6 +7,7 @@
 // layer's first quad, since SV_VertexID counts from the draw's first vertex. Colours arrive
 // linear and premultiplied, and the output is sRGB, so blending happens in linear light. A UI
 // panel in the world is drawn the same way into a texture of its own (see uiPanelVertex below).
+// Glyphs drawn from distance fields (UI_FIELD_GLYPH) read them from push.source.
 
 #include "common.slang"
 #include "ui_custom.slang"
@@ -17,6 +18,7 @@ static const uint UI_SHADOW = 2;
 static const uint UI_LINE = 3;
 static const uint UI_IMAGE = 4;
 static const uint UI_GRADIENT = 5;
+static const uint UI_FIELD_GLYPH = 6;
 static const uint UI_DASHED = 1;
 static const uint UI_BACKDROP = 2;
 // A background drawn by a shader (voxear_ui's Quad::SHADED): its number from
@@ -74,6 +76,45 @@ float textCoverage(float coverage, float4 color)
     float light = pow(coverage, 1.45);
     float dark = 1.0 - pow(1.0 - coverage, 1.45);
     return lerp(dark, light, sqrt(saturate(luma)));
+}
+
+// How much of a pixel a glyph drawn from distance fields covers at uv in them: q.border is how far its
+// distances reach either side of its edge, in the fields' texels, 0.5 on it. A glyph shown as large as its
+// fields or larger is read once, its edge soft across one pixel on screen whichever way it is slanted, from
+// how fast the distance changes from pixel to pixel. One shown smaller is read every texel and a half the
+// pixel spans, each way, up to four times, and how much each reading covers averaged, so its thin strokes
+// keep their weight rather than thinning away, as averaged distances would.
+float fieldCoverage(uint fields, UiQuad q, float2 uv)
+{
+    Texture2D field = textures[NonUniformResourceIndex(fields)];
+    SamplerState linear = samplers[SAMPLER_LINEAR_CLAMP];
+    uint width, height;
+    field.GetDimensions(width, height);
+    float2 size = float2(width, height);
+    float distance = (field.SampleLevel(linear, uv, 0.0).r - 0.5) * 2.0 * q.border;
+    float edge = clamp(length(float2(ddx(distance), ddy(distance))), 1e-3, 2.0 * q.border);
+    // How far one pixel on screen reaches in the fields, across and down the screen, in texels.
+    float2 across = ddx(uv) * size;
+    float2 down = ddy(uv) * size;
+    float2 reach = float2(length(across), length(down));
+    int2 count = int2(clamp(ceil(reach / 1.5), 1.0, 4.0));
+    if (all(count == 1))
+    {
+        return saturate(distance / edge + 0.5);
+    }
+    float soft = max(max(reach.x / count.x, reach.y / count.y), 1e-3);
+    float covered = 0.0;
+    for (int y = 0; y < count.y; y++)
+    {
+        for (int x = 0; x < count.x; x++)
+        {
+            float2 offset = (float2(x, y) + 0.5) / float2(count) - 0.5;
+            float2 at = uv + (offset.x * across + offset.y * down) / size;
+            float d = (field.SampleLevel(linear, at, 0.0).r - 0.5) * 2.0 * q.border;
+            covered += saturate(d / soft + 0.5);
+        }
+    }
+    return covered / float(count.x * count.y);
 }
 
 // The error function, to within about 5e-4, which a blur needs no closer.
@@ -141,6 +182,11 @@ float4 uiFragment(UiOut i) : SV_Target
         float2 uv = lerp(q.uv.xy, q.uv.zw, i.local / q.rect.zw);
         float coverage = textures[NonUniformResourceIndex(push.texture)].SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], uv, 0.0).r;
         return q.color * textCoverage(coverage, q.color);
+    }
+    if (q.kind == UI_FIELD_GLYPH)
+    {
+        float2 uv = lerp(q.uv.xy, q.uv.zw, i.local / q.rect.zw);
+        return q.color * textCoverage(fieldCoverage(push.source, q, uv), q.color);
     }
     float2 pixel = q.rect.xy + i.local;
     if (q.kind == UI_SHADOW)
@@ -252,17 +298,23 @@ UiPanelOut uiPanelVertex(uint vertexId : SV_VertexID)
     return o;
 }
 
+// Whether the scene is in front of a panel's pixel at position, read from the scene's depth.
+bool behindScene(float4 position)
+{
+    float2 view = float2(push.output & 0xFFFF, push.output >> 16);
+    float2 inView = position.xy - float2(push.textures.yz);
+    int2 pixel = int2(inView * float2(push.size) / max(view, 1.0));
+    float scene = textures[NonUniformResourceIndex(push.textures.x)].Load(int3(pixel, 0)).r;
+    // Reverse-Z: nearer is larger. A little slack keeps a panel on a wall from flickering into it.
+    return position.z < scene * 0.999;
+}
+
 [shader("fragment")]
 float4 uiPanelFragment(UiPanelOut i) : SV_Target
 {
     // Read before anything is thrown away, so the mip is picked from neighbouring pixels that all ran.
     float4 color = textures[NonUniformResourceIndex(i.texture)].Sample(samplers[push.textures.w], i.uv);
-    float2 view = float2(push.output & 0xFFFF, push.output >> 16);
-    float2 inView = i.position.xy - float2(push.textures.yz);
-    int2 pixel = int2(inView * float2(push.size) / max(view, 1.0));
-    float scene = textures[NonUniformResourceIndex(push.textures.x)].Load(int3(pixel, 0)).r;
-    // Reverse-Z: nearer is larger. A little slack keeps a panel on a wall from flickering into it.
-    if (i.position.z < scene * 0.999)
+    if (behindScene(i.position))
     {
         discard;
     }
@@ -270,6 +322,55 @@ float4 uiPanelFragment(UiPanelOut i) : SV_Target
     // the half pixel inside it instead.
     float2 inside = min(i.uv, 1.0 - i.uv) / max(fwidth(i.uv), 1e-6);
     return color * saturate(min(inside.x, inside.y) + 0.5);
+}
+
+// A panel's text, drawn straight onto it after it rather than into its texture, each glyph from distance
+// fields read for each pixel on screen, so it is sharp however near, far or slanted the panel is. push.list
+// is the panel, push.level its text's first quad, push.maxDraws its texture's size (width | height << 16),
+// which the quads are laid out in, and push.texture the distance fields; the rest is as uiPanelFragment's.
+
+struct UiPanelTextOut
+{
+    float4 position : SV_Position;
+    // In the distance fields.
+    float2 uv : UV;
+    // Where on the panel's UI, in its texture's pixels, for its clip.
+    float2 pixel : PIXEL;
+    nointerpolation uint quad : QUAD;
+};
+
+[shader("vertex")]
+UiPanelTextOut uiPanelTextVertex(uint vertexId : SV_VertexID)
+{
+    uint index = push.level + vertexId / 6;
+    UiQuad q = buffers().uiQuads[index];
+    UiPanel panel = buffers()->uiPanels[push.list];
+    float2 corner = UI_CORNERS[vertexId % 6];
+    float2 pixel = q.rect.xy + corner * q.rect.zw;
+    // The panel's edges reach as far as its texture does.
+    float2 size = max(float2(push.maxDraws & 0xFFFF, push.maxDraws >> 16), 1.0);
+    float2 on = pixel / size;
+    float3 world = panel.origin + panel.across * on.x + panel.down * on.y;
+    UiPanelTextOut o;
+    o.position = transform(push.frame->unjitteredViewProj, float4(world, 1.0));
+    o.uv = lerp(q.uv.xy, q.uv.zw, corner);
+    o.pixel = pixel;
+    o.quad = index;
+    return o;
+}
+
+[shader("fragment")]
+float4 uiPanelTextFragment(UiPanelTextOut i) : SV_Target
+{
+    UiQuad q = buffers().uiQuads[i.quad];
+    // Read before anything is thrown away, so the mip and the edge's softness come from neighbouring
+    // pixels that all ran.
+    float coverage = fieldCoverage(push.texture, q, i.uv);
+    if (behindScene(i.position) || any(i.pixel < q.clip.xy) || any(i.pixel > q.clip.zw))
+    {
+        discard;
+    }
+    return q.color * textCoverage(coverage, q.color);
 }
 
 // One mip of a panel's texture from the one before, twice its size: the

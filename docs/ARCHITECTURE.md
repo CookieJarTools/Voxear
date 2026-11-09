@@ -1546,10 +1546,16 @@ hud.Close();
   atlas keyed by font, size and glyph, with the baseline snapped to whole pixels, and a coverage curve tuned for
   light-on-dark text is applied. This is what makes small editor text sharp. *(Implemented, with glyphs on whole
   pixels; 4 sub-pixel x positions come with light hinting.)*
-- **World-space and large or transformed text** uses MSDF, with an option for Slug-style curve rendering (now patent
-  free). It stays sharp at any distance and angle. The renderer switches paths on scale and perspective. *(Still to
-  come: a UI panel's text is drawn unhinted, placed to a quarter of a pixel, into its texture at the size the
-  panel shows, and softens at steep angles.)*
+- **World-space text** is drawn from distance fields, so it stays sharp at any distance and angle. *(Implemented
+  for UI panels:)* each glyph is made once, at 48 texels to the em, as a single-channel distance field: drawn twice
+  as fine, its overlapping outlines filled as one, and measured with an exact distance transform
+  (`crates/voxear_ui/src/fields.rs`). A scalable `Ui` draws its text as `Quad::FIELD_GLYPH`s. Each view draws a
+  panel's glyphs straight onto it, after the panel's texture (`uiPanelTextVertex` and `uiPanelTextFragment`),
+  reading the fields for each pixel on screen: once, its edge soft across a pixel from how fast the distance
+  changes on screen, where the text shows at least as large as its fields; otherwise up to four times each way
+  across the pixel, averaging how much each covers, so small and slanted text keeps its strokes. Text that
+  something later in the panel overlaps, as an open menu, stays in the texture under it. A glyph magnified far
+  past its field's size rounds its sharpest corners; fields of three channels would keep them.
 
 **Rendering.** Shapes are instanced SDF quads, so rounded rectangles, borders, shadows and gradients stay crisp at
 any DPI. World-space panels render to a mipmapped texture sized to their on-screen pixel density, then draw as
@@ -1558,10 +1564,10 @@ surfaces in 3D. *(Implemented as the UI Panel component:)*
   fonts, its script numbers in a range of its own. Its layout is its size in metres times its pixels per metre,
   and the same at whatever size it is drawn: its `Ui` is scalable (`Ui::set_scalable`), so text wraps alike near
   and far, and nothing moves when the size it is drawn at changes. Its text's lines are not rounded to whole
-  pixels, its glyphs are unhinted and placed to a quarter of a pixel (the atlas keeps each quarter apart), and
-  its edges and borders are where its layout puts them, not rounded to whole pixels.
+  pixels, its glyphs are distance fields where its layout puts them (see **Crisp text**), and its edges and
+  borders are where its layout puts them, not rounded to whole pixels.
 - It is drawn at the size it showed in the last frame's views, which the renderer reports back, in steps of √2:
-  it grows at once and shrinks two steps late, so text is not rasterised again as the camera moves. Its texture
+  it grows at once and shrinks two steps late, so it is not drawn again at every step as the camera moves. Its texture
   is as wide as that step makes whole and as high as its layout then needs, rounded up; its UI is laid out at
   the panel's own size (`Ui::set_layout_size`), and the renderer draws the texture as far past the panel as it
   reaches (`UiPanelFrame::drawn`), so the UI keeps its shape rather than stretching to fill it.

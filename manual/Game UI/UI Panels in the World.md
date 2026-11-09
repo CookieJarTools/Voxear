@@ -23,7 +23,7 @@ The panel is centred on its Obj, and reads the right way round when you look the
 
 **Size** times **Pixels per Metre** is the size the document is laid out at. A panel 1.6 m wide at 500 pixels a metre lays its document out 800 pixels wide, as a screen 800 pixels wide would, so a label 16 pixels high stands 3.2 cm tall in the world. Raise Pixels per Metre to fit more on a panel, or lower it for bigger text.
 
-The layout never changes with distance, but how sharply the panel is drawn does: it's drawn at the size it shows on screen, so its text is crisp up close and it costs less far away. Coming nearer, it sharpens straight away. Moving off, it waits a little before it drops detail, so it isn't drawn afresh at every step.
+The layout never changes with distance, and a panel's text is sharp at any distance: it's drawn for each pixel on screen, from glyphs made once for every size. The rest of the panel, its backgrounds, borders and pictures, is drawn at the size the panel shows on screen, so it's crisp up close and costs less far away. Coming nearer, that sharpens straight away. Moving off, it waits a little before it drops detail, so it isn't drawn afresh at every step.
 
 ## Pointing at a panel
 
@@ -80,6 +80,6 @@ When the file is saved, each element is found again by its name, so one you rena
 
 - Panels show while you edit, as well as while the game plays. Their buttons work only while it plays.
 - A panel is drawn over the finished picture, so its colours are exactly as designed: light, fog and the camera's exposure don't change them. Smoke and particles don't cover it either.
-- Seen at a slant, a panel stays sharp along the way it isn't squeezed, so its text still reads from well off to one side. Only nearly edge on does its text soften.
+- Seen at a slant, a panel's text stays sharp, so it reads from well off to one side. Its backgrounds and borders stay sharp along the way the panel isn't squeezed, and soften only nearly edge on.
 - Saving a panel's document, or a style sheet it names, shows the change on the panel.
 - A panel on an Obj that's switched off doesn't show, and the pointer passes through where it was.

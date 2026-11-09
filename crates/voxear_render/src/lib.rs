@@ -2350,8 +2350,8 @@ impl View {
             view,
             render: extent,
         };
-        let panel_sizes =
-            ui_panels::draw(fg, (pipelines.ui_panels, push), &buffers.ui_panels, world, &panel_view, (output, depth));
+        let panel_pipelines = (pipelines.ui_panels, pipelines.ui_panel_text, push);
+        let panel_sizes = ui_panels::draw(fg, panel_pipelines, &buffers.ui_panels, world, &panel_view, (output, depth));
         let gizmos = self.options.gizmos;
         let debug = (pipelines.debug, pipelines.debug_solid, push);
         debug_pass::record(fg, debug, (&buffers.debug_lines, &buffers.debug_triangles), (output, view), depth, gizmos);

@@ -5,6 +5,8 @@
 //!   drawers and commands it has;
 //! - `Docs/`: VoxDocs pages, shown beside the manual;
 //! - `Samples/<name>/`: samples a project can copy in and change;
+//! - `Tests/`: the package's own tests and what they read, which no
+//!   project gets;
 //! - anything else: assets, which projects use where they are.
 
 use std::path::{Path, PathBuf};
@@ -16,6 +18,7 @@ use crate::manifest::title;
 pub const SCRIPTS_FOLDER: &str = "Scripts";
 pub const DOCS_FOLDER: &str = "Docs";
 pub const SAMPLES_FOLDER: &str = "Samples";
+pub const TESTS_FOLDER: &str = "Tests";
 
 /// Files at a package's top that are about the package, not assets in it.
 const ABOUT: [&str; 4] = ["README", "LICENSE", "CHANGELOG", "package"];
@@ -61,7 +64,7 @@ impl Contents {
                 continue;
             }
             if path.is_dir() {
-                if ![SCRIPTS_FOLDER, DOCS_FOLDER, SAMPLES_FOLDER].contains(&name.as_str()) {
+                if ![SCRIPTS_FOLDER, DOCS_FOLDER, SAMPLES_FOLDER, TESTS_FOLDER].contains(&name.as_str()) {
                     files(&path, &mut assets);
                 }
             } else if !is_about(&name) {
@@ -158,6 +161,8 @@ mod tests {
             "Scripts/obj/Generated.cs",
             "Docs/Orbit Cameras.md",
             "Samples/First Orbit/Orbit.level",
+            "Tests/OrbitTests.cs",
+            "Tests/Traces/Circle.trace",
             "Models/Rig.glb",
             "Models/Rig.glb.meta",
             ".git/HEAD",
@@ -168,10 +173,10 @@ mod tests {
             std::fs::write(path, "").unwrap();
         }
         let contents = Contents::of(root);
-        assert_eq!(contents.scripts.len(), 2);
+        assert_eq!(contents.scripts.len(), 2, "its tests are not its scripts");
         assert!(contents.runs_code());
         assert_eq!(contents.docs, 1);
-        assert_eq!(contents.assets, 2);
+        assert_eq!(contents.assets, 2, "nor its assets");
         assert_eq!(contents.samples.len(), 1);
         assert_eq!(contents.samples[0].name, "First Orbit");
 

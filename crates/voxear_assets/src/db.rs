@@ -22,8 +22,9 @@ const SKIPPED_FOLDERS: &[&str] = &["bin", "obj", "target", "node_modules"];
 /// its top: not the game's content, so never given GUIDs or built.
 const DOCS_FOLDER: &str = "Docs";
 /// A package's folders at its top that are not its assets: its C#, its
-/// VoxDocs pages, and the samples a project copies in to make its own.
-const PACKAGE_FOLDERS: &[&str] = &["Scripts", "Docs", "Samples"];
+/// VoxDocs pages, the samples a project copies in to make its own, and its
+/// own tests.
+const PACKAGE_FOLDERS: &[&str] = &["Scripts", "Docs", "Samples", "Tests"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -354,7 +355,7 @@ fn collect(folder: &Path, files: &mut Vec<PathBuf>, skipped: Option<&Skipped>) -
 }
 
 /// Every file of a package that may be an asset: anything outside its
-/// `Scripts`, `Docs` and `Samples` folders.
+/// `Scripts`, `Docs`, `Samples` and `Tests` folders.
 fn collect_package(root: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
     for entry in std::fs::read_dir(root).with_context(|| format!("reading {}", root.display()))? {
         let path = entry?.path();
@@ -451,13 +452,14 @@ mod tests {
             touch(&orbit, file);
         }
         touch(&orbit, "Samples/First Orbit/Orbit.level");
+        touch(&orbit, "Tests/Traces/Circle.trace");
         let shipped = AssetGuid::new_random();
         std::fs::write(orbit.join("Textures/Ring.png.meta"), format!("guid = \"{shipped}\"\n")).unwrap();
         touch(project.path(), "Scenes/Main.scene");
 
         let mounts = Mounts::new(project.path(), vec![package("orbit-tools", &orbit, Access::ReadOnly)]);
         let (db, report) = AssetDb::scan_mounted(mounts).unwrap();
-        assert_eq!(db.len(), 3, "the package's scripts, docs and samples are not its assets");
+        assert_eq!(db.len(), 3, "the package's scripts, docs, samples and tests are not its assets");
         assert_eq!(report.created, vec!["Scenes/Main.scene".to_string()], "only the project's get .meta files");
         assert!(!orbit.join("Models/Rig.glb.meta").exists(), "nothing is written into the cache");
         let rig = db.guid_of("Packages/orbit-tools/Models/Rig.glb").unwrap();

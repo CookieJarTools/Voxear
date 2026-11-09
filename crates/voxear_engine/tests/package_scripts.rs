@@ -14,13 +14,18 @@ use voxear_engine::{
     scripts::{self, ScriptsFor},
 };
 
-const ORBIT_MATH: &str = r#"namespace OrbitCore;
+const ORBIT_MATH: &str = r#"using Voxear;
+
+namespace OrbitCore;
 
 /// <summary>Sums for things that go round.</summary>
 public static class OrbitMath
 {
 	/// <summary>How far round an orbit of this many seconds is after one second, in degrees.</summary>
 	public static float DegreesPerSecond(float period) => 360f / period;
+
+	/// <summary>Whether this machine moves the orbits, from the Networking module the game has on.</summary>
+	public static bool Moves(NetRole role) => role != NetRole.Client;
 }
 "#;
 
@@ -145,7 +150,9 @@ fn packages_scripts_build_load_and_reload_with_the_games() {
     let _logging = tracing::subscriber::set_default(voxear_core::logging::capturing_only(log.clone()));
     let dir = project_with_packages();
     let root = dir.path().join("Orbits");
-    let project = Project::open(&root).unwrap();
+    let mut project = Project::open(&root).unwrap();
+    // The game has Networking on, and a package's scripts use it with the game's.
+    project.set_module(voxear_engine::modules::Module::Networking, true).unwrap();
 
     // Built: an assembly for each package, the game's using them, with the list beside it.
     let types = script_types::describe(&project).unwrap();

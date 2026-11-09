@@ -36,10 +36,14 @@
 	-->
 	<Import Project="$(VoxearProjectFolder).voxear/Packages.props" Condition="'$(VoxearPackage)' == '' and Exists('$(VoxearProjectFolder).voxear/Packages.props')" />
 	<!--
-		The project's modules, as .voxear/Modules.props has them: VoxearNetworking and the rest are true for the modules
-		its Project Settings switch on, and their assemblies are used as Voxear.Core is.
+		The game's modules, as its .voxear/Modules.props has them: VoxearNetworking and the rest are true for the modules
+		its Project Settings switch on, and their assemblies are used as Voxear.Core is. A package's scripts use the
+		modules of the game they are built for, which their project names as VoxearGameFolder.
 	-->
-	<Import Project="$(VoxearProjectFolder).voxear/Modules.props" Condition="Exists('$(VoxearProjectFolder).voxear/Modules.props')" />
+	<PropertyGroup>
+		<VoxearGameFolder Condition="'$(VoxearGameFolder)' == ''">$(VoxearProjectFolder)</VoxearGameFolder>
+	</PropertyGroup>
+	<Import Project="$(VoxearGameFolder).voxear/Modules.props" Condition="Exists('$(VoxearGameFolder).voxear/Modules.props')" />
 	<ItemGroup>
 		<CompilerVisibleProperty Include="RootNamespace" />
 		<VoxearStringTable Include="$(VoxearProjectFolder)**/*.strings" Exclude="$(VoxearProjectFolder)**/.*/**;$(VoxearProjectFolder)**/bin/**;$(VoxearProjectFolder)**/obj/**;$(VoxearProjectFolder)**/target/**;$(VoxearProjectFolder)**/node_modules/**;$(VoxearProjectFolder)Docs/**" />

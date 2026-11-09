@@ -161,12 +161,14 @@ fn package_project(package: &str, name: &str, root: &Path, uses: &[String]) -> S
         r#"<Project Sdk="Microsoft.NET.Sdk">
 	<!--
 		Written by Voxear on each build of the scripts: the scripts of the package {package}, from its own folder, built
-		as the game's are. VoxearProjectFolder is the package's, so its own string tables give it its Strings.
+		as the game's are. VoxearProjectFolder is the package's, so its own string tables give it its Strings;
+		VoxearGameFolder is the game's, so it uses the modules the game has on.
 	-->
 	<Import Project="../../Engine.props" Condition="'$(VoxearHome)' == '' and Exists('../../Engine.props')" />
 	<PropertyGroup>
 		<VoxearPackage>{package}</VoxearPackage>
 		<VoxearProjectFolder>{root}/</VoxearProjectFolder>
+		<VoxearGameFolder>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)../../../'))</VoxearGameFolder>
 	</PropertyGroup>
 	<Import Project="$(VoxearHome)managed/Voxear.Scripts.props" />
 	<PropertyGroup>

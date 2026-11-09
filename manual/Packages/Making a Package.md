@@ -40,6 +40,7 @@ springs = "^0.3"
 | `Scripts/` | C#: behaviours, components, editor windows, side bar items, drawers and commands. |
 | `Docs/` | Pages, which the editor shows beside the manual under the package's name. |
 | `Samples/<name>/` | Samples, which a project copies in to try and change. |
+| `Tests/` | The package's own tests and the files they read. A project that adds the package doesn't get them. |
 | Anything else | Assets, such as models, materials, sounds and prefabs. |
 
 A package's scripts build into an assembly of their own, named after the package: `orbit-tools` builds as `OrbitTools`. The game's scripts can use every package's types. A package's scripts can use the types of the packages it lists under `dependencies`.

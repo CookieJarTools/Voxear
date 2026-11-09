@@ -440,7 +440,9 @@ pub struct GpuOcean {
     /// its first texel's corner is, across the ground.
     pub caustics: u32,
     pub caustic_origin: [f32; 2],
-    pub _pad: u32,
+    /// How wet the lens is, and where the waterline crosses each column of
+    /// the screen (see `water`): its image.
+    pub waterline: u32,
 }
 
 /// A Pool, a Stream or a Dry Area (see `water_bodies`), as `WaterBody` in

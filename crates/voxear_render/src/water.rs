@@ -62,6 +62,10 @@ const FOAM_PATTERN: u32 = 1024;
 const CAUSTIC_TEXELS: u32 = 1024;
 const CAUSTIC_SPAN: f32 = 24.0;
 const CAUSTIC_MIPS: u32 = 7;
+/// How many columns across the screen the film of water on the lens is
+/// kept for, as `LENS_FILM_COLUMNS` in `shaders/water.slang`: beside the
+/// lens's wetness, in the image that holds it.
+const LENS_FILM_COLUMNS: u32 = 256;
 
 /// A view's sea: its spectrum, written when the sea changes, and the FFT's
 /// rows.
@@ -273,7 +277,7 @@ impl Water {
         let foam_desc = ImageDesc::new(FOAM_TEXELS, FOAM_TEXELS, WAVE_FORMAT, usage);
         let (foam_a, foam_b) = (fg.history_image(gpu, bindless, "ocean foam a", foam_desc)?, fg.history_image(gpu, bindless, "ocean foam b", foam_desc)?);
         let (foam_now, foam_then) = if buffers.parity { (foam_a, foam_b) } else { (foam_b, foam_a) };
-        let lens_desc = ImageDesc::new(1, 1, vk::Format::R32_SFLOAT, usage);
+        let lens_desc = ImageDesc::new(1 + LENS_FILM_COLUMNS, 2, vk::Format::R32_SFLOAT, usage);
         let (lens_a, lens_b) = (fg.history_image(gpu, bindless, "lens wetness a", lens_desc)?, fg.history_image(gpu, bindless, "lens wetness b", lens_desc)?);
         let (lens_now, lens_then) = if buffers.parity { (lens_a, lens_b) } else { (lens_b, lens_a) };
         let lens_kept = std::mem::replace(&mut buffers.lens_kept, true);
@@ -363,9 +367,6 @@ impl Water {
             buffers.under_until = time + 4.0;
         }
         let under = time < buffers.under_until;
-        if !under {
-            buffers.lens_kept = false;
-        }
         let linear = |srgb: [f32; 3]| srgb.map(|c| if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) });
         let absorb = linear(ocean.clarity).map(|t| -t.max(1e-3).ln() * ocean.murk.max(0.0));
         // The caustics round the camera, on whole texels, so they do not swim as it moves.
@@ -404,7 +405,7 @@ impl Water {
             wave_scale: sea.scale as f32,
             caustics: fg.texture(caustics).0,
             caustic_origin,
-            _pad: 0,
+            waterline: fg.texture(lens_now).0,
         };
         Ok(Self {
             displacement,
@@ -760,8 +761,20 @@ pub fn record(
         });
     }
 
+    // Where the waterline crosses each column of the screen, which the water and the view under it go by; how wet the
+    // lens is, and the film of water a falling wave leaves on it.
+    let (lens_now, lens_then, lens_kept) = lens;
+    let lens_then_texture = fg.texture(lens_then);
+    let lens_storage = fg.storage(lens_now, 0);
+    let mut lens_images = vec![(lens_now, ImageAccess::StorageWrite), (lens_then, ImageAccess::Sampled)];
+    lens_images.extend(displacement.iter().chain([&floor_depth, &floor_image]).chain(&sampled).map(|&image| (image, ImageAccess::Sampled)));
+    fg.add_pass("Waterline", &lens_images, &[], move |ctx| {
+        let push = Push { output: lens_storage.0, textures: [lens_then_texture.0, u32::from(!lens_kept), 0, 0], ..push };
+        bind(ctx, pipelines.lens_wetness, vk::PipelineBindPoint::COMPUTE, &push);
+        unsafe { ctx.gpu.device.cmd_dispatch(ctx.cmd, (1 + LENS_FILM_COLUMNS).div_ceil(64), 2, 1) };
+    });
     let mut waves: Vec<ImageId> = displacement.iter().chain(&slopes).chain(&previous).copied().collect();
-    waves.extend([foam_now, floor_image, floor_depth, pattern, caustics]);
+    waves.extend([foam_now, floor_image, floor_depth, pattern, caustics, lens_now]);
     let layer = Layer { hdr, velocity, depth, sampled, waves, size };
     // The sea and the walls round its Dry Areas, over a copy of the picture so far.
     let first_dry = pools + streams.len() as u32;
@@ -780,7 +793,6 @@ pub fn record(
         }
     }
     let waves = layer.waves.clone();
-    let wet_lens = on(ocean::features::WET_LENS);
     let under = under.then(|| UnderWater {
         lens,
         copy: (copy, copy_texture, copy_mips),
@@ -789,7 +801,6 @@ pub fn record(
         size,
         waves: layer.waves,
         sampled: layer.sampled,
-        wet_lens,
     });
     (under, waves)
 }
@@ -805,27 +816,15 @@ pub struct UnderWater {
     size: [u32; 2],
     waves: Vec<ImageId>,
     sampled: Vec<ImageId>,
-    wet_lens: bool,
 }
 
 /// Records the view under the water, the waterline and the wet lens, after
 /// the air's fog, so the water's own fog covers it: the air's haze has no
 /// place under the water.
 pub fn record_under(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), under: UnderWater) {
-    let UnderWater { lens, copy: (copy, copy_texture, copy_mips), hdr, depth, size, waves, sampled, wet_lens } = under;
-    // How wet the lens is: soaked under water, drying once out; dry without Wet Lens.
-    let (lens_now, lens_then, lens_kept) = lens;
-    let (lens_now_texture, lens_then_texture) = (fg.texture(lens_now), fg.texture(lens_then));
-    if wet_lens {
-        let lens_storage = fg.storage(lens_now, 0);
-        let mut lens_images = vec![(lens_now, ImageAccess::StorageWrite), (lens_then, ImageAccess::Sampled)];
-        lens_images.extend(waves.iter().map(|&image| (image, ImageAccess::Sampled)));
-        fg.add_pass("Lens wetness", &lens_images, &[], move |ctx| {
-            let push = Push { output: lens_storage.0, textures: [lens_then_texture.0, u32::from(!lens_kept), 0, 0], ..push };
-            bind(ctx, pipelines.lens_wetness, vk::PipelineBindPoint::COMPUTE, &push);
-            unsafe { ctx.gpu.device.cmd_dispatch(ctx.cmd, 1, 1, 1) };
-        });
-    }
+    let UnderWater { lens, copy: (copy, copy_texture, copy_mips), hdr, depth, size, waves, sampled } = under;
+    let (lens_now, _, _) = lens;
+    let lens_now_texture = fg.texture(lens_now);
     // Under water, across the waterline and through drops on the lens: over a copy of the picture with the water
     // in it, to bend and blur.
     crate::glass::record_copy(fg, (pipelines, push), (hdr, copy, copy_texture), &copy_mips, size);

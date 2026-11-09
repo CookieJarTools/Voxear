@@ -380,7 +380,9 @@ struct Ocean
     // its first texel's corner is.
     uint caustics;
     float2 causticOrigin;
-    uint _pad;
+    // How wet the lens is, and where the waterline crosses each column of the screen (water.slang's
+    // lensWetnessMain).
+    uint waterline;
 };
 
 // A place along a Stream (src/gpu.rs, GpuStreamPoint): its surface in the middle, which way it runs, how wide it is,

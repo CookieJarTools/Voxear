@@ -26,7 +26,7 @@ public enum WaterFeatures
 	/// <summary>Shafts of sunlight seen from under the water.</summary>
 	LightShafts = 1 << 4,
 
-	/// <summary>Drops on the camera's lens after it comes up out of the water.</summary>
+	/// <summary>Drops and a film of water on the camera's lens after it comes up out of the water, or a wave falls away past it.</summary>
 	WetLens = 1 << 5,
 
 	/// <summary>The two finest bands of waves, ripples from a few centimetres to a metre long.</summary>

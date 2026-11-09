@@ -156,7 +156,8 @@ pub struct Ocean {
     pub light_bending: bool,
     /// Shafts of sunlight seen from under the water.
     pub light_shafts: bool,
-    /// Drops on the camera's lens after it comes up out of the water.
+    /// Drops and a film of water on the camera's lens after it comes up out
+    /// of the water, or a wave falls away past it.
     pub wet_lens: bool,
     /// The two finest bands of waves, ripples from a few centimetres to a
     /// metre long.

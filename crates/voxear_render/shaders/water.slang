@@ -75,6 +75,11 @@ static const float DEEP_ALBEDO = 4.0;
 // How much water's specks scatter light onwards rather than aside
 // (Henyey–Greenstein's g), so the water glows towards the sun.
 static const float WATER_FORWARD = 0.85;
+// How many columns across the screen the film of water on the lens is kept
+// for (src/water.rs's LENS_FILM_COLUMNS), and how fast it drains down the
+// lens once the water drops away, in screen heights a second.
+static const uint LENS_FILM_COLUMNS = 256;
+static const float LENS_FILM_DRAIN = 1.2;
 // How far the shafts of sunlight under the water reach, in metres; the sun's
 // light the water scatters past them is worked out whole (waterGlow).
 static const float SHAFT_REACH = 30.0;
@@ -1084,6 +1089,35 @@ float3 oceanMoved(Frame* frame, float2 rest, float spacing, bool previous, float
     return moved;
 }
 
+// How high the waves move the water resting at `rest`, as oceanMoved's,
+// but blended between texels exactly rather than as finely as a sampler
+// blends them, a 256th of a texel: the waterline on the near plane, a few
+// centimetres wide across the whole screen, showed the sampler's steps.
+float oceanHeightExact(Frame* frame, float2 rest, float spacing, float swell, float depth)
+{
+    float height = 0.0;
+    float gusts = seaGusts(frame, rest);
+    float reach = wavesReach(frame, rest, depth);
+    for (uint c = 0; c < oceanCascades(frame); c++)
+    {
+        float mip = max(log2(spacing / (frame->ocean.sizes[c] / float(OCEAN_N))), 0.0);
+        uint level = min(uint(round(mip)), 8u);
+        int side = int(OCEAN_N >> level);
+        float2 at = cascadeUv(frame, c, rest) * float(side) - 0.5;
+        int2 corner = int2(floor(at));
+        float2 f = at - float2(corner);
+        Texture2D moves = textures[NonUniformResourceIndex(frame->ocean.displacement[c])];
+        // The repeating cascade's texels round it, wrapped: `side` is a power of two.
+        float h00 = moves.Load(int3(corner & (side - 1), level)).y;
+        float h10 = moves.Load(int3((corner + int2(1, 0)) & (side - 1), level)).y;
+        float h01 = moves.Load(int3((corner + int2(0, 1)) & (side - 1), level)).y;
+        float h11 = moves.Load(int3((corner + int2(1, 1)) & (side - 1), level)).y;
+        float h = lerp(lerp(h00, h10, f.x), lerp(h01, h11, f.x), f.y);
+        height += h * cascadeShare(c, swell) * shallowWeight(frame, c, depth, reach) * (c >= GUSTED_CASCADES ? gusts : 1.0);
+    }
+    return height;
+}
+
 // A corner of a quad of ring `ring`, round the camera. Each ring leaves out
 // the quads the finer ring inside it covers; its rings meet at multiples of
 // its own spacing, so a quad is wholly in or out. Near its outer edge its
@@ -1387,12 +1421,11 @@ float wavySurface(Frame* frame, float3 world, float surface)
         return surface;
     }
     float2 rest = world.xz;
-    for (uint i = 0; i < 3; i++)
+    for (uint i = 0; i < 3 && sea; i++)
     {
-        float depth = sea ? seaDepth(frame, rest) : 1e4;
-        rest = world.xz - oceanMoved(frame, rest, spacing, false, swell, depth).xz;
+        rest = world.xz - oceanMoved(frame, rest, spacing, false, swell, seaDepth(frame, rest)).xz;
     }
-    return surface + oceanMoved(frame, rest, spacing, false, swell, sea ? seaDepth(frame, rest) : 1e4).y;
+    return surface + oceanHeightExact(frame, rest, spacing, swell, sea ? seaDepth(frame, rest) : 1e4);
 }
 
 // Whether the camera is under the water's surface over it, waves and all:
@@ -2452,7 +2485,7 @@ struct Under
 // metres, negative under it; `near` is that point of the near plane, and
 // `surface` and `absorb` the water's height over it, waves and all
 // (wavySurface), and how it absorbs. Very large where there is no water.
-float waterlineAt(Frame* frame, float2 pixel, out float3 near, out float surface, out float3 absorb)
+float waterlineExact(Frame* frame, float2 pixel, out float3 near, out float surface, out float3 absorb)
 {
     float2 ndc = pixel / float2(frame->viewport) * 2.0 - 1.0;
     float4 nearH = transform(frame->invViewProj, float4(ndc, 1.0, 1.0));
@@ -2465,7 +2498,35 @@ float waterlineAt(Frame* frame, float2 pixel, out float3 near, out float surface
     return near.y - surface;
 }
 
-Under underwaterAt(Frame* frame, float2 pixel)
+// As waterlineExact, with the waves' height over the near plane read from
+// where lensWetnessMain found the waterline crosses the pixel's column of
+// the screen: the near plane is a few centimetres across, so the waves are
+// as good as the same height all over it, and every pixel finding them
+// itself cost much more.
+float waterlineAt(Frame* frame, float2 pixel, out float3 near, out float surface, out float3 absorb)
+{
+    if (frame->ocean.waterline == NO_TEXTURE)
+    {
+        return waterlineExact(frame, pixel, near, surface, absorb);
+    }
+    float2 ndc = pixel / float2(frame->viewport) * 2.0 - 1.0;
+    float4 nearH = transform(frame->invViewProj, float4(ndc, 1.0, 1.0));
+    near = nearH.xyz / nearH.w;
+    if (!waterSurface(frame, near, surface, absorb))
+    {
+        return 1e3;
+    }
+    float column = clamp(pixel.x / float(frame->viewport.x) * float(LENS_FILM_COLUMNS) + 0.5, 1.0, float(LENS_FILM_COLUMNS));
+    Texture2D columns = textures[NonUniformResourceIndex(frame->ocean.waterline)];
+    float left = columns.Load(int3(int(floor(column)), 1, 0)).r;
+    float right = columns.Load(int3(min(int(floor(column)) + 1, int(LENS_FILM_COLUMNS)), 1, 0)).r;
+    surface += lerp(left, right, frac(column));
+    return near.y - surface;
+}
+
+// The view under water at `pixel`; with `wedge`, as if under water just
+// above the waterline too, as the water clinging to the lens there is.
+Under underwaterAt(Frame* frame, float2 pixel, bool wedge = false)
 {
     Under u;
     u.under = false;
@@ -2490,7 +2551,7 @@ Under underwaterAt(Frame* frame, float2 pixel)
     }
     u.surface = surface;
     u.absorb = absorb;
-    if (u.line >= 0.0)
+    if (u.line >= 0.0 && !wedge)
     {
         return u;
     }
@@ -2608,36 +2669,61 @@ float3 lightShafts(Frame* frame, Under u, float2 pixel)
     return total * waterPhase(dot(down, -u.view)) * u.medium.scattering * sunLight;
 }
 
-// Drops on the lens just out of the water: a scatter of them, more and
-// larger the wetter it is, each a little lens that bends the view through
-// it and slides slowly down; how far to look aside through them, in uv,
-// and how much of the pixel a drop covers.
-float2 lensDrops(Frame* frame, float2 uv, float wet, out float covered)
+// Drops on the lens: a scatter of them, more and larger the wetter it is
+// (`wet`), sliding slowly down. A drop on the lens is far nearer than what
+// the lens focuses on, so it shows as a soft blob that bends and blurs the
+// view through it, its edge a little darker. How far to look aside through
+// them, in uv; in `covered`, how much of the pixel a drop covers, and in
+// `rim`, how near the pixel is to a drop's edge.
+float2 lensDrops(Frame* frame, float2 uv, float wet, out float covered, out float rim)
 {
     covered = 0.0;
+    rim = 0.0;
     float2 offset = 0.0;
     float aspect = float(frame->viewport.x) / float(frame->viewport.y);
     for (uint layer = 0; layer < 2; layer++)
     {
-        float across = layer == 0 ? 7.0 : 15.0;
+        float across = layer == 0 ? 11.0 : 24.0;
         float2 p = uv * float2(aspect, 1.0) * across;
         float2 cell = floor(p);
         float2 r = cellPoint(cell + float(layer) * 31.7);
         // Only some cells have a drop, fewer as the lens dries.
-        if (r.y > wet * 0.45)
+        if (r.y > wet * 0.5)
         {
             continue;
         }
-        float slid = frac(r.x * 3.7 + frame->time * (0.04 + 0.08 * r.y));
+        float slid = frac(r.x * 3.7 + frame->time * (0.03 + 0.06 * r.y));
         float2 centre = float2(0.25 + 0.5 * r.x, 0.2 + 0.6 * slid);
-        float radius = (0.06 + 0.22 * pow(frac(r.x * 13.1), 2.0)) * saturate(wet * 1.5);
+        float radius = (0.05 + 0.14 * pow(frac(r.x * 13.1), 2.0)) * saturate(wet * 1.5);
         float2 d = frac(p) - centre;
-        float inside = 1.0 - smoothstep(radius * 0.8, radius, length(d));
-        // Through a drop the view is turned about, as through a small round lens.
-        offset -= d / float2(aspect, 1.0) / across * 1.6 * inside;
+        // A drop is a little taller than wide, as it sags.
+        float distance = length(d * float2(1.0, 0.85));
+        float inside = 1.0 - smoothstep(radius * 0.7, radius, distance);
+        offset -= d / float2(aspect, 1.0) / across * 0.6 * inside;
         covered = max(covered, inside);
+        rim = max(rim, inside * smoothstep(radius * 0.45, radius * 0.9, distance));
     }
     return offset;
+}
+
+// How far down the screen the film of water on the lens reaches up to at
+// `uv` (lensWetnessMain), from 0 at the top; 1 where there is none.
+float lensFilmAt(float2 uv)
+{
+    float column = clamp(uv.x * float(LENS_FILM_COLUMNS) + 0.5, 1.0, float(LENS_FILM_COLUMNS));
+    Texture2D lens = textures[NonUniformResourceIndex(push.textures.y)];
+    float left = lens.Load(int3(int(floor(column)), 0, 0)).r;
+    float right = lens.Load(int3(min(int(floor(column)) + 1, int(LENS_FILM_COLUMNS)), 0, 0)).r;
+    return lerp(left, right, frac(column));
+}
+
+// Where the sun is on the screen, from 0 to 1 across and down, and whether
+// it is in front of the camera.
+float2 sunOnScreen(Frame* frame, out bool ahead)
+{
+    float4 clip = transform(frame->viewProj, float4(frame->cameraPosition - frame->sunDirection * 1000.0, 1.0));
+    ahead = clip.w > 0.0;
+    return clip.xy / max(clip.w, 1e-4) * 0.5 + 0.5;
 }
 
 // The view under water and across the waterline, over a copy of the
@@ -2645,10 +2731,12 @@ float2 lensDrops(Frame* frame, float2 uv, float wet, out float covered)
 // dimmed by the water it comes through colour by colour, red first, the
 // water's own light over it and the sun's rays through it; at the
 // waterline, a band a few pixels wide that bends and blurs what is behind
-// it as the water's edge on the lens does, a dark line along the meniscus
-// and a bright rim over it; and just out of the water, drops on the lens
-// (push.textures.y, how wet it is). Pixels with none of these keep what
-// they had. push.textures.x is the depth.
+// it as the water's edge on the lens does, its colours parting a little, a
+// dark line along the meniscus and a bright rim over it that glints where
+// it crosses the sun; above it, the film of water a falling wave leaves on
+// the lens, draining down; and out of the water, drops on the lens
+// (push.textures.y, how wet it is, and the film). Pixels with none of these
+// keep what they had. push.textures.x is the depth.
 [shader("fragment")]
 float4 underwaterFragment(UnderOut input) : SV_Target0
 {
@@ -2659,43 +2747,140 @@ float4 underwaterFragment(UnderOut input) : SV_Target0
     // How many pixels above the waterline this one is, negative under it.
     float above = u.line / max(fwidth(u.line), 1e-7);
     float band = 1.0 - saturate(abs(above) / 10.0);
-    float wet = textures[NonUniformResourceIndex(push.textures.y)].Load(int3(0, 0, 0)).r;
-    float lens = cameraUnderwater(frame) || !oceanHas(frame, OCEAN_WET_LENS) ? 0.0 : wet;
-    if (!u.under && band <= 0.0 && lens <= 0.01)
+    bool wetLens = oceanHas(frame, OCEAN_WET_LENS);
+    float wet = wetLens ? textures[NonUniformResourceIndex(push.textures.y)].Load(int3(0, 0, 0)).r : 0.0;
+    float lens = cameraUnderwater(frame) ? 0.0 : wet;
+    // The film on the lens: from its top down to the waterline, how far into it this pixel is, in screen heights.
+    float film = wetLens && !u.under ? max(uv.y - lensFilmAt(uv), 0.0) : 0.0;
+    float inFilm = film > 0.0 ? 1.0 : 0.0;
+    if (!u.under && band <= 0.0 && lens <= 0.01 && inFilm <= 0.0)
     {
         discard;
     }
-    float covered;
-    float2 offset = lens > 0.01 ? lensDrops(frame, uv, lens, covered) : 0.0;
+    // Drops wherever the lens is wet: out of the water, and in the film, thicker towards the waterline.
+    float drops = max(lens, inFilm * (0.25 + 0.4 * saturate(film / 0.06)));
+    float covered = 0.0;
+    float rim = 0.0;
+    float2 offset = drops > 0.01 ? lensDrops(frame, uv, drops, covered, rim) : 0.0;
     float2 texel = 1.0 / float2(frame->viewport);
     // The water's edge on the lens: what is behind pulled towards the line, swaying along it.
     float ripple = sin(pixel.x * 0.045 + frame->time * 2.3) * 3.0 + sin(pixel.x * 0.13 - frame->time * 3.7) * 1.5;
     offset += float2(sin(pixel.x * 0.06 + frame->time * 3.0) * 1.5, -sign(above) * 5.0 + ripple) * band * texel;
-    float blur = band * 1.5 + pow(lens, 6.0) * 3.0 + (u.under ? 0.5 : 0.0);
+    // Through the film, what is behind is drawn a little down towards the water, more where it is thicker, wavering
+    // as the film runs.
+    float thick = saturate(film / 0.05);
+    offset += float2(sin(uv.y * 60.0 + frame->time * 4.0) * 0.6, 4.0 + 6.0 * thick) * thick * texel;
+    float blur = band * 1.5 + covered * 3.5 + inFilm * (0.3 + 1.0 * thick) + (u.under ? 0.5 : 0.0);
     float3 color = glassBehind(push.texture, uv + offset, blur);
+    if (band > 0.0)
+    {
+        // Across the band its colours part a little, as through the edge of a lens.
+        float2 split = float2(0.0, 1.5 * band) * texel;
+        color.r = glassBehind(push.texture, uv + offset - split, blur).r;
+        color.b = glassBehind(push.texture, uv + offset + split, blur).b;
+    }
     if (u.under)
     {
         color = color * u.through + u.glow + (oceanHas(frame, OCEAN_LIGHT_SHAFTS) ? lightShafts(frame, u, pixel) : 0.0);
     }
-    // The meniscus: a dark line where the water meets the lens, and the bright rim of its curve over it.
+    else if (above < 6.0)
+    {
+        // Just above the waterline, the view goes through the wedge of water clinging to the lens, which also hides
+        // where the water's surface meets the near plane, a few pixels off the line.
+        Under clinging = underwaterAt(frame, pixel, true);
+        float3 through = color * clinging.through + clinging.glow;
+        color = lerp(through, color, smoothstep(0.0, 6.0, above));
+    }
+    bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
+    float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
+    if (inFilm > 0.0)
+    {
+        // The film's water, faintly, and its leading edge catching the light as it slides down.
+        color = lerp(color, color * (0.85 + 0.3 * u.scatter), 0.3 * thick);
+        float edge = exp(-film * float(frame->viewport.y) / 1.5);
+        color += edge * (color * 0.5 + sunLight * 0.01);
+    }
+    // A drop's edge, where it bends the light most, a little darker.
+    color *= 1.0 - 0.25 * rim;
+    // The meniscus: a dark line where the water meets the lens, and the bright rim of its curve over it, glinting
+    // where it crosses the sun.
     float line = 1.0 - smoothstep(0.5, 2.0, abs(above));
-    float rim = smoothstep(1.0, 2.5, above) * (1.0 - smoothstep(2.5, 6.0, above));
-    color = color * (1.0 - 0.6 * line) + rim * (color * 0.3 + 0.02);
+    float crest = smoothstep(1.0, 2.5, above) * (1.0 - smoothstep(2.5, 6.0, above));
+    bool ahead;
+    float2 sun = sunOnScreen(frame, ahead);
+    float aspect = float(frame->viewport.x) / float(frame->viewport.y);
+    float glint = ahead ? exp(-pow((uv.x - sun.x) * aspect / 0.04, 2.0)) : 0.0;
+    color = color * (1.0 - 0.6 * line) + crest * (color * 0.3 + 0.02 + sunLight * 0.25 * glint);
     return float4(color, 1.0);
 }
 
-// How wet the camera's lens is: 1 under water, then drying over a couple of
-// seconds once out, from last frame's (push.textures.x; push.textures.y is
-// 1 on the first frame, when there is none), into the 1×1 storage image
-// push.output.
+// Where the waterline crosses column `x` of the screen, from 0 to 1 across:
+// how far down the screen it is, from 0 at the top to 1 at the bottom; 0
+// where the whole column is under water, 1 where none of it is. Found by
+// halving: the near plane rises up the screen out of the water.
+// In `waves`, how high the waves raise the water there over its resting
+// level, where the waterline crosses, or the middle of the column where it
+// does not.
+float waterlineDown(Frame* frame, float x, out float waves)
+{
+    float2 size = float2(frame->viewport);
+    float3 near;
+    float surface;
+    float3 absorb;
+    float top = waterlineExact(frame, float2(x * size.x, 0.5), near, surface, absorb);
+    float bottom = waterlineExact(frame, float2(x * size.x, size.y - 0.5), near, surface, absorb);
+    float down = top < 0.0 ? 0.0 : 1.0;
+    if (top >= 0.0 && bottom < 0.0)
+    {
+        float low = 0.0;
+        float high = 1.0;
+        for (uint i = 0; i < 14; i++)
+        {
+            float mid = (low + high) * 0.5;
+            bool above = waterlineExact(frame, float2(x * size.x, mid * size.y), near, surface, absorb) >= 0.0;
+            low = above ? mid : low;
+            high = above ? high : mid;
+        }
+        down = (low + high) * 0.5;
+    }
+    float at = top < 0.0 || bottom >= 0.0 ? 0.5 : down;
+    waterlineExact(frame, float2(x * size.x, at * size.y), near, surface, absorb);
+    float resting;
+    waves = waterSurface(frame, near, resting, absorb) ? surface - resting : 0.0;
+    return down;
+}
+
+// How wet the camera's lens is, into texel 0 of the storage image
+// push.output's first row: 1 under water, then drying over a couple of
+// seconds once out.
+// And in texels 1 to LENS_FILM_COLUMNS, each a column of the screen, how
+// far down the screen the film of water on the lens reaches up to, from 0
+// at the top: up with the waterline at once, and when the water drops away,
+// draining down after it, so a wave falling past the lens leaves a sheet of
+// water sliding down it. Each from last frame's (push.textures.x;
+// push.textures.y is 1 on the first frame, when there is none).
 [shader("compute")]
-[numthreads(1, 1, 1)]
+[numthreads(64, 1, 1)]
 void lensWetnessMain(uint3 id : SV_DispatchThreadID)
 {
     Frame* frame = push.frame;
-    float before = push.textures.y != 0 ? 0.0 : textures[NonUniformResourceIndex(push.textures.x)].Load(int3(0, 0, 0)).r;
-    float now = cameraUnderwater(frame) ? 1.0 : before * exp(-frame->deltaTime / 1.2);
-    storageImagesR32f[push.output][uint2(0, 0)] = saturate(now);
+    if (id.x > LENS_FILM_COLUMNS)
+    {
+        return;
+    }
+    bool first = push.textures.y != 0;
+    float before = textures[NonUniformResourceIndex(push.textures.x)].Load(int3(id.x, 0, 0)).r;
+    if (id.x == 0)
+    {
+        float now = cameraUnderwater(frame) ? 1.0 : (first ? 0.0 : before) * exp(-frame->deltaTime / 1.2);
+        storageImagesR32f[push.output][uint2(0, id.y)] = id.y == 0 ? saturate(now) : 0.0;
+        return;
+    }
+    float waves;
+    float line = waterlineDown(frame, (float(id.x) - 0.5) / float(LENS_FILM_COLUMNS), waves);
+    // In the second row, how high the waves raise the water over this column of the near plane (waterlineAt).
+    float film = first ? line : min(line, before + LENS_FILM_DRAIN * frame->deltaTime);
+    storageImagesR32f[push.output][uint2(id.x, id.y)] = id.y == 0 ? film : waves;
 }
 
 // ---------------------------------------------------------------- Spray

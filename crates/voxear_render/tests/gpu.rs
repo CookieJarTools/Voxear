@@ -4137,6 +4137,48 @@ fn under_the_sea_the_waves_focus_sunlight_into_shafts() {
 }
 
 #[test]
+fn coming_up_out_of_the_water_a_film_runs_down_the_lens() {
+    use voxear_render::{Ocean, Sky, Weather};
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    // A metre under a still sea, looking along it at a row of posts standing out of it.
+    let camera = world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, -1.0, 0.0))));
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.3, -0.7, 0.6).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.6, ..Sky::default() });
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let dark = renderer.add_material(&MaterialDesc { base_color: [0.05, 0.05, 0.05, 1.0], ..MaterialDesc::default() }).unwrap();
+    for i in 0..16 {
+        let at = Vec3::new(-7.5 + i as f32, 1.0, 8.0);
+        world.spawn((MeshRenderer::new(cube, dark), Transform::new(at, Quat::IDENTITY, Vec3::new(0.3, 4.0, 0.3))));
+    }
+    let still = Ocean { weather: Weather::Custom, wind: 0.5, swell_wind: 0.2, ..Ocean::default() };
+    world.spawn((still, Transform::default()));
+    run(&mut renderer, &world, &mut 30.0, 10);
+    // Up out of it, a little over the water: the posts seen through the water still on the lens, then clear of it.
+    world.get_mut::<Transform>(camera).unwrap().position = Vec3::new(0.0, 0.25, 0.0);
+    let mut time = 30.5;
+    run(&mut renderer, &world, &mut time, 4);
+    let wet = renderer.read_pixels().unwrap().2;
+    keep_image("film.png", &wet);
+    run(&mut renderer, &world, &mut time, 150);
+    let dry = renderer.read_pixels().unwrap().2;
+    // How sharp the posts are, low on the screen where the film drains last: each pixel against the next across.
+    let sharp = |pixels: &[u8]| {
+        let (mut total, mut count) = (0, 0);
+        for y in (190..300u32).step_by(2) {
+            for x in 40..600u32 {
+                total += (rgb_at(pixels, (x + 1, y))[1] - rgb_at(pixels, (x, y))[1]).abs();
+                count += 1;
+            }
+        }
+        total as f32 / count as f32
+    };
+    let (through, clear) = (sharp(&wet), sharp(&dry));
+    assert!(through < clear * 0.85, "blurred through the film just out: {through:.2}, clear later: {clear:.2}");
+}
+
+#[test]
 fn a_stormy_sea_calms_and_stops_at_the_beach() {
     use voxear_render::{Ocean, Sky, Weather};
     let Some(mut renderer) = renderer() else { return };

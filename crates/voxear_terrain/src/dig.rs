@@ -775,15 +775,18 @@ impl Excavation {
     /// collides as it was before it was holed for them, so nothing shows or
     /// falls through the holes before the ground in them is there.
     pub fn tile_meshed(&self, tx: u32, tz: u32) -> bool {
+        self.tile_chunks(tx, tz).all(|(_, chunk)| chunk.made.get().is_some())
+    }
+
+    /// The chunks of the dug columns in tile `(tx, tz)` of the heights, in
+    /// order.
+    pub fn tile_chunks(&self, tx: u32, tz: u32) -> impl Iterator<Item = (&ChunkKey, &Arc<DugChunk>)> {
         let per_tile = (TILE_QUADS / CHUNK_SAMPLES) as i32;
         let (x0, z0) = (tx as i32 * per_tile, tz as i32 * per_tile);
         let (x1, z1) = (x0 + per_tile - 1, z0 + per_tile - 1);
         let first = ChunkKey { x: x0, z: i32::MIN, y: i32::MIN };
         let last = ChunkKey { x: x1, z: i32::MAX, y: i32::MAX };
-        self.chunks
-            .range(first..=last)
-            .filter(|(key, _)| (z0..=z1).contains(&key.z))
-            .all(|(_, chunk)| chunk.made.get().is_some())
+        self.chunks.range(first..=last).filter(move |(key, _)| (z0..=z1).contains(&key.z))
     }
 
     /// Corner `(x, y, z)` of the whole terrain's voxels as a dug chunk holds

@@ -2827,7 +2827,11 @@ with Transvoxel between levels on an octree; planets add their own gravity and a
 heightmap terrain turns its columns into smooth-voxel chunks that start from its heights (`voxear_terrain::dig`,
 two voxels a sample), holes the heights in them, and meshes them by marching tetrahedra, which meet the heights
 exactly along the columns' edges. Dug chunks' triangles are made on the CPU when they change and drawn from a pool
-of the terrain's own by its pipelines (`dug.rs`); physics has a mesh body a chunk. In the layer stack, dig strokes
+of the terrain's own by its pipelines (`dug.rs`); physics has a mesh body a chunk. A chunk keeps its triangles once
+made, at three levels of detail (its points gathered into cells of two and four voxels, those on its faces kept so
+levels meet), made on the terrain's background threads (`voxear_terrain::workers`): drawing and physics keep the chunk
+as it was, and a tile holed for new dug columns as it was, until they are done. Rays see dug ground through the
+tiles' meshes for rays, which carry their dug chunks at their coarsest. In the layer stack, dig strokes
 and trenches (a cross-section swept along a spline) are layers that lay no heights: they are dug after compositing,
 in order, as a terrain loads and again in the editor only when they or the heights under their columns change, so
 saved heights keep none of their holes (`dig::redig`).

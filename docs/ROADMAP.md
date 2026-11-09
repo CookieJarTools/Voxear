@@ -1478,8 +1478,10 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   nothing collides with tracks. The pass is skipped when nothing presses and the map stays put. Editor: Track Maker
   under Add Component ▸ Terrain; a surface's Tracks and Fills in. Tests: map scrolling and makers' paths; GPU (a track
   pressed into snow showing the ground, staying when lifted, forgotten when scrolled past, filling in). Manual:
-  Tracks and Snow. Still to come: grass flattened in tracks, tracks in the shadows' and vertices' depth, and a map
-  that keeps tracks further off.
+  Tracks and Snow. Grass lies flat where a Track Maker trod, on any surface, standing up again over its kind's
+  Springs back time (0 keeps it flat); blades turn down about their foot and stop swaying (GPU test: trodden blades
+  cover more ground from above, then stand again). Still to come: tracks in the shadows' and vertices' depth, and a
+  map that keeps tracks further off.
 - ~~**Wet ground, puddles, lava and glitter:**~~ done: a surface's Liquid (None, Wet, Puddles, Lava) and Glitter, so
   each goes where the surface covers, by rules, paint or a script's paint. Wet: darker and glossier. Puddles: water
   standing where the ground lies below the lowest of a ring round it (craters and ruts fill, slopes that dip drain),
@@ -1516,6 +1518,19 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   `.heights` keeps none of the holes digging cuts. A spade icon. Tests: trench profile, strokes read back, holes
   left out of saves; the editor (a dig, a trench, each undone); a trench dug as a terrain loads. Manual: Digging,
   Sculpting, Layers.
+- ~~**Dug ground finished:**~~ done: Smooth begun on dug ground evens it out into the Dig layer (each corner near the
+  surface towards the six round it, a few passes a dab, never on a face shared with ground not dug). Dug chunks keep
+  their triangles once made, shared by drawing and physics, made on background threads of the terrain's own
+  (`voxear_terrain::workers`); drawing and physics keep a chunk as it was until its new triangles are done, and a
+  tile holed for newly dug columns until theirs are, so nothing shows or falls through; a terrain loading or first
+  seen makes all of them at once. Digging itself shares its chunks over every core (a 4 m crater: 36 ms to 5 ms).
+  Each chunk is made at three levels of detail, its points gathered into cells of two and four voxels with those on
+  its faces kept, so levels meet with no gap; a view draws the chunks it sees, each at the level the ground round it
+  is, runs side by side in the pool as one draw. The tiles' meshes for rays leave out dug columns and carry their
+  chunks at their coarsest, so bounced light sees what was dug. Tests: smoothing a trench's lip and leaving the face
+  with ground not dug, background triangles and tiles waiting for them, coarser levels with the same edges on their
+  faces, a view's picks, rays' meshes over a pit, GPU (the pit whole from far off), the editor (Smooth on dug
+  ground, undone). Manual: Digging, Sculpting.
 - **Built-in terrain generation:** generators that make a terrain to start from, chosen and tuned in the editor or
   run from code, each feeding the layer stack so it can be painted and stamped over afterwards:
   - control fields (continentalness, erosion, ridges, temperature, humidity) shaped by nested curves, with presets

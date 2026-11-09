@@ -709,8 +709,8 @@ impl Template {
             }
             if let Some(parts) = &obj.terrain {
                 world.insert(entity, parts.terrain.clone());
-                if let Some(look) = parts.look {
-                    world.insert(entity, look);
+                if let Some(look) = &parts.look {
+                    world.insert(entity, look.clone());
                 }
                 if let Some(asset) = &parts.asset {
                     world.insert(entity, asset.clone());
@@ -879,31 +879,68 @@ pub struct TerrainParts {
 pub fn terrain(content: &mut Content, renderer: Option<&mut Renderer>, data: &TerrainData) -> Result<TerrainParts> {
     let guid = content.parse(&data.data).ok().and_then(|reference| reference.guid());
     let loaded = guid.and_then(|guid| Some((guid, content.terrain(guid)?)));
-    let (heights, asset) = match loaded {
+    let (heights, weights, asset) = match loaded {
         Some((guid, loaded)) => {
             let asset = crate::terrain::TerrainAsset { guid, file: loaded.file.clone(), rasters: loaded.rasters.clone() };
-            (loaded.heights.clone(), Some(asset))
+            (loaded.heights.clone(), loaded.weights.clone(), Some(asset))
         }
         None => {
             if !data.data.is_empty() {
                 tracing::warn!("the terrain {} could not be read; it is flat", data.data);
             }
-            (std::sync::Arc::new(voxear_terrain::file::TerrainFile::default().flat()), None)
+            (std::sync::Arc::new(voxear_terrain::file::TerrainFile::default().flat()), None, None)
         }
     };
     let terrain = voxear_terrain::Terrain {
         heights,
+        weights,
         detail_distance: data.detail_distance.max(1.0),
         cast_shadows: data.cast_shadows,
     };
     let look = match renderer {
-        Some(renderer) => Some(voxear_render::TerrainLook {
-            material: material_of(content, renderer, data.material.as_ref())?,
-            texture_size: data.texture_size.max(0.01),
-        }),
+        Some(renderer) => Some(terrain_look(content, renderer, data, asset.as_ref().map(|asset| &asset.file))?),
         None => None,
     };
     Ok(TerrainParts { terrain, look, asset, source: TerrainSource(data.clone()) })
+}
+
+/// How a Terrain looks: the material its scene gives it, and its asset's
+/// surfaces, each with its material loaded.
+pub fn terrain_look(
+    content: &mut Content,
+    renderer: &mut Renderer,
+    data: &TerrainData,
+    file: Option<&voxear_terrain::file::TerrainFile>,
+) -> Result<voxear_render::TerrainLook> {
+    let material = material_of(content, renderer, data.material.as_ref())?;
+    let mut surfaces = Vec::new();
+    for surface in file.map_or(&[][..], |file| &file.surfaces) {
+        surfaces.push(surface_look(content, renderer, surface)?);
+    }
+    Ok(voxear_render::TerrainLook { material, texture_size: data.texture_size.max(0.01), surfaces: surfaces.into() })
+}
+
+/// How one of a terrain's surfaces looks, its material loaded: a plain one
+/// where it names none or its material cannot be read.
+pub fn surface_look(
+    content: &mut Content,
+    renderer: &mut Renderer,
+    surface: &voxear_terrain::surfaces::Surface,
+) -> Result<voxear_render::SurfaceLook> {
+    let named = surface.material.as_ref().map(|reference| MaterialRef::Asset(reference.clone()));
+    let material = match material_of(content, renderer, named.as_ref()) {
+        Ok(material) => material,
+        Err(error) => {
+            tracing::warn!("a terrain surface's material could not be read: {error:#}");
+            material_of(content, renderer, None)?
+        }
+    };
+    Ok(voxear_render::SurfaceLook {
+        material,
+        size: surface.size.max(0.01),
+        sharpness: surface.sharpness,
+        triplanar: surface.triplanar,
+    })
 }
 
 /// A Model Renderer drawing every part of the model `data` names, loading

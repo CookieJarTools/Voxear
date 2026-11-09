@@ -1,16 +1,19 @@
 //! The Terrain component in the Inspector (the Terrain module).
 //!
-//! Its section has three tools along its top, as Unity's Terrain has
+//! Its section has four tools along its top, as Unity's Terrain has
 //! (`terrain_panel`): **Layers**, the layers its ground is made of, a list
 //! to pick one from with the picked one's settings below; **Sculpt**, the
-//! brush the Scene view paints with (`terrain_tools`); and **Settings**, its
-//! asset, how large and fine it is, and how it is drawn. Which tool shows,
-//! which layer is picked and the brush are the editor's, kept in the world
+//! brush the Scene view shapes the ground with, or cuts holes with
+//! (`terrain_tools`); **Paint**, its surfaces, a list to pick the one the
+//! brush paints, with its settings below; and **Settings**, its asset, how
+//! large and fine it is, and how it is drawn. Which tool shows, which layer
+//! and surface are picked and the brush are the editor's, kept in the world
 //! as [`TerrainUi`], not saved.
 //!
 //! A change to a layer makes the ground again where it reaches; one to the
-//! terrain's size or resolution, everywhere. The asset is written when the
-//! level is saved (`voxear_engine::terrain`).
+//! terrain's size or resolution, everywhere. The surfaces' shares follow
+//! the ground wherever it changes. The asset is written when the level is
+//! saved (`voxear_engine::terrain`).
 
 use std::sync::Arc;
 
@@ -28,9 +31,10 @@ use voxear_terrain::{
     brush::{Brush, BrushKind},
     composite::{Compositor, Dirty},
     file::{RESOLUTIONS, TerrainFile},
-    layers::{Area, Blend, Layer, LayerKind},
+    layers::{Area, Blend, Layer, LayerKind, Mask},
     noise::NoiseStyle,
     raster::Rasters,
+    surfaces::{Cover, MAX_SURFACES, Surface},
 };
 
 use crate::{
@@ -47,27 +51,36 @@ pub enum TerrainTool {
     #[default]
     Layers,
     Sculpt,
+    Paint,
     Settings,
 }
 
 impl TerrainTool {
-    pub const ALL: [TerrainTool; 3] = [TerrainTool::Layers, TerrainTool::Sculpt, TerrainTool::Settings];
+    pub const ALL: [TerrainTool; 4] =
+        [TerrainTool::Layers, TerrainTool::Sculpt, TerrainTool::Paint, TerrainTool::Settings];
 
     pub fn name(self) -> &'static str {
         match self {
             TerrainTool::Layers => "Layers",
             TerrainTool::Sculpt => "Sculpt",
+            TerrainTool::Paint => "Paint",
             TerrainTool::Settings => "Settings",
         }
     }
+
+    /// Whether the Scene view's brush works with it.
+    pub fn brushes(self) -> bool {
+        matches!(self, TerrainTool::Sculpt | TerrainTool::Paint)
+    }
 }
 
-/// What the editor is doing with terrains: the tool shown, the layer
-/// picked, and the brush. Kept in the edit world, not saved.
+/// What the editor is doing with terrains: the tool shown, the layer and
+/// the surface picked, and the brush. Kept in the edit world, not saved.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct TerrainUi {
     pub tool: TerrainTool,
     pub layer: usize,
+    pub surface: usize,
     pub brush: Brush,
 }
 
@@ -123,6 +136,18 @@ pub enum TerrainField {
     BrushHeight,
     BrushStep,
     BumpSize,
+    /// The picked surface's: its material, how large its pictures are, how
+    /// sharply it meets the others, whether it is drawn from the side on
+    /// steep ground, where it covers, and how far its rules' edges wander.
+    SurfaceMaterial,
+    TileSize,
+    HeightBlend,
+    Triplanar,
+    Cover,
+    Breakup,
+    BreakupSize,
+    /// Add Surface's picker: a new surface of the material picked.
+    NewSurface,
 }
 
 use TerrainField as F;
@@ -131,6 +156,56 @@ use TerrainField as F;
 fn picked(world: &World, entity: Entity) -> Option<(usize, Layer)> {
     let at = ui(world).layer;
     Some((at, world.get::<TerrainAsset>(entity)?.file.layers.get(at)?.clone()))
+}
+
+/// The picked surface of an Obj's terrain, if its asset has one there.
+fn picked_surface(world: &World, entity: Entity) -> Option<(usize, Surface)> {
+    let at = ui(world).surface;
+    Some((at, world.get::<TerrainAsset>(entity)?.file.surfaces.get(at)?.clone()))
+}
+
+/// The mask the mask's rows show: the picked surface's under Paint, else
+/// the picked layer's.
+fn shown_mask(world: &World, entity: Entity) -> Option<Mask> {
+    match ui(world).tool {
+        TerrainTool::Paint => picked_surface(world, entity).map(|(_, surface)| surface.mask),
+        _ => picked(world, entity).map(|(_, layer)| layer.mask),
+    }
+}
+
+/// The rows of a mask's ranges, as many as are on.
+fn mask_fields(mask: &Mask) -> Vec<TerrainField> {
+    let mut fields = vec![F::HeightMask];
+    if mask.height.is_some() {
+        fields.push(F::Heights);
+    }
+    fields.push(F::SlopeMask);
+    if mask.slope.is_some() {
+        fields.push(F::Slopes);
+    }
+    if !mask.is_none() {
+        fields.push(F::Feather);
+    }
+    fields
+}
+
+/// What the Paint tool shows: the brush, then the picked surface's values,
+/// its cover's rules where it covers by them. The first surface is the
+/// ground under the rest, so it has no cover.
+fn surface_fields(at: usize, surface: &Surface) -> Vec<TerrainField> {
+    let mut fields = vec![F::BrushSize, F::Strength, F::SurfaceMaterial, F::TileSize, F::HeightBlend, F::Triplanar];
+    if at == 0 {
+        return fields;
+    }
+    fields.push(F::Cover);
+    if surface.cover == Cover::Rules {
+        fields.extend(mask_fields(&surface.mask));
+        fields.push(F::Breakup);
+        if surface.breakup > 0.0 {
+            fields.push(F::BreakupSize);
+        }
+    }
+    fields
 }
 
 /// The values a Terrain shows, for the tool showing.
@@ -150,7 +225,11 @@ pub fn props(world: &World, entity: Entity) -> Vec<Prop> {
         },
         TerrainTool::Sculpt => {
             let brush = ui(world).brush;
-            let mut fields = vec![F::Brush, F::BrushSize, F::Strength];
+            let mut fields = vec![F::Brush, F::BrushSize];
+            // A hole is cut whole, or not at all.
+            if brush.kind != BrushKind::Holes {
+                fields.push(F::Strength);
+            }
             match brush.kind {
                 BrushKind::SetHeight => fields.push(F::BrushHeight),
                 BrushKind::Terrace => fields.push(F::BrushStep),
@@ -159,6 +238,10 @@ pub fn props(world: &World, entity: Entity) -> Vec<Prop> {
             }
             fields
         }
+        TerrainTool::Paint => match picked_surface(world, entity) {
+            Some((at, surface)) => surface_fields(at, &surface),
+            None => vec![F::BrushSize, F::Strength],
+        },
     };
     fields.into_iter().map(Prop::Terrain).collect()
 }
@@ -180,17 +263,7 @@ fn layer_fields(layer: &Layer) -> Vec<TerrainField> {
         LayerKind::Terrace { .. } => vec![F::Step, F::Sharpness],
         LayerKind::Smooth { .. } => vec![F::Radius],
     });
-    fields.push(F::HeightMask);
-    if layer.mask.height.is_some() {
-        fields.push(F::Heights);
-    }
-    fields.push(F::SlopeMask);
-    if layer.mask.slope.is_some() {
-        fields.push(F::Slopes);
-    }
-    if !layer.mask.is_none() {
-        fields.push(F::Feather);
-    }
+    fields.extend(mask_fields(&layer.mask));
     fields
 }
 
@@ -232,6 +305,13 @@ pub fn label(field: TerrainField) -> &'static str {
         F::BrushHeight => "Height",
         F::BrushStep => "Step",
         F::BumpSize => "Bump size",
+        F::SurfaceMaterial | F::NewSurface => "Material",
+        F::TileSize => "Tile size",
+        F::HeightBlend => "Height blend",
+        F::Triplanar => "Triplanar",
+        F::Cover => "Cover",
+        F::Breakup => "Breakup",
+        F::BreakupSize => "Breakup size",
     }
 }
 
@@ -254,6 +334,7 @@ pub fn unit(world: &World, entity: Entity, field: TerrainField) -> Option<&'stat
         F::Width | F::Step | F::Radius | F::Heights | F::BrushSize | F::BrushHeight | F::BrushStep | F::BumpSize => {
             Some("m")
         }
+        F::TileSize | F::BreakupSize => Some("m"),
         F::Rotation | F::Slopes => Some("°"),
         F::Falloff => match picked(world, entity) {
             Some((_, Layer { kind: LayerKind::Spline { .. }, .. })) => Some("m"),
@@ -266,7 +347,7 @@ pub fn unit(world: &World, entity: Entity, field: TerrainField) -> Option<&'stat
 /// The range a value's slider spans, for those shown as sliders.
 pub fn range(world: &World, entity: Entity, field: TerrainField) -> Option<[f32; 2]> {
     match field {
-        F::Opacity | F::Strength | F::Sharpness => Some([0.0, 1.0]),
+        F::Opacity | F::Strength | F::Sharpness | F::HeightBlend => Some([0.0, 1.0]),
         F::Falloff => match picked(world, entity) {
             Some((_, Layer { kind: LayerKind::Stamp { .. }, .. })) => Some([0.0, 1.0]),
             _ => None,
@@ -285,6 +366,8 @@ pub fn get(game: &Game, entity: Entity, field: TerrainField) -> Option<Value> {
     let world = &game.engine.world;
     let asset = || world.get::<TerrainAsset>(entity);
     let layer = || picked(world, entity).map(|(_, layer)| layer);
+    let surface = || picked_surface(world, entity).map(|(_, surface)| surface);
+    let mask = || shown_mask(world, entity);
     let brush = ui(world).brush;
     let choice = |at: usize, names: Vec<&str>| Value::Choice(at, names.into_iter().map(str::to_string).collect());
     Some(match field {
@@ -316,11 +399,22 @@ pub fn get(game: &Game, entity: Entity, field: TerrainField) -> Option<Value> {
             )
         }
         F::Opacity => Value::Number(layer()?.opacity),
-        F::HeightMask => Value::Toggle(layer()?.mask.height.is_some()),
-        F::Heights => Value::Vector(layer()?.mask.height?.to_vec()),
-        F::SlopeMask => Value::Toggle(layer()?.mask.slope.is_some()),
-        F::Slopes => Value::Vector(layer()?.mask.slope?.to_vec()),
-        F::Feather => Value::Number(layer()?.mask.feather),
+        F::HeightMask => Value::Toggle(mask()?.height.is_some()),
+        F::Heights => Value::Vector(mask()?.height?.to_vec()),
+        F::SlopeMask => Value::Toggle(mask()?.slope.is_some()),
+        F::Slopes => Value::Vector(mask()?.slope?.to_vec()),
+        F::Feather => Value::Number(mask()?.feather),
+        F::SurfaceMaterial => Value::Asset(path_of(game, surface()?.material.as_deref())),
+        F::NewSurface => Value::Asset(String::new()),
+        F::TileSize => Value::Number(surface()?.size),
+        F::HeightBlend => Value::Number(surface()?.sharpness),
+        F::Triplanar => Value::Toggle(surface()?.triplanar),
+        F::Cover => {
+            let cover = surface()?.cover;
+            choice(Cover::ALL.iter().position(|&c| c == cover).unwrap_or_default(), Cover::ALL.map(Cover::name).to_vec())
+        }
+        F::Breakup => Value::Number(surface()?.breakup),
+        F::BreakupSize => Value::Number(surface()?.breakup_size),
         F::Brush => {
             let at = BrushKind::ALL.iter().position(|&k| k == brush.kind).unwrap_or_default();
             choice(at, BrushKind::ALL.map(BrushKind::name).to_vec())
@@ -420,9 +514,44 @@ pub fn set(game: &mut Game, entity: Entity, field: TerrainField, value: Value) -
             }
             return *brush != before;
         }
+        F::TileSize | F::HeightBlend | F::Triplanar | F::Cover | F::Breakup | F::BreakupSize => {
+            return change_surface(game, entity, |surface| set_surface(surface, field, &value));
+        }
+        F::HeightMask | F::Heights | F::SlopeMask | F::Slopes | F::Feather
+            if ui(world).tool == TerrainTool::Paint =>
+        {
+            return change_surface(game, entity, |surface| set_mask(&mut surface.mask, field, &value));
+        }
         _ => {}
     }
     change_layer(game, entity, |layer| set_layer(layer, field, &value))
+}
+
+/// Sets one of a mask's values.
+fn set_mask(mask: &mut Mask, field: TerrainField, value: &Value) {
+    match (field, value) {
+        (F::HeightMask, Value::Toggle(on)) => mask.height = on.then_some(mask.height.unwrap_or([0.0, 100.0])),
+        (F::Heights, v) => mask.height = pair(v).map(|[a, b]| [a.min(b), a.max(b)]),
+        (F::SlopeMask, Value::Toggle(on)) => mask.slope = on.then_some(mask.slope.unwrap_or([0.0, 30.0])),
+        (F::Slopes, v) => {
+            mask.slope = pair(v).map(|[a, b]| [a.min(b).clamp(0.0, 90.0), a.max(b).clamp(0.0, 90.0)]);
+        }
+        (F::Feather, v) => mask.feather = number(v).unwrap_or(mask.feather).max(0.0),
+        _ => {}
+    }
+}
+
+/// Sets one of a surface's own values.
+fn set_surface(surface: &mut Surface, field: TerrainField, value: &Value) {
+    match (field, value) {
+        (F::TileSize, v) => surface.size = number(v).unwrap_or(surface.size).clamp(0.01, 10_000.0),
+        (F::HeightBlend, v) => surface.sharpness = number(v).unwrap_or(surface.sharpness).clamp(0.0, 1.0),
+        (F::Triplanar, Value::Toggle(on)) => surface.triplanar = *on,
+        (F::Cover, Value::Choice(at, _)) => surface.cover = Cover::ALL[(*at).min(Cover::ALL.len() - 1)],
+        (F::Breakup, v) => surface.breakup = number(v).unwrap_or(surface.breakup).max(0.0),
+        (F::BreakupSize, v) => surface.breakup_size = number(v).unwrap_or(surface.breakup_size).max(0.1),
+        _ => {}
+    }
 }
 
 /// Sets one of a layer's own values.
@@ -431,17 +560,7 @@ fn set_layer(layer: &mut Layer, field: TerrainField, value: &Value) {
         (F::LayerName, Value::Text(name), _) => layer.name = name.clone(),
         (F::Blend, Value::Choice(at, _), _) => layer.blend = Blend::ALL[(*at).min(Blend::ALL.len() - 1)],
         (F::Opacity, v, _) => layer.opacity = number(v).unwrap_or(layer.opacity).clamp(0.0, 1.0),
-        (F::HeightMask, Value::Toggle(on), _) => {
-            layer.mask.height = on.then_some(layer.mask.height.unwrap_or([0.0, 100.0]));
-        }
-        (F::Heights, v, _) => layer.mask.height = pair(v).map(|[a, b]| [a.min(b), a.max(b)]),
-        (F::SlopeMask, Value::Toggle(on), _) => {
-            layer.mask.slope = on.then_some(layer.mask.slope.unwrap_or([0.0, 30.0]));
-        }
-        (F::Slopes, v, _) => {
-            layer.mask.slope = pair(v).map(|[a, b]| [a.min(b).clamp(0.0, 90.0), a.max(b).clamp(0.0, 90.0)]);
-        }
-        (F::Feather, v, _) => layer.mask.feather = number(v).unwrap_or(layer.mask.feather).max(0.0),
+        (F::HeightMask | F::Heights | F::SlopeMask | F::Slopes | F::Feather, v, _) => set_mask(&mut layer.mask, field, v),
         (
             F::Height,
             v,
@@ -523,8 +642,64 @@ pub fn remake_with(
     };
     let heights = game.content.compose_terrain(&file, &rasters, Some(&previous), compositor, dirty);
     let world = &mut game.engine.world;
-    change(world, entity, |terrain: &mut Terrain| terrain.heights = Arc::new(heights))
-        && change(world, entity, |asset: &mut TerrainAsset| (asset.file, asset.rasters) = (file, rasters))
+    let changed = change(world, entity, |terrain: &mut Terrain| terrain.heights = Arc::new(heights))
+        && change(world, entity, |asset: &mut TerrainAsset| (asset.file, asset.rasters) = (file, rasters));
+    changed && reweigh(game, entity, dirty)
+}
+
+/// Works out the surfaces' shares again where `dirty` says, over the
+/// terrain's ground as it is now, from its asset's surfaces and paint.
+pub fn reweigh(game: &mut Game, entity: Entity, dirty: &Dirty) -> bool {
+    let world = &mut game.engine.world;
+    let Some(asset) = world.get::<TerrainAsset>(entity) else { return false };
+    let Some(terrain) = world.get::<Terrain>(entity) else { return false };
+    let previous = terrain.weights.as_deref();
+    let weights = voxear_terrain::surfaces::weigh(&asset.file, &terrain.heights, &asset.rasters, previous, dirty);
+    change(world, entity, |terrain: &mut Terrain| terrain.weights = weights.map(Arc::new))
+}
+
+/// Changes the picked surface, then its look and, if where it covers
+/// changed, everyone's shares.
+fn change_surface(game: &mut Game, entity: Entity, how: impl FnOnce(&mut Surface)) -> bool {
+    let world = &game.engine.world;
+    let Some((at, before)) = picked_surface(world, entity) else { return false };
+    let Some(asset) = world.get::<TerrainAsset>(entity) else { return false };
+    let mut file = asset.file.clone();
+    how(&mut file.surfaces[at]);
+    if file.surfaces[at] == before {
+        return false;
+    }
+    let covers = voxear_terrain::surfaces::hash_surfaces(&asset.file.surfaces)
+        != voxear_terrain::surfaces::hash_surfaces(&file.surfaces);
+    let world = &mut game.engine.world;
+    change(world, entity, |asset: &mut TerrainAsset| asset.file = file);
+    restyle(game, entity);
+    if covers {
+        reweigh(game, entity, &Dirty::All);
+    }
+    true
+}
+
+/// Gives the terrain's look its asset's surfaces again, each material
+/// loaded, where there is a renderer's look to change.
+fn restyle(game: &mut Game, entity: Entity) {
+    let Some(file) = game.engine.world.get::<TerrainAsset>(entity).map(|asset| asset.file.clone()) else { return };
+    let Some(mut look) = game.engine.world.get::<TerrainLook>(entity).cloned() else { return };
+    let mut surfaces = Vec::with_capacity(file.surfaces.len());
+    for surface in &file.surfaces {
+        let material = surface.material.as_deref().and_then(|reference| {
+            let parsed = game.content.parse(reference).ok()?;
+            game.content.loaded_material(&MaterialSource::Asset(parsed))
+        });
+        surfaces.push(voxear_render::SurfaceLook {
+            material: material.unwrap_or(look.material),
+            size: surface.size.max(0.01),
+            sharpness: surface.sharpness,
+            triplanar: surface.triplanar,
+        });
+    }
+    look.surfaces = surfaces.into();
+    game.engine.world.insert(entity, look);
 }
 
 /// Changes the terrain's size, resolution or base and makes all its ground
@@ -548,6 +723,13 @@ pub fn choices(game: &Game, field: TerrainField) -> Vec<(String, Pick)> {
     match field {
         F::Data => fields::assets_of(game, Some(AssetKind::Terrain)),
         F::Picture => fields::assets_of(game, Some(AssetKind::Texture)),
+        F::SurfaceMaterial => fields::assets_of(game, Some(AssetKind::Material)),
+        // A new surface is of a material.
+        F::NewSurface => {
+            let mut found = fields::assets_of(game, Some(AssetKind::Material));
+            found.retain(|(_, pick)| *pick != Pick::Asset(None));
+            found
+        }
         F::Material => {
             let mut found = vec![("Default".to_string(), Pick::Asset(None))];
             let mut paths: Vec<String> = (game.content.db().entries())
@@ -564,7 +746,7 @@ pub fn choices(game: &Game, field: TerrainField) -> Vec<(String, Pick)> {
 
 /// Whether a value is picked from a menu of assets.
 pub fn is_picked(field: TerrainField) -> bool {
-    matches!(field, F::Data | F::Picture | F::Material)
+    matches!(field, F::Data | F::Picture | F::Material | F::SurfaceMaterial | F::NewSurface)
 }
 
 /// Takes what was picked: another asset for its ground, a picture for its
@@ -607,6 +789,19 @@ pub fn pick(
                     *picture = written;
                 }
             })
+        }
+        F::SurfaceMaterial | F::NewSurface => {
+            let written = reference.as_ref().map(|r| r.to_string());
+            // The material loaded now, so the look can take it.
+            if let (Some(renderer), Some(reference)) = (renderer, &reference)
+                && let Err(error) = game.content.material(renderer, &MaterialSource::Asset(reference.clone()))
+            {
+                tracing::error!("{error:#}");
+            }
+            if field == F::NewSurface {
+                return add_surface(game, entity, written);
+            }
+            change_surface(game, entity, |surface| surface.material = written)
         }
         F::Material => {
             let Some(renderer) = renderer else { return false };
@@ -665,17 +860,67 @@ pub fn remove(world: &mut World, entity: Entity) {
     world.remove::<TerrainSource>(entity);
 }
 
+/// Adds a surface of `material` on top, and picks it: the first one covers
+/// all the ground, those after it only where painted.
+pub fn add_surface(game: &mut Game, entity: Entity, material: Option<String>) -> bool {
+    let Some(asset) = game.engine.world.get::<TerrainAsset>(entity) else { return false };
+    let mut file = asset.file.clone();
+    if file.surfaces.len() >= MAX_SURFACES {
+        return false;
+    }
+    let mut surface = Surface::new(material);
+    if file.surfaces.is_empty() {
+        surface.cover = Cover::Everywhere;
+    }
+    file.surfaces.push(surface);
+    ui_mut(&mut game.engine.world).surface = file.surfaces.len() - 1;
+    change(&mut game.engine.world, entity, |asset: &mut TerrainAsset| asset.file = file);
+    restyle(game, entity);
+    reweigh(game, entity, &Dirty::All)
+}
+
+/// Picks surface `at` to paint with and show.
+pub fn pick_surface(world: &mut World, at: usize) {
+    ui_mut(world).surface = at;
+}
+
+/// Moves surface `from` to place `to`, keeping it picked, its painting
+/// with it.
+pub fn move_surface(game: &mut Game, entity: Entity, from: usize, to: usize) -> bool {
+    let Some(asset) = game.engine.world.get::<TerrainAsset>(entity) else { return false };
+    let mut file = asset.file.clone();
+    if from >= file.surfaces.len() || to >= file.surfaces.len() || from == to {
+        return false;
+    }
+    let surface = file.surfaces.remove(from);
+    file.surfaces.insert(to, surface);
+    ui_mut(&mut game.engine.world).surface = to;
+    change(&mut game.engine.world, entity, |asset: &mut TerrainAsset| asset.file = file);
+    restyle(game, entity);
+    reweigh(game, entity, &Dirty::All)
+}
+
+/// Takes surface `at` out, and its painting with it.
+pub fn remove_surface(game: &mut Game, entity: Entity, at: usize) -> bool {
+    let Some(asset) = game.engine.world.get::<TerrainAsset>(entity) else { return false };
+    let mut file = asset.file.clone();
+    if at >= file.surfaces.len() {
+        return false;
+    }
+    let surface = file.surfaces.remove(at);
+    let mut rasters = asset.rasters.clone();
+    if surface.paint != 0 {
+        Arc::make_mut(&mut rasters).remove(surface.paint);
+    }
+    let ui = ui_mut(&mut game.engine.world);
+    ui.surface = ui.surface.min(file.surfaces.len().saturating_sub(1));
+    change(&mut game.engine.world, entity, |asset: &mut TerrainAsset| (asset.file, asset.rasters) = (file, rasters));
+    restyle(game, entity);
+    reweigh(game, entity, &Dirty::All)
+}
+
 /// The kinds of layer Add offers, in its menu's order.
 pub const NEW_LAYERS: [&str; 7] = ["Stamp", "Noise", "Sculpt", "Spline", "Terrace", "Smooth", "Import"];
-
-/// The raster numbers a terrain's sculpt layers paint into.
-fn sculpt_rasters(file: &TerrainFile) -> Vec<u32> {
-    let rasters = file.layers.iter().filter_map(|layer| match layer.kind {
-        LayerKind::Sculpt { raster } => Some(raster),
-        _ => None,
-    });
-    rasters.collect()
-}
 
 /// A new layer of the kind `NEW_LAYERS[choice]` names, to start from on a
 /// terrain as `file` says, numbering a sculpt layer's raster past `rasters`'.
@@ -689,7 +934,7 @@ pub fn new_layer(choice: usize, file: &TerrainFile, rasters: &Rasters) -> Layer 
             octaves: 5,
             seed: 0,
         },
-        "Sculpt" => LayerKind::Sculpt { raster: rasters.next_raster(sculpt_rasters(file)) },
+        "Sculpt" => LayerKind::Sculpt { raster: rasters.next_raster(file.rasters_in_use()) },
         "Spline" => {
             let y = file.base;
             LayerKind::Spline {
@@ -751,6 +996,42 @@ pub fn sculpt_layer(game: &mut Game, entity: Entity) -> Option<(usize, u32)> {
         LayerKind::Sculpt { raster } => Some((at, raster)),
         _ => None,
     }
+}
+
+/// The surface the Paint brush paints: the picked one, ready to paint with
+/// those above it; `None` for a terrain with no surfaces.
+pub fn paint_surface(game: &mut Game, entity: Entity) -> Option<usize> {
+    let world = &mut game.engine.world;
+    let asset = world.get::<TerrainAsset>(entity)?;
+    if asset.file.surfaces.is_empty() {
+        return None;
+    }
+    let surface = ui(world).surface.min(asset.file.surfaces.len() - 1);
+    let mut file = asset.file.clone();
+    if voxear_terrain::surfaces::ready_to_paint(&mut file, &asset.rasters, surface) {
+        change(world, entity, |asset: &mut TerrainAsset| asset.file = file);
+    }
+    ui_mut(world).surface = surface;
+    Some(surface)
+}
+
+/// Gives the terrain a raster for its holes, if it has none yet; whether it
+/// has one.
+pub fn ready_for_holes(game: &mut Game, entity: Entity) -> bool {
+    let world = &mut game.engine.world;
+    let Some(asset) = world.get::<TerrainAsset>(entity) else { return false };
+    if asset.file.holes == 0 {
+        let raster = asset.rasters.next_raster(asset.file.rasters_in_use());
+        change(world, entity, |asset: &mut TerrainAsset| asset.file.holes = raster);
+    }
+    true
+}
+
+/// Puts painted `rasters` on the terrain's asset and works the surfaces'
+/// shares out again where `dirty` says.
+pub fn repaint(game: &mut Game, entity: Entity, rasters: Arc<Rasters>, dirty: &Dirty) -> bool {
+    change(&mut game.engine.world, entity, |asset: &mut TerrainAsset| asset.rasters = rasters)
+        && reweigh(game, entity, dirty)
 }
 
 /// Picks layer `at` to show.

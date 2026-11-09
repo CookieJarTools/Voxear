@@ -91,3 +91,38 @@ fn a_changed_tile_and_a_moved_terrain_move_the_ground_with_them() {
     physics.step(&mut world, 1.0 / 60.0);
     assert_eq!(down(&physics, 55.0), None);
 }
+
+#[test]
+fn a_ball_falls_through_a_hole_and_one_beside_it_stays_on_the_ground() {
+    // Flat ground half a metre apart, with a hole 3 m across round (40, 40).
+    let mut bits = vec![0u32; voxear_terrain::heights::HOLE_WORDS];
+    let side = voxear_terrain::TILE_SAMPLES;
+    for z in 0..side {
+        for x in 0..side {
+            let (dx, dz) = (x as f32 * 0.5 - 40.0, z as f32 * 0.5 - 40.0);
+            if dx * dx + dz * dz <= 9.0 {
+                let index = (z * side + x) as usize;
+                bits[index / 32] |= 1 << (index % 32);
+            }
+        }
+    }
+    let tile = HeightTile::flat(0.0).with_holes(Some(bits.into()));
+    let heights = Heightmap::from_tiles(1, 1, 0.5, vec![std::sync::Arc::new(tile)]);
+    let (mut world, _) = world_with(heights, Vec3::ZERO);
+    let drop = |world: &mut World, x: f32| {
+        let ball = world.spawn((Transform::from_position(Vec3::new(x, 3.0, 40.0)),));
+        world.insert(ball, Collider { shape: ColliderShape::Sphere, radius: 0.5, ..Collider::default() });
+        world.insert(ball, Rigidbody::default());
+        ball
+    };
+    let (through, beside) = (drop(&mut world, 40.0), drop(&mut world, 50.0));
+    let mut physics = PhysicsScene::new();
+    for _ in 0..120 {
+        physics.step(&mut world, 1.0 / 60.0);
+    }
+    let y = |ball| world.get::<Transform>(ball).unwrap().position.y;
+    assert!(y(through) < -3.0, "fell through: {}", y(through));
+    assert!((y(beside) - 0.5).abs() < 0.1, "rests beside it: {}", y(beside));
+    assert!(physics.raycast(Vec3::new(40.0, 5.0, 40.0), Vec3::NEG_Y, 20.0, u32::MAX, false).is_none());
+    assert!(voxear_terrain::ground_at(&world, 40.0, 40.0).is_none());
+}

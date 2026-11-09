@@ -39,6 +39,10 @@ fn hello_with_a_field() -> tempfile::TempDir {
     let day = dir.path().join("Scenes/Day.scene");
     let scene = std::fs::read_to_string(&day).unwrap();
     std::fs::write(&day, scene + FIELD).unwrap();
+    // Two materials for a terrain's surfaces.
+    std::fs::create_dir_all(dir.path().join("Materials")).unwrap();
+    std::fs::write(dir.path().join("Materials/Mud.material"), "color = [0.35, 0.25, 0.15]\n").unwrap();
+    std::fs::write(dir.path().join("Materials/Snow.material"), "color = [0.95, 0.95, 0.97]\n").unwrap();
     // No background build of the scripts outliving the test.
     let toml = dir.path().join("voxear.toml");
     let text = std::fs::read_to_string(&toml).unwrap();
@@ -372,4 +376,121 @@ fn shot(renderer: &mut Renderer, name: &str) {
     let mut encoder = png::Encoder::new(file, width, height);
     encoder.set_color(png::ColorType::Rgba);
     encoder.write_header().unwrap().write_image_data(&pixels).unwrap();
+}
+
+/// Picks an option of a dropdown, as the pointer would.
+fn choose(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, dropdown: NodeId, option: usize) {
+    click(&mut editor.ui, dropdown);
+    frame(editor, renderer);
+    let mut options = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "dropdown-option", &mut options);
+    click(&mut editor.ui, options[option]);
+    frame(editor, renderer);
+}
+
+/// Adds a surface of the material named `name` as a user does: Add
+/// Surface, then the material in the picker.
+fn add_surface(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, name: &str) {
+    let add = first_with(&editor.ui, editor.ui.root(), "collection-add").expect("Add Surface");
+    click(&mut editor.ui, add);
+    frame(editor, renderer);
+    frame(editor, renderer);
+    let offered = || {
+        let list = editor.ui.find(editor.ui.root(), "picker-list");
+        let rows = list.map_or(Vec::new(), |list| editor.ui.children(list));
+        rows.into_iter().filter(|&r| editor.ui.is_visible(r)).map(|r| row_text(&editor.ui, r)).collect::<Vec<_>>()
+    };
+    let row = picker_row(&editor.ui, name).unwrap_or_else(|| panic!("{name} is offered: {:?}", offered()));
+    click(&mut editor.ui, row);
+    frame(editor, renderer);
+    frame(editor, renderer);
+}
+
+/// Holds the left button over `point` in the Scene view for a few frames.
+fn stroke(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, point: [f32; 2], shift: bool) {
+    pointer_to(editor, point);
+    frame(editor, renderer);
+    if shift {
+        shift_key(editor, true);
+    }
+    left_button(editor, true);
+    for _ in 0..6 {
+        frame(editor, renderer);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    left_button(editor, false);
+    if shift {
+        shift_key(editor, false);
+    }
+    frame(editor, renderer);
+}
+
+fn shift_key(editor: &mut voxear_editor::Editor, held: bool) {
+    let mut modifiers = winit::keyboard::ModifiersState::empty();
+    modifiers.set(winit::keyboard::ModifiersState::SHIFT, held);
+    editor.handle(&winit::event::WindowEvent::ModifiersChanged(modifiers.into()));
+}
+
+#[test]
+fn surfaces_are_added_painted_and_holes_cut_in_the_scene_view_each_a_step_to_undo() {
+    let Some((_dir, mut renderer, mut editor, field)) = editor_with_a_terrain() else { return };
+    show_tool(&mut editor, &mut renderer, "Paint");
+    add_surface(&mut editor, &mut renderer, "Mud.material");
+    add_surface(&mut editor, &mut renderer, "Snow.material");
+    let asset = |editor: &voxear_editor::Editor| editor.game.engine.world.get::<TerrainAsset>(field).unwrap().clone();
+    let surfaces = asset(&editor).file.surfaces;
+    assert_eq!(surfaces.len(), 2);
+    assert_eq!(surfaces[0].cover, voxear_terrain::surfaces::Cover::Everywhere, "the first covers the ground");
+    for label in ["Size", "Strength", "Material", "Tile size", "Height blend", "Triplanar", "Cover"] {
+        assert_eq!(prop_rows(&editor.ui, label).len(), 1, "the Paint tool's {label}");
+    }
+    assert!(row_text(&editor.ui, prop_rows(&editor.ui, "Material")[0]).contains("Snow"), "the new one is picked");
+    let names: Vec<String> = {
+        let mut found = Vec::new();
+        with_class(&editor.ui, editor.ui.root(), "terrain-layer-name", &mut found);
+        found.into_iter().map(|node| editor.ui.text(node)).collect()
+    };
+    assert_eq!(names, ["Snow", "Mud"], "the top one first");
+    let look = editor.game.engine.world.get::<voxear_render::TerrainLook>(field).unwrap().clone();
+    assert_eq!(look.surfaces.len(), 2, "drawn with both");
+
+    // Snow painted where the pointer holds.
+    let camera = editor.scene_camera().expect("the Scene view");
+    let [x, y, w, h] = camera.rect;
+    let point = [x + w / 2.0, y + h * 0.85];
+    let at =
+        voxear_editor::scene_tools::surface_at(&editor.game.engine.world, &renderer, &camera, point).expect("ground");
+    let local = (at.x + 256.0, at.z + 256.0);
+    let surface = |editor: &voxear_editor::Editor| {
+        let terrain = editor.game.engine.world.get::<Terrain>(field).unwrap();
+        terrain.weights.as_ref().expect("shares").surface_at(terrain.heights.spacing(), local.0, local.1)
+    };
+    assert_eq!(surface(&editor), 0, "mud before painting");
+    stroke(&mut editor, &mut renderer, point, false);
+    shot(&mut renderer, "terrain-paint.png");
+    assert_eq!(surface(&editor), 1, "snow painted");
+    editor.undo(&mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(surface(&editor), 0, "the stroke undone");
+    assert_eq!(asset(&editor).file.surfaces.len(), 2, "the surfaces stay");
+
+    // The Holes brush, under Sculpt, cuts the ground away there; Shift fills it again.
+    show_tool(&mut editor, &mut renderer, "Sculpt");
+    let brushes = first_with(&editor.ui, prop_rows(&editor.ui, "Brush")[0], "value-choice").expect("the brushes");
+    choose(&mut editor, &mut renderer, brushes, 6);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(row_text(&editor.ui, prop_rows(&editor.ui, "Brush")[0]), "Holes");
+    assert_eq!(prop_rows(&editor.ui, "Strength").len(), 0, "a hole is cut whole");
+    stroke(&mut editor, &mut renderer, point, false);
+    let cut = |editor: &voxear_editor::Editor| {
+        editor.game.engine.world.get::<Terrain>(field).unwrap().heights.cut_at(local.0, local.1)
+    };
+    assert!(cut(&editor), "a hole under the brush");
+    assert!(asset(&editor).file.holes != 0);
+    assert!(asset(&editor).file.layers.is_empty(), "with no sculpt layer");
+    stroke(&mut editor, &mut renderer, point, true);
+    assert!(!cut(&editor), "filled again");
+    editor.undo(&mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(cut(&editor), "the filling undone");
 }

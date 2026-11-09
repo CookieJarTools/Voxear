@@ -106,7 +106,7 @@ impl TerrainState {
     fn of(world: &World, entity: Entity) -> Option<Self> {
         Some(Self {
             terrain: world.get::<voxear_terrain::Terrain>(entity)?.clone(),
-            look: world.get::<voxear_render::TerrainLook>(entity).copied(),
+            look: world.get::<voxear_render::TerrainLook>(entity).cloned(),
             asset: world.get::<voxear_engine::terrain::TerrainAsset>(entity).cloned(),
             source: world.get::<voxear_engine::scene_file::TerrainSource>(entity).cloned(),
         })
@@ -232,7 +232,7 @@ impl ObjState {
         put(world, entity, self.model.as_deref().map(|(_, source)| source.clone()));
         let terrain = self.terrain.as_deref();
         put(world, entity, terrain.map(|state| state.terrain.clone()));
-        put(world, entity, terrain.and_then(|state| state.look));
+        put(world, entity, terrain.and_then(|state| state.look.clone()));
         put(world, entity, terrain.and_then(|state| state.asset.clone()));
         put(world, entity, terrain.and_then(|state| state.source.clone()));
         put(world, entity, self.joint.as_deref().copied());

@@ -3,7 +3,7 @@
 //! The ray is clipped to the terrain's box, then walked quad by quad along
 //! x and z. A quad whose corners all lie below the ray's lowest point
 //! across it, or all above its highest, is passed over; the rest have their
-//! two triangles tested.
+//! two triangles tested, but for those a hole cuts away.
 
 use voxear_core::math::Vec3;
 
@@ -19,8 +19,19 @@ pub struct GroundHit {
 }
 
 /// The first place a ray from `origin` along `direction` (in the terrain's
-/// space) meets the ground within `max_distance`, from above or below.
+/// space) meets the ground within `max_distance`, from above or below,
+/// passing through holes.
 pub fn raycast(map: &Heightmap, origin: Vec3, direction: Vec3, max_distance: f32) -> Option<GroundHit> {
+    cast(map, origin, direction, max_distance, true)
+}
+
+/// As [`raycast`], but meeting the ground across holes as if they were not
+/// cut: where a brush that fills them is.
+pub fn raycast_whole(map: &Heightmap, origin: Vec3, direction: Vec3, max_distance: f32) -> Option<GroundHit> {
+    cast(map, origin, direction, max_distance, false)
+}
+
+fn cast(map: &Heightmap, origin: Vec3, direction: Vec3, max_distance: f32, holes: bool) -> Option<GroundHit> {
     let direction = direction.try_normalize()?;
     let [w, l] = map.size();
     let [low, high] = map.range();
@@ -50,7 +61,7 @@ pub fn raycast(map: &Heightmap, origin: Vec3, direction: Vec3, max_distance: f32
     let mut near = start;
     loop {
         let far = crossing[0].min(crossing[1]).min(end);
-        if let Some(hit) = quad_hit(map, cell, origin, direction, (near, far)) {
+        if let Some(hit) = quad_hit(map, cell, origin, direction, (near, far), holes) {
             return Some(hit);
         }
         if far >= end {
@@ -68,7 +79,14 @@ pub fn raycast(map: &Heightmap, origin: Vec3, direction: Vec3, max_distance: f32
 
 /// The two triangles of quad `cell`, tested if the ray's height across it
 /// (from `span.0` to `span.1` along it) overlaps the quad's.
-fn quad_hit(map: &Heightmap, [x, z]: [i64; 2], origin: Vec3, direction: Vec3, span: (f32, f32)) -> Option<GroundHit> {
+fn quad_hit(
+    map: &Heightmap,
+    [x, z]: [i64; 2],
+    origin: Vec3,
+    direction: Vec3,
+    span: (f32, f32),
+    holes: bool,
+) -> Option<GroundHit> {
     let corners = [map.sample(x, z), map.sample(x + 1, z), map.sample(x, z + 1), map.sample(x + 1, z + 1)];
     let low = corners.iter().copied().fold(f32::MAX, f32::min);
     let high = corners.iter().copied().fold(f32::MIN, f32::max);
@@ -82,8 +100,16 @@ fn quad_hit(map: &Heightmap, [x, z]: [i64; 2], origin: Vec3, direction: Vec3, sp
     let b = point(1, 0, corners[1]);
     let c = point(0, 1, corners[2]);
     let d = point(1, 1, corners[3]);
-    // Split from the low corner to the high, as the ground is (see `heights`).
-    let hits = [triangle(origin, direction, a, c, d), triangle(origin, direction, a, d, b)];
+    // Split from the low corner to the high, as the ground is (see `heights`); a triangle with a corner on a hole
+    // is cut away.
+    let hole = |dx: i64, dz: i64| holes && map.is_hole(x + dx, z + dz);
+    if hole(0, 0) || hole(1, 1) {
+        return None;
+    }
+    let hits = [
+        (!hole(0, 1)).then(|| triangle(origin, direction, a, c, d)).flatten(),
+        (!hole(1, 0)).then(|| triangle(origin, direction, a, d, b)).flatten(),
+    ];
     let (distance, normal) = hits.into_iter().flatten().min_by(|p, q| p.0.total_cmp(&q.0))?;
     Some(GroundHit { point: origin + direction * distance, distance, normal })
 }

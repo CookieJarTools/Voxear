@@ -11,6 +11,10 @@
 //! diagonal from a quad's lowest corner to its highest (from `(x, z)` to
 //! `(x + 1, z + 1)`), as physics splits its height fields, so what stands on
 //! the ground, what is drawn and what a ray hits agree.
+//!
+//! A sample can be a hole's: every triangle with a corner on it is cut away,
+//! drawn as nothing, and nothing stands on it or stops a ray there, as
+//! physics cuts its height fields.
 
 use std::sync::{
     Arc,
@@ -38,12 +42,17 @@ pub const LEAVES: u32 = TILE_QUADS / LEAF_QUADS;
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
+/// How many 32-bit words a tile's holes are kept in, a bit a sample.
+pub const HOLE_WORDS: usize = TILE_LEN.div_ceil(32);
+
 /// One tile's heights, in metres, row after row along z, each row along x;
-/// and the lowest and highest height in each of its blocks.
+/// the lowest and highest height in each of its blocks; and which of its
+/// samples are holes', if any are.
 #[derive(Clone, Debug, PartialEq)]
 pub struct HeightTile {
     samples: Box<[f32]>,
     leaves: [[f32; 2]; (LEAVES * LEAVES) as usize],
+    holes: Option<Box<[u32]>>,
 }
 
 impl HeightTile {
@@ -55,9 +64,33 @@ impl HeightTile {
     /// A tile from its `TILE_LEN` samples.
     pub fn from_samples(samples: Vec<f32>) -> Self {
         assert_eq!(samples.len(), TILE_LEN, "a tile has {TILE_LEN} samples");
-        let mut tile = Self { samples: samples.into_boxed_slice(), leaves: [[0.0; 2]; (LEAVES * LEAVES) as usize] };
+        let mut tile =
+            Self { samples: samples.into_boxed_slice(), leaves: [[0.0; 2]; (LEAVES * LEAVES) as usize], holes: None };
         tile.measure();
         tile
+    }
+
+    /// The same tile with holes at the samples whose bits are set, `HOLE_WORDS`
+    /// words of them, or none.
+    pub fn with_holes(mut self, holes: Option<Box<[u32]>>) -> Self {
+        if let Some(bits) = &holes {
+            assert_eq!(bits.len(), HOLE_WORDS, "a tile's holes are {HOLE_WORDS} words");
+        }
+        self.holes = holes.filter(|bits| bits.iter().any(|&word| word != 0));
+        self
+    }
+
+    /// Its holes, a bit a sample, row after row; `None` when it has none.
+    pub fn holes(&self) -> Option<&[u32]> {
+        self.holes.as_deref()
+    }
+
+    /// Whether sample `(x, z)` of the tile is a hole's.
+    pub fn is_hole(&self, x: u32, z: u32) -> bool {
+        self.holes.as_ref().is_some_and(|bits| {
+            let index = (z * TILE_SAMPLES + x) as usize;
+            bits[index / 32] >> (index % 32) & 1 != 0
+        })
     }
 
     pub fn samples(&self) -> &[f32] {
@@ -225,6 +258,31 @@ impl Heightmap {
         let tx = (x / TILE_QUADS).min(self.tiles_x - 1);
         let tz = (z / TILE_QUADS).min(self.tiles_z - 1);
         self.tile(tx, tz).get(x - tx * TILE_QUADS, z - tz * TILE_QUADS)
+    }
+
+    /// Whether sample `(x, z)` of the whole terrain is a hole's, each clamped
+    /// to its edges.
+    pub fn is_hole(&self, x: i64, z: i64) -> bool {
+        let [qx, qz] = self.quads();
+        let x = x.clamp(0, i64::from(qx)) as u32;
+        let z = z.clamp(0, i64::from(qz)) as u32;
+        let tx = (x / TILE_QUADS).min(self.tiles_x - 1);
+        let tz = (z / TILE_QUADS).min(self.tiles_z - 1);
+        self.tile(tx, tz).is_hole(x - tx * TILE_QUADS, z - tz * TILE_QUADS)
+    }
+
+    /// Whether any tile has holes.
+    pub fn has_holes(&self) -> bool {
+        self.tiles.iter().any(|tile| tile.holes.is_some())
+    }
+
+    /// Whether the ground under `(x, z)`, in metres from the corner, is cut
+    /// away: the triangle there has a corner on a hole's sample.
+    pub fn cut_at(&self, x: f32, z: f32) -> bool {
+        let ([ix, iz], [tx, tz]) = self.quad_at(x, z);
+        self.is_hole(ix, iz)
+            || self.is_hole(ix + 1, iz + 1)
+            || if tz > tx { self.is_hole(ix, iz + 1) } else { self.is_hole(ix + 1, iz) }
     }
 
     /// The quad under `(x, z)`, in metres from the corner, and how far

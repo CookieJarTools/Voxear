@@ -2293,7 +2293,7 @@ impl Editor {
             && !self.ui.wants_keyboard()
             && let winit::keyboard::Key::Character(text) = &key.logical_key
             && matches!(text.as_str(), "[" | "]" | "{" | "}")
-            && crate::terrain_props::ui(&self.game.engine.world).tool == crate::terrain_props::TerrainTool::Sculpt
+            && crate::terrain_props::ui(&self.game.engine.world).tool.brushes()
         {
             // [ and ] size the terrain brush, and with Shift its strength, as painting tools do.
             let brush = &mut crate::terrain_props::ui_mut(&mut self.game.engine.world).brush;

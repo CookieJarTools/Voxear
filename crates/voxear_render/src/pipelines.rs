@@ -546,6 +546,8 @@ impl Pipelines {
                 cull: vk::CullModeFlags::NONE,
                 depth_bias: Some(SHADOW_BIAS),
                 depth_clamp: true,
+                // Its fragment shader cuts out the holes.
+                fragment_entry: Some(c"terrainShadowFragment"),
                 ..GraphicsPipelineDesc::depth_only("Shadows (terrain)", terrain, c"terrainShadowVertex", DEPTH_FORMAT)
             })?,
             // The sea's spray: particles that read the waves and the foam, so with the sea's shaders.

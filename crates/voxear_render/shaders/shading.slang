@@ -931,12 +931,20 @@ FragmentOut fragmentMain(VertexOut input)
     float4 metalRough = sampleTexture(material.metallicRoughnessTexture, input.uv);
     float metallic = material.metallic * metalRough.b;
     float roughness = material.roughness * metalRough.g;
+#ifdef TERRAIN_SHADING
+    // A terrain's own surfaces in place of its material's (terrain.slang).
+    float3 terrainNormal;
+    bool terrainSurfaced = terrainShading(input, base, metallic, roughness, terrainNormal);
+#endif
     float3 origin = buffers()->instances[input.instance].model.c3.xyz;
     seasonalSurface(frame, material, origin, shapeNormal(input, material), base.rgb, roughness);
     waterWetSurface(frame, input.worldPosition, shapeNormal(input, material), base.rgb, roughness);
     float3 emission =
         material.emissive * sampleTexture(material.emissiveTexture, input.uv).rgb * glowAmount(frame, material, origin);
     float3 normal = surfaceNormal(input, material);
+#ifdef TERRAIN_SHADING
+    normal = terrainSurfaced ? terrainNormal : normal;
+#endif
     SurfaceOutput surface = materialSurface(base.rgb, base.a, normal, metallic, roughness, emission);
     if (custom)
     {

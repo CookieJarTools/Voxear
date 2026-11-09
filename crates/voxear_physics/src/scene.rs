@@ -823,7 +823,13 @@ impl PhysicsScene {
                     self.world.release_shape(shape);
                     self.owners.remove(&body);
                 }
-                let made = self.world.heightfield_shape(tile.samples(), voxear_terrain::TILE_SAMPLES, map.spacing());
+                // A hole's samples have no ground, which cuts away every triangle touching them, as it is drawn.
+                let holed: Option<Vec<f32>> = tile.holes().map(|_| {
+                    let side = voxear_terrain::TILE_SAMPLES;
+                    (0..side * side).map(|i| if tile.is_hole(i % side, i / side) { f32::MAX } else { tile.samples()[i as usize] }).collect()
+                });
+                let samples = holed.as_deref().unwrap_or(tile.samples());
+                let made = self.world.heightfield_shape(samples, voxear_terrain::TILE_SAMPLES, map.spacing());
                 let Some(shape) = made else {
                     self.terrains.get_mut(&entity).expect("kept").tiles[index] = None;
                     continue;

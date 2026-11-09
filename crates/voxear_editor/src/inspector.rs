@@ -1089,7 +1089,7 @@ impl Inspector {
             }
             // A Terrain's tools come first, as in Unity, and under Layers its layers, the picked one's settings after.
             if *part == Part::Terrain {
-                self.terrain_panel = Some(crate::terrain_panel::TerrainPanel::new(ui, rows, world, entity));
+                self.terrain_panel = Some(crate::terrain_panel::TerrainPanel::new(ui, rows, game, entity));
             }
             // A LOD Group's bar of its levels comes first, as in Unity, and only the selected level's settings show.
             if *part == Part::LodGroup
@@ -1870,6 +1870,10 @@ impl Inspector {
         let mut items: Vec<(MenuItem, Option<RowAction>)>;
         if let Some(add) = self.add.filter(|&add| ui.clicked(add)) {
             return Some(RowAction::BrowseComponents(add));
+        }
+        // Add Surface picks the new surface's material, with the picker's search.
+        if let Some(add) = self.terrain_panel.as_ref().and_then(|panel| panel.add_surface_clicked(ui)) {
+            return Some(RowAction::Browse(Prop::Terrain(crate::terrain_props::TerrainField::NewSurface), add));
         }
         let overrides_button = self.prefab_buttons.as_ref().and_then(|buttons| buttons.overrides);
         let (owner, at) = if let Some(button) = self.transform_menu.filter(|&b| ui.clicked(b)) {

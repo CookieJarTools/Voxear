@@ -110,3 +110,63 @@ fn a_terrain_without_heights_is_made_from_its_layers_and_heights_made_from_other
     let terrain = game.engine.world.query_ref::<&Terrain>().into_iter().next().expect("the field").clone();
     assert_eq!(terrain.heights.height_at(64.0, 64.0), 7.0, "read as written");
 }
+
+#[test]
+fn surfaces_and_holes_are_made_from_the_file_and_shares_kept_beside_the_heights_are_read_as_written() {
+    use std::sync::Arc;
+    use voxear_terrain::{
+        layers::Mask,
+        raster::{Rasters, write_rasters},
+        surfaces::{Cover, Surface, WeightTile, Weights, hash_surfaces},
+    };
+    let dir = project();
+    // The stamped hill, grass everywhere, snow from 5 m up, and a hole raster cut round (20, 20).
+    let mut file = TerrainFile::parse(STAMPED).unwrap();
+    let mut snow = Surface::new(None);
+    snow.cover = Cover::Rules;
+    snow.mask = Mask { height: Some([5.0, 100.0]), slope: None, feather: 0.5 };
+    file.surfaces = vec![Surface { cover: Cover::Everywhere, ..Surface::new(None) }, snow];
+    file.holes = 3;
+    let mut rasters = Rasters::default();
+    let hole = rasters.tile_mut(3, 0, 0);
+    for z in 36..=44 {
+        for x in 36..=44 {
+            hole[z * voxear_terrain::TILE_SAMPLES as usize + x] = 1.0;
+        }
+    }
+    std::fs::write(dir.path().join("Terrains/Field.terrain"), file.to_text()).unwrap();
+    std::fs::write(dir.path().join("Terrains/Field.layers"), write_rasters(&rasters)).unwrap();
+    std::fs::remove_file(dir.path().join("Terrains/Field.heights")).unwrap();
+    let start = |dir: &tempfile::TempDir| {
+        let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
+        game.start(None).unwrap();
+        game
+    };
+    // The field's corner is at (-64, 2, -64): its (20, 20) is (-44, -44) in the world.
+    let game = start(&dir);
+    let world = &game.engine.world;
+    assert!(voxear_terrain::ground_at(world, -44.0, -44.0).is_none(), "a hole there");
+    assert!(voxear_terrain::ground_at(world, -40.0, -44.0).is_some(), "ground beside it");
+    assert_eq!(voxear_terrain::ground_at(world, 0.0, 0.0).unwrap().surface, 1, "snow on the hill");
+    assert_eq!(voxear_terrain::ground_at(world, -54.0, 40.0).unwrap().surface, 0, "grass below");
+    let terrain = world.query_ref::<&Terrain>().into_iter().next().unwrap().clone();
+
+    // Shares written beside heights for these surfaces are read as written: here all snow.
+    let marked = Weights::from_tiles(1, 1, vec![Arc::new(WeightTile::all(1))]);
+    let bytes = voxear_terrain::file::write_ground(
+        &terrain.heights,
+        file.shape_hash(),
+        Some((&marked, hash_surfaces(&file.surfaces))),
+    );
+    std::fs::write(dir.path().join("Terrains/Field.heights"), &bytes).unwrap();
+    let game = start(&dir);
+    let world = &game.engine.world;
+    assert_eq!(voxear_terrain::ground_at(world, -54.0, 40.0).unwrap().surface, 1, "read as written");
+    assert!(voxear_terrain::ground_at(world, -44.0, -44.0).is_none(), "the hole kept in the heights");
+
+    // Surfaces that cover elsewhere since are worked out again: snow from 50 m up covers nothing here.
+    file.surfaces[1].mask.height = Some([50.0, 100.0]);
+    std::fs::write(dir.path().join("Terrains/Field.terrain"), file.to_text()).unwrap();
+    let game = start(&dir);
+    assert_eq!(voxear_terrain::ground_at(&game.engine.world, 0.0, 0.0).unwrap().surface, 0);
+}

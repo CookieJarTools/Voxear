@@ -5,6 +5,9 @@
 //! looks at its neighbours (smoothing, a slope mask) sees past the tile's
 //! edge. Only the tiles a change reaches are made again; the rest are kept.
 //!
+//! A terrain's holes are cut into each tile as it is made, from their
+//! raster.
+//!
 //! While one layer is being edited (a stamp dragged, a sculpt layer
 //! painted), the ground below it is kept for each tile it reaches, so each
 //! change makes only that layer and the ones above it again.
@@ -19,7 +22,7 @@ use std::{
 
 use crate::{
     file::TerrainFile,
-    heights::{HeightTile, Heightmap, TILE_LEN, TILE_QUADS, TILE_SAMPLES},
+    heights::{HOLE_WORDS, HeightTile, Heightmap, TILE_LEN, TILE_QUADS, TILE_SAMPLES},
     import::Greys,
     layers::{Area, Layer, LayerKind, hash_layers, smoothstep},
     noise,
@@ -121,7 +124,8 @@ impl Compositor {
                         for layer in &file.layers[start..] {
                             apply(layer, &mut padded, (tx, tz), spacing, file, sources);
                         }
-                        made.lock().expect("never poisoned").push((tx, tz, HeightTile::from_samples(inner(&padded))));
+                        let tile = HeightTile::from_samples(inner(&padded)).with_holes(hole_bits(file, sources.rasters, tx, tz));
+                        made.lock().expect("never poisoned").push((tx, tz, tile));
                     }
                 });
             }
@@ -197,6 +201,22 @@ fn tiles_under(areas: &[Area], tiles: u32, spacing: f32) -> Vec<(u32, u32)> {
         }
     }
     found
+}
+
+/// Tile `(tx, tz)`'s holes, from the terrain's raster of them: a sample a
+/// hole's where it is more than a half.
+fn hole_bits(file: &TerrainFile, rasters: &Rasters, tx: u32, tz: u32) -> Option<Box<[u32]>> {
+    if file.holes == 0 {
+        return None;
+    }
+    let tile = rasters.tile(file.holes, tx, tz)?;
+    let mut bits = vec![0u32; HOLE_WORDS];
+    for (index, &value) in tile.iter().enumerate() {
+        if value > 0.5 {
+            bits[index / 32] |= 1 << (index % 32);
+        }
+    }
+    Some(bits.into())
 }
 
 /// A padded tile's own samples.
@@ -547,5 +567,19 @@ mod timing {
         let _ = compositor.composite(&file, &sources, Some(&whole), &Dirty::Areas(vec![[880.0, 880.0, 920.0, 920.0]]));
         let some = start.elapsed();
         eprintln!("256 tiles from 4 layers: {all:?}; a 40 m change: {some:?}");
+
+        // Grass everywhere, rock on slopes and snow up high, their edges broken up, and their shares worked out.
+        use crate::surfaces::{Cover, Surface, weigh};
+        let rules = |mask: crate::layers::Mask| Surface { cover: Cover::Rules, mask, breakup: 3.0, ..Surface::new(None) };
+        let rock = rules(crate::layers::Mask { height: None, slope: Some([30.0, 90.0]), feather: 5.0 });
+        let snow = rules(crate::layers::Mask { height: Some([80.0, 1000.0]), slope: None, feather: 6.0 });
+        let file = TerrainFile { surfaces: vec![Surface::new(None), rock, snow], ..file };
+        let start = std::time::Instant::now();
+        let shares = weigh(&file, &whole, &rasters, None, &Dirty::All).unwrap();
+        let all = start.elapsed();
+        let start = std::time::Instant::now();
+        let _ = weigh(&file, &whole, &rasters, Some(&shares), &Dirty::Areas(vec![[880.0, 880.0, 920.0, 920.0]]));
+        let some = start.elapsed();
+        eprintln!("shares of 3 surfaces over 256 tiles: {all:?}; over a 40 m change: {some:?}");
     }
 }

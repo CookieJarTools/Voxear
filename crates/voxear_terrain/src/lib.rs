@@ -21,6 +21,7 @@ pub mod lod;
 pub mod noise;
 pub mod raster;
 pub mod ray;
+pub mod surfaces;
 
 use std::sync::Arc;
 
@@ -30,10 +31,14 @@ use voxear_core::math::Vec3;
 use voxear_ecs::{Component, Entity, World};
 use voxear_scene::{Destroying, Transform, WorldTransform};
 
-/// A stretch of ground: its heights, and how it is drawn.
+/// A stretch of ground: its heights, its surfaces' shares, and how it is
+/// drawn.
 #[derive(Clone, Debug)]
 pub struct Terrain {
     pub heights: Arc<Heightmap>,
+    /// Each sample's surfaces and their shares (see `surfaces`); none for
+    /// ground drawn with one material.
+    pub weights: Option<Arc<surfaces::Weights>>,
     /// Out to how far from the camera the ground is drawn at its finest, in
     /// metres; each coarser level is drawn out twice as far again.
     pub detail_distance: f32,
@@ -46,6 +51,10 @@ impl Component for Terrain {}
 impl PartialEq for Terrain {
     fn eq(&self, other: &Self) -> bool {
         (Arc::ptr_eq(&self.heights, &other.heights) || self.heights == other.heights)
+            && match (&self.weights, &other.weights) {
+                (Some(a), Some(b)) => Arc::ptr_eq(a, b) || a == b,
+                (a, b) => a.is_none() && b.is_none(),
+            }
             && self.detail_distance == other.detail_distance
             && self.cast_shadows == other.cast_shadows
     }
@@ -55,7 +64,12 @@ impl Terrain {
     pub const DEFAULT_DETAIL_DISTANCE: f32 = 80.0;
 
     pub fn new(heights: Heightmap) -> Self {
-        Self { heights: Arc::new(heights), detail_distance: Self::DEFAULT_DETAIL_DISTANCE, cast_shadows: true }
+        Self {
+            heights: Arc::new(heights),
+            weights: None,
+            detail_distance: Self::DEFAULT_DETAIL_DISTANCE,
+            cast_shadows: true,
+        }
     }
 }
 
@@ -65,13 +79,15 @@ pub fn corner(transform: &Transform, placed: Option<&WorldTransform>) -> Vec3 {
     placed.map_or(transform.position, |world| world.0.w_axis.truncate())
 }
 
-/// The ground under a point: how high it is, which way it faces, and the
-/// terrain it is on.
+/// The ground under a point: how high it is, which way it faces, the
+/// terrain it is on, and which of its surfaces is most of it there (0 for
+/// a terrain of one material).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Ground {
     pub height: f32,
     pub normal: Vec3,
     pub terrain: Entity,
+    pub surface: usize,
 }
 
 /// Every terrain in `world`, with its corner.
@@ -85,14 +101,15 @@ pub fn terrains(world: &World) -> Vec<(Entity, &Terrain, Vec3)> {
 }
 
 /// The ground at `(x, z)` in the world, on the first terrain that reaches
-/// there.
+/// there and has no hole there.
 pub fn ground_at(world: &World, x: f32, z: f32) -> Option<Ground> {
     terrains(world).into_iter().find_map(|(entity, terrain, corner)| {
         let (lx, lz) = (x - corner.x, z - corner.z);
-        terrain.heights.contains(lx, lz).then(|| Ground {
+        (terrain.heights.contains(lx, lz) && !terrain.heights.cut_at(lx, lz)).then(|| Ground {
             height: corner.y + terrain.heights.height_at(lx, lz),
             normal: terrain.heights.normal_at(lx, lz),
             terrain: entity,
+            surface: terrain.weights.as_ref().map_or(0, |weights| weights.surface_at(terrain.heights.spacing(), lx, lz)),
         })
     })
 }

@@ -10,7 +10,10 @@
 //! heights where it falls and sliding onto the next level's grid as it
 //! nears that level's distance. The ground is shaded as any mesh is, by the
 //! forward passes' fragment shaders, with the terrain's material repeated
-//! every `texture_size` metres.
+//! every `texture_size` metres, or with its surfaces: each sample's four
+//! largest shares, kept beside its heights (with which samples are holes',
+//! a bit each), blended between the samples round each pixel and by the
+//! surfaces' height pictures.
 //!
 //! Terrain is drawn before the depth pyramid, with what was visible last
 //! frame, so it hides what is behind hills from the late cull. For the
@@ -26,8 +29,9 @@ use voxear_ecs::{Component, Entity, World};
 use voxear_rhi::{Buffer, Frames, Gpu, MemoryLocation, Retired, vk};
 use voxear_terrain::{
     HeightTile, Heightmap, TILE_QUADS,
-    heights::TILE_LEN,
+    heights::{HOLE_WORDS, TILE_LEN},
     lod::{LodRanges, LodTree, PATCH_QUADS, Patch},
+    surfaces::{MAX_SURFACES, WeightTile},
 };
 
 use crate::{
@@ -64,17 +68,41 @@ const PROXIES_A_FRAME: usize = 8;
 const PROXY_SETTLE: u64 = 20;
 
 /// How a terrain looks: its material, its pictures repeated every
-/// `texture_size` metres.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// `texture_size` metres; or its surfaces, in the order its shares number
+/// them, where it has any.
+#[derive(Clone, Debug, PartialEq)]
 pub struct TerrainLook {
     pub material: MaterialHandle,
     pub texture_size: f32,
+    pub surfaces: Arc<[SurfaceLook]>,
 }
 
 impl Component for TerrainLook {}
 
 impl TerrainLook {
     pub const DEFAULT_TEXTURE_SIZE: f32 = 4.0;
+
+    /// A terrain drawn with `material` alone.
+    pub fn new(material: MaterialHandle, texture_size: f32) -> Self {
+        Self { material, texture_size, surfaces: Arc::from([]) }
+    }
+
+    /// What the GI's rays see it as: its first surface, or its material.
+    fn seen(&self) -> (MaterialHandle, f32) {
+        self.surfaces.first().map_or((self.material, self.texture_size), |surface| (surface.material, surface.size))
+    }
+}
+
+/// How one of a terrain's surfaces looks: its material, its pictures
+/// repeated every `size` metres, how sharply it meets the others (0 to 1,
+/// by their height pictures), and whether it is drawn from the side too on
+/// steep ground.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SurfaceLook {
+    pub material: MaterialHandle,
+    pub size: f32,
+    pub sharpness: f32,
+    pub triplanar: bool,
 }
 
 /// A terrain as `shaders/terrain.slang` reads it.
@@ -96,7 +124,34 @@ pub struct GpuTerrain {
     /// Each level's distances its vertices slide onto the next level's
     /// grid over, `[start, end]`.
     pub morph: [[f32; 2]; MAX_TERRAIN_LEVELS],
+    /// Its tiles' shares, two words a sample, as its heights are laid out.
+    pub weights: u64,
+    /// Its tiles' holes, `HOLE_WORDS` words a tile, a bit a sample.
+    pub holes: u64,
+    /// Its surfaces, `surface_count` of them; none for its material alone.
+    pub surfaces: u64,
+    pub surface_count: u32,
+    /// `TERRAIN_HOLES` when any of its tiles has holes.
+    pub flags: u32,
+    pub pad: [u32; 2],
 }
+
+/// A terrain's flag for having holes, so the shaders look for them.
+const TERRAIN_HOLES: u32 = 1;
+
+/// A surface as `shaders/terrain.slang` reads it.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuTerrainSurface {
+    pub material: u32,
+    /// One over its pictures' size in metres.
+    pub uv_scale: f32,
+    pub sharpness: f32,
+    /// `SURFACE_TRIPLANAR` to be drawn from the side too on steep ground.
+    pub flags: u32,
+}
+
+const SURFACE_TRIPLANAR: u32 = 1;
 
 /// A patch as the vertex shader reads it: its corner in the terrain's
 /// space, how wide, and its level and terrain, `level | terrain << 8`.
@@ -111,18 +166,26 @@ pub struct GpuTerrainPatch {
 /// Where each draw list's patches start, then how many it has.
 const LISTS_SIZE: usize = 2 * LIST_COUNT as usize * 4;
 const TERRAINS_AT: usize = LISTS_SIZE;
-const PATCHES_AT: usize = TERRAINS_AT + MAX_TERRAINS * size_of::<GpuTerrain>();
+/// Each terrain's surfaces, `MAX_SURFACES` places each.
+const SURFACES_AT: usize = TERRAINS_AT + MAX_TERRAINS * size_of::<GpuTerrain>();
+const PATCHES_AT: usize = SURFACES_AT + MAX_TERRAINS * MAX_SURFACES * size_of::<GpuTerrainSurface>();
 
 /// How large a view's buffer of terrains and patches is.
 pub const FRAME_SIZE: u64 = (PATCHES_AT + MAX_TERRAIN_PATCHES * size_of::<GpuTerrainPatch>()) as u64;
 
-/// One terrain's heights on the GPU.
+/// One terrain's ground on the GPU: one buffer holding every tile's heights,
+/// then every tile's holes, then, where it has surfaces, every tile's
+/// shares.
 struct Resident {
     tiles: [u32; 2],
     spacing: f32,
-    heights: Buffer,
-    /// The tile each slot holds now, by pointer.
+    ground: Buffer,
+    /// Whether the buffer has room for shares.
+    weighted: bool,
+    /// The tile each slot holds now, by pointer, heights and holes.
     uploaded: Vec<Option<Arc<HeightTile>>>,
+    /// The shares each slot holds now, by pointer.
+    uploaded_weights: Vec<Option<Arc<WeightTile>>>,
     tree: Arc<LodTree>,
     /// Each tile's mesh for rays, and the tile it was made from.
     proxies: Vec<Option<(Arc<HeightTile>, MeshHandle)>>,
@@ -139,7 +202,12 @@ pub(crate) struct Drawn {
     pub tiles: [u32; 2],
     pub spacing: f32,
     pub heights: u64,
-    /// Its heights in this frame's graph, for every view to wait on.
+    pub holes: u64,
+    /// Its shares, where it has surfaces and shares for them.
+    pub weights: Option<u64>,
+    pub has_holes: bool,
+    /// Its heights, holes and shares in this frame's graph, for every view
+    /// to wait on.
     pub heights_id: Option<BufferId>,
     pub tree: Arc<LodTree>,
     pub ranges: LodRanges,
@@ -152,13 +220,30 @@ pub(crate) struct Drawn {
     key: u64,
 }
 
+/// A copy into a terrain's buffer: from where in the staging buffer, into
+/// which terrain's, where and how much.
+#[derive(Clone)]
+struct Copy {
+    from: u64,
+    key: u64,
+    to: u64,
+    size: u64,
+}
+
+/// Where in a terrain's buffer of `count` tiles its heights, holes and
+/// shares start, and how large it is with or without the shares.
+fn regions(count: usize) -> [u64; 4] {
+    let holes = (count * TILE_LEN * 4) as u64;
+    let weights = holes + (count * HOLE_WORDS * 4) as u64;
+    [0, holes, weights, weights + (count * TILE_LEN * 8) as u64]
+}
+
 /// Every terrain's heights on the GPU, and what to copy in this frame.
 #[derive(Default)]
 pub(crate) struct Terrains {
     resident: HashMap<u64, Resident>,
-    /// What this frame copies: from where in its staging buffer, into which
-    /// terrain's buffer and where.
-    copies: Vec<(u64, u64, u64)>,
+    /// What this frame copies.
+    copies: Vec<Copy>,
     staging: Option<Buffer>,
     drawn: Vec<Drawn>,
     /// The patch grid's indices, made with the first terrain.
@@ -183,12 +268,13 @@ impl Terrains {
             frames.retire(Retired::Buffer(staging));
             for resident in self.resident.values_mut() {
                 resident.uploaded.iter_mut().for_each(|held| *held = None);
+                resident.uploaded_weights.iter_mut().for_each(|held| *held = None);
             }
         }
         let features = world.resource::<crate::RenderFeatures>().copied().unwrap_or_default();
         let found = if features.terrain { voxear_terrain::terrains(world) } else { Vec::new() };
         let any_hidden = world.query_ref::<&voxear_scene::Hidden>().into_iter().next().is_some();
-        let mut staged: Vec<f32> = Vec::new();
+        let mut staged: Vec<u8> = Vec::new();
         let mut proxies_left = PROXIES_A_FRAME;
         if !found.is_empty() && self.grid.is_none() {
             let indices = grid_indices();
@@ -204,33 +290,50 @@ impl Terrains {
                 continue;
             }
             let map = &terrain.heights;
-            let look = world.get::<TerrainLook>(entity).copied().unwrap_or(TerrainLook {
-                material: assets.default_material,
-                texture_size: TerrainLook::DEFAULT_TEXTURE_SIZE,
-            });
+            let look = world
+                .get::<TerrainLook>(entity)
+                .cloned()
+                .unwrap_or_else(|| TerrainLook::new(assets.default_material, TerrainLook::DEFAULT_TEXTURE_SIZE));
             let key = map.id();
+            let weights = terrain.weights.as_ref().filter(|weights| weights.fits(map));
             let fits = self.resident.get(&key).is_some_and(|resident| {
-                resident.tiles == [map.tiles_x(), map.tiles_z()] && resident.spacing == map.spacing()
+                resident.tiles == [map.tiles_x(), map.tiles_z()]
+                    && resident.spacing == map.spacing()
+                    && resident.weighted == weights.is_some()
             });
             if !fits {
                 if let Some(old) = self.resident.remove(&key) {
                     retire(old, assets, frames, frame_index);
                 }
-                self.resident.insert(key, Resident::new(gpu, map)?);
+                self.resident.insert(key, Resident::new(gpu, map, weights.is_some())?);
             }
             let resident = self.resident.get_mut(&key).expect("resident");
             resident.seen = frame_index;
             let mut changed = false;
+            let [_, holes_at, weights_at, _] = regions(map.tiles().len());
+            let mut stage = |bytes: &[u8], to: u64| {
+                let from = staged.len() as u64;
+                staged.extend_from_slice(bytes);
+                self.copies.push(Copy { from, key, to, size: bytes.len() as u64 });
+            };
+            let no_holes = [0u32; HOLE_WORDS];
             for (index, tile) in map.tiles().iter().enumerate() {
                 if resident.uploaded[index].as_ref().is_some_and(|held| Arc::ptr_eq(held, tile)) {
                     continue;
                 }
-                let from = (staged.len() * 4) as u64;
-                staged.extend_from_slice(tile.samples());
-                self.copies.push((from, key, (index * TILE_LEN * 4) as u64));
+                stage(bytemuck::cast_slice(tile.samples()), (index * TILE_LEN * 4) as u64);
+                let holes = tile.holes().unwrap_or(&no_holes);
+                stage(bytemuck::cast_slice(holes), holes_at + (index * HOLE_WORDS * 4) as u64);
                 resident.uploaded[index] = Some(tile.clone());
                 resident.changed[index] = frame_index;
                 changed = true;
+            }
+            for (index, tile) in weights.map_or(&[][..], |weights| weights.tiles()).iter().enumerate() {
+                if resident.uploaded_weights[index].as_ref().is_some_and(|held| Arc::ptr_eq(held, tile)) {
+                    continue;
+                }
+                stage(bytemuck::cast_slice(tile.samples()), weights_at + (index * TILE_LEN * 8) as u64);
+                resident.uploaded_weights[index] = Some(tile.clone());
             }
             if changed {
                 resident.tree = Arc::new(LodTree::new(map));
@@ -246,7 +349,7 @@ impl Terrains {
                 }
                 proxies_left -= 1;
                 let (tx, tz) = (index as u32 % map.tiles_x(), index as u32 / map.tiles_x());
-                let mesh = proxy(map, tx, tz, 1.0 / look.texture_size.max(0.01));
+                let mesh = proxy(map, tx, tz, 1.0 / look.seen().1.max(0.01));
                 let handle = assets.add_mesh_with_lods(gpu, &mesh, &crate::lod::full_lod(&mesh))?;
                 if let Some((_, old)) = resident.proxies[index].replace((tile.clone(), handle)) {
                     assets.free_mesh(old, frame_index);
@@ -259,7 +362,10 @@ impl Terrains {
                 corner,
                 tiles: resident.tiles,
                 spacing: resident.spacing,
-                heights: resident.heights.address,
+                heights: resident.ground.address,
+                holes: resident.ground.address + holes_at,
+                weights: weights.map(|_| resident.ground.address + weights_at),
+                has_holes: map.has_holes(),
                 heights_id: None,
                 tree,
                 ranges,
@@ -293,16 +399,16 @@ impl Terrains {
         let mut ids = HashMap::new();
         for drawn in &mut self.drawn {
             let resident = &self.resident[&drawn.key];
-            let id = *ids.entry(drawn.key).or_insert_with(|| fg.import_buffer(&resident.heights));
+            let id = *ids.entry(drawn.key).or_insert_with(|| fg.import_buffer(&resident.ground));
             drawn.heights_id = Some(id);
         }
         if let Some(staging) = self.staging.take() {
             let copies: Vec<(vk::Buffer, vk::BufferCopy)> = self
                 .copies
                 .iter()
-                .map(|&(from, key, to)| {
-                    let region = vk::BufferCopy { src_offset: from, dst_offset: to, size: (TILE_LEN * 4) as u64 };
-                    (self.resident[&key].heights.handle, region)
+                .map(|copy| {
+                    let region = vk::BufferCopy { src_offset: copy.from, dst_offset: copy.to, size: copy.size };
+                    (self.resident[&copy.key].ground.handle, region)
                 })
                 .collect();
             let written: Vec<(BufferId, BufferAccess)> =
@@ -320,7 +426,7 @@ impl Terrains {
 
     pub fn destroy(&mut self, gpu: &Gpu) {
         for (_, resident) in self.resident.drain() {
-            gpu.destroy_buffer(resident.heights);
+            gpu.destroy_buffer(resident.ground);
         }
         if let Some(grid) = self.grid.take() {
             gpu.destroy_buffer(grid);
@@ -332,16 +438,19 @@ impl Terrains {
 }
 
 impl Resident {
-    fn new(gpu: &Gpu, map: &Heightmap) -> Result<Self> {
+    fn new(gpu: &Gpu, map: &Heightmap, weighted: bool) -> Result<Self> {
         let count = map.tiles().len();
         let usage = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
-        let size = (count * TILE_LEN * 4) as u64;
-        let heights = gpu.create_buffer("terrain heights", size, usage, MemoryLocation::GpuOnly)?;
+        let [_, _, without, with] = regions(count);
+        let size = if weighted { with } else { without };
+        let ground = gpu.create_buffer("terrain ground", size, usage, MemoryLocation::GpuOnly)?;
         Ok(Self {
             tiles: [map.tiles_x(), map.tiles_z()],
             spacing: map.spacing(),
-            heights,
+            ground,
+            weighted,
             uploaded: vec![None; count],
+            uploaded_weights: vec![None; count],
             tree: Arc::new(LodTree::new(map)),
             proxies: vec![None; count],
             changed: vec![0; count],
@@ -351,7 +460,7 @@ impl Resident {
 }
 
 fn retire(resident: Resident, assets: &mut Assets, frames: &mut Frames, frame_index: u64) {
-    frames.retire(Retired::Buffer(resident.heights));
+    frames.retire(Retired::Buffer(resident.ground));
     for (_, mesh) in resident.proxies.into_iter().flatten() {
         assets.free_mesh(mesh, frame_index);
     }
@@ -419,7 +528,7 @@ pub(crate) fn add_proxies(drawn: &[Drawn], extracted: &mut ExtractedFrame) {
                 prev_model: crate::gpu::cols(model),
                 normal: [normal.x_axis, normal.y_axis, normal.z_axis].map(|c| Vec4::from((c, 0.0)).to_array()),
                 mesh: mesh.0,
-                material: terrain.look.material.0,
+                material: terrain.look.seen().0.0,
                 flags: INSTANCE_RAYS_ONLY,
                 ..GpuInstance::default()
             });
@@ -450,6 +559,7 @@ pub(crate) fn gather(
     }
     let camera = Vec3::from(frame.camera_position);
     let mut records = Vec::with_capacity(drawn.len().min(MAX_TERRAINS));
+    let mut surfaces = vec![GpuTerrainSurface::default(); drawn.len().min(MAX_TERRAINS) * MAX_SURFACES];
     let mut lists: Vec<Vec<GpuTerrainPatch>> = vec![Vec::new(); LIST_COUNT as usize];
     let mut patches = Vec::new();
     for (number, terrain) in drawn.iter().take(MAX_TERRAINS).enumerate() {
@@ -457,6 +567,18 @@ pub(crate) fn gather(
         for (level, range) in terrain.ranges.morph.iter().take(MAX_TERRAIN_LEVELS).enumerate() {
             morph[level] = *range;
         }
+        // Surfaces only with their shares: until those are made, the material alone.
+        let looks = if terrain.weights.is_some() { &terrain.look.surfaces[..] } else { &[] };
+        let looks = &looks[..looks.len().min(MAX_SURFACES)];
+        for (place, look) in surfaces[number * MAX_SURFACES..].iter_mut().zip(looks) {
+            *place = GpuTerrainSurface {
+                material: look.material.0,
+                uv_scale: 1.0 / look.size.max(0.01),
+                sharpness: look.sharpness.clamp(0.0, 1.0),
+                flags: if look.triplanar { SURFACE_TRIPLANAR } else { 0 },
+            };
+        }
+        let surfaces_at = (SURFACES_AT + number * MAX_SURFACES * size_of::<GpuTerrainSurface>()) as u64;
         records.push(GpuTerrain {
             corner: terrain.corner.into(),
             spacing: terrain.spacing,
@@ -467,6 +589,12 @@ pub(crate) fn gather(
             uv_scale: 1.0 / terrain.look.texture_size.max(0.01),
             levels: terrain.tree.levels() as u32,
             morph,
+            weights: terrain.weights.unwrap_or(0),
+            holes: terrain.holes,
+            surfaces: buffer.address + surfaces_at,
+            surface_count: looks.len() as u32,
+            flags: if terrain.has_holes { TERRAIN_HOLES } else { 0 },
+            pad: [0; 2],
         });
         let local = camera - terrain.corner;
         let pack = |patch: &Patch| GpuTerrainPatch {
@@ -502,6 +630,7 @@ pub(crate) fn gather(
     }
     buffer.write(0, &header);
     buffer.write(TERRAINS_AT as u64, &records);
+    buffer.write(SURFACES_AT as u64, &surfaces);
     buffer.write(PATCHES_AT as u64, &all);
     let shadows = (0..CASCADES).any(|cascade| placed[LIST_SHADOW as usize + cascade].1 > 0);
     let heights = drawn.iter().filter_map(|terrain| terrain.heights_id).collect();
@@ -665,7 +794,8 @@ mod tests {
     #[test]
     fn a_views_terrain_buffer_holds_its_lists_records_and_patches() {
         const { assert!(TERRAINS_AT.is_multiple_of(8), "records hold addresses, so start on eight bytes") };
-        const { assert!(size_of::<GpuTerrain>() == 144) };
+        const { assert!(size_of::<GpuTerrain>() == 176) };
+        const { assert!(SURFACES_AT.is_multiple_of(16) && PATCHES_AT.is_multiple_of(16)) };
         const { assert!(FRAME_SIZE < 1 << 20) };
     }
 }

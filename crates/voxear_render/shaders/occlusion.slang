@@ -59,9 +59,20 @@ float4 depthFragment(VertexOut input) : SV_Target0
     float roughness = material.roughness * sampleTexture(material.metallicRoughnessTexture, input.uv).g;
     // Wet or snowy plants are as rough as the opaque passes shade them.
     float3 albedo = material.baseColor.rgb;
+#ifdef TERRAIN_SHADING
+    // A terrain's holes cut away, and its own surfaces' roughness and normal (terrain.slang).
+    float4 terrainBase = float4(albedo, 1.0);
+    float terrainMetallic = 0.0;
+    float3 terrainNormal;
+    bool terrainSurfaced = terrainShading(input, terrainBase, terrainMetallic, roughness, terrainNormal);
+    albedo = terrainBase.rgb;
+#endif
     float3 origin = buffers()->instances[input.instance].model.c3.xyz;
     seasonalSurface(push.frame, material, origin, shapeNormal(input, material), albedo, roughness);
     float3 normal = surfaceNormal(input, material);
+#ifdef TERRAIN_SHADING
+    normal = terrainSurfaced ? terrainNormal : normal;
+#endif
     // A custom shader's surface, cut out and as rough as shading has it.
     if (custom)
     {

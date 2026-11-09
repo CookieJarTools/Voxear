@@ -338,11 +338,13 @@ impl Released {
 }
 
 /// A terrain as its files have it: how large and how fine and its layers,
-/// its heights as they made them, and what its brushes painted.
+/// its heights as they made them, its surfaces' shares, and what its
+/// brushes painted.
 #[derive(Clone, Debug)]
 pub struct LoadedTerrain {
     pub file: voxear_terrain::file::TerrainFile,
     pub heights: Arc<voxear_terrain::Heightmap>,
+    pub weights: Option<Arc<voxear_terrain::surfaces::Weights>>,
     pub rasters: Arc<voxear_terrain::raster::Rasters>,
 }
 
@@ -1068,19 +1070,40 @@ impl Content {
             Err(_) => Default::default(),
         };
         let stored = match self.read(&voxear_terrain::file::heights_file(&path)) {
-            Ok(bytes) => Some(voxear_terrain::file::read_heights(&bytes).with_context(|| format!("reading {path}'s heights"))?),
+            Ok(bytes) => Some(voxear_terrain::file::read_ground(&bytes).with_context(|| format!("reading {path}'s heights"))?),
             Err(_) => None,
         };
+        let built = matches!(self.source, Source::Bundles(..));
+        let (stored, kept_weights) = match stored {
+            Some(stored) => (Some((stored.heights, stored.made_from)), stored.weights),
+            None => (None, None),
+        };
         // Heights made from these layers are used as they are; any others are made again from the layers.
-        let heights = match stored {
-            Some((heights, made_from)) if made_from == file.shape_hash() || made_from == 0 => file.fit(heights),
-            Some((heights, _)) if matches!(self.source, Source::Bundles(..)) => file.fit(heights),
+        let (heights, made_again) = match stored {
+            Some((heights, made_from)) if made_from == file.shape_hash() || made_from == 0 || built => {
+                let fits = |h: &voxear_terrain::Heightmap| h.tiles_x() == file.tiles() && h.spacing() == file.spacing();
+                let same = fits(&heights);
+                (file.fit(heights), !same)
+            }
             stored => {
                 let previous = stored.map(|(heights, _)| heights);
-                self.compose_terrain(&file, &rasters, previous.as_ref(), &voxear_terrain::composite::Compositor::default(), &voxear_terrain::composite::Dirty::All)
+                let dirty = voxear_terrain::composite::Dirty::All;
+                let compositor = voxear_terrain::composite::Compositor::default();
+                (self.compose_terrain(&file, &rasters, previous.as_ref(), &compositor, &dirty), true)
             }
         };
-        Ok(LoadedTerrain { heights: Arc::new(heights), file, rasters: Arc::new(rasters) })
+        // So with the shares: kept when worked out from these surfaces over these heights, or else again.
+        let surfaces = voxear_terrain::surfaces::hash_surfaces(&file.surfaces);
+        let weights = match kept_weights {
+            _ if file.surfaces.is_empty() => None,
+            Some((weights, weighed_from))
+                if !made_again && (weighed_from == surfaces || built) && weights.fits(&heights) =>
+            {
+                Some(weights)
+            }
+            _ => voxear_terrain::surfaces::weigh(&file, &heights, &rasters, None, &voxear_terrain::composite::Dirty::All),
+        };
+        Ok(LoadedTerrain { heights: Arc::new(heights), weights: weights.map(Arc::new), file, rasters: Arc::new(rasters) })
     }
 
     /// The ground `file`'s layers make, with what its brushes painted: the
@@ -1148,24 +1171,38 @@ impl Content {
         self.terrains.remove(&guid);
     }
 
-    /// Keeps `heights`, `file` and `rasters` as the terrain at `guid`'s, as
-    /// after the editor changed them, so what asks for it next gets these,
-    /// and marks it to be written, unless that is how it is already.
+    /// Keeps `file`, `terrain`'s heights and shares, and `rasters` as the
+    /// terrain at `guid`'s, as after the editor changed them, so what asks
+    /// for it next gets these, and marks it to be written, unless that is
+    /// how it is already.
     pub fn keep_terrain(
         &mut self,
         guid: AssetGuid,
         file: &voxear_terrain::file::TerrainFile,
-        heights: &Arc<voxear_terrain::Heightmap>,
+        terrain: &voxear_terrain::Terrain,
         rasters: &Arc<voxear_terrain::raster::Rasters>,
     ) {
+        let (heights, weights) = (&terrain.heights, &terrain.weights);
         let kept = self.terrains.get(&guid).and_then(Option::as_ref);
+        let same_weights = |kept: &LoadedTerrain| match (&kept.weights, weights) {
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            (a, b) => a.is_none() && b.is_none(),
+        };
         let same = |kept: &LoadedTerrain| {
-            kept.file == *file && Arc::ptr_eq(&kept.heights, heights) && Arc::ptr_eq(&kept.rasters, rasters)
+            kept.file == *file
+                && Arc::ptr_eq(&kept.heights, heights)
+                && same_weights(kept)
+                && Arc::ptr_eq(&kept.rasters, rasters)
         };
         if kept.is_some_and(|kept| same(kept)) {
             return;
         }
-        let loaded = LoadedTerrain { file: file.clone(), heights: heights.clone(), rasters: rasters.clone() };
+        let loaded = LoadedTerrain {
+            file: file.clone(),
+            heights: heights.clone(),
+            weights: weights.clone(),
+            rasters: rasters.clone(),
+        };
         self.terrains.insert(guid, Some(Arc::new(loaded)));
         self.unsaved_terrains.insert(guid);
     }
@@ -1807,6 +1844,15 @@ impl Content {
 
     pub fn material_source(&self, handle: MaterialHandle) -> Option<&MaterialSource> {
         self.material_sources.get(&handle)
+    }
+
+    /// The material `source` names, if it is loaded already: for what has no
+    /// renderer at hand to load it.
+    pub fn loaded_material(&self, source: &MaterialSource) -> Option<MaterialHandle> {
+        match source {
+            MaterialSource::Inline(data) => self.inline_materials.get(&data.key()).copied(),
+            MaterialSource::Asset(reference) => self.asset_materials.get(reference).copied(),
+        }
     }
 
     /// A sound asset's id, loading it now if it is not loaded, as its

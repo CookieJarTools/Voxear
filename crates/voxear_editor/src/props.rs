@@ -3520,6 +3520,7 @@ pub fn title(types: &ScriptTypes, prop: &Prop) -> String {
         Prop::UiPanelDocument => "UI Document".into(),
         Prop::LodObj(..) | Prop::LodAdd(_) => "Obj".into(),
         Prop::JointConnected => "Rigidbody".into(),
+        Prop::Terrain(field) if crate::terrain_props::is_picked(*field) => crate::terrain_props::label(*field).into(),
         Prop::Field { behaviour, path } => fields::kind_at(types, behaviour, path)
             .map_or_else(|| "Obj".into(), |kind| fields::takes(&kind).to_string()),
         _ => String::new(),

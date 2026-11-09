@@ -6,7 +6,7 @@ namespace Voxear;
 /// <summary>
 /// The level's ground: how high it is under a point, which way it faces there, and where a ray meets it, read from
 /// every Terrain's heights. It answers with or without physics, the same on every machine. Where no terrain reaches,
-/// <see cref="HeightAt"/> gives negative infinity.
+/// or in a hole cut in one, there is no ground: <see cref="HeightAt"/> gives negative infinity.
 /// <code>
 /// protected override void Update()
 /// {
@@ -21,7 +21,7 @@ public static unsafe class Terrain
 	/// <summary>Whether the level has a terrain.</summary>
 	public static bool Exists => Native.Api->TerrainCount() > 0;
 
-	/// <summary>How high the ground is under <paramref name="position"/>, or negative infinity off every terrain.</summary>
+	/// <summary>How high the ground is under <paramref name="position"/>, or negative infinity off every terrain or in a hole.</summary>
 	public static float HeightAt(Vector3 position)
 	{
 		return TryGetGround(position, out var ground) ? ground.Height : float.NegativeInfinity;

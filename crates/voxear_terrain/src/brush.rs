@@ -31,16 +31,21 @@ pub enum BrushKind {
     Terrace,
     /// Roughens the ground with noise.
     Noise,
+    /// Cuts holes in the ground, or fills them held inverted (Shift): a
+    /// way into a cave or a building below, where nothing is drawn and
+    /// nothing stands.
+    Holes,
 }
 
 impl BrushKind {
-    pub const ALL: [BrushKind; 6] = [
+    pub const ALL: [BrushKind; 7] = [
         BrushKind::Raise,
         BrushKind::Smooth,
         BrushKind::Flatten,
         BrushKind::SetHeight,
         BrushKind::Terrace,
         BrushKind::Noise,
+        BrushKind::Holes,
     ];
 
     pub fn name(self) -> &'static str {
@@ -51,7 +56,14 @@ impl BrushKind {
             BrushKind::SetHeight => "Set Height",
             BrushKind::Terrace => "Terrace",
             BrushKind::Noise => "Noise",
+            BrushKind::Holes => "Holes",
         }
+    }
+
+    /// Whether it paints into a Sculpt layer: Holes cuts the terrain's own
+    /// raster of holes, whatever layer is picked.
+    pub fn sculpts(self) -> bool {
+        self != BrushKind::Holes
     }
 }
 
@@ -154,6 +166,8 @@ pub fn dab(
                     let way = if inverted { -1.0 } else { 1.0 };
                     way * bump * strength * falloff * amount * RAISE_SPEED * 0.5
                 }
+                // Cut by `cut`, into the raster of holes.
+                BrushKind::Holes => 0.0,
             };
             if change != 0.0 {
                 add(rasters, raster, x, z, change);
@@ -163,9 +177,37 @@ pub fn dab(
     [x0 as f32 * spacing, z0 as f32 * spacing, x1 as f32 * spacing, z1 as f32 * spacing]
 }
 
+/// Cuts holes in the ground within `radius` metres of `at` (metres from
+/// the corner), or with `fill` (Shift) fills them, in the terrain's raster
+/// of holes, which must have a number (`TerrainFile::holes`). Each sample
+/// is wholly a hole's or not, so the edge is as sharp as the samples are
+/// fine. Returns the area it changed.
+pub fn cut(file: &TerrainFile, rasters: &mut Rasters, at: [f32; 2], radius: f32, fill: bool) -> Area {
+    let spacing = file.spacing();
+    let radius = radius.max(spacing * 0.5);
+    let quads = i64::from(file.tiles() * TILE_QUADS);
+    let first = |v: f32| (((v - radius) / spacing).floor() as i64).clamp(0, quads);
+    let last = |v: f32| (((v + radius) / spacing).ceil() as i64).clamp(0, quads);
+    let (x0, x1, z0, z1) = (first(at[0]), last(at[0]), first(at[1]), last(at[1]));
+    let raster = file.holes;
+    if raster != 0 {
+        let goal = if fill { 0.0 } else { 1.0 };
+        for z in z0..=z1 {
+            for x in x0..=x1 {
+                let distance = ((x as f32 * spacing - at[0]).powi(2) + (z as f32 * spacing - at[1]).powi(2)).sqrt();
+                let change = goal - rasters.sample(raster, x, z);
+                if distance <= radius && change != 0.0 {
+                    add(rasters, raster, x, z, change);
+                }
+            }
+        }
+    }
+    [x0 as f32 * spacing, z0 as f32 * spacing, x1 as f32 * spacing, z1 as f32 * spacing]
+}
+
 /// Adds `change` to sample `(x, z)` of a raster, in every tile that holds
 /// it: a sample on a tile's edge is in the tile beside it too.
-fn add(rasters: &mut Rasters, raster: u32, x: i64, z: i64, change: f32) {
+pub(crate) fn add(rasters: &mut Rasters, raster: u32, x: i64, z: i64, change: f32) {
     let quads = i64::from(TILE_QUADS);
     let tiles_along = |v: i64| {
         let tile = v / quads;
@@ -190,6 +232,7 @@ mod tests {
         composite::Dirty,
         layers::{Layer, LayerKind},
     };
+    use voxear_core::math::Vec3;
 
     fn none(_: &str) -> Option<std::sync::Arc<crate::import::Greys>> {
         None
@@ -262,5 +305,27 @@ mod tests {
         let smooth = Brush { kind: BrushKind::Smooth, radius: 4.0, strength: 1.0, ..Brush::default() };
         dab(&smooth, [200.0, 200.0], 0.2, false, 0.0, (&file, &compositor, pictures), (&mut spiky, 1));
         assert!(spiky.sample(1, 200, 200) < 5.0);
+    }
+
+    #[test]
+    fn holes_cut_the_ground_away_for_rays_and_what_stands_and_fill_again() {
+        let mut file = sculpted();
+        file.holes = 7;
+        let mut rasters = Rasters::default();
+        // On the line between two tiles, which share it.
+        cut(&file, &mut rasters, [256.0, 300.0], 3.0, false);
+        let compositor = Compositor::default();
+        let sources = Sources { pictures: &none, rasters: &rasters };
+        let ground = compositor.composite(&file, &sources, None, &Dirty::All);
+        assert!(ground.is_hole(256, 300) && ground.is_hole(254, 300) && !ground.is_hole(260, 300));
+        assert!(ground.tile(0, 1).is_hole(256, 44) && ground.tile(1, 1).is_hole(0, 44), "both tiles hold the edge");
+        assert!(ground.cut_at(256.5, 300.5) && !ground.cut_at(250.0, 300.0));
+        let down = crate::ray::raycast(&ground, Vec3::new(256.2, 50.0, 300.7), Vec3::NEG_Y, 100.0);
+        assert!(down.is_none(), "through the hole");
+        assert!(crate::ray::raycast(&ground, Vec3::new(240.0, 50.0, 300.0), Vec3::NEG_Y, 100.0).is_some());
+        cut(&file, &mut rasters, [256.0, 300.0], 3.0, true);
+        let sources = Sources { pictures: &none, rasters: &rasters };
+        let filled = compositor.composite(&file, &sources, Some(&ground), &Dirty::Areas(vec![[250.0, 295.0, 262.0, 305.0]]));
+        assert!(!filled.has_holes());
     }
 }

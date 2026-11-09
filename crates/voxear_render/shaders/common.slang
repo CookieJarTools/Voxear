@@ -918,7 +918,30 @@ struct Terrain
     uint levels;
     // Each level's [start, end] its vertices slide onto the next level's grid over.
     float2 morph[TERRAIN_MAX_LEVELS];
+    // Each tile's shares (terrain.slang), two words a sample: four surfaces' numbers, then their shares out of 255.
+    uint2* weights;
+    // Each tile's holes, TERRAIN_HOLE_WORDS words a tile, a bit a sample.
+    uint* holes;
+    TerrainSurface* surfaces;
+    uint surfaceCount;
+    // TERRAIN_HOLES when any tile has holes.
+    uint flags;
+    uint2 pad;
 };
+
+// One of a terrain's surfaces: its material, one over its pictures' size in metres, how sharply it meets the
+// others by their height pictures, and TERRAIN_SURFACE_TRIPLANAR to be drawn from the side on steep ground.
+struct TerrainSurface
+{
+    uint material;
+    float uvScale;
+    float sharpness;
+    uint flags;
+};
+
+static const uint TERRAIN_HOLE_WORDS = (TERRAIN_TILE_LEN + 31) / 32;
+static const uint TERRAIN_HOLES = 1;
+static const uint TERRAIN_SURFACE_TRIPLANAR = 1;
 
 // A patch: its corner in the terrain's space, how wide, and level | terrain << 8.
 struct TerrainPatch

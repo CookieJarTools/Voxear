@@ -118,7 +118,7 @@ pub use seasons::{Leaves, Season, SeasonLook, Seasons};
 pub use particles::{EmitShape, ParticleBlend, ParticlePlayback, ParticleSystem};
 pub use mist::{MAX_MIST_POINTS, MIST_RISE, Mist, MistTrail};
 pub use smoke::{SMOKE_GRID, Smoke, SmokeBlast, SmokeCue, SmokeFill, SmokeHoles, SmokeShot, smoke_origin};
-pub use terrain::TerrainLook;
+pub use terrain::{SurfaceLook, TerrainLook};
 pub use wind::{WindShape, WindZone};
 pub use ocean::{Ocean, OceanSampler, SeaEasing, SeaNow, SeaState, Weather, WindSource};
 pub use water_bodies::{DryArea, DryShape, Liquid, Pool, Stream, StreamPoint, stream_over};

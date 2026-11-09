@@ -1,16 +1,20 @@
 //! The top of a Terrain's Inspector section: its tools, **Layers**,
-//! **Sculpt** and **Settings**, as Unity's Terrain has them, and under
-//! Layers the list of its layers, the top one first, as image editors list
-//! theirs. A click picks a layer, whose settings show below; its box
-//! switches it on and off; a drag by its grip moves it; its cross takes it
-//! out; Add Layer offers a new one of each kind. Each change to the layers
-//! is a step to undo; picking a tool or a layer is not.
+//! **Sculpt**, **Paint** and **Settings**, as Unity's Terrain has them.
+//! Under Layers, the list of its layers, the top one first, as image
+//! editors list theirs. A click picks a layer, whose settings show below;
+//! its box switches it on and off; a drag by its grip moves it; its cross
+//! takes it out; Add Layer offers a new one of each kind. Under Paint, the
+//! list of its surfaces the same way, the top one first and the ground's
+//! own at the bottom: a click picks the one the brush paints, and Add
+//! Surface opens the picker of materials for a new one. Each change to
+//! either list is a step to undo; picking a tool, a layer or a surface is
+//! not.
 
 use std::hash::{Hash, Hasher};
 
 use voxear_ecs::{Entity, World};
 use voxear_engine::{Game, terrain::TerrainAsset};
-use voxear_terrain::layers::LayerKind;
+use voxear_terrain::{layers::LayerKind, surfaces::Surface};
 use voxear_ui::{NodeId, Style, Ui};
 
 use crate::{
@@ -18,19 +22,27 @@ use crate::{
     terrain_props::{self, TerrainTool},
 };
 
-/// One layer's row: the layer's place in the stack, the row, the part a
-/// click picks it by, its box, and its cross.
+/// One row of a list: the place in the stack of the layer or surface it
+/// shows, the part a click picks it by, its box, and its cross.
 struct Row {
-    layer: usize,
+    place: usize,
     body: NodeId,
-    toggle: NodeId,
+    toggle: Option<NodeId>,
     remove: Option<NodeId>,
 }
 
-/// The tools and the layer list of the Terrain the Inspector shows.
+/// What the panel's list shows.
+#[derive(Clone, Copy, PartialEq)]
+enum Listing {
+    Layers,
+    Surfaces,
+}
+
+/// The tools and the list of layers or surfaces of the Terrain the
+/// Inspector shows.
 pub struct TerrainPanel {
     tools: NodeId,
-    list: Option<Collection>,
+    list: Option<(Listing, Collection)>,
     rows: Vec<Row>,
     /// What the panel was built from, to build it again when that changes.
     signature: u64,
@@ -49,22 +61,40 @@ fn icon(kind: &LayerKind) -> &'static str {
     }
 }
 
-/// What the panel shows of an Obj's terrain: the tool, the picked layer,
-/// and each layer's name, kind and switch.
+/// What the panel shows of an Obj's terrain: the tool, the picked layer and
+/// surface, each layer's name, kind and switch, and each surface's material
+/// and cover.
 fn signature(world: &World, entity: Entity) -> u64 {
     let ui = terrain_props::ui(world);
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    (ui.tool, ui.layer).hash(&mut hasher);
+    (ui.tool, ui.layer, ui.surface).hash(&mut hasher);
     if let Some(asset) = world.get::<TerrainAsset>(entity) {
         for layer in &asset.file.layers {
             (&layer.name, layer.kind.title(), layer.enabled).hash(&mut hasher);
+        }
+        for surface in &asset.file.surfaces {
+            (&surface.material, surface.cover).hash(&mut hasher);
         }
     }
     hasher.finish()
 }
 
+/// What a surface's row is called: its material's file name, without its
+/// folders or extension.
+fn surface_name(game: &Game, surface: &Surface) -> String {
+    let path = surface.material.as_deref().and_then(|reference| {
+        let guid = game.content.parse(reference).ok()?.guid()?;
+        Some(game.content.db().get(guid)?.path.clone())
+    });
+    match path {
+        Some(path) => std::path::Path::new(&path).file_stem().map_or(path.clone(), |s| s.to_string_lossy().into()),
+        None => "No material".into(),
+    }
+}
+
 impl TerrainPanel {
-    pub fn new(ui: &mut Ui, rows: NodeId, world: &World, entity: Entity) -> Self {
+    pub fn new(ui: &mut Ui, rows: NodeId, game: &Game, entity: Entity) -> Self {
+        let world = &game.engine.world;
         let state = terrain_props::ui(world);
         let tools = ui.segmented(rows);
         ui.add_class(tools, "terrain-tools");
@@ -73,13 +103,14 @@ impl TerrainPanel {
         }
         let at = TerrainTool::ALL.iter().position(|&tool| tool == state.tool).unwrap_or_default();
         ui.set_segment(tools, at);
-        let layers = world.get::<TerrainAsset>(entity).map(|asset| asset.file.layers.clone());
-        let (list, rows_shown) = match (state.tool, layers) {
-            (TerrainTool::Layers, Some(layers)) => {
+        let file = world.get::<TerrainAsset>(entity).map(|asset| &asset.file);
+        let mut shown = Vec::new();
+        let list = match (state.tool, file) {
+            (TerrainTool::Layers, Some(file)) => {
+                let layers = &file.layers;
                 let list = collection::collection(ui, rows, layers.len(), true, Some("Add Layer"));
                 ui.add_class(list.frame, "terrain-layers");
                 ui.set_text(list.empty, "No layers: flat ground at its base height");
-                let mut shown = Vec::with_capacity(layers.len());
                 // The top layer first.
                 for (place, layer_at) in (0..layers.len()).rev().enumerate() {
                     let layer = &layers[layer_at];
@@ -97,13 +128,36 @@ impl TerrainPanel {
                     let toggle = ui.toggle(line, "", layer.enabled);
                     ui.add_class(toggle, "terrain-layer-on");
                     ui.set_tooltip(toggle, "On", None);
-                    shown.push(Row { layer: layer_at, body: line, toggle, remove: item.remove });
+                    shown.push(Row { place: layer_at, body: line, toggle: Some(toggle), remove: item.remove });
                 }
-                (Some(list), shown)
+                Some((Listing::Layers, list))
             }
-            _ => (None, Vec::new()),
+            (TerrainTool::Paint, Some(file)) => {
+                let surfaces = &file.surfaces;
+                let list = collection::collection(ui, rows, surfaces.len(), true, Some("Add Surface"));
+                ui.add_class(list.frame, "terrain-layers");
+                ui.set_text(list.empty, "No surfaces: drawn with its material");
+                for (place, surface_at) in (0..surfaces.len()).rev().enumerate() {
+                    let surface = &surfaces[surface_at];
+                    let item = collection::item(ui, list.items, place, true);
+                    ui.set_class(item.node, "selected", surface_at == state.surface);
+                    let line = ui.panel(item.body, Style::row());
+                    ui.add_class(line, "terrain-layer");
+                    let mark = ui.icon(line, "texture");
+                    ui.add_class(mark, "terrain-layer-icon");
+                    let name = ui.add_label(line, &surface_name(game, surface));
+                    ui.add_class(name, "terrain-layer-name");
+                    // The first is the ground under the rest, wherever they leave it.
+                    let cover = if surface_at == 0 { "Ground" } else { surface.cover.name() };
+                    let kind = ui.add_label(line, cover);
+                    ui.add_class(kind, "terrain-layer-kind");
+                    shown.push(Row { place: surface_at, body: line, toggle: None, remove: item.remove });
+                }
+                Some((Listing::Surfaces, list))
+            }
+            _ => None,
         };
-        Self { tools, list, rows: rows_shown, signature: signature(world, entity) }
+        Self { tools, list, rows: shown, signature: signature(world, entity) }
     }
 
     /// Whether what it shows changed since it was built.
@@ -111,8 +165,9 @@ impl TerrainPanel {
         signature(world, entity) != self.signature
     }
 
-    /// Does what was clicked or dragged: a tool or a layer picked, a layer
-    /// switched, moved or taken out. Whether anything changed.
+    /// Does what was clicked or dragged: a tool, a layer or a surface
+    /// picked, a layer switched, or either moved or taken out. Whether
+    /// anything changed.
     pub fn update(&self, ui: &Ui, game: &mut Game, entity: Entity) -> bool {
         let world = &mut game.engine.world;
         let tool = TerrainTool::ALL[ui.segment(self.tools).min(TerrainTool::ALL.len() - 1)];
@@ -120,28 +175,54 @@ impl TerrainPanel {
             terrain_props::show_tool(world, tool);
             return true;
         }
-        if let Some((from, to)) = self.list.as_ref().and_then(|list| collection::moved(ui, list.items)) {
-            // Places count from the top; layers from the bottom.
+        let Some((listing, list)) = &self.list else { return false };
+        if let Some((from, to)) = collection::moved(ui, list.items) {
+            // Places count from the top; the stacks from the bottom.
             let last = self.rows.len().saturating_sub(1);
-            return terrain_props::move_layer(game, entity, last - from.min(last), last - to.min(last));
+            let (from, to) = (last - from.min(last), last - to.min(last));
+            return match listing {
+                Listing::Layers => terrain_props::move_layer(game, entity, from, to),
+                Listing::Surfaces => terrain_props::move_surface(game, entity, from, to),
+            };
         }
         for row in &self.rows {
-            if ui.clicked(row.toggle) {
-                return terrain_props::toggle_layer(game, entity, row.layer);
+            if row.toggle.is_some_and(|toggle| ui.clicked(toggle)) {
+                return terrain_props::toggle_layer(game, entity, row.place);
             }
             if row.remove.is_some_and(|remove| ui.clicked(remove)) {
-                return terrain_props::remove_layer(game, entity, row.layer);
+                return match listing {
+                    Listing::Layers => terrain_props::remove_layer(game, entity, row.place),
+                    Listing::Surfaces => terrain_props::remove_surface(game, entity, row.place),
+                };
             }
-            if ui.clicked(row.body) && terrain_props::ui(&game.engine.world).layer != row.layer {
-                terrain_props::pick_layer(&mut game.engine.world, row.layer);
-                return true;
+            if !ui.clicked(row.body) {
+                continue;
             }
+            let state = terrain_props::ui(&game.engine.world);
+            let world = &mut game.engine.world;
+            match listing {
+                Listing::Layers if state.layer != row.place => terrain_props::pick_layer(world, row.place),
+                Listing::Surfaces if state.surface != row.place => terrain_props::pick_surface(world, row.place),
+                _ => return false,
+            }
+            return true;
         }
         false
     }
 
     /// The Add Layer button, when it was clicked, for its menu to open under.
     pub fn add_clicked(&self, ui: &Ui) -> Option<NodeId> {
-        self.list.as_ref().and_then(|list| list.add).filter(|&add| ui.clicked(add))
+        self.add_of(ui, Listing::Layers)
+    }
+
+    /// The Add Surface button, when it was clicked, for the picker of
+    /// materials to open under.
+    pub fn add_surface_clicked(&self, ui: &Ui) -> Option<NodeId> {
+        self.add_of(ui, Listing::Surfaces)
+    }
+
+    fn add_of(&self, ui: &Ui, wanted: Listing) -> Option<NodeId> {
+        let (listing, list) = self.list.as_ref()?;
+        list.add.filter(|&add| *listing == wanted && ui.clicked(add))
     }
 }

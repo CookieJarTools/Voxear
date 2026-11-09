@@ -58,7 +58,7 @@ fn hills(renderer: &mut Renderer) -> World {
     let terrain = Terrain { detail_distance: 40.0, ..Terrain::new(heights) };
     world.spawn((
         terrain,
-        TerrainLook { material, texture_size: 4.0 },
+        TerrainLook::new(material, 4.0),
         Transform::from_position(Vec3::new(-512.0, 0.0, -100.0)),
     ));
     let look = Quat::from_rotation_x(0.12);
@@ -110,7 +110,7 @@ fn a_ridge_shades_the_ground_on_its_far_side_from_the_sun() {
     // Flat ground 128 m across with a ridge 20 m high along z at x = 60 to 64.
     let heights = Heightmap::from_fn(1, 1, 0.5, |x, _| if (60.0..=64.0).contains(&x) { 20.0 } else { 0.0 });
     let grey = renderer.add_material(&MaterialDesc::default()).unwrap();
-    world.spawn((Terrain::new(heights), TerrainLook { material: grey, texture_size: 4.0 }, Transform::default()));
+    world.spawn((Terrain::new(heights), TerrainLook::new(grey, 4.0), Transform::default()));
     // Straight down onto its middle, within the sun's shadow distance, +z up the screen and +x to the right.
     let down = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
     world.spawn((Camera::default(), Transform::new(Vec3::new(64.0, 60.0, 64.0), down, Vec3::ONE)));
@@ -147,7 +147,7 @@ fn a_tile_changed_after_it_was_drawn_is_drawn_changed() {
     let flat = Heightmap::flat(2, 2, 0.5, 0.0);
     let field = world.spawn((
         Terrain::new(flat),
-        TerrainLook { material, texture_size: 4.0 },
+        TerrainLook::new(material, 4.0),
         Transform::from_position(Vec3::new(-128.0, 0.0, -128.0)),
     ));
     // Looking along the ground from just above it: flat, the sky fills the top half.
@@ -177,4 +177,131 @@ fn a_tile_changed_after_it_was_drawn_is_drawn_changed() {
     keep_image("terrain changed tile.png", &pixels);
     let after = ground(&pixels);
     assert!(after > before + WIDTH as usize * 20, "the raised tiles fill more of the view: {before} then {after}");
+}
+
+/// Where on screen a point of level ground is, seen straight down from
+/// `height` metres above `(64, 64)`: +x to the right, +z up the screen.
+fn from_above(height: f32, x: f32, z: f32) -> (u32, u32) {
+    let half = (30f32).to_radians().tan() * height;
+    let u = (x - 64.0) / (half * WIDTH as f32 / HEIGHT as f32);
+    let v = (z - 64.0) / half;
+    (((u + 1.0) * 0.5 * WIDTH as f32) as u32, ((1.0 - v) * 0.5 * HEIGHT as f32) as u32)
+}
+
+/// A camera straight down from `height` metres over `(64, 64)`, and no
+/// anti-aliasing to blur what is read back.
+fn look_down(world: &mut World, height: f32) {
+    let down = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+    world.spawn((Camera::default(), Transform::new(Vec3::new(64.0, height, 64.0), down, Vec3::ONE)));
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
+    world.insert_resource(PostProcess { anti_aliasing, ..PostProcess::neutral() });
+}
+
+#[test]
+fn thirty_two_surfaces_are_drawn_each_where_its_shares_put_it_and_blended_between() {
+    use std::sync::Arc;
+    use voxear_render::SurfaceLook;
+    use voxear_terrain::surfaces::{WeightTile, Weights};
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    // 32 colours, each its own.
+    let levels = [0.2, 0.45, 0.7, 0.95];
+    let colour = |i: usize| [levels[i & 3], levels[(i >> 2) & 3], if i & 16 == 0 { 0.2 } else { 0.9 }];
+    let mut surfaces = Vec::new();
+    for i in 0..32 {
+        let [r, g, b] = colour(i);
+        let material = renderer.add_material(&MaterialDesc { base_color: [r, g, b, 1.0], ..MaterialDesc::default() });
+        surfaces.push(SurfaceLook { material: material.unwrap(), size: 4.0, sharpness: 0.0, triplanar: false });
+    }
+    // 128 m across in stripes 4 m wide along x, each all of one surface.
+    let side = voxear_terrain::TILE_SAMPLES;
+    let samples = (0..side * side).map(|i| [((i % side) / 8).min(31), 255]).collect();
+    let weights = Weights::from_tiles(1, 1, vec![Arc::new(WeightTile::from_samples(samples))]);
+    let terrain = Terrain { weights: Some(Arc::new(weights)), ..Terrain::new(Heightmap::flat(1, 1, 0.5, 0.0)) };
+    let plain = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let look = TerrainLook { surfaces: surfaces.into(), ..TerrainLook::new(plain, 4.0) };
+    world.spawn((terrain, look, Transform::default()));
+    look_down(&mut world, 70.0);
+    renderer.set_view_options(ViewOptions { debug_view: voxear_render::DEBUG_VIEW_UNLIT, ..ViewOptions::default() });
+    let pixels = render(&mut renderer, &world, 3);
+    keep_image("terrain surfaces.png", &pixels);
+    let seen: Vec<[i32; 3]> = (0..32)
+        .map(|stripe| {
+            let (x, y) = from_above(70.0, stripe as f32 * 4.0 + 2.0, 64.0);
+            rgb_at(&pixels, x, y)
+        })
+        .collect();
+    // Each stripe nearer its own colour than any other's, as the screen shows them.
+    let distance = |a: [i32; 3], b: [i32; 3]| (0..3).map(|c| (a[c] - b[c]).pow(2)).sum::<i32>();
+    // Each stripe its own colour, brighter in each channel as its material is.
+    let distinct: std::collections::BTreeSet<[i32; 3]> = seen.iter().copied().collect();
+    assert_eq!(distinct.len(), 32, "32 colours: {seen:?}");
+    for (stripe, &shown) in seen.iter().enumerate() {
+        for other in 0..32 {
+            for channel in 0..3 {
+                if colour(other)[channel] > colour(stripe)[channel] {
+                    assert!(seen[other][channel] > shown[channel], "stripe {other} over {stripe}: {seen:?}");
+                }
+            }
+        }
+    }
+    // Between stripes 10 and 11, the half a metre between their samples blends from one to the other.
+    let (a, b) = (seen[10], seen[11]);
+    let between = (0..24).any(|step| {
+        let (x, y) = from_above(70.0, 43.0 + step as f32 * 0.08, 64.0);
+        let c = rgb_at(&pixels, x, y);
+        let span = distance(a, b) as f32;
+        distance(c, a) as f32 > span * 0.1 && distance(c, b) as f32 > span * 0.1
+    });
+    assert!(between, "a blend between {a:?} and {b:?}");
+}
+
+#[test]
+fn a_hole_shows_the_ground_below_it_and_lets_the_sun_through() {
+    use std::sync::Arc;
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    // Grey ground with a hole 12 m across in its middle, over green ground 5 m below.
+    let side = voxear_terrain::TILE_SAMPLES;
+    let mut bits = vec![0u32; voxear_terrain::heights::HOLE_WORDS];
+    for z in 0..side {
+        for x in 0..side {
+            let (dx, dz) = (x as f32 * 0.5 - 64.0, z as f32 * 0.5 - 64.0);
+            if dx * dx + dz * dz <= 36.0 {
+                let index = (z * side + x) as usize;
+                bits[index / 32] |= 1 << (index % 32);
+            }
+        }
+    }
+    let holed = voxear_terrain::HeightTile::flat(0.0).with_holes(Some(bits.into()));
+    let ground = Heightmap::from_tiles(1, 1, 0.5, vec![Arc::new(holed)]);
+    let grey = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let green = MaterialDesc { base_color: [0.1, 0.9, 0.1, 1.0], ..MaterialDesc::default() };
+    let green = renderer.add_material(&green).unwrap();
+    world.spawn((Terrain::new(ground), TerrainLook::new(grey, 4.0), Transform::default()));
+    let below = Terrain::new(Heightmap::flat(1, 1, 0.5, 0.0));
+    world.spawn((below, TerrainLook::new(green, 4.0), Transform::from_position(Vec3::new(0.0, -5.0, 0.0))));
+    look_down(&mut world, 40.0);
+    // The sun high overhead.
+    let towards_sun = Vec3::new(0.15, 1.0, 0.1).normalize();
+    let sun = Quat::from_rotation_arc(Vec3::Z, -towards_sun);
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.05, ..Sky::default() });
+    renderer.set_view_options(ViewOptions { debug_view: voxear_render::DEBUG_VIEW_UNLIT, ..ViewOptions::default() });
+    let unlit = render(&mut renderer, &world, 3);
+    keep_image("terrain hole unlit.png", &unlit);
+    let (cx, cy) = from_above(40.0, 64.0, 64.0);
+    let [r, g, b] = rgb_at(&unlit, cx, cy);
+    assert!(g > r + 60 && g > b + 60, "green through the hole: {:?}", [r, g, b]);
+    let (ex, ey) = from_above(40.0, 84.0, 64.0);
+    let [r, g, b] = rgb_at(&unlit, ex, ey);
+    assert!((r - g).abs() < 20 && (g - b).abs() < 20, "grey beside it: {:?}", [r, g, b]);
+
+    // Lit, the sun reaches the green through the hole: the ground over it casts no shadow there.
+    renderer.set_view_options(ViewOptions::default());
+    let lit = render(&mut renderer, &world, 3);
+    keep_image("terrain hole lit.png", &lit);
+    let through = rgb_at(&lit, cx, cy)[1];
+    let beside = rgb_at(&lit, ex, ey).iter().sum::<i32>() / 3;
+    assert!(through * 2 > beside, "the green under the hole is sunlit: {through} against {beside} beside it");
 }

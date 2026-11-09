@@ -35,20 +35,24 @@ impl Component for TerrainAsset {}
 pub fn keep(world: &World, content: &mut Content) {
     let terrains = world.query_ref::<(&Terrain, &TerrainAsset)>().without::<Destroying>();
     for (terrain, asset) in terrains {
-        content.keep_terrain(asset.guid, &asset.file, &terrain.heights, &asset.rasters);
+        content.keep_terrain(asset.guid, &asset.file, terrain, &asset.rasters);
     }
 }
 
 /// Writes each terrain asset changed since it was last written into the
-/// project's folder: its `.terrain`, its `.heights`, and its `.layers` when
-/// its brushes painted anything; gives the paths written.
+/// project's folder: its `.terrain`, its `.heights` (with its holes and its
+/// surfaces' shares), and its `.layers` when its brushes painted anything;
+/// gives the paths written.
 pub fn save(content: &mut Content, project: &Path) -> Result<Vec<String>> {
     let mut written = Vec::new();
     for (path, loaded) in content.take_unsaved_terrains() {
         let file = project.join(&path);
         std::fs::write(&file, loaded.file.to_text()).with_context(|| format!("saving {path}"))?;
         let heights = voxear_terrain::file::heights_file(&path);
-        let bytes = voxear_terrain::file::write_heights(&loaded.heights, loaded.file.shape_hash());
+        // The shares are kept too, so a game need not work them out as it loads.
+        let surfaces = voxear_terrain::surfaces::hash_surfaces(&loaded.file.surfaces);
+        let weights = loaded.weights.as_deref().map(|weights| (weights, surfaces));
+        let bytes = voxear_terrain::file::write_ground(&loaded.heights, loaded.file.shape_hash(), weights);
         std::fs::write(project.join(&heights), bytes).with_context(|| format!("saving {heights}"))?;
         let layers = project.join(voxear_terrain::raster::layers_file(&path));
         if loaded.rasters.tiles().next().is_some() {

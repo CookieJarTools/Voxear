@@ -5,6 +5,11 @@
 //! the pointer went; Shift lowers rather than raises, and Ctrl+click with
 //! Set Height takes the height under the pointer. The brush paints into the
 //! picked layer when it is a sculpt layer, else the topmost, else a new one.
+//! The Holes brush cuts holes instead, and with Shift held as the stroke
+//! begins fills them.
+//!
+//! Under **Paint**, the same ring paints the picked surface over the others,
+//! and Shift takes it away.
 //!
 //! Under **Layers**, a picked Stamp shows its outline on the ground, with a
 //! dot in its middle to move it, one past its far side to turn it and one
@@ -56,14 +61,26 @@ enum Grip {
     Point(usize),
 }
 
-/// A stroke under way: the terrain, the sculpt layer's raster, the height
-/// Flatten brings the ground to, where the last dab was, and when.
+/// A stroke under way: the terrain, what it paints, the height Flatten
+/// brings the ground to, where the last dab was, and when.
 struct Stroke {
     entity: Entity,
-    raster: u32,
+    paints: Paints,
     flatten_to: f32,
     last: [f32; 2],
     at: Instant,
+}
+
+/// What a stroke paints.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Paints {
+    /// A sculpt layer's raster.
+    Sculpt(u32),
+    /// The terrain's holes: cut, or filled with Shift held as the stroke
+    /// began, so letting Shift go first does not cut again.
+    Holes { fill: bool },
+    /// Surface `n` over the others.
+    Surface(usize),
 }
 
 /// A layer's dot held: the terrain, the layer, the dot, how high it was
@@ -89,13 +106,14 @@ pub struct TerrainTools {
     hold: Option<Hold>,
 }
 
-/// Where a ray through `point` meets an Obj's terrain, in its own space.
+/// Where a ray through `point` meets an Obj's terrain, in its own space,
+/// its holes' ground too, so a brush can fill them.
 fn ground_under(game: &Game, camera: &ViewCamera, entity: Entity, point: [f32; 2]) -> Option<Vec3> {
     let world = &game.engine.world;
     let terrain = world.get::<Terrain>(entity)?;
     let corner = voxear_terrain::corner(world.get(entity)?, world.get(entity));
     let (origin, direction) = camera.ray(point);
-    voxear_terrain::ray::raycast(&terrain.heights, origin - corner, direction, 20_000.0).map(|hit| hit.point)
+    voxear_terrain::ray::raycast_whole(&terrain.heights, origin - corner, direction, 20_000.0).map(|hit| hit.point)
 }
 
 /// Where a ray through `point` crosses the level `level` metres up in an
@@ -170,7 +188,9 @@ impl TerrainTools {
             return;
         }
         match terrain_props::ui(&game.engine.world).tool {
-            TerrainTool::Sculpt => self.under = ground_under(game, camera, entity, point).map(|at| (entity, at)),
+            TerrainTool::Sculpt | TerrainTool::Paint => {
+                self.under = ground_under(game, camera, entity, point).map(|at| (entity, at));
+            }
             TerrainTool::Layers => {
                 let Some(corner) = corner_of(game, entity) else { return };
                 let near = |at: Vec3| camera.project(at + corner).map(|p| (p[0] - point[0]).hypot(p[1] - point[1]));
@@ -205,15 +225,37 @@ impl TerrainTools {
             return true;
         }
         let Some((_, at)) = self.under else { return false };
-        let brush = terrain_props::ui(&game.engine.world).brush;
-        if control && brush.kind == BrushKind::SetHeight {
+        let ui = terrain_props::ui(&game.engine.world);
+        let brush = ui.brush;
+        if control && brush.kind == BrushKind::SetHeight && ui.tool == TerrainTool::Sculpt {
             terrain_props::ui_mut(&mut game.engine.world).brush.height = at.y;
             return true;
         }
-        let Some((layer, raster)) = terrain_props::sculpt_layer(game, entity) else { return false };
-        let Some(asset) = game.engine.world.get::<TerrainAsset>(entity) else { return false };
-        self.compositor.edit(&asset.file, Some(layer));
-        self.stroke = Some(Stroke { entity, raster, flatten_to: at.y, last: [at.x, at.z], at: Instant::now() });
+        let paints = match (ui.tool, brush.kind) {
+            (TerrainTool::Paint, _) => {
+                let Some(surface) = terrain_props::paint_surface(game, entity) else { return false };
+                Paints::Surface(surface)
+            }
+            (_, BrushKind::Holes) => {
+                if !terrain_props::ready_for_holes(game, entity) {
+                    return false;
+                }
+                Paints::Holes { fill: shift }
+            }
+            _ => {
+                let Some((layer, raster)) = terrain_props::sculpt_layer(game, entity) else { return false };
+                let Some(asset) = game.engine.world.get::<TerrainAsset>(entity) else { return false };
+                self.compositor.edit(&asset.file, Some(layer));
+                Paints::Sculpt(raster)
+            }
+        };
+        if matches!(paints, Paints::Holes { .. }) {
+            // Holes are cut as each tile is made, from the base up.
+            if let Some(asset) = game.engine.world.get::<TerrainAsset>(entity) {
+                self.compositor.edit(&asset.file, None);
+            }
+        }
+        self.stroke = Some(Stroke { entity, paints, flatten_to: at.y, last: [at.x, at.z], at: Instant::now() });
         self.paint(game, [at.x, at.z], 1.0 / 60.0, shift);
         true
     }
@@ -251,24 +293,39 @@ impl TerrainTools {
         let pictures = game.content.terrain_pictures(&file);
         let find = |reference: &str| pictures.get(reference).cloned();
         let mut areas: Vec<Area> = Vec::with_capacity(steps);
+        let heights = game.engine.world.get::<Terrain>(stroke.entity).map(|terrain| terrain.heights.clone());
         for step in 1..=steps {
             let t = step as f32 / steps as f32;
             let at = [stroke.last[0] + (to[0] - stroke.last[0]) * t, stroke.last[1] + (to[1] - stroke.last[1]) * t];
             let amount = held / steps as f32;
-            let area = brush::dab(
-                &brush,
-                at,
-                amount,
-                lower,
-                stroke.flatten_to,
-                (&file, &self.compositor, &find),
-                (&mut rasters, stroke.raster),
-            );
+            let area = match stroke.paints {
+                Paints::Sculpt(raster) => brush::dab(
+                    &brush,
+                    at,
+                    amount,
+                    lower,
+                    stroke.flatten_to,
+                    (&file, &self.compositor, &find),
+                    (&mut rasters, raster),
+                ),
+                Paints::Holes { fill } => brush::cut(&file, &mut rasters, at, brush.radius, fill),
+                Paints::Surface(surface) => {
+                    let Some(heights) = &heights else { return };
+                    voxear_terrain::surfaces::paint(&file, heights, &mut rasters, surface, &brush, at, amount, lower)
+                }
+            };
             areas.push(area);
         }
         stroke.last = to;
         let entity = stroke.entity;
-        terrain_props::remake_with(game, entity, file, Arc::new(rasters), &Dirty::Areas(areas), &self.compositor);
+        let dirty = Dirty::Areas(areas);
+        match stroke.paints {
+            // Painting changes only where the surfaces cover, not the ground.
+            Paints::Surface(_) => terrain_props::repaint(game, entity, Arc::new(rasters), &dirty),
+            Paints::Sculpt(_) | Paints::Holes { .. } => {
+                terrain_props::remake_with(game, entity, file, Arc::new(rasters), &dirty, &self.compositor)
+            }
+        };
     }
 
     /// Moves the held dot of layer `layer` to `to` on the ground, in the

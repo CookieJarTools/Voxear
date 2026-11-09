@@ -192,14 +192,20 @@ impl Mask {
     /// How much of the layer counts on ground `height` metres high whose
     /// slope's steepness is `rise` (metres up a metre along).
     pub fn weight(&self, height: f32, rise: f32) -> f32 {
+        // In degrees, as the Inspector shows them; the rise is turned into one only where a slope is masked.
+        self.weight_by(height, || rise.atan().to_degrees())
+    }
+
+    /// How much counts on ground `height` metres high whose slope is
+    /// `degrees()` degrees, asked only where a slope is masked.
+    pub fn weight_by(&self, height: f32, degrees: impl FnOnce() -> f32) -> f32 {
         let mut weight = 1.0;
         let feather = self.feather.max(1e-3);
         if let Some([low, high]) = self.height {
             weight *= smoothstep(low - feather, low, height) * (1.0 - smoothstep(high, high + feather, height));
         }
         if let Some([low, high]) = self.slope {
-            // In degrees, as the Inspector shows them; the rise is turned into one only where a slope is masked.
-            let degrees = rise.atan().to_degrees();
+            let degrees = degrees();
             weight *= smoothstep(low - feather, low, degrees) * (1.0 - smoothstep(high, high + feather, degrees));
         }
         weight

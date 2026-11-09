@@ -4514,6 +4514,43 @@ fn inspector_attributes_shape_how_script_fields_show() {
     shot(&mut renderer, "inspector-attributes-wobble.png");
 }
 
+/// Hello's Spinner as a build with a value whose clip shows only for one
+/// mode describes it, the clip a value of its own.
+const SPINNER_WITH_A_HIDDEN_VALUE: &str = r#"{"behaviours": [{"name": "Hello.Spinner", "bases": [], "interfaces": [], "fields": [
+  {"name": "shot", "type": {"kind": "struct", "name": "Hello.Shot"}, "default": {}}
+]}], "types": {"Hello.Shot": {"fields": [
+  {"name": "mode", "type": {"kind": "enum", "names": ["Plain", "Clip"]}, "default": "Plain"},
+  {"name": "clip", "type": {"kind": "struct", "name": "Hello.Take"}, "default": {},
+   "inspector": {"show_if": {"member": "mode", "value": "Clip"}}}
+]}, "Hello.Take": {"fields": [
+  {"name": "start", "type": {"kind": "number"}, "default": 0.0}
+]}}, "commands": []}"#;
+
+#[test]
+fn a_value_shown_only_if_hides_what_is_in_it() {
+    let Some(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()).ok() else { return };
+    let dir = hello_copy();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    editor.set_script_types(voxear_engine::script_types::parse(SPINNER_WITH_A_HIDDEN_VALUE).unwrap());
+    let (plain, clipped) = (obj(&editor, "Spinner A").unwrap(), obj(&editor, "Spinner B").unwrap());
+    {
+        let kept = &mut editor.game.engine.world.get_mut::<voxear_engine::EditBehaviours>(clipped).unwrap().0[0];
+        let shot: toml::Value = toml::from_str("shot = { mode = \"Clip\", clip = { start = 0.5 } }").unwrap();
+        std::sync::Arc::make_mut(&mut kept.fields).insert("shot".into(), shot["shot"].clone());
+    }
+    editor.select(Some(plain));
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(prop_row(&editor.ui, "Mode").is_some());
+    assert!(prop_row(&editor.ui, "Clip").is_none() && prop_row(&editor.ui, "Start").is_none(), "the clip and its start hide");
+
+    editor.select(Some(clipped));
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(prop_row(&editor.ui, "Clip").is_some() && prop_row(&editor.ui, "Start").is_some(), "both show for a clip");
+}
+
 /// Hello's build with a C# component in it, as ScriptInfo describes one.
 const WITH_A_COMPONENT: &str = r#"{"behaviours": [], "components": [{"name": "Hello.Spin", "bases": [],
   "interfaces": ["Voxear.IComponent"], "fields": [

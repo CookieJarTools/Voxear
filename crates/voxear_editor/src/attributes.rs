@@ -40,15 +40,12 @@ pub fn top<'t>(types: &'t ScriptTypes, prop: &Prop) -> &'t FieldInspector {
     field_at(types, behaviour, &path[..path.len().min(1)]).unwrap_or_else(|| none())
 }
 
-/// Whether a row shows: neither it nor its top-level field is hidden, and
-/// their conditions hold.
+/// Whether a row shows: neither it nor any field it is in is hidden, and
+/// their conditions hold, so a value hidden hides what is in it.
 pub fn shows(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> bool {
     let Prop::Field { behaviour, path } = prop else { return true };
-    let mut levels = vec![path.as_slice()];
-    if path.len() > 1 {
-        levels.insert(0, &path[..1]);
-    }
-    levels.into_iter().all(|at| {
+    (1..=path.len()).all(|end| {
+        let at = &path[..end];
         let Some(meta) = field_at(types, behaviour, at) else { return true };
         let holds = |condition: &FieldCondition| holds(game, types, entity, (behaviour, at), condition);
         !meta.hidden && meta.show_if.as_ref().is_none_or(holds) && !meta.hide_if.as_ref().is_some_and(holds)

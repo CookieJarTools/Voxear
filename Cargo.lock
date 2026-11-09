@@ -4232,6 +4232,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "voxear_terrain"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytemuck",
+ "image",
+ "lz4_flex",
+ "serde",
+ "toml",
+ "voxear_core",
+ "voxear_ecs",
+ "voxear_scene",
+]
+
+[[package]]
 name = "voxear_ui"
 version = "0.1.0"
 dependencies = [

@@ -53,6 +53,7 @@ mod collection;
 mod columns;
 mod curve_fields;
 mod console;
+mod data_assets;
 mod editor;
 pub mod entities_panel;
 mod field_drawers;

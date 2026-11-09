@@ -4,6 +4,7 @@
 
 mod color_popup;
 mod component_clipboard;
+mod data_assets;
 mod debug_texts;
 mod desktop_windows;
 mod docs_capture;
@@ -855,6 +856,7 @@ impl Editor {
         {
             profile_scope!("Inspector");
             self.update_inspectors(renderer, playing);
+            self.update_data_assets();
         }
         self.update_placing(renderer);
         self.update_material_drops(renderer);
@@ -1114,6 +1116,7 @@ impl Editor {
             ProjectEvent::Move { path, folder } => self.move_in_project(&path, &folder, renderer),
             ProjectEvent::Import { folder } => self.choose_imports(folder),
             ProjectEvent::NewShader { folder, anchor } => self.browse_shader_starts(folder, anchor),
+            ProjectEvent::NewDataAsset { folder, anchor } => self.browse_definitions(folder, anchor),
             ProjectEvent::WantsParts(path) => {
                 let parts = objs::model_parts(&mut self.game, renderer, &path);
                 if parts.is_empty() {
@@ -1170,6 +1173,10 @@ impl Editor {
 
     fn inspect_asset(&mut self, item: &ProjectItem) {
         self.select(None);
+        // A data asset shows the fields of the Definition it holds, to edit as an Obj's behaviour's.
+        if item.kind == ItemKind::Asset(AssetKind::Data) && self.inspect_data(item) {
+            return;
+        }
         self.inspector.show_asset(&mut self.ui, &self.game, item);
     }
 
@@ -1827,7 +1834,8 @@ impl Editor {
             | RowAction::CopyComponent(_) => {}
         }
         let Some(after) = ObjState::of(&self.game.engine.world, entity) else { return };
-        if before != after && !self.is_playing() {
+        // A data asset's change goes into its file instead (see `data_assets`).
+        if before != after && !self.is_playing() && !self.holds_data(entity) {
             self.history.record_step(Edit::Changed { entity, before, after });
             self.unsaved = true;
         }
@@ -1843,6 +1851,14 @@ impl Editor {
             (None, None) => return,
         };
         let types = self.inspector.types();
+        // A clip field takes a clip, or a model file with clips, as the Animator's clip does.
+        if let (Pick::Asset(Some(_)), true) = (&pick, props::takes_clips(types, prop)) {
+            let types = types.clone();
+            if !props::pick(&mut self.game, Some(renderer), &types, entity, prop, &pick) {
+                self.notify("Only a clip, or a model file with clips, goes there");
+            }
+            return;
+        }
         // A model's part, from the Project panel's opened-out model, fits the field of its kind.
         let part = match (&pick, prop) {
             (Pick::Asset(Some(reference)), Prop::Mesh) => reference.contains("#mesh"),
@@ -2372,6 +2388,9 @@ impl Editor {
                     self.pick_shader_picture(&material, &property, &pick, renderer);
                 }
                 (PickFor::NewShader { folder }, Chosen::Shader(start)) => self.make_shader(&folder, start, renderer),
+                (PickFor::NewDataAsset { folder }, Chosen::Definition(definition)) => {
+                    self.make_data_asset(&folder, &definition, renderer);
+                }
                 (PickFor::PartMaterial { owner, node }, Chosen::Value(pick)) if alive(owner) => {
                     self.pick_part_material(owner, node, &pick, renderer);
                 }

@@ -99,7 +99,9 @@ impl Editor {
         let following = unlocked || !self.inspector.is_locked();
         // A model's part picked in the Hierarchy shows in place of its Obj.
         let part = self.selected_part.filter(|(owner, _)| Some(*owner) == self.selected());
-        if following && (self.inspector.shown() != self.selected() || self.inspector.shown_part() != part) {
+        // A data asset shows with nothing selected, until something else is.
+        let data = self.inspector.shown_data().is_some();
+        if following && !data && (self.inspector.shown() != self.selected() || self.inspector.shown_part() != part) {
             let selected = self.selected();
             match part {
                 Some((owner, node)) => self.inspector.show_part(&mut self.ui, &self.game, owner, node, playing),
@@ -122,8 +124,9 @@ impl Editor {
         // Before the callbacks, so a running behaviour's has the value it was called for.
         self.push_live_fields(live);
         let edit = self.run_inspector_callbacks(edit);
-        // Edits while playing go with the played world, so there is nothing to undo or save.
-        if let Some(edit) = edit.filter(|_| !self.is_playing()) {
+        // Edits while playing go with the played world, so there is nothing to undo or save; a data
+        // asset's go into its file (see `data_assets`).
+        if let Some(edit) = edit.filter(|_| !self.is_playing() && self.inspector.shown_data().is_none()) {
             self.history.record(edit);
             self.unsaved = true;
         }
@@ -250,6 +253,12 @@ impl Editor {
     /// The lock button of the first Inspector.
     pub fn inspector_lock(&self) -> NodeId {
         self.nodes.inspector_lock
+    }
+
+    /// The Objs the data assets every Inspector shows are kept on.
+    pub(super) fn data_shown(&self) -> Vec<Entity> {
+        let inspectors = std::iter::once(&self.inspector).chain(self.extra_inspectors.iter().map(|e| &e.inspector));
+        inspectors.filter_map(|inspector| inspector.shown_data().map(|(_, holder)| holder)).collect()
     }
 
     /// What each Inspector shows, the first one first.

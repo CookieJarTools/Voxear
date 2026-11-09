@@ -70,6 +70,8 @@ pub enum Chosen {
     Icon(Option<&'static str>),
     /// What a new shader starts as.
     Shader(crate::project_files::ShaderStart),
+    /// The Definition a new data asset holds, by its full name.
+    Definition(String),
 }
 
 /// What a pick is for: a reference of an Obj's, or a scene of a level's.
@@ -99,6 +101,8 @@ pub enum PickFor {
     ShaderPicture { material: String, property: String },
     /// What a new shader in this folder starts as.
     NewShader { folder: String },
+    /// The Definition a new data asset in this folder holds.
+    NewDataAsset { folder: String },
     /// The control of the binding picked in the Input Actions window.
     InputControl,
     /// The icon of the action picked in the Input Actions window.

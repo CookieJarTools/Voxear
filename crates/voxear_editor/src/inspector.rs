@@ -26,6 +26,11 @@
 //! behaviour or an asset as what it points at. As in Unity, a click on a
 //! reference pings what it points at, a double click selects an Obj it
 //! points at, and its arrow opens the menu to pick another.
+//!
+//! A data asset selected in the Project panel shows the same way, its
+//! Definition's fields as one section, kept on an Obj of the editor's own
+//! (see `data_assets`), under a header naming the file and the Definition,
+//! with no Transform or Add Component.
 
 use voxear_core::math::{EulerRot, Quat, Vec3};
 use voxear_ecs::Entity;
@@ -322,6 +327,10 @@ pub struct Inspector {
     menu: Option<(NodeId, Vec<Option<RowAction>>)>,
     /// What is selected in the Project panel, when that is what it shows.
     asset: Option<AssetView>,
+    /// A data asset selected in the Project panel, when that is what it
+    /// shows: its item, and the Obj its fields are kept on, shown with its
+    /// Definition's fields alone (see `data_assets`).
+    data: Option<(ProjectItem, Entity)>,
     /// A part of a model an Obj draws whole, when that is what it shows.
     part: Option<PartView>,
     /// The project's layers, when that is what it shows.
@@ -425,6 +434,7 @@ impl Inspector {
             prefab_mode: false,
             menu: None,
             asset: None,
+            data: None,
             part: None,
             layers: None,
             wants_layers: false,
@@ -821,7 +831,7 @@ impl Inspector {
     /// Shows what is selected in the Project panel instead of an Obj.
     pub fn show_asset(&mut self, ui: &mut Ui, game: &Game, item: &ProjectItem) {
         self.shown = None;
-        self.part = None;
+        (self.part, self.data) = (None, None);
         (self.fields, self.transform_menu, self.add, self.menu) = (None, None, None, None);
         self.headers.clear();
         self.rows.clear();
@@ -837,6 +847,7 @@ impl Inspector {
             return self.show(ui, game, Some(owner), playing);
         };
         self.shown = Some(owner);
+        self.data = None;
         (self.fields, self.transform_menu, self.add, self.menu) = (None, None, None, None);
         self.headers.clear();
         self.rows.clear();
@@ -858,7 +869,7 @@ impl Inspector {
     /// as Unity's Tags and Layers does (see `layers_view`).
     pub fn show_layers(&mut self, ui: &mut Ui, layers: &Layers) {
         self.shown = None;
-        self.part = None;
+        (self.part, self.data) = (None, None);
         (self.fields, self.transform_menu, self.add, self.menu) = (None, None, None, None);
         self.headers.clear();
         self.rows.clear();
@@ -896,7 +907,24 @@ impl Inspector {
 
     /// The Project panel's item shown, if that is what it shows.
     pub fn shown_asset(&self) -> Option<&ProjectItem> {
-        self.asset.as_ref().map(AssetView::item)
+        self.asset.as_ref().map(AssetView::item).or(self.data.as_ref().map(|(item, _)| item))
+    }
+
+    /// Shows a data asset selected in the Project panel: the fields of the
+    /// Definition it holds, kept on `holder`, with the same rows an Obj's
+    /// behaviour shows, under a header naming the file and its Definition,
+    /// without a Transform, Add Component, or a menu to move or remove the
+    /// section.
+    pub fn show_data(&mut self, ui: &mut Ui, game: &Game, item: &ProjectItem, holder: Entity, playing: bool) {
+        self.data = Some((item.clone(), holder));
+        self.also.clear();
+        self.show(ui, game, Some(holder), playing);
+    }
+
+    /// The data asset shown, and the Obj its fields are kept on, when it
+    /// shows one.
+    pub fn shown_data(&self) -> Option<(&ProjectItem, Entity)> {
+        self.data.as_ref().map(|(item, holder)| (item, *holder))
     }
 
     /// The asset shown's large preview: its path, the frame that takes drags
@@ -911,6 +939,10 @@ impl Inspector {
         self.asset = None;
         self.layers = None;
         self.part = None;
+        // A data asset shows while its Obj does, built again as any Obj is; anything else shown ends it.
+        if self.data.as_ref().is_some_and(|(_, holder)| Some(*holder) != entity) {
+            self.data = None;
+        }
         for child in ui.children(self.root) {
             ui.remove(child);
         }
@@ -945,42 +977,36 @@ impl Inspector {
             ui.add_class(hint, "placeholder");
             return;
         };
-        let ((name_row, name, active), persistent, layer, prefab_buttons) =
-            header(ui, self.root, game, entity, self.also.len() + 1);
-        self.prefab_buttons = prefab_buttons;
-
-        let (transform, rows, menu) = section(ui, self.root, "Transform", "transform", HeaderEnd::Menu);
-        let (position_row, position) = vector_row(ui, rows, "Position");
-        let (rotation_row, rotation) = vector_row(ui, rows, "Rotation");
-        let (scale_row, scale) = vector_row(ui, rows, "Scale");
-        let rows = [
-            (Field::Name, name_row),
-            (Field::Position, position_row),
-            (Field::Rotation, rotation_row),
-            (Field::Scale, scale_row),
-        ];
-        self.fields = Some(Fields { name, active, persistent, layer, position, rotation, scale, rows });
-        self.transform_menu = menu;
-        self.headers.push((None, transform));
+        let data = self.data.as_ref().map(|(item, _)| item.clone());
+        match &data {
+            Some(item) => data_header(ui, self.root, item, world, entity),
+            None => self.object_header(ui, game, entity),
+        }
 
         let layout = self.layout_for(game, entity);
         let locks = world.get::<Locks>(entity).cloned();
         for (part, values) in &layout {
-            // A C# component is shown as a box of data, apart from behaviours' code.
+            // A C# component is shown as a box of data, apart from behaviours' code, and a data asset as a file.
             let icon = match part {
+                Part::Behaviour(_) if data.is_some() => "file",
                 Part::Behaviour(name) if self.types.is_component(name) => "box",
                 _ => part.icon(),
             };
             // A behaviour's tick and a switchable component's work; a C# component, only data, and a component
-            // that cannot be switched off have none, as in Unity.
+            // that cannot be switched off have none, as in Unity. A data asset's one section, its Definition's name
+            // in words, has no tick either, and no menu to move or remove it by.
             let end = match part {
+                _ if data.is_some() => HeaderEnd::Nothing,
                 Part::Behaviour(name) => props::behaviour_enabled(game, entity, name).map_or(HeaderEnd::Nothing, HeaderEnd::Switch),
                 _ => part.switch().map_or(HeaderEnd::Nothing, |switch| {
                     HeaderEnd::Switch(voxear_scene::is_component_on(world, entity, switch))
                 }),
             };
-            let (header, rows, tick) = section(ui, self.root, part.title(), icon, end);
-            self.headers.push((Some(part.clone()), header));
+            let title = if data.is_some() { props::nice_name(part.title()) } else { part.title().to_string() };
+            let (header, rows, tick) = section(ui, self.root, &title, icon, end);
+            if data.is_none() {
+                self.headers.push((Some(part.clone()), header));
+            }
             match (part, part.switch(), tick) {
                 (Part::Behaviour(name), _, Some(tick)) => self.behaviour_ticks.push((name.clone(), tick)),
                 (_, Some(switch), Some(tick)) => self.switches.push((switch, tick)),
@@ -1092,7 +1118,9 @@ impl Inspector {
                 let live = matches!(value, Prop::Field { behaviour, path }
                     if crate::live::is_live(world, &self.types, entity, behaviour, path)
                         || crate::live::is_running(world, entity, behaviour));
-                let editable = !(playing && matches!(value, Prop::Field { .. }) && !live) && enabled;
+                // A data asset's file is edited the same whether or not the game plays.
+                let fixed = playing && matches!(value, Prop::Field { .. }) && !live && self.data.is_none();
+                let editable = !fixed && enabled;
                 // An item goes in its list's collection field, and what is in an item in the item's body,
                 // indented from it; anything else in its group.
                 let mut remove = None;
@@ -1233,12 +1261,36 @@ impl Inspector {
                 self.group_foldouts.push((name, foldout));
             }
         }
-        let add = ui.button(self.root, "Add Component");
-        ui.add_class(add, "add-component");
-        self.add = Some(add);
+        if data.is_none() {
+            let add = ui.button(self.root, "Add Component");
+            ui.add_class(add, "add-component");
+            self.add = Some(add);
+        }
         self.conditions = attributes::key(game, &self.types, entity, &layout);
         self.built = (layout, playing, locks);
         self.mark_overrides(ui);
+    }
+
+    /// An Obj's header (its name, tag, layer and switches, and its prefab)
+    /// and its Transform.
+    fn object_header(&mut self, ui: &mut Ui, game: &Game, entity: Entity) {
+        let ((name_row, name, active), persistent, layer, prefab_buttons) =
+            header(ui, self.root, game, entity, self.also.len() + 1);
+        self.prefab_buttons = prefab_buttons;
+
+        let (transform, rows, menu) = section(ui, self.root, "Transform", "transform", HeaderEnd::Menu);
+        let (position_row, position) = vector_row(ui, rows, "Position");
+        let (rotation_row, rotation) = vector_row(ui, rows, "Rotation");
+        let (scale_row, scale) = vector_row(ui, rows, "Scale");
+        let rows = [
+            (Field::Name, name_row),
+            (Field::Position, position_row),
+            (Field::Rotation, rotation_row),
+            (Field::Scale, scale_row),
+        ];
+        self.fields = Some(Fields { name, active, persistent, layer, position, rotation, scale, rows });
+        self.transform_menu = menu;
+        self.headers.push((None, transform));
     }
 
     /// Marks the rows and sections whose values the Obj shown changes from
@@ -1761,9 +1813,13 @@ impl Inspector {
         can_keep: bool,
         kept: &[Field],
     ) -> Option<RowAction> {
-        let fields = self.fields.as_ref()?;
+        // An Obj's name and Transform rows, and its components', or a data asset's fields alone.
+        if self.fields.is_none() && self.data.is_none() {
+            return None;
+        }
+        let fields = self.fields.iter().flat_map(|fields| fields.rows.iter().cloned());
         let rows: Vec<(Field, NodeId)> =
-            fields.rows.iter().cloned().chain(self.rows.iter().map(|r| (Field::Prop(r.prop.clone()), r.row))).collect();
+            fields.chain(self.rows.iter().map(|r| (Field::Prop(r.prop.clone()), r.row))).collect();
         for (field, row) in &rows {
             ui.set_class(*row, "kept", kept.contains(field));
         }
@@ -1982,7 +2038,7 @@ impl Inspector {
 
 /// The namespace every script is in, as `Hello`, which Add Component's
 /// folders leave out; empty when they differ.
-fn shared_namespace<'a>(scripts: impl Iterator<Item = &'a BehaviourType>) -> Vec<String> {
+pub(crate) fn shared_namespace<'a>(scripts: impl Iterator<Item = &'a BehaviourType>) -> Vec<String> {
     let mut shared: Option<Vec<String>> = None;
     for script in scripts {
         let mut namespace: Vec<String> = script.name.split('.').map(str::to_string).collect();
@@ -1999,7 +2055,7 @@ fn shared_namespace<'a>(scripts: impl Iterator<Item = &'a BehaviourType>) -> Vec
 /// `[AddComponentMenu]` puts it, or else under Scripts in a folder for each
 /// part of its namespace past the `shared` one. `None` leaves it out, as an
 /// empty menu path asks.
-fn menu_place(script: &BehaviourType, shared: &[String]) -> Option<(String, String)> {
+pub(crate) fn menu_place(script: &BehaviourType, shared: &[String]) -> Option<(String, String)> {
     if let Some(path) = &script.menu {
         let path = path.trim().trim_matches('/');
         return match path.rsplit_once('/') {
@@ -2764,6 +2820,25 @@ fn section(ui: &mut Ui, root: NodeId, title: &str, icon: &str, end: HeaderEnd) -
         HeaderEnd::Nothing => None,
     };
     (header, ui.foldout_content(foldout).expect("a foldout has content"), end)
+}
+
+/// A data asset's header: its name, and the Definition it holds.
+fn data_header(ui: &mut Ui, root: NodeId, item: &ProjectItem, world: &voxear_ecs::World, holder: Entity) {
+    let header = ui.panel(root, Style::column());
+    ui.add_class(header, "inspector-header");
+    let top = ui.panel(header, Style::row());
+    ui.add_class(top, "header-row");
+    let tile = ui.panel(top, Style::row());
+    ui.add_class(tile, "obj-tile");
+    ui.icon(tile, "file");
+    let name = ui.add_label(top, item.name.strip_suffix(".asset").unwrap_or(&item.name));
+    ui.add_class(name, "obj-name");
+    ui.add_class(name, "data-name");
+    let held = crate::data_assets::fields_of(world, holder).map(|(type_name, _)| type_name).unwrap_or_default();
+    let short = held.rsplit(['.', '+']).next().unwrap_or(&held);
+    let kind = ui.add_label(top, &props::nice_name(short));
+    ui.add_class(kind, "data-type");
+    ui.set_tooltip(kind, &held, None);
 }
 
 /// A property's row: its label in the first 88 pixels, the value after.

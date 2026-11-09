@@ -3279,11 +3279,25 @@ pub fn pick(
             let obj = obj.filter(|&obj| obj != entity);
             with(&mut game.engine.world, entity, |joint: &mut Joint| joint.connected = obj)
         }
+        // A clip field keeps a clip as the Animator's does: a model file picked whole gives its first clip.
+        (Prop::Field { behaviour, path }, Pick::Asset(Some(choice)))
+            if fields::kind_at(types, behaviour, path) == Some(voxear_engine::script_types::FieldKind::Clip) =>
+        {
+            let Some(clip) = clip_reference(game, choice) else { return false };
+            fields::pick(&mut game.engine.world, types, entity, behaviour, path, &Pick::Asset(Some(clip)))
+        }
         (Prop::Field { behaviour, path }, choice) => {
             fields::pick(&mut game.engine.world, types, entity, behaviour, path, choice)
         }
         _ => false,
     }
+}
+
+/// Whether a prop is a script's clip field, which takes a clip or a model
+/// file with clips dropped on it, as the Animator's clip does.
+pub fn takes_clips(types: &ScriptTypes, prop: &Prop) -> bool {
+    let Prop::Field { behaviour, path } = prop else { return false };
+    fields::kind_at(types, behaviour, path) == Some(voxear_engine::script_types::FieldKind::Clip)
 }
 
 /// The Obj a reference that is not a script field points at, as a LOD
@@ -3461,7 +3475,7 @@ pub fn choices(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) ->
         }
         Prop::Sound => {
             let kind = voxear_engine::script_types::FieldKind::Asset { asset: "Voxear.Sound".into() };
-            return fields::asset_choices(game, &kind);
+            return fields::asset_choices(game, types, &kind);
         }
         Prop::MatcherMotionSet => return fields::assets_of(game, Some(AssetKind::MotionSet)),
         Prop::UiPanelDocument => return fields::assets_of(game, Some(AssetKind::Ui)),
@@ -3512,8 +3526,14 @@ pub fn choices(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) ->
         Some(
             kind @ (voxear_engine::script_types::FieldKind::Asset { .. }
             | voxear_engine::script_types::FieldKind::Ref { .. }),
-        ) => fields::asset_choices(game, &kind),
+        ) => fields::asset_choices(game, types, &kind),
         Some(voxear_engine::script_types::FieldKind::Localized) => fields::key_choices(game),
+        // As the Animator's clip picks one: each clip of the model files read, each file not read yet whole.
+        Some(voxear_engine::script_types::FieldKind::Clip) => {
+            let mut found = vec![("None".to_string(), Pick::Asset(None))];
+            found.extend(model_clips(game));
+            found
+        }
         Some(kind) => fields::obj_choices(game, types, entity, &kind),
         None => fields::obj_choices(game, types, entity, &voxear_engine::script_types::FieldKind::Obj),
     }
@@ -3531,7 +3551,7 @@ pub fn why_not(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop, ch
         return format!("The {} takes a {} from its list", label(prop), title(types, prop));
     };
     let kind = fields::kind_at(types, behaviour, path).unwrap_or(voxear_engine::script_types::FieldKind::Obj);
-    fields::why_not(game, entity, &kind, choice)
+    fields::why_not(game, types, entity, &kind, choice)
 }
 
 /// What a reference takes, as its picker's title says: "Material",

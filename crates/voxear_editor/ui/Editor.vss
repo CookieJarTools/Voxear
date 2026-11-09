@@ -965,8 +965,9 @@
     font-weight: 600;
 }
 
-/* How many Objs an edit goes to, beside the name, with several selected. */
-.inspector-many {
+/* How many Objs an edit goes to, beside the name, with several selected;
+   and the Definition a data asset holds, beside its name. */
+.inspector-many, .data-type {
     flex-shrink: 0;
     padding: 2px 6px;
     border-radius: 4px;

@@ -109,7 +109,7 @@ impl Editor {
             return;
         }
         let Some(after) = ObjState::of(&self.game.engine.world, entity) else { return };
-        if before != after {
+        if before != after && !self.holds_data(entity) {
             self.history.record_step(Edit::Changed { entity, before, after });
             self.unsaved = true;
         }

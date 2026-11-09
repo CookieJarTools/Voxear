@@ -6918,6 +6918,151 @@ fn a_material_picks_a_built_in_shader_and_one_is_copied_into_the_project() {
     assert!(copy.contains("struct Water") && copy.contains("float3 vertex(Water water"), "named as its file");
 }
 
+/// A data asset's Definition, as a build describes it: a number and a list,
+/// placed in the Create menu by its `[CreateAsset]`.
+const WEAPON_STATS: &str = r##"{"behaviours": [], "definitions": [{"name": "Hello.WeaponStats", "bases": [], "interfaces": [],
+  "menu": "Weapons/Weapon Stats", "fields": [
+  {"name": "damage", "type": {"kind": "number"}, "default": 10.0},
+  {"name": "shots", "type": {"kind": "list", "element": {"kind": "whole"}}, "default": []}
+]}], "types": {}, "commands": []}"##;
+
+#[test]
+fn a_data_asset_made_from_the_create_menu_is_edited_in_the_inspector_into_its_file() {
+    let Some(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()).ok() else { return };
+    let dir = hello_copy();
+    std::fs::create_dir_all(dir.path().join("Weapons")).unwrap();
+    std::fs::write(dir.path().join("Weapons/Rifle.asset"), "type = \"Hello.WeaponStats\"\n").unwrap();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    editor.set_script_types(voxear_engine::script_types::parse(WEAPON_STATS).unwrap());
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+
+    // New Data Asset… offers each Definition where its [CreateAsset] puts it, and makes a file of the one picked.
+    open_folder(&mut editor, &mut renderer, "Weapons");
+    assert!(tile(&editor.ui, "Rifle.asset").is_some(), "the rifle's stats in the Project panel");
+    // On the space around the files, whose menu is short enough to show whole.
+    let files = editor.ui.find(editor.ui.root(), "project-files").unwrap();
+    context_click(&mut editor.ui, files);
+    frame(&mut editor, &mut renderer);
+    let item = menu_item(&editor.ui, "New Data Asset…").expect("the menu makes data assets");
+    click(&mut editor.ui, item);
+    for _ in 0..3 {
+        frame(&mut editor, &mut renderer);
+    }
+    let labels = |ui: &Ui| picker_rows(ui).into_iter().map(|(label, _)| label).collect::<Vec<_>>();
+    assert_eq!(labels(&editor.ui), ["Weapons"], "in its menu's folder");
+    let weapons = picker_row(&editor.ui, "Weapons").unwrap();
+    click(&mut editor.ui, weapons);
+    frame(&mut editor, &mut renderer);
+    let stats = picker_row(&editor.ui, "Weapon Stats").expect("named as its menu names it");
+    click_across_frames(&mut editor, &mut renderer, stats);
+    frame(&mut editor, &mut renderer);
+    let file = dir.path().join("Weapons/New Weapon Stats.asset");
+    let read = || std::fs::read_to_string(&file).unwrap_or_default();
+    assert!(read().starts_with("type = \"Hello.WeaponStats\"\n"), "{}", read());
+
+    // Selected, it shows its Definition's fields under its name and type: no Transform, nothing to add.
+    assert_eq!(editor.inspected_asset().map(|item| item.path.as_str()), Some("Weapons/New Weapon Stats.asset"));
+    let inspector = editor.ui.find(editor.ui.root(), "inspector").unwrap();
+    let text_of = |editor: &voxear_editor::Editor, class: &str| {
+        first_with(&editor.ui, inspector, class).map(|node| editor.ui.text(node)).unwrap_or_default()
+    };
+    assert_eq!((text_of(&editor, "data-name"), text_of(&editor, "data-type")), ("New Weapon Stats".into(), "Weapon Stats".into()));
+    assert!(prop_row(&editor.ui, "Position").is_none(), "no Transform");
+    assert!(first_with(&editor.ui, inspector, "add-component").is_none(), "no Add Component");
+    shot(&mut renderer, "data-asset.png");
+
+    // A number typed is written into the file at once, the level left as it was.
+    let damage = first_with(&editor.ui, prop_row(&editor.ui, "Damage").unwrap(), "value-input").unwrap();
+    assert_eq!(editor.ui.text(damage), "10", "as the script starts it");
+    type_into(&mut editor.ui, damage, "35.5");
+    frame(&mut editor, &mut renderer);
+    let text = read();
+    assert!(text.starts_with("type = \"Hello.WeaponStats\"\n") && text.contains("damage = 35.5"), "{text}");
+    assert!(!editor.has_unsaved_changes(), "the level has nothing to save");
+
+    // A list grows by its button, and its item is edited as any field is.
+    editor.ui.blur();
+    frame(&mut editor, &mut renderer);
+    let add = first_with(&editor.ui, inspector, "collection-add").expect("the list can grow");
+    click(&mut editor.ui, add);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(read().contains("shots = [0]"), "{}", read());
+    let shot_field = first_with(&editor.ui, prop_row(&editor.ui, "Element 0").unwrap(), "value-input").unwrap();
+    type_into(&mut editor.ui, shot_field, "3");
+    frame(&mut editor, &mut renderer);
+    assert!(read().contains("shots = [3]") && read().contains("damage = 35.5"), "{}", read());
+
+    // Its fields are kept on an Obj of the editor's own, out of the Hierarchy, gone once something else shows.
+    let holder = obj(&editor, "New Weapon Stats").expect("kept on an Obj while it shows");
+    assert!(hierarchy_row(&editor.ui, "New Weapon Stats").is_none());
+    editor.ui.blur();
+    editor.select(obj(&editor, "Spinner A"));
+    frame(&mut editor, &mut renderer);
+    assert!(!editor.game.engine.world.is_alive(holder), "its Obj went with it");
+    assert!(!editor.has_unsaved_changes());
+    let text = read();
+    assert!(text.contains("damage = 35.5") && text.contains("shots = [3]"), "{text}");
+}
+
+/// Definitions, two of which derive one from the other, one named as a
+/// built-in kind is, and a behaviour with a field of two of them.
+const DEFINITION_FIELDS: &str = r##"{"behaviours": [{"name": "Hello.Spinner", "bases": [], "interfaces": [], "fields": [
+  {"name": "stats", "type": {"kind": "asset", "asset": "Hello.WeaponStats"}, "default": null},
+  {"name": "handling", "type": {"kind": "asset", "asset": "Hello.GunHandling"}, "default": null}
+]}], "definitions": [
+  {"name": "Hello.WeaponStats", "bases": [], "interfaces": [], "fields": []},
+  {"name": "Hello.SniperStats", "bases": ["Hello.WeaponStats"], "interfaces": [], "fields": []},
+  {"name": "Hello.Armour", "bases": [], "interfaces": [], "fields": []},
+  {"name": "Hello.GunHandling", "bases": [], "interfaces": [], "fields": []}
+], "types": {}, "commands": []}"##;
+
+#[test]
+fn a_definition_field_offers_only_its_own_types_data_assets() {
+    let Some(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()).ok() else { return };
+    let dir = hello_copy();
+    let write = |path: &str, text: &str| {
+        let path = dir.path().join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    };
+    write("Weapons/Rifle.asset", "type = \"Hello.WeaponStats\"\n");
+    write("Weapons/Sniper.asset", "type = \"Hello.SniperStats\"\n");
+    write("Weapons/Plate.asset", "type = \"Hello.Armour\"\n");
+    write("Weapons/Grip.asset", "type = \"Hello.GunHandling\"\n");
+    write("Guns/Rifle.gunhandling", "kind = \"bolt_action\"\n");
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    editor.set_script_types(voxear_engine::script_types::parse(DEFINITION_FIELDS).unwrap());
+    let spinner = obj(&editor, "Spinner A").unwrap();
+    editor.select(Some(spinner));
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let offered = |editor: &mut voxear_editor::Editor, renderer: &mut Renderer, label: &str| {
+        let field = first_with(&editor.ui, prop_row(&editor.ui, label).unwrap(), "value-picker").unwrap();
+        let arrow = first_with(&editor.ui, field, "picker-arrow").unwrap();
+        click(&mut editor.ui, arrow);
+        for _ in 0..3 {
+            frame(editor, renderer);
+        }
+        let offered: Vec<String> = picker_rows(&editor.ui).into_iter().map(|(label, _)| label).collect();
+        offered
+    };
+
+    // Its own type's, and those deriving from it; not another Definition's.
+    assert_eq!(offered(&mut editor, &mut renderer, "Stats"), ["None", "Rifle.asset", "Sniper.asset"]);
+    let sniper = picker_row(&editor.ui, "Sniper.asset").unwrap();
+    click_across_frames(&mut editor, &mut renderer, sniper);
+    frame(&mut editor, &mut renderer);
+    let kept = editor.game.engine.world.get::<voxear_engine::EditBehaviours>(spinner).unwrap();
+    assert_eq!(kept.0[0].fields.get("stats"), Some(&toml::Value::String("Weapons/Sniper.asset".into())));
+
+    // A Definition named as a built-in kind is still its own: its data assets, not Gun Handlings.
+    assert_eq!(offered(&mut editor, &mut renderer, "Handling"), ["None", "Grip.asset"]);
+}
+
 #[test]
 fn a_scenes_inspector_shows_its_lighting_to_change() {
     let Some(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()).ok() else { return };

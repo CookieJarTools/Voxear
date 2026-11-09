@@ -4,6 +4,10 @@
 //! read and written as the scene's TOML. A value the scene does not set
 //! reads as the script starts it; writing one sets the whole field for the
 //! scene, as it is now, with that value changed.
+//!
+//! A `Bone` field shows its Obj, then a row under it for the bone, one of
+//! the bones of the model the Obj draws. A clip field shows and picks its
+//! clip as the Animator's does.
 
 use std::sync::Arc;
 
@@ -37,6 +41,17 @@ pub enum Pick {
     Asset(Option<String>),
     /// A key into the project's string tables.
     Key(Option<String>),
+}
+
+/// The key a `Bone` field names its bone by, beside its Obj: `{ obj = 3,
+/// bone = "hand_r" }`. Its own row, under the field's, picks one of the
+/// bones of the model the Obj draws.
+pub const BONE: &str = "bone";
+
+/// Whether a path is a `Bone` field's bone, the row under its Obj's.
+pub fn is_bone_name(types: &ScriptTypes, behaviour: &str, path: &[Step]) -> bool {
+    let Some((Step::Key(key), field)) = path.split_last() else { return false };
+    key == BONE && kind_at(types, behaviour, field) == Some(FieldKind::Bone)
 }
 
 /// The kind of value at a path, as the scripts' description says.
@@ -79,6 +94,7 @@ pub fn expand(
                 expand(world, types, entity, behaviour, with(&path, Step::Key(field.name.clone())), rows);
             }
         }
+        Some(FieldKind::Bone) => rows.push(with(&path, Step::Key(BONE.to_string()))),
         _ => {}
     }
 }
@@ -101,12 +117,11 @@ pub enum Target {
 pub fn target(world: &World, types: &ScriptTypes, entity: Entity, behaviour: &str, path: &[Step]) -> Option<Target> {
     let value = value_at(world, types, entity, behaviour, path)?;
     match kind_at(types, behaviour, path)? {
-        FieldKind::Obj | FieldKind::Behaviour { .. } | FieldKind::Component { .. } => {
-            let bits = value.as_table()?.get("entity")?.as_integer().filter(|&bits| bits != 0)?;
-            let target = Entity::from_bits(bits as u64);
+        FieldKind::Obj | FieldKind::Behaviour { .. } | FieldKind::Component { .. } | FieldKind::Bone => {
+            let target = entity_of(Some(&value))?;
             world.is_alive(target).then_some(Target::Obj(target))
         }
-        FieldKind::Asset { .. } | FieldKind::Ref { .. } => {
+        FieldKind::Asset { .. } | FieldKind::Ref { .. } | FieldKind::Clip => {
             value.as_str().filter(|path| !path.is_empty()).map(|path| Target::Asset(path.to_string()))
         }
         _ => None,
@@ -172,10 +187,40 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, behaviour: &str, pa
         return live;
     }
     let value = value_at(world, types, entity, behaviour, path);
+    if is_bone_name(types, behaviour, path) {
+        let field = value_at(world, types, entity, behaviour, &path[..path.len() - 1]);
+        return bone_choice(world, entity_of(field.as_ref()), value.as_ref().and_then(toml::Value::as_str));
+    }
     match kind_at(types, behaviour, path) {
+        // A clip as the Animator's shows one: `Walk_Loop · Walks.glb`.
+        Some(FieldKind::Clip) => Value::Asset(crate::props::clip_label(
+            game,
+            value.as_ref().and_then(toml::Value::as_str).unwrap_or_default(),
+        )),
         Some(kind) => typed(world, &kind, value.as_ref()),
         None => untyped(world, value.as_ref()),
     }
+}
+
+/// A `Bone` field's bone, as a Bone Attachment's shows: one of the bones of
+/// the model the Obj it points at draws, none first. A bone the model does
+/// not have, or has not loaded yet, stays as it is named until another is
+/// picked.
+fn bone_choice(world: &World, target: Option<Entity>, bone: Option<&str>) -> Value {
+    let mut names = vec!["None".to_string()];
+    names.extend(target.map(|target| crate::props::model_bones(world, target)).unwrap_or_default());
+    let bone = bone.filter(|bone| !bone.is_empty());
+    if let Some(bone) = bone.filter(|bone| !names.iter().skip(1).any(|name| name == bone)) {
+        names.push(bone.to_string());
+    }
+    let index = bone.and_then(|bone| names.iter().skip(1).position(|name| name == bone)).map_or(0, |at| at + 1);
+    Value::Choice(index, names)
+}
+
+/// The entity a reference holds, `{ entity = n }`, when it holds one.
+fn entity_of(value: Option<&toml::Value>) -> Option<Entity> {
+    let bits = value?.as_table()?.get("entity")?.as_integer().filter(|&bits| bits != 0)?;
+    Some(Entity::from_bits(bits as u64))
 }
 
 /// A value shown as its field's kind says.
@@ -206,10 +251,10 @@ pub(crate) fn typed(world: &World, kind: &FieldKind, value: Option<&toml::Value>
             let [r, g, b, _] = color(value);
             Value::Color([r, g, b].map(|c| (c * 1000.0).round() / 1000.0))
         }
-        FieldKind::Obj | FieldKind::Behaviour { .. } | FieldKind::Component { .. } => {
+        FieldKind::Obj | FieldKind::Behaviour { .. } | FieldKind::Component { .. } | FieldKind::Bone => {
             Value::Obj(reference(world, value))
         }
-        FieldKind::Asset { .. } | FieldKind::Ref { .. } => {
+        FieldKind::Asset { .. } | FieldKind::Ref { .. } | FieldKind::Clip => {
             Value::Asset(value.and_then(toml::Value::as_str).filter(|p| !p.is_empty()).unwrap_or("None").to_string())
         }
         FieldKind::List { .. } => Value::List(value.and_then(toml::Value::as_array).map_or(0, Vec::len)),
@@ -245,6 +290,11 @@ pub fn set(
 ) -> bool {
     if crate::live::is_live(world, types, entity, behaviour, path) {
         return crate::live::set(world, types, entity, behaviour, path, value);
+    }
+    // A Bone field's bone is picked by name; None names none.
+    if let (true, Value::Choice(index, names)) = (is_bone_name(types, behaviour, path), value) {
+        let bone = names.get(*index).filter(|_| *index > 0).cloned().unwrap_or_default();
+        return set_raw_at(world, types, entity, behaviour, path, toml::Value::String(bone));
     }
     let new = match (value, kind_at(types, behaviour, path)) {
         (Value::Choice(index, names), _) => toml::Value::String(names.get(*index).cloned().unwrap_or_default()),
@@ -306,6 +356,16 @@ pub fn pick(
     pick: &Pick,
 ) -> bool {
     let new = match pick {
+        // A Bone field keeps its bone when the Obj picked has one of the same name.
+        Pick::Obj(Some(target)) if kind_at(types, behaviour, path) == Some(FieldKind::Bone) => {
+            let bone = with(path, Step::Key(BONE.to_string()));
+            let named = value_at(world, types, entity, behaviour, &bone).and_then(|v| v.as_str().map(str::to_string));
+            let kept = named.filter(|name| crate::props::model_bones(world, *target).contains(name));
+            let bits = toml::Value::Integer(target.to_bits() as i64);
+            let mut table = toml::Table::from_iter([("entity".to_string(), bits)]);
+            table.extend(kept.map(|name| (BONE.to_string(), toml::Value::String(name))));
+            toml::Value::Table(table)
+        }
         Pick::Obj(Some(target)) => toml::Value::Table(toml::Table::from_iter([(
             "entity".to_string(),
             toml::Value::Integer(target.to_bits() as i64),
@@ -440,7 +500,7 @@ fn blank(types: &ScriptTypes, kind: &FieldKind) -> toml::Value {
         FieldKind::Number => toml::Value::Float(0.0),
         FieldKind::Whole => toml::Value::Integer(0),
         FieldKind::Bool => toml::Value::Boolean(false),
-        FieldKind::Text | FieldKind::Localized | FieldKind::Asset { .. } | FieldKind::Ref { .. } => {
+        FieldKind::Text | FieldKind::Localized | FieldKind::Asset { .. } | FieldKind::Ref { .. } | FieldKind::Clip => {
             toml::Value::String(String::new())
         }
         FieldKind::Enum { names } => toml::Value::String(names.first().cloned().unwrap_or_default()),
@@ -455,9 +515,11 @@ fn blank(types: &ScriptTypes, kind: &FieldKind) -> toml::Value {
                 .map(|f| (f.name.clone(), f.default.clone().unwrap_or_else(|| blank(types, &f.kind))))
                 .collect(),
         ),
-        FieldKind::Obj | FieldKind::Behaviour { .. } | FieldKind::Component { .. } | FieldKind::Unsupported { .. } => {
-            toml::Value::Table(toml::Table::new())
-        }
+        FieldKind::Obj
+        | FieldKind::Bone
+        | FieldKind::Behaviour { .. }
+        | FieldKind::Component { .. }
+        | FieldKind::Unsupported { .. } => toml::Value::Table(toml::Table::new()),
     }
 }
 
@@ -467,6 +529,10 @@ fn blank(types: &ScriptTypes, kind: &FieldKind) -> toml::Value {
 /// first.
 pub fn obj_choices(game: &Game, types: &ScriptTypes, entity: Entity, kind: &FieldKind) -> Vec<(String, Pick)> {
     let world = &game.engine.world;
+    // An Obj the editor made for itself, as a data asset shows on, is in no scene to point into.
+    if world.has::<EditorOnly>(entity) {
+        return vec![("None".into(), Pick::Obj(None))];
+    }
     let scene = game.levels.scene_of(entity);
     let fits = |target: Entity| match kind {
         FieldKind::Behaviour { name } => specs(world, target)
@@ -489,9 +555,14 @@ pub fn obj_choices(game: &Game, types: &ScriptTypes, entity: Entity, kind: &Fiel
 }
 
 /// The project's assets an asset field can take, by path, with nothing
-/// first.
-pub fn asset_choices(game: &Game, kind: &FieldKind) -> Vec<(String, Pick)> {
+/// first: for a Definition, its own data assets; otherwise those of the
+/// built-in kind its type's name says.
+pub fn asset_choices(game: &Game, types: &ScriptTypes, kind: &FieldKind) -> Vec<(String, Pick)> {
     let (FieldKind::Asset { asset } | FieldKind::Ref { asset }) = kind else { return Vec::new() };
+    // Before the names below, which a Definition's own may share.
+    if types.definition(asset).is_some() {
+        return data_assets(game, types, asset);
+    }
     let wanted = match asset.rsplit('.').next() {
         Some("Prefab") => Some(AssetKind::Prefab),
         Some("Material") => Some(AssetKind::Material),
@@ -510,6 +581,28 @@ pub fn asset_choices(game: &Game, kind: &FieldKind) -> Vec<(String, Pick)> {
         _ => None,
     };
     assets_of(game, wanted)
+}
+
+/// The project's data assets that hold `definition`, or a Definition
+/// deriving from it, by path, with nothing first.
+fn data_assets(game: &Game, types: &ScriptTypes, definition: &str) -> Vec<(String, Pick)> {
+    let db = game.content.db();
+    let mut paths: Vec<String> = db
+        .entries()
+        .filter(|e| e.kind == AssetKind::Data && holds(game, types, e.guid, definition))
+        .map(|e| e.path.clone())
+        .collect();
+    paths.sort();
+    let mut found = vec![("None".to_string(), Pick::Asset(None))];
+    found.extend(paths.into_iter().map(|path| (path.clone(), Pick::Asset(Some(path)))));
+    found
+}
+
+/// Whether the data asset `guid` holds `definition`, or one deriving from
+/// it, as its `type` names.
+fn holds(game: &Game, types: &ScriptTypes, guid: voxear_assets::AssetGuid, definition: &str) -> bool {
+    let held = game.content.peek_data_type(guid);
+    held.is_some_and(|held| held == definition || types.definition(&held).is_some_and(|d| d.is_a(definition)))
 }
 
 /// The states, actions or marks of the project's Motion Sets, as
@@ -585,12 +678,24 @@ pub fn key_choices(game: &Game) -> Vec<(String, Pick)> {
 }
 
 /// Why a reference cannot take what was dropped on it, for the status bar.
-pub fn why_not(game: &Game, entity: Entity, kind: &FieldKind, pick: &Pick) -> String {
+pub fn why_not(game: &Game, types: &ScriptTypes, entity: Entity, kind: &FieldKind, pick: &Pick) -> String {
     let world = &game.engine.world;
+    // A data asset of another Definition says which it holds.
+    if let (Pick::Asset(Some(path)), FieldKind::Asset { asset } | FieldKind::Ref { asset }) = (pick, kind)
+        && types.definition(asset).is_some()
+        && let Some(held) = game.content.db().guid_of(path).and_then(|guid| game.content.peek_data_type(guid))
+    {
+        let file = path.rsplit('/').next().unwrap_or(path);
+        return format!("{file} holds {}, not {}", short(&held), short(asset));
+    }
     match (pick, kind) {
         (Pick::Obj(Some(target)), FieldKind::Asset { asset } | FieldKind::Ref { asset }) => {
             format!("{} is an Obj; the field takes a {}", name_of(world, *target), short(asset))
         }
+        (Pick::Obj(Some(target)), FieldKind::Clip) => {
+            format!("{} is an Obj; the field takes a clip", name_of(world, *target))
+        }
+        (Pick::Obj(Some(_)), _) if world.has::<EditorOnly>(entity) => "A data asset cannot point at an Obj".into(),
         (Pick::Obj(Some(target)), _) if game.levels.scene_of(*target) != game.levels.scene_of(entity) => {
             format!("{} is in another scene, which this scene cannot point into", name_of(world, *target))
         }
@@ -617,6 +722,7 @@ pub fn takes(kind: &FieldKind) -> &str {
         FieldKind::Asset { asset } | FieldKind::Ref { asset } => short(asset),
         FieldKind::Behaviour { name } | FieldKind::Component { name } => short(name),
         FieldKind::Localized => "Text",
+        FieldKind::Clip => "Clip",
         _ => "Obj",
     }
 }
@@ -709,5 +815,59 @@ fn summary(world: &World, value: &toml::Value) -> String {
         toml::Value::Table(table) if table.contains_key("entity") || table.is_empty() => reference(world, Some(value)),
         toml::Value::Array(items) => format!("{} items", items.len()),
         other => other.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An arm drawing a model with a hand, and a holder whose Bone field
+    /// points at it: the field shows its Obj, with a row under it for the
+    /// bone, which offers the model's bones and keeps the one picked; a bone
+    /// stays with an Obj picked whose model has one of its name.
+    #[test]
+    fn a_bone_field_shows_its_obj_then_a_bone_of_its_model() {
+        use voxear_render::{Bone, BonePose, ModelAnimation, ModelRenderer, Skeleton};
+        let bone = |name: &str, parent| Bone { name: name.into(), parent, rest: BonePose::default() };
+        let skeleton = Skeleton { bones: vec![bone("Root", None), bone("hand_r", Some(0))] };
+        let animation = Arc::new(ModelAnimation { skeleton, skins: Vec::new(), clips: Vec::new() });
+        let model = || ModelRenderer { animation: Some(animation.clone()), ..ModelRenderer::new(Vec::new()) };
+        let mut world = World::new();
+        let arm = world.spawn((Name("Arm".into()), voxear_scene::Transform::IDENTITY, model()));
+        let other = world.spawn((Name("Other".into()), voxear_scene::Transform::IDENTITY, model()));
+        let holder = world.spawn((Name("Holder".into()), EditBehaviours(vec![BehaviourSpec::new("Hello.Holder")])));
+        let text = r#"{"behaviours": [{"name": "Hello.Holder", "fields": [
+            { "name": "grip", "type": { "kind": "bone" }, "default": null }
+        ]}], "types": {}}"#;
+        let types = voxear_engine::script_types::parse(text).unwrap();
+        let grip = vec![Step::Key("grip".into())];
+        let bone_row = vec![Step::Key("grip".into()), Step::Key(BONE.into())];
+
+        let mut rows = Vec::new();
+        expand(&world, &types, holder, "Hello.Holder", grip.clone(), &mut rows);
+        assert_eq!(rows, [grip.clone(), bone_row.clone()], "the Obj, then its bone");
+        assert!(is_bone_name(&types, "Hello.Holder", &bone_row) && !is_bone_name(&types, "Hello.Holder", &grip));
+        assert!(pick(&mut world, &types, holder, "Hello.Holder", &grip, &Pick::Obj(Some(arm))));
+        let shown = bone_choice(&world, Some(arm), None);
+        assert_eq!(shown, Value::Choice(0, vec!["None".into(), "Root".into(), "hand_r".into()]));
+
+        let picked = Value::Choice(2, vec!["None".into(), "Root".into(), "hand_r".into()]);
+        assert!(set(&mut world, &types, holder, "Hello.Holder", &bone_row, &picked));
+        let value = value_at(&world, &types, holder, "Hello.Holder", &grip).unwrap();
+        assert_eq!(value.get("bone").and_then(toml::Value::as_str), Some("hand_r"));
+        assert_eq!(target(&world, &types, holder, "Hello.Holder", &grip), Some(Target::Obj(arm)), "pings its Obj");
+        assert_eq!(typed(&world, &FieldKind::Bone, Some(&value)), Value::Obj("Arm".into()));
+
+        // Another Obj whose model has a hand keeps it; a bone its model lacks shows as named until another is picked.
+        assert!(pick(&mut world, &types, holder, "Hello.Holder", &grip, &Pick::Obj(Some(other))));
+        let value = value_at(&world, &types, holder, "Hello.Holder", &grip).unwrap();
+        assert_eq!(value.get("bone").and_then(toml::Value::as_str), Some("hand_r"));
+        let missing = bone_choice(&world, Some(other), Some("tail"));
+        assert_eq!(missing, Value::Choice(3, vec!["None".into(), "Root".into(), "hand_r".into(), "tail".into()]));
+        let none = Value::Choice(0, vec!["None".into(), "Root".into(), "hand_r".into()]);
+        assert!(set(&mut world, &types, holder, "Hello.Holder", &bone_row, &none));
+        let value = value_at(&world, &types, holder, "Hello.Holder", &bone_row);
+        assert_eq!(value, Some(toml::Value::String(String::new())), "None names no bone");
     }
 }

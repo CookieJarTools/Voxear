@@ -99,6 +99,10 @@ pub enum ProjectEvent {
     /// under `anchor`, to make the one picked in `folder` (from the
     /// project's folder).
     NewShader { folder: String, anchor: NodeId },
+    /// New Data Asset was chosen: the editor offers the scripts'
+    /// Definitions under `anchor`, to make a data asset of the one picked in
+    /// `folder` (from the project's folder).
+    NewDataAsset { folder: String, anchor: NodeId },
     /// A file or folder of the panel's was dragged onto a folder, by their
     /// paths, to move it there.
     Move { path: String, folder: String },
@@ -128,6 +132,7 @@ enum MenuAction {
     Import,
     New(NewFile),
     NewShader,
+    NewDataAsset,
 }
 
 /// How long a pinged file stays lit, in seconds.
@@ -992,6 +997,10 @@ impl ProjectView {
                 _ if kind.module().is_some_and(|module| !self.modules.has(module)) => {}
                 _ => add(MenuItem::new(kind.label()).enabled(open_to_new), Some(MenuAction::New(kind))),
             }
+            // Data assets, after the scripts that describe them, as one item offering each Definition.
+            if kind == NewFile::Script {
+                add(MenuItem::new("New Data Asset…").enabled(open_to_new), Some(MenuAction::NewDataAsset));
+            }
         }
         let at = ui.pointer_position().unwrap_or_default();
         ui.open_menu(owner, at, &items);
@@ -1059,6 +1068,10 @@ impl ProjectView {
             MenuAction::NewShader => {
                 let folder = self.contents.borrow().folders[folder].path.clone();
                 vec![ProjectEvent::NewShader { folder, anchor: self.path }]
+            }
+            MenuAction::NewDataAsset => {
+                let folder = self.contents.borrow().folders[folder].path.clone();
+                vec![ProjectEvent::NewDataAsset { folder, anchor: self.path }]
             }
             MenuAction::New(kind) => {
                 let at = self.contents.borrow().folders[folder].path.clone();

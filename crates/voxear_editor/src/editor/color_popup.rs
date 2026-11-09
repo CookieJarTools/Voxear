@@ -165,7 +165,7 @@ impl Editor {
         }
         let Target::Prop { entity, before, .. } = target else { return };
         let Some(after) = ObjState::of(&self.game.engine.world, entity) else { return };
-        if after != *before && !self.is_playing() {
+        if after != *before && !self.is_playing() && !self.holds_data(entity) {
             self.history.record_step(Edit::Changed { entity, before: *before, after });
             self.unsaved = true;
         }

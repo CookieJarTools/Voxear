@@ -516,6 +516,7 @@ fn asset(game: &Game, path: &str) -> (&'static str, String) {
         Some(AssetKind::MotionSet) => "play",
         Some(AssetKind::GunHandling) => "crosshair",
         Some(AssetKind::Lighting) => "light",
+        Some(AssetKind::Data) => "file",
         None => "obj",
     };
     let folder = path.rsplit_once('/').map_or("", |(folder, _)| folder);

@@ -417,7 +417,8 @@ fn gather(
                 // Textures load with their models and lights, as light profiles do, scripts load
                 // UI documents themselves, and the game reads its input actions and string tables
                 // when it starts, and its sound the paths round the level's walls once it plays.
-                // Shaders are compiled into the renderer's own before anything loads.
+                // Shaders are compiled into the renderer's own before anything loads, and scripts read data
+                // assets as they load them.
                 AssetKind::Texture
                 | AssetKind::LightProfile
                 | AssetKind::Shader
@@ -425,7 +426,8 @@ fn gather(
                 | AssetKind::InputActions
                 | AssetKind::Strings
                 | AssetKind::AssetTable
-                | AssetKind::Paths => false,
+                | AssetKind::Paths
+                | AssetKind::Data => false,
             } && !models.stripped.contains(&guid);
             if owner == Some(guid) {
                 progress.scenes.lock().expect("never poisoned").entry(guid).or_insert((1.0, 0, 0));

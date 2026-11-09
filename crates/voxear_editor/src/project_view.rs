@@ -249,6 +249,7 @@ impl Contents {
                 FileKind::Asset(AssetKind::MotionSet) => "play",
                 FileKind::Asset(AssetKind::GunHandling) => "crosshair",
                 FileKind::Asset(AssetKind::Lighting) => "light",
+                FileKind::Asset(AssetKind::Data) => "file",
             },
         }
     }

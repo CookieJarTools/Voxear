@@ -187,6 +187,12 @@ pub trait ScriptServices {
         None
     }
 
+    /// A data asset (an `.asset` file) by project path or GUID, for
+    /// `Definition.Load`, as JSON: its GUID, its path, its type and its fields.
+    fn asset_fields(&mut self, reference: &str) -> Result<String> {
+        anyhow::bail!("data assets load only in a running game, not here ({reference})")
+    }
+
     /// Loads a sound asset by project path or GUID, for `Sound.Load`,
     /// returning its id.
     fn load_sound(&mut self, reference: &str) -> Result<u32> {
@@ -447,4 +453,24 @@ impl Drop for ServicesScope<'_> {
 pub(crate) fn with_services<R>(f: impl FnOnce(&mut dyn ScriptServices) -> R) -> Option<R> {
     let mut services = SERVICES.get()?;
     Some(f(unsafe { services.as_mut() }))
+}
+
+/// A data asset as JSON for `Definition.Load` (see
+/// [`ScriptServices::asset_fields`]), written when it fits: its length, or
+/// -1 when there is none.
+pub(crate) unsafe extern "C" fn asset_fields(reference: *const u8, len: i32, buffer: *mut u8, capacity: i32) -> i32 {
+    let reference = unsafe { crate::interop::utf8(reference, len) };
+    match with_services(|services| services.asset_fields(&reference)) {
+        Some(Ok(json)) => {
+            if !buffer.is_null() && json.len() <= capacity.max(0) as usize {
+                unsafe { std::ptr::copy_nonoverlapping(json.as_ptr(), buffer, json.len()) };
+            }
+            json.len() as i32
+        }
+        Some(Err(error)) => {
+            tracing::error!("{error:#}");
+            -1
+        }
+        None => -1,
+    }
 }

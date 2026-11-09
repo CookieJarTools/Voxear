@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 57;
+pub(crate) const API_VERSION: u32 = 58;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -401,6 +401,9 @@ pub(crate) struct NativeApi {
         out: *mut f32,
         out_len: i32,
     ) -> i32,
+    /// A data asset by project path or GUID, as JSON for
+    /// `Definition.Load`: its length, written when it fits, or -1.
+    pub asset_fields: unsafe extern "C" fn(reference: *const u8, len: i32, buffer: *mut u8, capacity: i32) -> i32,
 }
 
 /// The kinds of component scripts reach through one entry, `kind_value`,
@@ -1750,6 +1753,7 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         kind_value,
         kind_text,
         pose_op,
+        asset_fields: crate::services::asset_fields,
     }
 }
 

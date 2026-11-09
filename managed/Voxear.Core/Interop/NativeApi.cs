@@ -151,4 +151,5 @@ internal unsafe struct NativeApi
 	public delegate* unmanaged[Cdecl]<int, ulong, int, int, float*, int> KindValue;
 	public delegate* unmanaged[Cdecl]<int, ulong, int, byte*, int, byte*, int, int> KindText;
 	public delegate* unmanaged[Cdecl]<ulong, int, int*, int, float*, int, byte*, int, float*, int, int> PoseOp;
+	public delegate* unmanaged[Cdecl]<byte*, int, byte*, int, int> AssetFields;
 }

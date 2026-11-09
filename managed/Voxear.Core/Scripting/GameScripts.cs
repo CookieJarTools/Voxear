@@ -39,6 +39,7 @@ internal static class GameScripts
 		SceneComponentTypes.Clear();
 		BehaviourTypes.Clear();
 		BehaviourFields.Clear();
+		Definitions.Clear();
 		SaveTypes.Clear();
 		var packages = loaded.Count - 1;
 		Log.Info(packages == 0 ? $"Loaded game scripts from {path}" : $"Loaded game scripts from {path}, with {packages} package assemblies");
@@ -185,6 +186,7 @@ internal static class GameScripts
 		assemblies.AddRange(loaded);
 		BehaviourTypes.Clear();
 		BehaviourFields.Clear();
+		Definitions.Clear();
 		SceneComponentTypes.Clear();
 		InstanceRegistry.Clear();
 		InspectorDrawers.Forget();

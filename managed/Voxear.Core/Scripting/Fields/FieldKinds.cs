@@ -82,6 +82,12 @@ internal static class FieldKinds
 			json.WriteNumber("size", size);
 			return true;
 		}
+		if (typeof(Definition).IsAssignableFrom(type))
+		{
+			json.WriteString("kind", "asset");
+			json.WriteString("asset", type.FullName);
+			return true;
+		}
 		if (FieldValues.IsGeneric(type, typeof(Ref<>)) || FieldValues.IsAsset(type))
 		{
 			var asset = FieldValues.IsAsset(type) ? type : type.GetGenericArguments()[0];

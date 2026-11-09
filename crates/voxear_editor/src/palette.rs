@@ -428,6 +428,7 @@ fn assets(game: &Game) -> Vec<Entry> {
                 AssetKind::MotionSet => ("Motion Set", "play"),
                 AssetKind::GunHandling => ("Gun Handling", "crosshair"),
                 AssetKind::Lighting => ("Lighting settings", "light"),
+                AssetKind::Data => ("Data asset", "file"),
             };
             let (action, key) = match kind {
                 AssetKind::Level => (PaletteAction::OpenLevel(path.clone()), format!("level:{path}")),

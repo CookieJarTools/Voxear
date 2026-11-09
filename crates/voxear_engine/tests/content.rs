@@ -554,3 +554,25 @@ fn nothing_ships_as_the_file_it_was_made_as() {
     let id = content.sound(&wind).unwrap();
     assert_eq!(content.loaded_sound(id).unwrap().info().frames, 4800);
 }
+
+#[test]
+fn a_data_asset_ships_when_a_field_names_it_and_not_otherwise() {
+    let dir = project();
+    let write = |path: &str, text: &str| {
+        let path = dir.path().join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    };
+    write("Weapons/Rifle.asset", "type = \"Game.WeaponStats\"\n\n[fields]\ndamage = 35.0\n");
+    write("Weapons/Unused.asset", "type = \"Game.WeaponStats\"\n");
+    let wolf = format!("{WOLF}behaviours = [\"Game.Rifle\"]\nfields.\"Game.Rifle\" = {{ stats = \"Weapons/Rifle.asset\" }}\n");
+    write("Prefabs/Wolf.prefab", &wolf);
+    let output = dir.path().join("Built");
+    let report = content_build::build(dir.path(), &output, &unmerged(), &[]).unwrap();
+    let shipped: Vec<&String> = report.bundles.iter().flat_map(|b| &b.assets).collect();
+    assert!(shipped.iter().any(|p| *p == "Weapons/Rifle.asset"), "the wolf's rifle stats ship: {shipped:?}");
+    assert!(report.excluded.iter().any(|p| p == "Weapons/Unused.asset"), "nothing names the other");
+    let catalog = Catalog::read(&output).unwrap();
+    let rifle = catalog.assets.iter().find(|a| a.path == "Weapons/Rifle.asset").unwrap();
+    assert_eq!(rifle.kind, voxear_assets::AssetKind::Data);
+}

@@ -64,6 +64,9 @@ pub enum AssetKind {
     /// A `.gunhandling` file: how a gun is held and how its actions go,
     /// which a Gun picks.
     GunHandling,
+    /// An `.asset` file: a data asset, the fields of a C# `Definition`
+    /// subclass, which the file names, as scripts' fields pick it.
+    Data,
 }
 
 impl AssetKind {
@@ -87,6 +90,7 @@ impl AssetKind {
             "shader" => Self::Shader,
             "motionset" => Self::MotionSet,
             "gunhandling" => Self::GunHandling,
+            "asset" => Self::Data,
             _ => return None,
         })
     }

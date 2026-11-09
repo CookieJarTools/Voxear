@@ -1045,6 +1045,7 @@ fn assets(path: &Path) -> Result<()> {
             AssetKind::Shader => "shader",
             AssetKind::MotionSet => "motion set",
             AssetKind::GunHandling => "gun handling",
+            AssetKind::Data => "data",
         };
         println!("  {:<9} {}  {}", kind, entry.guid, entry.path);
     }

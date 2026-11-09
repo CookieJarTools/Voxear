@@ -88,6 +88,11 @@ internal static class FieldDefaults
 			WritePath(json, path);
 			return true;
 		}
+		if (value is Definition definition)
+		{
+			WritePath(json, definition.Path);
+			return true;
+		}
 		if (value is IList items)
 		{
 			WriteList(json, items, type);

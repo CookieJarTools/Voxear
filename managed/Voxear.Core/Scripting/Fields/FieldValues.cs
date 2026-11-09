@@ -88,6 +88,10 @@ internal static class FieldValues
 		{
 			return type.GetMethod("Load", new[] { typeof(string) })!.Invoke(null, new object?[] { value.GetString() });
 		}
+		if (typeof(Definition).IsAssignableFrom(type))
+		{
+			return Definitions.Load(type, value.GetString());
+		}
 		if (type.IsArray)
 		{
 			return ReadArray(value, type.GetElementType()!, path);

@@ -4,6 +4,8 @@ order: 5
 
 Plants move in the wind: trees lean and sway, their leaves flutter, and gusts sweep across a field of grass in waves. One **Wind Zone** blows over the whole level, and every plant whose material moves in the wind follows it, in its shading, its shadow and its motion blur alike. Plants also bend out of the way of a player or a vehicle passing through them, and spring back after.
 
+Under water there is no wind: plants rooted under the sea sway back and forth with its swell instead, slowly, and less the deeper they stand, and under a Pool's still water they drift a little (see [[The Ocean]]).
+
 ## A Wind Zone
 
 Add a **Wind Zone** to any Obj (Add Component, then Rendering). The wind blows along the Obj's blue (Z) axis, level with the ground: turn the Obj to turn the wind. While it is selected, the Scene view shows its arrows, longer the harder it blows.

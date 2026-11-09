@@ -4254,6 +4254,44 @@ fn where_the_water_meets_a_wall_it_foams_and_wets_it() {
     assert!(palest(&foamed) > palest(&dark) + 40, "foam at its foot: {} against {} without", palest(&foamed), palest(&dark));
 }
 
+/// A glowing pole that bends as a plant does, standing six metres tall on
+/// the bottom of a sea with no Wind Zone, its top two metres under, seen
+/// from beside it at `time`.
+fn surge_render(time: f32) -> Option<Vec<u8>> {
+    use voxear_render::{Ocean, Sky};
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, -5.0, -6.0))));
+    world.insert_resource(Sky { ambient: 0.6, ..Sky::default() });
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let glowing = MaterialDesc { base_color: [0.0, 0.0, 0.0, 1.0], emissive: [8.0, 8.0, 8.0], wind_bend: 1.0, ..MaterialDesc::default() };
+    let glowing = renderer.add_material(&glowing).unwrap();
+    // Its origin at its foot, so it bends from there.
+    let mut pole = voxear_render::MeshData::primitive(Primitive::Cube);
+    for vertex in &mut pole.vertices {
+        vertex.position[1] += 0.5;
+    }
+    let pole = renderer.add_mesh(&pole).unwrap();
+    world.spawn((MeshRenderer::new(pole, glowing), Transform::new(Vec3::new(0.0, -8.0, 0.0), Quat::IDENTITY, Vec3::new(0.15, 6.0, 0.15))));
+    // The waves running across the view, so the pole sways across it.
+    world.spawn((Ocean::default(), Transform::new(Vec3::ZERO, Quat::from_rotation_y(std::f32::consts::FRAC_PI_2), Vec3::ONE)));
+    let mut time = time;
+    run(&mut renderer, &world, &mut time, 4);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+#[test]
+fn under_the_sea_a_plant_sways_with_the_swell_without_a_wind() {
+    let (Some(now), Some(later)) = (surge_render(30.0), surge_render(32.5)) else { return };
+    keep_image("surge.png", &now);
+    // Across a row, the brightest column: the pole.
+    let column = |pixels: &[u8], y: u32| (0..640u32).max_by_key(|&x| rgb_at(pixels, (x, y)).iter().sum::<i32>()).unwrap() as i32;
+    let (tip, root) = (on_screen(Vec3::new(0.0, -5.0, -6.0), Quat::IDENTITY, Vec3::new(0.0, -2.3, 0.0)), on_screen(Vec3::new(0.0, -5.0, -6.0), Quat::IDENTITY, Vec3::new(0.0, -7.7, 0.0)));
+    let moved = (column(&now, tip.1) - column(&later, tip.1)).abs();
+    assert!(moved > 4, "its tip sways: {moved} pixels in two and a half seconds");
+    assert!((column(&now, root.1) - column(&later, root.1)).abs() <= 2, "its root stays");
+}
+
 #[test]
 fn a_stormy_sea_calms_and_stops_at_the_beach() {
     use voxear_render::{Ocean, Sky, Weather};

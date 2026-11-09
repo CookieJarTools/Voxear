@@ -16,6 +16,11 @@
 // flutters, so a trunk stays still while its leaves move; a phase of its
 // own, so neighbouring leaves and branches move out of step; and how far
 // its branch sways apart from the trunk, bobbing as well as leaning.
+//
+// Under water there is no wind: a plant rooted under the sea sways back and
+// forth with its swell instead, slowly, less the deeper it stands, a ripple
+// running up it as the water's to and fro reaches its tip later than its
+// root; under a Pool's still water it drifts a little.
 
 #pragma once
 
@@ -59,6 +64,44 @@ float3 bowed(float3 offset, float height)
     }
     offset.y -= dot(offset.xz, offset.xz) / (2.0 * height);
     return offset;
+}
+
+// How far under water the root of a plant standing at `origin` is, in
+// metres, and whether that is the sea's; 0 out of it. Dry Areas are not
+// asked: plants are seldom in them.
+float plantUnderwater(Frame* frame, float3 origin, out bool sea)
+{
+    sea = false;
+    for (uint i = 0; i < frame->ocean.pools; i++)
+    {
+        WaterBody pool = buffers()->waterBodies[i];
+        float3 local = transform(pool.toLocal, float4(origin, 1.0)).xyz;
+        if (pool.kind == WATER_POOL && pool.liquid == LIQUID_WATER && pool.shape == 0 && all(abs(local.xz) <= pool.size.xz * 0.5)
+            && local.y < 0.0 && local.y > -pool.size.y)
+        {
+            return -local.y;
+        }
+    }
+    sea = frame->ocean.enabled != 0 && origin.y < frame->ocean.level;
+    return sea ? frame->ocean.level - origin.y : 0.0;
+}
+
+// How far the water moves a plant `height` tall standing `below` metres
+// under it, its vertex `up` of the way up it, at `time`: the sea's swell to
+// and fro along its waves, with a little across, the tip later than the
+// root; a Pool's water drifting it gently.
+float3 surgeOffset(Frame* frame, float3 origin, float height, float below, bool sea, float up, float time)
+{
+    float3 along = float3(cos(frame->ocean.wind), 0.0, sin(frame->ocean.wind));
+    float3 across = float3(-along.z, 0.0, along.x);
+    // The swell passing over: each plant a little out of step with the next, as the wave reaches it.
+    float phase = dot(origin.xz, along.xz) * 0.12 + windHash(floor(origin.xz * 3.0)) * 0.8;
+    float period = sea ? 5.0 + windHash(floor(origin.xz * 0.5)) : 4.0;
+    float beat = time * 6.2831853 / period - phase - up * 1.2;
+    float strength = sea ? (0.12 + 0.25 * saturate(frame->ocean.waveHeight * frame->ocean.waveScale / 3.0)) * exp(-below / 8.0) : 0.06;
+    float to = sin(beat) * 0.8 + sin(beat * 2.3 + 1.3) * 0.2;
+    float side = sin(beat * 0.7 + phase * 2.1);
+    return (along * to + across * side * 0.3) * strength * height * up * up;
 }
 
 // How tall a plant is: the top of its mesh's bounds above its origin, as its instance scales it.
@@ -106,6 +149,12 @@ float3 windOffset(Frame* frame, Material material, float3 origin, float height, 
     // Read where each blade is, so a patch of grass parts round what passes through it.
     float2 pushed = foliagePush(frame, world);
     float3 offset = float3(pushed.x, 0.0, pushed.y) * (material.windBend * up * up * height * PUSH_LEAN);
+    bool sea;
+    float below = material.windBend > 0.0 ? plantUnderwater(frame, origin, sea) : 0.0;
+    if (below > 0.0)
+    {
+        return bowed(offset + surgeOffset(frame, origin, height, below, sea, up, time) * material.windBend, height);
+    }
     Wind wind = frame->wind;
     if (wind.strength <= 0.0)
     {

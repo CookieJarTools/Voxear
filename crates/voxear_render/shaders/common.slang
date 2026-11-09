@@ -234,7 +234,9 @@ struct Material
     uint heightTexture;
     float displacement;
     float detail;
-    uint3 pad;
+    // How many metres up from where it meets a terrain a model drawn with it blends into the ground (shading.slang).
+    float groundBlend;
+    uint2 pad;
 };
 
 static const uint STANDARD_SHADER = 0;
@@ -924,6 +926,8 @@ static const uint TERRAIN_TILE_SAMPLES = 257;
 static const uint TERRAIN_TILE_LEN = 257 * 257;
 static const uint TERRAIN_PATCH_QUADS = 32;
 static const uint TERRAIN_MAX_LEVELS = 12;
+// The most terrains a view has; the records after its last are empty (no tiles).
+static const uint MAX_TERRAINS = 64;
 
 struct Terrain
 {

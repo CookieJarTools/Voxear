@@ -123,7 +123,10 @@ pub struct GpuMaterial {
     pub height_texture: u32,
     pub displacement: f32,
     pub detail: f32,
-    pub _pad: [u32; 3],
+    /// How many metres up from where it meets a terrain a model drawn with
+    /// it blends into the ground; 0 for not at all.
+    pub ground_blend: f32,
+    pub _pad: [u32; 2],
 }
 
 /// A material drawn with the standard shader, not a custom one.

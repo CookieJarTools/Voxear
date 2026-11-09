@@ -610,6 +610,8 @@ pub(crate) fn gather(
     buffer: &Buffer,
 ) -> Option<ViewTerrains> {
     if drawn.is_empty() {
+        // An empty record first, so models blending into the ground find none.
+        buffer.write(TERRAINS_AT as u64, &[GpuTerrain::default()]);
         return None;
     }
     let mut anchors: HashMap<Entity, u32> = HashMap::new();
@@ -695,6 +697,10 @@ pub(crate) fn gather(
         header[LIST_COUNT as usize + list] = *count;
     }
     buffer.write(0, &header);
+    // An empty record after the last ends the list for models blending into the ground.
+    if records.len() < MAX_TERRAINS {
+        records.push(GpuTerrain::default());
+    }
     buffer.write(TERRAINS_AT as u64, &records);
     buffer.write(SURFACES_AT as u64, &surfaces);
     buffer.write(PATCHES_AT as u64, &all);

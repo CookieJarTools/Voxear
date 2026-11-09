@@ -553,3 +553,58 @@ fn wet_ground_puddles_lava_and_glitter_each_change_how_their_surface_looks() {
     let (on, off) = (sparks(&glittering), sparks(&still));
     assert!(on > 10 && off < on / 4, "the snow sparkles with Glitter: {on} bright points, {off} without");
 }
+
+#[test]
+fn a_model_whose_material_blends_into_the_ground_takes_the_grounds_look_at_its_foot() {
+    use std::sync::Arc;
+    use voxear_render::{MeshRenderer, Primitive, SurfaceLook};
+    use voxear_terrain::surfaces::{Liquid, WeightTile, Weights};
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    // Green ground, all one surface.
+    let desc = MaterialDesc { base_color: [0.0, 0.8, 0.0, 1.0], ..MaterialDesc::default() };
+    let green = renderer.add_material(&desc).unwrap();
+    let surface = SurfaceLook {
+        material: green,
+        size: 4.0,
+        sharpness: 0.0,
+        triplanar: false,
+        tracks: 0.0,
+        fills_in: 0.0,
+        liquid: Liquid::None,
+        glitter: false,
+    };
+    let weights = Weights::from_tiles(1, 1, vec![Arc::new(WeightTile::all(0))]);
+    let terrain = Terrain { weights: Some(Arc::new(weights)), ..Terrain::new(Heightmap::flat(1, 1, 0.5, 0.0)) };
+    let plain = renderer.add_material(&MaterialDesc::default()).unwrap();
+    world.spawn((
+        terrain,
+        TerrainLook { surfaces: Arc::from([surface]), ..TerrainLook::new(plain, 4.0) },
+        Transform::default(),
+    ));
+    // A red block two metres tall, half a metre sunk, seen side on from five metres off.
+    let red = MaterialDesc { base_color: [1.0, 0.0, 0.0, 1.0], ground_blend: 0.5, ..MaterialDesc::default() };
+    let red = renderer.add_material(&red).unwrap();
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let block = Transform::new(Vec3::new(64.0, 0.5, 64.0), Quat::IDENTITY, Vec3::splat(2.0));
+    world.spawn((MeshRenderer::new(cube, red), block));
+    world.spawn((Camera::default(), Transform::new(Vec3::new(64.0, 0.8, 58.0), Quat::IDENTITY, Vec3::ONE)));
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
+    world.insert_resource(PostProcess { anti_aliasing, ..PostProcess::neutral() });
+    renderer.set_view_options(ViewOptions { debug_view: voxear_render::DEBUG_VIEW_UNLIT, ..ViewOptions::default() });
+    let pixels = render(&mut renderer, &world, 3);
+    keep_image("terrain ground blend.png", &pixels);
+    // About 62 pixels a metre on the block's face, five metres off.
+    let at = |y: f32| rgb_at(&pixels, WIDTH / 2, (HEIGHT as f32 / 2.0 + (0.8 - y) * 62.0) as u32);
+    let ([fr, fg, _], [tr, tg, _]) = (at(0.08), at(1.3));
+    assert!(fg > fr, "its foot takes the ground's green: {:?}", at(0.08));
+    assert!(tr > tg * 2, "its top stays red: {:?}", at(1.3));
+
+    // Without the blend, red to the ground.
+    renderer
+        .update_material(red, &MaterialDesc { base_color: [1.0, 0.0, 0.0, 1.0], ..MaterialDesc::default() })
+        .unwrap();
+    let pixels = render(&mut renderer, &world, 2);
+    let [r, g, _] = rgb_at(&pixels, WIDTH / 2, (HEIGHT as f32 / 2.0 + (0.8 - 0.08) * 62.0) as u32);
+    assert!(r > g * 2, "red to the ground without it: {:?}", [r, g]);
+}

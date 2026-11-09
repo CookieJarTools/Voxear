@@ -14,6 +14,7 @@
 #include "lights.slang"
 #include "occlusion.slang"
 #include "seasons.slang"
+#include "terrain_ground.slang"
 #include "wind.slang"
 
 struct VertexOut
@@ -814,6 +815,112 @@ void waterWetSurface(Frame* frame, float3 world, float3 normal, inout float3 alb
 #endif
 }
 
+// The terrain under `world`, for a model's foot blended into it: how high its ground is there and which way it faces,
+// and its look there from above, its surfaces' (or for one with none, its material's) colour, metallic, roughness
+// and normal. False where no terrain reaches, or in a hole.
+bool groundUnder(float3 world, float3 dx, float3 dy, out float height, out TerrainLayer look)
+{
+    look.base = float4(0.0);
+    look.normal = float3(0.0, 1.0, 0.0);
+    look.metallic = 0.0;
+    look.roughness = 1.0;
+    height = 0.0;
+    for (uint i = 0; i < MAX_TERRAINS; i++)
+    {
+        Terrain terrain = buffers()->terrains[i];
+        if (terrain.tiles.x == 0)
+        {
+            return false;
+        }
+        float2 local = world.xz - terrain.corner.xz;
+        float2 size = float2(terrain.tiles * TERRAIN_TILE_QUADS) * terrain.spacing;
+        if (any(local < 0.0) || any(local > size) || terrainCut(terrain, local))
+        {
+            continue;
+        }
+        height = terrain.corner.y + terrainHeight(terrain, local);
+        float w = terrain.spacing;
+        float slopeX = terrainHeight(terrain, local + float2(w, 0.0)) - terrainHeight(terrain, local - float2(w, 0.0));
+        float slopeZ = terrainHeight(terrain, local + float2(0.0, w)) - terrainHeight(terrain, local - float2(0.0, w));
+        float3 ground = normalize(float3(-slopeX, 2.0 * w, -slopeZ));
+        TerrainSpot spot;
+        spot.place = float3(local.x, height, local.y);
+        spot.dx = dx;
+        spot.dy = dy;
+        float4 tangent = float4(1.0, 0.0, 0.0, 1.0);
+        if (terrain.surfaceCount == 0)
+        {
+            TerrainSurface plain;
+            plain.material = terrain.material;
+            plain.uvScale = terrain.uvScale;
+            plain.sharpness = 0.0;
+            plain.flags = 0;
+            plain.tracks = 0.0;
+            plain.fillsIn = 0.0;
+            look = terrainLayerAt(plain, spot, ground, tangent);
+            return true;
+        }
+        uint4 ids;
+        float4 shares;
+        terrainShares(terrain, local, ids, shares);
+        float3 bent = float3(0.0);
+        float used = 0.0;
+        for (uint k = 0; k < 4; k++)
+        {
+            if (shares[k] < 0.004)
+            {
+                continue;
+            }
+            TerrainLayer layer = terrainLayerAt(terrain.surfaces[min(ids[k], terrain.surfaceCount - 1)], spot, ground, tangent);
+            look.base += layer.base * shares[k];
+            look.metallic += layer.metallic * shares[k];
+            look.roughness += layer.roughness * shares[k];
+            bent += layer.normal * shares[k];
+            used += shares[k];
+        }
+        used = max(used, 1e-5);
+        look.base /= used;
+        look.metallic /= used;
+        look.roughness = look.roughness / used;
+        look.normal = normalizeOr(bent, ground);
+        return true;
+    }
+    return false;
+}
+
+// A model's foot blended into the terrain under it, for a material with a ground blend: from where it meets the
+// ground up as many metres as the blend says, its edge wandering, it takes the ground's own look there, as earth and
+// snow creep up a rock's foot, more on what faces up. All ground where it meets it, facing as the ground faces, so
+// no seam shows.
+void groundBlend(Material material, float3 world, inout float4 base, inout float metallic, inout float roughness, inout float3 normal)
+{
+    if (material.groundBlend <= 0.0)
+    {
+        return;
+    }
+    // Before any branch a pixel takes on its own, where the pictures' gradients are defined.
+    float3 dx = ddx(world);
+    float3 dy = ddy(world);
+    float height;
+    TerrainLayer ground;
+    if (!groundUnder(world, dx, dy, height, ground))
+    {
+        return;
+    }
+    // Further up what faces up, and all ground where it meets it, whichever way it faces.
+    float reach = material.groundBlend * (0.6 + 0.8 * wetNoise(world.xz * 1.7 + world.y * 0.5));
+    reach *= lerp(0.6, 1.4, saturate(normal.y * 0.5 + 0.5));
+    float covered = 1.0 - smoothstep(0.0, reach, world.y - height);
+    if (covered <= 0.001)
+    {
+        return;
+    }
+    base = float4(lerp(base.rgb, ground.base.rgb, covered), base.a);
+    metallic = lerp(metallic, ground.metallic, covered);
+    roughness = lerp(roughness, ground.roughness, covered);
+    normal = normalizeOr(lerp(normal, ground.normal, covered * covered), normal);
+}
+
 // How much of a lamp at `lamp` reaches `world` past the water between them,
 // dimmed a colour at a time over as much of the way as lies under it: the
 // water over `world` (`over`), or the sea's level where `world` is out of
@@ -947,6 +1054,8 @@ FragmentOut fragmentMain(VertexOut input)
     normal = terrainSurfaced ? terrainNormal : normal;
     emission += terrainLight;
 #endif
+    // A model's foot blended into the ground under it.
+    groundBlend(material, input.worldPosition, base, metallic, roughness, normal);
     SurfaceOutput surface = materialSurface(base.rgb, base.a, normal, metallic, roughness, emission);
     if (custom)
     {

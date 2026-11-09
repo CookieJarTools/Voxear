@@ -208,7 +208,10 @@ pub fn record(
         .chain([(draws.clusters, BufferAccess::ShaderRead), (draws.lod_state, BufferAccess::ShaderRead)])
         .collect();
     let counted = mesh.map(|_| (draws.stats, BufferAccess::TaskWrite));
-    let shading_buffers: Vec<_> = edge_buffers.iter().copied().chain(counted).collect();
+    // Models blending into the ground read the terrains' heights and shares too.
+    let grounds = frame.terrain.iter().flat_map(|terrains| &terrains.heights);
+    let grounds = grounds.map(|&id| (id, BufferAccess::ShaderRead));
+    let shading_buffers: Vec<_> = edge_buffers.iter().copied().chain(counted).chain(grounds).collect();
     drawing.extend(counted);
 
     let (count_handle, stats_handle) = (draws.count_handle, draws.stats_handle);

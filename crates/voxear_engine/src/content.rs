@@ -82,6 +82,11 @@ pub struct MaterialData {
     /// cards and leaves are cut from their pictures; none for solid.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cutout: Option<f32>,
+    /// How many metres up from where a model drawn with it meets a terrain
+    /// it blends into the ground's own look, as earth creeps up a rock's
+    /// foot; 0 for not at all.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub ground_blend: f32,
     /// Advanced: glass's index of refraction, 1.5 for window glass; higher
     /// bends and reflects more.
     #[serde(default = "default_ior", skip_serializing_if = "is_default_ior")]
@@ -143,6 +148,7 @@ impl Default for MaterialData {
             foliage: false,
             glass: false,
             cutout: None,
+            ground_blend: 0.0,
             ior: default_ior(),
             wind_bend: None,
             wind_flutter: None,
@@ -280,6 +286,7 @@ impl MaterialData {
             displacement: if height.is_some() { self.displacement } else { 0.0 },
             detail: self.detail,
             alpha_cutoff: self.cutout.filter(|cutout| *cutout > 0.0),
+            ground_blend: self.ground_blend.max(0.0),
             ..MaterialDesc::default()
         }
     }
@@ -299,6 +306,9 @@ impl MaterialData {
         let mut custom = self.shader.map(|shader| format!("{shader}{:?}", self.properties)).unwrap_or_default();
         if let Some(cutout) = self.cutout {
             custom.push_str(&format!(" cutout {cutout}"));
+        }
+        if self.ground_blend > 0.0 {
+            custom.push_str(&format!(" ground {}", self.ground_blend));
         }
         (values, MaterialMap::ALL.map(|map| self.map(map)), custom)
     }

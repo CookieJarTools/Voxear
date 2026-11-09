@@ -95,6 +95,9 @@ pub struct MaterialDesc {
     pub normal_scale: f32,
     pub emissive_texture: Option<TextureId>,
     pub alpha_cutoff: Option<f32>,
+    /// How many metres up from where it meets a terrain a model drawn with
+    /// it blends into the ground's own look; 0 for not at all.
+    pub ground_blend: f32,
     /// Lit as leaves are: light wrapped round, through the leaf against the
     /// sun, and a rim of the sun's colour.
     pub foliage: bool,
@@ -151,6 +154,7 @@ impl Default for MaterialDesc {
             normal_scale: 1.0,
             emissive_texture: None,
             alpha_cutoff: None,
+            ground_blend: 0.0,
             foliage: false,
             glass: false,
             ior: 1.5,
@@ -933,7 +937,8 @@ impl Assets {
             height_texture: texture(desc.height_texture),
             displacement: if displaced { desc.displacement } else { 0.0 },
             detail: desc.detail.clamp(1.0, 64.0),
-            _pad: [0; 3],
+            ground_blend: desc.ground_blend.clamp(0.0, 10.0),
+            _pad: [0; 2],
         };
         self.glass.retain(|&glass| glass != handle);
         if desc.glass {

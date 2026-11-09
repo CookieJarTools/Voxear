@@ -286,6 +286,8 @@ struct MaterialFields {
     glow_speed: NodeId,
     glass: NodeId,
     ior: NodeId,
+    /// How far up a model's foot it blends into the ground.
+    ground: NodeId,
     /// Its custom shader and the shader's properties.
     shader: ShaderFields,
 }
@@ -666,6 +668,7 @@ impl AssetView {
         data.ior = read(fields.ior, data.ior).clamp(1.0, 3.0);
         data.displacement = read(fields.displacement, data.displacement).clamp(-4.0, 4.0);
         data.detail = read(fields.detail, data.detail).clamp(1.0, 64.0);
+        data.ground_blend = read(fields.ground, data.ground_blend).clamp(0.0, 10.0);
         let data = data.clone();
         fields.show_what_applies(ui);
         Some(AssetAction::SaveMaterial(self.item.path.clone(), data))
@@ -976,6 +979,7 @@ fn material(ui: &mut Ui, root: NodeId, file: &std::path::Path, game: &Game) -> O
     let glass = ui.toggle(row, "", data.glass);
     ui.add_class(glass, "checkbox");
     let ior = one(ui, "IOR", data.ior);
+    let ground = one(ui, "Ground blend", data.ground_blend);
     let swatches = [color_swatch, emission_swatch];
     let shader = ShaderFields::build(ui, (shader_row, root), &data, game.content.shaders(), db);
     let fields = MaterialFields {
@@ -995,6 +999,7 @@ fn material(ui: &mut Ui, root: NodeId, file: &std::path::Path, game: &Game) -> O
         glow_speed,
         glass,
         ior,
+        ground,
         shader,
     };
     fields.show_swatches(ui);

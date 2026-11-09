@@ -8,7 +8,8 @@ namespace Voxear;
 /// A skeleton as a clip poses it at one time, read rather than shown: the clip's own skeleton, or a model's that the
 /// clip is made to fit, as <see cref="Skeleton.Pose"/> would pose it. Places and turns are in that skeleton's model
 /// space, since a clip is nowhere in the world. For reading where a clip has things, as where its hands hold what it
-/// carries, without posing anything by it. Bones are by their numbers in that skeleton.
+/// carries, without posing anything by it. Bones are by their numbers in that skeleton. It reads the same while the
+/// editor edits, in an inspector or a drawer, which are drawn again once the clip is found.
 /// <code>
 /// var frame = ClipFrame.Of(reload, 0.4f);
 /// var palm = frame?.Rig?.RightArm.PalmCenter;
@@ -117,6 +118,26 @@ public sealed class ClipFrame
 	{
 		var at = bone * BoneFloats + 20;
 		return Within(bone) ? new Vector3(bones[at], bones[at + 1], bones[at + 2]) : Vector3.Zero;
+	}
+
+	/// <summary>
+	/// A bone's name in the skeleton the frame is of: the clip's own, or the model's it is made to fit. Empty past the
+	/// last bone. With <see cref="BoneCount"/>, it lists the bones, as a menu of them does:
+	/// <code>
+	/// var names = Enumerable.Range(0, frame.BoneCount).Select(frame.BoneName).ToList();
+	/// </code>
+	/// </summary>
+	public string BoneName(int bone)
+	{
+		if (!Within(bone))
+		{
+			return string.Empty;
+		}
+		if (Onto != Obj.None)
+		{
+			return new Bone(Onto, bone).Name;
+		}
+		return NativeComponent.Ask(NativeComponent.Skeleton, Obj.None, bone << 8 | Bone.ClipNameText, Clip.Reference) ?? string.Empty;
 	}
 
 	/// <summary>The number of the bone with this name, or -1 when the skeleton has none.</summary>

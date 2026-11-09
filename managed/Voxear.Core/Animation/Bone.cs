@@ -14,6 +14,7 @@ public readonly struct Bone : IEquatable<Bone>
 	// The values the engine's animation/bones.rs answers, in the low byte; the bone is the bytes above.
 	internal const int CountValue = 0;
 	internal const int FindText = 1;
+	internal const int ClipNameText = 2;
 	private const int ParentValue = 1;
 	private const int LocalPositionValue = 2;
 	private const int LocalRotationValue = 3;

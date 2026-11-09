@@ -59,6 +59,12 @@ const BOX: usize = 22;
 #[derive(Default)]
 pub struct ScriptClips(pub BTreeSet<String>);
 
+/// Clips scripts asked about while they were still being found, until
+/// [`clips_found_for_scripts`](super::clips::clips_found_for_scripts) says
+/// they have been looked for.
+#[derive(Default)]
+pub struct WaitingClips(pub BTreeSet<String>);
+
 pub(crate) fn register() {
     voxear_scripting::set_pose_ops(run);
 }
@@ -239,7 +245,11 @@ fn clip_source(world: &mut World, reference: &str) -> Option<Option<super::clips
     if world.resource::<ScriptClips>().is_none() {
         world.insert_resource(ScriptClips::default());
     }
+    if world.resource::<WaitingClips>().is_none() {
+        world.insert_resource(WaitingClips::default());
+    }
     world.resource_mut::<ScriptClips>()?.0.insert(reference.to_string());
+    world.resource_mut::<WaitingClips>()?.0.insert(reference.to_string());
     Some(None)
 }
 
@@ -488,7 +498,10 @@ mod tests {
         let mut clips = Clips::default();
         clips
             .put("Models/Wave.glb#clip:Wave", ClipSource { animation: source, index: 0, settings: Default::default() });
+        assert!(!super::super::clips::clips_found_for_scripts(&mut world), "not looked for yet");
         world.insert_resource(clips);
+        assert!(super::super::clips::clips_found_for_scripts(&mut world), "found, for what waited to ask again");
+        assert!(!super::super::clips::clips_found_for_scripts(&mut world), "said once");
         let length = call(&mut world, body, CLIP_LENGTH, &[], &[], "Models/Wave.glb#clip:Wave").unwrap();
         assert_eq!(length, [0.0], "one frame lasts no time");
         assert_eq!(

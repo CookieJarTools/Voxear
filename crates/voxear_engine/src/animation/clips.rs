@@ -74,6 +74,21 @@ impl Clips {
     }
 }
 
+/// Whether a clip scripts asked about before it was found has been looked
+/// for since, found or not, as each tick does in the editor too: so what
+/// read it while it was being found, as a drawer's `ClipFrame`, can read it
+/// again. Each such clip says so once.
+pub fn clips_found_for_scripts(world: &mut World) -> bool {
+    let Some(waiting) = world.resource::<super::pose_ops::WaitingClips>() else { return false };
+    let clips = world.resource::<Clips>();
+    let looked: Vec<String> = waiting.0.iter().filter(|r| clips.is_some_and(|c| c.tried(r))).cloned().collect();
+    let Some(waiting) = world.resource_mut::<super::pose_ops::WaitingClips>() else { return false };
+    for reference in &looked {
+        waiting.0.remove(reference);
+    }
+    !looked.is_empty()
+}
+
 /// Resolves the clips and Motion Sets the world's Objs play that it has
 /// not yet, and every one again after a clip file, its settings or a set
 /// changed.

@@ -120,9 +120,17 @@ if (ClipFrame.Of(reload, 0.4f)?.Rig is { } rig)
 | `Matrix`, `Position`, `Rotation` | A bone's place and turn in the frame |
 | `LocalPosition`, `LocalRotation` | A bone's place and turn in its parent, as the clip sets them |
 | `Find(name)` | A bone's number, or -1 |
+| `BoneName(bone)` | A bone's name, and with `BoneCount`, every bone's |
 | `Rig` | The humanoid's bones by what they are, and each hand's `PalmCenter`, `Pointing`, `PalmFacing`, `Knuckles`, `Bends` and `Length` |
 
 A clip is nowhere in the world, so places are in its skeleton's own space, and bones are numbers in that skeleton rather than `Bone`s of an Obj. Until the engine has found the clip, `Of` gives back null.
+
+`ClipFrame` works in the editor too, with nothing playing: in a [[Custom Drawers|drawer]] or an inspector, as for a menu of a clip's bones. The first draw may come before the engine has found the clip; it draws again once the clip is found.
+
+```csharp
+var frame = ClipFrame.AtRest(gait.Walk);
+List<string> bones = frame == null ? [] : [.. Enumerable.Range(0, frame.BoneCount).Select(frame.BoneName)];
+```
 
 > [!NOTE]
 > A `Skeleton` and a `Bone` are values: keep one in a local to change it, as `var head = skeleton.Find("Head"); head.Rotation = ...`, since C# cannot set a property on a value it was handed straight back.

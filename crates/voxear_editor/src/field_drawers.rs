@@ -143,6 +143,12 @@ impl FieldDrawers {
         });
     }
 
+    /// Has every field drawn again next frame, as when what the drawers
+    /// read changed, though the fields did not.
+    pub fn redraw(&mut self) {
+        self.rows.iter_mut().for_each(|row| row.drawn = None);
+    }
+
     /// The fields whose drawers are to be opened, when they have not been
     /// since the Inspector was built.
     pub fn to_open(&self) -> Option<Vec<ToOpen>> {

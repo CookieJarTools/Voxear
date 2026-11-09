@@ -83,6 +83,11 @@ impl Editor {
     /// Runs every Inspector's frame: the first's, then each other's, swapped
     /// in as the editor's `inspector` while it runs.
     pub(super) fn update_inspectors(&mut self, renderer: &mut Renderer, playing: bool) {
+        // A clip the scripts read in drawers and Inspector calls while it was being found, as a ClipFrame, is
+        // read again once the game's tick has found it.
+        if !playing && voxear_engine::animation::clips_found_for_scripts(&mut self.game.engine.world) {
+            self.inspectors_mut().for_each(Inspector::ask_scripts_again);
+        }
         self.inspector_frame(renderer, playing);
         for index in 0..self.extra_inspectors.len() {
             std::mem::swap(&mut self.inspector, &mut self.extra_inspectors[index].inspector);

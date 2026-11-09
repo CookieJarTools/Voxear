@@ -23,9 +23,11 @@ const ROTATION: i32 = 5;
 const REST_POSITION: i32 = 6;
 const REST_ROTATION: i32 = 7;
 
-// What `texts` answers.
+// What `texts` answers. CLIP_NAME is a bone of a clip's own skeleton, by the clip's reference, as `ClipFrame` in
+// Voxear.Core reads one, with no Obj.
 const NAME: i32 = 0;
 const FIND: i32 = 1;
+const CLIP_NAME: i32 = 2;
 
 pub(crate) fn register() {
     voxear_scripting::set_kind_values(ComponentKind::Skeleton, values);
@@ -93,6 +95,10 @@ fn read(
 }
 
 fn texts(world: &mut World, entity: Entity, what: i32, text: &str) -> Option<String> {
+    if what & 0xff == CLIP_NAME {
+        let source = world.resource::<super::clips::Clips>()?.get(text)?;
+        return source.animation.skeleton.bones.get((what >> 8) as usize).map(|bone| bone.name.clone());
+    }
     let animation = world.get::<ModelRenderer>(entity)?.animation.clone()?;
     let bones = &animation.skeleton.bones;
     match what & 0xff {
@@ -169,5 +175,23 @@ mod tests {
         let local = at(&mut world, arm, 1, LOCAL_POSITION);
         assert!((Vec3::new(local[0], local[1], local[2]) - Vec3::new(0.5, 0.0, 0.0)).length() < 1e-5, "{local:?}");
         assert!(values(&mut world, arm, 7 << 8 | POSITION, None).is_none(), "no such bone");
+    }
+
+    #[test]
+    fn a_clips_own_bones_are_named_by_the_clip_with_no_obj() {
+        let (mut world, arm) = arm();
+        let reference = "Models/Wave.glb#clip:Wave";
+        let none = Entity::from_bits(0);
+        assert_eq!(texts(&mut world, none, 1 << 8 | CLIP_NAME, reference), None, "not found yet");
+
+        let animation = world.get::<ModelRenderer>(arm).unwrap().animation.clone().unwrap();
+        let clip = voxear_render::Clip { name: "Wave".into(), frames: 1, poses: animation.skeleton.rest() };
+        let source = Arc::new(ModelAnimation { clips: vec![clip], ..(*animation).clone() });
+        let mut clips = super::super::clips::Clips::default();
+        clips.put(reference, super::super::clips::ClipSource { animation: source, index: 0, settings: Default::default() });
+        world.insert_resource(clips);
+        assert_eq!(texts(&mut world, none, CLIP_NAME, reference), Some("Shoulder".into()));
+        assert_eq!(texts(&mut world, none, 1 << 8 | CLIP_NAME, reference), Some("Elbow".into()));
+        assert_eq!(texts(&mut world, none, 2 << 8 | CLIP_NAME, reference), None, "past the last");
     }
 }

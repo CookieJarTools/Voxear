@@ -508,6 +508,14 @@ impl Inspector {
         self.locked
     }
 
+    /// Draws the drawers and inspectors again, and asks the scripts again
+    /// what they answer about the fields, as when what their code reads
+    /// changed though the fields did not, as a clip found.
+    pub fn ask_scripts_again(&mut self) {
+        self.drawers.redraw();
+        self.asked_for.clear();
+    }
+
     /// Which of several Inspectors' drawers are its own, as the scripts know them.
     pub fn drawer_owner(&self) -> u32 {
         self.drawers.owner()

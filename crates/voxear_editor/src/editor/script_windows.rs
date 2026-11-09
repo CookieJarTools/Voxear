@@ -13,7 +13,7 @@
 //! `side_bar`).
 
 use voxear_ecs::World;
-use voxear_engine::{Game, game_ui::UiNumbers};
+use voxear_engine::{Content, Game, game_ui::UiNumbers};
 use voxear_scripting::{ScriptRuntime, WindowUpdate};
 use voxear_ui::{NodeId, Ui};
 
@@ -131,7 +131,7 @@ impl Editor {
         for item in items {
             if let Some(document) = item.document {
                 self.script_windows.numbers.close(document);
-                if let Some((scripts, world)) = window_scripts(&mut self.play, &mut self.game)
+                if let Some((scripts, world, _)) = window_scripts(&mut self.play, &mut self.game)
                     && let Err(error) = scripts.close_window(world, item.number)
                 {
                     tracing::error!(target: "script", "{error:#}");
@@ -149,7 +149,7 @@ impl Editor {
         let window = windows.open.remove(index);
         if let Some(document) = window.document {
             windows.numbers.close(document);
-            if let Some((scripts, world)) = window_scripts(&mut self.play, &mut self.game)
+            if let Some((scripts, world, _)) = window_scripts(&mut self.play, &mut self.game)
                 && let Err(error) = scripts.close_window(world, window.number)
             {
                 tracing::error!(target: "script", "{error:#}");
@@ -199,8 +199,8 @@ impl Editor {
         if shown.is_empty() {
             return;
         }
-        let Some((scripts, world)) = window_scripts(&mut self.play, &mut self.game) else { return };
-        let mut services = DrawerUi::new(&mut self.ui, &mut self.script_windows.numbers);
+        let Some((scripts, world, content)) = window_scripts(&mut self.play, &mut self.game) else { return };
+        let mut services = DrawerUi::new(&mut self.ui, &mut self.script_windows.numbers).with_content(content);
         let updates = match scripts.update_windows(world, &mut services, &shown) {
             Ok(updates) => updates,
             Err(error) => return tracing::error!(target: "script", "{error:#}"),
@@ -236,7 +236,7 @@ impl Editor {
                 continue;
             }
             let (number, type_name) = (window.number, window.type_name.clone());
-            let Some((scripts, world)) = window_scripts(&mut self.play, &mut self.game) else { return };
+            let Some((scripts, world, _)) = window_scripts(&mut self.play, &mut self.game) else { return };
             let opened = scripts.open_window(world, number, &type_name);
             let content = self.script_windows.open[index].content;
             for child in self.ui.children(content) {
@@ -277,10 +277,13 @@ impl Editor {
 
 /// The scripts the game's windows run in, with their world: those of the
 /// edit mode while editing, once started, and the game's while it plays.
-fn window_scripts<'a>(play: &'a mut Play, game: &'a mut Game) -> Option<(&'a mut ScriptRuntime, &'a mut World)> {
+fn window_scripts<'a>(
+    play: &'a mut Play,
+    game: &'a mut Game,
+) -> Option<(&'a mut ScriptRuntime, &'a mut World, &'a mut Content)> {
     match play.mode {
-        Mode::Editing => Some((play.edit_scripts()?, &mut game.engine.world)),
-        Mode::Playing(_) => game.engine.scripts_and_world(),
+        Mode::Editing => Some((play.edit_scripts()?, &mut game.engine.world, &mut game.content)),
+        Mode::Playing(_) => game.engine.scripts_and_world().map(|(scripts, world)| (scripts, world, &mut game.content)),
         Mode::Building(_) => None,
     }
 }

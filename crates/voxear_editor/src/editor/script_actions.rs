@@ -82,7 +82,7 @@ impl Editor {
             _ => ObjState::of(&self.game.engine.world, entity)?,
         };
         let owner = self.inspector.drawer_owner();
-        let mut ui = self.inspector.drawer_ui(&mut self.ui);
+        let mut ui = self.inspector.drawer_ui(&mut self.ui).with_content(&mut self.game.content);
         let drawn = scripts.draw_fields(&mut self.game.engine.world, &mut ui, owner, &requests);
         match drawn {
             Ok(answers) => {

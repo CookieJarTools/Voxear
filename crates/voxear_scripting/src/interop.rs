@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 66;
+pub(crate) const API_VERSION: u32 = 67;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -451,6 +451,9 @@ pub(crate) struct NativeApi {
     /// `element.Style`: one property of an element's inline style.
     pub ui_style_property:
         unsafe extern "C" fn(element: i32, name: *const u8, name_len: i32, value: *const u8, value_len: i32),
+    /// Every data asset of the project, as JSON for `Definition.All`: its
+    /// length, written when it fits, or -1.
+    pub data_assets: unsafe extern "C" fn(buffer: *mut u8, capacity: i32) -> i32,
 }
 
 /// The kinds of component scripts reach through one entry, `kind_value`,
@@ -1862,6 +1865,7 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         terrain_edit: crate::terrain::terrain_edit,
         terrain_edits: crate::terrain::terrain_edits,
         ui_style_property: crate::ui::ui_style_property,
+        data_assets: crate::services::data_assets,
     }
 }
 

@@ -837,14 +837,11 @@ impl ScriptServices for GameServices<'_> {
     }
 
     fn asset_fields(&mut self, reference: &str) -> Result<String> {
-        let guid = self.content.parse(reference)?.guid().with_context(|| format!("`{reference}` is not a data asset"))?;
-        let entry = self.content.db().get(guid).with_context(|| format!("no asset with GUID {guid}"))?;
-        anyhow::ensure!(entry.kind == voxear_assets::AssetKind::Data, "{} is not a data asset", entry.path);
-        let path = entry.path.clone();
-        let table: toml::Table = toml::from_str(&self.content.read_text(&path)?).with_context(|| format!("reading {path}"))?;
-        let kind = table.get("type").and_then(toml::Value::as_str).unwrap_or_default();
-        let fields = table.get("fields").cloned().unwrap_or_else(|| toml::Value::Table(toml::Table::new()));
-        Ok(serde_json::json!({ "guid": guid.to_string(), "path": path, "type": kind, "fields": fields }).to_string())
+        self.content.data_asset_json(reference)
+    }
+
+    fn data_assets(&mut self) -> Result<String> {
+        Ok(self.content.data_assets_json())
     }
 
     fn load_sound(&mut self, reference: &str) -> Result<u32> {

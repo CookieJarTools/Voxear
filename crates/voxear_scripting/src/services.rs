@@ -224,6 +224,12 @@ pub trait ScriptServices {
         anyhow::bail!("data assets load only in a running game, not here ({reference})")
     }
 
+    /// Every data asset of the project, for `Definition.All`, as JSON: each
+    /// one's GUID, its path and the type it names, by path.
+    fn data_assets(&mut self) -> Result<String> {
+        anyhow::bail!("data assets are listed only in a running game, not here")
+    }
+
     /// Loads a sound asset by project path or GUID, for `Sound.Load`,
     /// returning its id.
     fn load_sound(&mut self, reference: &str) -> Result<u32> {
@@ -507,7 +513,20 @@ pub fn ui_screen_document(world: &mut World, entity: Entity) -> Option<u32> {
 /// -1 when there is none.
 pub(crate) unsafe extern "C" fn asset_fields(reference: *const u8, len: i32, buffer: *mut u8, capacity: i32) -> i32 {
     let reference = unsafe { crate::interop::utf8(reference, len) };
-    match with_services(|services| services.asset_fields(&reference)) {
+    unsafe { answer_json(with_services(|services| services.asset_fields(&reference)), buffer, capacity) }
+}
+
+/// Every data asset of the project as JSON for `Definition.All` (see
+/// [`ScriptServices::data_assets`]), written when it fits: its length, or
+/// -1 when they cannot be listed here.
+pub(crate) unsafe extern "C" fn data_assets(buffer: *mut u8, capacity: i32) -> i32 {
+    unsafe { answer_json(with_services(|services| services.data_assets()), buffer, capacity) }
+}
+
+/// Writes JSON a service gave into `buffer` when it fits, and gives its
+/// length; -1, with the error logged, for none.
+unsafe fn answer_json(answer: Option<Result<String>>, buffer: *mut u8, capacity: i32) -> i32 {
+    match answer {
         Some(Ok(json)) => {
             if !buffer.is_null() && json.len() <= capacity.max(0) as usize {
                 unsafe { std::ptr::copy_nonoverlapping(json.as_ptr(), buffer, json.len()) };

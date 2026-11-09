@@ -74,3 +74,18 @@ public sealed class Armoury : Behaviour
 {
 }
 ```
+
+## Finding every data asset of a type
+
+`Definition.All<T>` gives every data asset in the project that holds a `T`, or a Definition derived from it, in order of their paths:
+
+```csharp
+foreach (var stats in Definition.All<WeaponStats>())
+{
+	Log.Info($"{stats.Name}: {stats.Damage} damage");
+}
+```
+
+Each one is the instance `Load` gives for its file. To find them, it reads every data asset's file, so call it once and keep the list, not every frame.
+
+It works in a running game and in the editor's [[Custom Drawers|drawers]], inspectors and windows, so a drawer can offer the project's data assets in a menu of its own. A build has only the data assets it ships, so name them with `[ContentRoot]`, as above.

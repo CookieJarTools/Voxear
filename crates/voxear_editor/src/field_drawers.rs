@@ -18,6 +18,7 @@
 //! and what it gives back the table of those it changed.
 
 use voxear_engine::{
+    Content,
     game_ui::UiNumbers,
     script_types::{FieldKind, ScriptTypes, same_field},
 };
@@ -237,7 +238,7 @@ impl FieldDrawers {
 
     /// What the scripts reach the drawers' elements through while they draw.
     pub fn services<'a>(&'a mut self, ui: &'a mut Ui) -> DrawerUi<'a> {
-        DrawerUi { ui, numbers: &mut self.numbers }
+        DrawerUi::new(ui, &mut self.numbers)
     }
 
     /// Takes what the drawers made of each field asked for. Returns each
@@ -357,11 +358,20 @@ fn next_of(ui: &Ui, built: NodeId) -> Option<NodeId> {
 pub struct DrawerUi<'a> {
     ui: &'a mut Ui,
     numbers: &'a mut UiNumbers,
+    /// The project's content, for the data assets the scripts load and list.
+    content: Option<&'a mut Content>,
 }
 
 impl<'a> DrawerUi<'a> {
     pub fn new(ui: &'a mut Ui, numbers: &'a mut UiNumbers) -> Self {
-        Self { ui, numbers }
+        Self { ui, numbers, content: None }
+    }
+
+    /// With the project's content, so the scripts' `Definition.Load` and
+    /// `Definition.All` reach its data assets.
+    pub fn with_content(mut self, content: &'a mut Content) -> Self {
+        self.content = Some(content);
+        self
     }
 }
 
@@ -380,6 +390,20 @@ impl ScriptServices for DrawerUi<'_> {
 
     fn ui_remove(&mut self, element: u32) {
         self.numbers.remove(self.ui, element);
+    }
+
+    fn asset_fields(&mut self, reference: &str) -> anyhow::Result<String> {
+        let Some(content) = self.content.as_deref_mut() else {
+            anyhow::bail!("data assets load only with the project's content, not here ({reference})")
+        };
+        content.data_asset_json(reference)
+    }
+
+    fn data_assets(&mut self) -> anyhow::Result<String> {
+        let Some(content) = self.content.as_deref_mut() else {
+            anyhow::bail!("data assets are listed only with the project's content, not here")
+        };
+        Ok(content.data_assets_json())
     }
 }
 

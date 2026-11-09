@@ -1,8 +1,9 @@
 //! A data asset drawn whole by a `DefinitionInspector` written in C#, on a
 //! copy of Hello with a `WeaponStats` Definition and a rifle's stats: the
 //! inspector's own elements, a field's rows in a `FieldRow` from markup and
-//! another from code, the rest in its "next", and a button whose change is
-//! written to the file. A file of its own, so it runs in a process of its
+//! another from code, the rest in its "next", a button whose change is
+//! written to the file, and the data assets of its type found from it with
+//! Definition.All. A file of its own, so it runs in a process of its
 //! own, since .NET starts only once per process. Skips itself without .NET
 //! or a GPU.
 
@@ -24,7 +25,8 @@ public sealed class WeaponStats : Definition
 }
 "#;
 
-const WEAPON_STATS_INSPECTOR: &str = r#"using Voxear;
+const WEAPON_STATS_INSPECTOR: &str = r#"using System.Linq;
+using Voxear;
 
 namespace Hello;
 
@@ -33,6 +35,7 @@ public sealed class WeaponStatsInspector : DefinitionInspector<WeaponStats>
 	public override string Markup => """
 		<vui>
 			<Label name="summary" />
+			<Label name="listed" />
 			<Button name="double">Double</Button>
 			<FieldRow field="Shots" />
 			<Panel name="next" />
@@ -51,6 +54,7 @@ public sealed class WeaponStatsInspector : DefinitionInspector<WeaponStats>
 			stats.Damage *= 2f;
 		}
 		ui.Find("summary")!.Text = $"{stats.Name}: {stats.Damage} damage";
+		ui.Find("listed")!.Text = string.Join(", ", Definition.All<WeaponStats>().Select(found => found.Path)) + " found";
 	}
 }
 "#;
@@ -171,6 +175,7 @@ fn a_definition_inspector_draws_a_data_asset_whole_and_writes_what_it_changes() 
 
     // The inspector draws the file's values, named for it, with its fields' rows where it puts them.
     until(&mut editor, &mut renderer, "the inspector drawing", |e| says(e, "Rifle: 12.5 damage"));
+    assert!(says(&editor, "Weapons/Rifle.asset found"), "the data assets of its type, read while editing");
     until(&mut editor, &mut renderer, "the fields placed", |e| {
         field_row(&e.ui, "Title").is_some_and(|row| prop_row(&e.ui, "Title").is_some_and(|t| e.ui.is_within(t, row)))
     });

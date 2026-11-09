@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+using System.Linq;
 using Voxear.Scripting;
 
 namespace Voxear;
@@ -37,6 +39,16 @@ public abstract class Definition
 	public static T? Load<T>(string path) where T : Definition
 	{
 		return Definitions.Load(typeof(T), path) as T;
+	}
+
+	/// <summary>
+	/// Every data asset of the project that holds a T, or a type derived from it, by path, each the instance Load
+	/// gives: <c>Definition.All&lt;WeaponStats&gt;()</c>. It reads each data asset's file to find them, so ask once
+	/// rather than every frame. It works in a running game, and in the editor's drawers, inspectors and windows.
+	/// </summary>
+	public static IReadOnlyList<T> All<T>() where T : Definition
+	{
+		return Definitions.All(typeof(T)).Cast<T>().ToList();
 	}
 
 	public override string ToString()

@@ -1308,6 +1308,37 @@ impl Content {
         table.get("type")?.as_str().filter(|name| !name.is_empty()).map(str::to_string)
     }
 
+    /// A data asset by project path or GUID as scripts' `Definition.Load`
+    /// reads it, as JSON: its GUID, its path, the type it names and its
+    /// fields.
+    pub fn data_asset_json(&mut self, reference: &str) -> Result<String> {
+        let guid = self.parse(reference)?.guid().with_context(|| format!("`{reference}` is not a data asset"))?;
+        let entry = self.db.get(guid).with_context(|| format!("no asset with GUID {guid}"))?;
+        anyhow::ensure!(entry.kind == AssetKind::Data, "{} is not a data asset", entry.path);
+        let path = entry.path.clone();
+        let table: toml::Table = toml::from_str(&self.read_text(&path)?).with_context(|| format!("reading {path}"))?;
+        let kind = table.get("type").and_then(toml::Value::as_str).unwrap_or_default();
+        let fields = table.get("fields").cloned().unwrap_or_else(|| toml::Value::Table(toml::Table::new()));
+        Ok(serde_json::json!({ "guid": guid.to_string(), "path": path, "type": kind, "fields": fields }).to_string())
+    }
+
+    /// Every data asset of the project as scripts' `Definition.All` lists
+    /// them, as JSON, by path: each one's GUID, path and the type it names.
+    /// A file that cannot be read is left out.
+    pub fn data_assets_json(&mut self) -> String {
+        let mut data: Vec<(String, AssetGuid)> =
+            self.db.entries().filter(|entry| entry.kind == AssetKind::Data).map(|e| (e.path.clone(), e.guid)).collect();
+        data.sort();
+        let mut listed = Vec::new();
+        for (path, guid) in data {
+            let text = self.read_text(&path).ok();
+            let Some(table) = text.and_then(|text| toml::from_str::<toml::Table>(&text).ok()) else { continue };
+            let kind = table.get("type").and_then(toml::Value::as_str).unwrap_or_default();
+            listed.push(serde_json::json!({ "guid": guid.to_string(), "path": path, "type": kind }));
+        }
+        serde_json::Value::Array(listed).to_string()
+    }
+
     /// Forgets a Gun Handling, read again when next asked for, as after it
     /// was saved: a game playing takes it up at once.
     pub fn forget_gun_handling(&mut self, guid: AssetGuid) {

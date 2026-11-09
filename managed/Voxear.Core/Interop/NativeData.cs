@@ -26,6 +26,31 @@ internal static unsafe class NativeData
 		}
 	}
 
+	/// <summary>Every data asset of the project as JSON, by path: each one's GUID, path and type; null when they cannot be listed.</summary>
+	public static string? All()
+	{
+		if (!Native.IsConnected)
+		{
+			return null;
+		}
+		var buffer = new byte[4096];
+		var length = List(buffer);
+		if (length > buffer.Length)
+		{
+			buffer = new byte[length];
+			length = List(buffer);
+		}
+		return length < 0 ? null : Encoding.UTF8.GetString(buffer, 0, length);
+	}
+
+	private static int List(byte[] buffer)
+	{
+		fixed (byte* answer = buffer)
+		{
+			return Native.Api->DataAssets(answer, buffer.Length);
+		}
+	}
+
 	private static int Read(byte* reference, int length, byte[] buffer)
 	{
 		fixed (byte* answer = buffer)

@@ -32,6 +32,28 @@ internal static class Definitions
 		return null;
 	}
 
+	/// <summary>Every data asset of the project holding a <paramref name="type"/>, or a type derived from it, by path.</summary>
+	public static List<Definition> All(Type type)
+	{
+		var found = new List<Definition>();
+		var json = NativeData.All();
+		if (json == null)
+		{
+			return found;
+		}
+		using var document = JsonDocument.Parse(json);
+		foreach (var asset in document.RootElement.EnumerateArray())
+		{
+			var named = asset.GetProperty("type").GetString();
+			var held = string.IsNullOrEmpty(named) ? null : type.Assembly.GetType(named) ?? FindType(named);
+			if (held != null && type.IsAssignableFrom(held) && Load(type, asset.GetProperty("guid").GetString()) is { } loaded)
+			{
+				found.Add(loaded);
+			}
+		}
+		return found;
+	}
+
 	public static void Clear()
 	{
 		loaded.Clear();

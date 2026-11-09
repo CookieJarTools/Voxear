@@ -164,4 +164,5 @@ internal unsafe struct NativeApi
 	public delegate* unmanaged[Cdecl]<TerrainEditData*, byte*, int, int> TerrainEdit;
 	public delegate* unmanaged[Cdecl]<int, byte*, int, byte*, int, int> TerrainEdits;
 	public delegate* unmanaged[Cdecl]<int, byte*, int, byte*, int, void> UiStyleProperty;
+	public delegate* unmanaged[Cdecl]<byte*, int, int> DataAssets;
 }

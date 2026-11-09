@@ -1541,6 +1541,105 @@ FragmentOut fromBelow(Frame* frame, WaterOut input, float3 n, float3 v, float3 d
     return o;
 }
 
+// ---------------------------------------------------------------- Caustics
+
+// How far sideways the sunlight goes for each metre it goes down, bent at
+// `rest` on the surface by the slope of the waves there, read no finer than
+// `spacing` metres.
+float2 causticSlant(Frame* frame, float2 rest, float spacing)
+{
+    float2 slope = 0.0;
+    for (uint c = 2; c < oceanCascades(frame); c++)
+    {
+        float level = max(log2(spacing / (frame->ocean.sizes[c] / float(OCEAN_N))), 0.0);
+        Texture2D slopes = textures[NonUniformResourceIndex(frame->ocean.slopes[c])];
+        slope += slopes.SampleLevel(samplers[SAMPLER_LINEAR_REPEAT], cascadeUv(frame, c, rest), level).xy;
+    }
+    float3 n = normalize(float3(-slope.x, 1.0, -slope.y));
+    float3 bent = refract(frame->sunDirection, n, 1.0 / 1.33);
+    return bent.xz / max(-bent.y, 0.2);
+}
+
+// How far `p` is, in metres, from the nearest edge between the cells of a
+// scatter of points about `size` metres apart, each wandering round its
+// place as `time` goes on: the second-nearest point's distance less the
+// nearest's.
+float driftingEdge(float2 p, float size, float time)
+{
+    float2 q = p / size;
+    float2 cell = floor(q);
+    float first = 1e9;
+    float second = 1e9;
+    for (int y = -1; y <= 1; y++)
+    {
+        for (int x = -1; x <= 1; x++)
+        {
+            float2 c = cell + float2(x, y);
+            float2 r = cellPoint(c);
+            float2 at = c + 0.5 + 0.4 * sin(time * (0.6 + 0.5 * r) + r * 6.2831853);
+            float d = length(q - at);
+            second = d < first ? first : min(second, d);
+            first = min(first, d);
+        }
+    }
+    return (second - first) * size;
+}
+
+// The caustics round the camera (push.output), at each texel where the
+// sunlight's way down through flat water crosses the surface: how bright
+// the sunlight is CAUSTIC_NEAR (x) and CAUSTIC_FAR (y) metres down, against
+// flat water, 1 on average. The waves gather it into a web of bright lines
+// round darker cells, two sizes laid over each other, the cells drifting
+// and the web swaying as the waves over it bend the light; sharp a metre or
+// two down, wider and fainter deeper.
+//
+// And in z, the broad bundles of light the longer waves gather, which keep
+// their shape far down and show as shafts in the water: the light reaching
+// a point SHAFT_FOCUS metres down came through the surface a little aside,
+// found by going back up its bent way; the light through a little square of
+// the surface there falls on a patch smaller or larger than the square, so
+// it is that much brighter or dimmer.
+[shader("compute")]
+[numthreads(8, 8, 1)]
+void causticsMain(uint3 id : SV_DispatchThreadID)
+{
+    // Each depth's line width in metres, how much of the light gathers into the lines, and the lines' average,
+    // so the web is as bright as flat water's light on average.
+    static const float2 WIDTH = float2(0.025, 0.06);
+    static const float2 GATHERED = float2(0.9, 0.6);
+    static const float2 AVERAGE = float2(0.283, 0.5);
+    Frame* frame = push.frame;
+    float texel = CAUSTIC_SPAN / float(CAUSTIC_TEXELS);
+    float2 crossed = frame->ocean.causticOrigin + (float2(id.xy) + 0.5) * texel;
+    float3 down = sunUnderwater(frame);
+    float2 flat = down.xz / max(-down.y, 0.2);
+    float2 swayed = crossed + (causticSlant(frame, crossed, 0.15) - flat) * 1.5;
+    float time = frame->ocean.time;
+    float large = driftingEdge(swayed, 0.5, time * 0.8);
+    float small = driftingEdge(swayed + 7.3, 0.27, time * 1.1);
+    float2 bright;
+    for (uint i = 0; i < 2; i++)
+    {
+        float lines = max(exp(-large / WIDTH[i]), exp(-small / WIDTH[i]));
+        bright[i] = (1.0 - GATHERED[i]) + GATHERED[i] * lines / AVERAGE[i];
+    }
+    // The shafts: the waves read no finer than a few centimetres, the finest ripples' light spread out by then.
+    static const float SHAFT_FOCUS = 2.5;
+    static const float BROAD = 0.06;
+    float2 ground = crossed + flat * SHAFT_FOCUS;
+    float2 from = crossed;
+    for (uint k = 0; k < 2; k++)
+    {
+        from = ground - causticSlant(frame, from, BROAD) * SHAFT_FOCUS;
+    }
+    float h = BROAD * 0.5;
+    float2 across = (causticSlant(frame, from + float2(h, 0.0), BROAD) - causticSlant(frame, from - float2(h, 0.0), BROAD)) * SHAFT_FOCUS / (2.0 * h);
+    float2 along = (causticSlant(frame, from + float2(0.0, h), BROAD) - causticSlant(frame, from - float2(0.0, h), BROAD)) * SHAFT_FOCUS / (2.0 * h);
+    float area = abs((1.0 + across.x) * (1.0 + along.y) - across.y * along.x);
+    float rays = clamp(1.0 / max(area, 0.08), 0.1, 8.0);
+    storageImagesRgba16f[push.output][id.xy] = float4(bright, rays, 1.0);
+}
+
 // How much of a lamp's light the water scatters towards the eye, for each
 // metre of view past it (lampsInWater).
 static const float LAMP_SCATTER = 0.004;
@@ -2449,16 +2548,39 @@ float shaftReach(Under u)
     return min(min(u.distance, SHAFT_REACH), 4.0 / max(clearest, 1e-3));
 }
 
+// How bright the sunlight is in the broad bundles the longer waves gather
+// (causticsMain's z), `depth` metres down where its way down crossed the
+// surface at `crossed`, against flat water: 1 on average, softened to a
+// pixel `footprint` metres wide, fading to 1 off the edge of the caustics
+// round the camera and far down.
+float shaftsAt(Frame* frame, float2 crossed, float depth, float footprint)
+{
+    if (frame->ocean.caustics == NO_TEXTURE)
+    {
+        return 1.0;
+    }
+    float2 uv = (crossed - frame->ocean.causticOrigin) / CAUSTIC_SPAN;
+    float2 edge = min(uv, 1.0 - uv);
+    float inside = saturate(min(edge.x, edge.y) / 0.12);
+    float level = log2(max(footprint * float(CAUSTIC_TEXELS) / CAUSTIC_SPAN, 1.0));
+    float rays = textures[NonUniformResourceIndex(frame->ocean.caustics)].SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], uv, level).z;
+    // From nothing at the surface, the bundles gather on the way down, then slowly blur out; softened as a step
+    // spans, they keep their light, drawn out again as much as they were blurred.
+    static const float DRAWN_OUT = 2.5;
+    float gathered = saturate(depth / 1.5) * exp(-max(depth - 6.0, 0.0) / 15.0);
+    return max(1.0 + (rays - 1.0) * DRAWN_OUT * gathered * inside, 0.05);
+}
+
 // Sunlight through the water along the pixel's view, as rays: the sun's
 // light the water scatters towards the eye (waterGlow) as far as
 // shaftReach, marched in a dozen steps through the sun's shadow, each
-// step's light focused into streaks by the waves over it, as caustics are.
+// step's light focused and spread by the waves over it into streaks, the
+// caustics there.
 float3 lightShafts(Frame* frame, Under u, float2 pixel)
 {
     static const uint STEPS = 12;
-    // The streaks' average, so on average the shafts are as bright as the water's light they stand for.
-    static const float STREAKS = 0.33;
     float reach = shaftReach(u);
+    float tall = length(float3(frame->viewProj.c0.y, frame->viewProj.c1.y, frame->viewProj.c2.y));
     // A different start each pixel, moved on by the golden ratio each frame for the TAA to smooth.
     float jitter = frac(52.9829189 * frac(dot(pixel, float2(0.06711056, 0.00583715))) + float(frame->frameIndex % 1024u) * 0.618034);
     float3 down = sunUnderwater(frame);
@@ -2474,9 +2596,11 @@ float3 lightShafts(Frame* frame, Under u, float2 pixel)
             continue;
         }
         float2 surfaced = p.xz - down.xz / slant * below;
-        float web = causticWeb(surfaced * 0.35, frame->time * 0.6);
+        // As blurred as a step spans, a pixel wide and a step long, so the streaks do not sparkle.
+        float footprint = max(2.0 * t / (max(tall, 1e-3) * float(frame->viewport.y)), reach / float(STEPS) * 0.25);
+        float focused = shaftsAt(frame, surfaced, below, footprint);
         float lit = sunShadow(frame, p, float3(0.0, 1.0, 0.0));
-        total += lit * (0.3 + 0.7 * web) / STREAKS * exp(-u.medium.extinction * t - u.medium.fade * below / slant);
+        total += lit * focused * exp(-u.medium.extinction * t - u.medium.fade * below / slant);
     }
     total *= reach / float(STEPS);
     bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;

@@ -431,6 +431,11 @@ pub struct GpuOcean {
     /// How much higher every wave is than its spectrum, applied as the waves
     /// move (`SeaState::scale`).
     pub wave_scale: f32,
+    /// The caustics round the camera (see `water`): their image, and where
+    /// its first texel's corner is, across the ground.
+    pub caustics: u32,
+    pub caustic_origin: [f32; 2],
+    pub _pad: u32,
 }
 
 /// A Pool, a Stream or a Dry Area (see `water_bodies`), as `WaterBody` in
@@ -1102,9 +1107,9 @@ mod tests {
         assert_eq!(LOCAL_SHADOW_ATLAS, [4096, 3072], "as LOCAL_SHADOW_ATLAS in the shaders");
         assert_eq!(
             size_of::<GpuFrame>(),
-            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi + 32 + 16 * MAX_PUSHERS + 4 * MAX_PUSHERS + 16 + seasons + local_shadows + 272
+            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi + 32 + 16 * MAX_PUSHERS + 4 * MAX_PUSHERS + 16 + seasons + local_shadows + 288
         );
-        assert_eq!(size_of::<GpuOcean>(), 272);
+        assert_eq!(size_of::<GpuOcean>(), 288);
         assert_eq!(size_of::<GpuStreamPoint>(), 48);
         assert_eq!(size_of::<GpuWaterBody>(), 208);
         assert_eq!(size_of::<GpuDdgi>(), 32 * DDGI_CASCADES + 32 + 48);

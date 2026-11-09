@@ -4006,6 +4006,45 @@ fn from_under_the_sea_what_stands_over_it_shows_through_snells_window() {
     assert!(redder > 200, "the box through the window: {redder} pixels");
 }
 
+/// From three metres under a calm sea, looking up towards the sun, with
+/// its Light Shafts on or off.
+fn shafts_render(shafts: bool) -> Option<Vec<u8>> {
+    use voxear_render::{Ocean, Sky, Weather};
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    let toward = Vec3::new(0.0, 0.35, 1.0).normalize();
+    world.spawn((Camera::default(), Transform::new(Vec3::new(0.0, -3.0, 0.0), Quat::from_rotation_arc(Vec3::Z, toward), Vec3::ONE)));
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.0, -0.7, -1.0).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.6, ..Sky::default() });
+    let plane = renderer.primitive(Primitive::Plane).unwrap();
+    let sand = MaterialDesc { base_color: [0.76, 0.66, 0.48, 1.0], roughness: 0.9, ..MaterialDesc::default() };
+    let sand = renderer.add_material(&sand).unwrap();
+    world.spawn((MeshRenderer::new(plane, sand), Transform::new(Vec3::new(0.0, -12.0, 0.0), Quat::IDENTITY, Vec3::splat(300.0))));
+    world.spawn((Ocean { weather: Weather::Calm, light_shafts: shafts, ..Ocean::default() }, Transform::default()));
+    run(&mut renderer, &world, &mut 30.0, 20);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+#[test]
+fn under_the_sea_the_waves_focus_sunlight_into_shafts() {
+    let (Some(plain), Some(shafts)) = (shafts_render(false), shafts_render(true)) else { return };
+    keep_image("shafts.png", &shafts);
+    // Below the window, streaks across each row: how much each pixel differs from the one a few to its side.
+    let streaks = |pixels: &[u8]| {
+        let (mut total, mut count) = (0, 0);
+        for y in (200..340u32).step_by(2) {
+            for x in (40..600u32).step_by(2) {
+                total += (rgb_at(pixels, (x + 6, y))[1] - rgb_at(pixels, (x, y))[1]).abs();
+                count += 1;
+            }
+        }
+        total as f32 / count as f32
+    };
+    let (without, with) = (streaks(&plain), streaks(&shafts));
+    assert!(with > without * 1.3 + 0.2, "shafts streak the water: {with:.2} against {without:.2} without them");
+}
+
 #[test]
 fn a_stormy_sea_calms_and_stops_at_the_beach() {
     use voxear_render::{Ocean, Sky, Weather};

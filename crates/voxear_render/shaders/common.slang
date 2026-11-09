@@ -16,6 +16,7 @@ static const uint SAMPLER_LINEAR_REPEAT = 0;
 static const uint SAMPLER_LINEAR_CLAMP = 1;
 static const uint SAMPLER_NEAREST_CLAMP = 2;
 static const uint SAMPLER_MIN_REDUCTION = 3;
+static const uint SAMPLER_ANISOTROPIC_CLAMP = 4;
 static const uint COMPARISON_SAMPLER_SHADOW = 0;
 
 static const uint NO_TEXTURE = 0xFFFFFFFF;
@@ -373,6 +374,11 @@ struct Ocean
     uint dryMask;
     // How much higher every wave is than its spectrum (src/ocean.rs's SeaState::scale).
     float waveScale;
+    // The sunlight the waves focus and spread under them, round the camera (water.slang's causticsMain), and where
+    // its first texel's corner is.
+    uint caustics;
+    float2 causticOrigin;
+    uint _pad;
 };
 
 // A place along a Stream (src/gpu.rs, GpuStreamPoint): its surface in the middle, which way it runs, how wide it is,

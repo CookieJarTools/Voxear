@@ -675,18 +675,42 @@ bool waterOver(Frame* frame, float3 world, out float surface, out float3 absorb)
     return world.y < surface;
 }
 
-// Caustics: the sun's light focused and spread by the waves over it, a
-// moving web of bright lines: three waves of light crossing at angles, each
-// bent by the others, bright where they meet; from 0 to about 1. (Slang
-// stops on Dave Hoskins' iterated web inside the ray-traced GI module.)
-float causticWeb(float2 p, float time)
+// The caustics round the camera (src/water.rs's CAUSTIC_TEXELS and
+// CAUSTIC_SPAN): this many texels a side, across this many metres; and the
+// two depths under the surface they are worked out at, in metres.
+static const uint CAUSTIC_TEXELS = 1024;
+static const float CAUSTIC_SPAN = 24.0;
+static const float CAUSTIC_NEAR = 1.5;
+static const float CAUSTIC_FAR = 6.0;
+
+// How bright the sunlight is `depth` metres under the water where its way
+// down crossed the surface at `crossed`, against what flat water lets
+// through: 1 on average, brighter where the waves over it focus it and
+// darker where they spread it (water.slang's causticsMain). As soft as a
+// pixel spans, `across` and `down` metres of `crossed` from it to the
+// next, and a little softer the deeper; plain 1 deep down and off the edge
+// of the caustics round the camera.
+float causticsAt(Frame* frame, float2 crossed, float depth, float2 across, float2 down)
 {
-    float2 q = p * 6.2831853;
-    float a = sin(q.x + sin(q.y * 0.9 + time) * 1.3 + time * 0.7);
-    float b = sin(q.y * 1.1 + sin(q.x * 1.2 - time * 0.8) * 1.4 - time * 0.6);
-    float c = sin((q.x + q.y) * 0.75 + sin(q.x * 0.6 - q.y * 0.7 + time) * 1.1 + time * 0.5);
-    float lines = (1.0 - abs(a)) + (1.0 - abs(b)) + (1.0 - abs(c));
-    return pow(saturate(lines / 3.0), 6.0) * 2.5;
+    if (frame->ocean.caustics == NO_TEXTURE || depth <= 0.0)
+    {
+        return 1.0;
+    }
+    float2 uv = (crossed - frame->ocean.causticOrigin) / CAUSTIC_SPAN;
+    float2 edge = min(uv, 1.0 - uv);
+    float inside = saturate(min(edge.x, edge.y) / 0.12);
+    if (inside <= 0.0)
+    {
+        return 1.0;
+    }
+    float soft = (1.0 + depth * 0.05) / CAUSTIC_SPAN;
+    Texture2D caustics = textures[NonUniformResourceIndex(frame->ocean.caustics)];
+    float2 both = caustics.SampleGrad(samplers[SAMPLER_ANISOTROPIC_CLAMP], uv, across * soft, down * soft).xy;
+    float near = lerp(1.0, both.x, saturate(depth / CAUSTIC_NEAR));
+    float far = lerp(both.x, both.y, saturate((depth - CAUSTIC_NEAR) / (CAUSTIC_FAR - CAUSTIC_NEAR)));
+    float bright = depth < CAUSTIC_NEAR ? near : far;
+    bright = lerp(1.0, bright, exp(-max(depth - CAUSTIC_FAR, 0.0) / 12.0));
+    return lerp(1.0, bright, inside);
 }
 
 // The water over `world`, for the light coming down to it: whether it is
@@ -739,18 +763,17 @@ float3 lampThroughWater(Frame* frame, float3 lamp, float3 world, WaterOver over)
     return exp(-absorb * length(lamp - world) * share);
 }
 
-// How much of the sun reaches `world` under water: dimmed a colour at a
-// time by the water it comes down through, and broken into caustics, which
-// blur away with depth; and in `sky`, how much of the sky's light does. One
-// out of water. `time` moves the caustics (passed in: read from the frame
-// here, Slang stops with an internal error in the ray-traced GI module).
-float3 underwaterSun(Frame* frame, float3 world, float time, out float3 sky)
+// How much of the sun reaches `world` under water, seen in a fragment:
+// dimmed a colour at a time by the water it comes down through, and focused
+// and spread by the waves into caustics, as sharp as the pixel; and in
+// `sky`, how much of the sky's light does. One out of water.
+float3 underwaterSun(Frame* frame, float3 world, out float3 sky)
 {
-    return underwaterSunUnder(frame, world, time, waterOverAt(frame, world), sky);
+    return underwaterSunUnder(frame, world, waterOverAt(frame, world), sky);
 }
 
 // As underwaterSun, with the water over `world` already found.
-float3 underwaterSunUnder(Frame* frame, float3 world, float time, WaterOver over, out float3 sky)
+float3 underwaterSunUnder(Frame* frame, float3 world, WaterOver over, out float3 sky)
 {
     sky = 1.0;
 #ifdef NO_UNDERWATER_LIGHT
@@ -767,12 +790,9 @@ float3 underwaterSunUnder(Frame* frame, float3 world, float time, WaterOver over
     float3 bent = refract(frame->sunDirection, float3(0.0, 1.0, 0.0), 1.0 / 1.33);
     float slant = max(-bent.y, 0.2);
     sky = exp(-absorb * depth);
-    // The web cast along the sun, a few metres across, moving with time.
-    float2 cast = world.xz - bent.xz / slant * depth;
-    float web = causticWeb(cast / 3.5, time * 0.45) + causticWeb(cast / 2.1 + 3.7, time * 0.31) * 0.5;
-    float focus = saturate(depth / 0.4) * exp(-depth / 15.0);
-    float caustic = lerp(1.0, 0.3 + web * 2.6, focus);
-    return exp(-absorb * depth / slant) * caustic;
+    // Where its way down crossed the surface.
+    float2 crossed = world.xz - bent.xz / slant * depth;
+    return exp(-absorb * depth / slant) * causticsAt(frame, crossed, depth, ddx(crossed), ddy(crossed));
 #endif
 }
 
@@ -877,7 +897,7 @@ FragmentOut fragmentMain(VertexOut input)
     // Under water, the sun comes down through it in caustics, and the sky's light is dimmed.
     float3 skyUnder;
     WaterOver water = waterOverAt(frame, input.worldPosition);
-    sunThrough *= underwaterSunUnder(frame, input.worldPosition, frame->time, water, skyUnder);
+    sunThrough *= underwaterSunUnder(frame, input.worldPosition, water, skyUnder);
     float3 color = shade(s, -frame->sunDirection, sunThrough) * shadow;
     if (customLit)
     {

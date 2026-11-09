@@ -56,6 +56,12 @@ const FOAM_TEXEL: f32 = 0.5;
 /// The tiling pattern foam is made of, this many texels a side, as
 /// `FOAM_PATTERN` in `shaders/water.slang`; made once, with mips.
 const FOAM_PATTERN: u32 = 1024;
+/// The caustics round the camera: this many texels a side, across this
+/// many metres, as `CAUSTIC_TEXELS` and `CAUSTIC_SPAN` in
+/// `shaders/shading.slang`; with mips down to this many texels.
+const CAUSTIC_TEXELS: u32 = 1024;
+const CAUSTIC_SPAN: f32 = 24.0;
+const CAUSTIC_MIPS: u32 = 7;
 
 /// A view's sea: its spectrum, written when the sea changes, and the FFT's
 /// rows.
@@ -227,6 +233,8 @@ pub struct Water {
     dry: Option<(ImageId, Vec<DryMesh>)>,
     /// The pattern foam is made of, and whether it is to be made this frame.
     pattern: (ImageId, bool),
+    /// The sunlight the waves focus and spread under them, round the camera.
+    caustics: ImageId,
     /// Whether the camera is near enough water for the view under it and
     /// the lens, and whether there are Pools or Streams to draw after the sea.
     under: bool,
@@ -360,6 +368,12 @@ impl Water {
         }
         let linear = |srgb: [f32; 3]| srgb.map(|c| if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) });
         let absorb = linear(ocean.clarity).map(|t| -t.max(1e-3).ln() * ocean.murk.max(0.0));
+        // The caustics round the camera, on whole texels, so they do not swim as it moves.
+        let mut caustic_desc = ImageDesc::new(CAUSTIC_TEXELS, CAUSTIC_TEXELS, WAVE_FORMAT, usage).with_mips();
+        caustic_desc.mip_levels = CAUSTIC_MIPS;
+        let caustics = fg.create_image(gpu, bindless, "ocean caustics", caustic_desc)?;
+        let caustic_texel = CAUSTIC_SPAN / CAUSTIC_TEXELS as f32;
+        let caustic_origin = [camera.x, camera.z].map(|v| (v / caustic_texel).floor() * caustic_texel - CAUSTIC_SPAN * 0.5);
         let texture = |id: ImageId| fg.texture(id).0;
         let frame = GpuOcean {
             sizes: CASCADE_SIZES,
@@ -388,6 +402,9 @@ impl Water {
             features: ocean.features(),
             dry_mask: dry.as_ref().map_or(u32::MAX, |(mask, _)| fg.texture(*mask).0),
             wave_scale: sea.scale as f32,
+            caustics: fg.texture(caustics).0,
+            caustic_origin,
+            _pad: 0,
         };
         Ok(Self {
             displacement,
@@ -405,6 +422,7 @@ impl Water {
             floor_depth: (floor_depth, floor_across),
             dry,
             pattern: (pattern, pattern_new),
+            caustics,
             under,
             layered: layered > 0,
             size: [extent.width, extent.height],
@@ -525,6 +543,12 @@ impl Water {
     pub fn dry_mask(&self) -> Option<ImageId> {
         self.dry.as_ref().map(|(mask, _)| *mask)
     }
+
+    /// The sunlight the waves focus and spread under them, which the opaque
+    /// passes light what is under the water by (`record_waves`).
+    pub fn caustics(&self) -> ImageId {
+        self.caustics
+    }
 }
 
 /// Draws the Dry Areas shaped as meshes, before the opaque passes that read
@@ -552,15 +576,85 @@ pub fn record_dry_mask(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, P
 /// a copy of the picture and the depth so far.
 /// Gives back the view under the water when the camera is in it, and the
 /// images the sea's shading reads, which the spray reads too.
+/// Moves the sea's waves on, before the opaque passes: their FFT, rows then
+/// columns, into each cascade's movement, folding and slopes, with mips;
+/// then the sunlight they focus and spread under them, round the camera,
+/// with mips, which what lies under the water is lit by.
+pub fn record_waves(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), water: &Water) {
+    let Water { displacement, slopes, fft, caustics, frame, .. } = water;
+    let (displacement, slopes, fft, caustics) = (*displacement, *slopes, *fft, *caustics);
+    let cascades = if frame.features & ocean::features::FINE_RIPPLES != 0 { CASCADES } else { CASCADES - 2 };
+    let storage = |fg: &mut FrameGraph<'_>, images: &[ImageId; CASCADES]| -> Vec<Vec<StorageImageId>> {
+        images.iter().map(|&image| (0..WAVE_MIPS as usize).map(|mip| fg.storage(image, mip)).collect()).collect()
+    };
+    let (moved_mips, slope_mips) = (storage(fg, &displacement), storage(fg, &slopes));
+    let textures: Vec<(TextureId, TextureId)> =
+        displacement.iter().zip(&slopes).map(|(&d, &s)| (fg.texture(d), fg.texture(s))).collect();
+    let images: Vec<(ImageId, ImageAccess)> =
+        displacement.iter().chain(&slopes).map(|&image| (image, ImageAccess::StorageWrite)).collect();
+    fg.add_pass("Ocean waves", &images, &[(fft, BufferAccess::ComputeWrite)], move |ctx| {
+        // Rows, then columns into the images' first mips: all but the finest two without Fine Ripples.
+        for cascade in 0..cascades as u32 {
+            bind(ctx, pipelines.ocean_rows, vk::PipelineBindPoint::COMPUTE, &Push { level: cascade, ..push });
+            unsafe { ctx.gpu.device.cmd_dispatch(ctx.cmd, N as u32, 1, 1) };
+        }
+        compute_barrier(ctx);
+        for cascade in 0..cascades {
+            let push = Push {
+                level: cascade as u32,
+                output: moved_mips[cascade][0].0,
+                textures: [slope_mips[cascade][0].0, 0, 0, 0],
+                ..push
+            };
+            bind(ctx, pipelines.ocean_columns, vk::PipelineBindPoint::COMPUTE, &push);
+            unsafe { ctx.gpu.device.cmd_dispatch(ctx.cmd, N as u32, 1, 1) };
+        }
+        // Each image's mips, four at a time from the one before: the first four, then the last four.
+        for first in [1usize, 5] {
+            compute_barrier(ctx);
+            let side = (N as u32 >> first).max(1);
+            for cascade in 0..cascades {
+                for (texture, mips) in [(textures[cascade].0, &moved_mips[cascade]), (textures[cascade].1, &slope_mips[cascade])] {
+                    let push = Push {
+                        texture: texture.0,
+                        level: first as u32 - 1,
+                        output: mips[first].0,
+                        textures: [mips[first + 1].0, mips[first + 2].0, mips[first + 3].0, 0],
+                        size: [side, side],
+                        ..push
+                    };
+                    bind(ctx, pipelines.ocean_mips, vk::PipelineBindPoint::COMPUTE, &push);
+                    unsafe { ctx.gpu.device.cmd_dispatch(ctx.cmd, side.div_ceil(8), side.div_ceil(8), 1) };
+                }
+            }
+        }
+    });
+    // How bright the sunlight is under the waves, worked out at two depths, then its mips, each from the one before.
+    let caustic_mips: Vec<StorageImageId> = (0..CAUSTIC_MIPS as usize).map(|mip| fg.storage(caustics, mip)).collect();
+    let caustic_texture = fg.texture(caustics);
+    let mut images: Vec<(ImageId, ImageAccess)> = slopes.iter().map(|&image| (image, ImageAccess::Sampled)).collect();
+    images.push((caustics, ImageAccess::StorageWrite));
+    fg.add_pass("Caustics", &images, &[], move |ctx| {
+        bind(ctx, pipelines.caustics, vk::PipelineBindPoint::COMPUTE, &Push { output: caustic_mips[0].0, ..push });
+        unsafe { ctx.gpu.device.cmd_dispatch(ctx.cmd, CAUSTIC_TEXELS / 8, CAUSTIC_TEXELS / 8, 1) };
+        for mip in 1..CAUSTIC_MIPS {
+            compute_barrier(ctx);
+            let side = CAUSTIC_TEXELS >> mip;
+            let push = Push { texture: caustic_texture.0, level: mip - 1, output: caustic_mips[mip as usize].0, size: [side, side], ..push };
+            bind(ctx, pipelines.ocean_mip, vk::PipelineBindPoint::COMPUTE, &push);
+            unsafe { ctx.gpu.device.cmd_dispatch(ctx.cmd, side.div_ceil(8), side.div_ceil(8), 1) };
+        }
+    });
+}
+
 pub fn record(
     fg: &mut FrameGraph<'_>,
     (pipelines, push): (Pipelines, Push),
     water: Water,
     targets: WaterTargets,
 ) -> (Option<UnderWater>, Vec<ImageId>) {
-    let Water { displacement, slopes, previous, fft, copy, copy_texture, copy_mips, depth_copy, second, foam, lens, floor, floor_depth, pattern, under, layered, size, sea, pools, streams, dries, frame, .. } = water;
+    let Water { displacement, slopes, previous, copy, copy_texture, copy_mips, depth_copy, second, foam, lens, floor, floor_depth, pattern, caustics, under, layered, size, sea, pools, streams, dries, frame, .. } = water;
     let on = |feature: u32| frame.features & feature != 0;
-    let cascades = if on(ocean::features::FINE_RIPPLES) { CASCADES } else { CASCADES - 2 };
     let (floor_image, floor_draws) = floor;
     // The pattern foam is made of, once, with its mips.
     let (pattern, pattern_new) = pattern;
@@ -645,51 +739,6 @@ pub fn record(
             }
         });
     }
-    let storage = |fg: &mut FrameGraph<'_>, images: &[ImageId; CASCADES]| -> Vec<Vec<StorageImageId>> {
-        images.iter().map(|&image| (0..WAVE_MIPS as usize).map(|mip| fg.storage(image, mip)).collect()).collect()
-    };
-    let (moved_mips, slope_mips) = (storage(fg, &displacement), storage(fg, &slopes));
-    let textures: Vec<(TextureId, TextureId)> =
-        displacement.iter().zip(&slopes).map(|(&d, &s)| (fg.texture(d), fg.texture(s))).collect();
-    let images: Vec<(ImageId, ImageAccess)> =
-        displacement.iter().chain(&slopes).map(|&image| (image, ImageAccess::StorageWrite)).collect();
-    fg.add_pass("Ocean waves", &images, &[(fft, BufferAccess::ComputeWrite)], move |ctx| {
-        // Rows, then columns into the images' first mips: all but the finest two without Fine Ripples.
-        for cascade in 0..cascades as u32 {
-            bind(ctx, pipelines.ocean_rows, vk::PipelineBindPoint::COMPUTE, &Push { level: cascade, ..push });
-            unsafe { ctx.gpu.device.cmd_dispatch(ctx.cmd, N as u32, 1, 1) };
-        }
-        compute_barrier(ctx);
-        for cascade in 0..cascades {
-            let push = Push {
-                level: cascade as u32,
-                output: moved_mips[cascade][0].0,
-                textures: [slope_mips[cascade][0].0, 0, 0, 0],
-                ..push
-            };
-            bind(ctx, pipelines.ocean_columns, vk::PipelineBindPoint::COMPUTE, &push);
-            unsafe { ctx.gpu.device.cmd_dispatch(ctx.cmd, N as u32, 1, 1) };
-        }
-        // Each image's mips, four at a time from the one before: the first four, then the last four.
-        for first in [1usize, 5] {
-            compute_barrier(ctx);
-            let side = (N as u32 >> first).max(1);
-            for cascade in 0..cascades {
-                for (texture, mips) in [(textures[cascade].0, &moved_mips[cascade]), (textures[cascade].1, &slope_mips[cascade])] {
-                    let push = Push {
-                        texture: texture.0,
-                        level: first as u32 - 1,
-                        output: mips[first].0,
-                        textures: [mips[first + 1].0, mips[first + 2].0, mips[first + 3].0, 0],
-                        size: [side, side],
-                        ..push
-                    };
-                    bind(ctx, pipelines.ocean_mips, vk::PipelineBindPoint::COMPUTE, &push);
-                    unsafe { ctx.gpu.device.cmd_dispatch(ctx.cmd, side.div_ceil(8), side.div_ceil(8), 1) };
-                }
-            }
-        }
-    });
 
     // The foam round the camera: last frame's carried with the water, and what breaks now; none without Foam Trails.
     let (foam_now, foam_then, previous_origin) = foam;
@@ -712,7 +761,7 @@ pub fn record(
     }
 
     let mut waves: Vec<ImageId> = displacement.iter().chain(&slopes).chain(&previous).copied().collect();
-    waves.extend([foam_now, floor_image, floor_depth, pattern]);
+    waves.extend([foam_now, floor_image, floor_depth, pattern, caustics]);
     let layer = Layer { hdr, velocity, depth, sampled, waves, size };
     // The sea and the walls round its Dry Areas, over a copy of the picture so far.
     let first_dry = pools + streams.len() as u32;

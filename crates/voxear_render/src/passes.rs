@@ -315,10 +315,13 @@ pub fn record(
     if let Some(atmosphere) = frame.atmosphere {
         atmosphere::record(fg, (pipelines, push), atmosphere);
     }
-    // Where the Dry Areas shaped as meshes are, which the opaque passes read to light what is in them as dry.
+    // Where the Dry Areas shaped as meshes are, which the opaque passes read to light what is in them as dry; and the
+    // sea's waves and the sunlight they focus, which light what is under the water.
     let dry_mask = frame.water.as_ref().and_then(crate::water::Water::dry_mask);
+    let caustics = frame.water.as_ref().map(crate::water::Water::caustics);
     if let Some(water) = &frame.water {
         crate::water::record_dry_mask(fg, (pipelines, push), water, draws.index_buffer);
+        crate::water::record_waves(fg, (pipelines, push), water);
     }
     let tables: Vec<ImageId> = frame.atmosphere.map(|atmosphere| atmosphere.all().to_vec()).unwrap_or_default();
     let shading = |color: ImageAccess| {
@@ -335,6 +338,7 @@ pub fn record(
         }));
         images.extend(tables.iter().map(|&table| (table, ImageAccess::Sampled)));
         images.extend(dry_mask.map(|mask| (mask, ImageAccess::Sampled)));
+        images.extend(caustics.map(|image| (image, ImageAccess::Sampled)));
         images
     };
     let shading_push = Push { size: [CASCADE_RESOLUTION; 2], ..draw_push };

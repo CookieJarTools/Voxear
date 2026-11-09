@@ -778,4 +778,26 @@ fn ground_dug_out_of_a_terrain_is_drawn_in_its_dug_surface_with_no_gap_at_its_ri
     assert!(gaps.is_empty(), "{} gaps, first {:?}", gaps.len(), gaps.first());
     let [r, g, _] = rgb_at(&pixels, from_above(20.0, 75.0, 60.0).0, from_above(20.0, 75.0, 60.0).1);
     assert!(g > r || r > 150, "the ground's green, or a red blade, beyond it");
+
+    // From 120 m up, past where its finer levels reach (32 and 64 m, for ground drawn in detail only near), the pit
+    // is drawn at its coarsest, whole: dug earth to its rim, and no sky through it.
+    let camera =
+        world.query_ref::<(voxear_ecs::Entity, &Camera)>().into_iter().next().map(|(entity, _)| entity).unwrap();
+    world.get_mut::<Transform>(camera).unwrap().position.y = 120.0;
+    let field =
+        world.query_ref::<(voxear_ecs::Entity, &Terrain)>().into_iter().next().map(|(entity, _)| entity).unwrap();
+    world.get_mut::<Terrain>(field).unwrap().detail_distance = 10.0;
+    let pixels = render(&mut renderer, &world, 3);
+    keep_image("terrain dug far.png", &pixels);
+    let mut earth = 0;
+    for ring in 0..24 {
+        let turn = ring as f32 / 24.0 * std::f32::consts::TAU;
+        for r in [0.0, 0.8, 1.6, 2.2] {
+            let (x, y) = from_above(120.0, 64.0 + turn.cos() * r, 64.0 + turn.sin() * r);
+            let [cr, cg, cb] = rgb_at(&pixels, x, y);
+            assert!(!(cb > cr && cb > cg), "sky through the pit at {r} m out: {:?}", [cr, cg, cb]);
+            earth += usize::from(cr > cg);
+        }
+    }
+    assert!(earth > 80, "dug earth across the pit: {earth} of 96");
 }

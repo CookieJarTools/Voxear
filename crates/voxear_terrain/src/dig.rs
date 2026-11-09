@@ -1083,7 +1083,9 @@ pub fn cut_columns(heights: &Heightmap, dug: &Excavation, newly: &[(i32, i32)]) 
 /// corner, the way the ground faces there, the surface digging laid there
 /// or beside it (its number and one; 0 for the terrain's own), and whether
 /// it lies on it, to blend from; three points a triangle, wound
-/// counter-clockwise seen from the air.
+/// counter-clockwise seen from the air. Then the same surface coarser, for
+/// drawing further off: a level each, each coarser than the last (see
+/// [`MESH_LEVELS`]).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ChunkMesh {
     pub positions: Vec<[f32; 3]>,
@@ -1091,6 +1093,80 @@ pub struct ChunkMesh {
     pub surfaces: Vec<u8>,
     pub laid: Vec<bool>,
     pub indices: Vec<u32>,
+    pub coarser: Vec<ChunkMesh>,
+}
+
+/// How many levels of detail a chunk's surface is made in: its own, then
+/// its points gathered two voxels a side, then four.
+pub const MESH_LEVELS: usize = 3;
+
+/// `mesh` coarser: its points inside the chunk (its corner at `low`,
+/// `size` metres a side) gathered into cells `cell` metres a side, each
+/// cell's into the one of them nearest where they average out, which keeps
+/// the way the ground faces there and its surface, and the triangles left
+/// between them. Points on the chunk's faces stay where they are, so a
+/// chunk meets its neighbours, and the heights round a dug column, as they
+/// meet it, however coarse each is drawn.
+fn coarsen(mesh: &ChunkMesh, low: Vec3, size: f32, cell: f32) -> ChunkMesh {
+    let near = size * 1e-5;
+    let on_face =
+        |p: Vec3| (0..3).any(|axis| (p[axis] - low[axis]).abs() < near || (p[axis] - low[axis] - size).abs() < near);
+    let point = |i: usize| Vec3::from(mesh.positions[i]);
+    // Each point's cell, those on a face one of their own, and where each cell's points average out.
+    let mut cells: HashMap<[i32; 3], usize> = HashMap::new();
+    let mut sums: Vec<(Vec3, f32)> = Vec::new();
+    let mut into = Vec::with_capacity(mesh.positions.len());
+    for i in 0..mesh.positions.len() {
+        let p = point(i);
+        let within = ((p - low) / cell).floor();
+        let at = (!on_face(p)).then(|| [within.x as i32, within.y as i32, within.z as i32]);
+        let gathered = match at.and_then(|at| cells.get(&at).copied()) {
+            Some(gathered) => gathered,
+            None => {
+                sums.push((Vec3::ZERO, 0.0));
+                if let Some(at) = at {
+                    cells.insert(at, sums.len() - 1);
+                }
+                sums.len() - 1
+            }
+        };
+        sums[gathered] = (sums[gathered].0 + p, sums[gathered].1 + 1.0);
+        into.push(gathered);
+    }
+    // The point nearest each average stands for its cell, so every point kept lies on the ground.
+    let mut kept: Vec<Option<(usize, f32)>> = vec![None; sums.len()];
+    for (i, &gathered) in into.iter().enumerate() {
+        let away = point(i).distance_squared(sums[gathered].0 / sums[gathered].1);
+        if kept[gathered].is_none_or(|(_, best)| away < best) {
+            kept[gathered] = Some((i, away));
+        }
+    }
+    let mut out = ChunkMesh::default();
+    for (i, _) in kept.into_iter().flatten() {
+        out.positions.push(mesh.positions[i]);
+        out.normals.push(mesh.normals[i]);
+        out.surfaces.push(mesh.surfaces[i]);
+        out.laid.push(mesh.laid[i]);
+    }
+    for triangle in mesh.indices.chunks_exact(3) {
+        let [a, b, c] = [triangle[0], triangle[1], triangle[2]];
+        let [na, nb, nc] = [a, b, c].map(|i| into[i as usize] as u32);
+        if na == nb || nb == nc || na == nc {
+            continue;
+        }
+        let now = |i: u32| Vec3::from(out.positions[i as usize]);
+        let facing = (point(b as usize) - point(a as usize)).cross(point(c as usize) - point(a as usize));
+        let made = (now(nb) - now(na)).cross(now(nc) - now(na));
+        if made.length_squared() < 1e-12 {
+            continue;
+        }
+        // Still facing the air, as the triangle it came from did.
+        match made.dot(facing) >= 0.0 {
+            true => out.indices.extend([na, nb, nc]),
+            false => out.indices.extend([na, nc, nb]),
+        }
+    }
+    out
 }
 
 /// The six tetrahedra each voxel is split into, by its corners (bit 0 x,
@@ -1213,6 +1289,12 @@ pub fn mesh(excavation: &Excavation, heights: &Heightmap, key: ChunkKey) -> Chun
                 }
             }
         }
+    }
+    if !out.indices.is_empty() {
+        let low = grid.corner_at(key, 0, 0, 0);
+        out.coarser = (1..MESH_LEVELS)
+            .map(|level| coarsen(&out, low, grid.chunk(), grid.voxel * (1u32 << level) as f32))
+            .collect();
     }
     out
 }
@@ -1466,6 +1548,61 @@ mod tests {
         assert!(!smoothed.tile_meshed(0, 0));
         smoothed.mesh_all(&heights);
         assert!(smoothed.tile_meshed(0, 0), "all made at once");
+    }
+
+    #[test]
+    fn a_chunk_drawn_coarser_has_fewer_triangles_and_the_same_edges_on_its_faces() {
+        let heights = field();
+        let mut dug = Excavation::default();
+        // On the corner of four columns, so it reaches across chunks' faces.
+        let ground = heights.height_at(16.0, 16.0);
+        dug.carve(&heights, &Shape::Ball { at: [16.0, ground, 16.0], radius: 3.0 }, Carve::Dig, None);
+        let grid = Grid::of(&heights);
+        let mut checked = 0;
+        for &key in dug.chunks().keys() {
+            let fine = mesh(&dug, &heights, key);
+            if fine.indices.is_empty() {
+                assert!(fine.coarser.is_empty());
+                continue;
+            }
+            assert_eq!(fine.coarser.len(), MESH_LEVELS - 1);
+            let (low, size) = (grid.corner_at(key, 0, 0, 0), grid.chunk());
+            // Each edge lying on one of the chunk's faces, as its two points.
+            let on_faces = |mesh: &ChunkMesh| -> std::collections::BTreeSet<[[u32; 3]; 2]> {
+                let face = |p: [f32; 3], axis: usize, at: f32| (p[axis] - at).abs() < 1e-4;
+                let mut edges = std::collections::BTreeSet::new();
+                for t in mesh.indices.chunks_exact(3) {
+                    for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
+                        let (p, q) = (mesh.positions[a as usize], mesh.positions[b as usize]);
+                        let shared = (0..3).any(|axis| {
+                            [low[axis], low[axis] + size].iter().any(|&at| face(p, axis, at) && face(q, axis, at))
+                        });
+                        // A triangle with no area, where the surface passes through a corner, has edges of none.
+                        if shared && p != q {
+                            let mut edge = [p.map(f32::to_bits), q.map(f32::to_bits)];
+                            edge.sort();
+                            edges.insert(edge);
+                        }
+                    }
+                }
+                edges
+            };
+            let edges = on_faces(&fine);
+            let mut last = fine.indices.len();
+            for (level, coarse) in fine.coarser.iter().enumerate() {
+                assert!(coarse.indices.len() < last, "level {} of {key:?} coarser", level + 1);
+                last = coarse.indices.len();
+                assert_eq!(on_faces(coarse), edges, "level {} of {key:?} meets its neighbours alike", level + 1);
+                // And near the ground it stands for: within a cell of it.
+                let cell = grid.voxel * (2 << level) as f32;
+                for p in &coarse.positions {
+                    let density = dug.density_at(&heights, Vec3::from(*p));
+                    assert!(density.abs() < cell, "{p:?} {density} off the ground at level {}", level + 1);
+                }
+            }
+            checked += 1;
+        }
+        assert!(checked >= 4, "chunks with ground in them: {checked}");
     }
 
     #[test]

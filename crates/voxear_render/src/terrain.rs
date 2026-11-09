@@ -268,10 +268,10 @@ pub(crate) struct Drawn {
     pub cast_shadows: bool,
     /// Its tiles' meshes for rays, those made so far.
     pub proxies: Vec<MeshHandle>,
-    /// Where its dug chunks' vertices are, each chunk's first vertex and
-    /// count, and where its dug columns' bits are and how many a row has,
-    /// where it is dug; the pool in this frame's graph.
-    pub dug: Option<(u64, Arc<[[u32; 2]]>, (u64, u32))>,
+    /// Where its dug chunks' vertices are, each chunk to draw (see
+    /// `dug::pick`), and where its dug columns' bits are and how many a row
+    /// has, where it is dug; the pool in this frame's graph.
+    pub dug: Option<(u64, Arc<[crate::dug::DugDraw]>, (u64, u32))>,
     pub dug_id: Option<BufferId>,
     /// The patch grid's indices, which every terrain draws with.
     pub grid: vk::Buffer,
@@ -479,9 +479,10 @@ impl Terrains {
                 look,
                 cast_shadows: terrain.cast_shadows,
                 proxies: resident.proxies.iter().flatten().map(|(_, mesh)| *mesh).collect(),
-                dug: resident.dug.as_ref().map(|pool| {
-                    (pool.buffer.address, pool.draws().into(), pool.columns().unwrap_or((0, 0)))
-                }),
+                dug: resident
+                    .dug
+                    .as_mut()
+                    .map(|pool| (pool.buffer.address, pool.draws(), pool.columns().unwrap_or((0, 0)))),
                 dug_id: None,
                 grid,
                 key,
@@ -638,9 +639,9 @@ pub(crate) struct ViewTerrains {
     pub grid: vk::Buffer,
     /// Whether any terrain casts the sun's shadows.
     pub shadows: bool,
-    /// Each dug terrain's number in the view and its chunks' first vertex
-    /// and count.
-    pub dug: Vec<(u32, Arc<[[u32; 2]]>)>,
+    /// Each dug terrain's number in the view, and for each list, the first
+    /// vertex and count of each run of its chunks' vertices it draws.
+    pub dug: Vec<(u32, Vec<Arc<[[u32; 2]]>>)>,
 }
 
 impl ViewTerrains {
@@ -697,6 +698,7 @@ pub(crate) fn gather(
     let mut surfaces = vec![GpuTerrainSurface::default(); drawn.len().min(MAX_TERRAINS) * MAX_SURFACES];
     let mut lists: Vec<Vec<GpuTerrainPatch>> = vec![Vec::new(); LIST_COUNT as usize];
     let mut patches = Vec::new();
+    let mut dug = Vec::new();
     for (number, terrain) in drawn.iter().take(MAX_TERRAINS).enumerate() {
         let mut morph = [[f32::MAX; 2]; MAX_TERRAIN_LEVELS];
         for (level, range) in terrain.ranges.morph.iter().take(MAX_TERRAIN_LEVELS).enumerate() {
@@ -750,13 +752,25 @@ pub(crate) fn gather(
         patches.clear();
         voxear_terrain::lod::select(&terrain.tree, local, &terrain.ranges, &planes, &mut patches);
         lists[LIST_EARLY as usize].extend(patches.iter().map(pack));
+        // Its dug chunks each list sees, coarser where the ground round them is drawn coarser.
+        let ends: Vec<f32> = (0..voxear_terrain::dig::MESH_LEVELS - 1).map(|level| terrain.ranges.end(level)).collect();
+        let mut dug_lists: Vec<Arc<[[u32; 2]]>> = vec![Arc::from([]); LIST_COUNT as usize];
+        if let Some((_, draws, _)) = &terrain.dug {
+            dug_lists[LIST_EARLY as usize] = crate::dug::pick(draws, local, &planes, &ends).into();
+        }
         if has_sun && terrain.cast_shadows {
             for cascade in 0..CASCADES {
                 let planes = voxear_terrain::lod::planes_from(&frame.cascade_planes[cascade], terrain.corner);
                 patches.clear();
                 voxear_terrain::lod::select(&terrain.tree, local, &terrain.ranges, &planes, &mut patches);
                 lists[LIST_SHADOW as usize + cascade].extend(patches.iter().map(pack));
+                if let Some((_, draws, _)) = &terrain.dug {
+                    dug_lists[LIST_SHADOW as usize + cascade] = crate::dug::pick(draws, local, &planes, &ends).into();
+                }
             }
+        }
+        if terrain.dug.is_some() {
+            dug.push((number as u32, dug_lists));
         }
     }
     let mut placed = [(0u32, 0u32); LIST_COUNT as usize];
@@ -784,12 +798,6 @@ pub(crate) fn gather(
     // The dug pools are waited on with the heights.
     let heights = drawn.iter().flat_map(|terrain| terrain.heights_id.into_iter().chain(terrain.dug_id)).collect();
     let grid = drawn.first().map_or(vk::Buffer::null(), |terrain| terrain.grid);
-    let dug = drawn
-        .iter()
-        .take(MAX_TERRAINS)
-        .enumerate()
-        .filter_map(|(number, terrain)| Some((number as u32, terrain.dug.as_ref()?.1.clone())))
-        .collect();
     Some(ViewTerrains { lists: placed, heights, tracks: None, shadows, grid, dug })
 }
 
@@ -834,8 +842,8 @@ fn draw_list(ctx: &PassContext, terrains: &ViewTerrains, push: &Push, list: u32)
 /// shader to read the terrain's dug vertices, and the chunk's first vertex
 /// in `output`, as the shaders' vertex numbers leave a draw's first out.
 fn draw_dug(ctx: &PassContext, terrains: &ViewTerrains, push: &Push, list: u32) {
-    for (number, draws) in &terrains.dug {
-        for &[first, count] in draws.iter() {
+    for (number, lists) in &terrains.dug {
+        for &[first, count] in lists[list as usize].iter() {
             ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { list, level: number + 1, output: first, ..*push });
             unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, count, 1, 0, 0) };
         }

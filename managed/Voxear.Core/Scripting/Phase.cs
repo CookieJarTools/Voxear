@@ -11,4 +11,5 @@ internal enum Phase
 	LateUpdate = 5,
 	OnDisable = 6,
 	OnDestroy = 7,
+	PoseUpdate = 8,
 }

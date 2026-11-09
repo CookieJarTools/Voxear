@@ -118,6 +118,7 @@ Each system runs in one **stage** of the frame. Choose it with `[UpdateIn]`:
 | `Stage.First` | At the start of the frame, before new behaviours get Awake, OnEnable and Start |
 | `Stage.FixedUpdate` | After the behaviours' FixedUpdate, at each fixed step |
 | `Stage.Update` | After the behaviours' Update. The default |
+| `Stage.Pose` | After animation has posed the bones and the behaviours' PoseUpdate has run, before Objs on bones follow them |
 | `Stage.PostUpdate` | After LateUpdate, just before Objs are drawn, so a Transform written here shows this frame |
 | `Stage.Last` | At the end of the frame, after destroyed Objs have gone |
 

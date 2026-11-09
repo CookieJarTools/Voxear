@@ -36,6 +36,9 @@ pub enum Phase {
     LateUpdate = 5,
     OnDisable = 6,
     OnDestroy = 7,
+    /// After animation and the engine's own posing, before Objs on bones
+    /// follow them.
+    PoseUpdate = 8,
 }
 
 /// The phases a behaviour type overrides. Phases it does not override are
@@ -46,7 +49,7 @@ pub struct Callbacks(pub u32);
 
 impl Callbacks {
     pub const NONE: Callbacks = Callbacks(0);
-    pub const ALL: Callbacks = Callbacks(0xff);
+    pub const ALL: Callbacks = Callbacks(0x1ff);
     /// Not a callback but a mark beside them: a `[Predicted]` behaviour,
     /// whose FixedUpdate a networked player's machine runs again for its
     /// own Objs when the server disagrees.
@@ -289,7 +292,7 @@ impl Lifecycle {
 
     /// Runs a per-frame phase on every started, enabled behaviour.
     pub fn run(&mut self, phase: Phase, host: &mut dyn BehaviourHost) {
-        debug_assert!(matches!(phase, Phase::FixedUpdate | Phase::Update | Phase::LateUpdate));
+        debug_assert!(matches!(phase, Phase::FixedUpdate | Phase::Update | Phase::PoseUpdate | Phase::LateUpdate));
         self.run_dirty();
         let running = std::mem::take(&mut self.running);
         self.dispatch(host, phase, &running);

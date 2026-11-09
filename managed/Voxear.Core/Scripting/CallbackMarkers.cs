@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Voxear.Interop;
 
@@ -9,7 +10,7 @@ namespace Voxear.Scripting;
 /// </summary>
 internal static class CallbackMarkers
 {
-	private const int Phases = (int)Phase.OnDestroy + 1;
+	private static readonly int Phases = Enum.GetValues<Phase>().Length;
 
 	private static readonly Dictionary<string, uint[]> markers = new Dictionary<string, uint[]>();
 

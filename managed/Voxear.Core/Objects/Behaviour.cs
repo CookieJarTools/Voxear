@@ -83,6 +83,15 @@ public abstract class Behaviour
 	{
 	}
 
+	/// <summary>
+	/// Called once a frame after animation has posed the bones and the engine has posed its own, as a First-Person
+	/// View's camera, and before Objs on bones follow them: to bend bones, reach hands somewhere or place what a
+	/// character holds. It comes after every behaviour's Update and before LateUpdate.
+	/// </summary>
+	protected virtual void PoseUpdate()
+	{
+	}
+
 	/// <summary>Called once a frame, after every behaviour's Update: for a camera that follows what Update moved.</summary>
 	protected virtual void LateUpdate()
 	{
@@ -249,6 +258,7 @@ public abstract class Behaviour
 			case Phase.Start: Start(); break;
 			case Phase.FixedUpdate: FixedUpdate(); break;
 			case Phase.Update: Update(); break;
+			case Phase.PoseUpdate: PoseUpdate(); break;
 			case Phase.LateUpdate: LateUpdate(); break;
 			case Phase.OnDisable: OnDisable(); break;
 			case Phase.OnDestroy: OnDestroy(); break;

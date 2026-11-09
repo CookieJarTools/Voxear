@@ -30,10 +30,15 @@ pub fn editing(world: &World) -> bool {
     world.resource::<EditMode>().is_some_and(|mode| mode.0)
 }
 
-/// The stage after animation where Rust systems change the pose: inverse
-/// kinematics, a first-person view, guns held. Scripts have no systems
-/// here, so it is not one of [`STAGES`].
+/// The stage after animation where systems change the pose: inverse
+/// kinematics, a first-person view, guns held. The engine's own run first,
+/// then behaviours' `PoseUpdate` and C#'s `Stage.Pose` systems, so they see
+/// where the camera and the bones are. It comes between C#'s other stages,
+/// so it is not one of [`STAGES`].
 pub const POSE: &str = "Pose";
+
+/// C#'s `Stage.Pose`, numbered after the stages in [`STAGES`].
+const SCRIPT_POSE: usize = 5;
 
 /// Fixed steps allowed per frame, so a slow frame cannot snowball into
 /// ever more catch-up work.
@@ -546,6 +551,9 @@ impl Engine {
             // The pose stage's systems read the frame's time from the world.
             self.world.insert_resource(self.time);
             self.schedule.run_stage(POSE, &mut self.world);
+            self.run_phase(Phase::PoseUpdate);
+            self.run_script_systems(SCRIPT_POSE);
+            self.flush();
             crate::animation::attach_to_bones(&mut self.world);
         }
         self.tell_motion_marks();
@@ -583,15 +591,18 @@ impl Engine {
     /// A stage's systems: the scripts' C# systems first, then the engine's,
     /// so what C# writes in `PostUpdate` is in this frame's transforms.
     fn run_stage(&mut self, stage: &'static str) {
-        if let Some(scripts) = self.scripts.as_mut() {
-            let index = STAGES.iter().position(|&s| s == stage).expect("one of the engine's stages");
-            scripts.run_systems(&mut self.world, index);
-            let doomed = scripts.take_obj_destroys();
-            if !doomed.is_empty() {
-                self.destroy_objs(&doomed);
-            }
-        }
+        self.run_script_systems(STAGES.iter().position(|&s| s == stage).expect("one of the engine's stages"));
         self.schedule.run_stage(stage, &mut self.world);
+    }
+
+    /// The scripts' C# systems of a stage, by C#'s number for it.
+    fn run_script_systems(&mut self, stage: usize) {
+        let Some(scripts) = self.scripts.as_mut() else { return };
+        scripts.run_systems(&mut self.world, stage);
+        let doomed = scripts.take_obj_destroys();
+        if !doomed.is_empty() {
+            self.destroy_objs(&doomed);
+        }
     }
 
     /// Moves physics on by a fixed step, after FixedUpdate as in Unity,

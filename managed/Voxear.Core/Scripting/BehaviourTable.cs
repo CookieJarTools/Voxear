@@ -212,7 +212,7 @@ internal static class BehaviourTable
 	/// </summary>
 	private static bool ShouldRun(Behaviour behaviour, Phase phase)
 	{
-		var perFrame = phase == Phase.FixedUpdate || phase == Phase.Update || phase == Phase.LateUpdate;
+		var perFrame = phase is Phase.FixedUpdate or Phase.Update or Phase.PoseUpdate or Phase.LateUpdate;
 		return !perFrame || (behaviour.Enabled && !behaviour.IsDestroyed);
 	}
 

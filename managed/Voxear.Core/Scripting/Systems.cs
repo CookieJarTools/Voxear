@@ -13,7 +13,7 @@ namespace Voxear.Scripting;
 /// </summary>
 internal static unsafe class Systems
 {
-	private static readonly List<SystemBase>[] byStage = Enumerable.Range(0, (int)Stage.Last + 1)
+	private static readonly List<SystemBase>[] byStage = Enumerable.Range(0, Enum.GetValues<Stage>().Length)
 		.Select(_ => new List<SystemBase>())
 		.ToArray();
 

@@ -13,11 +13,12 @@ A behaviour has methods the engine calls at set times: when it first appears, ev
 | `Start` | Once, just before its first Update |
 | `FixedUpdate` | At a steady 50 times a second, before Update. A frame can have none, or several |
 | `Update` | Once every frame |
-| `LateUpdate` | Every frame, after every behaviour's Update |
+| `PoseUpdate` | Every frame, after animation has posed the bones and before Objs on bones follow them |
+| `LateUpdate` | Every frame, after every behaviour's Update and PoseUpdate |
 | `OnDisable` | When the behaviour is turned off, and before OnDestroy |
 | `OnDestroy` | Once, last, at the end of the frame it is destroyed in |
 
-Use `Awake` to set the behaviour itself up, and `Start` for anything that needs other behaviours to be ready. Use `FixedUpdate` for movement that must not depend on how fast the computer is, and `LateUpdate` for things that follow others, such as a camera following the player.
+Use `Awake` to set the behaviour itself up, and `Start` for anything that needs other behaviours to be ready. Use `FixedUpdate` for movement that must not depend on how fast the computer is, and `LateUpdate` for things that follow others, such as a camera following the player. Use `PoseUpdate` to change a character's pose, such as reaching a hand to a door handle or placing what it holds before its eyes: by then its clips have posed it and a First-Person View has put its camera in the head.
 
 ## Movement between fixed steps
 

@@ -1882,9 +1882,18 @@ impl Editor {
             RowAction::InsertLodLevel(at) => {
                 props::insert_lod_level(&mut self.game, entity, at);
             }
+            RowAction::ErodeTerrain => {
+                if !crate::terrain_props::erode(&mut self.game, renderer, entity) {
+                    self.notify("Could not erode the terrain: see the Console");
+                }
+            }
             RowAction::AddTerrainLayer(kind) => {
                 let assets = self.game.content.db().entries().count();
                 crate::terrain_props::add_layer(&mut self.game, entity, kind);
+                // An Erosion layer wears the ground under it as it is added.
+                if crate::terrain_props::erosion_stale(&self.game.engine.world, entity) == Some(true) {
+                    crate::terrain_props::erode(&mut self.game, renderer, entity);
+                }
                 // A Generate layer may have made a world generator, to show in the Project panel.
                 if self.game.content.db().entries().count() != assets {
                     self.files_seen();

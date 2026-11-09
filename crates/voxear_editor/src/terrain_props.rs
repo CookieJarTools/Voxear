@@ -122,6 +122,12 @@ pub enum TerrainField {
     /// is in its world.
     World,
     Offset,
+    /// An Erosion layer's weather: rain a step, how many steps, how readily
+    /// water picks up ground, and the steepest loose ground stands.
+    Rain,
+    Steps,
+    Wear,
+    SlumpAngle,
     Picture,
     Height,
     Position,
@@ -347,6 +353,7 @@ fn layer_fields(layer: &Layer) -> Vec<TerrainField> {
         LayerKind::Dig { .. } => vec![],
         LayerKind::Terrace { .. } => vec![F::Step, F::Sharpness],
         LayerKind::Smooth { .. } => vec![F::Radius],
+        LayerKind::Erosion { .. } => vec![F::Rain, F::Steps, F::Wear, F::SlumpAngle],
     });
     fields.extend(mask_fields(&layer.mask));
     fields
@@ -368,6 +375,10 @@ pub fn label(field: TerrainField) -> &'static str {
         F::Picture => "Picture",
         F::World => "Generator",
         F::Offset => "Offset",
+        F::Rain => "Rain",
+        F::Steps => "Steps",
+        F::Wear => "Wear",
+        F::SlumpAngle => "Slump angle",
         F::Height => "Height",
         F::Position => "Position",
         F::Rotation => "Rotation",
@@ -448,6 +459,8 @@ pub fn unit(world: &World, entity: Entity, field: TerrainField) -> Option<&'stat
         F::GrassDensity => Some("per m²"),
         F::GrassSteepest => Some("°"),
         F::FillsIn | F::GrassSpringsBack => Some("s"),
+        F::Rain => Some("mm"),
+        F::SlumpAngle => Some("°"),
         F::Rotation | F::Slopes => Some("°"),
         F::Falloff => match picked(world, entity) {
             Some((_, Layer { kind: LayerKind::Spline { .. }, .. })) => Some("m"),
@@ -460,7 +473,7 @@ pub fn unit(world: &World, entity: Entity, field: TerrainField) -> Option<&'stat
 /// The range a value's slider spans, for those shown as sliders.
 pub fn range(world: &World, entity: Entity, field: TerrainField) -> Option<[f32; 2]> {
     match field {
-        F::Opacity | F::Strength | F::Sharpness | F::HeightBlend | F::Tracks => Some([0.0, 1.0]),
+        F::Opacity | F::Strength | F::Sharpness | F::HeightBlend | F::Tracks | F::Wear => Some([0.0, 1.0]),
         F::GrassSteepest => Some([0.0, 90.0]),
         F::Falloff => match picked(world, entity) {
             Some((_, Layer { kind: LayerKind::Stamp { .. }, .. })) => Some([0.0, 1.0]),
@@ -572,6 +585,10 @@ pub fn get(game: &Game, entity: Entity, field: TerrainField) -> Option<Value> {
                 Value::Asset(path_of(game, picture.as_deref()))
             }
             (F::World, LayerKind::Generate { world, .. }) => Value::Asset(path_of(game, world.as_deref())),
+            (F::Rain, LayerKind::Erosion { weather, .. }) => Value::Number(weather.rain),
+            (F::Steps, LayerKind::Erosion { weather, .. }) => Value::Whole(i64::from(weather.steps)),
+            (F::Wear, LayerKind::Erosion { weather, .. }) => Value::Number(weather.wear),
+            (F::SlumpAngle, LayerKind::Erosion { weather, .. }) => Value::Number(weather.slump),
             (F::Offset, LayerKind::Generate { position, .. }) => Value::Vector(position.to_vec()),
             (
                 F::Height,
@@ -788,6 +805,17 @@ fn set_layer(layer: &mut Layer, field: TerrainField, value: &Value) {
         ) => *height = number(v).unwrap_or(*height),
         (F::Position, v, LayerKind::Stamp { position, .. }) => *position = pair(v).unwrap_or(*position),
         (F::Offset, v, LayerKind::Generate { position, .. }) => *position = pair(v).unwrap_or(*position),
+        (F::Rain, v, LayerKind::Erosion { weather, .. }) => weather.rain = number(v).unwrap_or(weather.rain).max(0.0),
+        (F::Steps, v, LayerKind::Erosion { weather, .. }) => {
+            let most = voxear_render::MOST_EROSION_STEPS as f32;
+            weather.steps = number(v).map_or(weather.steps, |n| n.clamp(1.0, most) as u32);
+        }
+        (F::Wear, v, LayerKind::Erosion { weather, .. }) => {
+            weather.wear = number(v).unwrap_or(weather.wear).clamp(0.0, 1.0);
+        }
+        (F::SlumpAngle, v, LayerKind::Erosion { weather, .. }) => {
+            weather.slump = number(v).unwrap_or(weather.slump).clamp(1.0, 89.0);
+        }
         (F::Rotation, v, LayerKind::Stamp { rotation, .. }) => *rotation = number(v).unwrap_or(*rotation),
         (F::StampSize, v, LayerKind::Stamp { size, .. }) => *size = pair(v).map_or(*size, |s| s.map(|n| n.max(0.1))),
         (F::Falloff, v, LayerKind::Stamp { falloff, .. }) => *falloff = number(v).unwrap_or(*falloff).clamp(0.0, 1.0),
@@ -1332,8 +1360,8 @@ pub fn remove_surface(game: &mut Game, entity: Entity, at: usize) -> bool {
 }
 
 /// The kinds of layer Add offers, in its menu's order.
-pub const NEW_LAYERS: [&str; 10] =
-    ["Generate", "Stamp", "Noise", "Sculpt", "Spline", "Trench", "Dig", "Terrace", "Smooth", "Import"];
+pub const NEW_LAYERS: [&str; 11] =
+    ["Generate", "Stamp", "Noise", "Sculpt", "Spline", "Trench", "Dig", "Terrace", "Smooth", "Erosion", "Import"];
 
 /// A new layer of the kind `NEW_LAYERS[choice]` names, to start from on a
 /// terrain as `file` says, numbering a sculpt layer's raster past `rasters`'.
@@ -1369,6 +1397,12 @@ pub fn new_layer(choice: usize, file: &TerrainFile, rasters: &Rasters) -> Layer 
         "Dig" => LayerKind::Dig { strokes: Vec::new() },
         "Terrace" => LayerKind::Terrace { step: 4.0, sharpness: 0.5 },
         "Smooth" => LayerKind::Smooth { radius: 2.0 },
+        // Worn as it is added (see `erode`).
+        "Erosion" => LayerKind::Erosion {
+            raster: rasters.next_raster(file.rasters_in_use()),
+            weather: voxear_terrain::erosion::Weather::default(),
+            made_from: 0,
+        },
         "Import" => LayerKind::Import { picture: None, height: 100.0 },
         _ => {
             let across = (size / 8.0).max(4.0);
@@ -1403,6 +1437,56 @@ pub fn add_layer(game: &mut Game, entity: Entity, choice: usize) -> bool {
     let (at, rasters) = (file.layers.len() - 1, asset.rasters.clone());
     ui_mut(&mut game.engine.world).layer = at;
     remake(game, entity, file, rasters, &dirty)
+}
+
+/// A hash of the ground the layers below layer `at` make and, where it is
+/// an Erosion layer, its weather: for knowing when what it wore has changed
+/// since.
+pub fn worn_from(file: &TerrainFile, at: usize) -> u64 {
+    let below = TerrainFile { layers: file.layers[..at.min(file.layers.len())].to_vec(), ..file.clone() };
+    let weather = match file.layers.get(at).map(|layer| &layer.kind) {
+        Some(LayerKind::Erosion { weather, .. }) => format!("{weather:?}"),
+        _ => String::new(),
+    };
+    voxear_terrain::layers::stable_hash(format!("{} {weather}", below.shape_hash()).as_bytes()).max(1)
+}
+
+/// Whether the picked layer is an Erosion layer, and whether the ground
+/// below it or its weather changed since it was last worn: none for
+/// another kind.
+pub fn erosion_stale(world: &World, entity: Entity) -> Option<bool> {
+    let at = ui(world).layer;
+    let file = &world.get::<TerrainAsset>(entity)?.file;
+    let LayerKind::Erosion { made_from, .. } = file.layers.get(at)?.kind else { return None };
+    Some(made_from != worn_from(file, at))
+}
+
+/// Wears the ground below the picked Erosion layer down on the GPU, as its
+/// weather says, and keeps what that changed in its raster. False when the
+/// picked layer is no Erosion layer or the GPU could not do it.
+pub fn erode(game: &mut Game, renderer: &Renderer, entity: Entity) -> bool {
+    let world = &game.engine.world;
+    let Some((at, layer)) = picked(world, entity) else { return false };
+    let LayerKind::Erosion { raster, weather, .. } = layer.kind else { return false };
+    let Some(asset) = world.get::<TerrainAsset>(entity) else { return false };
+    let (mut file, mut rasters) = (asset.file.clone(), (*asset.rasters).clone());
+    let below = TerrainFile { layers: file.layers[..at].to_vec(), ..file.clone() };
+    let ground = game.content.compose_terrain(&below, &rasters, None, &Compositor::default(), &Dirty::All);
+    let grid = voxear_terrain::erosion::grid(&ground);
+    let eroded = match renderer.erode(&grid, &weather) {
+        Ok(eroded) => eroded,
+        Err(error) => {
+            tracing::error!("eroding the terrain: {error:#}");
+            return false;
+        }
+    };
+    rasters.remove(raster);
+    voxear_terrain::erosion::keep(&mut rasters, raster, &ground, &grid, &eroded);
+    let worn = worn_from(&file, at);
+    if let LayerKind::Erosion { made_from, .. } = &mut file.layers[at].kind {
+        *made_from = worn;
+    }
+    remake(game, entity, file, Arc::new(rasters), &Dirty::All)
 }
 
 /// The world generator a new Generate layer starts with: the project's
@@ -1575,7 +1659,7 @@ pub fn remove_layer(game: &mut Game, entity: Entity, at: usize) -> bool {
     }
     let layer = file.layers.remove(at);
     let mut rasters = asset.rasters.clone();
-    if let LayerKind::Sculpt { raster } = layer.kind {
+    if let LayerKind::Sculpt { raster } | LayerKind::Erosion { raster, .. } = layer.kind {
         Arc::make_mut(&mut rasters).remove(raster);
     }
     let dirty = dirty_between(Some(&layer), None);

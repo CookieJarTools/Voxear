@@ -801,3 +801,36 @@ fn ground_dug_out_of_a_terrain_is_drawn_in_its_dug_surface_with_no_gap_at_its_ri
     }
     assert!(earth > 80, "dug earth across the pit: {earth} of 96");
 }
+
+#[test]
+fn erosion_wears_high_ground_down_into_low_keeping_its_volume_and_slumps_a_cliff() {
+    use voxear_terrain::erosion::{Weather, grid};
+    let Some(renderer) = renderer() else { return };
+    // Generated mountains, 2 km across, a cell every 4 m.
+    let world = voxear_terrain::generate::Preset::Alpine.world();
+    let heights = Heightmap::from_fn(2, 2, 4.0, |x, z| world.height_at(x + 3000.0, z + 5000.0));
+    let ground = grid(&heights);
+    let eroded = renderer.erode(&ground, &Weather::default()).expect("eroded");
+    let changes: Vec<f32> = ground.heights.iter().zip(&eroded).map(|(a, b)| b - a).collect();
+    let moved: f32 = changes.iter().map(|c| c.abs()).sum();
+    let gained: f32 = changes.iter().sum();
+    assert!(moved > 10_000.0, "the ground worn: {moved} m moved");
+    assert!(gained.abs() < moved * 0.01, "as much ground after as before: {gained} of {moved} moved");
+    // The highest tenth of the ground loses some, and the lowest tenth gains it.
+    let mut by_height: Vec<usize> = (0..changes.len()).collect();
+    by_height.sort_by(|&a, &b| ground.heights[a].total_cmp(&ground.heights[b]));
+    let tenth = changes.len() / 10;
+    let mean = |cells: &[usize]| cells.iter().map(|&i| changes[i]).sum::<f32>() / cells.len() as f32;
+    let (low, high) = (mean(&by_height[..tenth]), mean(&by_height[changes.len() - tenth..]));
+    assert!(high < 0.0 && low > 0.0, "worn from the heights ({high} m) into the lows ({low} m)");
+
+    // With no rain, a cliff 20 m high slumps back to about the slope loose ground stands at, 45° here.
+    let cliff = Heightmap::from_fn(1, 1, 1.0, |x, _| if x < 128.0 { 20.0 } else { 0.0 });
+    let ground = grid(&cliff);
+    let dry = Weather { rain: 0.0, slump: 45.0, steps: 1500, ..Weather::default() };
+    let slumped = renderer.erode(&ground, &dry).expect("eroded");
+    let row = |x: u32| slumped[(128 * ground.cells[0] + x) as usize];
+    let steepest = (100..160).map(|x| (row(x) - row(x + 1)).abs()).fold(0.0f32, f32::max);
+    assert!(steepest < 1.3, "no steeper than about a metre a metre: {steepest}");
+    assert!(row(122) < 19.0 && row(134) > 1.0, "its top worn back and its foot heaped: {} and {}", row(122), row(134));
+}

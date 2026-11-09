@@ -45,6 +45,8 @@ pub struct TerrainPanel {
     tools: NodeId,
     list: Option<(Listing, Collection)>,
     rows: Vec<Row>,
+    /// The picked Erosion layer's button to wear its ground down again.
+    erode: Option<NodeId>,
     /// What the panel was built from, to build it again when that changes.
     signature: u64,
 }
@@ -55,6 +57,7 @@ fn icon(kind: &LayerKind) -> &'static str {
         LayerKind::Import { .. } => "texture",
         LayerKind::Stamp { .. } => "mountain",
         LayerKind::Generate { .. } => "sprout",
+        LayerKind::Erosion { .. } => "drop",
         LayerKind::Noise { .. } => "grid",
         LayerKind::Sculpt { .. } => "edit",
         LayerKind::Spline { dig: Some(_), .. } => "spade",
@@ -72,6 +75,7 @@ fn signature(world: &World, entity: Entity) -> u64 {
     let ui = terrain_props::ui(world);
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     (ui.tool, ui.layer, ui.surface, ui.grass).hash(&mut hasher);
+    terrain_props::erosion_stale(world, entity).hash(&mut hasher);
     if let Some(asset) = world.get::<TerrainAsset>(entity) {
         for layer in &asset.file.layers {
             (&layer.name, layer.kind.title(), layer.enabled).hash(&mut hasher);
@@ -186,7 +190,16 @@ impl TerrainPanel {
             }
             _ => None,
         };
-        Self { tools, list, rows: shown, signature: signature(world, entity) }
+        // An Erosion layer picked: a button to wear its ground, again once the ground below has changed.
+        let erode = match (state.tool, terrain_props::erosion_stale(world, entity)) {
+            (TerrainTool::Layers, Some(stale)) => {
+                let button = ui.button(rows, if stale { "Erode Again" } else { "Erode" });
+                ui.add_class(button, "terrain-erode");
+                Some(button)
+            }
+            _ => None,
+        };
+        Self { tools, list, rows: shown, erode, signature: signature(world, entity) }
     }
 
     /// Whether what it shows changed since it was built.
@@ -240,6 +253,11 @@ impl TerrainPanel {
             return true;
         }
         false
+    }
+
+    /// Whether the Erode button was clicked.
+    pub fn erode_clicked(&self, ui: &Ui) -> bool {
+        self.erode.is_some_and(|button| ui.clicked(button))
     }
 
     /// The Add Layer button, when it was clicked, for its menu to open under.

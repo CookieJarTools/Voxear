@@ -14,6 +14,7 @@
 pub mod brush;
 pub mod composite;
 pub mod dig;
+pub mod erosion;
 pub mod file;
 pub mod generate;
 pub mod grass;

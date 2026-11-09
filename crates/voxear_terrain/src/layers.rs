@@ -120,6 +120,18 @@ pub enum LayerKind {
     },
     /// The ground below smoothed over `radius` metres.
     Smooth { radius: f32 },
+    /// The ground below worn down by weather as `weather` says (see
+    /// `erosion`): what that changed, kept as raster `raster` in the
+    /// terrain's `.layers` file, worked out over the ground with hash
+    /// `made_from` (0 before it is), which tells when that ground has changed
+    /// since.
+    Erosion {
+        raster: u32,
+        #[serde(default)]
+        weather: crate::erosion::Weather,
+        #[serde(default)]
+        made_from: u64,
+    },
     /// Ground dug away or put back by the Sculpt tool's Dig and Fill
     /// brushes, a ball a stroke, in order (see `dig`). It lays no heights:
     /// it is dug into the ground every layer makes.
@@ -257,6 +269,7 @@ impl LayerKind {
             LayerKind::Spline { .. } => "Spline",
             LayerKind::Terrace { .. } => "Terrace",
             LayerKind::Smooth { .. } => "Smooth",
+            LayerKind::Erosion { .. } => "Erosion",
             LayerKind::Dig { .. } => "Dig",
         }
     }

@@ -160,7 +160,7 @@ impl TerrainFile {
     /// new one a number of its own.
     pub fn rasters_in_use(&self) -> Vec<u32> {
         let sculpted = self.layers.iter().filter_map(|layer| match layer.kind {
-            LayerKind::Sculpt { raster } => Some(raster),
+            LayerKind::Sculpt { raster } | LayerKind::Erosion { raster, .. } => Some(raster),
             _ => None,
         });
         let painted = self.surfaces.iter().map(|surface| surface.paint);

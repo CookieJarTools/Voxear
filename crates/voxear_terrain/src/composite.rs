@@ -317,7 +317,9 @@ fn apply(layer: &Layer, padded: &mut [f32], (tx, tz): (u32, u32), spacing: f32, 
                     let scale = scale.max(0.01);
                     (noise::fractal(*style, x / scale, z / scale, *octaves, *seed) * height, 1.0)
                 }
-                LayerKind::Sculpt { raster } => (sources.rasters.sample(*raster, gx, gz), 1.0),
+                LayerKind::Sculpt { raster } | LayerKind::Erosion { raster, .. } => {
+                    (sources.rasters.sample(*raster, gx, gz), 1.0)
+                }
                 LayerKind::Spline { points, width, falloff, .. } => spline_at((x, z), points, *width, *falloff),
                 LayerKind::Terrace { step, sharpness } => (terrace(h, *step, *sharpness), 1.0),
                 LayerKind::Smooth { .. } => (blurred.as_ref().map_or(h, |b| b[index]), 1.0),

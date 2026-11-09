@@ -94,6 +94,7 @@ pub const NAMES: &[&str] = &[
     "leaf",
     "spade",
     "sprout",
+    "drop",
 ];
 
 fn shapes(name: &str) -> Option<&'static [Part]> {
@@ -185,6 +186,8 @@ fn shapes(name: &str) -> Option<&'static [Part]> {
         // A leaf with its vein: grass and plants.
         "leaf" => &[("M5 19C5 10.5 10.5 5 19 5c0 8.5-5.5 14-14 14ZM5 19l8.5-8.5", STROKE)],
         "spade" => &[("M9.5 3.5h5M12 3.5v8M8 11.5h8l-1 6a3 3 0 0 1-6 0Z", STROKE)],
+        // A drop of water: rain wearing the ground.
+        "drop" => &[("M12 3.5c3.5 4.5 6 7.5 6 10.5a6 6 0 0 1-12 0c0-3 2.5-6 6-10.5Z", STROKE)],
         // A sprout from the ground: ground grown from a seed.
         "sprout" => &[(
             "M5.5 20.5h13M12 20.5v-8.5M12 12c0-4 3-6.5 7-6.5 0 4-3 6.5-7 6.5ZM12 14.5c0-3-2.5-5-5.5-5 0 3 2.5 5 5.5 5Z",

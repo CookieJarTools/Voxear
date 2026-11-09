@@ -107,6 +107,13 @@ pub struct Pipelines {
     pub foliage_push: vk::Pipeline,
     /// Presses this frame's tracks into the map round the camera (see `tracks`).
     pub tracks: vk::Pipeline,
+    /// Erosion's passes, run when the editor erodes a terrain (see `erosion`).
+    pub erosion_flux: vk::Pipeline,
+    pub erosion_water: vk::Pipeline,
+    pub erosion_carve: vk::Pipeline,
+    pub erosion_carry: vk::Pipeline,
+    pub erosion_slump: vk::Pipeline,
+    pub erosion_settle: vk::Pipeline,
     /// Glass: the copy of the picture it is drawn over, and its panes.
     pub glass_copy: vk::Pipeline,
     pub glass: vk::Pipeline,
@@ -233,6 +240,7 @@ impl Pipelines {
             module("terrain")?,
             module("grass")?,
             module("tracks")?,
+            module("erosion")?,
         ];
         let [
             cull,
@@ -259,6 +267,7 @@ impl Pipelines {
             terrain,
             grass,
             tracks,
+            erosion,
         ] = &modules;
         // Only a GPU with mesh shaders can load their modules.
         let meshlets = match gpu.mesh_shader {
@@ -393,6 +402,12 @@ impl Pipelines {
             glass_shadow_mip: create_compute_pipeline(gpu, layout, "Glass shadow mips", glass, c"glassShadowMipMain")?,
             foliage_push: create_compute_pipeline(gpu, layout, "Foliage pushes", foliage_push, c"pushMain")?,
             tracks: create_compute_pipeline(gpu, layout, "Tracks", tracks, c"tracksMain")?,
+            erosion_flux: create_compute_pipeline(gpu, layout, "Erosion flow", erosion, c"erosionFlux")?,
+            erosion_water: create_compute_pipeline(gpu, layout, "Erosion water", erosion, c"erosionWater")?,
+            erosion_carve: create_compute_pipeline(gpu, layout, "Erosion carving", erosion, c"erosionCarve")?,
+            erosion_carry: create_compute_pipeline(gpu, layout, "Erosion carrying", erosion, c"erosionCarry")?,
+            erosion_slump: create_compute_pipeline(gpu, layout, "Erosion slumping", erosion, c"erosionSlump")?,
+            erosion_settle: create_compute_pipeline(gpu, layout, "Erosion settling", erosion, c"erosionSettle")?,
             sky_light: create_compute_pipeline(gpu, layout, "Sky light", sky, c"skyLightMain")?,
             ocean_rows: create_compute_pipeline(gpu, layout, "Ocean rows", water, c"oceanRowsMain")?,
             ocean_columns: create_compute_pipeline(gpu, layout, "Ocean columns", water, c"oceanColumnsMain")?,
@@ -737,6 +752,12 @@ impl Pipelines {
             self.glass_copy,
             self.foliage_push,
             self.tracks,
+            self.erosion_flux,
+            self.erosion_water,
+            self.erosion_carve,
+            self.erosion_carry,
+            self.erosion_slump,
+            self.erosion_settle,
             self.sky_light,
             self.glass,
             self.glass_shadow,

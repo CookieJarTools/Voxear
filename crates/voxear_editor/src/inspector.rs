@@ -181,6 +181,8 @@ pub enum RowAction {
     /// Add a layer of the kind `terrain_props::NEW_LAYERS` names at this
     /// place to the Terrain, on top.
     AddTerrainLayer(usize),
+    /// Wear the ground below the picked Erosion layer down again.
+    ErodeTerrain,
     /// Put the prefab's values at these paths back on the Obj, or write the
     /// Obj's into the prefab.
     RevertOverrides(Vec<ValuePath>),
@@ -1946,6 +1948,9 @@ impl Inspector {
         }
         if let Some(add) = self.terrain_panel.as_ref().and_then(|panel| panel.add_grass_clicked(ui)) {
             return Some(RowAction::Browse(Prop::Terrain(crate::terrain_props::TerrainField::NewGrass), add));
+        }
+        if self.terrain_panel.as_ref().is_some_and(|panel| panel.erode_clicked(ui)) {
+            return Some(RowAction::ErodeTerrain);
         }
         let overrides_button = self.prefab_buttons.as_ref().and_then(|buttons| buttons.overrides);
         let (owner, at) = if let Some(button) = self.transform_menu.filter(|&b| ui.clicked(b)) {

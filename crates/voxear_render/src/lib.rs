@@ -50,6 +50,9 @@ mod smoke;
 mod grass;
 mod terrain;
 mod dug;
+mod erosion;
+/// The most steps a terrain's Erosion layer runs.
+pub use erosion::MOST_STEPS as MOST_EROSION_STEPS;
 mod tracks;
 mod payload;
 mod pipelines;
@@ -1381,6 +1384,17 @@ impl Renderer {
     }
 
     /// Reads back the last rendered offscreen frame as RGBA8 (sRGB).
+    /// `grid`'s ground worn down by `weather` on the GPU, as a terrain's
+    /// Erosion layer wears it (see `voxear_terrain::erosion`): its heights
+    /// after, in the same order. Waits until it is done.
+    pub fn erode(
+        &self,
+        grid: &voxear_terrain::erosion::Grid,
+        weather: &voxear_terrain::erosion::Weather,
+    ) -> Result<Vec<f32>> {
+        erosion::erode(&self.gpu, &self.bindless, &self.pipelines, grid, weather)
+    }
+
     pub fn read_pixels(&mut self) -> Result<(u32, u32, Vec<u8>)> {
         self.read_output_pixels(OutputId::MAIN)
     }

@@ -736,3 +736,63 @@ fn a_generate_layer_lays_a_world_generators_ground_and_follows_it_as_it_changes(
     assert!((laid - made).abs() < 1e-2, "made again: {laid} not {made}");
     shot(&mut renderer, "terrain-generate-alpine.png");
 }
+
+#[test]
+fn an_erosion_layer_wears_the_ground_below_it_and_again_once_its_weather_changes() {
+    use voxear_terrain::layers::LayerKind;
+    let Some((_dir, mut renderer, mut editor, field)) = editor_with_a_terrain() else { return };
+    let add = |editor: &mut voxear_editor::Editor, renderer: &mut Renderer, kind: &str| {
+        let add = first_with(&editor.ui, editor.ui.root(), "collection-add").expect("Add Layer");
+        click(&mut editor.ui, add);
+        frame(editor, renderer);
+        let item = menu_item(&editor.ui, kind).unwrap_or_else(|| panic!("a {kind} layer to add"));
+        click(&mut editor.ui, item);
+        frame(editor, renderer);
+        frame(editor, renderer);
+    };
+    // Hills generated to wear down.
+    add(&mut editor, &mut renderer, "Generate");
+    let ground = |editor: &voxear_editor::Editor| -> Vec<f32> {
+        (0..400).map(|i| height(editor, field, 20.0 + (i % 20) as f32 * 24.0, 20.0 + (i / 20) as f32 * 24.0)).collect()
+    };
+    let generated = ground(&editor);
+    let apart = |a: &[f32], b: &[f32]| a.iter().zip(b).map(|(a, b)| (a - b).abs()).fold(0.0f32, f32::max);
+
+    // An Erosion layer wears it as it is added.
+    add(&mut editor, &mut renderer, "Erosion");
+    let worn = |editor: &voxear_editor::Editor| {
+        match &editor.game.engine.world.get::<TerrainAsset>(field).unwrap().file.layers.last().unwrap().kind {
+            LayerKind::Erosion { made_from, weather, .. } => (*made_from, weather.rain),
+            kind => panic!("an Erosion layer on top, not {kind:?}"),
+        }
+    };
+    assert_ne!(worn(&editor).0, 0, "worn as it was added");
+    let eroded = ground(&editor);
+    assert!(apart(&generated, &eroded) > 0.01, "the ground worn: {}", apart(&generated, &eroded));
+    for label in ["Rain", "Steps", "Wear", "Slump angle"] {
+        assert_eq!(prop_rows(&editor.ui, label).len(), 1, "the layer's {label}");
+    }
+    let button = |editor: &voxear_editor::Editor| {
+        let found = first_with(&editor.ui, editor.ui.root(), "terrain-erode").expect("its Erode button");
+        (found, editor.ui.text(found))
+    };
+    assert_eq!(button(&editor).1, "Erode");
+    shot(&mut renderer, "terrain-erosion.png");
+
+    // Its rain changed, it asks to be worn again; pressed, the ground is worn anew.
+    type_number(&mut editor, &mut renderer, "Rain", "6");
+    frame(&mut editor, &mut renderer);
+    assert_eq!(worn(&editor).1, 6.0);
+    assert_eq!(button(&editor).1, "Erode Again");
+    std::thread::sleep(std::time::Duration::from_millis(900));
+    let erode = button(&editor).0;
+    click(&mut editor.ui, erode);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(button(&editor).1, "Erode");
+    let rained = ground(&editor);
+    assert!(apart(&eroded, &rained) > 0.01, "worn again in more rain: {}", apart(&eroded, &rained));
+    editor.undo(&mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(apart(&ground(&editor), &eroded) < 1e-4, "undone, as it was first worn");
+}

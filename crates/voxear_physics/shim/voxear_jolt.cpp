@@ -21,6 +21,7 @@
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
+#include <Jolt/Physics/Collision/Shape/HeightFieldShape.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/ScaledShape.h>
@@ -297,6 +298,15 @@ uint32_t vx_shape_mesh(VxWorld *world, const float *vertices, uint32_t vertex_co
 		triangles.push_back(IndexedTriangle(indices[i * 3], indices[i * 3 + 1], indices[i * 3 + 2]));
 	}
 	MeshShapeSettings settings(points, triangles);
+	auto made = settings.Create();
+	return made.IsValid() ? keep(world, made.Get().GetPtr()) : 0;
+}
+
+// Ground as heights: `count` by `count` samples, row after row along z,
+// `spacing` apart, from the origin along +x and +z; FLT_MAX where there is
+// no ground. Quads split from their lowest corner to their highest.
+uint32_t vx_shape_heightfield(VxWorld *world, const float *samples, uint32_t count, float spacing) {
+	HeightFieldShapeSettings settings(samples, Vec3::sZero(), Vec3(spacing, 1.0f, spacing), count);
 	auto made = settings.Create();
 	return made.IsValid() ? keep(world, made.Get().GetPtr()) : 0;
 }

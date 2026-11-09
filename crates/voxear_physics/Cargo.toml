@@ -12,6 +12,7 @@ links = "voxear_jolt"
 [dependencies]
 voxear_ecs.workspace = true
 voxear_scene.workspace = true
+voxear_terrain.workspace = true
 anyhow.workspace = true
 glam.workspace = true
 serde.workspace = true

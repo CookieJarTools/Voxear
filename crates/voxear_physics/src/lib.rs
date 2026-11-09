@@ -352,6 +352,16 @@ impl PhysicsWorld {
         (shape != 0).then_some(ShapeId(shape))
     }
 
+    /// Ground as heights: `count` by `count` samples, row after row along
+    /// z, `spacing` metres apart, from the shape's origin along +x and +z;
+    /// `f32::MAX` where there is no ground. Each quad is split from its
+    /// lowest corner to its highest, as a terrain's are.
+    pub fn heightfield_shape(&mut self, samples: &[f32], count: u32, spacing: f32) -> Option<ShapeId> {
+        assert_eq!(samples.len(), (count * count) as usize, "a height field has count by count samples");
+        let shape = unsafe { ffi::vx_shape_heightfield(self.world, samples.as_ptr(), count, spacing) };
+        (shape != 0).then_some(ShapeId(shape))
+    }
+
     /// A shape moved, turned and scaled from where it was made.
     pub fn placed_shape(&mut self, shape: ShapeId, offset: Vec3, rotation: Quat, scale: Vec3) -> ShapeId {
         let (offset, rotation, scale) = (offset.to_array(), rotation.to_array(), scale.to_array());

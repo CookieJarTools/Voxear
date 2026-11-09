@@ -128,6 +128,7 @@ unsafe extern "C" {
         indices: *const u32,
         triangle_count: u32,
     ) -> u32;
+    pub fn vx_shape_heightfield(world: *mut VxWorld, samples: *const f32, count: u32, spacing: f32) -> u32;
     pub fn vx_shape_placed(
         world: *mut VxWorld,
         shape: u32,

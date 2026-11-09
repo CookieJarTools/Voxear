@@ -343,6 +343,10 @@ pub struct ObjData {
     /// One plant, grown in many places without an Obj each.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub foliage: Option<FoliageData>,
+    /// A Terrain, ground from the Obj's position along +x and +z (the
+    /// Terrain module).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terrain: Option<TerrainData>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub character: Option<CharacterController>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -412,6 +416,7 @@ impl ObjData {
             seasons: None,
             foliage_interaction: None,
             foliage: None,
+            terrain: None,
             rigidbody: None,
             character: None,
             joint: None,
@@ -933,6 +938,45 @@ impl voxear_ecs::Component for ModelSource {}
 #[derive(Clone, Debug, PartialEq)]
 pub struct FoliageSource(pub FoliageData);
 impl voxear_ecs::Component for FoliageSource {}
+
+/// A Terrain as a scene writes it: the `.terrain` its ground is, and how
+/// it is drawn. The heights are the asset's, shared by every Obj that names
+/// it, so the scene keeps none of them.
+///
+/// ```toml
+/// [obj.terrain]
+/// data = "Terrains/Hills.terrain"
+/// material = "Materials/Grass.material"
+/// texture_size = 4.0        # metres one picture of the material covers
+/// detail_distance = 80.0    # metres the finest level of detail reaches
+/// cast_shadows = true
+/// ```
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TerrainData {
+    pub data: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub material: Option<MaterialRef>,
+    #[serde(default = "default_texture_size")]
+    pub texture_size: f32,
+    #[serde(default = "default_detail_distance")]
+    pub detail_distance: f32,
+    #[serde(default = "yes")]
+    pub cast_shadows: bool,
+}
+
+fn default_texture_size() -> f32 {
+    voxear_render::TerrainLook::DEFAULT_TEXTURE_SIZE
+}
+
+fn default_detail_distance() -> f32 {
+    voxear_terrain::Terrain::DEFAULT_DETAIL_DISTANCE
+}
+
+/// How the Obj's Terrain was written, so a save writes it back as it was.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TerrainSource(pub TerrainData);
+impl voxear_ecs::Component for TerrainSource {}
 
 /// A Dry Area as a scene writes it: its shape and size, and for the Mesh
 /// shape the mesh, written as a Mesh Renderer's is, or none for the Obj's own
@@ -1520,6 +1564,9 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     if let Some(model) = actual.model.as_ref().filter(|m| Some(*m) != expected.model.as_ref()) {
         put("model", toml::Value::try_from(model)?);
     }
+    if let Some(terrain) = actual.terrain.as_ref().filter(|t| Some(*t) != expected.terrain.as_ref()) {
+        put("terrain", toml::Value::try_from(terrain)?);
+    }
     if let Some(wind) = actual.wind_zone.filter(|w| Some(*w) != expected.wind_zone) {
         put("wind_zone", whole(&wind, &WindZone::default())?);
     }
@@ -1836,6 +1883,16 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
             (data.healthy_color, data.dry_color, data.color_spread) =
                 (foliage.healthy_color, foliage.dry_color, foliage.color_spread);
             (data.impostors, data.impostor_distance) = (foliage.impostors, foliage.impostor_distance);
+        }
+        data
+    });
+    obj.terrain = world.get::<TerrainSource>(entity).map(|source| {
+        let mut data = source.0.clone();
+        if let Some(terrain) = world.get::<voxear_terrain::Terrain>(entity) {
+            (data.detail_distance, data.cast_shadows) = (terrain.detail_distance, terrain.cast_shadows);
+        }
+        if let Some(look) = world.get::<voxear_render::TerrainLook>(entity) {
+            data.texture_size = look.texture_size;
         }
         data
     });

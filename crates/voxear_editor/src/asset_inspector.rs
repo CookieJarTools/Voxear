@@ -1375,6 +1375,7 @@ fn kind_name(kind: ItemKind) -> &'static str {
         ItemKind::Asset(AssetKind::MotionSet) => "Motion Set",
         ItemKind::Asset(AssetKind::GunHandling) => "Gun Handling",
         ItemKind::Asset(AssetKind::Data) => "Data asset",
+        ItemKind::Asset(AssetKind::Terrain) => "Terrain",
     }
 }
 
@@ -1399,6 +1400,7 @@ fn icon(kind: ItemKind) -> &'static str {
         ItemKind::Asset(AssetKind::MotionSet) => "play",
         ItemKind::Asset(AssetKind::GunHandling) => "crosshair",
         ItemKind::Asset(AssetKind::Data) => "file",
+        ItemKind::Asset(AssetKind::Terrain) => "mountain",
     }
 }
 

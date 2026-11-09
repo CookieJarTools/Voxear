@@ -337,6 +337,13 @@ impl Released {
     }
 }
 
+/// A terrain as its files have it: how large and how fine, and its heights.
+#[derive(Clone, Debug)]
+pub struct LoadedTerrain {
+    pub file: voxear_terrain::file::TerrainFile,
+    pub heights: Arc<voxear_terrain::Heightmap>,
+}
+
 /// What content has loaded, beside what the GPU holds (see
 /// `Renderer::asset_usage`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -422,6 +429,8 @@ pub struct Content {
     /// how many times one was saved, for what resolved them to ask again.
     gun_handlings: HashMap<AssetGuid, Option<Arc<crate::guns::handling::GunHandling>>>,
     handlings_version: u64,
+    /// Terrains read, by GUID; `None` for one that could not be.
+    terrains: HashMap<AssetGuid, Option<Arc<LoadedTerrain>>>,
     /// Pictures materials read, by GUID and whether they are read as sRGB.
     pictures: HashMap<(AssetGuid, bool), TextureId>,
     /// IES profiles uploaded for lights, by their assets.
@@ -571,6 +580,7 @@ impl Content {
             clips_version: 0,
             motion_sets: HashMap::new(),
             gun_handlings: HashMap::new(),
+            terrains: HashMap::new(),
             handlings_version: 0,
             pictures: HashMap::new(),
             light_profiles: HashMap::new(),
@@ -1022,6 +1032,45 @@ impl Content {
         let entry = self.db.get(guid).filter(|entry| entry.kind == AssetKind::GunHandling)?;
         let text = std::fs::read_to_string(mounts.file(&entry.path)).ok()?;
         toml::from_str(&text).ok().map(Arc::new)
+    }
+
+    /// The terrain at `guid`, its file and its heights, read once. Heights
+    /// that are missing are flat, and heights of another size are fitted to
+    /// the file's.
+    pub fn terrain(&mut self, guid: AssetGuid) -> Option<Arc<LoadedTerrain>> {
+        if let Some(found) = self.terrains.get(&guid) {
+            return found.clone();
+        }
+        let found = self.read_terrain(guid).map(Arc::new).map_err(|error| {
+            tracing::warn!("could not read the terrain {guid}: {error:#}");
+        });
+        self.terrains.insert(guid, found.clone().ok());
+        found.ok()
+    }
+
+    fn read_terrain(&mut self, guid: AssetGuid) -> Result<LoadedTerrain> {
+        let entry = self.db.get(guid).with_context(|| format!("no asset with GUID {guid}"))?;
+        ensure!(entry.kind == AssetKind::Terrain, "{} is not a terrain", entry.path);
+        let path = entry.path.clone();
+        let file = voxear_terrain::file::TerrainFile::parse(&self.read_text(&path)?)
+            .with_context(|| format!("reading {path}"))?;
+        let heights = match self.read(&voxear_terrain::file::heights_file(&path)) {
+            Ok(bytes) => voxear_terrain::file::read_heights(&bytes).with_context(|| format!("reading {path}'s heights"))?,
+            Err(_) => file.flat(),
+        };
+        Ok(LoadedTerrain { heights: Arc::new(file.fit(heights)), file })
+    }
+
+    /// Forgets a terrain, read again when next asked for, as after it was
+    /// changed outside the editor.
+    pub fn forget_terrain(&mut self, guid: AssetGuid) {
+        self.terrains.remove(&guid);
+    }
+
+    /// Keeps `heights` as the terrain at `guid`'s, as after the editor
+    /// changed them, so what asks for it next gets these.
+    pub fn keep_terrain(&mut self, guid: AssetGuid, file: voxear_terrain::file::TerrainFile, heights: Arc<voxear_terrain::Heightmap>) {
+        self.terrains.insert(guid, Some(Arc::new(LoadedTerrain { file, heights })));
     }
 
     /// Forgets a Gun Handling, read again when next asked for, as after it

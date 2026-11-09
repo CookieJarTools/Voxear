@@ -67,6 +67,9 @@ pub enum AssetKind {
     /// An `.asset` file: a data asset, the fields of a C# `Definition`
     /// subclass, which the file names, as scripts' fields pick it.
     Data,
+    /// A `.terrain` file: a stretch of ground, how large and how fine, its
+    /// heights in a `.heights` file beside it, which a Terrain picks.
+    Terrain,
 }
 
 impl AssetKind {
@@ -91,6 +94,7 @@ impl AssetKind {
             "motionset" => Self::MotionSet,
             "gunhandling" => Self::GunHandling,
             "asset" => Self::Data,
+            "terrain" => Self::Terrain,
             _ => return None,
         })
     }

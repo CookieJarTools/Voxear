@@ -597,6 +597,18 @@ pub struct PhysicsScene {
     /// went to sleep, or was made again. Each counts the steps since both
     /// were awake.
     unsure: HashMap<(Entity, Entity), u8>,
+    /// Each terrain's bodies, a height field for each of its tiles.
+    terrains: HashMap<Entity, TerrainBodies>,
+}
+
+/// A terrain's bodies: which heights they were made from, where its corner
+/// was, its layer, and for each tile the tile it was made from, its body
+/// and its shape.
+struct TerrainBodies {
+    heights: u64,
+    corner: Vec3,
+    layer: u8,
+    tiles: Vec<Option<(Arc<voxear_terrain::HeightTile>, BodyId, ShapeId)>>,
 }
 
 /// The layer an Obj is on, 0 without one.
@@ -631,14 +643,16 @@ impl PhysicsScene {
             stepped: false,
             touching: HashSet::new(),
             unsure: HashMap::new(),
+            terrains: HashMap::new(),
         }
     }
 
     /// Whether a world has anything for physics to do: an Obj with a
-    /// Collider or a Character Controller.
+    /// Collider, a Character Controller or a Terrain.
     pub fn wanted(world: &World) -> bool {
         world.query_ref::<&Collider>().into_iter().next().is_some()
             || world.query_ref::<&CharacterController>().into_iter().next().is_some()
+            || world.query_ref::<&voxear_terrain::Terrain>().into_iter().next().is_some()
     }
 
     /// Which way and how hard everything falls, in metres per second per second.
@@ -761,9 +775,80 @@ impl PhysicsScene {
         for (entity, collider) in colliders {
             self.sync_body(world, entity, collider, dt);
         }
+        self.sync_terrains(world);
         self.sync_characters(world);
         self.sync_joints(world);
         self.sync_vehicles(world);
+    }
+
+    /// Gives each terrain a static height field for each of its tiles, made
+    /// again for a tile whose heights changed, and moved with its Obj.
+    fn sync_terrains(&mut self, world: &World) {
+        let found = voxear_terrain::terrains(world);
+        let gone: Vec<Entity> =
+            self.terrains.keys().copied().filter(|entity| !found.iter().any(|(e, ..)| e == entity)).collect();
+        for entity in gone {
+            self.remove_terrain(entity);
+        }
+        for (entity, terrain, corner) in found {
+            let map = &terrain.heights;
+            let layer = layer(world, entity);
+            let fits = self.terrains.get(&entity).is_some_and(|kept| {
+                kept.heights == map.id() && kept.tiles.len() == map.tiles().len() && kept.layer == layer
+            });
+            if !fits {
+                self.remove_terrain(entity);
+                let tiles = vec![None; map.tiles().len()];
+                self.terrains.insert(entity, TerrainBodies { heights: map.id(), corner, layer, tiles });
+            }
+            let moved = self.terrains[&entity].corner != corner;
+            let width = voxear_terrain::TILE_QUADS as f32 * map.spacing();
+            for (index, tile) in map.tiles().iter().enumerate() {
+                let (tx, tz) = (index as u32 % map.tiles_x(), index as u32 / map.tiles_x());
+                let at = corner + Vec3::new(tx as f32 * width, 0.0, tz as f32 * width);
+                let kept = self.terrains[&entity].tiles[index].clone();
+                if let Some((made, body, _)) = &kept
+                    && Arc::ptr_eq(made, tile)
+                {
+                    if moved {
+                        self.world.set_transform(*body, at, Quat::IDENTITY);
+                    }
+                    continue;
+                }
+                if let Some((_, body, shape)) = kept {
+                    self.world.remove_body(body);
+                    self.world.release_shape(shape);
+                    self.owners.remove(&body);
+                }
+                let made = self.world.heightfield_shape(tile.samples(), voxear_terrain::TILE_SAMPLES, map.spacing());
+                let Some(shape) = made else {
+                    self.terrains.get_mut(&entity).expect("kept").tiles[index] = None;
+                    continue;
+                };
+                let mut desc = BodyDesc::new(shape, Motion::Static).at(at, Quat::IDENTITY);
+                desc.friction = Collider::default().friction;
+                desc.user_data = entity.to_bits();
+                desc.layer = layer;
+                let Some(body) = self.world.add_body(&desc) else {
+                    self.world.release_shape(shape);
+                    tracing::warn!("physics is full; a terrain's tile is left out");
+                    continue;
+                };
+                self.owners.insert(body, entity);
+                self.terrains.get_mut(&entity).expect("kept").tiles[index] = Some((tile.clone(), body, shape));
+            }
+            self.terrains.get_mut(&entity).expect("kept").corner = corner;
+        }
+    }
+
+    fn remove_terrain(&mut self, entity: Entity) {
+        let Some(kept) = self.terrains.remove(&entity) else { return };
+        for (_, body, shape) in kept.tiles.into_iter().flatten() {
+            self.world.remove_body(body);
+            self.world.release_shape(shape);
+            self.owners.remove(&body);
+        }
+        self.forget(entity);
     }
 
     /// Makes each Obj's joint between its body and the connected Obj's, or
@@ -1005,7 +1090,7 @@ impl PhysicsScene {
     /// Lets go of what a gone Obj touched, unless it still has physics:
     /// Unity tells nothing of an Obj's contacts ending as it goes.
     fn forget(&mut self, entity: Entity) {
-        if self.bodies.contains_key(&entity) || self.characters.contains_key(&entity) {
+        if self.bodies.contains_key(&entity) || self.characters.contains_key(&entity) || self.terrains.contains_key(&entity) {
             return;
         }
         self.touching.retain(|(a, b)| *a != entity && *b != entity);

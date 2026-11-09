@@ -71,7 +71,8 @@ use crate::{
     physics::{CharacterController, Collider, Rigidbody, Vehicle, Wheel},
     physics2d::{Collider2D, Rigidbody2D},
     scene_file::{
-        FoliageData, FoliageSource, LayerRef, MaterialRef, ModelData, ModelSource, ObjData, PostVolumeData, default_material, light_component, light_with_assets,
+        FoliageData, FoliageSource, LayerRef, MaterialRef, ModelData, ModelSource, ObjData, PostVolumeData, TerrainData,
+        TerrainSource, default_material, light_component, light_with_assets,
     },
 };
 
@@ -480,6 +481,9 @@ pub struct TemplateObj {
     /// A Foliage, where there is a renderer to draw it, and how it was
     /// written, which few Objs have.
     pub foliage: Option<Box<(Option<Foliage>, FoliageSource)>>,
+    /// A Terrain, its look where there is a renderer to draw it, and how it
+    /// was written.
+    pub terrain: Option<Box<(voxear_terrain::Terrain, Option<voxear_render::TerrainLook>, TerrainSource)>>,
     /// A whole model it draws, where there is a renderer to draw it, and how
     /// it was written.
     pub model: Option<Box<(Option<ModelRenderer>, ModelSource)>>,
@@ -689,6 +693,13 @@ impl Template {
                 }
                 world.insert(entity, model.1.clone());
             }
+            if let Some(terrain) = &obj.terrain {
+                world.insert(entity, terrain.0.clone());
+                if let Some(look) = terrain.1 {
+                    world.insert(entity, look);
+                }
+                world.insert(entity, terrain.2.clone());
+            }
             if let Some(body) = obj.rigidbody {
                 world.insert(entity, body);
             }
@@ -825,6 +836,41 @@ pub fn foliage(content: &mut Content, renderer: &mut Renderer, data: &FoliageDat
     Ok((foliage, FoliageSource(data.clone())))
 }
 
+/// A Terrain as a scene writes it: its asset's heights, read with or
+/// without a renderer, as physics stands things on them; its look, where
+/// there is a renderer to draw it; and how it was written, for saving. A
+/// terrain whose asset cannot be read is flat, as large as a new one.
+#[allow(clippy::type_complexity)]
+pub fn terrain(
+    content: &mut Content,
+    renderer: Option<&mut Renderer>,
+    data: &TerrainData,
+) -> Result<(voxear_terrain::Terrain, Option<voxear_render::TerrainLook>, TerrainSource)> {
+    let guid = content.parse(&data.data).ok().and_then(|reference| reference.guid());
+    let heights = match guid.and_then(|guid| content.terrain(guid)) {
+        Some(loaded) => loaded.heights.clone(),
+        None => {
+            if !data.data.is_empty() {
+                tracing::warn!("the terrain {} could not be read; it is flat", data.data);
+            }
+            std::sync::Arc::new(voxear_terrain::file::TerrainFile::default().flat())
+        }
+    };
+    let terrain = voxear_terrain::Terrain {
+        heights,
+        detail_distance: data.detail_distance.max(1.0),
+        cast_shadows: data.cast_shadows,
+    };
+    let look = match renderer {
+        Some(renderer) => Some(voxear_render::TerrainLook {
+            material: material_of(content, renderer, data.material.as_ref())?,
+            texture_size: data.texture_size.max(0.01),
+        }),
+        None => None,
+    };
+    Ok((terrain, look, TerrainSource(data.clone())))
+}
+
 /// A Model Renderer drawing every part of the model `data` names, loading
 /// it, each part where the model puts it, as `data` changes it.
 pub fn model_renderer(content: &mut Content, renderer: &mut Renderer, data: &ModelData) -> Result<ModelRenderer> {
@@ -927,6 +973,11 @@ pub(crate) fn resolve_obj(
         (Some(data), None) => Some(Box::new((None, FoliageSource(data.clone())))),
         (None, _) => None,
     };
+    // A terrain's heights are read with or without a renderer: physics stands things on them.
+    let terrain = match &data.terrain {
+        Some(written) => Some(Box::new(terrain(content, gpu.as_deref_mut(), written)?)),
+        None => None,
+    };
     // A mesh Dry Area's mesh needs a renderer to load it, and its box for scripts' questions; without one it keeps
     // to the Obj's own.
     let dry_area = match &data.dry_area {
@@ -956,6 +1007,7 @@ pub(crate) fn resolve_obj(
     Ok(TemplateObj {
         path: obj.path.clone(),
         foliage,
+        terrain,
         model,
         parent,
         name: if data.name.is_empty() { "Obj".to_string() } else { data.name.clone() },

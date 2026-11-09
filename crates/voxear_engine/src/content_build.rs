@@ -367,7 +367,8 @@ pub fn server_reads(kind: AssetKind) -> bool {
         | AssetKind::AssetTable
         | AssetKind::MotionSet
         | AssetKind::GunHandling
-        | AssetKind::Data => true,
+        | AssetKind::Data
+        | AssetKind::Terrain => true,
         AssetKind::Texture
         | AssetKind::Material
         | AssetKind::Ui
@@ -586,7 +587,8 @@ fn find_needs(db: &AssetDb, guid: AssetGuid, kind: AssetKind, path: &str) -> Res
         | AssetKind::Lighting
         | AssetKind::MotionSet
         | AssetKind::GunHandling
-        | AssetKind::Data => {
+        | AssetKind::Data
+        | AssetKind::Terrain => {
             let text = std::fs::read_to_string(db.file(path))?;
             let table: toml::Table = toml::from_str(&text)?;
             for (key, value) in &table {
@@ -596,6 +598,11 @@ fn find_needs(db: &AssetDb, guid: AssetGuid, kind: AssetKind, path: &str) -> Res
             let paths = crate::acoustics::paths_file(path);
             if kind == AssetKind::Level && db.file(&paths).is_file() {
                 needs.companions.push(paths);
+            }
+            // A terrain's heights go with it.
+            let heights = voxear_terrain::file::heights_file(path);
+            if kind == AssetKind::Terrain && db.file(&heights).is_file() {
+                needs.companions.push(heights);
             }
         }
         AssetKind::Model => {

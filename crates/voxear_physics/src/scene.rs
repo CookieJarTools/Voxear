@@ -829,6 +829,10 @@ impl PhysicsScene {
             });
             if !fits {
                 self.remove_terrain(entity);
+                // Seen for the first time, all its dug ground is made at once, so nothing falls through it.
+                if let Some(dug) = &terrain.dug {
+                    dug.mesh_all(map);
+                }
                 let tiles = vec![None; map.tiles().len()];
                 let dug = HashMap::new();
                 self.terrains.insert(entity, TerrainBodies { heights: map.id(), corner, layer, tiles, dug });
@@ -839,8 +843,10 @@ impl PhysicsScene {
                 let (tx, tz) = (index as u32 % map.tiles_x(), index as u32 / map.tiles_x());
                 let at = corner + Vec3::new(tx as f32 * width, 0.0, tz as f32 * width);
                 let kept = self.terrains[&entity].tiles[index].clone();
+                // A tile holed for ground dug in it stays as it was until that ground's triangles are made.
+                let waits = terrain.dug.as_ref().is_some_and(|dug| !dug.tile_meshed(tx, tz));
                 if let Some((made, body, _)) = &kept
-                    && Arc::ptr_eq(made, tile)
+                    && (Arc::ptr_eq(made, tile) || waits)
                 {
                     if moved {
                         self.world.set_transform(*body, at, Quat::IDENTITY);
@@ -881,34 +887,34 @@ impl PhysicsScene {
     }
 
     /// A static body for each dug chunk of a terrain, its ground's triangles
-    /// as a mesh, made again when the chunk changes, by pointer.
+    /// as a mesh, made again when the chunk changes, by pointer. A chunk
+    /// whose triangles are still being made on the terrain's background
+    /// threads keeps the body it had until they are done.
     fn sync_dug(&mut self, entity: Entity, terrain: &voxear_terrain::Terrain, corner: Vec3, moved: bool, layer: u8) {
-        let empty = voxear_terrain::dig::Excavation::default();
-        let dug = terrain.dug.as_deref().unwrap_or(&empty);
-        let kept = std::mem::take(&mut self.terrains.get_mut(&entity).expect("kept").dug);
+        use voxear_terrain::dig::Excavation;
+        let mut kept = std::mem::take(&mut self.terrains.get_mut(&entity).expect("kept").dug);
         let mut now = HashMap::new();
-        for (key, (made, body)) in kept {
-            let same = dug.chunk(key).is_some_and(|chunk| Arc::ptr_eq(chunk, &made));
-            match (same, body) {
-                (true, body) => {
+        for (key, chunk) in terrain.dug.as_ref().map(|dug| dug.chunks().iter()).into_iter().flatten() {
+            let held = kept.remove(key);
+            let mesh = match &held {
+                Some((made, _)) if Arc::ptr_eq(made, chunk) => None,
+                _ => terrain.dug.as_ref().and_then(|dug| Excavation::meshed(dug, &terrain.heights, *key)),
+            };
+            let Some(mesh) = mesh else {
+                // The same, or not made yet: as it was.
+                if let Some((made, body)) = held {
                     if moved && let Some((body, _)) = body {
                         self.world.set_transform(body, corner, Quat::IDENTITY);
                     }
-                    now.insert(key, (made, body));
+                    now.insert(*key, (made, body));
                 }
-                (false, Some((body, shape))) => {
-                    self.world.remove_body(body);
-                    self.world.release_shape(shape);
-                    self.owners.remove(&body);
-                }
-                (false, None) => {}
-            }
-        }
-        for (key, chunk) in dug.chunks() {
-            if now.contains_key(key) {
                 continue;
+            };
+            if let Some((_, Some((body, shape)))) = held {
+                self.world.remove_body(body);
+                self.world.release_shape(shape);
+                self.owners.remove(&body);
             }
-            let mesh = voxear_terrain::dig::mesh(dug, &terrain.heights, *key);
             let body = (!mesh.indices.is_empty()).then(|| {
                 let points: Vec<Vec3> = mesh.positions.iter().map(|p| Vec3::from(*p)).collect();
                 let shape = self.world.mesh_shape(&points, &mesh.indices)?;
@@ -925,6 +931,14 @@ impl PhysicsScene {
                 Some((body, shape))
             });
             now.insert(*key, (chunk.clone(), body.flatten()));
+        }
+        // Chunks no longer dug take their bodies with them.
+        for (_, (_, body)) in kept {
+            if let Some((body, shape)) = body {
+                self.world.remove_body(body);
+                self.world.release_shape(shape);
+                self.owners.remove(&body);
+            }
         }
         self.terrains.get_mut(&entity).expect("kept").dug = now;
     }

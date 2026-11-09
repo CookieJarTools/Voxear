@@ -1,7 +1,8 @@
 //! A terrain's dug ground on the GPU: each dug chunk's triangles (see
-//! `voxear_terrain::dig`), made on the CPU when the chunk changes and kept
-//! in a pool of vertices of the terrain's own, a range of it a chunk, which
-//! the terrain's shaders draw from as they draw its patches
+//! `voxear_terrain::dig`), made on the terrain's background threads when
+//! the chunk changes, the chunk as it was drawn until they are done, and
+//! kept in a pool of vertices of the terrain's own, a range of it a chunk,
+//! which the terrain's shaders draw from as they draw its patches
 //! (`terrainVertex` in `shaders/terrain.slang`).
 
 use std::{collections::HashMap, sync::Arc};
@@ -11,7 +12,7 @@ use voxear_core::math::Vec3;
 use voxear_rhi::{Buffer, FRAMES_IN_FLIGHT, Frames, Gpu, MemoryLocation, Retired, vk};
 use voxear_terrain::{
     Heightmap,
-    dig::{ChunkKey, DugChunk, Excavation, mesh},
+    dig::{ChunkKey, ChunkMesh, DugChunk, Excavation},
 };
 
 use crate::alloc::RangeAllocator;
@@ -42,8 +43,7 @@ fn pack(normal: [f32; 3], surface: u8) -> u32 {
 }
 
 /// A chunk's triangles as vertices, three a triangle.
-fn vertices(dug: &Excavation, heights: &Heightmap, key: ChunkKey) -> Vec<DugVertex> {
-    let mesh = mesh(dug, heights, key);
+fn vertices(mesh: &ChunkMesh) -> Vec<DugVertex> {
     mesh.indices
         .iter()
         .map(|&i| {
@@ -104,16 +104,16 @@ impl DugPool {
         self.columns_at.map(|(first, _)| (self.buffer.address + first * size_of::<DugVertex>() as u64, self.columns_x))
     }
 
-    /// Brings the pool up to `dug`: makes the triangles of each chunk that
-    /// changed, by pointer, and stages them with `stage(bytes, to)` into
-    /// the pool's buffer, growing it when they do not fit. Whether it grew,
-    /// and every chunk was staged again.
+    /// Brings the pool up to `dug`: stages the triangles of each chunk that
+    /// changed, by pointer, with `stage(bytes, to)` into the pool's buffer,
+    /// growing it when they do not fit. A chunk whose triangles are still
+    /// being made is drawn as it was until they are done.
     pub fn update(
         &mut self,
         gpu: &Gpu,
         frames: &mut Frames,
-        heights: &Heightmap,
-        dug: &Excavation,
+        heights: &Arc<Heightmap>,
+        dug: &Arc<Excavation>,
         frame_index: u64,
         stage: &mut dyn FnMut(&[u8], u64),
     ) -> Result<()> {
@@ -135,7 +135,8 @@ impl DugPool {
             if self.held.get(key).is_some_and(|held| Arc::ptr_eq(&held.chunk, chunk)) {
                 continue;
             }
-            let made: Arc<[DugVertex]> = vertices(dug, heights, *key).into();
+            let Some(mesh) = Excavation::meshed(dug, heights, *key) else { continue };
+            let made: Arc<[DugVertex]> = vertices(&mesh).into();
             let count = made.len() as u64;
             if let Some(old) = self.held.remove(key) {
                 self.freeing.push((frame_index, old.first, old.count));

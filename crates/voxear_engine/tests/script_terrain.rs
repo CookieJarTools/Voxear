@@ -53,6 +53,7 @@ public sealed class Digger : Behaviour
 	private int frame;
 	private byte[] kept = [];
 	private SceneState? state;
+	private bool metHole;
 
 	protected override void Update()
 	{
@@ -74,10 +75,16 @@ public sealed class Digger : Behaviour
 				var blast = new Vector3(-40f, 4.4f, 20f);
 				Log.Info($"exploded {Terrain.Explode(blast, 2f)}, its middle {Terrain.HeightAt(blast):0.0}");
 				break;
-			case 8:
-				var through = Physics.Raycast(new Vector3(-40f, 20f, 20f), -Vector3.UnitY, out var met);
+		}
+		// Physics follows the dug ground once its triangles are made, a frame or more on.
+		if (frame >= 7 && !metHole)
+		{
+			var through = Physics.Raycast(new Vector3(-40f, 20f, 20f), -Vector3.UnitY, out var met);
+			if (through && met.Point.Y < 3f)
+			{
+				metHole = true;
 				Log.Info($"physics met the shell hole at {met.Point.Y:0.0}, {through}");
-				break;
+			}
 		}
 	}
 
@@ -181,6 +188,13 @@ fn scripts_ask_about_the_ground_change_it_and_put_it_back() {
     let mut game = Game::new(project, engine).unwrap();
     game.start(None).unwrap();
     for _ in 0..10 {
+        game.tick(1.0 / 60.0, None);
+    }
+    // Until physics meets the shell hole, which waits for its ground's triangles to be made in the background.
+    let started = std::time::Instant::now();
+    let met = || log.lock().unwrap().lines.iter().any(|line| line.message.starts_with("physics met the shell hole"));
+    while !met() && started.elapsed().as_secs() < 30 {
+        std::thread::sleep(std::time::Duration::from_millis(5));
         game.tick(1.0 / 60.0, None);
     }
     let lines: Vec<String> = log.lock().unwrap().lines.iter().map(|line| line.message.clone()).collect();

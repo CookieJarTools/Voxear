@@ -25,6 +25,7 @@ pub mod raster;
 pub mod ray;
 pub mod runtime;
 pub mod surfaces;
+pub mod workers;
 
 use std::sync::Arc;
 

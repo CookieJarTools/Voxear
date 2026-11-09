@@ -1153,6 +1153,10 @@ impl Content {
         };
         // Then what its layers dig, into the ground they all make, and no grass where they opened it.
         let (heights, dug) = voxear_terrain::dig::redig(&file.layers, heights, None);
+        // Its triangles made as it loads, so the first frame it is in has them all.
+        if let Some(dug) = &dug {
+            dug.mesh_all(&heights);
+        }
         let grass = match (grass, &dug) {
             (Some(grass), Some(dug)) => Some(voxear_terrain::dig::clear_grass(&grass, &heights, dug, None)),
             (grass, _) => grass,

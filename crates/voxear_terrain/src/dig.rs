@@ -22,7 +22,10 @@
 
 use std::{
     collections::{BTreeMap, HashMap},
-    sync::Arc,
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use voxear_core::math::Vec3;
@@ -56,11 +59,44 @@ pub struct ChunkKey {
 /// ground it is, in metres (less than nothing in the air), and for one
 /// digging opened, the surface it laid on what it bared: 0 for the
 /// terrain's own, or a surface's number and one. Corners run along x, then
-/// z, then y.
-#[derive(Clone, Debug, PartialEq)]
+/// z, then y. It keeps its surface's triangles once they are made for it
+/// as it is ([`Excavation::meshed`]); a copy, to be changed, has none.
+#[derive(Debug)]
 pub struct DugChunk {
     pub density: Box<[f32]>,
     pub dug: Box<[u8]>,
+    made: OnceLock<Arc<ChunkMesh>>,
+    /// Whether making its triangles has begun.
+    asked: AtomicBool,
+}
+
+impl DugChunk {
+    pub fn new(density: Box<[f32]>, dug: Box<[u8]>) -> Self {
+        Self { density, dug, made: OnceLock::new(), asked: AtomicBool::new(false) }
+    }
+
+    /// Its triangles, if they are made.
+    pub fn mesh(&self) -> Option<&Arc<ChunkMesh>> {
+        self.made.get()
+    }
+
+    /// Forgets its triangles, once changed in place.
+    fn changed(&mut self) {
+        self.made = OnceLock::new();
+        *self.asked.get_mut() = false;
+    }
+}
+
+impl Clone for DugChunk {
+    fn clone(&self) -> Self {
+        Self::new(self.density.clone(), self.dug.clone())
+    }
+}
+
+impl PartialEq for DugChunk {
+    fn eq(&self, other: &Self) -> bool {
+        self.density == other.density && self.dug == other.dug
+    }
 }
 
 fn corner(x: usize, y: usize, z: usize) -> usize {
@@ -578,7 +614,7 @@ impl Excavation {
                 }
             }
         }
-        DugChunk { density: density.into_boxed_slice(), dug: vec![0; CORNERS * CORNERS * CORNERS].into_boxed_slice() }
+        DugChunk::new(density.into_boxed_slice(), vec![0; CORNERS * CORNERS * CORNERS].into_boxed_slice())
     }
 
     /// The chunks of column `(x, z)` that its ground passes through, from
@@ -629,6 +665,7 @@ impl Excavation {
         let (y0, y1) = (grid.chunk_of(low.y), grid.chunk_of(high.y));
         let mut newly = Vec::new();
         let mut touched = Vec::new();
+        let mut missing = Vec::new();
         for z in z0..=z1 {
             for x in x0..=x1 {
                 if !self.is_dug(x, z) {
@@ -637,12 +674,19 @@ impl Excavation {
                 let (low, high) = Self::column_span(heights, grid, x, z);
                 for y in low.min(y0)..=high.max(y1) {
                     let key = ChunkKey { x, y, z };
-                    self.chunks.entry(key).or_insert_with(|| Arc::new(Self::fresh(heights, grid, key)));
+                    if !self.chunks.contains_key(&key) {
+                        missing.push(key);
+                    }
                     if (y0..=y1).contains(&y) {
                         touched.push(key);
                     }
                 }
             }
+        }
+        // Each chunk on its own, over every core: the same ground whichever does which.
+        let made = crate::workers::each(&missing, |&key| Self::fresh(heights, grid, key));
+        for (key, chunk) in missing.into_iter().zip(made) {
+            self.chunks.insert(key, Arc::new(chunk));
         }
         let mark = surface.map_or(0, |s| s.saturating_add(1));
         // Only corners within two voxels of the shape's surface can move the ground's surface, so only those
@@ -650,14 +694,14 @@ impl Excavation {
         // ground, kept and sent in far fewer bytes.
         let band = grid.voxel * 2.0;
         let on_step = |v: f32| (v * 1024.0).round() / 1024.0;
-        let mut changed = Vec::new();
-        for key in touched {
-            let chunk = Arc::make_mut(self.chunks.get_mut(&key).expect("kept above"));
-            let mut any = false;
+        let carving: Vec<(ChunkKey, Arc<DugChunk>)> =
+            touched.iter().map(|key| (*key, self.chunks[key].clone())).collect();
+        let carved = crate::workers::each(&carving, |(key, chunk)| {
+            let mut copy: Option<DugChunk> = None;
             for y in 0..CORNERS {
                 for z in 0..CORNERS {
                     for x in 0..CORNERS {
-                        let p = grid.corner_at(key, x, y, z);
+                        let p = grid.corner_at(*key, x, y, z);
                         let distance = shape.distance(p);
                         if distance >= band {
                             continue;
@@ -673,24 +717,73 @@ impl Excavation {
                             _ => now.min(was),
                         };
                         if now != was {
-                            chunk.density[at] = now;
+                            let copy = copy.get_or_insert_with(|| chunk.as_ref().clone());
+                            copy.density[at] = now;
                             // Ground digging opened is what it bares; ground filled again is the terrain's own.
                             if carve == Carve::Dig && was > 0.0 && now <= 0.0 {
-                                chunk.dug[at] = mark;
+                                copy.dug[at] = mark;
                             } else if carve == Carve::Fill && now > 0.0 {
-                                chunk.dug[at] = 0;
+                                copy.dug[at] = 0;
                             }
-                            any = true;
                         }
                     }
                 }
             }
-            if any {
+            copy
+        });
+        let mut changed = Vec::new();
+        for ((key, _), copy) in carving.into_iter().zip(carved) {
+            if let Some(copy) = copy {
+                self.chunks.insert(key, Arc::new(copy));
                 changed.push(key);
             }
         }
         let holed = (!newly.is_empty()).then(|| cut_columns(heights, self, &newly));
         Some((holed, changed))
+    }
+
+    /// Chunk `key`'s triangles, if they are made. If not, they are begun on
+    /// a background thread (once for each chunk), from `dug` and `heights`
+    /// as they are, to be found here when done: a frame or two later.
+    pub fn meshed(dug: &Arc<Excavation>, heights: &Arc<Heightmap>, key: ChunkKey) -> Option<Arc<ChunkMesh>> {
+        let chunk = dug.chunks.get(&key)?;
+        if let Some(made) = chunk.made.get() {
+            return Some(made.clone());
+        }
+        if !chunk.asked.swap(true, Ordering::AcqRel) {
+            let (dug, heights, chunk) = (dug.clone(), heights.clone(), chunk.clone());
+            crate::workers::spawn(move || {
+                chunk.made.get_or_init(|| Arc::new(mesh(&dug, &heights, key)));
+            });
+        }
+        None
+    }
+
+    /// Every chunk's triangles made that are not yet, over every core,
+    /// waiting for them all: as a terrain is loaded or first seen, so it is
+    /// drawn and collides whole from its first frame.
+    pub fn mesh_all(&self, heights: &Heightmap) {
+        let wanted: Vec<(ChunkKey, &Arc<DugChunk>)> =
+            self.chunks.iter().filter(|(_, chunk)| chunk.made.get().is_none()).map(|(k, c)| (*k, c)).collect();
+        crate::workers::each(&wanted, |(key, chunk)| {
+            chunk.made.get_or_init(|| Arc::new(mesh(self, heights, *key)));
+        });
+    }
+
+    /// Whether every chunk of the dug columns in tile `(tx, tz)` of the
+    /// heights has its triangles made. Until then the tile is drawn and
+    /// collides as it was before it was holed for them, so nothing shows or
+    /// falls through the holes before the ground in them is there.
+    pub fn tile_meshed(&self, tx: u32, tz: u32) -> bool {
+        let per_tile = (TILE_QUADS / CHUNK_SAMPLES) as i32;
+        let (x0, z0) = (tx as i32 * per_tile, tz as i32 * per_tile);
+        let (x1, z1) = (x0 + per_tile - 1, z0 + per_tile - 1);
+        let first = ChunkKey { x: x0, z: i32::MIN, y: i32::MIN };
+        let last = ChunkKey { x: x1, z: i32::MAX, y: i32::MAX };
+        self.chunks
+            .range(first..=last)
+            .filter(|(key, _)| (z0..=z1).contains(&key.z))
+            .all(|(_, chunk)| chunk.made.get().is_some())
     }
 
     /// Corner `(x, y, z)` of the whole terrain's voxels as a dug chunk holds
@@ -737,6 +830,7 @@ impl Excavation {
                     let key = ChunkKey { x: cx as i32, y: cy as i32, z: cz as i32 };
                     if let Some(chunk) = self.chunks.get_mut(&key) {
                         let chunk = Arc::make_mut(chunk);
+                        chunk.changed();
                         let at = corner(ix, iy, iz);
                         (chunk.density[at], chunk.dug[at]) = (density, laid);
                         if !changed.contains(&key) {
@@ -1335,6 +1429,43 @@ mod tests {
             let edge = [p[0], p[2]].iter().any(|v| (v / 8.0 - (v / 8.0).round()).abs() < 1e-4);
             assert!(edge, "an open edge at {p:?} ({count}) inside the dug columns");
         }
+    }
+
+    #[test]
+    fn triangles_are_made_in_the_background_once_a_chunk_and_a_tile_waits_for_its_columns() {
+        let heights = Arc::new(field());
+        let mut dug = Excavation::default();
+        let ground = heights.height_at(20.0, 20.0);
+        dug.carve(&heights, &Shape::Ball { at: [20.0, ground, 20.0], radius: 2.0 }, Carve::Dig, None);
+        let dug = Arc::new(dug);
+        assert!(!dug.tile_meshed(0, 0), "a tile with dug columns not made yet waits");
+        assert!(dug.tile_meshed(0, 1), "one with none does not");
+        let keys: Vec<ChunkKey> = dug.chunks().keys().copied().collect();
+        let waited = std::time::Instant::now();
+        let mut made = Vec::new();
+        while made.len() < keys.len() {
+            assert!(waited.elapsed().as_secs() < 30, "made in the background");
+            made = keys.iter().filter_map(|&key| Excavation::meshed(&dug, &heights, key)).collect();
+            std::thread::yield_now();
+        }
+        assert!(dug.tile_meshed(0, 0));
+        // The same triangles as made on the spot, and the same ones asked for again.
+        for (&key, mesh_made) in keys.iter().zip(&made) {
+            assert_eq!(**mesh_made, mesh(&dug, &heights, key));
+            assert!(Arc::ptr_eq(&Excavation::meshed(&dug, &heights, key).unwrap(), mesh_made));
+        }
+        // Smoothed in place, a chunk forgets its triangles; its copy kept elsewhere does not.
+        let mut smoothed = (*dug).clone();
+        let ball = Shape::Ball { at: [21.5, ground - 1.0, 20.0], radius: 1.5 };
+        let (_, changed) = smoothed.carve(&heights, &ball, Carve::Smooth { amount: 1.0 }, None).unwrap();
+        assert!(!changed.is_empty());
+        for key in &changed {
+            assert!(smoothed.chunk(*key).unwrap().mesh().is_none(), "{key:?} forgot");
+            assert!(dug.chunk(*key).unwrap().mesh().is_some());
+        }
+        assert!(!smoothed.tile_meshed(0, 0));
+        smoothed.mesh_all(&heights);
+        assert!(smoothed.tile_meshed(0, 0), "all made at once");
     }
 
     #[test]

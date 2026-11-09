@@ -54,7 +54,7 @@ Each returns whether it reached a terrain. They are edits like the others in [[C
 
 ## What changes with the ground
 
-- Physics stands things on dug ground at once, and rays meet it, from **Physics.Raycast** and **Terrain.Raycast** alike.
+- **Terrain.Raycast** and **Terrain.HeightAt** meet the new ground at once. Drawing and physics follow a frame or two later, once the new ground's triangles are made on the terrain's own threads. Until then they keep the ground as it was, so nothing shows or falls through a hole before the ground in it is there. Physics then stands things on the dug ground, and **Physics.Raycast** meets it.
 - **Terrain.HeightAt** over a pit or a trench is the height of its floor: the top of the ground there.
 - Grass is cleared where digging opens the ground, and grows on as before right up to the edge.
 - Plants standing on ground taken from under them come down.
@@ -63,6 +63,6 @@ Each returns whether it reached a terrain. They are edits like the others in [[C
 
 The terrain is cut into columns 8 m a side on ground of half-metre samples, each a stack of chunks of 32 voxels a side. The first dig into a column turns the whole column into voxels, made from its heights, and the heights in the column become holes for them to stand in. Each dig after that changes only the voxels near its shape, and only the chunks it reaches are made again.
 
-A dug column's chunks are kept in memory, a few hundred kilobytes each. A save keeps the digs themselves while they are fewer than a few thousand, and after that only how each dug chunk differs from the heights it was made from.
+A dug column's chunks are kept in memory, a few hundred kilobytes each. Digging shares its work over every core, and the triangles of the chunks it changed are made on background threads, so a blast costs the frame a few milliseconds rather than a stall. A terrain loading makes all its dug ground's triangles as it loads. A save keeps the digs themselves while they are fewer than a few thousand, and after that only how each dug chunk differs from the heights it was made from.
 
 Dug ground is drawn at its finest wherever it is seen, and its walls cast shadows. The light bounced round a level sees the ground as it was before it was dug. Track Makers leave no tracks on dug ground, and water does not stand in it: puddles on a dug surface are only wet.

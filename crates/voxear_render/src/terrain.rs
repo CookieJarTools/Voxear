@@ -383,8 +383,20 @@ impl Terrains {
                 self.copies.push(Copy { from, key, to, size: bytes.len() as u64, dug: false });
             };
             let no_holes = [0u32; HOLE_WORDS];
+            let dug = terrain.dug.as_ref().filter(|dug| !dug.is_empty());
+            // Seen for the first time, all its dug ground is made at once, so it is drawn whole from the first frame.
+            if let Some(dug) = dug
+                && resident.uploaded.iter().any(Option::is_none)
+            {
+                dug.mesh_all(map);
+            }
             for (index, tile) in map.tiles().iter().enumerate() {
                 if resident.uploaded[index].as_ref().is_some_and(|held| Arc::ptr_eq(held, tile)) {
+                    continue;
+                }
+                // A tile holed for ground dug in it is drawn as it was until that ground's triangles are made.
+                let (tx, tz) = (index as u32 % map.tiles_x(), index as u32 / map.tiles_x());
+                if resident.uploaded[index].is_some() && dug.is_some_and(|dug| !dug.tile_meshed(tx, tz)) {
                     continue;
                 }
                 stage(bytemuck::cast_slice(tile.samples()), (index * TILE_LEN * 4) as u64);
@@ -412,7 +424,7 @@ impl Terrains {
                 resident.tree = Arc::new(LodTree::new(map));
             }
             // Its dug chunks' triangles, those that changed made again.
-            match terrain.dug.as_deref().filter(|dug| !dug.is_empty()) {
+            match dug {
                 Some(dug) => {
                     if resident.dug.is_none() {
                         resident.dug = Some(crate::dug::DugPool::new(gpu)?);

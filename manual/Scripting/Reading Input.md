@@ -94,6 +94,8 @@ bindings = ["Mouse/Right", "Gamepad/RightShoulder"]
 - A binding's `processors` change what it reads: `deadzone(0.2, 0.9)`, `invert`, `invert_x`, `invert_y` and `scale(2)`, as in `{ path = "Gamepad/RightStick", processors = ["invert_y"] }`.
 - An action's `interaction` says when it is performed: `hold(seconds)` once it has been held that long, or `tap(seconds)` when it is let go within that long.
 - A map's `excludes` names the maps that are never on while it is, as `excludes = ["Player"]`. Turning it on turns them off, and they can share keys without conflicting.
+- An action's `id` is what fields and `Actions` name it by. The Input Actions window gives every action one.
+- `prompt_icons` names the [[Showing the Controls#Your own icons|Prompt Icons]] prompts draw controls with.
 
 The Input Actions window writes all of this for you, controls picked from a list rather than typed (see [[Showing the Controls]]).
 
@@ -102,6 +104,28 @@ Controls are named by device:
 - **Keyboard**: a key by where it sits on a US keyboard, such as `Keyboard/W`, `Keyboard/1`, `Keyboard/Space`, `Keyboard/ShiftLeft` or `Keyboard/ArrowUp`. On an AZERTY keyboard, `Keyboard/W` is still the key above S, so WASD keeps its shape.
 - **Mouse**: `Mouse/Left`, `Mouse/Right`, `Mouse/Middle`, `Mouse/Back`, `Mouse/Forward`, `Mouse/Delta` and `Mouse/Scroll`.
 - **Gamepad**: the face buttons by where they sit, `Gamepad/South`, `East`, `West` and `North`, so South is A on an Xbox pad and Cross on a PlayStation one; `LeftShoulder`, `RightShoulder`, `LeftTrigger`, `RightTrigger`, `Select`, `Start`, `LeftStickPress`, `RightStickPress`, `DpadUp` and the other D-pad directions; `LeftStick` and `RightStick`, and their halves, such as `LeftStickUp`.
+
+## Naming an action
+
+Each action has an id from when it's made, kept when you rename it or move it to another map. Name an action by it, rather than by its name in quotes, and a rename never breaks your code.
+
+In a field, pick the action in the Inspector, from the project's actions:
+
+```csharp
+[SerializeField] private InputActionRef jump;
+
+protected override void Update()
+{
+	if (jump.Action.Pressed)
+	{
+		Leap();
+	}
+}
+```
+
+In code, `Actions` has every action, by map: `Actions.Player.Jump`, `Actions.UI.Submit`. It's made from your actions file as you build, as `Strings` is from your string tables, so an action you take away is an error where it's used. A project without an actions file of its own gets Voxear's.
+
+`Input.Action("Jump")` still finds an action by name, or by its id.
 
 ## Events
 

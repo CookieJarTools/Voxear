@@ -77,6 +77,8 @@ pub struct Shown {
     pub conflict: bool,
     /// A binding or part not given a control yet, shown as a placeholder.
     pub unset: bool,
+    /// An action's own row, which has a plus to add a binding to it.
+    pub action: bool,
 }
 
 /// How a row shows: an action with its icon, a binding's control by the
@@ -85,7 +87,7 @@ pub fn shown(map: &MapData, row: Row) -> Shown {
     let Some(action) = map.actions.get(row.action()) else { return Shown::default() };
     let binding = |at: usize| action.bindings.get(at);
     match row {
-        Row::Action(_) => Shown { icon: action_icon(action), text: action.name.clone(), ..Shown::default() },
+        Row::Action(_) => Shown { icon: action_icon(action), text: action.name.clone(), action: true, ..Shown::default() },
         Row::Binding(_, at) => match binding(at) {
             Some(Binding::Path(path)) => control_row(path, None),
             Some(Binding::Full(full)) if full.path.is_some() => control_row(full.path.as_deref().unwrap_or(""), None),
@@ -122,7 +124,7 @@ fn control_row(path: &str, part: Option<&str>) -> Shown {
         Some(part) => format!("{}: {name}", capital(part)),
         None => name,
     };
-    Shown { icon: device_icon(path), text, detail: device, depth, conflict: false, unset: path.is_empty() }
+    Shown { icon: device_icon(path), text, detail: device, depth, conflict: false, unset: path.is_empty(), action: false }
 }
 
 /// What people call a control, and its device: "Left Shift" and

@@ -3483,6 +3483,13 @@ DockSpace .resizable-columns > .split-divider:active > .split-handle {
     color: var(--vx-danger);
 }
 
+/* The plus on an action's row, at its right end, which adds a binding to it. */
+.input-row-add {
+    margin-left: auto;
+    flex-shrink: 0;
+    color: var(--vx-muted);
+}
+
 .input-row.conflict > .entities-row-name {
     color: var(--vx-danger);
 }

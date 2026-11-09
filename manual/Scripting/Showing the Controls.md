@@ -13,7 +13,7 @@ Open **Input Actions** from the Window menu or the command palette, or double-cl
 The Actions view is laid out as Unity's Input Actions window is, in three columns:
 
 - **Action Maps**: the maps, such as `Player` and `UI`. **+** adds one, and **×** takes the picked map away. With no action picked, Properties shows the map's **Name** and **Excludes**: the maps that are never on while it is (see below).
-- **Actions**: the picked map's actions, each followed by its bindings. A composite, such as WASD, shows each of its parts under it. **+** opens a menu: **Action** adds an action, **Binding** adds a binding to the picked action, and **2D Vector** and **1D Axis** add a composite with its parts. A new action is called **New Action** and its name is ready to type over in its row: type its name and press Enter, or Escape to keep New Action. A binding or part not given a control yet shows **None**. **×** takes away the picked row.
+- **Actions**: the picked map's actions, each followed by its bindings. A composite, such as WASD, shows each of its parts under it. **+** opens a menu: **Action** adds an action, **Binding** adds a binding to the picked action, and **2D Vector** and **1D Axis** add a composite with its parts. Each action's row has a **+** of its own, which adds a binding or a composite to that action. A new action is called **New Action** and its name is ready to type over in its row: type its name and press Enter, or Escape to keep New Action. A binding or part not given a control yet shows **None**. **×** takes away the picked row.
 - **Properties**: what the picked row has. An action has its **Name**, **Type** (Button, Value or Vector 2), **Interaction** (Press, Hold or Tap, with its **Seconds**), **Category**, **Icon** and whether it is **Hidden**. A binding, or a part of a composite, has its **Control** and its **Processors**, such as `deadzone(0.1, 0.9), invert`.
 
 Each row shows an icon: an action's own, or a binding's device. A binding shows its control by name, such as **Left Shift**, with its device after it. Every other row is shaded, so a long list is easy to follow.
@@ -158,6 +158,25 @@ In a UI document:
 From a script, `new PromptView("Jump")` makes one, and its `Action` changes the action it shows. A composite shows each of its parts, so `Move` bound to WASD shows W, A, S and D.
 
 To put the controls inside a sentence, as "Press [E] to open", use a `LocalizedLabel` with the action as one of its values: see [[Localized UI Text]].
+
+## Your own icons
+
+Prompts can show your own pictures for controls in place of the ones Voxear draws: a set of **Prompt Icons**.
+
+1. In the Project panel, pick **Create ▸ Prompt Icons**.
+2. In the Inspector, open a device: Keyboard, Mouse, Xbox, PlayStation, Switch or Steam. Each control has a row. Pick its picture, or drag one onto it from the Project panel.
+3. On the Input page, pick the set as **Prompt Icons**, in the bar at the top.
+
+A pad's pictures come from the set for the kind of pad the player holds, and change when they pick up another. A control the set has no picture for is drawn as Voxear draws it, so a set can start small.
+
+For a sheet of many icons in one picture, give a control the part of it to show, in the file, as `rect = [left, top, width, height]` in the picture's pixels:
+
+```toml
+[xbox]
+South = { texture = "UI/Prompts/Xbox.png", rect = [0, 0, 64, 64] }
+```
+
+A picture shows 28 pixels square. Style `.prompt-sprite` in your sheets to change that.
 
 Style the glyphs in your sheets by their classes: `prompt` for the whole prompt, and `prompt-glyph` for each control, with `key`, `round`, `pill`, `square`, `stick` or `bare` for its shape. Each holds a `prompt-text` label or a `prompt-icon`.
 

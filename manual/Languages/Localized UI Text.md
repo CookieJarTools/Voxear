@@ -141,15 +141,14 @@ de = "Drücke {0}, um es für {1, currency} zu kaufen"
 ```
 
 ```csharp
-var confirm = Input.Action("Submit");
-panel.Add(new LocalizedLabel(Strings.Shop.Buy, TextParam.Action(confirm), TextParam.Bind(() => new Money(price, Currency.EUR))));
+panel.Add(new LocalizedLabel(Strings.Shop.Buy, Actions.UI.Submit, TextParam.Bind(() => new Money(price, Currency.EUR))));
 ```
 
 The player sees "Press [Enter] to buy for €12.50", with the key drawn as a keycap. When they pick up a pad, the keycap becomes the pad's button, as its own pad marks it. Rebinding the action changes it too.
 
 | Value | What it fills in |
 | --- | --- |
-| `TextParam.Action(action)` | The action's controls, as a prompt draws them |
+| `Actions.UI.Submit`, an `InputActionRef` field | The action's controls, as a prompt draws them, with your [[Showing the Controls#Your own icons|Prompt Icons]] where you have them |
 | `TextParam.Bind(() => coins)` | A value worked out again each frame |
 | `12`, `"text"`, `new Money(…)` | A value as it is. `Set(1, 20)` changes one later |
 

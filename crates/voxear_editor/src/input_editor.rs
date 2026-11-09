@@ -14,7 +14,8 @@
 //!   a dropdown with a field for each of its values, as a deadzone's Min and
 //!   Max.
 //! - The plus over the actions adds an action, or a binding, 2D vector or
-//!   1D axis to the action picked. A new action is named so no other is,
+//!   1D axis to the action picked; the plus on an action's own row adds one
+//!   of those to it. A new action is named so no other is,
 //!   picked, and renamed in its row at once, its name selected to type
 //!   over: Enter or a click elsewhere keeps what is typed, and Escape the
 //!   name it was given.
@@ -120,6 +121,8 @@ pub struct ActionsEditor {
     /// The place of the row renamed in place, which shows a field for it.
     renaming_row: Rc<Cell<Option<usize>>>,
     renaming: Option<Renaming>,
+    /// The plus on an action's row whose menu is open, and the action.
+    row_add: Option<(NodeId, usize)>,
     controls: Properties,
     /// The file being edited, and the file as the game last read it.
     file: ActionsFile,
@@ -202,17 +205,21 @@ impl ActionsEditor {
                     ui.add_class(detail, "input-row-detail");
                     let conflict = ui.icon(row, "alert");
                     ui.add_class(conflict, "input-row-conflict");
+                    let add = ui.icon_button(row, "plus");
+                    ui.add_class(add, "input-row-add");
+                    ui.set_tooltip(add, "Add Binding", None);
                 },
                 bind: move |ui: &mut Ui, row: NodeId, index: usize| {
                     let Some(shown) = texts.borrow().get(index).cloned() else { return };
                     let parts = ui.children(row);
                     let part = |class: &str| parts.iter().copied().find(|&p| ui.has_class(p, class));
-                    let (Some(icon), Some(label), Some(rename), Some(detail), Some(conflict)) = (
+                    let (Some(icon), Some(label), Some(rename), Some(detail), Some(conflict), Some(add)) = (
                         part("input-row-icon"),
                         part("entities-row-name"),
                         part("input-row-rename"),
                         part("input-row-detail"),
                         part("input-row-conflict"),
+                        part("input-row-add"),
                     ) else {
                         return;
                     };
@@ -221,6 +228,7 @@ impl ActionsEditor {
                     ui.set_text(label, &shown.text);
                     ui.set_text(detail, &shown.detail);
                     ui.set_visible(conflict, shown.conflict);
+                    ui.set_visible(add, shown.action);
                     ui.set_class(row, "odd", index % 2 == 1);
                     ui.set_class(row, "conflict", shown.conflict);
                     ui.set_class(row, "unset", shown.unset);
@@ -256,6 +264,7 @@ impl ActionsEditor {
             bound_rows,
             renaming_row,
             renaming: None,
+            row_add: None,
             controls: Properties::default(),
             file: ActionsFile::default(),
             read: None,
@@ -369,6 +378,16 @@ impl ActionsEditor {
             ui.open_menu(self.add, (x, y + height + 2.0), &items);
         }
         let composite = |at: usize| [None, None, Some(Composite::Vector), Some(Composite::Axis)][at.min(3)];
+        self.open_row_add(ui);
+        if let Some((add, action)) = self.row_add
+            && let Some(at) = ui.menu_choice(add)
+        {
+            self.row_add = None;
+            let added = self.map_data().and_then(|map| input_edit::add_binding(map, action, composite(at + 1)));
+            if added.is_some() {
+                self.row = added;
+            }
+        }
         let added = match ui.menu_choice(self.add) {
             Some(0) => {
                 let added = self.map_data().map(input_edit::add_action);
@@ -405,6 +424,24 @@ impl ActionsEditor {
             input.listen_for_control(scheme.filter(|path| !path.is_empty()).map(|path| Scheme::of(&path)));
             self.listening = row;
             ui.set_text(listen, "Press a Key");
+        }
+    }
+
+    /// Opens the menu of what can be added to an action, under the plus on
+    /// its row that was clicked: a binding, a 2D vector or a 1D axis.
+    fn open_row_add(&mut self, ui: &mut Ui) {
+        let rows = self.file.maps.get(self.map).map(input_edit::rows).unwrap_or_default();
+        let bound = self.bound_rows.borrow().clone();
+        for (row, index) in bound {
+            let Some(add) = ui.children(row).into_iter().find(|&part| ui.has_class(part, "input-row-add")) else {
+                continue;
+            };
+            let Some(Row::Action(action)) = rows.get(index).copied().filter(|_| ui.clicked(add)) else { continue };
+            let [x, y, _, height] = ui.rect(add);
+            let items: Vec<MenuItem> = ADDS[1..].iter().map(|added| MenuItem::new(added)).collect();
+            ui.open_menu(add, (x, y + height + 2.0), &items);
+            self.row_add = Some((add, action));
+            self.row = Some(Row::Action(action));
         }
     }
 

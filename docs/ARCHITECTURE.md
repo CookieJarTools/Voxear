@@ -2509,7 +2509,16 @@ await Input.Rebind(actions["Jump"], scheme: ControlScheme.Gamepad);
 - **Prompts are native.** A `<prompt action="Jump"/>` UI element, or `Input.Glyph("Jump")`, shows the correct icon
   for the current scheme, device family and layout (Xbox, PlayStation, Switch, Steam Deck, keyboard). Key names are
   localised and follow the user's keyboard layout, so `KeyQ` shows as "A" on AZERTY. The icon updates instantly
-  when the scheme changes.
+  when the scheme changes. *(Built: a game's own pictures, as Prompt Icons (`crates/voxear_engine/src/prompt_icons.rs`):
+  a `.prompticons` file maps each control of each kind of device (keyboard, mouse, Xbox, PlayStation, Switch,
+  Steam) to a texture or a part of one. The input actions name the set (`prompt_icons`); the game uploads its
+  pictures through `Content::ui_picture` once a renderer is there, and `keymaps::prompt_glyphs_with` gives a glyph
+  the picture for its control in place of the drawn one, which `voxear_ui` draws as an image.)*
+- **Actions are named by id.** Each action in an `.inputactions` file has an `id`, given when the editor makes it
+  and to each it finds without one, and kept through a rename; Voxear's own actions have fixed ids. `Actions::find`
+  takes an id or a name. An `InputActionRef` field (field kind `action`) stores the id and the Inspector picks it
+  from the project's actions; Voxear.Analyzers makes `Actions.Map.Action` from the project's file, or from Voxear's
+  own, embedded, when it has none.
 - Processors (deadzones, curves, invert), action phases, and polling and event APIs both work. Input is read on the
   main thread and sampled once per frame, plus per fixed step for physics.
 

@@ -6352,6 +6352,45 @@ fn with_text(ui: &Ui, root: NodeId, text: &str) -> Option<NodeId> {
 }
 
 #[test]
+fn the_plus_on_an_actions_row_adds_a_binding_to_it() {
+    let mut renderer = match Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) {
+        Ok(renderer) => renderer,
+        Err(error) => return eprintln!("skipping: no usable GPU ({error:#})"),
+    };
+    let dir = hello_copy();
+    without_own_actions(dir.path());
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    let dock = editor.ui.find(editor.ui.root(), "dock").unwrap();
+    editor.ui.open_dock_panel_beside(dock, "input", "scene");
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let panel = editor.ui.find(editor.ui.root(), "input-panel").unwrap();
+    let bindings = |text: &str, action: &str| {
+        let file: voxear_input::ActionsFile = toml::from_str(text).unwrap();
+        file.maps.iter().flat_map(|map| &map.actions).find(|a| a.name == action).map_or(0, |a| a.bindings.len())
+    };
+    let before = bindings(voxear_input::DEFAULT_ACTIONS, "Move");
+
+    // Each action's row has a plus, at the top Move's; a binding's row has none.
+    let mut adds = Vec::new();
+    with_class(&editor.ui, panel, "input-row-add", &mut adds);
+    let shown: Vec<_> = adds.iter().copied().filter(|&add| editor.ui.is_visible(add)).collect();
+    assert!(!shown.is_empty() && shown.len() < adds.len(), "on actions' rows, not bindings'");
+    click(&mut editor.ui, shown[0]);
+    frame(&mut editor, &mut renderer);
+    let binding = menu_item(&editor.ui, "Binding").expect("the row's plus offers a binding");
+    assert!(menu_item(&editor.ui, "2D Vector").is_some() && menu_item(&editor.ui, "Action").is_none());
+    click(&mut editor.ui, binding);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let text = std::fs::read_to_string(dir.path().join("Input.inputactions")).expect("written to the project's own file");
+    assert_eq!(bindings(&text, "Move"), before + 1, "a binding added to Move: {text}");
+    assert!(with_text(&editor.ui, panel, "Listen").is_some(), "the new binding picked, to give it a control");
+}
+
+#[test]
 fn the_input_actions_window_adds_actions_and_listens_for_their_keys() {
     let mut renderer = match Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) {
         Ok(renderer) => renderer,

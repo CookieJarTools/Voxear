@@ -396,6 +396,8 @@ pub enum ComponentKind {
     FirstPersonView = 2,
     LimbIk = 3,
     UiPanel = 4,
+    /// A model's bones, as its Skeleton.
+    Skeleton = 5,
     Gun = 16,
     GunHolder = 17,
 }

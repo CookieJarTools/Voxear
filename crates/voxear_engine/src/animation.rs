@@ -9,6 +9,7 @@
 
 mod actions;
 mod bone_attachment;
+pub(crate) mod bones;
 pub mod boxes;
 mod clips;
 pub mod grip;

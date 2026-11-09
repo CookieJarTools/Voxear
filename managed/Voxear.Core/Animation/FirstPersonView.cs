@@ -7,7 +7,8 @@ namespace Voxear;
 /// <summary>
 /// An Obj's First-Person View: a camera in a character's own head. The mouse turns it, and the Obj with it; the upper
 /// body leans into where it looks, and the camera rides the head, steadied, with the head hidden. It finds the body,
-/// the first Model Renderer under its Obj, and the camera, the first under it or else in the level, unless told.
+/// the first Model Renderer under its Obj whose skeleton has a head and arms, and the camera, the first under it or
+/// else in the level, unless told.
 /// <code>
 /// var view = player.AddFirstPersonView();
 /// view.Sensitivity = 0.1f;

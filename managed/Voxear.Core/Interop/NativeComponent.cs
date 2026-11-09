@@ -14,6 +14,7 @@ internal static unsafe class NativeComponent
 	public const int FirstPersonView = 2;
 	public const int LimbIK = 3;
 	public const int UiPanel = 4;
+	public const int Skeleton = 5;
 	public const int Gun = 16;
 	public const int GunHolder = 17;
 
@@ -72,6 +73,30 @@ internal static unsafe class NativeComponent
 		fixed (byte* written = bytes)
 		{
 			return Native.Api->KindText(kind, obj.Id, what, written, bytes.Length, null, 0) >= 0;
+		}
+	}
+
+	/// <summary>Asks an Obj's component of a kind something with some text, and gives back its answer: null with none.</summary>
+	public static string? Ask(int kind, Obj obj, int what, string text)
+	{
+		if (!Native.IsConnected)
+		{
+			return null;
+		}
+		var bytes = Encoding.UTF8.GetBytes(text);
+		fixed (byte* written = bytes)
+		{
+			var length = Native.Api->KindText(kind, obj.Id, what, written, bytes.Length, null, 0);
+			if (length < 0)
+			{
+				return null;
+			}
+			var answer = new byte[length];
+			fixed (byte* buffer = answer)
+			{
+				Native.Api->KindText(kind, obj.Id, what, written, bytes.Length, buffer, length);
+			}
+			return Encoding.UTF8.GetString(answer);
 		}
 	}
 

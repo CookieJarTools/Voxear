@@ -268,6 +268,9 @@ public readonly struct Obj : IEquatable<Obj>
 		return new Camera(this);
 	}
 
+	/// <summary>The bones of the model the Obj draws, posed as they are this frame. Not valid when it draws none with bones.</summary>
+	public Skeleton Skeleton => new Skeleton(this);
+
 	/// <summary>The Obj's First-Person View. Not valid when it has none.</summary>
 	public FirstPersonView FirstPersonView => new FirstPersonView(this);
 

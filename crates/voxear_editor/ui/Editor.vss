@@ -4050,3 +4050,37 @@ DockSpace .resizable-columns > .split-divider:active > .split-handle {
     font-size: 11px;
     white-space: pre-wrap;
 }
+
+/* A Terrain's tools and layers (terrain_panel.rs). */
+.terrain-tools {
+    margin: 2px 0px 6px 0px;
+}
+
+.terrain-layer {
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    flex-grow: 1;
+    padding: 2px 0px;
+}
+
+.terrain-layer-icon {
+    color: var(--vx-muted);
+}
+
+.terrain-layer-name {
+    flex-grow: 1;
+}
+
+.terrain-layer-kind {
+    color: var(--vx-muted);
+    font-size: 11px;
+}
+
+.collection-item.selected {
+    background-color: var(--vx-selected);
+}
+
+.collection-item.off .terrain-layer-name, .collection-item.off .terrain-layer-icon {
+    opacity: 0.45;
+}

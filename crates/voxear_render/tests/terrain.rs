@@ -137,3 +137,44 @@ fn a_ridge_shades_the_ground_on_its_far_side_from_the_sun() {
     let (lit, shaded) = (brightness((30.0, 64.0)), brightness((80.0, 64.0)));
     assert!(shaded * 2 < lit, "the ground east of the ridge is in its shadow: {shaded} against {lit} lit");
 }
+
+#[test]
+fn a_tile_changed_after_it_was_drawn_is_drawn_changed() {
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    let red = MaterialDesc { base_color: [1.0, 0.0, 0.0, 1.0], ..MaterialDesc::default() };
+    let material = renderer.add_material(&red).unwrap();
+    let flat = Heightmap::flat(2, 2, 0.5, 0.0);
+    let field = world.spawn((
+        Terrain::new(flat),
+        TerrainLook { material, texture_size: 4.0 },
+        Transform::from_position(Vec3::new(-128.0, 0.0, -128.0)),
+    ));
+    // Looking along the ground from just above it: flat, the sky fills the top half.
+    let look = Quat::from_rotation_x(0.05);
+    world.spawn((Camera::default(), Transform::new(Vec3::new(0.0, 2.0, -100.0), look, Vec3::ONE)));
+    world.insert_resource(PostProcess {
+        anti_aliasing: AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() },
+        ..PostProcess::neutral()
+    });
+    renderer.set_view_options(ViewOptions { debug_view: voxear_render::DEBUG_VIEW_UNLIT, ..ViewOptions::default() });
+    let ground = |pixels: &[u8]| {
+        (0..HEIGHT)
+            .flat_map(|y| (0..WIDTH).map(move |x| (x, y)))
+            .filter(|&(x, y)| {
+                let [r, g, b] = rgb_at(pixels, x, y);
+                r > 150 && g < 60 && b < 60
+            })
+            .count()
+    };
+    let before = ground(&render(&mut renderer, &world, 3));
+    // A wall of ground 40 m high across the far tiles.
+    let heights = world.get::<Terrain>(field).unwrap().heights.clone();
+    let wall = voxear_terrain::HeightTile::flat(40.0);
+    let raised = heights.with_tiles([(0, 1, wall.clone()), (1, 1, wall)]);
+    world.get_mut::<Terrain>(field).unwrap().heights = std::sync::Arc::new(raised);
+    let pixels = render(&mut renderer, &world, 2);
+    keep_image("terrain changed tile.png", &pixels);
+    let after = ground(&pixels);
+    assert!(after > before + WIDTH as usize * 20, "the raised tiles fill more of the view: {before} then {after}");
+}

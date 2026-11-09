@@ -27,7 +27,8 @@ fn project() -> tempfile::TempDir {
     }
     // A slope rising 0.1 m a metre along x.
     let heights = Heightmap::from_fn(file.tiles(), file.tiles(), file.spacing(), |x, _| x * 0.1);
-    std::fs::write(dir.path().join("Terrains/Field.heights"), voxear_terrain::file::write_heights(&heights)).unwrap();
+    std::fs::write(dir.path().join("Terrains/Field.heights"), voxear_terrain::file::write_heights(&heights, 0))
+        .unwrap();
     dir
 }
 
@@ -77,4 +78,35 @@ fn a_terrain_whose_heights_are_missing_is_flat_and_as_large_as_its_file_says() {
     let terrain = world.query_ref::<&Terrain>().into_iter().next().expect("the field");
     assert_eq!(terrain.heights.size(), [128.0, 128.0]);
     assert_eq!(terrain.heights.range(), [0.0, 0.0]);
+}
+
+/// A terrain with a 10 m hill stamped in its middle, as its file says.
+const STAMPED: &str = "size = 128.0\nresolution = 257\n\n[[layers]]\nname = \"Hill\"\nkind = \"stamp\"\n\
+                       position = [64.0, 64.0]\nsize = [40.0, 40.0]\nheight = 10.0\nfalloff = 0.0\n";
+
+#[test]
+fn a_terrain_without_heights_is_made_from_its_layers_and_heights_made_from_others_are_made_again() {
+    let dir = project();
+    std::fs::write(dir.path().join("Terrains/Field.terrain"), STAMPED).unwrap();
+    // The slope's heights beside it, as made from other layers.
+    let slope = Heightmap::from_fn(1, 1, 0.5, |x, _| x * 0.1);
+    std::fs::write(dir.path().join("Terrains/Field.heights"), voxear_terrain::file::write_heights(&slope, 1)).unwrap();
+    let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
+    game.start(None).unwrap();
+    let terrain = game.engine.world.query_ref::<&Terrain>().into_iter().next().expect("the field").clone();
+    assert!((terrain.heights.height_at(64.0, 64.0) - 10.0).abs() < 1e-3, "the hill, not the slope");
+    assert_eq!(terrain.heights.height_at(5.0, 5.0), 0.0);
+
+    // Heights written for these layers are read as they are, without making them again.
+    let file = TerrainFile::parse(STAMPED).unwrap();
+    let marked = Heightmap::flat(1, 1, 0.5, 7.0);
+    std::fs::write(
+        dir.path().join("Terrains/Field.heights"),
+        voxear_terrain::file::write_heights(&marked, file.shape_hash()),
+    )
+    .unwrap();
+    let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
+    game.start(None).unwrap();
+    let terrain = game.engine.world.query_ref::<&Terrain>().into_iter().next().expect("the field").clone();
+    assert_eq!(terrain.heights.height_at(64.0, 64.0), 7.0, "read as written");
 }

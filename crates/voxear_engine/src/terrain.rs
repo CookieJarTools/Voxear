@@ -18,11 +18,14 @@ use voxear_terrain::{Terrain, file::TerrainFile};
 
 use crate::Content;
 
-/// A Terrain's `.terrain` asset, and its file as the game has it now.
+/// A Terrain's `.terrain` asset: its file and what its brushes painted, as
+/// the game has them now. The rasters are shared, so an undo step keeps only
+/// the tiles a stroke changed.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TerrainAsset {
     pub guid: AssetGuid,
     pub file: TerrainFile,
+    pub rasters: std::sync::Arc<voxear_terrain::raster::Rasters>,
 }
 
 impl Component for TerrainAsset {}
@@ -32,21 +35,28 @@ impl Component for TerrainAsset {}
 pub fn keep(world: &World, content: &mut Content) {
     let terrains = world.query_ref::<(&Terrain, &TerrainAsset)>().without::<Destroying>();
     for (terrain, asset) in terrains {
-        content.keep_terrain(asset.guid, &asset.file, &terrain.heights);
+        content.keep_terrain(asset.guid, &asset.file, &terrain.heights, &asset.rasters);
     }
 }
 
-/// Writes each terrain asset changed since it was last written, its
-/// `.terrain` and its `.heights`, into the project's folder; gives the
-/// paths written.
+/// Writes each terrain asset changed since it was last written into the
+/// project's folder: its `.terrain`, its `.heights`, and its `.layers` when
+/// its brushes painted anything; gives the paths written.
 pub fn save(content: &mut Content, project: &Path) -> Result<Vec<String>> {
     let mut written = Vec::new();
     for (path, loaded) in content.take_unsaved_terrains() {
         let file = project.join(&path);
         std::fs::write(&file, loaded.file.to_text()).with_context(|| format!("saving {path}"))?;
         let heights = voxear_terrain::file::heights_file(&path);
-        let bytes = voxear_terrain::file::write_heights(&loaded.heights);
+        let bytes = voxear_terrain::file::write_heights(&loaded.heights, loaded.file.shape_hash());
         std::fs::write(project.join(&heights), bytes).with_context(|| format!("saving {heights}"))?;
+        let layers = project.join(voxear_terrain::raster::layers_file(&path));
+        if loaded.rasters.tiles().next().is_some() {
+            std::fs::write(&layers, voxear_terrain::raster::write_rasters(&loaded.rasters))
+                .with_context(|| format!("saving {}", layers.display()))?;
+        } else if layers.is_file() {
+            std::fs::remove_file(&layers).with_context(|| format!("removing {}", layers.display()))?;
+        }
         written.push(path);
     }
     Ok(written)

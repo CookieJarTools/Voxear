@@ -881,7 +881,8 @@ pub fn terrain(content: &mut Content, renderer: Option<&mut Renderer>, data: &Te
     let loaded = guid.and_then(|guid| Some((guid, content.terrain(guid)?)));
     let (heights, asset) = match loaded {
         Some((guid, loaded)) => {
-            (loaded.heights.clone(), Some(crate::terrain::TerrainAsset { guid, file: loaded.file.clone() }))
+            let asset = crate::terrain::TerrainAsset { guid, file: loaded.file.clone(), rasters: loaded.rasters.clone() };
+            (loaded.heights.clone(), Some(asset))
         }
         None => {
             if !data.data.is_empty() {

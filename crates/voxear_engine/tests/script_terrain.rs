@@ -87,7 +87,7 @@ fn scripts_ask_the_ground_and_cast_rays_onto_it() {
     std::fs::create_dir_all(dir.path().join("Terrains")).unwrap();
     std::fs::write(dir.path().join("Terrains/Field.terrain"), file.to_text()).unwrap();
     let heights = Heightmap::from_fn(file.tiles(), file.tiles(), file.spacing(), |x, _| x * 0.1);
-    std::fs::write(dir.path().join("Terrains/Field.heights"), voxear_terrain::file::write_heights(&heights)).unwrap();
+    std::fs::write(dir.path().join("Terrains/Field.heights"), voxear_terrain::file::write_heights(&heights, 0)).unwrap();
     let scene = dir.path().join("Scenes/Environment.scene");
     let text = std::fs::read_to_string(&scene).unwrap() + OBJS;
     std::fs::write(&scene, text).unwrap();

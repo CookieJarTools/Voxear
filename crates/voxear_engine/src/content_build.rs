@@ -594,7 +594,8 @@ fn find_needs(db: &AssetDb, guid: AssetGuid, kind: AssetKind, path: &str) -> Res
         | AssetKind::Terrain => {
             let text = std::fs::read_to_string(db.file(path))?;
             let table: toml::Table = toml::from_str(&text)?;
-            for (key, value) in &table {
+            // A terrain's layers' pictures made its heights, which go with it; a game needs only those.
+            for (key, value) in table.iter().filter(|_| kind != AssetKind::Terrain) {
                 collect(db, key == "fields", key, value, &mut needs);
             }
             // A level's baked paths go with it, for its sound to follow round the walls.

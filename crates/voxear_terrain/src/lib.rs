@@ -11,10 +11,15 @@
 //! and the engine each keep what they need of it, and see what changed by
 //! the tiles' pointers.
 
+pub mod brush;
+pub mod composite;
 pub mod file;
 pub mod heights;
 pub mod import;
+pub mod layers;
 pub mod lod;
+pub mod noise;
+pub mod raster;
 pub mod ray;
 
 use std::sync::Arc;

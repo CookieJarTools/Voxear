@@ -58,6 +58,11 @@ const PROXY_STEP: u32 = 8;
 /// shaping a large terrain spreads over frames.
 const PROXIES_A_FRAME: usize = 8;
 
+/// How many frames a tile must stay as it is before its mesh for rays is
+/// made again: a brush changes its tiles every frame, and the GI need not
+/// follow each dab.
+const PROXY_SETTLE: u64 = 20;
+
 /// How a terrain looks: its material, its pictures repeated every
 /// `texture_size` metres.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -121,6 +126,8 @@ struct Resident {
     tree: Arc<LodTree>,
     /// Each tile's mesh for rays, and the tile it was made from.
     proxies: Vec<Option<(Arc<HeightTile>, MeshHandle)>>,
+    /// The frame each tile last changed.
+    changed: Vec<u64>,
     seen: u64,
 }
 
@@ -222,6 +229,7 @@ impl Terrains {
                 staged.extend_from_slice(tile.samples());
                 self.copies.push((from, key, (index * TILE_LEN * 4) as u64));
                 resident.uploaded[index] = Some(tile.clone());
+                resident.changed[index] = frame_index;
                 changed = true;
             }
             if changed {
@@ -230,7 +238,10 @@ impl Terrains {
             for index in 0..map.tiles().len() {
                 let tile = &map.tiles()[index];
                 let current = resident.proxies[index].as_ref().is_some_and(|(made, _)| Arc::ptr_eq(made, tile));
-                if current || proxies_left == 0 {
+                // A tile that has a mesh waits until it settles; one that has none gets one at once.
+                let settling =
+                    resident.proxies[index].is_some() && frame_index < resident.changed[index] + PROXY_SETTLE;
+                if current || settling || proxies_left == 0 {
                     continue;
                 }
                 proxies_left -= 1;
@@ -333,6 +344,7 @@ impl Resident {
             uploaded: vec![None; count],
             tree: Arc::new(LodTree::new(map)),
             proxies: vec![None; count],
+            changed: vec![0; count],
             seen: 0,
         })
     }

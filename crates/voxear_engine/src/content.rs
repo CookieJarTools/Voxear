@@ -337,11 +337,13 @@ impl Released {
     }
 }
 
-/// A terrain as its files have it: how large and how fine, and its heights.
+/// A terrain as its files have it: how large and how fine and its layers,
+/// its heights as they made them, and what its brushes painted.
 #[derive(Clone, Debug)]
 pub struct LoadedTerrain {
     pub file: voxear_terrain::file::TerrainFile,
     pub heights: Arc<voxear_terrain::Heightmap>,
+    pub rasters: Arc<voxear_terrain::raster::Rasters>,
 }
 
 /// What content has loaded, beside what the GPU holds (see
@@ -433,6 +435,8 @@ pub struct Content {
     /// changed since they were last written, as the editor changes them.
     terrains: HashMap<AssetGuid, Option<Arc<LoadedTerrain>>>,
     unsaved_terrains: std::collections::BTreeSet<AssetGuid>,
+    /// Heightmap pictures terrains' layers read, by GUID.
+    terrain_greys: HashMap<AssetGuid, Option<Arc<voxear_terrain::import::Greys>>>,
     /// Pictures materials read, by GUID and whether they are read as sRGB.
     pictures: HashMap<(AssetGuid, bool), TextureId>,
     /// IES profiles uploaded for lights, by their assets.
@@ -584,6 +588,7 @@ impl Content {
             gun_handlings: HashMap::new(),
             terrains: HashMap::new(),
             unsaved_terrains: Default::default(),
+            terrain_greys: HashMap::new(),
             handlings_version: 0,
             pictures: HashMap::new(),
             light_profiles: HashMap::new(),
@@ -1057,40 +1062,84 @@ impl Content {
         let path = entry.path.clone();
         let file = voxear_terrain::file::TerrainFile::parse(&self.read_text(&path)?)
             .with_context(|| format!("reading {path}"))?;
-        let heights = match self.read(&voxear_terrain::file::heights_file(&path)) {
-            Ok(bytes) => {
-                file.fit(voxear_terrain::file::read_heights(&bytes).with_context(|| format!("reading {path}'s heights"))?)
-            }
-            Err(_) => self.terrain_heights(&file, None),
+        // What its brushes painted is kept beside it in the project; builds leave it out, needing only its heights.
+        let rasters = match self.read(&voxear_terrain::raster::layers_file(&path)) {
+            Ok(bytes) => voxear_terrain::raster::read_rasters(&bytes).with_context(|| format!("reading {path}'s layers"))?,
+            Err(_) => Default::default(),
         };
-        Ok(LoadedTerrain { heights: Arc::new(heights), file })
+        let stored = match self.read(&voxear_terrain::file::heights_file(&path)) {
+            Ok(bytes) => Some(voxear_terrain::file::read_heights(&bytes).with_context(|| format!("reading {path}'s heights"))?),
+            Err(_) => None,
+        };
+        // Heights made from these layers are used as they are; any others are made again from the layers.
+        let heights = match stored {
+            Some((heights, made_from)) if made_from == file.shape_hash() || made_from == 0 => file.fit(heights),
+            Some((heights, _)) if matches!(self.source, Source::Bundles(..)) => file.fit(heights),
+            stored => {
+                let previous = stored.map(|(heights, _)| heights);
+                self.compose_terrain(&file, &rasters, previous.as_ref(), &voxear_terrain::composite::Compositor::default(), &voxear_terrain::composite::Dirty::All)
+            }
+        };
+        Ok(LoadedTerrain { heights: Arc::new(heights), file, rasters: Arc::new(rasters) })
     }
 
-    /// Heights as `file` says: made from its heightmap picture, if it names
-    /// one; else `old` fitted to its size and resolution; else flat.
-    pub fn terrain_heights(
+    /// The ground `file`'s layers make, with what its brushes painted: the
+    /// `dirty` tiles of `previous` made again, or all of them, by
+    /// `compositor`. Reads the pictures the layers name.
+    pub fn compose_terrain(
         &mut self,
         file: &voxear_terrain::file::TerrainFile,
-        old: Option<&voxear_terrain::Heightmap>,
+        rasters: &voxear_terrain::raster::Rasters,
+        previous: Option<&voxear_terrain::Heightmap>,
+        compositor: &voxear_terrain::composite::Compositor,
+        dirty: &voxear_terrain::composite::Dirty,
     ) -> voxear_terrain::Heightmap {
-        if let Some(picture) = &file.heightmap {
-            let read = self
-                .parse(picture)
-                .ok()
-                .and_then(|reference| reference.guid())
-                .and_then(|guid| self.db.get(guid).map(|entry| entry.path.clone()))
-                .context("no such picture")
-                .and_then(|path| self.read(&path))
-                .and_then(|bytes| voxear_terrain::import::Greys::from_picture(&bytes));
-            match read {
-                Ok(greys) => return greys.heights(file, file.height),
-                Err(error) => tracing::warn!("could not read the heightmap {picture}: {error:#}"),
+        let pictures = self.terrain_pictures(file);
+        let find = |reference: &str| pictures.get(reference).cloned();
+        let sources = voxear_terrain::composite::Sources { pictures: &find, rasters };
+        compositor.composite(file, &sources, previous, dirty)
+    }
+
+    /// Every picture `file`'s layers name, read once, by the reference the
+    /// layer has.
+    pub fn terrain_pictures(
+        &mut self,
+        file: &voxear_terrain::file::TerrainFile,
+    ) -> HashMap<String, Arc<voxear_terrain::import::Greys>> {
+        let mut found = HashMap::new();
+        for layer in &file.layers {
+            let (voxear_terrain::layers::LayerKind::Import { picture: Some(reference), .. }
+            | voxear_terrain::layers::LayerKind::Stamp { picture: Some(reference), .. }) = &layer.kind
+            else {
+                continue;
+            };
+            if found.contains_key(reference) {
+                continue;
+            }
+            if let Some(greys) = self.terrain_picture(reference) {
+                found.insert(reference.clone(), greys);
             }
         }
-        match old {
-            Some(old) => file.fit(old.clone()),
-            None => file.flat(),
+        found
+    }
+
+    /// The greys of the picture `reference` names, read once.
+    fn terrain_picture(&mut self, reference: &str) -> Option<Arc<voxear_terrain::import::Greys>> {
+        let guid = self.parse(reference).ok().and_then(|parsed| parsed.guid())?;
+        if let Some(kept) = self.terrain_greys.get(&guid) {
+            return kept.clone();
         }
+        let read = self
+            .db
+            .get(guid)
+            .map(|entry| entry.path.clone())
+            .context("no such picture")
+            .and_then(|path| self.read(&path))
+            .and_then(|bytes| voxear_terrain::import::Greys::from_picture(&bytes))
+            .map(Arc::new);
+        let kept = read.map_err(|error| tracing::warn!("could not read the heightmap {reference}: {error:#}")).ok();
+        self.terrain_greys.insert(guid, kept.clone());
+        kept
     }
 
     /// Forgets a terrain, read again when next asked for, as after it was
@@ -1099,20 +1148,24 @@ impl Content {
         self.terrains.remove(&guid);
     }
 
-    /// Keeps `heights` and `file` as the terrain at `guid`'s, as after the
-    /// editor changed them, so what asks for it next gets these, and marks
-    /// it to be written, unless that is how it is already.
+    /// Keeps `heights`, `file` and `rasters` as the terrain at `guid`'s, as
+    /// after the editor changed them, so what asks for it next gets these,
+    /// and marks it to be written, unless that is how it is already.
     pub fn keep_terrain(
         &mut self,
         guid: AssetGuid,
         file: &voxear_terrain::file::TerrainFile,
         heights: &Arc<voxear_terrain::Heightmap>,
+        rasters: &Arc<voxear_terrain::raster::Rasters>,
     ) {
         let kept = self.terrains.get(&guid).and_then(Option::as_ref);
-        if kept.is_some_and(|kept| kept.file == *file && Arc::ptr_eq(&kept.heights, heights)) {
+        let same = |kept: &LoadedTerrain| {
+            kept.file == *file && Arc::ptr_eq(&kept.heights, heights) && Arc::ptr_eq(&kept.rasters, rasters)
+        };
+        if kept.is_some_and(|kept| same(kept)) {
             return;
         }
-        let loaded = LoadedTerrain { file: file.clone(), heights: heights.clone() };
+        let loaded = LoadedTerrain { file: file.clone(), heights: heights.clone(), rasters: rasters.clone() };
         self.terrains.insert(guid, Some(Arc::new(loaded)));
         self.unsaved_terrains.insert(guid);
     }

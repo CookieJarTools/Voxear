@@ -284,6 +284,8 @@ pub struct Editor {
     /// and the Obj as it was when a drag of one began, for undo.
     field_handles: FieldHandles,
     path_handles: PathHandles,
+    /// The selected Terrain's brush and layer handles (see `terrain_tools`).
+    terrain_tools: crate::terrain_tools::TerrainTools,
     field_drag_start: Option<ObjState>,
     /// The handles behaviours' gizmos show for tools of their own.
     script_handles: ScriptHandles,
@@ -599,6 +601,7 @@ impl Editor {
             tools: SceneTools::new(),
             field_handles: FieldHandles::default(),
             path_handles: PathHandles::default(),
+            terrain_tools: Default::default(),
             field_drag_start: None,
             script_handles: ScriptHandles::default(),
             hovered_obj: None,
@@ -1510,6 +1513,12 @@ impl Editor {
             } else if let Some(owner) = self.script_handles.begin(&camera, point) {
                 // The gizmos' own handles may be on any Obj, and are dragged while playing too.
                 self.field_drag_start = ObjState::of(world, owner);
+            } else if let Some(entity) = editing.filter(|_| self.terrain_tools.is_hovered()) {
+                // A stroke may add a sculpt layer as it starts, so the step starts before.
+                let before = ObjState::of(world, entity);
+                if self.terrain_tools.begin(&mut self.game, &camera, entity, point, (self.shift, self.control)) {
+                    self.field_drag_start = before;
+                }
             } else if let Some(entity) = editing {
                 // A Path's dots add or take away points as they are taken, so the step starts before.
                 let before = ObjState::of(world, entity);
@@ -1542,6 +1551,11 @@ impl Editor {
         {
             self.script_handles.drag_to(&camera, point, (self.control, self.tools.snap));
         }
+        if self.terrain_tools.is_dragging()
+            && let Some(point) = point
+        {
+            self.terrain_tools.drag_to(&mut self.game, &camera, point, self.shift);
+        }
         if std::mem::take(&mut self.released_handle) {
             self.end_drag();
         }
@@ -1556,6 +1570,9 @@ impl Editor {
             self.path_handles.hover(world, &camera, editing, over_field.filter(|_| !self.field_handles.is_hovered()));
             let free = !self.field_handles.is_hovered() && !self.path_handles.is_hovered();
             self.script_handles.hover(&camera, over_field.filter(|_| free));
+            let free = free && !self.script_handles.is_hovered();
+            self.terrain_tools.hover(&self.game, &camera, editing, over_field.filter(|_| free));
+            let world = &self.game.engine.world;
             let markers = self.markers(self.scene.show_gizmos);
             self.hovered_obj = over.and_then(|point| pick(world, renderer, &camera, point, markers));
             // Letting go of a box is not also a click.
@@ -1573,6 +1590,7 @@ impl Editor {
         }
         shapes.extend(self.field_handles.shapes(world, self.inspector.types(), &camera, editing));
         shapes.extend(self.path_handles.shapes(world, &camera, editing));
+        shapes.extend(self.terrain_tools.shapes(&self.game, &camera, editing));
         shapes.extend(self.script_handles.shapes(&camera));
         shapes.extend(self.selection_shapes(renderer, &camera));
         shapes.extend(self.tools.shapes(world, renderer, &camera, self.selected()));
@@ -1620,6 +1638,7 @@ impl Editor {
     /// Lets go of a handle; the drag is one step to undo.
     fn end_drag(&mut self) {
         let held = self.field_handles.end().or_else(|| self.script_handles.end()).or_else(|| self.path_handles.end());
+        let held = held.or_else(|| self.terrain_tools.end());
         if let Some(entity) = held {
             return self.end_field_drag(entity);
         }
@@ -1822,6 +1841,9 @@ impl Editor {
             }
             RowAction::InsertLodLevel(at) => {
                 props::insert_lod_level(&mut self.game, entity, at);
+            }
+            RowAction::AddTerrainLayer(kind) => {
+                crate::terrain_props::add_layer(&mut self.game, entity, kind);
             }
             RowAction::DeleteLodLevel(at) => {
                 props::delete_lod_level(&mut self.game.engine.world, entity, at);
@@ -2186,7 +2208,8 @@ impl Editor {
             let over_handle = self.hovered_handle.is_some()
                 || self.field_handles.is_hovered()
                 || self.path_handles.is_hovered()
-                || self.script_handles.is_hovered();
+                || self.script_handles.is_hovered()
+                || self.terrain_tools.is_hovered();
             if pressed && over_handle && self.over_viewport() {
                 self.pressed_handle = self.pointer.map(|(x, y)| [x / self.scale, y / self.scale]);
                 return true;
@@ -2195,7 +2218,8 @@ impl Editor {
             let dragging = self.tools.is_dragging()
                 || self.field_handles.is_dragging()
                 || self.path_handles.is_dragging()
-                || self.script_handles.is_dragging();
+                || self.script_handles.is_dragging()
+                || self.terrain_tools.is_dragging();
             if !pressed && (dragging || self.pressed_handle.is_some()) {
                 self.released_handle = true;
                 return true;
@@ -2261,6 +2285,23 @@ impl Editor {
         {
             // Q, W, E and R pick the tool, as in Unity.
             self.ui.set_segment(self.scene.tool, index);
+            return true;
+        }
+        if let WindowEvent::KeyboardInput { event: key, .. } = event
+            && key.state == ElementState::Pressed
+            && !self.control
+            && !self.ui.wants_keyboard()
+            && let winit::keyboard::Key::Character(text) = &key.logical_key
+            && matches!(text.as_str(), "[" | "]" | "{" | "}")
+            && crate::terrain_props::ui(&self.game.engine.world).tool == crate::terrain_props::TerrainTool::Sculpt
+        {
+            // [ and ] size the terrain brush, and with Shift its strength, as painting tools do.
+            let brush = &mut crate::terrain_props::ui_mut(&mut self.game.engine.world).brush;
+            let up = matches!(text.as_str(), "]" | "}");
+            match self.shift || matches!(text.as_str(), "{" | "}") {
+                true => brush.strength = (brush.strength + if up { 0.1 } else { -0.1 }).clamp(0.0, 1.0),
+                false => brush.radius = (brush.radius * if up { 1.25 } else { 0.8 }).clamp(0.1, 1000.0),
+            }
             return true;
         }
         if let WindowEvent::KeyboardInput { event: key, .. } = event

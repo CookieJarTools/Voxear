@@ -186,6 +186,11 @@ pub const INSTANCE_NO_SHADOW: u32 = 4;
 /// it, as they would through a flat card.
 pub const INSTANCE_IMPOSTOR: u32 = 16;
 
+/// An instance only rays see, the GI's and the sea floor's: a terrain's
+/// coarse mesh for them (see `terrain`), which the raster passes leave out,
+/// as they draw the ground itself.
+pub const INSTANCE_RAYS_ONLY: u32 = 32;
+
 pub const LIGHT_POINT: u32 = 0;
 pub const LIGHT_SPOT: u32 = 1;
 /// Area lights, shining from one face along their direction.
@@ -835,6 +840,11 @@ pub struct GpuBuffers {
     pub skin_matrices: u64,
     /// This frame's UI panels in this view (see `ui_panels`).
     pub ui_panels: u64,
+    /// This view's terrains: where each draw list's patches start and how
+    /// many it has, each terrain's record, and the patches (see `terrain`).
+    pub terrain_lists: u64,
+    pub terrains: u64,
+    pub terrain_patches: u64,
 }
 
 /// A UI panel as `uiPanelVertex` in `shaders/ui.slang` draws it: its top

@@ -292,11 +292,13 @@ pub struct RenderFeatures {
     pub vegetation: bool,
     /// Oceans, Pools and Streams.
     pub water: bool,
+    /// Terrains.
+    pub terrain: bool,
 }
 
 impl Default for RenderFeatures {
     fn default() -> Self {
-        Self { vegetation: true, water: true }
+        Self { vegetation: true, water: true, terrain: true }
     }
 }
 
@@ -698,7 +700,7 @@ pub fn extract(
 
 /// Inward-facing side and near planes of an infinite perspective frustum.
 /// Whether `entity` or an Obj it is under is `Hidden`.
-fn hidden(world: &World, entity: Entity) -> bool {
+pub(crate) fn hidden(world: &World, entity: Entity) -> bool {
     let mut at = Some(entity);
     // As deep as any hierarchy goes, and no further should one loop.
     for _ in 0..64 {

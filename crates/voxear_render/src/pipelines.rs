@@ -142,6 +142,13 @@ pub struct Pipelines {
     /// Moves skinned parts' vertices by their bones (see `skinning`).
     pub skinning: vk::Pipeline,
     pub shadow_diced: vk::Pipeline,
+    /// Terrain's patches (see `terrain`): shaded, as depth, shaded over the
+    /// depth passes' depth, as edges, and into the sun's cascades.
+    pub terrain_forward: vk::Pipeline,
+    pub terrain_depth: vk::Pipeline,
+    pub terrain_forward_on_depth: vk::Pipeline,
+    pub terrain_wireframe: vk::Pipeline,
+    pub terrain_shadow: vk::Pipeline,
     pub dry_mesh: vk::Pipeline,
     pub water_wall: vk::Pipeline,
     /// Under water: what the view shows dimmed, then the water's own light.
@@ -211,6 +218,7 @@ impl Pipelines {
             module("smoke")?,
             module("dice")?,
             module("skinning")?,
+            module("terrain")?,
         ];
         let [
             cull,
@@ -234,6 +242,7 @@ impl Pipelines {
             smoke,
             dice,
             skinning,
+            terrain,
         ] = &modules;
         // Only a GPU with mesh shaders can load their modules.
         let meshlets = match gpu.mesh_shader {
@@ -503,6 +512,42 @@ impl Pipelines {
                 depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
                 ..GraphicsPipelineDesc::new("Opaque (diced)", dice, c"dicedVertex", c"fragmentMain")
             })?,
+            terrain_forward: graphics(&GraphicsPipelineDesc {
+                color_formats: scene_formats,
+                depth_format: Some(DEPTH_FORMAT),
+                depth_write: true,
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                ..GraphicsPipelineDesc::new("Opaque (terrain)", terrain, c"terrainVertex", c"fragmentMain")
+            })?,
+            terrain_depth: graphics(&GraphicsPipelineDesc {
+                color_formats: &[SURFACE_FORMAT],
+                depth_format: Some(DEPTH_FORMAT),
+                depth_write: true,
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                ..GraphicsPipelineDesc::new("Depth (terrain)", terrain, c"terrainVertex", c"depthFragment")
+            })?,
+            terrain_forward_on_depth: graphics(&GraphicsPipelineDesc {
+                color_formats: scene_formats,
+                depth_format: Some(DEPTH_FORMAT),
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                ..GraphicsPipelineDesc::new("Opaque (terrain)", terrain, c"terrainVertex", c"fragmentMain")
+            })?,
+            terrain_wireframe: graphics(&GraphicsPipelineDesc {
+                color_formats: scene_formats,
+                depth_format: Some(DEPTH_FORMAT),
+                depth_write: true,
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                cull: vk::CullModeFlags::NONE,
+                polygon_mode: vk::PolygonMode::LINE,
+                ..GraphicsPipelineDesc::new("Wireframe (terrain)", terrain, c"terrainVertex", c"fragmentMain")
+            })?,
+            terrain_shadow: graphics(&GraphicsPipelineDesc {
+                // Ground seen edge on by the sun still casts.
+                cull: vk::CullModeFlags::NONE,
+                depth_bias: Some(SHADOW_BIAS),
+                depth_clamp: true,
+                ..GraphicsPipelineDesc::depth_only("Shadows (terrain)", terrain, c"terrainShadowVertex", DEPTH_FORMAT)
+            })?,
             // The sea's spray: particles that read the waves and the foam, so with the sea's shaders.
             sea_spray: graphics(&GraphicsPipelineDesc {
                 color_formats: hdr,
@@ -670,6 +715,11 @@ impl Pipelines {
             self.forward_on_depth_diced,
             self.skinning,
             self.shadow_diced,
+            self.terrain_forward,
+            self.terrain_depth,
+            self.terrain_forward_on_depth,
+            self.terrain_wireframe,
+            self.terrain_shadow,
             self.dry_mesh,
             self.water_wall,
             self.underwater,

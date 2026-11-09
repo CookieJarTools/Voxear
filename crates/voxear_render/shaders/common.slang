@@ -287,6 +287,8 @@ static const uint INSTANCE_LOD_SCREEN = 2;
 static const uint INSTANCE_NO_SHADOW = 4;
 // A plant's impostor, its quad turned to the camera (impostor.slang).
 static const uint INSTANCE_IMPOSTOR = 16;
+// Only rays see it: a terrain's coarse mesh for the GI (src/terrain.rs).
+static const uint INSTANCE_RAYS_ONLY = 32;
 
 static const uint LIGHT_POINT = 0;
 static const uint LIGHT_SPOT = 1;
@@ -893,6 +895,37 @@ struct ParticleSystem
     uint4 curveCounts;
 };
 
+// A terrain as its patches are drawn (src/terrain.rs, shaders/terrain.slang).
+static const uint TERRAIN_TILE_QUADS = 256;
+static const uint TERRAIN_TILE_SAMPLES = 257;
+static const uint TERRAIN_TILE_LEN = 257 * 257;
+static const uint TERRAIN_PATCH_QUADS = 32;
+static const uint TERRAIN_MAX_LEVELS = 12;
+
+struct Terrain
+{
+    float3 corner;
+    float spacing;
+    // Each tile's heights, TERRAIN_TILE_LEN a tile, row after row of tiles.
+    float* heights;
+    uint2 tiles;
+    uint material;
+    // An instance of its own, for what the fragment shaders read of one.
+    uint anchor;
+    float uvScale;
+    uint levels;
+    // Each level's [start, end] its vertices slide onto the next level's grid over.
+    float2 morph[TERRAIN_MAX_LEVELS];
+};
+
+// A patch: its corner in the terrain's space, how wide, and level | terrain << 8.
+struct TerrainPatch
+{
+    float2 origin;
+    float size;
+    uint packed;
+};
+
 struct Buffers
 {
     Instance* instances;
@@ -961,6 +994,10 @@ struct Buffers
     float4* skinMatrices;
     // This frame's UI panels in this view (ui.slang).
     UiPanel* uiPanels;
+    // This view's terrains: each draw list's first patch, then each list's count; the terrains; their patches.
+    uint* terrainLists;
+    Terrain* terrains;
+    TerrainPatch* terrainPatches;
 };
 
 struct Push

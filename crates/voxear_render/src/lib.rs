@@ -47,6 +47,7 @@ mod mist;
 mod skeleton;
 mod skinning;
 mod smoke;
+mod terrain;
 mod payload;
 mod pipelines;
 mod post;
@@ -117,6 +118,7 @@ pub use seasons::{Leaves, Season, SeasonLook, Seasons};
 pub use particles::{EmitShape, ParticleBlend, ParticlePlayback, ParticleSystem};
 pub use mist::{MAX_MIST_POINTS, MIST_RISE, Mist, MistTrail};
 pub use smoke::{SMOKE_GRID, Smoke, SmokeBlast, SmokeCue, SmokeFill, SmokeHoles, SmokeShot, smoke_origin};
+pub use terrain::TerrainLook;
 pub use wind::{WindShape, WindZone};
 pub use ocean::{Ocean, OceanSampler, SeaEasing, SeaNow, SeaState, Weather, WindSource};
 pub use water_bodies::{DryArea, DryShape, Liquid, Pool, Stream, StreamPoint, stream_over};
@@ -321,6 +323,8 @@ struct FrameBuffers {
     mist_points: Buffer,
     /// This view's UI panels (see `ui_panels`).
     ui_panels: Buffer,
+    /// This view's terrains and the patches it draws of them (see `terrain`).
+    terrain: Buffer,
     /// Dicing's lists, counts and draws (see `dice`).
     diced_instances: Buffer,
     dice_counts: Buffer,
@@ -399,6 +403,8 @@ pub struct Renderer {
     impostor_bakes: impostors::Bakes,
     /// This frame's skinned parts, posed once for every view.
     skinning: skinning::Skinning,
+    /// Every terrain's heights on the GPU (see `terrain`).
+    terrains: terrain::Terrains,
     gpu_decompression: bool,
     /// Meshlet culling draws with task and mesh shaders, where the GPU has them.
     mesh_shaders: bool,
@@ -475,6 +481,7 @@ impl Renderer {
             previews: previews::Previews::default(),
             impostor_bakes: impostors::Bakes::default(),
             skinning: skinning::Skinning::default(),
+            terrains: terrain::Terrains::default(),
             gpu_decompression: true,
             mesh_shaders: true,
             clear: [0.0, 0.0, 0.0, 1.0],
@@ -1064,6 +1071,9 @@ impl Renderer {
         self.last_time = Some(time);
         let frame_index = self.frame_index;
         self.frame_index += 1;
+        // Every terrain's tiles that changed, staged to copy in before any view draws them.
+        let assets = self.assets.as_mut().expect("assets live until drop");
+        self.terrains.prepare(&self.gpu, assets, &mut self.frames, world, frame_index)?;
 
         let recording = profile_marker!("Record Passes").scope();
         let Self {
@@ -1079,6 +1089,8 @@ impl Renderer {
             previews,
             impostor_bakes,
             skinning,
+            terrains,
+            frames,
             frame_debugger,
             captures,
             clear,
@@ -1091,6 +1103,7 @@ impl Renderer {
         let mut fg = graph.begin(gpu, frame.slot);
         impostor_bakes.record(&mut fg, pipelines, assets, gpu, bindless)?;
         skinning.record(&mut fg, *pipelines, frame.slot);
+        let terrain_draws = terrains.record(&mut fg, frames);
         let ui = &ui_buffers[frame.slot];
         let ui_push = Push { buffers: ui.pointers.address, ..Push::default() };
         // UI panels in the world first, into their textures, for every view to draw.
@@ -1146,6 +1159,7 @@ impl Renderer {
                 software_rays,
                 posed: skinning.posed.clone(),
                 panels: panel_textures.clone(),
+                terrains: terrain_draws.clone(),
             };
             let recorded =
                 view.record(&mut fg, (gpu, bindless, pipelines, assets), world, &setup, output, frame.slot)?;
@@ -1369,6 +1383,7 @@ impl Drop for Renderer {
         let gpu = &self.gpu;
         self.pipelines.destroy(gpu);
         self.skinning.destroy(gpu);
+        self.terrains.destroy(gpu);
         for view in std::mem::take(&mut self.views) {
             view.retire(&mut self.frames);
         }
@@ -1472,6 +1487,8 @@ struct ViewSetup {
     posed: std::sync::Arc<HashMap<scene::Owner, skinning::Posed>>,
     /// This frame's UI panels' textures, which each view draws its panels with.
     panels: Vec<ui_panels::PanelTexture>,
+    /// This frame's terrains, as every view draws them.
+    terrains: std::sync::Arc<[terrain::Drawn]>,
 }
 
 /// What a view gives the frame after it: its push constants, which the UI
@@ -1556,6 +1573,7 @@ impl View {
                 mists,
                 mist_points,
                 ui_panels,
+                terrain,
                 diced_instances,
                 dice_counts,
                 dice_splits,
@@ -1571,8 +1589,18 @@ impl View {
             let all = [frame, instances, lights, draws, draw_count, draw_instances, stats, clusters, pointers];
             let meshlets = [meshlet_draws, meshlet_draw_instances, meshlet_work];
             let diced = [diced_instances, dice_counts, dice_splits, dice_patches, dice_draws];
-            let debug =
-                [debug_lines, debug_triangles, particle_systems, smokes, smoke_cells, smoke_holes, mists, mist_points, ui_panels];
+            let debug = [
+                debug_lines,
+                debug_triangles,
+                particle_systems,
+                smokes,
+                smoke_cells,
+                smoke_holes,
+                mists,
+                mist_points,
+                ui_panels,
+                terrain,
+            ];
             for buffer in all.into_iter().chain(debug).chain([sky_light, stats_readback]).chain(meshlets).chain(diced) {
                 frames.retire(Retired::Buffer(buffer));
             }
@@ -1790,6 +1818,8 @@ impl View {
         if extracted.ocean.is_some_and(|(_, level, _)| camera.y < level) {
             extracted.post.fog.enabled = false;
         }
+        // Each terrain's meshes for rays, among the Objs the GI traces and the sea floor is drawn from.
+        terrain::add_proxies(&setup.terrains, &mut extracted);
         if features.vegetation {
             self.foliage.gather(world, camera, &mut extracted, &|mesh| assets.mesh_sphere(mesh), &assets.impostors);
         }
@@ -1835,6 +1865,9 @@ impl View {
             false => None,
         };
         let buffers = &self.buffers[slot];
+        // The terrains' patches this view draws, for its camera and the sun's cascades.
+        let view_terrains =
+            terrain::gather(&setup.terrains, &extracted.frame, &extracted.entities, extracted.has_sun, &buffers.terrain);
         let color_usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
         let depth_usage = vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
         let hdr = fg.create_image(
@@ -2104,6 +2137,9 @@ impl View {
                 skins: assets.skins.address,
                 skin_matrices: 0,
                 ui_panels: buffers.ui_panels.address,
+                terrain_lists: terrain::addresses(&buffers.terrain)[0],
+                terrains: terrain::addresses(&buffers.terrain)[1],
+                terrain_patches: terrain::addresses(&buffers.terrain)[2],
             }],
         );
         buffers.instances.write(0, &extracted.instances[..instance_count]);
@@ -2189,6 +2225,7 @@ impl View {
             smoke_noise: assets.smoke_noise.0,
             mists: mists.len() as u32,
             probes,
+            terrain: view_terrains,
         };
         let (under_water, particles, smoke) = passes::record(fg, &frame_setup, &targets, &draws);
         let post = post_passes::PostInput {
@@ -2382,6 +2419,7 @@ fn create_frame_buffers(gpu: &Gpu, prefix: &str, slot: usize) -> Result<FrameBuf
             storage,
             host,
         )?,
+        terrain: gpu.create_buffer(&format!("{prefix}terrains {slot}"), terrain::FRAME_SIZE, storage, host)?,
         diced_instances: gpu.create_buffer(
             &format!("{prefix}diced instances {slot}"),
             dice::MAX_DICED_INSTANCES * 4,

@@ -4077,6 +4077,7 @@ dependencies = [
  "voxear_rhi",
  "voxear_scene",
  "voxear_scripting",
+ "voxear_terrain",
  "voxear_ui",
  "winit",
 ]
@@ -4148,6 +4149,7 @@ dependencies = [
  "tracing",
  "voxear_ecs",
  "voxear_scene",
+ "voxear_terrain",
 ]
 
 [[package]]
@@ -4185,6 +4187,7 @@ dependencies = [
  "voxear_ecs",
  "voxear_rhi",
  "voxear_scene",
+ "voxear_terrain",
  "voxear_ui",
 ]
 

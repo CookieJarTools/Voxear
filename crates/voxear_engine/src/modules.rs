@@ -13,6 +13,7 @@
 //! vegetation = true
 //! water = false
 //! steam_audio = true
+//! terrain = true
 //! ```
 //!
 //! A project with no `[modules]` was made before modules existed, and has
@@ -29,12 +30,20 @@ pub enum Module {
     Vegetation,
     Water,
     SteamAudio,
+    Terrain,
 }
 
 impl Module {
     /// Every module, in the order Project Settings lists them.
-    pub const ALL: [Module; 6] =
-        [Module::Networking, Module::Guns, Module::Physics2D, Module::Vegetation, Module::Water, Module::SteamAudio];
+    pub const ALL: [Module; 7] = [
+        Module::Networking,
+        Module::Guns,
+        Module::Physics2D,
+        Module::Vegetation,
+        Module::Water,
+        Module::SteamAudio,
+        Module::Terrain,
+    ];
 
     /// Its key in `[modules]`.
     pub fn key(self) -> &'static str {
@@ -45,6 +54,7 @@ impl Module {
             Module::Vegetation => "vegetation",
             Module::Water => "water",
             Module::SteamAudio => "steam_audio",
+            Module::Terrain => "terrain",
         }
     }
 
@@ -57,6 +67,7 @@ impl Module {
             Module::Vegetation => "Vegetation",
             Module::Water => "Water",
             Module::SteamAudio => "Steam Audio",
+            Module::Terrain => "Terrain",
         }
     }
 
@@ -69,6 +80,7 @@ impl Module {
             Module::Vegetation => "Foliage, seasons and impostors",
             Module::Water => "Oceans, pools, streams and buoyancy",
             Module::SteamAudio => "Occlusion, sound paths and room reverb",
+            Module::Terrain => "Heightmap ground, its LODs and collision",
         }
     }
 
@@ -98,6 +110,7 @@ pub struct Modules {
     pub vegetation: bool,
     pub water: bool,
     pub steam_audio: bool,
+    pub terrain: bool,
 }
 
 impl Modules {
@@ -139,6 +152,7 @@ impl Modules {
             Module::Vegetation => &self.vegetation,
             Module::Water => &self.water,
             Module::SteamAudio => &self.steam_audio,
+            Module::Terrain => &self.terrain,
         }
     }
 
@@ -150,16 +164,19 @@ impl Modules {
             Module::Vegetation => &mut self.vegetation,
             Module::Water => &mut self.water,
             Module::SteamAudio => &mut self.steam_audio,
+            Module::Terrain => &mut self.terrain,
         }
     }
 }
 
 /// Puts a project's modules into a game's world: for its systems to ask,
-/// and for the renderer, which leaves out what vegetation and water draw
-/// without them.
+/// and for the renderer, which leaves out what vegetation, water and
+/// terrain draw without them.
 pub fn put(world: &mut voxear_ecs::World, modules: Modules) {
     world.insert_resource(modules);
-    world.insert_resource(voxear_render::RenderFeatures { vegetation: modules.vegetation, water: modules.water });
+    let features =
+        voxear_render::RenderFeatures { vegetation: modules.vegetation, water: modules.water, terrain: modules.terrain };
+    world.insert_resource(features);
 }
 
 /// Whether a world's game has a module: the project's choice, which the

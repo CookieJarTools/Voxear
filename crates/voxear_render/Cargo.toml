@@ -17,6 +17,7 @@ tracing.workspace = true
 raw-window-handle.workspace = true
 voxear_ecs.workspace = true
 voxear_scene.workspace = true
+voxear_terrain.workspace = true
 voxear_core.workspace = true
 voxear_ui.workspace = true
 voxear_assets.workspace = true

@@ -28,6 +28,7 @@ voxear_physics2d = { path = "crates/voxear_physics2d" }
 voxear_localization = { path = "crates/voxear_localization" }
 voxear_packages = { path = "crates/voxear_packages" }
 voxear_net = { path = "crates/voxear_net" }
+voxear_terrain = { path = "crates/voxear_terrain" }
 
 anyhow = "1"
 ash = "0.38"

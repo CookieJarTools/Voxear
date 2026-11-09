@@ -137,6 +137,9 @@ pub struct Frame {
     /// The GI's probes, whose rays are traced once the opaque passes are
     /// done; shading reads last frame's.
     pub probes: Option<ddgi::Probes>,
+    /// The terrains' patches in view and in the sun's cascades, drawn with
+    /// what was visible last frame, before the depth pyramid.
+    pub terrain: Option<crate::terrain::ViewTerrains>,
 }
 
 /// Records the frame's passes up to post-processing, and gives back the view
@@ -413,6 +416,9 @@ pub fn record(
             unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
         });
     }
+    if let (Some(atlas), Some(terrains)) = (targets.shadows, &frame.terrain) {
+        crate::terrain::record_shadows(fg, (pipelines, push), terrains, atlas);
+    }
     let diced_buffers: Vec<_> = shading_buffers
         .iter()
         .copied()
@@ -431,6 +437,9 @@ pub fn record(
             fg.add_pass("Depth (diced)", &images, &diced_buffers, move |ctx| {
                 diced_depth(ctx, pipelines.depth_diced, &draw_push, dice, (depth, surface));
             });
+            if let Some(terrains) = &frame.terrain {
+                crate::terrain::record_depth(fg, (pipelines, push), terrains, (depth, surface));
+            }
         }
         false => {
             fg.add_pass("Opaque (early)", &shading(ImageAccess::ColorAttachment), &shading_buffers, move |ctx| {
@@ -440,6 +449,12 @@ pub fn record(
             fg.add_pass("Opaque (diced)", &shading(ImageAccess::ColorAttachment), &diced_buffers, move |ctx| {
                 diced_opaque(ctx, pipelines.forward_diced, &shading_push, dice, scene);
             });
+            if let Some(terrains) = &frame.terrain {
+                let pipeline = if frame.wireframe { pipelines.terrain_wireframe } else { pipelines.terrain_forward };
+                let images = shading(ImageAccess::ColorAttachment);
+                let targets = (hdr, velocity, depth);
+                crate::terrain::record_opaque(fg, shading_push, pipeline, terrains, images, targets, &shading_buffers);
+            }
         }
     }
 
@@ -491,6 +506,12 @@ pub fn record(
             fg.add_pass("Opaque (diced)", &shading(ImageAccess::ColorAttachment), &diced_buffers, move |ctx| {
                 diced_opaque(ctx, pipelines.forward_on_depth_diced, &shading_push, dice, scene);
             });
+            if let Some(terrains) = &frame.terrain {
+                let pipeline = pipelines.terrain_forward_on_depth;
+                let images = shading(ImageAccess::ColorAttachment);
+                let targets = (hdr, velocity, depth);
+                crate::terrain::record_opaque(fg, shading_push, pipeline, terrains, images, targets, &shading_buffers);
+            }
         }
         false => fg.add_pass("Opaque (late)", &shading(ImageAccess::ColorAttachment), &shading_buffers, move |ctx| {
             opaque(ctx, forward, &Push { list: LIST_LATE, ..shading_push }, indirect, scene, Clear::default());

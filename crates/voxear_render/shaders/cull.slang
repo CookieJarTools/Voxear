@@ -234,6 +234,11 @@ void cullMain(uint3 id : SV_DispatchThreadID)
     }
 
     Instance instance = buffers()->instances[id.x];
+    // A terrain's mesh for rays: the ground is drawn by its own passes (terrain.slang).
+    if ((instance.flags & INSTANCE_RAYS_ONLY) != 0)
+    {
+        return;
+    }
     Mesh mesh = buffers()->meshes[instance.mesh];
     float3 center = transform(instance.model, float4(mesh.center, 1.0)).xyz;
     float scale = max(length(instance.model.c0.xyz), max(length(instance.model.c1.xyz), length(instance.model.c2.xyz)));

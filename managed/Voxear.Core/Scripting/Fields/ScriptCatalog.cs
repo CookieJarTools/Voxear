@@ -135,6 +135,10 @@ internal static class ScriptCatalog
 		}
 		WriteFields(json, type, FieldDefaults.Create(type), types, drawers);
 		WriteButtons(json, type);
+		if (drawers.Inspector(type) is { } inspector)
+		{
+			json.WriteString("inspector", inspector.FullName);
+		}
 		json.WriteEndObject();
 	}
 

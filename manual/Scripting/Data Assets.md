@@ -20,7 +20,7 @@ A Definition's fields follow the rules a behaviour's do: public fields, or priva
 
 Right-click in the Project panel and choose **New Data Asset…**. The list shows each Definition in your scripts, in the folders its `[CreateAsset]` path names. A Definition without `[CreateAsset]` is under **Scripts**, in a folder for its namespace, and `[CreateAsset("")]` leaves one out. Pick one, and a new `.asset` file named after it, such as `New Weapon Stats.asset`, appears in the folder, ready to rename.
 
-Select the file and the Inspector shows its fields, as it shows a behaviour's, under the file's name and its Definition's. Each change goes into the file as you make it, so a data asset has nothing to save, and nothing to undo.
+Select the file and the Inspector shows its fields, as it shows a behaviour's, under the file's name and its Definition's. Each change goes into the file as you make it, so a data asset has nothing to save, and nothing to undo. To draw a Definition's data assets your own way, write a [[Data Asset Inspectors|data asset inspector]].
 
 The file names its Definition by its full name, then the values that differ from the script's:
 

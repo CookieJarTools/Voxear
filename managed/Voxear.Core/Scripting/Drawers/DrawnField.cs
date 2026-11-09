@@ -5,7 +5,7 @@ namespace Voxear.Scripting;
 
 /// <summary>
 /// A field the Inspector draws with drawers: the type of its value, its drawers, outermost first, and the Obj it
-/// is on. A whole behaviour, drawn by its inspector, has the behaviour's type.
+/// is on. A whole behaviour or data asset, drawn by its inspector, has its type.
 /// </summary>
 internal sealed class DrawnField
 {
@@ -22,6 +22,6 @@ internal sealed class DrawnField
 
 	public Obj Obj { get; }
 
-	/// <summary>Whether it is a whole behaviour, drawn by its inspector, rather than one of its fields.</summary>
-	public bool IsBehaviour => Drawers.Count == 1 && DrawerTable.Inspects(Drawers[0].GetType()) != null;
+	/// <summary>Whether it is a whole behaviour or data asset, drawn by its inspector, rather than one of its fields.</summary>
+	public bool IsWhole => Drawers.Count == 1 && DrawerTable.Inspects(Drawers[0].GetType()) != null;
 }

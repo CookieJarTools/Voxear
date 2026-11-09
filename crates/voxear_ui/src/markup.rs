@@ -21,8 +21,9 @@
 //! `DockSpace` (of `DockPanel`s with `id`, `title` and `icon`, and `layout`),
 //! `Segmented` (of `Segment`s with `text` and `icon`, and `value`), `Icon`
 //! (`icon`, one of [`crate::ICONS`]), `Keymap` (a device drawn as its keys, given them from code with
-//! [`Ui::set_keymap`]) and `Image` (given a texture from code
-//! with [`Ui::set_image`]), each taking `name`, `class`
+//! [`Ui::set_keymap`]), `Image` (given a texture from code
+//! with [`Ui::set_image`]) and `FieldRow` (`field`, a panel the editor's
+//! Inspector puts that field's rows in), each taking `name`, `class`
 //! (several, separated by spaces), `style` (declarations that win over
 //! sheets) and `tooltip` (what shows when the pointer rests on it, which
 //! may be `@key` too). A label's or button's text is its content, or its `text`
@@ -135,6 +136,14 @@ impl Ui {
                     let node = self.add(parent, Element::new(Kind::Panel, Style::column()));
                     self.attributes(node, child, &["name", "class", "style"], builder);
                     self.build_children(node, child, builder)?;
+                }
+                // Where an inspector built from markup shows one of its fields, as `FieldRow` in Voxear.Core.
+                "FieldRow" => {
+                    let field = child.attribute("field").ok_or_else(|| builder.error(child, "<FieldRow> needs field"))?;
+                    let node = self.add(parent, Element::new(Kind::Panel, Style::column()));
+                    self.add_class(node, "field-row");
+                    self.add_class(node, &format!("field-row:{field}"));
+                    self.attributes(node, child, &["name", "class", "style", "field"], builder);
                 }
                 "ScrollView" => {
                     let node = self.add(parent, Element::new(Kind::ScrollView, Style::column().scroll()));

@@ -8,7 +8,7 @@ namespace Voxear.Scripting;
 /// The drawers an assembly holds, and which of them draw a field: one for each of its attributes that has one, in
 /// the order they are written, then the one for its type. A list's drawers draw each of its items, so they are
 /// matched against the item's type. The catalog writes each field's drawers by name, outermost first, and each
-/// behaviour's inspector.
+/// behaviour's and Definition's inspector.
 /// </summary>
 internal sealed class DrawerTable
 {
@@ -51,12 +51,12 @@ internal sealed class DrawerTable
 		return null;
 	}
 
-	/// <summary>The behaviour type an inspector draws, if it is a BehaviourInspector.</summary>
+	/// <summary>The behaviour or Definition type an inspector draws, if it is a BehaviourInspector or a DefinitionInspector.</summary>
 	public static Type? Inspects(Type inspector)
 	{
 		for (var type = inspector.BaseType; type != null; type = type.BaseType)
 		{
-			if (FieldValues.IsGeneric(type, typeof(BehaviourInspector<>)))
+			if (FieldValues.IsGeneric(type, typeof(BehaviourInspector<>)) || FieldValues.IsGeneric(type, typeof(DefinitionInspector<>)))
 			{
 				return type.GetGenericArguments()[0];
 			}
@@ -64,7 +64,7 @@ internal sealed class DrawerTable
 		return null;
 	}
 
-	/// <summary>The inspector that draws a behaviour: its own type's, or the nearest base class's.</summary>
+	/// <summary>The inspector that draws a behaviour or a Definition: its own type's, or the nearest base class's.</summary>
 	public Type? Inspector(Type behaviour)
 	{
 		for (var type = behaviour; type != null; type = type.BaseType)

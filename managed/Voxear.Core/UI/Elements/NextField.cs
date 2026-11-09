@@ -2,7 +2,8 @@ namespace Voxear;
 
 /// <summary>
 /// Where whatever would show without your drawer goes, inside it: the field's next drawer, the field's usual
-/// control, or for a BehaviourInspector the behaviour's usual fields, as an element named "next" does in markup.
+/// control, or for a BehaviourInspector or a DefinitionInspector the usual fields no FieldRow holds, as an element
+/// named "next" does in markup.
 /// It is what Unity's PropertyField and DrawDefaultInspector give, as a place rather than a call:
 /// <code>
 /// protected override void Build(UiElement root)

@@ -221,6 +221,8 @@ internal static class ScriptCatalogTests
 		Check.True(fields["Damage"].GetProperty("default").GetDouble() == 10 && Kind(fields["Shots"]) == "list", "fields as a new one starts them");
 		var behaviours = document.RootElement.GetProperty("behaviours").EnumerateArray().Select(b => b.GetProperty("name").GetString());
 		Check.True(!behaviours.Contains("Voxear.Tests.TestWeaponStats"), "a Definition is not a behaviour");
+		Check.True(stats.GetProperty("inspector").GetString() == "Voxear.Tests.TestWeaponStatsInspector", "its DefinitionInspector");
+		Check.True(DrawerTable.Inspects(typeof(TestWeaponStatsInspector)) == typeof(TestWeaponStats), "which draws it whole");
 	}
 
 	[Test]

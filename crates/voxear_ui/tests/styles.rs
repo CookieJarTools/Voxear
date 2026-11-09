@@ -266,3 +266,12 @@ fn a_moved_element_is_styled_as_its_new_place_says() {
     ui.move_into(cold, label);
     assert_eq!(ui.parent(cold), Some(root), "nothing moves into what is inside it");
 }
+
+#[test]
+fn a_field_row_in_markup_is_a_panel_named_for_its_field_by_class() {
+    let mut ui = Ui::new();
+    let built = load(&mut ui, r#"<vui><FieldRow field="Recoil.Kick" class="wide" /></vui>"#, &[]).unwrap();
+    let row = ui.children(built)[0];
+    assert_eq!(ui.classes(row), ["field-row", "field-row:Recoil.Kick", "wide"]);
+    assert!(load(&mut ui, "<vui><FieldRow /></vui>", &[]).is_err(), "a FieldRow names its field");
+}

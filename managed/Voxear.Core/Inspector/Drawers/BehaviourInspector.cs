@@ -7,7 +7,8 @@ namespace Voxear;
 /// Draws a whole behaviour in the Inspector, in place of its fields, as Unity's custom Editor does:
 /// <c>class TowerInspector : BehaviourInspector&lt;Tower&gt;</c>. It draws behaviours of type T and of types derived
 /// from it, unless they have an inspector of their own. Build its elements in Build, with a NextField where the
-/// behaviour's usual fields go, or describe them in Markup, with an element named "next".
+/// behaviour's usual fields go, or a FieldRow for one of them, or describe them in Markup, with an element named
+/// "next".
 /// <para>
 /// Target is a copy of the behaviour made from the scene's values, on its Obj, and whatever the handlers change in
 /// its fields is saved in the scene, as one step to undo. It runs in edit mode; while the game plays, the behaviour

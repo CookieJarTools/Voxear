@@ -390,6 +390,11 @@ pub struct Inspector {
     /// are built in, which goes into the inspector's `next` element, or out
     /// of sight when it has none.
     inspected: Vec<(String, NodeId)>,
+    /// Each behaviour its inspector draws, with the slot the inspector is
+    /// built in, where `FieldRow`s are looked for, and each of its fields'
+    /// panels by its path, which a `FieldRow` naming it takes.
+    inspector_slots: Vec<(String, NodeId)>,
+    field_blocks: Vec<(String, Vec<Step>, NodeId)>,
     /// The Prefab row's buttons and the prefab's path, for a prefab
     /// instance or an Obj in one.
     prefab_buttons: Option<PrefabButtons>,
@@ -466,6 +471,8 @@ impl Inspector {
             collections: Vec::new(),
             drawers: FieldDrawers::new(owner),
             inspected: Vec::new(),
+            inspector_slots: Vec::new(),
+            field_blocks: Vec::new(),
             prefab_buttons: None,
             overrides: Vec::new(),
             copied: None,
@@ -796,6 +803,41 @@ impl Inspector {
             let offered = offered(&self.answers, &prop, &meta);
             self.rows[index].control = control(ui, next, &shown, editable, (&meta, offered));
         }
+        self.fill_field_rows(ui);
+    }
+
+    /// Puts the rows of each field a `FieldRow` names, in an inspector that
+    /// draws a whole behaviour or data asset, in that `FieldRow`, once the
+    /// inspector has built it: out of the usual fields, wherever they are.
+    fn fill_field_rows(&mut self, ui: &mut Ui) {
+        for (behaviour, slot) in &self.inspector_slots {
+            let mut wanted = Vec::new();
+            field_rows(ui, *slot, &mut wanted);
+            for (row, path) in wanted {
+                let named: Vec<&str> = path.split('.').collect();
+                let block = self.field_blocks.iter().find(|(of, steps, _)| of == behaviour && same_path(steps, &named));
+                if let Some(&(_, _, block)) = block.filter(|(.., block)| ui.parent(*block) != Some(row)) {
+                    ui.move_into(block, row);
+                }
+            }
+        }
+    }
+
+    /// Where the rows of a field go in a section an inspector draws: a
+    /// panel of the field's own, so a `FieldRow` can take it whole, inside
+    /// the panel of the field it is in, if any, or else `outer`. Elsewhere,
+    /// `outer` itself.
+    fn field_block(&mut self, ui: &mut Ui, drawn: bool, value: &Prop, outer: NodeId) -> NodeId {
+        let Prop::Field { behaviour, path } = value else { return outer };
+        if !drawn || path.is_empty() {
+            return outer;
+        }
+        let within = &path[..path.len() - 1];
+        let parent = self.field_blocks.iter().find(|(of, steps, _)| of == behaviour && steps.as_slice() == within);
+        let block = ui.panel(parent.map_or(outer, |(.., block)| *block), Style::column());
+        ui.add_class(block, "field-block");
+        self.field_blocks.push((behaviour.clone(), path.clone(), block));
+        block
     }
 
     /// The drawn fields to draw this frame, each with its value now.
@@ -978,6 +1020,8 @@ impl Inspector {
         self.prefab_buttons = None;
         self.drawers.clear();
         self.inspected.clear();
+        self.inspector_slots.clear();
+        self.field_blocks.clear();
         self.group_tabs.clear();
         self.group_foldouts.clear();
         (self.mesh_lods, self.group_lods, self.terrain_panel, self.plants_panel) = (None, None, None, None);
@@ -1051,6 +1095,8 @@ impl Inspector {
                 Part::Behaviour(name) if !playing => self.types.behaviour(name).and_then(|b| b.inspector.clone()),
                 _ => None,
             };
+            // Its fields' rows, each in a panel of its own, for a `FieldRow` to take.
+            let drawn_whole = inspector.is_some();
             let rows = match (part, inspector) {
                 (Part::Behaviour(name), Some(inspector)) => {
                     let slot = ui.panel(rows, Style::column());
@@ -1060,6 +1106,7 @@ impl Inspector {
                     let fields = ui.panel(rows, Style::column());
                     ui.add_class(fields, "behaviour-fields");
                     self.inspected.push((name.clone(), fields));
+                    self.inspector_slots.push((name.clone(), slot));
                     fields
                 }
                 _ => rows,
@@ -1155,7 +1202,10 @@ impl Inspector {
                     }
                     None => match bodies.iter().rev().find(|(item, _)| props::within(value, item)) {
                         Some((item, body)) => (*body, props::depth(item)),
-                        None => (groups.container(ui, attributes::top(&self.types, value).group.as_ref()), 0),
+                        None => {
+                            let outer = groups.container(ui, attributes::top(&self.types, value).group.as_ref());
+                            (self.field_block(ui, drawn_whole, value, outer), 0)
+                        }
                     },
                 };
                 let mut label = meta.label.clone().unwrap_or_else(|| props::label(value));
@@ -2862,6 +2912,29 @@ fn section(ui: &mut Ui, root: NodeId, title: &str, icon: &str, end: HeaderEnd) -
         HeaderEnd::Nothing => None,
     };
     (header, ui.foldout_content(foldout).expect("a foldout has content"), end)
+}
+
+/// The `FieldRow`s in `node`, each with the field it names, as
+/// `Recoil.Kick`: an element of the `field-row` class, whose
+/// `field-row:<field>` class says which.
+fn field_rows(ui: &Ui, node: NodeId, found: &mut Vec<(NodeId, String)>) {
+    if ui.has_class(node, "field-row") {
+        let named = ui.classes(node).iter().find_map(|class| class.strip_prefix("field-row:"));
+        if let Some(field) = named.filter(|field| !field.is_empty()) {
+            found.push((node, field.to_string()));
+        }
+        return;
+    }
+    for child in ui.children(node) {
+        field_rows(ui, child, found);
+    }
+}
+
+/// Whether a field's path is the one a `FieldRow` names, by its parts:
+/// names that match as a scene's keys do, ignoring case and underscores.
+fn same_path(steps: &[Step], named: &[&str]) -> bool {
+    steps.len() == named.len()
+        && steps.iter().zip(named).all(|(step, name)| matches!(step, Step::Key(key) if voxear_engine::script_types::same_field(key, name)))
 }
 
 /// A data asset's header: its name, and the Definition it holds.

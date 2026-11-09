@@ -13,12 +13,14 @@ A drawer is built from the same elements as a game's UI ([[UI from Scripts]]), a
 | Type drawer | `ValueDrawer<T>` | Every field of type `T`, and each item of a list of them | A struct or class of your own that should always look the same way |
 | Attribute drawer | `AttributeDrawer<TAttribute, T>` | Only the fields you mark with an attribute of your own | A look you want on some fields, such as **-** and **+** buttons beside a number |
 | Behaviour inspector | `BehaviourInspector<T>` | A whole behaviour's section, in place of its list of fields | Buttons and summaries for a behaviour as a whole, as a custom `Editor` in Unity |
+| Data asset inspector | `DefinitionInspector<T>` | A whole data asset, in place of its list of fields | The same for a data asset |
 
 Each kind has a page of its own, with a worked example:
 
 1. [[Type Drawers]]
 2. [[Attribute Drawers]]
 3. [[Behaviour Inspectors]]
+4. [[Data Asset Inspectors]]
 
 ## Why a drawer has Build and Draw
 

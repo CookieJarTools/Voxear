@@ -762,6 +762,11 @@ impl Ui {
         self.element(node).is_some_and(|e| e.classes.iter().any(|c| c == class))
     }
 
+    /// Its classes, in the order they were added.
+    pub fn classes(&self, node: NodeId) -> &[String] {
+        self.element(node).map_or(&[], |e| e.classes.as_slice())
+    }
+
     pub(crate) fn set_state(&mut self, node: NodeId, state: States, on: bool) {
         let Some(element) = self.element_mut(node) else { return };
         if element.states.contains(state) != on {

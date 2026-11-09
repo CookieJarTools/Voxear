@@ -19,8 +19,8 @@ namespace Voxear.Scripting;
 /// with { "fields": [{ "value", "changed" }] }. A field that could not be opened or drawn is answered with { "error" }, which
 /// is logged.
 /// <para>
-/// A behaviour's inspector draws it whole, as a field with no path. Its value is the table of fields the scene
-/// sets, and its answer the table of those the inspector changed.
+/// A behaviour's inspector draws it whole, as a field with no path, and so does a data asset's. Its value is the
+/// table of fields the scene or the file sets, and its answer the table of those the inspector changed.
 /// </para>
 /// </summary>
 internal static class InspectorDrawers
@@ -122,8 +122,9 @@ internal static class InspectorDrawers
 	}
 
 	/// <summary>
-	/// The field a path ends at, from the behaviour or component type it starts on, and the type of the value there:
-	/// a name steps into a field, and a number into a list's item. No path is the behaviour itself, for its inspector.
+	/// The field a path ends at, from the behaviour, component or Definition type it starts on, and the type of the
+	/// value there: a name steps into a field, and a number into a list's item. No path is the behaviour or the
+	/// Definition itself, for its inspector.
 	/// </summary>
 	private static (FieldInfo? Field, Type Value) Resolve(string typeName, JsonElement path)
 	{
@@ -141,9 +142,9 @@ internal static class InspectorDrawers
 				?? throw new ArgumentException($"{current.Name} has no field {step.GetString()}.");
 			current = field.FieldType;
 		}
-		if (field == null && !typeof(Behaviour).IsAssignableFrom(current))
+		if (field == null && !typeof(Behaviour).IsAssignableFrom(current) && !typeof(Definition).IsAssignableFrom(current))
 		{
-			throw new ArgumentException($"{current.Name} is not a behaviour, which only an inspector draws whole.");
+			throw new ArgumentException($"{current.Name} is neither a behaviour nor a Definition, which only an inspector draws whole.");
 		}
 		return (field, current);
 	}
@@ -168,9 +169,9 @@ internal static class InspectorDrawers
 		}
 
 		var given = asked.GetProperty("value");
-		if (field.IsBehaviour)
+		if (field.IsWhole)
 		{
-			DrawBehaviour(json, given, field, asked.GetProperty("documents"));
+			DrawWhole(json, given, field, asked.GetProperty("documents"));
 			return;
 		}
 		var value = given.ValueKind == JsonValueKind.Null ? null : FieldValues.Read(given, field.ValueType, field.Drawers[0].Label);
@@ -191,26 +192,26 @@ internal static class InspectorDrawers
 	}
 
 	/// <summary>
-	/// Draws a behaviour's inspector with a copy of the behaviour made from the fields the scene sets, on its Obj,
-	/// and answers with the fields it changed, as a scene writes them.
+	/// Draws a behaviour's or a data asset's inspector with a copy of the behaviour, on its Obj, or of the Definition,
+	/// made from the fields the scene or the file sets, and answers with the fields it changed, as a scene writes them.
 	/// </summary>
-	private static void DrawBehaviour(Utf8JsonWriter json, JsonElement given, DrawnField field, JsonElement documents)
+	private static void DrawWhole(Utf8JsonWriter json, JsonElement given, DrawnField field, JsonElement documents)
 	{
-		var behaviour = (Behaviour)Activator.CreateInstance(field.ValueType, nonPublic: true)!;
-		behaviour.Attach(field.Obj, 0, 0);
+		var whole = Activator.CreateInstance(field.ValueType, nonPublic: true)!;
+		Place(whole, field.Obj);
 		if (given.ValueKind == JsonValueKind.Object)
 		{
-			BehaviourFields.Fill(behaviour, given, $"{field.ValueType.Name} on {field.Obj.Name}");
+			BehaviourFields.Fill(whole, given, $"{field.ValueType.Name} on {field.Obj.Name}");
 		}
-		var before = InspectorCalls.Values(behaviour);
+		var before = InspectorCalls.Values(whole);
 		foreach (var document in documents.EnumerateArray())
 		{
-			field.Drawers[0].Draw(behaviour, new UiDocument(document.GetInt32()));
+			field.Drawers[0].Draw(whole, new UiDocument(document.GetInt32()));
 			break;
 		}
 		var changed = false;
 		json.WriteStartObject("value");
-		foreach (var (name, value) in InspectorCalls.Values(behaviour))
+		foreach (var (name, value) in InspectorCalls.Values(whole))
 		{
 			if (before[name] != value)
 			{
@@ -221,6 +222,22 @@ internal static class InspectorDrawers
 		}
 		json.WriteEndObject();
 		json.WriteBoolean("changed", changed);
+	}
+
+	/// <summary>
+	/// A behaviour's copy goes on its Obj; a data asset's is named for its file, as the Obj the editor shows it on is.
+	/// </summary>
+	private static void Place(object whole, Obj obj)
+	{
+		switch (whole)
+		{
+			case Behaviour behaviour:
+				behaviour.Attach(obj, 0, 0);
+				break;
+			case Definition definition:
+				definition.Name = obj.Name;
+				break;
+		}
 	}
 
 	/// <summary>A value as a scene writes it, to tell whether the drawers changed it.</summary>

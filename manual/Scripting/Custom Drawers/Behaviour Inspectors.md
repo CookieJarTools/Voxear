@@ -55,6 +55,7 @@ public sealed class TowerInspector : BehaviourInspector<Tower>
 - `Target` is the behaviour. It is a copy made from the scene's values for each draw, on its Obj, so `Target.Obj` is the Obj it is on.
 - What a handler changes in `Target`'s fields is saved in the scene, all of it as one step for **Ctrl+Z** to undo. Here **Add a floor** changes two fields, and one undo takes back both.
 - `NextField` is where the behaviour's usual fields and buttons go. Leave it out to draw the behaviour entirely yourself.
+- A `FieldRow` puts one of the usual fields where you want it, among your own elements, as `new FieldRow(nameof(Tower.Height))`. The `NextField` gets the rest. See [[Data Asset Inspectors]].
 
 An inspector also draws the behaviours derived from its type, unless they have an inspector of their own.
 

@@ -4933,3 +4933,44 @@ fn a_ui_panel_shows_its_colours_in_the_world_hidden_behind_what_is_in_front() {
     let i = ((y * width + x) * 4) as usize;
     assert_ne!(pixels[i..i + 3], [255, 0, 0], "a panel not handed over is gone");
 }
+
+/// A two-sided UI Panel seen from behind reads the right way round there:
+/// its page's left half is on the viewer's left. One-sided, it shows nothing.
+#[test]
+fn a_two_sided_ui_panel_reads_the_right_way_round_from_behind() {
+    use voxear_render::{UiPanel, UiPanelFrame};
+    use voxear_ui::{Color, Style, Ui};
+
+    let Some(mut renderer) = renderer() else { return };
+    let (width, height) = (640u32, 360u32);
+    let mut world = World::new();
+    // Four metres behind the panel, looking back at it along -Z.
+    let turned = Quat::from_rotation_y(std::f32::consts::PI);
+    world.spawn((Camera::default(), Transform::new(Vec3::new(0.0, 0.0, 8.0), turned, Vec3::ONE)));
+    let panel = world.spawn((
+        Transform::from_position(Vec3::new(0.0, 0.0, 4.0)),
+        UiPanel { size: [2.0, 1.0], ..UiPanel::default() },
+    ));
+    let mut ui = Ui::new();
+    let root = ui.root();
+    ui.panel(root, Style::default().at(0.0, 0.0).width(500.0).height(500.0).background(Color::hex(0xff0000)));
+    ui.panel(root, Style::default().at(500.0, 0.0).width(500.0).height(500.0).background(Color::hex(0x0000ff)));
+    let frame = ui.frame(1000, 500, 1.0);
+    renderer.set_ui_panels(&[UiPanelFrame { entity: panel, frame: &frame, size: [1000, 500] }]).unwrap();
+    run(&mut renderer, &world, &mut 0.0, 1);
+    let (_, _, pixels) = renderer.read_pixels().unwrap();
+    let at = |x: u32| {
+        let i = (((height / 2) * width + x) * 4) as usize;
+        [pixels[i], pixels[i + 1], pixels[i + 2]]
+    };
+    // The panel spans the middle of the view; a quarter of its width either side of the middle is well inside it.
+    let quarter = 30;
+    assert_eq!(at(width / 2 - quarter), [255, 0, 0], "the page's left, red, on the viewer's left");
+    assert_eq!(at(width / 2 + quarter), [0, 0, 255], "and its right, blue, on the right");
+
+    world.get_mut::<UiPanel>(panel).unwrap().two_sided = false;
+    run(&mut renderer, &world, &mut 0.0, 1);
+    let (_, _, pixels) = renderer.read_pixels().unwrap();
+    let i = (((height / 2) * width + width / 2 - quarter) * 4) as usize;
+    assert_ne!(pixels[i..i + 3], [255, 0, 0], "one-sided, nothing from behind");
+}

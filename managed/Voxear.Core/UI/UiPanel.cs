@@ -22,6 +22,7 @@ public readonly struct UiPanel : IEquatable<UiPanel>, IObjComponent
 	private const int FaceCameraValue = 5;
 	private const int ClickableValue = 6;
 	private const int DocumentValue = 7;
+	private const int TwoSidedValue = 8;
 
 	public static readonly UiPanel None = default;
 
@@ -73,6 +74,13 @@ public readonly struct UiPanel : IEquatable<UiPanel>, IObjComponent
 	{
 		get { return Number(FaceCameraValue) != 0f; }
 		set { Set(FaceCameraValue, value ? 1f : 0f); }
+	}
+
+	/// <summary>Whether it shows, and the pointer works it, from behind as well, reading the right way round there.</summary>
+	public bool TwoSided
+	{
+		get { return Number(TwoSidedValue) != 0f; }
+		set { Set(TwoSidedValue, value ? 1f : 0f); }
 	}
 
 	/// <summary>Whether the pointer works it. Off, clicks pass through to the game.</summary>

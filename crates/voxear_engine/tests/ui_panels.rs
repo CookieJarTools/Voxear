@@ -105,3 +105,36 @@ fn a_scene_keeps_a_panels_settings() {
     assert_eq!(written.document.as_deref(), Some(TERMINAL), "written back by GUID");
     assert_eq!(toml::to_string(&written).unwrap(), format!("document = \"{TERMINAL}\"\nsize = [2.0, 1.0]\nface_camera = true\n"));
 }
+
+#[test]
+fn a_two_sided_panel_is_clicked_from_behind_the_right_way_round() {
+    let dir = project();
+    let mut content = Content::open(dir.path()).unwrap();
+    let mut world = World::new();
+    let panel = terminal(&mut world);
+    let mut ui = GameUi::default();
+    ui.sync_panels(&mut world, &mut content, &HashMap::new());
+    ui.lay_out_panels(1.0 / 60.0);
+    let go = ui.find(ui.panel_document(panel).unwrap(), "go").unwrap();
+
+    // From behind, looking back along -Z, the button on the page's right half is on the viewer's right: -X.
+    let behind = Vec3::new(0.0, 0.0, 10.0);
+    let at_button = Some((behind, Vec3::new(-0.5, 0.0, -5.0).normalize()));
+    ui.point_panels(&world, at_button, |_, _| None);
+    assert_eq!(ui.hovered_panel(), Some(panel), "two-sided, as a panel is unless told otherwise");
+    assert!(click(&mut ui, ElementState::Pressed) && click(&mut ui, ElementState::Released));
+    assert!(ui.clicked(go), "the button, where it reads from behind");
+    ui.lay_out_panels(1.0 / 60.0);
+
+    // The page's left half, from behind, is not the button.
+    ui.point_panels(&world, Some((behind, Vec3::new(0.5, 0.0, -5.0).normalize())), |_, _| None);
+    click(&mut ui, ElementState::Pressed);
+    click(&mut ui, ElementState::Released);
+    assert!(!ui.clicked(go));
+    ui.lay_out_panels(1.0 / 60.0);
+
+    // One-sided, there is nothing to point at from behind.
+    world.get_mut::<UiPanel>(panel).unwrap().two_sided = false;
+    ui.point_panels(&world, at_button, |_, _| None);
+    assert_eq!(ui.hovered_panel(), None);
+}

@@ -58,6 +58,8 @@ pub struct UiPanelData {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub face_camera: bool,
     #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub two_sided: bool,
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
     pub clickable: bool,
 }
 
@@ -105,6 +107,7 @@ impl UiPanelData {
             put("size", toml::Value::try_from(data.size).expect("two numbers"));
             put("pixels_per_metre", f64::from(data.pixels_per_metre).into());
             put("face_camera", data.face_camera.into());
+            put("two_sided", data.two_sided.into());
             put("clickable", data.clickable.into());
             table
         };
@@ -130,6 +133,7 @@ pub fn ui_panel(content: &Content, data: &UiPanelData) -> Result<UiPanel> {
         size: data.size.map(|side| side.max(0.01)),
         pixels_per_metre: data.pixels_per_metre.max(1.0),
         face_camera: data.face_camera,
+        two_sided: data.two_sided,
         clickable: data.clickable,
     })
 }
@@ -141,6 +145,7 @@ pub fn ui_panel_data(panel: &UiPanel) -> UiPanelData {
         size: panel.size,
         pixels_per_metre: panel.pixels_per_metre,
         face_camera: panel.face_camera,
+        two_sided: panel.two_sided,
         clickable: panel.clickable,
     }
 }
@@ -423,6 +428,7 @@ const PIXELS_PER_METRE: i32 = 4;
 const FACE_CAMERA: i32 = 5;
 const CLICKABLE: i32 = 6;
 const DOCUMENT: i32 = 7;
+const TWO_SIDED: i32 = 8;
 
 /// Reads value `what` of `entity`'s UI Panel, or with `written`, writes it:
 /// `None` when it has none, or is gone. Its document reads as the number
@@ -458,6 +464,7 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
         (PIXELS_PER_METRE, None) => Some(number(panel.pixels_per_metre)),
         (FACE_CAMERA, None) => Some(flag(panel.face_camera)),
         (CLICKABLE, None) => Some(flag(panel.clickable)),
+        (TWO_SIDED, None) => Some(flag(panel.two_sided)),
         (SIZE, Some([x, y, ..])) => {
             panel.size = [x.max(0.01), y.max(0.01)];
             Some([0.0; 4])
@@ -472,6 +479,10 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
         }
         (CLICKABLE, Some([x, ..])) => {
             panel.clickable = x != 0.0;
+            Some([0.0; 4])
+        }
+        (TWO_SIDED, Some([x, ..])) => {
+            panel.two_sided = x != 0.0;
             Some([0.0; 4])
         }
         _ => None,

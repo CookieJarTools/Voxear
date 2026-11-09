@@ -40,7 +40,8 @@ pub(crate) const PANEL_FORMAT: vk::Format = vk::Format::R16G16B16A16_SFLOAT;
 
 /// A UI document shown on a rectangle in the world, centred on its Obj. It
 /// reads the right way round looking the way its Obj faces, along its
-/// forward; its right and up are its Obj's.
+/// forward; its right and up are its Obj's. Two-sided, it reads the right
+/// way round from behind too, as a sign painted on both sides does.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct UiPanel {
     /// The `.vui` document it shows.
@@ -52,6 +53,8 @@ pub struct UiPanel {
     pub pixels_per_metre: f32,
     /// Turned to face the camera, keeping its up, rather than its Obj's way.
     pub face_camera: bool,
+    /// Shown, and worked, from behind as well as from the front.
+    pub two_sided: bool,
     /// Whether the pointer works it. Off, clicks pass through to the game.
     pub clickable: bool,
 }
@@ -60,7 +63,14 @@ impl Component for UiPanel {}
 
 impl Default for UiPanel {
     fn default() -> Self {
-        Self { document: None, size: [1.6, 0.9], pixels_per_metre: 500.0, face_camera: false, clickable: true }
+        Self {
+            document: None,
+            size: [1.6, 0.9],
+            pixels_per_metre: 500.0,
+            face_camera: false,
+            two_sided: true,
+            clickable: true,
+        }
     }
 }
 
@@ -97,6 +107,12 @@ impl PanelRect {
         let across = right * panel.size[0].max(0.0);
         let down = -up * panel.size[1].max(0.0);
         Self { origin: centre - across * 0.5 - down * 0.5, across, down }
+    }
+
+    /// The same rectangle read from its back, the right way round there:
+    /// its left and right change places.
+    pub fn turned(&self) -> Self {
+        Self { origin: self.origin + self.across, across: -self.across, down: self.down }
     }
 
     /// Its middle.
@@ -166,13 +182,18 @@ fn placed(transform: &Transform, world: Option<&WorldTransform>) -> Mat4 {
 }
 
 /// The panels in `world`, each by its Obj, where it is for a camera at
-/// `eye`, and whether the pointer works it.
+/// `eye`, and its settings. A two-sided panel seen from behind is given as
+/// read from there, turned (see [`PanelRect::turned`]).
 pub fn panels(world: &World, eye: Vec3) -> Vec<(Entity, PanelRect, UiPanel)> {
     let query = world.query_ref::<(Entity, &UiPanel, &Transform, Option<&WorldTransform>)>();
+    let seen = |panel: &UiPanel, rect: PanelRect| match panel.two_sided && !rect.faces(eye) {
+        true => rect.turned(),
+        false => rect,
+    };
     query
         .without::<Destroying>()
         .into_iter()
-        .map(|(entity, panel, transform, placed_at)| (entity, PanelRect::of(panel, placed(transform, placed_at), eye), *panel))
+        .map(|(entity, panel, transform, at)| (entity, seen(panel, PanelRect::of(panel, placed(transform, at), eye)), *panel))
         .collect()
 }
 
@@ -458,6 +479,26 @@ mod tests {
         assert!(rect.hit(Vec3::new(1.5, 1.0, 0.0), Vec3::Z).is_none(), "past its right edge");
         assert!(rect.hit(Vec3::new(0.0, 1.0, 10.0), -Vec3::Z).is_none(), "from behind");
         assert!(rect.hit(Vec3::new(0.0, 1.0, 0.0), -Vec3::Z).is_none(), "pointing away");
+    }
+
+    #[test]
+    fn a_two_sided_panel_reads_the_right_way_round_from_behind() {
+        let mut world = World::new();
+        let one_sided = UiPanel { size: [2.0, 1.0], two_sided: false, ..UiPanel::default() };
+        let placed = Transform::from_position(Vec3::new(0.0, 0.0, 5.0));
+        let front = world.spawn((placed, one_sided));
+        let both = world.spawn((placed, UiPanel { two_sided: true, ..one_sided }));
+        let behind = Vec3::new(0.0, 0.0, 10.0);
+        let rects = panels(&world, behind);
+        let rect = |entity: Entity| rects.iter().find(|(e, ..)| *e == entity).unwrap().1;
+        assert!(!rect(front).faces(behind), "one-sided, its back is all there is from here");
+        let back = rect(both);
+        assert!(back.faces(behind), "two-sided, it faces whoever looks");
+        // Looking along -Z, the viewer's right is -X: the panel's left edge in the front's terms.
+        assert_eq!(back.origin, Vec3::new(1.0, 0.5, 5.0));
+        assert_eq!(back.across, Vec3::new(-2.0, 0.0, 0.0));
+        let (_, [u, v]) = back.hit(behind, Vec3::new(-0.5, 0.0, -5.0).normalize()).expect("from behind, on its right");
+        assert!((u - 0.75).abs() < 1e-5 && (v - 0.5).abs() < 1e-5, "the right of the page as read from here: {u} {v}");
     }
 
     #[test]

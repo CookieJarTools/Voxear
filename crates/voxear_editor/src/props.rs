@@ -370,6 +370,7 @@ pub enum Prop {
     UiPanelSize,
     UiPanelPixels,
     UiPanelFaceCamera,
+    UiPanelTwoSided,
     UiPanelClickable,
     /// A Net Object's priority and range.
     NetPriority,
@@ -753,6 +754,7 @@ impl Prop {
             | Prop::UiPanelSize
             | Prop::UiPanelPixels
             | Prop::UiPanelFaceCamera
+            | Prop::UiPanelTwoSided
             | Prop::UiPanelClickable => Part::UiPanel,
             Prop::NetPriority | Prop::NetRange => Part::NetObject,
             Prop::AnimatorClip
@@ -1046,6 +1048,7 @@ impl Prop {
             Prop::UiPanelSize => "size",
             Prop::UiPanelPixels => "pixels_per_metre",
             Prop::UiPanelFaceCamera => "face_camera",
+            Prop::UiPanelTwoSided => "two_sided",
             Prop::UiPanelClickable => "clickable",
             Prop::AnimatorClip => "clip",
             Prop::AnimatorSpeed => "speed",
@@ -1515,6 +1518,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             Prop::UiPanelSize,
             Prop::UiPanelPixels,
             Prop::UiPanelFaceCamera,
+            Prop::UiPanelTwoSided,
             Prop::UiPanelClickable,
         ],
         Part::NetObject => vec![Prop::NetPriority, Prop::NetRange],
@@ -1911,6 +1915,7 @@ pub fn label(prop: &Prop) -> String {
         Prop::UiPanelSize => "Size",
         Prop::UiPanelPixels => "Pixels per Metre",
         Prop::UiPanelFaceCamera => "Face Camera",
+        Prop::UiPanelTwoSided => "Two Sided",
         Prop::UiPanelClickable => "Clickable",
         Prop::AnimatorClip => "Clip",
         Prop::AnimatorSpeed => "Speed",
@@ -2654,6 +2659,7 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::UiPanelSize => Value::Vector(world.get::<voxear_render::UiPanel>(entity)?.size.to_vec()),
         Prop::UiPanelPixels => Value::Number(world.get::<voxear_render::UiPanel>(entity)?.pixels_per_metre),
         Prop::UiPanelFaceCamera => Value::Toggle(world.get::<voxear_render::UiPanel>(entity)?.face_camera),
+        Prop::UiPanelTwoSided => Value::Toggle(world.get::<voxear_render::UiPanel>(entity)?.two_sided),
         Prop::UiPanelClickable => Value::Toggle(world.get::<voxear_render::UiPanel>(entity)?.clickable),
         Prop::NetPriority => Value::Number(world.get::<voxear_engine::net::NetObject>(entity)?.priority),
         Prop::NetRange => Value::Number(world.get::<voxear_engine::net::NetObject>(entity)?.range),
@@ -4060,6 +4066,7 @@ fn set_panel(panel: &mut voxear_render::UiPanel, prop: &Prop, value: Value) {
         }
         (Prop::UiPanelPixels, Value::Number(n)) => panel.pixels_per_metre = n.clamp(1.0, 10_000.0),
         (Prop::UiPanelFaceCamera, Value::Toggle(on)) => panel.face_camera = on,
+        (Prop::UiPanelTwoSided, Value::Toggle(on)) => panel.two_sided = on,
         (Prop::UiPanelClickable, Value::Toggle(on)) => panel.clickable = on,
         _ => {}
     }

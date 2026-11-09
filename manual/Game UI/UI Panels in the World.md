@@ -14,9 +14,10 @@ The document is an ordinary `.vui` file with its style sheets, written as for th
 | **Size** | Width and height in metres, before the Obj's scale |
 | **Pixels per Metre** | How many of the document's pixels fit in a metre |
 | **Face Camera** | Turns it to face the camera, keeping it upright |
+| **Two Sided** | Shows it from behind as well, reading the right way round there, as a sign painted on both sides does. Off, it shows only from the front |
 | **Clickable** | Whether the pointer works it. Turn it off for a sign, so clicks go to the game |
 
-The panel is centred on its Obj, and reads the right way round when you look the way the Obj faces: point the Obj's forward away from whoever reads it. From behind, it doesn't show.
+The panel is centred on its Obj, and reads the right way round when you look the way the Obj faces: point the Obj's forward away from whoever reads it. Seen from behind, a panel is **Two Sided** unless you turn that off: it reads the right way round from there too, and its buttons work from either side. Turn it off for a panel on a wall or a screen in a machine, which has no back to see.
 
 ## How big a panel's document is laid out
 
@@ -58,7 +59,7 @@ public sealed class Terminal : Behaviour
 }
 ```
 
-Scripts can also change a panel's `Size`, `PixelsPerMetre`, `FaceCamera` and `Clickable`, give an Obj a panel with `Obj.AddUiPanel()`, and take it off with `Remove()`.
+Scripts can also change a panel's `Size`, `PixelsPerMetre`, `FaceCamera`, `TwoSided` and `Clickable`, give an Obj a panel with `Obj.AddUiPanel()`, and take it off with `Remove()`.
 
 ## Things to know about UI Panels
 

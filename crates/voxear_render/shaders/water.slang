@@ -1094,35 +1094,6 @@ float3 oceanMoved(Frame* frame, float2 rest, float spacing, bool previous, float
     return moved;
 }
 
-// How high the waves move the water resting at `rest`, as oceanMoved's,
-// but blended between texels exactly rather than as finely as a sampler
-// blends them, a 256th of a texel: the waterline on the near plane, a few
-// centimetres wide across the whole screen, showed the sampler's steps.
-float oceanHeightExact(Frame* frame, float2 rest, float spacing, float swell, float depth)
-{
-    float height = 0.0;
-    float gusts = seaGusts(frame, rest);
-    float reach = wavesReach(frame, rest, depth);
-    for (uint c = 0; c < oceanCascades(frame); c++)
-    {
-        float mip = max(log2(spacing / (frame->ocean.sizes[c] / float(OCEAN_N))), 0.0);
-        uint level = min(uint(round(mip)), 8u);
-        int side = int(OCEAN_N >> level);
-        float2 at = cascadeUv(frame, c, rest) * float(side) - 0.5;
-        int2 corner = int2(floor(at));
-        float2 f = at - float2(corner);
-        Texture2D moves = textures[NonUniformResourceIndex(frame->ocean.displacement[c])];
-        // The repeating cascade's texels round it, wrapped: `side` is a power of two.
-        float h00 = moves.Load(int3(corner & (side - 1), level)).y;
-        float h10 = moves.Load(int3((corner + int2(1, 0)) & (side - 1), level)).y;
-        float h01 = moves.Load(int3((corner + int2(0, 1)) & (side - 1), level)).y;
-        float h11 = moves.Load(int3((corner + int2(1, 1)) & (side - 1), level)).y;
-        float h = lerp(lerp(h00, h10, f.x), lerp(h01, h11, f.x), f.y);
-        height += h * cascadeShare(c, swell) * shallowWeight(frame, c, depth, reach) * (c >= GUSTED_CASCADES ? gusts : 1.0);
-    }
-    return height;
-}
-
 // How far apart ring `ring` round the camera has its points, in metres:
 // the first WATER_SPACING, each twice the last.
 float ringSpacing(uint ring)
@@ -1176,6 +1147,14 @@ float2 ringRest(float2 camera, uint ring, uint2 grid, out float sampled)
     return rest - float2(grid % 2) * spacing * morph;
 }
 
+// Where the sea's water resting at `rest` is drawn, its waves read as
+// coarsely as `sampled` metres, in water `depth` metres deep; last frame's
+// with `previous`.
+float3 seaPoint(Frame* frame, float2 rest, float sampled, bool previous, float depth)
+{
+    return float3(rest.x, frame->ocean.level, rest.y) + oceanMoved(frame, rest, sampled, previous, 1.0, depth);
+}
+
 // A corner of a quad of ring `ring` round the camera, each ring leaving out
 // what the finer ring inside it covers (ringCovered, ringRest).
 [shader("vertex")]
@@ -1193,10 +1172,9 @@ WaterOut waterVertex(uint vertexId : SV_VertexID, uint ring : SV_InstanceID)
     WaterOut o;
     float sampled;
     float2 rest = ringRest(camera, ring, cell + corners[vertexId % 6], sampled);
-    float level = frame->ocean.level;
     float depth = seaDepth(frame, rest);
-    float3 world = float3(rest.x, level, rest.y) + oceanMoved(frame, rest, sampled, false, 1.0, depth);
-    float3 before = float3(rest.x, level, rest.y) + oceanMoved(frame, rest, sampled, true, 1.0, depth);
+    float3 world = seaPoint(frame, rest, sampled, false, depth);
+    float3 before = seaPoint(frame, rest, sampled, true, depth);
     o.position = transform(frame->viewProj, float4(world, 1.0));
     o.world = world;
     o.rest = rest;
@@ -1333,12 +1311,45 @@ WaterOut poolVertex(uint vertexId : SV_VertexID, uint ring : SV_InstanceID)
     return o;
 }
 
+// A quad's corners as drawnWeights takes them.
+static const uint2 QUAD_CORNERS[4] = { uint2(0, 0), uint2(1, 0), uint2(0, 1), uint2(1, 1) };
+
+// Which of a quad's two triangles is drawn over `at` and how much each of
+// its corners counts there, the quad's corners resting at `rest` (in
+// QUAD_CORNERS' order) and `f` how far across the quad `at` is had they not
+// moved; its points `spacing` apart. Each quad is two triangles split from
+// its (0, 1) corner to its (1, 0) one, as waterVertex and poolVertex draw
+// it: the triangle's first corner is `first`, (0, 0) or (1, 1), and the
+// weights are for it, (1, 0) and (0, 1).
+float3 drawnWeights(float2 rest[4], float2 at, float2 f, float spacing, out uint first)
+{
+    // Which side of the split `at` is on: the (1, 1) corner's, or the (0, 0) one's.
+    float2 split = rest[2] - rest[1];
+    float2 toPoint = at - rest[1];
+    float2 toFar = rest[3] - rest[1];
+    first = (split.x * toPoint.y - split.y * toPoint.x) * (split.x * toFar.y - split.y * toFar.x) > 0.0 ? 3 : 0;
+    float2 e1 = rest[1] - rest[first];
+    float2 e2 = rest[2] - rest[first];
+    float2 p = at - rest[first];
+    float area = e1.x * e2.y - e1.y * e2.x;
+    if (abs(area) > 1e-4 * spacing * spacing)
+    {
+        float2 w = float2(p.x * e2.y - p.y * e2.x, e1.x * p.y - e1.y * p.x) / area;
+        // Kept on the triangle where a ring's corners slid past `at`.
+        float3 weights = max(float3(1.0 - w.x - w.y, w), 0.0);
+        return weights / (weights.x + weights.y + weights.z);
+    }
+    // Squashed flat where the corners slid together: weighed as if they had not.
+    float2 g = saturate(f);
+    first = g.x + g.y > 1.0 ? 3 : 0;
+    return first == 3 ? float3(g.x + g.y - 1.0, 1.0 - g.y, 1.0 - g.x) : float3(1.0 - g.x - g.y, g);
+}
+
 // The point of Pool `pool`'s surface as poolVertex draws it whose water rests
 // `across` its footprint, across it and how high: on the triangle drawn
-// there, between its corners as they are moved. Each quad is two triangles
-// split from its (0, 1) corner to its (1, 0) one; its corners can slide
-// near a ring's edge or stop at the Pool's sides, so `across` is weighed
-// between where they rest.
+// there, between its corners as they are moved (drawnWeights). Its corners
+// can slide near a ring's edge or stop at the Pool's sides, so `across` is
+// weighed between where they rest.
 float3 poolDrawnAt(Frame* frame, WaterBody pool, float2 across)
 {
     uint ring = 0;
@@ -1362,35 +1373,12 @@ float3 poolDrawnAt(Frame* frame, WaterBody pool, float2 across)
     uint2 cell = uint2(clamp(floor(at), 0.0, float(poolQuads(pool) - 1)));
     float sampled[4];
     float2 rest[4];
-    static const uint2 corners[4] = { uint2(0, 0), uint2(1, 0), uint2(0, 1), uint2(1, 1) };
     for (uint i = 0; i < 4; i++)
     {
-        rest[i] = poolRest(frame, pool, ring, cell + corners[i], sampled[i]);
+        rest[i] = poolRest(frame, pool, ring, cell + QUAD_CORNERS[i], sampled[i]);
     }
-    // Which side of the split `across` is on: the (1, 1) corner's, or the (0, 0) one's.
-    float2 split = rest[2] - rest[1];
-    float2 toPoint = across - rest[1];
-    float2 toFar = rest[3] - rest[1];
-    uint first = (split.x * toPoint.y - split.y * toPoint.x) * (split.x * toFar.y - split.y * toFar.x) > 0.0 ? 3 : 0;
-    float2 e1 = rest[1] - rest[first];
-    float2 e2 = rest[2] - rest[first];
-    float2 p = across - rest[first];
-    float area = e1.x * e2.y - e1.y * e2.x;
-    float3 weights;
-    if (abs(area) > 1e-4 * spacing * spacing)
-    {
-        float2 w = float2(p.x * e2.y - p.y * e2.x, e1.x * p.y - e1.y * p.x) / area;
-        // Kept on the triangle where a ring's corners slid past `across`.
-        weights = max(float3(1.0 - w.x - w.y, w), 0.0);
-        weights /= weights.x + weights.y + weights.z;
-    }
-    else
-    {
-        // Squashed flat where the corners slid together: weighed as if they had not.
-        float2 f = saturate(at - float2(cell));
-        first = f.x + f.y > 1.0 ? 3 : 0;
-        weights = first == 3 ? float3(f.x + f.y - 1.0, 1.0 - f.y, 1.0 - f.x) : float3(1.0 - f.x - f.y, f);
-    }
+    uint first;
+    float3 weights = drawnWeights(rest, across, at - float2(cell), spacing, first);
     float3 drawn = poolPoint(frame, pool, rest[first], sampled[first], false) * weights.x;
     drawn += poolPoint(frame, pool, rest[1], sampled[1], false) * weights.y;
     drawn += poolPoint(frame, pool, rest[2], sampled[2], false) * weights.z;
@@ -1413,6 +1401,51 @@ float poolDrawnHeight(Frame* frame, WaterBody pool, float3 world, uint steps)
         drawn = poolDrawnAt(frame, pool, across);
     }
     return transform(pool.toWorld, float4(drawn, 1.0)).y;
+}
+
+// The point of the sea's surface as waterVertex draws it whose water rests
+// at `rest`: on the triangle drawn there, between its corners as the waves
+// move them (drawnWeights). Near a ring's edge its corners slide onto the
+// coarser ring's (ringRest), so `rest` is weighed between where they rest.
+float3 seaDrawnAt(Frame* frame, float2 rest)
+{
+    float2 camera = frame->cameraPosition.xz;
+    uint ring = 0;
+    while (ring + 1 < WATER_RINGS && !ringHolds(camera, ring, rest))
+    {
+        ring++;
+    }
+    float spacing = ringSpacing(ring);
+    float2 at = (rest - ringCorner(camera, ring)) / spacing;
+    uint2 cell = uint2(clamp(floor(at), 0.0, float(WATER_QUADS - 1)));
+    float sampled[4];
+    float2 corners[4];
+    for (uint i = 0; i < 4; i++)
+    {
+        corners[i] = ringRest(camera, ring, cell + QUAD_CORNERS[i], sampled[i]);
+    }
+    uint first;
+    float3 weights = drawnWeights(corners, rest, at - float2(cell), spacing, first);
+    float3 drawn = seaPoint(frame, corners[first], sampled[first], false, seaDepth(frame, corners[first])) * weights.x;
+    drawn += seaPoint(frame, corners[1], sampled[1], false, seaDepth(frame, corners[1])) * weights.y;
+    drawn += seaPoint(frame, corners[2], sampled[2], false, seaDepth(frame, corners[2])) * weights.z;
+    return drawn;
+}
+
+// How high the sea's surface is drawn over `world`, as seaDrawnAt finds it,
+// so a waterline meets the surface as drawn: found by undoing the waves'
+// sideways pinch `steps` times, so the height is that of the water the
+// waves moved over `world`.
+float seaDrawnHeight(Frame* frame, float3 world, uint steps)
+{
+    float2 rest = world.xz;
+    float3 drawn = seaDrawnAt(frame, rest);
+    for (uint i = 0; i < steps; i++)
+    {
+        rest += world.xz - drawn.xz;
+        drawn = seaDrawnAt(frame, rest);
+    }
+    return drawn.y;
 }
 
 // A corner of a quad of Stream push.list's strip: STREAM_ACROSS quads across
@@ -1575,13 +1608,10 @@ bool keptDry(Frame* frame, float3 world, uint body)
 
 // How high the water whose resting surface waterSurface found at `surface`
 // stands over `world` with its waves: the sea's, or a Pool's share of them,
-// as its surface is drawn (poolDrawnHeight). Found by undoing the waves'
-// sideways pinch, so the height is that of the water the waves moved over
-// `world`, and a waterline rises and falls as each wave does.
+// as its surface is drawn (seaDrawnHeight, poolDrawnHeight), so a
+// waterline rises and falls as each wave does and meets the water as drawn.
 float wavySurface(Frame* frame, float3 world, float surface)
 {
-    float swell = 1.0;
-    float spacing = 0.05;
     bool sea = frame->ocean.enabled != 0 && surface == frame->ocean.level;
     for (uint i = 0; i < frame->ocean.pools && !sea; i++)
     {
@@ -1591,16 +1621,7 @@ float wavySurface(Frame* frame, float3 world, float surface)
             return poolDrawnHeight(frame, body, world, 3);
         }
     }
-    if (!sea)
-    {
-        return surface;
-    }
-    float2 rest = world.xz;
-    for (uint i = 0; i < 3 && sea; i++)
-    {
-        rest = world.xz - oceanMoved(frame, rest, spacing, false, swell, seaDepth(frame, rest)).xz;
-    }
-    return surface + oceanHeightExact(frame, rest, spacing, swell, sea ? seaDepth(frame, rest) : 1e4);
+    return sea ? seaDrawnHeight(frame, world, 3) : surface;
 }
 
 // Whether the camera is under the water's surface over it, waves and all:

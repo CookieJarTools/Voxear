@@ -268,7 +268,8 @@ float4 uiFragment(UiOut i) : SV_Target
 // into a texture of its own by uiVertex and uiFragment, at the size it shows
 // on screen, and uiPanelMipMain makes its mips. Each view then draws its
 // panels over the finished picture, after post-processing, so their colours
-// are as designed, one rectangle each from buffers().uiPanels. A panel is
+// are as designed, one draw each, the farthest first, each its rectangle from
+// buffers().uiPanels[push.list] and then its text. A panel is
 // hidden where the scene is in front of it, read from the scene's depth as
 // debug draw reads it. push.textures: the scene's depth texture, the view's
 // offset in the output (x, y), and the sampler a panel is read with, which
@@ -288,7 +289,7 @@ struct UiPanelOut
 [shader("vertex")]
 UiPanelOut uiPanelVertex(uint vertexId : SV_VertexID)
 {
-    UiPanel panel = buffers()->uiPanels[vertexId / 6];
+    UiPanel panel = buffers()->uiPanels[push.list];
     float2 corner = UI_CORNERS[vertexId % 6];
     float3 world = panel.origin + panel.across * corner.x + panel.down * corner.y;
     UiPanelOut o;

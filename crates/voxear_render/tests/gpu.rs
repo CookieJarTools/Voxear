@@ -5414,6 +5414,49 @@ fn a_two_sided_ui_panel_reads_the_right_way_round_from_behind() {
     assert_ne!(pixels[i..i + 3], [255, 0, 0], "one-sided, nothing from behind");
 }
 
+/// Several UI Panels at different distances each show their own page where
+/// they stand, the nearest as well as the farthest.
+#[test]
+fn several_ui_panels_each_show_their_own_page() {
+    use voxear_render::{UiPanel, UiPanelFrame};
+    use voxear_ui::{Color, Style, Ui};
+
+    let Some(mut renderer) = renderer() else { return };
+    let (width, height) = (640u32, 360u32);
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::IDENTITY));
+    // Red to the left and near, green low in the middle, blue to the right and far.
+    let pages = [
+        (Vec3::new(-1.2, 0.0, 4.0), 0xff0000),
+        (Vec3::new(0.0, -0.8, 5.5), 0x00ff00),
+        (Vec3::new(1.2, 0.0, 7.0), 0x0000ff),
+    ];
+    let mut uis: Vec<(voxear_ecs::Entity, voxear_ui::UiFrame)> = Vec::new();
+    for (at, color) in pages {
+        let panel = world.spawn((Transform::from_position(at), UiPanel { size: [1.0, 0.6], ..UiPanel::default() }));
+        let mut ui = Ui::new();
+        let root = ui.root();
+        ui.panel(root, Style::default().at(0.0, 0.0).width(500.0).height(300.0).background(Color::hex(color)));
+        uis.push((panel, ui.frame(500, 300, 1.0)));
+    }
+    let frames: Vec<UiPanelFrame> = uis
+        .iter()
+        .map(|(entity, frame)| UiPanelFrame { entity: *entity, frame, size: [500, 300], drawn: [500.0, 300.0] })
+        .collect();
+    renderer.set_ui_panels(&frames).unwrap();
+    run(&mut renderer, &world, &mut 0.0, 1);
+    let (_, _, pixels) = renderer.read_pixels().unwrap();
+    // Where each panel's middle shows, through a camera 60 degrees high.
+    let half = (30f32).to_radians().tan();
+    for (at, color) in pages {
+        let x = (width as f32 / 2.0 * (1.0 + at.x / at.z / (half * width as f32 / height as f32))) as u32;
+        let y = (height as f32 / 2.0 * (1.0 - at.y / at.z / half)) as u32;
+        let i = ((y * width + x) * 4) as usize;
+        let want = [(color >> 16) as u8, (color >> 8) as u8, color as u8];
+        assert_eq!(pixels[i..i + 3], want, "the panel {at} away shows its own page at ({x}, {y})");
+    }
+}
+
 /// A UI Panel seen nearly edge on keeps what runs across its short side
 /// sharp: fine stripes up it, as fine as text, still stand apart, not
 /// blurred grey by the way the panel is squeezed the other way.

@@ -518,16 +518,18 @@ pub(crate) fn draw(
     };
     let mut images = vec![(output, ImageAccess::ColorAttachment), (depth, ImageAccess::Sampled)];
     images.extend(shown.iter().map(|(.., texture)| (texture.image, ImageAccess::Sampled)));
-    // Each panel's text: the panel in `list`, its first quad in `level`, its texture's size, which the quads
-    // are laid out in, in `max_draws`, and its distance fields in `texture`.
-    let texts: Vec<(Push, u32)> = shown
+    // Each panel in `list`, since a draw's vertices count from 0 whichever it starts at; and its text's first
+    // quad in `level`, its texture's size, which the quads are laid out in, in `max_draws`, and its distance
+    // fields in `texture`.
+    let draws: Vec<(Push, Push, u32)> = shown
         .iter()
         .enumerate()
         .map(|(index, (.., texture))| {
+            let panel = Push { list: index as u32, ..push };
             let size = pack(texture.size[0], texture.size[1]);
             let (first, count) = texture.text;
-            let text = Push { texture: texture.fields, list: index as u32, level: first, max_draws: size, ..push };
-            (text, count)
+            let text = Push { texture: texture.fields, level: first, max_draws: size, ..panel };
+            (panel, text, count)
         })
         .collect();
     fg.add_pass("UI panels", &images, &[], move |ctx| {
@@ -537,9 +539,9 @@ pub(crate) fn draw(
             .load_op(vk::AttachmentLoadOp::LOAD)
             .store_op(vk::AttachmentStoreOp::STORE)];
         begin_rendering_in(ctx, view, &color);
-        for (index, (text, count)) in texts.iter().enumerate() {
-            bind(ctx, pipeline, vk::PipelineBindPoint::GRAPHICS, &push);
-            unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, 6, 1, index as u32 * 6, 0) };
+        for (panel, text, count) in &draws {
+            bind(ctx, pipeline, vk::PipelineBindPoint::GRAPHICS, panel);
+            unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, 6, 1, 0, 0) };
             if *count > 0 {
                 bind(ctx, text_pipeline, vk::PipelineBindPoint::GRAPHICS, text);
                 unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, count * 6, 1, 0, 0) };

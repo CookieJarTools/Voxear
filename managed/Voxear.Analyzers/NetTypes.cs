@@ -32,6 +32,13 @@ internal static class NetTypes
 		};
 	}
 
+	/// <summary>How an RPC's argument of this type is read: as <see cref="Kind"/> says, and bytes too, which change too much to replicate.</summary>
+	public static string? RpcKind(ITypeSymbol type)
+	{
+		var bytes = type is IArrayTypeSymbol { Rank: 1, ElementType.SpecialType: SpecialType.System_Byte };
+		return bytes ? "ReadBytes" : Kind(type);
+	}
+
 	/// <summary>A value read, as code: an enum through int.</summary>
 	public static string Read(string kind, string type)
 	{

@@ -69,7 +69,7 @@ A player whose machine does not have the Obj, because it is out of their range, 
 
 ## What RPCs carry
 
-Arguments can be `bool`, `int`, `long`, `float`, `double`, `string`, `Vector2`, `Vector3`, `Quaternion`, enums, `Obj` and `NetPlayer`. An `Obj` goes as the shared Obj it is, and reads as `Obj.None` on a machine that does not have it.
+Arguments can be `bool`, `int`, `long`, `float`, `double`, `string`, `byte[]`, `Vector2`, `Vector3`, `Quaternion`, enums, `Obj` and `NetPlayer`. An `Obj` goes as the shared Obj it is, and reads as `Obj.None` on a machine that does not have it.
 
 RPCs arrive in the order they were sent, unless they are `Unreliable`. Arguments come to at most 8 KB, and 1000 bytes for one that may be lost.
 

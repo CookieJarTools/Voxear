@@ -23,12 +23,15 @@ internal static class RpcTests
 				public void Wave() { }
 				[ClientRpc]
 				private void Blasted(NetPlayer by, string @string) { }
+				[ClientRpc]
+				private void Joined(byte[] ground) { }
 				private void Use(NetPlayer player)
 				{
 					CastOnServer(Vector3.UnitX, Weapon.Staff, Obj);
 					WaveOnServer();
 					BlastedOnClients(player, "hi");
 					BlastedOnClient(player, player, "only you");
+					JoinedOnClient(player, new byte[] { 1, 2 });
 				}
 			}
 			""";
@@ -37,7 +40,7 @@ internal static class RpcTests
 		{
 			throw new Exception($"wanted nothing, got {string.Join("; ", diagnostics.Select(d => d.ToString()))}");
 		}
-		var checks = new[] { "MayRunOnServer(this, key, false, 5)", "MayRunOnServer(this, key, true, 0)", "MayRunOnPlayer()" };
+		var checks = new[] { "MayRunOnServer(this, key, false, 5)", "MayRunOnServer(this, key, true, 0)", "MayRunOnPlayer()", "reader.ReadBytes()" };
 		if (!checks.All(generated.Contains))
 		{
 			throw new Exception($"the checks the attributes ask for are not all there:\n{generated}");

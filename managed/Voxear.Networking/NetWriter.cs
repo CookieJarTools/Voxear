@@ -47,6 +47,13 @@ public sealed class NetWriter
 		bytes.AddRange(text);
 	}
 
+	/// <summary>Bytes as they are, after their count: a terrain's edits for a player who joins, say.</summary>
+	public void Write(byte[]? value)
+	{
+		Write(value?.Length ?? 0);
+		bytes.AddRange(value ?? []);
+	}
+
 	public void Write(Vector2 value)
 	{
 		Write(value.X);

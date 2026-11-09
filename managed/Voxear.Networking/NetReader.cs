@@ -49,6 +49,12 @@ public sealed class NetReader
 		return length <= 0 ? string.Empty : Encoding.UTF8.GetString(Take(length));
 	}
 
+	public byte[] ReadBytes()
+	{
+		var length = ReadInt();
+		return length <= 0 ? [] : Take(length).ToArray();
+	}
+
 	public Vector2 ReadVector2()
 	{
 		return new Vector2(ReadFloat(), ReadFloat());

@@ -17,6 +17,8 @@ The brush paints into a **Sculpt** layer (see [[Layers]]): the one picked when i
 | Terrace | Cuts the ground into steps **Step** metres high |
 | Noise | Roughens the ground with bumps **Bump size** metres across; **Shift** turns them over |
 | Holes | Cuts holes in the ground; **Shift** as the stroke starts fills them. See [[Holes]] |
+| Dig | Digs a ball the brush's size out of the ground where you click, and along where you drag; **Shift** fills instead. Click again in the same place to dig deeper. See [[Digging]] |
+| Fill | Heaps a ball of ground up; **Shift** digs instead |
 
 | Setting | What it does |
 | --- | --- |

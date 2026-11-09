@@ -13,6 +13,30 @@ private void Landed(Vector3 at)
 }
 ```
 
+## Digging in the editor
+
+The **Sculpt** tool's **Dig** brush digs a ball the brush's **Size** round out of the ground where you click, and one after another along where you drag. Click again in the same place to dig deeper, and hold **Shift** to fill instead. **Strength** sets how deep each ball sits: at 0.5 it is half under the ground, so a click digs a bowl as deep as the brush is wide; at 1 deeper, at 0 shallower. **Bares** picks the surface laid on what it digs open. The **Fill** brush heaps ground up instead, as high as its strength.
+
+What the brushes dig goes in a **Dig** layer, made on top of the list the first time and picked after, and each stroke is one step to undo.
+
+### Trenches
+
+**Add Layer ▸ Trench** digs a trench along a line, as a Spline lays a road: a new one runs across the middle of the terrain, and you drag its dots in the Scene view to place it, as for any [[Layers#Splines|Spline]]. It follows the ground between its dots, a couple of metres at a time.
+
+| Setting | What it does |
+| --- | --- |
+| Width | How wide its floor is, in metres |
+| Dig | Whether the line is dug as a trench; off, it is a Spline that lays the ground level |
+| Depth | How deep its floor is under the ground, in metres |
+| Wall lean | How far its walls lean back, in metres out for each metre up: 0 for upright revetted walls |
+| Step height | How high its fire step stands above the floor, along its front wall |
+| Step width | How deep the fire step is; 0 for none |
+| Parapet | How high the earth dug out is heaped along its front; 0 for none |
+| Front | Which side is its front, going along from its first dot: where the fire step and parapet are |
+| Surface | The surface laid on what it digs open |
+
+Digging in layers is done over the ground every other layer makes, whatever its place in the list, in the order the layers are in. Change the ground under a trench, and it is dug again into the new ground.
+
 ## Digging from scripts
 
 | Call | What it does |

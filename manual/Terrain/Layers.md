@@ -23,7 +23,9 @@ Each change is one step to undo. A new terrain has no layers: flat ground at its
 | Stamp | A grey picture, or a rounded hill without one, placed, turned and sized on the ground |
 | Noise | Rolling, ridged or billowing ground all over, from a seed |
 | Sculpt | What the [[Sculpting]] brushes paint |
-| Spline | The ground laid level along a line: a road, a riverbed, a trench floor |
+| Spline | The ground laid level along a line: a road, a riverbed |
+| Trench | A trench dug along a line, with its fire step and parapet: a Spline with **Dig** on (see [[Digging]]) |
+| Dig | What the **Dig** and **Fill** brushes dug (see [[Digging]]) |
 | Terrace | The ground below cut into steps |
 | Smooth | The ground below smoothed |
 | Import | A grey picture stretched over the whole terrain: heights made in another tool |

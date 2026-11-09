@@ -1507,8 +1507,15 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   as commands or chunks (edits version 2). C#: `Terrain.Dig`, `Fill`, `Tunnel`, `Explode` (native API 66). Tests:
   no cracks or gaps along a column, rays and floors, save forms, GPU (a pit drawn whole, grass round it), physics
   (a ball in a pit, a character along a trench), a script's explosion. Manual: Digging.
-- **Digging in the editor:** dig and fill brushes, trenches along a Path with a profile (depth, floor width, wall
-  angle, fire step, parapet), kept as digs in the layer stack so they are made again over changed heights.
+- ~~**Digging in the editor:**~~ done: the Sculpt tool's Dig and Fill brushes (a ball a dab where the ground is
+  now, following the pointer over the level the stroke began at, Strength how deep, Bares the surface laid) into a
+  Dig layer of strokes; Spline layers with Dig on dug as a trench (Add Layer ▸ Trench): a cross-section of floor,
+  leaning walls, a fire step on the front and a parapet heaped along it, swept along the line a couple of metres at
+  a time over the ground. Digging layers lay no heights (left out of compositing and its hashes) and are dug after,
+  in order: as a terrain loads, and in the editor again only when they or the heights under their columns change.
+  `.heights` keeps none of the holes digging cuts. A spade icon. Tests: trench profile, strokes read back, holes
+  left out of saves; the editor (a dig, a trench, each undone); a trench dug as a terrain loads. Manual: Digging,
+  Sculpting, Layers.
 - **Built-in terrain generation:** generators that make a terrain to start from, chosen and tuned in the editor or
   run from code, each feeding the layer stack so it can be painted and stamped over afterwards:
   - control fields (continentalness, erosion, ridges, temperature, humidity) shaped by nested curves, with presets

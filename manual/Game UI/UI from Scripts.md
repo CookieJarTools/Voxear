@@ -30,17 +30,24 @@ An element made with `new` waits in your code until you add it to one on screen.
 
 `Remove` takes an element out again, with everything in it, and `Clear` takes out everything added to an element. A removed element keeps its text and value, and can be added again anywhere. `Children` lists what was added to an element in code, and `Parent` the element it was added to.
 
-Panels lay out in a column. Give them classes, as `new Panel("hud", "top")`, and style the classes in a sheet, or set a style straight on the element with `SetStyle`.
+Panels lay out in a column. Give them classes, as `new Panel("hud", "top")`, and style the classes in a sheet, or style the element itself with its `Style` (see [Styling elements from code](#styling-elements-from-code)).
 
 ## Loading and closing a UI document
 
+The simplest way to show a document is a **Screen UI** on an Obj, with no code at all: see [[Your First Menu]]. A script can also load one itself. Give it a field for the document, and pick the file in the Inspector:
+
 ```csharp
-var menu = UiDocument.Load("UI/Menu.vui");
+[SerializeField] private UiDocumentAsset menuDocument;
+
+protected override void Start()
+{
+	var menu = UiDocument.Load(menuDocument);
+}
 ```
 
-`Load` reads a `.vui` file by its path in your project and puts it on screen, over the game and over any UI loaded before it. It gives back `null` if the file cannot be read; the Console says why. Load from a behaviour's `Start`, or a system's `OnCreate`: UI exists only while the game runs.
+The field keeps pointing at the file when it is renamed or moved. `UiDocument.Load("UI/Menu.vui")` loads one by its path instead. Either puts the document on screen, over the game and over any UI loaded before it, and gives back `null` if the file can't be read; the Console says why. Load from a behaviour's `Start`, or a system's `OnCreate`: UI exists only while the game runs.
 
-`menu.Close()` takes the document off screen, and `menu.IsOpen` says whether it is still there.
+`menu.Close()` takes the document off screen, and `menu.IsOpen` says whether it is still there. A document a script loads stays until it is closed, even when the level changes, so close it in `OnDestroy` when it belongs to one level. A Screen UI does that by itself.
 
 ## Finding UI elements
 
@@ -81,14 +88,43 @@ protected override void Update()
 | `Value` | A slider's value, or the option a dropdown has picked, by its place |
 | `Checked` | Whether a toggle is on |
 | `AddClass("open")`, `RemoveClass`, `ToggleClass`, `HasClass` | Changes its classes, and so its style |
-| `SetStyle("width: 40%")` | Gives it its own style, replacing any it had from code or its `style` attribute |
+| `Style.Width = 40`, `SetStyles(…)` | Changes its own style, a property at a time: see below |
 
 Changing a class is the neat way to change how something looks: write the look in the style sheet, and switch the class from code. A health bar, for instance:
 
 ```csharp
-healthBar!.SetStyle($"width: {health}%");
+healthBar!.Style.Width = Length.Percent(health);
 lowHealth!.Visible = health < 20;
 ```
+
+## Styling elements from code
+
+An element's `Style` sets one property at a time. Each wins over the style sheets and keeps the rest, the `style` attribute's too:
+
+```csharp
+bar.Style.Position = Position.Absolute;
+bar.Style.Left = 20;
+bar.Style.Width = Length.Percent(50);
+bar.Style.BackgroundColor = Color.Hex("#8b93ff");
+```
+
+`SetStyles` sets several at once, by name, and gives the element back, so it fits inside `Add`:
+
+```csharp
+var hud = root.Add(new Panel().SetStyles(position: Position.Absolute, left: 20, top: 20, flexDirection: FlexDirection.Row, gap: 12));
+```
+
+A number is pixels, `Length.Percent(50)` is half the box the element is in, and `Length.Auto` leaves it to the layout. Set a property to `null` to hand it back to the sheets. Reading one gives what code set, or `null`.
+
+| Kind | Properties |
+| --- | --- |
+| Layout | `Display`, `Position`, `Left`, `Top`, `Right`, `Bottom`, `Width`, `Height`, `MinWidth`, `MinHeight`, `MaxWidth`, `MaxHeight`, `Overflow` |
+| Flex | `FlexDirection`, `FlexGrow`, `FlexShrink`, `FlexBasis`, `FlexWrap`, `AlignItems`, `AlignSelf`, `JustifyContent`, `Gap`, `RowGap`, `ColumnGap` |
+| Spacing | `Margin`, `Padding`, and each side, as `MarginLeft` or `PaddingTop` |
+| Look | `BackgroundColor`, `BorderWidth`, `BorderColor`, `BorderRadius`, `Opacity`, `ZIndex`, `PointerEvents` |
+| Text | `Color`, `FontSize`, `FontWeight`, `FontFamily`, `TextAlign`, `LineHeight` |
+
+For a property `Style` doesn't have yet, such as a shadow or a shader, `SetStyle("box-shadow: 0 4px 12px #00000080")` takes CSS text. It replaces the element's whole style, from code and its `style` attribute.
 
 ## Reacting to changes
 
@@ -116,7 +152,7 @@ A `ListView` shows a list of items, one to a row, and scrolls when they do not f
 
 ```csharp
 var names = hud.Root.Add(new ListView<string>(players));
-names.SetStyle("height: 240px");
+names.Style.Height = 240;
 names.SelectionChanged += () => Log.Info($"{names.SelectedItem} picked");
 ```
 

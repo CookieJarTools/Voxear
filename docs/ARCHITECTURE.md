@@ -1587,8 +1587,27 @@ surfaces in 3D. *(Implemented as the UI Panel component:)*
   which now stands for the new element of the same name, and elements made in code move across, so handlers
   scripts added keep running.
 - `OnUiBuilt(UiDocument)` is a lifecycle phase: after each batch's Starts, and at each frame's start after the
-  flush, where the behaviour looks whether its panel's document is one it has not been given yet. A new
-  document, or a behaviour made again by a reload of the scripts, gets it once.
+  flush, where the behaviour looks whether its panel's or Screen UI's document is one it has not been given yet.
+  A new document, or a behaviour made again by a reload of the scripts, gets it once.
+
+**Screen UI** *(implemented)*: a component (`crates/voxear_engine/src/screen_ui.rs`) that shows a `.vui` document
+over the game's view while the game plays, as a document of the screen's own `Ui`, so scripts reach it as one
+they loaded.
+- `GameUi::sync_screens` runs after each frame's scripts: it loads a new Screen UI's document, closes those
+  whose Objs went, hides a switched-off Obj's document and keeps its numbers, and raises the documents by
+  `order`. A script asking for `ScreenUi.Document` loads it first (`ScriptServices::ui_screen_document`).
+- The screen's `Surface` keeps each document's file, so `GameUi::reload_documents` loads every one again in
+  place when its file changes, keeping its numbers and its place among the others.
+
+**Styles from scripts**: `element.Style` sets one inline property at a time (`ui_style_property`, native API 65,
+`Ui::set_inline_property`), in place of that property and keeping the rest, the markup's `style` attribute's
+too. Voxear.Core writes each typed value as CSS (`StyleCss`), and keeps what was set to send again when an
+element made in code comes on screen. `SetStyle` still takes CSS text, replacing the whole inline style.
+
+**LocalizedLabel**: a key's text with `{0}`, `{1}`… filled from code, as a row of labels and prompts. An action's
+place is written into the formatted text as a private-use mark, so plurals and currencies format as ever, and the
+text is split at the marks. The row is made again only when its shape changes; otherwise its labels' texts
+change. Prompts follow the device and rebinding as every prompt does.
 
 **UI shaders** *(implemented)*: `shader: shimmer` or `shader: url("Shaders/Glow.shader")` draws an element's
 background with a shader, on the screen, on panels and in the editor alike, since all of them draw through

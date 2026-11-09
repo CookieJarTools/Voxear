@@ -157,6 +157,8 @@ In a UI document:
 
 From a script, `new PromptView("Jump")` makes one, and its `Action` changes the action it shows. A composite shows each of its parts, so `Move` bound to WASD shows W, A, S and D.
 
+To put the controls inside a sentence, as "Press [E] to open", use a `LocalizedLabel` with the action as one of its values: see [[Localized UI Text]].
+
 Style the glyphs in your sheets by their classes: `prompt` for the whole prompt, and `prompt-glyph` for each control, with `key`, `round`, `pill`, `square`, `stick` or `bare` for its shape. Each holds a `prompt-text` label or a `prompt-icon`.
 
 The Actions view of the Input Actions window shows a binding's glyph as its **Prompt**, so you can see what players will.

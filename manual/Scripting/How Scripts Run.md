@@ -11,7 +11,7 @@ A behaviour has methods the engine calls at set times: when it first appears, ev
 | `Awake` | Once, first, as soon as the behaviour exists and its fields are set |
 | `OnEnable` | After Awake, and again each time the behaviour is turned back on |
 | `Start` | Once, just before its first Update |
-| `OnUiBuilt` | On an Obj with a UI Panel, once its document is built, after Start. See [[UI Panels in the World]] |
+| `OnUiBuilt` | On an Obj with a UI Panel or a Screen UI, once its document is built, after Start. See [[Your First Menu]] |
 | `FixedUpdate` | At a steady 50 times a second, before Update. A frame can have none, or several |
 | `Update` | Once every frame |
 | `PoseUpdate` | Every frame, after animation has posed the bones and before Objs on bones follow them |
@@ -34,7 +34,7 @@ When a level loads, or a prefab is spawned, all its behaviours arrive together:
 1. Every one of them gets `Awake`.
 2. Then every one gets `OnEnable`.
 3. Then every one gets `Start`, before the first `Update`.
-4. Then those on an Obj with a UI Panel get `OnUiBuilt`.
+4. Then those on an Obj with a UI Panel or a Screen UI get `OnUiBuilt`.
 
 So in `Start`, every other behaviour that arrived with yours has already had its `Awake` and `OnEnable`.
 

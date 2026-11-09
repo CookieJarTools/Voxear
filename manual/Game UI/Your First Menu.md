@@ -2,7 +2,7 @@
 order: 1
 ---
 
-This page puts a score and a button on screen. It takes three files: the **markup**, which lists what is on screen; a **style sheet**, which says how it looks; and a **script**, which loads it and makes the button work.
+This page puts a score and a button on screen. It takes three files: the **markup**, which lists what is on screen; a **style sheet**, which says how it looks; and a **script**, which makes the button work. A **Screen UI** puts the markup on screen.
 
 ## The menu's markup
 
@@ -40,7 +40,16 @@ Beside it, make `Hud.vss`:
 
 `.hud` styles everything with the class `hud`, and `#score` the element named `score`. This puts the panel 20 pixels in from the top left of the screen, with a gap between its parts. See [[UI Style Sheets]].
 
-## The script that shows the menu
+## Showing the menu
+
+In the Hierarchy, pick **+ ▸ Screen UI**, or add one to any Obj with **Add Component ▸ UI ▸ Screen UI**. Drag `Hud.vui` from the Project panel onto its **Document**. Click **Play**, and the score and button show over the Game view.
+
+| Setting | What it does |
+| --- | --- |
+| **Document** | The `.vui` file it shows |
+| **Order** | Which Screen UI shows over which: higher over lower |
+
+## The script that makes the button work
 
 ```csharp
 using Voxear;
@@ -52,16 +61,10 @@ public sealed class ScoreHud : Behaviour
 	private UiElement? score;
 	private int points;
 
-	protected override void Start()
+	protected override void OnUiBuilt(UiDocument ui)
 	{
-		var hud = UiDocument.Load("UI/Hud.vui");
-		if (hud == null)
-		{
-			return;
-		}
-
-		score = hud.Find("score");
-		hud.Find("add")!.Clicked += AddPoint;
+		score = ui.Find("score");
+		ui.Find("add")!.Clicked += AddPoint;
 	}
 
 	private void AddPoint()
@@ -72,14 +75,17 @@ public sealed class ScoreHud : Behaviour
 }
 ```
 
-Put the behaviour on any Obj in your level, such as an empty one called UI, and click **Play**. The score and button show over the Game view. Click the button, and the score goes up.
+Add the behaviour to the Screen UI's Obj. `OnUiBuilt` runs once the document is built, after `Start`, and hands you the document. Find its elements there and subscribe to their events once. There's no need to check every frame. Click the button, and the score goes up.
 
-`UiDocument.Load` takes the path of the `.vui` file in your project. If it cannot be read, it gives back `null` and the Console says why. See [[UI from Scripts]].
+`Obj.ScreenUi.Document` is the same document, ready from `Awake` on, for a behaviour that needs it sooner.
+
+A script can also put a document on screen itself, with `UiDocument.Load`. See [[UI from Scripts]].
 
 ## Things to know about game UI
 
 - UI shows only while the game runs. There is no UI while you edit, and stopping play takes it away.
-- Load each document once, in `Start`. Every `Load` puts another copy on screen.
+- A Screen UI shows while its Obj is there. Switch the Obj off to hide it, keeping its handlers, and destroy it to close it.
 - Clicks that land on your UI are taken by it; clicks anywhere else reach the game.
-- When your scripts reload while the game plays, the UI stays on screen, but its buttons stop calling your code until you play again. On a UI Panel, subscribe in `OnUiBuilt` and they carry on (see [[UI Panels in the World]]).
+- Saving `Hud.vui` while the game plays shows the change at once. Elements are found again by their names, and keep their handlers.
+- When your scripts reload while the game plays, `OnUiBuilt` runs again, so the button carries on. Handlers added in `Start` stop until you play again.
 - Builds include every `.vui` file, and the style sheets it names, by themselves.

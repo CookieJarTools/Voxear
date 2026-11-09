@@ -602,6 +602,13 @@ public unsafe class UiElement
 		}
 	}
 
+	/// <summary>Shows text worked out in code, as it is, in place of any Bind: one starting with "@" is not read as a key.</summary>
+	internal void ShowPlainText(string shown)
+	{
+		textFrom = null;
+		ShowBoundText(shown);
+	}
+
 	/// <summary>Shows text code worked out, as it is: one starting with "@" is not read as a key.</summary>
 	private void ShowBoundText(string shown)
 	{

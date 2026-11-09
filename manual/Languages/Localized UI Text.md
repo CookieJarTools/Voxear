@@ -129,6 +129,32 @@ Call `Localize` again for other values. For values that change while the text sh
 panel.Add(new Button(Strings.Menu.Fill, Fill) { Tooltip = new UiText(Strings.Hud.Coins, ("count", 10)) });
 ```
 
+## Text with controls and values
+
+A `LocalizedLabel` shows a key's text with `{0}`, `{1}` and on filled in from code. A value can be an action, which shows the controls to press, drawn for the device the player used last:
+
+```toml
+[[entry]]
+key = "shop.buy"
+en = "Press {0} to buy for {1, currency}"
+de = "Drücke {0}, um es für {1, currency} zu kaufen"
+```
+
+```csharp
+var confirm = Input.Action("Submit");
+panel.Add(new LocalizedLabel(Strings.Shop.Buy, TextParam.Action(confirm), TextParam.Bind(() => new Money(price, Currency.EUR))));
+```
+
+The player sees "Press [Enter] to buy for €12.50", with the key drawn as a keycap. When they pick up a pad, the keycap becomes the pad's button, as its own pad marks it. Rebinding the action changes it too.
+
+| Value | What it fills in |
+| --- | --- |
+| `TextParam.Action(action)` | The action's controls, as a prompt draws them |
+| `TextParam.Bind(() => coins)` | A value worked out again each frame |
+| `12`, `"text"`, `new Money(…)` | A value as it is. `Set(1, 20)` changes one later |
+
+Values are written as the language writes them, so `{1, number}`, `{1, currency}` and `{1, plural, …}` all work. Each language can put the controls where its sentence needs them. Style the row with the class `localized-label`, and its text with `localized-label-text`. The controls are styled as every prompt is (see [[Showing the Controls]]).
+
 ## The main menu in markup
 
 The same menu in a `.vui` file writes each key with `@` in front, and `tooltip` takes one as well:
@@ -167,6 +193,7 @@ The placeholder is plain text here, and the dropdown is left out: in markup, a p
 | `new Dropdown(params UiText[])` | A dropdown whose options are keys' texts, or written out |
 | `Options` | A dropdown's options, as they show now, in the game's language |
 | `Localize(LocalizedString, values)` | Shows a key's text with values filled in. Call it again for other values |
+| `new LocalizedLabel(LocalizedString, params TextParam[])` | A key's text with `{0}`, `{1}` and on filled in: values, values worked out each frame, and actions' controls |
 | `Bind(LocalizedString)` | Shows a key's text, following the language |
 | `Bind(Func<LocalizedString>)` | Shows the text of whichever key the function gives, worked out again each frame |
 | `Bind(Func<string>)` | Shows what the function gives, as `() => Strings.Hud.Coins.Format(("count", Coins))` |

@@ -89,7 +89,7 @@ public sealed class LoadingScreen : Behaviour
 
 	protected override void Update()
 	{
-		bar?.SetStyle($"width: {Level.Progress * 100:0}%");   // full when nothing is loading
+		bar?.Style.Width = Length.Percent(Level.Progress * 100);   // full when nothing is loading
 
 		if (Level.IsReady)                                     // a held change is waiting
 		{

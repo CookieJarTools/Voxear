@@ -39,7 +39,7 @@ pub(crate) fn measure(
     style: &taffy::Style,
     fonts: &mut FontContext,
     layouts: &mut LayoutContext<u16>,
-    scale: f32,
+    (scale, whole_pixels): (f32, bool),
 ) -> LayoutOutput {
     let Some(element) = element else {
         return taffy::compute_leaf_layout(input, style, |_, _| 0.0, |_, _| Size::ZERO);
@@ -63,7 +63,7 @@ pub(crate) fn measure(
                     AvailableSpace::Definite(width) => Some(width),
                     _ => None,
                 });
-                edit.sync(text_style, scale, width.map(|w| w * scale));
+                edit.sync(text_style, (scale, whole_pixels), width.map(|w| w * scale));
                 let height = edit.editor.layout(fonts, layouts).height() / scale;
                 // Like CSS's inputs: a set width when there is room, but able to shrink.
                 let natural = if available.width == AvailableSpace::MinContent { FIELD_MIN_WIDTH } else { FIELD_WIDTH };
@@ -89,7 +89,7 @@ pub(crate) fn measure(
                 AvailableSpace::MinContent => Some(0.0),
                 AvailableSpace::MaxContent => None,
             };
-            let layout = text.shaped(fonts, layouts, scale);
+            let layout = text.shaped(fonts, layouts, (scale, whole_pixels));
             layout.break_all_lines(max.filter(|_| text_style.wrap).map(|w| w * scale));
             Size {
                 width: known.width.unwrap_or(layout.width() / scale),
@@ -285,8 +285,11 @@ impl Draw<'_> {
                 && let Some((_, shaped)) = &mut text.shaped
             {
                 // Broken again at the width it ended up, which the last
-                // measure may not have been.
-                let width = element.text_style.wrap.then_some((inner * self.scale).ceil());
+                // measure may not have been, rounded up to a whole pixel
+                // but by less than a logical one, as a UI drawn small, a
+                // panel far off, would otherwise fit more on a line.
+                let width = (inner * self.scale).ceil().min((inner + 1.0) * self.scale);
+                let width = element.text_style.wrap.then_some(width);
                 shaped.break_all_lines(width);
                 // Right to left, the start is the right, whichever way the text itself runs.
                 let rtl = element.text_style.rtl;

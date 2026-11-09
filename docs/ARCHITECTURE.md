@@ -1555,7 +1555,9 @@ hud.Close();
 any DPI. World-space panels render to a mipmapped texture sized to their on-screen pixel density, then draw as
 surfaces in 3D. *(Implemented as the UI Panel component:)*
 - Each panel's document is a `Ui` of its own (`crates/voxear_engine/src/ui_panels.rs`), sharing the screen UI's
-  fonts, its script numbers in a range of its own. Its layout is its size in metres times its pixels per metre.
+  fonts, its script numbers in a range of its own. Its layout is its size in metres times its pixels per metre,
+  and the same at whatever size it is drawn: its `Ui` is scalable (`Ui::set_scalable`), so its text's lines are
+  not rounded to whole pixels at the scale it is drawn at, and text wraps alike near and far.
 - It is drawn at the size it showed in the last frame's views, which the renderer reports back, in steps of √2:
   it grows at once and shrinks two steps late, so text is not rasterised again as the camera moves.
 - The renderer (`crates/voxear_render/src/ui_panels.rs`) draws each panel whose quads changed into an RGBA16F

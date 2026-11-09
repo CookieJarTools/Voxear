@@ -207,3 +207,46 @@ fn a_shaded_background_names_its_shader_and_carries_its_values() {
     ui.frame(WIDTH, HEIGHT, 2.0);
     assert!(ui.take_warnings().iter().all(|w| !w.contains("no UI shader")), "said once, not every frame");
 }
+
+/// A scalable UI laid out at the same logical size is laid out the same,
+/// whatever scale it is drawn at, as a panel in the world drawn small when
+/// far off is: its text wraps the same and its lines are as tall, so
+/// nothing below them moves.
+#[test]
+fn a_ui_drawn_at_any_scale_lays_out_alike() {
+    let lay_out = |scale: f32| {
+        let mut ui = Ui::new();
+        ui.set_scalable(true);
+        let root = ui.root();
+        let sheet = ".terminal { position: absolute; left: 0px; top: 0px; right: 0px; bottom: 0px; flex-direction: column; padding: 32px; gap: 18px; }\
+             .title { font-size: 44px; font-weight: bold; line-height: normal; }\
+             .body { font-size: 24px; line-height: normal; }\
+             .row { flex-direction: row; gap: 24px; align-items: center; }\
+             .primary { font-size: 26px; height: 56px; padding: 0px 24px; line-height: normal; }";
+        ui.add_sheet(root, voxear_ui::StyleSheet::parse("Terminal.vss", sheet));
+        let terminal = ui.panel(root, Style::default());
+        ui.add_class(terminal, "terminal");
+        let title = ui.label(terminal, "Supply Depot 7", TextStyle::default());
+        ui.add_class(title, "title");
+        let words = "Rations, rifle ammunition and field dressings. Sign for what you take, and bring back what you do not use.";
+        let body = ui.label(terminal, words, TextStyle { wrap: true, ..TextStyle::default() });
+        ui.add_class(body, "body");
+        let row = ui.panel(terminal, Style::default());
+        ui.add_class(row, "row");
+        let button = ui.button(row, "Open the gate");
+        ui.add_class(button, "primary");
+        let size = |logical: f32| (logical * scale).round() as u32;
+        ui.frame(size(800.0), size(450.0), scale);
+        [ui.rect(title), ui.rect(body), ui.rect(button)]
+    };
+    let near = lay_out(1.0);
+    for step in -6..=2 {
+        let scale = 2f32.powf(step as f32 / 2.0);
+        let far = lay_out(scale);
+        for (what, (a, b)) in ["title", "body", "button"].iter().zip(near.iter().zip(far.iter())) {
+            // Within a pixel as drawn: its size in whole pixels is a little off.
+            let off = a.iter().zip(b.iter()).map(|(a, b)| (a - b).abs()).fold(0.0, f32::max);
+            assert!(off <= 1.0 / scale.min(1.0), "at scale {scale}, the {what} moved: {a:?} became {b:?}");
+        }
+    }
+}

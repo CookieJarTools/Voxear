@@ -95,7 +95,7 @@ pub(crate) struct Editing {
     /// word being typed, which the next letters join in one step of undo.
     changed_at: f32,
     typing_at: Option<usize>,
-    synced: Option<(TextStyle, f32, Option<f32>)>,
+    synced: Option<(TextStyle, (f32, bool), Option<f32>)>,
 }
 
 /// What an edit is, for undo: letters typed, which join the word before
@@ -170,9 +170,9 @@ impl Editing {
     }
 
     /// Brings the editor's font, scale and wrapping width up to date.
-    pub fn sync(&mut self, style: TextStyle, scale: f32, width: Option<f32>) {
+    pub fn sync(&mut self, style: TextStyle, (scale, whole_pixels): (f32, bool), width: Option<f32>) {
         let width = if self.multiline { width } else { None };
-        if self.synced == Some((style, scale, width)) {
+        if self.synced == Some((style, (scale, whole_pixels), width)) {
             return;
         }
         let styles = self.editor.edit_styles();
@@ -181,11 +181,12 @@ impl Editing {
         styles.insert(StyleProperty::FontFamily(style.family.source().into()));
         styles.insert(StyleProperty::LineHeight(style.parley_line_height()));
         self.editor.set_scale(scale);
+        self.editor.set_quantize(whole_pixels);
         self.editor.set_width(width);
         let faded = Color { a: (style.color.a as f32 * 0.45) as u8, ..style.color };
         self.placeholder.style = TextStyle { color: faded, ..style };
         self.placeholder.shaped = None;
-        self.synced = Some((style, scale, width));
+        self.synced = Some((style, (scale, whole_pixels), width));
     }
 
     /// Scrolls a single line so the caret stays inside `width` pixels, or
@@ -473,14 +474,15 @@ impl Ui {
         step: Step,
         command: impl FnOnce(&mut PlainEditorDriver<'_, u16>),
     ) {
-        let scale = self.viewport.2.max(0.25);
+        let scale = self.viewport.2.max(crate::tree::MIN_SCALE);
+        let shaping = (scale, self.whole_pixel_text);
         let now = self.input.time;
         let [_, _, width, height] = self.content_box(field);
         let Ui { tree, fonts, layouts, .. } = self;
         let Some(element) = tree.get_node_context_mut(field.0) else { return };
         let style = element.text_style;
         let Some(Control::TextField(edit)) = &mut element.control else { return };
-        edit.sync(style, scale, Some(width * scale));
+        edit.sync(style, shaping, Some(width * scale));
         let before = (edit.editor.raw_text().to_string(), edit.caret());
         let mut driver = edit.editor.driver(fonts, layouts);
         command(&mut driver);
@@ -597,7 +599,7 @@ impl Ui {
     /// About how many lines of a multiline field show at once, for Page Up
     /// and Page Down.
     fn lines_shown(&mut self, field: NodeId) -> usize {
-        let scale = self.viewport.2.max(0.25);
+        let scale = self.viewport.2.max(crate::tree::MIN_SCALE);
         let [_, _, _, height] = self.content_box(field);
         let Some(edit) = self.editing(field) else { return 1 };
         let line = edit.editor.cursor_geometry(1.0).map_or(16.0, |caret| (caret.y1 - caret.y0) as f32);
@@ -607,7 +609,7 @@ impl Ui {
     /// Scrolls a multiline text field by `dy` logical pixels, as the wheel
     /// does. Returns whether it moved.
     pub(crate) fn scroll_field(&mut self, field: NodeId, dy: f32) -> bool {
-        let scale = self.viewport.2.max(0.25);
+        let scale = self.viewport.2.max(crate::tree::MIN_SCALE);
         let [_, _, _, height] = self.content_box(field);
         let Some(edit) = self.editing(field).filter(|edit| edit.multiline) else { return false };
         let before = edit.scroll_y;
@@ -733,7 +735,7 @@ impl Ui {
 
     /// A point on screen as a place in a text field's layout, in physical pixels.
     fn field_point(&self, field: NodeId, point: (f32, f32)) -> (f32, f32) {
-        let scale = self.viewport.2.max(0.25);
+        let scale = self.viewport.2.max(crate::tree::MIN_SCALE);
         let [x, y, ..] = self.content_box(field);
         let (scroll, top) = match self.element(field).and_then(|e| e.control.as_ref()) {
             Some(Control::TextField(edit)) => (edit.scroll, edit.top),
@@ -756,14 +758,15 @@ impl Ui {
     /// Before drawing: every text field's layout up to date, its single line
     /// centred, and its placeholder shaped.
     pub(crate) fn refresh_fields(&mut self) {
-        let scale = self.viewport.2.max(0.25);
+        let scale = self.viewport.2.max(crate::tree::MIN_SCALE);
+        let shaping = (scale, self.whole_pixel_text);
         for field in self.fields.clone() {
             let [_, _, width, height] = self.content_box(NodeId(field));
             let Ui { tree, fonts, layouts, .. } = self;
             let Some(element) = tree.get_node_context_mut(field) else { continue };
             let style = element.text_style;
             let Some(Control::TextField(edit)) = &mut element.control else { continue };
-            edit.sync(style, scale, Some(width * scale));
+            edit.sync(style, shaping, Some(width * scale));
             let text_height = edit.editor.layout(fonts, layouts).height();
             // A multiline field keeps where it was scrolled to, so the wheel can leave the caret.
             if edit.multiline {
@@ -773,7 +776,7 @@ impl Ui {
                 edit.keep_caret_visible(width * scale, height * scale);
             }
             if !edit.placeholder.content.is_empty() {
-                let layout = edit.placeholder.shaped(fonts, layouts, scale);
+                let layout = edit.placeholder.shaped(fonts, layouts, shaping);
                 layout.break_all_lines(None);
             }
         }

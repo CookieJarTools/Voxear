@@ -617,6 +617,8 @@ impl GameUi {
         self.next_panel += 1;
         let mut surface = Surface::sharing_fonts(&self.screen.ui, first);
         surface.ui.set_shaders(self.shaders.clone());
+        // Drawn small far off and large up close, and laid out alike at either.
+        surface.ui.set_scalable(true);
         (surface, first)
     }
 

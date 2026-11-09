@@ -259,7 +259,7 @@ impl Ui {
         let field = self.focused().filter(|&f| self.kind(f) == Some(Kind::TextField))?;
         let Some(Control::TextField(edit)) = &self.element(field)?.control else { return None };
         let area = edit.editor.ime_cursor_area();
-        let scale = self.viewport.2.max(0.25);
+        let scale = self.viewport.2.max(crate::tree::MIN_SCALE);
         let [x, y, ..] = self.content_box(field);
         let left = x + (area.x0 as f32 - edit.scroll) / scale;
         let top = y + (area.y0 as f32 + edit.top) / scale;

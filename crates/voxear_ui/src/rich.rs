@@ -172,7 +172,7 @@ impl Ui {
     pub fn link_rect(&self, node: NodeId, url: &str) -> Option<[f32; 4]> {
         let text = self.element(node)?.text.as_ref()?;
         let span = text.spans.iter().find(|span| span.link.as_deref() == Some(url))?;
-        let (scale, layout) = text.shaped.as_ref()?;
+        let ((scale, _), layout) = text.shaped.as_ref()?;
         let [x, y, _, height] = self.content_box(node);
         let spare = ((height * scale - layout.height()).max(0.0) / 2.0).round();
         let cluster = Cluster::from_byte_index(layout, span.range.start)?;
@@ -189,7 +189,7 @@ impl Ui {
         if !text.spans.iter().any(|span| span.link.is_some()) {
             return None;
         }
-        let (scale, layout) = text.shaped.as_ref()?;
+        let ((scale, _), layout) = text.shaped.as_ref()?;
         let [x, y, _, height] = self.content_box(node);
         // Drawn centred down a taller box, as the drawing does.
         let spare = ((height * scale - layout.height()).max(0.0) / 2.0).round();

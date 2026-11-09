@@ -192,8 +192,9 @@ pub(crate) struct Text {
     pub content: String,
     /// The style it was last shaped with.
     pub style: TextStyle,
-    /// Shaped at the display scale it was last laid out at.
-    pub shaped: Option<(f32, Layout<u16>)>,
+    /// Shaped at the display scale it was last laid out at, its lines
+    /// rounded to whole pixels or not (see [`Ui::set_scalable`]).
+    pub shaped: Option<((f32, bool), Layout<u16>)>,
     /// For rich text: how parts of it differ, and its links.
     pub spans: Vec<crate::Span>,
 }
@@ -204,25 +205,32 @@ impl Text {
     }
 
     /// Shaped at physical size, so hinting and line breaks match the pixels
-    /// it is drawn at.
+    /// it is drawn at, its lines' heights rounded to whole pixels there when
+    /// `whole_pixels`.
     pub fn shaped(
         &mut self,
         fonts: &mut FontContext,
         layouts: &mut LayoutContext<u16>,
-        scale: f32,
+        (scale, whole_pixels): (f32, bool),
     ) -> &mut Layout<u16> {
-        if self.shaped.as_ref().is_none_or(|(at, _)| *at != scale) {
-            let mut builder = layouts.ranged_builder(fonts, &self.content, scale, true);
+        if self.shaped.as_ref().is_none_or(|(at, _)| *at != (scale, whole_pixels)) {
+            let mut builder = layouts.ranged_builder(fonts, &self.content, scale, whole_pixels);
             builder.push_default(StyleProperty::FontSize(self.style.size));
             builder.push_default(StyleProperty::FontWeight(FontWeight::new(self.style.weight)));
             builder.push_default(StyleProperty::FontFamily(self.style.family.source().into()));
             builder.push_default(StyleProperty::LineHeight(self.style.parley_line_height()));
             crate::rich::push_spans(&mut builder, &self.spans, &self.style);
-            self.shaped = Some((scale, builder.build(&self.content)));
+            self.shaped = Some(((scale, whole_pixels), builder.build(&self.content)));
         }
         &mut self.shaped.as_mut().expect("shaped above").1
     }
 }
+
+/// The least display scale a UI is laid out at, which keeps one framed
+/// before it has a size from dividing by nothing. A UI Panel far off is
+/// drawn at an eighth of its size, and laid out the same as up close, so
+/// this is well below that.
+pub(crate) const MIN_SCALE: f32 = 1.0 / 64.0;
 
 /// A retained tree of UI elements. Build it in code or from markup
 /// ([`load_markup`](Self::load_markup)), style it with sheets, change what
@@ -250,6 +258,9 @@ pub struct Ui {
     pub(crate) shaders: std::rc::Rc<crate::UiShaders>,
     /// Shader names styles gave that no shader has, warned about already.
     pub(crate) unknown_shaders: std::collections::HashSet<String>,
+    /// Text's lines rounded to whole pixels at the display scale, unless
+    /// the UI is laid out alike at every scale (see [`Ui::set_scalable`]).
+    pub(crate) whole_pixel_text: bool,
     /// Elements that scroll, as of the last cascade.
     pub(crate) scrollers: Vec<taffy::NodeId>,
     /// List and tree views, which make rows as they scroll.
@@ -347,6 +358,7 @@ impl Ui {
             warnings: Vec::new(),
             shaders: Default::default(),
             unknown_shaders: Default::default(),
+            whole_pixel_text: true,
             scrollers: Vec::new(),
             lists: Vec::new(),
             modifiers: Default::default(),
@@ -932,6 +944,18 @@ impl Ui {
         }
     }
 
+    /// Lays this UI out alike at every display scale, as one drawn at many
+    /// sizes needs: a UI Panel in the world is drawn small far off and large
+    /// up close, and its text wraps the same at either. Its text's lines are
+    /// then not rounded to whole pixels at the scale it is drawn at, which
+    /// a UI drawn at one size looks crisper for.
+    pub fn set_scalable(&mut self, scalable: bool) {
+        if self.whole_pixel_text == scalable {
+            self.whole_pixel_text = !scalable;
+            self.reshape(self.root);
+        }
+    }
+
     /// Says once for each, until the shaders change, that a style named a
     /// shader there is none of.
     pub(crate) fn warn_unknown_shaders(&mut self, names: Vec<String>) {
@@ -1058,7 +1082,7 @@ impl Ui {
 
     fn compute_layout(&mut self, width: u32, height: u32, scale: f32) {
         voxear_core::profile_scope!("Layout");
-        let scale = scale.max(0.25);
+        let scale = scale.max(MIN_SCALE);
         let viewport = (width as f32 / scale, height as f32 / scale, scale);
         if viewport.2 != self.viewport.2 {
             self.reshape(self.root);
@@ -1072,14 +1096,15 @@ impl Ui {
         }
         let (fonts, layouts) = (&mut self.fonts, &mut self.layouts);
         let space = Size { width: AvailableSpace::Definite(viewport.0), height: AvailableSpace::Definite(viewport.1) };
+        let shaping = (scale, self.whole_pixel_text);
         let measured = self.tree.compute_layout_with_measure(self.root, space, |input, _, element, style| {
-            measure(input, element, style, fonts, layouts, scale)
+            measure(input, element, style, fonts, layouts, shaping)
         });
         measured.expect("the root is in this tree");
     }
 
     /// Text is shaped for the display scale, so a new scale shapes it again.
-    fn reshape(&mut self, node: taffy::NodeId) {
+    pub(crate) fn reshape(&mut self, node: taffy::NodeId) {
         for child in self.tree.children(node).unwrap_or_default() {
             self.reshape(child);
         }

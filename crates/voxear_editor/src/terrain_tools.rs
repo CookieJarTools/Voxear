@@ -9,7 +9,8 @@
 //! begins fills them.
 //!
 //! Under **Paint**, the same ring paints the picked surface over the others,
-//! and Shift takes it away.
+//! and Shift takes it away; under **Grass**, it grows the picked kind of
+//! grass, and Shift digs it up.
 //!
 //! Under **Layers**, a picked Stamp shows its outline on the ground, with a
 //! dot in its middle to move it, one past its far side to turn it and one
@@ -81,6 +82,8 @@ enum Paints {
     Holes { fill: bool },
     /// Surface `n` over the others.
     Surface(usize),
+    /// Grass kind `n`, grown or dug up.
+    Grass(usize),
 }
 
 /// A layer's dot held: the terrain, the layer, the dot, how high it was
@@ -188,7 +191,7 @@ impl TerrainTools {
             return;
         }
         match terrain_props::ui(&game.engine.world).tool {
-            TerrainTool::Sculpt | TerrainTool::Paint => {
+            TerrainTool::Sculpt | TerrainTool::Paint | TerrainTool::Grass => {
                 self.under = ground_under(game, camera, entity, point).map(|at| (entity, at));
             }
             TerrainTool::Layers => {
@@ -235,6 +238,10 @@ impl TerrainTools {
             (TerrainTool::Paint, _) => {
                 let Some(surface) = terrain_props::paint_surface(game, entity) else { return false };
                 Paints::Surface(surface)
+            }
+            (TerrainTool::Grass, _) => {
+                let Some(kind) = terrain_props::paint_grass(game, entity) else { return false };
+                Paints::Grass(kind)
             }
             (_, BrushKind::Holes) => {
                 if !terrain_props::ready_for_holes(game, entity) {
@@ -294,6 +301,7 @@ impl TerrainTools {
         let find = |reference: &str| pictures.get(reference).cloned();
         let mut areas: Vec<Area> = Vec::with_capacity(steps);
         let heights = game.engine.world.get::<Terrain>(stroke.entity).map(|terrain| terrain.heights.clone());
+        let weights = game.engine.world.get::<Terrain>(stroke.entity).and_then(|terrain| terrain.weights.clone());
         for step in 1..=steps {
             let t = step as f32 / steps as f32;
             let at = [stroke.last[0] + (to[0] - stroke.last[0]) * t, stroke.last[1] + (to[1] - stroke.last[1]) * t];
@@ -313,6 +321,10 @@ impl TerrainTools {
                     let Some(heights) = &heights else { return };
                     voxear_terrain::surfaces::paint(&file, heights, &mut rasters, surface, &brush, at, amount, lower)
                 }
+                Paints::Grass(kind) => {
+                    let weights = weights.as_deref();
+                    voxear_terrain::grass::paint(&file, weights, &mut rasters, kind, (&brush, at, amount), lower)
+                }
             };
             areas.push(area);
         }
@@ -320,8 +332,8 @@ impl TerrainTools {
         let entity = stroke.entity;
         let dirty = Dirty::Areas(areas);
         match stroke.paints {
-            // Painting changes only where the surfaces cover, not the ground.
-            Paints::Surface(_) => terrain_props::repaint(game, entity, Arc::new(rasters), &dirty),
+            // Painting changes only where the surfaces cover and the grass grows, not the ground.
+            Paints::Surface(_) | Paints::Grass(_) => terrain_props::repaint(game, entity, Arc::new(rasters), &dirty),
             Paints::Sculpt(_) | Paints::Holes { .. } => {
                 terrain_props::remake_with(game, entity, file, Arc::new(rasters), &dirty, &self.compositor)
             }

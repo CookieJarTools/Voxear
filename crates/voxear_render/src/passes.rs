@@ -140,6 +140,9 @@ pub struct Frame {
     /// The terrains' patches in view and in the sun's cascades, drawn with
     /// what was visible last frame, before the depth pyramid.
     pub terrain: Option<crate::terrain::ViewTerrains>,
+    /// The grass this view scatters round its camera and draws after the
+    /// terrain (see `grass`).
+    pub grass: Option<crate::grass::ViewGrass>,
     /// Reflections trace the scene's triangles by the GPU's ray queries,
     /// with or without the GI, rather than the screen.
     pub traced_reflections: bool,
@@ -422,6 +425,12 @@ pub fn record(
     if let (Some(atlas), Some(terrains)) = (targets.shadows, &frame.terrain) {
         crate::terrain::record_shadows(fg, (pipelines, push), terrains, atlas);
     }
+    // The grass round the camera, scattered afresh before anything draws it.
+    if let Some(grass) = &frame.grass {
+        crate::grass::record_scatter(fg, (pipelines, push), grass);
+    }
+    // What the grass's vertices read beside their own: how plants are pushed aside.
+    let pushes = [(draws.foliage_pushes, BufferAccess::ShaderRead)];
     let diced_buffers: Vec<_> = shading_buffers
         .iter()
         .copied()
@@ -443,6 +452,9 @@ pub fn record(
             if let Some(terrains) = &frame.terrain {
                 crate::terrain::record_depth(fg, (pipelines, push), terrains, (depth, surface));
             }
+            if let Some(grass) = &frame.grass {
+                crate::grass::record_depth(fg, (pipelines, push), grass, (depth, surface), &pushes);
+            }
         }
         false => {
             fg.add_pass("Opaque (early)", &shading(ImageAccess::ColorAttachment), &shading_buffers, move |ctx| {
@@ -457,6 +469,12 @@ pub fn record(
                 let images = shading(ImageAccess::ColorAttachment);
                 let targets = (hdr, velocity, depth);
                 crate::terrain::record_opaque(fg, shading_push, pipeline, terrains, images, targets, &shading_buffers);
+            }
+            if let Some(grass) = &frame.grass {
+                let images = shading(ImageAccess::ColorAttachment);
+                let targets = (hdr, velocity, depth);
+                let pipeline = pipelines.grass_forward;
+                crate::grass::record_opaque(fg, shading_push, pipeline, grass, images, targets, &shading_buffers);
             }
         }
     }
@@ -514,6 +532,12 @@ pub fn record(
                 let images = shading(ImageAccess::ColorAttachment);
                 let targets = (hdr, velocity, depth);
                 crate::terrain::record_opaque(fg, shading_push, pipeline, terrains, images, targets, &shading_buffers);
+            }
+            if let Some(grass) = &frame.grass {
+                let pipeline = pipelines.grass_forward_on_depth;
+                let images = shading(ImageAccess::ColorAttachment);
+                let targets = (hdr, velocity, depth);
+                crate::grass::record_opaque(fg, shading_push, pipeline, grass, images, targets, &shading_buffers);
             }
         }
         false => fg.add_pass("Opaque (late)", &shading(ImageAccess::ColorAttachment), &shading_buffers, move |ctx| {

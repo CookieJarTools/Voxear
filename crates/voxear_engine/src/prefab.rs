@@ -883,21 +883,22 @@ pub struct TerrainParts {
 pub fn terrain(content: &mut Content, renderer: Option<&mut Renderer>, data: &TerrainData) -> Result<TerrainParts> {
     let guid = content.parse(&data.data).ok().and_then(|reference| reference.guid());
     let loaded = guid.and_then(|guid| Some((guid, content.terrain(guid)?)));
-    let (heights, weights, asset) = match loaded {
+    let (heights, weights, grass, asset) = match loaded {
         Some((guid, loaded)) => {
             let asset = crate::terrain::TerrainAsset { guid, file: loaded.file.clone(), rasters: loaded.rasters.clone() };
-            (loaded.heights.clone(), loaded.weights.clone(), Some(asset))
+            (loaded.heights.clone(), loaded.weights.clone(), loaded.grass.clone(), Some(asset))
         }
         None => {
             if !data.data.is_empty() {
                 tracing::warn!("the terrain {} could not be read; it is flat", data.data);
             }
-            (std::sync::Arc::new(voxear_terrain::file::TerrainFile::default().flat()), None, None)
+            (std::sync::Arc::new(voxear_terrain::file::TerrainFile::default().flat()), None, None, None)
         }
     };
     let terrain = voxear_terrain::Terrain {
         heights,
         weights,
+        grass,
         detail_distance: data.detail_distance.max(1.0),
         cast_shadows: data.cast_shadows,
     };
@@ -921,7 +922,42 @@ pub fn terrain_look(
     for surface in file.map_or(&[][..], |file| &file.surfaces) {
         surfaces.push(surface_look(content, renderer, surface)?);
     }
-    Ok(voxear_render::TerrainLook { material, texture_size: data.texture_size.max(0.01), surfaces: surfaces.into() })
+    let mut grass = Vec::new();
+    for kind in file.map_or(&[][..], |file| &file.grass) {
+        grass.push(grass_look(content, renderer, kind));
+    }
+    Ok(voxear_render::TerrainLook {
+        material,
+        texture_size: data.texture_size.max(0.01),
+        surfaces: surfaces.into(),
+        grass: grass.into(),
+    })
+}
+
+/// How one kind of a terrain's grass looks, its mesh and material loaded;
+/// none drawn where its mesh cannot be read.
+pub fn grass_look(
+    content: &mut Content,
+    renderer: &mut Renderer,
+    kind: &voxear_terrain::grass::Grass,
+) -> Option<voxear_render::GrassLook> {
+    let reference = kind.mesh.as_deref()?;
+    let mesh = match content.parse(reference).and_then(|parsed| content.mesh(renderer, &parsed)) {
+        Ok(mesh) => mesh,
+        Err(error) => {
+            tracing::warn!("a terrain's grass {reference} could not be read: {error:#}");
+            return None;
+        }
+    };
+    let named = kind.material.as_ref().map(|reference| MaterialRef::Asset(reference.clone()));
+    let material = material_of(content, renderer, named.as_ref()).or_else(|_| material_of(content, renderer, None)).ok()?;
+    Some(voxear_render::GrassLook {
+        mesh,
+        material,
+        density: kind.density.max(0.0),
+        scale: kind.scale,
+        draw_distance: kind.draw_distance.max(1.0),
+    })
 }
 
 /// How one of a terrain's surfaces looks, its material loaded: a plain one

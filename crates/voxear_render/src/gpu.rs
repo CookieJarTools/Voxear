@@ -849,6 +849,12 @@ pub struct GpuBuffers {
     pub terrain_patches: u64,
     /// The values the UI's shaded backgrounds read (see `voxear_ui::Quad::SHADED`).
     pub ui_values: u64,
+    /// This view's grass: its jobs, its draws' indirect commands, its
+    /// blades, and its draws (see `grass`).
+    pub grass_jobs: u64,
+    pub grass_args: u64,
+    pub grass_blades: u64,
+    pub grass_draws: u64,
 }
 
 /// A UI panel as `uiPanelVertex` in `shaders/ui.slang` draws it: its top
@@ -1129,7 +1135,7 @@ mod tests {
         assert_eq!(size_of::<GpuDdgi>(), 32 * DDGI_CASCADES + 32 + 48);
         assert_eq!(size_of::<GpuLighting>(), lighting);
         assert_eq!(size_of::<GpuPost>(), post);
-        assert_eq!(size_of::<GpuBuffers>(), 53 * 8);
+        assert_eq!(size_of::<GpuBuffers>(), 57 * 8);
         assert_eq!(size_of::<GpuUiPanel>(), 48);
         assert_eq!(size_of::<GpuSmoke>(), 80);
         assert_eq!(size_of::<GpuMist>(), 64);

@@ -52,7 +52,9 @@ pub fn save(content: &mut Content, project: &Path) -> Result<Vec<String>> {
         // The shares are kept too, so a game need not work them out as it loads.
         let surfaces = voxear_terrain::surfaces::hash_surfaces(&loaded.file.surfaces);
         let weights = loaded.weights.as_deref().map(|weights| (weights, surfaces));
-        let bytes = voxear_terrain::file::write_ground(&loaded.heights, loaded.file.shape_hash(), weights);
+        let grown = voxear_terrain::grass::hash_grass(&loaded.file.grass, surfaces);
+        let grass = loaded.grass.as_deref().map(|grass| (grass, grown));
+        let bytes = voxear_terrain::file::write_ground(&loaded.heights, loaded.file.shape_hash(), weights, grass);
         std::fs::write(project.join(&heights), bytes).with_context(|| format!("saving {heights}"))?;
         let layers = project.join(voxear_terrain::raster::layers_file(&path));
         if loaded.rasters.tiles().next().is_some() {

@@ -31,6 +31,7 @@ use voxear_terrain::{
     HeightTile, Heightmap, TILE_QUADS,
     heights::{HOLE_WORDS, TILE_LEN},
     lod::{LodRanges, LodTree, PATCH_QUADS, Patch},
+    grass::GrassTile,
     surfaces::{MAX_SURFACES, WeightTile},
 };
 
@@ -75,6 +76,9 @@ pub struct TerrainLook {
     pub material: MaterialHandle,
     pub texture_size: f32,
     pub surfaces: Arc<[SurfaceLook]>,
+    /// Each kind of its grass, in the order its densities number them; none
+    /// for a kind with no mesh to draw.
+    pub grass: crate::grass::Looks,
 }
 
 impl Component for TerrainLook {}
@@ -84,7 +88,7 @@ impl TerrainLook {
 
     /// A terrain drawn with `material` alone.
     pub fn new(material: MaterialHandle, texture_size: f32) -> Self {
-        Self { material, texture_size, surfaces: Arc::from([]) }
+        Self { material, texture_size, surfaces: Arc::from([]), grass: Arc::from([]) }
     }
 
     /// What the GI's rays see it as: its first surface, or its material.
@@ -133,6 +137,11 @@ pub struct GpuTerrain {
     pub surface_count: u32,
     /// `TERRAIN_HOLES` when any of its tiles has holes.
     pub flags: u32,
+    /// How thickly each kind of its grass grows, `grass_words` words a
+    /// sample, as its heights are laid out; 0 for none.
+    pub grass: u64,
+    pub grass_words: u32,
+    pub grass_pad: u32,
 }
 
 /// A terrain's flag for having holes, so the shaders look for them.
@@ -174,13 +183,17 @@ pub const FRAME_SIZE: u64 = (PATCHES_AT + MAX_TERRAIN_PATCHES * size_of::<GpuTer
 
 /// One terrain's ground on the GPU: one buffer holding every tile's heights,
 /// then every tile's holes, then, where it has surfaces, every tile's
-/// shares.
+/// shares, then, where it has grass, every tile's densities.
 struct Resident {
     tiles: [u32; 2],
     spacing: f32,
     ground: Buffer,
-    /// Whether the buffer has room for shares.
+    /// Whether the buffer has room for shares, and for how many words of
+    /// grass a sample.
     weighted: bool,
+    grass_words: usize,
+    /// The densities each slot holds now, by pointer.
+    uploaded_grass: Vec<Option<Arc<GrassTile>>>,
     /// The tile each slot holds now, by pointer, heights and holes.
     uploaded: Vec<Option<Arc<HeightTile>>>,
     /// The shares each slot holds now, by pointer.
@@ -204,6 +217,8 @@ pub(crate) struct Drawn {
     pub holes: u64,
     /// Its shares, where it has surfaces and shares for them.
     pub weights: Option<u64>,
+    /// Its grass's densities and how many words a sample, where it has grass.
+    pub grass: Option<(u64, u32)>,
     pub has_holes: bool,
     /// Its heights, holes and shares in this frame's graph, for every view
     /// to wait on.
@@ -229,12 +244,14 @@ struct Copy {
     size: u64,
 }
 
-/// Where in a terrain's buffer of `count` tiles its heights, holes and
-/// shares start, and how large it is with or without the shares.
-fn regions(count: usize) -> [u64; 4] {
+/// Where in a terrain's buffer of `count` tiles its heights, holes, shares
+/// (when `weighted`) and grass (`grass_words` words a sample) start, and
+/// how large it is.
+fn regions(count: usize, weighted: bool, grass_words: usize) -> [u64; 5] {
     let holes = (count * TILE_LEN * 4) as u64;
     let weights = holes + (count * HOLE_WORDS * 4) as u64;
-    [0, holes, weights, weights + (count * TILE_LEN * 8) as u64]
+    let grass = weights + if weighted { (count * TILE_LEN * 8) as u64 } else { 0 };
+    [0, holes, weights, grass, grass + (count * TILE_LEN * 4 * grass_words) as u64]
 }
 
 /// Every terrain's heights on the GPU, and what to copy in this frame.
@@ -268,6 +285,7 @@ impl Terrains {
             for resident in self.resident.values_mut() {
                 resident.uploaded.iter_mut().for_each(|held| *held = None);
                 resident.uploaded_weights.iter_mut().for_each(|held| *held = None);
+                resident.uploaded_grass.iter_mut().for_each(|held| *held = None);
             }
         }
         let features = world.resource::<crate::RenderFeatures>().copied().unwrap_or_default();
@@ -295,21 +313,24 @@ impl Terrains {
                 .unwrap_or_else(|| TerrainLook::new(assets.default_material, TerrainLook::DEFAULT_TEXTURE_SIZE));
             let key = map.id();
             let weights = terrain.weights.as_ref().filter(|weights| weights.fits(map));
+            let grass = terrain.grass.as_ref().filter(|grass| grass.fits(map));
+            let grass_words = grass.map_or(0, |grass| grass.words());
             let fits = self.resident.get(&key).is_some_and(|resident| {
                 resident.tiles == [map.tiles_x(), map.tiles_z()]
                     && resident.spacing == map.spacing()
                     && resident.weighted == weights.is_some()
+                    && resident.grass_words == grass_words
             });
             if !fits {
                 if let Some(old) = self.resident.remove(&key) {
                     retire(old, assets, frames, frame_index);
                 }
-                self.resident.insert(key, Resident::new(gpu, map, weights.is_some())?);
+                self.resident.insert(key, Resident::new(gpu, map, weights.is_some(), grass_words)?);
             }
             let resident = self.resident.get_mut(&key).expect("resident");
             resident.seen = frame_index;
             let mut changed = false;
-            let [_, holes_at, weights_at, _] = regions(map.tiles().len());
+            let [_, holes_at, weights_at, grass_at, _] = regions(map.tiles().len(), weights.is_some(), grass_words);
             let mut stage = |bytes: &[u8], to: u64| {
                 let from = staged.len() as u64;
                 staged.extend_from_slice(bytes);
@@ -333,6 +354,13 @@ impl Terrains {
                 }
                 stage(bytemuck::cast_slice(tile.samples()), weights_at + (index * TILE_LEN * 8) as u64);
                 resident.uploaded_weights[index] = Some(tile.clone());
+            }
+            for (index, tile) in grass.map_or(&[][..], |grass| grass.tiles()).iter().enumerate() {
+                if resident.uploaded_grass[index].as_ref().is_some_and(|held| Arc::ptr_eq(held, tile)) {
+                    continue;
+                }
+                stage(bytemuck::cast_slice(tile.samples()), grass_at + (index * TILE_LEN * 4 * grass_words) as u64);
+                resident.uploaded_grass[index] = Some(tile.clone());
             }
             if changed {
                 resident.tree = Arc::new(LodTree::new(map));
@@ -364,6 +392,7 @@ impl Terrains {
                 heights: resident.ground.address,
                 holes: resident.ground.address + holes_at,
                 weights: weights.map(|_| resident.ground.address + weights_at),
+                grass: grass.map(|_| (resident.ground.address + grass_at, grass_words as u32)),
                 has_holes: map.has_holes(),
                 heights_id: None,
                 tree,
@@ -437,17 +466,18 @@ impl Terrains {
 }
 
 impl Resident {
-    fn new(gpu: &Gpu, map: &Heightmap, weighted: bool) -> Result<Self> {
+    fn new(gpu: &Gpu, map: &Heightmap, weighted: bool, grass_words: usize) -> Result<Self> {
         let count = map.tiles().len();
         let usage = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
-        let [_, _, without, with] = regions(count);
-        let size = if weighted { with } else { without };
+        let [.., size] = regions(count, weighted, grass_words);
         let ground = gpu.create_buffer("terrain ground", size, usage, MemoryLocation::GpuOnly)?;
         Ok(Self {
             tiles: [map.tiles_x(), map.tiles_z()],
             spacing: map.spacing(),
             ground,
             weighted,
+            grass_words,
+            uploaded_grass: vec![None; count],
             uploaded: vec![None; count],
             uploaded_weights: vec![None; count],
             tree: Arc::new(LodTree::new(map)),
@@ -593,6 +623,9 @@ pub(crate) fn gather(
             surfaces: buffer.address + surfaces_at,
             surface_count: looks.len() as u32,
             flags: if terrain.has_holes { TERRAIN_HOLES } else { 0 },
+            grass: terrain.grass.map_or(0, |(address, _)| address),
+            grass_words: terrain.grass.map_or(0, |(_, words)| words),
+            grass_pad: 0,
         });
         let local = camera - terrain.corner;
         let pack = |patch: &Patch| GpuTerrainPatch {
@@ -792,7 +825,7 @@ mod tests {
     #[test]
     fn a_views_terrain_buffer_holds_its_lists_records_and_patches() {
         const { assert!(TERRAINS_AT.is_multiple_of(8), "records hold addresses, so start on eight bytes") };
-        const { assert!(size_of::<GpuTerrain>() == 176) };
+        const { assert!(size_of::<GpuTerrain>() == 192) };
         const { assert!(SURFACES_AT.is_multiple_of(16) && PATCHES_AT.is_multiple_of(16)) };
         const { assert!(FRAME_SIZE < 1 << 20) };
     }

@@ -926,6 +926,10 @@ struct Terrain
     uint surfaceCount;
     // TERRAIN_HOLES when any tile has holes.
     uint flags;
+    // How thickly each kind of grass grows (terrain_ground.slang): grassWords words a sample, a byte a kind.
+    uint* grass;
+    uint grassWords;
+    uint grassPad;
 };
 
 // One of a terrain's surfaces: its material, one over its pictures' size in metres, how sharply it meets the
@@ -939,6 +943,45 @@ struct TerrainSurface
 };
 
 static const uint TERRAIN_HOLE_WORDS = (TERRAIN_TILE_LEN + 31) / 32;
+
+// One kind of grass on one terrain, as a view scatters and draws it (src/grass.rs): its terrain and its kind, the
+// grid of cells round the camera it is scattered over (one blade a cell at most), how far it is drawn, its sizes,
+// its mesh and material, and for each of its meshes' levels of detail how far it reaches, where its blades start in
+// the view's grass instances and how many there is room for.
+struct GrassJob
+{
+    uint terrain;
+    uint kind;
+    int2 firstCell;
+    uint2 cells;
+    float cellSize;
+    float drawDistance;
+    float2 scale;
+    uint mesh;
+    uint material;
+    uint lodCount;
+    uint draws;
+    float4 lodReach;
+    uint4 offsets;
+    uint4 capacities;
+};
+
+// A blade as a view keeps it: where it stands, and packed, its turn (10 bits), its size between its kind's
+// smallest and largest (8 bits) and its lean's x and z (7 bits each).
+struct GrassBlade
+{
+    float3 position;
+    uint packed;
+};
+
+// Each of a view's grass draws, as its vertex shader reads it: where its blades start, its job.
+struct GrassDraw
+{
+    uint offset;
+    uint job;
+};
+
+static const uint GRASS_MAX_LODS = 4;
 static const uint TERRAIN_HOLES = 1;
 static const uint TERRAIN_SURFACE_TRIPLANAR = 1;
 
@@ -1024,6 +1067,11 @@ struct Buffers
     TerrainPatch* terrainPatches;
     // The values the UI's shaded backgrounds read (ui_effects.slang, ui_custom.slang).
     float4* uiValues;
+    // This view's grass (grass.slang): its jobs, its draws' indirect commands, its blades, and its draws.
+    GrassJob* grassJobs;
+    DrawCommand* grassArgs;
+    GrassBlade* grassBlades;
+    GrassDraw* grassDraws;
 };
 
 struct Push

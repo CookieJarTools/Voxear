@@ -47,6 +47,7 @@ mod mist;
 mod skeleton;
 mod skinning;
 mod smoke;
+mod grass;
 mod terrain;
 mod payload;
 mod pipelines;
@@ -118,6 +119,7 @@ pub use seasons::{Leaves, Season, SeasonLook, Seasons};
 pub use particles::{EmitShape, ParticleBlend, ParticlePlayback, ParticleSystem};
 pub use mist::{MAX_MIST_POINTS, MIST_RISE, Mist, MistTrail};
 pub use smoke::{SMOKE_GRID, Smoke, SmokeBlast, SmokeCue, SmokeFill, SmokeHoles, SmokeShot, smoke_origin};
+pub use grass::GrassLook;
 pub use terrain::{SurfaceLook, TerrainLook};
 pub use wind::{WindShape, WindZone};
 pub use ocean::{Ocean, OceanSampler, SeaEasing, SeaNow, SeaState, Weather, WindSource};
@@ -327,6 +329,11 @@ struct FrameBuffers {
     ui_panels: Buffer,
     /// This view's terrains and the patches it draws of them (see `terrain`).
     terrain: Buffer,
+    /// This view's grass: its jobs and draws, its draws' indirect commands,
+    /// and its blades (see `grass`).
+    grass: Buffer,
+    grass_args: Buffer,
+    grass_blades: Buffer,
     /// Dicing's lists, counts and draws (see `dice`).
     diced_instances: Buffer,
     dice_counts: Buffer,
@@ -1591,6 +1598,9 @@ impl View {
                 mist_points,
                 ui_panels,
                 terrain,
+                grass,
+                grass_args,
+                grass_blades,
                 diced_instances,
                 dice_counts,
                 dice_splits,
@@ -1617,6 +1627,9 @@ impl View {
                 mist_points,
                 ui_panels,
                 terrain,
+                grass,
+                grass_args,
+                grass_blades,
             ];
             for buffer in all.into_iter().chain(debug).chain([sky_light, stats_readback]).chain(meshlets).chain(diced) {
                 frames.retire(Retired::Buffer(buffer));
@@ -1888,6 +1901,18 @@ impl View {
         // The terrains' patches this view draws, for its camera and the sun's cascades.
         let view_terrains =
             terrain::gather(&setup.terrains, &extracted.frame, &extracted.entities, extracted.has_sun, &buffers.terrain);
+        // The grass this view scatters round its camera on the terrains.
+        let view_grass = grass::gather(&setup.terrains, &extracted.frame, &buffers.grass).map(|(jobs, dispatches)| {
+            grass::ViewGrass {
+                jobs: dispatches,
+                draws: jobs.iter().map(|job| job.lod_count).sum(),
+                args: buffers.grass_args.handle,
+                args_id: fg.import_buffer(&buffers.grass_args),
+                blades_id: fg.import_buffer(&buffers.grass_blades),
+                grounds: setup.terrains.iter().filter_map(|terrain| terrain.heights_id).collect(),
+                index_buffer: assets.indices.handle,
+            }
+        });
         let color_usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
         let depth_usage = vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
         let hdr = fg.create_image(
@@ -2173,6 +2198,10 @@ impl View {
                 terrains: terrain::addresses(&buffers.terrain)[1],
                 terrain_patches: terrain::addresses(&buffers.terrain)[2],
                 ui_values: 0,
+                grass_jobs: grass::addresses(&buffers.grass)[0],
+                grass_args: buffers.grass_args.address,
+                grass_blades: buffers.grass_blades.address,
+                grass_draws: grass::addresses(&buffers.grass)[1],
             }],
         );
         buffers.instances.write(0, &extracted.instances[..instance_count]);
@@ -2259,6 +2288,7 @@ impl View {
             mists: mists.len() as u32,
             probes,
             terrain: view_terrains,
+            grass: view_grass,
             traced_reflections,
         };
         let (under_water, particles, smoke) = passes::record(fg, &frame_setup, &targets, &draws);
@@ -2457,6 +2487,19 @@ fn create_frame_buffers(gpu: &Gpu, prefix: &str, slot: usize) -> Result<FrameBuf
             host,
         )?,
         terrain: gpu.create_buffer(&format!("{prefix}terrains {slot}"), terrain::FRAME_SIZE, storage, host)?,
+        grass: gpu.create_buffer(&format!("{prefix}grass {slot}"), grass::FRAME_SIZE, storage, host)?,
+        grass_args: gpu.create_buffer(
+            &format!("{prefix}grass draws {slot}"),
+            grass::ARGS_SIZE,
+            indirect,
+            MemoryLocation::GpuOnly,
+        )?,
+        grass_blades: gpu.create_buffer(
+            &format!("{prefix}grass blades {slot}"),
+            grass::MAX_GRASS_BLADES * 16,
+            storage,
+            MemoryLocation::GpuOnly,
+        )?,
         diced_instances: gpu.create_buffer(
             &format!("{prefix}diced instances {slot}"),
             dice::MAX_DICED_INSTANCES * 4,

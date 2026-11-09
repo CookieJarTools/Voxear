@@ -26,11 +26,12 @@ use serde::{Deserialize, Serialize};
 use crate::{
     heights::{HOLE_WORDS, HeightTile, Heightmap, TILE_LEN, TILE_QUADS},
     layers::{Layer, LayerKind},
+    grass::{Grass, GrassMap, GrassTile},
     surfaces::{Surface, WeightTile, Weights},
 };
 
 const MAGIC: &[u8; 8] = b"VXHEIGHT";
-const VERSION: u32 = 3;
+const VERSION: u32 = 4;
 
 /// The sample counts a terrain can be across: a power of two and one.
 pub const RESOLUTIONS: [u32; 6] = [257, 513, 1025, 2049, 4097, 8193];
@@ -55,6 +56,9 @@ pub struct TerrainFile {
     /// The raster of its holes, a sample a hole's where it is 1; 0 for none.
     #[serde(skip_serializing_if = "is_none")]
     pub holes: u32,
+    /// The grass and details that grow on it (see `grass`).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub grass: Vec<Grass>,
 }
 
 fn is_none(raster: &u32) -> bool {
@@ -72,6 +76,7 @@ struct Written {
     layers: Vec<Layer>,
     surfaces: Vec<Surface>,
     holes: u32,
+    grass: Vec<Grass>,
     heightmap: Option<String>,
     height: f32,
 }
@@ -86,6 +91,7 @@ impl Default for Written {
             layers: Vec::new(),
             surfaces: Vec::new(),
             holes: 0,
+            grass: Vec::new(),
             heightmap: None,
             height: 100.0,
         }
@@ -107,6 +113,7 @@ impl From<Written> for TerrainFile {
             layers,
             surfaces: written.surfaces,
             holes: written.holes,
+            grass: written.grass,
         }
     }
 }
@@ -117,7 +124,15 @@ fn is_zero(value: &f32) -> bool {
 
 impl Default for TerrainFile {
     fn default() -> Self {
-        Self { size: 512.0, resolution: 1025, base: 0.0, layers: Vec::new(), surfaces: Vec::new(), holes: 0 }
+        Self {
+            size: 512.0,
+            resolution: 1025,
+            base: 0.0,
+            layers: Vec::new(),
+            surfaces: Vec::new(),
+            holes: 0,
+            grass: Vec::new(),
+        }
     }
 }
 
@@ -149,7 +164,8 @@ impl TerrainFile {
             _ => None,
         });
         let painted = self.surfaces.iter().map(|surface| surface.paint);
-        sculpted.chain(painted).chain([self.holes]).filter(|&raster| raster != 0).collect()
+        let grown = self.grass.iter().map(|grass| grass.paint);
+        sculpted.chain(painted).chain(grown).chain([self.holes]).filter(|&raster| raster != 0).collect()
     }
 
     /// How many tiles it is across.
@@ -184,7 +200,7 @@ pub fn heights_file(terrain: &str) -> String {
 /// `heights` as a `.heights` file, made from layers whose
 /// [`TerrainFile::shape_hash`] is `made_from`, with no shares kept.
 pub fn write_heights(heights: &Heightmap, made_from: u64) -> Vec<u8> {
-    write_ground(heights, made_from, None)
+    write_ground(heights, made_from, None, None)
 }
 
 /// The heights in a `.heights` file, and the hash of the layers they were
@@ -194,20 +210,30 @@ pub fn read_heights(bytes: &[u8]) -> Result<(Heightmap, u64)> {
 }
 
 /// What a `.heights` file keeps: the ground's heights and holes, the hash of
-/// the layers they were made from, and the surfaces' shares with the hash
-/// of the surfaces they were worked out from, if it keeps them.
+/// the layers they were made from, the surfaces' shares with the hash of the
+/// surfaces they were worked out from, and the grass's densities with the
+/// hash of the grass they were worked out from, the last two if it keeps
+/// them.
 pub struct Stored {
     pub heights: Heightmap,
     pub made_from: u64,
     pub weights: Option<(Weights, u64)>,
+    pub grass: Option<(GrassMap, u64)>,
 }
 
 /// `heights` as a `.heights` file, made from layers whose
 /// [`TerrainFile::shape_hash`] is `made_from`, with the shares `weights`
 /// worked out from surfaces whose `surfaces::hash_surfaces` is the number
-/// beside them.
-pub fn write_ground(heights: &Heightmap, made_from: u64, weights: Option<(&Weights, u64)>) -> Vec<u8> {
+/// beside them, and the densities `grass` worked out from grass whose
+/// `grass::hash_grass` is the number beside them.
+pub fn write_ground(
+    heights: &Heightmap,
+    made_from: u64,
+    weights: Option<(&Weights, u64)>,
+    grass: Option<(&GrassMap, u64)>,
+) -> Vec<u8> {
     let weights = weights.filter(|(weights, _)| weights.fits(heights));
+    let grass = grass.filter(|(grass, _)| grass.fits(heights));
     let mut out = Vec::new();
     out.extend_from_slice(MAGIC);
     out.extend_from_slice(&VERSION.to_le_bytes());
@@ -216,6 +242,8 @@ pub fn write_ground(heights: &Heightmap, made_from: u64, weights: Option<(&Weigh
     out.extend_from_slice(&heights.spacing().to_le_bytes());
     out.extend_from_slice(&made_from.to_le_bytes());
     out.extend_from_slice(&weights.map_or(0, |(_, hash)| hash.max(1)).to_le_bytes());
+    out.extend_from_slice(&grass.map_or(0, |(_, hash)| hash.max(1)).to_le_bytes());
+    out.extend_from_slice(&(grass.map_or(0, |(grass, _)| grass.words()) as u32).to_le_bytes());
     let mut planes = vec![0u8; TILE_LEN * 4];
     let put = |out: &mut Vec<u8>, bytes: &[u8]| {
         let packed = lz4_flex::compress(bytes);
@@ -236,6 +264,16 @@ pub fn write_ground(heights: &Heightmap, made_from: u64, weights: Option<(&Weigh
             let (surfaces, shares): (Vec<u32>, Vec<u32>) = samples.iter().map(|[a, b]| (*a, *b)).unzip();
             split_words(&surfaces, &mut words[..TILE_LEN * 4]);
             split_words(&shares, &mut words[TILE_LEN * 4..]);
+            put(&mut out, &words);
+        }
+        if let Some((grass, _)) = grass {
+            let (samples, count) = (grass.tiles()[index].samples(), grass.words());
+            let mut words = vec![0u8; TILE_LEN * 4 * count];
+            // Each word of the samples as a run of its own, in planes of bytes.
+            for word in 0..count {
+                let run: Vec<u32> = samples.iter().skip(word).step_by(count).copied().collect();
+                split_words(&run, &mut words[TILE_LEN * 4 * word..TILE_LEN * 4 * (word + 1)]);
+            }
             put(&mut out, &words);
         }
     }
@@ -260,10 +298,14 @@ pub fn read_ground(bytes: &[u8]) -> Result<Stored> {
     };
     let made_from = u64_after(2)?;
     let weighed_from = u64_after(3)?;
+    let grown_from = u64_after(4)?;
+    let grass_words = if version >= 4 { reader.u32()? as usize } else { 0 };
+    ensure!(grass_words <= 2, "grass of {grass_words} words a sample");
     ensure!(tiles_x > 0 && tiles_z > 0 && tiles_x * tiles_z <= 64 * 64, "{tiles_x} by {tiles_z} tiles");
     ensure!(spacing > 0.0 && spacing.is_finite(), "samples {spacing} m apart");
     let mut tiles = Vec::with_capacity((tiles_x * tiles_z) as usize);
     let mut shares = Vec::new();
+    let mut grown = Vec::new();
     for index in 0..tiles_x * tiles_z {
         let length = reader.u32()? as usize;
         let planes = lz4_flex::decompress(reader.take(length)?, TILE_LEN * 4)
@@ -289,10 +331,21 @@ pub fn read_ground(bytes: &[u8]) -> Result<Stored> {
             let samples = surfaces.into_iter().zip(weights).map(|(a, b)| [a, b]).collect();
             shares.push(Arc::new(WeightTile::from_samples(samples)));
         }
+        if grown_from != 0 {
+            let length = reader.u32()? as usize;
+            let size = TILE_LEN * 4 * grass_words;
+            let words = lz4_flex::decompress(reader.take(length)?, size).with_context(|| format!("tile {index}'s grass"))?;
+            ensure!(words.len() == size, "tile {index}'s grass is {} bytes", words.len());
+            let runs: Vec<Vec<u32>> = (0..grass_words).map(|w| join_words(&words[TILE_LEN * 4 * w..][..TILE_LEN * 4])).collect();
+            let samples = (0..TILE_LEN * grass_words).map(|i| runs[i % grass_words][i / grass_words]).collect();
+            grown.push(Arc::new(GrassTile::from_samples(samples)));
+        }
     }
     let heights = Heightmap::from_tiles(tiles_x, tiles_z, spacing, tiles);
     let weights = (weighed_from != 0).then(|| (Weights::from_tiles(tiles_x, tiles_z, shares), weighed_from));
-    Ok(Stored { heights, made_from, weights })
+    let grass = (grown_from != 0 && grass_words > 0)
+        .then(|| (GrassMap::from_tiles(tiles_x, tiles_z, grass_words, grown), grown_from));
+    Ok(Stored { heights, made_from, weights, grass })
 }
 
 /// A tile's samples as four planes of bytes, lowest bytes first.
@@ -374,7 +427,12 @@ mod tests {
         let mut samples = vec![[0u32, 255u32]; TILE_LEN];
         samples[100] = [0x0302_0100, 0x0010_20CF];
         let weights = Weights::from_tiles(2, 1, vec![Arc::new(WeightTile::from_samples(samples)), Arc::new(WeightTile::all(1))]);
-        let bytes = write_ground(&heights, 7, Some((&weights, 9)));
+        // Two words a sample: grass thick everywhere but in a patch.
+        let mut thick = vec![0x00FF_00FFu32; TILE_LEN * 2];
+        thick[2000..2100].fill(0x0010_0020);
+        let tiles = vec![Arc::new(GrassTile::from_samples(thick)), Arc::new(GrassTile::from_samples(vec![7; TILE_LEN * 2]))];
+        let grass = crate::grass::GrassMap::from_tiles(2, 1, 2, tiles);
+        let bytes = write_ground(&heights, 7, Some((&weights, 9)), Some((&grass, 11)));
         let stored = read_ground(&bytes).expect("ground");
         assert_eq!(stored.made_from, 7);
         assert_eq!(stored.heights.tile(0, 0).holes(), Some(&bits[..]));
@@ -382,6 +440,8 @@ mod tests {
         assert!(stored.heights.is_hole(97, 0) && !stored.heights.is_hole(96, 0));
         let (read, hash) = stored.weights.expect("shares kept");
         assert_eq!((read, hash), (weights, 9));
+        let (grown, hash) = stored.grass.expect("densities kept");
+        assert_eq!((grown, hash), (grass, 11));
         // A file of heights alone has no shares; a version 2 file reads as before.
         assert!(read_ground(&write_heights(&heights, 7)).unwrap().weights.is_none());
         assert!(bytes.len() < 3 * 4096, "{} bytes", bytes.len());

@@ -91,6 +91,7 @@ pub const NAMES: &[&str] = &[
     "mouse-middle",
     "keyboard",
     "mountain",
+    "leaf",
 ];
 
 fn shapes(name: &str) -> Option<&'static [Part]> {
@@ -179,6 +180,8 @@ fn shapes(name: &str) -> Option<&'static [Part]> {
         }
         "level" => &[("M12 3.5l8.5 4.25L12 12 3.5 7.75ZM3.5 12L12 16.25 20.5 12M3.5 16.25L12 20.5l8.5-4.25", STROKE)],
         "mountain" => &[("M3 19.5l6-10.5 3.5 5.75 2.5-3.75 6 8.5Z", STROKE)],
+        // A leaf with its vein: grass and plants.
+        "leaf" => &[("M5 19C5 10.5 10.5 5 19 5c0 8.5-5.5 14-14 14ZM5 19l8.5-8.5", STROKE)],
         "scene" => &[("M3.5 6.5l5.5-3 6 3 5.5-3v14l-5.5 3-6-3-5.5 3ZM9 3.5v14M15 6.5v14", STROKE)],
         "material" => &[("M12 3.5a8.5 8.5 0 1 0 0 17a8.5 8.5 0 1 0 0-17ZM7.5 10a5 5 0 0 1 4-3.5", STROKE)],
         // A shader: a sphere with its code's brackets.

@@ -1,12 +1,13 @@
 //! The Terrain component in the Inspector (the Terrain module).
 //!
-//! Its section has four tools along its top, as Unity's Terrain has
+//! Its section has five tools along its top, as Unity's Terrain has
 //! (`terrain_panel`): **Layers**, the layers its ground is made of, a list
 //! to pick one from with the picked one's settings below; **Sculpt**, the
 //! brush the Scene view shapes the ground with, or cuts holes with
 //! (`terrain_tools`); **Paint**, its surfaces, a list to pick the one the
-//! brush paints, with its settings below; and **Settings**, its asset, how
-//! large and fine it is, and how it is drawn. Which tool shows, which layer
+//! brush paints, with its settings below; **Grass**, its kinds of grass the
+//! same way, the brush growing or digging up the picked one; and
+//! **Settings**, its asset, how large and fine it is, and how it is drawn. Which tool shows, which layer
 //! and surface are picked and the brush are the editor's, kept in the world
 //! as [`TerrainUi`], not saved.
 //!
@@ -34,6 +35,7 @@ use voxear_terrain::{
     layers::{Area, Blend, Layer, LayerKind, Mask},
     noise::NoiseStyle,
     raster::Rasters,
+    grass::{Grass, GrassCover, MAX_GRASS},
     surfaces::{Cover, MAX_SURFACES, Surface},
 };
 
@@ -52,25 +54,27 @@ pub enum TerrainTool {
     Layers,
     Sculpt,
     Paint,
+    Grass,
     Settings,
 }
 
 impl TerrainTool {
-    pub const ALL: [TerrainTool; 4] =
-        [TerrainTool::Layers, TerrainTool::Sculpt, TerrainTool::Paint, TerrainTool::Settings];
+    pub const ALL: [TerrainTool; 5] =
+        [TerrainTool::Layers, TerrainTool::Sculpt, TerrainTool::Paint, TerrainTool::Grass, TerrainTool::Settings];
 
     pub fn name(self) -> &'static str {
         match self {
             TerrainTool::Layers => "Layers",
             TerrainTool::Sculpt => "Sculpt",
             TerrainTool::Paint => "Paint",
+            TerrainTool::Grass => "Grass",
             TerrainTool::Settings => "Settings",
         }
     }
 
     /// Whether the Scene view's brush works with it.
     pub fn brushes(self) -> bool {
-        matches!(self, TerrainTool::Sculpt | TerrainTool::Paint)
+        matches!(self, TerrainTool::Sculpt | TerrainTool::Paint | TerrainTool::Grass)
     }
 }
 
@@ -81,6 +85,7 @@ pub struct TerrainUi {
     pub tool: TerrainTool,
     pub layer: usize,
     pub surface: usize,
+    pub grass: usize,
     pub brush: Brush,
 }
 
@@ -148,6 +153,19 @@ pub enum TerrainField {
     BreakupSize,
     /// Add Surface's picker: a new surface of the material picked.
     NewSurface,
+    /// The picked kind of grass's: its mesh and material, how many to a
+    /// square metre, its sizes, how far it is drawn, where it grows, the
+    /// surface it grows on, and the steepest ground it grows on.
+    GrassMesh,
+    GrassMaterial,
+    GrassDensity,
+    GrassSizes,
+    GrassDistance,
+    GrassCover,
+    GrassSurface,
+    GrassSteepest,
+    /// Add Grass's picker: a new kind of grass of the mesh picked.
+    NewGrass,
 }
 
 use TerrainField as F;
@@ -162,6 +180,23 @@ fn picked(world: &World, entity: Entity) -> Option<(usize, Layer)> {
 fn picked_surface(world: &World, entity: Entity) -> Option<(usize, Surface)> {
     let at = ui(world).surface;
     Some((at, world.get::<TerrainAsset>(entity)?.file.surfaces.get(at)?.clone()))
+}
+
+/// The picked kind of grass of an Obj's terrain, if its asset has one there.
+fn picked_grass(world: &World, entity: Entity) -> Option<(usize, Grass)> {
+    let at = ui(world).grass;
+    Some((at, world.get::<TerrainAsset>(entity)?.file.grass.get(at)?.clone()))
+}
+
+/// What the Grass tool shows: the brush, then the picked kind's values.
+fn grass_fields(grass: &Grass) -> Vec<TerrainField> {
+    let mut fields = vec![F::BrushSize, F::Strength, F::GrassMesh, F::GrassMaterial, F::GrassDensity, F::GrassSizes];
+    fields.extend([F::GrassDistance, F::GrassCover]);
+    if grass.cover == GrassCover::Surfaces {
+        fields.push(F::GrassSurface);
+    }
+    fields.push(F::GrassSteepest);
+    fields
 }
 
 /// The mask the mask's rows show: the picked surface's under Paint, else
@@ -242,6 +277,10 @@ pub fn props(world: &World, entity: Entity) -> Vec<Prop> {
             Some((at, surface)) => surface_fields(at, &surface),
             None => vec![F::BrushSize, F::Strength],
         },
+        TerrainTool::Grass => match picked_grass(world, entity) {
+            Some((_, grass)) => grass_fields(&grass),
+            None => vec![F::BrushSize, F::Strength],
+        },
     };
     fields.into_iter().map(Prop::Terrain).collect()
 }
@@ -312,6 +351,14 @@ pub fn label(field: TerrainField) -> &'static str {
         F::Cover => "Cover",
         F::Breakup => "Breakup",
         F::BreakupSize => "Breakup size",
+        F::GrassMesh | F::NewGrass => "Mesh",
+        F::GrassMaterial => "Material",
+        F::GrassDensity => "Density",
+        F::GrassSizes => "Sizes",
+        F::GrassDistance => "Draw distance",
+        F::GrassCover => "Grows",
+        F::GrassSurface => "On surface",
+        F::GrassSteepest => "Steepest ground",
     }
 }
 
@@ -334,7 +381,9 @@ pub fn unit(world: &World, entity: Entity, field: TerrainField) -> Option<&'stat
         F::Width | F::Step | F::Radius | F::Heights | F::BrushSize | F::BrushHeight | F::BrushStep | F::BumpSize => {
             Some("m")
         }
-        F::TileSize | F::BreakupSize => Some("m"),
+        F::TileSize | F::BreakupSize | F::GrassDistance => Some("m"),
+        F::GrassDensity => Some("per m²"),
+        F::GrassSteepest => Some("°"),
         F::Rotation | F::Slopes => Some("°"),
         F::Falloff => match picked(world, entity) {
             Some((_, Layer { kind: LayerKind::Spline { .. }, .. })) => Some("m"),
@@ -348,6 +397,7 @@ pub fn unit(world: &World, entity: Entity, field: TerrainField) -> Option<&'stat
 pub fn range(world: &World, entity: Entity, field: TerrainField) -> Option<[f32; 2]> {
     match field {
         F::Opacity | F::Strength | F::Sharpness | F::HeightBlend => Some([0.0, 1.0]),
+        F::GrassSteepest => Some([0.0, 90.0]),
         F::Falloff => match picked(world, entity) {
             Some((_, Layer { kind: LayerKind::Stamp { .. }, .. })) => Some([0.0, 1.0]),
             _ => None,
@@ -367,6 +417,7 @@ pub fn get(game: &Game, entity: Entity, field: TerrainField) -> Option<Value> {
     let asset = || world.get::<TerrainAsset>(entity);
     let layer = || picked(world, entity).map(|(_, layer)| layer);
     let surface = || picked_surface(world, entity).map(|(_, surface)| surface);
+    let grass = || picked_grass(world, entity).map(|(_, grass)| grass);
     let mask = || shown_mask(world, entity);
     let brush = ui(world).brush;
     let choice = |at: usize, names: Vec<&str>| Value::Choice(at, names.into_iter().map(str::to_string).collect());
@@ -415,6 +466,24 @@ pub fn get(game: &Game, entity: Entity, field: TerrainField) -> Option<Value> {
         }
         F::Breakup => Value::Number(surface()?.breakup),
         F::BreakupSize => Value::Number(surface()?.breakup_size),
+        F::GrassMesh => Value::Asset(grass()?.mesh.map_or("None".into(), |r| crate::props::mesh_label(game, &r))),
+        F::NewGrass => Value::Asset(String::new()),
+        F::GrassMaterial => Value::Asset(path_of(game, grass()?.material.as_deref())),
+        F::GrassDensity => Value::Number(grass()?.density),
+        F::GrassSizes => Value::Vector(grass()?.scale.to_vec()),
+        F::GrassDistance => Value::Number(grass()?.draw_distance),
+        F::GrassCover => {
+            let cover = grass()?.cover;
+            let names = GrassCover::ALL.map(GrassCover::name).to_vec();
+            choice(GrassCover::ALL.iter().position(|&c| c == cover).unwrap_or_default(), names)
+        }
+        F::GrassSurface => {
+            let on = grass()?.surfaces.first().copied().unwrap_or_default() as usize;
+            let file = &world.get::<TerrainAsset>(entity)?.file;
+            let names: Vec<String> = (0..file.surfaces.len()).map(|at| surface_name(game, &file.surfaces[at], at)).collect();
+            Value::Choice(on.min(names.len().saturating_sub(1)), names)
+        }
+        F::GrassSteepest => Value::Number(grass()?.steepest),
         F::Brush => {
             let at = BrushKind::ALL.iter().position(|&k| k == brush.kind).unwrap_or_default();
             choice(at, BrushKind::ALL.map(BrushKind::name).to_vec())
@@ -517,6 +586,9 @@ pub fn set(game: &mut Game, entity: Entity, field: TerrainField, value: Value) -
         F::TileSize | F::HeightBlend | F::Triplanar | F::Cover | F::Breakup | F::BreakupSize => {
             return change_surface(game, entity, |surface| set_surface(surface, field, &value));
         }
+        F::GrassDensity | F::GrassSizes | F::GrassDistance | F::GrassCover | F::GrassSurface | F::GrassSteepest => {
+            return change_grass(game, entity, |grass| set_grass(grass, field, &value));
+        }
         F::HeightMask | F::Heights | F::SlopeMask | F::Slopes | F::Feather
             if ui(world).tool == TerrainTool::Paint =>
         {
@@ -539,6 +611,31 @@ fn set_mask(mask: &mut Mask, field: TerrainField, value: &Value) {
         (F::Feather, v) => mask.feather = number(v).unwrap_or(mask.feather).max(0.0),
         _ => {}
     }
+}
+
+/// Sets one of a kind of grass's own values.
+fn set_grass(grass: &mut Grass, field: TerrainField, value: &Value) {
+    match (field, value) {
+        (F::GrassDensity, v) => grass.density = number(v).unwrap_or(grass.density).clamp(0.0, 400.0),
+        (F::GrassSizes, v) => {
+            if let Some([a, b]) = pair(v) {
+                let [a, b] = [a.max(0.01), b.max(0.01)];
+                grass.scale = [a.min(b), a.max(b)];
+            }
+        }
+        (F::GrassDistance, v) => grass.draw_distance = number(v).unwrap_or(grass.draw_distance).clamp(1.0, 1000.0),
+        (F::GrassCover, Value::Choice(at, _)) => grass.cover = GrassCover::ALL[(*at).min(GrassCover::ALL.len() - 1)],
+        (F::GrassSurface, Value::Choice(at, _)) => grass.surfaces = vec![*at as u32],
+        (F::GrassSteepest, v) => grass.steepest = number(v).unwrap_or(grass.steepest).clamp(0.0, 90.0),
+        _ => {}
+    }
+}
+
+/// What a surface is called in a list: its material's file name.
+fn surface_name(game: &Game, surface: &Surface, at: usize) -> String {
+    let path = path_of(game, surface.material.as_deref());
+    let name = std::path::Path::new(&path).file_stem().map_or(path.clone(), |stem| stem.to_string_lossy().into());
+    format!("{} {name}", at + 1)
 }
 
 /// Sets one of a surface's own values.
@@ -655,7 +752,33 @@ pub fn reweigh(game: &mut Game, entity: Entity, dirty: &Dirty) -> bool {
     let Some(terrain) = world.get::<Terrain>(entity) else { return false };
     let previous = terrain.weights.as_deref();
     let weights = voxear_terrain::surfaces::weigh(&asset.file, &terrain.heights, &asset.rasters, previous, dirty);
-    change(world, entity, |terrain: &mut Terrain| terrain.weights = weights.map(Arc::new))
+    // And the grass, which grows on the surfaces.
+    let ground = (terrain.heights.as_ref(), weights.as_ref());
+    let grass = voxear_terrain::grass::grow(&asset.file, ground, &asset.rasters, terrain.grass.as_deref(), dirty);
+    change(world, entity, |terrain: &mut Terrain| {
+        terrain.weights = weights.map(Arc::new);
+        terrain.grass = grass.map(Arc::new);
+    })
+}
+
+/// Changes the picked kind of grass, then its look and, if where it grows
+/// changed, every kind's densities.
+fn change_grass(game: &mut Game, entity: Entity, how: impl FnOnce(&mut Grass)) -> bool {
+    let world = &game.engine.world;
+    let Some((at, before)) = picked_grass(world, entity) else { return false };
+    let Some(asset) = world.get::<TerrainAsset>(entity) else { return false };
+    let mut file = asset.file.clone();
+    how(&mut file.grass[at]);
+    if file.grass[at] == before {
+        return false;
+    }
+    let grows = voxear_terrain::grass::hash_grass(&asset.file.grass, 0) != voxear_terrain::grass::hash_grass(&file.grass, 0);
+    change(&mut game.engine.world, entity, |asset: &mut TerrainAsset| asset.file = file);
+    restyle(game, entity);
+    if grows {
+        reweigh(game, entity, &Dirty::All);
+    }
+    true
 }
 
 /// Changes the picked surface, then its look and, if where it covers
@@ -699,6 +822,24 @@ fn restyle(game: &mut Game, entity: Entity) {
         });
     }
     look.surfaces = surfaces.into();
+    let grass: Vec<Option<voxear_render::GrassLook>> = file
+        .grass
+        .iter()
+        .map(|kind| {
+            let mesh = game.content.loaded_mesh(&game.content.parse(kind.mesh.as_deref()?).ok()?)?;
+            let material = kind.material.as_deref().and_then(|reference| {
+                game.content.loaded_material(&MaterialSource::Asset(game.content.parse(reference).ok()?))
+            });
+            Some(voxear_render::GrassLook {
+                mesh,
+                material: material.unwrap_or(look.material),
+                density: kind.density.max(0.0),
+                scale: kind.scale,
+                draw_distance: kind.draw_distance.max(1.0),
+            })
+        })
+        .collect();
+    look.grass = grass.into();
     game.engine.world.insert(entity, look);
 }
 
@@ -723,7 +864,8 @@ pub fn choices(game: &Game, field: TerrainField) -> Vec<(String, Pick)> {
     match field {
         F::Data => fields::assets_of(game, Some(AssetKind::Terrain)),
         F::Picture => fields::assets_of(game, Some(AssetKind::Texture)),
-        F::SurfaceMaterial => fields::assets_of(game, Some(AssetKind::Material)),
+        F::SurfaceMaterial | F::GrassMaterial => fields::assets_of(game, Some(AssetKind::Material)),
+        F::GrassMesh | F::NewGrass => crate::props::mesh_choices(game),
         // A new surface is of a material.
         F::NewSurface => {
             let mut found = fields::assets_of(game, Some(AssetKind::Material));
@@ -746,7 +888,10 @@ pub fn choices(game: &Game, field: TerrainField) -> Vec<(String, Pick)> {
 
 /// Whether a value is picked from a menu of assets.
 pub fn is_picked(field: TerrainField) -> bool {
-    matches!(field, F::Data | F::Picture | F::Material | F::SurfaceMaterial | F::NewSurface)
+    matches!(
+        field,
+        F::Data | F::Picture | F::Material | F::SurfaceMaterial | F::NewSurface | F::GrassMesh | F::GrassMaterial | F::NewGrass
+    )
 }
 
 /// Takes what was picked: another asset for its ground, a picture for its
@@ -789,6 +934,24 @@ pub fn pick(
                     *picture = written;
                 }
             })
+        }
+        F::GrassMesh | F::GrassMaterial | F::NewGrass => {
+            let written = reference.as_ref().map(|r| r.to_string());
+            // Loaded now, so the look can take it.
+            if let (Some(renderer), Some(reference)) = (renderer, &reference) {
+                let loaded = match field {
+                    F::GrassMaterial => game.content.material(renderer, &MaterialSource::Asset(reference.clone())).map(drop),
+                    _ => game.content.mesh(renderer, reference).map(drop),
+                };
+                if let Err(error) = loaded {
+                    tracing::error!("{error:#}");
+                }
+            }
+            match field {
+                F::NewGrass => add_grass(game, entity, written),
+                F::GrassMesh => change_grass(game, entity, |grass| grass.mesh = written),
+                _ => change_grass(game, entity, |grass| grass.material = written),
+            }
         }
         F::SurfaceMaterial | F::NewSurface => {
             let written = reference.as_ref().map(|r| r.to_string());
@@ -877,6 +1040,76 @@ pub fn add_surface(game: &mut Game, entity: Entity, material: Option<String>) ->
     change(&mut game.engine.world, entity, |asset: &mut TerrainAsset| asset.file = file);
     restyle(game, entity);
     reweigh(game, entity, &Dirty::All)
+}
+
+/// Adds a kind of grass of `mesh` on top, growing everywhere, and picks it.
+pub fn add_grass(game: &mut Game, entity: Entity, mesh: Option<String>) -> bool {
+    let Some(asset) = game.engine.world.get::<TerrainAsset>(entity) else { return false };
+    let mut file = asset.file.clone();
+    if file.grass.len() >= MAX_GRASS {
+        return false;
+    }
+    file.grass.push(Grass::new(mesh));
+    ui_mut(&mut game.engine.world).grass = file.grass.len() - 1;
+    change(&mut game.engine.world, entity, |asset: &mut TerrainAsset| asset.file = file);
+    restyle(game, entity);
+    reweigh(game, entity, &Dirty::All)
+}
+
+/// Picks kind `at` of grass to paint with and show.
+pub fn pick_grass(world: &mut World, at: usize) {
+    ui_mut(world).grass = at;
+}
+
+/// Moves kind `from` of grass to place `to`, keeping it picked.
+pub fn move_grass(game: &mut Game, entity: Entity, from: usize, to: usize) -> bool {
+    let Some(asset) = game.engine.world.get::<TerrainAsset>(entity) else { return false };
+    let mut file = asset.file.clone();
+    if from >= file.grass.len() || to >= file.grass.len() || from == to {
+        return false;
+    }
+    let grass = file.grass.remove(from);
+    file.grass.insert(to, grass);
+    ui_mut(&mut game.engine.world).grass = to;
+    change(&mut game.engine.world, entity, |asset: &mut TerrainAsset| asset.file = file);
+    restyle(game, entity);
+    reweigh(game, entity, &Dirty::All)
+}
+
+/// Takes kind `at` of grass out, and its painting with it.
+pub fn remove_grass(game: &mut Game, entity: Entity, at: usize) -> bool {
+    let Some(asset) = game.engine.world.get::<TerrainAsset>(entity) else { return false };
+    let mut file = asset.file.clone();
+    if at >= file.grass.len() {
+        return false;
+    }
+    let grass = file.grass.remove(at);
+    let mut rasters = asset.rasters.clone();
+    if grass.paint != 0 {
+        Arc::make_mut(&mut rasters).remove(grass.paint);
+    }
+    let ui = ui_mut(&mut game.engine.world);
+    ui.grass = ui.grass.min(file.grass.len().saturating_sub(1));
+    change(&mut game.engine.world, entity, |asset: &mut TerrainAsset| (asset.file, asset.rasters) = (file, rasters));
+    restyle(game, entity);
+    reweigh(game, entity, &Dirty::All)
+}
+
+/// The kind of grass the Grass brush paints: the picked one, ready to
+/// paint; `None` for a terrain with no grass.
+pub fn paint_grass(game: &mut Game, entity: Entity) -> Option<usize> {
+    let world = &mut game.engine.world;
+    let asset = world.get::<TerrainAsset>(entity)?;
+    if asset.file.grass.is_empty() {
+        return None;
+    }
+    let kind = ui(world).grass.min(asset.file.grass.len() - 1);
+    let mut file = asset.file.clone();
+    if voxear_terrain::grass::ready_to_paint(&mut file, &asset.rasters, kind) {
+        change(world, entity, |asset: &mut TerrainAsset| asset.file = file);
+    }
+    ui_mut(world).grass = kind;
+    Some(kind)
 }
 
 /// Picks surface `at` to paint with and show.

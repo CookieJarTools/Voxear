@@ -1886,6 +1886,9 @@ impl Inspector {
         if let Some(add) = self.terrain_panel.as_ref().and_then(|panel| panel.add_surface_clicked(ui)) {
             return Some(RowAction::Browse(Prop::Terrain(crate::terrain_props::TerrainField::NewSurface), add));
         }
+        if let Some(add) = self.terrain_panel.as_ref().and_then(|panel| panel.add_grass_clicked(ui)) {
+            return Some(RowAction::Browse(Prop::Terrain(crate::terrain_props::TerrainField::NewGrass), add));
+        }
         let overrides_button = self.prefab_buttons.as_ref().and_then(|buttons| buttons.overrides);
         let (owner, at) = if let Some(button) = self.transform_menu.filter(|&b| ui.clicked(b)) {
             items = vec![(MenuItem::new("Reset"), Some(RowAction::ResetTransform))];

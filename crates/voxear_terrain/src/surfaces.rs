@@ -271,7 +271,7 @@ impl Weights {
 }
 
 /// The ground's height there and how steeply it rises, in metres a metre.
-fn slope_at(heights: &Heightmap, x: i64, z: i64) -> (f32, f32) {
+pub(crate) fn slope_at(heights: &Heightmap, x: i64, z: i64) -> (f32, f32) {
     let dx = heights.sample(x + 1, z) - heights.sample(x - 1, z);
     let dz = heights.sample(x, z + 1) - heights.sample(x, z - 1);
     (heights.sample(x, z), (dx * dx + dz * dz).sqrt() / (2.0 * heights.spacing()))
@@ -330,7 +330,7 @@ fn pack(best: &[(u32, f32); SHARES]) -> [u32; 2] {
 /// The samples of tile `(tx, tz)` (from 0 to `TILE_QUADS` each way, `[x0,
 /// z0, x1, z1]`) any of `areas` reach, one more each way for the slope, or
 /// `None` where none do.
-fn samples_under(areas: &[Area], spacing: f32, tx: u32, tz: u32) -> Option<[u32; 4]> {
+pub(crate) fn samples_under(areas: &[Area], spacing: f32, tx: u32, tz: u32) -> Option<[u32; 4]> {
     let (ox, oz) = (i64::from(tx * TILE_QUADS), i64::from(tz * TILE_QUADS));
     let quads = i64::from(TILE_QUADS);
     let mut found: Option<[i64; 4]> = None;

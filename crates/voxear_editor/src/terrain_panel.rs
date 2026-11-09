@@ -36,6 +36,7 @@ struct Row {
 enum Listing {
     Layers,
     Surfaces,
+    Grass,
 }
 
 /// The tools and the list of layers or surfaces of the Terrain the
@@ -67,13 +68,16 @@ fn icon(kind: &LayerKind) -> &'static str {
 fn signature(world: &World, entity: Entity) -> u64 {
     let ui = terrain_props::ui(world);
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    (ui.tool, ui.layer, ui.surface).hash(&mut hasher);
+    (ui.tool, ui.layer, ui.surface, ui.grass).hash(&mut hasher);
     if let Some(asset) = world.get::<TerrainAsset>(entity) {
         for layer in &asset.file.layers {
             (&layer.name, layer.kind.title(), layer.enabled).hash(&mut hasher);
         }
         for surface in &asset.file.surfaces {
             (&surface.material, surface.cover).hash(&mut hasher);
+        }
+        for grass in &asset.file.grass {
+            (&grass.mesh, grass.cover).hash(&mut hasher);
         }
     }
     hasher.finish()
@@ -155,6 +159,28 @@ impl TerrainPanel {
                 }
                 Some((Listing::Surfaces, list))
             }
+            (TerrainTool::Grass, Some(file)) => {
+                let grass = &file.grass;
+                let list = collection::collection(ui, rows, grass.len(), true, Some("Add Grass"));
+                ui.add_class(list.frame, "terrain-layers");
+                ui.set_text(list.empty, "No grass");
+                for (place, kind_at) in (0..grass.len()).rev().enumerate() {
+                    let kind = &grass[kind_at];
+                    let item = collection::item(ui, list.items, place, true);
+                    ui.set_class(item.node, "selected", kind_at == state.grass);
+                    let line = ui.panel(item.body, Style::row());
+                    ui.add_class(line, "terrain-layer");
+                    let mark = ui.icon(line, "leaf");
+                    ui.add_class(mark, "terrain-layer-icon");
+                    let label = kind.mesh.as_deref().map_or("No mesh".into(), |mesh| crate::props::mesh_label(game, mesh));
+                    let name = ui.add_label(line, &label);
+                    ui.add_class(name, "terrain-layer-name");
+                    let cover = ui.add_label(line, kind.cover.name());
+                    ui.add_class(cover, "terrain-layer-kind");
+                    shown.push(Row { place: kind_at, body: line, toggle: None, remove: item.remove });
+                }
+                Some((Listing::Grass, list))
+            }
             _ => None,
         };
         Self { tools, list, rows: shown, signature: signature(world, entity) }
@@ -183,6 +209,7 @@ impl TerrainPanel {
             return match listing {
                 Listing::Layers => terrain_props::move_layer(game, entity, from, to),
                 Listing::Surfaces => terrain_props::move_surface(game, entity, from, to),
+                Listing::Grass => terrain_props::move_grass(game, entity, from, to),
             };
         }
         for row in &self.rows {
@@ -193,6 +220,7 @@ impl TerrainPanel {
                 return match listing {
                     Listing::Layers => terrain_props::remove_layer(game, entity, row.place),
                     Listing::Surfaces => terrain_props::remove_surface(game, entity, row.place),
+                    Listing::Grass => terrain_props::remove_grass(game, entity, row.place),
                 };
             }
             if !ui.clicked(row.body) {
@@ -203,6 +231,7 @@ impl TerrainPanel {
             match listing {
                 Listing::Layers if state.layer != row.place => terrain_props::pick_layer(world, row.place),
                 Listing::Surfaces if state.surface != row.place => terrain_props::pick_surface(world, row.place),
+                Listing::Grass if state.grass != row.place => terrain_props::pick_grass(world, row.place),
                 _ => return false,
             }
             return true;
@@ -219,6 +248,12 @@ impl TerrainPanel {
     /// materials to open under.
     pub fn add_surface_clicked(&self, ui: &Ui) -> Option<NodeId> {
         self.add_of(ui, Listing::Surfaces)
+    }
+
+    /// The Add Grass button, when it was clicked, for the picker of meshes
+    /// to open under.
+    pub fn add_grass_clicked(&self, ui: &Ui) -> Option<NodeId> {
+        self.add_of(ui, Listing::Grass)
     }
 
     fn add_of(&self, ui: &Ui, wanted: Listing) -> Option<NodeId> {

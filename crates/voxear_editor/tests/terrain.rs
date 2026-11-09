@@ -547,3 +547,43 @@ fn foliage_paints_plants_onto_the_terrain_and_shift_takes_them_away_each_a_step_
     frame(&mut editor, &mut renderer);
     assert_eq!(plants(&editor).len(), before, "the painting undone");
 }
+
+#[test]
+fn grass_is_added_from_the_mesh_picker_and_dug_up_in_the_scene_view_each_a_step_to_undo() {
+    let Some((_dir, mut renderer, mut editor, field)) = editor_with_a_terrain() else { return };
+    show_tool(&mut editor, &mut renderer, "Grass");
+    let add = first_with(&editor.ui, editor.ui.root(), "collection-add").expect("Add Grass");
+    click(&mut editor.ui, add);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let row = picker_row(&editor.ui, "Cube").expect("the cube among the meshes");
+    click(&mut editor.ui, row);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    for label in ["Mesh", "Density", "Sizes", "Draw distance", "Grows", "Steepest ground"] {
+        assert_eq!(prop_rows(&editor.ui, label).len(), 1, "the Grass tool's {label}");
+    }
+    let look = editor.game.engine.world.get::<voxear_render::TerrainLook>(field).unwrap().clone();
+    assert!(matches!(&look.grass[..], [Some(_)]), "drawn with the cube");
+
+    let camera = editor.scene_camera().expect("the Scene view");
+    let [x, y, w, h] = camera.rect;
+    let point = [x + w / 2.0, y + h * 0.85];
+    let at =
+        voxear_editor::scene_tools::surface_at(&editor.game.engine.world, &renderer, &camera, point).expect("ground");
+    let spacing = editor.game.engine.world.get::<TerrainAsset>(field).unwrap().file.spacing();
+    let sample = (((at.x + 256.0) / spacing).round() as i64, ((at.z + 256.0) / spacing).round() as i64);
+    let density = |editor: &voxear_editor::Editor| {
+        let terrain = editor.game.engine.world.get::<Terrain>(field).unwrap();
+        terrain.grass.as_ref().expect("grass").density_at(0, sample.0, sample.1)
+    };
+    assert_eq!(density(&editor), 255, "growing everywhere");
+    stroke(&mut editor, &mut renderer, point, true);
+    // A short stroke at half strength digs up about half.
+    assert!(density(&editor) < 200, "dug up under the brush: {}", density(&editor));
+    let far = editor.game.engine.world.get::<Terrain>(field).unwrap().grass.as_ref().unwrap().density_at(0, 10, 10);
+    assert_eq!(far, 255, "and nowhere else");
+    editor.undo(&mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(density(&editor), 255, "the digging undone");
+}

@@ -127,6 +127,11 @@ fn surfaces_and_holes_are_made_from_the_file_and_shares_kept_beside_the_heights_
     snow.mask = Mask { height: Some([5.0, 100.0]), slope: None, feather: 0.5 };
     file.surfaces = vec![Surface { cover: Cover::Everywhere, ..Surface::new(None) }, snow];
     file.holes = 3;
+    // Grass on the snow alone.
+    let mut grass = voxear_terrain::grass::Grass::new(Some("builtin:cube".into()));
+    grass.cover = voxear_terrain::grass::GrassCover::Surfaces;
+    grass.surfaces = vec![1];
+    file.grass = vec![grass];
     let mut rasters = Rasters::default();
     let hole = rasters.tile_mut(3, 0, 0);
     for z in 36..=44 {
@@ -150,6 +155,12 @@ fn surfaces_and_holes_are_made_from_the_file_and_shares_kept_beside_the_heights_
     assert_eq!(voxear_terrain::ground_at(world, 0.0, 0.0).unwrap().surface, 1, "snow on the hill");
     assert_eq!(voxear_terrain::ground_at(world, -54.0, 40.0).unwrap().surface, 0, "grass below");
     let terrain = world.query_ref::<&Terrain>().into_iter().next().unwrap().clone();
+    let grown = terrain.grass.as_ref().expect("its grass grown on load");
+    // The field's corner is at (-64, 2, -64).
+    let at = |x: f32, z: f32| (((x + 64.0) / file.spacing()).round() as i64, ((z + 64.0) / file.spacing()).round() as i64);
+    let (hill, field) = (at(0.0, 0.0), at(-54.0, 40.0));
+    assert_eq!(grown.density_at(0, hill.0, hill.1), 255, "on the snow");
+    assert_eq!(grown.density_at(0, field.0, field.1), 0, "not on the grass below");
 
     // Shares written beside heights for these surfaces are read as written: here all snow.
     let marked = Weights::from_tiles(1, 1, vec![Arc::new(WeightTile::all(1))]);
@@ -157,6 +168,7 @@ fn surfaces_and_holes_are_made_from_the_file_and_shares_kept_beside_the_heights_
         &terrain.heights,
         file.shape_hash(),
         Some((&marked, hash_surfaces(&file.surfaces))),
+        None,
     );
     std::fs::write(dir.path().join("Terrains/Field.heights"), &bytes).unwrap();
     let game = start(&dir);

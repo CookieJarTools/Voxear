@@ -3425,9 +3425,7 @@ pub fn choices(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) ->
             return found;
         }
         Prop::Mesh => {
-            let mut found: Vec<(String, Pick)> =
-                BUILTIN_MESHES.iter().map(|(label, r)| (label.to_string(), Pick::Asset(Some(r.to_string())))).collect();
-            found.extend(model_meshes(game));
+            let mut found = mesh_choices(game);
             let mesh = game.engine.world.get::<MeshRenderer>(entity).map(|r| r.mesh);
             let reference = mesh.and_then(|mesh| game.content.mesh_ref(mesh)).map(|r| r.to_string());
             let listed = |reference: &str| {
@@ -3528,6 +3526,15 @@ pub fn why_not(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop, ch
 
 /// What a reference takes, as its picker's title says: "Material",
 /// "Prefab", "Spinner" or "Obj".
+/// The meshes a mesh's picker offers: the built-in shapes, then each part
+/// of the project's models.
+pub(crate) fn mesh_choices(game: &Game) -> Vec<(String, Pick)> {
+    let mut found: Vec<(String, Pick)> =
+        BUILTIN_MESHES.iter().map(|(label, r)| (label.to_string(), Pick::Asset(Some(r.to_string())))).collect();
+    found.extend(model_meshes(game));
+    found
+}
+
 pub fn title(types: &ScriptTypes, prop: &Prop) -> String {
     match prop {
         Prop::Mesh | Prop::DryMesh => "Mesh".into(),
@@ -4484,7 +4491,7 @@ fn first_mesh(game: &mut Game, renderer: &mut Renderer, reference: &str) -> Opti
 /// the part, then the part, `Gate #mesh0.3`, which tells apart the parts of
 /// a model that gives several the same name; or, for a model not loaded,
 /// its file and the part.
-fn mesh_label(game: &Game, reference: &str) -> String {
+pub(crate) fn mesh_label(game: &Game, reference: &str) -> String {
     let Some((asset, part)) = reference.split_once('#') else { return asset_label(game, reference) };
     let guid = game.content.parse(asset).ok().and_then(|r| r.guid());
     let nodes = guid.and_then(|guid| game.content.loaded_model(guid));

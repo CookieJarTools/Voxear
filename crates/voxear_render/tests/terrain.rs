@@ -305,3 +305,45 @@ fn a_hole_shows_the_ground_below_it_and_lets_the_sun_through() {
     let beside = rgb_at(&lit, ex, ey).iter().sum::<i32>() / 3;
     assert!(through * 2 > beside, "the green under the hole is sunlit: {through} against {beside} beside it");
 }
+
+#[test]
+fn grass_grows_thickly_where_its_densities_say_more_blades_than_the_scene_has_room_for() {
+    use std::sync::Arc;
+    use voxear_render::{GrassLook, Primitive};
+    use voxear_terrain::grass::{GrassMap, GrassTile};
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    // Thick on the left half (x under 64 m), none on the right.
+    let side = voxear_terrain::TILE_SAMPLES;
+    let samples = (0..side * side).map(|i| if i % side < 128 { 255 } else { 0 }).collect();
+    let map = GrassMap::from_tiles(1, 1, 1, vec![Arc::new(GrassTile::from_samples(samples))]);
+    let terrain = Terrain { grass: Some(Arc::new(map)), ..Terrain::new(Heightmap::flat(1, 1, 0.5, 0.0)) };
+    let grey = renderer.add_material(&MaterialDesc { base_color: [0.5, 0.5, 0.5, 1.0], ..MaterialDesc::default() });
+    let green = renderer.add_material(&MaterialDesc { base_color: [0.1, 0.9, 0.1, 1.0], ..MaterialDesc::default() });
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    // Forty to a square metre: some 85,000 blades in view, past the 65,536 instances a view has room for.
+    let look = GrassLook { mesh: cube, material: green.unwrap(), density: 40.0, scale: [0.12, 0.15], draw_distance: 80.0 };
+    let look = TerrainLook { grass: Arc::from([Some(look)]), ..TerrainLook::new(grey.unwrap(), 4.0) };
+    world.spawn((terrain, look, Transform::default()));
+    look_down(&mut world, 30.0);
+    renderer.set_view_options(ViewOptions { debug_view: voxear_render::DEBUG_VIEW_UNLIT, ..ViewOptions::default() });
+    let pixels = render(&mut renderer, &world, 3);
+    keep_image("terrain grass.png", &pixels);
+    let green_share = |x0: u32, x1: u32| {
+        let all = (x1 - x0) * (HEIGHT - 20);
+        let green = (10..HEIGHT - 10)
+            .flat_map(|y| (x0..x1).map(move |x| (x, y)))
+            .filter(|&(x, y)| {
+                let [r, g, b] = rgb_at(&pixels, x, y);
+                g > r + 60 && g > b + 60
+            })
+            .count() as u32;
+        green as f32 / all as f32
+    };
+    let (left, _) = from_above(30.0, 50.0, 64.0);
+    let (right, _) = from_above(30.0, 78.0, 64.0);
+    let thick = green_share(left - 60, left + 20);
+    let bare = green_share(right - 20, right + 60);
+    assert!(thick > 0.3, "the left half grassy: {thick}");
+    assert!(bare < 0.02, "none on the right: {bare}");
+}

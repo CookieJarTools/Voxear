@@ -149,6 +149,15 @@ pub struct Pipelines {
     pub terrain_forward_on_depth: vk::Pipeline,
     pub terrain_wireframe: vk::Pipeline,
     pub terrain_shadow: vk::Pipeline,
+    /// Grass (see `grass`): each draw's command made afresh, the blades
+    /// scattered, the counts kept within their room; then drawn as depth,
+    /// shaded writing depth, and shaded over the depth passes'.
+    pub grass_reset: vk::Pipeline,
+    pub grass_scatter: vk::Pipeline,
+    pub grass_clamp: vk::Pipeline,
+    pub grass_depth: vk::Pipeline,
+    pub grass_forward: vk::Pipeline,
+    pub grass_forward_on_depth: vk::Pipeline,
     pub dry_mesh: vk::Pipeline,
     pub water_wall: vk::Pipeline,
     /// Under water: what the view shows dimmed, then the water's own light.
@@ -219,6 +228,7 @@ impl Pipelines {
             module("dice")?,
             module("skinning")?,
             module("terrain")?,
+            module("grass")?,
         ];
         let [
             cull,
@@ -243,6 +253,7 @@ impl Pipelines {
             dice,
             skinning,
             terrain,
+            grass,
         ] = &modules;
         // Only a GPU with mesh shaders can load their modules.
         let meshlets = match gpu.mesh_shader {
@@ -550,6 +561,33 @@ impl Pipelines {
                 fragment_entry: Some(c"terrainShadowFragment"),
                 ..GraphicsPipelineDesc::depth_only("Shadows (terrain)", terrain, c"terrainShadowVertex", DEPTH_FORMAT)
             })?,
+            grass_reset: create_compute_pipeline(gpu, layout, "Grass reset", grass, c"grassReset")?,
+            grass_scatter: create_compute_pipeline(gpu, layout, "Grass scatter", grass, c"grassScatter")?,
+            grass_clamp: create_compute_pipeline(gpu, layout, "Grass clamp", grass, c"grassClamp")?,
+            // Blades are thin cards and tufts, seen from both sides.
+            grass_depth: graphics(&GraphicsPipelineDesc {
+                color_formats: &[SURFACE_FORMAT],
+                depth_format: Some(DEPTH_FORMAT),
+                depth_write: true,
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                cull: vk::CullModeFlags::NONE,
+                ..GraphicsPipelineDesc::new("Depth (grass)", grass, c"grassVertex", c"depthFragment")
+            })?,
+            grass_forward: graphics(&GraphicsPipelineDesc {
+                color_formats: scene_formats,
+                depth_format: Some(DEPTH_FORMAT),
+                depth_write: true,
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                cull: vk::CullModeFlags::NONE,
+                ..GraphicsPipelineDesc::new("Opaque (grass)", grass, c"grassVertex", c"fragmentMain")
+            })?,
+            grass_forward_on_depth: graphics(&GraphicsPipelineDesc {
+                color_formats: scene_formats,
+                depth_format: Some(DEPTH_FORMAT),
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                cull: vk::CullModeFlags::NONE,
+                ..GraphicsPipelineDesc::new("Opaque (grass)", grass, c"grassVertex", c"fragmentMain")
+            })?,
             // The sea's spray: particles that read the waves and the foam, so with the sea's shaders.
             sea_spray: graphics(&GraphicsPipelineDesc {
                 color_formats: hdr,
@@ -722,6 +760,12 @@ impl Pipelines {
             self.terrain_forward_on_depth,
             self.terrain_wireframe,
             self.terrain_shadow,
+            self.grass_reset,
+            self.grass_scatter,
+            self.grass_clamp,
+            self.grass_depth,
+            self.grass_forward,
+            self.grass_forward_on_depth,
             self.dry_mesh,
             self.water_wall,
             self.underwater,

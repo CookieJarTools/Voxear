@@ -78,6 +78,10 @@ pub struct MaterialData {
     /// reflected in it. It casts no shadow, and light passes it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub glass: bool,
+    /// Cut out where the colour picture's alpha is under this, as grass
+    /// cards and leaves are cut from their pictures; none for solid.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cutout: Option<f32>,
     /// Advanced: glass's index of refraction, 1.5 for window glass; higher
     /// bends and reflects more.
     #[serde(default = "default_ior", skip_serializing_if = "is_default_ior")]
@@ -138,6 +142,7 @@ impl Default for MaterialData {
             detail: default_detail(),
             foliage: false,
             glass: false,
+            cutout: None,
             ior: default_ior(),
             wind_bend: None,
             wind_flutter: None,
@@ -274,6 +279,7 @@ impl MaterialData {
             height_texture: height,
             displacement: if height.is_some() { self.displacement } else { 0.0 },
             detail: self.detail,
+            alpha_cutoff: self.cutout.filter(|cutout| *cutout > 0.0),
             ..MaterialDesc::default()
         }
     }
@@ -286,10 +292,14 @@ impl MaterialData {
         let flags = u32::from(self.foliage) | u32::from(self.glass) << 1 | (self.leaves as u32) << 2 | (self.glow as u32) << 3;
         let wind = [self.wind_bend().to_bits(), self.wind_flutter().to_bits(), self.glow_speed.to_bits()];
         let (displacement, detail) = (self.displacement.to_bits(), self.detail.to_bits());
+        // Cut out or not is in the custom part, so the array keeps its size.
         let values =
             [r, g, b, metallic, roughness, er, eg, eb, flags, ior, wind[0], wind[1], wind[2], displacement, detail];
         // A custom shader and its properties, as written: two materials alike in them are alike.
-        let custom = self.shader.map(|shader| format!("{shader}{:?}", self.properties)).unwrap_or_default();
+        let mut custom = self.shader.map(|shader| format!("{shader}{:?}", self.properties)).unwrap_or_default();
+        if let Some(cutout) = self.cutout {
+            custom.push_str(&format!(" cutout {cutout}"));
+        }
         (values, MaterialMap::ALL.map(|map| self.map(map)), custom)
     }
 
@@ -345,6 +355,7 @@ pub struct LoadedTerrain {
     pub file: voxear_terrain::file::TerrainFile,
     pub heights: Arc<voxear_terrain::Heightmap>,
     pub weights: Option<Arc<voxear_terrain::surfaces::Weights>>,
+    pub grass: Option<Arc<voxear_terrain::grass::GrassMap>>,
     pub rasters: Arc<voxear_terrain::raster::Rasters>,
 }
 
@@ -1074,9 +1085,9 @@ impl Content {
             Err(_) => None,
         };
         let built = matches!(self.source, Source::Bundles(..));
-        let (stored, kept_weights) = match stored {
-            Some(stored) => (Some((stored.heights, stored.made_from)), stored.weights),
-            None => (None, None),
+        let (stored, kept_weights, kept_grass) = match stored {
+            Some(stored) => (Some((stored.heights, stored.made_from)), stored.weights, stored.grass),
+            None => (None, None, None),
         };
         // Heights made from these layers are used as they are; any others are made again from the layers.
         let (heights, made_again) = match stored {
@@ -1094,6 +1105,7 @@ impl Content {
         };
         // So with the shares: kept when worked out from these surfaces over these heights, or else again.
         let surfaces = voxear_terrain::surfaces::hash_surfaces(&file.surfaces);
+        let mut weighed_again = false;
         let weights = match kept_weights {
             _ if file.surfaces.is_empty() => None,
             Some((weights, weighed_from))
@@ -1101,9 +1113,32 @@ impl Content {
             {
                 Some(weights)
             }
-            _ => voxear_terrain::surfaces::weigh(&file, &heights, &rasters, None, &voxear_terrain::composite::Dirty::All),
+            _ => {
+                weighed_again = true;
+                voxear_terrain::surfaces::weigh(&file, &heights, &rasters, None, &voxear_terrain::composite::Dirty::All)
+            }
         };
-        Ok(LoadedTerrain { heights: Arc::new(heights), weights: weights.map(Arc::new), file, rasters: Arc::new(rasters) })
+        // And the grass, which grows on the surfaces.
+        let grown = voxear_terrain::grass::hash_grass(&file.grass, surfaces);
+        let grass = match kept_grass {
+            _ if file.grass.is_empty() => None,
+            Some((grass, grown_from))
+                if !made_again && !weighed_again && (grown_from == grown || built) && grass.fits(&heights) =>
+            {
+                Some(grass)
+            }
+            _ => {
+                let all = voxear_terrain::composite::Dirty::All;
+                voxear_terrain::grass::grow(&file, (&heights, weights.as_ref()), &rasters, None, &all)
+            }
+        };
+        Ok(LoadedTerrain {
+            heights: Arc::new(heights),
+            weights: weights.map(Arc::new),
+            grass: grass.map(Arc::new),
+            file,
+            rasters: Arc::new(rasters),
+        })
     }
 
     /// The ground `file`'s layers make, with what its brushes painted: the
@@ -1182,9 +1217,13 @@ impl Content {
         terrain: &voxear_terrain::Terrain,
         rasters: &Arc<voxear_terrain::raster::Rasters>,
     ) {
-        let (heights, weights) = (&terrain.heights, &terrain.weights);
+        let (heights, weights, grass) = (&terrain.heights, &terrain.weights, &terrain.grass);
         let kept = self.terrains.get(&guid).and_then(Option::as_ref);
         let same_weights = |kept: &LoadedTerrain| match (&kept.weights, weights) {
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            (a, b) => a.is_none() && b.is_none(),
+        };
+        let same_grass = |kept: &LoadedTerrain| match (&kept.grass, grass) {
             (Some(a), Some(b)) => Arc::ptr_eq(a, b),
             (a, b) => a.is_none() && b.is_none(),
         };
@@ -1192,6 +1231,7 @@ impl Content {
             kept.file == *file
                 && Arc::ptr_eq(&kept.heights, heights)
                 && same_weights(kept)
+                && same_grass(kept)
                 && Arc::ptr_eq(&kept.rasters, rasters)
         };
         if kept.is_some_and(|kept| same(kept)) {
@@ -1201,6 +1241,7 @@ impl Content {
             file: file.clone(),
             heights: heights.clone(),
             weights: weights.clone(),
+            grass: grass.clone(),
             rasters: rasters.clone(),
         };
         self.terrains.insert(guid, Some(Arc::new(loaded)));
@@ -1844,6 +1885,12 @@ impl Content {
 
     pub fn material_source(&self, handle: MaterialHandle) -> Option<&MaterialSource> {
         self.material_sources.get(&handle)
+    }
+
+    /// The mesh `reference` names, if it is loaded already: for what has no
+    /// renderer at hand to load it.
+    pub fn loaded_mesh(&self, reference: &AssetRef) -> Option<MeshHandle> {
+        self.meshes.get(reference).copied()
     }
 
     /// The material `source` names, if it is loaded already: for what has no

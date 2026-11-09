@@ -14,6 +14,7 @@
 pub mod brush;
 pub mod composite;
 pub mod file;
+pub mod grass;
 pub mod heights;
 pub mod import;
 pub mod layers;
@@ -39,6 +40,9 @@ pub struct Terrain {
     /// Each sample's surfaces and their shares (see `surfaces`); none for
     /// ground drawn with one material.
     pub weights: Option<Arc<surfaces::Weights>>,
+    /// How thickly each kind of grass grows at each sample (see `grass`);
+    /// none for a terrain without grass.
+    pub grass: Option<Arc<grass::GrassMap>>,
     /// Out to how far from the camera the ground is drawn at its finest, in
     /// metres; each coarser level is drawn out twice as far again.
     pub detail_distance: f32,
@@ -55,6 +59,10 @@ impl PartialEq for Terrain {
                 (Some(a), Some(b)) => Arc::ptr_eq(a, b) || a == b,
                 (a, b) => a.is_none() && b.is_none(),
             }
+            && match (&self.grass, &other.grass) {
+                (Some(a), Some(b)) => Arc::ptr_eq(a, b) || a == b,
+                (a, b) => a.is_none() && b.is_none(),
+            }
             && self.detail_distance == other.detail_distance
             && self.cast_shadows == other.cast_shadows
     }
@@ -67,6 +75,7 @@ impl Terrain {
         Self {
             heights: Arc::new(heights),
             weights: None,
+            grass: None,
             detail_distance: Self::DEFAULT_DETAIL_DISTANCE,
             cast_shadows: true,
         }

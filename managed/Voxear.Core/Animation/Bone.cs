@@ -25,23 +25,45 @@ public readonly struct Bone : IEquatable<Bone>
 
 	public static readonly Bone None = default;
 
+	private readonly int index;
+	private readonly BoneName? named;
+
 	internal Bone(Obj obj, int index)
 	{
 		Obj = obj;
-		Index = index;
+		this.index = index;
+	}
+
+	/// <summary>
+	/// A bone of the model an Obj draws, by its name, found the first time it is asked for: a field set from a scene
+	/// is read before the model has loaded.
+	/// </summary>
+	internal Bone(Obj obj, string name)
+	{
+		Obj = obj;
+		index = -1;
+		named = new BoneName(name);
 	}
 
 	/// <summary>The Obj that draws the bone's model.</summary>
 	public Obj Obj { get; }
 
-	/// <summary>The bone's number in its skeleton.</summary>
-	public int Index { get; }
+	/// <summary>The bone's number in its skeleton; -1 for one named before its model had it.</summary>
+	public int Index => named?.IndexIn(Obj) ?? index;
 
 	/// <summary>False for <see cref="None"/>, or when its model or Obj is gone.</summary>
 	public bool IsValid => Index >= 0 && Index < new Skeleton(Obj).BoneCount;
 
-	/// <summary>Its name in the model.</summary>
-	public string Name => NativeComponent.Text(NativeComponent.Skeleton, Obj, Index << 8 | NameText) ?? string.Empty;
+	/// <summary>Its name in the model, or for one named before its model had it, the name it was given.</summary>
+	public string Name
+	{
+		get
+		{
+			var at = Index;
+			var read = at >= 0 ? NativeComponent.Text(NativeComponent.Skeleton, Obj, at << 8 | NameText) : null;
+			return read ?? named?.Name ?? string.Empty;
+		}
+	}
 
 	/// <summary>The bone it hangs from; <see cref="None"/> for a root.</summary>
 	public Bone Parent
@@ -99,7 +121,8 @@ public readonly struct Bone : IEquatable<Bone>
 
 	public bool Equals(Bone other)
 	{
-		return Obj == other.Obj && Index == other.Index;
+		var at = Index;
+		return Obj == other.Obj && at == other.Index && (at >= 0 || Name == other.Name);
 	}
 
 	public override bool Equals(object? other)

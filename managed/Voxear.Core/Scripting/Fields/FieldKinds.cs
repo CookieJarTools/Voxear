@@ -69,7 +69,13 @@ internal static class FieldKinds
 		{
 			return "color";
 		}
-		return type == typeof(Quaternion) ? "rotation" : type == typeof(Obj) ? "obj" : null;
+		return type == typeof(Quaternion) ? "rotation" : type == typeof(Obj) ? "obj" : Animated(type);
+	}
+
+	/// <summary>A bone of another Obj's model, or an animation clip.</summary>
+	private static string? Animated(Type type)
+	{
+		return type == typeof(Bone) ? "bone" : type == typeof(AnimationClip) ? "clip" : null;
 	}
 
 	/// <summary>Vectors, assets, lists, references to behaviours and components, and [Serializable] types.</summary>

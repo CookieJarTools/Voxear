@@ -1743,8 +1743,12 @@ fn unbind_value(world: &World, ids: &HashMap<Entity, u32>, value: &mut toml::Val
     match value {
         toml::Value::Table(table) => match entity_ref(table) {
             Some(entity) => {
+                // A Bone field's reference keeps its bone.
+                let bone = prefab::bone_of(table).cloned().map(|bone| (prefab::BONE_KEY.to_string(), bone));
                 *table = match file_path(world, ids, entity) {
-                    Some(path) => toml::Table::from_iter([("obj".to_string(), prefab::ref_value(&path))]),
+                    Some(path) => toml::Table::from_iter(
+                        std::iter::once(("obj".to_string(), prefab::ref_value(&path))).chain(bone),
+                    ),
                     None => {
                         tracing::warn!(
                             "a behaviour field points at an Obj that is not being saved; it is saved as none"
@@ -1760,10 +1764,13 @@ fn unbind_value(world: &World, ids: &HashMap<Entity, u32>, value: &mut toml::Val
     }
 }
 
-/// The entity in a bound reference, `{ entity = n }`.
+/// The entity in a bound reference, `{ entity = n }`, or a Bone field's,
+/// `{ entity = n, bone = "hand_r" }`.
 fn entity_ref(table: &toml::Table) -> Option<Entity> {
+    let bone = prefab::bone_of(table).is_some();
     match (table.len(), table.get("entity")) {
         (1, Some(toml::Value::Integer(bits))) => Some(Entity::from_bits(*bits as u64)),
+        (2, Some(toml::Value::Integer(bits))) if bone => Some(Entity::from_bits(*bits as u64)),
         _ => None,
     }
 }

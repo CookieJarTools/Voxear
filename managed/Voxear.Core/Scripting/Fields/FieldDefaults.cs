@@ -93,6 +93,16 @@ internal static class FieldDefaults
 			WritePath(json, definition.Path);
 			return true;
 		}
+		if (value is AnimationClip clip)
+		{
+			WritePath(json, clip.Reference);
+			return true;
+		}
+		if (value is Bone bone)
+		{
+			WriteBone(json, bone);
+			return true;
+		}
 		if (value is IList items)
 		{
 			WriteList(json, items, type);
@@ -114,6 +124,20 @@ internal static class FieldDefaults
 			return;
 		}
 		json.WriteStringValue(path);
+	}
+
+	/// <summary>A bone as the engine hands one over, by its Obj and its name: { "entity": n, "bone": "hand_r" }; None as null.</summary>
+	private static void WriteBone(Utf8JsonWriter json, Bone bone)
+	{
+		if (bone.Obj == Obj.None)
+		{
+			json.WriteNullValue();
+			return;
+		}
+		json.WriteStartObject();
+		json.WriteNumber("entity", (long)bone.Obj.Id);
+		json.WriteString("bone", bone.Name);
+		json.WriteEndObject();
 	}
 
 	/// <summary>A vector or a colour as its numbers, and a rotation as its four components, which scenes also accept.</summary>

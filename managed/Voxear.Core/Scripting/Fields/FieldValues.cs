@@ -75,6 +75,14 @@ internal static class FieldValues
 		{
 			return ReadObj(value);
 		}
+		if (type == typeof(Bone))
+		{
+			return ReadBone(value);
+		}
+		if (type == typeof(AnimationClip))
+		{
+			return new AnimationClip(value.ValueKind == JsonValueKind.String ? value.GetString() ?? string.Empty : string.Empty);
+		}
 		return ReadAssetOrList(value, type, path);
 	}
 
@@ -204,6 +212,23 @@ internal static class FieldValues
 			return Obj.None;
 		}
 		throw new FormatException("An Obj field takes { obj = 3 }: an Obj in the same scene or prefab.");
+	}
+
+	/// <summary>
+	/// A bone of another Obj's model, written as the Obj and the bone's name: { obj = 3, bone = "hand_r" }, which the
+	/// engine hands over as { entity = n, bone = "hand_r" }. The Obj's model may not have loaded yet, so the bone is
+	/// found by its name when it is first asked for. An empty table, or one without a bone, reads as None.
+	/// </summary>
+	private static Bone ReadBone(JsonElement value)
+	{
+		if (value.ValueKind != JsonValueKind.Object)
+		{
+			throw new FormatException("A Bone field takes { obj = 3, bone = \"hand_r\" }: an Obj in the same scene or prefab, and a bone of its model.");
+		}
+
+		var obj = value.TryGetProperty("entity", out var entity) ? new Obj((ulong)entity.GetInt64()) : Obj.None;
+		var name = value.TryGetProperty("bone", out var bone) && bone.ValueKind == JsonValueKind.String ? bone.GetString() : null;
+		return obj == Obj.None || string.IsNullOrEmpty(name) ? Bone.None : new Bone(obj, name);
 	}
 
 	private static object ReadEnum(JsonElement value, Type type)

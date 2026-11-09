@@ -43,6 +43,11 @@ pub struct ScriptTypes {
     /// `IComponent` structs, described as behaviours are, with no bases.
     #[serde(default)]
     pub components: Vec<BehaviourType>,
+    /// `Definition` classes, which data assets (`.asset` files) hold,
+    /// described as behaviours are: their bases go up to `Definition`, and
+    /// their `menu` is where `[CreateAsset]` lists them in the Create menu.
+    #[serde(default)]
+    pub definitions: Vec<BehaviourType>,
     /// `SystemBase` classes, as the engine will run them.
     #[serde(default)]
     pub systems: Vec<ScriptSystem>,
@@ -140,14 +145,19 @@ pub struct ScriptCommand {
 }
 
 impl ScriptTypes {
-    /// The behaviour or C# component of this name, which the Inspector shows
-    /// the same way.
+    /// The behaviour, C# component or Definition of this name, which the
+    /// Inspector shows the same way.
     pub fn behaviour(&self, name: &str) -> Option<&BehaviourType> {
-        self.behaviours.iter().chain(&self.components).find(|b| b.name == name)
+        self.behaviours.iter().chain(&self.components).chain(&self.definitions).find(|b| b.name == name)
     }
 
     pub fn is_component(&self, name: &str) -> bool {
         self.components.iter().any(|c| c.name == name)
+    }
+
+    /// The Definition of this name, the type a data asset holds.
+    pub fn definition(&self, name: &str) -> Option<&BehaviourType> {
+        self.definitions.iter().find(|d| d.name == name)
     }
 
     pub fn fields_of(&self, structure: &str) -> &[ScriptField] {
@@ -450,6 +460,12 @@ pub enum FieldKind {
     /// as three or four numbers from 0 to 1.
     Color,
     Obj,
+    /// A `Bone`: an Obj and a bone of the model it draws, which scenes write
+    /// as `{ obj = 3, bone = "hand_r" }`.
+    Bone,
+    /// An `AnimationClip`: a clip of a model file, which scenes write as its
+    /// reference, `Models/Walks.glb#clip:Walk`.
+    Clip,
     /// A behaviour on another Obj, of this type or one deriving from or
     /// implementing it.
     Behaviour {
@@ -460,7 +476,8 @@ pub enum FieldKind {
     Component {
         name: String,
     },
-    /// An asset loaded with the scene, such as a `Prefab`, by its type.
+    /// An asset loaded with the scene, such as a `Prefab`, by its type, or a
+    /// data asset, by its `Definition`.
     Asset {
         asset: String,
     },
@@ -697,6 +714,29 @@ mod tests {
         let wave = boss.fields[3].default.as_ref().unwrap().as_table().unwrap();
         assert!(wave.contains_key("count") && !wave.contains_key("who"), "nothing is left out");
         assert_eq!(types.fields_of("Hello.Wave")[0].name, "count");
+    }
+
+    #[test]
+    fn definitions_read_as_behaviours_do_and_their_fields_are_found_by_name() {
+        let text = r#"{
+            "behaviours": [{ "name": "Hello.Rifle", "fields": [
+                { "name": "grip", "type": { "kind": "bone" }, "default": null },
+                { "name": "reload", "type": { "kind": "clip" }, "default": null },
+                { "name": "stats", "type": { "kind": "asset", "asset": "Hello.WeaponStats" }, "default": null }
+            ]}],
+            "definitions": [{ "name": "Hello.WeaponStats", "bases": ["Hello.Stats"], "menu": "Weapons/Weapon Stats",
+                "fields": [{ "name": "damage", "type": { "kind": "number" }, "default": 10.0 }] }],
+            "types": {}
+        }"#;
+        let types = parse(text).unwrap();
+        let rifle = types.behaviour("Hello.Rifle").unwrap();
+        assert_eq!(rifle.fields[0].kind, FieldKind::Bone);
+        assert_eq!(rifle.fields[1].kind, FieldKind::Clip);
+        let stats = types.definition("Hello.WeaponStats").expect("a Definition");
+        assert!(stats.is_a("Hello.Stats") && stats.menu.as_deref() == Some("Weapons/Weapon Stats"));
+        let damage = types.behaviour("Hello.WeaponStats").and_then(|d| d.field("Damage"));
+        assert_eq!(damage.and_then(|f| f.default.clone()), Some(toml::Value::Float(10.0)), "found as a behaviour's are");
+        assert!(types.definition("Hello.Rifle").is_none() && !types.is_component("Hello.WeaponStats"));
     }
 
     #[test]

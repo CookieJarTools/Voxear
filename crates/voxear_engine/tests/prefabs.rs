@@ -434,6 +434,73 @@ fn obj_references_point_at_each_instances_own_objs() {
     }
 }
 
+/// An arm, and a holder under it whose Bone fields point at bones of its
+/// model: one on its own, one in a list.
+const ARM: &str = r#"
+format = 1
+
+[[obj]]
+id = 1
+name = "Arm"
+
+[[obj]]
+id = 2
+name = "Holder"
+parent = 1
+behaviours = ["Game.Holder"]
+fields."Game.Holder" = { grip = { obj = 1, bone = "hand_r" }, spares = [{ obj = 1, bone = "hand_l" }] }
+"#;
+
+#[test]
+fn a_bone_fields_bone_stays_with_its_obj_through_instances_and_saves() {
+    let dir = project(&[("Arm.prefab", ARM)]);
+    let mut content = Content::open(dir.path()).unwrap();
+    let scene: scene_file::SceneFile =
+        toml::from_str("format = 1\n[[obj]]\nid = 4\nname = \"Left\"\n[[obj]]\nid = 6\nprefab = \"Arm.prefab\"\n").unwrap();
+
+    // In an instance, the reference is to the instance's own arm, its bone kept.
+    let flat = prefab::expand(&mut content, &scene.objs).unwrap();
+    let holder = flat.iter().find(|o| o.path.to_string() == "6/2").expect("the instance's holder");
+    let fields = &holder.data.fields["Game.Holder"];
+    let written = |text: &str| toml::from_str::<toml::Table>(text).unwrap()["v"].clone();
+    assert_eq!(fields["grip"], written("v = { obj = 6, bone = \"hand_r\" }"));
+    assert_eq!(fields["spares"], written("v = [{ obj = 6, bone = \"hand_l\" }]"));
+
+    // Bound to the entity it became, as scripts are handed it, the bone still beside it.
+    let mut engine = Engine::new();
+    engine.set_edit_mode(true);
+    let spawned = scene_file::spawn(&mut engine, &mut content, None, &scene, &Default::default()).unwrap();
+    let arm = spawned.iter().find(|(path, _)| path.to_string() == "6").unwrap().1;
+    let holder = spawned.iter().find(|(path, _)| path.to_string() == "6/2").unwrap().1;
+    let kept = engine.world.get::<voxear_engine::EditBehaviours>(holder).expect("kept as data in edit mode");
+    let grip = kept.0[0].fields["grip"].as_table().unwrap().clone();
+    assert_eq!(grip.get("entity"), Some(&toml::Value::Integer(arm.to_bits() as i64)));
+    assert_eq!(grip.get("bone"), Some(&toml::Value::String("hand_r".into())));
+
+    // Saved, the reference is a path in the file again, with its bone.
+    let entities: Vec<Entity> = spawned.iter().map(|(_, e)| *e).collect();
+    let saved = scene_file::capture(&engine.world, &mut content, &entities);
+    let text = toml::to_string(&saved).unwrap();
+    let again: scene_file::SceneFile = toml::from_str(&text).unwrap();
+    let instance = again.objs.iter().find(|o| o.prefab.is_some()).unwrap();
+    let flat = prefab::expand(&mut content, &again.objs).unwrap();
+    let holder = flat.iter().find(|o| o.path.to_string() == format!("{}/2", instance.id)).unwrap();
+    let grip = holder.data.fields["Game.Holder"]["grip"].as_table().unwrap();
+    assert_eq!(grip.get("obj"), Some(&toml::Value::Integer(i64::from(instance.id))), "{text}");
+    assert_eq!(grip.get("bone"), Some(&toml::Value::String("hand_r".into())), "{text}");
+
+    // An Obj of the scene's own pointing at a bone saves the same way.
+    let left = spawned.iter().find(|(path, _)| path.to_string() == "4").unwrap().1;
+    let bound = format!("grip = {{ entity = {}, bone = \"head\" }}", arm.to_bits() as i64);
+    let spec = BehaviourSpec { fields: std::sync::Arc::new(toml::from_str(&bound).unwrap()), ..BehaviourSpec::new("Game.Look") };
+    engine.world.insert(left, voxear_engine::EditBehaviours(vec![spec]));
+    let saved = scene_file::capture(&engine.world, &mut content, &entities);
+    let left = saved.objs.iter().find(|o| o.name == "Left").unwrap();
+    let instance = saved.objs.iter().find(|o| o.prefab.is_some()).unwrap();
+    let expected = format!("v = {{ obj = {}, bone = \"head\" }}", instance.id);
+    assert_eq!(left.fields["Game.Look"]["grip"], written(&expected));
+}
+
 #[test]
 fn obj_references_stay_inside_their_file_and_save_as_paths() {
     let dir = project(&[("Lamp.prefab", LAMP)]);

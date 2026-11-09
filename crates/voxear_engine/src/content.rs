@@ -1130,6 +1130,17 @@ impl Content {
             .collect()
     }
 
+    /// The `Definition` a data asset (an `.asset` file) holds, as its
+    /// `type = "Hello.WeaponStats"` names it, read from its file under the
+    /// project's folder; `None` for a file that names none.
+    pub fn peek_data_type(&self, guid: AssetGuid) -> Option<String> {
+        let Source::Folder(_, mounts) = &self.source else { return None };
+        let entry = self.db.get(guid).filter(|entry| entry.kind == AssetKind::Data)?;
+        let text = std::fs::read_to_string(mounts.file(&entry.path)).ok()?;
+        let table: toml::Table = toml::from_str(&text).ok()?;
+        table.get("type")?.as_str().filter(|name| !name.is_empty()).map(str::to_string)
+    }
+
     /// Forgets a Gun Handling, read again when next asked for, as after it
     /// was saved: a game playing takes it up at once.
     pub fn forget_gun_handling(&mut self, guid: AssetGuid) {

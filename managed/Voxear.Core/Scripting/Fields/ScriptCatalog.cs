@@ -10,8 +10,9 @@ namespace Voxear.Scripting;
 /// <summary>
 /// Describes the behaviours of a built game assembly for the editor, as JSON: each behaviour a scene can add, the
 /// types it derives from and implements, and the fields BehaviourFields can set on it, with the kind of value each
-/// takes and the value a new instance starts with. IComponent structs are described the same way, as components. The editor reads this rather than the source, so what it shows
-/// is what the compiler made. [Serializable] types those fields use are described once each, by name, and every
+/// takes and the value a new instance starts with. IComponent structs are described the same way, as components, and
+/// Definitions, the types data assets hold, as definitions. The editor reads this rather than the source, so what it
+/// shows is what the compiler made. [Serializable] types those fields use are described once each, by name, and every
 /// [Command] method is listed for the palette.
 /// </summary>
 internal static class ScriptCatalog
@@ -43,6 +44,12 @@ internal static class ScriptCatalog
 			foreach (var component in Components(assemblies))
 			{
 				WriteComponent(json, component, types, drawers);
+			}
+			json.WriteEndArray();
+			json.WriteStartArray("definitions");
+			foreach (var definition in DefinitionTypes(assemblies))
+			{
+				WriteDefinition(json, definition, types, drawers);
 			}
 			json.WriteEndArray();
 			WriteSystems(json, assemblies);
@@ -84,6 +91,51 @@ internal static class ScriptCatalog
 		}
 		found.Sort((a, b) => string.CompareOrdinal(a.FullName, b.FullName));
 		return found;
+	}
+
+	/// <summary>Every Definition a data asset can hold: not abstract, and not generic.</summary>
+	private static List<Type> DefinitionTypes(IReadOnlyList<Assembly> assemblies)
+	{
+		var found = new List<Type>();
+		foreach (var type in Loadable(assemblies))
+		{
+			if (type != null && typeof(Definition).IsAssignableFrom(type) && !type.IsAbstract && !type.ContainsGenericParameters)
+			{
+				found.Add(type);
+			}
+		}
+		found.Sort((a, b) => string.CompareOrdinal(a.FullName, b.FullName));
+		return found;
+	}
+
+	/// <summary>
+	/// A Definition, as a behaviour is described: the classes it derives from up to Definition, and its fields with the
+	/// values a new data asset starts with. Its [CreateAsset] path is its place in the Create menu.
+	/// </summary>
+	private static void WriteDefinition(Utf8JsonWriter json, Type type, Dictionary<string, Type> types, DrawerTable drawers)
+	{
+		json.WriteStartObject();
+		json.WriteString("name", type.FullName);
+		json.WriteStartArray("bases");
+		for (var current = type.BaseType; current != null && current != typeof(Definition); current = current.BaseType)
+		{
+			json.WriteStringValue(current.FullName);
+		}
+		json.WriteEndArray();
+		json.WriteStartArray("interfaces");
+		foreach (var contract in type.GetInterfaces())
+		{
+			json.WriteStringValue(contract.FullName);
+		}
+		json.WriteEndArray();
+		WriteDocumentation(json, type);
+		if (type.GetCustomAttribute<CreateAssetAttribute>(inherit: false) is { } menu)
+		{
+			json.WriteString("menu", menu.Path);
+		}
+		WriteFields(json, type, FieldDefaults.Create(type), types, drawers);
+		WriteButtons(json, type);
+		json.WriteEndObject();
 	}
 
 	/// <summary>A component, as a behaviour is described but with no bases: its fields start as the struct's zero value.</summary>

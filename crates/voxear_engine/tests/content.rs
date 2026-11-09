@@ -592,3 +592,25 @@ fn a_data_asset_ships_when_a_field_names_it_and_not_otherwise() {
     let rifle = catalog.assets.iter().find(|a| a.path == "Weapons/Rifle.asset").unwrap();
     assert_eq!(rifle.kind, voxear_assets::AssetKind::Data);
 }
+
+#[test]
+fn a_clip_a_field_or_a_data_asset_names_ships_its_model_file() {
+    let dir = project();
+    let write = |path: &str, text: &str| {
+        let path = dir.path().join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    };
+    for model in ["Walks", "Reloads", "Idles"] {
+        write(&format!("Models/{model}.gltf"), TREE);
+    }
+    write("Weapons/Rifle.asset", "type = \"Game.WeaponStats\"\n\n[fields]\nreload = \"Models/Reloads.gltf#clip:Reload\"\n");
+    let fields = "{ walk = \"Models/Walks.gltf#clip:Walk\", stats = \"Weapons/Rifle.asset\" }";
+    write("Prefabs/Wolf.prefab", &format!("{WOLF}behaviours = [\"Game.Walker\"]\nfields.\"Game.Walker\" = {fields}\n"));
+    let output = dir.path().join("Built");
+    let report = content_build::build(dir.path(), &output, &unmerged(), &[]).unwrap();
+    let shipped: Vec<&String> = report.bundles.iter().flat_map(|b| &b.assets).collect();
+    assert!(shipped.iter().any(|p| *p == "Models/Walks.gltf"), "the wolf's walk: {shipped:?}");
+    assert!(shipped.iter().any(|p| *p == "Models/Reloads.gltf"), "its rifle's reload: {shipped:?}");
+    assert!(report.excluded.iter().any(|p| p == "Models/Idles.gltf"), "nothing names the idles");
+}

@@ -205,6 +205,36 @@ internal static class ScriptCatalogTests
 		Check.True(!fields["mode"].TryGetProperty("default", out var mode) || mode.GetString() == "Walk", "an enum starts at its first value");
 	}
 
+	[Test]
+	private static void DefinitionsAreDescribedWithTheirBasesFieldsAndMenus()
+	{
+		using var document = JsonDocument.Parse(ScriptCatalog.Describe(typeof(TestWeaponStats).Assembly));
+		var definitions = document.RootElement.GetProperty("definitions").EnumerateArray().ToList();
+		var names = definitions.Select(d => d.GetProperty("name").GetString()).ToList();
+		Check.True(names.Contains("Voxear.Tests.TestWeaponStats") && !names.Contains("Voxear.Tests.TestGearStats"), string.Join(", ", names));
+		var stats = definitions.Single(d => d.GetProperty("name").GetString() == "Voxear.Tests.TestWeaponStats");
+		Check.True(stats.GetProperty("menu").GetString() == "Weapons/Weapon Stats", "[CreateAsset]'s path");
+		var bases = stats.GetProperty("bases").EnumerateArray().Select(b => b.GetString()).ToList();
+		Check.True(bases.SequenceEqual(new[] { "Voxear.Tests.TestGearStats" }), string.Join(", ", bases));
+		var fields = stats.GetProperty("fields").EnumerateArray().ToDictionary(f => f.GetProperty("name").GetString()!);
+		Check.True(fields.Keys.SequenceEqual(new[] { "Title", "Damage", "Shots" }), string.Join(", ", fields.Keys));
+		Check.True(fields["Damage"].GetProperty("default").GetDouble() == 10 && Kind(fields["Shots"]) == "list", "fields as a new one starts them");
+		var behaviours = document.RootElement.GetProperty("behaviours").EnumerateArray().Select(b => b.GetProperty("name").GetString());
+		Check.True(!behaviours.Contains("Voxear.Tests.TestWeaponStats"), "a Definition is not a behaviour");
+	}
+
+	[Test]
+	private static void BoneClipAndDefinitionFieldsAreDescribedByKind()
+	{
+		using var document = JsonDocument.Parse(ScriptCatalog.Describe(typeof(TestArsenal).Assembly));
+		var arsenal = document.RootElement.GetProperty("behaviours").EnumerateArray().Single(b => b.GetProperty("name").GetString() == "Voxear.Tests.TestArsenal");
+		var fields = arsenal.GetProperty("fields").EnumerateArray().ToDictionary(f => f.GetProperty("name").GetString()!);
+		Check.True(Kind(fields["Grip"]) == "bone" && Kind(fields["Reload"]) == "clip", $"{Kind(fields["Grip"])} and {Kind(fields["Reload"])}");
+		var stats = fields["Stats"].GetProperty("type");
+		Check.True(Kind(fields["Stats"]) == "asset" && stats.GetProperty("asset").GetString() == "Voxear.Tests.TestWeaponStats", "a data asset, by its Definition");
+		Check.True(fields.Values.All(f => f.GetProperty("default").ValueKind == JsonValueKind.Null), "each starting as none");
+	}
+
 	private static string? Kind(JsonElement field)
 	{
 		return field.GetProperty("type").GetProperty("kind").GetString();

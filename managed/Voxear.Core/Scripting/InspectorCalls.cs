@@ -12,7 +12,8 @@ namespace Voxear.Scripting;
 /// Runs a behaviour's code for the Inspector in edit mode, when the behaviour has no instance: a [Button] or
 /// [OnValueChanged] method, a [ValidateInput] method, or a [ValueDropdown] member. Each call makes a copy of the
 /// behaviour, sets the scene's values on it and binds it to its Obj, but gives it no Awake or other callback, asks
-/// it, and lets it go. Requests and answers are JSON:
+/// it, and lets it go. A data asset's Definition is asked the same way, a copy made with the file's values. Requests
+/// and answers are JSON:
 /// { "behaviour", "entity", "fields", "action": "call" | "validate" | "dropdown", "member", "field" }, answered with
 /// { "changed": { field: value } }, { "valid", "message" } or { "options": [{ "label", "value" }] }, and
 /// { "error" } when it could not be asked, which is logged. The Inspector's drawers are opened and drawn through
@@ -95,18 +96,18 @@ internal static class InspectorCalls
 			return;
 		}
 
-		var behaviour = Make(root);
+		var target = Target(root);
 		var member = root.GetProperty("member").GetString() ?? string.Empty;
 		switch (action)
 		{
 			case "call":
-				Call(json, behaviour, member);
+				Call(json, target, member);
 				break;
 			case "validate":
-				Validate(json, behaviour, member, root.GetProperty("field").GetString() ?? string.Empty);
+				Validate(json, target, member, root.GetProperty("field").GetString() ?? string.Empty);
 				break;
 			case "dropdown":
-				Dropdown(json, behaviour, member);
+				Dropdown(json, target, member);
 				break;
 			default:
 				throw new ArgumentException("The Inspector asked for something it cannot.");
@@ -130,11 +131,31 @@ internal static class InspectorCalls
 		}
 	}
 
+	/// <summary>
+	/// What is asked about: a copy of the behaviour, bound to its Obj, or of the Definition a data asset holds, which
+	/// the Inspector shows the same way, with the values the editor has.
+	/// </summary>
+	private static object Target(JsonElement root)
+	{
+		var name = root.GetProperty("behaviour").GetString() ?? string.Empty;
+		if (Find(name, typeof(Definition)) is not { } type)
+		{
+			return Make(root);
+		}
+
+		var definition = Activator.CreateInstance(type, nonPublic: true)!;
+		if (root.TryGetProperty("fields", out var fields) && fields.ValueKind == JsonValueKind.Object)
+		{
+			BehaviourFields.Fill(definition, fields, type.Name);
+		}
+		return definition;
+	}
+
 	/// <summary>A copy of the behaviour with the scene's values, bound to its Obj.</summary>
 	internal static Behaviour Make(JsonElement root)
 	{
 		var name = root.GetProperty("behaviour").GetString() ?? string.Empty;
-		var type = Find(name) ?? throw new ArgumentException($"There is no behaviour {name}.");
+		var type = Find(name, typeof(Behaviour)) ?? throw new ArgumentException($"There is no behaviour {name}.");
 		var behaviour = (Behaviour)Activator.CreateInstance(type, nonPublic: true)!;
 		behaviour.Attach(new Obj(root.GetProperty("entity").GetUInt64()), 0, 0);
 		if (root.TryGetProperty("fields", out var fields) && fields.ValueKind == JsonValueKind.Object)
@@ -144,12 +165,13 @@ internal static class InspectorCalls
 		return behaviour;
 	}
 
-	private static Type? Find(string name)
+	/// <summary>The game's type of this name, when it is a <paramref name="kind"/>.</summary>
+	private static Type? Find(string name, Type kind)
 	{
 		foreach (var assembly in GameScripts.Assemblies)
 		{
 			var type = assembly.GetType(name);
-			if (type != null && typeof(Behaviour).IsAssignableFrom(type))
+			if (type != null && kind.IsAssignableFrom(type))
 			{
 				return type;
 			}
@@ -158,7 +180,7 @@ internal static class InspectorCalls
 	}
 
 	/// <summary>Calls a method that takes nothing, and answers with the fields it changed, as scenes write them.</summary>
-	private static void Call(Utf8JsonWriter json, Behaviour behaviour, string name)
+	private static void Call(Utf8JsonWriter json, object behaviour, string name)
 	{
 		var method = behaviour.GetType().GetMethod(name, Members, Type.EmptyTypes)
 			?? throw new ArgumentException($"{behaviour.GetType().Name} has no method {name} that takes nothing.");
@@ -177,7 +199,7 @@ internal static class InspectorCalls
 	}
 
 	/// <summary>Asks a method whether a field's value is right: it answers bool, or string, empty when it is.</summary>
-	private static void Validate(Utf8JsonWriter json, Behaviour behaviour, string name, string fieldName)
+	private static void Validate(Utf8JsonWriter json, object behaviour, string name, string fieldName)
 	{
 		var field = BehaviourFields.Settable(behaviour.GetType()).Find(f => f.Name == fieldName)
 			?? throw new ArgumentException($"{behaviour.GetType().Name} has no field {fieldName}.");
@@ -190,7 +212,7 @@ internal static class InspectorCalls
 	}
 
 	/// <summary>The values a member offers, each with its name: a ValueDropdownItem's text, or the value's own.</summary>
-	private static void Dropdown(Utf8JsonWriter json, Behaviour behaviour, string name)
+	private static void Dropdown(Utf8JsonWriter json, object behaviour, string name)
 	{
 		var type = behaviour.GetType();
 		var offered = type.GetMethod(name, Members, Type.EmptyTypes)?.Invoke(behaviour, null)
@@ -214,9 +236,8 @@ internal static class InspectorCalls
 		json.WriteEndArray();
 	}
 
-	/// <summary>Each field scenes can set, as a scene writes its value, to tell what a call changed.</summary>
-	/// <summary>Each field scenes can set, as a scene writes it, by name.</summary>
-	internal static Dictionary<string, string> Values(Behaviour behaviour)
+	/// <summary>Each field scenes can set, as a scene writes it, by name, to tell what a call changed.</summary>
+	internal static Dictionary<string, string> Values(object behaviour)
 	{
 		var values = new Dictionary<string, string>();
 		foreach (var field in BehaviourFields.Settable(behaviour.GetType()))

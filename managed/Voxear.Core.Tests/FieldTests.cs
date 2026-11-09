@@ -85,6 +85,23 @@ internal static class FieldTests
 	}
 
 	[Test]
+	private static void BoneAndClipFieldsFillFromTheirObjBoneAndReference()
+	{
+		var arsenal = new TestArsenal();
+		BehaviourFields.Apply(arsenal, """{ "grip": { "entity": 4294967297, "bone": "hand_r" }, "reload": "Models/Rifle.glb#clip:Reload" }""");
+		Check.True(arsenal.Reload.Reference == "Models/Rifle.glb#clip:Reload", "the clip, as written");
+		Check.True(arsenal.Grip.Obj != Obj.None && arsenal.Grip.Name == "hand_r", "the bone, by its Obj and its name");
+		Check.True(!arsenal.Grip.IsValid && arsenal.Grip.Index == -1, "found once its model has it");
+		var written = InspectorDrawers.Written(arsenal.Grip, typeof(Bone));
+		Check.True(written == """{"entity":4294967297,"bone":"hand_r"}""", written);
+		Check.True(InspectorDrawers.Written(arsenal.Reload, typeof(AnimationClip)) == "\"Models/Rifle.glb#clip:Reload\"", "a clip as its reference");
+
+		BehaviourFields.Apply(arsenal, """{ "grip": {}, "reload": "" }""");
+		Check.True(arsenal.Grip == Bone.None && !arsenal.Reload.IsValid, "an empty table and an empty reference are none");
+		Check.True(InspectorDrawers.Written(arsenal.Grip, typeof(Bone)) == "null", "and none is written as nothing");
+	}
+
+	[Test]
 	private static void BadNestedValuesKeepTheirDefaultsAndTheRestStillLoads()
 	{
 		var spawner = new TestSpawner();

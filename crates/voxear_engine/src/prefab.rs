@@ -248,9 +248,11 @@ fn expand_prefab_inner(content: &mut Content, guid: AssetGuid, stack: &mut Vec<A
 }
 
 /// `{ obj = 3 }` or `{ obj = "3/2" }` in a behaviour field: a reference to
-/// an Obj in the same file.
+/// an Obj in the same file. A `Bone` field's names one of its model's bones
+/// too, `{ obj = 3, bone = "hand_r" }`, which stays with it wherever the
+/// reference is rewritten.
 pub(crate) fn obj_ref(table: &toml::Table) -> Result<Option<ObjPath>> {
-    if table.len() != 1 {
+    if table.len() != 1 && !(table.len() == 2 && bone_of(table).is_some()) {
         return Ok(None);
     }
     match table.get("obj") {
@@ -260,6 +262,15 @@ pub(crate) fn obj_ref(table: &toml::Table) -> Result<Option<ObjPath>> {
         None => Ok(None),
     }
 }
+
+/// The bone a `Bone` field's reference names, `bone = "hand_r"`, if it is
+/// one.
+pub(crate) fn bone_of(table: &toml::Table) -> Option<&toml::Value> {
+    table.get(BONE_KEY).filter(|bone| bone.is_str())
+}
+
+/// The key a `Bone` field's reference names its bone by, beside its Obj.
+pub(crate) const BONE_KEY: &str = "bone";
 
 /// How files write a reference: a plain id when it can be one.
 pub(crate) fn ref_value(path: &ObjPath) -> toml::Value {
@@ -800,8 +811,10 @@ fn bind_value(value: &mut toml::Value, lookup: &dyn Fn(&ObjPath) -> Option<Entit
         toml::Value::Table(table) => match obj_ref(table).ok().flatten() {
             Some(path) => {
                 let entity = lookup(&path).map_or(0, Entity::to_bits);
+                let bone = bone_of(table).cloned();
                 // Entity bits go through TOML's i64 unchanged.
                 *table = toml::Table::from_iter([("entity".to_string(), toml::Value::Integer(entity as i64))]);
+                table.extend(bone.map(|bone| (BONE_KEY.to_string(), bone)));
             }
             None => table.iter_mut().map(|(_, v)| v).for_each(|v| bind_value(v, lookup)),
         },

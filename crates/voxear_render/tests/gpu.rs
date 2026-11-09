@@ -4204,6 +4204,56 @@ fn specks_drift_in_the_water_and_none_hang_in_the_air() {
     assert_eq!(differing_pixels(&bare, &aired), 0, "none over it");
 }
 
+/// A wall of `shade` standing in a still sea, in the sun from behind the
+/// camera, seen from three metres off, with the Ocean's Wet Edges on or off.
+fn wet_edges_render(wet_edges: bool, shade: f32) -> Option<(Vec<u8>, Vec3, Quat)> {
+    use voxear_render::{Ocean, Sky, Weather};
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    let eye = Vec3::new(0.0, 0.6, -3.0);
+    let look = Quat::from_rotation_arc(Vec3::Z, (Vec3::new(0.0, 0.2, 0.0) - eye).normalize());
+    world.spawn((Camera::default(), Transform::new(eye, look, Vec3::ONE)));
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.2, -0.6, 1.0).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.6, ..Sky::default() });
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let wall = MaterialDesc { base_color: [shade, shade, shade, 1.0], roughness: 0.8, ..MaterialDesc::default() };
+    let wall = renderer.add_material(&wall).unwrap();
+    world.spawn((MeshRenderer::new(cube, wall), Transform::new(Vec3::new(0.0, 1.0, 0.5), Quat::IDENTITY, Vec3::new(6.0, 6.0, 1.0))));
+    // Sand three metres down, so the sea is deep right up to the wall and only the wall's own line of foam shows.
+    let plane = renderer.primitive(Primitive::Plane).unwrap();
+    let sand = renderer.add_material(&MaterialDesc { base_color: [0.76, 0.66, 0.48, 1.0], roughness: 0.9, ..MaterialDesc::default() }).unwrap();
+    world.spawn((MeshRenderer::new(plane, sand), Transform::new(Vec3::new(0.0, -3.0, 0.0), Quat::IDENTITY, Vec3::splat(60.0))));
+    let still = Ocean { weather: Weather::Custom, wind: 0.5, swell_wind: 0.2, wet_edges, ..Ocean::default() };
+    world.spawn((still, Transform::default()));
+    run(&mut renderer, &world, &mut 30.0, 10);
+    Some((renderer.read_pixels().unwrap().2, eye, look))
+}
+
+#[test]
+fn where_the_water_meets_a_wall_it_foams_and_wets_it() {
+    let (Some((dry, eye, look)), Some((wet, ..))) = (wet_edges_render(false, 0.8), wet_edges_render(true, 0.8)) else { return };
+    keep_image("wet edges.png", &wet);
+    let brightness = |pixels: &[u8], at: Vec3| patch_rgb(pixels, on_screen(eye, look, at), 2).iter().sum::<i32>();
+    // On the wall a hand's breadth over the water: darker wet than dry, and a metre up, the same.
+    let low = Vec3::new(0.0, 0.07, 0.0);
+    assert!(brightness(&wet, low) * 10 < brightness(&dry, low) * 9, "wet over the water: {} against {}", brightness(&wet, low), brightness(&dry, low));
+    let high = Vec3::new(0.0, 1.0, 0.0);
+    assert!((brightness(&wet, high) - brightness(&dry, high)).abs() < 12, "dry a metre up");
+    // On the water right at the foot of a black wall, which the water mirrors dark, a pale line of foam.
+    let (dark, foamed) = (wet_edges_render(false, 0.02).unwrap().0, wet_edges_render(true, 0.02).unwrap().0);
+    keep_image("wet edges dark.png", &dark);
+    keep_image("wet edges foamed.png", &foamed);
+    let (x, y) = on_screen(eye, look, Vec3::ZERO);
+    let palest = |pixels: &[u8]| {
+        (y.saturating_sub(1)..y + 5)
+            .map(|row| (x - 40..x + 40).map(|column| rgb_at(pixels, (column, row)).iter().sum::<i32>()).sum::<i32>() / 80)
+            .max()
+            .unwrap()
+    };
+    assert!(palest(&foamed) > palest(&dark) + 40, "foam at its foot: {} against {} without", palest(&foamed), palest(&dark));
+}
+
 #[test]
 fn a_stormy_sea_calms_and_stops_at_the_beach() {
     use voxear_render::{Ocean, Sky, Weather};
@@ -4228,7 +4278,7 @@ fn a_stormy_sea_calms_and_stops_at_the_beach() {
     keep_image("beach.png", &pixels);
     // A metre up the beach, ten centimetres above the sea: sand, where a storm's waves would wash over it.
     let shore = patch_rgb(&pixels, on_screen(eye, look, Vec3::new(0.0, 0.1, 11.0)), 2);
-    assert!(shore[0] > shore[2] + 15, "sand above the waterline: {shore:?}");
+    assert!(shore[0] > shore[2] + 8, "sand above the waterline, if wet: {shore:?}");
     let sea = patch_rgb(&pixels, on_screen(eye, look, Vec3::new(4.0, 0.0, -2.0)), 3);
     assert!(sea[2] > sea[0] || sea.iter().all(|&c| c > 150), "water out at sea: {sea:?}");
 }

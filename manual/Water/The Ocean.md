@@ -50,6 +50,7 @@ The sea's costlier looks can each be turned off, on the Ocean in the Inspector o
 | Wet Lens | Drops and a film of water on the lens after it comes up out of the water, or a wave falls away past it |
 | Fine Ripples | The finest waves, from a few centimetres to a metre long |
 | Specks | Specks drifting in the water round the camera, bubbles rising from below, and soft motes right by the lens, more in murkier water |
+| Wet Edges | A line of foam where the water meets whatever stands in it, and a wet band on it above the waterline, darker and glossier, as high as the waves wash |
 
 ```csharp
 // On a low quality setting: no foam standing up off the water, and no light shafts under it.
@@ -62,7 +63,7 @@ The waves are hundreds of thousands of real ocean waves of every length, from a 
 
 Where a crest folds over, it breaks into foam. The foam stays where the crest broke while the wave runs on, streaking down its back, then thins into lace and fades over several seconds. Only the big breakers leave trails; small waves' white is gone as they pass.
 
-Over the ground under the sea, the waves feel the bottom and calm, the longest first, gradually over a few metres where the ground drops away. Near the shore they break as surf once the water is not much deeper than they are tall, and the surf runs up the beach and drains back. Round rocks the water surges white with each wave.
+Over the ground under the sea, the waves feel the bottom and calm, the longest first, gradually over a few metres where the ground drops away. Near the shore they break as surf once the water is not much deeper than they are tall, and the surf runs up the beach and drains back. Round rocks the water surges white with each wave. Whatever stands in the water, still or moving, has a thin line of foam where the water meets it, and a darker, glossier wet band over the waterline, as high as the waves wash.
 
 The sea only counts ground up to 4 m above its surface. Anything higher, such as a roof, an arch or a bridge, doesn't stop it, so the sea runs on under a roof to the floor beneath. Walls stop waves as they do in the real world. Over flat shallows such as a flooded floor, the waves have already broken before reaching it, so the water lies nearly still, even with a storm outside.
 

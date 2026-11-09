@@ -35,6 +35,9 @@ public enum WaterFeatures
 	/// <summary>Specks drifting in the water round the camera, bubbles rising from below, and soft motes by the lens.</summary>
 	Specks = 1 << 7,
 
+	/// <summary>A line of foam where the water meets whatever stands in it, and a wet band on it above the waterline.</summary>
+	WetEdges = 1 << 8,
+
 	/// <summary>All of them, as an Ocean starts.</summary>
-	All = (1 << 8) - 1,
+	All = (1 << 9) - 1,
 }

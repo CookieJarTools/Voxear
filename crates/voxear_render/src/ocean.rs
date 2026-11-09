@@ -165,6 +165,9 @@ pub struct Ocean {
     /// Specks drifting in the water round the camera, bubbles rising from
     /// below, and soft motes right by the lens, more in murkier water.
     pub specks: bool,
+    /// A line of foam where the water meets whatever stands in it, and a
+    /// wet band on it above the waterline, darker and glossier.
+    pub wet_edges: bool,
 }
 
 /// The costlier parts of an Ocean's look as bits, as `OCEAN_*` in
@@ -178,7 +181,8 @@ pub mod features {
     pub const WET_LENS: u32 = 1 << 5;
     pub const FINE_RIPPLES: u32 = 1 << 6;
     pub const SPECKS: u32 = 1 << 7;
-    pub const ALL: u32 = (1 << 8) - 1;
+    pub const WET_EDGES: u32 = 1 << 8;
+    pub const ALL: u32 = (1 << 9) - 1;
 }
 
 impl Ocean {
@@ -193,6 +197,7 @@ impl Ocean {
             (self.wet_lens, features::WET_LENS),
             (self.fine_ripples, features::FINE_RIPPLES),
             (self.specks, features::SPECKS),
+            (self.wet_edges, features::WET_EDGES),
         ]
         .into_iter()
         .filter(|(on, _)| *on)
@@ -210,6 +215,7 @@ impl Ocean {
         self.wet_lens = on(features::WET_LENS);
         self.fine_ripples = on(features::FINE_RIPPLES);
         self.specks = on(features::SPECKS);
+        self.wet_edges = on(features::WET_EDGES);
     }
 
     /// How many of the cascades are worked out: all but the two finest
@@ -248,6 +254,7 @@ impl Default for Ocean {
             wet_lens: true,
             fine_ripples: true,
             specks: true,
+            wet_edges: true,
         }
     }
 }

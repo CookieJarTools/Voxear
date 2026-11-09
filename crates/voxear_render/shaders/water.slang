@@ -22,6 +22,7 @@ static const uint OCEAN_LIGHT_SHAFTS = 16;
 static const uint OCEAN_WET_LENS = 32;
 static const uint OCEAN_FINE_RIPPLES = 64;
 static const uint OCEAN_SPECKS = 128;
+static const uint OCEAN_WET_EDGES = 256;
 
 // Whether the sea has `feature` on.
 bool oceanHas(Frame* frame, uint feature)
@@ -1812,11 +1813,26 @@ FragmentOut waterFragment(WaterOut input)
         discard;
     }
     bool sea = input.body == SEA;
-    // The sea stops at the shore: none where the ground stands above it, but on under an overhang.
+    // The sea stops at the shore: none where the ground stands above it, but on under an overhang. The ground is
+    // known only a texel or two of the sea floor at a time, so beside a wall, a post or a rock it seems to rise before
+    // the wall does; there, where the ground rises steeply, what the picture shows just behind the water, the wall,
+    // is where the water meets it. A beach rises gently, and the sea stops at it.
     float ground = sea ? groundUnder(frame, input.world.xz, input.world.y) : -1e9;
     if (ground > input.world.y)
     {
-        discard;
+        float behind = textures[NonUniformResourceIndex(push.textures.y)].Load(int3(int2(input.position.xy), 0)).r;
+        float gap = behind > 0.0 ? frame->near / behind - frame->near / max(input.position.z, 1e-7) : 1e4;
+        float2 xz = input.world.xz;
+        float steep = max(max(floorHeight(frame, xz + float2(0.25, 0.0)), floorHeight(frame, xz - float2(0.25, 0.0))),
+                          max(floorHeight(frame, xz + float2(0.0, 0.25)), floorHeight(frame, xz - float2(0.0, 0.25))))
+            - min(min(floorHeight(frame, xz + float2(0.25, 0.0)), floorHeight(frame, xz - float2(0.25, 0.0))),
+                  min(floorHeight(frame, xz + float2(0.0, 0.25)), floorHeight(frame, xz - float2(0.0, 0.25))));
+        if (!oceanHas(frame, OCEAN_WET_EDGES) || gap > 0.3 || steep < 1.0)
+        {
+            discard;
+        }
+        // Deep, as far as the shore's foam is concerned: the wall's own line of foam is the Wet Edges'.
+        ground = input.world.y - 10.0;
     }
     WaterBody pool = buffers()->waterBodies[sea ? 0 : input.body];
     bool stream = !sea && pool.kind == WATER_STREAM;
@@ -1968,6 +1984,14 @@ FragmentOut waterFragment(WaterOut input)
     // goes through the water where the ground is not known.
     float waterY = frame->ocean.level + moved.y;
     float shore = ground > -1e8 ? shoreEdge(waterY - ground) : saturate(1.0 - thickness / 0.6);
+    // And a thin line where it meets whatever stands in it, a post or a wall, moving or not, by how little water
+    // the view goes through there, swelling and thinning as the water laps against it.
+    if (oceanHas(frame, OCEAN_WET_EDGES))
+    {
+        float lapping = 0.18 + 0.08 * sin(frame->time * 2.1 + dot(rest, float2(1.3, 0.7)));
+        float contact = saturate(1.0 - thickness / lapping);
+        shore = max(shore, 0.65 * contact * contact);
+    }
     // What breaking crests and the surf left, carried with the water (the sea's only). Some stretches of sea hold
     // their foam longer than others, the patches shifting slowly.
     float4 trail = sea ? keptFoam(frame, rest) : 0.0;

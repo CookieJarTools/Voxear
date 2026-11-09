@@ -744,6 +744,56 @@ WaterOver waterOverAt(Frame* frame, float3 world)
     return over;
 }
 
+// A smooth noise over `p`, from 0 to 1, blotches a unit across.
+float wetNoise(float2 p)
+{
+    float2 cell = floor(p);
+    float2 f = p - cell;
+    f = f * f * (3.0 - 2.0 * f);
+    float a = frac(sin(dot(cell, float2(127.1, 311.7))) * 43758.5453);
+    float b = frac(sin(dot(cell + float2(1.0, 0.0), float2(127.1, 311.7))) * 43758.5453);
+    float c = frac(sin(dot(cell + float2(0.0, 1.0), float2(127.1, 311.7))) * 43758.5453);
+    float d = frac(sin(dot(cell + float2(1.0, 1.0), float2(127.1, 311.7))) * 43758.5453);
+    return lerp(lerp(a, b, f.x), lerp(c, d, f.x), f.y);
+}
+
+// Wet where the water washes over a surface at `world`, facing `normal`:
+// from the waterline up as high as the waves reach, its top uneven, with a
+// few drips run down a wall from higher; darker and glossier, `albedo` and
+// `roughness`, and a little darker under the water too. None in a Dry Area,
+// or without the Ocean's Wet Edges.
+void waterWetSurface(Frame* frame, float3 world, float3 normal, inout float3 albedo, inout float roughness)
+{
+#ifndef NO_UNDERWATER_LIGHT
+    static const uint WET_EDGES = 256;
+    float surface;
+    float3 absorb;
+    if ((frame->ocean.features & WET_EDGES) == 0 || !waterSurface(frame, world, surface, absorb))
+    {
+        return;
+    }
+    float above = world.y - surface;
+    bool sea = frame->ocean.enabled != 0 && surface == frame->ocean.level;
+    float reach = sea ? 0.15 + min(0.3 * frame->ocean.waveHeight * frame->ocean.waveScale, 0.9) : 0.12;
+    if (above > reach * 1.6)
+    {
+        return;
+    }
+    // Along a wall the noise runs round it; over the ground, across it.
+    float2 along = abs(normal.y) < 0.7 ? float2(world.x + world.z, world.y * 0.3) : world.xz;
+    float uneven = 0.7 + 0.5 * wetNoise(along * 2.0) + 0.15 * wetNoise(along * 7.0);
+    // A drip down a few narrow columns of a wall, each its own length.
+    float across = (world.x + world.z) * 18.0;
+    float column = frac(sin(floor(across) * 12.9898) * 43758.5453);
+    float drips = abs(normal.y) < 0.5 && column > 0.82 ? (column - 0.82) * 4.0 * pow(sin(frac(across) * PI), 4.0) : 0.0;
+    float top = reach * (uneven + drips);
+    float wet = 1.0 - smoothstep(top * 0.7, top, above);
+    float darker = above < 0.0 ? 0.25 : 0.4;
+    albedo *= 1.0 - darker * wet;
+    roughness *= 1.0 - 0.6 * wet;
+#endif
+}
+
 // How much of a lamp at `lamp` reaches `world` past the water between them,
 // dimmed a colour at a time over as much of the way as lies under it: the
 // water over `world` (`over`), or the sea's level where `world` is out of
@@ -863,6 +913,7 @@ FragmentOut fragmentMain(VertexOut input)
     float roughness = material.roughness * metalRough.g;
     float3 origin = buffers()->instances[input.instance].model.c3.xyz;
     seasonalSurface(frame, material, origin, shapeNormal(input, material), base.rgb, roughness);
+    waterWetSurface(frame, input.worldPosition, shapeNormal(input, material), base.rgb, roughness);
     float3 emission =
         material.emissive * sampleTexture(material.emissiveTexture, input.uv).rgb * glowAmount(frame, material, origin);
     float3 normal = surfaceNormal(input, material);

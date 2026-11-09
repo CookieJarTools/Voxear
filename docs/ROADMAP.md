@@ -1489,8 +1489,12 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   catching the sun, in shadow dark, fading out by 40 m. Tests: GPU (wet darker, water only in the puddled crater,
   lava glowing, sparkles only with Glitter). Manual: Wet Ground, Puddles and Lava. Still to come: lava lighting
   what is round it.
-- **Models blending into the ground:** a material flag; the forward shader samples terrain height and surfaces at
-  the fragment and blends near the ground.
+- ~~**Models blending into the ground:**~~ done: a material's Ground blend (`ground_blend` in its file, metres; the
+  Inspector's row): the forward shader finds the terrain under the pixel (the view's terrain records, ended by an
+  empty one), and up that far from the ground blends to the ground's own surfaces there, all ground and facing as it
+  does where they meet, the edge wandering, further up what faces up; over holes and off terrain, nothing. The
+  terrain's surface sampling moved into `shaders/terrain_ground.slang` for it. Tests: GPU (a red block's foot takes
+  the green ground, its top stays red, red to the ground without). Manual: Blending Models into Terrain.
 - **Digging, trenches and craters:** marching cubes into the heightmap, Transvoxel between levels; dig, fill and
   tunnel brushes, trenches along a Path with a profile, craters with rims; collision a chunk at a time.
 - **Built-in terrain generation:** generators that make a terrain to start from, chosen and tuned in the editor or

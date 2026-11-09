@@ -19,6 +19,7 @@ Right-click in the Project panel and choose **New Material**, then type its name
 | Normal Map | A picture of the surface's bumps and dents |
 | Emission Map | A picture of where it glows, tinted by **Emission** |
 | Height Map | A picture of how high each point of the surface stands, which **Displacement** raises it by. See [[Displacement]] |
+| Ground blend | How many metres up from where a model meets a terrain it takes on the ground's own look, so rocks and walls sit in the ground. 0 for not at all. See [[Blending Models into Terrain]] |
 
 Every change is saved straight away, and shows at once on everything that uses the material.
 
@@ -91,6 +92,7 @@ normal_map = "c81f3e0a9b2d4c6e8f1a3b5d7e9f0a2c"
 - `emissive` can go above 1 for a brighter glow.
 - `foliage = true` lights it as leaves are, as above.
 - `cutout = 0.5` cuts the surface out where its colour map's alpha is under 0.5, as leaves and grass cards are cut from their pictures. Leave it out for solid surfaces, which draw faster.
+- `ground_blend = 0.4` blends a model into the terrain it stands on, 0.4 m up from the ground.
 - `glass = true` makes it glass, as above, and `ior` sets its index of refraction, 1.5 unless written.
 - `color_map`, `metallic_map`, `normal_map` and `emissive_map` name pictures by their IDs, from their `.meta` files, so the link survives a picture being renamed.
 - `shader` names a custom shader by its ID, and `[properties]` holds the values the material gives it. See [[Custom Shaders]].

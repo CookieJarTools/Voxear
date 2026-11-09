@@ -2778,7 +2778,8 @@ into it and presses each Track Maker's path since last frame where it touches th
 they fill in. The ground's pixels march the eye's ray to the tracks' floor and bend their normal by its slope.
 A surface's liquid (wet, puddles, lava) and glitter are flags it carries to the shaders, so they go where it covers:
 puddles stand where the ground lies below the lowest of a ring of heights round it, and lava's crust rides down the
-ground's fall.
+ground's fall. A model's material can blend its foot into the ground: the forward shader finds the terrain under
+the pixel and samples its surfaces there, as the terrain does.
 
 **Voxels.** Chunks of 32³, in one GPU geometry pool filled through an asynchronous upload ring, culled on the GPU
 against the frustum and last frame's depth and drawn by multi-draw-indirect, with compact vertices of their own.

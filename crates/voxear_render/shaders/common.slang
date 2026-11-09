@@ -955,6 +955,8 @@ struct Terrain
     uint* grass;
     uint grassWords;
     uint grassPad;
+    // Its dug chunks' vertices, three a triangle (terrain.slang); null where it is not dug.
+    DugVertex* dug;
 };
 
 // One of a terrain's surfaces: its material, one over its pictures' size in metres, how sharply it meets the
@@ -972,6 +974,18 @@ struct TerrainSurface
 };
 
 static const uint TERRAIN_HOLE_WORDS = (TERRAIN_TILE_LEN + 31) / 32;
+
+// A vertex of a terrain's dug ground (src/dug.rs): where it is, in metres from the terrain's corner, then the way the
+// ground faces there in two 12-bit numbers folded onto an octahedron, and the surface digging laid there (0 for the
+// terrain's own) in its top byte.
+struct DugVertex
+{
+    float3 local;
+    uint packed;
+};
+
+// A dug vertex's `lod`, which the fragment shaders know it by, plus the surface digging laid there.
+static const uint TERRAIN_DUG = 256;
 
 // One kind of grass on one terrain, as a view scatters and draws it (src/grass.rs): its terrain and its kind, the
 // grid of cells round the camera it is scattered over (one blade a cell at most), how far it is drawn, its sizes,

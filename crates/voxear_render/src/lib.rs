@@ -49,6 +49,7 @@ mod skinning;
 mod smoke;
 mod grass;
 mod terrain;
+mod dug;
 mod tracks;
 mod payload;
 mod pipelines;

@@ -149,6 +149,9 @@ pub struct GpuTerrain {
     pub grass: u64,
     pub grass_words: u32,
     pub grass_pad: u32,
+    /// Its dug chunks' vertices (see `dug`), drawn with the patches; 0 for
+    /// a terrain not dug.
+    pub dug: u64,
 }
 
 /// A terrain's flag for having holes, so the shaders look for them.
@@ -234,6 +237,8 @@ struct Resident {
     /// The frame each tile last changed.
     changed: Vec<u64>,
     seen: u64,
+    /// Its dug chunks' triangles, once it is dug.
+    dug: Option<crate::dug::DugPool>,
 }
 
 /// A terrain to draw this frame, as every view draws it.
@@ -259,6 +264,10 @@ pub(crate) struct Drawn {
     pub cast_shadows: bool,
     /// Its tiles' meshes for rays, those made so far.
     pub proxies: Vec<MeshHandle>,
+    /// Where its dug chunks' vertices are, and each chunk's first vertex
+    /// and count, where it is dug; the pool in this frame's graph.
+    pub dug: Option<(u64, Arc<[[u32; 2]]>)>,
+    pub dug_id: Option<BufferId>,
     /// The patch grid's indices, which every terrain draws with.
     pub grid: vk::Buffer,
     key: u64,
@@ -272,6 +281,8 @@ struct Copy {
     key: u64,
     to: u64,
     size: u64,
+    /// Into its dug chunks' pool, not its ground.
+    dug: bool,
 }
 
 /// Where in a terrain's buffer of `count` tiles its heights, holes, shares
@@ -364,7 +375,7 @@ impl Terrains {
             let mut stage = |bytes: &[u8], to: u64| {
                 let from = staged.len() as u64;
                 staged.extend_from_slice(bytes);
-                self.copies.push(Copy { from, key, to, size: bytes.len() as u64 });
+                self.copies.push(Copy { from, key, to, size: bytes.len() as u64, dug: false });
             };
             let no_holes = [0u32; HOLE_WORDS];
             for (index, tile) in map.tiles().iter().enumerate() {
@@ -394,6 +405,27 @@ impl Terrains {
             }
             if changed {
                 resident.tree = Arc::new(LodTree::new(map));
+            }
+            // Its dug chunks' triangles, those that changed made again.
+            match terrain.dug.as_deref().filter(|dug| !dug.is_empty()) {
+                Some(dug) => {
+                    if resident.dug.is_none() {
+                        resident.dug = Some(crate::dug::DugPool::new(gpu)?);
+                    }
+                    let pool = resident.dug.as_mut().expect("made above");
+                    let copies = &mut self.copies;
+                    let mut stage = |bytes: &[u8], to: u64| {
+                        let from = staged.len() as u64;
+                        staged.extend_from_slice(bytes);
+                        copies.push(Copy { from, key, to, size: bytes.len() as u64, dug: true });
+                    };
+                    pool.update(gpu, frames, map, dug, frame_index, &mut stage)?;
+                }
+                None => {
+                    if let Some(pool) = resident.dug.take() {
+                        pool.retire(frames);
+                    }
+                }
             }
             for index in 0..map.tiles().len() {
                 let tile = &map.tiles()[index];
@@ -430,6 +462,8 @@ impl Terrains {
                 look,
                 cast_shadows: terrain.cast_shadows,
                 proxies: resident.proxies.iter().flatten().map(|(_, mesh)| *mesh).collect(),
+                dug: resident.dug.as_ref().map(|pool| (pool.buffer.address, pool.draws().into())),
+                dug_id: None,
                 grid,
                 key,
             });
@@ -455,10 +489,14 @@ impl Terrains {
     /// each terrain's heights as the graph knows them.
     pub fn record(&mut self, fg: &mut FrameGraph<'_>, frames: &mut Frames) -> Arc<[Drawn]> {
         let mut ids = HashMap::new();
+        let mut dug_ids = HashMap::new();
         for drawn in &mut self.drawn {
             let resident = &self.resident[&drawn.key];
             let id = *ids.entry(drawn.key).or_insert_with(|| fg.import_buffer(&resident.ground));
             drawn.heights_id = Some(id);
+            if let Some(pool) = &resident.dug {
+                drawn.dug_id = Some(*dug_ids.entry(drawn.key).or_insert_with(|| fg.import_buffer(&pool.buffer)));
+            }
         }
         if let Some(staging) = self.staging.take() {
             let copies: Vec<(vk::Buffer, vk::BufferCopy)> = self
@@ -466,11 +504,16 @@ impl Terrains {
                 .iter()
                 .map(|copy| {
                     let region = vk::BufferCopy { src_offset: copy.from, dst_offset: copy.to, size: copy.size };
-                    (self.resident[&copy.key].ground.handle, region)
+                    let resident = &self.resident[&copy.key];
+                    let target = match (&resident.dug, copy.dug) {
+                        (Some(pool), true) => pool.buffer.handle,
+                        _ => resident.ground.handle,
+                    };
+                    (target, region)
                 })
                 .collect();
             let written: Vec<(BufferId, BufferAccess)> =
-                ids.values().map(|&id| (id, BufferAccess::TransferWrite)).collect();
+                ids.values().chain(dug_ids.values()).map(|&id| (id, BufferAccess::TransferWrite)).collect();
             let source = staging.handle;
             fg.add_pass("Terrain uploads", &[], &written, move |ctx| {
                 for (target, region) in &copies {
@@ -485,6 +528,9 @@ impl Terrains {
     pub fn destroy(&mut self, gpu: &Gpu) {
         for (_, resident) in self.resident.drain() {
             gpu.destroy_buffer(resident.ground);
+            if let Some(pool) = resident.dug {
+                pool.destroy(gpu);
+            }
         }
         if let Some(grid) = self.grid.take() {
             gpu.destroy_buffer(grid);
@@ -514,12 +560,16 @@ impl Resident {
             proxies: vec![None; count],
             changed: vec![0; count],
             seen: 0,
+            dug: None,
         })
     }
 }
 
 fn retire(resident: Resident, assets: &mut Assets, frames: &mut Frames, frame_index: u64) {
     frames.retire(Retired::Buffer(resident.ground));
+    if let Some(pool) = resident.dug {
+        pool.retire(frames);
+    }
     for (_, mesh) in resident.proxies.into_iter().flatten() {
         assets.free_mesh(mesh, frame_index);
     }
@@ -569,6 +619,9 @@ pub(crate) struct ViewTerrains {
     pub grid: vk::Buffer,
     /// Whether any terrain casts the sun's shadows.
     pub shadows: bool,
+    /// Each dug terrain's number in the view and its chunks' first vertex
+    /// and count.
+    pub dug: Vec<(u32, Arc<[[u32; 2]]>)>,
 }
 
 impl ViewTerrains {
@@ -663,6 +716,7 @@ pub(crate) fn gather(
             grass: terrain.grass.map_or(0, |(address, _)| address),
             grass_words: terrain.grass.map_or(0, |(_, words)| words),
             grass_pad: 0,
+            dug: terrain.dug.as_ref().map_or(0, |(address, _)| *address),
         });
         let local = camera - terrain.corner;
         let pack = |patch: &Patch| GpuTerrainPatch {
@@ -705,9 +759,16 @@ pub(crate) fn gather(
     buffer.write(SURFACES_AT as u64, &surfaces);
     buffer.write(PATCHES_AT as u64, &all);
     let shadows = (0..CASCADES).any(|cascade| placed[LIST_SHADOW as usize + cascade].1 > 0);
-    let heights = drawn.iter().filter_map(|terrain| terrain.heights_id).collect();
+    // The dug pools are waited on with the heights.
+    let heights = drawn.iter().flat_map(|terrain| terrain.heights_id.into_iter().chain(terrain.dug_id)).collect();
     let grid = drawn.first().map_or(vk::Buffer::null(), |terrain| terrain.grid);
-    Some(ViewTerrains { lists: placed, heights, tracks: None, shadows, grid })
+    let dug = drawn
+        .iter()
+        .take(MAX_TERRAINS)
+        .enumerate()
+        .filter_map(|(number, terrain)| Some((number as u32, terrain.dug.as_ref()?.1.clone())))
+        .collect();
+    Some(ViewTerrains { lists: placed, heights, tracks: None, shadows, grid, dug })
 }
 
 /// Where a view's terrain buffer holds its lists, records and patches.
@@ -739,10 +800,23 @@ fn draw_list(ctx: &PassContext, terrains: &ViewTerrains, push: &Push, list: u32)
     if count == 0 {
         return;
     }
-    ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { list, ..*push });
+    ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { list, level: 0, ..*push });
     unsafe {
         ctx.gpu.device.cmd_bind_index_buffer(ctx.cmd, terrains.grid, 0, vk::IndexType::UINT32);
         ctx.gpu.device.cmd_draw_indexed(ctx.cmd, PATCH_INDICES, count, 0, 0, 0);
+    }
+}
+
+/// Each dug terrain's chunks, with the same pipeline as its patches: the
+/// terrain's number in the view and one in `level`, which tells its vertex
+/// shader to read the terrain's dug vertices, and the chunk's first vertex
+/// in `output`, as the shaders' vertex numbers leave a draw's first out.
+fn draw_dug(ctx: &PassContext, terrains: &ViewTerrains, push: &Push, list: u32) {
+    for (number, draws) in &terrains.dug {
+        for &[first, count] in draws.iter() {
+            ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { list, level: number + 1, output: first, ..*push });
+            unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, count, 1, 0, 0) };
+        }
     }
 }
 
@@ -771,6 +845,7 @@ pub(crate) fn record_shadows(
             };
             set_viewport(ctx, offset, vk::Extent2D { width: CASCADE_RESOLUTION, height: CASCADE_RESOLUTION });
             draw_list(ctx, &terrains, &push, LIST_SHADOW + cascade);
+            draw_dug(ctx, &terrains, &push, LIST_SHADOW + cascade);
         }
         unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
     });
@@ -784,7 +859,7 @@ pub(crate) fn record_depth(
     terrains: &ViewTerrains,
     (depth, surface): (ImageId, ImageId),
 ) {
-    if terrains.count(LIST_EARLY) == 0 {
+    if terrains.count(LIST_EARLY) == 0 && terrains.dug.is_empty() {
         return;
     }
     let mut reads: Vec<_> = terrains.heights.iter().map(|&id| (id, BufferAccess::ShaderRead)).collect();
@@ -797,6 +872,7 @@ pub(crate) fn record_depth(
         begin_rendering(ctx, ctx.extent(depth), &rough, Some(&target));
         bind(ctx, pipelines.terrain_depth, vk::PipelineBindPoint::GRAPHICS, &push);
         draw_list(ctx, &terrains, &push, LIST_EARLY);
+        draw_dug(ctx, &terrains, &push, LIST_EARLY);
         unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
     });
 }
@@ -812,7 +888,7 @@ pub(crate) fn record_opaque(
     (hdr, velocity, depth): (ImageId, ImageId, ImageId),
     buffers: &[(BufferId, BufferAccess)],
 ) {
-    if terrains.count(LIST_EARLY) == 0 {
+    if terrains.count(LIST_EARLY) == 0 && terrains.dug.is_empty() {
         return;
     }
     let mut reads: Vec<_> = buffers.to_vec();
@@ -826,6 +902,7 @@ pub(crate) fn record_opaque(
         begin_rendering(ctx, ctx.extent(hdr), &color, Some(&target));
         bind(ctx, pipeline, vk::PipelineBindPoint::GRAPHICS, &push);
         draw_list(ctx, &terrains, &push, LIST_EARLY);
+        draw_dug(ctx, &terrains, &push, LIST_EARLY);
         unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
     });
 }
@@ -868,7 +945,7 @@ mod tests {
     #[test]
     fn a_views_terrain_buffer_holds_its_lists_records_and_patches() {
         const { assert!(TERRAINS_AT.is_multiple_of(8), "records hold addresses, so start on eight bytes") };
-        const { assert!(size_of::<GpuTerrain>() == 192) };
+        const { assert!(size_of::<GpuTerrain>() == 200) };
         const { assert!(SURFACES_AT.is_multiple_of(16) && PATCHES_AT.is_multiple_of(16)) };
         const { assert!(FRAME_SIZE < 1 << 20) };
     }

@@ -48,9 +48,10 @@ pub struct ChunkKey {
 }
 
 /// One chunk of dug ground: for each of its corners, how far into the
-/// ground it is, in metres (less than nothing in the air), and the surface
-/// its digging laid there: 0 for the terrain's own, or a surface's number
-/// and one. Corners run along x, then z, then y.
+/// ground it is, in metres (less than nothing in the air), and for one
+/// digging opened, the surface it laid on what it bared: 0 for the
+/// terrain's own, or a surface's number and one. Corners run along x, then
+/// z, then y.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DugChunk {
     pub density: Box<[f32]>,
@@ -310,8 +311,11 @@ impl Excavation {
                         };
                         if now != was {
                             chunk.density[at] = now;
-                            if carve == Carve::Dig && now > -grid.voxel * 2.0 {
+                            // Ground digging opened is what it bares; ground filled again is the terrain's own.
+                            if carve == Carve::Dig && was > 0.0 && now <= 0.0 {
                                 chunk.dug[at] = mark;
+                            } else if carve == Carve::Fill && now > 0.0 {
+                                chunk.dug[at] = 0;
                             }
                             any = true;
                         }
@@ -322,27 +326,56 @@ impl Excavation {
                 changed.push(key);
             }
         }
-        let holed = (!newly.is_empty()).then(|| cut_columns(heights, &newly));
+        let holed = (!newly.is_empty()).then(|| cut_columns(heights, self, &newly));
         Some((holed, changed))
     }
 }
 
-/// `heights` with holes in every sample inside each column of `columns`,
-/// the samples on their edges kept, where the voxels meet the heights.
-pub fn cut_columns(heights: &Heightmap, columns: &[(i32, i32)]) -> Heightmap {
+/// `heights` with holes where the voxels of `dug` columns stand: every
+/// sample whose columns, all those it is the corner or edge of, are dug,
+/// for those of `newly` dug. A sample between a dug column and one not dug
+/// is kept, where the voxels meet the heights.
+pub fn cut_columns(heights: &Heightmap, dug: &Excavation, newly: &[(i32, i32)]) -> Heightmap {
     let mut tiles: HashMap<(u32, u32), Vec<u32>> = HashMap::new();
-    let samples = CHUNK_SAMPLES as i64;
-    for &(cx, cz) in columns {
+    let samples = i64::from(CHUNK_SAMPLES);
+    let [qx, qz] = heights.quads().map(i64::from);
+    let quads = i64::from(TILE_QUADS);
+    // Every column a sample is in: one inside a column, two on an edge, four at a corner.
+    let all_dug = |x: i64, z: i64| {
+        let span = |v: i64| {
+            let column = v.div_euclid(samples);
+            if v.rem_euclid(samples) == 0 { vec![column - 1, column] } else { vec![column] }
+        };
+        let (xs, zs) = (span(x), span(z));
+        xs.iter().all(|&cx| zs.iter().all(|&cz| dug.is_dug(cx as i32, cz as i32)))
+    };
+    for &(cx, cz) in newly {
         let (ox, oz) = (i64::from(cx) * samples, i64::from(cz) * samples);
-        let (tx, tz) = ((ox / i64::from(TILE_QUADS)) as u32, (oz / i64::from(TILE_QUADS)) as u32);
-        let bits = tiles
-            .entry((tx, tz))
-            .or_insert_with(|| heights.tile(tx, tz).holes().map_or_else(|| vec![0; HOLE_WORDS], <[u32]>::to_vec));
-        for z in oz + 1..oz + samples {
-            for x in ox + 1..ox + samples {
-                let (ix, iz) = (x - i64::from(tx * TILE_QUADS), z - i64::from(tz * TILE_QUADS));
-                let index = (iz as u32 * TILE_SAMPLES + ix as u32) as usize;
-                bits[index / 32] |= 1 << (index % 32);
+        for z in oz..=(oz + samples).min(qz) {
+            for x in ox..=(ox + samples).min(qx) {
+                if !all_dug(x, z) {
+                    continue;
+                }
+                // In every tile that holds the sample: those either side of a tile's edge share it.
+                let holders = |v: i64, most: i64| {
+                    let tile = (v / quads).min(most);
+                    if v % quads == 0 && v > 0 {
+                        vec![tile - 1, tile].into_iter().filter(|t| *t <= most).collect::<Vec<_>>()
+                    } else {
+                        vec![tile]
+                    }
+                };
+                for tz in holders(z, qz / quads - 1) {
+                    for tx in holders(x, qx / quads - 1) {
+                        let (tx, tz) = (tx as u32, tz as u32);
+                        let bits = tiles.entry((tx, tz)).or_insert_with(|| {
+                            heights.tile(tx, tz).holes().map_or_else(|| vec![0; HOLE_WORDS], <[u32]>::to_vec)
+                        });
+                        let (ix, iz) = (x - i64::from(tx) * quads, z - i64::from(tz) * quads);
+                        let index = (iz as u32 * TILE_SAMPLES + ix as u32) as usize;
+                        bits[index / 32] |= 1 << (index % 32);
+                    }
+                }
             }
         }
     }
@@ -354,14 +387,16 @@ pub fn cut_columns(heights: &Heightmap, columns: &[(i32, i32)]) -> Heightmap {
 }
 
 /// A chunk's surface as triangles: each point in metres from the terrain's
-/// corner, the way the ground faces there, and the surface digging laid
-/// there (0 for the terrain's own); three points a triangle, wound
+/// corner, the way the ground faces there, the surface digging laid there
+/// or beside it (its number and one; 0 for the terrain's own), and whether
+/// it lies on it, to blend from; three points a triangle, wound
 /// counter-clockwise seen from the air.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ChunkMesh {
     pub positions: Vec<[f32; 3]>,
     pub normals: Vec<[f32; 3]>,
     pub surfaces: Vec<u8>,
+    pub laid: Vec<bool>,
     pub indices: Vec<u32>,
 }
 
@@ -414,6 +449,8 @@ pub fn mesh(excavation: &Excavation, heights: &Heightmap, key: ChunkKey) -> Chun
                 if solid == 0 || solid == 8 {
                     continue;
                 }
+                // The surface digging laid anywhere in the voxel, which its triangles blend to.
+                let laid_here = corners.iter().map(|&(cx, cy, cz)| chunk.dug[corner(cx, cy, cz)]).max().unwrap_or(0);
                 for tet in TETRAHEDRA {
                     let inside: Vec<usize> = tet.iter().copied().filter(|&c| values[c] > 0.0).collect();
                     let outside: Vec<usize> = tet.iter().copied().filter(|&c| values[c] <= 0.0).collect();
@@ -440,12 +477,14 @@ pub fn mesh(excavation: &Excavation, heights: &Heightmap, key: ChunkKey) -> Chun
                         let p = place(glo) + (place(ghi) - place(glo)) * t;
                         let n = -(slope(glo.0, glo.1, glo.2) * (1.0 - t) + slope(ghi.0, ghi.1, ghi.2) * t);
                         let n = n.try_normalize().unwrap_or(Vec3::Y);
-                        // The surface its solid end was dug with.
-                        let solid = if dlo > 0.0 { clo } else { chi };
-                        let (sx, sy, sz) = corners[solid];
+                        // Bared by digging where its air end was opened; beside that, blending to it.
+                        let air = if dlo > 0.0 { chi } else { clo };
+                        let (ax, ay, az) = corners[air];
+                        let opened = chunk.dug[corner(ax, ay, az)];
                         out.positions.push(p.to_array());
                         out.normals.push(n.to_array());
-                        out.surfaces.push(chunk.dug[corner(sx, sy, sz)]);
+                        out.surfaces.push(if opened != 0 { opened } else { laid_here });
+                        out.laid.push(opened != 0);
                         let index = out.positions.len() as u32 - 1;
                         made.insert((lo, hi), index);
                         index
@@ -506,6 +545,13 @@ mod tests {
         assert!(dug.is_dug(2, 2) && !dug.is_dug(0, 0));
         assert!(holed.is_hole(40, 40) && holed.is_hole(33, 47));
         assert!(!holed.is_hole(32, 40) && !holed.is_hole(48, 40), "its edges kept");
+        // Dug on the edge of four columns, the samples between them are holes too, but not their outer edges.
+        let mut more = Excavation::default();
+        let (holed, _) =
+            more.carve(&heights, &Shape::Ball { at: [16.0, ground, 16.0], radius: 1.0 }, Carve::Dig, None).unwrap();
+        let holed = holed.unwrap();
+        assert!(holed.is_hole(32, 32) && holed.is_hole(32, 40) && holed.is_hole(40, 32), "between dug columns");
+        assert!(!holed.is_hole(16, 32) && !holed.is_hole(32, 48), "where they meet ground not dug");
         // Air in the ball, ground beside it, as the heights were where it did not reach.
         let grid = Grid::of(&heights);
         let corner = |p: f32| (p / grid.voxel).round() as i64;

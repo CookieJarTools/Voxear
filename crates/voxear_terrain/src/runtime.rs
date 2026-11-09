@@ -950,8 +950,10 @@ mod tests {
             assert!(kept.apply(&mut now, edit).is_some());
         }
         assert!(now.dug.as_ref().is_some_and(|dug| dug.is_dug(5, 5)));
-        // 40 m is on the edge of the sixth column of 8 m, samples 80 to 96; those inside it are holes.
-        assert!(now.heights.is_hole(82, 82) && !now.heights.is_hole(80, 82), "the columns under the dig cut out");
+        // 40 m is on the edge between the fifth and sixth columns of 8 m: inside them and between them are holes,
+        // and their edges with columns not dug are kept.
+        assert!(now.heights.is_hole(82, 82) && now.heights.is_hole(80, 82), "the columns under the dig cut out");
+        assert!(!now.heights.is_hole(64, 82) && !now.heights.is_hole(82, 96), "their edges with ground not dug kept");
         assert_eq!(now.dug.as_ref().unwrap().columns(), [(4, 4), (4, 5), (5, 4), (5, 5)]);
         let commands = kept.save(&now);
         let tiles = write_edits(&built, &now);

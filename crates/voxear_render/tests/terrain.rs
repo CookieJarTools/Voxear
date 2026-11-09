@@ -608,3 +608,60 @@ fn a_model_whose_material_blends_into_the_ground_takes_the_grounds_look_at_its_f
     let [r, g, _] = rgb_at(&pixels, WIDTH / 2, (HEIGHT as f32 / 2.0 + (0.8 - 0.08) * 62.0) as u32);
     assert!(r > g * 2, "red to the ground without it: {:?}", [r, g]);
 }
+
+#[test]
+fn ground_dug_out_of_a_terrain_is_drawn_in_its_dug_surface_with_no_gap_at_its_rim() {
+    use std::sync::Arc;
+    use voxear_render::SurfaceLook;
+    use voxear_terrain::{
+        runtime::{Edit, apply},
+        surfaces::{Liquid, WeightTile, Weights},
+    };
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    let mut look = |colour: [f32; 3]| {
+        let [r, g, b] = colour;
+        let desc = MaterialDesc { base_color: [r, g, b, 1.0], ..MaterialDesc::default() };
+        let material = renderer.add_material(&desc).unwrap();
+        SurfaceLook {
+            material,
+            size: 4.0,
+            sharpness: 0.0,
+            triplanar: false,
+            tracks: 0.0,
+            fills_in: 0.0,
+            liquid: Liquid::None,
+            glitter: false,
+        }
+    };
+    // Green grass over the field, and brown earth for what digging bares.
+    let surfaces = vec![look([0.1, 0.7, 0.1]), look([0.5, 0.3, 0.1])];
+    let weights = Weights::from_tiles(1, 1, vec![Arc::new(WeightTile::all(0))]);
+    let mut terrain = Terrain { weights: Some(Arc::new(weights)), ..Terrain::new(Heightmap::flat(1, 1, 0.5, 0.0)) };
+    apply(&mut terrain, &Edit::Dig { at: [64.0, 0.0, 64.0], radius: 3.0, surface: Some(1) });
+    assert!(terrain.dug.is_some());
+    let plain = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let look = TerrainLook { surfaces: surfaces.into(), ..TerrainLook::new(plain, 4.0) };
+    world.spawn((terrain, look, Transform::default()));
+    look_down(&mut world, 20.0);
+    renderer.set_view_options(ViewOptions { debug_view: voxear_render::DEBUG_VIEW_UNLIT, ..ViewOptions::default() });
+    let pixels = render(&mut renderer, &world, 3);
+    keep_image("terrain dug.png", &pixels);
+    let [r, g, _] = rgb_at(&pixels, WIDTH / 2, HEIGHT / 2);
+    assert!(r > g, "the pit's floor is the dug earth: {:?}", rgb_at(&pixels, WIDTH / 2, HEIGHT / 2));
+    // Round the pit, out past its rim, every pixel is ground, green or brown: none of the sky through a gap.
+    let mut gaps = Vec::new();
+    for ring in 0..60 {
+        let turn = ring as f32 / 60.0 * std::f32::consts::TAU;
+        for r in [1.0, 2.0, 2.9, 3.05, 3.3, 4.0] {
+            let (x, y) = from_above(20.0, 64.0 + turn.cos() * r, 64.0 + turn.sin() * r);
+            let [cr, cg, cb] = rgb_at(&pixels, x, y);
+            if cb > cr && cb > cg {
+                gaps.push((x, y, [cr, cg, cb]));
+            }
+        }
+    }
+    assert!(gaps.is_empty(), "{} gaps, first {:?}", gaps.len(), gaps.first());
+    let [r, g, _] = rgb_at(&pixels, from_above(20.0, 70.0, 64.0).0, from_above(20.0, 70.0, 64.0).1);
+    assert!(g > r * 2, "green grass beyond it");
+}

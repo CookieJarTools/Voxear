@@ -28,6 +28,8 @@ struct TerrainPoint
     float2 local;
     uint level;
     uint terrain;
+    // For dug ground, whether digging laid its surface here: 1, or 0 beside it.
+    float laid;
 };
 
 // Vertex `vertexId` of patch `instanceId` in draw list `list`: where it is, slid onto the next level's grid as
@@ -65,14 +67,48 @@ TerrainPoint terrainPoint(Frame* frame, uint list, uint vertexId, uint instanceI
     p.normal = normalize(float3(-dx, 2.0 * width, -dz));
     p.level = level;
     p.terrain = patch.packed >> 8;
+    p.laid = 0.0;
     return p;
+}
+
+// Vertex `vertexId` of terrain `terrainIndex`'s dug ground: where it is and which way it faces, its level
+// TERRAIN_DUG and the surface digging laid there.
+TerrainPoint dugPoint(uint terrainIndex, uint vertexId)
+{
+    Terrain terrain = buffers()->terrains[terrainIndex];
+    DugVertex v = terrain.dug[vertexId];
+    float2 folded = float2(v.packed & 0xFFF, (v.packed >> 12) & 0xFFF) / 4095.0 * 2.0 - 1.0;
+    float3 n = float3(folded.x, 1.0 - abs(folded.x) - abs(folded.y), folded.y);
+    if (n.y < 0.0)
+    {
+        n.xz = (1.0 - abs(folded.yx)) * select(folded >= 0.0, float2(1.0), float2(-1.0));
+    }
+    TerrainPoint p;
+    p.local = v.local.xz;
+    p.world = terrain.corner + v.local;
+    p.normal = normalize(n);
+    p.level = TERRAIN_DUG + ((v.packed >> 24) & 0x7F);
+    p.terrain = terrainIndex;
+    p.laid = float(v.packed >> 31);
+    return p;
+}
+
+// The point a draw's vertex is: a patch's, or with `push.level` a dug terrain's (its number and one), its chunk's
+// vertices from `push.output` on.
+TerrainPoint terrainOrDug(Frame* frame, uint vertexId, uint instanceId)
+{
+    if (push.level != 0)
+    {
+        return dugPoint(push.level - 1, push.output + vertexId);
+    }
+    return terrainPoint(frame, push.list, vertexId, instanceId);
 }
 
 [shader("vertex")]
 VertexOut terrainVertex(uint vertexId : SV_VertexID, uint instanceId : SV_InstanceID)
 {
     Frame* frame = push.frame;
-    TerrainPoint p = terrainPoint(frame, push.list, vertexId, instanceId);
+    TerrainPoint p = terrainOrDug(frame, vertexId, instanceId);
     Terrain terrain = buffers()->terrains[p.terrain];
     float4 world = float4(p.world, 1.0);
 
@@ -82,7 +118,8 @@ VertexOut terrainVertex(uint vertexId : SV_VertexID, uint instanceId : SV_Instan
     o.normal = p.normal;
     // Along +x over the ground, as the pictures' u runs; v runs along -z, as a plane's does.
     o.tangent = float4(normalizeOr(float3(p.normal.y, -p.normal.x, 0.0), float3(1.0, 0.0, 0.0)), 1.0);
-    o.uv = float2(p.local.x, -p.local.y) * terrain.uvScale;
+    // Dug ground's carries how much digging laid its surface, to blend by.
+    o.uv = p.level >= TERRAIN_DUG ? float2(p.laid, 0.0) : float2(p.local.x, -p.local.y) * terrain.uvScale;
     o.material = terrain.material;
     o.lod = p.level;
     o.instance = terrain.anchor;
@@ -101,6 +138,8 @@ struct TerrainShadowOut
     float4 position : SV_Position;
     float2 local : TEXCOORD0;
     nointerpolation uint terrain : TERRAIN;
+    // Dug ground, which holes do not cut.
+    nointerpolation uint dug : DUG;
 };
 
 // A vertex in a sun cascade's view (push.list), placed as the camera's view places it, so the ground's shadow
@@ -108,11 +147,12 @@ struct TerrainShadowOut
 [shader("vertex")]
 TerrainShadowOut terrainShadowVertex(uint vertexId : SV_VertexID, uint instanceId : SV_InstanceID)
 {
-    TerrainPoint p = terrainPoint(push.frame, push.list, vertexId, instanceId);
+    TerrainPoint p = terrainOrDug(push.frame, vertexId, instanceId);
     TerrainShadowOut o;
     o.position = transform(shadowViewProj(push.frame, push.list, 0), float4(p.world, 1.0));
     o.local = p.local;
     o.terrain = p.terrain;
+    o.dug = p.level >= TERRAIN_DUG ? 1 : 0;
     return o;
 }
 
@@ -120,7 +160,7 @@ TerrainShadowOut terrainShadowVertex(uint vertexId : SV_VertexID, uint instanceI
 [shader("fragment")]
 void terrainShadowFragment(TerrainShadowOut input)
 {
-    if (terrainCut(buffers()->terrains[input.terrain], input.local))
+    if (input.dug == 0 && terrainCut(buffers()->terrains[input.terrain], input.local))
     {
         discard;
     }
@@ -397,7 +437,9 @@ bool terrainShading(VertexOut input, inout float4 base, inout float metallic, in
     spot.place = float3(local.x, input.worldPosition.y, local.y);
     spot.dx = ddx(spot.place);
     spot.dy = ddy(spot.place);
-    if (terrainCut(terrain, local))
+    // Dug ground is where holes are cut for it, and its walls stand up, so every surface is drawn from the sides too.
+    bool dug = input.lod >= TERRAIN_DUG;
+    if (!dug && terrainCut(terrain, local))
     {
         discard;
     }
@@ -408,7 +450,26 @@ bool terrainShading(VertexOut input, inout float4 base, inout float metallic, in
     uint4 ids;
     float4 shares;
     terrainShares(terrain, local, ids, shares);
-    float pressed = (terrain.flags & TERRAIN_TRACKS) != 0 ? terrainTracks(terrain, input, spot, normal, ids, shares) : 0.0;
+    // Where digging laid a surface, it blends over the terrain's own, in the place of the least of them.
+    uint laid = dug ? input.lod - TERRAIN_DUG : 0;
+    float amount = saturate(input.uv.x);
+    if (laid != 0 && amount > 0.0)
+    {
+        shares *= 1.0 - amount;
+        uint into = 0;
+        for (uint k = 1; k < 4; k++)
+        {
+            into = shares[k] < shares[into] ? k : into;
+        }
+        for (uint k = 0; k < 4; k++)
+        {
+            into = ids[k] == laid - 1 && shares[k] > 0.0 ? k : into;
+        }
+        shares[into] = ids[into] == laid - 1 ? shares[into] + amount : amount;
+        ids[into] = laid - 1;
+    }
+    bool tracked = !dug && (terrain.flags & TERRAIN_TRACKS) != 0;
+    float pressed = tracked ? terrainTracks(terrain, input, spot, normal, ids, shares) : 0.0;
 
     // Blended by the surfaces' height pictures as sharply as they ask: each share raised by its picture's height,
     // and only what stands near the highest kept.
@@ -420,6 +481,7 @@ bool terrainShading(VertexOut input, inout float4 base, inout float metallic, in
         if (shares[k] > 0.0)
         {
             TerrainSurface surface = terrain.surfaces[min(ids[k], terrain.surfaceCount - 1)];
+            surface.flags |= dug ? TERRAIN_SURFACE_TRIPLANAR : 0;
             heights[k] = terrainLayerHeight(surface, spot, normal);
             sharpness += surface.sharpness * shares[k];
             count++;
@@ -450,6 +512,9 @@ bool terrainShading(VertexOut input, inout float4 base, inout float metallic, in
             continue;
         }
         TerrainSurface surface = terrain.surfaces[min(ids[k], terrain.surfaceCount - 1)];
+        // Dug ground holds no standing water: its hollows are not the heights'.
+        surface.flags |= dug ? TERRAIN_SURFACE_TRIPLANAR : 0;
+        surface.flags = dug && (surface.flags & TERRAIN_SURFACE_PUDDLES) != 0 ? (surface.flags & ~TERRAIN_SURFACE_PUDDLES) | TERRAIN_SURFACE_WET : surface.flags;
         TerrainLayer layer = terrainLayerAt(surface, spot, normal, input.tangent);
         if ((surface.flags & ~TERRAIN_SURFACE_TRIPLANAR) != 0)
         {

@@ -184,7 +184,7 @@ For a sheet of many icons in one picture, give a control the part of it to show,
 South = { texture = "UI/Prompts/Xbox.png", rect = [0, 0, 64, 64] }
 ```
 
-A picture shows 28 pixels square. Style `.prompt-sprite` in your sheets to change that.
+A picture shows 32 pixels square. Style `.prompt-sprite` in your sheets to change that.
 
 Style the glyphs in your sheets by their classes: `prompt` for the whole prompt, and `prompt-glyph` for each control, with `key`, `round`, `pill`, `square`, `stick` or `bare` for its shape. Each holds a `prompt-text` label or a `prompt-icon`.
 

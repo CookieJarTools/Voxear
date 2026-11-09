@@ -1145,15 +1145,17 @@ DockSpace .split-column > .split-divider {
     width: 24px;
 }
 
-/* A control drawn by a game's own Prompt Icons: its picture, with no outline of Voxear's. */
+/* A control shown as a picture, Voxear's or a game's own Prompt Icons: the picture, sized as it is, with no outline. */
 .prompt-glyph.sprite {
     min-width: 0px;
+    height: auto;
     border-width: 0px;
     background-color: transparent;
     padding: 0px;
 }
 
 .prompt-sprite {
-    width: 28px;
-    height: 28px;
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
 }

@@ -149,9 +149,13 @@ pub struct GpuTerrain {
     pub grass: u64,
     pub grass_words: u32,
     pub grass_pad: u32,
-    /// Its dug chunks' vertices (see `dug`), drawn with the patches; 0 for
-    /// a terrain not dug.
+    /// Its dug chunks' vertices (see `dug`), drawn with the patches, and
+    /// which of its columns of chunks are dug, a bit each, with how many a
+    /// row has; 0 for a terrain not dug.
     pub dug: u64,
+    pub dug_columns: u64,
+    pub dug_columns_x: u32,
+    pub dug_pad: u32,
 }
 
 /// A terrain's flag for having holes, so the shaders look for them.
@@ -264,9 +268,10 @@ pub(crate) struct Drawn {
     pub cast_shadows: bool,
     /// Its tiles' meshes for rays, those made so far.
     pub proxies: Vec<MeshHandle>,
-    /// Where its dug chunks' vertices are, and each chunk's first vertex
-    /// and count, where it is dug; the pool in this frame's graph.
-    pub dug: Option<(u64, Arc<[[u32; 2]]>)>,
+    /// Where its dug chunks' vertices are, each chunk's first vertex and
+    /// count, and where its dug columns' bits are and how many a row has,
+    /// where it is dug; the pool in this frame's graph.
+    pub dug: Option<(u64, Arc<[[u32; 2]]>, (u64, u32))>,
     pub dug_id: Option<BufferId>,
     /// The patch grid's indices, which every terrain draws with.
     pub grid: vk::Buffer,
@@ -462,7 +467,9 @@ impl Terrains {
                 look,
                 cast_shadows: terrain.cast_shadows,
                 proxies: resident.proxies.iter().flatten().map(|(_, mesh)| *mesh).collect(),
-                dug: resident.dug.as_ref().map(|pool| (pool.buffer.address, pool.draws().into())),
+                dug: resident.dug.as_ref().map(|pool| {
+                    (pool.buffer.address, pool.draws().into(), pool.columns().unwrap_or((0, 0)))
+                }),
                 dug_id: None,
                 grid,
                 key,
@@ -716,7 +723,10 @@ pub(crate) fn gather(
             grass: terrain.grass.map_or(0, |(address, _)| address),
             grass_words: terrain.grass.map_or(0, |(_, words)| words),
             grass_pad: 0,
-            dug: terrain.dug.as_ref().map_or(0, |(address, _)| *address),
+            dug: terrain.dug.as_ref().map_or(0, |(address, ..)| *address),
+            dug_columns: terrain.dug.as_ref().map_or(0, |(.., (columns, _))| *columns),
+            dug_columns_x: terrain.dug.as_ref().map_or(0, |(.., (_, across))| *across),
+            dug_pad: 0,
         });
         let local = camera - terrain.corner;
         let pack = |patch: &Patch| GpuTerrainPatch {
@@ -945,7 +955,7 @@ mod tests {
     #[test]
     fn a_views_terrain_buffer_holds_its_lists_records_and_patches() {
         const { assert!(TERRAINS_AT.is_multiple_of(8), "records hold addresses, so start on eight bytes") };
-        const { assert!(size_of::<GpuTerrain>() == 200) };
+        const { assert!(size_of::<GpuTerrain>() == 216) };
         const { assert!(SURFACES_AT.is_multiple_of(16) && PATCHES_AT.is_multiple_of(16)) };
         const { assert!(FRAME_SIZE < 1 << 20) };
     }

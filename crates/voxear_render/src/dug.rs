@@ -63,7 +63,9 @@ struct Held {
     vertices: Arc<[DugVertex]>,
 }
 
-/// One terrain's dug chunks' vertices.
+/// One terrain's dug chunks' vertices, and which of its columns are dug, a
+/// bit each, row after row, in a range of its own, for its grass to grow
+/// over the holes its voxels stand in.
 pub(crate) struct DugPool {
     pub buffer: Buffer,
     space: RangeAllocator,
@@ -71,6 +73,10 @@ pub(crate) struct DugPool {
     held: HashMap<ChunkKey, Held>,
     /// Ranges given up, freed once the frames that may draw them are done.
     freeing: Vec<(u64, u64, u64)>,
+    columns: Vec<u32>,
+    columns_x: u32,
+    /// Where the columns' bits are, in vertices, and how many.
+    columns_at: Option<(u64, u64)>,
 }
 
 impl DugPool {
@@ -87,7 +93,15 @@ impl DugPool {
             capacity: FIRST_CAPACITY,
             held: HashMap::new(),
             freeing: Vec::new(),
+            columns: Vec::new(),
+            columns_x: 0,
+            columns_at: None,
         })
+    }
+
+    /// Where the dug columns' bits are, and how many columns a row has.
+    pub fn columns(&self) -> Option<(u64, u32)> {
+        self.columns_at.map(|(first, _)| (self.buffer.address + first * size_of::<DugVertex>() as u64, self.columns_x))
     }
 
     /// Brings the pool up to `dug`: makes the triangles of each chunk that
@@ -136,6 +150,32 @@ impl DugPool {
             stage(bytemuck::cast_slice(&made), first * size_of::<DugVertex>() as u64);
             self.held.insert(*key, Held { chunk: chunk.clone(), first, count, vertices: made });
         }
+        // Which columns are dug, staged again when they change.
+        let columns_x = heights.quads()[0] / voxear_terrain::dig::CHUNK_SAMPLES;
+        let columns_z = heights.quads()[1] / voxear_terrain::dig::CHUNK_SAMPLES;
+        let mut columns = vec![0u32; (columns_x * columns_z).div_ceil(32) as usize];
+        for (x, z) in dug.columns() {
+            let index = z as u32 * columns_x + x as u32;
+            columns[(index / 32) as usize] |= 1 << (index % 32);
+        }
+        if columns != self.columns || self.columns_at.is_none() {
+            if let Some((first, count)) = self.columns_at.take() {
+                self.freeing.push((frame_index, first, count));
+            }
+            let count = (columns.len() as u64).div_ceil(4);
+            let first = match self.space.alloc(count) {
+                Some(first) => first,
+                None => {
+                    self.grow(gpu, frames, count, stage)?;
+                    self.space.alloc(count).expect("room after growing")
+                }
+            };
+            let mut bytes: Vec<u32> = columns.clone();
+            bytes.resize(count as usize * 4, 0);
+            stage(bytemuck::cast_slice(&bytes), first * size_of::<DugVertex>() as u64);
+            self.columns_at = Some((first, count));
+            (self.columns, self.columns_x) = (columns, columns_x);
+        }
         Ok(())
     }
 
@@ -156,6 +196,8 @@ impl DugPool {
             held.first = self.space.alloc(held.count).expect("room in a larger pool");
             stage(bytemuck::cast_slice(&held.vertices), held.first * size_of::<DugVertex>() as u64);
         }
+        // The columns' bits are staged again too.
+        self.columns_at = None;
         Ok(())
     }
 

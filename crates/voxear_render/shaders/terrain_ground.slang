@@ -290,3 +290,20 @@ TerrainLayer terrainLayerAt(TerrainSurface surface, TerrainSpot spot, float3 nor
     layer.normal = normalizeOr(bent, normal);
     return layer;
 }
+
+// Whether `local`, metres from the terrain's corner, is in a dug column (src/dug.rs): where its heights are holes for
+// its voxels to stand in, and grass still grows as the heights have it.
+bool terrainDugColumn(Terrain terrain, float2 local)
+{
+    if (terrain.dugColumnsX == 0)
+    {
+        return false;
+    }
+    int2 column = int2(floor(local / (terrain.spacing * float(TERRAIN_DUG_COLUMN))));
+    if (any(column < 0) || column.x >= int(terrain.dugColumnsX))
+    {
+        return false;
+    }
+    uint index = uint(column.y) * terrain.dugColumnsX + uint(column.x);
+    return ((terrain.dugColumns[index / 32] >> (index % 32)) & 1) != 0;
+}

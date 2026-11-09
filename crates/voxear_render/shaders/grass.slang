@@ -52,7 +52,7 @@ void grassScatter(uint3 id : SV_DispatchThreadID)
     {
         return;
     }
-    if (terrainCut(terrain, local))
+    if (terrainCut(terrain, local) && !terrainDugColumn(terrain, local))
     {
         return;
     }

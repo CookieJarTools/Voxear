@@ -612,8 +612,9 @@ fn a_model_whose_material_blends_into_the_ground_takes_the_grounds_look_at_its_f
 #[test]
 fn ground_dug_out_of_a_terrain_is_drawn_in_its_dug_surface_with_no_gap_at_its_rim() {
     use std::sync::Arc;
-    use voxear_render::SurfaceLook;
+    use voxear_render::{GrassLook, Primitive, SurfaceLook};
     use voxear_terrain::{
+        grass::{GrassMap, GrassTile},
         runtime::{Edit, apply},
         surfaces::{Liquid, WeightTile, Weights},
     };
@@ -637,19 +638,42 @@ fn ground_dug_out_of_a_terrain_is_drawn_in_its_dug_surface_with_no_gap_at_its_ri
     // Green grass over the field, and brown earth for what digging bares.
     let surfaces = vec![look([0.1, 0.7, 0.1]), look([0.5, 0.3, 0.1])];
     let weights = Weights::from_tiles(1, 1, vec![Arc::new(WeightTile::all(0))]);
-    let mut terrain = Terrain { weights: Some(Arc::new(weights)), ..Terrain::new(Heightmap::flat(1, 1, 0.5, 0.0)) };
+    // And red grass all over it, thinly.
+    let grass = GrassTile::from_samples(vec![0xFF; voxear_terrain::heights::TILE_LEN]);
+    let grass = Some(Arc::new(GrassMap::from_tiles(1, 1, 1, vec![Arc::new(grass)])));
+    let mut terrain =
+        Terrain { weights: Some(Arc::new(weights)), grass, ..Terrain::new(Heightmap::flat(1, 1, 0.5, 0.0)) };
     apply(&mut terrain, &Edit::Dig { at: [64.0, 0.0, 64.0], radius: 3.0, surface: Some(1) });
     assert!(terrain.dug.is_some());
     let plain = renderer.add_material(&MaterialDesc::default()).unwrap();
-    let look = TerrainLook { surfaces: surfaces.into(), ..TerrainLook::new(plain, 4.0) };
+    let red = renderer.add_material(&MaterialDesc { base_color: [1.0, 0.0, 0.0, 1.0], ..MaterialDesc::default() });
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let blades = GrassLook { mesh: cube, material: red.unwrap(), density: 4.0, scale: [0.1, 0.1], draw_distance: 80.0 };
+    let look =
+        TerrainLook { surfaces: surfaces.into(), grass: Arc::from([Some(blades)]), ..TerrainLook::new(plain, 4.0) };
     world.spawn((terrain, look, Transform::default()));
     look_down(&mut world, 20.0);
     renderer.set_view_options(ViewOptions { debug_view: voxear_render::DEBUG_VIEW_UNLIT, ..ViewOptions::default() });
     let pixels = render(&mut renderer, &world, 3);
     keep_image("terrain dug.png", &pixels);
+    // Red blades in a square metre: in the dug column beside the pit, as on the ground not dug, and none in the pit.
+    let blades = |x0: f32, z0: f32| {
+        let mut count = 0;
+        for i in 0..24 {
+            for j in 0..24 {
+                let (x, y) = from_above(20.0, x0 + i as f32 / 24.0, z0 + j as f32 / 24.0);
+                let [r, g, b] = rgb_at(&pixels, x, y);
+                count += usize::from(r > 150 && g < 80 && b < 80);
+            }
+        }
+        count
+    };
+    let (dug_column, not_dug, pit) = (blades(59.5, 59.5), blades(50.5, 59.5), blades(63.5, 63.5));
+    assert!(dug_column > 5 && not_dug > 5, "grass grows in the dug column: {dug_column}, and beyond it: {not_dug}");
+    assert_eq!(pit, 0, "and none in the pit");
     let [r, g, _] = rgb_at(&pixels, WIDTH / 2, HEIGHT / 2);
     assert!(r > g, "the pit's floor is the dug earth: {:?}", rgb_at(&pixels, WIDTH / 2, HEIGHT / 2));
-    // Round the pit, out past its rim, every pixel is ground, green or brown: none of the sky through a gap.
+    // Round the pit, out past its rim, every pixel is ground (or grass): none of the sky through a gap.
     let mut gaps = Vec::new();
     for ring in 0..60 {
         let turn = ring as f32 / 60.0 * std::f32::consts::TAU;
@@ -662,6 +686,6 @@ fn ground_dug_out_of_a_terrain_is_drawn_in_its_dug_surface_with_no_gap_at_its_ri
         }
     }
     assert!(gaps.is_empty(), "{} gaps, first {:?}", gaps.len(), gaps.first());
-    let [r, g, _] = rgb_at(&pixels, from_above(20.0, 70.0, 64.0).0, from_above(20.0, 70.0, 64.0).1);
-    assert!(g > r * 2, "green grass beyond it");
+    let [r, g, _] = rgb_at(&pixels, from_above(20.0, 75.0, 60.0).0, from_above(20.0, 75.0, 60.0).1);
+    assert!(g > r || r > 150, "the ground's green, or a red blade, beyond it");
 }

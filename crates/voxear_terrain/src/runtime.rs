@@ -56,6 +56,10 @@ pub enum Edit {
     /// Digs a tunnel `radius` metres round from `from` to `to`, rounded at
     /// its ends: a trench along the ground, or a way under it.
     Tunnel { from: [f32; 3], to: [f32; 3], radius: f32, surface: Option<u8> },
+    /// A shell's crater blown out of the ground at `at`: a bowl `radius`
+    /// metres round, its middle a third of that under `at`, and the earth
+    /// thrown up round its lip, laying surface `surface` on what it bares.
+    Explode { at: [f32; 3], radius: f32, surface: Option<u8> },
 }
 
 impl Edit {
@@ -70,6 +74,7 @@ impl Edit {
             | Edit::Holes { at, radius, .. }
             | Edit::Grass { at, radius, .. } => (at, radius),
             Edit::Dig { at, radius, .. } | Edit::Fill { at, radius } => ([at[0], at[2]], radius),
+            Edit::Explode { at, radius, .. } => ([at[0], at[2]], radius * EXPLOSION_REACH),
             Edit::Tunnel { from, to, radius, .. } => {
                 let middle = [(from[0] + to[0]) * 0.5, (from[2] + to[2]) * 0.5];
                 let half = ((to[0] - from[0]).powi(2) + (to[2] - from[2]).powi(2)).sqrt() * 0.5;
@@ -78,16 +83,31 @@ impl Edit {
         }
     }
 
-    /// The shape a digging edit carves, and whether it digs or fills.
-    pub fn carving(&self) -> Option<(crate::dig::Shape, crate::dig::Carve, Option<u8>)> {
+    /// The shapes a digging edit carves, in order, each digging or filling;
+    /// none for an edit of the heights.
+    pub fn carving(&self) -> Vec<(crate::dig::Shape, crate::dig::Carve, Option<u8>)> {
         use crate::dig::{Carve, Shape};
         match *self {
-            Edit::Dig { at, radius, surface } => Some((Shape::Ball { at, radius }, Carve::Dig, surface)),
-            Edit::Fill { at, radius } => Some((Shape::Ball { at, radius }, Carve::Fill, None)),
+            Edit::Dig { at, radius, surface } => vec![(Shape::Ball { at, radius }, Carve::Dig, surface)],
+            Edit::Fill { at, radius } => vec![(Shape::Ball { at, radius }, Carve::Fill, None)],
             Edit::Tunnel { from, to, radius, surface } => {
-                Some((Shape::Capsule { from, to, radius }, Carve::Dig, surface))
+                vec![(Shape::Capsule { from, to, radius }, Carve::Dig, surface)]
             }
-            _ => None,
+            Edit::Explode { at, radius, surface } => {
+                // Earth thrown up round the lip first, in a ring of mounds, then the bowl cut through their insides.
+                let mut shapes: Vec<_> = (0..RIM_MOUNDS)
+                    .map(|i| {
+                        let turn = i as f32 / RIM_MOUNDS as f32 * std::f32::consts::TAU;
+                        let (sin, cos) = turn.sin_cos();
+                        let mound = [at[0] + cos * radius, at[1] - radius * 0.1, at[2] + sin * radius];
+                        (Shape::Ball { at: mound, radius: radius * 0.3 }, Carve::Fill, None)
+                    })
+                    .collect();
+                let middle = [at[0], at[1] - radius / 3.0, at[2]];
+                shapes.push((Shape::Ball { at: middle, radius }, Carve::Dig, surface));
+                shapes
+            }
+            _ => Vec::new(),
         }
     }
 
@@ -104,6 +124,7 @@ impl Edit {
             Edit::Grass { at, radius, amount, .. } => &[at[0], at[1], *radius, *amount],
             Edit::Dig { at, radius, .. } | Edit::Fill { at, radius } => &[at[0], at[1], at[2], *radius],
             Edit::Tunnel { from, to, radius, .. } => &[from[0], from[1], from[2], to[0], to[1], to[2], *radius],
+            Edit::Explode { at, radius, .. } => &[at[0], at[1], at[2], *radius],
         };
         numbers.iter().all(|v| v.is_finite()) && self.reach().1 > 0.0
     }
@@ -122,7 +143,7 @@ impl Edit {
             | Edit::Paint { at, .. }
             | Edit::Holes { at, .. }
             | Edit::Grass { at, .. } => *at = [at[0] + by[0], at[1] + by[2]],
-            Edit::Dig { at, .. } | Edit::Fill { at, .. } => shift(at),
+            Edit::Dig { at, .. } | Edit::Fill { at, .. } | Edit::Explode { at, .. } => shift(at),
             Edit::Tunnel { from, to, .. } => {
                 shift(from);
                 shift(to);
@@ -173,6 +194,11 @@ impl Edit {
                 out.push(7);
                 put(&mut out, &[at[0], at[1], at[2], radius]);
             }
+            Edit::Explode { at, radius, surface } => {
+                out.push(9);
+                put(&mut out, &[at[0], at[1], at[2], radius]);
+                out.push(surface.unwrap_or(0xFF));
+            }
             Edit::Tunnel { from, to, radius, surface } => {
                 out.push(8);
                 put(&mut out, &[from[0], from[1], from[2], to[0], to[1], to[2], radius]);
@@ -202,6 +228,11 @@ impl Edit {
                 Edit::Dig { at: [number(0)?, number(1)?, number(2)?], radius: number(3)?, surface: optional(byte(4)?) }
             }
             7 => Edit::Fill { at: [number(0)?, number(1)?, number(2)?], radius: number(3)? },
+            9 => Edit::Explode {
+                at: [number(0)?, number(1)?, number(2)?],
+                radius: number(3)?,
+                surface: optional(byte(4)?),
+            },
             8 => Edit::Tunnel {
                 from: [number(0)?, number(1)?, number(2)?],
                 to: [number(3)?, number(4)?, number(5)?],
@@ -215,6 +246,49 @@ impl Edit {
 
 /// How far past a crater's radius its rim reaches, as a share of it.
 const RIM_REACH: f32 = 1.4;
+/// How many mounds of earth an explosion throws up round its lip, and how
+/// far past its radius they reach, as a share of it.
+const RIM_MOUNDS: usize = 12;
+const EXPLOSION_REACH: f32 = 1.3;
+
+/// `grass` with none growing in `area` (metres from the terrain's corner,
+/// `[x0, z0, x1, z1]`) where digging opened the ground under it: where the
+/// ground just under the heights' surface is air now.
+fn cleared_where_opened(grass: &GrassMap, heights: &Heightmap, dug: &crate::dig::Excavation, area: Area) -> GrassMap {
+    let spacing = heights.spacing();
+    let words = grass.words();
+    let [qx, qz] = heights.quads().map(i64::from);
+    let first = |v: f32, most: i64| ((v / spacing).floor() as i64).clamp(0, most);
+    let last = |v: f32, most: i64| ((v / spacing).ceil() as i64).clamp(0, most);
+    let (x0, z0, x1, z1) = (first(area[0], qx), first(area[1], qz), last(area[2], qx), last(area[3], qz));
+    let mut tiles = grass.tiles().to_vec();
+    let (tiles_x, tiles_z) = (i64::from(heights.tiles_x()), i64::from(heights.tiles_z()));
+    let quads = i64::from(TILE_QUADS);
+    for z in z0..=z1 {
+        for x in x0..=x1 {
+            let (px, pz) = (x as f32 * spacing, z as f32 * spacing);
+            let under = voxear_core::math::Vec3::new(px, heights.sample(x, z) - spacing * 0.25, pz);
+            if dug.density_at(heights, under) > 0.0 {
+                continue;
+            }
+            // In every tile holding the sample: those either side of a tile's edge share it.
+            for tz in [z / quads - 1, z / quads].into_iter().filter(|t| (0..tiles_z).contains(t)) {
+                for tx in [x / quads - 1, x / quads].into_iter().filter(|t| (0..tiles_x).contains(t)) {
+                    let (ix, iz) = (x - tx * quads, z - tz * quads);
+                    if !(0..=quads).contains(&ix) || !(0..=quads).contains(&iz) {
+                        continue;
+                    }
+                    let index = (tz * tiles_x + tx) as usize;
+                    let mut samples = tiles[index].samples().to_vec();
+                    let at = (iz as u32 * TILE_SAMPLES + ix as u32) as usize * words;
+                    samples[at..at + words].iter_mut().for_each(|word| *word = 0);
+                    tiles[index] = Arc::new(GrassTile::from_samples(samples));
+                }
+            }
+        }
+    }
+    GrassMap::from_tiles(heights.tiles_x(), heights.tiles_z(), words, tiles)
+}
 
 /// How a crater stands at `r`, its distance from the middle over its
 /// radius: a bowl `depth` deep and a rim a fifth of that, peaking at its
@@ -296,15 +370,24 @@ pub fn apply(ground: &mut Terrain, edit: &Edit) -> Option<Area> {
         return None;
     }
     let (at, reach) = edit.reach();
-    if let Some((shape, carve, surface)) = edit.carving() {
+    let carving = edit.carving();
+    if !carving.is_empty() {
         let mut dug = ground.dug.as_deref().cloned().unwrap_or_default();
-        let (holed, _) = dug.carve(&ground.heights, &shape, carve, surface)?;
-        if let Some(holed) = holed {
-            ground.heights = Arc::new(holed);
+        let mut area: Option<Area> = None;
+        for (shape, carve, surface) in carving {
+            let Some((holed, _)) = dug.carve(&ground.heights, &shape, carve, surface) else { continue };
+            if let Some(holed) = holed {
+                ground.heights = Arc::new(holed);
+            }
+            let (low, high) = shape.bounds();
+            let [x0, z0, x1, z1] = area.unwrap_or([low.x, low.z, high.x, high.z]);
+            area = Some([x0.min(low.x), z0.min(low.z), x1.max(high.x), z1.max(high.z)]);
         }
+        let area = area?;
+        let opened = |grass: &Arc<GrassMap>| Arc::new(cleared_where_opened(grass, &ground.heights, &dug, area));
+        ground.grass = ground.grass.as_ref().map(opened);
         ground.dug = Some(Arc::new(dug));
-        let (low, high) = shape.bounds();
-        return Some([low.x, low.z, high.x, high.z]);
+        return Some(area);
     }
     let rect = samples(&ground.heights, at, reach)?;
     let spacing = ground.heights.spacing();
@@ -964,6 +1047,23 @@ mod tests {
             assert_eq!(joined.heights.tile(0, 0).holes(), now.heights.tile(0, 0).holes());
         }
         assert!(commands.len() < 120, "three digs as themselves in {} bytes", commands.len());
+        // Grass where the dig opened the ground, and none beside it lost.
+        let grass = now.grass.as_ref().unwrap();
+        assert_eq!(grass.density_at(0, 80, 80), 0);
+        assert_eq!(grass.density_at(0, 100, 80), 255, "the dug column's grass beside the dig stays");
+    }
+
+    #[test]
+    fn an_explosion_blows_a_bowl_with_a_lip_thrown_up_round_it() {
+        let mut terrain = Terrain::new(Heightmap::flat(1, 1, 0.5, 0.0));
+        let blast = Edit::Explode { at: [64.0, 0.0, 64.0], radius: 2.0, surface: None };
+        assert_eq!(Edit::from_bytes(&blast.to_bytes()).unwrap(), blast);
+        apply(&mut terrain, &blast).expect("on the terrain");
+        let dug = terrain.dug.as_ref().unwrap();
+        let (middle, _) = dug.surface_at(&terrain.heights, 64.0, 64.0).unwrap();
+        assert!(middle < -2.0, "a bowl {middle} deep, its middle a third under the point");
+        let (lip, _) = dug.surface_at(&terrain.heights, 66.2, 64.0).unwrap();
+        assert!(lip > 0.15, "earth thrown up round it: {lip}");
     }
 
     #[test]

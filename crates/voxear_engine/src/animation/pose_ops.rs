@@ -34,6 +34,22 @@ const TURN_SPINE: i32 = 11;
 const SAMPLE_CLIP: i32 = 12;
 const CLIP_LENGTH: i32 = 13;
 const BONE_BOXES: i32 = 14;
+const CLIP_FRAME: i32 = 15;
+const FIND_BONE: i32 = 16;
+const ARM_REACH: i32 = 17;
+
+/// Added to a read's number to read a skeleton as a clip poses it, rather
+/// than a model as it stands: the clip's own skeleton, or the model an Obj
+/// draws as the clip made to fit it poses it. The text is the clip's
+/// reference, then for FIND_BONE a line with the bone's name; the first
+/// floats are the time, whether the clip loops, and whether to read the
+/// skeleton at rest instead. Places and ways are in that skeleton's model
+/// space, since a clip is not anywhere in the world.
+const ON_CLIP: i32 = 0x100;
+
+/// How many floats CLIP_FRAME gives each bone: its matrix in the model's
+/// space, then its turn and place in its parent's.
+const FRAME_BONE: usize = 23;
 
 /// How many floats a box takes: its frame's sixteen, then its least and
 /// most corners.
@@ -58,6 +74,9 @@ fn run(
     text: &str,
     out: &mut [f32],
 ) -> Option<usize> {
+    if op & ON_CLIP != 0 {
+        return on_clip(world, entity, op & !ON_CLIP, ints, floats, text, out);
+    }
     if !world.is_alive(entity) {
         return None;
     }
@@ -141,6 +160,70 @@ fn run(
     };
     world.insert(entity, Pose { bones: edit.matrices().into() });
     put(out, &written)
+}
+
+/// Reads a skeleton as a clip poses it (see [`ON_CLIP`]): the clip's own, or
+/// with an Obj, its model's, as the clip made to fit it poses it. Writes
+/// nothing while the clip is being found.
+fn on_clip(
+    world: &mut World,
+    entity: Entity,
+    op: i32,
+    ints: &[i32],
+    floats: &[f32],
+    text: &str,
+    out: &mut [f32],
+) -> Option<usize> {
+    let (reference, name) = text.split_once('\n').unwrap_or((text, ""));
+    let Some(source) = clip_source(world, reference)? else { return Some(0) };
+    let (time, looping, rest) = (*floats.first()?, floats.get(1) == Some(&1.0), floats.get(2) == Some(&1.0));
+    // Generation zero is the null entity: no Obj, so the clip's own skeleton.
+    let (animation, pose) = if entity.to_bits() >> 32 == 0 {
+        let mut pose = source.animation.skeleton.rest();
+        if !rest {
+            source.clip().sample(time, looping, &mut pose);
+        }
+        (source.animation.clone(), pose)
+    } else {
+        let body = world.get::<ModelRenderer>(entity)?.animation.clone()?;
+        let mut pose = body.skeleton.rest();
+        if !rest {
+            super::retarget::fitted(world, &source, &body).sample(time, looping, &mut pose);
+        }
+        (body, pose)
+    };
+    let skeleton = &animation.skeleton;
+    let matrices = skeleton.model_matrices(&pose);
+    let edit = PoseEdit::new(skeleton, &matrices);
+    let arm = || -> Option<Arm> { Rig::find(skeleton)?.arms.get(usize::try_from(*ints.first()?).ok()?).cloned() };
+    match op {
+        CLIP_FRAME => {
+            let mut frame = vec![matrices.len() as f32];
+            for (matrix, local) in matrices.iter().zip(&pose) {
+                frame.extend(matrix.to_cols_array());
+                frame.extend(local.rotation.to_array());
+                frame.extend(local.translation.to_array());
+            }
+            debug_assert_eq!(frame.len(), 1 + matrices.len() * FRAME_BONE);
+            // Too little room says only how many bones there are, for asking again with enough.
+            put(out, if out.len() < frame.len() { &frame[..1] } else { &frame })
+        }
+        FIND_BONE => put(out, &[skeleton.find(name).map_or(-1.0, |bone| bone as f32)]),
+        RIG => put(out, &rig_layout(&Rig::find(skeleton)?)),
+        HAND_AXES => {
+            let (fingers, palm) = hand_axes(&edit, &arm()?)?;
+            put(out, &[fingers.normalize_or_zero().to_array(), palm.normalize_or_zero().to_array()].concat())
+        }
+        PALM => {
+            let palm = palm_of(&edit, &arm()?)?;
+            let facing = palm.facing.normalize_or_zero();
+            put(out, &[palm.point.to_array().as_slice(), &facing.to_array(), &[palm.finger]].concat())
+        }
+        KNUCKLES => put(out, &knuckles(&edit, &arm()?)?.to_array()),
+        FINGER_BENDS => put(out, &flat(finger_bends(&edit, &arm()?))),
+        ARM_REACH => put(out, &[super::grip::arm_reach(&edit, &arm()?)?]),
+        _ => None,
+    }
 }
 
 /// A clip's source by its reference: `Some(None)` while it is being found,
@@ -273,7 +356,7 @@ mod tests {
     }
 
     fn call(world: &mut World, entity: Entity, op: i32, ints: &[i32], floats: &[f32], text: &str) -> Option<Vec<f32>> {
-        let mut out = vec![0.0; 256];
+        let mut out = vec![0.0; 2048];
         let written = run(world, entity, op, ints, floats, text, &mut out)?;
         out.truncate(written);
         Some(out)
@@ -331,6 +414,59 @@ mod tests {
         assert!(free.iter().sum::<f32>() > held.iter().sum::<f32>() + 0.2, "the bar stops them: {free:?} {held:?}");
         let bends = call(&mut world, body, FINGER_BENDS, &[1], &[], "").unwrap();
         assert_eq!(bends.len(), 15);
+    }
+
+    #[test]
+    fn a_clips_own_skeleton_is_read_as_the_clip_poses_it_and_on_a_body_as_it_would_pose_that() {
+        let (mut world, body, animation) = body();
+        let reference = "Models/Hold.glb#clip:Hold";
+        let read = |world: &mut World, entity: Entity, op: i32, ints: &[i32], floats: &[f32], text: &str| {
+            call(world, entity, op | ON_CLIP, ints, floats, text)
+        };
+        let none = Entity::from_bits(0);
+        assert_eq!(read(&mut world, none, CLIP_FRAME, &[], &[0.0, 0.0, 0.0], reference), Some(vec![]), "being found");
+
+        // A clip of a skeleton like the body's, but its hips 10 cm higher, and its right hand turned palm down.
+        let rig = Rig::find(&animation.skeleton).unwrap();
+        let hand = rig.arms[1].hand;
+        let mut poses = animation.skeleton.rest();
+        poses[0].translation.y += 0.1;
+        poses[hand].rotation = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+        let clip = Clip { name: "Hold".into(), frames: 1, poses };
+        let source = Arc::new(ModelAnimation { clips: vec![clip], ..(*animation).clone() });
+        let mut clips = Clips::default();
+        clips.put(reference, ClipSource { animation: source, index: 0, settings: Default::default() });
+        world.insert_resource(clips);
+
+        let mut out = vec![0.0; 1 + animation.skeleton.bones.len() * FRAME_BONE];
+        let written = run(&mut world, none, CLIP_FRAME | ON_CLIP, &[], &[0.0, 0.0, 0.0], reference, &mut out).unwrap();
+        assert_eq!((out[0] as usize, written), (animation.skeleton.bones.len(), out.len()));
+        let hips = Mat4::from_cols_array(out[1..17].try_into().unwrap());
+        assert!((hips.w_axis.y - 1.1).abs() < 1e-5, "in the clip's model space, not the world: {}", hips.w_axis);
+        let at_rest = read(&mut world, none, CLIP_FRAME, &[], &[0.0, 0.0, 1.0], reference).unwrap();
+        assert!((at_rest[14] - 1.0).abs() < 1e-5, "at rest the hips stand where the skeleton has them");
+
+        let name = format!("{reference}\n{}", animation.skeleton.bones[hand].name);
+        assert_eq!(read(&mut world, none, FIND_BONE, &[], &[0.0, 0.0, 0.0], &name), Some(vec![hand as f32]));
+        let missing = format!("{reference}\nweapon_r");
+        assert_eq!(read(&mut world, none, FIND_BONE, &[], &[0.0, 0.0, 0.0], &missing), Some(vec![-1.0]));
+        let layout = read(&mut world, none, RIG, &[], &[0.0, 0.0, 0.0], reference).unwrap();
+        assert_eq!(layout, rig_layout(&rig));
+        let reach = read(&mut world, none, ARM_REACH, &[1], &[0.0, 0.0, 1.0], reference).unwrap()[0];
+        assert!(reach > 0.5 && reach < 0.8, "shoulder to palm, held out straight: {reach}");
+
+        // Its hand's axes as the clip has them, and the same on the body standing a metre aside: the clip made to fit
+        // it, not where the body is.
+        let own = read(&mut world, none, HAND_AXES, &[1], &[0.0, 0.0, 0.0], reference).unwrap();
+        let on_body = read(&mut world, body, HAND_AXES, &[1], &[0.0, 0.0, 0.0], reference).unwrap();
+        for (a, b) in own.iter().zip(&on_body) {
+            assert!((a - b).abs() < 1e-4, "{own:?} {on_body:?}");
+        }
+        let rested = read(&mut world, none, HAND_AXES, &[1], &[0.0, 0.0, 1.0], reference).unwrap();
+        assert!((own[3] - rested[3]).abs() + (own[4] - rested[4]).abs() + (own[5] - rested[5]).abs() > 0.5, "turned");
+        let palm = read(&mut world, body, PALM, &[1], &[0.0, 0.0, 0.0], reference).unwrap();
+        assert!(palm[0] > 0.3 && palm[0] < 1.0, "on the body's model, not a metre aside: {palm:?}");
+        assert!(world.get::<Pose>(body).is_none(), "and the body is left as it stands");
     }
 
     #[test]

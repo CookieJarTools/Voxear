@@ -27,6 +27,18 @@ internal sealed class RigReader
 		return index >= 0 ? skeleton[index] : Voxear.Bone.None;
 	}
 
+	/// <summary>A list of bones as their numbers, for a rig of a skeleton that no Obj draws.</summary>
+	public IReadOnlyList<int> Numbers()
+	{
+		var count = Math.Max(Number(), 0);
+		var numbers = new int[count];
+		for (var i = 0; i < count; i++)
+		{
+			numbers[i] = Number();
+		}
+		return numbers;
+	}
+
 	public IReadOnlyList<Bone> Bones()
 	{
 		var count = Math.Max(Number(), 0);

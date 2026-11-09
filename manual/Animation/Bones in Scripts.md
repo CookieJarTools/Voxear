@@ -99,5 +99,30 @@ skeleton.Pose(wave, time, weight: 0.5f, looping: true, only: new[] { arm.UpperAr
 
 The engine finds a clip the first time it is asked for, so `Pose` gives back false, and `ClipLength` null, for a frame or so until it has.
 
+## Reading a clip without posing by it
+
+`ClipFrame` reads a skeleton as a clip poses it at a time, and poses nothing: the clip's own skeleton, or a model's that the clip is fitted to, as `Pose` would pose it. It's for asking where a clip has things, such as where its hands hold what they carry.
+
+```csharp
+var reload = new AnimationClip("Models/Rifle Arms.glb#clip:Reload");
+if (ClipFrame.Of(reload, 0.4f)?.Rig is { } rig)
+{
+	var palm = rig.RightArm.PalmCenter;
+	var carried = rig.Frame.Matrix(rig.Frame.Find("gun_carrier"));
+}
+```
+
+| Call | What it gives |
+| --- | --- |
+| `ClipFrame.Of(clip, time, looping)` | The clip's own skeleton at that time |
+| `ClipFrame.Of(clip, skeleton, time, looping)` | The skeleton of a model the clip is fitted to |
+| `ClipFrame.AtRest(clip)` | The clip's own skeleton standing at rest |
+| `Matrix`, `Position`, `Rotation` | A bone's place and turn in the frame |
+| `LocalPosition`, `LocalRotation` | A bone's place and turn in its parent, as the clip sets them |
+| `Find(name)` | A bone's number, or -1 |
+| `Rig` | The humanoid's bones by what they are, and each hand's `PalmCenter`, `Pointing`, `PalmFacing`, `Knuckles`, `Bends` and `Length` |
+
+A clip is nowhere in the world, so places are in its skeleton's own space, and bones are numbers in that skeleton rather than `Bone`s of an Obj. Until the engine has found the clip, `Of` gives back null.
+
 > [!NOTE]
 > A `Skeleton` and a `Bone` are values: keep one in a local to change it, as `var head = skeleton.Find("Head"); head.Rotation = ...`, since C# cannot set a property on a value it was handed straight back.

@@ -61,9 +61,9 @@ impl Clips {
         self.sets.get(reference)?.as_ref()
     }
 
-    /// Gives a clip by a reference, as tests do without a file.
-    #[cfg(test)]
-    pub(crate) fn put(&mut self, reference: &str, source: ClipSource) {
+    /// Gives a clip by a reference without a file, as tests do with clips
+    /// they make: it stays until the content's clips change.
+    pub fn put(&mut self, reference: &str, source: ClipSource) {
         self.found.insert(reference.to_string(), Some(source));
     }
 

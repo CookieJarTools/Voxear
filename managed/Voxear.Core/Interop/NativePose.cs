@@ -24,11 +24,21 @@ internal static unsafe class NativePose
 	public const int SampleClip = 12;
 	public const int ClipLength = 13;
 	public const int BoneBoxes = 14;
+	public const int ClipFrame = 15;
+	public const int FindBone = 16;
+	public const int ArmReach = 17;
+
+	/// <summary>
+	/// Added to a read's number to read a skeleton as a clip poses it: the clip's own with no Obj, or an Obj's model's
+	/// with the clip made to fit it. The text is the clip's reference, then for FindBone a line with the bone's name;
+	/// the first floats are the time, 1 when the clip loops, and 1 to read the skeleton at rest.
+	/// </summary>
+	public const int OnClip = 0x100;
 
 	/// <summary>Does an op on the model an Obj draws: how many floats it wrote into output, or -1 when it could not.</summary>
 	public static int Run(Obj model, int op, ReadOnlySpan<int> ints, ReadOnlySpan<float> floats, string? text, Span<float> output)
 	{
-		if (!Native.IsConnected || !model.IsValid)
+		if (!Native.IsConnected || (!model.IsValid && (op & OnClip) == 0))
 		{
 			return -1;
 		}

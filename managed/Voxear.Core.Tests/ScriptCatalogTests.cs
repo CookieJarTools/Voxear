@@ -237,6 +237,18 @@ internal static class ScriptCatalogTests
 		Check.True(fields.Values.All(f => f.GetProperty("default").ValueKind == JsonValueKind.Null), "each starting as none");
 	}
 
+	[Test]
+	private static void CreateObjectPrefabsAreListedWithTheirAssembly()
+	{
+		using var document = JsonDocument.Parse(ScriptCatalog.Describe(typeof(TestRifleObjects).Assembly));
+		var created = document.RootElement.GetProperty("create_objects").EnumerateArray()
+			.Select(entry => $"{entry.GetProperty("menu").GetString()} {entry.GetProperty("prefab").GetString()} {entry.GetProperty("assembly").GetString()}")
+			.OrderBy(entry => entry, StringComparer.Ordinal)
+			.ToList();
+		var expected = new[] { "Guns/Pistol Prefabs/Pistol.prefab Voxear.Core.Tests", "Guns/Rifle Prefabs/Rifle.prefab Voxear.Core.Tests" };
+		Check.True(created.SequenceEqual(expected), string.Join(", ", created));
+	}
+
 	private static string? Kind(JsonElement field)
 	{
 		return field.GetProperty("type").GetProperty("kind").GetString();

@@ -65,6 +65,40 @@ pub struct ScriptTypes {
     /// What the game adds to the editor's side bar.
     #[serde(default)]
     pub side_bar: ScriptSideBar,
+    /// The prefabs the game's and its packages' scripts add to Create
+    /// Object, each by a static `Ref<Prefab>` marked `[CreateObject]`.
+    #[serde(default)]
+    pub create_objects: Vec<ScriptCreateObject>,
+}
+
+/// A prefab a script adds to Create Object: its menu path, folders and a
+/// name separated by slashes, the prefab's path as the script names it,
+/// and the assembly the script is in, which says whose folder that path is
+/// from.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct ScriptCreateObject {
+    pub menu: String,
+    pub prefab: String,
+    #[serde(default)]
+    pub assembly: String,
+}
+
+impl ScriptCreateObject {
+    /// The folder the menu path puts it in, empty for none, and the name it
+    /// shows: `Guns/Rifle` is Rifle in Guns.
+    pub fn place(&self) -> (&str, &str) {
+        let path = self.menu.trim().trim_matches('/');
+        path.rsplit_once('/').unwrap_or(("", path))
+    }
+
+    /// The prefab's path as the content knows it. In a package's script
+    /// it is from the package's folder, as `Packages/rifle-kit/Prefabs/Rifle.prefab`,
+    /// where the package has that file; otherwise from the project's.
+    pub fn prefab_path(&self, db: &voxear_assets::AssetDb) -> String {
+        let package = db.mounts().packages().iter().find(|package| crate::packages::assembly_name(&package.name) == self.assembly);
+        let own = package.map(|package| format!("{}/{}/{}", voxear_assets::PACKAGES_FOLDER, package.name, self.prefab));
+        own.filter(|path| db.guid_of(path).is_some()).unwrap_or_else(|| self.prefab.clone())
+    }
 }
 
 /// The game's own buttons and items on the editor's side bar, the strip

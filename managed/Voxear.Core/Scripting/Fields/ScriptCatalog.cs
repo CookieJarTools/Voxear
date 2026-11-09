@@ -13,7 +13,7 @@ namespace Voxear.Scripting;
 /// takes and the value a new instance starts with. IComponent structs are described the same way, as components, and
 /// Definitions, the types data assets hold, as definitions. The editor reads this rather than the source, so what it
 /// shows is what the compiler made. [Serializable] types those fields use are described once each, by name, and every
-/// [Command] method is listed for the palette.
+/// [Command] method is listed for the palette, and every [CreateObject] prefab for Create Object.
 /// </summary>
 internal static class ScriptCatalog
 {
@@ -58,6 +58,7 @@ internal static class ScriptCatalog
 			WriteChecks(json, assemblies);
 			WriteWindows(json, assemblies);
 			WriteSideBar(json, assemblies);
+			WriteCreateObjects(json, assemblies);
 			json.WriteEndObject();
 		}
 		return Encoding.UTF8.GetString(stream.ToArray());
@@ -405,6 +406,57 @@ internal static class ScriptCatalog
 		}
 		json.WriteEndArray();
 		json.WriteEndObject();
+	}
+
+	/// <summary>
+	/// Each prefab a static Ref&lt;Prefab&gt; marked [CreateObject] adds to the editor's Create Object: where its path
+	/// puts it, the prefab's path as written, and the assembly it is in, whose package's folder that path is from.
+	/// </summary>
+	private static void WriteCreateObjects(Utf8JsonWriter json, IReadOnlyList<Assembly> assemblies)
+	{
+		json.WriteStartArray("create_objects");
+		foreach (var type in Loadable(assemblies))
+		{
+			foreach (var member in type?.GetMembers(Static) ?? [])
+			{
+				WriteCreateObject(json, type!, member);
+			}
+		}
+		json.WriteEndArray();
+	}
+
+	private static void WriteCreateObject(Utf8JsonWriter json, Type type, MemberInfo member)
+	{
+		var created = member.GetCustomAttribute<CreateObjectAttribute>();
+		if (created == null || PrefabPath(member) is not { Length: > 0 } prefab)
+		{
+			return;
+		}
+
+		json.WriteStartObject();
+		json.WriteString("menu", created.Path);
+		json.WriteString("prefab", prefab);
+		json.WriteString("assembly", type.Assembly.GetName().Name);
+		json.WriteEndObject();
+	}
+
+	/// <summary>The path a static Ref&lt;Prefab&gt; field or property holds; null for another member, or one that throws.</summary>
+	private static string? PrefabPath(MemberInfo member)
+	{
+		try
+		{
+			var value = member switch
+			{
+				FieldInfo field when field.FieldType == typeof(Ref<Prefab>) => field.GetValue(null),
+				PropertyInfo property when property.PropertyType == typeof(Ref<Prefab>) => property.GetValue(null),
+				_ => null,
+			};
+			return value is Ref<Prefab> reference ? reference.Path : null;
+		}
+		catch (Exception exception) when (exception is TargetInvocationException or TypeInitializationException)
+		{
+			return null;
+		}
 	}
 
 	private static void WriteCommands(Utf8JsonWriter json, IReadOnlyList<Assembly> assemblies)

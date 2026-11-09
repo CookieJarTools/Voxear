@@ -719,6 +719,55 @@ fn hierarchy_row(ui: &Ui, name: &str) -> Option<NodeId> {
     None
 }
 
+/// A folder package's script adds its Lantern prefab to Create Object, as
+/// a build of it describes it.
+const LANTERN_OBJECTS: &str = r##"{"behaviours": [], "types": {}, "commands": [],
+  "create_objects": [{"menu": "Lights/Lantern", "prefab": "Prefabs/Lantern.prefab", "assembly": "LanternKit"}]}"##;
+
+#[test]
+fn a_packages_prefab_is_made_from_create_object_as_plain_objs() {
+    let Some(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()).ok() else { return };
+    let dir = hello_copy();
+    let kit = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    std::fs::write(kit.path().join("package.toml"), "[package]\nname = \"lantern-kit\"\nversion = \"1.0.0\"\nengine = \">=0.1\"\n")
+        .unwrap();
+    std::fs::create_dir_all(kit.path().join("Prefabs")).unwrap();
+    let lantern = "format = 1\n[[obj]]\nid = 1\nname = \"Lantern\"\n[[obj]]\nid = 2\nname = \"Flame\"\nparent = 1\n\
+                   position = [0.0, 0.5, 0.0]\nlight = { type = \"point\" }\n";
+    std::fs::write(kit.path().join("Prefabs/Lantern.prefab"), lantern).unwrap();
+    let packages = format!("[packages]\nlantern-kit = {{ path = {:?} }}\n", kit.path().display().to_string());
+    std::fs::write(dir.path().join("packages.toml"), packages).unwrap();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    editor.set_script_types(voxear_engine::script_types::parse(LANTERN_OBJECTS).unwrap());
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+
+    // The + menu offers it after the built-in Objs, under its folder's name.
+    let add = editor.ui.find(editor.ui.root(), "hierarchy-add").unwrap();
+    click(&mut editor.ui, add);
+    frame(&mut editor, &mut renderer);
+    assert!(menu_item(&editor.ui, "Lights").is_some() && menu_item(&editor.ui, "Lantern").is_some(), "in the + menu");
+    editor.ui.key_down(Key::Escape);
+    frame(&mut editor, &mut renderer);
+
+    // Made from the palette's New Lantern: the prefab's Objs, as plain Objs, selected, as one step to undo.
+    run_command(&mut editor, &mut renderer, "New Lantern");
+    let made = obj(&editor, "Lantern").expect("the Lantern was made");
+    let flame = obj(&editor, "Flame").expect("with its Flame");
+    let world = &editor.game.engine.world;
+    assert_eq!(world.get::<voxear_scene::Parent>(flame).map(|p| p.0), Some(made), "inside it");
+    for entity in [made, flame] {
+        assert!(!world.has::<voxear_engine::prefab::PrefabInstance>(entity), "no instance of the prefab");
+        assert!(!world.has::<voxear_engine::prefab::FromPrefab>(entity), "nor part of one");
+    }
+    assert_eq!(editor.selected(), Some(made));
+    assert!(editor.has_unsaved_changes());
+    editor.undo(&mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(obj(&editor, "Lantern").is_none() && obj(&editor, "Flame").is_none(), "one undo takes both");
+}
+
 #[test]
 fn the_hierarchy_makes_duplicates_deletes_and_reparents_objs() {
     let Some((mut renderer, mut editor)) = open() else { return };

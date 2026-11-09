@@ -19,7 +19,7 @@ Click the **+** at the top of the Hierarchy and pick what to make:
 | Spot Light | A cone of light, like a torch |
 | Camera | What the game is seen through |
 
-The new Obj appears in front of you in the Scene view. The command bar (Ctrl+K) has the same choices, as **New Cube**, **New Point Light** and so on.
+The new Obj appears in front of you in the Scene view. The command bar (Ctrl+K) has the same choices, as **New Cube**, **New Point Light** and so on. Scripts and packages can add prefabs of their own to both: see [[Adding to Create Object]].
 
 Right-click an Obj in the Hierarchy to **Duplicate** it (Ctrl+D), **Delete** it, or make a new Obj inside it.
 

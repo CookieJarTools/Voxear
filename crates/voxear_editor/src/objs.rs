@@ -381,6 +381,34 @@ pub fn create(
     Ok(made)
 }
 
+/// Makes the Objs of the prefab at `path` (as the content knows it) where
+/// [`create`] makes a new Obj, as a script's `[CreateObject]` asks: Objs of
+/// the scene rather than an instance of the prefab, though a prefab nested
+/// in it stays that prefab's instance, as Unpack Prefab leaves it. Returns
+/// its root.
+pub fn create_from_prefab(
+    game: &mut Game,
+    renderer: Option<&mut Renderer>,
+    path: &str,
+    parent: Option<Entity>,
+    scene: Option<AssetGuid>,
+    position: Vec3,
+) -> Result<Entity> {
+    let made = place_prefab(game, renderer, path, parent, scene, position)?;
+    let world = &mut game.engine.world;
+    for (entity, from, instance) in voxear_engine::prefab_overrides::unpacked(world, made) {
+        match from {
+            Some(from) => world.insert(entity, from),
+            None => world.remove::<voxear_engine::prefab::FromPrefab>(entity).is_some(),
+        };
+        match instance {
+            Some(instance) => world.insert(entity, instance),
+            None => world.remove::<voxear_engine::prefab::PrefabInstance>(entity).is_some(),
+        };
+    }
+    Ok(made)
+}
+
 /// Places an instance of the prefab at `path` (from the project's folder):
 /// under `parent` at its middle, or at the top at `position`, last in the
 /// parent's scene, or `scene`, or the active one. At the top, the prefab's

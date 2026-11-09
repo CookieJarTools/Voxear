@@ -77,6 +77,9 @@ pub enum PaletteAction {
     Tool(usize),
     /// Make one of `NEW_OBJS` at the top of the Hierarchy.
     Create(usize),
+    /// Make the Objs of a prefab the scripts add to Create Object, by its
+    /// place among their `[CreateObject]`s.
+    CreateFrom(usize),
     /// Bring a docked panel to the front, by its id.
     ShowPanel(&'static str),
     Select(Entity),

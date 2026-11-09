@@ -1307,7 +1307,15 @@ impl Editor {
             icon: "code",
             action: PaletteAction::Script { type_name: command.type_name.clone(), method: command.method.clone() },
         });
-        added.chain(scripts).collect()
+        // The prefabs scripts add to Create Object, as the built-in New … entries are.
+        let objects = self.inspector.types().create_objects.iter().enumerate().map(|(entry, made)| Added {
+            key: format!("new:{}", made.menu),
+            title: format!("New {}", made.place().1),
+            keys: String::new(),
+            icon: "plus",
+            action: PaletteAction::CreateFrom(entry),
+        });
+        added.chain(scripts).chain(objects).collect()
     }
 
     /// Adds a command to the palette, as code built on the editor does.
@@ -1400,6 +1408,9 @@ impl Editor {
             PaletteAction::Tool(index) => self.ui.set_segment(self.scene.tool, index),
             PaletteAction::Create(kind) => {
                 self.obj_action(ObjAction::Create { kind, parent: None, scene: None }, renderer)
+            }
+            PaletteAction::CreateFrom(entry) => {
+                self.obj_action(ObjAction::CreateFrom { entry, parent: None, scene: None }, renderer)
             }
             PaletteAction::ShowPanel(id) => self.show_panel(id),
             PaletteAction::Select(entity) => {
@@ -1710,6 +1721,14 @@ impl Editor {
                 match objs::create(game, Some(renderer), kind, parent, scene, position) {
                     Ok(made) => (Edit::Exists { root: made, taken: None }, Some(made)),
                     Err(error) => return tracing::error!("could not make the Obj: {error:#}"),
+                }
+            }
+            ObjAction::CreateFrom { entry, parent, scene } => {
+                let Some(made) = self.inspector.types().create_objects.get(entry) else { return };
+                let path = made.prefab_path(game.content.db());
+                match objs::create_from_prefab(game, Some(renderer), &path, parent, scene, position) {
+                    Ok(made) => (Edit::Exists { root: made, taken: None }, Some(made)),
+                    Err(error) => return self.notify(&format!("Could not make {path}: {error:#}")),
                 }
             }
             ObjAction::Duplicate(entity) => match objs::duplicate(game, Some(renderer), entity) {

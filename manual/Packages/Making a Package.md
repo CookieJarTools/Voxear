@@ -47,6 +47,8 @@ A package's scripts build into an assembly of their own, named after the package
 
 Give your scripts a namespace named after the package, so their names do not clash with the game's.
 
+A package's prefabs can show in the Hierarchy's **+** menu, through `[CreateObject]` in its scripts: see [[Adding to Create Object]].
+
 ## Samples
 
 A sample is a small, working example: a level and the scripts and assets it needs, in a folder under `Samples/`. A project copies a sample into its own `Samples/<Package>/<Sample>` folder. The project then owns the copy and can change it, while the package itself stays as it is.

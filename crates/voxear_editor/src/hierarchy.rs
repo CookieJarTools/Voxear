@@ -203,6 +203,13 @@ pub enum ObjAction {
         parent: Option<Entity>,
         scene: Option<AssetGuid>,
     },
+    /// Make the Objs of a prefab the scripts add to the menu, by its place
+    /// among their `[CreateObject]`s, as `Create` makes one of `NEW_OBJS`.
+    CreateFrom {
+        entry: usize,
+        parent: Option<Entity>,
+        scene: Option<AssetGuid>,
+    },
     Duplicate(Entity),
     Delete(Entity),
     /// Move an Obj, keeping where it is in the world.
@@ -239,6 +246,9 @@ pub struct Hierarchy {
     showing_parts: HashSet<Entity>,
     /// The project's modules, whose Objs the menu offers.
     modules: Modules,
+    /// The prefabs the scripts add to the menu (`[CreateObject]`), each by
+    /// its place among the scripts' with its folder and name, in order.
+    script_objects: Vec<(usize, String, String)>,
 }
 
 impl Hierarchy {
@@ -250,7 +260,20 @@ impl Hierarchy {
         ui.set_rows_draggable(tree, true);
         let (opened, menu, showing_parts) = (HashSet::new(), Vec::new(), HashSet::new());
         let modules = Modules::all();
-        Self { tree, filter, add, shown, pinged, ping_left: 0.0, opened, menu, part_buttons, showing_parts, modules }
+        Self {
+            tree,
+            filter,
+            add,
+            shown,
+            pinged,
+            ping_left: 0.0,
+            opened,
+            menu,
+            part_buttons,
+            showing_parts,
+            modules,
+            script_objects: Vec::new(),
+        }
     }
 
     /// What the + button, a context click or a dropped row asks for.
@@ -389,6 +412,21 @@ impl Hierarchy {
                 self.menu.push(Some(ObjAction::Create { kind, parent, scene }));
             }
         }
+        // The scripts' prefabs after a line, each folder's under its name.
+        let mut folder = None;
+        for (entry, within, name) in &self.script_objects {
+            if folder != Some(within) {
+                items.push(MenuItem::separator());
+                self.menu.push(None);
+                if !within.is_empty() {
+                    items.push(MenuItem::new(within).enabled(false));
+                    self.menu.push(None);
+                }
+                folder = Some(within);
+            }
+            items.push(MenuItem::new(name));
+            self.menu.push(Some(ObjAction::CreateFrom { entry: *entry, parent, scene }));
+        }
         ui.open_menu(owner, at, &items);
     }
 
@@ -396,6 +434,11 @@ impl Hierarchy {
     /// scripts are `IInstance`s while their behaviours are not running.
     pub fn update(&mut self, ui: &mut Ui, world: &World, (levels, content): (&Levels, &Content), types: &ScriptTypes) {
         self.modules = world.resource::<Modules>().copied().unwrap_or_else(Modules::all);
+        let mut objects: Vec<(usize, String, String)> = (types.create_objects.iter().enumerate())
+            .map(|(entry, made)| (entry, made.place().0.to_string(), made.place().1.to_string()))
+            .collect();
+        objects.sort_by(|a, b| (&a.1, &a.2).cmp(&(&b.1, &b.2)));
+        self.script_objects = objects;
         let filter = ui.text(self.filter).to_lowercase();
         self.showing_parts.retain(|&owner| world.has::<ModelRenderer>(owner));
         let snapshot = snapshot(world, (levels, content), types, (&filter, &self.showing_parts));

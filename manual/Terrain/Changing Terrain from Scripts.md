@@ -1,5 +1,5 @@
 ---
-order: 11
+order: 12
 ---
 
 Scripts change the ground while the game runs: a shell blows a crater, an engineer digs a gun pit flat, a cart paints mud along its track, a charge cuts a way into a bunker, a fire leaves the grass burnt away. Physics stands things on the new ground at once and the terrain is drawn as it is now, from the tiles the change reached and no others.
@@ -30,10 +30,14 @@ Every call takes a point in the world and a radius in metres, and changes every 
 | `Terrain.FillHole(point, radius)` | Fills the holes there again |
 | `Terrain.ClearGrass(point, radius)` | Clears every kind of [[Grass]] there |
 | `Terrain.GrowGrass(point, radius, amount)` | Grows every kind of grass there towards `amount`, 1 for fully |
+| `Terrain.Dig(point, radius, walls)` | Digs a ball of ground out, up and down as well as across (see [[Digging]]) |
+| `Terrain.Fill(point, radius)` | Puts a ball of ground back |
+| `Terrain.Tunnel(from, to, radius, walls)` | Digs a tunnel from one point to another: a trench along the ground, a way under it |
+| `Terrain.Explode(point, radius, walls)` | Blows a crater out of the ground, its lip thrown up |
 
 A terrain's surfaces are named by their materials: give a behaviour a `MaterialAsset` field and pick the material in the Inspector, the same one the surface has in the Terrain's list (see [[Surfaces]]). A crater whose `walls` the terrain has no surface for leaves the ground's surfaces as they were, and a paint of one does nothing and returns false.
 
-Raising and lowering move the ground up and down only. A crater has no overhangs and a raised mound no caves: digging under the ground is for marching cubes, which come later.
+Raising and lowering move the ground up and down only, so a crater made by `Crater` has no overhangs and a raised mound no caves. Digging takes the ground away in any shape: see [[Digging]].
 
 ## Edits as values
 
@@ -52,8 +56,12 @@ Terrain.Apply(blast);
 | Paint | `TerrainEdit.Paint(point, radius, surface, strength)` |
 | Holes | `TerrainEdit.Holes(point, radius, cut)`, `cut` false to fill |
 | Grass | `TerrainEdit.Grass(point, radius, amount)` |
+| Dig | `TerrainEdit.Dig(point, radius, walls)` |
+| Fill | `TerrainEdit.Fill(point, radius)` |
+| Tunnel | `TerrainEdit.Tunnel(from, to, radius, walls)` |
+| Explode | `TerrainEdit.Explode(point, radius, walls)` |
 
-A `TerrainEdit` is a record: its `Kind`, `Point`, `Radius`, `Amount`, `Surface` and `Cut` can be read, and `with` makes another from it, as `blast with { Radius = 6f }`.
+A `TerrainEdit` is a record: its `Kind`, `Point`, `Radius`, `Amount`, `Surface`, `Cut` and `To` can be read, and `with` makes another from it, as `blast with { Radius = 6f }`.
 
 ## The same ground on every machine
 

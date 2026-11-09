@@ -2811,8 +2811,10 @@ against the frustum and last frame's depth and drawn by multi-draw-indirect, wit
 Block worlds: palette-compressed chunks, binary greedy meshing, faces bucketed by direction, face-connectivity cave
 culling, and far views through rings of coarser chunks. Smooth voxels: density and material a voxel, marching cubes
 with Transvoxel between levels on an octree; planets add their own gravity and a floating origin. Digging into a
-heightmap terrain turns its columns into smooth-voxel chunks that start from its heights and meet its ground along
-the grid lines.
+heightmap terrain turns its columns into smooth-voxel chunks that start from its heights (`voxear_terrain::dig`,
+two voxels a sample), holes the heights in them, and meshes them by marching tetrahedra, which meet the heights
+exactly along the columns' edges. Dug chunks' triangles are made on the CPU when they change and drawn from a pool
+of the terrain's own by its pipelines (`dug.rs`); physics has a mesh body a chunk.
 
 **Runtime editing.** A script's edit (raise, crater, flatten, paint, holes, grass: `voxear_terrain::runtime`) is a
 small command applied straight to the tiles it reaches, the layer stack left alone, with nothing but sums, products,

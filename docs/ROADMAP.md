@@ -1495,8 +1495,20 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   does where they meet, the edge wandering, further up what faces up; over holes and off terrain, nothing. The
   terrain's surface sampling moved into `shaders/terrain_ground.slang` for it. Tests: GPU (a red block's foot takes
   the green ground, its top stays red, red to the ground without). Manual: Blending Models into Terrain.
-- **Digging, trenches and craters:** marching cubes into the heightmap, Transvoxel between levels; dig, fill and
-  tunnel brushes, trenches along a Path with a profile, craters with rims; collision a chunk at a time.
+- ~~**Digging from scripts:**~~ done: dug ground as voxels where a terrain is dug, two a sample (a quarter metre on
+  half-metre ground), in chunks of 32 a side and columns of them 16 samples a side; a column's chunks made from its
+  heights (`height − y`) on its first dig, its inside samples (and those between dug columns) holes in the heights.
+  Shapes (ball, capsule) dig or fill only corners within two voxels of their surface, clamped to that band and set
+  to 1/1024 m steps; ground a dig opens takes its surface. Marching tetrahedra (six a voxel along its diagonal, so
+  neighbours share faces) meet the heights on a column's outside faces exactly, with no crack. Drawn from a pool of
+  vertices a terrain (chunks made again when they change, by pointer), by the terrain's own pipelines, triplanar,
+  the dug surface blended over what was opened; grass grows over dug columns' holes; a mesh body a chunk; rays,
+  `HeightAt` and physics find the floor. Edits Dig, Fill, Tunnel and Explode (a bowl with its lip thrown up), saved
+  as commands or chunks (edits version 2). C#: `Terrain.Dig`, `Fill`, `Tunnel`, `Explode` (native API 65). Tests:
+  no cracks or gaps along a column, rays and floors, save forms, GPU (a pit drawn whole, grass round it), physics
+  (a ball in a pit, a character along a trench), a script's explosion. Manual: Digging.
+- **Digging in the editor:** dig and fill brushes, trenches along a Path with a profile (depth, floor width, wall
+  angle, fire step, parapet), kept as digs in the layer stack so they are made again over changed heights.
 - **Built-in terrain generation:** generators that make a terrain to start from, chosen and tuned in the editor or
   run from code, each feeding the layer stack so it can be painted and stamped over afterwards:
   - control fields (continentalness, erosion, ridges, temperature, humidity) shaped by nested curves, with presets

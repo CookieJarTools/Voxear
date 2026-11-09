@@ -61,10 +61,11 @@
 <text x="80" y="557" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="12" fill="#9198a1">M7</text>
 <text x="120" y="557" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#e6edf3">Materials and particles</text>
 <text x="380" y="557" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="13" fill="#9198a1">Custom shaders, Shader Graph, material variants, GPU particles</text>
-<circle cx="56" cy="592" r="7" fill="#0d1117" stroke="#656c76" stroke-width="2"/>
+<rect x="32" y="576" width="816" height="32" rx="7" fill="#151b23"/>
+<circle cx="56" cy="592" r="7.5" fill="#0d1117" stroke="#8a97ff" stroke-width="2"/><path d="M56 586.5 a5.5 5.5 0 0 1 0 11 z" fill="#8a97ff"/>
 <text x="80" y="597" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="12" fill="#9198a1">M8</text>
-<text x="120" y="597" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="14" font-weight="500" fill="#e6edf3">Terrain</text>
-<text x="380" y="597" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="13" fill="#9198a1">CDLOD terrain, layers, stamps, erosion, scatter, generators</text>
+<text x="120" y="597" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#e6edf3">Terrain</text>
+<text x="380" y="597" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="13" fill="#9198a1">Heightmap CDLOD, layers, digging, generation, voxel worlds</text>
 <circle cx="56" cy="632" r="7" fill="#0d1117" stroke="#656c76" stroke-width="2"/>
 <text x="80" y="637" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="12" fill="#9198a1">M9</text>
 <text x="120" y="637" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="14" font-weight="500" fill="#e6edf3">Navigation, cameras, Timeline</text>

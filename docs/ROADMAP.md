@@ -1371,23 +1371,59 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
 
 ## M8 — Terrain
 
-- CDLOD rendering.
-- Layer stack and dirty-tile compositing.
-- Stamps and brushes, then GPU erosion.
-- Auto-material and scatter layers.
-- A scatter brush in the editor (from Vegetation), painting Foliage plants onto terrain and any other surface with
-  density, scale and slope limits, and erasing; the scatter layers use the same instances. Foliage's own scatter
-  onto uneven ground (from Vegetation): each plant dropped onto what is under it, and tilted to its slope.
-- Holes, collision and the runtime delta layer with its API.
-- **Built-in terrain generation** *(later)*: generators that make a terrain to start from, chosen and tuned in the
-  editor or run from code, each feeding the layer stack so it can be painted and stamped over afterwards:
-  - noise-based heightfields (fractal, ridged, billow, domain-warped) with seeds
-  - biomes and climate (height, moisture, temperature) choosing materials and scatter
-  - island and continent masks, mountains, plateaus and canyons
-  - rivers and lakes carved by flow, alongside the GPU erosion above
-  - roads and paths that flatten the ground along a spline
-  - generation at runtime, in chunks, for endless or procedural worlds, as well as baked in the editor
-  - Later still: voxel terrain with caves and overhangs.
+Heightmap terrain first, then digging, generation, block worlds, and smooth voxels and planets: each its own
+component, sharing generation, surfaces and plants where they fit. Gameplay data (heights, voxels, collision, saves)
+is worked out on the CPU, the same on every machine; drawing, culling and erosion run on the GPU. The design is in
+[ARCHITECTURE.md](ARCHITECTURE.md#terrain).
+
+- ~~**Terrain you can see and walk on:**~~ done: a `voxear_terrain` crate (heights in tiles of 256 quads that share
+  their edges, held as `Arc`s so a change to one leaves the rest; the ground between heights two triangles a quad,
+  split as Jolt splits height fields; rays over it; CDLOD patch picking; the `.terrain` file and its `.heights`
+  beside it, byte planes then LZ4). A Terrain module and component: heights read from the asset with or without a
+  renderer, flat where missing, made from a 16-bit heightmap picture where the file names one. Drawn by the GPU
+  from a buffer of tile slots that only changed tiles are copied into (**Terrain uploads**), patches picked on the
+  CPU for the camera and each sun cascade and drawn from one indexed grid, each vertex sliding onto the next level's
+  grid (geomorph), shaded by the forward passes' own fragment shaders: early, so hills hide what is behind them,
+  into the cascades and the depth passes; a coarse mesh a tile for the GI's rays and the sea floor, which only rays
+  see (`INSTANCE_RAYS_ONLY`). Jolt height fields a tile, made again for a changed tile and moved with the Obj; rays
+  and collision events give the terrain's Obj. Editor: Add Component makes one on its own asset; the Inspector sets
+  Data, Size, Resolution, Heightmap and Height, Material, Texture size, Detail distance and Cast shadows, each
+  undoable, kept as the asset's in memory and written when the level is saved; New Terrain in the Project panel;
+  the Scene view picks and places on the ground. C#: `Terrain.HeightAt`, `NormalAt`, `TryGetGround`, `Raycast`,
+  `Exists` (native API 60). Tests: crate, GPU (hills with no cracks between levels, a ridge's shadow), physics, scene
+  files, the editor and scripts. Manual: Terrain.
+- **Layers, stamps and sculpting:** the layer stack as the terrain's source (base, import, stamps of pictures or
+  meshes, noise, sculpt rasters, splines for roads, rivers and trenches, terrace, smooth), with blend ops, opacity,
+  masks by height and slope, sizes in metres; compositing on the CPU over the dirty tiles alone, each layer's result
+  cached by a hash of what changes it, with checkpoints; sculpt brushes; scene handles for stamps and splines; undo
+  a stroke at a time.
+- **Surfaces, painting and holes:** up to 32 surfaces from texture arrays, the four strongest at a time blended by
+  height; triplanar on cliffs, distance resampling and a basemap far off, variants and hex tiling against repeats;
+  rules by height, slope, curvature and flow; a paint brush; holes in the ground and its collision.
+- **Plants on terrain:** a scatter brush (from Vegetation), painting Foliage plants onto terrain and any other
+  surface with density, scale and slope limits, and erasing; scatter layers by rule using the same instances;
+  Foliage's own scatter dropped onto the ground and tilted to its slope. Every plant can be cut down, dug up or
+  replaced by a prefab, kept in saves; grass and details scattered on the GPU from density maps, past the CPU's
+  instance cap.
+- **Runtime edits and the ground's looks:** the runtime delta layer (heights, surfaces, holes, plants) with its C#
+  API, easy and advanced, saved and sent as compact commands or per-tile deltas; tracks and deformable snow and mud;
+  wetness, puddles, streams and lava painted on the ground and flowing downhill; wind and glitter; models blending
+  into the ground.
+- **Digging, trenches and craters:** marching cubes into the heightmap, Transvoxel between levels; dig, fill and
+  tunnel brushes, trenches along a Path with a profile, craters with rims; collision a chunk at a time.
+- **Built-in terrain generation:** generators that make a terrain to start from, chosen and tuned in the editor or
+  run from code, each feeding the layer stack so it can be painted and stamped over afterwards:
+  - control fields (continentalness, erosion, ridges, temperature, humidity) shaped by nested curves, with presets
+  - a per-point erosion filter, GPU hydraulic and thermal erosion, and stream-power erosion for ranges
+  - rivers and lakes carved by flow, as Streams and Pools
+  - biomes and climate choosing surfaces and scatter
+  - generation at runtime, in chunks, for endless worlds, as well as baked in the editor
+- **Block worlds:** palette-compressed chunks, greedy meshing, editing, far views through levels of chunks,
+  face-connectivity cave culling.
+- **Smooth voxel terrain, flat and planets:** marching cubes with Transvoxel on an octree, caves and overhangs from
+  3D density, planets with their own gravity, and a floating origin.
+- Throughout: chunks culled against the frustum and last frame's depth, and the smallest save and network data
+  (only changes from what a build or a seed makes, as commands while few and compacted deltas once many).
 
 ## M9 — Navigation, cameras and Timeline
 

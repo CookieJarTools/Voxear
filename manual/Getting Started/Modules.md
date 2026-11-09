@@ -14,6 +14,7 @@ Open **Project Settings** from the side bar, the button above Settings. The **Mo
 - **Vegetation**: foliage, seasons and impostors.
 - **Water**: oceans, pools, streams and buoyancy.
 - **Steam Audio**: occlusion, sound paths and room reverb.
+- **Terrain**: heightmap ground, its levels of detail and collision. See [[Terrains]].
 
 Every install of Voxear has every module, so turning one on later is just a toggle. Your scripts build again with the new set.
 
@@ -27,6 +28,7 @@ physics_2d = false
 vegetation = true
 water = false
 steam_audio = true
+terrain = true
 ```
 
 A new project starts with no modules. A project made before modules existed has every module but Guns, so nothing it uses goes missing.

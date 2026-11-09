@@ -2680,47 +2680,70 @@ Effekseer and Houdini. The pattern is clear:
 
 ## Terrain
 
-Modern terrain should be non-destructive, layered and GPU-built.
+Three kinds of terrain, each a component of its own under the Terrain module: **Terrain** (heights), **Block
+World** (blocky voxels, from big blocks down to small coloured ones) and **Voxel Terrain** (smooth, flat or a
+planet). They share generation (`.worldgen`), ground textures (`.surface`) and plants where those fit.
 
-**Data model.**
-- The world is a sparse grid of tiles, for example 256² plus a border, held in a GPU texture array behind a page
-  table.
-- A terrain is a **stack of layers**. Each layer is a *command*, not a raster: stamp, noise, brush stroke, erosion,
-  spline or import, each with a blend op (add, max, min, set, lerp), opacity, mask, transform and bounds.
-- Only **dirty tiles** are re-composited, in compute. Checkpoints every few layers mean editing layer *k* only
-  re-runs layers *k* to *n*.
-- Derived maps are computed alongside: normals, slope, curvature, flow accumulation, and min/max mips for culling,
-  collision and ray queries.
+**Where the work runs.** Gameplay data is worked out on the CPU, the same on every machine: heights, voxels,
+generation, collision, saves and the edits sent over the network. A dedicated server has no GPU, and physics reads
+the same data the game shows. Drawing, culling, erosion simulation, grass and tracks run on the GPU.
 
-**Erosion.**
-- Erosion is a layer type: hydraulic (the pipe model) plus thermal, on the GPU, with the result cached.
-- Stream-power erosion handles mountain-scale terrain.
-- Erosion produces flow, sediment and debris masks that texturing and scattering can use.
+**Heights.** `voxear_terrain` holds them in tiles of 256 quads, 257 heights a side, each sharing its edge with the
+next, held as `Arc`s: a change makes new tiles and keeps the rest, and the renderer and physics see which changed by
+pointer. Between heights the ground is two triangles a quad, split from a quad's low corner to its high one, as Jolt
+splits height fields, so what is drawn, what collides and what a ray hits agree. A `.terrain` file says how large
+and how fine the ground is; its heights are kept beside it in a `.heights` file (each tile's samples split into byte
+planes, then LZ4).
 
-**Texturing and scattering.**
-- **Auto-material rules** paint by slope, height, curvature and flow. Defaults look good immediately (grass, rock,
-  dirt, snow, triplanar cliffs).
-- Biomes are planned.
-- **Scatter layers** place vegetation and details from rules (density, slope, height, noise, masks), generated in
-  compute with no CPU instance lists.
+**Layer stack.** A terrain is a stack of layers, each a *command* rather than a raster: base, import, stamp
+(picture or mesh), noise, sculpt raster, spline (roads, rivers, trenches), terrace, smooth, erosion and generate,
+each with a blend op (add, subtract, max, min, set, blend, multiply), opacity, a mask by height and slope, and
+sizes in metres. Compositing runs on the CPU across worker threads, over the dirty tiles alone: each layer's
+contribution is cached by a hash of what changes it, with checkpoints every few layers, so editing layer *k*
+replays only *k* to *n*. Derived per tile: normals, slope, curvature, flow, lowest and highest heights for culling
+and rays, and a basemap of average colour.
 
-**Rendering.** A CDLOD quadtree with geomorphing, drawn through GPU culling and indirect draw. Runtime virtual
-texturing comes later.
+**Erosion.** A layer type: GPU hydraulic (pipe model) and thermal erosion, their result read back and cached in the
+layer; stream-power erosion for mountain ranges; and a per-point erosion filter (branching gullies along the
+steepest descent, octave by octave) that suits endless chunked worlds. Erosion leaves flow, sediment and debris
+masks for texturing and scattering.
 
-**Runtime editing.**
-- A sparse **runtime delta layer** holds a height delta and a hole mask.
-- Gameplay stamps (craters, digging, footprints) append commands, and only the affected tiles update.
-- Collision updates asynchronously.
-- Saves store only the deltas.
+**Generation.** Control fields (continentalness, erosion, ridges folded into peaks and valleys, temperature and
+humidity) shaped by nested curves a designer draws, with presets; domain warping; rivers and lakes by flow on
+finished maps and along valleys in endless ones; biomes from climate and landform choosing surfaces, plants and
+blocks. For voxels, 3D density from the same fields, with caves.
+
+**Rendering.** CDLOD: a quadtree of patches, each a grid of 32 quads drawn from one index buffer, picked on the CPU
+for the camera and each sun cascade, each vertex sliding onto the next level's grid near its level's far distance.
+Heights live on the GPU in a buffer of tile slots that only changed tiles are copied into. The ground is shaded by
+the forward passes' own fragment shaders, drawn early so hills hide what is behind them; a coarse mesh a tile,
+which only rays see, gives the GI and the sea floor the ground. Surfaces: up to 32 from texture arrays, weights as
+the four strongest a texel, blended by height, triplanar on cliffs, distance resampled, with variants and hex
+tiling. GPU culling of patches against last frame's depth, and horizon culling over the heights, come with the
+chunk culling below.
+
+**Plants.** Placed plants (trees, rocks) are Foliage, each with an id so it can be cut down, dug up or swapped for
+a prefab; grass and details are scattered on the GPU from density maps round the camera.
+
+**Voxels.** Chunks of 32³, in one GPU geometry pool filled through an asynchronous upload ring, culled on the GPU
+against the frustum and last frame's depth and drawn by multi-draw-indirect, with compact vertices of their own.
+Block worlds: palette-compressed chunks, binary greedy meshing, faces bucketed by direction, face-connectivity cave
+culling, and far views through rings of coarser chunks. Smooth voxels: density and material a voxel, marching cubes
+with Transvoxel between levels on an octree; planets add their own gravity and a floating origin. Digging into a
+heightmap terrain turns its columns into smooth-voxel chunks that start from its heights and meet its ground along
+the grid lines.
+
+**Runtime editing.** A sparse delta layer holds height changes, surfaces, holes, plants taken and voxels dug.
+Gameplay stamps (craters, digging, footprints) apply on the CPU and only the tiles they touch update, collision in
+place. Saves and the network carry only changes from what a build or a seed makes: commands while they are few,
+then per-chunk deltas (quantised, zero runs collapsed, zstd; LZ4 for streaming from disk). A player joining gets the
+changed chunks nearest first.
 
 ```csharp
-Terrain.Stamp(Stamps.Crater, at: hit.Point, radius: 4f);                      // easy
-terrain.Runtime.Apply(new HeightBrush(BlendOp.Subtract, mask, falloff));   // advanced
+Terrain.HeightAt(position);                                                   // easy
+Terrain.Stamp(Stamps.Crater, at: hit.Point, radius: 4f);
+terrain.Runtime.Apply(new HeightBrush(BlendOp.Subtract, mask, falloff));      // advanced
 ```
-
-**MVP vs later.** The MVP is CDLOD, stamps and brushes, erosion, auto-material, scatter, holes, collision and
-runtime stamps. Later come runtime virtual texturing, spline rivers, a biome graph, cave and overhang volumes, and
-Gaea, World Creator and Houdini import.
 
 ## Navigation
 

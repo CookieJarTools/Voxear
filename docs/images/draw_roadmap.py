@@ -24,7 +24,7 @@ MILESTONES = [
     ("M6", "Animation", "GPU skinning, state machines, blend trees, motion matching, IK", "planned"),
     ("", "Gameplay kits", "Guns with procedural recoil, controllers, building destruction", "planned"),
     ("M7", "Materials and particles", "Custom shaders, Shader Graph, material variants, GPU particles", "now"),
-    ("M8", "Terrain", "CDLOD terrain, layers, stamps, erosion, scatter, generators", "planned"),
+    ("M8", "Terrain", "Heightmap CDLOD, layers, digging, generation, voxel worlds", "now"),
     ("M9", "Navigation, cameras, Timeline", "Pathfinding and avoidance, camera rigs, Timeline", "planned"),
     ("M10", "2D and networking", "Sprites and tilemaps, replication and rollback", "planned"),
     ("M11", "Modding and platform services", "Content and script mods, Steam, the Workshop", "planned"),

@@ -1921,6 +1921,7 @@ impl Inspector {
             (Part::Seasons, "Rendering"),
             (Part::FoliageInteraction, "Rendering"),
             (Part::Foliage, "Rendering"),
+            (Part::Terrain, "Terrain"),
             (Part::Audio, "Audio"),
             (Part::Listener, "Audio"),
             (Part::Collider, "Physics"),
@@ -2602,6 +2603,7 @@ fn part_paths(part: Option<&Part>) -> Vec<ValuePath> {
     let key = match part {
         None => return ["position", "rotation", "scale"].map(|key| ValuePath::new(&[key])).to_vec(),
         Some(Part::Renderer) => "renderer",
+        Some(Part::Terrain) => "terrain",
         Some(Part::Light) => "light",
         Some(Part::Camera) => "camera",
         Some(Part::Audio) => "audio",

@@ -87,7 +87,7 @@ mod tests {
             }
         }
         let greys = Greys::from_raw16(&raw).expect("greys");
-        let file = TerrainFile { size: 100.0, resolution: 257 };
+        let file = TerrainFile { size: 100.0, resolution: 257, ..TerrainFile::default() };
         let heights = greys.heights(&file, 40.0);
         assert!((heights.height_at(50.0, 100.0) - 40.0).abs() < 1e-3);
         assert!(heights.height_at(50.0, 0.0).abs() < 1e-3);

@@ -481,9 +481,8 @@ pub struct TemplateObj {
     /// A Foliage, where there is a renderer to draw it, and how it was
     /// written, which few Objs have.
     pub foliage: Option<Box<(Option<Foliage>, FoliageSource)>>,
-    /// A Terrain, its look where there is a renderer to draw it, and how it
-    /// was written.
-    pub terrain: Option<Box<(voxear_terrain::Terrain, Option<voxear_render::TerrainLook>, TerrainSource)>>,
+    /// A Terrain, which few Objs have.
+    pub terrain: Option<Box<TerrainParts>>,
     /// A whole model it draws, where there is a renderer to draw it, and how
     /// it was written.
     pub model: Option<Box<(Option<ModelRenderer>, ModelSource)>>,
@@ -693,12 +692,15 @@ impl Template {
                 }
                 world.insert(entity, model.1.clone());
             }
-            if let Some(terrain) = &obj.terrain {
-                world.insert(entity, terrain.0.clone());
-                if let Some(look) = terrain.1 {
+            if let Some(parts) = &obj.terrain {
+                world.insert(entity, parts.terrain.clone());
+                if let Some(look) = parts.look {
                     world.insert(entity, look);
                 }
-                world.insert(entity, terrain.2.clone());
+                if let Some(asset) = &parts.asset {
+                    world.insert(entity, asset.clone());
+                }
+                world.insert(entity, parts.source.clone());
             }
             if let Some(body) = obj.rigidbody {
                 world.insert(entity, body);
@@ -836,24 +838,33 @@ pub fn foliage(content: &mut Content, renderer: &mut Renderer, data: &FoliageDat
     Ok((foliage, FoliageSource(data.clone())))
 }
 
+/// What a Terrain is made of: its ground, its look where there is a
+/// renderer to draw it, its asset where it has one, and how it was
+/// written, for saving.
+#[derive(Clone, Debug)]
+pub struct TerrainParts {
+    pub terrain: voxear_terrain::Terrain,
+    pub look: Option<voxear_render::TerrainLook>,
+    pub asset: Option<crate::terrain::TerrainAsset>,
+    pub source: TerrainSource,
+}
+
 /// A Terrain as a scene writes it: its asset's heights, read with or
 /// without a renderer, as physics stands things on them; its look, where
-/// there is a renderer to draw it; and how it was written, for saving. A
-/// terrain whose asset cannot be read is flat, as large as a new one.
-#[allow(clippy::type_complexity)]
-pub fn terrain(
-    content: &mut Content,
-    renderer: Option<&mut Renderer>,
-    data: &TerrainData,
-) -> Result<(voxear_terrain::Terrain, Option<voxear_render::TerrainLook>, TerrainSource)> {
+/// there is a renderer to draw it. A terrain whose asset cannot be read is
+/// flat, as large as a new one.
+pub fn terrain(content: &mut Content, renderer: Option<&mut Renderer>, data: &TerrainData) -> Result<TerrainParts> {
     let guid = content.parse(&data.data).ok().and_then(|reference| reference.guid());
-    let heights = match guid.and_then(|guid| content.terrain(guid)) {
-        Some(loaded) => loaded.heights.clone(),
+    let loaded = guid.and_then(|guid| Some((guid, content.terrain(guid)?)));
+    let (heights, asset) = match loaded {
+        Some((guid, loaded)) => {
+            (loaded.heights.clone(), Some(crate::terrain::TerrainAsset { guid, file: loaded.file.clone() }))
+        }
         None => {
             if !data.data.is_empty() {
                 tracing::warn!("the terrain {} could not be read; it is flat", data.data);
             }
-            std::sync::Arc::new(voxear_terrain::file::TerrainFile::default().flat())
+            (std::sync::Arc::new(voxear_terrain::file::TerrainFile::default().flat()), None)
         }
     };
     let terrain = voxear_terrain::Terrain {
@@ -868,7 +879,7 @@ pub fn terrain(
         }),
         None => None,
     };
-    Ok((terrain, look, TerrainSource(data.clone())))
+    Ok(TerrainParts { terrain, look, asset, source: TerrainSource(data.clone()) })
 }
 
 /// A Model Renderer drawing every part of the model `data` names, loading

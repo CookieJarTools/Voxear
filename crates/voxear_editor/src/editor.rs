@@ -749,6 +749,10 @@ impl Editor {
             profile_scope!("Editor");
             self.update_panels(renderer, delta)
         };
+        // Terrains changed by edits, undo or redo, kept as their assets' to save and to play.
+        if !self.is_playing() {
+            voxear_engine::terrain::keep(&self.game.engine.world, &mut self.game.content);
+        }
         let frame = {
             profile_scope!("UI");
             self.ui.frame(size.0, size.1, scale)

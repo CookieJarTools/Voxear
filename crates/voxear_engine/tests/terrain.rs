@@ -13,7 +13,7 @@ const FIELD: &str = "format = 1\n\n[[obj]]\nid = 1\nname = \"Field\"\nposition =
 
 fn project() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
-    let file = TerrainFile { size: 128.0, resolution: 257 };
+    let file = TerrainFile { size: 128.0, resolution: 257, ..TerrainFile::default() };
     let files = [
         ("voxear.toml", "[project]\nname = \"Field\"\nstart_level = \"Levels/Main.level\"\n".to_string()),
         ("Levels/Main.level", "format = 1\n[[scene]]\nscene = \"Scenes/Field.scene\"\n".to_string()),

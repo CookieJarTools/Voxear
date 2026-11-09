@@ -293,6 +293,10 @@ pub(crate) fn drawn_bounds(world: &World, renderer: &Renderer, entity: Entity) -
     if let Some(model) = world.get::<ModelRenderer>(entity) {
         return model.bounds(renderer);
     }
+    if let Some(terrain) = world.get::<voxear_terrain::Terrain>(entity) {
+        let ([width, length], [low, high]) = (terrain.heights.size(), terrain.heights.range());
+        return Some((Vec3::new(0.0, low, 0.0), Vec3::new(width, high, length)));
+    }
     let foliage = world.get::<Foliage>(entity)?;
     let (min, max) = renderer.mesh_bounds(foliage.mesh)?;
     // Each plant's mesh as far as it can reach, whichever way it is turned.

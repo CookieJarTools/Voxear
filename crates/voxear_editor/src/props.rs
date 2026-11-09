@@ -118,6 +118,8 @@ pub enum Part {
     Seasons,
     FoliageInteraction,
     Foliage,
+    /// Ground from heights (the Terrain module).
+    Terrain,
     /// A Model Renderer: a whole model drawn by the Obj.
     Model,
     /// A script, by its full type name.
@@ -166,6 +168,7 @@ impl Part {
             Part::Seasons => "seasons".into(),
             Part::FoliageInteraction => "foliage_interaction".into(),
             Part::Foliage => "foliage".into(),
+            Part::Terrain => "terrain".into(),
             Part::Model => "model".into(),
             Part::Behaviour(name) => name.clone(),
         }
@@ -180,6 +183,7 @@ impl Part {
             Part::Collider2D | Part::Rigidbody2D => Some(Module::Physics2D),
             Part::Seasons | Part::FoliageInteraction | Part::Foliage => Some(Module::Vegetation),
             Part::Ocean | Part::Pool | Part::DryArea | Part::Stream | Part::Buoyancy => Some(Module::Water),
+            Part::Terrain => Some(Module::Terrain),
             _ => None,
         }
     }
@@ -223,6 +227,7 @@ impl Part {
             Part::Seasons => "Seasons",
             Part::FoliageInteraction => "Foliage Interaction",
             Part::Foliage => "Foliage",
+            Part::Terrain => "Terrain",
             Part::Model => "Model Renderer",
             Part::Behaviour(name) => name.rsplit('.').next().unwrap_or(name),
         }
@@ -264,6 +269,7 @@ impl Part {
             Part::Seasons => "globe",
             Part::FoliageInteraction => "move",
             Part::Foliage => "cube",
+            Part::Terrain => "mountain",
             Part::Model => "box",
             Part::Behaviour(_) => "code",
         }
@@ -552,6 +558,18 @@ pub enum Prop {
     /// Whether far plants are impostors, and from how far when it says.
     FoliageImpostors,
     FoliageImpostorDistance,
+    /// A Terrain's asset, then the asset's size, resolution, the picture its
+    /// heights are made from and how high its white is; then how it is
+    /// drawn (see `terrain_props`).
+    TerrainData,
+    TerrainSize,
+    TerrainResolution,
+    TerrainHeightmap,
+    TerrainHeight,
+    TerrainMaterial,
+    TerrainTextureSize,
+    TerrainDetail,
+    TerrainShadows,
     FieldOfView,
     Near,
     Exposure,
@@ -673,6 +691,15 @@ impl Prop {
     pub fn part(&self) -> Part {
         match self {
             Prop::Mesh | Prop::Material | Prop::LodBias => Part::Renderer,
+            Prop::TerrainData
+            | Prop::TerrainSize
+            | Prop::TerrainResolution
+            | Prop::TerrainHeightmap
+            | Prop::TerrainHeight
+            | Prop::TerrainMaterial
+            | Prop::TerrainTextureSize
+            | Prop::TerrainDetail
+            | Prop::TerrainShadows => Part::Terrain,
             Prop::LightKind
             | Prop::LightAppearance
             | Prop::LightTemperature
@@ -965,6 +992,15 @@ impl Prop {
     /// script value by its field, and the rest by a name of their own.
     pub fn lock_key(&self) -> String {
         let name = match self {
+            Prop::TerrainData
+            | Prop::TerrainSize
+            | Prop::TerrainResolution
+            | Prop::TerrainHeightmap
+            | Prop::TerrainHeight
+            | Prop::TerrainMaterial
+            | Prop::TerrainTextureSize
+            | Prop::TerrainDetail
+            | Prop::TerrainShadows => crate::terrain_props::key(self),
             Prop::Mesh => "mesh",
             Prop::Material => "material",
             Prop::LodBias => "lod_bias",
@@ -1383,6 +1419,9 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     if world.has::<Foliage>(entity) {
         parts.push(Part::Foliage);
     }
+    if world.has::<voxear_terrain::Terrain>(entity) {
+        parts.push(Part::Terrain);
+    }
     if world.has::<ModelSource>(entity) {
         parts.push(Part::Model);
     }
@@ -1450,6 +1489,7 @@ fn occlusion_props(occlusion: SoundOcclusion) -> Vec<Prop> {
 pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) -> Vec<Prop> {
     match part {
         Part::Renderer => vec![Prop::Mesh, Prop::Material, Prop::LodBias],
+        Part::Terrain => crate::terrain_props::props(world, entity),
         Part::Light => {
             let kind = world.get::<Light>(entity).map_or(LightKind::Point, |l| l.kind);
             let temperature = world.get::<Light>(entity).and_then(|l| l.temperature).is_some();
@@ -1831,6 +1871,15 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
 /// What a prop's row says.
 pub fn label(prop: &Prop) -> String {
     let label = match prop {
+        Prop::TerrainData
+        | Prop::TerrainSize
+        | Prop::TerrainResolution
+        | Prop::TerrainHeightmap
+        | Prop::TerrainHeight
+        | Prop::TerrainMaterial
+        | Prop::TerrainTextureSize
+        | Prop::TerrainDetail
+        | Prop::TerrainShadows => crate::terrain_props::label(prop),
         Prop::Mesh => "Mesh",
         Prop::Material => "Material",
         Prop::LodBias => "LOD Bias",
@@ -2156,6 +2205,9 @@ pub fn unit_on(world: &World, entity: Entity, prop: &Prop) -> Option<&'static st
         (Prop::LodUntil(_), Some(LodMeasure::ScreenSize)) => Some("%"),
         (Prop::LodUntil(_), Some(LodMeasure::Distance)) => Some("m"),
         (Prop::SeasonPatchSize | Prop::FoliageSpread | Prop::FoliageImpostorDistance | Prop::NetRange, _) => Some("m"),
+        (Prop::TerrainSize | Prop::TerrainHeight | Prop::TerrainTextureSize | Prop::TerrainDetail, _) => {
+            crate::terrain_props::unit(prop)
+        }
         (Prop::JointMin | Prop::JointMax, _) => match world.get::<Joint>(entity)?.kind {
             JointType::Hinge => Some("°"),
             _ => Some("m"),
@@ -2203,6 +2255,9 @@ pub fn add(
         game.engine.world.insert(entity, source);
         return Ok(());
     }
+    if *part == Part::Terrain {
+        return crate::terrain_props::add(game, renderer, entity);
+    }
     if *part == Part::LodGroup {
         let group = LodGroup::of_levels(lod_levels_inside(game, entity));
         game.engine.world.insert(entity, group);
@@ -2211,7 +2266,7 @@ pub fn add(
     let world = &mut game.engine.world;
     match part {
         // A model is placed from the Project panel, so Add Component does not offer one.
-        Part::Renderer | Part::LodGroup | Part::Foliage | Part::Model => {}
+        Part::Renderer | Part::LodGroup | Part::Foliage | Part::Terrain | Part::Model => {}
         Part::Light => {
             world.insert(entity, default_light(LightKind::Point));
         }
@@ -2342,6 +2397,7 @@ pub fn add(
 pub fn remove(world: &mut World, entity: Entity, part: &Part) {
     match part {
         Part::Renderer => drop(world.remove::<MeshRenderer>(entity)),
+        Part::Terrain => crate::terrain_props::remove(world, entity),
         Part::Light => drop(world.remove::<Light>(entity)),
         Part::Camera => drop(world.remove::<Camera>(entity)),
         Part::PostVolume => drop(world.remove::<PostVolume>(entity)),
@@ -2445,6 +2501,15 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
     let vehicle = || world.get::<Vehicle>(entity);
     let wheel = || world.get::<Wheel>(entity);
     Some(match prop {
+        Prop::TerrainData
+        | Prop::TerrainSize
+        | Prop::TerrainResolution
+        | Prop::TerrainHeightmap
+        | Prop::TerrainHeight
+        | Prop::TerrainMaterial
+        | Prop::TerrainTextureSize
+        | Prop::TerrainDetail
+        | Prop::TerrainShadows => return crate::terrain_props::get(game, entity, prop),
         Prop::Shape2D => {
             let shape = collider2d()?.shape;
             let index = ColliderShape2D::ALL.iter().position(|s| *s == shape).unwrap_or_default();
@@ -2978,6 +3043,19 @@ pub fn set(
         (Prop::Field { behaviour, path }, value) => {
             fields::set(&mut game.engine.world, types, entity, behaviour, path, &value)
         }
+        (Prop::TerrainData | Prop::TerrainHeightmap | Prop::TerrainMaterial, Value::Asset(label)) => {
+            let choice = crate::terrain_props::choices(game, prop).into_iter().find(|(l, _)| *l == label);
+            choice.is_some_and(|(_, choice)| crate::terrain_props::pick(game, renderer.as_deref_mut(), entity, prop, &choice))
+        }
+        (
+            Prop::TerrainSize
+            | Prop::TerrainResolution
+            | Prop::TerrainHeight
+            | Prop::TerrainTextureSize
+            | Prop::TerrainDetail
+            | Prop::TerrainShadows,
+            value,
+        ) => crate::terrain_props::set(game, entity, prop, value),
         (prop, value) => set_component(&mut game.engine.world, entity, prop, value),
     };
     if changed && matches!(prop, Prop::DryShape | Prop::DryMesh | Prop::Mesh) {
@@ -3014,6 +3092,9 @@ pub fn pick(
     prop: &Prop,
     choice: &Pick,
 ) -> bool {
+    if matches!(prop, Prop::TerrainData | Prop::TerrainHeightmap | Prop::TerrainMaterial) {
+        return crate::terrain_props::pick(game, renderer, entity, prop, choice);
+    }
     match (prop, choice) {
         (Prop::Mesh, Pick::Asset(Some(reference))) => {
             let Some(renderer) = renderer else { return false };
@@ -3309,6 +3390,9 @@ pub fn set_lod_until(world: &mut World, entity: Entity, at: usize, until: f32) -
 /// empty.
 pub fn choices(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Vec<(String, Pick)> {
     match prop {
+        Prop::TerrainData | Prop::TerrainHeightmap | Prop::TerrainMaterial => {
+            return crate::terrain_props::choices(game, prop);
+        }
         // The Obj's own Mesh Renderer's first, then any mesh.
         Prop::DryMesh => {
             let mut found = vec![(OWN_MESH.to_string(), Pick::Asset(None))];

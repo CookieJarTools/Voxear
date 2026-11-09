@@ -49,6 +49,10 @@ const FREE_TURN: f32 = 0.01;
 /// the pointer is too near the horizon for it to be where it was meant.
 const GROUND_REACH: f32 = 200.0;
 
+/// How far along a ray from the Scene view's camera a terrain is looked
+/// for, in metres.
+const TERRAIN_REACH: f32 = 20_000.0;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Tool {
     #[default]
@@ -288,6 +292,17 @@ fn mesh_hits(
             try_box(entity, obj * part.transform, bounds, Some(part.mesh));
         }
     }
+    // A terrain by its ground's own triangles, which are what is drawn near the camera.
+    let mut grounds = Vec::new();
+    for (entity, terrain, corner) in voxear_terrain::terrains(world) {
+        if world.has::<EditorOnly>(entity) {
+            continue;
+        }
+        let local = origin - corner;
+        if let Some(hit) = voxear_terrain::ray::raycast(&terrain.heights, local, direction, TERRAIN_REACH) {
+            grounds.push((hit.distance, hit.point + corner, entity));
+        }
+    }
     let foliage = world
         .query_ref::<(Entity, &Foliage, &Transform, Option<&WorldTransform>)>()
         .without::<EditorOnly>()
@@ -304,6 +319,7 @@ fn mesh_hits(
             try_box(entity, obj * local, bounds, None);
         }
     }
+    hits.extend(grounds);
     hits
 }
 

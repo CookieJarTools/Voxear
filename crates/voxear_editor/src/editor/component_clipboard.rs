@@ -68,7 +68,8 @@ impl Copied {
             Part::Audio => Self::Audio(Box::new(*world.get::<AudioSource>(entity)?)),
             Part::Listener => world.has::<AudioListener>(entity).then_some(Self::Listener)?,
             // A LOD Group's levels and a Foliage's plants belong where they are.
-            Part::LodGroup | Part::Foliage | Part::Model => return None,
+            // A terrain's ground is its asset's, and belongs where it is too.
+            Part::LodGroup | Part::Foliage | Part::Terrain | Part::Model => return None,
             Part::Collider => Self::Collider(*world.get::<Collider>(entity)?),
             Part::Rigidbody => Self::Rigidbody(*world.get::<Rigidbody>(entity)?),
             Part::Character => Self::Character(*world.get::<CharacterController>(entity)?),

@@ -1,6 +1,7 @@
 //! The files a terrain is kept in.
 //!
-//! A `.terrain` file is text, what a terrain is: how large and how fine.
+//! A `.terrain` file is text, what a terrain is: how large and how fine,
+//! and the picture its heights were made from, if any.
 //! Its heights are kept beside it, in a `.heights` file of the same name
 //! (`Terrains/Hills.terrain` and `Terrains/Hills.heights`), as binary: the
 //! samples are many, and a picture of them or numbers in text would be
@@ -34,11 +35,18 @@ pub struct TerrainFile {
     pub size: f32,
     /// How many samples it is across each way, one of `RESOLUTIONS`.
     pub resolution: u32,
+    /// A grey picture its heights are made from, black lowest and white
+    /// `height` metres up, as an asset reference; none for heights of its
+    /// own.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub heightmap: Option<String>,
+    /// How high the heightmap's white is, in metres.
+    pub height: f32,
 }
 
 impl Default for TerrainFile {
     fn default() -> Self {
-        Self { size: 512.0, resolution: 1025 }
+        Self { size: 512.0, resolution: 1025, heightmap: None, height: 100.0 }
     }
 }
 
@@ -47,6 +55,7 @@ impl TerrainFile {
         let file: Self = toml::from_str(text)?;
         ensure!(file.size > 0.0 && file.size.is_finite(), "a terrain's size is more than nothing");
         ensure!(RESOLUTIONS.contains(&file.resolution), "a terrain's resolution is one of {RESOLUTIONS:?}");
+        ensure!(file.height.is_finite(), "a terrain's height is a number");
         Ok(file)
     }
 
@@ -177,6 +186,7 @@ mod tests {
     #[test]
     fn a_terrain_file_is_its_size_and_resolution() {
         let file = TerrainFile::parse("size = 1000.0\nresolution = 2049\n").expect("a terrain");
+        assert_eq!((file.heightmap.as_deref(), file.height), (None, 100.0), "made from no picture");
         assert_eq!((file.tiles(), file.spacing()), (8, 1000.0 / 2048.0));
         assert_eq!(TerrainFile::parse(&file.to_text()).expect("again"), file);
         assert!(TerrainFile::parse("resolution = 1000").is_err());

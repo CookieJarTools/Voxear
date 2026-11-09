@@ -76,6 +76,9 @@ pub struct ObjState {
     pub foliage: Option<Box<(Foliage, FoliageSource)>>,
     /// A Model Renderer and how it was written; its parts are shared.
     pub model: Option<Box<(ModelRenderer, ModelSource)>>,
+    /// A Terrain, its look, its asset and how it was written; its tiles are
+    /// shared, so a step costs only the tiles it changed.
+    pub terrain: Option<Box<TerrainState>>,
     pub joint: Option<Box<Joint>>,
     pub collider2d: Option<Box<Collider2D>>,
     pub rigidbody2d: Option<Box<Rigidbody2D>>,
@@ -84,6 +87,26 @@ pub struct ObjState {
     pub behaviours: Option<EditBehaviours>,
     /// Components locked for designers, when this is a prefab's Obj.
     pub locks: Option<Locks>,
+}
+
+/// A Terrain's parts, as an undo step keeps them.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TerrainState {
+    pub terrain: voxear_terrain::Terrain,
+    pub look: Option<voxear_render::TerrainLook>,
+    pub asset: Option<voxear_engine::terrain::TerrainAsset>,
+    pub source: Option<voxear_engine::scene_file::TerrainSource>,
+}
+
+impl TerrainState {
+    fn of(world: &World, entity: Entity) -> Option<Self> {
+        Some(Self {
+            terrain: world.get::<voxear_terrain::Terrain>(entity)?.clone(),
+            look: world.get::<voxear_render::TerrainLook>(entity).copied(),
+            asset: world.get::<voxear_engine::terrain::TerrainAsset>(entity).cloned(),
+            source: world.get::<voxear_engine::scene_file::TerrainSource>(entity).cloned(),
+        })
+    }
 }
 
 impl ObjState {
@@ -133,6 +156,7 @@ impl ObjState {
                 .cloned()
                 .zip(world.get::<ModelSource>(entity).cloned())
                 .map(Box::new),
+            terrain: TerrainState::of(world, entity).map(Box::new),
             joint: world.get::<Joint>(entity).copied().map(Box::new),
             collider2d: world.get::<Collider2D>(entity).copied().map(Box::new),
             rigidbody2d: world.get::<Rigidbody2D>(entity).copied().map(Box::new),
@@ -198,6 +222,11 @@ impl ObjState {
         put(world, entity, self.foliage.as_deref().map(|(_, source)| source.clone()));
         put(world, entity, self.model.as_deref().map(|(drawn, _)| drawn.clone()));
         put(world, entity, self.model.as_deref().map(|(_, source)| source.clone()));
+        let terrain = self.terrain.as_deref();
+        put(world, entity, terrain.map(|state| state.terrain.clone()));
+        put(world, entity, terrain.and_then(|state| state.look));
+        put(world, entity, terrain.and_then(|state| state.asset.clone()));
+        put(world, entity, terrain.and_then(|state| state.source.clone()));
         put(world, entity, self.joint.as_deref().copied());
         put(world, entity, self.collider2d.as_deref().copied());
         put(world, entity, self.rigidbody2d.as_deref().copied());

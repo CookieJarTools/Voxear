@@ -2854,12 +2854,26 @@ fn add_component_is_a_search_with_folders() {
     frame(&mut editor, &mut renderer);
     let labels = |ui: &Ui| picker_rows(ui).into_iter().map(|(label, _)| label).collect::<Vec<_>>();
     // The scripts' Effects folder is the built-in one, with the Particle System.
-    let folders =
-        ["Rendering", "Effects", "UI", "Networking", "Animation", "Water", "Paths", "Audio", "Physics", "Physics 2D", "Scripts"];
+    let folders = [
+        "Rendering",
+        "Effects",
+        "UI",
+        "Networking",
+        "Animation",
+        "Water",
+        "Paths",
+        "Terrain",
+        "Audio",
+        "Physics",
+        "Physics 2D",
+        "Scripts",
+    ];
     assert_eq!(labels(&editor.ui), folders, "folders first, as in Unity");
     shot(&mut renderer, "add-component.png");
 
     // A folder opens on a click, its scripts past the namespace they share, with a back button.
+    let scripts = picker_row(&editor.ui, "Scripts").unwrap();
+    scroll_to(&mut editor, &mut renderer, scripts);
     let scripts = picker_row(&editor.ui, "Scripts").unwrap();
     click(&mut editor.ui, scripts);
     frame(&mut editor, &mut renderer);

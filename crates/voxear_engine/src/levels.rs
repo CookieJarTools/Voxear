@@ -553,6 +553,8 @@ impl Levels {
             }
             written.push(scene.path.clone());
         }
+        // Terrains the level changed, which are assets of their own.
+        written.extend(crate::terrain::save(content, project)?);
         Ok(written)
     }
 

@@ -12,6 +12,7 @@
 //! `Packages/<name>/`, and change in the package's own folder (see
 //! [`place`]). A package from the machine's cache never changes.
 
+use voxear_terrain::file::TerrainFile;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail, ensure};
@@ -101,10 +102,11 @@ pub enum NewFile {
     Script,
     MotionSet,
     GunHandling,
+    Terrain,
 }
 
 impl NewFile {
-    pub const ALL: [NewFile; 10] = [
+    pub const ALL: [NewFile; 11] = [
         NewFile::Folder,
         NewFile::Scene,
         NewFile::Level,
@@ -115,11 +117,16 @@ impl NewFile {
         NewFile::Script,
         NewFile::MotionSet,
         NewFile::GunHandling,
+        NewFile::Terrain,
     ];
 
     /// The module it belongs to, without which the menu leaves it out.
     pub fn module(self) -> Option<voxear_engine::modules::Module> {
-        (self == NewFile::GunHandling).then_some(voxear_engine::modules::Module::Guns)
+        match self {
+            NewFile::GunHandling => Some(voxear_engine::modules::Module::Guns),
+            NewFile::Terrain => Some(voxear_engine::modules::Module::Terrain),
+            _ => None,
+        }
     }
 
     /// As the menu offers it.
@@ -135,6 +142,7 @@ impl NewFile {
             NewFile::Script => "New C# Script",
             NewFile::MotionSet => "New Motion Set",
             NewFile::GunHandling => "New Gun Handling",
+            NewFile::Terrain => "New Terrain",
         }
     }
 
@@ -152,6 +160,7 @@ impl NewFile {
             NewFile::Script => ("NewBehaviour", ".cs"),
             NewFile::MotionSet => ("New Motion Set", ".motionset"),
             NewFile::GunHandling => ("New Gun Handling", ".gunhandling"),
+            NewFile::Terrain => ("New Terrain", ".terrain"),
         }
     }
 }
@@ -174,8 +183,26 @@ pub fn create(root: &Path, folder: &str, kind: NewFile, namespace: &str) -> Resu
         NewFile::Script => std::fs::write(&file, script(namespace, &name[..name.len() - extension.len()])),
         NewFile::MotionSet => std::fs::write(&file, NEW_MOTION_SET),
         NewFile::GunHandling => std::fs::write(&file, NEW_GUN_HANDLING),
+        NewFile::Terrain => std::fs::write(&file, NEW_TERRAIN.to_string() + &TerrainFile::default().to_text()),
     }
     .with_context(|| format!("making {}", file.display()))?;
+    Ok(path)
+}
+
+/// What a new terrain's file starts with, before its settings: flat ground,
+/// its heights written beside it once it is shaped and the level saved.
+const NEW_TERRAIN: &str = "# Voxear terrain: how large and how fine the ground is; its heights are in the .heights file beside it.\n";
+
+/// Makes a new terrain asset in `folder` (from the project's folder), named
+/// `name` and a number if that is taken, and returns its path.
+pub fn create_terrain(root: &Path, folder: &str, name: &str) -> Result<String> {
+    std::fs::create_dir_all(root.join(folder)).with_context(|| format!("making {folder}"))?;
+    let named: String = name.chars().filter(|c| !matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|')).collect();
+    let stem = if named.trim().is_empty() { "Terrain" } else { named.trim() };
+    let file = unique(&root.join(folder), stem, ".terrain");
+    let path = join(folder, &file);
+    let text = NEW_TERRAIN.to_string() + &TerrainFile::default().to_text();
+    std::fs::write(root.join(&path), text).with_context(|| format!("making {path}"))?;
     Ok(path)
 }
 

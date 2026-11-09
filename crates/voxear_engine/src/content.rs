@@ -429,8 +429,10 @@ pub struct Content {
     /// how many times one was saved, for what resolved them to ask again.
     gun_handlings: HashMap<AssetGuid, Option<Arc<crate::guns::handling::GunHandling>>>,
     handlings_version: u64,
-    /// Terrains read, by GUID; `None` for one that could not be.
+    /// Terrains read, by GUID; `None` for one that could not be. And those
+    /// changed since they were last written, as the editor changes them.
     terrains: HashMap<AssetGuid, Option<Arc<LoadedTerrain>>>,
+    unsaved_terrains: std::collections::BTreeSet<AssetGuid>,
     /// Pictures materials read, by GUID and whether they are read as sRGB.
     pictures: HashMap<(AssetGuid, bool), TextureId>,
     /// IES profiles uploaded for lights, by their assets.
@@ -581,6 +583,7 @@ impl Content {
             motion_sets: HashMap::new(),
             gun_handlings: HashMap::new(),
             terrains: HashMap::new(),
+            unsaved_terrains: Default::default(),
             handlings_version: 0,
             pictures: HashMap::new(),
             light_profiles: HashMap::new(),
@@ -1055,10 +1058,39 @@ impl Content {
         let file = voxear_terrain::file::TerrainFile::parse(&self.read_text(&path)?)
             .with_context(|| format!("reading {path}"))?;
         let heights = match self.read(&voxear_terrain::file::heights_file(&path)) {
-            Ok(bytes) => voxear_terrain::file::read_heights(&bytes).with_context(|| format!("reading {path}'s heights"))?,
-            Err(_) => file.flat(),
+            Ok(bytes) => {
+                file.fit(voxear_terrain::file::read_heights(&bytes).with_context(|| format!("reading {path}'s heights"))?)
+            }
+            Err(_) => self.terrain_heights(&file, None),
         };
-        Ok(LoadedTerrain { heights: Arc::new(file.fit(heights)), file })
+        Ok(LoadedTerrain { heights: Arc::new(heights), file })
+    }
+
+    /// Heights as `file` says: made from its heightmap picture, if it names
+    /// one; else `old` fitted to its size and resolution; else flat.
+    pub fn terrain_heights(
+        &mut self,
+        file: &voxear_terrain::file::TerrainFile,
+        old: Option<&voxear_terrain::Heightmap>,
+    ) -> voxear_terrain::Heightmap {
+        if let Some(picture) = &file.heightmap {
+            let read = self
+                .parse(picture)
+                .ok()
+                .and_then(|reference| reference.guid())
+                .and_then(|guid| self.db.get(guid).map(|entry| entry.path.clone()))
+                .context("no such picture")
+                .and_then(|path| self.read(&path))
+                .and_then(|bytes| voxear_terrain::import::Greys::from_picture(&bytes));
+            match read {
+                Ok(greys) => return greys.heights(file, file.height),
+                Err(error) => tracing::warn!("could not read the heightmap {picture}: {error:#}"),
+            }
+        }
+        match old {
+            Some(old) => file.fit(old.clone()),
+            None => file.flat(),
+        }
     }
 
     /// Forgets a terrain, read again when next asked for, as after it was
@@ -1067,10 +1099,35 @@ impl Content {
         self.terrains.remove(&guid);
     }
 
-    /// Keeps `heights` as the terrain at `guid`'s, as after the editor
-    /// changed them, so what asks for it next gets these.
-    pub fn keep_terrain(&mut self, guid: AssetGuid, file: voxear_terrain::file::TerrainFile, heights: Arc<voxear_terrain::Heightmap>) {
-        self.terrains.insert(guid, Some(Arc::new(LoadedTerrain { file, heights })));
+    /// Keeps `heights` and `file` as the terrain at `guid`'s, as after the
+    /// editor changed them, so what asks for it next gets these, and marks
+    /// it to be written, unless that is how it is already.
+    pub fn keep_terrain(
+        &mut self,
+        guid: AssetGuid,
+        file: &voxear_terrain::file::TerrainFile,
+        heights: &Arc<voxear_terrain::Heightmap>,
+    ) {
+        let kept = self.terrains.get(&guid).and_then(Option::as_ref);
+        if kept.is_some_and(|kept| kept.file == *file && Arc::ptr_eq(&kept.heights, heights)) {
+            return;
+        }
+        let loaded = LoadedTerrain { file: file.clone(), heights: heights.clone() };
+        self.terrains.insert(guid, Some(Arc::new(loaded)));
+        self.unsaved_terrains.insert(guid);
+    }
+
+    /// The terrains changed since they were last written, each with its
+    /// path, which are no longer marked.
+    pub fn take_unsaved_terrains(&mut self) -> Vec<(String, Arc<LoadedTerrain>)> {
+        let guids = std::mem::take(&mut self.unsaved_terrains);
+        guids
+            .into_iter()
+            .filter_map(|guid| {
+                let path = self.db.get(guid)?.path.clone();
+                Some((path, self.terrains.get(&guid)?.clone()?))
+            })
+            .collect()
     }
 
     /// Forgets a Gun Handling, read again when next asked for, as after it

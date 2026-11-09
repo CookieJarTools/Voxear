@@ -51,6 +51,7 @@ pub mod scripts;
 pub mod shaders;
 mod stats_overlay;
 pub mod steam_language;
+pub mod terrain;
 pub mod ui_input;
 pub mod ui_panels;
 pub mod upgrade;
@@ -58,7 +59,7 @@ pub mod water;
 mod windowed;
 
 pub use content::{
-    Content, ContentUsage, MaterialData, MaterialMap, MaterialSource, MovedPart, PropertyValue, Reimported, Released,
+    Content, ContentUsage, LoadedTerrain, MaterialData, MaterialMap, MaterialSource, MovedPart, PropertyValue, Reimported, Released,
     default_on_gpu, linear, srgb,
 };
 pub use engine::{EditBehaviours, EditMode, Engine, POSE, STAGES, editing};

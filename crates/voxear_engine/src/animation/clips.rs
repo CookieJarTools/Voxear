@@ -52,6 +52,11 @@ impl Clips {
         self.found.get(reference)?.as_ref()
     }
 
+    /// Whether a clip by this reference has been looked for, found or not.
+    pub fn tried(&self, reference: &str) -> bool {
+        self.found.contains_key(reference)
+    }
+
     pub fn set(&self, reference: &str) -> Option<&Arc<MotionSet>> {
         self.sets.get(reference)?.as_ref()
     }
@@ -86,6 +91,9 @@ pub fn give_clips(world: &mut World, content: &mut Content) {
         .filter(|set| !set.is_empty())
         .collect();
     wanted.extend(crate::guns::handling::clips_wanted(world));
+    if let Some(asked) = world.resource::<super::pose_ops::ScriptClips>() {
+        wanted.extend(asked.0.iter().cloned());
+    }
     if world.resource::<Clips>().is_none() {
         world.insert_resource(Clips::default());
     }

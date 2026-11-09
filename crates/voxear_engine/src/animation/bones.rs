@@ -108,7 +108,7 @@ fn texts(world: &mut World, entity: Entity, what: i32, text: &str) -> Option<Str
 
 /// A model's bones in its space as posed now: by its Pose, or at rest
 /// without one.
-fn posed(world: &World, entity: Entity, skeleton: &Skeleton) -> Vec<Mat4> {
+pub(super) fn posed(world: &World, entity: Entity, skeleton: &Skeleton) -> Vec<Mat4> {
     match world.get::<Pose>(entity).filter(|pose| pose.bones.len() == skeleton.bones.len()) {
         Some(pose) => pose.bones.to_vec(),
         None => skeleton.model_matrices(&skeleton.rest()),

@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 56;
+pub(crate) const API_VERSION: u32 = 57;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -384,6 +384,23 @@ pub(crate) struct NativeApi {
         buffer: *mut u8,
         capacity: i32,
     ) -> i32,
+    /// Changes a posed model's bones, or reads them, by `op`, as the
+    /// engine's `animation::pose_ops` numbers them: bones and sides in
+    /// `ints`, places, ways and weights in `floats`, a clip's reference in
+    /// `text`. What it gives back goes in `out`: how many it wrote, or -1
+    /// when the Obj draws no model with bones or it cannot be done.
+    pub pose_op: unsafe extern "C" fn(
+        entity: u64,
+        op: i32,
+        ints: *const i32,
+        ints_len: i32,
+        floats: *const f32,
+        floats_len: i32,
+        text: *const u8,
+        text_len: i32,
+        out: *mut f32,
+        out_len: i32,
+    ) -> i32,
 }
 
 /// The kinds of component scripts reach through one entry, `kind_value`,
@@ -444,6 +461,54 @@ unsafe extern "C" fn kind_text(
         unsafe { ptr::copy_nonoverlapping(answer.as_ptr(), buffer, answer.len()) };
     }
     answer.len() as i32
+}
+
+/// What answers scripts' posing of a model's bones (see `pose_op`): the
+/// engine's, set when it starts. It writes into its last slice and says how
+/// many it wrote, or `None` when the op cannot be done.
+pub type PoseOps = fn(&mut World, Entity, i32, &[i32], &[f32], &str, &mut [f32]) -> Option<usize>;
+static POSE_OPS: std::sync::OnceLock<PoseOps> = std::sync::OnceLock::new();
+
+/// Sets what answers `pose_op`; the first set is kept.
+pub fn set_pose_ops(ops: PoseOps) {
+    let _ = POSE_OPS.set(ops);
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe extern "C" fn pose_op(
+    entity: u64,
+    op: i32,
+    ints: *const i32,
+    ints_len: i32,
+    floats: *const f32,
+    floats_len: i32,
+    text: *const u8,
+    text_len: i32,
+    out: *mut f32,
+    out_len: i32,
+) -> i32 {
+    let Some(ops) = POSE_OPS.get() else { return -1 };
+    // C# hands its arrays over as they are, which may not be aligned for Rust's slices: copied, read unaligned.
+    let read = |ptr: *const u8, len: i32, size: usize| -> Vec<u8> {
+        if ptr.is_null() || len <= 0 {
+            return Vec::new();
+        }
+        unsafe { std::slice::from_raw_parts(ptr, len as usize * size) }.to_vec()
+    };
+    let word = |bytes: &[u8]| -> [u8; 4] { bytes.try_into().expect("four bytes") };
+    let ints: Vec<i32> = read(ints.cast(), ints_len, 4).chunks_exact(4).map(|b| i32::from_le_bytes(word(b))).collect();
+    let floats: Vec<f32> = read(floats.cast(), floats_len, 4).chunks_exact(4).map(|b| f32::from_le_bytes(word(b))).collect();
+    let text = unsafe { utf8(text, text_len) };
+    let mut answer = vec![0f32; out_len.max(0) as usize];
+    let written = with_world(|world| ops(world, Entity::from_bits(entity), op, &ints, &floats, &text, &mut answer));
+    let Some(written) = written else { return -1 };
+    let written = written.min(answer.len());
+    if !out.is_null() {
+        for (index, value) in answer[..written].iter().enumerate() {
+            unsafe { out.add(index).write_unaligned(*value) };
+        }
+    }
+    written as i32
 }
 
 /// What answers scripts' questions about water: the engine's, set when it
@@ -1684,6 +1749,7 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         net_raycast,
         kind_value,
         kind_text,
+        pose_op,
     }
 }
 

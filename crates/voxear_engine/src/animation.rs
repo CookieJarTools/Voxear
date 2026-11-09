@@ -14,6 +14,7 @@ pub mod boxes;
 mod clips;
 pub mod grip;
 pub mod ik;
+pub(crate) mod pose_ops;
 mod motion_database;
 mod motion_matching;
 mod motion_set;

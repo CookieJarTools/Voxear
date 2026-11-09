@@ -1437,16 +1437,26 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   written and worked out again when the surfaces change. Manual: Surfaces, Painting, Holes. Still to come:
   distance resampling, a basemap far off, variants and hex tiling against repeats; curvature and flow rules;
   materials dropped onto the list.
-- **Plants on terrain:** placed plants done: a plant's place, turn, size and lean are a `Plants` component of
+- ~~**Plants on terrain:**~~ done. Placed plants: a plant's place, turn, size and lean are a `Plants` component of
   its own (in `voxear_scene`), so a server with no renderer has them; the Foliage's Paint tool paints its plant
   onto whatever is below the brush, terrain or mesh, to a density, between two sizes, leaning with the ground as
   far as asked, off ground too steep and no nearer than its spacing, Shift to erase, each stroke one step to undo.
   A plant taken away is only marked gone, so nothing is built again and the rest keep their numbers; trunks
   collide as a static capsule each, which a ray names the plant of; a Cut prefab is made where a plant cut down
   stood. C#: `RaycastHit.Plant`, `Plant.CutDown`, `Remove`, `Exists`, `Position`, `Size`, `Plants.Query`; a save of
-  the scene keeps which plants are gone (native API 63). Manual: Painting and Cutting Plants. Still to come: grass
-  and details scattered on the GPU from density maps, past the CPU's instance cap, and dug up; scatter layers by
-  rule.
+  the scene keeps which plants are gone (native API 63). Manual: Painting and Cutting Plants. Grass: up to eight
+  kinds a terrain in its `.terrain` file, each a mesh and material, a density, sizes and a draw distance, growing
+  everywhere, where painted, or on a surface as thickly as it covers, off steep ground; a byte a kind a sample,
+  worked out on worker threads over the tiles a change reaches and kept in `.heights` (version 4). Each view
+  scatters every kind on the GPU round its camera on a grid fixed to the world (same blade, same place), out of
+  holes and out of view, into a run of blades per kind and ring of distance with room for every cell the ring
+  reaches, drawn by indirect draws with the GPU picking each ring's level of detail by its mesh's error; no
+  instance of the scene's each, so past the 65,536 cap. Sways and bends as Foliage does; no shadows. Editor: the
+  Terrain's Grass tool, its list (Add Grass opens the mesh picker), each kind's settings, the brush growing it or
+  with Shift digging it up, each stroke one step to undo. Material files gained `cutout`. Tests: densities and
+  painting; GPU (half a field of 85,000 blades drawn, half bare); the editor (grass added and dug up, undone); grass
+  grown on load. Manual: Grass. Still to come: scatter layers by rule for placed plants, digging grass from scripts,
+  a basemap and impostors for far grass, and the grass's own tint between healthy and dry.
 - **Runtime edits and the ground's looks:** the runtime delta layer (heights, surfaces, holes, plants) with its C#
   API, easy and advanced, saved and sent as compact commands or per-tile deltas; tracks and deformable snow and mud;
   wetness, puddles, streams and lava painted on the ground and flowing downhill; wind and glitter; models blending

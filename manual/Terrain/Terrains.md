@@ -17,6 +17,7 @@ Along the top of the Terrain in the Inspector are its tools, as in Unity:
 - **Layers**: what the ground is made of, a stamp, noise, a road or a sculpted layer at a time. See [[Layers]].
 - **Sculpt**: brushes that shape the ground in the Scene view, and cut holes in it. See [[Sculpting]] and [[Holes]].
 - **Paint**: what the ground is covered with, and the brush that paints it. See [[Surfaces]] and [[Painting]].
+- **Grass**: the grass and details that grow on it, and the brush that grows and digs them up. See [[Grass]].
 - **Settings**: the asset, how large and fine the ground is, and how it is drawn.
 
 ## Size and resolution

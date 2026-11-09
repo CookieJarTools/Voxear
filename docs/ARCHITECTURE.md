@@ -2751,8 +2751,11 @@ worked out before any branch; triplanar where a surface asks. Distance resamplin
 come. GPU culling of patches against last frame's depth, and horizon culling over the heights, come with the chunk
 culling below.
 
-**Plants.** Placed plants (trees, rocks) are Foliage, each with an id so it can be cut down, dug up or swapped for
-a prefab; grass and details are scattered on the GPU from density maps round the camera.
+**Plants.** Placed plants (trees, rocks) are a Foliage's `Plants` (`voxear_scene`), numbered by their place, kept
+with or without a renderer, so trunks collide on servers too; one cut down is only marked gone, so nothing is built
+again and saves name it by its number. Grass and details are densities a byte a kind a sample, scattered on the GPU
+each frame round each view's camera on a grid fixed to the world, into runs of blades per kind and ring of
+distance, drawn by indirect draws outside the scene's instances (`grass.rs`, `shaders/grass.slang`).
 
 **Voxels.** Chunks of 32³, in one GPU geometry pool filled through an asynchronous upload ring, culled on the GPU
 against the frustum and last frame's depth and drawn by multi-draw-indirect, with compact vertices of their own.

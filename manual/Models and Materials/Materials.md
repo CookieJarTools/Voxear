@@ -90,6 +90,7 @@ normal_map = "c81f3e0a9b2d4c6e8f1a3b5d7e9f0a2c"
 - `color` is red, green and blue from 0 to 1, as a colour picker shows them.
 - `emissive` can go above 1 for a brighter glow.
 - `foliage = true` lights it as leaves are, as above.
+- `cutout = 0.5` cuts the surface out where its colour map's alpha is under 0.5, as leaves and grass cards are cut from their pictures. Leave it out for solid surfaces, which draw faster.
 - `glass = true` makes it glass, as above, and `ior` sets its index of refraction, 1.5 unless written.
 - `color_map`, `metallic_map`, `normal_map` and `emissive_map` name pictures by their IDs, from their `.meta` files, so the link survives a picture being renamed.
 - `shader` names a custom shader by its ID, and `[properties]` holds the values the material gives it. See [[Custom Shaders]].

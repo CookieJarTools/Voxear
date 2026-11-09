@@ -12,5 +12,6 @@ Terrain is a module: switch it on in **Project Settings** first (see [[Modules]]
 4. [[Surfaces]]: what the ground is covered with, by rules of height and slope or where it is painted
 5. [[Painting]]: painting surfaces on the ground in the Scene view
 6. [[Holes]]: cutting the ground away, for a way into a cave or a bunker
+7. [[Grass]]: grass and small details grown thickly over the ground on the GPU
 
 Terrain is under **Add Component ▸ Terrain**.

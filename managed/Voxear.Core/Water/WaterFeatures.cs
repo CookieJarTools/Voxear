@@ -32,6 +32,9 @@ public enum WaterFeatures
 	/// <summary>The two finest bands of waves, ripples from a few centimetres to a metre long.</summary>
 	FineRipples = 1 << 6,
 
+	/// <summary>Specks drifting in the water round the camera, bubbles rising from below, and soft motes by the lens.</summary>
+	Specks = 1 << 7,
+
 	/// <summary>All of them, as an Ocean starts.</summary>
-	All = (1 << 7) - 1,
+	All = (1 << 8) - 1,
 }

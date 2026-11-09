@@ -49,6 +49,7 @@ The sea's costlier looks can each be turned off, on the Ocean in the Inspector o
 | Light Shafts | Shafts of sunlight under the water, swaying with the waves |
 | Wet Lens | Drops and a film of water on the lens after it comes up out of the water, or a wave falls away past it |
 | Fine Ripples | The finest waves, from a few centimetres to a metre long |
+| Specks | Specks drifting in the water round the camera, bubbles rising from below, and soft motes right by the lens, more in murkier water |
 
 ```csharp
 // On a low quality setting: no foam standing up off the water, and no light shafts under it.

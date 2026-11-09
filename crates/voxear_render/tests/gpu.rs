@@ -4178,6 +4178,32 @@ fn coming_up_out_of_the_water_a_film_runs_down_the_lens() {
     assert!(through < clear * 0.85, "blurred through the film just out: {through:.2}, clear later: {clear:.2}");
 }
 
+/// A still sea, seen from `eye` looking along it, with its Specks on or off.
+fn specks_render(eye: Vec3, specks: bool) -> Option<Vec<u8>> {
+    use voxear_render::{Ocean, Sky, Weather};
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::from_position(eye)));
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.0, -0.7, -1.0).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.6, ..Sky::default() });
+    let murky = Ocean { weather: Weather::Custom, wind: 0.5, swell_wind: 0.2, murk: 3.0, specks, ..Ocean::default() };
+    world.spawn((murky, Transform::default()));
+    run(&mut renderer, &world, &mut 30.0, 10);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+#[test]
+fn specks_drift_in_the_water_and_none_hang_in_the_air() {
+    let under = Vec3::new(0.0, -2.0, 0.0);
+    let (Some(clear), Some(specked)) = (specks_render(under, false), specks_render(under, true)) else { return };
+    keep_image("specks.png", &specked);
+    assert!(differing_pixels(&clear, &specked) > 40, "specks under the water");
+    let above = Vec3::new(0.0, 2.0, 0.0);
+    let (bare, aired) = (specks_render(above, false).unwrap(), specks_render(above, true).unwrap());
+    assert_eq!(differing_pixels(&bare, &aired), 0, "none over it");
+}
+
 #[test]
 fn a_stormy_sea_calms_and_stops_at_the_beach() {
     use voxear_render::{Ocean, Sky, Weather};

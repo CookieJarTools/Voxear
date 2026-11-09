@@ -21,6 +21,7 @@ static const uint OCEAN_LIGHT_BENDING = 8;
 static const uint OCEAN_LIGHT_SHAFTS = 16;
 static const uint OCEAN_WET_LENS = 32;
 static const uint OCEAN_FINE_RIPPLES = 64;
+static const uint OCEAN_SPECKS = 128;
 
 // Whether the sea has `feature` on.
 bool oceanHas(Frame* frame, uint feature)
@@ -2706,6 +2707,106 @@ float2 lensDrops(Frame* frame, float2 uv, float wet, out float covered, out floa
     return offset;
 }
 
+// Three numbers from 0 to 1 for cell `cell` of a grid, the same each frame.
+float3 cellNoise(float3 cell)
+{
+    return frac(sin(float3(dot(cell, float3(127.1, 311.7, 74.7)), dot(cell, float3(269.5, 183.3, 246.1)), dot(cell, float3(113.5, 271.9, 124.6)))) * 43758.5453);
+}
+
+// The specks in the water along the pixel's view, as far as `reach`: flecks
+// of silt and plankton, one in some of the cells of a grid round the camera,
+// each wandering slowly round its place; bubbles rising in thin streams; and
+// those right by the lens, too near to be in focus, as soft wide motes.
+// Each lit by the light down there, glowing towards the sun as the water
+// does, and dimmed by the water between it and the eye. More in water that
+// scatters more.
+float3 waterSpecks(Frame* frame, Under u, float reach, float3 sunLight, float3 sky)
+{
+    static const float CELL = 0.5;
+    static const uint CELLS = 16;
+    float3 origin = frame->cameraPosition;
+    float3 way = u.view;
+    float tall = length(float3(frame->viewProj.c0.y, frame->viewProj.c1.y, frame->viewProj.c2.y));
+    // How many metres a pixel spans a metre away.
+    float spans = 2.0 / (max(tall, 1e-3) * float(frame->viewport.y));
+    float many = saturate(u.medium.scattering.g / 0.08);
+    float3 sunDown = sunUnderwater(frame);
+    float slant = max(-sunDown.y, 0.2);
+    float glow = waterPhase(dot(sunDown, -way)) * 4.0 * PI;
+    float time = frame->time;
+    // Walking the grid's cells along the view, nearest first.
+    float3 cell = floor(origin / CELL);
+    float3 stepping = select(way >= 0.0, 1.0, -1.0);
+    float3 safe = select(abs(way) > 1e-5, way, 1e-5);
+    float3 across = abs(CELL / safe);
+    float3 next = ((cell + max(stepping, 0.0)) * CELL - origin) / safe;
+    float3 total = 0.0;
+    for (uint i = 0; i < CELLS; i++)
+    {
+        float3 r = cellNoise(cell);
+        float3 corner = cell * CELL;
+        // A fleck in some cells, wandering round its place; and in a few columns of cells, a stream of bubbles
+        // rising up them, three to a cell, wobbling.
+        float3 stream = cellNoise(float3(cell.x, -7.0, cell.z));
+        bool fleck = r.x < 0.35 * many;
+        bool bubbles = stream.x > 0.93;
+        for (uint k = 0; k < 4; k++)
+        {
+            float3 at;
+            float size;
+            float bright;
+            if (k == 0)
+            {
+                if (!fleck)
+                {
+                    continue;
+                }
+                at = corner + CELL * (0.5 + 0.3 * sin(time * (0.15 + 0.2 * r) + r * 6.2831853));
+                size = 0.002 + 0.003 * r.y;
+                bright = 1.0;
+            }
+            else
+            {
+                if (!bubbles)
+                {
+                    break;
+                }
+                float rise = frac(stream.y + time * 0.6 / CELL + float(k) / 3.0);
+                float wobble = 0.04 * sin(time * 7.0 + (cell.y + rise) * 9.0);
+                at = corner + CELL * float3(0.5 + 0.3 * (stream.z - 0.5) + wobble, rise, 0.5 + 0.3 * (r.z - 0.5));
+                size = 0.004;
+                bright = 5.0;
+            }
+            float along = dot(at - origin, way);
+            float below = u.surface - at.y;
+            if (along <= 0.08 || along >= reach || below <= 0.0)
+            {
+                continue;
+            }
+            float miss = length(at - (origin + way * along));
+            // How many metres a pixel spans there, and nearer than the lens focuses, how far it is spread, as a soft
+            // brighter mote.
+            float pixel = spans * along;
+            float spread = along < 0.45 ? (0.45 - along) * 0.008 : 0.0;
+            float radius = max(size + spread, pixel * 0.8);
+            float covered = exp(-(miss * miss) / (radius * radius)) * (size * size) / (radius * radius) * min(size / pixel, 4.0);
+            covered *= 1.0 + 6.0 * spread / (spread + size);
+            float3 reaching = sunLight * glow * exp(-u.medium.fade * below / slant) + sky * exp(-u.medium.fade * below);
+            total += covered * bright * reaching * exp(-u.medium.extinction * along);
+        }
+        // On to the next cell the view enters.
+        float nearest = min(next.x, min(next.y, next.z));
+        if (nearest > reach)
+        {
+            break;
+        }
+        float3 crossing = select(next <= nearest, 1.0, 0.0);
+        cell += stepping * crossing;
+        next += across * crossing;
+    }
+    return total;
+}
+
 // How far down the screen the film of water on the lens reaches up to at
 // `uv` (lensWetnessMain), from 0 at the top; 1 where there is none.
 float lensFilmAt(float2 uv)
@@ -2782,6 +2883,18 @@ float4 underwaterFragment(UnderOut input) : SV_Target0
     if (u.under)
     {
         color = color * u.through + u.glow + (oceanHas(frame, OCEAN_LIGHT_SHAFTS) ? lightShafts(frame, u, pixel) : 0.0);
+        if (oceanHas(frame, OCEAN_SPECKS))
+        {
+            bool lit = frame->lighting.sky == SKY_ATMOSPHERE;
+            Surface up;
+            up.normal = float3(0.0, 1.0, 0.0);
+            up.view = up.normal;
+            up.roughness = 1.0;
+            up.diffuse = 0.0;
+            up.f0 = 0.02;
+            float3 sun = lit ? sunThroughAtmosphere(frame) : frame->sunColor;
+            color += waterSpecks(frame, u, min(u.distance, 8.0), sun, ambientLight(frame, frame->cameraPosition, up, sun, lit));
+        }
     }
     else if (above < 6.0)
     {

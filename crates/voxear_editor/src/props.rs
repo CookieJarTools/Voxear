@@ -514,6 +514,7 @@ pub enum Prop {
     OceanLightShafts,
     OceanWetLens,
     OceanFineRipples,
+    OceanSpecks,
     /// A Pool's footprint and liquid, its waves, and its water's colours.
     PoolSize,
     PoolDepth,
@@ -891,7 +892,8 @@ impl Prop {
             | Prop::OceanLightBending
             | Prop::OceanLightShafts
             | Prop::OceanWetLens
-            | Prop::OceanFineRipples => Part::Ocean,
+            | Prop::OceanFineRipples
+            | Prop::OceanSpecks => Part::Ocean,
             Prop::PoolSize
             | Prop::PoolDepth
             | Prop::PoolLiquid
@@ -1197,6 +1199,7 @@ impl Prop {
             Prop::OceanLightShafts => "light_shafts",
             Prop::OceanWetLens => "wet_lens",
             Prop::OceanFineRipples => "fine_ripples",
+            Prop::OceanSpecks => "specks",
             Prop::PoolSize => "size",
             Prop::PoolDepth => "depth",
             Prop::PoolLiquid => "liquid",
@@ -1718,6 +1721,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
                 Prop::OceanLightShafts,
                 Prop::OceanWetLens,
                 Prop::OceanFineRipples,
+                Prop::OceanSpecks,
             ]);
             props
         }
@@ -2077,6 +2081,7 @@ pub fn label(prop: &Prop) -> String {
         Prop::OceanLightShafts => "Light Shafts",
         Prop::OceanWetLens => "Wet Lens",
         Prop::OceanFineRipples => "Fine Ripples",
+        Prop::OceanSpecks => "Specks",
         Prop::PoolSize => "Size",
         Prop::PoolDepth => "Depth",
         Prop::PoolLiquid => "Liquid",
@@ -2899,6 +2904,7 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::OceanLightShafts => Value::Toggle(world.get::<Ocean>(entity)?.light_shafts),
         Prop::OceanWetLens => Value::Toggle(world.get::<Ocean>(entity)?.wet_lens),
         Prop::OceanFineRipples => Value::Toggle(world.get::<Ocean>(entity)?.fine_ripples),
+        Prop::OceanSpecks => Value::Toggle(world.get::<Ocean>(entity)?.specks),
         Prop::PoolSize => Value::Vector(world.get::<Pool>(entity)?.size.to_vec()),
         Prop::PoolDepth => Value::Number(world.get::<Pool>(entity)?.depth),
         Prop::PoolLiquid => {
@@ -3987,6 +3993,7 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         (Prop::OceanLightShafts, Value::Toggle(on)) => with(world, entity, |o: &mut Ocean| o.light_shafts = on),
         (Prop::OceanWetLens, Value::Toggle(on)) => with(world, entity, |o: &mut Ocean| o.wet_lens = on),
         (Prop::OceanFineRipples, Value::Toggle(on)) => with(world, entity, |o: &mut Ocean| o.fine_ripples = on),
+        (Prop::OceanSpecks, Value::Toggle(on)) => with(world, entity, |o: &mut Ocean| o.specks = on),
         (Prop::PoolSize, Value::Vector(v)) if v.len() == 2 => {
             with(world, entity, |p: &mut Pool| p.size = [v[0].max(0.1), v[1].max(0.1)])
         }

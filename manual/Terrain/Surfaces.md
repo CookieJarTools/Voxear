@@ -36,6 +36,8 @@ A typical battlefield takes three: mud as the ground's surface, packed dirt **Ev
 | Tile size | How many metres one picture of the material covers on the ground |
 | Height blend | How it meets the surfaces beside it, from 0 to 1: blended evenly at 0; towards 1, the higher bumps of its height picture stand through the other's, so stones rise out of mud where they meet |
 | Triplanar | Draws it from the side as well as from above, so its pictures do not stretch down cliffs. It costs more, so give it to the surfaces that cover steep ground |
+| Tracks | How far feet and wheels press into it, from 0 to 1: 1 for fresh snow, about a half for mud, 0 for rock and road (see [[Tracks and Snow]]) |
+| Fills in | With tracks, how many seconds they take to fill in again, as falling snow fills them. 0 keeps them |
 | Cover | Where it covers, as above. The ground's own surface has none |
 
 With **Height and Slope**, its rules:

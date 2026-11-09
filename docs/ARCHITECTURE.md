@@ -2757,6 +2757,12 @@ again and saves name it by its number. Grass and details are densities a byte a 
 each frame round each view's camera on a grid fixed to the world, into runs of blades per kind and ring of
 distance, drawn by indirect draws outside the scene's instances (`grass.rs`, `shaders/grass.slang`).
 
+**Tracks.** Only drawn, so on the GPU: each view keeps a map of the ground round its camera (1024 texels of 6 cm a
+side), holding the world's cells modulo its size so it scrolls without copying; a compute pass clears what came
+into it and presses each Track Maker's path since last frame where it touches the ground (`tracks.rs`,
+`shaders/tracks.slang`). Each texel keeps its deepest press and when; surfaces say how far they give and how soon
+they fill in. The ground's pixels march the eye's ray to the tracks' floor and bend their normal by its slope.
+
 **Voxels.** Chunks of 32³, in one GPU geometry pool filled through an asynchronous upload ring, culled on the GPU
 against the frustum and last frame's depth and drawn by multi-draw-indirect, with compact vertices of their own.
 Block worlds: palette-compressed chunks, binary greedy meshing, faces bucketed by direction, face-connectivity cave

@@ -1470,8 +1470,18 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   exactly, sizes; a script's crater, physics following it, and edits put back from bytes and from a save. Manual:
   Changing Terrain from Scripts. Still to come: choosing the form a tile at a time, sending a player who joins the
   edits on their own, and digging grass by kind.
-- **The ground's looks:** tracks and deformable snow and mud; wetness, puddles, streams and lava painted on the
-  ground and flowing downhill; wind and glitter; models blending into the ground.
+- ~~**Tracks in snow and mud:**~~ done: a Track Maker component (width, depth) presses its path since last frame
+  into a map of the ground round each view's camera (1024 texels a side, 6 cm each, scrolling by holding the world's
+  cells modulo its size), where it touches the ground; each texel keeps its deepest press and the time of the latest.
+  Surfaces gained Tracks (how far they give) and Fills in (seconds). The ground's pixels march the eye's ray down to
+  the tracks' floor, bend the normal by its slope, pack it darker, and where deep show the first surface beneath;
+  nothing collides with tracks. The pass is skipped when nothing presses and the map stays put. Editor: Track Maker
+  under Add Component ▸ Terrain; a surface's Tracks and Fills in. Tests: map scrolling and makers' paths; GPU (a track
+  pressed into snow showing the ground, staying when lifted, forgotten when scrolled past, filling in). Manual:
+  Tracks and Snow. Still to come: grass flattened in tracks, tracks in the shadows' and vertices' depth, and a map
+  that keeps tracks further off.
+- **The ground's looks:** wetness, puddles, streams and lava painted on the ground and flowing downhill; wind and
+  glitter; models blending into the ground.
 - **Digging, trenches and craters:** marching cubes into the heightmap, Transvoxel between levels; dig, fill and
   tunnel brushes, trenches along a Path with a profile, craters with rims; collision a chunk at a time.
 - **Built-in terrain generation:** generators that make a terrain to start from, chosen and tuned in the editor or

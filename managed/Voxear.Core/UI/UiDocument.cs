@@ -5,7 +5,8 @@ namespace Voxear;
 
 /// <summary>
 /// A UI the game shows over its view, laid out by Voxear UI as the editor is: a .vui document from the project, with
-/// the sheets its Style elements name, or one made empty and filled in code. <c>var hud = UiDocument.Load("UI/Hud.vui");</c>,
+/// the sheets its Style elements name, or one made empty and filled in code. <c>var hud = UiDocument.Load(hudDocument);</c>
+/// with a UiDocumentAsset field picked in the Inspector, or by path, <c>UiDocument.Load("UI/Hud.vui")</c>,
 /// then <c>hud.Find("score").Text = "10";</c> and <c>hud.Find("pause").Clicked += Pause;</c>; or
 /// <c>var hud = UiDocument.Create();</c> and <c>hud.Root.Add(new Button("Pause")).Clicked += Pause;</c>. It shows
 /// over the whole window in a built game and over the Game view in the editor, until it is closed or play mode
@@ -29,7 +30,22 @@ public sealed unsafe class UiDocument
 	/// <summary>The number the engine holds it by, which a document loaded again keeps.</summary>
 	internal int Id => id;
 
-	/// <summary>Shows a document by project path. Null when it cannot be read, which the Console says why.</summary>
+	/// <summary>
+	/// Shows a document a field picked in the Inspector: <c>UiDocument.Load(pauseMenu)</c>. Renaming or moving its file
+	/// keeps the field pointing at it. Null when it cannot be read, which the Console says why.
+	/// </summary>
+	public static UiDocument? Load(UiDocumentAsset document)
+	{
+		if (!document.IsSet)
+		{
+			Log.Error("UiDocument.Load was given no UI document: pick one for the field in the Inspector.");
+			return null;
+		}
+
+		return Load(document.Reference);
+	}
+
+	/// <summary>Shows a document by project path, as "UI/Hud.vui". Null when it cannot be read, which the Console says why.</summary>
 	public static UiDocument? Load(string path)
 	{
 		if (!Native.IsConnected)

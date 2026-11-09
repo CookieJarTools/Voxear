@@ -99,6 +99,8 @@ pub enum Part {
     Mist,
     /// A UI Panel: a UI document shown on a rectangle in the world.
     UiPanel,
+    /// A Screen UI: a UI document shown over the game's view.
+    ScreenUi,
     NetObject,
     Animator,
     MotionMatcher,
@@ -153,6 +155,7 @@ impl Part {
             Part::Smoke => "smoke".into(),
             Part::Mist => "mist".into(),
             Part::UiPanel => "ui_panel".into(),
+            Part::ScreenUi => "screen_ui".into(),
             Part::NetObject => "net".into(),
             Part::Animator => "animator".into(),
             Part::MotionMatcher => "motion_matcher".into(),
@@ -213,6 +216,7 @@ impl Part {
             Part::Smoke => "Smoke",
             Part::Mist => "Mist",
             Part::UiPanel => "UI Panel",
+            Part::ScreenUi => "Screen UI",
             Part::NetObject => "Net Object",
             Part::Animator => "Animator",
             Part::MotionMatcher => "Motion Matcher",
@@ -285,7 +289,7 @@ impl Part {
             Part::ParticleSystem => "particles",
             Part::Smoke => "particles",
             Part::Mist => "particles",
-            Part::UiPanel => "panels",
+            Part::UiPanel | Part::ScreenUi => "panels",
             Part::NetObject => "globe",
             Part::Animator => "play",
             Part::MotionMatcher => "play",
@@ -411,6 +415,8 @@ pub enum Prop {
     UiPanelFaceCamera,
     UiPanelTwoSided,
     UiPanelClickable,
+    ScreenUiDocument,
+    ScreenUiOrder,
     /// A Net Object's priority and range.
     NetPriority,
     NetRange,
@@ -807,6 +813,7 @@ impl Prop {
             | Prop::UiPanelFaceCamera
             | Prop::UiPanelTwoSided
             | Prop::UiPanelClickable => Part::UiPanel,
+            Prop::ScreenUiDocument | Prop::ScreenUiOrder => Part::ScreenUi,
             Prop::NetPriority | Prop::NetRange => Part::NetObject,
             Prop::AnimatorClip
             | Prop::AnimatorSpeed
@@ -1106,6 +1113,8 @@ impl Prop {
             Prop::UiPanelFaceCamera => "face_camera",
             Prop::UiPanelTwoSided => "two_sided",
             Prop::UiPanelClickable => "clickable",
+            Prop::ScreenUiDocument => "document",
+            Prop::ScreenUiOrder => "order",
             Prop::AnimatorClip => "clip",
             Prop::AnimatorSpeed => "speed",
             Prop::AnimatorLooping => "looping",
@@ -1392,6 +1401,9 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     if world.has::<voxear_render::UiPanel>(entity) {
         parts.push(Part::UiPanel);
     }
+    if world.has::<voxear_engine::screen_ui::ScreenUi>(entity) {
+        parts.push(Part::ScreenUi);
+    }
     if world.has::<voxear_engine::net::NetObject>(entity) {
         parts.push(Part::NetObject);
     }
@@ -1588,6 +1600,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             Prop::UiPanelTwoSided,
             Prop::UiPanelClickable,
         ],
+        Part::ScreenUi => vec![Prop::ScreenUiDocument, Prop::ScreenUiOrder],
         Part::NetObject => vec![Prop::NetPriority, Prop::NetRange],
         Part::Animator => vec![
             Prop::AnimatorClip,
@@ -1989,6 +2002,8 @@ pub fn label(prop: &Prop) -> String {
         Prop::UiPanelFaceCamera => "Face Camera",
         Prop::UiPanelTwoSided => "Two Sided",
         Prop::UiPanelClickable => "Clickable",
+        Prop::ScreenUiDocument => "Document",
+        Prop::ScreenUiOrder => "Order",
         Prop::AnimatorClip => "Clip",
         Prop::AnimatorSpeed => "Speed",
         Prop::AnimatorLooping => "Looping",
@@ -2349,6 +2364,9 @@ pub fn add(
         Part::UiPanel => {
             world.insert(entity, voxear_render::UiPanel::default());
         }
+        Part::ScreenUi => {
+            world.insert(entity, voxear_engine::screen_ui::ScreenUi::default());
+        }
         Part::NetObject => {
             world.insert(entity, voxear_engine::net::NetObject::default());
         }
@@ -2445,6 +2463,10 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
         Part::UiPanel => {
             world.remove::<voxear_render::UiPanel>(entity);
             world.remove::<voxear_engine::ui_panels::PanelDocument>(entity);
+        }
+        Part::ScreenUi => {
+            world.remove::<voxear_engine::screen_ui::ScreenUi>(entity);
+            world.remove::<voxear_engine::screen_ui::ScreenDocument>(entity);
         }
         Part::NetObject => {
             world.remove::<voxear_engine::net::NetObject>(entity);
@@ -2748,6 +2770,11 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
             Value::Asset(document.and_then(|guid| game.content.db().get(guid)).map_or("None".into(), |e| e.path.clone()))
         }
         Prop::UiPanelSize => Value::Vector(world.get::<voxear_render::UiPanel>(entity)?.size.to_vec()),
+        Prop::ScreenUiDocument => {
+            let document = world.get::<voxear_engine::screen_ui::ScreenUi>(entity)?.document;
+            Value::Asset(document.and_then(|guid| game.content.db().get(guid)).map_or("None".into(), |e| e.path.clone()))
+        }
+        Prop::ScreenUiOrder => Value::Whole(i64::from(world.get::<voxear_engine::screen_ui::ScreenUi>(entity)?.order)),
         Prop::UiPanelPixels => Value::Number(world.get::<voxear_render::UiPanel>(entity)?.pixels_per_metre),
         Prop::UiPanelFaceCamera => Value::Toggle(world.get::<voxear_render::UiPanel>(entity)?.face_camera),
         Prop::UiPanelTwoSided => Value::Toggle(world.get::<voxear_render::UiPanel>(entity)?.two_sided),
@@ -3063,7 +3090,8 @@ pub fn set(
             | Prop::Sound
             | Prop::LightCookie
             | Prop::LightProfile
-            | Prop::UiPanelDocument,
+            | Prop::UiPanelDocument
+            | Prop::ScreenUiDocument,
             Value::Asset(label),
         )
         | (Prop::LodObj(..) | Prop::LodAdd(_) | Prop::JointConnected, Value::Obj(label)) => {
@@ -3225,6 +3253,16 @@ pub fn pick(
                 },
             };
             with(&mut game.engine.world, entity, |panel: &mut voxear_render::UiPanel| panel.document = document)
+        }
+        (Prop::ScreenUiDocument, Pick::Asset(choice)) => {
+            let document = match choice {
+                None => None,
+                Some(path) => match game.content.parse(path).map(|reference| reference.guid()) {
+                    Ok(Some(guid)) => Some(guid),
+                    _ => return false,
+                },
+            };
+            with(&mut game.engine.world, entity, |screen: &mut voxear_engine::screen_ui::ScreenUi| screen.document = document)
         }
         (Prop::MatcherMotionSet, Pick::Asset(choice)) => {
             let set = match choice {
@@ -3473,7 +3511,7 @@ pub fn choices(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) ->
             return fields::asset_choices(game, types, &kind);
         }
         Prop::MatcherMotionSet => return fields::assets_of(game, Some(AssetKind::MotionSet)),
-        Prop::UiPanelDocument => return fields::assets_of(game, Some(AssetKind::Ui)),
+        Prop::UiPanelDocument | Prop::ScreenUiDocument => return fields::assets_of(game, Some(AssetKind::Ui)),
         Prop::GunHandling => return fields::assets_of(game, Some(AssetKind::GunHandling)),
         Prop::AnimatorClip => {
             let mut found = vec![("None".to_string(), Pick::Asset(None))];
@@ -3567,7 +3605,7 @@ pub fn title(types: &ScriptTypes, prop: &Prop) -> String {
         Prop::Sound => "Sound".into(),
         Prop::LightCookie => "Texture".into(),
         Prop::LightProfile => "IES profile".into(),
-        Prop::UiPanelDocument => "UI Document".into(),
+        Prop::UiPanelDocument | Prop::ScreenUiDocument => "UI Document".into(),
         Prop::LodObj(..) | Prop::LodAdd(_) => "Obj".into(),
         Prop::JointConnected => "Rigidbody".into(),
         Prop::Terrain(field) if crate::terrain_props::is_picked(*field) => crate::terrain_props::label(*field).into(),
@@ -3983,6 +4021,10 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         }
         (prop, value) if prop.part() == Part::UiPanel => {
             with(world, entity, |panel: &mut voxear_render::UiPanel| set_panel(panel, prop, value))
+        }
+        (Prop::ScreenUiOrder, Value::Whole(order)) => {
+            let order = order.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
+            with(world, entity, |screen: &mut voxear_engine::screen_ui::ScreenUi| screen.order = order)
         }
         (Prop::NetPriority, Value::Number(n)) => {
             with(world, entity, |net: &mut voxear_engine::net::NetObject| net.priority = n.max(0.0))

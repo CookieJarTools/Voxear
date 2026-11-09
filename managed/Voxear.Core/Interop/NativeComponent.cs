@@ -17,6 +17,7 @@ internal static unsafe class NativeComponent
 	public const int Skeleton = 5;
 	public const int MeshRenderer = 6;
 	public const int Hierarchy = 7;
+	public const int ScreenUi = 8;
 	public const int Gun = 16;
 	public const int GunHolder = 17;
 

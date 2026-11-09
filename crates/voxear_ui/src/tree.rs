@@ -657,6 +657,24 @@ impl Ui {
         }
     }
 
+    /// Sets one property of the element's inline style, as `("left",
+    /// "20px")`, in place of what it had for that property, and keeps the
+    /// rest, from code or its `style` attribute. An empty value takes the
+    /// property out, so sheets decide it again.
+    pub fn set_inline_property(&mut self, node: NodeId, name: &str, value: &str) {
+        let mut warnings = Vec::new();
+        let added = match value.is_empty() {
+            true => Vec::new(),
+            false => parse_inline("inline style", &format!("{name}: {value}"), &mut warnings),
+        };
+        self.warn(warnings);
+        if let Some(element) = self.element_mut(node) {
+            element.inline.retain(|declaration| declaration.name != name);
+            element.inline.extend(added);
+            self.restyle(node.0, false);
+        }
+    }
+
     /// Lays the whole UI out right to left, as Arabic and Hebrew read, or
     /// back: rows run from the right, left and right swap in margins,
     /// padding, borders and places, and text starts at the right. An

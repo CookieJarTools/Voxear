@@ -39,7 +39,8 @@ public abstract class Behaviour
 	private Obj obj;
 	private uint handle;
 	private bool enabled = true;
-	private int uiBuilt = -1;
+	private int panelBuilt = -1;
+	private int screenBuilt = -1;
 
 	/// <summary>Destroys this behaviour at the end of the frame, after OnDisable and OnDestroy.</summary>
 	public void Destroy()
@@ -75,10 +76,11 @@ public abstract class Behaviour
 	}
 
 	/// <summary>
-	/// Called once its Obj's UI Panel has built its document: the place to find the elements and subscribe to their
-	/// events. It comes after every Start of the batch and before the first Update. It is called again only for a
-	/// document built anew: when the panel is given another, or after the scripts reload while the game plays, which
-	/// lets go of the old scripts' handlers. Saving the document's file keeps the handlers, so it is not called then.
+	/// Called once its Obj's UI Panel or Screen UI has built its document: the place to find the elements and
+	/// subscribe to their events. It comes after every Start of the batch and before the first Update, once for each
+	/// of the two the Obj has. It is called again only for a document built anew: when the component is given
+	/// another, or after the scripts reload while the game plays, which lets go of the old scripts' handlers. Saving
+	/// the document's file keeps the handlers, so it is not called then.
 	/// <code>
 	/// protected override void OnUiBuilt(UiDocument ui)
 	/// {
@@ -285,16 +287,21 @@ public abstract class Behaviour
 		}
 	}
 
-	/// <summary>Calls OnUiBuilt when its Obj's UI Panel shows a document it has not been told of yet.</summary>
+	/// <summary>Calls OnUiBuilt for each document its Obj's UI Panel and Screen UI show that it has not been told of yet.</summary>
 	private void BuildUi()
 	{
-		var document = Obj.UiPanel.Document;
-		if (document == null || document.Id == uiBuilt)
+		Build(Obj.UiPanel.Document, ref panelBuilt);
+		Build(Obj.ScreenUi.Document, ref screenBuilt);
+	}
+
+	private void Build(UiDocument? document, ref int built)
+	{
+		if (document == null || document.Id == built)
 		{
 			return;
 		}
 
-		uiBuilt = document.Id;
+		built = document.Id;
 		OnUiBuilt(document);
 	}
 

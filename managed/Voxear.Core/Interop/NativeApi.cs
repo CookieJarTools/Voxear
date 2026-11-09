@@ -163,4 +163,5 @@ internal unsafe struct NativeApi
 	public delegate* unmanaged[Cdecl]<Vector3*, float, PlantRefData*, int, int> PlantsNear;
 	public delegate* unmanaged[Cdecl]<TerrainEditData*, byte*, int, int> TerrainEdit;
 	public delegate* unmanaged[Cdecl]<int, byte*, int, byte*, int, int> TerrainEdits;
+	public delegate* unmanaged[Cdecl]<int, byte*, int, byte*, int, void> UiStyleProperty;
 }

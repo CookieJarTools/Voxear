@@ -260,9 +260,9 @@ impl Editor {
                 self.game.content.forget_kind(voxear_assets::AssetKind::InputActions);
                 self.game.load_input_actions();
             }
-            // UI Panels in the world show a document edited outside the editor as it now is.
+            // UI documents on the screen and on UI Panels show as edited outside the editor, keeping their handlers.
             if documents {
-                self.game.ui.reload_panels(&mut self.game.content);
+                self.game.ui.reload_documents(&mut self.game.content);
             }
             // A shader saved from a code editor compiles again, and its materials draw with it; nothing
             // compiles again when the shaders the materials pick are as they were.

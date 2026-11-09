@@ -51,6 +51,7 @@ pub use saves::{SAVE_EXTENSION, SaveError, SaveFolder, SavePart, SaveSettings, S
 pub use services::{
     AssetName, ContentStats, LevelInfo, LevelLoadOptions, LoadProgress, PreviewOptions, PreviewSource, PreviewState,
     SceneLoadOptions, SceneRequest, ScriptServices, ServicesScope, SpawnedPrefab, UiAnswer, UiAsk, ui_panel_document,
+    ui_screen_document,
 };
 pub use ui_rows::RowWork;
 pub use windows::WindowUpdate;

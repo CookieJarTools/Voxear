@@ -31,7 +31,8 @@
 //!
 //! An Obj's `[obj.audio]` is an Audio Source, and `audio_listener = true`
 //! hears the game from it (see [`crate::audio`]). `[obj.ui_panel]` shows a
-//! UI document on a rectangle in the world (see [`crate::ui_panels`]). `[obj.lod_group]` is a
+//! UI document on a rectangle in the world (see [`crate::ui_panels`]), and
+//! `[obj.screen_ui]` one over the game's view (see [`crate::screen_ui`]). `[obj.lod_group]` is a
 //! LOD Group, which shows one of its levels' Objs at a time (see
 //! [`crate::lod_groups`]). `layer = 3` puts an Obj on a layer by its
 //! number, which stays the same when the project renames it; a file
@@ -279,6 +280,9 @@ pub struct ObjData {
     /// A UI Panel, which shows a UI document on a rectangle in the world.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ui_panel: Option<crate::ui_panels::UiPanelData>,
+    /// A Screen UI, which shows a UI document over the game's view.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub screen_ui: Option<crate::screen_ui::ScreenUiData>,
     /// A LOD Group, which shows one of its levels' Objs at a time.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lod_group: Option<LodGroupData>,
@@ -405,6 +409,7 @@ impl ObjData {
             audio: None,
             audio_listener: false,
             ui_panel: None,
+            screen_ui: None,
             layer: None,
             collider: None,
             wind_zone: None,
@@ -1503,6 +1508,9 @@ fn capture_instance(
     if root.ui_panel.is_some() && root.ui_panel != prefab_root.ui_panel {
         instance.ui_panel = root.ui_panel.clone();
     }
+    if root.screen_ui.is_some() && root.screen_ui != prefab_root.screen_ui {
+        instance.screen_ui = root.screen_ui.clone();
+    }
     if root.lod_group.is_some() && root.lod_group != prefab_root.lod_group {
         instance.lod_group = root.lod_group.clone();
     }
@@ -1687,6 +1695,9 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     }
     if let Some(panel) = actual.ui_panel.as_ref().filter(|p| Some(*p) != expected.ui_panel.as_ref()) {
         put("ui_panel", toml::Value::Table(panel.changes_from(expected.ui_panel.as_ref())));
+    }
+    if let Some(screen) = actual.screen_ui.as_ref().filter(|s| Some(*s) != expected.screen_ui.as_ref()) {
+        put("screen_ui", toml::Value::Table(screen.changes_from(expected.screen_ui.as_ref())));
     }
     if actual.audio_listener != expected.audio_listener {
         put("audio_listener", actual.audio_listener.into());
@@ -2005,6 +2016,7 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.audio = world.get::<AudioSource>(entity).map(|source| audio_source_data(content, source));
     obj.audio_listener = world.has::<AudioListener>(entity);
     obj.ui_panel = world.get::<voxear_render::UiPanel>(entity).map(crate::ui_panels::ui_panel_data);
+    obj.screen_ui = world.get::<crate::screen_ui::ScreenUi>(entity).map(crate::screen_ui::screen_ui_data);
     obj.layer = world.get::<Layer>(entity).filter(|layer| layer.0 != 0).map(|layer| LayerRef::Number(layer.0));
     obj.collider = world.get::<Collider>(entity).copied();
     obj.wind_zone = world.get::<WindZone>(entity).copied();

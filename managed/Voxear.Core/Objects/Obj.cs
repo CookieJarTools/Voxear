@@ -363,6 +363,16 @@ public readonly struct Obj : IEquatable<Obj>
 		return new UiPanel(this);
 	}
 
+	/// <summary>The Obj's Screen UI, which shows a UI document over the game's view. Not valid when it has none.</summary>
+	public ScreenUi ScreenUi => new ScreenUi(this);
+
+	/// <summary>Gives the Obj a Screen UI, unless it has one, and returns it. Its document is picked in the Inspector.</summary>
+	public ScreenUi AddScreenUi()
+	{
+		NativeComponent.Set(NativeComponent.ScreenUi, this, NativeComponent.Add, Vector4.Zero);
+		return new ScreenUi(this);
+	}
+
 	/// <summary>The Obj's Mist. Not valid when it has none.</summary>
 	public Mist Mist => new Mist(this);
 

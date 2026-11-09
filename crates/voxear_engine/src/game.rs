@@ -599,6 +599,10 @@ impl Game {
             let _scope = ServicesScope::enter(&mut services);
             self.engine.tick(delta);
         }
+        // Screen UIs show while the game plays: those made this frame, without their Objs gone.
+        if !self.engine.is_edit_mode() {
+            self.ui.sync_screens(&mut self.engine.world, &mut self.content);
+        }
         if let Some(renderer) = renderer.as_deref_mut() {
             self.prepare_post(renderer);
         }
@@ -848,8 +852,13 @@ impl ScriptServices for GameServices<'_> {
         self.display.cursor_changed = true;
     }
 
-    fn ui_load(&mut self, path: &str) -> Result<u32> {
-        self.ui.load(self.content, path)
+    fn ui_load(&mut self, reference: &str) -> Result<u32> {
+        // By project path, or by GUID, as a UiDocumentAsset field names it.
+        let path = match reference.parse::<AssetGuid>() {
+            Ok(guid) => self.content.db().get(guid).with_context(|| format!("no asset has the GUID {guid}"))?.path.clone(),
+            Err(_) => reference.to_string(),
+        };
+        self.ui.load(self.content, &path)
     }
 
     fn ui_find(&mut self, document: u32, name: &str) -> Option<u32> {
@@ -878,6 +887,10 @@ impl ScriptServices for GameServices<'_> {
 
     fn ui_panel_document(&mut self, world: &mut World, entity: Entity) -> Option<u32> {
         self.ui.load_panel(world, self.content, entity)
+    }
+
+    fn ui_screen_document(&mut self, world: &mut World, entity: Entity) -> Option<u32> {
+        self.ui.load_screen(world, self.content, entity)
     }
 
     fn load_prefab(&mut self, reference: &str) -> Result<u32> {

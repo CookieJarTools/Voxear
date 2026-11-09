@@ -177,6 +177,11 @@ pub trait ScriptServices {
         None
     }
 
+    /// The same for a Screen UI's document.
+    fn ui_screen_document(&mut self, _world: &mut World, _entity: Entity) -> Option<u32> {
+        None
+    }
+
     /// What a save calls an Obj, so that a later run finds it again: the
     /// GUID of the scene it was loaded from and its path there, as
     /// `guid:3/2`. An Obj a script made from a prefab is `spawned:` and its
@@ -273,6 +278,9 @@ pub enum UiAsk<'a> {
     SetValue(f32),
     /// Declarations that win over its sheets.
     SetStyle(&'a str),
+    /// One property of those, by its name and value, in place of what it
+    /// had for it; an empty value takes it out.
+    SetStyleProperty(&'a str, &'a str),
     /// What shows when the pointer rests on it; empty for nothing.
     SetTooltip(&'a str),
     /// What a text field shows, faded, while nothing is typed.
@@ -486,6 +494,12 @@ pub(crate) fn with_services<R>(f: impl FnOnce(&mut dyn ScriptServices) -> R) -> 
 /// them.
 pub fn ui_panel_document(world: &mut World, entity: Entity) -> Option<u32> {
     with_services(|services| services.ui_panel_document(world, entity)).flatten()
+}
+
+/// A Screen UI's document through the lent services, as
+/// [`ui_panel_document`] gives a UI Panel's.
+pub fn ui_screen_document(world: &mut World, entity: Entity) -> Option<u32> {
+    with_services(|services| services.ui_screen_document(world, entity)).flatten()
 }
 
 /// A data asset as JSON for `Definition.Load` (see

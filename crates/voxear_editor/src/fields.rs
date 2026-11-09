@@ -566,6 +566,7 @@ pub fn asset_choices(game: &Game, types: &ScriptTypes, kind: &FieldKind) -> Vec<
     let wanted = match asset.rsplit('.').next() {
         Some("Prefab") => Some(AssetKind::Prefab),
         Some("Material" | "MaterialAsset") => Some(AssetKind::Material),
+        Some("UiDocumentAsset") => Some(AssetKind::Ui),
         Some("Texture") => Some(AssetKind::Texture),
         Some("Model") => Some(AssetKind::Model),
         Some("Scene" | "SceneAsset") => Some(AssetKind::Scene),
@@ -740,6 +741,7 @@ fn has_component(world: &World, entity: Entity, name: &str) -> bool {
         "Smoke" => world.has::<voxear_render::Smoke>(entity),
         "Mist" => world.has::<voxear_render::Mist>(entity),
         "UiPanel" => world.has::<voxear_render::UiPanel>(entity),
+        "ScreenUi" => world.has::<voxear_engine::screen_ui::ScreenUi>(entity),
         "CharacterController" => world.has::<CharacterController>(entity),
         "Joint" => world.has::<Joint>(entity),
         "Collider2D" => world.has::<Collider2D>(entity),

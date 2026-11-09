@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 64;
+pub(crate) const API_VERSION: u32 = 65;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -448,6 +448,9 @@ pub(crate) struct NativeApi {
     /// `Terrain.CaptureEdits` and `Terrain.ApplyEdits`: every edited
     /// terrain's edits as bytes, and back.
     pub terrain_edits: unsafe extern "C" fn(what: i32, data: *const u8, len: i32, out: *mut u8, capacity: i32) -> i32,
+    /// `element.Style`: one property of an element's inline style.
+    pub ui_style_property:
+        unsafe extern "C" fn(element: i32, name: *const u8, name_len: i32, value: *const u8, value_len: i32),
 }
 
 /// The kinds of component scripts reach through one entry, `kind_value`,
@@ -466,6 +469,8 @@ pub enum ComponentKind {
     MeshRenderer = 6,
     /// Where an Obj is in the hierarchy: its parent and its children.
     Hierarchy = 7,
+    /// A document shown over the game's view.
+    ScreenUi = 8,
     Gun = 16,
     GunHolder = 17,
 }
@@ -1856,6 +1861,7 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         plants_near: crate::plants::plants_near,
         terrain_edit: crate::terrain::terrain_edit,
         terrain_edits: crate::terrain::terrain_edits,
+        ui_style_property: crate::ui::ui_style_property,
     }
 }
 

@@ -89,6 +89,11 @@ impl UiNumbers {
         self.numbers.clear();
     }
 
+    /// A document's container, while it is open.
+    pub fn root(&self, document: u32) -> Option<NodeId> {
+        *self.documents.get(document.checked_sub(self.first)? as usize)?
+    }
+
     pub fn has_documents(&self) -> bool {
         self.documents.iter().any(Option::is_some)
     }
@@ -222,6 +227,7 @@ impl UiNumbers {
             UiAsk::Value => return UiAnswer::Number(value(ui, node)),
             UiAsk::SetValue(to) => set_value(ui, node, to),
             UiAsk::SetStyle(style) => ui.set_inline_style(node, style),
+            UiAsk::SetStyleProperty(name, value) => ui.set_inline_property(node, name, value),
             UiAsk::SetTooltip(text) => ui.set_tooltip(node, text, None),
             UiAsk::SetPlaceholder(text) => ui.set_placeholder(node, text),
             UiAsk::SetOptions(options) => ui.set_options(node, &options.lines().collect::<Vec<_>>()),
@@ -373,6 +379,9 @@ pub(crate) struct Surface {
     /// rests on, with for how long, in seconds.
     tooltip: Option<NodeId>,
     rested: Option<(String, f32)>,
+    /// Each document loaded from a file, by its number, with the file's
+    /// path, to load again when it changes.
+    files: HashMap<u32, String>,
 }
 
 impl Surface {
@@ -386,7 +395,9 @@ impl Surface {
     /// names beside it, and returns the number scripts hold it by.
     pub fn load(&mut self, content: &mut Content, path: &str) -> Result<u32> {
         let document = self.build(content, path)?;
-        Ok(self.numbers.add_document(document))
+        let number = self.numbers.add_document(document);
+        self.files.insert(number, path.to_string());
+        Ok(number)
     }
 
     /// Loads `document` again from `path`, as after its file changed. Its
@@ -395,9 +406,50 @@ impl Surface {
     /// the file cannot be read.
     pub fn reload(&mut self, content: &mut Content, document: u32, path: &str) -> Result<()> {
         let container = self.build(content, path)?;
-        let old = self.numbers.replace(&mut self.ui, document, container);
-        self.ui.remove(old.unwrap_or(container));
+        let Some(old) = self.numbers.replace(&mut self.ui, document, container) else {
+            self.ui.remove(container);
+            return Ok(());
+        };
+        // In the old one's place among the documents, so what showed over it still does.
+        if let Some(parent) = self.ui.parent(old) {
+            let children = self.ui.children(parent);
+            let after = children.into_iter().skip_while(|&node| node != old).skip(1).filter(|&node| node != container);
+            for node in after.collect::<Vec<_>>() {
+                self.ui.move_into(node, parent);
+            }
+        }
+        self.ui.remove(old);
         Ok(())
+    }
+
+    /// Loads each document from a file again, as after files changed (see
+    /// [`reload`](Self::reload)). One that cannot be read stays as it was.
+    pub fn reload_files(&mut self, content: &mut Content) {
+        let files: Vec<(u32, String)> = self.files.iter().map(|(&document, path)| (document, path.clone())).collect();
+        for (document, path) in files {
+            if let Err(error) = self.reload(content, document, &path) {
+                tracing::warn!("{error:#}");
+            }
+        }
+    }
+
+    /// Shows or hides a whole document.
+    pub(crate) fn set_document_visible(&mut self, document: u32, visible: bool) {
+        if let Some(root) = self.numbers.root(document) {
+            self.ui.set_visible(root, visible);
+        }
+    }
+
+    /// Puts these documents over every other, the last over all, under the
+    /// tooltip.
+    pub(crate) fn raise(&mut self, documents: &[u32]) {
+        let root = self.ui.root();
+        for node in documents.iter().filter_map(|&document| self.numbers.root(document)) {
+            self.ui.move_into(node, root);
+        }
+        if let Some(tooltip) = self.tooltip {
+            self.ui.move_into(tooltip, root);
+        }
     }
 
     /// Builds the document at `path` in a container of its own on the
@@ -498,6 +550,7 @@ impl Surface {
 
     /// Takes a document off the screen, its elements with it.
     pub fn close(&mut self, document: u32) {
+        self.files.remove(&document);
         if let Some(node) = self.numbers.close(document) {
             self.ui.remove(node);
         }
@@ -644,8 +697,10 @@ const PANEL_SPAN: u32 = 1 << 16;
 /// same numbers, each UI's in a range of its own.
 #[derive(Default)]
 pub struct GameUi {
-    screen: Surface,
+    pub(crate) screen: Surface,
     pub(crate) panels: Vec<crate::ui_panels::PanelUi>,
+    /// The Screen UIs in the world, each a document of the screen's.
+    pub(crate) screens: Vec<crate::screen_ui::ScreenDoc>,
     /// The next panel's first number, less [`PANEL_NUMBERS`], in spans.
     next_panel: u32,
     /// The panel the pointer is over, and the one a press went down on,

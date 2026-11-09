@@ -163,6 +163,13 @@ pub(crate) unsafe extern "C" fn ui_style(element: i32, style: *const u8, len: i3
     ask(element, UiAsk::SetStyle(&style));
 }
 
+/// Sets one property of an element's inline style (`element.Style.Left`),
+/// or with an empty value takes it out.
+pub(crate) unsafe extern "C" fn ui_style_property(element: i32, name: *const u8, name_len: i32, value: *const u8, value_len: i32) {
+    let (name, value) = unsafe { (utf8(name, name_len), utf8(value, value_len)) };
+    ask(element, UiAsk::SetStyleProperty(&name, &value));
+}
+
 fn ask(element: i32, asked: UiAsk<'_>) -> Option<UiAnswer> {
     if element < 0 {
         return None;

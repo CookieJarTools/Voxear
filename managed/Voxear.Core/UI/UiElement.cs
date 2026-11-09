@@ -38,7 +38,8 @@ public unsafe class UiElement
 	private Action? clicked;
 	private Action? changed;
 	private string text;
-	private string? style;
+	private string? styleText;
+	private UiStyle? style;
 	private bool visible = true;
 	private float value;
 	private UiText tooltip;
@@ -230,10 +231,43 @@ public unsafe class UiElement
 		return ChangeClass(name, ClassHas);
 	}
 
-	/// <summary>Declarations that win over its sheets, as a style attribute's: <c>bar.SetStyle("width: 40%")</c>.</summary>
+	/// <summary>
+	/// Its own style, a property at a time, each winning over its sheets and keeping the rest:
+	/// <c>bar.Style.Position = Position.Absolute;</c>, <c>bar.Style.Width = Length.Percent(50);</c>. SetStyles sets
+	/// several at once.
+	/// </summary>
+	public UiStyle Style => style ??= new UiStyle(this);
+
+	/// <summary>
+	/// Its whole style as CSS text, as a style attribute's: <c>bar.SetStyle("width: 40%")</c>, in place of everything
+	/// it had from code or its style attribute. For what Style does not have a property for yet.
+	/// </summary>
 	public void SetStyle(string declarations)
 	{
-		style = declarations;
+		styleText = declarations;
+		style?.Forget();
+		SendStyleText(declarations);
+	}
+
+	/// <summary>Sends one property of its style, as Style sets it, or takes it out with an empty value.</summary>
+	internal void SendStyleProperty(string name, string value)
+	{
+		if (!IsShown)
+		{
+			return;
+		}
+
+		var nameBytes = Encoding.UTF8.GetBytes(name);
+		var valueBytes = Encoding.UTF8.GetBytes(value);
+		fixed (byte* named = nameBytes)
+		fixed (byte* written = valueBytes)
+		{
+			Native.Api->UiStyleProperty(Id, named, nameBytes.Length, written, valueBytes.Length);
+		}
+	}
+
+	private void SendStyleText(string declarations)
+	{
 		if (!IsShown)
 		{
 			return;
@@ -434,10 +468,11 @@ public unsafe class UiElement
 		{
 			SendClass(name, ClassAdd);
 		}
-		if (style != null)
+		if (styleText != null)
 		{
-			SetStyle(style);
+			SendStyleText(styleText);
 		}
+		style?.SendAll();
 		if (!visible)
 		{
 			Show(false);

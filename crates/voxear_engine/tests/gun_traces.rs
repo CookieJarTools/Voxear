@@ -10,6 +10,14 @@
 //! `VOXEAR_GUN_TRACES` or else the guns package's `Tests/Traces` beside the
 //! engine's folder. Without traces there, it skips itself, as it does
 //! without .NET and the managed build.
+//!
+//! With `VOXEAR_GUNS_PACKAGE` naming the guns package's folder, the guns
+//! are the package's instead of the engine's: the Hello copy adds it as a
+//! folder package, the Guns module stays off, the driver uses its
+//! namespace, and the Rifle is its sample's. They must match the same
+//! traces, which are never recorded from them. `VOXEAR_GUN_TRACES_RUN`
+//! names a folder to write a run's own traces into, to look over beside
+//! the kept ones.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -260,17 +268,26 @@ fn guns_hold_move_and_work_as_their_traces_have_them() {
         return eprintln!("skipping: needs .NET and the managed build");
     }
     let recording = std::env::var_os("VOXEAR_RECORD_GUN_TRACES").is_some();
-    let folder = traces_folder();
+    let package = std::env::var_os("VOXEAR_GUNS_PACKAGE").map(PathBuf::from);
+    assert!(!(recording && package.is_some()), "the traces are recorded from the engine's guns, never the package's");
+    let folder = traces_folder(package.as_deref());
     if !recording && !folder.join("Aim.trace").is_file() {
         return eprintln!("skipping: no gun traces in {}", folder.display());
     }
-    let traces = run();
+    let traces = run(package.as_deref());
     if recording {
         std::fs::create_dir_all(&folder).unwrap();
         for (name, lines) in &traces {
             std::fs::write(folder.join(format!("{name}.trace")), trace_file(name, lines)).unwrap();
         }
         return eprintln!("recorded {} gun traces in {}", traces.len(), folder.display());
+    }
+    // A run's own traces, to look over beside the kept ones, where `VOXEAR_GUN_TRACES_RUN` names a folder.
+    if let Some(run_folder) = std::env::var_os("VOXEAR_GUN_TRACES_RUN").map(PathBuf::from) {
+        std::fs::create_dir_all(&run_folder).unwrap();
+        for (name, lines) in &traces {
+            std::fs::write(run_folder.join(format!("{name}.trace")), trace_file(name, lines)).unwrap();
+        }
     }
     let mut differences = Vec::new();
     for (name, lines) in &traces {
@@ -280,16 +297,22 @@ fn guns_hold_move_and_work_as_their_traces_have_them() {
     assert!(differences.is_empty(), "the guns differ from their traces:\n{}", differences.join("\n"));
 }
 
-/// Runs every trace at once in a copy of Hello with the Guns module on,
-/// and gives each one's lines, a frame a line.
-fn run() -> BTreeMap<String, Vec<String>> {
+/// Runs every trace at once in a copy of Hello, with the Guns module on or
+/// the guns package in `package`, and gives each one's lines, a frame a line.
+fn run(package: Option<&Path>) -> BTreeMap<String, Vec<String>> {
     let log = LogCapture::default();
     let _logging = tracing::subscriber::set_default(voxear_core::logging::capturing_only(log.clone()));
     let dir = hello_copy();
-    std::fs::write(dir.path().join("Scripts/GunTrace.cs"), DRIVER).unwrap();
-    std::fs::write(dir.path().join("Rifle.prefab"), RIFLE).unwrap();
-    let mut project = Project::open(dir.path()).unwrap();
-    project.set_module(voxear_engine::modules::Module::Guns, true).unwrap();
+    let project = match package {
+        Some(package) => with_package(dir.path(), package),
+        None => {
+            std::fs::write(dir.path().join("Scripts/GunTrace.cs"), DRIVER).unwrap();
+            std::fs::write(dir.path().join("Rifle.prefab"), RIFLE).unwrap();
+            let mut project = Project::open(dir.path()).unwrap();
+            project.set_module(voxear_engine::modules::Module::Guns, true).unwrap();
+            project
+        }
+    };
     if let Err(error) = scripts::build(&project) {
         let lines: Vec<String> = log.lock().unwrap().lines.iter().map(|l| l.message.clone()).collect();
         panic!("{error:#}: {lines:#?}");
@@ -320,6 +343,21 @@ fn run() -> BTreeMap<String, Vec<String>> {
         traces.entry(name).or_default().push(format!("{frame} {measured} | {state}"));
     }
     traces
+}
+
+/// The Hello copy in `dir` with the guns package in `package` as a folder
+/// package, the driver using its guns and the Rifle its sample's, and the
+/// Guns module off.
+fn with_package(dir: &Path, package: &Path) -> Project {
+    let package = package.canonicalize().expect("the guns package's folder");
+    let toml = format!("[packages]\nvoxear-guns = {{ path = {:?} }}\n", package.display().to_string());
+    std::fs::write(dir.join("packages.toml"), toml).unwrap();
+    let driver = DRIVER.replacen("using Voxear;\n", "using Voxear;\nusing Voxear.Guns;\n", 1);
+    std::fs::write(dir.join("Scripts/GunTrace.cs"), driver).unwrap();
+    std::fs::copy(package.join("Samples/Rifle/Rifle.prefab"), dir.join("Rifle.prefab")).unwrap();
+    let mut project = Project::open(dir).unwrap();
+    project.set_module(voxear_engine::modules::Module::Guns, false).unwrap();
+    project
 }
 
 /// A player away from Hello's own Objs and from the others: the Obj that
@@ -449,11 +487,15 @@ fn compare(name: &str, kept: &str, run: &[String]) -> Vec<String> {
 }
 
 /// The guns package's traces: in `VOXEAR_GUN_TRACES` when it names a
-/// folder, or else in `VoxearGuns` beside the engine's folder, or beside a
-/// folder it is in, as a work tree under it is.
-fn traces_folder() -> PathBuf {
+/// folder, or else in the package being run, or else in `VoxearGuns` beside
+/// the engine's folder, or beside a folder it is in, as a work tree under it
+/// is.
+fn traces_folder(package: Option<&Path>) -> PathBuf {
     if let Some(folder) = std::env::var_os("VOXEAR_GUN_TRACES") {
         return PathBuf::from(folder);
+    }
+    if let Some(package) = package {
+        return package.join("Tests/Traces");
     }
     let engine = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let engine = engine.canonicalize().unwrap_or(engine);

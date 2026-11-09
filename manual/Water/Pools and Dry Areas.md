@@ -12,6 +12,8 @@ A Pool can be anywhere, above or below the sea:
 - **Raised above everything**, a block of water standing in the air, its sides and bottom show as walls of water you can see into.
 - **Anywhere**, it ripples with the sea's small waves. **Waves** adds the sea's long swell as well, from 0 for none to 1 for as much as the sea has, for a lagoon that rises and falls with the tide.
 
+A large Pool is drawn as finely near the camera as the sea is, so a lake's ripples are as sharp at your feet as a pond's.
+
 | Setting | What it does |
 | --- | --- |
 | Size | Across and along, in metres |

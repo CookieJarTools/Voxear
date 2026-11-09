@@ -55,8 +55,11 @@ static const float SHALLOWS_SLOPE = 0.03;
 static const uint WATER_QUADS = 64;
 static const uint WATER_RINGS = 12;
 static const float WATER_SPACING = 0.25;
-// A Pool's grid: this many quads along each side.
+// A Pool's grid: this many quads along each side. A Pool larger than that
+// many of the sea's finest quads a side is drawn with the sea's rings round
+// the camera instead (src/water.rs's RINGED_POOL).
 static const uint POOL_QUADS = 64;
+static const float RINGED_POOL = float(POOL_QUADS) * WATER_SPACING;
 // A Stream's strip: this many quads across it at each point.
 static const uint STREAM_ACROSS = 8;
 // How long a Stream's ripples drift with it before they start again (two-phase flow).
@@ -1120,10 +1123,61 @@ float oceanHeightExact(Frame* frame, float2 rest, float spacing, float swell, fl
     return height;
 }
 
-// A corner of a quad of ring `ring`, round the camera. Each ring leaves out
-// the quads the finer ring inside it covers; its rings meet at multiples of
-// its own spacing, so a quad is wholly in or out. Near its outer edge its
-// odd vertices slide onto the coarser ring's, so the two meet without cracks.
+// How far apart ring `ring` round the camera has its points, in metres:
+// the first WATER_SPACING, each twice the last.
+float ringSpacing(uint ring)
+{
+    return WATER_SPACING * exp2(float(ring));
+}
+
+// The middle of the ring round `camera` whose points are `spacing` apart: on
+// a whole number of twice its spacing, so its points stay put as the camera
+// moves, and the finer ring inside it ends on its points.
+float2 ringCentre(float2 camera, float spacing)
+{
+    return floor(camera / (2.0 * spacing)) * 2.0 * spacing;
+}
+
+// Where ring `ring` round `camera` starts: its corner with the lowest x and z.
+float2 ringCorner(float2 camera, uint ring)
+{
+    float spacing = ringSpacing(ring);
+    return ringCentre(camera, spacing) - float(WATER_QUADS) * 0.5 * spacing;
+}
+
+// Whether ring `ring` round `camera` reaches over `at`.
+bool ringHolds(float2 camera, uint ring, float2 at)
+{
+    float spacing = ringSpacing(ring);
+    return all(abs(at - ringCentre(camera, spacing)) < float(WATER_QUADS) * 0.5 * spacing);
+}
+
+// Whether quad `cell` of ring `ring` round `camera` is left out, as the finer
+// ring inside it covers it. Rings meet at multiples of the coarser one's
+// spacing, so a quad is wholly in or out.
+bool ringCovered(float2 camera, uint ring, uint2 cell)
+{
+    float2 middle = ringCorner(camera, ring) + (float2(cell) + 0.5) * ringSpacing(ring);
+    return ring > 0 && ringHolds(camera, ring - 1, middle);
+}
+
+// Where point `grid` of ring `ring` round `camera` rests. Near the ring's
+// outer edge its odd points slide onto the coarser ring's, so the two meet
+// without cracks; `sampled` is how coarsely to read the waves there, as
+// coarsely as the coarser ring where they meet, so both put a shared point
+// at one height.
+float2 ringRest(float2 camera, uint ring, uint2 grid, out float sampled)
+{
+    float spacing = ringSpacing(ring);
+    float2 rest = ringCorner(camera, ring) + float2(grid) * spacing;
+    float edge = float(min(min(grid.x, grid.y), min(WATER_QUADS - grid.x, WATER_QUADS - grid.y)));
+    float morph = ring + 1 < WATER_RINGS ? saturate(1.0 - edge / 8.0) : 0.0;
+    sampled = spacing * exp2(morph);
+    return rest - float2(grid % 2) * spacing * morph;
+}
+
+// A corner of a quad of ring `ring` round the camera, each ring leaving out
+// what the finer ring inside it covers (ringCovered, ringRest).
 [shader("vertex")]
 WaterOut waterVertex(uint vertexId : SV_VertexID, uint ring : SV_InstanceID)
 {
@@ -1131,27 +1185,14 @@ WaterOut waterVertex(uint vertexId : SV_VertexID, uint ring : SV_InstanceID)
     static const uint2 corners[6] = { uint2(0, 0), uint2(0, 1), uint2(1, 0), uint2(1, 0), uint2(0, 1), uint2(1, 1) };
     uint quad = vertexId / 6;
     uint2 cell = uint2(quad % WATER_QUADS, quad / WATER_QUADS);
-    float spacing = WATER_SPACING * exp2(float(ring));
-    float2 centre = floor(frame->cameraPosition.xz / (2.0 * spacing)) * 2.0 * spacing;
-    float extent = float(WATER_QUADS) * 0.5 * spacing;
-    WaterOut o;
-    if (ring > 0)
+    float2 camera = frame->cameraPosition.xz;
+    if (ringCovered(camera, ring, cell))
     {
-        float finer = spacing * 0.5;
-        float2 finerCentre = floor(frame->cameraPosition.xz / (2.0 * finer)) * 2.0 * finer;
-        float2 middle = centre - extent + (float2(cell) + 0.5) * spacing;
-        if (all(abs(middle - finerCentre) < float(WATER_QUADS) * 0.5 * finer))
-        {
-            return nothing();
-        }
+        return nothing();
     }
-    uint2 grid = cell + corners[vertexId % 6];
-    float2 rest = centre - extent + float2(grid) * spacing;
-    float edge = float(min(min(grid.x, grid.y), min(WATER_QUADS - grid.x, WATER_QUADS - grid.y)));
-    float morph = ring + 1 < WATER_RINGS ? saturate(1.0 - edge / 8.0) : 0.0;
-    rest -= float2(grid % 2) * spacing * morph;
-    // Sampled as coarsely as the coarser ring where they meet, so both put a shared vertex at one height.
-    float sampled = spacing * exp2(morph);
+    WaterOut o;
+    float sampled;
+    float2 rest = ringRest(camera, ring, cell + corners[vertexId % 6], sampled);
     float level = frame->ocean.level;
     float depth = seaDepth(frame, rest);
     float3 world = float3(rest.x, level, rest.y) + oceanMoved(frame, rest, sampled, false, 1.0, depth);
@@ -1187,30 +1228,104 @@ WaterOut nothing()
     return o;
 }
 
-// A corner of a quad of Pool `pool`'s grid over its footprint, at its
-// height, with the sea's smallest waves on it as much as it says.
+// Whether Pool `pool` is drawn with rings round the camera rather than its
+// own grid: when its grid would be coarser than the rings' finest.
+bool poolRinged(WaterBody pool)
+{
+    return max(pool.size.x, pool.size.z) > RINGED_POOL;
+}
+
+// How many quads a side the grid or a ring of Pool `pool` has.
+uint poolQuads(WaterBody pool)
+{
+    return poolRinged(pool) ? WATER_QUADS : POOL_QUADS;
+}
+
+// The camera across Pool `pool`'s footprint: what its rings are round, laid
+// along its sides and turned with it.
+float2 poolCamera(Frame* frame, WaterBody pool)
+{
+    return transform(pool.toLocal, float4(frame->cameraPosition, 1.0)).xz;
+}
+
+// Whether Pool `pool` draws quad `cell` of ring `ring` (of its grid, which
+// is ring 0, when it has no rings): only where it covers some of its
+// footprint that no finer ring does. A ring's corners slide back up to a
+// quad's width (ringRest), so a quad reaches one further back than it lies.
+bool poolDraws(Frame* frame, WaterBody pool, uint ring, uint2 cell)
+{
+    if (!poolRinged(pool))
+    {
+        return ring == 0;
+    }
+    float2 camera = poolCamera(frame, pool);
+    float spacing = ringSpacing(ring);
+    float2 low = ringCorner(camera, ring) + float2(cell) * spacing;
+    float2 half = pool.size.xz * 0.5;
+    return !ringCovered(camera, ring, cell) && all(low - spacing < half) && all(low + spacing > -half);
+}
+
+// Where point `grid` of Pool `pool`'s ring `ring` (or its grid) rests across
+// its footprint, kept inside its sides; `sampled` is how coarsely the waves
+// are read there, as far apart as the points are.
+float2 poolRest(Frame* frame, WaterBody pool, uint ring, uint2 grid, out float sampled)
+{
+    if (!poolRinged(pool))
+    {
+        sampled = max(pool.size.x, pool.size.z) / float(POOL_QUADS);
+        return (float2(grid) / float(POOL_QUADS) - 0.5) * pool.size.xz;
+    }
+    float2 half = pool.size.xz * 0.5;
+    return clamp(ringRest(poolCamera(frame, pool), ring, grid, sampled), -half, half);
+}
+
+// Where the water of Pool `pool` resting `across` its footprint is drawn,
+// across it and how high, its waves read as coarsely as `sampled` metres:
+// moved up and down in full, but sideways less and less towards its sides
+// and never past them, so its surface stays inside its walls however high
+// the waves. Last frame's with `previous`.
+float3 poolPoint(Frame* frame, WaterBody pool, float2 across, float sampled, bool previous)
+{
+    float3 flat = transform(pool.toWorld, float4(across.x, 0.0, across.y, 1.0)).xyz;
+    // Lava is too thick for waves.
+    float wet = pool.liquid == LIQUID_LAVA ? 0.0 : 1.0;
+    float3 moved = transform(pool.toLocal, float4(oceanMoved(frame, flat.xz, sampled, previous, pool.waves) * wet, 0.0)).xyz;
+    float2 half = pool.size.xz * 0.5;
+    float2 room = half - abs(across);
+    float2 held = across + moved.xz * saturate(min(room.x, room.y) / max(0.15 * min(pool.size.x, pool.size.z), 0.01));
+    held = clamp(held, -half, half);
+    return float3(held.x, moved.y, held.y);
+}
+
+// A corner of a quad of Pool push.list's surface, at its height, with the
+// sea's smallest waves on it as much as it says. A large Pool is drawn
+// with ring `ring` round the camera as the sea is (waterVertex), along its
+// sides and turned with it, cut off at its sides; a small one with a grid
+// over its footprint.
 [shader("vertex")]
-WaterOut poolVertex(uint vertexId : SV_VertexID, uint pool : SV_InstanceID)
+WaterOut poolVertex(uint vertexId : SV_VertexID, uint ring : SV_InstanceID)
 {
     Frame* frame = push.frame;
     static const uint2 corners[6] = { uint2(0, 0), uint2(0, 1), uint2(1, 0), uint2(1, 0), uint2(0, 1), uint2(1, 1) };
-    WaterBody body = buffers()->waterBodies[pool];
+    WaterBody body = buffers()->waterBodies[push.list];
     uint quad = vertexId / 6;
-    uint2 grid = uint2(quad % POOL_QUADS, quad / POOL_QUADS) + corners[vertexId % 6];
-    float2 across = (float2(grid) / float(POOL_QUADS) - 0.5) * body.size.xz;
-    float3 flat = transform(body.toWorld, float4(across.x, 0.0, across.y, 1.0)).xyz;
-    float spacing = poolSpacing(body);
-    // Lava is too thick for waves.
-    float wet = body.liquid == LIQUID_LAVA ? 0.0 : 1.0;
-    float3 world = poolMoved(body, across, oceanMoved(frame, flat.xz, spacing, false, body.waves) * wet);
-    float3 before = poolMoved(body, across, oceanMoved(frame, flat.xz, spacing, true, body.waves) * wet);
+    uint quads = poolQuads(body);
+    uint2 cell = uint2(quad % quads, quad / quads);
+    if (!poolDraws(frame, body, ring, cell))
+    {
+        return nothing();
+    }
+    float sampled;
+    float2 across = poolRest(frame, body, ring, cell + corners[vertexId % 6], sampled);
+    float3 world = transform(body.toWorld, float4(poolPoint(frame, body, across, sampled, false), 1.0)).xyz;
+    float3 before = transform(body.toWorld, float4(poolPoint(frame, body, across, sampled, true), 1.0)).xyz;
     WaterOut o;
     o.position = transform(frame->viewProj, float4(world, 1.0));
     o.world = world;
-    o.rest = flat.xz;
+    o.rest = transform(body.toWorld, float4(across.x, 0.0, across.y, 1.0)).xz;
     o.currentClip = transform(frame->unjitteredViewProj, float4(world, 1.0));
     o.previousClip = transform(frame->prevViewProj, float4(before, 1.0));
-    o.body = pool;
+    o.body = push.list;
     o.stream = 0.0;
     o.lava = 0.0;
     o.mouth = 0.0;
@@ -1218,52 +1333,86 @@ WaterOut poolVertex(uint vertexId : SV_VertexID, uint pool : SV_InstanceID)
     return o;
 }
 
-// Where the water of Pool `pool` resting `across` its footprint is moved to
-// by its waves, `moved`: up and down in full, but sideways less and less
-// towards its sides and never past them, so its surface stays inside its
-// walls however high the waves.
-float3 poolMoved(WaterBody pool, float2 across, float3 moved)
+// The point of Pool `pool`'s surface as poolVertex draws it whose water rests
+// `across` its footprint, across it and how high: on the triangle drawn
+// there, between its corners as they are moved. Each quad is two triangles
+// split from its (0, 1) corner to its (1, 0) one; its corners can slide
+// near a ring's edge or stop at the Pool's sides, so `across` is weighed
+// between where they rest.
+float3 poolDrawnAt(Frame* frame, WaterBody pool, float2 across)
 {
-    float3 local = transform(pool.toLocal, float4(moved, 0.0)).xyz;
-    float2 half = pool.size.xz * 0.5;
-    float2 room = half - abs(across);
-    float2 held = across + local.xz * saturate(min(room.x, room.y) / max(0.15 * min(pool.size.x, pool.size.z), 0.01));
-    held = clamp(held, -half, half);
-    return transform(pool.toWorld, float4(held.x, local.y, held.y, 1.0)).xyz;
-}
-
-// How high Pool `pool`'s surface is drawn over `world`: on the triangle of
-// its grid there, between its corners as poolVertex moves them, so a
-// waterline meets the surface as drawn even where the grid is coarser than
-// its waves.
-float poolGridHeight(Frame* frame, WaterBody pool, float3 world)
-{
-    float3 local = transform(pool.toLocal, float4(world, 1.0)).xyz;
-    float2 at = (local.xz / pool.size.xz + 0.5) * float(POOL_QUADS);
-    float2 cell = floor(at);
-    float2 f = at - cell;
-    // Each quad is two triangles split from its (0, 1) corner to its (1, 0) one, as poolVertex lays them.
-    bool far = f.x + f.y > 1.0;
-    float2 corners[3] = { far ? float2(1.0, 1.0) : float2(0.0, 0.0), float2(1.0, 0.0), float2(0.0, 1.0) };
-    float2 weights = far ? float2(1.0 - f.y, 1.0 - f.x) : f;
-    float spacing = poolSpacing(pool);
-    float height = 0.0;
-    for (uint i = 0; i < 3; i++)
+    uint ring = 0;
+    float2 at;
+    float spacing;
+    if (poolRinged(pool))
     {
-        float2 across = ((cell + corners[i]) / float(POOL_QUADS) - 0.5) * pool.size.xz;
-        float3 flat = transform(pool.toWorld, float4(across.x, 0.0, across.y, 1.0)).xyz;
-        float y = poolMoved(pool, across, oceanMoved(frame, flat.xz, spacing, false, pool.waves)).y;
-        float weight = i == 0 ? 1.0 - weights.x - weights.y : (i == 1 ? weights.x : weights.y);
-        height += y * weight;
+        float2 camera = poolCamera(frame, pool);
+        while (ring + 1 < WATER_RINGS && !ringHolds(camera, ring, across))
+        {
+            ring++;
+        }
+        spacing = ringSpacing(ring);
+        at = (across - ringCorner(camera, ring)) / spacing;
     }
-    return height;
+    else
+    {
+        spacing = min(pool.size.x, pool.size.z) / float(POOL_QUADS);
+        at = (across / pool.size.xz + 0.5) * float(POOL_QUADS);
+    }
+    uint2 cell = uint2(clamp(floor(at), 0.0, float(poolQuads(pool) - 1)));
+    float sampled[4];
+    float2 rest[4];
+    static const uint2 corners[4] = { uint2(0, 0), uint2(1, 0), uint2(0, 1), uint2(1, 1) };
+    for (uint i = 0; i < 4; i++)
+    {
+        rest[i] = poolRest(frame, pool, ring, cell + corners[i], sampled[i]);
+    }
+    // Which side of the split `across` is on: the (1, 1) corner's, or the (0, 0) one's.
+    float2 split = rest[2] - rest[1];
+    float2 toPoint = across - rest[1];
+    float2 toFar = rest[3] - rest[1];
+    uint first = (split.x * toPoint.y - split.y * toPoint.x) * (split.x * toFar.y - split.y * toFar.x) > 0.0 ? 3 : 0;
+    float2 e1 = rest[1] - rest[first];
+    float2 e2 = rest[2] - rest[first];
+    float2 p = across - rest[first];
+    float area = e1.x * e2.y - e1.y * e2.x;
+    float3 weights;
+    if (abs(area) > 1e-4 * spacing * spacing)
+    {
+        float2 w = float2(p.x * e2.y - p.y * e2.x, e1.x * p.y - e1.y * p.x) / area;
+        // Kept on the triangle where a ring's corners slid past `across`.
+        weights = max(float3(1.0 - w.x - w.y, w), 0.0);
+        weights /= weights.x + weights.y + weights.z;
+    }
+    else
+    {
+        // Squashed flat where the corners slid together: weighed as if they had not.
+        float2 f = saturate(at - float2(cell));
+        first = f.x + f.y > 1.0 ? 3 : 0;
+        weights = first == 3 ? float3(f.x + f.y - 1.0, 1.0 - f.y, 1.0 - f.x) : float3(1.0 - f.x - f.y, f);
+    }
+    float3 drawn = poolPoint(frame, pool, rest[first], sampled[first], false) * weights.x;
+    drawn += poolPoint(frame, pool, rest[1], sampled[1], false) * weights.y;
+    drawn += poolPoint(frame, pool, rest[2], sampled[2], false) * weights.z;
+    return drawn;
 }
 
-// How far apart a Pool's grid's points are, in metres, which its walls read
-// its waves as coarsely as, to meet its surface.
-float poolSpacing(WaterBody pool)
+// How high Pool `pool`'s surface is drawn over `world`, as poolDrawnAt finds
+// it, so a waterline meets the surface as drawn however coarse its quads
+// there: found by undoing its waves' sideways pinch `steps` times, so the
+// height is that of the water the waves moved over `world`.
+float poolDrawnHeight(Frame* frame, WaterBody pool, float3 world, uint steps)
 {
-    return max(pool.size.x, pool.size.z) / float(POOL_QUADS);
+    float2 target = transform(pool.toLocal, float4(world, 1.0)).xz;
+    float2 half = pool.size.xz * 0.5;
+    float2 across = clamp(target, -half, half);
+    float3 drawn = poolDrawnAt(frame, pool, across);
+    for (uint i = 0; i < steps; i++)
+    {
+        across = clamp(across + target - drawn.xz, -half, half);
+        drawn = poolDrawnAt(frame, pool, across);
+    }
+    return transform(pool.toWorld, float4(drawn, 1.0)).y;
 }
 
 // A corner of a quad of Stream push.list's strip: STREAM_ACROSS quads across
@@ -1426,7 +1575,7 @@ bool keptDry(Frame* frame, float3 world, uint body)
 
 // How high the water whose resting surface waterSurface found at `surface`
 // stands over `world` with its waves: the sea's, or a Pool's share of them,
-// as coarsely as its grid carries them. Found by undoing the waves'
+// as its surface is drawn (poolDrawnHeight). Found by undoing the waves'
 // sideways pinch, so the height is that of the water the waves moved over
 // `world`, and a waterline rises and falls as each wave does.
 float wavySurface(Frame* frame, float3 world, float surface)
@@ -1439,7 +1588,7 @@ float wavySurface(Frame* frame, float3 world, float surface)
         WaterBody body = buffers()->waterBodies[i];
         if (body.liquid == LIQUID_WATER && body.shape == 0 && body.toWorld.c3.y == surface && overPool(body, world))
         {
-            return poolGridHeight(frame, body, world);
+            return poolDrawnHeight(frame, body, world, 3);
         }
     }
     if (!sea)
@@ -1466,6 +1615,17 @@ bool cameraUnderwater(Frame* frame)
         return false;
     }
     return camera.y < wavySurface(frame, camera, surface);
+}
+
+// As cameraUnderwater, as the Waterline pass found it this frame
+// (lensWetnessMain), so a pass over every pixel need not find it again.
+bool cameraUnder(Frame* frame)
+{
+    if (frame->ocean.waterline == NO_TEXTURE)
+    {
+        return cameraUnderwater(frame);
+    }
+    return textures[NonUniformResourceIndex(frame->ocean.waterline)].Load(int3(0, 1, 0)).r > 0.5;
 }
 
 // The water light passes through, a metre of it: how much of each colour
@@ -2381,14 +2541,14 @@ WallOut wallVertex(uint vertexId : SV_VertexID, uint instance : SV_InstanceID)
     return o;
 }
 
-// How high the water a wall holds stands above `world`: a Pool's surface,
-// with its share of the sea's small waves, or the sea's round a Dry Area.
+// How high the water a wall holds stands above `world`: a Pool's surface
+// as drawn, with its share of the sea's small waves, which do not move it
+// sideways at its sides; or the sea's round a Dry Area.
 float wallSurface(Frame* frame, WaterBody water, float3 world)
 {
     if (water.kind == WATER_POOL)
     {
-        float wet = water.liquid == LIQUID_LAVA ? 0.0 : 1.0;
-        return water.toWorld.c3.y + oceanMoved(frame, world.xz, poolSpacing(water), false, water.waves).y * wet;
+        return poolDrawnHeight(frame, water, world, 0);
     }
     return frame->ocean.level + oceanMoved(frame, world.xz, 0.25, false, 1.0, seaDepth(frame, world.xz)).y;
 }
@@ -2898,7 +3058,7 @@ float4 underwaterFragment(UnderOut input) : SV_Target0
     float band = 1.0 - saturate(abs(above) / 10.0);
     bool wetLens = oceanHas(frame, OCEAN_WET_LENS);
     float wet = wetLens ? textures[NonUniformResourceIndex(push.textures.y)].Load(int3(0, 0, 0)).r : 0.0;
-    float lens = cameraUnderwater(frame) ? 0.0 : wet;
+    float lens = cameraUnder(frame) ? 0.0 : wet;
     // The film on the lens: from its top down to the waterline, how far into it this pixel is, in screen heights.
     float film = wetLens && !u.under ? max(uv.y - lensFilmAt(uv), 0.0) : 0.0;
     float inFilm = film > 0.0 ? 1.0 : 0.0;
@@ -3013,7 +3173,8 @@ float waterlineDown(Frame* frame, float x, out float waves)
 
 // How wet the camera's lens is, into texel 0 of the storage image
 // push.output's first row: 1 under water, then drying over a couple of
-// seconds once out.
+// seconds once out; and into texel 0 of its second row, 1 while the camera
+// is under water, which the passes after read (cameraUnder).
 // And in texels 1 to LENS_FILM_COLUMNS, each a column of the screen, how
 // far down the screen the film of water on the lens reaches up to, from 0
 // at the top: up with the waterline at once, and when the water drops away,
@@ -3033,8 +3194,9 @@ void lensWetnessMain(uint3 id : SV_DispatchThreadID)
     float before = textures[NonUniformResourceIndex(push.textures.x)].Load(int3(id.x, 0, 0)).r;
     if (id.x == 0)
     {
-        float now = cameraUnderwater(frame) ? 1.0 : (first ? 0.0 : before) * exp(-frame->deltaTime / 1.2);
-        storageImagesR32f[push.output][uint2(0, id.y)] = id.y == 0 ? saturate(now) : 0.0;
+        bool under = cameraUnderwater(frame);
+        float now = under ? 1.0 : (first ? 0.0 : before) * exp(-frame->deltaTime / 1.2);
+        storageImagesR32f[push.output][uint2(0, id.y)] = id.y == 0 ? saturate(now) : (under ? 1.0 : 0.0);
         return;
     }
     float waves;

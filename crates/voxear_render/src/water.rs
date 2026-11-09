@@ -29,12 +29,17 @@ use crate::{
 const WAVE_FORMAT: vk::Format = vk::Format::R16G16B16A16_SFLOAT;
 /// Mips down to one texel, for the waves seen far off.
 const WAVE_MIPS: u32 = 9;
-/// How many quads across a ring of the sea's grid, and how many rings (as
-/// `WATER_QUADS` and `WATER_RINGS` in `shaders/water.slang`).
+/// How many quads across a ring of the sea's grid, how many rings, and how
+/// far apart the first ring's points are, in metres (as `WATER_QUADS`,
+/// `WATER_RINGS` and `WATER_SPACING` in `shaders/water.slang`).
 const QUADS: u32 = 64;
 const RINGS: u32 = 12;
-/// A Pool's grid, as `POOL_QUADS` in `shaders/water.slang`.
+const SPACING: f32 = 0.25;
+/// A Pool's grid, and how large a Pool is drawn with the sea's rings round
+/// the camera instead, a side, in metres; as `POOL_QUADS` and `RINGED_POOL`
+/// in `shaders/water.slang`.
 const POOL_QUADS: u32 = 64;
+const RINGED_POOL: f32 = POOL_QUADS as f32 * SPACING;
 /// How many quads across a Stream, as `STREAM_ACROSS` in `shaders/water.slang`.
 const STREAM_ACROSS: u32 = 8;
 /// The sea floor round the camera, seen from straight above: this many
@@ -249,6 +254,8 @@ pub struct Water {
     pools: u32,
     streams: Vec<u32>,
     dries: u32,
+    /// How each Pool is drawn (`pool_draw`).
+    pool_draws: Vec<(u32, u32)>,
 }
 
 impl Water {
@@ -432,8 +439,27 @@ impl Water {
             pools: bodies.pools,
             streams: bodies.streams.clone(),
             dries: bodies.dries(),
+            pool_draws: bodies.bodies[..bodies.pools as usize].iter().map(|pool| pool_draw(pool, camera)).collect(),
         })
     }
+}
+
+/// How Pool `pool` is drawn, as `poolVertex` in `shaders/water.slang` lays
+/// it out: how many quads a side, and how many rings round the camera, just
+/// enough that the last reaches all of its footprint; a Pool too small for
+/// rings has its own grid, as one.
+fn pool_draw(pool: &GpuWaterBody, camera: Vec3) -> (u32, u32) {
+    let [x, _, z] = pool.size;
+    if x.max(z) <= RINGED_POOL {
+        return (POOL_QUADS, 1);
+    }
+    let local = Mat4::from_cols_array_2d(&pool.to_local).transform_point3(camera);
+    // The furthest its footprint reaches from the camera, along either of its sides.
+    let reach = (local.x.abs() + x * 0.5).max(local.z.abs() + z * 0.5);
+    // A ring's middle is snapped to up to two of its quads from the camera, so it reaches this many quads round it.
+    let quads = QUADS as f32 * 0.5 - 2.0;
+    let last = (reach / (quads * SPACING)).log2().ceil().max(0.0) as u32;
+    (QUADS, (last + 1).min(RINGS))
 }
 
 /// How many mips the foam pattern has, down to one texel.
@@ -654,7 +680,7 @@ pub fn record(
     water: Water,
     targets: WaterTargets,
 ) -> (Option<UnderWater>, Vec<ImageId>) {
-    let Water { displacement, slopes, previous, copy, copy_texture, copy_mips, depth_copy, second, foam, lens, floor, floor_depth, pattern, caustics, under, layered, size, sea, pools, streams, dries, frame, .. } = water;
+    let Water { displacement, slopes, previous, copy, copy_texture, copy_mips, depth_copy, second, foam, lens, floor, floor_depth, pattern, caustics, under, layered, size, sea, pools, streams, dries, frame, pool_draws, .. } = water;
     let on = |feature: u32| frame.features & feature != 0;
     let (floor_image, floor_draws) = floor;
     // The pattern foam is made of, once, with its mips.
@@ -778,12 +804,12 @@ pub fn record(
     let layer = Layer { hdr, velocity, depth, sampled, waves, size };
     // The sea and the walls round its Dry Areas, over a copy of the picture so far.
     let first_dry = pools + streams.len() as u32;
-    let draws = Draws { sea, pools: 0, streams: Vec::new(), walls: (first_dry, dries) };
+    let draws = Draws { sea, pools: Vec::new(), streams: Vec::new(), walls: (first_dry, dries) };
     record_layer(fg, (pipelines, push), &layer, (copy, copy_texture, &copy_mips, depth_copy), (draws, true));
     // The Pools, their walls and the Streams over a copy made after the sea, so the sea shows through them.
     if layered {
         let streams = streams.iter().enumerate().map(|(i, &points)| (pools + i as u32, points)).collect();
-        let draws = Draws { sea: false, pools, streams, walls: (0, pools) };
+        let draws = Draws { sea: false, pools: pool_draws, streams, walls: (0, pools) };
         match &second {
             Some((copy, copy_texture, copy_mips, depth_copy)) => {
                 record_layer(fg, (pipelines, push), &layer, (*copy, *copy_texture, copy_mips, *depth_copy), (draws, true))
@@ -858,12 +884,12 @@ struct Layer {
     size: [u32; 2],
 }
 
-/// What a layer of water draws: the sea, how many Pools, each Stream's body
-/// and how many points it has, and the walls of the bodies from the first
-/// given, how many.
+/// What a layer of water draws: the sea, how each Pool is drawn
+/// (`pool_draw`), each Stream's body and how many points it has, and the
+/// walls of the bodies from the first given, how many.
 struct Draws {
     sea: bool,
-    pools: u32,
+    pools: Vec<(u32, u32)>,
     streams: Vec<(u32, u32)>,
     walls: (u32, u32),
 }
@@ -913,9 +939,10 @@ fn record_layer(
             bind(ctx, pipelines.water, vk::PipelineBindPoint::GRAPHICS, &push);
             unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, QUADS * QUADS * 6, RINGS, 0, 0) };
         }
-        if draws.pools > 0 {
-            bind(ctx, pipelines.water_pool, vk::PipelineBindPoint::GRAPHICS, &push);
-            unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, POOL_QUADS * POOL_QUADS * 6, draws.pools, 0, 0) };
+        // Each Pool its rings round the camera, or its own grid.
+        for (pool, &(quads, rings)) in draws.pools.iter().enumerate() {
+            bind(ctx, pipelines.water_pool, vk::PipelineBindPoint::GRAPHICS, &Push { list: pool as u32, ..push });
+            unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, quads * quads * 6, rings, 0, 0) };
         }
         // Each Stream a strip along its points.
         for &(body, points) in draws.streams.iter().filter(|(_, points)| *points > 1) {

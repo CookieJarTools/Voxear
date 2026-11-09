@@ -4,11 +4,12 @@
 //! boat's hull, a cave or a diving bell; a Stream runs along its Obj's Path,
 //! as a river, a brook or a flow of lava, as wide as the Path is.
 //!
-//! Each Pool draws its own surface, a grid over its footprint with the sea's
-//! smallest waves on it; every water surface leaves out what lies inside a
-//! Dry Area, pixel by pixel, so a moving boat's hull is dry exactly where it
-//! is. A Pool below the sea's level is dry to the sea, so a pit by the shore
-//! can hold a pond lower than the sea round it.
+//! Each Pool draws its own surface with the sea's smallest waves on it: a
+//! small one a grid over its footprint, a large one the sea's rings round
+//! the camera, cut off at its sides. Every water surface leaves out what
+//! lies inside a Dry Area, pixel by pixel, so a moving boat's hull is dry
+//! exactly where it is. A Pool below the sea's level is dry to the sea, so
+//! a pit by the shore can hold a pond lower than the sea round it.
 
 use serde::{Deserialize, Serialize};
 use voxear_core::math::{Mat4, Quat, Vec3};

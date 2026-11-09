@@ -12,6 +12,7 @@
 // on its surface.
 
 #include "common.slang"
+#include "ddgi_sample.slang"
 
 // The largest search radius on screen, in pixels at 1080p: wider searches
 // thrash the texture cache for little change.
@@ -23,6 +24,10 @@ static const float MIN_SAMPLE_PIXELS = 1.3;
 static const float FALLOFF = 0.615;
 // How much of last frame's result the temporal pass keeps.
 static const float HISTORY = 0.9;
+// How far apart two LODs of a mesh may lie while they crossfade, in the
+// pixels of error past which a LOD is too coarse to draw (lodThreshold),
+// with room for the camera moving closer during the fade.
+static const float LOD_FADE_GAP = 2.0;
 static const float HALF_PI = PI * 0.5;
 
 struct AoOut
@@ -137,7 +142,8 @@ float2 aoNoise(int2 pixel, uint frameIndex)
 // For each of a few directions (slices) around the pixel, the highest
 // horizon on either side within the radius, then the cosine-weighted share
 // of the hemisphere above those horizons, integrated in closed form.
-// textures: x depth. Writes visibility, 1 where nothing occludes.
+// textures: x depth, y the surface: normal, and whether its LODs crossfade.
+// Writes visibility, 1 where nothing occludes.
 [shader("fragment")]
 float4 gtaoFragment(AoOut input) : SV_Target
 {
@@ -151,6 +157,17 @@ float4 gtaoFragment(AoOut input) : SV_Target
     }
     float3 centre = viewPosition(float2(pixel) + 0.5, depth);
     float3 normal = viewNormal(depthTexture, pixel, centre);
+    // While two LODs crossfade, dithered, each pixel's depth is one or the other, and the simpler lies a little
+    // inside the other: its pixels found the other's in front as occluders, and the normals from depth tilted
+    // every way, so a chrome ball was blotched dark for as long as each fade lasted. There, the surface's own
+    // normal, and the horizons looked for from just past the gap between them.
+    float4 surface = textures[NonUniformResourceIndex(push.textures.y)].Load(int3(pixel, 0));
+    if (surface.a < 0.5)
+    {
+        normal = normalize(transform(frame->view, float4(octDecode(surface.rg * 2.0 - 1.0), 0.0)).xyz);
+        normal = dot(normal, centre) > 0.0 ? -normal : normal;
+        centre += normal * (LOD_FADE_GAP * frame->lodThreshold * centre.z / frame->lodScale);
+    }
     float3 toView = normalize(-centre);
 
     float radius = max(frame->post.aoRadius, 1e-3);
@@ -429,16 +446,24 @@ float4 reflectionsFragment(AoOut input) : SV_Target
     uint depthTexture = push.textures.x;
     int2 pixel = fullPixel(int2(input.position.xy));
     float depth = loadDepth(depthTexture, pixel);
-    float roughness = textures[NonUniformResourceIndex(push.textures.z)].Load(int3(pixel, 0)).b;
+    float4 surface = textures[NonUniformResourceIndex(push.textures.z)].Load(int3(pixel, 0));
+    float roughness = surface.b;
     if (depth <= 0.0 || roughness >= frame->post.reflectionMaxRoughness)
     {
         return 0.0;
     }
     float3 centre = viewPosition(float2(pixel) + 0.5, depth);
-    float3 normal = viewNormal(depthTexture, pixel, centre);
+    // The surface's own smooth normal, as the depth passes kept it, not one from the depth: a sphere's depth is
+    // its flat triangles, each a flat mirror showing one place, so a chrome ball's reflection broke into blocks a
+    // triangle wide; and while two of its LODs crossfade, dithered, the depth's neighbours are on either one, and
+    // its reflection broke into speckles.
+    float3 normal = normalize(transform(frame->view, float4(octDecode(surface.rg * 2.0 - 1.0), 0.0)).xyz);
+    normal = dot(normal, centre) > 0.0 ? -normal : normal;
     float3 ray = reflect(normalize(centre), normal);
-    // Rays back towards the camera find only what is behind it, off screen.
-    if (ray.z < -0.2)
+    // Rays back towards the camera find only what is behind it, off screen. They fade out on the way there: cut off
+    // at once, a chrome ball's lower half showed a sharp ring where they gave way to the sky's ground colour.
+    float towards = smoothstep(-0.2, 0.0, ray.z);
+    if (towards <= 0.0)
     {
         return 0.0;
     }
@@ -515,6 +540,6 @@ float4 reflectionsFragment(AoOut input) : SV_Target
     }
     float3 colour = textures[NonUniformResourceIndex(push.textures.y)].SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], previousUv, 0.0).rgb;
     float2 border = min(uv, 1.0 - uv);
-    float sure = saturate(min(border.x, border.y) * 10.0) * saturate((1.0 - travelled) * 4.0);
+    float sure = saturate(min(border.x, border.y) * 10.0) * saturate((1.0 - travelled) * 4.0) * towards;
     return float4(colour, sure);
 }

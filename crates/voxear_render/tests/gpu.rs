@@ -2120,6 +2120,114 @@ fn a_polished_floor_reflects_what_stands_on_it() {
     assert!(red_with > red_without + 20, "the cube shows in the floor: {red_with} redder there, from {red_without}");
 }
 
+/// Where the chrome ball of [`chrome_ball_render`] stands, and how big it is.
+const CHROME_BALL: Vec3 = Vec3::new(0.0, 0.9, 0.0);
+const CHROME_BALL_RADIUS: f32 = 0.9;
+
+/// A chrome ball on a grey floor between a purple and a blue cube, seen
+/// from three metres, after enough frames of TAA that screen-space
+/// reflections show what is round it, turned `turn` radians about its
+/// upright.
+fn chrome_ball_render(turn: f32) -> Option<Vec<u8>> {
+    use voxear_render::{AntiAliasing, AntiAliasingMode, Reflections};
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    let eye = Vec3::new(0.0, 1.6, -3.0);
+    let forward = (CHROME_BALL - eye).normalize();
+    let looking = Quat::from_rotation_y(forward.x.atan2(forward.z)) * Quat::from_rotation_x(-forward.y.asin());
+    world.spawn((Camera::default(), Transform::new(eye, looking, Vec3::ONE)));
+    let plane = renderer.primitive(Primitive::Plane).unwrap();
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let sphere = renderer.primitive(Primitive::Sphere).unwrap();
+    let mut material = |base_color: [f32; 4], metallic: f32, roughness: f32| {
+        renderer.add_material(&MaterialDesc { base_color, metallic, roughness, ..MaterialDesc::default() }).unwrap()
+    };
+    let (grey, purple, blue) = (
+        material([0.42, 0.44, 0.46, 1.0], 0.0, 0.9),
+        material([0.55, 0.36, 0.96, 1.0], 0.0, 0.35),
+        material([0.24, 0.62, 0.98, 1.0], 0.0, 0.5),
+    );
+    let chrome = material([0.95, 0.93, 0.9, 1.0], 1.0, 0.05);
+    world.spawn((MeshRenderer::new(plane, grey), Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(30.0))));
+    for (x, colour) in [(-2.2, purple), (2.2, blue)] {
+        let place = Transform::new(Vec3::new(x, 0.75, -0.5), Quat::IDENTITY, Vec3::splat(1.5));
+        world.spawn((MeshRenderer::new(cube, colour), place));
+    }
+    let ball = Transform::new(CHROME_BALL, Quat::from_rotation_y(turn), Vec3::splat(2.0 * CHROME_BALL_RADIUS));
+    world.spawn((MeshRenderer::new(sphere, chrome), ball));
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.3, -1.0, 0.5).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Taa, sharpness: 0.0, ..AntiAliasing::default() };
+    let reflections = Reflections { enabled: true, ..Reflections::default() };
+    let mut post = voxear_render::PostProcess { anti_aliasing, reflections, ..steady_post() };
+    post.ambient_occlusion.enabled = false;
+    world.insert_resource(post);
+    run(&mut renderer, &world, &mut 0.0, 12);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+/// The pixels within `share` of a ball's radius of its centre on screen, at
+/// the middle of a 640×360 picture whose camera looks at it from `distance`.
+fn ball_pixels(distance: f32, radius: f32, share: f32) -> Vec<(u32, u32)> {
+    let pixels_per_unit = 180.0 / 30f32.to_radians().tan();
+    let across = pixels_per_unit * (radius / distance).asin().tan() * share;
+    let reach = across.ceil() as i32;
+    (-reach..=reach)
+        .flat_map(|y| (-reach..=reach).map(move |x| (x, y)))
+        .filter(|&(x, y)| ((x * x + y * y) as f32) < across * across)
+        .map(|(x, y)| ((320 + x) as u32, (180 + y) as u32))
+        .collect()
+}
+
+#[test]
+fn a_chrome_ball_mirrors_its_surroundings_smoothly_not_triangle_by_triangle() {
+    // Turned by half the width of one of its triangles, a smooth ball mirrors the same; one whose reflections are
+    // traced from its flat triangles shows each as a block of one colour, and the blocks move as it turns.
+    let half_a_triangle = std::f32::consts::PI / 64.0;
+    let (Some(still), Some(turned)) = (chrome_ball_render(0.0), chrome_ball_render(half_a_triangle)) else { return };
+    keep_image("chrome ball.png", &still);
+    keep_image("chrome ball turned.png", &turned);
+    let distance = Vec3::new(0.0, 1.6, -3.0).distance(CHROME_BALL);
+    let ball = ball_pixels(distance, CHROME_BALL_RADIUS, 0.85);
+    let moved = |at: &(u32, u32)| {
+        let (a, b) = (rgb_at(&still, *at), rgb_at(&turned, *at));
+        (0..3).map(|c| a[c].abs_diff(b[c])).sum::<u32>() > 24
+    };
+    let changed = ball.iter().filter(|at| moved(at)).count();
+    assert!(changed * 100 < ball.len(), "{changed} of the ball's {} pixels changed as it turned", ball.len());
+}
+
+#[test]
+fn a_lod_crossfade_leaves_no_dark_patches_of_ambient_occlusion() {
+    // A matte ball alone in the sky, which nothing occludes, seen through ambient occlusion's debug view.
+    let options = ViewOptions { debug_view: voxear_render::DEBUG_VIEW_AMBIENT_OCCLUSION, ..ViewOptions::default() };
+    let Some(mut renderer) = renderer_culling(Meshlets::Compute, options) else { return };
+    let mut world = World::new();
+    let camera = world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 0.0, -3.0))));
+    let sphere = renderer.primitive(Primitive::Sphere).unwrap();
+    let material = renderer.add_material(&MaterialDesc::default()).unwrap();
+    world.spawn((MeshRenderer::new(sphere, material), Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(3.0))));
+    let mut time = 0.0;
+    let near = run(&mut renderer, &world, &mut time, 4);
+    assert!(near.lods[0] > 0 && near.fade_draws == 0, "{near:?}");
+
+    // Backing away until it crossfades to a simpler LOD, and a few frames into the fade, where the depth is
+    // either LOD's, pixel by pixel.
+    let mut distance = 3.0;
+    while run(&mut renderer, &world, &mut time, 0).fade_draws == 0 {
+        distance += 0.05;
+        assert!(distance < 12.0, "the ball never changed LOD");
+        world.get_mut::<Transform>(camera).unwrap().position = Vec3::new(0.0, 0.0, -distance);
+    }
+    let fading = run(&mut renderer, &world, &mut time, 4);
+    assert!(fading.fade_draws > 0, "{fading:?}");
+    let pixels = renderer.read_pixels().unwrap().2;
+    keep_image("lod crossfade ao.png", &pixels);
+    let ball = ball_pixels(distance, 1.5, 0.85);
+    let darkened = ball.iter().filter(|&&at| rgb_at(&pixels, at)[0] < 245).count();
+    assert!(darkened * 200 < ball.len(), "{darkened} of the ball's {} pixels are occluded", ball.len());
+}
+
 /// The lamp camera's floor under a sun 40 degrees from straight down, a
 /// tall wall's shadow falling along +X from where it ends at z = 0, with
 /// `light` as the sun and, perhaps, a look's `sun_look` over it.

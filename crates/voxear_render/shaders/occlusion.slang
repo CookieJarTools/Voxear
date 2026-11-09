@@ -40,7 +40,8 @@ Occlusion ambientOcclusion(Frame* frame, float2 pixel, float nv, float roughness
 // the same to the bit and those passes shade only what it kept; and each
 // pixel's normal, folded flat, and roughness beside it, so reflections pass
 // over what is too rough to show them and trace from the surface's own
-// smooth normal (SURFACE_FORMAT in src/pipelines.rs).
+// smooth normal, and in alpha 0 where two LODs crossfade, 1 elsewhere
+// (SURFACE_FORMAT in src/pipelines.rs).
 [shader("fragment")]
 float4 depthFragment(VertexOut input) : SV_Target0
 {
@@ -77,7 +78,9 @@ float4 depthFragment(VertexOut input) : SV_Target0
     }
     // As rough as shading draws it, so reflections fade from bumpy shiny detail just as its highlights do.
     roughness = smoothedRoughness(push.frame, normal, roughness);
-    return float4(octEncode(normal) * 0.5 + 0.5, saturate(roughness), 1.0);
+    // Marked while its LODs crossfade, as the depth then is either one's, pixel by pixel (ambient_occlusion.slang).
+    float settled = input.fade == 0 ? 1.0 : 0.0;
+    return float4(octEncode(normal) * 0.5 + 0.5, saturate(roughness), settled);
 }
 
 // Whether the contact shadows pass found something between a pixel and the

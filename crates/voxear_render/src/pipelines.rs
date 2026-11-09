@@ -21,7 +21,8 @@ pub const AO_FORMAT: vk::Format = vk::Format::R8_UNORM;
 /// roughness in blue, which the depth passes write beside the depth, so
 /// reflections skip what is too rough to show them and trace from the
 /// surface's own smooth normal. Ten bits each, as eight would facet a
-/// mirror's reflection.
+/// mirror's reflection. Alpha is 0 where two LODs crossfade, so ambient
+/// occlusion knows its depth is from either.
 pub const SURFACE_FORMAT: vk::Format = vk::Format::A2B10G10R10_UNORM_PACK32;
 /// Its history, which blends a tenth of each frame in, so eight bits would
 /// stop short of the value it is heading for.

@@ -10,7 +10,7 @@
 //! the same lists again over that depth, shading each pixel once:
 //!
 //! 1. **GTAO** searches each pixel's horizons, with normals rebuilt from
-//!    depth.
+//!    depth, or the surface's own where two LODs crossfade.
 //! 2. **AO denoise** blurs it across the surface, not across edges.
 //! 3. **AO temporal** blends it with last frame's result, reprojected by the
 //!    camera's motion, into one of two history images. The opaque passes read
@@ -77,14 +77,20 @@ impl Targets {
     }
 }
 
-/// Records the three passes, reading `depth` once the depth passes drew it.
-pub fn record(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipelines, Push), depth: ImageId, ao: Targets) {
+/// Records the three passes, reading `depth` and `surface` once the depth
+/// passes drew them.
+pub fn record(
+    fg: &mut FrameGraph<'_>,
+    (pipelines, push): (Pipelines, Push),
+    (depth, surface): (ImageId, ImageId),
+    ao: Targets,
+) {
     let depth_texture = fg.texture(depth).0;
     let Targets { raw, denoised, previous, current, level } = ao;
     let push = Push { level, ..push };
 
-    let gtao = Push { textures: [depth_texture, 0, 0, 0], ..push };
-    let images = [(depth, ImageAccess::Sampled), (raw, ImageAccess::ColorAttachment)];
+    let gtao = Push { textures: [depth_texture, fg.texture(surface).0, 0, 0], ..push };
+    let images = [(depth, ImageAccess::Sampled), (surface, ImageAccess::Sampled), (raw, ImageAccess::ColorAttachment)];
     fg.add_pass("GTAO", &images, &[], move |ctx| draw(ctx, pipelines.gtao, &gtao, raw));
 
     let denoise = Push { textures: [fg.texture(raw).0, depth_texture, 0, 0], ..push };

@@ -462,7 +462,8 @@ pub fn record(
         true => {
             depth_pass(fg, "Depth (late)", LIST_LATE);
             if let Some(ao) = ambient_occlusion {
-                ambient_occlusion::record(fg, (pipelines, push), depth, ao);
+                let surface = frame.surface.expect("the depth passes' surface");
+                ambient_occlusion::record(fg, (pipelines, push), (depth, surface), ao);
             }
             if let Some(contact) = contact_shadows {
                 ambient_occlusion::record_contact_shadows(fg, (pipelines, push), depth, contact);

@@ -53,6 +53,10 @@ internal static class FieldKinds
 		{
 			return "localized";
 		}
+		if (type == typeof(InputActionRef))
+		{
+			return "action";
+		}
 		if (type == typeof(bool))
 		{
 			return "bool";

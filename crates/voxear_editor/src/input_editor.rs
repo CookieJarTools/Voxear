@@ -317,6 +317,8 @@ impl ActionsEditor {
             return None;
         }
         ui.set_text(self.status, "");
+        // Each action is known by an id from when it is made, which a script's field or its Actions class names.
+        self.file.fill_ids(|| voxear_assets::AssetGuid::new_random().to_string());
         self.show(ui);
         self.show_glyph(ui, input);
         self.file.to_text().ok()

@@ -235,6 +235,11 @@ pub(crate) fn typed(world: &World, kind: &FieldKind, value: Option<&toml::Value>
         FieldKind::Localized => Value::Asset(
             value.and_then(toml::Value::as_str).filter(|key| !key.is_empty()).unwrap_or("None").to_string(),
         ),
+        FieldKind::Action => {
+            let reference = value.and_then(toml::Value::as_str).filter(|id| !id.is_empty());
+            let names = world.resource::<voxear_engine::ActionNames>();
+            Value::Asset(reference.map_or("None".to_string(), |id| names.map_or(id.to_string(), |n| n.label(id))))
+        }
         FieldKind::Enum { names } => {
             let index = match value {
                 Some(toml::Value::Integer(i)) => usize::try_from(*i).ok(),
@@ -500,7 +505,12 @@ fn blank(types: &ScriptTypes, kind: &FieldKind) -> toml::Value {
         FieldKind::Number => toml::Value::Float(0.0),
         FieldKind::Whole => toml::Value::Integer(0),
         FieldKind::Bool => toml::Value::Boolean(false),
-        FieldKind::Text | FieldKind::Localized | FieldKind::Asset { .. } | FieldKind::Ref { .. } | FieldKind::Clip => {
+        FieldKind::Text
+        | FieldKind::Localized
+        | FieldKind::Action
+        | FieldKind::Asset { .. }
+        | FieldKind::Ref { .. }
+        | FieldKind::Clip => {
             toml::Value::String(String::new())
         }
         FieldKind::Enum { names } => toml::Value::String(names.first().cloned().unwrap_or_default()),
@@ -678,6 +688,19 @@ pub fn key_choices(game: &Game) -> Vec<(String, Pick)> {
     found
 }
 
+/// The project's input actions an `InputActionRef` field can name, as
+/// `Map/Name`, each by its id, none first.
+pub fn action_choices(game: &Game) -> Vec<(String, Pick)> {
+    let file = game.input.authored_file();
+    let mut found = vec![("None".to_string(), Pick::Key(None))];
+    for map in &file.maps {
+        for action in map.actions.iter().filter(|action| !action.id.is_empty()) {
+            found.push((format!("{}/{}", map.name, action.name), Pick::Key(Some(action.id.clone()))));
+        }
+    }
+    found
+}
+
 /// Why a reference cannot take what was dropped on it, for the status bar.
 pub fn why_not(game: &Game, types: &ScriptTypes, entity: Entity, kind: &FieldKind, pick: &Pick) -> String {
     let world = &game.engine.world;
@@ -723,6 +746,7 @@ pub fn takes(kind: &FieldKind) -> &str {
         FieldKind::Asset { asset } | FieldKind::Ref { asset } => short(asset),
         FieldKind::Behaviour { name } | FieldKind::Component { name } => short(name),
         FieldKind::Localized => "Text",
+        FieldKind::Action => "Input Action",
         FieldKind::Clip => "Clip",
         _ => "Obj",
     }

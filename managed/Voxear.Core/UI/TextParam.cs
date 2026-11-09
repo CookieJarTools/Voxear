@@ -49,6 +49,12 @@ public readonly struct TextParam
 		return new TextParam(null, null, action);
 	}
 
+	/// <summary>An action's controls, as a field or the Actions class names the action: see Action(InputAction).</summary>
+	public static TextParam Action(InputActionRef action)
+	{
+		return new TextParam(null, null, action.Action);
+	}
+
 	public static implicit operator TextParam(string value)
 	{
 		return Value(value);
@@ -85,6 +91,11 @@ public readonly struct TextParam
 	}
 
 	public static implicit operator TextParam(InputAction action)
+	{
+		return Action(action);
+	}
+
+	public static implicit operator TextParam(InputActionRef action)
 	{
 		return Action(action);
 	}

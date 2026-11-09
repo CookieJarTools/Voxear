@@ -50,6 +50,10 @@
 		<AdditionalFiles Include="@(VoxearStringTable)" />
 		<!-- A table added or removed builds the scripts again, as a script would; a table changed does already. -->
 		<CoreCompileCache Include="@(VoxearStringTable)" />
+		<!-- The project's input actions, for Voxear.Analyzers to make Actions from, so Actions.Player.Jump names Jump by its id. -->
+		<VoxearInputActions Include="$(VoxearProjectFolder)**/*.inputactions" Exclude="$(VoxearProjectFolder)**/.*/**;$(VoxearProjectFolder)**/bin/**;$(VoxearProjectFolder)**/obj/**;$(VoxearProjectFolder)**/target/**;$(VoxearProjectFolder)**/node_modules/**;$(VoxearProjectFolder)Docs/**" />
+		<AdditionalFiles Include="@(VoxearInputActions)" />
+		<CoreCompileCache Include="@(VoxearInputActions)" />
 	</ItemGroup>
 	<ItemGroup Condition="Exists('$(MSBuildThisFileDirectory)Voxear.Core.dll')">
 		<Reference Include="Voxear.Core">

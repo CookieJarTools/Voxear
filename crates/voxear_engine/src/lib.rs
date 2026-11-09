@@ -68,7 +68,7 @@ pub use content::{
 };
 pub use engine::{EditBehaviours, EditMode, Engine, POSE, STAGES, editing};
 pub use fly_camera::FlyCamera;
-pub use game::{Display, Game};
+pub use game::{ActionNames, Display, Game};
 pub use levels::{
     LEVEL_FORMAT, LevelChange, LevelFile, LevelOptions, LevelScene, LevelSummary, Levels, Tracked, summarise,
 };

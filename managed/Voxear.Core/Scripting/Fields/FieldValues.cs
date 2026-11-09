@@ -27,6 +27,10 @@ internal static class FieldValues
 		{
 			return new LocalizedString(value.ValueKind == JsonValueKind.Null ? string.Empty : value.GetString() ?? string.Empty);
 		}
+		if (type == typeof(InputActionRef))
+		{
+			return new InputActionRef(value.ValueKind == JsonValueKind.Null ? string.Empty : value.GetString() ?? string.Empty);
+		}
 		if (type == typeof(bool))
 		{
 			return value.GetBoolean();

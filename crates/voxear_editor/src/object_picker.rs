@@ -452,7 +452,8 @@ pub fn decorate(game: &Game, choices: Vec<(String, Pick)>) -> Vec<Choice> {
             let (icon, detail) = match &pick {
                 Pick::Obj(None) | Pick::Asset(None) | Pick::Key(None) if label == "None" => ("close", String::new()),
                 Pick::Obj(None) | Pick::Asset(None) | Pick::Key(None) => ("material", "Built in".into()),
-                // A key, beside its text in the language the game is in.
+                // An input action, beside its controls; a key, beside its text in the language the game is in.
+                Pick::Key(Some(key)) if game.input.action(key).is_some() => ("gamepad", action_controls(game, key)),
                 Pick::Key(Some(key)) => ("globe", key_text(game, key)),
                 Pick::Obj(Some(entity)) => obj(game, *entity),
                 Pick::Asset(Some(reference)) if builtin_material(reference) => ("material", "Built in".into()),
@@ -490,6 +491,14 @@ pub fn decorate(game: &Game, choices: Vec<(String, Pick)>) -> Vec<Choice> {
             Choice { label, detail, icon, pick: Chosen::Value(pick), preview, folder: String::new() }
         })
         .collect()
+}
+
+/// An input action's controls, as its prompt names them on each device.
+fn action_controls(game: &Game, action: &str) -> String {
+    let Some(action) = game.input.action(action) else { return String::new() };
+    let schemes = [voxear_input::Scheme::KeyboardMouse, voxear_input::Scheme::Gamepad];
+    let named: Vec<String> = schemes.iter().map(|&scheme| game.input.prompt_for(action, scheme)).filter(|p| !p.is_empty()).collect();
+    named.join(" · ")
 }
 
 fn key_text(game: &Game, key: &str) -> String {

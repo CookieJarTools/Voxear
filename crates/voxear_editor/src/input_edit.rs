@@ -255,6 +255,7 @@ pub fn add_action(map: &mut MapData) -> Row {
     let name = free_name(map.actions.iter().map(|a| a.name.as_str()), "New Action");
     map.actions.push(ActionData {
         name,
+        id: voxear_assets::AssetGuid::new_random().to_string(),
         kind: ActionKind::Button,
         interaction: None,
         category: None,

@@ -24,7 +24,21 @@ use crate::{
 const NEW_FILE: &str = "Input.inputactions";
 
 impl Editor {
+    /// Gives the actions in the project's file that have no id one, and
+    /// writes them, so a script's field or its Actions class can name them.
+    fn give_action_ids(&mut self) {
+        let has_file = self.game.content.db().entries().any(|entry| entry.kind == AssetKind::InputActions);
+        let mut file = self.game.input.authored_file().clone();
+        if has_file && file.fill_ids(|| voxear_assets::AssetGuid::new_random().to_string()) {
+            match file.to_text() {
+                Ok(text) => self.save_input_actions(&text),
+                Err(error) => self.notify(&format!("Could not give the input actions ids: {error:#}")),
+            }
+        }
+    }
+
     pub(super) fn update_input_actions(&mut self) {
+        self.give_action_ids();
         if self.shown(self.nodes.input_panel)
             && let Some(text) = self.input_actions.update(&mut self.ui, &mut self.game.input)
         {

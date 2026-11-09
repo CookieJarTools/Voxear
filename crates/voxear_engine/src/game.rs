@@ -65,6 +65,26 @@ pub struct Game {
     pub prompt_icons: crate::prompt_icons::PromptIcons,
 }
 
+/// The project's input actions' names, `Map/Name`, by their ids, for the
+/// Inspector to show an `InputActionRef` field by.
+#[derive(Clone, Debug, Default)]
+pub struct ActionNames(pub HashMap<String, String>);
+
+impl ActionNames {
+    pub fn of(input: &voxear_input::Input) -> Self {
+        let file = input.authored_file();
+        let actions = file.maps.iter().flat_map(|map| map.actions.iter().map(move |action| (map, action)));
+        let named = actions.filter(|(_, action)| !action.id.is_empty());
+        Self(named.map(|(map, action)| (action.id.clone(), format!("{}/{}", map.name, action.name))).collect())
+    }
+
+    /// An action's name, `Map/Name`, by its id, or what it is named by
+    /// when that is not an id.
+    pub fn label(&self, reference: &str) -> String {
+        self.0.get(reference).cloned().unwrap_or_else(|| reference.to_string())
+    }
+}
+
 /// The game's window as scripts see it and ask for it, through `Screen` and
 /// `Cursor` in C#: whatever shows the game sets its size each frame, and
 /// afterwards makes what scripts asked for.
@@ -143,11 +163,13 @@ impl Game {
             .map(|entry| (entry.path.clone(), entry.guid))
             .collect();
         files.sort();
-        let Some((path, guid)) = files.into_iter().next() else { return };
-        let read = self.content.asset_text(guid, AssetKind::InputActions);
-        if let Err(error) = read.and_then(|(text, _)| self.input.load_actions(&text)) {
-            tracing::error!("{path}: {error:#}; the game uses Voxear's own input actions");
+        if let Some((path, guid)) = files.into_iter().next() {
+            let read = self.content.asset_text(guid, AssetKind::InputActions);
+            if let Err(error) = read.and_then(|(text, _)| self.input.load_actions(&text)) {
+                tracing::error!("{path}: {error:#}; the game uses Voxear's own input actions");
+            }
         }
+        self.engine.world.insert_resource(ActionNames::of(&self.input));
     }
 
     /// Reads every string table and asset table in the project, in path

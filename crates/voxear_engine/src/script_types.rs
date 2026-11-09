@@ -481,6 +481,9 @@ pub enum FieldKind {
     /// A `LocalizedString`: a key into the project's string tables, which
     /// scenes write as the key.
     Localized,
+    /// An `InputActionRef`: one of the project's input actions, which
+    /// scenes write as its id.
+    Action,
     Enum {
         names: Vec<String>,
     },

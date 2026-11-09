@@ -50,6 +50,9 @@ internal static class FieldDefaults
 			case LocalizedString localized:
 				json.WriteStringValue(localized.Key ?? string.Empty);
 				return true;
+			case InputActionRef action:
+				json.WriteStringValue(action.Id);
+				return true;
 			case bool on:
 				json.WriteBooleanValue(on);
 				return true;

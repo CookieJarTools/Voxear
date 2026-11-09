@@ -8,6 +8,7 @@ name = "Player"
 
 [[map.action]]
 name = "Move"
+id = "80c7470d7b911e7b1b1f47436e30d25d"
 type = "vector2"
 bindings = [
     { up = "Keyboard/W", down = "Keyboard/S", left = "Keyboard/A", right = "Keyboard/D" },
@@ -18,39 +19,48 @@ bindings = [
 # The mouse in pixels this frame, and the stick from -1 to 1 each way.
 [[map.action]]
 name = "Look"
+id = "a969671fa0a942f657d484862e33efd0"
 type = "vector2"
 bindings = ["Mouse/Delta", "Gamepad/RightStick"]
 
 [[map.action]]
 name = "Jump"
+id = "2440c4c99e071bfb09b3d9fddf94bd1d"
 bindings = ["Keyboard/Space", "Gamepad/South"]
 
 [[map.action]]
 name = "Sprint"
+id = "bbc3defbd49053c31a71b6e58983fe75"
 bindings = ["Keyboard/ShiftLeft", "Gamepad/LeftStickPress"]
 
 [[map.action]]
 name = "Crouch"
+id = "b21e82fb75f9327887f2211d230aab8c"
 bindings = ["Keyboard/C", "Gamepad/East"]
 
 [[map.action]]
 name = "Interact"
+id = "16e7e6a1b4d3dc5bf83654c58e72e935"
 bindings = ["Keyboard/E", "Gamepad/North"]
 
 [[map.action]]
 name = "Attack"
+id = "5c38384a52f76b66a0d19019ce9fdd82"
 bindings = ["Mouse/Left", "Gamepad/RightTrigger"]
 
 [[map.action]]
 name = "Aim"
+id = "f467cac8b5b60f34bdd97e222c0812df"
 bindings = ["Mouse/Right", "Gamepad/LeftTrigger"]
 
 [[map.action]]
 name = "Reload"
+id = "3ceefb7c45f5b0e18d8e24dcbb6521f9"
 bindings = ["Keyboard/R", "Gamepad/West"]
 
 [[map.action]]
 name = "Pause"
+id = "b53319bd4650fa8e04fa075df5b9f6b0"
 bindings = ["Keyboard/Escape", "Gamepad/Start"]
 
 # Menus: on while one is open, which turns Player off, so the two share
@@ -61,6 +71,7 @@ excludes = ["Player"]
 
 [[map.action]]
 name = "Navigate"
+id = "f547fa3ddcd4a62f4098c2aad4bcb395"
 type = "vector2"
 bindings = [
     { up = "Keyboard/ArrowUp", down = "Keyboard/ArrowDown", left = "Keyboard/ArrowLeft", right = "Keyboard/ArrowRight" },
@@ -70,8 +81,10 @@ bindings = [
 
 [[map.action]]
 name = "Submit"
+id = "65f8224189ac3b260bc12c8c37506869"
 bindings = ["Keyboard/Enter", "Gamepad/South"]
 
 [[map.action]]
 name = "Cancel"
+id = "47caec6f8cec231b0c32acef53046515"
 bindings = ["Keyboard/Escape", "Gamepad/East"]

@@ -54,6 +54,9 @@
 //!
 //! - Its `icon`, one of Voxear's icons by name, marks it in key maps and in
 //!   the Input Actions window.
+//! - Its `id` is what scripts' fields and their `Actions` class know it by,
+//!   kept when it is renamed: the editor gives one to each action it makes,
+//!   and to each it finds without one.
 //! - A map's `excludes` names the maps that cannot be on while it is, as a
 //!   game's Player and UI maps are not on together: turning it on turns
 //!   them off, and of two that exclude each other only the first in the file
@@ -96,6 +99,17 @@ pub struct ActionsFile {
 }
 
 impl ActionsFile {
+    /// Gives each action without an id one from `new_id`; whether any had
+    /// none.
+    pub fn fill_ids(&mut self, mut new_id: impl FnMut() -> String) -> bool {
+        let mut filled = false;
+        for action in self.maps.iter_mut().flat_map(|map| map.actions.iter_mut()).filter(|a| a.id.is_empty()) {
+            action.id = new_id();
+            filled = true;
+        }
+        filled
+    }
+
     /// The file as `.inputactions` writes it, as the editor's Input Actions
     /// window saves it: each binding on its own line.
     pub fn to_text(&self) -> Result<String> {
@@ -224,6 +238,10 @@ pub fn overlaps(a: &str, b: &str) -> bool {
 #[serde(deny_unknown_fields)]
 pub struct ActionData {
     pub name: String,
+    /// What scripts' fields and code know it by, which stays when it is
+    /// renamed or moved to another map: given when it is made.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub id: String,
     #[serde(default, rename = "type", skip_serializing_if = "is_button")]
     pub kind: ActionKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -606,7 +624,11 @@ impl Actions {
     }
 
     /// An action by its name, `Jump`, or with its map, `Player/Jump`.
+    /// An action by its id, or by its name, with its map's before it or not.
     pub fn find(&self, name: &str) -> Option<usize> {
+        if let Some(found) = self.list.iter().position(|a| !a.data.id.is_empty() && a.data.id == name) {
+            return Some(found);
+        }
         let (map, action) = name.split_once('/').map_or((None, name), |(map, action)| (Some(map), action));
         self.list.iter().position(|a| a.data.name == action && map.is_none_or(|map| a.map == map))
     }
@@ -687,6 +709,37 @@ impl Actions {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_action_is_found_by_its_id_and_keeps_it_through_a_rename() {
+        let text = "format = 1\n[[map]]\nname = \"Player\"\n[[map.action]]\nname = \"Jump\"\nid = \"abc123\"\n\
+                    bindings = [\"Keyboard/Space\"]\n[[map.action]]\nname = \"Duck\"\nbindings = [\"Keyboard/C\"]\n";
+        let mut file: ActionsFile = toml::from_str(text).unwrap();
+        let actions = Actions::of(file.clone()).unwrap();
+        assert_eq!(actions.find("abc123"), actions.find("Player/Jump"));
+
+        // Renamed, the id still finds it.
+        file.maps[0].actions[0].name = "Leap".into();
+        let actions = Actions::of(file.clone()).unwrap();
+        assert_eq!(actions.find("abc123"), actions.find("Leap"));
+        assert!(actions.find("abc123").is_some());
+
+        // An action without one is given one, and one that has one keeps it.
+        let mut next = 0;
+        assert!(file.fill_ids(|| {
+            next += 1;
+            format!("new{next}")
+        }));
+        assert_eq!((file.maps[0].actions[0].id.as_str(), file.maps[0].actions[1].id.as_str()), ("abc123", "new1"));
+        assert!(!file.fill_ids(|| unreachable!("every action has one")));
+        assert!(file.to_text().unwrap().contains("id = \"new1\""));
+    }
+
+    #[test]
+    fn voxears_own_actions_have_ids() {
+        let file: ActionsFile = toml::from_str(crate::DEFAULT_ACTIONS).unwrap();
+        assert!(file.maps.iter().flat_map(|map| &map.actions).all(|action| !action.id.is_empty()));
+    }
 
     #[test]
     fn a_file_written_out_reads_back_the_same() {

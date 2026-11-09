@@ -3561,6 +3561,7 @@ pub fn choices(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) ->
             | voxear_engine::script_types::FieldKind::Ref { .. }),
         ) => fields::asset_choices(game, types, &kind),
         Some(voxear_engine::script_types::FieldKind::Localized) => fields::key_choices(game),
+        Some(voxear_engine::script_types::FieldKind::Action) => fields::action_choices(game),
         // As the Animator's clip picks one: each clip of the model files read, each file not read yet whole.
         Some(voxear_engine::script_types::FieldKind::Clip) => {
             let mut found = vec![("None".to_string(), Pick::Asset(None))];

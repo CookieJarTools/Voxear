@@ -13,6 +13,7 @@ internal static unsafe class NativeComponent
 	public const int Camera = 1;
 	public const int FirstPersonView = 2;
 	public const int LimbIK = 3;
+	public const int UiPanel = 4;
 	public const int Gun = 16;
 	public const int GunHolder = 17;
 

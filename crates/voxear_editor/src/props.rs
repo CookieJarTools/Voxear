@@ -97,6 +97,8 @@ pub enum Part {
     ParticleSystem,
     Smoke,
     Mist,
+    /// A UI Panel: a UI document shown on a rectangle in the world.
+    UiPanel,
     NetObject,
     Animator,
     MotionMatcher,
@@ -146,6 +148,7 @@ impl Part {
             Part::ParticleSystem => "particles".into(),
             Part::Smoke => "smoke".into(),
             Part::Mist => "mist".into(),
+            Part::UiPanel => "ui_panel".into(),
             Part::NetObject => "net".into(),
             Part::Animator => "animator".into(),
             Part::MotionMatcher => "motion_matcher".into(),
@@ -202,6 +205,7 @@ impl Part {
             Part::ParticleSystem => "Particle System",
             Part::Smoke => "Smoke",
             Part::Mist => "Mist",
+            Part::UiPanel => "UI Panel",
             Part::NetObject => "Net Object",
             Part::Animator => "Animator",
             Part::MotionMatcher => "Motion Matcher",
@@ -244,6 +248,7 @@ impl Part {
             Part::ParticleSystem => "particles",
             Part::Smoke => "particles",
             Part::Mist => "particles",
+            Part::UiPanel => "panels",
             Part::NetObject => "globe",
             Part::Animator => "play",
             Part::MotionMatcher => "play",
@@ -358,6 +363,14 @@ pub enum Prop {
     MistColor,
     MistLinger,
     MistSeed,
+    /// A UI Panel's document, its size in metres, how many of its UI's
+    /// pixels a metre holds, and whether it faces the camera and the
+    /// pointer works it.
+    UiPanelDocument,
+    UiPanelSize,
+    UiPanelPixels,
+    UiPanelFaceCamera,
+    UiPanelClickable,
     /// A Net Object's priority and range.
     NetPriority,
     NetRange,
@@ -736,6 +749,11 @@ impl Prop {
             | Prop::MistColor
             | Prop::MistLinger
             | Prop::MistSeed => Part::Mist,
+            Prop::UiPanelDocument
+            | Prop::UiPanelSize
+            | Prop::UiPanelPixels
+            | Prop::UiPanelFaceCamera
+            | Prop::UiPanelClickable => Part::UiPanel,
             Prop::NetPriority | Prop::NetRange => Part::NetObject,
             Prop::AnimatorClip
             | Prop::AnimatorSpeed
@@ -1024,6 +1042,11 @@ impl Prop {
             Prop::MistColor => "color",
             Prop::MistLinger => "linger",
             Prop::MistSeed => "seed",
+            Prop::UiPanelDocument => "document",
+            Prop::UiPanelSize => "size",
+            Prop::UiPanelPixels => "pixels_per_metre",
+            Prop::UiPanelFaceCamera => "face_camera",
+            Prop::UiPanelClickable => "clickable",
             Prop::AnimatorClip => "clip",
             Prop::AnimatorSpeed => "speed",
             Prop::AnimatorLooping => "looping",
@@ -1303,6 +1326,9 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     if world.has::<voxear_render::Mist>(entity) {
         parts.push(Part::Mist);
     }
+    if world.has::<voxear_render::UiPanel>(entity) {
+        parts.push(Part::UiPanel);
+    }
     if world.has::<voxear_engine::net::NetObject>(entity) {
         parts.push(Part::NetObject);
     }
@@ -1483,6 +1509,13 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             Prop::MistColor,
             Prop::MistLinger,
             Prop::MistSeed,
+        ],
+        Part::UiPanel => vec![
+            Prop::UiPanelDocument,
+            Prop::UiPanelSize,
+            Prop::UiPanelPixels,
+            Prop::UiPanelFaceCamera,
+            Prop::UiPanelClickable,
         ],
         Part::NetObject => vec![Prop::NetPriority, Prop::NetRange],
         Part::Animator => vec![
@@ -1874,6 +1907,11 @@ pub fn label(prop: &Prop) -> String {
         Prop::MistColor => "Colour",
         Prop::MistLinger => "Linger",
         Prop::MistSeed => "Seed",
+        Prop::UiPanelDocument => "Document",
+        Prop::UiPanelSize => "Size",
+        Prop::UiPanelPixels => "Pixels per Metre",
+        Prop::UiPanelFaceCamera => "Face Camera",
+        Prop::UiPanelClickable => "Clickable",
         Prop::AnimatorClip => "Clip",
         Prop::AnimatorSpeed => "Speed",
         Prop::AnimatorLooping => "Looping",
@@ -2220,6 +2258,9 @@ pub fn add(
         Part::Mist => {
             world.insert(entity, voxear_render::Mist::default());
         }
+        Part::UiPanel => {
+            world.insert(entity, voxear_render::UiPanel::default());
+        }
         Part::NetObject => {
             world.insert(entity, voxear_engine::net::NetObject::default());
         }
@@ -2308,6 +2349,10 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
         Part::Mist => {
             world.remove::<voxear_render::Mist>(entity);
             world.remove::<voxear_render::MistTrail>(entity);
+        }
+        Part::UiPanel => {
+            world.remove::<voxear_render::UiPanel>(entity);
+            world.remove::<voxear_engine::ui_panels::PanelDocument>(entity);
         }
         Part::NetObject => {
             world.remove::<voxear_engine::net::NetObject>(entity);
@@ -2602,6 +2647,14 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         | Prop::MistColor
         | Prop::MistLinger
         | Prop::MistSeed => mist_value(world.get::<voxear_render::Mist>(entity)?, prop)?,
+        Prop::UiPanelDocument => {
+            let document = world.get::<voxear_render::UiPanel>(entity)?.document;
+            Value::Asset(document.and_then(|guid| game.content.db().get(guid)).map_or("None".into(), |e| e.path.clone()))
+        }
+        Prop::UiPanelSize => Value::Vector(world.get::<voxear_render::UiPanel>(entity)?.size.to_vec()),
+        Prop::UiPanelPixels => Value::Number(world.get::<voxear_render::UiPanel>(entity)?.pixels_per_metre),
+        Prop::UiPanelFaceCamera => Value::Toggle(world.get::<voxear_render::UiPanel>(entity)?.face_camera),
+        Prop::UiPanelClickable => Value::Toggle(world.get::<voxear_render::UiPanel>(entity)?.clickable),
         Prop::NetPriority => Value::Number(world.get::<voxear_engine::net::NetObject>(entity)?.priority),
         Prop::NetRange => Value::Number(world.get::<voxear_engine::net::NetObject>(entity)?.range),
         Prop::AnimatorClip => {
@@ -2902,7 +2955,16 @@ pub fn set(
     let mut renderer = renderer;
     let changed = match (prop, value) {
         // A mesh, material, sound or level's Obj kept after play comes back by its name, as its list has it.
-        (Prop::Mesh | Prop::DryMesh | Prop::Material | Prop::Sound | Prop::LightCookie | Prop::LightProfile, Value::Asset(label))
+        (
+            Prop::Mesh
+            | Prop::DryMesh
+            | Prop::Material
+            | Prop::Sound
+            | Prop::LightCookie
+            | Prop::LightProfile
+            | Prop::UiPanelDocument,
+            Value::Asset(label),
+        )
         | (Prop::LodObj(..) | Prop::LodAdd(_) | Prop::JointConnected, Value::Obj(label)) => {
             let choice = choices(game, types, entity, prop).into_iter().find(|(l, _)| *l == label);
             choice.is_some_and(|(_, choice)| pick(game, renderer.as_deref_mut(), types, entity, prop, &choice))
@@ -3035,6 +3097,16 @@ pub fn pick(
                 },
             };
             with(&mut game.engine.world, entity, |gun: &mut Gun| gun.handling = handling)
+        }
+        (Prop::UiPanelDocument, Pick::Asset(choice)) => {
+            let document = match choice {
+                None => None,
+                Some(path) => match game.content.parse(path).map(|reference| reference.guid()) {
+                    Ok(Some(guid)) => Some(guid),
+                    _ => return false,
+                },
+            };
+            with(&mut game.engine.world, entity, |panel: &mut voxear_render::UiPanel| panel.document = document)
         }
         (Prop::MatcherMotionSet, Pick::Asset(choice)) => {
             let set = match choice {
@@ -3269,6 +3341,7 @@ pub fn choices(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) ->
             return fields::asset_choices(game, &kind);
         }
         Prop::MatcherMotionSet => return fields::assets_of(game, Some(AssetKind::MotionSet)),
+        Prop::UiPanelDocument => return fields::assets_of(game, Some(AssetKind::Ui)),
         Prop::GunHandling => return fields::assets_of(game, Some(AssetKind::GunHandling)),
         Prop::AnimatorClip => {
             let mut found = vec![("None".to_string(), Pick::Asset(None))];
@@ -3347,6 +3420,7 @@ pub fn title(types: &ScriptTypes, prop: &Prop) -> String {
         Prop::Sound => "Sound".into(),
         Prop::LightCookie => "Texture".into(),
         Prop::LightProfile => "IES profile".into(),
+        Prop::UiPanelDocument => "UI Document".into(),
         Prop::LodObj(..) | Prop::LodAdd(_) => "Obj".into(),
         Prop::JointConnected => "Rigidbody".into(),
         Prop::Field { behaviour, path } => fields::kind_at(types, behaviour, path)
@@ -3752,6 +3826,9 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         (prop, value) if prop.part() == Part::Mist => {
             with(world, entity, |mist: &mut voxear_render::Mist| set_mist(mist, prop, value))
         }
+        (prop, value) if prop.part() == Part::UiPanel => {
+            with(world, entity, |panel: &mut voxear_render::UiPanel| set_panel(panel, prop, value))
+        }
         (Prop::NetPriority, Value::Number(n)) => {
             with(world, entity, |net: &mut voxear_engine::net::NetObject| net.priority = n.max(0.0))
         }
@@ -3973,6 +4050,19 @@ fn mist_value(mist: &voxear_render::Mist, prop: &Prop) -> Option<Value> {
         Prop::MistSeed => Value::Whole(i64::from(mist.seed)),
         _ => return None,
     })
+}
+
+/// Sets a UI Panel's field from the Inspector, kept within what it can be.
+fn set_panel(panel: &mut voxear_render::UiPanel, prop: &Prop, value: Value) {
+    match (prop, value) {
+        (Prop::UiPanelSize, Value::Vector(size)) if size.len() == 2 => {
+            panel.size = [size[0].max(0.01), size[1].max(0.01)];
+        }
+        (Prop::UiPanelPixels, Value::Number(n)) => panel.pixels_per_metre = n.clamp(1.0, 10_000.0),
+        (Prop::UiPanelFaceCamera, Value::Toggle(on)) => panel.face_camera = on,
+        (Prop::UiPanelClickable, Value::Toggle(on)) => panel.clickable = on,
+        _ => {}
+    }
 }
 
 /// Sets a Mist's field from the Inspector, kept within what it can be.

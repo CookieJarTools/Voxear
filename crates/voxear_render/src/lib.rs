@@ -58,6 +58,7 @@ mod seasons;
 mod shadows;
 mod texture_codec;
 mod ui_pass;
+mod ui_panels;
 mod volumetric;
 mod water;
 pub mod water_bodies;
@@ -78,6 +79,7 @@ pub use assets::{MaterialDesc, MaterialHandle, MeshHandle, TextureSource};
 pub use capture::{Capture, CapturedImage};
 pub use cooked::{COOKED_VERSION, CookedModel};
 pub use cooked_picture::{COOKED_PICTURE_VERSION, CookedPicture, PictureUse};
+pub use ui_panels::{MAX_UI_PANELS, PanelRect, UiPanel, UiPanelFrame, panels as ui_panel_rects};
 pub use frame_debugger::{Channels, FrameImage, FrameLook, FramePass};
 pub use gltf_import::{
     FilePicture, FileMaterial, ImportedModel, ImportedNode, PreparedModel, ReadFile, companion_files,
@@ -317,6 +319,8 @@ struct FrameBuffers {
     smoke_holes: Buffer,
     mists: Buffer,
     mist_points: Buffer,
+    /// This view's UI panels (see `ui_panels`).
+    ui_panels: Buffer,
     /// Dicing's lists, counts and draws (see `dice`).
     diced_instances: Buffer,
     dice_counts: Buffer,
@@ -388,6 +392,8 @@ pub struct Renderer {
     waited_ms: f32,
     stats: RenderStats,
     ui_buffers: Vec<UiBuffers>,
+    /// UI panels in the world: their UIs, textures, and how large each showed.
+    ui_panels: ui_panels::UiPanels,
     previews: previews::Previews,
     /// Plants' impostors waiting to be baked, and what bakes drew from.
     impostor_bakes: impostors::Bakes,
@@ -465,6 +471,7 @@ impl Renderer {
             waited_ms: 0.0,
             stats: RenderStats::default(),
             ui_buffers,
+            ui_panels: ui_panels::UiPanels::default(),
             previews: previews::Previews::default(),
             impostor_bakes: impostors::Bakes::default(),
             skinning: skinning::Skinning::default(),
@@ -1068,6 +1075,7 @@ impl Renderer {
             assets,
             outputs,
             ui_buffers,
+            ui_panels,
             previews,
             impostor_bakes,
             skinning,
@@ -1083,6 +1091,12 @@ impl Renderer {
         let mut fg = graph.begin(gpu, frame.slot);
         impostor_bakes.record(&mut fg, pipelines, assets, gpu, bindless)?;
         skinning.record(&mut fg, *pipelines, frame.slot);
+        let ui = &ui_buffers[frame.slot];
+        let ui_push = Push { buffers: ui.pointers.address, ..Push::default() };
+        // UI panels in the world first, into their textures, for every view to draw.
+        let panel_pipelines = (pipelines.ui_panel, pipelines.ui_panel_mips, ui_push);
+        let (panel_textures, panel_quads) =
+            ui_panels.record(&mut fg, (gpu, bindless), panel_pipelines, &ui.quads, 0)?;
         // Each output drawn this frame, as the graph knows it.
         let images: Vec<Option<(ImageId, ImageDesc)>> = outputs
             .iter()
@@ -1104,8 +1118,6 @@ impl Renderer {
                 Some((fg.import_image(&name, (image, view), desc, last), desc))
             })
             .collect();
-        let ui = &ui_buffers[frame.slot];
-        let ui_push = Push { buffers: ui.pointers.address, ..Push::default() };
         // The first view drawn into each output clears around itself, and keeps the view for its UI's backdrop.
         let mut backdrops = vec![None; outputs.len()];
         let mut cleared = vec![false; outputs.len()];
@@ -1133,11 +1145,15 @@ impl Renderer {
                 mesh_shaders,
                 software_rays,
                 posed: skinning.posed.clone(),
+                panels: panel_textures.clone(),
             };
             let recorded =
                 view.record(&mut fg, (gpu, bindless, pipelines, assets), world, &setup, output, frame.slot)?;
             if first {
                 backdrops[at] = recorded.backdrop;
+            }
+            for (entity, size) in recorded.panel_sizes {
+                ui_panels.saw(entity, size);
             }
             if index == 0 {
                 push = Some(recorded.push);
@@ -1160,7 +1176,8 @@ impl Renderer {
         if let Some((output, desc)) = main {
             captures.record(&mut fg, gpu, (output, desc), true, frame.slot)?;
         }
-        let mut first_quad = 0;
+        ui_panels.end_frame();
+        let mut first_quad = panel_quads;
         for ((output, image), backdrop) in outputs.iter().zip(&images).zip(backdrops) {
             let Some((image, desc)) = *image else { continue };
             let target = (image, desc.extent());
@@ -1297,6 +1314,18 @@ impl Renderer {
         self.set_output_game_ui(OutputId::MAIN, frame, origin)
     }
 
+    /// The UI panels in the world, each laid out for its texture: those not
+    /// among them are let go. Kept until set again.
+    pub fn set_ui_panels(&mut self, frames: &[UiPanelFrame<'_>]) -> Result<()> {
+        self.ui_panels.set(&self.gpu, &mut self.bindless, &mut self.graph, frames)
+    }
+
+    /// How large each UI panel showed in the last frame's views, the
+    /// largest of them, in pixels: what its next texture is sized for.
+    pub fn ui_panel_sizes(&self) -> &HashMap<voxear_ecs::Entity, [f32; 2]> {
+        self.ui_panels.sizes()
+    }
+
     /// What the UI draws over an output, as [`set_ui`](Self::set_ui) sets
     /// the main one's.
     pub fn set_output_ui(&mut self, id: OutputId, frame: &voxear_ui::UiFrame) -> Result<()> {
@@ -1351,6 +1380,7 @@ impl Drop for Renderer {
             self.frames.retire(Retired::Buffer(buffers.quads));
             self.frames.retire(Retired::Buffer(buffers.pointers));
         }
+        self.ui_panels.destroy(gpu, &mut self.bindless);
         self.graph.destroy(gpu, &mut self.bindless);
         for output in &mut self.outputs {
             output.destroy(gpu, &mut self.bindless);
@@ -1440,6 +1470,8 @@ struct ViewSetup {
     software_rays: bool,
     /// This frame's posed parts, whose instances draw their posed vertices.
     posed: std::sync::Arc<HashMap<scene::Owner, skinning::Posed>>,
+    /// This frame's UI panels' textures, which each view draws its panels with.
+    panels: Vec<ui_panels::PanelTexture>,
 }
 
 /// What a view gives the frame after it: its push constants, which the UI
@@ -1448,6 +1480,8 @@ struct ViewSetup {
 struct ViewRecorded {
     push: Push,
     backdrop: Option<(ImageId, [u32; 2], vk::Rect2D)>,
+    /// How large each UI panel showed in the view, in pixels.
+    panel_sizes: Vec<(voxear_ecs::Entity, [f32; 2])>,
 }
 
 impl View {
@@ -1521,6 +1555,7 @@ impl View {
                 smoke_holes,
                 mists,
                 mist_points,
+                ui_panels,
                 diced_instances,
                 dice_counts,
                 dice_splits,
@@ -1537,7 +1572,7 @@ impl View {
             let meshlets = [meshlet_draws, meshlet_draw_instances, meshlet_work];
             let diced = [diced_instances, dice_counts, dice_splits, dice_patches, dice_draws];
             let debug =
-                [debug_lines, debug_triangles, particle_systems, smokes, smoke_cells, smoke_holes, mists, mist_points];
+                [debug_lines, debug_triangles, particle_systems, smokes, smoke_cells, smoke_holes, mists, mist_points, ui_panels];
             for buffer in all.into_iter().chain(debug).chain([sky_light, stats_readback]).chain(meshlets).chain(diced) {
                 frames.retire(Retired::Buffer(buffer));
             }
@@ -1747,6 +1782,7 @@ impl View {
         }
         // The scene is drawn at its render size, which TAA upscales to the view's.
         let output_extent = extent;
+        let panel_projection = voxear_core::math::Mat4::from_cols_array_2d(&extracted.frame.unjittered_view_proj);
         let extent = vk::Extent2D { width: extracted.render_size.0, height: extracted.render_size.1 };
         // Every Foliage's plants within their draw distance, as instances of their own.
         let camera = voxear_core::math::Vec3::from(extracted.frame.camera_position);
@@ -2067,6 +2103,7 @@ impl View {
                 dice_draws: buffers.dice_draws.address,
                 skins: assets.skins.address,
                 skin_matrices: 0,
+                ui_panels: buffers.ui_panels.address,
             }],
         );
         buffers.instances.write(0, &extracted.instances[..instance_count]);
@@ -2185,10 +2222,20 @@ impl View {
             }
             None => None,
         };
+        // UI panels in the world, over the finished picture so their colours are as designed, and under debug draw.
+        let panel_view = ui_panels::PanelView {
+            textures: &setup.panels,
+            camera,
+            view_projection: panel_projection,
+            view,
+            render: extent,
+        };
+        let panel_sizes =
+            ui_panels::draw(fg, (pipelines.ui_panels, push), &buffers.ui_panels, world, &panel_view, (output, depth));
         let gizmos = self.options.gizmos;
         let debug = (pipelines.debug, pipelines.debug_solid, push);
         debug_pass::record(fg, debug, (&buffers.debug_lines, &buffers.debug_triangles), (output, view), depth, gizmos);
-        Ok(ViewRecorded { push, backdrop })
+        Ok(ViewRecorded { push, backdrop, panel_sizes })
     }
 }
 
@@ -2326,6 +2373,12 @@ fn create_frame_buffers(gpu: &Gpu, prefix: &str, slot: usize) -> Result<FrameBuf
         mist_points: gpu.create_buffer(
             &format!("{prefix}mist points {slot}"),
             (mist::MAX_MISTS * mist::MAX_MIST_POINTS * 16) as u64,
+            storage,
+            host,
+        )?,
+        ui_panels: gpu.create_buffer(
+            &format!("{prefix}ui panels {slot}"),
+            (ui_panels::MAX_UI_PANELS * size_of::<gpu::GpuUiPanel>()) as u64,
             storage,
             host,
         )?,

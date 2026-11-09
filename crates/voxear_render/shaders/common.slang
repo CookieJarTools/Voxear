@@ -742,6 +742,18 @@ struct DrawCommand
 
 // Device addresses of every buffer, written once per frame->
 // A rectangle or glyph of the UI. Mirrors `Quad` in voxear_ui.
+// A UI panel in the world: its top left corner, the edges from there to its
+// top right and its bottom left, and the texture its UI was drawn into.
+struct UiPanel
+{
+    float3 origin;
+    uint texture;
+    float3 across;
+    uint pad0;
+    float3 down;
+    uint pad1;
+};
+
 struct UiQuad
 {
     float4 rect;
@@ -941,6 +953,8 @@ struct Buffers
     // three rows each (skinning.slang).
     uint4* skins;
     float4* skinMatrices;
+    // This frame's UI panels in this view (ui.slang).
+    UiPanel* uiPanels;
 };
 
 struct Push

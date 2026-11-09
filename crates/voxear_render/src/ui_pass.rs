@@ -19,16 +19,17 @@ use crate::{
     passes::{begin_rendering, bind},
 };
 
-/// Quads the per-frame buffer holds, both layers together; more are left out.
-pub const MAX_UI_QUADS: u64 = 16 * 1024;
+/// Quads the per-frame buffer holds, every layer and UI panel together; more
+/// are left out.
+pub const MAX_UI_QUADS: u64 = 32 * 1024;
 
 /// One UI's quads and glyph atlas, and where its area starts in the output.
 #[derive(Default)]
-struct Layer {
-    quads: Vec<Quad>,
+pub(crate) struct Layer {
+    pub(crate) quads: Vec<Quad>,
     atlas: Option<(Image, TextureId)>,
     /// The version of the atlas on the GPU.
-    version: u64,
+    pub(crate) version: u64,
     origin: [u32; 2],
 }
 
@@ -41,7 +42,7 @@ pub(crate) struct UiGpu {
 }
 
 impl Layer {
-    fn set(&mut self, gpu: &Gpu, bindless: &mut Bindless, frame: &UiFrame, room: usize) -> Result<()> {
+    pub(crate) fn set(&mut self, gpu: &Gpu, bindless: &mut Bindless, frame: &UiFrame, room: usize) -> Result<()> {
         if frame.quads.len() > room {
             tracing::warn!("the UI drew {} quads; only {room} fit", frame.quads.len());
         }
@@ -74,11 +75,11 @@ impl Layer {
         gpu.upload_mips(image, std::slice::from_ref(&atlas.pixels))
     }
 
-    fn texture(&self) -> u32 {
+    pub(crate) fn texture(&self) -> u32 {
         self.atlas.as_ref().map_or(NO_TEXTURE, |(_, texture)| texture.0)
     }
 
-    fn destroy(&mut self, gpu: &Gpu, bindless: &mut Bindless) {
+    pub(crate) fn destroy(&mut self, gpu: &Gpu, bindless: &mut Bindless) {
         if let Some((image, texture)) = self.atlas.take() {
             bindless.remove_texture(texture);
             gpu.destroy_image(image);

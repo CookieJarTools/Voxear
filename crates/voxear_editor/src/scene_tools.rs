@@ -169,8 +169,8 @@ impl Markers {
     }
 }
 
-/// The Obj under a point in the Scene view: the nearest mesh the ray
-/// meets, or a light, camera or Audio Source whose marker shows
+/// The Obj under a point in the Scene view: the nearest mesh or UI Panel
+/// the ray meets, or a light, camera or Audio Source whose marker shows
 /// close by.
 pub fn pick(
     world: &World,
@@ -189,6 +189,12 @@ pub fn pick(
     // A plant of a Foliage picks the Foliage's Obj, as grass picks a terrain.
     for (distance, _, entity) in mesh_hits(world, renderer, (origin, direction), true) {
         consider(distance, entity);
+    }
+    // A UI Panel by its rectangle, from the side it shows on.
+    for (entity, rect, _) in voxear_render::ui_panel_rects(world, camera.position) {
+        if let Some((along, _)) = rect.hit(origin, direction).filter(|_| !world.has::<EditorOnly>(entity)) {
+            consider(along, entity);
+        }
     }
     let marked = world
         .query_ref::<(Entity, &Transform, Option<&WorldTransform>, Option<&Light>, Option<&Camera>, Option<&AudioSource>)>()

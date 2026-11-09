@@ -235,6 +235,10 @@ impl App {
             self.overlay.update(delta, renderer);
             let size = window.inner_size();
             let scale = window.scale_factor() as f32;
+            // UI Panels in the world, pointed at from the camera, unless the tools' camera flies.
+            let pointer = (!self.fly.is_looking()).then(|| self.game.input.devices().mouse().position);
+            let view = [0.0, 0.0, size.width as f32, size.height as f32];
+            self.game.show_panels(renderer, (view, None), pointer, delta)?;
             // The game's own UI over the whole window, under the tools.
             self.game.ui.draw(renderer, delta, [0, 0, size.width, size.height], scale)?;
             self.overlay.show_debug_texts(&self.game.engine.world, (size.width, size.height), scale);
@@ -319,6 +323,10 @@ impl ApplicationHandler for App {
         }
         // Then the game's own UI, which takes what is over it.
         if !self.fly.is_looking() && !self.game.ui.is_empty() && crate::ui_input::handle(self.game.ui.ui(), &event) {
+            return;
+        }
+        // Then the UI Panels in the world, which take a click that lands on one.
+        if !self.fly.is_looking() && self.game.ui.panel_input(&event) {
             return;
         }
         // Then the game's input, unless the tools' camera is flying.

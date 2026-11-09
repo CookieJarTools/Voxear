@@ -630,11 +630,13 @@ fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<
     renderer.set_view_options(options);
     renderer.set_mesh_shaders(mesh_shaders);
     game.start(Some(&mut renderer))?;
+    let mut looking_through = None;
     if let Some(name) = &camera {
         let world = &game.engine.world;
         let named = world.query_ref::<(voxear_ecs::Entity, &voxear_scene::Name)>().into_iter().find(|(_, n)| n.0 == *name);
         let (found, _) = named.with_context(|| format!("no Obj named {name} to look through"))?;
         renderer.set_view_options(ViewOptions { camera: Some(found), ..options });
+        looking_through = Some(found);
     }
     let mut overlay = StatsOverlay::new(stats);
     let frames = frames.max(1);
@@ -643,6 +645,9 @@ fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<
     let mut frame_gpu = Vec::new();
     for frame in 1..=frames {
         game.tick(delta, Some(&mut renderer));
+        // UI Panels in the world, with nothing pointing at them.
+        let view = [0.0, 0.0, width as f32, height as f32];
+        game.show_panels(&mut renderer, (view, looking_through), None, delta)?;
         if stats {
             // Refreshed every frame, since a render is over too soon to wait.
             overlay.update(delta, &renderer);

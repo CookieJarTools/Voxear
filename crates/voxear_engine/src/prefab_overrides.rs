@@ -213,6 +213,7 @@ pub fn put(
     }
     set::<AudioSource>(world, entity, obj.audio);
     set(world, entity, obj.audio_listener.then_some(AudioListener));
+    set::<voxear_render::UiPanel>(world, entity, obj.ui_panel);
     let layer = obj.layer.as_ref().map(|layer| layer.layer(world)).filter(|layer| layer.0 != 0);
     set::<Layer>(world, entity, layer);
     set::<Collider>(world, entity, obj.collider);

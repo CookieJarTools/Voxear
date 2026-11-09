@@ -184,6 +184,14 @@ impl RenderGraph {
         self.timer.frame_ms()
     }
 
+    /// Lets go of the kept image `name`, as of a UI panel that has gone.
+    /// The caller makes sure the GPU is done with it.
+    pub fn release(&mut self, gpu: &Gpu, bindless: &mut Bindless, name: &str) {
+        if let Some(transient) = self.transients.remove(name) {
+            release(gpu, bindless, transient);
+        }
+    }
+
     pub fn destroy(&mut self, gpu: &Gpu, bindless: &mut Bindless) {
         for (_, transient) in self.transients.drain() {
             release(gpu, bindless, transient);

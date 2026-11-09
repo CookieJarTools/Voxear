@@ -110,6 +110,7 @@ pub fn shapes(
     }
     if let Some(entity) = selected {
         post_volume(&mut shapes, world, camera, entity);
+        ui_panel(&mut shapes, world, camera, entity);
         wind_zone(&mut shapes, world, camera, entity);
         water_body(&mut shapes, world, camera, entity);
         path_curve(&mut shapes, world, camera, entity);
@@ -300,6 +301,18 @@ fn post_volume(shapes: &mut Vec<Shape>, world: &World, camera: &ViewCamera, enti
                 }
             }
         }
+    }
+}
+
+/// A UI Panel's rectangle, as it shows to the view's camera.
+fn ui_panel(shapes: &mut Vec<Shape>, world: &World, camera: &ViewCamera, entity: Entity) {
+    let Some(panel) = world.get::<voxear_render::UiPanel>(entity) else { return };
+    let matrix = voxear_scene::world_matrix(world, entity);
+    let rect = voxear_render::PanelRect::of(panel, matrix, camera.position);
+    let corners = [rect.origin, rect.origin + rect.across, rect.origin + rect.across + rect.down, rect.origin + rect.down];
+    let points: Option<Vec<[f32; 2]>> = corners.iter().chain(&corners[..1]).map(|&corner| camera.project(corner)).collect();
+    if let Some(points) = points {
+        polyline(shapes, camera, &points, Color::hex(REACH));
     }
 }
 

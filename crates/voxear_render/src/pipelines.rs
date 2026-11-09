@@ -155,6 +155,11 @@ pub struct Pipelines {
     /// The frame debugger's view of an image.
     pub frame_debug: vk::Pipeline,
     pub ui: vk::Pipeline,
+    /// A UI panel's UI into its texture, the panels over each view's
+    /// finished picture, and each panel's texture's mips (see `ui_panels`).
+    pub ui_panel: vk::Pipeline,
+    pub ui_panels: vk::Pipeline,
+    pub ui_panel_mips: vk::Pipeline,
     /// Debug draw's lines, and its solid shapes, over the finished frame.
     pub debug: vk::Pipeline,
     pub debug_solid: vk::Pipeline,
@@ -519,6 +524,19 @@ impl Pipelines {
                 blend: Blend::Premultiplied,
                 ..GraphicsPipelineDesc::new("UI", ui, c"uiVertex", c"uiFragment")
             })?,
+            ui_panel: graphics(&GraphicsPipelineDesc {
+                color_formats: &[crate::ui_panels::PANEL_FORMAT],
+                cull: vk::CullModeFlags::NONE,
+                blend: Blend::Premultiplied,
+                ..GraphicsPipelineDesc::new("UI panel", ui, c"uiVertex", c"uiFragment")
+            })?,
+            ui_panels: graphics(&GraphicsPipelineDesc {
+                color_formats: output,
+                cull: vk::CullModeFlags::NONE,
+                blend: Blend::Premultiplied,
+                ..GraphicsPipelineDesc::new("UI panels", ui, c"uiPanelVertex", c"uiPanelFragment")
+            })?,
+            ui_panel_mips: create_compute_pipeline(gpu, layout, "UI panel mips", ui, c"uiPanelMipMain")?,
             debug: graphics(&GraphicsPipelineDesc {
                 color_formats: output,
                 cull: vk::CullModeFlags::NONE,
@@ -656,6 +674,9 @@ impl Pipelines {
             self.finish,
             self.frame_debug,
             self.ui,
+            self.ui_panel,
+            self.ui_panels,
+            self.ui_panel_mips,
             self.debug,
             self.debug_solid,
             self.preview,

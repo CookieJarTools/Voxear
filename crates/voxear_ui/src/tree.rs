@@ -308,6 +308,17 @@ impl Default for Ui {
 
 impl Ui {
     pub fn new() -> Self {
+        Self::with_fonts(FontContext::new())
+    }
+
+    /// A new UI that finds fonts as this one does, sharing what it found:
+    /// finding the system's fonts afresh takes a while, which a UI made
+    /// often, as a panel in the world is, should not.
+    pub fn sharing_fonts(&self) -> Self {
+        Self::with_fonts(self.fonts.clone())
+    }
+
+    fn with_fonts(fonts: FontContext) -> Self {
         let mut tree = TaffyTree::new();
         // Snapped to physical pixels when drawn instead, which is what matters
         // at display scales other than 1.
@@ -321,7 +332,7 @@ impl Ui {
             tree,
             root,
             rtl: false,
-            fonts: FontContext::new(),
+            fonts,
             layouts: LayoutContext::new(),
             atlas: GlyphAtlas::new(),
             viewport: (0.0, 0.0, 0.0),

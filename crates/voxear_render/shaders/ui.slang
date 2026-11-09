@@ -5,7 +5,8 @@
 // image's size, the same way packed. push.list is where the layer's area starts in the output
 // (x | y << 16): the game's UI is laid out for its own area, as the Game view. push.level is the
 // layer's first quad, since SV_VertexID counts from the draw's first vertex. Colours arrive
-// linear and premultiplied, and the output is sRGB, so blending happens in linear light.
+// linear and premultiplied, and the output is sRGB, so blending happens in linear light. A UI
+// panel in the world is drawn the same way into a texture of its own (see uiPanelVertex below).
 
 #include "common.slang"
 
@@ -189,4 +190,74 @@ float4 uiFragment(UiOut i) : SV_Target
         fill = float4(backdrop(pixel + origin) * (1.0 - q.color.a) + q.color.rgb, 1.0);
     }
     return fill * inner + q.borderColor * edge;
+}
+
+// UI panels in the world (see src/ui_panels.rs). Each panel's UI is drawn
+// into a texture of its own by uiVertex and uiFragment, at the size it shows
+// on screen, and uiPanelMipMain makes its mips. Each view then draws its
+// panels over the finished picture, after post-processing, so their colours
+// are as designed, one rectangle each from buffers().uiPanels. A panel is
+// hidden where the scene is in front of it, read from the scene's depth as
+// debug draw reads it. push.textures: the scene's depth texture, and the
+// view's offset in the output (x, y); push.size is the depth's size and
+// push.output the view's (width | height << 16), which differ when the scene
+// is drawn smaller and upscaled.
+
+struct UiPanelOut
+{
+    float4 position : SV_Position;
+    // Across and down the panel, from 0 to 1.
+    float2 uv : UV;
+    nointerpolation uint texture : TEXTURE;
+};
+
+[shader("vertex")]
+UiPanelOut uiPanelVertex(uint vertexId : SV_VertexID)
+{
+    UiPanel panel = buffers()->uiPanels[vertexId / 6];
+    float2 corner = UI_CORNERS[vertexId % 6];
+    float3 world = panel.origin + panel.across * corner.x + panel.down * corner.y;
+    UiPanelOut o;
+    o.position = transform(push.frame->unjitteredViewProj, float4(world, 1.0));
+    o.uv = corner;
+    o.texture = panel.texture;
+    return o;
+}
+
+[shader("fragment")]
+float4 uiPanelFragment(UiPanelOut i) : SV_Target
+{
+    // Read before anything is thrown away, so the mip is picked from neighbouring pixels that all ran.
+    float4 color = textures[NonUniformResourceIndex(i.texture)].Sample(samplers[SAMPLER_LINEAR_CLAMP], i.uv);
+    float2 view = float2(push.output & 0xFFFF, push.output >> 16);
+    float2 inView = i.position.xy - float2(push.textures.yz);
+    int2 pixel = int2(inView * float2(push.size) / max(view, 1.0));
+    float scene = textures[NonUniformResourceIndex(push.textures.x)].Load(int3(pixel, 0)).r;
+    // Reverse-Z: nearer is larger. A little slack keeps a panel on a wall from flickering into it.
+    if (i.position.z < scene * 0.999)
+    {
+        discard;
+    }
+    // Drawn after anti-aliasing, a slanted edge would step from pixel to pixel: the pixels along it fade over
+    // the half pixel inside it instead.
+    float2 inside = min(i.uv, 1.0 - i.uv) / max(fwidth(i.uv), 1e-6);
+    return color * saturate(min(inside.x, inside.y) + 0.5);
+}
+
+// One mip of a panel's texture from the one before, twice its size: the
+// average of the four texels under it, its colour premultiplied, so a
+// see-through edge does not darken. push.texture is the texture, push.level
+// the mip read, push.output this mip's storage image, push.size its size.
+[shader("compute")]
+[numthreads(8, 8, 1)]
+void uiPanelMipMain(uint3 id : SV_DispatchThreadID)
+{
+    if (any(id.xy >= push.size))
+    {
+        return;
+    }
+    float2 uv = (float2(id.xy) + 0.5) / float2(push.size);
+    Texture2D texture = textures[NonUniformResourceIndex(push.texture)];
+    storageImagesRgba16f[push.output][id.xy] =
+        texture.SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], uv, float(push.level));
 }

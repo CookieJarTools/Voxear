@@ -245,6 +245,7 @@ impl Editor {
         let tables = changed.iter().any(|path| path.ends_with(".strings") || path.ends_with(".assettable"));
         let actions = changed.iter().any(|path| path.ends_with(".inputactions"));
         let lighting = changed.iter().any(|path| path.ends_with(".lighting"));
+        let documents = changed.iter().any(|path| path.ends_with(".vui") || path.ends_with(".vss"));
         // A material may pick a built-in shader no other did, which is compiled in then.
         let shaders = changed.iter().any(|path| path.ends_with(".shader") || path.ends_with(".material"));
         if came_or_went {
@@ -258,6 +259,10 @@ impl Editor {
             if actions {
                 self.game.content.forget_kind(voxear_assets::AssetKind::InputActions);
                 self.game.load_input_actions();
+            }
+            // UI Panels in the world show a document edited outside the editor as it now is.
+            if documents {
+                self.game.ui.reload_panels(&mut self.game.content);
             }
             // A shader saved from a code editor compiles again, and its materials draw with it; nothing
             // compiles again when the shaders the materials pick are as they were.

@@ -376,6 +376,9 @@ fn apply_instance(root: &mut ObjData, instance: &ObjData) {
         root.audio = instance.audio.clone();
     }
     root.audio_listener |= instance.audio_listener;
+    if instance.ui_panel.is_some() {
+        root.ui_panel = instance.ui_panel.clone();
+    }
     if instance.lod_group.is_some() {
         root.lod_group = instance.lod_group.clone();
     }
@@ -448,6 +451,7 @@ pub struct TemplateObj {
     pub collider_mesh: Option<ColliderMeshSource>,
     pub audio: Option<AudioSource>,
     pub audio_listener: bool,
+    pub ui_panel: Option<voxear_render::UiPanel>,
     pub collider: Option<Collider>,
     pub rigidbody: Option<Rigidbody>,
     pub character: Option<CharacterController>,
@@ -602,6 +606,9 @@ impl Template {
             }
             if let Some(audio) = obj.audio {
                 world.insert(entity, audio);
+            }
+            if let Some(panel) = obj.ui_panel {
+                world.insert(entity, panel);
             }
             if let Some(layer) = obj.layer.as_ref().map(|layer| layer.layer(world)).filter(|layer| layer.0 != 0) {
                 world.insert(entity, layer);
@@ -961,6 +968,7 @@ pub(crate) fn resolve_obj(
         collider_mesh,
         audio: data.audio.as_ref().map(|audio| audio_source(content, audio)).transpose()?,
         audio_listener: data.audio_listener,
+        ui_panel: data.ui_panel.as_ref().map(|panel| crate::ui_panels::ui_panel(content, panel)).transpose()?,
         collider: data.collider,
         rigidbody: data.rigidbody,
         character: data.character,

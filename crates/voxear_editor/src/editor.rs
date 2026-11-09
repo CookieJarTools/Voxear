@@ -401,6 +401,9 @@ pub struct Editor {
     /// Frames run, which each log line notes, and what opens a stack frame's
     /// file, when not the code editor the settings name.
     frames: u64,
+    /// Where the pointer is over the Game view while the game plays, in its
+    /// window's pixels, which works the UI Panels in the world.
+    game_pointer: Option<[f32; 2]>,
     source_opener: Option<SourceOpener>,
     /// Frames and seconds counted towards the status bar's next numbers, and
     /// the frame rate it shows.
@@ -659,6 +662,7 @@ impl Editor {
             maximized: None,
             status: (0, 0.0),
             frames: 0,
+            game_pointer: None,
             source_opener: None,
             average_fps: 0.0,
             shown_fps: 0.0,
@@ -773,6 +777,7 @@ impl Editor {
                 profile_scope!("UI Upload");
                 renderer.set_ui(&frame)?;
                 self.draw_desktop_windows(renderer)?;
+                self.draw_panels(renderer, &views, size, delta)?;
                 self.draw_game_ui(renderer, &views, size, delta)?;
             }
             // In edit mode the game does not tick, so the level's lookup table is loaded here.
@@ -781,6 +786,24 @@ impl Editor {
         };
         self.profiler.record(profiling::end_frame(), delta * 1000.0, renderer);
         rendered
+    }
+
+    /// The UI Panels in the world, in every view, editing or playing. While
+    /// the game plays, the pointer over the Game view works them, through
+    /// its camera.
+    fn draw_panels(
+        &mut self,
+        renderer: &mut Renderer,
+        views: &[(NodeId, Entity)],
+        size: (u32, u32),
+        delta: f32,
+    ) -> Result<()> {
+        let game = self.nodes.game_viewport;
+        let camera = views.iter().find(|(viewport, _)| *viewport == game).map(|(_, camera)| *camera);
+        let area = self.output_of(game, size).map(|(_, output_size)| self.viewport_rect(Some(game), output_size));
+        let view = area.map_or([0.0, 0.0, 1.0, 1.0], |area| area.map(|side| side as f32));
+        let pointer = self.game_pointer.filter(|_| self.is_playing() && camera.is_some());
+        self.game.show_panels(renderer, (view, camera), pointer, delta)
     }
 
     /// The game's own UI, over the Game view while it plays, in whichever
@@ -2111,7 +2134,7 @@ impl Editor {
     /// to the command bar.
     pub fn handle(&mut self, event: &winit::event::WindowEvent) -> bool {
         use winit::event::{ElementState, WindowEvent};
-        if self.game_ui_takes(event) {
+        if self.game_ui_takes(event) || self.panels_take(event) {
             return true;
         }
         if self.input_listening_takes(event) || self.game_input_takes(event) {
@@ -2433,6 +2456,40 @@ impl Editor {
                 voxear_engine::ui_input::handle(ui, event)
             }
             _ => false,
+        }
+    }
+
+    /// Hands the UI Panels in the world what happens over the Game view while
+    /// the game plays: where the pointer is, which they are pointed at from,
+    /// and the clicks, wheel and keys that are theirs. Returns whether one
+    /// took the event.
+    fn panels_take(&mut self, event: &winit::event::WindowEvent) -> bool {
+        use winit::event::WindowEvent;
+        if !self.is_playing() || !self.shown(self.nodes.game_viewport) {
+            self.game_pointer = None;
+            return false;
+        }
+        let pointing = matches!(event, WindowEvent::CursorMoved { .. } | WindowEvent::MouseInput { .. });
+        if pointing && self.ui.window_of(self.nodes.game_viewport) != self.ui.pointer_window() {
+            return false;
+        }
+        if matches!(event, WindowEvent::MouseInput { state: winit::event::ElementState::Released, .. })
+            && self.ui.holds_press()
+        {
+            return false;
+        }
+        match event {
+            WindowEvent::CursorMoved { position, .. } => {
+                let [x, y, w, h] = self.ui.rect(self.nodes.game_viewport).map(|v| v * self.scale);
+                let (px, py) = (position.x as f32, position.y as f32);
+                self.game_pointer = (px >= x && px < x + w && py >= y && py < y + h).then_some([px, py]);
+                false
+            }
+            WindowEvent::CursorLeft { .. } => {
+                self.game_pointer = None;
+                false
+            }
+            _ => self.game.ui.panel_input(event),
         }
     }
 

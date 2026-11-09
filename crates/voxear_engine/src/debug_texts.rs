@@ -123,6 +123,33 @@ pub fn camera_projection(
     camera: Option<Entity>,
     rect: [f32; 4],
 ) -> Option<impl Fn(Vec3) -> Option<[f32; 2]>> {
+    let view_projection = view_projection(world, camera, rect)?;
+    Some(move |point: Vec3| {
+        let clip = view_projection * point.extend(1.0);
+        if clip.w <= 1e-4 {
+            return None;
+        }
+        let (x, y) = (clip.x / clip.w, clip.y / clip.w);
+        Some([rect[0] + (x + 1.0) * 0.5 * rect[2], rect[1] + (y + 1.0) * 0.5 * rect[3]])
+    })
+}
+
+/// The ray from the camera the renderer draws with (`camera`, or the first
+/// in the world) through `point` of `rect` (left, top, width and height):
+/// where it starts, on the camera's near plane, and which way it goes, a
+/// metre long. `None` without a camera.
+pub fn camera_ray(world: &World, camera: Option<Entity>, rect: [f32; 4], point: [f32; 2]) -> Option<(Vec3, Vec3)> {
+    let inverse = view_projection(world, camera, rect)?.inverse();
+    let x = (point[0] - rect[0]) / rect[2].max(1.0) * 2.0 - 1.0;
+    let y = (point[1] - rect[1]) / rect[3].max(1.0) * 2.0 - 1.0;
+    // Depth runs the other way: 1 at the near plane, smaller farther off.
+    let near = inverse.project_point3(Vec3::new(x, y, 1.0));
+    let far = inverse.project_point3(Vec3::new(x, y, 0.5));
+    Some((near, (far - near).normalize_or_zero()))
+}
+
+/// What the camera the renderer draws with sees, for a view `rect` in size.
+fn view_projection(world: &World, camera: Option<Entity>, rect: [f32; 4]) -> Option<Mat4> {
     let (lens, position, rotation) = world
         .query_ref::<(Entity, &Camera, &Transform, Option<&WorldTransform>)>()
         .without::<Destroying>()
@@ -135,16 +162,7 @@ pub fn camera_projection(
         })?;
     let aspect = rect[2] / rect[3].max(1.0);
     let view = Mat4::from_rotation_translation(rotation, position).inverse();
-    let view_projection =
-        vulkan::perspective_infinite_reverse(lens.fov_y_degrees.to_radians(), aspect, lens.near) * view;
-    Some(move |point: Vec3| {
-        let clip = view_projection * point.extend(1.0);
-        if clip.w <= 1e-4 {
-            return None;
-        }
-        let (x, y) = (clip.x / clip.w, clip.y / clip.w);
-        Some([rect[0] + (x + 1.0) * 0.5 * rect[2], rect[1] + (y + 1.0) * 0.5 * rect[3]])
-    })
+    Some(vulkan::perspective_infinite_reverse(lens.fov_y_degrees.to_radians(), aspect, lens.near) * view)
 }
 
 #[cfg(test)]
@@ -162,6 +180,12 @@ mod tests {
         let project = camera_projection(&world, None, rect).expect("the world has a camera");
         assert_eq!(project(Vec3::ZERO), Some([400.0, 300.0]), "straight ahead is the middle");
         assert_eq!(project(Vec3::new(0.0, 0.0, -20.0)), None, "behind the camera");
+        let (from, along) = camera_ray(&world, None, rect, [400.0, 300.0]).expect("the world has a camera");
+        assert!((along - Vec3::Z).length() < 1e-4 && from.x.abs() < 1e-4 && from.z > -10.0, "{from} {along}");
+        let (_, right) = camera_ray(&world, None, rect, [800.0, 300.0]).unwrap();
+        assert!(right.x > 0.0 && right.y.abs() < 1e-4, "the view's right edge is to the camera's right: {right}");
+        let (_, low) = camera_ray(&world, None, rect, [400.0, 600.0]).unwrap();
+        assert!(low.y < 0.0, "the bottom edge is below: {low}");
 
         debug_draw::set_enabled(true);
         debug_draw::text(Vec3::ZERO, "texts_show_where_the_camera_sees_their_points", [1.0, 0.5, 0.0, 1.0], 0.0);

@@ -828,6 +828,22 @@ pub struct GpuBuffers {
     /// (see `skinning`).
     pub skins: u64,
     pub skin_matrices: u64,
+    /// This frame's UI panels in this view (see `ui_panels`).
+    pub ui_panels: u64,
+}
+
+/// A UI panel as `uiPanelVertex` in `shaders/ui.slang` draws it: its top
+/// left corner in the world, the edges from there to its top right and its
+/// bottom left, and the texture its UI was drawn into.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuUiPanel {
+    pub origin: [f32; 3],
+    pub texture: u32,
+    pub across: [f32; 3],
+    pub _pad0: u32,
+    pub down: [f32; 3],
+    pub _pad1: u32,
 }
 
 /// A mist as `shaders/smoke.slang` draws it: the box its trail stays in, how
@@ -1094,7 +1110,8 @@ mod tests {
         assert_eq!(size_of::<GpuDdgi>(), 32 * DDGI_CASCADES + 32 + 48);
         assert_eq!(size_of::<GpuLighting>(), lighting);
         assert_eq!(size_of::<GpuPost>(), post);
-        assert_eq!(size_of::<GpuBuffers>(), 48 * 8);
+        assert_eq!(size_of::<GpuBuffers>(), 49 * 8);
+        assert_eq!(size_of::<GpuUiPanel>(), 48);
         assert_eq!(size_of::<GpuSmoke>(), 80);
         assert_eq!(size_of::<GpuMist>(), 64);
         assert_eq!(size_of::<GpuParticleSystem>(), 64 + 16 * 9 + 64 * 3 + 128 + 16);

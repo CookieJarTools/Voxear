@@ -75,6 +75,7 @@ impl Engine {
         crate::smoke::register();
         crate::mist::register();
         crate::cameras::register();
+        crate::ui_panels::register();
         crate::first_person::register();
         crate::guns::register();
         crate::net::register();

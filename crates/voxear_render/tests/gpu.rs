@@ -4857,3 +4857,79 @@ fn skin_bound_to_a_hidden_bone_is_left_out_where_the_camera_sees() {
     assert!(lit(Vec3::new(0.0, 0.15, 0.0)) && lit(Vec3::new(0.0, 0.38, 0.0)), "the foot stays");
     assert!(!lit(Vec3::new(0.0, 0.65, 0.0)) && !lit(Vec3::new(0.0, 1.5, 0.0)), "the rest is left out");
 }
+
+/// A UI Panel in the world shows its UI's colours exactly as designed, being
+/// drawn after post-processing; a box in front of it hides it; a fine
+/// pattern on it, far smaller on screen than in its texture, comes out as
+/// its average rather than as pixels picked from it; and the renderer says
+/// how large it showed.
+#[test]
+fn a_ui_panel_shows_its_colours_in_the_world_hidden_behind_what_is_in_front() {
+    use voxear_core::math::{Mat4, Vec4};
+    use voxear_render::{UiPanel, UiPanelFrame};
+    use voxear_ui::{Color, Style, Ui};
+
+    let Some(mut renderer) = renderer() else { return };
+    let (width, height) = (640u32, 360u32);
+    let mut world = World::new();
+    let lens = Camera::default();
+    world.spawn((lens, Transform::IDENTITY));
+    // A 2 by 1 metre panel four metres ahead: red on its left half, one-pixel black and white stripes on its right.
+    let panel = world.spawn((
+        Transform::from_position(Vec3::new(0.0, 0.0, 4.0)),
+        UiPanel { size: [2.0, 1.0], ..UiPanel::default() },
+    ));
+    let mut ui = Ui::new();
+    let root = ui.root();
+    ui.panel(root, Style::default().at(0.0, 0.0).width(500.0).height(500.0).background(Color::hex(0xff0000)));
+    ui.panel(root, Style::default().at(500.0, 0.0).width(500.0).height(500.0).background(Color::hex(0x000000)));
+    for stripe in (500..1000).step_by(2) {
+        let white = Style::default().at(stripe as f32, 0.0).width(1.0).height(500.0).background(Color::hex(0xffffff));
+        ui.panel(root, white);
+    }
+    let frame = ui.frame(1000, 500, 1.0);
+    renderer.set_ui_panels(&[UiPanelFrame { entity: panel, frame: &frame, size: [1000, 500] }]).unwrap();
+    // A small box two metres ahead, in front of the panel's red half's top.
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let grey = renderer.add_material(&MaterialDesc::default()).unwrap();
+    world.spawn((
+        MeshRenderer::new(cube, grey),
+        Transform::new(Vec3::new(-0.25, 0.125, 2.0), Quat::IDENTITY, Vec3::splat(0.15)),
+    ));
+    run(&mut renderer, &world, &mut 0.0, 1);
+
+    // Where a point in the world shows, as the renderer draws it.
+    let aspect = width as f32 / height as f32;
+    let projection = voxear_core::math::camera::lh::proj::vulkan::perspective_infinite_reverse(
+        lens.fov_y_degrees.to_radians(),
+        aspect,
+        lens.near,
+    );
+    let pixel = |point: Vec3| {
+        let clip: Vec4 = projection * Mat4::IDENTITY * point.extend(1.0);
+        let (x, y) = (clip.x / clip.w, clip.y / clip.w);
+        (((x + 1.0) * 0.5 * width as f32) as u32, ((y + 1.0) * 0.5 * height as f32) as u32)
+    };
+    let (_, _, pixels) = renderer.read_pixels().unwrap();
+    let at = |point: Vec3| {
+        let (x, y) = pixel(point);
+        let i = ((y * width + x) * 4) as usize;
+        [pixels[i], pixels[i + 1], pixels[i + 2]]
+    };
+    assert_eq!(at(Vec3::new(-0.5, -0.25, 4.0)), [255, 0, 0], "its red, exactly, untouched by exposure and tone");
+    assert_ne!(at(Vec3::new(-0.5, 0.25, 4.0)), [255, 0, 0], "hidden behind the box");
+    let striped = at(Vec3::new(0.5, 0.0, 4.0));
+    // Half white and half black, averaged in linear light, is about 188 in sRGB.
+    assert!(striped.iter().all(|&c| (170..=205).contains(&c)), "averaged by its mips: {striped:?}");
+    let shown = renderer.ui_panel_sizes().get(&panel).copied().expect("it showed");
+    let (left, _) = pixel(Vec3::new(-1.0, 0.0, 4.0));
+    let (right, _) = pixel(Vec3::new(1.0, 0.0, 4.0));
+    assert!((shown[0] - (right - left) as f32).abs() < 3.0, "as wide as it showed: {shown:?}, {}", right - left);
+
+    renderer.set_ui_panels(&[]).unwrap();
+    run(&mut renderer, &world, &mut 0.0, 1);
+    let (_, _, pixels) = renderer.read_pixels().unwrap();
+    let (x, y) = pixel(Vec3::new(-0.5, -0.25, 4.0));
+    let i = ((y * width + x) * 4) as usize;
+    assert_ne!(pixels[i..i + 3], [255, 0, 0], "a panel not handed over is gone");
+}

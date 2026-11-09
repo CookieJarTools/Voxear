@@ -395,6 +395,7 @@ pub enum ComponentKind {
     Camera = 1,
     FirstPersonView = 2,
     LimbIk = 3,
+    UiPanel = 4,
     Gun = 16,
     GunHolder = 17,
 }

@@ -300,9 +300,12 @@ impl TreeItems for ScriptTree {
     }
 }
 
+/// One Voxear UI the game shows, the screen's or a panel's in the world:
+/// its documents, the numbers scripts hold them by, and what it keeps for
+/// its list and tree views, key maps, language and tooltip.
 #[derive(Default)]
-pub struct GameUi {
-    ui: Ui,
+pub(crate) struct Surface {
+    pub(crate) ui: Ui,
     numbers: UiNumbers,
     /// The list and tree views the scripts gave items, what they made and
     /// bound since, and each tree's items.
@@ -323,7 +326,13 @@ pub struct GameUi {
     rested: Option<(String, f32)>,
 }
 
-impl GameUi {
+impl Surface {
+    /// A surface whose numbers start at `first`, finding fonts as `fonts`
+    /// does.
+    fn sharing_fonts(fonts: &Ui, first: u32) -> Self {
+        Self { ui: fonts.sharing_fonts(), numbers: UiNumbers::starting_at(first), ..Self::default() }
+    }
+
     /// Loads a document by project path, with the sheets its `<Style src>`
     /// names beside it, and returns the number scripts hold it by.
     pub fn load(&mut self, content: &mut Content, path: &str) -> Result<u32> {
@@ -529,10 +538,6 @@ impl GameUi {
         Some(self.ui.text(self.numbers.node(element)?))
     }
 
-    pub fn set_text(&mut self, element: u32, text: &str) {
-        self.ask(element, UiAsk::SetText(text));
-    }
-
     /// Adds, removes or toggles a class, and says whether the element has it after.
     pub fn class(&mut self, element: u32, class: &str, change: ClassChange) -> bool {
         let Some(node) = self.numbers.node(element) else { return false };
@@ -541,10 +546,6 @@ impl GameUi {
 
     pub fn visible(&self, element: u32) -> bool {
         self.numbers.node(element).is_some_and(|node| self.ui.is_visible(node))
-    }
-
-    pub fn set_visible(&mut self, element: u32, visible: bool) {
-        self.ask(element, UiAsk::SetVisible(visible));
     }
 
     /// Whether the element was clicked since the last frame.
@@ -557,6 +558,172 @@ impl GameUi {
         self.numbers.node(element).map_or(0.0, |node| value(&self.ui, node))
     }
 
+    /// Moves the UI's clock on by a frame and lays it out for an area of
+    /// `width` by `height` pixels, at `scale` pixels to a logical one.
+    pub fn frame(&mut self, delta: f32, (width, height): (u32, u32), scale: f32) -> UiFrame {
+        self.ui.advance(delta);
+        self.laid_out = Some(((width, height), scale));
+        self.ui.frame(width, height, scale)
+    }
+}
+
+/// The first number a UI panel's documents and elements are known by, past
+/// the editor's drawers' and windows', and how many numbers each panel has.
+const PANEL_NUMBERS: u32 = 1 << 27;
+const PANEL_SPAN: u32 = 1 << 16;
+
+/// The game's UI: its screen's, over the game's view, and each UI panel's
+/// in the world (see [`crate::ui_panels`]). Scripts reach either through the
+/// same numbers, each UI's in a range of its own.
+#[derive(Default)]
+pub struct GameUi {
+    screen: Surface,
+    pub(crate) panels: Vec<crate::ui_panels::PanelUi>,
+    /// The next panel's first number, less [`PANEL_NUMBERS`], in spans.
+    next_panel: u32,
+    /// The panel the pointer is over, and the one a press went down on,
+    /// which hears its release wherever the pointer is then.
+    pub(crate) hovered: Option<voxear_ecs::Entity>,
+    pub(crate) pressed: Option<voxear_ecs::Entity>,
+}
+
+impl GameUi {
+    /// The UI that holds the document or element `number`: the screen's, or
+    /// a panel's.
+    fn surface(&mut self, number: u32) -> Option<&mut Surface> {
+        if number < PANEL_NUMBERS {
+            return Some(&mut self.screen);
+        }
+        let held = |first: u32| (first..first.saturating_add(PANEL_SPAN)).contains(&number);
+        self.panels.iter_mut().find(|panel| held(panel.first)).map(|panel| &mut panel.surface)
+    }
+
+    fn surface_ref(&self, number: u32) -> Option<&Surface> {
+        if number < PANEL_NUMBERS {
+            return Some(&self.screen);
+        }
+        let held = |first: u32| (first..first.saturating_add(PANEL_SPAN)).contains(&number);
+        self.panels.iter().find(|panel| held(panel.first)).map(|panel| &panel.surface)
+    }
+
+    /// A UI for a new panel, its numbers in a range no panel had before,
+    /// finding fonts as the screen's does, and its first number.
+    pub(crate) fn new_surface(&mut self) -> (Surface, u32) {
+        let spans = (u32::MAX - PANEL_NUMBERS) / PANEL_SPAN;
+        let first = PANEL_NUMBERS + (self.next_panel % spans) * PANEL_SPAN;
+        self.next_panel += 1;
+        (Surface::sharing_fonts(&self.screen.ui, first), first)
+    }
+
+    /// Every UI: the screen's, then each panel's.
+    fn surfaces(&mut self) -> impl Iterator<Item = &mut Surface> {
+        std::iter::once(&mut self.screen).chain(self.panels.iter_mut().map(|panel| &mut panel.surface))
+    }
+
+    /// Loads a document onto the screen by project path, with the sheets
+    /// its `<Style src>` names beside it, and returns the number scripts
+    /// hold it by.
+    pub fn load(&mut self, content: &mut Content, path: &str) -> Result<u32> {
+        self.screen.load(content, path)
+    }
+
+    /// Shows each element bound to a key that key's text in the game's
+    /// language, on the screen and every panel, every one when the language
+    /// or its text changed.
+    pub fn follow_language(&mut self, localization: Option<&Localization>) {
+        for surface in self.surfaces() {
+            surface.follow_language(localization);
+        }
+    }
+
+    /// Shows the tooltip the pointer rests on, on the screen and every panel.
+    pub fn show_tooltip(&mut self, delta: f32) {
+        for surface in self.surfaces() {
+            surface.show_tooltip(delta);
+        }
+    }
+
+    /// An empty document over the game, to fill with elements made from
+    /// code, and the number scripts hold it by.
+    pub fn new_document(&mut self) -> u32 {
+        self.screen.new_document()
+    }
+
+    /// The element named `name` in a document, as a number scripts hold.
+    pub fn find(&mut self, document: u32, name: &str) -> Option<u32> {
+        self.surface(document)?.find(document, name)
+    }
+
+    /// Makes an element at the end of `parent`: see [`UiNumbers::create`].
+    pub fn create(&mut self, parent: u32, kind: ElementKind, text: &str) -> Option<u32> {
+        self.surface(parent)?.create(parent, kind, text)
+    }
+
+    /// Takes an element out: see [`UiNumbers::remove`].
+    pub fn remove(&mut self, element: u32) {
+        if let Some(surface) = self.surface(element) {
+            surface.remove(element);
+        }
+    }
+
+    /// Takes a document away, its elements with it.
+    pub fn close(&mut self, document: u32) {
+        if let Some(surface) = self.surface(document) {
+            surface.close(document);
+        }
+    }
+
+    /// Answers what a script asks of an element: see [`UiAsk`].
+    pub fn ask(&mut self, element: u32, ask: UiAsk<'_>) -> UiAnswer {
+        self.surface(element).map_or(UiAnswer::None, |surface| surface.ask(element, ask))
+    }
+
+    /// Shows each key map and prompt the game's input as it is now, on the
+    /// screen and every panel.
+    pub fn follow_input(&mut self, input: &Input) {
+        for surface in self.surfaces() {
+            surface.follow_input(input);
+        }
+    }
+
+    /// The rows the list and tree views on the screen and every panel made
+    /// or bound, for the scripts to make and fill, laid out as the last
+    /// frame was so the frame drawn next shows them right.
+    pub fn rows_to_fill(&mut self) -> Vec<RowWork> {
+        self.surfaces().flat_map(Surface::rows_to_fill).collect()
+    }
+
+    pub fn text(&self, element: u32) -> Option<String> {
+        self.surface_ref(element)?.text(element)
+    }
+
+    pub fn set_text(&mut self, element: u32, text: &str) {
+        self.ask(element, UiAsk::SetText(text));
+    }
+
+    /// Adds, removes or toggles a class, and says whether the element has it after.
+    pub fn class(&mut self, element: u32, class: &str, change: ClassChange) -> bool {
+        self.surface(element).is_some_and(|surface| surface.class(element, class, change))
+    }
+
+    pub fn visible(&self, element: u32) -> bool {
+        self.surface_ref(element).is_some_and(|surface| surface.visible(element))
+    }
+
+    pub fn set_visible(&mut self, element: u32, visible: bool) {
+        self.ask(element, UiAsk::SetVisible(visible));
+    }
+
+    /// Whether the element was clicked since the last frame.
+    pub fn clicked(&self, element: u32) -> bool {
+        self.surface_ref(element).is_some_and(|surface| surface.clicked(element))
+    }
+
+    /// A slider's value, or a toggle's, 1 when ticked and 0 when not.
+    pub fn value(&self, element: u32) -> f32 {
+        self.surface_ref(element).map_or(0.0, |surface| surface.value(element))
+    }
+
     pub fn set_value(&mut self, element: u32, value: f32) {
         self.ask(element, UiAsk::SetValue(value));
     }
@@ -566,25 +733,23 @@ impl GameUi {
         self.ask(element, UiAsk::SetStyle(style));
     }
 
-    /// Whether anything is showing, so a window can skip it when not.
+    /// Whether anything shows on the screen, so a window can skip it when not.
     pub fn is_empty(&self) -> bool {
-        !self.numbers.has_documents()
+        !self.screen.numbers.has_documents()
     }
 
-    /// The UI, for a window to hand input to and lay out.
+    /// The screen's UI, for a window to hand input to and lay out.
     pub fn ui(&mut self) -> &mut Ui {
-        &mut self.ui
+        &mut self.screen.ui
     }
 
-    /// Moves the UI's clock on by a frame and lays it out for an area of
-    /// `width` by `height` pixels, at `scale` pixels to a logical one.
-    pub fn frame(&mut self, delta: f32, (width, height): (u32, u32), scale: f32) -> UiFrame {
-        self.ui.advance(delta);
-        self.laid_out = Some(((width, height), scale));
-        self.ui.frame(width, height, scale)
+    /// Moves the screen's UI's clock on by a frame and lays it out for an
+    /// area of `width` by `height` pixels, at `scale` pixels to a logical one.
+    pub fn frame(&mut self, delta: f32, size: (u32, u32), scale: f32) -> UiFrame {
+        self.screen.frame(delta, size, scale)
     }
 
-    /// Hands the renderer the game's UI for the area at `origin` in the
+    /// Hands the renderer the screen's UI for the area at `origin` in the
     /// output, or nothing when no document shows.
     pub fn draw(&mut self, renderer: &mut Renderer, delta: f32, area: [u32; 4], scale: f32) -> Result<()> {
         if self.is_empty() {

@@ -278,6 +278,16 @@ public readonly struct Obj : IEquatable<Obj>
 		return new FirstPersonView(this);
 	}
 
+	/// <summary>The Obj's UI Panel, which shows a UI document in the world. Not valid when it has none.</summary>
+	public UiPanel UiPanel => new UiPanel(this);
+
+	/// <summary>Gives the Obj a UI Panel, unless it has one, and returns it. Its document is picked in the Inspector.</summary>
+	public UiPanel AddUiPanel()
+	{
+		NativeComponent.Set(NativeComponent.UiPanel, this, NativeComponent.Add, Vector4.Zero);
+		return new UiPanel(this);
+	}
+
 	/// <summary>The Obj's Mist. Not valid when it has none.</summary>
 	public Mist Mist => new Mist(this);
 

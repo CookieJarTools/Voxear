@@ -1123,7 +1123,7 @@ variants inherit from a parent and override only what differs.
 **Compilation.** Permutations are tracked and compiled in parallel in the background. A pipeline cache persists
 across runs, and the build pipeline pre-compiles the permutations used by shipped content.
 
-## UI (Voxear UI) *(implemented: tree, layout incl. grid, text, drawing, markup, style sheets, transitions, pointer and keyboard, scroll/list/tree views, input controls, split views, tabs, dropdowns, docking, default theme, the game's UI in C#; data binding planned)*
+## UI (Voxear UI) *(implemented: tree, layout incl. grid, text, drawing, markup, style sheets, transitions, pointer and keyboard, scroll/list/tree views, input controls, split views, tabs, dropdowns, docking, default theme, the game's UI in C#, UI panels in the world; data binding planned)*
 
 **Recommendation from research.** Build our own retained-mode UI on the Linebender and Servo crates, rendered by our
 own Vulkan code.
@@ -1546,11 +1546,25 @@ hud.Close();
   light-on-dark text is applied. This is what makes small editor text sharp. *(Implemented, with glyphs on whole
   pixels; 4 sub-pixel x positions come with light hinting.)*
 - **World-space and large or transformed text** uses MSDF, with an option for Slug-style curve rendering (now patent
-  free). It stays sharp at any distance and angle. The renderer switches paths on scale and perspective.
+  free). It stays sharp at any distance and angle. The renderer switches paths on scale and perspective. *(Still to
+  come: a UI panel's text is drawn hinted into its texture at the size the panel shows, and softens at steep
+  angles.)*
 
 **Rendering.** Shapes are instanced SDF quads, so rounded rectangles, borders, shadows and gradients stay crisp at
 any DPI. World-space panels render to a mipmapped texture sized to their on-screen pixel density, then draw as
-surfaces in 3D.
+surfaces in 3D. *(Implemented as the UI Panel component:)*
+- Each panel's document is a `Ui` of its own (`crates/voxear_engine/src/ui_panels.rs`), sharing the screen UI's
+  fonts, its script numbers in a range of its own. Its layout is its size in metres times its pixels per metre.
+- It is drawn at the size it showed in the last frame's views, which the renderer reports back, in steps of √2:
+  it grows at once and shrinks two steps late, so text is not rasterised again as the camera moves.
+- The renderer (`crates/voxear_render/src/ui_panels.rs`) draws each panel whose quads changed into an RGBA16F
+  history image, with the UI shader, before the views, then makes its mips in a compute pass that averages
+  premultiplied colour.
+- Each view draws its panels after post-processing and before debug draw, so their colours are as designed and TAA
+  does not soften their text. It projects them unjittered, samples trilinearly, and discards where the scene's depth
+  is in front.
+- The pointer works the nearest clickable panel that a camera ray meets before any collider: through the cursor,
+  or through the view's middle while the cursor is locked. Clicks a panel takes do not reach the game's input.
 
 **The editor is built with Voxear UI**, so every editor improvement also improves game UI.
 

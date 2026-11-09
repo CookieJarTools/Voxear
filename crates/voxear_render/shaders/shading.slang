@@ -744,6 +744,26 @@ WaterOver waterOverAt(Frame* frame, float3 world)
     return over;
 }
 
+// How much of the sea's waves reach `xz`, from 1 out at sea to 0 where the
+// shallows have calmed them (water.slang's seaFloorAt, from the sea floor
+// round the camera); 1 beyond it.
+float wavesHere(Frame* frame, float2 xz)
+{
+    static const uint SLICES = 4;
+    Texture2D depths = textures[NonUniformResourceIndex(frame->ocean.floorDepth)];
+    for (uint i = 0; i < SLICES; i++)
+    {
+        float4 slice = frame->ocean.floor[i];
+        float2 uv = (xz - slice.xy) / slice.z;
+        if (slice.w <= 0.0 || any(uv < 0.02) || any(uv > 0.98))
+        {
+            continue;
+        }
+        return depths.SampleLevel(samplers[SAMPLER_LINEAR_CLAMP], (float2(float(i % 2), float(i / 2)) + uv) * 0.5, 0.0).g;
+    }
+    return 1.0;
+}
+
 // A smooth noise over `p`, from 0 to 1, blotches a unit across.
 float wetNoise(float2 p)
 {
@@ -774,7 +794,7 @@ void waterWetSurface(Frame* frame, float3 world, float3 normal, inout float3 alb
     }
     float above = world.y - surface;
     bool sea = frame->ocean.enabled != 0 && surface == frame->ocean.level;
-    float reach = sea ? 0.15 + min(0.3 * frame->ocean.waveHeight * frame->ocean.waveScale, 0.9) : 0.12;
+    float reach = sea ? 0.12 + min(0.3 * frame->ocean.waveHeight * frame->ocean.waveScale * wavesHere(frame, world.xz), 0.9) : 0.12;
     if (above > reach * 1.6)
     {
         return;

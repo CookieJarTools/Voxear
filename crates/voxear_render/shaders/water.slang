@@ -1232,6 +1232,33 @@ float3 poolMoved(WaterBody pool, float2 across, float3 moved)
     return transform(pool.toWorld, float4(held.x, local.y, held.y, 1.0)).xyz;
 }
 
+// How high Pool `pool`'s surface is drawn over `world`: on the triangle of
+// its grid there, between its corners as poolVertex moves them, so a
+// waterline meets the surface as drawn even where the grid is coarser than
+// its waves.
+float poolGridHeight(Frame* frame, WaterBody pool, float3 world)
+{
+    float3 local = transform(pool.toLocal, float4(world, 1.0)).xyz;
+    float2 at = (local.xz / pool.size.xz + 0.5) * float(POOL_QUADS);
+    float2 cell = floor(at);
+    float2 f = at - cell;
+    // Each quad is two triangles split from its (0, 1) corner to its (1, 0) one, as poolVertex lays them.
+    bool far = f.x + f.y > 1.0;
+    float2 corners[3] = { far ? float2(1.0, 1.0) : float2(0.0, 0.0), float2(1.0, 0.0), float2(0.0, 1.0) };
+    float2 weights = far ? float2(1.0 - f.y, 1.0 - f.x) : f;
+    float spacing = poolSpacing(pool);
+    float height = 0.0;
+    for (uint i = 0; i < 3; i++)
+    {
+        float2 across = ((cell + corners[i]) / float(POOL_QUADS) - 0.5) * pool.size.xz;
+        float3 flat = transform(pool.toWorld, float4(across.x, 0.0, across.y, 1.0)).xyz;
+        float y = poolMoved(pool, across, oceanMoved(frame, flat.xz, spacing, false, pool.waves)).y;
+        float weight = i == 0 ? 1.0 - weights.x - weights.y : (i == 1 ? weights.x : weights.y);
+        height += y * weight;
+    }
+    return height;
+}
+
 // How far apart a Pool's grid's points are, in metres, which its walls read
 // its waves as coarsely as, to meet its surface.
 float poolSpacing(WaterBody pool)
@@ -1407,18 +1434,15 @@ float wavySurface(Frame* frame, float3 world, float surface)
     float swell = 1.0;
     float spacing = 0.05;
     bool sea = frame->ocean.enabled != 0 && surface == frame->ocean.level;
-    bool pool = false;
-    for (uint i = 0; i < frame->ocean.pools && !sea && !pool; i++)
+    for (uint i = 0; i < frame->ocean.pools && !sea; i++)
     {
         WaterBody body = buffers()->waterBodies[i];
         if (body.liquid == LIQUID_WATER && body.shape == 0 && body.toWorld.c3.y == surface && overPool(body, world))
         {
-            pool = true;
-            swell = body.waves;
-            spacing = poolSpacing(body);
+            return poolGridHeight(frame, body, world);
         }
     }
-    if (!sea && !pool)
+    if (!sea)
     {
         return surface;
     }
@@ -2883,7 +2907,7 @@ float4 underwaterFragment(UnderOut input) : SV_Target0
         discard;
     }
     // Drops wherever the lens is wet: out of the water, and in the film, thicker towards the waterline.
-    float drops = max(lens, inFilm * (0.25 + 0.4 * saturate(film / 0.06)));
+    float drops = max(lens, inFilm * (0.1 + 0.25 * saturate(film / 0.06)));
     float covered = 0.0;
     float rim = 0.0;
     float2 offset = drops > 0.01 ? lensDrops(frame, uv, drops, covered, rim) : 0.0;

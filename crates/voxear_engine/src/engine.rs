@@ -384,6 +384,21 @@ impl Engine {
         Ok(handles[0])
     }
 
+    /// Enables or disables a running behaviour as its script setting
+    /// `Enabled` does, for the Inspector's tick: it gets OnDisable, or
+    /// OnEnable (and Start the first time), before the next frame's updates,
+    /// and no updates while it is disabled. Does nothing without scripts.
+    pub fn set_behaviour_enabled(&mut self, handle: BehaviourHandle, enabled: bool) {
+        let Some(scripts) = self.scripts.as_mut() else { return };
+        scripts.set_behaviour_enabled(&mut self.world, handle, enabled);
+        self.with_host(|lifecycle, host| lifecycle.apply_requests(host));
+    }
+
+    /// Whether a running behaviour is enabled, as its `Enabled` says.
+    pub fn is_behaviour_enabled(&self, handle: BehaviourHandle) -> bool {
+        self.lifecycle.wants_enabled(handle)
+    }
+
     /// Creates behaviours on an Obj and queues them for the next batch.
     fn attach_behaviours(&mut self, entity: Entity, specs: &[BehaviourSpec]) -> Result<Vec<BehaviourHandle>> {
         if specs.is_empty() {

@@ -55,17 +55,41 @@ internal static unsafe class EntryPoints
 	}
 
 	[UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
-	public static int CreateBehaviour(byte* typeName, int length, ulong obj, byte* fields, int fieldsLength, BehaviourInfo* info)
+	public static int CreateBehaviour(
+		byte* typeName,
+		int length,
+		ulong obj,
+		byte* fields,
+		int fieldsLength,
+		int enabled,
+		BehaviourInfo* info)
 	{
 		try
 		{
 			var json = fields == null ? null : Native.Utf8(fields, fieldsLength);
-			return BehaviourTable.Create(Native.Utf8(typeName, length), new Obj(obj), json, info);
+			return BehaviourTable.Create(Native.Utf8(typeName, length), new Obj(obj), json, enabled != 0, info);
 		}
 		catch (Exception exception)
 		{
 			Log.Exception(exception);
 			return -1;
+		}
+	}
+
+	/// <summary>The editor's tick for a behaviour: the same as its script setting Enabled.</summary>
+	[UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+	public static void SetEnabled(uint handle, int enabled)
+	{
+		try
+		{
+			if (BehaviourTable.Get(handle) is { } behaviour)
+			{
+				behaviour.Enabled = enabled != 0;
+			}
+		}
+		catch (Exception exception)
+		{
+			Log.Exception(exception);
 		}
 	}
 

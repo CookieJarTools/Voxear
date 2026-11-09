@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 58;
+pub(crate) const API_VERSION: u32 = 59;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -850,8 +850,10 @@ const ADOPT_ENABLED: u32 = 1;
 const ADOPT_WANTS_ENABLED: u32 = 2;
 const ADOPT_DESTROYED: u32 = 4;
 
-/// Type name, entity, field values as JSON (or null), and the info to fill.
-pub(crate) type CreateBehaviour = unsafe extern "C" fn(*const u8, i32, u64, *const u8, i32, *mut BehaviourInfo) -> i32;
+/// Type name, entity, field values as JSON (or null), whether it starts
+/// enabled, and the info to fill.
+pub(crate) type CreateBehaviour =
+    unsafe extern "C" fn(*const u8, i32, u64, *const u8, i32, i32, *mut BehaviourInfo) -> i32;
 
 /// Type name, entity, and field values as JSON (or null).
 pub(crate) type AddComponent = unsafe extern "C" fn(*const u8, i32, u64, *const u8, i32) -> i32;
@@ -932,6 +934,9 @@ pub(crate) struct ManagedApi {
     /// behaviours now, rather than with the next frame's events, as a
     /// predicted Obj put right needs before its ticks run again.
     pub take_net_fields: Option<unsafe extern "C" fn()>,
+    /// Enables or disables a behaviour as a script setting its `Enabled`
+    /// does, for the editor's tick: the engine hears of it as a request.
+    pub set_enabled: Option<unsafe extern "C" fn(handle: u32, enabled: i32)>,
 }
 
 pub(crate) type RunCheck = unsafe extern "C" fn(
@@ -1552,8 +1557,13 @@ fn attach(entity: Entity, specs: &[BehaviourSpec]) -> Vec<u32> {
             );
             continue;
         };
-        let registration =
-            Registration { handle, entity, callbacks: Callbacks(info.callbacks), order: info.order, enabled: true };
+        let registration = Registration {
+            handle,
+            entity,
+            callbacks: Callbacks(info.callbacks),
+            order: info.order,
+            enabled: spec.enabled,
+        };
         ACTIVATING.with_borrow_mut(|activating| activating.insert(handle.0, registration));
         is_instance |= info.flags & FLAG_INSTANCE != 0;
         attached.push(AttachedBehaviour { handle, spec: (*spec).clone() });
@@ -1585,8 +1595,9 @@ pub(crate) fn call_create(
     entity: Entity,
     info: &mut BehaviourInfo,
 ) -> Option<BehaviourHandle> {
+    let enabled = i32::from(spec.enabled);
     let handle = call_with_fields(spec, |name, len, fields, fields_len| unsafe {
-        create(name, len, entity.to_bits(), fields, fields_len, info)
+        create(name, len, entity.to_bits(), fields, fields_len, enabled, info)
     });
     (handle >= 0).then_some(BehaviourHandle(handle as u32))
 }

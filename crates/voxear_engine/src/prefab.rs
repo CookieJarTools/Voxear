@@ -356,6 +356,7 @@ fn apply_instance(root: &mut ObjData, instance: &ObjData) {
     root.scale = instance.scale.or(root.scale);
     root.persistent |= instance.persistent;
     root.behaviours.extend(instance.behaviours.iter().cloned());
+    root.enabled.extend(instance.enabled.iter().map(|(name, on)| (name.clone(), *on)));
     root.components.extend(instance.components.iter().cloned());
     for (behaviour, values) in &instance.fields {
         merge(root.fields.entry(behaviour.clone()).or_default(), values.clone());
@@ -960,7 +961,7 @@ pub(crate) fn resolve_obj(
         name: if data.name.is_empty() { "Obj".to_string() } else { data.name.clone() },
         transform: Transform::new(Vec3::from(data.position()), rotation, Vec3::from(data.scale())),
         persistent: data.persistent,
-        behaviours: behaviour_specs(&data.behaviours, &data.components, &data.fields)?,
+        behaviours: behaviour_specs(data)?,
         camera: data.camera.map(|c| Camera { fov_y_degrees: c.fov, exposure: c.exposure, near: c.near }),
         light,
         post_volume: data.post_volume.as_ref().map(PostVolumeData::component).transpose()?,
@@ -1004,14 +1005,12 @@ pub(crate) fn resolve_obj(
     })
 }
 
-/// Pairs each behaviour, then each C# component, with its field values.
-/// Values for a script the Obj does not have are an error, since they would
-/// otherwise vanish unnoticed.
-fn behaviour_specs(
-    behaviours: &[String],
-    components: &[String],
-    fields: &BTreeMap<String, toml::Table>,
-) -> Result<Vec<BehaviourSpec>> {
+/// Pairs each behaviour, then each C# component, with its field values,
+/// and each behaviour with whether it starts enabled. Values for a script
+/// the Obj does not have are an error, since they would otherwise vanish
+/// unnoticed.
+fn behaviour_specs(data: &ObjData) -> Result<Vec<BehaviourSpec>> {
+    let (behaviours, components, fields) = (&data.behaviours, &data.components, &data.fields);
     if let Some(stray) = fields.keys().find(|t| !behaviours.contains(t) && !components.contains(t)) {
         bail!("it has fields for {stray}, which is not one of its behaviours or components");
     }
@@ -1019,6 +1018,7 @@ fn behaviour_specs(
         type_name: type_name.clone(),
         fields: Arc::new(fields.get(type_name).cloned().unwrap_or_default()),
         component,
+        enabled: component || data.is_enabled(type_name),
     };
     Ok(behaviours.iter().map(|t| spec(t, false)).chain(components.iter().map(|t| spec(t, true))).collect())
 }

@@ -111,7 +111,8 @@ impl ScriptRuntime {
                 && managed.managed_memory.is_some()
                 && managed.physics_events.is_some()
                 && managed.motion_marks.is_some()
-                && managed.take_net_fields.is_some(),
+                && managed.take_net_fields.is_some()
+                && managed.set_enabled.is_some(),
             "Voxear.Core left part of its interop table empty"
         );
         interop::set_create_behaviour(
@@ -326,7 +327,7 @@ impl ScriptRuntime {
                 entity,
                 callbacks: Callbacks(info.callbacks),
                 order: info.order,
-                enabled: true,
+                enabled: spec.enabled,
             },
             is_instance: info.flags & FLAG_INSTANCE != 0,
         })
@@ -391,6 +392,14 @@ impl ScriptRuntime {
         let text = marks.iter().map(|(_, mark)| mark.as_str()).collect::<Vec<_>>().join("\n");
         let _scope = WorldScope::enter(world);
         unsafe { send(entities.as_ptr(), entities.len() as i32, text.as_ptr(), text.len() as i32) };
+    }
+
+    /// Enables or disables a behaviour as its script setting `Enabled`
+    /// would: what it asks for waits in the requests the lifecycle takes.
+    pub fn set_behaviour_enabled(&mut self, world: &mut World, handle: BehaviourHandle, enabled: bool) {
+        let set = self.managed.set_enabled.expect("validated at start");
+        let _scope = WorldScope::enter(world);
+        unsafe { set(handle.0, i32::from(enabled)) };
     }
 
     /// Sets the replicated properties that came from the server on their

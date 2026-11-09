@@ -213,10 +213,11 @@ public abstract class Behaviour
 		return method != null && method.DeclaringType != typeof(Behaviour);
 	}
 
-	internal void Attach(Obj obj, uint handle, int order)
+	internal void Attach(Obj obj, uint handle, int order, bool enabled = true)
 	{
 		this.obj = obj;
 		this.handle = handle;
+		this.enabled = enabled;
 		Order = order;
 	}
 

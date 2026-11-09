@@ -304,7 +304,8 @@ and a positive pitch looks down.
   applies them. Components are subtables:
   - `[obj.camera]`, `[obj.light]` and `[obj.renderer]`, the last with a mesh reference and a material reference or
     inline material
-  - `behaviours = ["Game.Spinner"]`, and `components = ["Game.Spin"]` for C# components
+  - `behaviours = ["Game.Spinner"]`, and `components = ["Game.Spin"]` for C# components; `[obj.enabled]` lists
+    behaviours unticked in the Inspector, as `"Game.Spinner" = false`, which start disabled
   - `persistent = true`
   - a scene-level `[sky]`
   See `crates/voxear_engine/src/scene_file.rs`. Builds will use a binary form made by the content build.

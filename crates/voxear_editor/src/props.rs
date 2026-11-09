@@ -4406,6 +4406,40 @@ fn round3(value: f32) -> f32 {
     (value * 1000.0).round() / 1000.0
 }
 
+/// Whether the Obj's behaviour of this type is enabled, as its tick shows
+/// it: while playing, as its `Enabled` says; while editing, as the scene
+/// starts it. None for a C# component, which has no tick.
+pub fn behaviour_enabled(game: &Game, entity: Entity, type_name: &str) -> Option<bool> {
+    let world = &game.engine.world;
+    if let Some(running) = world.get::<Behaviours>(entity) {
+        let attached = running.0.iter().find(|b| b.spec.type_name == type_name)?;
+        return Some(game.engine.is_behaviour_enabled(attached.handle));
+    }
+    let kept = world.get::<EditBehaviours>(entity)?;
+    kept.0.iter().find(|spec| spec.type_name == type_name && !spec.component).map(|spec| spec.enabled)
+}
+
+/// Enables or disables the Obj's behaviour of this type, as its tick does.
+/// While playing it gets OnDisable, or OnEnable, before the next frame's
+/// updates; while editing, the scene starts it so.
+pub fn set_behaviour_enabled(game: &mut Game, entity: Entity, type_name: &str, enabled: bool) {
+    let world = &mut game.engine.world;
+    let running = world.get::<Behaviours>(entity).map(|running| running.0.iter().find(|b| b.spec.type_name == type_name));
+    match running {
+        Some(Some(attached)) => {
+            let handle = attached.handle;
+            game.engine.set_behaviour_enabled(handle, enabled);
+        }
+        Some(None) => {}
+        None => {
+            let Some(kept) = world.get_mut::<EditBehaviours>(entity) else { return };
+            if let Some(spec) = kept.0.iter_mut().find(|spec| spec.type_name == type_name && !spec.component) {
+                spec.enabled = enabled;
+            }
+        }
+    }
+}
+
 /// Moves a script `by` places among the Obj's scripts, as their order runs
 /// and saves. In edit mode only: running behaviours keep their order.
 pub fn move_behaviour(world: &mut World, entity: Entity, type_name: &str, by: isize) {

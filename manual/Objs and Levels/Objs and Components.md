@@ -56,6 +56,8 @@ Click **Add Component**, under the last one, to add another. As in Unity, a sear
 
 Right-click a component's title to **Remove Component**, or, for a behaviour, to **Move Up** or **Move Down**. Behaviours on an Obj run in the order they are listed.
 
+The box on a behaviour's title turns it on and off, as `enabled` does in Unity. Untick it while the game plays and the behaviour gets OnDisable and stops updating; tick it again and it gets OnEnable and carries on. Untick it while editing and the scene saves it off, so the game starts with it off. With several Objs selected, the box turns the behaviour on or off on each of them that has it. See [[How Scripts Run]].
+
 The same menu copies a component, as Unity's does. Choose **Copy Component**, select another Obj, and right-click one of its components' titles: **Paste Component Values** puts the copied values over the same component, and **Paste Component As New** adds it to an Obj that does not have it yet. For a behaviour, its field values are copied. A LOD Group cannot be copied, as its levels are the Objs inside its own.
 
 ## An Obj's layer
@@ -74,4 +76,4 @@ names = ["Default", "", "Player", "Enemy", "Pickup"]
 A scene file writes an Obj's layer by its number, as `layer = 3`, so renaming a layer keeps its Objs on it. When you write a scene by hand you can use the name instead, as `layer = "Player"`. A script reads and sets `Obj.Layer` by number, and `LayerMask.NameToLayer("Player")` finds a layer's number by its name.
 
 > [!NOTE]
-> The Inspector also shows **Tag** and **Static** for an Obj, and a switch to turn it on and off. These are not used yet, and are not saved. **Persistent**, beside Static, does work: it keeps the Obj through changes of level. See [[Scenes and Levels]].
+> The Inspector also shows **Tag** and **Static** for an Obj, a switch to turn it on and off, and a box on each built-in component's title. These are not used yet, and are not saved. **Persistent**, beside Static, does work: it keeps the Obj through changes of level. See [[Scenes and Levels]].

@@ -17,9 +17,10 @@ internal static class BehaviourTable
 
 	/// <summary>
 	/// Creates a behaviour, keeping its field values from the scene to set just before its Awake. Awake is then
-	/// always dispatched, even when the type does not override it, so the fields are never skipped.
+	/// always dispatched, even when the type does not override it, so the fields are never skipped. One its scene
+	/// unticked starts disabled.
 	/// </summary>
-	public static unsafe int Create(string typeName, Obj obj, string? fields, BehaviourInfo* info)
+	public static unsafe int Create(string typeName, Obj obj, string? fields, bool enabled, BehaviourInfo* info)
 	{
 		var type = BehaviourTypes.Find(typeName);
 		if (type == null)
@@ -30,7 +31,7 @@ internal static class BehaviourTable
 
 		var behaviour = type.Create();
 		var handle = Allocate(behaviour);
-		behaviour.Attach(obj, (uint)handle, type.Order);
+		behaviour.Attach(obj, (uint)handle, type.Order, enabled);
 		behaviour.PendingFields = fields;
 		info->Callbacks = fields == null ? type.Callbacks : type.Callbacks | 1u << (int)Phase.Awake;
 		info->Order = type.Order;

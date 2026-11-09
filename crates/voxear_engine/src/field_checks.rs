@@ -55,7 +55,7 @@ pub fn check(root: &Path, types: &ScriptTypes, validate: &mut Validate) -> Resul
             for name in obj.behaviours.iter().chain(&obj.components) {
                 let Some(described) = types.behaviour(name) else { continue };
                 let set = obj.fields.get(name).cloned().unwrap_or_default();
-                let spec = BehaviourSpec { type_name: name.clone(), fields: Arc::new(set), component: false };
+                let spec = BehaviourSpec { fields: Arc::new(set), ..BehaviourSpec::new(name) };
                 for field in &described.fields {
                     let place = (file.as_str(), obj.name.as_str(), name.as_str());
                     problems.extend(check_field(place, field, &spec, validate));

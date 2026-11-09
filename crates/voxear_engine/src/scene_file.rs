@@ -18,6 +18,8 @@
 //! parent = 1
 //! behaviours = ["Game.Spinner"]
 //! components = ["Game.Spin"]     # C# IComponent structs, which systems work on
+//! [obj.enabled]                  # behaviours unticked, which start disabled
+//! "Game.Spinner" = false
 //! [obj.fields."Game.Spinner"]
 //! degrees_per_second = 45.0
 //! [obj.fields."Game.Spin"]
@@ -242,6 +244,11 @@ pub struct ObjData {
     /// and then field name. Field names may be written in snake_case.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub fields: BTreeMap<String, toml::Table>,
+    /// Behaviours that start disabled, by type, as `"Game.Spinner" = false`,
+    /// Unity's `enabled`. One left out starts enabled, or as its prefab has
+    /// it; an instance writes `true` to enable one its prefab disables.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub enabled: BTreeMap<String, bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub camera: Option<CameraData>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -373,6 +380,7 @@ impl ObjData {
             behaviours: Vec::new(),
             components: Vec::new(),
             fields: BTreeMap::new(),
+            enabled: BTreeMap::new(),
             camera: None,
             light: None,
             post_volume: None,
@@ -419,6 +427,11 @@ impl ObjData {
 
     pub fn position(&self) -> [f32; 3] {
         self.position.unwrap_or([0.0; 3])
+    }
+
+    /// Whether the behaviour of this type starts enabled.
+    pub fn is_enabled(&self, behaviour: &str) -> bool {
+        self.enabled.get(behaviour) != Some(&false)
     }
 
     pub fn rotation(&self) -> [f32; 3] {
@@ -1290,6 +1303,7 @@ fn capture_instance(
         instance.name = root.name.clone();
     }
     instance.persistent = root.persistent && !prefab_root.persistent;
+    instance.enabled = switched_from(prefab_root, &root);
     match root.behaviours.strip_prefix(prefab_root.behaviours.as_slice()) {
         Some(added) => instance.behaviours = added.to_vec(),
         None => tracing::warn!("{}: behaviours removed from a prefab root are not saved yet", root.name),
@@ -1433,6 +1447,13 @@ fn whole<T: Serialize>(value: &T, defaults: &T) -> Result<toml::Value> {
     Ok(toml::Value::Table(table))
 }
 
+/// The behaviours `actual` enables otherwise than `expected` does, each with
+/// whether it starts enabled.
+fn switched_from(expected: &ObjData, actual: &ObjData) -> BTreeMap<String, bool> {
+    let differs = |name: &&String| actual.is_enabled(name) != expected.is_enabled(name);
+    actual.behaviours.iter().filter(differs).map(|name| (name.clone(), actual.is_enabled(name))).collect()
+}
+
 /// The fields of `actual` that differ from `expected`, as an override.
 pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjData) -> Result<toml::Table> {
     let mut changes = toml::Table::new();
@@ -1456,6 +1477,10 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     }
     if actual.behaviours != expected.behaviours {
         put("behaviours", toml::Value::try_from(&actual.behaviours)?);
+    }
+    let switched = switched_from(expected, actual);
+    if !switched.is_empty() {
+        put("enabled", toml::Value::try_from(&switched)?);
     }
     if actual.components != expected.components {
         put("components", toml::Value::try_from(&actual.components)?);
@@ -1750,6 +1775,8 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     let names = |component: bool| specs.iter().filter(move |s| s.component == component).map(|s| s.type_name.clone());
     obj.behaviours = names(false).collect();
     obj.components = names(true).collect();
+    let disabled = specs.iter().filter(|spec| !spec.component && !spec.enabled);
+    obj.enabled = disabled.map(|spec| (spec.type_name.clone(), false)).collect();
     // Saved as loaded: values scripts change at runtime are not written back.
     obj.fields = specs
         .iter()

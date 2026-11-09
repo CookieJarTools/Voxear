@@ -12,7 +12,7 @@ internal unsafe struct ManagedApi
 	public uint Size;
 	public uint Version;
 	public delegate* unmanaged[Cdecl]<byte*, int, int> LoadGameAssembly;
-	public delegate* unmanaged[Cdecl]<byte*, int, ulong, byte*, int, BehaviourInfo*, int> CreateBehaviour;
+	public delegate* unmanaged[Cdecl]<byte*, int, ulong, byte*, int, int, BehaviourInfo*, int> CreateBehaviour;
 	public delegate* unmanaged[Cdecl]<int, uint*, int, void> Invoke;
 	public delegate* unmanaged[Cdecl]<uint*, int, void> Release;
 	public delegate* unmanaged[Cdecl]<void> Update;
@@ -30,4 +30,5 @@ internal unsafe struct ManagedApi
 	public delegate* unmanaged[Cdecl]<PhysicsEventData*, int, void> PhysicsEvents;
 	public delegate* unmanaged[Cdecl]<ulong*, int, byte*, int, void> MotionMarks;
 	public delegate* unmanaged[Cdecl]<void> TakeNetFields;
+	public delegate* unmanaged[Cdecl]<uint, int, void> SetEnabled;
 }

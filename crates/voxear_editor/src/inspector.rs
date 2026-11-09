@@ -6,7 +6,9 @@
 //! apply as they are typed or picked, and values that change elsewhere show
 //! here, except in the field being edited. When an Obj's components, or what
 //! they show, change (a light of another kind, a component added or undone),
-//! the Inspector is built again.
+//! the Inspector is built again. A behaviour's tick enables and disables it,
+//! as Unity's `enabled`: while editing, the scene starts it so; while
+//! playing, it gets OnDisable and no more updates, or OnEnable again.
 //!
 //! Menus: a context click on a value's row offers Reset for the Transform
 //! and script fields, and while playing, "Keep value after play", which
@@ -296,6 +298,8 @@ pub struct Inspector {
     /// component (`None` for the Transform).
     transform_menu: Option<NodeId>,
     headers: Vec<(Option<Part>, NodeId)>,
+    /// Each behaviour's tick, by its type.
+    behaviour_ticks: Vec<(String, NodeId)>,
     rows: Vec<PropRow>,
     add: Option<NodeId>,
     /// The project's scripts, as their last build describes them.
@@ -404,6 +408,7 @@ impl Inspector {
             fields: None,
             transform_menu: None,
             headers: Vec::new(),
+            behaviour_ticks: Vec::new(),
             rows: Vec::new(),
             add: None,
             types: ScriptTypes::default(),
@@ -909,6 +914,7 @@ impl Inspector {
         }
         (self.fields, self.transform_menu, self.add, self.menu) = (None, None, None, None);
         self.headers.clear();
+        self.behaviour_ticks.clear();
         self.rows.clear();
         self.previews.clear();
         self.doc_buttons.clear();
@@ -934,7 +940,7 @@ impl Inspector {
             header(ui, self.root, game, entity, self.also.len() + 1);
         self.prefab_buttons = prefab_buttons;
 
-        let (transform, rows, menu) = section(ui, self.root, "Transform", "transform", false);
+        let (transform, rows, menu) = section(ui, self.root, "Transform", "transform", HeaderEnd::Menu);
         let (position_row, position) = vector_row(ui, rows, "Position");
         let (rotation_row, rotation) = vector_row(ui, rows, "Rotation");
         let (scale_row, scale) = vector_row(ui, rows, "Scale");
@@ -956,8 +962,20 @@ impl Inspector {
                 Part::Behaviour(name) if self.types.is_component(name) => "box",
                 _ => part.icon(),
             };
-            let (header, rows, _) = section(ui, self.root, part.title(), icon, true);
+            // A behaviour's tick works; a C# component, only data, has none; other components' ticks show on for now.
+            let end = match part {
+                Part::Behaviour(name) => match props::behaviour_enabled(game, entity, name) {
+                    Some(on) => HeaderEnd::Switch(on),
+                    None => HeaderEnd::Nothing,
+                },
+                _ => HeaderEnd::Switch(true),
+            };
+            let (header, rows, tick) = section(ui, self.root, part.title(), icon, end);
             self.headers.push((Some(part.clone()), header));
+            if let (Part::Behaviour(name), Some(tick)) = (part, tick) {
+                ui.set_tooltip(tick, "Enabled", None);
+                self.behaviour_ticks.push((name.clone(), tick));
+            }
             // A component whose module the project is without keeps its values, but shows only how to get it back.
             if let Some(module) = part.module().filter(|module| !game.project.modules().has(*module)) {
                 ui.add_class(header, "needs-module");
@@ -1481,6 +1499,7 @@ impl Inspector {
             return (before != after).then_some(Edit::Changed { entity, before, after });
         }
         self.update_transform(ui, game, entity, transform);
+        self.update_ticks(ui, game, entity);
         self.update_reorders(ui, game, entity);
         for row in &self.rows {
             // Adding or taking out an item changes the rows, which are built again next frame.
@@ -1583,6 +1602,22 @@ impl Inspector {
             ui.set_visible(bias.row, !custom);
         }
         false
+    }
+
+    /// Each behaviour's tick enables or disables it on every Obj edited that
+    /// has it, then shows whether it is, as scripts may switch it too.
+    fn update_ticks(&mut self, ui: &mut Ui, game: &mut Game, entity: Entity) {
+        for (name, tick) in &self.behaviour_ticks {
+            if ui.changed(*tick) {
+                let on = ui.is_checked(*tick);
+                for target in std::iter::once(entity).chain(self.also.iter().copied()) {
+                    props::set_behaviour_enabled(game, target, name, on);
+                }
+            }
+            if let Some(on) = props::behaviour_enabled(game, entity, name) {
+                ui.set_checked(*tick, on);
+            }
+        }
     }
 
     fn update_transform(&mut self, ui: &mut Ui, game: &mut Game, entity: Entity, transform: Transform) {
@@ -2663,25 +2698,34 @@ fn axis_fields(ui: &mut Ui, vector: NodeId, letters: &[&str]) -> Vec<NodeId> {
         .collect()
 }
 
+/// What a section's header has at its right: the Transform's menu button,
+/// a tick, on or off, or nothing, for a C# component.
+enum HeaderEnd {
+    Menu,
+    Switch(bool),
+    Nothing,
+}
+
 /// A component's section: a line above it, then a foldout headed by its
-/// icon and title, and at the right a switch for whether it is enabled
-/// (shown on, until components can be turned off) or, for the Transform,
-/// which cannot be, a menu button. Returns its header, where its rows go,
-/// and the menu button.
-fn section(ui: &mut Ui, root: NodeId, title: &str, icon: &str, switch: bool) -> (NodeId, NodeId, Option<NodeId>) {
+/// icon and title, and at the right what `end` says. Returns its header,
+/// where its rows go, and the menu button or the tick.
+fn section(ui: &mut Ui, root: NodeId, title: &str, icon: &str, end: HeaderEnd) -> (NodeId, NodeId, Option<NodeId>) {
     let line = ui.panel(root, Style::default());
     ui.add_class(line, "divider");
     let foldout = ui.foldout(root, title, true);
     ui.add_class(foldout, "section");
     ui.set_foldout_icon(foldout, icon);
     let header = ui.foldout_header(foldout).expect("a foldout has a header");
-    let menu = if switch {
-        ui.toggle(header, "", true);
-        None
-    } else {
-        Some(ui.icon_button(header, "more"))
+    let end = match end {
+        HeaderEnd::Menu => Some(ui.icon_button(header, "more")),
+        HeaderEnd::Switch(on) => {
+            let tick = ui.toggle(header, "", on);
+            ui.add_class(tick, "component-switch");
+            Some(tick)
+        }
+        HeaderEnd::Nothing => None,
     };
-    (header, ui.foldout_content(foldout).expect("a foldout has content"), menu)
+    (header, ui.foldout_content(foldout).expect("a foldout has content"), end)
 }
 
 /// A property's row: its label in the first 88 pixels, the value after.

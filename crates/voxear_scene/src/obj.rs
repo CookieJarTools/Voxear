@@ -66,13 +66,23 @@ impl Placement {
 /// Awake, or, when `component` is set, a C# component (an `IComponent`
 /// struct) made with those values. Both are saved, loaded and edited the
 /// same way; only attaching them differs.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct BehaviourSpec {
     /// The full C# type name, which scenes save.
     pub type_name: String,
     /// Field values as the scene or prefab wrote them, by field name.
     pub fields: Arc<toml::Table>,
     pub component: bool,
+    /// Whether a behaviour starts enabled, as its tick in the Inspector
+    /// says. One that does not gets Awake but no OnEnable, Start or
+    /// updates until something enables it. Always on for a C# component.
+    pub enabled: bool,
+}
+
+impl Default for BehaviourSpec {
+    fn default() -> Self {
+        Self { type_name: String::new(), fields: Arc::default(), component: false, enabled: true }
+    }
 }
 
 impl BehaviourSpec {

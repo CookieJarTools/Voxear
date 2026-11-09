@@ -234,6 +234,12 @@ impl Lifecycle {
         self.records.get(&handle).is_some_and(|r| r.enabled)
     }
 
+    /// Whether the behaviour is to be enabled, as its `Enabled` says, though
+    /// its OnEnable or OnDisable may wait for the next flush.
+    pub fn wants_enabled(&self, handle: BehaviourHandle) -> bool {
+        self.records.get(&handle).is_some_and(|r| r.wants_enabled)
+    }
+
     pub fn len(&self) -> usize {
         self.records.len()
     }

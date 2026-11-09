@@ -57,7 +57,9 @@ public sealed class GameManager : Behaviour
 
 ## Turning behaviours on and off
 
-Set `Enabled` to false to turn a behaviour off: it stops getting Update and the other frame methods, and gets OnDisable. Set it back to true to turn it on again. `Destroy()` removes the behaviour from its Obj for good.
+Set `Enabled` to false to turn a behaviour off: it stops getting Update and the other frame methods, and gets OnDisable. Set it back to true to turn it on again, and it gets OnEnable. OnDisable or OnEnable comes once every behaviour has had the method that made the change: a behaviour turned off in Update gets OnDisable after this frame's Updates. `Destroy()` removes the behaviour from its Obj for good.
+
+The box on a behaviour's title in the Inspector does the same while the game plays. Untick it while editing and the scene saves the behaviour off: the game starts with it off, so it gets Awake but no OnEnable, Start or Update until something turns it on.
 
 ## Waiting with async and await
 

@@ -1,5 +1,7 @@
 //! Prefabs on a throwaway project, headless (no GPU, no scripts).
 
+use std::collections::BTreeMap;
+
 use voxear_core::math::Vec3;
 use voxear_ecs::Entity;
 use voxear_engine::{
@@ -463,4 +465,88 @@ fn obj_references_stay_inside_their_file_and_save_as_paths() {
         format!("{{ obj = \"{}/2\" }}", instance.id),
         "saved ids are renumbered, and the reference follows"
     );
+}
+
+const SLEEPER: &str = r#"
+format = 1
+
+[[obj]]
+id = 1
+name = "Sleeper"
+behaviours = ["Game.Nap", "Game.Snore"]
+enabled = { "Game.Nap" = false }
+"#;
+
+/// Whether the Obj's behaviour of this type starts enabled, as edit mode
+/// keeps it.
+fn starts_enabled(engine: &Engine, entity: Entity, type_name: &str) -> bool {
+    let kept = &engine.world.get::<voxear_engine::EditBehaviours>(entity).unwrap().0;
+    kept.iter().find(|spec| spec.type_name == type_name).unwrap().enabled
+}
+
+/// Ticks or unticks a behaviour as the Inspector does in edit mode.
+fn tick(engine: &mut Engine, entity: Entity, type_name: &str, on: bool) {
+    let kept = &mut engine.world.get_mut::<voxear_engine::EditBehaviours>(entity).unwrap().0;
+    kept.iter_mut().find(|spec| spec.type_name == type_name).unwrap().enabled = on;
+}
+
+#[test]
+fn unticked_behaviours_load_disabled_and_save_as_switched() {
+    let dir = project(&[("Turret.prefab", TURRET), ("Sleeper.prefab", SLEEPER)]);
+    let mut content = Content::open(dir.path()).unwrap();
+    let mut engine = Engine::new();
+    engine.set_edit_mode(true);
+    let scene: scene_file::SceneFile = toml::from_str(
+        r#"
+format = 1
+[[obj]]
+id = 1
+prefab = "Turret.prefab"
+enabled = { "Game.Turret" = false }
+
+[[obj]]
+id = 2
+name = "Mill"
+behaviours = ["Game.Creak", "Game.Hum"]
+enabled = { "Game.Hum" = false }
+
+[[obj]]
+id = 3
+prefab = "Sleeper.prefab"
+"#,
+    )
+    .unwrap();
+    let spawned = scene_file::spawn(&mut engine, &mut content, None, &scene, &Default::default()).unwrap();
+    let (turret, barrel, mill, sleeper) =
+        (find(&engine, "Turret"), find(&engine, "Barrel"), find(&engine, "Mill"), find(&engine, "Sleeper"));
+    assert!(!starts_enabled(&engine, turret, "Game.Turret"), "the instance unticks its prefab's behaviour");
+    assert!(starts_enabled(&engine, barrel, "Game.Recoil"));
+    assert!(starts_enabled(&engine, mill, "Game.Creak") && !starts_enabled(&engine, mill, "Game.Hum"));
+    assert!(!starts_enabled(&engine, sleeper, "Game.Nap"), "as its prefab has it");
+
+    tick(&mut engine, turret, "Game.Turret", true);
+    tick(&mut engine, barrel, "Game.Recoil", false);
+    tick(&mut engine, mill, "Game.Creak", false);
+    tick(&mut engine, mill, "Game.Hum", true);
+    tick(&mut engine, sleeper, "Game.Nap", true);
+    let entities: Vec<Entity> = spawned.iter().map(|(_, entity)| *entity).collect();
+    let saved = scene_file::capture(&engine.world, &mut content, &entities);
+    let instance = |prefab: &str| saved.objs.iter().find(|o| o.prefab.as_deref() == Some(prefab)).unwrap();
+    assert!(instance("Turret.prefab").enabled.is_empty(), "back as its prefab has it");
+    assert_eq!(instance("Turret.prefab").overrides["2"]["enabled"].to_string(), r#"{ "Game.Recoil" = false }"#);
+    assert_eq!(instance("Sleeper.prefab").enabled, BTreeMap::from([("Game.Nap".to_string(), true)]));
+    let saved_mill = saved.objs.iter().find(|o| o.name == "Mill").unwrap();
+    assert_eq!(saved_mill.enabled, BTreeMap::from([("Game.Creak".to_string(), false)]), "only what is off, by type");
+
+    // And it loads back so.
+    let path = dir.path().join("Copy.scene");
+    scene_file::write(&path, &saved).unwrap();
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(text.contains("\"Game.Creak\" = false") && !text.contains("\"Game.Hum\" ="), "{text}");
+    let mut reloaded = Engine::new();
+    reloaded.set_edit_mode(true);
+    scene_file::spawn(&mut reloaded, &mut content, None, &scene_file::read(&path).unwrap(), &Default::default()).unwrap();
+    let on = |name: &str, type_name: &str| starts_enabled(&reloaded, find(&reloaded, name), type_name);
+    assert!(on("Turret", "Game.Turret") && !on("Barrel", "Game.Recoil"));
+    assert!(!on("Mill", "Game.Creak") && on("Mill", "Game.Hum") && on("Sleeper", "Game.Nap"));
 }

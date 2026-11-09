@@ -124,13 +124,31 @@ pub fn terrains(world: &World) -> Vec<(Entity, &Terrain, Vec3)> {
 pub fn ground_at(world: &World, x: f32, z: f32) -> Option<Ground> {
     terrains(world).into_iter().find_map(|(entity, terrain, corner)| {
         let (lx, lz) = (x - corner.x, z - corner.z);
-        (terrain.heights.contains(lx, lz) && !terrain.heights.cut_at(lx, lz)).then(|| Ground {
-            height: corner.y + terrain.heights.height_at(lx, lz),
-            normal: terrain.heights.normal_at(lx, lz),
-            terrain: entity,
-            surface: terrain.weights.as_ref().map_or(0, |weights| weights.surface_at(terrain.heights.spacing(), lx, lz)),
-        })
+        if !terrain.heights.contains(lx, lz) {
+            return None;
+        }
+        let spacing = terrain.heights.spacing();
+        let surface = terrain.weights.as_ref().map_or(0, |weights| weights.surface_at(spacing, lx, lz));
+        // Where it is dug, the top of the dug ground; elsewhere in a hole, none.
+        let (height, normal) = if terrain.heights.cut_at(lx, lz) {
+            terrain.dug.as_ref()?.surface_at(&terrain.heights, lx, lz)?
+        } else {
+            (terrain.heights.height_at(lx, lz), terrain.heights.normal_at(lx, lz))
+        };
+        Some(Ground { height: corner.y + height, normal, terrain: entity, surface })
     })
+}
+
+/// The first place a ray from `origin` along `direction`, in a terrain's
+/// own space, meets its ground within `max_distance`: its heights, through
+/// their holes, or its dug ground, whichever is nearer.
+pub fn raycast_terrain(terrain: &Terrain, origin: Vec3, direction: Vec3, max_distance: f32) -> Option<GroundHit> {
+    let heights = ray::raycast(&terrain.heights, origin, direction, max_distance);
+    let dug = terrain.dug.as_ref().and_then(|dug| dug.raycast(&terrain.heights, origin, direction, max_distance));
+    match (heights, dug) {
+        (Some(a), Some(b)) => Some(if a.distance <= b.distance { a } else { b }),
+        (a, b) => a.or(b),
+    }
 }
 
 /// The nearest place a ray in the world meets any terrain within
@@ -139,7 +157,7 @@ pub fn raycast(world: &World, origin: Vec3, direction: Vec3, max_distance: f32) 
     terrains(world)
         .into_iter()
         .filter_map(|(entity, terrain, corner)| {
-            let hit = ray::raycast(&terrain.heights, origin - corner, direction, max_distance)?;
+            let hit = raycast_terrain(terrain, origin - corner, direction, max_distance)?;
             Some((entity, GroundHit { point: hit.point + corner, ..hit }))
         })
         .min_by(|a, b| a.1.distance.total_cmp(&b.1.distance))

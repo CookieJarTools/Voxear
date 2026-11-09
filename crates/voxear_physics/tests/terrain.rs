@@ -126,3 +126,44 @@ fn a_ball_falls_through_a_hole_and_one_beside_it_stays_on_the_ground() {
     assert!(physics.raycast(Vec3::new(40.0, 5.0, 40.0), Vec3::NEG_Y, 20.0, u32::MAX, false).is_none());
     assert!(voxear_terrain::ground_at(&world, 40.0, 40.0).is_none());
 }
+
+#[test]
+fn a_ball_lands_on_a_pits_floor_and_a_character_walks_along_a_trench() {
+    use voxear_terrain::runtime::{Edit, apply};
+    // Flat ground, a pit 2.5 m round dug out of it, and a trench along x beside it, its floor 2.2 m down.
+    let mut terrain = Terrain::new(Heightmap::flat(1, 1, 0.5, 0.0));
+    apply(&mut terrain, &Edit::Dig { at: [40.0, 0.0, 40.0], radius: 2.5, surface: None });
+    let trench = Edit::Tunnel { from: [20.0, -1.0, 64.0], to: [44.0, -1.0, 64.0], radius: 1.2, surface: None };
+    apply(&mut terrain, &trench);
+    let mut world = World::new();
+    voxear_scene::register_obj_components(&mut world);
+    world.spawn((terrain, Transform::default()));
+    let drop = |world: &mut World, x: f32| {
+        let ball = world.spawn((Transform::from_position(Vec3::new(x, 3.0, 40.0)),));
+        world.insert(ball, Collider { shape: ColliderShape::Sphere, radius: 0.5, ..Collider::default() });
+        world.insert(ball, Rigidbody { angular_drag: 2.0, ..Rigidbody::default() });
+        ball
+    };
+    let (into, beside) = (drop(&mut world, 40.0), drop(&mut world, 50.0));
+    let walker = world.spawn((Transform::from_position(Vec3::new(22.0, -2.15, 64.0)),));
+    world.insert(walker, CharacterController::default());
+    let mut physics = PhysicsScene::new();
+    for _ in 0..180 {
+        physics.step(&mut world, 1.0 / 60.0);
+    }
+    let y = |world: &World, ball| world.get::<Transform>(ball).unwrap().position.y;
+    assert!((y(&world, into) + 2.0).abs() < 0.15, "rests in the pit's bowl: {}", y(&world, into));
+    assert!((y(&world, beside) - 0.5).abs() < 0.1, "rests on the ground beside it: {}", y(&world, beside));
+    // Beside the ball, 2.1 m from the middle, where the bowl is 1.32 m deep.
+    let hit = physics.raycast(Vec3::new(38.5, 5.0, 41.5), Vec3::NEG_Y, 20.0, u32::MAX, false).expect("the pit's floor");
+    assert!((hit.point.y + 1.32).abs() < 0.1, "a ray meets its side: {}", hit.point.y);
+    let ground = voxear_terrain::ground_at(&world, 40.0, 40.0).expect("ground in the pit");
+    assert!((ground.height + 2.5).abs() < 0.1, "and so does the ground under it: {}", ground.height);
+
+    for _ in 0..120 {
+        physics.move_character(&mut world, walker, Vec3::new(2.0, -2.0, 0.0), 1.0 / 60.0);
+    }
+    let at = world.get::<Transform>(walker).unwrap().position;
+    assert!(at.x > 25.0, "walked along the trench: {at}");
+    assert!((at.y + 2.2).abs() < 0.25, "on its floor: {at}");
+}

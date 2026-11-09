@@ -77,7 +77,7 @@ impl DugPool {
     fn create(gpu: &Gpu, capacity: u64) -> Result<Buffer> {
         let usage = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
         let size = capacity * size_of::<DugVertex>() as u64;
-        Ok(gpu.create_buffer("terrain dug ground", size, usage, MemoryLocation::GpuOnly)?)
+        gpu.create_buffer("terrain dug ground", size, usage, MemoryLocation::GpuOnly)
     }
 
     pub fn new(gpu: &Gpu) -> Result<Self> {
@@ -129,7 +129,7 @@ impl DugPool {
             let first = match self.space.alloc(count) {
                 Some(first) => first,
                 None => {
-                    self.grow(gpu, frames, count, frame_index, stage)?;
+                    self.grow(gpu, frames, count, stage)?;
                     self.space.alloc(count).expect("room after growing")
                 }
             };
@@ -141,14 +141,7 @@ impl DugPool {
 
     /// A buffer twice as large, or more where `wanted` more vertices need
     /// it, with every chunk held staged into it again.
-    fn grow(
-        &mut self,
-        gpu: &Gpu,
-        frames: &mut Frames,
-        wanted: u64,
-        _frame_index: u64,
-        stage: &mut dyn FnMut(&[u8], u64),
-    ) -> Result<()> {
+    fn grow(&mut self, gpu: &Gpu, frames: &mut Frames, wanted: u64, stage: &mut dyn FnMut(&[u8], u64)) -> Result<()> {
         let held: u64 = self.held.values().map(|held| held.count).sum();
         let mut capacity = self.capacity * 2;
         while capacity < held + wanted {

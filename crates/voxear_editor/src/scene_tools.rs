@@ -326,7 +326,7 @@ fn mesh_hits(
             continue;
         }
         let local = origin - corner;
-        if let Some(hit) = voxear_terrain::ray::raycast(&terrain.heights, local, direction, TERRAIN_REACH) {
+        if let Some(hit) = voxear_terrain::raycast_terrain(terrain, local, direction, TERRAIN_REACH) {
             grounds.push((hit.distance, hit.point + corner, entity));
         }
     }

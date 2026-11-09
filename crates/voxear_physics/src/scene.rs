@@ -608,13 +608,19 @@ pub struct PhysicsScene {
 
 /// A terrain's bodies: which heights they were made from, where its corner
 /// was, its layer, and for each tile the tile it was made from, its body
-/// and its shape.
+/// and its shape; and for each dug chunk the chunk it was made from and,
+/// where it has ground in it, its mesh's body and shape.
 struct TerrainBodies {
     heights: u64,
     corner: Vec3,
     layer: u8,
     tiles: Vec<Option<(Arc<voxear_terrain::HeightTile>, BodyId, ShapeId)>>,
+    dug: HashMap<voxear_terrain::dig::ChunkKey, DugBody>,
 }
+
+/// A dug chunk's body: the chunk it was made from, and its body and shape
+/// where it has ground in it.
+type DugBody = (Arc<voxear_terrain::dig::DugChunk>, Option<(BodyId, ShapeId)>);
 
 /// An Obj's plants' trunks: what they were made from (the plants, where the
 /// Obj was, the trunk's shape, its layer, the plants taken away), and each
@@ -824,7 +830,8 @@ impl PhysicsScene {
             if !fits {
                 self.remove_terrain(entity);
                 let tiles = vec![None; map.tiles().len()];
-                self.terrains.insert(entity, TerrainBodies { heights: map.id(), corner, layer, tiles });
+                let dug = HashMap::new();
+                self.terrains.insert(entity, TerrainBodies { heights: map.id(), corner, layer, tiles, dug });
             }
             let moved = self.terrains[&entity].corner != corner;
             let width = voxear_terrain::TILE_QUADS as f32 * map.spacing();
@@ -868,8 +875,58 @@ impl PhysicsScene {
                 self.owners.insert(body, entity);
                 self.terrains.get_mut(&entity).expect("kept").tiles[index] = Some((tile.clone(), body, shape));
             }
+            self.sync_dug(entity, terrain, corner, moved, layer);
             self.terrains.get_mut(&entity).expect("kept").corner = corner;
         }
+    }
+
+    /// A static body for each dug chunk of a terrain, its ground's triangles
+    /// as a mesh, made again when the chunk changes, by pointer.
+    fn sync_dug(&mut self, entity: Entity, terrain: &voxear_terrain::Terrain, corner: Vec3, moved: bool, layer: u8) {
+        let empty = voxear_terrain::dig::Excavation::default();
+        let dug = terrain.dug.as_deref().unwrap_or(&empty);
+        let kept = std::mem::take(&mut self.terrains.get_mut(&entity).expect("kept").dug);
+        let mut now = HashMap::new();
+        for (key, (made, body)) in kept {
+            let same = dug.chunk(key).is_some_and(|chunk| Arc::ptr_eq(chunk, &made));
+            match (same, body) {
+                (true, body) => {
+                    if moved && let Some((body, _)) = body {
+                        self.world.set_transform(body, corner, Quat::IDENTITY);
+                    }
+                    now.insert(key, (made, body));
+                }
+                (false, Some((body, shape))) => {
+                    self.world.remove_body(body);
+                    self.world.release_shape(shape);
+                    self.owners.remove(&body);
+                }
+                (false, None) => {}
+            }
+        }
+        for (key, chunk) in dug.chunks() {
+            if now.contains_key(key) {
+                continue;
+            }
+            let mesh = voxear_terrain::dig::mesh(dug, &terrain.heights, *key);
+            let body = (!mesh.indices.is_empty()).then(|| {
+                let points: Vec<Vec3> = mesh.positions.iter().map(|p| Vec3::from(*p)).collect();
+                let shape = self.world.mesh_shape(&points, &mesh.indices)?;
+                let mut desc = BodyDesc::new(shape, Motion::Static).at(corner, Quat::IDENTITY);
+                desc.friction = Collider::default().friction;
+                desc.user_data = entity.to_bits();
+                desc.layer = layer;
+                let Some(body) = self.world.add_body(&desc) else {
+                    self.world.release_shape(shape);
+                    tracing::warn!("physics is full; a terrain's dug ground is left out");
+                    return None;
+                };
+                self.owners.insert(body, entity);
+                Some((body, shape))
+            });
+            now.insert(*key, (chunk.clone(), body.flatten()));
+        }
+        self.terrains.get_mut(&entity).expect("kept").dug = now;
     }
 
     /// Stands a static capsule up for the trunk of each plant still there,
@@ -963,7 +1020,8 @@ impl PhysicsScene {
 
     fn remove_terrain(&mut self, entity: Entity) {
         let Some(kept) = self.terrains.remove(&entity) else { return };
-        for (_, body, shape) in kept.tiles.into_iter().flatten() {
+        let dug = kept.dug.into_values().filter_map(|(_, body)| body);
+        for (body, shape) in kept.tiles.into_iter().flatten().map(|(_, body, shape)| (body, shape)).chain(dug) {
             self.world.remove_body(body);
             self.world.release_shape(shape);
             self.owners.remove(&body);

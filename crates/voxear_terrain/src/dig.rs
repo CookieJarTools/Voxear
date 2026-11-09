@@ -27,7 +27,10 @@ use std::{
 
 use voxear_core::math::Vec3;
 
-use crate::heights::{HOLE_WORDS, HeightTile, Heightmap, TILE_QUADS, TILE_SAMPLES};
+use crate::{
+    heights::{HOLE_WORDS, HeightTile, Heightmap, TILE_QUADS, TILE_SAMPLES},
+    ray::GroundHit,
+};
 
 /// How many voxels a chunk has a side.
 pub const CELLS: usize = 32;
@@ -331,6 +334,97 @@ impl Excavation {
     }
 }
 
+impl Excavation {
+    /// The ground's density at `p`, in metres from the terrain's corner,
+    /// blended between the corners round it.
+    pub fn density_at(&self, heights: &Heightmap, p: Vec3) -> f32 {
+        let grid = Grid::of(heights);
+        let g = p / grid.voxel;
+        let low = g.floor();
+        let t = g - low;
+        let (x, y, z) = (low.x as i64, low.y as i64, low.z as i64);
+        let d = |dx: i64, dy: i64, dz: i64| self.density(heights, grid, x + dx, y + dy, z + dz);
+        let lerp = |a: f32, b: f32, t: f32| a + (b - a) * t;
+        let along_x = |dy: i64, dz: i64| lerp(d(0, dy, dz), d(1, dy, dz), t.x);
+        let along_z = |dy: i64| lerp(along_x(dy, 0), along_x(dy, 1), t.z);
+        lerp(along_z(0), along_z(1), t.y)
+    }
+
+    /// Which way the ground faces at `p`: down its density's slope.
+    fn normal_at(&self, heights: &Heightmap, p: Vec3) -> Vec3 {
+        let e = Grid::of(heights).voxel * 0.5;
+        let d = |offset: Vec3| self.density_at(heights, p + offset);
+        let slope = Vec3::new(
+            d(Vec3::X * e) - d(-Vec3::X * e),
+            d(Vec3::Y * e) - d(-Vec3::Y * e),
+            d(Vec3::Z * e) - d(-Vec3::Z * e),
+        );
+        (-slope).try_normalize().unwrap_or(Vec3::Y)
+    }
+
+    /// The first place a ray from `origin` along `direction`, in the
+    /// terrain's space, goes from air into dug ground within
+    /// `max_distance`: stepped through the dug chunks it crosses a half
+    /// voxel at a time, then found between the last two steps.
+    pub fn raycast(&self, heights: &Heightmap, origin: Vec3, direction: Vec3, max_distance: f32) -> Option<GroundHit> {
+        let direction = direction.try_normalize()?;
+        let grid = Grid::of(heights);
+        let size = grid.chunk();
+        // Where the ray is inside any dug chunk.
+        let (mut first, mut last) = (f32::MAX, f32::MIN);
+        for key in self.chunks.keys() {
+            let low = Vec3::new(key.x as f32, key.y as f32, key.z as f32) * size;
+            let high = low + size;
+            let (mut near, mut far) = (0.0f32, max_distance);
+            for axis in 0..3 {
+                if direction[axis].abs() < 1e-9 {
+                    if origin[axis] < low[axis] || origin[axis] > high[axis] {
+                        (near, far) = (1.0, 0.0);
+                    }
+                    continue;
+                }
+                let (a, b) =
+                    ((low[axis] - origin[axis]) / direction[axis], (high[axis] - origin[axis]) / direction[axis]);
+                near = near.max(a.min(b));
+                far = far.min(a.max(b));
+            }
+            if near <= far {
+                (first, last) = (first.min(near), last.max(far));
+            }
+        }
+        if first > last {
+            return None;
+        }
+        let step = grid.voxel * 0.5;
+        let mut t = first;
+        let mut before = self.density_at(heights, origin + direction * t);
+        while t < last {
+            let next = (t + step).min(last);
+            let now = self.density_at(heights, origin + direction * next);
+            if before <= 0.0 && now > 0.0 {
+                let met = t + (next - t) * (before / (before - now));
+                let point = origin + direction * met;
+                return Some(GroundHit { point, distance: met, normal: self.normal_at(heights, point) });
+            }
+            (t, before) = (next, now);
+        }
+        None
+    }
+
+    /// The top of the dug ground over `(x, z)`, in the terrain's space,
+    /// where its column is dug: how high, and which way it faces there.
+    pub fn surface_at(&self, heights: &Heightmap, x: f32, z: f32) -> Option<(f32, Vec3)> {
+        let grid = Grid::of(heights);
+        let (cx, cz) = (grid.chunk_of(x), grid.chunk_of(z));
+        let mut column =
+            self.chunks.range(ChunkKey { x: cx, z: cz, y: i32::MIN }..=ChunkKey { x: cx, z: cz, y: i32::MAX });
+        let top = column.next_back()?.0.y;
+        let top = (top + 1) as f32 * grid.chunk();
+        let hit = self.raycast(heights, Vec3::new(x, top + 1.0, z), Vec3::NEG_Y, f32::MAX)?;
+        Some((hit.point.y, hit.normal))
+    }
+}
+
 /// `heights` with holes where the voxels of `dug` columns stand: every
 /// sample whose columns, all those it is the corner or edge of, are dug,
 /// for those of `newly` dug. A sample between a dug column and one not dug
@@ -602,6 +696,23 @@ mod tests {
             let edge = [p[0], p[2]].iter().any(|v| ((v / 0.5) - 32.0).abs() < 1e-4 || ((v / 0.5) - 48.0).abs() < 1e-4);
             assert!(edge, "an open edge at {p:?} ({count}) inside the column");
         }
+    }
+
+    #[test]
+    fn rays_and_the_ground_under_a_point_find_the_floor_of_a_pit() {
+        let heights = field();
+        let mut dug = Excavation::default();
+        let ground = heights.height_at(20.0, 20.0);
+        dug.carve(&heights, &Shape::Ball { at: [20.0, ground, 20.0], radius: 2.0 }, Carve::Dig, None);
+        // Straight down into it: its floor two metres under the ground.
+        let (floor, up) = dug.surface_at(&heights, 20.0, 20.0).expect("a dug column");
+        assert!((floor - (ground - 2.0)).abs() < 0.1, "{floor} against {}", ground - 2.0);
+        assert!(up.y > 0.9);
+        // A ray across the pit's mouth meets its far wall, facing back.
+        let hit = dug.raycast(&heights, Vec3::new(17.0, ground - 1.0, 20.0), Vec3::X, 10.0).expect("its wall");
+        assert!(hit.point.x > 21.0 && hit.point.x < 22.0 && hit.normal.x < -0.5, "{hit:?}");
+        // Off the dug columns, nothing.
+        assert!(dug.surface_at(&heights, 2.0, 2.0).is_none());
     }
 
     #[test]

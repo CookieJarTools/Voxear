@@ -15,7 +15,7 @@
 //! With `VOXEAR_GUNS_PACKAGE` naming the guns package's folder, the guns
 //! are the package's instead of the engine's: the Hello copy adds it as a
 //! folder package, the Guns module stays off, the driver uses its
-//! namespace, and the Rifle is its sample's. They must match the same
+//! namespace, and the Rifle is the package's. They must match the same
 //! traces, which are never recorded from them. `VOXEAR_GUN_TRACES_RUN`
 //! names a folder to write a run's own traces into, to look over beside
 //! the kept ones.
@@ -398,7 +398,7 @@ fn run(package: Option<&Path>) -> BTreeMap<String, Vec<String>> {
 }
 
 /// The Hello copy in `dir` with the guns package in `package` as a folder
-/// package, the driver using its guns and the Rifle its sample's, and the
+/// package, the driver using its guns and the Rifle the package's, and the
 /// Guns module off.
 fn with_package(dir: &Path, package: &Path) -> Project {
     let package = package.canonicalize().expect("the guns package's folder");
@@ -413,7 +413,7 @@ fn with_package(dir: &Path, package: &Path) -> Project {
     std::fs::write(dir.join("Scripts/GunTrace.cs"), driver).unwrap();
     let handling = format!("type = \"Voxear.Guns.GunHandling\"\n\n[fields.clips]\n{HELD_BY}");
     std::fs::write(dir.join("Guns/Clips.asset"), handling).unwrap();
-    std::fs::copy(package.join("Samples/Rifle/Rifle.prefab"), dir.join("Rifle.prefab")).unwrap();
+    std::fs::copy(package.join("Prefabs/Rifle.prefab"), dir.join("Rifle.prefab")).unwrap();
     let mut project = Project::open(dir).unwrap();
     project.set_module(voxear_engine::modules::Module::Guns, false).unwrap();
     project

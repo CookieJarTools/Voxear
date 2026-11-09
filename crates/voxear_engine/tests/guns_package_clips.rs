@@ -183,10 +183,9 @@ public sealed class PackDriver : SystemBase
 		static Mark Mark(float at, GunEvent then) => new() { At = at, Event = then };
 		var throws = new ClipPart { Gun = new AnimationClip("Gun#clip:Bolt"), Marks = [Mark(0.5f, GunEvent.Eject), Mark(0.8f, GunEvent.Chamber)], When = When.AllOf(Fact.ChamberFilled) };
 		var empty = new ClipPart { Gun = new AnimationClip("Gun#clip:Bolt Up"), Marks = [Mark(0.8f, GunEvent.Chamber)], When = When.AllOf(Fact.ChamberEmpty) };
-		var cycle = new ActionOffsets { Action = GunAction.Cycle };
-		cycle.Parts.AddRange([throws, empty]);
 		var handling = new GunHandling { Pack = new PackClips { Rest = new AnimationClip("Gun#clip:Still"), GunFire = new AnimationClip("Gun#clip:Trigger") } };
-		handling.Offsets.Add(cycle);
+		handling.Cycle.Mode = ActionMode.Clips;
+		handling.Cycle.Parts.AddRange([throws, empty]);
 		return handling;
 	}
 }

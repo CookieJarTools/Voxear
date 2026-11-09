@@ -2767,6 +2767,9 @@ side), holding the world's cells modulo its size so it scrolls without copying; 
 into it and presses each Track Maker's path since last frame where it touches the ground (`tracks.rs`,
 `shaders/tracks.slang`). Each texel keeps its deepest press and when; surfaces say how far they give and how soon
 they fill in. The ground's pixels march the eye's ray to the tracks' floor and bend their normal by its slope.
+A surface's liquid (wet, puddles, lava) and glitter are flags it carries to the shaders, so they go where it covers:
+puddles stand where the ground lies below the lowest of a ring of heights round it, and lava's crust rides down the
+ground's fall.
 
 **Voxels.** Chunks of 32³, in one GPU geometry pool filled through an asynchronous upload ring, culled on the GPU
 against the frustum and last frame's depth and drawn by multi-draw-indirect, with compact vertices of their own.

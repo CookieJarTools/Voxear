@@ -1480,8 +1480,17 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   pressed into snow showing the ground, staying when lifted, forgotten when scrolled past, filling in). Manual:
   Tracks and Snow. Still to come: grass flattened in tracks, tracks in the shadows' and vertices' depth, and a map
   that keeps tracks further off.
-- **The ground's looks:** wetness, puddles, streams and lava painted on the ground and flowing downhill; wind and
-  glitter; models blending into the ground.
+- ~~**Wet ground, puddles, lava and glitter:**~~ done: a surface's Liquid (None, Wet, Puddles, Lava) and Glitter, so
+  each goes where the surface covers, by rules, paint or a script's paint. Wet: darker and glossier. Puddles: water
+  standing where the ground lies below the lowest of a ring round it (craters and ruts fill, slopes that dip drain),
+  ruffled by the Wind Zone's wind, and rivulets down slopes that fade where thinner than a pixel. Lava: the
+  surface's pictures as a crust cracked into plates carried down the ground's fall in two cross-faded sets, glowing
+  by its heat (lava's functions now shared with lava Pools and Streams, `shaders/lava.slang`). Glitter: grains
+  catching the sun, in shadow dark, fading out by 40 m. Tests: GPU (wet darker, water only in the puddled crater,
+  lava glowing, sparkles only with Glitter). Manual: Wet Ground, Puddles and Lava. Still to come: lava lighting
+  what is round it.
+- **Models blending into the ground:** a material flag; the forward shader samples terrain height and surfaces at
+  the fragment and blends near the ground.
 - **Digging, trenches and craters:** marching cubes into the heightmap, Transvoxel between levels; dig, fill and
   tunnel brushes, trenches along a Path with a profile, craters with rims; collision a chunk at a time.
 - **Built-in terrain generation:** generators that make a terrain to start from, chosen and tuned in the editor or

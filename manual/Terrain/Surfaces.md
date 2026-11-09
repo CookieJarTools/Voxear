@@ -38,6 +38,8 @@ A typical battlefield takes three: mud as the ground's surface, packed dirt **Ev
 | Triplanar | Draws it from the side as well as from above, so its pictures do not stretch down cliffs. It costs more, so give it to the surfaces that cover steep ground |
 | Tracks | How far feet and wheels press into it, from 0 to 1: 1 for fresh snow, about a half for mud, 0 for rock and road (see [[Tracks and Snow]]) |
 | Fills in | With tracks, how many seconds they take to fill in again, as falling snow fills them. 0 keeps them |
+| Liquid | None, **Wet**, **Puddles** or **Lava** (see [[Wet Ground, Puddles and Lava]]) |
+| Glitter | Sparkles in the sun, as snow and sand do |
 | Cover | Where it covers, as above. The ground's own surface has none |
 
 With **Height and Slope**, its rules:

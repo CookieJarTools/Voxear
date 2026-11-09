@@ -14,6 +14,7 @@ Terrain is a module: switch it on in **Project Settings** first (see [[Modules]]
 6. [[Holes]]: cutting the ground away, for a way into a cave or a bunker
 7. [[Grass]]: grass and small details grown thickly over the ground on the GPU
 8. [[Tracks and Snow]]: footprints and wheel ruts pressed into snow and mud as things pass over it
-9. [[Changing Terrain from Scripts]]: craters, raised and flattened ground, paint, holes and grass changed while the game runs, the same on every machine, kept in saves and sent to players who join
+9. [[Wet Ground, Puddles and Lava]]: surfaces soaked, holding puddles or flowing as lava, and snow that sparkles
+10. [[Changing Terrain from Scripts]]: craters, raised and flattened ground, paint, holes and grass changed while the game runs, the same on every machine, kept in saves and sent to players who join
 
 Terrain is under **Add Component ▸ Terrain**.

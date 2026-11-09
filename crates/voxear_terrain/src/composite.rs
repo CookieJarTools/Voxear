@@ -519,3 +519,33 @@ mod tests {
         assert!((first.sample(64, 64) - compositor.below_at(&terrain, &sources, 64, 64) - 5.0).abs() < 0.01);
     }
 }
+
+#[cfg(test)]
+mod timing {
+    use super::*;
+    use crate::layers::Blend;
+
+    /// How long a large terrain takes to make from a few layers, and a
+    /// brush-sized change to it; run with `--ignored --nocapture` in release.
+    #[test]
+    #[ignore]
+    fn a_large_terrain_is_made_quickly() {
+        let hills = Layer::new(LayerKind::Noise { style: crate::noise::NoiseStyle::Ridged, scale: 600.0, height: 120.0, octaves: 7, seed: 3 });
+        let crater = Layer::new(LayerKind::Stamp { picture: None, position: [900.0, 900.0], rotation: 0.0, size: [60.0, 60.0], height: -8.0, falloff: 0.3 });
+        let mut road = Layer::new(LayerKind::Spline { points: vec![[100.0, 20.0, 100.0], [1500.0, 30.0, 1800.0]], width: 10.0, falloff: 6.0 });
+        road.blend = Blend::Set;
+        let smooth = Layer::new(LayerKind::Smooth { radius: 2.0 });
+        let file = TerrainFile { size: 2048.0, resolution: 4097, layers: vec![hills, crater, road, smooth], ..TerrainFile::default() };
+        let rasters = Rasters::default();
+        let none = |_: &str| None;
+        let sources = Sources { pictures: &none, rasters: &rasters };
+        let compositor = Compositor::default();
+        let start = std::time::Instant::now();
+        let whole = compositor.composite(&file, &sources, None, &Dirty::All);
+        let all = start.elapsed();
+        let start = std::time::Instant::now();
+        let _ = compositor.composite(&file, &sources, Some(&whole), &Dirty::Areas(vec![[880.0, 880.0, 920.0, 920.0]]));
+        let some = start.elapsed();
+        eprintln!("256 tiles from 4 layers: {all:?}; a 40 m change: {some:?}");
+    }
+}

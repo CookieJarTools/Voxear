@@ -1402,11 +1402,24 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   the Scene view picks and places on the ground. C#: `Terrain.HeightAt`, `NormalAt`, `TryGetGround`, `Raycast`,
   `Exists` (native API 60). Tests: crate, GPU (hills with no cracks between levels, a ridge's shadow), physics, scene
   files, the editor and scripts. Manual: Terrain.
-- **Layers, stamps and sculpting:** the layer stack as the terrain's source (base, import, stamps of pictures or
-  meshes, noise, sculpt rasters, splines for roads, rivers and trenches, terrace, smooth), with blend ops, opacity,
-  masks by height and slope, sizes in metres; compositing on the CPU over the dirty tiles alone, each layer's result
-  cached by a hash of what changes it, with checkpoints; sculpt brushes; scene handles for stamps and splines; undo
-  a stroke at a time.
+- ~~**Layers, stamps and sculpting:**~~ done: the `.terrain` file's layers as the terrain's source (base height,
+  then Import, Stamp, Noise, Sculpt, Spline, Terrace and Smooth, each with a blend of Add, Subtract, Max, Min, Set or
+  Multiply, an opacity, height and slope masks with a feather, and sizes in metres; a Phase 1 heightmap read as an
+  Import layer). Composed on the CPU, tile by tile on worker threads with a border of 16 samples for what looks at
+  its neighbours, over the tiles a change reaches; while a layer is edited, the ground below it is kept, so a brush
+  or a dragged stamp makes only that layer and those above it again (release: 4097² from four layers in 0.3 s, a
+  brush-sized change in 14 ms). Noise from integer hashing, the same on every machine. Sculpt layers' rasters are
+  shared tiles in a `.layers` file, left out of builds; `.heights` keeps a hash of the layers it was made from, and
+  heights made from other layers are made again on load. Editor: Layers, Sculpt and Settings along the top of the
+  Terrain section, as Unity has them; the layer list (top first, picked, switched, dragged, removed, Add Layer by
+  kind) with the picked layer's settings under it; brushes Raise or Lower (Shift), Smooth, Flatten, Set Height
+  (Ctrl+click takes the height), Terrace and Noise, painting in the Scene view under a ring on the ground, `[` `]`
+  for size and with Shift strength; a picked stamp's outline and its dots to move, turn and size it, a spline's
+  points to move; each stroke or drag one step to undo. The GI's meshes for rays wait until a tile stops changing.
+  Tests: compositing, masks, brushes, rasters and files; GPU (a changed tile is drawn changed); the editor (layers
+  from the menu, a stamp's dot dragged, a stroke in the Scene view, each undone); layers made on load. Manual:
+  Layers, Sculpting. Still to come: pictures dropped onto the list as stamps, mesh stamps, a stamp brush, and the
+  ceiling warning.
 - **Surfaces, painting and holes:** up to 32 surfaces from texture arrays, the four strongest at a time blended by
   height; triplanar on cliffs, distance resampling and a basemap far off, variants and hex tiling against repeats;
   rules by height, slope, curvature and flow; a paint brush; holes in the ground and its collision.

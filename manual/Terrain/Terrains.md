@@ -8,25 +8,34 @@ A **Terrain** is a stretch of ground: a field, a valley or a range of hills. It 
 
 Select an Obj and pick **Add Component ▸ Terrain ▸ Terrain**. It starts flat, 512 metres each way, on a new asset of its own in the project's **Terrains** folder, named for its Obj: `Terrains/Ground.terrain`. You can also make one with **New ▸ New Terrain** in the Project panel and pick it as a Terrain's **Data**.
 
-The asset holds the ground, so every Terrain that picks the same asset has the same ground, as two copies of a level would. Changes to the ground are written to the asset when you save the level: the `.terrain` file says how large and how fine the ground is, and its heights are kept beside it in a `.heights` file of the same name. Keep the two together when you move or copy them.
+The asset holds the ground, so every Terrain that picks the same asset has the same ground, as two copies of a level would. Changes to the ground are written to the asset when you save the level. Beside the `.terrain` file are its heights, in a `.heights` file of the same name, and what its brushes painted, in a `.layers` file. Keep them together when you move or copy them. A built game ships only the `.terrain` and its `.heights`.
 
-## Size, resolution and heightmap
+## The Terrain's tools
 
-These are the asset's, so they show only for a terrain that has one.
+Along the top of the Terrain in the Inspector are its tools, as in Unity:
+
+- **Layers**: what the ground is made of, a stamp, noise, a road or a sculpted layer at a time. See [[Layers]].
+- **Sculpt**: brushes that paint the ground in the Scene view. See [[Sculpting]].
+- **Settings**: the asset, how large and fine the ground is, and how it is drawn.
+
+## Size and resolution
+
+These are the asset's, under **Settings**.
 
 | Setting | What it does |
 | --- | --- |
 | Data | The `.terrain` asset its ground is |
 | Size | How wide and long the ground is, in metres |
 | Resolution | How many heights it has each way: 257 to 8193. More is finer, and takes more memory |
-| Heightmap | A grey picture its heights are made from, black lowest and white highest; None for heights of its own |
-| Height | How high the heightmap's white is, in metres |
+| Base height | How high the ground is before any layer, in metres |
 
-The distance between heights is the **Size** over one less than the **Resolution**: a 512 m terrain at 1025 has a height every half metre. Half a metre suits a battlefield, with trenches and shell holes; a metre or two suits wide open country.
+The distance between heights is the **Size** over one less than the **Resolution**: a 512 m terrain at 1025 has a height every half metre. Half a metre suits a battlefield, with trenches and shell holes; a metre or two suits wide open country. Changing **Size** or **Resolution** makes the ground again from its layers, what the brushes painted stretched to fit. Each change is one step to undo.
 
-A heightmap from another tool is best as a 16-bit greyscale PNG: an 8-bit one has only 256 steps, which show as terraces on a tall terrain. A raw 16-bit file works too. The picture's top is the terrain's far edge, the one along +Z, as it looks from above. Changing **Size**, **Resolution** or **Height** makes the ground again from the heightmap; a terrain with no heightmap keeps its ground, stretched to fit. Each change is one step to undo.
+A heightmap from another tool goes in as an **Import** layer (see [[Layers]]).
 
 ## How it is drawn
+
+These are under **Settings** too.
 
 | Setting | What it does |
 | --- | --- |

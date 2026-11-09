@@ -1548,8 +1548,8 @@ hud.Close();
   pixels; 4 sub-pixel x positions come with light hinting.)*
 - **World-space and large or transformed text** uses MSDF, with an option for Slug-style curve rendering (now patent
   free). It stays sharp at any distance and angle. The renderer switches paths on scale and perspective. *(Still to
-  come: a UI panel's text is drawn hinted into its texture at the size the panel shows, and softens at steep
-  angles.)*
+  come: a UI panel's text is drawn unhinted, placed to a quarter of a pixel, into its texture at the size the
+  panel shows, and softens at steep angles.)*
 
 **Rendering.** Shapes are instanced SDF quads, so rounded rectangles, borders, shadows and gradients stay crisp at
 any DPI. World-space panels render to a mipmapped texture sized to their on-screen pixel density, then draw as

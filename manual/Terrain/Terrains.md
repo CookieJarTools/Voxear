@@ -80,3 +80,5 @@ if (Terrain.Raycast(new Vector3(x, 500f, z), -Vector3.UnitY, out var hit))
 | `Terrain.NormalAt(position)` | Which way the ground faces there, smoothed as it is drawn |
 | `Terrain.TryGetGround(position, out ground)` | Both at once, with the terrain's Obj |
 | `Terrain.Raycast(origin, direction, out hit)` | Where a ray first meets the ground, from above or below |
+
+Scripts change the ground too, with craters, holes, paint and grass: see [[Changing Terrain from Scripts]].

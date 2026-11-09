@@ -2765,16 +2765,21 @@ with Transvoxel between levels on an octree; planets add their own gravity and a
 heightmap terrain turns its columns into smooth-voxel chunks that start from its heights and meet its ground along
 the grid lines.
 
-**Runtime editing.** A sparse delta layer holds height changes, surfaces, holes, plants taken and voxels dug.
-Gameplay stamps (craters, digging, footprints) apply on the CPU and only the tiles they touch update, collision in
-place. Saves and the network carry only changes from what a build or a seed makes: commands while they are few,
-then per-chunk deltas (quantised, zero runs collapsed, zstd; LZ4 for streaming from disk). A player joining gets the
-changed chunks nearest first.
+**Runtime editing.** A script's edit (raise, crater, flatten, paint, holes, grass: `voxear_terrain::runtime`) is a
+small command applied straight to the tiles it reaches, the layer stack left alone, with nothing but sums, products,
+square roots and smoothsteps, and heights set to whole steps of 1/1024 m: the same edits make the same ground on
+every machine, so a networked game sends the edit rather than the ground. Physics and drawing follow the new tiles
+by pointer, as they follow the editor's. Each edited terrain keeps the ground as built and its edits since
+(`TerrainEdits`); a save of the scene, or a player joining, is given whichever is smaller, the edits one by one
+(about 20 bytes each) or each changed tile as how it differs from the one built (heights as steps from what their
+neighbours foretell, shares and grass XORed, split into byte planes, then zstd). Still to come: choosing the form a
+tile at a time, voxels dug in the same record, LZ4 for streaming from disk, and joiners sent the nearest first.
 
 ```csharp
-Terrain.HeightAt(position);                                                   // easy
-Terrain.Stamp(Stamps.Crater, at: hit.Point, radius: 4f);
-terrain.Runtime.Apply(new HeightBrush(BlendOp.Subtract, mask, falloff));      // advanced
+Terrain.HeightAt(position);                                   // asking
+Terrain.Crater(hit.Point, radius: 3f, depth: 1.2f, Dirt);     // easy
+Terrain.Apply(TerrainEdit.Flatten(at, 4f, floor));            // advanced
+var edits = Terrain.CaptureEdits();                           // for a save, or a player joining
 ```
 
 ## Navigation

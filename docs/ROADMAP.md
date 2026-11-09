@@ -1457,10 +1457,21 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   painting; GPU (half a field of 85,000 blades drawn, half bare); the editor (grass added and dug up, undone); grass
   grown on load. Manual: Grass. Still to come: scatter layers by rule for placed plants, digging grass from scripts,
   a basemap and impostors for far grass, and the grass's own tint between healthy and dry.
-- **Runtime edits and the ground's looks:** the runtime delta layer (heights, surfaces, holes, plants) with its C#
-  API, easy and advanced, saved and sent as compact commands or per-tile deltas; tracks and deformable snow and mud;
-  wetness, puddles, streams and lava painted on the ground and flowing downhill; wind and glitter; models blending
-  into the ground.
+- ~~**Changing terrain from scripts:**~~ done: edits (raise, crater with its rim, flatten, paint a surface, cut or
+  fill holes, grow or clear grass) as small commands applied straight to the tiles they reach, in nothing but sums,
+  products, square roots and smoothsteps, heights to whole 1/1024 m steps, so the same edits make the same ground on
+  every machine; physics and drawing follow by pointer, a crater takes away the plants in it. Each edited terrain
+  keeps the ground as built and its edits (`TerrainEdits`), saved or sent as whichever is smaller: the edits (about
+  20 bytes each) or each changed tile as how it differs from the one built (heights as steps from their
+  neighbours' foretelling, shares and grass XORed, byte planes, zstd). C#: `Terrain.Raise`, `Lower`, `Flatten`,
+  `Crater`, `Paint`, `CutHole`, `FillHole`, `ClearGrass`, `GrowGrass`, `TerrainEdit` and `Terrain.Apply`,
+  `CaptureEdits` and `ApplyEdits`; `MaterialAsset` names a surface by its material, with a picker; a save of the
+  scene keeps the edits; RPCs carry `byte[]` (native API 64). Tests: edits on a tile's edge, both forms read back
+  exactly, sizes; a script's crater, physics following it, and edits put back from bytes and from a save. Manual:
+  Changing Terrain from Scripts. Still to come: choosing the form a tile at a time, sending a player who joins the
+  edits on their own, and digging grass by kind.
+- **The ground's looks:** tracks and deformable snow and mud; wetness, puddles, streams and lava painted on the
+  ground and flowing downhill; wind and glitter; models blending into the ground.
 - **Digging, trenches and craters:** marching cubes into the heightmap, Transvoxel between levels; dig, fill and
   tunnel brushes, trenches along a Path with a profile, craters with rims; collision a chunk at a time.
 - **Built-in terrain generation:** generators that make a terrain to start from, chosen and tuned in the editor or

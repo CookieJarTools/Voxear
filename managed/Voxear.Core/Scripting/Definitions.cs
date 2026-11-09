@@ -7,7 +7,8 @@ namespace Voxear.Scripting;
 
 /// <summary>
 /// The data assets scripts have loaded, by GUID and by every reference they were asked for by, so each file is one
-/// instance. Cleared when scripts reload, as the instances are of the old build's classes.
+/// instance. Cleared when scripts reload, as the instances are of the old build's classes, and as a run of the game
+/// ends, so values its code set on them go with it and the next run reads the files again.
 /// </summary>
 internal static class Definitions
 {
@@ -34,6 +35,26 @@ internal static class Definitions
 	public static void Clear()
 	{
 		loaded.Clear();
+	}
+
+	/// <summary>
+	/// Changes the loaded instance of the data asset <paramref name="guid"/>, when there is one, as the Inspector changed
+	/// its file: the fields in <paramref name="changed"/> are set, and those <paramref name="reset"/> names, which the
+	/// file no longer gives, go back to the script's values. What holds the instance sees the new values at once, and
+	/// its other fields keep what the game's code set on them.
+	/// </summary>
+	public static bool Refill(string guid, JsonElement changed, JsonElement reset)
+	{
+		if (!loaded.TryGetValue(guid, out var found))
+		{
+			return false;
+		}
+		if (reset.GetArrayLength() > 0)
+		{
+			Reset(found, reset);
+		}
+		BehaviourFields.Fill(found, changed, found.Path);
+		return true;
 	}
 
 	private static Definition? Read(Type type, string reference)
@@ -65,6 +86,19 @@ internal static class Definitions
 		loaded[guid] = made;
 		loaded[reference] = made;
 		return made;
+	}
+
+	/// <summary>Puts each field named back to the value a new instance has, which is the one written in the script.</summary>
+	private static void Reset(Definition found, JsonElement names)
+	{
+		var fresh = Activator.CreateInstance(found.GetType(), nonPublic: true)!;
+		var fields = BehaviourFields.Settable(found.GetType());
+		foreach (var name in names.EnumerateArray())
+		{
+			var key = BehaviourFields.Normalize(name.GetString() ?? string.Empty);
+			var field = fields.Find(each => BehaviourFields.Normalize(each.Name) == key);
+			field?.SetValue(found, field.GetValue(fresh));
+		}
 	}
 
 	/// <summary>An instance of the type the file names, found beside the type asked for, or of that type.</summary>

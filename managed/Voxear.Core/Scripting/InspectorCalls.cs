@@ -18,7 +18,8 @@ namespace Voxear.Scripting;
 /// { "changed": { field: value } }, { "valid", "message" } or { "options": [{ "label", "value" }] }, and
 /// { "error" } when it could not be asked, which is logged. The Inspector's drawers are opened and drawn through
 /// here too, as InspectorDrawers says, the running game's behaviours read and changed while it plays, as
-/// LiveFields says, and behaviours' gizmos drawn, as SceneGizmos says.
+/// LiveFields says, the data assets scripts loaded changed as the Inspector writes their files, or let go of as a run
+/// ends, as Definitions says, and behaviours' gizmos drawn, as SceneGizmos says.
 /// </summary>
 internal static class InspectorCalls
 {
@@ -83,6 +84,17 @@ internal static class InspectorCalls
 		if (action is "live-read" or "live-write" or "live-call")
 		{
 			Live(json, root, action);
+			return;
+		}
+		if (action == "data-refill")
+		{
+			var guid = root.GetProperty("guid").GetString() ?? string.Empty;
+			json.WriteBoolean("refilled", Definitions.Refill(guid, root.GetProperty("fields"), root.GetProperty("reset")));
+			return;
+		}
+		if (action == "data-forget")
+		{
+			Definitions.Clear();
 			return;
 		}
 		if (action == "gizmos")

@@ -459,6 +459,30 @@ impl Game {
         Ok(())
     }
 
+    /// Changes the running scripts' loaded instance of the data asset
+    /// `guid`, as the Inspector changed its file while the game plays (see
+    /// [`Engine::refill_data_asset`]), with the content at hand for a data
+    /// asset a changed field picks that they have not loaded yet.
+    pub fn refill_data_asset(&mut self, guid: AssetGuid, changed: &toml::Table, reset: &[String]) -> Result<bool> {
+        let models = self.models;
+        let unload_requested = &mut self.unload_requested;
+        let mut services = GameServices {
+            content: &mut self.content,
+            loads: &mut self.loads,
+            levels: &self.levels,
+            renderer: None,
+            models,
+            unload_requested,
+            previews: &mut self.previews,
+            ui: &mut self.ui,
+            display: &mut self.display,
+            audio: &mut self.audio,
+            input: &mut self.input,
+        };
+        let _scope = ServicesScope::enter(&mut services);
+        self.engine.refill_data_asset(&guid.to_string(), changed, reset)
+    }
+
     /// Starts loading a prefab in the background; its status gives the
     /// prefab once done.
     pub fn load_prefab_async(&mut self, prefab: &str) -> Result<LoadId> {

@@ -1,8 +1,9 @@
 //! Data assets in the Inspector (see `crate::data_assets`): a `.asset`
 //! selected in the Project panel shows the fields of the Definition it
 //! holds, on an Obj made for it alone, and each change is written into the
-//! file at once, as a Gun Handling's is, the open level left as it was. The
-//! Obj goes once no Inspector shows it. The Create menu's New Data Asset…
+//! file at once, as a Gun Handling's is, the open level left as it was, and
+//! into the instance the scripts loaded, so a game playing sees it. The Obj
+//! goes once no Inspector shows it. The Create menu's New Data Asset…
 //! offers each Definition the scripts have, in the folders its
 //! `[CreateAsset]` path names, and makes a file of the one picked.
 
@@ -91,8 +92,33 @@ impl Editor {
             return self.notify(&format!("Could not save {path}: {error:#}"));
         }
         self.files_seen();
-        if let Some(kept) = self.game.engine.world.get_mut::<DataAssetHolder>(holder) {
-            kept.written = (*fields).clone();
+        let before = match self.game.engine.world.get_mut::<DataAssetHolder>(holder) {
+            Some(kept) => std::mem::replace(&mut kept.written, (*fields).clone()),
+            None => return,
+        };
+        self.refill_loaded(&path, &before, &fields);
+    }
+
+    /// Gives the scripts' instance of the data asset at `path`, when they
+    /// have loaded it, the fields the Inspector changed from `before` to
+    /// `after`: a game playing sees the new values at once, as does code
+    /// run while editing, and fields the change left alone keep what the
+    /// game's code set on them.
+    fn refill_loaded(&mut self, path: &str, before: &toml::Table, after: &toml::Table) {
+        let Some(guid) = self.game.content.db().guid_of(path) else { return };
+        let changed: toml::Table = after
+            .iter()
+            .filter(|&(name, value)| before.get(name) != Some(value))
+            .map(|(name, value)| (name.clone(), value.clone()))
+            .collect();
+        let reset: Vec<String> = before.keys().filter(|&name| !after.contains_key(name)).cloned().collect();
+        let world = &mut self.game.engine.world;
+        let refilled = match self.play.edit_scripts() {
+            Some(scripts) => scripts.refill_data_asset(world, &guid.to_string(), &changed, &reset),
+            None => self.game.refill_data_asset(guid, &changed, &reset),
+        };
+        if let Err(error) = refilled {
+            tracing::error!("{error:#}");
         }
     }
 

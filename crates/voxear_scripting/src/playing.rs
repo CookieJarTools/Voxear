@@ -2,7 +2,9 @@
 //! while it plays: each field scenes can set, read from the instance as a
 //! scene writes it; a value set on the instance; and a `[Button]` or
 //! `[OnValueChanged]` method called on it. Voxear.Core's `LiveFields`
-//! answers, through the Inspector's JSON calls.
+//! answers, through the Inspector's JSON calls. The data assets the
+//! scripts loaded are changed here too, as the Inspector writes their
+//! files, which `Definitions` answers.
 
 use anyhow::{Result, bail};
 use serde_json::json;
@@ -43,6 +45,30 @@ impl ScriptRuntime {
     pub fn call_live(&mut self, world: &mut World, handle: BehaviourHandle, method: &str) -> Result<()> {
         let request = json!({ "action": "live-call", "handle": handle.0, "method": method });
         self.ask_live(world, &request).map(drop)
+    }
+
+    /// Changes the instance the scripts loaded of the data asset `guid`,
+    /// as the Inspector changed its file: the fields in `changed` set, as
+    /// a scene writes them, and those `reset` names back to the script's
+    /// values. What holds it sees the new values at once. False when the
+    /// scripts have not loaded it.
+    pub fn refill_data_asset(
+        &mut self,
+        world: &mut World,
+        guid: &str,
+        changed: &toml::Table,
+        reset: &[String],
+    ) -> Result<bool> {
+        let request = json!({ "action": "data-refill", "guid": guid, "fields": changed, "reset": reset });
+        let answer = self.ask_live(world, &request)?;
+        Ok(answer.get("refilled").and_then(|r| r.as_bool()).unwrap_or(false))
+    }
+
+    /// Lets go of every data asset the scripts loaded, as a run of the game
+    /// ends, so values its code set on them go too, and the next run reads
+    /// their files again.
+    pub fn forget_data_assets(&mut self, world: &mut World) -> Result<()> {
+        self.ask_live(world, &json!({ "action": "data-forget" })).map(drop)
     }
 
     fn ask_live(&mut self, world: &mut World, request: &serde_json::Value) -> Result<serde_json::Value> {

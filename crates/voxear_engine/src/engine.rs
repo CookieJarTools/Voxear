@@ -186,6 +186,15 @@ impl Engine {
         scripts.set_live_field(&mut self.world, handle, field, value)
     }
 
+    /// Changes the scripts' loaded instance of the data asset `guid`, as
+    /// the Inspector changed its file while the game plays (see
+    /// [`ScriptRuntime::refill_data_asset`]). False without scripts, or when
+    /// they have not loaded it.
+    pub fn refill_data_asset(&mut self, guid: &str, changed: &toml::Table, reset: &[String]) -> anyhow::Result<bool> {
+        let Some(scripts) = self.scripts.as_mut() else { return Ok(false) };
+        scripts.refill_data_asset(&mut self.world, guid, changed, reset)
+    }
+
     /// Draws the running behaviours' gizmos, as the editor's Scene views
     /// show them while the game plays, but for the types `hidden` names,
     /// with what its pointer does to their handles. `objs` are the Obj
@@ -308,8 +317,9 @@ impl Engine {
 
     /// Ends the simulation as leaving play mode does: every Obj is
     /// destroyed, so its behaviours get OnDisable and OnDestroy and the
-    /// scripts let go of them. Returns the scripts, for the next run, since
-    /// .NET starts only once per process.
+    /// scripts let go of them, and of the data assets they loaded. Returns
+    /// the scripts, for the next run, since .NET starts only once per
+    /// process.
     pub fn shutdown(&mut self) -> Option<ScriptRuntime> {
         let all: Vec<Entity> = self.world.query_ref::<Entity>().into_iter().collect();
         self.destroy_objs(&all);
@@ -318,6 +328,9 @@ impl Engine {
             self.world.despawn(entity);
         }
         let mut scripts = self.scripts.take()?;
+        if let Err(error) = scripts.forget_data_assets(&mut self.world) {
+            tracing::warn!("{error:#}");
+        }
         // Requests made on the way out belong to no run.
         scripts.take_obj_destroys();
         scripts.take_level_requests();

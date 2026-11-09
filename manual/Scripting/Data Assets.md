@@ -54,6 +54,8 @@ The field's list holds the data assets of that Definition, and of Definitions de
 
 Every field that picks the same file shares one instance of it, loaded the first time something asks for it. A value your code changes on it is changed for every Obj holding it, until the game stops. The file changes only when you edit it in the Inspector.
 
+Edit a data asset in the Inspector while the game plays, and the game has the change at once: every script holding it sees the new value from its next frame. Only the field you edited changes, so values your code set on the others stay until the game stops. The next run reads the file again.
+
 ## Loading a data asset from code
 
 `Definition.Load<T>` loads a data asset by its path, the same instance a field gives:

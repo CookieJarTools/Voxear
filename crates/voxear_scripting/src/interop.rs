@@ -443,6 +443,8 @@ pub enum ComponentKind {
     Skeleton = 5,
     /// The mesh an Obj draws, for its box.
     MeshRenderer = 6,
+    /// Where an Obj is in the hierarchy: its parent and its children.
+    Hierarchy = 7,
     Gun = 16,
     GunHolder = 17,
 }

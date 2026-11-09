@@ -126,6 +126,15 @@ public readonly struct Obj : IEquatable<Obj>
 	/// <summary>The Obj's rotation in the world, through all its parents. Like Unity's rotation.</summary>
 	public Quaternion WorldRotation => Native.GetWorldTransform(Id).Rotation;
 
+	/// <summary>The Obj this one is inside, or None for one at the top of its scene.</summary>
+	public Obj Parent => ObjHierarchy.ParentOf(this);
+
+	/// <summary>
+	/// The Objs directly inside this one, not those further in, in the order the engine itself goes through them. It
+	/// asks the engine each time, so keep what it gives while it is still true.
+	/// </summary>
+	public Obj[] Children => ObjHierarchy.ChildrenOf(this);
+
 	/// <summary>The engine entity the Obj is, for the ECS: the same handle, with its components.</summary>
 	public Entity Entity => new Entity(Id);
 

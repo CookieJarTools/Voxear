@@ -28,6 +28,7 @@ mod loading;
 pub mod memory;
 pub mod modules;
 pub mod new_project;
+mod obj_hierarchy;
 pub mod package_assets;
 pub mod package_scripts;
 pub mod packages;

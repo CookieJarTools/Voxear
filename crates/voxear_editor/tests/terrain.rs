@@ -866,3 +866,58 @@ fn a_rivers_layer_cuts_rivers_where_water_gathers_and_adds_water_for_them_and_th
     frame(&mut editor, &mut renderer);
     assert_eq!(editor.game.engine.world.query_ref::<&voxear_render::Stream>().into_iter().count(), 0, "undone");
 }
+
+#[test]
+fn a_surface_covers_by_its_biome_and_climate_over_a_generated_world() {
+    use voxear_terrain::surfaces::{Biome, Cover};
+    let Some((_dir, mut renderer, mut editor, field)) = editor_with_a_terrain() else { return };
+    let add = first_with(&editor.ui, editor.ui.root(), "collection-add").expect("Add Layer");
+    click(&mut editor.ui, add);
+    frame(&mut editor, &mut renderer);
+    let generate = menu_item(&editor.ui, "Generate").expect("a Generate layer");
+    click(&mut editor.ui, generate);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    show_tool(&mut editor, &mut renderer, "Paint");
+    add_surface(&mut editor, &mut renderer, "Mud.material");
+    add_surface(&mut editor, &mut renderer, "Snow.material");
+    let snow = |editor: &voxear_editor::Editor| {
+        editor.game.engine.world.get::<TerrainAsset>(field).unwrap().file.surfaces[1].clone()
+    };
+    // Covering by rules: its biome and climate show beside its height and slope.
+    let cover = first_with(&editor.ui, prop_rows(&editor.ui, "Cover")[0], "value-choice").expect("its cover");
+    choose(&mut editor, &mut renderer, cover, Cover::ALL.iter().position(|&c| c == Cover::Rules).unwrap());
+    frame(&mut editor, &mut renderer);
+    for label in ["Biome", "Temperature", "Humidity"] {
+        assert_eq!(prop_rows(&editor.ui, label).len(), 1, "the surface's {label}");
+    }
+    // Snow, where it is below freezing: nowhere on hills a hundred metres high in a mild world.
+    let biomes = first_with(&editor.ui, prop_rows(&editor.ui, "Biome")[0], "value-choice").expect("its biomes");
+    choose(&mut editor, &mut renderer, biomes, 1 + Biome::ALL.iter().position(|&b| b == Biome::Snow).unwrap());
+    frame(&mut editor, &mut renderer);
+    assert_eq!((snow(&editor).temperature, snow(&editor).humidity), Biome::Snow.ranges());
+    let surface_at = |editor: &voxear_editor::Editor, x: f32, z: f32| {
+        let terrain = editor.game.engine.world.get::<Terrain>(field).unwrap();
+        terrain.weights.as_ref().unwrap().surface_at(terrain.heights.spacing(), x, z)
+    };
+    let points = [(50.0, 50.0), (250.0, 300.0), (450.0, 120.0)];
+    assert!(points.iter().all(|&(x, z)| surface_at(&editor, x, z) == 0), "no snow in a mild world");
+    // Its temperatures widened to every mild one: it covers everywhere, and its biome is its own.
+    let row = prop_rows(&editor.ui, "Temperatures")[0];
+    let mut fields = Vec::new();
+    with_class(&editor.ui, row, "axis-input", &mut fields);
+    // The highest first, so the range never turns round on the way.
+    for (field_node, text) in fields.iter().zip(["0", "40"]).rev() {
+        editor.ui.focus(*field_node);
+        editor.ui.set_modifiers(Modifiers { shift: false, control: true });
+        editor.ui.key_down(Key::Char('a'));
+        editor.ui.set_modifiers(Modifiers::default());
+        editor.ui.text_input(text);
+        frame(&mut editor, &mut renderer);
+        editor.ui.blur();
+        frame(&mut editor, &mut renderer);
+    }
+    assert_eq!(snow(&editor).temperature, Some([0.0, 40.0]));
+    assert!(points.iter().all(|&(x, z)| surface_at(&editor, x, z) == 1), "covering wherever it is mild");
+    assert_eq!(row_text(&editor.ui, prop_rows(&editor.ui, "Biome")[0]), "Custom");
+}

@@ -372,6 +372,8 @@ impl TerrainTools {
         let find = |reference: &str| pictures.get(reference).cloned();
         let worlds = game.content.terrain_worlds(&file);
         let world = |reference: &str| worlds.get(reference).cloned();
+        let (generator, position) = game.content.terrain_climate(&file);
+        let climate = voxear_terrain::surfaces::ClimateSource { world: generator.as_deref(), position };
         let mut areas: Vec<Area> = Vec::with_capacity(steps);
         let heights = game.engine.world.get::<Terrain>(stroke.entity).map(|terrain| terrain.heights.clone());
         let weights = game.engine.world.get::<Terrain>(stroke.entity).and_then(|terrain| terrain.weights.clone());
@@ -392,7 +394,8 @@ impl TerrainTools {
                 Paints::Holes { fill } => brush::cut(&file, &mut rasters, at, brush.radius, fill),
                 Paints::Surface(surface) => {
                     let Some(heights) = &heights else { return };
-                    voxear_terrain::surfaces::paint(&file, heights, &mut rasters, surface, &brush, at, amount, lower)
+                    let ground = (heights.as_ref(), climate);
+                    voxear_terrain::surfaces::paint(&file, ground, &mut rasters, surface, &brush, at, amount, lower)
                 }
                 Paints::Grass(kind) => {
                     let weights = weights.as_deref();

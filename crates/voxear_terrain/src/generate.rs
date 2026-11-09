@@ -26,6 +26,12 @@
 //! them, as streams join a river. Ridges and valley floors, where the
 //! ground is level across, are left as they were.
 //!
+//! A generator's world has a climate too ([`WorldGen::climate`]): how warm
+//! and how wet it is at each place, over fields larger than its continents,
+//! and colder the higher the ground stands. Its terrain's surfaces can cover
+//! the ground by it, so biomes follow the world: desert where it is hot and
+//! dry, forest where it is mild and wet, snow on the high peaks.
+//!
 //! It is all sums, products, square roots and `floor`, with no trigonometry
 //! or powers, so a seed makes the same ground on every machine, and a world
 //! made from one need only send its seed.
@@ -68,6 +74,7 @@ pub struct WorldGen {
     /// How rough high peaks are, as a share of `height`.
     pub crags: f32,
     pub erosion: Erosion,
+    pub climate: Climate,
     /// How high the small bumps over all the ground are, in metres.
     pub bumps: f32,
 }
@@ -89,6 +96,42 @@ pub struct Erosion {
     pub strength: f32,
     pub spacing: f32,
     pub octaves: u32,
+}
+
+/// How warm and wet a generator's world is: its temperature where the sea
+/// is, in °C, and its humidity, 0 for dry to 1 for wet, each on average and
+/// how far either way it strays from that, over fields `size` metres
+/// across; and how many °C it cools for every 1000 m the ground rises
+/// above the sea.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Climate {
+    pub size: f32,
+    pub temperature: f32,
+    pub temperature_range: f32,
+    pub humidity: f32,
+    pub humidity_range: f32,
+    pub cooling: f32,
+}
+
+impl Default for Climate {
+    fn default() -> Self {
+        Self {
+            size: 5000.0,
+            temperature: 12.0,
+            temperature_range: 8.0,
+            humidity: 0.5,
+            humidity_range: 0.3,
+            cooling: 6.5,
+        }
+    }
+}
+
+impl Climate {
+    /// How warm it is on ground `above` metres over the sea where it is
+    /// `temperature` °C at the sea.
+    pub fn cooled(&self, temperature: f32, above: f32) -> f32 {
+        temperature - self.cooling * above.max(0.0) / 1000.0
+    }
 }
 
 /// How a generator bends the world before it reads its fields: over how
@@ -162,6 +205,7 @@ impl Preset {
             peaks: Curve::new(&[[0.0, -0.4], [0.5, 0.1], [1.0, 0.6]]),
             crags: 0.0,
             erosion: erosion(0.35, 160.0, 3),
+            climate: Climate { humidity: 0.6, ..Climate::default() },
             bumps: 1.5,
         };
         match self {
@@ -176,6 +220,7 @@ impl Preset {
                 relief: Curve::new(&[[0.0, 0.05], [0.6, 0.2], [1.0, 0.4]]),
                 peaks: Curve::new(&[[0.0, -0.3], [0.5, 0.0], [1.0, 0.4]]),
                 erosion: erosion(0.15, 120.0, 2),
+                climate: Climate { humidity: 0.55, ..Climate::default() },
                 bumps: 0.8,
                 ..base
             },
@@ -192,6 +237,7 @@ impl Preset {
                 peaks: Curve::new(&[[0.0, -0.12], [0.3, -0.05], [0.6, 0.35], [0.85, 0.75], [1.0, 0.85]]),
                 crags: 0.12,
                 erosion: erosion(0.7, 260.0, 4),
+                climate: Climate { temperature: 8.0, humidity: 0.6, size: 8000.0, ..Climate::default() },
                 bumps: 2.0,
                 ..base
             },
@@ -208,6 +254,7 @@ impl Preset {
                 peaks: Curve::new(&[[0.0, -0.2], [0.5, 0.1], [1.0, 0.6]]),
                 crags: 0.03,
                 erosion: erosion(0.5, 160.0, 4),
+                climate: Climate { temperature: 24.0, temperature_range: 4.0, humidity: 0.75, ..Climate::default() },
                 bumps: 1.0,
                 ..base
             },
@@ -222,6 +269,7 @@ impl Preset {
                 relief: Curve::new(&[[0.0, 0.4], [1.0, 0.9]]),
                 peaks: Curve::new(&[[0.0, 0.2], [0.6, 0.15], [0.72, -0.2], [0.85, -0.9], [1.0, -1.0]]),
                 erosion: erosion(0.6, 120.0, 3),
+                climate: Climate { temperature: 22.0, humidity: 0.15, humidity_range: 0.15, ..Climate::default() },
                 bumps: 1.0,
                 ..base
             },
@@ -399,19 +447,38 @@ pub fn smooth(curve: &Curve, t: f32, empty: f32) -> f32 {
 }
 
 impl WorldGen {
-    /// The preset it is shaped as, whatever its seed, scale, sea level and
-    /// height; none once its shape is its own.
+    /// The preset it is shaped as, whatever its seed, scale, sea level,
+    /// height, temperature and humidity; none once its shape is its own.
     pub fn preset(&self) -> Option<Preset> {
         Preset::ALL.into_iter().find(|preset| {
+            let world = preset.world();
             let shaped = WorldGen {
                 seed: self.seed,
                 scale: self.scale,
                 sea_level: self.sea_level,
                 height: self.height,
-                ..preset.world()
+                climate: Climate {
+                    temperature: self.climate.temperature,
+                    humidity: self.climate.humidity,
+                    ..world.climate
+                },
+                ..world
             };
             shaped == *self
         })
+    }
+
+    /// How warm and wet it is at `(x, z)`, in metres in its own world, on
+    /// ground `height` metres high: its temperature, in °C, and its
+    /// humidity, 0 to 1.
+    pub fn climate(&self, x: f32, z: f32, height: f32) -> (f32, f32) {
+        let climate = &self.climate;
+        let size = (climate.size * self.scale.max(0.01)).max(1.0);
+        let read =
+            |part: u32| signed(noise::fractal(NoiseStyle::Fractal, x / size, z / size, 3, seed_of(self.seed, part)));
+        let warmth = climate.temperature + read(8) * climate.temperature_range;
+        let humidity = (climate.humidity + read(9) * climate.humidity_range).clamp(0.0, 1.0);
+        (climate.cooled(warmth, height - self.sea_level), humidity)
     }
 
     /// Shaped as `preset`, keeping its seed and scale.
@@ -570,6 +637,28 @@ mod tests {
             (along, across) = (along + dx.abs(), across + dz.abs());
         }
         assert!(across > along * 3.0, "across {across}, along {along}");
+    }
+
+    #[test]
+    fn a_world_is_warmer_and_wetter_in_places_and_colder_up_high() {
+        let world = Preset::Alpine.world();
+        let (mut low, mut high) = (f32::MAX, f32::MIN);
+        for i in 0..400 {
+            let (x, z) = ((i % 20) as f32 * 1000.0, (i / 20) as f32 * 1000.0);
+            let (warmth, wet) = world.climate(x, z, world.sea_level);
+            assert!((0.0..=1.0).contains(&wet));
+            (low, high) = (low.min(warmth), high.max(warmth));
+            assert_eq!(world.climate(x, z, world.sea_level), (warmth, wet), "the same every time");
+        }
+        assert!(high - low > 6.0, "warmer and colder places: {low} to {high} °C");
+        // 6.5 °C colder 1000 m up, and as wet.
+        let (sea, wet) = world.climate(500.0, 500.0, 0.0);
+        let (peak, wet_up_high) = world.climate(500.0, 500.0, 1000.0);
+        assert!((sea - peak - 6.5).abs() < 1e-3 && wet == wet_up_high);
+        // Its temperature and humidity are its own, not its shape's.
+        let warmer =
+            WorldGen { climate: Climate { temperature: 30.0, humidity: 0.1, ..world.climate }, ..world.clone() };
+        assert_eq!(warmer.preset(), Some(Preset::Alpine));
     }
 
     #[test]

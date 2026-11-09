@@ -406,7 +406,7 @@ pub fn paint(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::surfaces::{Cover, Surface, weigh};
+    use crate::surfaces::{ClimateSource, Cover, Surface, weigh};
 
     fn field(grass: Vec<Grass>, surfaces: Vec<Surface>) -> (TerrainFile, Heightmap) {
         let file = TerrainFile { size: 256.0, resolution: 257, grass, surfaces, ..TerrainFile::default() };
@@ -426,7 +426,7 @@ mod tests {
         painted.cover = GrassCover::Painted;
         let (file, heights) = field(vec![Grass::new(None), on_mud, painted], vec![Surface::new(None), mud]);
         let rasters = Rasters::default();
-        let weights = weigh(&file, &heights, &rasters, None, &Dirty::All);
+        let weights = weigh(&file, &heights, &rasters, ClimateSource::default(), None, &Dirty::All);
         let map = grow(&file, (&heights, weights.as_ref()), &rasters, None, &Dirty::All).expect("grass");
         assert_eq!(map.words(), 1, "three kinds in one word");
         assert_eq!(map.density_at(0, 50, 50), 255, "everywhere on level ground");

@@ -36,7 +36,7 @@ use voxear_terrain::{
     noise::NoiseStyle,
     raster::Rasters,
     grass::{Grass, GrassCover, MAX_GRASS},
-    surfaces::{Cover, Liquid, MAX_SURFACES, Surface},
+    surfaces::{Biome, Cover, Liquid, MAX_SURFACES, Surface},
 };
 
 use crate::{
@@ -122,6 +122,13 @@ pub enum TerrainField {
     /// is in its world.
     World,
     Offset,
+    /// A surface's climate rules: a biome to set them to at once, and its
+    /// temperatures and humidities, each switched on or off.
+    Biome,
+    TemperatureMask,
+    Temperatures,
+    HumidityMask,
+    Humidities,
     /// An Erosion layer's weather: rain a step, how many steps, how readily
     /// water picks up ground, and the steepest loose ground stands.
     Rain,
@@ -277,6 +284,14 @@ fn surface_fields(at: usize, surface: &Surface) -> Vec<TerrainField> {
     fields.push(F::Cover);
     if surface.cover == Cover::Rules {
         fields.extend(mask_fields(&surface.mask));
+        fields.extend([F::Biome, F::TemperatureMask]);
+        if surface.temperature.is_some() {
+            fields.push(F::Temperatures);
+        }
+        fields.push(F::HumidityMask);
+        if surface.humidity.is_some() {
+            fields.push(F::Humidities);
+        }
         fields.push(F::Breakup);
         if surface.breakup > 0.0 {
             fields.push(F::BreakupSize);
@@ -430,6 +445,11 @@ pub fn label(field: TerrainField) -> &'static str {
         F::Liquid => "Liquid",
         F::Glitter => "Glitter",
         F::Cover => "Cover",
+        F::Biome => "Biome",
+        F::TemperatureMask => "Temperature",
+        F::Temperatures => "Temperatures",
+        F::HumidityMask => "Humidity",
+        F::Humidities => "Humidities",
         F::Breakup => "Breakup",
         F::BreakupSize => "Breakup size",
         F::GrassMesh | F::NewGrass => "Mesh",
@@ -473,6 +493,7 @@ pub fn unit(world: &World, entity: Entity, field: TerrainField) -> Option<&'stat
         F::RiverWidth | F::RiverDepth => Some("m"),
         F::SlumpAngle => Some("°"),
         F::Rotation | F::Slopes => Some("°"),
+        F::Temperatures => Some("°C"),
         F::Falloff => match picked(world, entity) {
             Some((_, Layer { kind: LayerKind::Spline { .. }, .. })) => Some("m"),
             _ => None,
@@ -562,6 +583,25 @@ pub fn get(game: &Game, entity: Entity, field: TerrainField) -> Option<Value> {
         }
         F::Breakup => Value::Number(surface()?.breakup),
         F::BreakupSize => Value::Number(surface()?.breakup_size),
+        F::Biome => {
+            // Any, each biome, and its own ranges where they are none's.
+            let surface = surface()?;
+            let mut names = vec!["Any".to_string()];
+            names.extend(Biome::ALL.map(|biome| biome.name().to_string()));
+            let at = match (surface.biome(), surface.temperature.is_none() && surface.humidity.is_none()) {
+                (_, true) => 0,
+                (Some(biome), _) => 1 + Biome::ALL.iter().position(|&b| b == biome).unwrap_or_default(),
+                (None, false) => {
+                    names.push("Custom".to_string());
+                    names.len() - 1
+                }
+            };
+            Value::Choice(at, names)
+        }
+        F::TemperatureMask => Value::Toggle(surface()?.temperature.is_some()),
+        F::Temperatures => Value::Vector(surface()?.temperature?.to_vec()),
+        F::HumidityMask => Value::Toggle(surface()?.humidity.is_some()),
+        F::Humidities => Value::Vector(surface()?.humidity?.to_vec()),
         F::GrassMesh => Value::Asset(grass()?.mesh.map_or("None".into(), |r| crate::props::mesh_label(game, &r))),
         F::NewGrass => Value::Asset(String::new()),
         F::GrassMaterial => Value::Asset(path_of(game, grass()?.material.as_deref())),
@@ -726,7 +766,12 @@ pub fn set(game: &mut Game, entity: Entity, field: TerrainField, value: Value) -
         | F::Glitter
         | F::Cover
         | F::Breakup
-        | F::BreakupSize => {
+        | F::BreakupSize
+        | F::Biome
+        | F::TemperatureMask
+        | F::Temperatures
+        | F::HumidityMask
+        | F::Humidities => {
             return change_surface(game, entity, |surface| set_surface(surface, field, &value));
         }
         F::GrassDensity
@@ -801,6 +846,20 @@ fn set_surface(surface: &mut Surface, field: TerrainField, value: &Value) {
         (F::Cover, Value::Choice(at, _)) => surface.cover = Cover::ALL[(*at).min(Cover::ALL.len() - 1)],
         (F::Breakup, v) => surface.breakup = number(v).unwrap_or(surface.breakup).max(0.0),
         (F::BreakupSize, v) => surface.breakup_size = number(v).unwrap_or(surface.breakup_size).max(0.1),
+        (F::Biome, Value::Choice(at, _)) => match at.checked_sub(1).and_then(|at| Biome::ALL.get(at)) {
+            Some(biome) => (surface.temperature, surface.humidity) = biome.ranges(),
+            // Any: its climate left alone; Custom: as it is.
+            None if *at == 0 => (surface.temperature, surface.humidity) = (None, None),
+            None => {}
+        },
+        (F::TemperatureMask, Value::Toggle(on)) => {
+            surface.temperature = on.then_some(surface.temperature.unwrap_or([-10.0, 10.0]));
+        }
+        (F::Temperatures, v) => surface.temperature = pair(v).map(|[a, b]| [a.min(b), a.max(b)]),
+        (F::HumidityMask, Value::Toggle(on)) => surface.humidity = on.then_some(surface.humidity.unwrap_or([0.0, 0.5])),
+        (F::Humidities, v) => {
+            surface.humidity = pair(v).map(|[a, b]| [a.min(b).clamp(0.0, 1.0), a.max(b).clamp(0.0, 1.0)]);
+        }
         _ => {}
     }
 }
@@ -950,11 +1009,17 @@ pub fn remake_with(
 /// Works out the surfaces' shares again where `dirty` says, over the
 /// terrain's ground as it is now, from its asset's surfaces and paint.
 pub fn reweigh(game: &mut Game, entity: Entity, dirty: &Dirty) -> bool {
+    let Some(file) = game.engine.world.get::<TerrainAsset>(entity).map(|asset| asset.file.clone()) else {
+        return false;
+    };
+    let (generator, position) = game.content.terrain_climate(&file);
+    let climate = voxear_terrain::surfaces::ClimateSource { world: generator.as_deref(), position };
     let world = &mut game.engine.world;
     let Some(asset) = world.get::<TerrainAsset>(entity) else { return false };
     let Some(terrain) = world.get::<Terrain>(entity) else { return false };
     let previous = terrain.weights.as_deref();
-    let weights = voxear_terrain::surfaces::weigh(&asset.file, &terrain.heights, &asset.rasters, previous, dirty);
+    let weights =
+        voxear_terrain::surfaces::weigh(&asset.file, &terrain.heights, &asset.rasters, climate, previous, dirty);
     // And the grass, which grows on the surfaces.
     let ground = (terrain.heights.as_ref(), weights.as_ref());
     let grass = voxear_terrain::grass::grow(&asset.file, ground, &asset.rasters, terrain.grass.as_deref(), dirty);

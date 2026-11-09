@@ -81,6 +81,12 @@ pub struct WorldGenFields {
     scale: NodeId,
     sea_level: NodeId,
     height: NodeId,
+    /// Its temperature and humidity on average.
+    warmth: NodeId,
+    wet: NodeId,
+    /// Its climate's size, how far its temperature and humidity stray, and
+    /// how fast it cools up high.
+    climate: [NodeId; 4],
     /// Each field's size and octaves.
     fields: Vec<(Which, NodeId, NodeId)>,
     sharpness: NodeId,
@@ -104,6 +110,8 @@ impl WorldGenFields {
         let scale = number_field(ui, rows, "Scale", world.scale);
         let sea_level = number_field(ui, rows, "Sea level", world.sea_level);
         let height = number_field(ui, rows, "Height", world.height);
+        let warmth = number_field(ui, rows, "Temperature", world.climate.temperature);
+        let wet = number_field(ui, rows, "Humidity", world.climate.humidity);
 
         let line = ui.panel(root, voxear_ui::Style::default());
         ui.add_class(line, "divider");
@@ -139,7 +147,30 @@ impl WorldGenFields {
             number_field(ui, advanced, "Gully octaves", world.erosion.octaves as f32),
         ];
         let bumps = number_field(ui, advanced, "Bumps", world.bumps);
-        Self { world, preset, seed, scale, sea_level, height, fields, sharpness, warp, curves, crags, erosion, bumps }
+        let climate = [
+            number_field(ui, advanced, "Climate size", world.climate.size),
+            number_field(ui, advanced, "Temperature range", world.climate.temperature_range),
+            number_field(ui, advanced, "Humidity range", world.climate.humidity_range),
+            number_field(ui, advanced, "Cooling", world.climate.cooling),
+        ];
+        Self {
+            world,
+            preset,
+            seed,
+            scale,
+            sea_level,
+            height,
+            warmth,
+            wet,
+            climate,
+            fields,
+            sharpness,
+            warp,
+            curves,
+            crags,
+            erosion,
+            bumps,
+        }
     }
 
     /// What was done this frame, the generator changed to match; and its
@@ -162,6 +193,12 @@ impl WorldGenFields {
             (self.scale, &mut world.scale, 0.01),
             (self.sea_level, &mut world.sea_level, f32::MIN),
             (self.height, &mut world.height, 0.0),
+            (self.warmth, &mut world.climate.temperature, -100.0),
+            (self.wet, &mut world.climate.humidity, 0.0),
+            (self.climate[0], &mut world.climate.size, 1.0),
+            (self.climate[1], &mut world.climate.temperature_range, 0.0),
+            (self.climate[2], &mut world.climate.humidity_range, 0.0),
+            (self.climate[3], &mut world.climate.cooling, 0.0),
             (self.sharpness, &mut world.sharpness, 0.0),
             (self.warp[0], &mut world.warp.size, 1.0),
             (self.warp[1], &mut world.warp.strength, 0.0),
@@ -175,6 +212,7 @@ impl WorldGenFields {
             }
         }
         world.sharpness = world.sharpness.min(1.0);
+        world.climate.humidity = world.climate.humidity.min(1.0);
         if let Some(value) = changed_number(ui, self.erosion[2]) {
             (world.erosion.octaves, typed) = (value.clamp(0.0, 8.0) as u32, true);
         }

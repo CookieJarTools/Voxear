@@ -630,16 +630,23 @@ mod timing {
         eprintln!("256 tiles from 4 layers: {all:?}; a 40 m change: {some:?}");
 
         // Grass everywhere, rock on slopes and snow up high, their edges broken up, and their shares worked out.
-        use crate::surfaces::{Cover, Surface, weigh};
+        use crate::surfaces::{ClimateSource, Cover, Surface, weigh};
         let rules = |mask: crate::layers::Mask| Surface { cover: Cover::Rules, mask, breakup: 3.0, ..Surface::new(None) };
         let rock = rules(crate::layers::Mask { height: None, slope: Some([30.0, 90.0]), feather: 5.0 });
         let snow = rules(crate::layers::Mask { height: Some([80.0, 1000.0]), slope: None, feather: 6.0 });
         let file = TerrainFile { surfaces: vec![Surface::new(None), rock, snow], ..file };
         let start = std::time::Instant::now();
-        let shares = weigh(&file, &whole, &rasters, None, &Dirty::All).unwrap();
+        let shares = weigh(&file, &whole, &rasters, ClimateSource::default(), None, &Dirty::All).unwrap();
         let all = start.elapsed();
         let start = std::time::Instant::now();
-        let _ = weigh(&file, &whole, &rasters, Some(&shares), &Dirty::Areas(vec![[880.0, 880.0, 920.0, 920.0]]));
+        let _ = weigh(
+            &file,
+            &whole,
+            &rasters,
+            ClimateSource::default(),
+            Some(&shares),
+            &Dirty::Areas(vec![[880.0, 880.0, 920.0, 920.0]]),
+        );
         let some = start.elapsed();
         eprintln!("shares of 3 surfaces over 256 tiles: {all:?}; over a 40 m change: {some:?}");
     }

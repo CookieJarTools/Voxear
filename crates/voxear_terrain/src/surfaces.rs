@@ -4,10 +4,13 @@
 //! The first surface is the ground under the rest, wherever the others
 //! leave it bare. Each one above covers those below it as far as its cover
 //! says at each sample: everywhere, nowhere until painted, or by the
-//! ground's height and slope there (its rules), with what was painted added
-//! to that or taken from it. So rules can cover a terrain in grass, with
-//! rock on its slopes and snow on its peaks, a brush can paint a path
-//! through the grass, and a hill raised later is snowy without repainting.
+//! ground's height and slope there and how warm and wet it is (its rules),
+//! with what was painted added to that or taken from it. So rules can cover
+//! a terrain in grass, with rock on its slopes and snow where it is cold,
+//! sand where it is dry and hot, a brush can paint a path through the
+//! grass, and a hill raised later is snowy without repainting. How warm and
+//! wet it is comes from the world generator its ground was made by (see
+//! [`ClimateSource`]), or from its height alone.
 //!
 //! Each sample's share of each surface is worked out from those covers
 //! ([`weigh`]), and its four largest shares kept for drawing ([`Weights`]):
@@ -67,6 +70,12 @@ pub struct Surface {
     /// How large the wanderings are, in metres.
     #[serde(default = "eight", skip_serializing_if = "is_eight")]
     pub breakup_size: f32,
+    /// With rules for its cover: between which temperatures, in °C, and
+    /// humidities, 0 to 1 (see [`Biome`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<[f32; 2]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub humidity: Option<[f32; 2]>,
     /// The raster of its painting, which adds to its cover; 0 before it is
     /// painted.
     #[serde(default, skip_serializing_if = "is_nothing")]
@@ -166,7 +175,7 @@ impl Cover {
         match self {
             Cover::Painted => "Painted",
             Cover::Everywhere => "Everywhere",
-            Cover::Rules => "Height and Slope",
+            Cover::Rules => "Rules",
         }
     }
 }
@@ -183,6 +192,8 @@ impl Surface {
             mask: Mask::default(),
             breakup: 0.0,
             breakup_size: eight(),
+            temperature: None,
+            humidity: None,
             paint: 0,
             tracks: 0.0,
             fills_in: 0.0,
@@ -195,7 +206,7 @@ impl Surface {
     /// ground `height` metres high rising `rise` metres a metre, at `(x, z)`
     /// metres from the corner; `index` is its place in the list, which
     /// seeds its wandering.
-    pub fn rule(&self, index: usize, height: f32, rise: f32, x: f32, z: f32) -> f32 {
+    pub fn rule(&self, index: usize, height: f32, rise: f32, x: f32, z: f32, climate: &dyn Fn() -> (f32, f32)) -> f32 {
         match self.cover {
             Cover::Painted => 0.0,
             Cover::Everywhere => 1.0,
@@ -207,8 +218,102 @@ impl Surface {
                 } else {
                     0.0
                 };
-                self.mask.weight_by(height + wander, || rise.atan().to_degrees() + wander)
+                let mut weight = self.mask.weight_by(height + wander, || rise.atan().to_degrees() + wander);
+                if weight > 0.0 && (self.temperature.is_some() || self.humidity.is_some()) {
+                    let (warmth, wet) = climate();
+                    // Its edges wander as its height's do, a degree for every metre, a hundredth wetter for every 10.
+                    let within = |range: Option<[f32; 2]>, value: f32, feather: f32| {
+                        range.map_or(1.0, |[low, high]| {
+                            smoothstep(low - feather, low, value) * (1.0 - smoothstep(high, high + feather, value))
+                        })
+                    };
+                    weight *= within(self.temperature, warmth + wander * 0.5, CLIMATE_FEATHER.0);
+                    weight *= within(self.humidity, wet + wander * 0.01, CLIMATE_FEATHER.1);
+                }
+                weight
             }
+        }
+    }
+
+    /// The biome its climate's ranges are, if they are one's.
+    pub fn biome(&self) -> Option<Biome> {
+        Biome::ALL.into_iter().find(|biome| biome.ranges() == (self.temperature, self.humidity))
+    }
+}
+
+/// Over how many °C and how much humidity a surface's climate rules ease in.
+const CLIMATE_FEATHER: (f32, f32) = (3.0, 0.08);
+
+/// A kind of country, by how warm and wet it is: what a surface's climate
+/// rules can be set to at once.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Biome {
+    Snow,
+    Tundra,
+    Taiga,
+    Grassland,
+    Forest,
+    Desert,
+    Savanna,
+    Rainforest,
+}
+
+impl Biome {
+    pub const ALL: [Biome; 8] = [
+        Biome::Snow,
+        Biome::Tundra,
+        Biome::Taiga,
+        Biome::Grassland,
+        Biome::Forest,
+        Biome::Desert,
+        Biome::Savanna,
+        Biome::Rainforest,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Biome::Snow => "Snow",
+            Biome::Tundra => "Tundra",
+            Biome::Taiga => "Taiga",
+            Biome::Grassland => "Grassland",
+            Biome::Forest => "Forest",
+            Biome::Desert => "Desert",
+            Biome::Savanna => "Savanna",
+            Biome::Rainforest => "Rainforest",
+        }
+    }
+
+    /// Its temperatures, in °C, and humidities, 0 to 1, each none for any.
+    pub fn ranges(self) -> (Option<[f32; 2]>, Option<[f32; 2]>) {
+        match self {
+            Biome::Snow => (Some([-60.0, -2.0]), None),
+            Biome::Tundra => (Some([-60.0, 4.0]), Some([0.0, 0.6])),
+            Biome::Taiga => (Some([-2.0, 10.0]), Some([0.45, 1.0])),
+            Biome::Grassland => (Some([4.0, 22.0]), Some([0.25, 0.55])),
+            Biome::Forest => (Some([6.0, 22.0]), Some([0.5, 1.0])),
+            Biome::Desert => (Some([18.0, 60.0]), Some([0.0, 0.25])),
+            Biome::Savanna => (Some([20.0, 60.0]), Some([0.25, 0.55])),
+            Biome::Rainforest => (Some([20.0, 60.0]), Some([0.6, 1.0])),
+        }
+    }
+}
+
+/// Where a terrain's climate comes from: the world generator its ground was
+/// made by, and where its corner is in that world. With none, it is 15 °C
+/// at nothing high, cooling 6.5 °C for every 1000 m up, and half wet.
+#[derive(Clone, Copy, Default)]
+pub struct ClimateSource<'a> {
+    pub world: Option<&'a crate::generate::WorldGen>,
+    pub position: [f32; 2],
+}
+
+impl ClimateSource<'_> {
+    /// How warm and wet it is at `(x, z)`, in metres from the terrain's
+    /// corner, on ground `height` metres high.
+    pub fn at(&self, x: f32, z: f32, height: f32) -> (f32, f32) {
+        match self.world {
+            Some(world) => world.climate(x + self.position[0], z + self.position[1], height),
+            None => (15.0 - 6.5 * height / 1000.0, 0.5),
         }
     }
 }
@@ -221,8 +326,8 @@ pub fn hash_surfaces(surfaces: &[Surface]) -> u64 {
     for surface in surfaces {
         let toml = toml::to_string(&surface.mask).unwrap_or_default();
         text.push_str(&format!(
-            "\n{:?} {} {} {} {toml}",
-            surface.cover, surface.breakup, surface.breakup_size, surface.paint
+            "\n{:?} {} {} {} {toml} {:?} {:?}",
+            surface.cover, surface.breakup, surface.breakup_size, surface.paint, surface.temperature, surface.humidity
         ));
     }
     // Never 0, which a file writes for none kept.
@@ -331,23 +436,47 @@ pub(crate) fn slope_at(heights: &Heightmap, x: i64, z: i64) -> (f32, f32) {
 
 /// How much surface `index` covers those below it at sample `(x, z)`: its
 /// rule's cover with its painting added.
-fn cover_at(file: &TerrainFile, rasters: &Rasters, index: usize, x: i64, z: i64, ground: (f32, f32)) -> f32 {
+fn cover_at(
+    file: &TerrainFile,
+    rasters: &Rasters,
+    index: usize,
+    x: i64,
+    z: i64,
+    ground: (f32, f32),
+    climate: &dyn Fn() -> (f32, f32),
+) -> f32 {
     let surface = &file.surfaces[index];
     let spacing = file.spacing();
-    let rule = surface.rule(index, ground.0, ground.1, x as f32 * spacing, z as f32 * spacing);
+    let rule = surface.rule(index, ground.0, ground.1, x as f32 * spacing, z as f32 * spacing, climate);
     let painted = if surface.paint == 0 { 0.0 } else { rasters.sample(surface.paint, x, z) };
     (rule + painted).clamp(0.0, 1.0)
 }
 
-/// The shares of sample `(x, z)` of the whole terrain, packed.
-fn shares_of(file: &TerrainFile, heights: &Heightmap, rasters: &Rasters, x: i64, z: i64) -> [u32; 2] {
+/// The shares of sample `(x, z)` of the whole terrain, packed, its climate
+/// from `climate`.
+fn shares_of(
+    file: &TerrainFile,
+    heights: &Heightmap,
+    rasters: &Rasters,
+    climate: ClimateSource,
+    x: i64,
+    z: i64,
+) -> [u32; 2] {
     let ground = slope_at(heights, x, z);
+    // Worked out once a sample, and only for a surface that asks.
+    let known = std::cell::Cell::new(None);
+    let spacing = file.spacing();
+    let climate_here = || {
+        let found = known.get().unwrap_or_else(|| climate.at(x as f32 * spacing, z as f32 * spacing, ground.0));
+        known.set(Some(found));
+        found
+    };
     let count = file.surfaces.len().min(MAX_SURFACES);
     // From the top down: each surface takes its cover of what those above left, the first all that is left.
     let mut best = [(0u32, 0.0f32); SHARES];
     let mut left = 1.0f32;
     for index in (0..count).rev() {
-        let cover = if index == 0 { 1.0 } else { cover_at(file, rasters, index, x, z, ground) };
+        let cover = if index == 0 { 1.0 } else { cover_at(file, rasters, index, x, z, ground, &climate_here) };
         let share = left * cover;
         left -= share;
         if share > best[SHARES - 1].1 {
@@ -406,6 +535,7 @@ pub fn weigh(
     file: &TerrainFile,
     heights: &Heightmap,
     rasters: &Rasters,
+    climate: ClimateSource,
     previous: Option<&Weights>,
     dirty: &Dirty,
 ) -> Option<Weights> {
@@ -445,7 +575,7 @@ pub fn weigh(
                     for z in z0..=z1 {
                         for x in x0..=x1 {
                             samples[(z * TILE_SAMPLES + x) as usize] =
-                                shares_of(file, heights, rasters, ox + i64::from(x), oz + i64::from(z));
+                                shares_of(file, heights, rasters, climate, ox + i64::from(x), oz + i64::from(z));
                         }
                     }
                     made.lock().expect("never poisoned").push((tx, tz, WeightTile::from_samples(samples)));
@@ -488,9 +618,10 @@ const PAINT_PULL: f32 = 8.0;
 /// Surface `surface` and those above must be ready to paint
 /// ([`ready_to_paint`]). Returns the area it changed.
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 pub fn paint(
     file: &TerrainFile,
-    heights: &Heightmap,
+    (heights, climate): (&Heightmap, ClimateSource),
     rasters: &mut Rasters,
     surface: usize,
     brush: &Brush,
@@ -519,13 +650,14 @@ pub fn paint(
             }
             let pull = (strength * falloff * amount * PAINT_PULL).min(1.0);
             let ground = slope_at(heights, x, z);
+            let here = || climate.at(x as f32 * spacing, z as f32 * spacing, ground.0);
             // The surface brought towards covering all, or nothing; those above it towards nothing, so it shows.
             let towards = |rasters: &mut Rasters, index: usize, goal: f32| {
                 let raster = file.surfaces[index].paint;
                 if raster == 0 {
                     return;
                 }
-                let change = (goal - cover_at(file, rasters, index, x, z, ground)) * pull;
+                let change = (goal - cover_at(file, rasters, index, x, z, ground, &here)) * pull;
                 if change != 0.0 {
                     add(rasters, raster, x, z, change);
                 }
@@ -562,12 +694,72 @@ mod tests {
     }
 
     #[test]
+    fn surfaces_cover_by_climate_snow_where_cold_and_desert_where_hot_and_dry() {
+        // Ground rising from nothing to 3 km along x, with no generator: 0 °C at about 2300 m.
+        let mut snow = Surface::new(None);
+        snow.cover = Cover::Rules;
+        (snow.temperature, snow.humidity) = Biome::Snow.ranges();
+        assert_eq!(snow.biome(), Some(Biome::Snow));
+        let file = TerrainFile {
+            size: 1024.0,
+            resolution: 257,
+            surfaces: vec![Surface::new(None), snow],
+            ..TerrainFile::default()
+        };
+        let heights = Heightmap::from_fn(1, 1, 4.0, |x, _| x * 3.0);
+        let none = ClimateSource::default();
+        let weights = weigh(&file, &heights, &Rasters::default(), none, None, &Dirty::All).expect("surfaces");
+        assert_eq!(weights.surface_at(4.0, 100.0, 5.0), 0, "300 m up: no snow");
+        assert_eq!(weights.surface_at(4.0, 950.0, 5.0), 1, "2850 m up: snow");
+        // With a generator, a Desert surface where its world is hot and dry, and none where it is wet.
+        let world = crate::generate::WorldGen {
+            climate: crate::generate::Climate {
+                temperature: 25.0,
+                humidity: 0.25,
+                humidity_range: 0.3,
+                ..Default::default()
+            },
+            ..crate::generate::Preset::BattlefieldPlains.world()
+        };
+        let mut desert = Surface::new(None);
+        desert.cover = Cover::Rules;
+        (desert.temperature, desert.humidity) = Biome::Desert.ranges();
+        let file = TerrainFile {
+            size: 1024.0,
+            resolution: 257,
+            surfaces: vec![Surface::new(None), desert],
+            ..TerrainFile::default()
+        };
+        let flat = Heightmap::flat(1, 1, 4.0, 10.0);
+        let mut checked = (0, 0);
+        for position in [[0.0, 0.0], [4000.0, 0.0], [0.0, 9000.0], [12000.0, 5000.0], [20000.0, 20000.0]] {
+            let source = ClimateSource { world: Some(&world), position };
+            let weights = weigh(&file, &flat, &Rasters::default(), source, None, &Dirty::All).expect("surfaces");
+            for i in 0..25 {
+                let (x, z) = (40.0 + (i % 5) as f32 * 220.0, 40.0 + (i / 5) as f32 * 220.0);
+                let (warmth, wet) = source.at(x, z, 10.0);
+                let surface = weights.surface_at(4.0, x, z);
+                // All desert inside its ranges, none past their feathers.
+                if wet < 0.25 && warmth > 18.0 {
+                    assert_eq!(surface, 1, "desert where it is {warmth} °C and {wet} wet");
+                    checked.0 += 1;
+                } else if wet > 0.34 {
+                    assert_eq!(surface, 0, "none where it is {wet} wet");
+                    checked.1 += 1;
+                }
+            }
+        }
+        assert!(checked.0 > 0 && checked.1 > 0, "dry and wet places both seen: {checked:?}");
+    }
+
+    #[test]
     fn the_first_surface_covers_what_the_rest_leave_and_shares_make_255() {
         let mut high = Surface::new(None);
         high.cover = Cover::Rules;
         high.mask = Mask { height: Some([10.0, 100.0]), slope: None, feather: 4.0 };
         let (file, heights) = sloped(vec![Surface::new(None), high]);
-        let weights = weigh(&file, &heights, &Rasters::default(), None, &Dirty::All).expect("surfaces");
+        let weights =
+            weigh(&file, &heights, &Rasters::default(), ClimateSource::default(), None, &Dirty::All).expect("surfaces");
         let tile = weights.tile(0, 0);
         assert_eq!(tile.shares(20, 5)[0], (0, 255), "2 m up: the ground's surface alone");
         assert_eq!(tile.shares(200, 5)[0], (1, 255), "20 m up: the high one");
@@ -594,25 +786,32 @@ mod tests {
         assert!(!ready_to_paint(&mut file, &rasters, 1), "ready already");
         let brush = Brush { radius: 6.0, strength: 1.0, ..Brush::default() };
         for _ in 0..10 {
-            paint(&file, &heights, &mut rasters, 1, &brush, [100.0, 100.0], 0.2, false);
+            paint(&file, (&heights, ClimateSource::default()), &mut rasters, 1, &brush, [100.0, 100.0], 0.2, false);
         }
-        let weights = weigh(&file, &heights, &rasters, None, &Dirty::All).unwrap();
+        let weights = weigh(&file, &heights, &rasters, ClimateSource::default(), None, &Dirty::All).unwrap();
         assert_eq!(weights.shares_at(100, 100)[0].0, 1, "painted over the snow");
         assert_eq!(weights.shares_at(130, 100)[0], (2, 255), "the snow beyond the brush");
         // The ground's own surface painted back over both, then the snow taken away there.
         let before = weights.clone();
         ready_to_paint(&mut file, &rasters, 0);
         for _ in 0..10 {
-            paint(&file, &heights, &mut rasters, 0, &brush, [100.0, 100.0], 0.2, false);
+            paint(&file, (&heights, ClimateSource::default()), &mut rasters, 0, &brush, [100.0, 100.0], 0.2, false);
         }
-        let weights = weigh(&file, &heights, &rasters, Some(&before), &Dirty::Areas(vec![[90.0, 90.0, 110.0, 110.0]]));
+        let weights = weigh(
+            &file,
+            &heights,
+            &rasters,
+            ClimateSource::default(),
+            Some(&before),
+            &Dirty::Areas(vec![[90.0, 90.0, 110.0, 110.0]]),
+        );
         let weights = weights.unwrap();
         assert_eq!(weights.shares_at(100, 100)[0].0, 0);
         assert!(!Arc::ptr_eq(weights.tile(0, 0), before.tile(0, 0)));
         for _ in 0..10 {
-            paint(&file, &heights, &mut rasters, 2, &brush, [40.0, 40.0], 0.2, true);
+            paint(&file, (&heights, ClimateSource::default()), &mut rasters, 2, &brush, [40.0, 40.0], 0.2, true);
         }
-        let weights = weigh(&file, &heights, &rasters, None, &Dirty::All).unwrap();
+        let weights = weigh(&file, &heights, &rasters, ClimateSource::default(), None, &Dirty::All).unwrap();
         assert_eq!(weights.shares_at(40, 40)[0].0, 0, "snow erased to the ground below");
     }
 
@@ -623,13 +822,13 @@ mod tests {
         steep.mask = Mask { height: None, slope: Some([3.0, 90.0]), feather: 1.0 };
         steep.breakup = 2.0;
         let (file, heights) = sloped(vec![Surface::new(None), steep]);
-        let whole = weigh(&file, &heights, &Rasters::default(), None, &Dirty::All).unwrap();
+        let whole = weigh(&file, &heights, &Rasters::default(), ClimateSource::default(), None, &Dirty::All).unwrap();
         // Steeper ground in one place, and only there worked out again.
         let steeper =
             Heightmap::from_fn(1, 1, 1.0, |x, z| x * 0.1 + if (60.0..70.0).contains(&z) { x * 0.2 } else { 0.0 });
         let area = Dirty::Areas(vec![[0.0, 59.0, 256.0, 71.0]]);
-        let part = weigh(&file, &steeper, &Rasters::default(), Some(&whole), &area).unwrap();
-        let fresh = weigh(&file, &steeper, &Rasters::default(), None, &Dirty::All).unwrap();
+        let part = weigh(&file, &steeper, &Rasters::default(), ClimateSource::default(), Some(&whole), &area).unwrap();
+        let fresh = weigh(&file, &steeper, &Rasters::default(), ClimateSource::default(), None, &Dirty::All).unwrap();
         assert_eq!(part.tile(0, 0).samples(), fresh.tile(0, 0).samples());
         assert_ne!(part.tile(0, 0).samples(), whole.tile(0, 0).samples());
     }

@@ -1011,6 +1011,15 @@ impl ScriptServices for GameServices<'_> {
         Some(guid.to_string())
     }
 
+    fn terrain_surface(&self, world: &World, terrain: Entity, material: &str) -> Option<u8> {
+        let guid = |reference: &str| self.content.parse(reference).ok()?.guid();
+        let wanted = guid(material)?;
+        let asset = world.get::<crate::terrain::TerrainAsset>(terrain)?;
+        let surfaces = &asset.file.surfaces;
+        let found = surfaces.iter().position(|surface| surface.material.as_deref().and_then(guid) == Some(wanted))?;
+        u8::try_from(found).ok()
+    }
+
     fn prefab_path(&self, prefab: u32) -> Option<String> {
         let guid = self.content.prefab_guid(PrefabId(prefab))?;
         Some(self.content.db().get(guid)?.path.clone())

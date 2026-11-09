@@ -1,11 +1,24 @@
 //! Terrain for C#: `Terrain` in Voxear.Core asks about the level's ground,
 //! its height and the way it faces under a point, and where a ray meets it,
 //! straight from the terrains' heights (see `voxear_terrain`), with or
-//! without physics.
+//! without physics, and changes it: a crater, ground raised or flattened,
+//! a surface painted, a hole cut, grass cleared, each the same on every
+//! machine (see `voxear_terrain::runtime`), and kept for a save of the
+//! scene or a player joining a game.
 
 use voxear_core::math::Vec3;
+use voxear_ecs::{Entity, World};
+use voxear_scene::{Destroying, Plants, world_matrix};
+use voxear_terrain::{
+    Terrain,
+    runtime::{Edit, TerrainEdits},
+};
 
-use crate::{interop::with_world, physics::RaycastHitData};
+use crate::{
+    interop::{utf8, with_world},
+    physics::RaycastHitData,
+    services::with_services,
+};
 
 /// How many terrains the level has.
 pub(crate) unsafe extern "C" fn terrain_count() -> i32 {
@@ -52,4 +65,195 @@ pub(crate) unsafe extern "C" fn terrain_raycast(
         };
     }
     1
+}
+
+/// An edit to the ground as C# sends it: `TerrainEditData` in Voxear.Core,
+/// made by a `TerrainEdit`. `kind` is 0 raise, 1 crater, 2 flatten, 3 paint,
+/// 4 holes and 5 grass; `amount` the height raised, the crater's depth, the
+/// height in the world flattened to, the paint's strength or the grass's
+/// density; `cut` whether holes are cut or filled.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct TerrainEditData {
+    pub kind: i32,
+    pub cut: i32,
+    pub at: [f32; 3],
+    pub radius: f32,
+    pub amount: f32,
+    pub _pad: u32,
+}
+
+const _: () = assert!(size_of::<TerrainEditData>() == 32, "TerrainEditData in Voxear.Core is 32 bytes");
+
+/// The edit `data` makes of a terrain whose corner is at `corner`, in its
+/// space, with `surface` the number of the surface it lays; none for an
+/// edit of no kind, or a paint of a surface the terrain has not.
+fn local_edit(data: &TerrainEditData, corner: Vec3, surface: Option<u8>) -> Option<Edit> {
+    let at = [data.at[0] - corner.x, data.at[2] - corner.z];
+    let (radius, amount) = (data.radius, data.amount);
+    Some(match data.kind {
+        0 => Edit::Raise { at, radius, height: amount },
+        1 => Edit::Crater { at, radius, depth: amount, surface },
+        2 => Edit::Flatten { at, radius, height: amount - corner.y },
+        3 => Edit::Paint { at, radius, surface: surface?, strength: amount },
+        4 => Edit::Holes { at, radius, cut: data.cut != 0 },
+        5 => Edit::Grass { at, radius, kind: None, amount },
+        _ => return None,
+    })
+}
+
+/// Changes the ground of every terrain an edit reaches, kept with its
+/// [`TerrainEdits`] for a save; a crater takes away the plants standing in
+/// it too. `surface` names the material of the surface a crater lays on
+/// its walls or a paint lays, as a project path or GUID. How many terrains
+/// it changed.
+pub(crate) unsafe extern "C" fn terrain_edit(
+    edit: *const TerrainEditData,
+    surface: *const u8,
+    surface_len: i32,
+) -> i32 {
+    if edit.is_null() {
+        return 0;
+    }
+    let data = unsafe { *edit };
+    let material = unsafe { utf8(surface, surface_len) }.into_owned();
+    let changed = with_world(|world| {
+        let mut changed = 0;
+        for (entity, terrain, corner) in voxear_terrain::terrains(world)
+            .into_iter()
+            .map(|(entity, terrain, corner)| (entity, terrain.clone(), corner))
+            .collect::<Vec<_>>()
+        {
+            let surface = (!material.is_empty())
+                .then(|| with_services(|services| services.terrain_surface(world, entity, &material)).flatten())
+                .flatten();
+            let Some(edit) = local_edit(&data, corner, surface) else { continue };
+            // A terrain keeps its edits from the first that reaches it.
+            let mut terrain = terrain;
+            let mut edits = world.remove::<TerrainEdits>(entity).unwrap_or_else(|| TerrainEdits::new(&terrain));
+            let reached = edits.apply(&mut terrain, &edit).is_some();
+            if reached || edits.has_edits() {
+                world.insert(entity, edits);
+            }
+            if reached && let Some(kept) = world.get_mut::<Terrain>(entity) {
+                kept.heights = terrain.heights;
+                kept.weights = terrain.weights;
+                kept.grass = terrain.grass;
+                changed += 1;
+            }
+        }
+        if data.kind == 1 && changed > 0 {
+            clear_plants(world, Vec3::from(data.at), data.radius);
+        }
+        Some(changed)
+    });
+    changed.unwrap_or(0)
+}
+
+/// Takes away the plants standing within `radius` metres of `at` along the
+/// ground.
+fn clear_plants(world: &mut World, at: Vec3, radius: f32) {
+    let mut gone: Vec<(Entity, u32)> = Vec::new();
+    for (entity, plants) in world.query_ref::<(Entity, &Plants)>().without::<Destroying>() {
+        let model = world_matrix(world, entity);
+        for (number, plant) in plants.standing() {
+            let stands = plant.matrix(model).w_axis.truncate();
+            if (stands.x - at.x).hypot(stands.z - at.z) <= radius {
+                gone.push((entity, number));
+            }
+        }
+    }
+    for (entity, number) in gone {
+        if let Some(plants) = world.get_mut::<Plants>(entity) {
+            plants.remove(number);
+        }
+    }
+}
+
+/// What every edited terrain's edits are: the terrains' count, then each
+/// one's Obj's key (its length in two bytes, then it) and its edits (their
+/// length in four bytes, then them), in the order of their keys.
+fn capture(world: &World) -> Vec<u8> {
+    let mut kept: Vec<(String, Vec<u8>)> = world
+        .query_ref::<(Entity, &Terrain, &TerrainEdits)>()
+        .without::<Destroying>()
+        .into_iter()
+        .filter_map(|(entity, terrain, edits)| {
+            let key = with_services(|services| services.obj_key(world, entity)).flatten()?;
+            Some((key, edits.save(terrain)))
+        })
+        .collect();
+    kept.sort();
+    let mut out = (kept.len() as u32).to_le_bytes().to_vec();
+    for (key, edits) in kept {
+        out.extend_from_slice(&(key.len() as u16).to_le_bytes());
+        out.extend_from_slice(key.as_bytes());
+        out.extend_from_slice(&(edits.len() as u32).to_le_bytes());
+        out.extend_from_slice(&edits);
+    }
+    out
+}
+
+/// Puts each terrain `bytes` (from [`capture`]) names back as it was built,
+/// then makes its edits; how many it found, or an error for bytes that are
+/// not edits.
+fn restore(world: &mut World, bytes: &[u8]) -> anyhow::Result<i32> {
+    use anyhow::Context;
+    let take = |at: usize, len: usize| bytes.get(at..at + len).context("terrain edits end early");
+    let count = u32::from_le_bytes(take(0, 4)?.try_into()?);
+    let mut at = 4;
+    let mut found = 0;
+    for _ in 0..count {
+        let key_len = usize::from(u16::from_le_bytes(take(at, 2)?.try_into()?));
+        let key = std::str::from_utf8(take(at + 2, key_len)?)?;
+        at += 2 + key_len;
+        let len = u32::from_le_bytes(take(at, 4)?.try_into()?) as usize;
+        let edits = take(at + 4, len)?;
+        at += 4 + len;
+        let Some(entity) = with_services(|services| services.obj_by_key(world, key)).flatten() else { continue };
+        let Some(mut terrain) = world.get::<Terrain>(entity).cloned() else { continue };
+        let mut kept = world.remove::<TerrainEdits>(entity).unwrap_or_else(|| TerrainEdits::new(&terrain));
+        let loaded = kept.load(&mut terrain, edits);
+        world.insert(entity, kept);
+        loaded.with_context(|| format!("the edits of the terrain {key}"))?;
+        if let Some(now) = world.get_mut::<Terrain>(entity) {
+            *now = terrain;
+        }
+        found += 1;
+    }
+    Ok(found)
+}
+
+/// `Terrain.CaptureEdits` (`what` 0): every edited terrain's edits into
+/// `out`, their length returned, written when it fits. `Terrain.ApplyEdits`
+/// (`what` 1): puts the edits in `data` back, returning how many terrains
+/// it found, or -1 with an error logged for bytes that are not edits.
+pub(crate) unsafe extern "C" fn terrain_edits(
+    what: i32,
+    data: *const u8,
+    len: i32,
+    out: *mut u8,
+    capacity: i32,
+) -> i32 {
+    match what {
+        0 => {
+            let bytes = with_world(|world| Some(capture(world))).unwrap_or_else(|| 0u32.to_le_bytes().to_vec());
+            if !out.is_null() && bytes.len() <= capacity.max(0) as usize {
+                unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), out, bytes.len()) };
+            }
+            bytes.len() as i32
+        }
+        1 if !data.is_null() && len >= 0 => {
+            let bytes = unsafe { std::slice::from_raw_parts(data, len as usize) };
+            match with_world(|world| Some(restore(world, bytes))) {
+                Some(Ok(found)) => found,
+                Some(Err(error)) => {
+                    tracing::error!("Terrain.ApplyEdits: {error:#}");
+                    -1
+                }
+                None => 0,
+            }
+        }
+        _ => -1,
+    }
 }

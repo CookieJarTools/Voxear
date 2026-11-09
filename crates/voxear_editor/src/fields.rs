@@ -565,7 +565,7 @@ pub fn asset_choices(game: &Game, types: &ScriptTypes, kind: &FieldKind) -> Vec<
     }
     let wanted = match asset.rsplit('.').next() {
         Some("Prefab") => Some(AssetKind::Prefab),
-        Some("Material") => Some(AssetKind::Material),
+        Some("Material" | "MaterialAsset") => Some(AssetKind::Material),
         Some("Texture") => Some(AssetKind::Texture),
         Some("Model") => Some(AssetKind::Model),
         Some("Scene" | "SceneAsset") => Some(AssetKind::Scene),

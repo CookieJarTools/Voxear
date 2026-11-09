@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 63;
+pub(crate) const API_VERSION: u32 = 64;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -441,6 +441,13 @@ pub(crate) struct NativeApi {
         out: *mut crate::plants::PlantRef,
         capacity: i32,
     ) -> i32,
+    /// `Terrain.Apply`: changes the ground of every terrain an edit
+    /// reaches, with the surface it lays by its material (see `terrain`).
+    pub terrain_edit:
+        unsafe extern "C" fn(edit: *const crate::terrain::TerrainEditData, surface: *const u8, surface_len: i32) -> i32,
+    /// `Terrain.CaptureEdits` and `Terrain.ApplyEdits`: every edited
+    /// terrain's edits as bytes, and back.
+    pub terrain_edits: unsafe extern "C" fn(what: i32, data: *const u8, len: i32, out: *mut u8, capacity: i32) -> i32,
 }
 
 /// The kinds of component scripts reach through one entry, `kind_value`,
@@ -1847,6 +1854,8 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         plant_remove: crate::plants::plant_remove,
         plant_cut: crate::plants::plant_cut,
         plants_near: crate::plants::plants_near,
+        terrain_edit: crate::terrain::terrain_edit,
+        terrain_edits: crate::terrain::terrain_edits,
     }
 }
 

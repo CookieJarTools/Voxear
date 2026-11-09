@@ -200,6 +200,12 @@ pub trait ScriptServices {
         None
     }
 
+    /// The number of a terrain's surface drawn with `material`, a project
+    /// path or GUID, in its asset's list; none where it has no such surface.
+    fn terrain_surface(&self, _world: &World, _terrain: Entity, _material: &str) -> Option<u8> {
+        None
+    }
+
     /// A data asset (an `.asset` file) by project path or GUID, for
     /// `Definition.Load`, as JSON: its GUID, its path, its type and its fields.
     fn asset_fields(&mut self, reference: &str) -> Result<String> {

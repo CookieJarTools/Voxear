@@ -52,6 +52,7 @@ public sealed class SceneState
 			root["saved"] = SaveNode.NewList(BehaviourTable.Live().Select(Values).OfType<SaveNode>());
 			root["components"] = SaveNode.NewList(SceneComponents.Capture());
 			root["plants"] = SaveNode.NewList(RemovedPlants().Select(PlantsNode));
+			root["terrains"] = SaveNode.Bytes(Terrain.CaptureEdits());
 		}
 		return new SceneState(root);
 	}
@@ -90,6 +91,12 @@ public sealed class SceneState
 					new Plant(obj, number.AsInt()).Remove();
 				}
 			}
+		}
+
+		// The ground scripts changed, each terrain from as its level built it.
+		if (!Root["terrains"].IsNull)
+		{
+			Terrain.ApplyEdits(Root["terrains"].AsBytes());
 		}
 
 		var made = MakeCopies();

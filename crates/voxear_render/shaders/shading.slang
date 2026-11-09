@@ -763,11 +763,12 @@ float3 underwaterSunUnder(Frame* frame, float3 world, float time, WaterOver over
         return 1.0;
     }
     float depth = surface - world.y;
-    float3 sunDown = -frame->sunDirection;
-    float slant = max(sunDown.y, 0.2);
-    sky = exp(-absorb * depth * 0.6);
+    // The sun's way down, bent at the surface, and how much of the slant it comes down.
+    float3 bent = refract(frame->sunDirection, float3(0.0, 1.0, 0.0), 1.0 / 1.33);
+    float slant = max(-bent.y, 0.2);
+    sky = exp(-absorb * depth);
     // The web cast along the sun, a few metres across, moving with time.
-    float2 cast = world.xz + sunDown.xz / slant * depth;
+    float2 cast = world.xz - bent.xz / slant * depth;
     float web = causticWeb(cast / 3.5, time * 0.45) + causticWeb(cast / 2.1 + 3.7, time * 0.31) * 0.5;
     float focus = saturate(depth / 0.4) * exp(-depth / 15.0);
     float caustic = lerp(1.0, 0.3 + web * 2.6, focus);

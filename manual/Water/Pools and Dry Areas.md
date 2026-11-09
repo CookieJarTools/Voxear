@@ -18,7 +18,7 @@ A Pool can be anywhere, above or below the sea:
 | Depth | How deep the water is, in metres |
 | Liquid | Water, or [[Lava]] |
 | Waves | How much of the sea's long swell it takes |
-| Deep, Scatter, Clarity, Murk | Its water's colours, as [[The Ocean]] describes them |
+| Deep, Scatter, Clarity, Murk | Its water's colours, as [[The Ocean]] describes them. A new Pool starts as a lake's green |
 
 ## Dry Areas
 

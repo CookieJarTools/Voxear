@@ -23,7 +23,7 @@ Under **Custom**, the sea is two seas at once, as a real one is: a **Swell** rai
 | --- | --- |
 | Wave scale | How much taller the waves are than the weather makes them: 2 for towering seas. The crests break no more for it |
 | Choppiness | How sharp the crests are, from 0 for rounded waves to 1 as real ones |
-| Deep | The colour of the water seen deep down, lit by the sky |
+| Deep | The water's own colour: what it fades into far off under the water, and what deep water shows from above |
 | Scatter | The colour sunlight takes through the thin tops of the waves, glowing turquoise towards the sun |
 | Foam | How much foam breaking crests make |
 | Spray | How much spray flies off breaking crests and the surf, 0 for none |
@@ -71,7 +71,7 @@ The waves are worked out the same on every machine, and the game can ask how hig
 
 ## Under the sea
 
-When the camera goes under the surface, the world turns blue and dim with distance, as the water takes the light a colour at a time. Sunlight comes down through the waves in a moving web of caustics on everything below, and fades with depth. Looking up, you see the sky through a bright circle overhead, Snell's window, and past its edge the surface turns to a mirror of the water below. Where the camera is half in, a waterline runs across the view.
+When the camera goes under the surface, everything fades with distance into the water's own colour, as the water takes the light a colour at a time and its specks scatter it. The water is lit from above: brighter near the surface and looking up, darker looking down and deeper down, and glowing towards the sun, as water scatters light mostly onwards. Clearer water shows further; murkier water glows more and shows less. Sunlight comes down through the waves in a moving web of caustics on everything below, and fades with depth. Looking up, you see the sky through a bright circle overhead, Snell's window, and past its edge the surface turns to a mirror of the water below. Where the camera is half in, a waterline runs across the view.
 
 ## Lamps and water
 

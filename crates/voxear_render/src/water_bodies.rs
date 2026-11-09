@@ -88,7 +88,7 @@ pub struct Pool {
     /// How much of the sea's long swell it takes, from 0 for none to 1 as
     /// the sea's: its ripples and short waves it has always.
     pub waves: f32,
-    /// The colour of its deep water, sRGB.
+    /// Its water's own colour, sRGB, as an Ocean's Deep.
     pub deep: [f32; 3],
     /// The colour light takes through its ripples, sRGB.
     pub scatter: [f32; 3],
@@ -111,9 +111,10 @@ impl Default for Pool {
             depth: 4.0,
             liquid: Liquid::Water,
             waves: 0.0,
-            deep: [0.02, 0.18, 0.2],
+            // A lake's green.
+            deep: [0.04, 0.46, 0.33],
             scatter: [0.15, 0.6, 0.5],
-            clarity: [0.75, 0.93, 0.9],
+            clarity: [0.7, 0.97, 0.93],
             murk: 1.0,
             cooling: 20.0,
             glow: 1.0,
@@ -311,7 +312,7 @@ pub struct Stream {
     pub speed: f32,
     /// How steep it runs, as a slope, before it breaks white into rapids.
     pub rapids: f32,
-    /// The colour of its deep water, sRGB.
+    /// Its water's own colour, sRGB, as an Ocean's Deep.
     pub deep: [f32; 3],
     /// The colour light takes through its ripples, sRGB.
     pub scatter: [f32; 3],
@@ -334,7 +335,7 @@ impl Default for Stream {
             depth: 1.0,
             speed: 1.0,
             rapids: 0.1,
-            deep: [0.04, 0.17, 0.2],
+            deep: [0.05, 0.36, 0.3],
             scatter: [0.2, 0.55, 0.45],
             clarity: [0.9, 0.96, 0.95],
             murk: 1.0,

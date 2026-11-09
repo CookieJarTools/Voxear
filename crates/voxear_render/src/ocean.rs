@@ -123,7 +123,8 @@ pub struct Ocean {
     /// them, 2 twice as high. Their crests fold no
     /// harder, so they break into no more foam.
     pub wave_scale: f32,
-    /// The colour of deep water, sRGB.
+    /// The water's own colour, sRGB: what it fades into far off, as much of
+    /// the light as its specks scatter rather than absorb.
     pub deep: [f32; 3],
     /// The colour light takes through the thin tops of the waves, sRGB.
     pub scatter: [f32; 3],
@@ -223,8 +224,8 @@ impl Default for Ocean {
             fetch: 20.0,
             choppiness: 0.9,
             wave_scale: 1.0,
-            // Deep, saturated blue, turquoise through the crests.
-            deep: [0.0, 0.16, 0.32],
+            // Blue-green deep down, turquoise through the crests.
+            deep: [0.0, 0.3, 0.34],
             scatter: [0.1, 0.78, 0.72],
             foam: 0.5,
             spray: 0.5,

@@ -64,10 +64,20 @@ static const float LAKE_TURNOVER = 15.0;
 // What a WaterOut is the sea's rather than a Pool's.
 static const uint SEA = 0xFFFFFFFF;
 static const float GRAVITY = 9.81;
-// How much of every colour a metre of water scatters away under it, beside
-// what it absorbs: its specks of sediment and plankton, which no water is
-// without.
-static const float UNDERWATER_SCATTERING = 0.05;
+// How much of every colour a metre of water scatters, beside what it
+// absorbs and what its colour scatters: its specks of sediment and plankton,
+// which no water is without, so what is far off fades into the water's own
+// light however clear it is.
+static const float UNDERWATER_SCATTERING = 0.02;
+// How a water's Deep colour, linear, sets how much of the light it stops it
+// scatters rather than absorbs.
+static const float DEEP_ALBEDO = 4.0;
+// How much water's specks scatter light onwards rather than aside
+// (Henyey–Greenstein's g), so the water glows towards the sun.
+static const float WATER_FORWARD = 0.85;
+// How far the shafts of sunlight under the water reach, in metres; the sun's
+// light the water scatters past them is worked out whole (waterGlow).
+static const float SHAFT_REACH = 30.0;
 
 // The sea repeats after this many seconds (REPEAT_SECONDS in src/ocean.rs).
 static const float OCEAN_REPEAT = 1000.0;
@@ -1399,6 +1409,84 @@ bool cameraUnderwater(Frame* frame)
     return camera.y < wavySurface(frame, camera, surface);
 }
 
+// The water light passes through, a metre of it: how much of each colour
+// its specks scatter, and how much it takes altogether, absorbed or
+// scattered; and how fast the sun's and the sky's light fade going down
+// through it, little more than it absorbs, as most of what it scatters goes
+// on down.
+struct WaterMedium
+{
+    float3 scattering;
+    float3 extinction;
+    float3 fade;
+};
+
+// A water's medium from how fast it absorbs each colour and its Deep
+// colour, linear: the share of what it stops that it scatters rather than
+// absorbs, so deep down, looking far off, it shows that colour lit by the
+// light that reaches there.
+WaterMedium waterMedium(float3 absorb, float3 deep)
+{
+    float3 albedo = clamp(deep * DEEP_ALBEDO, 0.0, 0.9);
+    WaterMedium m;
+    m.scattering = absorb * albedo / (1.0 - albedo) + UNDERWATER_SCATTERING;
+    m.extinction = absorb + m.scattering;
+    m.fade = absorb + m.scattering * 0.3;
+    return m;
+}
+
+// How much light, summed along a view through water from `from` to `to`
+// metres along it, comes down from the surface to each point and then back
+// along the view to its start, through water that takes `extinction` of it
+// a metre along the view and `fade` a metre down: the view starts `depth`
+// deep and rises `rise` a metre along it. The sum of e^-(extinction t) e^-(fade
+// (depth - rise t)), in closed form; the view must stay under the surface
+// as far as `to`.
+float3 alongView(float3 extinction, float3 fade, float depth, float rise, float from, float to)
+{
+    float3 a = extinction - fade * rise;
+    float3 start = exp(-fade * depth - a * from);
+    float3 end = exp(-fade * depth - a * to);
+    return select(abs(a) > 1e-4, (start - end) / a, start * (to - from));
+}
+
+// How much of the sun's light the water's specks scatter `cosine` from the
+// way it is going (Henyey–Greenstein), a steradian.
+float waterPhase(float cosine)
+{
+    float g = WATER_FORWARD;
+    return (1.0 - g * g) / (4.0 * PI * pow(max(1.0 + g * g - 2.0 * g * cosine, 1e-4), 1.5));
+}
+
+// The sunlight's way down through the water, bent at the surface.
+float3 sunUnderwater(Frame* frame)
+{
+    return refract(frame->sunDirection, float3(0.0, 1.0, 0.0), 1.0 / 1.33);
+}
+
+// The water's own light along a view through it that starts `depth` deep
+// and goes `view`, from `from` to `to` metres along it: what its specks
+// scatter towards the eye of the sky's light from above, `sky`, more
+// looking up into it, as water scatters forwards; and of the sun's,
+// `sunLight` through `sunLit` of its shadow, glowing towards it, counted
+// from `sunFrom` on (lightShafts draws it nearer). Darker the deeper the
+// view goes, as less light reaches down there.
+float3 waterGlow(Frame* frame, WaterMedium m, float depth, float3 view, float from, float to, float sunFrom, float sunLit, float3 sky, float3 sunLight)
+{
+    float3 sunDown = sunUnderwater(frame);
+    float slant = max(-sunDown.y, 0.2);
+    float upward = 0.5 + 0.5 * view.y;
+    float skyward = 0.25 + 1.5 * upward * sqrt(upward);
+    float3 glow = sky * skyward * alongView(m.extinction, m.fade, depth, view.y, from, to);
+    float start = max(from, sunFrom);
+    if (start < to && sunLit > 0.0)
+    {
+        float3 reaching = alongView(m.extinction, m.fade / slant, depth, view.y, start, to);
+        glow += sunLight * sunLit * waterPhase(dot(sunDown, -view)) * reaching;
+    }
+    return m.scattering * glow;
+}
+
 // The surface seen from under the water: inside Snell's window, the sky
 // above bent through it; outside it, past the critical angle of 48.6°, the
 // water below mirrored, as total internal reflection does; the under-water
@@ -1417,7 +1505,10 @@ FragmentOut fromBelow(Frame* frame, WaterOut input, float3 n, float3 v, float3 d
     s.diffuse = 0.0;
     s.f0 = 0.02;
     float3 ambient = ambientLight(frame, input.world, s, sunLight, atmosphere);
-    float3 water = deep * ambient + scatter * sunLight * 0.04;
+    // Mirrored, the water's own light along the view turned back down into it.
+    float3 mirrored = reflect(-v, down);
+    mirrored.y = min(mirrored.y, -0.02);
+    float3 water = waterGlow(frame, waterMedium(absorb, deep), 0.0, normalize(mirrored), 0.0, 1e4, 0.0, 1.0, ambient, sunLight);
     float3 color = water;
     if (sine < 1.0)
     {
@@ -1672,8 +1763,7 @@ FragmentOut waterFragment(WaterOut input)
         lamps += reaching.color * saturate((dot(reaching.direction, n) + 0.5) / 1.5);
     }
 
-    // The water's own colour: deep blue lit by the sky, and the scatter colour where the
-    // sun shines through the thin top of a wave towards the eye.
+    // The scatter colour where the sun shines through the thin top of a wave towards the eye.
     float height = max(frame->ocean.waveHeight * max(waves, 0.2), 0.05);
     // Where the waves pinch the water most sideways, the crests are thinnest and
     // let most light through; a little on every high wave too. A Stream's ripples have no crests to glow.
@@ -1682,7 +1772,7 @@ FragmentOut waterFragment(WaterOut input)
     float towards = pow(saturate(dot(l, -v)), 4.0) * pow(saturate(0.5 - 0.5 * dot(l, n)), 3.0);
     // Crests glow through: strongly towards the sun, and a little from every side on a wave's top.
     float3 throughWave = (3.0 * crest * towards + 0.12 * crest * pow(saturate(dot(v, n)), 2.0) + 0.04 * saturate(dot(l, n))) * scatter * sunLight * shadow;
-    float3 body = deep * ambient + throughWave + scatter * lamps * 0.05;
+    float3 body = throughWave + scatter * lamps * 0.05;
 
     // What lies under it: how far through the water, bent by the waves, and dimmed a colour at a time.
     float2 pixel = input.position.xy;
@@ -1693,7 +1783,8 @@ FragmentOut waterFragment(WaterOut input)
     float thickness = max(sceneDepth - surfaceDepth, 0.0) / along;
     // A Pool's water ends at its sides and bottom, whatever lies past them; a Stream's at its bed.
     thickness = sea || stream ? thickness : min(thickness, poolExit(pool, input.world, v));
-    float3 through = exp(-absorb * thickness);
+    WaterMedium medium = waterMedium(absorb, deep);
+    float3 through = exp(-medium.extinction * thickness);
     // Light bends as it goes into the water, by Snell's law with water's index of 1.33: what shows under a pixel
     // lies along the bent ray, as far into the water as the view goes there. Only what is really behind the water
     // shows from where the ray bends to, not something standing in front of it.
@@ -1756,7 +1847,9 @@ FragmentOut waterFragment(WaterOut input)
     // Bubbles a hand's breadth under the foam, seen through the water, a pale turquoise, more as it ages.
     float bubbles = coverage > 0.1 ? smoothstep(0.1, 0.5, coverage) * foamPatternAt(frame, bubbleAt, 4.0).y * (0.3 + 0.4 * spot.age) : 0.0;
     float3 bubbleLit = (scatter * 0.6 + 0.2) * (ambient + sunLight * shadow * 0.25);
-    float3 under = behind * through + body * (1.0 - through) + bubbleLit * bubbles * 0.25;
+    // The water's own light along the view down into it, the sky's and the sun's, its shadow on the water too.
+    float3 glow = waterGlow(frame, medium, 0.0, refract(-v, n, 1.0 / 1.33), 0.0, thickness, 0.0, shadow, ambient, sunLight);
+    float3 under = behind * through + glow + body * (1.0 - through) + bubbleLit * bubbles * 0.25;
     // Lamps under the water, glowing in it along the bent view down through it.
     under += lampsInWater(frame, input.world, refract(-v, n, 1.0 / 1.33), min(thickness, 30.0), pixel, absorb, scatter);
     float3 color = (1.0 - fresnel) * under + fresnel * reflected + glints;
@@ -2163,7 +2256,8 @@ FragmentOut wallFragment(WallOut input)
     float along = max(dot(-v, frame->cameraForward), 0.05);
     float thickness = max(sceneDepth - wallDepth, 0.0) / along;
     thickness = pool ? min(thickness, poolExit(water, input.world, v)) : thickness;
-    float3 through = exp(-absorb * thickness);
+    WaterMedium medium = waterMedium(absorb, deep);
+    float3 through = exp(-medium.extinction * thickness);
     float3 behind = thickness < 1e3 ? glassBehind(push.texture, pixel / float2(frame->viewport), log2(1.0 + thickness * 0.3)) : 0.0;
 
     bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
@@ -2175,11 +2269,14 @@ FragmentOut wallFragment(WallOut input)
     s.diffuse = 0.0;
     s.f0 = 0.02;
     float3 ambient = ambientLight(frame, input.world, s, sunLight, atmosphere);
-    // Light from above, dimmed by the water it came down through.
+    // The water's own light along the view into it, from as deep as it goes in, as far as it shows; looking up,
+    // only as far as the surface.
     float below = max(surface - input.world.y, 0.0);
-    float3 reaching = exp(-absorb * below);
-    float3 body = (deep * ambient + scatter * sunLight * 0.05) * (0.35 + 0.65 * reaching);
-    float3 color = behind * through + body * (1.0 - through);
+    float rise = -v.y;
+    float reach = rise > 1e-4 ? min(thickness, below / rise) : thickness;
+    float shadow = sunShadow(frame, input.world, float3(0.0, 1.0, 0.0));
+    float3 glow = waterGlow(frame, medium, below, -v, 0.0, reach, 0.0, shadow, ambient, sunLight);
+    float3 color = behind * through + glow;
     // The water's edge against its surface, bright and frothy.
     float rim = saturate(1.0 - below / 0.06);
     color = lerp(color, ambient * 0.9 + sunLight * 0.1, rim * 0.7);
@@ -2228,6 +2325,9 @@ struct Under
     float surface;
     float3 absorb;
     float3 scatter;
+    // The water's light, and how deep the view starts.
+    WaterMedium medium;
+    float depth;
 };
 
 // How far above the water's surface the near plane is at `pixel`, in
@@ -2258,6 +2358,8 @@ Under underwaterAt(Frame* frame, float2 pixel)
     u.surface = -1e9;
     u.absorb = 0.0;
     u.scatter = 0.0;
+    u.depth = 0.0;
+    u.medium = waterMedium(0.0, 0.0);
     float2 ndc = pixel / float2(frame->viewport) * 2.0 - 1.0;
     float3 near;
     float surface;
@@ -2281,9 +2383,6 @@ Under underwaterAt(Frame* frame, float2 pixel)
         float4 farH = transform(frame->invViewProj, float4(ndc, depth, 1.0));
         u.distance = length(farH.xyz / farH.w - frame->cameraPosition);
     }
-    // Lost to the water as it takes each colour, and as its specks scatter all of them, so what is far off fades into
-    // the water's own colour rather than showing through it, however clear.
-    u.through = exp(-(absorb + UNDERWATER_SCATTERING) * u.distance);
     // The water's own colours: a Pool's, or the sea's.
     float3 deep = frame->ocean.deep;
     float3 scatter = frame->ocean.scatter;
@@ -2299,6 +2398,11 @@ Under underwaterAt(Frame* frame, float2 pixel)
         }
     }
     u.scatter = scatter;
+    u.medium = waterMedium(absorb, deep);
+    u.depth = max(surface - near.y, 0.0);
+    // Lost to the water as it takes each colour and as its specks scatter them, so what is far off fades into the
+    // water's own light rather than showing through it, however clear.
+    u.through = exp(-u.medium.extinction * u.distance);
     bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
     float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
     Surface s;
@@ -2308,34 +2412,38 @@ Under underwaterAt(Frame* frame, float2 pixel)
     s.diffuse = 0.0;
     s.f0 = 0.02;
     float3 ambient = ambientLight(frame, near, s, sunLight, atmosphere);
-    // Darker the deeper the camera, and darker looking down than up towards the light; brighter towards the sun,
-    // as light scatters forwards.
-    float3 dim = exp(-absorb * max(surface - near.y, 0.0) * 0.5);
-    float up = 0.45 + 0.55 * saturate(u.view.y * 0.5 + 0.5);
-    float forward = pow(saturate(dot(u.view, -frame->sunDirection)), 4.0);
-    // The sun's light dimmed as far as it has come down through the water, longer the lower the sun.
-    float3 sunDown = refract(frame->sunDirection, float3(0.0, 1.0, 0.0), 1.0 / 1.33);
-    float3 sunDim = exp(-absorb * max(surface - near.y, 0.0) / max(-sunDown.y, 0.2));
-    // The water's own colours: the sun sets how bright its light through the water is, not its hue, so a low
-    // orange sun does not turn the water green.
-    float sunBright = dot(sunLight, float3(0.2126, 0.7152, 0.0722));
-    float3 own = deep * ambient * up + scatter * sunBright * (0.03 + 0.05 * forward) * sunDim;
-    u.glow = own * dim * (1.0 - u.through) + lampsInWater(frame, near, u.view, min(u.distance, 40.0), pixel, absorb, scatter);
+    // The water's own light along the view, as far as it goes or, looking up, to the surface: darker the deeper it
+    // goes, brighter looking up and towards the sun. The sun's nearer than the shafts reach is theirs.
+    float reach = u.view.y > 1e-4 ? min(u.distance, u.depth / u.view.y) : u.distance;
+    float shafts = oceanHas(frame, OCEAN_LIGHT_SHAFTS) ? shaftReach(u) : 0.0;
+    u.glow = waterGlow(frame, u.medium, u.depth, u.view, 0.0, reach, shafts, 1.0, ambient, sunLight);
+    u.glow += lampsInWater(frame, near, u.view, min(u.distance, 40.0), pixel, absorb, scatter);
     return u;
 }
 
+// How far along a pixel's view under the water lightShafts reaches: as far
+// as it sees, up to SHAFT_REACH, and in murky water only as far as most of
+// the light it scatters comes from.
+float shaftReach(Under u)
+{
+    float clearest = min(min(u.medium.extinction.r, u.medium.extinction.g), u.medium.extinction.b);
+    return min(min(u.distance, SHAFT_REACH), 4.0 / max(clearest, 1e-3));
+}
+
 // Sunlight through the water along the pixel's view, as rays: the sun's
-// shadow marched in a dozen steps as far as 30 m, each step's light focused
-// into streaks by the waves over it, as caustics are, and dimmed by the
-// water it has come down through and then across to the eye, scattered
-// mostly onwards (Henyey–Greenstein).
+// light the water scatters towards the eye (waterGlow) as far as
+// shaftReach, marched in a dozen steps through the sun's shadow, each
+// step's light focused into streaks by the waves over it, as caustics are.
 float3 lightShafts(Frame* frame, Under u, float2 pixel)
 {
     static const uint STEPS = 12;
-    float reach = min(u.distance, 30.0);
-    // A different start each frame and pixel, for the TAA to smooth.
-    float jitter = frac(52.9829189 * frac(dot(pixel, float2(0.06711056, 0.00583715))) + frac(frame->time * 7.31));
-    float3 down = refract(frame->sunDirection, float3(0.0, 1.0, 0.0), 1.0 / 1.33);
+    // The streaks' average, so on average the shafts are as bright as the water's light they stand for.
+    static const float STREAKS = 0.33;
+    float reach = shaftReach(u);
+    // A different start each pixel, moved on by the golden ratio each frame for the TAA to smooth.
+    float jitter = frac(52.9829189 * frac(dot(pixel, float2(0.06711056, 0.00583715))) + float(frame->frameIndex % 1024u) * 0.618034);
+    float3 down = sunUnderwater(frame);
+    float slant = max(-down.y, 0.2);
     float3 total = 0.0;
     for (uint i = 0; i < STEPS; i++)
     {
@@ -2346,18 +2454,15 @@ float3 lightShafts(Frame* frame, Under u, float2 pixel)
         {
             continue;
         }
-        float2 surfaced = p.xz - down.xz / max(-down.y, 0.2) * below;
+        float2 surfaced = p.xz - down.xz / slant * below;
         float web = causticWeb(surfaced * 0.35, frame->time * 0.6);
         float lit = sunShadow(frame, p, float3(0.0, 1.0, 0.0));
-        total += lit * (0.3 + 0.7 * web) * exp(-u.absorb * (t + below));
+        total += lit * (0.3 + 0.7 * web) / STREAKS * exp(-u.medium.extinction * t - u.medium.fade * below / slant);
     }
     total *= reach / float(STEPS);
-    float g = 0.6;
-    float cosine = dot(u.view, -down);
-    float phase = (1.0 - g * g) / (4.0 * PI * pow(max(1.0 + g * g - 2.0 * g * cosine, 1e-4), 1.5));
     bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
     float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
-    return total * phase * u.scatter * sunLight * 0.35;
+    return total * waterPhase(dot(down, -u.view)) * u.medium.scattering * sunLight;
 }
 
 // Drops on the lens just out of the water: a scatter of them, more and

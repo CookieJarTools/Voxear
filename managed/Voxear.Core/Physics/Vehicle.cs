@@ -31,6 +31,13 @@ public readonly struct Vehicle : IEquatable<Vehicle>, IObjComponent
 	/// <summary>False when its Obj has no Vehicle, or is gone.</summary>
 	public bool IsValid => Obj.IsValid && NativePhysics.Flag(Obj, NativePhysics.VehicleHas);
 
+	/// <summary>Whether it is switched on, as Unity's enabled. Off, it neither drives nor steers.</summary>
+	public bool Enabled
+	{
+		get { return Obj.IsEnabled(EngineComponent.Vehicle); }
+		set { Obj.SetEnabled(EngineComponent.Vehicle, value); }
+	}
+
 	public VehicleKind Kind
 	{
 		get { return (VehicleKind)(int)NativePhysics.Number(Obj, NativePhysics.VehicleKind, 0f); }

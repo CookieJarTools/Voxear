@@ -241,6 +241,16 @@ Done so far:
   with items added and taken out, and nested
   `[Serializable]` tables; Add Component and Remove Component; all of it undoable, and component values keepable
   after play.
+- **Switching Objs and components off**, as Unity's `SetActive` and `enabled`: the Inspector's tick by an Obj's
+  name switches it and everything under it off (its behaviours get OnDisable and OnEnable, and the Hierarchy dims
+  it), and each component's tick switches that one off, its values kept and still editable. Rendering skips what is
+  off (lights, meshes, models, foliage, wind, seasons, post volumes, cameras, LOD Groups), and so do physics (3D
+  and 2D colliders, characters, vehicles, wheels), sound (sources, listeners, acoustic walls) and the Seasons
+  clock. A behaviour's own tick gives it OnDisable and stops its updates, its C# `Enabled` following it. Undoable;
+  saved in scenes and prefabs as `active = false` and `enabled = { light = false, "Game.Flicker" = false }`, left
+  out when on; `Obj.Active`, `ActiveInHierarchy`, `IsEnabled`/`SetEnabled(EngineComponent)` and `Enabled` on the
+  component handles in C# (native API 61).
+  - [ ] Objs that are off left out of Scene view picking, and their gizmos hidden, as in Unity
 - **Command palette** (Ctrl+K): commands with their shortcuts, Objs, levels, assets, settings and VoxDocs pages,
   matched fuzzily, run from the keyboard or with a click, with what ran recently first. Scripts add commands with
   `[Command]` (run in edit mode against the edited level, undoable, with their own keys), and Rust code with

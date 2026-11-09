@@ -35,6 +35,13 @@ public readonly struct CharacterController : IEquatable<CharacterController>, IO
 	/// <summary>False when its Obj has no Character Controller, or is gone.</summary>
 	public bool IsValid => Obj.IsValid && NativePhysics.Flag(Obj, NativePhysics.CharacterHas);
 
+	/// <summary>Whether it is switched on, as Unity's enabled. Off, it neither walks nor collides.</summary>
+	public bool Enabled
+	{
+		get { return Obj.IsEnabled(EngineComponent.CharacterController); }
+		set { Obj.SetEnabled(EngineComponent.CharacterController, value); }
+	}
+
 	/// <summary>How tall it is, from its feet up, in metres.</summary>
 	public float Height
 	{

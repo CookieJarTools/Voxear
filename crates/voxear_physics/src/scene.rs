@@ -760,10 +760,13 @@ impl PhysicsScene {
             self.collide = collide;
             self.world.set_layers(&collide);
         }
+        // A Collider switched off, or on an Obj that is, leaves physics, its body with it, until it is back.
+        let switched = voxear_scene::Switched::of(world);
         let colliders: Vec<(Entity, Collider)> = world
             .query_ref::<(Entity, &Collider)>()
             .without::<Destroying>()
             .into_iter()
+            .filter(|(entity, _)| switched.is_on(world, *entity, voxear_scene::Switch::Collider))
             .map(|(entity, collider)| (entity, *collider))
             .collect();
         let gone: Vec<Entity> =
@@ -1126,6 +1129,7 @@ impl PhysicsScene {
             .query_ref::<(Entity, &CharacterController)>()
             .without::<Destroying>()
             .into_iter()
+            .filter(|(entity, _)| voxear_scene::is_on(world, *entity, voxear_scene::Switch::Character))
             .map(|(entity, controller)| (entity, *controller))
             .collect();
         let gone: Vec<Entity> =

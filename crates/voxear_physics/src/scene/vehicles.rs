@@ -41,6 +41,7 @@ impl PhysicsScene {
             .query_ref::<(Entity, &Vehicle)>()
             .without::<Destroying>()
             .into_iter()
+            .filter(|(entity, _)| voxear_scene::is_on(world, *entity, voxear_scene::Switch::Vehicle))
             .map(|(entity, vehicle)| (entity, *vehicle))
             .collect();
         let gone: Vec<Entity> =
@@ -54,6 +55,7 @@ impl PhysicsScene {
             .query_ref::<(Entity, &Wheel, &Parent)>()
             .without::<Destroying>()
             .into_iter()
+            .filter(|(entity, ..)| voxear_scene::is_on(world, *entity, voxear_scene::Switch::Wheel))
             .map(|(entity, wheel, parent)| (entity, parent.0, *wheel))
             .collect();
         self.wheels_at_rest.retain(|entity, _| wheels.iter().any(|(e, ..)| e == entity));

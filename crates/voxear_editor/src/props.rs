@@ -44,7 +44,7 @@ use voxear_render::{
     ModelRenderer, Ocean, Season, Seasons, SkyBody, VolumeShape, Weather, WindShape, WindSource, WindZone, DryArea, DryShape, Liquid, Pool, Stream,
     EmitShape, ParticleBlend, ParticleSystem,
 };
-use voxear_scene::{BehaviourSpec, Behaviours, Name, Parent, SceneComponents};
+use voxear_scene::{BehaviourSpec, Behaviours, Name, Parent, SceneComponents, Switch};
 
 use crate::fields::{self, Pick, Step};
 
@@ -231,6 +231,33 @@ impl Part {
             Part::Model => "Model Renderer",
             Part::Behaviour(name) => name.rsplit('.').next().unwrap_or(name),
         }
+    }
+
+    /// What switches the component on and off, as its tick in the
+    /// Inspector does; none for a component Unity gives no tick, such as a
+    /// Rigidbody, for a script, which has its own, and for those that
+    /// cannot be switched off yet.
+    pub fn switch(&self) -> Option<Switch> {
+        Some(match self {
+            Part::Renderer => Switch::Renderer,
+            Part::Light => Switch::Light,
+            Part::Camera => Switch::Camera,
+            Part::Audio => Switch::Audio,
+            Part::Listener => Switch::AudioListener,
+            Part::LodGroup => Switch::LodGroup,
+            Part::Collider => Switch::Collider,
+            Part::Character => Switch::Character,
+            Part::Collider2D => Switch::Collider2d,
+            Part::Vehicle => Switch::Vehicle,
+            Part::Wheel => Switch::Wheel,
+            Part::PostVolume => Switch::PostVolume,
+            Part::WindZone => Switch::WindZone,
+            Part::Seasons => Switch::Seasons,
+            Part::FoliageInteraction => Switch::FoliageInteraction,
+            Part::Foliage => Switch::Foliage,
+            Part::Model => Switch::Model,
+            _ => return None,
+        })
     }
 
     pub fn icon(&self) -> &'static str {

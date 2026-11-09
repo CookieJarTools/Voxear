@@ -326,10 +326,12 @@ impl PhysicsScene2D {
     }
 
     fn sync(&mut self, world: &World, dt: f32) {
+        let switched = voxear_scene::Switched::of(world);
         let colliders: Vec<(Entity, Collider2D)> = world
             .query_ref::<(Entity, &Collider2D)>()
             .without::<Destroying>()
             .into_iter()
+            .filter(|(entity, _)| switched.is_on(world, *entity, voxear_scene::Switch::Collider2d))
             .map(|(entity, collider)| (entity, *collider))
             .collect();
         let gone: Vec<Entity> =

@@ -18,7 +18,7 @@
 //! parent = 1
 //! behaviours = ["Game.Spinner"]
 //! components = ["Game.Spin"]     # C# IComponent structs, which systems work on
-//! [obj.enabled]                  # behaviours unticked, which start disabled
+//! [obj.enabled]                  # what is unticked: built-in components and behaviours
 //! "Game.Spinner" = false
 //! [obj.fields."Game.Spinner"]
 //! degrees_per_second = 45.0
@@ -64,7 +64,8 @@ use voxear_render::{
     DryArea, Ocean, ParticleSystem, Plant, Pool, Seasons, Sky, SkyBody, SkyMode, Stream, SunLook, VolumeShape, WindZone, scatter,
 };
 use voxear_scene::{
-    BehaviourSpec, Behaviours, Layer, Layers, Name, Parent, SceneComponents, ScenePersistence, Transform,
+    BehaviourSpec, Behaviours, Layer, Layers, Name, OffComponents, Parent, SceneComponents, ScenePersistence, Switch,
+    Transform,
 };
 
 use crate::{
@@ -234,6 +235,18 @@ pub struct ObjData {
     /// Survives level changes, like Unity's `DontDestroyOnLoad`.
     #[serde(default, skip_serializing_if = "is_false")]
     pub persistent: bool,
+    /// `false` switches the Obj off, and everything under it, as Unity's
+    /// `SetActive(false)`. Left out, it is on, or a prefab instance keeps
+    /// its prefab root's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active: Option<bool>,
+    /// Components and behaviours switched off, as Unity's `enabled`: a
+    /// built-in component by its name, a behaviour by its C# type, as
+    /// `enabled = { light = false, "Game.Spinner" = false }`. One left out is
+    /// on, or as its prefab has it; an instance writes `true` to switch on
+    /// one its prefab has off.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub enabled: BTreeMap<String, bool>,
     /// Full C# type names.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub behaviours: Vec<String>,
@@ -244,11 +257,6 @@ pub struct ObjData {
     /// and then field name. Field names may be written in snake_case.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub fields: BTreeMap<String, toml::Table>,
-    /// Behaviours that start disabled, by type, as `"Game.Spinner" = false`,
-    /// Unity's `enabled`. One left out starts enabled, or as its prefab has
-    /// it; an instance writes `true` to enable one its prefab disables.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub enabled: BTreeMap<String, bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub camera: Option<CameraData>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -381,10 +389,11 @@ impl ObjData {
             rotation: None,
             scale: None,
             persistent: false,
+            active: None,
+            enabled: BTreeMap::new(),
             behaviours: Vec::new(),
             components: Vec::new(),
             fields: BTreeMap::new(),
-            enabled: BTreeMap::new(),
             camera: None,
             light: None,
             post_volume: None,
@@ -437,6 +446,16 @@ impl ObjData {
     /// Whether the behaviour of this type starts enabled.
     pub fn is_enabled(&self, behaviour: &str) -> bool {
         self.enabled.get(behaviour) != Some(&false)
+    }
+
+    /// Whether the Obj's own switch is on.
+    pub fn is_active(&self) -> bool {
+        self.active != Some(false)
+    }
+
+    /// The built-in components it switches off.
+    pub fn off_components(&self) -> OffComponents {
+        self.enabled.iter().filter(|(_, on)| !**on).filter_map(|(name, _)| Switch::named(name)).collect()
     }
 
     pub fn rotation(&self) -> [f32; 3] {
@@ -1347,6 +1366,7 @@ fn capture_instance(
         instance.name = root.name.clone();
     }
     instance.persistent = root.persistent && !prefab_root.persistent;
+    instance.active = (root.is_active() != prefab_root.is_active()).then_some(root.is_active());
     instance.enabled = switched_from(prefab_root, &root);
     match root.behaviours.strip_prefix(prefab_root.behaviours.as_slice()) {
         Some(added) => instance.behaviours = added.to_vec(),
@@ -1481,6 +1501,17 @@ fn capture_instance(
     Ok(instance)
 }
 
+/// The components and behaviours switched otherwise in `actual` than in
+/// `expected`, each with whether it is on.
+fn switched_from(expected: &ObjData, actual: &ObjData) -> BTreeMap<String, bool> {
+    let (was, now) = (expected.off_components(), actual.off_components());
+    let components = Switch::ALL.into_iter().filter(|&s| was.contains(s) != now.contains(s));
+    let mut switched: BTreeMap<String, bool> = components.map(|s| (s.name().to_string(), !now.contains(s))).collect();
+    let differs = |name: &&String| actual.is_enabled(name) != expected.is_enabled(name);
+    switched.extend(actual.behaviours.iter().filter(differs).map(|name| (name.clone(), actual.is_enabled(name))));
+    switched
+}
+
 /// A component's every value as a table, those at their defaults too, as
 /// an override writes it so that none of the prefab's stays.
 fn whole<T: Serialize>(value: &T, defaults: &T) -> Result<toml::Value> {
@@ -1489,13 +1520,6 @@ fn whole<T: Serialize>(value: &T, defaults: &T) -> Result<toml::Value> {
         table.entry(key).or_insert(default);
     }
     Ok(toml::Value::Table(table))
-}
-
-/// The behaviours `actual` enables otherwise than `expected` does, each with
-/// whether it starts enabled.
-fn switched_from(expected: &ObjData, actual: &ObjData) -> BTreeMap<String, bool> {
-    let differs = |name: &&String| actual.is_enabled(name) != expected.is_enabled(name);
-    actual.behaviours.iter().filter(differs).map(|name| (name.clone(), actual.is_enabled(name))).collect()
 }
 
 /// The fields of `actual` that differ from `expected`, as an override.
@@ -1519,12 +1543,15 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     if actual.persistent != expected.persistent {
         put("persistent", actual.persistent.into());
     }
-    if actual.behaviours != expected.behaviours {
-        put("behaviours", toml::Value::try_from(&actual.behaviours)?);
+    if actual.is_active() != expected.is_active() {
+        put("active", actual.is_active().into());
     }
     let switched = switched_from(expected, actual);
     if !switched.is_empty() {
         put("enabled", toml::Value::try_from(&switched)?);
+    }
+    if actual.behaviours != expected.behaviours {
+        put("behaviours", toml::Value::try_from(&actual.behaviours)?);
     }
     if actual.components != expected.components {
         put("components", toml::Value::try_from(&actual.components)?);
@@ -1810,6 +1837,10 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     }
     obj.parent = world.get::<Parent>(entity).and_then(|p| ids.get(&p.0).copied());
     obj.persistent = world.has::<ScenePersistence>(entity);
+    obj.active = (!voxear_scene::is_active_self(world, entity)).then_some(false);
+    let off = world.get::<OffComponents>(entity).copied().unwrap_or_default();
+    let off = off.iter().filter(|&switch| has_component(world, entity, switch));
+    obj.enabled = off.map(|switch| (switch.name().to_string(), false)).collect();
     obj.locks = world.get::<crate::prefab::Locks>(entity).map(|locks| locks.0.clone()).unwrap_or_default();
     // Running behaviours and the components made from the scene, or in edit
     // mode the same as data.
@@ -1823,7 +1854,7 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.behaviours = names(false).collect();
     obj.components = names(true).collect();
     let disabled = specs.iter().filter(|spec| !spec.component && !spec.enabled);
-    obj.enabled = disabled.map(|spec| (spec.type_name.clone(), false)).collect();
+    obj.enabled.extend(disabled.map(|spec| (spec.type_name.clone(), false)));
     // Saved as loaded: values scripts change at runtime are not written back.
     obj.fields = specs
         .iter()
@@ -1915,6 +1946,30 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.wheel = world.get::<Wheel>(entity).copied();
     obj.lod_group = world.get::<LodGroup>(entity).map(|lod| LodGroupData::of(lod, &|e| file_path(world, ids, e)));
     obj
+}
+
+/// Whether the Obj has the component a switch switches. A switch is kept
+/// only for one it has.
+pub fn has_component(world: &World, entity: Entity, switch: Switch) -> bool {
+    match switch {
+        Switch::Renderer => world.has::<MeshRenderer>(entity),
+        Switch::Model => world.has::<ModelSource>(entity),
+        Switch::Light => world.has::<Light>(entity),
+        Switch::Camera => world.has::<Camera>(entity),
+        Switch::Audio => world.has::<AudioSource>(entity),
+        Switch::AudioListener => world.has::<AudioListener>(entity),
+        Switch::LodGroup => world.has::<LodGroup>(entity),
+        Switch::Collider => world.has::<Collider>(entity),
+        Switch::Character => world.has::<CharacterController>(entity),
+        Switch::Collider2d => world.has::<Collider2D>(entity),
+        Switch::Vehicle => world.has::<Vehicle>(entity),
+        Switch::Wheel => world.has::<Wheel>(entity),
+        Switch::PostVolume => world.has::<PostVolume>(entity),
+        Switch::WindZone => world.has::<WindZone>(entity),
+        Switch::Seasons => world.has::<Seasons>(entity),
+        Switch::FoliageInteraction => world.has::<FoliageInteraction>(entity),
+        Switch::Foliage => world.has::<FoliageSource>(entity),
+    }
 }
 
 /// A light of `kind` as a scene makes one when it says nothing more about it.

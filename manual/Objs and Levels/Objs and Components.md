@@ -75,5 +75,27 @@ names = ["Default", "", "Player", "Enemy", "Pickup"]
 
 A scene file writes an Obj's layer by its number, as `layer = 3`, so renaming a layer keeps its Objs on it. When you write a scene by hand you can use the name instead, as `layer = "Player"`. A script reads and sets `Obj.Layer` by number, and `LayerMask.NameToLayer("Player")` finds a layer's number by its name.
 
+## Switching Objs and components off
+
+The tick beside an Obj's name, at the top of the Inspector, switches the whole Obj on and off, as Unity's `SetActive` does. An Obj that is off takes everything inside it with it: none of it draws, lights, collides or makes a sound, and its behaviours get `OnDisable`. Tick it again and it all comes back as it was, with `OnEnable`. The Hierarchy shows an Obj that is off, and the Objs inside it, dimmed.
+
+Each component has a tick of its own, at the right of its title. Untick a Light and it stops shining, untick a Mesh Renderer and its model is no longer drawn, untick a Collider and nothing bumps into it any more, while the rest of the Obj goes on as before. An Audio Source that is ticked again starts over, playing on start if it is set to. A LOD Group that is off shows every one of its levels at once, as in Unity.
+
+The settings of a component that is off stay where they were, and you can still change them. Rigidbodies and Joints have no tick, as in Unity, and nor yet do Particle Systems, Smoke, Mist, water, terrain and the animation and gun components.
+
+A behaviour that is off when its Obj is switched off stays off when the Obj comes back: it gets OnEnable only once both its own tick and its Obj's are on.
+
+Each tick is a step to undo. A scene saves an Obj that is off as `active = false`, and the components and behaviours that are off as a table, a built-in component by its name and a behaviour by its type:
+
+```toml
+[[obj]]
+id = 12
+name = "Neon Tube"
+behaviours = ["Game.Flicker"]
+enabled = { light = false, "Game.Flicker" = false }
+```
+
+An Obj with everything on writes neither, so scenes from before the ticks read the same. In a prefab instance, each Obj saves only what it switches otherwise than its prefab, as an override. Scripts switch them with `Obj.Active` and `Enabled`; see [[Working with Objs]].
+
 > [!NOTE]
-> The Inspector also shows **Tag** and **Static** for an Obj, a switch to turn it on and off, and a box on each built-in component's title. These are not used yet, and are not saved. **Persistent**, beside Static, does work: it keeps the Obj through changes of level. See [[Scenes and Levels]].
+> The Inspector also shows **Tag** and **Static** for an Obj. These are not used yet, and are not saved. **Persistent**, beside Static, does work: it keeps the Obj through changes of level. See [[Scenes and Levels]].

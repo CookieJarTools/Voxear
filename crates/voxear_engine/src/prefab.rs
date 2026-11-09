@@ -61,7 +61,7 @@ use voxear_render::{
     Camera, Foliage, FoliageInteraction, Light, MaterialHandle, MeshRenderer, ModelPart, ModelRenderer, Ocean, PostVolume, Renderer,
     ParticleSystem, Seasons, Stream, WindZone, DryArea, Pool,
 };
-use voxear_scene::{BehaviourSpec, Name, Parent, Path, Placement, ScenePersistence, Transform};
+use voxear_scene::{BehaviourSpec, Inactive, Name, OffComponents, Parent, Path, Placement, ScenePersistence, Transform};
 
 use crate::{
     audio::{AudioListener, AudioSource, audio_source},
@@ -356,6 +356,7 @@ fn apply_instance(root: &mut ObjData, instance: &ObjData) {
     root.rotation = instance.rotation.or(root.rotation);
     root.scale = instance.scale.or(root.scale);
     root.persistent |= instance.persistent;
+    root.active = instance.active.or(root.active);
     root.behaviours.extend(instance.behaviours.iter().cloned());
     root.enabled.extend(instance.enabled.iter().map(|(name, on)| (name.clone(), *on)));
     root.components.extend(instance.components.iter().cloned());
@@ -443,6 +444,9 @@ pub struct TemplateObj {
     pub name: String,
     pub transform: Transform,
     pub persistent: bool,
+    /// Its own switch, and the components it switches off.
+    pub active: bool,
+    pub off: OffComponents,
     pub behaviours: Vec<BehaviourSpec>,
     pub camera: Option<Camera>,
     pub light: Option<Light>,
@@ -725,6 +729,12 @@ impl Template {
             }
             if obj.persistent {
                 world.insert(entity, ScenePersistence);
+            }
+            if !obj.active {
+                world.insert(entity, Inactive);
+            }
+            if !obj.off.is_empty() {
+                world.insert(entity, obj.off);
             }
             if let Some(prefab) = obj.prefab {
                 world.insert(entity, PrefabInstance(prefab));
@@ -1024,6 +1034,8 @@ pub(crate) fn resolve_obj(
         name: if data.name.is_empty() { "Obj".to_string() } else { data.name.clone() },
         transform: Transform::new(Vec3::from(data.position()), rotation, Vec3::from(data.scale())),
         persistent: data.persistent,
+        active: data.is_active(),
+        off: data.off_components(),
         behaviours: behaviour_specs(data)?,
         camera: data.camera.map(|c| Camera { fov_y_degrees: c.fov, exposure: c.exposure, near: c.near }),
         light,

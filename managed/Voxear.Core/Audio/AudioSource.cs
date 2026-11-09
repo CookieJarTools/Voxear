@@ -27,6 +27,13 @@ public readonly struct AudioSource : IEquatable<AudioSource>, IObjComponent
 	/// <summary>False when its Obj has no Audio Source, or is gone.</summary>
 	public bool IsValid => Obj.IsValid && NativeAudio.Source(Obj, NativeAudio.SourceExists) == 1f;
 
+	/// <summary>Whether it is switched on, as Unity's enabled. Off, it stops; back on, it plays again if it plays on start.</summary>
+	public bool Enabled
+	{
+		get { return Obj.IsEnabled(EngineComponent.AudioSource); }
+		set { Obj.SetEnabled(EngineComponent.AudioSource, value); }
+	}
+
 	/// <summary>Whether it is playing now, or about to at the end of the frame.</summary>
 	public bool IsPlaying => NativeAudio.Source(Obj, NativeAudio.SourcePlaying) == 1f;
 

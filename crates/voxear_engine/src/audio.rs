@@ -31,7 +31,7 @@ use voxear_assets::{AssetGuid, SoundImport};
 use voxear_core::math::Vec3;
 use voxear_ecs::{Component, Entity, World};
 use voxear_render::Camera;
-use voxear_scene::{Destroying, EditorOnly, Name, Transform, WorldTransform};
+use voxear_scene::{Destroying, EditorOnly, Name, Switch, Switched, Transform, WorldTransform};
 use voxear_scripting::{AudioAsk, BusValue, PlaySound, SoundFacts, SourceValue, VoiceValue};
 
 use voxear_audio::steam_audio::{Heard, Muffle, Occlusion, RoomHeard, SourceAcoustics, SteamAudio};
@@ -661,10 +661,13 @@ impl GameAudio {
             self.audio.set_listener(listener);
             listener
         });
+        let switched = Switched::of(world);
         let found: Vec<(Entity, AudioSource, Vec3)> = world
             .query_ref::<(Entity, &AudioSource, &Transform, Option<&WorldTransform>)>()
             .without::<Destroying>()
             .into_iter()
+            // One switched off stops, and starts again as it would at first once it is back on.
+            .filter(|(entity, ..)| switched.is_on(world, *entity, Switch::Audio))
             .map(|(entity, source, local, placed)| (entity, *source, position(local, placed)))
             .collect();
         let alive: HashSet<Entity> = found.iter().map(|(entity, ..)| *entity).collect();
@@ -1226,6 +1229,7 @@ pub fn listener(world: &World) -> Option<Listener> {
         .without::<EditorOnly>()
         .without::<Destroying>()
         .into_iter()
+        .filter(|(entity, ..)| voxear_scene::is_on(world, *entity, Switch::AudioListener))
         .map(|(entity, _, local, world)| (entity, placed(local, world)))
         .collect();
     if let Some((_, listener)) = first(listeners) {
@@ -1236,6 +1240,7 @@ pub fn listener(world: &World) -> Option<Listener> {
         .without::<EditorOnly>()
         .without::<Destroying>()
         .into_iter()
+        .filter(|(entity, ..)| voxear_scene::is_on(world, *entity, Switch::Camera))
         .map(|(entity, _, local, world)| (entity, placed(local, world)))
         .collect();
     first(cameras).map(|(_, listener)| listener)

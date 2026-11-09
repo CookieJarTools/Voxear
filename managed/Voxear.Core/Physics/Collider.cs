@@ -28,6 +28,13 @@ public readonly struct Collider : IEquatable<Collider>, IObjComponent
 	/// <summary>False when its Obj has no Collider, or is gone.</summary>
 	public bool IsValid => Obj.IsValid && NativePhysics.Flag(Obj, NativePhysics.ColliderHas);
 
+	/// <summary>Whether it is switched on, as Unity's enabled. Off, nothing bumps into it and a trigger tells of nothing; a Rigidbody beside it leaves physics too.</summary>
+	public bool Enabled
+	{
+		get { return Obj.IsEnabled(EngineComponent.Collider); }
+		set { Obj.SetEnabled(EngineComponent.Collider, value); }
+	}
+
 	public ColliderShape Shape
 	{
 		get { return (ColliderShape)(int)NativePhysics.Number(Obj, NativePhysics.ColliderShape, 0f); }

@@ -40,6 +40,34 @@ public readonly struct Obj : IEquatable<Obj>
 	}
 
 	/// <summary>
+	/// The Obj's own switch, as Unity's activeSelf and SetActive. Off, the Obj and everything under it do nothing: they
+	/// neither draw nor collide nor play, and their behaviours get OnDisable, then OnEnable once it is back on.
+	/// </summary>
+	public bool Active
+	{
+		get { return NativeSwitches.Active(this); }
+		set { NativeSwitches.SetActive(this, value); }
+	}
+
+	/// <summary>Whether the Obj and every Obj above it are on, as Unity's activeInHierarchy.</summary>
+	public bool ActiveInHierarchy => NativeSwitches.ActiveInHierarchy(this);
+
+	/// <summary>
+	/// Whether one of the Obj's engine components is switched on, as Unity's enabled. True when it has none, as nothing
+	/// is switched off. An Obj that is off keeps its components' switches as they are.
+	/// </summary>
+	public bool IsEnabled(EngineComponent component)
+	{
+		return NativeSwitches.Enabled(this, component);
+	}
+
+	/// <summary>Switches one of the Obj's engine components on or off. Off, it keeps its values, to come back as it was.</summary>
+	public void SetEnabled(EngineComponent component, bool enabled)
+	{
+		NativeSwitches.SetEnabled(this, component, enabled);
+	}
+
+	/// <summary>
 	/// Position, rotation and scale relative to the parent, or to the world for an Obj without one. An Obj that
 	/// FixedUpdate or physics moves is, outside FixedUpdate, part-way between where the last two fixed steps left it,
 	/// so it moves evenly on a display faster than they come; inside FixedUpdate it is where they left it.

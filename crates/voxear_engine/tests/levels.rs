@@ -2,7 +2,7 @@
 
 use voxear_engine::{Content, Engine, Levels, scene_file};
 use voxear_render::{Camera, PostProcess};
-use voxear_scene::{Name, Parent, ScenePersistence, Transform};
+use voxear_scene::{Inactive, Name, Parent, ScenePersistence, Switch, Transform};
 
 const ENVIRONMENT: &str = r#"
 format = 1
@@ -406,4 +406,61 @@ fn hellos_levels_save_back_unchanged() {
         let written = levels.save(&engine, &mut content, dir.path()).unwrap();
         assert!(written.is_empty(), "{level}: an unedited level writes nothing, but wrote {written:?}");
     }
+}
+
+#[test]
+fn objs_and_components_switched_off_survive_a_save_and_load_round_trip() {
+    let dir = project();
+    let scene = r#"
+format = 1
+
+[[obj]]
+id = 1
+name = "Lamp"
+active = false
+light = { type = "point" }
+
+[[obj]]
+id = 2
+name = "Bulb"
+parent = 1
+
+[[obj]]
+id = 3
+name = "Neon Tube"
+light = { type = "tube" }
+collider = { shape = "box" }
+enabled = { light = false }
+"#;
+    std::fs::write(dir.path().join("Scenes/Switched.scene"), scene).unwrap();
+    let mut content = Content::open(dir.path()).unwrap();
+    let mut engine = Engine::new();
+    let original = scene_file::read(&dir.path().join("Scenes/Switched.scene")).unwrap();
+    let spawned = scene_file::spawn(&mut engine, &mut content, None, &original, &Default::default()).unwrap();
+    let entities: Vec<_> = spawned.iter().map(|(_, e)| *e).collect();
+    let world = &engine.world;
+    let named = |name: &str| *entities.iter().find(|&&e| world.get::<Name>(e).unwrap().0 == name).unwrap();
+    let (lamp, bulb, tube) = (named("Lamp"), named("Bulb"), named("Neon Tube"));
+    assert!(world.has::<Inactive>(lamp) && !voxear_scene::is_active(world, bulb), "the Bulb is off with its Lamp");
+    assert!(voxear_scene::is_active_self(world, bulb), "but its own switch is on");
+    assert!(!voxear_scene::is_on(world, tube, Switch::Light));
+    assert!(voxear_scene::is_on(world, tube, Switch::Collider));
+
+    let captured = scene_file::capture(&engine.world, &mut content, &entities);
+    let saved = dir.path().join("Scenes/Copy.scene");
+    scene_file::write(&saved, &captured).unwrap();
+    let text = std::fs::read_to_string(&saved).unwrap();
+    let reloaded = scene_file::read(&saved).unwrap();
+    assert_eq!(toml::to_string(&reloaded).unwrap(), toml::to_string(&captured).unwrap());
+    let obj = |name: &str| reloaded.objs.iter().find(|o| o.name == name).unwrap();
+    assert_eq!(obj("Lamp").active, Some(false));
+    assert_eq!(obj("Neon Tube").enabled, [(Switch::Light.name().to_string(), false)].into());
+    assert_eq!((obj("Bulb").active, obj("Bulb").enabled.len()), (None, 0), "an Obj all on writes neither");
+    assert_eq!(text.matches("active").count(), 1, "{text}");
+
+    // Switched back on, nothing of it is written, as a scene from before switches.
+    voxear_scene::set_active(&mut engine.world, lamp, true);
+    voxear_scene::set_component_on(&mut engine.world, tube, Switch::Light, true);
+    let text = toml::to_string(&scene_file::capture(&engine.world, &mut content, &entities)).unwrap();
+    assert!(!text.contains("active") && !text.contains("enabled"), "{text}");
 }

@@ -25,6 +25,13 @@ public readonly struct Collider2D : IEquatable<Collider2D>, IObjComponent
 	/// <summary>False when its Obj has no Collider2D, or is gone.</summary>
 	public bool IsValid => Obj.IsValid && NativePhysics.Flag(Obj, NativePhysics.Collider2DHas);
 
+	/// <summary>Whether it is switched on, as Unity's enabled. Off, nothing bumps into it; a Rigidbody2D beside it leaves physics too.</summary>
+	public bool Enabled
+	{
+		get { return Obj.IsEnabled(EngineComponent.Collider2D); }
+		set { Obj.SetEnabled(EngineComponent.Collider2D, value); }
+	}
+
 	public ColliderShape2D Shape
 	{
 		get { return (ColliderShape2D)(int)NativePhysics.Number(Obj, NativePhysics.Collider2DShape, 0f); }

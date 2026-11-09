@@ -10,7 +10,9 @@ use voxear_engine::{
     scene_file,
 };
 use voxear_render::Light;
-use voxear_scene::{AttachedBehaviour, BehaviourHandle, BehaviourSpec, Behaviours, Name, Parent, Placement, Transform};
+use voxear_scene::{
+    AttachedBehaviour, BehaviourHandle, BehaviourSpec, Behaviours, Name, Parent, Placement, Switch, Transform,
+};
 
 const LAMP: &str = r#"
 format = 1
@@ -549,4 +551,45 @@ prefab = "Sleeper.prefab"
     let on = |name: &str, type_name: &str| starts_enabled(&reloaded, find(&reloaded, name), type_name);
     assert!(on("Turret", "Game.Turret") && !on("Barrel", "Game.Recoil"));
     assert!(!on("Mill", "Game.Creak") && on("Mill", "Game.Hum") && on("Sleeper", "Game.Nap"));
+}
+
+#[test]
+fn an_instance_saves_what_it_switches_otherwise_than_its_prefab() {
+    let dir = street();
+    let mut content = Content::open(dir.path()).unwrap();
+    let mut engine = Engine::new();
+    let scene = scene_file::read(&dir.path().join("Scenes/Street.scene")).unwrap();
+    let spawned = scene_file::spawn(&mut engine, &mut content, None, &scene, &Default::default()).unwrap();
+    let entities: Vec<Entity> = spawned.iter().map(|(_, e)| *e).collect();
+    let red = find(&engine, "Red Lamp");
+    let red_glow = engine
+        .world
+        .query_ref::<(Entity, &Name, &Parent)>()
+        .into_iter()
+        .find(|(_, n, p)| n.0 == "Glow" && p.0 == red)
+        .unwrap()
+        .0;
+    voxear_scene::set_active(&mut engine.world, red, false);
+    voxear_scene::set_component_on(&mut engine.world, red_glow, Switch::Light, false);
+
+    let saved = scene_file::capture(&engine.world, &mut content, &entities);
+    let instance = saved.objs.iter().find(|o| o.prefab.as_deref() == Some("Prefabs/RedLamp.prefab")).unwrap();
+    assert_eq!(instance.active, Some(false));
+    let glow = &instance.overrides["1/2"];
+    assert_eq!(glow.get("enabled").unwrap().to_string(), "{ light = false }");
+    let corner = saved.objs.iter().find(|o| o.name == "Corner Light").unwrap();
+    assert!(corner.active.is_none() && !corner.overrides.values().any(|o| o.contains_key("enabled")));
+
+    // And it loads back off.
+    let path = dir.path().join("Scenes/Copy.scene");
+    scene_file::write(&path, &saved).unwrap();
+    let mut reloaded = Engine::new();
+    let copy = scene_file::read(&path).unwrap();
+    scene_file::spawn(&mut reloaded, &mut content, None, &copy, &Default::default()).unwrap();
+    let red = find(&reloaded, "Red Lamp");
+    assert!(!voxear_scene::is_active_self(&reloaded.world, red));
+    let glows = reloaded.world.query_ref::<(Entity, &Name, &Parent)>().into_iter().filter(|(_, n, _)| n.0 == "Glow");
+    let (lit, unlit): (Vec<_>, Vec<_>) =
+        glows.partition(|(e, ..)| voxear_scene::is_component_on(&reloaded.world, *e, Switch::Light));
+    assert_eq!((lit.len(), unlit.len()), (1, 1), "only the red lamp's glow is off");
 }

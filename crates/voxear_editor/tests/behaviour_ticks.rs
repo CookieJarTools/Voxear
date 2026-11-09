@@ -3,7 +3,8 @@
 //! saves so and the game starts with it disabled, Awake but no OnEnable,
 //! Start or Update; ticked while playing, it gets OnEnable, Start and its
 //! updates; unticked, OnDisable once and no more updates; ticked again,
-//! OnEnable and its updates, but no second Start. A file of its own, so it
+//! OnEnable and its updates, but no second Start. Its Obj's tick does the
+//! same, and leaves it off when its own tick is. A file of its own, so it
 //! runs in a process of its own, since .NET starts only once per process.
 //! Skips itself without .NET or a GPU.
 
@@ -145,6 +146,20 @@ fn click_tick(ui: &mut Ui) {
     ui.pointer_button(false);
 }
 
+/// Clicks the tick by the Obj's name.
+fn click_obj_tick(ui: &mut Ui) {
+    let tick = ui.find(ui.root(), "obj-active").expect("the Obj's tick");
+    let [x, y, w, h] = ui.rect(tick);
+    ui.pointer_move(x + w / 2.0, y + h / 2.0);
+    ui.pointer_button(true);
+    ui.pointer_button(false);
+}
+
+/// Whether the tick by the Obj's name shows it on.
+fn obj_ticked(editor: &voxear_editor::Editor) -> bool {
+    editor.ui.is_checked(editor.ui.find(editor.ui.root(), "obj-active").expect("the Obj's tick"))
+}
+
 /// Whether Switched's tick shows it on.
 fn ticked(editor: &voxear_editor::Editor) -> bool {
     editor.ui.is_checked(tick(&editor.ui, "Switched").expect("the Switched section's tick"))
@@ -256,6 +271,30 @@ fn a_behaviours_tick_disables_and_enables_it_while_playing() {
     click_tick(&mut editor.ui);
     until(&mut editor, &mut renderer, "its updates again", |e| shows(e, "Ticks") > stopped + 2);
     assert_eq!(counts(&editor), [1, 2, 1, 1]);
+
+    // Its Obj switched off, it gets OnDisable and no updates, its own tick still on; back on, OnEnable.
+    click_obj_tick(&mut editor.ui);
+    until(&mut editor, &mut renderer, "its OnDisable with its Obj", |e| shows(e, "Disables") == 2);
+    let stopped = shows(&editor, "Ticks");
+    frames(&mut editor, &mut renderer, 10);
+    assert_eq!(shows(&editor, "Ticks"), stopped, "no updates while its Obj is off");
+    assert_eq!(counts(&editor), [1, 2, 2, 1]);
+    assert!(ticked(&editor) && !obj_ticked(&editor), "its own tick on, its Obj's off");
+    click_obj_tick(&mut editor.ui);
+    until(&mut editor, &mut renderer, "its updates with its Obj back", |e| shows(e, "Ticks") > stopped + 2);
+    assert_eq!(counts(&editor), [1, 3, 2, 1]);
+
+    // Off by its own tick, its Obj going off and on leaves it off.
+    click_tick(&mut editor.ui);
+    until(&mut editor, &mut renderer, "its OnDisable again", |e| shows(e, "Disables") == 3);
+    let stopped = shows(&editor, "Ticks");
+    click_obj_tick(&mut editor.ui);
+    frames(&mut editor, &mut renderer, 5);
+    click_obj_tick(&mut editor.ui);
+    frames(&mut editor, &mut renderer, 10);
+    assert!(obj_ticked(&editor) && !ticked(&editor));
+    assert_eq!(counts(&editor), [1, 3, 3, 1], "no OnEnable while its own tick is off");
+    assert_eq!(shows(&editor, "Ticks"), stopped);
 
     // Stopping brings back the scene as it was edited, the behaviour unticked.
     editor.stop(&mut renderer);

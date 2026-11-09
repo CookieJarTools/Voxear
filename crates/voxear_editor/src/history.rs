@@ -22,7 +22,7 @@ use voxear_engine::{
 use voxear_render::{
     Camera, Foliage, FoliageInteraction, Light, LodGroup, MeshRenderer, ModelRenderer, Ocean, ParticleSystem, Renderer, Seasons, WindZone, DryArea, Pool, Stream,
 };
-use voxear_scene::{Layer, Name, ScenePersistence, Transform};
+use voxear_scene::{Inactive, Layer, Name, OffComponents, ScenePersistence, Transform};
 
 use crate::objs::{self, Placing, Taken};
 
@@ -38,6 +38,9 @@ pub struct ObjState {
     pub name: String,
     pub transform: Transform,
     pub persistent: bool,
+    /// Its own switch, and the components it switches off.
+    pub active: bool,
+    pub off: OffComponents,
     pub layer: Option<Layer>,
     pub renderer: Option<MeshRenderer>,
     /// Lights and Audio Sources are boxed: few Objs have one, and every
@@ -85,8 +88,9 @@ pub struct ObjState {
     pub vehicle: Option<Box<Vehicle>>,
     pub wheel: Option<Box<Wheel>>,
     pub behaviours: Option<EditBehaviours>,
-    /// Components locked for designers, when this is a prefab's Obj.
-    pub locks: Option<Locks>,
+    /// Components locked for designers, when this is a prefab's Obj, boxed
+    /// as few Objs have them.
+    pub locks: Option<Box<Locks>>,
 }
 
 /// A Terrain's parts, as an undo step keeps them.
@@ -115,6 +119,8 @@ impl ObjState {
             name: world.get::<Name>(entity)?.0.clone(),
             transform: *world.get::<Transform>(entity)?,
             persistent: world.has::<ScenePersistence>(entity),
+            active: !world.has::<Inactive>(entity),
+            off: world.get::<OffComponents>(entity).copied().unwrap_or_default(),
             layer: world.get::<Layer>(entity).copied(),
             renderer: world.get::<MeshRenderer>(entity).copied(),
             light: world.get::<Light>(entity).copied().map(Box::new),
@@ -163,7 +169,7 @@ impl ObjState {
             vehicle: world.get::<Vehicle>(entity).copied().map(Box::new),
             wheel: world.get::<Wheel>(entity).copied().map(Box::new),
             behaviours: world.get::<EditBehaviours>(entity).cloned(),
-            locks: world.get::<Locks>(entity).cloned(),
+            locks: world.get::<Locks>(entity).cloned().map(Box::new),
         })
     }
 
@@ -187,6 +193,8 @@ impl ObjState {
             *transform = self.transform;
         }
         put(world, entity, self.persistent.then_some(ScenePersistence));
+        put(world, entity, (!self.active).then_some(Inactive));
+        put(world, entity, Some(self.off).filter(|off| !off.is_empty()));
         put(world, entity, self.layer);
         put(world, entity, self.renderer);
         put(world, entity, self.light.as_deref().copied());
@@ -233,7 +241,7 @@ impl ObjState {
         put(world, entity, self.vehicle.as_deref().copied());
         put(world, entity, self.wheel.as_deref().copied());
         put(world, entity, self.behaviours.clone());
-        put(world, entity, self.locks.clone());
+        put(world, entity, self.locks.as_deref().cloned());
     }
 }
 

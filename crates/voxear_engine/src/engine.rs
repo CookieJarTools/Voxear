@@ -501,7 +501,7 @@ impl Engine {
         crate::particles::start(&mut self.world, self.time.elapsed);
         crate::smoke::fill_smokes(&mut self.world, self.time.elapsed);
         crate::mist::trail_mists(&mut self.world, self.time.elapsed);
-        let year = self.world.query_ref::<&Seasons>().into_iter().next().map(|seasons| seasons.time_of_year);
+        let year = self.first_seasons().and_then(|entity| self.world.get::<Seasons>(entity)).map(|s| s.time_of_year);
         let features = self.world.query_ref::<&voxear_render::Ocean>().into_iter().next().map(|ocean| ocean.features());
         if let Some(scripts) = self.scripts.as_mut() {
             scripts.publish_time_of_year(year);
@@ -593,7 +593,7 @@ impl Engine {
         self.run_stage("Last");
         // The year scripts turned turns the level's first Seasons.
         if let Some(time) = self.scripts.as_mut().and_then(ScriptRuntime::take_time_of_year)
-            && let Some(seasons) = self.world.query::<&mut Seasons>().into_iter().next()
+            && let Some(seasons) = self.first_seasons().and_then(|entity| self.world.get_mut::<Seasons>(entity))
         {
             seasons.time_of_year = time;
         }
@@ -704,6 +704,8 @@ impl Engine {
     /// Awake, OnEnable, Start, OnDisable and OnDestroy for what changed.
     fn flush(&mut self) {
         profile_scope!("Lifecycle");
+        // Behaviours on Objs switched off since the last flush get OnDisable, and those back on OnEnable.
+        self.lifecycle.follow_active(voxear_scene::inactive_objs(&self.world));
         self.with_host(|lifecycle, host| lifecycle.flush(host));
     }
 
@@ -756,6 +758,13 @@ impl Engine {
 
     /// Runs lifecycle work with scripts attached, then destroys the Objs
     /// scripts asked to destroy meanwhile.
+    /// The level's Seasons, which turn its plants: the first one switched on.
+    fn first_seasons(&self) -> Option<Entity> {
+        let switched = voxear_scene::Switched::of(&self.world);
+        let found = self.world.query_ref::<(Entity, &Seasons)>().into_iter().map(|(entity, _)| entity);
+        found.into_iter().find(|&entity| switched.is_on(&self.world, entity, voxear_scene::Switch::Seasons))
+    }
+
     fn with_host(&mut self, f: impl FnOnce(&mut Lifecycle, &mut dyn BehaviourHost)) {
         match &self.scripts {
             Some(scripts) => f(&mut self.lifecycle, &mut scripts.host(&mut self.world)),

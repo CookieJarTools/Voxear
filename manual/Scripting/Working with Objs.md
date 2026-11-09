@@ -72,6 +72,25 @@ if (manager != null)
 
 `Current` is `null` when there is none.
 
+## Switching Objs and components off
+
+```csharp
+// The door and everything inside it, off:
+door.Active = false;
+
+// Only the lamp's light:
+lamp.SetEnabled(EngineComponent.Light, false);
+
+// A component that has its own handle has its own Enabled too:
+Obj.Collider.Enabled = false;
+```
+
+`Obj.Active` is the Obj's own switch, as the tick at the top of the Inspector. An Obj that is off takes everything inside it with it, and its behaviours get `OnDisable`, then `OnEnable` when it is back on. `ActiveInHierarchy` says whether the Obj and every Obj it is inside are on, so a child of an Obj that is off can be `Active` but not `ActiveInHierarchy`, as in Unity.
+
+`IsEnabled` and `SetEnabled` switch one of the engine's components on the Obj, named by `EngineComponent`: `MeshRenderer`, `Light`, `Camera`, `AudioSource` and the rest. `Collider`, `Collider2D`, `CharacterController`, `AudioSource`, `Vehicle` and `Wheel` also have `Enabled` themselves. A component that is off keeps its values, to come back as it was.
+
+To switch a behaviour off, set its own `Enabled`.
+
 ## Spawning and destroying
 
 ```csharp

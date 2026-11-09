@@ -6,7 +6,7 @@
 
 use anyhow::{Context, Result};
 use voxear_core::math::{Mat4, Vec3};
-use voxear_ecs::{Component, World};
+use voxear_ecs::{Component, Entity, World};
 use voxear_scene::{Destroying, Transform, WorldTransform};
 
 use crate::post::PostProcess;
@@ -78,10 +78,13 @@ impl PostVolume {
 /// The settings as the camera at `point` sees them: `post` with every post
 /// volume blended over it, lowest priority first.
 pub fn blend_volumes(world: &World, post: PostProcess, point: Vec3) -> PostProcess {
-    let volumes = world.query_ref::<(&PostVolume, &Transform, Option<&WorldTransform>)>().without::<Destroying>();
+    let volumes =
+        world.query_ref::<(Entity, &PostVolume, &Transform, Option<&WorldTransform>)>().without::<Destroying>();
+    let switched = voxear_scene::Switched::of(world);
     let mut found: Vec<(i32, &PostVolume, f32)> = volumes
         .into_iter()
-        .filter_map(|(volume, local, world)| {
+        .filter(|(entity, ..)| switched.is_on(world, *entity, voxear_scene::Switch::PostVolume))
+        .filter_map(|(_, volume, local, world)| {
             let transform = world.map_or_else(|| local.matrix(), |world| world.0);
             let amount = volume.influence(&transform, point);
             (amount > 0.0 && !volume.overrides.is_empty()).then_some((volume.priority, volume, amount))

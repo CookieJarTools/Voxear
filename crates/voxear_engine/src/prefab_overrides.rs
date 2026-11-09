@@ -206,6 +206,8 @@ pub fn put(
     }
     world.insert(entity, (Name(obj.name), obj.transform));
     set(world, entity, obj.persistent.then_some(ScenePersistence));
+    set(world, entity, (!obj.active).then_some(voxear_scene::Inactive));
+    set(world, entity, Some(obj.off).filter(|off| !off.is_empty()));
     set::<Camera>(world, entity, obj.camera);
     set::<Light>(world, entity, obj.light);
     if drawn {

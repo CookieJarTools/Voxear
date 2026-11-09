@@ -97,6 +97,8 @@ struct Row {
     model: Option<bool>,
     /// A part of a model, listed under its Obj.
     part: bool,
+    /// Switched off, by its own tick or one above it, and shown dimmed.
+    inactive: bool,
 }
 
 /// What the tree shows, rebuilt from the world when it changes.
@@ -187,6 +189,7 @@ impl TreeItems for Items {
         if let Some(button) = self.2.borrow_mut().iter_mut().find(|(button, _)| *button == parts[4]) {
             button.1 = Some(item);
         }
+        ui.set_class(row, "inactive", shown.inactive);
     }
 }
 
@@ -582,6 +585,7 @@ fn snapshot(
         places.extend(entities.iter().enumerate().map(|(at, entity)| (*entity, (scene, at))));
     }
     let objs = world.query_ref::<(Entity, &Name, Option<&Parent>)>().without::<EditorOnly>().without::<Destroying>();
+    let switched = voxear_scene::Switched::of(world);
     let mut all: Vec<(Entity, Option<Entity>, Place)> = Vec::new();
     for (entity, name, parent) in objs {
         if !filter.is_empty() && !name.0.to_lowercase().contains(filter) {
@@ -592,7 +596,8 @@ fn snapshot(
         let icon = if prefab == Some(true) { "cube" } else { icon(world, entity) };
         let badge = if is_instance(world, types, entity) { "Instance" } else { "" };
         let model = world.has::<ModelRenderer>(entity).then(|| showing_parts.contains(&entity));
-        let row = Row { name: name.0.clone(), icon, header: false, badge, prefab, model, part: false };
+        let inactive = !switched.is_active(entity);
+        let row = Row { name: name.0.clone(), icon, header: false, badge, prefab, model, part: false, inactive };
         snapshot.rows.insert(entity.to_bits(), row);
         let (scene, at) = places.get(&entity).copied().unwrap_or((active, usize::MAX));
         all.push((entity, parent.map(|p| p.0), (scene, at, entity.index())));
@@ -618,6 +623,7 @@ fn snapshot(
                 prefab: None,
                 model: None,
                 part: false,
+                inactive: false,
             });
         snapshot.scenes.insert(header, *guid);
         if alongside {
@@ -647,7 +653,8 @@ fn snapshot(
             let item = part_item(owner, part.node);
             let name = names.get(part.node as usize).filter(|name| !name.is_empty()).cloned();
             let name = name.unwrap_or_else(|| format!("Part {}", part.node + 1));
-            let row = Row { name, icon: "box", header: false, badge: "", prefab: None, model: None, part: true };
+            let inactive = !switched.is_active(owner);
+            let row = Row { name, icon: "box", header: false, badge: "", prefab: None, model: None, part: true, inactive };
             snapshot.rows.insert(item, row);
             snapshot.owners.insert(item, owner);
             snapshot.children.entry(owner.to_bits()).or_default().push(item);

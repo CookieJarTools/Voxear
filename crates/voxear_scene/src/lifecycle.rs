@@ -15,8 +15,13 @@
 //! Instantiating is the one exception to waiting for a flush, as in Unity:
 //! [`activate`](Lifecycle::activate) runs Awake and OnEnable on the new batch
 //! before it returns, and its Start still waits for the next flush.
+//!
+//! A behaviour on an Obj that is switched off (see [`crate::Inactive`]) is
+//! not enabled however it asks to be: it gets OnDisable when its Obj goes
+//! off and OnEnable when it comes back, as in Unity. It still gets its Awake
+//! while off, which Unity holds back until the Obj comes on.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use voxear_ecs::Entity;
 
@@ -122,8 +127,17 @@ struct Record {
     awake: bool,
     enabled: bool,
     wants_enabled: bool,
+    /// Its Obj is on, and everything above it.
+    obj_active: bool,
     started: bool,
     destroying: bool,
+}
+
+impl Record {
+    /// Whether it should be enabled: it asks to be and its Obj is on.
+    fn wants(&self) -> bool {
+        self.wants_enabled && self.obj_active
+    }
 }
 
 #[derive(Default)]
@@ -138,6 +152,8 @@ pub struct Lifecycle {
     next_seq: u64,
     requests: Vec<Request>,
     dispatch: Vec<BehaviourHandle>,
+    /// The Objs switched off, as last followed.
+    inactive: HashSet<Entity>,
 }
 
 impl Lifecycle {
@@ -155,6 +171,7 @@ impl Lifecycle {
             awake: false,
             enabled: false,
             wants_enabled: registration.enabled,
+            obj_active: !self.inactive.contains(&registration.entity),
             started: false,
             destroying: false,
         };
@@ -198,11 +215,12 @@ impl Lifecycle {
         let record = self.record(handle);
         record.awake = true;
         record.enabled = adopted.enabled;
+        let wants = record.wants();
         if adopted.enabled {
             self.to_start.push(handle);
         }
-        // OnEnable may have disabled it again, or it never got enabled.
-        if adopted.enabled != registration.enabled {
+        // OnEnable may have disabled it again, or it never got enabled, or its Obj is off.
+        if adopted.enabled != wants {
             self.toggled.push(handle);
         }
         if adopted.destroyed {
@@ -224,6 +242,25 @@ impl Lifecycle {
             Request::SetEnabled(handle, enabled) => self.set_enabled(handle, enabled),
             Request::Destroy(handle) => self.destroy(handle),
         }
+    }
+
+    /// Follows the Objs switched off (see [`crate::inactive_objs`]): their
+    /// behaviours get OnDisable at the next flush, and those of Objs back on
+    /// OnEnable.
+    pub fn follow_active(&mut self, inactive: HashSet<Entity>) {
+        if inactive == self.inactive {
+            return;
+        }
+        for (handle, record) in &mut self.records {
+            let active = !inactive.contains(&record.entity);
+            if record.obj_active != active {
+                record.obj_active = active;
+                if record.awake {
+                    self.toggled.push(*handle);
+                }
+            }
+        }
+        self.inactive = inactive;
     }
 
     pub fn entity(&self, handle: BehaviourHandle) -> Option<Entity> {
@@ -377,7 +414,7 @@ impl Lifecycle {
         }
         self.collect_requests(host);
 
-        let enabling = self.filtered(&awakening, |r| r.wants_enabled && !r.destroying);
+        let enabling = self.filtered(&awakening, |r| r.wants() && !r.destroying);
         self.dispatch(host, Phase::OnEnable, &enabling);
         for handle in &enabling {
             self.record(*handle).enabled = true;
@@ -392,13 +429,13 @@ impl Lifecycle {
         toggled.dedup();
         sort_by_order(&self.records, &mut toggled);
 
-        let disabling = self.filtered(&toggled, |r| r.enabled && !r.wants_enabled);
+        let disabling = self.filtered(&toggled, |r| r.enabled && !r.wants());
         self.dispatch(host, Phase::OnDisable, &disabling);
         for handle in &disabling {
             self.record(*handle).enabled = false;
         }
 
-        let enabling = self.filtered(&toggled, |r| !r.enabled && r.wants_enabled && !r.destroying);
+        let enabling = self.filtered(&toggled, |r| !r.enabled && r.wants() && !r.destroying);
         self.dispatch(host, Phase::OnEnable, &enabling);
         for handle in &enabling {
             self.record(*handle).enabled = true;
@@ -496,6 +533,26 @@ mod tests {
             order,
             enabled: true,
         }
+    }
+
+    #[test]
+    fn behaviours_on_an_obj_switched_off_are_disabled_until_it_comes_back() {
+        let mut lifecycle = Lifecycle::new();
+        let mut host = Recorder::default();
+        let (on, off) = (Entity::from_bits(1 << 32), Entity::from_bits((1 << 32) | 1));
+        lifecycle.register(Registration { entity: on, ..reg(0, 0) });
+        lifecycle.register(Registration { entity: off, ..reg(1, 0) });
+        lifecycle.follow_active(HashSet::from([off]));
+        lifecycle.flush(&mut host);
+        assert_eq!(host.log[1], (Phase::OnEnable, vec![0]));
+        host.log.clear();
+        lifecycle.run(Phase::Update, &mut host);
+        assert_eq!(host.log, vec![(Phase::Update, vec![0])]);
+
+        host.log.clear();
+        lifecycle.follow_active(HashSet::from([on]));
+        lifecycle.flush(&mut host);
+        assert_eq!(host.log, vec![(Phase::OnDisable, vec![0]), (Phase::OnEnable, vec![1]), (Phase::Start, vec![1])]);
     }
 
     #[test]

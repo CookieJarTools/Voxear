@@ -192,8 +192,14 @@ impl LodChoices {
     /// Chooses for every group. `sphere` gives a mesh's bounding sphere in
     /// its own space, which the groups' sizes are measured from.
     pub fn new(world: &World, camera: LodCamera, sphere: &dyn Fn(MeshHandle) -> Option<(Vec3, f32)>) -> Self {
-        let groups: Vec<(Entity, &LodGroup)> =
-            world.query_ref::<(Entity, &LodGroup)>().without::<Destroying>().into_iter().collect();
+        // A group switched off chooses nothing, and every level of it shows, as in Unity.
+        let switched = voxear_scene::Switched::of(world);
+        let groups: Vec<(Entity, &LodGroup)> = world
+            .query_ref::<(Entity, &LodGroup)>()
+            .without::<Destroying>()
+            .into_iter()
+            .filter(|(entity, _)| switched.is_on(world, *entity, voxear_scene::Switch::LodGroup))
+            .collect();
         if groups.is_empty() {
             return Self::default();
         }

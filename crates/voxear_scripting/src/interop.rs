@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 60;
+pub(crate) const API_VERSION: u32 = 61;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -416,6 +416,8 @@ pub(crate) struct NativeApi {
         distance: f32,
         hit: *mut crate::physics::RaycastHitData,
     ) -> i32,
+    /// `Obj.Active` and a component's `Enabled` (see `switches`).
+    pub obj_switch: unsafe extern "C" fn(entity: u64, what: i32, set: i32) -> i32,
 }
 
 /// The kinds of component scripts reach through one entry, `kind_value`,
@@ -1780,6 +1782,7 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         terrain_count: crate::terrain::terrain_count,
         terrain_ground: crate::terrain::terrain_ground,
         terrain_raycast: crate::terrain::terrain_raycast,
+        obj_switch: crate::switches::obj_switch,
     }
 }
 

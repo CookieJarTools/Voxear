@@ -55,11 +55,15 @@ pub struct WaterPoint {
 /// each Stream's points where its Path is now.
 pub fn update(world: &mut World, time: f64) {
     voxear_scripting::set_water_sampler(for_scripts);
+    // The first Global Wind Zone that is on, as the renderer blows the sea with.
+    let switched = voxear_scene::Switched::of(world);
     let zone = world
-        .query_ref::<(&WindZone, &Transform, Option<&WorldTransform>)>()
+        .query_ref::<(Entity, &WindZone, &Transform, Option<&WorldTransform>)>()
         .into_iter()
-        .find(|(zone, ..)| zone.shape == voxear_render::WindShape::Global)
-        .map(|(zone, transform, at)| (placed(transform, at).1, zone.strength));
+        .find(|(entity, zone, ..)| {
+            zone.shape == voxear_render::WindShape::Global && switched.is_on(world, *entity, voxear_scene::Switch::WindZone)
+        })
+        .map(|(_, zone, transform, at)| (placed(transform, at).1, zone.strength));
     let first = world.query_ref::<(Entity, &Ocean, &Transform, Option<&WorldTransform>)>().into_iter().next().map(
         |(entity, ocean, transform, at)| {
             let (position, rotation) = placed(transform, at);

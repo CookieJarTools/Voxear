@@ -19,7 +19,7 @@ use voxear_core::math::{Mat4, Quat, Vec2, Vec3, Vec4, camera::lh::proj::vulkan};
 use voxear_ecs::{Entity, World};
 use voxear_engine::audio::AudioSource;
 use voxear_render::{Camera, Foliage, Light, MeshHandle, MeshRenderer, ModelRenderer, Renderer};
-use voxear_scene::{Destroying, EditorOnly, Parent, Transform, WorldTransform};
+use voxear_scene::{Destroying, EditorOnly, Parent, Switch, Switched, Transform, WorldTransform};
 use voxear_ui::{Color, Shape};
 
 /// How long the handles are on screen, in logical pixels.
@@ -204,8 +204,10 @@ pub fn pick(
         .query_ref::<(Entity, &Transform, Option<&WorldTransform>, Option<&Light>, Option<&Camera>, Option<&AudioSource>)>()
         .without::<EditorOnly>()
         .without::<Destroying>();
+    // An Obj that is off shows no icon to click, as in Unity.
+    let switched = Switched::of(world);
     for (entity, transform, placed, light, lens, sound) in marked {
-        if !markers.show(light.is_some(), lens.is_some(), sound.is_some()) {
+        if !markers.show(light.is_some(), lens.is_some(), sound.is_some()) || !switched.is_active(entity) {
             continue;
         }
         let at = placed.map_or(transform.position, |w| w.0.w_axis.truncate());
@@ -260,6 +262,9 @@ fn mesh_hits(
         .query_ref::<(Entity, &MeshRenderer, &Transform, Option<&WorldTransform>)>()
         .without::<EditorOnly>()
         .without::<Destroying>();
+    // What is not drawn is not hit.
+    let switched = Switched::of(world);
+    let drawn = |entity: Entity, switch: Switch| switched.is_on(world, entity, switch);
     let mut hits = Vec::new();
     let mut try_box = |entity: Entity, matrix: Mat4, (min, max): (Vec3, Vec3), mesh: Option<MeshHandle>| {
         let inverse = matrix.inverse();
@@ -275,7 +280,7 @@ fn mesh_hits(
         let hit = matrix.transform_point3(local_origin + local_direction * t);
         hits.push((hit.distance(origin), hit, entity));
     };
-    for (entity, renderer_of, transform, placed) in meshes {
+    for (entity, renderer_of, transform, placed) in meshes.into_iter().filter(|(e, ..)| drawn(*e, Switch::Renderer)) {
         let Some(bounds) = renderer.mesh_bounds(renderer_of.mesh) else { continue };
         try_box(entity, placed.map_or_else(|| transform.matrix(), |w| w.0), bounds, Some(renderer_of.mesh));
     }
@@ -285,7 +290,7 @@ fn mesh_hits(
         .query_ref::<(Entity, &ModelRenderer, &Transform, Option<&WorldTransform>)>()
         .without::<EditorOnly>()
         .without::<Destroying>();
-    for (entity, model, transform, placed) in models {
+    for (entity, model, transform, placed) in models.into_iter().filter(|(e, ..)| drawn(*e, Switch::Model)) {
         let obj = placed.map_or_else(|| transform.matrix(), |w| w.0);
         for part in model.parts.iter() {
             let Some(bounds) = renderer.mesh_bounds(part.mesh) else { continue };
@@ -307,7 +312,8 @@ fn mesh_hits(
         .query_ref::<(Entity, &Foliage, &Transform, Option<&WorldTransform>)>()
         .without::<EditorOnly>()
         .without::<Destroying>();
-    for (entity, foliage, transform, placed) in foliage.into_iter().filter(|_| plants) {
+    let foliage = foliage.into_iter().filter(|(e, ..)| plants && drawn(*e, Switch::Foliage));
+    for (entity, foliage, transform, placed) in foliage {
         let Some(bounds) = renderer.mesh_bounds(foliage.mesh) else { continue };
         let obj = placed.map_or_else(|| transform.matrix(), |w| w.0);
         for plant in foliage.plants.iter() {

@@ -24,6 +24,13 @@ public readonly struct Wheel : IEquatable<Wheel>, IObjComponent
 	/// <summary>False when its Obj has no Wheel, or is gone.</summary>
 	public bool IsValid => Obj.IsValid && NativePhysics.Flag(Obj, NativePhysics.WheelHas);
 
+	/// <summary>Whether it is switched on, as Unity's enabled. Off, its Vehicle drives without it.</summary>
+	public bool Enabled
+	{
+		get { return Obj.IsEnabled(EngineComponent.Wheel); }
+		set { Obj.SetEnabled(EngineComponent.Wheel, value); }
+	}
+
 	/// <summary>In metres.</summary>
 	public float Radius
 	{

@@ -4,7 +4,7 @@
 use voxear_core::math::{Mat3, Mat4, Quat, Vec3, Vec4, camera::lh::proj::vulkan};
 use voxear_ecs::{Component, Entity, World};
 use voxear_rhi::TextureId;
-use voxear_scene::{Destroying, Hidden, Parent, Transform, WorldTransform};
+use voxear_scene::{Destroying, Hidden, Parent, Switch, Switched, Transform, WorldTransform};
 
 use crate::{
     assets::{MaterialHandle, MeshHandle},
@@ -412,10 +412,14 @@ pub fn extract(
     sphere: &dyn Fn(MeshHandle) -> Option<(Vec3, f32)>,
 ) -> ExtractedFrame {
     let aspect = width as f32 / height.max(1) as f32;
+    // Nothing switched off draws, lights or looks: neither an Obj that is off nor a component.
+    let switched = Switched::of(world);
+    let on = |entity: Entity, switch: Switch| switched.is_on(world, entity, switch);
     let (camera, position, rotation) = world
         .query_ref::<(voxear_ecs::Entity, &Camera, &Transform, Option<&WorldTransform>)>()
         .without::<Destroying>()
         .into_iter()
+        .filter(|(entity, ..)| on(*entity, Switch::Camera))
         .find(|(entity, ..)| options.camera.is_none_or(|chosen| chosen == *entity))
         .map(|(_, camera, local, world)| (camera, local, world))
         .map(|(camera, local, world)| {
@@ -531,7 +535,8 @@ pub fn extract(
     let mut sun_found = false;
     let shining = world.query_ref::<(Entity, &Light, &Transform)>().without::<Destroying>();
     let sun_look = world.resource::<crate::looks::SunLook>().copied();
-    for (_, light, transform) in shining.into_iter().filter(|(entity, ..)| !lods.hidden.contains(entity)) {
+    let lit = shining.into_iter().filter(|(entity, ..)| !lods.hidden.contains(entity) && on(*entity, Switch::Light));
+    for (_, light, transform) in lit {
         // A look changes the sun's colour and strength, and gives what the light leaves at its default.
         let looked;
         let light = match (light.kind, sun_look) {
@@ -578,16 +583,20 @@ pub fn extract(
     frame.light_count = lights.len() as u32;
     let local_shadows = local_shadows(&mut frame, &mut lights, shadowed);
     // What pushes through foliage, the nearest the camera first.
-    let pushing = world.query_ref::<(&crate::FoliageInteraction, &Transform, Option<&WorldTransform>)>();
+    let pushing = world.query_ref::<(Entity, &crate::FoliageInteraction, &Transform, Option<&WorldTransform>)>();
     let pushers = pushing
         .without::<Destroying>()
         .into_iter()
-        .map(|(push, transform, at)| (at.map_or(transform.position, |w| w.0.w_axis.truncate()), *push))
+        .filter(|(entity, ..)| on(*entity, Switch::FoliageInteraction))
+        .map(|(_, push, transform, at)| (at.map_or(transform.position, |w| w.0.w_axis.truncate()), *push))
         .collect();
     frame.pushes = crate::foliage::pushes(position, pushers);
-    // The first Global Wind Zone blows over the whole level.
-    let zones = world.query_ref::<(&crate::WindZone, &Transform)>().without::<Destroying>();
-    let zone = zones.into_iter().find(|(zone, _)| zone.shape == crate::WindShape::Global).map(|(zone, transform)| (*zone, transform.rotation));
+    // The first Global Wind Zone that is on blows over the whole level.
+    let zones = world.query_ref::<(Entity, &crate::WindZone, &Transform)>().without::<Destroying>();
+    let global = |(entity, zone, _): &(Entity, &crate::WindZone, &Transform)| {
+        zone.shape == crate::WindShape::Global && on(*entity, Switch::WindZone)
+    };
+    let zone = zones.into_iter().find(global).map(|(_, zone, transform)| (*zone, transform.rotation));
     if let Some((zone, rotation)) = zone {
         frame.wind = zone.gpu(rotation);
     }
@@ -603,8 +612,8 @@ pub fn extract(
     });
     let water_bodies = water_bodies(world, position);
     // And the first Seasons turns all its plants.
-    let seasons = world.query_ref::<&crate::Seasons>().without::<Destroying>();
-    if let Some(seasons) = seasons.into_iter().next() {
+    let seasons = world.query_ref::<(Entity, &crate::Seasons)>().without::<Destroying>();
+    if let Some((_, seasons)) = seasons.into_iter().find(|(entity, _)| on(*entity, Switch::Seasons)) {
         frame.seasons = seasons.gpu();
     }
 
@@ -629,7 +638,7 @@ pub fn extract(
         .query_ref::<(Entity, &MeshRenderer, &Transform, Option<&WorldTransform>)>()
         .without::<Destroying>()
         .into_iter()
-        .filter(|(entity, ..)| shown(*entity))
+        .filter(|(entity, ..)| shown(*entity) && on(*entity, Switch::Renderer))
         .map(|(entity, renderer, transform, world_transform)| {
             entities.push(Owner { entity, plant: None, part: None });
             let model = world_transform.map_or_else(
@@ -655,7 +664,7 @@ pub fn extract(
     // Each part of a model an Obj draws whole, where the model puts it.
     let models = world.query_ref::<(Entity, &crate::ModelRenderer, &Transform, Option<&WorldTransform>)>();
     for (entity, drawn, transform, world_transform) in models.without::<Destroying>() {
-        if !shown(entity) {
+        if !shown(entity) || !on(entity, Switch::Model) {
             continue;
         }
         let obj = world_transform.map_or_else(
@@ -898,12 +907,13 @@ fn water_bodies(world: &World, camera: Vec3) -> crate::water::WaterBodies {
         .collect();
     // Sphere and Box Wind Zones go with the Dry Areas, which the shaders tell apart by their kind.
     type Dry = (f32, crate::gpu::GpuWaterBody, Option<crate::MeshHandle>, Option<crate::gpu::GpuWaterBody>);
+    let switched = Switched::of(world);
     let gusts: Vec<Dry> = world
-        .query_ref::<(&crate::WindZone, &Transform, Option<&WorldTransform>)>()
+        .query_ref::<(Entity, &crate::WindZone, &Transform, Option<&WorldTransform>)>()
         .without::<Destroying>()
         .into_iter()
-        .filter(|(zone, ..)| zone.shape != crate::WindShape::Global)
-        .map(|(zone, transform, at)| {
+        .filter(|(entity, zone, ..)| zone.shape != crate::WindShape::Global && switched.is_on(world, *entity, Switch::WindZone))
+        .map(|(_, zone, transform, at)| {
             let (position, rotation) = placed(transform, at);
             (position.distance_squared(camera), zone.gpu_local(position, rotation), None, None)
         })

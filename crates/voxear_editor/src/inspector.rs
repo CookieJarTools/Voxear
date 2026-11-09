@@ -1,14 +1,16 @@
-//! The Inspector: the selected Obj's header (its kind, name, whether it is
-//! persistent, staying through level changes, and the active, tag, layer
-//! and static settings to come; for a prefab instance or an Obj in one, the
+//! The Inspector: the selected Obj's header (its kind, name, its tick that
+//! switches it on and off, whether it is persistent, staying through level
+//! changes, its layer, and the tag and static settings to come; for a
+//! prefab instance or an Obj in one, the
 //! prefab, with Open and Select, as Unity's prefab bar), then a section for its
 //! Transform and for each component (see `props`), divided by lines. Values
 //! apply as they are typed or picked, and values that change elsewhere show
 //! here, except in the field being edited. When an Obj's components, or what
 //! they show, change (a light of another kind, a component added or undone),
-//! the Inspector is built again. A behaviour's tick enables and disables it,
-//! as Unity's `enabled`: while editing, the scene starts it so; while
-//! playing, it gets OnDisable and no more updates, or OnEnable again.
+//! the Inspector is built again. A component's tick switches it on and
+//! off, as Unity's `enabled`, its values still editable; a behaviour's
+//! gives it OnDisable and no more updates while playing, or OnEnable again,
+//! and while editing the scene starts it so.
 //!
 //! Menus: a context click on a value's row offers Reset for the Transform
 //! and script fields, and while playing, "Keep value after play", which
@@ -30,10 +32,11 @@ use voxear_ecs::Entity;
 use voxear_engine::{
     Game,
     prefab_overrides::ValuePath,
+    scene_file,
     script_types::{BehaviourType, FieldInspector, InfoKind, ScriptTypes},
 };
 use voxear_render::{LodGroup, Renderer};
-use voxear_scene::{Layer, Layers, Name, ScenePersistence, Transform};
+use voxear_scene::{Layer, Layers, Name, ScenePersistence, Switch, Transform};
 use voxear_ui::{DragSource, MenuItem, NodeId, Style, Ui};
 
 use voxear_engine::prefab::{FromPrefab, Locks, PrefabInstance};
@@ -60,6 +63,8 @@ use crate::{
 /// they edit, and the row each is on.
 struct Fields {
     name: NodeId,
+    /// The tick that switches the Obj on and off.
+    active: NodeId,
     persistent: NodeId,
     /// The Layer dropdown, and the layer each of its choices is.
     layer: (NodeId, Vec<u8>),
@@ -300,6 +305,8 @@ pub struct Inspector {
     headers: Vec<(Option<Part>, NodeId)>,
     /// Each behaviour's tick, by its type.
     behaviour_ticks: Vec<(String, NodeId)>,
+    /// Each component's tick, by what it switches.
+    switches: Vec<(Switch, NodeId)>,
     rows: Vec<PropRow>,
     add: Option<NodeId>,
     /// The project's scripts, as their last build describes them.
@@ -409,6 +416,7 @@ impl Inspector {
             transform_menu: None,
             headers: Vec::new(),
             behaviour_ticks: Vec::new(),
+            switches: Vec::new(),
             rows: Vec::new(),
             add: None,
             types: ScriptTypes::default(),
@@ -915,6 +923,7 @@ impl Inspector {
         (self.fields, self.transform_menu, self.add, self.menu) = (None, None, None, None);
         self.headers.clear();
         self.behaviour_ticks.clear();
+        self.switches.clear();
         self.rows.clear();
         self.previews.clear();
         self.doc_buttons.clear();
@@ -936,7 +945,7 @@ impl Inspector {
             ui.add_class(hint, "placeholder");
             return;
         };
-        let (name_row, name, persistent, layer, prefab_buttons) =
+        let ((name_row, name, active), persistent, layer, prefab_buttons) =
             header(ui, self.root, game, entity, self.also.len() + 1);
         self.prefab_buttons = prefab_buttons;
 
@@ -950,7 +959,7 @@ impl Inspector {
             (Field::Rotation, rotation_row),
             (Field::Scale, scale_row),
         ];
-        self.fields = Some(Fields { name, persistent, layer, position, rotation, scale, rows });
+        self.fields = Some(Fields { name, active, persistent, layer, position, rotation, scale, rows });
         self.transform_menu = menu;
         self.headers.push((None, transform));
 
@@ -962,19 +971,20 @@ impl Inspector {
                 Part::Behaviour(name) if self.types.is_component(name) => "box",
                 _ => part.icon(),
             };
-            // A behaviour's tick works; a C# component, only data, has none; other components' ticks show on for now.
+            // A behaviour's tick and a switchable component's work; a C# component, only data, and a component
+            // that cannot be switched off have none, as in Unity.
             let end = match part {
-                Part::Behaviour(name) => match props::behaviour_enabled(game, entity, name) {
-                    Some(on) => HeaderEnd::Switch(on),
-                    None => HeaderEnd::Nothing,
-                },
-                _ => HeaderEnd::Switch(true),
+                Part::Behaviour(name) => props::behaviour_enabled(game, entity, name).map_or(HeaderEnd::Nothing, HeaderEnd::Switch),
+                _ => part.switch().map_or(HeaderEnd::Nothing, |switch| {
+                    HeaderEnd::Switch(voxear_scene::is_component_on(world, entity, switch))
+                }),
             };
             let (header, rows, tick) = section(ui, self.root, part.title(), icon, end);
             self.headers.push((Some(part.clone()), header));
-            if let (Part::Behaviour(name), Some(tick)) = (part, tick) {
-                ui.set_tooltip(tick, "Enabled", None);
-                self.behaviour_ticks.push((name.clone(), tick));
+            match (part, part.switch(), tick) {
+                (Part::Behaviour(name), _, Some(tick)) => self.behaviour_ticks.push((name.clone(), tick)),
+                (_, Some(switch), Some(tick)) => self.switches.push((switch, tick)),
+                _ => {}
             }
             // A component whose module the project is without keeps its values, but shows only how to get it back.
             if let Some(module) = part.module().filter(|module| !game.project.modules().has(*module)) {
@@ -1604,15 +1614,32 @@ impl Inspector {
         false
     }
 
-    /// Each behaviour's tick enables or disables it on every Obj edited that
-    /// has it, then shows whether it is, as scripts may switch it too.
+    /// The Obj's tick, its components' and its behaviours' switch them on
+    /// and off on every Obj edited that has them, then show how they are, as
+    /// scripts may switch them too.
     fn update_ticks(&mut self, ui: &mut Ui, game: &mut Game, entity: Entity) {
+        let Some(fields) = &self.fields else { return };
+        let edited: Vec<Entity> = std::iter::once(entity).chain(self.also.iter().copied()).collect();
+        let world = &mut game.engine.world;
+        if ui.changed(fields.active) {
+            let active = ui.is_checked(fields.active);
+            edited.iter().for_each(|&target| voxear_scene::set_active(world, target, active));
+        }
+        ui.set_checked(fields.active, voxear_scene::is_active_self(world, entity));
+        for &(switch, tick) in &self.switches {
+            if ui.changed(tick) {
+                let on = ui.is_checked(tick);
+                // Each other Obj selected that has the component switches it too.
+                let having: Vec<Entity> =
+                    edited.iter().copied().filter(|&target| scene_file::has_component(world, target, switch)).collect();
+                having.into_iter().for_each(|target| voxear_scene::set_component_on(world, target, switch, on));
+            }
+            ui.set_checked(tick, voxear_scene::is_component_on(world, entity, switch));
+        }
         for (name, tick) in &self.behaviour_ticks {
             if ui.changed(*tick) {
                 let on = ui.is_checked(*tick);
-                for target in std::iter::once(entity).chain(self.also.iter().copied()) {
-                    props::set_behaviour_enabled(game, target, name, on);
-                }
+                edited.iter().for_each(|&target| props::set_behaviour_enabled(game, target, name, on));
             }
             if let Some(on) = props::behaviour_enabled(game, entity, name) {
                 ui.set_checked(*tick, on);
@@ -2474,12 +2501,12 @@ fn numbers(value: &Value) -> Vec<f32> {
     }
 }
 
-/// The Obj's icon, its name field and whether it is active, then rows for
-/// its tag, layer, whether it is static and whether it is persistent, and
-/// for a prefab instance or an Obj in one, its prefab. Returns the top row,
-/// the name field, the persistent box, and the prefab row's Open and Select
-/// with the prefab's path. Active, tag, layer and static show their
-/// defaults until Objs have them.
+/// The Obj's icon, its name field and its tick, which switches it on and
+/// off, then rows for its tag, layer, whether it is static and whether it
+/// is persistent, and for a prefab instance or an Obj in one, its prefab.
+/// Returns the top row, the name field and the tick, the persistent box,
+/// and the prefab row's Open and Select with the prefab's path. Tag and
+/// static show their defaults until Objs have them.
 /// The Obj's name and its switch on one row, Tag and Layer side by side on
 /// the next, and Static and Persistent on a short one under them, kept
 /// short as Unity's header is. With
@@ -2491,7 +2518,7 @@ fn header(
     game: &Game,
     entity: Entity,
     editing: usize,
-) -> (NodeId, NodeId, NodeId, (NodeId, Vec<u8>), Option<PrefabButtons>) {
+) -> Header {
     let world = &game.engine.world;
     let header = ui.panel(root, Style::column());
     ui.add_class(header, "inspector-header");
@@ -2511,7 +2538,9 @@ fn header(
         let many = ui.add_label(top, &format!("{editing} Objs"));
         ui.add_class(many, "inspector-many");
     }
-    ui.toggle(top, "", true);
+    let active = ui.toggle(top, "", voxear_scene::is_active_self(world, entity));
+    ui.set_name(active, "obj-active");
+    ui.set_tooltip(active, "Active: off, the Obj and everything under it do nothing", None);
     let tags = ui.panel(header, Style::row());
     ui.add_class(tags, "header-tags");
     let label = ui.add_label(tags, "Tag");
@@ -2554,8 +2583,13 @@ fn header(
         let overrides = root.then(|| button("Overrides"));
         PrefabButtons { open, select, overrides, path }
     });
-    (top, name, persistent, (layer, numbers), buttons)
+    ((top, name, active), persistent, (layer, numbers), buttons)
 }
+
+/// What `header` makes: the top row, the name field and the Obj's tick, the
+/// persistent box, the Layer dropdown with the layer of each choice, and the
+/// prefab row's buttons.
+type Header = ((NodeId, NodeId, NodeId), NodeId, (NodeId, Vec<u8>), Option<PrefabButtons>);
 
 /// The Prefab row's Open, Select and, on an instance's root, Overrides, and
 /// the prefab's path.
@@ -2701,7 +2735,8 @@ fn axis_fields(ui: &mut Ui, vector: NodeId, letters: &[&str]) -> Vec<NodeId> {
 }
 
 /// What a section's header has at its right: the Transform's menu button,
-/// a tick, on or off, or nothing, for a C# component.
+/// a tick, on or off, or nothing, for a component Unity gives no tick and
+/// a C# component.
 enum HeaderEnd {
     Menu,
     Switch(bool),
@@ -2723,6 +2758,7 @@ fn section(ui: &mut Ui, root: NodeId, title: &str, icon: &str, end: HeaderEnd) -
         HeaderEnd::Switch(on) => {
             let tick = ui.toggle(header, "", on);
             ui.add_class(tick, "component-switch");
+            ui.set_tooltip(tick, "Enabled", None);
             Some(tick)
         }
         HeaderEnd::Nothing => None,

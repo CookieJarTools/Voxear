@@ -685,6 +685,11 @@
     color: var(--vx-prefab-member);
 }
 
+/* An Obj switched off, by its own tick or one above it, dims, as in Unity's Hierarchy. */
+.inactive > .row-name, .inactive > .row-icon {
+    opacity: 0.45;
+}
+
 /* The Inspector's Prefab row: the prefab an instance comes from, to open or show. */
 .prefab-icon {
     width: 13px;

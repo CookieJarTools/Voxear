@@ -256,6 +256,10 @@ impl FoliageCache {
         let mut seen = Vec::new();
         let found =
             world.query_ref::<(Entity, &Foliage, &Transform, Option<&WorldTransform>)>().without::<Destroying>();
+        // A Foliage switched off grows nothing, and what it had built goes, as for one taken away.
+        let switched = voxear_scene::Switched::of(world);
+        let on = |entity: Entity| switched.is_on(world, entity, voxear_scene::Switch::Foliage);
+        let found = found.into_iter().filter(|(entity, ..)| on(*entity));
         for (entity, foliage, transform, placed) in found {
             seen.push(entity);
             let model = placed.map_or_else(

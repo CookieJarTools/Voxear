@@ -27,9 +27,9 @@ use voxear_audio::{
     steam_audio::{AcousticMaterial, Acoustics, Heard, PathProbes, RoomHeard, RoomReverb, SourceAcoustics, Wall},
 };
 use voxear_core::math::{Mat4, Vec3};
-use voxear_ecs::World;
+use voxear_ecs::{Entity, World};
 use voxear_physics::scene::{Acoustic, Collider, ColliderMesh, ColliderShape, Rigidbody};
-use voxear_scene::{Destroying, Transform, WorldTransform};
+use voxear_scene::{Destroying, Switch, Switched, Transform, WorldTransform};
 
 /// Rings from pole to pole, and points round each, of a sphere's or a
 /// capsule's walls: coarse, as sound does not need more.
@@ -214,13 +214,14 @@ pub fn material(acoustic: Acoustic) -> AcousticMaterial {
 /// The colliders that are walls: neither triggers nor moved by physics,
 /// each with where it is and its mesh, for a Mesh collider.
 fn still_colliders(world: &World) -> Vec<(Collider, Mat4, Option<&ColliderMesh>)> {
+    let switched = Switched::of(world);
     world
-        .query_ref::<(&Collider, &Transform, Option<&WorldTransform>, Option<&ColliderMesh>)>()
+        .query_ref::<(Entity, &Collider, &Transform, Option<&WorldTransform>, Option<&ColliderMesh>)>()
         .without::<Rigidbody>()
         .without::<Destroying>()
         .into_iter()
-        .filter(|(collider, ..)| !collider.trigger)
-        .map(|(collider, local, placed, mesh)| {
+        .filter(|(entity, collider, ..)| !collider.trigger && switched.is_on(world, *entity, Switch::Collider))
+        .map(|(_, collider, local, placed, mesh)| {
             (*collider, placed.map_or_else(|| local.matrix(), |placed| placed.0), mesh)
         })
         .collect()

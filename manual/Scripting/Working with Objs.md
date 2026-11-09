@@ -21,6 +21,7 @@ Obj.LookAt(new Vector3(0f, 0f, 10f));
 - `WorldPosition` and `WorldRotation` say where it is in the world. You can read them, but not set them.
 - `Forward`, `Right` and `Up` are the directions the Obj faces, in the world.
 - For the scale, set the whole Transform: `Obj.Transform = Obj.Transform with { Scale = new Vector3(2f) };`
+- `MeshBox` is the box round the mesh the Obj draws, where the Obj is: its corners `Least` and `Most` in the mesh's own space, and its `Frame` in the world. It is null for an Obj that draws no mesh, until the mesh has loaded, and in a game with no window, such as a server.
 
 Distances are in metres and angles in degrees. Y is up and Z is forward.
 

@@ -280,6 +280,9 @@ pub struct Assets {
     /// Each mesh's box in its own space, for picking: exact for meshes
     /// uploaded from their vertices, the bounding sphere's box for cooked ones.
     mesh_bounds: HashMap<MeshHandle, (Vec3, Vec3)>,
+    /// How many times `mesh_bounds` has changed, for copies of it to know
+    /// when they are out of date.
+    bounds_changes: u64,
     /// Meshes' finest triangles read back for picking, kept once read.
     triangles: std::sync::Mutex<HashMap<MeshHandle, Arc<MeshTriangles>>>,
     textures: HashMap<TextureId, Image>,
@@ -362,6 +365,7 @@ impl Assets {
                 .map(RangeAllocator::new),
             mesh_slots: SlotAllocator::new(MAX_MESHES as u32),
             mesh_bounds: HashMap::new(),
+            bounds_changes: 0,
             triangles: std::sync::Mutex::new(HashMap::new()),
             material_slots: SlotAllocator::new(MAX_MATERIALS as u32),
             glass: Vec::new(),
@@ -430,6 +434,7 @@ impl Assets {
         let ranges = MeshRanges::new(self.reserve_space(sizes(data, lods, &meshlets))?);
         self.mesh_ranges.insert(mesh, ranges);
         self.mesh_bounds.remove(&mesh);
+        self.bounds_changes += 1;
         self.forget_triangles(mesh);
         self.write_mesh(gpu, mesh, ranges, data, lods, &meshlets)?;
         self.retire(frame, Retiring::Space(old.space));
@@ -492,6 +497,7 @@ impl Assets {
         });
         if !mesh.vertices.is_empty() {
             self.mesh_bounds.insert(handle, (min, max));
+            self.bounds_changes += 1;
         }
         if let (Some(hierarchies), Some(lod)) = (&mut self.hierarchies, lods.first()) {
             let points: Vec<Vec3> = mesh.vertices.iter().map(|v| Vec3::from(v.position)).collect();
@@ -534,6 +540,11 @@ impl Assets {
     /// A mesh's box in its own space, min and max corners.
     pub fn mesh_bounds(&self, mesh: MeshHandle) -> Option<(Vec3, Vec3)> {
         self.mesh_bounds.get(&mesh).copied()
+    }
+
+    /// Every mesh's box, with how many times they have changed.
+    pub fn mesh_boxes(&self) -> (u64, &HashMap<MeshHandle, (Vec3, Vec3)>) {
+        (self.bounds_changes, &self.mesh_bounds)
     }
 
     /// A mesh's finest triangles in its own space, read back from the GPU
@@ -679,6 +690,7 @@ impl Assets {
             let reach = Vec3::splat(mesh.radius);
             self.most_meshlets[handle.0 as usize] = mesh.lods.iter().map(|&(_, _, count)| count).max().unwrap_or(0);
             self.mesh_bounds.insert(*handle, (mesh.center - reach, mesh.center + reach));
+            self.bounds_changes += 1;
             if let (Some(ranges), Some(&(_, count, _))) = (self.mesh_ranges.get_mut(handle), mesh.lods.first()) {
                 (ranges.first_lod, ranges.sphere) = (count, (mesh.center, mesh.radius));
                 ranges.keep_lods(mesh.lods.iter().map(|&(error, count, _)| LodInfo { triangles: count / 3, error }));
@@ -809,6 +821,7 @@ impl Assets {
     /// no frame has drawn yet.
     fn release_mesh(&mut self, handle: MeshHandle) {
         self.mesh_bounds.remove(&handle);
+        self.bounds_changes += 1;
         self.forget_triangles(handle);
         if let Some(ranges) = self.mesh_ranges.remove(&handle) {
             self.free_space(ranges.space);
@@ -1043,6 +1056,7 @@ impl Assets {
             Retiring::BottomLevel(level) => gpu.destroy_acceleration_structure(level),
             Retiring::Mesh(mesh) => {
                 self.mesh_bounds.remove(&mesh);
+                self.bounds_changes += 1;
                 self.forget_triangles(mesh);
                 if let Some(hierarchies) = &mut self.hierarchies {
                     hierarchies.remove(mesh.0);

@@ -299,6 +299,13 @@ public readonly struct Obj : IEquatable<Obj>
 	/// <summary>The bones of the model the Obj draws, posed as they are this frame. Not valid when it draws none with bones.</summary>
 	public Skeleton Skeleton => new Skeleton(this);
 
+	/// <summary>
+	/// The box round the mesh the Obj draws, where the Obj is in the world: its corners in the mesh's own space, placed,
+	/// turned and scaled as the Obj is. Null when it draws no mesh, before its mesh has loaded, and in a game with no
+	/// window to draw in.
+	/// </summary>
+	public OrientedBox? MeshBox => MeshBoxes.Of(this);
+
 	/// <summary>The Obj's First-Person View. Not valid when it has none.</summary>
 	public FirstPersonView FirstPersonView => new FirstPersonView(this);
 

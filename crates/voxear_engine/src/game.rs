@@ -543,6 +543,10 @@ impl Game {
         self.net_begin(delta, renderer.as_deref_mut());
         self.models = ModelWork::for_renderer(renderer.as_deref());
         give_collider_meshes(&mut self.engine.world, &mut self.content);
+        // The meshes' boxes, as the renderer has them, for the scripts that ask.
+        if let Some(renderer) = renderer.as_deref() {
+            crate::mesh_boxes::refresh(&mut self.engine.world, renderer);
+        }
         if crate::modules::has(&self.engine.world, crate::modules::Module::Guns) {
             crate::guns::contact::give_shapes(&mut self.engine.world, renderer.as_deref());
             crate::guns::handling::give_handlings(&mut self.engine.world, &mut self.content);

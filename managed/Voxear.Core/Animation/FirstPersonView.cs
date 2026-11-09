@@ -31,6 +31,11 @@ public readonly struct FirstPersonView : IEquatable<FirstPersonView>, IObjCompon
 	private const int HideHeadValue = 12;
 	private const int BodyValue = 13;
 	private const int CameraValue = 14;
+	private const int EyePositionValue = 15;
+	private const int EyeRotationValue = 16;
+	private const int PunchValue = 17;
+	private const int GlanceValue = 18;
+	private const int FrameEyesValue = 19;
 
 	public static readonly FirstPersonView None = default;
 
@@ -134,6 +139,50 @@ public readonly struct FirstPersonView : IEquatable<FirstPersonView>, IObjCompon
 	{
 		get { return NativeComponent.ObjOf(Get(CameraValue)).Camera; }
 		set { NativeComponent.Set(NativeComponent.FirstPersonView, Obj, CameraValue, NativeComponent.ValueOf(value.Obj)); }
+	}
+
+	/// <summary>
+	/// Where the eyes are this frame, in the world: the camera's place for this machine's own player, and for anyone
+	/// else's, where what they hold is held before. At the level's middle until the view has placed them.
+	/// </summary>
+	public Vector3 EyePosition => Get(EyePositionValue).AsVector3();
+
+	/// <summary>Which way the eyes look this frame, in the world, with any kick from Punch but not a Glance.</summary>
+	public Quaternion EyeRotation
+	{
+		get
+		{
+			var turn = Get(EyeRotationValue);
+			return new Quaternion(turn.X, turn.Y, turn.Z, turn.W);
+		}
+	}
+
+	/// <summary>
+	/// Jolts the camera by a spin, in degrees a second about its across, up and forward, which springs back: a shot's
+	/// kick, a landing, a blast. Where the view looks stays as it was.
+	/// </summary>
+	public void Punch(Vector3 spin)
+	{
+		NativeComponent.Set(NativeComponent.FirstPersonView, Obj, PunchValue, new Vector4(spin, 0f));
+	}
+
+	/// <summary>
+	/// Has the eyes glance down by this many degrees next frame, toward what the hands are doing, turning the camera
+	/// alone. Ask it each frame: once it is no longer asked, the eyes ease back.
+	/// </summary>
+	public void Glance(float degrees)
+	{
+		Set(GlanceValue, degrees);
+	}
+
+	/// <summary>
+	/// Has the eyes go next frame to a place relative to its Obj, weight of the way from the head, from 0 to 1, easing
+	/// there: where the clips holding something were filmed from. Ask it each frame: once it is no longer asked, the
+	/// eyes go back to the head.
+	/// </summary>
+	public void FrameEyes(Vector3 at, float weight)
+	{
+		NativeComponent.Set(NativeComponent.FirstPersonView, Obj, FrameEyesValue, new Vector4(at, weight));
 	}
 
 	/// <summary>Takes the First-Person View off its Obj.</summary>

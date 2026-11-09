@@ -21,6 +21,7 @@ pub mod joints;
 pub mod keymaps;
 pub mod lod_groups;
 mod levels;
+pub mod mesh_boxes;
 pub mod lighting;
 mod lights;
 mod loading;

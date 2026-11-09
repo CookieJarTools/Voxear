@@ -432,6 +432,8 @@ pub enum ComponentKind {
     UiPanel = 4,
     /// A model's bones, as its Skeleton.
     Skeleton = 5,
+    /// The mesh an Obj draws, for its box.
+    MeshRenderer = 6,
     Gun = 16,
     GunHolder = 17,
 }

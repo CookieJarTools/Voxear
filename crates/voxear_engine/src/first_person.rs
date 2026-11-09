@@ -322,6 +322,11 @@ const LEAN: i32 = 11;
 const HIDE_HEAD: i32 = 12;
 const BODY: i32 = 13;
 const CAMERA: i32 = 14;
+const EYE_POSITION: i32 = 15;
+const EYE_ROTATION: i32 = 16;
+const PUNCH: i32 = 17;
+const GLANCE: i32 = 18;
+const FRAME_EYES: i32 = 19;
 
 pub(crate) fn register() {
     voxear_scripting::set_kind_values(voxear_scripting::ComponentKind::FirstPersonView, values);
@@ -344,6 +349,9 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
         }
         (REMOVE, Some(_)) => return world.remove::<FirstPersonView>(entity).map(|_| [0.0; 4]),
         _ => {}
+    }
+    if let Some(eyes) = eye_values(world, entity, what, written) {
+        return eyes;
     }
     let view = world.get_mut::<FirstPersonView>(entity)?;
     let Some(v) = written else {
@@ -379,6 +387,33 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
         _ => return None,
     }
     Some([0.0; 4])
+}
+
+/// A view's eyes as they are this frame, and what moves them from the next:
+/// a kick, a glance and a place to look from, their angles in degrees as
+/// scripts give them. `None` for anything else.
+fn eye_values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]>) -> Option<Option<[f32; 4]>> {
+    let done = Some(Some([0.0; 4]));
+    match (what, written) {
+        (EYE_POSITION | EYE_ROTATION, None) => {
+            let eye = world.get::<FirstPersonState>(entity).map_or(Mat4::IDENTITY, |state| state.eye);
+            let (_, rotation, position) = eye.to_scale_rotation_translation();
+            Some(Some(if what == EYE_POSITION { position.extend(0.0).to_array() } else { rotation.to_array() }))
+        }
+        (PUNCH, Some(v)) => {
+            punch(world, entity, Vec3::new(v[0], v[1], v[2]) * std::f32::consts::PI / 180.0);
+            done
+        }
+        (GLANCE, Some(v)) => {
+            glance(world, entity, v[0].to_radians());
+            done
+        }
+        (FRAME_EYES, Some(v)) => {
+            frame_eyes(world, entity, Vec3::new(v[0], v[1], v[2]), v[3]);
+            done
+        }
+        _ => None,
+    }
 }
 
 /// Whether a view is this machine's own player's: always offline, and in
@@ -495,6 +530,28 @@ mod tests {
         let rig = Rig::find(&world.get::<ModelRenderer>(body).unwrap().animation.as_ref().unwrap().skeleton).unwrap();
         assert!(hidden.bones[head] && hidden.bones[rig.neck.unwrap()], "the head and neck are hidden from the camera");
         assert!(world.get::<Pose>(body).unwrap().bones[head].x_axis.length() > 0.5, "though it stays where it is");
+    }
+
+    #[test]
+    fn a_script_reads_the_eyes_and_kicks_glances_and_frames_them() {
+        let mut world = World::new();
+        let (player, _, _) = player(&mut world);
+        place(&mut world);
+        let at = values(&mut world, player, EYE_POSITION, None).unwrap();
+        let eye = world.get::<FirstPersonState>(player).unwrap().eye;
+        assert_eq!(Vec3::new(at[0], at[1], at[2]), eye.w_axis.truncate());
+        let turn = values(&mut world, player, EYE_ROTATION, None).unwrap();
+        assert!(Quat::from_array(turn).angle_between(eye.to_scale_rotation_translation().1) < 1e-5);
+
+        values(&mut world, player, PUNCH, Some([-90.0, 0.0, 0.0, 0.0]));
+        values(&mut world, player, GLANCE, Some([10.0, 0.0, 0.0, 0.0]));
+        values(&mut world, player, FRAME_EYES, Some([0.0, 1.4, 0.1, 2.0]));
+        let state = world.get::<FirstPersonState>(player).copied().unwrap();
+        assert!((state.glance_goal - 10f32.to_radians()).abs() < 1e-6, "asked in degrees, kept in radians");
+        assert_eq!(state.framed, Some((Vec3::new(0.0, 1.4, 0.1), 1.0)), "a weight past 1 is 1");
+        place(&mut world);
+        let kicked = values(&mut world, player, EYE_ROTATION, None).unwrap();
+        assert!(Quat::from_array(kicked).angle_between(Quat::from_array(turn)) > 1e-3, "the kick turns the eyes");
     }
 
     #[test]

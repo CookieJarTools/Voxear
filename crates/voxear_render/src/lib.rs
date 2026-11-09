@@ -839,6 +839,15 @@ impl Renderer {
         self.assets.as_ref()?.mesh_bounds(mesh)
     }
 
+    /// Every mesh's box in its own space, as [`mesh_bounds`](Self::mesh_bounds)
+    /// has them, with how many times they have changed, for a copy kept
+    /// elsewhere to know when it is out of date.
+    pub fn mesh_boxes(
+        &self,
+    ) -> Option<(u64, &std::collections::HashMap<MeshHandle, (voxear_core::math::Vec3, voxear_core::math::Vec3)>)> {
+        Some(self.assets.as_ref()?.mesh_boxes())
+    }
+
     /// A mesh's finest triangles in its own space, for picking: read back
     /// from the GPU the first time, which waits for it, and kept.
     pub fn mesh_triangles(&self, mesh: MeshHandle) -> Option<std::sync::Arc<MeshTriangles>> {

@@ -16,6 +16,15 @@ var view = Obj.FirstPersonView;
 var aim = view.Forward;
 ```
 
+A script can also move the eyes for a moment, and read where they are:
+
+| Call | What it does |
+| --- | --- |
+| `view.EyePosition`, `view.EyeRotation` | Where the eyes are this frame, in the world, and which way they look |
+| `view.Punch(spin)` | Jolts the camera, in degrees a second about its across, up and forward. It springs back |
+| `view.Glance(degrees)` | The eyes look down for this frame, toward the hands, and ease back once it stops being asked |
+| `view.FrameEyes(at, weight)` | The eyes move toward a place by the Obj for this frame, and go back to the head once it stops being asked |
+
 In networked play, only this machine's own player's view moves the camera, hides the head and takes the mouse. Everyone else's keeps their head on.
 
 While playing, the camera it places sees from 5 cm away rather than the usual 10 cm, so the gun held at the eye and the hands working right before it are not cut off, while the neck and shoulders round the camera stay out of sight.

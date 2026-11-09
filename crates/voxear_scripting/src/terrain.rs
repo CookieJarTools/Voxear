@@ -69,9 +69,10 @@ pub(crate) unsafe extern "C" fn terrain_raycast(
 
 /// An edit to the ground as C# sends it: `TerrainEditData` in Voxear.Core,
 /// made by a `TerrainEdit`. `kind` is 0 raise, 1 crater, 2 flatten, 3 paint,
-/// 4 holes and 5 grass; `amount` the height raised, the crater's depth, the
-/// height in the world flattened to, the paint's strength or the grass's
-/// density; `cut` whether holes are cut or filled.
+/// 4 holes, 5 grass, 6 dig, 7 fill, 8 tunnel and 9 explode; `amount` the
+/// height raised, the crater's depth, the height in the world flattened to,
+/// the paint's strength or the grass's density; `cut` whether holes are cut
+/// or filled; `to` where a tunnel goes to.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct TerrainEditData {
@@ -80,10 +81,10 @@ pub struct TerrainEditData {
     pub at: [f32; 3],
     pub radius: f32,
     pub amount: f32,
-    pub _pad: u32,
+    pub to: [f32; 3],
 }
 
-const _: () = assert!(size_of::<TerrainEditData>() == 32, "TerrainEditData in Voxear.Core is 32 bytes");
+const _: () = assert!(size_of::<TerrainEditData>() == 40, "TerrainEditData in Voxear.Core is 40 bytes");
 
 /// The edit `data` makes of a terrain whose corner is at `corner`, in its
 /// space, with `surface` the number of the surface it lays; none for an
@@ -91,6 +92,7 @@ const _: () = assert!(size_of::<TerrainEditData>() == 32, "TerrainEditData in Vo
 fn local_edit(data: &TerrainEditData, corner: Vec3, surface: Option<u8>) -> Option<Edit> {
     let at = [data.at[0] - corner.x, data.at[2] - corner.z];
     let (radius, amount) = (data.radius, data.amount);
+    let local = |p: [f32; 3]| (Vec3::from(p) - corner).to_array();
     Some(match data.kind {
         0 => Edit::Raise { at, radius, height: amount },
         1 => Edit::Crater { at, radius, depth: amount, surface },
@@ -98,6 +100,10 @@ fn local_edit(data: &TerrainEditData, corner: Vec3, surface: Option<u8>) -> Opti
         3 => Edit::Paint { at, radius, surface: surface?, strength: amount },
         4 => Edit::Holes { at, radius, cut: data.cut != 0 },
         5 => Edit::Grass { at, radius, kind: None, amount },
+        6 => Edit::Dig { at: local(data.at), radius, surface },
+        7 => Edit::Fill { at: local(data.at), radius },
+        8 => Edit::Tunnel { from: local(data.at), to: local(data.to), radius, surface },
+        9 => Edit::Explode { at: local(data.at), radius, surface },
         _ => return None,
     })
 }
@@ -139,11 +145,19 @@ pub(crate) unsafe extern "C" fn terrain_edit(
                 kept.heights = terrain.heights;
                 kept.weights = terrain.weights;
                 kept.grass = terrain.grass;
+                kept.dug = terrain.dug;
                 changed += 1;
             }
         }
         if data.kind == 1 && changed > 0 {
             clear_plants(world, Vec3::from(data.at), data.radius);
+        }
+        // What stood on ground digging took away comes down.
+        if (6..=9).contains(&data.kind) && changed > 0 {
+            let reach = if data.kind == 8 { Vec3::from(data.at).distance(Vec3::from(data.to)) } else { 0.0 };
+            let middle =
+                (Vec3::from(data.at) + if data.kind == 8 { Vec3::from(data.to) } else { Vec3::from(data.at) }) * 0.5;
+            uproot(world, middle, reach * 0.5 + data.radius * 1.5);
         }
         Some(changed)
     });
@@ -159,6 +173,31 @@ fn clear_plants(world: &mut World, at: Vec3, radius: f32) {
         for (number, plant) in plants.standing() {
             let stands = plant.matrix(model).w_axis.truncate();
             if (stands.x - at.x).hypot(stands.z - at.z) <= radius {
+                gone.push((entity, number));
+            }
+        }
+    }
+    for (entity, number) in gone {
+        if let Some(plants) = world.get_mut::<Plants>(entity) {
+            plants.remove(number);
+        }
+    }
+}
+
+/// Takes away the plants within `radius` metres of `at` along the ground
+/// whose foot the ground fell away from, by more than a few centimetres.
+fn uproot(world: &mut World, at: Vec3, radius: f32) {
+    let mut gone: Vec<(Entity, u32)> = Vec::new();
+    for (entity, plants) in world.query_ref::<(Entity, &Plants)>().without::<Destroying>() {
+        let model = world_matrix(world, entity);
+        for (number, plant) in plants.standing() {
+            let foot = plant.matrix(model).w_axis.truncate();
+            if (foot.x - at.x).hypot(foot.z - at.z) > radius {
+                continue;
+            }
+            let fell =
+                voxear_terrain::ground_at(world, foot.x, foot.z).is_none_or(|ground| foot.y > ground.height + 0.1);
+            if fell {
                 gone.push((entity, number));
             }
         }

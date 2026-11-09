@@ -12,5 +12,5 @@ internal struct TerrainEditData
 	public Vector3 At;
 	public float Radius;
 	public float Amount;
-	public uint Pad;
+	public Vector3 To;
 }

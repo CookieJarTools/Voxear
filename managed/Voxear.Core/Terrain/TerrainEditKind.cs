@@ -20,4 +20,16 @@ public enum TerrainEditKind
 
 	/// <summary>Brings every kind of grass towards Amount: 0 clears it, 1 grows it fully.</summary>
 	Grass = 5,
+
+	/// <summary>Digs a ball of ground Radius metres round out of it, up and down too, laying Surface on what it bares.</summary>
+	Dig = 6,
+
+	/// <summary>Puts a ball of ground Radius metres round back.</summary>
+	Fill = 7,
+
+	/// <summary>Digs a tunnel Radius metres round from Point to To: a trench along the ground, or a way under it.</summary>
+	Tunnel = 8,
+
+	/// <summary>Blows a crater out of the ground at Point, Radius metres round, its lip thrown up, laying Surface on what it bares.</summary>
+	Explode = 9,
 }

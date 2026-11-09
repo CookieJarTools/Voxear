@@ -15,7 +15,7 @@ namespace Voxear;
 /// }
 /// </code>
 /// </summary>
-public readonly record struct TerrainEdit(TerrainEditKind Kind, Vector3 Point, float Radius, float Amount, MaterialAsset Surface = default, bool Cut = false)
+public readonly record struct TerrainEdit(TerrainEditKind Kind, Vector3 Point, float Radius, float Amount, MaterialAsset Surface = default, bool Cut = false, Vector3 To = default)
 {
 	/// <summary>Raises the ground within <paramref name="radius"/> metres by <paramref name="height"/> at the middle; less than nothing lowers it.</summary>
 	public static TerrainEdit Raise(Vector3 point, float radius, float height)
@@ -55,5 +55,29 @@ public readonly record struct TerrainEdit(TerrainEditKind Kind, Vector3 Point, f
 	public static TerrainEdit Grass(Vector3 point, float radius, float amount)
 	{
 		return new TerrainEdit(TerrainEditKind.Grass, point, radius, amount);
+	}
+
+	/// <summary>Digs a ball of ground <paramref name="radius"/> metres round out of it, laying the surface drawn with <paramref name="walls"/> on what it bares.</summary>
+	public static TerrainEdit Dig(Vector3 point, float radius, MaterialAsset walls = default)
+	{
+		return new TerrainEdit(TerrainEditKind.Dig, point, radius, 0f, walls);
+	}
+
+	/// <summary>Puts a ball of ground <paramref name="radius"/> metres round back.</summary>
+	public static TerrainEdit Fill(Vector3 point, float radius)
+	{
+		return new TerrainEdit(TerrainEditKind.Fill, point, radius, 0f);
+	}
+
+	/// <summary>Digs a tunnel <paramref name="radius"/> metres round from <paramref name="from"/> to <paramref name="to"/>, rounded at its ends.</summary>
+	public static TerrainEdit Tunnel(Vector3 from, Vector3 to, float radius, MaterialAsset walls = default)
+	{
+		return new TerrainEdit(TerrainEditKind.Tunnel, from, radius, 0f, walls, false, to);
+	}
+
+	/// <summary>Blows a crater <paramref name="radius"/> metres round out of the ground at <paramref name="point"/>, its lip thrown up.</summary>
+	public static TerrainEdit Explode(Vector3 point, float radius, MaterialAsset walls = default)
+	{
+		return new TerrainEdit(TerrainEditKind.Explode, point, radius, 0f, walls);
 	}
 }

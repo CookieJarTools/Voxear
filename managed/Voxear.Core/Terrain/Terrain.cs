@@ -132,6 +132,42 @@ public static unsafe class Terrain
 		return Apply(TerrainEdit.Grass(point, radius, amount));
 	}
 
+	/// <summary>
+	/// Digs a ball of ground <paramref name="radius"/> metres round out of the terrain at <paramref name="point"/>,
+	/// up and down as well as across, so it can undercut and overhang as heights cannot: a dugout, a shell hole's
+	/// steep sides. The surface drawn with <paramref name="walls"/> is laid on what it bares, and what stood on ground it
+	/// took away comes down.
+	/// </summary>
+	public static bool Dig(Vector3 point, float radius, MaterialAsset walls = default)
+	{
+		return Apply(TerrainEdit.Dig(point, radius, walls));
+	}
+
+	/// <summary>Puts a ball of ground <paramref name="radius"/> metres round back at <paramref name="point"/>.</summary>
+	public static bool Fill(Vector3 point, float radius)
+	{
+		return Apply(TerrainEdit.Fill(point, radius));
+	}
+
+	/// <summary>
+	/// Digs a tunnel <paramref name="radius"/> metres round from <paramref name="from"/> to <paramref name="to"/>,
+	/// rounded at its ends: along the ground a trench, under it a way through.
+	/// </summary>
+	public static bool Tunnel(Vector3 from, Vector3 to, float radius, MaterialAsset walls = default)
+	{
+		return Apply(TerrainEdit.Tunnel(from, to, radius, walls));
+	}
+
+	/// <summary>
+	/// Blows a crater out of the ground at <paramref name="point"/>: a bowl <paramref name="radius"/> metres round, its
+	/// middle a third of that under the point, with the earth thrown up round its lip, the surface drawn with
+	/// <paramref name="walls"/> laid on what it bares, and the grass and plants it took away gone.
+	/// </summary>
+	public static bool Explode(Vector3 point, float radius, MaterialAsset walls = default)
+	{
+		return Apply(TerrainEdit.Explode(point, radius, walls));
+	}
+
 	/// <summary>Makes an edit to every terrain it reaches. Whether it reached any.</summary>
 	public static bool Apply(TerrainEdit edit)
 	{
@@ -142,6 +178,7 @@ public static unsafe class Terrain
 			At = edit.Point,
 			Radius = edit.Radius,
 			Amount = edit.Amount,
+			To = edit.To,
 		};
 		var surface = Encoding.UTF8.GetBytes(edit.Surface.Reference);
 		fixed (byte* named = surface)

@@ -69,6 +69,15 @@ public sealed class Digger : Behaviour
 				state!.Apply();
 				Log.Info($"saved scene, mound {Terrain.HeightAt(Mound):0.00}, crater {Terrain.HeightAt(Middle):0.00}");
 				break;
+			case 6:
+				// A shell's crater, dug into the ground, at x = -40: the ground there 4.4 m up.
+				var blast = new Vector3(-40f, 4.4f, 20f);
+				Log.Info($"exploded {Terrain.Explode(blast, 2f)}, its middle {Terrain.HeightAt(blast):0.0}");
+				break;
+			case 8:
+				var through = Physics.Raycast(new Vector3(-40f, 20f, 20f), -Vector3.UnitY, out var met);
+				Log.Info($"physics met the shell hole at {met.Point.Y:0.0}, {through}");
+				break;
 		}
 	}
 
@@ -197,4 +206,8 @@ fn scripts_ask_about_the_ground_change_it_and_put_it_back() {
     assert!(said("physics met the crater at 9.0"), "physics follows the ground: {lines:?}");
     assert!(said("applied True, mound 6.80, crater 9.00"), "{lines:?}");
     assert!(said("saved scene, mound 6.80, crater 9.00"), "{lines:?}");
+    // A bowl 2 m round, its middle 0.67 m under the point at 4.4: its floor 2.67 m down, at 1.7, for scripts and
+    // physics alike.
+    assert!(said("exploded True, its middle 1.7"), "{lines:?}");
+    assert!(said("physics met the shell hole at 1.7, True"), "{lines:?}");
 }

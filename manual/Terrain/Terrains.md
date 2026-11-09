@@ -8,14 +8,15 @@ A **Terrain** is a stretch of ground: a field, a valley or a range of hills. It 
 
 Select an Obj and pick **Add Component ▸ Terrain ▸ Terrain**. It starts flat, 512 metres each way, on a new asset of its own in the project's **Terrains** folder, named for its Obj: `Terrains/Ground.terrain`. You can also make one with **New ▸ New Terrain** in the Project panel and pick it as a Terrain's **Data**.
 
-The asset holds the ground, so every Terrain that picks the same asset has the same ground, as two copies of a level would. Changes to the ground are written to the asset when you save the level. Beside the `.terrain` file are its heights, in a `.heights` file of the same name, and what its brushes painted, in a `.layers` file. Keep them together when you move or copy them. A built game ships only the `.terrain` and its `.heights`.
+The asset holds the ground, so every Terrain that picks the same asset has the same ground, as two copies of a level would. Changes to the ground are written to the asset when you save the level. Beside the `.terrain` file are its heights, holes and surfaces as drawn, in a `.heights` file of the same name, and what its brushes painted, in a `.layers` file. Keep them together when you move or copy them. A built game ships only the `.terrain` and its `.heights`.
 
 ## The Terrain's tools
 
 Along the top of the Terrain in the Inspector are its tools, as in Unity:
 
 - **Layers**: what the ground is made of, a stamp, noise, a road or a sculpted layer at a time. See [[Layers]].
-- **Sculpt**: brushes that paint the ground in the Scene view. See [[Sculpting]].
+- **Sculpt**: brushes that shape the ground in the Scene view, and cut holes in it. See [[Sculpting]] and [[Holes]].
+- **Paint**: what the ground is covered with, and the brush that paints it. See [[Surfaces]] and [[Painting]].
 - **Settings**: the asset, how large and fine the ground is, and how it is drawn.
 
 ## Size and resolution
@@ -39,7 +40,7 @@ These are under **Settings** too.
 
 | Setting | What it does |
 | --- | --- |
-| Material | The material its ground is drawn with |
+| Material | The material its ground is drawn with while it has no surfaces (see [[Surfaces]]) |
 | Texture size | How many metres one picture of the material covers on the ground |
 | Detail distance | How far from the camera the ground is drawn at its finest, in metres |
 | Cast shadows | Whether its hills cast the sun's shadows |

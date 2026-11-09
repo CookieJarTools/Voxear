@@ -16,6 +16,7 @@ The brush paints into a **Sculpt** layer (see [[Layers]]): the one picked when i
 | Set Height | Brings the ground to its **Height**; **Ctrl**+click takes the height under the pointer |
 | Terrace | Cuts the ground into steps **Step** metres high |
 | Noise | Roughens the ground with bumps **Bump size** metres across; **Shift** turns them over |
+| Holes | Cuts holes in the ground; **Shift** as the stroke starts fills them. See [[Holes]] |
 
 | Setting | What it does |
 | --- | --- |

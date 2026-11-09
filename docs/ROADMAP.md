@@ -1420,9 +1420,23 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   from the menu, a stamp's dot dragged, a stroke in the Scene view, each undone); layers made on load. Manual:
   Layers, Sculpting. Still to come: pictures dropped onto the list as stamps, mesh stamps, a stamp brush, and the
   ceiling warning.
-- **Surfaces, painting and holes:** up to 32 surfaces from texture arrays, the four strongest at a time blended by
-  height; triplanar on cliffs, distance resampling and a basemap far off, variants and hex tiling against repeats;
-  rules by height, slope, curvature and flow; a paint brush; holes in the ground and its collision.
+- ~~**Surfaces, painting and holes:**~~ done: up to 32 surfaces in the `.terrain` file, each a material (picked from
+  the project's, read through the bindless table, so no texture arrays), its tile size, how sharply it meets the
+  others by its height picture, and triplanar for cliffs. Surfaces stack from the ground's own up, each covering
+  those below Everywhere, where Painted, or by Height and Slope (the layers' masks, with edges that wander by a
+  noise of their own), what was painted added to or taken from that, so rules follow the ground as it changes. Each
+  sample keeps its four largest shares, worked out on worker threads over the tiles a change reaches (4097² with
+  three ruled surfaces in 0.3 s, a brush-sized change in 1.4 ms) and kept in `.heights` beside the heights, so a game
+  reads them as made. The fragment shaders blend the four samples round each pixel, then by height, through a hook
+  the forward and depth passes call for terrain. Holes: a Holes brush under Sculpt (Shift fills), a bit a sample,
+  every triangle touching one cut away in drawing, shadows, rays, `TryGetGround` and physics (Jolt's no-collision
+  height). Editor: the Paint tool, its surface list (Add Surface opens the material picker), the picked surface's
+  settings and the brush; each stroke one step to undo. Tests: shares, painting, holes and files; GPU (32 surfaces
+  each where its shares are and blended between; the ground below seen and sunlit through a hole); physics (a ball
+  falls through a hole); the editor (surfaces added, painted, a hole cut and filled, each undone); shares read as
+  written and worked out again when the surfaces change. Manual: Surfaces, Painting, Holes. Still to come:
+  distance resampling, a basemap far off, variants and hex tiling against repeats; curvature and flow rules;
+  materials dropped onto the list.
 - **Plants on terrain:** a scatter brush (from Vegetation), painting Foliage plants onto terrain and any other
   surface with density, scale and slope limits, and erasing; scatter layers by rule using the same instances;
   Foliage's own scatter dropped onto the ground and tilted to its slope. Every plant can be cut down, dug up or

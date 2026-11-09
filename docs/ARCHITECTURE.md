@@ -2704,7 +2704,8 @@ Effekseer and Houdini. The pattern is clear:
 
 Three kinds of terrain, each a component of its own under the Terrain module: **Terrain** (heights), **Block
 World** (blocky voxels, from big blocks down to small coloured ones) and **Voxel Terrain** (smooth, flat or a
-planet). They share generation (`.worldgen`), ground textures (`.surface`) and plants where those fit.
+planet). They share generation (`.worldgen`), ground surfaces (materials laid by rules and paint) and plants where
+those fit.
 
 **Where the work runs.** Gameplay data is worked out on the CPU, the same on every machine: heights, voxels,
 generation, collision, saves and the edits sent over the network. A dedicated server has no GPU, and physics reads
@@ -2715,7 +2716,9 @@ next, held as `Arc`s: a change makes new tiles and keeps the rest, and the rende
 pointer. Between heights the ground is two triangles a quad, split from a quad's low corner to its high one, as Jolt
 splits height fields, so what is drawn, what collides and what a ray hits agree. A `.terrain` file says how large
 and how fine the ground is; its heights are kept beside it in a `.heights` file (each tile's samples split into byte
-planes, then LZ4).
+planes, then LZ4), with its holes, a bit a sample, and its surfaces' shares, so a game reads them as made. A hole
+cuts away every triangle with a corner on its sample, in drawing, in rays and in Jolt (whose no-collision height
+cuts the same triangles).
 
 **Layer stack.** A terrain is a stack of layers, each a *command* rather than a raster: base, import, stamp
 (picture or mesh), noise, sculpt raster, spline (roads, rivers, trenches), terrace, smooth, erosion and generate,
@@ -2739,10 +2742,14 @@ blocks. For voxels, 3D density from the same fields, with caves.
 for the camera and each sun cascade, each vertex sliding onto the next level's grid near its level's far distance.
 Heights live on the GPU in a buffer of tile slots that only changed tiles are copied into. The ground is shaded by
 the forward passes' own fragment shaders, drawn early so hills hide what is behind them; a coarse mesh a tile,
-which only rays see, gives the GI and the sea floor the ground. Surfaces: up to 32 from texture arrays, weights as
-the four strongest a texel, blended by height, triplanar on cliffs, distance resampled, with variants and hex
-tiling. GPU culling of patches against last frame's depth, and horizon culling over the heights, come with the
-chunk culling below.
+which only rays see, gives the GI and the sea floor the ground. Surfaces: up to 32 materials, each read through the
+bindless table, so no texture arrays; each surface covers those below it by rules of height and slope with wandering
+edges, and by what was painted (a raster a surface), and each sample keeps its four largest shares (four surface
+numbers and four shares out of 255, two words) in the terrain's GPU buffer beside its heights and holes. The fragment
+shader blends the four samples round a pixel, then by the surfaces' height pictures, sampling each with gradients
+worked out before any branch; triplanar where a surface asks. Distance resampling, variants and hex tiling are to
+come. GPU culling of patches against last frame's depth, and horizon culling over the heights, come with the chunk
+culling below.
 
 **Plants.** Placed plants (trees, rocks) are Foliage, each with an id so it can be cut down, dug up or swapped for
 a prefab; grass and details are scattered on the GPU from density maps round the camera.

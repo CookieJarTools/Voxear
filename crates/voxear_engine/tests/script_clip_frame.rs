@@ -45,7 +45,7 @@ public sealed class FrameReader : SystemBase
 		var turned = (restRig.RightArm.PalmFacing - palm).Length() > 0.5f;
 		var length = restRig.RightArm.Length;
 		Log.Info($"frame: {held.BoneCount} hips {Shown(held.Position(rig.Hips).Y)} {Shown(held.LocalPosition(rig.Hips).Y)}");
-		Log.Info($"bones: {held.Find("head") == rig.Head} {held.Find("gun_carrier")} {rig.RightArm.Fingers[1].Count}");
+		Log.Info($"bones: {held.Find("head") == rig.Head} {held.Find("tail")} {rig.RightArm.Fingers[1].Count}");
 		Log.Info($"palm: same {same} turned {turned} length {length > 0.5f && length < 0.8f}");
 	}
 }

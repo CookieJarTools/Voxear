@@ -108,7 +108,7 @@ var reload = new AnimationClip("Models/Rifle Arms.glb#clip:Reload");
 if (ClipFrame.Of(reload, 0.4f)?.Rig is { } rig)
 {
 	var palm = rig.RightArm.PalmCenter;
-	var carried = rig.Frame.Matrix(rig.Frame.Find("gun_carrier"));
+	var carried = rig.Frame.Matrix(rig.Frame.Find("Carrier"));
 }
 ```
 

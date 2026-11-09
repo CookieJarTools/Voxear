@@ -286,7 +286,7 @@ const UNSETTLED: [(&str, usize); 1] = [("Clips", 1)];
 
 /// The clips that hold the Clips player's gun, in a handling: standing, walking, running, and starting a run, with the
 /// eyes the clips were made for, the players' own.
-const HELD_BY: &str = "idle = \"Arms#clip:Hold\"\nwalk = \"Arms#clip:Walk\"\nrun = \"Arms#clip:Run\"\n\
+const HELD_BY: &str = "carrier = \"Carrier\"\nidle = \"Arms#clip:Hold\"\nwalk = \"Arms#clip:Walk\"\nrun = \"Arms#clip:Run\"\n\
                        run_start = \"Arms#clip:Start\"\neyes = [0.0, 0.07, 0.11]\n";
 
 /// What a trace records each frame, in order: the gun's place and turn in
@@ -565,13 +565,13 @@ fn traces_folder(package: Option<&Path>) -> PathBuf {
     package.unwrap_or_else(|| engine.join("../VoxearGuns")).join("Tests/Traces")
 }
 
-/// Arms clips of the players' own body, made here: its arms held forward to a gun carried by a `gun_carrier` bone
+/// Arms clips of the players' own body, made here: its arms held forward to a gun carried by a `Carrier` bone
 /// before its chest, standing (Hold), bobbing as it walks (Walk), a little higher running (Run), and lifted and
 /// brought down to the run's height over half a second as a run starts (Start).
 fn arms_clips() -> Arc<ModelAnimation> {
     let mut skeleton = body();
     let at = |translation| BonePose { translation, ..BonePose::default() };
-    skeleton.bones.push(Bone { name: "gun_carrier".into(), parent: Some(0), rest: at(Vec3::new(0.12, 0.4, 0.45)) });
+    skeleton.bones.push(Bone { name: "Carrier".into(), parent: Some(0), rest: at(Vec3::new(0.12, 0.4, 0.45)) });
     let carrier = skeleton.bones.len() - 1;
     let find = |name: &str| skeleton.bones.iter().position(|bone| bone.name == name).unwrap();
     let mut held = skeleton.rest();

@@ -150,7 +150,7 @@ public sealed class PackDriver : SystemBase
 		var clip = new AnimationClip($"{file}#clip:Lifted");
 		var length = player.Children.First(child => child.Name == "Body").Skeleton.ClipLength(clip) ?? 0f;
 		var hold = typeof(GunHolder).Assembly.GetType("Voxear.Guns.ClipHold")!;
-		object?[] given = [clip, length, new PackClips(), 0.35f, null];
+		object?[] given = [clip, length, new PackClips { Carrier = "Carrier" }, 0.35f, null];
 		var read = (bool)hold.GetMethod("SnapsBackAt", BindingFlags.Static | BindingFlags.Public)!.Invoke(null, given)!;
 		var at = (float?)given[4];
 		Log.Info(string.Create(CultureInfo.InvariantCulture, $"snaps {file} {(read ? at?.ToString("F3") ?? "none" : "unread")}"));
@@ -159,7 +159,7 @@ public sealed class PackDriver : SystemBase
 	private static GunHandling HeldBy(string clip, PackCamera camera)
 	{
 		// The clip was made with the holder's own eyes, which sit up and forward of its head.
-		return new GunHandling { Pack = new PackClips { Idle = new AnimationClip(clip), Eyes = ViewEyes, Camera = camera } };
+		return new GunHandling { Pack = new PackClips { Idle = new AnimationClip(clip), Carrier = "Carrier", Eyes = ViewEyes, Camera = camera } };
 	}
 
 	private static GunHandling Running()
@@ -169,6 +169,7 @@ public sealed class PackDriver : SystemBase
 			Idle = new AnimationClip("Idle#clip:Lifted"),
 			Run = new AnimationClip("Run#clip:Lifted"),
 			RunStart = new AnimationClip("Start#clip:Lifted"),
+			Carrier = "Carrier",
 			WalkSpeed = 0.5f,
 			RunSpeed = 1f,
 			Eyes = ViewEyes,
@@ -839,7 +840,7 @@ fn own_into_clips(world: &mut World, own: &Player) -> (Own, Vec<(&'static str, A
 }
 
 /// An arms clip made from how the gun's own hold has a body: its pose, and a
-/// `gun_carrier` bone under the hips where the gun was, a still clip of a
+/// `Carrier` bone under the hips where the gun was, a still clip of a
 /// second. Gives the clip's file, with where its palms are on the gun.
 fn clip_of_hold(world: &World, own: &Player) -> (Arc<ModelAnimation>, [Vec3; 2]) {
     let body = &own.animation;
@@ -849,7 +850,7 @@ fn clip_of_hold(world: &World, own: &Player) -> (Arc<ModelAnimation>, [Vec3; 2])
     let hips = 0;
     let (scale, rotation, translation) = (posed[hips].inverse() * gun).to_scale_rotation_translation();
     skeleton.bones.push(Bone {
-        name: "gun_carrier".into(),
+        name: "Carrier".into(),
         parent: Some(hips),
         rest: BonePose { translation, rotation, scale },
     });

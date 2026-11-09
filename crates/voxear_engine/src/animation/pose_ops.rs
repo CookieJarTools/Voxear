@@ -448,7 +448,7 @@ mod tests {
 
         let name = format!("{reference}\n{}", animation.skeleton.bones[hand].name);
         assert_eq!(read(&mut world, none, FIND_BONE, &[], &[0.0, 0.0, 0.0], &name), Some(vec![hand as f32]));
-        let missing = format!("{reference}\nweapon_r");
+        let missing = format!("{reference}\ntail");
         assert_eq!(read(&mut world, none, FIND_BONE, &[], &[0.0, 0.0, 0.0], &missing), Some(vec![-1.0]));
         let layout = read(&mut world, none, RIG, &[], &[0.0, 0.0, 0.0], reference).unwrap();
         assert_eq!(layout, rig_layout(&rig));

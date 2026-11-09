@@ -1574,6 +1574,15 @@ surfaces in 3D. *(Implemented as the UI Panel component:)*
   discards where the scene's depth is in front.
 - The pointer works the nearest clickable panel that a camera ray meets before any collider: through the cursor,
   or through the view's middle while the cursor is locked. Clicks a panel takes do not reach the game's input.
+- A panel's document loads the first time a script asks for it (`ScriptServices::ui_panel_document`), so it is
+  there in Awake and Start, before the panel is first drawn. A panel on an Obj switched off keeps its `Ui`, and
+  so its elements' numbers, but is neither drawn nor pointed at.
+- A saved document is loaded again in place (`UiNumbers::replace`): each element scripts hold keeps its number,
+  which now stands for the new element of the same name, and elements made in code move across, so handlers
+  scripts added keep running.
+- `OnUiBuilt(UiDocument)` is a lifecycle phase: after each batch's Starts, and at each frame's start after the
+  flush, where the behaviour looks whether its panel's document is one it has not been given yet. A new
+  document, or a behaviour made again by a reload of the scripts, gets it once.
 
 **UI shaders** *(implemented)*: `shader: shimmer` or `shader: url("Shaders/Glow.shader")` draws an element's
 background with a shader, on the screen, on panels and in the editor alike, since all of them draw through

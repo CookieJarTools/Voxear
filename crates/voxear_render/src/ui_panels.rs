@@ -181,18 +181,20 @@ fn placed(transform: &Transform, world: Option<&WorldTransform>) -> Mat4 {
     )
 }
 
-/// The panels in `world`, each by its Obj, where it is for a camera at
-/// `eye`, and its settings. A two-sided panel seen from behind is given as
-/// read from there, turned (see [`PanelRect::turned`]).
+/// The panels in `world` on Objs switched on, each by its Obj, where it is
+/// for a camera at `eye`, and its settings. A two-sided panel seen from
+/// behind is given as read from there, turned (see [`PanelRect::turned`]).
 pub fn panels(world: &World, eye: Vec3) -> Vec<(Entity, PanelRect, UiPanel)> {
     let query = world.query_ref::<(Entity, &UiPanel, &Transform, Option<&WorldTransform>)>();
     let seen = |panel: &UiPanel, rect: PanelRect| match panel.two_sided && !rect.faces(eye) {
         true => rect.turned(),
         false => rect,
     };
+    let switched = voxear_scene::Switched::of(world);
     query
         .without::<Destroying>()
         .into_iter()
+        .filter(|(entity, ..)| switched.is_active(*entity))
         .map(|(entity, panel, transform, at)| (entity, seen(panel, PanelRect::of(panel, placed(transform, at), eye)), *panel))
         .collect()
 }

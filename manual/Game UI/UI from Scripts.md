@@ -56,7 +56,9 @@ var resume = menu.Find("resume");
 resume!.Clicked += Resume;
 ```
 
-`Clicked` runs your code when the element, or anything inside it, is clicked. It runs at the start of the next frame, before any `Update`. If you would rather check each frame, `WasClicked` says whether it was clicked since the last frame:
+`Clicked` runs your code when the element, or anything inside it, is clicked. It runs at the start of the next frame, before any `Update`. Subscribe once, where you find the element, usually in `Start`: a document is ready as soon as `Load` returns, and a UI Panel's as soon as its Obj is. There's no need to wait for it in `Update`.
+
+If you would rather check each frame, `WasClicked` says whether it was clicked since the last frame:
 
 ```csharp
 protected override void Update()

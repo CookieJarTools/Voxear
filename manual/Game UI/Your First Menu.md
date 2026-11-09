@@ -81,5 +81,5 @@ Put the behaviour on any Obj in your level, such as an empty one called UI, and 
 - UI shows only while the game runs. There is no UI while you edit, and stopping play takes it away.
 - Load each document once, in `Start`. Every `Load` puts another copy on screen.
 - Clicks that land on your UI are taken by it; clicks anywhere else reach the game.
-- When your scripts reload while the game plays, the UI stays on screen, but its buttons stop calling your code until you play again.
+- When your scripts reload while the game plays, the UI stays on screen, but its buttons stop calling your code until you play again. On a UI Panel, subscribe in `OnUiBuilt` and they carry on (see [[UI Panels in the World]]).
 - Builds include every `.vui` file, and the style sheets it names, by themselves.

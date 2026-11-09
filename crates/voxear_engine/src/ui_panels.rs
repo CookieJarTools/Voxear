@@ -24,6 +24,7 @@ use voxear_assets::AssetGuid;
 use voxear_core::math::Vec3;
 use voxear_ecs::{Entity, World};
 use voxear_render::{Renderer, UiPanel, UiPanelFrame};
+use voxear_scene::Destroying;
 use voxear_ui::{Ui, UiFrame};
 use winit::event::{ElementState, WindowEvent};
 
@@ -205,13 +206,48 @@ pub(crate) struct PanelUi {
 impl GameUi {
     /// Keeps a UI for each UI Panel in `world`, its document loaded: makes
     /// one for each new panel, loads its document again when that changes,
-    /// and lets go of those whose panels went. How large each is drawn next
-    /// follows how large it showed last frame, `shown` in pixels.
+    /// and lets go of those whose panels went. A panel on an Obj switched
+    /// off keeps its UI, so its elements and their handlers are as they were
+    /// when it is back on. How large each is drawn next follows how large it
+    /// showed last frame, `shown` in pixels.
     pub fn sync_panels(&mut self, world: &mut World, content: &mut Content, shown: &HashMap<Entity, [f32; 2]>) {
-        let found = voxear_render::ui_panel_rects(world, Vec3::ZERO);
-        self.panels.retain(|panel| found.iter().any(|(entity, ..)| *entity == panel.entity));
-        for (entity, _, panel) in found {
-            if !self.panels.iter().any(|kept| kept.entity == entity) {
+        let found: Vec<(Entity, UiPanel)> = world
+            .query_ref::<(Entity, &UiPanel)>()
+            .without::<Destroying>()
+            .into_iter()
+            .map(|(entity, panel)| (entity, *panel))
+            .collect();
+        self.panels.retain(|panel| found.iter().any(|(entity, _)| *entity == panel.entity));
+        for (entity, panel) in found {
+            let kept = self.keep_panel(world, content, entity, &panel);
+            kept.step = drawing_step(kept.step, shown.get(&entity).copied(), kept.layout);
+        }
+        if self.hovered.is_some_and(|hovered| !self.panels.iter().any(|panel| panel.entity == hovered)) {
+            self.hovered = None;
+        }
+    }
+
+    /// Loads the document `entity`'s panel shows now, if it has not loaded
+    /// yet, as when a script asks for it before the panel is first drawn:
+    /// in Awake or Start, the frame its Obj is made. Gives back the number
+    /// scripts hold it by.
+    pub fn load_panel(&mut self, world: &mut World, content: &mut Content, entity: Entity) -> Option<u32> {
+        let panel = *world.get::<UiPanel>(entity)?;
+        self.keep_panel(world, content, entity, &panel).document
+    }
+
+    /// The UI of `entity`'s panel, made if it has none, showing the
+    /// document `panel` names, whose number its Obj holds for scripts.
+    fn keep_panel(
+        &mut self,
+        world: &mut World,
+        content: &mut Content,
+        entity: Entity,
+        panel: &UiPanel,
+    ) -> &mut PanelUi {
+        let at = match self.panels.iter().position(|kept| kept.entity == entity) {
+            Some(at) => at,
+            None => {
                 let (surface, first) = self.new_surface();
                 let made = PanelUi {
                     entity,
@@ -226,33 +262,32 @@ impl GameUi {
                     scale: 1.0,
                 };
                 self.panels.push(made);
+                self.panels.len() - 1
             }
-            let kept = self.panels.iter_mut().find(|kept| kept.entity == entity).expect("made above");
-            kept.layout = panel.layout_size();
-            kept.step = drawing_step(kept.step, shown.get(&entity).copied(), kept.layout);
-            if kept.shown != panel.document && kept.failed != panel.document {
-                kept.show(content, panel.document);
-            }
-            let document = kept.document.map(PanelDocument);
-            if world.get::<PanelDocument>(entity).copied() != document {
-                match document {
-                    Some(document) => drop(world.insert(entity, document)),
-                    None => drop(world.remove::<PanelDocument>(entity)),
-                }
+        };
+        let kept = &mut self.panels[at];
+        kept.layout = panel.layout_size();
+        if kept.shown != panel.document && kept.failed != panel.document {
+            kept.show(content, panel.document);
+        }
+        let document = kept.document.map(PanelDocument);
+        if world.get::<PanelDocument>(entity).copied() != document {
+            match document {
+                Some(document) => drop(world.insert(entity, document)),
+                None => drop(world.remove::<PanelDocument>(entity)),
             }
         }
-        if self.hovered.is_some_and(|hovered| !self.panels.iter().any(|panel| panel.entity == hovered)) {
-            self.hovered = None;
-        }
+        kept
     }
 
     /// Loads the document each panel shows again, as after its file or a
-    /// sheet it names changed.
+    /// sheet it names changed. Its elements keep the numbers scripts hold
+    /// them by, matched by name, so the handlers scripts added to them keep
+    /// running. One that would not load is tried again.
     pub fn reload_panels(&mut self, content: &mut Content) {
         for panel in &mut self.panels {
-            let document = panel.shown.take();
             panel.failed = None;
-            panel.show(content, document);
+            panel.reload(content);
         }
     }
 
@@ -407,6 +442,19 @@ impl crate::Game {
 }
 
 impl PanelUi {
+    /// Loads the document it shows again, keeping its numbers. It shows the
+    /// one it had when the file cannot be read now.
+    fn reload(&mut self, content: &mut Content) {
+        let (Some(guid), Some(document)) = (self.shown, self.document) else { return };
+        let path = content.db().get(guid).map(|entry| entry.path.clone());
+        let reloaded = path.with_context(|| format!("no asset has the GUID {guid}")).and_then(|path| {
+            self.surface.reload(content, document, &path).with_context(|| format!("showing {path} on a UI Panel again"))
+        });
+        if let Err(error) = reloaded {
+            tracing::warn!("{error:#}");
+        }
+    }
+
     /// Shows `document` in place of what it showed, or nothing.
     fn show(&mut self, content: &mut Content, document: Option<AssetGuid>) {
         if let Some(number) = self.document.take() {
@@ -469,7 +517,9 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
         }
         (DOCUMENT, None) => {
             world.get::<UiPanel>(entity)?;
-            let document = world.get::<PanelDocument>(entity).map(|document| document.0);
+            // Loaded the first time a script asks, so it is there in Awake and Start.
+            let loaded = voxear_scripting::ui_panel_document(world, entity);
+            let document = loaded.or_else(|| world.get::<PanelDocument>(entity).map(|document| document.0));
             return Some([f32::from_bits(document.unwrap_or(0)), f32::from(u8::from(document.is_some())), 0.0, 0.0]);
         }
         _ => {}

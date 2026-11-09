@@ -26,6 +26,9 @@ public sealed unsafe class UiDocument
 	/// <summary>The document's top element, around everything in it.</summary>
 	public UiElement Root => Find(string.Empty)!;
 
+	/// <summary>The number the engine holds it by, which a document loaded again keeps.</summary>
+	internal int Id => id;
+
 	/// <summary>Shows a document by project path. Null when it cannot be read, which the Console says why.</summary>
 	public static UiDocument? Load(string path)
 	{

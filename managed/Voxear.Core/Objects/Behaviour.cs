@@ -39,6 +39,7 @@ public abstract class Behaviour
 	private Obj obj;
 	private uint handle;
 	private bool enabled = true;
+	private int uiBuilt = -1;
 
 	/// <summary>Destroys this behaviour at the end of the frame, after OnDisable and OnDestroy.</summary>
 	public void Destroy()
@@ -70,6 +71,23 @@ public abstract class Behaviour
 	/// behaviours are ready to be asked for what they hold.
 	/// </summary>
 	protected virtual void Start()
+	{
+	}
+
+	/// <summary>
+	/// Called once its Obj's UI Panel has built its document: the place to find the elements and subscribe to their
+	/// events. It comes after every Start of the batch and before the first Update. It is called again only for a
+	/// document built anew: when the panel is given another, or after the scripts reload while the game plays, which
+	/// lets go of the old scripts' handlers. Saving the document's file keeps the handlers, so it is not called then.
+	/// <code>
+	/// protected override void OnUiBuilt(UiDocument ui)
+	/// {
+	/// 	var status = ui.Find("status")!;
+	/// 	ui.Find("open")!.Clicked += () => status.Text = "Open";
+	/// }
+	/// </code>
+	/// </summary>
+	protected virtual void OnUiBuilt(UiDocument ui)
 	{
 	}
 
@@ -263,7 +281,21 @@ public abstract class Behaviour
 			case Phase.LateUpdate: LateUpdate(); break;
 			case Phase.OnDisable: OnDisable(); break;
 			case Phase.OnDestroy: OnDestroy(); break;
+			case Phase.OnUiBuilt: BuildUi(); break;
 		}
+	}
+
+	/// <summary>Calls OnUiBuilt when its Obj's UI Panel shows a document it has not been told of yet.</summary>
+	private void BuildUi()
+	{
+		var document = Obj.UiPanel.Document;
+		if (document == null || document.Id == uiBuilt)
+		{
+			return;
+		}
+
+		uiBuilt = document.Id;
+		OnUiBuilt(document);
 	}
 
 	private void SetEnabled(bool value)

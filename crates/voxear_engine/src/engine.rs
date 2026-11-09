@@ -479,7 +479,8 @@ impl Engine {
     /// Advances one frame:
     ///
     /// 0. Scripts resume awaits that finished and run posted continuations.
-    /// 1. `First` systems, then pending behaviours get Awake/OnEnable/Start.
+    /// 1. `First` systems, then pending behaviours get Awake/OnEnable/Start
+    ///    and OnUiBuilt, then OnUiBuilt where a UI Panel's document is new.
     /// 2. Fixed steps: FixedUpdate behaviours, then `FixedUpdate` systems.
     /// 3. Update behaviours, then `Update` systems.
     /// 4. LateUpdate behaviours, then `PostUpdate` systems.
@@ -519,6 +520,8 @@ impl Engine {
             profile_scope!("First");
             self.run_stage("First");
             self.flush();
+            // A UI Panel given a new document, or scripts reloaded, which let go of their handlers.
+            self.run_phase(Phase::OnUiBuilt);
         }
 
         // A networked client runs its ticks a little faster or slower to keep pace with its server.

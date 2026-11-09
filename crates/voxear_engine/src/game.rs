@@ -852,6 +852,10 @@ impl ScriptServices for GameServices<'_> {
         self.ui.ask(element, ask)
     }
 
+    fn ui_panel_document(&mut self, world: &mut World, entity: Entity) -> Option<u32> {
+        self.ui.load_panel(world, self.content, entity)
+    }
+
     fn load_prefab(&mut self, reference: &str) -> Result<u32> {
         Ok(self.content.prefab(self.renderer.as_deref_mut(), reference)?.0)
     }

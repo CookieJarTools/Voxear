@@ -50,7 +50,7 @@ pub use runtime::{
 pub use saves::{SAVE_EXTENSION, SaveError, SaveFolder, SavePart, SaveSettings, SlotEntry, saved_language};
 pub use services::{
     AssetName, ContentStats, LevelInfo, LevelLoadOptions, LoadProgress, PreviewOptions, PreviewSource, PreviewState,
-    SceneLoadOptions, SceneRequest, ScriptServices, ServicesScope, SpawnedPrefab, UiAnswer, UiAsk,
+    SceneLoadOptions, SceneRequest, ScriptServices, ServicesScope, SpawnedPrefab, UiAnswer, UiAsk, ui_panel_document,
 };
 pub use ui_rows::RowWork;
 pub use windows::WindowUpdate;

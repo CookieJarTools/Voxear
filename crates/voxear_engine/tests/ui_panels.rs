@@ -138,3 +138,91 @@ fn a_two_sided_panel_is_clicked_from_behind_the_right_way_round() {
     ui.point_panels(&world, at_button, |_, _| None);
     assert_eq!(ui.hovered_panel(), None);
 }
+
+#[test]
+fn a_panels_document_loads_when_first_asked_for() {
+    let dir = project();
+    let mut content = Content::open(dir.path()).unwrap();
+    let mut world = World::new();
+    let panel = terminal(&mut world);
+    let mut ui = GameUi::default();
+
+    // Before it is ever drawn, as a script's Start asks the frame its Obj is made.
+    let document = ui.load_panel(&mut world, &mut content, panel).expect("loaded when asked for");
+    assert_eq!(world.get::<voxear_engine::ui_panels::PanelDocument>(panel).map(|d| d.0), Some(document));
+    assert!(ui.find(document, "go").is_some());
+    ui.sync_panels(&mut world, &mut content, &HashMap::new());
+    assert_eq!(ui.panel_document(panel), Some(document), "drawing keeps the one loaded");
+    assert_eq!(ui.load_panel(&mut world, &mut content, panel), Some(document), "and so does asking again");
+}
+
+#[test]
+fn a_panel_switched_off_hides_and_keeps_its_elements() {
+    let dir = project();
+    let mut content = Content::open(dir.path()).unwrap();
+    let mut world = World::new();
+    let panel = terminal(&mut world);
+    let mut ui = GameUi::default();
+    ui.sync_panels(&mut world, &mut content, &HashMap::new());
+    ui.lay_out_panels(1.0 / 60.0);
+    let document = ui.panel_document(panel).unwrap();
+    let go = ui.find(document, "go").unwrap();
+    let at_button = Some((Vec3::ZERO, Vec3::new(0.5, 0.0, 5.0).normalize()));
+
+    // Off: nothing to point at, and its UI kept for when it is back.
+    voxear_scene::set_active(&mut world, panel, false);
+    ui.sync_panels(&mut world, &mut content, &HashMap::new());
+    ui.point_panels(&world, at_button, |_, _| None);
+    assert_eq!(ui.hovered_panel(), None);
+    assert!(voxear_render::ui_panel_rects(&world, Vec3::ZERO).is_empty(), "not drawn");
+    assert_eq!(ui.panel_document(panel), Some(document));
+
+    // Back on: the same button, clicked.
+    voxear_scene::set_active(&mut world, panel, true);
+    ui.sync_panels(&mut world, &mut content, &HashMap::new());
+    ui.lay_out_panels(1.0 / 60.0);
+    ui.point_panels(&world, at_button, |_, _| None);
+    assert!(click(&mut ui, ElementState::Pressed) && click(&mut ui, ElementState::Released));
+    assert_eq!(ui.find(document, "go"), Some(go));
+    assert!(ui.clicked(go));
+}
+
+#[test]
+fn a_saved_document_keeps_the_numbers_of_its_elements() {
+    let dir = project();
+    let mut content = Content::open(dir.path()).unwrap();
+    let mut world = World::new();
+    let panel = terminal(&mut world);
+    let mut ui = GameUi::default();
+    ui.sync_panels(&mut world, &mut content, &HashMap::new());
+    let document = ui.panel_document(panel).unwrap();
+    let go = ui.find(document, "go").unwrap();
+    let root = ui.find(document, "").unwrap();
+    let made = ui.create(root, voxear_ui::ElementKind::Label, "Made in code").unwrap();
+    let file = dir.path().join("UI/Terminal.vui");
+    let markup = std::fs::read_to_string(&file).unwrap();
+
+    // Saved with the button's text changed: the same numbers, now the new elements.
+    std::fs::write(&file, markup.replace(">Go<", ">Open<")).unwrap();
+    ui.reload_panels(&mut content);
+    assert_eq!(ui.panel_document(panel), Some(document));
+    assert_eq!(ui.find(document, "go"), Some(go));
+    assert_eq!(ui.text(go).as_deref(), Some("Open"));
+    assert_eq!(ui.text(made).as_deref(), Some("Made in code"), "what a script added comes along");
+    ui.lay_out_panels(1.0 / 60.0);
+    ui.point_panels(&world, Some((Vec3::ZERO, Vec3::new(0.5, 0.0, 5.0).normalize())), |_, _| None);
+    assert!(click(&mut ui, ElementState::Pressed) && click(&mut ui, ElementState::Released));
+    assert!(ui.clicked(go), "the new button, clicked by its old number");
+
+    // A file that cannot be read leaves it as it was.
+    std::fs::write(&file, "<vui><Panel").unwrap();
+    ui.reload_panels(&mut content);
+    assert_eq!(ui.text(go).as_deref(), Some("Open"));
+
+    // Without the button now: its number stands for nothing.
+    std::fs::write(&file, "<vui><Label name=\"said\">Closed</Label></vui>").unwrap();
+    ui.reload_panels(&mut content);
+    assert_eq!(ui.find(document, "go"), None);
+    assert_eq!(ui.text(go), None);
+    assert!(ui.find(document, "said").is_some());
+}

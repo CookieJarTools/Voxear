@@ -170,6 +170,13 @@ pub trait ScriptServices {
         UiAnswer::None
     }
 
+    /// The number scripts hold a UI Panel's document by, loaded now if it
+    /// has not been yet, so a script finds it in Awake and Start; none while
+    /// the panel shows no document, or here, where there is no UI.
+    fn ui_panel_document(&mut self, _world: &mut World, _entity: Entity) -> Option<u32> {
+        None
+    }
+
     /// What a save calls an Obj, so that a later run finds it again: the
     /// GUID of the scene it was loaded from and its path there, as
     /// `guid:3/2`. An Obj a script made from a prefab is `spawned:` and its
@@ -472,6 +479,13 @@ impl Drop for ServicesScope<'_> {
 pub(crate) fn with_services<R>(f: impl FnOnce(&mut dyn ScriptServices) -> R) -> Option<R> {
     let mut services = SERVICES.get()?;
     Some(f(unsafe { services.as_mut() }))
+}
+
+/// A UI Panel's document through the lent services, which load it if it has
+/// not loaded yet (see [`ScriptServices::ui_panel_document`]); none outside
+/// them.
+pub fn ui_panel_document(world: &mut World, entity: Entity) -> Option<u32> {
+    with_services(|services| services.ui_panel_document(world, entity)).flatten()
 }
 
 /// A data asset as JSON for `Definition.Load` (see

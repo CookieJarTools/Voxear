@@ -40,7 +40,7 @@ internal sealed class BehaviourType
 		uint callbacks = 0;
 		foreach (var phase in Enum.GetValues<Phase>())
 		{
-			if (Overrides(type, phase.ToString()))
+			if (Overrides(type, phase))
 			{
 				callbacks |= 1u << (int)phase;
 			}
@@ -65,9 +65,10 @@ internal sealed class BehaviourType
 		return false;
 	}
 
-	private static bool Overrides(Type type, string name)
+	private static bool Overrides(Type type, Phase phase)
 	{
-		var method = type.GetMethod(name, MethodFlags, null, Type.EmptyTypes, null);
+		Type[] parameters = phase == Phase.OnUiBuilt ? [typeof(UiDocument)] : Type.EmptyTypes;
+		var method = type.GetMethod(phase.ToString(), MethodFlags, null, parameters, null);
 		return method != null && method.DeclaringType != typeof(Behaviour);
 	}
 }

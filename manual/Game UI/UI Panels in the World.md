@@ -35,31 +35,46 @@ The layout never changes with distance, but how sharply the panel is drawn does:
 
 ## Panels from scripts
 
-`Obj.UiPanel.Document` is the document a panel shows, found and changed as a screen document is (see [[UI from Scripts]]). It's null until the document has loaded, a frame after the panel appears:
+`Obj.UiPanel.Document` is the document a panel shows, found and changed as a screen document is (see [[UI from Scripts]]). It's ready as soon as the panel's Obj is, so find its elements and subscribe to their events once, in `Start`:
 
 ```csharp
 public sealed class Terminal : Behaviour
 {
-	private UiElement? status;
-
-	protected override void Update()
+	protected override void Start()
 	{
-		if (status != null)
-		{
-			return;
-		}
-		var screen = Obj.UiPanel.Document;
-		if (screen == null)
-		{
-			return;
-		}
-		status = screen.Find("status");
-		screen.Find("open")!.Clicked += () => status!.Text = "Open";
+		var screen = Obj.UiPanel.Document!;
+		var status = screen.Find("status")!;
+		screen.Find("open")!.Clicked += () => status.Text = "Open";
 	}
 }
 ```
 
+`Document` is null only when the panel has no document, or its file can't be read. The Console says why.
+
 Scripts can also change a panel's `Size`, `PixelsPerMetre`, `FaceCamera`, `TwoSided` and `Clickable`, give an Obj a panel with `Obj.AddUiPanel()`, and take it off with `Remove()`.
+
+## Subscribing in OnUiBuilt
+
+A behaviour on the panel's Obj can subscribe in `OnUiBuilt` instead, which is handed the document. It runs after `Start`, before the first `Update`, and again each time the panel builds a new document:
+
+```csharp
+protected override void OnUiBuilt(UiDocument ui)
+{
+	var status = ui.Find("status")!;
+	ui.Find("open")!.Clicked += () => status.Text = "Open";
+}
+```
+
+How long handlers last:
+
+| When | Added in Start | Added in OnUiBuilt |
+| --- | --- | --- |
+| The Obj is switched off and on | Kept | Kept |
+| The document's file is saved | Kept | Kept |
+| The panel is given another document | Stay with the old one | Added again |
+| Scripts reload while the game plays | Lost | Added again |
+
+When the file is saved, each element is found again by its name, so one you rename loses its handlers. Elements your scripts added to the document stay.
 
 ## Things to know about UI Panels
 
@@ -67,3 +82,4 @@ Scripts can also change a panel's `Size`, `PixelsPerMetre`, `FaceCamera`, `TwoSi
 - A panel is drawn over the finished picture, so its colours are exactly as designed: light, fog and the camera's exposure don't change them. Smoke and particles don't cover it either.
 - Seen at a slant, a panel stays sharp along the way it isn't squeezed, so its text still reads from well off to one side. Only nearly edge on does its text soften.
 - Saving a panel's document, or a style sheet it names, shows the change on the panel.
+- A panel on an Obj that's switched off doesn't show, and the pointer passes through where it was.

@@ -12,4 +12,5 @@ internal enum Phase
 	OnDisable = 6,
 	OnDestroy = 7,
 	PoseUpdate = 8,
+	OnUiBuilt = 9,
 }

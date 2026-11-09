@@ -10,9 +10,12 @@ namespace Voxear;
 /// UiDocument it shows, so its elements are found, read and clicked as a screen document's are. Get it with
 /// Obj.UiPanel, or give an Obj one with Obj.AddUiPanel; its document is picked in the Inspector.
 /// <code>
-/// // A terminal by a door: its button opens the door.
-/// var screen = terminal.UiPanel.Document;
-/// screen?.Find("open")!.Clicked += door.Open;
+/// // A terminal by a door: its button opens the door. Subscribed once, in Start.
+/// protected override void Start()
+/// {
+/// 	var screen = Obj.UiPanel.Document!;
+/// 	screen.Find("open")!.Clicked += door.Open;
+/// }
 /// </code>
 /// </summary>
 public readonly struct UiPanel : IEquatable<UiPanel>, IObjComponent
@@ -37,7 +40,12 @@ public readonly struct UiPanel : IEquatable<UiPanel>, IObjComponent
 	/// <summary>False when its Obj has no UI Panel, or is gone.</summary>
 	public bool IsValid => Obj.IsValid && Number(NativeComponent.Has) != 0f;
 
-	/// <summary>The document it shows, null while it shows none or has not loaded it yet.</summary>
+	/// <summary>
+	/// The document it shows, loaded the first time a script asks, so it is there in Awake, OnEnable and Start. Its
+	/// elements keep their handlers while the Obj is switched off and on, and when its file is saved again, as they
+	/// are found again by name. Null when the panel has no document, or its file cannot be read, which the Console
+	/// says why.
+	/// </summary>
 	public UiDocument? Document
 	{
 		get

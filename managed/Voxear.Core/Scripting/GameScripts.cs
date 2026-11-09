@@ -51,7 +51,8 @@ internal static class GameScripts
 	/// in the new build, under the same handle, with its fields carried over (see StateTransfer); and the enabled
 	/// ones get OnEnable. Awake and Start do not run again. Static fields start afresh, listeners the old scripts
 	/// added to Level's events are dropped, and awaits they were in the middle of never resume, so code that
-	/// subscribes in OnEnable and unsubscribes in OnDisable carries on as before. A behaviour whose class is gone is
+	/// subscribes in OnEnable and unsubscribes in OnDisable carries on as before. So do handlers added in OnUiBuilt,
+	/// which the new behaviours get again at the next frame's start. A behaviour whose class is gone is
 	/// dropped, with a warning. handles are the behaviours the engine schedules, enabled says which of them are
 	/// enabled, and infos is filled with what the engine needs to schedule each one now. Returns false, with nothing
 	/// changed, when the new build cannot be loaded.

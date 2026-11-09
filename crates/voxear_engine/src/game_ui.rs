@@ -131,6 +131,49 @@ impl UiNumbers {
         if self.documents.contains(&Some(node)) {
             return;
         }
+        self.forget(ui, node);
+        ui.remove(node);
+    }
+
+    /// Puts `document` in `new`, a container built afresh from its file, in
+    /// place of the one it was in, keeping the numbers scripts hold its
+    /// elements by, and so their handlers: one found by name stands for the
+    /// new element of that name, or for nothing when the file has none now,
+    /// and one made in code moves into the new container, under the new
+    /// element of its parent's name. Gives back the old container, to take
+    /// off the screen.
+    pub fn replace(&mut self, ui: &mut Ui, document: u32, new: NodeId) -> Option<NodeId> {
+        let slot = self.documents.get_mut(document.checked_sub(self.first)? as usize)?;
+        let old = (*slot)?;
+        *slot = Some(new);
+        self.renumber(old, Some(new));
+        let mut stack: Vec<NodeId> = ui.children(old).into_iter().rev().collect();
+        while let Some(node) = stack.pop() {
+            if !self.numbers.contains_key(&node) {
+                stack.extend(ui.children(node).into_iter().rev());
+                continue;
+            }
+            if let Some(name) = ui.name(node) {
+                let found = ui.find(new, name);
+                self.renumber(node, found);
+                stack.extend(ui.children(node).into_iter().rev());
+                continue;
+            }
+            let parent = ui.parent(node).and_then(|parent| match parent == old {
+                true => Some(new),
+                false => ui.find(new, ui.name(parent)?),
+            });
+            match parent {
+                Some(parent) => ui.move_into(node, parent),
+                None => self.forget(ui, node),
+            }
+        }
+        Some(old)
+    }
+
+    /// Lets go of the numbers of `node` and everything in it, which stand
+    /// for nothing after.
+    fn forget(&mut self, ui: &Ui, node: NodeId) {
         let mut gone = vec![node];
         let mut at = 0;
         while let Some(&next) = gone.get(at) {
@@ -138,11 +181,17 @@ impl UiNumbers {
             at += 1;
         }
         for node in gone {
-            if let Some(number) = self.numbers.remove(&node) {
-                self.elements[(number - self.first) as usize] = None;
-            }
+            self.renumber(node, None);
         }
-        ui.remove(node);
+    }
+
+    /// Has the number scripts hold `node` by stand for `to`, or for nothing.
+    fn renumber(&mut self, node: NodeId, to: Option<NodeId>) {
+        let Some(number) = self.numbers.remove(&node) else { return };
+        self.elements[(number - self.first) as usize] = to;
+        if let Some(to) = to {
+            self.numbers.insert(to, number);
+        }
     }
 
     /// Answers what a script asks of an element: see [`UiAsk`].
@@ -336,6 +385,24 @@ impl Surface {
     /// Loads a document by project path, with the sheets its `<Style src>`
     /// names beside it, and returns the number scripts hold it by.
     pub fn load(&mut self, content: &mut Content, path: &str) -> Result<u32> {
+        let document = self.build(content, path)?;
+        Ok(self.numbers.add_document(document))
+    }
+
+    /// Loads `document` again from `path`, as after its file changed. Its
+    /// elements keep their numbers (see [`UiNumbers::replace`]), so the
+    /// handlers scripts added to them keep running. It stays as it was when
+    /// the file cannot be read.
+    pub fn reload(&mut self, content: &mut Content, document: u32, path: &str) -> Result<()> {
+        let container = self.build(content, path)?;
+        let old = self.numbers.replace(&mut self.ui, document, container);
+        self.ui.remove(old.unwrap_or(container));
+        Ok(())
+    }
+
+    /// Builds the document at `path` in a container of its own on the
+    /// screen, and gives back the container.
+    fn build(&mut self, content: &mut Content, path: &str) -> Result<NodeId> {
         let markup = content.read_text(path).with_context(|| format!("reading {path}"))?;
         let folder = path.rsplit_once('/').map_or("", |(folder, _)| folder);
         let mut load = |src: &str| {
@@ -347,7 +414,7 @@ impl Surface {
         for warning in self.ui.take_warnings() {
             tracing::warn!(target: "script", "{warning}");
         }
-        Ok(self.numbers.add_document(document))
+        Ok(document)
     }
 
     /// Shows each element bound to a key that key's text in the game's

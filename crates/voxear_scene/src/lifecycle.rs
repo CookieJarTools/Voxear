@@ -44,6 +44,10 @@ pub enum Phase {
     /// After animation and the engine's own posing, before Objs on bones
     /// follow them.
     PoseUpdate = 8,
+    /// Its Obj's UI Panel has built a document: after Start, and at each
+    /// frame's start, where scripts look whether the document is a new one,
+    /// so the behaviour hears of each document once.
+    OnUiBuilt = 9,
 }
 
 /// The phases a behaviour type overrides. Phases it does not override are
@@ -54,7 +58,7 @@ pub struct Callbacks(pub u32);
 
 impl Callbacks {
     pub const NONE: Callbacks = Callbacks(0);
-    pub const ALL: Callbacks = Callbacks(0x1ff);
+    pub const ALL: Callbacks = Callbacks(0x3ff);
     /// Not a callback but a mark beside them: a `[Predicted]` behaviour,
     /// whose FixedUpdate a networked player's machine runs again for its
     /// own Objs when the server disagrees.
@@ -335,7 +339,10 @@ impl Lifecycle {
 
     /// Runs a per-frame phase on every started, enabled behaviour.
     pub fn run(&mut self, phase: Phase, host: &mut dyn BehaviourHost) {
-        debug_assert!(matches!(phase, Phase::FixedUpdate | Phase::Update | Phase::PoseUpdate | Phase::LateUpdate));
+        debug_assert!(matches!(
+            phase,
+            Phase::FixedUpdate | Phase::Update | Phase::PoseUpdate | Phase::LateUpdate | Phase::OnUiBuilt
+        ));
         self.run_dirty();
         let running = std::mem::take(&mut self.running);
         self.dispatch(host, phase, &running);
@@ -454,6 +461,10 @@ impl Lifecycle {
         for handle in &starting {
             self.record(*handle).started = true;
         }
+        // Every Start in the batch first, so OnUiBuilt finds the others set up.
+        self.collect_requests(host);
+        let building = self.filtered(&starting, |r| r.enabled && !r.destroying);
+        self.dispatch(host, Phase::OnUiBuilt, &building);
         self.running_dirty = true;
         self.collect_requests(host);
     }
@@ -525,14 +536,37 @@ mod tests {
         }
     }
 
+    /// A behaviour with every callback but OnUiBuilt, which has a test of its own.
     fn reg(handle: u32, order: i32) -> Registration {
         Registration {
             handle: BehaviourHandle(handle),
             entity: Entity::NULL,
-            callbacks: Callbacks::ALL,
+            callbacks: Callbacks(Callbacks::ALL.0 & !Callbacks::of(Phase::OnUiBuilt).0),
             order,
             enabled: true,
         }
+    }
+
+    #[test]
+    fn on_ui_built_follows_every_start_in_the_batch() {
+        let mut lifecycle = Lifecycle::new();
+        let mut host = Recorder::default();
+        lifecycle.register(Registration { callbacks: Callbacks::ALL, ..reg(0, 0) });
+        lifecycle.register(Registration { callbacks: Callbacks::of(Phase::Start), ..reg(1, 0) });
+        lifecycle.register(Registration { callbacks: Callbacks::of(Phase::OnUiBuilt), ..reg(2, 0) });
+        lifecycle.flush(&mut host);
+        assert_eq!(
+            host.log,
+            vec![
+                (Phase::Awake, vec![0]),
+                (Phase::OnEnable, vec![0]),
+                (Phase::Start, vec![0, 1]),
+                (Phase::OnUiBuilt, vec![0, 2]),
+            ]
+        );
+        host.log.clear();
+        lifecycle.run(Phase::OnUiBuilt, &mut host);
+        assert_eq!(host.log, vec![(Phase::OnUiBuilt, vec![0, 2])], "and at each frame's start");
     }
 
     #[test]

@@ -46,6 +46,7 @@ use crate::{
     shader_fields::{ShaderEdit, ShaderFields},
     gun_handling_inspector::{GunHandlingFields, HandlingChange, HandlingClip},
     motion_set_inspector::{ClipSlot, MotionSetFields, SetChange},
+    prompt_icons_inspector::{IconSlot, IconsChange, PromptIconsFields},
     strings_inspector::{StringsChange, StringsFields},
 };
 
@@ -93,6 +94,20 @@ pub enum AssetAction {
     DropClip {
         set: String,
         slot: ClipSlot,
+        source: DragSource,
+    },
+    /// Open the object picker under `anchor` for a control's picture in the
+    /// Prompt Icons at this path.
+    BrowsePromptIcon {
+        icons: String,
+        slot: IconSlot,
+        anchor: NodeId,
+    },
+    /// Something was dragged onto a control's row of the Prompt Icons at
+    /// this path.
+    DropPromptIcon {
+        icons: String,
+        slot: IconSlot,
         source: DragSource,
     },
     /// Write the Gun Handling at this path as this, and when `rebuild`, show
@@ -212,6 +227,8 @@ pub struct AssetView {
     motion_set: Option<MotionSetFields>,
     /// A Gun Handling's holds and actions.
     gun_handling: Option<GunHandlingFields>,
+    /// Prompt Icons' pictures, by device and control.
+    prompt_icons: Option<PromptIconsFields>,
     /// The preview's frame, which takes drags, and its image.
     preview: Option<(NodeId, NodeId)>,
     /// A sound's play button, and whether it shows that the sound plays.
@@ -386,6 +403,7 @@ impl AssetView {
             clips: None,
             motion_set: None,
             gun_handling: None,
+            prompt_icons: None,
             preview,
             listen: None,
             strings: None,
@@ -410,6 +428,11 @@ impl AssetView {
                 let label = |clip: &str| crate::props::clip_label(game, clip);
                 let bones = |clip: &str| crate::props::clip_bones(game, clip);
                 view.gun_handling = Some(GunHandlingFields::new(ui, root, handling, &label, &bones));
+            }
+            ItemKind::Asset(AssetKind::PromptIcons) => {
+                let text = std::fs::read_to_string(&file).unwrap_or_default();
+                let icons = toml::from_str(&text).unwrap_or_default();
+                view.prompt_icons = Some(PromptIconsFields::new(ui, root, icons, game.content.db()));
             }
             ItemKind::Asset(AssetKind::Model) => {
                 let rows = part(ui, root, "Import Settings", "box");
@@ -513,6 +536,7 @@ impl AssetView {
             clips: None,
             motion_set: None,
             gun_handling: None,
+            prompt_icons: None,
             preview: None,
             listen: None,
             strings: None,
@@ -586,6 +610,13 @@ impl AssetView {
                 HandlingChange::Shape => AssetAction::SaveGunHandling { path, handling, rebuild: true },
                 HandlingChange::Browse(field, anchor) => AssetAction::BrowseGunClip { handling: path, field, anchor },
                 HandlingChange::Drop(field, source) => AssetAction::DropGunClip { handling: path, field, source },
+            });
+        }
+        if let Some(change) = self.prompt_icons.as_mut().and_then(|fields| fields.update(ui)) {
+            let icons = self.item.path.clone();
+            return Some(match change {
+                IconsChange::Browse(slot, anchor) => AssetAction::BrowsePromptIcon { icons, slot, anchor },
+                IconsChange::Drop(slot, source) => AssetAction::DropPromptIcon { icons, slot, source },
             });
         }
         if let Some(settings) = self.clips.as_mut().and_then(|(_, _, fields)| fields.as_mut()?.update(ui)) {
@@ -1379,6 +1410,7 @@ fn kind_name(kind: ItemKind) -> &'static str {
         ItemKind::Asset(AssetKind::Shader) => "Shader",
         ItemKind::Asset(AssetKind::MotionSet) => "Motion Set",
         ItemKind::Asset(AssetKind::GunHandling) => "Gun Handling",
+        ItemKind::Asset(AssetKind::PromptIcons) => "Prompt Icons",
         ItemKind::Asset(AssetKind::Data) => "Data asset",
         ItemKind::Asset(AssetKind::Terrain) => "Terrain",
     }
@@ -1404,6 +1436,7 @@ fn icon(kind: ItemKind) -> &'static str {
         ItemKind::Asset(AssetKind::Shader) => "shader",
         ItemKind::Asset(AssetKind::MotionSet) => "play",
         ItemKind::Asset(AssetKind::GunHandling) => "crosshair",
+        ItemKind::Asset(AssetKind::PromptIcons) => "gamepad",
         ItemKind::Asset(AssetKind::Data) => "file",
         ItemKind::Asset(AssetKind::Terrain) => "mountain",
     }

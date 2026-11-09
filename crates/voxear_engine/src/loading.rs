@@ -428,7 +428,8 @@ fn gather(
                 | AssetKind::Strings
                 | AssetKind::AssetTable
                 | AssetKind::Paths
-                | AssetKind::Data => false,
+                | AssetKind::Data
+                | AssetKind::PromptIcons => false,
             } && !models.stripped.contains(&guid);
             if owner == Some(guid) {
                 progress.scenes.lock().expect("never poisoned").entry(guid).or_insert((1.0, 0, 0));

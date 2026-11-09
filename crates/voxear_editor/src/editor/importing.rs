@@ -246,6 +246,7 @@ impl Editor {
         let actions = changed.iter().any(|path| path.ends_with(".inputactions"));
         let lighting = changed.iter().any(|path| path.ends_with(".lighting"));
         let documents = changed.iter().any(|path| path.ends_with(".vui") || path.ends_with(".vss"));
+        let prompt_icons = changed.iter().any(|path| path.ends_with(".prompticons"));
         // A material may pick a built-in shader no other did, which is compiled in then.
         let shaders = changed.iter().any(|path| path.ends_with(".shader") || path.ends_with(".material"));
         if came_or_went {
@@ -263,6 +264,10 @@ impl Editor {
             // UI documents on the screen and on UI Panels show as edited outside the editor, keeping their handlers.
             if documents {
                 self.game.ui.reload_documents(&mut self.game.content);
+            }
+            // Prompts show a game's own pictures for its controls as the file now has them.
+            if prompt_icons {
+                self.game.prompt_icons.forget();
             }
             // A shader saved from a code editor compiles again, and its materials draw with it; nothing
             // compiles again when the shaders the materials pick are as they were.

@@ -25,6 +25,7 @@ mod material_drops;
 mod material_shaders;
 mod model_clips;
 mod motion_sets;
+mod prompt_icon_files;
 mod model_materials;
 mod model_parts;
 mod modules;
@@ -1228,6 +1229,8 @@ impl Editor {
             AssetAction::SaveGunHandling { path, handling, rebuild } => {
                 self.save_gun_handling(&path, &handling, rebuild);
             }
+            AssetAction::BrowsePromptIcon { icons, slot, anchor } => self.browse_prompt_icon(&icons, slot, anchor),
+            AssetAction::DropPromptIcon { icons, slot, source } => self.drop_prompt_icon(&icons, &slot, &source),
             AssetAction::BrowseGunClip { handling, field, anchor } => self.browse_gun_clip(&handling, field, anchor),
             AssetAction::DropGunClip { handling, field, source } => self.drop_gun_clip(&handling, field, &source),
             AssetAction::BrowseScene { level, at, anchor } => self.browse_level_scene(&level, at, anchor),
@@ -2456,6 +2459,8 @@ impl Editor {
                 (PickFor::GunHandlingClip { handling, field }, Chosen::Value(pick)) => {
                     self.pick_gun_handling_clip(&handling, field, &pick);
                 }
+                (PickFor::PromptIcon { icons, slot }, Chosen::Value(pick)) => self.pick_prompt_icon(&icons, &slot, &pick),
+                (PickFor::InputPromptIcons, Chosen::Value(pick)) => self.pick_input_prompt_icons(&pick),
                 (PickFor::MaterialMap { material, map }, Chosen::Value(pick)) => {
                     self.pick_material_map(&material, map, &pick, renderer);
                 }

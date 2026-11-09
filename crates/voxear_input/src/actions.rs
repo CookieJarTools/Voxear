@@ -85,6 +85,10 @@ const STICK_DEADZONE: (f32, f32) = (0.125, 0.925);
 #[serde(deny_unknown_fields)]
 pub struct ActionsFile {
     pub format: u32,
+    /// The Prompt Icons prompts draw controls with, by GUID or project
+    /// path; none for the glyphs Voxear draws.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_icons: Option<String>,
     #[serde(default, rename = "category", skip_serializing_if = "Vec::is_empty")]
     pub categories: Vec<CategoryData>,
     #[serde(default, rename = "map")]

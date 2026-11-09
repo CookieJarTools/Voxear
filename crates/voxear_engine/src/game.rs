@@ -60,6 +60,9 @@ pub struct Game {
     /// The lookup table the post-processing names that could not be loaded,
     /// said once rather than every frame.
     lut_failed: Option<String>,
+    /// The pictures prompts show for controls, as the input actions name
+    /// them.
+    pub prompt_icons: crate::prompt_icons::PromptIcons,
 }
 
 /// The game's window as scripts see it and ask for it, through `Screen` and
@@ -118,6 +121,7 @@ impl Game {
             audio: GameAudio::default(),
             input: voxear_input::Input::new(),
             lut_failed: None,
+            prompt_icons: crate::prompt_icons::PromptIcons::default(),
         };
         game.audio.headphones = game.project.file.audio.headphones;
         game.audio.reverb = game.project.file.audio.reverb;
@@ -607,7 +611,10 @@ impl Game {
             self.prepare_post(renderer);
         }
         self.ui.follow_language(self.engine.world.resource::<Localization>());
-        self.ui.follow_input(&self.input);
+        if let Some(renderer) = renderer.as_deref_mut() {
+            self.prompt_icons.follow(&self.input, &mut self.content, renderer);
+        }
+        self.ui.follow_input(&self.input, self.prompt_icons.sprites());
         self.ui.show_tooltip(delta);
         // The UI's list and tree views have the scripts fill the rows now on screen, before the frame draws them.
         let rows = self.ui.rows_to_fill();

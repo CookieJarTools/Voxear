@@ -575,6 +575,24 @@ impl Input {
         binding.controls().iter().map(|(_, path)| self.control_glyph(path)).collect()
     }
 
+    /// The paths of the controls an action's prompt shows, for the device
+    /// used last, in the order [`glyphs`](Self::glyphs) gives them.
+    pub fn prompt_controls(&self, action: ActionId) -> Vec<String> {
+        let scheme = self.scheme();
+        let Some(binding) = self.bindings(action).iter().find(|b| b.scheme() == scheme) else { return Vec::new() };
+        binding.controls().iter().map(|(_, path)| path.to_string()).collect()
+    }
+
+    /// The kind of pad the player used last, or would use.
+    pub fn pad_family(&self) -> Family {
+        self.devices.family()
+    }
+
+    /// The Prompt Icons the actions' file names, by GUID or project path.
+    pub fn prompt_icons(&self) -> Option<&str> {
+        self.actions.file.prompt_icons.as_deref()
+    }
+
     /// A control, by its path, as a prompt draws it on the player's device.
     pub fn control_glyph(&self, path: &str) -> Glyph {
         glyphs::glyph(self.devices.family(), path, &|key| self.devices.key_label(key))

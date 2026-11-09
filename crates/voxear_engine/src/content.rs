@@ -462,6 +462,8 @@ pub struct Content {
     terrain_greys: HashMap<AssetGuid, Option<Arc<voxear_terrain::import::Greys>>>,
     /// Pictures materials read, by GUID and whether they are read as sRGB.
     pictures: HashMap<(AssetGuid, bool), TextureId>,
+    /// Each picture's size as uploaded, in pixels.
+    picture_sizes: HashMap<(AssetGuid, bool), [u32; 2]>,
     /// IES profiles uploaded for lights, by their assets.
     light_profiles: HashMap<AssetGuid, TextureId>,
     /// The project's custom shaders, read when the assets are scanned.
@@ -614,6 +616,7 @@ impl Content {
             terrain_greys: HashMap::new(),
             handlings_version: 0,
             pictures: HashMap::new(),
+            picture_sizes: HashMap::new(),
             light_profiles: HashMap::new(),
             shaders: crate::shaders::ShaderRegistry::default(),
             luts: HashMap::new(),
@@ -1474,6 +1477,14 @@ impl Content {
         Ok(colour_on_gpu(kind, values))
     }
 
+    /// A picture asset for UI, in its colours as they look, with its size in
+    /// pixels as uploaded, as a prompt's icon is drawn from a part of it.
+    pub fn ui_picture(&mut self, renderer: &mut Renderer, guid: AssetGuid) -> Result<(TextureId, [u32; 2])> {
+        let texture = self.picture(renderer, guid, true)?;
+        let size = self.picture_sizes.get(&(guid, true)).copied().unwrap_or([1, 1]);
+        Ok((texture, size))
+    }
+
     /// A picture asset as a light's cookie, in its colours as they look.
     pub fn cookie(&mut self, renderer: &mut Renderer, reference: &AssetRef) -> Result<TextureId> {
         let guid = reference.guid().with_context(|| format!("`{reference}` is not a picture"))?;
@@ -1567,8 +1578,11 @@ impl Content {
         let bytes = self.read(&path)?;
         // A build ships the picture cooked, as its import settings said.
         if CookedPicture::is_cooked(&bytes) {
-            let texture = renderer.add_cooked_picture(&path, &CookedPicture::from_bytes(&bytes, &path)?, srgb)?;
+            let cooked = CookedPicture::from_bytes(&bytes, &path)?;
+            let texture = renderer.add_cooked_picture(&path, &cooked, srgb)?;
             self.pictures.insert((guid, srgb), texture);
+            let (width, height) = cooked.size();
+            self.picture_sizes.insert((guid, srgb), [width, height]);
             return Ok(texture);
         }
         let meta = format!("{path}.{}", voxear_assets::META_EXTENSION);
@@ -1583,6 +1597,7 @@ impl Content {
         let source = TextureSource { name: &path, width, height, rgba: picture.as_raw(), srgb };
         let texture = renderer.add_texture(&source)?;
         self.pictures.insert((guid, srgb), texture);
+        self.picture_sizes.insert((guid, srgb), [width, height]);
         Ok(texture)
     }
 

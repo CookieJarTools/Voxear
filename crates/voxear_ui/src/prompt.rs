@@ -43,6 +43,9 @@ pub struct PromptGlyph {
     pub text: String,
     pub icon: Option<&'static str>,
     pub color: Option<Color>,
+    /// A picture drawn in place of the outline and what is in it, as a
+    /// game's own icons for its controls give one.
+    pub image: Option<crate::ImageRef>,
 }
 
 /// A prompt's action, by name, and the glyphs it shows.
@@ -103,6 +106,13 @@ impl Ui {
     fn add_glyph(&mut self, prompt: NodeId, glyph: &PromptGlyph) {
         let node = self.panel(prompt, Style::row());
         self.add_class(node, "prompt-glyph");
+        if let Some(image) = glyph.image {
+            self.add_class(node, "sprite");
+            let shown = self.image(node);
+            self.add_class(shown, "prompt-sprite");
+            self.set_image(shown, Some(image));
+            return;
+        }
         self.add_class(node, glyph.shape.class());
         let inner = match glyph.icon {
             Some(icon) => {

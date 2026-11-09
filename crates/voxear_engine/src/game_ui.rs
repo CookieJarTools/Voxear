@@ -585,9 +585,9 @@ impl Surface {
     /// Shows each key map scripts made the game's input as they asked, as
     /// it is now, with what was rebound, and each prompt its action's
     /// controls. Once a frame.
-    pub fn follow_input(&mut self, input: &Input) {
+    pub fn follow_input(&mut self, input: &Input, sprites: Option<&crate::prompt_icons::PromptSprites>) {
         for (node, action) in self.ui.prompts() {
-            self.ui.set_prompt(node, keymaps::prompt_glyphs(input, &action));
+            self.ui.set_prompt(node, keymaps::prompt_glyphs_with(input, &action, sprites));
         }
         self.keymaps.retain(|node, _| self.ui.is_keymap(*node));
         let views: Vec<(NodeId, Scheme, KeymapOptions)> =
@@ -823,10 +823,11 @@ impl GameUi {
     }
 
     /// Shows each key map and prompt the game's input as it is now, on the
-    /// screen and every panel.
-    pub fn follow_input(&mut self, input: &Input) {
+    /// screen and every panel, each prompt's controls the pictures of the
+    /// game's Prompt Icons where it has them.
+    pub fn follow_input(&mut self, input: &Input, sprites: Option<&crate::prompt_icons::PromptSprites>) {
         for surface in self.surfaces() {
-            surface.follow_input(input);
+            surface.follow_input(input, sprites);
         }
     }
 

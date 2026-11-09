@@ -253,6 +253,7 @@ impl Contents {
                 FileKind::Asset(AssetKind::Shader) => "shader",
                 FileKind::Asset(AssetKind::MotionSet) => "play",
                 FileKind::Asset(AssetKind::GunHandling) => "crosshair",
+                FileKind::Asset(AssetKind::PromptIcons) => "gamepad",
                 FileKind::Asset(AssetKind::Terrain) => "mountain",
                 FileKind::Asset(AssetKind::Lighting) => "light",
                 FileKind::Asset(AssetKind::Data) => "file",

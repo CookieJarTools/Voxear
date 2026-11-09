@@ -376,7 +376,8 @@ pub fn server_reads(kind: AssetKind) -> bool {
         | AssetKind::Paths
         | AssetKind::LightProfile
         | AssetKind::Lighting
-        | AssetKind::Shader => false,
+        | AssetKind::Shader
+        | AssetKind::PromptIcons => false,
     }
 }
 
@@ -591,7 +592,10 @@ fn find_needs(db: &AssetDb, guid: AssetGuid, kind: AssetKind, path: &str) -> Res
         | AssetKind::MotionSet
         | AssetKind::GunHandling
         | AssetKind::Data
-        | AssetKind::Terrain => {
+        | AssetKind::Terrain
+        // The pictures a set of prompt icons shows, and the set the input actions name.
+        | AssetKind::PromptIcons
+        | AssetKind::InputActions => {
             let text = std::fs::read_to_string(db.file(path))?;
             let table: toml::Table = toml::from_str(&text)?;
             // A terrain's layers' pictures made its heights, which go with it; a game needs only those.
@@ -624,12 +628,7 @@ fn find_needs(db: &AssetDb, guid: AssetGuid, kind: AssetKind, path: &str) -> Res
             needs.companions = sheets.into_iter().map(beside).collect();
         }
         AssetKind::Sound => needs.companions = vec![format!("{path}.{}", voxear_assets::META_EXTENSION)],
-        AssetKind::Texture
-        | AssetKind::InputActions
-        | AssetKind::Strings
-        | AssetKind::Paths
-        | AssetKind::LightProfile
-        | AssetKind::Shader => {}
+        AssetKind::Texture | AssetKind::Strings | AssetKind::Paths | AssetKind::LightProfile | AssetKind::Shader => {}
     }
     needs.direct.remove(&guid);
     needs.named.remove(&guid);

@@ -15,14 +15,33 @@
 //! The device's outline is drawn behind its keys.
 
 use voxear_input::{ControlUse, Input, Scheme, layouts};
+
+use crate::prompt_icons::PromptSprites;
 use voxear_ui::{Color, GlyphShape, KeyShape, KeyState, KeymapBody, KeymapData, KeymapKey, KeymapLine, PromptGlyph};
 
 /// An action's controls, by its name (`Jump` or `Player/Jump`), as a
 /// prompt draws them on the device the player used last: none for an
 /// action there is not, or one with no binding for that device.
 pub fn prompt_glyphs(input: &Input, action: &str) -> Vec<PromptGlyph> {
+    prompt_glyphs_with(input, action, None)
+}
+
+/// An action's controls as [`prompt_glyphs`] gives them, each the
+/// picture `sprites` has for it in place of the glyph Voxear draws, where
+/// it has one (see [`crate::prompt_icons`]).
+pub fn prompt_glyphs_with(input: &Input, action: &str, sprites: Option<&PromptSprites>) -> Vec<PromptGlyph> {
     let Some(action) = input.action(action) else { return Vec::new() };
-    input.glyphs(action).into_iter().map(prompt_glyph).collect()
+    let glyphs = input.glyphs(action).into_iter().map(prompt_glyph);
+    let Some(sprites) = sprites else { return glyphs.collect() };
+    let family = input.pad_family();
+    let paths = input.prompt_controls(action);
+    glyphs
+        .zip(paths)
+        .map(|(glyph, path)| match sprites.get(&path, family) {
+            Some(image) => PromptGlyph { image: Some(image), ..glyph },
+            None => glyph,
+        })
+        .collect()
 }
 
 /// A control, by its path, as a prompt draws it on the player's device.
@@ -41,7 +60,7 @@ fn prompt_glyph(glyph: voxear_input::Glyph) -> PromptGlyph {
         Input::Bare => GlyphShape::Bare,
     };
     let color = glyph.color.map(|[r, g, b]| Color::rgb(r, g, b));
-    PromptGlyph { shape, text: glyph.text, icon: glyph.icon, color }
+    PromptGlyph { shape, text: glyph.text, icon: glyph.icon, color, image: None }
 }
 
 /// How keys are coloured.

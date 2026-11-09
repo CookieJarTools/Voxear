@@ -105,10 +105,12 @@ pub enum NewFile {
     MotionSet,
     GunHandling,
     Terrain,
+    /// Pictures prompts show for controls, picked on the Input page.
+    PromptIcons,
 }
 
 impl NewFile {
-    pub const ALL: [NewFile; 12] = [
+    pub const ALL: [NewFile; 13] = [
         NewFile::Folder,
         NewFile::Scene,
         NewFile::Level,
@@ -121,6 +123,7 @@ impl NewFile {
         NewFile::MotionSet,
         NewFile::GunHandling,
         NewFile::Terrain,
+        NewFile::PromptIcons,
     ];
 
     /// The module it belongs to, without which the menu leaves it out.
@@ -147,6 +150,7 @@ impl NewFile {
             NewFile::MotionSet => "New Motion Set",
             NewFile::GunHandling => "New Gun Handling",
             NewFile::Terrain => "New Terrain",
+            NewFile::PromptIcons => "New Prompt Icons",
         }
     }
 
@@ -166,6 +170,7 @@ impl NewFile {
             NewFile::MotionSet => ("New Motion Set", ".motionset"),
             NewFile::GunHandling => ("New Gun Handling", ".gunhandling"),
             NewFile::Terrain => ("New Terrain", ".terrain"),
+            NewFile::PromptIcons => ("New Prompt Icons", ".prompticons"),
         }
     }
 }
@@ -190,6 +195,10 @@ pub fn create(root: &Path, folder: &str, kind: NewFile, namespace: &str) -> Resu
         NewFile::MotionSet => std::fs::write(&file, NEW_MOTION_SET),
         NewFile::GunHandling => std::fs::write(&file, NEW_GUN_HANDLING),
         NewFile::Terrain => std::fs::write(&file, NEW_TERRAIN.to_string() + &TerrainFile::default().to_text()),
+        NewFile::PromptIcons => {
+            let icons = voxear_engine::prompt_icons::PromptIconsFile { format: 1, ..Default::default() };
+            std::fs::write(&file, icons.to_text()?)
+        }
     }
     .with_context(|| format!("making {}", file.display()))?;
     Ok(path)

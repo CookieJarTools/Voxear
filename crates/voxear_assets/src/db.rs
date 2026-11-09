@@ -71,6 +71,9 @@ pub enum AssetKind {
     /// A `.terrain` file: a stretch of ground, how large and how fine, its
     /// heights in a `.heights` file beside it, which a Terrain picks.
     Terrain,
+    /// A `.prompticons` file: the pictures prompts show for controls, for
+    /// each kind of device, in place of the glyphs Voxear draws.
+    PromptIcons,
 }
 
 impl AssetKind {
@@ -96,6 +99,7 @@ impl AssetKind {
             "gunhandling" => Self::GunHandling,
             "asset" => Self::Data,
             "terrain" => Self::Terrain,
+            "prompticons" => Self::PromptIcons,
             _ => return None,
         })
     }

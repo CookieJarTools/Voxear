@@ -109,6 +109,10 @@ pub enum PickFor {
     ActionIcon,
     /// The clip an action of the Gun Handling at this path is based on.
     GunHandlingClip { handling: String, field: crate::gun_handling_inspector::HandlingClip },
+    /// A control's picture in the Prompt Icons at this path.
+    PromptIcon { icons: String, slot: crate::prompt_icons_inspector::IconSlot },
+    /// The Prompt Icons the project's input actions name.
+    InputPromptIcons,
 }
 
 /// What the picker is open for, and the field it opened from.
@@ -519,6 +523,7 @@ fn asset(game: &Game, path: &str) -> (&'static str, String) {
         Some(AssetKind::Shader) => "shader",
         Some(AssetKind::MotionSet) => "play",
         Some(AssetKind::GunHandling) => "crosshair",
+        Some(AssetKind::PromptIcons) => "gamepad",
         Some(AssetKind::Terrain) => "mountain",
         Some(AssetKind::Lighting) => "light",
         Some(AssetKind::Data) => "file",

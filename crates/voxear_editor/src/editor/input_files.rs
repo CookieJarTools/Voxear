@@ -16,6 +16,7 @@ use super::Editor;
 use crate::{
     input_edit,
     input_editor::{Browse, Picked},
+    input_panel::IconsAsk,
     object_picker::{Choice, Chosen, PickFor},
 };
 
@@ -31,6 +32,14 @@ impl Editor {
         }
         if self.input_actions.is_listening() && !self.is_playing() {
             self.game.input.update(1.0 / 60.0);
+        }
+        if self.shown(self.nodes.input_panel) {
+            let shown = self.input_prompt_icons_path();
+            match self.input_actions.prompt_icons(&mut self.ui, shown.as_deref()) {
+                Some(IconsAsk::Browse(anchor)) => self.browse_input_prompt_icons(anchor),
+                Some(IconsAsk::Drop(source)) => self.drop_input_prompt_icons(&source),
+                None => {}
+            }
         }
         match self.input_actions.take_browse() {
             Some(Browse::Control { anchor, now }) => {
@@ -92,7 +101,7 @@ impl Editor {
         taken
     }
 
-    fn save_input_actions(&mut self, text: &str) {
+    pub(super) fn save_input_actions(&mut self, text: &str) {
         let db = self.game.content.db();
         let mut files: Vec<String> = db
             .entries()

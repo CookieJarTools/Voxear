@@ -13,7 +13,18 @@ use voxear_engine::keymaps::{self, KeymapColors, KeymapOptions};
 use voxear_input::{Input, Scheme};
 use voxear_ui::{KeyState, NodeId, Style, Ui};
 
-use crate::input_editor::{ActionsEditor, Browse, Picked};
+use crate::{
+    asset_inspector::{Slot, show_slot, slot},
+    input_editor::{ActionsEditor, Browse, Picked},
+};
+
+/// What the Prompt Icons field was asked this frame.
+pub enum IconsAsk {
+    /// Its arrow or its name clicked: the picker, under this node.
+    Browse(NodeId),
+    /// Something dropped onto it.
+    Drop(voxear_ui::DragSource),
+}
 
 pub struct InputPanel {
     view: NodeId,
@@ -30,6 +41,8 @@ pub struct InputPanel {
     maps: Vec<String>,
     /// What the legend shows, to make it again when that changes.
     legend_for: Option<(KeymapColors, Vec<String>)>,
+    /// The Prompt Icons the actions name, which prompts draw controls with.
+    icons: Slot,
 }
 
 impl InputPanel {
@@ -40,6 +53,12 @@ impl InputPanel {
         ui.add_segment(view, "Actions", None);
         ui.add_segment(view, "Layout", None);
         ui.set_name(view, "input-view");
+        let spacer = ui.panel(tabs, Style::default());
+        ui.add_class(spacer, "spacer");
+        let holder = ui.panel(tabs, Style::row());
+        ui.add_class(holder, "input-icons");
+        let icons = slot(ui, holder, "Prompt Icons", "gamepad");
+        ui.set_name(icons.field, "input-prompt-icons");
         let actions_view = ui.panel(panel, Style::default());
         ui.add_class(actions_view, "fill");
         ui.add_class(actions_view, "input-view");
@@ -83,7 +102,18 @@ impl InputPanel {
             legend,
             maps: Vec::new(),
             legend_for: None,
+            icons,
         }
+    }
+
+    /// Shows the Prompt Icons the actions name, by path, and says what was
+    /// asked of the field this frame.
+    pub fn prompt_icons(&mut self, ui: &mut Ui, shown: Option<&str>) -> Option<IconsAsk> {
+        show_slot(ui, self.icons, shown, "drawn by Voxear");
+        if let Some(source) = ui.dropped_onto(self.icons.field) {
+            return Some(IconsAsk::Drop(source));
+        }
+        (ui.clicked(self.icons.arrow) || ui.clicked(self.icons.field)).then_some(IconsAsk::Browse(self.icons.field))
     }
 
     /// Whether the Actions view waits for a key or button for a binding.

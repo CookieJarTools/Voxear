@@ -423,7 +423,7 @@ pub(crate) fn draw(
     let view = panels.view;
     let offset = [view.offset.x as u32, view.offset.y as u32];
     let push = Push {
-        textures: [fg.texture(depth).0, offset[0], offset[1], 0],
+        textures: [fg.texture(depth).0, offset[0], offset[1], voxear_rhi::samplers::ANISOTROPIC_CLAMP],
         size: [panels.render.width, panels.render.height],
         output: pack(view.extent.width, view.extent.height),
         ..push

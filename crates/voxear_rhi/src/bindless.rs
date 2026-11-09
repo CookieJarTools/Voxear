@@ -24,6 +24,9 @@ pub mod samplers {
     pub const NEAREST_CLAMP: u32 = 2;
     /// Returns the minimum of the footprint; builds depth pyramids.
     pub const MIN_REDUCTION: u32 = 3;
+    /// Trilinear and anisotropic, clamped at the edges: for a picture seen
+    /// at a slant that must not wrap round, as a UI panel's.
+    pub const ANISOTROPIC_CLAMP: u32 = 4;
 
     /// In `comparisonSamplers`: bilinear PCF, lit when the reference depth is
     /// less than or equal to the stored one.
@@ -186,12 +189,14 @@ impl Bindless {
             .mipmap_mode(vk::SamplerMipmapMode::NEAREST);
         let mut reduction = vk::SamplerReductionModeCreateInfo::default().reduction_mode(vk::SamplerReductionMode::MIN);
         let min_reduction = clamp.mipmap_mode(vk::SamplerMipmapMode::NEAREST).push_next(&mut reduction);
+        let anisotropic = clamp.anisotropy_enable(true).max_anisotropy(16.0);
 
         for (expected, info) in [
             (samplers::LINEAR_REPEAT, repeat),
             (samplers::LINEAR_CLAMP, clamp),
             (samplers::NEAREST_CLAMP, nearest),
             (samplers::MIN_REDUCTION, min_reduction),
+            (samplers::ANISOTROPIC_CLAMP, anisotropic),
         ] {
             let index = self.add_sampler(gpu, &info)?;
             debug_assert_eq!(index, expected);

@@ -65,5 +65,5 @@ Scripts can also change a panel's `Size`, `PixelsPerMetre`, `FaceCamera`, `TwoSi
 
 - Panels show while you edit, as well as while the game plays. Their buttons work only while it plays.
 - A panel is drawn over the finished picture, so its colours are exactly as designed: light, fog and the camera's exposure don't change them. Smoke and particles don't cover it either.
-- Text softens when a panel is seen at a steep angle.
+- Seen at a slant, a panel stays sharp along the way it isn't squeezed, so its text still reads from well off to one side. Only nearly edge on does its text soften.
 - Saving a panel's document, or a style sheet it names, shows the change on the panel.

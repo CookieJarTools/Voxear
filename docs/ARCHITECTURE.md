@@ -1561,8 +1561,9 @@ surfaces in 3D. *(Implemented as the UI Panel component:)*
   history image, with the UI shader, before the views, then makes its mips in a compute pass that averages
   premultiplied colour.
 - Each view draws its panels after post-processing and before debug draw, so their colours are as designed and TAA
-  does not soften their text. It projects them unjittered, samples trilinearly, and discards where the scene's depth
-  is in front.
+  does not soften their text. It projects them unjittered, samples them anisotropically with a clamping sampler
+  (`samplers::ANISOTROPIC_CLAMP`), so a panel seen at a slant stays sharp across the way it is squeezed, and
+  discards where the scene's depth is in front.
 - The pointer works the nearest clickable panel that a camera ray meets before any collider: through the cursor,
   or through the view's middle while the cursor is locked. Clicks a panel takes do not reach the game's input.
 

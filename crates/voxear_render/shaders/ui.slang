@@ -198,8 +198,10 @@ float4 uiFragment(UiOut i) : SV_Target
 // panels over the finished picture, after post-processing, so their colours
 // are as designed, one rectangle each from buffers().uiPanels. A panel is
 // hidden where the scene is in front of it, read from the scene's depth as
-// debug draw reads it. push.textures: the scene's depth texture, and the
-// view's offset in the output (x, y); push.size is the depth's size and
+// debug draw reads it. push.textures: the scene's depth texture, the view's
+// offset in the output (x, y), and the sampler a panel is read with, which
+// filters anisotropically so a panel seen at a slant stays sharp across
+// the way it is squeezed; push.size is the depth's size and
 // push.output the view's (width | height << 16), which differ when the scene
 // is drawn smaller and upscaled.
 
@@ -228,7 +230,7 @@ UiPanelOut uiPanelVertex(uint vertexId : SV_VertexID)
 float4 uiPanelFragment(UiPanelOut i) : SV_Target
 {
     // Read before anything is thrown away, so the mip is picked from neighbouring pixels that all ran.
-    float4 color = textures[NonUniformResourceIndex(i.texture)].Sample(samplers[SAMPLER_LINEAR_CLAMP], i.uv);
+    float4 color = textures[NonUniformResourceIndex(i.texture)].Sample(samplers[push.textures.w], i.uv);
     float2 view = float2(push.output & 0xFFFF, push.output >> 16);
     float2 inView = i.position.xy - float2(push.textures.yz);
     int2 pixel = int2(inView * float2(push.size) / max(view, 1.0));

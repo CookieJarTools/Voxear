@@ -4974,3 +4974,41 @@ fn a_two_sided_ui_panel_reads_the_right_way_round_from_behind() {
     let i = (((height / 2) * width + width / 2 - quarter) * 4) as usize;
     assert_ne!(pixels[i..i + 3], [255, 0, 0], "one-sided, nothing from behind");
 }
+
+/// A UI Panel seen nearly edge on keeps what runs across its short side
+/// sharp: fine stripes up it, as fine as text, still stand apart, not
+/// blurred grey by the way the panel is squeezed the other way.
+#[test]
+fn a_ui_panel_seen_from_the_side_stays_sharp() {
+    use voxear_render::{UiPanel, UiPanelFrame};
+    use voxear_ui::{Color, Style, Ui};
+
+    let Some(mut renderer) = renderer() else { return };
+    let (width, height) = (640u32, 360u32);
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::IDENTITY));
+    // Two metres ahead, turned nearly edge on.
+    let turned = Quat::from_rotation_y(80f32.to_radians());
+    let panel = world.spawn((
+        Transform::new(Vec3::new(0.0, 0.0, 2.0), turned, Vec3::ONE),
+        UiPanel { size: [1.6, 0.9], ..UiPanel::default() },
+    ));
+    let mut ui = Ui::new();
+    let root = ui.root();
+    ui.panel(root, Style::default().at(0.0, 0.0).width(800.0).height(450.0).background(Color::hex(0x000000)));
+    for band in (0..450).step_by(16) {
+        let white = Style::default().at(0.0, band as f32).width(800.0).height(8.0).background(Color::hex(0xffffff));
+        ui.panel(root, white);
+    }
+    let frame = ui.frame(800, 450, 1.0);
+    renderer.set_ui_panels(&[UiPanelFrame { entity: panel, frame: &frame, size: [800, 450] }]).unwrap();
+    run(&mut renderer, &world, &mut 0.0, 3);
+    let (_, _, pixels) = renderer.read_pixels().unwrap();
+    let red = |x: u32, y: u32| pixels[((y * width + x) * 4) as usize];
+    // The panel's middle is straight ahead, in the middle of the view; down that column the stripes still swing
+    // from dark to light.
+    let x = width / 2;
+    let column: Vec<u8> = (height / 2 - 30..height / 2 + 30).map(|y| red(x, y)).collect();
+    let (low, high) = (column.iter().min().unwrap(), column.iter().max().unwrap());
+    assert!(high - low > 150, "the stripes blurred together at column {x}: {low} to {high}");
+}

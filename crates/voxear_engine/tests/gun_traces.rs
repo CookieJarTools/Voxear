@@ -1,6 +1,7 @@
-//! Gun traces: five players side by side, each with a body built here and
+//! Gun traces: six players side by side, each with a body built here and
 //! the Rifle in its hands, aiming, turning, walking, firing and reloading
-//! from a clip. Each frame records where the gun, the eye, the hands, the
+//! from a clip, and one held by arms clips made here, as a gun from an
+//! animation pack is. Each frame records where the gun, the eye, the hands, the
 //! fingers and the gun's moving parts are, and what the gun has in it as a
 //! script reads it. The traces are kept with the guns package, and a run
 //! must match them: so guns written again elsewhere hold, move and work as
@@ -26,12 +27,13 @@ use std::sync::Arc;
 use voxear_core::logging::LogCapture;
 use voxear_core::math::{Mat4, Quat, Vec3};
 use voxear_ecs::{Entity, World};
+use voxear_engine::animation::{ClipSource, Clips};
 use voxear_engine::{Engine, Game, Project, scripts};
-use voxear_render::{Bone, BonePose, Camera, ModelAnimation, ModelRenderer, Pose, Skeleton};
+use voxear_render::{Bone, BonePose, Camera, Clip, ModelAnimation, ModelRenderer, Pose, Skeleton};
 use voxear_scene::{Name, Parent, ScenePersistence, Transform, world_matrix};
 
 /// What each player does, by the name the driver knows it by.
-const TRACES: [&str; 5] = ["Aim", "Turn", "Walk", "Fire", "Reload"];
+const TRACES: [&str; 6] = ["Aim", "Turn", "Walk", "Fire", "Reload", "Clips"];
 
 /// How many frames each trace runs, at 60 a second: long enough for a
 /// clip reload to end.
@@ -53,7 +55,7 @@ namespace Hello;
 /// </summary>
 public sealed class GunTrace : SystemBase
 {
-	private static readonly string[] Traces = ["Aim", "Turn", "Walk", "Fire", "Reload"];
+	private static readonly string[] Traces = ["Aim", "Turn", "Walk", "Fire", "Reload", "Clips"];
 
 	private int frame;
 
@@ -81,7 +83,18 @@ public sealed class GunTrace : SystemBase
 	{
 		player.AddFirstPersonView().MouseLook = false;
 		var rifle = Prefab.Load("Rifle.prefab").Instantiate(player);
-		player.AddGunHolder().Gun = rifle.Gun;
+		var gun = rifle.Gun;
+		if (player.Name == "Player Clips")
+		{
+			gun.Handling = HeldByClips();
+		}
+		player.AddGunHolder().Gun = gun;
+	}
+
+	/// <summary>The handling whose arms clips, made by the test, hold the gun.</summary>
+	private static GunHandling HeldByClips()
+	{
+		return GunHandling.Load("Guns/Clips.gunhandling");
 	}
 
 	private string Act(string trace, Obj player)
@@ -102,9 +115,30 @@ public sealed class GunTrace : SystemBase
 				return "";
 			case "Fire":
 				return frame == 60 || frame == 70 || frame == 240 ? Shot(holder) : "";
-			default:
+			case "Reload":
 				return Reload(holder);
+			default:
+				return HoldByClips(player, holder);
 		}
+	}
+
+	/// <summary>Held by clips: aimed, run with, turned, fired, and reloaded from a clip by hand.</summary>
+	private string HoldByClips(Obj player, GunHolder holder)
+	{
+		holder.Aiming = frame >= 60 && frame < 180;
+		player.Position += frame >= 240 && frame < 330 ? new Vector3(0f, 0f, 3f / 60f) : Vector3.Zero;
+		var view = player.FirstPersonView;
+		view.Yaw += frame >= 400 && frame < 430 ? 2f : 0f;
+		if (frame == 520)
+		{
+			var gun = holder.Gun;
+			gun.Rounds = 0;
+		}
+		if (frame == 530)
+		{
+			holder.Reload();
+		}
+		return frame == 450 ? Shot(holder) : "";
 	}
 
 	private string Reload(GunHolder holder)
@@ -245,6 +279,16 @@ role = "case"
 handle = [0.03, 0.05, 0.12]
 "#;
 
+/// Frames of a trace left out of the comparison. The engine's guns take up a handling given during a frame from the
+/// next frame on, the package's at once: so the Clips player's gun is held by its clips from its second frame in the
+/// engine's trace, and from its first in the package's.
+const UNSETTLED: [(&str, usize); 1] = [("Clips", 1)];
+
+/// The clips that hold the Clips player's gun, in a handling: standing, walking, running, and starting a run, with the
+/// eyes the clips were made for, the players' own.
+const HELD_BY: &str = "idle = \"Arms#clip:Hold\"\nwalk = \"Arms#clip:Walk\"\nrun = \"Arms#clip:Run\"\n\
+                       run_start = \"Arms#clip:Start\"\neyes = [0.0, 0.07, 0.11]\n";
+
 /// What a trace records each frame, in order: the gun's place and turn in
 /// the world, the eye's, each hand's, each index fingertip's place, and
 /// the bolt's and the clip's on the gun.
@@ -303,11 +347,13 @@ fn run(package: Option<&Path>) -> BTreeMap<String, Vec<String>> {
     let log = LogCapture::default();
     let _logging = tracing::subscriber::set_default(voxear_core::logging::capturing_only(log.clone()));
     let dir = hello_copy();
+    std::fs::create_dir_all(dir.path().join("Guns")).unwrap();
     let project = match package {
         Some(package) => with_package(dir.path(), package),
         None => {
             std::fs::write(dir.path().join("Scripts/GunTrace.cs"), DRIVER).unwrap();
             std::fs::write(dir.path().join("Rifle.prefab"), RIFLE).unwrap();
+            std::fs::write(dir.path().join("Guns/Clips.gunhandling"), format!("[clips]\n{HELD_BY}")).unwrap();
             let mut project = Project::open(dir.path()).unwrap();
             project.set_module(voxear_engine::modules::Module::Guns, true).unwrap();
             project
@@ -323,6 +369,12 @@ fn run(package: Option<&Path>) -> BTreeMap<String, Vec<String>> {
     game.start(None).unwrap();
     // The level loads on the first frame, in place of what was there.
     game.tick(1.0 / 60.0, None);
+    let arms = arms_clips();
+    let clips = game.engine.world.resource_mut::<Clips>().expect("the game's clips");
+    for (index, clip) in arms.clips.iter().enumerate() {
+        let source = ClipSource { animation: arms.clone(), index, settings: Default::default() };
+        clips.put(&format!("Arms#clip:{}", clip.name), source);
+    }
     let players: Vec<Player> =
         TRACES.iter().enumerate().map(|(at, name)| spawn_player(&mut game.engine.world, name, at)).collect();
     let mut numbers: BTreeMap<(String, usize), String> = BTreeMap::new();
@@ -353,7 +405,14 @@ fn with_package(dir: &Path, package: &Path) -> Project {
     let toml = format!("[packages]\nvoxear-guns = {{ path = {:?} }}\n", package.display().to_string());
     std::fs::write(dir.join("packages.toml"), toml).unwrap();
     let driver = DRIVER.replacen("using Voxear;\n", "using Voxear;\nusing Voxear.Guns;\n", 1);
+    let driver = driver.replacen(
+        "GunHandling.Load(\"Guns/Clips.gunhandling\")",
+        "Definition.Load<GunHandling>(\"Guns/Clips.asset\")!",
+        1,
+    );
     std::fs::write(dir.join("Scripts/GunTrace.cs"), driver).unwrap();
+    let handling = format!("type = \"Voxear.Guns.GunHandling\"\n\n[fields.clips]\n{HELD_BY}");
+    std::fs::write(dir.join("Guns/Clips.asset"), handling).unwrap();
     std::fs::copy(package.join("Samples/Rifle/Rifle.prefab"), dir.join("Rifle.prefab")).unwrap();
     let mut project = Project::open(dir).unwrap();
     project.set_module(voxear_engine::modules::Module::Guns, false).unwrap();
@@ -465,6 +524,9 @@ fn compare(name: &str, kept: &str, run: &[String]) -> Vec<String> {
         let parse = |text: &str| text.split_whitespace().map(|word| word.parse::<f32>().unwrap_or(f32::NAN)).collect();
         let (kept_values, run_values): (Vec<f32>, Vec<f32>) = (parse(kept_numbers), parse(run_numbers));
         let frame = kept_values.first().copied().unwrap_or_default();
+        if UNSETTLED.contains(&(name, frame as usize)) {
+            continue;
+        }
         let worst = kept_values[1..]
             .iter()
             .zip(&run_values[1..])
@@ -501,6 +563,38 @@ fn traces_folder(package: Option<&Path>) -> PathBuf {
     let engine = engine.canonicalize().unwrap_or(engine);
     let package = engine.ancestors().skip(1).map(|folder| folder.join("VoxearGuns")).find(|folder| folder.is_dir());
     package.unwrap_or_else(|| engine.join("../VoxearGuns")).join("Tests/Traces")
+}
+
+/// Arms clips of the players' own body, made here: its arms held forward to a gun carried by a `gun_carrier` bone
+/// before its chest, standing (Hold), bobbing as it walks (Walk), a little higher running (Run), and lifted and
+/// brought down to the run's height over half a second as a run starts (Start).
+fn arms_clips() -> Arc<ModelAnimation> {
+    let mut skeleton = body();
+    let at = |translation| BonePose { translation, ..BonePose::default() };
+    skeleton.bones.push(Bone { name: "gun_carrier".into(), parent: Some(0), rest: at(Vec3::new(0.12, 0.4, 0.45)) });
+    let carrier = skeleton.bones.len() - 1;
+    let find = |name: &str| skeleton.bones.iter().position(|bone| bone.name == name).unwrap();
+    let mut held = skeleton.rest();
+    held[find("upper_arm_r")].rotation = Quat::from_rotation_y(-80f32.to_radians()) * Quat::from_rotation_z(-0.3);
+    held[find("upper_arm_l")].rotation = Quat::from_rotation_y(70f32.to_radians()) * Quat::from_rotation_z(0.3);
+    held[find("forearm_r")].rotation = Quat::from_rotation_y(-20f32.to_radians());
+    held[find("forearm_l")].rotation = Quat::from_rotation_y(30f32.to_radians());
+    let clip = |name: &str, seconds: f32, up: &dyn Fn(f32) -> f32| {
+        let frames = (seconds * voxear_render::CLIP_RATE).round() as usize + 1;
+        let poses = (0..frames).flat_map(|frame| {
+            let mut pose = held.clone();
+            pose[carrier].translation.y += up(frame as f32 / voxear_render::CLIP_RATE);
+            pose
+        });
+        Clip { name: name.into(), frames, poses: poses.collect() }
+    };
+    let clips = vec![
+        clip("Hold", 1.0, &|_| 0.0),
+        clip("Walk", 1.0, &|t| 0.02 * (std::f32::consts::TAU * t).sin()),
+        clip("Run", 1.0, &|_| 0.05),
+        clip("Start", 0.5, &|t| if t < 0.25 { 0.4 * t } else { 0.1 - 0.2 * (t - 0.25) }),
+    ];
+    Arc::new(ModelAnimation { skeleton, skins: Vec::new(), clips })
 }
 
 /// A humanoid standing at the Obj's middle facing +Z, its arms out to the

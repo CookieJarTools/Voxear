@@ -133,12 +133,17 @@ impl InputPanel {
 
     /// Shows the view picked, once a frame while the window shows. Gives
     /// the actions file's new text after the Actions view changed it.
-    pub fn update(&mut self, ui: &mut Ui, input: &mut Input) -> Option<String> {
+    pub fn update(
+        &mut self,
+        ui: &mut Ui,
+        input: &mut Input,
+        sprites: Option<&voxear_engine::prompt_icons::PromptSprites>,
+    ) -> Option<String> {
         let actions = ui.segment(self.view) == 0;
         ui.set_visible(self.actions_view, actions);
         ui.set_visible(self.layout_view, !actions);
         if actions {
-            return self.editor.update(ui, input);
+            return self.editor.update(ui, input, sprites);
         }
         self.show_layout(ui, input);
         None

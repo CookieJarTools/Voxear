@@ -6471,10 +6471,10 @@ fn the_input_actions_window_adds_actions_and_listens_for_their_keys() {
     assert!(text.contains("\"Keyboard/K\""), "the key pressed is bound: {text}");
     let mut glyphs = Vec::new();
     with_class(&editor.ui, panel, "prompt-glyph", &mut glyphs);
-    assert_eq!(glyphs.len(), 1, "the binding's prompt: a keycap");
-    assert!(editor.ui.has_class(glyphs[0], "key") && texts_in(&editor.ui, glyphs[0]) == ["K"]);
+    assert_eq!(glyphs.len(), 1, "the binding's prompt: one control");
+    assert!(editor.ui.has_class(glyphs[0], "sprite"), "K as players see it: Voxear's picture of it");
 
-    // Picked from every control, searched for, a pad's button is drawn as an Xbox pad marks it until a pad says
+    // Picked from every control, searched for, a pad's button is shown as an Xbox pad marks it until a pad says
     // otherwise.
     let control = editor.ui.find(panel, "input-control").expect("the binding's Control");
     assert_eq!(texts_in(&editor.ui, control), ["K Key"]);
@@ -6490,6 +6490,19 @@ fn the_input_actions_window_adds_actions_and_listens_for_their_keys() {
         frame(&mut editor, &mut renderer);
     }
     assert!(std::fs::read_to_string(&file).unwrap().contains("\"Gamepad/South\""));
+    let mut glyphs = Vec::new();
+    with_class(&editor.ui, panel, "prompt-glyph", &mut glyphs);
+    assert!(editor.ui.has_class(glyphs[0], "sprite"), "an Xbox pad's A, as Voxear's picture of it");
+    shot(&mut renderer, "input-actions-prompt.png");
+
+    // Drawn, the glyph as Voxear draws it.
+    let mut drawn = editor.game.input.authored_file().clone();
+    drawn.prompt_icons = Some(voxear_engine::prompt_icons::DRAWN.into());
+    std::fs::write(&file, drawn.to_text().unwrap()).unwrap();
+    editor.game.load_input_actions();
+    for _ in 0..2 {
+        frame(&mut editor, &mut renderer);
+    }
     let mut glyphs = Vec::new();
     with_class(&editor.ui, panel, "prompt-glyph", &mut glyphs);
     assert!(editor.ui.has_class(glyphs[0], "round") && texts_in(&editor.ui, glyphs[0]) == ["A"]);

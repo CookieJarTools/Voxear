@@ -18,18 +18,35 @@
 //!
 //! A pad's controls come from the section for the kind of pad the player
 //! holds: `xbox`, `playstation`, `switch` or `steam`. The project's input
-//! actions name the set prompts use (`prompt_icons`). A control the set has
-//! no picture for is drawn as Voxear draws it.
+//! actions name the set prompts use (`prompt_icons`).
+//!
+//! Voxear has a set of its own, every control it binds on one sheet built
+//! into the engine (`prompt_icons/` beside this crate's sources), which
+//! prompts use when the actions name none, and under a project's own set
+//! for the controls that set has no picture for. `builtin:drawn` has
+//! prompts drawn as Voxear draws them, with no pictures.
 
 use std::collections::{BTreeMap, HashMap};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use voxear_input::{Family, Input};
-use voxear_render::Renderer;
+use voxear_render::{Renderer, TextureSource};
 use voxear_ui::ImageRef;
 
 use crate::Content;
+
+/// What the input actions name to have prompts drawn by Voxear, with no
+/// pictures.
+pub const DRAWN: &str = "builtin:drawn";
+
+/// The sheet Voxear's own set's pictures are on, which a project's set may
+/// name for a picture too.
+pub const SHEET: &str = "builtin:prompts";
+
+/// Voxear's own set: each control's part of its sheet.
+const DEFAULT_SET: &str = include_str!("../prompt_icons/Prompts.prompticons");
+const DEFAULT_SHEET: &[u8] = include_bytes!("../prompt_icons/Prompts.png");
 
 /// A `.prompticons` file.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -187,6 +204,17 @@ impl PromptSprites {
     pub fn is_empty(&self) -> bool {
         self.sprites.is_empty()
     }
+
+    /// Takes `over`'s pictures in place of its own for the controls both
+    /// have, and its others beside them.
+    pub fn overlay(&mut self, over: PromptSprites) {
+        self.sprites.extend(over.sprites);
+    }
+}
+
+/// Voxear's own set, as its file says.
+pub fn default_set() -> PromptIconsFile {
+    toml::from_str(DEFAULT_SET).expect("Voxear's own Prompt Icons read")
 }
 
 /// The set the game's prompts use: read and its textures uploaded once the
@@ -197,6 +225,8 @@ pub struct PromptIcons {
     /// The set, by the reference the actions gave, as last loaded.
     loaded: Option<Option<String>>,
     sprites: Option<PromptSprites>,
+    /// Voxear's sheet, once uploaded: its texture and size.
+    sheet: Option<(u32, [u32; 2])>,
 }
 
 impl PromptIcons {
@@ -211,8 +241,8 @@ impl PromptIcons {
         self.loaded = None;
     }
 
-    /// Loads the set `input`'s actions name, when it is not the one loaded:
-    /// needs a renderer, to upload its pictures.
+    /// Loads the set `input`'s actions name, over Voxear's own, when it is
+    /// not the one loaded: needs a renderer, to upload its pictures.
     pub fn follow(&mut self, input: &Input, content: &mut Content, renderer: &mut Renderer) {
         let wanted = input.prompt_icons().map(str::to_string);
         if self.loaded.as_ref() == Some(&wanted) {
@@ -220,10 +250,17 @@ impl PromptIcons {
         }
         self.loaded = Some(wanted.clone());
         self.sprites = None;
-        let Some(reference) = wanted else { return };
-        match read(content, &reference) {
-            Ok(file) => {
-                let sprites = PromptSprites::resolve(&file, |texture| {
+        if wanted.as_deref() == Some(DRAWN) {
+            return;
+        }
+        let sheet = self.sheet(renderer);
+        let mut sprites = PromptSprites::resolve(&default_set(), |texture| if texture == SHEET { sheet } else { None });
+        if let Some(reference) = wanted {
+            match read(content, &reference) {
+                Ok(file) => sprites.overlay(PromptSprites::resolve(&file, |texture| {
+                    if texture == SHEET {
+                        return sheet;
+                    }
                     let guid = content.parse(texture).ok()?.guid()?;
                     match content.ui_picture(renderer, guid) {
                         Ok((texture, size)) => Some((texture.0, size)),
@@ -232,10 +269,50 @@ impl PromptIcons {
                             None
                         }
                     }
-                });
-                self.sprites = Some(sprites);
+                })),
+                Err(error) => tracing::error!("the input actions' prompt icons: {error:#}"),
             }
-            Err(error) => tracing::error!("the input actions' prompt icons: {error:#}"),
+        }
+        self.sprites = Some(sprites);
+    }
+
+    /// Voxear's sheet, uploaded the first time it is asked for.
+    fn sheet(&mut self, renderer: &mut Renderer) -> Option<(u32, [u32; 2])> {
+        if self.sheet.is_none() {
+            let mut picture =
+                image::load_from_memory(DEFAULT_SHEET).expect("Voxear's own prompt icons read").to_rgba8();
+            premultiply(&mut picture);
+            let (width, height) = picture.dimensions();
+            let source =
+                TextureSource { name: "Voxear prompt icons", width, height, rgba: picture.as_raw(), srgb: true };
+            match renderer.add_texture(&source) {
+                Ok(texture) => self.sheet = Some((texture.0, [width, height])),
+                Err(error) => tracing::error!("Voxear's prompt icons: {error:#}"),
+            }
+        }
+        self.sheet
+    }
+}
+
+/// Multiplies an sRGB picture's colours by its alpha, in linear light, as
+/// the UI draws pictures: what is see-through shows nothing of its colour,
+/// and a soft edge blends as it would have before it was stored.
+pub fn premultiply(picture: &mut image::RgbaImage) {
+    let to_linear: Vec<f32> = (0..256)
+        .map(|value| {
+            let c = value as f32 / 255.0;
+            if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+        })
+        .collect();
+    let to_srgb =
+        |linear: f32| if linear <= 0.0031308 { linear * 12.92 } else { 1.055 * linear.powf(1.0 / 2.4) - 0.055 };
+    for pixel in picture.pixels_mut() {
+        let alpha = f32::from(pixel[3]) / 255.0;
+        if pixel[3] == 255 {
+            continue;
+        }
+        for channel in &mut pixel.0[..3] {
+            *channel = (to_srgb(to_linear[usize::from(*channel)] * alpha) * 255.0).round() as u8;
         }
     }
 }

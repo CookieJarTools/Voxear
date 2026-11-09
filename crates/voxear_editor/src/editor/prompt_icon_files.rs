@@ -4,7 +4,7 @@
 //! the project's input actions name, picked or dropped on the Input page.
 
 use voxear_assets::AssetKind;
-use voxear_engine::prompt_icons::{PromptIconsFile, Sprite};
+use voxear_engine::prompt_icons::{DRAWN, PromptIconsFile, Sprite};
 use voxear_ui::{DragSource, NodeId};
 
 use super::Editor;
@@ -13,6 +13,10 @@ use crate::{
     object_picker::{self, PickFor},
     prompt_icons_inspector::IconSlot,
 };
+
+/// How the Input page names Voxear's own set, and none at all.
+const VOXEARS: &str = "Voxear's";
+const DRAWN_LABEL: &str = "Drawn";
 
 impl Editor {
     /// Opens the object picker under `anchor` for a control's picture in
@@ -65,7 +69,9 @@ impl Editor {
     /// Opens the object picker under `anchor` for the set the input actions
     /// name.
     pub(super) fn browse_input_prompt_icons(&mut self, anchor: NodeId) {
-        let choices = fields::assets_of(&self.game, Some(AssetKind::PromptIcons));
+        let mut choices =
+            vec![(VOXEARS.to_string(), Pick::Asset(None)), (DRAWN_LABEL.to_string(), Pick::Asset(Some(DRAWN.into())))];
+        choices.extend(fields::assets_of(&self.game, Some(AssetKind::PromptIcons)).into_iter().skip(1));
         let choices = object_picker::decorate(&self.game, choices);
         self.picker.open(&mut self.ui, (PickFor::InputPromptIcons, anchor), "Select Prompt Icons", choices, "");
     }
@@ -83,18 +89,26 @@ impl Editor {
     /// writes them.
     pub(super) fn pick_input_prompt_icons(&mut self, pick: &Pick) {
         let Pick::Asset(choice) = pick else { return };
-        let guid = choice.as_deref().and_then(|path| self.game.content.db().guid_of(path));
+        let named = match choice.as_deref() {
+            None => None,
+            Some(DRAWN) => Some(DRAWN.to_string()),
+            Some(path) => self.game.content.db().guid_of(path).map(|guid| guid.to_string()),
+        };
         let mut file = self.game.input.authored_file().clone();
-        file.prompt_icons = guid.map(|guid| guid.to_string());
+        file.prompt_icons = named;
         match file.to_text() {
             Ok(text) => self.save_input_actions(&text),
             Err(error) => self.notify(&format!("Could not save the input actions: {error:#}")),
         }
     }
 
-    /// The path of the set the input actions name, for the Input page.
+    /// What the Input page shows for the set the input actions name: its
+    /// path, or Voxear's own, or none, drawn.
     pub(super) fn input_prompt_icons_path(&self) -> Option<String> {
-        let reference = self.game.input.prompt_icons()?;
+        let Some(reference) = self.game.input.prompt_icons() else { return Some(VOXEARS.to_string()) };
+        if reference == DRAWN {
+            return Some(DRAWN_LABEL.to_string());
+        }
         let db = self.game.content.db();
         let guid = reference.parse().ok().or_else(|| db.guid_of(reference))?;
         db.get(guid).map(|entry| entry.path.clone())

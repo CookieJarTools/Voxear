@@ -467,6 +467,8 @@ pub struct Content {
     pictures: HashMap<(AssetGuid, bool), TextureId>,
     /// Each picture's size as uploaded, in pixels.
     picture_sizes: HashMap<(AssetGuid, bool), [u32; 2]>,
+    /// Pictures for UI, their colours multiplied by their alpha, with their sizes.
+    ui_pictures: HashMap<AssetGuid, (TextureId, [u32; 2])>,
     /// IES profiles uploaded for lights, by their assets.
     light_profiles: HashMap<AssetGuid, TextureId>,
     /// The project's custom shaders, read when the assets are scanned.
@@ -620,6 +622,7 @@ impl Content {
             handlings_version: 0,
             pictures: HashMap::new(),
             picture_sizes: HashMap::new(),
+            ui_pictures: HashMap::new(),
             light_profiles: HashMap::new(),
             shaders: crate::shaders::ShaderRegistry::default(),
             luts: HashMap::new(),
@@ -1495,10 +1498,27 @@ impl Content {
 
     /// A picture asset for UI, in its colours as they look, with its size in
     /// pixels as uploaded, as a prompt's icon is drawn from a part of it.
+    /// It is uploaded with its colours multiplied by its alpha, as the UI
+    /// draws pictures, so what is see-through shows nothing of its colour;
+    /// a build's, cooked for drawing on models, is uploaded as cooked.
     pub fn ui_picture(&mut self, renderer: &mut Renderer, guid: AssetGuid) -> Result<(TextureId, [u32; 2])> {
-        let texture = self.picture(renderer, guid, true)?;
-        let size = self.picture_sizes.get(&(guid, true)).copied().unwrap_or([1, 1]);
-        Ok((texture, size))
+        if let Some(&found) = self.ui_pictures.get(&guid) {
+            return Ok(found);
+        }
+        let entry = self.db.get(guid).with_context(|| format!("no asset with GUID {guid}"))?;
+        ensure!(entry.kind == AssetKind::Texture, "{} is not a picture", entry.path);
+        let path = entry.path.clone();
+        if CookedPicture::is_cooked(&self.read(&path)?) {
+            let texture = self.picture(renderer, guid, true)?;
+            let size = self.picture_sizes.get(&(guid, true)).copied().unwrap_or([1, 1]);
+            return Ok((texture, size));
+        }
+        let mut picture = self.source_picture(&path)?;
+        crate::prompt_icons::premultiply(&mut picture);
+        let (width, height) = picture.dimensions();
+        let texture = renderer.add_texture(&TextureSource { name: &path, width, height, rgba: picture.as_raw(), srgb: true })?;
+        self.ui_pictures.insert(guid, (texture, [width, height]));
+        Ok((texture, [width, height]))
     }
 
     /// A picture asset as a light's cookie, in its colours as they look.
@@ -1601,20 +1621,28 @@ impl Content {
             self.picture_sizes.insert((guid, srgb), [width, height]);
             return Ok(texture);
         }
-        let meta = format!("{path}.{}", voxear_assets::META_EXTENSION);
-        let settings = self.read_text(&meta).map(|text| TextureImport::from_meta(&text)).unwrap_or_default();
-        let mut picture = image::load_from_memory(&bytes).with_context(|| format!("reading {path}"))?.to_rgba8();
-        settings.apply_flip(&mut picture);
-        let (width, height) = settings.size(picture.width(), picture.height());
-        let picture = match (width, height) == picture.dimensions() {
-            true => picture,
-            false => image::imageops::resize(&picture, width, height, image::imageops::FilterType::Triangle),
-        };
+        let picture = self.source_picture(&path)?;
+        let (width, height) = picture.dimensions();
         let source = TextureSource { name: &path, width, height, rgba: picture.as_raw(), srgb };
         let texture = renderer.add_texture(&source)?;
         self.pictures.insert((guid, srgb), texture);
         self.picture_sizes.insert((guid, srgb), [width, height]);
         Ok(texture)
+    }
+
+    /// A picture file read as its import settings say: flipped, and at the
+    /// size they allow.
+    fn source_picture(&mut self, path: &str) -> Result<image::RgbaImage> {
+        let bytes = self.read(path)?;
+        let meta = format!("{path}.{}", voxear_assets::META_EXTENSION);
+        let settings = self.read_text(&meta).map(|text| TextureImport::from_meta(&text)).unwrap_or_default();
+        let mut picture = image::load_from_memory(&bytes).with_context(|| format!("reading {path}"))?.to_rgba8();
+        settings.apply_flip(&mut picture);
+        let (width, height) = settings.size(picture.width(), picture.height());
+        Ok(match (width, height) == picture.dimensions() {
+            true => picture,
+            false => image::imageops::resize(&picture, width, height, image::imageops::FilterType::Triangle),
+        })
     }
 
     /// The models whose material is remapped to the `.material` asset `guid`,

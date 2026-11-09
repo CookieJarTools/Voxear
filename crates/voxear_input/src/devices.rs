@@ -334,6 +334,18 @@ impl Devices {
 
     /// What a key is called in prompts: what it types on this keyboard, if
     /// it has typed, or else its name, spaced.
+    /// What a key types on this keyboard, as its presses have shown, by the
+    /// key's name: `A` for `Q` on a French keyboard. None until it is known.
+    pub fn typed(&self, name: &str) -> Option<&str> {
+        self.layout.get(name).map(String::as_str).filter(|typed| typed.chars().any(|c| !c.is_whitespace()))
+    }
+
+    /// Learns what a key types, as a key event teaches it, for a host that
+    /// knows the keyboard's layout another way, and for tests.
+    pub fn set_typed(&mut self, name: &str, text: &str) {
+        self.layout.insert(name.to_string(), text.to_uppercase());
+    }
+
     pub fn key_label(&self, name: &str) -> String {
         if let Some(typed) = self.layout.get(name).filter(|typed| typed.chars().any(|c| !c.is_whitespace())) {
             return typed.clone();

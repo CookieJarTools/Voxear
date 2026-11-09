@@ -2513,7 +2513,11 @@ await Input.Rebind(actions["Jump"], scheme: ControlScheme.Gamepad);
   a `.prompticons` file maps each control of each kind of device (keyboard, mouse, Xbox, PlayStation, Switch,
   Steam) to a texture or a part of one. The input actions name the set (`prompt_icons`); the game uploads its
   pictures through `Content::ui_picture` once a renderer is there, and `keymaps::prompt_glyphs_with` gives a glyph
-  the picture for its control in place of the drawn one, which `voxear_ui` draws as an image.)*
+  the picture for its control in place of the drawn one, which `voxear_ui` draws as an image. Under it is Voxear's
+  own set, one sheet of a CC0 pack's icons built into the engine (`crates/voxear_engine/prompt_icons/`, credited
+  in its `CREDITS.md`), which prompts use when the actions name no set; `builtin:drawn` draws them instead. A key
+  the player's keyboard types differently from a US one keeps its drawn keycap, so no picture shows the wrong
+  letter.)*
 - **Actions are named by id.** Each action in an `.inputactions` file has an `id`, given when the editor makes it
   and to each it finds without one, and kept through a rename; Voxear's own actions have fixed ids. `Actions::find`
   takes an id or a name. An `InputActionRef` field (field kind `action`) stores the id and the Inspector picks it

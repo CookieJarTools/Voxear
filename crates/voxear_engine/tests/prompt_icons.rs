@@ -7,7 +7,7 @@ use voxear_engine::{
     Content,
     game_ui::GameUi,
     keymaps::prompt_glyphs_with,
-    prompt_icons::{PromptIcons, PromptIconsFile, PromptSprites},
+    prompt_icons::{DRAWN, IconDevice, PromptIcons, PromptIconsFile, PromptSprites, SHEET, default_set},
 };
 use voxear_input::{Family, Input, Pad};
 use voxear_ui::{ElementKind, ImageRef};
@@ -56,6 +56,52 @@ fn a_prompt_shows_the_sets_picture_for_a_control_it_has_one_for() {
     let jump = prompt_glyphs_with(&input, "Jump", Some(&sprites));
     assert_eq!(jump[0].image, None);
     assert!(jump[0].icon.is_some() || !jump[0].text.is_empty(), "drawn as Voxear draws a PlayStation pad's cross");
+}
+
+#[test]
+fn voxears_own_set_has_a_picture_for_every_control_it_binds() {
+    let set = default_set();
+    let sprites = PromptSprites::resolve(&set, |texture| (texture == SHEET).then_some((7, [1024, 832])));
+    for path in ["Keyboard/Space", "Keyboard/Q", "Keyboard/F12", "Keyboard/ArrowUp", "Mouse/Left", "Mouse/Delta"] {
+        assert!(sprites.get(path, Family::Xbox).is_some(), "{path}");
+    }
+    for family in [Family::Xbox, Family::PlayStation, Family::Switch, Family::Steam] {
+        for control in
+            ["South", "East", "LeftShoulder", "RightTrigger", "Start", "DpadUp", "LeftStick", "RightStickPress"]
+        {
+            assert!(sprites.get(&format!("Gamepad/{control}"), family).is_some(), "{control} on {family:?}");
+        }
+    }
+    // Each section's every control on the sheet, a whole cell of it.
+    for device in IconDevice::ALL {
+        for sprite in set.sprites(device).values() {
+            let [x, y, w, h] = sprite.rect.expect("a part of the sheet");
+            assert!(x + w <= 1024 && y + h <= 832 && (w, h) == (64, 64));
+        }
+    }
+}
+
+#[test]
+fn a_key_typed_differently_from_a_us_keyboard_keeps_its_drawn_letter() {
+    const QUIT: &str =
+        "format = 1\n[[map]]\nname = \"Player\"\n[[map.action]]\nname = \"Quit\"\nbindings = [\"Keyboard/Q\"]\n";
+    let mut input = Input::without_gamepads();
+    input.load_actions(QUIT).unwrap();
+    let sprites = PromptSprites::resolve(&default_set(), |texture| (texture == SHEET).then_some((7, [1024, 832])));
+    assert!(prompt_glyphs_with(&input, "Quit", Some(&sprites))[0].image.is_some(), "a US keyboard's Q: its picture");
+    input.devices_mut().set_typed("Q", "a");
+    let quit = prompt_glyphs_with(&input, "Quit", Some(&sprites));
+    assert_eq!((quit[0].image, quit[0].text.as_str()), (None, "A"), "a French keyboard's A, drawn");
+}
+
+#[test]
+fn a_picture_for_ui_is_multiplied_by_its_alpha_in_linear_light() {
+    let mut picture =
+        image::RgbaImage::from_raw(3, 1, vec![0, 200, 0, 0, 255, 255, 255, 128, 10, 20, 30, 255]).unwrap();
+    voxear_engine::prompt_icons::premultiply(&mut picture);
+    assert_eq!(picture.get_pixel(0, 0).0, [0, 0, 0, 0], "see-through shows nothing of its colour");
+    assert_eq!(picture.get_pixel(1, 0).0, [188, 188, 188, 128], "half white: half its light, as sRGB stores it");
+    assert_eq!(picture.get_pixel(2, 0).0, [10, 20, 30, 255], "solid: as it was");
 }
 
 #[test]
@@ -116,4 +162,20 @@ fn the_set_the_actions_name_is_loaded_and_its_pictures_uploaded() {
     let south = sprites.get("Gamepad/South", Family::Xbox).expect("South's, from the sheet");
     assert_eq!(south.uv, [0.5, 0.0, 1.0, 0.5]);
     assert_ne!(space.texture, south.texture);
+    // What the set has no picture for, Voxear's own: C, and a PlayStation pad's cross.
+    let c = sprites.get("Keyboard/C", Family::Xbox).expect("C, from Voxear's sheet");
+    let cross = sprites.get("Gamepad/South", Family::PlayStation).expect("a cross, from Voxear's sheet");
+    assert_eq!(c.texture, cross.texture);
+    assert!(c.texture != space.texture && c.texture != south.texture);
+
+    // Naming none: Voxear's set alone; naming Drawn: none at all.
+    let mut own = Input::without_gamepads();
+    own.load_actions(&ACTIONS.replace("prompt_icons = \"UI/Prompts.prompticons\"\n", "")).unwrap();
+    icons.follow(&own, &mut content, &mut renderer);
+    let sprites = icons.sprites().expect("Voxear's own");
+    assert_eq!(sprites.get("Keyboard/Space", Family::Xbox).unwrap().texture, c.texture, "its sheet, uploaded once");
+    let mut drawn = Input::without_gamepads();
+    drawn.load_actions(&ACTIONS.replace("UI/Prompts.prompticons", DRAWN)).unwrap();
+    icons.follow(&drawn, &mut content, &mut renderer);
+    assert!(icons.sprites().is_none(), "drawn by Voxear");
 }

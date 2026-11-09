@@ -95,7 +95,7 @@ bindings = ["Mouse/Right", "Gamepad/RightShoulder"]
 - An action's `interaction` says when it is performed: `hold(seconds)` once it has been held that long, or `tap(seconds)` when it is let go within that long.
 - A map's `excludes` names the maps that are never on while it is, as `excludes = ["Player"]`. Turning it on turns them off, and they can share keys without conflicting.
 - An action's `id` is what fields and `Actions` name it by. The Input Actions window gives every action one.
-- `prompt_icons` names the [[Showing the Controls#Your own icons|Prompt Icons]] prompts draw controls with.
+- `prompt_icons` names the [[Showing the Controls#Your own icons|Prompt Icons]] prompts show controls with, over Voxear's own, or `builtin:drawn` to have them drawn.
 
 The Input Actions window writes all of this for you, controls picked from a list rather than typed (see [[Showing the Controls]]).
 

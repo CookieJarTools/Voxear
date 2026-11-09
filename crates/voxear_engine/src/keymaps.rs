@@ -37,16 +37,36 @@ pub fn prompt_glyphs_with(input: &Input, action: &str, sprites: Option<&PromptSp
     let paths = input.prompt_controls(action);
     glyphs
         .zip(paths)
-        .map(|(glyph, path)| match sprites.get(&path, family) {
+        .map(|(glyph, path)| match sprites.get(&path, family).filter(|_| types_as_us(input, &path)) {
             Some(image) => PromptGlyph { image: Some(image), ..glyph },
             None => glyph,
         })
         .collect()
 }
 
+/// Whether a control shows what a picture of it would: anything but a key
+/// this keyboard types differently from a US one, as `Q` types A on a
+/// French keyboard, whose picture would show the wrong letter. That key is
+/// drawn as Voxear draws it, with the letter it types.
+fn types_as_us(input: &Input, path: &str) -> bool {
+    static US: std::sync::OnceLock<layouts::Layout> = std::sync::OnceLock::new();
+    let Some(key) = path.strip_prefix("Keyboard/") else { return true };
+    let Some(typed) = input.devices().typed(key) else { return true };
+    let us = US.get_or_init(layouts::keyboard_mouse).control_of(path).map(|control| control.label.as_str());
+    us.is_none_or(|us| typed.eq_ignore_ascii_case(us))
+}
+
 /// A control, by its path, as a prompt draws it on the player's device.
 pub fn control_prompt_glyph(input: &Input, path: &str) -> PromptGlyph {
     prompt_glyph(input.control_glyph(path))
+}
+
+/// A control as [`control_prompt_glyph`] gives it, with the picture
+/// `sprites` has for it in place of the drawn glyph, where it has one.
+pub fn control_prompt_glyph_with(input: &Input, path: &str, sprites: Option<&PromptSprites>) -> PromptGlyph {
+    let glyph = control_prompt_glyph(input, path);
+    let image = sprites.and_then(|sprites| sprites.get(path, input.pad_family())).filter(|_| types_as_us(input, path));
+    PromptGlyph { image: image.or(glyph.image), ..glyph }
 }
 
 fn prompt_glyph(glyph: voxear_input::Glyph) -> PromptGlyph {

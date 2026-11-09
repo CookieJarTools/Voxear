@@ -37,10 +37,15 @@ impl Editor {
         }
     }
 
-    pub(super) fn update_input_actions(&mut self) {
+    pub(super) fn update_input_actions(&mut self, renderer: &mut voxear_render::Renderer) {
         self.give_action_ids();
+        // The Prompt shows a binding as players will see it, with the game's Prompt Icons.
+        if self.shown(self.nodes.input_panel) {
+            self.game.prompt_icons.follow(&self.game.input, &mut self.game.content, renderer);
+        }
+        let sprites = self.game.prompt_icons.sprites();
         if self.shown(self.nodes.input_panel)
-            && let Some(text) = self.input_actions.update(&mut self.ui, &mut self.game.input)
+            && let Some(text) = self.input_actions.update(&mut self.ui, &mut self.game.input, sprites)
         {
             self.save_input_actions(&text);
         }

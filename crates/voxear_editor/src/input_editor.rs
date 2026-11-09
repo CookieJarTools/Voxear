@@ -37,7 +37,7 @@ use std::{
 use voxear_input::{ActionKind, ActionsFile, Input, Processor, Rebound, Scheme, actions::MapData, controls};
 use voxear_ui::{ItemFns, MenuItem, NodeId, Style, Ui};
 
-use voxear_engine::keymaps;
+use voxear_engine::{keymaps, prompt_icons::PromptSprites};
 
 use crate::{
     columns,
@@ -296,7 +296,7 @@ impl ActionsEditor {
     /// Follows the game's actions and what is done to them here, once a
     /// frame while the view shows. Gives the file's new text after a
     /// change, for the editor to write.
-    pub fn update(&mut self, ui: &mut Ui, input: &mut Input) -> Option<String> {
+    pub fn update(&mut self, ui: &mut Ui, input: &mut Input, sprites: Option<&PromptSprites>) -> Option<String> {
         if self.read.as_ref() != Some(input.authored_file()) {
             let fresh = input.authored_file().clone();
             self.read = Some(fresh.clone());
@@ -316,7 +316,7 @@ impl ActionsEditor {
         self.take_picked();
         self.take_properties(ui);
         if self.file == before {
-            self.show_glyph(ui, input);
+            self.show_glyph(ui, input, sprites);
             return None;
         }
         if let Err(error) = self.file.check() {
@@ -329,7 +329,7 @@ impl ActionsEditor {
         // Each action is known by an id from when it is made, which a script's field or its Actions class names.
         self.file.fill_ids(|| voxear_assets::AssetGuid::new_random().to_string());
         self.show(ui);
-        self.show_glyph(ui, input);
+        self.show_glyph(ui, input, sprites);
         self.file.to_text().ok()
     }
 
@@ -624,10 +624,11 @@ impl ActionsEditor {
 
     /// The picked binding's control as the game's prompts draw it on the
     /// device the window last heard.
-    fn show_glyph(&self, ui: &mut Ui, input: &Input) {
+    fn show_glyph(&self, ui: &mut Ui, input: &Input, sprites: Option<&PromptSprites>) {
         let Some(glyph) = self.controls.glyph else { return };
         let path = self.row.and_then(|row| self.file.maps.get(self.map).and_then(|map| input_edit::path(map, row)));
-        let glyphs = path.filter(|path| !path.is_empty()).map(|path| keymaps::control_prompt_glyph(input, &path));
+        let shown = |path: String| keymaps::control_prompt_glyph_with(input, &path, sprites);
+        let glyphs = path.filter(|path| !path.is_empty()).map(shown);
         ui.set_prompt(glyph, glyphs.into_iter().collect());
     }
 

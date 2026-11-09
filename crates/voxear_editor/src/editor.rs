@@ -902,7 +902,7 @@ impl Editor {
                 self.rename_string_key(&table, &old, &new, renderer);
             }
         }
-        self.update_input_actions();
+        self.update_input_actions(renderer);
         {
             profile_scope!("Package Manager");
             self.update_packages(renderer);

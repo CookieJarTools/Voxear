@@ -144,7 +144,9 @@ A key's category colour is set on the key itself, so it wins over your sheets.
 
 ## Prompts
 
-A prompt draws an action's controls, as games show "press A to jump". Each control is a **glyph**: a keycap for a key, the mouse with its button filled, and a gamepad's buttons as the player's own pad marks them. An Xbox pad's face buttons are lettered A, B, X and Y in green, red, blue and yellow, and a PlayStation pad's show its cross, circle, square and triangle. Shoulders and triggers are pills, the sticks are rings, and the d-pad's directions are arrows. A prompt follows the device the player used last, and rebinding, by itself.
+A prompt shows an action's controls, as games show "press A to jump": a picture of each, for the device the player used last. An Xbox pad's face buttons are lettered A, B, X and Y in green, red, blue and yellow, and a PlayStation pad's show its cross, circle, square and triangle. A prompt follows the device the player used last, and rebinding, by itself.
+
+The pictures are Voxear's own icons, for the keyboard and mouse, Xbox, PlayStation, Switch and Steam Deck pads, unless your project has its own (see [[Showing the Controls#Your own icons|Your own icons]]). Pick **Drawn** as the Prompt Icons on the Input page to have Voxear draw each control instead, as a **glyph** your sheets can style: a keycap for a key, the mouse with its button filled, pills for shoulders and triggers, rings for the sticks and arrows for the d-pad.
 
 In a UI document:
 
@@ -159,15 +161,21 @@ From a script, `new PromptView("Jump")` makes one, and its `Action` changes the 
 
 To put the controls inside a sentence, as "Press [E] to open", use a `LocalizedLabel` with the action as one of its values: see [[Localized UI Text]].
 
+### Voxear's icons
+
+Voxear's icons are **Input Prompts** by Kenney, free for anyone to use and ship, in any game, with nothing owed. If they help your game, you can thank their maker by paying what you like for the pack at [kenney-assets.itch.io/input-prompts](https://kenney-assets.itch.io/input-prompts), or donating at [kenney.nl/donate](https://kenney.nl/donate).
+
+A key your player's keyboard types differently, as Q types A on a French one, is drawn with the letter it types, rather than shown with a picture of the wrong letter.
+
 ## Your own icons
 
-Prompts can show your own pictures for controls in place of the ones Voxear draws: a set of **Prompt Icons**.
+Prompts can show your own pictures for controls in place of Voxear's: a set of **Prompt Icons**.
 
 1. In the Project panel, pick **Create ▸ Prompt Icons**.
 2. In the Inspector, open a device: Keyboard, Mouse, Xbox, PlayStation, Switch or Steam. Each control has a row. Pick its picture, or drag one onto it from the Project panel.
 3. On the Input page, pick the set as **Prompt Icons**, in the bar at the top.
 
-A pad's pictures come from the set for the kind of pad the player holds, and change when they pick up another. A control the set has no picture for is drawn as Voxear draws it, so a set can start small.
+A pad's pictures come from the set for the kind of pad the player holds, and change when they pick up another. A control your set has no picture for shows Voxear's, so a set can start small.
 
 For a sheet of many icons in one picture, give a control the part of it to show, in the file, as `rect = [left, top, width, height]` in the picture's pixels:
 

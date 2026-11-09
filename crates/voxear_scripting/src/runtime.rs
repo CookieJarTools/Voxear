@@ -14,6 +14,7 @@ use crate::{
     interop::{self, BehaviourInfo, FLAG_GONE, FLAG_INSTANCE, ManagedApi, NativeApi, WorldScope},
     physics::PhysicsEventData,
     saves::{self, SaveSettings},
+    signals,
 };
 
 const BOOTSTRAP_TYPE: &str = "Voxear.Interop.Bootstrap, Voxear.Core";
@@ -62,7 +63,7 @@ pub struct ManagedMemory {
 /// The C# side of the engine. CoreCLR cannot be restarted, so there is at most
 /// one per process.
 pub struct ScriptRuntime {
-    pub(crate) managed: ManagedApi,
+    managed: ManagedApi,
     // Scripts hold pointers into both of these, so they live on the heap.
     _native: Box<NativeApi>,
     time: Box<Time>,
@@ -78,6 +79,7 @@ impl ScriptRuntime {
         let config = core_assembly.with_extension("runtimeconfig.json");
         ensure!(config.is_file(), "{} is missing; build managed/Voxear.slnx first", config.display());
 
+        signals::prepare_thread();
         let runtime = Runtime::start(install, &config)?;
         runtime.load_assembly(core_assembly)?;
         let initialize = runtime.function(BOOTSTRAP_TYPE, "Initialize")?;
@@ -122,11 +124,18 @@ impl ScriptRuntime {
         Ok(Self { managed, _native: native, time, loaded: None })
     }
 
+    /// The C# entry points, for a call from this thread, which first gets a
+    /// signal stack C#'s null dereferences can be caught on.
+    pub(crate) fn api(&self) -> &ManagedApi {
+        signals::prepare_thread();
+        &self.managed
+    }
+
     /// Loads game scripts into their own unloadable context.
     pub fn load_game_assembly(&mut self, path: &Path) -> Result<()> {
         let path = path.canonicalize().with_context(|| format!("{} not found", path.display()))?;
         let path = path.to_str().context("assembly path is not valid UTF-8")?;
-        let load = self.managed.load_game_assembly.expect("validated at start");
+        let load = self.api().load_game_assembly.expect("validated at start");
         let status = unsafe { load(path.as_ptr(), path.len() as i32) };
         ensure!(status == 0, "could not load game scripts from {path}");
         self.loaded = Some((PathBuf::from(path), built(Path::new(path))));
@@ -158,7 +167,7 @@ impl ScriptRuntime {
         let path = path.clone();
         let text = path.to_str().context("assembly path is not valid UTF-8")?;
         let built_at = built(&path);
-        let reload = self.managed.reload_game_assembly.expect("validated at start");
+        let reload = self.api().reload_game_assembly.expect("validated at start");
         let handles: Vec<u32> = behaviours.iter().map(|(handle, _)| handle.0).collect();
         let enabled: Vec<u32> = behaviours.iter().map(|&(_, enabled)| u32::from(enabled)).collect();
         let mut infos: Vec<BehaviourInfo> = behaviours.iter().map(|_| BehaviourInfo::default()).collect();
@@ -189,7 +198,7 @@ impl ScriptRuntime {
     /// as for a change scripts start, as the editor's Levels panel does
     /// while playing. Needs the engine's services lent, as while ticking.
     pub fn switch_level(&mut self, world: &mut World, level: &str) {
-        let Some(switch) = self.managed.switch_level else { return };
+        let Some(switch) = self.api().switch_level else { return };
         let _scope = WorldScope::enter(world);
         unsafe { switch(level.as_ptr(), level.len() as i32) };
     }
@@ -198,7 +207,7 @@ impl ScriptRuntime {
     /// editor's palette asks. Fails when the method is not there or throws;
     /// what it threw is logged.
     pub fn run_command(&mut self, world: &mut World, type_name: &str, method: &str) -> Result<()> {
-        let run = self.managed.run_command.context("Voxear.Core cannot run commands")?;
+        let run = self.api().run_command.context("Voxear.Core cannot run commands")?;
         let _scope = WorldScope::enter(world);
         let status = unsafe { run(type_name.as_ptr(), type_name.len() as i32, method.as_ptr(), method.len() as i32) };
         ensure!(status != 1, "{type_name} has no [Command] method {method}");
@@ -213,7 +222,7 @@ impl ScriptRuntime {
     /// said nothing; an error when there is no such method or it threw, which
     /// is logged.
     pub fn run_check(&mut self, world: &mut World, type_name: &str, method: &str) -> Result<Result<(), String>> {
-        let run = self.managed.run_check.expect("validated at start");
+        let run = self.api().run_check.expect("validated at start");
         let _scope = WorldScope::enter(world);
         let mut buffer = vec![0u8; 1024];
         let mut written = 0i32;
@@ -236,7 +245,7 @@ impl ScriptRuntime {
 
     /// The managed heap as .NET counts it.
     pub fn managed_memory(&self) -> ManagedMemory {
-        let read = self.managed.managed_memory.expect("validated at start");
+        let read = self.api().managed_memory.expect("validated at start");
         let mut values = [0u64; 8];
         let written = unsafe { read(values.as_mut_ptr(), values.len() as i32) }.clamp(0, 8) as usize;
         let [heap, committed, allocated, generations @ ..] = values;
@@ -251,7 +260,7 @@ impl ScriptRuntime {
     /// set. What it did is logged. False when nothing has its first word as
     /// a name.
     pub fn run_console(&mut self, world: &mut World, line: &str) -> Result<bool> {
-        let run = self.managed.console_run.expect("validated at start");
+        let run = self.api().console_run.expect("validated at start");
         let _scope = WorldScope::enter(world);
         let status = unsafe { run(line.as_ptr(), line.len() as i32) };
         ensure!(status != 2, "`{line}` failed; the log has what went wrong");
@@ -261,7 +270,7 @@ impl ScriptRuntime {
     /// The console's commands and variables: each one's name, how it is
     /// typed, and what it is for.
     pub fn console_names(&self) -> Vec<ConsoleName> {
-        let call = self.managed.console_names.expect("validated at start");
+        let call = self.api().console_names.expect("validated at start");
         let mut buffer = vec![0u8; 4096];
         loop {
             let length = unsafe { call(buffer.as_mut_ptr(), buffer.len() as i32) };
@@ -287,7 +296,7 @@ impl ScriptRuntime {
     /// Every `[ContentRoot]` pattern in the game scripts, with the type or
     /// member that declares it.
     pub fn content_roots(&self) -> Result<Vec<(String, String)>> {
-        let call = self.managed.content_roots.expect("validated at start");
+        let call = self.api().content_roots.expect("validated at start");
         let mut buffer = vec![0u8; 4096];
         loop {
             let length = unsafe { call(buffer.as_mut_ptr(), buffer.len() as i32) };
@@ -312,7 +321,7 @@ impl ScriptRuntime {
         spec: &BehaviourSpec,
         entity: Entity,
     ) -> Result<CreatedBehaviour> {
-        let create = self.managed.create_behaviour.expect("validated at start");
+        let create = self.api().create_behaviour.expect("validated at start");
         let mut info = BehaviourInfo::default();
         let handle = {
             let _scope = WorldScope::enter(world);
@@ -337,7 +346,7 @@ impl ScriptRuntime {
     /// its stages, in their order; the entity commands they made wait until
     /// each one ends, and anything left waiting applies before this returns.
     pub fn run_systems(&mut self, world: &mut World, stage: usize) {
-        let run = self.managed.run_systems.expect("validated at start");
+        let run = self.api().run_systems.expect("validated at start");
         let _scope = WorldScope::enter(world);
         unsafe { run(stage as i32) };
         interop::systems_ran();
@@ -346,7 +355,7 @@ impl ScriptRuntime {
     /// Gives an Obj a C# component (an `IComponent` struct, e.g.
     /// `Hello.Spin`) with the spec's field values, as a scene or prefab does.
     pub fn add_component(&mut self, world: &mut World, spec: &BehaviourSpec, entity: Entity) -> Result<()> {
-        let add = self.managed.add_component.expect("validated at start");
+        let add = self.api().add_component.expect("validated at start");
         let added = {
             let _scope = WorldScope::enter(world);
             interop::call_with_fields(spec, |name, len, fields, fields_len| unsafe {
@@ -364,7 +373,7 @@ impl ScriptRuntime {
     /// The once-per-frame script step: finished loads resume their awaits,
     /// and continuations posted to the main thread run.
     pub fn update(&mut self, world: &mut World) {
-        let update = self.managed.update.expect("validated at start");
+        let update = self.api().update.expect("validated at start");
         let _scope = WorldScope::enter(world);
         unsafe { update() };
     }
@@ -376,7 +385,7 @@ impl ScriptRuntime {
         if events.is_empty() {
             return;
         }
-        let send = self.managed.physics_events.expect("validated at start");
+        let send = self.api().physics_events.expect("validated at start");
         let _scope = WorldScope::enter(world);
         unsafe { send(events.as_ptr(), events.len() as i32) };
     }
@@ -387,7 +396,7 @@ impl ScriptRuntime {
         if marks.is_empty() {
             return;
         }
-        let send = self.managed.motion_marks.expect("validated at start");
+        let send = self.api().motion_marks.expect("validated at start");
         let entities: Vec<u64> = marks.iter().map(|(entity, _)| entity.to_bits()).collect();
         let text = marks.iter().map(|(_, mark)| mark.as_str()).collect::<Vec<_>>().join("\n");
         let _scope = WorldScope::enter(world);
@@ -397,7 +406,7 @@ impl ScriptRuntime {
     /// Enables or disables a behaviour as its script setting `Enabled`
     /// would: what it asks for waits in the requests the lifecycle takes.
     pub fn set_behaviour_enabled(&mut self, world: &mut World, handle: BehaviourHandle, enabled: bool) {
-        let set = self.managed.set_enabled.expect("validated at start");
+        let set = self.api().set_enabled.expect("validated at start");
         let _scope = WorldScope::enter(world);
         unsafe { set(handle.0, i32::from(enabled)) };
     }
@@ -405,7 +414,7 @@ impl ScriptRuntime {
     /// Sets the replicated properties that came from the server on their
     /// behaviours now.
     pub fn take_net_fields(&mut self, world: &mut World) {
-        let take = self.managed.take_net_fields.expect("validated at start");
+        let take = self.api().take_net_fields.expect("validated at start");
         let _scope = WorldScope::enter(world);
         unsafe { take() };
     }
@@ -489,13 +498,13 @@ pub struct ScriptHost<'a> {
 
 impl BehaviourHost for ScriptHost<'_> {
     fn invoke(&mut self, phase: Phase, behaviours: &[BehaviourHandle]) {
-        let invoke = self.runtime.managed.invoke.expect("validated at start");
+        let invoke = self.runtime.api().invoke.expect("validated at start");
         let _scope = WorldScope::enter(self.world);
         unsafe { invoke(phase as i32, behaviours.as_ptr().cast(), behaviours.len() as i32) };
     }
 
     fn release(&mut self, behaviours: &[BehaviourHandle]) {
-        let release = self.runtime.managed.release.expect("validated at start");
+        let release = self.runtime.api().release.expect("validated at start");
         let _scope = WorldScope::enter(self.world);
         unsafe { release(behaviours.as_ptr().cast(), behaviours.len() as i32) };
     }

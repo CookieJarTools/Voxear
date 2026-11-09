@@ -85,7 +85,7 @@ impl ScriptRuntime {
     /// Sends the request and returns the answer, asking for it again into a
     /// larger buffer when it did not fit, without running anything twice.
     pub(crate) fn inspector_call(&mut self, world: &mut World, request: &str) -> Result<String> {
-        let call = self.managed.inspector_call.expect("validated at start");
+        let call = self.api().inspector_call.expect("validated at start");
         let _scope = WorldScope::enter(world);
         let mut buffer = vec![0u8; 16 * 1024];
         let mut length =

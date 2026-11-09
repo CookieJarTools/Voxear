@@ -22,6 +22,7 @@ mod playing;
 mod runtime;
 mod saves;
 mod services;
+mod signals;
 mod terrain;
 mod switches;
 mod text;

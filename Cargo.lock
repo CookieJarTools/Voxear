@@ -4222,6 +4222,7 @@ name = "voxear_scripting"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "libc",
  "libloading 0.9.0",
  "serde_json",
  "toml",

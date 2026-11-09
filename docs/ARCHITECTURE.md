@@ -487,6 +487,11 @@ after any await (a load, `Task.Delay`, a web request) runs on the main thread at
 the `First` stage, where it can touch Objs. `async void` lifecycle methods work too: `protected override async void
 Start()`. An exception thrown after an await is logged against the frame, never lost.
 
+**Null dereferences.** Every entry point Voxear.Core gives the engine catches what C# throws and logs it, including
+the `NullReferenceException` of a null dereference. On Linux and macOS .NET raises that one from inside its `SIGSEGV`
+handler, on the thread's alternate signal stack. Rust gives its threads an 8 KiB stack, which that handler overflows,
+so `voxear_scripting` gives each thread a 64 KiB one before its first call into C# (`signals.rs`).
+
 ### Behaviour fields *(implemented)*
 
 Scenes and prefabs set behaviour fields, as Unity's inspector does. Values are written per behaviour type, so an

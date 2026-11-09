@@ -22,5 +22,6 @@ You write your game's code in C#. A script that you put on an Obj is called a **
 16. [[Side Bar Items]], buttons and small readouts of your own down the editor's left edge
 17. [[Playing Sounds from Scripts]], effects, music and volume settings
 18. [[Springs]], values that lag, overshoot and settle, for motion that looks alive
+19. [[Data Assets]], files of values your scripts describe, such as a weapon's stats, edited in the Inspector
 
 If you know Unity, much will feel familiar: Obj is Voxear's GameObject, and Behaviour its MonoBehaviour. [[How Scripts Run]] lists the few differences that catch people out.

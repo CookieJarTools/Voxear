@@ -42,7 +42,10 @@ Values are set just before `Awake`, so by the time any of your methods run, the 
 | A behaviour type, such as `Door` | An Obj in the same scene that has that behaviour |
 | `AudioSource` | An Obj in the same scene that has an Audio Source |
 | `Collider`, `Rigidbody`, `CharacterController`, `Joint`, `Collider2D`, `Rigidbody2D` | An Obj in the same scene that has one |
+| `Bone` | An Obj in the same scene, and one of the bones of the model it draws |
+| `AnimationClip` | A clip of one of the project's model files |
 | `Prefab` | A prefab in the project |
+| A `Definition` type, such as `WeaponStats` | A data asset of that type (see [[Data Assets]]) |
 
 Click a field that refers to an Obj or a prefab to pick from a list, or drag an Obj from the Hierarchy, or a prefab from the Project panel, onto the field.
 
@@ -50,6 +53,24 @@ An Obj field can only point at an Obj in the same scene, or in the same prefab. 
 
 > [!TIP]
 > A `Prefab` field loads its prefab when the level loads. For a prefab the game might never need, use `Ref<Prefab>` instead, and call `Load()` on it when you do need it.
+
+## Bone and clip fields
+
+A `Bone` field points at a bone of another Obj's model, such as the hand a torch is held in. An `AnimationClip` field picks a clip to pose a model by (see [[Bones in Scripts]]):
+
+```csharp
+public sealed class Torchbearer : Behaviour
+{
+	public Bone Hand;
+	public AnimationClip Wave;
+}
+```
+
+**Hand** shows two rows. The first is the Obj, picked or dragged onto it as for an `Obj` field. Under it, **Bone** lists the bones of the model that Obj draws. Pick another Obj and the bone stays when the new model has one of the same name. The scene keeps the field as `{ obj = 3, bone = "hand_r" }`.
+
+Fields are set before an Obj's model may have loaded, so a `Bone` finds its bone by name the first time your code asks for it. Until the model has that bone, its `IsValid` is false, and its `Name` is the name the scene gives.
+
+**Wave** lists clips as the Animator's clip field does: each clip of the project's model files, shown with its file, as `Wave · Gestures`. Drag a clip or a model file onto it; a model file gives its first clip. A build ships the model file a clip field names.
 
 ## Arranging fields with attributes
 

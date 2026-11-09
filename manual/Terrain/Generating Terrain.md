@@ -78,7 +78,7 @@ The ground stands at the **Coast** curve's height and rises or falls from there 
 
 Water running off ground cuts gullies down its slopes, and the gullies join as they go down, as streams join a river. A generator cuts them in a few sizes, the largest first: each size runs down the slope the ground has after the sizes before cut it, so small gullies run down the walls of larger ones and into them. Steep ground is cut deepest; ridges and valley floors, level across, are left as they are, so peaks stay sharp and valleys flat-bottomed. Gullies grow shallower towards the sea and stop at its edge.
 
-Gullies make mountains look worn by weather rather than stretched noise, and canyon walls fluted. For the ground a river carves, and the fans of what it washes down, add an **Erosion** layer above the Generate layer.
+Gullies make mountains look worn by weather rather than stretched noise, and canyon walls fluted. For the channels running water carves, and the fans of what it washes down, add an [[Erosion]] layer above the Generate layer.
 
 ## The same ground everywhere
 

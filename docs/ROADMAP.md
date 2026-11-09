@@ -1550,9 +1550,19 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   up to about 30°, never raising it, so small gullies run down the walls of large ones and into them; ridges and
   valley floors left; shallower towards the sea and never below it. Polynomials only, still the same bits for a
   seed. Tests: only cutting, gullies across the slope, level ground left, the hash. Manual: Generating Terrain.
+- ~~**Erosion layer:**~~ done: Add Layer ▸ Erosion wears the ground below it on the GPU (`shaders/erosion.slang`,
+  `voxear_render::erosion`, `Renderer::erode`), once, in the editor: rain each step, water through pipes to its four
+  neighbours sped by the drop and held to what each cell has, its depth and speed, carving where it can carry more
+  (by tilt, speed and depth) and dropping where it can carry less, what it carries passed on as the same share of
+  its water through each pipe (so none is lost), evaporation, then slumping past an angle worked out to eight
+  neighbours and gathered. Grids over 2048 a side worn coarser, the change stretched back. What it changed kept as
+  the layer's raster, added like a Sculpt layer's; `made_from` (the ground below and its weather) tells the panel's
+  Erode / Erode Again button when to wear it again. Weather: Rain (mm), Steps, Wear, Slump angle. A drop icon.
+  Tests: GPU (high ground worn into low, volume kept within 1%, a cliff slumped to 45°), the grid and its change
+  sample by sample, the editor (worn as added, again after rain changed, undone). Manual: Erosion.
 - **More terrain generation:** feeding the layer stack so it can be painted and stamped over afterwards:
   - temperature and humidity fields, for biomes
-  - GPU hydraulic and thermal erosion as an Erosion layer, and stream-power erosion for ranges
+  - stream-power erosion for ranges
   - rivers and lakes carved by flow, as Streams and Pools
   - biomes and climate choosing surfaces and scatter
   - generation at runtime, in chunks, for endless worlds, as well as baked in the editor

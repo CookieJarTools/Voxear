@@ -2785,10 +2785,12 @@ contribution is cached by a hash of what changes it, with checkpoints every few 
 replays only *k* to *n*. Derived per tile: normals, slope, curvature, flow, lowest and highest heights for culling
 and rays, and a basemap of average colour.
 
-**Erosion.** A layer type: GPU hydraulic (pipe model) and thermal erosion, their result read back and cached in the
-layer; stream-power erosion for mountain ranges; and a per-point erosion filter (branching gullies along the
-steepest descent, octave by octave) that suits endless chunked worlds. Erosion leaves flow, sediment and debris
-masks for texturing and scattering.
+**Erosion.** A world generator's gullies, per point (stripes down the slope octave by octave, each following the
+last), suit endless chunked worlds. The Erosion layer wears finished ground on the GPU once, in the editor
+(`shaders/erosion.slang`): pipe-model water with sediment passed on with each pipe's share of the water (mass
+kept), then slumping past an angle gathered from eight neighbours; read back and kept as the layer's raster, so
+games read it as made. To come: stream-power erosion for mountain ranges, and flow, sediment and debris masks for
+texturing and scattering.
 
 **Generation.** A `.worldgen` asset (`voxear_terrain::generate::WorldGen`) makes ground at any point from a seed:
 three fields read through one warp (continents, ruggedness, and ridged noise from valleys to crests), shaped by

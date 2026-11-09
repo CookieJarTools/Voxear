@@ -1,5 +1,5 @@
 ---
-order: 10
+order: 11
 ---
 
 A surface can be soaked through, hold puddles, or be lava, and snow and sand can sparkle in the sun. Each is a setting of a terrain's surface (see [[Surfaces]]), so it goes wherever that surface covers: by its rules, where it is painted, or where a script paints it while the game runs.

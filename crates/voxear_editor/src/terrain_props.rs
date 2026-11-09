@@ -36,7 +36,7 @@ use voxear_terrain::{
     noise::NoiseStyle,
     raster::Rasters,
     grass::{Grass, GrassCover, MAX_GRASS},
-    surfaces::{Cover, MAX_SURFACES, Surface},
+    surfaces::{Cover, Liquid, MAX_SURFACES, Surface},
 };
 
 use crate::{
@@ -151,6 +151,8 @@ pub enum TerrainField {
     Triplanar,
     Tracks,
     FillsIn,
+    Liquid,
+    Glitter,
     Cover,
     Breakup,
     BreakupSize,
@@ -236,6 +238,7 @@ fn surface_fields(at: usize, surface: &Surface) -> Vec<TerrainField> {
     if surface.tracks > 0.0 {
         fields.push(F::FillsIn);
     }
+    fields.extend([F::Liquid, F::Glitter]);
     if at == 0 {
         return fields;
     }
@@ -357,6 +360,8 @@ pub fn label(field: TerrainField) -> &'static str {
         F::Triplanar => "Triplanar",
         F::Tracks => "Tracks",
         F::FillsIn => "Fills in",
+        F::Liquid => "Liquid",
+        F::Glitter => "Glitter",
         F::Cover => "Cover",
         F::Breakup => "Breakup",
         F::BreakupSize => "Breakup size",
@@ -472,6 +477,12 @@ pub fn get(game: &Game, entity: Entity, field: TerrainField) -> Option<Value> {
         F::Triplanar => Value::Toggle(surface()?.triplanar),
         F::Tracks => Value::Number(surface()?.tracks),
         F::FillsIn => Value::Number(surface()?.fills_in),
+        F::Liquid => {
+            let liquid = surface()?.liquid;
+            let at = Liquid::ALL.iter().position(|&l| l == liquid).unwrap_or_default();
+            choice(at, Liquid::ALL.map(Liquid::name).to_vec())
+        }
+        F::Glitter => Value::Toggle(surface()?.glitter),
         F::Cover => {
             let cover = surface()?.cover;
             choice(Cover::ALL.iter().position(|&c| c == cover).unwrap_or_default(), Cover::ALL.map(Cover::name).to_vec())
@@ -600,6 +611,8 @@ pub fn set(game: &mut Game, entity: Entity, field: TerrainField, value: Value) -
         | F::Triplanar
         | F::Tracks
         | F::FillsIn
+        | F::Liquid
+        | F::Glitter
         | F::Cover
         | F::Breakup
         | F::BreakupSize => {
@@ -665,6 +678,8 @@ fn set_surface(surface: &mut Surface, field: TerrainField, value: &Value) {
         (F::Triplanar, Value::Toggle(on)) => surface.triplanar = *on,
         (F::Tracks, v) => surface.tracks = number(v).unwrap_or(surface.tracks).clamp(0.0, 1.0),
         (F::FillsIn, v) => surface.fills_in = number(v).unwrap_or(surface.fills_in).max(0.0),
+        (F::Liquid, Value::Choice(at, _)) => surface.liquid = Liquid::ALL[(*at).min(Liquid::ALL.len() - 1)],
+        (F::Glitter, Value::Toggle(on)) => surface.glitter = *on,
         (F::Cover, Value::Choice(at, _)) => surface.cover = Cover::ALL[(*at).min(Cover::ALL.len() - 1)],
         (F::Breakup, v) => surface.breakup = number(v).unwrap_or(surface.breakup).max(0.0),
         (F::BreakupSize, v) => surface.breakup_size = number(v).unwrap_or(surface.breakup_size).max(0.1),
@@ -842,6 +857,8 @@ fn restyle(game: &mut Game, entity: Entity) {
             triplanar: surface.triplanar,
             tracks: surface.tracks,
             fills_in: surface.fills_in,
+            liquid: surface.liquid,
+            glitter: surface.glitter,
         });
     }
     look.surfaces = surfaces.into();

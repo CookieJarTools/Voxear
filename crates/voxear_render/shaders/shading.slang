@@ -934,7 +934,8 @@ FragmentOut fragmentMain(VertexOut input)
 #ifdef TERRAIN_SHADING
     // A terrain's own surfaces in place of its material's (terrain.slang).
     float3 terrainNormal;
-    bool terrainSurfaced = terrainShading(input, base, metallic, roughness, terrainNormal);
+    float3 terrainLight = float3(0.0);
+    bool terrainSurfaced = terrainShading(input, base, metallic, roughness, terrainNormal, terrainLight);
 #endif
     float3 origin = buffers()->instances[input.instance].model.c3.xyz;
     seasonalSurface(frame, material, origin, shapeNormal(input, material), base.rgb, roughness);
@@ -944,6 +945,7 @@ FragmentOut fragmentMain(VertexOut input)
     float3 normal = surfaceNormal(input, material);
 #ifdef TERRAIN_SHADING
     normal = terrainSurfaced ? terrainNormal : normal;
+    emission += terrainLight;
 #endif
     SurfaceOutput surface = materialSurface(base.rgb, base.a, normal, metallic, roughness, emission);
     if (custom)

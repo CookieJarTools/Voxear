@@ -64,7 +64,8 @@ float4 depthFragment(VertexOut input) : SV_Target0
     float4 terrainBase = float4(albedo, 1.0);
     float terrainMetallic = 0.0;
     float3 terrainNormal;
-    bool terrainSurfaced = terrainShading(input, terrainBase, terrainMetallic, roughness, terrainNormal);
+    float3 terrainLight = float3(0.0);
+    bool terrainSurfaced = terrainShading(input, terrainBase, terrainMetallic, roughness, terrainNormal, terrainLight);
     albedo = terrainBase.rgb;
 #endif
     float3 origin = buffers()->instances[input.instance].model.c3.xyz;

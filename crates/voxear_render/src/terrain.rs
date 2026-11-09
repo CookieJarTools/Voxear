@@ -102,7 +102,7 @@ impl TerrainLook {
 /// by their height pictures), whether it is drawn from the side too on
 /// steep ground, how far Track Makers press into it (a share of their
 /// depth, see `tracks`), and how many seconds their tracks take to fill in
-/// again (0 for never).
+/// again (0 for never); what liquid lies on it, and whether it sparkles.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SurfaceLook {
     pub material: MaterialHandle,
@@ -111,6 +111,9 @@ pub struct SurfaceLook {
     pub triplanar: bool,
     pub tracks: f32,
     pub fills_in: f32,
+    /// What lies on it or runs over it, and whether it sparkles in the sun.
+    pub liquid: voxear_terrain::surfaces::Liquid,
+    pub glitter: bool,
 }
 
 /// A terrain as `shaders/terrain.slang` reads it.
@@ -162,13 +165,31 @@ pub struct GpuTerrainSurface {
     /// One over its pictures' size in metres.
     pub uv_scale: f32,
     pub sharpness: f32,
-    /// `SURFACE_TRIPLANAR` to be drawn from the side too on steep ground.
+    /// `SURFACE_TRIPLANAR` to be drawn from the side too on steep ground,
+    /// its liquid's flag, and `SURFACE_GLITTER`.
     pub flags: u32,
     pub tracks: f32,
     pub fills_in: f32,
 }
 
 const SURFACE_TRIPLANAR: u32 = 1;
+const SURFACE_WET: u32 = 2;
+const SURFACE_PUDDLES: u32 = 4;
+const SURFACE_LAVA: u32 = 8;
+const SURFACE_GLITTER: u32 = 16;
+
+/// A surface's flags for the shaders: drawn from the side, its liquid, and
+/// whether it glitters.
+fn surface_flags(look: &SurfaceLook) -> u32 {
+    use voxear_terrain::surfaces::Liquid;
+    let liquid = match look.liquid {
+        Liquid::None => 0,
+        Liquid::Wet => SURFACE_WET,
+        Liquid::Puddles => SURFACE_PUDDLES,
+        Liquid::Lava => SURFACE_LAVA,
+    };
+    u32::from(look.triplanar) * SURFACE_TRIPLANAR | liquid | u32::from(look.glitter) * SURFACE_GLITTER
+}
 
 /// A patch as the vertex shader reads it: its corner in the terrain's
 /// space, how wide, and its level and terrain, `level | terrain << 8`.
@@ -615,7 +636,7 @@ pub(crate) fn gather(
                 material: look.material.0,
                 uv_scale: 1.0 / look.size.max(0.01),
                 sharpness: look.sharpness.clamp(0.0, 1.0),
-                flags: if look.triplanar { SURFACE_TRIPLANAR } else { 0 },
+                flags: surface_flags(look),
                 tracks: look.tracks.clamp(0.0, 1.0),
                 fills_in: look.fills_in.max(0.0),
             };

@@ -79,6 +79,46 @@ pub struct Surface {
     /// does; 0 keeps them.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub fills_in: f32,
+    /// What lies on it or runs over it: nothing, water soaking it, water
+    /// standing in its hollows and running down its slopes, or lava.
+    #[serde(default, skip_serializing_if = "Liquid::is_none")]
+    pub liquid: Liquid,
+    /// Whether it sparkles in the sun, as snow and sand do.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub glitter: bool,
+}
+
+/// What lies on a surface or runs over it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Liquid {
+    #[default]
+    None,
+    /// Soaked: darker and glossier, as rain leaves soil and stone.
+    Wet,
+    /// Soaked, with water standing in the ground's hollows (and tracks) and
+    /// running down its slopes in rivulets.
+    Puddles,
+    /// Lava under a crust of the surface's own pictures, cracked into plates
+    /// that ride downhill, glowing through the cracks.
+    Lava,
+}
+
+impl Liquid {
+    pub const ALL: [Liquid; 4] = [Liquid::None, Liquid::Wet, Liquid::Puddles, Liquid::Lava];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Liquid::None => "None",
+            Liquid::Wet => "Wet",
+            Liquid::Puddles => "Puddles",
+            Liquid::Lava => "Lava",
+        }
+    }
+
+    fn is_none(&self) -> bool {
+        *self == Liquid::None
+    }
 }
 
 fn four() -> f32 {
@@ -146,6 +186,8 @@ impl Surface {
             paint: 0,
             tracks: 0.0,
             fills_in: 0.0,
+            liquid: Liquid::None,
+            glitter: false,
         }
     }
 

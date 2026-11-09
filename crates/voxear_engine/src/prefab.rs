@@ -987,6 +987,8 @@ pub fn surface_look(
         triplanar: surface.triplanar,
         tracks: surface.tracks,
         fills_in: surface.fills_in,
+        liquid: surface.liquid,
+        glitter: surface.glitter,
     })
 }
 

@@ -219,6 +219,8 @@ fn thirty_two_surfaces_are_drawn_each_where_its_shares_put_it_and_blended_betwee
             triplanar: false,
             tracks: 0.0,
             fills_in: 0.0,
+            liquid: voxear_terrain::surfaces::Liquid::None,
+            glitter: false,
         });
     }
     // 128 m across in stripes 4 m wide along x, each all of one surface.
@@ -367,7 +369,16 @@ fn a_track_maker_presses_a_track_into_snow_that_stays_until_it_fills_in() {
     let mut look = |colour: [f32; 3], tracks: f32| {
         let [r, g, b] = colour;
         let material = renderer.add_material(&MaterialDesc { base_color: [r, g, b, 1.0], ..MaterialDesc::default() });
-        SurfaceLook { material: material.unwrap(), size: 4.0, sharpness: 0.0, triplanar: false, tracks, fills_in: 0.0 }
+        SurfaceLook {
+            material: material.unwrap(),
+            size: 4.0,
+            sharpness: 0.0,
+            triplanar: false,
+            tracks,
+            fills_in: 0.0,
+            liquid: voxear_terrain::surfaces::Liquid::None,
+            glitter: false,
+        }
     };
     let surfaces = vec![look([0.3, 0.2, 0.1], 0.0), look([0.9, 0.9, 0.9], 1.0)];
     let weights = Weights::from_tiles(1, 1, vec![Arc::new(WeightTile::all(1))]);
@@ -434,4 +445,111 @@ fn a_track_maker_presses_a_track_into_snow_that_stays_until_it_fills_in() {
     world.get_mut::<Transform>(foot).unwrap().position.y = 0.5;
     let pixels = frames(&mut renderer, &mut world, 60, 0.0);
     assert!((brightness(&pixels, 63.0, 64.0) - beside).abs() < 20, "and fill in");
+}
+
+#[test]
+fn wet_ground_puddles_lava_and_glitter_each_change_how_their_surface_looks() {
+    use std::sync::Arc;
+    use voxear_render::SurfaceLook;
+    use voxear_terrain::{
+        runtime::{Edit, apply},
+        surfaces::{Liquid, WeightTile, Weights},
+    };
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    let mut look = |colour: [f32; 3], liquid: Liquid, glitter: bool| {
+        let [r, g, b] = colour;
+        let desc = MaterialDesc { base_color: [r, g, b, 1.0], roughness: 0.8, ..MaterialDesc::default() };
+        let material = renderer.add_material(&desc).unwrap();
+        SurfaceLook {
+            material,
+            size: 4.0,
+            sharpness: 0.0,
+            triplanar: false,
+            tracks: 0.0,
+            fills_in: 0.0,
+            liquid,
+            glitter,
+        }
+    };
+    let mud = [0.5, 0.4, 0.3];
+    let surfaces = vec![
+        look(mud, Liquid::None, false),
+        look(mud, Liquid::Wet, false),
+        look(mud, Liquid::Puddles, false),
+        look([0.12, 0.11, 0.1], Liquid::Lava, false),
+        look([0.85, 0.87, 0.9], Liquid::None, true),
+    ];
+    // Stripes 6 m wide along x from x = 49: plain, wet, puddles, lava, then glittering snow.
+    let side = voxear_terrain::TILE_SAMPLES;
+    let stripe = |i: u32| (((i % side) as f32 * 0.5 - 49.0) / 6.0).floor().clamp(0.0, 4.0) as u32;
+    let weights = Weights::from_tiles(
+        1,
+        1,
+        vec![Arc::new(WeightTile::from_samples((0..side * side).map(|i| [stripe(i), 255]).collect()))],
+    );
+    let mut terrain = Terrain { weights: Some(Arc::new(weights)), ..Terrain::new(Heightmap::flat(1, 1, 0.5, 0.0)) };
+    // A crater each in the wet ground and among the puddles.
+    for at in [[58.0, 64.0], [64.0, 64.0]] {
+        apply(&mut terrain, &Edit::Crater { at, radius: 2.0, depth: 0.5, surface: None });
+    }
+    let plain = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let field = world.spawn((
+        terrain,
+        TerrainLook { surfaces: surfaces.into(), ..TerrainLook::new(plain, 4.0) },
+        Transform::default(),
+    ));
+    look_down(&mut world, 20.0);
+    renderer.set_view_options(ViewOptions { debug_view: voxear_render::DEBUG_VIEW_UNLIT, ..ViewOptions::default() });
+    let pixels = render(&mut renderer, &world, 3);
+    keep_image("terrain liquids unlit.png", &pixels);
+    let brightness = |pixels: &[u8], x: f32, z: f32| {
+        let (u, v) = from_above(20.0, x, z);
+        rgb_at(pixels, u, v).iter().sum::<i32>()
+    };
+    let (dry, wet) = (brightness(&pixels, 52.0, 58.0), brightness(&pixels, 58.0, 58.0));
+    // About half as bright, which the screen's gamma shows as some four fifths.
+    assert!(wet < dry * 85 / 100, "wet ground is darker: {wet} against {dry}");
+    let (level, puddle) = (brightness(&pixels, 64.0, 58.0), brightness(&pixels, 64.0, 64.0));
+    assert!((level - wet).abs() < 20, "level puddled ground is as wet: {level} against {wet}");
+    assert!(puddle < level * 85 / 100, "water stands in the crater, darker still: {puddle} against {level}");
+    assert!(brightness(&pixels, 58.0, 64.0) > puddle + 20, "and not in the crater that is only wet");
+
+    // Lit, the lava glows orange through its cracks.
+    renderer.set_view_options(ViewOptions::default());
+    let sun = Quat::from_rotation_y(0.3) * Quat::from_rotation_x(0.35);
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    let pixels = render(&mut renderer, &world, 3);
+    keep_image("terrain liquids lit.png", &pixels);
+    let glowing = (0..40)
+        .flat_map(|z| (0..12).map(move |x| (67.5 + x as f32 * 0.4, 54.0 + z as f32 * 0.5)))
+        .filter(|&(x, z)| {
+            let (u, v) = from_above(20.0, x, z);
+            let [r, g, b] = rgb_at(&pixels, u, v);
+            r > 140 && r > g + 30 && g > b
+        })
+        .count();
+    assert!(glowing > 20, "lava's cracks glow: {glowing} of 480 points");
+
+    // From low down looking towards the sun over the snow, its grains sparkle; without Glitter, none do.
+    let camera =
+        world.query_ref::<(voxear_ecs::Entity, &Camera)>().into_iter().next().map(|(entity, _)| entity).unwrap();
+    let low = Quat::from_rotation_y(std::f32::consts::PI) * Quat::from_rotation_x(0.22);
+    *world.get_mut::<Transform>(camera).unwrap() = Transform::new(Vec3::new(76.0, 1.8, 60.0), low, Vec3::ONE);
+    let sparks = |pixels: &[u8]| {
+        let near = (HEIGHT * 2 / 3..HEIGHT).flat_map(|y| (WIDTH / 3..WIDTH * 2 / 3).map(move |x| (x, y)));
+        let all: Vec<i32> = near.map(|(x, y)| rgb_at(pixels, x, y).iter().sum::<i32>()).collect();
+        let mean = all.iter().sum::<i32>() / all.len() as i32;
+        all.iter().filter(|&&b| b > mean + 120).count()
+    };
+    let glittering = render(&mut renderer, &world, 3);
+    keep_image("terrain glitter.png", &glittering);
+    let mut plain_snow = world.get::<TerrainLook>(field).unwrap().clone();
+    let mut looks = plain_snow.surfaces.to_vec();
+    looks[4].glitter = false;
+    plain_snow.surfaces = looks.into();
+    world.insert(field, plain_snow);
+    let still = render(&mut renderer, &world, 3);
+    let (on, off) = (sparks(&glittering), sparks(&still));
+    assert!(on > 10 && off < on / 4, "the snow sparkles with Glitter: {on} bright points, {off} without");
 }

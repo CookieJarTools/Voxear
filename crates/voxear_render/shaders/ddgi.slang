@@ -252,7 +252,9 @@ float3 ddgiShadeHit(Frame* frame, uint id, uint primitive, float2 barycentrics,
     // reflection's ray comes from the thing reflecting, and back towards a chrome ball the probes round it are
     // inside it or have it in their way, so straight out from the surface instead.
     float3 towards = fromProbe ? -direction : normal;
-    float3 around = ddgiIrradiance(frame, position, normal, towards, sky);
+    // Without the GI, reflections still trace the scene, and what they meet takes the sky's light alone, as
+    // shading does then.
+    float3 around = frame->ddgi.enabled != 0 ? ddgiIrradiance(frame, position, normal, towards, sky) : sky;
     return lit + albedo * around + emissive;
 }
 
@@ -472,10 +474,11 @@ float3 ddgiShadeReflected(Frame* frame, Hit hit, float3 origin, float3 direction
     return ddgiShadeHit(frame, hit.instance, hit.primitive, hit.barycentrics, at, direction, mip, false, back);
 }
 
-// Reflections by tracing the scene's triangles, as the GI's rays do, where
-// the GI has them: from each pixel smooth enough to reflect, at full
-// resolution, its mirror ray into the scene; the surface it meets is lit
-// as the GI's rays light theirs, or where it meets nothing, the sky shows.
+// Reflections by tracing the scene's triangles, as the GI's rays do,
+// wherever the GPU has ray queries, GI or not: from each pixel smooth enough
+// to reflect, at full resolution, its mirror ray into the scene; the surface
+// it meets is lit as the GI's rays light theirs (by the sky alone without the
+// GI), or where it meets nothing, the sky shows.
 // Unlike screen-space reflections, they show what is off screen, behind the
 // camera and behind other things: a chrome ball mirrors the whole room.
 // Writes the colour and 1, as sure as can be. textures: x depth, z the

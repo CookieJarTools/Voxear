@@ -121,9 +121,10 @@ pub fn record_contact_shadows(fg: &mut FrameGraph<'_>, (pipelines, push): (Pipel
 /// it and `history`, last frame's finished picture. Its shader lives beside
 /// GTAO's, as both march through the depth buffer.
 ///
-/// Given the GI's probes traced by the GPU's rays, it traces each pixel's
-/// mirror ray through the GI's scene instead (`ray_reflections`), lighting
-/// what it meets as the GI's rays do, by the probes.
+/// Given `traced`, where the GPU has ray queries and the scene's top level
+/// was built, it traces each pixel's mirror ray through the scene instead
+/// (`ray_reflections`), lighting what it meets as the GI's rays do: by the
+/// GI's probes, when the GI is on and they are given, or else by the sky.
 ///
 /// Every pixel traces its own ray, unlike GTAO's half-resolution passes. At
 /// half resolution, each 2×2 from a different pixel every frame, a curved
@@ -137,7 +138,7 @@ pub fn record_reflections(
     (depth, surface): (ImageId, ImageId),
     history: ImageId,
     target: ImageId,
-    probes: Option<Probes>,
+    traced: Option<Option<Probes>>,
     shadow_maps: &[ImageId],
 ) {
     let textures = [fg.texture(depth).0, fg.texture(history).0, fg.texture(surface).0, 0];
@@ -150,10 +151,10 @@ pub fn record_reflections(
     ];
     // What rays meet is lit by local lights through their shadows, and through glass.
     images.extend(shadow_maps.iter().map(|&map| (map, ImageAccess::Sampled)));
-    let traced = probes.filter(|probes| !probes.software).zip(pipelines.ray_reflections);
-    let pipeline = match traced {
-        Some((Probes { irradiance, depth, states, .. }, pipeline)) => {
-            images.extend([irradiance, depth, states].map(|probe| (probe, ImageAccess::Sampled)));
+    let pipeline = match traced.zip(pipelines.ray_reflections) {
+        Some((probes, pipeline)) => {
+            let maps = probes.iter().flat_map(|probes| [probes.irradiance, probes.depth, probes.states]);
+            images.extend(maps.map(|map| (map, ImageAccess::Sampled)));
             pipeline
         }
         None => pipelines.reflections,

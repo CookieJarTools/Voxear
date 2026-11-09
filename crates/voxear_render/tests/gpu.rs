@@ -2228,6 +2228,97 @@ fn a_lod_crossfade_leaves_no_dark_patches_of_ambient_occlusion() {
     assert!(darkened * 200 < ball.len(), "{darkened} of the ball's {} pixels are occluded", ball.len());
 }
 
+/// A chrome ball three metres ahead of a camera with GI off, and a red cube
+/// behind the camera, out of view, lit by a sun from beyond the ball, after
+/// enough frames of TAA for reflections; its rays traced in software when
+/// `software`, so reflections fall back to the screen.
+fn mirror_behind_render(software: bool) -> Option<Vec<u8>> {
+    use voxear_render::{AntiAliasing, AntiAliasingMode, Reflections};
+    let mut renderer = renderer_with(&RendererSettings { software_rays: software, ..Default::default() })?;
+    if !software && !renderer.gpu().ray_tracing {
+        eprintln!("skipping the ray-traced reflections: this GPU has no ray tracing");
+        return None;
+    }
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 0.9, -3.0))));
+    let plane = renderer.primitive(Primitive::Plane).unwrap();
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let sphere = renderer.primitive(Primitive::Sphere).unwrap();
+    let mut material = |base_color: [f32; 4], metallic: f32, roughness: f32| {
+        renderer.add_material(&MaterialDesc { base_color, metallic, roughness, ..MaterialDesc::default() }).unwrap()
+    };
+    let (grey, red, chrome) = (
+        material([0.42, 0.44, 0.46, 1.0], 0.0, 0.9),
+        material([0.9, 0.05, 0.05, 1.0], 0.0, 0.5),
+        material([0.95, 0.93, 0.9, 1.0], 1.0, 0.05),
+    );
+    world.spawn((MeshRenderer::new(plane, grey), Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(30.0))));
+    let place = |position: Vec3, size: f32| Transform::new(position, Quat::IDENTITY, Vec3::splat(size));
+    world.spawn((MeshRenderer::new(cube, red), place(Vec3::new(0.0, 1.5, -6.0), 3.0)));
+    world.spawn((MeshRenderer::new(sphere, chrome), place(Vec3::new(0.0, 0.9, 0.0), 1.8)));
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.3, -1.0, -0.5).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Taa, sharpness: 0.0, ..AntiAliasing::default() };
+    let reflections = Reflections { enabled: true, ..Reflections::default() };
+    world.insert_resource(voxear_render::PostProcess { anti_aliasing, reflections, ..steady_post() });
+    run(&mut renderer, &world, &mut 0.0, 12);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+#[test]
+fn without_gi_a_chrome_ball_still_mirrors_what_is_behind_the_camera() {
+    let (Some(traced), Some(on_screen)) = (mirror_behind_render(false), mirror_behind_render(true)) else { return };
+    keep_image("mirror behind traced.png", &traced);
+    keep_image("mirror behind on screen.png", &on_screen);
+    // The middle of the ball looks straight back past the camera, at the red cube.
+    let redness = |pixels: &[u8]| {
+        let patch = ball_pixels(3.0, 0.9, 0.2);
+        let sum: i32 = patch.iter().map(|&at| rgb_at(pixels, at)).map(|[r, g, b]| r - (g + b) / 2).sum();
+        sum / patch.len() as i32
+    };
+    let (traced_red, screen_red) = (redness(&traced), redness(&on_screen));
+    assert!(traced_red > 40, "traced, the ball shows the red cube behind the camera: {traced_red} redder");
+    assert!(screen_red < 10, "the screen holds no such cube: {screen_red} redder");
+}
+
+#[test]
+fn under_taa_a_lod_crossfade_blends_rather_than_leaving_a_dither_pattern() {
+    use voxear_render::{AntiAliasing, AntiAliasingMode, PostProcess};
+    // A white ball against the sky, close up, at its most detailed LOD.
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 0.0, -4.0))));
+    let sphere = renderer.primitive(Primitive::Sphere).unwrap();
+    let material = renderer.add_material(&MaterialDesc::default()).unwrap();
+    world.spawn((MeshRenderer::new(sphere, material), Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(3.0))));
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Taa, sharpness: 0.0, ..AntiAliasing::default() };
+    world.insert_resource(PostProcess { anti_aliasing, ..steady_post() });
+    let mut time = 0.0;
+    run(&mut renderer, &world, &mut time, 20);
+    let settled = renderer.read_pixels().unwrap().2;
+
+    // Sent to its simplest LOD, whose few flat sides lie well inside the round one's outline, and half way through
+    // the quarter-second fade: in the ring between the two outlines, a dither held still stippled sky and ball.
+    renderer.set_view_options(ViewOptions { lod_threshold: 256.0, ..ViewOptions::default() });
+    let fading = run(&mut renderer, &world, &mut time, 6);
+    assert!(fading.fade_draws > 0, "{fading:?}");
+    let blending = renderer.read_pixels().unwrap().2;
+    keep_image("crossfade under taa.png", &blending);
+    let inner: std::collections::HashSet<_> = ball_pixels(4.0, 1.5, 0.8).into_iter().collect();
+    let ring: Vec<_> = ball_pixels(4.0, 1.5, 0.97).into_iter().filter(|at| !inner.contains(at)).collect();
+    // How much each pixel of the ring differs from the mean of the four beside it.
+    let grain = |pixels: &[u8]| {
+        let grey = |x: u32, y: u32| rgb_at(pixels, (x, y)).iter().sum::<i32>();
+        let off = |&(x, y): &(u32, u32)| {
+            let around = grey(x - 1, y) + grey(x + 1, y) + grey(x, y - 1) + grey(x, y + 1);
+            i64::from((4 * grey(x, y) - around).abs())
+        };
+        ring.iter().map(off).sum::<i64>()
+    };
+    let (still, faded) = (grain(&settled), grain(&blending));
+    assert!(faded * 10 < still * 18, "as grainy as {faded} half way through the fade, from {still} before it");
+}
+
 /// The lamp camera's floor under a sun 40 degrees from straight down, a
 /// tall wall's shadow falling along +X from where it ends at z = 0, with
 /// `light` as the sun and, perhaps, a look's `sun_look` over it.

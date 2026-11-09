@@ -134,11 +134,13 @@ uint clusterAt(Frame* frame, float2 pixel, float viewDepth)
     return tile.x + tile.y * frame->clusterGrid.x + z * frame->clusterGrid.x * frame->clusterGrid.y;
 }
 
-// Ordered 4x4 dither, for fading between LODs without blending.
-float bayer4(uint2 pixel)
+// Ordered 4x4 dither, for fading between LODs without blending. `turn`
+// moves every pixel's threshold on by as many of the 16, wrapping round, so
+// the pattern stays an even dither.
+float bayer4(uint2 pixel, uint turn = 0)
 {
-    static const float MATRIX[16] = { 0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5 };
-    return (MATRIX[(pixel.y & 3) * 4 + (pixel.x & 3)] + 0.5) / 16.0;
+    static const uint MATRIX[16] = { 0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5 };
+    return (float((MATRIX[(pixel.y & 3) * 4 + (pixel.x & 3)] + turn) & 15u) + 0.5) / 16.0;
 }
 
 // The incoming LOD covers `fade` of the pixels and the outgoing one the rest;
@@ -168,7 +170,14 @@ void ditherLodFade(VertexOut input)
         return;
     }
     float fade = float((buffers()->lodState[input.instance] >> 8) & 0xFFFF) / 65535.0;
-    bool incoming = bayer4(uint2(input.position.xy)) < fade;
+    // Under TAA, which jitters the view, the thresholds turn every frame, all 16 in 16 frames, so each pixel shows
+    // the incoming LOD `fade` of the time and TAA blends the two. Held still, the pattern stayed where it was, and
+    // a chrome ball showed it as a fine checker along its rim and the edges of what it mirrored while it faded. In
+    // bit-reversed order, 0, 8, 4, 12, 2..., so every 2, 4 and 8 frames in a row turn as evenly as 16 do: a fade
+    // is over in about 15 frames, and TAA weighs the last few most.
+    Frame* frame = push.frame;
+    uint turn = any(frame->jitter != 0.0) ? reversebits(frame->frameIndex & 15u) >> 28u : 0u;
+    bool incoming = bayer4(uint2(input.position.xy), turn) < fade;
     if (incoming != ((input.fade & DRAW_FADING_IN) != 0))
     {
         discard;

@@ -140,6 +140,9 @@ pub struct Frame {
     /// The terrains' patches in view and in the sun's cascades, drawn with
     /// what was visible last frame, before the depth pyramid.
     pub terrain: Option<crate::terrain::ViewTerrains>,
+    /// Reflections trace the scene's triangles by the GPU's ray queries,
+    /// with or without the GI, rather than the screen.
+    pub traced_reflections: bool,
 }
 
 /// Records the frame's passes up to post-processing, and gives back the view
@@ -490,9 +493,9 @@ pub fn record(
             if let Some((target, history)) = reflections {
                 let surface = frame.surface.expect("the depth passes' surface");
                 let images = (depth, surface);
-                let probes = frame.probes;
+                let traced = frame.traced_reflections.then_some(frame.probes);
                 let maps = &shadow_maps;
-                ambient_occlusion::record_reflections(fg, (pipelines, push), images, history, target, probes, maps);
+                ambient_occlusion::record_reflections(fg, (pipelines, push), images, history, target, traced, maps);
             }
             // Both lists again, over their own depth. Task shaders cull them again, without counting them again.
             let forward = mesh.map_or(pipelines.forward_on_depth, |mesh| mesh.forward_on_depth);

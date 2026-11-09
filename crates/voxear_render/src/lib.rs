@@ -1712,9 +1712,12 @@ impl View {
             })
             .collect();
         // The same instances, of the same meshes' bottom levels, as this slot's top level was last built from:
-        // it stands as it is.
+        // it stands as it is. Its pass is listed all the same, doing nothing, so the frame's passes stay the same
+        // from frame to frame: the frame debugger keeps the pass looked at by its place in the list, and with
+        // reflections tracing a still scene, the pass came only in the first frames and the look slid onto the next.
         let changes = assets.bottom_level_changes;
         if built.0 == changes && built.1 == placed && !placed.is_empty() {
+            fg.add_pass("Scene BVH", &[], &[], |_| {});
             return Ok(Some(index));
         }
         level.write(&placed);
@@ -1962,11 +1965,13 @@ impl View {
         let mut probes = None;
         let previous_ddgi = self.ddgi_history.take();
         let mut scene_hierarchy = (0, 0);
+        // Plants of a Foliage come after the Objs; rays leave them out, as thousands of small moving meshes cost far
+        // more to trace than they change the bounced light or a reflection.
+        let objs = extracted.entities[..opaque_count].iter().position(|owner| owner.plant.is_some());
+        let traced = &extracted.instances[..objs.unwrap_or(opaque_count)];
+        // Whether reflections trace the scene's triangles, by the GPU's ray queries, rather than the screen.
+        let mut traced_reflections = false;
         if lit.enabled && !wireframe {
-            // Plants of a Foliage come after the Objs; the rays leave them out, as thousands of small moving
-            // meshes cost far more to trace than they change the bounced light.
-            let objs = extracted.entities[..opaque_count].iter().position(|owner| owner.plant.is_some());
-            let traced = &extracted.instances[..objs.unwrap_or(opaque_count)];
             // Ray queries where the GPU has them; otherwise the scene's hierarchy, walked in a compute shader.
             let scene = if setup.software_rays {
                 let hierarchy = &mut self.scene_hierarchies[slot];
@@ -1998,7 +2003,17 @@ impl View {
                     rotation: ddgi::rotation(setup.frame_index),
                 };
                 self.ddgi_history = Some((origin, spacing, frames));
+                traced_reflections = !made.software;
                 probes = Some(made);
+            }
+        } else if reflections.is_some() && !setup.software_rays && pipelines.ray_reflections.is_some() {
+            // Without GI, reflections still trace the scene where the GPU has ray queries, lit by the sun, the
+            // lamps and the sky: the screen holds only what the camera sees, and a chrome ball mirrored the ground
+            // behind the cubes beside it where it should have shown their sides.
+            let top_level = (&mut self.top_levels[slot], &mut self.top_level_built[slot], self.number);
+            if let Some(scene) = Self::build_scene(top_level, fg, (gpu, bindless, assets), traced, slot)? {
+                frame_data.ddgi.scene = scene;
+                traced_reflections = true;
             }
         }
         let panes = match wireframe {
@@ -2226,6 +2241,7 @@ impl View {
             mists: mists.len() as u32,
             probes,
             terrain: view_terrains,
+            traced_reflections,
         };
         let (under_water, particles, smoke) = passes::record(fg, &frame_setup, &targets, &draws);
         let post = post_passes::PostInput {

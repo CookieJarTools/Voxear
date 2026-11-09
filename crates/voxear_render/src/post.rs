@@ -116,8 +116,9 @@ impl Default for GlobalIllumination {
     }
 }
 
-/// Screen-space reflections: what lies on screen, mirrored in smooth
-/// surfaces, from last frame's picture. They need TAA, whose history they
+/// Reflections of what is round smooth surfaces: traced through the scene
+/// where the GPU has ray queries, otherwise what lies on screen, from last
+/// frame's picture. They need TAA, whose history screen-space reflections
 /// read; without it, and where a ray finds nothing, surfaces reflect the sky.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]

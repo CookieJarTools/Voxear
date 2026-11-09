@@ -37,6 +37,9 @@ pub struct GrassLook {
     pub density: f32,
     pub scale: [f32; 2],
     pub draw_distance: f32,
+    /// How long it takes to stand up again where a Track Maker trod it
+    /// flat, in seconds; 0 for it to stay flat.
+    pub springs_back: f32,
 }
 
 /// How many kinds of grass, over every terrain, a view scatters.
@@ -71,6 +74,7 @@ pub struct GpuGrassJob {
     pub lod_count: u32,
     /// Its first draw, the rest after it, one a LOD.
     pub draws: u32,
+    pub springs_back: f32,
     /// How far each LOD reaches from the camera, in metres.
     pub lod_reach: [f32; 4],
     /// Where each LOD's blades start in the view's blades, and how many
@@ -114,6 +118,9 @@ pub(crate) struct ViewGrass {
     pub blades_id: BufferId,
     /// The terrains' buffers, which the scatter reads.
     pub grounds: Vec<BufferId>,
+    /// The map of tracks round the camera, which lays blades down where
+    /// something trod.
+    pub tracks: BufferId,
     pub index_buffer: vk::Buffer,
 }
 
@@ -183,6 +190,7 @@ pub(crate) fn gather(
             material: look.material.0,
             lod_count: lod_count as u32,
             draws: draws.len() as u32,
+            springs_back: look.springs_back.max(0.0),
             ..GpuGrassJob::default()
         };
         // The square the distance reaches, within the terrain.
@@ -266,6 +274,7 @@ fn draw_all(ctx: &crate::graph::PassContext, grass: &ViewGrass, push: &Push) {
 fn reads(grass: &ViewGrass, more: &[(BufferId, BufferAccess)]) -> Vec<(BufferId, BufferAccess)> {
     let mut reads = vec![(grass.args_id, BufferAccess::IndirectRead), (grass.blades_id, BufferAccess::ShaderRead)];
     reads.extend(grass.grounds.iter().map(|&id| (id, BufferAccess::ShaderRead)));
+    reads.push((grass.tracks, BufferAccess::ShaderRead));
     reads.extend_from_slice(more);
     reads
 }
@@ -323,7 +332,7 @@ mod tests {
 
     #[test]
     fn a_ring_has_room_for_a_blade_in_every_cell_it_reaches() {
-        const { assert!(size_of::<GpuGrassJob>() == 104 && size_of::<GpuGrassDraw>() == 8) };
+        const { assert!(size_of::<GpuGrassJob>() == 108 && size_of::<GpuGrassDraw>() == 8) };
         // A disc 10 m round of half-metre cells: about 1,257 cells, and its edge's.
         let room = ring_cells(0.0, 10.0, 0.5);
         assert!((1257..1600).contains(&room), "{room}");

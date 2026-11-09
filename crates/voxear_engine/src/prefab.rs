@@ -971,6 +971,7 @@ pub fn grass_look(
         density: kind.density.max(0.0),
         scale: kind.scale,
         draw_distance: kind.draw_distance.max(1.0),
+        springs_back: kind.springs_back.max(0.0),
     })
 }
 

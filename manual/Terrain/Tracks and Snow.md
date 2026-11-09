@@ -26,10 +26,14 @@ Where tracks press deep into a surface that gives, the terrain's first surface, 
 
 Pressed ground is packed tighter, so it is drawn a little darker and smoother than the ground round it.
 
+## Trodden grass
+
+[[Grass]] lies flat wherever a Track Maker has trodden, on any surface, even rock and road. It stands up again over its kind's **Springs back** time: a few seconds for stiff grass, a minute or more for soft grass, 0 for grass that stays flat.
+
 ## How tracks are drawn
 
 Tracks are only drawn. Nothing collides with them, so a character walks on the ground as it was, and they are not the same on every machine: each player's game makes its own from what it sees. For ground changed for good, the same for every player, change the terrain itself (see [[Changing Terrain from Scripts]]).
 
-Each view keeps its tracks in a map of the ground round its camera, 64 m across, a texel every 6 cm. The ground's pixels look into it to draw the floor of each track where the eye meets it, with its sides lit by their slope. Tracks are kept only while they are on the map: the camera moving more than 32 m from a track forgets it.
+Each view keeps its tracks in a map of the ground round its camera, 64 m across, a texel every 6 cm. The ground's pixels look into it to draw the floor of each track where the eye meets it, with its sides lit by their slope, and each blade of grass looks into it to know whether to lie down. Tracks are kept only while they are on the map: the camera moving more than 32 m from a track forgets it, and the grass there stands up at once.
 
 At most 64 Track Makers press into the ground at once, those nearest the camera.

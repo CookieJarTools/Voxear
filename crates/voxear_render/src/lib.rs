@@ -1927,6 +1927,7 @@ impl View {
                 args_id: fg.import_buffer(&buffers.grass_args),
                 blades_id: fg.import_buffer(&buffers.grass_blades),
                 grounds: setup.terrains.iter().filter_map(|terrain| terrain.heights_id).collect(),
+                tracks: tracks_id,
                 index_buffer: assets.indices.handle,
             }
         });

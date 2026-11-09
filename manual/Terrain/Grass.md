@@ -19,6 +19,7 @@ Pick **Grass** along the top of the Terrain in the Inspector. Its kinds are list
 | Draw distance | How far from the camera it is drawn, in metres. It thins out over the last fifth |
 | Grows | **Everywhere**, only where **Painted**, or **On Surfaces**: on the surface picked under **On surface**, as thickly as that surface covers (see [[Surfaces]]) |
 | Steepest ground | The steepest slope it grows on, in degrees; it thins out over the last five |
+| Springs back | How many seconds it takes to stand up again where it was trodden flat. 0 leaves it flat |
 
 Grass on a surface follows the surface: paint mud over a field and the grass on the field goes with it, and grass by height and slope rules grows wherever those rules say.
 
@@ -28,7 +29,7 @@ With **Grass** picked, the brush in the Scene view grows the picked kind where i
 
 ## How grass is drawn
 
-Each view scatters each kind on a grid fixed to the world round its camera, a cell for each blade it could have, and keeps a blade where the kind grows thickly enough there, on the ground's height, out of holes, and in view. Blades nearer the camera are drawn with their mesh's finest level of detail, and further off with coarser ones, each twice as far as the last. Grass is drawn after the terrain, sways in a [[Wind]] Zone's wind, and bends away from what has a **Foliage Interaction**, as a Foliage's plants do. It casts no shadows.
+Each view scatters each kind on a grid fixed to the world round its camera, a cell for each blade it could have, and keeps a blade where the kind grows thickly enough there, on the ground's height, out of holes, and in view. Blades nearer the camera are drawn with their mesh's finest level of detail, and further off with coarser ones, each twice as far as the last. Grass is drawn after the terrain, sways in a [[Wind]] Zone's wind, and bends away from what has a **Foliage Interaction**, as a Foliage's plants do. It lies flat where a **Track Maker** has trodden, whether or not the ground there takes tracks, and stands up again over its **Springs back** time (see [[Tracks and Snow]]). It casts no shadows.
 
 Blades are not Objs or instances of the scene's, so a field of half a million costs no more of the scene's 65,536 instances than none. What they cost is the GPU's time drawing them: a dense kind of a heavy mesh drawn far is the slow kind. Keep each mesh's triangles few, the draw distance as short as it looks right, and the density as low as covers the ground.
 

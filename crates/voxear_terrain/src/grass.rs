@@ -60,6 +60,10 @@ pub struct Grass {
     /// five.
     #[serde(default = "steep")]
     pub steepest: f32,
+    /// How long it takes to stand up again where something trod it flat,
+    /// in seconds; 0 for it to stay flat.
+    #[serde(default = "twenty")]
+    pub springs_back: f32,
     /// The raster of its painting, which adds to where it grows; 0 before
     /// it is painted.
     #[serde(default, skip_serializing_if = "is_nothing")]
@@ -80,6 +84,10 @@ fn forty() -> f32 {
 
 fn steep() -> f32 {
     40.0
+}
+
+fn twenty() -> f32 {
+    20.0
 }
 
 fn is_nothing(value: &u32) -> bool {
@@ -124,6 +132,7 @@ impl Grass {
             cover: GrassCover::Everywhere,
             surfaces: Vec::new(),
             steepest: steep(),
+            springs_back: twenty(),
             paint: 0,
         }
     }

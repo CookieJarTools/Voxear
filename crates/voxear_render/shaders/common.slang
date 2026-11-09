@@ -1010,6 +1010,7 @@ struct GrassJob
     uint material;
     uint lodCount;
     uint draws;
+    float springsBack;
     float4 lodReach;
     uint4 offsets;
     uint4 capacities;

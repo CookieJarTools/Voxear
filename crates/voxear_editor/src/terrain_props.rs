@@ -175,7 +175,8 @@ pub enum TerrainField {
     NewSurface,
     /// The picked kind of grass's: its mesh and material, how many to a
     /// square metre, its sizes, how far it is drawn, where it grows, the
-    /// surface it grows on, and the steepest ground it grows on.
+    /// surface it grows on, the steepest ground it grows on, and how soon it
+    /// stands up again where it was trodden flat.
     GrassMesh,
     GrassMaterial,
     GrassDensity,
@@ -184,6 +185,7 @@ pub enum TerrainField {
     GrassCover,
     GrassSurface,
     GrassSteepest,
+    GrassSpringsBack,
     /// Add Grass's picker: a new kind of grass of the mesh picked.
     NewGrass,
 }
@@ -215,7 +217,7 @@ fn grass_fields(grass: &Grass) -> Vec<TerrainField> {
     if grass.cover == GrassCover::Surfaces {
         fields.push(F::GrassSurface);
     }
-    fields.push(F::GrassSteepest);
+    fields.extend([F::GrassSteepest, F::GrassSpringsBack]);
     fields
 }
 
@@ -411,6 +413,7 @@ pub fn label(field: TerrainField) -> &'static str {
         F::GrassCover => "Grows",
         F::GrassSurface => "On surface",
         F::GrassSteepest => "Steepest ground",
+        F::GrassSpringsBack => "Springs back",
     }
 }
 
@@ -437,7 +440,7 @@ pub fn unit(world: &World, entity: Entity, field: TerrainField) -> Option<&'stat
         F::TileSize | F::BreakupSize | F::GrassDistance => Some("m"),
         F::GrassDensity => Some("per m²"),
         F::GrassSteepest => Some("°"),
-        F::FillsIn => Some("s"),
+        F::FillsIn | F::GrassSpringsBack => Some("s"),
         F::Rotation | F::Slopes => Some("°"),
         F::Falloff => match picked(world, entity) {
             Some((_, Layer { kind: LayerKind::Spline { .. }, .. })) => Some("m"),
@@ -546,6 +549,7 @@ pub fn get(game: &Game, entity: Entity, field: TerrainField) -> Option<Value> {
             Value::Choice(on.min(names.len().saturating_sub(1)), names)
         }
         F::GrassSteepest => Value::Number(grass()?.steepest),
+        F::GrassSpringsBack => Value::Number(grass()?.springs_back),
         F::Brush => {
             let at = BrushKind::ALL.iter().position(|&k| k == brush.kind).unwrap_or_default();
             choice(at, BrushKind::ALL.map(BrushKind::name).to_vec())
@@ -685,7 +689,13 @@ pub fn set(game: &mut Game, entity: Entity, field: TerrainField, value: Value) -
         | F::BreakupSize => {
             return change_surface(game, entity, |surface| set_surface(surface, field, &value));
         }
-        F::GrassDensity | F::GrassSizes | F::GrassDistance | F::GrassCover | F::GrassSurface | F::GrassSteepest => {
+        F::GrassDensity
+        | F::GrassSizes
+        | F::GrassDistance
+        | F::GrassCover
+        | F::GrassSurface
+        | F::GrassSteepest
+        | F::GrassSpringsBack => {
             return change_grass(game, entity, |grass| set_grass(grass, field, &value));
         }
         F::HeightMask | F::Heights | F::SlopeMask | F::Slopes | F::Feather
@@ -726,6 +736,7 @@ fn set_grass(grass: &mut Grass, field: TerrainField, value: &Value) {
         (F::GrassCover, Value::Choice(at, _)) => grass.cover = GrassCover::ALL[(*at).min(GrassCover::ALL.len() - 1)],
         (F::GrassSurface, Value::Choice(at, _)) => grass.surfaces = vec![*at as u32],
         (F::GrassSteepest, v) => grass.steepest = number(v).unwrap_or(grass.steepest).clamp(0.0, 90.0),
+        (F::GrassSpringsBack, v) => grass.springs_back = number(v).unwrap_or(grass.springs_back).clamp(0.0, 3600.0),
         _ => {}
     }
 }
@@ -976,6 +987,7 @@ fn restyle(game: &mut Game, entity: Entity) {
                 density: kind.density.max(0.0),
                 scale: kind.scale,
                 draw_distance: kind.draw_distance.max(1.0),
+                springs_back: kind.springs_back.max(0.0),
             })
         })
         .collect();

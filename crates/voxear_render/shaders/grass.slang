@@ -9,7 +9,8 @@
 // indirect draws that draw them (grassVertex), with the forward passes'
 // own fragment shaders: no instance of the scene's each, so there can be
 // millions. They sway in the wind and bend from what passes through them,
-// as Foliage does; they cast no shadow.
+// as Foliage does, and lie flat where a Track Maker trod, standing up again
+// over their kind's time (grassTrodden); they cast no shadow.
 
 #include "shading.slang"
 #include "culling.slang"
@@ -166,6 +167,32 @@ float3x3 grassTurn(uint packed)
     return mul(leanTurn, spin);
 }
 
+// How far over a blade standing at `foot` lies, 0 standing to 1 flat: as deep as the ground there was pressed, up to
+// a few centimetres, and standing up again over `springsBack` seconds since it was last trodden (0: never). Off the
+// map of tracks round the camera, nothing lies flat.
+static const float GRASS_FLAT_PRESS = 0.03;
+float grassTrodden(Frame* frame, float2 foot, float springsBack)
+{
+    float2 track = trackAt(frame, foot);
+    if (track.x <= 1e-4)
+    {
+        return 0.0;
+    }
+    float age = max(frame->time - track.y, 0.0);
+    float standing = springsBack > 0.0 ? smoothstep(0.0, springsBack, age) : 0.0;
+    return saturate(track.x / GRASS_FLAT_PRESS) * (1.0 - standing);
+}
+
+// `v` of a blade turned `over` (0 to 1) of the way down about its foot, towards its own +z.
+float3 grassLaid(float3 v, float over)
+{
+    // Not quite flat, so it still reads as a blade lying on the ground rather than in it.
+    float angle = over * 1.4;
+    float c = cos(angle);
+    float s = sin(angle);
+    return float3(v.x, v.y * c - v.z * s, v.y * s + v.z * c);
+}
+
 // Vertex `vertexId` of blade `instanceId` of draw `push.list`.
 [shader("vertex")]
 VertexOut grassVertex(uint vertexId : SV_VertexID, uint instanceId : SV_InstanceID)
@@ -179,19 +206,22 @@ VertexOut grassVertex(uint vertexId : SV_VertexID, uint instanceId : SV_Instance
     Material material = buffers()->materials[job.material];
     float scale = lerp(job.scale.x, job.scale.y, float((blade.packed >> 10) & 0xFF) / 255.0);
     float3x3 turn = grassTurn(blade.packed);
-    float3 normal = normalize(mul(turn, v.normal));
-    float3 world = blade.position + mul(turn, v.position * scale);
+    float over = grassTrodden(frame, blade.position.xz, job.springsBack);
+    float3 normal = normalize(mul(turn, grassLaid(v.normal, over)));
+    float3 world = blade.position + mul(turn, grassLaid(v.position * scale, over));
     float height = max((mesh.center.y + mesh.radius) * scale, 0.05);
-    float3 now = world + windOffset(frame, material, blade.position, height, world, normal, v.wind, frame->time);
+    // Lying flat, it no longer catches the wind.
+    float sway = 1.0 - over;
+    float3 now = world + windOffset(frame, material, blade.position, height, world, normal, v.wind, frame->time) * sway;
     float earlier = frame->time - frame->deltaTime;
-    float3 before = world + windOffset(frame, material, blade.position, height, world, normal, v.wind, earlier);
+    float3 before = world + windOffset(frame, material, blade.position, height, world, normal, v.wind, earlier) * sway;
     Terrain terrain = buffers()->terrains[job.terrain];
 
     VertexOut o;
     o.position = transform(frame->viewProj, float4(now, 1.0));
     o.worldPosition = now;
     o.normal = normal;
-    o.tangent = float4(mul(turn, v.tangent.xyz), v.tangent.w);
+    o.tangent = float4(mul(turn, grassLaid(v.tangent.xyz, over)), v.tangent.w);
     o.uv = v.uv;
     o.material = job.material;
     o.lod = 0;

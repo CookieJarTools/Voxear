@@ -332,7 +332,14 @@ fn grass_grows_thickly_where_its_densities_say_more_blades_than_the_scene_has_ro
     let green = renderer.add_material(&MaterialDesc { base_color: [0.1, 0.9, 0.1, 1.0], ..MaterialDesc::default() });
     let cube = renderer.primitive(Primitive::Cube).unwrap();
     // Forty to a square metre: some 85,000 blades in view, past the 65,536 instances a view has room for.
-    let look = GrassLook { mesh: cube, material: green.unwrap(), density: 40.0, scale: [0.12, 0.15], draw_distance: 80.0 };
+    let look = GrassLook {
+        mesh: cube,
+        material: green.unwrap(),
+        density: 40.0,
+        scale: [0.12, 0.15],
+        draw_distance: 80.0,
+        springs_back: 20.0,
+    };
     let look = TerrainLook { grass: Arc::from([Some(look)]), ..TerrainLook::new(grey.unwrap(), 4.0) };
     world.spawn((terrain, look, Transform::default()));
     look_down(&mut world, 30.0);
@@ -445,6 +452,82 @@ fn a_track_maker_presses_a_track_into_snow_that_stays_until_it_fills_in() {
     world.get_mut::<Transform>(foot).unwrap().position.y = 0.5;
     let pixels = frames(&mut renderer, &mut world, 60, 0.0);
     assert!((brightness(&pixels, 63.0, 64.0) - beside).abs() < 20, "and fill in");
+}
+
+#[test]
+fn grass_lies_flat_where_a_track_maker_trod_and_stands_up_again_over_its_kinds_time() {
+    use std::sync::Arc;
+    use voxear_render::{GrassLook, MeshData, Primitive, TrackMaker};
+    use voxear_terrain::grass::{GrassMap, GrassTile};
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    let side = voxear_terrain::TILE_SAMPLES;
+    let map = GrassMap::from_tiles(1, 1, 1, vec![Arc::new(GrassTile::from_samples(vec![255; (side * side) as usize]))]);
+    let terrain = Terrain { grass: Some(Arc::new(map)), ..Terrain::new(Heightmap::flat(1, 1, 0.5, 0.0)) };
+    let grey = renderer.add_material(&MaterialDesc { base_color: [0.5, 0.5, 0.5, 1.0], ..MaterialDesc::default() });
+    let green =
+        renderer.add_material(&MaterialDesc { base_color: [0.1, 0.9, 0.1, 1.0], ..MaterialDesc::default() }).unwrap();
+    // Thin blades standing from their foot, a fifth as wide as they are tall: seen from above, they cover far more
+    // of the ground lying down than standing.
+    let mut blade = MeshData::primitive(Primitive::Cube);
+    for vertex in &mut blade.vertices {
+        let [x, y, z] = vertex.position;
+        vertex.position = [x * 0.2, y + 0.5, z * 0.2];
+    }
+    let blade = renderer.add_mesh(&blade).unwrap();
+    let kind = |springs_back: f32| GrassLook {
+        mesh: blade,
+        material: green,
+        density: 40.0,
+        scale: [0.3, 0.3],
+        draw_distance: 80.0,
+        springs_back,
+    };
+    let look = TerrainLook { grass: Arc::from([Some(kind(0.0))]), ..TerrainLook::new(grey.unwrap(), 4.0) };
+    let field = world.spawn((terrain, look, Transform::default()));
+    look_down(&mut world, 20.0);
+    renderer.set_view_options(ViewOptions { debug_view: voxear_render::DEBUG_VIEW_UNLIT, ..ViewOptions::default() });
+    // A foot walking along x across the middle.
+    let foot =
+        world.spawn((TrackMaker { width: 0.5, depth: 0.15 }, Transform::from_position(Vec3::new(58.0, 0.0, 64.0))));
+    let mut time = 0.0;
+    let mut frames = |renderer: &mut Renderer, world: &mut World, count: u32, walk: f32| {
+        for _ in 0..count {
+            time += 1.0 / 60.0;
+            if let Some(transform) = world.get_mut::<Transform>(foot) {
+                transform.position.x += walk;
+            }
+            renderer.render(world, time).expect("frame renders");
+        }
+        renderer.read_pixels().expect("pixels").2
+    };
+    // How much of a strip along x from 61 to 67 m, a few pixels deep about `z`, is green.
+    let green_share = |pixels: &[u8], z: f32| {
+        let ((x0, v), (x1, _)) = (from_above(20.0, 61.0, z), from_above(20.0, 67.0, z));
+        let all = (x1 - x0) * 5;
+        let green = (v - 2..=v + 2)
+            .flat_map(|y| (x0..x1).map(move |x| (x, y)))
+            .filter(|&(x, y)| {
+                let [r, g, b] = rgb_at(pixels, x, y);
+                g > r + 60 && g > b + 60
+            })
+            .count() as u32;
+        green as f32 / all as f32
+    };
+    frames(&mut renderer, &mut world, 20, 0.6);
+    // Lifted off the ground, and a second on: grass that never springs back still lies flat.
+    world.get_mut::<Transform>(foot).unwrap().position.y = 0.5;
+    let pixels = frames(&mut renderer, &mut world, 60, 0.0);
+    keep_image("terrain grass trodden.png", &pixels);
+    let (trodden, beside) = (green_share(&pixels, 64.0), green_share(&pixels, 66.0));
+    assert!(trodden > beside + 0.15, "the blades lie flat along the track: {trodden} against {beside} beside it");
+
+    // Grass that springs back in half a second stands up again.
+    world.get_mut::<TerrainLook>(field).unwrap().grass = Arc::from([Some(kind(0.5))]);
+    let pixels = frames(&mut renderer, &mut world, 30, 0.0);
+    keep_image("terrain grass stood up.png", &pixels);
+    let (stood, beside) = (green_share(&pixels, 64.0), green_share(&pixels, 66.0));
+    assert!((stood - beside).abs() < 0.08, "the blades stand up again: {stood} against {beside} beside them");
 }
 
 #[test]
@@ -648,7 +731,14 @@ fn ground_dug_out_of_a_terrain_is_drawn_in_its_dug_surface_with_no_gap_at_its_ri
     let plain = renderer.add_material(&MaterialDesc::default()).unwrap();
     let red = renderer.add_material(&MaterialDesc { base_color: [1.0, 0.0, 0.0, 1.0], ..MaterialDesc::default() });
     let cube = renderer.primitive(Primitive::Cube).unwrap();
-    let blades = GrassLook { mesh: cube, material: red.unwrap(), density: 4.0, scale: [0.1, 0.1], draw_distance: 80.0 };
+    let blades = GrassLook {
+        mesh: cube,
+        material: red.unwrap(),
+        density: 4.0,
+        scale: [0.1, 0.1],
+        draw_distance: 80.0,
+        springs_back: 20.0,
+    };
     let look =
         TerrainLook { surfaces: surfaces.into(), grass: Arc::from([Some(blades)]), ..TerrainLook::new(plain, 4.0) };
     world.spawn((terrain, look, Transform::default()));

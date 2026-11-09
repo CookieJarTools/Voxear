@@ -1351,8 +1351,42 @@ bool keptDry(Frame* frame, float3 world, uint body)
     return false;
 }
 
-// Whether the camera is under the water's surface over it: the sea's, waves
-// and all, or a Pool's.
+// How high the water whose resting surface waterSurface found at `surface`
+// stands over `world` with its waves: the sea's, or a Pool's share of them,
+// as coarsely as its grid carries them. Found by undoing the waves'
+// sideways pinch, so the height is that of the water the waves moved over
+// `world`, and a waterline rises and falls as each wave does.
+float wavySurface(Frame* frame, float3 world, float surface)
+{
+    float swell = 1.0;
+    float spacing = 0.05;
+    bool sea = frame->ocean.enabled != 0 && surface == frame->ocean.level;
+    bool pool = false;
+    for (uint i = 0; i < frame->ocean.pools && !sea && !pool; i++)
+    {
+        WaterBody body = buffers()->waterBodies[i];
+        if (body.liquid == LIQUID_WATER && body.shape == 0 && body.toWorld.c3.y == surface && overPool(body, world))
+        {
+            pool = true;
+            swell = body.waves;
+            spacing = poolSpacing(body);
+        }
+    }
+    if (!sea && !pool)
+    {
+        return surface;
+    }
+    float2 rest = world.xz;
+    for (uint i = 0; i < 3; i++)
+    {
+        float depth = sea ? seaDepth(frame, rest) : 1e4;
+        rest = world.xz - oceanMoved(frame, rest, spacing, false, swell, depth).xz;
+    }
+    return surface + oceanMoved(frame, rest, spacing, false, swell, sea ? seaDepth(frame, rest) : 1e4).y;
+}
+
+// Whether the camera is under the water's surface over it, waves and all:
+// the sea's or a Pool's.
 bool cameraUnderwater(Frame* frame)
 {
     float3 camera = frame->cameraPosition;
@@ -1362,11 +1396,7 @@ bool cameraUnderwater(Frame* frame)
     {
         return false;
     }
-    if (frame->ocean.enabled != 0 && surface == frame->ocean.level)
-    {
-        surface += oceanMoved(frame, camera.xz, 0.05, false, 1.0, seaDepth(frame, camera.xz)).y;
-    }
-    return camera.y < surface;
+    return camera.y < wavySurface(frame, camera, surface);
 }
 
 // The surface seen from under the water: inside Snell's window, the sky
@@ -2202,10 +2232,8 @@ struct Under
 
 // How far above the water's surface the near plane is at `pixel`, in
 // metres, negative under it; `near` is that point of the near plane, and
-// `surface` and `absorb` the water's height over it and how it absorbs.
-// Very large where there is no water. For the sea, the height of the water
-// the waves moved there, found by undoing their sideways pinch, so the
-// waterline rises and falls as each wave does.
+// `surface` and `absorb` the water's height over it, waves and all
+// (wavySurface), and how it absorbs. Very large where there is no water.
 float waterlineAt(Frame* frame, float2 pixel, out float3 near, out float surface, out float3 absorb)
 {
     float2 ndc = pixel / float2(frame->viewport) * 2.0 - 1.0;
@@ -2215,15 +2243,7 @@ float waterlineAt(Frame* frame, float2 pixel, out float3 near, out float surface
     {
         return 1e3;
     }
-    if (frame->ocean.enabled != 0 && surface == frame->ocean.level)
-    {
-        float2 rest = near.xz;
-        for (uint i = 0; i < 3; i++)
-        {
-            rest = near.xz - oceanMoved(frame, rest, 0.05, false, 1.0, seaDepth(frame, rest)).xz;
-        }
-        surface += oceanMoved(frame, rest, 0.05, false, 1.0, seaDepth(frame, rest)).y;
-    }
+    surface = wavySurface(frame, near, surface);
     return near.y - surface;
 }
 

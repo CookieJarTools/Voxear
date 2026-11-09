@@ -71,7 +71,7 @@ The waves are worked out the same on every machine, and the game can ask how hig
 
 ## Under the sea
 
-When the camera goes under the surface, everything fades with distance into the water's own colour, as the water takes the light a colour at a time and its specks scatter it. The water is lit from above: brighter near the surface and looking up, darker looking down and deeper down, and glowing towards the sun, as water scatters light mostly onwards. Clearer water shows further; murkier water glows more and shows less. Sunlight comes down through the waves in a moving web of caustics on everything below, and fades with depth. Looking up, you see the sky through a bright circle overhead, Snell's window, and past its edge the surface turns to a mirror of the water below. Where the camera is half in, a waterline runs across the view.
+When the camera goes under the surface, everything fades with distance into the water's own colour, as the water takes the light a colour at a time and its specks scatter it. The water is lit from above: brighter near the surface and looking up, darker looking down and deeper down, and glowing towards the sun, as water scatters light mostly onwards. Clearer water shows further; murkier water glows more and shows less. Sunlight comes down through the waves in a moving web of caustics on everything below, and fades with depth. Looking up, you see the sky through a bright circle overhead, Snell's window: what stands over the water shows in it too, squeezed towards its edge, and the sun glares through it, spread by the waves. Past its edge the surface turns to a mirror of the water below and what lies in it. Where the camera is half in, a waterline runs across the view.
 
 ## Lamps and water
 

@@ -3856,6 +3856,48 @@ fn half_in_the_water_the_view_splits_at_the_waterline() {
     assert!(line.is_some_and(|y| y < 180), "a dark line above the middle: {line:?}");
 }
 
+/// A still sea seen from a metre and a half under it, looking up across
+/// Snell's window towards a red box standing out of the water, or none.
+fn window_render(boxed: bool) -> Option<Vec<u8>> {
+    use voxear_render::{Ocean, Sky, Weather};
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    let look = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.0, 0.55, 1.0).normalize());
+    world.spawn((Camera::default(), Transform::new(Vec3::new(0.0, -1.5, 0.0), look, Vec3::ONE)));
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.3, -0.8, 0.5).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.6, ..Sky::default() });
+    let plane = renderer.primitive(Primitive::Plane).unwrap();
+    let sand = MaterialDesc { base_color: [0.76, 0.66, 0.48, 1.0], roughness: 0.9, ..MaterialDesc::default() };
+    let sand = renderer.add_material(&sand).unwrap();
+    world.spawn((MeshRenderer::new(plane, sand), Transform::new(Vec3::new(0.0, -6.0, 0.0), Quat::IDENTITY, Vec3::splat(200.0))));
+    if boxed {
+        let cube = renderer.primitive(Primitive::Cube).unwrap();
+        let red = MaterialDesc { base_color: [0.9, 0.05, 0.05, 1.0], roughness: 0.8, ..MaterialDesc::default() };
+        let red = renderer.add_material(&red).unwrap();
+        world.spawn((MeshRenderer::new(cube, red), Transform::new(Vec3::new(0.0, 1.0, 7.0), Quat::IDENTITY, Vec3::new(6.0, 14.0, 2.0))));
+    }
+    let still = Ocean { weather: Weather::Custom, wind: 0.5, swell_wind: 0.2, ..Ocean::default() };
+    world.spawn((still, Transform::default()));
+    run(&mut renderer, &world, &mut 30.0, 10);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+#[test]
+fn from_under_the_sea_what_stands_over_it_shows_through_snells_window() {
+    let (Some(open), Some(boxed)) = (window_render(false), window_render(true)) else { return };
+    keep_image("window.png", &boxed);
+    // The box above the water, bent down into the window, reddens the surface seen from under it.
+    let redder = (0..180u32)
+        .flat_map(|y| (0..640u32).map(move |x| (x, y)))
+        .filter(|&at| {
+            let ([r, g, _], [r0, g0, _]) = (rgb_at(&boxed, at), rgb_at(&open, at));
+            (r - g) - (r0 - g0) > 12
+        })
+        .count();
+    assert!(redder > 200, "the box through the window: {redder} pixels");
+}
+
 #[test]
 fn a_stormy_sea_calms_and_stops_at_the_beach() {
     use voxear_render::{Ocean, Sky, Weather};

@@ -1487,11 +1487,14 @@ float3 waterGlow(Frame* frame, WaterMedium m, float depth, float3 view, float fr
     return m.scattering * glow;
 }
 
-// The surface seen from under the water: inside Snell's window, the sky
-// above bent through it; outside it, past the critical angle of 48.6°, the
-// water below mirrored, as total internal reflection does; the under-water
-// pass fogs it by how far it is.
-FragmentOut fromBelow(Frame* frame, WaterOut input, float3 n, float3 v, float3 deep, float3 scatter, float3 absorb)
+// The surface seen from under the water: inside Snell's window, what lies
+// above bent through it, the sky and what stands over the water where the
+// picture shows it, and the sun spread by the waves; outside it, past the
+// critical angle of 48.6°, the water below mirrored, as total internal
+// reflection does: what is under the water where the picture shows it,
+// dimmed by the water between, and the water's own light along the way.
+// The under-water pass fogs it by how far it is.
+FragmentOut fromBelow(Frame* frame, WaterOut input, float3 n, float3 v, float3 deep, float3 absorb, float roughness, float slopes)
 {
     float3 down = -n;
     float cosine = saturate(dot(down, v));
@@ -1505,17 +1508,28 @@ FragmentOut fromBelow(Frame* frame, WaterOut input, float3 n, float3 v, float3 d
     s.diffuse = 0.0;
     s.f0 = 0.02;
     float3 ambient = ambientLight(frame, input.world, s, sunLight, atmosphere);
-    // Mirrored, the water's own light along the view turned back down into it.
+    WaterMedium medium = waterMedium(absorb, deep);
+    // Mirrored: down into the water again, never along the surface.
     float3 mirrored = reflect(-v, down);
-    mirrored.y = min(mirrored.y, -0.02);
-    float3 water = waterGlow(frame, waterMedium(absorb, deep), 0.0, normalize(mirrored), 0.0, 1e4, 0.0, 1.0, ambient, sunLight);
+    mirrored = normalize(float3(mirrored.x, min(mirrored.y, -0.02), mirrored.z));
+    float far;
+    float4 under = waterScreenReflection(frame, input.world, mirrored, roughness, input.position.xy, far);
+    float3 open = waterGlow(frame, medium, 0.0, mirrored, 0.0, 1e4, 0.0, 1.0, ambient, sunLight);
+    float3 met = waterGlow(frame, medium, 0.0, mirrored, 0.0, far, 0.0, 1.0, ambient, sunLight) + under.rgb * exp(-medium.extinction * far);
+    float3 water = lerp(open, met, under.a);
     float3 color = water;
     if (sine < 1.0)
     {
         float3 bent = refract(-v, down, 1.33);
         float3 sky = surroundingsReflection(frame, input.world, n, bent, 0.05, ambient, atmosphere);
-        // The sun's disc through the window, where the bent view meets it.
-        sky += sunLight * pow(saturate(dot(bent, -frame->sunDirection)), 800.0) * 40.0;
+        float above;
+        float4 standing = waterScreenReflection(frame, input.world, bent, roughness, input.position.xy, above);
+        sky = lerp(sky, standing.rgb, standing.a);
+        // The sun through the window, its disc spread into a glare as wide as the waves are rough: all its light,
+        // over as much of the sky as the glare covers.
+        float spread = max(slopes * slopes, 0.0005);
+        float toward = saturate(dot(bent, -frame->sunDirection));
+        sky += sunLight * exp(-(1.0 - toward) / spread) / (2.0 * PI * spread);
         // Reflecting more towards the window's edge, wholly past it.
         float edge = pow(saturate(sine), 6.0);
         float fresnel = lerp(0.02 + 0.98 * pow(1.0 - cosine, 5.0), 1.0, edge);
@@ -1582,12 +1596,14 @@ float3 lampsInWater(Frame* frame, float3 from, float3 way, float span, float2 pi
 // blurred as the water roughens, from the copy the water is drawn over
 // (push.texture), and in alpha how sure the walk is of it, fading out
 // towards the screen's edges and the walk's end and where it found nothing,
-// where the probes' and the sky's light shows instead. Without it, water
-// under a roof mirrored the light from all round, a pale sheet, rather than
-// the pillars and curtains over it.
-float4 waterScreenReflection(Frame* frame, float3 world, float3 r, float roughness, float2 pixel)
+// where the probes' and the sky's light shows instead; in `distance`, how
+// far along the ray it found it, in metres. Without it, water under a roof
+// mirrored the light from all round, a pale sheet, rather than the pillars
+// and curtains over it.
+float4 waterScreenReflection(Frame* frame, float3 world, float3 r, float roughness, float2 pixel, out float distance)
 {
     static const uint STEPS = 32;
+    distance = 0.0;
     float3 forward = frame->cameraForward;
     float start = dot(world - frame->cameraPosition, forward);
     float toward = dot(r, forward);
@@ -1637,6 +1653,7 @@ float4 waterScreenReflection(Frame* frame, float3 world, float3 r, float roughne
             {
                 float2 edge = min(uv, 1.0 - uv);
                 float sure = saturate(min(edge.x, edge.y) / 0.08) * (1.0 - high * high);
+                distance = 0.05 + (reach - 0.05) * high * high;
                 return float4(glassBehind(push.texture, uv, sqrt(roughness) * 3.0), sure);
             }
         }
@@ -1717,7 +1734,8 @@ FragmentOut waterFragment(WaterOut input)
     float3 absorbed;
     if (waterlineAt(frame, input.position.xy, near, level, absorbed) < 0.0)
     {
-        return fromBelow(frame, input, n, v, deep, scatter, absorb);
+        float slopes = sqrt(0.02 * 0.02 + 2.0 * variance);
+        return fromBelow(frame, input, n, v, deep, absorb, clamp(sqrt(slopes), 0.03, 1.0), slopes);
     }
     float3 l = -frame->sunDirection;
     bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
@@ -1741,7 +1759,8 @@ FragmentOut waterFragment(WaterOut input)
     float fresnel = 0.02 + 0.98 * pow(1.0 - nv, 5.0 * exp(-2.69 * alpha)) / (1.0 + 22.7 * pow(alpha, 1.5));
     float3 ambient = ambientLight(frame, input.world, s, sunLight, atmosphere);
     float3 reflected = surroundingsReflection(frame, input.world, n, reflect(-v, n), s.roughness, ambient, atmosphere);
-    float4 mirrored = waterScreenReflection(frame, input.world, reflect(-v, n), s.roughness, input.position.xy);
+    float mirroredAt;
+    float4 mirrored = waterScreenReflection(frame, input.world, reflect(-v, n), s.roughness, input.position.xy, mirroredAt);
     reflected = lerp(reflected, mirrored.rgb, mirrored.a);
     // The sun, a little rougher than the water so its disc shows as a streak of glints rather than a point.
     Surface sunSurface = s;

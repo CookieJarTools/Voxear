@@ -84,17 +84,42 @@ pub fn engine_shader_dir() -> Option<PathBuf> {
     [beside, checkout].into_iter().find(|dir| dir.join("custom.slang").is_file())
 }
 
+/// A project's custom shaders as generated code: its material shaders, the
+/// engine's `project_shaders.slang`, and its UI shaders,
+/// `project_ui_shaders.slang`, which defines `customUi` (see
+/// `shaders/ui_custom.slang`). Empty UI code compiles to none.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CustomCode {
+    pub materials: String,
+    pub ui: String,
+}
+
+impl From<String> for CustomCode {
+    fn from(materials: String) -> Self {
+        Self { materials, ui: String::new() }
+    }
+}
+
+impl From<&str> for CustomCode {
+    fn from(materials: &str) -> Self {
+        Self::from(materials.to_string())
+    }
+}
+
+/// The UI's `customUi` when a project has no UI shaders of its own.
+const NO_UI_SHADERS: &str = "float4 customUi(uint shader, uint first, UiInput input)\n{\n    return input.background;\n}\n";
+
 /// A project's custom shaders compiling on a thread of their own, into the
-/// modules that draw materials.
+/// modules that draw materials and the UI.
 pub struct CustomCompile {
     job: std::thread::JoinHandle<Result<Vec<(String, Vec<u8>)>>>,
 }
 
 impl CustomCompile {
-    /// Starts compiling `code`, a project's `project_shaders.slang`, in
-    /// `dir`, with the engine's shaders.
-    pub fn start(code: String, dir: PathBuf) -> Self {
-        Self { job: std::thread::spawn(move || compile_custom_shaders(&code, &dir)) }
+    /// Starts compiling a project's `code` in `dir`, with the engine's
+    /// shaders.
+    pub fn start(code: CustomCode, dir: PathBuf) -> Self {
+        Self { job: std::thread::spawn(move || compile_custom_shaders(code, &dir)) }
     }
 
     /// The modules compiled, once done; an error says which shader failed
@@ -108,13 +133,17 @@ impl CustomCompile {
     }
 }
 
-/// Compiles the modules that draw materials with `code` as their
-/// `project_shaders.slang`, written into `dir`, a module a thread, as a
-/// game build does ahead of time and [`CustomCompile`] while editing.
-pub fn compile_custom_shaders(code: &str, dir: &Path) -> Result<Vec<(String, Vec<u8>)>> {
+/// Compiles the modules that draw materials and the UI with a project's
+/// `code`, its `project_shaders.slang` and `project_ui_shaders.slang`
+/// written into `dir`, a module a thread, as a game build does ahead of
+/// time and [`CustomCompile`] while editing.
+pub fn compile_custom_shaders(code: impl Into<CustomCode>, dir: &Path) -> Result<Vec<(String, Vec<u8>)>> {
+    let code = code.into();
     let engine = engine_shader_dir().context("the engine's shader sources are not installed beside it")?;
     std::fs::create_dir_all(dir)?;
-    std::fs::write(dir.join("project_shaders.slang"), code)?;
+    std::fs::write(dir.join("project_shaders.slang"), &code.materials)?;
+    let ui = if code.ui.is_empty() { NO_UI_SHADERS } else { &code.ui };
+    std::fs::write(dir.join("project_ui_shaders.slang"), ui)?;
     let compiled: Vec<Result<(String, Vec<u8>)>> = std::thread::scope(|scope| {
         let jobs: Vec<_> = CUSTOM_SHADER_MODULES
             .iter()

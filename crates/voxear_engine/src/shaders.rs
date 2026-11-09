@@ -279,6 +279,9 @@ pub struct ShaderInfo {
     pub surface: bool,
     pub vertex: bool,
     pub light: bool,
+    /// A UI shader: its `ui` function draws a UI element's background (see
+    /// [`ui_dispatch_code`]). It draws UI or materials, never both.
+    pub ui: bool,
     /// `[Unlit]`: drawn as its surface's colour and emission alone.
     pub unlit: bool,
     /// `[MaxOffset(metres)]`: how far its `vertex` may move a vertex, which
@@ -296,19 +299,26 @@ pub fn read(source: &str) -> Result<ShaderInfo> {
         surface: declares(&code, "surface"),
         vertex: declares(&code, "vertex"),
         light: declares(&code, "light"),
+        ui: declares(&code, "ui"),
         unlit: attributes.iter().any(|(attribute, _)| attribute == "Unlit"),
         max_offset: 0.0,
     };
     if let Some((_, arguments)) = attributes.iter().find(|(attribute, _)| attribute == "MaxOffset") {
         info.max_offset = number(arguments).with_context(|| format!("[MaxOffset] on {name} takes metres"))?.max(0.0);
     }
-    if !info.surface && !info.vertex && !info.light && !info.unlit {
-        bail!("{name} has no surface, vertex or light function");
+    if !info.surface && !info.vertex && !info.light && !info.unlit && !info.ui {
+        bail!("{name} has no surface, vertex, light or ui function");
+    }
+    if info.ui && (info.surface || info.vertex || info.light || info.unlit) {
+        bail!("{name} draws UI with its ui function, so it draws no materials: it cannot have a surface, vertex or light function, or be [Unlit]");
     }
     for field in body.split(';').map(str::trim).filter(|field| !field.is_empty()) {
         if let Some(property) = property(field).with_context(|| format!("in {name}: `{field}`"))? {
             info.properties.push(property);
         }
+    }
+    if info.ui && info.properties.iter().any(|property| property.kind == PropertyKind::Picture) {
+        bail!("{name} draws UI, whose properties are numbers, vectors, colours and toggles, not pictures");
     }
     if info.properties.len() > MAX_PROPERTIES {
         bail!("{name} has {} properties; a shader has at most {MAX_PROPERTIES}", info.properties.len());
@@ -522,32 +532,14 @@ pub fn dispatch_code(registry: &ShaderRegistry) -> String {
         .iter()
         .filter(|shader| shader.used)
         .filter_map(|shader| Some((shader, shader.info.as_ref().ok()?)))
+        .filter(|(_, info)| !info.ui)
         .collect();
     let mut code = String::from("// Written by the engine from the project's .shader assets.\n\n#pragma once\n\n");
     for (shader, info) in &shaders {
         let number = shader.number;
         code += &format!("namespace shader_{number}\n{{\n#line 1 \"{}\"\n{}\n}}\n\n", shader.path, shader.source);
-        code += &format!(
-            "shader_{number}::{name} shader_{number}_properties(uint material)\n{{\n    \
-             float4* values = buffers()->materialProperties + material * MATERIAL_PROPERTIES;\n    \
-             shader_{number}::{name} properties;\n",
-            name = info.name
-        );
-        for (slot, property) in info.properties.iter().enumerate().take(MAX_PROPERTIES) {
-            let value = match property.kind {
-                PropertyKind::Float => format!("values[{slot}].x"),
-                PropertyKind::Float2 => format!("values[{slot}].xy"),
-                PropertyKind::Float3 | PropertyKind::Color { alpha: false } => format!("values[{slot}].xyz"),
-                PropertyKind::Float4 | PropertyKind::Color { alpha: true } => format!("values[{slot}]"),
-                PropertyKind::Toggle => format!("values[{slot}].x > 0.5"),
-                PropertyKind::Picture => {
-                    code += &format!("    properties.{}.index = asuint(values[{slot}].x);\n", property.name);
-                    continue;
-                }
-            };
-            code += &format!("    properties.{} = {value};\n", property.name);
-        }
-        code += "    return properties;\n}\n\n";
+        let values = "buffers()->materialProperties + material * MATERIAL_PROPERTIES";
+        code += &properties_reader(&format!("shader_{number}"), info, "uint material", values);
     }
     let calls = |wanted: fn(&ShaderInfo) -> bool, call: &dyn Fn(u32) -> String| -> String {
         let mut cases = String::new();
@@ -584,6 +576,100 @@ pub fn dispatch_code(registry: &ShaderRegistry) -> String {
     });
     code += "    default:\n        return 0.0;\n    }\n}\n";
     code
+}
+
+/// A function `{namespace}_properties` that reads a shader's properties from
+/// `values`, a `float4*` worked out from what it takes, `argument`.
+fn properties_reader(namespace: &str, info: &ShaderInfo, argument: &str, values: &str) -> String {
+    let mut code = format!(
+        "{namespace}::{name} {namespace}_properties({argument})\n{{\n    float4* values = {values};\n    \
+         {namespace}::{name} properties;\n",
+        name = info.name
+    );
+    for (slot, property) in info.properties.iter().enumerate().take(MAX_PROPERTIES) {
+        let value = match property.kind {
+            PropertyKind::Float => format!("values[{slot}].x"),
+            PropertyKind::Float2 => format!("values[{slot}].xy"),
+            PropertyKind::Float3 | PropertyKind::Color { alpha: false } => format!("values[{slot}].xyz"),
+            PropertyKind::Float4 | PropertyKind::Color { alpha: true } => format!("values[{slot}]"),
+            PropertyKind::Toggle => format!("values[{slot}].x > 0.5"),
+            PropertyKind::Picture => {
+                code += &format!("    properties.{}.index = asuint(values[{slot}].x);\n", property.name);
+                continue;
+            }
+        };
+        code += &format!("    properties.{} = {value};\n", property.name);
+    }
+    code + "    return properties;\n}\n\n"
+}
+
+/// The code a project's UI shaders compile into the UI's shader as
+/// (`project_ui_shaders.slang`; see `shaders/ui_custom.slang`): each in a
+/// namespace of its own, named for its number, a function reading its
+/// properties from the UI's values, where a shaded background's quad says
+/// they start, and `customUi`, which calls the one the quad picks by its
+/// number. Empty for a project without any, which compiles to none.
+pub fn ui_dispatch_code(registry: &ShaderRegistry) -> String {
+    let shaders: Vec<(&ProjectShader, &ShaderInfo)> = registry
+        .shaders
+        .iter()
+        .filter_map(|shader| Some((shader, shader.info.as_ref().ok()?)))
+        .filter(|(_, info)| info.ui)
+        .collect();
+    if shaders.is_empty() {
+        return String::new();
+    }
+    let mut code = String::from("// Written by the engine from the project's .shader assets that draw UI.\n\n#pragma once\n\n");
+    for (shader, info) in &shaders {
+        let number = shader.number;
+        code += &format!("namespace ui_shader_{number}\n{{\n#line 1 \"{}\"\n{}\n}}\n\n", shader.path, shader.source);
+        code += &properties_reader(&format!("ui_shader_{number}"), info, "uint first", "buffers()->uiValues + first");
+    }
+    code += "float4 customUi(uint shader, uint first, UiInput input)\n{\n    switch (shader)\n    {\n";
+    for (shader, _) in &shaders {
+        let n = shader.number;
+        code += &format!("    case {n}:\n        return ui_shader_{n}::ui(ui_shader_{n}_properties(first), input);\n");
+    }
+    code + "    default:\n        return input.background;\n    }\n}\n"
+}
+
+/// The shaders the UI can draw backgrounds with: the built-in effects, and
+/// the project's UI shaders, each by its path and by its GUID, as a style's
+/// `shader: url("…")` names it. Colours' defaults are made linear and
+/// premultiplied, as the UI's values are.
+pub fn ui_shaders(registry: &ShaderRegistry) -> voxear_ui::UiShaders {
+    use voxear_ui::{UiShader, UiShaderProperty, UiShaderValue};
+    let mut shaders = voxear_ui::UiShaders::default();
+    let linear = |c: f32| if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) };
+    for shader in &registry.shaders {
+        let Some(info) = shader.info.as_ref().ok().filter(|info| info.ui) else { continue };
+        let properties = info
+            .properties
+            .iter()
+            .map(|property| {
+                let [r, g, b, a] = property.default;
+                let (value, default) = match property.kind {
+                    PropertyKind::Float => (UiShaderValue::Number, property.default),
+                    PropertyKind::Float2 => (UiShaderValue::Vector(2), property.default),
+                    PropertyKind::Float3 => (UiShaderValue::Vector(3), property.default),
+                    PropertyKind::Float4 => (UiShaderValue::Vector(4), property.default),
+                    PropertyKind::Toggle => (UiShaderValue::Toggle, property.default),
+                    PropertyKind::Color { alpha } => {
+                        let a = if alpha { a } else { 1.0 };
+                        (UiShaderValue::Color, [linear(r) * a, linear(g) * a, linear(b) * a, a])
+                    }
+                    PropertyKind::Picture => (UiShaderValue::Number, [0.0; 4]),
+                };
+                UiShaderProperty { name: property.name.clone(), value, default }
+            })
+            .collect();
+        let made = UiShader { number: shader.number, properties };
+        if let ShaderRef::Asset(guid) = shader.reference {
+            shaders.insert(guid.to_string(), made.clone());
+        }
+        shaders.insert(shader.path.clone(), made);
+    }
+    shaders
 }
 
 /// The most properties a shader's materials can set: each is one of a
@@ -718,6 +804,52 @@ mod tests {
         assert!(code.contains(&format!("case {water}:\n        return shader_{water}::vertex(")));
         assert!(code.contains(&format!("case {glow}:\n        return true;")), "Glow is unlit");
         assert!(!code.contains(&format!("shader_{glow}::surface")), "Glow has no surface function");
+    }
+
+    const SCAN: &str = r#"
+        // Scanlines for a terminal.
+        struct Scan
+        {
+            [Property, Color] float4 tint = float4(0.5, 1.0, 0.5, 1.0);
+            [Property] float spacing = 3.0;
+            [Property] bool flicker = true;
+        }
+        float4 ui(Scan scan, UiInput input) { return input.background * scan.tint; }
+    "#;
+
+    #[test]
+    fn a_ui_shader_draws_ui_alone_and_is_dispatched_by_the_ui() {
+        let scan = read(SCAN).unwrap();
+        assert!(scan.ui && !scan.surface && !scan.unlit);
+        let mixed = "struct Both { [Property] float x = 1.0; }\nvoid surface(Both b, SurfaceInput i, inout SurfaceOutput s) {}\nfloat4 ui(Both b, UiInput i) { return 0.0; }";
+        assert!(read(mixed).unwrap_err().to_string().contains("draws UI"));
+        let pictured = "struct Pictured { [Property] Picture pattern; }\nfloat4 ui(Pictured p, UiInput i) { return 0.0; }";
+        assert!(read(pictured).unwrap_err().to_string().contains("not pictures"));
+
+        let guid = |n: u32| format!("{n:032x}").parse::<AssetGuid>().unwrap();
+        let registry = ShaderRegistry::new(
+            vec![(guid(1), "Shaders/Scan.shader".into(), SCAN.into()), (guid(2), "Shaders/Water.shader".into(), WATER.into())],
+            &BTreeSet::new(),
+        );
+        let (scan_number, water) = (FIRST, FIRST + 1);
+        assert!(!dispatch_code(&registry).contains(&format!("shader_{scan_number}")), "materials leave it out");
+        let code = ui_dispatch_code(&registry);
+        assert!(code.contains(&format!("namespace ui_shader_{scan_number}\n{{\n#line 1 \"Shaders/Scan.shader\"")), "{code}");
+        assert!(code.contains("float4* values = buffers()->uiValues + first;"));
+        assert!(code.contains("properties.flicker = values[2].x > 0.5;"));
+        let call = format!("case {scan_number}:\n        return ui_shader_{scan_number}::ui(ui_shader_{scan_number}_properties(first), input);");
+        assert!(code.contains(&call), "{code}");
+        assert!(!code.contains(&format!("ui_shader_{water}")), "the water draws materials");
+        assert!(ui_dispatch_code(&ShaderRegistry::new(Vec::new(), &BTreeSet::new())).is_empty());
+
+        let table = ui_shaders(&registry);
+        let by_path = table.get("Shaders/Scan.shader").expect("by its path");
+        assert_eq!(table.get(&guid(1).to_string()), Some(by_path), "and by its GUID");
+        assert_eq!(by_path.number, scan_number);
+        let tint = by_path.properties[0].default;
+        assert!((tint[0] - 0.214).abs() < 0.01 && tint[1] == 1.0, "a colour made linear: {tint:?}");
+        assert!(table.get("shimmer").is_some(), "with the built-in effects");
+        assert!(table.get("Shaders/Water.shader").is_none());
     }
 
     #[test]

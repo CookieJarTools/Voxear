@@ -315,7 +315,9 @@ impl Editor {
         self.stop_multiplayer();
         // What the game drew goes with it, and its UI and sound.
         voxear_core::debug_draw::clear();
+        let shaders = self.game.ui.shaders();
         self.game.ui = voxear_engine::game_ui::GameUi::default();
+        self.game.ui.set_shaders(shaders);
         self.game.audio.stop_game();
         self.game.input.release_all();
         self.game_focused = false;

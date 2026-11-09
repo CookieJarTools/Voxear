@@ -988,7 +988,7 @@ impl ProjectView {
         for kind in NewFile::ALL {
             match kind {
                 NewFile::Shader => add(MenuItem::new("New Shader…").enabled(open_to_new), Some(MenuAction::NewShader)),
-                NewFile::UnlitShader => {}
+                NewFile::UnlitShader | NewFile::UiShader => {}
                 _ if kind.module().is_some_and(|module| !self.modules.has(module)) => {}
                 _ => add(MenuItem::new(kind.label()).enabled(open_to_new), Some(MenuAction::New(kind))),
             }

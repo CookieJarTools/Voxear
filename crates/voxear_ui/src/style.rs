@@ -47,6 +47,10 @@ pub struct Style {
     /// CSS's `backdrop-filter: blur(16px)` does: frosted glass over the 3D
     /// view, which the renderer draws.
     pub backdrop_blur: f32,
+    /// The shader its background is drawn with, by the name its style gives:
+    /// a built-in effect's, or a project's shader's path or GUID (see
+    /// [`crate::UiShaders`]).
+    pub shader: Option<String>,
 }
 
 /// A blurred copy of an element's box, drawn under it, as CSS's
@@ -173,6 +177,7 @@ impl Default for Style {
             transitions: Vec::new(),
             animation: None,
             backdrop_blur: 0.0,
+            shader: None,
         }
     }
 }

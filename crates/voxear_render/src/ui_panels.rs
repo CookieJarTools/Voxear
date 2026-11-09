@@ -29,7 +29,7 @@ use crate::{
     gpu::{GpuUiPanel, NO_TEXTURE, Push},
     graph::{FrameGraph, ImageAccess, ImageId, RenderGraph},
     passes::{begin_rendering_in, bind},
-    ui_pass::{Layer, MAX_UI_QUADS},
+    ui_pass::{Layer, MAX_UI_QUADS, MAX_UI_VALUES},
 };
 
 /// The most UI panels a view draws, the nearest first.
@@ -259,7 +259,10 @@ impl UiPanels {
         for frame in frames {
             let panel = self.panels.entry(frame.entity).or_default();
             let atlas = frame.frame.atlas.as_ref().map(|atlas| atlas.version);
-            let changed = panel.size != frame.size
+            // A shaded background may change every frame with the time, so its panel is drawn every frame.
+            let shaded = frame.frame.quads.iter().any(|quad| quad.flags & Quad::SHADED != 0);
+            let changed = shaded
+                || panel.size != frame.size
                 || panel.layer.quads != frame.frame.quads
                 || atlas.is_some_and(|version| version != panel.layer.version);
             panel.stale |= changed;
@@ -286,18 +289,19 @@ impl UiPanels {
     }
 
     /// Draws each panel whose UI changed into its texture, with its mips,
-    /// from quad `first` of `buffer` on. Returns the panels' textures and
-    /// how many quads it wrote.
+    /// its quads from quad `first` of `buffer` on and its shaded
+    /// backgrounds' values from `first_value` of `value_buffer` on. Returns
+    /// the panels' textures, and how many quads and values it wrote.
     pub fn record(
         &mut self,
         fg: &mut FrameGraph<'_>,
         (gpu, bindless): (&Gpu, &mut Bindless),
         (draw, mips, push): (vk::Pipeline, vk::Pipeline, Push),
-        buffer: &Buffer,
-        first: usize,
-    ) -> Result<(Vec<PanelTexture>, usize)> {
+        (buffer, value_buffer): (&Buffer, &Buffer),
+        (first, first_value): (usize, usize),
+    ) -> Result<(Vec<PanelTexture>, (usize, usize))> {
         let mut textures = Vec::with_capacity(self.panels.len());
-        let mut written = 0;
+        let (mut written, mut values_written) = (0, 0);
         for (&entity, panel) in &mut self.panels {
             let [width, height] = panel.size;
             if width == 0 || height == 0 {
@@ -318,8 +322,13 @@ impl UiPanels {
             let at = first + written;
             buffer.write((at * size_of::<Quad>()) as u64, &panel.layer.quads[..quads]);
             written += quads;
+            let value_at = first_value + values_written;
+            let values = panel.layer.values.len().min((MAX_UI_VALUES as usize).saturating_sub(value_at));
+            value_buffer.write((value_at * size_of::<[f32; 4]>()) as u64, &panel.layer.values[..values]);
+            values_written += values;
             let base = Push { size: [width, height], textures: [NO_TEXTURE, 0, 0, 0], ..push };
-            let drawn = Push { texture: panel.layer.texture(), list: 0, level: at as u32, ..base };
+            let drawn =
+                Push { texture: panel.layer.texture(), list: 0, level: at as u32, max_draws: value_at as u32, ..base };
             let area = vk::Rect2D { offset: vk::Offset2D::default(), extent: desc.extent() };
             fg.add_pass("UI panel", &[(image, ImageAccess::ColorAttachment)], &[], move |ctx| {
                 let color = [vk::RenderingAttachmentInfo::default()
@@ -354,7 +363,7 @@ impl UiPanels {
                 }
             });
         }
-        Ok((textures, written))
+        Ok((textures, (written, values_written)))
     }
 
     /// The caller makes sure the GPU is idle.

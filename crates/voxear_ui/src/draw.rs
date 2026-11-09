@@ -126,6 +126,11 @@ pub(crate) struct Draw<'a> {
     pub lifting: bool,
     /// Elements shown in desktop windows, which only their own windows draw.
     pub skip: Vec<taffy::NodeId>,
+    /// The shaders backgrounds can be drawn with, the values the shaded
+    /// ones read, and the names styles gave that no shader has.
+    pub shaders: &'a crate::UiShaders,
+    pub values: &'a mut Vec<[f32; 4]>,
+    pub unknown_shaders: &'a mut Vec<String>,
 }
 
 impl Draw<'_> {
@@ -201,7 +206,18 @@ impl Draw<'_> {
             if let Some(shadow) = &element.computed.shadow {
                 shadow_quad(shadow, &look, rect, self.scale, opacity, clip, self.quads);
             }
-            shape_quad(&look, rect, self.scale, opacity, clip, self.quads);
+            let shaded = element.computed.shader.as_deref().and_then(|name| match self.shaders.get(name) {
+                Some(shader) => {
+                    let first = self.values.len() as u32;
+                    self.values.extend(shader.values(&element.vars));
+                    Some((shader.number, first))
+                }
+                None => {
+                    self.unknown_shaders.push(name.to_string());
+                    None
+                }
+            });
+            shape_quad(&look, rect, (self.scale, opacity, shaded), clip, self.quads);
             side_quads(&look, rect, self.scale, opacity, clip, self.quads);
             if let Some(gradient) = element.gradient
                 && opacity > 0.0
@@ -325,7 +341,7 @@ impl Draw<'_> {
             let [l, t] = self.snap(x, padding_box[1] + top);
             let [r, b] = self.snap(x + BAR, padding_box[1] + top + length);
             let look = Look { background: bar.linear_premultiplied(), radius: BAR / 2.0, ..Look::default() };
-            shape_quad(&look, [l, t, r - l, b - t], self.scale, opacity, child_clip, self.quads);
+            shape_quad(&look, [l, t, r - l, b - t], (self.scale, opacity, None), child_clip, self.quads);
         }
     }
 
@@ -469,7 +485,7 @@ fn shape_quads(
                     radius,
                     backdrop: false,
                 };
-                shape_quad(&look, [c[0] - r, c[1] - r, r * 2.0, r * 2.0], scale, opacity, clip, quads);
+                shape_quad(&look, [c[0] - r, c[1] - r, r * 2.0, r * 2.0], (scale, opacity, None), clip, quads);
             }
             Shape::Rect { rect: [x, y, w, h], radius, fill } => {
                 let corner = at([x, y]);
@@ -482,7 +498,7 @@ fn shape_quads(
                     backdrop: false,
                     radius,
                 };
-                shape_quad(&look, [corner[0], corner[1], w * scale, h * scale], scale, opacity, clip, quads);
+                shape_quad(&look, [corner[0], corner[1], w * scale, h * scale], (scale, opacity, None), clip, quads);
             }
             Shape::Icon { name, center, size, color } => {
                 let (c, size) = (at(center), size * scale);
@@ -522,22 +538,41 @@ fn icon_quad(
     });
 }
 
-fn shape_quad(look: &Look, rect: [f32; 4], scale: f32, opacity: f32, clip: [f32; 4], quads: &mut Vec<Quad>) {
+/// A box's background and border. One drawn by a shader, numbered in
+/// `shaded` with where its values start, is drawn even when its background
+/// is clear, which the shader may fill; its colour is left unfaded, and its
+/// opacity and the display scale go to the shader beside it.
+fn shape_quad(
+    look: &Look,
+    rect: [f32; 4],
+    (scale, opacity, shaded): (f32, f32, Option<(u32, u32)>),
+    clip: [f32; 4],
+    quads: &mut Vec<Quad>,
+) {
     let border = look.border > 0.0 && look.border_color[3] > 0.0;
-    if (look.background[3] <= 0.0 && !border && !look.backdrop) || opacity <= 0.0 {
+    if (look.background[3] <= 0.0 && !border && !look.backdrop && shaded.is_none()) || opacity <= 0.0 {
         return;
     }
     let border = if border { (look.border * scale).round().max(1.0) } else { 0.0 };
+    let flags = if look.dashed { Quad::DASHED } else { 0 } | if look.backdrop { Quad::BACKDROP } else { 0 };
+    let (color, uv, flags) = match shaded {
+        Some((number, first)) => (
+            look.background,
+            [f32::from_bits(first), scale, opacity, 0.0],
+            flags | Quad::SHADED | (number & 0xffff) << Quad::SHADER_SHIFT,
+        ),
+        None => (look.background.map(|c| c * opacity), [0.0; 4], flags),
+    };
     quads.push(Quad {
         rect,
-        color: look.background.map(|c| c * opacity),
+        uv,
+        color,
         border_color: look.border_color.map(|c| c * opacity),
         clip,
         radius: look.radius * scale,
         border,
         kind: Quad::SHAPE,
-        flags: if look.dashed { Quad::DASHED } else { 0 } | if look.backdrop { Quad::BACKDROP } else { 0 },
-        ..Quad::default()
+        flags,
     });
 }
 
@@ -636,7 +671,7 @@ fn glyph_quads(
                     (baseline + metrics.descent).round() - top,
                 ];
                 let look = Look { background: ground.linear_premultiplied(), radius: 3.0, ..Look::default() };
-                shape_quad(&look, rect, paint.scale, paint.opacity, clip, quads);
+                shape_quad(&look, rect, (paint.scale, paint.opacity, None), clip, quads);
             }
             let font = run.font();
             let font = (font.data.data(), font.index, font.data.id());
@@ -736,6 +771,6 @@ fn draw_field(element: &mut Element, origin: [f32; 2], field: Field, atlas: &mut
         let (edge, clip) = field.bar;
         let rect = [(edge - width - inset).round(), (origin[1] + top).round(), width, length];
         let look = Look { background: style.scrollbar.linear_premultiplied(), radius: BAR / 2.0, ..Look::default() };
-        shape_quad(&look, rect, field.scale, field.opacity, clip, quads);
+        shape_quad(&look, rect, (field.scale, field.opacity, None), clip, quads);
     }
 }

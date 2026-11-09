@@ -127,7 +127,7 @@ pub use scene::{
     temperature_color,
 };
 pub use voxear_rhi::TextureId;
-pub use hot_reload::{compile_custom_shaders, engine_shader_dir};
+pub use hot_reload::{CustomCode, compile_custom_shaders, engine_shader_dir};
 
 use crate::{
     assets::Assets,
@@ -297,6 +297,8 @@ impl Output {
 /// not any view did.
 struct UiBuffers {
     quads: Buffer,
+    /// What the UI's shaded backgrounds read.
+    values: Buffer,
     pointers: Buffer,
 }
 
@@ -948,12 +950,14 @@ impl Renderer {
         }
     }
 
-    /// Compiles a project's custom shaders, `code` as its
-    /// `project_shaders.slang` (see `voxear_engine::shaders`), into the
-    /// shaders that draw materials, on a thread of its own, and draws with
-    /// them once they compile; until then, and if they do not, with those it
-    /// had. The same code again does nothing; whether the code changed.
-    pub fn set_custom_shaders(&mut self, code: String) -> bool {
+    /// Compiles a project's custom shaders, `code` as its generated
+    /// material and UI shader code (see `voxear_engine::shaders`), into the
+    /// shaders that draw materials and the UI, on a thread of its own, and
+    /// draws with them once they compile; until then, and if they do not,
+    /// with those it had. The same code again does nothing; whether the code
+    /// changed.
+    pub fn set_custom_shaders(&mut self, code: impl Into<CustomCode>) -> bool {
+        let code = code.into();
         if self.custom.code == code {
             return false;
         }
@@ -1014,7 +1018,7 @@ impl Renderer {
             }
         }
         if let Some(code) = self.custom.waiting.take() {
-            self.custom.code.clear();
+            self.custom.code = CustomCode::default();
             self.set_custom_shaders(code);
         }
     }
@@ -1105,11 +1109,12 @@ impl Renderer {
         skinning.record(&mut fg, *pipelines, frame.slot);
         let terrain_draws = terrains.record(&mut fg, frames);
         let ui = &ui_buffers[frame.slot];
-        let ui_push = Push { buffers: ui.pointers.address, ..Push::default() };
+        // The UI's shaded backgrounds read the time from `output`.
+        let ui_push = Push { buffers: ui.pointers.address, output: time.to_bits(), ..Push::default() };
         // UI panels in the world first, into their textures, for every view to draw.
         let panel_pipelines = (pipelines.ui_panel, pipelines.ui_panel_mips, ui_push);
-        let (panel_textures, panel_quads) =
-            ui_panels.record(&mut fg, (gpu, bindless), panel_pipelines, &ui.quads, 0)?;
+        let (panel_textures, (panel_quads, panel_values)) =
+            ui_panels.record(&mut fg, (gpu, bindless), panel_pipelines, (&ui.quads, &ui.values), (0, 0))?;
         // Each output drawn this frame, as the graph knows it.
         let images: Vec<Option<(ImageId, ImageDesc)>> = outputs
             .iter()
@@ -1191,12 +1196,14 @@ impl Renderer {
             captures.record(&mut fg, gpu, (output, desc), true, frame.slot)?;
         }
         ui_panels.end_frame();
-        let mut first_quad = panel_quads;
+        let mut first = (panel_quads, panel_values);
         for ((output, image), backdrop) in outputs.iter().zip(&images).zip(backdrops) {
             let Some((image, desc)) = *image else { continue };
             let target = (image, desc.extent());
-            first_quad +=
-                output.ui.record(&mut fg, (pipelines.ui, ui_push), &ui.quads, first_quad, target, &sampled, backdrop);
+            let buffers = (&ui.quads, &ui.values);
+            let (quads, values) =
+                output.ui.record(&mut fg, (pipelines.ui, ui_push), buffers, first, target, &sampled, backdrop);
+            first = (first.0 + quads, first.1 + values);
         }
         if let Some((output, desc)) = main {
             captures.record(&mut fg, gpu, (output, desc), false, frame.slot)?;
@@ -1393,6 +1400,7 @@ impl Drop for Renderer {
         }
         for buffers in self.ui_buffers.drain(..) {
             self.frames.retire(Retired::Buffer(buffers.quads));
+            self.frames.retire(Retired::Buffer(buffers.values));
             self.frames.retire(Retired::Buffer(buffers.pointers));
         }
         self.ui_panels.destroy(gpu, &mut self.bindless);
@@ -2155,6 +2163,7 @@ impl View {
                 terrain_lists: terrain::addresses(&buffers.terrain)[0],
                 terrains: terrain::addresses(&buffers.terrain)[1],
                 terrain_patches: terrain::addresses(&buffers.terrain)[2],
+                ui_values: 0,
             }],
         );
         buffers.instances.write(0, &extracted.instances[..instance_count]);
@@ -2312,9 +2321,12 @@ fn create_ui_buffers(gpu: &Gpu, slot: usize) -> Result<UiBuffers> {
     let (storage, host) = (vk::BufferUsageFlags::STORAGE_BUFFER, MemoryLocation::CpuToGpu);
     let size = ui_pass::MAX_UI_QUADS * size_of::<voxear_ui::Quad>() as u64;
     let quads = gpu.create_buffer(&format!("ui quads {slot}"), size, storage, host)?;
+    let size = ui_pass::MAX_UI_VALUES * size_of::<[f32; 4]>() as u64;
+    let values = gpu.create_buffer(&format!("ui values {slot}"), size, storage, host)?;
     let pointers = gpu.create_buffer(&format!("ui pointers {slot}"), size_of::<GpuBuffers>() as u64, storage, host)?;
-    pointers.write(0, &[GpuBuffers { ui_quads: quads.address, ..bytemuck::Zeroable::zeroed() }]);
-    Ok(UiBuffers { quads, pointers })
+    let table = GpuBuffers { ui_quads: quads.address, ui_values: values.address, ..bytemuck::Zeroable::zeroed() };
+    pointers.write(0, &[table]);
+    Ok(UiBuffers { quads, values, pointers })
 }
 
 /// A view's buffers for one frame in flight, their names after `prefix`.
@@ -2516,9 +2528,9 @@ pub enum CustomShaderState {
 /// code asked for while it did, and where they stand.
 #[derive(Default)]
 struct CustomShaders {
-    code: String,
+    code: CustomCode,
     compiling: Option<CustomCompile>,
-    waiting: Option<String>,
+    waiting: Option<CustomCode>,
     state: CustomShaderState,
 }
 

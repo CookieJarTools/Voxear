@@ -998,6 +998,8 @@ struct Buffers
     uint* terrainLists;
     Terrain* terrains;
     TerrainPatch* terrainPatches;
+    // The values the UI's shaded backgrounds read (ui_effects.slang, ui_custom.slang).
+    float4* uiValues;
 };
 
 struct Push

@@ -154,8 +154,10 @@ impl Ui {
         let parent = self.parent_origin(node);
         let (scale, focused, caret_on, time) = (self.viewport.2, self.input.focused, self.caret_on(), self.input.time);
         let mut quads = Vec::new();
+        let (mut values, mut unknown) = (Vec::new(), Vec::new());
         for _ in 0..2 {
             quads.clear();
+            values.clear();
             self.atlas.restarted = false;
             let mut draw = Draw {
                 tree: &mut self.tree,
@@ -168,13 +170,17 @@ impl Ui {
                 raised: Vec::new(),
                 lifting: false,
                 skip: Vec::new(),
+                shaders: &self.shaders,
+                values: &mut values,
+                unknown_shaders: &mut unknown,
             };
             draw.subtree(node, parent);
             if !self.atlas.restarted {
                 break;
             }
         }
-        UiFrame { quads, atlas: self.atlas.snapshot() }
+        self.warn_unknown_shaders(unknown);
+        UiFrame { quads, values, atlas: self.atlas.snapshot() }
     }
 
     /// The size of the screen an element is on, in logical pixels: its

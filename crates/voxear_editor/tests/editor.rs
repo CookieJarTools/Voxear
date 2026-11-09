@@ -6910,7 +6910,7 @@ fn a_material_picks_a_built_in_shader_and_one_is_copied_into_the_project() {
         frame(&mut editor, &mut renderer);
     }
     let offered: Vec<String> = picker_rows(&editor.ui).into_iter().map(|(label, _)| label).collect();
-    assert_eq!(offered[..3], ["Lit", "Unlit", "Toon"], "{offered:?}");
+    assert_eq!(offered[..4], ["Lit", "Unlit", "UI", "Toon"], "{offered:?}");
     let water = picker_row(&editor.ui, "Water").unwrap();
     click_across_frames(&mut editor, &mut renderer, water);
     frame(&mut editor, &mut renderer);

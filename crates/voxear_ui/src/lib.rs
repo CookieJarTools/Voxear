@@ -57,6 +57,7 @@ mod rich;
 mod scroll;
 mod scrub;
 mod selector;
+mod shaders;
 mod sheet;
 mod style;
 mod theme;
@@ -78,6 +79,7 @@ pub use markup::LoadFile;
 pub use menu::MenuItem;
 pub use pointer::Modifiers;
 pub use rich::{Marks, RichText, Span};
+pub use shaders::{BUILTIN_UI_SHADERS, UiShader, UiShaderProperty, UiShaderValue, UiShaders};
 pub use sheet::StyleSheet;
 pub use style::{
     Animated, Easing, Family, KeyframeAnimation, Overflow, Shadow, Style, TextAlign, TextStyle, Transition,
@@ -152,6 +154,13 @@ impl Quad {
     /// For a shape: what is behind it shows through its background, blurred,
     /// as CSS's `backdrop-filter: blur()` makes frosted glass.
     pub const BACKDROP: u32 = 2;
+    /// For a shape: its background is drawn by a shader (`shader: shimmer`),
+    /// whose number is in `flags` from [`Quad::SHADER_SHIFT`] on. `uv` holds,
+    /// bit for bit, where the shader's values start in the frame's
+    /// [`UiFrame::values`], then the display scale and the opacity, by which
+    /// `color` is not multiplied.
+    pub const SHADED: u32 = 4;
+    pub const SHADER_SHIFT: u32 = 8;
     /// A clip that clips nothing.
     pub const UNCLIPPED: [f32; 4] = [f32::MIN, f32::MIN, f32::MAX, f32::MAX];
 }
@@ -187,6 +196,9 @@ pub struct AtlasImage {
 #[derive(Clone, Debug, Default)]
 pub struct UiFrame {
     pub quads: Vec<Quad>,
+    /// The values shaded backgrounds' shaders read (see [`Quad::SHADED`]),
+    /// four numbers each.
+    pub values: Vec<[f32; 4]>,
     /// The atlas as the glyphs in `quads` need it. Shared, so a frame costs
     /// no copy of it; `None` when no text was ever drawn.
     pub atlas: Option<std::sync::Arc<AtlasImage>>,

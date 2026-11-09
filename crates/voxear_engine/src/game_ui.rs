@@ -585,6 +585,9 @@ pub struct GameUi {
     /// which hears its release wherever the pointer is then.
     pub(crate) hovered: Option<voxear_ecs::Entity>,
     pub(crate) pressed: Option<voxear_ecs::Entity>,
+    /// The shaders backgrounds can be drawn with, which every UI it shows is
+    /// given (see [`GameUi::set_shaders`]).
+    shaders: std::rc::Rc<voxear_ui::UiShaders>,
 }
 
 impl GameUi {
@@ -612,7 +615,24 @@ impl GameUi {
         let spans = (u32::MAX - PANEL_NUMBERS) / PANEL_SPAN;
         let first = PANEL_NUMBERS + (self.next_panel % spans) * PANEL_SPAN;
         self.next_panel += 1;
-        (Surface::sharing_fonts(&self.screen.ui, first), first)
+        let mut surface = Surface::sharing_fonts(&self.screen.ui, first);
+        surface.ui.set_shaders(self.shaders.clone());
+        (surface, first)
+    }
+
+    /// The shaders backgrounds can be drawn with: the built-in effects and
+    /// the project's UI shaders, for the screen's UI and every panel's.
+    pub fn set_shaders(&mut self, shaders: std::rc::Rc<voxear_ui::UiShaders>) {
+        self.shaders = shaders.clone();
+        for surface in self.surfaces() {
+            surface.ui.set_shaders(shaders.clone());
+        }
+    }
+
+    /// The shaders backgrounds can be drawn with, for a UI of the window's
+    /// own, as the editor's, to draw with the same.
+    pub fn shaders(&self) -> std::rc::Rc<voxear_ui::UiShaders> {
+        self.shaders.clone()
     }
 
     /// Every UI: the screen's, then each panel's.

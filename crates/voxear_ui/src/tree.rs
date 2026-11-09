@@ -246,6 +246,10 @@ pub struct Ui {
     pub(crate) state_ancestors: Vec<Compound>,
     pub(crate) pointer: crate::pointer::Pointer,
     pub(crate) warnings: Vec<String>,
+    /// The shaders backgrounds can be drawn with (see [`Ui::set_shaders`]).
+    pub(crate) shaders: std::rc::Rc<crate::UiShaders>,
+    /// Shader names styles gave that no shader has, warned about already.
+    pub(crate) unknown_shaders: std::collections::HashSet<String>,
     /// Elements that scroll, as of the last cascade.
     pub(crate) scrollers: Vec<taffy::NodeId>,
     /// List and tree views, which make rows as they scroll.
@@ -341,6 +345,8 @@ impl Ui {
             state_ancestors: Vec::new(),
             pointer: Default::default(),
             warnings: Vec::new(),
+            shaders: Default::default(),
+            unknown_shaders: Default::default(),
             scrollers: Vec::new(),
             lists: Vec::new(),
             modifiers: Default::default(),
@@ -916,6 +922,23 @@ impl Ui {
         std::mem::take(&mut self.warnings)
     }
 
+    /// The shaders backgrounds can be drawn with, by the names styles give
+    /// them: the built-in effects, which a new UI has, and a project's own,
+    /// which the engine adds.
+    pub fn set_shaders(&mut self, shaders: std::rc::Rc<crate::UiShaders>) {
+        if !std::rc::Rc::ptr_eq(&self.shaders, &shaders) {
+            self.shaders = shaders;
+            self.unknown_shaders.clear();
+        }
+    }
+
+    /// Says once for each, until the shaders change, that a style named a
+    /// shader there is none of.
+    pub(crate) fn warn_unknown_shaders(&mut self, names: Vec<String>) {
+        let new: Vec<String> = names.into_iter().filter(|name| self.unknown_shaders.insert(name.clone())).collect();
+        self.warn(new.into_iter().map(|name| format!("there is no UI shader '{name}'; its background is drawn plain")).collect());
+    }
+
     pub(crate) fn warn(&mut self, warnings: Vec<String>) {
         for warning in warnings {
             if !self.warnings.contains(&warning) {
@@ -965,12 +988,14 @@ impl Ui {
         let scale = self.viewport.2;
         let (focused, caret_on, time) = (self.input.focused, self.caret_on(), self.input.time);
         let mut quads = Vec::new();
+        let (mut values, mut unknown) = (Vec::new(), Vec::new());
         let skip: Vec<taffy::NodeId> = self.desktop.iter().map(|shown| shown.node).collect();
         voxear_core::profile_scope!("Draw");
         // An atlas that filled up starts again part way through, so the
         // glyphs drawn before then are drawn once more.
         for _ in 0..2 {
             quads.clear();
+            values.clear();
             self.atlas.restarted = false;
             let mut draw = Draw {
                 tree: &mut self.tree,
@@ -983,12 +1008,16 @@ impl Ui {
                 raised: Vec::new(),
                 lifting: false,
                 skip: skip.clone(),
+                shaders: &self.shaders,
+                values: &mut values,
+                unknown_shaders: &mut unknown,
             };
             draw.all(self.root);
             if !self.atlas.restarted {
                 break;
             }
         }
+        self.warn_unknown_shaders(unknown);
         self.pointer.clicks.clear();
         self.pointer.double_clicks.clear();
         self.pointer.link_clicks.clear();
@@ -1000,7 +1029,7 @@ impl Ui {
         self.row_landings.clear();
         self.clear_selection_changes();
         self.clear_input_events();
-        UiFrame { quads, atlas: self.atlas.snapshot() }
+        UiFrame { quads, values, atlas: self.atlas.snapshot() }
     }
 
     /// Lays the tree out and lets each list make and bind the rows now on

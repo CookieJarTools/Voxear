@@ -5295,3 +5295,112 @@ fn a_ui_panel_seen_from_the_side_stays_sharp() {
     let (low, high) = (column.iter().min().unwrap(), column.iter().max().unwrap());
     assert!(high - low > 150, "the stripes blurred together at column {x}: {low} to {high}");
 }
+
+/// A UI whose element's background is striped by a built-in effect, `stripes`
+/// white on black, `left` pixels from the left of its area.
+fn striped_ui(left: f32) -> voxear_ui::Ui {
+    use voxear_ui::{Style, StyleSheet, Ui};
+    let mut ui = Ui::new();
+    let root = ui.root();
+    let sheet = format!(
+        ".striped {{ position: absolute; left: {left}px; top: 40px; width: 200px; height: 200px; background-color: #000000; \
+         shader: stripes; --stripe: #ffffff; --spacing: 20; --speed: 0; --angle: 0; }}"
+    );
+    ui.add_sheet(root, StyleSheet::parse("Striped.vss", &sheet));
+    let panel = ui.panel(root, Style::default());
+    ui.add_class(panel, "striped");
+    ui
+}
+
+/// How many times a row of pixels from `from` to `to` goes from dark to light
+/// or back.
+fn swings(pixels: &[u8], width: u32, y: u32, (from, to): (u32, u32)) -> usize {
+    let light = |x: u32| pixels[((y * width + x) * 4) as usize] > 128;
+    (from..to - 1).filter(|&x| light(x) != light(x + 1)).count()
+}
+
+/// A built-in effect draws an element's background the same in the window's
+/// UI, as the editor's, and in the game's: stripes, 20 pixels apart.
+#[test]
+fn ui_backgrounds_draw_with_built_in_effects_in_the_window_and_the_game() {
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::IDENTITY));
+    let (mut window, mut game) = (striped_ui(20.0), striped_ui(0.0));
+    renderer.set_ui(&window.frame(640, 360, 1.0)).unwrap();
+    renderer.set_game_ui(&game.frame(300, 300, 1.0), [360, 0]).unwrap();
+    run(&mut renderer, &world, &mut 0.0, 1);
+    let (width, _, pixels) = renderer.read_pixels().unwrap();
+    // Ten stripes and ten gaps across 200 pixels: about twenty swings.
+    let window_swings = swings(&pixels, width, 140, (24, 216));
+    let game_swings = swings(&pixels, width, 140, (364, 556));
+    assert!((17..=21).contains(&window_swings), "the window's UI striped: {window_swings}");
+    assert!((17..=21).contains(&game_swings), "the game's UI striped alike: {game_swings}");
+}
+
+/// A project's UI shader, compiled into the UI's shader as material shaders
+/// are into the scene's: a background it colours green, drawn as its own red
+/// background until it compiles.
+#[test]
+fn a_projects_ui_shader_compiles_into_the_ui() {
+    use voxear_render::{CustomCode, CustomShaderState};
+    use voxear_ui::{Style, StyleSheet, Ui, UiShader, UiShaderProperty, UiShaderValue, UiShaders};
+    const UI_SHADERS: &str = r#"
+namespace ui_shader_9
+{
+struct Tint { float4 color; };
+float4 ui(Tint tint, UiInput input) { return tint.color; }
+}
+ui_shader_9::Tint ui_shader_9_properties(uint first)
+{
+    float4* values = buffers()->uiValues + first;
+    ui_shader_9::Tint properties;
+    properties.color = values[0];
+    return properties;
+}
+float4 customUi(uint shader, uint first, UiInput input)
+{
+    switch (shader)
+    {
+    case 9:
+        return ui_shader_9::ui(ui_shader_9_properties(first), input);
+    default:
+        return input.background;
+    }
+}
+"#;
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::IDENTITY));
+    let mut ui = Ui::new();
+    let root = ui.root();
+    let sheet = ".tinted { position: absolute; left: 100px; top: 100px; width: 80px; height: 80px; \
+                 background-color: #ff0000; shader: url(\"Shaders/Tint.shader\"); --color: #00ff00; }";
+    ui.add_sheet(root, StyleSheet::parse("Tinted.vss", sheet));
+    let panel = ui.panel(root, Style::default());
+    ui.add_class(panel, "tinted");
+    let color = UiShaderProperty { name: "color".into(), value: UiShaderValue::Color, default: [0.0; 4] };
+    let mut shaders = UiShaders::default();
+    shaders.insert("Shaders/Tint.shader", UiShader { number: 9, properties: vec![color] });
+    ui.set_shaders(std::rc::Rc::new(shaders));
+    renderer.set_ui(&ui.frame(640, 360, 1.0)).unwrap();
+    let at = |pixels: &[u8]| {
+        let i = ((140 * 640 + 140) * 4) as usize;
+        [pixels[i], pixels[i + 1], pixels[i + 2]]
+    };
+    run(&mut renderer, &world, &mut 0.0, 1);
+    assert_eq!(at(&renderer.read_pixels().unwrap().2), [255, 0, 0], "its own background until the shader compiles");
+
+    renderer.set_custom_shaders(CustomCode { materials: CUSTOM_SHADERS.to_string(), ui: UI_SHADERS.to_string() });
+    for _ in 0..600 {
+        run(&mut renderer, &world, &mut 0.0, 1);
+        match renderer.custom_shaders() {
+            CustomShaderState::Compiling => std::thread::sleep(std::time::Duration::from_millis(50)),
+            CustomShaderState::Failed(error) => panic!("{error}"),
+            _ => break,
+        }
+    }
+    assert_eq!(*renderer.custom_shaders(), CustomShaderState::Ready);
+    run(&mut renderer, &world, &mut 0.0, 1);
+    assert_eq!(at(&renderer.read_pixels().unwrap().2), [0, 255, 0], "the shader's green");
+}

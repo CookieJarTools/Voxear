@@ -755,6 +755,8 @@ impl Editor {
         }
         let frame = {
             profile_scope!("UI");
+            // The editor's own UI draws backgrounds with the same shaders as the game's.
+            self.ui.set_shaders(self.game.ui.shaders());
             self.ui.frame(size.0, size.1, scale)
         };
         let rendered = {

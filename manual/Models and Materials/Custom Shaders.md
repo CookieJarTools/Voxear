@@ -41,7 +41,7 @@ For a flow of lava along a path, or a lava lake, see [[Lava]].
 
 ## Making a shader
 
-Right-click in the Project panel and choose **New Shader…**, then pick what it starts as: **Lit**, **Unlit** for one that ignores light, or one of the built-in shaders to change. A new lit shader starts with a tint, a gloss and a pattern, and a vertex and a light function to uncomment and try:
+Right-click in the Project panel and choose **New Shader…**, then pick what it starts as: **Lit**, **Unlit** for one that ignores light, or one of the built-in shaders to change. **UI** starts a shader for UI elements' backgrounds instead, which materials can't use: see [[UI Shaders]]. A new lit shader starts with a tint, a gloss and a pattern, and a vertex and a light function to uncomment and try:
 
 ```slang
 struct Tinted

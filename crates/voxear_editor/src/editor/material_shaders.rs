@@ -25,7 +25,17 @@ impl Editor {
     /// material at `material`: the Standard shader, one built in, or one of
     /// the project's.
     pub(super) fn browse_material_shader(&mut self, material: &str, anchor: NodeId) {
-        let mut choices = self.asset_choices(AssetKind::Shader);
+        // The project's shaders, but those that draw UI, which draw no materials.
+        let registry = self.game.content.shaders();
+        let draws_ui =
+            |path: &str| registry.shaders.iter().any(|s| s.path == path && s.info.as_ref().is_ok_and(|info| info.ui));
+        let db = self.game.content.db();
+        let materials = |e: &&voxear_assets::AssetEntry| e.kind == AssetKind::Shader && !draws_ui(&e.path);
+        let mut paths: Vec<String> = db.entries().filter(materials).map(|e| e.path.clone()).collect();
+        paths.sort();
+        let mut listed = vec![("None".to_string(), Pick::Asset(None))];
+        listed.extend(paths.into_iter().map(|path| (path.clone(), Pick::Asset(Some(path)))));
+        let mut choices = object_picker::decorate(&self.game, listed);
         if let Some(standard) = choices.first_mut() {
             standard.label = "Standard".to_string();
         }

@@ -161,3 +161,49 @@ fn a_see_through_element_cuts_away_what_was_drawn_under_it() {
     let frame = ui.frame(WIDTH, HEIGHT, 1.0);
     assert_eq!(shapes(&frame.quads).iter().filter(|q| q.rect[2] == 300.0).count(), 1);
 }
+
+/// A background drawn by a shader: its quad says which and where its values
+/// start, read from the element's custom properties or the shader's
+/// defaults; a shader there is none of draws the background plain, once
+/// warned of.
+#[test]
+fn a_shaded_background_names_its_shader_and_carries_its_values() {
+    use voxear_ui::{BUILTIN_UI_SHADERS, StyleSheet, UiShader, UiShaderProperty, UiShaderValue, UiShaders};
+
+    let mut ui = Ui::new();
+    let root = ui.root();
+    let sheet = ".busy { width: 100px; height: 20px; shader: stripes; --spacing: 20; }
+        .glow { width: 50px; height: 20px; background-color: #ff0000; shader: url(\"Shaders/Glow.shader\"); }
+        .lost { width: 50px; height: 20px; background-color: #00ff00; shader: missing; }";
+    ui.add_sheet(root, StyleSheet::parse("Test.vss", sheet));
+    let busy = ui.panel(root, Style::default());
+    ui.add_class(busy, "busy");
+    let glow = ui.panel(root, Style::default());
+    ui.add_class(glow, "glow");
+    let lost = ui.panel(root, Style::default());
+    ui.add_class(lost, "lost");
+    let mut shaders = UiShaders::default();
+    let strength = UiShaderProperty { name: "strength".into(), value: UiShaderValue::Number, default: [0.5, 0.0, 0.0, 0.0] };
+    shaders.insert("Shaders/Glow.shader", UiShader { number: 9, properties: vec![strength] });
+    let ui_shaders = std::rc::Rc::new(shaders);
+    ui.set_shaders(ui_shaders.clone());
+    let frame = ui.frame(WIDTH, HEIGHT, 2.0);
+
+    let shaded: Vec<&Quad> = frame.quads.iter().filter(|q| q.kind == Quad::SHAPE && q.flags & Quad::SHADED != 0).collect();
+    assert_eq!(shaded.len(), 2, "the stripes and the glow, though the stripes' background is clear");
+    let number = |q: &Quad| (q.flags >> Quad::SHADER_SHIFT) & 0xffff;
+    let first = |q: &Quad| q.uv[0].to_bits() as usize;
+    assert_eq!(number(shaded[0]), BUILTIN_UI_SHADERS + 1, "stripes");
+    assert_eq!(frame.values[first(shaded[0]) + 1][0], 20.0, "its spacing, from --spacing");
+    assert_eq!(frame.values[first(shaded[0]) + 3][0], 45.0, "its angle, the default");
+    assert_eq!(shaded[0].uv[1], 2.0, "with the display scale");
+    assert_eq!(number(shaded[1]), 9, "the project's shader, by its path");
+    assert_eq!(frame.values[first(shaded[1])][0], 0.5);
+    assert_eq!(shaded[1].color, [1.0, 0.0, 0.0, 1.0], "its background, for the shader to use");
+    let plain = frame.quads.iter().filter(|q| q.kind == Quad::SHAPE && q.color == [0.0, 1.0, 0.0, 1.0]).count();
+    assert_eq!(plain, 1, "an unknown shader's background is drawn plain");
+    assert!(ui.take_warnings().iter().any(|w| w.contains("no UI shader 'missing'")));
+    ui.set_shaders(ui_shaders);
+    ui.frame(WIDTH, HEIGHT, 2.0);
+    assert!(ui.take_warnings().iter().all(|w| !w.contains("no UI shader")), "said once, not every frame");
+}

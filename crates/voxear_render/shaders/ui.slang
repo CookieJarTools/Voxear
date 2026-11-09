@@ -9,6 +9,8 @@
 // panel in the world is drawn the same way into a texture of its own (see uiPanelVertex below).
 
 #include "common.slang"
+#include "ui_custom.slang"
+#include "ui_effects.slang"
 
 static const uint UI_GLYPH = 1;
 static const uint UI_SHADOW = 2;
@@ -17,6 +19,13 @@ static const uint UI_IMAGE = 4;
 static const uint UI_GRADIENT = 5;
 static const uint UI_DASHED = 1;
 static const uint UI_BACKDROP = 2;
+// A background drawn by a shader (voxear_ui's Quad::SHADED): its number from
+// bit 8, built-in effects from UI_BUILTIN_SHADERS; q.uv holds where its
+// values start among this layer's (from push.maxDraws), the display scale
+// and the opacity. push.output is the time, in seconds, as float bits.
+static const uint UI_SHADED = 4;
+static const uint UI_SHADER_SHIFT = 8;
+static const uint UI_BUILTIN_SHADERS = 0x8000;
 static const uint UI_FADES_DOWN = 1;
 static const float3 UI_LUMA = float3(0.2126, 0.7152, 0.0722);
 static const float2 UI_CORNERS[6] = {
@@ -183,11 +192,28 @@ float4 uiFragment(UiOut i) : SV_Target
         edge *= dashes(p, halfSize, q.border);
     }
     float4 fill = q.color;
+    if ((q.flags & UI_SHADED) != 0)
+    {
+        float scale = max(q.uv.y, 1e-3);
+        UiInput input;
+        input.position = i.local / scale;
+        input.size = q.rect.zw / scale;
+        input.uv = i.local / max(q.rect.zw, 1.0);
+        input.background = q.color;
+        input.border = q.borderColor;
+        input.time = asfloat(push.output);
+        input.scale = scale;
+        uint shader = (q.flags >> UI_SHADER_SHIFT) & 0xFFFF;
+        uint first = push.maxDraws + asuint(q.uv.x);
+        fill = shader >= UI_BUILTIN_SHADERS ? builtinUi(shader - UI_BUILTIN_SHADERS, first, input)
+                                            : customUi(shader, first, input);
+        fill *= q.uv.z;
+    }
     if ((q.flags & UI_BACKDROP) != 0 && push.textures.x != NO_TEXTURE)
     {
         // The background over what is behind, blurred: frosted glass, opaque.
         float2 origin = float2(push.list & 0xFFFF, push.list >> 16);
-        fill = float4(backdrop(pixel + origin) * (1.0 - q.color.a) + q.color.rgb, 1.0);
+        fill = float4(backdrop(pixel + origin) * (1.0 - fill.a) + fill.rgb, 1.0);
     }
     return fill * inner + q.borderColor * edge;
 }

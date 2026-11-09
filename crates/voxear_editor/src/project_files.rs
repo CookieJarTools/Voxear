@@ -99,6 +99,8 @@ pub enum NewFile {
     Lighting,
     Shader,
     UnlitShader,
+    /// A shader a UI element's background is drawn with.
+    UiShader,
     Script,
     MotionSet,
     GunHandling,
@@ -106,7 +108,7 @@ pub enum NewFile {
 }
 
 impl NewFile {
-    pub const ALL: [NewFile; 11] = [
+    pub const ALL: [NewFile; 12] = [
         NewFile::Folder,
         NewFile::Scene,
         NewFile::Level,
@@ -114,6 +116,7 @@ impl NewFile {
         NewFile::Lighting,
         NewFile::Shader,
         NewFile::UnlitShader,
+        NewFile::UiShader,
         NewFile::Script,
         NewFile::MotionSet,
         NewFile::GunHandling,
@@ -139,6 +142,7 @@ impl NewFile {
             NewFile::Lighting => "New Lighting Settings",
             NewFile::Shader => "New Shader",
             NewFile::UnlitShader => "New Unlit Shader",
+            NewFile::UiShader => "New UI Shader",
             NewFile::Script => "New C# Script",
             NewFile::MotionSet => "New Motion Set",
             NewFile::GunHandling => "New Gun Handling",
@@ -157,6 +161,7 @@ impl NewFile {
             NewFile::Lighting => ("New Lighting", ".lighting"),
             NewFile::Shader => ("New Shader", ".shader"),
             NewFile::UnlitShader => ("New Unlit Shader", ".shader"),
+            NewFile::UiShader => ("New UI Shader", ".shader"),
             NewFile::Script => ("NewBehaviour", ".cs"),
             NewFile::MotionSet => ("New Motion Set", ".motionset"),
             NewFile::GunHandling => ("New Gun Handling", ".gunhandling"),
@@ -180,6 +185,7 @@ pub fn create(root: &Path, folder: &str, kind: NewFile, namespace: &str) -> Resu
         NewFile::Lighting => std::fs::write(&file, NEW_LIGHTING),
         NewFile::Shader => std::fs::write(&file, shader(NEW_SHADER, &name[..name.len() - extension.len()])),
         NewFile::UnlitShader => std::fs::write(&file, shader(NEW_UNLIT_SHADER, &name[..name.len() - extension.len()])),
+        NewFile::UiShader => std::fs::write(&file, shader(NEW_UI_SHADER, &name[..name.len() - extension.len()])),
         NewFile::Script => std::fs::write(&file, script(namespace, &name[..name.len() - extension.len()])),
         NewFile::MotionSet => std::fs::write(&file, NEW_MOTION_SET),
         NewFile::GunHandling => std::fs::write(&file, NEW_GUN_HANDLING),
@@ -227,19 +233,20 @@ fn struct_name(name: &str) -> String {
     if named.starts_with(|c: char| c.is_ascii_alphabetic()) { named } else { format!("Shader{named}") }
 }
 
-/// What a new shader starts as: a lit or an unlit one to write, or a copy
-/// of one built in, to change.
+/// What a new shader starts as: a lit, an unlit or a UI one to write, or a
+/// copy of one built in, to change.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ShaderStart {
     Lit,
     Unlit,
+    Ui,
     Copy(BuiltinShader),
 }
 
 impl ShaderStart {
-    /// As New Shader offers them: the two to write first, then the built-in ones.
+    /// As New Shader offers them: the three to write first, then the built-in ones.
     pub fn all() -> Vec<Self> {
-        let mut all = vec![Self::Lit, Self::Unlit];
+        let mut all = vec![Self::Lit, Self::Unlit, Self::Ui];
         all.extend(BuiltinShader::ALL.map(Self::Copy));
         all
     }
@@ -248,6 +255,7 @@ impl ShaderStart {
         match self {
             Self::Lit => "Lit",
             Self::Unlit => "Unlit",
+            Self::Ui => "UI",
             Self::Copy(builtin) => builtin.title(),
         }
     }
@@ -255,7 +263,7 @@ impl ShaderStart {
     /// What it starts as, beside its name.
     pub fn detail(self) -> &'static str {
         match self {
-            Self::Lit | Self::Unlit => "To write",
+            Self::Lit | Self::Unlit | Self::Ui => "To write",
             Self::Copy(_) => "Built in, to change",
         }
     }
@@ -267,6 +275,7 @@ pub fn create_shader(root: &Path, folder: &str, start: ShaderStart, namespace: &
     match start {
         ShaderStart::Lit => create(root, folder, NewFile::Shader, namespace),
         ShaderStart::Unlit => create(root, folder, NewFile::UnlitShader, namespace),
+        ShaderStart::Ui => create(root, folder, NewFile::UiShader, namespace),
         ShaderStart::Copy(builtin) => create_shader_from(root, folder, builtin),
     }
 }
@@ -351,6 +360,29 @@ void surface(NAME shader, SurfaceInput input, inout SurfaceOutput surface)
 {
     surface.color = shader.color * shader.brightness;
     surface.emission = 0.0;
+}
+"#;
+
+/// What a new UI shader starts as: a band of light that sweeps across the
+/// element's background, in a colour, at a speed.
+const NEW_UI_SHADER: &str = r#"// A UI shader. A UI element's background is drawn with it when its style says
+// shader: url("Shaders/NAME.shader"), and its properties are the element's custom properties of the
+// same names, as --glow: #8b93ff. The Manual's UI Shaders page says everything a UI shader can do.
+
+struct NAME
+{
+    [Property, Color] float4 glow = float4(1.0, 1.0, 1.0, 0.4);
+    [Property, Range(0, 4), Tooltip("How many times a second the light crosses")] float speed = 0.5;
+}
+
+// The background's colour at one pixel, premultiplied by its alpha. The border, rounded corners and
+// opacity go on after.
+float4 ui(NAME shader, UiInput input)
+{
+    float at = frac(input.time * shader.speed) * 1.6 - 0.3;
+    float band = saturate(1.0 - abs(input.uv.x - at) / 0.3);
+    float4 light = shader.glow * band * band;
+    return light + input.background * (1.0 - light.a);
 }
 "#;
 
@@ -581,6 +613,17 @@ mod tests {
         let file: voxear_engine::lighting::LightingFile = toml::from_str(&text).unwrap();
         assert_eq!(file.look.as_deref(), Some("golden_hour"));
         file.resolve().unwrap();
+    }
+
+    #[test]
+    fn a_new_ui_shader_draws_ui_with_a_colour_and_a_speed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = create_shader(dir.path(), "", ShaderStart::Ui, "Game").unwrap();
+        assert_eq!(path, "New UI Shader.shader");
+        let info = voxear_engine::shaders::read(&std::fs::read_to_string(dir.path().join(&path)).unwrap()).unwrap();
+        assert!(info.ui && !info.surface, "a UI shader, which materials cannot pick");
+        let names: Vec<&str> = info.properties.iter().map(|property| property.name.as_str()).collect();
+        assert_eq!(names, ["glow", "speed"]);
     }
 
     #[test]

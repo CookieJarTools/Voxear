@@ -1568,6 +1568,26 @@ surfaces in 3D. *(Implemented as the UI Panel component:)*
 - The pointer works the nearest clickable panel that a camera ray meets before any collider: through the cursor,
   or through the view's middle while the cursor is locked. Clicks a panel takes do not reach the game's input.
 
+**UI shaders** *(implemented)*: `shader: shimmer` or `shader: url("Shaders/Glow.shader")` draws an element's
+background with a shader, on the screen, on panels and in the editor alike, since all of them draw through
+`uiFragment`.
+- `voxear_ui` knows shaders only as a table, `UiShaders`: each one's number and its properties' names, kinds and
+  defaults. The engine fills it from the `ShaderRegistry` and the built-in effects (`shaders::ui_shaders`), for the
+  screen's UI, every panel's and the editor's own. A name not in it draws the plain background and warns once.
+- `Draw::node` marks the background's SHAPE quad `Quad::SHADED`, with the shader's number in flag bits 8–23. A
+  SHAPE quad's `uv` is otherwise unused, so it carries where the element's values start, the display scale and the
+  opacity, and `Quad` stays 96 bytes. The values, one `[f32; 4]` per property, come from the element's custom
+  properties of the same names, or the defaults, and go in `UiFrame::values`.
+- The renderer writes each layer's and each panel's values into a per-frame buffer (`Buffers.uiValues`), giving the
+  shader where they start in `push.maxDraws` and the time in `push.output`. A panel with a shaded quad is drawn
+  again every frame, so its effect moves.
+- The built-in effects (numbers from `0x8000`) are in `ui_effects.slang`, always compiled in. A project's UI shaders
+  are `.shader` assets with a `ui` function: `ui_dispatch_code` writes them, their property loaders and
+  `customUi` into `project_ui_shaders.slang`, compiled into the `ui` module with the material shaders
+  (`CustomCode`), hot-reloaded in the editor and shipped as `Shaders/ui.spv` in builds. Until then the stub in
+  `ui_custom.slang` draws the plain background. Material dispatch leaves UI shaders out, and a material that picks
+  one draws Standard.
+
 **The editor is built with Voxear UI**, so every editor improvement also improves game UI.
 
 ## Editor

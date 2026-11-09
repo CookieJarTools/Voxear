@@ -11,7 +11,8 @@
 //! `transition` (`background-color 150ms ease-out, opacity 0.1s`) and
 //! `animation` (`pulse 1.2s ease-in-out infinite alternate`, playing a
 //! sheet's `@keyframes`). Look: `backdrop-filter` (`blur(16px)`, frosted glass
-//! over the 3D view), `background-color`, `border`, `border-width`,
+//! over the 3D view), `shader` (`shimmer`, or `url("Shaders/Glow.shader")`, its
+//! values from the element's custom properties; see [`crate::UiShaders`]), `background-color`, `border`, `border-width`,
 //! `border-color`, `border-style` (`solid` or `dashed`), `border-radius`, `box-shadow` (`0 16px 40px #0006`,
 //! with an optional spread, or `none`), `opacity`, `z-index` (above 0 draws over everything), `pointer-events`,
 //! `overflow`
@@ -69,7 +70,7 @@ pub(crate) fn apply(
 }
 
 /// Replaces each `var(--name)` or `var(--name, fallback)` with its value.
-fn substitute(value: &str, vars: &HashMap<String, String>, depth: u32) -> Result<String, String> {
+pub(crate) fn substitute(value: &str, vars: &HashMap<String, String>, depth: u32) -> Result<String, String> {
     if depth > 8 {
         return Err("variables refer to each other in a loop".into());
     }
@@ -129,6 +130,7 @@ fn set(style: &mut Style, text: &mut TextStyle, name: &str, input: &mut Parser) 
         "transition" => style.transitions = transitions(input)?,
         "animation" => style.animation = animation(input)?,
         "backdrop-filter" => style.backdrop_blur = backdrop(input)?,
+        "shader" => style.shader = shader(input)?,
         "position" => {
             let positions =
                 [("relative", Position::Relative), ("absolute", Position::Absolute), ("static", Position::Static)];
@@ -424,6 +426,21 @@ fn backdrop(input: &mut Parser) -> Parsed<f32> {
             cssparser::ParseErrorKind::Custom(message) => message,
             _ => "expected blur(16px)".to_string(),
         })
+}
+
+/// `shader: shimmer`, a built-in effect, `shader: url("Shaders/Glow.shader")`,
+/// a project's own by path or GUID, or `none`.
+fn shader(input: &mut Parser) -> Parsed<Option<String>> {
+    match input.next().map_err(|_| "expected a shader".to_string())?.clone() {
+        Token::Ident(name) if name.eq_ignore_ascii_case("none") => Ok(None),
+        Token::Ident(name) => Ok(Some(name.to_string())),
+        Token::UnquotedUrl(url) | Token::QuotedString(url) => Ok(Some(url.to_string())),
+        Token::Function(name) if name.eq_ignore_ascii_case("url") => input
+            .parse_nested_block(|block| Ok::<_, ParseError<()>>(block.expect_string()?.to_string()))
+            .map(Some)
+            .map_err(|_| "expected url(\"Shaders/Glow.shader\")".to_string()),
+        other => Err(format!("expected a shader's name or url(...), not {other:?}")),
+    }
 }
 
 /// A time in `s` or `ms`, as seconds.

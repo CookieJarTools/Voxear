@@ -22,11 +22,16 @@ use crate::{
 /// Quads the per-frame buffer holds, every layer and UI panel together; more
 /// are left out.
 pub const MAX_UI_QUADS: u64 = 32 * 1024;
+/// The shaded backgrounds' values the per-frame buffer holds, every layer
+/// and UI panel together, four numbers each.
+pub const MAX_UI_VALUES: u64 = 64 * 1024;
 
 /// One UI's quads and glyph atlas, and where its area starts in the output.
 #[derive(Default)]
 pub(crate) struct Layer {
     pub(crate) quads: Vec<Quad>,
+    /// What its shaded backgrounds read.
+    pub(crate) values: Vec<[f32; 4]>,
     atlas: Option<(Image, TextureId)>,
     /// The version of the atlas on the GPU.
     pub(crate) version: u64,
@@ -48,6 +53,8 @@ impl Layer {
         }
         self.quads.clear();
         self.quads.extend(frame.quads.iter().take(room));
+        self.values.clear();
+        self.values.extend(frame.values.iter().take(MAX_UI_VALUES as usize / 2));
         if let Some(atlas) = frame.atlas.as_deref().filter(|a| a.version != self.version) {
             self.upload(gpu, bindless, atlas)?;
             self.version = atlas.version;
@@ -109,9 +116,10 @@ impl UiGpu {
         quads.into_iter().any(|q| q.kind == Quad::SHAPE && q.flags & Quad::BACKDROP != 0)
     }
 
-    /// Writes this frame's quads into `buffer` from its `first` quad on and
-    /// adds the pass that draws them onto `output`, returning how many it
-    /// wrote. `sampled` are images drawn this frame that the UI shows, as
+    /// Writes this frame's quads into `buffer` from its `first` quad on, and
+    /// their shaded backgrounds' values into `value_buffer` from `first_value`
+    /// on, and adds the pass that draws them onto `output`, returning how
+    /// many quads and values it wrote. `sampled` are images drawn this frame that the UI shows, as
     /// the preview atlas. `backdrop` is the view blurred, with its size, and
     /// where the view is in the output, for quads that show it.
     #[allow(clippy::too_many_arguments)]
@@ -119,22 +127,28 @@ impl UiGpu {
         &self,
         fg: &mut FrameGraph<'_>,
         (pipeline, push): (vk::Pipeline, Push),
-        buffer: &Buffer,
-        first: usize,
+        (buffer, value_buffer): (&Buffer, &Buffer),
+        (first, first_value): (usize, usize),
         output: (ImageId, vk::Extent2D),
         sampled: &[ImageId],
         backdrop: Option<(ImageId, [u32; 2], vk::Rect2D)>,
-    ) -> usize {
-        // Every output's UI shares the buffer; what does not fit is left out.
+    ) -> (usize, usize) {
+        // Every output's UI shares the buffers; what does not fit is left out.
         let room = (MAX_UI_QUADS as usize).saturating_sub(first);
         let games = self.game.quads.len().min(room);
         let windows = self.window.quads.len().min(room - games);
         if games + windows == 0 {
-            return 0;
+            return (0, 0);
         }
         let quad = size_of::<Quad>();
         buffer.write((first * quad) as u64, &self.game.quads[..games]);
         buffer.write(((first + games) * quad) as u64, &self.window.quads[..windows]);
+        let value_room = (MAX_UI_VALUES as usize).saturating_sub(first_value);
+        let game_values = self.game.values.len().min(value_room);
+        let window_values = self.window.values.len().min(value_room - game_values);
+        let value = size_of::<[f32; 4]>();
+        value_buffer.write((first_value * value) as u64, &self.game.values[..game_values]);
+        value_buffer.write(((first_value + game_values) * value) as u64, &self.window.values[..window_values]);
         let (output, extent) = output;
         let pack = |a: u32, b: u32| a.min(0xffff) | b.min(0xffff) << 16;
         let textures = match backdrop {
@@ -146,12 +160,24 @@ impl UiGpu {
             ],
             None => [NO_TEXTURE, 0, 0, 0],
         };
-        // Each layer's atlas, its area's start in `list`, which the UI shader reads as its offset,
-        // and its first quad in `level`.
+        // Each layer's atlas, its area's start in `list`, which the UI shader reads as its offset, its
+        // first quad in `level`, and where its shaded backgrounds' values start in `max_draws`.
         let base = Push { size: [extent.width, extent.height], textures, ..push };
         let list = pack(self.game.origin[0], self.game.origin[1]);
-        let game = Push { texture: self.game.texture(), list, level: first as u32, ..base };
-        let window = Push { texture: self.window.texture(), list: 0, level: (first + games) as u32, ..base };
+        let game = Push {
+            texture: self.game.texture(),
+            list,
+            level: first as u32,
+            max_draws: first_value as u32,
+            ..base
+        };
+        let window = Push {
+            texture: self.window.texture(),
+            list: 0,
+            level: (first + games) as u32,
+            max_draws: (first_value + game_values) as u32,
+            ..base
+        };
         let draws = [(game, games as u32), (window, windows as u32)];
         let mut images = vec![(output, ImageAccess::ColorAttachment)];
         images.extend(sampled.iter().map(|&image| (image, ImageAccess::Sampled)));
@@ -169,7 +195,7 @@ impl UiGpu {
             }
             unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
         });
-        games + windows
+        (games + windows, game_values + window_values)
     }
 
     /// The caller makes sure the GPU is idle.

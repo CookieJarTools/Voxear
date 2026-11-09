@@ -415,6 +415,22 @@ fn custom_shaders_ship_compiled_and_compile_again_only_when_changed() {
     assert!(!shaders.exists(), "a game without custom shaders has none compiled");
 }
 
+#[test]
+fn a_ui_shader_ships_compiled_into_the_uis_module() {
+    const GLOW: &str = "struct Glow\n{\n    [Property, Color] float4 glow = float4(1, 0.8, 0.2, 1);\n}\n\n\
+        float4 ui(Glow glow, UiInput input)\n{\n    return lerp(input.background, glow.glow, input.uv.x);\n}\n";
+    let dir = project();
+    std::fs::write(dir.path().join("Materials/Glow.shader"), GLOW).unwrap();
+    let output = dir.path().join("Built");
+    content_build::build(dir.path(), &output, &unmerged(), &[]).unwrap();
+    let content = Content::open_bundles(dir.path(), &output).unwrap();
+    let modules = content.built_shaders().unwrap().unwrap();
+    assert!(modules.iter().any(|(name, spirv)| name == "ui" && spirv.len() > 1000), "the UI's module ships with it");
+    let shaders = voxear_engine::shaders::ui_shaders(content.shaders());
+    let glow = shaders.get("Materials/Glow.shader").expect("styles name it by its path");
+    assert!(glow.number < voxear_ui::BUILTIN_UI_SHADERS && glow.properties.len() == 1);
+}
+
 /// A 16-bit mono WAV of silence, a tenth of a second long.
 fn wav() -> Vec<u8> {
     let (rate, frames) = (48_000u32, 4_800u32);

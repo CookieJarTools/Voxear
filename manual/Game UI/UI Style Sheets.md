@@ -73,6 +73,7 @@ To centre a menu on screen, centre what the document holds:
 | `color`, `font-size: 16px`, `font-weight: bold`, `text-align: center` | Text |
 | `font-family: mono` | `sans` (the default) or `mono` |
 | `backdrop-filter: blur(8px)` | Blurs the game behind the element |
+| `shader: shimmer` | Draws the background with a shader: a built-in effect, or `url("Shaders/Glow.shader")` for one of your own. See [[UI Shaders]] |
 | `pointer-events: none` | Lets clicks pass through to the game |
 
 Colours are written `#rgb`, `#rrggbb`, `#rrggbbaa` (with see-through), `rgb(…)`, `rgba(…)` or `oklch(…)`. The only named colours are `white`, `black` and `transparent`.

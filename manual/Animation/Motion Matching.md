@@ -42,6 +42,8 @@ To have the clips move the character instead, turn on **Root Motion**: they move
 
 While an action stands the character still or moves it itself, as a sit or a roll, `ActionTakesMovement` is true. A game moving the character itself should leave it to `ClipVelocity` meanwhile.
 
+`FeetDown` says which feet the clips playing have down this frame, left then right. A foot that was up last frame and is down now is a footfall, for a step's sound, or a held gun's bob.
+
 `AimPitch` bends the spine a little to look up or down, down positive: set it to the view's pitch. For a first-person camera on the body, see [[Bone Attachments]].
 
 Going another way than it faces, the hips and legs turn towards the way it goes, up to **Leg Turn**, and the spine twists back so the chest still faces ahead. With only a forward and a backward walk, it walks forward and to the side, or backs away to the side, turning smoothly from one to the next. Steps to each side, if the model has them, take over once they fit better.

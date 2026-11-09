@@ -291,6 +291,7 @@ const ROOT_MOTION: i32 = 17;
 const ACTION_TIME: i32 = 18;
 const CLIP_VELOCITY: i32 = 19;
 const ACTION_TAKES_MOVEMENT: i32 = 20;
+const FEET_DOWN: i32 = 21;
 
 // What `texts` reads or does, as `NativeMotionMatcher` in Voxear.Core numbers them.
 const MOTION_SET: i32 = 0;
@@ -338,6 +339,13 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
         (ACTION_TAKES_MOVEMENT, None) => {
             world.get::<MotionMatcher>(entity)?;
             return Some(toggle(world.get::<MotionMatcherState>(entity).is_some_and(|state| state.taken)));
+        }
+        // Each foot, then whether the matcher has played a frame to have them down at all.
+        (FEET_DOWN, None) => {
+            world.get::<MotionMatcher>(entity)?;
+            let feet = world.get::<MotionMatcherState>(entity).map(MotionMatcherState::feet_down);
+            let flag = |on: bool| f32::from(u8::from(on));
+            return Some(feet.map_or([0.0; 4], |[left, right]| [flag(left), flag(right), 0.0, 1.0]));
         }
         (ACTION_TIME, None) => {
             let pending = world.get::<MotionMatcher>(entity)?.commands.iter().any(|c| matches!(c, ActionCommand::Play(_)));
@@ -1124,6 +1132,17 @@ mod tests {
     use voxear_render::{Bone, CLIP_RATE, Clip};
 
     const DT: f32 = 1.0 / 60.0;
+
+    #[test]
+    fn a_script_reads_which_feet_the_clips_have_down_once_the_matcher_has_played() {
+        let mut world = World::new();
+        let matcher = world.spawn((MotionMatcher::default(),));
+        let bare = world.spawn(());
+        assert_eq!(values(&mut world, bare, FEET_DOWN, None), None, "no matcher, no feet");
+        assert_eq!(values(&mut world, matcher, FEET_DOWN, None), Some([0.0; 4]), "nothing played yet");
+        world.insert(matcher, MotionMatcherState { down: [true, false], ..MotionMatcherState::default() });
+        assert_eq!(values(&mut world, matcher, FEET_DOWN, None), Some([1.0, 0.0, 0.0, 1.0]), "the left foot down");
+    }
 
     /// One loop a second long of a root, hips and two feet: the root moving
     /// A frame's bones: the root at `root`, the hips over it, each leg's hip,

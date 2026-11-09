@@ -30,6 +30,7 @@ internal static unsafe class NativeMotionMatcher
 	public const int ActionTime = 18;
 	public const int ClipVelocity = 19;
 	public const int ActionTakesMovement = 20;
+	public const int FeetDown = 21;
 
 	public const int MotionSetText = 0;
 	public const int SetMotionSet = 1;

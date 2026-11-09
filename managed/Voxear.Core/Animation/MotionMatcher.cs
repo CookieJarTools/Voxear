@@ -119,6 +119,22 @@ public readonly struct MotionMatcher : IEquatable<MotionMatcher>, IObjComponent
 	public Vector3 ClipVelocity => Vector(NativeMotionMatcher.ClipVelocity);
 
 	/// <summary>
+	/// Which feet the clips playing have down this frame, left then right: a foot coming down is a footfall, for what
+	/// bobs or sounds with the steps. Null until the matcher has played a frame.
+	/// </summary>
+	public (bool Left, bool Right)? FeetDown
+	{
+		get
+		{
+			if (!NativeMotionMatcher.Get(Obj, NativeMotionMatcher.FeetDown, out var feet) || feet.W == 0f)
+			{
+				return null;
+			}
+			return (feet.X != 0f, feet.Y != 0f);
+		}
+	}
+
+	/// <summary>
 	/// Whether the clips move the character as they travel, rather than the game moving it: through the Character
 	/// Controller on the Obj or the nearest Obj above it, else the Obj itself. A clip set to move at a speed and
 	/// direction moves it at those.

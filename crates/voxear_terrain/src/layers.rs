@@ -97,6 +97,10 @@ pub enum LayerKind {
         width: f32,
         #[serde(default = "four")]
         falloff: f32,
+        /// Dug along the line as a trench instead, its floor `width`
+        /// metres wide, following the ground (see `dig`); it lays no heights.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        dig: Option<crate::dig::Trench>,
     },
     /// The ground below cut into steps `step` metres high, their edges
     /// `sharpness` sharp, from 0 for gentle to 1 for cliffs.
@@ -107,6 +111,13 @@ pub enum LayerKind {
     },
     /// The ground below smoothed over `radius` metres.
     Smooth { radius: f32 },
+    /// Ground dug away or put back by the Sculpt tool's Dig and Fill
+    /// brushes, a ball a stroke, in order (see `dig`). It lays no heights:
+    /// it is dug into the ground every layer makes.
+    Dig {
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        strokes: Vec<crate::dig::DigStroke>,
+    },
 }
 
 fn quarter() -> f32 {
@@ -236,7 +247,14 @@ impl LayerKind {
             LayerKind::Spline { .. } => "Spline",
             LayerKind::Terrace { .. } => "Terrace",
             LayerKind::Smooth { .. } => "Smooth",
+            LayerKind::Dig { .. } => "Dig",
         }
+    }
+
+    /// Whether it digs into the ground rather than laying heights: a Dig
+    /// layer, or a Spline dug as a trench.
+    pub fn digs(&self) -> bool {
+        matches!(self, LayerKind::Dig { .. } | LayerKind::Spline { dig: Some(_), .. })
     }
 
     /// The blend a new layer of its kind starts with.
@@ -255,7 +273,7 @@ impl LayerKind {
                 let reach = (w * w + l * l).sqrt() * 0.5;
                 Some([x - reach, z - reach, x + reach, z + reach])
             }
-            LayerKind::Spline { points, width, falloff } => {
+            LayerKind::Spline { points, width, falloff, .. } => {
                 let reach = width * 0.5 + falloff;
                 let first = points.first()?;
                 let mut area = [first[0], first[2], first[0], first[2]];
@@ -297,7 +315,8 @@ pub fn stable_hash(bytes: &[u8]) -> u64 {
 /// A hash of everything about these layers that shapes the ground.
 pub fn hash_layers(base: f32, layers: &[Layer]) -> u64 {
     let mut text = format!("{base}");
-    for layer in layers.iter().filter(|layer| layer.enabled) {
+    // Digging lays no heights, so it is left out.
+    for layer in layers.iter().filter(|layer| layer.enabled && !layer.kind.digs()) {
         text.push('\n');
         text.push_str(&toml::to_string(layer).unwrap_or_default());
     }

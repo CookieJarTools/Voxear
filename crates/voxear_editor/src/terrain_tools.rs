@@ -84,6 +84,8 @@ enum Paints {
     Surface(usize),
     /// Grass kind `n`, grown or dug up.
     Grass(usize),
+    /// Ground dug away, or put back with `fill`, into Dig layer `layer`.
+    Dig { fill: bool, layer: usize },
 }
 
 /// A layer's dot held: the terrain, the layer, the dot, how high it was
@@ -116,6 +118,10 @@ fn ground_under(game: &Game, camera: &ViewCamera, entity: Entity, point: [f32; 2
     let terrain = world.get::<Terrain>(entity)?;
     let corner = voxear_terrain::corner(world.get(entity)?, world.get(entity));
     let (origin, direction) = camera.ray(point);
+    // Digging digs where the ground is now, into what it dug before; the rest work on the heights, holes and all.
+    if terrain_props::ui(world).brush.kind.digs() && terrain_props::ui(world).tool == TerrainTool::Sculpt {
+        return voxear_terrain::raycast_terrain(terrain, origin - corner, direction, 20_000.0).map(|hit| hit.point);
+    }
     voxear_terrain::ray::raycast_whole(&terrain.heights, origin - corner, direction, 20_000.0).map(|hit| hit.point)
 }
 
@@ -243,6 +249,10 @@ impl TerrainTools {
                 let Some(kind) = terrain_props::paint_grass(game, entity) else { return false };
                 Paints::Grass(kind)
             }
+            (_, BrushKind::Dig | BrushKind::Fill) => {
+                let Some(layer) = terrain_props::dig_layer(game, entity) else { return false };
+                Paints::Dig { fill: (brush.kind == BrushKind::Fill) != shift, layer }
+            }
             (_, BrushKind::Holes) => {
                 if !terrain_props::ready_for_holes(game, entity) {
                     return false;
@@ -263,6 +273,11 @@ impl TerrainTools {
             }
         }
         self.stroke = Some(Stroke { entity, paints, flatten_to: at.y, last: [at.x, at.z], at: Instant::now() });
+        if let Paints::Dig { fill, layer } = paints {
+            // The first where the pointer meets the ground; the rest along the way it is dragged.
+            self.dig(game, &[at], fill, layer);
+            return true;
+        }
         self.paint(game, [at.x, at.z], 1.0 / 60.0, shift);
         true
     }
@@ -280,6 +295,13 @@ impl TerrainTools {
         let held = now.duration_since(stroke.at).as_secs_f32().min(LONGEST_FRAME);
         stroke.at = now;
         let entity = stroke.entity;
+        // Digging follows the pointer over the level the stroke began at, not over the ground it digs away, which
+        // would carry it off as the ground under the pointer falls.
+        if matches!(stroke.paints, Paints::Dig { .. }) {
+            let Some([x, z]) = on_level(game, camera, entity, point, stroke.flatten_to) else { return };
+            self.paint(game, [x, z], held, shift);
+            return;
+        }
         let Some(at) = ground_under(game, camera, entity, point) else { return };
         self.under = Some((entity, at));
         self.paint(game, [at.x, at.z], held, shift);
@@ -291,6 +313,34 @@ impl TerrainTools {
     fn paint(&mut self, game: &mut Game, to: [f32; 2], held: f32, lower: bool) {
         let Some(stroke) = &mut self.stroke else { return };
         let brush = terrain_props::ui(&game.engine.world).brush;
+        // A dig or a fill each time the brush has moved on as far as its spacing, and none while it is held still.
+        if let Paints::Dig { fill, layer } = stroke.paints {
+            let gap = (brush.radius * SPACING).max(0.1);
+            let distance = ((to[0] - stroke.last[0]).powi(2) + (to[1] - stroke.last[1]).powi(2)).sqrt();
+            let steps = (distance / gap).floor() as usize;
+            if steps == 0 {
+                return;
+            }
+            let from = stroke.last;
+            let entity = stroke.entity;
+            let along: Vec<[f32; 2]> = (1..=steps.min(64))
+                .map(|step| {
+                    let t = step as f32 * gap / distance;
+                    [from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t]
+                })
+                .collect();
+            stroke.last = *along.last().expect("a step at least");
+            let Some(terrain) = game.engine.world.get::<Terrain>(entity) else { return };
+            let points: Vec<Vec3> = along
+                .iter()
+                .map(|&[x, z]| {
+                    let top = terrain.dug.as_ref().and_then(|dug| dug.surface_at(&terrain.heights, x, z));
+                    Vec3::new(x, top.map_or_else(|| terrain.heights.height_at(x, z), |(h, _)| h), z)
+                })
+                .collect();
+            self.dig(game, &points, fill, layer);
+            return;
+        }
         let Some(asset) = game.engine.world.get::<TerrainAsset>(stroke.entity) else { return };
         let file = asset.file.clone();
         let mut rasters = (*asset.rasters).clone();
@@ -325,6 +375,8 @@ impl TerrainTools {
                     let weights = weights.as_deref();
                     voxear_terrain::grass::paint(&file, weights, &mut rasters, kind, (&brush, at, amount), lower)
                 }
+                // Dug above, as the brush moves on.
+                Paints::Dig { .. } => return,
             };
             areas.push(area);
         }
@@ -337,7 +389,54 @@ impl TerrainTools {
             Paints::Sculpt(_) | Paints::Holes { .. } => {
                 terrain_props::remake_with(game, entity, file, Arc::new(rasters), &dirty, &self.compositor)
             }
+            Paints::Dig { .. } => false,
         };
+    }
+
+    /// Digs a ball into the ground at each of `points` (on the ground, in the
+    /// terrain's space), or heaps one up with `fill`, as strokes of Dig
+    /// layer `layer`, carving each into the terrain's dug ground at once.
+    fn dig(&mut self, game: &mut Game, points: &[Vec3], fill: bool, layer: usize) {
+        use voxear_terrain::dig::{Carve, DigStroke, Shape};
+        let Some(stroke) = &self.stroke else { return };
+        let entity = stroke.entity;
+        let ui = terrain_props::ui(&game.engine.world);
+        let (brush, bares) = (ui.brush, ui.bares);
+        let world = &game.engine.world;
+        let (Some(asset), Some(terrain)) = (world.get::<TerrainAsset>(entity), world.get::<Terrain>(entity)) else {
+            return;
+        };
+        let mut file = asset.file.clone();
+        let mut heights = (*terrain.heights).clone();
+        let mut dug = terrain.dug.as_deref().cloned().unwrap_or_default();
+        let Some(LayerKind::Dig { strokes }) = file.layers.get_mut(layer).map(|layer| &mut layer.kind) else { return };
+        let radius = brush.radius.max(0.1);
+        let surface = if fill { None } else { bares.and_then(|at| u8::try_from(at).ok()) };
+        let mut areas = Vec::new();
+        for p in points {
+            // Stronger, a dig goes deeper under the ground and a fill heaps higher over it.
+            let middle =
+                if fill { p.y - radius * (1.0 - brush.strength) } else { p.y + radius * (0.5 - brush.strength) };
+            let made = DigStroke { at: [p.x, middle, p.z], radius, fill, surface };
+            strokes.push(made);
+            let carve = if fill { Carve::Fill } else { Carve::Dig };
+            if let Some((holed, _)) = dug.carve(&heights, &Shape::Ball { at: made.at, radius }, carve, surface)
+                && let Some(holed) = holed
+            {
+                heights = holed;
+            }
+            areas.push([p.x - radius, p.z - radius, p.x + radius, p.z + radius]);
+        }
+        dug.dug_by = voxear_terrain::dig::digging_hash(&file.layers);
+        let world = &mut game.engine.world;
+        if let Some(asset) = world.get_mut::<TerrainAsset>(entity) {
+            asset.file = file;
+        }
+        if let Some(terrain) = world.get_mut::<Terrain>(entity) {
+            terrain.heights = Arc::new(heights);
+            terrain.dug = Some(Arc::new(dug));
+        }
+        terrain_props::reweigh(game, entity, &Dirty::Areas(areas));
     }
 
     /// Moves the held dot of layer `layer` to `to` on the ground, in the

@@ -895,23 +895,24 @@ pub struct TerrainParts {
 pub fn terrain(content: &mut Content, renderer: Option<&mut Renderer>, data: &TerrainData) -> Result<TerrainParts> {
     let guid = content.parse(&data.data).ok().and_then(|reference| reference.guid());
     let loaded = guid.and_then(|guid| Some((guid, content.terrain(guid)?)));
-    let (heights, weights, grass, asset) = match loaded {
+    let (heights, weights, grass, dug, asset) = match loaded {
         Some((guid, loaded)) => {
             let asset = crate::terrain::TerrainAsset { guid, file: loaded.file.clone(), rasters: loaded.rasters.clone() };
-            (loaded.heights.clone(), loaded.weights.clone(), loaded.grass.clone(), Some(asset))
+            let ground = (loaded.heights.clone(), loaded.weights.clone(), loaded.grass.clone(), loaded.dug.clone());
+            (ground.0, ground.1, ground.2, ground.3, Some(asset))
         }
         None => {
             if !data.data.is_empty() {
                 tracing::warn!("the terrain {} could not be read; it is flat", data.data);
             }
-            (std::sync::Arc::new(voxear_terrain::file::TerrainFile::default().flat()), None, None, None)
+            (std::sync::Arc::new(voxear_terrain::file::TerrainFile::default().flat()), None, None, None, None)
         }
     };
     let terrain = voxear_terrain::Terrain {
         heights,
         weights,
         grass,
-        dug: None,
+        dug,
         detail_distance: data.detail_distance.max(1.0),
         cast_shadows: data.cast_shadows,
     };

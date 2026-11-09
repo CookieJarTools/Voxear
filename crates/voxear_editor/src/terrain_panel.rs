@@ -56,9 +56,11 @@ fn icon(kind: &LayerKind) -> &'static str {
         LayerKind::Stamp { .. } => "mountain",
         LayerKind::Noise { .. } => "grid",
         LayerKind::Sculpt { .. } => "edit",
+        LayerKind::Spline { dig: Some(_), .. } => "spade",
         LayerKind::Spline { .. } => "branch",
         LayerKind::Terrace { .. } => "layers",
         LayerKind::Smooth { .. } => "globe",
+        LayerKind::Dig { .. } => "spade",
     }
 }
 

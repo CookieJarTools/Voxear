@@ -205,7 +205,7 @@ fn tiles_under(areas: &[Area], tiles: u32, spacing: f32) -> Vec<(u32, u32)> {
 
 /// Tile `(tx, tz)`'s holes, from the terrain's raster of them: a sample a
 /// hole's where it is more than a half.
-fn hole_bits(file: &TerrainFile, rasters: &Rasters, tx: u32, tz: u32) -> Option<Box<[u32]>> {
+pub fn hole_bits(file: &TerrainFile, rasters: &Rasters, tx: u32, tz: u32) -> Option<Box<[u32]>> {
     if file.holes == 0 {
         return None;
     }
@@ -231,7 +231,8 @@ fn inner(padded: &[f32]) -> Vec<f32> {
 
 /// Puts one layer on a padded tile.
 fn apply(layer: &Layer, padded: &mut [f32], (tx, tz): (u32, u32), spacing: f32, file: &TerrainFile, sources: &Sources) {
-    if !layer.enabled || layer.opacity <= 0.0 {
+    // Digging is done into the ground every layer makes, after (see `dig::dig_layers`).
+    if !layer.enabled || layer.opacity <= 0.0 || layer.kind.digs() {
         return;
     }
     let (ox, oz) = (i64::from(tx * TILE_QUADS) - i64::from(PAD), i64::from(tz * TILE_QUADS) - i64::from(PAD));
@@ -293,9 +294,10 @@ fn apply(layer: &Layer, padded: &mut [f32], (tx, tz): (u32, u32), spacing: f32, 
                     (noise::fractal(*style, x / scale, z / scale, *octaves, *seed) * height, 1.0)
                 }
                 LayerKind::Sculpt { raster } => (sources.rasters.sample(*raster, gx, gz), 1.0),
-                LayerKind::Spline { points, width, falloff } => spline_at((x, z), points, *width, *falloff),
+                LayerKind::Spline { points, width, falloff, .. } => spline_at((x, z), points, *width, *falloff),
                 LayerKind::Terrace { step, sharpness } => (terrace(h, *step, *sharpness), 1.0),
                 LayerKind::Smooth { .. } => (blurred.as_ref().map_or(h, |b| b[index]), 1.0),
+                LayerKind::Dig { .. } => (h, 0.0),
             };
             if weight <= 0.0 {
                 continue;
@@ -456,6 +458,7 @@ mod tests {
             points: vec![[20.0, 5.0, 128.0], [230.0, 5.0, 128.0]],
             width: 8.0,
             falloff: 4.0,
+            dig: None,
         });
         road.blend = Blend::Set;
         let hills =
@@ -473,6 +476,7 @@ mod tests {
             points: vec![[0.0, 0.0, 128.0], [256.0, 50.0, 128.0]],
             width: 600.0,
             falloff: 1.0,
+            dig: None,
         });
         let mut raise = Layer::new(LayerKind::Stamp {
             picture: None,
@@ -552,7 +556,7 @@ mod timing {
     fn a_large_terrain_is_made_quickly() {
         let hills = Layer::new(LayerKind::Noise { style: crate::noise::NoiseStyle::Ridged, scale: 600.0, height: 120.0, octaves: 7, seed: 3 });
         let crater = Layer::new(LayerKind::Stamp { picture: None, position: [900.0, 900.0], rotation: 0.0, size: [60.0, 60.0], height: -8.0, falloff: 0.3 });
-        let mut road = Layer::new(LayerKind::Spline { points: vec![[100.0, 20.0, 100.0], [1500.0, 30.0, 1800.0]], width: 10.0, falloff: 6.0 });
+        let mut road = Layer::new(LayerKind::Spline { points: vec![[100.0, 20.0, 100.0], [1500.0, 30.0, 1800.0]], width: 10.0, falloff: 6.0, dig: None });
         road.blend = Blend::Set;
         let smooth = Layer::new(LayerKind::Smooth { radius: 2.0 });
         let file = TerrainFile { size: 2048.0, resolution: 4097, layers: vec![hills, crater, road, smooth], ..TerrainFile::default() };

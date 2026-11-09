@@ -87,6 +87,8 @@ pub struct TerrainUi {
     pub surface: usize,
     pub grass: usize,
     pub brush: Brush,
+    /// The surface the Dig brush lays on what it bares, by its number.
+    pub bares: Option<usize>,
 }
 
 /// The editor's terrain tools as they are.
@@ -141,6 +143,19 @@ pub enum TerrainField {
     BrushHeight,
     BrushStep,
     BumpSize,
+    /// The Dig brush's surface laid on what it bares.
+    DigBares,
+    /// A Spline layer's trench: whether it is dug, how deep, how its walls
+    /// lean, its fire step's height and depth, its parapet's height, which
+    /// side is its front, and the surface laid on what it bares.
+    TrenchDig,
+    TrenchDepth,
+    TrenchBatter,
+    StepHeight,
+    StepWidth,
+    Parapet,
+    TrenchFront,
+    TrenchSurface,
     /// The picked surface's: its material, how large its pictures are, how
     /// sharply it meets the others, whether it is drawn from the side on
     /// steep ground, how far tracks press into it and how soon they fill
@@ -275,6 +290,9 @@ pub fn props(world: &World, entity: Entity) -> Vec<Prop> {
             if brush.kind != BrushKind::Holes {
                 fields.push(F::Strength);
             }
+            if brush.kind == BrushKind::Dig {
+                fields.push(F::DigBares);
+            }
             match brush.kind {
                 BrushKind::SetHeight => fields.push(F::BrushHeight),
                 BrushKind::Terrace => fields.push(F::BrushStep),
@@ -298,6 +316,16 @@ pub fn props(world: &World, entity: Entity) -> Vec<Prop> {
 /// What a layer of its kind shows.
 fn layer_fields(layer: &Layer) -> Vec<TerrainField> {
     let mut fields = vec![F::LayerName];
+    // Digging lays no heights to blend, weigh or mask: a trench has its shape, and a Dig layer its brush strokes.
+    match &layer.kind {
+        LayerKind::Dig { .. } => return fields,
+        LayerKind::Spline { dig: Some(_), .. } => {
+            fields.extend([F::Width, F::TrenchDig, F::TrenchDepth, F::TrenchBatter, F::StepHeight, F::StepWidth]);
+            fields.extend([F::Parapet, F::TrenchFront, F::TrenchSurface]);
+            return fields;
+        }
+        _ => {}
+    }
     // A sculpt layer adds what its brushes painted; how is all it has.
     if !matches!(layer.kind, LayerKind::Sculpt { .. }) {
         fields.push(F::Blend);
@@ -308,7 +336,8 @@ fn layer_fields(layer: &Layer) -> Vec<TerrainField> {
         LayerKind::Stamp { .. } => vec![F::Picture, F::Position, F::Rotation, F::StampSize, F::Height, F::Falloff],
         LayerKind::Noise { .. } => vec![F::Style, F::Scale, F::Height, F::Octaves, F::Seed],
         LayerKind::Sculpt { .. } => vec![],
-        LayerKind::Spline { .. } => vec![F::Width, F::Falloff],
+        LayerKind::Spline { .. } => vec![F::Width, F::Falloff, F::TrenchDig],
+        LayerKind::Dig { .. } => vec![],
         LayerKind::Terrace { .. } => vec![F::Step, F::Sharpness],
         LayerKind::Smooth { .. } => vec![F::Radius],
     });
@@ -354,6 +383,15 @@ pub fn label(field: TerrainField) -> &'static str {
         F::BrushHeight => "Height",
         F::BrushStep => "Step",
         F::BumpSize => "Bump size",
+        F::DigBares => "Bares",
+        F::TrenchDig => "Dig",
+        F::TrenchDepth => "Depth",
+        F::TrenchBatter => "Wall lean",
+        F::StepHeight => "Step height",
+        F::StepWidth => "Step width",
+        F::Parapet => "Parapet",
+        F::TrenchFront => "Front",
+        F::TrenchSurface => "Surface",
         F::SurfaceMaterial | F::NewSurface => "Material",
         F::TileSize => "Tile size",
         F::HeightBlend => "Height blend",
@@ -392,6 +430,7 @@ pub fn key(field: TerrainField) -> &'static str {
 pub fn unit(world: &World, entity: Entity, field: TerrainField) -> Option<&'static str> {
     match field {
         F::Size | F::Base | F::TextureSize | F::Detail | F::Height | F::Position | F::StampSize | F::Scale => Some("m"),
+        F::TrenchDepth | F::StepHeight | F::StepWidth | F::Parapet => Some("m"),
         F::Width | F::Step | F::Radius | F::Heights | F::BrushSize | F::BrushHeight | F::BrushStep | F::BumpSize => {
             Some("m")
         }
@@ -516,6 +555,7 @@ pub fn get(game: &Game, entity: Entity, field: TerrainField) -> Option<Value> {
         F::BrushHeight => Value::Number(brush.height),
         F::BrushStep => Value::Number(brush.step),
         F::BumpSize => Value::Number(brush.noise_size),
+        F::DigBares => surface_choice(game, entity, ui(world).bares)?,
         _ => match (field, layer()?.kind) {
             (F::Picture, LayerKind::Import { picture, .. } | LayerKind::Stamp { picture, .. }) => {
                 Value::Asset(path_of(game, picture.as_deref()))
@@ -541,9 +581,31 @@ pub fn get(game: &Game, entity: Entity, field: TerrainField) -> Option<Value> {
             (F::Step, LayerKind::Terrace { step, .. }) => Value::Number(step),
             (F::Sharpness, LayerKind::Terrace { sharpness, .. }) => Value::Number(sharpness),
             (F::Radius, LayerKind::Smooth { radius }) => Value::Number(radius),
+            (F::TrenchDig, LayerKind::Spline { dig, .. }) => Value::Toggle(dig.is_some()),
+            (F::TrenchDepth, LayerKind::Spline { dig: Some(trench), .. }) => Value::Number(trench.depth),
+            (F::TrenchBatter, LayerKind::Spline { dig: Some(trench), .. }) => Value::Number(trench.batter),
+            (F::StepHeight, LayerKind::Spline { dig: Some(trench), .. }) => Value::Number(trench.step_height),
+            (F::StepWidth, LayerKind::Spline { dig: Some(trench), .. }) => Value::Number(trench.step_width),
+            (F::Parapet, LayerKind::Spline { dig: Some(trench), .. }) => Value::Number(trench.parapet),
+            (F::TrenchFront, LayerKind::Spline { dig: Some(trench), .. }) => {
+                choice(if trench.front_left { 0 } else { 1 }, vec!["Left", "Right"])
+            }
+            (F::TrenchSurface, LayerKind::Spline { dig: Some(trench), .. }) => {
+                surface_choice(game, entity, trench.surface.map(usize::from))?
+            }
             _ => return None,
         },
     })
+}
+
+/// A choice of none or one of a terrain's surfaces, `picked` (its number)
+/// chosen.
+fn surface_choice(game: &Game, entity: Entity, picked: Option<usize>) -> Option<Value> {
+    let file = &game.engine.world.get::<TerrainAsset>(entity)?.file;
+    let mut names = vec!["None".to_string()];
+    names.extend((0..file.surfaces.len()).map(|at| surface_name(game, &file.surfaces[at], at)));
+    let at = picked.map_or(0, |picked| (picked + 1).min(names.len() - 1));
+    Some(Value::Choice(at, names))
 }
 
 fn number(value: &Value) -> Option<f32> {
@@ -591,6 +653,11 @@ pub fn set(game: &mut Game, entity: Entity, field: TerrainField, value: Value) -
         F::Base => {
             let Some(base) = number(&value) else { return false };
             return reshape(game, entity, |file| file.base = base);
+        }
+        F::DigBares => {
+            let Value::Choice(at, _) = value else { return false };
+            let bares = (at > 0).then(|| at - 1);
+            return std::mem::replace(&mut ui_mut(world).bares, bares) != bares;
         }
         F::Brush | F::BrushSize | F::Strength | F::BrushHeight | F::BrushStep | F::BumpSize => {
             let brush = &mut ui_mut(world).brush;
@@ -703,6 +770,28 @@ fn set_layer(layer: &mut Layer, field: TerrainField, value: &Value) {
         (F::Rotation, v, LayerKind::Stamp { rotation, .. }) => *rotation = number(v).unwrap_or(*rotation),
         (F::StampSize, v, LayerKind::Stamp { size, .. }) => *size = pair(v).map_or(*size, |s| s.map(|n| n.max(0.1))),
         (F::Falloff, v, LayerKind::Stamp { falloff, .. }) => *falloff = number(v).unwrap_or(*falloff).clamp(0.0, 1.0),
+        (F::TrenchDig, Value::Toggle(on), LayerKind::Spline { dig, .. }) => *dig = on.then(|| dig.unwrap_or_default()),
+        (F::TrenchDepth, v, LayerKind::Spline { dig: Some(trench), .. }) => {
+            trench.depth = number(v).unwrap_or(trench.depth).clamp(0.1, 20.0);
+        }
+        (F::TrenchBatter, v, LayerKind::Spline { dig: Some(trench), .. }) => {
+            trench.batter = number(v).unwrap_or(trench.batter).clamp(0.0, 2.0);
+        }
+        (F::StepHeight, v, LayerKind::Spline { dig: Some(trench), .. }) => {
+            trench.step_height = number(v).unwrap_or(trench.step_height).max(0.0);
+        }
+        (F::StepWidth, v, LayerKind::Spline { dig: Some(trench), .. }) => {
+            trench.step_width = number(v).unwrap_or(trench.step_width).max(0.0);
+        }
+        (F::Parapet, v, LayerKind::Spline { dig: Some(trench), .. }) => {
+            trench.parapet = number(v).unwrap_or(trench.parapet).clamp(0.0, 5.0);
+        }
+        (F::TrenchFront, Value::Choice(at, _), LayerKind::Spline { dig: Some(trench), .. }) => {
+            trench.front_left = *at == 0;
+        }
+        (F::TrenchSurface, Value::Choice(at, _), LayerKind::Spline { dig: Some(trench), .. }) => {
+            trench.surface = (*at > 0).then(|| (*at - 1).min(255) as u8);
+        }
         (F::Falloff, v, LayerKind::Spline { falloff, .. }) => *falloff = number(v).unwrap_or(*falloff).max(0.0),
         (F::Style, Value::Choice(at, _), LayerKind::Noise { style, .. }) => {
             *style = NoiseStyle::ALL[(*at).min(NoiseStyle::ALL.len() - 1)];
@@ -770,12 +859,18 @@ pub fn remake_with(
     dirty: &Dirty,
     compositor: &Compositor,
 ) -> bool {
-    let Some(previous) = game.engine.world.get::<Terrain>(entity).map(|terrain| terrain.heights.clone()) else {
+    let Some((previous, dug)) =
+        game.engine.world.get::<Terrain>(entity).map(|terrain| (terrain.heights.clone(), terrain.dug.clone()))
+    else {
         return false;
     };
     let heights = game.content.compose_terrain(&file, &rasters, Some(&previous), compositor, dirty);
+    // Then what the layers dig, kept as it was where they and the heights under it are.
+    let kept = dug.as_ref().map(|dug| (previous.as_ref(), dug));
+    let (heights, dug) = voxear_terrain::dig::redig(&file.layers, heights, kept);
     let world = &mut game.engine.world;
-    let changed = change(world, entity, |terrain: &mut Terrain| terrain.heights = Arc::new(heights))
+    let ground = (Arc::new(heights), dug);
+    let changed = change(world, entity, |terrain: &mut Terrain| (terrain.heights, terrain.dug) = ground)
         && change(world, entity, |asset: &mut TerrainAsset| (asset.file, asset.rasters) = (file, rasters));
     changed && reweigh(game, entity, dirty)
 }
@@ -791,6 +886,11 @@ pub fn reweigh(game: &mut Game, entity: Entity, dirty: &Dirty) -> bool {
     // And the grass, which grows on the surfaces.
     let ground = (terrain.heights.as_ref(), weights.as_ref());
     let grass = voxear_terrain::grass::grow(&asset.file, ground, &asset.rasters, terrain.grass.as_deref(), dirty);
+    // None where it is dug open.
+    let grass = match (grass, &terrain.dug) {
+        (Some(grass), Some(dug)) => Some(voxear_terrain::dig::clear_grass(&grass, &terrain.heights, dug, None)),
+        (grass, _) => grass,
+    };
     change(world, entity, |terrain: &mut Terrain| {
         terrain.weights = weights.map(Arc::new);
         terrain.grass = grass.map(Arc::new);
@@ -1193,7 +1293,8 @@ pub fn remove_surface(game: &mut Game, entity: Entity, at: usize) -> bool {
 }
 
 /// The kinds of layer Add offers, in its menu's order.
-pub const NEW_LAYERS: [&str; 7] = ["Stamp", "Noise", "Sculpt", "Spline", "Terrace", "Smooth", "Import"];
+pub const NEW_LAYERS: [&str; 9] =
+    ["Stamp", "Noise", "Sculpt", "Spline", "Trench", "Dig", "Terrace", "Smooth", "Import"];
 
 /// A new layer of the kind `NEW_LAYERS[choice]` names, to start from on a
 /// terrain as `file` says, numbering a sculpt layer's raster past `rasters`'.
@@ -1214,8 +1315,17 @@ pub fn new_layer(choice: usize, file: &TerrainFile, rasters: &Rasters) -> Layer 
                 points: vec![[size * 0.3, y, middle], [size * 0.7, y, middle]],
                 width: 8.0,
                 falloff: 4.0,
+                dig: None,
             }
         }
+        // A trench across the middle, its floor a metre wide.
+        "Trench" => LayerKind::Spline {
+            points: vec![[size * 0.4, file.base, middle], [size * 0.6, file.base, middle]],
+            width: 1.0,
+            falloff: 1.0,
+            dig: Some(voxear_terrain::dig::Trench::default()),
+        },
+        "Dig" => LayerKind::Dig { strokes: Vec::new() },
         "Terrace" => LayerKind::Terrace { step: 4.0, sharpness: 0.5 },
         "Smooth" => LayerKind::Smooth { radius: 2.0 },
         "Import" => LayerKind::Import { picture: None, height: 100.0 },
@@ -1231,7 +1341,11 @@ pub fn new_layer(choice: usize, file: &TerrainFile, rasters: &Rasters) -> Layer 
             }
         }
     };
-    Layer::new(kind)
+    let mut layer = Layer::new(kind);
+    if NEW_LAYERS.get(choice) == Some(&"Trench") {
+        layer.name = "Trench".into();
+    }
+    layer
 }
 
 /// Adds a layer of the kind `NEW_LAYERS[choice]` names on top, and picks it.
@@ -1269,6 +1383,23 @@ pub fn sculpt_layer(game: &mut Game, entity: Entity) -> Option<(usize, u32)> {
         LayerKind::Sculpt { raster } => Some((at, raster)),
         _ => None,
     }
+}
+
+/// The Dig layer the Dig and Fill brushes add to: the picked one, or the
+/// topmost, or a new one on top.
+pub fn dig_layer(game: &mut Game, entity: Entity) -> Option<usize> {
+    let world = &game.engine.world;
+    let file = &world.get::<TerrainAsset>(entity)?.file;
+    let digs = |at: usize| matches!(file.layers.get(at)?.kind, LayerKind::Dig { .. }).then_some(at);
+    let topmost = (0..file.layers.len()).rev().find_map(digs);
+    if let Some(found) = digs(ui(world).layer).or(topmost) {
+        ui_mut(&mut game.engine.world).layer = found;
+        return Some(found);
+    }
+    let dig = NEW_LAYERS.iter().position(|&kind| kind == "Dig").expect("Dig is offered");
+    add_layer(game, entity, dig);
+    let file = &game.engine.world.get::<TerrainAsset>(entity)?.file;
+    Some(file.layers.len() - 1)
 }
 
 /// The surface the Paint brush paints: the picked one, ready to paint with

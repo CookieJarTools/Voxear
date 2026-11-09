@@ -587,3 +587,67 @@ fn grass_is_added_from_the_mesh_picker_and_dug_up_in_the_scene_view_each_a_step_
     frame(&mut editor, &mut renderer);
     assert_eq!(density(&editor), 255, "the digging undone");
 }
+
+#[test]
+fn the_dig_brush_and_a_trench_layer_dig_into_the_ground_each_a_step_to_undo() {
+    let Some((_dir, mut renderer, mut editor, field)) = editor_with_a_terrain() else { return };
+    show_tool(&mut editor, &mut renderer, "Sculpt");
+    let brushes = first_with(&editor.ui, prop_rows(&editor.ui, "Brush")[0], "value-choice").expect("the brushes");
+    choose(&mut editor, &mut renderer, brushes, 7);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(row_text(&editor.ui, prop_rows(&editor.ui, "Brush")[0]), "Dig");
+    assert_eq!(prop_rows(&editor.ui, "Bares").len(), 1, "the surface it lays on what it bares");
+
+    // A click digs a ball the brush's size round where the pointer meets the ground: 8 m across by default.
+    let camera = editor.scene_camera().expect("the Scene view");
+    let [x, y, w, h] = camera.rect;
+    let point = [x + w / 2.0, y + h * 0.85];
+    let at =
+        voxear_editor::scene_tools::surface_at(&editor.game.engine.world, &renderer, &camera, point).expect("ground");
+    let local = (at.x + 256.0, at.z + 256.0);
+    stroke(&mut editor, &mut renderer, point, false);
+    shot(&mut renderer, "terrain-dig.png");
+    let floor = |editor: &voxear_editor::Editor, x: f32, z: f32| {
+        let terrain = editor.game.engine.world.get::<Terrain>(field).unwrap();
+        terrain.dug.as_ref().and_then(|dug| dug.surface_at(&terrain.heights, x, z)).map(|(h, _)| h)
+    };
+    let dug = floor(&editor, local.0, local.1).expect("dug ground under the brush");
+    assert!(dug < -5.0, "a pit under the brush: {dug}");
+    let layers = |editor: &voxear_editor::Editor| {
+        editor.game.engine.world.get::<TerrainAsset>(field).unwrap().file.layers.clone()
+    };
+    let one_stroke = |layer: &voxear_terrain::layers::Layer| {
+        matches!(&layer.kind, voxear_terrain::layers::LayerKind::Dig { strokes } if strokes.len() == 1)
+    };
+    assert!(
+        matches!(layers(&editor).as_slice(), [layer] if one_stroke(layer)),
+        "into a new Dig layer, a stroke: {:?}",
+        layers(&editor)
+    );
+    editor.undo(&mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(floor(&editor, local.0, local.1).is_none() && layers(&editor).is_empty(), "the dig undone");
+
+    // A Trench from Add Layer: across the middle, its floor 2 m down.
+    show_tool(&mut editor, &mut renderer, "Layers");
+    let add = first_with(&editor.ui, editor.ui.root(), "collection-add").expect("Add Layer");
+    click(&mut editor.ui, add);
+    frame(&mut editor, &mut renderer);
+    let trench = menu_item(&editor.ui, "Trench").expect("a Trench to add");
+    click(&mut editor.ui, trench);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    for label in ["Depth", "Wall lean", "Step height", "Step width", "Parapet", "Front", "Surface"] {
+        assert_eq!(prop_rows(&editor.ui, label).len(), 1, "the trench's {label}");
+    }
+    // Along x, its front on its left, +z: the floor at the back, the fire step at the front.
+    let bottom = floor(&editor, 256.0, 255.7).expect("dug along it");
+    assert!((bottom + 2.0).abs() < 0.2, "its floor 2 m down: {bottom}");
+    let step = floor(&editor, 256.0, 256.3).expect("dug along it");
+    assert!((step + 1.4).abs() < 0.2, "its fire step 0.6 m up: {step}");
+    assert_eq!(height(&editor, field, 220.0, 300.0), 0.0, "and the ground beside it as it was");
+    shot(&mut renderer, "terrain-trench.png");
+    editor.undo(&mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(floor(&editor, 256.0, 255.7).is_none(), "the trench undone");
+}

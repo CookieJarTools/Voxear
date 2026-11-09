@@ -367,6 +367,9 @@ pub struct LoadedTerrain {
     pub weights: Option<Arc<voxear_terrain::surfaces::Weights>>,
     pub grass: Option<Arc<voxear_terrain::grass::GrassMap>>,
     pub rasters: Arc<voxear_terrain::raster::Rasters>,
+    /// The ground its layers dig (see `voxear_terrain::dig`), its holes in
+    /// `heights`; none where none dig.
+    pub dug: Option<Arc<voxear_terrain::dig::Excavation>>,
 }
 
 /// What content has loaded, beside what the GPU holds (see
@@ -1145,12 +1148,19 @@ impl Content {
                 voxear_terrain::grass::grow(&file, (&heights, weights.as_ref()), &rasters, None, &all)
             }
         };
+        // Then what its layers dig, into the ground they all make, and no grass where they opened it.
+        let (heights, dug) = voxear_terrain::dig::redig(&file.layers, heights, None);
+        let grass = match (grass, &dug) {
+            (Some(grass), Some(dug)) => Some(voxear_terrain::dig::clear_grass(&grass, &heights, dug, None)),
+            (grass, _) => grass,
+        };
         Ok(LoadedTerrain {
             heights: Arc::new(heights),
             weights: weights.map(Arc::new),
             grass: grass.map(Arc::new),
             file,
             rasters: Arc::new(rasters),
+            dug,
         })
     }
 
@@ -1240,8 +1250,13 @@ impl Content {
             (Some(a), Some(b)) => Arc::ptr_eq(a, b),
             (a, b) => a.is_none() && b.is_none(),
         };
+        let same_dug = |kept: &LoadedTerrain| match (&kept.dug, &terrain.dug) {
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            (a, b) => a.is_none() && b.is_none(),
+        };
         let same = |kept: &LoadedTerrain| {
             kept.file == *file
+                && same_dug(kept)
                 && Arc::ptr_eq(&kept.heights, heights)
                 && same_weights(kept)
                 && same_grass(kept)
@@ -1256,6 +1271,7 @@ impl Content {
             weights: weights.clone(),
             grass: grass.clone(),
             rasters: rasters.clone(),
+            dug: terrain.dug.clone(),
         };
         self.terrains.insert(guid, Some(Arc::new(loaded)));
         self.unsaved_terrains.insert(guid);

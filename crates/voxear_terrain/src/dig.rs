@@ -28,7 +28,9 @@ use std::{
 use voxear_core::math::Vec3;
 
 use crate::{
+    grass::{GrassMap, GrassTile},
     heights::{HOLE_WORDS, HeightTile, Heightmap, TILE_QUADS, TILE_SAMPLES},
+    layers::Area,
     ray::GroundHit,
 };
 
@@ -65,21 +67,167 @@ fn corner(x: usize, y: usize, z: usize) -> usize {
     (y * CORNERS + z) * CORNERS + x
 }
 
-/// A terrain's dug ground: every chunk of every dug column, in order.
-#[derive(Clone, Debug, Default, PartialEq)]
+/// A terrain's dug ground: every chunk of every dug column, in order, and a
+/// hash of the layers that dug it (see [`redig`]), which is no part of the
+/// ground.
+#[derive(Clone, Debug, Default)]
 pub struct Excavation {
     chunks: BTreeMap<ChunkKey, Arc<DugChunk>>,
+    pub dug_by: u64,
 }
 
-/// A shape that digs or fills: a ball, or a capsule from one point to
-/// another, in metres from the terrain's corner.
+impl PartialEq for Excavation {
+    fn eq(&self, other: &Self) -> bool {
+        self.chunks.len() == other.chunks.len()
+            && self.chunks.iter().zip(&other.chunks).all(|((ka, a), (kb, b))| ka == kb && (Arc::ptr_eq(a, b) || a == b))
+    }
+}
+
+/// A shape that digs or fills: a ball, a capsule from one point to
+/// another, or a length of trench from one point on the ground to another,
+/// in metres from the terrain's corner.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Shape {
     Ball { at: [f32; 3], radius: f32 },
     Capsule { from: [f32; 3], to: [f32; 3], radius: f32 },
+    Trench { from: [f32; 3], to: [f32; 3], floor: f32, profile: Trench },
+}
+
+/// A trench's shape across it, below the line it is dug along: its floor
+/// `depth` metres down, its walls leaning back `batter` metres for each
+/// metre up, a fire step along its front wall `step_height` metres above
+/// the floor and `step_width` metres deep (none at 0), and a parapet of the
+/// earth dug out heaped along its front, `parapet` metres high (none at 0).
+/// Its front is on the left of the line going from its first point, or the
+/// right; the surface `surface` (its number) is laid on what it bares.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct Trench {
+    pub depth: f32,
+    pub batter: f32,
+    pub step_height: f32,
+    pub step_width: f32,
+    pub parapet: f32,
+    pub front_left: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub surface: Option<u8>,
+}
+
+impl Default for Trench {
+    fn default() -> Self {
+        Self {
+            depth: 2.0,
+            batter: 0.1,
+            step_height: 0.6,
+            step_width: 0.5,
+            parapet: 0.5,
+            front_left: true,
+            surface: None,
+        }
+    }
+}
+
+/// One stroke of the Dig or Fill brush: a ball `[x, y, z]` in metres from
+/// the terrain's corner, `radius` round, filling or digging, and for a dig
+/// the surface laid on what it bares (its number, or none).
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct DigStroke {
+    pub at: [f32; 3],
+    pub radius: f32,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub fill: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub surface: Option<u8>,
+}
+
+/// How far `p` is outside a convex polygon `corners`, wound
+/// counter-clockwise; less than nothing inside.
+fn polygon_distance(p: [f32; 2], corners: &[[f32; 2]]) -> f32 {
+    let mut nearest = f32::MAX;
+    let mut inside = true;
+    for (i, a) in corners.iter().enumerate() {
+        let b = corners[(i + 1) % corners.len()];
+        let (edge, to) = ([b[0] - a[0], b[1] - a[1]], [p[0] - a[0], p[1] - a[1]]);
+        let length2 = edge[0] * edge[0] + edge[1] * edge[1];
+        let t = if length2 > 0.0 { ((to[0] * edge[0] + to[1] * edge[1]) / length2).clamp(0.0, 1.0) } else { 0.0 };
+        let (dx, dy) = (to[0] - edge[0] * t, to[1] - edge[1] * t);
+        nearest = nearest.min((dx * dx + dy * dy).sqrt());
+        // Counter-clockwise: inside is to the left of every edge.
+        inside &= edge[0] * to[1] - edge[1] * to[0] >= 0.0;
+    }
+    if inside { -nearest } else { nearest }
+}
+
+impl Trench {
+    /// How far `(across, up)` is outside the ground it digs away, across
+    /// from the line towards the front and up from it.
+    fn distance(&self, across: f32, up: f32, floor: f32) -> f32 {
+        // Its cut, open well above the line: full width above the fire step, narrowed on the front below it.
+        let (half, top) = (floor * 0.5, 6.0);
+        let lean = |v: f32| self.batter * (v + self.depth);
+        let step = -self.depth + self.step_height.min(self.depth);
+        let back = |v: f32| -(half + lean(v));
+        let upper = [[back(step), step], [half + lean(step), step], [half + lean(top), top], [back(top), top]];
+        let narrow = (half - self.step_width).max(-half * 0.5);
+        let floor_at = -self.depth;
+        let lower = [
+            [back(floor_at), floor_at],
+            [narrow + lean(floor_at), floor_at],
+            [narrow + lean(step), step],
+            [back(step), step],
+        ];
+        let cut = polygon_distance([across, up], &upper);
+        if self.step_width > 0.0 && self.step_height > 0.0 {
+            cut.min(polygon_distance([across, up], &lower))
+        } else {
+            let whole = [
+                [back(floor_at), floor_at],
+                [half + lean(floor_at), floor_at],
+                [half + lean(top), top],
+                [back(top), top],
+            ];
+            polygon_distance([across, up], &whole)
+        }
+    }
 }
 
 impl Shape {
+    /// The pieces a trench along `points` (in metres from the terrain's
+    /// corner) is dug as: a length of trench every two metres or less along
+    /// it, each from the ground to the ground, so it follows the ground
+    /// between its points; and first, where it has one, its parapet, heaped
+    /// along its front as a filled capsule.
+    pub fn trench(heights: &Heightmap, points: &[[f32; 3]], floor: f32, profile: Trench) -> Vec<(Shape, Carve)> {
+        let mut along: Vec<[f32; 3]> = Vec::new();
+        for pair in points.windows(2) {
+            let (a, b) = (Vec3::from(pair[0]), Vec3::from(pair[1]));
+            let pieces = ((b - a).length() / 2.0).ceil().max(1.0) as usize;
+            for i in 0..=pieces {
+                if i == 0 && !along.is_empty() {
+                    continue;
+                }
+                let p = a + (b - a) * (i as f32 / pieces as f32);
+                along.push([p.x, heights.height_at(p.x, p.z), p.z]);
+            }
+        }
+        let mut shapes = Vec::new();
+        if profile.parapet > 0.0 {
+            for pair in along.windows(2) {
+                let (a, b) = (Vec3::from(pair[0]), Vec3::from(pair[1]));
+                let across = across_of(a, b) * if profile.front_left { 1.0 } else { -1.0 };
+                let out = floor * 0.5 + profile.batter * profile.depth + profile.parapet * 1.2;
+                let radius = profile.parapet * 1.4;
+                let lift = Vec3::new(0.0, profile.parapet - radius, 0.0);
+                let (from, to) = (a + across * out + lift, b + across * out + lift);
+                shapes.push((Shape::Capsule { from: from.to_array(), to: to.to_array(), radius }, Carve::Fill));
+            }
+        }
+        for pair in along.windows(2) {
+            shapes.push((Shape::Trench { from: pair[0], to: pair[1], floor, profile }, Carve::Dig));
+        }
+        shapes
+    }
+
     /// How far `p` is outside it, in metres; less than nothing inside.
     pub fn distance(&self, p: Vec3) -> f32 {
         match *self {
@@ -94,6 +242,27 @@ impl Shape {
                 };
                 p.distance(a + along * t) - radius
             }
+            Shape::Trench { from, to, floor, profile } => {
+                // Across and up from the line where `p` is beside it; past its ends, rounded off.
+                let (a, b) = (Vec3::from(from), Vec3::from(to));
+                let flat = Vec3::new(b.x - a.x, 0.0, b.z - a.z);
+                let length = flat.length();
+                let (direction, t) = match length > 1e-6 {
+                    true => (flat / length, (p - a).dot(flat / length) / length),
+                    false => (Vec3::X, 0.0),
+                };
+                let base = a + (b - a) * t.clamp(0.0, 1.0);
+                let across = across_of(a, a + direction) * if profile.front_left { 1.0 } else { -1.0 };
+                let section = profile.distance((p - base).dot(across), p.y - base.y, floor);
+                let past = (t.max(1.0) - 1.0 - t.min(0.0)) * length;
+                if past <= 0.0 {
+                    section
+                } else if section > 0.0 {
+                    (section * section + past * past).sqrt()
+                } else {
+                    past.max(section)
+                }
+            }
         }
     }
 
@@ -105,6 +274,11 @@ impl Shape {
                 let (a, b) = (Vec3::from(from), Vec3::from(to));
                 (a.min(b) - radius, a.max(b) + radius)
             }
+            Shape::Trench { from, to, floor, profile } => {
+                let (a, b) = (Vec3::from(from), Vec3::from(to));
+                let wide = floor * 0.5 + profile.batter * (profile.depth + 6.0);
+                (a.min(b) - Vec3::new(wide, profile.depth, wide), a.max(b) + Vec3::new(wide, 6.0, wide))
+            }
         }
     }
 
@@ -114,6 +288,19 @@ impl Shape {
         let numbers: Vec<f32> = match *self {
             Shape::Ball { at, radius } => vec![at[0], at[1], at[2], radius],
             Shape::Capsule { from, to, radius } => vec![from[0], from[1], from[2], to[0], to[1], to[2], radius],
+            Shape::Trench { from, to, floor, profile } => {
+                vec![
+                    from[0],
+                    from[1],
+                    from[2],
+                    to[0],
+                    to[1],
+                    to[2],
+                    profile.batter,
+                    profile.step_height,
+                    floor.min(profile.depth),
+                ]
+            }
         };
         numbers.iter().all(|v| v.is_finite()) && numbers.last().is_some_and(|r| *r > 0.0)
     }
@@ -155,6 +342,155 @@ impl Grid {
     }
 }
 
+/// The way across a line from `a` to `b`, level, to its left going along.
+fn across_of(a: Vec3, b: Vec3) -> Vec3 {
+    Vec3::new(-(b.z - a.z), 0.0, b.x - a.x).try_normalize().unwrap_or(Vec3::Z)
+}
+
+/// The ground the layers `layers` dig into `heights`: each Dig layer's
+/// strokes and each Spline dug as a trench, in the layers' order, over the
+/// ground every layer makes. The heights with holes for the dug columns,
+/// and the dug ground, none where nothing is dug.
+pub fn dig_layers(layers: &[crate::layers::Layer], heights: &Heightmap) -> (Option<Heightmap>, Option<Excavation>) {
+    use crate::layers::LayerKind;
+    let mut dug = Excavation::default();
+    let mut holed: Option<Heightmap> = None;
+    for layer in layers.iter().filter(|layer| layer.enabled) {
+        let carves: Vec<(Shape, Carve, Option<u8>)> = match &layer.kind {
+            LayerKind::Dig { strokes } => strokes
+                .iter()
+                .map(|stroke| {
+                    let carve = if stroke.fill { Carve::Fill } else { Carve::Dig };
+                    (Shape::Ball { at: stroke.at, radius: stroke.radius }, carve, stroke.surface)
+                })
+                .collect(),
+            LayerKind::Spline { points, width, dig: Some(trench), .. } => {
+                let shapes = Shape::trench(holed.as_ref().unwrap_or(heights), points, *width, *trench);
+                shapes.into_iter().map(|(shape, carve)| (shape, carve, trench.surface)).collect()
+            }
+            _ => continue,
+        };
+        for (shape, carve, surface) in carves {
+            let now = holed.as_ref().unwrap_or(heights);
+            if let Some((Some(cut), _)) = dug.carve(now, &shape, carve, surface) {
+                holed = Some(cut);
+            }
+        }
+    }
+    (holed, (!dug.is_empty()).then_some(dug))
+}
+
+/// A hash of the layers that dig: what [`dig_layers`] digs, in order.
+pub fn digging_hash(layers: &[crate::layers::Layer]) -> u64 {
+    let mut text = String::new();
+    for layer in layers.iter().filter(|layer| layer.enabled && layer.kind.digs()) {
+        text.push_str(&toml::to_string(layer).unwrap_or_default());
+        text.push('\n');
+    }
+    crate::layers::stable_hash(text.as_bytes())
+}
+
+/// The ground `layers` dig into `heights`, as [`dig_layers`], but keeping
+/// `previous`'s dug ground (and the holes for it, already in `heights`)
+/// where the same layers dug it into the same heights: none of the tiles
+/// its dug columns are in made again since (`heights` holding the same
+/// tiles as `previous_heights` there). The heights, and the dug ground.
+pub fn redig(
+    layers: &[crate::layers::Layer],
+    heights: Heightmap,
+    previous: Option<(&Heightmap, &Arc<Excavation>)>,
+) -> (Heightmap, Option<Arc<Excavation>>) {
+    let hash = digging_hash(layers);
+    if !layers.iter().any(|layer| layer.enabled && layer.kind.digs()) {
+        return (heights, None);
+    }
+    let quads = TILE_QUADS as i32 / CHUNK_SAMPLES as i32;
+    if let Some((was, dug)) = previous
+        && dug.dug_by == hash
+        && dug.columns().iter().all(|&(x, z)| {
+            let (tx, tz) = ((x / quads) as u32, (z / quads) as u32);
+            Arc::ptr_eq(heights.tile(tx, tz), was.tile(tx, tz))
+        })
+    {
+        return (heights, Some(dug.clone()));
+    }
+    let (holed, dug) = dig_layers(layers, &heights);
+    let dug = dug.map(|mut dug| {
+        dug.dug_by = hash;
+        Arc::new(dug)
+    });
+    (holed.unwrap_or(heights), dug)
+}
+
+/// `heights` without the holes digging cut, as a terrain's `.heights` file
+/// keeps them: each tile with dug columns in it holed only where its
+/// terrain's hole raster says (`painted`, a tile's bits, or none).
+pub fn undug(heights: &Heightmap, dug: &Excavation, painted: impl Fn(u32, u32) -> Option<Box<[u32]>>) -> Heightmap {
+    let quads = TILE_QUADS as i32 / CHUNK_SAMPLES as i32;
+    let mut tiles: Vec<(u32, u32)> =
+        dug.columns().iter().map(|&(x, z)| ((x / quads) as u32, (z / quads) as u32)).collect();
+    tiles.sort_unstable();
+    tiles.dedup();
+    let changed = tiles.into_iter().map(|(tx, tz)| {
+        let tile = heights.tile(tx, tz);
+        (tx, tz, HeightTile::from_samples(tile.samples().to_vec()).with_holes(painted(tx, tz)))
+    });
+    heights.with_tiles(changed.collect::<Vec<_>>())
+}
+
+/// `grass` with none growing where digging opened the ground under it:
+/// where the ground just under the heights' surface is air now. Over `area`
+/// (metres from the terrain's corner, `[x0, z0, x1, z1]`), or every dug
+/// column with none.
+pub fn clear_grass(grass: &GrassMap, heights: &Heightmap, dug: &Excavation, area: Option<Area>) -> GrassMap {
+    let column = Grid::of(heights).chunk();
+    let area = area.unwrap_or_else(|| {
+        let columns = dug.columns();
+        let (mut x0, mut z0, mut x1, mut z1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+        for (x, z) in columns {
+            (x0, z0) = (x0.min(x as f32 * column), z0.min(z as f32 * column));
+            (x1, z1) = (x1.max((x + 1) as f32 * column), z1.max((z + 1) as f32 * column));
+        }
+        [x0, z0, x1, z1]
+    });
+    if area[0] > area[2] {
+        return grass.clone();
+    }
+    let spacing = heights.spacing();
+    let words = grass.words();
+    let [qx, qz] = heights.quads().map(i64::from);
+    let first = |v: f32, most: i64| ((v / spacing).floor() as i64).clamp(0, most);
+    let last = |v: f32, most: i64| ((v / spacing).ceil() as i64).clamp(0, most);
+    let (x0, z0, x1, z1) = (first(area[0], qx), first(area[1], qz), last(area[2], qx), last(area[3], qz));
+    let mut tiles = grass.tiles().to_vec();
+    let (tiles_x, tiles_z) = (i64::from(heights.tiles_x()), i64::from(heights.tiles_z()));
+    let quads = i64::from(TILE_QUADS);
+    for z in z0..=z1 {
+        for x in x0..=x1 {
+            let (px, pz) = (x as f32 * spacing, z as f32 * spacing);
+            let under = Vec3::new(px, heights.sample(x, z) - spacing * 0.25, pz);
+            if dug.density_at(heights, under) > 0.0 {
+                continue;
+            }
+            // In every tile holding the sample: those either side of a tile's edge share it.
+            for tz in [z / quads - 1, z / quads].into_iter().filter(|t| (0..tiles_z).contains(t)) {
+                for tx in [x / quads - 1, x / quads].into_iter().filter(|t| (0..tiles_x).contains(t)) {
+                    let (ix, iz) = (x - tx * quads, z - tz * quads);
+                    if !(0..=quads).contains(&ix) || !(0..=quads).contains(&iz) {
+                        continue;
+                    }
+                    let index = (tz * tiles_x + tx) as usize;
+                    let mut samples = tiles[index].samples().to_vec();
+                    let at = (iz as u32 * TILE_SAMPLES + ix as u32) as usize * words;
+                    samples[at..at + words].iter_mut().for_each(|word| *word = 0);
+                    tiles[index] = Arc::new(GrassTile::from_samples(samples));
+                }
+            }
+        }
+    }
+    GrassMap::from_tiles(heights.tiles_x(), heights.tiles_z(), words, tiles)
+}
+
 /// The ground's density at `p` as the heights have it: how far below the
 /// ground's height there `p` is.
 fn natural(heights: &Heightmap, p: Vec3) -> f32 {
@@ -179,7 +515,7 @@ impl Excavation {
     pub fn with_chunk(&self, key: ChunkKey, chunk: DugChunk) -> Self {
         let mut chunks = self.chunks.clone();
         chunks.insert(key, Arc::new(chunk));
-        Self { chunks }
+        Self { chunks, dug_by: self.dug_by }
     }
 
     /// Whether the column of chunks at `(x, z)` is dug.
@@ -713,6 +1049,64 @@ mod tests {
         assert!(hit.point.x > 21.0 && hit.point.x < 22.0 && hit.normal.x < -0.5, "{hit:?}");
         // Off the dug columns, nothing.
         assert!(dug.surface_at(&heights, 2.0, 2.0).is_none());
+    }
+
+    #[test]
+    fn a_trench_along_a_spline_has_its_floor_fire_step_and_parapet() {
+        use crate::layers::{Layer, LayerKind};
+        let heights = Heightmap::flat(1, 1, 0.5, 0.0);
+        // A trench along z, its front on the left going along, which is -x: floor 1 m wide, 2 m down.
+        let spline = LayerKind::Spline {
+            points: vec![[64.0, 0.0, 40.0], [64.0, 0.0, 90.0]],
+            width: 1.0,
+            falloff: 1.0,
+            dig: Some(Trench::default()),
+        };
+        let (holed, dug) = dig_layers(&[Layer::new(spline)], &heights);
+        let (holed, dug) = (holed.expect("cut"), dug.expect("dug"));
+        assert!(holed.is_hole(128, 130));
+        let floor = |x: f32| dug.surface_at(&heights, x, 64.0).map(|(h, _)| h);
+        let at = |x: f32| floor(x).unwrap_or(f32::NAN);
+        assert!((at(64.3) + 2.0).abs() < 0.15, "its floor 2 m down at the back: {}", at(64.3));
+        assert!((at(63.75) + 1.4).abs() < 0.15, "the fire step 0.6 m up at the front: {}", at(63.75));
+        // Heaped 1.3 m out in front of the line, beyond the cut's lip at 63.3 m.
+        let parapet = (0..20).map(|i| at(63.2 - i as f32 * 0.1)).fold(f32::MIN, f32::max);
+        assert!((0.3..0.8).contains(&parapet), "the parapet heaped up in front: {parapet}");
+        assert!(at(66.5).abs() < 0.05, "and the ground behind as it was: {}", at(66.5));
+    }
+
+    #[test]
+    fn a_dig_layers_strokes_read_back_and_dig_as_they_were_made() {
+        use crate::layers::{Layer, LayerKind};
+        let heights = field();
+        let ground = heights.height_at(30.0, 30.0);
+        let strokes = vec![
+            DigStroke { at: [30.0, ground, 30.0], radius: 1.5, fill: false, surface: Some(1) },
+            DigStroke { at: [31.0, ground - 0.5, 30.0], radius: 0.8, fill: true, surface: None },
+        ];
+        let strokes_kept = strokes.clone();
+        let layer = Layer::new(LayerKind::Dig { strokes: strokes.clone() });
+        let text = toml::to_string(&layer).unwrap();
+        assert_eq!(toml::from_str::<Layer>(&text).unwrap(), layer);
+        let (_, by_layer) = dig_layers(&[layer], &heights);
+        let mut by_hand = Excavation::default();
+        for stroke in strokes {
+            let carve = if stroke.fill { Carve::Fill } else { Carve::Dig };
+            by_hand.carve(&heights, &Shape::Ball { at: stroke.at, radius: stroke.radius }, carve, stroke.surface);
+        }
+        assert_eq!(by_layer, Some(by_hand));
+        // Kept in a file without the holes it cut, which digging cuts again as it loads.
+        let (holed, Some(dug)) = dig_layers(&[Layer::new(LayerKind::Dig { strokes: vec![strokes_kept[0]] })], &heights)
+        else {
+            panic!("dug")
+        };
+        let holed = holed.expect("cut");
+        assert!(holed.has_holes());
+        assert!(!undug(&holed, &dug, |_, _| None).has_holes(), "none left");
+        // Digging lays no heights, so the heights' hash ignores it.
+        let plain = crate::layers::hash_layers(0.0, &[]);
+        let dug = Layer::new(LayerKind::Dig { strokes: Vec::new() });
+        assert_eq!(crate::layers::hash_layers(0.0, &[dug]), plain);
     }
 
     #[test]

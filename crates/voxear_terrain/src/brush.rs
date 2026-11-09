@@ -35,10 +35,16 @@ pub enum BrushKind {
     /// way into a cave or a building below, where nothing is drawn and
     /// nothing stands.
     Holes,
+    /// Digs the ground away under the brush, up and down too, into a Dig
+    /// layer (see `dig`), or fills it back held inverted (Shift).
+    Dig,
+    /// Heaps ground up under the brush into a Dig layer, or digs it away
+    /// held inverted.
+    Fill,
 }
 
 impl BrushKind {
-    pub const ALL: [BrushKind; 7] = [
+    pub const ALL: [BrushKind; 9] = [
         BrushKind::Raise,
         BrushKind::Smooth,
         BrushKind::Flatten,
@@ -46,6 +52,8 @@ impl BrushKind {
         BrushKind::Terrace,
         BrushKind::Noise,
         BrushKind::Holes,
+        BrushKind::Dig,
+        BrushKind::Fill,
     ];
 
     pub fn name(self) -> &'static str {
@@ -57,13 +65,21 @@ impl BrushKind {
             BrushKind::Terrace => "Terrace",
             BrushKind::Noise => "Noise",
             BrushKind::Holes => "Holes",
+            BrushKind::Dig => "Dig",
+            BrushKind::Fill => "Fill",
         }
     }
 
     /// Whether it paints into a Sculpt layer: Holes cuts the terrain's own
-    /// raster of holes, whatever layer is picked.
+    /// raster of holes, whatever layer is picked, and Dig and Fill go in a
+    /// Dig layer.
     pub fn sculpts(self) -> bool {
-        self != BrushKind::Holes
+        !matches!(self, BrushKind::Holes | BrushKind::Dig | BrushKind::Fill)
+    }
+
+    /// Whether it digs or fills, into a Dig layer.
+    pub fn digs(self) -> bool {
+        matches!(self, BrushKind::Dig | BrushKind::Fill)
     }
 }
 
@@ -167,7 +183,7 @@ pub fn dab(
                     way * bump * strength * falloff * amount * RAISE_SPEED * 0.5
                 }
                 // Cut by `cut`, into the raster of holes.
-                BrushKind::Holes => 0.0,
+                BrushKind::Holes | BrushKind::Dig | BrushKind::Fill => 0.0,
             };
             if change != 0.0 {
                 add(rasters, raster, x, z, change);
@@ -243,6 +259,7 @@ mod tests {
             points: vec![[0.0, 0.0, 256.0], [512.0, 20.0, 256.0]],
             width: 2000.0,
             falloff: 1.0,
+            dig: None,
         });
         TerrainFile {
             size: 512.0,

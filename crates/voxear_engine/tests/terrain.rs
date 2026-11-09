@@ -182,3 +182,34 @@ fn surfaces_and_holes_are_made_from_the_file_and_shares_kept_beside_the_heights_
     let game = start(&dir);
     assert_eq!(voxear_terrain::ground_at(&game.engine.world, 0.0, 0.0).unwrap().surface, 0);
 }
+
+#[test]
+fn a_trench_in_a_terrains_layers_is_dug_as_it_loads() {
+    use voxear_terrain::{
+        dig::Trench,
+        layers::{Layer, LayerKind},
+    };
+    let dir = project();
+    // A trench across the field along z at x = 64 from its corner, its floor 2 m down.
+    let trench = LayerKind::Spline {
+        points: vec![[64.0, 0.0, 20.0], [64.0, 0.0, 100.0]],
+        width: 1.0,
+        falloff: 1.0,
+        dig: Some(Trench { step_width: 0.0, parapet: 0.0, ..Trench::default() }),
+    };
+    let file = TerrainFile { size: 128.0, resolution: 257, layers: vec![Layer::new(trench)], ..TerrainFile::default() };
+    std::fs::write(dir.path().join("Terrains/Field.terrain"), file.to_text()).unwrap();
+    let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
+    game.start(None).unwrap();
+    let world = &game.engine.world;
+    let field = world.query_ref::<(voxear_ecs::Entity, &TerrainSource)>().into_iter().next().expect("the field").0;
+    let terrain = world.get::<Terrain>(field).expect("its ground");
+    assert!(terrain.dug.is_some(), "dug as it loads");
+    // Its corner at (-64, 2, -64) and the ground rising 0.1 m a metre: the trench at x = 0 in the world, where
+    // the ground is 8.4 m up, its floor 2 m under that.
+    let floor = voxear_terrain::ground_at(world, 0.0, 0.0).expect("its floor").height;
+    assert!((floor - 6.4).abs() < 0.2, "a trench 2 m deep: its floor at {floor}");
+    let beside = voxear_terrain::ground_at(world, 10.0, 0.0).expect("ground beside it").height;
+    assert!((beside - 9.4).abs() < 0.01, "and the ground beside it as it was: {beside}");
+
+}

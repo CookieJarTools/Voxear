@@ -251,45 +251,6 @@ const RIM_REACH: f32 = 1.4;
 const RIM_MOUNDS: usize = 12;
 const EXPLOSION_REACH: f32 = 1.3;
 
-/// `grass` with none growing in `area` (metres from the terrain's corner,
-/// `[x0, z0, x1, z1]`) where digging opened the ground under it: where the
-/// ground just under the heights' surface is air now.
-fn cleared_where_opened(grass: &GrassMap, heights: &Heightmap, dug: &crate::dig::Excavation, area: Area) -> GrassMap {
-    let spacing = heights.spacing();
-    let words = grass.words();
-    let [qx, qz] = heights.quads().map(i64::from);
-    let first = |v: f32, most: i64| ((v / spacing).floor() as i64).clamp(0, most);
-    let last = |v: f32, most: i64| ((v / spacing).ceil() as i64).clamp(0, most);
-    let (x0, z0, x1, z1) = (first(area[0], qx), first(area[1], qz), last(area[2], qx), last(area[3], qz));
-    let mut tiles = grass.tiles().to_vec();
-    let (tiles_x, tiles_z) = (i64::from(heights.tiles_x()), i64::from(heights.tiles_z()));
-    let quads = i64::from(TILE_QUADS);
-    for z in z0..=z1 {
-        for x in x0..=x1 {
-            let (px, pz) = (x as f32 * spacing, z as f32 * spacing);
-            let under = voxear_core::math::Vec3::new(px, heights.sample(x, z) - spacing * 0.25, pz);
-            if dug.density_at(heights, under) > 0.0 {
-                continue;
-            }
-            // In every tile holding the sample: those either side of a tile's edge share it.
-            for tz in [z / quads - 1, z / quads].into_iter().filter(|t| (0..tiles_z).contains(t)) {
-                for tx in [x / quads - 1, x / quads].into_iter().filter(|t| (0..tiles_x).contains(t)) {
-                    let (ix, iz) = (x - tx * quads, z - tz * quads);
-                    if !(0..=quads).contains(&ix) || !(0..=quads).contains(&iz) {
-                        continue;
-                    }
-                    let index = (tz * tiles_x + tx) as usize;
-                    let mut samples = tiles[index].samples().to_vec();
-                    let at = (iz as u32 * TILE_SAMPLES + ix as u32) as usize * words;
-                    samples[at..at + words].iter_mut().for_each(|word| *word = 0);
-                    tiles[index] = Arc::new(GrassTile::from_samples(samples));
-                }
-            }
-        }
-    }
-    GrassMap::from_tiles(heights.tiles_x(), heights.tiles_z(), words, tiles)
-}
-
 /// How a crater stands at `r`, its distance from the middle over its
 /// radius: a bowl `depth` deep and a rim a fifth of that, peaking at its
 /// edge. Smoothsteps alone, so the same on every machine.
@@ -384,7 +345,8 @@ pub fn apply(ground: &mut Terrain, edit: &Edit) -> Option<Area> {
             area = Some([x0.min(low.x), z0.min(low.z), x1.max(high.x), z1.max(high.z)]);
         }
         let area = area?;
-        let opened = |grass: &Arc<GrassMap>| Arc::new(cleared_where_opened(grass, &ground.heights, &dug, area));
+        let opened =
+            |grass: &Arc<GrassMap>| Arc::new(crate::dig::clear_grass(grass, &ground.heights, &dug, Some(area)));
         ground.grass = ground.grass.as_ref().map(opened);
         ground.dug = Some(Arc::new(dug));
         return Some(area);

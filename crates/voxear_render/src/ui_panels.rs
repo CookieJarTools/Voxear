@@ -198,28 +198,35 @@ pub fn panels(world: &World, eye: Vec3) -> Vec<(Entity, PanelRect, UiPanel)> {
 }
 
 /// A panel's UI, laid out by the engine, for its texture: `size` is the
-/// texture's size in pixels, which the frame's quads are laid out in.
+/// texture's size in pixels, which the frame's quads are laid out in, and
+/// `drawn` how much of it the UI covers. The texture's whole pixels may
+/// reach a little past its UI, which is drawn at the panel's own shape.
 pub struct UiPanelFrame<'a> {
     pub entity: Entity,
     pub frame: &'a UiFrame,
     pub size: [u32; 2],
+    pub drawn: [f32; 2],
 }
 
 /// One panel's UI on the GPU: its quads and glyph atlas, the size of its
-/// texture, and whether its texture needs drawing again.
+/// texture and how much of it the UI covers, and whether its texture needs
+/// drawing again.
 #[derive(Default)]
 struct PanelGpu {
     layer: Layer,
     size: [u32; 2],
+    drawn: [f32; 2],
     stale: bool,
 }
 
-/// This frame's texture for a panel, for the views to draw it with.
+/// This frame's texture for a panel, for the views to draw it with, and how
+/// far it reaches past the panel, across and down, in panels.
 #[derive(Clone, Copy)]
 pub(crate) struct PanelTexture {
     pub entity: Entity,
     pub image: ImageId,
     pub texture: TextureId,
+    pub reach: [f32; 2],
 }
 
 /// Every panel's UI, kept until the engine hands over the next, and how
@@ -267,6 +274,7 @@ impl UiPanels {
                 || atlas.is_some_and(|version| version != panel.layer.version);
             panel.stale |= changed;
             panel.size = frame.size;
+            panel.drawn = frame.drawn;
             panel.layer.set(gpu, bindless, frame.frame, MAX_UI_QUADS as usize / 2)?;
         }
         Ok(())
@@ -312,7 +320,8 @@ impl UiPanels {
             let desc = ImageDesc::new(width, height, PANEL_FORMAT, usage).with_mips();
             let image = fg.history_image(gpu, bindless, &image_name(entity), desc)?;
             let texture = fg.texture(image);
-            textures.push(PanelTexture { entity, image, texture });
+            let reach = [0, 1].map(|axis| panel.size[axis] as f32 / panel.drawn[axis].max(1.0));
+            textures.push(PanelTexture { entity, image, texture, reach });
             let room = (MAX_UI_QUADS as usize).saturating_sub(first + written);
             if !(panel.stale || fg.is_new(image)) || room == 0 {
                 continue;
@@ -419,11 +428,13 @@ pub(crate) fn draw(
     }
     let gpu: Vec<GpuUiPanel> = shown
         .iter()
+        // Its texture's whole pixels reach a little past the panel, and are
+        // drawn as far past it, rather than its UI stretched to fill it.
         .map(|(_, _, rect, texture)| GpuUiPanel {
             origin: rect.origin.to_array(),
             texture: texture.texture.0,
-            across: rect.across.to_array(),
-            down: rect.down.to_array(),
+            across: (rect.across * texture.reach[0]).to_array(),
+            down: (rect.down * texture.reach[1]).to_array(),
             ..Default::default()
         })
         .collect();

@@ -5,7 +5,7 @@ use taffy::{AvailableSpace, Display, LayoutInput, LayoutOutput, Size, TaffyTree}
 
 use crate::{
     Animated, Color, Overflow, Quad, Style, TextAlign, animation,
-    atlas::GlyphAtlas,
+    atlas::{GlyphAtlas, SUBPIXELS, Subpixel},
     controls::Control,
     scroll::{BAR, BAR_INSET, thumb},
     tree::{Element, Kind},
@@ -114,6 +114,8 @@ pub(crate) struct Draw<'a> {
     pub tree: &'a mut TaffyTree<Element>,
     pub atlas: &'a mut GlyphAtlas,
     pub scale: f32,
+    /// Edges, borders and text kept to whole pixels (see [`Pixels`]).
+    pub whole_pixels: bool,
     pub quads: &'a mut Vec<Quad>,
     /// The focused element, and whether its caret shows this frame.
     pub focused: Option<taffy::NodeId>,
@@ -167,6 +169,7 @@ impl Draw<'_> {
             return;
         }
         let layout = *self.tree.layout(node).expect("laid out");
+        let pixels = self.pixels();
         let shift = self.tree.get_node_context(node).map_or([0.0; 2], |e| e.translate);
         let at = (parent.0 + layout.location.x + shift[0], parent.1 + layout.location.y + shift[1]);
         let [x0, y0] = self.snap(at.0, at.1);
@@ -217,8 +220,8 @@ impl Draw<'_> {
                     None
                 }
             });
-            shape_quad(&look, rect, (self.scale, opacity, shaded), clip, self.quads);
-            side_quads(&look, rect, self.scale, opacity, clip, self.quads);
+            shape_quad(&look, rect, (pixels, opacity, shaded), clip, self.quads);
+            side_quads(&look, rect, pixels, opacity, clip, self.quads);
             if let Some(gradient) = element.gradient
                 && opacity > 0.0
             {
@@ -240,7 +243,7 @@ impl Draw<'_> {
                 });
             }
             let content = [origin[0], origin[1], inner * self.scale, inner_height * self.scale];
-            shape_quads(&element.shapes, content, self.scale, opacity, clip, (self.atlas, self.quads));
+            shape_quads(&element.shapes, content, pixels, opacity, clip, (self.atlas, self.quads));
             if let Some(icon) = element.icon {
                 let color = text_color.map(|c| c * opacity);
                 icon_quad(icon, content, self.scale, color, clip, (self.atlas, self.quads));
@@ -276,8 +279,7 @@ impl Draw<'_> {
                 // Its thumb runs inside its border, as a scroll view's does.
                 let edge = x1 - look.border * self.scale;
                 let bar = (edge, outer);
-                let field =
-                    Field { focused, caret: focused && self.caret_on, opacity, clip, size, bar, scale: self.scale };
+                let field = Field { focused, caret: focused && self.caret_on, opacity, clip, size, bar, pixels };
                 draw_field(element, origin, field, self.atlas, self.quads);
             }
             let color = text_color.map(|c| c * opacity);
@@ -305,14 +307,14 @@ impl Draw<'_> {
                 let room = if width.is_none() { (inner * self.scale - shaped.width()).max(0.0) } else { 0.0 };
                 let across = match (element.text_style.align, rtl) {
                     (TextAlign::Start, false) | (TextAlign::End, true) => 0.0,
-                    (TextAlign::Center, _) => (room / 2.0).round(),
-                    _ => room.round(),
+                    (TextAlign::Center, _) => pixels.round(room / 2.0),
+                    _ => pixels.round(room),
                 };
                 // Centred down a box taller than the text, such as a button
                 // with a set height, as Unity's middle alignment does.
                 let spare = (inner_height * self.scale - shaped.height()).max(0.0);
-                let origin = [origin[0] + across, origin[1] + (spare / 2.0).round()];
-                let paint = Paint { color, spans: &text.spans, style: &element.text_style, opacity, scale: self.scale };
+                let origin = [origin[0] + across, origin[1] + pixels.round(spare / 2.0)];
+                let paint = Paint { color, spans: &text.spans, style: &element.text_style, opacity, pixels };
                 glyph_quads(shaped, origin, &paint, text_clip, self.atlas, self.quads);
             }
         }
@@ -344,13 +346,62 @@ impl Draw<'_> {
             let [l, t] = self.snap(x, padding_box[1] + top);
             let [r, b] = self.snap(x + BAR, padding_box[1] + top + length);
             let look = Look { background: bar.linear_premultiplied(), radius: BAR / 2.0, ..Look::default() };
-            shape_quad(&look, [l, t, r - l, b - t], (self.scale, opacity, None), child_clip, self.quads);
+            shape_quad(&look, [l, t, r - l, b - t], (pixels, opacity, None), child_clip, self.quads);
         }
     }
 
-    /// A logical point on the physical pixel grid.
+    /// A logical point in physical pixels, on a whole one unless the UI
+    /// keeps to its layout instead.
     fn snap(&self, x: f32, y: f32) -> [f32; 2] {
-        [(x * self.scale).round(), (y * self.scale).round()]
+        [self.pixels().of(x), self.pixels().of(y)]
+    }
+
+    fn pixels(&self) -> Pixels {
+        Pixels { scale: self.scale, whole: self.whole_pixels }
+    }
+}
+
+/// The display scale, and whether what is drawn keeps to whole pixels at
+/// it, which a UI drawn at one size looks crisper for. A UI drawn at many
+/// sizes, as a panel in the world is as it nears and recedes, puts edges,
+/// borders and text where its layout does instead, so nothing in it moves
+/// when the size it is drawn at changes: its glyphs are unhinted and
+/// placed to a quarter of a pixel.
+#[derive(Clone, Copy)]
+pub(crate) struct Pixels {
+    pub scale: f32,
+    pub whole: bool,
+}
+
+impl Pixels {
+    /// A logical position or length in physical pixels.
+    fn of(self, logical: f32) -> f32 {
+        self.round(logical * self.scale)
+    }
+
+    /// A physical position or length.
+    fn round(self, physical: f32) -> f32 {
+        if self.whole { physical.round() } else { physical }
+    }
+
+    /// A line `logical` pixels wide, in physical pixels: a whole one at
+    /// least, when kept to whole pixels.
+    fn line(self, logical: f32) -> f32 {
+        if self.whole { (logical * self.scale).round().max(1.0) } else { logical * self.scale }
+    }
+
+    /// Where a glyph whose pen is at `pen` is drawn from, and where between
+    /// pixels: hinted, on the nearest whole pixel, or unhinted, on the
+    /// whole pixel below the nearest quarter and that many quarters on.
+    fn place(self, pen: [f32; 2]) -> ([f32; 2], Option<Subpixel>) {
+        if self.whole {
+            return (pen.map(f32::round), None);
+        }
+        let step = f32::from(SUBPIXELS);
+        let quarters = pen.map(|at| (at * step).round());
+        let whole = quarters.map(|q| (q / step).floor());
+        let between = [0, 1].map(|axis| (quarters[axis] - whole[axis] * step) as u8);
+        (whole, Some(between))
     }
 }
 
@@ -454,11 +505,12 @@ fn cut_out(quads: &mut Vec<Quad>, hole: [f32; 4]) {
 fn shape_quads(
     shapes: &[Shape],
     content: [f32; 4],
-    scale: f32,
+    pixels: Pixels,
     opacity: f32,
     clip: [f32; 4],
     (atlas, quads): (&mut GlyphAtlas, &mut Vec<Quad>),
 ) {
+    let scale = pixels.scale;
     let at = |p: [f32; 2]| [content[0] + p[0] * scale, content[1] + p[1] * scale];
     for shape in shapes {
         match *shape {
@@ -488,7 +540,7 @@ fn shape_quads(
                     radius,
                     backdrop: false,
                 };
-                shape_quad(&look, [c[0] - r, c[1] - r, r * 2.0, r * 2.0], (scale, opacity, None), clip, quads);
+                shape_quad(&look, [c[0] - r, c[1] - r, r * 2.0, r * 2.0], (pixels, opacity, None), clip, quads);
             }
             Shape::Rect { rect: [x, y, w, h], radius, fill } => {
                 let corner = at([x, y]);
@@ -501,7 +553,7 @@ fn shape_quads(
                     backdrop: false,
                     radius,
                 };
-                shape_quad(&look, [corner[0], corner[1], w * scale, h * scale], (scale, opacity, None), clip, quads);
+                shape_quad(&look, [corner[0], corner[1], w * scale, h * scale], (pixels, opacity, None), clip, quads);
             }
             Shape::Icon { name, center, size, color } => {
                 let (c, size) = (at(center), size * scale);
@@ -548,7 +600,7 @@ fn icon_quad(
 fn shape_quad(
     look: &Look,
     rect: [f32; 4],
-    (scale, opacity, shaded): (f32, f32, Option<(u32, u32)>),
+    (pixels, opacity, shaded): (Pixels, f32, Option<(u32, u32)>),
     clip: [f32; 4],
     quads: &mut Vec<Quad>,
 ) {
@@ -556,7 +608,8 @@ fn shape_quad(
     if (look.background[3] <= 0.0 && !border && !look.backdrop && shaded.is_none()) || opacity <= 0.0 {
         return;
     }
-    let border = if border { (look.border * scale).round().max(1.0) } else { 0.0 };
+    let scale = pixels.scale;
+    let border = if border { pixels.line(look.border) } else { 0.0 };
     let flags = if look.dashed { Quad::DASHED } else { 0 } | if look.backdrop { Quad::BACKDROP } else { 0 };
     let (color, uv, flags) = match shaded {
         Some((number, first)) => (
@@ -581,14 +634,14 @@ fn shape_quad(
 
 /// A border on some sides only: each a strip along the inside of the box,
 /// as wide as its side, in the border's colour.
-fn side_quads(look: &Look, rect: [f32; 4], scale: f32, opacity: f32, clip: [f32; 4], quads: &mut Vec<Quad>) {
+fn side_quads(look: &Look, rect: [f32; 4], pixels: Pixels, opacity: f32, clip: [f32; 4], quads: &mut Vec<Quad>) {
     let Some(sides) = look.sides else { return };
     let color = look.border_color.map(|c| c * opacity);
     if color[3] <= 0.0 {
         return;
     }
     let [x, y, width, height] = rect;
-    let [left, top, right, bottom] = sides.map(|side| if side > 0.0 { (side * scale).round().max(1.0) } else { 0.0 });
+    let [left, top, right, bottom] = sides.map(|side| if side > 0.0 { pixels.line(side) } else { 0.0 });
     let strips = [
         [x, y, left, height],
         [x, y, width, top],
@@ -607,14 +660,14 @@ struct Paint<'a> {
     spans: &'a [crate::Span],
     style: &'a crate::TextStyle,
     opacity: f32,
-    scale: f32,
+    pixels: Pixels,
 }
 
 impl Paint<'_> {
     /// One colour for everything, as a text field is drawn.
-    fn plain(color: [f32; 4]) -> Paint<'static> {
+    fn plain(color: [f32; 4], pixels: Pixels) -> Paint<'static> {
         static STYLE: std::sync::LazyLock<crate::TextStyle> = std::sync::LazyLock::new(crate::TextStyle::default);
-        Paint { color, spans: &[], style: &STYLE, opacity: 1.0, scale: 1.0 }
+        Paint { color, spans: &[], style: &STYLE, opacity: 1.0, pixels }
     }
 
     fn fade(&self, color: Color) -> [f32; 4] {
@@ -632,9 +685,9 @@ impl Paint<'_> {
     }
 }
 
-/// Every glyph of a shaped text, on whole pixels: hinted glyphs are drawn
-/// where the hinting expected them. Rich text's grounds go under its
-/// glyphs, and its lines through or under them.
+/// Every glyph of a shaped text, hinted on whole pixels or placed between
+/// them as `paint` keeps to (see [`Pixels`]). Rich text's grounds go under
+/// its glyphs, and its lines through or under them.
 fn glyph_quads(
     layout: &Layout<u16>,
     origin: [f32; 2],
@@ -662,19 +715,16 @@ fn glyph_quads(
                 && (span.marks.code || span.marks.mark)
             {
                 let (ground, pad) = if span.marks.code {
-                    (paint.style.code_background, 2.0 * paint.scale)
+                    (paint.style.code_background, 2.0 * paint.pixels.scale)
                 } else {
                     (paint.style.mark_color, 0.0)
                 };
-                let top = (baseline - metrics.ascent).round();
-                let rect = [
-                    (left - pad).round(),
-                    top,
-                    (width + pad * 2.0).round(),
-                    (baseline + metrics.descent).round() - top,
-                ];
+                let round = |at: f32| paint.pixels.round(at);
+                let top = round(baseline - metrics.ascent);
+                let rect =
+                    [round(left - pad), top, round(width + pad * 2.0), round(baseline + metrics.descent) - top];
                 let look = Look { background: ground.linear_premultiplied(), radius: 3.0, ..Look::default() };
-                shape_quad(&look, rect, (paint.scale, paint.opacity, None), clip, quads);
+                shape_quad(&look, rect, (paint.pixels, paint.opacity, None), clip, quads);
             }
             let font = run.font();
             let font = (font.data.data(), font.index, font.data.id());
@@ -682,9 +732,9 @@ fn glyph_quads(
             let synthesis = run.synthesis();
             let synthesis = crate::atlas::Synthesis { skew: synthesis.skew(), embolden: synthesis.embolden() };
             for glyph in glyph_run.positioned_glyphs() {
-                let found = atlas.glyph(font, glyph.id as u16, run.font_size(), &coords, synthesis);
+                let (pen, between) = paint.pixels.place([origin[0] + glyph.x, origin[1] + glyph.y]);
+                let found = atlas.glyph(font, glyph.id as u16, (run.font_size(), between), &coords, synthesis);
                 let Some(found) = found else { continue };
-                let pen = [(origin[0] + glyph.x).round(), (origin[1] + glyph.y).round()];
                 let (x, y) = (found.x as f32, found.y as f32);
                 let (w, h) = (found.width as f32, found.height as f32);
                 quads.push(Quad {
@@ -703,8 +753,10 @@ fn glyph_quads(
             ];
             for (decoration, offset, thickness) in lines.into_iter().flatten() {
                 let offset = decoration.offset.unwrap_or(offset);
-                let thickness = decoration.size.unwrap_or(thickness).round().max(1.0);
-                let rect = [left.round(), (baseline - offset).round(), width.round(), thickness];
+                let thickness = decoration.size.unwrap_or(thickness);
+                let thickness = if paint.pixels.whole { thickness.round().max(1.0) } else { thickness };
+                let round = |at: f32| paint.pixels.round(at);
+                let rect = [round(left), round(baseline - offset), round(width), thickness];
                 quads.push(Quad { rect, color, clip, kind: Quad::SHAPE, ..Quad::default() });
             }
         }
@@ -722,7 +774,7 @@ struct Field {
     /// show: its right edge inside its border, and what clips the field.
     size: [f32; 2],
     bar: (f32, [f32; 4]),
-    scale: f32,
+    pixels: Pixels,
 }
 
 /// A text field's selection, text (or placeholder) and caret, from the top
@@ -748,10 +800,11 @@ fn draw_field(element: &mut Element, origin: [f32; 2], field: Field, atlas: &mut
     let empty = edit.editor.raw_text().is_empty();
     if empty && !edit.placeholder.content.is_empty() {
         if let Some((_, layout)) = &edit.placeholder.shaped {
-            glyph_quads(layout, at, &Paint::plain(fade(edit.placeholder.style.color)), field.clip, atlas, quads);
+            let paint = Paint::plain(fade(edit.placeholder.style.color), field.pixels);
+            glyph_quads(layout, at, &paint, field.clip, atlas, quads);
         }
     } else if let Some(layout) = edit.editor.try_layout() {
-        glyph_quads(layout, at, &Paint::plain(fade(element.text_style.color)), field.clip, atlas, quads);
+        glyph_quads(layout, at, &Paint::plain(fade(element.text_style.color), field.pixels), field.clip, atlas, quads);
     }
     if field.caret
         && let Some(bounds) = edit.editor.cursor_geometry(1.0)
@@ -770,10 +823,10 @@ fn draw_field(element: &mut Element, origin: [f32; 2], field: Field, atlas: &mut
         && let Some(layout) = edit.editor.try_layout()
         && let Some((top, length)) = thumb(field.size[1], layout.height() - field.size[1], edit.scroll_y)
     {
-        let (width, inset) = (BAR * field.scale, BAR_INSET * field.scale);
+        let (width, inset) = (BAR * field.pixels.scale, BAR_INSET * field.pixels.scale);
         let (edge, clip) = field.bar;
         let rect = [(edge - width - inset).round(), (origin[1] + top).round(), width, length];
         let look = Look { background: style.scrollbar.linear_premultiplied(), radius: BAR / 2.0, ..Look::default() };
-        shape_quad(&look, rect, (field.scale, field.opacity, None), clip, quads);
+        shape_quad(&look, rect, (field.pixels, field.opacity, None), clip, quads);
     }
 }

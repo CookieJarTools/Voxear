@@ -208,6 +208,33 @@ fn a_shaded_background_names_its_shader_and_carries_its_values() {
     assert!(ui.take_warnings().iter().all(|w| !w.contains("no UI shader")), "said once, not every frame");
 }
 
+/// A terminal, as on a UI Panel in the world: a column filling the UI, its
+/// title, words that wrap, and a button. Scalable, as a panel's UI is.
+fn terminal() -> (Ui, [voxear_ui::NodeId; 3]) {
+    let mut ui = Ui::new();
+    ui.set_scalable(true);
+    let root = ui.root();
+    let sheet = ".terminal { position: absolute; left: 0px; top: 0px; right: 0px; bottom: 0px; flex-direction: column; \
+         padding: 32px; gap: 18px; border-width: 3px; border-color: #e3b04b; border-radius: 18px; }\
+         .title { font-size: 44px; font-weight: bold; line-height: normal; }\
+         .body { font-size: 24px; line-height: normal; }\
+         .row { flex-direction: row; gap: 24px; align-items: center; }\
+         .primary { font-size: 26px; height: 56px; padding: 0px 24px; line-height: normal; background-color: #e3b04b; }";
+    ui.add_sheet(root, voxear_ui::StyleSheet::parse("Terminal.vss", sheet));
+    let terminal = ui.panel(root, Style::default());
+    ui.add_class(terminal, "terminal");
+    let title = ui.label(terminal, "Supply Depot 7", TextStyle::default());
+    ui.add_class(title, "title");
+    let words = "Rations, rifle ammunition and field dressings. Sign for what you take, and bring back what you do not use.";
+    let body = ui.label(terminal, words, TextStyle { wrap: true, ..TextStyle::default() });
+    ui.add_class(body, "body");
+    let row = ui.panel(terminal, Style::default());
+    ui.add_class(row, "row");
+    let button = ui.button(row, "Open the gate");
+    ui.add_class(button, "primary");
+    (ui, [title, body, button])
+}
+
 /// A scalable UI laid out at the same logical size is laid out the same,
 /// whatever scale it is drawn at, as a panel in the world drawn small when
 /// far off is: its text wraps the same and its lines are as tall, so
@@ -215,26 +242,7 @@ fn a_shaded_background_names_its_shader_and_carries_its_values() {
 #[test]
 fn a_ui_drawn_at_any_scale_lays_out_alike() {
     let lay_out = |scale: f32| {
-        let mut ui = Ui::new();
-        ui.set_scalable(true);
-        let root = ui.root();
-        let sheet = ".terminal { position: absolute; left: 0px; top: 0px; right: 0px; bottom: 0px; flex-direction: column; padding: 32px; gap: 18px; }\
-             .title { font-size: 44px; font-weight: bold; line-height: normal; }\
-             .body { font-size: 24px; line-height: normal; }\
-             .row { flex-direction: row; gap: 24px; align-items: center; }\
-             .primary { font-size: 26px; height: 56px; padding: 0px 24px; line-height: normal; }";
-        ui.add_sheet(root, voxear_ui::StyleSheet::parse("Terminal.vss", sheet));
-        let terminal = ui.panel(root, Style::default());
-        ui.add_class(terminal, "terminal");
-        let title = ui.label(terminal, "Supply Depot 7", TextStyle::default());
-        ui.add_class(title, "title");
-        let words = "Rations, rifle ammunition and field dressings. Sign for what you take, and bring back what you do not use.";
-        let body = ui.label(terminal, words, TextStyle { wrap: true, ..TextStyle::default() });
-        ui.add_class(body, "body");
-        let row = ui.panel(terminal, Style::default());
-        ui.add_class(row, "row");
-        let button = ui.button(row, "Open the gate");
-        ui.add_class(button, "primary");
+        let (mut ui, [title, body, button]) = terminal();
         let size = |logical: f32| (logical * scale).round() as u32;
         ui.frame(size(800.0), size(450.0), scale);
         [ui.rect(title), ui.rect(body), ui.rect(button)]
@@ -247,6 +255,59 @@ fn a_ui_drawn_at_any_scale_lays_out_alike() {
             // Within a pixel as drawn: its size in whole pixels is a little off.
             let off = a.iter().zip(b.iter()).map(|(a, b)| (a - b).abs()).fold(0.0, f32::max);
             assert!(off <= 1.0 / scale.min(1.0), "at scale {scale}, the {what} moved: {a:?} became {b:?}");
+        }
+    }
+}
+
+/// The middle of each glyph's ink, where a scalable UI drawn at `step`, as
+/// a panel is, puts it, in logical pixels, and its boxes' edges: drawn
+/// `2^(step / 2)` times its layout of 800 by 450, its width a whole number
+/// of pixels and its height rounded up to one, laid out at its own size.
+fn terminal_drawn_at(step: i32) -> (f32, Vec<[f32; 2]>, Vec<[f32; 4]>) {
+    let (mut ui, _) = terminal();
+    let layout = [800.0, 450.0];
+    ui.set_layout_size(Some(layout));
+    let width = (layout[0] * 2f32.powf(step as f32 / 2.0)).ceil();
+    let scale = width / layout[0];
+    let frame = ui.frame(width as u32, (layout[1] * scale).ceil() as u32, scale);
+    let atlas = frame.atlas.expect("it has text");
+    let ink = |quad: &Quad| {
+        let corner = [quad.uv[0] * atlas.width as f32, quad.uv[1] * atlas.height as f32].map(|at| at as usize);
+        let (mut sum, mut middle) = (0.0, [0.0; 2]);
+        for y in 0..quad.rect[3] as usize {
+            for x in 0..quad.rect[2] as usize {
+                let coverage = f32::from(atlas.pixels[(corner[1] + y) * atlas.width as usize + corner[0] + x]);
+                sum += coverage;
+                middle = [middle[0] + coverage * (x as f32 + 0.5), middle[1] + coverage * (y as f32 + 0.5)];
+            }
+        }
+        [(quad.rect[0] + middle[0] / sum) / scale, (quad.rect[1] + middle[1] / sum) / scale]
+    };
+    let inks = frame.quads.iter().filter(|q| q.kind == Quad::GLYPH).map(ink).collect();
+    let boxes = shapes(&frame.quads).iter().map(|q| q.rect.map(|at| at / scale)).collect();
+    (scale, inks, boxes)
+}
+
+/// A scalable UI draws its text and boxes in the same place at every size,
+/// as a panel in the world must, or it shifts each time it is drawn at the
+/// next size as the camera moves: its glyphs unhinted and placed to a
+/// quarter of a pixel, and its edges not rounded to whole ones.
+#[test]
+fn a_scalable_ui_draws_its_text_and_boxes_in_the_same_place_at_every_size() {
+    let (_, near, near_boxes) = terminal_drawn_at(2);
+    for step in -6..=1 {
+        let (scale, inks, boxes) = terminal_drawn_at(step);
+        assert_eq!(inks.len(), near.len(), "at step {step}, as many glyphs");
+        // How far each moved, in pixels as drawn at this size.
+        let moved: Vec<[f32; 2]> = near.iter().zip(&inks).map(|(a, b)| [0, 1].map(|i| (b[i] - a[i]) * scale)).collect();
+        let worst = moved.iter().flatten().fold(0.0f32, |worst, d| worst.max(d.abs()));
+        assert!(worst < 0.5, "at step {step}, a glyph moved {worst} pixels");
+        let mean = [0, 1].map(|i| moved.iter().map(|d| d[i]).sum::<f32>() / moved.len() as f32);
+        assert!(mean.iter().all(|d| d.abs() < 0.1), "at step {step}, the text moved {mean:?} pixels");
+        assert_eq!(boxes.len(), near_boxes.len());
+        for (a, b) in near_boxes.iter().zip(&boxes) {
+            let off = a.iter().zip(b).map(|(a, b)| (a - b).abs() * scale).fold(0.0, f32::max);
+            assert!(off < 0.01, "at step {step}, a box moved {off} pixels: {a:?} became {b:?}");
         }
     }
 }

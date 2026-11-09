@@ -475,7 +475,7 @@ impl Ui {
         command: impl FnOnce(&mut PlainEditorDriver<'_, u16>),
     ) {
         let scale = self.viewport.2.max(crate::tree::MIN_SCALE);
-        let shaping = (scale, self.whole_pixel_text);
+        let shaping = (scale, self.whole_pixels);
         let now = self.input.time;
         let [_, _, width, height] = self.content_box(field);
         let Ui { tree, fonts, layouts, .. } = self;
@@ -759,7 +759,7 @@ impl Ui {
     /// centred, and its placeholder shaped.
     pub(crate) fn refresh_fields(&mut self) {
         let scale = self.viewport.2.max(crate::tree::MIN_SCALE);
-        let shaping = (scale, self.whole_pixel_text);
+        let shaping = (scale, self.whole_pixels);
         for field in self.fields.clone() {
             let [_, _, width, height] = self.content_box(NodeId(field));
             let Ui { tree, fonts, layouts, .. } = self;

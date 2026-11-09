@@ -5325,7 +5325,8 @@ fn a_ui_panel_shows_its_colours_in_the_world_hidden_behind_what_is_in_front() {
         ui.panel(root, white);
     }
     let frame = ui.frame(1000, 500, 1.0);
-    renderer.set_ui_panels(&[UiPanelFrame { entity: panel, frame: &frame, size: [1000, 500] }]).unwrap();
+    let shown = UiPanelFrame { entity: panel, frame: &frame, size: [1000, 500], drawn: [1000.0, 500.0] };
+    renderer.set_ui_panels(&[shown]).unwrap();
     // A small box two metres ahead, in front of the panel's red half's top.
     let cube = renderer.primitive(Primitive::Cube).unwrap();
     let grey = renderer.add_material(&MaterialDesc::default()).unwrap();
@@ -5393,7 +5394,8 @@ fn a_two_sided_ui_panel_reads_the_right_way_round_from_behind() {
     ui.panel(root, Style::default().at(0.0, 0.0).width(500.0).height(500.0).background(Color::hex(0xff0000)));
     ui.panel(root, Style::default().at(500.0, 0.0).width(500.0).height(500.0).background(Color::hex(0x0000ff)));
     let frame = ui.frame(1000, 500, 1.0);
-    renderer.set_ui_panels(&[UiPanelFrame { entity: panel, frame: &frame, size: [1000, 500] }]).unwrap();
+    let shown = UiPanelFrame { entity: panel, frame: &frame, size: [1000, 500], drawn: [1000.0, 500.0] };
+    renderer.set_ui_panels(&[shown]).unwrap();
     run(&mut renderer, &world, &mut 0.0, 1);
     let (_, _, pixels) = renderer.read_pixels().unwrap();
     let at = |x: u32| {
@@ -5438,7 +5440,8 @@ fn a_ui_panel_seen_from_the_side_stays_sharp() {
         ui.panel(root, white);
     }
     let frame = ui.frame(800, 450, 1.0);
-    renderer.set_ui_panels(&[UiPanelFrame { entity: panel, frame: &frame, size: [800, 450] }]).unwrap();
+    let shown = UiPanelFrame { entity: panel, frame: &frame, size: [800, 450], drawn: [800.0, 450.0] };
+    renderer.set_ui_panels(&[shown]).unwrap();
     run(&mut renderer, &world, &mut 0.0, 3);
     let (_, _, pixels) = renderer.read_pixels().unwrap();
     let red = |x: u32, y: u32| pixels[((y * width + x) * 4) as usize];
@@ -5448,6 +5451,43 @@ fn a_ui_panel_seen_from_the_side_stays_sharp() {
     let column: Vec<u8> = (height / 2 - 30..height / 2 + 30).map(|y| red(x, y)).collect();
     let (low, high) = (column.iter().min().unwrap(), column.iter().max().unwrap());
     assert!(high - low > 150, "the stripes blurred together at column {x}: {low} to {high}");
+}
+
+/// A UI Panel's texture is a whole number of pixels, which may reach past
+/// the UI drawn in it: the panel shows its UI at its own shape, and the
+/// texture as far past it, rather than its UI stretched to fill the panel.
+#[test]
+fn a_ui_panel_shows_its_ui_unstretched_when_its_texture_reaches_past_it() {
+    use voxear_render::{UiPanel, UiPanelFrame};
+    use voxear_ui::{Color, Style, Ui};
+
+    let Some(mut renderer) = renderer() else { return };
+    let (width, height) = (640u32, 360u32);
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::IDENTITY));
+    // Four metres ahead, its middle in the middle of the view, laid out 1000 by 250.
+    let ahead = Transform::from_position(Vec3::new(0.0, 0.0, 4.0));
+    let panel = world.spawn((ahead, UiPanel { size: [2.0, 0.5], ..UiPanel::default() }));
+    let mut ui = Ui::new();
+    let root = ui.root();
+    ui.set_layout_size(Some([1000.0, 250.0]));
+    ui.panel(root, Style::default().at(0.0, 0.0).width(1000.0).height(250.0).background(Color::hex(0xff0000)));
+    // Far past it, to be plain: a texture twice as tall as the UI in it.
+    let frame = ui.frame(1000, 500, 1.0);
+    let shown = UiPanelFrame { entity: panel, frame: &frame, size: [1000, 500], drawn: [1000.0, 250.0] };
+    renderer.set_ui_panels(&[shown]).unwrap();
+    run(&mut renderer, &world, &mut 0.0, 1);
+    let (_, _, pixels) = renderer.read_pixels().unwrap();
+    let red = |y: u32| {
+        let i = ((y * width + width / 2) * 4) as usize;
+        pixels[i] > 200 && pixels[i + 1] < 60 && pixels[i + 2] < 60
+    };
+    let rows: Vec<u32> = (0..height).filter(|&y| red(y)).collect();
+    let (top, bottom) = (rows[0], rows[rows.len() - 1]);
+    assert!(bottom - top > 10, "the panel shows: rows {top} to {bottom}");
+    // Stretched, the red would fill only the panel's top half, ending at the middle of the view.
+    let (above, below) = (height / 2 - top, bottom + 1 - height / 2);
+    assert!(above.abs_diff(below) <= 2, "red from row {top} to {bottom}, not about the middle at {}", height / 2);
 }
 
 /// A UI whose element's background is striped by a built-in effect, `stripes`

@@ -258,9 +258,12 @@ pub struct Ui {
     pub(crate) shaders: std::rc::Rc<crate::UiShaders>,
     /// Shader names styles gave that no shader has, warned about already.
     pub(crate) unknown_shaders: std::collections::HashSet<String>,
-    /// Text's lines rounded to whole pixels at the display scale, unless
-    /// the UI is laid out alike at every scale (see [`Ui::set_scalable`]).
-    pub(crate) whole_pixel_text: bool,
+    /// Text and edges kept to whole pixels at the display scale, unless the
+    /// UI is drawn alike at every scale (see [`Ui::set_scalable`]).
+    pub(crate) whole_pixels: bool,
+    /// The size it is laid out at, in logical pixels, whatever the area it
+    /// is drawn in (see [`Ui::set_layout_size`]).
+    pub(crate) layout_size: Option<[f32; 2]>,
     /// Elements that scroll, as of the last cascade.
     pub(crate) scrollers: Vec<taffy::NodeId>,
     /// List and tree views, which make rows as they scroll.
@@ -358,7 +361,8 @@ impl Ui {
             warnings: Vec::new(),
             shaders: Default::default(),
             unknown_shaders: Default::default(),
-            whole_pixel_text: true,
+            whole_pixels: true,
+            layout_size: None,
             scrollers: Vec::new(),
             lists: Vec::new(),
             modifiers: Default::default(),
@@ -944,16 +948,26 @@ impl Ui {
         }
     }
 
-    /// Lays this UI out alike at every display scale, as one drawn at many
+    /// Draws this UI alike at every display scale, as one drawn at many
     /// sizes needs: a UI Panel in the world is drawn small far off and large
-    /// up close, and its text wraps the same at either. Its text's lines are
-    /// then not rounded to whole pixels at the scale it is drawn at, which
-    /// a UI drawn at one size looks crisper for.
+    /// up close, and its text wraps the same and nothing in it moves as it
+    /// goes from one to the other. Its text, edges and borders are then
+    /// placed where its layout puts them, its glyphs unhinted and placed to
+    /// a quarter of a pixel, rather than kept to whole pixels at the scale
+    /// it is drawn at, which a UI drawn at one size looks crisper for.
     pub fn set_scalable(&mut self, scalable: bool) {
-        if self.whole_pixel_text == scalable {
-            self.whole_pixel_text = !scalable;
+        if self.whole_pixels == scalable {
+            self.whole_pixels = !scalable;
             self.reshape(self.root);
         }
+    }
+
+    /// Lays this UI out at `size` logical pixels, whatever the area it is
+    /// drawn in, or at that area's size for `None`. A UI Panel's texture is
+    /// a whole number of pixels, a little larger than its layout at most
+    /// scales, which its UI keeps to rather than stretching to fill.
+    pub fn set_layout_size(&mut self, size: Option<[f32; 2]>) {
+        self.layout_size = size;
     }
 
     /// Says once for each, until the shaders change, that a style named a
@@ -1025,6 +1039,7 @@ impl Ui {
                 tree: &mut self.tree,
                 atlas: &mut self.atlas,
                 scale,
+                whole_pixels: self.whole_pixels,
                 quads: &mut quads,
                 focused,
                 caret_on,
@@ -1083,7 +1098,8 @@ impl Ui {
     fn compute_layout(&mut self, width: u32, height: u32, scale: f32) {
         voxear_core::profile_scope!("Layout");
         let scale = scale.max(MIN_SCALE);
-        let viewport = (width as f32 / scale, height as f32 / scale, scale);
+        let [width, height] = self.layout_size.unwrap_or([width as f32 / scale, height as f32 / scale]);
+        let viewport = (width, height, scale);
         if viewport.2 != self.viewport.2 {
             self.reshape(self.root);
         }
@@ -1096,7 +1112,7 @@ impl Ui {
         }
         let (fonts, layouts) = (&mut self.fonts, &mut self.layouts);
         let space = Size { width: AvailableSpace::Definite(viewport.0), height: AvailableSpace::Definite(viewport.1) };
-        let shaping = (scale, self.whole_pixel_text);
+        let shaping = (scale, self.whole_pixels);
         let measured = self.tree.compute_layout_with_measure(self.root, space, |input, _, element, style| {
             measure(input, element, style, fonts, layouts, shaping)
         });

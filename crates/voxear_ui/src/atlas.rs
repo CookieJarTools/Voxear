@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use swash::{
     FontRef,
     scale::{Render, ScaleContext, Source},
-    zeno::{Angle, Cap, Fill, Format, Join, Mask, Stroke, Transform},
+    zeno::{Angle, Cap, Fill, Format, Join, Mask, Stroke, Transform, Vector},
 };
 
 use std::sync::Arc;
@@ -16,6 +16,8 @@ use crate::AtlasImage;
 const SIZE: u32 = 1024;
 /// Empty pixels around each glyph, so bilinear lookups never bleed.
 const PADDING: u32 = 1;
+/// How finely an unhinted glyph is placed between pixels, each way.
+pub(crate) const SUBPIXELS: u8 = 4;
 
 /// A glyph rasterised at one size: where it sits relative to its pen
 /// position, and where it is in the atlas.
@@ -29,9 +31,15 @@ pub(crate) struct AtlasGlyph {
     pub y: u32,
 }
 
-/// A font, a glyph in it, the size in 1/64 pixels, and its synthesis: the
-/// slant in degrees and whether it is emboldened.
-type Key = (u64, u32, u16, u32, i8, bool);
+/// A font, a glyph in it, the size in 1/64 pixels, its synthesis (the
+/// slant in degrees and whether it is emboldened), and how it is placed:
+/// 0 hinted on a whole pixel, or one more than its [`Subpixel`] numbered
+/// across then down, unhinted.
+type Key = (u64, u32, u16, u32, i8, bool, u8);
+
+/// Where an unhinted glyph sits between pixels, across and down, in
+/// [`SUBPIXELS`] of a pixel.
+pub(crate) type Subpixel = [u8; 2];
 
 /// What a font lacks and is faked for: italics slanted, bold thickened,
 /// as parley asks when the family has no such face.
@@ -74,22 +82,26 @@ impl GlyphAtlas {
         SIZE
     }
 
-    /// The glyph at `size` pixels, rasterised and packed on first use.
-    /// `None` for glyphs with no pixels, such as spaces.
+    /// The glyph at `size` pixels, rasterised and packed on first use:
+    /// hinted to sit on a whole pixel, or with `between` unhinted and that
+    /// far between pixels, for a UI drawn at many sizes whose text should
+    /// land in the same place at each. `None` for glyphs with no pixels,
+    /// such as spaces.
     pub fn glyph(
         &mut self,
         font: (&[u8], u32, u64),
         glyph: u16,
-        size: f32,
+        (size, between): (f32, Option<Subpixel>),
         coords: &[i16],
         synthesis: Synthesis,
     ) -> Option<AtlasGlyph> {
         let skew = synthesis.skew.unwrap_or_default().round() as i8;
-        let key = (font.2, font.1, glyph, (size * 64.0) as u32, skew, synthesis.embolden);
+        let place = between.map_or(0, |[x, y]| 1 + x + y * SUBPIXELS);
+        let key = (font.2, font.1, glyph, (size * 64.0) as u32, skew, synthesis.embolden, place);
         if let Some(found) = self.glyphs.get(&key) {
             return *found;
         }
-        let rasterised = self.rasterise(font, glyph, size, coords, synthesis);
+        let rasterised = self.rasterise(font, glyph, (size, between), coords, synthesis);
         let packed = rasterised.and_then(|(left, top, width, height, coverage)| {
             let (x, y) = self.pack(width, height, &coverage)?;
             Some(AtlasGlyph { left, top, width, height, x, y })
@@ -152,14 +164,20 @@ impl GlyphAtlas {
         &mut self,
         (data, index, _): (&[u8], u32, u64),
         glyph: u16,
-        size: f32,
+        (size, between): (f32, Option<Subpixel>),
         coords: &[i16],
         synthesis: Synthesis,
     ) -> Option<(i32, i32, u32, u32, Vec<u8>)> {
         let font = FontRef::from_index(data, index as usize)?;
-        let mut scaler = self.scaler.builder(font).size(size).hint(true).normalized_coords(coords).build();
+        let hint = between.is_none();
+        let mut scaler = self.scaler.builder(font).size(size).hint(hint).normalized_coords(coords).build();
         let mut render = Render::new(&[Source::Outline]);
         render.format(Format::Alpha);
+        if let Some([x, y]) = between {
+            // The outline's own space points up, the screen's down.
+            let step = f32::from(SUBPIXELS);
+            render.offset(Vector::new(f32::from(x) / step, -f32::from(y) / step));
+        }
         if let Some(degrees) = synthesis.skew {
             render.transform(Some(Transform::skew(Angle::from_degrees(degrees), Angle::ZERO)));
         }
@@ -168,7 +186,9 @@ impl GlyphAtlas {
         }
         let image = render.render(&mut scaler, glyph)?;
         let p = image.placement;
-        (p.width > 0 && p.height > 0).then_some((p.left, p.top, p.width, p.height, image.data))
+        // A space placed between pixels comes back a pixel of nothing.
+        let inked = image.data.iter().any(|&coverage| coverage > 0);
+        (p.width > 0 && p.height > 0 && inked).then_some((p.left, p.top, p.width, p.height, image.data))
     }
 
     /// First fit along the shelves, opening a new one below when none fits.

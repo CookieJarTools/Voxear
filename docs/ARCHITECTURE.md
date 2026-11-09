@@ -1556,10 +1556,15 @@ any DPI. World-space panels render to a mipmapped texture sized to their on-scre
 surfaces in 3D. *(Implemented as the UI Panel component:)*
 - Each panel's document is a `Ui` of its own (`crates/voxear_engine/src/ui_panels.rs`), sharing the screen UI's
   fonts, its script numbers in a range of its own. Its layout is its size in metres times its pixels per metre,
-  and the same at whatever size it is drawn: its `Ui` is scalable (`Ui::set_scalable`), so its text's lines are
-  not rounded to whole pixels at the scale it is drawn at, and text wraps alike near and far.
+  and the same at whatever size it is drawn: its `Ui` is scalable (`Ui::set_scalable`), so text wraps alike near
+  and far, and nothing moves when the size it is drawn at changes. Its text's lines are not rounded to whole
+  pixels, its glyphs are unhinted and placed to a quarter of a pixel (the atlas keeps each quarter apart), and
+  its edges and borders are where its layout puts them, not rounded to whole pixels.
 - It is drawn at the size it showed in the last frame's views, which the renderer reports back, in steps of √2:
-  it grows at once and shrinks two steps late, so text is not rasterised again as the camera moves.
+  it grows at once and shrinks two steps late, so text is not rasterised again as the camera moves. Its texture
+  is as wide as that step makes whole and as high as its layout then needs, rounded up; its UI is laid out at
+  the panel's own size (`Ui::set_layout_size`), and the renderer draws the texture as far past the panel as it
+  reaches (`UiPanelFrame::drawn`), so the UI keeps its shape rather than stretching to fill it.
 - The renderer (`crates/voxear_render/src/ui_panels.rs`) draws each panel whose quads changed into an RGBA16F
   history image, with the UI shader, before the views, then makes its mips in a compute pass that averages
   premultiplied colour.

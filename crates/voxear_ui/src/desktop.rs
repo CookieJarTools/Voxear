@@ -163,6 +163,7 @@ impl Ui {
                 tree: &mut self.tree,
                 atlas: &mut self.atlas,
                 scale,
+                whole_pixels: self.whole_pixels,
                 quads: &mut quads,
                 focused,
                 caret_on,

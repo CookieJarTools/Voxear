@@ -172,10 +172,15 @@ pub fn drawing_step(current: i32, shown: Option<[f32; 2]>, layout: [f32; 2]) -> 
 }
 
 /// The size of a panel's texture laid out `layout` pixels in size and drawn
-/// at `step`, in pixels.
-fn drawn_size(layout: [f32; 2], step: i32) -> [u32; 2] {
-    let scale = 2f32.powf(step as f32 / 2.0);
-    layout.map(|side| (side * scale).ceil().clamp(1.0, MAX_PANEL_PIXELS) as u32)
+/// at `step`, in pixels, and how many of them to a logical one: as many as
+/// make its width whole, its height then rounded up to a whole pixel, so
+/// its layout fits in it at one scale both ways.
+fn drawn_size(layout: [f32; 2], step: i32) -> ([u32; 2], f32) {
+    let wanted = 2f32.powf(step as f32 / 2.0);
+    let width = (layout[0] * wanted).ceil().clamp(1.0, MAX_PANEL_PIXELS);
+    let scale = width / layout[0].max(1.0);
+    let height = (layout[1] * scale).ceil().clamp(1.0, MAX_PANEL_PIXELS);
+    ([width as u32, height as u32], scale)
 }
 
 /// A UI Panel's UI: its Obj, its numbers' first, the document it shows and
@@ -191,8 +196,10 @@ pub(crate) struct PanelUi {
     failed: Option<AssetGuid>,
     layout: [f32; 2],
     step: i32,
-    /// The size it was last drawn at, in pixels, which its pointer is in.
+    /// The size of its texture as last drawn, in pixels, and how many of
+    /// them to a logical one, which its pointer is in.
     pub size: [u32; 2],
+    scale: f32,
 }
 
 impl GameUi {
@@ -216,6 +223,7 @@ impl GameUi {
                     layout: panel.layout_size(),
                     step: 0,
                     size: [0, 0],
+                    scale: 1.0,
                 };
                 self.panels.push(made);
             }
@@ -254,9 +262,10 @@ impl GameUi {
     pub fn lay_out_panels(&mut self, delta: f32) -> Vec<(Entity, [u32; 2], UiFrame)> {
         let mut frames = Vec::with_capacity(self.panels.len());
         for panel in &mut self.panels {
-            let size = drawn_size(panel.layout, panel.step);
-            let scale = size[0] as f32 / panel.layout[0].max(1.0);
-            panel.size = size;
+            let (size, scale) = drawn_size(panel.layout, panel.step);
+            (panel.size, panel.scale) = (size, scale);
+            // Laid out at its own size, which its texture's whole pixels reach a little past.
+            panel.surface.ui.set_layout_size(Some(panel.layout));
             frames.push((panel.entity, size, panel.surface.frame(delta, (size[0], size[1]), scale)));
         }
         frames
@@ -266,8 +275,14 @@ impl GameUi {
     /// and hands the renderer them all.
     pub fn draw_panels(&mut self, renderer: &mut Renderer, delta: f32) -> Result<()> {
         let frames = self.lay_out_panels(delta);
-        let frames: Vec<UiPanelFrame<'_>> =
-            frames.iter().map(|(entity, size, frame)| UiPanelFrame { entity: *entity, frame, size: *size }).collect();
+        let frames: Vec<UiPanelFrame<'_>> = frames
+            .iter()
+            .zip(&self.panels)
+            .map(|((entity, size, frame), panel)| {
+                let drawn = panel.layout.map(|side| side * panel.scale);
+                UiPanelFrame { entity: *entity, frame, size: *size, drawn }
+            })
+            .collect();
         renderer.set_ui_panels(&frames)
     }
 
@@ -309,7 +324,8 @@ impl GameUi {
         if let Some((entity, [u, v])) = hit
             && let Some(panel) = self.panels.iter_mut().find(|panel| panel.entity == entity && panel.size[0] > 0)
         {
-            panel.surface.ui.pointer_move(u * panel.size[0] as f32, v * panel.size[1] as f32);
+            let [x, y] = [u * panel.layout[0], v * panel.layout[1]].map(|logical| logical * panel.scale);
+            panel.surface.ui.pointer_move(x, y);
         }
         self.hovered = hovered;
     }
@@ -501,8 +517,8 @@ mod tests {
         assert_eq!(drawing_step(2, Some([1000.0, 560.0]), layout), 2, "a step smaller: kept");
         assert_eq!(drawing_step(2, Some([500.0, 280.0]), layout), 0, "three steps smaller: one above that");
         assert_eq!(drawing_step(0, Some([f32::MAX; 2]), layout), 2, "at the eye: no larger than it may be");
-        assert_eq!(drawn_size(layout, 2), [1600, 900]);
-        assert_eq!(drawn_size(layout, -6), [100, 57]);
+        assert_eq!(drawn_size(layout, 2), ([1600, 900], 2.0));
+        assert_eq!(drawn_size(layout, -6), ([100, 57], 0.125), "its height rounded up");
         assert_eq!(drawing_step(0, Some([1.0, 1.0]), layout), SMALLEST_STEP);
     }
 

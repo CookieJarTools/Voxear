@@ -181,8 +181,12 @@ pub enum RowAction {
     /// Add a layer of the kind `terrain_props::NEW_LAYERS` names at this
     /// place to the Terrain, on top.
     AddTerrainLayer(usize),
-    /// Wear the ground below the picked Erosion layer down again.
+    /// Work the picked Erosion or Rivers layer out again over the ground
+    /// below it.
     ErodeTerrain,
+    /// Make Streams along the picked Rivers layer's rivers and Pools over
+    /// its lakes.
+    AddRiverWater,
     /// Put the prefab's values at these paths back on the Obj, or write the
     /// Obj's into the prefab.
     RevertOverrides(Vec<ValuePath>),
@@ -1951,6 +1955,9 @@ impl Inspector {
         }
         if self.terrain_panel.as_ref().is_some_and(|panel| panel.erode_clicked(ui)) {
             return Some(RowAction::ErodeTerrain);
+        }
+        if self.terrain_panel.as_ref().is_some_and(|panel| panel.water_clicked(ui)) {
+            return Some(RowAction::AddRiverWater);
         }
         let overrides_button = self.prefab_buttons.as_ref().and_then(|buttons| buttons.overrides);
         let (owner, at) = if let Some(button) = self.transform_menu.filter(|&b| ui.clicked(b)) {

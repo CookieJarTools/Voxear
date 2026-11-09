@@ -15,6 +15,7 @@ mod drawer;
 mod framing;
 mod gun_handlings;
 mod world_gens;
+mod river_water;
 mod hierarchies;
 mod importing;
 mod input_files;
@@ -1884,14 +1885,15 @@ impl Editor {
             }
             RowAction::ErodeTerrain => {
                 if !crate::terrain_props::erode(&mut self.game, renderer, entity) {
-                    self.notify("Could not erode the terrain: see the Console");
+                    self.notify("Could not work the layer out: see the Console");
                 }
             }
+            RowAction::AddRiverWater => self.add_river_water(entity, renderer),
             RowAction::AddTerrainLayer(kind) => {
                 let assets = self.game.content.db().entries().count();
                 crate::terrain_props::add_layer(&mut self.game, entity, kind);
-                // An Erosion layer wears the ground under it as it is added.
-                if crate::terrain_props::erosion_stale(&self.game.engine.world, entity) == Some(true) {
+                // An Erosion or Rivers layer is worked out over the ground under it as it is added.
+                if crate::terrain_props::worked_stale(&self.game.engine.world, entity).is_some_and(|(_, stale)| stale) {
                     crate::terrain_props::erode(&mut self.game, renderer, entity);
                 }
                 // A Generate layer may have made a world generator, to show in the Project panel.

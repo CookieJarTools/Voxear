@@ -132,6 +132,17 @@ pub enum LayerKind {
         #[serde(default)]
         made_from: u64,
     },
+    /// Rivers cut into the ground below as `settings` says, where water
+    /// draining over it gathers (see `rivers`): what that changed, kept as
+    /// raster `raster`, worked out over the ground with hash `made_from` (0
+    /// before it is).
+    Rivers {
+        raster: u32,
+        #[serde(default)]
+        settings: crate::rivers::RiverSettings,
+        #[serde(default)]
+        made_from: u64,
+    },
     /// Ground dug away or put back by the Sculpt tool's Dig and Fill
     /// brushes, a ball a stroke, in order (see `dig`). It lays no heights:
     /// it is dug into the ground every layer makes.
@@ -270,6 +281,7 @@ impl LayerKind {
             LayerKind::Terrace { .. } => "Terrace",
             LayerKind::Smooth { .. } => "Smooth",
             LayerKind::Erosion { .. } => "Erosion",
+            LayerKind::Rivers { .. } => "Rivers",
             LayerKind::Dig { .. } => "Dig",
         }
     }

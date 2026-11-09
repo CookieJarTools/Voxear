@@ -796,3 +796,73 @@ fn an_erosion_layer_wears_the_ground_below_it_and_again_once_its_weather_changes
     frame(&mut editor, &mut renderer);
     assert!(apart(&ground(&editor), &eroded) < 1e-4, "undone, as it was first worn");
 }
+
+#[test]
+fn a_rivers_layer_cuts_rivers_where_water_gathers_and_adds_water_for_them_and_their_lakes() {
+    use voxear_terrain::layers::LayerKind;
+    let Some((_dir, mut renderer, mut editor, field)) = editor_with_a_terrain() else { return };
+    let add = |editor: &mut voxear_editor::Editor, renderer: &mut Renderer, kind: &str| {
+        let add = first_with(&editor.ui, editor.ui.root(), "collection-add").expect("Add Layer");
+        click(&mut editor.ui, add);
+        frame(editor, renderer);
+        let item = menu_item(&editor.ui, kind).unwrap_or_else(|| panic!("a {kind} layer to add"));
+        click(&mut editor.ui, item);
+        frame(editor, renderer);
+        frame(editor, renderer);
+    };
+    add(&mut editor, &mut renderer, "Generate");
+    let ground = |editor: &voxear_editor::Editor| -> Vec<f32> {
+        (0..10_000).map(|i| height(editor, field, 6.0 + (i % 100) as f32 * 5.0, 6.0 + (i / 100) as f32 * 5.0)).collect()
+    };
+    let generated = ground(&editor);
+
+    // A Rivers layer is cut as it is added; with less ground draining into a river before it starts, more rivers.
+    add(&mut editor, &mut renderer, "Rivers");
+    let carved_from = |editor: &voxear_editor::Editor| {
+        match &editor.game.engine.world.get::<TerrainAsset>(field).unwrap().file.layers.last().unwrap().kind {
+            LayerKind::Rivers { made_from, settings, .. } => (*made_from, settings.source),
+            kind => panic!("a Rivers layer on top, not {kind:?}"),
+        }
+    };
+    assert_ne!(carved_from(&editor).0, 0, "cut as it was added");
+    for label in ["Source", "Width", "Depth"] {
+        assert_eq!(prop_rows(&editor.ui, label).len(), 1, "the layer's {label}");
+    }
+    let button = |editor: &voxear_editor::Editor, class: &str| {
+        let found = first_with(&editor.ui, editor.ui.root(), class).unwrap_or_else(|| panic!("its {class} button"));
+        (found, editor.ui.text(found))
+    };
+    assert_eq!(button(&editor, "terrain-erode").1, "Carve");
+    assert_eq!(button(&editor, "terrain-water").1, "Add Water");
+    type_number(&mut editor, &mut renderer, "Source", "1");
+    frame(&mut editor, &mut renderer);
+    assert_eq!(carved_from(&editor).1, 1.0);
+    assert_eq!(button(&editor, "terrain-erode").1, "Carve Again");
+    let carve = button(&editor, "terrain-erode").0;
+    click(&mut editor.ui, carve);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(button(&editor, "terrain-erode").1, "Carve");
+    let cut = ground(&editor);
+    let lowered = generated.iter().zip(&cut).filter(|(a, b)| **b < **a - 0.1).count();
+    let raised = generated.iter().zip(&cut).filter(|(a, b)| **b > **a + 1e-3).count();
+    assert!(lowered > 20 && raised == 0, "beds cut into the ground, none raised: {lowered} lowered, {raised} raised");
+    shot(&mut renderer, "terrain-rivers.png");
+
+    // Add Water: an Obj holding a Stream along each river and a Pool over each lake, one step to undo.
+    std::thread::sleep(std::time::Duration::from_millis(900));
+    let water = button(&editor, "terrain-water").0;
+    click(&mut editor.ui, water);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let world = &editor.game.engine.world;
+    let streams = world.query_ref::<&voxear_render::Stream>().into_iter().count();
+    let pools = world.query_ref::<&voxear_render::Pool>().into_iter().count();
+    assert!(streams > 0, "a Stream along each river: {streams}, and {pools} Pools");
+    let root = obj(&editor, "Rivers and Lakes");
+    let path = world.query_ref::<(&voxear_render::Stream, &voxear_scene::Path, &voxear_scene::Parent)>();
+    assert!(path.into_iter().all(|(_, path, parent)| parent.0 == root && path.points.len() >= 2));
+    editor.undo(&mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.game.engine.world.query_ref::<&voxear_render::Stream>().into_iter().count(), 0, "undone");
+}

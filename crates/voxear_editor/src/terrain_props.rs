@@ -128,6 +128,11 @@ pub enum TerrainField {
     Steps,
     Wear,
     SlumpAngle,
+    /// A Rivers layer's: how much ground drains into a river before it
+    /// starts, and how wide and deep a river is where a square kilometre does.
+    RiverSource,
+    RiverWidth,
+    RiverDepth,
     Picture,
     Height,
     Position,
@@ -354,6 +359,7 @@ fn layer_fields(layer: &Layer) -> Vec<TerrainField> {
         LayerKind::Terrace { .. } => vec![F::Step, F::Sharpness],
         LayerKind::Smooth { .. } => vec![F::Radius],
         LayerKind::Erosion { .. } => vec![F::Rain, F::Steps, F::Wear, F::SlumpAngle],
+        LayerKind::Rivers { .. } => vec![F::RiverSource, F::RiverWidth, F::RiverDepth],
     });
     fields.extend(mask_fields(&layer.mask));
     fields
@@ -379,6 +385,9 @@ pub fn label(field: TerrainField) -> &'static str {
         F::Steps => "Steps",
         F::Wear => "Wear",
         F::SlumpAngle => "Slump angle",
+        F::RiverSource => "Source",
+        F::RiverWidth => "Width",
+        F::RiverDepth => "Depth",
         F::Height => "Height",
         F::Position => "Position",
         F::Rotation => "Rotation",
@@ -460,6 +469,8 @@ pub fn unit(world: &World, entity: Entity, field: TerrainField) -> Option<&'stat
         F::GrassSteepest => Some("°"),
         F::FillsIn | F::GrassSpringsBack => Some("s"),
         F::Rain => Some("mm"),
+        F::RiverSource => Some("ha"),
+        F::RiverWidth | F::RiverDepth => Some("m"),
         F::SlumpAngle => Some("°"),
         F::Rotation | F::Slopes => Some("°"),
         F::Falloff => match picked(world, entity) {
@@ -589,6 +600,9 @@ pub fn get(game: &Game, entity: Entity, field: TerrainField) -> Option<Value> {
             (F::Steps, LayerKind::Erosion { weather, .. }) => Value::Whole(i64::from(weather.steps)),
             (F::Wear, LayerKind::Erosion { weather, .. }) => Value::Number(weather.wear),
             (F::SlumpAngle, LayerKind::Erosion { weather, .. }) => Value::Number(weather.slump),
+            (F::RiverSource, LayerKind::Rivers { settings, .. }) => Value::Number(settings.source),
+            (F::RiverWidth, LayerKind::Rivers { settings, .. }) => Value::Number(settings.width),
+            (F::RiverDepth, LayerKind::Rivers { settings, .. }) => Value::Number(settings.depth),
             (F::Offset, LayerKind::Generate { position, .. }) => Value::Vector(position.to_vec()),
             (
                 F::Height,
@@ -812,6 +826,15 @@ fn set_layer(layer: &mut Layer, field: TerrainField, value: &Value) {
         }
         (F::Wear, v, LayerKind::Erosion { weather, .. }) => {
             weather.wear = number(v).unwrap_or(weather.wear).clamp(0.0, 1.0);
+        }
+        (F::RiverSource, v, LayerKind::Rivers { settings, .. }) => {
+            settings.source = number(v).unwrap_or(settings.source).max(0.01);
+        }
+        (F::RiverWidth, v, LayerKind::Rivers { settings, .. }) => {
+            settings.width = number(v).unwrap_or(settings.width).max(0.1);
+        }
+        (F::RiverDepth, v, LayerKind::Rivers { settings, .. }) => {
+            settings.depth = number(v).unwrap_or(settings.depth).max(0.0);
         }
         (F::SlumpAngle, v, LayerKind::Erosion { weather, .. }) => {
             weather.slump = number(v).unwrap_or(weather.slump).clamp(1.0, 89.0);
@@ -1360,8 +1383,10 @@ pub fn remove_surface(game: &mut Game, entity: Entity, at: usize) -> bool {
 }
 
 /// The kinds of layer Add offers, in its menu's order.
-pub const NEW_LAYERS: [&str; 11] =
-    ["Generate", "Stamp", "Noise", "Sculpt", "Spline", "Trench", "Dig", "Terrace", "Smooth", "Erosion", "Import"];
+pub const NEW_LAYERS: [&str; 12] = [
+    "Generate", "Stamp", "Noise", "Sculpt", "Spline", "Trench", "Dig", "Terrace", "Smooth", "Erosion", "Rivers",
+    "Import",
+];
 
 /// A new layer of the kind `NEW_LAYERS[choice]` names, to start from on a
 /// terrain as `file` says, numbering a sculpt layer's raster past `rasters`'.
@@ -1397,6 +1422,12 @@ pub fn new_layer(choice: usize, file: &TerrainFile, rasters: &Rasters) -> Layer 
         "Dig" => LayerKind::Dig { strokes: Vec::new() },
         "Terrace" => LayerKind::Terrace { step: 4.0, sharpness: 0.5 },
         "Smooth" => LayerKind::Smooth { radius: 2.0 },
+        // Cut as it is added (see `erode`).
+        "Rivers" => LayerKind::Rivers {
+            raster: rasters.next_raster(file.rasters_in_use()),
+            settings: voxear_terrain::rivers::RiverSettings::default(),
+            made_from: 0,
+        },
         // Worn as it is added (see `erode`).
         "Erosion" => LayerKind::Erosion {
             raster: rasters.next_raster(file.rasters_in_use()),
@@ -1440,53 +1471,140 @@ pub fn add_layer(game: &mut Game, entity: Entity, choice: usize) -> bool {
 }
 
 /// A hash of the ground the layers below layer `at` make and, where it is
-/// an Erosion layer, its weather: for knowing when what it wore has changed
-/// since.
+/// an Erosion or Rivers layer, its settings: for knowing when what it worked
+/// out has changed since.
 pub fn worn_from(file: &TerrainFile, at: usize) -> u64 {
     let below = TerrainFile { layers: file.layers[..at.min(file.layers.len())].to_vec(), ..file.clone() };
-    let weather = match file.layers.get(at).map(|layer| &layer.kind) {
+    let settings = match file.layers.get(at).map(|layer| &layer.kind) {
         Some(LayerKind::Erosion { weather, .. }) => format!("{weather:?}"),
+        Some(LayerKind::Rivers { settings, .. }) => format!("{settings:?}"),
         _ => String::new(),
     };
-    voxear_terrain::layers::stable_hash(format!("{} {weather}", below.shape_hash()).as_bytes()).max(1)
+    voxear_terrain::layers::stable_hash(format!("{} {settings}", below.shape_hash()).as_bytes()).max(1)
 }
 
-/// Whether the picked layer is an Erosion layer, and whether the ground
-/// below it or its weather changed since it was last worn: none for
-/// another kind.
-pub fn erosion_stale(world: &World, entity: Entity) -> Option<bool> {
+/// Whether the picked layer is worked out over the ground below it, an
+/// Erosion layer (false) or a Rivers layer (true), and whether that ground or
+/// its settings changed since it last was: none for another kind.
+pub fn worked_stale(world: &World, entity: Entity) -> Option<(bool, bool)> {
     let at = ui(world).layer;
     let file = &world.get::<TerrainAsset>(entity)?.file;
-    let LayerKind::Erosion { made_from, .. } = file.layers.get(at)?.kind else { return None };
-    Some(made_from != worn_from(file, at))
+    let (rivers, made_from) = match file.layers.get(at)?.kind {
+        LayerKind::Erosion { made_from, .. } => (false, made_from),
+        LayerKind::Rivers { made_from, .. } => (true, made_from),
+        _ => return None,
+    };
+    Some((rivers, made_from != worn_from(file, at)))
 }
 
-/// Wears the ground below the picked Erosion layer down on the GPU, as its
-/// weather says, and keeps what that changed in its raster. False when the
-/// picked layer is no Erosion layer or the GPU could not do it.
+/// The ground the layers below layer `at` make, as erosion and rivers work
+/// on it, and the sea's height over it: the topmost generator's below it
+/// whose sea reaches the ground, if any.
+fn ground_under(
+    game: &mut Game,
+    file: &TerrainFile,
+    rasters: &Rasters,
+    at: usize,
+) -> (voxear_terrain::Heightmap, Option<f32>) {
+    let below = TerrainFile { layers: file.layers[..at].to_vec(), ..file.clone() };
+    let ground = game.content.compose_terrain(&below, rasters, None, &Compositor::default(), &Dirty::All);
+    let generator = below.layers.iter().rev().find_map(|layer| match &layer.kind {
+        LayerKind::Generate { world: Some(reference), .. } if layer.enabled => game.content.world_gen(reference),
+        _ => None,
+    });
+    let lowest = ground.tiles().iter().flat_map(|tile| tile.samples().iter().copied()).fold(f32::MAX, f32::min);
+    let sea = generator.map(|world| world.sea_level).filter(|&level| level > lowest);
+    (ground, sea)
+}
+
+/// Works the picked Erosion or Rivers layer out over the ground below it:
+/// wears it down on the GPU, or cuts rivers into it; and keeps what that
+/// changed in its raster. False when the picked layer is neither, or the
+/// GPU could not do it.
 pub fn erode(game: &mut Game, renderer: &Renderer, entity: Entity) -> bool {
     let world = &game.engine.world;
     let Some((at, layer)) = picked(world, entity) else { return false };
-    let LayerKind::Erosion { raster, weather, .. } = layer.kind else { return false };
     let Some(asset) = world.get::<TerrainAsset>(entity) else { return false };
     let (mut file, mut rasters) = (asset.file.clone(), (*asset.rasters).clone());
-    let below = TerrainFile { layers: file.layers[..at].to_vec(), ..file.clone() };
-    let ground = game.content.compose_terrain(&below, &rasters, None, &Compositor::default(), &Dirty::All);
+    let (ground, sea) = ground_under(game, &file, &rasters, at);
     let grid = voxear_terrain::erosion::grid(&ground);
-    let eroded = match renderer.erode(&grid, &weather) {
-        Ok(eroded) => eroded,
-        Err(error) => {
-            tracing::error!("eroding the terrain: {error:#}");
-            return false;
+    let (raster, worked) = match layer.kind {
+        LayerKind::Erosion { raster, weather, .. } => match renderer.erode(&grid, &weather) {
+            Ok(eroded) => (raster, eroded),
+            Err(error) => {
+                tracing::error!("eroding the terrain: {error:#}");
+                return false;
+            }
+        },
+        LayerKind::Rivers { raster, settings, .. } => {
+            (raster, voxear_terrain::rivers::carve(&grid, &settings, sea).heights)
         }
+        _ => return false,
     };
     rasters.remove(raster);
-    voxear_terrain::erosion::keep(&mut rasters, raster, &ground, &grid, &eroded);
+    voxear_terrain::erosion::keep(&mut rasters, raster, &ground, &grid, &worked);
     let worn = worn_from(&file, at);
-    if let LayerKind::Erosion { made_from, .. } = &mut file.layers[at].kind {
+    if let LayerKind::Erosion { made_from, .. } | LayerKind::Rivers { made_from, .. } = &mut file.layers[at].kind {
         *made_from = worn;
     }
     remake(game, entity, file, Arc::new(rasters), &Dirty::All)
+}
+
+/// The picked Rivers layer's rivers and lakes as a scene's Objs, to add: an
+/// Obj at the terrain's corner holding a Stream along each river and a Pool
+/// over each part of each lake. None when the picked layer is no Rivers
+/// layer, or it has neither.
+pub fn river_water(game: &mut Game, entity: Entity) -> Option<String> {
+    let world = &game.engine.world;
+    let (at, layer) = picked(world, entity)?;
+    let LayerKind::Rivers { settings, .. } = layer.kind else { return None };
+    let corner = voxear_terrain::corner(world.get(entity)?, world.get(entity));
+    let asset = world.get::<TerrainAsset>(entity)?;
+    let (file, rasters) = (asset.file.clone(), asset.rasters.clone());
+    let (ground, sea) = ground_under(game, &file, &rasters, at);
+    let grid = voxear_terrain::erosion::grid(&ground);
+    let carved = voxear_terrain::rivers::carve(&grid, &settings, sea);
+    if carved.rivers.is_empty() && carved.lakes.is_empty() {
+        return None;
+    }
+    let number = |v: f32| format!("{v:?}");
+    let triple = |[x, y, z]: [f32; 3]| format!("[{}, {}, {}]", number(x), number(y), number(z));
+    let mut text = String::from("format = 1\n\n[[obj]]\nid = 1\nname = \"Rivers and Lakes\"\n");
+    text += &format!("position = {}\n", triple(corner.to_array()));
+    let mut id = 1;
+    for (n, river) in carved.rivers.iter().enumerate() {
+        id += 1;
+        let start = river.points[0].at;
+        let points: Vec<String> = river
+            .points
+            .iter()
+            .map(|point| {
+                let p = point.at;
+                let local = [p[0] - start[0], p[1] - start[1], p[2] - start[2]];
+                format!("{{ position = {}, width = {} }}", triple(local), number(point.water_width()))
+            })
+            .collect();
+        let depth = river.points.last().map_or(1.0, |point| point.depth);
+        let place = triple(start);
+        text += &format!("\n[[obj]]\nid = {id}\nname = \"River {}\"\nparent = 1\nposition = {place}\n", n + 1);
+        text += &format!("stream = {{ depth = {} }}\npath = {{ points = [{}] }}\n", number(depth), points.join(", "));
+    }
+    for (n, lake) in carved.lakes.iter().enumerate() {
+        for (part, (bounds, depth)) in lake.boxes.iter().enumerate() {
+            id += 1;
+            let spacing = grid.spacing;
+            let [x0, z0, x1, z1] = *bounds;
+            let middle = [(x0 + x1) * 0.5, lake.level, (z0 + z1) * 0.5];
+            let name = match lake.boxes.len() {
+                1 => format!("Lake {}", n + 1),
+                _ => format!("Lake {} ({})", n + 1, part + 1),
+            };
+            text += &format!("\n[[obj]]\nid = {id}\nname = \"{name}\"\nparent = 1\nposition = {}\n", triple(middle));
+            let size = [number(x1 - x0 + spacing), number(z1 - z0 + spacing)];
+            text += &format!("pool = {{ size = [{}, {}], depth = {} }}\n", size[0], size[1], number(*depth));
+        }
+    }
+    Some(text)
 }
 
 /// The world generator a new Generate layer starts with: the project's
@@ -1659,7 +1777,9 @@ pub fn remove_layer(game: &mut Game, entity: Entity, at: usize) -> bool {
     }
     let layer = file.layers.remove(at);
     let mut rasters = asset.rasters.clone();
-    if let LayerKind::Sculpt { raster } | LayerKind::Erosion { raster, .. } = layer.kind {
+    if let LayerKind::Sculpt { raster } | LayerKind::Erosion { raster, .. } | LayerKind::Rivers { raster, .. } =
+        layer.kind
+    {
         Arc::make_mut(&mut rasters).remove(raster);
     }
     let dirty = dirty_between(Some(&layer), None);

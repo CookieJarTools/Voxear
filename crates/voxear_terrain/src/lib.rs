@@ -24,6 +24,7 @@ pub mod layers;
 pub mod lod;
 pub mod noise;
 pub mod raster;
+pub mod rivers;
 pub mod ray;
 pub mod runtime;
 pub mod surfaces;

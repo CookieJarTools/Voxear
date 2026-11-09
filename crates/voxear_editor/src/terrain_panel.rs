@@ -45,8 +45,10 @@ pub struct TerrainPanel {
     tools: NodeId,
     list: Option<(Listing, Collection)>,
     rows: Vec<Row>,
-    /// The picked Erosion layer's button to wear its ground down again.
+    /// The picked Erosion or Rivers layer's button to work it out again, and
+    /// a Rivers layer's to make water for its rivers and lakes.
     erode: Option<NodeId>,
+    water: Option<NodeId>,
     /// What the panel was built from, to build it again when that changes.
     signature: u64,
 }
@@ -58,6 +60,7 @@ fn icon(kind: &LayerKind) -> &'static str {
         LayerKind::Stamp { .. } => "mountain",
         LayerKind::Generate { .. } => "sprout",
         LayerKind::Erosion { .. } => "drop",
+        LayerKind::Rivers { .. } => "branch",
         LayerKind::Noise { .. } => "grid",
         LayerKind::Sculpt { .. } => "edit",
         LayerKind::Spline { dig: Some(_), .. } => "spade",
@@ -75,7 +78,7 @@ fn signature(world: &World, entity: Entity) -> u64 {
     let ui = terrain_props::ui(world);
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     (ui.tool, ui.layer, ui.surface, ui.grass).hash(&mut hasher);
-    terrain_props::erosion_stale(world, entity).hash(&mut hasher);
+    terrain_props::worked_stale(world, entity).hash(&mut hasher);
     if let Some(asset) = world.get::<TerrainAsset>(entity) {
         for layer in &asset.file.layers {
             (&layer.name, layer.kind.title(), layer.enabled).hash(&mut hasher);
@@ -190,16 +193,26 @@ impl TerrainPanel {
             }
             _ => None,
         };
-        // An Erosion layer picked: a button to wear its ground, again once the ground below has changed.
-        let erode = match (state.tool, terrain_props::erosion_stale(world, entity)) {
-            (TerrainTool::Layers, Some(stale)) => {
-                let button = ui.button(rows, if stale { "Erode Again" } else { "Erode" });
-                ui.add_class(button, "terrain-erode");
-                Some(button)
+        // An Erosion or Rivers layer picked: a button to work it out, again once the ground below or its settings
+        // changed; and for rivers, one to make their water.
+        let (mut erode, mut water) = (None, None);
+        if let (TerrainTool::Layers, Some((rivers, stale))) = (state.tool, terrain_props::worked_stale(world, entity)) {
+            let label = match (rivers, stale) {
+                (false, false) => "Erode",
+                (false, true) => "Erode Again",
+                (true, false) => "Carve",
+                (true, true) => "Carve Again",
+            };
+            let button = ui.button(rows, label);
+            ui.add_class(button, "terrain-erode");
+            erode = Some(button);
+            if rivers {
+                let button = ui.button(rows, "Add Water");
+                ui.add_class(button, "terrain-water");
+                water = Some(button);
             }
-            _ => None,
-        };
-        Self { tools, list, rows: shown, erode, signature: signature(world, entity) }
+        }
+        Self { tools, list, rows: shown, erode, water, signature: signature(world, entity) }
     }
 
     /// Whether what it shows changed since it was built.
@@ -255,9 +268,14 @@ impl TerrainPanel {
         false
     }
 
-    /// Whether the Erode button was clicked.
+    /// Whether the Erode or Carve button was clicked.
     pub fn erode_clicked(&self, ui: &Ui) -> bool {
         self.erode.is_some_and(|button| ui.clicked(button))
+    }
+
+    /// Whether the Add Water button was clicked.
+    pub fn water_clicked(&self, ui: &Ui) -> bool {
+        self.water.is_some_and(|button| ui.clicked(button))
     }
 
     /// The Add Layer button, when it was clicked, for its menu to open under.

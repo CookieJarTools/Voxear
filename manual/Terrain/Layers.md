@@ -20,6 +20,7 @@ Each change is one step to undo. A new terrain has no layers: flat ground at its
 
 | Kind | What it makes |
 | --- | --- |
+| Generate | Ground made by a world generator, from coasts to mountain ranges (see [[Generating Terrain]]) |
 | Stamp | A grey picture, or a rounded hill without one, placed, turned and sized on the ground |
 | Noise | Rolling, ridged or billowing ground all over, from a seed |
 | Sculpt | What the [[Sculpting]] brushes paint |

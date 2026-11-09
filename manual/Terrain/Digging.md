@@ -1,5 +1,5 @@
 ---
-order: 11
+order: 12
 ---
 
 Heights give the ground one height at each place, so they cannot make what a battlefield is full of: a trench with straight walls, a shell hole's undercut lip, a dugout under the parapet, a tunnel. Digging can. Where a terrain is dug, its ground there becomes voxels, cubes a quarter of a metre a side on ground of half-metre samples, which digging takes away and filling puts back in any shape. Everywhere else the terrain stays heights, and the two meet with no seam.

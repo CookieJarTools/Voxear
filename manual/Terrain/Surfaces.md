@@ -1,5 +1,5 @@
 ---
-order: 4
+order: 5
 ---
 
 A terrain's **surfaces** are what its ground is covered with: dirt, mud, grass, rock, snow. Each surface is a material laid on the ground, its pictures repeated every few metres. A terrain can have up to 32 surfaces. Without any, it is drawn with its **Material** (see [[Terrains]]).

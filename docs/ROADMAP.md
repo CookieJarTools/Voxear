@@ -1531,9 +1531,21 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   with ground not dug, background triangles and tiles waiting for them, coarser levels with the same edges on their
   faces, a view's picks, rays' meshes over a pit, GPU (the pit whole from far off), the editor (Smooth on dug
   ground, undone). Manual: Digging, Sculpting.
-- **Built-in terrain generation:** generators that make a terrain to start from, chosen and tuned in the editor or
-  run from code, each feeding the layer stack so it can be painted and stamped over afterwards:
-  - control fields (continentalness, erosion, ridges, temperature, humidity) shaped by nested curves, with presets
+- ~~**World generators:**~~ done: `.worldgen` assets (`voxear_terrain::generate`): a seed, Scale, Sea level and
+  Height, three fields read through one warp (Continents, Ruggedness, and Ridges as ridged noise whose crests run in
+  long branching lines, their Sharpness set), and four curves drawn smooth through their keys without overshoot
+  (Coast and Inland over continents, Relief over ruggedness, Peaks from valleys to crests): ground = Coast + Inland ×
+  Relief × Peaks, then Crags on high peaks and Bumps everywhere. Presets: Battlefield Plains, Rolling Hills, Alpine,
+  Archipelago, Canyons. Only sums, products, square roots and `floor`, so a seed makes the same bits everywhere.
+  A Generate layer (Add Layer ▸ Generate, which picks the project's generator or makes one beside the terrain) lays
+  it, Set, from an Offset in the generator's world. New ▸ World Generator; its Inspector: the five settings, and
+  under Advanced the fields, warp, curves (graphs drawn as the generator reads them), crags and bumps; each change
+  saved and the open level's terrains generated from it made again, as are those edited outside the editor. A
+  sprout icon. Tests: the same bits for a seed (a hash), smooth curves through their keys, fields filling their
+  range, presets found by shape, a layer across a tile's edge, the editor (a Generate layer, a preset picked).
+  Manual: Generating Terrain. Chose four curves combined over nested ones: easier to edit, coasts into ranges alike.
+- **More terrain generation:** feeding the layer stack so it can be painted and stamped over afterwards:
+  - temperature and humidity fields, for biomes
   - a per-point erosion filter, GPU hydraulic and thermal erosion, and stream-power erosion for ranges
   - rivers and lakes carved by flow, as Streams and Pools
   - biomes and climate choosing surfaces and scatter

@@ -1,5 +1,5 @@
 ---
-order: 12
+order: 13
 ---
 
 Scripts change the ground while the game runs: a shell blows a crater, an engineer digs a gun pit flat, a cart paints mud along its track, a charge cuts a way into a bunker, a fire leaves the grass burnt away. Physics stands things on the new ground at once and the terrain is drawn as it is now, from the tiles the change reached and no others.

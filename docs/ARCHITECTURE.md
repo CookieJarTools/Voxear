@@ -2785,10 +2785,15 @@ layer; stream-power erosion for mountain ranges; and a per-point erosion filter 
 steepest descent, octave by octave) that suits endless chunked worlds. Erosion leaves flow, sediment and debris
 masks for texturing and scattering.
 
-**Generation.** Control fields (continentalness, erosion, ridges folded into peaks and valleys, temperature and
-humidity) shaped by nested curves a designer draws, with presets; domain warping; rivers and lakes by flow on
-finished maps and along valleys in endless ones; biomes from climate and landform choosing surfaces, plants and
-blocks. For voxels, 3D density from the same fields, with caves.
+**Generation.** A `.worldgen` asset (`voxear_terrain::generate::WorldGen`) makes ground at any point from a seed:
+three fields read through one warp (continents, ruggedness, and ridged noise from valleys to crests), shaped by
+four curves a designer draws, smoothed through their keys (coast and inland over continents, relief over
+ruggedness, peaks over ridges: height = coast + inland × relief × peaks), with crags and bumps, from presets. Only
+sums, products, square roots and `floor`, so the same seed makes the same bits on every machine. A terrain's
+Generate layer lays it from an offset in its world; compositing finds generators by reference as it finds
+pictures. To come: temperature and humidity; rivers and lakes by flow on finished maps and along valleys in endless
+ones; biomes from climate and landform choosing surfaces, plants and blocks. For voxels, 3D density from the same
+fields, with caves.
 
 **Rendering.** CDLOD: a quadtree of patches, each a grid of 32 quads drawn from one index buffer, picked on the CPU
 for the camera and each sun cascade, each vertex sliding onto the next level's grid near its level's far distance.

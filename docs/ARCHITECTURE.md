@@ -2798,8 +2798,10 @@ four curves a designer draws, smoothed through their keys (coast and inland over
 ruggedness, peaks over ridges: height = coast + inland × relief × peaks), with crags and bumps, from presets. Only
 sums, products, square roots and `floor`, so the same seed makes the same bits on every machine. A terrain's
 Generate layer lays it from an offset in its world; compositing finds generators by reference as it finds
-pictures. To come: temperature and humidity; rivers and lakes by flow on finished maps and along valleys in endless
-ones; biomes from climate and landform choosing surfaces, plants and blocks. For voxels, 3D density from the same
+pictures. Rivers and lakes on finished maps are a Rivers layer (`voxear_terrain::rivers`): priority-flood filling
+gives every cell the way it drains and the ground draining through it; rivers are cut where that is enough, lakes
+stand in the filled hollows, and the editor makes Streams and Pools for them. To come: temperature and humidity;
+rivers along valleys in endless worlds; biomes from climate and landform choosing surfaces, plants and blocks. For voxels, 3D density from the same
 fields, with caves.
 
 **Rendering.** CDLOD: a quadtree of patches, each a grid of 32 quads drawn from one index buffer, picked on the CPU

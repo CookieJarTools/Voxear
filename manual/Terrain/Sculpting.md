@@ -1,5 +1,5 @@
 ---
-order: 5
+order: 6
 ---
 
 Pick **Sculpt** along the top of the Terrain in the Inspector, and paint the ground in the Scene view with the left mouse button. A ring on the ground shows the brush, with an inner ring where it is strongest; it eases to nothing at its edge.

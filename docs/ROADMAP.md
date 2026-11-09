@@ -1560,6 +1560,18 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   Erode / Erode Again button when to wear it again. Weather: Rain (mm), Steps, Wear, Slump angle. A drop icon.
   Tests: GPU (high ground worn into low, volume kept within 1%, a cliff slumped to 45°), the grid and its change
   sample by sample, the editor (worn as added, again after rain changed, undone). Manual: Erosion.
+- ~~**Rivers and lakes:**~~ done: a Rivers layer (`voxear_terrain::rivers`): priority-flood filling from the edges
+  and the sea (the topmost generator's below, where it reaches the ground) giving each cell the neighbour it drains
+  to and the ground draining through it; rivers where that passes Source (hectares), wider (by the square root of
+  the area) and deeper (by its fourth root) downstream; courses traced from each head to the edge, the sea, a lake
+  or another river, eased and never rising; beds cut along the courses under the water, rounded floors and banks
+  rising a metre a metre; lakes in filled hollows half a metre deep and 2000 m² or more, at their spill height,
+  covered by boxes halved until hardly any holds lower ground that drains elsewhere. Kept as the layer's raster with
+  its `made_from`; Carve / Carve Again and Add Water (an Obj of Streams on Paths, their water as wide as the banks
+  at its height, and Pools) in the panel; Source, Width, Depth rows; new Rivers layers cut as added. Tests: all
+  water drains away, filled ground falls along the flow, rivers never rise and run in their beds, a bowl's lake and
+  its boxes, nothing cut under the sea, the editor (cut, again with less Source, water added and undone). Manual:
+  Rivers and Lakes.
 - **More terrain generation:** feeding the layer stack so it can be painted and stamped over afterwards:
   - temperature and humidity fields, for biomes
   - stream-power erosion for ranges

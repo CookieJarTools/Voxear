@@ -1,5 +1,5 @@
 ---
-order: 9
+order: 10
 ---
 
 A terrain's **grass** is what grows thickly all over it: grass, weeds, flowers, pebbles, millions of them. There are far too many to place one by one or to keep a list of, so each kind of grass only says how thickly it grows where, and the GPU grows the blades round the camera each frame: the same blade in the same place every time you come back, sized and turned its own way, leaning with the ground. Grass far off thins out to nothing at its draw distance.

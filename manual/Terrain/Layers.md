@@ -30,6 +30,7 @@ Each change is one step to undo. A new terrain has no layers: flat ground at its
 | Terrace | The ground below cut into steps |
 | Smooth | The ground below smoothed |
 | Erosion | The ground below worn by rain and slumping (see [[Erosion]]) |
+| Rivers | Rivers cut where water draining over the ground below gathers, and lakes in its hollows (see [[Rivers and Lakes]]) |
 | Import | A grey picture stretched over the whole terrain: heights made in another tool |
 
 A picture is best as a 16-bit greyscale PNG, black lowest and white highest. An 8-bit one has only 256 steps, which show as terraces on a tall terrain. Its top is the far side, the one along +Z, as it looks from above.

@@ -1,5 +1,5 @@
 ---
-order: 12
+order: 13
 ---
 
 A rock, a wall or a sandbag set on a terrain meets it in a hard line: grey stone on brown mud, as if it had been put down a moment ago. Give the model's material a **Ground blend**, and its foot takes on the ground's own look, the earth or snow it stands in creeping up it, so it sits in the ground.

@@ -911,6 +911,7 @@ pub fn terrain(content: &mut Content, renderer: Option<&mut Renderer>, data: &Te
         heights,
         weights,
         grass,
+        dug: None,
         detail_distance: data.detail_distance.max(1.0),
         cast_shadows: data.cast_shadows,
     };

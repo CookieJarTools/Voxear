@@ -47,6 +47,15 @@ pub enum Edit {
     /// Brings grass kind `kind`, or every kind with `None`, towards
     /// `amount` (0 cleared, 1 grown fully) within `radius` metres.
     Grass { at: [f32; 2], radius: f32, kind: Option<u8>, amount: f32 },
+    /// Digs a ball of ground `radius` metres round out of it, `at` in
+    /// metres from the terrain's corner, up and down too, laying surface
+    /// `surface` on what it bares where one is given (see `dig`).
+    Dig { at: [f32; 3], radius: f32, surface: Option<u8> },
+    /// Puts a ball of ground back.
+    Fill { at: [f32; 3], radius: f32 },
+    /// Digs a tunnel `radius` metres round from `from` to `to`, rounded at
+    /// its ends: a trench along the ground, or a way under it.
+    Tunnel { from: [f32; 3], to: [f32; 3], radius: f32, surface: Option<u8> },
 }
 
 impl Edit {
@@ -60,6 +69,25 @@ impl Edit {
             | Edit::Paint { at, radius, .. }
             | Edit::Holes { at, radius, .. }
             | Edit::Grass { at, radius, .. } => (at, radius),
+            Edit::Dig { at, radius, .. } | Edit::Fill { at, radius } => ([at[0], at[2]], radius),
+            Edit::Tunnel { from, to, radius, .. } => {
+                let middle = [(from[0] + to[0]) * 0.5, (from[2] + to[2]) * 0.5];
+                let half = ((to[0] - from[0]).powi(2) + (to[2] - from[2]).powi(2)).sqrt() * 0.5;
+                (middle, half + radius)
+            }
+        }
+    }
+
+    /// The shape a digging edit carves, and whether it digs or fills.
+    pub fn carving(&self) -> Option<(crate::dig::Shape, crate::dig::Carve, Option<u8>)> {
+        use crate::dig::{Carve, Shape};
+        match *self {
+            Edit::Dig { at, radius, surface } => Some((Shape::Ball { at, radius }, Carve::Dig, surface)),
+            Edit::Fill { at, radius } => Some((Shape::Ball { at, radius }, Carve::Fill, None)),
+            Edit::Tunnel { from, to, radius, surface } => {
+                Some((Shape::Capsule { from, to, radius }, Carve::Dig, surface))
+            }
+            _ => None,
         }
     }
 
@@ -74,22 +102,32 @@ impl Edit {
             Edit::Paint { at, radius, strength, .. } => &[at[0], at[1], *radius, *strength],
             Edit::Holes { at, radius, .. } => &[at[0], at[1], *radius],
             Edit::Grass { at, radius, amount, .. } => &[at[0], at[1], *radius, *amount],
+            Edit::Dig { at, radius, .. } | Edit::Fill { at, radius } => &[at[0], at[1], at[2], *radius],
+            Edit::Tunnel { from, to, radius, .. } => &[from[0], from[1], from[2], to[0], to[1], to[2], *radius],
         };
         numbers.iter().all(|v| v.is_finite()) && self.reach().1 > 0.0
     }
 
-    /// The same edit `by` metres along, as from the world into a terrain's
-    /// space.
-    pub fn moved(mut self, by: [f32; 2]) -> Self {
-        let at = match &mut self {
+    /// The same edit `by` metres along, x, y and z, as from the world into
+    /// a terrain's space: a height to flatten to moved up with it.
+    pub fn moved(mut self, by: [f32; 3]) -> Self {
+        let shift = |p: &mut [f32; 3]| *p = [p[0] + by[0], p[1] + by[1], p[2] + by[2]];
+        match &mut self {
+            Edit::Flatten { at, height, .. } => {
+                *at = [at[0] + by[0], at[1] + by[2]];
+                *height += by[1];
+            }
             Edit::Raise { at, .. }
             | Edit::Crater { at, .. }
-            | Edit::Flatten { at, .. }
             | Edit::Paint { at, .. }
             | Edit::Holes { at, .. }
-            | Edit::Grass { at, .. } => at,
-        };
-        *at = [at[0] + by[0], at[1] + by[1]];
+            | Edit::Grass { at, .. } => *at = [at[0] + by[0], at[1] + by[2]],
+            Edit::Dig { at, .. } | Edit::Fill { at, .. } => shift(at),
+            Edit::Tunnel { from, to, .. } => {
+                shift(from);
+                shift(to);
+            }
+        }
         self
     }
 
@@ -126,6 +164,20 @@ impl Edit {
                 put(&mut out, &[at[0], at[1], radius, amount]);
                 out.push(kind.unwrap_or(0xFF));
             }
+            Edit::Dig { at, radius, surface } => {
+                out.push(6);
+                put(&mut out, &[at[0], at[1], at[2], radius]);
+                out.push(surface.unwrap_or(0xFF));
+            }
+            Edit::Fill { at, radius } => {
+                out.push(7);
+                put(&mut out, &[at[0], at[1], at[2], radius]);
+            }
+            Edit::Tunnel { from, to, radius, surface } => {
+                out.push(8);
+                put(&mut out, &[from[0], from[1], from[2], to[0], to[1], to[2], radius]);
+                out.push(surface.unwrap_or(0xFF));
+            }
         }
         out
     }
@@ -146,6 +198,16 @@ impl Edit {
             3 => Edit::Paint { at, radius: number(2)?, strength: number(3)?, surface: byte(4)? },
             4 => Edit::Holes { at, radius: number(2)?, cut: byte(3)? != 0 },
             5 => Edit::Grass { at, radius: number(2)?, amount: number(3)?, kind: optional(byte(4)?) },
+            6 => {
+                Edit::Dig { at: [number(0)?, number(1)?, number(2)?], radius: number(3)?, surface: optional(byte(4)?) }
+            }
+            7 => Edit::Fill { at: [number(0)?, number(1)?, number(2)?], radius: number(3)? },
+            8 => Edit::Tunnel {
+                from: [number(0)?, number(1)?, number(2)?],
+                to: [number(3)?, number(4)?, number(5)?],
+                radius: number(6)?,
+                surface: optional(byte(7)?),
+            },
             kind => anyhow::bail!("no edit of kind {kind}"),
         })
     }
@@ -234,6 +296,16 @@ pub fn apply(ground: &mut Terrain, edit: &Edit) -> Option<Area> {
         return None;
     }
     let (at, reach) = edit.reach();
+    if let Some((shape, carve, surface)) = edit.carving() {
+        let mut dug = ground.dug.as_deref().cloned().unwrap_or_default();
+        let (holed, _) = dug.carve(&ground.heights, &shape, carve, surface)?;
+        if let Some(holed) = holed {
+            ground.heights = Arc::new(holed);
+        }
+        ground.dug = Some(Arc::new(dug));
+        let (low, high) = shape.bounds();
+        return Some([low.x, low.z, high.x, high.z]);
+    }
     let rect = samples(&ground.heights, at, reach)?;
     let spacing = ground.heights.spacing();
     let tiles = tiles_of(&ground.heights, rect);
@@ -360,7 +432,8 @@ fn laid(packed: [u32; 2], surface: u8, amount: f32) -> [u32; 2] {
 }
 
 const MAGIC: &[u8; 8] = b"VXTEDITS";
-const VERSION: u32 = 1;
+/// 2 added the dug ground's chunks after the tiles.
+const VERSION: u32 = 2;
 /// Which form edits are kept in: the tiles they changed, or the edits.
 const TILES: u8 = 0;
 const COMMANDS: u8 = 1;
@@ -439,6 +512,7 @@ impl TerrainEdits {
         now.heights = loaded.heights;
         now.weights = loaded.weights;
         now.grass = loaded.grass;
+        now.dug = loaded.dug;
         Ok(())
     }
 }
@@ -518,6 +592,37 @@ pub fn write_edits(built: &Terrain, now: &Terrain) -> Vec<u8> {
         let packed = zstd::bulk::compress(&bytes, 9).expect("compressing in memory");
         out.extend_from_slice(&index.to_le_bytes());
         out.push(flags);
+        out.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+        out.extend_from_slice(&(packed.len() as u32).to_le_bytes());
+        out.extend_from_slice(&packed);
+    }
+    // Then each dug chunk changed, as it differs from the one built, or from the heights where none was.
+    let empty = crate::dig::Excavation::default();
+    let (was, is) = (built.dug.as_deref().unwrap_or(&empty), now.dug.as_deref().unwrap_or(&empty));
+    let grid = crate::dig::Grid::of(&built.heights);
+    let mut dug = Vec::new();
+    for (key, chunk) in is.chunks() {
+        let base = match was.chunk(*key) {
+            Some(same) if Arc::ptr_eq(same, chunk) => continue,
+            Some(before) => before.as_ref().clone(),
+            None => crate::dig::Excavation::fresh(&built.heights, grid, *key),
+        };
+        let mut words: Vec<u32> =
+            base.density.iter().zip(chunk.density.iter()).map(|(a, b)| a.to_bits() ^ b.to_bits()).collect();
+        let marks: Vec<u8> = base.dug.iter().zip(chunk.dug.iter()).map(|(a, b)| a ^ b).collect();
+        words.extend(
+            marks.chunks(4).map(|four| u32::from_le_bytes(std::array::from_fn(|i| four.get(i).copied().unwrap_or(0)))),
+        );
+        if words.iter().any(|&word| word != 0) {
+            dug.push((*key, planes(&words)));
+        }
+    }
+    out.extend_from_slice(&(dug.len() as u32).to_le_bytes());
+    for (key, bytes) in dug {
+        let packed = zstd::bulk::compress(&bytes, 9).expect("compressing in memory");
+        for v in [key.x, key.y, key.z] {
+            out.extend_from_slice(&v.to_le_bytes());
+        }
         out.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
         out.extend_from_slice(&(packed.len() as u32).to_le_bytes());
         out.extend_from_slice(&packed);
@@ -603,7 +708,8 @@ fn read_saved(built: &Terrain, bytes: &[u8]) -> Result<Saved> {
     let number = |at: usize| -> Result<u32> {
         Ok(u32::from_le_bytes(bytes.get(at..at + 4).context("the edits end early")?.try_into().expect("four")))
     };
-    ensure!(number(8)? == VERSION, "edits of version {}", number(8)?);
+    let version = number(8)?;
+    ensure!((1..=VERSION).contains(&version), "edits of version {version}");
     let form = *bytes.get(12).context("the edits end early")?;
     let count = number(13)? as usize;
     let mut at = 17;
@@ -689,6 +795,37 @@ fn read_saved(built: &Terrain, bytes: &[u8]) -> Result<Saved> {
     if let (Some(tiles), Some(was)) = (grass, &built.grass) {
         ground.grass = Some(Arc::new(GrassMap::from_tiles(tiles_x, built.heights.tiles_z(), was.words(), tiles)));
     }
+    if version >= 2 {
+        let count = number(at)? as usize;
+        at += 4;
+        let grid = crate::dig::Grid::of(&built.heights);
+        let mut dug = built.dug.as_deref().cloned().unwrap_or_default();
+        let corners = crate::dig::CORNERS.pow(3);
+        for _ in 0..count {
+            let key =
+                crate::dig::ChunkKey { x: number(at)? as i32, y: number(at + 4)? as i32, z: number(at + 8)? as i32 };
+            let (size, packed) = (number(at + 12)? as usize, number(at + 16)? as usize);
+            let data = bytes.get(at + 20..at + 20 + packed).context("the edits end early")?;
+            at += 20 + packed;
+            let words = words_of(&zstd::bulk::decompress(data, size).context("a dug chunk's edits")?);
+            ensure!(words.len() == corners + corners.div_ceil(4), "a dug chunk's edits of the wrong size");
+            let mut chunk = match dug.chunk(key) {
+                Some(before) => before.as_ref().clone(),
+                None => crate::dig::Excavation::fresh(&built.heights, grid, key),
+            };
+            for (density, change) in chunk.density.iter_mut().zip(&words) {
+                *density = f32::from_bits(density.to_bits() ^ change);
+            }
+            let marks = words[corners..].iter().flat_map(|word| word.to_le_bytes());
+            for (mark, change) in chunk.dug.iter_mut().zip(marks) {
+                *mark ^= change;
+            }
+            dug = dug.with_chunk(key, chunk);
+        }
+        if !dug.is_empty() {
+            ground.dug = Some(Arc::new(dug));
+        }
+    }
     Ok(Saved::Tiles(ground))
 }
 
@@ -753,7 +890,7 @@ mod tests {
         }
         assert_eq!(loaded.weights, now.weights);
         assert_eq!(loaded.grass, now.grass);
-        assert!(write_edits(&built, &built).len() <= 17, "nothing changed is nothing written");
+        assert!(write_edits(&built, &built).len() <= 21, "nothing changed is nothing written");
         assert!(read_edits(&built, b"VXTEDITS").is_err());
         let mut same = built.clone();
         assert_eq!(
@@ -790,6 +927,41 @@ mod tests {
         let mut joined = built.clone();
         TerrainEdits::new(&built).load(&mut joined, &write_commands(&[crater])).expect("edits");
         assert!(joined.heights.height_at(40.0, 40.0) < built.heights.height_at(40.0, 40.0) - 0.9);
+    }
+
+    #[test]
+    fn digging_reads_back_exactly_from_its_commands_and_its_chunks() {
+        let built = field();
+        let mut kept = TerrainEdits::new(&built);
+        let mut now = built.clone();
+        let ground = built.heights.height_at(40.0, 40.0);
+        let edits = [
+            Edit::Dig { at: [40.0, ground, 40.0], radius: 2.0, surface: Some(1) },
+            Edit::Tunnel {
+                from: [36.0, ground - 1.0, 40.0],
+                to: [44.0, ground - 1.0, 40.0],
+                radius: 0.8,
+                surface: None,
+            },
+            Edit::Fill { at: [40.0, ground - 0.5, 41.0], radius: 0.6 },
+        ];
+        for edit in &edits {
+            assert_eq!(Edit::from_bytes(&edit.to_bytes()).unwrap(), *edit);
+            assert!(kept.apply(&mut now, edit).is_some());
+        }
+        assert!(now.dug.as_ref().is_some_and(|dug| dug.is_dug(5, 5)));
+        // 40 m is on the edge of the sixth column of 8 m, samples 80 to 96; those inside it are holes.
+        assert!(now.heights.is_hole(82, 82) && !now.heights.is_hole(80, 82), "the columns under the dig cut out");
+        assert_eq!(now.dug.as_ref().unwrap().columns(), [(4, 4), (4, 5), (5, 4), (5, 5)]);
+        let commands = kept.save(&now);
+        let tiles = write_edits(&built, &now);
+        for saved in [&commands, &tiles] {
+            let mut joined = built.clone();
+            TerrainEdits::new(&built).load(&mut joined, saved).expect("edits");
+            assert_eq!(joined.dug, now.dug);
+            assert_eq!(joined.heights.tile(0, 0).holes(), now.heights.tile(0, 0).holes());
+        }
+        assert!(commands.len() < 120, "three digs as themselves in {} bytes", commands.len());
     }
 
     #[test]

@@ -13,6 +13,7 @@
 
 pub mod brush;
 pub mod composite;
+pub mod dig;
 pub mod file;
 pub mod grass;
 pub mod heights;
@@ -44,6 +45,9 @@ pub struct Terrain {
     /// How thickly each kind of grass grows at each sample (see `grass`);
     /// none for a terrain without grass.
     pub grass: Option<Arc<grass::GrassMap>>,
+    /// Its dug ground, voxels where it was dug (see `dig`); none where it
+    /// has not been.
+    pub dug: Option<Arc<dig::Excavation>>,
     /// Out to how far from the camera the ground is drawn at its finest, in
     /// metres; each coarser level is drawn out twice as far again.
     pub detail_distance: f32,
@@ -64,6 +68,10 @@ impl PartialEq for Terrain {
                 (Some(a), Some(b)) => Arc::ptr_eq(a, b) || a == b,
                 (a, b) => a.is_none() && b.is_none(),
             }
+            && match (&self.dug, &other.dug) {
+                (Some(a), Some(b)) => Arc::ptr_eq(a, b) || a == b,
+                (a, b) => a.is_none() && b.is_none(),
+            }
             && self.detail_distance == other.detail_distance
             && self.cast_shadows == other.cast_shadows
     }
@@ -77,6 +85,7 @@ impl Terrain {
             heights: Arc::new(heights),
             weights: None,
             grass: None,
+            dug: None,
             detail_distance: Self::DEFAULT_DETAIL_DISTANCE,
             cast_shadows: true,
         }

@@ -49,6 +49,7 @@ mod skinning;
 mod smoke;
 mod grass;
 mod terrain;
+mod tracks;
 mod payload;
 mod pipelines;
 mod post;
@@ -112,6 +113,7 @@ pub use looks::{Look, LookName, SunLook};
 pub use shadows::{SHADOW_DISTANCE, SHADOW_SPLIT};
 pub use post_volume::{PostVolume, VolumeShape};
 pub use foliage::{Foliage, FoliageInteraction, Impostors, Plant, PlantSet, Plants, scatter};
+pub use tracks::TrackMaker;
 pub use assets::Glow;
 pub use impostors::Impostor;
 pub use model_renderer::{ModelPart, ModelRenderer};
@@ -1459,6 +1461,10 @@ struct View {
     lod_state: Buffer,
     /// The grid of pushes through foliage round the camera (see `foliage`).
     foliage_pushes: Buffer,
+    /// The map of tracks in the ground round the camera, and where its
+    /// Track Makers were last frame (see `tracks`).
+    tracks: Buffer,
+    track_memory: tracks::TrackMemory,
     /// Auto exposure's adapted EV and whether it has started.
     exposure: Buffer,
     /// Last frame's model matrices and camera, for motion vectors.
@@ -1538,11 +1544,13 @@ impl View {
             gpu.create_buffer(&named("lod state"), MAX_INSTANCES * 4, persistent, MemoryLocation::GpuOnly)?;
         let cells = u64::from(gpu::PUSH_CELLS * gpu::PUSH_CELLS) * 8;
         let foliage_pushes = gpu.create_buffer(&named("foliage pushes"), cells, persistent, MemoryLocation::GpuOnly)?;
+        let texels = u64::from(tracks::TRACK_TEXELS * tracks::TRACK_TEXELS) * 8;
+        let tracks = gpu.create_buffer(&named("tracks"), texels, persistent, MemoryLocation::GpuOnly)?;
         // Host visible so the adapted exposure shows in the stats.
         let exposure = gpu.create_buffer(&named("exposure"), 16, persistent, MemoryLocation::GpuToCpu)?;
         // Nothing was visible, no LOD chosen and no exposure metered before the first frame.
         gpu.immediate(|cmd| unsafe {
-            for buffer in [&visibility, &lod_state, &exposure, &foliage_pushes] {
+            for buffer in [&visibility, &lod_state, &exposure, &foliage_pushes, &tracks] {
                 gpu.device.cmd_fill_buffer(cmd, buffer.handle, 0, vk::WHOLE_SIZE, 0);
             }
         })?;
@@ -1558,6 +1566,8 @@ impl View {
             visibility,
             lod_state,
             foliage_pushes,
+            tracks,
+            track_memory: tracks::TrackMemory::default(),
             exposure,
             prev_models: HashMap::new(),
             prev_entities: Vec::new(),
@@ -1635,7 +1645,7 @@ impl View {
                 frames.retire(Retired::Buffer(buffer));
             }
         }
-        for buffer in [self.visibility, self.lod_state, self.exposure, self.foliage_pushes] {
+        for buffer in [self.visibility, self.lod_state, self.exposure, self.foliage_pushes, self.tracks] {
             frames.retire(Retired::Buffer(buffer));
         }
         for buffer in self.ocean.into_buffers() {
@@ -1837,6 +1847,10 @@ impl View {
             });
         // What the project's modules leave out is not drawn.
         let features = world.resource::<RenderFeatures>().copied().unwrap_or_default();
+        // What presses into the ground, from where each was last frame.
+        let makers = if features.terrain { std::mem::take(&mut extracted.track_makers) } else { Vec::new() };
+        let camera = voxear_core::math::Vec3::from(extracted.frame.camera_position);
+        extracted.frame.tracks = self.track_memory.frame(camera, makers);
         if !features.water {
             extracted.ocean = None;
             extracted.water_bodies = Default::default();
@@ -1898,9 +1912,11 @@ impl View {
             false => None,
         };
         let buffers = &self.buffers[slot];
-        // The terrains' patches this view draws, for its camera and the sun's cascades.
+        // The terrains' patches this view draws, for its camera and the sun's cascades, and the tracks in them.
+        let tracks_id = fg.import_buffer(&self.tracks);
         let view_terrains =
-            terrain::gather(&setup.terrains, &extracted.frame, &extracted.entities, extracted.has_sun, &buffers.terrain);
+            terrain::gather(&setup.terrains, &extracted.frame, &extracted.entities, extracted.has_sun, &buffers.terrain)
+                .map(|drawn| terrain::ViewTerrains { tracks: Some(tracks_id), ..drawn });
         // The grass this view scatters round its camera on the terrains.
         let view_grass = grass::gather(&setup.terrains, &extracted.frame, &buffers.grass).map(|(jobs, dispatches)| {
             grass::ViewGrass {
@@ -2172,6 +2188,7 @@ impl View {
                 scene_nodes: scene_hierarchy.0,
                 scene_instances: scene_hierarchy.1,
                 foliage_pushes: self.foliage_pushes.address,
+                tracks: self.tracks.address,
                 // Only under the atmosphere, which works it out.
                 sky_light: if atmosphere.is_some() { buffers.sky_light.address } else { 0 },
                 material_properties: assets.material_properties.address,
@@ -2243,6 +2260,8 @@ impl View {
             visibility: fg.import_buffer(&self.visibility),
             lod_state: fg.import_buffer(&self.lod_state),
             foliage_pushes: fg.import_buffer(&self.foliage_pushes),
+            tracks: tracks_id,
+            tracks_change: extracted.frame.tracks.changes(),
             stats: fg.import_buffer(&buffers.stats),
             stats_readback: fg.import_buffer(&buffers.stats_readback),
             clusters: fg.import_buffer(&buffers.clusters),

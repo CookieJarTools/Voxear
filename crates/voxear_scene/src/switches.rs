@@ -40,10 +40,11 @@ pub enum Switch {
     Seasons,
     FoliageInteraction,
     Foliage,
+    TrackMaker,
 }
 
 impl Switch {
-    pub const ALL: [Switch; 17] = [
+    pub const ALL: [Switch; 18] = [
         Switch::Renderer,
         Switch::Model,
         Switch::Light,
@@ -61,6 +62,7 @@ impl Switch {
         Switch::Seasons,
         Switch::FoliageInteraction,
         Switch::Foliage,
+        Switch::TrackMaker,
     ];
 
     /// The component by its number, as C# passes it.
@@ -85,7 +87,7 @@ impl Switch {
 }
 
 /// Each switch's name, as serde writes it, in `Switch::ALL`'s order.
-const NAMES: [&str; 17] = [
+const NAMES: [&str; 18] = [
     "renderer",
     "model",
     "light",
@@ -103,6 +105,7 @@ const NAMES: [&str; 17] = [
     "seasons",
     "foliage_interaction",
     "foliage",
+    "track_maker",
 ];
 
 /// The components switched off on an Obj. An Obj with every component on

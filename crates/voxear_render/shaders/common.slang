@@ -636,6 +636,26 @@ struct Pushes
     uint count;
 };
 
+// Tracks in the ground round the camera (src/tracks.rs, tracks.slang): TRACK_TEXELS a side, each how deep the ground
+// was pressed and when, holding the world's cells modulo its size.
+static const uint TRACK_TEXELS = 1024;
+static const uint MAX_TRACK_MAKERS = 64;
+
+// What presses into the ground this frame: each Track Maker's path since last frame (from x, z, to x, z), its half
+// width and depth and how high it was above the ground at each end; the map's corner now and last frame, in texels.
+struct Tracks
+{
+    float4 paths[MAX_TRACK_MAKERS];
+    float4 sizes[MAX_TRACK_MAKERS];
+    int2 origin;
+    int2 lastOrigin;
+    uint count;
+    float texel;
+    // The map holds nothing to keep yet.
+    uint fresh;
+    uint pad;
+};
+
 // Ray-traced GI's probes; mirrors GpuDdgi in src/gpu.rs.
 static const uint DDGI_CASCADES = 3;
 static const float DDGI_CASCADE_SCALE = 2.0;
@@ -732,6 +752,7 @@ struct Frame
     Seasons seasons;
     LocalShadows localShadows;
     Ocean ocean;
+    Tracks tracks;
 };
 
 // The projection a shadow draw puts its vertices through: a cascade's, or
@@ -924,7 +945,7 @@ struct Terrain
     uint* holes;
     TerrainSurface* surfaces;
     uint surfaceCount;
-    // TERRAIN_HOLES when any tile has holes.
+    // TERRAIN_HOLES when any tile has holes, TERRAIN_TRACKS when a surface takes tracks.
     uint flags;
     // How thickly each kind of grass grows (terrain_ground.slang): grassWords words a sample, a byte a kind.
     uint* grass;
@@ -933,13 +954,17 @@ struct Terrain
 };
 
 // One of a terrain's surfaces: its material, one over its pictures' size in metres, how sharply it meets the
-// others by their height pictures, and TERRAIN_SURFACE_TRIPLANAR to be drawn from the side on steep ground.
+// others by their height pictures, TERRAIN_SURFACE_TRIPLANAR to be drawn from the side on steep ground, and how it
+// takes tracks.
 struct TerrainSurface
 {
     uint material;
     float uvScale;
     float sharpness;
     uint flags;
+    // How far tracks press into it, as a share of their depth, and the seconds they take to fill in again (0 never).
+    float tracks;
+    float fillsIn;
 };
 
 static const uint TERRAIN_HOLE_WORDS = (TERRAIN_TILE_LEN + 31) / 32;
@@ -983,6 +1008,8 @@ struct GrassDraw
 
 static const uint GRASS_MAX_LODS = 4;
 static const uint TERRAIN_HOLES = 1;
+// A terrain with a surface that tracks press into.
+static const uint TERRAIN_TRACKS = 2;
 static const uint TERRAIN_SURFACE_TRIPLANAR = 1;
 
 // A patch: its corner in the terrain's space, how wide, and level | terrain << 8.
@@ -1072,6 +1099,8 @@ struct Buffers
     DrawCommand* grassArgs;
     GrassBlade* grassBlades;
     GrassDraw* grassDraws;
+    // This view's tracks in the ground round its camera (tracks.slang): how deep each texel was pressed, and when.
+    float2* tracks;
 };
 
 struct Push

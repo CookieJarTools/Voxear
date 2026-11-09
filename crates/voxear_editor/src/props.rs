@@ -120,6 +120,8 @@ pub enum Part {
     Foliage,
     /// Ground from heights (the Terrain module).
     Terrain,
+    /// Leaves tracks in the ground where its Obj touches it.
+    TrackMaker,
     /// A Model Renderer: a whole model drawn by the Obj.
     Model,
     /// A script, by its full type name.
@@ -169,6 +171,7 @@ impl Part {
             Part::FoliageInteraction => "foliage_interaction".into(),
             Part::Foliage => "foliage".into(),
             Part::Terrain => "terrain".into(),
+            Part::TrackMaker => "track_maker".into(),
             Part::Model => "model".into(),
             Part::Behaviour(name) => name.clone(),
         }
@@ -183,7 +186,7 @@ impl Part {
             Part::Collider2D | Part::Rigidbody2D => Some(Module::Physics2D),
             Part::Seasons | Part::FoliageInteraction | Part::Foliage => Some(Module::Vegetation),
             Part::Ocean | Part::Pool | Part::DryArea | Part::Stream | Part::Buoyancy => Some(Module::Water),
-            Part::Terrain => Some(Module::Terrain),
+            Part::Terrain | Part::TrackMaker => Some(Module::Terrain),
             _ => None,
         }
     }
@@ -228,6 +231,7 @@ impl Part {
             Part::FoliageInteraction => "Foliage Interaction",
             Part::Foliage => "Foliage",
             Part::Terrain => "Terrain",
+            Part::TrackMaker => "Track Maker",
             Part::Model => "Model Renderer",
             Part::Behaviour(name) => name.rsplit('.').next().unwrap_or(name),
         }
@@ -254,6 +258,7 @@ impl Part {
             Part::WindZone => Switch::WindZone,
             Part::Seasons => Switch::Seasons,
             Part::FoliageInteraction => Switch::FoliageInteraction,
+            Part::TrackMaker => Switch::TrackMaker,
             Part::Foliage => Switch::Foliage,
             Part::Model => Switch::Model,
             _ => return None,
@@ -297,6 +302,7 @@ impl Part {
             Part::FoliageInteraction => "move",
             Part::Foliage => "cube",
             Part::Terrain => "mountain",
+            Part::TrackMaker => "move",
             Part::Model => "box",
             Part::Behaviour(_) => "code",
         }
@@ -572,6 +578,9 @@ pub enum Prop {
     GroundCover,
     PushRadius,
     PushStrength,
+    /// A Track Maker's: how wide its track is and how deep it presses.
+    TrackWidth,
+    TrackDepth,
     FoliageDraw,
     /// A Foliage's colours, which its plants are tinted between, and how
     /// wide the patches are.
@@ -919,6 +928,7 @@ impl Prop {
             | Prop::Wetness
             | Prop::GroundCover => Part::Seasons,
             Prop::PushRadius | Prop::PushStrength => Part::FoliageInteraction,
+            Prop::TrackWidth | Prop::TrackDepth => Part::TrackMaker,
             Prop::FoliageDraw
             | Prop::FoliageFade
             | Prop::FoliageShadow
@@ -1221,6 +1231,8 @@ impl Prop {
             Prop::GroundCover => "ground_cover",
             Prop::PushRadius => "radius",
             Prop::PushStrength => "strength",
+            Prop::TrackWidth => "width",
+            Prop::TrackDepth => "depth",
             Prop::FoliageDraw => "draw_distance",
             Prop::FoliageHealthy => "healthy_color",
             Prop::FoliageDry => "dry_color",
@@ -1433,6 +1445,9 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     }
     if world.has::<voxear_terrain::Terrain>(entity) {
         parts.push(Part::Terrain);
+    }
+    if world.has::<voxear_render::TrackMaker>(entity) {
+        parts.push(Part::TrackMaker);
     }
     if world.has::<ModelSource>(entity) {
         parts.push(Part::Model);
@@ -1754,6 +1769,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             ]
         }
         Part::FoliageInteraction => vec![Prop::PushRadius, Prop::PushStrength],
+        Part::TrackMaker => vec![Prop::TrackWidth, Prop::TrackDepth],
         Part::Foliage => {
             let mut props = vec![Prop::FoliageDraw, Prop::FoliageFade, Prop::FoliageShadow, Prop::FoliageImpostors];
             if world.get::<Foliage>(entity).is_some_and(|f| f.impostors == Impostors::From) {
@@ -2101,6 +2117,8 @@ pub fn label(prop: &Prop) -> String {
         Prop::GroundCover => "Ground and rocks",
         Prop::PushRadius => "Radius",
         Prop::PushStrength => "Strength",
+        Prop::TrackWidth => "Width",
+        Prop::TrackDepth => "Depth",
         Prop::FoliageDraw => "Draw distance",
         Prop::FoliageHealthy => "Healthy colour",
         Prop::FoliageDry => "Dry colour",
@@ -2214,6 +2232,7 @@ pub fn unit_on(world: &World, entity: Entity, prop: &Prop) -> Option<&'static st
         (Prop::LodUntil(_), Some(LodMeasure::ScreenSize)) => Some("%"),
         (Prop::LodUntil(_), Some(LodMeasure::Distance)) => Some("m"),
         (Prop::SeasonPatchSize | Prop::FoliageSpread | Prop::FoliageImpostorDistance | Prop::NetRange, _) => Some("m"),
+        (Prop::TrackWidth | Prop::TrackDepth, _) => Some("m"),
         (Prop::Terrain(field), _) => crate::terrain_props::unit(world, entity, *field),
         (Prop::Plants(field), _) => crate::plants_props::unit(*field),
         (Prop::JointMin | Prop::JointMax, _) => match world.get::<Joint>(entity)?.kind {
@@ -2389,6 +2408,9 @@ pub fn add(
         Part::FoliageInteraction => {
             world.insert(entity, FoliageInteraction::default());
         }
+        Part::TrackMaker => {
+            world.insert(entity, voxear_render::TrackMaker::default());
+        }
         Part::Behaviour(name) => {
             let spec = if types.is_component(name) { BehaviourSpec::component(name) } else { BehaviourSpec::new(name) };
             match world.get_mut::<EditBehaviours>(entity) {
@@ -2465,6 +2487,7 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
         Part::Buoyancy => drop(world.remove::<voxear_engine::water::Buoyancy>(entity)),
         Part::Seasons => drop(world.remove::<Seasons>(entity)),
         Part::FoliageInteraction => drop(world.remove::<FoliageInteraction>(entity)),
+        Part::TrackMaker => drop(world.remove::<voxear_render::TrackMaker>(entity)),
         Part::Foliage => {
             world.remove::<Foliage>(entity);
             world.remove::<voxear_scene::Plants>(entity);
@@ -2945,6 +2968,8 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         Prop::GroundCover => Value::Number(world.get::<Seasons>(entity)?.ground_cover),
         Prop::PushRadius => Value::Number(world.get::<FoliageInteraction>(entity)?.radius),
         Prop::PushStrength => Value::Number(world.get::<FoliageInteraction>(entity)?.strength),
+        Prop::TrackWidth => Value::Number(world.get::<voxear_render::TrackMaker>(entity)?.width),
+        Prop::TrackDepth => Value::Number(world.get::<voxear_render::TrackMaker>(entity)?.depth),
         Prop::FoliageDraw => Value::Number(world.get::<Foliage>(entity)?.draw_distance),
         Prop::FoliageHealthy => Value::Color(world.get::<Foliage>(entity)?.healthy_color.map(round3)),
         Prop::FoliageDry => Value::Color(world.get::<Foliage>(entity)?.dry_color.map(round3)),
@@ -3806,6 +3831,12 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         }
         (Prop::PushRadius, Value::Number(n)) => {
             with(world, entity, |push: &mut FoliageInteraction| push.radius = n.max(0.01))
+        }
+        (Prop::TrackWidth, Value::Number(n)) => {
+            with(world, entity, |maker: &mut voxear_render::TrackMaker| maker.width = n.clamp(0.01, 20.0))
+        }
+        (Prop::TrackDepth, Value::Number(n)) => {
+            with(world, entity, |maker: &mut voxear_render::TrackMaker| maker.depth = n.clamp(0.0, 2.0))
         }
         (Prop::PushStrength, Value::Number(n)) => {
             with(world, entity, |push: &mut FoliageInteraction| push.strength = n.max(0.0))

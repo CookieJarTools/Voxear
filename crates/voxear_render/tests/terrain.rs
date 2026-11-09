@@ -211,7 +211,15 @@ fn thirty_two_surfaces_are_drawn_each_where_its_shares_put_it_and_blended_betwee
     for i in 0..32 {
         let [r, g, b] = colour(i);
         let material = renderer.add_material(&MaterialDesc { base_color: [r, g, b, 1.0], ..MaterialDesc::default() });
-        surfaces.push(SurfaceLook { material: material.unwrap(), size: 4.0, sharpness: 0.0, triplanar: false });
+        let material = material.unwrap();
+        surfaces.push(SurfaceLook {
+            material,
+            size: 4.0,
+            sharpness: 0.0,
+            triplanar: false,
+            tracks: 0.0,
+            fills_in: 0.0,
+        });
     }
     // 128 m across in stripes 4 m wide along x, each all of one surface.
     let side = voxear_terrain::TILE_SAMPLES;
@@ -346,4 +354,84 @@ fn grass_grows_thickly_where_its_densities_say_more_blades_than_the_scene_has_ro
     let bare = green_share(right - 20, right + 60);
     assert!(thick > 0.3, "the left half grassy: {thick}");
     assert!(bare < 0.02, "none on the right: {bare}");
+}
+
+#[test]
+fn a_track_maker_presses_a_track_into_snow_that_stays_until_it_fills_in() {
+    use std::sync::Arc;
+    use voxear_render::{SurfaceLook, TrackMaker};
+    use voxear_terrain::surfaces::{WeightTile, Weights};
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    // Brown ground under white snow, which takes tracks all the way.
+    let mut look = |colour: [f32; 3], tracks: f32| {
+        let [r, g, b] = colour;
+        let material = renderer.add_material(&MaterialDesc { base_color: [r, g, b, 1.0], ..MaterialDesc::default() });
+        SurfaceLook { material: material.unwrap(), size: 4.0, sharpness: 0.0, triplanar: false, tracks, fills_in: 0.0 }
+    };
+    let surfaces = vec![look([0.3, 0.2, 0.1], 0.0), look([0.9, 0.9, 0.9], 1.0)];
+    let weights = Weights::from_tiles(1, 1, vec![Arc::new(WeightTile::all(1))]);
+    let terrain = Terrain { weights: Some(Arc::new(weights)), ..Terrain::new(Heightmap::flat(1, 1, 0.5, 0.0)) };
+    let plain = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let field = world.spawn((
+        terrain,
+        TerrainLook { surfaces: surfaces.into(), ..TerrainLook::new(plain, 4.0) },
+        Transform::default(),
+    ));
+    look_down(&mut world, 20.0);
+    renderer.set_view_options(ViewOptions { debug_view: voxear_render::DEBUG_VIEW_UNLIT, ..ViewOptions::default() });
+    // A foot on the ground walking along x across the middle.
+    let foot =
+        world.spawn((TrackMaker { width: 0.5, depth: 0.15 }, Transform::from_position(Vec3::new(58.0, 0.0, 64.0))));
+    let mut time = 0.0;
+    let mut frames = |renderer: &mut Renderer, world: &mut World, count: u32, walk: f32| {
+        for _ in 0..count {
+            time += 1.0 / 60.0;
+            if let Some(transform) = world.get_mut::<Transform>(foot) {
+                transform.position.x += walk;
+            }
+            renderer.render(world, time).expect("frame renders");
+        }
+        renderer.read_pixels().expect("pixels").2
+    };
+    let pixels = frames(&mut renderer, &mut world, 20, 0.6);
+    keep_image("terrain tracks.png", &pixels);
+    let brightness = |pixels: &[u8], x: f32, z: f32| {
+        let (u, v) = from_above(20.0, x, z);
+        rgb_at(pixels, u, v).iter().sum::<i32>()
+    };
+    let (track, beside, ahead) =
+        (brightness(&pixels, 63.0, 64.0), brightness(&pixels, 63.0, 66.0), brightness(&pixels, 56.0, 64.0));
+    assert!(track < beside - 150, "the track shows the ground under the snow: {track} beside {beside}");
+    assert!((beside - ahead).abs() < 20, "untouched snow either side: {beside} and {ahead}");
+
+    // Lifted off the ground, it leaves nothing more; what it left stays.
+    world.get_mut::<Transform>(foot).unwrap().position.y = 0.5;
+    let pixels = frames(&mut renderer, &mut world, 10, 0.6);
+    assert!(brightness(&pixels, 63.0, 64.0) < beside - 150, "the track stays");
+    assert!((brightness(&pixels, 74.0, 64.0) - beside).abs() < 20, "and none where it went in the air");
+
+    // The camera goes far enough off that the map scrolls past the track, and back: it was left behind.
+    let camera =
+        world.query_ref::<(voxear_ecs::Entity, &Camera)>().into_iter().next().map(|(entity, _)| entity).unwrap();
+    world.get_mut::<Transform>(camera).unwrap().position.x += 100.0;
+    frames(&mut renderer, &mut world, 2, 0.0);
+    world.get_mut::<Transform>(camera).unwrap().position.x -= 100.0;
+    let pixels = frames(&mut renderer, &mut world, 2, 0.0);
+    keep_image("terrain tracks scrolled.png", &pixels);
+    assert!((brightness(&pixels, 63.0, 64.0) - beside).abs() < 20, "the map forgot what it scrolled past");
+
+    // A track in snow that fills in over half a second is gone in a second.
+    let mut look = world.get::<TerrainLook>(field).unwrap().clone();
+    let mut filling: Vec<SurfaceLook> = look.surfaces.to_vec();
+    filling[1].fills_in = 0.5;
+    look.surfaces = filling.into();
+    world.insert(field, look);
+    let foot_at = world.get_mut::<Transform>(foot).unwrap();
+    foot_at.position = Vec3::new(58.0, 0.0, 64.0);
+    let pixels = frames(&mut renderer, &mut world, 10, 0.6);
+    assert!(brightness(&pixels, 63.0, 64.0) < beside - 150, "fresh tracks show at once");
+    world.get_mut::<Transform>(foot).unwrap().position.y = 0.5;
+    let pixels = frames(&mut renderer, &mut world, 60, 0.0);
+    assert!((brightness(&pixels, 63.0, 64.0) - beside).abs() < 20, "and fill in");
 }

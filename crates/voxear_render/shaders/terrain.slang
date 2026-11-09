@@ -298,6 +298,113 @@ TerrainLayer terrainLayerAt(TerrainSurface surface, TerrainSpot spot, float3 nor
     return layer;
 }
 
+// How far tracks press into ground of these surfaces, as a share of their depth: each surface's own, those pressed
+// `age` seconds ago filled in as far as it fills them.
+float terrainGive(Terrain terrain, uint4 ids, float4 shares, float age)
+{
+    float give = 0.0;
+    for (uint k = 0; k < 4; k++)
+    {
+        if (shares[k] <= 0.0)
+        {
+            continue;
+        }
+        TerrainSurface surface = terrain.surfaces[min(ids[k], terrain.surfaceCount - 1)];
+        float kept = surface.fillsIn > 0.0 ? saturate(1.0 - age / surface.fillsIn) : 1.0;
+        give += shares[k] * surface.tracks * kept;
+    }
+    return give;
+}
+
+// Where the eye's ray through `world` meets the floor of the tracks pressed `give` of their depth into the ground
+// facing `normal`: how far from `world` along x and z, then how far down. Marched in steps down from the surface,
+// then between the last two; nothing where the ground there is not pressed, or is seen almost edge on.
+float3 terrainTrackFloor(Frame* frame, float3 world, float3 normal, float give)
+{
+    float sunk = trackAt(frame, world.xz).x * give;
+    float3 ray = normalize(world - frame->cameraPosition);
+    float down = -dot(ray, normal);
+    if (sunk <= 1e-4 || down < 0.05)
+    {
+        return float3(0.0);
+    }
+    static const uint STEPS = 10;
+    float deepest = min(max(sunk * 2.0, 0.05), 1.0);
+    float lastDepth = 0.0;
+    float lastSunk = sunk;
+    for (uint i = 1; i <= STEPS; i++)
+    {
+        float depth = deepest * float(i) / float(STEPS);
+        float2 along = ray.xz * (depth / down);
+        float bottom = trackAt(frame, world.xz + along).x * give;
+        if (bottom <= depth)
+        {
+            float above = lastSunk - lastDepth;
+            float t = above / max(above - (bottom - depth), 1e-5);
+            float met = lerp(lastDepth, depth, t);
+            return float3(ray.xz * (met / down), met);
+        }
+        lastDepth = depth;
+        lastSunk = bottom;
+    }
+    return float3(ray.xz * (deepest / down), deepest);
+}
+
+// The tracks at the pixel: its spot moved to where the eye sees the floor of the tracks, the normal bent by their
+// slope there, and where they are deep, the terrain's first surface showing through those that gave. How deep the
+// floor is, for the compacted look.
+float terrainTracks(Terrain terrain, VertexOut input, inout TerrainSpot spot, inout float3 normal, inout uint4 ids, inout float4 shares)
+{
+    Frame* frame = push.frame;
+    float age = frame->time - trackAt(frame, input.worldPosition.xz).y;
+    float give = terrainGive(terrain, ids, shares, age);
+    if (give <= 0.0)
+    {
+        return 0.0;
+    }
+    float3 met = terrainTrackFloor(frame, input.worldPosition, normal, give);
+    if (met.z <= 0.0)
+    {
+        return 0.0;
+    }
+    spot.place += float3(met.x, -met.z, met.y);
+    float2 at = input.worldPosition.xz + met.xy;
+    float e = frame->tracks.texel;
+    float gx = (trackAt(frame, at + float2(e, 0.0)).x - trackAt(frame, at - float2(e, 0.0)).x) * give / (2.0 * e);
+    float gz = (trackAt(frame, at + float2(0.0, e)).x - trackAt(frame, at - float2(0.0, e)).x) * give / (2.0 * e);
+    normal = normalize(normal + float3(gx, 0.0, gz));
+
+    // Pressed deep, what gave thins to show the first surface under it.
+    float through = 0.85 * smoothstep(0.04, 0.12, met.z);
+    float moved = 0.0;
+    for (uint k = 0; k < 4; k++)
+    {
+        TerrainSurface surface = terrain.surfaces[min(ids[k], terrain.surfaceCount - 1)];
+        if (shares[k] > 0.0 && ids[k] != 0 && surface.tracks > 0.0)
+        {
+            float gone = shares[k] * through * saturate(surface.tracks);
+            shares[k] -= gone;
+            moved += gone;
+        }
+    }
+    if (moved > 0.0)
+    {
+        // Into the first surface's place, or the least's.
+        uint into = 0;
+        for (uint k = 1; k < 4; k++)
+        {
+            into = shares[k] < shares[into] ? k : into;
+        }
+        for (uint k = 0; k < 4; k++)
+        {
+            into = ids[k] == 0 && shares[k] > 0.0 ? k : into;
+        }
+        shares[into] = ids[into] == 0 ? shares[into] + moved : moved;
+        ids[into] = 0;
+    }
+    return met.z;
+}
+
 // The terrain's own look at the pixel, for shading.slang's fragment shaders (TERRAIN_SHADING): cuts away holes,
 // then for a terrain with surfaces gives their colour, metallic, roughness and normal blended, and true.
 bool terrainShading(VertexOut input, inout float4 base, inout float metallic, inout float roughness, out float3 normal)
@@ -320,6 +427,7 @@ bool terrainShading(VertexOut input, inout float4 base, inout float metallic, in
     uint4 ids;
     float4 shares;
     terrainShares(terrain, local, ids, shares);
+    float pressed = (terrain.flags & TERRAIN_TRACKS) != 0 ? terrainTracks(terrain, input, spot, normal, ids, shares) : 0.0;
 
     // Blended by the surfaces' height pictures as sharply as they ask: each share raised by its picture's height,
     // and only what stands near the highest kept.
@@ -370,5 +478,9 @@ bool terrainShading(VertexOut input, inout float4 base, inout float metallic, in
     metallic = blendedMetallic / used;
     roughness = blendedRoughness / used;
     normal = normalizeOr(blendedNormal, normal);
+    // Ground pressed down is packed tighter: a little darker and smoother.
+    float packed = saturate(pressed / 0.1);
+    base.rgb *= 1.0 - 0.18 * packed;
+    roughness *= 1.0 - 0.2 * packed;
     return true;
 }

@@ -55,6 +55,7 @@ pub(super) enum Copied {
     Buoyancy(voxear_engine::water::Buoyancy),
     Seasons(Box<Seasons>),
     FoliageInteraction(FoliageInteraction),
+    TrackMaker(voxear_render::TrackMaker),
     Behaviour(BehaviourSpec),
 }
 
@@ -108,6 +109,7 @@ impl Copied {
             Part::Buoyancy => Self::Buoyancy(*world.get::<voxear_engine::water::Buoyancy>(entity)?),
             Part::Seasons => Self::Seasons(Box::new(*world.get::<Seasons>(entity)?)),
             Part::FoliageInteraction => Self::FoliageInteraction(*world.get::<FoliageInteraction>(entity)?),
+            Part::TrackMaker => Self::TrackMaker(*world.get::<voxear_render::TrackMaker>(entity)?),
             Part::Behaviour(name) => {
                 let specs = &world.get::<EditBehaviours>(entity)?.0;
                 Self::Behaviour(specs.iter().find(|spec| spec.type_name == *name)?.clone())
@@ -143,6 +145,7 @@ impl Copied {
             Self::Buoyancy(buoyancy) => drop(world.insert(entity, *buoyancy)),
             Self::Seasons(seasons) => drop(world.insert(entity, **seasons)),
             Self::FoliageInteraction(push) => drop(world.insert(entity, *push)),
+            Self::TrackMaker(maker) => drop(world.insert(entity, *maker)),
             Self::Audio(audio) => drop(world.insert(entity, **audio)),
             Self::Listener => drop(world.insert(entity, AudioListener)),
             Self::Collider(collider) => drop(world.insert(entity, *collider)),

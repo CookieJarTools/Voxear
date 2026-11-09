@@ -272,6 +272,8 @@ pub struct ExtractedFrame {
     pub ocean: Option<(crate::Ocean, f32, crate::SeaState)>,
     /// The Pools and Dry Areas nearest the camera.
     pub water_bodies: crate::water::WaterBodies,
+    /// The Track Makers over a terrain (see `tracks`).
+    pub track_makers: Vec<crate::tracks::Maker>,
 }
 
 /// What an instance was made from: its Obj, for a plant of a Foliage its
@@ -591,6 +593,18 @@ pub fn extract(
         .map(|(_, push, transform, at)| (at.map_or(transform.position, |w| w.0.w_axis.truncate()), *push))
         .collect();
     frame.pushes = crate::foliage::pushes(position, pushers);
+    // What presses tracks into the ground, each with how high it is above the ground under it.
+    let pressing = world.query_ref::<(Entity, &crate::TrackMaker, &Transform, Option<&WorldTransform>)>();
+    let track_makers = pressing
+        .without::<Destroying>()
+        .into_iter()
+        .filter(|(entity, ..)| on(*entity, Switch::TrackMaker))
+        .filter_map(|(entity, maker, transform, at)| {
+            let at = at.map_or(transform.position, |w| w.0.w_axis.truncate());
+            let ground = voxear_terrain::ground_at(world, at.x, at.z)?;
+            Some((entity, at, at.y - ground.height, *maker))
+        })
+        .collect();
     // The first Global Wind Zone that is on blows over the whole level.
     let zones = world.query_ref::<(Entity, &crate::WindZone, &Transform)>().without::<Destroying>();
     let global = |(entity, zone, _): &(Entity, &crate::WindZone, &Transform)| {
@@ -704,6 +718,7 @@ pub fn extract(
         render_size: (width, height),
         ocean,
         water_bodies,
+        track_makers,
     }
 }
 

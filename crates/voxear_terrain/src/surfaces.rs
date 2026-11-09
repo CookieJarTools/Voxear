@@ -71,6 +71,14 @@ pub struct Surface {
     /// painted.
     #[serde(default, skip_serializing_if = "is_nothing")]
     pub paint: u32,
+    /// How far Track Makers press into it, as a share of their depth: 1
+    /// for fresh snow, a half for mud, nothing for rock.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub tracks: f32,
+    /// How many seconds its tracks take to fill in again, as snow falling
+    /// does; 0 keeps them.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub fills_in: f32,
 }
 
 fn four() -> f32 {
@@ -136,6 +144,8 @@ impl Surface {
             breakup: 0.0,
             breakup_size: eight(),
             paint: 0,
+            tracks: 0.0,
+            fills_in: 0.0,
         }
     }
 

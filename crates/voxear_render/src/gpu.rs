@@ -383,6 +383,7 @@ pub struct GpuFrame {
     pub seasons: GpuSeasons,
     pub local_shadows: GpuLocalShadows,
     pub ocean: GpuOcean,
+    pub tracks: crate::tracks::GpuTracks,
 }
 
 /// The sea, as `Ocean` in `shaders/common.slang` (see `ocean`).
@@ -855,6 +856,8 @@ pub struct GpuBuffers {
     pub grass_args: u64,
     pub grass_blades: u64,
     pub grass_draws: u64,
+    /// This view's tracks in the ground round its camera (see `tracks`).
+    pub tracks: u64,
 }
 
 /// A UI panel as `uiPanelVertex` in `shaders/ui.slang` draws it: its top
@@ -1123,11 +1126,14 @@ mod tests {
         let seasons = 16 * 4 * 2 + 16 + 32;
         // Each view's matrix, each list's light, then the atlas and count.
         let local_shadows = 64 * LOCAL_SHADOW_VIEWS + 16 * LOCAL_SHADOW_LIGHTS + 16;
+        // Each Track Maker's path and size, then the map's corners and four words.
+        let tracks = 32 * crate::tracks::MAX_TRACK_MAKERS + 32;
+        assert_eq!(size_of::<crate::tracks::GpuTracks>(), tracks);
         assert_eq!(size_of::<GpuLocalShadows>(), local_shadows);
         assert_eq!(LOCAL_SHADOW_ATLAS, [4096, 3072], "as LOCAL_SHADOW_ATLAS in the shaders");
         assert_eq!(
             size_of::<GpuFrame>(),
-            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi + 32 + 16 * MAX_PUSHERS + 4 * MAX_PUSHERS + 16 + seasons + local_shadows + 288
+            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi + 32 + 16 * MAX_PUSHERS + 4 * MAX_PUSHERS + 16 + seasons + local_shadows + 288 + tracks
         );
         assert_eq!(size_of::<GpuOcean>(), 288);
         assert_eq!(size_of::<GpuStreamPoint>(), 48);
@@ -1135,7 +1141,7 @@ mod tests {
         assert_eq!(size_of::<GpuDdgi>(), 32 * DDGI_CASCADES + 32 + 48);
         assert_eq!(size_of::<GpuLighting>(), lighting);
         assert_eq!(size_of::<GpuPost>(), post);
-        assert_eq!(size_of::<GpuBuffers>(), 57 * 8);
+        assert_eq!(size_of::<GpuBuffers>(), 58 * 8);
         assert_eq!(size_of::<GpuUiPanel>(), 48);
         assert_eq!(size_of::<GpuSmoke>(), 80);
         assert_eq!(size_of::<GpuMist>(), 64);

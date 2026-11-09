@@ -99,14 +99,18 @@ impl TerrainLook {
 
 /// How one of a terrain's surfaces looks: its material, its pictures
 /// repeated every `size` metres, how sharply it meets the others (0 to 1,
-/// by their height pictures), and whether it is drawn from the side too on
-/// steep ground.
+/// by their height pictures), whether it is drawn from the side too on
+/// steep ground, how far Track Makers press into it (a share of their
+/// depth, see `tracks`), and how many seconds their tracks take to fill in
+/// again (0 for never).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SurfaceLook {
     pub material: MaterialHandle,
     pub size: f32,
     pub sharpness: f32,
     pub triplanar: bool,
+    pub tracks: f32,
+    pub fills_in: f32,
 }
 
 /// A terrain as `shaders/terrain.slang` reads it.
@@ -146,6 +150,9 @@ pub struct GpuTerrain {
 
 /// A terrain's flag for having holes, so the shaders look for them.
 const TERRAIN_HOLES: u32 = 1;
+/// A terrain's flag for a surface tracks press into, so the shaders read
+/// the tracks.
+const TERRAIN_TRACKS: u32 = 2;
 
 /// A surface as `shaders/terrain.slang` reads it.
 #[repr(C)]
@@ -157,6 +164,8 @@ pub struct GpuTerrainSurface {
     pub sharpness: f32,
     /// `SURFACE_TRIPLANAR` to be drawn from the side too on steep ground.
     pub flags: u32,
+    pub tracks: f32,
+    pub fills_in: f32,
 }
 
 const SURFACE_TRIPLANAR: u32 = 1;
@@ -533,6 +542,8 @@ fn proxy(map: &Heightmap, tx: u32, tz: u32, uv_scale: f32) -> MeshData {
 pub(crate) struct ViewTerrains {
     pub lists: [(u32, u32); LIST_COUNT as usize],
     pub heights: Vec<BufferId>,
+    /// The view's tracks, which the ground's pixels read.
+    pub tracks: Option<BufferId>,
     /// The patch grid's indices.
     pub grid: vk::Buffer,
     /// Whether any terrain casts the sun's shadows.
@@ -605,6 +616,8 @@ pub(crate) fn gather(
                 uv_scale: 1.0 / look.size.max(0.01),
                 sharpness: look.sharpness.clamp(0.0, 1.0),
                 flags: if look.triplanar { SURFACE_TRIPLANAR } else { 0 },
+                tracks: look.tracks.clamp(0.0, 1.0),
+                fills_in: look.fills_in.max(0.0),
             };
         }
         let surfaces_at = (SURFACES_AT + number * MAX_SURFACES * size_of::<GpuTerrainSurface>()) as u64;
@@ -622,7 +635,8 @@ pub(crate) fn gather(
             holes: terrain.holes,
             surfaces: buffer.address + surfaces_at,
             surface_count: looks.len() as u32,
-            flags: if terrain.has_holes { TERRAIN_HOLES } else { 0 },
+            flags: if terrain.has_holes { TERRAIN_HOLES } else { 0 }
+                | if looks.iter().any(|look| look.tracks > 0.0) { TERRAIN_TRACKS } else { 0 },
             grass: terrain.grass.map_or(0, |(address, _)| address),
             grass_words: terrain.grass.map_or(0, |(_, words)| words),
             grass_pad: 0,
@@ -666,7 +680,7 @@ pub(crate) fn gather(
     let shadows = (0..CASCADES).any(|cascade| placed[LIST_SHADOW as usize + cascade].1 > 0);
     let heights = drawn.iter().filter_map(|terrain| terrain.heights_id).collect();
     let grid = drawn.first().map_or(vk::Buffer::null(), |terrain| terrain.grid);
-    Some(ViewTerrains { lists: placed, heights, shadows, grid })
+    Some(ViewTerrains { lists: placed, heights, tracks: None, shadows, grid })
 }
 
 /// Where a view's terrain buffer holds its lists, records and patches.
@@ -746,7 +760,8 @@ pub(crate) fn record_depth(
     if terrains.count(LIST_EARLY) == 0 {
         return;
     }
-    let reads: Vec<_> = terrains.heights.iter().map(|&id| (id, BufferAccess::ShaderRead)).collect();
+    let mut reads: Vec<_> = terrains.heights.iter().map(|&id| (id, BufferAccess::ShaderRead)).collect();
+    reads.extend(terrains.tracks.map(|id| (id, BufferAccess::ShaderRead)));
     let images = [(depth, ImageAccess::DepthAttachment), (surface, ImageAccess::ColorAttachment)];
     let terrains = terrains.clone();
     fg.add_pass("Depth (terrain)", &images, &reads, move |ctx| {
@@ -775,6 +790,7 @@ pub(crate) fn record_opaque(
     }
     let mut reads: Vec<_> = buffers.to_vec();
     reads.extend(terrains.heights.iter().map(|&id| (id, BufferAccess::ShaderRead)));
+    reads.extend(terrains.tracks.map(|id| (id, BufferAccess::ShaderRead)));
     let terrains = terrains.clone();
     fg.add_pass("Opaque (terrain)", &images, &reads, move |ctx| {
         let layout = vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL;

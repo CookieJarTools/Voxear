@@ -64,6 +64,10 @@ pub struct Draws {
     pub lod_state: BufferId,
     /// The grid of pushes through foliage, which plants read where they stand.
     pub foliage_pushes: BufferId,
+    /// The map of tracks round the camera, which the terrain reads, and
+    /// whether it changes this frame: something presses, or it scrolls.
+    pub tracks: BufferId,
+    pub tracks_change: bool,
     pub stats: BufferId,
     /// Where the stats are copied for the CPU to read.
     pub stats_readback: BufferId,
@@ -227,6 +231,9 @@ pub fn record(
     let pipelines = frame.pipelines;
 
     crate::foliage::record(fg, (pipelines, push), draws.foliage_pushes);
+    if draws.tracks_change {
+        crate::tracks::record(fg, (pipelines, push), draws.tracks);
+    }
 
     fg.add_pass(
         "Light clusters",

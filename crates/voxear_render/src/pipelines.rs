@@ -105,6 +105,8 @@ pub struct Pipelines {
     pub sky_light: vk::Pipeline,
     /// Pushes through foliage: springing back, and this frame's stamped.
     pub foliage_push: vk::Pipeline,
+    /// Presses this frame's tracks into the map round the camera (see `tracks`).
+    pub tracks: vk::Pipeline,
     /// Glass: the copy of the picture it is drawn over, and its panes.
     pub glass_copy: vk::Pipeline,
     pub glass: vk::Pipeline,
@@ -229,6 +231,7 @@ impl Pipelines {
             module("skinning")?,
             module("terrain")?,
             module("grass")?,
+            module("tracks")?,
         ];
         let [
             cull,
@@ -254,6 +257,7 @@ impl Pipelines {
             skinning,
             terrain,
             grass,
+            tracks,
         ] = &modules;
         // Only a GPU with mesh shaders can load their modules.
         let meshlets = match gpu.mesh_shader {
@@ -387,6 +391,7 @@ impl Pipelines {
             glass_copy: create_compute_pipeline(gpu, layout, "Glass copy", glass, c"glassCopyMain")?,
             glass_shadow_mip: create_compute_pipeline(gpu, layout, "Glass shadow mips", glass, c"glassShadowMipMain")?,
             foliage_push: create_compute_pipeline(gpu, layout, "Foliage pushes", foliage_push, c"pushMain")?,
+            tracks: create_compute_pipeline(gpu, layout, "Tracks", tracks, c"tracksMain")?,
             sky_light: create_compute_pipeline(gpu, layout, "Sky light", sky, c"skyLightMain")?,
             ocean_rows: create_compute_pipeline(gpu, layout, "Ocean rows", water, c"oceanRowsMain")?,
             ocean_columns: create_compute_pipeline(gpu, layout, "Ocean columns", water, c"oceanColumnsMain")?,
@@ -724,6 +729,7 @@ impl Pipelines {
             self.exposure,
             self.glass_copy,
             self.foliage_push,
+            self.tracks,
             self.sky_light,
             self.glass,
             self.glass_shadow,

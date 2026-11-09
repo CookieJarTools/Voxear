@@ -348,6 +348,9 @@ pub struct ObjData {
     /// Bends foliage out of the Obj's way as it passes through.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub foliage_interaction: Option<FoliageInteraction>,
+    /// Leaves tracks in the ground where the Obj touches it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub track_maker: Option<voxear_render::TrackMaker>,
     /// One plant, grown in many places without an Obj each.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub foliage: Option<FoliageData>,
@@ -424,6 +427,7 @@ impl ObjData {
             buoyancy: None,
             seasons: None,
             foliage_interaction: None,
+            track_maker: None,
             foliage: None,
             terrain: None,
             rigidbody: None,
@@ -1571,6 +1575,9 @@ fn capture_instance(
     if root.foliage_interaction.is_some() && root.foliage_interaction != prefab_root.foliage_interaction {
         instance.foliage_interaction = root.foliage_interaction;
     }
+    if root.track_maker.is_some() && root.track_maker != prefab_root.track_maker {
+        instance.track_maker = root.track_maker;
+    }
     if root.rigidbody.is_some() && root.rigidbody != prefab_root.rigidbody {
         instance.rigidbody = root.rigidbody;
     }
@@ -1759,6 +1766,9 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     }
     if let Some(push) = actual.foliage_interaction.filter(|p| Some(*p) != expected.foliage_interaction) {
         put("foliage_interaction", whole(&push, &FoliageInteraction::default())?);
+    }
+    if let Some(maker) = actual.track_maker.filter(|m| Some(*m) != expected.track_maker) {
+        put("track_maker", whole(&maker, &voxear_render::TrackMaker::default())?);
     }
     if let Some(body) = actual.rigidbody.filter(|b| Some(*b) != expected.rigidbody) {
         put("rigidbody", whole(&body, &crate::physics::Rigidbody::default())?);
@@ -2017,6 +2027,7 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.buoyancy = world.get::<crate::water::Buoyancy>(entity).copied();
     obj.seasons = world.get::<Seasons>(entity).copied();
     obj.foliage_interaction = world.get::<FoliageInteraction>(entity).copied();
+    obj.track_maker = world.get::<voxear_render::TrackMaker>(entity).copied();
     obj.model = world.get::<ModelSource>(entity).map(|source| {
         let lod_bias = world.get::<voxear_render::ModelRenderer>(entity).map_or(source.0.lod_bias, |drawn| drawn.lod_bias);
         ModelData { lod_bias, ..source.0.clone() }
@@ -2084,6 +2095,7 @@ pub fn has_component(world: &World, entity: Entity, switch: Switch) -> bool {
         Switch::Seasons => world.has::<Seasons>(entity),
         Switch::FoliageInteraction => world.has::<FoliageInteraction>(entity),
         Switch::Foliage => world.has::<FoliageSource>(entity),
+        Switch::TrackMaker => world.has::<voxear_render::TrackMaker>(entity),
     }
 }
 

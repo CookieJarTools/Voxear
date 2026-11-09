@@ -143,11 +143,14 @@ pub enum TerrainField {
     BumpSize,
     /// The picked surface's: its material, how large its pictures are, how
     /// sharply it meets the others, whether it is drawn from the side on
-    /// steep ground, where it covers, and how far its rules' edges wander.
+    /// steep ground, how far tracks press into it and how soon they fill
+    /// in, where it covers, and how far its rules' edges wander.
     SurfaceMaterial,
     TileSize,
     HeightBlend,
     Triplanar,
+    Tracks,
+    FillsIn,
     Cover,
     Breakup,
     BreakupSize,
@@ -229,6 +232,10 @@ fn mask_fields(mask: &Mask) -> Vec<TerrainField> {
 /// ground under the rest, so it has no cover.
 fn surface_fields(at: usize, surface: &Surface) -> Vec<TerrainField> {
     let mut fields = vec![F::BrushSize, F::Strength, F::SurfaceMaterial, F::TileSize, F::HeightBlend, F::Triplanar];
+    fields.push(F::Tracks);
+    if surface.tracks > 0.0 {
+        fields.push(F::FillsIn);
+    }
     if at == 0 {
         return fields;
     }
@@ -348,6 +355,8 @@ pub fn label(field: TerrainField) -> &'static str {
         F::TileSize => "Tile size",
         F::HeightBlend => "Height blend",
         F::Triplanar => "Triplanar",
+        F::Tracks => "Tracks",
+        F::FillsIn => "Fills in",
         F::Cover => "Cover",
         F::Breakup => "Breakup",
         F::BreakupSize => "Breakup size",
@@ -384,6 +393,7 @@ pub fn unit(world: &World, entity: Entity, field: TerrainField) -> Option<&'stat
         F::TileSize | F::BreakupSize | F::GrassDistance => Some("m"),
         F::GrassDensity => Some("per m²"),
         F::GrassSteepest => Some("°"),
+        F::FillsIn => Some("s"),
         F::Rotation | F::Slopes => Some("°"),
         F::Falloff => match picked(world, entity) {
             Some((_, Layer { kind: LayerKind::Spline { .. }, .. })) => Some("m"),
@@ -396,7 +406,7 @@ pub fn unit(world: &World, entity: Entity, field: TerrainField) -> Option<&'stat
 /// The range a value's slider spans, for those shown as sliders.
 pub fn range(world: &World, entity: Entity, field: TerrainField) -> Option<[f32; 2]> {
     match field {
-        F::Opacity | F::Strength | F::Sharpness | F::HeightBlend => Some([0.0, 1.0]),
+        F::Opacity | F::Strength | F::Sharpness | F::HeightBlend | F::Tracks => Some([0.0, 1.0]),
         F::GrassSteepest => Some([0.0, 90.0]),
         F::Falloff => match picked(world, entity) {
             Some((_, Layer { kind: LayerKind::Stamp { .. }, .. })) => Some([0.0, 1.0]),
@@ -460,6 +470,8 @@ pub fn get(game: &Game, entity: Entity, field: TerrainField) -> Option<Value> {
         F::TileSize => Value::Number(surface()?.size),
         F::HeightBlend => Value::Number(surface()?.sharpness),
         F::Triplanar => Value::Toggle(surface()?.triplanar),
+        F::Tracks => Value::Number(surface()?.tracks),
+        F::FillsIn => Value::Number(surface()?.fills_in),
         F::Cover => {
             let cover = surface()?.cover;
             choice(Cover::ALL.iter().position(|&c| c == cover).unwrap_or_default(), Cover::ALL.map(Cover::name).to_vec())
@@ -583,7 +595,14 @@ pub fn set(game: &mut Game, entity: Entity, field: TerrainField, value: Value) -
             }
             return *brush != before;
         }
-        F::TileSize | F::HeightBlend | F::Triplanar | F::Cover | F::Breakup | F::BreakupSize => {
+        F::TileSize
+        | F::HeightBlend
+        | F::Triplanar
+        | F::Tracks
+        | F::FillsIn
+        | F::Cover
+        | F::Breakup
+        | F::BreakupSize => {
             return change_surface(game, entity, |surface| set_surface(surface, field, &value));
         }
         F::GrassDensity | F::GrassSizes | F::GrassDistance | F::GrassCover | F::GrassSurface | F::GrassSteepest => {
@@ -644,6 +663,8 @@ fn set_surface(surface: &mut Surface, field: TerrainField, value: &Value) {
         (F::TileSize, v) => surface.size = number(v).unwrap_or(surface.size).clamp(0.01, 10_000.0),
         (F::HeightBlend, v) => surface.sharpness = number(v).unwrap_or(surface.sharpness).clamp(0.0, 1.0),
         (F::Triplanar, Value::Toggle(on)) => surface.triplanar = *on,
+        (F::Tracks, v) => surface.tracks = number(v).unwrap_or(surface.tracks).clamp(0.0, 1.0),
+        (F::FillsIn, v) => surface.fills_in = number(v).unwrap_or(surface.fills_in).max(0.0),
         (F::Cover, Value::Choice(at, _)) => surface.cover = Cover::ALL[(*at).min(Cover::ALL.len() - 1)],
         (F::Breakup, v) => surface.breakup = number(v).unwrap_or(surface.breakup).max(0.0),
         (F::BreakupSize, v) => surface.breakup_size = number(v).unwrap_or(surface.breakup_size).max(0.1),
@@ -819,6 +840,8 @@ fn restyle(game: &mut Game, entity: Entity) {
             size: surface.size.max(0.01),
             sharpness: surface.sharpness,
             triplanar: surface.triplanar,
+            tracks: surface.tracks,
+            fills_in: surface.fills_in,
         });
     }
     look.surfaces = surfaces.into();

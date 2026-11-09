@@ -87,3 +87,32 @@ float terrainGrass(Terrain terrain, float2 local, uint kind)
     float bottom = lerp(terrainGrassAt(terrain, i + int2(0, 1), kind), terrainGrassAt(terrain, i + int2(1, 1), kind), t.x);
     return lerp(top, bottom, t.y);
 }
+
+// The tracks at `world` (x and z in the world) from the map round the camera, blended between its four nearest
+// texels: how deep the ground was pressed there, and when, the latest of the four. Nothing off the map.
+float2 trackAt(Frame* frame, float2 world)
+{
+    Tracks tracks = frame->tracks;
+    float2 at = world / tracks.texel - 0.5;
+    int2 low = int2(floor(at));
+    float2 within = at - float2(low);
+    float2* texels = buffers()->tracks;
+    int n = int(TRACK_TEXELS);
+    float depth = 0.0;
+    float pressed = -1e9;
+    for (uint corner = 0; corner < 4; corner++)
+    {
+        int2 cell = low + int2(corner & 1, corner >> 1);
+        int2 inMap = cell - tracks.origin;
+        if (any(inMap < 0) || any(inMap >= n))
+        {
+            continue;
+        }
+        int2 slot = (cell % n + n) % n;
+        float2 weights = lerp(1.0 - within, within, float2(corner & 1, corner >> 1));
+        float2 texel = texels[slot.x + slot.y * TRACK_TEXELS];
+        depth += texel.x * weights.x * weights.y;
+        pressed = max(pressed, texel.y);
+    }
+    return float2(depth, pressed);
+}

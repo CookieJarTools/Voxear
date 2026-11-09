@@ -23,4 +23,5 @@ public enum EngineComponent
 	Seasons,
 	FoliageInteraction,
 	Foliage,
+	TrackMaker,
 }

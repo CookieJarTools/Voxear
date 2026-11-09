@@ -22,11 +22,11 @@ The surfaces stack from the bottom up. The first is the ground under the rest, w
 | --- | --- |
 | Painted | Only where it is painted |
 | Everywhere | All the ground, but where painting takes it away |
-| Height and Slope | Where the ground is between the heights and slopes its rules give, and where it is painted |
+| Rules | Where the ground's height, slope, temperature and humidity are within the ranges its rules give, and where it is painted |
 
 Rules follow the ground. A hill raised later is snowy at its top and rocky on its sides with no repainting, and a crater dug from a script turns its fresh walls to dirt.
 
-A typical battlefield takes three: mud as the ground's surface, packed dirt **Everywhere** above it with a path painted away through it, and rock by **Height and Slope** on everything steeper than 35°.
+A typical battlefield takes three: mud as the ground's surface, packed dirt **Everywhere** above it with a path painted away through it, and rock by **Rules** on everything steeper than 35°.
 
 ## Settings
 
@@ -42,7 +42,7 @@ A typical battlefield takes three: mud as the ground's surface, packed dirt **Ev
 | Glitter | Sparkles in the sun, as snow and sand do |
 | Cover | Where it covers, as above. The ground's own surface has none |
 
-With **Height and Slope**, its rules:
+With **Rules**, its rules:
 
 | Setting | What it does |
 | --- | --- |
@@ -51,8 +51,34 @@ With **Height and Slope**, its rules:
 | Slope mask | Covers only between two slopes |
 | Slopes | The least and most steep, in degrees: 0 is level, 90 a wall |
 | Feather | How far it eases in at each edge, in metres for heights and degrees for slopes |
+| Biome | Sets its temperatures and humidities to a biome's at once (see below): **Any** for none |
+| Temperature | Covers only between two temperatures |
+| Temperatures | The coldest and warmest, in °C |
+| Humidity | Covers only between two humidities |
+| Humidities | The driest and wettest, from 0 for dry to 1 for wet |
 | Breakup | How far its edges wander, in metres or degrees, so they do not run straight along the hills' contours |
 | Breakup size | How large the wanderings are, in metres |
+
+## Biomes
+
+How warm and wet the ground is comes from the [[Generating Terrain|world generator]] its ground was made by: its topmost **Generate** layer's generator, at the terrain's place in that world. It is warmer and wetter in places, over fields kilometres across, and colder the higher the ground stands. A terrain made by no generator is 15 °C at height 0, cooling 6.5 °C for every 1000 m up, and half wet.
+
+So surfaces can cover by country. Pick a **Biome** for a surface covering by **Rules**, and its temperatures and humidities are set to that biome's; change either, and its biome shows **Custom**:
+
+| Biome | Temperatures | Humidities |
+| --- | --- | --- |
+| Snow | Below -2 °C | Any |
+| Tundra | Below 4 °C | 0 to 0.6 |
+| Taiga | -2 to 10 °C | 0.45 and wetter |
+| Grassland | 4 to 22 °C | 0.25 to 0.55 |
+| Forest | 6 to 22 °C | 0.5 and wetter |
+| Desert | 18 °C and warmer | 0.25 and drier |
+| Savanna | 20 °C and warmer | 0.25 to 0.55 |
+| Rainforest | 20 °C and warmer | 0.6 and wetter |
+
+Each eases in over 3 °C and 0.08 at its edges, and wanders with the surface's **Breakup**. Surfaces still stack, so a biome lower in the list shows where those above it leave, and where no biome covers, the first surface shows: make it a fallback that suits anywhere. A surface can mix rules: rock only where it is steep **and** cold, sand only where it is low **and** dry.
+
+[[Grass]] that grows **On Surfaces** follows them, so tufts grow over a Grassland surface and pebbles over a Desert one.
 
 ## How surfaces are drawn
 

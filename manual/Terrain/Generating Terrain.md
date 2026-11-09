@@ -30,6 +30,8 @@ The same generator makes the same ground for every terrain that uses it, so terr
 | Scale | How large everything is: 2 makes every coast, range and valley twice as large |
 | Sea level | The height of the sea, in metres |
 | Height | How high the highest mountains rise above the sea, in metres |
+| Temperature | How warm it is by the sea on average, in °C |
+| Humidity | How wet it is on average, from 0 for dry to 1 for wet |
 
 | Preset | Its ground |
 | --- | --- |
@@ -73,12 +75,20 @@ The ground stands at the **Coast** curve's height and rises or falls from there 
 | Gully spacing | How far apart the largest gullies are, in metres |
 | Gully octaves | In how many sizes gullies are cut, each half as far apart as the last |
 | Bumps | How high the small bumps over all the ground are, in metres |
+| Climate size | How wide its warmer and colder, wetter and drier places are, in metres. Smaller gives more biomes on one terrain |
+| Temperature range | How far its temperature strays from its average, in °C |
+| Humidity range | How far its humidity strays from its average |
+| Cooling | How many °C colder it is for every 1000 m the ground rises above the sea |
 
 ## Gullies
 
 Water running off ground cuts gullies down its slopes, and the gullies join as they go down, as streams join a river. A generator cuts them in a few sizes, the largest first: each size runs down the slope the ground has after the sizes before cut it, so small gullies run down the walls of larger ones and into them. Steep ground is cut deepest; ridges and valley floors, level across, are left as they are, so peaks stay sharp and valleys flat-bottomed. Gullies grow shallower towards the sea and stop at its edge.
 
 Gullies make mountains look worn by weather rather than stretched noise, and canyon walls fluted. For the channels running water carves, and the fans of what it washes down, add an [[Erosion]] layer above the Generate layer.
+
+## Climate
+
+A generator's world has a climate: how warm and wet each place is, which its terrains' surfaces can cover by (see [[Surfaces#Biomes|Biomes]]), so deserts, forests and snowfields fall where the world puts them and follow the ground as it changes. Each preset has a climate to suit it: Canyons hot and dry, Archipelago warm and wet, Alpine cool.
 
 ## The same ground everywhere
 

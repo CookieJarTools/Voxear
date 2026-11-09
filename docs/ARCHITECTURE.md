@@ -2800,8 +2800,9 @@ sums, products, square roots and `floor`, so the same seed makes the same bits o
 Generate layer lays it from an offset in its world; compositing finds generators by reference as it finds
 pictures. Rivers and lakes on finished maps are a Rivers layer (`voxear_terrain::rivers`): priority-flood filling
 gives every cell the way it drains and the ground draining through it; rivers are cut where that is enough, lakes
-stand in the filled hollows, and the editor makes Streams and Pools for them. To come: temperature and humidity;
-rivers along valleys in endless worlds; biomes from climate and landform choosing surfaces, plants and blocks. For voxels, 3D density from the same
+stand in the filled hollows, and the editor makes Streams and Pools for them. A generator's climate (temperature
+and humidity fields, cooling with height) feeds surfaces' rules, so biomes choose surfaces and the grass on them.
+To come: rivers along valleys in endless worlds; biomes choosing trees and blocks. For voxels, 3D density from the same
 fields, with caves.
 
 **Rendering.** CDLOD: a quadtree of patches, each a grid of 32 quads drawn from one index buffer, picked on the CPU

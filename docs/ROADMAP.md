@@ -1572,8 +1572,18 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   water drains away, filled ground falls along the flow, rivers never rise and run in their beds, a bowl's lake and
   its boxes, nothing cut under the sea, the editor (cut, again with less Source, water added and undone). Manual:
   Rivers and Lakes.
+- ~~**Biomes:**~~ done: a generator's Climate (size, temperature and humidity on average and how far they stray,
+  cooling with height above the sea; `WorldGen::climate`), with Temperature and Humidity among its first settings
+  and the rest under Advanced, presets each with a climate to suit. Surfaces covering by Rules gain temperature and
+  humidity ranges beside their height and slope ones (eased over 3 °C and 0.08, wandering with their breakup), set
+  at once by a Biome (Snow, Tundra, Taiga, Grassland, Forest, Desert, Savanna, Rainforest; Custom once changed);
+  weighing reads the climate from the topmost Generate layer's generator at the terrain's place in its world
+  (`ClimateSource`), or from height alone without one; Cover's Rules renamed from Height and Slope. Grass on
+  surfaces follows. Tests: climate fields and cooling, snow where cold and desert where hot and dry, the editor (a
+  Snow surface nowhere in a mild world, everywhere once its temperatures widen). Manual: Surfaces, Generating
+  Terrain. Not done: trees scattered by rules (a Foliage's plants by surface or biome).
 - **More terrain generation:** feeding the layer stack so it can be painted and stamped over afterwards:
-  - temperature and humidity fields, for biomes
+  - trees and other plants scattered by surface and biome
   - stream-power erosion for ranges
   - rivers and lakes carved by flow, as Streams and Pools
   - biomes and climate choosing surfaces and scatter

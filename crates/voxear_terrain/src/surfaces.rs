@@ -310,7 +310,7 @@ fn shares_of(file: &TerrainFile, heights: &Heightmap, rasters: &Rasters, x: i64,
 }
 
 /// Four surfaces' shares, largest first, as out of 255 together.
-fn pack(best: &[(u32, f32); SHARES]) -> [u32; 2] {
+pub(crate) fn pack(best: &[(u32, f32); SHARES]) -> [u32; 2] {
     let total: f32 = best.iter().map(|(_, share)| share).sum();
     if total <= 0.0 {
         return [best[0].0, 255];

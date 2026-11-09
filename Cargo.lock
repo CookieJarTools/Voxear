@@ -4249,6 +4249,7 @@ dependencies = [
  "voxear_core",
  "voxear_ecs",
  "voxear_scene",
+ "zstd",
 ]
 
 [[package]]

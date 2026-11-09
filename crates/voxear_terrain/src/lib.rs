@@ -22,6 +22,7 @@ pub mod lod;
 pub mod noise;
 pub mod raster;
 pub mod ray;
+pub mod runtime;
 pub mod surfaces;
 
 use std::sync::Arc;

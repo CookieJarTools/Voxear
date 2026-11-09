@@ -6,13 +6,14 @@
 //! part played from clips lasts as long as its stretch of clip, its marks
 //! happening to the gun as the clip passes them.
 
+use voxear_core::ease::{bezier, minimum_jerk};
 use voxear_core::math::{Mat4, Quat, Vec3};
 use voxear_ecs::{Entity, World};
 use voxear_scene::{Hidden, Transform};
 
 use super::actions::{ActionId, ActionKind, Beat, ClipPart, Goal, Hand, apply};
 use super::gun::Gun;
-use super::hands::Grip;
+use crate::animation::grip::Grip;
 use super::mechanism::{GunPart, GunState, PartRole};
 
 /// An action under way.
@@ -262,7 +263,7 @@ pub fn advance(
         // Out to the hand's side first, further for a pouch on the body, so it goes round the gun, not through it.
         let side = if beat.hand == Hand::Right { 1.0 } else { -1.0 };
         let out = Vec3::new(side, 0.4, 0.0) * if beat.goal == Goal::Pouch { 0.16 } else { 0.06 };
-        curve([from, from + out, goal + toward * 0.08, goal], s)
+        bezier([from, from + out, goal + toward * 0.08, goal], s)
     } else {
         let work = minimum_jerk((play.t - beat.reach) / beat.work.max(1e-4));
         if let Some(drive) = beat.drive
@@ -324,13 +325,6 @@ fn approach(goal: Goal, gun: &Gun, hand: Hand) -> Vec3 {
         Goal::Port => Vec3::new(side, 0.3, 0.0).normalize(),
         Goal::Pouch | Goal::Hold => Vec3::ZERO,
     }
-}
-
-/// A smooth path through four points, from the first to the last, leaving
-/// toward the second and coming in from the third, `s` of the way along.
-pub fn curve([a, b, c, d]: [Vec3; 4], s: f32) -> Vec3 {
-    let r = 1.0 - s;
-    a * (r * r * r) + b * (3.0 * r * r * s) + c * (3.0 * r * s * s) + d * (s * s * s)
 }
 
 /// Puts the part the beat under way carries where its hand is now.
@@ -432,25 +426,5 @@ fn throw_away(
             throw(world, state, PartRole::Clip, "Stripper Clip", flick, up * 12.0, Vec3::new(0.012, 0.05, 0.06), now);
         }
         _ => {}
-    }
-}
-
-/// The share of the way a person's reach has gone at `t`, 0 to 1: quick to
-/// start, quickest midway, and soft to arrive.
-pub fn minimum_jerk(t: f32) -> f32 {
-    let t = t.clamp(0.0, 1.0);
-    t * t * t * (10.0 - 15.0 * t + 6.0 * t * t)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_reach_starts_and_ends_at_rest_and_is_quickest_midway() {
-        assert_eq!((minimum_jerk(0.0), minimum_jerk(1.0)), (0.0, 1.0));
-        let speed = |t: f32| (minimum_jerk(t + 0.01) - minimum_jerk(t)) / 0.01;
-        assert!(speed(0.0) < 0.01 && speed(0.99) < 0.05);
-        assert!(speed(0.5) > speed(0.25) && speed(0.5) > speed(0.75));
     }
 }

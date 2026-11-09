@@ -20,7 +20,7 @@ const MOST_LEAN: f32 = 40.0;
 /// The most the upper body turns from the legs to face the view, in
 /// radians: about 80 degrees.
 const MOST_TWIST: f32 = 1.4;
-/// How near a first-person camera sees, in metres: the gun held at the eye
+/// How near a first-person camera sees, in metres: what is held at the eye
 /// and the hands working before it come closer than a camera usually
 /// looks, and would be cut off.
 const NEAR: f32 = 0.01;
@@ -104,13 +104,13 @@ pub struct FirstPersonState {
     glance: Spring<f32>,
     glance_goal: f32,
     /// Where the eyes are asked to be next frame instead of in the head,
-    /// relative to the Obj, and how much: by clips holding a gun, filmed
+    /// relative to the Obj, and how much: by clips holding something, filmed
     /// from somewhere else.
     framed: Option<(Vec3, f32)>,
     started: bool,
     /// Where the eyes are and look this frame, in the world, glances aside:
     /// the camera's place for the player's own view, and for anyone else's,
-    /// what their gun is held before.
+    /// what they hold is held before.
     pub eye: Mat4,
 }
 
@@ -139,7 +139,7 @@ pub fn glance(world: &mut World, entity: Entity, angle: f32) {
 
 /// Has a view's eyes go to `at` next frame, relative to its Obj, `weight`
 /// of the way from the head, easing there and back: where the clips
-/// holding a gun were filmed from. Once it is no longer asked to, they go
+/// holding something were filmed from. Once it is no longer asked to, they go
 /// back to the head.
 pub fn frame_eyes(world: &mut World, entity: Entity, at: Vec3, weight: f32) {
     if let Some(state) = world.get_mut::<FirstPersonState>(entity) {
@@ -155,6 +155,14 @@ pub fn punch(world: &mut World, entity: Entity, spin: Vec3) {
 }
 
 impl Component for FirstPersonState {}
+
+/// Marks a view posed while editing too, where no other is: one the editor
+/// previews what it holds in.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PosedWhileEditing;
+
+impl Component for PosedWhileEditing {}
+
 
 /// The mouse as this frame moved it, for views that look with it: the game
 /// puts it in the world each frame.
@@ -196,7 +204,7 @@ pub fn place(world: &mut World) {
     let views: Vec<(Entity, FirstPersonView)> = world
         .query_ref::<(Entity, &FirstPersonView)>()
         .into_iter()
-        .filter(|(entity, _)| crate::guns::preview::runs(world, *entity))
+        .filter(|(entity, _)| !editing || world.has::<PosedWhileEditing>(*entity))
         .map(|(e, v)| (e, v.clone()))
         .collect();
     for (entity, view) in views {
@@ -205,7 +213,7 @@ pub fn place(world: &mut World) {
         // The eyes follow the head on a spring from where the Obj is, so the head's bob is steadied; a view with
         // no body looks from the Obj itself.
         let obj = world_matrix(world, entity);
-        // While clips hold a gun the eyes stay put on the body and the upper body does not lean, so the shoulders
+        // While clips hold something the eyes stay put on the body and the upper body does not lean, so the shoulders
         // keep their place under them, as the clips' were under their camera.
         let framed = world.get::<FirstPersonState>(entity).is_some_and(|state| state.framed.is_some());
         let posed = pose_body(world, entity, &view, own, framed).map(|eyes| obj.inverse().transform_point3(eyes));
@@ -216,7 +224,7 @@ pub fn place(world: &mut World) {
             (posed, _) => posed.unwrap_or(Vec3::ZERO),
         };
         // The eyes start in the head the first time the body is posed, not on a spring up from the Obj's feet,
-        // which would leave the gun held before them far below the shoulders.
+        // which would leave what is held before them far below the shoulders.
         if !state.started && posed.is_some() {
             state.eyes.snap(eyes_now);
             state.started = true;
@@ -225,7 +233,7 @@ pub fn place(world: &mut World) {
         let shown = steadied.lerp(eyes_now, view.bob.clamp(0.0, 1.0));
         let jolt = state.punch.update(Vec3::ZERO, delta);
         let jolt = Quat::from_euler(voxear_core::math::EulerRot::XYZ, jolt.x, jolt.y, jolt.z);
-        // A glance turns the camera alone: the gun stays where it is held, and the eyes look down at it.
+        // A glance turns the camera alone: what is held stays where it is, and the eyes look down at it.
         let down = state.glance.update(std::mem::take(&mut state.glance_goal), delta);
         state.eye = Mat4::from_rotation_translation(view.rotation() * jolt, obj.transform_point3(shown));
         let jolt = Quat::from_rotation_x(down) * jolt;
@@ -253,7 +261,7 @@ pub fn place(world: &mut World) {
 /// Turns a view's body's upper body toward where the view looks and leans
 /// it, hiding its head for this machine's own player, and gives back where
 /// its eyes are in the world; none for a view with no body. While clips
-/// hold a gun, `framed`, the eyes stay put low in the head and the upper
+/// hold something, `framed`, the eyes stay put low in the head and the upper
 /// body does not lean, so the shoulders keep their place under them, as the
 /// clips' did under their camera; and the upper chest and collarbones round
 /// the eyes are hidden too, as the steps carry them up past the eyes.
@@ -286,7 +294,7 @@ fn pose_body(world: &mut World, entity: Entity, view: &FirstPersonView, own: boo
     let head = edit.matrices()[rig.head];
     let eyes_in_body = head.w_axis.truncate() + Vec3::from(view.eyes);
     world.insert(body, Pose { bones: edit.matrices().into() });
-    // The neck goes with the head where the rig has one: a camera low in the head, as one held where a gun's clips
+    // The neck goes with the head where the rig has one: a camera low in the head, as one held where a pack's clips
     // were filmed from, sits nearer the neck than the head.
     if view.hide_head && own {
         crate::animation::hide(world, body, &animation.skeleton, rig.neck.unwrap_or(rig.head));
@@ -400,21 +408,16 @@ pub(crate) fn set_world(world: &mut World, entity: Entity, position: Vec3, rotat
 }
 
 /// The body a view looks out of: the one it names, or else the first model
-/// under its Obj that is neither a gun nor on one, as a gun drawn by a
-/// skinned model is not.
+/// under its Obj with a body's bones, a head and arms, so a skinned model
+/// it holds is not taken for it.
 pub(crate) fn body_of(world: &World, entity: Entity, view: &FirstPersonView) -> Option<Entity> {
-    view.body.or_else(|| {
-        let on_a_gun = |world: &World, mut at: Entity| loop {
-            if world.has::<crate::guns::Gun>(at) {
-                return true;
-            }
-            match world.get::<Parent>(at) {
-                Some(parent) if at != entity => at = parent.0,
-                _ => return false,
-            }
-        };
-        first_under(world, entity, |w, e| w.has::<ModelRenderer>(e) && !on_a_gun(w, e))
-    })
+    view.body.or_else(|| first_under(world, entity, is_body))
+}
+
+/// Whether an Obj draws a model whose skeleton is a humanoid's.
+fn is_body(world: &World, entity: Entity) -> bool {
+    let skeleton = world.get::<ModelRenderer>(entity).and_then(|model| model.animation.as_ref());
+    skeleton.is_some_and(|animation| crate::animation::rig::Rig::find(&animation.skeleton).is_some())
 }
 
 /// The first Obj under `entity`, itself included, that `is` picks, going

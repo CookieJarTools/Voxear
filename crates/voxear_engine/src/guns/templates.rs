@@ -7,7 +7,7 @@ use super::actions::{
     ActionKind, ActionSpec, Beat, BeatKey as K, Event, Fact, Goal, Hand::Left, Hand::Right, Knock, Repeat, Throw, When,
 };
 use super::gun::GunKind;
-use super::hands::Grip;
+use crate::animation::grip::Grip;
 use super::mechanism::PartRole;
 
 /// A built-in action for a gun of `kind`. A reload plays only when the gun

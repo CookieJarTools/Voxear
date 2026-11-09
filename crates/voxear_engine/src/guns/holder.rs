@@ -18,13 +18,14 @@ use voxear_render::{ModelAnimation, ModelRenderer, Pose};
 use voxear_scene::{Parent, world_matrix};
 
 use super::actions::{ActionId, ActionKind, Hand};
-use super::contact::{Shape, surface};
+use crate::animation::boxes::{Shape, surface};
 use super::gun::{Gun, GunKind, HandRole, Socket};
 use super::clip_hold::ClipPose;
 use super::handling::{PackClips, Poses};
-use super::hands::{Grip, close_by, finger_bends, keep_out, palm_of, seat_hand};
+use crate::animation::grip::{Grip, close_by, finger_bends, keep_out, palm_of, seat_hand};
 use super::mechanism::{GunPart, GunState, Known, PartRole};
-use super::playing::{ActionPlay, HandAim, Throwing, advance, curve, minimum_jerk};
+use super::playing::{ActionPlay, HandAim, Throwing, advance};
+use voxear_core::ease::{bezier, minimum_jerk, smooth};
 use super::preview::HoldPreview;
 use crate::animation::MotionMatcherState;
 use crate::animation::ik::{PoseEdit, aim_turn, turn_spine};
@@ -683,8 +684,8 @@ fn place_gun(
         (hip_at, hip_turn) = (hip_at.lerp(at, weight), hip_turn.slerp(turn, weight));
     }
     let (_, aim_turn, aim_at) = sighted.to_scale_rotation_translation();
-    let mut at = hip_at.lerp(aim_at, ease(aim)) + Vec3::Y * (-0.012 * (aim * std::f32::consts::PI).sin());
-    let mut turn = hip_turn.slerp(aim_turn, ease(aim));
+    let mut at = hip_at.lerp(aim_at, smooth(aim)) + Vec3::Y * (-0.012 * (aim * std::f32::consts::PI).sin());
+    let mut turn = hip_turn.slerp(aim_turn, smooth(aim));
 
     // Near a wall it comes back toward the body, and closer still lifts to high ready.
     at += Vec3::new(0.0, 0.06, -0.22) * wall;
@@ -909,7 +910,7 @@ fn hand_aims(
                 (rest_grip(poses, hand), Vec3::NEG_Y)
             };
             let s = minimum_jerk(*t);
-            let at = curve([*from, *from, home + towards * 0.06, home], s);
+            let at = bezier([*from, *from, home + towards * 0.06, home], s);
             aims[index] = Some(HandAim { hand, at, grip, settle: s, toward: towards, turn: Quat::IDENTITY });
             if *t >= 1.0 {
                 state.returning[index] = None;
@@ -1014,7 +1015,7 @@ fn steady_eyes(
         let (from_middle, scale) = match pack.camera {
             super::handling::PackCamera::Filmed => {
                 // Their space's origin, so back from their shoulders the way the shoulders are from it.
-                let reach = |arm: usize| super::hands::arm_reach(&rest, &rig.arms[arm]);
+                let reach = |arm: usize| crate::animation::grip::arm_reach(&rest, &rig.arms[arm]);
                 let scale = (reach(0)? + reach(1)?) / (filmed.hands[0].reach + filmed.hands[1].reach).max(1e-3);
                 (-(filmed.shoulders[0] + filmed.shoulders[1]) * 0.5 * scale, scale)
             }
@@ -1257,7 +1258,7 @@ fn hands_on(
     };
     // A hand built otherwise than the clip's holds with its knuckles where the clip's are, so its fingers close
     // on what the clip's close on: the middle of its palm goes as far from there as it is on this hand.
-    let palm_to_knuckles = [0, 1].map(|hand| super::hands::knuckles_from_palm(&edit, &rig.arms[hand]));
+    let palm_to_knuckles = [0, 1].map(|hand| crate::animation::grip::knuckles_from_palm(&edit, &rig.arms[hand]));
     // A hand the clips pose keeps the turn their pose gives it, carried as the gun has moved from where they hold it:
     // the frame its knuckles make tells a hand built otherwise turned otherwise, its thumb over the top.
     let by_clip = |hand: usize, (contact, (fingers, palm)): (Vec3, (Vec3, Vec3)), posed: Option<(Vec3, Vec3)>| {
@@ -1266,7 +1267,7 @@ fn hands_on(
         let (clip_fingers, clip_palm) = posed.unwrap_or(turned);
         let held_at = match palm_to_knuckles[hand] {
             Some(offset) => {
-                to_body.transform_point3(by.knuckles) - super::hands::frame_of(clip_fingers, clip_palm) * offset
+                to_body.transform_point3(by.knuckles) - crate::animation::grip::frame_of(clip_fingers, clip_palm) * offset
             }
             None => to_body.transform_point3(by.contact),
         };
@@ -1306,7 +1307,7 @@ fn hands_on(
     let grip = aims[1].map_or(rest_grip(held.poses, Hand::Right), |aim| aim.grip);
     match posed {
         Some(_) => hands.fingers[1] = kept(&edit, right),
-        None => close_by(&mut edit, right, super::hands::bends_of(grip), &shapes, &mut hands.fingers[1], delta),
+        None => close_by(&mut edit, right, crate::animation::grip::bends_of(grip), &shapes, &mut hands.fingers[1], delta),
     }
 
     let shoulder = edit.position(left.upper);
@@ -1330,7 +1331,7 @@ fn hands_on(
     let grip = aims[0].map_or(rest_grip(held.poses, Hand::Left), |aim| aim.grip);
     match posed {
         Some(_) => hands.fingers[0] = kept(&edit, left),
-        None => close_by(&mut edit, left, super::hands::bends_of(grip), &shapes, &mut hands.fingers[0], delta),
+        None => close_by(&mut edit, left, crate::animation::grip::bends_of(grip), &shapes, &mut hands.fingers[0], delta),
     }
     world.insert(body, Pose { bones: edit.matrices().into() });
     if aims[1].is_some() { 0.0 } else { short }
@@ -1559,16 +1560,6 @@ fn planted(support: &mut Option<Spring<f32>>, needed: f32, delta: f32) -> f32 {
     spring.update(goal, delta)
 }
 
-/// Eases 0 to 1 in and out.
-fn ease(t: f32) -> f32 {
-    let t = t.clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
-}
-
-fn smooth(t: f32) -> f32 {
-    ease(t)
-}
-
 /// An angle in degrees brought into -180..180.
 fn wrap(angle: f32) -> f32 {
     (angle + 180.0).rem_euclid(360.0) - 180.0
@@ -1713,7 +1704,8 @@ pub(super) mod tests {
 
     #[test]
     fn palms_stay_on_the_guns_surfaces_and_fingers_out_of_it_as_the_body_walks_and_turns() {
-        use crate::guns::contact::{GunShapes, nearest, shapes_now};
+        use crate::animation::boxes::nearest;
+        use crate::guns::contact::{GunShapes, shapes_now};
         let mut scene = scene();
         // A rifle's wrist, stock and fore-end, each a unit cube scaled, as the Rifle the editor makes has them.
         let blocks = [
@@ -1801,6 +1793,7 @@ pub(super) mod tests {
 
     #[test]
     fn while_editing_only_a_previewed_holder_is_held_and_it_shows_a_time_in_an_action_the_same_each_time() {
+        use crate::first_person::PosedWhileEditing;
         use crate::guns::preview::{HoldPreview, PreviewStart};
         let mut scene = scene();
         let rest = rest_of(&scene);
@@ -1814,7 +1807,7 @@ pub(super) mod tests {
 
         let shown_at = |scene: &mut Scene, t: f32| {
             let at = Some((ActionId::Builtin(ActionKind::Reload), t));
-            scene.world.insert(scene.player, HoldPreview { start: PreviewStart::Dry, at });
+            scene.world.insert(scene.player, (HoldPreview { start: PreviewStart::Dry, at }, PosedWhileEditing));
             frame(scene, &rest);
             let gun = world_matrix(&scene.world, scene.gun);
             let parts = scene.world.get::<GunState>(scene.gun).unwrap().clone();
@@ -1838,6 +1831,7 @@ pub(super) mod tests {
         use crate::animation::{ClipSource, Clips};
         use crate::guns::base_clip::BaseClip;
         use crate::guns::handling::{ActionOffsets, GunHandling, put_handling};
+        use crate::first_person::PosedWhileEditing;
         use crate::guns::preview::{HoldPreview, PreviewStart};
         use voxear_render::{BonePose, Clip};
         let mut scene = scene();
@@ -1886,7 +1880,8 @@ pub(super) mod tests {
             let length = ActionPlay::start(&id, kind, &handling, &start, 10, None).unwrap().progress().1;
             put_handling(&mut scene.world, "Based", Arc::new(handling));
             scene.world.get_mut::<Gun>(scene.gun).unwrap().handling = "Based".into();
-            scene.world.insert(scene.player, HoldPreview { start: PreviewStart::Full, at: Some((id, length * 0.5)) });
+            let preview = HoldPreview { start: PreviewStart::Full, at: Some((id, length * 0.5)) };
+            scene.world.insert(scene.player, (preview, PosedWhileEditing));
             frame(scene, &posed);
             let gun = world_matrix(&scene.world, scene.camera).inverse() * world_matrix(&scene.world, scene.gun);
             let chest = scene.world.get::<Pose>(scene.body).unwrap().bones[rig.chest()];
@@ -2075,8 +2070,9 @@ mod acting {
 
     #[test]
     fn a_reload_keeps_the_working_hand_out_of_the_gun() {
-        use crate::guns::contact::{GunShapes, Shape, shapes_now};
-        use crate::guns::hands::keep_out;
+        use crate::animation::boxes::Shape;
+        use crate::guns::contact::{GunShapes, shapes_now};
+        use crate::animation::grip::keep_out;
         let (mut scene, bolt) = rifle();
         // The Rifle the editor makes: its wrist, stock, fore-end and receiver, and its bolt's handle out to the right.
         let blocks = [

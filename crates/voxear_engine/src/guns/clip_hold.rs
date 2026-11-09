@@ -17,12 +17,13 @@
 
 use std::sync::Arc;
 
+use voxear_core::ease::smooth;
 use voxear_core::math::{Mat4, Quat, Vec3};
 use voxear_ecs::World;
 use voxear_render::{CLIP_RATE, ModelAnimation, Skeleton};
 
 use super::handling::{PackClips, Place};
-use super::hands::{arm_reach, knuckles, palm_of};
+use crate::animation::grip::{arm_reach, knuckles, palm_of};
 use super::playing::ActionPlay;
 use crate::animation::{ClipSource, Clips};
 use crate::animation::ik::{PoseEdit, hand_axes};
@@ -373,12 +374,6 @@ pub fn comes_in(elapsed: f32, blend: f32) -> f32 {
 /// seconds after it ended, going out over `blend`.
 pub fn goes_out(since: f32, blend: f32) -> f32 {
     1.0 - smooth(since / blend.max(0.01))
-}
-
-/// `t` from 0 to 1, eased in and out.
-pub fn smooth(t: f32) -> f32 {
-    let t = t.clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
 }
 
 #[cfg(test)]

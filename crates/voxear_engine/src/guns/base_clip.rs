@@ -8,6 +8,7 @@
 //! for any rifle, or for none, holds this one.
 
 use serde::{Deserialize, Serialize};
+use voxear_core::ease::smooth;
 use voxear_core::math::{Mat4, Quat, Vec3};
 use voxear_ecs::{Entity, World};
 use voxear_render::{ModelRenderer, Pose};
@@ -113,10 +114,4 @@ pub(super) fn play(world: &mut World, body: Entity, play: &ActionPlay, eye: Mat4
         (rig.arms.each_ref().map(way), arms_weight)
     });
     Some(Given { gun, elbows })
-}
-
-/// Eases from 0 to 1 and holds there, flat at both ends.
-fn smooth(t: f32) -> f32 {
-    let t = t.clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
 }

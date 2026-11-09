@@ -26,6 +26,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
+use voxear_core::ease::smooth;
 use voxear_core::math::{Mat4, Quat, Vec3};
 use voxear_ecs::{Component, Entity, World};
 use voxear_render::{BonePose, ModelAnimation, ModelRenderer, Pose, Skeleton};
@@ -1048,12 +1049,6 @@ fn hold_feet(
         }
     }
     state.down = down;
-}
-
-/// Eases 0 to 1 in and out.
-fn smooth(t: f32) -> f32 {
-    let t = t.clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
 }
 
 /// Bends a leg, its hip, knee and ankle, so the ankle reaches `target` in

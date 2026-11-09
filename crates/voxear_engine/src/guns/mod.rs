@@ -12,7 +12,6 @@ pub mod contact;
 pub mod gun;
 pub mod gun_clips;
 pub mod handling;
-pub mod hands;
 pub mod holder;
 pub mod leftovers;
 #[cfg(test)]

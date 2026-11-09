@@ -31,7 +31,7 @@ use voxear_ecs::World;
 use super::actions::{ActionKind, ActionSpec, Beat, BeatKey, ClipPart, When};
 use super::base_clip::BaseClip;
 use super::gun::{Gun, GunKind, Socket};
-use super::hands::Grip;
+use crate::animation::grip::Grip;
 use crate::content::Content;
 
 /// A place and turn: metres, and degrees about X, then Y, then Z.

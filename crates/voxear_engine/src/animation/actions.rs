@@ -8,6 +8,7 @@
 
 use std::sync::Arc;
 
+use voxear_core::ease::smooth;
 use voxear_core::math::{Quat, Vec3};
 use voxear_ecs::{Entity, World};
 use voxear_render::{BonePose, Clip, Skeleton};
@@ -173,12 +174,6 @@ fn arm(skeleton: &Skeleton, left: bool) -> Option<usize> {
     let names: Vec<String> = skeleton.bones.iter().map(|bone| bone.name.to_lowercase()).collect();
     let named = |part: &str| names.iter().position(|name| name.contains(part) && side_of(name) == Some(left));
     named("shoulder").or_else(|| named("clavicle")).or_else(|| named("upper_arm")).or_else(|| named("upperarm"))
-}
-
-/// Eases 0 to 1 in and out.
-fn smooth(t: f32) -> f32 {
-    let t = t.clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
 }
 
 #[cfg(test)]

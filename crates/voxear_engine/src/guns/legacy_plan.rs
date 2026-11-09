@@ -6,7 +6,7 @@ use voxear_core::math::Vec3;
 
 use super::actions::{ActionKind, Event, Goal, Hand};
 use super::gun::GunKind;
-use super::hands::Grip;
+use crate::animation::grip::Grip;
 use super::mechanism::{Chamber, GunState, PartRole};
 
 /// One thing a hand does, as beats were before they were data.

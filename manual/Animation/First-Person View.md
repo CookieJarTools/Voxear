@@ -2,7 +2,7 @@
 order: 7
 ---
 
-A **First-Person View** puts the camera in a character's own head. Add it to the character's root Obj, with **Add Component ▸ Animation ▸ First-Person View**. It finds the body, the first Model Renderer under its Obj, and the camera, the first under it, or else the first in the level.
+A **First-Person View** puts the camera in a character's own head. Add it to the character's root Obj, with **Add Component ▸ Animation ▸ First-Person View**. It finds the body, the first Model Renderer under its Obj whose skeleton has a head and arms, and the camera, the first under it, or else the first in the level.
 
 - The mouse turns it, by **Sensitivity** degrees a pixel, between its **Tilt Limits**. Turn **Mouse Look** off to turn it from a script with `view.Yaw` and `view.Pitch`.
 - **Turn Obj**: the Obj it is on turns to face where it looks.

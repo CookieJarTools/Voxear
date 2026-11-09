@@ -205,7 +205,7 @@ fn palm_on_gun(scene: &Scene, arm: usize) -> Vec3 {
     let animation = scene.world.get::<ModelRenderer>(scene.body).unwrap().animation.clone().unwrap();
     let rig = Rig::find(&animation.skeleton).unwrap();
     let edit = PoseEdit::new(&animation.skeleton, &scene.world.get::<Pose>(scene.body).unwrap().bones);
-    let palm = super::hands::palm_of(&edit, &rig.arms[arm]).unwrap().point;
+    let palm = crate::animation::grip::palm_of(&edit, &rig.arms[arm]).unwrap().point;
     let world = voxear_scene::world_matrix(&scene.world, scene.body).transform_point3(palm);
     voxear_scene::world_matrix(&scene.world, scene.gun).inverse().transform_point3(world)
 }
@@ -217,7 +217,7 @@ fn fingers(scene: &Scene, arm: usize) -> [[f32; 3]; 5] {
     let animation = scene.world.get::<ModelRenderer>(scene.body).unwrap().animation.clone().unwrap();
     let rig = Rig::find(&animation.skeleton).unwrap();
     let edit = PoseEdit::new(&animation.skeleton, &scene.world.get::<Pose>(scene.body).unwrap().bones);
-    super::hands::finger_bends(&edit, &rig.arms[arm])
+    crate::animation::grip::finger_bends(&edit, &rig.arms[arm])
 }
 
 /// The gun's place in the camera's space.
@@ -510,7 +510,7 @@ fn finger_ways(scene: &Scene, arm: usize) -> [[Vec3; 3]; 5] {
     let rig = Rig::find(skeleton).unwrap();
     let edit = PoseEdit::new(skeleton, &scene.world.get::<Pose>(scene.body).unwrap().bones);
     let rest = PoseEdit::new(skeleton, &skeleton.model_matrices(&skeleton.rest()));
-    super::hands::finger_ways(&edit, &rest, &rig.arms[arm])
+    crate::animation::grip::finger_ways(&edit, &rest, &rig.arms[arm])
 }
 
 /// Where a body's camera is from its head, in metres.
@@ -585,7 +585,7 @@ fn knuckles_on_gun(scene: &Scene, arm: usize) -> Vec3 {
     let animation = scene.world.get::<ModelRenderer>(scene.body).unwrap().animation.clone().unwrap();
     let rig = Rig::find(&animation.skeleton).unwrap();
     let edit = PoseEdit::new(&animation.skeleton, &scene.world.get::<Pose>(scene.body).unwrap().bones);
-    let knuckles = super::hands::knuckles(&edit, &rig.arms[arm]).unwrap();
+    let knuckles = crate::animation::grip::knuckles(&edit, &rig.arms[arm]).unwrap();
     let world = voxear_scene::world_matrix(&scene.world, scene.body).transform_point3(knuckles);
     voxear_scene::world_matrix(&scene.world, scene.gun).inverse().transform_point3(world)
 }

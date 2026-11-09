@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use super::base_clip::BaseClip;
 use super::gun::GunKind;
 use super::handling::Place;
-use super::hands::Grip;
+use crate::animation::grip::Grip;
 use super::mechanism::{Chamber, Feed, GunState, Known, PartRole};
 
 /// What a holder can do with a gun.

@@ -2,6 +2,7 @@
 
 pub mod curve;
 pub mod debug_draw;
+pub mod ease;
 pub mod logging;
 pub mod memory;
 pub mod profiling;

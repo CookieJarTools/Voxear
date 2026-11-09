@@ -9,7 +9,9 @@
 
 mod actions;
 mod bone_attachment;
+pub mod boxes;
 mod clips;
+pub mod grip;
 pub mod ik;
 mod motion_database;
 mod motion_matching;

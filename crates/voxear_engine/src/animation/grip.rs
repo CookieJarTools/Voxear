@@ -1,17 +1,18 @@
 //! Hands on what they hold, with no clips. A hand is put by its palm: the
 //! middle of the palm, on its skin, goes where it holds, the hand turned
-//! as the socket says. Then its fingers close from straight, every joint
-//! at once, and a link that would go into the gun stops there, with the
+//! as asked. Then its fingers close from straight, every joint at once,
+//! and a link that would go into what it holds stops there, with the
 //! joints before it, while those after it close on: so fingers wrap a
-//! grip of any size and never pass through it. A grip says how far each
-//! finger may curl at most, thumb first.
+//! handle of any size and never pass through it. A grip says how far each
+//! finger may curl at most, thumb first. What is held is boxes (see
+//! [`super::boxes`]).
 
 use serde::{Deserialize, Serialize};
 use voxear_core::math::{Mat3, Quat, Vec3};
 
-use super::contact::{Shape, nearest, push_out};
-use crate::animation::ik::{PoseEdit, aim_hand, aim_turn, hand_axes, reach_hand};
-use crate::animation::rig::Arm;
+use super::boxes::{Shape, nearest, push_out};
+use super::ik::{PoseEdit, aim_hand, aim_turn, hand_axes, reach_hand};
+use super::rig::Arm;
 
 /// How far a finger's joints bend at a full curl, from its root out, in
 /// degrees, and the thumb's.
@@ -32,11 +33,11 @@ const BENDING: f32 = 0.05;
 pub struct Grip(pub [f32; 5]);
 
 impl Grip {
-    /// Round a pistol grip, the index finger along the trigger.
+    /// Round a handle, the index finger out along it, as on a trigger.
     pub const TRIGGER: Grip = Grip([0.55, 0.35, 0.85, 0.88, 0.9]);
-    /// Round a handguard or fore-end from below.
+    /// Round something held from below.
     pub const SUPPORT: Grip = Grip([0.2, 0.7, 0.75, 0.78, 0.8]);
-    /// Pinching something small, as a bolt's knob or a round.
+    /// Pinching something small.
     pub const PINCH: Grip = Grip([0.6, 0.6, 0.85, 0.9, 0.9]);
     /// Open, as when reaching.
     pub const OPEN: Grip = Grip([0.1, 0.1, 0.12, 0.14, 0.16]);
@@ -141,7 +142,7 @@ pub fn seat_hand(edit: &mut PoseEdit, arm: &Arm, contact: Vec3, axes: (Vec3, Vec
 }
 
 /// How far a hand must move for it to be clear of `shapes`, in the
-/// model's space, staying on the gun's `side` it is on: its body, from the
+/// model's space, staying on the `side` of them it is on: its body, from the
 /// wrist to the knuckles and across them, as thick as it is, and its
 /// forearm just behind the wrist. Its fingers close round what they touch
 /// instead.

@@ -39,6 +39,12 @@ impl CurveField {
 
     /// Draws `curve`, between 0 and 1 or as far as its keys go.
     pub fn draw(&self, ui: &mut Ui, curve: &Curve) {
+        self.draw_by(ui, curve, &|t| curve.at(t).unwrap_or(1.0));
+    }
+
+    /// Draws `curve` as `value` reads it between its keys, as one smoothed
+    /// through them.
+    pub fn draw_by(&self, ui: &mut Ui, curve: &Curve, value: &dyn Fn(f32) -> f32) {
         if self.held.get().is_none() {
             let (low, high) = curve.keys().iter().fold((0.0f32, 1.0f32), |(lo, hi), k| (lo.min(k[1]), hi.max(k[1])));
             self.range.set([low, high + (high - low) * 0.1]);
@@ -52,7 +58,6 @@ impl CurveField {
         }
         // With no keys it changes nothing: shown flat at 1, faintly.
         let faint = curve.is_empty();
-        let value = |t: f32| curve.at(t).unwrap_or(1.0);
         let points: Vec<[f32; 2]> =
             (0..=STEPS).map(|i| i as f32 / STEPS as f32).map(|t| [t * width, y(value(t))]).collect();
         let color = if faint { Color::hex(LINE).with_alpha(70) } else { Color::hex(LINE) };

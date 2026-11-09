@@ -54,6 +54,7 @@ fn icon(kind: &LayerKind) -> &'static str {
     match kind {
         LayerKind::Import { .. } => "texture",
         LayerKind::Stamp { .. } => "mountain",
+        LayerKind::Generate { .. } => "sprout",
         LayerKind::Noise { .. } => "grid",
         LayerKind::Sculpt { .. } => "edit",
         LayerKind::Spline { dig: Some(_), .. } => "spade",

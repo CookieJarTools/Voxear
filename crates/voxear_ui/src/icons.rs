@@ -93,6 +93,7 @@ pub const NAMES: &[&str] = &[
     "mountain",
     "leaf",
     "spade",
+    "sprout",
 ];
 
 fn shapes(name: &str) -> Option<&'static [Part]> {
@@ -184,6 +185,11 @@ fn shapes(name: &str) -> Option<&'static [Part]> {
         // A leaf with its vein: grass and plants.
         "leaf" => &[("M5 19C5 10.5 10.5 5 19 5c0 8.5-5.5 14-14 14ZM5 19l8.5-8.5", STROKE)],
         "spade" => &[("M9.5 3.5h5M12 3.5v8M8 11.5h8l-1 6a3 3 0 0 1-6 0Z", STROKE)],
+        // A sprout from the ground: ground grown from a seed.
+        "sprout" => &[(
+            "M5.5 20.5h13M12 20.5v-8.5M12 12c0-4 3-6.5 7-6.5 0 4-3 6.5-7 6.5ZM12 14.5c0-3-2.5-5-5.5-5 0 3 2.5 5 5.5 5Z",
+            STROKE,
+        )],
         "scene" => &[("M3.5 6.5l5.5-3 6 3 5.5-3v14l-5.5 3-6-3-5.5 3ZM9 3.5v14M15 6.5v14", STROKE)],
         "material" => &[("M12 3.5a8.5 8.5 0 1 0 0 17a8.5 8.5 0 1 0 0-17ZM7.5 10a5 5 0 0 1 4-3.5", STROKE)],
         // A shader: a sphere with its code's brackets.

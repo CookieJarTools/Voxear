@@ -110,6 +110,13 @@ pub enum AssetAction {
         slot: IconSlot,
         source: DragSource,
     },
+    /// Write the World Generator at this path as this, make the terrains
+    /// generated from it again, and when `rebuild`, show it again.
+    SaveWorldGen {
+        path: String,
+        world: voxear_terrain::generate::WorldGen,
+        rebuild: bool,
+    },
     /// Write the Gun Handling at this path as this, and when `rebuild`, show
     /// it again.
     SaveGunHandling {
@@ -227,6 +234,7 @@ pub struct AssetView {
     motion_set: Option<MotionSetFields>,
     /// A Gun Handling's holds and actions.
     gun_handling: Option<GunHandlingFields>,
+    world_gen: Option<crate::world_gen_inspector::WorldGenFields>,
     /// Prompt Icons' pictures, by device and control.
     prompt_icons: Option<PromptIconsFields>,
     /// The preview's frame, which takes drags, and its image.
@@ -403,6 +411,7 @@ impl AssetView {
             clips: None,
             motion_set: None,
             gun_handling: None,
+            world_gen: None,
             prompt_icons: None,
             preview,
             listen: None,
@@ -428,6 +437,11 @@ impl AssetView {
                 let label = |clip: &str| crate::props::clip_label(game, clip);
                 let bones = |clip: &str| crate::props::clip_bones(game, clip);
                 view.gun_handling = Some(GunHandlingFields::new(ui, root, handling, &label, &bones));
+            }
+            ItemKind::Asset(AssetKind::WorldGen) => {
+                let text = std::fs::read_to_string(&file).unwrap_or_default();
+                let world = voxear_terrain::generate::WorldGen::parse(&text).unwrap_or_default();
+                view.world_gen = Some(crate::world_gen_inspector::WorldGenFields::new(ui, root, world));
             }
             ItemKind::Asset(AssetKind::PromptIcons) => {
                 let text = std::fs::read_to_string(&file).unwrap_or_default();
@@ -536,6 +550,7 @@ impl AssetView {
             clips: None,
             motion_set: None,
             gun_handling: None,
+            world_gen: None,
             prompt_icons: None,
             preview: None,
             listen: None,
@@ -611,6 +626,13 @@ impl AssetView {
                 HandlingChange::Browse(field, anchor) => AssetAction::BrowseGunClip { handling: path, field, anchor },
                 HandlingChange::Drop(field, source) => AssetAction::DropGunClip { handling: path, field, source },
             });
+        }
+        if let Some(fields) = self.world_gen.as_mut()
+            && let Some(change) = fields.update(ui)
+        {
+            let (path, world) = (self.item.path.clone(), fields.world.clone());
+            let rebuild = matches!(change, crate::world_gen_inspector::WorldGenChange::Shape);
+            return Some(AssetAction::SaveWorldGen { path, world, rebuild });
         }
         if let Some(change) = self.prompt_icons.as_mut().and_then(|fields| fields.update(ui)) {
             let icons = self.item.path.clone();
@@ -1413,6 +1435,7 @@ fn kind_name(kind: ItemKind) -> &'static str {
         ItemKind::Asset(AssetKind::PromptIcons) => "Prompt Icons",
         ItemKind::Asset(AssetKind::Data) => "Data asset",
         ItemKind::Asset(AssetKind::Terrain) => "Terrain",
+        ItemKind::Asset(AssetKind::WorldGen) => "World Generator",
     }
 }
 
@@ -1439,6 +1462,7 @@ fn icon(kind: ItemKind) -> &'static str {
         ItemKind::Asset(AssetKind::PromptIcons) => "gamepad",
         ItemKind::Asset(AssetKind::Data) => "file",
         ItemKind::Asset(AssetKind::Terrain) => "mountain",
+        ItemKind::Asset(AssetKind::WorldGen) => "sprout",
     }
 }
 

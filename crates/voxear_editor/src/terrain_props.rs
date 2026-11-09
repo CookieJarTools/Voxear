@@ -118,6 +118,10 @@ pub enum TerrainField {
     LayerName,
     Blend,
     Opacity,
+    /// A Generate layer's world generator, and where the terrain's corner
+    /// is in its world.
+    World,
+    Offset,
     Picture,
     Height,
     Position,
@@ -336,6 +340,7 @@ fn layer_fields(layer: &Layer) -> Vec<TerrainField> {
     fields.extend(match layer.kind {
         LayerKind::Import { .. } => vec![F::Picture, F::Height],
         LayerKind::Stamp { .. } => vec![F::Picture, F::Position, F::Rotation, F::StampSize, F::Height, F::Falloff],
+        LayerKind::Generate { .. } => vec![F::World, F::Offset],
         LayerKind::Noise { .. } => vec![F::Style, F::Scale, F::Height, F::Octaves, F::Seed],
         LayerKind::Sculpt { .. } => vec![],
         LayerKind::Spline { .. } => vec![F::Width, F::Falloff, F::TrenchDig],
@@ -361,6 +366,8 @@ pub fn label(field: TerrainField) -> &'static str {
         F::Blend => "Blend",
         F::Opacity => "Opacity",
         F::Picture => "Picture",
+        F::World => "Generator",
+        F::Offset => "Offset",
         F::Height => "Height",
         F::Position => "Position",
         F::Rotation => "Rotation",
@@ -564,6 +571,8 @@ pub fn get(game: &Game, entity: Entity, field: TerrainField) -> Option<Value> {
             (F::Picture, LayerKind::Import { picture, .. } | LayerKind::Stamp { picture, .. }) => {
                 Value::Asset(path_of(game, picture.as_deref()))
             }
+            (F::World, LayerKind::Generate { world, .. }) => Value::Asset(path_of(game, world.as_deref())),
+            (F::Offset, LayerKind::Generate { position, .. }) => Value::Vector(position.to_vec()),
             (
                 F::Height,
                 LayerKind::Import { height, .. } | LayerKind::Stamp { height, .. } | LayerKind::Noise { height, .. },
@@ -778,6 +787,7 @@ fn set_layer(layer: &mut Layer, field: TerrainField, value: &Value) {
             LayerKind::Import { height, .. } | LayerKind::Stamp { height, .. } | LayerKind::Noise { height, .. },
         ) => *height = number(v).unwrap_or(*height),
         (F::Position, v, LayerKind::Stamp { position, .. }) => *position = pair(v).unwrap_or(*position),
+        (F::Offset, v, LayerKind::Generate { position, .. }) => *position = pair(v).unwrap_or(*position),
         (F::Rotation, v, LayerKind::Stamp { rotation, .. }) => *rotation = number(v).unwrap_or(*rotation),
         (F::StampSize, v, LayerKind::Stamp { size, .. }) => *size = pair(v).map_or(*size, |s| s.map(|n| n.max(0.1))),
         (F::Falloff, v, LayerKind::Stamp { falloff, .. }) => *falloff = number(v).unwrap_or(*falloff).clamp(0.0, 1.0),
@@ -1016,6 +1026,7 @@ pub fn choices(game: &Game, field: TerrainField) -> Vec<(String, Pick)> {
     match field {
         F::Data => fields::assets_of(game, Some(AssetKind::Terrain)),
         F::Picture => fields::assets_of(game, Some(AssetKind::Texture)),
+        F::World => fields::assets_of(game, Some(AssetKind::WorldGen)),
         F::SurfaceMaterial | F::GrassMaterial => fields::assets_of(game, Some(AssetKind::Material)),
         F::GrassMesh | F::NewGrass => crate::props::mesh_choices(game),
         // A new surface is of a material.
@@ -1042,7 +1053,15 @@ pub fn choices(game: &Game, field: TerrainField) -> Vec<(String, Pick)> {
 pub fn is_picked(field: TerrainField) -> bool {
     matches!(
         field,
-        F::Data | F::Picture | F::Material | F::SurfaceMaterial | F::NewSurface | F::GrassMesh | F::GrassMaterial | F::NewGrass
+        F::Data
+            | F::Picture
+            | F::World
+            | F::Material
+            | F::SurfaceMaterial
+            | F::NewSurface
+            | F::GrassMesh
+            | F::GrassMaterial
+            | F::NewGrass
     )
 }
 
@@ -1084,6 +1103,14 @@ pub fn pick(
             change_layer(game, entity, |layer| {
                 if let LayerKind::Import { picture, .. } | LayerKind::Stamp { picture, .. } = &mut layer.kind {
                     *picture = written;
+                }
+            })
+        }
+        F::World => {
+            let written = reference.map(|r| r.to_string());
+            change_layer(game, entity, |layer| {
+                if let LayerKind::Generate { world, .. } = &mut layer.kind {
+                    *world = written;
                 }
             })
         }
@@ -1305,14 +1332,16 @@ pub fn remove_surface(game: &mut Game, entity: Entity, at: usize) -> bool {
 }
 
 /// The kinds of layer Add offers, in its menu's order.
-pub const NEW_LAYERS: [&str; 9] =
-    ["Stamp", "Noise", "Sculpt", "Spline", "Trench", "Dig", "Terrace", "Smooth", "Import"];
+pub const NEW_LAYERS: [&str; 10] =
+    ["Generate", "Stamp", "Noise", "Sculpt", "Spline", "Trench", "Dig", "Terrace", "Smooth", "Import"];
 
 /// A new layer of the kind `NEW_LAYERS[choice]` names, to start from on a
 /// terrain as `file` says, numbering a sculpt layer's raster past `rasters`'.
 pub fn new_layer(choice: usize, file: &TerrainFile, rasters: &Rasters) -> Layer {
     let (size, middle) = (file.size, file.size * 0.5);
     let kind = match NEW_LAYERS.get(choice).copied().unwrap_or("Stamp") {
+        // Its generator is picked as it is added (see `add_layer`).
+        "Generate" => LayerKind::Generate { world: None, position: [0.0, 0.0] },
         "Noise" => LayerKind::Noise {
             style: NoiseStyle::Fractal,
             scale: (size * 0.25).max(10.0),
@@ -1364,12 +1393,63 @@ pub fn new_layer(choice: usize, file: &TerrainFile, rasters: &Rasters) -> Layer 
 pub fn add_layer(game: &mut Game, entity: Entity, choice: usize) -> bool {
     let Some(asset) = game.engine.world.get::<TerrainAsset>(entity) else { return false };
     let mut file = asset.file.clone();
-    let layer = new_layer(choice, &file, &asset.rasters);
+    let mut layer = new_layer(choice, &file, &asset.rasters);
+    if let LayerKind::Generate { world, .. } = &mut layer.kind {
+        *world = world_for(game, entity);
+    }
+    let Some(asset) = game.engine.world.get::<TerrainAsset>(entity) else { return false };
     let dirty = dirty_between(None, Some(&layer));
     file.layers.push(layer);
     let (at, rasters) = (file.layers.len() - 1, asset.rasters.clone());
     ui_mut(&mut game.engine.world).layer = at;
     remake(game, entity, file, rasters, &dirty)
+}
+
+/// The world generator a new Generate layer starts with: the project's
+/// first, by its path, or a new one made beside the terrain's file and
+/// named for it.
+fn world_for(game: &mut Game, entity: Entity) -> Option<String> {
+    let db = game.content.db();
+    let mut found: Vec<String> =
+        db.entries().filter(|entry| entry.kind == AssetKind::WorldGen).map(|entry| entry.path.clone()).collect();
+    found.sort();
+    let path = match found.into_iter().next() {
+        Some(path) => path,
+        None => {
+            let guid = game.engine.world.get::<TerrainAsset>(entity)?.guid;
+            let terrain = db.get(guid)?.path.clone();
+            let (folder, name) = terrain.rsplit_once('/').unwrap_or(("", &terrain));
+            let stem = name.strip_suffix(".terrain").unwrap_or(name);
+            let made = crate::project_files::create_world_gen(&game.project.root, folder, stem)
+                .inspect_err(|error| tracing::error!("{error:#}"))
+                .ok()?;
+            game.content.rescan().inspect_err(|error| tracing::error!("{error:#}")).ok()?;
+            made
+        }
+    };
+    game.content.parse(&path).ok().map(|reference| reference.to_string())
+}
+
+/// Makes every terrain whose Generate layers read the world generator
+/// `guid` again from its layers, as after the generator changed.
+pub fn regenerate(game: &mut Game, guid: voxear_assets::AssetGuid) {
+    let world = &game.engine.world;
+    let using: Vec<(Entity, TerrainFile, Arc<Rasters>)> = world
+        .query_ref::<(Entity, &TerrainAsset)>()
+        .into_iter()
+        .filter(|(_, asset)| {
+            asset.file.layers.iter().any(|layer| match &layer.kind {
+                LayerKind::Generate { world: Some(reference), .. } => {
+                    game.content.parse(reference).ok().and_then(|parsed| parsed.guid()) == Some(guid)
+                }
+                _ => false,
+            })
+        })
+        .map(|(entity, asset)| (entity, asset.file.clone(), asset.rasters.clone()))
+        .collect();
+    for (entity, file, rasters) in using {
+        remake(game, entity, file, rasters, &Dirty::All);
+    }
 }
 
 /// The sculpt layer the brush paints into: the picked layer if it is one,
@@ -1510,13 +1590,14 @@ mod tests {
 
     #[test]
     fn each_kind_of_layer_shows_its_own_values_and_a_mask_shows_its_ranges_once_on() {
-        let stamp = new_layer(0, &TerrainFile::default(), &Rasters::default());
+        let kind = |name: &str| NEW_LAYERS.iter().position(|&kind| kind == name).expect("offered");
+        let stamp = new_layer(kind("Stamp"), &TerrainFile::default(), &Rasters::default());
         let fields = layer_fields(&stamp);
         assert!(fields.contains(&F::Position) && fields.contains(&F::Picture) && !fields.contains(&F::Heights));
         let mut masked = stamp.clone();
         masked.mask.height = Some([0.0, 10.0]);
         assert!(layer_fields(&masked).contains(&F::Heights) && layer_fields(&masked).contains(&F::Feather));
-        let sculpt = new_layer(2, &TerrainFile::default(), &Rasters::default());
+        let sculpt = new_layer(kind("Sculpt"), &TerrainFile::default(), &Rasters::default());
         assert!(matches!(sculpt.kind, LayerKind::Sculpt { raster: 1 }));
         assert!(!layer_fields(&sculpt).contains(&F::Blend), "a sculpt layer adds");
         // A stamp starts in the middle, an eighth of the terrain across.

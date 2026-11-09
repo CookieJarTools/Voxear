@@ -7,7 +7,7 @@
 //! the same stroke does the same at any frame rate.
 
 use crate::{
-    composite::{Compositor, Pictures, Sources},
+    composite::{Compositor, Pictures, Sources, Worlds},
     file::TerrainFile,
     heights::{TILE_QUADS, TILE_SAMPLES},
     layers::{Area, smoothstep},
@@ -112,15 +112,15 @@ const PULL: f32 = 8.0;
 /// One dab of `brush` on raster `raster` at `at` (metres from the corner),
 /// held for `amount` seconds, `inverted` (Shift) to lower rather than raise.
 /// `flatten_to` is the height Flatten brings the ground to. The compositor
-/// must be editing the Sculpt layer whose raster this is; `pictures` are
-/// what the layers below read. Returns the area it changed.
+/// must be editing the Sculpt layer whose raster this is; `pictures` and
+/// `worlds` are what the layers below read. Returns the area it changed.
 pub fn dab(
     brush: &Brush,
     at: [f32; 2],
     amount: f32,
     inverted: bool,
     flatten_to: f32,
-    (file, compositor, pictures): (&TerrainFile, &Compositor, Pictures),
+    (file, compositor, pictures, worlds): (&TerrainFile, &Compositor, Pictures, Worlds),
     (rasters, raster): (&mut Rasters, u32),
 ) -> Area {
     let spacing = file.spacing();
@@ -132,7 +132,7 @@ pub fn dab(
     let (x0, x1, z0, z1) = (first(at[0]), last(at[0]), first(at[1]), last(at[1]));
     let width = (x1 - x0 + 1) as usize;
     let current: Vec<f32> = {
-        let sources = Sources { pictures, rasters };
+        let sources = Sources { pictures, worlds, rasters };
         let mut current = Vec::with_capacity(width * (z1 - z0 + 1) as usize);
         for z in z0..=z1 {
             for x in x0..=x1 {
@@ -244,6 +244,7 @@ pub(crate) fn add(rasters: &mut Rasters, raster: u32, x: i64, z: i64, change: f3
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::composite::no_worlds;
     use crate::{
         composite::Dirty,
         layers::{Layer, LayerKind},
@@ -278,7 +279,7 @@ mod tests {
         let brush = Brush { radius: 10.0, strength: 1.0, ..Brush::default() };
         // A dab on the line between two tiles, which share their edge.
         let at = [256.0, 100.0];
-        let area = dab(&brush, at, 0.5, false, 0.0, (&file, &compositor, &none), (&mut rasters, 1));
+        let area = dab(&brush, at, 0.5, false, 0.0, (&file, &compositor, &none, &no_worlds), (&mut rasters, 1));
         assert!(area[0] < 246.0 && area[2] > 266.0);
         let middle = rasters.sample(1, 256, 100);
         assert!((middle - 3.0).abs() < 1e-3, "{middle}");
@@ -289,7 +290,7 @@ mod tests {
             middle,
             "the tile before has the edge too"
         );
-        dab(&brush, at, 0.5, true, 0.0, (&file, &compositor, &none), (&mut rasters, 1));
+        dab(&brush, at, 0.5, true, 0.0, (&file, &compositor, &none, &no_worlds), (&mut rasters, 1));
         assert!(rasters.sample(1, 256, 100).abs() < 1e-4, "lowered back");
     }
 
@@ -303,24 +304,24 @@ mod tests {
         let at = [100.0, 100.0];
         let set = Brush { kind: BrushKind::SetHeight, height: 12.0, radius: 6.0, strength: 1.0, ..Brush::default() };
         for _ in 0..20 {
-            dab(&set, at, 0.1, false, 0.0, (&file, &compositor, pictures), (&mut rasters, 1));
+            dab(&set, at, 0.1, false, 0.0, (&file, &compositor, pictures, &no_worlds), (&mut rasters, 1));
         }
-        let sources = Sources { pictures, rasters: &rasters };
+        let sources = Sources { pictures, worlds: &no_worlds, rasters: &rasters };
         let ground = compositor.composite(&file, &sources, None, &Dirty::All);
         assert!((ground.height_at(100.0, 100.0) - 12.0).abs() < 0.05, "{}", ground.height_at(100.0, 100.0));
         // The slope below was about 3.9 m there; Flatten to 2 m pulls it down too.
         let flatten = Brush { kind: BrushKind::Flatten, radius: 6.0, strength: 1.0, ..Brush::default() };
         for _ in 0..20 {
-            dab(&flatten, at, 0.1, false, 2.0, (&file, &compositor, pictures), (&mut rasters, 1));
+            dab(&flatten, at, 0.1, false, 2.0, (&file, &compositor, pictures, &no_worlds), (&mut rasters, 1));
         }
-        let sources = Sources { pictures, rasters: &rasters };
+        let sources = Sources { pictures, worlds: &no_worlds, rasters: &rasters };
         let ground = compositor.composite(&file, &sources, None, &Dirty::All);
         assert!((ground.height_at(100.0, 100.0) - 2.0).abs() < 0.05);
         // A spike smoothed away.
         let mut spiky = Rasters::default();
         spiky.tile_mut(1, 0, 0)[(200 * TILE_SAMPLES + 200) as usize] = 10.0;
         let smooth = Brush { kind: BrushKind::Smooth, radius: 4.0, strength: 1.0, ..Brush::default() };
-        dab(&smooth, [200.0, 200.0], 0.2, false, 0.0, (&file, &compositor, pictures), (&mut spiky, 1));
+        dab(&smooth, [200.0, 200.0], 0.2, false, 0.0, (&file, &compositor, pictures, &no_worlds), (&mut spiky, 1));
         assert!(spiky.sample(1, 200, 200) < 5.0);
     }
 
@@ -332,7 +333,7 @@ mod tests {
         // On the line between two tiles, which share it.
         cut(&file, &mut rasters, [256.0, 300.0], 3.0, false);
         let compositor = Compositor::default();
-        let sources = Sources { pictures: &none, rasters: &rasters };
+        let sources = Sources { pictures: &none, worlds: &no_worlds, rasters: &rasters };
         let ground = compositor.composite(&file, &sources, None, &Dirty::All);
         assert!(ground.is_hole(256, 300) && ground.is_hole(254, 300) && !ground.is_hole(260, 300));
         assert!(ground.tile(0, 1).is_hole(256, 44) && ground.tile(1, 1).is_hole(0, 44), "both tiles hold the edge");
@@ -341,7 +342,7 @@ mod tests {
         assert!(down.is_none(), "through the hole");
         assert!(crate::ray::raycast(&ground, Vec3::new(240.0, 50.0, 300.0), Vec3::NEG_Y, 100.0).is_some());
         cut(&file, &mut rasters, [256.0, 300.0], 3.0, true);
-        let sources = Sources { pictures: &none, rasters: &rasters };
+        let sources = Sources { pictures: &none, worlds: &no_worlds, rasters: &rasters };
         let filled = compositor.composite(&file, &sources, Some(&ground), &Dirty::Areas(vec![[250.0, 295.0, 262.0, 305.0]]));
         assert!(!filled.has_holes());
     }

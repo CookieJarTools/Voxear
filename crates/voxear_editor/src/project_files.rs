@@ -105,12 +105,14 @@ pub enum NewFile {
     MotionSet,
     GunHandling,
     Terrain,
+    /// A world generator, which a terrain's Generate layer picks.
+    WorldGen,
     /// Pictures prompts show for controls, picked on the Input page.
     PromptIcons,
 }
 
 impl NewFile {
-    pub const ALL: [NewFile; 13] = [
+    pub const ALL: [NewFile; 14] = [
         NewFile::Folder,
         NewFile::Scene,
         NewFile::Level,
@@ -123,6 +125,7 @@ impl NewFile {
         NewFile::MotionSet,
         NewFile::GunHandling,
         NewFile::Terrain,
+        NewFile::WorldGen,
         NewFile::PromptIcons,
     ];
 
@@ -130,7 +133,7 @@ impl NewFile {
     pub fn module(self) -> Option<voxear_engine::modules::Module> {
         match self {
             NewFile::GunHandling => Some(voxear_engine::modules::Module::Guns),
-            NewFile::Terrain => Some(voxear_engine::modules::Module::Terrain),
+            NewFile::Terrain | NewFile::WorldGen => Some(voxear_engine::modules::Module::Terrain),
             _ => None,
         }
     }
@@ -150,6 +153,7 @@ impl NewFile {
             NewFile::MotionSet => "New Motion Set",
             NewFile::GunHandling => "New Gun Handling",
             NewFile::Terrain => "New Terrain",
+            NewFile::WorldGen => "New World Generator",
             NewFile::PromptIcons => "New Prompt Icons",
         }
     }
@@ -170,6 +174,7 @@ impl NewFile {
             NewFile::MotionSet => ("New Motion Set", ".motionset"),
             NewFile::GunHandling => ("New Gun Handling", ".gunhandling"),
             NewFile::Terrain => ("New Terrain", ".terrain"),
+            NewFile::WorldGen => ("New World Generator", ".worldgen"),
             NewFile::PromptIcons => ("New Prompt Icons", ".prompticons"),
         }
     }
@@ -195,6 +200,7 @@ pub fn create(root: &Path, folder: &str, kind: NewFile, namespace: &str) -> Resu
         NewFile::MotionSet => std::fs::write(&file, NEW_MOTION_SET),
         NewFile::GunHandling => std::fs::write(&file, NEW_GUN_HANDLING),
         NewFile::Terrain => std::fs::write(&file, NEW_TERRAIN.to_string() + &TerrainFile::default().to_text()),
+        NewFile::WorldGen => std::fs::write(&file, new_world_gen()),
         NewFile::PromptIcons => {
             let icons = voxear_engine::prompt_icons::PromptIconsFile { format: 1, ..Default::default() };
             std::fs::write(&file, icons.to_text()?)
@@ -207,6 +213,25 @@ pub fn create(root: &Path, folder: &str, kind: NewFile, namespace: &str) -> Resu
 /// What a new terrain's file starts with, before its settings: flat ground,
 /// its heights written beside it once it is shaped and the level saved.
 const NEW_TERRAIN: &str = "# Voxear terrain: how large and how fine the ground is; its heights are in the .heights file beside it.\n";
+
+/// What a new world generator's file holds: a heading, then Rolling Hills.
+pub(crate) fn new_world_gen() -> String {
+    NEW_WORLD_GEN.to_string() + &voxear_terrain::generate::WorldGen::default().to_text()
+}
+
+/// What a world generator's file starts with, before its settings.
+pub(crate) const NEW_WORLD_GEN: &str =
+    "# Voxear world generator: a seed and how it shapes ground, which a terrain's Generate layer picks.\n";
+
+/// Makes a new world generator in `folder` (from the project's folder),
+/// named `name` and a number if that is taken, and returns its path.
+pub fn create_world_gen(root: &Path, folder: &str, name: &str) -> Result<String> {
+    std::fs::create_dir_all(root.join(folder)).with_context(|| format!("making {folder}"))?;
+    let file = unique(&root.join(folder), name, ".worldgen");
+    let path = join(folder, &file);
+    std::fs::write(root.join(&path), new_world_gen()).with_context(|| format!("making {path}"))?;
+    Ok(path)
+}
 
 /// Makes a new terrain asset in `folder` (from the project's folder), named
 /// `name` and a number if that is taken, and returns its path.

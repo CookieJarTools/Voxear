@@ -675,3 +675,64 @@ fn the_dig_brush_and_a_trench_layer_dig_into_the_ground_each_a_step_to_undo() {
     frame(&mut editor, &mut renderer);
     assert!(floor(&editor, 256.0, 255.7).is_none(), "the trench undone");
 }
+
+#[test]
+fn a_generate_layer_lays_a_world_generators_ground_and_follows_it_as_it_changes() {
+    use voxear_terrain::generate::{Preset, WorldGen};
+    use voxear_terrain::layers::LayerKind;
+    let Some((dir, mut renderer, mut editor, field)) = editor_with_a_terrain() else { return };
+    let layers = |editor: &voxear_editor::Editor| {
+        editor.game.engine.world.get::<TerrainAsset>(field).unwrap().file.layers.clone()
+    };
+    // Add Layer ▸ Generate, with no generator in the project yet: one made beside the terrain's file.
+    let add = first_with(&editor.ui, editor.ui.root(), "collection-add").expect("Add Layer");
+    click(&mut editor.ui, add);
+    frame(&mut editor, &mut renderer);
+    let generate = menu_item(&editor.ui, "Generate").expect("a Generate layer to add");
+    click(&mut editor.ui, generate);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let generating = |layer: &voxear_terrain::layers::Layer| {
+        matches!(&layer.kind, LayerKind::Generate { world: Some(_), .. })
+    };
+    assert!(matches!(layers(&editor).as_slice(), [layer] if generating(layer)));
+    for label in ["Generator", "Offset"] {
+        assert_eq!(prop_rows(&editor.ui, label).len(), 1, "the layer's {label}");
+    }
+    let db = editor.game.content.db();
+    let made: Vec<String> = db
+        .entries()
+        .filter(|entry| entry.kind == voxear_assets::AssetKind::WorldGen)
+        .map(|entry| entry.path.clone())
+        .collect();
+    let [path] = made.as_slice() else { panic!("one generator made: {made:?}") };
+    assert!(path.ends_with(".worldgen"));
+    let text = std::fs::read_to_string(dir.path().join(path)).unwrap();
+    assert_eq!(WorldGen::parse(&text).unwrap().preset(), Some(Preset::RollingHills));
+    // The ground is the generator's, from the corner of its world.
+    let rolling = WorldGen::default();
+    for (x, z) in [(100.0, 100.0), (300.0, 50.0), (256.0, 400.0)] {
+        let made = rolling.height_at(x, z);
+        let laid = height(&editor, field, x, z);
+        assert!((laid - made).abs() < 1e-2, "at {x}, {z}: {laid} not {made}");
+    }
+    shot(&mut renderer, "terrain-generate.png");
+
+    // In its Inspector, Alpine picked: saved, and the terrain's ground made again from it at once.
+    assert!(editor.inspect_path(path));
+    frame(&mut editor, &mut renderer);
+    for label in ["Preset", "Seed", "Scale", "Sea level", "Height"] {
+        assert_eq!(prop_rows(&editor.ui, label).len(), 1, "the generator's {label}");
+    }
+    let presets = first_with(&editor.ui, prop_rows(&editor.ui, "Preset")[0], "value-choice").expect("its presets");
+    assert_eq!(row_text(&editor.ui, prop_rows(&editor.ui, "Preset")[0]), "Rolling Hills");
+    choose(&mut editor, &mut renderer, presets, 2);
+    frame(&mut editor, &mut renderer);
+    let text = std::fs::read_to_string(dir.path().join(path)).unwrap();
+    let alpine = WorldGen::parse(&text).unwrap();
+    assert_eq!(alpine.preset(), Some(Preset::Alpine), "saved as it was picked");
+    let made = alpine.height_at(100.0, 100.0);
+    let laid = height(&editor, field, 100.0, 100.0);
+    assert!((laid - made).abs() < 1e-2, "made again: {laid} not {made}");
+    shot(&mut renderer, "terrain-generate-alpine.png");
+}

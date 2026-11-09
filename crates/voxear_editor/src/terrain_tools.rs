@@ -370,6 +370,8 @@ impl TerrainTools {
         let steps = ((distance / gap).ceil() as usize).clamp(1, 64);
         let pictures = game.content.terrain_pictures(&file);
         let find = |reference: &str| pictures.get(reference).cloned();
+        let worlds = game.content.terrain_worlds(&file);
+        let world = |reference: &str| worlds.get(reference).cloned();
         let mut areas: Vec<Area> = Vec::with_capacity(steps);
         let heights = game.engine.world.get::<Terrain>(stroke.entity).map(|terrain| terrain.heights.clone());
         let weights = game.engine.world.get::<Terrain>(stroke.entity).and_then(|terrain| terrain.weights.clone());
@@ -384,7 +386,7 @@ impl TerrainTools {
                     amount,
                     lower,
                     stroke.flatten_to,
-                    (&file, &self.compositor, &find),
+                    (&file, &self.compositor, &find, &world),
                     (&mut rasters, raster),
                 ),
                 Paints::Holes { fill } => brush::cut(&file, &mut rasters, at, brush.radius, fill),
@@ -496,7 +498,9 @@ impl TerrainTools {
                 // A point stands on the ground below the spline, which it then lays level along it.
                 let pictures = game.content.terrain_pictures(&asset.file);
                 let find = |reference: &str| pictures.get(reference).cloned();
-                let sources = voxear_terrain::composite::Sources { pictures: &find, rasters: &rasters };
+                let worlds = game.content.terrain_worlds(&asset.file);
+                let world = |reference: &str| worlds.get(reference).cloned();
+                let sources = voxear_terrain::composite::Sources { pictures: &find, worlds: &world, rasters: &rasters };
                 let spacing = asset.file.spacing();
                 let below = self.compositor.below_at(
                     &asset.file,

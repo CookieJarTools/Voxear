@@ -15,6 +15,7 @@ pub mod brush;
 pub mod composite;
 pub mod dig;
 pub mod file;
+pub mod generate;
 pub mod grass;
 pub mod heights;
 pub mod import;

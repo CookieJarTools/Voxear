@@ -1048,6 +1048,7 @@ fn assets(path: &Path) -> Result<()> {
             AssetKind::Data => "data",
             AssetKind::Terrain => "terrain",
             AssetKind::PromptIcons => "prompts",
+            AssetKind::WorldGen => "worldgen",
         };
         println!("  {:<9} {}  {}", kind, entry.guid, entry.path);
     }

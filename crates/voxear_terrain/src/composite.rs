@@ -22,6 +22,7 @@ use std::{
 
 use crate::{
     file::TerrainFile,
+    generate::WorldGen,
     heights::{HOLE_WORDS, HeightTile, Heightmap, TILE_LEN, TILE_QUADS, TILE_SAMPLES},
     import::Greys,
     layers::{Area, Layer, LayerKind, hash_layers, smoothstep},
@@ -38,11 +39,26 @@ const SIDE: u32 = TILE_SAMPLES + 2 * PAD;
 /// What finds a picture by the reference a layer has.
 pub type Pictures<'a> = &'a (dyn Fn(&str) -> Option<Arc<Greys>> + Sync);
 
-/// What layers read from outside the file: pictures by their references,
-/// and the sculpt layers' rasters.
+/// What finds a world generator by the reference a Generate layer has.
+pub type Worlds<'a> = &'a (dyn Fn(&str) -> Option<Arc<WorldGen>> + Sync);
+
+/// What layers read from outside the file: pictures and world generators
+/// by their references, and the sculpt layers' rasters.
 pub struct Sources<'a> {
     pub pictures: Pictures<'a>,
+    pub worlds: Worlds<'a>,
     pub rasters: &'a Rasters,
+}
+
+/// Sources with no pictures or generators: what a terrain whose layers
+/// name none needs.
+pub fn no_pictures(_: &str) -> Option<Arc<Greys>> {
+    None
+}
+
+/// No world generators, for sources that have none.
+pub fn no_worlds(_: &str) -> Option<Arc<WorldGen>> {
+    None
 }
 
 /// Which tiles to make again.
@@ -275,6 +291,10 @@ fn apply(layer: &Layer, padded: &mut [f32], (tx, tz): (u32, u32), spacing: f32, 
         LayerKind::Stamp { picture: reference, .. } => picture(reference),
         _ => None,
     };
+    let world = match &layer.kind {
+        LayerKind::Generate { world: Some(reference), .. } => (sources.worlds)(reference),
+        _ => None,
+    };
     for j in 0..SIDE {
         for i in 0..SIDE {
             let index = (j * SIDE + i) as usize;
@@ -289,6 +309,10 @@ fn apply(layer: &Layer, padded: &mut [f32], (tx, tz): (u32, u32), spacing: f32, 
                     stamp_at((x, z), *position, *rotation, *size, *falloff, stamp.as_deref())
                         .map_or((0.0, 0.0), |(grey, weight)| (grey * height, weight))
                 }
+                LayerKind::Generate { position, .. } => match &world {
+                    Some(world) => (world.height_at(x + position[0], z + position[1]), 1.0),
+                    None => (0.0, 0.0),
+                },
                 LayerKind::Noise { style, scale, height, octaves, seed } => {
                     let scale = scale.max(0.01);
                     (noise::fractal(*style, x / scale, z / scale, *octaves, *seed) * height, 1.0)
@@ -420,8 +444,39 @@ mod tests {
     }
 
     fn make(file: &TerrainFile, rasters: &Rasters) -> Heightmap {
-        let sources = Sources { pictures: &none, rasters };
+        let sources = Sources { pictures: &none, worlds: &no_worlds, rasters };
         Compositor::default().composite(file, &sources, None, &Dirty::All)
+    }
+
+    #[test]
+    fn a_generate_layer_lays_its_generators_ground_from_where_the_terrain_is_in_its_world() {
+        let world = Arc::new(crate::generate::Preset::Alpine.world());
+        let found = world.clone();
+        let worlds = move |reference: &str| (reference == "alpine").then(|| found.clone());
+        let generate = |position: [f32; 2]| {
+            Layer::new(LayerKind::Generate { world: Some("alpine".to_string()), position })
+        };
+        // Two tiles a side, a sample a metre, so it is seen across a tile's edge.
+        let terrain = TerrainFile { size: 512.0, resolution: 513, ..file(vec![generate([1000.0, -500.0])]) };
+        let sources = Sources { pictures: &none, worlds: &worlds, rasters: &Rasters::default() };
+        let ground = Compositor::default().composite(&terrain, &sources, None, &Dirty::All);
+        for (x, z) in [(0.0, 0.0), (255.0, 100.0), (256.0, 256.0), (511.0, 3.0)] {
+            let made = world.height_at(x + 1000.0, z - 500.0);
+            assert!((ground.height_at(x, z) - made).abs() < 1e-3, "at {x}, {z}: {} not {made}", ground.height_at(x, z));
+        }
+        // The same both sides of a tile's edge, as one ground.
+        for z in 0..=512 {
+            assert_eq!(ground.sample(256, z), world.height_at(256.0 + 1000.0, z as f32 - 500.0));
+        }
+        // With no generator found it lays nothing, and the ground stays at the base.
+        let lost = Layer::new(LayerKind::Generate { world: Some("lost".to_string()), position: [0.0, 0.0] });
+        let lost = file(vec![lost]);
+        let flat = Compositor::default().composite(&lost, &sources, None, &Dirty::All);
+        assert_eq!(flat.height_at(100.0, 100.0), lost.base);
+        // Read back from a terrain file as written.
+        let text = toml::to_string(&terrain).unwrap();
+        assert!(text.contains("kind = \"generate\""), "{text}");
+        assert_eq!(toml::from_str::<TerrainFile>(&text).unwrap().layers, terrain.layers);
     }
 
     #[test]
@@ -524,7 +579,7 @@ mod tests {
         let mut terrain =
             TerrainFile { size: 1024.0, resolution: 1025, layers: vec![hills, stamp(64.0)], ..TerrainFile::default() };
         let rasters = Rasters::default();
-        let sources = Sources { pictures: &none, rasters: &rasters };
+        let sources = Sources { pictures: &none, worlds: &no_worlds, rasters: &rasters };
         let mut compositor = Compositor::default();
         let first = compositor.composite(&terrain, &sources, None, &Dirty::All);
         // Dragged along, the stamp's tiles before and after are made again, the rest kept.
@@ -562,7 +617,7 @@ mod timing {
         let file = TerrainFile { size: 2048.0, resolution: 4097, layers: vec![hills, crater, road, smooth], ..TerrainFile::default() };
         let rasters = Rasters::default();
         let none = |_: &str| None;
-        let sources = Sources { pictures: &none, rasters: &rasters };
+        let sources = Sources { pictures: &none, worlds: &no_worlds, rasters: &rasters };
         let compositor = Compositor::default();
         let start = std::time::Instant::now();
         let whole = compositor.composite(&file, &sources, None, &Dirty::All);

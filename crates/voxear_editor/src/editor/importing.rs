@@ -247,6 +247,8 @@ impl Editor {
         let lighting = changed.iter().any(|path| path.ends_with(".lighting"));
         let documents = changed.iter().any(|path| path.ends_with(".vui") || path.ends_with(".vss"));
         let prompt_icons = changed.iter().any(|path| path.ends_with(".prompticons"));
+        let world_gens: Vec<String> =
+            changed.iter().filter(|path| path.ends_with(".worldgen")).map(|path| path.to_string()).collect();
         // A material may pick a built-in shader no other did, which is compiled in then.
         let shaders = changed.iter().any(|path| path.ends_with(".shader") || path.ends_with(".material"));
         if came_or_went {
@@ -268,6 +270,13 @@ impl Editor {
             // Prompts show a game's own pictures for its controls as the file now has them.
             if prompt_icons {
                 self.game.prompt_icons.forget();
+            }
+            // Terrains generated from a world generator edited outside the editor are made again from it.
+            for path in &world_gens {
+                if let Some(guid) = self.game.content.db().guid_of(path) {
+                    self.game.content.forget_world_gen(guid);
+                    crate::terrain_props::regenerate(&mut self.game, guid);
+                }
             }
             // A shader saved from a code editor compiles again, and its materials draw with it; nothing
             // compiles again when the shaders the materials pick are as they were.

@@ -74,6 +74,9 @@ pub enum AssetKind {
     /// A `.prompticons` file: the pictures prompts show for controls, for
     /// each kind of device, in place of the glyphs Voxear draws.
     PromptIcons,
+    /// A `.worldgen` file: a world generator, its seed and how it shapes
+    /// ground, which a terrain's Generate layer picks.
+    WorldGen,
 }
 
 impl AssetKind {
@@ -100,6 +103,7 @@ impl AssetKind {
             "asset" => Self::Data,
             "terrain" => Self::Terrain,
             "prompticons" => Self::PromptIcons,
+            "worldgen" => Self::WorldGen,
             _ => return None,
         })
     }

@@ -14,6 +14,7 @@ mod docs_steps;
 mod drawer;
 mod framing;
 mod gun_handlings;
+mod world_gens;
 mod hierarchies;
 mod importing;
 mod input_files;
@@ -1229,6 +1230,7 @@ impl Editor {
             AssetAction::SaveGunHandling { path, handling, rebuild } => {
                 self.save_gun_handling(&path, &handling, rebuild);
             }
+            AssetAction::SaveWorldGen { path, world, rebuild } => self.save_world_gen(&path, &world, rebuild),
             AssetAction::BrowsePromptIcon { icons, slot, anchor } => self.browse_prompt_icon(&icons, slot, anchor),
             AssetAction::DropPromptIcon { icons, slot, source } => self.drop_prompt_icon(&icons, &slot, &source),
             AssetAction::BrowseGunClip { handling, field, anchor } => self.browse_gun_clip(&handling, field, anchor),
@@ -1881,7 +1883,13 @@ impl Editor {
                 props::insert_lod_level(&mut self.game, entity, at);
             }
             RowAction::AddTerrainLayer(kind) => {
+                let assets = self.game.content.db().entries().count();
                 crate::terrain_props::add_layer(&mut self.game, entity, kind);
+                // A Generate layer may have made a world generator, to show in the Project panel.
+                if self.game.content.db().entries().count() != assets {
+                    self.files_seen();
+                    self.project.refresh(&mut self.ui, self.game.content.db(), None);
+                }
             }
             RowAction::DeleteLodLevel(at) => {
                 props::delete_lod_level(&mut self.game.engine.world, entity, at);

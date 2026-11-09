@@ -103,6 +103,7 @@ mod settings_panel;
 mod shader_fields;
 mod motion_set_inspector;
 mod prompt_icons_inspector;
+mod world_gen_inspector;
 mod strings_inspector;
 #[cfg(target_os = "linux")]
 mod wayland_drops;

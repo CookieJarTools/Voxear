@@ -74,6 +74,15 @@ pub enum LayerKind {
         #[serde(default = "quarter")]
         falloff: f32,
     },
+    /// Ground made by a world generator (see `generate`), the `.worldgen`
+    /// file `world` names by its GUID, the terrain's corner `position`
+    /// metres along x and z in the generator's world: none without one.
+    Generate {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        world: Option<String>,
+        #[serde(default)]
+        position: [f32; 2],
+    },
     /// Fractal noise over the whole terrain, `scale` metres to its largest
     /// features and `height` metres from its lowest to its highest.
     Noise {
@@ -242,6 +251,7 @@ impl LayerKind {
         match self {
             LayerKind::Import { .. } => "Import",
             LayerKind::Stamp { .. } => "Stamp",
+            LayerKind::Generate { .. } => "Generate",
             LayerKind::Noise { .. } => "Noise",
             LayerKind::Sculpt { .. } => "Sculpt",
             LayerKind::Spline { .. } => "Spline",
@@ -260,7 +270,10 @@ impl LayerKind {
     /// The blend a new layer of its kind starts with.
     pub fn usual_blend(&self) -> Blend {
         match self {
-            LayerKind::Spline { .. } | LayerKind::Terrace { .. } | LayerKind::Smooth { .. } => Blend::Set,
+            LayerKind::Generate { .. }
+            | LayerKind::Spline { .. }
+            | LayerKind::Terrace { .. }
+            | LayerKind::Smooth { .. } => Blend::Set,
             _ => Blend::Add,
         }
     }

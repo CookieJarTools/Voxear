@@ -534,6 +534,7 @@ fn asset(game: &Game, path: &str) -> (&'static str, String) {
         Some(AssetKind::GunHandling) => "crosshair",
         Some(AssetKind::PromptIcons) => "gamepad",
         Some(AssetKind::Terrain) => "mountain",
+        Some(AssetKind::WorldGen) => "sprout",
         Some(AssetKind::Lighting) => "light",
         Some(AssetKind::Data) => "file",
         None => "obj",

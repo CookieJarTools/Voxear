@@ -463,6 +463,8 @@ pub struct Content {
     unsaved_terrains: std::collections::BTreeSet<AssetGuid>,
     /// Heightmap pictures terrains' layers read, by GUID.
     terrain_greys: HashMap<AssetGuid, Option<Arc<voxear_terrain::import::Greys>>>,
+    /// World generators terrains' Generate layers read, by GUID.
+    world_gens: HashMap<AssetGuid, Option<Arc<voxear_terrain::generate::WorldGen>>>,
     /// Pictures materials read, by GUID and whether they are read as sRGB.
     pictures: HashMap<(AssetGuid, bool), TextureId>,
     /// Each picture's size as uploaded, in pixels.
@@ -619,6 +621,7 @@ impl Content {
             terrains: HashMap::new(),
             unsaved_terrains: Default::default(),
             terrain_greys: HashMap::new(),
+            world_gens: HashMap::new(),
             handlings_version: 0,
             pictures: HashMap::new(),
             picture_sizes: HashMap::new(),
@@ -1184,7 +1187,9 @@ impl Content {
     ) -> voxear_terrain::Heightmap {
         let pictures = self.terrain_pictures(file);
         let find = |reference: &str| pictures.get(reference).cloned();
-        let sources = voxear_terrain::composite::Sources { pictures: &find, rasters };
+        let worlds = self.terrain_worlds(file);
+        let world = |reference: &str| worlds.get(reference).cloned();
+        let sources = voxear_terrain::composite::Sources { pictures: &find, worlds: &world, rasters };
         compositor.composite(file, &sources, previous, dirty)
     }
 
@@ -1209,6 +1214,51 @@ impl Content {
             }
         }
         found
+    }
+
+    /// The world generators `file`'s Generate layers name, by their
+    /// references, read once each.
+    pub fn terrain_worlds(
+        &mut self,
+        file: &voxear_terrain::file::TerrainFile,
+    ) -> HashMap<String, Arc<voxear_terrain::generate::WorldGen>> {
+        let mut found = HashMap::new();
+        for layer in &file.layers {
+            let voxear_terrain::layers::LayerKind::Generate { world: Some(reference), .. } = &layer.kind else {
+                continue;
+            };
+            if !found.contains_key(reference)
+                && let Some(world) = self.world_gen(reference)
+            {
+                found.insert(reference.clone(), world);
+            }
+        }
+        found
+    }
+
+    /// The world generator `reference` names, read once.
+    pub fn world_gen(&mut self, reference: &str) -> Option<Arc<voxear_terrain::generate::WorldGen>> {
+        let guid = self.parse(reference).ok().and_then(|parsed| parsed.guid())?;
+        if let Some(kept) = self.world_gens.get(&guid) {
+            return kept.clone();
+        }
+        let path = self.db.get(guid).filter(|entry| entry.kind == AssetKind::WorldGen)?.path.clone();
+        let read = self.read_text(&path).and_then(|text| voxear_terrain::generate::WorldGen::parse(&text));
+        let kept = match read {
+            Ok(world) => Some(Arc::new(world)),
+            Err(error) => {
+                tracing::warn!("{path} could not be read: {error:#}");
+                None
+            }
+        };
+        self.world_gens.insert(guid, kept.clone());
+        kept
+    }
+
+    /// Forgets a world generator, read again when next asked for, as after
+    /// it was changed.
+    pub fn forget_world_gen(&mut self, guid: AssetGuid) {
+        self.world_gens.remove(&guid);
     }
 
     /// The greys of the picture `reference` names, read once.

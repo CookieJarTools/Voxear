@@ -4233,6 +4233,7 @@ dependencies = [
  "voxear_physics",
  "voxear_physics2d",
  "voxear_scene",
+ "voxear_terrain",
 ]
 
 [[package]]

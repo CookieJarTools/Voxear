@@ -21,6 +21,7 @@ mod playing;
 mod runtime;
 mod saves;
 mod services;
+mod terrain;
 mod text;
 mod ui;
 mod ui_rows;

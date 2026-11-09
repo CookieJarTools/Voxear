@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 59;
+pub(crate) const API_VERSION: u32 = 60;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -404,6 +404,18 @@ pub(crate) struct NativeApi {
     /// A data asset by project path or GUID, as JSON for
     /// `Definition.Load`: its length, written when it fits, or -1.
     pub asset_fields: unsafe extern "C" fn(reference: *const u8, len: i32, buffer: *mut u8, capacity: i32) -> i32,
+    /// `Terrain`: how many terrains the level has.
+    pub terrain_count: unsafe extern "C" fn() -> i32,
+    /// `Terrain`: the ground under a point, its height and the way it faces,
+    /// and the terrain's Obj; 0 where no terrain reaches.
+    pub terrain_ground: unsafe extern "C" fn(at: *const [f32; 3], out: *mut [f32; 4], obj: *mut u64) -> i32,
+    /// `Terrain`: the first place a ray meets any terrain within a distance.
+    pub terrain_raycast: unsafe extern "C" fn(
+        origin: *const [f32; 3],
+        direction: *const [f32; 3],
+        distance: f32,
+        hit: *mut crate::physics::RaycastHitData,
+    ) -> i32,
 }
 
 /// The kinds of component scripts reach through one entry, `kind_value`,
@@ -1765,6 +1777,9 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         kind_text,
         pose_op,
         asset_fields: crate::services::asset_fields,
+        terrain_count: crate::terrain::terrain_count,
+        terrain_ground: crate::terrain::terrain_ground,
+        terrain_raycast: crate::terrain::terrain_raycast,
     }
 }
 

@@ -1504,7 +1504,7 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   vertices a terrain (chunks made again when they change, by pointer), by the terrain's own pipelines, triplanar,
   the dug surface blended over what was opened; grass grows over dug columns' holes; a mesh body a chunk; rays,
   `HeightAt` and physics find the floor. Edits Dig, Fill, Tunnel and Explode (a bowl with its lip thrown up), saved
-  as commands or chunks (edits version 2). C#: `Terrain.Dig`, `Fill`, `Tunnel`, `Explode` (native API 65). Tests:
+  as commands or chunks (edits version 2). C#: `Terrain.Dig`, `Fill`, `Tunnel`, `Explode` (native API 66). Tests:
   no cracks or gaps along a column, rays and floors, save forms, GPU (a pit drawn whole, grass round it), physics
   (a ball in a pit, a character along a trench), a script's explosion. Manual: Digging.
 - **Digging in the editor:** dig and fill brushes, trenches along a Path with a profile (depth, floor width, wall

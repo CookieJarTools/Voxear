@@ -248,9 +248,10 @@ impl Kernel for Hollow {
         let mut held = None;
         let mut lifted = None;
         for (at, out) in out.iter_mut().enumerate() {
-            // Above the roof nothing is hollow, and a cell or more above it nothing changes what a cell holds.
+            // A cell or more over the ground nothing changes what a cell holds. Under it and over the roof an
+            // entrance may still come up, so those cells are asked.
             let (under, size) = (inputs[0][at] - net.set.roof, inputs[4][at]);
-            if under <= -size {
+            if inputs[0][at] <= -size {
                 *out = under;
                 continue;
             }
@@ -389,6 +390,13 @@ mod tests {
                 assert!(open(&caves, out, None), "open out of an exit at {out:?}");
             }
         }
+        // Entrances come out into the open: over this ground some places just under its top are hollow.
+        let mut mouths = 0;
+        for i in 0..40000 {
+            let (x, z) = ((i % 200) as f32 * 2.0 - 200.0, (i / 200) as f32 * 2.0 - 200.0);
+            mouths += usize::from(open(&caves, [x, caves.height_at(x, z) - 0.5, z], None));
+        }
+        assert!(mouths > 8, "{mouths} places open at the ground's top over {} rooms", rooms.len());
         // Nothing is hollow over the roof, where no entrance is.
         let plain = world(CaveNetwork { entrances: 0.0, ..CaveNetwork::default() }, None, 3);
         for i in 0..4000 {

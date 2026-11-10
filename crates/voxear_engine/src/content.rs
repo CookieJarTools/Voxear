@@ -1164,7 +1164,7 @@ impl Content {
         };
         // Heights made from these layers are used as they are; any others are made again from the layers.
         let (heights, made_again) = match stored {
-            Some((heights, made_from)) if made_from == file.shape_hash() || made_from == 0 || built => {
+            Some((heights, made_from)) if made_from == 0 || built || made_from == self.terrain_shape(&file) => {
                 let fits = |h: &voxear_terrain::Heightmap| h.tiles_x() == file.tiles() && h.spacing() == file.spacing();
                 let same = fits(&heights);
                 (file.fit(heights), !same)
@@ -1270,6 +1270,24 @@ impl Content {
         found
     }
 
+    /// A hash of what makes `file`'s ground: its own shape (see
+    /// `TerrainFile::shape_hash`), and the ground each world generator its
+    /// Generate layers name makes. Heights kept for a terrain are read as
+    /// they are while this is what they were made from, so a generator
+    /// changed while its terrain was closed makes them again.
+    pub fn terrain_shape(&mut self, file: &voxear_terrain::file::TerrainFile) -> u64 {
+        let mut hash = file.shape_hash();
+        for layer in &file.layers {
+            if let voxear_terrain::layers::LayerKind::Generate { world: Some(reference), .. } = &layer.kind
+                && let Some(world) = self.world_gen(reference)
+            {
+                let bytes = [hash.to_le_bytes(), world.hash().to_le_bytes()].concat();
+                hash = voxear_terrain::layers::stable_hash(&bytes);
+            }
+        }
+        hash
+    }
+
     /// The world generators `file`'s Generate layers name, by their
     /// references, read once each.
     pub fn terrain_worlds(
@@ -1326,10 +1344,20 @@ impl Content {
         kept
     }
 
-    /// Forgets a world generator, read again when next asked for, as after
-    /// it was changed.
-    pub fn forget_world_gen(&mut self, guid: AssetGuid) {
-        self.world_gens.remove(&guid);
+    /// Reads a world generator again, as after it was changed: whether the
+    /// ground it makes changed. One changed only in what makes no ground (a
+    /// node moved on its graph's canvas, a row's label) stays the generator
+    /// it was to everything that holds it, so nothing is made again; any
+    /// other is forgotten, and read again when next asked for.
+    pub fn forget_world_gen(&mut self, guid: AssetGuid) -> bool {
+        let Some(Some(kept)) = self.world_gens.remove(&guid) else { return true };
+        let Some(path) = self.db.get(guid).map(|entry| entry.path.clone()) else { return true };
+        let read = self.read_text(&path).and_then(|text| voxear_terrain::generate::WorldGen::parse(&text));
+        if read.is_ok_and(|world| world.hash() == kept.hash()) {
+            self.world_gens.insert(guid, Some(kept));
+            return false;
+        }
+        true
     }
 
     /// The greys of the picture `reference` names, read once.

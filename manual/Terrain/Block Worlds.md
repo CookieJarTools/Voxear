@@ -13,7 +13,7 @@ Along the top of the Block World in the Inspector are its tools: **Build**, the 
 | Setting | What it does |
 | --- | --- |
 | Data | The `.blockworld` asset its blocks are |
-| Block size | How many metres a block is a side |
+| Block size | How many metres a block is a side: smaller blocks make the same world finer, not smaller (see below) |
 | Smooth | Whether its surface runs smoothly between its blocks rather than as cubes: a [[Voxel Terrain]] |
 | Ground | **Flat**, **Generated** by a world generator (see below), or a **Planet** (see [[Voxel Terrain#Planets|Planets]]) |
 | Ground size | How many blocks its ground reaches along X and Z |
@@ -23,6 +23,8 @@ Along the top of the Block World in the Inspector are its tools: **Build**, the 
 | Cast shadows | Whether its blocks cast the sun's shadows |
 
 A change to its ground makes its blocks again at once, what you built on it kept. Each change is one step to undo, and is written to the asset when you save the level.
+
+Changing **Block size** keeps the world as it is in metres and makes it again from blocks of the new size. Its ground stays as wide, as high and as deep, so the rows counted in blocks (Ground size, Ground height, Under depth, Lowest block, a kind's cover Depth) are counted again: halve the block size and each doubles. What you built stays where it was: a wall a metre thick is two blocks thick at half the size, and in a Voxel Terrain the ground's surface stays where it lay. Going to larger blocks loses what was finer than they are. Flat ground is at most 4096 blocks a side, which sets how small its blocks can go.
 
 Its blocks are made from its ground as it loads, the same on every machine. What you built since is kept beside the `.blockworld` in a `.blocks` file of the same name, holding only the chunks you changed, each as its changed blocks one by one while they are few, or whole once that is smaller: a house on a field takes a few hundred bytes. Keep the two together when you move or copy them. A built game ships both.
 
@@ -117,9 +119,11 @@ On a planet, down is towards its middle. Water falls towards the middle and runs
 
 For a sea, pick a block of water as the **Sea block** of generated ground: the air below the generator's sea level is filled with it. A planet's sea lies its **Radius** from its middle.
 
-In a [[Voxel Terrain]], water is smooth too: its surface runs between its blocks as the ground's does, meeting the ground at the shore. A full block's surface is its top, and flowing water stands as high as it flows. A generated sea lies flat at its generator's sea level, and on a planet it lies round the planet as a smooth sea. It flows as it does among cubes.
+In a [[Voxel Terrain]], water is smooth too: its surface runs between its blocks as the ground's does. A full block's surface is its top, and flowing water stands as high as it flows. A generated sea lies flat at its generator's sea level, and on a planet it lies round the planet as a smooth sea; it covers every block whose ground lies under it, and its surface runs on a block into the shore, so the waterline is where the ground rises through it, with no gaps. It flows as it does among cubes.
 
-Not done yet: with the camera in water blocks, the view is not fogged by the water round it, as it is under the sea and in Pools. A script asking **Water** about a point finds a planet's water only on its top, where the planet's up is the world's.
+With the camera in the water, the view is the same as under a Pool: the water's own colour thickening with distance, light fading with depth, the surface from below, a waterline across the lens as you come up. The water round the camera is found from the top of its column, as far as that top runs along X and Z, so the ground beside a pond stays dry to look at.
+
+Not done yet: on a planet's sides there is no under-water view, and a script asking **Water** about a point finds a planet's water only on its top, where the planet's up is the world's.
 
 ## Building
 
@@ -139,7 +143,7 @@ A **Block Model** is a `.vox` file, as voxel sculpting tools save them: a model 
 
 Each of its colours builds with a kind of the world's own of that colour: one the world has already, or a new one added at the end of the list. Colours stay the world's, so a model of two hundred colours is not two hundred files. A world draws its faces 256 ways at most, a way for each colour or material; once it has no room for more, a colour builds with the nearest one there is. A click builds the model once, and is one step to undo, the kinds it added with it.
 
-For a world of small coloured blocks to sculpt with, make **Block size** small: at 0.1 m, a model 32 blocks high stands about three metres tall.
+For a world of small coloured blocks to sculpt with, make **Block size** small before you build: at 0.1 m, a model 32 blocks high stands about three metres tall.
 
 ## How blocks are drawn
 

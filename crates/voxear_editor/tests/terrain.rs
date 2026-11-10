@@ -735,6 +735,30 @@ fn a_generate_layer_lays_a_world_generators_ground_and_follows_it_as_it_changes(
     let laid = height(&editor, field, 100.0, 100.0);
     assert!((laid - made).abs() < 1e-2, "made again: {laid} not {made}");
     shot(&mut renderer, "terrain-generate-alpine.png");
+
+    // A generator with a graph of its own shows its seed, scale and sea level, and a row for each value it exposes.
+    use voxear_terrain::generate::{Graph, NodeKind, nodes};
+    let mut graph = Graph::default();
+    let noise = graph.add(NodeKind::Noise(nodes::Noise { size: 300.0, high: 40.0, ..Default::default() }), [0.0, 0.0]);
+    let base = graph.add(NodeKind::Constant(nodes::Constant { value: 5.0 }), [0.0, 150.0]);
+    let sum = graph.add(NodeKind::Math(nodes::Math::default()), [200.0, 0.0]);
+    let output = graph.add(NodeKind::Output(nodes::Output::default()), [400.0, 0.0]);
+    assert!(graph.connect(noise, 0, sum, 0) && graph.connect(base, 0, sum, 1) && graph.connect(sum, 0, output, 0));
+    assert!(graph.expose(base, 0, "Base"));
+    std::fs::write(dir.path().join(path), WorldGen::new(3, 1.0, 0.0, graph).to_text()).unwrap();
+    assert!(editor.inspect_path(path));
+    frame(&mut editor, &mut renderer);
+    for (label, rows) in [("Seed", 1), ("Scale", 1), ("Sea level", 1), ("Base", 1), ("Preset", 0), ("Height", 0)] {
+        assert_eq!(prop_rows(&editor.ui, label).len(), rows, "the graph's {label}");
+    }
+    // Its exposed row typed in: saved into the node it shows, and the terrain made again from the graph.
+    type_number(&mut editor, &mut renderer, "Base", "30");
+    frame(&mut editor, &mut renderer);
+    let hills = WorldGen::parse(&std::fs::read_to_string(dir.path().join(path)).unwrap()).unwrap();
+    assert_eq!(hills.graph().exposed_value(0).and_then(|value| value.number()), Some(30.0));
+    assert_eq!((hills.seed(), hills.preset()), (3, None));
+    let (made, laid) = (hills.height_at(100.0, 100.0), height(&editor, field, 100.0, 100.0));
+    assert!((30.0..=70.0).contains(&made) && (laid - made).abs() < 1e-2, "the graph's ground: {laid} not {made}");
 }
 
 #[test]
@@ -1418,6 +1442,46 @@ fn a_kind_of_block_made_water_is_placed_flows_out_and_a_generated_world_can_fill
 }
 
 #[test]
+fn a_block_world_made_of_smaller_blocks_stays_as_large_with_what_was_built_where_it_was() {
+    use voxear_engine::blocks::BlockWorldAsset;
+    use voxear_terrain::blocks::BlockWorld;
+    let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {
+        eprintln!("skipping: no usable GPU");
+        return;
+    };
+    let dir = hello_with_a_field();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    let field = obj(&editor, "Field");
+    editor.select(Some(field));
+    frame(&mut editor, &mut renderer);
+    add_component(&mut editor, &mut renderer, "Block World");
+    // A pillar of stone three blocks high on the grass, built as a script or a brush would.
+    let pillar = [[20, 8, 30], [20, 9, 30], [20, 10, 30]];
+    editor.game.engine.world.get_mut::<BlockWorld>(field).unwrap().set_blocks(pillar.map(|at| (at, 3)));
+    frame(&mut editor, &mut renderer);
+    // Blocks half the size: the ground as large in metres, of twice as many blocks each way.
+    show_block_tool(&mut editor, &mut renderer, "Settings");
+    type_number(&mut editor, &mut renderer, "Block size", "0.5");
+    let world = &editor.game.engine.world;
+    let (file, blocks) =
+        (world.get::<BlockWorldAsset>(field).unwrap().file.clone(), world.get::<BlockWorld>(field).unwrap());
+    assert_eq!((file.block_size, file.ground.size, file.ground.height), (0.5, [128, 128], 16));
+    assert_eq!(blocks.block_size, 0.5);
+    // The pillar where it stood, a metre across and three high: two blocks across and six high.
+    for (at, kind) in [([40, 16, 60], 3), ([41, 21, 61], 3), ([42, 16, 60], 0), ([40, 22, 60], 0), ([39, 15, 60], 1)] {
+        assert_eq!(blocks.blocks.get(at), kind, "at {at:?}");
+    }
+    assert_eq!(blocks.blocks.get([127, 15, 127]), 1, "grass at its far corner, 64 m out");
+    // One step to undo.
+    editor.undo(&mut renderer);
+    frame(&mut editor, &mut renderer);
+    let blocks = editor.game.engine.world.get::<BlockWorld>(field).unwrap();
+    assert_eq!((blocks.block_size, blocks.blocks.get([20, 10, 30]), blocks.blocks.get([40, 16, 60])), (1.0, 3, 0));
+}
+
+#[test]
 fn a_block_worlds_ground_is_generated_by_a_picked_generator_and_covered_by_a_kinds_biome() {
     use voxear_engine::blocks::BlockWorldAsset;
     use voxear_terrain::{
@@ -1430,9 +1494,10 @@ fn a_block_worlds_ground_is_generated_by_a_picked_generator_and_covered_by_a_kin
     };
     let dir = hello_with_a_field();
     // A cold world of hills, snow on its tops.
-    let mut hills = Preset::RollingHills.world();
+    let mut hills = Preset::RollingHills.landmass();
     hills.climate.temperature = -4.0;
     hills.climate.temperature_range = 1.0;
+    let hills = WorldGen::from(hills);
     std::fs::create_dir_all(dir.path().join("Worlds")).unwrap();
     std::fs::write(dir.path().join("Worlds/Cold.worldgen"), hills.to_text()).unwrap();
     let project = Project::open(dir.path()).unwrap();

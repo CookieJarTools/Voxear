@@ -282,8 +282,9 @@ impl Editor {
             }
             // Terrains generated from a world generator edited outside the editor are made again from it.
             for path in &world_gens {
-                if let Some(guid) = self.game.content.db().guid_of(path) {
-                    self.game.content.forget_world_gen(guid);
+                if let Some(guid) = self.game.content.db().guid_of(path)
+                    && self.game.content.forget_world_gen(guid)
+                {
                     crate::terrain_props::regenerate(&mut self.game, guid);
                     crate::block_props::regenerate(&mut self.game, guid);
                 }

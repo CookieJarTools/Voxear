@@ -1550,6 +1550,34 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   up to about 30°, never raising it, so small gullies run down the walls of large ones and into them; ridges and
   valley floors left; shallower towards the sea and never below it. Polynomials only, still the same bits for a
   seed. Tests: only cutting, gullies across the slope, level ground left, the hash. Manual: Generating Terrain.
+- **Generator graphs**, in parts: a world generator as a graph of nodes; a graph editor with a preview on every
+  node; more kinds of node and the presets as graphs; biomes as nodes; overhangs, caves and cave rooms as nodes.
+  - ~~**The graph and its evaluator:**~~ done: a `.worldgen` holds its seed, scale and sea level and a graph
+    (`generate::Graph`: nodes with numbers of their own, wires from outputs to inputs, and the values it exposes as
+    rows of the generator's own). Kinds of node a file each under `generate/nodes/`, saying their ports and values
+    for the editor to draw: Landmass (all a generator was, in one node, the same bits), Climate, Noise, Constant,
+    Math, Curve, Output. Compiled when made (`generate::compile`) from the Output back along the wires into steps
+    that fill rows of numbers, shared where two do the same work, in an order the wires alone set; run 512 places
+    at a time (`generate::eval`), each place by itself, so a batch gets the bits each point gets alone. A file from
+    before graphs reads as a Landmass and a Climate wired to the Output and makes the same ground. A generator is
+    never changed, only replaced, with a hash of all that decides its ground: saved with only a node moved it keeps
+    its place in `Content` and nothing is made again, and a terrain's kept heights remember their generators'
+    hashes. The Generate layer asks for a padded tile at once, block worlds for a chunk column, planets for a row.
+    A graph with a loop or no Output still makes ground and says what is wrong (`WorldGen::faults`). Inspector:
+    a landmass's settings as before; any other graph, its seed, scale, sea level and exposed rows. Tests: an old
+    file's hash, a landmass in a graph against itself flat and round, batches against single places, text read
+    back as written, the hash following the ground alone, broken graphs, block chunks by hash before and after.
+  - the graph editor: a canvas that pans and zooms, typed ports and wires, search to add a node, undo; the
+    Inspector for the picked node, values exposed from their rows; a preview on every node and a 3D preview that
+    refines while a value is dragged
+  - more nodes (cells, falloff, warp, terrace, blend, smooth; masks from height, slope and curvature; gullies as a
+    node of their own) and the five presets rebuilt as graphs
+  - biomes as nodes: where each is and what it brings (its shape, a Terrain's surfaces, a Block World's blocks),
+    laid over one another as layers; surfaces' climate ranges and kinds' covers moved over
+  - voxels: a Volume beside the height, with overhangs, tunnels and chambers as nodes; hillsides no longer pocked,
+    layers counted from the real surface
+  - cave rooms as prefabs of shapes and exits, strung together by a Cave Network node, as a bounded cave level or
+    under a world without end
 - ~~**Erosion layer:**~~ done: Add Layer ▸ Erosion wears the ground below it on the GPU (`shaders/erosion.slang`,
   `voxear_render::erosion`, `Renderer::erode`), once, in the editor: rain each step, water through pipes to its four
   neighbours sped by the drop and held to what each cell has, its depth and speed, carving where it can carry more
@@ -1690,8 +1718,8 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     the editor's water running out and undone with it. Buoyancy pushes against the pull where a body is, as strongly
     as it pulls (towards a planet's middle near one, as physics pulls), reading how deep it is along the water's own
     up (`BlockWorld::water_depth`), so things float on a planet's sides; tested with a ball floating out from a
-    planet's middle and one sinking to its stone. Not done: the view fogged from in water blocks; scripts' `Water`
-    finding a planet's water off its top.
+    planet's middle and one sinking to its stone. Not done: an under-water view on a planet's sides; scripts'
+    `Water` finding a planet's water off its top.
     After a first look: still water spreads over water (falling water only over ground), so a lake runs into a hole
     dug beside it, and a block between two sources becomes one; a Voxel Terrain's water is smooth, its surface made
     by surface nets over a field of water's and ground's depths, faces only where water meets air, a generated sea's
@@ -1700,6 +1728,20 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     while playing; terrains' and block worlds' looks count as using their materials, so their colours survive play
     (they were freed as a level loaded). Tests: a lake running into a hole, a gap filling, smooth water at its top and
     at a sea's level, a block world's colours kept loaded.
+    After a second look: drawn smooth, a generated sea takes every block whose ground lies under it
+    (`generate::pushed`), and its surface runs a block into the shore (`smooth::water_surface`: ground beside the
+    water's top with air over it takes the water's level and a face, up being the map's, `BlockMap::round` on a planet),
+    so it meets the ground with no gaps; each smooth corner takes the kind of the ground nearest the surface among its
+    eight blocks (`Padded::kind`) and a triangle's three kinds blend by how near each corner a fragment is
+    (`blockVertex` packs them in `lod` and `cluster`), which also keeps dirt from showing through a thin top layer on
+    slopes. Under water in blocks: the water round the camera is a body among the Pools (`water_bodies::block_water`,
+    `WATER_BLOCKS`), level with the top of the camera's column and as far as that top runs along x and z, in the kind's
+    colour (`BlockFaces::color`), so the under-water view, the waterline and the wet lens are a Pool's; it draws no
+    surface or walls and leaves the sea alone. Block size keeps the world's size: `BlockFile::set_block_size` counts its
+    ground again in blocks of the new size, and what was built is read again in them (`edits::changed`,
+    `edits::resized`: nearest for kinds, between the old blocks' middles for how full smooth ground is; a world without
+    end's kept changes block by block). Tests: a sea's surface whole over a gentle shore, smooth sea generation, a
+    pond's body of water, pillars and holes resized and back, a mound's surface kept, the editor halving Block size.
   - ~~**Blocks, items and recipes:**~~ done: a block is an asset of its own (`.block`, `blocks::block::BlockDef`): its
     look and liquid, which the engine reads, and its rules, hardness, the kind of tool, a tier, drops, sounds and a
     data asset of the game's, which scripts apply. A world's `[[blocks]]` list names its blocks by reference, keeps a
@@ -1737,8 +1779,8 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     fills say, a slope with no steps, chunks meeting at the same points, a closed blob, balls added, taken and
     painted, changes with fills read back and version 1 read, the GPU drawing a hill's top and sides with no gaps,
     a ball resting on it, a generated world on its generator's heights, the editor adding one and building a ball.
-    Not done: blending between kinds within a triangle (each triangle takes its block's kind); levels of detail
-    that meet (far rings are drawn smooth but meet with seams).
+    Not done: levels of detail that meet (far rings are drawn smooth but meet with seams). (Kinds blend within a
+    triangle since the water blocks' second look, above.)
   - ~~**Planets:**~~ done: generated ground as a planet (`BlockGenerate::planet`, `BlockPlanet { radius }`) all round
     a middle at its world's corner, its generator read round it in three dimensions (`WorldGen::height_round`,
     `climate_round`, colder towards the poles; fields read through a flat or round `Spot`, `noise::fractal3`), once,

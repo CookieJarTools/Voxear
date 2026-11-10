@@ -70,7 +70,12 @@ data = "Blocks/Field.blockworld"
 [[obj]]
 id = 42
 name = "Carrier"
-behaviours = ["Voxear.Inventories.Inventory", "Voxear.Inventories.Hotbar", "Voxear.Inventories.InventoryScreen", "Hello.PackDriver"]
+behaviours = [
+    "Voxear.Inventories.Inventory",
+    "Voxear.Inventories.Hotbar",
+    "Voxear.Inventories.InventoryScreen",
+    "Hello.PackDriver",
+]
 fields."Voxear.Inventories.Inventory" = { starts = [{ item = "Items/Pick.asset", count = 1 }] }
 "#;
 
@@ -124,7 +129,8 @@ fn the_inventory_package_carries_what_blocks_drop_shows_it_and_comes_back_from_a
     write("Blocks/Stone.block", stone);
     write("Tools/Pickaxe.asset", "type = \"Voxear.ToolKind\"\n");
     write("Items/Cobblestone.asset", "type = \"Voxear.Item\"\n");
-    let pick = "type = \"Voxear.Item\"\n\n[fields]\ntool = \"Tools/Pickaxe.asset\"\ntier = 1\nstacksize = 1\ndurability = 60\n";
+    let pick = "type = \"Voxear.Item\"\n\n[fields]\ntool = \"Tools/Pickaxe.asset\"\n\
+                tier = 1\nstacksize = 1\ndurability = 60\n";
     write("Items/Pick.asset", pick);
     let mut file = BlockFile::default();
     file.ground.size = [16, 16];
@@ -174,4 +180,61 @@ fn the_inventory_package_carries_what_blocks_drop_shows_it_and_comes_back_from_a
     assert!(said("spent: 1 cobblestone, in hand nothing"), "{lines:#?}");
     // A save of the scene keeps each item as which data asset it is, how many, and how worn.
     assert!(said("read back: 3 cobblestone, in hand 1 Pick, worn 1"), "{lines:#?}");
+}
+
+#[test]
+fn the_inventory_packages_sample_reads_whole_and_everything_it_names_is_there() {
+    use voxear_assets::{AssetDb, AssetKind, AssetRef};
+    use voxear_terrain::blocks::block::BlockDef;
+    let Some(package) = std::env::var_os("VOXEAR_INVENTORY_PACKAGE").map(PathBuf::from) else {
+        return eprintln!("skipping: VOXEAR_INVENTORY_PACKAGE names no inventory package");
+    };
+    // The sample as a game takes it: copied into the project, its files' IDs with them.
+    fn copy(from: &Path, to: &Path) {
+        std::fs::create_dir_all(to).unwrap();
+        for entry in std::fs::read_dir(from).unwrap().flatten() {
+            match entry.path().is_dir() {
+                true => copy(&entry.path(), &to.join(entry.file_name())),
+                false => drop(std::fs::copy(entry.path(), to.join(entry.file_name())).unwrap()),
+            }
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    copy(&package.join("Samples/Survival"), &dir.path().join("Samples/Inventory/Survival"));
+    let (db, _) = AssetDb::scan(dir.path()).unwrap();
+    let named = |reference: &str| AssetRef::parse(reference, &db).ok().and_then(|parsed| parsed.guid());
+    let kind_of = |reference: &str| named(reference).and_then(|guid| db.get(guid)).map(|entry| entry.kind);
+    let (mut blocks, mut data) = (0, 0);
+    for entry in db.entries() {
+        let text = std::fs::read_to_string(db.file(&entry.path)).unwrap();
+        match entry.kind {
+            AssetKind::Block => {
+                blocks += 1;
+                let block = BlockDef::parse(&text).unwrap_or_else(|error| panic!("{}: {error:#}", entry.path));
+                let asked = block.tool.iter().chain(block.drops.iter().filter_map(|drop| drop.item.as_ref()));
+                for reference in asked {
+                    assert_eq!(kind_of(reference), Some(AssetKind::Data), "{} names {reference}", entry.path);
+                }
+            }
+            AssetKind::Data => {
+                data += 1;
+                let table: toml::Table = toml::from_str(&text).unwrap();
+                let fields = table.get("fields").and_then(toml::Value::as_table).cloned().unwrap_or_default();
+                for (key, value) in fields.iter().filter(|(key, _)| key.as_str() != "shape") {
+                    let Some(reference) = value.as_str() else { continue };
+                    assert!(
+                        kind_of(reference).is_some(),
+                        "{}'s {key} names {reference}, which is not there",
+                        entry.path
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+    assert!(blocks >= 10 && data >= 25, "{blocks} blocks and {data} data assets");
+    // An ID is its file's own, kept when the sample is copied: stone is the block its item places.
+    let stone = named("Samples/Inventory/Survival/Blocks/Stone.block").expect("stone");
+    let item = std::fs::read_to_string(dir.path().join("Samples/Inventory/Survival/Items/Stone.asset")).unwrap();
+    assert!(item.contains(&stone.to_string()), "{item}");
 }

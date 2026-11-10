@@ -33,6 +33,9 @@ const COLOR: u32 = 0xF5C542;
 /// How far into the world a click reaches for a block, in metres.
 const REACH: f32 = 2000.0;
 
+/// How far the pointer moves, in points, before a stroke works again.
+const STROKE_MOVE: f32 = 4.0;
+
 /// A model the Model brush builds, and the blocks it reaches from where it
 /// stands: from its lowest corner to past its highest.
 struct Model {
@@ -41,12 +44,13 @@ struct Model {
 }
 
 /// The Scene view's brush for worlds of blocks: the block under the
-/// pointer, while a stroke goes on its world and the block it last worked
-/// on, and the picked model as last read, none if it could not be.
+/// pointer, while a stroke goes on its world, the block it last worked on
+/// and where the pointer was then, and the picked model as last read, none
+/// if it could not be.
 #[derive(Default)]
 pub struct BlockTools {
     under: Option<(Entity, BlockHit)>,
-    stroke: Option<(Entity, [i32; 3])>,
+    stroke: Option<(Entity, [i32; 3], [f32; 2])>,
     model: Option<(AssetGuid, Option<Model>)>,
 }
 
@@ -223,35 +227,43 @@ impl BlockTools {
             if !block_props::place_model(game, Some(renderer), entity, &file, at) {
                 return false;
             }
-            self.stroke = Some((entity, at));
+            self.stroke = Some((entity, at, point));
             return true;
         }
         let last = Self::work(game, entity, &hit, brush);
-        self.stroke = Some((entity, last));
+        self.stroke = Some((entity, last, point));
         true
     }
 
-    /// Goes on with the stroke under `point`, where it has moved to another
-    /// block.
+    /// Goes on with the stroke under `point`, where the pointer has moved
+    /// on from where it last worked, and as far on as half the brush.
     pub fn drag_to(&mut self, game: &mut Game, camera: &ViewCamera, point: [f32; 2], shift: bool) {
-        let Some((entity, last)) = self.stroke else { return };
+        let Some((entity, last, from)) = self.stroke else { return };
+        // A pointer held still works once: the blocks it changed under it are no reason to work again.
+        if (point[0] - from[0]).hypot(point[1] - from[1]) < STROKE_MOVE {
+            return;
+        }
         let Some(hit) = block_under(game, camera, entity, point) else { return };
         let brush = Self::brush(game, shift);
         // A model is built once a click.
         if brush == BlockBrush::Model {
             return;
         }
-        // Placing builds on what it placed, so it waits until the pointer leaves the block it last worked on.
-        if Self::middle(&hit, brush) == last || hit.block == last {
+        // Placing builds on what it placed, so it waits until the pointer leaves the block it last worked on, and
+        // a ball goes on half its width from the last.
+        let middle = Self::middle(&hit, brush);
+        let apart = (0..3).map(|i| (middle[i] - last[i]).pow(2)).sum::<i32>() as f32;
+        let spacing = (block_props::ui(&game.engine.world).size as f32 * 0.5).max(1.0);
+        if middle == last || hit.block == last || apart.sqrt() < spacing {
             return;
         }
         let worked = Self::work(game, entity, &hit, brush);
-        self.stroke = Some((entity, worked));
+        self.stroke = Some((entity, worked, point));
     }
 
     /// Ends the stroke; its Obj, for the step to undo.
     pub fn end(&mut self) -> Option<Entity> {
-        self.stroke.take().map(|(entity, _)| entity)
+        self.stroke.take().map(|(entity, ..)| entity)
     }
 
     /// The outline of what the brush would work on, as a box of lines.

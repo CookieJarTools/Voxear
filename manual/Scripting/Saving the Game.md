@@ -210,7 +210,7 @@ protected override void Start()
 
 `Save.IsLoadingScene` is true from `LoadScene` until the end of the frame the save is put back in.
 
-To keep where an Obj from a scene file is, such as a crate the player can push, add the `SavedTransform` behaviour to it. Objs your scripts spawn don't need it.
+To keep where an Obj from a scene file is, such as a crate the player can push, add the `SavedTransform` behaviour to it. Objs your scripts spawn don't need it. Both are kept from the level's own middle, so they load in the right place in a world whose middle has moved (see [[Floating Origin]]).
 
 A save of the scene is a value like any other, so it can be one part of a `SaveFile` beside your own:
 

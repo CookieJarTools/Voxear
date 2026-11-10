@@ -65,6 +65,8 @@ Beyond its view distance, it is drawn in rings of coarser blocks, each ring's bl
 
 What you build is kept as it goes out of reach and made again as it comes back, and saving keeps it all, near or away, in its `.blocks` file. In a game it is made round the camera; in the editor, round where the Scene view looks from.
 
+However far the camera goes, positions stay exact: the world's middle moves along with it (see [[Floating Origin]]), and the chunks already made stay as they were.
+
 ## Kinds of block
 
 Under **Build**, the world's kinds of block are listed, numbered from 1 in the order they come. A click picks the one the brush builds with, and its settings show below the list:

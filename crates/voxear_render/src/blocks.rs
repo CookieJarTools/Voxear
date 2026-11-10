@@ -5,7 +5,8 @@
 //!
 //! Each view picks the chunks it sees and, of each, only the faces turned
 //! towards its camera; quads following on in the pool are drawn as one.
-//! The sun's cascades take every face of the chunks they see. Each chunk
+//! The sun's cascades take the faces turned towards the sun of the chunks
+//! they see: ground is closed all round, so sunlight meets those first. Each chunk
 //! also gives the GI's rays a mesh of its own, its faces merged by surface
 //! alone, as the terrain's tiles do.
 //!
@@ -131,19 +132,34 @@ fn within(planes: &[[f32; 4]], [low, high]: [Vec3; 2]) -> bool {
     })
 }
 
-/// What a view draws of a world's chunks seen from `camera` (in the
-/// world's space): those within `planes` (inward, in its space) and, where
-/// `seen` says which of its own chunks the camera can see into, those; and
-/// of each, with `facing_camera`, only the faces turned towards the camera;
-/// as first quads and counts, those that follow on in the pool drawn as
-/// one.
+/// Which of a chunk's faces a view draws.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Facing {
+    /// Every face, as a smooth surface faces every way in a chunk.
+    All,
+    /// Those turned towards a camera at this point, in the world's space.
+    Camera(Vec3),
+    /// Those turned towards light going this way: ground is closed all
+    /// round, so a ray of it meets one of those first, and they alone cast
+    /// its shadows.
+    Light(Vec3),
+}
+
+/// What a view draws of a world's chunks: those within `planes` (inward,
+/// in the world's space) and, where `seen` says which of its own chunks the
+/// camera can see into, those; and of each, the faces `facing` picks; as
+/// first quads and counts, those that follow on in the pool drawn as one.
 pub(crate) fn pick(
     chunks: &[ChunkDraw],
-    camera: Vec3,
     planes: &[[f32; 4]],
-    facing_camera: bool,
+    facing: Facing,
     seen: Option<&HashSet<[i32; 3]>>,
 ) -> Vec<[u32; 2]> {
+    // Turned towards the light, the faces whose way out goes against it.
+    let lit = match facing {
+        Facing::Light(way) => [way.x <= 0.0, way.x >= 0.0, way.y <= 0.0, way.y >= 0.0, way.z <= 0.0, way.z >= 0.0],
+        _ => [true; FACINGS],
+    };
     let mut picked: Vec<[u32; 2]> = Vec::new();
     for chunk in chunks {
         let [level, x, y, z] = chunk.key;
@@ -155,16 +171,19 @@ pub(crate) fn pick(
         }
         let [low, high] = chunk.bounds;
         // A face is turned towards the camera when the camera is past its plane, along the way it faces.
-        let toward = [
-            camera.x > low.x,
-            camera.x < high.x,
-            camera.y > low.y,
-            camera.y < high.y,
-            camera.z > low.z,
-            camera.z < high.z,
-        ];
+        let toward = match facing {
+            Facing::Camera(camera) => [
+                camera.x > low.x,
+                camera.x < high.x,
+                camera.y > low.y,
+                camera.y < high.y,
+                camera.z > low.z,
+                camera.z < high.z,
+            ],
+            _ => lit,
+        };
         for (facing, &[first, count]) in chunk.facings.iter().enumerate() {
-            if count > 0 && (!facing_camera || toward[facing]) {
+            if count > 0 && toward[facing] {
                 picked.push([first, count]);
             }
         }
@@ -767,16 +786,17 @@ pub(crate) fn gather(
             };
             voxear_terrain::blocks::sight::seen(map, sights, from, |key| within(&planes, bounds(key)))
         });
-        // A smooth surface faces every way in a chunk, so all of it is drawn.
-        lists[LIST_EARLY as usize] = pick(&blocks.chunks, local, &planes, !blocks.smooth, seen.as_ref());
+        let facing = if blocks.smooth { Facing::All } else { Facing::Camera(local) };
+        lists[LIST_EARLY as usize] = pick(&blocks.chunks, &planes, facing, seen.as_ref());
         let wet = pick_water(&blocks.chunks, &planes, seen.as_ref());
         if !wet.is_empty() {
             water.push((number as u32, blocks.smooth, wet));
         }
         if has_sun && blocks.cast_shadows {
+            let sunlit = if blocks.smooth { Facing::All } else { Facing::Light(Vec3::from(frame.sun_direction)) };
             for cascade in 0..CASCADES {
                 let planes = voxear_terrain::lod::planes_from(&frame.cascade_planes[cascade], blocks.corner);
-                lists[LIST_SHADOW as usize + cascade] = pick(&blocks.chunks, local, &planes, false, None);
+                lists[LIST_SHADOW as usize + cascade] = pick(&blocks.chunks, &planes, sunlit, None);
             }
         }
         runs.push((number as u32, blocks.smooth, lists));
@@ -921,20 +941,25 @@ mod tests {
         };
         let chunks = [chunk(0.0, 0), chunk(32.0, 60)];
         // From above the first, beyond its +x side: no -y faces of either, and none of the second's +x.
-        let picked = pick(&chunks, Vec3::new(16.0, 40.0, 16.0), &[], true, None);
+        let picked = pick(&chunks, &[], Facing::Camera(Vec3::new(16.0, 40.0, 16.0)), None);
         let has = |first: u32| picked.iter().any(|&[f, c]| f <= first && first < f + c);
         assert!(has(0) && has(20), "the first's +x and +y faces");
         assert!(!has(30) && !has(90), "no faces turned down");
         assert!(!has(60), "the second's +x faces are beyond the camera");
         assert!(has(70), "its -x faces face back towards it");
-        // Shadows take every face; quads following on are drawn as one.
-        assert_eq!(pick(&chunks, Vec3::new(16.0, 40.0, 16.0), &[], false, None), vec![[0, 120]]);
+        // Every face, where a smooth surface asks; quads following on are drawn as one.
+        assert_eq!(pick(&chunks, &[], Facing::All, None), vec![[0, 120]]);
         // Looking along +x from x = 40: only the second.
-        let ahead = pick(&chunks, Vec3::new(40.0, 16.0, 16.0), &[[1.0, 0.0, 0.0, -40.0]], false, None);
+        let ahead = pick(&chunks, &[[1.0, 0.0, 0.0, -40.0]], Facing::All, None);
         assert_eq!(ahead, vec![[60, 60]]);
         // Only the chunks the camera can see into, where it is known which.
         let seen = HashSet::from([[1, 0, 0]]);
-        assert_eq!(pick(&chunks, Vec3::new(16.0, 40.0, 16.0), &[], false, Some(&seen)), vec![[60, 60]]);
+        assert_eq!(pick(&chunks, &[], Facing::All, Some(&seen)), vec![[60, 60]]);
+        // The sun's cascades: of each chunk, the faces turned towards sunlight going down, to -x and to +z.
+        let lit = pick(&chunks, &[], Facing::Light(Vec3::new(-0.3, -0.8, 0.5)), None);
+        let has = |first: u32| lit.iter().any(|&[f, c]| f <= first && first < f + c);
+        assert!([0, 20, 50, 60, 80, 110].map(has).iter().all(|&h| h), "+x, +y and -z faces: {lit:?}");
+        assert!(![10, 30, 40, 70, 90, 100].map(has).iter().any(|&h| h), "none turned away: {lit:?}");
     }
 
     #[test]

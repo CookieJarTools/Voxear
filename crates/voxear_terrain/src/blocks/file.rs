@@ -36,6 +36,9 @@ use super::{
 /// The most kinds of block a world can have.
 pub const MAX_BLOCKS: usize = 255;
 
+/// The most blocks across a world's flat ground is, a side.
+pub const MOST_ACROSS: u32 = 4096;
+
 /// What a `.blockworld` file holds.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -193,6 +196,29 @@ impl BlockFile {
 
     pub fn to_text(&self) -> String {
         toml::to_string(self).expect("a block world's file writes as TOML")
+    }
+
+    /// Makes its blocks `size` metres a side with its ground as large in
+    /// metres as it was: what it counts in blocks (its ground's size, height
+    /// and under layers, its lowest block, how deep its kinds cover) is
+    /// counted again in blocks of the new size. No smaller than keeps its
+    /// ground within `MOST_ACROSS` blocks a side; gives the size it took.
+    pub fn set_block_size(&mut self, size: f32) -> f32 {
+        let widest = self.ground.size.into_iter().max().unwrap_or(0).max(self.ground.height) as f32;
+        let size = size.max(self.block_size * widest / MOST_ACROSS as f32).max(1e-3);
+        let ratio = self.block_size / size;
+        let count = |n: u32| if n == 0 { 0 } else { ((n as f32 * ratio).round() as u32).max(1) };
+        self.ground.size = self.ground.size.map(count);
+        self.ground.height = count(self.ground.height);
+        self.ground.under_depth = count(self.ground.under_depth);
+        if let Some(generate) = &mut self.generate {
+            generate.bottom = (generate.bottom as f32 * ratio).round() as i32;
+        }
+        for cover in self.blocks.iter_mut().filter_map(|kind| kind.cover.as_mut()) {
+            cover.depth = count(cover.depth);
+        }
+        self.block_size = size;
+        size
     }
 
     /// The ways its faces are drawn, each once, and for each block by its

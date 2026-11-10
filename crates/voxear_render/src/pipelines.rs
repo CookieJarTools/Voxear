@@ -132,6 +132,9 @@ pub struct Pipelines {
     pub water: vk::Pipeline,
     pub water_pool: vk::Pipeline,
     pub water_stream: vk::Pipeline,
+    /// The blobs lava's bursting bubbles throw up, and the bubbles' domes.
+    pub lava_spatter: vk::Pipeline,
+    pub lava_domes: vk::Pipeline,
     pub sea_floor: vk::Pipeline,
     pub sea_floor_under: vk::Pipeline,
     pub sea_floor_walls: vk::Pipeline,
@@ -484,6 +487,22 @@ impl Pipelines {
                 depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
                 cull: vk::CullModeFlags::NONE,
                 ..GraphicsPipelineDesc::new("Streams", water, c"streamVertex", c"waterFragment")
+            })?,
+            lava_spatter: graphics(&GraphicsPipelineDesc {
+                color_formats: &[HDR_FORMAT, VELOCITY_FORMAT],
+                depth_format: Some(DEPTH_FORMAT),
+                depth_write: true,
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                cull: vk::CullModeFlags::NONE,
+                ..GraphicsPipelineDesc::new("Lava spatter", water, c"lavaSpatterVertex", c"lavaSpatterFragment")
+            })?,
+            lava_domes: graphics(&GraphicsPipelineDesc {
+                color_formats: &[HDR_FORMAT, VELOCITY_FORMAT],
+                depth_format: Some(DEPTH_FORMAT),
+                depth_write: true,
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                cull: vk::CullModeFlags::NONE,
+                ..GraphicsPipelineDesc::new("Lava bubbles", water, c"lavaDomeVertex", c"waterFragment")
             })?,
             water_wall: graphics(&GraphicsPipelineDesc {
                 color_formats: &[HDR_FORMAT, VELOCITY_FORMAT],
@@ -847,6 +866,8 @@ impl Pipelines {
             self.water,
             self.water_pool,
             self.water_stream,
+            self.lava_spatter,
+            self.lava_domes,
             self.sea_floor,
             self.sea_floor_under,
             self.sea_floor_walls,

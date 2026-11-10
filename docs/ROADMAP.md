@@ -1834,13 +1834,14 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   block is 0.1 m to 10 m a side (`file::SMALLEST_BLOCK`, `LARGEST_BLOCK`; at 0.01 m a 64 m world was 4096 blocks
   across), and in the editor a world too large to make within a frame is made again on other threads, shown as it was
   until then and put in as one edit (`block_props::Making`): Voxel Terrain set to 0.4 m blocks froze the editor for
-  2.9 s, and now its frames go on and the new world lands in one frame of 258 ms, as a pool takes a world's chunks
-  grown once (it staged 474 MB for 220). Costs: a smooth world loads slower (three levels a chunk, Voxel Terrain 34 ms
+  2.9 s, and now its frames go on and the new world comes over about 14 frames, the slowest 33 ms: a pool grows
+  once for every chunk coming (it staged 474 MB for 220) and takes 16 MB of them a frame, the old pool drawn until
+  the new one has them all. Costs: a smooth world loads slower (three levels a chunk, Voxel Terrain 34 ms
   to 67). Not done: the coarse rings made and kept on the GPU, as nothing but drawing needs them; coarser levels past
   the chunks' fixed sides (resampled blocks, so a far planet drops below its locked edges); a coarser mesh for the GI's
-  rays (very large worlds still fill the shared mesh pool); a frame's draws merged across a chunk's levels; a new
-  world's chunks uploaded over several frames, the old shown meanwhile; ground generated per metre rather than per
-  block, as noise for caves and overhangs is worked out for every block under the surface.
+  rays (very large worlds still fill the shared mesh pool); a frame's draws merged across a chunk's levels; ground
+  generated per metre rather than per block, as noise for caves and overhangs is worked out for every block under
+  the surface.
 - Throughout: chunks culled against the frustum and last frame's depth, and the smallest save and network data
   (only changes from what a build or a seed makes, as commands while few and compacted deltas once many).
 

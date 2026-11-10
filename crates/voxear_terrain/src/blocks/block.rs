@@ -1,0 +1,266 @@
+//! A `.block` file: one block, as text. Its look (its colour, the materials
+//! its faces are drawn with, and whether it is a liquid) and its rules: how
+//! long it takes to break, with which kind of tool, and what it drops. A
+//! world of blocks lists the blocks it is made of (see `file`), so every
+//! world listing a block draws it the same, and a change to the block
+//! reaches them all.
+//!
+//! Its look is all this crate reads: how a world's faces are made and what
+//! is stood on. Its rules are kept here to be written back as they were
+//! read, and are a game's scripts' to apply (`Block` in Voxear.Core).
+//!
+//! ```toml
+//! color = [0.5, 0.5, 0.52]
+//! material = "Materials/Stone.material"  # every face; `top` and `bottom` in its place for those
+//! hardness = 1.5                         # seconds to break by hand
+//! tool = "Tools/Pickaxe.asset"           # the kind of tool that breaks it fast
+//! tier = 1                               # the lowest tier of that tool that gets its drops
+//!
+//! [[drops]]
+//! item = "Items/Cobblestone.asset"
+//! count = [1, 1]                         # from so many to so many
+//! chance = 1.0
+//!
+//! [sounds]
+//! break = "Sounds/Stone Break.ogg"       # and `place`, `step`
+//! ```
+//!
+//! ```toml
+//! color = [0.04, 0.46, 0.33]  # the water's own colour
+//! liquid = "water"            # see-through, and things float in it
+//! ```
+
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
+
+use super::file::BlockKind;
+
+/// The colour a block that cannot be found is drawn in, loud enough to see.
+pub const MISSING: [f32; 3] = [1.0, 0.0, 1.0];
+
+/// What a `.block` file holds.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct BlockDef {
+    /// Its colour where a face has no material; a liquid's own colour.
+    pub color: [f32; 3],
+    /// Every face's material; none for its colour.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub material: Option<String>,
+    /// Its top's and bottom's, in place of its material.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bottom: Option<String>,
+    /// Which liquid it is, where it is one.
+    #[serde(skip_serializing_if = "Liquid::is_none")]
+    pub liquid: Liquid,
+    /// How many seconds it takes to break by hand.
+    pub hardness: f32,
+    /// Whether nothing breaks it.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub unbreakable: bool,
+    /// The kind of tool that breaks it fast: a reference to a Tool Kind
+    /// data asset.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool: Option<String>,
+    /// The lowest tier of its kind of tool that gets its drops; 0 for
+    /// anything, a hand too.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub tier: u32,
+    /// A data asset of the game's own for it: what its scripts want to know
+    /// of it, or rules of its own.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<String>,
+    /// What it drops when it is broken.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub drops: Vec<BlockDrop>,
+    /// The sounds of breaking it, placing it and stepping on it.
+    #[serde(skip_serializing_if = "BlockSounds::is_none")]
+    pub sounds: BlockSounds,
+}
+
+fn is_zero(value: &u32) -> bool {
+    *value == 0
+}
+
+/// Something a block drops: an item, by reference to its data asset, from
+/// `count[0]` to `count[1]` of it, `chance` of the time from 0 to 1.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct BlockDrop {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub item: Option<String>,
+    pub count: [u32; 2],
+    pub chance: f32,
+}
+
+impl Default for BlockDrop {
+    fn default() -> Self {
+        Self { item: None, count: [1, 1], chance: 1.0 }
+    }
+}
+
+/// A block's sounds, each a reference to a sound: breaking it, placing it,
+/// and a step on it.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct BlockSounds {
+    #[serde(rename = "break", skip_serializing_if = "Option::is_none")]
+    pub broken: Option<String>,
+    #[serde(rename = "place", skip_serializing_if = "Option::is_none")]
+    pub placed: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub step: Option<String>,
+}
+
+impl BlockSounds {
+    pub fn is_none(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// Which liquid a block is. Water is drawn see-through with the water's
+/// look, its faces only where it meets air; nothing stands on it, what
+/// floats floats in it, and it flows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Liquid {
+    #[default]
+    None,
+    Water,
+}
+
+impl Liquid {
+    pub fn is_none(&self) -> bool {
+        *self == Liquid::None
+    }
+}
+
+impl Default for BlockDef {
+    fn default() -> Self {
+        Self {
+            color: [0.6, 0.6, 0.6],
+            material: None,
+            top: None,
+            bottom: None,
+            liquid: Liquid::None,
+            hardness: 1.0,
+            unbreakable: false,
+            tool: None,
+            tier: 0,
+            data: None,
+            drops: Vec::new(),
+            sounds: BlockSounds::default(),
+        }
+    }
+}
+
+impl BlockDef {
+    pub fn parse(text: &str) -> Result<Self> {
+        let mut block: Self = toml::from_str(text)?;
+        block.hardness = if block.hardness.is_finite() { block.hardness.max(0.0) } else { 1.0 };
+        for drop in &mut block.drops {
+            drop.count = [drop.count[0].min(drop.count[1]), drop.count[0].max(drop.count[1])];
+            drop.chance = if drop.chance.is_finite() { drop.chance.clamp(0.0, 1.0) } else { 1.0 };
+        }
+        Ok(block)
+    }
+
+    pub fn to_text(&self) -> String {
+        toml::to_string(self).expect("a block's file writes as TOML")
+    }
+
+    /// A block of a colour alone.
+    pub fn colored(color: [f32; 3]) -> Self {
+        Self { color, ..Self::default() }
+    }
+
+    /// The block a kind kept in a world's own file is: its look and whether
+    /// it is water, with the rules a new block has.
+    pub fn from_kind(kind: &BlockKind) -> Self {
+        Self {
+            color: kind.color,
+            material: kind.material.clone(),
+            top: kind.top.clone(),
+            bottom: kind.bottom.clone(),
+            liquid: if kind.water { Liquid::Water } else { Liquid::None },
+            ..Self::default()
+        }
+    }
+
+    /// Whether it is drawn as `other` is, whatever their rules.
+    pub fn looks_like(&self, other: &Self) -> bool {
+        let look = |block: &Self| (block.color, block.material.clone(), block.top.clone(), block.bottom.clone());
+        look(self) == look(other) && self.liquid == other.liquid
+    }
+
+    /// Gives `kind`, a world's entry naming this block, the block's look.
+    pub fn fill(&self, kind: &mut BlockKind) {
+        kind.color = self.color;
+        kind.material = self.material.clone();
+        kind.top = self.top.clone();
+        kind.bottom = self.bottom.clone();
+        kind.water = self.liquid == Liquid::Water;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_block_reads_as_written_and_fills_a_kinds_look() {
+        let grass = BlockDef {
+            top: Some("Materials/Grass.material".into()),
+            material: Some("Materials/Dirt.material".into()),
+            ..BlockDef::colored([0.33, 0.52, 0.2])
+        };
+        assert_eq!(BlockDef::parse(&grass.to_text()).unwrap(), grass);
+        assert!(!grass.to_text().contains("liquid"), "a block that is no liquid does not say so");
+        let water = BlockDef { liquid: Liquid::Water, ..BlockDef::colored([0.04, 0.46, 0.33]) };
+        assert!(water.to_text().contains("liquid = \"water\""));
+        assert_eq!(BlockDef::parse(&water.to_text()).unwrap(), water);
+        assert!(BlockDef::parse("colour = [1.0, 0.0, 0.0]").is_err(), "a key it does not know is a mistake");
+
+        // A world's entry naming the block is drawn as the block says, and a kind made a block is the same block.
+        let mut kind = BlockKind::of("Blocks/Grass.block");
+        grass.fill(&mut kind);
+        assert_eq!((kind.color, kind.top.as_deref()), ([0.33, 0.52, 0.2], Some("Materials/Grass.material")));
+        assert!(!kind.water);
+        assert_eq!(BlockDef::from_kind(&kind), grass);
+        water.fill(&mut kind);
+        assert!(kind.water && kind.material.is_none() && kind.top.is_none());
+        assert_eq!(BlockDef::from_kind(&kind), water);
+    }
+
+    #[test]
+    fn a_blocks_rules_read_as_written_and_a_block_written_before_it_had_any_reads_with_a_new_blocks() {
+        // As blocks were written while they had a look alone.
+        let older = "color = [0.5, 0.5, 0.52]\nmaterial = \"Materials/Stone.material\"\n";
+        let read = BlockDef::parse(older).unwrap();
+        assert_eq!((read.hardness, read.unbreakable, read.tier), (1.0, false, 0));
+        assert!(read.tool.is_none() && read.drops.is_empty() && read.sounds.is_none() && read.data.is_none());
+        let stone = BlockDef {
+            hardness: 1.5,
+            tool: Some("Tools/Pickaxe.asset".into()),
+            tier: 1,
+            data: Some("Blocks/Data/Stone.asset".into()),
+            drops: vec![
+                BlockDrop { item: Some("Items/Cobblestone.asset".into()), ..BlockDrop::default() },
+                BlockDrop { item: Some("Items/Flint.asset".into()), count: [1, 3], chance: 0.1 },
+            ],
+            sounds: BlockSounds { broken: Some("Sounds/Stone Break.ogg".into()), ..BlockSounds::default() },
+            ..read.clone()
+        };
+        let text = stone.to_text();
+        assert!(text.contains("[[drops]]") && text.contains("[sounds]\nbreak = "), "{text}");
+        assert!(!text.contains("unbreakable") && !text.contains("place"), "what it has not is not said: {text}");
+        assert_eq!(BlockDef::parse(&text).unwrap(), stone);
+        assert!(stone.looks_like(&read) && !stone.looks_like(&BlockDef::default()));
+        // A count written the wrong way round, a chance past sure and a hardness below nothing are put right.
+        let odd = "hardness = -2.0\n[[drops]]\nitem = \"Items/Flint.asset\"\ncount = [3, 1]\nchance = 4.0\n";
+        let read = BlockDef::parse(odd).unwrap();
+        assert_eq!((read.hardness, read.drops[0].count, read.drops[0].chance), (0.0, [1, 3], 1.0));
+    }
+}

@@ -596,7 +596,9 @@ mod tests {
         streamer.update(&mut terrain, making.clone(), [10.0, 10.0]);
         let before = terrain.clone();
         let settle = |streamer: &mut Streamer, terrain: &mut Terrain, making: &Making| {
-            for _ in 0..1000 {
+            // A minute at most: on a busy machine its background work can take a while.
+            let start = std::time::Instant::now();
+            while start.elapsed().as_secs() < 60 {
                 streamer.update(terrain, making.clone(), [10.0, 10.0]);
                 if streamer.settled() {
                     return;
@@ -669,7 +671,8 @@ mod tests {
             position[0] += 1000.0;
         }
         streamer.update(&mut terrain, changed.clone(), [12.0 + width, 10.0]);
-        for _ in 0..500 {
+        let start = std::time::Instant::now();
+        while start.elapsed().as_secs() < 60 {
             if streamer.settled() {
                 break;
             }

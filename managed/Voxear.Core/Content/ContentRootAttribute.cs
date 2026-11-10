@@ -9,6 +9,10 @@ namespace Voxear;
 /// <c>Prefab.Load($"Prefabs/Bosses/{boss}.prefab")</c>. Name the paths here, or patterns where * matches within
 /// a folder and ** across folders. Like a field naming an asset, a content root ships even when
 /// <c>[content] exclude</c> matches it, and the build warns about a pattern that matches nothing.
+/// <para>
+/// With no pattern, on a Definition, it names every data asset that holds that Definition, or one deriving from it:
+/// for data assets code finds with <c>Definition.All</c> rather than by a field, as a game's recipes are.
+/// </para>
 /// </summary>
 /// <example>
 /// <code>

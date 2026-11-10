@@ -1265,6 +1265,7 @@
 
 .collection-footer {
     flex-direction: row;
+    flex-wrap: wrap;
     justify-content: flex-end;
 }
 

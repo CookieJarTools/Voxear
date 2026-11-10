@@ -38,6 +38,7 @@ pub const NAMES: &[&str] = &[
     "cube",
     "box",
     "blocks",
+    "block",
     "modules",
     "crosshair",
     "code",
@@ -124,6 +125,8 @@ fn shapes(name: &str) -> Option<&'static [Part]> {
         "cube" => &[("M12 2.75l8.25 4.6v9.3L12 21.25l-8.25-4.6v-9.3ZM3.75 7.35L12 12l8.25-4.65M12 12v9.25", STROKE)],
         // Two blocks with a third on them: a world of blocks.
         "blocks" => &[("M4 13.5h7.5V21H4ZM12.5 13.5H20V21h-7.5ZM8.25 4.5h7.5V12h-7.5Z", STROKE)],
+        // One block from its side, its top a band across it.
+        "block" => &[("M4.5 4.5h15v15h-15ZM4.5 9.5h15", STROKE)],
         // Three blocks and a fourth being added: the engine's optional systems.
         "modules" => &[("M4.5 4.5h6v6h-6ZM13.5 4.5h6v6h-6ZM4.5 13.5h6v6h-6ZM16.5 13.5v6M13.5 16.5h6", STROKE)],
         // A ring with four ticks: a gun's sights, for the Guns module.

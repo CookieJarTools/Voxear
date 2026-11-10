@@ -301,6 +301,7 @@ mod tests {
         // A sea's top block drawn smooth keeps where its surface lies, and is a source.
         assert_eq!(Water::of(surface_fill(0.2)), Water::Source);
         assert!((smooth_surface(surface_fill(0.2)) - 0.2).abs() < 0.01);
+        assert!((smooth_surface(surface_fill(0.8)) - 0.8).abs() < 0.01, "over its top, into the air");
         assert_eq!((smooth_surface(FULL), smooth_surface(Water::Flowing { level: 6, up: 2 }.fill())), (0.5, 0.25));
         assert_eq!(Water::Flowing { level: 7, up: 2 }.height(), (14, Some(2)));
         assert_eq!(Water::Falling.height(), (16, None));

@@ -19,6 +19,9 @@
             <Panel class="row"><Label>Culled</Label><Label name="culled" class="value">–</Label></Panel>
             <!-- Meshlets drawn, of those tested. -->
             <Panel class="row"><Label>Meshlets</Label><Label name="meshlets" class="value">–</Label></Panel>
+            <!-- Worlds of blocks' triangles drawn, in view (their water too) and in the sun's shadows. -->
+            <Panel class="row"><Label>Block triangles</Label><Label name="block-triangles" class="value">–</Label></Panel>
+            <Panel class="row"><Label>Block shadows</Label><Label name="block-shadows" class="value">–</Label></Panel>
             <Panel class="divider" />
             <Panel class="row"><Label>Lights per cluster</Label><Label name="lights" class="value">–</Label></Panel>
             <Panel class="row"><Label>Exposure</Label><Label name="exposure" class="value">–</Label></Panel>

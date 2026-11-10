@@ -5,7 +5,8 @@
 //!
 //! Each view picks the chunks it sees and, of each, only the faces turned
 //! towards its camera; quads following on in the pool are drawn as one.
-//! The sun's cascades take every face of the chunks they see. Each chunk
+//! The sun's cascades take the faces turned towards the sun of the chunks
+//! they see: ground is closed all round, so sunlight meets those first. Each chunk
 //! also gives the GI's rays a mesh of its own, its faces merged by surface
 //! alone, as the terrain's tiles do.
 //!
@@ -23,9 +24,10 @@ use voxear_core::math::{Mat3, Mat4, Vec3, Vec4};
 use voxear_ecs::{Component, Entity, World};
 use voxear_rhi::{Buffer, FRAMES_IN_FLIGHT, Frames, Gpu, MemoryLocation, Retired, vk};
 use voxear_terrain::blocks::{
-    BlockWorld,
+    BlockWorld, ChunkMeshes,
     chunk::CHUNK,
     mesh::{ChunkMesh, FACINGS},
+    smooth,
 };
 
 use crate::{
@@ -70,6 +72,10 @@ const FIRST_CAPACITY: u64 = 1 << 16;
 
 /// How many chunks get their meshes for rays in a frame, at most.
 const PROXIES_A_FRAME: usize = 8;
+
+/// How many bytes of chunks a frame stages into a pool at most, past its
+/// first: a world of many new chunks comes over several frames.
+const STAGED_A_FRAME: u64 = 16 << 20;
 
 /// A world of blocks as `shaders/blocks.slang` reads it (`BlockWorld` in
 /// `shaders/common.slang`).
@@ -117,7 +123,15 @@ pub(crate) struct ChunkDraw {
     pub bounds: [Vec3; 2],
     pub facings: [[u32; 2]; FACINGS],
     pub water: [u32; 2],
+    /// Drawn smooth, the cone the ways its triangles face lie within (see
+    /// `voxear_terrain::blocks::mesh::ChunkMesh::cone`), [`EVERY_WAY`] where
+    /// they face every way; `None` for cubes, kept by the way they face.
+    pub cone: Option<[f32; 4]>,
 }
+
+/// The cone of a smooth chunk whose triangles face every way: wider than
+/// any turn, so never turned away.
+const EVERY_WAY: [f32; 4] = [0.0, 1.0, 0.0, 2.0];
 
 /// Whether the box from `low` to `high` is within `planes`, inward.
 fn within(planes: &[[f32; 4]], [low, high]: [Vec3; 2]) -> bool {
@@ -131,19 +145,58 @@ fn within(planes: &[[f32; 4]], [low, high]: [Vec3; 2]) -> bool {
     })
 }
 
-/// What a view draws of a world's chunks seen from `camera` (in the
-/// world's space): those within `planes` (inward, in its space) and, where
-/// `seen` says which of its own chunks the camera can see into, those; and
-/// of each, with `facing_camera`, only the faces turned towards the camera;
-/// as first quads and counts, those that follow on in the pool drawn as
-/// one.
+/// Which of a chunk's faces a view draws.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Facing {
+    /// Those turned towards a camera at this point, in the world's space.
+    Camera(Vec3),
+    /// Those turned towards light going this way: ground is closed all
+    /// round, so a ray of it meets one of those first, and they alone cast
+    /// its shadows.
+    Light(Vec3),
+}
+
+/// How finely a view draws smooth chunks: from where, in the world's space,
+/// how far their surface may move for each metre they are away, and how
+/// large the world's blocks are.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Detail {
+    pub camera: Vec3,
+    pub allowed: f32,
+    pub block_size: f32,
+}
+
+impl Detail {
+    /// The coarsest of a smooth chunk's levels (see
+    /// `voxear_terrain::blocks::smooth::LEVELS`) whose surface moves no more
+    /// than allowed for how far away it is, of those it has.
+    fn level(&self, chunk: &ChunkDraw) -> usize {
+        let [low, high] = chunk.bounds;
+        let distance = (self.camera.clamp(low, high) - self.camera).length();
+        let block = self.block_size * (1u32 << chunk.key[0].clamp(0, 16)) as f32;
+        (1..smooth::LEVELS)
+            .rev()
+            .find(|&level| chunk.facings[level][1] > 0 && smooth::COARSER[level - 1] * block <= self.allowed * distance)
+            .unwrap_or(0)
+    }
+}
+
+/// What a view draws of a world's chunks: those within `planes` (inward,
+/// in the world's space) and, where `seen` says which of its own chunks the
+/// camera can see into, those; and of each, the faces `facing` picks, and of
+/// a smooth one the level `detail` picks; as first quads and counts, those
+/// that follow on in the pool drawn as one.
 pub(crate) fn pick(
     chunks: &[ChunkDraw],
-    camera: Vec3,
     planes: &[[f32; 4]],
-    facing_camera: bool,
+    (facing, detail): (Facing, Option<Detail>),
     seen: Option<&HashSet<[i32; 3]>>,
 ) -> Vec<[u32; 2]> {
+    // Turned towards the light, the faces whose way out goes against it.
+    let lit = match facing {
+        Facing::Light(way) => [way.x <= 0.0, way.x >= 0.0, way.y <= 0.0, way.y >= 0.0, way.z <= 0.0, way.z >= 0.0],
+        _ => [true; FACINGS],
+    };
     let mut picked: Vec<[u32; 2]> = Vec::new();
     for chunk in chunks {
         let [level, x, y, z] = chunk.key;
@@ -154,22 +207,52 @@ pub(crate) fn pick(
             continue;
         }
         let [low, high] = chunk.bounds;
+        // A smooth chunk is drawn whole at one of its levels, unless every triangle in it is turned away.
+        if let Some(cone) = chunk.cone {
+            let [first, count] = chunk.facings[detail.map_or(0, |detail| detail.level(chunk))];
+            if count > 0 && !turned_away(cone, chunk.bounds, facing) {
+                picked.push([first, count]);
+            }
+            continue;
+        }
         // A face is turned towards the camera when the camera is past its plane, along the way it faces.
-        let toward = [
-            camera.x > low.x,
-            camera.x < high.x,
-            camera.y > low.y,
-            camera.y < high.y,
-            camera.z > low.z,
-            camera.z < high.z,
-        ];
+        let toward = match facing {
+            Facing::Camera(camera) => [
+                camera.x > low.x,
+                camera.x < high.x,
+                camera.y > low.y,
+                camera.y < high.y,
+                camera.z > low.z,
+                camera.z < high.z,
+            ],
+            _ => lit,
+        };
         for (facing, &[first, count]) in chunk.facings.iter().enumerate() {
-            if count > 0 && (!facing_camera || toward[facing]) {
+            if count > 0 && toward[facing] {
                 picked.push([first, count]);
             }
         }
     }
     merged(picked)
+}
+
+/// Whether every triangle facing within `cone` (its axis and the sine of
+/// its angle, in a world's space) somewhere in the box `bounds` is turned
+/// away as `facing` sees it: from a camera, or from light.
+fn turned_away([x, y, z, spread]: [f32; 4], [low, high]: [Vec3; 2], facing: Facing) -> bool {
+    let axis = Vec3::new(x, y, z);
+    match facing {
+        // Going the way the light goes, by more than the cone is wide.
+        Facing::Light(way) => axis.dot(way.normalize_or_zero()) > spread,
+        // The camera behind every triangle wherever in the box it lies: the box seen from the camera within a
+        // quarter turn of the axis, less the cone's width and the box's.
+        Facing::Camera(camera) => {
+            let (middle, radius) = ((low + high) * 0.5, (high - low).length() * 0.5);
+            let away = middle - camera;
+            let distance = away.length();
+            distance > radius && axis.dot(away / distance) > spread + radius / distance
+        }
+    }
 }
 
 /// The water a view draws of a world's chunks: every face of the water of
@@ -217,6 +300,16 @@ struct Pool {
     /// with its draws.
     sights: Option<Arc<HashMap<[i32; 3], u16>>>,
     seen: u64,
+    /// The world's faces, its own and coarser, as the pool was last brought
+    /// up to them, and as every one of its own had its mesh for rays made.
+    made_from: Option<(Arc<ChunkMeshes>, Arc<HashMap<[i32; 4], Arc<ChunkMesh>>>)>,
+    proxied: Option<Arc<ChunkMeshes>>,
+    /// Its chunks' meshes for rays, each with where its chunk is from the
+    /// world's corner, made again as they change.
+    placed: Option<Arc<[(MeshHandle, Vec3)]>>,
+    /// The world as it last drew it, drawn in place of the pool that follows
+    /// it until that one has every chunk.
+    shown: Option<DrawnBlocks>,
 }
 
 impl Pool {
@@ -239,12 +332,19 @@ impl Pool {
             draws: None,
             sights: None,
             seen: 0,
+            made_from: None,
+            proxied: None,
+            placed: None,
+            shown: None,
         })
     }
 
     /// Brings the pool up to `world`'s chunks: stages the quads of each
     /// that changed, by pointer, with `stage(bytes, to)`, growing the pool
-    /// when they do not fit.
+    /// once for all of them. A frame stages `STAGED_A_FRAME` bytes of them
+    /// at most, past the first; each of the rest shows as it was until its
+    /// frame comes, and those the world no longer has go once none is left.
+    /// Whether the pool is up to the world.
     fn update(
         &mut self,
         gpu: &Gpu,
@@ -252,7 +352,7 @@ impl Pool {
         world: &BlockWorld,
         frame_index: u64,
         stage: &mut dyn FnMut(&[u8], u64),
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let free_by = frame_index.saturating_sub(FRAMES_IN_FLIGHT as u64);
         let (done, waiting): (Vec<_>, Vec<_>) = self.freeing.drain(..).partition(|(when, ..)| *when <= free_by);
         self.freeing = waiting;
@@ -260,35 +360,46 @@ impl Pool {
             self.space.free(first, count);
             self.slots.free(slot);
         }
-        let before = self.held.len();
-        let freeing = &mut self.freeing;
-        let has = |key: &[i32; 4]| match key[0] {
-            0 => world.meshes.contains_key(&[key[1], key[2], key[3]]),
-            _ => world.far.contains_key(key),
+        // Nothing to bring up where its faces are those it was last brought up to.
+        let same = |(meshes, far): &(Arc<ChunkMeshes>, Arc<HashMap<[i32; 4], Arc<ChunkMesh>>>)| {
+            Arc::ptr_eq(meshes, &world.meshes) && Arc::ptr_eq(far, &world.far)
         };
-        self.held.retain(|key, held| {
-            let kept = has(key);
-            if !kept {
-                freeing.push((frame_index, held.first, held.mesh.quads.len() as u64, held.slot));
-            }
-            kept
-        });
-        let mut changed = self.held.len() != before;
+        if self.made_from.as_ref().is_some_and(same) {
+            return Ok(true);
+        }
         let side = CHUNK as f32 * world.block_size;
         let near = world.meshes.iter().map(|(k, mesh)| ([0, k[0], k[1], k[2]], mesh));
-        for (key, mesh) in near.chain(world.far.iter().map(|(k, mesh)| (*k, mesh))) {
-            let key = &key;
-            if self.held.get(key).is_some_and(|held| Arc::ptr_eq(&held.mesh, mesh)) {
-                continue;
+        let held = &self.held;
+        let coming: Vec<([i32; 4], &Arc<ChunkMesh>)> = near
+            .chain(world.far.iter().map(|(k, mesh)| (*k, mesh)))
+            .filter(|(key, mesh)| !held.get(key).is_some_and(|held| Arc::ptr_eq(&held.mesh, mesh)))
+            .collect();
+        // Grown at once to hold every chunk coming, so those held are staged again once, not at each doubling.
+        let quads = |count: u64, held: &Held| count + held.mesh.quads.len() as u64;
+        let used = self.held.values().fold(0, quads) + self.freeing.iter().map(|freed| freed.2).sum::<u64>();
+        let wanted: u64 = coming.iter().map(|(_, mesh)| mesh.quads.len() as u64).sum();
+        if used + wanted > self.capacity {
+            self.grow(gpu, frames, wanted, stage)?;
+        }
+        // As many as a frame stages, at least one; the rest come over the next frames, each shown as it was till then.
+        let mut left = STAGED_A_FRAME;
+        let mut changed = false;
+        let mut whole = true;
+        for (key, mesh) in coming {
+            let count = mesh.quads.len() as u64;
+            if changed && count * 8 > left {
+                whole = false;
+                break;
             }
-            if let Some(old) = self.held.remove(key) {
+            left = left.saturating_sub(count * 8);
+            changed = true;
+            if let Some(old) = self.held.remove(&key) {
                 self.freeing.push((frame_index, old.first, old.mesh.quads.len() as u64, old.slot));
             }
             let Some(slot) = self.slots.alloc() else {
                 tracing::warn!("a world of blocks has more chunks than {SLOTS}; the rest are left out");
                 continue;
             };
-            let count = mesh.quads.len() as u64;
             let first = match self.space.alloc(count) {
                 Some(first) => first,
                 None => {
@@ -306,14 +417,31 @@ impl Pool {
             let low = Vec3::new(key[1] as f32, key[2] as f32, key[3] as f32) * side;
             let margin = if self.smooth { Vec3::splat(2.0 * self.block_size * scale) } else { Vec3::ZERO };
             let bounds = [low - margin, low + Vec3::splat(side) + margin];
-            self.held.insert(*key, Held { mesh: mesh.clone(), slot, first, bounds });
-            changed = true;
+            self.held.insert(key, Held { mesh: mesh.clone(), slot, first, bounds });
+        }
+        // Those the world no longer has go once every one coming has come, so none leaves a gap till then.
+        if whole {
+            let before = self.held.len();
+            let freeing = &mut self.freeing;
+            let has = |key: &[i32; 4]| match key[0] {
+                0 => world.meshes.contains_key(&[key[1], key[2], key[3]]),
+                _ => world.far.contains_key(key),
+            };
+            self.held.retain(|key, held| {
+                let kept = has(key);
+                if !kept {
+                    freeing.push((frame_index, held.first, held.mesh.quads.len() as u64, held.slot));
+                }
+                kept
+            });
+            changed |= self.held.len() != before;
+            self.made_from = Some((world.meshes.clone(), world.far.clone()));
         }
         if changed {
             self.draws = None;
             self.sights = None;
         }
-        Ok(())
+        Ok(whole)
     }
 
     /// A buffer twice as large, or more where `wanted` more quads need it,
@@ -328,6 +456,7 @@ impl Pool {
         frames.retire(Retired::Buffer(old));
         self.capacity = capacity;
         self.space = RangeAllocator::new(capacity);
+        self.made_from = None;
         // Slots given up wait no longer: nothing draws from the old buffer's quads now.
         for (_, _, _, slot) in self.freeing.drain(..) {
             self.slots.free(slot);
@@ -360,7 +489,9 @@ impl Pool {
                 let buckets = held.mesh.buckets;
                 let facings = std::array::from_fn(|f| [held.first as u32 + buckets[f], buckets[f + 1] - buckets[f]]);
                 let (water, count) = held.mesh.water();
-                ChunkDraw { key: *key, bounds: held.bounds, facings, water: [held.first as u32 + water, count] }
+                let water = [held.first as u32 + water, count];
+                let cone = self.smooth.then(|| held.mesh.cone.unwrap_or(EVERY_WAY));
+                ChunkDraw { key: *key, bounds: held.bounds, facings, water, cone }
             });
             self.draws = Some(draws.collect());
         }
@@ -385,7 +516,7 @@ pub(crate) struct DrawnBlocks {
     pub cast_shadows: bool,
     /// Its chunks' meshes for rays, each with where its chunk is from the
     /// world's corner.
-    pub proxies: Vec<(MeshHandle, Vec3)>,
+    pub proxies: Arc<[(MeshHandle, Vec3)]>,
     /// Its pool in this frame's graph, for every view to wait on.
     pub id: Option<BufferId>,
 }
@@ -404,9 +535,15 @@ struct Copy {
 #[derive(Default)]
 pub(crate) struct BlockWorlds {
     resident: HashMap<Entity, Pool>,
+    /// Each world's pool of blocks of another size, drawn until its new
+    /// pool has every chunk.
+    leaving: HashMap<Entity, Pool>,
     copies: Vec<Copy>,
     staging: Option<Buffer>,
     drawn: Vec<DrawnBlocks>,
+    /// Whether it has said that the GI's rays are left without some chunks,
+    /// once.
+    warned_full: bool,
 }
 
 /// The axis `normal` lies most along: 0 for x, 1 for y, 2 for z.
@@ -423,15 +560,27 @@ fn axis_of(normal: Vec3) -> usize {
 
 /// A chunk's mesh for rays: its faces merged by surface alone, in metres
 /// from its corner, its pictures repeated as the world's are from `from`,
-/// where the chunk is from the world's corner.
+/// where the chunk is from the world's corner. Its triangles share their
+/// corners, each facing the way the faces round it face on average: a
+/// block's face has its corners to itself, so faces its own way, and a
+/// smooth surface's run on smoothly.
 fn proxy(mesh: &ChunkMesh, block_size: f32, from: Vec3, uv_scale: f32) -> MeshData {
-    let mut data = MeshData::default();
-    for triangle in mesh.indices.chunks(3) {
-        let [a, b, c] = [0, 1, 2].map(|i| Vec3::from(mesh.positions[triangle[i] as usize]) * block_size);
-        let normal = (b - a).cross(c - a).normalize_or(Vec3::Y);
-        let tangent = Vec3::new(normal.y, -normal.x, 0.0).normalize_or(Vec3::X);
-        let first = data.vertices.len() as u32;
-        for point in [a, b, c] {
+    let points: Vec<Vec3> = mesh.positions.iter().map(|&p| Vec3::from(p) * block_size).collect();
+    let mut ways = vec![Vec3::ZERO; points.len()];
+    for triangle in mesh.indices.chunks_exact(3) {
+        let [a, b, c] = [0, 1, 2].map(|i| points[triangle[i] as usize]);
+        // As large as the triangle, so larger faces count for more.
+        let way = (b - a).cross(c - a);
+        for &i in triangle {
+            ways[i as usize] += way;
+        }
+    }
+    let vertices = points
+        .iter()
+        .zip(ways)
+        .map(|(&point, way)| {
+            let normal = way.normalize_or(Vec3::Y);
+            let tangent = Vec3::new(normal.y, -normal.x, 0.0).normalize_or(Vec3::X);
             let world = point + from;
             // Each face's pictures from the side it faces, as the shaders draw them.
             let uv = match axis_of(normal) {
@@ -439,17 +588,16 @@ fn proxy(mesh: &ChunkMesh, block_size: f32, from: Vec3, uv_scale: f32) -> MeshDa
                 1 => [world.x, -world.z],
                 _ => [world.x, -world.y],
             };
-            data.vertices.push(Vertex {
+            Vertex {
                 position: point.to_array(),
                 normal: normal.to_array(),
                 uv: uv.map(|v| v * uv_scale),
                 tangent: [tangent.x, tangent.y, tangent.z, 1.0],
                 wind: NO_WIND_MASKS,
-            });
-        }
-        data.indices.extend([first, first + 1, first + 2]);
-    }
-    data
+            }
+        })
+        .collect();
+    MeshData { vertices, indices: mesh.indices.clone(), ..MeshData::default() }
 }
 
 impl BlockWorlds {
@@ -463,12 +611,13 @@ impl BlockWorlds {
         world: &World,
         frame_index: u64,
     ) -> Result<()> {
+        voxear_core::profile_scope!("Block Uploads");
         self.drawn.clear();
         self.copies.clear();
         // Staged and never recorded: every chunk staged again.
         if let Some(staging) = self.staging.take() {
             frames.retire(Retired::Buffer(staging));
-            for (_, pool) in self.resident.drain() {
+            for (_, pool) in self.resident.drain().chain(self.leaving.drain()) {
                 retire(pool, assets, frames, frame_index);
             }
         }
@@ -499,7 +648,11 @@ impl BlockWorlds {
             let changed = |pool: &Pool| pool.block_size != blocks.block_size || pool.smooth != blocks.smooth;
             if self.resident.get(&entity).is_some_and(changed) {
                 let pool = self.resident.remove(&entity).expect("held");
-                retire(pool, assets, frames, frame_index);
+                // Drawn as it was until the new pool has every chunk, unless an older one already is.
+                match pool.shown.is_some() && !self.leaving.contains_key(&entity) {
+                    true => drop(self.leaving.insert(entity, pool)),
+                    false => retire(pool, assets, frames, frame_index),
+                }
             }
             if !self.resident.contains_key(&entity) {
                 self.resident.insert(entity, Pool::new(gpu, blocks.block_size, blocks.smooth)?);
@@ -512,35 +665,75 @@ impl BlockWorlds {
                 staged.extend_from_slice(bytes);
                 copies.push(Copy { from, key: entity, to, size: bytes.len() as u64 });
             };
-            pool.update(gpu, frames, blocks, frame_index, &mut stage)?;
+            let whole = pool.update(gpu, frames, blocks, frame_index, &mut stage)?;
             // Each chunk's mesh for rays, a few a frame, the old one shown until the new one is made.
-            pool.proxies.retain(|key, (_, mesh)| {
-                let kept = blocks.meshes.contains_key(key);
-                if !kept {
-                    assets.free_mesh(*mesh, frame_index);
+            if !pool.proxied.as_ref().is_some_and(|made| Arc::ptr_eq(made, &blocks.meshes)) {
+                let before = pool.proxies.len();
+                pool.proxies.retain(|key, (_, mesh)| {
+                    let kept = blocks.meshes.contains_key(key);
+                    if !kept {
+                        assets.free_mesh(*mesh, frame_index);
+                    }
+                    kept
+                });
+                let mut changed = pool.proxies.len() != before;
+                let mut all = true;
+                let side = CHUNK as f32 * blocks.block_size;
+                let uv_scale = 1.0 / blocks.block_size.max(0.01);
+                // Uploaded and built together, waited for once.
+                let batch = gpu.batch();
+                for (key, mesh) in blocks.meshes.iter() {
+                    if pool.proxies.get(key).is_some_and(|(made, _)| Arc::ptr_eq(made, mesh)) {
+                        continue;
+                    }
+                    if proxies_left == 0 {
+                        all = false;
+                        break;
+                    }
+                    proxies_left -= 1;
+                    let from = Vec3::new(key[0] as f32, key[1] as f32, key[2] as f32) * side;
+                    let making = voxear_core::profile_marker!("Ray Mesh Make").scope();
+                    let data = proxy(mesh, blocks.block_size, from, uv_scale);
+                    let lods = crate::lod::rays_only(&data);
+                    drop(making);
+                    let _uploading = voxear_core::profile_marker!("Ray Mesh Upload").scope();
+                    // Out of room, the rest wait: the GI's rays miss them, but the frame goes on.
+                    let handle = match assets.add_mesh_with_lods(gpu, &data, &lods) {
+                        Ok(handle) => handle,
+                        Err(error) => {
+                            if !std::mem::replace(&mut self.warned_full, true) {
+                                tracing::warn!("a world of blocks' chunks are left out of the GI's rays: {error:#}");
+                            }
+                            // Tried again once its faces change, as room may be made by then.
+                            proxies_left = 0;
+                            break;
+                        }
+                    };
+                    if let Some((_, old)) = pool.proxies.insert(*key, (mesh.clone(), handle)) {
+                        assets.free_mesh(old, frame_index);
+                    }
+                    changed = true;
                 }
-                kept
-            });
-            let side = CHUNK as f32 * blocks.block_size;
-            let uv_scale = 1.0 / blocks.block_size.max(0.01);
-            for (key, mesh) in blocks.meshes.iter() {
-                if pool.proxies.get(key).is_some_and(|(made, _)| Arc::ptr_eq(made, mesh)) || proxies_left == 0 {
-                    continue;
+                {
+                    let _uploading = voxear_core::profile_marker!("Ray Mesh Upload").scope();
+                    batch.finish()?;
                 }
-                proxies_left -= 1;
-                let from = Vec3::new(key[0] as f32, key[1] as f32, key[2] as f32) * side;
-                let data = proxy(mesh, blocks.block_size, from, uv_scale);
-                let handle = assets.add_mesh_with_lods(gpu, &data, &crate::lod::full_lod(&data))?;
-                if let Some((_, old)) = pool.proxies.insert(*key, (mesh.clone(), handle)) {
-                    assets.free_mesh(old, frame_index);
+                if all {
+                    pool.proxied = Some(blocks.meshes.clone());
+                }
+                if changed {
+                    pool.placed = None;
                 }
             }
+            let side = CHUNK as f32 * blocks.block_size;
             let placed = pool
-                .proxies
-                .iter()
-                .map(|(key, (_, mesh))| (*mesh, Vec3::new(key[0] as f32, key[1] as f32, key[2] as f32) * side))
-                .collect();
-            self.drawn.push(DrawnBlocks {
+                .placed
+                .get_or_insert_with(|| {
+                    let at = |key: &[i32; 3]| Vec3::new(key[0] as f32, key[1] as f32, key[2] as f32) * side;
+                    pool.proxies.iter().map(|(key, (_, mesh))| (*mesh, at(key))).collect()
+                })
+                .clone();
+            let drawn = DrawnBlocks {
                 entity,
                 corner,
                 block_size: blocks.block_size,
@@ -552,13 +745,29 @@ impl BlockWorlds {
                 cast_shadows: blocks.cast_shadows,
                 proxies: placed,
                 id: None,
-            });
+            };
+            if whole && let Some(old) = self.leaving.remove(&entity) {
+                retire(old, assets, frames, frame_index);
+            }
+            // Until then, the pool of blocks of the old size is drawn where the world is now, as it last drew.
+            match self.leaving.get(&entity).and_then(|old| old.shown.clone()) {
+                Some(old) => {
+                    self.drawn.push(DrawnBlocks { corner, look: drawn.look, cast_shadows: drawn.cast_shadows, ..old })
+                }
+                None => {
+                    pool.shown = Some(drawn.clone());
+                    self.drawn.push(drawn);
+                }
+            }
         }
         let gone: Vec<Entity> =
             self.resident.iter().filter(|(_, pool)| pool.seen != frame_index).map(|(key, _)| *key).collect();
         for key in gone {
             let pool = self.resident.remove(&key).expect("held");
             retire(pool, assets, frames, frame_index);
+            if let Some(old) = self.leaving.remove(&key) {
+                retire(old, assets, frames, frame_index);
+            }
         }
         if !staged.is_empty() {
             let usage = vk::BufferUsageFlags::TRANSFER_SRC;
@@ -572,20 +781,21 @@ impl BlockWorlds {
     /// Copies this frame's staged chunks in, and gives what every view
     /// draws, each world's pool as the graph knows it.
     pub fn record(&mut self, fg: &mut FrameGraph<'_>, frames: &mut Frames) -> Arc<[DrawnBlocks]> {
+        // Each pool once, by where its buffer is: a world drawn from the pool it is leaving is copied into the next.
         let mut ids = HashMap::new();
+        let pools: Vec<&Pool> = self.resident.values().chain(self.leaving.values()).collect();
         for drawn in &mut self.drawn {
-            let pool = &self.resident[&drawn.entity];
-            drawn.id = Some(*ids.entry(drawn.entity).or_insert_with(|| fg.import_buffer(&pool.buffer)));
+            let Some(pool) = pools.iter().find(|pool| pool.buffer.address == drawn.address) else { continue };
+            drawn.id = Some(*ids.entry(drawn.address).or_insert_with(|| fg.import_buffer(&pool.buffer)));
         }
         if let Some(staging) = self.staging.take() {
-            let copies: Vec<(vk::Buffer, vk::BufferCopy)> = self
-                .copies
-                .iter()
-                .filter_map(|copy| {
-                    let region = vk::BufferCopy { src_offset: copy.from, dst_offset: copy.to, size: copy.size };
-                    Some((self.resident.get(&copy.key)?.buffer.handle, region))
-                })
-                .collect();
+            let mut copies: Vec<(vk::Buffer, vk::BufferCopy)> = Vec::with_capacity(self.copies.len());
+            for copy in &self.copies {
+                let Some(pool) = self.resident.get(&copy.key) else { continue };
+                ids.entry(pool.buffer.address).or_insert_with(|| fg.import_buffer(&pool.buffer));
+                let region = vk::BufferCopy { src_offset: copy.from, dst_offset: copy.to, size: copy.size };
+                copies.push((pool.buffer.handle, region));
+            }
             let written: Vec<(BufferId, BufferAccess)> =
                 ids.values().map(|&id| (id, BufferAccess::TransferWrite)).collect();
             let source = staging.handle;
@@ -603,7 +813,7 @@ impl BlockWorlds {
         if let Some(staging) = self.staging.take() {
             gpu.destroy_buffer(staging);
         }
-        for (_, pool) in self.resident.drain() {
+        for (_, pool) in self.resident.drain().chain(self.leaving.drain()) {
             gpu.destroy_buffer(pool.buffer);
         }
     }
@@ -655,6 +865,42 @@ impl ViewBlocks {
     pub fn has_water(&self) -> bool {
         !self.water.is_empty()
     }
+
+    /// How many draws and triangles its worlds take, in view and in the
+    /// sun's cascades.
+    pub fn counts(&self) -> BlockCounts {
+        let mut counts = BlockCounts::default();
+        for (_, smooth, lists) in &self.runs {
+            // A quad is two triangles; drawn smooth, a triangle is three corners of two pairs of words.
+            let triangles = |runs: &[[u32; 2]]| -> u64 {
+                runs.iter().map(|&[_, count]| if *smooth { u64::from(count) / 6 } else { u64::from(count) * 2 }).sum()
+            };
+            counts.draws += lists[LIST_EARLY as usize].len() as u32;
+            counts.triangles += triangles(&lists[LIST_EARLY as usize]);
+            for cascade in 0..CASCADES {
+                let list = &lists[LIST_SHADOW as usize + cascade];
+                counts.shadow_draws += list.len() as u32;
+                counts.shadow_triangles += triangles(list);
+            }
+        }
+        for (_, smooth, runs) in &self.water {
+            counts.draws += runs.len() as u32;
+            let triangles = |count: u32| if *smooth { u64::from(count) / 6 } else { u64::from(count) * 2 };
+            counts.water_triangles += runs.iter().map(|&[_, count]| triangles(count)).sum::<u64>();
+        }
+        counts
+    }
+}
+
+/// How many draws and triangles a view's worlds of blocks take: their
+/// ground in view, their water, and their ground in the sun's cascades.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BlockCounts {
+    pub draws: u32,
+    pub triangles: u64,
+    pub water_triangles: u64,
+    pub shadow_draws: u32,
+    pub shadow_triangles: u64,
 }
 
 /// Picks each world's chunks and faces for this view and writes the
@@ -671,6 +917,7 @@ pub(crate) fn gather(
     if drawn.is_empty() {
         return None;
     }
+    voxear_core::profile_scope!("Block Picking");
     let mut anchors: HashMap<Entity, u32> = HashMap::new();
     for (index, owner) in entities.iter().enumerate().take(crate::MAX_INSTANCES as usize) {
         if owner.plant.is_none() && owner.part.is_some() {
@@ -719,16 +966,19 @@ pub(crate) fn gather(
             };
             voxear_terrain::blocks::sight::seen(map, sights, from, |key| within(&planes, bounds(key)))
         });
-        // A smooth surface faces every way in a chunk, so all of it is drawn.
-        lists[LIST_EARLY as usize] = pick(&blocks.chunks, local, &planes, !blocks.smooth, seen.as_ref());
+        // A smooth chunk drawn as coarse as its distance allows, as models' levels are picked.
+        let allowed = frame.lod_threshold / frame.lod_scale.max(1e-6);
+        let detail = Some(Detail { camera: local, allowed, block_size: blocks.block_size });
+        lists[LIST_EARLY as usize] = pick(&blocks.chunks, &planes, (Facing::Camera(local), detail), seen.as_ref());
         let wet = pick_water(&blocks.chunks, &planes, seen.as_ref());
         if !wet.is_empty() {
             water.push((number as u32, blocks.smooth, wet));
         }
         if has_sun && blocks.cast_shadows {
+            let sunlit = Facing::Light(Vec3::from(frame.sun_direction));
             for cascade in 0..CASCADES {
                 let planes = voxear_terrain::lod::planes_from(&frame.cascade_planes[cascade], blocks.corner);
-                lists[LIST_SHADOW as usize + cascade] = pick(&blocks.chunks, local, &planes, false, None);
+                lists[LIST_SHADOW as usize + cascade] = pick(&blocks.chunks, &planes, (sunlit, detail), None);
             }
         }
         runs.push((number as u32, blocks.smooth, lists));
@@ -870,23 +1120,57 @@ mod tests {
             bounds: [Vec3::new(x, 0.0, 0.0), Vec3::new(x + 32.0, 32.0, 32.0)],
             facings: std::array::from_fn(|f| [first + 10 * f as u32, 10]),
             water: [first + 60, 0],
+            cone: None,
         };
         let chunks = [chunk(0.0, 0), chunk(32.0, 60)];
         // From above the first, beyond its +x side: no -y faces of either, and none of the second's +x.
-        let picked = pick(&chunks, Vec3::new(16.0, 40.0, 16.0), &[], true, None);
+        let picked = pick(&chunks, &[], (Facing::Camera(Vec3::new(16.0, 40.0, 16.0)), None), None);
         let has = |first: u32| picked.iter().any(|&[f, c]| f <= first && first < f + c);
         assert!(has(0) && has(20), "the first's +x and +y faces");
         assert!(!has(30) && !has(90), "no faces turned down");
         assert!(!has(60), "the second's +x faces are beyond the camera");
         assert!(has(70), "its -x faces face back towards it");
-        // Shadows take every face; quads following on are drawn as one.
-        assert_eq!(pick(&chunks, Vec3::new(16.0, 40.0, 16.0), &[], false, None), vec![[0, 120]]);
+        // Smooth chunks, three levels of 40, 15 and 5 quads' words each, the second's following on from the first's.
+        let smooth = |x: f32, first: u32, cone: [f32; 4]| {
+            let levels = [[first, 40], [first + 40, 15], [first + 55, 5]];
+            let facings = std::array::from_fn(|f| levels.get(f).copied().unwrap_or([first + 60, 0]));
+            ChunkDraw { facings, cone: Some(cone), ..chunk(x, first) }
+        };
+        // Facing every way, each drawn whole at its first level; the second's first following on from the first's.
+        let mut second = smooth(32.0, 60, EVERY_WAY);
+        second.facings[0] = [40, 40];
+        let whole = [smooth(0.0, 0, EVERY_WAY), second];
+        let from = Facing::Camera(Vec3::new(16.0, 40.0, 16.0));
+        assert_eq!(pick(&whole, &[], (from, None), None), vec![[0, 80]]);
         // Looking along +x from x = 40: only the second.
-        let ahead = pick(&chunks, Vec3::new(40.0, 16.0, 16.0), &[[1.0, 0.0, 0.0, -40.0]], false, None);
-        assert_eq!(ahead, vec![[60, 60]]);
+        let ahead = pick(&whole, &[[1.0, 0.0, 0.0, -40.0]], (Facing::Camera(Vec3::new(40.0, 16.0, 16.0)), None), None);
+        assert_eq!(ahead, vec![[40, 40]]);
         // Only the chunks the camera can see into, where it is known which.
         let seen = HashSet::from([[1, 0, 0]]);
-        assert_eq!(pick(&chunks, Vec3::new(16.0, 40.0, 16.0), &[], false, Some(&seen)), vec![[60, 60]]);
+        assert_eq!(pick(&whole, &[], (from, None), Some(&seen)), vec![[40, 40]]);
+        // Further away, coarser: 2 m blocks, half a block allowed at 1000 m and two blocks at 4000.
+        let at = |x: f32| Detail { camera: Vec3::new(x, 16.0, 16.0), allowed: 0.001, block_size: 2.0 };
+        let level = |x: f32| pick(&whole[..1], &[], (Facing::Camera(at(x).camera), Some(at(x))), None);
+        assert_eq!([level(-500.0), level(-2000.0), level(-9000.0)], [vec![[0, 40]], vec![[40, 15]], vec![[55, 5]]]);
+        // A smooth chunk, its triangles all facing within a tenth of up: drawn from above or beside it, not at all
+        // from below, nor into the shadows of light coming up from under it.
+        let up = [smooth(0.0, 0, [0.0, 1.0, 0.0, 0.1])];
+        let drawn = |facing: Facing| !pick(&up, &[], (facing, None), None).is_empty();
+        assert!(drawn(Facing::Camera(Vec3::new(16.0, 60.0, 16.0))));
+        assert!(!drawn(Facing::Camera(Vec3::new(16.0, -60.0, 16.0))));
+        assert!(drawn(Facing::Camera(Vec3::new(60.0, 10.0, 16.0))), "beside it");
+        assert!(drawn(Facing::Light(Vec3::new(0.2, -1.0, 0.0))));
+        assert!(!drawn(Facing::Light(Vec3::new(0.2, 1.0, 0.0))));
+        // One facing every way, drawn from anywhere.
+        for from in [Vec3::new(16.0, -60.0, 16.0), Vec3::new(-60.0, 10.0, 16.0)] {
+            assert_eq!(pick(&whole[..1], &[], (Facing::Camera(from), None), None), vec![[0, 40]]);
+        }
+        assert_eq!(pick(&whole[..1], &[], (Facing::Light(Vec3::new(0.2, 1.0, 0.0)), None), None), vec![[0, 40]]);
+        // The sun's cascades: of each chunk, the faces turned towards sunlight going down, to -x and to +z.
+        let lit = pick(&chunks, &[], (Facing::Light(Vec3::new(-0.3, -0.8, 0.5)), None), None);
+        let has = |first: u32| lit.iter().any(|&[f, c]| f <= first && first < f + c);
+        assert!([0, 20, 50, 60, 80, 110].map(has).iter().all(|&h| h), "+x, +y and -z faces: {lit:?}");
+        assert!(![10, 30, 40, 70, 90, 100].map(has).iter().any(|&h| h), "none turned away: {lit:?}");
     }
 
     #[test]
@@ -897,6 +1181,7 @@ mod tests {
             bounds: [Vec3::new(x, 0.0, 0.0), Vec3::new(x + 32.0, 32.0, 32.0)],
             facings: std::array::from_fn(|f| [first + 10 * f as u32, 10]),
             water: [first + 60, water],
+            cone: None,
         };
         let chunks = [chunk(0.0, 0, 5), chunk(32.0, 65, 0), chunk(64.0, 125, 7)];
         assert_eq!(pick_water(&chunks, &[], None), vec![[60, 5], [185, 7]]);

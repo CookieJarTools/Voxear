@@ -1,26 +1,30 @@
 //! A `.blockworld` file: what a world of blocks is, as text. How large a
-//! block is, the kinds of block it has, each with its colour and the
-//! materials its faces are drawn with, and the ground its blocks start as.
+//! block is, the blocks it is made of, and the ground its blocks start as.
+//!
+//! Each entry of its list is a block (see `block`), named by its asset, or
+//! a kind of its own: a colour, as a model of small blocks brings its
+//! colours, or as worlds kept all their kinds once, materials and water
+//! too. A block's number is its entry's place in the list, from 1, and
+//! never changes: an entry taken out leaves its place empty.
 //!
 //! ```toml
 //! block_size = 1.0
 //!
 //! [[blocks]]
-//! name = "Grass"
-//! color = [0.33, 0.52, 0.2]
-//! top = "Materials/Grass.material"      # its top, in place of its material
-//! material = "Materials/Dirt.material"  # every other face
+//! block = "Blocks/Grass.block"
 //!
 //! [[blocks]]
-//! name = "Water"
-//! color = [0.04, 0.46, 0.33]  # the water's own colour
-//! water = true                # see-through, and things float in it
+//! removed = true              # the block once numbered 2
+//!
+//! [[blocks]]
+//! name = "Color 7"            # a kind of its own
+//! color = [0.8, 0.2, 0.2]
 //!
 //! [ground]
 //! size = [64, 64]   # blocks along x and z
 //! height = 8        # blocks up
 //! top = 1           # blocks by their place in the list, from 1
-//! under = 2
+//! under = 3
 //! under_depth = 3
 //! bottom = 3
 //! ```
@@ -33,11 +37,20 @@ use super::{
     chunk::{AIR, BlockId},
 };
 
-/// The most kinds of block a world can have.
-pub const MAX_BLOCKS: usize = 255;
+/// The most entries a world's list of blocks can have, those taken out
+/// counted: as many as a block's number can say.
+pub const MAX_BLOCKS: usize = BlockId::MAX as usize;
+
+/// The most ways of drawing a face a world can have: as many as its quads
+/// can name (see `BlockFile::faces`).
+pub const MAX_LOOKS: usize = 256;
 
 /// The most blocks across a world's flat ground is, a side.
 pub const MOST_ACROSS: u32 = 4096;
+
+/// The smallest and the largest a block is a side, in metres.
+pub const SMALLEST_BLOCK: f32 = 0.1;
+pub const LARGEST_BLOCK: f32 = 10.0;
 
 /// What a `.blockworld` file holds.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -45,7 +58,8 @@ pub const MOST_ACROSS: u32 = 4096;
 pub struct BlockFile {
     /// How many metres a block is a side.
     pub block_size: f32,
-    /// The kinds of block, numbered from 1 in this order.
+    /// Its blocks, numbered from 1 in this order, the entries taken out
+    /// counted.
     pub blocks: Vec<BlockKind>,
     /// The ground its blocks start as.
     pub ground: Ground,
@@ -59,30 +73,76 @@ pub struct BlockFile {
     pub smooth: bool,
 }
 
-/// A kind of block: its name, its colour where its faces have no material,
-/// and the materials it is drawn with, each a reference to a `.material`.
+/// An entry of a world's list of blocks. One naming a `block` is drawn as
+/// that asset says, and its own look is filled in from it where the world
+/// is made (the file keeps only which). One naming none is a kind of the
+/// world's own: its name, its colour where its faces have no material, and
+/// the materials it is drawn with, each a reference to a `.material`. One
+/// `removed` is the place a block was taken out of, kept so the blocks
+/// after it keep their numbers.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default, deny_unknown_fields, into = "Written")]
 pub struct BlockKind {
+    /// The `.block` it is, by reference.
+    pub block: Option<String>,
+    /// Whether it was taken out of the list.
+    pub removed: bool,
     pub name: String,
     pub color: [f32; 3],
     /// Every face's material; none for its colour.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub material: Option<String>,
     /// Its top's and bottom's, in place of its material.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub top: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub bottom: Option<String>,
     /// Where generated ground is covered with it in place of its top block:
     /// none for nowhere.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub cover: Option<BlockCover>,
     /// Whether it is water: drawn see-through with the water's look, its
     /// colour the water's own, its faces only where it meets air; nothing
     /// stands on it, and what floats floats in it.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub water: bool,
+}
+
+/// An entry as its file says it: one naming a block says which and where it
+/// covers, one taken out only that, and a kind of the world's own all its
+/// look.
+#[derive(Serialize)]
+struct Written {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    block: Option<String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    removed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    color: Option<[f32; 3]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    material: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bottom: Option<String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    water: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cover: Option<BlockCover>,
+}
+
+impl From<BlockKind> for Written {
+    fn from(kind: BlockKind) -> Self {
+        let own = kind.is_inline();
+        Self {
+            block: kind.block.filter(|_| !kind.removed),
+            removed: kind.removed,
+            name: own.then_some(kind.name),
+            color: own.then_some(kind.color),
+            material: kind.material.filter(|_| own),
+            top: kind.top.filter(|_| own),
+            bottom: kind.bottom.filter(|_| own),
+            water: own && kind.water,
+            cover: kind.cover.filter(|_| !kind.removed),
+        }
+    }
 }
 
 /// Where a kind of block covers generated ground: where its climate and
@@ -121,6 +181,8 @@ impl BlockCover {
 impl Default for BlockKind {
     fn default() -> Self {
         Self {
+            block: None,
+            removed: false,
             name: "Block".into(),
             color: [0.6, 0.6, 0.6],
             material: None,
@@ -136,6 +198,27 @@ impl BlockKind {
     /// A block of a colour alone.
     pub fn colored(name: &str, color: [f32; 3]) -> Self {
         Self { name: name.into(), color, ..Self::default() }
+    }
+
+    /// An entry naming the `.block` at `reference`.
+    pub fn of(reference: &str) -> Self {
+        Self { block: Some(reference.into()), ..Self::default() }
+    }
+
+    /// The place a block was taken out of.
+    pub fn gap() -> Self {
+        Self { removed: true, ..Self::default() }
+    }
+
+    /// Whether it is a block, rather than the place one was taken out of.
+    pub fn is_live(&self) -> bool {
+        !self.removed
+    }
+
+    /// Whether it is a kind of the world's own, its look kept in the
+    /// world's file.
+    pub fn is_inline(&self) -> bool {
+        !self.removed && self.block.is_none()
     }
 }
 
@@ -190,8 +273,46 @@ impl BlockFile {
             generate.endless = None;
         }
         ensure!(file.block_size > 0.0 && file.block_size.is_finite(), "a block is some size");
-        ensure!(file.blocks.len() <= MAX_BLOCKS, "a world has at most {MAX_BLOCKS} kinds of block");
+        file.block_size = file.block_size.clamp(SMALLEST_BLOCK, LARGEST_BLOCK);
+        ensure!(file.blocks.len() <= MAX_BLOCKS, "a world lists at most {MAX_BLOCKS} blocks");
+        // An entry is one thing: a place left empty, a block (its look its asset's) or a kind of its own.
+        for kind in &mut file.blocks {
+            if kind.removed {
+                *kind = BlockKind::gap();
+            } else if kind.block.is_some() {
+                *kind = BlockKind { block: kind.block.take(), cover: kind.cover, ..BlockKind::default() };
+            }
+        }
+        file.forget_gaps();
         Ok(file)
+    }
+
+    /// Whether `block` is one of its blocks: an entry of its list not taken
+    /// out.
+    pub fn lists(&self, block: BlockId) -> bool {
+        usize::from(block).checked_sub(1).and_then(|at| self.blocks.get(at)).is_some_and(BlockKind::is_live)
+    }
+
+    /// The block numbered `block`'s entry, where it lists one.
+    pub fn kind(&self, block: BlockId) -> Option<&BlockKind> {
+        usize::from(block).checked_sub(1).and_then(|at| self.blocks.get(at)).filter(|kind| kind.is_live())
+    }
+
+    /// Makes its ground of air wherever it names a block taken out, so no
+    /// block is ever made with an empty place's number.
+    pub fn forget_gaps(&mut self) {
+        let gone: Vec<bool> = self.blocks.iter().map(|kind| kind.removed).collect();
+        let kept = |block: &mut BlockId| {
+            if usize::from(*block).checked_sub(1).and_then(|at| gone.get(at)).copied().unwrap_or(false) {
+                *block = AIR;
+            }
+        };
+        kept(&mut self.ground.top);
+        kept(&mut self.ground.under);
+        kept(&mut self.ground.bottom);
+        if let Some(generate) = &mut self.generate {
+            kept(&mut generate.sea);
+        }
     }
 
     pub fn to_text(&self) -> String {
@@ -201,11 +322,13 @@ impl BlockFile {
     /// Makes its blocks `size` metres a side with its ground as large in
     /// metres as it was: what it counts in blocks (its ground's size, height
     /// and under layers, its lowest block, how deep its kinds cover) is
-    /// counted again in blocks of the new size. No smaller than keeps its
-    /// ground within `MOST_ACROSS` blocks a side; gives the size it took.
+    /// counted again in blocks of the new size. Between `SMALLEST_BLOCK` and
+    /// `LARGEST_BLOCK`, and no smaller than keeps its ground within
+    /// `MOST_ACROSS` blocks a side; gives the size it took.
     pub fn set_block_size(&mut self, size: f32) -> f32 {
         let widest = self.ground.size.into_iter().max().unwrap_or(0).max(self.ground.height) as f32;
-        let size = size.max(self.block_size * widest / MOST_ACROSS as f32).max(1e-3);
+        let size = if size.is_nan() { self.block_size } else { size.clamp(SMALLEST_BLOCK, LARGEST_BLOCK) };
+        let size = size.max(self.block_size * widest / MOST_ACROSS as f32);
         let ratio = self.block_size / size;
         let count = |n: u32| if n == 0 { 0 } else { ((n as f32 * ratio).round() as u32).max(1) };
         self.ground.size = self.ground.size.map(count);
@@ -223,7 +346,10 @@ impl BlockFile {
 
     /// The ways its faces are drawn, each once, and for each block by its
     /// number (air first) which of them its top, its sides and its bottom
-    /// are and whether it is water: the surfaces a chunk's quads name.
+    /// are and whether it is water: the surfaces a chunk's quads name. A
+    /// place a block was taken out of has no look. Its entries naming
+    /// blocks are drawn as they stand here, so fill them in first (see
+    /// `block::BlockDef::fill`).
     pub fn faces(&self) -> (Vec<FaceLook>, Vec<BlockFaces>) {
         let mut looks: Vec<FaceLook> = Vec::new();
         let mut find = |material: &Option<String>, color: [f32; 3]| {
@@ -236,6 +362,10 @@ impl BlockFile {
         };
         let mut faces = vec![BlockFaces::default()];
         for kind in &self.blocks {
+            if kind.removed {
+                faces.push(BlockFaces::default());
+                continue;
+            }
             let top = find(&kind.top.clone().or_else(|| kind.material.clone()), kind.color);
             let sides = find(&kind.material, kind.color);
             let bottom = find(&kind.bottom.clone().or_else(|| kind.material.clone()), kind.color);
@@ -243,6 +373,11 @@ impl BlockFile {
             faces.push(BlockFaces { water: kind.water, color, ..BlockFaces::new(top, sides, bottom) });
         }
         (looks, faces)
+    }
+
+    /// How many ways of drawing a face it has, of the `MAX_LOOKS` it can.
+    pub fn looks(&self) -> usize {
+        self.faces().0.len()
     }
 
     /// The blocks its ground starts as: made by `generator` where it is
@@ -262,7 +397,7 @@ impl BlockFile {
     /// Its flat ground's blocks.
     fn flat_ground(&self) -> BlockMap {
         let mut map = BlockMap::default();
-        let known = |block: BlockId| if usize::from(block) <= self.blocks.len() { block } else { AIR };
+        let known = |block: BlockId| if self.lists(block) { block } else { AIR };
         let ground = &self.ground;
         for y in 0..ground.height {
             let block = if y + 1 == ground.height {
@@ -305,11 +440,87 @@ mod tests {
         assert_ne!(faces[2].sides, faces[3].sides);
         assert!(faces.iter().all(|faces| !faces.water));
         assert!(BlockFile::parse("block_size = 0.0").is_err());
+        // Blocks no smaller than a tenth of a metre and no larger than ten, read or set.
+        assert_eq!(BlockFile::parse("block_size = 0.01").unwrap().block_size, SMALLEST_BLOCK);
+        assert_eq!(BlockFile::parse("block_size = 500.0").unwrap().block_size, LARGEST_BLOCK);
+        let mut sized = BlockFile::default();
+        assert_eq!(sized.set_block_size(0.0), SMALLEST_BLOCK);
+        assert_eq!(sized.ground.size, [640, 640]);
+        assert_eq!(sized.set_block_size(1000.0), LARGEST_BLOCK);
+        assert_eq!(sized.ground.size, [6, 6]);
         // A kind of water reads back as water, and its faces say so.
         file.blocks.push(BlockKind { water: true, ..BlockKind::colored("Water", [0.04, 0.46, 0.33]) });
         let read = BlockFile::parse(&file.to_text()).unwrap();
         assert!(read.blocks[3].water && !read.blocks[0].water);
         assert!(read.faces().1[4].water);
+    }
+
+    #[test]
+    fn an_older_block_worlds_file_reads_as_it_did_and_is_written_back_the_same() {
+        // As worlds were written while they kept all their kinds themselves.
+        let older = r#"block_size = 0.5
+
+[[blocks]]
+name = "Grass"
+color = [0.33, 0.52, 0.2]
+material = "Materials/Dirt.material"
+top = "Materials/Grass.material"
+
+[[blocks]]
+name = "Sand"
+color = [0.8, 0.7, 0.4]
+
+[blocks.cover]
+height = [-200.0, 3.0]
+depth = 3
+
+[[blocks]]
+name = "Water"
+color = [0.04, 0.46, 0.33]
+water = true
+
+[ground]
+size = [128, 96]
+height = 8
+top = 1
+under = 2
+under_depth = 3
+bottom = 2
+"#;
+        let file = BlockFile::parse(older).unwrap();
+        assert_eq!(file.blocks.len(), 3);
+        assert!(file.blocks.iter().all(|kind| kind.is_inline()));
+        assert_eq!(file.blocks[0].top.as_deref(), Some("Materials/Grass.material"));
+        assert_eq!(file.blocks[1].cover.map(|cover| cover.depth), Some(3));
+        assert!(file.blocks[2].water && file.faces().1[3].water);
+        assert_eq!(file.to_text(), older, "nothing about it is written differently");
+    }
+
+    #[test]
+    fn a_kind_taken_out_leaves_its_number_empty_and_the_rest_keep_theirs() {
+        let mut file = BlockFile::default();
+        file.blocks[0] = BlockKind { cover: Some(BlockCover::default()), ..BlockKind::of("Blocks/Grass.block") };
+        file.blocks[1] = BlockKind::gap();
+        let text = file.to_text();
+        assert!(text.contains("block = \"Blocks/Grass.block\"") && text.contains("removed = true"), "{text}");
+        assert_eq!(text.matches("name = ").count(), 1, "only stone, a kind of its own, says its look: {text}");
+        // Read back: three entries still, the ground naming the empty place made air there.
+        let read = BlockFile::parse(&text).unwrap();
+        assert_eq!(read.blocks.len(), 3);
+        assert_eq!(read.blocks[0], file.blocks[0]);
+        assert!(read.blocks[1].removed && read.blocks[2].is_inline());
+        assert_eq!((read.ground.top, read.ground.under, read.ground.bottom), (1, AIR, 3));
+        assert!(read.lists(1) && !read.lists(2) && read.lists(3) && !read.lists(4) && !read.lists(AIR));
+        assert_eq!(read.kind(3).map(|kind| kind.name.as_str()), Some("Stone"));
+        // The place taken out has no look and is no ground; stone is still number 3.
+        let (looks, faces) = read.faces();
+        assert_eq!((looks.len(), faces.len()), (2, 4));
+        assert_eq!(faces[2], BlockFaces::default());
+        let map = read.make_ground(None);
+        assert_eq!([7, 6, 4, 0].map(|y| map.get([0, y, 0])), [1, AIR, AIR, 3]);
+        // An entry is one thing: a look written beside a block it names is the block's, not the file's.
+        let both = "[[blocks]]\nblock = \"Blocks/Grass.block\"\nname = \"Mine\"\ncolor = [1.0, 0.0, 0.0]\n";
+        assert_eq!(BlockFile::parse(both).unwrap().blocks[0], BlockKind::of("Blocks/Grass.block"));
     }
 
     #[test]

@@ -79,15 +79,26 @@ pub struct BuildReport {
 /// the build cannot see.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CodeRoot {
-    /// A project path, a GUID, or a path pattern with `*` and `**`.
+    /// A project path, a GUID, or a path pattern with `*` and `**`; or
+    /// `type:` and a Definition's name, for every data asset that holds it,
+    /// as code finds them all without naming one (a project's recipes).
     pub pattern: String,
     /// The type or member that declares it, for messages.
     pub source: String,
 }
 
 impl CodeRoot {
+    /// What comes before a Definition's name in the pattern of a root that
+    /// is every data asset of that Definition.
+    pub const TYPE: &'static str = "type:";
+
     fn matches(&self, guid: AssetGuid, path: &str) -> bool {
         glob(&self.pattern, path) || self.pattern.parse::<AssetGuid>().is_ok_and(|g| g == guid)
+    }
+
+    /// Whether it is every data asset holding the Definition `held`.
+    fn holds(&self, held: Option<&str>) -> bool {
+        held.is_some_and(|held| self.pattern.strip_prefix(Self::TYPE) == Some(held))
     }
 }
 
@@ -124,6 +135,8 @@ struct Needs {
     companions: Vec<String>,
     /// The pictures it names, each with how it uses it.
     pictures: Vec<(AssetGuid, PictureUse)>,
+    /// For a data asset, the Definition it holds, by name.
+    holds: Option<String>,
 }
 
 pub fn build(root: &Path, output: &Path, settings: &ContentSettings, code_roots: &[CodeRoot]) -> Result<BuildReport> {
@@ -184,7 +197,11 @@ pub fn build_mounted(
     for &(picture, how) in shipped.flat_map(|(_, found)| &found.pictures) {
         uses.entry(picture).and_modify(|was| *was = was.and(how)).or_insert(how);
     }
-    let unmatched = code_roots.iter().filter(|r| !db.entries().any(|e| r.matches(e.guid, &e.path))).cloned().collect();
+    // A root that is every data asset of a Definition matches none in a project that has none, which is no mistake.
+    let matched = |root: &CodeRoot| {
+        root.pattern.starts_with(CodeRoot::TYPE) || db.entries().any(|e| root.matches(e.guid, &e.path))
+    };
+    let unmatched = code_roots.iter().filter(|root| !matched(root)).cloned().collect();
     let mut excluded: Vec<String> =
         db.entries().filter(|e| !usage.contains_key(&e.guid)).map(|e| e.path.clone()).collect();
     excluded.sort();
@@ -371,6 +388,7 @@ pub fn server_reads(kind: AssetKind) -> bool {
         | AssetKind::Terrain
         | AssetKind::WorldGen
         | AssetKind::BlockWorld
+        | AssetKind::Block
         | AssetKind::VoxModel => true,
         AssetKind::Texture
         | AssetKind::Material
@@ -463,7 +481,9 @@ fn usage_sets(
         .entries()
         .filter(|e| {
             // A field or code naming an asset means something shipped uses it, so exclude cannot drop it.
-            let needed = named.contains(&e.guid) || code_roots.iter().any(|r| r.matches(e.guid, &e.path));
+            let held = needs.get(&e.guid).and_then(|found| found.holds.as_deref());
+            let rooted = |root: &CodeRoot| root.matches(e.guid, &e.path) || root.holds(held);
+            let needed = named.contains(&e.guid) || code_roots.iter().any(rooted);
             // Code loads levels, prefabs and UI documents by path, which the build cannot see, and the game
             // reads its input actions and every string and asset table when it starts, an asset table taking
             // each language's asset with it. The project's shaders all ship, as they are compiled in together. A
@@ -596,8 +616,9 @@ fn find_needs(db: &AssetDb, guid: AssetGuid, kind: AssetKind, path: &str) -> Res
         | AssetKind::GunHandling
         | AssetKind::Data
         | AssetKind::Terrain
-        // The materials a world of blocks' faces are drawn with.
+        // The blocks a world of blocks lists and the materials its own kinds' faces are drawn with; what a block names.
         | AssetKind::BlockWorld
+        | AssetKind::Block
         // The pictures a set of prompt icons shows, and the set the input actions name.
         | AssetKind::PromptIcons
         | AssetKind::InputActions => {
@@ -608,6 +629,9 @@ fn find_needs(db: &AssetDb, guid: AssetGuid, kind: AssetKind, path: &str) -> Res
             let made_in_game = kind != AssetKind::Terrain || table.contains_key("endless");
             for (key, value) in table.iter().filter(|_| made_in_game) {
                 collect(db, key == "fields", key, value, &mut needs);
+            }
+            if kind == AssetKind::Data {
+                needs.holds = table.get("type").and_then(toml::Value::as_str).map(str::to_string);
             }
             // A level's baked paths go with it, for its sound to follow round the walls.
             let paths = crate::acoustics::paths_file(path);

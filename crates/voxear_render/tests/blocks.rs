@@ -124,6 +124,46 @@ fn a_field_of_blocks_is_drawn_in_its_blocks_colours_shaded_at_a_pillars_foot_and
 }
 
 #[test]
+fn a_world_too_large_to_upload_in_a_frame_comes_over_several_the_old_one_drawn_till_it_is_whole() {
+    use voxear_terrain::blocks::BlockMap;
+    let Some(mut renderer) = renderer() else { return };
+    // A field 64 m a side, seen from above.
+    let mut file = BlockFile::default();
+    file.ground.size = [64, 64];
+    file.ground.height = 4;
+    let (_, faces) = file.faces();
+    let material = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let look = BlockLook { material, surfaces: Arc::from([]) };
+    let mut world = World::new();
+    let field = world.spawn((BlockWorld::new(file.make_ground(None), &faces, 1.0), look, Transform::default()));
+    let down = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+    world.spawn((Camera::default(), Transform::new(Vec3::new(32.0, 80.0, 32.0), down, Vec3::ONE)));
+    render(&mut renderer, &world, 2);
+    let old = renderer.stats().blocks;
+    // Made again of blocks half the size, every other one: about 38 MB of faces, more than a frame uploads.
+    let mut checks = BlockMap::default();
+    for x in 0..128 {
+        for y in 0..96 {
+            for z in (0..128).filter(|z| (x + y + z) % 2 == 0) {
+                checks.set([x, y, z], 3);
+            }
+        }
+    }
+    world.insert(field, BlockWorld::new(checks, &faces, 0.5));
+    let counts: Vec<_> = (0..8)
+        .map(|_| {
+            render(&mut renderer, &world, 1);
+            renderer.stats().blocks
+        })
+        .collect();
+    // The field drawn while the new world comes, then the new world whole, the same each frame after.
+    let arrived = counts.iter().position(|counts| *counts != old).expect("the new world drawn");
+    assert!(arrived >= 2, "came in {} frames: {counts:?}", arrived + 1);
+    assert!(counts[arrived..].windows(2).all(|two| two[0] == two[1]), "whole once drawn: {counts:?}");
+    assert!(counts[arrived].triangles > old.triangles * 10, "{:?} against {old:?}", counts[arrived]);
+}
+
+#[test]
 fn a_coarser_chunk_of_a_world_without_end_is_drawn_twice_as_large() {
     use std::collections::HashMap;
     use voxear_terrain::blocks::{BlockMap, mesh::mesh_chunk};

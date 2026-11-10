@@ -57,6 +57,73 @@ fn a_block_world_is_made_from_its_asset_stood_on_and_saved_as_written() {
 }
 
 #[test]
+fn a_block_worlds_blocks_are_drawn_as_their_files_say_and_a_block_saved_is_taken_up_at_once() {
+    use std::sync::Arc;
+    use voxear_engine::blocks::BlockWorldAsset;
+    use voxear_terrain::blocks::{
+        block::{BlockDef, Liquid, MISSING},
+        file::BlockKind,
+        is_water,
+    };
+    let dir = project();
+    // Grass a block of the project's, its top its own; dirt a block that is not there; stone the world's own kind.
+    let grass = BlockDef { top: Some("Materials/Grass.material".into()), ..BlockDef::colored([0.2, 0.6, 0.1]) };
+    std::fs::write(dir.path().join("Blocks/Grass.block"), grass.to_text()).unwrap();
+    let mut file = BlockFile::default();
+    (file.ground.size, file.ground.height) = ([32, 32], 6);
+    file.blocks[0] = BlockKind::of("Blocks/Grass.block");
+    file.blocks[1] = BlockKind::of("Blocks/Lost.block");
+    std::fs::write(dir.path().join("Blocks/Field.blockworld"), file.to_text()).unwrap();
+    let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
+    game.start(None).unwrap();
+    let field = {
+        let named = game.engine.world.query_ref::<(voxear_ecs::Entity, &voxear_scene::Name)>();
+        named.into_iter().find(|(_, name)| name.0 == "Blocks").unwrap().0
+    };
+    let asset = |game: &Game| game.engine.world.get::<BlockWorldAsset>(field).unwrap().clone();
+    let blocks = |game: &Game| game.engine.world.get::<BlockWorld>(field).unwrap().clone();
+    // Its file is kept as written, naming its blocks; drawn, each has its block's look and its file's name.
+    assert_eq!(asset(&game).file, file);
+    let drawn = asset(&game).drawn.clone();
+    assert_eq!((drawn.blocks[0].name.as_str(), drawn.blocks[0].color), ("Grass", [0.2, 0.6, 0.1]));
+    assert_eq!(drawn.blocks[0].top.as_deref(), Some("Materials/Grass.material"));
+    assert_eq!(drawn.blocks[1].color, MISSING, "a block that cannot be found shows loudly");
+    assert_eq!(drawn.blocks[2].name, "Stone");
+    let (looks, faces) = drawn.faces();
+    assert_eq!(looks.len(), 4, "grass's top, its sides, the missing block and stone");
+    assert_eq!(*blocks(&game).faces, faces[..]);
+    assert_eq!([5, 4, 0].map(|y| blocks(&game).blocks.get([3, y, 3])), [1, 2, 3], "numbered as listed");
+
+    // The block's colour changed and saved: the world listing it draws it so from the next tick, its faces as they
+    // were, so nothing is meshed again.
+    let guid = game.content.parse("Blocks/Grass.block").unwrap().guid().unwrap();
+    let meshes = blocks(&game).meshes.clone();
+    let paler = BlockDef { color: [0.4, 0.7, 0.3], ..grass.clone() };
+    std::fs::write(dir.path().join("Blocks/Grass.block"), paler.to_text()).unwrap();
+    game.content.forget_block(guid);
+    game.tick(1.0 / 60.0, None);
+    assert_eq!(asset(&game).drawn.blocks[0].color, [0.4, 0.7, 0.3]);
+    assert_eq!(asset(&game).derived, game.content.blocks_version());
+    assert!(Arc::ptr_eq(&meshes, &blocks(&game).meshes), "its faces were as they are");
+    assert_eq!(asset(&game).file, file, "its own file is as it was");
+
+    // Made water, its faces are another kind: made again, with nothing to stand on at the top.
+    let water = BlockDef { liquid: Liquid::Water, ..BlockDef::colored([0.04, 0.46, 0.33]) };
+    std::fs::write(dir.path().join("Blocks/Grass.block"), water.to_text()).unwrap();
+    game.content.forget_block(guid);
+    game.tick(1.0 / 60.0, None);
+    let now = blocks(&game);
+    assert!(is_water(&now.faces, 1) && !is_water(&now.faces, 2));
+    assert!(!Arc::ptr_eq(&meshes, &now.meshes));
+    let highest = now.meshes.values().flat_map(|mesh| mesh.positions.iter().map(|p| p[1])).fold(0.0, f32::max);
+    assert_eq!(highest, 5.0, "the ground's top is the dirt under the water");
+    // Loaded again, as a level is, the world is drawn as the block is now.
+    let again = game.content.block_world(asset(&game).guid).expect("the world");
+    assert!(is_water(&again.world.faces, 1));
+    assert_eq!(again.derived, game.content.blocks_version());
+}
+
+#[test]
 fn a_block_world_loads_with_the_changes_kept_beside_it() {
     use voxear_terrain::blocks::edits::BlockEdits;
     let dir = project();
@@ -217,7 +284,7 @@ fn a_generated_world_drawn_smooth_lies_on_its_generators_heights_and_keeps_a_smo
         assert!((surface(&blocks.blocks, x, z) - height).abs() < 0.1, "column ({x}, {z}) at {height} m");
     }
     assert_eq!((blocks.blocks.get([4, scooped, 4]), blocks.blocks.fill([4, scooped, 4])), (2, 140), "kept");
-    assert!(blocks.meshes.values().all(|mesh| mesh.quads.len() == mesh.indices.len() * 2), "drawn smooth");
+    assert!(blocks.meshes.values().all(|mesh| mesh.buckets[1] as usize == mesh.indices.len() * 2), "drawn smooth");
 }
 
 #[test]

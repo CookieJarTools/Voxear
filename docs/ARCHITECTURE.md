@@ -2924,6 +2924,17 @@ gets the bits each point gets alone. Places are rows too, so a node that reads i
 behind it again at the rows it made. A generator is never changed, only replaced, and carries a hash of everything
 that decides its ground: one saved with only a node moved keeps its place in `Content`, and nothing is made again.
 Only sums, products, divisions, square roots and `floor`, so the same seed makes the same bits on every machine.
+The Output's **Volume** is the ground in three dimensions, for worlds of blocks: how many metres into the ground
+each place in space is. It compiles into two programs (`compile::Voxels`). One runs once a column and makes what
+the Volume's nodes read of the ground, a height or a mask, the same for every cell up the column; the other runs
+once a cell, given its middle, its size and those rows carried up to it (`Compiler::column`). A Field is worked
+out a cell at a time only where a node moved the cells it asks about. The Volume is compiled twice into the cells'
+program, whole and as the ground under its caves, with what a Combine node subtracts left in: the second is what
+far levels are made from, what tells open air from a cave's, and what layers are counted in. Volume nodes
+(Solid, Noise 3D, Overhangs, Tunnels, Chambers, Combine) take their sizes in metres whatever the generator's scale.
+`WorldGen::volume` hands this to whatever makes blocks: `carried` for columns, `densities` for cells, flat and
+round a planet; masks, which are slow to make, are made at every fourth column of a grid and read between
+(`carried_grid`), the same for a column whichever chunk asks.
 A terrain's Generate layer lays it from an offset in its world; compositing finds generators by reference as it
 finds pictures. Rivers and lakes on finished maps are a Rivers layer (`voxear_terrain::rivers`): priority-flood filling
 gives every cell the way it drains and the ground draining through it; rivers are cut where that is enough, lakes
@@ -2934,8 +2945,7 @@ background threads from the layers worked out from where each sample is, with it
 ground; renderer and physics keep each tile in a slot by where it is in the world, so a moving window copies in
 only the tiles that came into it. To come: the graph editor, with a preview on every node; more kinds of node
 (warps, terraces, masks from the ground's own height and slope); biomes as nodes, bringing their surfaces and
-blocks; for voxels, a Volume beside the height, with overhangs and caves as nodes and cave rooms joined by
-tunnels; rivers along valleys in endless worlds.
+blocks; cave rooms joined by tunnels, as a node; rivers along valleys in endless worlds.
 
 **Rendering.** CDLOD: a quadtree of patches, each a grid of 32 quads drawn from one index buffer, picked on the CPU
 for the camera and each sun cascade, each vertex sliding onto the next level's grid near its level's far distance.
@@ -2972,26 +2982,60 @@ Block worlds (`voxear_terrain::blocks`): chunks of 32³ blocks kept sparse by wh
 blocks in it and indices in as few bits as it needs; faces where a block meets air, shaded at their corners by the
 blocks closing them in and merged into quads by surface and shading (greedy meshing), two words a quad, kept by the
 way they face. A world's quads live in a pool of its own and are drawn six vertices a quad with no vertex buffer
-(`blocks.rs`, `shaders/blocks.slang`), each view drawing only the chunks in view and their faces turned towards it;
-each chunk's faces merged by surface alone are its collision mesh and its mesh for the GI's rays. A change remakes
+(`blocks.rs`, `shaders/blocks.slang`), each view drawing only the chunks in view and their faces turned towards it,
+and each sun cascade only their faces turned towards the sun;
+each chunk's faces merged by surface alone are its collision mesh and its mesh for the GI's rays, the shapes made on
+every core and kept while a chunk's triangles stay the same, the ray meshes made a few a frame and uploaded and built
+in one GPU batch (`Gpu::batch`). A world whose faces did not change costs physics and the renderer no walk over its
+chunks. A pool takes at most 16 MB of chunks a frame (`STAGED_A_FRAME`), grown once for all that are coming: each
+chunk shows as it was until its frame comes, and those the world no longer has go once all have come; a world whose
+blocks change size gets a new pool, and its old one is drawn until the new one has every chunk. In the editor, a
+world too large to make again within a frame is made on other threads and shown as it was until then
+(`block_props::Making`). A change remakes
 the chunks it reaches and those beside it it shades, on every core; changes are kept as what differs from what a
 world was made as (`blocks::edits`), in a `.blocks` file for the editor's and in a scene's save for scripts'.
-Generated block ground (`blocks::generate`) takes a world generator's heights a column at a time, pushed in and out
-by 3D noise and hollowed by caves, its top covered by kinds of block by climate and height. Generated ground without
+Generated block ground (`blocks::generate`) takes a world generator's heights a column at a time, and from its
+Volume how far into the ground each block is, which pushes cliffs in and out and hollows caves; a generator with no
+Volume has the world's own overhangs and caves wired into a copy of its graph as the nodes that make them, so both
+are made one way and a world with no overhangs keeps its blocks to the bit. Where the ground is the height alone a
+block's depth is how far under its column's height it is; where it is pushed, layers are counted down each column
+from the open air, and a world drawn smooth keeps each block's distance from the surface (the number over how fast
+it changes from block to block), lays its top layer along slopes as a skin and leaves walls bare. Its top is covered
+by kinds of block by climate and height. Generated ground without
 end streams chunk columns round the camera (`blocks::stream`), the world's own near, and beyond them rings of
-coarser chunks, each twice the last's block size, kept by level in the renderer's pool. Models of small coloured
-blocks come from `.vox` files (`blocks::vox`), each colour built as a kind of block. A world drawn smooth (a Voxel
+coarser chunks, each twice the last's block size, kept by level in the renderer's pool; near columns' blocks are made
+a column past those drawn, and each column's faces on the same background threads once the columns round it have
+blocks, so none is meshed twice and the frame waits for none. Models of small coloured
+blocks come from `.vox` files (`blocks::vox`), each colour built as a kind of the world's own. A block is an asset
+(`.block`, `blocks::block`): its look and liquid are read natively, by meshing, flow, physics and servers, and its
+rules (hardness, tool kind, tier, drops, sounds) are kept with them for scripts to apply. A world's file lists its
+blocks by reference; a block's number is its place in that list, which never changes, a place taken out left empty.
+The engine keeps the file as written and draws from a copy with each entry given its block's look
+(`voxear_engine::blocks::resolved`), made again for every world listing a block once the block is saved
+(`blocks::refresh`, by a version `Content` counts). A block placed in play that its world does not list is numbered
+in the game alone, and saved changes carry which block each such number is. Items, tool kinds, stations and recipes
+are C# Definitions of Voxear.Core's own, so games derive from them; `Blocks.Mine`, `Place`, `Scoop` and
+`Recipes.Match` apply the rules, and what holds items is a package's. A world drawn smooth (a Voxel
 Terrain) keeps how full each block is near its surface and is meshed by surface nets (`blocks::smooth`), drawn from
-the same pool as triangles' corners. A planet's ground lies all round its world's corner, its generator read round
+the same pool as triangles' corners; each chunk's triangles merged where the surface is flat (a tenth of a block),
+and twice more, coarser, for far away, the points beside another kind and those chunks share kept, so kinds blend
+where they did and any level meets any other; a view picks a chunk's level by its distance as models' are, and passes over a chunk whose
+triangles all face away (`ChunkMesh::cone`). A corner of the surface is the kind of the ground it passes beside:
+of the eight blocks round it, the least deep with a block that is not ground next to it, so a block deeper down
+that lies near another surface, a cave's roof under a hillside, does not show on the hill.
+A planet's ground lies all round its world's corner, its generator read round
 it in three dimensions on a cube's faces once; physics pulls bodies near it towards its middle, and characters near
 it stand away from its middle, their First-Person Views and Motion Matchers turning about that up
 (`PhysicsScene::gravity_at`, shared by all). Each chunk of cubes
 notes which of its sides see each other through its air, and each view draws only the chunks a walk from the
 camera's chunk through those reaches (`blocks::sight`). Kinds of block can be water (`BlockFaces::water`): the ground
 shows its faces where it meets water as where it meets air, and water's own faces, where it meets air, follow the
-ground's quads in a chunk's mesh and are no part of its triangles, so physics and the GI's rays pass through it. They
-are drawn with the Pools (`water::record`): first the farthest face turned from the camera at each pixel, which is
-where the view leaves the water, then the faces turned towards it shaded as still water over a copy of the picture.
+ground's quads in a chunk's mesh and are no part of its triangles, so physics and the GI's rays pass through it. In a
+world without end none faces a chunk column not made (`BlockWorld::columns`; drawn smooth, the water's surface reads
+one as the made column beside it), and every coarse ring's sea stands as high as the finest's, so the rings meet
+without walls or steps. Water's faces are drawn with the Pools (`water::record`): first the farthest face turned from
+the camera at each pixel, which is where the view leaves the water, then the faces turned towards it shaded as still
+water over a copy of the picture.
 Buoyancy pushes against the pull where a body is, as strongly as it pulls, reading how deep it is along the water's
 own up (`BlockWorld::water_depth`), so things float round a planet. Water flows (`blocks::flow`) from
 sources, down (towards a planet's middle) and then out over ground, a level lower each block, its level and way up kept

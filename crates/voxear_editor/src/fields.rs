@@ -584,6 +584,7 @@ pub fn asset_choices(game: &Game, types: &ScriptTypes, kind: &FieldKind) -> Vec<
         Some("Sound") => Some(AssetKind::Sound),
         Some("LightingSettings") => Some(AssetKind::Lighting),
         Some("MotionSet") => Some(AssetKind::MotionSet),
+        Some("Block") => Some(AssetKind::Block),
         Some("MotionSetState") => return set_parts(game, STATE_PART),
         Some("MotionAction") => return set_parts(game, ACTION_PART),
         Some("MotionMark") => return set_parts(game, MARK_PART),
@@ -596,7 +597,7 @@ pub fn asset_choices(game: &Game, types: &ScriptTypes, kind: &FieldKind) -> Vec<
 
 /// The project's data assets that hold `definition`, or a Definition
 /// deriving from it, by path, with nothing first.
-fn data_assets(game: &Game, types: &ScriptTypes, definition: &str) -> Vec<(String, Pick)> {
+pub(crate) fn data_assets(game: &Game, types: &ScriptTypes, definition: &str) -> Vec<(String, Pick)> {
     let db = game.content.db();
     let mut paths: Vec<String> = db
         .entries()
@@ -611,7 +612,7 @@ fn data_assets(game: &Game, types: &ScriptTypes, definition: &str) -> Vec<(Strin
 
 /// Whether the data asset `guid` holds `definition`, or one deriving from
 /// it, as its `type` names.
-fn holds(game: &Game, types: &ScriptTypes, guid: voxear_assets::AssetGuid, definition: &str) -> bool {
+pub(crate) fn holds(game: &Game, types: &ScriptTypes, guid: voxear_assets::AssetGuid, definition: &str) -> bool {
     let held = game.content.peek_data_type(guid);
     held.is_some_and(|held| held == definition || types.definition(&held).is_some_and(|d| d.is_a(definition)))
 }

@@ -4,6 +4,7 @@
 
 mod color_popup;
 mod component_clipboard;
+mod blocks;
 mod data_assets;
 mod debug_texts;
 mod desktop_windows;
@@ -1243,6 +1244,10 @@ impl Editor {
                 self.save_gun_handling(&path, &handling, rebuild);
             }
             AssetAction::SaveWorldGen { path, world, rebuild } => self.save_world_gen(&path, &world, rebuild),
+            AssetAction::SaveBlock { path, block, rebuild } => self.save_block(&path, &block, rebuild),
+            AssetAction::BrowseBlockRef { block, field, anchor } => self.browse_block_ref(&block, field, anchor),
+            AssetAction::DropBlockRef { block, field, source } => self.drop_block_ref(&block, field, &source),
+            AssetAction::MakeBlockItem(block) => self.make_block_item(&block),
             AssetAction::BrowsePromptIcon { icons, slot, anchor } => self.browse_prompt_icon(&icons, slot, anchor),
             AssetAction::DropPromptIcon { icons, slot, source } => self.drop_prompt_icon(&icons, &slot, &source),
             AssetAction::BrowseGunClip { handling, field, anchor } => self.browse_gun_clip(&handling, field, anchor),
@@ -2150,6 +2155,8 @@ impl Editor {
             Command::Undo | Command::Redo => {
                 // A field being typed in would keep its text over the undone value.
                 self.ui.blur();
+                // A world of blocks still being made from a new file is let go, so it shows what the history puts back.
+                crate::block_props::stop_making(&mut self.game.engine.world);
                 let game = &mut self.game;
                 let step = match command {
                     Command::Undo => self.history.undo(game, Some(renderer)),
@@ -2506,6 +2513,7 @@ impl Editor {
                 (PickFor::GunHandlingClip { handling, field }, Chosen::Value(pick)) => {
                     self.pick_gun_handling_clip(&handling, field, &pick);
                 }
+                (PickFor::BlockRef { block, field }, Chosen::Value(pick)) => self.pick_block_ref(&block, field, &pick),
                 (PickFor::PromptIcon { icons, slot }, Chosen::Value(pick)) => self.pick_prompt_icon(&icons, &slot, &pick),
                 (PickFor::InputPromptIcons, Chosen::Value(pick)) => self.pick_input_prompt_icons(&pick),
                 (PickFor::MaterialMap { material, map }, Chosen::Value(pick)) => {

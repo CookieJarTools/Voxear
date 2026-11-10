@@ -319,7 +319,26 @@ enum Commands {
         /// Trace the GI's rays in a compute shader, as GPUs without ray tracing do, even on one that has it.
         #[arg(long)]
         software_rays: bool,
+        /// Load this level rather than the project's start level, by its path in the project.
+        #[arg(long, value_name = "LEVEL")]
+        level: Option<String>,
+        /// Also time the CPU: loading, each frame's tick and render, and the profiler's samples in them.
+        #[arg(long)]
+        profile: bool,
+        /// Move the camera this many metres a second along x, y and z as the frames go, as `--fly 0,0,20`.
+        #[arg(long, value_name = "X,Y,Z", value_parser = parse_vector)]
+        fly: Option<voxear_core::math::Vec3>,
     },
+}
+
+/// Three numbers apart by commas, as `0,0,20`.
+fn parse_vector(text: &str) -> Result<voxear_core::math::Vec3, String> {
+    let numbers: Vec<f32> =
+        text.split(',').map(|v| v.trim().parse::<f32>().map_err(|e| e.to_string())).collect::<Result<_, _>>()?;
+    match numbers[..] {
+        [x, y, z] => Ok(voxear_core::math::Vec3::new(x, y, z)),
+        _ => Err(format!("three numbers apart by commas, not {text}")),
+    }
 }
 
 /// What to do before starting a project.
@@ -444,6 +463,9 @@ fn main() -> Result<()> {
             rate,
             software_rays,
             camera,
+            level,
+            profile,
+            fly,
         } => {
             let debug_view = match debug_view.as_str() {
                 "lod" => DEBUG_VIEW_LOD,
@@ -463,7 +485,21 @@ fn main() -> Result<()> {
             let mesh_shaders = !no_mesh_shaders;
             let delta = 1.0 / rate.clamp(1.0, 1000.0);
             let size = (width, height);
-            let shot = Shot { out, size, frames, every, delta, options, stats, mesh_shaders, software_rays, camera };
+            let shot = Shot {
+                out,
+                size,
+                frames,
+                every,
+                delta,
+                options,
+                stats,
+                mesh_shaders,
+                software_rays,
+                camera,
+                level,
+                profile,
+                fly,
+            };
             render(&project, shot, prepare, renderdoc)
         }
     }
@@ -586,10 +622,111 @@ struct Shot {
     camera: Option<String>,
     /// Trace the GI's rays in a compute shader even on a GPU with ray tracing.
     software_rays: bool,
+    /// The level to load in place of the start level.
+    level: Option<String>,
+    /// Time the CPU too.
+    profile: bool,
+    /// How fast the camera moves, in metres a second.
+    fly: Option<voxear_core::math::Vec3>,
 }
 
 /// How many of a render's last frames its timings are averaged over.
 const TIMED_FRAMES: u64 = 60;
+
+/// The CPU's time over a render with `--profile`: loading, each frame's
+/// tick and render, and the profiler's samples by where they ran, over every
+/// frame and over the timed ones.
+#[derive(Default)]
+struct CpuTimes {
+    load_ms: f32,
+    frames: u32,
+    /// Ticks and renders over every frame, the slowest of each, and over the timed frames.
+    all: [f32; 2],
+    slowest: [f32; 2],
+    timed: [f32; 2],
+    timed_frames: u32,
+    /// The first frame by which every world of blocks without end had made its chunks round the camera, once
+    /// any was making them: 0 while one still is.
+    streamed_by: Option<u32>,
+    /// Each sample by its path: milliseconds over every frame, the slowest frame's, and over the timed ones.
+    samples: Vec<(String, f32, f32, f32)>,
+}
+
+impl CpuTimes {
+    fn add_frame(&mut self, tick_ms: f32, render_ms: f32, timed: bool, streamed: bool) {
+        self.frames += 1;
+        for (i, ms) in [tick_ms, render_ms].into_iter().enumerate() {
+            self.all[i] += ms;
+            self.slowest[i] = self.slowest[i].max(ms);
+            if timed {
+                self.timed[i] += ms;
+            }
+        }
+        self.timed_frames += u32::from(timed);
+        match (streamed, self.streamed_by) {
+            (false, _) => self.streamed_by = Some(0),
+            (true, Some(0)) => self.streamed_by = Some(self.frames),
+            _ => {}
+        }
+    }
+
+    fn add_samples(&mut self, samples: &voxear_core::profiling::Samples, timed: bool) {
+        fn walk(samples: &voxear_core::profiling::Samples, node: usize, path: &str, out: &mut Vec<(String, f32)>) {
+            for &child in &samples.nodes[node].children {
+                let name =
+                    if path.is_empty() { samples.name(child) } else { format!("{path} / {}", samples.name(child)) };
+                out.push((name.clone(), samples.total_ms(child)));
+                walk(samples, child, &name, out);
+            }
+        }
+        let mut found = Vec::new();
+        walk(samples, voxear_core::profiling::Samples::FRAME, "", &mut found);
+        for (path, ms) in found {
+            let at = match self.samples.iter().position(|(kept, ..)| *kept == path) {
+                Some(at) => at,
+                None => {
+                    self.samples.push((path, 0.0, 0.0, 0.0));
+                    self.samples.len() - 1
+                }
+            };
+            let kept = &mut self.samples[at];
+            kept.1 += ms;
+            kept.2 = kept.2.max(ms);
+            if timed {
+                kept.3 += ms;
+            }
+        }
+    }
+
+    fn print(&self) {
+        let frames = self.frames.max(1) as f32;
+        let timed = self.timed_frames.max(1) as f32;
+        println!(
+            "CPU time: loading {:.1} ms; over {} frames, then the last {}:",
+            self.load_ms, self.frames, self.timed_frames
+        );
+        for (i, name) in ["tick", "render"].iter().enumerate() {
+            println!(
+                "  {name:<12} {:>8.2} ms a frame (slowest {:.2}) · {:>8.2} ms",
+                self.all[i] / frames,
+                self.slowest[i],
+                self.timed[i] / timed
+            );
+        }
+        match self.streamed_by {
+            Some(0) => println!("  worlds of blocks without end still making chunks round the camera"),
+            Some(by) => println!("  worlds of blocks without end made round the camera by frame {by}"),
+            None => {}
+        }
+        let mut samples = self.samples.clone();
+        samples.retain(|(_, all, ..)| *all >= 0.5);
+        samples.sort_by(|a, b| b.1.total_cmp(&a.1));
+        println!("  samples, in all · slowest frame · a timed frame:");
+        for (path, all, slowest, last) in samples.iter().take(40) {
+            println!("    {path:<60} {all:>9.1} ms · {slowest:>8.2} · {:>7.3}", last / timed);
+        }
+    }
+}
 
 /// Each pass's GPU time added up over frames, by its place in the frame,
 /// as passes such as Bloom down come several times.
@@ -621,15 +758,40 @@ impl TimingAverage {
 }
 
 fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<()> {
-    let Shot { out, size: (width, height), frames, every, delta, options, stats, mesh_shaders, software_rays, camera } =
-        shot;
-    let project = Project::open(path)?;
+    let Shot {
+        out,
+        size: (width, height),
+        frames,
+        every,
+        delta,
+        options,
+        stats,
+        mesh_shaders,
+        software_rays,
+        camera,
+        level,
+        profile,
+        fly,
+    } = shot;
+    let mut project = Project::open(path)?;
+    if level.is_some() {
+        project.file.project.start_level = level;
+    }
     let settings = RendererSettings { software_rays, ..renderer_settings(&project, renderdoc) };
     let mut game = start_game(project, prepare)?;
     let mut renderer = Renderer::new_offscreen(width, height, &settings)?;
     renderer.set_view_options(options);
     renderer.set_mesh_shaders(mesh_shaders);
+    let mut cpu = profile.then(CpuTimes::default);
+    if profile {
+        voxear_core::profiling::set_enabled(true);
+    }
+    let loading = std::time::Instant::now();
     game.start(Some(&mut renderer))?;
+    if let Some(cpu) = &mut cpu {
+        cpu.load_ms = loading.elapsed().as_secs_f32() * 1000.0;
+        cpu.add_samples(&voxear_core::profiling::end_frame(), false);
+    }
     let mut looking_through = None;
     if let Some(name) = &camera {
         let world = &game.engine.world;
@@ -643,8 +805,22 @@ fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<
     // Each pass's time over the last frames, averaged, as one frame's alone varies by a lot.
     let mut timed = TimingAverage::default();
     let mut frame_gpu = Vec::new();
+    // The camera that flies: the one looked through, or the first.
+    let flying = fly.and_then(|velocity| {
+        let world = &game.engine.world;
+        let first =
+            || world.query_ref::<(voxear_ecs::Entity, &voxear_render::Camera)>().into_iter().next().map(|(e, _)| e);
+        looking_through.or_else(first).map(|camera| (camera, velocity))
+    });
     for frame in 1..=frames {
+        if let Some((camera, velocity)) = flying
+            && let Some(transform) = game.engine.world.get_mut::<Transform>(camera)
+        {
+            transform.position += velocity * delta;
+        }
+        let ticking = std::time::Instant::now();
         game.tick(delta, Some(&mut renderer));
+        let tick_ms = ticking.elapsed().as_secs_f32() * 1000.0;
         // UI Panels in the world, with nothing pointing at them.
         let view = [0.0, 0.0, width as f32, height as f32];
         game.show_panels(&mut renderer, (view, looking_through), None, delta)?;
@@ -658,10 +834,17 @@ fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<
         if capture {
             renderer.start_capture();
         }
+        let rendering = std::time::Instant::now();
         renderer.render(&game.engine.world, game.engine.time().elapsed as f32)?;
-        if frame + TIMED_FRAMES > frames {
+        let render_ms = rendering.elapsed().as_secs_f32() * 1000.0;
+        let timing = frame + TIMED_FRAMES > frames;
+        if timing {
             timed.add(renderer.timings());
             frame_gpu.push(renderer.gpu_frame_ms());
+        }
+        if let Some(cpu) = &mut cpu {
+            cpu.add_frame(tick_ms, render_ms, timing, voxear_engine::blocks::streamed(&game.engine.world));
+            cpu.add_samples(&voxear_core::profiling::end_frame(), timing);
         }
         if capture && let Some(path) = renderer.end_capture() {
             println!("RenderDoc capture: {}", path.display());
@@ -714,6 +897,16 @@ fn render(path: &Path, shot: Shot, prepare: Prepare, renderdoc: bool) -> Result<
         "lights: up to {} per cluster · {} light-cluster links",
         stats.cluster_max_lights, stats.cluster_light_links
     );
+    let blocks = stats.blocks;
+    if blocks.draws + blocks.shadow_draws > 0 {
+        println!(
+            "blocks: {} triangles in {} draws · {} of water · {} triangles in {} shadow draws",
+            blocks.triangles, blocks.draws, blocks.water_triangles, blocks.shadow_triangles, blocks.shadow_draws
+        );
+    }
+    if let Some(cpu) = &cpu {
+        cpu.print();
+    }
     let lods: Vec<String> =
         stats.lods.iter().enumerate().filter(|(_, n)| **n > 0).map(|(i, n)| format!("LOD{i} {n}")).collect();
     println!("LODs: {}", if lods.is_empty() { "none".into() } else { lods.join(" · ") });
@@ -1050,6 +1243,7 @@ fn assets(path: &Path) -> Result<()> {
             AssetKind::PromptIcons => "prompts",
             AssetKind::WorldGen => "worldgen",
             AssetKind::BlockWorld => "blockworld",
+            AssetKind::Block => "block",
             AssetKind::VoxModel => "vox",
         };
         println!("  {:<9} {}  {}", kind, entry.guid, entry.path);

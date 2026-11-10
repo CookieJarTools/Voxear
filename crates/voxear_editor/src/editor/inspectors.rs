@@ -15,6 +15,7 @@ use voxear_ui::{NodeId, Style};
 
 use super::Editor;
 use crate::{
+    history::{Edit, ObjState},
     inspector::{Field, Inspector},
     lod_inspector::{self, LodEdge, LodEye},
 };
@@ -88,11 +89,30 @@ impl Editor {
         if !playing && voxear_engine::animation::clips_found_for_scripts(&mut self.game.engine.world) {
             self.inspectors_mut().for_each(Inspector::ask_scripts_again);
         }
+        if !playing {
+            self.finish_block_worlds(renderer);
+        }
         self.inspector_frame(renderer, playing);
         for index in 0..self.extra_inspectors.len() {
             std::mem::swap(&mut self.inspector, &mut self.extra_inspectors[index].inspector);
             self.inspector_frame(renderer, playing);
             std::mem::swap(&mut self.inspector, &mut self.extra_inspectors[index].inspector);
+        }
+    }
+
+    /// Puts in each world of blocks made on other threads from a file
+    /// changed in the Inspector (see `block_props::finish`), each an edit to
+    /// undo, from what it showed until then.
+    fn finish_block_worlds(&mut self, renderer: &mut Renderer) {
+        for entity in crate::block_props::made(&self.game.engine.world) {
+            let before = ObjState::of(&self.game.engine.world, entity);
+            if !crate::block_props::finish(&mut self.game, Some(renderer), entity) {
+                continue;
+            }
+            if let (Some(before), Some(after)) = (before, ObjState::of(&self.game.engine.world, entity)) {
+                self.history.record(Edit::Changed { entity, before, after });
+                self.unsaved = true;
+            }
         }
     }
 

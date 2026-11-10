@@ -9,6 +9,13 @@
 //! and so does whatever it makes ground for: its seed, its scale (how large
 //! everything along the ground is) and its sea level.
 //!
+//! The Output also takes a Volume, the ground in three dimensions, for
+//! worlds of blocks: how many metres into the ground each place in space
+//! is. Its nodes (`nodes/solid.rs` and those beside it) push cliffs in and
+//! out and hollow caves, and it is asked once a column and then once a
+//! cell ([`Volume`]). A world of blocks whose generator has none wires its
+//! own overhangs and caves in as those nodes ([`Graph::add_voxels`]).
+//!
 //! The simplest graph is a [`Landmass`] wired to the Output with a Climate
 //! beside it: continents, ranges and gullies in one node, and all a
 //! generator was before it was a graph. A file written then reads as that
@@ -29,10 +36,12 @@ mod eval;
 mod graph;
 mod landmass;
 pub mod nodes;
+mod voxels;
 mod world;
 
 pub use compile::Fault;
 pub use graph::{Exposed, Graph, Link, Node, NodeId};
 pub use landmass::{Climate, Erosion, Field, Landmass, POLES_COLDER, Preset, Sample, Warp, smooth};
 pub use nodes::{NodeKind, Port, PortKind, Value, ValueKind, ValueSpec};
-pub use world::WorldGen;
+pub use voxels::OwnVoxels;
+pub use world::{Carried, Cells, Volume, WorldGen};

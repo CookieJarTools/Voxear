@@ -12,7 +12,7 @@ use std::sync::{Arc, OnceLock};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    compile::{self, Compiled, Fault, World},
+    compile::{self, Compiled, Fault, Voxels, World},
     eval::{Givens, Program},
     graph::{Graph, NodeId, Written, WrittenExposed, WrittenLink, WrittenNode},
     landmass::{Landmass, Preset},
@@ -49,6 +49,217 @@ pub struct Preview {
     pub node: NodeId,
     pub output: usize,
     pub values: Vec<f32>,
+}
+
+/// How far under the ground the cells a Volume's preview shows are, in
+/// metres: deep enough to be under a cave's roof.
+const PREVIEW_UNDER: f32 = 8.0;
+
+/// A generator's Volume: the ground in three dimensions, for worlds of
+/// blocks. It is asked in two steps. First what it reads of each column of
+/// ground, once a column ([`Volume::carried`]); then how far into the
+/// ground cells are, given their columns' rows ([`Volume::densities`]).
+#[derive(Clone, Copy, Debug)]
+pub struct Volume<'a> {
+    flat: &'a Voxels,
+    round: &'a Voxels,
+    /// The generator's own heights on flat ground.
+    height: &'a Program,
+}
+
+/// How many columns of a grid apart the rows that may be read between
+/// columns are made (see [`Volume::carried_grid`]).
+const BETWEEN: i32 = 4;
+
+/// What a Volume reads of the columns of ground asked about, made once for
+/// each: rows of numbers, one a column in each.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Carried {
+    rows: Vec<Vec<f32>>,
+}
+
+impl Carried {
+    /// The rows, each with a number for every column asked about.
+    pub fn rows(&self) -> &[Vec<f32>] {
+        &self.rows
+    }
+
+    /// Column `at`'s number in every row, each as a row of one: what
+    /// [`Cells::carried`] takes for cells up that column.
+    pub fn column(&self, at: usize) -> Vec<&[f32]> {
+        self.rows.iter().map(|row| &row[at..=at]).collect()
+    }
+}
+
+/// The cells a Volume is asked about: rows of where their middles are, the
+/// rows carried up from their columns, and their size, in metres. A row of
+/// one number stands for every cell, as a column's `x` and `z` and its
+/// carried rows do for the cells up it.
+#[derive(Clone, Copy, Debug)]
+pub struct Cells<'a> {
+    pub x: &'a [f32],
+    pub y: &'a [f32],
+    pub z: &'a [f32],
+    pub carried: &'a [&'a [f32]],
+    pub size: f32,
+}
+
+impl Volume<'_> {
+    /// Whether the ground under its caves is the generator's height made
+    /// solid and nothing more: a cell's number there is then its depth
+    /// under its column's surface.
+    pub fn plain(&self) -> bool {
+        self.flat.plain
+    }
+
+    /// Whether anything is taken out of its ground: whether it has caves.
+    /// Without any, and [`Volume::plain`], a cell is as far into the
+    /// ground as its column's height is over it, and there is nothing to
+    /// ask.
+    pub fn caved(&self) -> bool {
+        self.flat.caved
+    }
+
+    /// How far over a column's ground its cells may be solid, in metres.
+    pub fn reach(&self) -> f32 {
+        self.flat.reach
+    }
+
+    /// What it reads of the columns at each `(xs[i], zs[i])`, in metres in
+    /// the generator's world, whose ground is `heights[i]` high: the
+    /// generator's own heights there.
+    pub fn carried(&self, xs: &[f32], zs: &[f32], heights: &[f32]) -> Carried {
+        let count = xs.len().min(zs.len()).min(heights.len());
+        made(&self.flat.columns, count, Givens { x: xs, z: zs, ground: heights, ..Givens::default() })
+    }
+
+    /// What it reads of a grid of columns, as [`Volume::carried`] gives it
+    /// for each, but for the rows that change slowly from column to column
+    /// (masks, such as where the ground is steep), which are made at every
+    /// fourth column of the grid, counted from column 0, and read between
+    /// those. They are what is slow to make, each from the ground's height
+    /// at several places.
+    ///
+    /// The grid is `count[0]` columns along x by `count[1]` along z, from
+    /// column `first`; column `v` along axis `axis` (0 for x, 1 for z) lies
+    /// at `place(axis, v)` metres in the generator's world; `heights` are
+    /// the generator's own there, a row along x after another. A column's
+    /// numbers are the same whatever grid it is asked for in.
+    pub fn carried_grid(
+        &self,
+        first: [i32; 2],
+        count: [usize; 2],
+        place: impl Fn(usize, i32) -> f32,
+        heights: &[f32],
+    ) -> Carried {
+        let columns = |axis: usize| (0..count[axis] as i32).map(move |v| first[axis] + v);
+        let (xs, zs): (Vec<f32>, Vec<f32>) =
+            columns(1).flat_map(|z| columns(0).map(move |x| (x, z))).map(|(x, z)| (place(0, x), place(1, z))).unzip();
+        let all = xs.len().min(heights.len());
+        let voxels = self.flat;
+        let mut exact = made(&voxels.exact, all, Givens { x: &xs, z: &zs, ground: heights, ..Givens::default() }).rows;
+        if !voxels.between.contains(&true) || all == 0 {
+            return Carried { rows: exact };
+        }
+        // The columns the slow rows are made at: every fourth, from the last at or before the grid's first to
+        // the first at or after its last.
+        let lines = |axis: usize| {
+            let from = first[axis].div_euclid(BETWEEN) * BETWEEN;
+            let last = first[axis] + count[axis] as i32 - 1;
+            (from, ((last - from + BETWEEN - 1) / BETWEEN + 1) as usize)
+        };
+        let ((from_x, wide), (from_z, deep)) = (lines(0), lines(1));
+        let at = |from: i32, line: usize| from + line as i32 * BETWEEN;
+        let (lx, lz): (Vec<f32>, Vec<f32>) = (0..deep)
+            .flat_map(|z| (0..wide).map(move |x| (x, z)))
+            .map(|(x, z)| (place(0, at(from_x, x)), place(1, at(from_z, z))))
+            .unzip();
+        let mut ground = Vec::new();
+        if voxels.spread.reads(crate::generate::eval::Given::Ground) {
+            ground = vec![0.0; lx.len()];
+            self.height.run(lx.len(), Givens { x: &lx, z: &lz, ..Givens::default() }, &mut [&mut ground]);
+        }
+        let given = Givens { x: &lx, z: &lz, ground: &ground, ..Givens::default() };
+        let spread = made(&voxels.spread, lx.len(), given).rows;
+        // Each column's number read between the four made round it.
+        let between = |row: &[f32]| -> Vec<f32> {
+            let mut read = Vec::with_capacity(all);
+            for z in columns(1) {
+                let (line_z, part_z) = ((z - from_z).div_euclid(BETWEEN) as usize, (z - from_z).rem_euclid(BETWEEN));
+                for x in columns(0) {
+                    let (line_x, part_x) =
+                        ((x - from_x).div_euclid(BETWEEN) as usize, (x - from_x).rem_euclid(BETWEEN));
+                    let along = |line_z: usize| {
+                        let a = row[line_z * wide + line_x];
+                        if part_x == 0 {
+                            a
+                        } else {
+                            a + (row[line_z * wide + line_x + 1] - a) * (part_x as f32 / BETWEEN as f32)
+                        }
+                    };
+                    let a = along(line_z);
+                    read.push(if part_z == 0 {
+                        a
+                    } else {
+                        a + (along(line_z + 1) - a) * (part_z as f32 / BETWEEN as f32)
+                    });
+                }
+            }
+            read
+        };
+        let mut spread = spread.iter().map(|row| between(row));
+        let rows = voxels.between.iter().map(|between| if *between { spread.next() } else { Some(exact.remove(0)) });
+        Carried { rows: rows.map(Option::unwrap_or_default).collect() }
+    }
+
+    /// What it reads of the columns out through each of `at` on the surface
+    /// of a planet of `radius` metres, whose ground is `heights[i]` high
+    /// (see [`WorldGen::height_round`]).
+    pub fn carried_round(&self, at: &[[f32; 3]], heights: &[f32], radius: f32) -> Carried {
+        let count = at.len().min(heights.len());
+        let [x, y, z] = apart(&at[..count]);
+        made(&self.round.columns, count, Givens { x: &x, y: &y, z: &z, ground: heights, radius, ..Givens::default() })
+    }
+
+    /// How far into the ground each of `cells` is, in metres, out of it
+    /// where negative, into `density`; and into `ground` the same with its
+    /// caves left whole, which tells the open air (out of both) from a
+    /// cave's. A `coarse` asking leaves the caves out of both, as far
+    /// levels of a world of blocks do. Their `x` and `z` are metres in the
+    /// generator's world, their `y` metres up.
+    ///
+    /// The numbers are exact within a cell of a surface. Further in or out
+    /// they say which side a cell is on, and no less than a cell.
+    pub fn densities(&self, cells: Cells, coarse: bool, density: &mut [f32], ground: &mut [f32]) {
+        run_cells(self.flat, cells, 0.0, coarse, density, ground);
+    }
+
+    /// How far into the ground each of `cells` round a planet of `radius`
+    /// metres is (see [`Volume::densities`]): their `x`, `y` and `z` are
+    /// metres from its middle.
+    pub fn densities_round(&self, cells: Cells, radius: f32, coarse: bool, density: &mut [f32], ground: &mut [f32]) {
+        run_cells(self.round, cells, radius, coarse, density, ground);
+    }
+}
+
+/// The rows `columns` makes over `count` columns.
+fn made(columns: &Program, count: usize, given: Givens) -> Carried {
+    let mut rows = vec![vec![0.0; count]; columns.outputs.len()];
+    let mut outs: Vec<&mut [f32]> = rows.iter_mut().map(Vec::as_mut_slice).collect();
+    columns.run(count, given, &mut outs);
+    Carried { rows }
+}
+
+fn run_cells(voxels: &Voxels, cells: Cells, radius: f32, coarse: bool, density: &mut [f32], ground: &mut [f32]) {
+    let count = density.len().min(ground.len());
+    let Cells { x, y, z, carried, size } = cells;
+    let given = Givens { x, y, z, carried, size, radius, ..Givens::default() };
+    if coarse {
+        voxels.coarse.run(count, given, &mut [&mut ground[..count]]);
+        density[..count].copy_from_slice(&ground[..count]);
+    } else {
+        voxels.cells.run(count, given, &mut [&mut density[..count], &mut ground[..count]]);
+    }
 }
 
 /// A generator as its file keeps it.
@@ -109,6 +320,10 @@ impl WorldGen {
         for program in [&flat.height, &flat.climate, &round.height, &round.climate] {
             bytes.extend(program.hash.to_le_bytes());
         }
+        // A generator with no Volume keeps the hash it had before there were any.
+        for voxels in [&flat.volume, &round.volume].into_iter().flatten() {
+            bytes.extend(voxels.hash.to_le_bytes());
+        }
         let hash = crate::layers::stable_hash(&bytes);
         Self {
             seed,
@@ -143,6 +358,16 @@ impl WorldGen {
     /// them differs, and the same on every machine.
     pub fn hash(&self) -> u64 {
         self.made.hash
+    }
+
+    /// Its Volume, the ground in three dimensions, where its Output has one
+    /// wired in.
+    pub fn volume(&self) -> Option<Volume<'_>> {
+        Some(Volume {
+            flat: self.made.flat.volume.as_ref()?,
+            round: self.made.round.volume.as_ref()?,
+            height: &self.made.flat.height,
+        })
     }
 
     /// What is wrong with its graph: nothing, for one that is whole.
@@ -260,22 +485,26 @@ impl WorldGen {
     pub fn climates_round(&self, at: &[[f32; 3]], heights: &[f32], warmth: &mut [f32], wetness: &mut [f32]) {
         let count = at.len().min(heights.len()).min(warmth.len()).min(wetness.len());
         let [x, y, z] = apart(&at[..count]);
-        let given = Givens { x: &x, y: &y, z: &z, ground: heights };
+        let given = Givens { x: &x, y: &y, z: &z, ground: heights, ..Givens::default() };
         self.made.round.climate.run(count, given, &mut [warmth, wetness]);
     }
 
     /// What every output of every node makes at each `(xs[i], zs[i])`, in
     /// the order of the nodes' numbers: for the graph editor's previews.
-    /// Nodes reading the ground asked about read the generator's own.
+    /// Nodes reading the ground asked about read the generator's own. A
+    /// Volume shows a slice following the ground, 8 m under it, in cells of
+    /// a metre: deep enough to cut through its caves.
     pub fn previews(&self, xs: &[f32], zs: &[f32]) -> Vec<Preview> {
         let world = World { seed: self.seed, scale: self.scale, sea_level: self.sea_level };
         let (program, which) = self.made.previews.get_or_init(|| compile::compile_all(&self.graph, world));
         let count = xs.len().min(zs.len());
         let mut ground = vec![0.0; count];
         self.heights(xs, zs, &mut ground);
+        let under: Vec<f32> = ground.iter().map(|height| height - PREVIEW_UNDER).collect();
         let mut rows = vec![vec![0.0; count]; which.len()];
         let mut outs: Vec<&mut [f32]> = rows.iter_mut().map(Vec::as_mut_slice).collect();
-        program.run(count, Givens { x: xs, z: zs, ground: &ground, ..Givens::default() }, &mut outs);
+        let given = Givens { x: xs, y: &under, z: zs, ground: &ground, size: 1.0, ..Givens::default() };
+        program.run(count, given, &mut outs);
         which.iter().zip(rows).map(|(&(node, output), values)| Preview { node, output, values }).collect()
     }
 
@@ -309,13 +538,16 @@ fn apart(at: &[[f32; 3]]) -> [Vec<f32>; 3] {
 mod tests {
     use super::*;
     use crate::generate::{
-        Link, NodeKind,
-        nodes::{Constant, Land, Math, Noise, Operation, Output, Remap},
+        Link, NodeKind, OwnVoxels,
+        nodes::{Combine, Combining, Constant, Land, Math, Noise, Noise3d, Operation, Output, Remap},
     };
 
     fn bits(values: &[f32]) -> Vec<u32> {
         values.iter().map(|value| value.to_bits()).collect()
     }
+
+    /// The hash of the Alpine preset's generator as it was before generators had Volumes.
+    const ALPINE_HASH: u64 = 0x5331_b75a_e91a_a738;
 
     /// Hills of noise shaped by a curve, raised by a constant: a graph of every plain kind of node.
     fn hills() -> WorldGen {
@@ -331,6 +563,261 @@ mod tests {
         assert!(graph.connect(scaled, 0, sum, 0) && graph.connect(base, 0, sum, 1));
         assert!(graph.connect(sum, 0, output, Output::HEIGHT));
         WorldGen::new(5, 1.0, 3.0, graph)
+    }
+
+    /// The hills with a Volume of every kind of Volume node: their ground made solid, pushed by overhangs,
+    /// hollowed by tunnels and chambers, and rock of noise through space run into it.
+    fn hollow_hills() -> WorldGen {
+        let hills = hills();
+        let mut graph = hills.graph().clone();
+        assert!(graph.add_voxels(OwnVoxels { overhangs: 6.0, caves: 0.6, roof: 3.0 }, true));
+        let output = graph.output().unwrap().id;
+        let hollowed = graph.link_into(output, Output::VOLUME).unwrap().from;
+        let rock = Noise3d { size: 30.0, low: -20.0, high: 4.0, ..Noise3d::default() };
+        let rock = graph.add(NodeKind::Noise3d(rock), [0.0, 900.0]);
+        let joined = Combine { operation: Combining::Smooth, blend: 3.0 };
+        let joined = graph.add(NodeKind::Combine(joined), [300.0, 900.0]);
+        assert!(graph.connect(hollowed, 0, joined, Combine::A) && graph.connect(rock, 0, joined, Combine::B));
+        assert!(graph.connect(joined, 0, output, Output::VOLUME));
+        hills.with_graph(graph)
+    }
+
+    #[test]
+    fn cells_asked_together_get_the_bits_each_gets_alone_flat_and_round() {
+        let world = hollow_hills();
+        assert!(world.faults().is_empty(), "{:?}", world.faults());
+        let volume = world.volume().expect("a Volume wired in");
+        assert!(!volume.plain() && volume.reach() > 6.0);
+        let radius = 400.0;
+        for count in [1usize, 7, 289, 513, 1500] {
+            // Cells scattered through the ground and the air over it, each in a column of its own.
+            let xs: Vec<f32> = (0..count).map(|i| i as f32 * 3.7 - 600.0).collect();
+            let zs: Vec<f32> = (0..count).map(|i| 250.0 - i as f32 * 1.3).collect();
+            let mut heights = vec![0.0; count];
+            world.heights(&xs, &zs, &mut heights);
+            let ys: Vec<f32> = (0..count).map(|i| heights[i] + 9.0 - (i % 23) as f32).collect();
+            let carried = volume.carried(&xs, &zs, &heights);
+            assert!(carried.rows().len() >= 2, "the ground's height and the overhangs' mask at least");
+            let rows: Vec<&[f32]> = carried.rows().iter().map(Vec::as_slice).collect();
+            for (coarse, size) in [(false, 1.0), (true, 4.0), (false, 0.5)] {
+                let (mut inside, mut ground) = (vec![0.0; count], vec![0.0; count]);
+                let cells = Cells { x: &xs, y: &ys, z: &zs, carried: &rows, size };
+                volume.densities(cells, coarse, &mut inside, &mut ground);
+                let (mut alone, mut alone_ground) = (vec![0.0; count], vec![0.0; count]);
+                for i in 0..count {
+                    // One cell, its column's place and rows each a row of one.
+                    let cells =
+                        Cells { x: &xs[i..=i], y: &ys[i..=i], z: &zs[i..=i], carried: &carried.column(i), size };
+                    volume.densities(cells, coarse, &mut alone[i..=i], &mut alone_ground[i..=i]);
+                }
+                assert_eq!(bits(&inside), bits(&alone), "{count} cells, coarse {coarse}");
+                assert_eq!(bits(&ground), bits(&alone_ground));
+                // The caves are only ever taken out of the ground, and a coarse asking leaves them in it.
+                assert!(inside.iter().zip(&ground).all(|(inside, ground)| inside <= ground));
+                assert!(!coarse || bits(&inside) == bits(&ground));
+                assert!(coarse || count < 200 || bits(&inside) != bits(&ground), "caves among {count} cells");
+            }
+            // Round a planet, cells along ways out from its middle.
+            let ways: Vec<[f32; 3]> = (0..count)
+                .map(|i| {
+                    let way = [
+                        (i as f32 * 0.37).fract() - 0.5,
+                        (i as f32 * 0.61).fract() - 0.5,
+                        (i as f32 * 0.83).fract() - 0.4,
+                    ];
+                    let long = way.iter().map(|v| v * v).sum::<f32>().sqrt();
+                    way.map(|v| v / long)
+                })
+                .collect();
+            let on: Vec<[f32; 3]> = ways.iter().map(|way| way.map(|v| v * radius)).collect();
+            world.heights_round(&on, &mut heights);
+            let carried = volume.carried_round(&on, &heights, radius);
+            let rows: Vec<&[f32]> = carried.rows().iter().map(Vec::as_slice).collect();
+            let out = |i: usize| radius + heights[i] - world.sea_level() + 7.0 - (i % 19) as f32;
+            let [x, y, z] = [0, 1, 2].map(|axis| (0..count).map(|i| ways[i][axis] * out(i)).collect::<Vec<f32>>());
+            let (mut inside, mut ground) = (vec![0.0; count], vec![0.0; count]);
+            volume.densities_round(
+                Cells { x: &x, y: &y, z: &z, carried: &rows, size: 1.0 },
+                radius,
+                false,
+                &mut inside,
+                &mut ground,
+            );
+            let (mut alone, mut alone_ground) = (vec![0.0; count], vec![0.0; count]);
+            for i in 0..count {
+                let cells = Cells { x: &x[i..=i], y: &y[i..=i], z: &z[i..=i], carried: &carried.column(i), size: 1.0 };
+                volume.densities_round(cells, radius, false, &mut alone[i..=i], &mut alone_ground[i..=i]);
+            }
+            assert_eq!(bits(&inside), bits(&alone), "{count} cells round a planet");
+            assert_eq!(bits(&ground), bits(&alone_ground));
+            if count > 100 {
+                for found in [&inside, &ground] {
+                    assert!(found.iter().any(|&v| v > 0.0) && found.iter().any(|&v| v < 0.0), "ground and air");
+                }
+            }
+        }
+        // A column's cells asked for at once, its place and rows each one number: what block worlds ask.
+        let (x, z) = (40.0, -75.0);
+        let height = world.height_at(x, z);
+        let carried = volume.carried(&[x], &[z], &[height]);
+        let ys: Vec<f32> = (0..600).map(|i| height + 12.0 - i as f32 * 0.5).collect();
+        let (mut inside, mut ground) = (vec![0.0; 600], vec![0.0; 600]);
+        let column = Cells { x: &[x], y: &ys, z: &[z], carried: &carried.column(0), size: 0.5 };
+        volume.densities(column, false, &mut inside, &mut ground);
+        for i in [0usize, 77, 511, 512, 599] {
+            let (mut one, mut one_ground) = ([0.0], [0.0]);
+            volume.densities(Cells { y: &ys[i..=i], ..column }, false, &mut one, &mut one_ground);
+            assert_eq!((one[0].to_bits(), one_ground[0].to_bits()), (inside[i].to_bits(), ground[i].to_bits()));
+        }
+        // And the same from every core at once as from one.
+        let world = Arc::new(world);
+        let columns: Vec<u32> = (0..64).collect();
+        let column = |&j: &u32| -> Vec<u32> {
+            let volume = world.volume().unwrap();
+            let (x, z) = (j as f32 * 9.0, 30.0 - j as f32 * 4.0);
+            let height = world.height_at(x, z);
+            let carried = volume.carried(&[x], &[z], &[height]);
+            let ys: Vec<f32> = (0..200).map(|i| height + 10.0 - i as f32).collect();
+            let (mut inside, mut ground) = (vec![0.0; 200], vec![0.0; 200]);
+            let cells = Cells { x: &[x], y: &ys, z: &[z], carried: &carried.column(0), size: 1.0 };
+            volume.densities(cells, false, &mut inside, &mut ground);
+            bits(&inside)
+        };
+        assert_eq!(crate::workers::each(&columns, column), columns.iter().map(column).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn a_grid_of_columns_reads_its_masks_between_every_fourth_and_is_the_same_in_any_grid() {
+        // Hills steep enough for overhangs to push: 150 m high and 60 m across.
+        let mut graph = Graph::default();
+        let steep = Noise { size: 60.0, octaves: 1, high: 150.0, ..Noise::default() };
+        let (ground, output) = (
+            graph.add(NodeKind::Noise(steep), [0.0, 0.0]),
+            graph.add(NodeKind::Output(Output::default()), [300.0, 0.0]),
+        );
+        assert!(graph.connect(ground, 0, output, Output::HEIGHT));
+        assert!(graph.add_voxels(OwnVoxels { overhangs: 6.0, caves: 0.5, roof: 3.0 }, false));
+        let world = WorldGen::new(5, 1.0, 0.0, graph);
+        let volume = world.volume().unwrap();
+        let place = |axis: usize, v: i32| [30.0, -200.0][axis] + (v as f32 + 0.5) * 2.0;
+        let grid = |first: [i32; 2], count: [usize; 2]| {
+            let columns = |axis: usize| (0..count[axis] as i32).map(move |v| first[axis] + v);
+            let at: Vec<(i32, i32)> = columns(1).flat_map(|z| columns(0).map(move |x| (x, z))).collect();
+            let (xs, zs): (Vec<f32>, Vec<f32>) = at.iter().map(|&(x, z)| (place(0, x), place(1, z))).unzip();
+            let mut heights = vec![0.0; at.len()];
+            world.heights(&xs, &zs, &mut heights);
+            let exact = volume.carried(&xs, &zs, &heights);
+            (at, volume.carried_grid(first, count, place, &heights), exact)
+        };
+        let (at, read, exact) = grid([-5, 30], [34, 34]);
+        assert_eq!(read.rows().len(), exact.rows().len());
+        let mut masks = 0;
+        for (read, exact) in read.rows().iter().zip(exact.rows()) {
+            if bits(read) == bits(exact) {
+                continue;
+            }
+            // A mask: as made at every fourth column, and between those near what it would be made there.
+            masks += 1;
+            let mut apart = 0.0;
+            for (i, &(x, z)) in at.iter().enumerate() {
+                if x.rem_euclid(4) == 0 && z.rem_euclid(4) == 0 {
+                    assert_eq!(read[i].to_bits(), exact[i].to_bits(), "column {x}, {z}");
+                }
+                assert!((0.0..=1.0).contains(&read[i]), "column {x}, {z}");
+                apart += (read[i] - exact[i]).abs();
+            }
+            assert!(apart / (at.len() as f32) < 0.1, "{} from the mask made at each column", apart / at.len() as f32);
+            assert!(exact.iter().any(|&mask| mask > 0.5) && exact.contains(&0.0));
+        }
+        assert_eq!(masks, 1, "the overhangs' mask of steep ground");
+        // A column has the same numbers whichever grid it is asked for in: chunks made apart agree.
+        let (other_at, other, _) = grid([20, 11], [33, 40]);
+        let mut shared = 0;
+        for (i, place) in at.iter().enumerate() {
+            let Some(j) = other_at.iter().position(|other| other == place) else { continue };
+            shared += 1;
+            for (row, other) in read.rows().iter().zip(other.rows()) {
+                assert_eq!(row[i].to_bits(), other[j].to_bits(), "column {place:?}");
+            }
+        }
+        assert!(shared > 100);
+        // A grid of one column, and one with nothing read between, are whole too.
+        let (_, one, _) = grid([7, -3], [1, 1]);
+        assert_eq!(one.rows().iter().map(Vec::len).collect::<Vec<_>>(), vec![1; one.rows().len()]);
+    }
+
+    #[test]
+    fn a_generators_hash_follows_its_volume_and_one_with_none_keeps_its_own() {
+        // As it was before generators had Volumes: nothing a terrain was made from has changed.
+        let alpine = Preset::Alpine.world();
+        assert!(alpine.volume().is_none());
+        assert_eq!(alpine.hash(), ALPINE_HASH, "a generator with no Volume changed its hash: {:#x}", alpine.hash());
+        // Volume nodes nothing reads change nothing either.
+        let mut graph = alpine.graph().clone();
+        let rock = graph.add(NodeKind::Noise3d(Noise3d::default()), [0.0, 600.0]);
+        assert_eq!(alpine.with_graph(graph.clone()).hash(), alpine.hash());
+        // Wired in, the Volume is part of what it makes; and each value the Volume is made from.
+        let output = graph.output().unwrap().id;
+        assert!(graph.connect(rock, 0, output, Output::VOLUME));
+        let rocky = alpine.with_graph(graph.clone());
+        assert_ne!(rocky.hash(), alpine.hash());
+        assert_eq!(rocky.height_at(900.0, -40.0).to_bits(), alpine.height_at(900.0, -40.0).to_bits());
+        graph.node_mut(rock).unwrap().kind.set_value(1, Value::Number(55.0));
+        assert_ne!(alpine.with_graph(graph.clone()).hash(), rocky.hash());
+        let hollow = hollow_hills();
+        for row in 0..hollow.graph().exposed.len() {
+            let changed = hollow.with_exposed(row, Value::Number(0.25)).expect("the row");
+            assert_ne!(changed.hash(), hollow.hash(), "{}", hollow.graph().exposed[row].label);
+        }
+        // Nodes moved about the canvas make the same Volume.
+        let mut moved = hollow.graph().clone();
+        for node in &mut moved.nodes {
+            node.at = [node.at[1] - 7.0, node.at[0]];
+        }
+        moved.nodes.reverse();
+        moved.links.reverse();
+        assert_eq!(hollow.with_graph(moved).hash(), hollow.hash());
+        // Written and read back it is the same generator.
+        let read = WorldGen::parse(&hollow.to_text()).unwrap();
+        assert_eq!(read, hollow, "{}", hollow.to_text());
+        assert_eq!(read.hash(), hollow.hash());
+    }
+
+    #[test]
+    fn a_field_is_carried_up_its_column_and_every_node_has_a_preview() {
+        // A Field wired straight into the Output's Volume: the same number for every cell of a column.
+        let hills = hills();
+        let mut graph = hills.graph().clone();
+        let output = graph.output().unwrap().id;
+        let ground = graph.link_into(output, Output::HEIGHT).unwrap().from;
+        assert!(graph.connect(ground, 0, output, Output::VOLUME));
+        let world = hills.with_graph(graph);
+        let volume = world.volume().unwrap();
+        let (xs, zs) = ([10.0, 250.0, 900.0], [40.0, -300.0, 77.0]);
+        let heights: Vec<f32> = (0..3).map(|i| world.height_at(xs[i], zs[i])).collect();
+        let carried = volume.carried(&xs, &zs, &heights);
+        // What makes the generator's own ground is not worked out a second time: it is the height given.
+        assert_eq!(carried.rows().len(), 1);
+        assert_eq!(bits(&carried.rows()[0]), bits(&heights));
+        for (at, &height) in heights.iter().enumerate() {
+            let ys = [-50.0, 0.0, 33.0, 2000.0];
+            let (mut inside, mut ground) = ([0.0; 4], [0.0; 4]);
+            let cells = Cells { x: &xs[at..=at], y: &ys, z: &zs[at..=at], carried: &carried.column(at), size: 1.0 };
+            volume.densities(cells, false, &mut inside, &mut ground);
+            assert_eq!(bits(&inside), bits(&[height; 4]));
+        }
+        assert!(!volume.plain(), "a height alone is no ground made solid");
+        // Each node's outputs for its preview, a Volume's a slice 8 m under the ground.
+        let world = hollow_hills();
+        let previews = world.previews(&xs, &zs);
+        let outputs: usize = world.graph().nodes.iter().map(|node| node.kind.outputs().len()).sum();
+        assert_eq!(previews.len(), outputs);
+        for preview in &previews {
+            assert!(preview.values.iter().all(|value| value.is_finite()), "{preview:?}");
+        }
+        let solid = world.graph().nodes.iter().find(|node| matches!(node.kind, NodeKind::Solid(_))).unwrap();
+        let slice = previews.iter().find(|preview| preview.node == solid.id).unwrap();
+        assert!(slice.values.iter().all(|under| (under - 8.0).abs() < 1e-3), "{slice:?}");
     }
 
     #[test]

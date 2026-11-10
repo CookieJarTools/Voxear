@@ -1595,8 +1595,26 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     node of their own) and the five presets rebuilt as graphs
   - biomes as nodes: where each is and what it brings (its shape, a Terrain's surfaces, a Block World's blocks),
     laid over one another as layers; surfaces' climate ranges and kinds' covers moved over
-  - voxels: a Volume beside the height, with overhangs, tunnels and chambers as nodes; hillsides no longer pocked,
-    layers counted from the real surface
+  - ~~**Voxels:**~~ done: the Output has a **Volume** beside its height, how far into the ground each place in
+    space is. It compiles into two programs (`compile::Voxels`): one run once a column, making what its nodes read
+    of the ground (a height, a mask), and one run once a cell, given its middle, its size and those rows carried
+    up; a Field is only worked out a cell at a time where a node moved the cells it asks about. The ground under
+    the caves is compiled beside the whole, for far levels, for telling open air from a cave's, and for layers.
+    Nodes: Solid, Noise 3D, Overhangs (pushes through a mask, steep ground with none wired in, its octaves fading as
+    blocks grow too large to hold them), Tunnels, Chambers, Combine (Union, Subtract, Smooth). `WorldGen::volume`
+    gives `carried`, `carried_grid` (masks made at every fourth column and read between) and `densities`, flat and
+    round. Block worlds, Voxel Terrains and planets make their ground from it (`blocks::generate`); a generator
+    with none has the world's own Overhangs and Caves wired into a copy of its graph as the same nodes, seeded as
+    they were, so a world with Overhangs at 0 keeps its blocks to the bit, and **Move to Generator** in the Block
+    World's Inspector writes them into the generator with their amounts as its rows. Hillsides are no longer
+    pocked: only steep ground is pushed. Layers are counted down each column from the open air, through chunks and
+    past caves, and out along the radius on a planet, so the under block no longer shows through; drawn smooth,
+    fills are distances (the number over how fast it changes from block to block), the top block follows slopes as
+    a skin and walls are bare, and a corner takes the kind of the ground its surface passes beside. Tests: cells in
+    a batch against each alone, flat and round, from every core; the hash following the Volume and unchanged
+    without one; each node; a Field carried and bent; grids agreeing where they overlap; layers on overhanging
+    ground of cubes and smooth; the moved numbers making the same ground; the editor moving them. Manual: Block
+    Worlds, Voxel Terrain.
   - cave rooms as prefabs of shapes and exits, strung together by a Cave Network node, as a bounded cave level or
     under a world without end
 - ~~**Erosion layer:**~~ done: Add Layer ▸ Erosion wears the ground below it on the GPU (`shaders/erosion.slang`,
@@ -1764,6 +1782,37 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     full smooth ground is; a world without end's kept changes block by block). Tests: a sea's surface whole over a
     gentle shore, smooth sea generation, a pond's body of water, pillars and holes resized and back, a mound's surface
     kept, the editor halving Block size.
+    In a world without end, water shows no face towards a chunk column not made (`BlockWorld::columns`,
+    `blocks::mesh_made`): a coarse column is meshed with only itself made, near chunks with the near columns, and the
+    water beside columns let go is meshed again; drawn smooth, the water's surface reads a column not made as the made
+    one beside it, so it runs on flat. So a sea shows no walls where its rings meet. Every level's sea stands as high,
+    so the rings meet without steps: of cubes where the finest level's does, a coarse column's top block of it only as
+    full as that, in eighths (a flowing fill; coarse blocks never flow); drawn smooth at its sea level, a top block's
+    surface standing up to a whole block over its middle (`surface_fill`). Tests: a streamed sea, cubes
+    and smooth, with no water faces on its columns' sides towards columns not made and every level's top as high,
+    water put in the air showing every side, a chunk of water showing its sides at a world's edge.
+  - ~~**Blocks, items and recipes:**~~ done: a block is an asset of its own (`.block`, `blocks::block::BlockDef`): its
+    look and liquid, which the engine reads, and its rules, hardness, the kind of tool, a tier, drops, sounds and a
+    data asset of the game's, which scripts apply. A world's `[[blocks]]` list names its blocks by reference, keeps a
+    colour alone as a kind of its own (as `.vox` models bring theirs), and leaves a place taken out empty
+    (`BlockKind::block`, `removed`), so a block's number never changes and older worlds load untouched; ids are 16 bits,
+    and a world draws 256 looks at most, refused past that rather than aliased. The engine keeps the file as written
+    and draws from it resolved (`blocks::resolved`, kept on `BlockWorldAsset::drawn` with the blocks' version it was
+    made at); a block saved is taken up by every world listing it in the next tick (`blocks::refresh`), remeshed only
+    where its faces differ. A script may place a block a world does not list: the world numbers it in the game alone
+    (`BlockWorldAsset::grown`), and the changes kept for saves and joining players say which block each such number
+    is, after bytes that read as they always did. Rays pass through liquids unless asked, a block placed takes a
+    liquid's place, and an item that leaves another holds a liquid (a bucket). C#: `Block`, `BlockHit.Definition`,
+    `Blocks.Mine`, `Place` and `Scoop`, `BlockMiner`, events and `BlockRules`; `Item`, `ToolKind`, `Station`,
+    `Recipe` and `Recipes.Match` as Definitions of the engine's own, described for the editor with a game's; every
+    recipe ships (`[ContentRoot]` with no pattern on a Definition); a save keeps a data asset as which file it is; an
+    `Image` shows a project picture in game UI. Editor: a Block's Inspector (Look, Breaking, Drops, Sounds, Data, Make
+    Item), a Block World's list with Add Block, New Block, Add Color and Make Block Assets, brushes building through
+    water. The inventory, its hotbar and screen, a crafting grid, a miner and a sample are a package of their own,
+    `voxear-inventory`. Tests: an older world written back byte for byte, a place left empty, looks from blocks and a
+    block saved taken up, shipping, captures old and new and renumbered, scripts mining by rules, placing unlisted
+    blocks and reaching through water, recipes moved, mirrored and at a station, the Inspectors, and the package
+    played in a game.
 - **Smooth voxel terrain, flat and planets**, in parts: smooth ground you can see, stand on, generate and build on;
   planets with their own gravity; a floating origin.
   - ~~**Voxel Terrain:**~~ done: a Block World drawn smooth (`BlockFile::smooth`, `BlockWorld::smooth`). Each chunk
@@ -1779,8 +1828,8 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     fills say, a slope with no steps, chunks meeting at the same points, a closed blob, balls added, taken and
     painted, changes with fills read back and version 1 read, the GPU drawing a hill's top and sides with no gaps,
     a ball resting on it, a generated world on its generator's heights, the editor adding one and building a ball.
-    Not done: levels of detail that meet (far rings are drawn smooth but meet with seams). (Kinds blend within a
-    triangle since the water blocks' second look, above.)
+    Not done: an endless world's far rings meeting without seams (a bounded world's chunks are drawn coarser far away
+    and meet, see Speed below). (Kinds blend within a triangle since the water blocks' second look, above.)
   - ~~**Planets:**~~ done: generated ground as a planet (`BlockGenerate::planet`, `BlockPlanet { radius }`) all round
     a middle at its world's corner, its generator read round it in three dimensions (`WorldGen::height_round`,
     `climate_round`, colder towards the poles; fields read through a flat or round `Spot`, `noise::fractal3`), once,
@@ -1829,6 +1878,31 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     player whose middle moved seeing and sending script positions from the level's. Manual: Floating Origin. Not done:
     shader patterns from absolute positions (grass, wind, seasons, puddles), moves up and down (sky and fog heights), a
     server exact for players far from the level's middle.
+- ~~**Speed of block worlds and Voxel Terrains:**~~ done, measured on a test project with a level of each kind
+  (`vox render --level --profile --fly`; the stats overlay and the Profiler count block triangles in view and in
+  shadows). Each chunk's mesh for the GI's rays waited on the GPU about seven times; a frame's are now uploaded and
+  built in one batch (`Gpu::batch`), keep no meshlets, and share their corners; a full mesh pool leaves chunks out of
+  the GI rather than failing the frame (a planet 250 blocks round stopped drawing). Physics makes chunks' shapes on
+  every core and keeps a body whose triangles did not change. An endless world makes its near blocks a column past those
+  drawn and meshes each column once, in the background, when the columns round it have blocks, so a flight across it
+  spends 53 ms streaming where it spent 861 ms, its ticks 0.3 ms where 1.9, its slowest frame 33 ms where 130, and the
+  near window's edge shows no walls. Smooth surfaces are merged where flat (a tenth of a block), the points beside
+  another kind and those chunks share kept, and twice more for far away, a view drawing the coarsest its distance allows (the Voxel
+  Planet level: 146k triangles where it drew 265k, its sea 21k where 62k; a planet 250 blocks round, 2.0M where 4.1M,
+  which before failed to draw at all), and passes over chunks facing away; smooth water is merged as the ground is; a
+  chunk changed is made again at its first level alone. Cascades draw only cubes' faces turned towards the sun (about
+  half). A world whose faces did not change costs physics and the renderer no walk over its chunks. Small blocks: a
+  block is 0.1 m to 10 m a side (`file::SMALLEST_BLOCK`, `LARGEST_BLOCK`; at 0.01 m a 64 m world was 4096 blocks
+  across), and in the editor a world too large to make within a frame is made again on other threads, shown as it was
+  until then and put in as one edit (`block_props::Making`): Voxel Terrain set to 0.4 m blocks froze the editor for
+  2.9 s, and now its frames go on and the new world comes over about 14 frames, the slowest 33 ms: a pool grows
+  once for every chunk coming (it staged 474 MB for 220) and takes 16 MB of them a frame, the old pool drawn until
+  the new one has them all. Costs: a smooth world loads slower (three levels a chunk, Voxel Terrain 34 ms
+  to 67). Not done: the coarse rings made and kept on the GPU, as nothing but drawing needs them; coarser levels past
+  the chunks' fixed sides (resampled blocks, so a far planet drops below its locked edges); a coarser mesh for the GI's
+  rays (very large worlds still fill the shared mesh pool); a frame's draws merged across a chunk's levels; ground
+  generated per metre rather than per block, as noise for caves and overhangs is worked out for every block under
+  the surface.
 - Throughout: chunks culled against the frustum and last frame's depth, and the smallest save and network data
   (only changes from what a build or a seed makes, as commands while few and compacted deltas once many).
 

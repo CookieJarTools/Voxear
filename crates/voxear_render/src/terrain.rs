@@ -369,6 +369,8 @@ impl Terrains {
             self.grid = Some(grid);
         }
         let grid = self.grid.as_ref().map_or(vk::Buffer::null(), |grid| grid.handle);
+        // The tiles' meshes for rays uploaded and built together, waited for once.
+        let batch = gpu.batch();
         for (entity, terrain, corner) in found {
             if any_hidden && crate::scene::hidden(world, entity) {
                 continue;
@@ -506,7 +508,7 @@ impl Terrains {
                     // Its pictures repeated from where the tile is from the terrain's Obj, as the ground's are.
                     let from = at + terrain.offset();
                     let mesh = proxy(map, dug.map(|dug| &**dug), (tx, tz), from, 1.0 / look.seen().1.max(0.01));
-                    let handle = assets.add_mesh_with_lods(gpu, &mesh, &crate::lod::full_lod(&mesh))?;
+                    let handle = assets.add_mesh_with_lods(gpu, &mesh, &crate::lod::rays_only(&mesh))?;
                     if let Some((_, _, old)) = resident.proxies[slot].replace((tile.clone(), chunks, handle)) {
                         assets.free_mesh(old, frame_index);
                     }
@@ -547,6 +549,7 @@ impl Terrains {
                 key,
             });
         }
+        batch.finish()?;
         // What no longer is, or is no longer drawn, goes once the frames that drew it are done.
         let gone: Vec<u64> =
             self.resident.iter().filter(|(_, resident)| resident.seen != frame_index).map(|(key, _)| *key).collect();

@@ -1977,6 +1977,14 @@ impl Inspector {
         if let Some(add) = self.terrain_panel.as_ref().and_then(|panel| panel.add_grass_clicked(ui)) {
             return Some(RowAction::Browse(Prop::Terrain(crate::terrain_props::TerrainField::NewGrass), add));
         }
+        // Add Block picks the block to list, and one dropped on the list is listed.
+        let new_block = Prop::BlockWorld(crate::block_props::BlockField::NewBlock);
+        if let Some(add) = self.block_panel.as_ref().and_then(|panel| panel.add_block_clicked(ui)) {
+            return Some(RowAction::Browse(new_block, add));
+        }
+        if let Some(source) = self.block_panel.as_ref().and_then(|panel| panel.dropped(ui)) {
+            return Some(RowAction::Dropped(new_block, source));
+        }
         if self.terrain_panel.as_ref().is_some_and(|panel| panel.erode_clicked(ui)) {
             return Some(RowAction::ErodeTerrain);
         }

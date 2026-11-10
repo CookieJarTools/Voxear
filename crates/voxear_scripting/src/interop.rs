@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 70;
+pub(crate) const API_VERSION: u32 = 71;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -461,11 +461,13 @@ pub(crate) struct NativeApi {
     /// every world of blocks; how many changed.
     pub block_set:
         unsafe extern "C" fn(shape: i32, a: *const [f32; 3], b: *const [f32; 3], block: i32, only: i32) -> i32,
-    /// `Blocks.Raycast`: the first block a ray meets within a distance.
+    /// `Blocks.Raycast`: the first block a ray meets within a distance,
+    /// liquids passed through unless the flags say to meet them.
     pub block_raycast: unsafe extern "C" fn(
         origin: *const [f32; 3],
         direction: *const [f32; 3],
         distance: f32,
+        flags: i32,
         hit: *mut crate::blocks::BlockHitData,
     ) -> i32,
     /// `Blocks.CaptureEdits` and `Blocks.ApplyEdits`: every changed world of
@@ -477,6 +479,24 @@ pub(crate) struct NativeApi {
     /// Where the world's middle is from the level's, in whole metres, as x,
     /// y and z (see `voxear_scene::WorldOrigin`): zero until it first moves.
     pub world_origin: unsafe extern "C" fn(out: *mut i64),
+    /// `Block`: what a `.block` says, by project path or GUID, as JSON; its
+    /// length, written when it fits, or -1.
+    pub block_info: unsafe extern "C" fn(reference: *const u8, len: i32, buffer: *mut u8, capacity: i32) -> i32,
+    /// `BlockHit.Definition`: the GUID of the block numbered so in the
+    /// world of blocks on an Obj; its length, or 0 for none.
+    pub block_of: unsafe extern "C" fn(obj: u64, block: i32, buffer: *mut u8, capacity: i32) -> i32,
+    /// `Blocks.Set`, `Fill`, `Ball` and `Place` with a `Block`: as
+    /// `block_set`, the block numbered in each world as that world has it.
+    pub block_set_named: unsafe extern "C" fn(
+        shape: i32,
+        a: *const [f32; 3],
+        b: *const [f32; 3],
+        block: *const u8,
+        len: i32,
+        only: i32,
+    ) -> i32,
+    /// Goes up whenever a block is saved, so `Block` reads it again.
+    pub blocks_version: unsafe extern "C" fn() -> u64,
     /// `Water.Splash`: throws up a splash where the water is over or under
     /// a point, so wide; 0 where there is no water.
     pub water_splash: unsafe extern "C" fn(at: *const [f32; 3], size: f32) -> i32,
@@ -1929,6 +1949,10 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         block_edits: crate::blocks::block_edits,
         physics_gravity_at: crate::physics::physics_gravity_at,
         world_origin,
+        block_info: crate::services::block_info,
+        block_of: crate::blocks::block_of,
+        block_set_named: crate::blocks::block_set_named,
+        blocks_version: crate::blocks::blocks_version,
         water_splash,
     }
 }

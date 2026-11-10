@@ -322,8 +322,9 @@ mod tests {
                 assert!(!above || (0..32).all(|z| (0..32).all(|x| chunk.get(x, y, z) != water)));
             }
         }
-        // Drawn smooth, the sea also takes the ground's top blocks whose surface lies under it, so its surface
-        // reaches the shore: no block of ground under the sea's level with air over it has its ground under the sea.
+        // Drawn smooth, the sea also takes the ground's top block where its surface lies under the sea with no sea
+        // over it, so its surface reaches the shore: no block of ground under the sea's level with air over it has
+        // its ground under the sea.
         let smooth = BlockFile { smooth: true, ..file.clone() };
         let map = smooth.make_ground(Some(&world));
         let position = smooth.generate.as_ref().unwrap().position;
@@ -342,6 +343,11 @@ mod tests {
             }
         }
         assert!(shore > 0, "some of the sea lies over ground that reaches into its blocks");
+        // Under it the sea keeps its floor, as deep as the ground lies.
+        let top = (-40..400).rev().find(|&y| map.get([x, y, z]) != AIR).expect("the column");
+        let ground = (-40..top).rev().find(|&y| map.get([x, y, z]) != water).expect("a sea floor");
+        assert_ne!(map.get([x, ground, z]), AIR, "ground under the smooth sea");
+        assert!(((top - ground) as f32 - deep / 2.0).abs() <= 1.0, "{} smooth blocks for {deep} m", top - ground);
         // Without a sea block, none.
         file.generate.as_mut().unwrap().sea = AIR;
         assert_ne!(file.make_ground(Some(&world)).get([x, top, z]), water);

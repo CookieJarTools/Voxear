@@ -196,8 +196,9 @@ pub fn planet_ground(
                     let (block, depth, open) =
                         cell_at(&column, under, place, size, generate, push / size, seed, caves / size);
                     let over = (sea_out - out) / size;
+                    // Of the ground, the sea takes the top block alone, as on flat ground.
                     let shore =
-                        file.smooth && block != AIR && depth < over && pushed(under, place, push / size, seed) < over;
+                        file.smooth && block != AIR && over <= 1.0 && pushed(under, place, push / size, seed) < over;
                     let block = if over > 0.0 && (open || shore) { sea } else { block };
                     if file.smooth && sea != AIR && block == sea {
                         chunk.set_cell(lx, ly, lz, sea, surface_fill(over));

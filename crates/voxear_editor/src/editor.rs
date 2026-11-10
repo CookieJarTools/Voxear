@@ -1247,6 +1247,7 @@ impl Editor {
             AssetAction::SaveBlock { path, block, rebuild } => self.save_block(&path, &block, rebuild),
             AssetAction::BrowseBlockRef { block, field, anchor } => self.browse_block_ref(&block, field, anchor),
             AssetAction::DropBlockRef { block, field, source } => self.drop_block_ref(&block, field, &source),
+            AssetAction::MakeBlockItem(block) => self.make_block_item(&block),
             AssetAction::BrowsePromptIcon { icons, slot, anchor } => self.browse_prompt_icon(&icons, slot, anchor),
             AssetAction::DropPromptIcon { icons, slot, source } => self.drop_prompt_icon(&icons, &slot, &source),
             AssetAction::BrowseGunClip { handling, field, anchor } => self.browse_gun_clip(&handling, field, anchor),

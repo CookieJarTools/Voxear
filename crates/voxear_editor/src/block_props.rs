@@ -919,6 +919,18 @@ pub(crate) fn write_block(game: &mut Game, guid: AssetGuid, block: &BlockDef) ->
     true
 }
 
+/// Whether a data asset of the project places the block at `guid`: an item
+/// it is carried as.
+pub(crate) fn placed_by(game: &Game, guid: AssetGuid) -> bool {
+    let db = game.content.db();
+    db.entries().filter(|entry| entry.kind == AssetKind::Data).any(|entry| {
+        let read = std::fs::read_to_string(db.file(&entry.path)).ok();
+        let Some(table) = read.and_then(|text| toml::from_str::<toml::Table>(&text).ok()) else { return false };
+        let places = table.get("fields").and_then(|fields| fields.get("places")).and_then(toml::Value::as_str);
+        places.and_then(|block| game.content.parse(block).ok()).and_then(|block| block.guid()) == Some(guid)
+    })
+}
+
 /// Lists the block `reference` names at the end of the world's list, and
 /// picks it; one it lists already is only picked.
 pub fn list_block(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, reference: &str) -> bool {

@@ -4,21 +4,50 @@ using System.Collections.Generic;
 namespace Voxear;
 
 /// <summary>
-/// A way to make an item from others: a data asset with a grid of up to three by three items, what they make and how
-/// many. Shaped, the items must lie as the grid shows them, anywhere in the crafting grid or mirrored; shapeless,
-/// they may lie anywhere. <see cref="Recipes"/> finds the recipe a grid makes.
+/// A way to make an item from others: a data asset with a grid of three by three places, each an item or none, what
+/// they make and how many. Shaped, the items must lie as the grid shows them, anywhere in the crafting grid or
+/// mirrored; shapeless, they may lie anywhere. <see cref="Recipes"/> finds the recipe a grid makes.
 /// </summary>
 [CreateAsset("Items/Recipe")]
 public class Recipe : Definition
 {
 	public RecipeShape Shape;
 
-	[Title("Grid")]
-	public RecipeRow Top = new();
+	[HideLabel]
+	[HorizontalGroup("Top")]
+	public Item? TopLeft;
 
-	public RecipeRow Middle = new();
+	[HideLabel]
+	[HorizontalGroup("Top")]
+	public Item? Top;
 
-	public RecipeRow Bottom = new();
+	[HideLabel]
+	[HorizontalGroup("Top")]
+	public Item? TopRight;
+
+	[HideLabel]
+	[HorizontalGroup("Middle")]
+	public Item? Left;
+
+	[HideLabel]
+	[HorizontalGroup("Middle")]
+	public Item? Middle;
+
+	[HideLabel]
+	[HorizontalGroup("Middle")]
+	public Item? Right;
+
+	[HideLabel]
+	[HorizontalGroup("Bottom")]
+	public Item? BottomLeft;
+
+	[HideLabel]
+	[HorizontalGroup("Bottom")]
+	public Item? Bottom;
+
+	[HideLabel]
+	[HorizontalGroup("Bottom")]
+	public Item? BottomRight;
 
 	[Title("Makes")]
 	public Item? Result;
@@ -38,7 +67,7 @@ public class Recipe : Definition
 	public const int Width = 3;
 
 	/// <summary>Its nine places row by row from the top left, each an item or none.</summary>
-	public Item?[] Cells => [.. Top.Cells, .. Middle.Cells, .. Bottom.Cells];
+	public Item?[] Cells => [TopLeft, Top, TopRight, Left, Middle, Right, BottomLeft, Bottom, BottomRight];
 
 	/// <summary>What it makes: so many of its result.</summary>
 	public ItemStack Makes => new(Result, Count);

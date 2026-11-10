@@ -136,6 +136,8 @@ pub enum AssetAction {
         field: crate::block_inspector::BlockRef,
         source: DragSource,
     },
+    /// Make an item that places the block at this path, which drops it.
+    MakeBlockItem(String),
     /// Write the Gun Handling at this path as this, and when `rebuild`, show
     /// it again.
     SaveGunHandling {
@@ -472,7 +474,8 @@ impl AssetView {
                     let guid = game.content.parse(reference).ok()?.guid()?;
                     Some(db.get(guid)?.path.clone())
                 };
-                view.block = Some(crate::block_inspector::BlockFields::new(ui, root, block, &path_of));
+                let carried = db.guid_of(&item.path).is_some_and(|guid| crate::block_props::placed_by(game, guid));
+                view.block = Some(crate::block_inspector::BlockFields::new(ui, root, block, &path_of, carried));
             }
             ItemKind::Asset(AssetKind::PromptIcons) => {
                 let text = std::fs::read_to_string(&file).unwrap_or_default();
@@ -677,6 +680,7 @@ impl AssetView {
                 BlockChange::Browse(field, anchor) => AssetAction::BrowseBlockRef { block: path, field, anchor },
                 BlockChange::Drop(field, source) => AssetAction::DropBlockRef { block: path, field, source },
                 BlockChange::Ping(path) => AssetAction::Ping(path),
+                BlockChange::MakeItem => AssetAction::MakeBlockItem(path),
             });
         }
         if let Some(change) = self.prompt_icons.as_mut().and_then(|fields| fields.update(ui)) {

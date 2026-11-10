@@ -223,6 +223,13 @@ internal static class ScriptCatalogTests
 		Check.True(!behaviours.Contains("Voxear.Tests.TestWeaponStats"), "a Definition is not a behaviour");
 		Check.True(stats.GetProperty("inspector").GetString() == "Voxear.Tests.TestWeaponStatsInspector", "its DefinitionInspector");
 		Check.True(DrawerTable.Inspects(typeof(TestWeaponStatsInspector)) == typeof(TestWeaponStats), "which draws it whole");
+		// The engine's own Definitions are described with a game's: an item, a recipe and what they name.
+		var item = definitions.Single(d => d.GetProperty("name").GetString() == "Voxear.Item");
+		Check.True(item.GetProperty("menu").GetString() == "Items/Item", "where an item is made");
+		var held = item.GetProperty("fields").EnumerateArray().Select(f => f.GetProperty("name").GetString()).ToList();
+		Check.True(held.SequenceEqual(["Icon", "StackSize", "Places", "Leaves", "Tool", "Tier", "Speed", "Durability"]), string.Join(", ", held));
+		Check.True(new[] { "Voxear.Recipe", "Voxear.ToolKind", "Voxear.Station" }.All(names.Contains), string.Join(", ", names));
+		Check.True(!names.Contains("Voxear.BlockRules"), "what a game derives from is no data asset by itself");
 	}
 
 	[Test]

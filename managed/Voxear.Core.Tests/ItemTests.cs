@@ -13,9 +13,9 @@ internal static class ItemTests
 	private static Recipe Shaped(Item result, params Item?[] cells)
 	{
 		var recipe = new Recipe { Name = result.Name, Result = result };
-		(recipe.Top.Left, recipe.Top.Middle, recipe.Top.Right) = (cells[0], cells[1], cells[2]);
-		(recipe.Middle.Left, recipe.Middle.Middle, recipe.Middle.Right) = (cells[3], cells[4], cells[5]);
-		(recipe.Bottom.Left, recipe.Bottom.Middle, recipe.Bottom.Right) = (cells[6], cells[7], cells[8]);
+		(recipe.TopLeft, recipe.Top, recipe.TopRight) = (cells[0], cells[1], cells[2]);
+		(recipe.Left, recipe.Middle, recipe.Right) = (cells[3], cells[4], cells[5]);
+		(recipe.BottomLeft, recipe.Bottom, recipe.BottomRight) = (cells[6], cells[7], cells[8]);
 		return recipe;
 	}
 

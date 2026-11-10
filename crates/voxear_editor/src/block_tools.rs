@@ -1,11 +1,15 @@
 //! The Scene view's brush for a Block World under its Build tool: a click
-//! puts the picked kind of block against the face under the pointer, takes
-//! the block there away, or turns it into the picked kind, as the brush
-//! says (Shift places where it would break, and breaks where it would
-//! place); dragging goes on block by block. A brush larger than a block
-//! reaches a ball of blocks that many across. The Model brush builds the
-//! picked `.vox` model standing on the face clicked, once a click. A stroke
-//! is one step to undo.
+//! puts the picked block against the face under the pointer, takes the
+//! block there away, or turns it into the picked block, as the brush says
+//! (Shift places where it would break, and breaks where it would place);
+//! dragging goes on block by block. A brush larger than a block reaches a
+//! ball of blocks that many across. The Model brush builds the picked
+//! `.vox` model standing on the face clicked, once a click. A stroke is one
+//! step to undo.
+//!
+//! A brush that builds reaches through water to the ground under it, and
+//! what it places takes the water's place; building with water itself, or
+//! breaking, meets the water.
 
 use std::sync::Arc;
 
@@ -17,6 +21,7 @@ use voxear_render::Renderer;
 use voxear_terrain::blocks::{
     BlockFaces, BlockHit, BlockMap, BlockWorld,
     chunk::{AIR, BlockId, Fill},
+    is_water,
     smooth::{self, Ball},
     vox::VoxFile,
 };
@@ -72,15 +77,33 @@ fn corner_of(game: &Game, entity: Entity) -> Option<Vec3> {
     Some(voxear_terrain::corner(world.get(entity)?, world.get(entity)))
 }
 
-/// The block under `point` in the selected Obj's world, and the face the
-/// ray came through.
-fn block_under(game: &Game, camera: &ViewCamera, entity: Entity, point: [f32; 2]) -> Option<BlockHit> {
+/// The number of the block picked to build with in `entity`'s world, where
+/// one is: none once the one picked was taken out of its list.
+fn picked(game: &Game, entity: Entity) -> Option<BlockId> {
+    let world = &game.engine.world;
+    let at = block_props::picked(world, &world.get::<BlockWorldAsset>(entity)?.file)?;
+    Some((at + 1) as BlockId)
+}
+
+/// The block under `point` in the selected Obj's world for `brush`, and the
+/// face the ray came through. A brush that builds with ground passes
+/// through water to what lies under it.
+fn block_under(
+    game: &Game,
+    camera: &ViewCamera,
+    entity: Entity,
+    point: [f32; 2],
+    brush: BlockBrush,
+) -> Option<BlockHit> {
     let blocks = game.engine.world.get::<BlockWorld>(entity)?;
     let corner = corner_of(game, entity)?;
     let (origin, direction) = camera.ray(point);
     let size = blocks.block_size;
     let from = ((origin - corner) / size).to_array();
-    voxear_terrain::blocks::raycast(&blocks.blocks, from, direction.to_array(), REACH / size)
+    let builds_water = picked(game, entity).is_some_and(|block| is_water(&blocks.faces, block));
+    let through = brush != BlockBrush::Break && !builds_water;
+    let meets = |block: BlockId| block != AIR && !(through && is_water(&blocks.faces, block));
+    voxear_terrain::blocks::raycast_where(&blocks.blocks, from, direction.to_array(), REACH / size, &meets)
 }
 
 /// The blocks a brush `size` blocks across reaches round `middle`: a ball.
@@ -141,7 +164,7 @@ impl BlockTools {
         if !world.has::<BlockWorldAsset>(entity) || block_props::ui(world).tool != BlockTool::Build {
             return;
         }
-        self.under = block_under(game, camera, entity, point).map(|hit| (entity, hit));
+        self.under = block_under(game, camera, entity, point, Self::brush(game, false)).map(|hit| (entity, hit));
         if block_props::ui(world).brush == BlockBrush::Model {
             self.keep_model(game, false);
         }
@@ -180,11 +203,9 @@ impl BlockTools {
     fn work(game: &mut Game, entity: Entity, hit: &BlockHit, brush: BlockBrush) -> [i32; 3] {
         let state = block_props::ui(&game.engine.world);
         let middle = Self::middle(hit, brush);
-        let world = &game.engine.world;
-        let listed = world.get::<BlockWorldAsset>(entity).and_then(|asset| block_props::picked(world, &asset.file));
         // With no block picked, as once the one picked was taken out, there is nothing to place or paint with.
-        let picked = match (listed, brush) {
-            (Some(at), _) => (at + 1) as BlockId,
+        let picked = match (picked(game, entity), brush) {
+            (Some(block), _) => block,
             (None, BlockBrush::Break) => AIR,
             (None, _) => return middle,
         };
@@ -195,14 +216,17 @@ impl BlockTools {
             blocks.set_cells(smooth_ball((&map, &faces), middle, state.size, brush, picked));
             return middle;
         }
+        // Ground placed takes water's place, and painting with ground leaves water as it is.
+        let faces = blocks.faces.clone();
+        let water = |block: BlockId| is_water(&faces, block);
         let changes: Vec<([i32; 3], BlockId)> = reached(middle, state.size)
             .into_iter()
             .filter_map(|at| {
                 let now = map.get(at);
                 let wanted = match brush {
-                    BlockBrush::Place => (now == AIR).then_some(picked),
+                    BlockBrush::Place => (now == AIR || (water(now) && !water(picked))).then_some(picked),
                     BlockBrush::Break => (now != AIR).then_some(AIR),
-                    BlockBrush::Paint => (now != AIR).then_some(picked),
+                    BlockBrush::Paint => (now != AIR && (!water(now) || water(picked))).then_some(picked),
                     BlockBrush::Model => None,
                 }?;
                 Some((at, wanted))
@@ -224,8 +248,12 @@ impl BlockTools {
         shift: bool,
     ) -> bool {
         self.hover(game, camera, Some(entity), Some(point));
-        let Some((_, hit)) = self.under.filter(|(e, _)| *e == entity) else { return false };
         let brush = Self::brush(game, shift);
+        // With Shift the brush is another, which may meet water where the one shown passes through it.
+        if shift && self.under.is_some() {
+            self.under = block_under(game, camera, entity, point, brush).map(|hit| (entity, hit));
+        }
+        let Some((_, hit)) = self.under.filter(|(e, _)| *e == entity) else { return false };
         if brush == BlockBrush::Model {
             // Read again, as its file may have changed since.
             self.keep_model(game, true);
@@ -250,8 +278,8 @@ impl BlockTools {
         if (point[0] - from[0]).hypot(point[1] - from[1]) < STROKE_MOVE {
             return;
         }
-        let Some(hit) = block_under(game, camera, entity, point) else { return };
         let brush = Self::brush(game, shift);
+        let Some(hit) = block_under(game, camera, entity, point, brush) else { return };
         // A model is built once a click.
         if brush == BlockBrush::Model {
             return;

@@ -1382,6 +1382,24 @@ fn a_kind_of_block_made_water_is_placed_flows_out_and_a_generated_world_can_fill
     assert_eq!(Water::of(blocks.blocks.fill(beside)), Water::Flowing { level: 7, up: 2 });
     assert_eq!(Water::of(blocks.blocks.fill(under)), Water::Source, "what was placed stays full");
     shot(&mut renderer, "blocks-water-flowing.png");
+    // Building with ground reaches through the water to the grass under it, and takes the water's place.
+    let rows = |editor: &voxear_editor::Editor| {
+        let mut rows = Vec::new();
+        with_class(&editor.ui, editor.ui.root(), "terrain-layer", &mut rows);
+        rows.retain(|&row| editor.ui.is_visible(row));
+        rows
+    };
+    let grass = rows(&editor)[0];
+    click(&mut editor.ui, grass);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    click_scene(&mut editor, &mut renderer, point);
+    let blocks = editor.game.engine.world.get::<BlockWorld>(field).unwrap().clone();
+    assert_eq!(blocks.blocks.get(under), 1, "grass where the water was");
+    editor.undo(&mut renderer);
+    frame(&mut editor, &mut renderer);
+    let blocks = editor.game.engine.world.get::<BlockWorld>(field).unwrap().clone();
+    assert_eq!(blocks.blocks.get(under), 4, "the water back");
     // Undone, the water it ran out into goes with it.
     editor.undo(&mut renderer);
     frame(&mut editor, &mut renderer);

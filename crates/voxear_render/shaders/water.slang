@@ -1600,7 +1600,8 @@ bool keptDry(Frame* frame, float3 world, uint body)
     {
         WaterBody pool = buffers()->waterBodies[i];
         float3 local = transform(pool.toLocal, float4(world, 1.0)).xyz;
-        if (pool.shape == 0 && pool.toWorld.c3.y < frame->ocean.level && all(abs(local.xz) <= pool.size.xz * 0.5) && local.y > -0.5)
+        bool lower = pool.kind == WATER_POOL && pool.shape == 0 && pool.toWorld.c3.y < frame->ocean.level;
+        if (lower && all(abs(local.xz) <= pool.size.xz * 0.5) && local.y > -0.5)
         {
             return true;
         }

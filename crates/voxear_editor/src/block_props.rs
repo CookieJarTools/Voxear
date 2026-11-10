@@ -23,7 +23,7 @@ use voxear_terrain::{
     blocks::{
         BlockMap, BlockWorld,
         chunk::{AIR, BlockId},
-        edits::BlockEdits,
+        edits::{self, BlockEdits, Resize},
         file::{BlockCover, BlockFile, BlockKind, MAX_BLOCKS},
         generate::BlockGenerate,
         vox::VoxFile,
@@ -463,7 +463,8 @@ pub fn set(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, fie
     let Some(mut file) = world.get::<BlockWorldAsset>(entity).map(|asset| asset.file.clone()) else { return false };
     let picked = ui(world).block;
     match (field, &value) {
-        (F::BlockSize, v) => file.block_size = number(v).unwrap_or(file.block_size).clamp(0.01, 100.0),
+        // Its ground stays as large in metres, counted again in blocks of the new size.
+        (F::BlockSize, v) => drop(file.set_block_size(number(v).unwrap_or(file.block_size).clamp(0.01, 100.0))),
         (F::Smooth, Value::Toggle(on)) => file.smooth = *on,
         (F::GroundSize, Value::Vector(v)) if v.len() >= 2 => {
             file.ground.size = [v[0], v[1]].map(|n| n.round().clamp(0.0, 4096.0) as u32);
@@ -591,17 +592,22 @@ fn change(
         Some(change) => edits.remapped(change),
         None => edits,
     };
+    // Blocks of another size: what was built stays where it was in metres, read again in the new blocks.
+    let resized = old.block_size != file.block_size;
+    let water = |block: BlockId| voxear_terrain::blocks::is_water(&blocks.faces, block);
+    let resize = Resize { from: old.block_size, to: file.block_size, smooth: file.smooth, water: &water };
     // A world without end is made round where it is seen as it goes (see `voxear_engine::blocks::stream`), from its
     // file: only that changes here. One just made endless, or renumbered, starts again with nothing made and every
     // change kept.
     let endless = |file: &BlockFile| file.generate.as_ref().is_some_and(|g| g.endless.is_some());
     if endless(&file) {
         let world = &mut game.engine.world;
-        if !endless(&old) || renumber.is_some() {
+        if !endless(&old) || renumber.is_some() || resized {
             let changes = match endless(&old) {
                 true => voxear_terrain::blocks::stream::all_changes(&base, &blocks.blocks, &asset.pending),
                 false => BlockEdits::between(&base, &blocks.blocks),
             };
+            let changes = if resized { changes.resized(&resize) } else { changes };
             let (_, faces) = file.faces();
             let mut empty = BlockWorld::made(BlockMap::default(), &faces, file.block_size, file.smooth);
             empty.cast_shadows = blocks.cast_shadows;
@@ -629,7 +635,16 @@ fn change(
         // The new ground names its blocks by their new numbers already; the old ground and blocks are renumbered.
         let ground = Arc::new(voxear_engine::blocks::ground(&mut game.content, &file));
         let changes = match carried {
+            Some(carried) if resized => carried.resized(&resize),
             Some(carried) => renumbered_edits(carried),
+            None if resized => {
+                let mut built = (*ground).clone();
+                let cells = edits::changed(&base, &blocks.blocks);
+                for (at, block, fill) in edits::resized(&cells, Some(&blocks.blocks), &resize) {
+                    built.set_cell(at, block, fill);
+                }
+                BlockEdits::between(&ground, &built)
+            }
             None => BlockEdits::between(&renumbered(&base), &renumbered(&blocks.blocks)),
         };
         let mut made = voxear_engine::blocks::make(&file, &ground, Some(&changes));

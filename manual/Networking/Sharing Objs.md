@@ -54,3 +54,9 @@ public sealed partial class Health : Behaviour
 Voxear writes the property for you. Set it on the server, and it changes on every player's machine shortly after. Only what changed is sent, and only when it changes. `bool`, `int`, `long`, `float`, `double`, `string`, `Vector2`, `Vector3`, `Quaternion`, enums, `Obj` and `NetPlayer` can be replicated. An `Obj` reads as `Obj.None` on a machine that does not have it yet.
 
 Set replicated properties on the server only: a player's machine takes them from the server, and its own changes are not sent anywhere.
+
+A `Vector3` that is a place in the world, rather than a direction or a size, is marked `[WorldPosition]` as well: `[Replicated, WorldPosition] public partial Vector3 Rally { get; set; }`. It is sent measured from the level's middle, so a player whose world's middle has moved with them (see [[Floating Origin]]) reads it where it is in their world. An RPC's argument is marked the same way.
+
+## Far from the middle
+
+Every Obj's position goes between machines measured from the level's middle, a millimetre's steps out to half a million kilometres either way. With the [[Floating Origin]] switched on, each player's machine moves its own middle along with its camera, and the server keeps the level's; neither needs to know where the other's is.

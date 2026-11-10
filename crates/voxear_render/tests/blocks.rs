@@ -10,7 +10,7 @@ use voxear_render::{
     Sky, SurfaceLook,
 };
 use voxear_scene::Transform;
-use voxear_terrain::blocks::{BlockFaces, BlockWorld, file::BlockFile};
+use voxear_terrain::blocks::{BlockWorld, file::BlockFile};
 
 const WIDTH: u32 = 640;
 const HEIGHT: u32 = 360;
@@ -219,7 +219,7 @@ fn a_world_drawn_smooth_is_a_round_hill_its_top_and_sides_blended_with_no_gaps_b
         }
     }
     let (looks, faces) = file.faces();
-    assert_eq!(faces[1], BlockFaces::new(0, 1, 1), "top, sides and bottom");
+    assert_eq!((faces[1].top, faces[1].sides, faces[1].bottom), (0, 1, 1));
     let surfaces: Vec<SurfaceLook> = looks
         .iter()
         .map(|look| {

@@ -36,7 +36,7 @@ A planet a few hundred metres round shows only a small piece of its generator's 
 
 Physics pulls everything with a Rigidbody near a planet towards its middle, as strongly as gravity pulls elsewhere and in place of it: near is within four times its radius of its middle. A ball dropped beside it falls onto its side and comes to rest there.
 
-A planet is made all at once, never without end, so a large one takes a while: one 200 m across takes a few seconds to make and draw, most of it for its caves. Far from the level's middle, the world's middle moves along with the camera across the ground (see [[Floating Origin]]), but not up or down, so a planet far below or above the level's middle is still drawn and moved less exactly.
+A planet is made all at once, never without end, so a large one takes a while: one 200 m across takes a few seconds to make and draw, most of it for its caves. With the [[Floating Origin]] switched on, the world's middle moves along with the camera across the ground, but not up or down, so a planet far below or above the level's middle is still drawn and moved less exactly.
 
 ### Walking round a planet
 
@@ -54,6 +54,8 @@ A [[First-Person View]] on the character turns about the same up, so its Obj and
 ## How it is drawn
 
 Each kind of block is drawn with its **Top** where the ground faces up, its **Bottom** where it faces down, and its **Material** where it is steep, blended as the ground turns: wholly its top on slopes up to about 25 degrees, wholly its sides past about 50. A kind of grass with a grass top and a rock material covers gentle hills in grass and turns to rock on the cliffs, with no painting.
+
+Where two kinds of ground meet, they blend across the triangles between them, so sand runs into grass over a soft edge. Each point of the surface takes the kind of the ground nearest the surface round it, so a thin top layer of grass stays grass on a slope and the dirt under it does not show through.
 
 The surface takes the way the ground faces from the blocks round it, so light runs smoothly over hills. It casts the sun's shadows, the GI's rays see it, and physics stands things on it and rays meet it where it is drawn. Chunks meet without gaps.
 

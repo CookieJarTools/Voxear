@@ -2,9 +2,10 @@
 //! moves with it.
 //!
 //! Far from the middle an f32 position loses its smallest steps (see
-//! `voxear_scene::WorldOrigin`), so while a game plays, once the viewer
-//! terrain is made round (see [`crate::terrain::viewer`]) is more than the
-//! project's distance from the middle, the world moves back by whole steps,
+//! `voxear_scene::WorldOrigin`), so in a project that switches it on, while a
+//! game plays, once the viewer terrain is made round (see
+//! [`crate::terrain::viewer`]) is more than the project's distance from the
+//! middle, the world moves back by whole steps,
 //! between two frames ([`due`], then `Game` moving the world, its sound and
 //! its drawing). Everything the game keeps in the world moves with it here
 //! ([`shift`]): the Objs, physics, and what effects, animation and guns keep
@@ -13,7 +14,7 @@
 //!
 //! ```toml
 //! [floating_origin]
-//! mode = "automatic"   # or "always", or "never"
+//! mode = "endless"     # "off" by default, or "always"
 //! distance = 2048      # metres from the middle before it moves
 //! step = 1024          # metres it moves by, a whole number of them
 //! ```
@@ -30,12 +31,26 @@ use crate::terrain::{TerrainAsset, TerrainViewer};
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum OriginMode {
+    /// Never: the middle stays where the level puts it.
+    #[default]
+    Off,
     /// In levels with ground without end, or a planet, only: a level of a
     /// set size keeps its middle where it is.
-    #[default]
-    Automatic,
+    Endless,
+    /// In every level.
     Always,
-    Never,
+}
+
+impl OriginMode {
+    pub const ALL: [Self; 3] = [Self::Off, Self::Endless, Self::Always];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Off => "Off",
+            Self::Endless => "Endless Worlds",
+            Self::Always => "Every Level",
+        }
+    }
 }
 
 /// The project's `[floating_origin]`: when the world's middle moves, how far
@@ -54,7 +69,7 @@ pub struct OriginSettings {
 
 impl Default for OriginSettings {
     fn default() -> Self {
-        Self { mode: OriginMode::Automatic, distance: 2048.0, step: 1024 }
+        Self { mode: OriginMode::Off, distance: 2048.0, step: 1024 }
     }
 }
 
@@ -71,15 +86,16 @@ impl OriginSettings {
     }
 }
 
-/// The move due now, if the world's middle should move: never in a
-/// networked game, whose machines would each have their own middle.
+/// The move due now, if the world's middle should move: never on a server
+/// or a host, whose world is every player's; a client's moves with its own
+/// camera, positions going between them measured from the level's middle.
 pub fn due(world: &World, settings: &OriginSettings) -> Option<IVec3> {
     let wanted = match settings.mode {
-        OriginMode::Never => false,
+        OriginMode::Off => false,
         OriginMode::Always => true,
-        OriginMode::Automatic => without_end(world),
+        OriginMode::Endless => without_end(world),
     };
-    if !wanted || world.resource::<crate::net::NetSession>().is_some() {
+    if !wanted || !crate::net::origin_may_move(world) {
         return None;
     }
     settings.move_for(crate::terrain::viewer(world)?).filter(|by| *by != IVec3::ZERO)
@@ -123,6 +139,7 @@ pub fn shift(world: &mut World, by: IVec3) -> WorldOrigin {
     crate::first_person::FirstPersonState::shift(world, moved);
     crate::guns::holder::GunHolderState::shift(world, moved);
     voxear_core::debug_draw::shift(moved);
+    crate::net::shift(world, moved);
     tracing::debug!(target: "origin", "the world moved by {by}: its middle is {} from the level's", origin.0);
     origin
 }
@@ -142,8 +159,9 @@ mod tests {
     }
 
     #[test]
-    fn reads_from_the_project_file() {
+    fn reads_from_the_project_file_and_is_off_without_it() {
         let settings: OriginSettings = toml::from_str("mode = \"always\"\nstep = 512").unwrap();
         assert_eq!(settings, OriginSettings { mode: OriginMode::Always, distance: 2048.0, step: 512 });
+        assert_eq!(OriginSettings::default().mode, OriginMode::Off);
     }
 }

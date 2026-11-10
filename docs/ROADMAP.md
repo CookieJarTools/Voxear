@@ -1690,8 +1690,8 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     the editor's water running out and undone with it. Buoyancy pushes against the pull where a body is, as strongly
     as it pulls (towards a planet's middle near one, as physics pulls), reading how deep it is along the water's own
     up (`BlockWorld::water_depth`), so things float on a planet's sides; tested with a ball floating out from a
-    planet's middle and one sinking to its stone. Not done: the view fogged from in water blocks; scripts' `Water`
-    finding a planet's water off its top.
+    planet's middle and one sinking to its stone. Not done: an under-water view on a planet's sides; scripts'
+    `Water` finding a planet's water off its top.
     After a first look: still water spreads over water (falling water only over ground), so a lake runs into a hole
     dug beside it, and a block between two sources becomes one; a Voxel Terrain's water is smooth, its surface made
     by surface nets over a field of water's and ground's depths, faces only where water meets air, a generated sea's
@@ -1700,13 +1700,27 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     while playing; terrains' and block worlds' looks count as using their materials, so their colours survive play
     (they were freed as a level loaded). Tests: a lake running into a hole, a gap filling, smooth water at its top and
     at a sea's level, a block world's colours kept loaded.
+    After a second look: drawn smooth, a generated sea takes every block whose ground lies under it
+    (`generate::pushed`), and its surface runs a block into the shore (`smooth::water_surface`: ground beside the
+    water's top with air over it takes the water's level and a face, up being the map's, `BlockMap::round` on a planet),
+    so it meets the ground with no gaps; each smooth corner takes the kind of the ground nearest the surface among its
+    eight blocks (`Padded::kind`) and a triangle's three kinds blend by how near each corner a fragment is
+    (`blockVertex` packs them in `lod` and `cluster`), which also keeps dirt from showing through a thin top layer on
+    slopes. Under water in blocks: the water round the camera is a body among the Pools (`water_bodies::block_water`,
+    `WATER_BLOCKS`), level with the top of the camera's column and as far as that top runs along x and z, in the kind's
+    colour (`BlockFaces::color`), so the under-water view, the waterline and the wet lens are a Pool's; it draws no
+    surface or walls and leaves the sea alone. Block size keeps the world's size: `BlockFile::set_block_size` counts its
+    ground again in blocks of the new size, and what was built is read again in them (`edits::changed`,
+    `edits::resized`: nearest for kinds, between the old blocks' middles for how full smooth ground is; a world without
+    end's kept changes block by block). Tests: a sea's surface whole over a gentle shore, smooth sea generation, a
+    pond's body of water, pillars and holes resized and back, a mound's surface kept, the editor halving Block size.
     In a world without end, water shows no face towards a chunk column not made (`BlockWorld::columns`,
     `blocks::mesh_made`): a coarse column is meshed with only itself made, near chunks with the near columns, and the
     water beside columns let go is meshed again; drawn smooth, the water's surface reads a column not made as the made
     one beside it, so it runs on flat. So a sea shows no walls where its rings meet. Every level's sea stands as high,
     so the rings meet without steps: of cubes where the finest level's does, a coarse column's top block of it only as
     full as that, in eighths (a flowing fill; coarse blocks never flow); drawn smooth at its sea level, a top block's
-    surface standing up to a whole block over its middle (`surface_fill`, a half before). Tests: a streamed sea, cubes
+    surface standing up to a whole block over its middle (`surface_fill`). Tests: a streamed sea, cubes
     and smooth, with no water faces on its columns' sides towards columns not made and every level's top as high,
     water put in the air showing every side, a chunk of water showing its sides at a world's edge.
 - **Smooth voxel terrain, flat and planets**, in parts: smooth ground you can see, stand on, generate and build on;
@@ -1724,8 +1738,8 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     fills say, a slope with no steps, chunks meeting at the same points, a closed blob, balls added, taken and
     painted, changes with fills read back and version 1 read, the GPU drawing a hill's top and sides with no gaps,
     a ball resting on it, a generated world on its generator's heights, the editor adding one and building a ball.
-    Not done: blending between kinds within a triangle (each triangle takes its block's kind); levels of detail
-    that meet (far rings are drawn smooth but meet with seams).
+    Not done: levels of detail that meet (far rings are drawn smooth but meet with seams). (Kinds blend within a
+    triangle since the water blocks' second look, above.)
   - ~~**Planets:**~~ done: generated ground as a planet (`BlockGenerate::planet`, `BlockPlanet { radius }`) all round
     a middle at its world's corner, its generator read round it in three dimensions (`WorldGen::height_round`,
     `climate_round`, colder towards the poles; fields read through a flat or round `Spot`, `noise::fractal3`), once,
@@ -1751,23 +1765,29 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     yaw carried over the top; a script doing the same through `GravityAt` and `SimpleMove`, its view and Obj upright;
     a motion-matched character walking round a planet's side by its clips, its body upright to it and facing the way
     it goes.
-  - ~~**Floating origin:**~~ done: once the viewer terrain streams round is past `[floating_origin]`'s distance (2048 m)
-    from the world's middle across the ground, the world moves back by whole steps (1024 m) between frames
-    (`origin::due`, `Game::move_origin`). `WorldOrigin` keeps where the middle is from the level's, in whole metres;
-    root Objs move, those not moved since put back exactly from f64 (`voxear_scene::move_objs`); with them tick
-    smoothing, Jolt in one call (`vx_world_shift`: bodies without waking, characters with their contacts; joints held to
-    the world held to a still anchor body), kept places and corners, sound (`Command::Shift`, acoustics measured from
-    the level's middle), smokes, mists, motion matching, first-person eyes, gun holders and debug draw; the renderer's
-    last-frame matrices, probes, tracks, foam, sea floor and foliage (`Renderer::shift_origin`); the sea's cascades
-    phased by the origin in f64, drawn and for buoyancy. Streaming counts from its Obj, so nothing is made again. Mode
-    Automatic (levels with ground without end or a planet), Always or Never; never while networked. Scripts (native API
-    70): `Origin.Moved`, `Origin.Position`, `ToLevel`, `FromLevel`, `LevelPosition`, and `[WorldPosition]` fields moved
-    for them; saves and the editor's play keep positions from the level's middle; a level loads from its own. Tests: a
-    ball 100 km out rolling within 0.02 mm of one at the middle (66 mm astray with the middle still), endless terrain
-    and blocks carried on with nothing made again and physics on the drawn ground, the GPU's frame after a move matching
-    the one before with motion blur on, scripts' fields and events, a prop back exactly after 100 km. Manual: Floating
-    Origin. Not done: shader patterns from absolute positions (grass, wind, seasons, puddles), moves up and down (sky
-    and fog heights), networked games with a middle per player.
+  - ~~**Floating origin:**~~ done, switched on in Project Settings ▸ World (`[floating_origin]`, off by default): once
+    the viewer terrain streams round is past its distance (2048 m) from the world's middle across the ground, the world
+    moves back by whole steps (1024 m) between frames (`origin::due`, `Game::move_origin`). `WorldOrigin` keeps where
+    the middle is from the level's, in whole metres; root Objs move, those not moved since put back exactly from f64
+    (`voxear_scene::move_objs`); with them tick smoothing, Jolt in one call (`vx_world_shift`: bodies without waking,
+    characters with their contacts; joints held to the world held to a still anchor body), kept places and corners,
+    sound (`Command::Shift`, acoustics measured from the level's middle), smokes, mists, motion matching, first-person
+    eyes, gun holders and debug draw; the renderer's last-frame matrices, probes, tracks, foam, sea floor and foliage
+    (`Renderer::shift_origin`); the sea's cascades phased by the origin in f64, drawn and for buoyancy. Streaming counts
+    from its Obj, so nothing is made again. Mode Off, Endless Worlds (levels with ground without end or a planet) or
+    Every Level. Networked: a server and a host keep the level's middle, each client moves its own; positions go between
+    them measured from the level's middle, each machine adding its origin as it sends and taking it away as it reads, a
+    root bit and a far bit each, 16 bits an axis more past 8 km (out to half a million km); clients' samples, spawns and
+    prediction history move with them. Scripts (native API 70): `Origin.Moved`, `Origin.Position`, `ToLevel`,
+    `FromLevel`, `LevelPosition`, and `[WorldPosition]` fields moved for them, and on `[Replicated]` properties and RPC
+    arguments sent from the level's middle; saves and the editor's play keep positions from the level's middle; a level
+    loads from its own. Tests: a ball 100 km out rolling within 0.02 mm of one at the middle (66 mm astray with the
+    middle still), endless terrain and blocks carried on with nothing made again and physics on the drawn ground, the
+    GPU's frame after a move matching the one before with motion blur on, scripts' fields and events, a prop back
+    exactly after 100 km, players far out seeing, predicting and moving Objs 20–50 km out as the server has them, a
+    player whose middle moved seeing and sending script positions from the level's. Manual: Floating Origin. Not done:
+    shader patterns from absolute positions (grass, wind, seasons, puddles), moves up and down (sky and fog heights), a
+    server exact for players far from the level's middle.
 - Throughout: chunks culled against the frustum and last frame's depth, and the smallest save and network data
   (only changes from what a build or a seed makes, as commands while few and compacted deltas once many).
 

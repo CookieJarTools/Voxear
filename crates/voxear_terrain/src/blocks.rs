@@ -45,24 +45,26 @@ use mesh::ChunkMesh;
 
 /// How a kind of block's faces are drawn, by its number in its world (see
 /// `file::BlockFile::faces`): the surfaces its top, its sides and its
-/// bottom are drawn with, and whether it is water.
+/// bottom are drawn with, whether it is water, and its own colour, sRGB a
+/// byte each, which water takes from in it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BlockFaces {
     pub top: u8,
     pub sides: u8,
     pub bottom: u8,
     pub water: bool,
+    pub color: [u8; 3],
 }
 
 impl BlockFaces {
     /// A kind of ground drawn with these surfaces.
     pub const fn new(top: u8, sides: u8, bottom: u8) -> Self {
-        Self { top, sides, bottom, water: false }
+        Self { top, sides, bottom, water: false, color: [0; 3] }
     }
 
     /// Water drawn with surface `surface`.
     pub const fn water(surface: u8) -> Self {
-        Self { top: surface, sides: surface, bottom: surface, water: true }
+        Self { top: surface, sides: surface, bottom: surface, water: true, color: [0; 3] }
     }
 }
 
@@ -82,6 +84,9 @@ pub fn is_ground(faces: &[BlockFaces], block: BlockId) -> bool {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct BlockMap {
     chunks: HashMap<[i32; 3], Arc<Chunk>>,
+    /// Whether its blocks lie all round its corner, as a planet's do: up is
+    /// then out from the corner (see `flow::Fall`).
+    pub round: bool,
 }
 
 impl BlockMap {
@@ -130,6 +135,12 @@ impl BlockMap {
         }
     }
 
+    /// Which way its water falls: down, or towards its corner where its
+    /// blocks lie round it.
+    pub fn fall(&self) -> flow::Fall {
+        if self.round { flow::Fall::Middle } else { flow::Fall::Down }
+    }
+
     /// Whether chunk `key` and the six beside it are all ground through and
     /// through, none of it water as `faces` says, so it has no faces to draw:
     /// as deep in a planet.
@@ -165,7 +176,7 @@ impl BlockMap {
     /// The same blocks, each by the number `change` gives it: as after a
     /// kind of block is taken out of its world's list.
     pub fn remapped(&self, change: impl Fn(BlockId) -> BlockId) -> Self {
-        let mut map = Self::default();
+        let mut map = Self { round: self.round, ..Self::default() };
         for (key, chunk) in &self.chunks {
             map.put_chunk(*key, chunk.remapped(&change));
         }
@@ -273,7 +284,7 @@ impl BlockWorld {
 
     /// Which way its water falls: down, or towards its middle on a planet.
     pub fn fall(&self) -> flow::Fall {
-        if self.planet.is_some() { flow::Fall::Middle } else { flow::Fall::Down }
+        if self.planet.is_some() { flow::Fall::Middle } else { self.blocks.fall() }
     }
 
     /// How deep under its water `at` is, a point in metres from its corner,

@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     BlockMap,
-    chunk::{AIR, BlockId, CHUNK, Chunk, FULL, Fill, fill_of},
+    chunk::{AIR, BlockId, CHUNK, Chunk, fill_of},
     file::BlockFile,
     flow::{Water, surface_fill},
 };
@@ -229,24 +229,28 @@ pub fn column_chunks(
                     continue;
                 }
                 let middle = [*x as f32 + 0.5, y as f32 + 0.5, *z as f32 + 0.5];
-                let depth = column.surface - middle[1];
+                let under = column.surface - middle[1];
                 let place = middle.map(|v| v * size);
-                let (block, depth, open) = cell_at(column, depth, place, size, &coarse, push, seed, f32::INFINITY);
-                // Of cubes, how many eighths of the block the sea fills: a coarser level's top block of it only partly.
+                let (block, depth, open) = cell_at(column, under, place, size, &coarse, push, seed, f32::INFINITY);
+                // The sea fills the open air below its level; drawn smooth, also the ground's top blocks whose
+                // surface lies under it, so its surface reaches the shore. Of cubes, how many eighths of the block
+                // it fills: a coarser level's top block of it only partly.
+                let over = sea_top - middle[1];
                 let eighths = ((sea_top - y as f32).min(1.0) * 8.0).round();
-                let wet = open && if file.smooth { middle[1] < sea_top } else { eighths >= 1.0 };
+                let shore = file.smooth && block != AIR && depth < over && pushed(under, place, push, seed) < over;
+                let wet = if file.smooth { over > 0.0 && (open || shore) } else { open && eighths >= 1.0 };
                 let block = if wet { sea } else { block };
                 let (lx, lz) = ((x - cx * side) as u32, (z - cz * side) as u32);
                 // Drawn smooth, the air a block from the surface keeps how far it is from it too, and the sea's top
                 // blocks where its surface lies.
                 if wet && file.smooth {
-                    chunk.set_cell(lx, ly as u32, lz, sea, sea_fill(sea_top - middle[1]));
+                    chunk.set_cell(lx, ly as u32, lz, sea, surface_fill(over));
                     any = true;
                 } else if wet && eighths < 8.0 {
                     // Kept as flowing water keeps how high it stands; a coarse level's blocks never flow.
                     chunk.set_cell(lx, ly as u32, lz, sea, Water::Flowing { level: eighths as u8, up: 2 }.fill());
                     any = true;
-                } else if file.smooth && !wet && (block != AIR || depth > -1.0) {
+                } else if file.smooth && (block != AIR || depth > -1.0) {
                     chunk.set_cell(lx, ly as u32, lz, block, fill_of(depth, block != AIR));
                     any = true;
                 } else if block != AIR {
@@ -260,6 +264,16 @@ pub fn column_chunks(
         }
     }
     chunks
+}
+
+/// How deep under its column's surface a block `depth` under it is once the
+/// surface is pushed in and out at `place`, as [`cell_at`] pushes it.
+fn pushed(depth: f32, place: [f32; 3], push: f32, seed: u32) -> f32 {
+    if push > 0.0 && depth.abs() < push + 1.0 {
+        let s = OVERHANG_SIZE;
+        return depth + gradient3(place[0] / s, place[1] / s, place[2] / s, seed.wrapping_add(41)) * push;
+    }
+    depth
 }
 
 /// The block `depth` blocks under its column's surface at `place`, in
@@ -314,13 +328,6 @@ fn cell_at(
         column.bottom
     };
     (block, inside, false)
-}
-
-/// The fill of a block of sea drawn smooth whose middle is `above` blocks
-/// under the sea's surface: its top block keeps where the surface lies (see
-/// `flow::surface_fill`), and those under it are full.
-fn sea_fill(above: f32) -> Fill {
-    if above > 1.0 { FULL } else { surface_fill(above) }
 }
 
 /// One point of a planet's ground all round: how far out its surface is
@@ -487,12 +494,15 @@ pub fn planet_ground(
                         layers: [top, (known(ground.under), ground.under_depth as f32)],
                         bottom,
                     };
-                    let depth = (point.surface - out) / size;
+                    let under = (point.surface - out) / size;
                     let (block, depth, open) =
-                        cell_at(&column, depth, place, size, generate, push / size, seed, caves / size);
-                    let block = if open && out < sea_out { sea } else { block };
+                        cell_at(&column, under, place, size, generate, push / size, seed, caves / size);
+                    let over = (sea_out - out) / size;
+                    let shore =
+                        file.smooth && block != AIR && depth < over && pushed(under, place, push / size, seed) < over;
+                    let block = if over > 0.0 && (open || shore) { sea } else { block };
                     if file.smooth && sea != AIR && block == sea {
-                        chunk.set_cell(lx, ly, lz, sea, sea_fill((sea_out - out) / size));
+                        chunk.set_cell(lx, ly, lz, sea, surface_fill(over));
                         any = true;
                     } else if file.smooth && (block != AIR || depth > -1.0) {
                         chunk.set_cell(lx, ly, lz, block, fill_of(depth, block != AIR));
@@ -506,7 +516,7 @@ pub fn planet_ground(
         }
         any.then_some(chunk)
     });
-    let mut map = BlockMap::default();
+    let mut map = BlockMap { round: true, ..BlockMap::default() };
     for (key, chunk) in keys.into_iter().zip(made) {
         if let Some(chunk) = chunk {
             map.put_chunk(key, chunk);
@@ -630,6 +640,26 @@ mod tests {
                 assert!(!above || (0..32).all(|z| (0..32).all(|x| chunk.get(x, y, z) != water)));
             }
         }
+        // Drawn smooth, the sea also takes the ground's top blocks whose surface lies under it, so its surface
+        // reaches the shore: no block of ground under the sea's level with air over it has its ground under the sea.
+        let smooth = BlockFile { smooth: true, ..file.clone() };
+        let map = smooth.make_ground(Some(&world));
+        let position = smooth.generate.as_ref().unwrap().position;
+        let mut shore = 0;
+        for cx in 0..64 {
+            for cz in 0..64 {
+                let height =
+                    world.height_at(position[0] + (cx as f32 + 0.5) * 2.0, position[1] + (cz as f32 + 0.5) * 2.0);
+                for y in -20..40 {
+                    let (block, over) = (map.get([cx, y, cz]), map.get([cx, y + 1, cz]));
+                    if block != AIR && block != water && over == AIR && middle(y) < world.sea_level {
+                        assert!(height >= world.sea_level - 0.01, "dry ground under the sea at {cx}, {y}, {cz}");
+                    }
+                    shore += usize::from(block == water && height > middle(y));
+                }
+            }
+        }
+        assert!(shore > 0, "some of the sea lies over ground that reaches into its blocks");
         // Without a sea block, none.
         file.generate.as_mut().unwrap().sea = AIR;
         assert_ne!(file.make_ground(Some(&world)).get([x, top, z]), water);

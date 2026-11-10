@@ -36,7 +36,7 @@ public sealed class ReplicatedGenerator : IIncrementalGenerator
 		var partial = syntax.Modifiers.Any(m => m.IsKind(SyntaxKind.PartialKeyword));
 		var type = property.ContainingType;
 		var space = type.ContainingNamespace.IsGlobalNamespace ? string.Empty : type.ContainingNamespace.ToDisplayString();
-		var kind = NetTypes.Kind(property.Type);
+		var kind = NetTypes.Kind(property, property.Type);
 		return new ReplicatedProperty(
 			space,
 			type.Name,
@@ -84,6 +84,11 @@ public sealed class ReplicatedGenerator : IIncrementalGenerator
 		foreach (var property in properties)
 		{
 			var field = Field(property);
+			// A world position's value moves with the world's middle, as fields so marked do.
+			if (property.Kind == NetTypes.WorldPosition)
+			{
+				text.AppendLine("\t[global::Voxear.WorldPosition]");
+			}
 			text.AppendLine($"\tprivate {property.Type} {field};");
 			text.AppendLine();
 			text.AppendLine($"\t{property.Access} partial {property.Type} {property.Name}");

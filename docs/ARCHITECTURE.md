@@ -297,13 +297,14 @@ if (Random.Chance(0.1f)) { /* ... */ }
 way. Their tests, in `managed/Voxear.Core.Tests`, check Unity's conventions: a positive yaw turns forward to the right,
 and a positive pitch looks down.
 
-### The floating origin *(implemented across the ground; shader patterns, height and networking planned)*
+### The floating origin *(implemented across the ground, networked too; shader patterns and height planned)*
 
 Positions stay f32 everywhere: the C# `Transform` is written in place, Jolt is built single-precision and the GPU
 works in floats. Instead the world's middle follows the camera. `WorldOrigin` (a resource, whole metres as `I64Vec3`)
 says where the world's middle is from the level's; a position in the world plus it is the position from the level's
-middle, exactly, in f64. Once the viewer terrain streams round (`terrain::viewer`) is past the project's
-`[floating_origin]` distance (2048 m) from the middle on x or z, `origin::due` asks for a move of whole steps
+middle, exactly, in f64. In a project that switches it on (`[floating_origin]`, Project Settings ▸ World: Off,
+Endless Worlds or Every Level), once the viewer terrain streams round (`terrain::viewer`) is past its distance
+(2048 m) from the middle on x or z, `origin::due` asks for a move of whole steps
 (1024 m, a whole number of tiles, chunks and every world-anchored GPU grid), and `Game::move_origin` makes it at the
 top of `Game::tick`, before anything that frame reads positions:
 
@@ -330,8 +331,17 @@ Ground streamed round the viewer counts its tiles and chunks from its own Obj, w
 changes no window and makes nothing again. Saves (`SceneState` copies, `SavedTransform`) keep roots from the
 level's middle; a level load moves the world back to its own middle first. Edit mode never moves; when play stops
 the Scene camera and kept values come back measured from the level's middle. Moves are on x and z only, as the
-atmosphere and fog measure height from the level's ground; a networked session keeps its middle still, as its
-messages carry positions from one middle for every machine.
+atmosphere and fog measure height from the level's ground.
+
+Networked, a server and a host keep the level's middle (their world is every player's) and each client moves its
+own (`net::origin_may_move`). Positions go between them measured from the level's middle: `write_state` adds the
+sender's origin to a root Obj's position and `read_state` takes the reader's away, exactly, in i64 steps of
+1/1024 m, so no machine needs another's origin. Each position carries a root bit (a child's stays its parent's)
+and a far bit: within 8 km of the level's middle 24 bits an axis as before, further 16 bits an axis more. A
+client's move shifts its remote samples, spawns waiting and prediction history (`net::shift`). C#: a Vector3 on a
+`[Replicated]` property or an RPC argument marked `[WorldPosition]` is written as `Origin.ToLevel` doubles and read
+through `Origin.FromLevel` (`NetTypes.WorldPosition`), its backing field marked so moves shift it. A server's own
+physics stays f32 from the level's middle, so its Objs more than about 10 km out are less exact.
 
 ## Scenes, Levels and Scene Persistence *(implemented)*
 
@@ -2908,7 +2918,9 @@ sources, down (towards a planet's middle) and then out over ground, a level lowe
 in its fill: a step looks only at the blocks near the last step's changes, each from the blocks as they were, so every
 machine flows alike, five steps a second in the game's tick. In a world drawn smooth, water has a smooth surface of its
 own, by surface nets over how deep into water or ground each block's middle is, a generated sea's top blocks keeping
-where its surface lies in their fill. Far out, the world's middle follows the camera (see the
+where its surface lies in their fill; the water round the camera is one more body among the Pools for the view under it.
+A world's blocks can change size with the world staying as it is in metres: its ground is counted again and what was
+built read again in the new blocks (`blocks::edits::resized`). Far out, the world's middle follows the camera (see the
 floating origin, under the Obj model), and chunk keys count from the world's Obj, so none is made again.
 Digging into a
 heightmap terrain turns its columns into smooth-voxel chunks that start from its heights (`voxear_terrain::dig`,

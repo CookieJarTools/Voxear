@@ -1261,6 +1261,46 @@ fn a_kind_of_block_made_water_is_placed_flows_out_and_a_generated_world_can_fill
 }
 
 #[test]
+fn a_block_world_made_of_smaller_blocks_stays_as_large_with_what_was_built_where_it_was() {
+    use voxear_engine::blocks::BlockWorldAsset;
+    use voxear_terrain::blocks::BlockWorld;
+    let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {
+        eprintln!("skipping: no usable GPU");
+        return;
+    };
+    let dir = hello_with_a_field();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    let field = obj(&editor, "Field");
+    editor.select(Some(field));
+    frame(&mut editor, &mut renderer);
+    add_component(&mut editor, &mut renderer, "Block World");
+    // A pillar of stone three blocks high on the grass, built as a script or a brush would.
+    let pillar = [[20, 8, 30], [20, 9, 30], [20, 10, 30]];
+    editor.game.engine.world.get_mut::<BlockWorld>(field).unwrap().set_blocks(pillar.map(|at| (at, 3)));
+    frame(&mut editor, &mut renderer);
+    // Blocks half the size: the ground as large in metres, of twice as many blocks each way.
+    show_block_tool(&mut editor, &mut renderer, "Settings");
+    type_number(&mut editor, &mut renderer, "Block size", "0.5");
+    let world = &editor.game.engine.world;
+    let (file, blocks) =
+        (world.get::<BlockWorldAsset>(field).unwrap().file.clone(), world.get::<BlockWorld>(field).unwrap());
+    assert_eq!((file.block_size, file.ground.size, file.ground.height), (0.5, [128, 128], 16));
+    assert_eq!(blocks.block_size, 0.5);
+    // The pillar where it stood, a metre across and three high: two blocks across and six high.
+    for (at, kind) in [([40, 16, 60], 3), ([41, 21, 61], 3), ([42, 16, 60], 0), ([40, 22, 60], 0), ([39, 15, 60], 1)] {
+        assert_eq!(blocks.blocks.get(at), kind, "at {at:?}");
+    }
+    assert_eq!(blocks.blocks.get([127, 15, 127]), 1, "grass at its far corner, 64 m out");
+    // One step to undo.
+    editor.undo(&mut renderer);
+    frame(&mut editor, &mut renderer);
+    let blocks = editor.game.engine.world.get::<BlockWorld>(field).unwrap();
+    assert_eq!((blocks.block_size, blocks.blocks.get([20, 10, 30]), blocks.blocks.get([40, 16, 60])), (1.0, 3, 0));
+}
+
+#[test]
 fn a_block_worlds_ground_is_generated_by_a_picked_generator_and_covered_by_a_kinds_biome() {
     use voxear_engine::blocks::BlockWorldAsset;
     use voxear_terrain::{
@@ -1599,9 +1639,15 @@ fn a_block_worlds_ground_made_a_planet_lies_all_round_its_middle_as_large_as_its
         assert_eq!(now.blocks.get(at), 1, "grass at {at:?}");
     }
     assert_eq!(now.blocks.get([0, 21, 0]), AIR);
-    // Undone (the two changes so close together one step), flat ground again.
+    // Undone, flat ground again: the two changes are one step when they came within the history's merge time, else
+    // two, which a busy machine making the first planet slowly can take.
     editor.undo(&mut renderer);
     frame(&mut editor, &mut renderer);
+    if blocks(&editor).planet.is_some() {
+        assert_eq!(blocks(&editor).planet, Some(100.0), "the radius's own step undone, the first planet left");
+        editor.undo(&mut renderer);
+        frame(&mut editor, &mut renderer);
+    }
     assert_eq!(blocks(&editor).planet, None);
     assert_eq!(blocks(&editor).blocks.get([0, 7, 0]), 1, "its flat ground's grass");
 }

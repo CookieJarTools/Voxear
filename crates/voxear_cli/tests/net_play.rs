@@ -284,6 +284,93 @@ fn with_shared_authority_a_players_machine_runs_their_own_obj() {
     );
 }
 
+const FLAG: &str = r#"using System.Numerics;
+using Voxear;
+
+namespace Hello;
+
+public sealed partial class Flag : Behaviour
+{
+	[Replicated, WorldPosition]
+	public partial Vector3 Rally { get; set; }
+
+	private bool told;
+
+	protected override void Update()
+	{
+		if (Net.IsServer || told || Rally.X < 1000f)
+		{
+			return;
+		}
+		told = true;
+		var (rally, ball) = (Origin.ToLevel(Rally), Origin.ToLevel(Obj.Position));
+		Log.Info($"middle moved {Origin.IsMoved}, rally {rally.X:0.0} {rally.Y:0.0} {rally.Z:0.0}, "
+			+ $"ball {ball.X:0.0} {ball.Y:0.0} {ball.Z:0.0}");
+		SignalOnServer(Origin.FromLevel(new LevelPosition(100.5, 0.0, -20.0)));
+	}
+
+	[ServerRpc]
+	private void Signal([WorldPosition] Vector3 at)
+	{
+		Log.Info($"signalled at {at.X:0.0} {at.Y:0.0} {at.Z:0.0}");
+	}
+}
+"#;
+
+const RALLY: &str = r#"using System.Numerics;
+using Voxear;
+
+namespace Hello;
+
+public sealed class Rallying : SystemBase
+{
+	protected override void OnCreate()
+	{
+		Net.PlayerJoined += player =>
+		{
+			if (!Net.IsServer)
+			{
+				return;
+			}
+			var flag = Prefab.Load("Prefabs/Flag.prefab").Instantiate(new Vector3(0f, 1f, 0f), Quaternion.Identity);
+			var net = flag.NetObject;
+			net.Owner = player;
+			flag.GetBehaviour<Flag>()!.Rally = new Vector3(2000.5f, 1f, 30f);
+		};
+	}
+
+	protected override void Update()
+	{
+	}
+}
+"#;
+
+#[test]
+fn a_player_whose_middle_moved_sees_and_sends_positions_from_the_levels_middle() {
+    if voxear_scripting::find_dotnet().is_none() {
+        return eprintln!("skipping: needs .NET");
+    }
+    let dir = hello_copy();
+    std::fs::write(dir.path().join("Scripts/Flag.cs"), FLAG).unwrap();
+    std::fs::write(dir.path().join("Scripts/Rallying.cs"), RALLY).unwrap();
+    let prefab = "format = 1\n[[obj]]\nid = 1\nname = \"Flag\"\nbehaviours = [\"Hello.Flag\"]\nnet = {}\n";
+    std::fs::write(dir.path().join("Prefabs/Flag.prefab"), prefab).unwrap();
+    // The player's middle follows their camera, 7 m back from the level's, as soon as they play; the server's stays.
+    let toml = dir.path().join("voxear.toml");
+    let moving =
+        std::fs::read_to_string(&toml).unwrap() + "\n[floating_origin]\nmode = \"always\"\ndistance = 1\nstep = 1\n";
+    std::fs::write(&toml, moving).unwrap();
+    let (server, client) = play(dir.path(), 47797, 240);
+    assert!(
+        client.iter().any(|line| line.contains("middle moved True, rally 2000.5 1.0 30.0, ball 0.0 1.0 0.0")),
+        "the player sees the server's positions from the level's middle: {client:?}"
+    );
+    assert!(
+        server.iter().any(|line| line.contains("signalled at 100.5 0.0 -20.0")),
+        "and the server the player's: {server:?}\n{client:?}"
+    );
+}
+
 /// Plays a server and a client of the project at `dir` on `port`, the client for `frames` frames: each one's log.
 fn play(dir: &Path, port: u16, frames: u32) -> (Vec<String>, Vec<String>) {
     let vox = env!("CARGO_BIN_EXE_vox");

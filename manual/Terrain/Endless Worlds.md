@@ -35,4 +35,4 @@ Brushes, **Import**, **Erosion** and **Rivers** layers, holes and digging work o
 
 ## Far from the middle
 
-An endless terrain can be walked as far as the player likes: once the camera is 2 km from the world's middle, everything moves back towards it by whole kilometres, the ground with it, so positions stay exact (see [[Floating Origin]]). The tiles already made stay as they were, and the ground carries on round the camera.
+Positions are exact to about half a millimetre within 8 km of the world's middle; further out, things that move begin to shake. To walk an endless terrain as far as the player likes, switch the [[Floating Origin]] on in Project Settings ▸ World: once the camera is 2 km from the world's middle, everything moves back towards it by whole kilometres, the ground with it. The tiles already made stay as they were, and the ground carries on round the camera.

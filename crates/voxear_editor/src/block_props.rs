@@ -120,11 +120,94 @@ struct HeldFiles {
     files: std::collections::HashMap<Entity, BlockFile>,
 }
 
+/// The worlds whose generator's graph has a Volume, and so makes their
+/// overhangs and caves itself: their own Overhangs and Caves are not shown.
+#[derive(Default, PartialEq)]
+struct GeneratorVolumes(std::collections::HashSet<Entity>);
+
+/// Whether the world's generator makes its overhangs and caves itself, as
+/// last seen (see [`hold`]).
+pub fn generator_has_volume(world: &World, entity: Entity) -> bool {
+    world.resource::<GeneratorVolumes>().is_some_and(|volumes| volumes.0.contains(&entity))
+}
+
+/// Whether the world's own overhangs and caves can move into its
+/// generator: its ground is made by a generator that can be read and has
+/// no Volume yet.
+pub fn can_move_to_generator(game: &Game, entity: Entity) -> bool {
+    let world = &game.engine.world;
+    let reference = world.get::<BlockWorldAsset>(entity).and_then(|asset| asset.file.generate.as_ref()?.world.clone());
+    let guid = reference.and_then(|r| game.content.parse(&r).ok()).and_then(|parsed| parsed.guid());
+    guid.is_some_and(|guid| game.content.db().get(guid).is_some()) && !generator_has_volume(world, entity)
+}
+
+/// Sees which worlds' generators make their overhangs and caves
+/// themselves, for the rows a world shows.
+fn see_generators(game: &mut Game) {
+    let generated: Vec<(Entity, String)> = game
+        .engine
+        .world
+        .query_ref::<(Entity, &BlockWorldAsset)>()
+        .into_iter()
+        .filter_map(|(entity, asset)| Some((entity, asset.file.generate.as_ref()?.world.clone()?)))
+        .collect();
+    let content = &mut game.content;
+    let mut own = |reference: &str| content.world_gen(reference).is_some_and(|world| world.volume().is_some());
+    let seen = GeneratorVolumes(
+        generated.into_iter().filter(|(_, reference)| own(reference)).map(|(entity, _)| entity).collect(),
+    );
+    if game.engine.world.resource::<GeneratorVolumes>() != Some(&seen) {
+        game.engine.world.insert_resource(seen);
+    }
+}
+
+/// Moves the world's own overhangs and caves into its generator: wired
+/// into the generator's graph as the nodes that make them, their amounts
+/// shown as rows of the generator's own, and none left on the world. The
+/// generator is saved, and every world it makes ground for is made again
+/// from it. The ground of a world placed at its generator's own corner is
+/// what it was; one placed elsewhere has its caves where the generator's
+/// are there.
+pub fn move_to_generator(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity) -> bool {
+    let Some(mut file) = game.engine.world.get::<BlockWorldAsset>(entity).map(|asset| asset.file.clone()) else {
+        return false;
+    };
+    let Some(generate) = file.generate.as_mut() else { return false };
+    let Some(reference) = generate.world.clone() else { return false };
+    let Some(guid) = game.content.parse(&reference).ok().and_then(|parsed| parsed.guid()) else { return false };
+    let Some(world) = game.content.world_gen(&reference).filter(|world| world.volume().is_none()) else {
+        return false;
+    };
+    let Some(path) = game.content.db().get(guid).map(|entry| entry.path.clone()) else { return false };
+    let own = voxear_terrain::generate::OwnVoxels {
+        overhangs: generate.overhangs.max(0.0),
+        caves: generate.caves.clamp(0.0, 1.0),
+        roof: voxear_terrain::blocks::generate::CAVE_ROOF * file.block_size,
+    };
+    let mut graph = world.graph().clone();
+    if !graph.add_voxels(own, true) {
+        return false;
+    }
+    let text = format!("{}{}", crate::project_files::NEW_WORLD_GEN, world.with_graph(graph).to_text());
+    if let Err(error) = std::fs::write(game.project.root.join(&path), text) {
+        tracing::error!("could not save {path}: {error}");
+        return false;
+    }
+    (generate.overhangs, generate.caves) = (0.0, 0.0);
+    if game.content.forget_world_gen(guid) {
+        crate::terrain_props::regenerate(game, guid);
+        regenerate(game, guid);
+    }
+    see_generators(game);
+    change_file(game, renderer, entity, file)
+}
+
 /// Holds changes to worlds' files from now on while `dragging`, a number
 /// dragged by its label; once it is not, makes each world held again from
 /// its last file. The Inspector calls it each frame before it reads its
 /// rows, so a world made again on letting go is one edit.
 pub fn hold(game: &mut Game, mut renderer: Option<&mut Renderer>, dragging: bool) {
+    see_generators(game);
     let world = &mut game.engine.world;
     if world.resource::<HeldFiles>().is_none() {
         if !dragging {
@@ -264,10 +347,13 @@ pub fn props(world: &World, entity: Entity) -> Vec<Prop> {
         (BlockTool::Build, None) => vec![F::Data],
         (BlockTool::Settings, Some(file)) => {
             let mut fields = vec![F::Data, F::BlockSize, F::Smooth, F::Ground];
+            // A generator whose graph has a Volume makes the overhangs and caves itself.
+            let own_voxels = if generator_has_volume(world, entity) { vec![] } else { vec![F::Overhangs, F::Caves] };
             match file.generate {
                 // A planet lies all round its middle, made at once: no size, place, lowest block or end.
                 Some(ref generate) if generate.planet.is_some() => {
-                    fields.extend([F::Generator, F::Radius, F::Overhangs, F::Caves]);
+                    fields.extend([F::Generator, F::Radius]);
+                    fields.extend(own_voxels);
                 }
                 Some(ref generate) => {
                     fields.extend([F::Generator, F::Offset, F::Endless]);
@@ -275,7 +361,8 @@ pub fn props(world: &World, entity: Entity) -> Vec<Prop> {
                         Some(_) => fields.extend([F::ViewDistance, F::FarDistance]),
                         None => fields.push(F::GroundSize),
                     }
-                    fields.extend([F::Lowest, F::Overhangs, F::Caves]);
+                    fields.push(F::Lowest);
+                    fields.extend(own_voxels);
                 }
                 None => fields.extend([F::GroundSize, F::GroundHeight]),
             }

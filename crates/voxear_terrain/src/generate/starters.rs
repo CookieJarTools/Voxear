@@ -12,7 +12,9 @@ use voxear_core::curve::Curve;
 use super::{
     graph::{Graph, NodeId},
     landmass::Climate,
-    nodes::{Bend, Blend, Cells, Clamp, Gullies, HeightMask, Math, NodeKind, Noise, Operation, Output, Remap, Terrace},
+    nodes::{
+        Bend, Blend, Cellular, Clamp, Gullies, HeightMask, Math, NodeKind, Noise, Operation, Output, Remap, Terrace,
+    },
     world::WorldGen,
 };
 use crate::noise::NoiseStyle;
@@ -220,8 +222,8 @@ fn battlefield_plains() -> Starter {
     let ground = g.math(Add, cut, bumps);
     // Shell holes: a bowl with a raised lip round each point of two scatters, small holes and large ones, where a
     // broad field says the shells fell.
-    let small = g.add(NodeKind::Cells(Cells { size: 14.0, jitter: 1.0 }));
-    let large = g.add(NodeKind::Cells(Cells { size: 30.0, jitter: 1.0 }));
+    let small = g.add(NodeKind::Cells(Cellular { size: 14.0, jitter: 1.0 }));
+    let large = g.add(NodeKind::Cells(Cellular { size: 30.0, jitter: 1.0 }));
     let fell = g.noise(Fractal, 260.0, 2, 0.0, 1.0);
     g.next();
     let bowl: &[[f32; 2]] = &[[0.0, -1.0], [0.12, -0.85], [0.24, 0.12], [0.32, 0.0], [1.0, 0.0]];
@@ -309,7 +311,7 @@ fn archipelago() -> Starter {
     let broad = g.noise(Fractal, 2800.0, 3, 0.0, 1.0);
     let ragged = g.noise(Fractal, 700.0, 3, -0.07, 0.07);
     // A mound round each point of a scatter, which lifts an islet out of the shallows where the sea is not deep.
-    let scatter = g.add(NodeKind::Cells(Cells { size: 1500.0, jitter: 1.0 }));
+    let scatter = g.add(NodeKind::Cells(Cellular { size: 1500.0, jitter: 1.0 }));
     let hills = g.noise(Fractal, 520.0, 3, 0.0, 1.0);
     g.next();
     let mounds = g.curve(scatter, 0.0, 0.32, &[[0.0, 0.2], [1.0, 0.0]]);

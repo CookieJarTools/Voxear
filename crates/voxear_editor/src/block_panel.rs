@@ -9,6 +9,10 @@
 //! alone. While the world keeps kinds of its own that are more than a
 //! model's colours, Make Block Assets makes blocks of them. Each change to
 //! the list is a step to undo; picking a tool or a block is not.
+//!
+//! Under Settings, while the world's generator makes no overhangs and caves
+//! of its own, **Move to Generator** moves the world's into it (see
+//! `block_props::move_to_generator`).
 
 use std::hash::{Hash, Hasher};
 
@@ -41,6 +45,8 @@ pub struct BlockPanel {
     new_block: Option<NodeId>,
     add_color: Option<NodeId>,
     make_assets: Option<NodeId>,
+    /// Move to Generator, where the world's overhangs and caves can move.
+    move_out: Option<NodeId>,
     signature: u64,
 }
 
@@ -50,7 +56,9 @@ fn signature(world: &World, entity: Entity) -> u64 {
     let state = block_props::ui(world);
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     (state.tool, state.block).hash(&mut hasher);
+    block_props::generator_has_volume(world, entity).hash(&mut hasher);
     if let Some(asset) = world.get::<BlockWorldAsset>(entity) {
+        asset.file.generate.as_ref().and_then(|generate| generate.world.as_ref()).hash(&mut hasher);
         for kind in &asset.drawn.blocks {
             (&kind.name, &kind.block, kind.removed).hash(&mut hasher);
             kind.color.map(f32::to_bits).hash(&mut hasher);
@@ -109,7 +117,15 @@ impl BlockPanel {
             }
             _ => None,
         };
-        Self { tools, list, rows: shown, new_block, add_color, make_assets, signature: signature(world, entity) }
+        let mut move_out = None;
+        if state.tool == BlockTool::Settings && block_props::can_move_to_generator(game, entity) {
+            let button = ui.button(rows, "Move to Generator");
+            ui.add_class(button, "block-move-to-generator");
+            ui.set_tooltip(button, "Moves Overhangs and Caves into the generator, as nodes of its graph", None);
+            move_out = Some(button);
+        }
+        let signature = signature(world, entity);
+        Self { tools, list, rows: shown, new_block, add_color, make_assets, move_out, signature }
     }
 
     /// Whether what it shows changed since it was built.
@@ -139,10 +155,13 @@ impl BlockPanel {
             block_props::show_tool(world, tool);
             return true;
         }
+        let clicked = |button: Option<NodeId>| button.is_some_and(|button| ui.clicked(button));
+        if clicked(self.move_out) {
+            return block_props::move_to_generator(game, renderer, entity);
+        }
         if self.list.is_none() {
             return false;
         }
-        let clicked = |button: Option<NodeId>| button.is_some_and(|button| ui.clicked(button));
         if clicked(self.new_block) {
             return block_props::new_block(game, renderer, entity);
         }

@@ -37,9 +37,13 @@ With **Ground** set to **Generated**, a [[Generating Terrain|world generator]] m
 | Generator | The `.worldgen` its ground comes from |
 | Offset | Where its corner is in the generator's world, in metres |
 | Lowest block | How far down its ground goes, in blocks from its corner: below that is air |
-| Overhangs | How far its surface is pushed in and out, in metres, so cliffs lean and overhang |
+| Overhangs | How far its steep ground is pushed in and out, in metres, so cliffs lean, bulge and overhang |
 | Caves | How much of the ground below is hollowed out, from 0 for none to 1: long tunnels, and chambers here and there |
 | Sea block | The block the air below the generator's sea level is filled with, one that is [[Block Worlds#Water|water]]; Air for none |
+
+Overhangs push cliffs and leave hillsides alone: ground steeper than about 30° is pushed a little, and ground steeper than about 45° by the whole amount. The bulges are about 14 m across, so the ground hangs over open air once Overhangs is 9 m or so; under that, cliffs lean and bulge. The far rings of a world without end, whose blocks are too large to hold a bulge, are left unpushed.
+
+The ground's layers follow the pushed ground. The top block is whatever has open air over it, with the under block below, counted down each column, so the under block never shows through where the ground was pushed out. Under an overhang the count starts again on the ground below, and the overhang's underside has no top block.
 
 Caves keep three blocks under the surface whole, so they open onto it only where a slope cuts into them. The sea fills only the open air over the ground: caves under it stay dry.
 
@@ -54,6 +58,31 @@ A block the world lists can **cover** generated ground in place of its top block
 | Depth | How many blocks deep it lies |
 
 Snow covering where it is below freezing, sand where it is hot and dry and low, gravel on the tops: blocks later in the list cover those before them. A cover is the world's, not the block's: the same snow can cover one world's peaks and none of another's. A change to the generator makes the ground again, with what you built on it kept.
+
+### Overhangs and caves in the generator
+
+Overhangs and Caves can belong to the generator rather than the world, so every world on that generator shares them. **Move to Generator**, above the settings, moves the world's two numbers into its generator. The generator's graph gains the nodes that make them, and the generator shows three rows of its own:
+
+| Row | What it does |
+| --- | --- |
+| Overhangs | How far steep ground is pushed in and out, in metres |
+| Tunnels | How wide the long winding caves are, from 0 for none to 1 |
+| Chambers | How much of the ground the wide low caves take, from 0 for none to 1 |
+
+The world's own Overhangs and Caves rows go, since the generator now makes both, for this world and any other on the generator. The ground of a world whose **Offset** is 0, 0 stays exactly as it was. A world placed elsewhere takes the caves that lie there in the generator's world, so its caves move.
+
+The nodes are wired into the **Volume** of the graph's Output, which is the ground in three dimensions: how far into the ground each place is. A terrain of heights reads the Output's height and never its Volume.
+
+| Node | What it makes |
+| --- | --- |
+| Solid | A height made solid: the generator's own ground with nothing wired in |
+| Overhangs | Ground pushed in and out by **Amount** metres, in bulges **Size** metres across with **Octaves** finer ones over them. It pushes where its **Mask** says, and steep ground alone with no mask wired in |
+| Tunnels | Long winding caves, **Amount** wide and winding over **Size** metres, kept **Roof** metres under the ground |
+| Chambers | Wide low caves **Size** metres apart, taking **Amount** of the ground, kept **Roof** metres under it |
+| Noise 3D | Noise through space, from **Low** to **High** |
+| Combine | Two of these made one: **Union**, **Subtract** or **Smooth**, which runs them together over **Blend** metres |
+
+What a Subtract takes away counts as caves: the far rings are made without it, the sea does not flood it, and the ground's layers run through it. A Volume is read up to 64 m over the generator's ground and no higher.
 
 ## Without end
 

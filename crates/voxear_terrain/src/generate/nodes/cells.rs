@@ -29,18 +29,18 @@ use crate::generate::{
 /// its square of the grid by `jitter`, 0 to 1.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
-pub struct Cells {
+pub struct Cellular {
     pub size: f32,
     pub jitter: f32,
 }
 
-impl Default for Cells {
+impl Default for Cellular {
     fn default() -> Self {
         Self { size: 100.0, jitter: 1.0 }
     }
 }
 
-impl Cells {
+impl Cellular {
     /// Its outputs, among its outputs.
     pub const DISTANCE: usize = 0;
     pub const EDGES: usize = 1;
@@ -53,7 +53,7 @@ const VALUES: &[ValueSpec] =
 const OUTPUTS: &[Port] =
     &[Port::field("distance", "Distance"), Port::field("edges", "Edges"), Port::field("value", "Value")];
 
-impl Kind for Cells {
+impl Kind for Cellular {
     const TITLE: &'static str = "Cells";
     const FOLDER: &'static str = "Sources";
 
@@ -83,7 +83,7 @@ impl Kind for Cells {
 
     fn compile(&self, cx: &mut Compiler, node: NodeId, port: usize, at: Places) -> V {
         let scatter = Scatter {
-            what: port.min(Cells::VALUE),
+            what: port.min(Cellular::VALUE),
             size: (self.size * cx.world.scale.max(0.01)).max(0.01),
             jitter: self.jitter.clamp(0.0, 1.0),
             seed: node_seed(cx.world, node),
@@ -213,13 +213,13 @@ impl Scatter {
         self.gather(&mut found, cell, inside, 1, 0);
         let (mut nearest, mut least) = found.nearest();
         let reach = 1.0 + margin;
-        if self.what != Cells::EDGES {
+        if self.what != Cellular::EDGES {
             if least > reach * reach {
                 self.gather(&mut found, cell, inside, 2, 1);
                 (nearest, least) = found.nearest();
             }
             return match self.what {
-                Cells::DISTANCE => {
+                Cellular::DISTANCE => {
                     let far = least.sqrt();
                     if far < 1.0 { far } else { 1.0 }
                 }
@@ -284,8 +284,8 @@ mod tests {
 
     #[test]
     fn cells_stay_from_nothing_to_one_and_fill_it() {
-        for port in [Cells::DISTANCE, Cells::EDGES, Cells::VALUE] {
-            let world = testing::world_of(NodeKind::Cells(Cells { size: 60.0, jitter: 1.0 }), port, &[]);
+        for port in [Cellular::DISTANCE, Cellular::EDGES, Cellular::VALUE] {
+            let world = testing::world_of(NodeKind::Cells(Cellular { size: 60.0, jitter: 1.0 }), port, &[]);
             let (low, high) = testing::checked(&world);
             assert!(low >= 0.0 && high <= 1.0, "output {port}: {low} to {high}");
             assert!(low < 0.05 && high > 0.7, "output {port} fills its range: {low} to {high}");
@@ -297,10 +297,10 @@ mod tests {
     #[test]
     fn a_cell_has_one_value_a_point_at_its_middle_and_borders_at_its_edges() {
         let cells =
-            |jitter: f32, port: usize| testing::world_of(NodeKind::Cells(Cells { size: 50.0, jitter }), port, &[]);
+            |jitter: f32, port: usize| testing::world_of(NodeKind::Cells(Cellular { size: 50.0, jitter }), port, &[]);
         // With no jitter the points lie on the middle of each square: nothing far at one, and a border between two.
         let (distance, edges, value) =
-            (cells(0.0, Cells::DISTANCE), cells(0.0, Cells::EDGES), cells(0.0, Cells::VALUE));
+            (cells(0.0, Cellular::DISTANCE), cells(0.0, Cellular::EDGES), cells(0.0, Cellular::VALUE));
         assert!(distance.height_at(25.0, 75.0).abs() < 1e-5);
         assert!((distance.height_at(40.0, 75.0) - 0.3).abs() < 1e-5, "15 m of 50 from its point");
         assert!(edges.height_at(50.0, 20.0).abs() < 1e-5 && (edges.height_at(25.0, 25.0) - 1.0).abs() < 1e-5);
@@ -311,7 +311,7 @@ mod tests {
         // With all of it the borders are found from points two cells off as well, so they have no breaks: a short
         // step never changes how far a border is by more than its length.
         // A step of 0.54 m is 0.0108 of a cell, so how far a border is, twice over, changes by 0.0216 at the most.
-        let ragged = cells(1.0, Cells::EDGES);
+        let ragged = cells(1.0, Cellular::EDGES);
         let mut last = ragged.height_at(0.0, 13.0);
         for i in 1..40_000 {
             let edge = ragged.height_at(i as f32 * 0.5, 13.0 + i as f32 * 0.2);
@@ -319,7 +319,7 @@ mod tests {
             last = edge;
         }
         // Another node's cells are its own, and so are another seed's.
-        let world = cells(1.0, Cells::VALUE);
+        let world = cells(1.0, Cellular::VALUE);
         assert_ne!(world.with_seed(8).height_at(10.0, 10.0), world.height_at(10.0, 10.0));
         // Twice the scale, the same cells twice as wide.
         assert_eq!(world.with_scale(2.0).height_at(84.0, -36.0), world.height_at(42.0, -18.0));

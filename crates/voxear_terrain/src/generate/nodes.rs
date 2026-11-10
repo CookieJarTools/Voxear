@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use voxear_core::curve::Curve;
 
 use super::{
-    compile::{Compiler, Places, V, World},
+    compile::{Cells, Compiler, Places, V, World},
     graph::NodeId,
     landmass::{Climate, seed_of},
 };
@@ -40,8 +40,16 @@ mod terrace;
 pub(crate) mod testing;
 mod warp;
 
+mod chambers;
+mod combine;
+mod noise3d;
+mod overhangs;
+mod solid;
+mod tunnels;
+
 pub use blend::Blend;
-pub use cells::Cells;
+// The Cells node's values: `Cells` by itself is a row of places in space.
+pub use cells::Cellular;
 pub use clamp::Clamp;
 pub use climate_mask::ClimateMask;
 pub use constant::Constant;
@@ -58,6 +66,13 @@ pub use slope_mask::SlopeMask;
 pub use smooth::Smooth;
 pub use terrace::Terrace;
 pub use warp::Bend;
+
+pub use chambers::Chambers;
+pub use combine::{Combine, Combining};
+pub use noise3d::Noise3d;
+pub use overhangs::Overhangs;
+pub use solid::Solid;
+pub use tunnels::Tunnels;
 
 /// What a wire carries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -95,6 +110,10 @@ pub struct Port {
 impl Port {
     pub(crate) const fn field(name: &'static str, label: &'static str) -> Self {
         Self { name, label, kind: PortKind::Field }
+    }
+
+    pub(crate) const fn volume(name: &'static str, label: &'static str) -> Self {
+        Self { name, label, kind: PortKind::Volume }
     }
 }
 
@@ -269,6 +288,15 @@ pub(crate) trait Kind {
     /// The steps that make its output `port` at `at`, added to what `cx`
     /// compiles: the row their last fills.
     fn compile(&self, cx: &mut Compiler, node: NodeId, port: usize, at: Places) -> V;
+
+    /// The steps that make its Volume output `port` at the cells `at`: for
+    /// a kind with one. Its Volume inputs it asks of [`Compiler::volume`],
+    /// and what it reads of the ground under the cells of
+    /// [`Compiler::field`] or [`Compiler::column`], which make it once a
+    /// column.
+    fn compile_volume(&self, cx: &mut Compiler, _node: NodeId, _port: usize, _at: Cells) -> V {
+        cx.constant(0.0)
+    }
 }
 
 /// A node's kind, with its values. A graph has few nodes, so a landmass's many values lie in the node itself.
@@ -283,7 +311,7 @@ pub enum NodeKind {
     Noise(Noise),
     Math(Math),
     Curve(Remap),
-    Cells(Cells),
+    Cells(Cellular),
     Falloff(Falloff),
     Terrace(Terrace),
     Clamp(Clamp),
@@ -298,6 +326,12 @@ pub enum NodeKind {
     #[serde(rename = "climate_mask")]
     ClimateMask(ClimateMask),
     Gullies(Gullies),
+    Solid(Solid),
+    Noise3d(Noise3d),
+    Overhangs(Overhangs),
+    Tunnels(Tunnels),
+    Chambers(Chambers),
+    Combine(Combine),
 }
 
 /// `$do` for the values of whichever kind `$node` is, as `$kind`.
@@ -323,6 +357,12 @@ macro_rules! each_kind {
             NodeKind::Curvature($kind) => $do,
             NodeKind::ClimateMask($kind) => $do,
             NodeKind::Gullies($kind) => $do,
+            NodeKind::Solid($kind) => $do,
+            NodeKind::Noise3d($kind) => $do,
+            NodeKind::Overhangs($kind) => $do,
+            NodeKind::Tunnels($kind) => $do,
+            NodeKind::Chambers($kind) => $do,
+            NodeKind::Combine($kind) => $do,
         }
     };
 }
@@ -338,7 +378,7 @@ impl NodeKind {
         vec![
             NodeKind::Landmass(Land::default()),
             NodeKind::Noise(Noise::default()),
-            NodeKind::Cells(Cells::default()),
+            NodeKind::Cells(Cellular::default()),
             NodeKind::Falloff(Falloff::default()),
             NodeKind::Constant(Constant::default()),
             NodeKind::Curve(Remap::default()),
@@ -354,6 +394,12 @@ impl NodeKind {
             NodeKind::ClimateMask(ClimateMask::default()),
             NodeKind::Gullies(Gullies::default()),
             NodeKind::Climate(Climate::default()),
+            NodeKind::Solid(Solid::default()),
+            NodeKind::Noise3d(Noise3d::default()),
+            NodeKind::Overhangs(Overhangs::default()),
+            NodeKind::Tunnels(Tunnels::default()),
+            NodeKind::Chambers(Chambers::default()),
+            NodeKind::Combine(Combine::default()),
             NodeKind::Output(Output::default()),
         ]
     }
@@ -395,5 +441,9 @@ impl NodeKind {
 
     pub(crate) fn compile(&self, cx: &mut Compiler, node: NodeId, port: usize, at: Places) -> V {
         each_kind!(self, kind => kind.compile(cx, node, port, at))
+    }
+
+    pub(crate) fn compile_volume(&self, cx: &mut Compiler, node: NodeId, port: usize, at: Cells) -> V {
+        each_kind!(self, kind => kind.compile_volume(cx, node, port, at))
     }
 }

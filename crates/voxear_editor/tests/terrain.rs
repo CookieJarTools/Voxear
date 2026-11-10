@@ -1647,6 +1647,89 @@ fn a_block_worlds_ground_is_generated_by_a_picked_generator_and_covered_by_a_kin
 }
 
 #[test]
+fn a_block_worlds_overhangs_and_caves_move_into_its_generator_as_nodes_and_leave_its_ground_as_it_was() {
+    use voxear_engine::blocks::BlockWorldAsset;
+    use voxear_terrain::{
+        blocks::BlockWorld,
+        generate::{Preset, Value, WorldGen},
+    };
+    let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {
+        eprintln!("skipping: no usable GPU");
+        return;
+    };
+    let dir = hello_with_a_field();
+    // Steep hills, so overhangs have ground to push.
+    let mut hills = Preset::RollingHills.landmass();
+    hills.height = 400.0;
+    std::fs::create_dir_all(dir.path().join("Worlds")).unwrap();
+    std::fs::write(dir.path().join("Worlds/Steep.worldgen"), WorldGen::from(hills).to_text()).unwrap();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    let field = obj(&editor, "Field");
+    editor.select(Some(field));
+    frame(&mut editor, &mut renderer);
+    add_component(&mut editor, &mut renderer, "Block World");
+    show_block_tool(&mut editor, &mut renderer, "Settings");
+    let button = |editor: &voxear_editor::Editor| first_with(&editor.ui, editor.ui.root(), "block-move-to-generator");
+    assert!(button(&editor).is_none(), "flat ground has no generator to move anything into");
+    let ground = first_with(&editor.ui, prop_rows(&editor.ui, "Ground")[0], "value-choice").expect("its ground");
+    choose(&mut editor, &mut renderer, ground, 1);
+    frame(&mut editor, &mut renderer);
+    let picker = first_with(&editor.ui, prop_rows(&editor.ui, "Generator")[0], "value-picker").expect("its picker");
+    let arrow = first_with(&editor.ui, picker, "picker-arrow").expect("its arrow");
+    click(&mut editor.ui, arrow);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let offered = picker_row(&editor.ui, "Steep.worldgen").expect("the generator is offered");
+    click(&mut editor.ui, offered);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    type_number(&mut editor, &mut renderer, "Overhangs", "9");
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let file =
+        |editor: &voxear_editor::Editor| editor.game.engine.world.get::<BlockWorldAsset>(field).unwrap().file.clone();
+    let blocks =
+        |editor: &voxear_editor::Editor| editor.game.engine.world.get::<BlockWorld>(field).unwrap().blocks.clone();
+    let generate = file(&editor).generate.expect("generated");
+    assert_eq!((generate.overhangs, generate.caves), (9.0, 0.3));
+    let before = blocks(&editor);
+    // Moved: the numbers are nodes of the generator's graph, shown as its rows, and the world keeps none.
+    let move_out = button(&editor).expect("Move to Generator");
+    click(&mut editor.ui, move_out);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let text = std::fs::read_to_string(dir.path().join("Worlds/Steep.worldgen")).unwrap();
+    let world = WorldGen::parse(&text).unwrap();
+    assert!(world.volume().is_some() && world.faults().is_empty(), "{text}");
+    let rows: Vec<(String, Option<Value>)> = (0..world.graph().exposed.len())
+        .map(|row| (world.graph().exposed[row].label.clone(), world.graph().exposed_value(row)))
+        .collect();
+    let amounts: Vec<(&str, Option<Value>)> =
+        rows.iter().skip(3).map(|(label, value)| (label.as_str(), *value)).collect();
+    assert_eq!(
+        amounts,
+        [
+            ("Overhangs", Some(Value::Number(9.0))),
+            ("Tunnels", Some(Value::Number(0.3))),
+            ("Chambers", Some(Value::Number(0.3)))
+        ]
+    );
+    let generate = file(&editor).generate.expect("generated");
+    assert_eq!((generate.overhangs, generate.caves), (0.0, 0.0));
+    for label in ["Overhangs", "Caves"] {
+        assert!(prop_rows(&editor.ui, label).is_empty(), "{label} left the world");
+    }
+    assert!(button(&editor).is_none(), "nothing left to move");
+    assert_eq!(prop_rows(&editor.ui, "Generator").len(), 1);
+    // The ground is what it was, block for block.
+    assert!(*blocks(&editor) == *before, "the ground moved");
+    assert!(before.chunks().count() > 4);
+}
+
+#[test]
 fn a_generated_block_world_made_endless_is_made_round_the_scene_view() {
     use voxear_terrain::{blocks::BlockWorld, generate::Preset};
     let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {

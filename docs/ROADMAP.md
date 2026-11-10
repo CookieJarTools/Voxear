@@ -1613,8 +1613,26 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     new generator's graph, another starter picked and undone, an angle typed in degrees.
   - biomes as nodes: where each is and what it brings (its shape, a Terrain's surfaces, a Block World's blocks),
     laid over one another as layers; surfaces' climate ranges and kinds' covers moved over
-  - voxels: a Volume beside the height, with overhangs, tunnels and chambers as nodes; hillsides no longer pocked,
-    layers counted from the real surface
+  - ~~**Voxels:**~~ done: the Output has a **Volume** beside its height, how far into the ground each place in
+    space is. It compiles into two programs (`compile::Voxels`): one run once a column, making what its nodes read
+    of the ground (a height, a mask), and one run once a cell, given its middle, its size and those rows carried
+    up; a Field is only worked out a cell at a time where a node moved the cells it asks about. The ground under
+    the caves is compiled beside the whole, for far levels, for telling open air from a cave's, and for layers.
+    Nodes: Solid, Noise 3D, Overhangs (pushes through a mask, steep ground with none wired in, its octaves fading as
+    blocks grow too large to hold them), Tunnels, Chambers, Combine (Union, Subtract, Smooth). `WorldGen::volume`
+    gives `carried`, `carried_grid` (masks made at every fourth column and read between) and `densities`, flat and
+    round. Block worlds, Voxel Terrains and planets make their ground from it (`blocks::generate`); a generator
+    with none has the world's own Overhangs and Caves wired into a copy of its graph as the same nodes, seeded as
+    they were, so a world with Overhangs at 0 keeps its blocks to the bit, and **Move to Generator** in the Block
+    World's Inspector writes them into the generator with their amounts as its rows. Hillsides are no longer
+    pocked: only steep ground is pushed. Layers are counted down each column from the open air, through chunks and
+    past caves, and out along the radius on a planet, so the under block no longer shows through; drawn smooth,
+    fills are distances (the number over how fast it changes from block to block), the top block follows slopes as
+    a skin and walls are bare, and a corner takes the kind of the ground its surface passes beside. Tests: cells in
+    a batch against each alone, flat and round, from every core; the hash following the Volume and unchanged
+    without one; each node; a Field carried and bent; grids agreeing where they overlap; layers on overhanging
+    ground of cubes and smooth; the moved numbers making the same ground; the editor moving them. Manual: Block
+    Worlds, Voxel Terrain.
   - cave rooms as prefabs of shapes and exits, strung together by a Cave Network node, as a bounded cave level or
     under a world without end
 - ~~**Erosion layer:**~~ done: Add Layer ▸ Erosion wears the ground below it on the GPU (`shaders/erosion.slang`,

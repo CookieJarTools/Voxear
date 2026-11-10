@@ -38,14 +38,30 @@ impl Starter {
         WorldGen::new(seed, scale, self.sea_level, self.graph.clone())
     }
 
+    /// `world` with this starter's ground in place of its own: its seed,
+    /// its scale and the area its previews show kept, and the nodes that
+    /// make its Volume carried over with their rows (see
+    /// [`Graph::take_volume`]). A starter with a Volume of its own keeps
+    /// that instead: the cave level is its cave.
+    pub fn reshapes(&self, world: &WorldGen) -> WorldGen {
+        let mut graph = self.graph.clone();
+        if graph.volume_nodes().is_empty() {
+            graph.take_volume(world.graph());
+        }
+        WorldGen::new(world.seed(), world.scale(), self.sea_level, graph).with_preview_area(world.preview_area())
+    }
+
     /// Whether `graph` is this starter's still: the same nodes and wires,
-    /// whatever its rows are set to and wherever its nodes lie.
+    /// whatever its rows are set to and wherever its nodes lie. The nodes
+    /// that make its Volume alone are not looked at: a starter is the
+    /// ground, and stays that starter with overhangs and caves wired in.
     pub fn shapes(&self, graph: &Graph) -> bool {
-        if graph.exposed != self.graph.exposed {
+        let graph = &graph.without_volume();
+        let mut own = self.graph.without_volume();
+        if graph.exposed != own.exposed {
             return false;
         }
         // Its rows set as the graph's are, and both with their nodes in the order of their numbers, nowhere.
-        let mut own = self.graph.clone();
         for row in 0..own.exposed.len() {
             let Some(value) = graph.exposed_value(row) else { return false };
             own.set_exposed(row, value);
@@ -449,6 +465,13 @@ mod tests {
         // Its Rooms row is the main path's length; another seed is another cave.
         let longer = world.with_exposed(1, Value::Whole(12)).expect("its Rooms row");
         assert_eq!(longer.caves().unwrap().rooms(None).len(), 16);
+        // Picked for a generator with caves of its own, it keeps its cave; hills picked for it take the cave along.
+        let mut caved = starters()[1].graph.clone();
+        assert!(caved.add_voxels(crate::generate::OwnVoxels { overhangs: 0.0, caves: 0.4, roof: 3.0 }, false));
+        let picked = starter.reshapes(&WorldGen::new(4, 1.0, 0.0, caved));
+        assert_eq!((picked.starter(), picked.caves().map(|caves| caves.rooms(None).len())), (Some("Cave Level"), Some(12)));
+        let hills = starters()[1].reshapes(&world);
+        assert_eq!((hills.starter(), hills.caves().is_some()), (Some("Rolling Hills"), true));
         let other = starter.world(2, 1.0).caves().unwrap().rooms(None);
         let regions = |rooms: &[crate::generate::PlacedRoom]| rooms.iter().map(|room| room.region).collect::<Vec<_>>();
         assert_ne!(regions(&other), regions(&rooms));

@@ -132,11 +132,16 @@ pub struct Pipelines {
     pub water: vk::Pipeline,
     pub water_pool: vk::Pipeline,
     pub water_stream: vk::Pipeline,
+    /// The blobs lava's bursting bubbles throw up, and the bubbles' domes.
+    pub lava_spatter: vk::Pipeline,
+    pub lava_domes: vk::Pipeline,
     pub sea_floor: vk::Pipeline,
     pub sea_floor_under: vk::Pipeline,
     pub sea_floor_walls: vk::Pipeline,
     pub particles: vk::Pipeline,
     pub sea_spray: vk::Pipeline,
+    /// The spray over Streams' rapids.
+    pub stream_spray: vk::Pipeline,
     pub smoke_march: vk::Pipeline,
     pub smoke_composite: vk::Pipeline,
     pub smoke_resolve: vk::Pipeline,
@@ -485,6 +490,22 @@ impl Pipelines {
                 cull: vk::CullModeFlags::NONE,
                 ..GraphicsPipelineDesc::new("Streams", water, c"streamVertex", c"waterFragment")
             })?,
+            lava_spatter: graphics(&GraphicsPipelineDesc {
+                color_formats: &[HDR_FORMAT, VELOCITY_FORMAT],
+                depth_format: Some(DEPTH_FORMAT),
+                depth_write: true,
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                cull: vk::CullModeFlags::NONE,
+                ..GraphicsPipelineDesc::new("Lava spatter", water, c"lavaSpatterVertex", c"lavaSpatterFragment")
+            })?,
+            lava_domes: graphics(&GraphicsPipelineDesc {
+                color_formats: &[HDR_FORMAT, VELOCITY_FORMAT],
+                depth_format: Some(DEPTH_FORMAT),
+                depth_write: true,
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                cull: vk::CullModeFlags::NONE,
+                ..GraphicsPipelineDesc::new("Lava bubbles", water, c"lavaDomeVertex", c"waterFragment")
+            })?,
             water_wall: graphics(&GraphicsPipelineDesc {
                 color_formats: &[HDR_FORMAT, VELOCITY_FORMAT],
                 depth_format: Some(DEPTH_FORMAT),
@@ -689,6 +710,12 @@ impl Pipelines {
                 blend: Blend::Premultiplied,
                 ..GraphicsPipelineDesc::new("Sea spray", water, c"sprayVertex", c"particleFragment")
             })?,
+            stream_spray: graphics(&GraphicsPipelineDesc {
+                color_formats: hdr,
+                cull: vk::CullModeFlags::NONE,
+                blend: Blend::Premultiplied,
+                ..GraphicsPipelineDesc::new("Stream spray", water, c"streamSprayVertex", c"particleFragment")
+            })?,
             glass_shadow: graphics(&GraphicsPipelineDesc {
                 color_formats: &crate::glass::SHADOW_FORMATS,
                 cull: vk::CullModeFlags::NONE,
@@ -847,11 +874,14 @@ impl Pipelines {
             self.water,
             self.water_pool,
             self.water_stream,
+            self.lava_spatter,
+            self.lava_domes,
             self.sea_floor,
             self.sea_floor_under,
             self.sea_floor_walls,
             self.particles,
             self.sea_spray,
+            self.stream_spray,
             self.smoke_march,
             self.smoke_composite,
             self.smoke_resolve,

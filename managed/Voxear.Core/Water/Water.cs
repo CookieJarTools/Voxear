@@ -80,4 +80,19 @@ public static unsafe class Water
 		water = new WaterPoint(values[0], new Vector3(values[1], values[2], values[3]), new Vector3(values[4], values[5], values[6]));
 		return true;
 	}
+
+	/// <summary>
+	/// Throws up a splash where the water's surface is over or under <paramref name="position"/>, as of something
+	/// <paramref name="size"/> metres wide going in: drops of water, or blobs of molten rock from lava. False where
+	/// there is no water. A Rigidbody splashes by itself as it falls in or ploughs through; this is for what moves
+	/// without one, as a character wading does.
+	/// <code>
+	/// // A footstep in the shallows.
+	/// Water.Splash(foot.Position, 0.3f);
+	/// </code>
+	/// </summary>
+	public static bool Splash(Vector3 position, float size = 1f)
+	{
+		return Native.Api->WaterSplash(&position, size) != 0;
+	}
 }

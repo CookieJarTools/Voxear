@@ -325,13 +325,12 @@ impl WorldFields {
     }
 
     /// The generator shaped as the preset at `picked` in its Preset row, keeping its seed and
-    /// scale: a starter's graph in place of its own, or for a landmass, the landmass's preset.
+    /// scale: a starter's graph in place of its ground's, or for a landmass, the landmass's preset.
     fn with_preset(&self, picked: usize) -> Option<WorldGen> {
         match self.built.presets {
             Presets::Starters => {
-                let starter = starter_graphs().get(picked)?;
-                let made = starter.world(self.world.seed(), self.world.scale());
-                Some(made.with_preview_area(self.world.preview_area()))
+                // With the overhangs and caves the generator has, which are no part of a starter.
+                Some(starter_graphs().get(picked)?.reshapes(&self.world))
             }
             Presets::Landmass => Some(reshaped(&self.world, *Preset::ALL.get(picked)?)),
             Presets::None => None,
@@ -853,6 +852,18 @@ mod tests {
             ["Preset", "Seed", "Scale", "Sea level", "Height", "Ravines", "Temperature", "Humidity"]
         );
         assert_eq!(fields.preset.map(|dropdown| ui.selected_option(dropdown)), Some(4));
+        // With overhangs and caves moved into it, it is that starter still: its rows, then theirs, and another
+        // starter picked keeps them.
+        let mut caved = picked.graph().clone();
+        assert!(caved.add_voxels(voxear_terrain::generate::OwnVoxels { overhangs: 6.0, caves: 0.5, roof: 3.0 }, true));
+        fields.follow(&mut ui, &picked.with_graph(caved));
+        assert_eq!(fields.preset.map(|dropdown| ui.selected_option(dropdown)), Some(4));
+        assert_eq!(shown(&ui)[8..], ["Overhangs", "Tunnels", "Chambers"]);
+        let hills = fields.with_preset(1).expect("Rolling Hills");
+        assert!(hills.starter() == Some("Rolling Hills") && hills.volume().is_some());
+        fields.follow(&mut ui, &hills);
+        let rows = ["Height", "Gullies", "Temperature", "Humidity", "Overhangs", "Tunnels", "Chambers"];
+        assert_eq!(shown(&ui)[4..], rows);
         // A graph of its own has no Preset row; a landmass has a landmass's presets, and Custom after them.
         fields.follow(&mut ui, &canyons.with_graph(grown));
         assert_eq!(shown(&ui)[..2], ["Seed", "Scale"]);

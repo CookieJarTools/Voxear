@@ -12,6 +12,10 @@
 //! and slowed against the way the water there flows, so a Stream carries it.
 //! Up is against the pull where it is, and the push as strong as that pull:
 //! near a planet, out from its middle, where its blocks' water floats it.
+//!
+//! What goes into the water fast throws up a splash, and so does what moves
+//! through it fast, floating or not: drops of water, or of molten rock from
+//! lava. Scripts make one with `Water.Splash`.
 
 use voxear_core::math::{Mat4, Quat, Vec3};
 use voxear_ecs::{Component, Entity, World};
@@ -19,7 +23,7 @@ use voxear_physics::{
     Push,
     scene::{Collider, ColliderMesh, ColliderShape, PhysicsScene, Rigidbody},
 };
-use voxear_render::{DryArea, DryShape, Ocean, SeaEasing, SeaNow, WindZone, OceanSampler, ParticlePlayback, ParticleSystem, Pool, SeaState, Stream, StreamPoint, ocean, stream_over};
+use voxear_render::{DryArea, DryShape, Liquid, Ocean, SeaEasing, SeaNow, WindZone, OceanSampler, ParticlePlayback, ParticleSystem, Pool, SeaState, Stream, StreamPoint, ocean, stream_over};
 use voxear_scene::{Destroying, Path, Transform, WorldTransform};
 
 pub use voxear_physics::scene::Buoyancy;
@@ -38,8 +42,10 @@ pub struct WaterQuery {
     sampler: Option<OceanSampler>,
     /// The sea and the level the sampler was made for.
     made_for: Option<SeaState>,
-    /// Each Stream's points, in the world, and how deep it is.
-    streams: Vec<(Vec<StreamPoint>, f32)>,
+    /// Each Stream's points, in the world, how deep it is and what runs in it.
+    streams: Vec<(Vec<StreamPoint>, f32, Liquid)>,
+    /// The engine's time as the water was last moved on, for splashes scripts make.
+    now: f64,
     /// Whether the sea's waves calm in shallow water (the Ocean's Shores).
     shores: bool,
     /// How the sea is following its wind as it changes.
@@ -47,12 +53,14 @@ pub struct WaterQuery {
 }
 
 /// The water at a point: how high its surface is above it, the way that
-/// surface faces, and how fast it flows, in metres a second.
+/// surface faces, how fast it flows, in metres a second, and whether it is
+/// water or lava.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct WaterPoint {
     pub height: f32,
     pub normal: Vec3,
     pub flow: Vec3,
+    pub liquid: Liquid,
 }
 
 /// Moves the sea's waves on to `time`, in the game's elapsed seconds, as
@@ -62,6 +70,7 @@ pub struct WaterPoint {
 /// each Stream's points where its Path is now.
 pub fn update(world: &mut World, time: f64) {
     voxear_scripting::set_water_sampler(for_scripts);
+    voxear_scripting::set_water_splasher(splash_for_scripts);
     // The first Global Wind Zone that is on, as the renderer blows the sea with.
     let switched = voxear_scene::Switched::of(world);
     let zone = world
@@ -77,10 +86,12 @@ pub fn update(world: &mut World, time: f64) {
             (entity, ocean.sea_blown(rotation, zone), ocean.transition, position.y, ocean.shores)
         },
     );
-    let streams: Vec<(Vec<StreamPoint>, f32)> = world
+    let streams: Vec<(Vec<StreamPoint>, f32, Liquid)> = world
         .query_ref::<(&Stream, &Path, &Transform, Option<&WorldTransform>)>()
         .into_iter()
-        .map(|(stream, path, transform, at)| (stream.points(path, at.map_or_else(|| transform.matrix(), |w| w.0)), stream.depth))
+        .map(|(stream, path, transform, at)| {
+            (stream.points(path, at.map_or_else(|| transform.matrix(), |w| w.0)), stream.depth, stream.liquid)
+        })
         .collect();
     let origin = voxear_scene::WorldOrigin::of(world).0;
     if world.resource::<WaterQuery>().is_none() {
@@ -88,6 +99,7 @@ pub fn update(world: &mut World, time: f64) {
     }
     let query = world.resource_mut::<WaterQuery>().expect("inserted above");
     query.streams = streams;
+    query.now = time;
     let Some((entity, target, transition, level, shores)) = first else {
         (query.sampler, query.made_for, query.easing) = (None, None, None);
         return;
@@ -134,7 +146,7 @@ pub fn sample(world: &World, at: Vec3) -> Option<WaterPoint> {
         inside.then(|| area.bilge_over(model, at))
     });
     if let Some(bilge) = dry {
-        return bilge.map(|height| WaterPoint { height, normal: Vec3::Y, flow: Vec3::ZERO });
+        return bilge.map(|height| WaterPoint { height, normal: Vec3::Y, flow: Vec3::ZERO, liquid: Liquid::Water });
     }
     sample_wet(world, world.resource::<PhysicsScene>(), at)
 }
@@ -196,10 +208,10 @@ fn sample_wet(world: &World, physics: Option<&PhysicsScene>, at: Vec3) -> Option
     let pools = world.query_ref::<(&Pool, &Transform, Option<&WorldTransform>)>();
     let pool = pools.into_iter().find_map(|(pool, t, w)| {
         let (position, rotation) = placed(t, w);
-        pool.surface_over(position, rotation, at)
+        Some((pool.surface_over(position, rotation, at)?, pool.liquid))
     });
-    if let Some(height) = pool {
-        return Some(WaterPoint { height, normal: Vec3::Y, flow: Vec3::ZERO });
+    if let Some((height, liquid)) = pool {
+        return Some(WaterPoint { height, normal: Vec3::Y, flow: Vec3::ZERO, liquid });
     }
     // In a world of blocks' water, or over it: the top of its column, still.
     let blocks = world.query_ref::<(&voxear_terrain::blocks::BlockWorld, &Transform, Option<&WorldTransform>)>();
@@ -208,34 +220,35 @@ fn sample_wet(world: &World, physics: Option<&PhysicsScene>, at: Vec3) -> Option
         Some(corner.y + blocks.water_over((at - corner).to_array(), OVER_BLOCK_WATER)?)
     });
     if let Some(height) = block_water {
-        return Some(WaterPoint { height, normal: Vec3::Y, flow: Vec3::ZERO });
+        return Some(WaterPoint { height, normal: Vec3::Y, flow: Vec3::ZERO, liquid: Liquid::Water });
     }
     let query = world.resource::<WaterQuery>()?;
-    let stream = query.streams.iter().find_map(|(points, depth)| stream_over(points, *depth, at));
-    if let Some((height, flow)) = stream {
-        return Some(WaterPoint { height, normal: Vec3::Y, flow });
+    let stream =
+        query.streams.iter().find_map(|(points, depth, liquid)| Some((stream_over(points, *depth, at)?, *liquid)));
+    if let Some(((height, flow), liquid)) = stream {
+        return Some(WaterPoint { height, normal: Vec3::Y, flow, liquid });
     }
     let sampler = query.sampler.as_ref()?;
     let shallows = if query.shores { sea_shallows(world, physics, sampler.level(), at) } else { f32::INFINITY.into() };
     let height = sampler.height_over(at.x, at.z, shallows);
     // On the sea, the water flows as its waves carry it round, so what floats is slowed against that, not held back.
     let (normal, flow) = (sampler.normal_over(at.x, at.z, shallows), sampler.velocity_over(at.x, at.z, shallows));
-    Some(WaterPoint { height, normal, flow })
+    Some(WaterPoint { height, normal, flow, liquid: Liquid::Water })
 }
 
 /// How deep under water `at` is along `up`, in metres (less than nothing
-/// over it), and how the water there flows: where up is the world's, any
-/// water's (see `sample_wet`); elsewhere, as round a planet, its blocks'
-/// water, whose up is out from its middle.
-fn depth_at(world: &World, physics: Option<&PhysicsScene>, at: Vec3, up: Vec3) -> Option<(f32, Vec3)> {
+/// over it), how the water there flows, and what it is: where up is the
+/// world's, any water's (see `sample_wet`); elsewhere, as round a planet,
+/// its blocks' water, whose up is out from its middle.
+fn depth_at(world: &World, physics: Option<&PhysicsScene>, at: Vec3, up: Vec3) -> Option<(f32, Vec3, Liquid)> {
     if up.y > 0.999 {
-        return sample_wet(world, physics, at).map(|water| (water.height - at.y, water.flow));
+        return sample_wet(world, physics, at).map(|water| (water.height - at.y, water.flow, water.liquid));
     }
     let blocks = world.query_ref::<(&voxear_terrain::blocks::BlockWorld, &Transform, Option<&WorldTransform>)>();
     blocks.into_iter().find_map(|(blocks, local, placed)| {
         let corner = voxear_terrain::corner(local, placed);
         let (depth, _) = blocks.water_depth((at - corner).to_array(), OVER_BLOCK_WATER)?;
-        Some((depth, Vec3::ZERO))
+        Some((depth, Vec3::ZERO, Liquid::Water))
     })
 }
 
@@ -266,23 +279,28 @@ fn collider_box(world: &World, entity: Entity, collider: &Collider) -> (Vec3, Ve
     (middle, reach)
 }
 
-/// A floating body as `float` found it: how much of it is under water, the
-/// water's surface over its middle, how fast it is falling and how wide it
-/// is, for `splash` to tell when it hits the water.
+/// A body in or near water as `float` found it: how much of it is under
+/// water, the water's surface over its middle, how fast it is falling, how
+/// fast it moves across the water against the way that flows, how wide it
+/// is and what the water is, for `splash` to tell when it hits the water or
+/// ploughs through it.
 pub struct Floating {
     entity: Entity,
     under: f32,
     surface: Vec3,
     falling: f32,
+    across: f32,
     width: f32,
+    liquid: Liquid,
 }
 
 /// Pushes each floating Obj's body up where it is under water, and slows it
 /// against the water, for the physics step about to run. A body physics has
 /// not made yet floats from the next step. Gives back how each lies in the
-/// water.
+/// water, and how each other body that moves lies in it too, which the
+/// water does not push.
 pub fn float(world: &World, physics: &mut PhysicsScene) -> Vec<Floating> {
-    let mut found = Vec::new();
+    let mut found = sinking(world, physics);
     let floating: Vec<(Entity, Buoyancy, Collider, f32)> = world
         .query_ref::<(Entity, &Buoyancy, &Collider, &Rigidbody)>()
         .without::<Destroying>()
@@ -316,7 +334,7 @@ pub fn float(world: &World, physics: &mut PhysicsScene) -> Vec<Floating> {
             for j in 0..COLUMNS {
                 let spot = |k: usize| (k as f32 + 0.5) / COLUMNS as f32 * 2.0 - 1.0;
                 let at = to_world.transform_point3(middle + Vec3::new(reach.x * spot(i), 0.0, reach.z * spot(j)));
-                let Some((depth, flow)) = depth_at(world, Some(&*physics), at, up) else { continue };
+                let Some((depth, flow, _)) = depth_at(world, Some(&*physics), at, up) else { continue };
                 let under = ((depth + tall * 0.5) / tall).clamp(0.0, 1.0);
                 if under <= 0.0 {
                     continue;
@@ -332,9 +350,50 @@ pub fn float(world: &World, physics: &mut PhysicsScene) -> Vec<Floating> {
             physics.world_mut().push(body, Push::Torque(-turning * slowing));
         }
         let water = depth_at(world, Some(&*physics), centre, up);
-        let surface = water.map_or(centre, |(depth, _)| centre + up * depth);
+        let surface = water.map_or(centre, |(depth, ..)| centre + up * depth);
         let width = (across * 3.0).sqrt() * 2.0;
-        found.push(Floating { entity, under: under_all, surface, falling: -moving.dot(up), width });
+        let (flow, liquid) = water.map_or((Vec3::ZERO, Liquid::Water), |(_, flow, liquid)| (flow, liquid));
+        let against = moving - flow;
+        let ploughing = (against - up * against.dot(up)).length();
+        found.push(Floating { entity, under: under_all, surface, falling: -moving.dot(up), across: ploughing, width, liquid });
+    }
+    found
+}
+
+/// How fast a body that does not float moves before the water under it is
+/// looked for, in metres a second: one at rest makes no splash.
+const SINKING_SPEED: f32 = 0.5;
+
+/// How each body that does not float lies in the water, of those that move:
+/// a rock thrown in, or a barrel rolled through the shallows. The water does
+/// not push them; they are found so that they splash.
+fn sinking(world: &World, physics: &PhysicsScene) -> Vec<Floating> {
+    let bodies = world.query_ref::<(Entity, &Collider, &Rigidbody)>().without::<Destroying>().without::<Buoyancy>();
+    let mut found = Vec::new();
+    for (entity, collider, _) in bodies.into_iter().filter(|(.., body)| !body.kinematic) {
+        let Some(body) = physics.body(entity) else { continue };
+        let (moving, _) = physics.world().velocity(body);
+        if moving.length_squared() < SINKING_SPEED * SINKING_SPEED {
+            continue;
+        }
+        let to_world: Mat4 = voxear_scene::world_matrix(world, entity);
+        let (middle, reach) = collider_box(world, entity, collider);
+        let centre = to_world.transform_point3(middle);
+        let pull = physics.gravity_at(world, centre);
+        let up = if pull.length_squared() > 1e-12 { -pull.normalize() } else { Vec3::Y };
+        let Some((depth, flow, liquid)) = depth_at(world, Some(physics), centre, up) else { continue };
+        let tall = to_world.transform_vector3(Vec3::new(0.0, reach.y * 2.0, 0.0)).length().max(1e-3);
+        let width = to_world.transform_vector3(Vec3::new(reach.x, 0.0, reach.z)).length() * 2.0;
+        let against = moving - flow;
+        found.push(Floating {
+            entity,
+            under: ((depth + tall * 0.5) / tall).clamp(0.0, 1.0),
+            surface: centre + up * depth,
+            falling: -moving.dot(up),
+            across: (against - up * against.dot(up)).length(),
+            width,
+            liquid,
+        });
     }
     found
 }
@@ -345,10 +404,17 @@ const SPLASH_SPEED: f32 = 2.0;
 /// How much of a body is under water before it counts as in it.
 const IN_WATER: f32 = 0.02;
 
-/// How much of a floating body was under water as last seen, to tell when it
-/// goes in.
+/// How fast a body moves across the water, half in it, before it throws up
+/// a splash as it goes, in metres a second, and how long it is before its
+/// next, in seconds. Lava, as thick as it is, is thrown up sooner.
+const PLOUGH_SPEED: f32 = 1.5;
+const PLOUGH_SPEED_LAVA: f32 = 0.6;
+const PLOUGH_EVERY: f64 = 0.35;
+
+/// How much of a body was under water as last seen, to tell when it goes
+/// in, and when it may next splash as it ploughs through.
 #[derive(Clone, Copy, Debug)]
-struct Wetted(f32);
+struct Wetted(f32, f64);
 
 impl Component for Wetted {}
 
@@ -360,26 +426,57 @@ struct Splash {
 
 impl Component for Splash {}
 
-/// Throws up a splash where each floating body has just gone into the water
-/// fast enough, as big as it is fast and wide, and takes away the splashes
-/// whose drops have fallen; `now` is the engine's time.
+/// Throws up a splash where each body has just gone into the water fast
+/// enough, as big as it is fast and wide, and a smaller one every so often
+/// while it ploughs through the water half in it; and takes away the
+/// splashes whose drops have fallen. `now` is the engine's time.
 pub fn splash(world: &mut World, floating: Vec<Floating>, now: f64) {
     for body in floating {
-        let was = world.get::<Wetted>(body.entity).map_or(1.0, |wetted| wetted.0);
-        world.insert(body.entity, Wetted(body.under));
-        if was >= IN_WATER || body.under < IN_WATER || body.falling < SPLASH_SPEED {
-            continue;
+        let Wetted(was, next) = world.get::<Wetted>(body.entity).copied().unwrap_or(Wetted(1.0, 0.0));
+        let entering = was < IN_WATER && body.under >= IN_WATER && body.falling >= SPLASH_SPEED;
+        let fast = if body.liquid == Liquid::Lava { PLOUGH_SPEED_LAVA } else { PLOUGH_SPEED };
+        let ploughing = body.under >= IN_WATER && body.under < 0.95 && body.across >= fast && now >= next;
+        let again = if entering || ploughing { now + PLOUGH_EVERY } else { next };
+        world.insert(body.entity, Wetted(body.under, again));
+        if entering {
+            throw_up(world, body.surface, body.falling, body.width, body.liquid, now);
+        } else if ploughing {
+            throw_up(world, body.surface, body.across * SPLASH_SPEED / fast, body.width * 0.5, body.liquid, now);
         }
-        let drops = splash_drops(body.falling, body.width);
-        let lasts = f64::from(drops.lifetime[1]) + 0.2;
-        let playback = ParticlePlayback { started: now as f32, stopped: None };
-        world.spawn((drops, playback, Splash { until: now + lasts }, Transform::from_position(body.surface)));
     }
     let splashes = world.query_ref::<(Entity, &Splash)>();
     let gone: Vec<Entity> = splashes.into_iter().filter(|(_, splash)| splash.until < now).map(|(e, _)| e).collect();
     for entity in gone {
         world.despawn(entity);
     }
+}
+
+/// A splash at `surface`, as of something `width` wide going in at `falling`
+/// metres a second: drops of water, or blobs of molten rock from lava.
+fn throw_up(world: &mut World, surface: Vec3, falling: f32, width: f32, liquid: Liquid, now: f64) {
+    let drops = match liquid {
+        Liquid::Water => splash_drops(falling, width),
+        Liquid::Lava => lava_drops(falling, width),
+    };
+    let lasts = f64::from(drops.lifetime[1]) + 0.2;
+    let playback = ParticlePlayback { started: now as f32, stopped: None };
+    world.spawn((drops, playback, Splash { until: now + lasts }, Transform::from_position(surface)));
+}
+
+/// A splash where the water's surface is over or under `at`, `size` metres
+/// wide, as scripts ask for one (`Water.Splash`): whether there was water
+/// there to throw up.
+pub fn splash_at(world: &mut World, at: Vec3, size: f32) -> bool {
+    let Some(water) = sample(world, at) else { return false };
+    let now = world.resource::<WaterQuery>().map_or(0.0, |query| query.now);
+    let size = size.clamp(0.05, 20.0);
+    throw_up(world, Vec3::new(at.x, water.height, at.z), SPLASH_SPEED * (1.0 + size.min(3.0)), size, water.liquid, now);
+    true
+}
+
+/// A splash as scripts ask for one.
+fn splash_for_scripts(world: &mut World, at: [f32; 3], size: f32) -> bool {
+    splash_at(world, Vec3::from(at), size)
 }
 
 /// A splash's drops, for a body falling `falling` metres a second, `width`
@@ -402,6 +499,34 @@ fn splash_drops(falling: f32, width: f32) -> ParticleSystem {
         gravity: 1.0,
         drag: 0.4,
         softness: 0.1,
+        ..ParticleSystem::default()
+    }
+}
+
+/// A splash of lava, for a body falling `falling` metres a second, `width`
+/// wide: fewer and heavier than water's drops and thrown less far, as thick
+/// as lava is; blobs of molten rock that glow yellow and cool to red as they
+/// fall back.
+fn lava_drops(falling: f32, width: f32) -> ParticleSystem {
+    let hard = (falling / SPLASH_SPEED).min(4.0);
+    ParticleSystem {
+        looping: false,
+        duration: 0.1,
+        rate: 0.0,
+        burst: (10.0 * hard * width.clamp(0.3, 4.0)).clamp(6.0, 160.0) as u32,
+        lifetime: [0.45, 0.75 + 0.15 * hard],
+        speed: [0.8 + hard * 0.4, 1.6 + hard * 0.9],
+        size: [0.05, 0.15],
+        size_end: 0.7,
+        color: [1.0, 0.5, 0.1, 1.0],
+        color_end: [0.55, 0.05, 0.0, 0.85],
+        intensity: 6.0,
+        radius: width * 0.5,
+        angle: 40.0,
+        gravity: 1.0,
+        drag: 0.1,
+        lit: false,
+        softness: 0.02,
         ..ParticleSystem::default()
     }
 }
@@ -494,6 +619,73 @@ mod tests {
         assert!(when > 0.5 && when < 1.2, "as it reaches the water, falling three metres: {when}");
         assert!(burst > 40 && at.y.abs() < 0.3, "a big splash at the surface: {burst} at {at}");
         assert!(world.query_ref::<&Splash>().into_iter().next().is_none(), "gone once its drops have fallen");
+    }
+
+    #[test]
+    fn a_rock_that_sinks_into_lava_throws_up_molten_rock() {
+        let mut world = World::new();
+        let lake = Pool { size: [20.0, 20.0], depth: 5.0, liquid: Liquid::Lava, ..Pool::default() };
+        world.spawn((lake, Transform::default()));
+        // No Buoyancy: it goes straight down.
+        let body = Rigidbody { mass: 40.0, ..Rigidbody::default() };
+        world.spawn((Collider::default(), body, Transform::from_position(Vec3::new(0.0, 4.0, 0.0))));
+        let mut physics = PhysicsScene::new();
+        let dt = 1.0 / 60.0;
+        let mut thrown: Vec<(Entity, ParticleSystem, Vec3)> = Vec::new();
+        for step in 0..(1.5 / dt) as usize {
+            let now = f64::from(step as f32 * dt);
+            update(&mut world, now);
+            voxear_scene::propagate_transforms(&mut world);
+            let floating = float(&world, &mut physics);
+            physics.step(&mut world, dt);
+            splash(&mut world, floating, now);
+            for (entity, drops, at, _) in world.query_ref::<(Entity, &ParticleSystem, &Transform, &Splash)>() {
+                if !thrown.iter().any(|(seen, ..)| *seen == entity) {
+                    thrown.push((entity, *drops, at.position));
+                }
+            }
+        }
+        assert_eq!(thrown.len(), 1, "one splash as it goes in");
+        let (_, drops, at) = thrown[0];
+        assert!(at.y.abs() < 0.3, "at the lava's surface: {at}");
+        assert!(drops.color[0] > drops.color[2] * 4.0 && !drops.lit && drops.intensity > 2.0, "glowing orange: {drops:?}");
+        assert!(drops.burst < splash_drops(8.0, 1.7).burst, "fewer than water throws up, as thick as it is");
+    }
+
+    #[test]
+    fn what_ploughs_through_water_half_in_it_splashes_every_so_often() {
+        let mut world = World::new();
+        let boat = world.spawn(Transform::default());
+        let at = |across: f32| Floating {
+            entity: boat,
+            under: 0.5,
+            surface: Vec3::ZERO,
+            falling: 0.0,
+            across,
+            width: 1.0,
+            liquid: Liquid::Water,
+        };
+        let splashes = |world: &World| world.query_ref::<&Splash>().into_iter().count();
+        world.insert(boat, Wetted(0.5, 0.0));
+        splash(&mut world, vec![at(0.5)], 1.0);
+        assert_eq!(splashes(&world), 0, "drifting, none");
+        splash(&mut world, vec![at(3.0)], 1.1);
+        assert_eq!(splashes(&world), 1, "ploughing through at three metres a second");
+        splash(&mut world, vec![at(3.0)], 1.2);
+        assert_eq!(splashes(&world), 1, "not again at once");
+        splash(&mut world, vec![at(3.0)], 1.6);
+        assert_eq!(splashes(&world), 2, "but again a little later");
+    }
+
+    #[test]
+    fn a_splash_asked_for_is_thrown_up_at_the_waters_surface_where_there_is_water() {
+        let mut world = World::new();
+        world.spawn((Pool { size: [6.0, 6.0], ..Pool::default() }, Transform::from_position(Vec3::new(0.0, 2.0, 0.0))));
+        update(&mut world, 3.0);
+        assert!(splash_at(&mut world, Vec3::new(1.0, 0.5, 1.0), 0.5), "under the pond's surface");
+        let made: Vec<Vec3> = world.query_ref::<(&Transform, &Splash)>().into_iter().map(|(at, _)| at.position).collect();
+        assert_eq!(made, vec![Vec3::new(1.0, 2.0, 1.0)], "at its surface over the point");
+        assert!(!splash_at(&mut world, Vec3::new(50.0, 0.0, 0.0), 0.5), "no water there");
     }
 
     #[test]

@@ -45,8 +45,23 @@ const SPACING: f32 = 0.25;
 /// in `shaders/water.slang`.
 const POOL_QUADS: u32 = 64;
 const RINGED_POOL: f32 = POOL_QUADS as f32 * SPACING;
-/// How many quads across a Stream, as `STREAM_ACROSS` in `shaders/water.slang`.
-const STREAM_ACROSS: u32 = 8;
+/// How many quads across a Stream, and how many rows of them from each of its
+/// points to the next, as `STREAM_ACROSS` and `STREAM_ALONG` in
+/// `shaders/water.slang`.
+const STREAM_ACROSS: u32 = 16;
+const STREAM_ALONG: u32 = 4;
+/// Lava's spatter: how many blobs a bursting bubble throws up at most, and
+/// how wide the squares of lava its bubbles rise in are, in metres; as
+/// `SPATTER_BLOBS` in `shaders/water.slang` and `BUBBLE_CELL` in
+/// `shaders/lava.slang`. And how many of those squares are looked in for
+/// bubbles at most: a side of a lake's, and along a flow.
+const SPATTER_BLOBS: u32 = 20;
+const BUBBLE_CELL: f32 = 2.4;
+/// How many quads a bubble's dome is drawn with, as `DOME_RINGS` times
+/// `DOME_SEGMENTS` in `shaders/water.slang`.
+const DOME_QUADS: u32 = 6 * 16;
+const SPATTER_SQUARES: u32 = 24;
+const SPATTER_ALONG: u32 = 64;
 /// The sea floor round the camera, seen from straight above: this many
 /// slices, each this many texels a side, the first this many metres across
 /// and each twice the last, its heights kept within this many metres of
@@ -274,6 +289,8 @@ pub struct Water {
     dries: u32,
     /// How each Pool is drawn (`pool_draw`).
     pool_draws: Vec<(u32, u32)>,
+    /// The spatter of each Pool and Stream of lava (`spatter_draw`).
+    spatter: Vec<(u32, u32, [u32; 2])>,
     /// The worlds of blocks' water in view, and where each pixel's view
     /// leaves it; none when there is none.
     blocks: Option<(crate::blocks::ViewBlocks, ImageId)>,
@@ -478,6 +495,7 @@ impl Water {
             streams: bodies.streams.clone(),
             dries: bodies.dries(),
             pool_draws: bodies.bodies[..bodies.pools as usize].iter().map(|pool| pool_draw(pool, camera)).collect(),
+            spatter: (0u32..).zip(&bodies.bodies[..layered]).filter_map(|(body, lava)| spatter_draw(body, lava)).collect(),
             blocks,
         })
     }
@@ -503,6 +521,33 @@ fn pool_draw(pool: &GpuWaterBody, camera: Vec3) -> (u32, u32) {
     let quads = QUADS as f32 * 0.5 - 2.0;
     let last = (reach / (quads * SPACING)).log2().ceil().max(0.0) as u32;
     (QUADS, (last + 1).min(RINGS))
+}
+
+/// How the spatter of `lava`, body `body`, is drawn, as `lavaSpatterVertex`
+/// in `shaders/water.slang` lays it out: the body, a Stream's points, and
+/// how many squares of its plates are looked in for bursting bubbles. A
+/// lake's are those over its footprint, however it is turned; a flow's reach
+/// back from where it sets out as far as it stays molten, and a few either
+/// side of its middle. None for water.
+fn spatter_draw(body: u32, lava: &GpuWaterBody) -> Option<(u32, u32, [u32; 2])> {
+    use crate::water_bodies::{Liquid, WATER_POOL, WATER_STREAM};
+    if lava.liquid != Liquid::Lava as u32 {
+        return None;
+    }
+    let squares = |metres: f32, most: u32| ((metres / BUBBLE_CELL).ceil() as u32 + 2).min(most);
+    match lava.kind {
+        WATER_POOL => {
+            let side = squares(lava.size[0].hypot(lava.size[2]), SPATTER_SQUARES);
+            Some((body, 0, [side, side]))
+        }
+        WATER_STREAM => {
+            // A bubble rises only where the lava has not yet cooled as long as its Cooling, which down its middle
+            // takes it twice as long (`lavaCooledAt`), then rides on with it.
+            let [cooling, _, pace, _] = lava.lava;
+            Some((body, lava.size[0] as u32, [squares((cooling * 2.0 + 10.0) * pace, SPATTER_ALONG), 6]))
+        }
+        _ => None,
+    }
 }
 
 /// How many mips the foam pattern has, down to one texel.
@@ -723,7 +768,7 @@ pub fn record(
     water: Water,
     targets: WaterTargets,
 ) -> (Option<UnderWater>, Vec<ImageId>) {
-    let Water { displacement, slopes, previous, copy, copy_texture, copy_mips, depth_copy, second, foam, lens, floor, floor_depth, pattern, caustics, under, layered, size, sea, pools, streams, dries, frame, pool_draws, blocks, .. } = water;
+    let Water { displacement, slopes, previous, copy, copy_texture, copy_mips, depth_copy, second, foam, lens, floor, floor_depth, pattern, caustics, under, layered, size, sea, pools, streams, dries, frame, pool_draws, spatter, blocks, .. } = water;
     let on = |feature: u32| frame.features & feature != 0;
     let (floor_image, floor_draws) = floor;
     // The pattern foam is made of, once, with its mips.
@@ -847,7 +892,7 @@ pub fn record(
     let layer = Layer { hdr, velocity, depth, sampled, waves, size };
     // The sea and the walls round its Dry Areas, over a copy of the picture so far.
     let first_dry = pools + streams.len() as u32;
-    let draws = Draws { sea, pools: Vec::new(), streams: Vec::new(), walls: (first_dry, dries), blocks: None };
+    let draws = Draws { sea, pools: Vec::new(), streams: Vec::new(), spatter: Vec::new(), walls: (first_dry, dries), blocks: None };
     record_layer(fg, (pipelines, push), &layer, (copy, copy_texture, &copy_mips, depth_copy), (draws, true));
     // The Pools, their walls, the Streams and the worlds of blocks' water over a copy made after the sea, so the sea
     // shows through them; the blocks' water first finding where each pixel's view leaves it.
@@ -856,7 +901,7 @@ pub fn record(
             record_block_exits(fg, (pipelines, push), view, (*exits, depth, size));
         }
         let streams = streams.iter().enumerate().map(|(i, &points)| (pools + i as u32, points)).collect();
-        let draws = Draws { sea: false, pools: pool_draws, streams, walls: (0, pools), blocks };
+        let draws = Draws { sea: false, pools: pool_draws, streams, spatter, walls: (0, pools), blocks };
         match &second {
             Some((copy, copy_texture, copy_mips, depth_copy)) => {
                 record_layer(fg, (pipelines, push), &layer, (*copy, *copy_texture, copy_mips, *depth_copy), (draws, true))
@@ -932,13 +977,15 @@ struct Layer {
 }
 
 /// What a layer of water draws: the sea, how each Pool is drawn
-/// (`pool_draw`), each Stream's body and how many points it has, the
-/// walls of the bodies from the first given, how many, and the worlds of
-/// blocks' water, with where each pixel's view leaves it.
+/// (`pool_draw`), each Stream's body and how many points it has, lava's
+/// spatter (`spatter_draw`), the walls of the bodies from the first given,
+/// how many, and the worlds of blocks' water, with where each pixel's view
+/// leaves it.
 struct Draws {
     sea: bool,
     pools: Vec<(u32, u32)>,
     streams: Vec<(u32, u32)>,
+    spatter: Vec<(u32, u32, [u32; 2])>,
     walls: (u32, u32),
     blocks: Option<(crate::blocks::ViewBlocks, ImageId)>,
 }
@@ -1027,7 +1074,15 @@ fn record_layer(
         // Each Stream a strip along its points.
         for &(body, points) in draws.streams.iter().filter(|(_, points)| *points > 1) {
             bind(ctx, pipelines.water_stream, vk::PipelineBindPoint::GRAPHICS, &Push { list: body, level: points, ..push });
-            unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, (points - 1) * STREAM_ACROSS * 6, 1, 0, 0) };
+            unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, (points - 1) * STREAM_ALONG * STREAM_ACROSS * 6, 1, 0, 0) };
+        }
+        // Lava's bubbles, each a dome, and the blobs they throw up as they burst.
+        for &(body, points, squares) in &draws.spatter {
+            let push = Push { list: body, level: points, size: squares, ..push };
+            bind(ctx, pipelines.lava_domes, vk::PipelineBindPoint::GRAPHICS, &push);
+            unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, squares[0] * squares[1] * DOME_QUADS * 6, 1, 0, 0) };
+            bind(ctx, pipelines.lava_spatter, vk::PipelineBindPoint::GRAPHICS, &push);
+            unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, squares[0] * squares[1] * SPATTER_BLOBS * 6, 1, 0, 0) };
         }
         // Worlds of blocks' water, every face of it in view.
         if let Some((view, _)) = &draws.blocks {

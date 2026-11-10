@@ -31,7 +31,16 @@ protected override void FixedUpdate()
 
 ## Splashes
 
-A floating Obj that falls into the water fast enough throws up a splash where it goes in. Faster and wider Objs make bigger splashes. Nothing needs setting up: any Obj with Buoyancy splashes.
+An Obj with a Rigidbody that falls into the water fast enough throws up a splash where it goes in, whether it floats or sinks. Faster and wider Objs make bigger splashes. One that is pushed through the water, half in it, throws up smaller splashes as it goes. Nothing needs setting up.
+
+[[Lava]] splashes too, with blobs of molten rock in place of drops.
+
+Whatever moves without a Rigidbody, as a character wading does, can ask for a splash:
+
+```csharp
+// A footstep in the shallows, a third of a metre wide.
+Water.Splash(foot.Position, 0.3f);
+```
 
 ## Asking about the water from scripts
 
@@ -53,5 +62,6 @@ protected override void Update()
 | `Water.FlowAt(position)` | How fast the water flows there, in metres a second: a Stream's current, or on the sea the water carried round by its waves |
 | `Water.IsUnderwater(position)` | Whether a point is under the surface |
 | `Water.TrySample(position, out WaterPoint water)` | All three at once, and whether there is water there |
+| `Water.Splash(position, size)` | Throws up a splash where the water's surface is over or under a point, as wide as `size` in metres. False where there is no water |
 
 Inside a Dry Area there is no water. Over a Pool, its surface counts, not the sea's.

@@ -85,6 +85,68 @@ impl Graph {
         debug_assert!(wired, "a world's own overhangs and caves wire up");
         wired
     }
+
+    /// The nodes that make its Volume and nothing else: those its Output
+    /// reads through its Volume, and not through its height or its climate.
+    pub fn volume_nodes(&self) -> Vec<NodeId> {
+        let Some(output) = self.output() else { return Vec::new() };
+        let source = |input: usize| self.link_into(output.id, input).map(|link| link.from);
+        let Some(volume) = source(Output::VOLUME) else { return Vec::new() };
+        let ground: Vec<NodeId> =
+            (0..output.kind.inputs().len()).filter(|&input| input != Output::VOLUME).filter_map(source).collect();
+        let nodes = self.nodes.iter().map(|node| node.id);
+        nodes.filter(|&node| self.reads(volume, node) && !ground.iter().any(|&from| self.reads(from, node))).collect()
+    }
+
+    /// The graph without the nodes that make its Volume alone, their wires
+    /// and their rows: the ground's own graph.
+    pub fn without_volume(&self) -> Graph {
+        let mut ground = self.clone();
+        for node in self.volume_nodes() {
+            ground.remove(node);
+        }
+        ground
+    }
+
+    /// Takes `other`'s Volume for its own, in place of any it had: the
+    /// nodes that make `other`'s Volume alone, under new numbers, laid out
+    /// under everything here, with the wires between them, the wire into
+    /// the Output and their rows. A wire into them from `other`'s ground is
+    /// let go, as that ground is not here. False, and nothing done, where
+    /// `other` has none or this graph no Output.
+    pub fn take_volume(&mut self, other: &Graph) -> bool {
+        let moved = other.volume_nodes();
+        let (Some(output), Some(theirs)) = (self.output().map(|node| node.id), other.output().map(|node| node.id))
+        else {
+            return false;
+        };
+        if moved.is_empty() {
+            return false;
+        }
+        for node in self.volume_nodes() {
+            self.remove(node);
+        }
+        self.disconnect(output, Output::VOLUME);
+        let places = || moved.iter().filter_map(|&node| other.node(node));
+        let top = places().map(|node| node.at[1]).fold(f32::MAX, f32::min);
+        let below = self.nodes.iter().map(|node| node.at[1]).fold(0.0, f32::max) + 280.0;
+        let mut numbers = vec![(theirs, output)];
+        for node in places() {
+            numbers.push((node.id, self.add(node.kind.clone(), [node.at[0], node.at[1] - top + below])));
+        }
+        let now = |was: NodeId| numbers.iter().find(|(old, _)| *old == was).map(|(_, new)| *new);
+        for link in other.links.iter().filter(|link| moved.contains(&link.from)) {
+            if let (Some(from), Some(to)) = (now(link.from), now(link.to)) {
+                self.connect(from, link.output, to, link.input);
+            }
+        }
+        for shown in other.exposed.iter().filter(|shown| moved.contains(&shown.node)) {
+            if let Some(node) = now(shown.node) {
+                self.expose(node, shown.value, &shown.label);
+            }
+        }
+        true
+    }
 }
 
 #[cfg(test)]
@@ -471,6 +533,47 @@ mod tests {
         assert_eq!(WorldGen::parse(&text).unwrap(), made);
         // A graph with no Output has nothing to wire them into.
         assert!(!Graph::default().add_voxels(own, true));
+    }
+
+    #[test]
+    fn a_starter_with_overhangs_and_caves_is_that_starter_still_and_another_picked_keeps_them() {
+        let starters = crate::generate::starters();
+        let (hills, canyons) = (&starters[1], &starters[4]);
+        let mut graph = hills.graph.clone();
+        assert!(graph.add_voxels(OwnVoxels { overhangs: 9.0, caves: 0.3, roof: 3.0 }, true));
+        let made = WorldGen::new(5, 2.0, hills.sea_level, graph.clone());
+        assert_eq!(made.starter(), Some("Rolling Hills"));
+        assert_eq!(graph.volume_nodes().len(), 6);
+        assert_eq!(graph.without_volume(), hills.graph, "the ground's graph is the starter's");
+        // A wire of its own in the ground is a graph of its own, with or without a Volume.
+        let mut own = graph.clone();
+        let output = own.output().unwrap().id;
+        assert!(own.disconnect(output, Output::HEIGHT));
+        assert_eq!(made.with_graph(own).starter(), None);
+        // Another starter picked: its ground, with the same nodes making the Volume, their rows after its own.
+        let picked = canyons.reshapes(&made);
+        assert!(picked.faults().is_empty(), "{:?}", picked.faults());
+        assert_eq!((picked.starter(), picked.seed(), picked.scale()), (Some("Canyons"), 5, 2.0));
+        assert_eq!(picked.sea_level(), canyons.sea_level);
+        let rows = |world: &WorldGen| -> Vec<(String, Option<Value>)> {
+            let graph = world.graph();
+            (0..graph.exposed.len()).map(|row| (graph.exposed[row].label.clone(), graph.exposed_value(row))).collect()
+        };
+        let (before, after) = (rows(&made), rows(&picked));
+        assert_eq!(after[..canyons.graph.exposed.len()], rows(&canyons.world(5, 2.0))[..]);
+        assert_eq!(after[canyons.graph.exposed.len()..], before[hills.graph.exposed.len()..]);
+        assert_eq!(after.last(), Some(&("Chambers".to_string(), Some(Value::Number(0.3)))));
+        let kinds = |graph: &Graph| -> Vec<NodeKind> {
+            graph.volume_nodes().into_iter().filter_map(|node| graph.node(node)).map(|node| node.kind.clone()).collect()
+        };
+        assert_eq!(kinds(picked.graph()), kinds(&graph));
+        let volume = picked.volume().expect("its Volume came with it");
+        assert!(!volume.plain() && volume.caved());
+        // The nodes lie under the starter's own, and a starter picked for a generator with no Volume has none.
+        let lowest = canyons.graph.nodes.iter().map(|node| node.at[1]).fold(0.0, f32::max);
+        let moved = picked.graph().volume_nodes();
+        assert!(moved.iter().all(|&node| picked.graph().node(node).unwrap().at[1] > lowest));
+        assert!(canyons.reshapes(&hills.world(1, 1.0)).volume().is_none());
     }
 
     #[test]

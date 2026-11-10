@@ -347,7 +347,7 @@ impl Default for Stream {
 }
 
 /// How far white water from rapids is carried on downstream, in metres.
-const FOAM_CARRIED: f32 = 6.0;
+const FOAM_CARRIED: f32 = 9.0;
 
 /// A place along a Stream, in the world: where its surface is in the
 /// middle, which way it runs, how wide it is, how fast it flows there, how
@@ -530,7 +530,7 @@ impl Stream {
             waves: 0.0,
             absorb: linear(self.clarity).map(|t| -t.max(1e-3).ln() * self.murk.max(0.0)),
             liquid: self.liquid as u32,
-            lava: [self.cooling.max(0.1), self.glow.max(0.0), 0.0, 0.0],
+            lava: [self.cooling.max(0.1), self.glow.max(0.0), self.speed.max(0.0), self.rapids.max(1e-3)],
         }
     }
 }
@@ -572,6 +572,103 @@ pub fn stream_over(points: &[StreamPoint], depth: f32, point: Vec3) -> Option<(f
         best = Some((off, middle.y, tangent * speed));
     }
     best.filter(|&(_, height, _)| point.y >= height - depth).map(|(_, height, flow)| (height, flow))
+}
+
+/// How hot the molten rock that lights what is round lava is taken to be, in
+/// kelvin, and how much of that light is given out: a little more than the
+/// surface shows, as lava lights nothing by the light that bounces.
+const LAVA_LIT_KELVIN: f32 = 1330.0;
+const LAVA_LIT: f32 = 1.2;
+/// The most lights lava has in a frame, the nearest the camera; how long a
+/// stretch of a flow each of its lights is, at most, in metres; and how wide
+/// a lake's light is at most, a side.
+const LAVA_LIGHTS: usize = 16;
+const LAVA_LIGHT_STRETCH: f32 = 8.0;
+const LAVA_LIGHT_SIDE: f32 = 48.0;
+
+/// The light of something as hot as `kelvin`, as `blackbody` in
+/// `shaders/lava.slang`, times what lava's surface shows of it (`lavaLight`).
+fn lava_light(kelvin: f32) -> Vec3 {
+    let planck = |wavelength: f32, kelvin: f32| {
+        1.0 / ((wavelength / 610e-9).powi(5) * ((1.4388e-2 / (wavelength * kelvin.max(300.0))).exp() - 1.0))
+    };
+    let red = 1.0 / planck(610e-9, 1400.0);
+    Vec3::new(planck(610e-9, kelvin), planck(550e-9, kelvin), planck(465e-9, kelvin)) * red * 4.0
+}
+
+/// What lava lights round it: a rectangle of light lying on each lake of it,
+/// as bright as what of it is molten, and one along each stretch of a flow
+/// while it still glows; the nearest `camera` first, no more than a frame
+/// has room for. They cast no shadows.
+pub(crate) fn lava_lights(bodies: &crate::water::WaterBodies, camera: Vec3) -> Vec<crate::gpu::GpuLight> {
+    use crate::gpu::{GpuLight, LIGHT_RECTANGLE, NO_SHADOW, NO_TEXTURE};
+    let glowing = lava_light(LAVA_LIT_KELVIN) * LAVA_LIT;
+    let rectangle = |middle: Vec3, right: Vec3, up: Vec3, half: [f32; 2], radiance: Vec3| {
+        let area = 4.0 * half[0] * half[1];
+        GpuLight {
+            position: middle.to_array(),
+            range: (area.sqrt() * 0.8).clamp(4.0, 16.0),
+            color: (radiance * area).to_array(),
+            kind: LIGHT_RECTANGLE,
+            direction: up.to_array(),
+            cos_outer: 0.0,
+            right: right.to_array(),
+            cos_inner: 0.0,
+            size: half,
+            cookie: NO_TEXTURE,
+            profile: NO_TEXTURE,
+            shadow: NO_SHADOW,
+            _pad: [0; 3],
+        }
+    };
+    let layered = bodies.pools as usize + bodies.streams.len();
+    let mut lights: Vec<(f32, GpuLight)> = Vec::new();
+    for body in bodies.bodies[..layered].iter().filter(|body| body.liquid == Liquid::Lava as u32) {
+        let [cooling, glow, ..] = body.lava;
+        if body.kind == WATER_POOL {
+            // About how much of a lake is molten: it turns over every quarter of a minute or so.
+            let cooled = 16.5 / cooling;
+            let t = ((cooled - 0.2) / 1.1).clamp(0.0, 1.0);
+            let molten = 0.1 + 0.55 * (1.0 - t * t * (3.0 - 2.0 * t));
+            let to_world = Mat4::from_cols_array_2d(&body.to_world);
+            let local = Mat4::from_cols_array_2d(&body.to_local).transform_point3(camera);
+            // A lake too wide for one light is lit round the camera.
+            let half = [body.size[0] * 0.5, body.size[2] * 0.5].map(|half| half.min(LAVA_LIGHT_SIDE * 0.5));
+            let room = [body.size[0] * 0.5 - half[0], body.size[2] * 0.5 - half[1]];
+            let middle = to_world.transform_point3(Vec3::new(local.x.clamp(-room[0], room[0]), 0.02, local.z.clamp(-room[1], room[1])));
+            let (right, up) = (to_world.x_axis.truncate(), to_world.y_axis.truncate());
+            lights.push((middle.distance_squared(camera), rectangle(middle, right, up, half, glowing * glow * molten)));
+        } else if body.kind == WATER_STREAM {
+            let (first, count) = (body.shape as usize, body.size[0] as usize);
+            let points = &bodies.points[first..first + count];
+            let mut from = 0;
+            while from + 1 < points.len() {
+                // As long a stretch as the flow is wide, or thereabouts.
+                let start = Vec3::from(points[from].position);
+                let mut to = from + 1;
+                while to + 1 < points.len() && Vec3::from(points[to].position).distance(start) < LAVA_LIGHT_STRETCH.min(points[from].width * 2.0).max(2.0) {
+                    to += 1;
+                }
+                let (a, b) = (&points[from], &points[to]);
+                let end = Vec3::from(b.position);
+                let along = (end - start).normalize_or(Vec3::Z);
+                let across = Vec3::new(along.z, 0.0, -along.x).normalize_or(Vec3::X);
+                // How much of it still glows there: its crust closes as it cools.
+                let cooled = (a.age + b.age) * 0.5 / cooling;
+                let molten = 0.85 * (-0.8 * cooled).exp();
+                from = to;
+                if molten < 0.03 {
+                    continue;
+                }
+                let middle = (start + end) * 0.5 + Vec3::Y * 0.02;
+                let half = [(a.width + b.width) * 0.25, start.distance(end) * 0.5];
+                let light = rectangle(middle, across, along.cross(across).normalize_or(Vec3::Y), half, glowing * glow * molten);
+                lights.push((middle.distance_squared(camera), light));
+            }
+        }
+    }
+    lights.sort_by(|a, b| a.0.total_cmp(&b.0));
+    lights.into_iter().take(LAVA_LIGHTS).map(|(_, light)| light).collect()
 }
 
 /// A body's kind, as `WATER_POOL`, `WATER_DRY`, `WATER_STREAM` and `WATER_WIND` in

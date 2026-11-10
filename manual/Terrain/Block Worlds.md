@@ -51,6 +51,19 @@ A kind of block can **cover** generated ground in place of its top block, by the
 
 Snow covering where it is below freezing, sand where it is hot and dry and low, gravel on the tops: later kinds in the list cover those before them. A change to the generator makes the ground again, with what you built on it kept.
 
+## Without end
+
+Generated ground can go on **without end**: tick **Endless** under its generator's settings, and its ground is made round the camera as it goes, from its generator, a column of chunks at a time on threads of their own, the nearest first.
+
+| Setting | What it does |
+| --- | --- |
+| View distance | How far round the camera its own blocks are made, in metres: built on, stood on and drawn |
+| Far distance | How far coarser blocks are drawn beyond, in metres |
+
+Beyond its view distance, it is drawn in rings of coarser blocks, each ring's blocks twice as large as the one inside it, so mountains stand on the horizon at a fraction of the cost. A coarse ring shows the ground until the finer one inside it is made, and never where it is. Only its own blocks near the camera can be built on and stood on.
+
+What you build is kept as it goes out of reach and made again as it comes back, and saving keeps it all, near or away, in its `.blocks` file. In a game it is made round the camera; in the editor, round where the Scene view looks from.
+
 ## Kinds of block
 
 Under **Build**, the world's kinds of block are listed, numbered from 1 in the order they come. A click picks the one the brush builds with, and its settings show below the list:

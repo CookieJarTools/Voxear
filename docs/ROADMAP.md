@@ -1636,6 +1636,16 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     Editor: Ground (Flat or Generated) and its rows, the ground's blocks, each kind's Cover rows. Tests: 3D noise,
     columns at their generator's heights, snow where cold, caves hollowing, overhangs, a generated world loading
     with its changes, the editor picking a generator and a kind covering by its biome. Not done: water blocks.
+  - ~~**Without end, and far views:**~~ done: generated ground's `[generate.endless]` (view and far distances)
+    streams chunk columns round the camera on the background threads, nearest first (`blocks::stream`): near
+    columns into the world's own blocks, changes kept for them made as they come (`BlockWorldAsset::pending`) and
+    kept as they go; beyond, rings of coarser columns (`generate::column_chunks` at a level, blocks twice as large
+    each ring, out to six), each window's sides on its next level's columns, a coarse column left out where its
+    four finer ones are made. The renderer keeps chunks by level (`origins.w`) and scales them; physics stands
+    things on the near ones alone. Saving keeps every change, near or away (`stream::all_changes`). Editor:
+    Endless, View distance, Far distance. Tests: windows, columns coming with their changes and going keeping
+    them, coarse columns never over made fine ones, the engine streaming round a camera and saving a far change
+    with a near one, the GPU drawing a coarse chunk twice as large, the editor making one round the Scene view.
   - face-connectivity cave culling.
 - **Smooth voxel terrain, flat and planets:** marching cubes with Transvoxel on an octree, caves and overhangs from
   3D density, planets with their own gravity, and a floating origin.

@@ -1241,17 +1241,20 @@ The sea, lakes, rivers and lava, built in. Manual: `manual/Water`.
   Path each frame into world points with Manning speed, rapids foam carried downstream and travel time; drawn as a
   strip, 16 quads across and four rows a point, with two-phase flow on the sea's finest cascades. Its look goes by
   how fast it runs: calm water near flat and glassy, its bed dappled with the caustics carried along with it and no
-  foam on still shallows; faster water rougher, its ripples drawn out along the current, with low standing waves;
-  rapids raised into standing waves and churn (`streamSwell`, the strip and its shading alike), white on the crests,
-  pale with air, with spray the renderer adds as a particle system for each Stream with rapids
-  (`streamSprayVertex`). What stands in fast water has a white collar and leaves rough white water downstream, and
-  water fast over a shallow bed breaks white, both found in the picture's depth behind the water a few places
-  upstream (`streamWake`). Tests: rapids white and the level stretch not, calm smooth against fast rough, white
+  foam on still shallows; faster water rougher and drawn out into streaks along the current; rapids raised into
+  standing waves and churn (`streamSwell`, the strip and its shading alike), froth with broken edges and glints on
+  their crests and clear green troughs, with fine spray the renderer adds as a particle system for each Stream with
+  rapids (`streamSprayVertex`). What stands in fast water has a bow wave upstream, a white collar, and a wake that
+  spreads downstream in a V with a trail of white down its middle, and water fast over a shallow bed breaks white:
+  all found in the picture's depth behind the water, a few places straight upstream, out along each arm of the V,
+  and just downstream (`streamWake`). Tests: rapids white and the level stretch not, calm smooth against fast rough, white
   water below a rock in fast water and none in calm, spray gathered only for rapids.
 - **Lava:** Pools and Streams of lava glow by Planck's law, yellow-white where it wells up to dull red. A skin sets
   on molten rock in small cells with bright seams; crust forms in plates, each from its middle out, that stand above
   the molten rock between them, seen down into past the near plate's edge (`lavaParallax`, worked out from the plates
-  themselves); gaps narrow to cracks as it cools, sooner in some stretches than others. A flow stands as high as it is deep with
+  themselves); gaps narrow to cracks as it cools, sooner in some stretches than others, and crust breaks up in
+  places into smaller pieces with dull red cracks between. Molten rock heaves in slow swells (`lavaHeave`, the
+  surface's points and its shading alike) and its skin folds against the crust. A flow stands as high as it is deep with
   rounded sides and ends, crusts from its banks in on a molten channel, its plates placed by when the lava set out,
   with pahoehoe ropes bowed at the banks. A lake turns over in wandering patches. Bubbles swell into domes, break
   the crust, burst and leave a ring that heals, throwing up blobs of molten rock that cool as they fly; vents spit

@@ -25,12 +25,12 @@ A Stream flows down its Path from the first point to the last, at **Speed** wher
 How a Stream looks follows how fast it runs, and changes smoothly from one to the next along it:
 
 - **Calm water**, at a metre a second or less, lies near flat: dark and glassy, with slow ripples drifting down it and clear reflections of what stands over it. In its shallows the bed shows through, with the sun's light dappled on it. Still shallows stay clear; they do not foam.
-- **Faster water** is rougher. Its ripples are drawn out along the current, it stands in low waves that stay where they are, and thin streaks of foam ride down it.
-- **Rapids**, where it falls more steeply than its **Rapids** setting (a slope: 0.1 is a metre's drop every ten metres), are white water. The surface heaves up into standing waves and churns, white on the crests with dark water between, pale where it is full of air, with spray over it. The white water runs on past the foot of the rapids and fades back to calm.
+- **Faster water** is rougher, and drawn out into streaks along the current, with thin lines of foam riding down it.
+- **Rapids**, where it falls more steeply than its **Rapids** setting (a slope: 0.1 is a metre's drop every ten metres), are white water. The surface heaves up into standing waves and churns. Its crests are white froth with broken edges that glints in the sun, its troughs run clear and green, and spray flies over it. The white water runs on past the foot of the rapids and fades back to calm.
 
 ## Rocks and banks
 
-Whatever stands in a Stream disturbs it as fast as it runs. In calm water a rock has only a faint line round it. In fast water it has a white collar, and the water downstream of it is rough, with a trail of white carried away from it. Water running fast over a bed just under its surface breaks white there too, so a shelf of stones makes a riffle.
+Whatever stands in a Stream disturbs it as fast as it runs. In calm water a rock has only a faint line round it. In fast water the water piles up against its upstream side in a bow wave, it has a white collar, and its wake spreads out downstream in a V: rough water between two low ridges, with a trail of white down the middle. Water running fast over a bed just under its surface breaks white there too, so a shelf of stones makes a riffle.
 
 Nothing needs setting up for this: the Stream sees what is in the picture where it is drawn. That has one limit. A rock that is out of view, or hidden behind something nearer, disturbs nothing until it is seen.
 

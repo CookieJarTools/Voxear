@@ -6,11 +6,11 @@ Set a [[Pools and Dry Areas|Pool's]] or a [[Streams|Stream's]] **Liquid** to **L
 
 ## How lava cools
 
-Fresh lava is molten all over. Within seconds a skin sets on it, in cells a hand's width across, with bright seams between them where the rock underneath still shows.
+Fresh lava is molten all over, and it heaves: slow swells a couple of metres across rise and sink over several seconds. Within seconds a skin sets on it, in cells a hand's width across, with bright seams between them where the rock underneath still shows. Where the skin is pushed against crust it gathers into folds along the crust's edge.
 
 As it goes on cooling, crust forms: dark plates of rock, each growing out from its middle, so islands of crust stand in molten rock before they close up. Some stretches set sooner than others. The crust stands above the molten rock in the gaps. Look along the lava and the near plate's edge hides a gap; look down into one and you see the glowing rock at its bottom, and the far plate's side lit by it.
 
-As it cools further the gaps narrow to cracks, and the crust thickens and dulls.
+As it cools further the gaps narrow to cracks, and the crust thickens and dulls. Crust does not set evenly. In places, and most along its edges, it breaks up into smaller pieces that stand a little higher or lower than each other, with the rock under them glowing dull red in the cracks between.
 
 **Cooling** sets how many seconds all that takes. **Glow** is how bright the lava shines.
 

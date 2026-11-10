@@ -2822,7 +2822,9 @@ share (Planck's light, the plates, the skin, the bubbles); `lavaFragment` in `sh
   (a finer scatter of cells) is worked out only there and the crust's lumps only on the crust. The view is followed
   only as far as the gap runs straight, to where the next nearest gap joins it, and the crust's edge is softened to
   a pixel; the crust's drift is given as motion, so the edges settle from frame to frame.
-- **As geometry:** what has an outline. A Stream's strip is fine enough (16 quads across, four rows a point) for lava
+- **As geometry:** what has an outline, and what is broad. Molten rock heaves in swells a couple of metres across
+  (`lavaHeave`), which the surface's points can follow: they are raised by it and the fragment adds the same
+  height to what it shades. A Stream's strip is fine enough (16 quads across, four rows a point) for lava
   to stand as high as it is deep with rounded sides and ends. A bubble's dome is a small mesh of its own
   (`lavaDomeVertex`), since the surface's points are a quarter of a metre apart and would make a tent of it; it has
   the shape the surface's shader gives the lava there, so the same shader shades both and no seam shows. The lava's
@@ -2855,8 +2857,12 @@ changes smoothly along it, with nothing for the user to place.
   and the fragment takes its slopes from, so white water has a shape and its shading agrees with it.
 - **Rocks and shallows** are not captured or simulated. The fragment looks a few places upstream of itself on the
   water's surface and reads the picture's depth behind the water there (`streamWake`): something in front of the
-  surface is standing in the water, and a bed just under it is a riffle. It costs five depth reads, works for
-  whatever is drawn, moving or not, and sees nothing that is off screen or hidden. A capture from above, as the sea
+  surface is standing in the water, and a bed just under it is a riffle. Straight upstream gives the trail of white
+  below a rock; out along two lines a little over twenty degrees either side gives the arms of its V; just
+  downstream gives the bow wave against it. It costs thirteen depth reads where the water runs fast and none where
+  it is calm, works for whatever is drawn, moving or not, and sees nothing that is off screen or hidden. Where the
+  sea's ripples are read is never squeezed along the current: dividing a place along the Stream by a number that
+  changes with its speed bends them into rings. A capture from above, as the sea
   has of its floor, would see those, but the sea's is kept about the sea's own level and a Stream runs at any height.
 - **The bed's dappled light** is laid over what shows through the water, where the sun reaches the bed: the opaque
   passes do not know a Stream is over them (they look only for the sea and Pools, as finding a Stream means walking

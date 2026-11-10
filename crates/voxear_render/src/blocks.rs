@@ -460,6 +460,9 @@ pub(crate) struct BlockWorlds {
     copies: Vec<Copy>,
     staging: Option<Buffer>,
     drawn: Vec<DrawnBlocks>,
+    /// Whether it has said that the GI's rays are left without some chunks,
+    /// once.
+    warned_full: bool,
 }
 
 /// The axis `normal` lies most along: 0 for x, 1 for y, 2 for z.
@@ -476,15 +479,27 @@ fn axis_of(normal: Vec3) -> usize {
 
 /// A chunk's mesh for rays: its faces merged by surface alone, in metres
 /// from its corner, its pictures repeated as the world's are from `from`,
-/// where the chunk is from the world's corner.
+/// where the chunk is from the world's corner. Its triangles share their
+/// corners, each facing the way the faces round it face on average: a
+/// block's face has its corners to itself, so faces its own way, and a
+/// smooth surface's run on smoothly.
 fn proxy(mesh: &ChunkMesh, block_size: f32, from: Vec3, uv_scale: f32) -> MeshData {
-    let mut data = MeshData::default();
-    for triangle in mesh.indices.chunks(3) {
-        let [a, b, c] = [0, 1, 2].map(|i| Vec3::from(mesh.positions[triangle[i] as usize]) * block_size);
-        let normal = (b - a).cross(c - a).normalize_or(Vec3::Y);
-        let tangent = Vec3::new(normal.y, -normal.x, 0.0).normalize_or(Vec3::X);
-        let first = data.vertices.len() as u32;
-        for point in [a, b, c] {
+    let points: Vec<Vec3> = mesh.positions.iter().map(|&p| Vec3::from(p) * block_size).collect();
+    let mut ways = vec![Vec3::ZERO; points.len()];
+    for triangle in mesh.indices.chunks_exact(3) {
+        let [a, b, c] = [0, 1, 2].map(|i| points[triangle[i] as usize]);
+        // As large as the triangle, so larger faces count for more.
+        let way = (b - a).cross(c - a);
+        for &i in triangle {
+            ways[i as usize] += way;
+        }
+    }
+    let vertices = points
+        .iter()
+        .zip(ways)
+        .map(|(&point, way)| {
+            let normal = way.normalize_or(Vec3::Y);
+            let tangent = Vec3::new(normal.y, -normal.x, 0.0).normalize_or(Vec3::X);
             let world = point + from;
             // Each face's pictures from the side it faces, as the shaders draw them.
             let uv = match axis_of(normal) {
@@ -492,17 +507,16 @@ fn proxy(mesh: &ChunkMesh, block_size: f32, from: Vec3, uv_scale: f32) -> MeshDa
                 1 => [world.x, -world.z],
                 _ => [world.x, -world.y],
             };
-            data.vertices.push(Vertex {
+            Vertex {
                 position: point.to_array(),
                 normal: normal.to_array(),
                 uv: uv.map(|v| v * uv_scale),
                 tangent: [tangent.x, tangent.y, tangent.z, 1.0],
                 wind: NO_WIND_MASKS,
-            });
-        }
-        data.indices.extend([first, first + 1, first + 2]);
-    }
-    data
+            }
+        })
+        .collect();
+    MeshData { vertices, indices: mesh.indices.clone(), ..MeshData::default() }
 }
 
 impl BlockWorlds {
@@ -590,7 +604,17 @@ impl BlockWorlds {
                 let lods = crate::lod::rays_only(&data);
                 drop(making);
                 let _uploading = voxear_core::profile_marker!("Ray Mesh Upload").scope();
-                let handle = assets.add_mesh_with_lods(gpu, &data, &lods)?;
+                // Out of room, the rest wait: the GI's rays miss them, but the frame goes on.
+                let handle = match assets.add_mesh_with_lods(gpu, &data, &lods) {
+                    Ok(handle) => handle,
+                    Err(error) => {
+                        if !std::mem::replace(&mut self.warned_full, true) {
+                            tracing::warn!("a world of blocks' chunks are left out of the GI's rays: {error:#}");
+                        }
+                        proxies_left = 0;
+                        continue;
+                    }
+                };
                 if let Some((_, old)) = pool.proxies.insert(*key, (mesh.clone(), handle)) {
                     assets.free_mesh(old, frame_index);
                 }

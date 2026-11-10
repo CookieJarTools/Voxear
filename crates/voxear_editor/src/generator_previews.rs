@@ -43,8 +43,8 @@ const GROUND_STEPS: [usize; 4] = [33, 65, 129, 257];
 const TURN_PER_PIXEL: f32 = 0.01;
 const TIPPED: f32 = -0.5;
 const TIPS: [f32; 2] = [-0.65, 0.75];
-/// How close the ground is drawn: its corners nearly at the picture's edges.
-const ZOOM: f32 = 1.12;
+/// How close the ground is drawn: all of it in the picture however it is turned.
+const ZOOM: f32 = 1.0;
 /// The heights the ground's colours run to: this far above the sea is white, and this far under it
 /// the darkest water.
 const HIGHEST: f32 = 3000.0;

@@ -99,6 +99,12 @@ pub struct TerrainViewer(pub Vec3);
 #[derive(Default)]
 struct Streams(HashMap<Entity, Streamer>);
 
+/// Where ground made round the camera is made round: the
+/// [`TerrainViewer`] where there is one, or else the game's camera.
+pub(crate) fn viewer(world: &World) -> Option<Vec3> {
+    world.resource::<TerrainViewer>().map(|viewer| viewer.0).or_else(|| camera_position(world))
+}
+
 /// Where the game looks from: the first camera switched on, of the game's
 /// own, not the editor's.
 fn camera_position(world: &World) -> Option<Vec3> {

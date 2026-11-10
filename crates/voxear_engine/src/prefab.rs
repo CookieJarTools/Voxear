@@ -966,8 +966,12 @@ pub fn block_world(
     let loaded = guid.and_then(|guid| Some((guid, content.block_world(guid)?)));
     let (mut blocks, asset) = match &loaded {
         Some((guid, loaded)) => {
-            let asset =
-                crate::blocks::BlockWorldAsset { guid: *guid, file: loaded.file.clone(), base: loaded.base.clone() };
+            let asset = crate::blocks::BlockWorldAsset {
+                guid: *guid,
+                file: loaded.file.clone(),
+                base: loaded.base.clone(),
+                pending: loaded.pending.clone(),
+            };
             (loaded.world.clone(), Some(asset))
         }
         None => {

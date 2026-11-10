@@ -1238,3 +1238,56 @@ fn a_block_worlds_ground_is_generated_by_a_picked_generator_and_covered_by_a_kin
     let now = blocks(&editor);
     assert_eq!(now.blocks.get([10, top(&now, 10, 10), 10]), 4, "snow on top");
 }
+
+#[test]
+fn a_generated_block_world_made_endless_is_made_round_the_scene_view() {
+    use voxear_terrain::{blocks::BlockWorld, generate::Preset};
+    let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {
+        eprintln!("skipping: no usable GPU");
+        return;
+    };
+    let dir = hello_with_a_field();
+    std::fs::create_dir_all(dir.path().join("Worlds")).unwrap();
+    std::fs::write(dir.path().join("Worlds/Hills.worldgen"), Preset::RollingHills.world().to_text()).unwrap();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    let field = obj(&editor, "Field");
+    editor.select(Some(field));
+    frame(&mut editor, &mut renderer);
+    add_component(&mut editor, &mut renderer, "Block World");
+    show_block_tool(&mut editor, &mut renderer, "Settings");
+    let ground = first_with(&editor.ui, prop_rows(&editor.ui, "Ground")[0], "value-choice").expect("its ground");
+    choose(&mut editor, &mut renderer, ground, 1);
+    frame(&mut editor, &mut renderer);
+    let picker = first_with(&editor.ui, prop_rows(&editor.ui, "Generator")[0], "value-picker").expect("its picker");
+    let arrow = first_with(&editor.ui, picker, "picker-arrow").expect("its arrow");
+    click(&mut editor.ui, arrow);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let row = picker_row(&editor.ui, "Hills.worldgen").expect("the generator");
+    click(&mut editor.ui, row);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let endless = first_with(&editor.ui, prop_rows(&editor.ui, "Endless")[0], "checkbox").expect("Endless");
+    click(&mut editor.ui, endless);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    for (label, shown) in [("View distance", 1), ("Far distance", 1), ("Ground size", 0)] {
+        assert_eq!(prop_rows(&editor.ui, label).len(), shown, "{label}");
+    }
+    // Made round where the Scene view looks from, the field's Obj at (-256, 0.5, -256).
+    let camera = editor.scene_camera().expect("the Scene view").position;
+    let local = [(camera.x + 256.0).floor() as i32, (camera.z + 256.0).floor() as i32];
+    for _ in 0..600 {
+        frame(&mut editor, &mut renderer);
+        let blocks = editor.game.engine.world.get::<BlockWorld>(field).unwrap();
+        if voxear_engine::blocks::streamed(&editor.game.engine.world) && !blocks.far.is_empty() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let blocks = editor.game.engine.world.get::<BlockWorld>(field).unwrap().clone();
+    assert!((-16..200).any(|y| blocks.blocks.get([local[0], y, local[1]]) != 0), "ground under the view");
+    assert!(!blocks.far.is_empty(), "coarser chunks beyond");
+}

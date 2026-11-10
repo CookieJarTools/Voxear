@@ -15,6 +15,7 @@ pub mod edits;
 pub mod file;
 pub mod generate;
 pub mod mesh;
+pub mod stream;
 
 use std::{collections::HashMap, sync::Arc};
 
@@ -105,6 +106,9 @@ pub struct BlockWorld {
     pub blocks: Arc<BlockMap>,
     pub meshes: Arc<HashMap<[i32; 3], Arc<ChunkMesh>>>,
     pub faces: Arc<[[u8; 3]]>,
+    /// For a world without end, its coarser chunks' faces beyond its own, by
+    /// level and place in that level's chunks (see `stream`): drawn alone.
+    pub far: Arc<HashMap<[i32; 4], Arc<ChunkMesh>>>,
     pub block_size: f32,
     pub cast_shadows: bool,
 }
@@ -116,6 +120,7 @@ impl PartialEq for BlockWorld {
         (Arc::ptr_eq(&self.blocks, &other.blocks) || self.blocks == other.blocks)
             && (Arc::ptr_eq(&self.meshes, &other.meshes) || self.meshes == other.meshes)
             && self.faces == other.faces
+            && (Arc::ptr_eq(&self.far, &other.far) || self.far == other.far)
             && self.block_size == other.block_size
             && self.cast_shadows == other.cast_shadows
     }
@@ -125,7 +130,14 @@ impl BlockWorld {
     /// A world of `blocks`, every chunk's faces worked out with `faces`.
     pub fn new(blocks: BlockMap, faces: &[[u8; 3]], block_size: f32) -> Self {
         let meshes = blocks.mesh_all(faces);
-        Self { blocks: Arc::new(blocks), meshes: Arc::new(meshes), faces: faces.into(), block_size, cast_shadows: true }
+        Self {
+            blocks: Arc::new(blocks),
+            meshes: Arc::new(meshes),
+            faces: faces.into(),
+            far: Arc::default(),
+            block_size,
+            cast_shadows: true,
+        }
     }
 
     /// The block at `at`, a point in metres from the world's corner, and

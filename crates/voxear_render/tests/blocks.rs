@@ -122,3 +122,71 @@ fn a_field_of_blocks_is_drawn_in_its_blocks_colours_shaded_at_a_pillars_foot_and
     let foot = brightness(31.6, 33.0);
     assert!(foot < open, "darker at the pillar's foot: {foot} against {open}");
 }
+
+#[test]
+fn a_coarser_chunk_of_a_world_without_end_is_drawn_twice_as_large() {
+    use std::collections::HashMap;
+    use voxear_terrain::blocks::{BlockMap, mesh::mesh_chunk};
+    let Some(mut renderer) = renderer() else { return };
+    // A floor a block thick over one chunk, its own at (0, 0, 0), and the same as a level-1 chunk at (1, 0, 0):
+    // 32 m of floor from 0, and 64 m of coarser floor from 64 m, its chunks being twice as large.
+    let file = BlockFile::default();
+    let (looks, faces) = file.faces();
+    let mut floor = BlockMap::default();
+    for z in 0..32 {
+        for x in 0..32 {
+            floor.set([x, 0, z], 3);
+        }
+    }
+    let mut world_blocks = BlockWorld::new(floor.clone(), &faces, 1.0);
+    let mut moved = BlockMap::default();
+    for z in 0..32 {
+        for x in 0..32 {
+            moved.set([32 + x, 0, z], 1);
+        }
+    }
+    let coarse = mesh_chunk(&moved, [1, 0, 0], &faces);
+    world_blocks.far = Arc::new(HashMap::from([([1, 1, 0, 0], Arc::new(coarse))]));
+    let surfaces: Vec<SurfaceLook> = looks
+        .iter()
+        .map(|look| {
+            let [r, g, b] = look.color;
+            let material =
+                renderer.add_material(&MaterialDesc { base_color: [r, g, b, 1.0], ..MaterialDesc::default() });
+            SurfaceLook {
+                material: material.unwrap(),
+                size: 1.0,
+                sharpness: 0.0,
+                triplanar: true,
+                tracks: 0.0,
+                fills_in: 0.0,
+                liquid: Default::default(),
+                glitter: false,
+            }
+        })
+        .collect();
+    let default = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let mut world = World::new();
+    world.spawn((world_blocks, BlockLook { material: default, surfaces: Arc::from(surfaces) }, Transform::default()));
+    // Straight down from 90 m over (64, ·, 16): +x to the right.
+    let down = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+    world.spawn((Camera::default(), Transform::new(Vec3::new(64.0, 91.0, 16.0), down, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 1.0, ..Sky::default() });
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
+    world.insert_resource(PostProcess { anti_aliasing, ..PostProcess::neutral() });
+    let pixels = render(&mut renderer, &world, 3);
+    keep_image("blocks coarse.png", &pixels);
+    // Seen from 90 m, the view is about 52 m half across: x from 12 to 116.
+    let half = (30f32).to_radians().tan() * 90.0 * WIDTH as f32 / HEIGHT as f32;
+    let column = |x: f32| ((x - 64.0) / half * 0.5 + 0.5) * WIDTH as f32;
+    let at = |x: f32| rgb_at(&pixels, column(x) as u32, HEIGHT / 2);
+    let green = |[r, g, b]: [i32; 3]| g > r + 10 && g > b + 10;
+    assert!(!green(at(20.0)), "its own chunk: stone");
+    assert!(!green(at(50.0)), "nothing between");
+    assert!(
+        green(at(70.0)) && green(at(110.0)),
+        "the coarser chunk's grass, 64 m wide: {:?} {:?}",
+        at(70.0),
+        at(110.0)
+    );
+}

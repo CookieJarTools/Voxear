@@ -157,7 +157,9 @@ struct Pool {
     space: RangeAllocator,
     slots: SlotAllocator,
     capacity: u64,
-    held: HashMap<[i32; 3], Held>,
+    /// By level (0 for the world's own chunks, more for a world without
+    /// end's coarser ones) and place in that level's chunks.
+    held: HashMap<[i32; 4], Held>,
     /// Ranges and slots given up, freed once the frames that may draw them
     /// are done.
     freeing: Vec<(u64, u64, u64, u32)>,
@@ -208,8 +210,12 @@ impl Pool {
         }
         let before = self.held.len();
         let freeing = &mut self.freeing;
+        let has = |key: &[i32; 4]| match key[0] {
+            0 => world.meshes.contains_key(&[key[1], key[2], key[3]]),
+            _ => world.far.contains_key(key),
+        };
         self.held.retain(|key, held| {
-            let kept = world.meshes.contains_key(key);
+            let kept = has(key);
             if !kept {
                 freeing.push((frame_index, held.first, held.mesh.quads.len() as u64, held.slot));
             }
@@ -217,7 +223,9 @@ impl Pool {
         });
         let mut changed = self.held.len() != before;
         let side = CHUNK as f32 * world.block_size;
-        for (key, mesh) in world.meshes.iter() {
+        let near = world.meshes.iter().map(|(k, mesh)| ([0, k[0], k[1], k[2]], mesh));
+        for (key, mesh) in near.chain(world.far.iter().map(|(k, mesh)| (*k, mesh))) {
+            let key = &key;
             if self.held.get(key).is_some_and(|held| Arc::ptr_eq(&held.mesh, mesh)) {
                 continue;
             }
@@ -238,8 +246,10 @@ impl Pool {
             };
             let quads: Vec<[u32; 2]> = mesh.quads.iter().map(|&[a, b]| [a, b | slot << 16]).collect();
             stage(bytemuck::cast_slice(&quads), QUADS_AT + first * 8);
-            stage(bytemuck::cast_slice(&[key[0], key[1], key[2], 0]), u64::from(slot) * 16);
-            let low = Vec3::new(key[0] as f32, key[1] as f32, key[2] as f32) * side;
+            stage(bytemuck::cast_slice(&[key[1], key[2], key[3], key[0]]), u64::from(slot) * 16);
+            // A coarser level's chunk is as many times larger as its blocks are.
+            let side = side * (1u32 << key[0].clamp(0, 16)) as f32;
+            let low = Vec3::new(key[1] as f32, key[2] as f32, key[3] as f32) * side;
             self.held.insert(*key, Held { mesh: mesh.clone(), slot, first, bounds: [low, low + Vec3::splat(side)] });
             changed = true;
         }
@@ -269,7 +279,7 @@ impl Pool {
             held.first = self.space.alloc(held.mesh.quads.len() as u64).expect("room in a larger pool");
             let quads: Vec<[u32; 2]> = held.mesh.quads.iter().map(|&[a, b]| [a, b | held.slot << 16]).collect();
             stage(bytemuck::cast_slice(&quads), QUADS_AT + held.first * 8);
-            stage(bytemuck::cast_slice(&[key[0], key[1], key[2], 0]), u64::from(held.slot) * 16);
+            stage(bytemuck::cast_slice(&[key[1], key[2], key[3], key[0]]), u64::from(held.slot) * 16);
         }
         self.draws = None;
         Ok(())

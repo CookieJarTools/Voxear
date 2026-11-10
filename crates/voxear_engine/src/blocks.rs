@@ -37,6 +37,9 @@ pub struct BlockWorldAsset {
     pub guid: AssetGuid,
     pub file: BlockFile,
     pub base: Arc<BlockMap>,
+    /// For a world without end, the changes kept for its chunks not made
+    /// now (see `voxear_terrain::blocks::stream`).
+    pub pending: Arc<BlockEdits>,
 }
 
 impl Component for BlockWorldAsset {}
@@ -46,6 +49,7 @@ impl PartialEq for BlockWorldAsset {
         self.guid == other.guid
             && self.file == other.file
             && (Arc::ptr_eq(&self.base, &other.base) || self.base == other.base)
+            && (Arc::ptr_eq(&self.pending, &other.pending) || self.pending == other.pending)
     }
 }
 
@@ -110,7 +114,7 @@ pub fn look(content: &mut Content, renderer: &mut Renderer, file: &BlockFile) ->
 /// written.
 pub fn keep(world: &World, content: &mut Content) {
     for (asset, blocks) in world.query_ref::<(&BlockWorldAsset, &BlockWorld)>().without::<Destroying>() {
-        content.keep_block_world(asset.guid, &asset.file, &asset.base, blocks);
+        content.keep_block_world(asset.guid, &asset.file, (&asset.base, &asset.pending), blocks);
     }
 }
 
@@ -122,7 +126,10 @@ pub fn save(content: &mut Content, project: &Path) -> Result<Vec<String>> {
     let mut written = Vec::new();
     for (path, file, blocks) in content.take_unsaved_block_worlds() {
         std::fs::write(project.join(&path), file.to_text()).with_context(|| format!("saving {path}"))?;
-        let edits = BlockEdits::between(&blocks.base, &blocks.world.blocks);
+        let edits = match file.generate.as_ref().and_then(|g| g.endless) {
+            Some(_) => voxear_terrain::blocks::stream::all_changes(&blocks.base, &blocks.world.blocks, &blocks.pending),
+            None => BlockEdits::between(&blocks.base, &blocks.world.blocks),
+        };
         let changes = project.join(blocks_file(&path));
         if edits.is_empty() {
             if changes.is_file() {
@@ -134,4 +141,56 @@ pub fn save(content: &mut Content, project: &Path) -> Result<Vec<String>> {
         written.push(path);
     }
     Ok(written)
+}
+
+/// Each world of blocks without end's streamer, by its Obj.
+#[derive(Default)]
+struct Streams(std::collections::HashMap<voxear_ecs::Entity, voxear_terrain::blocks::stream::BlockStreamer>);
+
+/// Brings each world of blocks without end's chunks round where it is seen
+/// from: the editor's view where there is one (`terrain::TerrainViewer`), or
+/// else the game's camera. Without a camera or a generator, left as it is.
+pub fn stream(world: &mut World, content: &mut Content) {
+    use voxear_scene::{Transform, WorldTransform};
+    let endless: Vec<(voxear_ecs::Entity, BlockWorldAsset, voxear_core::math::Vec3)> = world
+        .query_ref::<(voxear_ecs::Entity, &BlockWorld, &BlockWorldAsset, &Transform, Option<&WorldTransform>)>()
+        .without::<Destroying>()
+        .into_iter()
+        .filter(|(_, _, asset, ..)| asset.file.generate.as_ref().is_some_and(|g| g.endless.is_some()))
+        .map(|(entity, _, asset, local, placed)| (entity, asset.clone(), voxear_terrain::corner(local, placed)))
+        .collect();
+    if endless.is_empty() {
+        world.remove_resource::<Streams>();
+        return;
+    }
+    let Some(viewer) = crate::terrain::viewer(world) else { return };
+    let mut streams = world.remove_resource::<Streams>().unwrap_or_default();
+    streams.0.retain(|entity, _| endless.iter().any(|(e, ..)| e == entity));
+    for (entity, mut asset, corner) in endless {
+        let Some(generate) = asset.file.generate.clone() else { continue };
+        let Some(far) = generate.endless else { continue };
+        let Some(generator) = generator(content, &asset.file) else { continue };
+        let (_, faces) = asset.file.faces();
+        let making = voxear_terrain::blocks::stream::BlockMaking {
+            file: asset.file.clone(),
+            generate,
+            world: generator,
+            faces: faces.into(),
+        };
+        let Some(mut blocks) = world.get::<BlockWorld>(entity).cloned() else { continue };
+        let camera = [viewer.x - corner.x, viewer.z - corner.z];
+        let streamer = streams.0.entry(entity).or_default();
+        let distances = (far.distance, far.far);
+        if streamer.update(&mut blocks, &mut asset.base, &mut asset.pending, making, distances, camera) {
+            world.insert(entity, blocks);
+            world.insert(entity, asset);
+        }
+    }
+    world.insert_resource(streams);
+}
+
+/// Whether every world of blocks without end has made all its chunks round
+/// where it is seen from.
+pub fn streamed(world: &World) -> bool {
+    world.resource::<Streams>().is_none_or(|streams| streams.0.values().all(|s| s.settled()))
 }

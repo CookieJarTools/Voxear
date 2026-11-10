@@ -363,6 +363,9 @@ impl Released {
 pub struct LoadedBlockWorld {
     pub file: voxear_terrain::blocks::file::BlockFile,
     pub base: Arc<voxear_terrain::blocks::BlockMap>,
+    /// For a world without end, its changes for chunks not made now: all
+    /// of them as it loads, none made yet.
+    pub pending: Arc<voxear_terrain::blocks::edits::BlockEdits>,
     pub world: voxear_terrain::blocks::BlockWorld,
 }
 
@@ -1345,8 +1348,16 @@ impl Content {
                 }
                 Err(_) => None,
             };
+            // One without end starts with nothing made: its chunks are made round the camera as it goes.
+            if file.generate.as_ref().is_some_and(|g| g.endless.is_some()) {
+                let (_, faces) = file.faces();
+                let world = voxear_terrain::blocks::BlockWorld::new(Default::default(), &faces, file.block_size);
+                let pending = Arc::new(edits.unwrap_or_default());
+                return Ok(Arc::new(LoadedBlockWorld { world, base: Arc::default(), pending, file }));
+            }
             let base = Arc::new(crate::blocks::ground(self, &file));
-            Ok(Arc::new(LoadedBlockWorld { world: crate::blocks::make(&file, &base, edits.as_ref()), base, file }))
+            let world = crate::blocks::make(&file, &base, edits.as_ref());
+            Ok(Arc::new(LoadedBlockWorld { world, base, pending: Arc::default(), file }))
         });
         let found = found.map_err(|error| tracing::warn!("could not read the world of blocks {guid}: {error:#}")).ok();
         self.block_worlds.insert(guid, found.clone());
@@ -1360,17 +1371,25 @@ impl Content {
         &mut self,
         guid: AssetGuid,
         file: &voxear_terrain::blocks::file::BlockFile,
-        base: &Arc<voxear_terrain::blocks::BlockMap>,
+        (base, pending): (&Arc<voxear_terrain::blocks::BlockMap>, &Arc<voxear_terrain::blocks::edits::BlockEdits>),
         world: &voxear_terrain::blocks::BlockWorld,
     ) {
+        use voxear_terrain::blocks::stream::all_changes;
         let kept = self.block_worlds.get(&guid).and_then(Option::as_ref);
+        // A world without end's blocks come and go as it is seen; only its file and its changes are its own.
+        let endless = file.generate.as_ref().is_some_and(|g| g.endless.is_some());
         let same = |kept: &LoadedBlockWorld| {
-            kept.file == *file && Arc::ptr_eq(&kept.world.blocks, &world.blocks) && Arc::ptr_eq(&kept.base, base)
+            let shared = Arc::ptr_eq(&kept.world.blocks, &world.blocks) && Arc::ptr_eq(&kept.base, base);
+            let changes = || {
+                all_changes(&kept.base, &kept.world.blocks, &kept.pending) == all_changes(base, &world.blocks, pending)
+            };
+            kept.file == *file && (shared || (endless && changes()))
         };
         if kept.is_some_and(|kept| same(kept)) {
             return;
         }
-        let loaded = LoadedBlockWorld { world: world.clone(), base: base.clone(), file: file.clone() };
+        let loaded =
+            LoadedBlockWorld { world: world.clone(), base: base.clone(), pending: pending.clone(), file: file.clone() };
         self.block_worlds.insert(guid, Some(Arc::new(loaded)));
         self.unsaved_block_worlds.insert(guid);
     }

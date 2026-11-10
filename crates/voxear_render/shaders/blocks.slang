@@ -54,9 +54,11 @@ BlockPoint blockPoint(uint vertexId)
     float3 p = float3(at) + blockAxis(axes.x) * (out ? 1.0 : 0.0);
     p += blockAxis(axes.y) * (corner == 1 || corner == 2 ? size.x : 0.0);
     p += blockAxis(axes.z) * (corner >= 2 ? size.y : 0.0);
-    int3 chunk = world.origins[quad.y >> 16].xyz;
+    // Its chunk's place, in its level's chunks; a coarser level's blocks as many times larger.
+    int4 chunk = world.origins[quad.y >> 16];
+    float blockSize = world.blockSize * float(1u << uint(chunk.w));
     BlockPoint b;
-    b.world = world.corner + (float3(chunk * 32) + p) * world.blockSize;
+    b.world = world.corner + (float3(chunk.xyz * 32) + p) * blockSize;
     b.normal = blockAxis(axes.x) * (out ? 1.0 : -1.0);
     b.surface = quad.y & 0xFF;
     b.shade = float(shades[corner]) / 3.0;

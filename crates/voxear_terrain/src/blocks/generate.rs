@@ -34,11 +34,30 @@ pub struct BlockGenerate {
     pub bottom: i32,
     pub overhangs: f32,
     pub caves: f32,
+    /// For a world without end, made round the camera as it goes: how far
+    /// (see `stream`). Its ground's size is then left unused.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub endless: Option<BlockEndless>,
 }
 
 impl Default for BlockGenerate {
     fn default() -> Self {
-        Self { world: None, position: [0.0, 0.0], bottom: -16, overhangs: 0.0, caves: 0.3 }
+        Self { world: None, position: [0.0, 0.0], bottom: -16, overhangs: 0.0, caves: 0.3, endless: None }
+    }
+}
+
+/// How far round the camera a world of blocks without end is made: its own
+/// chunks out to `distance` metres, and coarser ones drawn out to `far`.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct BlockEndless {
+    pub distance: f32,
+    pub far: f32,
+}
+
+impl Default for BlockEndless {
+    fn default() -> Self {
+        Self { distance: 128.0, far: 1024.0 }
     }
 }
 
@@ -62,9 +81,36 @@ struct Column {
     bottom: BlockId,
 }
 
-/// The ground `generate` makes for `file` with generator `world`.
+/// The ground `generate` makes for `file` with generator `world`: its
+/// ground's size of chunk columns, each on every core.
 pub fn generate(file: &BlockFile, generate: &BlockGenerate, world: &WorldGen) -> BlockMap {
-    let size = file.block_size.max(0.01);
+    let ground = &file.ground;
+    let columns_x = ground.size[0].div_ceil(CHUNK) as i32;
+    let columns_z = ground.size[1].div_ceil(CHUNK) as i32;
+    let keys: Vec<[i32; 2]> = (0..columns_z).flat_map(|z| (0..columns_x).map(move |x| [x, z])).collect();
+    let made = crate::workers::each(&keys, |&key| column_chunks(file, generate, world, 0, key, Some(ground.size)));
+    let mut map = BlockMap::default();
+    for (key, chunk) in made.into_iter().flatten() {
+        map.put_chunk(key, chunk);
+    }
+    map
+}
+
+/// The chunks of chunk column `[cx, cz]` of the ground `generate` makes for
+/// `file` with generator `world`, at level `level` of coarseness: each level
+/// blocks twice as large as the one before, counted in its own blocks and
+/// chunks, for far views; its columns within `limit` blocks along x and z
+/// from the world's corner where it has one. Coarser levels leave out caves.
+pub fn column_chunks(
+    file: &BlockFile,
+    generate: &BlockGenerate,
+    world: &WorldGen,
+    level: u32,
+    [cx, cz]: [i32; 2],
+    limit: Option<[u32; 2]>,
+) -> Vec<([i32; 3], Chunk)> {
+    let scale = (1u32 << level.min(16)) as f32;
+    let size = file.block_size.max(0.01) * scale;
     let ground = &file.ground;
     let known = |block: BlockId| if usize::from(block) <= file.blocks.len() { block } else { AIR };
     let seed = world.seed;
@@ -76,60 +122,58 @@ pub fn generate(file: &BlockFile, generate: &BlockGenerate, world: &WorldGen) ->
         let cover = file.blocks.iter().enumerate().rev().find_map(|(at, kind)| {
             kind.cover.filter(|c| c.covers(height, climate)).map(|c| ((at + 1) as BlockId, c.depth))
         });
+        // Layers as many metres deep at every level, at least a block.
         let top = match cover {
-            Some((block, depth)) => (block, depth.max(1) as f32),
+            Some((block, depth)) => (block, (depth.max(1) as f32 / scale).max(1.0)),
             None => (known(ground.top), 1.0),
         };
         Column {
             surface: height / size,
-            layers: [top, (known(ground.under), ground.under_depth as f32)],
+            layers: [top, (known(ground.under), ground.under_depth as f32 / scale)],
             bottom: known(ground.bottom),
         }
     };
-    let columns_x = ground.size[0].div_ceil(CHUNK) as i32;
-    let columns_z = ground.size[1].div_ceil(CHUNK) as i32;
-    let keys: Vec<[i32; 2]> = (0..columns_z).flat_map(|z| (0..columns_x).map(move |x| [x, z])).collect();
-    let made = crate::workers::each(&keys, |&[cx, cz]| {
-        let side = CHUNK as i32;
-        let reach = |v: i32, limit: u32| v * side..((v + 1) * side).min(limit as i32);
-        let mut columns = Vec::with_capacity((side * side) as usize);
-        for z in reach(cz, ground.size[1]) {
-            for x in reach(cx, ground.size[0]) {
-                columns.push(((x, z), column(x, z)));
-            }
+    let side = CHUNK as i32;
+    let reach = |v: i32, limit: Option<u32>| {
+        let end = (v + 1) * side;
+        v * side..limit.map_or(end, |limit| end.min(limit.div_ceil(scale as u32) as i32))
+    };
+    let mut columns = Vec::with_capacity((side * side) as usize);
+    for z in reach(cz, limit.map(|l| l[1])) {
+        for x in reach(cx, limit.map(|l| l[0])) {
+            columns.push(((x, z), column(x, z)));
         }
-        let push = generate.overhangs.max(0.0) / size;
-        let highest = columns.iter().map(|(_, c)| c.surface).fold(f32::MIN, f32::max) + push + 1.0;
-        let low = generate.bottom;
-        let mut chunks: Vec<([i32; 3], Chunk)> = Vec::new();
-        let (low_key, high_key) = (low.div_euclid(side), (highest.ceil() as i32).div_euclid(side));
-        for cy in low_key..=high_key {
-            let mut chunk = Chunk::filled(AIR);
-            let mut any = false;
-            for ((x, z), column) in &columns {
-                for ly in 0..side {
-                    let y = cy * side + ly;
-                    if y < low {
-                        continue;
-                    }
-                    let block = block_at(column, [*x, y, *z], size, generate, push, seed);
-                    if block != AIR {
-                        chunk.set((x - cx * side) as u32, ly as u32, (z - cz * side) as u32, block);
-                        any = true;
-                    }
+    }
+    if columns.is_empty() {
+        return Vec::new();
+    }
+    let push = generate.overhangs.max(0.0) / size;
+    let coarse = BlockGenerate { caves: if level == 0 { generate.caves } else { 0.0 }, ..generate.clone() };
+    let highest = columns.iter().map(|(_, c)| c.surface).fold(f32::MIN, f32::max) + push + 1.0;
+    let low = generate.bottom.div_euclid(scale as i32);
+    let mut chunks: Vec<([i32; 3], Chunk)> = Vec::new();
+    let (low_key, high_key) = (low.div_euclid(side), (highest.ceil() as i32).div_euclid(side));
+    for cy in low_key..=high_key {
+        let mut chunk = Chunk::filled(AIR);
+        let mut any = false;
+        for ((x, z), column) in &columns {
+            for ly in 0..side {
+                let y = cy * side + ly;
+                if y < low {
+                    continue;
+                }
+                let block = block_at(column, [*x, y, *z], size, &coarse, push, seed);
+                if block != AIR {
+                    chunk.set((x - cx * side) as u32, ly as u32, (z - cz * side) as u32, block);
+                    any = true;
                 }
             }
-            if any {
-                chunks.push(([cx, cy, cz], chunk));
-            }
         }
-        chunks
-    });
-    let mut map = BlockMap::default();
-    for (key, chunk) in made.into_iter().flatten() {
-        map.put_chunk(key, chunk);
+        if any {
+            chunks.push(([cx, cy, cz], chunk));
+        }
     }
-    map
+    chunks
 }
 
 /// The block at `at` in its column: solid below its surface pushed in and
@@ -191,6 +235,7 @@ mod tests {
                 bottom: -40,
                 overhangs,
                 caves,
+                endless: None,
             }),
             ..BlockFile::default()
         };

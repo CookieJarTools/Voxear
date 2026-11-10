@@ -116,3 +116,61 @@ fn a_generated_block_world_follows_its_generator_and_keeps_changes_from_that_gro
     }
     assert_eq!(top(&blocks.blocks, 4, 4), dug - 1, "the block dug out stays out");
 }
+
+#[test]
+fn a_block_world_without_end_is_made_round_the_camera_and_saves_every_change() {
+    use voxear_terrain::{
+        blocks::{
+            edits::BlockEdits,
+            generate::{BlockEndless, BlockGenerate},
+        },
+        generate::Preset,
+    };
+    let dir = project();
+    std::fs::create_dir_all(dir.path().join("Worlds")).unwrap();
+    std::fs::write(dir.path().join("Worlds/Hills.worldgen"), Preset::RollingHills.world().to_text()).unwrap();
+    let mut file = BlockFile { block_size: 2.0, ..BlockFile::default() };
+    file.generate = Some(BlockGenerate {
+        world: Some("Worlds/Hills.worldgen".into()),
+        bottom: -4,
+        caves: 0.0,
+        endless: Some(BlockEndless { distance: 70.0, far: 300.0 }),
+        ..BlockGenerate::default()
+    });
+    std::fs::write(dir.path().join("Blocks/Field.blockworld"), file.to_text()).unwrap();
+    // A change kept for far away: stone high over (2000 m, 0).
+    let mut far = voxear_terrain::blocks::BlockMap::default();
+    far.set([1000, 100, 0], 3);
+    std::fs::write(dir.path().join("Blocks/Field.blocks"), BlockEdits::between(&Default::default(), &far).to_bytes())
+        .unwrap();
+    let scene =
+        format!("{FIELD}\n[[obj]]\nid = 3\nname = \"Eye\"\nposition = [40.0, 60.0, 40.0]\n[obj.camera]\nfov = 60.0\n");
+    std::fs::write(dir.path().join("Scenes/Field.scene"), scene).unwrap();
+    let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
+    game.start(None).unwrap();
+    for _ in 0..3000 {
+        game.tick(1.0 / 60.0, None);
+        if voxear_engine::blocks::streamed(&game.engine.world)
+            && game.engine.world.query_ref::<&BlockWorld>().into_iter().next().is_some_and(|b| !b.far.is_empty())
+        {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    let entity = game.engine.world.query_ref::<(voxear_ecs::Entity, &BlockWorld)>().into_iter().next().unwrap().0;
+    let blocks = game.engine.world.get::<BlockWorld>(entity).unwrap().clone();
+    // The ground under the camera (corner at (-16, 0, -16)), coarser chunks beyond.
+    assert!((-4..100).any(|y| blocks.blocks.get([28, y, 28]) != 0), "ground under the camera");
+    assert!(!blocks.far.is_empty(), "coarser chunks drawn beyond");
+    // A block dug near, then saved: the far change kept with it.
+    let mut dug = blocks.clone();
+    let top = (-4..100).rev().find(|&y| dug.blocks.get([28, y, 28]) != 0).unwrap();
+    dug.set_blocks([([28, top, 28], 0)]);
+    game.engine.world.insert(entity, dug);
+    voxear_engine::blocks::keep(&game.engine.world, &mut game.content);
+    let written = voxear_engine::blocks::save(&mut game.content, dir.path()).unwrap();
+    assert_eq!(written, vec!["Blocks/Field.blockworld".to_string()]);
+    let saved = BlockEdits::from_bytes(&std::fs::read(dir.path().join("Blocks/Field.blocks")).unwrap()).unwrap();
+    assert!(saved.chunks.contains_key(&[31, 3, 0]), "the far change kept");
+    assert!(saved.chunks.keys().any(|key| key[0] == 0 && key[2] == 0), "the near one with it");
+}

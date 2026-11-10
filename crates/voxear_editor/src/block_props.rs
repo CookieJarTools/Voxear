@@ -127,6 +127,11 @@ pub enum BlockField {
     Lowest,
     Overhangs,
     Caves,
+    /// Whether its generated ground goes on without end, made round the
+    /// camera, and how far its own chunks and its coarser ones reach.
+    Endless,
+    ViewDistance,
+    FarDistance,
     /// The blocks its ground is made of: its top, the layers under it and
     /// how deep they go, and the rest.
     TopBlock,
@@ -188,7 +193,14 @@ pub fn props(world: &World, entity: Entity) -> Vec<Prop> {
         (BlockTool::Settings, Some(file)) => {
             let mut fields = vec![F::Data, F::BlockSize, F::Ground];
             match file.generate {
-                Some(_) => fields.extend([F::Generator, F::Offset, F::GroundSize, F::Lowest, F::Overhangs, F::Caves]),
+                Some(ref generate) => {
+                    fields.extend([F::Generator, F::Offset, F::Endless]);
+                    match generate.endless {
+                        Some(_) => fields.extend([F::ViewDistance, F::FarDistance]),
+                        None => fields.push(F::GroundSize),
+                    }
+                    fields.extend([F::Lowest, F::Overhangs, F::Caves]);
+                }
                 None => fields.extend([F::GroundSize, F::GroundHeight]),
             }
             fields.extend([F::TopBlock, F::UnderBlock, F::UnderDepth, F::BaseBlock, F::Shadows]);
@@ -219,6 +231,9 @@ pub fn label(field: BlockField) -> &'static str {
         F::Lowest => "Lowest block",
         F::Overhangs => "Overhangs",
         F::Caves => "Caves",
+        F::Endless => "Endless",
+        F::ViewDistance => "View distance",
+        F::FarDistance => "Far distance",
         F::TopBlock => "Top block",
         F::UnderBlock => "Under block",
         F::UnderDepth => "Under depth",
@@ -247,7 +262,7 @@ pub fn key(field: BlockField) -> &'static str {
 
 pub fn unit(field: BlockField) -> Option<&'static str> {
     match field {
-        F::BlockSize | F::Offset | F::Overhangs | F::Heights => Some("m"),
+        F::BlockSize | F::Offset | F::Overhangs | F::Heights | F::ViewDistance | F::FarDistance => Some("m"),
         F::Temperatures => Some("°C"),
         _ => None,
     }
@@ -309,6 +324,9 @@ pub fn get(game: &Game, entity: Entity, field: BlockField) -> Option<Value> {
         F::Lowest => Value::Number(file()?.generate.as_ref()?.bottom as f32),
         F::Overhangs => Value::Number(file()?.generate.as_ref()?.overhangs),
         F::Caves => Value::Number(file()?.generate.as_ref()?.caves),
+        F::Endless => Value::Toggle(file()?.generate.as_ref()?.endless.is_some()),
+        F::ViewDistance => Value::Number(file()?.generate.as_ref()?.endless?.distance),
+        F::FarDistance => Value::Number(file()?.generate.as_ref()?.endless?.far),
         F::TopBlock => block_choice(file()?, file()?.ground.top),
         F::UnderBlock => block_choice(file()?, file()?.ground.under),
         F::UnderDepth => Value::Number(file()?.ground.under_depth as f32),
@@ -431,6 +449,18 @@ pub fn set(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, fie
             let Some(generate) = &mut file.generate else { return false };
             generate.caves = number(v).unwrap_or(generate.caves).clamp(0.0, 1.0);
         }
+        (F::Endless, Value::Toggle(on)) => {
+            let Some(generate) = &mut file.generate else { return false };
+            generate.endless = on.then(|| generate.endless.unwrap_or_default());
+        }
+        (F::ViewDistance | F::FarDistance, v) => {
+            let Some(endless) = file.generate.as_mut().and_then(|g| g.endless.as_mut()) else { return false };
+            let distance = number(v).unwrap_or(0.0).clamp(16.0, 100_000.0);
+            match field {
+                F::ViewDistance => endless.distance = distance,
+                _ => endless.far = distance,
+            }
+        }
         (F::TopBlock | F::UnderBlock | F::BaseBlock, Value::Choice(at, _)) => {
             let block = (*at).min(file.blocks.len()) as BlockId;
             match field {
@@ -470,13 +500,37 @@ fn change_file(
     renumber: impl Fn(BlockMap) -> BlockMap,
 ) -> bool {
     let world = &game.engine.world;
-    let Some((old, base)) = world.get::<BlockWorldAsset>(entity).map(|a| (a.file.clone(), a.base.clone())) else {
-        return false;
-    };
+    let Some(asset) = world.get::<BlockWorldAsset>(entity).cloned() else { return false };
+    let (old, base) = (asset.file.clone(), asset.base.clone());
     let Some(blocks) = world.get::<BlockWorld>(entity).cloned() else { return false };
     if old == file {
         return false;
     }
+    // A world without end is made round where it is seen as it goes (see `voxear_engine::blocks::stream`), from its
+    // file: only that changes here, and a world just made endless starts with nothing made, its changes kept.
+    let endless = |file: &BlockFile| file.generate.as_ref().is_some_and(|g| g.endless.is_some());
+    if endless(&file) {
+        let world = &mut game.engine.world;
+        if !endless(&old) {
+            let changes =
+                Arc::new(BlockEdits::between(&renumber((*base).clone()), &renumber((*blocks.blocks).clone())));
+            let (_, faces) = file.faces();
+            let mut empty = BlockWorld::new(BlockMap::default(), &faces, file.block_size);
+            empty.cast_shadows = blocks.cast_shadows;
+            world.insert(entity, empty);
+            world.insert(
+                entity,
+                BlockWorldAsset { file: file.clone(), base: Arc::default(), pending: changes, ..asset },
+            );
+        } else if let Some(kept) = world.get_mut::<BlockWorldAsset>(entity) {
+            kept.file = file.clone();
+        }
+        restyle(game, renderer, entity, &file);
+        return true;
+    }
+    // One no longer endless keeps every change it had, near or away.
+    let carried =
+        endless(&old).then(|| voxear_terrain::blocks::stream::all_changes(&base, &blocks.blocks, &asset.pending));
     let (_, faces) = file.faces();
     let grounded = old.ground != file.ground
         || old.generate != file.generate
@@ -486,7 +540,8 @@ fn change_file(
     let (base, remade) = if grounded {
         // The new ground names its blocks by their new numbers already; the old ground and blocks are renumbered.
         let ground = Arc::new(voxear_engine::blocks::ground(&mut game.content, &file));
-        let changes = BlockEdits::between(&renumber((*base).clone()), &renumber((*blocks.blocks).clone()));
+        let changes = carried
+            .unwrap_or_else(|| BlockEdits::between(&renumber((*base).clone()), &renumber((*blocks.blocks).clone())));
         let mut made = voxear_engine::blocks::make(&file, &ground, Some(&changes));
         made.cast_shadows = blocks.cast_shadows;
         (ground, made)
@@ -513,6 +568,10 @@ pub fn regenerate(game: &mut Game, guid: voxear_assets::AssetGuid) {
         .query_ref::<(Entity, &BlockWorldAsset)>()
         .into_iter()
         .filter(|(_, asset)| {
+            // One without end is made again from its generator by its streamer, which sees the generator change.
+            if asset.file.generate.as_ref().is_some_and(|g| g.endless.is_some()) {
+                return false;
+            }
             let reference = asset.file.generate.as_ref().and_then(|g| g.world.as_deref());
             reference.and_then(|r| game.content.parse(r).ok()).and_then(|parsed| parsed.guid()) == Some(guid)
         })

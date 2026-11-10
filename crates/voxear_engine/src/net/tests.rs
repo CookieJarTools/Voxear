@@ -297,6 +297,11 @@ fn roll(world: &mut World, ball: voxear_ecs::Entity) {
 
 /// A client's frame with its own ball predicted: corrections first, as the engine makes them, then its ticks.
 fn predicted_frame(client: &mut World) {
+    predicted_frame_rolling(client, roll);
+}
+
+/// The same, the ball rolled by `roll` each tick.
+fn predicted_frame_rolling(client: &mut World, roll: fn(&mut World, voxear_ecs::Entity)) {
     frame_begin(client, TICK, &[]);
     make_spawns(std::slice::from_mut(client));
     mark_predicting(client, &|_| true);
@@ -475,4 +480,113 @@ fn a_players_aim_reaches_the_server_with_their_input() {
     assert_eq!(session.aim(PlayerId(1)), [135.0, -20.0]);
     assert!(session.input(PlayerId(1), 0).held, "the actions read as before, the aim after them");
     assert_eq!(session.input(PlayerId(1), 1), ActionState::default(), "the aim is not an action");
+}
+
+/// Where a networked Obj is on `world`, measured from the level's middle.
+fn level_position_of(world: &World, id: NetId) -> Option<voxear_core::math::DVec3> {
+    position_of(world, id).map(|at| voxear_scene::WorldOrigin::of(world).to_level(at))
+}
+
+#[test]
+fn players_far_out_see_the_servers_objs_where_they_are_as_their_own_middles_move() {
+    use voxear_core::math::{IVec3, Vec3};
+    let network = MemoryNetwork::new();
+    let (mut server, mut clients) = session(&network, 2, Conditions::GOOD);
+    // 20 km out, past where a position once fitted, moving a metre a second.
+    let start = Vec3::new(20_000.0, 0.0, 3000.0);
+    let mover = shared(&mut server, start, NetObject::default());
+    let id = server.get::<Networked>(mover).unwrap().id;
+    let mut seen = Vec::new();
+    for n in 0..300 {
+        server.get_mut::<voxear_scene::Transform>(mover).unwrap().position.x = start.x + n as f32 / 60.0;
+        // The first player's middle follows them out to it, then on a kilometre; the second's stays put.
+        if n == 60 {
+            crate::origin::shift(&mut clients[0], IVec3::new(-20_480, 0, -3072));
+        }
+        if n == 150 {
+            crate::origin::shift(&mut clients[0], IVec3::new(-1024, 0, 0));
+        }
+        frame(&mut server, &mut clients, &[(false, false); 2]);
+        make_spawns(&mut clients);
+        if n > 30 {
+            seen.push(level_position_of(&clients[0], id).expect("made on the first player's machine"));
+        }
+    }
+    // Moving on smoothly through both moves, a frame's worth a frame, never jumping.
+    let steps: Vec<f64> = seen.windows(2).map(|w| w[1].x - w[0].x).collect();
+    assert!(steps.iter().all(|s| *s > -0.001 && *s < 0.06), "smooth across the moves: {steps:?}");
+    assert!(seen.windows(2).all(|w| (w[1].z - 3000.0).abs() < 1e-3), "and nowhere else");
+    // Near the first player's middle in their world, where the second sees it from the level's.
+    let local = position_of(&clients[0], id).unwrap();
+    assert!(local.distance(Vec3::new(-1499.0, 0.0, -72.0)) < 1.0, "near the first player's middle: {local}");
+    let (first, second) = (level_position_of(&clients[0], id).unwrap(), level_position_of(&clients[1], id).unwrap());
+    // Each shows it a little in the past at its own pace: within a frame's worth of its moving.
+    assert!(first.distance(second) < 1.0 / 60.0, "both players see it in one place: {first} and {second}");
+}
+
+/// Rolls the ball on by a step a float holds exactly 30 km out as near the
+/// middle, so the server far out and its player near their own middle
+/// agree to the bit.
+fn roll_exactly(world: &mut World, ball: voxear_ecs::Entity) {
+    if let Some(transform) = world.get_mut::<voxear_scene::Transform>(ball) {
+        transform.position.x += 1.0 / 128.0;
+    }
+}
+
+#[test]
+fn a_players_own_obj_far_out_is_not_put_right_when_their_middle_moves() {
+    use voxear_core::math::{IVec3, Vec3};
+    let network = MemoryNetwork::new();
+    let (mut server, mut clients) = session(&network, 1, Conditions::GOOD);
+    for _ in 0..60 {
+        frame(&mut server, &mut clients, &[(false, false)]);
+    }
+    let ball = shared(&mut server, Vec3::new(30_000.0, 0.0, 0.0), NetObject::default());
+    set_owner(&mut server, ball, Some(PlayerId(1)));
+    let client = &mut clients[0];
+    let mut put_right = Vec::new();
+    for n in 0..300 {
+        frame_begin(&mut server, TICK, &[]);
+        fixed_tick(&mut server);
+        roll_exactly(&mut server, ball);
+        frame_end(&mut server);
+        if n == 120 || n == 200 {
+            crate::origin::shift(client, IVec3::new(if n == 120 { -30_720 } else { 1024 }, 0, 0));
+        }
+        predicted_frame_rolling(client, roll_exactly);
+        put_right.push(session_of(client).stats().corrections);
+    }
+    assert_eq!(put_right[299], put_right[100], "never put right for its player's middle moving");
+    let on_client = entity_of(client, NetId(1)).unwrap();
+    let server_x = server.get::<voxear_scene::Transform>(ball).unwrap().position.x;
+    let server_tick = session_of(&server).tick;
+    let shown = client.get::<voxear_scene::Transform>(on_client).unwrap().position;
+    let client_x = voxear_scene::WorldOrigin::of(client).to_level(shown).x;
+    let expected = f64::from(server_x) + (session_of(client).tick - server_tick) as f64 / 128.0;
+    assert!((client_x - expected).abs() < 0.02, "{client_x} from the level's middle, the server's soon {expected}");
+}
+
+#[test]
+fn with_shared_authority_a_player_far_out_moves_their_own_obj_where_the_server_sees_it() {
+    use voxear_core::math::{IVec3, Vec3};
+    let network = MemoryNetwork::new();
+    let (mut server, mut clients) = session_with(&network, 1, Conditions::GOOD, NetAuthority::Shared);
+    for _ in 0..60 {
+        frame(&mut server, &mut clients, &[(false, false)]);
+    }
+    let crate_ = shared(&mut server, Vec3::new(50_000.0, 0.0, 0.0), NetObject::default());
+    set_owner(&mut server, crate_, session_of(&clients[0]).local_player());
+    for _ in 0..30 {
+        frame(&mut server, &mut clients, &[(false, false)]);
+        make_spawns(&mut clients);
+    }
+    crate::origin::shift(&mut clients[0], IVec3::new(-50_176, 0, 0));
+    let mine = entity_of(&clients[0], NetId(1)).unwrap();
+    assert_eq!(clients[0].get::<voxear_scene::Transform>(mine).unwrap().position.x, -176.0);
+    for _ in 0..60 {
+        clients[0].get_mut::<voxear_scene::Transform>(mine).unwrap().position.x += 0.05;
+        frame(&mut server, &mut clients, &[(false, false)]);
+    }
+    let at = server.get::<voxear_scene::Transform>(crate_).unwrap().position.x;
+    assert!((at - 50_003.0).abs() < 0.3, "the server follows its owner from the level's middle: {at}");
 }

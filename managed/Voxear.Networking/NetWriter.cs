@@ -67,6 +67,14 @@ public sealed class NetWriter
 		Write(value.Z);
 	}
 
+	/// <summary>A position from the level's middle, exact however far out, as Origin.ToLevel gives one.</summary>
+	public void Write(LevelPosition value)
+	{
+		Write(value.X);
+		Write(value.Y);
+		Write(value.Z);
+	}
+
 	public void Write(Quaternion value)
 	{
 		Write(value.X);

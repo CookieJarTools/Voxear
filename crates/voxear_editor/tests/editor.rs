@@ -7489,6 +7489,45 @@ fn project_settings_switch_a_module_off_in_the_project_file_and_add_component() 
     assert!(!offers(&editor, "Net Object"));
 }
 
+#[test]
+fn project_settings_world_tab_switches_the_floating_origin_on_in_the_project_file() {
+    use voxear_engine::origin::{OriginMode, OriginSettings};
+    let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {
+        return eprintln!("skipping: no usable GPU");
+    };
+    let dir = hello_copy();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    assert_eq!(editor.game.project.file.floating_origin.mode, OriginMode::Off, "off until switched on");
+    editor.open_drawer(Some(voxear_editor::Drawer::Project));
+    frame(&mut editor, &mut renderer);
+    let tabs = editor.ui.find(editor.ui.root(), "project-tabs").unwrap();
+    let world = label_starting(&editor.ui, tabs, "World").expect("a World tab");
+    click(&mut editor.ui, world);
+    frame(&mut editor, &mut renderer);
+    let heading = label_starting(&editor.ui, editor.ui.root(), "Floating Origin").expect("its section");
+    let body = editor.ui.parent(heading).unwrap();
+    assert!(editor.ui.is_visible(body), "the World tab shows the floating origin");
+    let mut rows = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "module-row", &mut rows);
+    let modules = editor.ui.parent(rows[0]).unwrap();
+    assert!(!editor.ui.is_visible(modules), "in place of the modules");
+
+    let mut choices = Vec::new();
+    with_class(&editor.ui, body, "value-choice", &mut choices);
+    choose(&mut editor, &mut renderer, choices[0], 1);
+    let mut fields = Vec::new();
+    with_class(&editor.ui, body, "number-input", &mut fields);
+    type_into(&mut editor.ui, fields[1], "512");
+    editor.ui.key_down(Key::Enter);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    shot(&mut renderer, "project-settings-world.png");
+    let on = OriginSettings { mode: OriginMode::Endless, step: 512, ..OriginSettings::default() };
+    assert_eq!(Project::open(dir.path()).unwrap().file.floating_origin, on, "voxear.toml has it on");
+    assert_eq!(editor.game.project.file.floating_origin, on, "and the game plays with it");
+}
+
 
 /// A model file with two clips, Walk and Sneak, on a two-bone skeleton, its
 /// data beside it.

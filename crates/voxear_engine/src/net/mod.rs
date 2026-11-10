@@ -29,6 +29,7 @@ use std::net::SocketAddr;
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
+use voxear_core::math::{I64Vec3, Vec3};
 use voxear_ecs::World;
 use voxear_input::ActionState;
 use voxear_net::{
@@ -251,6 +252,12 @@ pub struct NetSession {
     /// jumping, as what the server said before the jump is still coming.
     pace_hold: u64,
     level_request: Option<String>,
+    /// Where this machine's world's middle is from the level's (see
+    /// `voxear_scene::WorldOrigin`): a client's follows its camera far out,
+    /// a server's and a host's stay at the level's middle, as their world is
+    /// every player's. Positions go between them measured from the level's
+    /// middle (see `replication`).
+    origin: I64Vec3,
     replication: Replication,
     rpcs: rpcs::Rpcs,
     prediction: prediction::Prediction,
@@ -291,6 +298,7 @@ impl NetSession {
             settling: 0,
             pace_hold: 0,
             level_request: None,
+            origin: I64Vec3::ZERO,
             replication: Replication::default(),
             rpcs: rpcs::Rpcs::default(),
             prediction: prediction::Prediction::default(),
@@ -393,7 +401,7 @@ impl NetSession {
 
     fn send(&mut self, client: ClientId, channel: Channel, message: &Message) {
         if let End::Server(server) = &mut self.end
-            && let Err(error) = server.send(client, channel, &message.encode())
+            && let Err(error) = server.send(client, channel, &message.encode(self.origin))
         {
             tracing::warn!("could not send to player {client:?}: {error:?}");
         }
@@ -433,10 +441,10 @@ impl NetSession {
         for (&client, &player) in &self.by_client {
             let mut messages = Vec::new();
             while let Some(bytes) = server.receive(client, Channel::UNRELIABLE) {
-                messages.extend(Message::decode(&bytes));
+                messages.extend(Message::decode(&bytes, self.origin));
             }
             while let Some(bytes) = server.receive(client, Channel::RELIABLE) {
-                messages.extend(Message::decode(&bytes));
+                messages.extend(Message::decode(&bytes, self.origin));
             }
             for message in messages {
                 match message {
@@ -501,10 +509,10 @@ impl NetSession {
         let state = client.state();
         let mut messages = Vec::new();
         while let Some(bytes) = client.receive(Channel::RELIABLE) {
-            messages.extend(Message::decode(&bytes));
+            messages.extend(Message::decode(&bytes, self.origin));
         }
         while let Some(bytes) = client.receive(Channel::UNRELIABLE) {
-            messages.extend(Message::decode(&bytes));
+            messages.extend(Message::decode(&bytes, self.origin));
         }
         let rtt = client.stats().rtt;
         for message in messages {
@@ -583,6 +591,7 @@ impl NetSession {
                 rotation: if mask & 2 != 0 { parts.rotation } else { base.rotation },
                 scale: if mask & 4 != 0 { parts.scale } else { base.scale },
                 mist: if mask & 8 != 0 { parts.mist } else { base.mist },
+                root: if mask & 1 != 0 { parts.root } else { base.root },
             };
             replication.note(id, tick, state);
         }
@@ -676,11 +685,11 @@ impl NetSession {
                 }
             }
             for message in reliable {
-                let _ = server.send(client, Channel::RELIABLE, &message.encode());
+                let _ = server.send(client, Channel::RELIABLE, &message.encode(self.origin));
             }
             for &(id, owner) in &owners {
                 if viewer.known.contains_key(&id) {
-                    let _ = server.send(client, Channel::RELIABLE, &Message::Owner { id, owner }.encode());
+                    let _ = server.send(client, Channel::RELIABLE, &Message::Owner { id, owner }.encode(self.origin));
                 }
             }
             // RPCs reach those who have the Obj, just made or not.
@@ -689,10 +698,10 @@ impl NetSession {
                 if to_them && viewer.known.contains_key(&rpc.id) {
                     let message = Message::Rpc { id: rpc.id, key: rpc.key, tick, bytes: rpc.bytes.clone() };
                     let channel = if rpc.reliable { Channel::RELIABLE } else { Channel::UNRELIABLE };
-                    let _ = server.send(client, channel, &message.encode());
+                    let _ = server.send(client, channel, &message.encode(self.origin));
                 }
             }
-            let snapshot = snapshot(tick, viewer, &replication.objects);
+            let snapshot = snapshot(tick, viewer, &replication.objects, self.origin);
             if let Some((bytes, carried)) = snapshot {
                 let tag = viewer.next_tag;
                 viewer.next_tag = viewer.next_tag.wrapping_add(1);
@@ -768,7 +777,7 @@ impl NetSession {
                     let buffer = self.buffers.get(player).filter(|b| b.heard());
                     let ahead = buffer.map_or(messages::UNHEARD, |b| b.ahead(tick).clamp(-30_000, 30_000) as i16);
                     let sync = Message::Sync { tick, ahead };
-                    let _ = server.send(client, Channel::UNRELIABLE, &sync.encode());
+                    let _ = server.send(client, Channel::UNRELIABLE, &sync.encode(self.origin));
                 }
                 server.flush(self.now);
             }
@@ -779,7 +788,8 @@ impl NetSession {
                     // What the player sees, as far behind their newest command as the server's world shows.
                     let newest = self.sent.back().map_or(0, |(tick, _)| *tick);
                     let behind = (newest as f64 - self.replication.shown).clamp(0.0, 63.0) as f32;
-                    let _ = client.send(Channel::UNRELIABLE, &Message::Inputs { first, commands, behind }.encode());
+                    let inputs = Message::Inputs { first, commands, behind }.encode(self.origin);
+                    let _ = client.send(Channel::UNRELIABLE, &inputs);
                 }
                 client.flush(self.now);
             }
@@ -790,7 +800,12 @@ impl NetSession {
 /// A player's snapshot this tick: the Objs that changed, the longest
 /// waiting first, as many as fit; with what it carried. `None` when
 /// nothing changed.
-fn snapshot(tick: u64, viewer: &mut Viewer, objects: &std::collections::BTreeMap<NetId, Tracked>) -> Option<(Vec<u8>, Vec<(NetId, u8)>)> {
+fn snapshot(
+    tick: u64,
+    viewer: &mut Viewer,
+    objects: &std::collections::BTreeMap<NetId, Tracked>,
+    origin: I64Vec3,
+) -> Option<(Vec<u8>, Vec<(NetId, u8)>)> {
     let mut waiting: Vec<(NetId, f32)> =
         viewer.known.iter().filter(|(_, (pending, _))| *pending != 0).map(|(id, (_, waited))| (*id, *waited)).collect();
     if waiting.is_empty() {
@@ -807,7 +822,7 @@ fn snapshot(tick: u64, viewer: &mut Viewer, objects: &std::collections::BTreeMap
         let before = w.clone();
         w.write_bool(true);
         w.write_varint(u64::from(id.0));
-        replication::write_state(&mut w, &tracked.state, *pending);
+        replication::write_state(&mut w, &tracked.state, *pending, origin);
         if *pending & replication::FIELDS != 0 {
             replication::write_fields(&mut w, &tracked.fields);
         }
@@ -917,6 +932,8 @@ pub fn stop(world: &mut World) {
 /// moment ago on the server.
 pub fn frame_begin(world: &mut World, delta: f32, local: &[ActionState]) {
     let Some(mut session) = world.remove_resource::<NetSession>() else { return };
+    // Kept by `shift` as it moves; a world that moved before the session began starts from where it is.
+    session.origin = voxear_scene::WorldOrigin::of(world).0;
     prediction::unshow(world, delta, &mut session.prediction);
     crate::tick_smoothing::hide(world);
     session.now += f64::from(delta);
@@ -1094,11 +1111,11 @@ pub fn rpc(world: &mut World, entity: voxear_ecs::Entity, key: u32, bytes: Vec<u
         return false;
     }
     let reliable = reliable || bytes.len() > rpcs::MOST_UNRELIABLE_BYTES;
-    let tick = session.tick;
+    let (tick, origin) = (session.tick, session.origin);
     match (&mut session.end, target) {
         (End::Client(client), RpcTarget::Server) => {
             let channel = if reliable { Channel::RELIABLE } else { Channel::UNRELIABLE };
-            client.send(channel, &Message::Rpc { id, key, tick, bytes }.encode()).is_ok()
+            client.send(channel, &Message::Rpc { id, key, tick, bytes }.encode(origin)).is_ok()
         }
         (End::Client(_), _) => {
             tracing::warn!(target: "script", "only the server runs RPCs on players' machines");
@@ -1142,6 +1159,37 @@ pub fn after_tick(world: &mut World) {
 pub fn set_aim(world: &mut World, aim: [f32; 2]) {
     if let Some(session) = world.resource_mut::<NetSession>() {
         session.aim = aim;
+    }
+}
+
+/// Whether this machine's world's middle may move with its camera (see
+/// `crate::origin`): with no session, or on a client. A server's and a
+/// host's world is every player's, so it stays at the level's middle.
+pub fn origin_may_move(world: &World) -> bool {
+    world.resource::<NetSession>().is_none_or(|session| session.role == NetRole::Client)
+}
+
+/// Moves what a client keeps of where things are by `by`, as its world's
+/// middle moves (see `crate::origin`): each remote Obj's samples, Objs still
+/// to be made, and where its own predicted Objs were after each tick, so
+/// nothing is seen to jump and no prediction is put right. Positions from
+/// here on go and come measured from the level's middle with its new origin.
+pub fn shift(world: &mut World, by: Vec3) {
+    let origin = voxear_scene::WorldOrigin::of(world).0;
+    let Some(session) = world.resource_mut::<NetSession>() else { return };
+    session.origin = origin;
+    for remote in session.replication.remote.values_mut() {
+        for (_, state) in &mut remote.samples {
+            *state = state.shifted(by);
+        }
+    }
+    for spawn in &mut session.replication.spawns {
+        spawn.state = spawn.state.shifted(by);
+    }
+    for history in session.prediction.history.values_mut() {
+        for (_, state) in history.iter_mut() {
+            *state = state.shifted(by);
+        }
     }
 }
 

@@ -164,6 +164,8 @@ struct VxWorld {
 	JobSystemThreadPool jobs;
 	PhysicsSystem system;
 	std::vector<RefConst<Shape>> shapes;
+	// The places in `shapes` given up, to fill before growing it.
+	std::vector<uint32_t> free_shapes;
 	std::vector<Character> characters;
 	std::vector<Ref<Constraint>> joints;
 	// For each joint held to the world, the still body it is held to, which
@@ -279,11 +281,11 @@ static uint32_t keep(VxWorld *world, const Shape *shape) {
 	if (shape == nullptr) {
 		return 0;
 	}
-	for (size_t at = 0; at < world->shapes.size(); ++at) {
-		if (world->shapes[at] == nullptr) {
-			world->shapes[at] = shape;
-			return uint32_t(at + 1);
-		}
+	if (!world->free_shapes.empty()) {
+		uint32_t at = world->free_shapes.back();
+		world->free_shapes.pop_back();
+		world->shapes[at] = shape;
+		return at + 1;
 	}
 	world->shapes.push_back(shape);
 	return uint32_t(world->shapes.size());
@@ -315,7 +317,20 @@ uint32_t vx_shape_convex_hull(VxWorld *world, const float *points, uint32_t coun
 	return made.IsValid() ? keep(world, made.Get().GetPtr()) : 0;
 }
 
+const void *vx_mesh_make(const float *vertices, uint32_t vertex_count, const uint32_t *indices, uint32_t triangle_count);
+void vx_made_drop(const void *made);
+
 uint32_t vx_shape_mesh(VxWorld *world, const float *vertices, uint32_t vertex_count, const uint32_t *indices, uint32_t triangle_count) {
+	const Shape *made = static_cast<const Shape *>(vx_mesh_make(vertices, vertex_count, indices, triangle_count));
+	uint32_t kept = keep(world, made);
+	vx_made_drop(made);
+	return kept;
+}
+
+// A triangle mesh made apart from any world, on any thread: held until
+// `vx_made_keep` gives it to a world or `vx_made_drop` lets it go. Null for
+// one that could not be made.
+const void *vx_mesh_make(const float *vertices, uint32_t vertex_count, const uint32_t *indices, uint32_t triangle_count) {
 	VertexList points;
 	points.reserve(vertex_count);
 	for (uint32_t i = 0; i < vertex_count; ++i) {
@@ -328,7 +343,27 @@ uint32_t vx_shape_mesh(VxWorld *world, const float *vertices, uint32_t vertex_co
 	}
 	MeshShapeSettings settings(points, triangles);
 	auto made = settings.Create();
-	return made.IsValid() ? keep(world, made.Get().GetPtr()) : 0;
+	if (!made.IsValid()) {
+		return nullptr;
+	}
+	const Shape *shape = made.Get().GetPtr();
+	shape->AddRef();
+	return shape;
+}
+
+// Gives a shape made apart to a world, which keeps it from then on.
+uint32_t vx_made_keep(VxWorld *world, const void *made) {
+	const Shape *shape = static_cast<const Shape *>(made);
+	uint32_t kept = keep(world, shape);
+	vx_made_drop(shape);
+	return kept;
+}
+
+// Lets a shape made apart go.
+void vx_made_drop(const void *made) {
+	if (made != nullptr) {
+		static_cast<const Shape *>(made)->Release();
+	}
 }
 
 // Ground as heights: `count` by `count` samples, row after row along z,
@@ -361,8 +396,9 @@ uint32_t vx_shape_placed(VxWorld *world, uint32_t shape, const float offset[3], 
 }
 
 void vx_shape_release(VxWorld *world, uint32_t shape) {
-	if (shape > 0 && shape <= world->shapes.size()) {
+	if (shape > 0 && shape <= world->shapes.size() && world->shapes[shape - 1] != nullptr) {
 		world->shapes[shape - 1] = nullptr;
+		world->free_shapes.push_back(shape - 1);
 	}
 }
 

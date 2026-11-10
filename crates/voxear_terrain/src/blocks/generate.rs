@@ -9,7 +9,11 @@
 //! and bottom blocks), but where a kind of block's cover takes its climate
 //! and height (`file::BlockCover`), that kind lies on top instead. Where it
 //! has a sea block, the open air below its generator's sea level is filled
-//! with it, as water is (caves under the ground stay dry). Every
+//! with it, as water is (caves under the ground stay dry). Every level's sea
+//! stands as high, so rings of chunks meet without steps: drawn smooth, at
+//! the sea level, its top blocks keeping where its surface lies; of cubes,
+//! where the finest level's does, a coarser level's top block of it only as
+//! full as that, in eighths. Every
 //! chunk is made apart, on every core, from where its blocks are alone, so
 //! the same ground comes from the same file anywhere.
 //!

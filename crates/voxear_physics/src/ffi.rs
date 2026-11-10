@@ -138,6 +138,14 @@ unsafe extern "C" {
         scale: *const f32,
     ) -> u32;
     pub fn vx_shape_release(world: *mut VxWorld, shape: u32);
+    pub fn vx_mesh_make(
+        vertices: *const f32,
+        vertex_count: u32,
+        indices: *const u32,
+        triangle_count: u32,
+    ) -> *const std::ffi::c_void;
+    pub fn vx_made_keep(world: *mut VxWorld, made: *const std::ffi::c_void) -> u32;
+    pub fn vx_made_drop(made: *const std::ffi::c_void);
 
     pub fn vx_body_add(world: *mut VxWorld, desc: *const VxBodyDesc) -> u32;
     pub fn vx_body_remove(world: *mut VxWorld, body: u32);

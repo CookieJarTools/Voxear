@@ -10,7 +10,7 @@ use crate::{
     blocks::{
         chunk::{AIR, BlockId, CHUNK, Chunk, fill_of},
         file::BlockFile,
-        flow::surface_fill,
+        flow::{Water, surface_fill},
     },
     generate::WorldGen,
 };
@@ -77,10 +77,17 @@ pub fn column_chunks(
         places.iter().enumerate().map(|(at, &place)| (place, column(heights[at], (warmth[at], wetness[at])))).collect();
     let push = generate.overhangs.max(0.0) / size;
     let coarse = BlockGenerate { caves: if level == 0 { generate.caves } else { 0.0 }, ..generate.clone() };
-    // The sea's top, in this level's blocks, where it has a sea.
+    // The sea's top, in this level's blocks, where it has a sea, as high at every level, so none shows a step where
+    // its rings meet: drawn smooth, its sea level, which its top blocks keep; of cubes, where the finest level's
+    // blocks put it.
     let sea = known(generate.sea);
-    let sea_level = if sea == AIR { f32::MIN } else { world.sea_level() / size };
-    let highest = columns.iter().map(|(_, c)| c.surface).fold(f32::MIN, f32::max).max(sea_level) + push + 1.0;
+    let finest = (world.sea_level() / file.block_size.max(0.01) - 0.5).ceil();
+    let sea_top = match (sea == AIR, file.smooth) {
+        (true, _) => f32::MIN,
+        (false, true) => world.sea_level() / size,
+        (false, false) => finest / scale,
+    };
+    let highest = columns.iter().map(|(_, c)| c.surface).fold(f32::MIN, f32::max).max(sea_top) + push + 1.0;
     let low = generate.bottom.div_euclid(scale as i32);
     let mut chunks: Vec<([i32; 3], Chunk)> = Vec::new();
     let (low_key, high_key) = (low.div_euclid(side), (highest.ceil() as i32).div_euclid(side));
@@ -99,16 +106,22 @@ pub fn column_chunks(
                 let (block, depth, open) = cell_at(column, under, place, size, &coarse, push, seed, f32::INFINITY);
                 // The sea fills the open air below its level. Drawn smooth, it also takes the ground's top block
                 // where the ground's surface lies under the sea and the block over it stands clear of it, which
-                // would else leave no sea there: so the sea's surface reaches the shore, and keeps its floor.
-                let over = sea_level - middle[1];
+                // would else leave no sea there: so the sea's surface reaches the shore, and keeps its floor. Of
+                // cubes, how many eighths of the block it fills: a coarser level's top block of it only partly.
+                let over = sea_top - middle[1];
+                let eighths = ((sea_top - y as f32).min(1.0) * 8.0).round();
                 let shore = file.smooth && block != AIR && over <= 1.0 && pushed(under, place, push, seed) < over;
-                let block = if over > 0.0 && (open || shore) { sea } else { block };
+                let wet = if file.smooth { over > 0.0 && (open || shore) } else { open && eighths >= 1.0 };
+                let block = if wet { sea } else { block };
                 let (lx, lz) = ((x - cx * side) as u32, (z - cz * side) as u32);
                 // Drawn smooth, the air a block from the surface keeps how far it is from it too, and the sea's top
                 // blocks where its surface lies.
-                let is_sea = sea != AIR && block == sea;
-                if file.smooth && is_sea {
+                if wet && file.smooth {
                     chunk.set_cell(lx, ly as u32, lz, sea, surface_fill(over));
+                    any = true;
+                } else if wet && eighths < 8.0 {
+                    // Kept as flowing water keeps how high it stands; a coarse level's blocks never flow.
+                    chunk.set_cell(lx, ly as u32, lz, sea, Water::Flowing { level: eighths as u8, up: 2 }.fill());
                     any = true;
                 } else if file.smooth && (block != AIR || depth > -1.0) {
                     chunk.set_cell(lx, ly as u32, lz, block, fill_of(depth, block != AIR));

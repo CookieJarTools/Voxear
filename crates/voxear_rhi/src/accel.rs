@@ -17,6 +17,41 @@ pub struct AccelerationStructure {
     buffer: Buffer,
 }
 
+/// A bottom level waiting to be built: into which structure, from which
+/// triangles, with which scratch space.
+pub(crate) struct BottomLevelBuild {
+    pub structure: vk::AccelerationStructureKHR,
+    pub triangles: Triangles,
+    pub scratch: Buffer,
+    pub scratch_address: vk::DeviceAddress,
+}
+
+/// A mesh's triangles as a bottom level's one geometry.
+fn bottom_level_geometry(triangles: &Triangles) -> vk::AccelerationStructureGeometryKHR<'static> {
+    let data = vk::AccelerationStructureGeometryTrianglesDataKHR::default()
+        .vertex_format(vk::Format::R32G32B32_SFLOAT)
+        .vertex_data(vk::DeviceOrHostAddressConstKHR { device_address: triangles.vertices })
+        .vertex_stride(triangles.stride)
+        .max_vertex(triangles.vertex_count.saturating_sub(1))
+        .index_type(vk::IndexType::UINT32)
+        .index_data(vk::DeviceOrHostAddressConstKHR { device_address: triangles.indices });
+    vk::AccelerationStructureGeometryKHR::default()
+        .geometry_type(vk::GeometryTypeKHR::TRIANGLES)
+        .geometry(vk::AccelerationStructureGeometryDataKHR { triangles: data })
+        .flags(vk::GeometryFlagsKHR::OPAQUE)
+}
+
+/// How a bottom level of `geometry` is built.
+fn bottom_level_info<'a>(
+    geometry: &'a [vk::AccelerationStructureGeometryKHR<'a>],
+) -> vk::AccelerationStructureBuildGeometryInfoKHR<'a> {
+    vk::AccelerationStructureBuildGeometryInfoKHR::default()
+        .ty(vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL)
+        .flags(vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE)
+        .mode(vk::BuildAccelerationStructureModeKHR::BUILD)
+        .geometries(geometry)
+}
+
 /// A mesh's triangles where they lie on the GPU: positions as the first
 /// three floats of each `stride`-byte vertex, and three `u32` indices a
 /// triangle, counting from the first vertex.
@@ -82,29 +117,16 @@ impl Gpu {
         Ok(AccelerationStructure { handle, address, buffer })
     }
 
-    /// Builds a mesh's bottom level from its triangles, and waits for it.
+    /// Builds a mesh's bottom level from its triangles, and waits for it; while
+    /// a batch is open, when it closes (see [`Gpu::batch`]).
     pub fn build_bottom_level(&self, name: &str, triangles: Triangles) -> Result<AccelerationStructure> {
-        let data = vk::AccelerationStructureGeometryTrianglesDataKHR::default()
-            .vertex_format(vk::Format::R32G32B32_SFLOAT)
-            .vertex_data(vk::DeviceOrHostAddressConstKHR { device_address: triangles.vertices })
-            .vertex_stride(triangles.stride)
-            .max_vertex(triangles.vertex_count.saturating_sub(1))
-            .index_type(vk::IndexType::UINT32)
-            .index_data(vk::DeviceOrHostAddressConstKHR { device_address: triangles.indices });
-        let geometry = [vk::AccelerationStructureGeometryKHR::default()
-            .geometry_type(vk::GeometryTypeKHR::TRIANGLES)
-            .geometry(vk::AccelerationStructureGeometryDataKHR { triangles: data })
-            .flags(vk::GeometryFlagsKHR::OPAQUE)];
-        let mut build = vk::AccelerationStructureBuildGeometryInfoKHR::default()
-            .ty(vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL)
-            .flags(vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE)
-            .mode(vk::BuildAccelerationStructureModeKHR::BUILD)
-            .geometries(&geometry);
+        let geometry = [bottom_level_geometry(&triangles)];
+        let info = bottom_level_info(&geometry);
         let mut sizes = vk::AccelerationStructureBuildSizesInfoKHR::default();
         unsafe {
             self.loader().get_acceleration_structure_build_sizes(
                 vk::AccelerationStructureBuildTypeKHR::DEVICE,
-                &build,
+                &info,
                 &[triangles.triangle_count],
                 &mut sizes,
             )
@@ -115,14 +137,43 @@ impl Gpu {
             sizes.acceleration_structure_size,
         )?;
         let (scratch, scratch_address) = self.scratch("bottom level scratch", sizes.build_scratch_size)?;
-        build = build
-            .dst_acceleration_structure(structure.handle)
-            .scratch_data(vk::DeviceOrHostAddressKHR { device_address: scratch_address });
-        let range = [vk::AccelerationStructureBuildRangeInfoKHR::default().primitive_count(triangles.triangle_count)];
-        let loader = self.loader().clone();
-        self.immediate(|cmd| unsafe { loader.cmd_build_acceleration_structures(cmd, &[build], &[&range]) })?;
-        self.destroy_buffer(scratch);
+        let build = BottomLevelBuild { structure: structure.handle, triangles, scratch, scratch_address };
+        {
+            let mut batch = self.batch.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            if batch.open > 0 {
+                batch.builds.push(build);
+                return Ok(structure);
+            }
+        }
+        let builds = [build];
+        self.immediate(|cmd| self.record_bottom_levels(cmd, &builds))?;
+        let [build] = builds;
+        self.destroy_buffer(build.scratch);
         Ok(structure)
+    }
+
+    /// Records the building of bottom levels, all at once.
+    pub(crate) fn record_bottom_levels(&self, cmd: vk::CommandBuffer, builds: &[BottomLevelBuild]) {
+        let geometries: Vec<[vk::AccelerationStructureGeometryKHR; 1]> =
+            builds.iter().map(|build| [bottom_level_geometry(&build.triangles)]).collect();
+        let infos: Vec<vk::AccelerationStructureBuildGeometryInfoKHR> = builds
+            .iter()
+            .zip(&geometries)
+            .map(|(build, geometry)| {
+                bottom_level_info(geometry)
+                    .dst_acceleration_structure(build.structure)
+                    .scratch_data(vk::DeviceOrHostAddressKHR { device_address: build.scratch_address })
+            })
+            .collect();
+        let ranges: Vec<[vk::AccelerationStructureBuildRangeInfoKHR; 1]> = builds
+            .iter()
+            .map(|build| {
+                [vk::AccelerationStructureBuildRangeInfoKHR::default().primitive_count(build.triangles.triangle_count)]
+            })
+            .collect();
+        let ranges: Vec<&[vk::AccelerationStructureBuildRangeInfoKHR]> =
+            ranges.iter().map(|range| &range[..]).collect();
+        unsafe { self.loader().cmd_build_acceleration_structures(cmd, &infos, &ranges) };
     }
 
     pub fn destroy_acceleration_structure(&self, structure: AccelerationStructure) {

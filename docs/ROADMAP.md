@@ -1761,6 +1761,15 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     full smooth ground is; a world without end's kept changes block by block). Tests: a sea's surface whole over a
     gentle shore, smooth sea generation, a pond's body of water, pillars and holes resized and back, a mound's surface
     kept, the editor halving Block size.
+    In a world without end, water shows no face towards a chunk column not made (`BlockWorld::columns`,
+    `blocks::mesh_made`): a coarse column is meshed with only itself made, near chunks with the near columns, and the
+    water beside columns let go is meshed again; drawn smooth, the water's surface reads a column not made as the made
+    one beside it, so it runs on flat. So a sea shows no walls where its rings meet. Every level's sea stands as high,
+    so the rings meet without steps: of cubes where the finest level's does, a coarse column's top block of it only as
+    full as that, in eighths (a flowing fill; coarse blocks never flow); drawn smooth at its sea level, a top block's
+    surface standing up to a whole block over its middle (`surface_fill`). Tests: a streamed sea, cubes
+    and smooth, with no water faces on its columns' sides towards columns not made and every level's top as high,
+    water put in the air showing every side, a chunk of water showing its sides at a world's edge.
 - **Smooth voxel terrain, flat and planets**, in parts: smooth ground you can see, stand on, generate and build on;
   planets with their own gravity; a floating origin.
   - ~~**Voxel Terrain:**~~ done: a Block World drawn smooth (`BlockFile::smooth`, `BlockWorld::smooth`). Each chunk
@@ -1776,8 +1785,8 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     fills say, a slope with no steps, chunks meeting at the same points, a closed blob, balls added, taken and
     painted, changes with fills read back and version 1 read, the GPU drawing a hill's top and sides with no gaps,
     a ball resting on it, a generated world on its generator's heights, the editor adding one and building a ball.
-    Not done: levels of detail that meet (far rings are drawn smooth but meet with seams). (Kinds blend within a
-    triangle since the water blocks' second look, above.)
+    Not done: an endless world's far rings meeting without seams (a bounded world's chunks are drawn coarser far away
+    and meet, see Speed below). (Kinds blend within a triangle since the water blocks' second look, above.)
   - ~~**Planets:**~~ done: generated ground as a planet (`BlockGenerate::planet`, `BlockPlanet { radius }`) all round
     a middle at its world's corner, its generator read round it in three dimensions (`WorldGen::height_round`,
     `climate_round`, colder towards the poles; fields read through a flat or round `Spot`, `noise::fractal3`), once,
@@ -1826,6 +1835,24 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     player whose middle moved seeing and sending script positions from the level's. Manual: Floating Origin. Not done:
     shader patterns from absolute positions (grass, wind, seasons, puddles), moves up and down (sky and fog heights), a
     server exact for players far from the level's middle.
+- ~~**Speed of block worlds and Voxel Terrains:**~~ done, measured on a test project with a level of each kind
+  (`vox render --level --profile --fly`; the stats overlay and the Profiler count block triangles in view and in
+  shadows). Each chunk's mesh for the GI's rays waited on the GPU about seven times; a frame's are now uploaded and
+  built in one batch (`Gpu::batch`), keep no meshlets, and share their corners; a full mesh pool leaves chunks out of
+  the GI rather than failing the frame (a planet 250 blocks round stopped drawing). Physics makes chunks' shapes on
+  every core and keeps a body whose triangles did not change. An endless world makes its near blocks a column past those
+  drawn and meshes each column once, in the background, when the columns round it have blocks, so a flight across it
+  spends 53 ms streaming where it spent 861 ms, its ticks 0.3 ms where 1.9, its slowest frame 33 ms where 130, and the
+  near window's edge shows no walls. Smooth surfaces are merged where flat (a tenth of a block), the points beside
+  another kind and those chunks share kept, and twice more for far away, a view drawing the coarsest its distance allows (the Voxel
+  Planet level: 146k triangles where it drew 265k, its sea 21k where 62k; a planet 250 blocks round, 2.0M where 4.1M,
+  which before failed to draw at all), and passes over chunks facing away; smooth water is merged as the ground is; a
+  chunk changed is made again at its first level alone. Cascades draw only cubes' faces turned towards the sun (about
+  half). A world whose faces did not change costs physics and the renderer no walk over its chunks. Costs: a smooth
+  world loads slower (three levels a chunk, Voxel Terrain 34 ms to 67). Not done: the coarse rings made and kept on the
+  GPU, as nothing but drawing needs them; coarser levels past the chunks' fixed sides (resampled blocks, so a far planet
+  drops below its locked edges); a coarser mesh for the GI's rays (very large worlds still fill the shared mesh pool); a
+  frame's draws merged across a chunk's levels.
 - Throughout: chunks culled against the frustum and last frame's depth, and the smallest save and network data
   (only changes from what a build or a seed makes, as commands while few and compacted deltas once many).
 

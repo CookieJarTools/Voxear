@@ -305,9 +305,14 @@ impl BlockWorld {
             }
             block = next;
         }
-        let (height, _) = flow::Water::of(self.blocks.fill(block)).height();
+        // Drawn smooth, its surface stands where the smooth water's does.
+        let fill = self.blocks.fill(block);
+        let height = match self.smooth {
+            true => 0.5 + flow::smooth_surface(fill),
+            false => f32::from(flow::Water::of(fill).height().0) / 16.0,
+        };
         let foot = if toward > 0 { block[axis] } else { block[axis] + 1 } as f32;
-        let top = (foot + toward as f32 * f32::from(height) / 16.0) * self.block_size;
+        let top = (foot + toward as f32 * height) * self.block_size;
         Some(((top - at[axis]) * toward as f32, up))
     }
 

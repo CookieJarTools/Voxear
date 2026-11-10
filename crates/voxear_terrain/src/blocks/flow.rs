@@ -43,6 +43,35 @@ const FALLING: Fill = 254;
 /// Where flowing water's fills start: then eight a way up, a level each.
 const FLOWING: Fill = 128;
 
+/// Where a source's fills start that say how high its surface stands in a
+/// world drawn smooth (see [`surface_fill`]), and how many steps of a half
+/// block they have.
+const SURFACE: Fill = 176;
+const SURFACE_STEPS: f32 = 77.0;
+
+/// The fill of a source whose surface, in a world drawn smooth, stands
+/// `above` blocks over its middle, from nothing to a half (its top): as a
+/// generated sea's top blocks are, so it lies at its sea level. To flowing
+/// it is a source like any other.
+pub fn surface_fill(above: f32) -> Fill {
+    SURFACE + (above.clamp(0.0, 0.5) / 0.5 * SURFACE_STEPS).round() as Fill
+}
+
+/// How far over a block of water's middle its surface stands in a world
+/// drawn smooth, in blocks: a half for a full block, its top; as its fill
+/// says for a sea's top block; and for flowing water as high as it flows,
+/// but never under a twentieth of a block, so the thinnest still shows.
+pub fn smooth_surface(fill: Fill) -> f32 {
+    let above = match fill {
+        SURFACE..FALLING => f32::from(fill - SURFACE) / SURFACE_STEPS * 0.5,
+        _ => match Water::of(fill) {
+            Water::Flowing { level, .. } => f32::from(level) / 8.0 - 0.5,
+            _ => 0.5,
+        },
+    };
+    above.max(0.05)
+}
+
 /// One block of water.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Water {
@@ -269,6 +298,10 @@ mod tests {
             assert_eq!(Water::of(water.fill()), water);
         }
         assert_eq!(Water::of(200), Water::Source, "any other fill of water is a source");
+        // A sea's top block drawn smooth keeps where its surface lies, and is a source.
+        assert_eq!(Water::of(surface_fill(0.2)), Water::Source);
+        assert!((smooth_surface(surface_fill(0.2)) - 0.2).abs() < 0.01);
+        assert_eq!((smooth_surface(FULL), smooth_surface(Water::Flowing { level: 6, up: 2 }.fill())), (0.5, 0.25));
         assert_eq!(Water::Flowing { level: 7, up: 2 }.height(), (14, Some(2)));
         assert_eq!(Water::Falling.height(), (16, None));
         // On a planet, up is out from its middle along the axis a block lies furthest out along.

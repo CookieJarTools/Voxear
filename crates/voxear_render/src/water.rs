@@ -9,6 +9,11 @@
 //! Each view keeps the spectrum and the FFT's rows in buffers of its own,
 //! and its waves in two sets of images it takes turns to write, so last
 //! frame's are there for motion vectors.
+//!
+//! Worlds of blocks' water is drawn with the Pools and Streams: first how
+//! far each pixel's view goes before it leaves the water, from the faces
+//! turned away from the camera, then the faces turned towards it, which
+//! show what lies behind through as much water as that.
 
 use anyhow::Result;
 use voxear_core::math::{Mat4, Quat, Vec3};
@@ -256,6 +261,9 @@ pub struct Water {
     dries: u32,
     /// How each Pool is drawn (`pool_draw`).
     pool_draws: Vec<(u32, u32)>,
+    /// The worlds of blocks' water in view, and where each pixel's view
+    /// leaves it; none when there is none.
+    blocks: Option<(crate::blocks::ViewBlocks, ImageId)>,
 }
 
 impl Water {
@@ -263,12 +271,12 @@ impl Water {
     /// there is one, else a sea drawn nowhere whose small waves the Pools
     /// take; its waves at `time`: its spectrum written if the sea changed,
     /// this frame's Pools and Dry Areas written into `slot`'s buffer, and
-    /// this frame's images.
+    /// this frame's images; with the worlds of blocks' water in view.
     pub(crate) fn new(
         fg: &mut FrameGraph<'_>,
         (gpu, bindless): (&Gpu, &mut Bindless),
         (buffers, slot): (&mut OceanBuffers, usize),
-        (found, bodies): (Option<(Ocean, f32, SeaState)>, &WaterBodies),
+        (found, bodies, blocks): (Option<(Ocean, f32, SeaState)>, &WaterBodies, Option<crate::blocks::ViewBlocks>),
         (extent, time, camera): (vk::Extent2D, f32, voxear_core::math::Vec3),
         (ground, dry_meshes): (&[Ground], Vec<DryMesh>),
     ) -> Result<Self> {
@@ -343,8 +351,18 @@ impl Water {
             }
         };
         // Lava shows nothing through it, so a layer of only lava needs no copy of the picture behind it.
+        let blocks = blocks.filter(crate::blocks::ViewBlocks::has_water);
         let layered = bodies.pools as usize + bodies.streams.len();
-        let clear = bodies.bodies[..layered].iter().any(|body| body.liquid == crate::water_bodies::Liquid::Water as u32);
+        let clear = blocks.is_some()
+            || bodies.bodies[..layered].iter().any(|body| body.liquid == crate::water_bodies::Liquid::Water as u32);
+        let blocks = match blocks {
+            Some(blocks) => {
+                let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
+                let desc = ImageDesc::new(extent.width, extent.height, vk::Format::R32_SFLOAT, usage);
+                Some((blocks, fg.create_image(gpu, bindless, "block water exits", desc)?))
+            }
+            None => None,
+        };
         let second = match clear {
             true => {
                 let copy = fg.create_image(gpu, bindless, "pool copy", copy_desc)?;
@@ -432,7 +450,7 @@ impl Water {
             pattern: (pattern, pattern_new),
             caustics,
             under,
-            layered: layered > 0,
+            layered: layered > 0 || blocks.is_some(),
             size: [extent.width, extent.height],
             frame,
             sea: found.is_some(),
@@ -440,6 +458,7 @@ impl Water {
             streams: bodies.streams.clone(),
             dries: bodies.dries(),
             pool_draws: bodies.bodies[..bodies.pools as usize].iter().map(|pool| pool_draw(pool, camera)).collect(),
+            blocks,
         })
     }
 }
@@ -680,7 +699,7 @@ pub fn record(
     water: Water,
     targets: WaterTargets,
 ) -> (Option<UnderWater>, Vec<ImageId>) {
-    let Water { displacement, slopes, previous, copy, copy_texture, copy_mips, depth_copy, second, foam, lens, floor, floor_depth, pattern, caustics, under, layered, size, sea, pools, streams, dries, frame, pool_draws, .. } = water;
+    let Water { displacement, slopes, previous, copy, copy_texture, copy_mips, depth_copy, second, foam, lens, floor, floor_depth, pattern, caustics, under, layered, size, sea, pools, streams, dries, frame, pool_draws, blocks, .. } = water;
     let on = |feature: u32| frame.features & feature != 0;
     let (floor_image, floor_draws) = floor;
     // The pattern foam is made of, once, with its mips.
@@ -804,12 +823,16 @@ pub fn record(
     let layer = Layer { hdr, velocity, depth, sampled, waves, size };
     // The sea and the walls round its Dry Areas, over a copy of the picture so far.
     let first_dry = pools + streams.len() as u32;
-    let draws = Draws { sea, pools: Vec::new(), streams: Vec::new(), walls: (first_dry, dries) };
+    let draws = Draws { sea, pools: Vec::new(), streams: Vec::new(), walls: (first_dry, dries), blocks: None };
     record_layer(fg, (pipelines, push), &layer, (copy, copy_texture, &copy_mips, depth_copy), (draws, true));
-    // The Pools, their walls and the Streams over a copy made after the sea, so the sea shows through them.
+    // The Pools, their walls, the Streams and the worlds of blocks' water over a copy made after the sea, so the sea
+    // shows through them; the blocks' water first finding where each pixel's view leaves it.
     if layered {
+        if let Some((view, exits)) = &blocks {
+            record_block_exits(fg, (pipelines, push), view, (*exits, depth, size));
+        }
         let streams = streams.iter().enumerate().map(|(i, &points)| (pools + i as u32, points)).collect();
-        let draws = Draws { sea: false, pools: pool_draws, streams, walls: (0, pools) };
+        let draws = Draws { sea: false, pools: pool_draws, streams, walls: (0, pools), blocks };
         match &second {
             Some((copy, copy_texture, copy_mips, depth_copy)) => {
                 record_layer(fg, (pipelines, push), &layer, (*copy, *copy_texture, copy_mips, *depth_copy), (draws, true))
@@ -885,13 +908,39 @@ struct Layer {
 }
 
 /// What a layer of water draws: the sea, how each Pool is drawn
-/// (`pool_draw`), each Stream's body and how many points it has, and the
-/// walls of the bodies from the first given, how many.
+/// (`pool_draw`), each Stream's body and how many points it has, the
+/// walls of the bodies from the first given, how many, and the worlds of
+/// blocks' water, with where each pixel's view leaves it.
 struct Draws {
     sea: bool,
     pools: Vec<(u32, u32)>,
     streams: Vec<(u32, u32)>,
     walls: (u32, u32),
+    blocks: Option<(crate::blocks::ViewBlocks, ImageId)>,
+}
+
+/// How far each pixel's view goes before it leaves the worlds of blocks'
+/// water: of their faces turned away from the camera, in front of what the
+/// picture holds so far, the farthest, as a distance from the camera; 0
+/// where none is.
+fn record_block_exits(
+    fg: &mut FrameGraph<'_>,
+    (pipelines, push): (Pipelines, Push),
+    view: &crate::blocks::ViewBlocks,
+    (exits, depth, size): (ImageId, ImageId, [u32; 2]),
+) {
+    let reads: Vec<_> = view.pools.iter().map(|&id| (id, BufferAccess::ShaderRead)).collect();
+    let images = [(exits, ImageAccess::ColorAttachment), (depth, ImageAccess::DepthRead)];
+    let view = view.clone();
+    let extent = vk::Extent2D { width: size[0], height: size[1] };
+    fg.add_pass("Water exits (blocks)", &images, &reads, move |ctx| {
+        let clear = vk::ClearValue { color: vk::ClearColorValue { float32: [0.0; 4] } };
+        let color = [attachment(ctx.view(exits), vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL, Some(clear))];
+        let depth = attachment(ctx.view(depth), vk::ImageLayout::DEPTH_READ_ONLY_OPTIMAL, None);
+        begin_rendering(ctx, extent, &color, Some(&depth));
+        crate::blocks::draw_water(ctx, &view, &push, pipelines.block_water_exits);
+        unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
+    });
 }
 
 /// Copies the picture and its depth, then draws a layer of water over them.
@@ -926,9 +975,16 @@ fn record_layer(
     ];
     images.extend(layer.waves.iter().map(|&image| (image, ImageAccess::Sampled)));
     images.extend(layer.sampled.iter().map(|&image| (image, ImageAccess::Sampled)));
+    let mut reads = Vec::new();
+    let mut exits_texture = 0;
+    if let Some((view, exits)) = &draws.blocks {
+        images.push((*exits, ImageAccess::Sampled));
+        reads.extend(view.pools.iter().map(|&id| (id, BufferAccess::ShaderRead)));
+        exits_texture = fg.texture(*exits).0;
+    }
     let extent = vk::Extent2D { width: size[0], height: size[1] };
-    let push = Push { texture: copy_texture.0, textures: [0, depth_copy_texture.0, 0, 0], ..push };
-    fg.add_pass("Water", &images, &[], move |ctx| {
+    let push = Push { texture: copy_texture.0, textures: [0, depth_copy_texture.0, exits_texture, 0], ..push };
+    fg.add_pass("Water", &images, &reads, move |ctx| {
         let color = [
             attachment(ctx.view(hdr), vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL, None),
             attachment(ctx.view(velocity), vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL, None),
@@ -948,6 +1004,10 @@ fn record_layer(
         for &(body, points) in draws.streams.iter().filter(|(_, points)| *points > 1) {
             bind(ctx, pipelines.water_stream, vk::PipelineBindPoint::GRAPHICS, &Push { list: body, level: points, ..push });
             unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, (points - 1) * STREAM_ACROSS * 6, 1, 0, 0) };
+        }
+        // Worlds of blocks' water, every face of it in view.
+        if let Some((view, _)) = &draws.blocks {
+            crate::blocks::draw_water(ctx, view, &push, pipelines.block_water);
         }
         // Walls of water: six faces of each body's box.
         let (first, count) = draws.walls;

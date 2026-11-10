@@ -228,8 +228,9 @@ impl Default for Rigidbody {
     }
 }
 
-/// Floats its Obj on the sea, Pools and Streams. It needs a Rigidbody and a
-/// Collider beside it; how much it weighs does not change how it floats.
+/// Floats its Obj on the sea, Pools, Streams and water blocks. It needs a
+/// Rigidbody and a Collider beside it; how much it weighs does not change
+/// how it floats.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Buoyancy {
@@ -1083,6 +1084,10 @@ impl PhysicsScene {
                     self.world.remove_body(body);
                     self.world.release_shape(shape);
                     self.owners.remove(&body);
+                }
+                // A chunk of water alone has no ground to stand on.
+                if mesh.indices.is_empty() {
+                    continue;
                 }
                 let points: Vec<Vec3> = mesh.positions.iter().map(|p| Vec3::from(*p) * blocks.block_size).collect();
                 let Some(shape) = self.world.mesh_shape(&points, &mesh.indices) else { continue };

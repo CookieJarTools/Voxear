@@ -45,7 +45,7 @@ pub struct BlockMaking {
     pub file: BlockFile,
     pub generate: BlockGenerate,
     pub world: Arc<WorldGen>,
-    pub faces: Arc<[[u8; 3]]>,
+    pub faces: Arc<[super::BlockFaces]>,
 }
 
 impl BlockMaking {

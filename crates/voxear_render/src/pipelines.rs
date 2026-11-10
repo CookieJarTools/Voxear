@@ -177,6 +177,10 @@ pub struct Pipelines {
     pub grass_forward_on_depth: vk::Pipeline,
     pub dry_mesh: vk::Pipeline,
     pub water_wall: vk::Pipeline,
+    /// Worlds of blocks' water (see `blocks` and `water`): how far each
+    /// pixel's view goes before it leaves the water, then its faces.
+    pub block_water_exits: vk::Pipeline,
+    pub block_water: vk::Pipeline,
     /// Under water: what the view shows dimmed, then the water's own light.
     pub underwater: vk::Pipeline,
     pub lens_wetness: vk::Pipeline,
@@ -488,6 +492,29 @@ impl Pipelines {
                 depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
                 cull: vk::CullModeFlags::NONE,
                 ..GraphicsPipelineDesc::new("Walls of water", water, c"wallVertex", c"wallFragment")
+            })?,
+            // The farthest face turned from the camera in front of what stands behind it.
+            block_water_exits: graphics(&GraphicsPipelineDesc {
+                color_formats: &[vk::Format::R32_SFLOAT],
+                depth_format: Some(DEPTH_FORMAT),
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                cull: vk::CullModeFlags::NONE,
+                blend: Blend::Max,
+                ..GraphicsPipelineDesc::new(
+                    "Water exits (blocks)",
+                    water,
+                    c"blockWaterVertex",
+                    c"blockWaterExitFragment",
+                )
+            })?,
+            // Seen from either side: its top's underside from in it.
+            block_water: graphics(&GraphicsPipelineDesc {
+                color_formats: &[HDR_FORMAT, VELOCITY_FORMAT],
+                depth_format: Some(DEPTH_FORMAT),
+                depth_write: true,
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                cull: vk::CullModeFlags::NONE,
+                ..GraphicsPipelineDesc::new("Water (blocks)", water, c"blockWaterVertex", c"blockWaterFragment")
             })?,
             underwater: graphics(&GraphicsPipelineDesc {
                 color_formats: hdr,
@@ -853,6 +880,8 @@ impl Pipelines {
             self.grass_forward_on_depth,
             self.dry_mesh,
             self.water_wall,
+            self.block_water_exits,
+            self.block_water,
             self.underwater,
             self.lens_wetness,
             self.composite_ldr,

@@ -13,10 +13,17 @@
 //!
 //! Beside them, the same faces merged by surface alone, as triangles, for
 //! collision and for the GI's rays, which need no shading.
+//!
+//! Water is seen through, so the ground's faces show where it meets water as
+//! where it meets air, and water closes no corners in. Water's own faces show
+//! only where it meets air, merged by surface, and are kept after the
+//! ground's quads, every way they face together, to be drawn apart; they are
+//! no triangles, so nothing stands on water and the GI's rays pass through.
 
 use super::{
-    BlockMap,
+    BlockFaces, BlockMap,
     chunk::{AIR, BlockId, CHUNK},
+    is_ground, is_water,
 };
 
 /// The ways a face can face, in the order quads are kept: +x, -x, +y, -y,
@@ -30,9 +37,10 @@ const AXES: [(usize, bool, usize, usize); FACINGS] =
     [(0, true, 1, 2), (0, false, 2, 1), (1, true, 2, 0), (1, false, 0, 2), (2, true, 0, 1), (2, false, 1, 0)];
 
 /// A chunk's faces: its quads, kept by facing, `buckets[f]..buckets[f + 1]`
-/// those of facing `f`; its faces as triangles, in blocks from the chunk's
-/// corner, three indices a triangle, facing out; and which of the chunk's
-/// sides see each other through its air (see `sight`).
+/// those of facing `f`, and after `buckets[FACINGS]` its water's; its
+/// ground's faces as triangles, in blocks from the chunk's corner, three
+/// indices a triangle, facing out; and which of the chunk's sides see each
+/// other through its air and water (see `sight`).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ChunkMesh {
     pub quads: Vec<[u32; 2]>,
@@ -46,6 +54,12 @@ impl ChunkMesh {
     /// Whether it has nothing to draw.
     pub fn is_empty(&self) -> bool {
         self.quads.is_empty()
+    }
+
+    /// Its water's quads: where they start among its quads, and how many.
+    pub fn water(&self) -> (u32, u32) {
+        let first = self.buckets[FACINGS];
+        (first, self.quads.len() as u32 - first)
     }
 }
 
@@ -72,9 +86,9 @@ const PADDED: usize = CHUNK as usize + 2;
 
 /// Chunk `key`'s faces in `map`, each block's faces drawn with the
 /// surfaces `faces` gives it (its top, sides and bottom), by its number.
-pub fn mesh_chunk(map: &BlockMap, key: [i32; 3], faces: &[[u8; 3]]) -> ChunkMesh {
+pub fn mesh_chunk(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces]) -> ChunkMesh {
     let Some(chunk) = map.chunk(key) else { return ChunkMesh::default() };
-    if chunk.is_air() || map.buried(key) {
+    if chunk.is_air() || map.buried(key, faces) {
         return ChunkMesh::default();
     }
     // The chunk's blocks and those just past it, solid or not.
@@ -94,15 +108,7 @@ pub fn mesh_chunk(map: &BlockMap, key: [i32; 3], faces: &[[u8; 3]]) -> ChunkMesh
     }
     let block =
         |p: [i32; 3]| padded[((p[1] + 1) as usize * PADDED + (p[2] + 1) as usize) * PADDED + (p[0] + 1) as usize];
-    let solid = |p: [i32; 3]| block(p) != AIR;
-    let surface = |id: BlockId, facing: usize| {
-        let sides = faces.get(id as usize).copied().unwrap_or_default();
-        match facing {
-            2 => sides[0],
-            3 => sides[2],
-            _ => sides[1],
-        }
-    };
+    let solid = |p: [i32; 3]| is_ground(faces, block(p));
     let side = CHUNK as usize;
     let mut mesh = ChunkMesh::default();
     let mut shaded = vec![0u32; side * side];
@@ -120,10 +126,10 @@ pub fn mesh_chunk(map: &BlockMap, key: [i32; 3], faces: &[[u8; 3]]) -> ChunkMesh
                     let id = block(p);
                     let mut beyond = p;
                     beyond[axis] += step;
-                    if id == AIR || solid(beyond) {
+                    if !is_ground(faces, id) || solid(beyond) {
                         continue;
                     }
-                    let look = surface(id, facing);
+                    let look = surface(faces, id, facing);
                     // Each corner, as the blocks beside it in the air before the face close it in.
                     let shade = [(-1, -1), (1, -1), (1, 1), (-1, 1)].map(|(su, sv)| {
                         let at = |du: i32, dv: i32| {
@@ -162,8 +168,56 @@ pub fn mesh_chunk(map: &BlockMap, key: [i32; 3], faces: &[[u8; 3]]) -> ChunkMesh
         }
     }
     mesh.buckets[FACINGS] = mesh.quads.len() as u32;
-    mesh.sights = super::sight::sights(chunk);
+    if chunk.may_hold(|block| is_water(faces, block)) {
+        mesh.quads.extend(water_quads(&block, faces, |beyond| beyond == AIR));
+    }
+    mesh.sights = super::sight::sights(chunk, |block| !is_ground(faces, block));
     mesh
+}
+
+/// The surface block `id` is drawn with on its faces facing `facing`.
+fn surface(faces: &[BlockFaces], id: BlockId, facing: usize) -> u8 {
+    let kind = faces.get(id as usize).copied().unwrap_or_default();
+    match facing {
+        2 => kind.top,
+        3 => kind.bottom,
+        _ => kind.sides,
+    }
+}
+
+/// A chunk's water's faces as quads, unshaded, merged by surface: one
+/// wherever a block of water meets a block `meets` picks, `block` giving
+/// each block from one before the chunk's corner to one past its far side.
+pub(super) fn water_quads(
+    block: &dyn Fn([i32; 3]) -> BlockId,
+    faces: &[BlockFaces],
+    meets: impl Fn(BlockId) -> bool,
+) -> Vec<[u32; 2]> {
+    let side = CHUNK as usize;
+    let mut quads = Vec::new();
+    let mut mask = vec![0u32; side * side];
+    for (facing, &(axis, out, u, v)) in AXES.iter().enumerate() {
+        for layer in 0..side {
+            for j in 0..side {
+                for i in 0..side {
+                    let mut p = [0i32; 3];
+                    (p[axis], p[u], p[v]) = (layer as i32, i as i32, j as i32);
+                    let id = block(p);
+                    let mut beyond = p;
+                    beyond[axis] += if out { 1 } else { -1 };
+                    if is_water(faces, id) && !is_water(faces, block(beyond)) && meets(block(beyond)) {
+                        mask[j * side + i] = u32::from(surface(faces, id, facing)) + 1;
+                    }
+                }
+            }
+            for (i, j, w, h, look) in merge(&mut mask, side) {
+                let mut at = [0u32; 3];
+                (at[axis], at[u], at[v]) = (layer as u32, i as u32, j as u32);
+                quads.push(pack(at, [w as u32, h as u32], facing, look as u8, [3; 4]));
+            }
+        }
+    }
+    quads
 }
 
 /// The rectangles of equal values in a `side` by `side` mask, row after
@@ -219,6 +273,60 @@ mod tests {
     }
 
     #[test]
+    fn water_shows_its_faces_where_it_meets_air_apart_and_the_ground_shows_through_it() {
+        // A floor of ground, a pool of water two deep on it, 4 blocks a side, a pillar of ground standing in it.
+        let mut map = BlockMap::default();
+        for z in 0..8 {
+            for x in 0..8 {
+                map.set([x, 0, z], 1);
+            }
+        }
+        for y in 1..3 {
+            for z in 2..6 {
+                for x in 2..6 {
+                    map.set([x, y, z], 2);
+                }
+            }
+        }
+        for y in 1..4 {
+            map.set([3, y, 3], 1);
+        }
+        let faces = [BlockFaces::default(), BlockFaces::new(1, 1, 1), BlockFaces::water(5)];
+        let mesh = mesh_chunk(&map, [0, 0, 0], &faces);
+        let (first, count) = mesh.water();
+        assert_eq!(first, mesh.buckets[FACINGS]);
+        let water: Vec<_> = mesh.quads[first as usize..].iter().map(|&q| unpack(q)).collect();
+        assert_eq!(water.len(), count as usize);
+        // Its top and four sides, where it meets air, and nothing against the floor or the pillar.
+        let area = |facing: usize| -> u32 {
+            water.iter().filter(|q| q.2 == facing).map(|q| q.1.iter().product::<u32>()).sum()
+        };
+        assert_eq!(area(2), 16 - 1, "its top, but where the pillar stands out of it");
+        assert_eq!([0, 1, 4, 5].map(area), [8; 4], "each side 4 wide and 2 high");
+        assert_eq!(area(3), 0, "none down onto the floor");
+        assert!(water.iter().all(|q| q.3 == 5), "drawn with its surface");
+        // The ground's faces show under the water and round the pillar in it, and the water closes no corner in.
+        let ground: Vec<_> = mesh.quads[..first as usize].iter().map(|&q| unpack(q)).collect();
+        let floor: u32 = ground.iter().filter(|q| q.2 == 2 && q.0[1] == 0).map(|q| q.1.iter().product::<u32>()).sum();
+        assert_eq!(floor, 64 - 1, "the whole floor's top but under the pillar");
+        let sides_in_water = ground.iter().filter(|q| q.0 == [3, 1, 3] || q.0 == [4, 1, 3]).count();
+        assert!(sides_in_water > 0, "the pillar's sides under the water");
+        assert!(ground.iter().filter(|q| q.2 == 2 && q.0[1] == 0).all(|q| q.4 == [3; 4] || q.0[0] >= 2));
+        // Nothing stands on water: its faces are no triangles.
+        let tops = mesh.indices.chunks(3).filter(|t| t.iter().all(|&i| mesh.positions[i as usize][1] == 3.0));
+        assert_eq!(tops.count(), 0, "no triangles at the water's top");
+        // A chunk of ground beside a chunk of water shows its faces against it, though both are whole.
+        let mut sea = BlockMap::default();
+        for key in [[-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1], [0, 0, 0]] {
+            sea.put_chunk(key, Chunk::filled(1));
+        }
+        sea.put_chunk([1, 0, 0], Chunk::filled(2));
+        let shore = mesh_chunk(&sea, [0, 0, 0], &faces);
+        assert_eq!(shore.buckets[1] - shore.buckets[0], 1, "one quad facing the water");
+        assert_eq!(shore.water().1, 0);
+    }
+
+    #[test]
     fn a_quad_keeps_what_it_was_packed_with() {
         let quad = pack([31, 0, 17], [32, 5], 4, 200, [3, 0, 2, 1]);
         assert_eq!(unpack(quad), ([31, 0, 17], [32, 5], 4, 200, [3, 0, 2, 1]));
@@ -238,7 +346,7 @@ mod tests {
             map.set([10, y, 12], 2);
         }
         map.set([32, 0, 3], 1);
-        let faces = [[0, 0, 0], [1, 2, 3], [4, 4, 4]];
+        let faces = [BlockFaces::default(), BlockFaces::new(1, 2, 3), BlockFaces::new(4, 4, 4)];
         let mesh = mesh_chunk(&map, [0, 0, 0], &faces);
         // Every face a block at a time would draw, and no more, but in far fewer quads.
         let area: u32 = mesh.quads.iter().map(|&q| unpack(q).1.iter().product::<u32>()).sum();

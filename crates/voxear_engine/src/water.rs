@@ -1,7 +1,8 @@
 //! Water as the game asks about it: how high the sea is at a point, which
 //! way it faces, and how it flows, from the CPU's copy of its long waves
 //! (`voxear_render::OceanSampler`), the same waves the GPU draws and the same
-//! on every machine; and the same of Pools and Streams. Moved on each tick,
+//! on every machine; and the same of Pools, Streams and worlds of blocks'
+//! water (`voxear_terrain::blocks::BlockWorld::water_over`). Moved on each tick,
 //! before scripts run, from the level's first Ocean, and each Stream's points
 //! along its Path made again; scripts read it through `Water` in C#.
 //!
@@ -23,6 +24,10 @@ pub use voxear_physics::scene::Buoyancy;
 
 /// How many columns a side the water pushes a floating Obj up by.
 const COLUMNS: usize = 3;
+
+/// How far over a world of blocks' water a point is still over it, in
+/// metres, through air: as a Pool's surface is over all its footprint.
+const OVER_BLOCK_WATER: f32 = 16.0;
 
 /// The sea's long waves on the CPU, and the Streams' points along their
 /// Paths, kept as a world resource.
@@ -190,6 +195,15 @@ fn sample_wet(world: &World, physics: Option<&PhysicsScene>, at: Vec3) -> Option
         pool.surface_over(position, rotation, at)
     });
     if let Some(height) = pool {
+        return Some(WaterPoint { height, normal: Vec3::Y, flow: Vec3::ZERO });
+    }
+    // In a world of blocks' water, or over it: the top of its column, still.
+    let blocks = world.query_ref::<(&voxear_terrain::blocks::BlockWorld, &Transform, Option<&WorldTransform>)>();
+    let block_water = blocks.into_iter().find_map(|(blocks, local, placed)| {
+        let corner = voxear_terrain::corner(local, placed);
+        Some(corner.y + blocks.water_over((at - corner).to_array(), OVER_BLOCK_WATER)?)
+    });
+    if let Some(height) = block_water {
         return Some(WaterPoint { height, normal: Vec3::Y, flow: Vec3::ZERO });
     }
     let query = world.resource::<WaterQuery>()?;
@@ -457,6 +471,38 @@ mod tests {
         assert!(when > 0.5 && when < 1.2, "as it reaches the water, falling three metres: {when}");
         assert!(burst > 40 && at.y.abs() < 0.3, "a big splash at the surface: {burst} at {at}");
         assert!(world.query_ref::<&Splash>().into_iter().next().is_none(), "gone once its drops have fallen");
+    }
+
+    #[test]
+    fn a_buoyant_ball_floats_on_block_water_and_one_without_sinks_through_it_to_the_ground() {
+        use voxear_terrain::blocks::{
+            BlockMap, BlockWorld,
+            file::{BlockFile, BlockKind},
+        };
+        let mut world = World::new();
+        let mut file = BlockFile::default();
+        file.blocks.push(BlockKind { water: true, ..BlockKind::colored("Water", [0.04, 0.46, 0.33]) });
+        let (_, faces) = file.faces();
+        // A floor of stone 16 blocks a side under water 4 deep: its top at 0 in the world, the floor's at -4.
+        let mut map = BlockMap::default();
+        for z in 0..16 {
+            for x in 0..16 {
+                map.set([x, 0, z], 3);
+                for y in 1..5 {
+                    map.set([x, y, z], 4);
+                }
+            }
+        }
+        world.spawn((BlockWorld::new(map, &faces, 1.0), Transform::from_position(Vec3::new(-8.0, -5.0, -8.0))));
+        let sphere = Collider { shape: ColliderShape::Sphere, radius: 0.5, ..Collider::default() };
+        let body = Rigidbody { mass: 10.0, ..Rigidbody::default() };
+        let floating =
+            world.spawn((Buoyancy::default(), sphere, body, Transform::from_position(Vec3::new(-3.0, 3.0, 0.0))));
+        let sinking = world.spawn((sphere, body, Transform::from_position(Vec3::new(3.0, 3.0, 0.0))));
+        play(&mut world, 8.0);
+        let height = |entity: Entity| world.get::<Transform>(entity).unwrap().position.y;
+        assert!(height(floating).abs() < 0.2, "half under, at the water's top: {}", height(floating));
+        assert!((height(sinking) + 3.5).abs() < 0.1, "through the water onto the floor: {}", height(sinking));
     }
 
     #[test]

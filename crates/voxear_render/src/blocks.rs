@@ -8,6 +8,10 @@
 //! The sun's cascades take every face of the chunks they see. Each chunk
 //! also gives the GI's rays a mesh of its own, its faces merged by surface
 //! alone, as the terrain's tiles do.
+//!
+//! A chunk's water's quads follow its ground's in the pool. They are drawn
+//! apart, with the water after the opaque scene (`water::record`): every
+//! one of a chunk the view sees, seen from either side, casting no shadow.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -105,13 +109,14 @@ struct Held {
 }
 
 /// One chunk as a view picks what to draw of it: its level and place, its
-/// box, and where each facing's quads start in the pool and how many, +x
-/// first.
+/// box, where each facing's quads start in the pool and how many, +x
+/// first, and its water's.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct ChunkDraw {
     pub key: [i32; 4],
     pub bounds: [Vec3; 2],
     pub facings: [[u32; 2]; FACINGS],
+    pub water: [u32; 2],
 }
 
 /// Whether the box from `low` to `high` is within `planes`, inward.
@@ -164,6 +169,21 @@ pub(crate) fn pick(
             }
         }
     }
+    merged(picked)
+}
+
+/// The water a view draws of a world's chunks: every face of the water of
+/// the chunks it sees, as [`pick`] picks them.
+pub(crate) fn pick_water(chunks: &[ChunkDraw], planes: &[[f32; 4]], seen: Option<&HashSet<[i32; 3]>>) -> Vec<[u32; 2]> {
+    let picked = chunks.iter().filter(|chunk| chunk.water[1] > 0).filter(|chunk| {
+        let [level, x, y, z] = chunk.key;
+        (level != 0 || seen.is_none_or(|seen| seen.contains(&[x, y, z]))) && within(planes, chunk.bounds)
+    });
+    merged(picked.map(|chunk| chunk.water).collect())
+}
+
+/// Runs of quads in order, those that follow on drawn as one.
+fn merged(mut picked: Vec<[u32; 2]>) -> Vec<[u32; 2]> {
     picked.sort_unstable();
     let mut merged: Vec<[u32; 2]> = Vec::with_capacity(picked.len());
     for [first, count] in picked {
@@ -339,7 +359,8 @@ impl Pool {
             let draws = self.held.iter().map(|(key, held)| {
                 let buckets = held.mesh.buckets;
                 let facings = std::array::from_fn(|f| [held.first as u32 + buckets[f], buckets[f + 1] - buckets[f]]);
-                ChunkDraw { key: *key, bounds: held.bounds, facings }
+                let (water, count) = held.mesh.water();
+                ChunkDraw { key: *key, bounds: held.bounds, facings, water: [held.first as u32 + water, count] }
             });
             self.draws = Some(draws.collect());
         }
@@ -618,13 +639,22 @@ pub(crate) fn add_proxies(drawn: &[DrawnBlocks], extracted: &mut ExtractedFrame)
 
 /// What a view draws of its worlds of blocks: for each world, its number in
 /// the view, whether it is drawn smooth, and the quads (or corners' words)
-/// each list draws; their pools to wait on; and whether any casts the sun's
+/// each list draws; for each world with water in view, its number and its
+/// water's quads; their pools to wait on; and whether any casts the sun's
 /// shadows.
 #[derive(Clone)]
 pub(crate) struct ViewBlocks {
     pub runs: Vec<(u32, bool, Vec<Vec<[u32; 2]>>)>,
+    pub water: Vec<(u32, Vec<[u32; 2]>)>,
     pub pools: Vec<BufferId>,
     pub shadows: bool,
+}
+
+impl ViewBlocks {
+    /// Whether any world's water is in view.
+    pub fn has_water(&self) -> bool {
+        !self.water.is_empty()
+    }
 }
 
 /// Picks each world's chunks and faces for this view and writes the
@@ -651,6 +681,7 @@ pub(crate) fn gather(
     let mut records = Vec::with_capacity(drawn.len().min(MAX_BLOCK_WORLDS));
     let mut surfaces = vec![GpuTerrainSurface::default(); drawn.len().min(MAX_BLOCK_WORLDS) * MAX_BLOCK_SURFACES];
     let mut runs = Vec::new();
+    let mut water = Vec::new();
     for (number, blocks) in drawn.iter().take(MAX_BLOCK_WORLDS).enumerate() {
         let looks = &blocks.look.surfaces[..blocks.look.surfaces.len().min(MAX_BLOCK_SURFACES)];
         for (place, look) in surfaces[number * MAX_BLOCK_SURFACES..].iter_mut().zip(looks) {
@@ -690,6 +721,10 @@ pub(crate) fn gather(
         });
         // A smooth surface faces every way in a chunk, so all of it is drawn.
         lists[LIST_EARLY as usize] = pick(&blocks.chunks, local, &planes, !blocks.smooth, seen.as_ref());
+        let wet = pick_water(&blocks.chunks, &planes, seen.as_ref());
+        if !wet.is_empty() {
+            water.push((number as u32, wet));
+        }
         if has_sun && blocks.cast_shadows {
             for cascade in 0..CASCADES {
                 let planes = voxear_terrain::lod::planes_from(&frame.cascade_planes[cascade], blocks.corner);
@@ -702,7 +737,7 @@ pub(crate) fn gather(
     buffer.write(SURFACES_AT as u64, &surfaces);
     let shadows = runs.iter().any(|(_, _, lists)| (0..CASCADES).any(|c| !lists[LIST_SHADOW as usize + c].is_empty()));
     let pools = drawn.iter().take(MAX_BLOCK_WORLDS).filter_map(|blocks| blocks.id).collect();
-    Some(ViewBlocks { runs, pools, shadows })
+    Some(ViewBlocks { runs, water, pools, shadows })
 }
 
 /// Each world's quads list `list` draws: six vertices a quad (drawn
@@ -715,6 +750,21 @@ fn draw_runs(ctx: &PassContext, view: &ViewBlocks, push: &Push, list: u32) {
             ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { list, level: number + 1, output: first, ..*push });
             let vertices = if *smooth { count / 2 } else { count * 6 };
             unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, vertices, 1, 0, 0) };
+        }
+    }
+}
+
+/// Each world's water in view, six vertices a quad, as `draw_runs` draws
+/// its ground: drawn with the water (`water::record`), with `pipeline`.
+pub(crate) fn draw_water(ctx: &PassContext, view: &ViewBlocks, push: &Push, pipeline: vk::Pipeline) {
+    if !view.has_water() {
+        return;
+    }
+    bind(ctx, pipeline, vk::PipelineBindPoint::GRAPHICS, push);
+    for (number, runs) in &view.water {
+        for &[first, count] in runs {
+            ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { level: number + 1, output: first, ..*push });
+            unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, count * 6, 1, 0, 0) };
         }
     }
 }
@@ -817,6 +867,7 @@ mod tests {
             key: [0, (x / 32.0) as i32, 0, 0],
             bounds: [Vec3::new(x, 0.0, 0.0), Vec3::new(x + 32.0, 32.0, 32.0)],
             facings: std::array::from_fn(|f| [first + 10 * f as u32, 10]),
+            water: [first + 60, 0],
         };
         let chunks = [chunk(0.0, 0), chunk(32.0, 60)];
         // From above the first, beyond its +x side: no -y faces of either, and none of the second's +x.
@@ -834,5 +885,22 @@ mod tests {
         // Only the chunks the camera can see into, where it is known which.
         let seen = HashSet::from([[1, 0, 0]]);
         assert_eq!(pick(&chunks, Vec3::new(16.0, 40.0, 16.0), &[], false, Some(&seen)), vec![[60, 60]]);
+    }
+
+    #[test]
+    fn a_view_draws_the_water_of_every_chunk_it_sees_whichever_way_it_faces() {
+        // Three chunks along x, the first and last with water after their ground's quads.
+        let chunk = |x: f32, first: u32, water: u32| ChunkDraw {
+            key: [0, (x / 32.0) as i32, 0, 0],
+            bounds: [Vec3::new(x, 0.0, 0.0), Vec3::new(x + 32.0, 32.0, 32.0)],
+            facings: std::array::from_fn(|f| [first + 10 * f as u32, 10]),
+            water: [first + 60, water],
+        };
+        let chunks = [chunk(0.0, 0, 5), chunk(32.0, 65, 0), chunk(64.0, 125, 7)];
+        assert_eq!(pick_water(&chunks, &[], None), vec![[60, 5], [185, 7]]);
+        // Only those in view, and those the camera can see into.
+        assert_eq!(pick_water(&chunks, &[[1.0, 0.0, 0.0, -40.0]], None), vec![[185, 7]]);
+        let seen = HashSet::from([[0, 0, 0]]);
+        assert_eq!(pick_water(&chunks, &[], Some(&seen)), vec![[60, 5]]);
     }
 }

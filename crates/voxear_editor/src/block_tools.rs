@@ -15,7 +15,7 @@ use voxear_ecs::Entity;
 use voxear_engine::{Game, blocks::BlockWorldAsset};
 use voxear_render::Renderer;
 use voxear_terrain::blocks::{
-    BlockHit, BlockMap, BlockWorld,
+    BlockFaces, BlockHit, BlockMap, BlockWorld,
     chunk::{AIR, BlockId, Fill},
     smooth::{self, Ball},
     vox::VoxFile,
@@ -101,7 +101,7 @@ fn reached(middle: [i32; 3], size: u32) -> Vec<[i32; 3]> {
 /// reaches, adding to the ground where it places, taking from it where it
 /// breaks, and turning the ground in it to `picked` where it paints.
 fn smooth_ball(
-    map: &BlockMap,
+    (map, faces): (&BlockMap, &[BlockFaces]),
     middle: [i32; 3],
     size: u32,
     brush: BlockBrush,
@@ -113,7 +113,7 @@ fn smooth_ball(
         BlockBrush::Paint => Ball::Paint(picked),
         BlockBrush::Model => return Vec::new(),
     };
-    smooth::ball(map, middle.map(|v| v as f32 + 0.5), size as f32 * 0.5, does)
+    smooth::ball(map, middle.map(|v| v as f32 + 0.5), size as f32 * 0.5, does, faces)
 }
 
 impl BlockTools {
@@ -180,7 +180,8 @@ impl BlockTools {
         let Some(blocks) = game.engine.world.get_mut::<BlockWorld>(entity) else { return middle };
         let map = blocks.blocks.clone();
         if blocks.smooth {
-            blocks.set_cells(smooth_ball(&map, middle, state.size, brush, picked));
+            let faces = blocks.faces.clone();
+            blocks.set_cells(smooth_ball((&map, &faces), middle, state.size, brush, picked));
             return middle;
         }
         let changes: Vec<([i32; 3], BlockId)> = reached(middle, state.size)

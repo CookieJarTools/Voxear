@@ -2120,14 +2120,18 @@ impl View {
         if let Some((maps, _)) = &glass_shadows {
             frame_data.glass_shadow = maps.frame_field(fg);
         }
-        // The first Ocean's sea, its waves moved on to now, and the Pools and Dry Areas.
-        let wet = extracted.ocean.is_some() || extracted.water_bodies.pools > 0 || !extracted.water_bodies.streams.is_empty();
+        // The first Ocean's sea, its waves moved on to now, the Pools and Dry Areas, and the worlds of blocks' water.
+        let block_water = view_blocks.as_ref().filter(|blocks| blocks.has_water()).cloned();
+        let wet = extracted.ocean.is_some()
+            || extracted.water_bodies.pools > 0
+            || !extracted.water_bodies.streams.is_empty()
+            || block_water.is_some();
         let water = match wet && !wireframe {
             true => Some(water::Water::new(
                 fg,
                 (gpu, bindless),
                 (&mut self.ocean, slot),
-                (extracted.ocean, &extracted.water_bodies),
+                (extracted.ocean, &extracted.water_bodies, block_water),
                 (extent, setup.time, camera),
                 (
                     &{

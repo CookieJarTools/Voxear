@@ -105,7 +105,8 @@ pub(crate) unsafe extern "C" fn block_set(
                     _ => Ball::Add(block),
                 };
                 let middle = ((a - corner) / size).to_array();
-                let changes = voxear_terrain::blocks::smooth::ball(&blocks.blocks, middle, b.x.max(0.0) / size, does);
+                let radius = b.x.max(0.0) / size;
+                let changes = voxear_terrain::blocks::smooth::ball(&blocks.blocks, middle, radius, does, &blocks.faces);
                 if changes.is_empty() {
                     continue;
                 }

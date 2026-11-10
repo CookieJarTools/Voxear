@@ -169,6 +169,12 @@ impl Chunk {
             Self { palette: old.palette, bits, words: words.into_boxed_slice(), solid: old.solid, fills: old.fills };
     }
 
+    /// Whether any of its blocks may be of a kind `pick` picks: any its
+    /// palette holds, though some may no longer be used.
+    pub fn may_hold(&self, pick: impl Fn(BlockId) -> bool) -> bool {
+        self.palette.iter().any(|&block| pick(block))
+    }
+
     /// Each block's place in the palette, in the order blocks are kept.
     fn entries(&self) -> impl Iterator<Item = usize> + '_ {
         let per_word = if self.bits == 0 { 1 } else { (64 / self.bits) as usize };

@@ -10,7 +10,7 @@ use voxear_render::{
     Sky, SurfaceLook,
 };
 use voxear_scene::Transform;
-use voxear_terrain::blocks::{BlockWorld, file::BlockFile};
+use voxear_terrain::blocks::{BlockFaces, BlockWorld, file::BlockFile};
 
 const WIDTH: u32 = 640;
 const HEIGHT: u32 = 360;
@@ -219,7 +219,7 @@ fn a_world_drawn_smooth_is_a_round_hill_its_top_and_sides_blended_with_no_gaps_b
         }
     }
     let (looks, faces) = file.faces();
-    assert_eq!(faces[1], [0, 1, 1], "top, sides and bottom");
+    assert_eq!(faces[1], BlockFaces::new(0, 1, 1), "top, sides and bottom");
     let surfaces: Vec<SurfaceLook> = looks
         .iter()
         .map(|look| {
@@ -352,4 +352,99 @@ fn a_planet_drawn_smooth_is_round_its_hills_lit_on_its_sunny_side() {
     // Lit on its sunny side, the screen's right, darker on its night side.
     let brightness = |dx: f32| at(dx * reach, 0.0).iter().sum::<i32>();
     assert!(brightness(0.6) > brightness(-0.6) + 60, "{} against {}", brightness(0.6), brightness(-0.6));
+}
+
+#[test]
+fn water_blocks_are_drawn_over_the_ground_under_them_which_shows_through_tinted() {
+    use voxear_terrain::blocks::{
+        BlockMap,
+        chunk::{AIR, BlockId},
+        file::BlockKind,
+    };
+    let Some(mut renderer) = renderer() else { return };
+    // Grass 4 blocks up, 64 a side, and a pit 24 blocks a side and 3 deep in its middle, its floor stone in the west
+    // and grass in the east; then the same pit full of water.
+    let mut file = BlockFile::default();
+    file.ground.size = [64, 64];
+    file.ground.height = 4;
+    file.blocks.push(BlockKind { water: true, ..BlockKind::colored("Water", [0.04, 0.46, 0.33]) });
+    let water = file.blocks.len() as BlockId;
+    let mut dug = file.make_ground(None);
+    for z in 20..44 {
+        for x in 20..44 {
+            for y in 1..4 {
+                dug.set([x, y, z], AIR);
+            }
+            dug.set([x, 0, z], if x < 32 { 3 } else { 1 });
+        }
+    }
+    let mut flooded = dug.clone();
+    for z in 20..44 {
+        for x in 20..44 {
+            for y in 1..4 {
+                flooded.set([x, y, z], water);
+            }
+        }
+    }
+    let (looks, faces) = file.faces();
+    assert!(faces[usize::from(water)].water);
+    let surfaces: Vec<SurfaceLook> = looks
+        .iter()
+        .map(|look| {
+            // Linear, as the engine makes a colour's material.
+            let linear = |c: f32| if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) };
+            let [r, g, b] = look.color.map(linear);
+            let material =
+                renderer.add_material(&MaterialDesc { base_color: [r, g, b, 1.0], ..MaterialDesc::default() });
+            SurfaceLook {
+                material: material.unwrap(),
+                size: 1.0,
+                sharpness: 0.0,
+                triplanar: true,
+                tracks: 0.0,
+                fills_in: 0.0,
+                liquid: Default::default(),
+                glitter: false,
+            }
+        })
+        .collect();
+    let default = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let look = BlockLook { material: default, surfaces: Arc::from(surfaces) };
+    let mut draw = |blocks: BlockMap, name: &str| {
+        let mut world = World::new();
+        world.spawn((BlockWorld::new(blocks, &faces, 1.0), look.clone(), Transform::default()));
+        // Straight down onto its middle from 40 m over the grass, the sun high in the west.
+        let down = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+        world.spawn((Camera::default(), Transform::new(Vec3::new(32.0, 44.0, 32.0), down, Vec3::ONE)));
+        let towards_sun = Vec3::new(-60f32.to_radians().cos(), 60f32.to_radians().sin(), 0.2).normalize();
+        let sun = Quat::from_rotation_arc(Vec3::Z, -towards_sun);
+        world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+        world.insert_resource(Sky { ambient: 0.3, ..Sky::default() });
+        let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
+        world.insert_resource(PostProcess { anti_aliasing, ..PostProcess::neutral() });
+        let pixels = render(&mut renderer, &world, 4);
+        keep_image(name, &pixels);
+        move |x: f32, z: f32| {
+            let (px, py) = from_above(40.0, x, z);
+            rgb_at(&pixels, px, py)
+        }
+    };
+    let dry = draw(dug, "blocks pit.png");
+    let wet = draw(flooded, "blocks water.png");
+    let apart = |a: [i32; 3], b: [i32; 3]| (0..3).map(|i| (a[i] - b[i]).abs()).sum::<i32>();
+    // The grass round the pit as it was.
+    for (x, z) in [(10.0, 40.0), (54.0, 24.0)] {
+        assert!(apart(dry(x, z), wet(x, z)) < 24, "the grass at ({x}, {z}): {:?} and {:?}", dry(x, z), wet(x, z));
+    }
+    // Over the pit's floor, the water drawn over it, bluer.
+    let blue = |[r, _, b]: [i32; 3]| b - r;
+    for (x, z) in [(25.0, 32.0), (39.0, 30.0)] {
+        let (before, after) = (dry(x, z), wet(x, z));
+        assert!(apart(before, after) > 20, "water over ({x}, {z}): {before:?} and {after:?}");
+        assert!(blue(after) > blue(before) + 8, "bluer under water: {before:?} and {after:?}");
+    }
+    // And the floor under it seen through it: its stone and its grass still apart.
+    let (stone, grass) = (wet(25.0, 32.0), wet(39.0, 30.0));
+    assert!(apart(stone, grass) > 20, "the floor through the water: {stone:?} and {grass:?}");
+    assert!(grass[1] - grass[0] > stone[1] - stone[0], "greener over the grass: {grass:?} and {stone:?}");
 }

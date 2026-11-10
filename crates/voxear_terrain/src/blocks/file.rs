@@ -11,6 +11,11 @@
 //! top = "Materials/Grass.material"      # its top, in place of its material
 //! material = "Materials/Dirt.material"  # every other face
 //!
+//! [[blocks]]
+//! name = "Water"
+//! color = [0.04, 0.46, 0.33]  # the water's own colour
+//! water = true                # see-through, and things float in it
+//!
 //! [ground]
 //! size = [64, 64]   # blocks along x and z
 //! height = 8        # blocks up
@@ -24,7 +29,7 @@ use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    BlockMap,
+    BlockFaces, BlockMap,
     chunk::{AIR, BlockId},
 };
 
@@ -70,6 +75,11 @@ pub struct BlockKind {
     /// none for nowhere.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cover: Option<BlockCover>,
+    /// Whether it is water: drawn see-through with the water's look, its
+    /// colour the water's own, its faces only where it meets air; nothing
+    /// stands on it, and what floats floats in it.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub water: bool,
 }
 
 /// Where a kind of block covers generated ground: where its climate and
@@ -107,7 +117,15 @@ impl BlockCover {
 
 impl Default for BlockKind {
     fn default() -> Self {
-        Self { name: "Block".into(), color: [0.6, 0.6, 0.6], material: None, top: None, bottom: None, cover: None }
+        Self {
+            name: "Block".into(),
+            color: [0.6, 0.6, 0.6],
+            material: None,
+            top: None,
+            bottom: None,
+            cover: None,
+            water: false,
+        }
     }
 }
 
@@ -179,8 +197,8 @@ impl BlockFile {
 
     /// The ways its faces are drawn, each once, and for each block by its
     /// number (air first) which of them its top, its sides and its bottom
-    /// are: the surfaces a chunk's quads name.
-    pub fn faces(&self) -> (Vec<FaceLook>, Vec<[u8; 3]>) {
+    /// are and whether it is water: the surfaces a chunk's quads name.
+    pub fn faces(&self) -> (Vec<FaceLook>, Vec<BlockFaces>) {
         let mut looks: Vec<FaceLook> = Vec::new();
         let mut find = |material: &Option<String>, color: [f32; 3]| {
             let look = FaceLook { material: material.clone(), color };
@@ -190,12 +208,12 @@ impl BlockFile {
             });
             at.min(255) as u8
         };
-        let mut faces = vec![[0; 3]];
+        let mut faces = vec![BlockFaces::default()];
         for kind in &self.blocks {
             let top = find(&kind.top.clone().or_else(|| kind.material.clone()), kind.color);
             let sides = find(&kind.material, kind.color);
             let bottom = find(&kind.bottom.clone().or_else(|| kind.material.clone()), kind.color);
-            faces.push([top, sides, bottom]);
+            faces.push(BlockFaces { water: kind.water, ..BlockFaces::new(top, sides, bottom) });
         }
         (looks, faces)
     }
@@ -255,10 +273,16 @@ mod tests {
         // Grass's top its material, its sides and bottom its colour; dirt and stone a colour each.
         assert_eq!(looks.len(), 4);
         assert_eq!(faces.len(), 4, "air, then each block");
-        assert_eq!(looks[faces[1][0] as usize].material.as_deref(), Some("Materials/Grass.material"));
-        assert_eq!(faces[1][1], faces[1][2]);
-        assert_ne!(faces[2][1], faces[3][1]);
+        assert_eq!(looks[faces[1].top as usize].material.as_deref(), Some("Materials/Grass.material"));
+        assert_eq!(faces[1].sides, faces[1].bottom);
+        assert_ne!(faces[2].sides, faces[3].sides);
+        assert!(faces.iter().all(|faces| !faces.water));
         assert!(BlockFile::parse("block_size = 0.0").is_err());
+        // A kind of water reads back as water, and its faces say so.
+        file.blocks.push(BlockKind { water: true, ..BlockKind::colored("Water", [0.04, 0.46, 0.33]) });
+        let read = BlockFile::parse(&file.to_text()).unwrap();
+        assert!(read.blocks[3].water && !read.blocks[0].water);
+        assert!(read.faces().1[4].water);
     }
 
     #[test]

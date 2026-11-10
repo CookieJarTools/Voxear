@@ -29,10 +29,12 @@ mod eval;
 mod graph;
 mod landmass;
 pub mod nodes;
+mod starters;
 mod world;
 
 pub use compile::Fault;
 pub use graph::{Exposed, Graph, Link, Node, NodeId};
 pub use landmass::{Climate, Erosion, Field, Landmass, POLES_COLDER, Preset, Sample, Warp, smooth};
 pub use nodes::{NodeKind, Port, PortKind, Value, ValueKind, ValueSpec};
+pub use starters::{Starter, starters};
 pub use world::{PreviewArea, WorldGen};

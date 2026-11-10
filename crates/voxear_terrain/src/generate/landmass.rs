@@ -329,7 +329,7 @@ const RIDGE_MIDDLE: f32 = 0.45;
 const RIDGE_SPREAD: f32 = 2.4;
 
 /// Noise from 0 to 1 as -1 to 1, stretched by `SPREAD` and held within.
-fn signed(value: f32) -> f32 {
+pub(crate) fn signed(value: f32) -> f32 {
     ((value - 0.5) * 2.0 * SPREAD).clamp(-1.0, 1.0)
 }
 
@@ -425,8 +425,9 @@ const GULLY_REACH: f32 = 1.5;
 /// along x and z, per cell. Each cell has a point of its own, its gullies'
 /// stripes laid round it at a phase of its own, and blended with its
 /// neighbours' as they reach, so gullies wander and end rather than run in
-/// rows.
-fn gullies(x: f32, z: f32, along: [f32; 2], seed: u32) -> (f32, f32, f32) {
+/// rows. With `joined`, how it changes eases to nothing on the floors, where
+/// it would turn about from one wall to the other.
+fn gullies(x: f32, z: f32, along: [f32; 2], seed: u32, joined: bool) -> (f32, f32, f32) {
     let across = [-along[1], along[0]];
     let reach2 = GULLY_REACH * GULLY_REACH;
     let (mut sum, mut weights) = (0.0f32, 0.0f32);
@@ -450,7 +451,14 @@ fn gullies(x: f32, z: f32, along: [f32; 2], seed: u32) -> (f32, f32, f32) {
             let s = dx * across[0] + dz * across[1] + phase;
             let u = s - s.floor();
             let wave = 8.0 * u * (1.0 - u) - 1.0;
-            let slope = 8.0 - 16.0 * u;
+            let mut slope = 8.0 - 16.0 * u;
+            if joined {
+                // Whole from an eighth of the way up either wall.
+                let up = if u < 0.5 { u } else { 1.0 - u };
+                if up < 0.125 {
+                    slope *= up * 8.0;
+                }
+            }
             sum += w * wave;
             weights += w;
             for axis in 0..2 {
@@ -465,6 +473,75 @@ fn gullies(x: f32, z: f32, along: [f32; 2], seed: u32) -> (f32, f32, f32) {
     let value = sum / weights;
     let d = |axis: usize| (dsum[axis] * weights - sum * dweights[axis]) / (weights * weights);
     (value, d(0), d(1))
+}
+
+/// Gullies cut down the slopes of any ground: how deeply, how far apart
+/// and in how many octaves; in a world of this scale and sea level; from
+/// this seed. A landmass cuts its own with them, and a graph's Gullies node
+/// whatever height is wired into it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Gullied {
+    pub erosion: Erosion,
+    pub scale: f32,
+    pub sea_level: f32,
+    pub seed: u32,
+    /// Whether each octave's gullies join the floors of the octave before
+    /// without a step. An octave runs down the slope the one before left,
+    /// and that slope turns about across a gully's floor, from one wall's to
+    /// the other's: so the next octave's gullies meet there out of step,
+    /// which leaves a step in the ground along the floor. Joined, the slope
+    /// they follow eases to the floor's own as they near it, so they turn
+    /// to run along it and meet. A landmass's are not joined: its ground is
+    /// what it was.
+    pub joined: bool,
+}
+
+impl Gullied {
+    /// How far apart the largest gullies are, in metres of the world.
+    fn spacing(&self) -> f32 {
+        (self.erosion.spacing * self.scale.max(0.01)).max(1.0)
+    }
+
+    /// How far off each way the ground's height is read to find its slope,
+    /// in metres.
+    pub fn step(&self) -> f32 {
+        self.spacing() * 0.15
+    }
+
+    /// `height`, the ground at `(x, z)`, with gullies cut down its slopes:
+    /// in each octave, stripes run down the slope as the octaves before left
+    /// it, cut deeper the steeper it is. None under the sea, and shallower
+    /// towards it. `around` is the ground's height [`Gullied::step`] metres
+    /// off: further along x, back along x, further along z, back along z.
+    pub fn cut(&self, x: f32, z: f32, height: f32, around: [f32; 4]) -> f32 {
+        let scale = self.scale.max(0.01);
+        let mut spacing = self.spacing();
+        // The ground's slope round the point, from its height a little way off each way.
+        let step = spacing * 0.15;
+        let (mut gx, mut gz) = ((around[0] - around[1]) / (2.0 * step), (around[2] - around[3]) / (2.0 * step));
+        let mut cut = 0.0;
+        for octave in 0..self.erosion.octaves.min(8) {
+            let slope = (gx * gx + gz * gz).sqrt();
+            if slope > 1e-4 {
+                let along = [gx / slope, gz / slope];
+                let seed = seed_of(self.seed, 20 + octave);
+                let (value, dx, dz) = gullies(x / spacing, z / spacing, along, seed, self.joined);
+                // From nothing between gullies to their whole depth on their floors, deepest from about 30° up.
+                let depth = self.erosion.strength * spacing * 0.25 * crate::layers::smoothstep(0.0, 0.6, slope);
+                let share = (value - 1.0) * 0.5;
+                cut += depth * share;
+                // The next octave runs down the slope as this one left it: off a gully's walls, into it.
+                gx += depth * 0.5 * dx / spacing;
+                gz += depth * 0.5 * dz / spacing;
+            }
+            spacing *= 0.5;
+        }
+        // None under the sea: gullies grow shallower towards the shore, over as many metres as they are deep.
+        let deepest = self.erosion.strength * self.erosion.spacing * scale * 0.25;
+        let above = crate::layers::smoothstep(self.sea_level, self.sea_level + deepest.max(1.0), height);
+        // And never below the sea from above it, so no pools are left along the shore.
+        (height + cut * above).max(height.min(self.sea_level))
+    }
 }
 
 /// The seed of a generator's part `part`, from its own.
@@ -653,39 +730,20 @@ impl Landmass {
         (Sample { continents, ruggedness, peaks, height }, relief)
     }
 
-    /// `height`, the ground at `(x, z)`, with gullies cut down its slopes:
-    /// in each octave, stripes run down the slope as the octaves before left
-    /// it, cut deeper the steeper it is. None under the sea, and shallower
-    /// towards it.
+    /// `height`, the ground at `(x, z)`, with gullies cut down its slopes
+    /// (see [`Gullied`]), which are read from its height a little way off
+    /// each way.
     fn eroded(&self, x: f32, z: f32, height: f32) -> f32 {
-        let scale = self.scale.max(0.01);
-        let mut spacing = (self.erosion.spacing * scale).max(1.0);
-        // The ground's slope round the point, from its height a little way off each way.
-        let step = spacing * 0.15;
+        let cut = Gullied {
+            erosion: self.erosion,
+            scale: self.scale,
+            sea_level: self.sea_level,
+            seed: self.seed,
+            joined: false,
+        };
+        let step = cut.step();
         let at = |dx: f32, dz: f32| self.shaped(Spot::Flat(x + dx, z + dz)).0.height;
-        let (mut gx, mut gz) =
-            ((at(step, 0.0) - at(-step, 0.0)) / (2.0 * step), (at(0.0, step) - at(0.0, -step)) / (2.0 * step));
-        let mut cut = 0.0;
-        for octave in 0..self.erosion.octaves.min(8) {
-            let slope = (gx * gx + gz * gz).sqrt();
-            if slope > 1e-4 {
-                let along = [gx / slope, gz / slope];
-                let (value, dx, dz) = gullies(x / spacing, z / spacing, along, seed_of(self.seed, 20 + octave));
-                // From nothing between gullies to their whole depth on their floors, deepest from about 30° up.
-                let depth = self.erosion.strength * spacing * 0.25 * crate::layers::smoothstep(0.0, 0.6, slope);
-                let share = (value - 1.0) * 0.5;
-                cut += depth * share;
-                // The next octave runs down the slope as this one left it: off a gully's walls, into it.
-                gx += depth * 0.5 * dx / spacing;
-                gz += depth * 0.5 * dz / spacing;
-            }
-            spacing *= 0.5;
-        }
-        // None under the sea: gullies grow shallower towards the shore, over as many metres as they are deep.
-        let deepest = self.erosion.strength * self.erosion.spacing * scale * 0.25;
-        let above = crate::layers::smoothstep(self.sea_level, self.sea_level + deepest.max(1.0), height);
-        // And never below the sea from above it, so no pools are left along the shore.
-        (height + cut * above).max(height.min(self.sea_level))
+        cut.cut(x, z, height, [at(step, 0.0), at(-step, 0.0), at(0.0, step), at(0.0, -step)])
     }
 
     /// The ground's height at `(x, z)`, in metres in its own world.
@@ -763,7 +821,7 @@ mod tests {
         let (mut along, mut across) = (0.0, 0.0);
         for i in 0..4000 {
             let (x, z) = ((i % 64) as f32 * 0.173, (i / 64) as f32 * 0.191);
-            let (_, dx, dz) = gullies(x, z, [1.0, 0.0], 7);
+            let (_, dx, dz) = gullies(x, z, [1.0, 0.0], 7, false);
             (along, across) = (along + dx.abs(), across + dz.abs());
         }
         assert!(across > along * 3.0, "across {across}, along {along}");

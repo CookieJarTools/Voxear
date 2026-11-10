@@ -14,12 +14,13 @@
 //!
 //! Both are made of [`ValueRow`]s, one for each kind of value a node can
 //! have, so a new kind of value is one more arm in each of its three
-//! methods. Each change is saved as it is made, and terrains generated
+//! methods. An angle is one such: its row shows degrees, while its value
+//! is kept as the slope's rise over run. Each change is saved as it is made, and terrains generated
 //! from the generator are made again (see `editor::generators`).
 
 use voxear_terrain::generate::{
     Exposed, NodeId as GraphNode, NodeKind, Preset, Value, ValueKind, ValueSpec, WorldGen,
-    nodes::{Land, Output},
+    nodes::{Land, Output, degrees_of, rise_of},
     smooth,
 };
 use voxear_ui::{MenuItem, NodeId, Style, Ui};
@@ -42,7 +43,7 @@ const fn own(name: &'static str, label: &'static str, kind: ValueKind) -> ValueS
 
 /// What edits a row's value.
 enum RowControl {
-    /// A field typed in or scrubbed by the row's label, for a number or a whole number.
+    /// A field typed in or scrubbed by the row's label, for a number, a whole number or an angle.
     Number(NodeId),
     Choice(NodeId),
     /// A curve's graph, and what the curve is worth with no keys.
@@ -65,6 +66,7 @@ impl ValueRow {
         let control = match spec.kind {
             ValueKind::Number { unit, .. } => RowControl::Number(number_field(ui, row, unit)),
             ValueKind::Whole { .. } => RowControl::Number(number_field(ui, row, "")),
+            ValueKind::Angle => RowControl::Number(number_field(ui, row, "°")),
             ValueKind::Choice(choices) => {
                 let picked = if let Value::Choice(picked) = value { picked } else { 0 };
                 let dropdown = ui.dropdown(row, choices, picked.min(choices.len().saturating_sub(1)));
@@ -91,6 +93,8 @@ impl ValueRow {
                         Ok(whole) => Value::Whole(whole),
                         Err(_) => Value::Number(text.parse().ok()?),
                     },
+                    // Typed in degrees, kept as rise over run.
+                    ValueKind::Angle => Value::Number(rise_of(text.parse().ok()?)),
                     _ => Value::Number(text.parse().ok()?),
                 }
             }
@@ -108,6 +112,9 @@ impl ValueRow {
     /// Shows `value`, but in a field being typed in, and draws a curve as it is.
     pub fn show(&self, ui: &mut Ui, value: Value) {
         match (&self.control, value) {
+            (RowControl::Number(field), Value::Number(rise)) if self.spec.kind == ValueKind::Angle => {
+                write(ui, *field, &number(degrees_of(rise)));
+            }
             (RowControl::Number(field), Value::Number(shown)) => write(ui, *field, &number(shown)),
             (RowControl::Number(field), Value::Whole(shown)) => write(ui, *field, &shown.to_string()),
             (RowControl::Choice(dropdown), Value::Choice(picked)) => {
@@ -527,6 +534,35 @@ mod tests {
         // And a row marked as one its generator shows says so to the sheet.
         row.set_exposed(&mut ui, true);
         assert!(ui.has_class(row.row, "exposed"));
+    }
+
+    #[test]
+    fn an_angles_row_shows_degrees_and_keeps_the_slopes_rise_over_run() {
+        use voxear_terrain::generate::nodes::STEEPEST;
+        let (mut ui, rows) = rows();
+        let steepness = own("min", "Min", ValueKind::Angle);
+        let row = ValueRow::new(&mut ui, rows, "Min", steepness, Value::Number(1.0));
+        assert_eq!(ui.text(field(&row)), "45", "a rise of 1 in 1");
+        let beside = ui.children(ui.parent(field(&row)).unwrap());
+        assert_eq!(beside.last().map(|&unit| ui.text(unit)).as_deref(), Some("°"));
+        // 30° typed is kept as its tangent, and shows as 30 again.
+        type_in(&mut ui, &row, "30");
+        let Some(Value::Number(rise)) = row.changed(&ui, Value::Number(1.0)) else { panic!("a change") };
+        assert!((rise - 0.57735).abs() < 1e-4, "{rise}");
+        ui.blur();
+        row.show(&mut ui, Value::Number(rise));
+        assert_eq!(ui.text(field(&row)), "30");
+        // Straight up and past it are the steepest there is; below level is level.
+        for (typed, kept) in [("90", STEEPEST), ("120", STEEPEST), ("-5", 0.0)] {
+            type_in(&mut ui, &row, typed);
+            assert_eq!(row.changed(&ui, Value::Number(rise)), Some(Value::Number(kept)), "{typed}");
+        }
+        ui.blur();
+        row.show(&mut ui, Value::Number(STEEPEST));
+        assert_eq!(ui.text(field(&row)), "90");
+        // The same angle typed again is no change.
+        type_in(&mut ui, &row, "90");
+        assert_eq!(row.changed(&ui, Value::Number(STEEPEST)), None);
     }
 
     #[test]

@@ -12,25 +12,52 @@ use serde::{Deserialize, Serialize};
 use voxear_core::curve::Curve;
 
 use super::{
-    compile::{Compiler, Places, V},
+    compile::{Compiler, Places, V, World},
     graph::NodeId,
-    landmass::Climate,
+    landmass::{Climate, seed_of},
 };
 
+mod around;
+mod blend;
+mod cells;
+mod clamp;
 mod climate;
+mod climate_mask;
 mod constant;
+mod curvature;
 mod curve;
+mod falloff;
+mod gullies;
+mod height_mask;
 mod landmass;
 mod math;
 mod noise;
 mod output;
+mod slope_mask;
+mod smooth;
+mod terrace;
+#[cfg(test)]
+pub(crate) mod testing;
+mod warp;
 
+pub use blend::Blend;
+pub use cells::Cells;
+pub use clamp::Clamp;
+pub use climate_mask::ClimateMask;
 pub use constant::Constant;
+pub use curvature::Curvature;
 pub use curve::Remap;
+pub use falloff::{Falloff, FalloffShape};
+pub use gullies::Gullies;
+pub use height_mask::HeightMask;
 pub use landmass::Land;
 pub use math::{Math, Operation};
 pub use noise::Noise;
 pub use output::Output;
+pub use slope_mask::SlopeMask;
+pub use smooth::Smooth;
+pub use terrace::Terrace;
+pub use warp::Bend;
 
 /// What a wire carries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -83,6 +110,34 @@ pub enum ValueKind {
     Choice(&'static [&'static str]),
     /// A curve from 0 to 1, worth `empty` with no keys.
     Curve { empty: f32 },
+    /// An angle from level to straight up. Its number is the slope's rise
+    /// over run (0 for level, 1 for 45°, [`STEEPEST`] for straight up), so
+    /// that making ground needs no trigonometry; its row shows it in
+    /// degrees (see [`degrees_of`] and [`rise_of`]).
+    Angle,
+}
+
+/// The rise over run kept for an angle of 90°, which has none: steeper
+/// than any ground.
+pub const STEEPEST: f32 = 1.0e6;
+
+/// The rise over run a [`ValueKind::Angle`] row keeps for an angle of
+/// `degrees`. For rows only: nothing that makes ground calls it, since a
+/// tangent can differ between machines.
+pub fn rise_of(degrees: f32) -> f32 {
+    if degrees >= 90.0 {
+        return STEEPEST;
+    }
+    degrees.max(0.0).to_radians().tan().clamp(0.0, STEEPEST)
+}
+
+/// The angle, in degrees, a [`ValueKind::Angle`] row shows for the rise
+/// over run it keeps. For rows only, as [`rise_of`] is.
+pub fn degrees_of(rise: f32) -> f32 {
+    if rise >= STEEPEST {
+        return 90.0;
+    }
+    rise.max(0.0).atan().to_degrees()
 }
 
 /// One of a node's values: its name in a file, its label on its row, what
@@ -121,6 +176,10 @@ impl ValueSpec {
         Self { name, label, kind: ValueKind::Curve { empty }, input: None, advanced: false }
     }
 
+    pub(crate) const fn angle(name: &'static str, label: &'static str) -> Self {
+        Self { name, label, kind: ValueKind::Angle, input: None, advanced: false }
+    }
+
     /// Kept under Advanced.
     pub(crate) const fn advanced(mut self) -> Self {
         self.advanced = true;
@@ -134,8 +193,8 @@ impl ValueSpec {
     }
 
     /// `value` as this row keeps it: a number or whole number held within
-    /// its range, a choice among those it has; none for a value of another
-    /// kind.
+    /// its range, a choice among those it has, an angle's rise over run from
+    /// level to straight up; none for a value of another kind.
     pub fn kept(&self, value: Value) -> Option<Value> {
         match (self.kind, value) {
             (ValueKind::Number { low, high, .. }, Value::Number(number)) if !number.is_nan() => {
@@ -147,6 +206,7 @@ impl ValueSpec {
             }
             (ValueKind::Choice(choices), Value::Choice(choice)) if choice < choices.len() => Some(value),
             (ValueKind::Curve { .. }, Value::Curve(_)) => Some(value),
+            (ValueKind::Angle, Value::Number(rise)) if !rise.is_nan() => Some(Value::Number(rise.clamp(0.0, STEEPEST))),
             _ => None,
         }
     }
@@ -169,6 +229,16 @@ impl Value {
             _ => None,
         }
     }
+}
+
+/// The part of a generator's seed nodes' own noise starts from: past every
+/// part a landmass uses.
+const NODE_SEEDS: u32 = 0x1000;
+
+/// The seed of `node`'s own noise in `world`: from the generator's seed and
+/// the node's number, so each node's is its own and stays with it.
+pub(crate) fn node_seed(world: World, node: NodeId) -> u32 {
+    seed_of(world.seed, NODE_SEEDS.wrapping_add(node.0))
 }
 
 /// What every kind of node has.
@@ -213,6 +283,21 @@ pub enum NodeKind {
     Noise(Noise),
     Math(Math),
     Curve(Remap),
+    Cells(Cells),
+    Falloff(Falloff),
+    Terrace(Terrace),
+    Clamp(Clamp),
+    Blend(Blend),
+    Warp(Bend),
+    Smooth(Smooth),
+    #[serde(rename = "height_mask")]
+    HeightMask(HeightMask),
+    #[serde(rename = "slope_mask")]
+    SlopeMask(SlopeMask),
+    Curvature(Curvature),
+    #[serde(rename = "climate_mask")]
+    ClimateMask(ClimateMask),
+    Gullies(Gullies),
 }
 
 /// `$do` for the values of whichever kind `$node` is, as `$kind`.
@@ -226,6 +311,18 @@ macro_rules! each_kind {
             NodeKind::Noise($kind) => $do,
             NodeKind::Math($kind) => $do,
             NodeKind::Curve($kind) => $do,
+            NodeKind::Cells($kind) => $do,
+            NodeKind::Falloff($kind) => $do,
+            NodeKind::Terrace($kind) => $do,
+            NodeKind::Clamp($kind) => $do,
+            NodeKind::Blend($kind) => $do,
+            NodeKind::Warp($kind) => $do,
+            NodeKind::Smooth($kind) => $do,
+            NodeKind::HeightMask($kind) => $do,
+            NodeKind::SlopeMask($kind) => $do,
+            NodeKind::Curvature($kind) => $do,
+            NodeKind::ClimateMask($kind) => $do,
+            NodeKind::Gullies($kind) => $do,
         }
     };
 }
@@ -241,9 +338,21 @@ impl NodeKind {
         vec![
             NodeKind::Landmass(Land::default()),
             NodeKind::Noise(Noise::default()),
+            NodeKind::Cells(Cells::default()),
+            NodeKind::Falloff(Falloff::default()),
             NodeKind::Constant(Constant::default()),
             NodeKind::Curve(Remap::default()),
+            NodeKind::Terrace(Terrace::default()),
+            NodeKind::Clamp(Clamp::default()),
             NodeKind::Math(Math::default()),
+            NodeKind::Blend(Blend::default()),
+            NodeKind::Warp(Bend::default()),
+            NodeKind::Smooth(Smooth::default()),
+            NodeKind::HeightMask(HeightMask::default()),
+            NodeKind::SlopeMask(SlopeMask::default()),
+            NodeKind::Curvature(Curvature::default()),
+            NodeKind::ClimateMask(ClimateMask::default()),
+            NodeKind::Gullies(Gullies::default()),
             NodeKind::Climate(Climate::default()),
             NodeKind::Output(Output::default()),
         ]

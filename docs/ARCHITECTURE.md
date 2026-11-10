@@ -2857,6 +2857,21 @@ gets the bits each point gets alone. Places are rows too, so a node that reads i
 behind it again at the rows it made. A generator is never changed, only replaced, and carries a hash of everything
 that decides its ground: one saved with only a node moved keeps its place in `Content`, and nothing is made again.
 Only sums, products, divisions, square roots and `floor`, so the same seed makes the same bits on every machine.
+The node library beside the Landmass: sources (Noise, Cells, Falloff, Constant), shape (Curve, Terrace, Clamp, Math,
+Blend, Warp, Smooth), masks (height, slope, curvature, climate) and Gullies. A node that needs the ground round a
+place (`nodes/around.rs`) makes rows of places a step off and asks for its input at them: along x and z on flat
+ground; round a planet along two tangents of its surface, found with a cross product and a square root, where
+gullies pass their input through as a landmass's do. A mask's angles are kept as rise over run
+(`ValueKind::Angle`, which a row shows in degrees) and a feathered edge is the tangent of a sum or a difference of
+angles, worked out from the two tangents, so slopes need no trigonometry either. The Gullies node and the Landmass
+share one piece of maths (`landmass::Gullied`); the node's octaves follow a slope eased to nothing on the floors of
+the octave before, where a landmass's turns about, which is what left steps along its gully floors, so a
+landmass keeps its bits and a graph's gullies join without them. Chose reading the input again at moved rows over
+giving nodes neighbours: a place still depends on its own inputs alone, any batch gets the same bits, and the
+cost is plain to see, five reads behind a slope or gullies and nine behind a smooth. `generate::starters()` gives
+five graphs built from the library under the presets' names (plains, hills, alpine, archipelago, canyons), each
+with its height and a few values exposed, their ground pinned by hash; the landmass presets and files made from
+them are untouched.
 A terrain's Generate layer lays it from an offset in its world; compositing finds generators by reference as it
 finds pictures. Rivers and lakes on finished maps are a Rivers layer (`voxear_terrain::rivers`): priority-flood filling
 gives every cell the way it drains and the ground draining through it; rivers are cut where that is enough, lakes

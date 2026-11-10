@@ -19,8 +19,8 @@
 //! ground; the ground's faces show where they meet it as they do air.
 //! Nothing stands on it, and things float in it ([`BlockWorld::water_over`]).
 //! It flows ([`flow`]): from water placed, down and then out sideways,
-//! falling towards a planet's middle. A Voxel Terrain keeps its water as
-//! cubes, its top flat, the smooth ground running under it.
+//! falling towards a planet's middle. A Voxel Terrain's water is smooth
+//! too, its surface made as its ground's is (see `smooth`).
 
 pub mod chunk;
 pub mod edits;

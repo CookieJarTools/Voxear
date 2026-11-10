@@ -336,7 +336,7 @@ fn round_line(at: [i32; 3], facing: usize) -> [[i32; 3]; 4] {
 /// over a field of how far each block's middle is into water or ground
 /// (water's by how high its surface stands, see `flow::smooth_surface`;
 /// the ground's by its fill), the air a block further out than the water
-/// beside it. Each corner is two pairs of words, as the ground's are, its
+/// beside it, whatever the ground near it. Each corner is two pairs of words, as the ground's are, its
 /// surface the water's.
 fn water_surface(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], padded: &Padded) -> Vec<[u32; 2]> {
     let fills = super::mesh::fills(map, key);
@@ -353,11 +353,12 @@ fn water_surface(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], padded: &P
             } else if is_ground(faces, block) {
                 padded.depths[index].max(0.05)
             } else {
-                padded.depths[index].min(-1e-3)
+                -1.0
             }
         })
         .collect();
-    // Air beside water: a block further out than the water's surface.
+    // Air beside water: a block further out than the water's surface. How near the ground air is says nothing
+    // of the water, and would draw the water out over a beach.
     let beside = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
     let mut out_of_water = Vec::new();
     for index in 0..field.len() {
@@ -373,7 +374,7 @@ fn water_surface(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], padded: &P
             .map(|next| field[Padded::index(next)] - 1.0)
             .fold(f32::MIN, f32::max);
         if near > f32::MIN {
-            out_of_water.push((index, field[index].max(near).min(-1e-3)));
+            out_of_water.push((index, near.min(-1e-3)));
         }
     }
     for (index, value) in out_of_water {

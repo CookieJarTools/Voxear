@@ -3935,14 +3935,82 @@ fn a_stream_runs_along_its_path_and_breaks_white_where_it_runs_steep() {
     assert!(water[1] > water[0] + 10, "the stream's water: {water:?}");
     let sand = patch_rgb(&pixels, on_screen(eye, look, Vec3::new(5.0, -3.0, 6.0)), 2);
     assert!(sand[0] > sand[2] + 10, "dry sand beside it: {sand:?}");
-    // White water from the drop, churning on past its foot.
-    let rapids = patch_rgb(&pixels, on_screen(eye, look, Vec3::new(0.0, -1.5, 18.5)), 2);
-    assert!(rapids.iter().all(|&c| c > 120), "rapids: {rapids:?}");
+    // White water down the drop and churning on past its foot, and none on the level stretch above it: how much of
+    // each stretch is white.
+    let white = |z: [f32; 2], y: [f32; 2]| {
+        let (a, b) = (on_screen(eye, look, Vec3::new(-1.5, y[1], z[1])), on_screen(eye, look, Vec3::new(1.5, y[0], z[0])));
+        let spots: Vec<[i32; 3]> =
+            (a.1.min(b.1)..=a.1.max(b.1)).flat_map(|y| (a.0.min(b.0)..=a.0.max(b.0)).map(move |x| (x, y))).map(|at| rgb_at(&pixels, at)).collect();
+        spots.iter().filter(|c| c.iter().all(|&channel| channel > 130)).count() as f32 / spots.len() as f32
+    };
+    let (level, steep) = (white([3.0, 9.0], [0.0, 0.0]), white([13.0, 18.5], [-0.4, -1.5]));
+    assert!(steep > 0.15 && level < 0.02, "rapids white, the level stretch not: {steep} and {level}");
     // Its ripples drift downstream: half a second on, the water there is not as it was.
     let (later, ..) = stream_render(10.5).unwrap();
     let at = on_screen(eye, look, Vec3::new(0.0, 0.0, 6.0));
     let changed = (0..8u32).flat_map(|dy| (0..8u32).map(move |dx| (at.0 - 4 + dx, at.1 - 4 + dy))).filter(|&p| rgb_at(&pixels, p) != rgb_at(&later, p)).count();
     assert!(changed > 16, "its ripples move: {changed} of 64 pixels changed");
+}
+
+/// A level stream six metres wide flowing at `speed`, with a rock standing
+/// in its middle fourteen metres down it, seen from downstream of the rock,
+/// looking back up at it; over sand a metre under it, or with `deep` over
+/// dark ground far below, so only its surface shows.
+fn rock_in_stream_render(speed: f32, deep: bool) -> Option<(Vec<u8>, Vec3, Quat)> {
+    use voxear_render::{Sky, Stream};
+    use voxear_scene::{Path, PathPoint};
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    let eye = Vec3::new(3.5, 3.0, 21.0);
+    let look = Quat::from_rotation_arc(Vec3::Z, (Vec3::new(0.0, 0.0, 14.5) - eye).normalize());
+    world.spawn((Camera::default(), Transform::new(eye, look, Vec3::ONE)));
+    // The sun behind the camera, so its glare on the water is out of the picture.
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(-0.4, -0.6, -0.6).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.6, ..Sky::default() });
+    world.insert_resource(steady_post());
+    let plane = renderer.primitive(Primitive::Plane).unwrap();
+    let (colour, under) = if deep { ([0.03, 0.03, 0.03, 1.0], -8.0) } else { ([0.76, 0.66, 0.48, 1.0], -1.0) };
+    let bed = renderer.add_material(&MaterialDesc { base_color: colour, roughness: 0.9, ..MaterialDesc::default() }).unwrap();
+    world.spawn((MeshRenderer::new(plane, bed), Transform::new(Vec3::new(0.0, under, 0.0), Quat::IDENTITY, Vec3::splat(200.0))));
+    let sphere = renderer.primitive(Primitive::Sphere).unwrap();
+    let stone = renderer.add_material(&MaterialDesc { base_color: [0.3, 0.3, 0.3, 1.0], roughness: 0.9, ..MaterialDesc::default() }).unwrap();
+    world.spawn((MeshRenderer::new(sphere, stone), Transform::new(Vec3::new(0.0, -0.1, 14.0), Quat::IDENTITY, Vec3::splat(1.4))));
+    let point = |z: f32| PathPoint { position: [0.0, 0.0, z], width: 6.0 };
+    let path = Path { points: vec![point(0.0), point(20.0), point(40.0)], closed: false };
+    world.spawn((Stream { speed, ..Stream::default() }, path, Transform::default()));
+    run(&mut renderer, &world, &mut 10.0, 6);
+    Some((renderer.read_pixels().unwrap().2, eye, look))
+}
+
+#[test]
+fn a_calm_stream_lies_smooth_a_fast_one_is_rough_and_leaves_white_water_below_a_rock() {
+    let Some((calm, eye, look)) = rock_in_stream_render(0.5, false) else { return };
+    let (fast, ..) = rock_in_stream_render(3.5, false).unwrap();
+    keep_image("stream calm.png", &calm);
+    keep_image("stream fast.png", &fast);
+    // How much each pixel differs from the next over a patch of open water beside the rock, with nothing showing
+    // through it: ripples make it large.
+    let rough = |speed: f32| {
+        let (pixels, ..) = rock_in_stream_render(speed, true).unwrap();
+        let pixels = &pixels[..];
+        let at = on_screen(eye, look, Vec3::new(-1.8, 0.0, 15.0));
+        let grey = |p: (u32, u32)| rgb_at(pixels, p).iter().sum::<i32>();
+        let spots = (0..24u32).flat_map(|dy| (0..40u32).map(move |dx| (at.0 - 20 + dx, at.1 - 12 + dy)));
+        spots.map(|p| (grey((p.0 + 1, p.1)) - grey(p)).abs()).sum::<i32>() as f32 / (24.0 * 40.0)
+    };
+    let (smooth, rippled) = (rough(0.5), rough(3.5));
+    assert!(rippled > smooth * 1.5 + 0.5, "fast water rougher than calm: {rippled} and {smooth}");
+    // How white the water is a metre below the rock, where what it disturbs is carried, and a metre and a half
+    // above it, where the water has not met it yet: by its dimmest colour.
+    let whiteness = |pixels: &[u8], z: f32| *patch_rgb(pixels, on_screen(eye, look, Vec3::new(0.0, 0.0, z)), 3).iter().min().unwrap();
+    let (below, above) = (whiteness(&fast, 15.7), whiteness(&fast, 11.8));
+    assert!(below > above + 20, "white water below a rock in fast water: {below} against {above} above it");
+    let (still_below, still_above) = (whiteness(&calm, 15.7), whiteness(&calm, 11.8));
+    assert!(still_below - still_above < (below - above) / 2, "and none in calm water: {still_below} against {still_above}");
+    // Calm water over sand shows the sand, and is nowhere white.
+    let open = patch_rgb(&calm, on_screen(eye, look, Vec3::new(-1.8, 0.0, 15.0)), 4);
+    assert!(open.iter().all(|&c| c < 215) && open[0] + 25 > open[2], "the bed through calm water: {open:?}");
 }
 
 #[test]

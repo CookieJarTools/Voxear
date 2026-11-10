@@ -205,11 +205,25 @@ pub struct ParticlePlayback {
 
 impl Component for ParticlePlayback {}
 
+/// The spray over a Stream's rapids, as `gather` lists it: its system, the
+/// Stream's body, how many points the Stream has and how many drops.
+pub type RapidsSpray = (u32, u32, u32, u32);
+
+/// The most Streams with rapids that throw up spray in a frame, the nearest
+/// the camera.
+const SPRAYING_STREAMS: usize = 4;
+
 /// This frame's Particle Systems, the farthest from `camera` first, so the
 /// nearer draw over them, and how many particles each draws; then, listed
 /// after them, the sea's spray and how many drops it has, when the first
-/// Ocean has any.
-pub(crate) fn gather(world: &World, camera: Vec3, time: f32) -> (Vec<GpuParticleSystem>, Vec<u32>, Option<u32>) {
+/// Ocean has any; then the spray over the rapids of the Streams of water
+/// nearest the camera among `bodies`.
+pub(crate) fn gather(
+    world: &World,
+    camera: Vec3,
+    time: f32,
+    bodies: &crate::water::WaterBodies,
+) -> (Vec<GpuParticleSystem>, Vec<u32>, Option<u32>, Vec<RapidsSpray>) {
     let query = world.query_ref::<(&ParticleSystem, &Transform, Option<&WorldTransform>, Option<&ParticlePlayback>)>();
     let mut systems: Vec<(f32, GpuParticleSystem, u32)> = query
         .without::<Destroying>()
@@ -222,7 +236,7 @@ pub(crate) fn gather(world: &World, camera: Vec3, time: f32) -> (Vec<GpuParticle
         })
         .collect();
     systems.sort_by(|a, b| b.0.total_cmp(&a.0));
-    systems.truncate(MAX_PARTICLE_SYSTEMS - 1);
+    systems.truncate(MAX_PARTICLE_SYSTEMS - 1 - SPRAYING_STREAMS);
     let (mut gpus, counts): (Vec<GpuParticleSystem>, Vec<u32>) =
         systems.into_iter().map(|(_, gpu, slots)| (gpu, slots)).unzip();
     let seas = world.query_ref::<(&crate::Ocean, &Transform, Option<&WorldTransform>)>();
@@ -234,7 +248,44 @@ pub(crate) fn gather(world: &World, camera: Vec3, time: f32) -> (Vec<GpuParticle
         gpus.push(gpu(&drops, Mat4::from_translation(Vec3::new(0.0, level, 0.0)), time, None));
         drops.slots()
     });
-    (gpus, counts, spray)
+    // The Streams are listed after the Pools, the nearest first.
+    let mut rapids = Vec::new();
+    let streams = (bodies.pools..).zip(&bodies.bodies[bodies.pools as usize..]).take(bodies.streams.len());
+    for (body, stream) in streams.filter(|(_, stream)| stream.liquid == crate::water_bodies::Liquid::Water as u32) {
+        let (first, count) = (stream.shape as usize, stream.size[0] as usize);
+        let points = &bodies.points[first..first + count];
+        // How many square metres of white water it has, about.
+        let white: f32 = points.windows(2).map(|pair| {
+            let run = Vec3::from(pair[1].position).distance(Vec3::from(pair[0].position));
+            pair[0].foam * pair[0].foam * pair[0].width * run
+        }).sum();
+        if white < 1.0 || rapids.len() == SPRAYING_STREAMS {
+            continue;
+        }
+        let drops = rapids_spray(white);
+        rapids.push((gpus.len() as u32, body, count as u32, drops.slots()));
+        gpus.push(gpu(&drops, Mat4::IDENTITY, time, None));
+    }
+    (gpus, counts, spray, rapids)
+}
+
+/// The spray over `white` square metres of a Stream's white water: fine
+/// drops thrown up a metre or so, drifting into mist as they fall back.
+fn rapids_spray(white: f32) -> ParticleSystem {
+    ParticleSystem {
+        rate: (white * 14.0).min(3000.0),
+        lifetime: [0.5, 1.1],
+        speed: [1.0, 2.8],
+        size: [0.12, 0.32],
+        size_end: 2.8,
+        color: [1.0, 1.0, 1.0, 0.4],
+        color_end: [1.0, 1.0, 1.0, 0.0],
+        gravity: 1.0,
+        drag: 0.7,
+        softness: 0.1,
+        seed: 0x5712EA,
+        ..ParticleSystem::default()
+    }
 }
 
 /// The sea's spray as a system, as much as an Ocean's Spray says: puffs of
@@ -258,12 +309,13 @@ fn sea_spray(amount: f32) -> ParticleSystem {
 }
 
 /// The particles a frame draws, after the fog (see `post_passes`): how many
-/// each Particle System draws, how many drops the sea's spray has, and what
-/// they draw into and read.
+/// each Particle System draws, how many drops the sea's spray has, the
+/// spray over Streams' rapids, and what they draw into and read.
 #[derive(Clone)]
 pub struct Draw {
     pub counts: Vec<u32>,
     pub spray: Option<u32>,
+    pub rapids: Vec<RapidsSpray>,
     pub targets: Targets,
 }
 
@@ -292,7 +344,7 @@ pub(crate) fn record(
     draw: Draw,
     fog_volume: Option<ImageId>,
 ) {
-    let Draw { counts, spray, targets } = draw;
+    let Draw { counts, spray, rapids, targets } = draw;
     let Targets { hdr, depth, sampled, clusters, extent } = targets;
     let depth_texture = fg.texture(depth);
     let mut images = vec![(hdr, ImageAccess::ColorAttachment), (depth, ImageAccess::Sampled)];
@@ -314,6 +366,13 @@ pub(crate) fn record(
         if let Some(drops) = spray {
             bind(ctx, pipelines.sea_spray, vk::PipelineBindPoint::GRAPHICS, &push);
             ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { source: counts.len() as u32, ..push });
+            unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, drops * 6, 1, 0, 0) };
+        }
+        if !rapids.is_empty() {
+            bind(ctx, pipelines.stream_spray, vk::PipelineBindPoint::GRAPHICS, &push);
+        }
+        for &(system, body, points, drops) in &rapids {
+            ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { source: system, list: body, level: points, ..push });
             unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, drops * 6, 1, 0, 0) };
         }
         unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
@@ -410,11 +469,37 @@ mod tests {
         world.spawn((ParticleSystem::default(), Transform::from_position(Vec3::new(0.0, 0.0, 2.0))));
         let far = world.spawn((ParticleSystem::default(), Transform::from_position(Vec3::new(0.0, 0.0, 20.0))));
         world.insert(far, ParticlePlayback { started: 3.0, stopped: Some(5.0) });
-        let (systems, slots, spray) = gather(&world, Vec3::ZERO, 10.0);
+        let (systems, slots, spray, rapids) = gather(&world, Vec3::ZERO, 10.0, &Default::default());
         assert_eq!(spray, None, "no sea, no spray");
+        assert!(rapids.is_empty(), "no Streams, none over rapids");
         assert_eq!(slots.len(), 2);
         assert_eq!(systems[0].model[3][2], 20.0, "the far one first");
         assert_eq!((systems[0].time, systems[0].stopped), (7.0, 2.0), "seven seconds in, stopped at two");
         assert_eq!(systems[1].stopped, f32::INFINITY);
+    }
+
+    #[test]
+    fn a_stream_with_rapids_throws_up_spray_and_one_that_runs_level_none() {
+        use crate::water_bodies::Stream;
+        use voxear_scene::{Path, PathPoint};
+        let point = |y: f32, z: f32| PathPoint { position: [0.0, y, z], width: 6.0 };
+        let level = Path { points: vec![point(0.0, 0.0), point(0.0, 30.0)], closed: false };
+        let steep = Path { points: vec![point(0.0, 0.0), point(0.0, 10.0), point(-4.0, 22.0), point(-4.0, 40.0)], closed: false };
+        let bodies = |path: &Path| {
+            let stream = Stream::default();
+            let points = stream.points(path, Mat4::IDENTITY);
+            let body = stream.gpu(0, points.len() as u32, None);
+            let points = points.iter().map(|p| p.gpu()).collect::<Vec<_>>();
+            crate::water::WaterBodies { bodies: vec![body], pools: 0, streams: vec![points.len() as u32], points, dry_meshes: Vec::new() }
+        };
+        let world = World::new();
+        let (systems, _, _, rapids) = gather(&world, Vec3::ZERO, 10.0, &bodies(&level));
+        assert!(systems.is_empty() && rapids.is_empty(), "a level stream throws up none");
+        let steep = bodies(&steep);
+        let (systems, _, _, rapids) = gather(&world, Vec3::ZERO, 10.0, &steep);
+        assert_eq!((systems.len(), rapids.len()), (1, 1));
+        let (system, body, points, drops) = rapids[0];
+        assert_eq!((system, body, points), (0, 0, steep.streams[0]), "its own system, for the Stream's body and points");
+        assert!(drops > 50, "enough drops to see: {drops}");
     }
 }

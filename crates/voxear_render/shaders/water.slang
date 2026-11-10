@@ -1466,6 +1466,70 @@ float seaDrawnHeight(Frame* frame, float3 world, uint steps)
     return drawn.y;
 }
 
+// ---------------------------------------------------------------- Streams
+
+// How fast a Stream runs, from 0 where it idles along to 1 where it races: what its ripples, its standing waves and
+// its foam go by.
+float streamQuick(float speed)
+{
+    return saturate((speed - 1.0) / 2.5);
+}
+
+// How high a Stream's water stands over its surface at `xz`, in metres, flowing `flow` metres a second across the
+// ground, `rapids` of the way to white water (0 to 1). Fast water rides over its bed in standing waves, which stay
+// where they are, their crests across the flow, longer the faster it runs, in trains here and there; rapids throw
+// it up higher, and churn it as it goes.
+float streamSwell(float2 xz, float2 flow, float rapids, float time)
+{
+    float speed = length(flow);
+    float quick = streamQuick(speed);
+    float standing = 0.02 * quick * quick + 0.13 * rapids;
+    if (standing <= 0.0)
+    {
+        return 0.0;
+    }
+    float2 along = flow / max(speed, 1e-4);
+    float s = dot(xz, along);
+    float t = dot(xz, float2(-along.y, along.x));
+    float trains = lavaNoise(float2(s * 0.11, t * 0.6) + 3.0);
+    float wave = sin(6.2832 * s / clamp(0.5 * speed * speed, 0.6, 2.8) + 2.5 * lavaNoise(float2(s * 0.45, t * 0.16))) * smoothstep(0.3, 0.75, trains);
+    float churn = lavaNoise(xz * 1.4 - flow * time * 0.6) + 0.5 * lavaNoise(xz * 3.1 + 7.0 - flow * time * 0.9) - 0.75;
+    return standing * wave + 0.14 * rapids * churn;
+}
+
+// What stands in a Stream's way upstream of `world`, on its surface, from 0 for open water to 1: a rock standing out
+// of it, or its bed so near under it that the water breaks over it, as fast as it runs (`speed`, in metres a second,
+// along `way`). Looked for in the picture's depth behind the water (push.textures.y), a few places upstream, the
+// nearer counting for more, so the water downstream of a rock is disturbed and what is out of sight disturbs nothing.
+float streamWake(Frame* frame, float3 world, float3 way, float speed, float2 pixel)
+{
+    static const uint PLACES = 5;
+    Texture2D depths = textures[NonUniformResourceIndex(push.textures.y)];
+    // As deep as this, water this fast runs over what is under it without breaking.
+    float clear = min(0.04 + 0.08 * speed * speed, 0.35);
+    // Each place a little nearer or further from pixel to pixel and frame to frame, so no step shows where one ends.
+    float jitter = frac(52.9829189 * frac(dot(pixel, float2(0.06711056, 0.00583715)) + float(frame->frameIndex % 64) * 0.61803));
+    float wake = 0.0;
+    for (uint i = 0; i < PLACES; i++)
+    {
+        float far = (float(i) + jitter) / float(PLACES);
+        float3 there = world - way * (0.15 + 3.2 * far * far) * (0.5 + 0.25 * speed);
+        float4 clip = transform(frame->viewProj, float4(there, 1.0));
+        float2 uv = clip.xy / max(clip.w, 1e-4) * 0.5 + 0.5;
+        if (clip.w <= frame->near || any(uv <= 0.0) || any(uv >= 1.0))
+        {
+            continue;
+        }
+        float behind = depths.Load(int3(int2(uv * float2(frame->viewport)), 0)).r;
+        float gap = (behind > 0.0 ? frame->near / behind : 1e4) - clip.w;
+        // Something in front of the water there, near enough to be standing in it; or the bed just under it.
+        float3 toCamera = normalize(frame->cameraPosition - there);
+        float blocked = gap < 0.0 ? step(-2.5, gap) : saturate(1.0 - gap * saturate(toCamera.y + 0.15) / clear) * 0.7;
+        wake = max(wake, blocked * (1.0 - far));
+    }
+    return wake;
+}
+
 // Stream `body` `along` points down it, between two of its `points` points.
 StreamPoint streamPointAt(WaterBody body, float along, uint points)
 {
@@ -1540,6 +1604,14 @@ WaterOut streamVertex(uint vertexId : SV_VertexID)
         float2 plate = float2((frame->time - p.age) * pace, across * half);
         sunk -= lavaBubbles(field, plate, pace / max(p.speed, 0.02), 0.55 * half).x;
     }
+    else
+    {
+        // Fast water stands in waves over its bed and rapids churn (waterFragment's, at the same places): less at
+        // its banks, and none at its ends or where it becomes the water it runs into.
+        float2 flow = level * p.speed * (0.3 + 0.7 * (1.0 - across * across));
+        float raised = saturate(ends / 2.0) * (1.0 - p.mouth) * min(body.size.y, 1.0);
+        sunk = -streamSwell((p.position + right * across * half).xz, flow, p.foam, frame->time) * raised;
+    }
     float3 world = p.position + right * across * half - float3(0.0, sunk, 0.0);
     // At its mouth it eases to the height of the water it runs into, rising and falling with the sea's waves there.
     bool intoSea = p.mouth > 0.0 && frame->ocean.enabled != 0 && abs(p.meets - frame->ocean.level) < 1e-3;
@@ -1592,11 +1664,12 @@ float4 smoothSample(Texture2D image, float2 uv, float texels = float(OCEAN_N))
 // The waves at `rest`, with as much of the sea's long swell as `swell`
 // says, added in by `weight`: their slopes, the slopes too small to see
 // there as variance, how much they fold and how far they move the water.
-void addWaves(Frame* frame, float2 rest, float swell, float weight, inout float2 slope, inout float variance, inout float folded, inout float3 moved, float depth = 1e4)
+// Only those of cascade `from` on, the finer ones.
+void addWaves(Frame* frame, float2 rest, float swell, float weight, inout float2 slope, inout float variance, inout float folded, inout float3 moved, float depth = 1e4, uint from = 0)
 {
     float gusts = seaGusts(frame, rest);
     float reach = wavesReach(frame, rest, depth);
-    for (uint c = 0; c < oceanCascades(frame); c++)
+    for (uint c = from; c < oceanCascades(frame); c++)
     {
         float2 uv = cascadeUv(frame, c, rest);
         // How many of the cascade's texels a pixel spans: under one, they are seen magnified.
@@ -2140,14 +2213,40 @@ FragmentOut waterFragment(WaterOut input)
     float2 restA = rest - flow * phase * FLOW_PERIOD;
     float2 restB = rest - flow * frac(phase + 0.5) * FLOW_PERIOD;
     float blend = abs(1.0 - 2.0 * phase);
+    // How fast a Stream runs here, which way, and how much of the way to white water its rapids have it.
+    float speed = length(flow);
+    float2 downstream = flow / max(speed, 1e-4);
+    float2 beside = float2(-downstream.y, downstream.x);
+    float quick = streamQuick(speed);
+    float rapid = input.stream.z;
+    float swell = 0.0;
+    float wake = 0.0;
     if (stream)
     {
-        // Its own ripples, carried along, giving way at its mouth to the waves of the water it runs into.
+        // Its own ripples, only the sea's finest, carried along and drawn out along the current the faster it
+        // runs, giving way at its mouth to the waves of the water it runs into.
         float own = 1.0 - abs(input.mouth);
-        addWaves(frame, restA, 0.0, (1.0 - blend) * own, slope, variance, folded, moved);
-        addWaves(frame, restB, 0.0, blend * own, slope, variance, folded, moved);
-        // Faster water is rougher.
-        slope *= 0.6 + 0.25 * length(flow) * own;
+        float drawn = 1.0 + 1.5 * quick;
+        float2 a = downstream * (dot(restA, downstream) / drawn) + beside * dot(restA, beside);
+        float2 b = downstream * (dot(restB, downstream) / drawn) + beside * dot(restB, beside);
+        addWaves(frame, a, 0.0, (1.0 - blend) * own, slope, variance, folded, moved, 1e4, 3);
+        addWaves(frame, b, 0.0, blend * own, slope, variance, folded, moved, 1e4, 3);
+        slope = downstream * (dot(slope, downstream) / drawn) + beside * dot(slope, beside);
+        // What stands in it upstream leaves disturbed water behind it.
+        float3 way = float3(downstream.x, 0.0, downstream.y);
+        wake = streamWake(frame, input.world, normalize(way - input.up * dot(way, input.up)), speed, input.position.xy) * saturate((speed - 0.8) / 1.5);
+        // Calm water lies near flat, a glass for what stands over it; the faster it runs the rougher, rapids rougher
+        // still, and so the water below a rock.
+        float rough = lerp(0.1, 1.5, quick) + 0.6 * rapid + 0.6 * wake;
+        slope *= rough;
+        variance *= rough * rough;
+        // The standing waves and the churn its strip is raised by (streamVertex), and their slopes.
+        float raised = saturate(input.stream.w / 2.0) * own * min(pool.size.y, 1.0);
+        static const float STEP = 0.1;
+        float standing = streamSwell(rest, flow, rapid, frame->time);
+        swell = standing * raised;
+        float2 lean = float2(streamSwell(rest + float2(STEP, 0.0), flow, rapid, frame->time), streamSwell(rest + float2(0.0, STEP), flow, rapid, frame->time)) - standing;
+        slope += lean * raised / STEP;
         if (input.mouth > 0.0)
         {
             addWaves(frame, rest, 1.0, input.mouth, slope, variance, folded, moved);
@@ -2258,6 +2357,18 @@ FragmentOut waterFragment(WaterOut input)
     // As sharp as clear water shows what is under it, blurring only where it is deep or rough.
     float blur = sqrt(s.roughness) * 1.2 + log2(1.0 + thickness * 0.12);
     float3 behind = thickness < 1e3 ? glassBehind(push.texture, seenAt, blur) : 0.0;
+    if (stream && thickness < 1e3)
+    {
+        // The sun comes down to a Stream's bed in a web of light its ripples focus, carried along with them: the
+        // ground under a Stream is lit as dry ground is, so the web is laid over what shows of it here, where the
+        // sun reaches the bed.
+        float3 bed = input.world + refract(-v, n, 1.0 / 1.33) * min(thickness, 10.0);
+        float under = max(input.world.y - bed.y, 0.0);
+        float2 webA = bed.xz - flow * phase * FLOW_PERIOD;
+        float2 webB = bed.xz - flow * frac(phase + 0.5) * FLOW_PERIOD;
+        float web = lerp(causticsAt(frame, webA, under, ddx(bed.xz), ddy(bed.xz)), causticsAt(frame, webB, under, ddx(bed.xz), ddy(bed.xz)), blend);
+        behind *= lerp(1.0, web, (0.5 + 0.5 * quick) * sunShadow(frame, bed, float3(0.0, 1.0, 0.0)) * saturate(under / 0.1));
+    }
     // How much foam there is: where a crest folds over, and where the water thins at a shore. Only where the water
     // folds hard does a crest break: a calm sea's gentle folding stays clear.
     float threshold = 0.4 + 0.45 * frame->ocean.foam;
@@ -2269,11 +2380,17 @@ FragmentOut waterFragment(WaterOut input)
     float shore = ground > -1e8 ? shoreEdge(waterY - ground) : saturate(1.0 - thickness / 0.6);
     // And a thin line where it meets whatever stands in it, a post or a wall, moving or not, by how little water
     // the view goes through there, swelling and thinning as the water laps against it.
-    if (oceanHas(frame, OCEAN_WET_EDGES))
+    float lapping = 0.18 + 0.08 * sin(frame->time * 2.1 + dot(rest, float2(1.3, 0.7)));
+    float contact = oceanHas(frame, OCEAN_WET_EDGES) ? saturate(1.0 - thickness / lapping) : 0.0;
+    shore = max(shore, 0.65 * contact * contact);
+    if (stream)
     {
-        float lapping = 0.18 + 0.08 * sin(frame->time * 2.1 + dot(rest, float2(1.3, 0.7)));
-        float contact = saturate(1.0 - thickness / lapping);
-        shore = max(shore, 0.65 * contact * contact);
+        // A Stream breaks white over its shallows only as it runs fast over them: still shallows lie clear, the
+        // bed showing through. And a collar where it runs against what stands in it, the faster the whiter.
+        float under = thickness * saturate(v.y + 0.1);
+        float moving = saturate((speed - 0.8) / 1.5);
+        float clear = min(0.04 + 0.08 * speed * speed, 0.35);
+        shore = max(0.6 * saturate(1.0 - under / clear) * moving, contact * contact * (0.12 + 0.6 * moving));
     }
     // What breaking crests and the surf left, carried with the water (the sea's only). Some stretches of sea hold
     // their foam longer than others, the patches shifting slowly.
@@ -2288,13 +2405,21 @@ FragmentOut waterFragment(WaterOut input)
     float streamPattern = 0.0;
     if (stream)
     {
-        float speed = length(flow);
-        float2 along = flow / max(speed, 1e-4);
-        float2 across = float2(-along.y, along.x);
-        float2 a = float2(dot(restA, along) * 0.35, dot(restA, across));
-        float2 b = float2(dot(restB, along) * 0.35, dot(restB, across));
-        breaking = max(input.stream.z, 0.3 * saturate(speed / 4.0));
+        // Drawn out along the current, less where rapids churn it.
+        float drawnOut = lerp(0.35, 0.75, rapid);
+        float2 a = float2(dot(restA, downstream) * drawnOut, dot(restA, beside));
+        float2 b = float2(dot(restB, downstream) * drawnOut, dot(restB, beside));
+        // Streaks of foam down fast water; white water where its rapids throw it up, most on the crests of its
+        // standing waves and where it churns; and what a rock or its own shallows upstream leave behind them.
+        float thrown = saturate(swell / 0.12 + 0.5);
+        breaking = max(max(0.08 * quick, rapid * (0.35 + 0.45 * thrown)), 0.8 * wake);
         streamPattern = lerp(foamPatternAt(frame, a, 0.0, false).x, foamPatternAt(frame, b, 0.0, false).x, blend);
+        // White water's froth is finer than the streaks calmer water carries.
+        if (rapid > 0.01)
+        {
+            float fine = lerp(foamPatternAt(frame, a * 2.7 + 0.37, 0.0, false).x, foamPatternAt(frame, b * 2.7 + 0.37, 0.0, false).x, blend);
+            streamPattern = lerp(streamPattern, 0.55 * streamPattern + 0.6 * fine, saturate(rapid * 1.5));
+        }
         fresh = 1.0;
     }
     float coverage = saturate(max(max(breaking, shore), trail.r * 1.2 * patchy));
@@ -2309,6 +2434,8 @@ FragmentOut waterFragment(WaterOut input)
     // The water's own light along the view down into it, the sky's and the sun's, its shadow on the water too.
     float3 glow = waterGlow(frame, medium, 0.0, refract(-v, n, 1.0 / 1.33), 0.0, thickness, 0.0, shadow, ambient, sunLight);
     float3 under = behind * through + glow + body * (1.0 - through) + bubbleLit * bubbles * 0.25;
+    // White water is full of air, and stays pale as it runs on.
+    under = lerp(under, bubbleLit * 0.55, stream ? saturate(0.75 * rapid + 0.35 * wake) * 0.6 : 0.0);
     // Lamps under the water, glowing in it along the bent view down through it.
     under += lampsInWater(frame, input.world, refract(-v, n, 1.0 / 1.33), min(thickness, 30.0), pixel, absorb, scatter);
     float3 color = (1.0 - fresnel) * under + fresnel * reflected + glints;
@@ -2317,12 +2444,14 @@ FragmentOut waterFragment(WaterOut input)
     // The foam itself: as much of the pattern as there is foam, its thickest froth first, so a little foam is a
     // lace of its densest threads and the most, white water, is all of it. Its edge never sharper than a pixel or two.
     float edge = max(0.3 + 0.3 * spot.age, fwidth(pattern) * 1.5);
-    // Even white water keeps its froth's deepest hollows.
-    float from = max(1.0 - coverage * 1.8, 0.03);
+    // Even white water keeps its froth's deepest hollows; a Stream's foam stays streaks and patches until it is all
+    // white water.
+    float from = max(1.0 - coverage * (stream ? 1.35 : 1.8), 0.03);
     float foam = smoothstep(from, from + edge, pattern) * saturate(coverage * 4.0);
-    float3 foamNormal = bumped(input.world, n, pattern * 0.03);
+    float3 foamNormal = bumped(input.world, n, pattern * (stream ? 0.03 + 0.07 * rapid : 0.03));
     float foamSun = 1.0;
-    float crevice = 1.0;
+    // A Stream's white water darker down between its clumps, as thick as it is.
+    float crevice = stream ? lerp(1.0, 0.55 + 0.45 * saturate(pattern * 1.5), rapid) : 1.0;
     float glint = 0.0;
     // Near the camera it stands up off the water as a layer of froth, its clumps hiding what is behind them and
     // shading each other; further off, where a clump is smaller than a pixel, it lies flat.
@@ -3859,6 +3988,53 @@ void lensWetnessMain(uint3 id : SV_DispatchThreadID)
 static const float SPRAY_REACH = 30.0;
 // How many places a drop tries for fresh foam to fly from.
 static const uint SPRAY_TRIES = 4;
+
+// A vertex of the spray over a Stream's rapids (particles::gather adds it as
+// a system of its own for each Stream of water with rapids near the camera):
+// drops thrown up where it runs white, carried on downstream and falling
+// back. Each tries a few places along Stream push.list, of push.level
+// points, for white water, the whiter the likelier.
+[shader("vertex")]
+ParticleOut streamSprayVertex(uint vertexId : SV_VertexID)
+{
+    Frame* frame = push.frame;
+    ParticleSystem system = buffers()->particleSystems[push.source];
+    WaterBody body = buffers()->waterBodies[push.list];
+    uint slot = vertexId / 6;
+    float2 corner = PARTICLE_CORNERS[vertexId % 6];
+    ParticleOut none = particleNone(system, corner);
+    float spawn;
+    uint turn;
+    if (!particleSpawn(system, slot, spawn, turn))
+    {
+        return none;
+    }
+    uint h = particleHash(system.seed ^ particleHash(slot ^ particleHash(turn * 7919u + 17u)));
+    float life = lerp(system.lifetime.x, system.lifetime.y, particleRandom(h));
+    float age = system.time - spawn;
+    if (age > life)
+    {
+        return none;
+    }
+    StreamPoint p = buffers()->streamPoints[body.shape];
+    bool found = false;
+    for (uint attempt = 0; attempt < SPRAY_TRIES && !found; attempt++)
+    {
+        p = streamPointAt(body, particleRandom(h) * float(push.level - 1), push.level);
+        found = particleRandom(h) < p.foam * p.foam;
+    }
+    if (!found)
+    {
+        return none;
+    }
+    float2 level = normalize(p.tangent.xz + float2(0.0, 1e-5));
+    float3 from = p.position + float3(level.y, 0.0, -level.x) * (particleRandom(h) * 1.7 - 0.85) * p.width * 0.5;
+    float3 way = normalize(float3(0.0, 1.0, 0.0) + p.tangent * 0.5 + anyWay(h) * 0.4);
+    float3 velocity = way * lerp(system.speed.x, system.speed.y, particleRandom(h)) + p.tangent * p.speed * 0.4;
+    float3 world = particleFlight(system, from, velocity, age, life);
+    float fade = saturate((SPRAY_REACH * 2.0 - distance(from, frame->cameraPosition)) / SPRAY_REACH);
+    return particlePlace(frame, system, world, age, age / life, corner, h, fade);
+}
 
 // A vertex of the sea's spray (particles::gather adds it as a system of its
 // own): drops thrown up where foam is freshly made, by breaking crests and

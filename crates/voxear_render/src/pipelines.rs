@@ -140,6 +140,8 @@ pub struct Pipelines {
     pub sea_floor_walls: vk::Pipeline,
     pub particles: vk::Pipeline,
     pub sea_spray: vk::Pipeline,
+    /// The spray over Streams' rapids.
+    pub stream_spray: vk::Pipeline,
     pub smoke_march: vk::Pipeline,
     pub smoke_composite: vk::Pipeline,
     pub smoke_resolve: vk::Pipeline,
@@ -708,6 +710,12 @@ impl Pipelines {
                 blend: Blend::Premultiplied,
                 ..GraphicsPipelineDesc::new("Sea spray", water, c"sprayVertex", c"particleFragment")
             })?,
+            stream_spray: graphics(&GraphicsPipelineDesc {
+                color_formats: hdr,
+                cull: vk::CullModeFlags::NONE,
+                blend: Blend::Premultiplied,
+                ..GraphicsPipelineDesc::new("Stream spray", water, c"streamSprayVertex", c"particleFragment")
+            })?,
             glass_shadow: graphics(&GraphicsPipelineDesc {
                 color_formats: &crate::glass::SHADOW_FORMATS,
                 cull: vk::CullModeFlags::NONE,
@@ -873,6 +881,7 @@ impl Pipelines {
             self.sea_floor_walls,
             self.particles,
             self.sea_spray,
+            self.stream_spray,
             self.smoke_march,
             self.smoke_composite,
             self.smoke_resolve,

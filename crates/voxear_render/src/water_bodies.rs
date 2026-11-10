@@ -347,7 +347,7 @@ impl Default for Stream {
 }
 
 /// How far white water from rapids is carried on downstream, in metres.
-const FOAM_CARRIED: f32 = 6.0;
+const FOAM_CARRIED: f32 = 9.0;
 
 /// A place along a Stream, in the world: where its surface is in the
 /// middle, which way it runs, how wide it is, how fast it flows there, how

@@ -417,6 +417,9 @@ static const uint WATER_STREAM = 3;
 // A Sphere or Box Wind Zone, kept among the Dry Areas: the sea's short waves inside it as rough as `waves` says,
 // fading out over lava.x metres outside it (src/wind.rs).
 static const uint WATER_WIND = 4;
+// A world of blocks' water round the camera, among the Pools (src/water_bodies.rs): what is under it and its waterline
+// are found as a Pool's, but it has no surface or walls of its own, and the sea runs on over it.
+static const uint WATER_BLOCKS = 5;
 // What fills a Pool or a Stream (Liquid in src/water_bodies.rs).
 static const uint LIQUID_WATER = 0;
 static const uint LIQUID_LAVA = 1;

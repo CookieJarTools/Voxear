@@ -213,7 +213,8 @@ impl BlockFile {
             let top = find(&kind.top.clone().or_else(|| kind.material.clone()), kind.color);
             let sides = find(&kind.material, kind.color);
             let bottom = find(&kind.bottom.clone().or_else(|| kind.material.clone()), kind.color);
-            faces.push(BlockFaces { water: kind.water, ..BlockFaces::new(top, sides, bottom) });
+            let color = kind.color.map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u8);
+            faces.push(BlockFaces { water: kind.water, color, ..BlockFaces::new(top, sides, bottom) });
         }
         (looks, faces)
     }

@@ -1,9 +1,10 @@
 //! Ground of blocks made by a world generator (see `crate::generate`): its
 //! heights a column at a time, the same mountains, coasts and climate a
-//! terrain's Generate layer lays, pushed in and out by noise in three
-//! dimensions so cliffs lean and overhang, and hollowed below by caves: long
-//! tunnels where two noises are both near nothing, and chambers where a
-//! third is high.
+//! terrain's Generate layer lays, and how far into the ground each block
+//! is from the generator's Volume, which pushes cliffs in and out so they
+//! lean and overhang, and hollows the ground with caves. A generator with
+//! no Volume has the world's own overhangs and caves wired into it as the
+//! nodes that make them (see `cells`), so one way makes both.
 //!
 //! Each column takes its world's ground layers (`file::Ground`'s top, under
 //! and bottom blocks), but where a kind of block's cover takes its climate
@@ -35,15 +36,18 @@ mod cells;
 mod columns;
 mod planet;
 
+pub use cells::CAVE_ROOF;
 pub use columns::column_chunks;
 pub use planet::planet_ground;
 
 /// How a world of blocks' ground is generated: by the world generator
 /// `world` names (a reference to a `.worldgen`), from `position` metres in
 /// its world, down to block `bottom` (counted from the world's corner, so
-/// negative goes below it), its surface pushed in and out by as many metres
-/// as `overhangs`, and as much of it below hollowed out as `caves` says,
-/// from 0 for none to 1.
+/// negative goes below it). While the generator's graph has no Volume, its
+/// steep ground is pushed in and out by as many metres as `overhangs`, and
+/// as much of the ground hollowed out as `caves` says, from 0 for none to
+/// 1; a generator with a Volume makes both itself, and these two are left
+/// unread.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct BlockGenerate {
@@ -212,14 +216,130 @@ mod tests {
         };
         let (full, hollowed) = (solid(&map), solid(&hollow));
         assert!(hollowed < full * 97 / 100 && hollowed > full * 50 / 100, "{hollowed} of {full} blocks left by caves");
-        // With overhangs, the surface pushed in and out: some blocks with air under them above ground.
+        // Overhangs push steep ground alone: on these slopes, which are no cliffs, the ground is as it was.
         let (leaning, _) = generated(0.0, 10.0);
-        let pushed = leaning.make_ground(Some(&world));
-        let overhanging = (0..64).flat_map(|z| (0..64).map(move |x| (x, z))).any(|(x, z)| {
-            let top = surface(&pushed, x, z).unwrap_or(-40);
-            (top - 6..top).any(|y| pushed.get([x, y, z]) == AIR)
-        });
-        assert!(overhanging, "air under the ground somewhere above the caves' reach");
+        assert_eq!(leaning.make_ground(Some(&world)), map);
+    }
+
+    /// Cliffs: hills of noise 150 m high and 60 m across, as a generator.
+    fn cliffs() -> WorldGen {
+        use crate::generate::{Graph, NodeKind, nodes};
+        let mut graph = Graph::default();
+        let noise = nodes::Noise { size: 60.0, octaves: 1, high: 150.0, ..nodes::Noise::default() };
+        let hills = graph.add(NodeKind::Noise(noise), [0.0, 0.0]);
+        let output = graph.add(NodeKind::Output(nodes::Output::default()), [300.0, 0.0]);
+        assert!(graph.connect(hills, 0, output, nodes::Output::HEIGHT));
+        WorldGen::new(7, 1.0, 0.0, graph)
+    }
+
+    /// A world of metre blocks 64 across on the cliffs, its ground pushed and hollowed as told.
+    fn on_cliffs(overhangs: f32, caves: f32, smooth: bool) -> BlockFile {
+        let generate =
+            BlockGenerate { world: Some("cliffs".into()), bottom: -8, overhangs, caves, ..BlockGenerate::default() };
+        let ground = Ground { size: [64, 64], under_depth: 3, ..Ground::default() };
+        BlockFile { block_size: 1.0, ground, smooth, generate: Some(generate), ..BlockFile::default() }
+    }
+
+    /// How far into the ground under the caves each block up column `(x, z)` of `file`'s ground is, in blocks
+    /// from `low` up: what tells the open air from a cave's.
+    fn grounds(file: &BlockFile, world: &WorldGen, [x, z]: [i32; 2], low: i32, count: usize) -> Vec<f32> {
+        let generate = file.generate.as_ref().unwrap();
+        let source = cells::source(generate, world, file.block_size);
+        let volume = source.world().volume().unwrap();
+        let (px, pz) = (x as f32 + 0.5, z as f32 + 0.5);
+        let height = world.height_at(px, pz);
+        let carried =
+            volume.carried_grid([x, z], [1, 1], |axis, v| generate.position[axis] + (v as f32 + 0.5), &[height]);
+        let ys: Vec<f32> = (0..count).map(|k| (low + k as i32) as f32 + 0.5).collect();
+        let (mut inside, mut ground) = (vec![0.0; count], vec![0.0; count]);
+        let cells = crate::generate::Cells { x: &[px], y: &ys, z: &[pz], carried: &carried.column(0), size: 1.0 };
+        volume.densities(cells, false, &mut inside, &mut ground);
+        ground
+    }
+
+    #[test]
+    fn layers_are_counted_down_from_the_open_air_on_overhanging_ground_and_through_caves() {
+        let world = cliffs();
+        let file = on_cliffs(20.0, 0.5, false);
+        let (top, under, bottom) = (file.ground.top, file.ground.under, file.ground.bottom);
+        let map = file.make_ground(Some(&world));
+        let (low, count) = (-8, 190usize);
+        let (mut overhangs, mut ledges, mut seams, mut caves) = (0, 0, 0, 0);
+        for z in 0..64 {
+            for x in 0..64 {
+                let ground = grounds(&file, &world, [x, z], low, count);
+                // Down the column: the first block under open air is the top block, the three under it the
+                // under block, the rest the bottom one, counted through cave air but again under every overhang.
+                let mut deep = 0;
+                for k in (0..count - 1).rev() {
+                    let (y, block) = (low + k as i32, map.get([x, low + k as i32, z]));
+                    deep = if ground[k] > 0.0 { deep + 1 } else { 0 };
+                    if block == AIR {
+                        caves += usize::from(ground[k] > 0.0);
+                        continue;
+                    }
+                    assert!(ground[k] > 0.0, "ground in the open air at {x}, {y}, {z}");
+                    let layer = [top, under, under, under].get(deep - 1).copied().unwrap_or(bottom);
+                    assert_eq!(block, layer, "block {deep} down at {x}, {y}, {z}");
+                    // Under an overhang: ground with open air under it has none of the top block on its
+                    // underside unless it is one block thick, and the ground below starts with it again.
+                    if k > 0 && ground[k - 1] <= 0.0 {
+                        overhangs += 1;
+                        assert!(deep == 1 || block != top, "the top block under an overhang at {x}, {y}, {z}");
+                        ledges += usize::from((0..k - 1).any(|below| ground[below] > 0.0));
+                    }
+                    seams += usize::from(deep == 1 && y.rem_euclid(CHUNK as i32) == 0);
+                }
+            }
+        }
+        assert!(overhangs > 40 && ledges > 20, "{overhangs} blocks hang over open air, {ledges} over more ground");
+        assert!(seams > 20 && caves > 1000, "{seams} top blocks lowest in their chunk, {caves} blocks of cave");
+        // Drawn smooth, the top block follows slopes as a skin: a block with open air over it is of the top
+        // block unless it stands in a wall, and so are some its surface steps down past, with ground over them,
+        // which would else show the block under. Under an overhang there is none still.
+        let file = on_cliffs(20.0, 0.0, true);
+        let map = file.make_ground(Some(&world));
+        let (mut tops, mut bare, mut skin) = (0, 0, 0);
+        for z in 0..64 {
+            for x in 0..64 {
+                let ground = grounds(&file, &world, [x, z], low, count);
+                for k in (1..count - 1).filter(|&k| ground[k] > 0.0) {
+                    let (y, block) = (low + k as i32, map.get([x, low + k as i32, z]));
+                    assert_ne!(block, AIR, "ground at {x}, {y}, {z}");
+                    let (over, under_it) = (ground[k + 1] <= 0.0, ground[k - 1] <= 0.0);
+                    tops += usize::from(over);
+                    bare += usize::from(over && block != top);
+                    skin += usize::from(!over && block == top);
+                    assert!(over || !under_it || block != top, "the top block under an overhang at {x}, {y}, {z}");
+                }
+            }
+        }
+        assert!(tops > 3000 && skin > 100, "{tops} blocks under open air, {skin} more of the top block down slopes");
+        assert!(bare > 0 && bare < tops / 3, "{bare} of {tops} blocks under open air stand in walls, bare");
+    }
+
+    #[test]
+    fn overhangs_and_caves_moved_into_the_generator_make_the_ground_the_world_made_with_its_own() {
+        use crate::generate::OwnVoxels;
+        for (overhangs, caves) in [(0.0, 0.4), (14.0, 0.5), (5.0, 0.0)] {
+            for smooth in [false, true] {
+                let world = cliffs();
+                let own = on_cliffs(overhangs, caves, smooth);
+                // What Move to Generator does: the numbers into the graph, as nodes and rows, and none left on
+                // the world.
+                let mut graph = world.graph().clone();
+                assert!(graph.add_voxels(OwnVoxels { overhangs, caves, roof: 3.0 * own.block_size }, true));
+                let moved_world = world.with_graph(graph);
+                assert!(moved_world.volume().is_some() && world.volume().is_none());
+                let moved = on_cliffs(0.0, 0.0, smooth);
+                let (was, now) = (own.make_ground(Some(&world)), moved.make_ground(Some(&moved_world)));
+                assert!(was == now, "overhangs {overhangs}, caves {caves}, smooth {smooth}");
+                assert!(was.chunks().count() > 4);
+                // The generator's rows change the ground from then on.
+                let fewer = moved_world.with_exposed(1, crate::generate::Value::Number(0.0)).expect("the Tunnels row");
+                assert!(caves == 0.0 || moved.make_ground(Some(&fewer)) != now);
+            }
+        }
     }
 
     /// A hash of every block and fill of `chunks`, in their order.
@@ -268,13 +388,15 @@ mod tests {
 
     #[test]
     fn generated_chunks_with_overhangs_are_the_same_blocks_to_the_bit() {
-        // Apart from those without: ground pushed in and out is the part due to change.
+        // Apart from those without. Pinned again when overhangs became a node: they push steep ground alone,
+        // layers are counted down from the open air, and smooth fills are distances. At level 2 the blocks, 8 m
+        // a side, are too large to hold a bulge, so the far ground is the ground with no overhangs.
         let (file, world) = generated(0.5, 6.0);
         let smooth = BlockFile { smooth: true, ..file.clone() };
         let hashes = [columns_hash(&file, &world, 0), columns_hash(&file, &world, 2), columns_hash(&smooth, &world, 0)];
         assert_eq!(
             hashes,
-            [0xa8ae_cec1_d46b_1412, 0xd161_297f_6f71_c39c, 0x252f_5388_bfff_6927],
+            [0x879c_99e5_626f_1886, 0x06fa_ee9e_a714_aca3, 0xfc09_8f2b_e038_785a],
             "overhanging blocks changed: were they meant to? {hashes:#x?}"
         );
     }
@@ -389,7 +511,8 @@ mod tests {
             assert!((surface(way) - expected).abs() < 1.0, "out along {way:?}: {} for {expected}", surface(way));
         }
         // Read on a cube's faces, its ground runs on across their edges: no step where two faces meet.
-        let round = Round::of(&world, planet.radius, 1.0);
+        let source = cells::source(file.generate.as_ref().unwrap(), &world, 1.0);
+        let round = Round::of(source.world(), source.world().volume().unwrap(), planet.radius, 1.0);
         let either = |e: f32| round.at([1.0, 1.0 + e, 0.3]).surface;
         assert!((either(0.002) - either(-0.002)).abs() < 0.1, "{} and {}", either(0.002), either(-0.002));
         // Colder at its poles than round its middle.

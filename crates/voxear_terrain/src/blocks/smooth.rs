@@ -170,17 +170,26 @@ impl Padded {
 
     /// The kind of ground at the point of the cube whose lowest corner is
     /// block `low`'s middle: of its eight blocks, the ground nearest the
-    /// surface, the least deep; air where none is ground.
+    /// surface, the least deep; air where none is ground. Ground the
+    /// surface passes beside, with a block that is not ground next to it
+    /// along one of the cube's edges, comes before ground it does not:
+    /// a block deeper down that happens to lie near another surface, such
+    /// as a cave's roof under a hillside, is not what shows here.
     fn kind(&self, low: [i32; 3], faces: &[BlockFaces]) -> BlockId {
-        let mut found: Option<(f32, BlockId)> = None;
-        for c in 0..8 {
-            let at = [low[0] + (c & 1), low[1] + ((c >> 1) & 1), low[2] + ((c >> 2) & 1)];
-            let (block, depth) = (self.block(at), self.depth(at));
-            if is_ground(faces, block) && found.is_none_or(|(d, b)| depth < d || depth == d && block < b) {
-                found = Some((depth, block));
+        let at = |c: usize| [low[0] + (c & 1) as i32, low[1] + ((c >> 1) & 1) as i32, low[2] + ((c >> 2) & 1) as i32];
+        let ground: [bool; 8] = std::array::from_fn(|c| is_ground(faces, self.block(at(c))));
+        let mut found: Option<(bool, f32, BlockId)> = None;
+        for c in (0..8).filter(|&c| ground[c]) {
+            let (block, depth) = (self.block(at(c)), self.depth(at(c)));
+            let beside = [1, 2, 4].iter().any(|bit| !ground[c ^ bit]);
+            let nearer = found.is_none_or(|(was_beside, d, b)| {
+                beside && !was_beside || beside == was_beside && (depth < d || depth == d && block < b)
+            });
+            if nearer {
+                found = Some((beside, depth, block));
             }
         }
-        found.map_or(AIR, |(_, block)| block)
+        found.map_or(AIR, |(_, _, block)| block)
     }
 
     /// The point of the cube whose lowest corner is block `low`'s middle, in
@@ -775,6 +784,53 @@ mod tests {
             }
         }
         map
+    }
+
+    #[test]
+    fn a_corner_takes_the_kind_of_the_ground_its_surface_passes_beside() {
+        let faces = [BlockFaces::default(), BlockFaces::new(1, 1, 1), BlockFaces::new(2, 2, 2)];
+        // A hillside of one kind, a block deep, over another kind; and under it at one place a block of the
+        // second kind that is nearly empty, as one just over a cave's roof is.
+        let mut map = BlockMap::default();
+        for z in 0..8 {
+            for x in 0..8 {
+                let surface = 4.2 + x as f32 * 0.6;
+                for y in 0..(surface.ceil() as i32 + 1) {
+                    let depth = surface - (y as f32 + 0.5);
+                    let block = if depth <= 0.0 {
+                        AIR
+                    } else if depth <= 1.0 {
+                        1
+                    } else {
+                        2
+                    };
+                    map.set_cell([x, y, z], block, fill_of(depth, depth > 0.0));
+                }
+            }
+        }
+        let (x, z) = (4, 4);
+        let top = (0..12).rev().find(|&y| map.get([x, y, z]) != AIR).unwrap();
+        assert_eq!((map.get([x, top, z]), map.get([x, top - 1, z])), (1, 2));
+        map.set_cell([x, top - 1, z], 2, fill_of(0.05, true));
+        // Every cube with the surface through it round that block: the kind at its point is the hillside's.
+        let padded = Padded::of(&map, [0, 0, 0], &faces);
+        let mut seen = 0;
+        for low in (0..8).map(|c| [x - (c & 1), top - 1 - ((c >> 1) & 1), z - ((c >> 2) & 1)]) {
+            let blocks: Vec<BlockId> = (0..8)
+                .map(|c| padded.block([low[0] + (c & 1), low[1] + ((c >> 1) & 1), low[2] + ((c >> 2) & 1)]))
+                .collect();
+            if blocks.contains(&AIR) && blocks.contains(&1) {
+                seen += 1;
+                assert_eq!(padded.kind(low, &faces), 1, "the cube from {low:?}, of {blocks:?}");
+            }
+        }
+        assert!(seen > 0);
+        // With no ground beside the air but the deeper kind's, as on a wall, that kind shows.
+        let wall = [x, top - 1, z];
+        for beside in [[1, 0, 0], [0, 1, 0], [1, 1, 0], [0, 0, 1], [1, 0, 1], [0, 1, 1], [1, 1, 1]] {
+            map.set_cell([wall[0] + beside[0], wall[1] + beside[1], wall[2] + beside[2]], AIR, fill_of(-0.5, false));
+        }
+        assert_eq!(Padded::of(&map, [0, 0, 0], &faces).kind(wall, &faces), 2);
     }
 
     #[test]

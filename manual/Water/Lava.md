@@ -8,9 +8,9 @@ Set a [[Pools and Dry Areas|Pool's]] or a [[Streams|Stream's]] **Liquid** to **L
 
 Fresh lava is molten all over. Within seconds a skin sets on it, in cells a hand's width across, with bright seams between them where the rock underneath still shows.
 
-As it goes on cooling, crust forms: dark plates of rock, each growing out from its middle, so islands of crust stand in molten rock before they close up. The crust stands above the molten rock in the gaps. Look along the lava and the near plate's edge hides a gap; look down into one and you see the glowing rock at its bottom, and the far plate's side lit by it.
+As it goes on cooling, crust forms: dark plates of rock, each growing out from its middle, so islands of crust stand in molten rock before they close up. Some stretches set sooner than others. The crust stands above the molten rock in the gaps. Look along the lava and the near plate's edge hides a gap; look down into one and you see the glowing rock at its bottom, and the far plate's side lit by it.
 
-As it cools further the gaps narrow to cracks, the crust thickens and dulls, and its edges fold where they were pushed up while they were soft.
+As it cools further the gaps narrow to cracks, and the crust thickens and dulls.
 
 **Cooling** sets how many seconds all that takes. **Glow** is how bright the lava shines.
 
@@ -39,7 +39,7 @@ Raised above the ground, a lake's sides are rock with glowing seams, hotter deep
 
 ## Bubbles and spatter
 
-Gas comes up through lava wherever it is still molten. A bubble swells slowly into a dome, up to a metre across, breaking open any crust over it. Its skin thins and brightens as it stretches, and then it bursts. The burst throws up blobs of molten rock that arc up, cool from yellow to red as they fly and fall back, and it leaves a ring that spreads and heals.
+Gas comes up through lava wherever it is still molten. A bubble swells slowly into a dome, up to a metre across, breaking open any crust over it. Its skin thins and brightens as it stretches, and then it bursts. The burst throws up blobs of molten rock that arc up, cool from yellow to red as they fly and fall back, and it leaves a ring of fresh rock that spreads and heals.
 
 Here and there a vent spits small bursts one after another from the same place.
 

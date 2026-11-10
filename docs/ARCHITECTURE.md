@@ -2819,11 +2819,15 @@ share (Planck's light, the plates, the skin, the bubbles); `lavaFragment` in `sh
   it meets the far plate's side or the molten rock is worked out from one lookup of the plates, a few steps along a
   line, with no height map to march. That gives crust that stands above the molten rock, hides it from a low view and
   shows its lit side, at the cost of a loop of arithmetic. The same lookup says where the molten rock is, so its skin
-  (a finer scatter of cells) is worked out only there and the crust's folds and lumps only on the crust.
+  (a finer scatter of cells) is worked out only there and the crust's lumps only on the crust. The view is followed
+  only as far as the gap runs straight, to where the next nearest gap joins it, and the crust's edge is softened to
+  a pixel; the crust's drift is given as motion, so the edges settle from frame to frame.
 - **As geometry:** what has an outline. A Stream's strip is fine enough (16 quads across, four rows a point) for lava
   to stand as high as it is deep with rounded sides and ends. A bubble's dome is a small mesh of its own
   (`lavaDomeVertex`), since the surface's points are a quarter of a metre apart and would make a tent of it; it has
-  the shape the surface's shader gives the lava there, so the same shader shades both and no seam shows.
+  the shape the surface's shader gives the lava there, so the same shader shades both and no seam shows. The lava's
+  own surface is not raised at all: the ring a burst leaves is narrower than its points are apart, and is only
+  shaded.
 - **As particles:** what leaves the surface. The blobs a bursting bubble throws up are quads placed in the vertex
   shader along the arc each flies (`lavaSpatterVertex`), drawn in the water's pass with depth, so rock hides them and
   they hide the lava behind. They are not Particle Systems, which are Objs: the bubbles are found where they are

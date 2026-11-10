@@ -1251,7 +1251,7 @@ The sea, lakes, rivers and lava, built in. Manual: `manual/Water`.
 - **Lava:** Pools and Streams of lava glow by Planck's law, yellow-white where it wells up to dull red. A skin sets
   on molten rock in small cells with bright seams; crust forms in plates, each from its middle out, that stand above
   the molten rock between them, seen down into past the near plate's edge (`lavaParallax`, worked out from the plates
-  themselves); gaps narrow to cracks and the crust folds along its edges. A flow stands as high as it is deep with
+  themselves); gaps narrow to cracks as it cools, sooner in some stretches than others. A flow stands as high as it is deep with
   rounded sides and ends, crusts from its banks in on a molten channel, its plates placed by when the lava set out,
   with pahoehoe ropes bowed at the banks. A lake turns over in wandering patches. Bubbles swell into domes, break
   the crust, burst and leave a ring that heals, throwing up blobs of molten rock that cool as they fly; vents spit

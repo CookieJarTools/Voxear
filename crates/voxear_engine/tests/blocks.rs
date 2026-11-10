@@ -219,3 +219,22 @@ fn a_generated_world_drawn_smooth_lies_on_its_generators_heights_and_keeps_a_smo
     assert_eq!((blocks.blocks.get([4, scooped, 4]), blocks.blocks.fill([4, scooped, 4])), (2, 140), "kept");
     assert!(blocks.meshes.values().all(|mesh| mesh.quads.len() == mesh.indices.len() * 2), "drawn smooth");
 }
+
+#[test]
+fn a_block_worlds_colours_stay_loaded_while_its_look_draws_with_them() {
+    use voxear_engine::{MaterialData, MaterialSource, scene_file::default_material};
+    use voxear_render::{BlockLook, Renderer, RendererSettings};
+    let Ok(mut renderer) = Renderer::new_offscreen(64, 64, &RendererSettings::default()) else {
+        eprintln!("skipping: no usable GPU");
+        return;
+    };
+    let dir = project();
+    let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
+    game.start(Some(&mut renderer)).unwrap();
+    let look = game.engine.world.query_ref::<&BlockLook>().into_iter().next().expect("its look").clone();
+    // Changing level lets go of what nothing draws with, as stopping play does: grass is drawn with its colour.
+    let grass = MaterialSource::Inline(MaterialData { color: [0.33, 0.52, 0.2], ..default_material() });
+    assert_eq!(game.content.loaded_material(&grass), Some(look.surfaces[0].material), "kept as the level loaded");
+    game.release_unused(Some(&mut renderer));
+    assert_eq!(game.content.loaded_material(&grass), Some(look.surfaces[0].material), "kept after");
+}

@@ -523,6 +523,19 @@ impl InUse {
             used.meshes.insert(foliage.mesh);
             used.materials.insert(foliage.material);
         }
+        // Terrains' and worlds of blocks' looks: their materials, their surfaces' and their grass's.
+        for look in world.query_ref::<&voxear_render::TerrainLook>().without::<Destroying>() {
+            used.materials.insert(look.material);
+            used.materials.extend(look.surfaces.iter().map(|surface| surface.material));
+            for grass in look.grass.iter().flatten() {
+                used.meshes.insert(grass.mesh);
+                used.materials.insert(grass.material);
+            }
+        }
+        for look in world.query_ref::<&voxear_render::BlockLook>().without::<Destroying>() {
+            used.materials.insert(look.material);
+            used.materials.extend(look.surfaces.iter().map(|surface| surface.material));
+        }
         used.prefabs = world.query_ref::<&PrefabInstance>().without::<Destroying>().into_iter().map(|p| p.0).collect();
         let heard = world.query_ref::<&AudioSource>().without::<Destroying>().into_iter().filter_map(|s| s.sound);
         used.sounds = heard.collect();

@@ -1549,7 +1549,8 @@ impl Editor {
                 if self.terrain_tools.begin(&mut self.game, &camera, entity, point, (self.shift, self.control)) {
                     self.field_drag_start = before;
                 }
-            } else if let Some(entity) = editing.filter(|_| self.block_tools.is_hovered()) {
+            } else if let Some(entity) = selected.filter(|_| self.block_tools.is_hovered()) {
+                // Blocks are built while playing too, as a game would build them; play keeps none of it.
                 let before = ObjState::of(world, entity);
                 if self.block_tools.begin(&mut self.game, renderer, &camera, entity, point, self.shift) {
                     self.field_drag_start = before;
@@ -1623,7 +1624,7 @@ impl Editor {
             let free = free && !self.script_handles.is_hovered();
             self.terrain_tools.hover(&self.game, &camera, editing, over_field.filter(|_| free));
             let free = free && !self.terrain_tools.is_hovered();
-            self.block_tools.hover(&self.game, &camera, editing, over_field.filter(|_| free));
+            self.block_tools.hover(&self.game, &camera, selected, over_field.filter(|_| free));
             let free = free && !self.block_tools.is_hovered();
             self.plants_tools.hover(&self.game, renderer, &camera, editing, over_field.filter(|_| free));
             let world = &self.game.engine.world;
@@ -1645,7 +1646,7 @@ impl Editor {
         shapes.extend(self.field_handles.shapes(world, self.inspector.types(), &camera, editing));
         shapes.extend(self.path_handles.shapes(world, &camera, editing));
         shapes.extend(self.terrain_tools.shapes(&self.game, &camera, editing));
-        shapes.extend(self.block_tools.shapes(&self.game, &camera, editing, self.shift));
+        shapes.extend(self.block_tools.shapes(&self.game, &camera, selected, self.shift));
         shapes.extend(self.plants_tools.shapes(&self.game, renderer, &camera, editing));
         shapes.extend(self.script_handles.shapes(&camera));
         shapes.extend(self.selection_shapes(renderer, &camera));

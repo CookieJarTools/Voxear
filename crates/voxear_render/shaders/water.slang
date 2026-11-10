@@ -2624,15 +2624,18 @@ struct BlockWaterOut
 // after another in the world's pool from push.output on. Flowing water stands lower than its block: a quad of it keeps
 // the way up from it (a facing, 7 for none) in the top bits of its first word, and in place of its corners' shading how
 // far its corners on its block's lower side along that way are raised and those on its upper side lowered, in
-// sixteenths of a block (voxear_terrain::blocks::mesh::water_shape).
+// sixteenths of a block (voxear_terrain::blocks::mesh::water_shape). A world drawn smooth keeps its water's surface as
+// triangles' corners, as it keeps its ground (voxear_terrain::blocks::smooth).
 [shader("vertex")]
 BlockWaterOut blockWaterVertex(uint vertexId : SV_VertexID)
 {
     Frame* frame = push.frame;
     BlockWorld world = buffers()->blockWorlds[push.level - 1];
-    BlockPoint b = cubePoint(world, vertexId);
+    // Drawn smooth, its water is triangles' corners, as its ground is.
+    bool smooth = (world.flags & BLOCKS_SMOOTH) != 0;
+    BlockPoint b = smooth ? smoothPoint(world, vertexId) : cubePoint(world, vertexId);
     uint2 quad = world.quads[push.output + vertexId / 6];
-    uint up = (quad.x >> 28) & 7;
+    uint up = smooth ? 7 : (quad.x >> 28) & 7;
     if (up < 6)
     {
         uint axis = up / 2;
@@ -2654,7 +2657,7 @@ BlockWaterOut blockWaterVertex(uint vertexId : SV_VertexID)
     o.normal = b.normal;
     o.currentClip = transform(frame->unjitteredViewProj, at);
     o.previousClip = transform(frame->prevViewProj, at);
-    o.water = uint2(push.level - 1, b.surface);
+    o.water = uint2(push.level - 1, b.surface & 0xFF);
     return o;
 }
 
@@ -2710,7 +2713,7 @@ FragmentOut blockWaterFragment(BlockWaterOut input)
     BlockWorld world = buffers()->blockWorlds[input.water.x];
     BlockWaterLook look = blockWaterLook(world, input.water.y);
     float3 v = normalize(frame->cameraPosition - input.world);
-    float3 face = input.normal;
+    float3 face = normalize(input.normal);
     bool level = abs(face.y) > 0.5;
     // Ripples on its top and its underside, as a Pool's with none of the sea's swell; its sides stand still.
     float2 slope = 0.0;

@@ -97,7 +97,7 @@ Nothing stands on water. Physics leaves it out, so things fall through it to the
 
 ### Flowing water
 
-Water flows. Each block of water you place is a **source**: it stays full and never runs dry. Water runs out of it, down first and then out over the ground, an eighth of a block lower for each block it goes, for seven blocks at most. Over an edge it falls as a column to the ground below and runs on from there. Water runs out only over ground, so a waterfall keeps to its column, and water falling into a lake joins it. Take a source away and the water it fed dries up behind it. Dig a trench beside a pond and the pond runs into it.
+Water flows. Each block of water you place is a **source**: it stays full and never runs dry. Water runs out of it, down first and then out over the ground or over still water, an eighth of a block lower for each block it goes, for seven blocks at most. Over an edge it falls as a column to the ground below and runs on from there. Falling water runs out only once it lands on ground, so a waterfall keeps to its column, and water falling into a lake joins it. A block with a source on each of two sides becomes a source itself, so a gap between two pools fills to the brim. Take a source away and the water it fed dries up behind it. Dig into the bank of a pond or the sea and the water runs into the hole.
 
 Water flows five blocks a second, the same on every machine, both in play and in the editor as you build; while a game is paused, it stands still. It starts wherever something changes, so a generated sea stays as it was made until you dig into it or build beside it. It stays within the chunks its world reaches: at the world's edge it stops as if at a wall. Saving keeps the water where it has run to.
 
@@ -105,7 +105,7 @@ On a planet, down is towards its middle. Water falls towards the middle and runs
 
 For a sea, pick a kind of water as the **Sea block** of generated ground: the air below the generator's sea level is filled with it. A planet's sea lies its **Radius** from its middle.
 
-In a [[Voxel Terrain]], water stays cubes: its top is flat at its blocks' tops, with the smooth ground running on under it. Its sides show wherever it meets anything but water, so a shore where the ground dips below the water's edge still shows the water there. It flows there as it does among cubes.
+In a [[Voxel Terrain]], water is smooth too: its surface runs between its blocks as the ground's does, meeting the ground at the shore. A full block's surface is its top, and flowing water stands as high as it flows. A generated sea lies flat at its generator's sea level, and on a planet it lies round the planet as a smooth sea. It flows as it does among cubes.
 
 Not done yet: with the camera in water blocks, the view is not fogged by the water round it, as it is under the sea and in Pools. A script asking **Water** about a point finds a planet's water only on its top, where the planet's up is the world's.
 
@@ -119,7 +119,7 @@ With **Build** showing, the brush works in the Scene view over the selected worl
 | Size | How many blocks across it reaches: 1 for a block at a time, more for a ball of them |
 | Model | With the Model brush, the `.vox` model it builds |
 
-Click to build; drag to go on block by block. Hold **Shift** to break while placing, and to place while breaking. Each stroke is one step to undo.
+Click to build once; drag to go on, the brush working again as the pointer moves on by half its size. Hold **Shift** to break while placing, and to place while breaking. Each stroke is one step to undo. The brushes work while playing too, on the world selected: what you build there goes when play stops, as everything played does.
 
 ## Models of small blocks
 

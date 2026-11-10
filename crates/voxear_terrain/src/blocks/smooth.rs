@@ -21,14 +21,21 @@
 //!
 //! Water is not ground: the surface runs between the ground and the water
 //! as it does the air, each block of water taken as far out of the ground as
-//! the ground beside it says. The water itself is kept as cubes, its faces
-//! after the ground's, as a world of cubes keeps them (see `mesh`), but
-//! wherever it meets anything but water, so where the smooth ground dips
-//! below the water's side the water still shows.
+//! the ground beside it says. The water has a smooth surface of its own,
+//! made the same way, after the ground's corners ([`water_surface`]): over
+//! how far into water or ground each block's middle is, so its edge meets
+//! the ground's surface, and only where water meets air, so the ground
+//! under it is not drawn twice. A full block's surface is its top; a sea's
+//! top block keeps where its surface lies (`flow::surface_fill`), so a
+//! generated sea lies flat at its sea level and round a planet; flowing
+//! water stands as high as it flows. In a world without end, past the chunk
+//! columns made the water reads as the column beside it, so it shows no
+//! side there and its surface runs on flat.
 
 use super::{
     BlockFaces, BlockMap,
     chunk::{AIR, BlockId, CHUNK, FULL, Fill, depth_of, fill_of},
+    flow::smooth_surface,
     is_ground, is_water,
     mesh::{ChunkMesh, FACINGS},
 };
@@ -297,10 +304,164 @@ pub fn mesh_made(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], made: &dyn
     let count = out.quads.len() as u32;
     out.buckets = [0, count, count, count, count, count, count];
     if map.chunk(key).is_some_and(|chunk| chunk.may_hold(|block| is_water(faces, block))) {
-        let (fills, made) = (super::mesh::fills(map, key), super::mesh::held(key, made));
-        out.quads.extend(super::mesh::water_quads((&|at| padded.block(at), &fills), faces, |at, _| made(at)));
+        out.quads.extend(water_surface(map, key, faces, &padded, made));
     }
     out
+}
+
+/// The faces between `quad`'s four cubes' points, each cube by its lowest
+/// corner, split along the shorter way across: two triangles, or fewer
+/// where points meet.
+fn split(quad: [u32; 4], place: impl Fn(u32) -> [f32; 3]) -> Vec<[u32; 3]> {
+    let [a, b, c, d] = quad;
+    let apart = |i: u32, j: u32| (0..3).map(|k| (place(i)[k] - place(j)[k]).powi(2)).sum::<f32>();
+    let split = if apart(a, c) <= apart(b, d) { [[a, b, c], [a, c, d]] } else { [[a, b, d], [b, c, d]] };
+    split.into_iter().filter(|&[i, j, k]| i != j && j != k && i != k).collect()
+}
+
+/// The four cubes round the line from block `at`'s middle to the next
+/// block's along facing `facing`, each by its lowest corner, in the order
+/// that makes their face look along the facing.
+fn round_line(at: [i32; 3], facing: usize) -> [[i32; 3]; 4] {
+    let (axis, out_along) = (facing / 2, facing % 2 == 0);
+    let mut next = at;
+    next[axis] += if out_along { 1 } else { -1 };
+    let lower = if out_along { at } else { next };
+    let (u, v) = ((axis + 1) % 3, (axis + 2) % 3);
+    let cube = |du: i32, dv: i32| {
+        let mut low = lower;
+        low[u] -= 1 - du;
+        low[v] -= 1 - dv;
+        low
+    };
+    let mut quad = [cube(0, 0), cube(1, 0), cube(1, 1), cube(0, 1)];
+    if !out_along {
+        quad.reverse();
+    }
+    quad
+}
+
+/// Chunk `key`'s water's surface, drawn smooth: where its water meets air,
+/// over a field of how far each block's middle is into water or ground
+/// (water's by how high its surface stands, see `flow::smooth_surface`;
+/// the ground's by its fill), the air a block further out than the water
+/// beside it, whatever the ground near it. Each corner is two pairs of words, as the ground's are, its
+/// surface the water's. Past the chunk columns `made` picks, the world goes on as the column beside it, so the
+/// water shows no side there and its surface runs on flat.
+fn water_surface(
+    map: &BlockMap,
+    key: [i32; 3],
+    faces: &[BlockFaces],
+    padded: &Padded,
+    made: &dyn Fn([i32; 2]) -> bool,
+) -> Vec<[u32; 2]> {
+    let span = SPAN as i32;
+    let place = |index: usize| {
+        let index = index as i32;
+        [index % span, index / (span * span), (index / span) % span].map(|v| v - BEFORE)
+    };
+    // Each block read from where the world goes on as it does: itself, or the nearest made along x, z or both.
+    let held = super::mesh::held(key, made);
+    let side = CHUNK as i32;
+    let from = |at: [i32; 3]| -> [i32; 3] {
+        let along_x = [at[0].clamp(0, side - 1), at[1], at[2]];
+        let along_z = [at[0], at[1], at[2].clamp(0, side - 1)];
+        [at, along_x, along_z].into_iter().find(|&at| held(at)).unwrap_or([along_x[0], at[1], along_z[2]])
+    };
+    let all_made = (-1..=1).all(|dz| (-1..=1).all(|dx| held([dx * side, 0, dz * side])));
+    let going_on;
+    let padded = if all_made {
+        padded
+    } else {
+        let read = |index: usize| Padded::index(from(place(index)));
+        going_on = Padded {
+            blocks: (0..padded.blocks.len()).map(|index| padded.blocks[read(index)]).collect(),
+            depths: (0..padded.depths.len()).map(|index| padded.depths[read(index)]).collect(),
+        };
+        &going_on
+    };
+    let fills = super::mesh::fills(map, key);
+    let fills = |at: [i32; 3]| fills(from(at));
+    let mut field: Vec<f32> = (0..padded.blocks.len())
+        .map(|index| {
+            let block = padded.blocks[index];
+            if is_water(faces, block) {
+                smooth_surface(fills(place(index)))
+            } else if is_ground(faces, block) {
+                padded.depths[index].max(0.05)
+            } else {
+                -1.0
+            }
+        })
+        .collect();
+    // Air beside water: a block further out than the water's surface. How near the ground air is says nothing
+    // of the water, and would draw the water out over a beach.
+    let beside = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
+    let mut out_of_water = Vec::new();
+    for index in 0..field.len() {
+        if padded.blocks[index] != AIR {
+            continue;
+        }
+        let at = place(index);
+        let near = beside
+            .iter()
+            .map(|step| [0, 1, 2].map(|i| at[i] + step[i]))
+            .filter(|next| next.iter().all(|&v| (-BEFORE..span - BEFORE).contains(&v)))
+            .filter(|&next| is_water(faces, padded.block(next)))
+            .map(|next| field[Padded::index(next)] - 1.0)
+            .fold(f32::MIN, f32::max);
+        if near > f32::MIN {
+            out_of_water.push((index, near.min(-1e-3)));
+        }
+    }
+    for (index, value) in out_of_water {
+        field[index] = value;
+    }
+    let wet = Padded { blocks: padded.blocks.clone(), depths: field };
+    let mut numbers = vec![u32::MAX; CUBES * CUBES * CUBES];
+    let mut points: Vec<([f32; 3], [f32; 3])> = Vec::new();
+    let mut number = |low: [i32; 3]| -> u32 {
+        let [x, y, z] = low.map(|v| (v + CUBES_BEFORE) as usize);
+        let slot = &mut numbers[(y * CUBES + z) * CUBES + x];
+        if *slot == u32::MAX {
+            points.push(wet.point(low));
+            *slot = points.len() as u32 - 1;
+        }
+        *slot
+    };
+    let mut quads: Vec<([u32; 4], BlockId)> = Vec::new();
+    let side = CHUNK as i32;
+    for y in 0..side {
+        for z in 0..side {
+            for x in 0..side {
+                let at = [x, y, z];
+                let block = padded.block(at);
+                if !is_water(faces, block) {
+                    continue;
+                }
+                for facing in 0..FACINGS {
+                    let mut next = at;
+                    next[facing / 2] += if facing % 2 == 0 { 1 } else { -1 };
+                    if padded.block(next) == AIR {
+                        quads.push((round_line(at, facing).map(&mut number), block));
+                    }
+                }
+            }
+        }
+    }
+    let triangles = quads
+        .into_iter()
+        .flat_map(|(quad, block)| split(quad, |i| points[i as usize].0).into_iter().map(move |t| (t, block)));
+    let mut words = Vec::new();
+    for (triangle, block) in triangles.collect::<Vec<_>>() {
+        let surface = u32::from(faces.get(usize::from(block)).copied().unwrap_or_default().top);
+        for i in triangle {
+            let ([x, y, z], normal) = points[i as usize];
+            words.push([quantise(x) | quantise(y) << 16, quantise(z)]);
+            words.push([pack_normal(normal) | surface << 24, surface | surface << 8]);
+        }
+    }
+    words
 }
 
 /// What a ball does to a world drawn smooth: adds ground of a kind where
@@ -481,7 +642,7 @@ mod tests {
     }
 
     #[test]
-    fn water_over_smooth_ground_stays_cubes_and_the_ground_runs_on_under_it() {
+    fn water_over_smooth_ground_lies_smooth_at_its_level_and_the_ground_runs_on_under_it() {
         let faces = [BlockFaces::default(), BlockFaces::new(1, 1, 1), BlockFaces::water(7)];
         // Ground 3.3 blocks up, a lake over it up to 6 blocks, across the middle of the chunk.
         let mut map = ground([32, 32], |_, _| 3.3);
@@ -498,15 +659,36 @@ mod tests {
         for p in mesh.positions.iter().filter(|p| p[1] > 2.0).filter(inside) {
             assert!((p[1] - 3.3).abs() < 0.02, "under the water: {p:?}");
         }
-        // The water's faces are cubes' quads after the ground's corners, its top flat and whole at 6 blocks up.
-        let (first, count) = mesh.water();
-        assert_eq!(first as usize, mesh.indices.len() * 2);
-        assert!(count > 0);
-        let water: Vec<_> = mesh.quads[first as usize..].iter().map(|&q| super::super::mesh::unpack(q)).collect();
-        assert!(water.iter().all(|q| q.3 == 7), "drawn with its surface");
-        let top: u32 = water.iter().filter(|q| q.2 == 2).map(|q| q.1.iter().product::<u32>()).sum();
-        assert_eq!(top, 16 * 16);
-        assert!(water.iter().filter(|q| q.2 == 2).all(|q| q.0[1] == 5));
+        // The water's surface after the ground's corners, two pairs of words a corner, three corners a face: flat at
+        // its top, 6 blocks up, facing up, drawn with its surface; and none of it on the ground under it.
+        let water_corners = |mesh: &ChunkMesh| -> Vec<([f32; 3], u32)> {
+            let (first, _) = mesh.water();
+            let words = &mesh.quads[first as usize..];
+            assert_eq!(words.len() % 6, 0);
+            words
+                .chunks(2)
+                .map(|pair| {
+                    let at = [pair[0][0] & 0xFFFF, pair[0][0] >> 16, pair[0][1] & 0xFFFF];
+                    (at.map(|q| q as f32 / POINT_STEPS + POINT_FROM), pair[1][1] & 0xFF)
+                })
+                .collect()
+        };
+        assert_eq!(mesh.water().0 as usize, mesh.indices.len() * 2);
+        let corners = water_corners(&mesh);
+        assert!(!corners.is_empty() && corners.iter().all(|&(_, surface)| surface == 7));
+        let middle: Vec<_> = corners.iter().filter(|(p, _)| inside(&p)).collect();
+        assert!(!middle.is_empty());
+        assert!(middle.iter().all(|(p, _)| (p[1] - 6.0).abs() < 0.01), "its top at 6 blocks: {:?}", middle[0]);
+        // A sea's top blocks keep where its surface lies: there, a fifth of a block over their middles.
+        let mut sea = map.clone();
+        for z in 8..24 {
+            for x in 8..24 {
+                sea.set_cell([x, 5, z], 2, super::super::flow::surface_fill(0.2));
+            }
+        }
+        let corners = water_corners(&mesh_chunk(&sea, [0, 0, 0], &faces));
+        let middle: Vec<_> = corners.iter().filter(|(p, _)| inside(&p)).collect();
+        assert!(middle.iter().all(|(p, _)| (p[1] - 5.7).abs() < 0.01), "its sea level: {:?}", middle[0]);
         // Ground added into the water takes its place; taking ground leaves the water.
         let added = ball(&map, [16.5, 4.5, 16.5], 1.0, Ball::Add(1), &faces);
         assert!(added.iter().any(|&(at, block, _)| at == [16, 4, 16] && block == 1));

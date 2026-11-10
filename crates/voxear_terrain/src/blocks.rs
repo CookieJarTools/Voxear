@@ -19,8 +19,8 @@
 //! ground; the ground's faces show where they meet it as they do air.
 //! Nothing stands on it, and things float in it ([`BlockWorld::water_over`]).
 //! It flows ([`flow`]): from water placed, down and then out sideways,
-//! falling towards a planet's middle. A Voxel Terrain keeps its water as
-//! cubes, its top flat, the smooth ground running under it.
+//! falling towards a planet's middle. A Voxel Terrain's water is smooth
+//! too, its surface made as its ground's is (see `smooth`).
 
 pub mod chunk;
 pub mod edits;
@@ -312,9 +312,14 @@ impl BlockWorld {
             }
             block = next;
         }
-        let (height, _) = flow::Water::of(self.blocks.fill(block)).height();
+        // Drawn smooth, its surface stands where the smooth water's does.
+        let fill = self.blocks.fill(block);
+        let height = match self.smooth {
+            true => 0.5 + flow::smooth_surface(fill),
+            false => f32::from(flow::Water::of(fill).height().0) / 16.0,
+        };
         let foot = if toward > 0 { block[axis] } else { block[axis] + 1 } as f32;
-        let top = (foot + toward as f32 * f32::from(height) / 16.0) * self.block_size;
+        let top = (foot + toward as f32 * height) * self.block_size;
         Some(((top - at[axis]) * toward as f32, up))
     }
 
@@ -578,23 +583,40 @@ mod tests {
         let faces = [BlockFaces::default(), BlockFaces::new(1, 1, 1), BlockFaces::water(5)];
         let mut map = BlockMap::default();
         map.put_chunk([0, 0, 0], Chunk::filled(2));
-        for smooth in [false, true] {
-            // How much of the chunk's side each way its water covers.
-            let covers = |mesh: ChunkMesh| -> [u32; mesh::FACINGS] {
-                let mut area = [0; mesh::FACINGS];
-                for &quad in &mesh.quads[mesh.water().0 as usize..] {
-                    let (_, size, facing, ..) = mesh::unpack(quad);
-                    area[facing] += size[0] * size[1];
-                }
-                area
-            };
-            let whole = CHUNK * CHUNK;
-            assert_eq!(covers(mesh_any(&map, [0, 0, 0], &faces, smooth)), [whole; 6], "at the world's edge");
-            let alone = mesh_made(&map, [0, 0, 0], &faces, smooth, &|column| column == [0, 0]);
-            assert_eq!(covers(alone), [0, 0, whole, whole, 0, 0], "its own column made alone");
-            let beside = mesh_made(&map, [0, 0, 0], &faces, smooth, &|column| column == [0, 0] || column == [1, 0]);
-            assert_eq!(covers(beside), [whole, 0, whole, whole, 0, 0], "towards air in a column made");
-        }
+        let alone = |column: [i32; 2]| column == [0, 0];
+        let beside = |column: [i32; 2]| column == [0, 0] || column == [1, 0];
+        // Of cubes: how much of the chunk's side each way its water covers.
+        let covers = |mesh: ChunkMesh| -> [u32; mesh::FACINGS] {
+            let mut area = [0; mesh::FACINGS];
+            for &quad in &mesh.quads[mesh.water().0 as usize..] {
+                let (_, size, facing, ..) = mesh::unpack(quad);
+                area[facing] += size[0] * size[1];
+            }
+            area
+        };
+        let whole = CHUNK * CHUNK;
+        assert_eq!(covers(mesh_any(&map, [0, 0, 0], &faces, false)), [whole; 6], "at the world's edge");
+        assert_eq!(covers(mesh_made(&map, [0, 0, 0], &faces, false, &alone)), [0, 0, whole, whole, 0, 0]);
+        assert_eq!(covers(mesh_made(&map, [0, 0, 0], &faces, false, &beside)), [whole, 0, whole, whole, 0, 0]);
+        // Drawn smooth: which of the chunk's sides, +x, -x, +z, -z, its water's surface has corners on, between its
+        // top and bottom and its other sides.
+        let sides = |mesh: ChunkMesh| -> [bool; 4] {
+            let words = &mesh.quads[mesh.water().0 as usize..];
+            let side = CHUNK as f32;
+            let corners: Vec<[f32; 3]> = words
+                .chunks(2)
+                .map(|pair| [pair[0][0] & 0xFFFF, pair[0][0] >> 16, pair[0][1] & 0xFFFF])
+                .map(|at| at.map(|q| q as f32 / smooth::POINT_STEPS + smooth::POINT_FROM))
+                .filter(|p| (1.0..side - 1.0).contains(&p[1]))
+                .collect();
+            let across = |p: &[f32; 3], axis: usize| (1.0..side - 1.0).contains(&p[2 - axis]);
+            let on = |axis: usize, at: f32| corners.iter().any(|p| (p[axis] - at).abs() < 0.01 && across(p, axis));
+            [on(0, side), on(0, 0.0), on(2, side), on(2, 0.0)]
+        };
+        assert_eq!(sides(mesh_any(&map, [0, 0, 0], &faces, true)), [true; 4], "at the world's edge");
+        assert_eq!(sides(mesh_made(&map, [0, 0, 0], &faces, true, &alone)), [false; 4], "its own column made alone");
+        let towards = sides(mesh_made(&map, [0, 0, 0], &faces, true, &beside));
+        assert_eq!(towards, [true, false, false, false], "towards air in a column made");
     }
 
     #[test]

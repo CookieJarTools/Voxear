@@ -1668,12 +1668,12 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     water, the kind's colour its Deep, its top rippled, bent and dimmed by as much water as the view goes through,
     foam at the shore, its underside from below. `BlockWorld::water_over` gives Buoyancy the top of the water in
     a column. Generated ground fills the open air below its generator's sea level with its sea block
-    (`BlockGenerate::sea`; a planet's sea its radius). A Voxel Terrain keeps its water as cubes, the smooth ground
-    running under it, each block of water taken as a block further out than the ground beside it, its sides drawn
-    against anything not water; balls add ground in place of water and never take it. Editor: each kind's Water
-    (its materials' rows hidden), and Sea block under generated ground's settings. Tests: water's faces apart and
-    the ground's under it, a chunk of ground beside one of water, sights through water, water over smooth ground,
-    a generated sea up to its level, water's top in a column, a ball floating and one sinking to the floor, the GPU
+    (`BlockGenerate::sea`; a planet's sea its radius). A Voxel Terrain kept its water as cubes (smooth since, below),
+    the smooth ground running under it, each block of water taken as a block further out than the ground beside it, its
+    sides drawn against anything not water; balls add ground in place of water and never take it. Editor: each kind's
+    Water (its materials' rows hidden), and Sea block under generated ground's settings. Tests: water's faces apart and
+    the ground's under it, a chunk of ground beside one of water, sights through water, water over smooth ground, a
+    generated sea up to its level, water's top in a column, a ball floating and one sinking to the floor, the GPU
     drawing a pond over its floor, the editor making a kind water, placing it and picking a sea block.
     Flowing (`blocks::flow`): water placed and a generated sea are sources, full for good; water runs from them
     down, then out over ground an eighth of a block lower each block, seven at most, falling as a column off an
@@ -1690,15 +1690,25 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     the editor's water running out and undone with it. Buoyancy pushes against the pull where a body is, as strongly
     as it pulls (towards a planet's middle near one, as physics pulls), reading how deep it is along the water's own
     up (`BlockWorld::water_depth`), so things float on a planet's sides; tested with a ball floating out from a
-    planet's middle and one sinking to its stone. In a world without end, water shows no face towards a chunk
-    column not made (`BlockWorld::columns`, `blocks::mesh_made`): a coarse column is meshed with only itself made,
-    near chunks with the near columns, and the water beside columns let go is meshed again, so a sea shows no walls
-    where its rings meet; every level's sea stands where the finest level's does, a coarse column's top block of it
-    only as full as that, in eighths (a flowing fill; coarse blocks never flow), so the rings meet without steps.
-    Tests: a streamed sea, cubes and smooth, with no water faces on its columns' sides towards columns not made and
-    every level's top as high, water put in the air showing every side, a chunk of water showing its sides at a
-    world's edge. Not done: the view fogged from in water blocks; scripts' `Water` finding a planet's water off its
-    top.
+    planet's middle and one sinking to its stone. Not done: the view fogged from in water blocks; scripts' `Water`
+    finding a planet's water off its top.
+    After a first look: still water spreads over water (falling water only over ground), so a lake runs into a hole
+    dug beside it, and a block between two sources becomes one; a Voxel Terrain's water is smooth, its surface made
+    by surface nets over a field of water's and ground's depths, faces only where water meets air, a generated sea's
+    top blocks keeping where its surface lies (`flow::surface_fill`, `smooth_surface`), so it lies flat at its sea
+    level and round a planet; block brushes work once a click, again only as the pointer moves half a brush on, and
+    while playing; terrains' and block worlds' looks count as using their materials, so their colours survive play
+    (they were freed as a level loaded). Tests: a lake running into a hole, a gap filling, smooth water at its top and
+    at a sea's level, a block world's colours kept loaded.
+    In a world without end, water shows no face towards a chunk column not made (`BlockWorld::columns`,
+    `blocks::mesh_made`): a coarse column is meshed with only itself made, near chunks with the near columns, and the
+    water beside columns let go is meshed again; drawn smooth, the water's surface reads a column not made as the made
+    one beside it, so it runs on flat. So a sea shows no walls where its rings meet. Every level's sea stands as high,
+    so the rings meet without steps: of cubes where the finest level's does, a coarse column's top block of it only as
+    full as that, in eighths (a flowing fill; coarse blocks never flow); drawn smooth at its sea level, a top block's
+    surface standing up to a whole block over its middle (`surface_fill`, a half before). Tests: a streamed sea, cubes
+    and smooth, with no water faces on its columns' sides towards columns not made and every level's top as high,
+    water put in the air showing every side, a chunk of water showing its sides at a world's edge.
 - **Smooth voxel terrain, flat and planets**, in parts: smooth ground you can see, stand on, generate and build on;
   planets with their own gravity; a floating origin.
   - ~~**Voxel Terrain:**~~ done: a Block World drawn smooth (`BlockFile::smooth`, `BlockWorld::smooth`). Each chunk

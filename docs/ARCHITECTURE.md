@@ -2838,21 +2838,37 @@ kept), then slumping past an angle gathered from eight neighbours; read back and
 games read it as made. To come: stream-power erosion for mountain ranges, and flow, sediment and debris masks for
 texturing and scattering.
 
-**Generation.** A `.worldgen` asset (`voxear_terrain::generate::WorldGen`) makes ground at any point from a seed:
-three fields read through one warp (continents, ruggedness, and ridged noise from valleys to crests), shaped by
-four curves a designer draws, smoothed through their keys (coast and inland over continents, relief over
-ruggedness, peaks over ridges: height = coast + inland × relief × peaks), with crags and bumps, from presets. Only
-sums, products, square roots and `floor`, so the same seed makes the same bits on every machine. A terrain's
-Generate layer lays it from an offset in its world; compositing finds generators by reference as it finds
-pictures. Rivers and lakes on finished maps are a Rivers layer (`voxear_terrain::rivers`): priority-flood filling
+**Generation.** A `.worldgen` asset (`voxear_terrain::generate::WorldGen`) makes ground at any point from a seed.
+It is a graph of nodes (`generate::Graph`): each makes a number at every place on the ground (a height, or a mask)
+from its values and from what is wired into it, and one Output node takes the ground's height and its climate. The
+generator itself holds the three values every node and every consumer reads: seed, scale and sea level. Kinds of
+node live a file each under `generate/nodes/` and describe their ports and values, so the editor draws any of them
+without knowing what it is; a graph can show any node's value as a row of the generator's own (its exposed
+values), which is how a generator stays a preset and a few numbers for whoever never opens its graph. The Landmass
+node is what a generator was before it was a graph, in one node (`generate::Landmass`): three fields read through
+one warp (continents, ruggedness, and ridged noise from valleys to crests), shaped by four curves a designer
+draws, smoothed through their keys (coast and inland over continents, relief over ruggedness, peaks over ridges:
+height = coast + inland × relief × peaks), with crags, gullies and bumps, from presets. A file written before
+graphs reads as that node wired to the Output and makes the same ground to the bit. A generator is compiled when
+it is made (`generate::compile`): from the Output back along the wires, into steps that each fill one row of
+numbers from earlier rows, two steps doing the same work made one, in an order the wires alone set. The steps run
+over up to 512 places at a time (`generate::eval`), each place worked out by itself, so a tile asked for at once
+gets the bits each point gets alone. Places are rows too, so a node that reads its input elsewhere compiles what is
+behind it again at the rows it made. A generator is never changed, only replaced, and carries a hash of everything
+that decides its ground: one saved with only a node moved keeps its place in `Content`, and nothing is made again.
+Only sums, products, divisions, square roots and `floor`, so the same seed makes the same bits on every machine.
+A terrain's Generate layer lays it from an offset in its world; compositing finds generators by reference as it
+finds pictures. Rivers and lakes on finished maps are a Rivers layer (`voxear_terrain::rivers`): priority-flood filling
 gives every cell the way it drains and the ground draining through it; rivers are cut where that is enough, lakes
 stand in the filled hollows, and the editor makes Streams and Pools for them. A generator's climate (temperature
 and humidity fields, cooling with height) feeds surfaces' rules, so biomes choose surfaces and the grass on them.
 A terrain without end (`voxear_terrain::endless`) keeps a window of tiles round the camera, each made alone on
 background threads from the layers worked out from where each sample is, with its shares and grass from its padded
 ground; renderer and physics keep each tile in a slot by where it is in the world, so a moving window copies in
-only the tiles that came into it. To come: rivers along valleys in endless worlds; biomes choosing trees and
-blocks. For voxels, 3D density from the same fields, with caves.
+only the tiles that came into it. To come: the graph editor, with a preview on every node; more kinds of node
+(warps, terraces, masks from the ground's own height and slope); biomes as nodes, bringing their surfaces and
+blocks; for voxels, a Volume beside the height, with overhangs and caves as nodes and cave rooms joined by
+tunnels; rivers along valleys in endless worlds.
 
 **Rendering.** CDLOD: a quadtree of patches, each a grid of 32 quads drawn from one index buffer, picked on the CPU
 for the camera and each sun cascade, each vertex sliding onto the next level's grid near its level's far distance.

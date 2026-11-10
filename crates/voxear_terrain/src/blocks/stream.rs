@@ -545,7 +545,7 @@ mod tests {
             mesh::{FACINGS, unpack, water_shape},
             smooth::{POINT_FROM, POINT_STEPS},
         },
-        generate::{Preset, WorldGen},
+        generate::{Landmass, Preset, WorldGen},
     };
 
     fn making() -> BlockMaking {
@@ -597,7 +597,8 @@ mod tests {
         making.faces = making.file.faces().1.into();
         let flat = voxear_core::curve::Curve::flat;
         let (coast, relief) = (flat(-0.5), flat(0.0));
-        making.world = Arc::new(WorldGen { coast, relief, bumps: 0.0, sea_level: 3.0, ..Preset::RollingHills.world() });
+        let land = Landmass { coast, relief, bumps: 0.0, sea_level: 3.0, ..Preset::RollingHills.landmass() };
+        making.world = Arc::new(WorldGen::from(land));
         let mut world = BlockWorld::made(BlockMap::default(), &making.faces, 2.0, smooth);
         let (mut base, mut pending) = (Arc::new(BlockMap::default()), Arc::new(BlockEdits::default()));
         let mut streamer = BlockStreamer::default();

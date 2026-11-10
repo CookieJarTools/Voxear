@@ -1655,7 +1655,7 @@ fn ground_under(
         _ => None,
     });
     let lowest = ground.tiles().iter().flat_map(|tile| tile.samples().iter().copied()).fold(f32::MAX, f32::min);
-    let sea = generator.map(|world| world.sea_level).filter(|&level| level > lowest);
+    let sea = generator.map(|world| world.sea_level()).filter(|&level| level > lowest);
     (ground, sea)
 }
 

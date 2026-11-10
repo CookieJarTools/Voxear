@@ -214,11 +214,26 @@ How warm and how wet the world is at each place, cooler the higher the ground. W
 
 **In:** Height. **Out:** Temperature, Humidity.
 
+## Voxels
+
+Voxel nodes make the ground in three dimensions, for worlds of blocks and voxels. Where the nodes above make a number at each place on the ground, these make one at each place in space: how many metres inside the ground it is. They are wired into the Output's **Volume**, and a terrain of heights never reads them. Their sizes are metres whatever the generator's Scale.
+
+| Node | What it makes |
+| --- | --- |
+| Solid | A height made solid: the generator's own ground with nothing wired in |
+| Overhangs | Ground pushed in and out where its Mask says, and steep ground alone with no mask wired in |
+| Tunnels | Long winding caves |
+| Chambers | Wide low caves |
+| Noise 3D | Noise through space |
+| Combine | Two of these made one: Union, Subtract or Smooth |
+
+A height or a mask from any node above can be wired into them: a Height Mask into the Overhangs' Mask keeps cliffs to the high ground. Their rows, and how a Block World's own Overhangs and Caves become these nodes, are in [[Block Worlds#Overhangs and caves in the generator|Overhangs and caves in the generator]].
+
 ## Output
 
-What the generator makes. With nothing wired into Height the ground lies at the sea level; with no climate wired in it is 15 °C by the sea, cooler higher up, and half wet.
+What the generator makes. With nothing wired into Height the ground lies at the sea level; with no climate wired in it is 15 °C by the sea, cooler higher up, and half wet. With nothing wired into Volume a world of blocks makes the ground under the height solid, with the world's own Overhangs and Caves.
 
-**In:** Height, Temperature, Humidity.
+**In:** Height, Temperature, Humidity, Volume.
 
 ## What a node costs
 

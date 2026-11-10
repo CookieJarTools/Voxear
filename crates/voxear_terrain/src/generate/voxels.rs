@@ -472,4 +472,64 @@ mod tests {
         // A graph with no Output has nothing to wire them into.
         assert!(!Graph::default().add_voxels(own, true));
     }
+
+    #[test]
+    fn a_starters_ground_takes_overhangs_and_caves_flat_and_round_and_a_cell_alone_is_the_cell_in_a_batch() {
+        // Each starter's graph under the Volume's nodes: the Overhangs' own mask reads the ground again round
+        // every column, through the starter's warps, masks and gullies.
+        for starter in crate::generate::starters() {
+            let name = starter.name;
+            let mut graph = starter.graph.clone();
+            assert!(graph.add_voxels(OwnVoxels { overhangs: 6.0, caves: 0.5, roof: 3.0 }, false), "{name}");
+            let made = WorldGen::new(7, 1.0, starter.sea_level, graph);
+            assert!(made.faults().is_empty(), "{name}: {:?}", made.faults());
+            let volume = made.volume().expect("a Volume");
+            assert!(!volume.plain() && volume.caved() && volume.reach() >= 6.0, "{name}");
+            // Flat: columns of cells through the ground, from 30 m under it to 15 m over it.
+            let cells: Vec<[f32; 3]> = (0..10)
+                .flat_map(|i| {
+                    let (x, z) = (i as f32 * 137.5 - 600.0, i as f32 * 71.3 + 40.0);
+                    let ground = made.height_at(x, z);
+                    (0..30).map(move |j| [x, ground + j as f32 * 1.5 - 30.0, z])
+                })
+                .collect();
+            let (inside, ground) = asked(&made, &cells, 1.0, false);
+            for (at, cell) in cells.iter().enumerate() {
+                let (one, one_ground) = asked(&made, &[*cell], 1.0, false);
+                assert_eq!(one[0].to_bits(), inside[at].to_bits(), "{name} at {cell:?}");
+                assert_eq!(one_ground[0].to_bits(), ground[at].to_bits(), "{name}, its ground at {cell:?}");
+            }
+            for found in [&inside, &ground] {
+                assert!(found.iter().any(|&v| v > 1.0) && found.iter().any(|&v| v < -1.0), "{name}: ground and air");
+            }
+            // Round a planet: cells along ways out from its middle, about its surface.
+            let radius = 400.0;
+            let ways: Vec<[f32; 3]> = (0..60)
+                .map(|i| {
+                    let i = i as f32;
+                    let way = [(i * 0.37).fract() - 0.5, (i * 0.61).fract() - 0.5, (i * 0.83).fract() - 0.4];
+                    let long = way.iter().map(|v| v * v).sum::<f32>().sqrt();
+                    way.map(|v| v / long)
+                })
+                .collect();
+            let on: Vec<[f32; 3]> = ways.iter().map(|way| way.map(|v| v * radius)).collect();
+            let mut heights = vec![0.0; on.len()];
+            made.heights_round(&on, &mut heights);
+            let carried = volume.carried_round(&on, &heights, radius);
+            let rows: Vec<&[f32]> = carried.rows().iter().map(Vec::as_slice).collect();
+            let out = |i: usize| radius + heights[i] - made.sea_level() + 7.0 - (i % 19) as f32;
+            let [x, y, z] = [0, 1, 2].map(|axis| (0..on.len()).map(|i| ways[i][axis] * out(i)).collect::<Vec<f32>>());
+            let (mut inside, mut ground) = (vec![0.0; on.len()], vec![0.0; on.len()]);
+            let all = Cells { x: &x, y: &y, z: &z, carried: &rows, size: 1.0 };
+            volume.densities_round(all, radius, false, &mut inside, &mut ground);
+            for i in 0..on.len() {
+                let (mut one, mut one_ground) = ([0.0], [0.0]);
+                let cell = Cells { x: &x[i..=i], y: &y[i..=i], z: &z[i..=i], carried: &carried.column(i), size: 1.0 };
+                volume.densities_round(cell, radius, false, &mut one, &mut one_ground);
+                assert_eq!(one[0].to_bits(), inside[i].to_bits(), "{name}, round a planet at {i}");
+                assert_eq!(one_ground[0].to_bits(), ground[i].to_bits(), "{name}, its ground round a planet at {i}");
+            }
+            assert!(inside.iter().any(|&v| v > 0.0) && inside.iter().any(|&v| v < 0.0), "{name}: round ground and air");
+        }
+    }
 }

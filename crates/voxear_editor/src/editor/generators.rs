@@ -130,6 +130,10 @@ impl Editor {
     /// the generator it shows.
     pub(super) fn update_generator(&mut self, renderer: &mut Renderer) {
         self.save_edited_world_gen();
+        // A Block World's overhangs and caves moved into the open generator are nodes of the graph shown.
+        for path in crate::block_props::take_written_generators(&mut self.game.engine.world) {
+            self.generator_file_changed(&path);
+        }
         self.follow_generator_file(renderer);
         self.follow_generator_presses();
         self.edit_graph_node();

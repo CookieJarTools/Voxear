@@ -1646,16 +1646,14 @@ fn a_block_worlds_ground_is_generated_by_a_picked_generator_and_covered_by_a_kin
     assert_eq!(now.blocks.get([10, top(&now, 10, 10), 10]), 4, "snow on top");
 }
 
-#[test]
-fn a_block_worlds_overhangs_and_caves_move_into_its_generator_as_nodes_and_leave_its_ground_as_it_was() {
-    use voxear_engine::blocks::BlockWorldAsset;
-    use voxear_terrain::{
-        blocks::BlockWorld,
-        generate::{Preset, Value, WorldGen},
-    };
+/// A copy of Hello open in the editor, its field a Block World made by `Worlds/Steep.worldgen`, a
+/// generator from before graphs with hills steep enough for overhangs to push, and with Overhangs
+/// at 9: the project, the renderer, the editor and the field.
+fn editor_with_a_steep_block_world() -> Option<(tempfile::TempDir, Renderer, voxear_editor::Editor, Entity)> {
+    use voxear_terrain::generate::{Preset, WorldGen};
     let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {
         eprintln!("skipping: no usable GPU");
-        return;
+        return None;
     };
     let dir = hello_with_a_field();
     // Steep hills, so overhangs have ground to push.
@@ -1688,6 +1686,18 @@ fn a_block_worlds_overhangs_and_caves_move_into_its_generator_as_nodes_and_leave
     type_number(&mut editor, &mut renderer, "Overhangs", "9");
     frame(&mut editor, &mut renderer);
     frame(&mut editor, &mut renderer);
+    Some((dir, renderer, editor, field))
+}
+
+#[test]
+fn a_block_worlds_overhangs_and_caves_move_into_its_generator_as_nodes_and_leave_its_ground_as_it_was() {
+    use voxear_engine::blocks::BlockWorldAsset;
+    use voxear_terrain::{
+        blocks::BlockWorld,
+        generate::{Value, WorldGen},
+    };
+    let Some((dir, mut renderer, mut editor, field)) = editor_with_a_steep_block_world() else { return };
+    let button = |editor: &voxear_editor::Editor| first_with(&editor.ui, editor.ui.root(), "block-move-to-generator");
     let file =
         |editor: &voxear_editor::Editor| editor.game.engine.world.get::<BlockWorldAsset>(field).unwrap().file.clone();
     let blocks =
@@ -1727,6 +1737,70 @@ fn a_block_worlds_overhangs_and_caves_move_into_its_generator_as_nodes_and_leave
     // The ground is what it was, block for block.
     assert!(*blocks(&editor) == *before, "the ground moved");
     assert!(before.chunks().count() > 4);
+}
+
+#[test]
+fn overhangs_moved_into_a_generator_whose_graph_is_open_show_there_and_its_nodes_stay_where_they_were_put() {
+    use voxear_terrain::generate::WorldGen;
+    let Some((dir, mut renderer, mut editor, field)) = editor_with_a_steep_block_world() else { return };
+    let path = "Worlds/Steep.worldgen";
+    let saved = || WorldGen::parse(&std::fs::read_to_string(dir.path().join(path)).unwrap()).unwrap();
+    // A node moved on the canvas makes no other ground, so the level keeps the generator it had read before.
+    let world = saved();
+    let mut graph = world.graph().clone();
+    let land = graph.nodes.iter().find(|node| node.kind.title() == "Landmass").expect("its Landmass").id;
+    graph.node_mut(land).unwrap().at = [-640.0, 96.0];
+    std::fs::write(dir.path().join(path), world.with_graph(graph).to_text()).unwrap();
+    editor.handle(&winit::event::WindowEvent::Focused(true));
+    for _ in 0..3 {
+        frame(&mut editor, &mut renderer);
+    }
+    // Its graph is open in the Generator panel while the world's numbers move into it.
+    assert!(editor.open_path(path, &mut renderer));
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(editor.generator().world().is_some_and(|open| open.volume().is_none()), "open, with no Volume yet");
+    editor.select(Some(field));
+    frame(&mut editor, &mut renderer);
+    show_block_tool(&mut editor, &mut renderer, "Settings");
+    let move_out = first_with(&editor.ui, editor.ui.root(), "block-move-to-generator").expect("Move to Generator");
+    click(&mut editor.ui, move_out);
+    for _ in 0..3 {
+        frame(&mut editor, &mut renderer);
+    }
+    // The file has the nodes moved in, and the Landmass where it was put.
+    let moved = saved();
+    assert!(moved.volume().is_some() && moved.faults().is_empty());
+    assert_eq!(moved.graph().node(land).map(|node| node.at), Some([-640.0, 96.0]));
+    // The open graph is the file's, so what it saves next keeps the Volume.
+    let open = editor.generator().world().expect("the graph is still open");
+    assert!(open.volume().is_some(), "the open graph has the nodes moved in");
+    assert!(*open == moved, "and is the generator its file has");
+    let titles: Vec<&str> = open.graph().nodes.iter().map(|node| node.kind.title()).collect();
+    for title in ["Solid", "Overhangs", "Tunnels", "Chambers", "Combine"] {
+        assert!(titles.contains(&title), "a {title} node: {titles:?}");
+    }
+    // When pictures are kept: the whole graph in view, once its previews are as fine as they get.
+    if std::env::var("VOXEAR_TEST_OUTPUT").is_err() {
+        return;
+    }
+    let panel = editor.ui.find(editor.ui.root(), "generator-panel").expect("the Generator panel");
+    let mut buttons = Vec::new();
+    with_class(&editor.ui, panel, "console-button", &mut buttons);
+    let named = |ui: &Ui, node: NodeId| {
+        ui.text(node) == "Frame" || ui.children(node).iter().any(|&part| ui.text(part) == "Frame")
+    };
+    let frame_all = buttons.into_iter().find(|&button| named(&editor.ui, button)).expect("the panel's Frame button");
+    click(&mut editor.ui, frame_all);
+    let waited = std::time::Instant::now();
+    while !editor.generator().previews_settled() && waited.elapsed() < std::time::Duration::from_secs(120) {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        frame(&mut editor, &mut renderer);
+    }
+    for _ in 0..4 {
+        frame(&mut editor, &mut renderer);
+    }
+    shot(&mut renderer, "generator-voxels-moved-in.png");
 }
 
 #[test]

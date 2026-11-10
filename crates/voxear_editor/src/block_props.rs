@@ -125,6 +125,18 @@ struct HeldFiles {
 #[derive(Default, PartialEq)]
 struct GeneratorVolumes(std::collections::HashSet<Entity>);
 
+/// The generators Move to Generator wrote since the editor last asked, by
+/// path.
+#[derive(Default)]
+struct WrittenGenerators(Vec<String>);
+
+/// The generators Move to Generator wrote since this was last asked, by
+/// path: a graph open on one reads its file again, so that its next save
+/// keeps what was moved in.
+pub fn take_written_generators(world: &mut World) -> Vec<String> {
+    world.resource_mut::<WrittenGenerators>().map(|written| std::mem::take(&mut written.0)).unwrap_or_default()
+}
+
 /// Whether the world's generator makes its overhangs and caves itself, as
 /// last seen (see [`hold`]).
 pub fn generator_has_volume(world: &World, entity: Entity) -> bool {
@@ -175,10 +187,13 @@ pub fn move_to_generator(game: &mut Game, renderer: Option<&mut Renderer>, entit
     let Some(generate) = file.generate.as_mut() else { return false };
     let Some(reference) = generate.world.clone() else { return false };
     let Some(guid) = game.content.parse(&reference).ok().and_then(|parsed| parsed.guid()) else { return false };
-    let Some(world) = game.content.world_gen(&reference).filter(|world| world.volume().is_none()) else {
-        return false;
-    };
     let Some(path) = game.content.db().get(guid).map(|entry| entry.path.clone()) else { return false };
+    // As its file has it. `Content` keeps the generator it had for as long as the ground is the same, and that one
+    // is without the nodes moved and the rows exposed since.
+    let at = game.project.root.join(&path);
+    let read = |text: String| voxear_terrain::generate::WorldGen::parse(&text).ok();
+    let written = std::fs::read_to_string(&at).ok().and_then(read);
+    let Some(world) = written.filter(|world| world.volume().is_none()) else { return false };
     let own = voxear_terrain::generate::OwnVoxels {
         overhangs: generate.overhangs.max(0.0),
         caves: generate.caves.clamp(0.0, 1.0),
@@ -189,10 +204,14 @@ pub fn move_to_generator(game: &mut Game, renderer: Option<&mut Renderer>, entit
         return false;
     }
     let text = format!("{}{}", crate::project_files::NEW_WORLD_GEN, world.with_graph(graph).to_text());
-    if let Err(error) = std::fs::write(game.project.root.join(&path), text) {
+    if let Err(error) = std::fs::write(&at, text) {
         tracing::error!("could not save {path}: {error}");
         return false;
     }
+    if game.engine.world.resource::<WrittenGenerators>().is_none() {
+        game.engine.world.insert_resource(WrittenGenerators::default());
+    }
+    game.engine.world.resource_mut::<WrittenGenerators>().expect("inserted above").0.push(path.clone());
     (generate.overhangs, generate.caves) = (0.0, 0.0);
     if game.content.forget_world_gen(guid) {
         crate::terrain_props::regenerate(game, guid);

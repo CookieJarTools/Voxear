@@ -616,7 +616,7 @@ pub fn set(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, fie
     let picked = ui(world).block;
     match (field, &value) {
         // Its ground stays as large in metres, counted again in blocks of the new size.
-        (F::BlockSize, v) => drop(file.set_block_size(number(v).unwrap_or(file.block_size).clamp(0.01, 100.0))),
+        (F::BlockSize, v) => drop(file.set_block_size(number(v).unwrap_or(file.block_size))),
         (F::Smooth, Value::Toggle(on)) => file.smooth = *on,
         (F::GroundSize, Value::Vector(v)) if v.len() >= 2 => {
             file.ground.size = [v[0], v[1]].map(|n| n.round().clamp(0.0, 4096.0) as u32);

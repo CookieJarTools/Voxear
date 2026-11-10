@@ -39,6 +39,10 @@ pub const MAX_BLOCKS: usize = 255;
 /// The most blocks across a world's flat ground is, a side.
 pub const MOST_ACROSS: u32 = 4096;
 
+/// The smallest and the largest a block is a side, in metres.
+pub const SMALLEST_BLOCK: f32 = 0.1;
+pub const LARGEST_BLOCK: f32 = 10.0;
+
 /// What a `.blockworld` file holds.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -190,6 +194,7 @@ impl BlockFile {
             generate.endless = None;
         }
         ensure!(file.block_size > 0.0 && file.block_size.is_finite(), "a block is some size");
+        file.block_size = file.block_size.clamp(SMALLEST_BLOCK, LARGEST_BLOCK);
         ensure!(file.blocks.len() <= MAX_BLOCKS, "a world has at most {MAX_BLOCKS} kinds of block");
         Ok(file)
     }
@@ -201,11 +206,13 @@ impl BlockFile {
     /// Makes its blocks `size` metres a side with its ground as large in
     /// metres as it was: what it counts in blocks (its ground's size, height
     /// and under layers, its lowest block, how deep its kinds cover) is
-    /// counted again in blocks of the new size. No smaller than keeps its
-    /// ground within `MOST_ACROSS` blocks a side; gives the size it took.
+    /// counted again in blocks of the new size. Between `SMALLEST_BLOCK` and
+    /// `LARGEST_BLOCK`, and no smaller than keeps its ground within
+    /// `MOST_ACROSS` blocks a side; gives the size it took.
     pub fn set_block_size(&mut self, size: f32) -> f32 {
         let widest = self.ground.size.into_iter().max().unwrap_or(0).max(self.ground.height) as f32;
-        let size = size.max(self.block_size * widest / MOST_ACROSS as f32).max(1e-3);
+        let size = if size.is_nan() { self.block_size } else { size.clamp(SMALLEST_BLOCK, LARGEST_BLOCK) };
+        let size = size.max(self.block_size * widest / MOST_ACROSS as f32);
         let ratio = self.block_size / size;
         let count = |n: u32| if n == 0 { 0 } else { ((n as f32 * ratio).round() as u32).max(1) };
         self.ground.size = self.ground.size.map(count);
@@ -305,6 +312,14 @@ mod tests {
         assert_ne!(faces[2].sides, faces[3].sides);
         assert!(faces.iter().all(|faces| !faces.water));
         assert!(BlockFile::parse("block_size = 0.0").is_err());
+        // Blocks no smaller than a tenth of a metre and no larger than ten, read or set.
+        assert_eq!(BlockFile::parse("block_size = 0.01").unwrap().block_size, SMALLEST_BLOCK);
+        assert_eq!(BlockFile::parse("block_size = 500.0").unwrap().block_size, LARGEST_BLOCK);
+        let mut sized = BlockFile::default();
+        assert_eq!(sized.set_block_size(0.0), SMALLEST_BLOCK);
+        assert_eq!(sized.ground.size, [640, 640]);
+        assert_eq!(sized.set_block_size(1000.0), LARGEST_BLOCK);
+        assert_eq!(sized.ground.size, [6, 6]);
         // A kind of water reads back as water, and its faces say so.
         file.blocks.push(BlockKind { water: true, ..BlockKind::colored("Water", [0.04, 0.46, 0.33]) });
         let read = BlockFile::parse(&file.to_text()).unwrap();

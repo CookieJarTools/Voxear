@@ -2621,13 +2621,32 @@ struct BlockWaterOut
 };
 
 // A corner of a face of the water of the world push.level names (its number and one): six to a quad, its quads one
-// after another in the world's pool from push.output on.
+// after another in the world's pool from push.output on. Flowing water stands lower than its block: a quad of it keeps
+// the way up from it (a facing, 7 for none) in the top bits of its first word, and in place of its corners' shading how
+// far its corners on its block's lower side along that way are raised and those on its upper side lowered, in
+// sixteenths of a block (voxear_terrain::blocks::mesh::water_shape).
 [shader("vertex")]
 BlockWaterOut blockWaterVertex(uint vertexId : SV_VertexID)
 {
     Frame* frame = push.frame;
     BlockWorld world = buffers()->blockWorlds[push.level - 1];
     BlockPoint b = cubePoint(world, vertexId);
+    uint2 quad = world.quads[push.output + vertexId / 6];
+    uint up = (quad.x >> 28) & 7;
+    if (up < 6)
+    {
+        uint axis = up / 2;
+        float toward = (up & 1) == 0 ? 1.0 : -1.0;
+        int4 chunk = world.origins[quad.y >> 16];
+        float blockSize = world.blockSize * float(1u << uint(chunk.w));
+        float3 local = (b.world - world.corner) / blockSize - float3(chunk.xyz * 32);
+        uint3 block = uint3(quad.x & 31, (quad.x >> 5) & 31, (quad.x >> 10) & 31);
+        float lower = float(block[axis]) + (toward > 0.0 ? 0.0 : 1.0);
+        float raised = float((quad.y >> 12) & 15) / 16.0;
+        float lowered = float((quad.y >> 8) & 15) / 16.0;
+        local[axis] += abs(local[axis] - lower) < 0.5 ? toward * raised : -toward * lowered;
+        b.world = world.corner + (float3(chunk.xyz * 32) + local) * blockSize;
+    }
     float4 at = float4(b.world, 1.0);
     BlockWaterOut o;
     o.position = transform(frame->viewProj, at);

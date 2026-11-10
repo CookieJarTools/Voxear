@@ -1184,9 +1184,9 @@ fn blocks_are_placed_broken_and_their_kinds_changed_in_the_scene_view_each_a_ste
 }
 
 #[test]
-fn a_kind_of_block_made_water_is_placed_with_faces_of_its_own_and_a_generated_world_can_fill_its_sea_with_it() {
+fn a_kind_of_block_made_water_is_placed_flows_out_and_a_generated_world_can_fill_its_sea_with_it() {
     use voxear_engine::blocks::BlockWorldAsset;
-    use voxear_terrain::blocks::{BlockMap, BlockWorld, is_water};
+    use voxear_terrain::blocks::{BlockMap, BlockWorld, flow::Water, is_water};
     let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {
         eprintln!("skipping: no usable GPU");
         return;
@@ -1233,9 +1233,21 @@ fn a_kind_of_block_made_water_is_placed_with_faces_of_its_own_and_a_generated_wo
     assert!(mesh.water().1 >= 5, "its top and sides: {} quads", mesh.water().1);
     assert!(mesh.positions.iter().all(|p| p[1] <= 8.0), "nothing to stand on at its top, 9 blocks up");
     shot(&mut renderer, "blocks-water.png");
+    // It flows while editing: out over the grass round it, a block a fifth of a second, an eighth lower each.
+    for _ in 0..30 {
+        frame(&mut editor, &mut renderer);
+    }
+    let beside = [under[0] + 1, 8, under[2]];
+    let blocks = editor.game.engine.world.get::<BlockWorld>(field).unwrap().clone();
+    assert_eq!(blocks.blocks.get(beside), 4, "run out beside it");
+    assert_eq!(Water::of(blocks.blocks.fill(beside)), Water::Flowing { level: 7, up: 2 });
+    assert_eq!(Water::of(blocks.blocks.fill(under)), Water::Source, "what was placed stays full");
+    shot(&mut renderer, "blocks-water-flowing.png");
+    // Undone, the water it ran out into goes with it.
     editor.undo(&mut renderer);
     frame(&mut editor, &mut renderer);
-    assert_eq!(editor.game.engine.world.get::<BlockWorld>(field).unwrap().blocks.get(under), 0, "undone");
+    let blocks = editor.game.engine.world.get::<BlockWorld>(field).unwrap().clone();
+    assert_eq!((blocks.blocks.get(under), blocks.blocks.get(beside)), (0, 0), "undone");
     // Generated ground has a sea block to fill its sea with: air, or the water.
     show_block_tool(&mut editor, &mut renderer, "Settings");
     assert!(prop_rows(&editor.ui, "Sea block").is_empty(), "flat ground has no sea");

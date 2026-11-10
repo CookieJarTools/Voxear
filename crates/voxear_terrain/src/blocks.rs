@@ -18,12 +18,14 @@
 //! only where it meets air, and are drawn apart, see-through, after the
 //! ground; the ground's faces show where they meet it as they do air.
 //! Nothing stands on it, and things float in it ([`BlockWorld::water_over`]).
-//! A Voxel Terrain keeps its water as cubes, its top flat, the smooth ground
-//! running under it.
+//! It flows ([`flow`]): from water placed, down and then out sideways,
+//! falling towards a planet's middle. A Voxel Terrain keeps its water as
+//! cubes, its top flat, the smooth ground running under it.
 
 pub mod chunk;
 pub mod edits;
 pub mod file;
+pub mod flow;
 pub mod generate;
 pub mod mesh;
 pub mod sight;
@@ -31,7 +33,10 @@ pub mod smooth;
 pub mod stream;
 pub mod vox;
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{BTreeSet, HashMap},
+    sync::Arc,
+};
 
 use voxear_ecs::Component;
 
@@ -192,8 +197,12 @@ pub struct BlockWorld {
     pub smooth: bool,
     pub cast_shadows: bool,
     /// For a planet, how far its sea is from its middle, the world's corner,
-    /// in metres: physics pulls things near it towards its middle.
+    /// in metres: physics pulls things near it towards its middle, and its
+    /// water falls towards it.
     pub planet: Option<f32>,
+    /// The blocks its water's next step looks at (see [`flow`]): those near
+    /// where its blocks changed since the last.
+    pub flowing: Arc<BTreeSet<[i32; 3]>>,
 }
 
 impl Component for BlockWorld {}
@@ -208,6 +217,7 @@ impl PartialEq for BlockWorld {
             && self.smooth == other.smooth
             && self.cast_shadows == other.cast_shadows
             && self.planet == other.planet
+            && (Arc::ptr_eq(&self.flowing, &other.flowing) || self.flowing == other.flowing)
     }
 }
 
@@ -218,9 +228,11 @@ impl BlockWorld {
     }
 
     /// A world of `blocks` drawn smooth or not as `smooth` says, every
-    /// chunk's faces worked out with `faces`.
+    /// chunk's faces worked out with `faces`, and any water running in it
+    /// set flowing on.
     pub fn made(blocks: BlockMap, faces: &[BlockFaces], block_size: f32, smooth: bool) -> Self {
         let meshes = blocks.mesh_all(faces, smooth);
+        let flowing = running(&blocks, faces);
         Self {
             blocks: Arc::new(blocks),
             meshes: Arc::new(meshes),
@@ -230,7 +242,20 @@ impl BlockWorld {
             smooth,
             cast_shadows: true,
             planet: None,
+            flowing: Arc::new(flowing),
         }
+    }
+
+    /// Moves its water on a step (see [`flow`]), from the blocks near where
+    /// it changed since the last. How many blocks changed.
+    pub fn flow(&mut self) -> usize {
+        if self.flowing.is_empty() {
+            return 0;
+        }
+        let near = std::mem::take(Arc::make_mut(&mut self.flowing));
+        let fall = if self.planet.is_some() { flow::Fall::Middle } else { flow::Fall::Down };
+        let changes = flow::step(&self.blocks, &self.faces, fall, self.smooth, &near);
+        self.set_cells(changes)
     }
 
     /// The block at `at`, a point in metres from the world's corner, and
@@ -263,11 +288,12 @@ impl BlockWorld {
                 }
             }
         }
-        // Up to the top of the water above it.
+        // Up to the top of the water above it, as high as it stands in its block.
         while water([block[0], block[1] + 1, block[2]]) {
             block[1] += 1;
         }
-        Some((block[1] + 1) as f32 * self.block_size)
+        let (height, _) = flow::Water::of(self.blocks.fill(block)).height();
+        Some((block[1] as f32 + f32::from(height) / 16.0) * self.block_size)
     }
 
     /// Puts each block of `changes` in place, each by where it is in blocks
@@ -279,10 +305,13 @@ impl BlockWorld {
     }
 
     /// Puts each block of `changes` in place, as [`BlockWorld::set_blocks`]
-    /// does, each as full as it says (see [`Fill`]).
+    /// does, each as full as it says (see [`Fill`]); water near them flows
+    /// from the next step (see [`BlockWorld::flow`]).
     pub fn set_cells(&mut self, changes: impl IntoIterator<Item = ([i32; 3], BlockId, Fill)>) -> usize {
         let mut changed = 0;
         let mut reached: Vec<[i32; 3]> = Vec::new();
+        let wet = self.faces.iter().any(|faces| faces.water);
+        let mut flowing: Vec<[i32; 3]> = Vec::new();
         let blocks = Arc::make_mut(&mut self.blocks);
         // How far into a chunk from either side a block is in the next chunk's padded blocks.
         let (first, last) = if self.smooth { (smooth::REACH_AFTER, smooth::REACH_BELOW) } else { (0, CHUNK - 1) };
@@ -292,6 +321,9 @@ impl BlockWorld {
             }
             blocks.set_cell(at, block, fill);
             changed += 1;
+            if wet {
+                flowing.extend(flow::reached(at));
+            }
             // A block on a chunk's side is in the next chunk's padded blocks too.
             let (key, local) = BlockMap::chunk_of(at);
             let near = |axis: usize| -> Vec<i32> {
@@ -312,6 +344,9 @@ impl BlockWorld {
         reached.sort_unstable();
         reached.dedup();
         self.remesh(&reached);
+        if !flowing.is_empty() {
+            Arc::make_mut(&mut self.flowing).extend(flowing);
+        }
         changed
     }
 
@@ -339,6 +374,29 @@ impl BlockWorld {
         let meshes = self.blocks.mesh_all(faces, smooth);
         Self { meshes: Arc::new(meshes), faces: faces.into(), smooth, ..self.clone() }
     }
+}
+
+/// The blocks of water running in `map` (see [`flow`]): every block of it
+/// that is not a source, and so may be fed no longer, or feed more.
+fn running(map: &BlockMap, faces: &[BlockFaces]) -> BTreeSet<[i32; 3]> {
+    let mut found = BTreeSet::new();
+    for (key, chunk) in map.chunks() {
+        if !chunk.has_fills() || !chunk.may_hold(|block| is_water(faces, block)) {
+            continue;
+        }
+        for y in 0..CHUNK {
+            for z in 0..CHUNK {
+                for x in 0..CHUNK {
+                    let water = is_water(faces, chunk.get(x, y, z));
+                    if water && flow::Water::of(chunk.fill(x, y, z)) != flow::Water::Source {
+                        let at = [x, y, z].map(|v| v as i32);
+                        found.insert(std::array::from_fn(|i| key[i] * CHUNK as i32 + at[i]));
+                    }
+                }
+            }
+        }
+    }
+    found
 }
 
 /// Chunk `key`'s faces in `map`, drawn smooth or not as `smooth` says.

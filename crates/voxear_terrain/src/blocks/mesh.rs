@@ -19,10 +19,17 @@
 //! only where it meets air, merged by surface, and are kept after the
 //! ground's quads, every way they face together, to be drawn apart; they are
 //! no triangles, so nothing stands on water and the GI's rays pass through.
+//! Flowing water stands lower than its block (see `flow`): its top lower,
+//! its sides only as high as it stands, and where it meets lower water, the
+//! strip of its side between their tops. Such a quad keeps in place of its
+//! corners' shading how far its corners on its block's lower and upper side
+//! along the way up are moved, in sixteenths of a block, and in its first
+//! word that way (`water_shape`).
 
 use super::{
     BlockFaces, BlockMap,
-    chunk::{AIR, BlockId, CHUNK},
+    chunk::{AIR, BlockId, CHUNK, Fill},
+    flow::Water,
     is_ground, is_water,
 };
 
@@ -169,7 +176,7 @@ pub fn mesh_chunk(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces]) -> ChunkM
     }
     mesh.buckets[FACINGS] = mesh.quads.len() as u32;
     if chunk.may_hold(|block| is_water(faces, block)) {
-        mesh.quads.extend(water_quads(&block, faces, |beyond| beyond == AIR));
+        mesh.quads.extend(water_quads((&block, &fills(map, key)), faces, |beyond| beyond == AIR));
     }
     mesh.sights = super::sight::sights(chunk, |block| !is_ground(faces, block));
     mesh
@@ -185,35 +192,80 @@ fn surface(faces: &[BlockFaces], id: BlockId, facing: usize) -> u8 {
     }
 }
 
-/// A chunk's water's faces as quads, unshaded, merged by surface: one
-/// wherever a block of water meets a block `meets` picks, `block` giving
-/// each block from one before the chunk's corner to one past its far side.
+/// How full each block round chunk `key` is (see `chunk::Fill`), by where
+/// it is from the chunk's corner.
+pub(super) fn fills(map: &BlockMap, key: [i32; 3]) -> impl Fn([i32; 3]) -> Fill + '_ {
+    let chunk = map.chunk(key);
+    let corner = key.map(|v| v * CHUNK as i32);
+    move |p: [i32; 3]| match chunk {
+        Some(chunk) if p.iter().all(|v| (0..CHUNK as i32).contains(v)) => {
+            chunk.fill(p[0] as u32, p[1] as u32, p[2] as u32)
+        }
+        _ => map.fill(std::array::from_fn(|i| corner[i] + p[i])),
+    }
+}
+
+/// A water quad's shape: how far its corners on its block's lower side
+/// along the way up are raised and those on its upper side lowered, in
+/// sixteenths of a block, and the way up (a facing), where any is moved.
+pub fn water_shape(quad: [u32; 2]) -> (u8, u8, Option<usize>) {
+    let up = (quad[0] >> 28) & 7;
+    (((quad[1] >> 12) & 15) as u8, ((quad[1] >> 8) & 15) as u8, (up < 6).then_some(up as usize))
+}
+
+/// A chunk's water's faces as quads, merged by surface and shape: one
+/// wherever a block of water meets a block `meets` picks, as high as it
+/// stands; and where it meets lower water across the way up, the strip of
+/// its side above that water's top. `blocks` gives each block, and how full
+/// it is, from one before the chunk's corner to one past its far side.
 pub(super) fn water_quads(
-    block: &dyn Fn([i32; 3]) -> BlockId,
+    (block, fill): (&dyn Fn([i32; 3]) -> BlockId, &dyn Fn([i32; 3]) -> Fill),
     faces: &[BlockFaces],
     meets: impl Fn(BlockId) -> bool,
 ) -> Vec<[u32; 2]> {
     let side = CHUNK as usize;
     let mut quads = Vec::new();
     let mut mask = vec![0u32; side * side];
+    let water = |p: [i32; 3]| is_water(faces, block(p)).then(|| Water::of(fill(p)).height());
     for (facing, &(axis, out, u, v)) in AXES.iter().enumerate() {
         for layer in 0..side {
             for j in 0..side {
                 for i in 0..side {
                     let mut p = [0i32; 3];
                     (p[axis], p[u], p[v]) = (layer as i32, i as i32, j as i32);
-                    let id = block(p);
+                    let Some((height, up)) = water(p) else { continue };
                     let mut beyond = p;
                     beyond[axis] += if out { 1 } else { -1 };
-                    if is_water(faces, id) && !is_water(faces, block(beyond)) && meets(block(beyond)) {
-                        mask[j * side + i] = u32::from(surface(faces, id, facing)) + 1;
-                    }
+                    // How far its corners on its lower side along the way up are raised and on its upper side lowered.
+                    let shape = match water(beyond) {
+                        Some((lower, its)) => match up.or(its) {
+                            Some(up) if up / 2 != axis && lower < height => Some((lower, 16 - height, Some(up))),
+                            _ => None,
+                        },
+                        None if meets(block(beyond)) => match up {
+                            Some(up) if facing == up ^ 1 => Some((0, 0, None)),
+                            Some(up) => Some((0, 16 - height, Some(up))),
+                            None => Some((0, 0, None)),
+                        },
+                        None => None,
+                    };
+                    let Some((rise, drop, up)) = shape else { continue };
+                    let look = u32::from(surface(faces, block(p), facing));
+                    let up = up.filter(|_| rise > 0 || drop > 0);
+                    // A side moved at its top or foot is a block high: merged across the way up, it would leave gaps.
+                    let across = match up {
+                        Some(up) if up / 2 != axis => (p[up / 2] + 1) as u32,
+                        _ => 0,
+                    };
+                    let shaped = u32::from(rise) << 12 | u32::from(drop) << 8 | (up.unwrap_or(7) as u32) << 16;
+                    mask[j * side + i] = (look | shaped | across << 19) + 1;
                 }
             }
-            for (i, j, w, h, look) in merge(&mut mask, side) {
+            for (i, j, w, h, key) in merge(&mut mask, side) {
                 let mut at = [0u32; 3];
                 (at[axis], at[u], at[v]) = (layer as u32, i as u32, j as u32);
-                quads.push(pack(at, [w as u32, h as u32], facing, look as u8, [3; 4]));
+                let [first, _] = pack(at, [w as u32, h as u32], facing, key as u8, [0; 4]);
+                quads.push([first | ((key >> 16) & 7) << 28, key & 0xFFFF]);
             }
         }
     }
@@ -324,6 +376,34 @@ mod tests {
         let shore = mesh_chunk(&sea, [0, 0, 0], &faces);
         assert_eq!(shore.buckets[1] - shore.buckets[0], 1, "one quad facing the water");
         assert_eq!(shore.water().1, 0);
+    }
+
+    #[test]
+    fn flowing_water_stands_as_high_as_it_flows_and_shows_its_side_over_lower_water() {
+        // On a floor, a source and then water run out from it, seven and six eighths of a block high.
+        let mut map = BlockMap::default();
+        for x in 0..8 {
+            map.set([x, 0, 1], 1);
+        }
+        map.set([2, 1, 1], 2);
+        map.set_cell([3, 1, 1], 2, Water::Flowing { level: 7, up: 2 }.fill());
+        map.set_cell([4, 1, 1], 2, Water::Flowing { level: 6, up: 2 }.fill());
+        let faces = [BlockFaces::default(), BlockFaces::new(1, 1, 1), BlockFaces::water(5)];
+        let mesh = mesh_chunk(&map, [0, 0, 0], &faces);
+        let (first, _) = mesh.water();
+        let water = &mesh.quads[first as usize..];
+        let shape = |x: u32, facing: usize| {
+            let found = water.iter().filter(|&&q| unpack(q).0[0] == x && unpack(q).2 == facing).collect::<Vec<_>>();
+            assert_eq!(found.len(), 1, "one face at {x} facing {facing}");
+            water_shape(*found[0])
+        };
+        // Their tops lowered by what they lack; the source's whole.
+        assert_eq!([2, 3, 4].map(|x| shape(x, 2)), [(0, 0, None), (0, 2, Some(2)), (0, 4, Some(2))]);
+        // Each side towards lower water a strip from its top down to that water's; the last's down to its foot.
+        assert_eq!([2, 3, 4].map(|x| shape(x, 0)), [(14, 0, Some(2)), (12, 2, Some(2)), (0, 4, Some(2))]);
+        // Its sides along z each a block high, their tops lowered as they stand.
+        assert_eq!(shape(3, 4), (0, 2, Some(2)));
+        assert_eq!(unpack(*water.iter().find(|&&q| unpack(q).0 == [3, 1, 1] && unpack(q).2 == 4).unwrap()).1, [1, 1]);
     }
 
     #[test]

@@ -28,7 +28,7 @@
 
 use super::{
     BlockFaces, BlockMap,
-    chunk::{AIR, BlockId, CHUNK, Fill, depth_of, fill_of},
+    chunk::{AIR, BlockId, CHUNK, FULL, Fill, depth_of, fill_of},
     is_ground, is_water,
     mesh::{ChunkMesh, FACINGS},
 };
@@ -290,7 +290,8 @@ pub fn mesh_chunk(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces]) -> ChunkM
     let count = out.quads.len() as u32;
     out.buckets = [0, count, count, count, count, count, count];
     if map.chunk(key).is_some_and(|chunk| chunk.may_hold(|block| is_water(faces, block))) {
-        out.quads.extend(super::mesh::water_quads(&|at| padded.block(at), faces, |_| true));
+        let fills = super::mesh::fills(map, key);
+        out.quads.extend(super::mesh::water_quads((&|at| padded.block(at), &fills), faces, |_| true));
     }
     out
 }
@@ -335,7 +336,8 @@ pub fn ball(
                 let water = is_water(faces, now);
                 let depth = if water { -1.0 } else { depth_of(fill) };
                 let (block, depth) = match does {
-                    Ball::Add(kind) if inside > depth => {
+                    // Water is left as it is but where ground takes its place.
+                    Ball::Add(kind) if inside > depth && !(water && inside <= 0.0) => {
                         let ground = is_ground(faces, now);
                         (if ground || inside <= 0.0 { now } else { kind }, inside)
                     }
@@ -343,7 +345,9 @@ pub fn ball(
                     Ball::Paint(kind) if is_ground(faces, now) && inside > 0.0 && kind != AIR => (kind, depth),
                     _ => continue,
                 };
-                changes.push((at, block, fill_of(depth, block != AIR)));
+                // Water added is a source, full.
+                let fill = if is_water(faces, block) { FULL } else { fill_of(depth, block != AIR) };
+                changes.push((at, block, fill));
             }
         }
     }

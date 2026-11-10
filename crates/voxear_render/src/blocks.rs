@@ -370,17 +370,28 @@ impl Pool {
             }
             kept
         });
-        let mut changed = self.held.len() != before;
         let side = CHUNK as f32 * world.block_size;
         let near = world.meshes.iter().map(|(k, mesh)| ([0, k[0], k[1], k[2]], mesh));
-        for (key, mesh) in near.chain(world.far.iter().map(|(k, mesh)| (*k, mesh))) {
-            let key = &key;
-            if self.held.get(key).is_some_and(|held| Arc::ptr_eq(&held.mesh, mesh)) {
-                continue;
-            }
+        let held = &self.held;
+        let coming: Vec<([i32; 4], &Arc<ChunkMesh>)> = near
+            .chain(world.far.iter().map(|(k, mesh)| (*k, mesh)))
+            .filter(|(key, mesh)| !held.get(key).is_some_and(|held| Arc::ptr_eq(&held.mesh, mesh)))
+            .collect();
+        for (key, _) in &coming {
             if let Some(old) = self.held.remove(key) {
                 self.freeing.push((frame_index, old.first, old.mesh.quads.len() as u64, old.slot));
             }
+        }
+        let changed = self.held.len() != before || !coming.is_empty();
+        // Grown at once to hold every chunk coming, so those held are staged again once, not at each doubling.
+        let quads = |count: u64, held: &Held| count + held.mesh.quads.len() as u64;
+        let used = self.held.values().fold(0, quads) + self.freeing.iter().map(|freed| freed.2).sum::<u64>();
+        let wanted: u64 = coming.iter().map(|(_, mesh)| mesh.quads.len() as u64).sum();
+        if used + wanted > self.capacity {
+            self.grow(gpu, frames, wanted, stage)?;
+        }
+        for (key, mesh) in coming {
+            let key = &key;
             let Some(slot) = self.slots.alloc() else {
                 tracing::warn!("a world of blocks has more chunks than {SLOTS}; the rest are left out");
                 continue;
@@ -404,7 +415,6 @@ impl Pool {
             let margin = if self.smooth { Vec3::splat(2.0 * self.block_size * scale) } else { Vec3::ZERO };
             let bounds = [low - margin, low + Vec3::splat(side) + margin];
             self.held.insert(*key, Held { mesh: mesh.clone(), slot, first, bounds });
-            changed = true;
         }
         if changed {
             self.draws = None;

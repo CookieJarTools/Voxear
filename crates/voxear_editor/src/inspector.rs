@@ -1664,6 +1664,9 @@ impl Inspector {
         let world = &game.engine.world;
         let others_before: Vec<(Entity, ObjState)> =
             self.also.iter().filter_map(|&other| Some((other, ObjState::of(world, other)?))).collect();
+        // A world of blocks is made again from a number dragged by its label once it is let go, as one edit, not
+        // at every step of the drag.
+        crate::block_props::hold(game, renderer.as_deref_mut(), ui.is_scrubbing());
         if self.update_lists(ui, game, entity, renderer.as_deref_mut())
             || self.terrain_panel.as_ref().is_some_and(|panel| panel.update(ui, game, entity))
             || self.block_panel.as_ref().is_some_and(|panel| panel.update(ui, game, renderer.as_deref_mut(), entity))

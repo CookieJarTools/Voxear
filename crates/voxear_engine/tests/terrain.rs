@@ -240,6 +240,32 @@ fn endless_project() -> tempfile::TempDir {
 }
 
 #[test]
+fn a_generator_changed_stays_the_one_it_was_while_its_ground_is_the_same() {
+    use voxear_terrain::generate::WorldGen;
+    let dir = endless_project();
+    let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
+    let (reference, file) = ("Worlds/Hills.worldgen", dir.path().join("Worlds/Hills.worldgen"));
+    let guid = game.content.db().guid_of(reference).expect("the generator");
+    let first = game.content.world_gen(reference).expect("read");
+    let terrain = TerrainFile::parse(&std::fs::read_to_string(dir.path().join("Terrains/World.terrain")).unwrap()).unwrap();
+    let shape = game.content.terrain_shape(&terrain);
+    assert_ne!(shape, terrain.shape_hash(), "its generator's ground is part of a terrain's shape");
+    // A node moved on its graph's canvas, saved: the same ground, so the same generator to all that hold it.
+    let mut graph = first.graph().clone();
+    graph.nodes[0].at = [640.0, -80.0];
+    std::fs::write(&file, first.with_graph(graph).to_text()).unwrap();
+    assert!(!game.content.forget_world_gen(guid), "nothing to make again");
+    assert!(std::sync::Arc::ptr_eq(&first, &game.content.world_gen(reference).unwrap()));
+    assert_eq!(game.content.terrain_shape(&terrain), shape);
+    // Another seed is other ground: read again, and a terrain's kept heights are no longer its.
+    std::fs::write(&file, first.with_seed(9).to_text()).unwrap();
+    assert!(game.content.forget_world_gen(guid));
+    let second = game.content.world_gen(reference).unwrap();
+    assert_eq!((second.seed(), WorldGen::clone(&second)), (9, first.with_seed(9)));
+    assert_ne!(game.content.terrain_shape(&terrain), shape);
+}
+
+#[test]
 fn a_terrain_without_end_is_made_round_the_camera_and_follows_it() {
     use voxear_terrain::generate::{Preset, WorldGen};
     let dir = endless_project();

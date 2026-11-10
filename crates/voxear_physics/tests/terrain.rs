@@ -287,8 +287,9 @@ fn a_ball_by_a_planet_falls_towards_its_middle_and_comes_to_rest_on_its_side() {
         generate::Preset,
     };
     // A planet 30 m to its sea, smooth, its hills 4 m high, its middle at (100, 0, 0).
-    let mut hills = Preset::RollingHills.world();
+    let mut hills = Preset::RollingHills.landmass();
     hills.height = 4.0;
+    let hills = voxear_terrain::generate::WorldGen::from(hills);
     let planet = BlockPlanet { radius: 30.0 };
     let generate = BlockGenerate { caves: 0.0, planet: Some(planet), ..BlockGenerate::default() };
     let file = BlockFile { generate: Some(generate), smooth: true, ..BlockFile::default() };
@@ -309,7 +310,7 @@ fn a_ball_by_a_planet_falls_towards_its_middle_and_comes_to_rest_on_its_side() {
     }
     // Pulled along -x to the planet's side, not down: resting on its ground, about as far out as its surface.
     let at = world.get::<Transform>(ball).unwrap().position - middle;
-    let height = hills.height_round((at.normalize() * planet.radius).to_array()) - hills.sea_level;
+    let height = hills.height_round((at.normalize() * planet.radius).to_array()) - hills.sea_level();
     let surface = planet.radius + height;
     assert!(at.x > 20.0 && at.y.abs() < 8.0, "on the planet's +x side: {at}");
     assert!(

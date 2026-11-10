@@ -738,15 +738,15 @@ mod tests {
         assert_eq!(weights.surface_at(4.0, 100.0, 5.0), 0, "300 m up: no snow");
         assert_eq!(weights.surface_at(4.0, 950.0, 5.0), 1, "2850 m up: snow");
         // With a generator, a Desert surface where its world is hot and dry, and none where it is wet.
-        let world = crate::generate::WorldGen {
+        let world = crate::generate::WorldGen::from(crate::generate::Landmass {
             climate: crate::generate::Climate {
                 temperature: 25.0,
                 humidity: 0.25,
                 humidity_range: 0.3,
                 ..Default::default()
             },
-            ..crate::generate::Preset::BattlefieldPlains.world()
-        };
+            ..crate::generate::Preset::BattlefieldPlains.landmass()
+        });
         let mut desert = Surface::new(None);
         desert.cover = Cover::Rules;
         (desert.temperature, desert.humidity) = Biome::Desert.ranges();

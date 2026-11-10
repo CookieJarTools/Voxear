@@ -306,8 +306,20 @@ fn apply(layer: &Layer, padded: &mut [f32], (tx, tz): (i64, i64), spacing: f32, 
         LayerKind::Stamp { picture: reference, .. } => picture(reference),
         _ => None,
     };
-    let world = match &layer.kind {
-        LayerKind::Generate { world: Some(reference), .. } => (sources.worlds)(reference),
+    // A generator's ground over the whole padded tile, asked for at once: the bits it makes for each place alone.
+    let generated = match &layer.kind {
+        LayerKind::Generate { world: Some(reference), position } => (sources.worlds)(reference).map(|world| {
+            let places = (0..SIDE).flat_map(|j| (0..SIDE).map(move |i| (i, j)));
+            let (xs, zs): (Vec<f32>, Vec<f32>) = places
+                .map(|(i, j)| {
+                    let (_, _, x, z) = place(i, j);
+                    (x + position[0], z + position[1])
+                })
+                .unzip();
+            let mut heights = vec![0.0; xs.len()];
+            world.heights(&xs, &zs, &mut heights);
+            heights
+        }),
         _ => None,
     };
     for j in 0..SIDE {
@@ -324,8 +336,8 @@ fn apply(layer: &Layer, padded: &mut [f32], (tx, tz): (i64, i64), spacing: f32, 
                     stamp_at((x, z), *position, *rotation, *size, *falloff, stamp.as_deref())
                         .map_or((0.0, 0.0), |(grey, weight)| (grey * height, weight))
                 }
-                LayerKind::Generate { position, .. } => match &world {
-                    Some(world) => (world.height_at(x + position[0], z + position[1]), 1.0),
+                LayerKind::Generate { .. } => match &generated {
+                    Some(heights) => (heights[index], 1.0),
                     None => (0.0, 0.0),
                 },
                 LayerKind::Noise { style, scale, height, octaves, seed } => {

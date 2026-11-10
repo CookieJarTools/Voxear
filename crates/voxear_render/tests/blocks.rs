@@ -291,8 +291,9 @@ fn a_planet_drawn_smooth_is_round_its_hills_lit_on_its_sunny_side() {
     };
     let Some(mut renderer) = renderer() else { return };
     // A planet 30 m to its sea, its hills 4 m high, at the middle of the world.
-    let mut hills = Preset::RollingHills.world();
+    let mut hills = Preset::RollingHills.landmass();
     hills.height = 4.0;
+    let hills = voxear_terrain::generate::WorldGen::from(hills);
     let generate = BlockGenerate { caves: 0.0, planet: Some(BlockPlanet { radius: 30.0 }), ..BlockGenerate::default() };
     let file = BlockFile { generate: Some(generate), smooth: true, ..BlockFile::default() };
     let (looks, faces) = file.faces();

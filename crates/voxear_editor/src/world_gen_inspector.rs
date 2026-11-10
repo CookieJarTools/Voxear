@@ -1,13 +1,16 @@
-//! A World Generator in the Inspector: its preset, seed, scale, sea level
-//! and height first, which are all most worlds need; then, closed until
-//! opened, its fields, its warp, the curves that shape its ground and its
-//! crags and bumps. Picking a preset reshapes it, keeping its seed and
-//! scale; changing anything of its shape makes it a preset of its own.
-//! Each change is saved as it is made, and terrains generated from it are
-//! made again (see `editor::world_gens`).
+//! A World Generator in the Inspector. One that is a landmass and nothing
+//! more shows its preset, seed, scale, sea level and height first, which
+//! are all most worlds need; then, closed until opened, its fields, its
+//! warp, the curves that shape its ground and its crags and bumps. Picking
+//! a preset reshapes it, keeping its seed and scale; changing anything of
+//! its shape makes it a preset of its own. A generator with a graph of its
+//! own shows its seed, scale and sea level, and a row for each value its
+//! graph exposes ([`GraphFields`]). Each change is saved as it is made,
+//! and terrains generated from it are made again (see
+//! `editor::world_gens`).
 
 use voxear_core::curve::Curve;
-use voxear_terrain::generate::{Field, Preset, WorldGen, smooth};
+use voxear_terrain::generate::{Field, Landmass, Preset, Value, ValueKind, WorldGen, smooth};
 use voxear_ui::{NodeId, Ui};
 
 use crate::{
@@ -37,7 +40,7 @@ const SHAPING: [(Shaping, &str); 4] =
     [(Shaping::Coast, "Coast"), (Shaping::Inland, "Inland"), (Shaping::Relief, "Relief"), (Shaping::Peaks, "Peaks")];
 
 impl Shaping {
-    fn curve(self, world: &mut WorldGen) -> &mut Curve {
+    fn curve(self, world: &mut Landmass) -> &mut Curve {
         match self {
             Shaping::Coast => &mut world.coast,
             Shaping::Inland => &mut world.inland,
@@ -64,7 +67,7 @@ enum Which {
 }
 
 impl Which {
-    fn field(self, world: &mut WorldGen) -> &mut Field {
+    fn field(self, world: &mut Landmass) -> &mut Field {
         match self {
             Which::Continents => &mut world.continents,
             Which::Ruggedness => &mut world.ruggedness,
@@ -73,9 +76,10 @@ impl Which {
     }
 }
 
-/// A generator's fields, and the generator as they show it.
+/// The fields of a generator that is one landmass, and the landmass as
+/// they show it.
 pub struct WorldGenFields {
-    pub world: WorldGen,
+    pub world: Landmass,
     preset: NodeId,
     seed: NodeId,
     scale: NodeId,
@@ -99,7 +103,7 @@ pub struct WorldGenFields {
 }
 
 impl WorldGenFields {
-    pub fn new(ui: &mut Ui, root: NodeId, world: WorldGen) -> Self {
+    pub fn new(ui: &mut Ui, root: NodeId, world: Landmass) -> Self {
         let rows = part(ui, root, "World Generator", "sprout");
         let mut presets: Vec<&str> = Preset::ALL.iter().map(|preset| preset.name()).collect();
         presets.push("Custom");
@@ -238,6 +242,87 @@ impl WorldGenFields {
             ui.set_selected_option(self.preset, picked);
         }
         typed.then_some(WorldGenChange::Typed)
+    }
+}
+
+/// One row of a graph's exposed values: which row it is, and its field.
+enum Shown {
+    Number(usize, NodeId),
+    Choice(usize, NodeId),
+    Curve(usize, CurveField, f32),
+}
+
+/// The fields of a generator with a graph of its own, and the generator as
+/// they show it: its seed, scale and sea level, then the values its graph
+/// exposes.
+pub struct GraphFields {
+    pub world: WorldGen,
+    seed: NodeId,
+    scale: NodeId,
+    sea_level: NodeId,
+    shown: Vec<Shown>,
+}
+
+impl GraphFields {
+    pub fn new(ui: &mut Ui, root: NodeId, world: WorldGen) -> Self {
+        let rows = part(ui, root, "World Generator", "sprout");
+        let seed = number_field(ui, rows, "Seed", 0.0);
+        ui.set_text(seed, &world.seed().to_string());
+        let scale = number_field(ui, rows, "Scale", world.scale());
+        let sea_level = number_field(ui, rows, "Sea level", world.sea_level());
+        let mut shown = Vec::new();
+        let graph = world.graph();
+        for (row, exposed) in graph.exposed.iter().enumerate() {
+            let spec = graph.node(exposed.node).and_then(|node| node.kind.values().get(exposed.value));
+            let (Some(spec), Some(value)) = (spec, graph.exposed_value(row)) else { continue };
+            shown.push(match (spec.kind, value) {
+                (ValueKind::Choice(choices), Value::Choice(picked)) => {
+                    Shown::Choice(row, choice(ui, rows, &exposed.label, choices, picked))
+                }
+                (ValueKind::Curve { empty }, _) => {
+                    let field = prop(ui, rows, &exposed.label);
+                    Shown::Curve(row, CurveField::new(ui, field), empty)
+                }
+                _ => Shown::Number(row, number_field(ui, rows, &exposed.label, value.number().unwrap_or(0.0))),
+            });
+        }
+        Self { world, seed, scale, sea_level, shown }
+    }
+
+    /// Whether anything was changed this frame, the generator changed to
+    /// match; and its curves drawn as they are.
+    pub fn update(&mut self, ui: &mut Ui) -> bool {
+        let before = self.world.clone();
+        if ui.changed(self.seed)
+            && let Ok(seed) = ui.text(self.seed).trim().parse::<u32>()
+        {
+            self.world = self.world.with_seed(seed);
+        }
+        if let Some(scale) = changed_number(ui, self.scale) {
+            self.world = self.world.with_scale(scale.max(0.01));
+        }
+        if let Some(sea_level) = changed_number(ui, self.sea_level) {
+            self.world = self.world.with_sea_level(sea_level);
+        }
+        for shown in &self.shown {
+            let set = match shown {
+                Shown::Number(row, field) => changed_number(ui, *field).map(|number| (*row, Value::Number(number))),
+                Shown::Choice(row, field) => {
+                    ui.changed(*field).then(|| (*row, Value::Choice(ui.selected_option(*field))))
+                }
+                Shown::Curve(row, field, empty) => {
+                    let Some(Value::Curve(curve)) = self.world.graph().exposed_value(*row) else { continue };
+                    let dragged = field.drag(ui, &curve);
+                    let now = dragged.unwrap_or(curve);
+                    field.draw_by(ui, &now, &|t| smooth(&now, t, *empty));
+                    dragged.map(|curve| (*row, Value::Curve(curve)))
+                }
+            };
+            if let Some(world) = set.and_then(|(row, value)| self.world.with_exposed(row, value)) {
+                self.world = world;
+            }
+        }
+        self.world != before
     }
 }
 

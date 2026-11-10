@@ -273,6 +273,7 @@ impl Editor {
             }
             // Terrains generated from a world generator edited outside the editor are made again from it.
             for path in &world_gens {
+                self.generator_file_changed(path);
                 if let Some(guid) = self.game.content.db().guid_of(path)
                     && self.game.content.forget_world_gen(guid)
                 {

@@ -3200,6 +3200,125 @@ DockSpace .resizable-columns > .split-divider:active > .split-handle {
     border: 1px solid var(--vx-line);
 }
 
+/* The Generator panel: a World Generator's graph on its canvas, and beside it the ground it makes. */
+.generator-panel {
+    flex-direction: column;
+    font-size: 11px;
+}
+
+.generator-icon {
+    width: 13px;
+    height: 13px;
+    color: var(--vx-muted);
+}
+
+.generator-name {
+    margin-right: 6px;
+    color: var(--vx-text);
+    font-weight: 600;
+}
+
+.generator-split {
+    flex-direction: row;
+    align-items: stretch;
+    min-height: 0px;
+}
+
+.generator-side {
+    flex-shrink: 0;
+    width: 280px;
+    padding: 8px;
+    gap: 4px;
+    border-left: 1px solid var(--vx-line);
+    overflow: scroll;
+}
+
+/* The ground in 3D, which a drag turns and the wheel shows more or less of. */
+.generator-ground {
+    flex-direction: row;
+    justify-content: center;
+    align-items: center;
+    flex-shrink: 0;
+    height: 264px;
+    border-radius: 8px;
+    background-color: var(--vx-bg);
+}
+
+.generator-ground-image {
+    width: 256px;
+    height: 256px;
+    border-radius: 8px;
+}
+
+/* A graph's canvas: its nodes' boxes, ports and wires are drawn, and these are the labels and pictures laid over
+   them, at a font size the canvas sets as it zooms. */
+.graph-canvas {
+    min-width: 0px;
+    background-color: var(--vx-bg);
+}
+
+.graph-label {
+    white-space: nowrap;
+    pointer-events: none;
+}
+
+.graph-title {
+    color: var(--vx-text);
+    font-weight: 600;
+}
+
+.graph-port {
+    color: var(--vx-text-2);
+}
+
+.graph-detail {
+    font-family: mono;
+    color: var(--vx-muted);
+}
+
+.graph-fault {
+    color: var(--vx-danger);
+}
+
+.graph-picture {
+    position: absolute;
+    border-radius: 3px;
+    pointer-events: none;
+}
+
+.graph-notice {
+    position: absolute;
+    left: 12px;
+    top: 10px;
+    color: var(--vx-warning);
+    pointer-events: none;
+}
+
+/* A number with its unit after its field. */
+.value-with-unit {
+    flex-direction: row;
+    align-items: center;
+    gap: 5px;
+    min-width: 0px;
+}
+
+.value-with-unit > TextField {
+    flex-grow: 1;
+    min-width: 0px;
+}
+
+.value-unit {
+    flex-shrink: 0;
+    min-width: 14px;
+    font-size: 10px;
+    color: var(--vx-muted);
+}
+
+/* A node's value its generator shows as a row of its own: its label in the accent. */
+.prop.exposed > .prop-label {
+    color: var(--vx-accent);
+}
+
 /* The Profiler's Timeline: the frame's runs as bars, the one pointed at named above. */
 .profiler-view {
     margin-left: 6px;

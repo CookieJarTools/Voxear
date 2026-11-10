@@ -62,6 +62,9 @@
                 <DockPanel id="frames" title="Frame Debugger" class="dock-content">
                     <Panel name="frame-debugger-panel" class="fill frame-debugger-panel" />
                 </DockPanel>
+                <DockPanel id="generator" title="Generator" icon="sprout" class="dock-content">
+                    <Panel name="generator-panel" class="fill generator-panel" />
+                </DockPanel>
                 <DockPanel id="memory" title="Memory" class="dock-content">
                     <Panel name="memory-panel" class="fill frame-debugger-panel" />
                 </DockPanel>

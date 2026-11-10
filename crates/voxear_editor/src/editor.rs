@@ -15,6 +15,7 @@ mod drawer;
 mod framing;
 mod gun_handlings;
 mod world_gens;
+mod generators;
 mod river_water;
 mod hierarchies;
 mod importing;
@@ -85,6 +86,7 @@ use crate::{
     path_handles::PathHandles,
     fields::{self, Pick},
     frame_debugger_panel::FrameDebuggerPanel,
+    generator_panel::GeneratorPanel,
     gizmos,
     hierarchy::EditorOnly,
     hierarchy::Hierarchy,
@@ -181,6 +183,8 @@ struct Nodes {
     /// The Entities panel's content, the ECS inspector.
     entities_panel: NodeId,
     frame_debugger_panel: NodeId,
+    /// The Generator panel's content, a World Generator's graph.
+    generator_panel: NodeId,
     memory_panel: NodeId,
     audio_panel: NodeId,
     localization_panel: NodeId,
@@ -328,6 +332,11 @@ pub struct Editor {
     profiler: Profiler,
     entities: EntitiesPanel,
     frame_debugger: FrameDebuggerPanel,
+    /// The World Generator's graph open to edit, and its file, to follow it when it is renamed.
+    generator: GeneratorPanel,
+    generator_guid: Option<voxear_assets::AssetGuid>,
+    /// A World Generator changed in its Inspector by a drag still held, to save once it is let go.
+    world_gen_to_save: Option<(String, voxear_terrain::generate::WorldGen)>,
     memory_profiler: MemoryPanel,
     audio: AudioPanel,
     localization: LocalizationPanel,
@@ -499,6 +508,7 @@ impl Editor {
             profiler_panel: find(&ui, "profiler-panel"),
             entities_panel: find(&ui, "entities-panel"),
             frame_debugger_panel: find(&ui, "frame-debugger-panel"),
+            generator_panel: find(&ui, "generator-panel"),
             memory_panel: find(&ui, "memory-panel"),
             audio_panel: find(&ui, "audio-panel"),
             localization_panel: find(&ui, "localization-panel"),
@@ -554,6 +564,7 @@ impl Editor {
         let profiler = Profiler::new(&mut ui, nodes.profiler_panel);
         let entities = EntitiesPanel::new(&mut ui, nodes.entities_panel);
         let frame_debugger = FrameDebuggerPanel::new(&mut ui, nodes.frame_debugger_panel);
+        let generator = GeneratorPanel::new(&mut ui, nodes.generator_panel);
         let memory_profiler = MemoryPanel::new(&mut ui, nodes.memory_panel);
         let audio = AudioPanel::new(&mut ui, nodes.audio_panel);
         let localization = LocalizationPanel::new(&mut ui, nodes.localization_panel);
@@ -632,6 +643,9 @@ impl Editor {
             profiler,
             entities,
             frame_debugger,
+            generator,
+            generator_guid: None,
+            world_gen_to_save: None,
             memory_profiler,
             audio,
             localization,
@@ -934,6 +948,7 @@ impl Editor {
             renderer.set_clear_color(theme.base.linear_premultiplied());
             self.docs.set_dark(&mut self.ui, theme.is_dark());
             self.packages.set_dark(theme.is_dark());
+            self.generator.set_dark(theme.is_dark());
             for inspector in self.inspectors_mut() {
                 inspector.set_dark(theme.is_dark());
             }
@@ -950,6 +965,10 @@ impl Editor {
             self.update_imports(renderer);
             if let Some(action) = self.inspector.update_asset(&mut self.ui) {
                 self.asset_action(action, renderer);
+            }
+            {
+                profile_scope!("Generator");
+                self.update_generator(renderer);
             }
             self.fill_model_materials(renderer);
             self.fill_model_clips();
@@ -1201,7 +1220,8 @@ impl Editor {
     }
 
     /// Opens a file: a level or scene to edit, a prefab on its own, a script
-    /// in the code editor, and anything else in the Inspector.
+    /// in the code editor, a World Generator's graph in the Generator panel,
+    /// and anything else in the Inspector.
     fn open_item(&mut self, item: &ProjectItem, renderer: &mut Renderer) {
         match item.kind {
             ItemKind::Asset(AssetKind::Level) => self.level_action(LevelAction::Open(item.path.clone()), renderer),
@@ -1212,6 +1232,9 @@ impl Editor {
                 self.open_source(&file, 1);
             }
             ItemKind::Asset(AssetKind::InputActions) => self.show_panel("input"),
+            ItemKind::Asset(AssetKind::WorldGen) => {
+                self.open_generator(&item.path);
+            }
             _ => self.inspect_asset(item),
         }
     }
@@ -1242,7 +1265,10 @@ impl Editor {
             AssetAction::SaveGunHandling { path, handling, rebuild } => {
                 self.save_gun_handling(&path, &handling, rebuild);
             }
-            AssetAction::SaveWorldGen { path, world, rebuild } => self.save_world_gen(&path, &world, rebuild),
+            AssetAction::SaveWorldGen { path, world } => self.world_gen_edited(&path, &world),
+            AssetAction::OpenGraph(path) => {
+                self.open_generator(&path);
+            }
             AssetAction::BrowsePromptIcon { icons, slot, anchor } => self.browse_prompt_icon(&icons, slot, anchor),
             AssetAction::DropPromptIcon { icons, slot, source } => self.drop_prompt_icon(&icons, &slot, &source),
             AssetAction::BrowseGunClip { handling, field, anchor } => self.browse_gun_clip(&handling, field, anchor),
@@ -2124,6 +2150,10 @@ impl Editor {
 
     /// Saves, undoes or redoes, as a shortcut asked.
     fn run(&mut self, command: Command, renderer: &mut Renderer) {
+        // The open graph's, while its panel is the one last pressed in.
+        if self.graph_command(command) {
+            return;
+        }
         let selected = self.selected();
         match command {
             Command::Duplicate if self.duplicate_many(renderer) => {}
@@ -2350,6 +2380,16 @@ impl Editor {
             && key.state == ElementState::Pressed
             && !key.repeat
             && !self.ui.wants_keyboard()
+            && let Some(asked) = self.graph_key(&key.logical_key)
+        {
+            // Ctrl+C, Ctrl+V and Space are the open graph's while its panel was the last pressed in.
+            self.generator_key(asked);
+            return true;
+        }
+        if let WindowEvent::KeyboardInput { event: key, .. } = event
+            && key.state == ElementState::Pressed
+            && !key.repeat
+            && !self.ui.wants_keyboard()
             && let Some(picked) = self.command_for_keys(&key.logical_key)
         {
             self.palette_runs.push(picked);
@@ -2529,6 +2569,7 @@ impl Editor {
                     self.row_action_on(entity, RowAction::Add(part), renderer);
                 }
                 (PickFor::InputControl | PickFor::ActionIcon, picked) => self.pick_for_input(picked),
+                (PickFor::GraphNode, Chosen::GraphNode(place)) => self.pick_graph_node(place),
                 _ => {}
             }
         }

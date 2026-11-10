@@ -34,7 +34,7 @@ pub mod stream;
 pub mod vox;
 
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeSet, HashMap, HashSet},
     sync::Arc,
 };
 
@@ -193,6 +193,11 @@ pub struct BlockWorld {
     /// For a world without end, its coarser chunks' faces beyond its own, by
     /// level and place in that level's chunks (see `stream`): drawn alone.
     pub far: Arc<HashMap<[i32; 4], Arc<ChunkMesh>>>,
+    /// For a world without end, the chunk columns of its own made, by place
+    /// along x and z (see `stream`): past them the world goes on, so its
+    /// water shows no face towards them. `None` for a world of its blocks
+    /// alone.
+    pub columns: Option<Arc<HashSet<[i32; 2]>>>,
     pub block_size: f32,
     pub smooth: bool,
     pub cast_shadows: bool,
@@ -213,6 +218,7 @@ impl PartialEq for BlockWorld {
             && (Arc::ptr_eq(&self.meshes, &other.meshes) || self.meshes == other.meshes)
             && self.faces == other.faces
             && (Arc::ptr_eq(&self.far, &other.far) || self.far == other.far)
+            && self.columns == other.columns
             && self.block_size == other.block_size
             && self.smooth == other.smooth
             && self.cast_shadows == other.cast_shadows
@@ -238,6 +244,7 @@ impl BlockWorld {
             meshes: Arc::new(meshes),
             faces: faces.into(),
             far: Arc::default(),
+            columns: None,
             block_size,
             smooth,
             cast_shadows: true,
@@ -379,12 +386,11 @@ impl BlockWorld {
     /// Makes chunks `keys`' faces again, on every core, from the blocks as
     /// they are now.
     pub fn remesh(&mut self, keys: &[[i32; 3]]) {
-        let blocks = &self.blocks;
-        let faces = &self.faces;
-        let smooth = self.smooth;
-        let made = crate::workers::each(keys, |&key| mesh_any(blocks, key, faces, smooth));
+        let (blocks, faces, smooth) = (&self.blocks, &self.faces, self.smooth);
+        let made = |column: [i32; 2]| self.columns.as_ref().is_none_or(|made| made.contains(&column));
+        let meshed = crate::workers::each(keys, |&key| mesh_made(blocks, key, faces, smooth, &made));
         let meshes = Arc::make_mut(&mut self.meshes);
-        for (key, mesh) in keys.iter().zip(made) {
+        for (key, mesh) in keys.iter().zip(meshed) {
             if mesh.is_empty() {
                 meshes.remove(key);
             } else {
@@ -397,8 +403,10 @@ impl BlockWorld {
     /// says, every chunk's faces made again: as after its kinds of block
     /// changed how they are drawn.
     pub fn with_faces(&self, faces: &[BlockFaces], smooth: bool) -> Self {
-        let meshes = self.blocks.mesh_all(faces, smooth);
-        Self { meshes: Arc::new(meshes), faces: faces.into(), smooth, ..self.clone() }
+        let mut world = Self { meshes: Arc::default(), faces: faces.into(), smooth, ..self.clone() };
+        let keys: Vec<[i32; 3]> = world.blocks.chunks().map(|(key, _)| *key).collect();
+        world.remesh(&keys);
+        world
     }
 }
 
@@ -427,9 +435,23 @@ fn running(map: &BlockMap, faces: &[BlockFaces]) -> BTreeSet<[i32; 3]> {
 
 /// Chunk `key`'s faces in `map`, drawn smooth or not as `smooth` says.
 pub fn mesh_any(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], smooth: bool) -> ChunkMesh {
+    mesh_made(map, key, faces, smooth, &|_| true)
+}
+
+/// Chunk `key`'s faces in `map`, as [`mesh_any`] makes them, for a world
+/// without end of which only the chunk columns `made` picks, by place along
+/// x and z, are made: past the others the world goes on, so its water shows
+/// no face towards them, though no blocks are there yet.
+pub fn mesh_made(
+    map: &BlockMap,
+    key: [i32; 3],
+    faces: &[BlockFaces],
+    smooth: bool,
+    made: &dyn Fn([i32; 2]) -> bool,
+) -> ChunkMesh {
     match smooth {
-        true => smooth::mesh_chunk(map, key, faces),
-        false => mesh::mesh_chunk(map, key, faces),
+        true => smooth::mesh_made(map, key, faces, made),
+        false => mesh::mesh_made(map, key, faces, made),
     }
 }
 
@@ -548,6 +570,31 @@ mod tests {
         world.set_blocks([([5, 40, 5], AIR)]);
         assert!(!world.meshes.contains_key(&[0, 1, 0]), "let go once empty");
         assert_eq!(world.block_at([5.5, 7.5, 10.2]), ([5, 7, 10], 1));
+    }
+
+    #[test]
+    fn water_at_a_worlds_edge_shows_its_sides_but_none_towards_columns_a_world_without_end_has_not_made() {
+        // A chunk of water, alone.
+        let faces = [BlockFaces::default(), BlockFaces::new(1, 1, 1), BlockFaces::water(5)];
+        let mut map = BlockMap::default();
+        map.put_chunk([0, 0, 0], Chunk::filled(2));
+        for smooth in [false, true] {
+            // How much of the chunk's side each way its water covers.
+            let covers = |mesh: ChunkMesh| -> [u32; mesh::FACINGS] {
+                let mut area = [0; mesh::FACINGS];
+                for &quad in &mesh.quads[mesh.water().0 as usize..] {
+                    let (_, size, facing, ..) = mesh::unpack(quad);
+                    area[facing] += size[0] * size[1];
+                }
+                area
+            };
+            let whole = CHUNK * CHUNK;
+            assert_eq!(covers(mesh_any(&map, [0, 0, 0], &faces, smooth)), [whole; 6], "at the world's edge");
+            let alone = mesh_made(&map, [0, 0, 0], &faces, smooth, &|column| column == [0, 0]);
+            assert_eq!(covers(alone), [0, 0, whole, whole, 0, 0], "its own column made alone");
+            let beside = mesh_made(&map, [0, 0, 0], &faces, smooth, &|column| column == [0, 0] || column == [1, 0]);
+            assert_eq!(covers(beside), [whole, 0, whole, whole, 0, 0], "towards air in a column made");
+        }
     }
 
     #[test]

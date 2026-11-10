@@ -19,6 +19,9 @@
 //! only where it meets air, merged by surface, and are kept after the
 //! ground's quads, every way they face together, to be drawn apart; they are
 //! no triangles, so nothing stands on water and the GI's rays pass through.
+//! In a world without end, none faces a chunk column not made (see
+//! `stream`): the world goes on there, and a sea would show walls of water
+//! where its rings of chunks meet.
 //! Flowing water stands lower than its block (see `flow`): its top lower,
 //! its sides only as high as it stands, and where it meets lower water, the
 //! strip of its side between their tops. Such a quad keeps in place of its
@@ -94,6 +97,13 @@ const PADDED: usize = CHUNK as usize + 2;
 /// Chunk `key`'s faces in `map`, each block's faces drawn with the
 /// surfaces `faces` gives it (its top, sides and bottom), by its number.
 pub fn mesh_chunk(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces]) -> ChunkMesh {
+    mesh_made(map, key, faces, &|_| true)
+}
+
+/// Chunk `key`'s faces in `map`, as [`mesh_chunk`] makes them, where only
+/// the chunk columns `made` picks, by place along x and z, are made: past
+/// the others the world goes on, so its water shows no face towards them.
+pub fn mesh_made(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], made: &dyn Fn([i32; 2]) -> bool) -> ChunkMesh {
     let Some(chunk) = map.chunk(key) else { return ChunkMesh::default() };
     if chunk.is_air() || map.buried(key, faces) {
         return ChunkMesh::default();
@@ -176,7 +186,8 @@ pub fn mesh_chunk(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces]) -> ChunkM
     }
     mesh.buckets[FACINGS] = mesh.quads.len() as u32;
     if chunk.may_hold(|block| is_water(faces, block)) {
-        mesh.quads.extend(water_quads((&block, &fills(map, key)), faces, |beyond| beyond == AIR));
+        let made = held(key, made);
+        mesh.quads.extend(water_quads((&block, &fills(map, key)), faces, |at, beyond| beyond == AIR && made(at)));
     }
     mesh.sights = super::sight::sights(chunk, |block| !is_ground(faces, block));
     mesh
@@ -205,6 +216,16 @@ pub(super) fn fills(map: &BlockMap, key: [i32; 3]) -> impl Fn([i32; 3]) -> Fill 
     }
 }
 
+/// Whether the block at `at` from chunk `key`'s corner is in a chunk
+/// column `made` picks, or in the chunk's own.
+pub(super) fn held<'a>(key: [i32; 3], made: &'a dyn Fn([i32; 2]) -> bool) -> impl Fn([i32; 3]) -> bool + 'a {
+    let side = CHUNK as i32;
+    move |at: [i32; 3]| {
+        let column = [at[0].div_euclid(side), at[2].div_euclid(side)];
+        column == [0, 0] || made([key[0] + column[0], key[2] + column[1]])
+    }
+}
+
 /// A water quad's shape: how far its corners on its block's lower side
 /// along the way up are raised and those on its upper side lowered, in
 /// sixteenths of a block, and the way up (a facing), where any is moved.
@@ -214,14 +235,15 @@ pub fn water_shape(quad: [u32; 2]) -> (u8, u8, Option<usize>) {
 }
 
 /// A chunk's water's faces as quads, merged by surface and shape: one
-/// wherever a block of water meets a block `meets` picks, as high as it
-/// stands; and where it meets lower water across the way up, the strip of
-/// its side above that water's top. `blocks` gives each block, and how full
-/// it is, from one before the chunk's corner to one past its far side.
+/// wherever a block of water meets a block `meets` picks, by where it is
+/// from the chunk's corner and which block, as high as it stands; and where
+/// it meets lower water across the way up, the strip of its side above that
+/// water's top. `blocks` gives each block, and how full it is, from one
+/// before the chunk's corner to one past its far side.
 pub(super) fn water_quads(
     (block, fill): (&dyn Fn([i32; 3]) -> BlockId, &dyn Fn([i32; 3]) -> Fill),
     faces: &[BlockFaces],
-    meets: impl Fn(BlockId) -> bool,
+    meets: impl Fn([i32; 3], BlockId) -> bool,
 ) -> Vec<[u32; 2]> {
     let side = CHUNK as usize;
     let mut quads = Vec::new();
@@ -242,7 +264,7 @@ pub(super) fn water_quads(
                             Some(up) if up / 2 != axis && lower < height => Some((lower, 16 - height, Some(up))),
                             _ => None,
                         },
-                        None if meets(block(beyond)) => match up {
+                        None if meets(beyond, block(beyond)) => match up {
                             Some(up) if facing == up ^ 1 => Some((0, 0, None)),
                             Some(up) => Some((0, 16 - height, Some(up))),
                             None => Some((0, 0, None)),

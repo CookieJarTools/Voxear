@@ -1690,8 +1690,15 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     the editor's water running out and undone with it. Buoyancy pushes against the pull where a body is, as strongly
     as it pulls (towards a planet's middle near one, as physics pulls), reading how deep it is along the water's own
     up (`BlockWorld::water_depth`), so things float on a planet's sides; tested with a ball floating out from a
-    planet's middle and one sinking to its stone. Not done: the view fogged from in water blocks; scripts' `Water`
-    finding a planet's water off its top.
+    planet's middle and one sinking to its stone. In a world without end, water shows no face towards a chunk
+    column not made (`BlockWorld::columns`, `blocks::mesh_made`): a coarse column is meshed with only itself made,
+    near chunks with the near columns, and the water beside columns let go is meshed again, so a sea shows no walls
+    where its rings meet; every level's sea stands where the finest level's does, a coarse column's top block of it
+    only as full as that, in eighths (a flowing fill; coarse blocks never flow), so the rings meet without steps.
+    Tests: a streamed sea, cubes and smooth, with no water faces on its columns' sides towards columns not made and
+    every level's top as high, water put in the air showing every side, a chunk of water showing its sides at a
+    world's edge. Not done: the view fogged from in water blocks; scripts' `Water` finding a planet's water off its
+    top.
 - **Smooth voxel terrain, flat and planets**, in parts: smooth ground you can see, stand on, generate and build on;
   planets with their own gravity; a floating origin.
   - ~~**Voxel Terrain:**~~ done: a Block World drawn smooth (`BlockFile::smooth`, `BlockWorld::smooth`). Each chunk

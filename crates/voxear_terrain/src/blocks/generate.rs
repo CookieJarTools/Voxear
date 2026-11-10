@@ -9,7 +9,9 @@
 //! and bottom blocks), but where a kind of block's cover takes its climate
 //! and height (`file::BlockCover`), that kind lies on top instead. Where it
 //! has a sea block, the open air below its generator's sea level is filled
-//! with it, as water is (caves under the ground stay dry). Every
+//! with it, as water is (caves under the ground stay dry); coarser levels'
+//! sea stands where the finest level's does, its top block only as full as
+//! that, in eighths, so rings of chunks meet without steps. Every
 //! chunk is made apart, on every core, from where its blocks are alone, so
 //! the same ground comes from the same file anywhere.
 //!
@@ -24,6 +26,7 @@ use super::{
     BlockMap,
     chunk::{AIR, BlockId, CHUNK, Chunk, fill_of},
     file::BlockFile,
+    flow::Water,
 };
 use crate::{generate::WorldGen, noise::gradient3};
 
@@ -200,10 +203,12 @@ pub fn column_chunks(
     }
     let push = generate.overhangs.max(0.0) / size;
     let coarse = BlockGenerate { caves: if level == 0 { generate.caves } else { 0.0 }, ..generate.clone() };
-    // The sea's top, in this level's blocks, where it has a sea.
+    // The sea's top, in this level's blocks, where it has a sea: where the finest level's blocks put it, so every
+    // level's sea stands as high and none shows a step where its rings meet.
     let sea = known(generate.sea);
-    let sea_level = if sea == AIR { f32::MIN } else { world.sea_level / size };
-    let highest = columns.iter().map(|(_, c)| c.surface).fold(f32::MIN, f32::max).max(sea_level) + push + 1.0;
+    let finest = (world.sea_level / file.block_size.max(0.01) - 0.5).ceil();
+    let sea_top = if sea == AIR { f32::MIN } else { finest / scale };
+    let highest = columns.iter().map(|(_, c)| c.surface).fold(f32::MIN, f32::max).max(sea_top) + push + 1.0;
     let low = generate.bottom.div_euclid(scale as i32);
     let mut chunks: Vec<([i32; 3], Chunk)> = Vec::new();
     let (low_key, high_key) = (low.div_euclid(side), (highest.ceil() as i32).div_euclid(side));
@@ -220,10 +225,17 @@ pub fn column_chunks(
                 let depth = column.surface - middle[1];
                 let place = middle.map(|v| v * size);
                 let (block, depth, open) = cell_at(column, depth, place, size, &coarse, push, seed, f32::INFINITY);
-                let block = if open && middle[1] < sea_level { sea } else { block };
+                // How many eighths of the block the sea fills: a coarser level's top block of it only partly.
+                let eighths = ((sea_top - y as f32).min(1.0) * 8.0).round();
+                let wet = open && eighths >= 1.0;
+                let block = if wet { sea } else { block };
                 let (lx, lz) = ((x - cx * side) as u32, (z - cz * side) as u32);
-                // Drawn smooth, the air a block from the surface keeps how far it is from it too; the sea, none.
-                if file.smooth && (sea == AIR || block != sea) && (block != AIR || depth > -1.0) {
+                if wet && eighths < 8.0 {
+                    // Kept as flowing water keeps how high it stands; a coarse level's blocks never flow.
+                    chunk.set_cell(lx, ly as u32, lz, sea, Water::Flowing { level: eighths as u8, up: 2 }.fill());
+                    any = true;
+                } else if file.smooth && !wet && (block != AIR || depth > -1.0) {
+                    // Drawn smooth, the air a block from the surface keeps how far it is from it too; the sea, none.
                     chunk.set_cell(lx, ly as u32, lz, block, fill_of(depth, block != AIR));
                     any = true;
                 } else if block != AIR {

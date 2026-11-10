@@ -10,6 +10,11 @@
 //! columns are left out where the four finer columns under each are made,
 //! so near and far never both draw the same ground, and the coarse ground
 //! shows until the fine is made.
+//!
+//! Where a chunk column's neighbours are not made, near or coarse, its
+//! blocks meet no blocks there; its ground's faces show as cliffs, hidden
+//! by the ground beside them, but its water shows none (see
+//! `BlockWorld::columns`), or a sea would be cut by walls of water.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -27,7 +32,7 @@ use super::{
     file::BlockFile,
     generate::{BlockGenerate, column_chunks},
     mesh::ChunkMesh,
-    mesh_any,
+    mesh_made,
 };
 use crate::generate::WorldGen;
 
@@ -170,6 +175,7 @@ impl BlockStreamer {
             }
             *base = Arc::new(BlockMap::default());
             *world = BlockWorld::made(BlockMap::default(), &making.faces, making.file.block_size, making.file.smooth);
+            world.columns = Some(Arc::default());
             (self.near, self.coarse, self.asked) = (HashSet::new(), HashMap::new(), HashSet::new());
             self.number = self.latest.fetch_add(1, Ordering::AcqRel) + 1;
             self.making = Some(Arc::new(making));
@@ -219,6 +225,7 @@ impl BlockStreamer {
                 !mine
             });
             theirs.apply(blocks);
+            world.columns = Some(Arc::new(self.near.clone()));
             let mut keys: Vec<[i32; 3]> = Vec::new();
             for at in &came {
                 for dz in -1..=1 {
@@ -255,9 +262,22 @@ impl BlockStreamer {
                 made.put_chunk(key, Chunk::filled(super::chunk::AIR));
                 meshes.remove(&key);
             }
-            for at in gone {
-                self.near.remove(&at);
+            for at in &gone {
+                self.near.remove(at);
             }
+            // Water beside them made again: the world goes on past it now.
+            world.columns = Some(Arc::new(self.near.clone()));
+            let beside = |key: &[i32; 3]| {
+                [[1, 0], [-1, 0], [0, 1], [0, -1]].iter().any(|[dx, dz]| gone.contains(&[key[0] + dx, key[2] + dz]))
+            };
+            let faces = &world.faces;
+            let wet: Vec<[i32; 3]> = world
+                .blocks
+                .chunks()
+                .filter(|(key, chunk)| beside(key) && chunk.may_hold(|block| super::is_water(faces, block)))
+                .map(|(key, _)| *key)
+                .collect();
+            world.remesh(&wet);
             changed = true;
         }
         self.coarse.retain(|(level, at), _| windows.get(*level as usize).is_some_and(|window| window.contains(*at)));
@@ -288,7 +308,7 @@ impl BlockStreamer {
             crate::workers::spawn(move || {
                 if latest.load(Ordering::Acquire) == number {
                     let chunks = column_chunks(&making.file, &making.generate, &making.world, level, at, None);
-                    // A coarse column's faces made here, the columns beside it taken as air.
+                    // A coarse column's faces made here, alone: the columns beside it not made.
                     let meshes = if level == 0 {
                         Vec::new()
                     } else {
@@ -298,7 +318,10 @@ impl BlockStreamer {
                         }
                         chunks
                             .iter()
-                            .map(|(key, _)| (*key, mesh_any(&alone, *key, &making.faces, making.file.smooth)))
+                            .map(|(key, _)| {
+                                let mesh = mesh_made(&alone, *key, &making.faces, making.file.smooth, &|c| c == at);
+                                (*key, mesh)
+                            })
                             .collect()
                     };
                     let _ = send.send(Finished { number, level, at, chunks, meshes });
@@ -351,7 +374,10 @@ pub fn all_changes(base: &BlockMap, blocks: &BlockMap, pending: &BlockEdits) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{blocks::file::Ground, generate::Preset};
+    use crate::{
+        blocks::file::Ground,
+        generate::{Preset, WorldGen},
+    };
 
     fn making() -> BlockMaking {
         let file = BlockFile {
@@ -368,6 +394,127 @@ mod tests {
         let (_, faces) = file.faces();
         let generate = file.generate.clone().unwrap();
         BlockMaking { file, generate, world: Arc::new(Preset::RollingHills.world()), faces: faces.into() }
+    }
+
+    /// Brings `world` round `at` and waits until every column is made.
+    fn settle(
+        streamer: &mut BlockStreamer,
+        world: &mut BlockWorld,
+        (base, pending): (&mut Arc<BlockMap>, &mut Arc<BlockEdits>),
+        making: &BlockMaking,
+        at: [f32; 2],
+    ) {
+        for _ in 0..2000 {
+            streamer.update(world, base, pending, making.clone(), (100.0, 600.0), at);
+            if streamer.settled() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        panic!("never settled");
+    }
+
+    #[test]
+    fn a_streamed_sea_shows_no_walls_of_water_where_its_columns_meet_but_water_meeting_air_shows_its_sides() {
+        use crate::blocks::{
+            chunk::{AIR, BlockId},
+            file::BlockKind,
+            mesh::{FACINGS, unpack, water_shape},
+        };
+        // A sea over the whole world, its floor about 12 m under it, made of cubes and smooth: 3 m up, so the
+        // finest level's 2 m blocks put its top at 2 m, and coarser ones' would put it elsewhere, whole.
+        for smooth in [false, true] {
+            let mut making = making();
+            making.file.smooth = smooth;
+            making.file.blocks.push(BlockKind { water: true, ..BlockKind::colored("Water", [0.04, 0.46, 0.33]) });
+            let water = making.file.blocks.len() as BlockId;
+            making.generate.sea = water;
+            making.file.generate = Some(making.generate.clone());
+            making.faces = making.file.faces().1.into();
+            let flat = voxear_core::curve::Curve::flat(-0.1);
+            making.world = Arc::new(WorldGen { coast: flat, sea_level: 3.0, ..Preset::RollingHills.world() });
+            let mut world = BlockWorld::made(BlockMap::default(), &making.faces, 2.0, smooth);
+            let (mut base, mut pending) = (Arc::new(BlockMap::default()), Arc::new(BlockEdits::default()));
+            let mut streamer = BlockStreamer::default();
+            settle(&mut streamer, &mut world, (&mut base, &mut pending), &making, [10.0, 10.0]);
+            // Each water quad of a chunk on a side of its column: by the way it faces, the column beside it.
+            let on_sides = |mesh: &ChunkMesh| -> Vec<(usize, [i32; 2])> {
+                let (first, _) = mesh.water();
+                let last = CHUNK - 1;
+                mesh.quads[first as usize..]
+                    .iter()
+                    .map(|&quad| unpack(quad))
+                    .filter_map(|(at, _, facing, ..)| match facing {
+                        0 if at[0] == last => Some((facing, [1, 0])),
+                        1 if at[0] == 0 => Some((facing, [-1, 0])),
+                        4 if at[2] == last => Some((facing, [0, 1])),
+                        5 if at[2] == 0 => Some((facing, [0, -1])),
+                        _ => None,
+                    })
+                    .collect()
+            };
+            let tops = |mesh: &ChunkMesh| mesh.quads[mesh.water().0 as usize..].iter().any(|&q| unpack(q).2 == 2);
+            // Near: none towards a column not made, past the window's edge.
+            assert!(world.meshes.values().any(|mesh| tops(mesh)), "the sea's top near (smooth: {smooth})");
+            let mut edge = 0;
+            for (key, mesh) in world.meshes.iter() {
+                for (facing, [dx, dz]) in on_sides(mesh) {
+                    let beside = [key[0] + dx, key[2] + dz];
+                    assert!(
+                        streamer.near.contains(&beside),
+                        "a wall of water at {key:?} facing {facing} (smooth: {smooth})"
+                    );
+                }
+                let all = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+                edge += usize::from(all.iter().any(|[dx, dz]| !streamer.near.contains(&[key[0] + dx, key[2] + dz])));
+            }
+            assert!(edge > 0, "chunks at the window's edge");
+            // Coarse: none on any side of a column, every column made alone.
+            assert!(world.far.values().any(|mesh| tops(mesh)), "the sea's top far (smooth: {smooth})");
+            for (key, mesh) in world.far.iter() {
+                assert_eq!(on_sides(mesh), [], "walls of water on coarse chunk {key:?} (smooth: {smooth})");
+            }
+            // Every level's sea stands as high, so none shows a step where they meet.
+            let near = world.meshes.iter().map(|(key, mesh)| (0, key[1], &**mesh));
+            let far = world.far.iter().map(|(key, mesh)| (key[0], key[2], &**mesh));
+            let mut levels = HashSet::new();
+            for (level, cy, mesh) in near.chain(far) {
+                for &quad in &mesh.quads[mesh.water().0 as usize..] {
+                    let ((at, _, facing, ..), (_, drop, _)) = (unpack(quad), water_shape(quad));
+                    if facing == 2 {
+                        let top = (cy * CHUNK as i32 + at[1] as i32 + 1) as f32 - f32::from(drop) / 16.0;
+                        assert_eq!(top * 2.0 * (1 << level) as f32, 2.0, "level {level}'s sea (smooth: {smooth})");
+                        levels.insert(level);
+                    }
+                }
+            }
+            assert!(levels.len() >= 4, "{levels:?}");
+            // In a sea of cubes water meets air only at its top: no side shows anywhere.
+            if !smooth {
+                let sides = |mesh: &ChunkMesh| {
+                    mesh.quads[mesh.water().0 as usize..].iter().filter(|&&q| ![2, 3].contains(&unpack(q).2)).count()
+                };
+                assert_eq!(world.meshes.values().chain(world.far.values()).map(|mesh| sides(mesh)).sum::<usize>(), 0);
+            }
+            // A block of water put in the air shows every side, though the world goes on.
+            let middle = [5 * CHUNK as i32 / 2, 30, 5 * CHUNK as i32 / 2];
+            assert_eq!(world.blocks.get(middle), AIR);
+            world.set_blocks([(middle, water)]);
+            let faces_of = |world: &BlockWorld, at: [i32; 3]| -> Vec<usize> {
+                let (key, local) = BlockMap::chunk_of(at);
+                let mesh = &world.meshes[&key];
+                let quads = mesh.quads[mesh.water().0 as usize..].iter().map(|&q| unpack(q));
+                quads.filter(|q| q.0 == local).map(|q| q.2).collect()
+            };
+            assert_eq!(faces_of(&world, middle), (0..FACINGS).collect::<Vec<_>>(), "smooth: {smooth}");
+            // On a column's side: its side towards the column beside it, made; none past the window's edge.
+            let (_, column) = streamer.near.iter().map(|at| (at[0], *at)).max().unwrap();
+            let edge = [column[0] * CHUNK as i32 + CHUNK as i32 - 1, 30, column[1] * CHUNK as i32 + 3];
+            let inner = [edge[0] - CHUNK as i32, edge[1], edge[2]];
+            world.set_blocks([(inner, water), (edge, water)]);
+            assert!(faces_of(&world, inner).contains(&0), "towards the column beside it (smooth: {smooth})");
+            assert!(!faces_of(&world, edge).contains(&0), "past the window's edge (smooth: {smooth})");
+        }
     }
 
     #[test]
@@ -395,21 +542,7 @@ mod tests {
         changed.set([5, 200, 5], 3);
         Arc::make_mut(&mut pending).chunks.extend(BlockEdits::between(&BlockMap::default(), &changed).chunks);
         let mut streamer = BlockStreamer::default();
-        let settle = |streamer: &mut BlockStreamer,
-                      world: &mut BlockWorld,
-                      base: &mut Arc<BlockMap>,
-                      pending: &mut Arc<BlockEdits>,
-                      at: [f32; 2]| {
-            for _ in 0..2000 {
-                streamer.update(world, base, pending, making.clone(), (100.0, 600.0), at);
-                if streamer.settled() {
-                    return;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(2));
-            }
-            panic!("never settled");
-        };
-        settle(&mut streamer, &mut world, &mut base, &mut pending, [10.0, 10.0]);
+        settle(&mut streamer, &mut world, (&mut base, &mut pending), &making, [10.0, 10.0]);
         assert_eq!(world.blocks.get([5, 200, 5]), 3, "the kept change made as its column came");
         assert!(pending.is_empty());
         assert!(!world.meshes.is_empty() && !world.far.is_empty(), "near chunks drawn, and coarse ones beyond");
@@ -418,12 +551,12 @@ mod tests {
         let height = making.world.height_at(41.0, 41.0);
         assert!(((surface + 1) as f32 * 2.0 - height).abs() <= 2.0);
         // Gone 3 km on: the old columns let go, their change kept, coarse ones of the new place round it.
-        settle(&mut streamer, &mut world, &mut base, &mut pending, [3000.0, 10.0]);
+        settle(&mut streamer, &mut world, (&mut base, &mut pending), &making, [3000.0, 10.0]);
         assert_eq!(world.blocks.get([5, 200, 5]), 0);
         assert_eq!(pending.chunks.len(), 1, "the change kept while its column is away");
         assert!(world.blocks.get([1500, 2, 5]) != 0 || world.blocks.chunks().count() > 0);
         // And back: made again with it.
-        settle(&mut streamer, &mut world, &mut base, &mut pending, [10.0, 10.0]);
+        settle(&mut streamer, &mut world, (&mut base, &mut pending), &making, [10.0, 10.0]);
         assert_eq!(world.blocks.get([5, 200, 5]), 3);
         // No coarse column draws where its four finer ones are made.
         for key in world.far.keys().filter(|k| k[0] == 1) {

@@ -64,6 +64,8 @@ Generated ground can go on **without end**: tick **Endless** under its generator
 
 Beyond its view distance, it is drawn in rings of coarser blocks, each ring's blocks twice as large as the one inside it, so mountains stand on the horizon at a fraction of the cost. A coarse ring shows the ground until the finer one inside it is made, and never where it is. Only its own blocks near the camera can be built on and stood on.
 
+A [[Block Worlds#Water|sea]] runs on across the rings unbroken: it stands as high in every ring, and its water shows no sides where they meet, nor at the edge of what is made, where the world goes on.
+
 What you build is kept as it goes out of reach and made again as it comes back, and saving keeps it all, near or away, in its `.blocks` file. In a game it is made round the camera; in the editor, round where the Scene view looks from.
 
 However far the camera goes, positions stay exact: the world's middle moves along with it (see [[Floating Origin]]), and the chunks already made stay as they were.

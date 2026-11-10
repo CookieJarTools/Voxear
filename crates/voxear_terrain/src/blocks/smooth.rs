@@ -210,6 +210,13 @@ impl Padded {
 /// surfaces `faces` gives its block of ground (its top, sides and bottom),
 /// by its number.
 pub fn mesh_chunk(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces]) -> ChunkMesh {
+    mesh_made(map, key, faces, &|_| true)
+}
+
+/// Chunk `key`'s surface in `map`, as [`mesh_chunk`] makes it, where only
+/// the chunk columns `made` picks, by place along x and z, are made: past
+/// the others the world goes on, so its water shows no face towards them.
+pub fn mesh_made(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], made: &dyn Fn([i32; 2]) -> bool) -> ChunkMesh {
     let mut out = ChunkMesh::default();
     if !map.chunk(key).is_some_and(|chunk| chunk.has_blocks()) || map.buried(key, faces) {
         return out;
@@ -290,8 +297,8 @@ pub fn mesh_chunk(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces]) -> ChunkM
     let count = out.quads.len() as u32;
     out.buckets = [0, count, count, count, count, count, count];
     if map.chunk(key).is_some_and(|chunk| chunk.may_hold(|block| is_water(faces, block))) {
-        let fills = super::mesh::fills(map, key);
-        out.quads.extend(super::mesh::water_quads((&|at| padded.block(at), &fills), faces, |_| true));
+        let (fills, made) = (super::mesh::fills(map, key), super::mesh::held(key, made));
+        out.quads.extend(super::mesh::water_quads((&|at| padded.block(at), &fills), faces, |at, _| made(at)));
     }
     out
 }

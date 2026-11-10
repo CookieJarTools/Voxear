@@ -50,7 +50,8 @@ use voxear_scene::{Destroying, Layer, Layers, Parent, Plant, PlantSet, Plants, T
 mod vehicles;
 
 use crate::{
-    BodyDesc, BodyId, CharacterDesc, CharacterId, CharacterState, JointId, JointKind, Motion, PhysicsWorld, ShapeId,
+    BodyDesc, BodyId, CharacterDesc, CharacterId, CharacterState, JointId, JointKind, Motion, PhysicsWorld, Push,
+    ShapeId,
 };
 
 /// A collider's shape.
@@ -612,6 +613,9 @@ pub struct PhysicsScene {
     plant_bodies: HashMap<BodyId, u32>,
 }
 
+/// How far from a planet's middle it pulls things, in its radii.
+pub const PLANET_REACH: f32 = 4.0;
+
 /// A terrain's bodies: which heights they were made from, where its Obj
 /// was, its layer, and for each tile's slot (see
 /// `voxear_terrain::endless::slot_of`) the tile it was made from, its body
@@ -793,11 +797,45 @@ impl PhysicsScene {
     /// where physics put them, and the step's contacts noted.
     pub fn step(&mut self, world: &mut World, dt: f32) {
         self.sync(world, dt);
+        self.pull_to_planets(world);
         self.stepped = true;
         self.world.step(dt, 1);
         self.write_back(world);
         self.write_back_vehicles(world);
         self.note_contacts();
+    }
+
+    /// Pulls each moving body near a planet (see
+    /// `voxear_terrain::blocks::BlockWorld::planet`) towards the nearest
+    /// one's middle, as strongly as the world's gravity and in place of it:
+    /// near, within `PLANET_REACH` of its radius. A body asleep is left be,
+    /// as gravity leaves it.
+    fn pull_to_planets(&mut self, world: &World) {
+        let planets: Vec<(Vec3, f32)> = world
+            .query_ref::<(&voxear_terrain::blocks::BlockWorld, &Transform, Option<&WorldTransform>)>()
+            .without::<Destroying>()
+            .into_iter()
+            .filter_map(|(blocks, local, placed)| Some((voxear_terrain::corner(local, placed), blocks.planet?)))
+            .collect();
+        if planets.is_empty() {
+            return;
+        }
+        let strength = self.gravity.length();
+        for kept in self.bodies.values() {
+            let Some(body) = kept.key.rigidbody.filter(|body| body.gravity && !body.kinematic) else { continue };
+            if !self.world.is_active(kept.body) {
+                continue;
+            }
+            let (at, _) = self.world.transform(kept.body);
+            let near = planets.iter().filter(|(middle, radius)| middle.distance(at) < radius * PLANET_REACH);
+            let Some((middle, _)) = near.min_by(|a, b| a.0.distance(at).total_cmp(&b.0.distance(at))) else {
+                continue;
+            };
+            let pull = (*middle - at).normalize_or_zero() * strength;
+            // The world's gravity still pulls it too, so the push takes that away.
+            let force = (pull - self.gravity) * body.mass.max(1e-3);
+            self.world.push(kept.body, Push::Force(force, None));
+        }
     }
 
     fn sync(&mut self, world: &World, dt: f32) {

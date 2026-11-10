@@ -192,6 +192,11 @@ impl Chunk {
         self.solid > 0
     }
 
+    /// Whether every block of it is wholly ground.
+    pub fn is_whole(&self) -> bool {
+        self.solid == CHUNK_LEN as u32 && self.fills.as_ref().is_none_or(|fills| fills.iter().all(|&f| f == FULL))
+    }
+
     /// How full each block is, in the order blocks are kept, where it keeps
     /// that: for writing it.
     pub fn fills(&self) -> Option<&[Fill]> {

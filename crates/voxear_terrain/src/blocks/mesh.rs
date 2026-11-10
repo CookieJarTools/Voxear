@@ -72,7 +72,7 @@ const PADDED: usize = CHUNK as usize + 2;
 /// surfaces `faces` gives it (its top, sides and bottom), by its number.
 pub fn mesh_chunk(map: &BlockMap, key: [i32; 3], faces: &[[u8; 3]]) -> ChunkMesh {
     let Some(chunk) = map.chunk(key) else { return ChunkMesh::default() };
-    if chunk.is_air() {
+    if chunk.is_air() || map.buried(key) {
         return ChunkMesh::default();
     }
     // The chunk's blocks and those just past it, solid or not.

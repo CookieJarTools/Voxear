@@ -135,6 +135,32 @@ pub fn fractal(style: NoiseStyle, x: f32, z: f32, octaves: u32, seed: u32) -> f3
     (sum / total).clamp(0.0, 1.0)
 }
 
+/// Fractal noise of `style` at `(x, y, z)`, 0 to 1, as [`fractal`] makes
+/// it in two dimensions: for a world generator read round a planet.
+pub fn fractal3(style: NoiseStyle, at: [f32; 3], octaves: u32, seed: u32) -> f32 {
+    let (mut sum, mut total, mut amplitude, mut frequency) = (0.0, 0.0, 1.0, 1.0);
+    let mut weight = 1.0f32;
+    for octave in 0..octaves.clamp(1, 12) {
+        let [x, y, z] = at.map(|v| v * frequency);
+        let n = gradient3(x, y, z, seed.wrapping_add(octave.wrapping_mul(0x632B_E5AB)));
+        let value = match style {
+            NoiseStyle::Fractal => n * 0.5 + 0.5,
+            NoiseStyle::Billow => n.abs(),
+            NoiseStyle::Ridged => {
+                let ridge = 1.0 - n.abs();
+                let ridge = ridge * ridge * weight;
+                weight = (ridge * 2.0).clamp(0.0, 1.0);
+                ridge
+            }
+        };
+        sum += value * amplitude;
+        total += amplitude;
+        amplitude *= 0.5;
+        frequency *= 2.0;
+    }
+    (sum / total).clamp(0.0, 1.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -271,7 +271,7 @@ fn restore(world: &mut World, bytes: &[u8]) -> anyhow::Result<i32> {
         let mut blocks = (*built).clone();
         edits.apply(&mut blocks);
         let mut remade = BlockWorld::made(blocks, &now.faces, now.block_size, now.smooth);
-        remade.cast_shadows = now.cast_shadows;
+        (remade.cast_shadows, remade.planet) = (now.cast_shadows, now.planet);
         world.insert(entity, remade);
         world.insert(entity, BuiltBlocks(built));
         found += 1;

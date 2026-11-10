@@ -297,13 +297,66 @@ fn signed(value: f32) -> f32 {
     ((value - 0.5) * 2.0 * SPREAD).clamp(-1.0, 1.0)
 }
 
-/// Ridged fractal noise at `(x, z)`, 0 to 1, as `noise::fractal` makes it,
+/// How many degrees colder a planet's poles are than its middle.
+pub const POLES_COLDER: f32 = 30.0;
+
+/// Where a world generator reads its fields: a point of its flat world, in
+/// metres along x and z, or of a round one's surface, in metres from its
+/// middle, read in three dimensions so a planet has no seams.
+#[derive(Clone, Copy, Debug)]
+enum Spot {
+    Flat(f32, f32),
+    Round([f32; 3]),
+}
+
+impl Spot {
+    /// The same spot measured in units `size` metres long.
+    fn over(self, size: f32) -> Self {
+        match self {
+            Spot::Flat(x, z) => Spot::Flat(x / size, z / size),
+            Spot::Round(at) => Spot::Round(at.map(|v| v / size)),
+        }
+    }
+
+    fn times(self, by: f32) -> Self {
+        match self {
+            Spot::Flat(x, z) => Spot::Flat(x * by, z * by),
+            Spot::Round(at) => Spot::Round(at.map(|v| v * by)),
+        }
+    }
+
+    /// Fractal noise of `style` here, 0 to 1.
+    fn fractal(self, style: NoiseStyle, octaves: u32, seed: u32) -> f32 {
+        match self {
+            Spot::Flat(x, z) => noise::fractal(style, x, z, octaves, seed),
+            Spot::Round(at) => noise::fractal3(style, at, octaves, seed),
+        }
+    }
+
+    /// Gradient noise here, about -1 to 1.
+    fn gradient(self, seed: u32) -> f32 {
+        match self {
+            Spot::Flat(x, z) => noise::gradient(x, z, seed),
+            Spot::Round([x, y, z]) => noise::gradient3(x, y, z, seed),
+        }
+    }
+
+    /// The spot moved by `bend(part)` metres along each of its axes.
+    fn bent(self, bend: impl Fn(u32) -> f32) -> Self {
+        match self {
+            Spot::Flat(x, z) => Spot::Flat(x + bend(1), z + bend(2)),
+            Spot::Round([x, y, z]) => Spot::Round([x + bend(1), y + bend(10), z + bend(2)]),
+        }
+    }
+}
+
+/// Ridged fractal noise at `spot`, 0 to 1, as `noise::fractal` makes it,
 /// but each octave's crease rounded off where the noise under it is within
 /// `soft` of its middle, so crests can be rounded.
-fn ridged(x: f32, z: f32, octaves: u32, seed: u32, soft: f32) -> f32 {
+fn ridged(spot: Spot, octaves: u32, seed: u32, soft: f32) -> f32 {
     let (mut sum, mut total, mut amplitude, mut frequency, mut weight) = (0.0, 0.0, 1.0, 1.0, 1.0f32);
     for octave in 0..octaves.clamp(1, 12) {
-        let n = noise::gradient(x * frequency, z * frequency, seed.wrapping_add(octave.wrapping_mul(0x632B_E5AB)));
+        let n = spot.times(frequency).gradient(seed.wrapping_add(octave.wrapping_mul(0x632B_E5AB)));
         // |n|, rounded into a curve within `soft` of the middle, the same as it outside.
         let crease = if n.abs() < soft { (n * n / soft + soft) * 0.5 } else { n.abs() };
         let ridge = (1.0 - crease).max(0.0);
@@ -472,10 +525,24 @@ impl WorldGen {
     /// ground `height` metres high: its temperature, in °C, and its
     /// humidity, 0 to 1.
     pub fn climate(&self, x: f32, z: f32, height: f32) -> (f32, f32) {
+        self.climate_at(Spot::Flat(x, z), height)
+    }
+
+    /// How warm and wet it is at `at` on a planet's surface, in metres from
+    /// its middle, on ground `height` metres high (see
+    /// [`WorldGen::height_round`]): as [`WorldGen::climate`] says, and up to
+    /// `POLES_COLDER` degrees colder towards its poles, along y.
+    pub fn climate_round(&self, at: [f32; 3], height: f32) -> (f32, f32) {
+        let (warmth, humidity) = self.climate_at(Spot::Round(at), height);
+        let length = at.iter().map(|v| v * v).sum::<f32>().sqrt().max(1e-6);
+        let toward_pole = at[1] / length;
+        (warmth - POLES_COLDER * toward_pole * toward_pole, humidity)
+    }
+
+    fn climate_at(&self, spot: Spot, height: f32) -> (f32, f32) {
         let climate = &self.climate;
         let size = (climate.size * self.scale.max(0.01)).max(1.0);
-        let read =
-            |part: u32| signed(noise::fractal(NoiseStyle::Fractal, x / size, z / size, 3, seed_of(self.seed, part)));
+        let read = |part: u32| signed(spot.over(size).fractal(NoiseStyle::Fractal, 3, seed_of(self.seed, part)));
         let warmth = climate.temperature + read(8) * climate.temperature_range;
         let humidity = (climate.humidity + read(9) * climate.humidity_range).clamp(0.0, 1.0);
         (climate.cooled(warmth, height - self.sea_level), humidity)
@@ -488,45 +555,59 @@ impl WorldGen {
 
     /// What it reads and makes at `(x, z)`, in metres in its own world.
     pub fn sample(&self, x: f32, z: f32) -> Sample {
-        let (mut sample, relief) = self.shaped(x, z);
+        let (mut sample, relief) = self.shaped(Spot::Flat(x, z));
         if self.erosion.strength > 0.0 && self.erosion.octaves > 0 {
             sample.height = self.eroded(x, z, sample.height);
         }
-        if self.bumps != 0.0 {
-            let scale = self.scale.max(0.01);
-            let size = 30.0 * scale;
-            let bump = signed(noise::fractal(NoiseStyle::Fractal, x / size, z / size, 4, seed_of(self.seed, 7)));
-            sample.height += self.bumps * bump * (0.3 + 0.7 * relief);
-        }
+        sample.height += self.bumped(Spot::Flat(x, z), relief);
         sample
     }
 
-    /// Its ground at `(x, z)` before water cuts it and bumps roughen it: its
+    /// The ground's height at `at` on a planet's surface, in metres from its
+    /// middle along the way out to it, its fields read round the planet so
+    /// they have no seams: as [`WorldGen::height_at`] gives it on flat
+    /// ground, but without gullies, which need the ground's slope along it.
+    pub fn height_round(&self, at: [f32; 3]) -> f32 {
+        let (sample, relief) = self.shaped(Spot::Round(at));
+        sample.height + self.bumped(Spot::Round(at), relief)
+    }
+
+    /// How far bumps raise the ground at `spot`, with `relief` there.
+    fn bumped(&self, spot: Spot, relief: f32) -> f32 {
+        if self.bumps == 0.0 {
+            return 0.0;
+        }
+        let size = 30.0 * self.scale.max(0.01);
+        let bump = signed(spot.over(size).fractal(NoiseStyle::Fractal, 4, seed_of(self.seed, 7)));
+        self.bumps * bump * (0.3 + 0.7 * relief)
+    }
+
+    /// Its ground at `spot` before water cuts it and bumps roughen it: its
     /// fields there and its height, and how much relief the ground has.
-    fn shaped(&self, x: f32, z: f32) -> (Sample, f32) {
+    fn shaped(&self, spot: Spot) -> (Sample, f32) {
         let scale = self.scale.max(0.01);
-        let fractal = |style: NoiseStyle, size: f32, octaves: u32, part: u32, (x, z): (f32, f32)| {
+        let fractal = |style: NoiseStyle, size: f32, octaves: u32, part: u32, spot: Spot| {
             let size = (size * scale).max(1.0);
-            noise::fractal(style, x / size, z / size, octaves, seed_of(self.seed, part))
+            spot.over(size).fractal(style, octaves, seed_of(self.seed, part))
         };
         // The world bent before its fields are read, the same for all of them.
-        let (wx, wz) = match self.warp.strength > 0.0 {
+        let bent = match self.warp.strength > 0.0 {
             true => {
                 let reach = self.warp.strength * scale;
-                let bend = |part: u32| signed(fractal(NoiseStyle::Fractal, self.warp.size, 3, part, (x, z))) * reach;
-                (x + bend(1), z + bend(2))
+                let bend = |part: u32| signed(fractal(NoiseStyle::Fractal, self.warp.size, 3, part, spot)) * reach;
+                spot.bent(bend)
             }
-            false => (x, z),
+            false => spot,
         };
         let read =
-            |field: Field, part: u32| signed(fractal(NoiseStyle::Fractal, field.size, field.octaves, part, (wx, wz)));
+            |field: Field, part: u32| signed(fractal(NoiseStyle::Fractal, field.size, field.octaves, part, bent));
         let continents = read(self.continents, 3);
         let ruggedness = read(self.ruggedness, 4);
         // Ridged noise runs its ridges along where the noise under it crosses its middle: long lines that wind and
         // branch, as ranges do.
         let size = (self.ridges.size * scale).max(1.0);
         let soft = (1.0 - self.sharpness.clamp(0.0, 1.0)) * 0.35;
-        let ridged = ridged(wx / size, wz / size, self.ridges.octaves, seed_of(self.seed, 5), soft);
+        let ridged = ridged(bent.over(size), self.ridges.octaves, seed_of(self.seed, 5), soft);
         let peaks = ((ridged - RIDGE_MIDDLE) * RIDGE_SPREAD).clamp(-1.0, 1.0);
         let across = (continents + 1.0) * 0.5;
         let ground = smooth(&self.coast, across, 0.0);
@@ -535,7 +616,7 @@ impl WorldGen {
         let shape = smooth(&self.peaks, (peaks + 1.0) * 0.5, 0.0);
         let mut share = ground + relief * shape;
         if self.crags > 0.0 && peaks > 0.0 {
-            let crag = fractal(NoiseStyle::Ridged, self.ridges.size / 8.0, 3, 6, (wx, wz));
+            let crag = fractal(NoiseStyle::Ridged, self.ridges.size / 8.0, 3, 6, bent);
             share += self.crags * relief * peaks * peaks * crag;
         }
         let height = self.sea_level + share * self.height;
@@ -551,7 +632,7 @@ impl WorldGen {
         let mut spacing = (self.erosion.spacing * scale).max(1.0);
         // The ground's slope round the point, from its height a little way off each way.
         let step = spacing * 0.15;
-        let at = |dx: f32, dz: f32| self.shaped(x + dx, z + dz).0.height;
+        let at = |dx: f32, dz: f32| self.shaped(Spot::Flat(x + dx, z + dz)).0.height;
         let (mut gx, mut gz) =
             ((at(step, 0.0) - at(-step, 0.0)) / (2.0 * step), (at(0.0, step) - at(0.0, -step)) / (2.0 * step));
         let mut cut = 0.0;

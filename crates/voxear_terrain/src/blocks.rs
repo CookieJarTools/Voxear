@@ -84,6 +84,14 @@ impl BlockMap {
         }
     }
 
+    /// Whether chunk `key` and the six beside it are all ground through and
+    /// through, so it has no faces to draw: as deep in a planet.
+    pub fn buried(&self, key: [i32; 3]) -> bool {
+        let whole = |key: [i32; 3]| self.chunks.get(&key).is_some_and(|chunk| chunk.is_whole());
+        let beside = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
+        whole(key) && beside.iter().all(|step| whole([0, 1, 2].map(|i| key[i] + step[i])))
+    }
+
     /// Chunk `key`, if it has blocks.
     pub fn chunk(&self, key: [i32; 3]) -> Option<&Arc<Chunk>> {
         self.chunks.get(&key)
@@ -137,6 +145,9 @@ pub struct BlockWorld {
     pub block_size: f32,
     pub smooth: bool,
     pub cast_shadows: bool,
+    /// For a planet, how far its sea is from its middle, the world's corner,
+    /// in metres: physics pulls things near it towards its middle.
+    pub planet: Option<f32>,
 }
 
 impl Component for BlockWorld {}
@@ -150,6 +161,7 @@ impl PartialEq for BlockWorld {
             && self.block_size == other.block_size
             && self.smooth == other.smooth
             && self.cast_shadows == other.cast_shadows
+            && self.planet == other.planet
     }
 }
 
@@ -171,6 +183,7 @@ impl BlockWorld {
             block_size,
             smooth,
             cast_shadows: true,
+            planet: None,
         }
     }
 

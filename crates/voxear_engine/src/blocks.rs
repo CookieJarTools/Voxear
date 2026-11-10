@@ -74,7 +74,9 @@ pub fn make(file: &BlockFile, base: &Arc<BlockMap>, edits: Option<&BlockEdits>) 
     if let Some(edits) = edits {
         edits.apply(&mut blocks);
     }
-    BlockWorld::made(blocks, &faces, file.block_size, file.smooth)
+    let mut world = BlockWorld::made(blocks, &faces, file.block_size, file.smooth);
+    world.planet = file.generate.as_ref().and_then(|generate| generate.planet).map(|planet| planet.radius);
+    world
 }
 
 /// How a world of blocks looks: each way its faces are drawn, with its

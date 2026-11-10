@@ -275,3 +275,46 @@ fn a_ball_comes_to_rest_on_a_world_drawn_smooth_where_its_surface_lies_between_b
     assert_eq!(hit.obj, entity);
     assert!((hit.point.y - 5.3).abs() < 0.01, "its surface: {}", hit.point.y);
 }
+
+#[test]
+fn a_ball_by_a_planet_falls_towards_its_middle_and_comes_to_rest_on_its_side() {
+    use voxear_terrain::{
+        blocks::{
+            BlockWorld,
+            file::BlockFile,
+            generate::{BlockGenerate, BlockPlanet},
+        },
+        generate::Preset,
+    };
+    // A planet 30 m to its sea, smooth, its hills 4 m high, its middle at (100, 0, 0).
+    let mut hills = Preset::RollingHills.world();
+    hills.height = 4.0;
+    let planet = BlockPlanet { radius: 30.0 };
+    let generate = BlockGenerate { caves: 0.0, planet: Some(planet), ..BlockGenerate::default() };
+    let file = BlockFile { generate: Some(generate), smooth: true, ..BlockFile::default() };
+    let (_, faces) = file.faces();
+    let mut blocks = BlockWorld::made(file.make_ground(Some(&hills)), &faces, 1.0, true);
+    blocks.planet = Some(planet.radius);
+    let mut world = World::new();
+    voxear_scene::register_obj_components(&mut world);
+    let middle = Vec3::new(100.0, 0.0, 0.0);
+    world.spawn((blocks, Transform::from_position(middle)));
+    // A ball 50 m out from its middle along +x: beside it, not over it.
+    let ball = world.spawn((Transform::from_position(middle + Vec3::new(50.0, 0.0, 0.0)),));
+    world.insert(ball, Collider { shape: ColliderShape::Sphere, radius: 0.5, ..Collider::default() });
+    world.insert(ball, Rigidbody { angular_drag: 2.0, drag: 0.5, ..Rigidbody::default() });
+    let mut physics = PhysicsScene::new();
+    for _ in 0..600 {
+        physics.step(&mut world, 1.0 / 60.0);
+    }
+    // Pulled along -x to the planet's side, not down: resting on its ground, about as far out as its surface.
+    let at = world.get::<Transform>(ball).unwrap().position - middle;
+    let height = hills.height_round((at.normalize() * planet.radius).to_array()) - hills.sea_level;
+    let surface = planet.radius + height;
+    assert!(at.x > 20.0 && at.y.abs() < 8.0, "on the planet's +x side: {at}");
+    assert!(
+        (at.length() - surface - 0.5).abs() < 0.6,
+        "resting on its ground, {} out for a surface {surface} out",
+        at.length()
+    );
+}

@@ -178,7 +178,7 @@ impl Padded {
 /// by its number.
 pub fn mesh_chunk(map: &BlockMap, key: [i32; 3], faces: &[[u8; 3]]) -> ChunkMesh {
     let mut out = ChunkMesh::default();
-    if !map.chunk(key).is_some_and(|chunk| chunk.has_blocks()) {
+    if !map.chunk(key).is_some_and(|chunk| chunk.has_blocks()) || map.buried(key) {
         return out;
     }
     let padded = Padded::of(map, key);

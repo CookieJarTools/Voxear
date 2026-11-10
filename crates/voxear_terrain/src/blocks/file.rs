@@ -163,7 +163,11 @@ pub struct FaceLook {
 
 impl BlockFile {
     pub fn parse(text: &str) -> Result<Self> {
-        let file: Self = toml::from_str(text)?;
+        let mut file: Self = toml::from_str(text)?;
+        // A planet is made all at once, never without end.
+        if let Some(generate) = file.generate.as_mut().filter(|generate| generate.planet.is_some()) {
+            generate.endless = None;
+        }
         ensure!(file.block_size > 0.0 && file.block_size.is_finite(), "a block is some size");
         ensure!(file.blocks.len() <= MAX_BLOCKS, "a world has at most {MAX_BLOCKS} kinds of block");
         Ok(file)
@@ -200,6 +204,10 @@ impl BlockFile {
     /// generated and the generator could be found, else flat. Blocks naming
     /// no kind it has are left out.
     pub fn make_ground(&self, generator: Option<&crate::generate::WorldGen>) -> BlockMap {
+        // A planet is round with or without its generator.
+        if let Some((generate, planet)) = self.generate.as_ref().and_then(|g| Some((g, g.planet?))) {
+            return super::generate::planet_ground(self, generate, generator, planet);
+        }
         if let (Some(generate), Some(world)) = (&self.generate, generator) {
             return super::generate::generate(self, generate, world);
         }

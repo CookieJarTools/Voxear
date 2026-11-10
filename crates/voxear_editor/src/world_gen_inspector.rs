@@ -804,11 +804,11 @@ mod tests {
 
     #[test]
     fn a_generators_preset_is_picked_among_starters_or_for_a_landmass_among_its_own() {
-        // The starters carry the presets' names, in the presets' order, and a new generator is one of them.
+        // The starters carry the presets' names, in the presets' order, with the Cave Level after them, and a
+        // new generator is one of them.
         let starters = starter_graphs();
-        assert!(
-            starters.len() == Preset::ALL.len() && starters.iter().zip(Preset::ALL).all(|(s, p)| s.name == p.name())
-        );
+        assert!(starters.iter().zip(Preset::ALL).all(|(s, p)| s.name == p.name()));
+        assert_eq!(starters[Preset::ALL.len()..].iter().map(|s| s.name).collect::<Vec<_>>(), ["Cave Level"]);
         let new = crate::project_files::new_world();
         assert_eq!(
             (presets_of(&new), new.starter(), new.seed(), new.scale()),

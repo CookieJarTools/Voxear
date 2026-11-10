@@ -201,6 +201,8 @@ pub struct GeneratorPanel {
     showing: Option<bool>,
     /// Asked of the editor outside the panel's own frame.
     pending: Vec<GeneratorEvent>,
+    /// Whether the project's cave rooms were read from their prefabs since it opened.
+    rooms_read: bool,
 }
 
 impl GeneratorPanel {
@@ -248,6 +250,7 @@ impl GeneratorPanel {
         let area = [row(ui, CENTER_X, area.center[0]), row(ui, CENTER_Z, area.center[1]), row(ui, SIZE, area.size)];
         ui.set_visible(body, false);
         Self {
+            rooms_read: false,
             hint,
             body,
             name,
@@ -407,6 +410,12 @@ impl GeneratorPanel {
             open.history.record(&open.world, None);
             (open.world, open.stale) = (world, true);
         }
+    }
+
+    /// Whether the project's cave rooms are still to be read from their prefabs, as they are once after it
+    /// opens: a prefab may have changed while it was closed.
+    pub fn rooms_to_read(&mut self) -> bool {
+        !std::mem::replace(&mut self.rooms_read, true)
     }
 
     /// What the Inspector did to a node's rows: false where the graph took no such change.

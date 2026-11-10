@@ -2,7 +2,7 @@
 //! rooms closed off from it are passed over before the GPU sees them.
 //!
 //! Each chunk notes which of its six faces see each other through its air
-//! ([`sights`]): air flooded from one face that reaches another links the
+//! and water ([`sights`]): air flooded from one face that reaches another links the
 //! two. A walk from the camera's chunk goes from chunk to chunk through
 //! those links, never back towards the camera along an axis it has moved
 //! away along, and only the chunks it reaches are drawn ([`seen`]). It is
@@ -13,7 +13,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::{
     BlockMap,
-    chunk::{AIR, CHUNK, Chunk},
+    chunk::{BlockId, CHUNK, Chunk},
 };
 
 /// Every pair of faces linked: what a chunk of air sees.
@@ -30,8 +30,9 @@ pub fn sight(a: usize, b: usize) -> u16 {
     1 << (before + b - a - 1)
 }
 
-/// Which of a chunk's faces see each other through its air.
-pub fn sights(chunk: &Chunk) -> u16 {
+/// Which of a chunk's faces see each other through its blocks that `clear`
+/// says can be seen through: air, and water.
+pub fn sights(chunk: &Chunk, clear: impl Fn(BlockId) -> bool) -> u16 {
     if !chunk.has_blocks() {
         return ALL_SIGHTS;
     }
@@ -43,7 +44,7 @@ pub fn sights(chunk: &Chunk) -> u16 {
     for start in 0..side * side * side {
         let (x, rest) = (start % side, start / side);
         let (z, y) = (rest % side, rest / side);
-        if seen[start] || chunk.get(x as u32, y as u32, z as u32) != AIR {
+        if seen[start] || !clear(chunk.get(x as u32, y as u32, z as u32)) {
             continue;
         }
         // Only air on a face can link faces.
@@ -72,7 +73,7 @@ pub fn sights(chunk: &Chunk) -> u16 {
                     let mut to = at;
                     to[axis] = next as usize;
                     let i = index(to[0], to[1], to[2]);
-                    if !seen[i] && chunk.get(to[0] as u32, to[1] as u32, to[2] as u32) == AIR {
+                    if !seen[i] && clear(chunk.get(to[0] as u32, to[1] as u32, to[2] as u32)) {
                         seen[i] = true;
                         stack.push(to);
                     }
@@ -153,11 +154,19 @@ pub fn seen(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::blocks::chunk::AIR;
+
+    /// Air alone seen through.
+    fn air(block: BlockId) -> bool {
+        block == AIR
+    }
 
     #[test]
     fn a_chunks_faces_see_each_other_through_its_air_alone() {
-        assert_eq!(sights(&Chunk::filled(AIR)), ALL_SIGHTS);
-        assert_eq!(sights(&Chunk::filled(1)), 0);
+        assert_eq!(sights(&Chunk::filled(AIR), air), ALL_SIGHTS);
+        assert_eq!(sights(&Chunk::filled(1), air), 0);
+        // A chunk of water, deep in a sea, is seen through when water is.
+        assert_eq!(sights(&Chunk::filled(2), |block| block == AIR || block == 2), ALL_SIGHTS);
         // A wall across the middle along y: its two sides' faces see along it, but not through it.
         let mut wall = Chunk::filled(AIR);
         for z in 0..CHUNK {
@@ -165,7 +174,7 @@ mod tests {
                 wall.set(x, 16, z, 1);
             }
         }
-        let found = sights(&wall);
+        let found = sights(&wall, air);
         assert_eq!(found & sight(2, 3), 0, "+y and -y are apart");
         assert_ne!(found & sight(0, 1), 0, "+x and -x see each other above and below it");
         assert_ne!(found & sight(2, 0), 0, "+y and +x see each other above it");
@@ -198,7 +207,7 @@ mod tests {
         }
         map.put_chunk([0, 1, 0], cave.clone());
         let all = |map: &BlockMap| -> HashMap<[i32; 3], u16> {
-            map.chunks().map(|(key, chunk)| (*key, sights(chunk))).collect()
+            map.chunks().map(|(key, chunk)| (*key, sights(chunk, air))).collect()
         };
         let camera = [0, 3, 0];
         let seen_now = seen(&map, &all(&map), camera, |_| true).expect("the camera among its chunks");

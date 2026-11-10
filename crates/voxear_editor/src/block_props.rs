@@ -146,18 +146,22 @@ pub enum BlockField {
     ViewDistance,
     FarDistance,
     /// The blocks its ground is made of: its top, the layers under it and
-    /// how deep they go, and the rest.
+    /// how deep they go, and the rest; and the block its generated ground's
+    /// sea is filled with.
     TopBlock,
     UnderBlock,
     UnderDepth,
     BaseBlock,
+    SeaBlock,
     /// The brush: what it does, and how many blocks across or the model it
     /// builds.
     Brush,
     BrushSize,
     Model,
-    /// The picked kind of block's name, colour and materials.
+    /// The picked kind of block's name, whether it is water, its colour
+    /// and materials.
     Name,
+    Water,
     Color,
     Material,
     Top,
@@ -187,9 +191,13 @@ pub fn props(world: &World, entity: Entity) -> Vec<Prop> {
         (BlockTool::Build, Some(file)) => {
             let mut fields = vec![F::Brush, if state.brush == BlockBrush::Model { F::Model } else { F::BrushSize }];
             if let Some(kind) = file.blocks.get(state.block) {
-                fields.extend([F::Name, F::Color, F::Material, F::Top, F::Bottom]);
-                // Covers lay blocks on generated ground.
-                if file.generate.is_some() {
+                fields.extend([F::Name, F::Water, F::Color]);
+                // Water is drawn with its colour alone.
+                if !kind.water {
+                    fields.extend([F::Material, F::Top, F::Bottom]);
+                }
+                // Covers lay blocks on generated ground; its sea, water.
+                if file.generate.is_some() && !kind.water {
                     fields.push(F::Cover);
                     if let Some(cover) = &kind.cover {
                         fields.extend([F::CoverBiome, F::TemperatureMask]);
@@ -222,7 +230,11 @@ pub fn props(world: &World, entity: Entity) -> Vec<Prop> {
                 }
                 None => fields.extend([F::GroundSize, F::GroundHeight]),
             }
-            fields.extend([F::TopBlock, F::UnderBlock, F::UnderDepth, F::BaseBlock, F::Shadows]);
+            fields.extend([F::TopBlock, F::UnderBlock, F::UnderDepth, F::BaseBlock]);
+            if file.generate.is_some() {
+                fields.push(F::SeaBlock);
+            }
+            fields.push(F::Shadows);
             fields
         }
         (BlockTool::Settings, None) => vec![F::Data, F::Shadows],
@@ -242,6 +254,7 @@ pub fn label(field: BlockField) -> &'static str {
         F::BrushSize => "Size",
         F::Model => "Model",
         F::Name => "Name",
+        F::Water => "Water",
         F::Color => "Color",
         F::Material => "Material",
         F::Top => "Top",
@@ -260,6 +273,7 @@ pub fn label(field: BlockField) -> &'static str {
         F::UnderBlock => "Under block",
         F::UnderDepth => "Under depth",
         F::BaseBlock => "Base block",
+        F::SeaBlock => "Sea block",
         F::Cover => "Cover",
         F::CoverBiome => "Biome",
         F::TemperatureMask => "Temperature",
@@ -339,6 +353,7 @@ pub fn get(game: &Game, entity: Entity, field: BlockField) -> Option<Value> {
             state.model.and_then(|guid| game.content.db().get(guid)).map_or("None".into(), |e| e.path.clone()),
         ),
         F::Name => Value::Text(kind()?.name.clone()),
+        F::Water => Value::Toggle(kind()?.water),
         F::Color => Value::Color(kind()?.color),
         F::Material => Value::Asset(path_of(game, kind()?.material.as_deref())),
         F::Top => Value::Asset(path_of(game, kind()?.top.as_deref())),
@@ -361,6 +376,7 @@ pub fn get(game: &Game, entity: Entity, field: BlockField) -> Option<Value> {
         F::UnderBlock => block_choice(file()?, file()?.ground.under),
         F::UnderDepth => Value::Number(file()?.ground.under_depth as f32),
         F::BaseBlock => block_choice(file()?, file()?.ground.bottom),
+        F::SeaBlock => block_choice(file()?, file()?.generate.as_ref()?.sea),
         F::Cover => Value::Toggle(kind()?.cover.is_some()),
         F::CoverBiome => {
             // Any, each biome, and its own ranges where they are none's.
@@ -457,6 +473,7 @@ pub fn set(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, fie
         }
         (F::Name, Value::Text(name)) if picked < file.blocks.len() => file.blocks[picked].name = name.clone(),
         (F::Color, Value::Color(color)) if picked < file.blocks.len() => file.blocks[picked].color = *color,
+        (F::Water, Value::Toggle(on)) if picked < file.blocks.len() => file.blocks[picked].water = *on,
         (F::Ground, Value::Choice(at, _)) => {
             let generate = file.generate.clone().unwrap_or_default();
             file.generate = match at {
@@ -511,6 +528,10 @@ pub fn set(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, fie
                 F::UnderBlock => file.ground.under = block,
                 _ => file.ground.bottom = block,
             }
+        }
+        (F::SeaBlock, Value::Choice(at, _)) => {
+            let Some(generate) = &mut file.generate else { return false };
+            generate.sea = (*at).min(file.blocks.len()) as BlockId;
         }
         (F::UnderDepth, v) => {
             file.ground.under_depth =
@@ -821,6 +842,9 @@ pub fn remove_block(game: &mut Game, renderer: Option<&mut Renderer>, entity: En
     };
     let ground = &mut file.ground;
     (ground.top, ground.under, ground.bottom) = (renumber(ground.top), renumber(ground.under), renumber(ground.bottom));
+    if let Some(generate) = &mut file.generate {
+        generate.sea = renumber(generate.sea);
+    }
     let state = ui_mut(&mut game.engine.world);
     state.block = state.block.min(file.blocks.len().saturating_sub(1));
     renumber_file(game, renderer, entity, file, &renumber)
@@ -849,6 +873,9 @@ pub fn move_block(game: &mut Game, renderer: Option<&mut Renderer>, entity: Enti
         move |block: BlockId| new_of.get(usize::from(block)).copied().filter(|_| block != AIR).unwrap_or(block);
     let ground = &mut file.ground;
     (ground.top, ground.under, ground.bottom) = (renumber(ground.top), renumber(ground.under), renumber(ground.bottom));
+    if let Some(generate) = &mut file.generate {
+        generate.sea = renumber(generate.sea);
+    }
     ui_mut(&mut game.engine.world).block = to;
     renumber_file(game, renderer, entity, file, &renumber)
 }

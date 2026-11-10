@@ -598,6 +598,7 @@ impl Game {
         // Before physics steps, so ground made round the camera stands things on it this frame.
         crate::terrain::stream(&mut self.engine.world, &mut self.content);
         crate::blocks::stream(&mut self.engine.world, &mut self.content);
+        crate::blocks::flow(&mut self.engine.world, delta);
         // The meshes' boxes, as the renderer has them, for the scripts that ask.
         if let Some(renderer) = renderer.as_deref() {
             crate::mesh_boxes::refresh(&mut self.engine.world, renderer);

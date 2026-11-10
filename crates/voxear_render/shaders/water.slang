@@ -9,6 +9,7 @@
 #include "glass.slang"
 #include "particle_shared.slang"
 #include "lava.slang"
+#include "block_quads.slang"
 
 // The cascades' resolution and how many there are (OCEAN_CASCADES in src/ocean.rs).
 static const uint OCEAN_N = 256;
@@ -2594,6 +2595,226 @@ FragmentOut wallFragment(WallOut input)
     if (atmosphere)
     {
         float4 haze = aerialPerspectiveAt(frame, pixel / float2(frame->viewport), length(input.world - frame->cameraPosition));
+        color = color * haze.a + haze.rgb * skyLook(frame);
+    }
+    FragmentOut o;
+    o.color = float4(color, 1.0);
+    o.velocity = motion(input.currentClip, input.previousClip);
+    return o;
+}
+
+// ---------------------------------------------------------------- Water blocks
+
+// What water drawn from a world of blocks is to keptDry: no body of its own, kept out of Dry Areas as the sea is.
+static const uint BLOCK_WATER = 0xFFFFFFFE;
+
+// A face of a world of blocks' water (src/blocks.rs, voxear_terrain::blocks::mesh): where it is, the way it faces out
+// of the water, and the world's number in the view and the surface its water is drawn with.
+struct BlockWaterOut
+{
+    float4 position : SV_Position;
+    float3 world : POSITION;
+    float3 normal : NORMAL;
+    float4 currentClip : CURRENT_CLIP;
+    float4 previousClip : PREVIOUS_CLIP;
+    nointerpolation uint2 water : WATER;
+};
+
+// A corner of a face of the water of the world push.level names (its number and one): six to a quad, its quads one
+// after another in the world's pool from push.output on. Flowing water stands lower than its block: a quad of it keeps
+// the way up from it (a facing, 7 for none) in the top bits of its first word, and in place of its corners' shading how
+// far its corners on its block's lower side along that way are raised and those on its upper side lowered, in
+// sixteenths of a block (voxear_terrain::blocks::mesh::water_shape).
+[shader("vertex")]
+BlockWaterOut blockWaterVertex(uint vertexId : SV_VertexID)
+{
+    Frame* frame = push.frame;
+    BlockWorld world = buffers()->blockWorlds[push.level - 1];
+    BlockPoint b = cubePoint(world, vertexId);
+    uint2 quad = world.quads[push.output + vertexId / 6];
+    uint up = (quad.x >> 28) & 7;
+    if (up < 6)
+    {
+        uint axis = up / 2;
+        float toward = (up & 1) == 0 ? 1.0 : -1.0;
+        int4 chunk = world.origins[quad.y >> 16];
+        float blockSize = world.blockSize * float(1u << uint(chunk.w));
+        float3 local = (b.world - world.corner) / blockSize - float3(chunk.xyz * 32);
+        uint3 block = uint3(quad.x & 31, (quad.x >> 5) & 31, (quad.x >> 10) & 31);
+        float lower = float(block[axis]) + (toward > 0.0 ? 0.0 : 1.0);
+        float raised = float((quad.y >> 12) & 15) / 16.0;
+        float lowered = float((quad.y >> 8) & 15) / 16.0;
+        local[axis] += abs(local[axis] - lower) < 0.5 ? toward * raised : -toward * lowered;
+        b.world = world.corner + (float3(chunk.xyz * 32) + local) * blockSize;
+    }
+    float4 at = float4(b.world, 1.0);
+    BlockWaterOut o;
+    o.position = transform(frame->viewProj, at);
+    o.world = b.world;
+    o.normal = b.normal;
+    o.currentClip = transform(frame->unjitteredViewProj, at);
+    o.previousClip = transform(frame->prevViewProj, at);
+    o.water = uint2(push.level - 1, b.surface);
+    return o;
+}
+
+// How far from the camera the view leaves a world of blocks' water: at each pixel, of its faces turned away from the
+// camera and in front of what stands behind them, the farthest (the pass keeps the greatest), none drawn where there
+// is none.
+[shader("fragment")]
+float blockWaterExitFragment(BlockWaterOut input) : SV_Target0
+{
+    float3 camera = push.frame->cameraPosition;
+    if (dot(camera - input.world, input.normal) > 0.0)
+    {
+        discard;
+    }
+    return length(input.world - camera);
+}
+
+// A world of blocks' water's colours, from its kind's, the base colour of the material its surface is drawn with,
+// linear: that colour as its Deep; the light through its ripples a paler one; and what a metre of it takes, more of
+// the colours it has least of, as clear water takes red first.
+struct BlockWaterLook
+{
+    float3 deep;
+    float3 scatter;
+    float3 absorb;
+};
+
+BlockWaterLook blockWaterLook(BlockWorld world, uint surface)
+{
+    uint material = world.surfaceCount > 0 ? world.surfaces[min(surface, world.surfaceCount - 1)].material : world.material;
+    float3 color = max(buffers()->materials[material].baseColor.rgb, 0.0);
+    float3 own = color / max(max(max(color.r, color.g), color.b), 1e-3);
+    BlockWaterLook look;
+    look.deep = color;
+    look.scatter = 0.75 * sqrt(color);
+    look.absorb = -log(lerp(1.0, own, 0.55)) + 0.05;
+    return look;
+}
+
+// A world of blocks' water seen through one of its faces. From the air: its top as a Pool's still water, its ripples
+// showing the sky and what stands round it, what lies under it bent and dimmed by as much water as the view goes
+// through, as far as the ground behind it or where the view leaves the water, and a line of foam where it meets the
+// ground; its sides and bottom the same, flat. From in it, its top's underside as from under the sea; its other faces
+// show what is past them.
+[shader("fragment")]
+FragmentOut blockWaterFragment(BlockWaterOut input)
+{
+    Frame* frame = push.frame;
+    if (keptDry(frame, input.world, BLOCK_WATER))
+    {
+        discard;
+    }
+    BlockWorld world = buffers()->blockWorlds[input.water.x];
+    BlockWaterLook look = blockWaterLook(world, input.water.y);
+    float3 v = normalize(frame->cameraPosition - input.world);
+    float3 face = input.normal;
+    bool level = abs(face.y) > 0.5;
+    // Ripples on its top and its underside, as a Pool's with none of the sea's swell; its sides stand still.
+    float2 slope = 0.0;
+    float variance = 0.0;
+    float folded = 1.0;
+    float3 moved = 0.0;
+    if (level)
+    {
+        addWaves(frame, input.world.xz, 0.0, 1.0, slope, variance, folded, moved);
+    }
+    float3 n = normalize(float3(-slope.x, 0.0, -slope.y) * face.y + face);
+    float slopes = sqrt(0.02 * 0.02 + 2.0 * variance);
+    if (dot(v, face) < 0.0)
+    {
+        if (face.y < 0.5)
+        {
+            discard;
+        }
+        WaterOut surface = nothing();
+        surface.position = input.position;
+        surface.world = input.world;
+        surface.rest = input.world.xz;
+        surface.currentClip = input.currentClip;
+        surface.previousClip = input.previousClip;
+        return fromBelow(frame, surface, n, v, look.deep, look.absorb, clamp(sqrt(slopes), 0.03, 1.0), slopes);
+    }
+    float3 l = -frame->sunDirection;
+    bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
+    float3 sunLight = atmosphere ? sunThroughAtmosphere(frame) : frame->sunColor;
+    float shadow = sunShadow(frame, input.world, face);
+    float3 nx = ddx(n);
+    float3 ny = ddy(n);
+    float turning = min(2.0 * 0.159 * (dot(nx, nx) + dot(ny, ny)), 0.18);
+    float alpha = sqrt(0.02 * 0.02 + 2.0 * variance + turning);
+    Surface s;
+    s.normal = n;
+    s.view = v;
+    s.roughness = clamp(sqrt(alpha), 0.03, 1.0);
+    s.diffuse = 0.0;
+    s.f0 = 0.02;
+    float nv = saturate(dot(n, v));
+    float fresnel = 0.02 + 0.98 * pow(1.0 - nv, 5.0 * exp(-2.69 * alpha)) / (1.0 + 22.7 * pow(alpha, 1.5));
+    float3 ambient = ambientLight(frame, input.world, s, sunLight, atmosphere);
+    float3 reflected = surroundingsReflection(frame, input.world, n, reflect(-v, n), s.roughness, ambient, atmosphere);
+    float2 pixel = input.position.xy;
+    float mirroredAt;
+    float4 mirrored = waterScreenReflection(frame, input.world, reflect(-v, n), s.roughness, pixel, mirroredAt);
+    reflected = lerp(reflected, mirrored.rgb, mirrored.a);
+    Surface sunSurface = s;
+    sunSurface.roughness = max(s.roughness, 0.08);
+    float3 glints = shade(sunSurface, l, sunLight) * shadow;
+
+    // How far through the water the view goes: to what lies behind it, or where it leaves the water, if sooner.
+    float behindDepth = textures[NonUniformResourceIndex(push.textures.y)].Load(int3(int2(pixel), 0)).r;
+    float surfaceDepth = frame->near / max(input.position.z, 1e-7);
+    float sceneDepth = behindDepth > 0.0 ? frame->near / behindDepth : 1e4;
+    float along = max(dot(-v, frame->cameraForward), 0.05);
+    float thickness = max(sceneDepth - surfaceDepth, 0.0) / along;
+    float here = length(input.world - frame->cameraPosition);
+    float leaves = textures[NonUniformResourceIndex(push.textures.z)].Load(int3(int2(pixel), 0)).r;
+    if (leaves > here)
+    {
+        thickness = min(thickness, leaves - here);
+    }
+    WaterMedium medium = waterMedium(look.absorb, look.deep);
+    float3 through = exp(-medium.extinction * thickness);
+    float3 bentView = refract(-v, n, 1.0 / 1.33);
+    float2 seenAt = pixel / float2(frame->viewport);
+    if (oceanHas(frame, OCEAN_LIGHT_BENDING) && thickness < 1e3)
+    {
+        float3 under = input.world + bentView * min(thickness, 10.0);
+        float4 clip = transform(frame->viewProj, float4(under, 1.0));
+        if (clip.w > 0.0)
+        {
+            float2 shift = clip.xy / clip.w * 0.5 + 0.5 - seenAt;
+            float2 room = select(shift > 0.0, 1.0 - seenAt, seenAt) * 0.98 / max(abs(shift), 1e-6);
+            float2 bent = seenAt + shift * saturate(min(room.x, room.y));
+            float there = textures[NonUniformResourceIndex(push.textures.y)].Load(int3(int2(bent * float2(frame->viewport)), 0)).r;
+            seenAt = (there > 0.0 ? frame->near / there : 1e4) > surfaceDepth ? bent : seenAt;
+        }
+    }
+    float blur = sqrt(s.roughness) * 1.2 + log2(1.0 + thickness * 0.12);
+    float3 behind = thickness < 1e3 ? glassBehind(push.texture, seenAt, blur) : 0.0;
+    float3 glow = waterGlow(frame, medium, 0.0, bentView, 0.0, thickness, 0.0, shadow, ambient, sunLight);
+    float3 under = behind * through + glow;
+    float3 color = (1.0 - fresnel) * under + fresnel * reflected + glints;
+    // A thin line of foam on its top where it meets the ground, swelling and thinning as the water laps against it.
+    if (face.y > 0.5 && oceanHas(frame, OCEAN_WET_EDGES))
+    {
+        float lapping = 0.18 + 0.08 * sin(frame->time * 2.1 + dot(input.world.xz, float2(1.3, 0.7)));
+        float contact = saturate(1.0 - thickness / lapping);
+        float coverage = 0.65 * contact * contact;
+        float pattern = foamPatternAt(frame, input.world.xz).x;
+        float from = max(1.0 - coverage * 1.8, 0.03);
+        float foam = smoothstep(from, from + max(0.3, fwidth(pattern) * 1.5), pattern) * saturate(coverage * 4.0);
+        float wrapped = saturate((dot(n, l) + 0.4) / 1.4);
+        float3 foamLit = 0.9 * (ambient + sunLight * shadow * wrapped / PI);
+        color = lerp(color, foamLit, foam);
+    }
+    // Thinning to nothing where it meets the ground, rather than ending in a hard bright edge.
+    color = lerp(glassBehind(push.texture, pixel / float2(frame->viewport), 0.0), color, saturate(thickness / 0.1));
+    if (atmosphere)
+    {
+        float4 haze = aerialPerspectiveAt(frame, pixel / float2(frame->viewport), here);
         color = color * haze.a + haze.rgb * skyLook(frame);
     }
     FragmentOut o;

@@ -191,8 +191,84 @@ pub fn stream(world: &mut World, content: &mut Content) {
     world.insert_resource(streams);
 }
 
+/// How far into its next step the worlds of blocks' water is, in seconds.
+struct FlowClock(f32);
+
+/// The most steps water takes in a frame, however long the frame: a long
+/// one slows it rather than stalling the game.
+const FLOW_STEPS_A_FRAME: u32 = 4;
+
+/// Moves each world of blocks' water on (see `voxear_terrain::blocks::flow`):
+/// `STEPS_A_SECOND` steps a second of `delta`, while any is flowing.
+pub fn flow(world: &mut World, delta: f32) {
+    use voxear_terrain::blocks::flow::STEPS_A_SECOND;
+    let flowing: Vec<voxear_ecs::Entity> = world
+        .query_ref::<(voxear_ecs::Entity, &BlockWorld)>()
+        .without::<Destroying>()
+        .into_iter()
+        .filter(|(_, blocks)| !blocks.flowing.is_empty())
+        .map(|(entity, _)| entity)
+        .collect();
+    if flowing.is_empty() {
+        world.remove_resource::<FlowClock>();
+        return;
+    }
+    let each = 1.0 / STEPS_A_SECOND;
+    let since = world.remove_resource::<FlowClock>().map_or(0.0, |clock| clock.0) + delta.max(0.0);
+    let steps = ((since / each) as u32).min(FLOW_STEPS_A_FRAME);
+    world.insert_resource(FlowClock((since - steps as f32 * each).min(each)));
+    for entity in flowing {
+        if let Some(blocks) = world.get_mut::<BlockWorld>(entity) {
+            for _ in 0..steps {
+                blocks.flow();
+            }
+        }
+    }
+}
+
 /// Whether every world of blocks without end has made all its chunks round
 /// where it is seen from.
 pub fn streamed(world: &World) -> bool {
     world.resource::<Streams>().is_none_or(|streams| streams.0.values().all(|s| s.settled()))
+}
+
+#[cfg(test)]
+mod tests {
+    use voxear_terrain::blocks::{
+        chunk::AIR,
+        file::BlockKind,
+        flow::{STEPS_A_SECOND, Water},
+    };
+
+    use super::*;
+
+    #[test]
+    fn water_placed_flows_as_the_game_ticks_the_same_however_its_frames_fall() {
+        let mut file = BlockFile::default();
+        file.blocks.push(BlockKind { water: true, ..BlockKind::colored("Water", [0.04, 0.46, 0.33]) });
+        let (_, faces) = file.faces();
+        let mut blocks = BlockWorld::new(file.make_ground(None), &faces, 1.0);
+        blocks.set_blocks([([10, 8, 10], 4)]);
+        // Three seconds of frames, short ones and long ones: water runs a block each step either way.
+        let run = |frames: &[f32]| {
+            let mut world = World::new();
+            let entity = world.spawn((blocks.clone(), voxear_scene::Transform::default()));
+            for &delta in frames {
+                flow(&mut world, delta);
+            }
+            world.get::<BlockWorld>(entity).unwrap().clone()
+        };
+        let short = run(&[0.03; 100]);
+        let long = run(&[0.1; 30]);
+        assert!(short.flowing.is_empty() && long.flowing.is_empty(), "settled within {} steps", 3.0 * STEPS_A_SECOND);
+        assert_eq!(short.blocks, long.blocks);
+        let water = |x: i32| (short.blocks.get([x, 8, 10]) == 4).then(|| Water::of(short.blocks.fill([x, 8, 10])));
+        assert_eq!((water(17), water(18)), (Some(Water::Flowing { level: 1, up: 2 }), None), "seven blocks out");
+        // A frame a second long takes no more than a few steps.
+        let mut world = World::new();
+        let entity = world.spawn((blocks.clone(), voxear_scene::Transform::default()));
+        flow(&mut world, 1.0);
+        let reached = world.get::<BlockWorld>(entity).unwrap().blocks.get([15, 8, 10]);
+        assert_eq!(reached, AIR, "four steps at most in one frame");
+    }
 }

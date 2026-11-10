@@ -2858,7 +2858,15 @@ it in three dimensions on a cube's faces once; physics pulls bodies near it towa
 it stand away from its middle, their First-Person Views and Motion Matchers turning about that up
 (`PhysicsScene::gravity_at`, shared by all). Each chunk of cubes
 notes which of its sides see each other through its air, and each view draws only the chunks a walk from the
-camera's chunk through those reaches (`blocks::sight`). To come: a floating origin, for worlds past about 10 km.
+camera's chunk through those reaches (`blocks::sight`). Kinds of block can be water (`BlockFaces::water`): the ground
+shows its faces where it meets water as where it meets air, and water's own faces, where it meets air, follow the
+ground's quads in a chunk's mesh and are no part of its triangles, so physics and the GI's rays pass through it. They
+are drawn with the Pools (`water::record`): first the farthest face turned from the camera at each pixel, which is
+where the view leaves the water, then the faces turned towards it shaded as still water over a copy of the picture.
+Buoyancy reads the top of the water in a point's column (`BlockWorld::water_over`). Water flows (`blocks::flow`) from
+sources, down (towards a planet's middle) and then out over ground, a level lower each block, its level and way up kept
+in its fill: a step looks only at the blocks near the last step's changes, each from the blocks as they were, so every
+machine flows alike, five steps a second in the game's tick. To come: a floating origin, for worlds past about 10 km.
 Digging into a
 heightmap terrain turns its columns into smooth-voxel chunks that start from its heights (`voxear_terrain::dig`,
 two voxels a sample), holes the heights in them, and meshes them by marching tetrahedra, which meet the heights

@@ -1184,6 +1184,83 @@ fn blocks_are_placed_broken_and_their_kinds_changed_in_the_scene_view_each_a_ste
 }
 
 #[test]
+fn a_kind_of_block_made_water_is_placed_flows_out_and_a_generated_world_can_fill_its_sea_with_it() {
+    use voxear_engine::blocks::BlockWorldAsset;
+    use voxear_terrain::blocks::{BlockMap, BlockWorld, flow::Water, is_water};
+    let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {
+        eprintln!("skipping: no usable GPU");
+        return;
+    };
+    let dir = hello_with_a_field();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    let field = obj(&editor, "Field");
+    editor.select(Some(field));
+    frame(&mut editor, &mut renderer);
+    add_component(&mut editor, &mut renderer, "Block World");
+    // A new kind, made water: its materials' rows go, as water is drawn with its colour alone.
+    let add = first_with(&editor.ui, editor.ui.root(), "collection-add").expect("Add Block");
+    click(&mut editor.ui, add);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let water = first_with(&editor.ui, prop_rows(&editor.ui, "Water")[0], "checkbox").expect("Water");
+    click(&mut editor.ui, water);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    for (label, shown) in [("Water", 1), ("Color", 1), ("Material", 0), ("Top", 0), ("Bottom", 0)] {
+        assert_eq!(prop_rows(&editor.ui, label).len(), shown, "{label}");
+    }
+    let file =
+        |editor: &voxear_editor::Editor| editor.game.engine.world.get::<BlockWorldAsset>(field).unwrap().file.clone();
+    assert!(file(&editor).blocks[3].water && !file(&editor).blocks[0].water);
+    // The world moved under the bottom middle of the Scene view, its top half a metre up, under the camera.
+    let camera = editor.scene_camera().expect("the Scene view");
+    let [x, y, w, h] = camera.rect;
+    let point = [x + w / 2.0, y + h * 0.8];
+    let (origin, direction) = camera.ray(point);
+    let hit = origin + direction * ((0.5 - origin.y) / direction.y);
+    let corner = voxear_core::math::Vec3::new(hit.x - 32.0, -7.5, hit.z - 32.0);
+    editor.game.engine.world.get_mut::<voxear_scene::Transform>(field).unwrap().position = corner;
+    frame(&mut editor, &mut renderer);
+    let under = [(hit.x - corner.x).floor() as i32, 8, (hit.z - corner.z).floor() as i32];
+    // A click puts water on the grass under it: its own faces, drawn apart, and nothing to stand on.
+    click_scene(&mut editor, &mut renderer, point);
+    let blocks = editor.game.engine.world.get::<BlockWorld>(field).unwrap().clone();
+    assert_eq!(blocks.blocks.get(under), 4, "water placed on the face clicked");
+    assert!(is_water(&blocks.faces, 4));
+    let mesh = &blocks.meshes[&BlockMap::chunk_of(under).0];
+    assert!(mesh.water().1 >= 5, "its top and sides: {} quads", mesh.water().1);
+    assert!(mesh.positions.iter().all(|p| p[1] <= 8.0), "nothing to stand on at its top, 9 blocks up");
+    shot(&mut renderer, "blocks-water.png");
+    // It flows while editing: out over the grass round it, a block a fifth of a second, an eighth lower each.
+    for _ in 0..30 {
+        frame(&mut editor, &mut renderer);
+    }
+    let beside = [under[0] + 1, 8, under[2]];
+    let blocks = editor.game.engine.world.get::<BlockWorld>(field).unwrap().clone();
+    assert_eq!(blocks.blocks.get(beside), 4, "run out beside it");
+    assert_eq!(Water::of(blocks.blocks.fill(beside)), Water::Flowing { level: 7, up: 2 });
+    assert_eq!(Water::of(blocks.blocks.fill(under)), Water::Source, "what was placed stays full");
+    shot(&mut renderer, "blocks-water-flowing.png");
+    // Undone, the water it ran out into goes with it.
+    editor.undo(&mut renderer);
+    frame(&mut editor, &mut renderer);
+    let blocks = editor.game.engine.world.get::<BlockWorld>(field).unwrap().clone();
+    assert_eq!((blocks.blocks.get(under), blocks.blocks.get(beside)), (0, 0), "undone");
+    // Generated ground has a sea block to fill its sea with: air, or the water.
+    show_block_tool(&mut editor, &mut renderer, "Settings");
+    assert!(prop_rows(&editor.ui, "Sea block").is_empty(), "flat ground has no sea");
+    let ground = first_with(&editor.ui, prop_rows(&editor.ui, "Ground")[0], "value-choice").expect("its ground");
+    choose(&mut editor, &mut renderer, ground, 1);
+    frame(&mut editor, &mut renderer);
+    let sea = first_with(&editor.ui, prop_rows(&editor.ui, "Sea block")[0], "value-choice").expect("its sea");
+    choose(&mut editor, &mut renderer, sea, 4);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(file(&editor).generate.expect("generated").sea, 4);
+}
+
+#[test]
 fn a_block_worlds_ground_is_generated_by_a_picked_generator_and_covered_by_a_kinds_biome() {
     use voxear_engine::blocks::BlockWorldAsset;
     use voxear_terrain::{

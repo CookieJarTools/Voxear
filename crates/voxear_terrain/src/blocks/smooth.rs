@@ -18,10 +18,18 @@
 //! block of ground its face comes from, for its top, sides and bottom. The
 //! same triangles, their corners shared, are kept for collision and the
 //! GI's rays.
+//!
+//! Water is not ground: the surface runs between the ground and the water
+//! as it does the air, each block of water taken as far out of the ground as
+//! the ground beside it says. The water itself is kept as cubes, its faces
+//! after the ground's, as a world of cubes keeps them (see `mesh`), but
+//! wherever it meets anything but water, so where the smooth ground dips
+//! below the water's side the water still shows.
 
 use super::{
-    BlockMap,
-    chunk::{AIR, BlockId, CHUNK, Fill, depth_of, fill_of},
+    BlockFaces, BlockMap,
+    chunk::{AIR, BlockId, CHUNK, FULL, Fill, depth_of, fill_of},
+    is_ground, is_water,
     mesh::{ChunkMesh, FACINGS},
 };
 
@@ -79,7 +87,7 @@ struct Padded {
 }
 
 impl Padded {
-    fn of(map: &BlockMap, key: [i32; 3]) -> Self {
+    fn of(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces]) -> Self {
         let mut blocks = vec![AIR; SPAN * SPAN * SPAN];
         let mut depths = vec![-1.0; SPAN * SPAN * SPAN];
         let base = key.map(|v| v * CHUNK as i32 - BEFORE);
@@ -99,6 +107,31 @@ impl Padded {
                     index += 1;
                 }
             }
+        }
+        // Water keeps no fill of its own: a block further out than the ground beside it, or a block out of it.
+        let span = SPAN as i32;
+        let at = |x: i32, y: i32, z: i32| ((y * span + z) * span + x) as usize;
+        let mut estimated = Vec::new();
+        for y in 0..span {
+            for z in 0..span {
+                for x in 0..span {
+                    if !is_water(faces, blocks[at(x, y, z)]) {
+                        continue;
+                    }
+                    let beside = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
+                    let out = beside
+                        .iter()
+                        .map(|[dx, dy, dz]| (x + dx, y + dy, z + dz))
+                        .filter(|&(x, y, z)| [x, y, z].iter().all(|v| (0..span).contains(v)))
+                        .filter(|&(x, y, z)| is_ground(faces, blocks[at(x, y, z)]))
+                        .map(|(x, y, z)| depths[at(x, y, z)] - 1.0)
+                        .fold(-1.0f32, f32::max);
+                    estimated.push((at(x, y, z), out.min(-1e-3)));
+                }
+            }
+        }
+        for (index, depth) in estimated {
+            depths[index] = depth;
         }
         Self { blocks, depths }
     }
@@ -176,12 +209,12 @@ impl Padded {
 /// Chunk `key`'s surface in `map`, drawn smooth, each face with the
 /// surfaces `faces` gives its block of ground (its top, sides and bottom),
 /// by its number.
-pub fn mesh_chunk(map: &BlockMap, key: [i32; 3], faces: &[[u8; 3]]) -> ChunkMesh {
+pub fn mesh_chunk(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces]) -> ChunkMesh {
     let mut out = ChunkMesh::default();
-    if !map.chunk(key).is_some_and(|chunk| chunk.has_blocks()) || map.buried(key) {
+    if !map.chunk(key).is_some_and(|chunk| chunk.has_blocks()) || map.buried(key, faces) {
         return out;
     }
-    let padded = Padded::of(map, key);
+    let padded = Padded::of(map, key, faces);
     // Each cube's point's number among the mesh's points, made as faces come to it.
     let mut numbers = vec![u32::MAX; CUBES * CUBES * CUBES];
     let mut normals: Vec<[f32; 3]> = Vec::new();
@@ -203,14 +236,14 @@ pub fn mesh_chunk(map: &BlockMap, key: [i32; 3], faces: &[[u8; 3]]) -> ChunkMesh
             for x in 0..side {
                 let at = [x, y, z];
                 let block = padded.block(at);
-                if block == AIR {
+                if !is_ground(faces, block) {
                     continue;
                 }
                 for facing in 0..FACINGS {
                     let (axis, out_along) = (facing / 2, facing % 2 == 0);
                     let mut next = at;
                     next[axis] += if out_along { 1 } else { -1 };
-                    if padded.block(next) != AIR {
+                    if is_ground(faces, padded.block(next)) {
                         continue;
                     }
                     // The four cubes round the line between the two middles, turning about the axis.
@@ -243,7 +276,7 @@ pub fn mesh_chunk(map: &BlockMap, key: [i32; 3], faces: &[[u8; 3]]) -> ChunkMesh
         }
     }
     for (triangle, block) in triangles {
-        let [top, sides, bottom] = faces.get(usize::from(block)).copied().unwrap_or_default();
+        let BlockFaces { top, sides, bottom, .. } = faces.get(usize::from(block)).copied().unwrap_or_default();
         out.indices.extend(triangle);
         for i in triangle {
             let [x, y, z] = out.positions[i as usize];
@@ -256,6 +289,10 @@ pub fn mesh_chunk(map: &BlockMap, key: [i32; 3], faces: &[[u8; 3]]) -> ChunkMesh
     }
     let count = out.quads.len() as u32;
     out.buckets = [0, count, count, count, count, count, count];
+    if map.chunk(key).is_some_and(|chunk| chunk.may_hold(|block| is_water(faces, block))) {
+        let fills = super::mesh::fills(map, key);
+        out.quads.extend(super::mesh::water_quads((&|at| padded.block(at), &fills), faces, |_| true));
+    }
     out
 }
 
@@ -272,8 +309,15 @@ pub enum Ball {
 /// The changes a ball of `radius` blocks round `middle` (in blocks from the
 /// world's corner) makes to `map`, drawn smooth: its surface lies between
 /// blocks as far out as it reaches, each block as full as the ball and the
-/// ground there make it.
-pub fn ball(map: &BlockMap, middle: [f32; 3], radius: f32, does: Ball) -> Vec<([i32; 3], BlockId, Fill)> {
+/// ground there make it. Water, by `faces`, is no ground: ground added
+/// takes its place, and taking or painting ground leaves it as it is.
+pub fn ball(
+    map: &BlockMap,
+    middle: [f32; 3],
+    radius: f32,
+    does: Ball,
+    faces: &[BlockFaces],
+) -> Vec<([i32; 3], BlockId, Fill)> {
     let radius = radius.max(0.0);
     let low = middle.map(|v| (v - radius - 1.5).floor() as i32);
     let high = middle.map(|v| (v + radius + 1.5).ceil() as i32);
@@ -289,14 +333,21 @@ pub fn ball(map: &BlockMap, middle: [f32; 3], radius: f32, does: Ball) -> Vec<([
                 }
                 let at = [x, y, z];
                 let (now, fill) = (map.get(at), map.fill(at));
-                let depth = depth_of(fill);
+                let water = is_water(faces, now);
+                let depth = if water { -1.0 } else { depth_of(fill) };
                 let (block, depth) = match does {
-                    Ball::Add(kind) if inside > depth => (if now != AIR || inside <= 0.0 { now } else { kind }, inside),
-                    Ball::Take if -inside < depth => (if -inside > 0.0 { now } else { AIR }, -inside),
-                    Ball::Paint(kind) if now != AIR && inside > 0.0 && kind != AIR => (kind, depth),
+                    // Water is left as it is but where ground takes its place.
+                    Ball::Add(kind) if inside > depth && !(water && inside <= 0.0) => {
+                        let ground = is_ground(faces, now);
+                        (if ground || inside <= 0.0 { now } else { kind }, inside)
+                    }
+                    Ball::Take if -inside < depth && !water => (if -inside > 0.0 { now } else { AIR }, -inside),
+                    Ball::Paint(kind) if is_ground(faces, now) && inside > 0.0 && kind != AIR => (kind, depth),
                     _ => continue,
                 };
-                changes.push((at, block, fill_of(depth, block != AIR)));
+                // Water added is a source, full.
+                let fill = if is_water(faces, block) { FULL } else { fill_of(depth, block != AIR) };
+                changes.push((at, block, fill));
             }
         }
     }
@@ -327,7 +378,7 @@ mod tests {
 
     #[test]
     fn a_smooth_surface_lies_where_its_blocks_fill_says_and_faces_away_from_the_ground() {
-        let faces = [[0; 3], [1, 2, 3]];
+        let faces = [BlockFaces::default(), BlockFaces::new(1, 2, 3)];
         let map = ground([32, 32], |_, _| 10.3);
         let mesh = mesh_chunk(&map, [0, 0, 0], &faces);
         assert!(!mesh.is_empty());
@@ -359,7 +410,7 @@ mod tests {
 
     #[test]
     fn a_slope_runs_smoothly_and_chunks_meet_at_the_same_points() {
-        let faces = [[0; 3], [1, 1, 1]];
+        let faces = [BlockFaces::default(), BlockFaces::new(1, 1, 1)];
         // A gentle slope across two chunks: a block up every eight along x.
         let map = ground([64, 8], |x, _| 6.0 + x as f32 / 8.0);
         let (first, second) = (mesh_chunk(&map, [0, 0, 0], &faces), mesh_chunk(&map, [1, 0, 0], &faces));
@@ -400,7 +451,7 @@ mod tests {
     fn a_ball_adds_and_takes_ground_its_edge_between_blocks() {
         let mut map = ground([16, 16], |_, _| 4.0);
         // Added on the ground: wholly ground at its middle, its edge half a block past the next block up.
-        let added = ball(&map, [8.5, 4.5, 8.5], 1.5, Ball::Add(2));
+        let added = ball(&map, [8.5, 4.5, 8.5], 1.5, Ball::Add(2), &[]);
         for (at, block, fill) in added {
             map.set_cell(at, block, fill);
         }
@@ -408,14 +459,14 @@ mod tests {
         assert_eq!((map.get([8, 6, 8]), map.fill([8, 6, 8])), (AIR, fill_of(-0.5, false)));
         assert_eq!(map.get([8, 3, 8]), 1, "the ground under it keeps its kind");
         // Taken away again, deeper: a hollow whose floor lies between blocks.
-        for (at, block, fill) in ball(&map, [8.5, 4.0, 8.5], 2.25, Ball::Take) {
+        for (at, block, fill) in ball(&map, [8.5, 4.0, 8.5], 2.25, Ball::Take, &[]) {
             map.set_cell(at, block, fill);
         }
         assert_eq!(map.get([8, 4, 8]), AIR);
         assert_eq!((map.get([8, 1, 8]), map.fill([8, 1, 8])), (1, fill_of(0.25, true)));
         // Painted: only the ground in it changes kind, as full as it was.
         let before = map.fill([3, 3, 3]);
-        for (at, block, fill) in ball(&map, [3.5, 3.5, 3.5], 1.0, Ball::Paint(3)) {
+        for (at, block, fill) in ball(&map, [3.5, 3.5, 3.5], 1.0, Ball::Paint(3), &[]) {
             map.set_cell(at, block, fill);
         }
         assert_eq!((map.get([3, 3, 3]), map.fill([3, 3, 3])), (3, before));
@@ -423,8 +474,42 @@ mod tests {
     }
 
     #[test]
+    fn water_over_smooth_ground_stays_cubes_and_the_ground_runs_on_under_it() {
+        let faces = [BlockFaces::default(), BlockFaces::new(1, 1, 1), BlockFaces::water(7)];
+        // Ground 3.3 blocks up, a lake over it up to 6 blocks, across the middle of the chunk.
+        let mut map = ground([32, 32], |_, _| 3.3);
+        for y in 3..6 {
+            for z in 8..24 {
+                for x in 8..24 {
+                    map.set([x, y, z], 2);
+                }
+            }
+        }
+        let mesh = mesh_chunk(&map, [0, 0, 0], &faces);
+        // The ground under the water lies where its fill says, as it does out of it.
+        let inside = |p: &&[f32; 3]| (10.0..22.0).contains(&p[0]) && (10.0..22.0).contains(&p[2]);
+        for p in mesh.positions.iter().filter(|p| p[1] > 2.0).filter(inside) {
+            assert!((p[1] - 3.3).abs() < 0.02, "under the water: {p:?}");
+        }
+        // The water's faces are cubes' quads after the ground's corners, its top flat and whole at 6 blocks up.
+        let (first, count) = mesh.water();
+        assert_eq!(first as usize, mesh.indices.len() * 2);
+        assert!(count > 0);
+        let water: Vec<_> = mesh.quads[first as usize..].iter().map(|&q| super::super::mesh::unpack(q)).collect();
+        assert!(water.iter().all(|q| q.3 == 7), "drawn with its surface");
+        let top: u32 = water.iter().filter(|q| q.2 == 2).map(|q| q.1.iter().product::<u32>()).sum();
+        assert_eq!(top, 16 * 16);
+        assert!(water.iter().filter(|q| q.2 == 2).all(|q| q.0[1] == 5));
+        // Ground added into the water takes its place; taking ground leaves the water.
+        let added = ball(&map, [16.5, 4.5, 16.5], 1.0, Ball::Add(1), &faces);
+        assert!(added.iter().any(|&(at, block, _)| at == [16, 4, 16] && block == 1));
+        let taken = ball(&map, [16.5, 4.5, 16.5], 1.0, Ball::Take, &faces);
+        assert!(taken.iter().all(|&(at, ..)| map.get(at) != 2), "no water taken as ground");
+    }
+
+    #[test]
     fn a_lone_block_is_a_closed_shape_of_six_faces() {
-        let faces = [[0; 3], [1, 1, 1]];
+        let faces = [BlockFaces::default(), BlockFaces::new(1, 1, 1)];
         let mut map = BlockMap::default();
         map.set([5, 5, 5], 1);
         let mesh = mesh_chunk(&map, [0, 0, 0], &faces);

@@ -105,6 +105,44 @@ impl Default for BlockUi {
     }
 }
 
+/// Worlds' files changed while a number is dragged by its label, kept
+/// until it is let go: each world is made again once from the last, not at
+/// every step of the drag, as making a large one again takes a while.
+#[derive(Default)]
+struct HeldFiles {
+    holding: bool,
+    files: std::collections::HashMap<Entity, BlockFile>,
+}
+
+/// Holds changes to worlds' files from now on while `dragging`, a number
+/// dragged by its label; once it is not, makes each world held again from
+/// its last file. The Inspector calls it each frame before it reads its
+/// rows, so a world made again on letting go is one edit.
+pub fn hold(game: &mut Game, mut renderer: Option<&mut Renderer>, dragging: bool) {
+    let world = &mut game.engine.world;
+    if world.resource::<HeldFiles>().is_none() {
+        if !dragging {
+            return;
+        }
+        world.insert_resource(HeldFiles::default());
+    }
+    let held = world.resource_mut::<HeldFiles>().expect("inserted above");
+    held.holding = dragging;
+    if dragging || held.files.is_empty() {
+        return;
+    }
+    for (entity, file) in std::mem::take(&mut held.files) {
+        change_file(game, renderer.as_deref_mut(), entity, file);
+    }
+}
+
+/// The file a world of blocks shows: the one held for it while a number is
+/// dragged, or its asset's.
+fn shown_file(world: &World, entity: Entity) -> Option<&BlockFile> {
+    let held = world.resource::<HeldFiles>().and_then(|held| held.files.get(&entity));
+    held.or_else(|| world.get::<BlockWorldAsset>(entity).map(|asset| &asset.file))
+}
+
 /// The editor's block tools as they are.
 pub fn ui(world: &World) -> BlockUi {
     world.resource::<BlockUi>().copied().unwrap_or_default()
@@ -334,7 +372,7 @@ fn path_of(game: &Game, reference: Option<&str>) -> String {
 
 pub fn get(game: &Game, entity: Entity, field: BlockField) -> Option<Value> {
     let world = &game.engine.world;
-    let file = || world.get::<BlockWorldAsset>(entity).map(|asset| &asset.file);
+    let file = || shown_file(world, entity);
     let kind = || file().and_then(|file| file.blocks.get(ui(world).block));
     let state = ui(world);
     Some(match field {
@@ -548,6 +586,10 @@ pub fn set(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, fie
             set_cover(cover, field, &value);
         }
         _ => return false,
+    }
+    // While a number is dragged by its label, its world is made again only once it is let go (see `hold`).
+    if let Some(held) = game.engine.world.resource_mut::<HeldFiles>().filter(|held| held.holding) {
+        return held.files.insert(entity, file.clone()).is_none_or(|was| was != file);
     }
     change_file(game, renderer, entity, file)
 }

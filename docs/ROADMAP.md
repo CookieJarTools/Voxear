@@ -1615,6 +1615,17 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     Ground height, Cast shadows), undo. Tests: palettes, greedy quads covering exactly the faces a block at a time
     would, corner shading, files, rays, the GPU drawing a field and a pillar shaded at its foot and shadowing, a
     ball resting on blocks, the engine loading and saving, the editor adding one. Manual: Block Worlds.
+  - ~~**Editing:**~~ done: `BlockWorld::set_blocks` remakes the chunks a change reaches, and those beside it whose
+    faces it meets or shades, on every core; `blocks::edits::BlockEdits` keeps changes from what a world was made
+    as, a chunk's blocks one by one while few or whole once smaller, compressed (`VXBLOCKS`); the editor keeps its
+    changes from the ground in a `.blocks` file beside the `.blockworld` (builds ship it), and a ground changed
+    keeps them. Editor: Build and Settings tools (`block_panel`), the list of kinds (add, move and take out, every
+    block renumbered), each kind's Name, Color, Material, Top and Bottom, and the Scene view's brush
+    (`block_tools`: Place, Break, Paint, a ball as many blocks across as its Size, Shift turning one into the
+    other, a stroke a step to undo). C#: `Blocks.At`, `Raycast`, `Set`, `Fill`, `Ball`, `Break`, `Place`,
+    `CaptureEdits` and `ApplyEdits`, saved with the scene (API 68). Tests: chunks remade beside a change, changes
+    kept small and read back, a world loading with them, the editor placing, breaking, undoing, adding and taking
+    out kinds and saving, scripts asking, building, blasting and putting back.
   - face-connectivity cave culling.
 - **Smooth voxel terrain, flat and planets:** marching cubes with Transvoxel on an octree, caves and overhangs from
   3D density, planets with their own gravity, and a floating origin.

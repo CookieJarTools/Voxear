@@ -89,13 +89,21 @@ Tick a kind's **Water** and its blocks are water, drawn see-through with the sam
 
 Water shows its faces only where it meets air: a pond in a hollow is its top alone. The ground under it and round it shows through it, bent as light bends going into water, and dimmed by as much water as the view goes through: a shallow edge is clear, a deep middle shows its colour. Its top ripples, catching the sky and the sun, with a line of foam where it meets the shore. From under the water, its top shows the world above it.
 
-Nothing stands on water. Physics leaves it out, so things fall through it to the ground under it, and a Rigidbody with **Buoyancy** floats in it as it does on a Pool: the top of the water in its column is the surface. Water stays where it is put: it does not flow or spread when the ground beside it is dug away.
+Nothing stands on water. Physics leaves it out, so things fall through it to the ground under it, and a Rigidbody with **Buoyancy** floats in it as it does on a Pool: the top of the water in its column is the surface.
+
+### Flowing water
+
+Water flows. Each block of water you place is a **source**: it stays full and never runs dry. Water runs out of it, down first and then out over the ground, an eighth of a block lower for each block it goes, for seven blocks at most. Over an edge it falls as a column to the ground below and runs on from there. Water runs out only over ground, so a waterfall keeps to its column, and water falling into a lake joins it. Take a source away and the water it fed dries up behind it. Dig a trench beside a pond and the pond runs into it.
+
+Water flows five blocks a second, the same on every machine, both in play and in the editor as you build; while a game is paused, it stands still. It starts wherever something changes, so a generated sea stays as it was made until you dig into it or build beside it. It stays within the chunks its world reaches: at the world's edge it stops as if at a wall. Saving keeps the water where it has run to.
+
+On a planet, down is towards its middle. Water falls towards the middle and runs out across the planet's surface, whichever side it is on.
 
 For a sea, pick a kind of water as the **Sea block** of generated ground: the air below the generator's sea level is filled with it. A planet's sea lies its **Radius** from its middle.
 
-In a [[Voxel Terrain]], water stays cubes: its top is flat at its blocks' tops, with the smooth ground running on under it. Its sides show wherever it meets anything but water, so a shore where the ground dips below the water's edge still shows the water there.
+In a [[Voxel Terrain]], water stays cubes: its top is flat at its blocks' tops, with the smooth ground running on under it. Its sides show wherever it meets anything but water, so a shore where the ground dips below the water's edge still shows the water there. It flows there as it does among cubes.
 
-Not done yet: with the camera in water blocks, the view is not fogged by the water round it, as it is under the sea and in Pools.
+Not done yet: with the camera in water blocks, the view is not fogged by the water round it, as it is under the sea and in Pools. On a planet, Buoyancy floats things only on its top, where the planet's up is the world's.
 
 ## Building
 
@@ -123,7 +131,7 @@ The blocks are kept in chunks of 32 a side, only the chunks with blocks in them,
 
 The camera draws only the chunks in view, and of each only the faces turned towards it. Caves and rooms closed off from it are passed over too: each chunk notes which of its sides see each other through its air and water, and only the chunks the camera can see into through them are drawn, so a mountain full of caves costs no more than its outside until a tunnel opens onto one. The sun's shadows fall from every face. Blocks light the world round them too, as the GI's rays see them.
 
-Water's faces are drawn after the rest of the scene, with the sea and Pools: every face of the water in the chunks the camera sees, from either side. Water casts no shadow, and the GI's rays pass through it.
+Water's faces are drawn after the rest of the scene, with the sea and Pools: every face of the water in the chunks the camera sees, from either side, flowing water as high as it stands. Water casts no shadow, and the GI's rays pass through it.
 
 ## Blocks from scripts
 

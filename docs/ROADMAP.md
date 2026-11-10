@@ -1674,8 +1674,21 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     (its materials' rows hidden), and Sea block under generated ground's settings. Tests: water's faces apart and
     the ground's under it, a chunk of ground beside one of water, sights through water, water over smooth ground,
     a generated sea up to its level, water's top in a column, a ball floating and one sinking to the floor, the GPU
-    drawing a pond over its floor, the editor making a kind water, placing it and picking a sea block. Not done:
-    the view fogged from in water blocks; water that flows.
+    drawing a pond over its floor, the editor making a kind water, placing it and picking a sea block.
+    Flowing (`blocks::flow`): water placed and a generated sea are sources, full for good; water runs from them
+    down, then out over ground an eighth of a block lower each block, seven at most, falling as a column off an
+    edge, never running out from falling water or over water, and dries a step at a time once nothing feeds it. On a
+    planet, down is towards its middle along the axis a block lies furthest out along (`flow::Fall`). A flowing
+    block keeps its level and its way up in its fill (`flow::Water`), so saves and the network carry it; the mesher
+    lowers its top and sides and draws the strip over lower water, each such quad keeping its shape where the
+    corners' shading was and its way up in its first word's top bits (`mesh::water_shape`), which `blockWaterVertex`
+    moves its corners by. A step looks only at blocks near the last step's changes (`BlockWorld::flowing`, set by
+    every change), each from the blocks as they were, so every machine flows the same; `voxear_engine::blocks::flow`
+    runs five a second in `Game::tick`, editing and playing, at most four a frame. Tests: levels, reach, falling off
+    an edge, drying, a Voxel Terrain planet's water running round it, a step a block from the blocks as they were,
+    quads' shapes, the engine's steps the same however frames fall, the GPU drawing water lower the further it runs,
+    the editor's water running out and undone with it. Not done: the view fogged from in water blocks; floating on
+    a planet's sides (Buoyancy's up stays the world's).
 - **Smooth voxel terrain, flat and planets**, in parts: smooth ground you can see, stand on, generate and build on;
   planets with their own gravity; a floating origin.
   - ~~**Voxel Terrain:**~~ done: a Block World drawn smooth (`BlockFile::smooth`, `BlockWorld::smooth`). Each chunk

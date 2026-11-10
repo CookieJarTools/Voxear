@@ -1200,6 +1200,9 @@ impl Inspector {
                 if let Prop::Terrain(field) = value {
                     meta.range = crate::terrain_props::range(&game.engine.world, entity, *field).map(|r| r.map(f64::from));
                 }
+                if let Prop::BlockWorld(field) = value {
+                    meta.range = crate::block_props::range(*field).map(|r| r.map(f64::from));
+                }
                 let shown = props::get(game, &self.types, entity, value).unwrap_or(Value::Fixed(String::new()));
                 let enabled = attributes::enabled(game, &self.types, entity, value);
                 // While playing, a C# component's values are read and written in the running

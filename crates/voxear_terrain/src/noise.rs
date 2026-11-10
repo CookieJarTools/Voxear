@@ -45,6 +45,45 @@ pub fn gradient(x: f32, z: f32, seed: u32) -> f32 {
     (top + (bottom - top) * v) * std::f32::consts::SQRT_2
 }
 
+/// A hash of a lattice point in three dimensions and a seed.
+fn hash3(x: i32, y: i32, z: i32, seed: u32) -> u32 {
+    hash(x ^ (y.wrapping_mul(0x2C1B_3C6D_u32 as i32)), z, seed.wrapping_add(y as u32))
+}
+
+/// The twelve edges of a cube, for the three-dimensional lattice's
+/// gradients.
+const GRADIENTS3: [[f32; 3]; 12] = [
+    [1.0, 1.0, 0.0],
+    [-1.0, 1.0, 0.0],
+    [1.0, -1.0, 0.0],
+    [-1.0, -1.0, 0.0],
+    [1.0, 0.0, 1.0],
+    [-1.0, 0.0, 1.0],
+    [1.0, 0.0, -1.0],
+    [-1.0, 0.0, -1.0],
+    [0.0, 1.0, 1.0],
+    [0.0, -1.0, 1.0],
+    [0.0, 1.0, -1.0],
+    [0.0, -1.0, -1.0],
+];
+
+/// Gradient noise at `(x, y, z)`, about -1 to 1, changing over a unit: for
+/// what hollows ground out and pushes it in and out (see `blocks::generate`).
+pub fn gradient3(x: f32, y: f32, z: f32, seed: u32) -> f32 {
+    let (fx, fy, fz) = (x.floor(), y.floor(), z.floor());
+    let (ix, iy, iz) = (fx as i32, fy as i32, fz as i32);
+    let (tx, ty, tz) = (x - fx, y - fy, z - fz);
+    let corner = |dx: i32, dy: i32, dz: i32| {
+        let [gx, gy, gz] = GRADIENTS3[(hash3(ix + dx, iy + dy, iz + dz, seed) % 12) as usize];
+        gx * (tx - dx as f32) + gy * (ty - dy as f32) + gz * (tz - dz as f32)
+    };
+    let (u, v, w) = (fade(tx), fade(ty), fade(tz));
+    let lerp = |a: f32, b: f32, t: f32| a + (b - a) * t;
+    let near = lerp(lerp(corner(0, 0, 0), corner(1, 0, 0), u), lerp(corner(0, 1, 0), corner(1, 1, 0), u), v);
+    let far = lerp(lerp(corner(0, 0, 1), corner(1, 0, 1), u), lerp(corner(0, 1, 1), corner(1, 1, 1), u), v);
+    lerp(near, far, w)
+}
+
 /// The kinds of fractal noise a terrain layer makes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -99,6 +138,19 @@ pub fn fractal(style: NoiseStyle, x: f32, z: f32, octaves: u32, seed: u32) -> f3
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn noise_in_three_dimensions_is_smooth_and_the_same_each_time() {
+        let a = gradient3(1.3, -2.7, 5.1, 9);
+        assert_eq!(a, gradient3(1.3, -2.7, 5.1, 9));
+        assert_ne!(a, gradient3(1.3, -2.7, 5.1, 10));
+        assert_eq!(gradient3(4.0, -3.0, 2.0, 1), 0.0, "nothing on the lattice");
+        let values: Vec<f32> =
+            (0..2000).map(|i| gradient3(i as f32 * 0.37, i as f32 * 0.11, i as f32 * 0.23, 3)).collect();
+        assert!(values.iter().all(|v| v.abs() <= 1.5));
+        assert!(values.iter().any(|&v| v > 0.4) && values.iter().any(|&v| v < -0.4));
+        assert!((gradient3(0.5, 0.5, 0.5, 2) - gradient3(0.501, 0.5, 0.5, 2)).abs() < 0.01, "smooth");
+    }
 
     #[test]
     fn noise_is_the_same_for_the_same_seed_and_differs_for_another() {

@@ -13,6 +13,7 @@
 pub mod chunk;
 pub mod edits;
 pub mod file;
+pub mod generate;
 pub mod mesh;
 
 use std::{collections::HashMap, sync::Arc};
@@ -282,7 +283,7 @@ mod tests {
     fn a_change_makes_its_chunks_faces_again_and_those_beside_it_where_it_meets_them() {
         let file = file::BlockFile::default();
         let (_, faces) = file.faces();
-        let mut world = BlockWorld::new(file.make_ground(), &faces, 1.0);
+        let mut world = BlockWorld::new(file.make_ground(None), &faces, 1.0);
         let before = world.meshes.clone();
         // A block dug out of the middle of chunk (0, 0, 0): its faces alone made again.
         assert_eq!(world.set_blocks([([10, 7, 10], AIR)]), 1);

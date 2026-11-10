@@ -12,32 +12,61 @@
 use std::path::Path;
 
 use anyhow::{Context, Result};
+use std::sync::Arc;
 use voxear_assets::AssetGuid;
 use voxear_ecs::{Component, World};
 use voxear_render::{BlockLook, Renderer};
 use voxear_scene::Destroying;
-use voxear_terrain::blocks::{
-    BlockWorld,
-    edits::{BlockEdits, blocks_file},
-    file::BlockFile,
+
+use voxear_terrain::{
+    blocks::{
+        BlockMap, BlockWorld,
+        edits::{BlockEdits, blocks_file},
+        file::BlockFile,
+    },
+    generate::WorldGen,
 };
 
 use crate::{Content, MaterialData, MaterialSource, scene_file::default_material};
 
-/// A Block World's `.blockworld` asset: its file as the game has it now.
-#[derive(Clone, Debug, PartialEq)]
+/// A Block World's `.blockworld` asset: its file as the game has it now,
+/// and the ground its file made, from which its blocks' changes are what
+/// differs (its chunks shared with the world's wherever nothing changed).
+#[derive(Clone, Debug)]
 pub struct BlockWorldAsset {
     pub guid: AssetGuid,
     pub file: BlockFile,
+    pub base: Arc<BlockMap>,
 }
 
 impl Component for BlockWorldAsset {}
 
-/// The world of blocks `file` makes: its ground's blocks, with `edits`
-/// made to them, each chunk's faces worked out on every core.
-pub fn make(file: &BlockFile, edits: Option<&BlockEdits>) -> BlockWorld {
+impl PartialEq for BlockWorldAsset {
+    fn eq(&self, other: &Self) -> bool {
+        self.guid == other.guid
+            && self.file == other.file
+            && (Arc::ptr_eq(&self.base, &other.base) || self.base == other.base)
+    }
+}
+
+/// The world generator `file`'s ground is made by, where it is generated
+/// and its generator can be read.
+pub fn generator(content: &mut Content, file: &BlockFile) -> Option<Arc<WorldGen>> {
+    let reference = file.generate.as_ref()?.world.as_ref()?;
+    content.world_gen(reference)
+}
+
+/// The ground `file` makes, by its generator where it has one.
+pub fn ground(content: &mut Content, file: &BlockFile) -> BlockMap {
+    let generator = generator(content, file);
+    file.make_ground(generator.as_deref())
+}
+
+/// The world of blocks made on `base`, `file`'s ground, with `edits` made
+/// to it, each chunk's faces worked out on every core.
+pub fn make(file: &BlockFile, base: &Arc<BlockMap>, edits: Option<&BlockEdits>) -> BlockWorld {
     let (_, faces) = file.faces();
-    let mut blocks = file.make_ground();
+    let mut blocks = (**base).clone();
     if let Some(edits) = edits {
         edits.apply(&mut blocks);
     }
@@ -81,7 +110,7 @@ pub fn look(content: &mut Content, renderer: &mut Renderer, file: &BlockFile) ->
 /// written.
 pub fn keep(world: &World, content: &mut Content) {
     for (asset, blocks) in world.query_ref::<(&BlockWorldAsset, &BlockWorld)>().without::<Destroying>() {
-        content.keep_block_world(asset.guid, &asset.file, blocks);
+        content.keep_block_world(asset.guid, &asset.file, &asset.base, blocks);
     }
 }
 
@@ -93,7 +122,7 @@ pub fn save(content: &mut Content, project: &Path) -> Result<Vec<String>> {
     let mut written = Vec::new();
     for (path, file, blocks) in content.take_unsaved_block_worlds() {
         std::fs::write(project.join(&path), file.to_text()).with_context(|| format!("saving {path}"))?;
-        let edits = BlockEdits::between(&file.make_ground(), &blocks.world.blocks);
+        let edits = BlockEdits::between(&blocks.base, &blocks.world.blocks);
         let changes = project.join(blocks_file(&path));
         if edits.is_empty() {
             if changes.is_file() {

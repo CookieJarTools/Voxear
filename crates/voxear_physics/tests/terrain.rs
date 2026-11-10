@@ -212,7 +212,7 @@ fn a_ball_comes_to_rest_on_a_world_of_blocks_and_a_ray_meets_its_top() {
     // Ground 4 blocks high of half-metre blocks, from (-10, 1, -10), and a step 2 blocks higher at its middle.
     let mut file = BlockFile::default();
     file.ground.height = 4;
-    let mut blocks = file.make_ground();
+    let mut blocks = file.make_ground(None);
     for (x, z) in [(32, 32), (33, 32), (32, 33), (33, 33)] {
         blocks.set([x, 4, z], 3);
         blocks.set([x, 5, z], 3);

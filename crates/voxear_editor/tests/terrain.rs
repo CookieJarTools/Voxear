@@ -1155,3 +1155,86 @@ fn blocks_are_placed_broken_and_their_kinds_changed_in_the_scene_view_each_a_ste
     let edits = BlockEdits::from_bytes(&changes).unwrap();
     assert!(!edits.is_empty() && changes.len() < 200, "{} bytes", changes.len());
 }
+
+#[test]
+fn a_block_worlds_ground_is_generated_by_a_picked_generator_and_covered_by_a_kinds_biome() {
+    use voxear_engine::blocks::BlockWorldAsset;
+    use voxear_terrain::{
+        blocks::BlockWorld,
+        generate::{Preset, WorldGen},
+    };
+    let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {
+        eprintln!("skipping: no usable GPU");
+        return;
+    };
+    let dir = hello_with_a_field();
+    // A cold world of hills, snow on its tops.
+    let mut hills = Preset::RollingHills.world();
+    hills.climate.temperature = -4.0;
+    hills.climate.temperature_range = 1.0;
+    std::fs::create_dir_all(dir.path().join("Worlds")).unwrap();
+    std::fs::write(dir.path().join("Worlds/Cold.worldgen"), hills.to_text()).unwrap();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    let field = obj(&editor, "Field");
+    editor.select(Some(field));
+    frame(&mut editor, &mut renderer);
+    add_component(&mut editor, &mut renderer, "Block World");
+    show_block_tool(&mut editor, &mut renderer, "Settings");
+    // Generated: its generator's rows in place of the flat ground's height.
+    let ground = first_with(&editor.ui, prop_rows(&editor.ui, "Ground")[0], "value-choice").expect("its ground");
+    choose(&mut editor, &mut renderer, ground, 1);
+    frame(&mut editor, &mut renderer);
+    for (label, shown) in [("Generator", 1), ("Offset", 1), ("Caves", 1), ("Overhangs", 1), ("Ground height", 0)] {
+        assert_eq!(prop_rows(&editor.ui, label).len(), shown, "{label}");
+    }
+    let picker = first_with(&editor.ui, prop_rows(&editor.ui, "Generator")[0], "value-picker").expect("its picker");
+    let arrow = first_with(&editor.ui, picker, "picker-arrow").expect("its arrow");
+    click(&mut editor.ui, arrow);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let offered = || {
+        let list = editor.ui.find(editor.ui.root(), "picker-list");
+        let rows = list.map_or(Vec::new(), |list| editor.ui.children(list));
+        rows.into_iter().filter(|&r| editor.ui.is_visible(r)).map(|r| row_text(&editor.ui, r)).collect::<Vec<_>>()
+    };
+    let row =
+        picker_row(&editor.ui, "Cold.worldgen").unwrap_or_else(|| panic!("the generator is offered: {:?}", offered()));
+    click(&mut editor.ui, row);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let world = WorldGen::parse(&hills.to_text()).unwrap();
+    let blocks = |editor: &voxear_editor::Editor| editor.game.engine.world.get::<BlockWorld>(field).unwrap().clone();
+    let top =
+        |blocks: &BlockWorld, x: i32, z: i32| (-64..300).rev().find(|&y| blocks.blocks.get([x, y, z]) != 0).unwrap();
+    for (x, z) in [(3, 3), (40, 20), (60, 60)] {
+        let height = world.height_at(x as f32 + 0.5, z as f32 + 0.5);
+        assert!(((top(&blocks(&editor), x, z) + 1) as f32 - height).abs() <= 1.0, "column ({x}, {z}) at {height} m");
+    }
+    // A kind that covers where it is below freezing, as Snow: everywhere in this cold world.
+    show_block_tool(&mut editor, &mut renderer, "Build");
+    let add = first_with(&editor.ui, editor.ui.root(), "collection-add").expect("Add Block");
+    click(&mut editor.ui, add);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let cover = first_with(&editor.ui, prop_rows(&editor.ui, "Cover")[0], "checkbox").expect("its cover");
+    click(&mut editor.ui, cover);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let biome = first_with(&editor.ui, prop_rows(&editor.ui, "Biome")[0], "value-choice").expect("its biomes");
+    choose(
+        &mut editor,
+        &mut renderer,
+        biome,
+        1 + voxear_terrain::surfaces::Biome::ALL
+            .iter()
+            .position(|&b| b == voxear_terrain::surfaces::Biome::Snow)
+            .unwrap(),
+    );
+    frame(&mut editor, &mut renderer);
+    let file = editor.game.engine.world.get::<BlockWorldAsset>(field).unwrap().file.clone();
+    assert!(file.blocks[3].cover.is_some_and(|cover| cover.temperature.is_some()));
+    let now = blocks(&editor);
+    assert_eq!(now.blocks.get([10, top(&now, 10, 10), 10]), 4, "snow on top");
+}

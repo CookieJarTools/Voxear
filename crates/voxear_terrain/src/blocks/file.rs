@@ -41,6 +41,10 @@ pub struct BlockFile {
     pub blocks: Vec<BlockKind>,
     /// The ground its blocks start as.
     pub ground: Ground,
+    /// Where its ground is made by a world generator rather than flat: which,
+    /// and how (see `generate`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub generate: Option<super::generate::BlockGenerate>,
 }
 
 /// A kind of block: its name, its colour where its faces have no material,
@@ -58,11 +62,48 @@ pub struct BlockKind {
     pub top: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bottom: Option<String>,
+    /// Where generated ground is covered with it in place of its top block:
+    /// none for nowhere.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cover: Option<BlockCover>,
+}
+
+/// Where a kind of block covers generated ground: where its climate and
+/// height are within these ranges (a range left out is any), and how many
+/// blocks deep. Later kinds in the list cover those before them.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct BlockCover {
+    /// In °C.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<[f32; 2]>,
+    /// From 0 for dry to 1 for wet.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub humidity: Option<[f32; 2]>,
+    /// In metres in the generator's world.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub height: Option<[f32; 2]>,
+    pub depth: u32,
+}
+
+impl Default for BlockCover {
+    fn default() -> Self {
+        Self { temperature: None, humidity: None, height: None, depth: 1 }
+    }
+}
+
+impl BlockCover {
+    /// Whether it covers ground `height` metres up, `temperature` °C and
+    /// `humidity` wet.
+    pub fn covers(&self, height: f32, (temperature, humidity): (f32, f32)) -> bool {
+        let within = |range: Option<[f32; 2]>, v: f32| range.is_none_or(|[low, high]| (low..=high).contains(&v));
+        within(self.temperature, temperature) && within(self.humidity, humidity) && within(self.height, height)
+    }
 }
 
 impl Default for BlockKind {
     fn default() -> Self {
-        Self { name: "Block".into(), color: [0.6, 0.6, 0.6], material: None, top: None, bottom: None }
+        Self { name: "Block".into(), color: [0.6, 0.6, 0.6], material: None, top: None, bottom: None, cover: None }
     }
 }
 
@@ -103,6 +144,7 @@ impl Default for BlockFile {
                 BlockKind::colored("Stone", [0.5, 0.5, 0.52]),
             ],
             ground: Ground::default(),
+            generate: None,
         }
     }
 }
@@ -149,9 +191,18 @@ impl BlockFile {
         (looks, faces)
     }
 
-    /// The blocks its ground starts as, those naming no kind it has left
-    /// out.
-    pub fn make_ground(&self) -> BlockMap {
+    /// The blocks its ground starts as: made by `generator` where it is
+    /// generated and the generator could be found, else flat. Blocks naming
+    /// no kind it has are left out.
+    pub fn make_ground(&self, generator: Option<&crate::generate::WorldGen>) -> BlockMap {
+        if let (Some(generate), Some(world)) = (&self.generate, generator) {
+            return super::generate::generate(self, generate, world);
+        }
+        self.flat_ground()
+    }
+
+    /// Its flat ground's blocks.
+    fn flat_ground(&self) -> BlockMap {
         let mut map = BlockMap::default();
         let known = |block: BlockId| if usize::from(block) <= self.blocks.len() { block } else { AIR };
         let ground = &self.ground;
@@ -201,7 +252,7 @@ mod tests {
     fn flat_ground_is_grass_over_dirt_over_stone() {
         let file =
             BlockFile { ground: Ground { size: [40, 3], height: 6, ..Ground::default() }, ..BlockFile::default() };
-        let map = file.make_ground();
+        let map = file.make_ground(None);
         assert_eq!([5, 4, 3, 2, 0].map(|y| map.get([39, y, 2])), [1, 2, 2, 2, 3]);
         assert_eq!((map.get([40, 5, 0]), map.get([0, 6, 0])), (AIR, AIR));
         assert_eq!(map.chunks().count(), 2, "40 blocks along x reach a second chunk");

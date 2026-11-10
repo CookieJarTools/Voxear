@@ -276,6 +276,7 @@ impl Editor {
                 if let Some(guid) = self.game.content.db().guid_of(path) {
                     self.game.content.forget_world_gen(guid);
                     crate::terrain_props::regenerate(&mut self.game, guid);
+                    crate::block_props::regenerate(&mut self.game, guid);
                 }
             }
             // A shader saved from a code editor compiles again, and its materials draw with it; nothing

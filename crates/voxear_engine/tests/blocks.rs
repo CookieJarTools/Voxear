@@ -64,7 +64,7 @@ fn a_block_world_loads_with_the_changes_kept_beside_it() {
     let mut file = BlockFile::default();
     file.ground.size = [32, 32];
     file.ground.height = 6;
-    let base = file.make_ground();
+    let base = file.make_ground(None);
     let mut built = base.clone();
     for y in 6..10 {
         built.set([5, y, 5], 3);
@@ -75,4 +75,44 @@ fn a_block_world_loads_with_the_changes_kept_beside_it() {
     game.start(None).unwrap();
     let blocks = game.engine.world.query_ref::<&BlockWorld>().into_iter().next().expect("the world").clone();
     assert_eq!([5, 6, 9, 10].map(|y| blocks.blocks.get([5, y, 5])), [1, 3, 3, 0]);
+}
+
+#[test]
+fn a_generated_block_world_follows_its_generator_and_keeps_changes_from_that_ground() {
+    use voxear_terrain::{
+        blocks::{edits::BlockEdits, generate::BlockGenerate},
+        generate::{Preset, WorldGen},
+    };
+    let dir = project();
+    let hills = Preset::RollingHills.world();
+    std::fs::create_dir_all(dir.path().join("Worlds")).unwrap();
+    std::fs::write(dir.path().join("Worlds/Hills.worldgen"), hills.to_text()).unwrap();
+    let mut file = BlockFile::default();
+    file.ground.size = [32, 32];
+    let generate = BlockGenerate {
+        world: Some("Worlds/Hills.worldgen".into()),
+        bottom: -8,
+        caves: 0.0,
+        ..BlockGenerate::default()
+    };
+    file.generate = Some(generate);
+    std::fs::write(dir.path().join("Blocks/Field.blockworld"), file.to_text()).unwrap();
+    // A block taken out of the generated ground, kept as a change from it.
+    let hills = WorldGen::parse(&hills.to_text()).unwrap();
+    let base = file.make_ground(Some(&hills));
+    let top = |map: &voxear_terrain::blocks::BlockMap, x: i32, z: i32| {
+        (-8..200).rev().find(|&y| map.get([x, y, z]) != 0).unwrap()
+    };
+    let mut built = base.clone();
+    let dug = top(&base, 4, 4);
+    built.set([4, dug, 4], 0);
+    std::fs::write(dir.path().join("Blocks/Field.blocks"), BlockEdits::between(&base, &built).to_bytes()).unwrap();
+    let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
+    game.start(None).unwrap();
+    let blocks = game.engine.world.query_ref::<&BlockWorld>().into_iter().next().expect("the world").clone();
+    for (x, z) in [(1, 2), (20, 30), (31, 0)] {
+        let height = hills.height_at((x as f32 + 0.5) * 1.0, (z as f32 + 0.5) * 1.0);
+        assert!(((top(&blocks.blocks, x, z) + 1) as f32 - height).abs() <= 1.0, "column ({x}, {z}) at {height} m");
+    }
+    assert_eq!(top(&blocks.blocks, 4, 4), dug - 1, "the block dug out stays out");
 }

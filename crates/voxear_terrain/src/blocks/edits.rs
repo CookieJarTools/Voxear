@@ -202,7 +202,7 @@ mod tests {
     #[test]
     fn changes_from_the_ground_are_kept_small_and_come_back_as_they_were() {
         let file = super::super::file::BlockFile::default();
-        let base = file.make_ground();
+        let base = file.make_ground(None);
         let mut now = base.clone();
         // A few blocks dug out: kept one by one.
         for x in 3..6 {

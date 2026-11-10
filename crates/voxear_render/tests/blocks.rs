@@ -64,7 +64,7 @@ fn a_field_of_blocks_is_drawn_in_its_blocks_colours_shaded_at_a_pillars_foot_and
     let mut file = BlockFile::default();
     file.ground.size = [64, 64];
     file.ground.height = 4;
-    let mut blocks = file.make_ground();
+    let mut blocks = file.make_ground(None);
     for y in 4..12 {
         for (x, z) in [(32, 32), (33, 32), (32, 33), (33, 33)] {
             blocks.set([x, y, z], 3);

@@ -357,10 +357,12 @@ impl Released {
     }
 }
 
-/// A world of blocks as read: its file and the blocks it makes.
+/// A world of blocks as read: its file, the ground it makes, and its
+/// blocks, that ground with the editor's changes.
 #[derive(Clone, Debug)]
 pub struct LoadedBlockWorld {
     pub file: voxear_terrain::blocks::file::BlockFile,
+    pub base: Arc<voxear_terrain::blocks::BlockMap>,
     pub world: voxear_terrain::blocks::BlockWorld,
 }
 
@@ -1343,7 +1345,8 @@ impl Content {
                 }
                 Err(_) => None,
             };
-            Ok(Arc::new(LoadedBlockWorld { world: crate::blocks::make(&file, edits.as_ref()), file }))
+            let base = Arc::new(crate::blocks::ground(self, &file));
+            Ok(Arc::new(LoadedBlockWorld { world: crate::blocks::make(&file, &base, edits.as_ref()), base, file }))
         });
         let found = found.map_err(|error| tracing::warn!("could not read the world of blocks {guid}: {error:#}")).ok();
         self.block_worlds.insert(guid, found.clone());
@@ -1357,13 +1360,17 @@ impl Content {
         &mut self,
         guid: AssetGuid,
         file: &voxear_terrain::blocks::file::BlockFile,
+        base: &Arc<voxear_terrain::blocks::BlockMap>,
         world: &voxear_terrain::blocks::BlockWorld,
     ) {
         let kept = self.block_worlds.get(&guid).and_then(Option::as_ref);
-        if kept.is_some_and(|kept| kept.file == *file && Arc::ptr_eq(&kept.world.blocks, &world.blocks)) {
+        let same = |kept: &LoadedBlockWorld| {
+            kept.file == *file && Arc::ptr_eq(&kept.world.blocks, &world.blocks) && Arc::ptr_eq(&kept.base, base)
+        };
+        if kept.is_some_and(|kept| same(kept)) {
             return;
         }
-        let loaded = LoadedBlockWorld { world: world.clone(), file: file.clone() };
+        let loaded = LoadedBlockWorld { world: world.clone(), base: base.clone(), file: file.clone() };
         self.block_worlds.insert(guid, Some(Arc::new(loaded)));
         self.unsaved_block_worlds.insert(guid);
     }

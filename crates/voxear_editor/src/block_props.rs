@@ -8,6 +8,7 @@
 //! the world for saving and undo as a Terrain's are.
 
 use anyhow::{Context, Result};
+use std::sync::Arc;
 use voxear_assets::AssetKind;
 use voxear_ecs::{Entity, World};
 use voxear_engine::{
@@ -17,11 +18,15 @@ use voxear_engine::{
     scene_file::{BlockWorldData, BlockWorldSource},
 };
 use voxear_render::{BlockLook, Renderer};
-use voxear_terrain::blocks::{
-    BlockWorld,
-    chunk::{AIR, BlockId},
-    edits::BlockEdits,
-    file::{BlockFile, BlockKind, MAX_BLOCKS},
+
+use voxear_terrain::{
+    blocks::{
+        BlockMap, BlockWorld,
+        chunk::{AIR, BlockId},
+        edits::BlockEdits,
+        file::{BlockCover, BlockFile, BlockKind, MAX_BLOCKS},
+    },
+    surfaces::Biome,
 };
 
 use crate::{
@@ -113,6 +118,21 @@ pub enum BlockField {
     GroundSize,
     GroundHeight,
     Shadows,
+    /// Whether its ground is flat or made by a world generator, and then
+    /// which generator, from where in its world, down to which block, how
+    /// far its surface is pushed in and out, and how much is caves.
+    Ground,
+    Generator,
+    Offset,
+    Lowest,
+    Overhangs,
+    Caves,
+    /// The blocks its ground is made of: its top, the layers under it and
+    /// how deep they go, and the rest.
+    TopBlock,
+    UnderBlock,
+    UnderDepth,
+    BaseBlock,
     /// The brush: what it does and how many blocks across.
     Brush,
     BrushSize,
@@ -122,6 +142,18 @@ pub enum BlockField {
     Material,
     Top,
     Bottom,
+    /// Where the picked kind covers generated ground: whether it does, by
+    /// which biome, between which temperatures, humidities and heights, and
+    /// how many blocks deep.
+    Cover,
+    CoverBiome,
+    TemperatureMask,
+    Temperatures,
+    HumidityMask,
+    Humidities,
+    HeightMask,
+    Heights,
+    CoverDepth,
 }
 
 use BlockField as F;
@@ -134,13 +166,34 @@ pub fn props(world: &World, entity: Entity) -> Vec<Prop> {
     let fields = match (state.tool, file) {
         (BlockTool::Build, Some(file)) => {
             let mut fields = vec![F::Brush, F::BrushSize];
-            if state.block < file.blocks.len() {
+            if let Some(kind) = file.blocks.get(state.block) {
                 fields.extend([F::Name, F::Color, F::Material, F::Top, F::Bottom]);
+                // Covers lay blocks on generated ground.
+                if file.generate.is_some() {
+                    fields.push(F::Cover);
+                    if let Some(cover) = &kind.cover {
+                        fields.extend([F::CoverBiome, F::TemperatureMask]);
+                        fields.extend(cover.temperature.map(|_| F::Temperatures));
+                        fields.push(F::HumidityMask);
+                        fields.extend(cover.humidity.map(|_| F::Humidities));
+                        fields.push(F::HeightMask);
+                        fields.extend(cover.height.map(|_| F::Heights));
+                        fields.push(F::CoverDepth);
+                    }
+                }
             }
             fields
         }
         (BlockTool::Build, None) => vec![F::Data],
-        (BlockTool::Settings, Some(_)) => vec![F::Data, F::BlockSize, F::GroundSize, F::GroundHeight, F::Shadows],
+        (BlockTool::Settings, Some(file)) => {
+            let mut fields = vec![F::Data, F::BlockSize, F::Ground];
+            match file.generate {
+                Some(_) => fields.extend([F::Generator, F::Offset, F::GroundSize, F::Lowest, F::Overhangs, F::Caves]),
+                None => fields.extend([F::GroundSize, F::GroundHeight]),
+            }
+            fields.extend([F::TopBlock, F::UnderBlock, F::UnderDepth, F::BaseBlock, F::Shadows]);
+            fields
+        }
         (BlockTool::Settings, None) => vec![F::Data, F::Shadows],
     };
     fields.into_iter().map(Prop::BlockWorld).collect()
@@ -160,6 +213,25 @@ pub fn label(field: BlockField) -> &'static str {
         F::Material => "Material",
         F::Top => "Top",
         F::Bottom => "Bottom",
+        F::Ground => "Ground",
+        F::Generator => "Generator",
+        F::Offset => "Offset",
+        F::Lowest => "Lowest block",
+        F::Overhangs => "Overhangs",
+        F::Caves => "Caves",
+        F::TopBlock => "Top block",
+        F::UnderBlock => "Under block",
+        F::UnderDepth => "Under depth",
+        F::BaseBlock => "Base block",
+        F::Cover => "Cover",
+        F::CoverBiome => "Biome",
+        F::TemperatureMask => "Temperature",
+        F::Temperatures => "Temperatures",
+        F::HumidityMask => "Humidity",
+        F::Humidities => "Humidities",
+        F::HeightMask => "Height",
+        F::Heights => "Heights",
+        F::CoverDepth => "Depth",
     }
 }
 
@@ -175,14 +247,30 @@ pub fn key(field: BlockField) -> &'static str {
 
 pub fn unit(field: BlockField) -> Option<&'static str> {
     match field {
-        F::BlockSize => Some("m"),
+        F::BlockSize | F::Offset | F::Overhangs | F::Heights => Some("m"),
+        F::Temperatures => Some("°C"),
+        _ => None,
+    }
+}
+
+/// The range a value's slider spans, for those shown as sliders.
+pub fn range(field: BlockField) -> Option<[f32; 2]> {
+    match field {
+        F::Caves => Some([0.0, 1.0]),
         _ => None,
     }
 }
 
 /// Whether the value is an asset picked from a list.
 pub fn is_picked(field: BlockField) -> bool {
-    matches!(field, F::Data | F::Material | F::Top | F::Bottom)
+    matches!(field, F::Data | F::Material | F::Top | F::Bottom | F::Generator)
+}
+
+/// A choice of the world's kinds of block, air first, with `block` chosen.
+fn block_choice(file: &BlockFile, block: BlockId) -> Value {
+    let mut names = vec!["Air".to_string()];
+    names.extend(file.blocks.iter().map(|kind| kind.name.clone()));
+    Value::Choice(usize::from(block).min(names.len() - 1), names)
 }
 
 /// An asset's path, by the reference a file holds, or "None".
@@ -212,7 +300,72 @@ pub fn get(game: &Game, entity: Entity, field: BlockField) -> Option<Value> {
         F::Material => Value::Asset(path_of(game, kind()?.material.as_deref())),
         F::Top => Value::Asset(path_of(game, kind()?.top.as_deref())),
         F::Bottom => Value::Asset(path_of(game, kind()?.bottom.as_deref())),
+        F::Ground => {
+            let names = vec!["Flat".to_string(), "Generated".to_string()];
+            Value::Choice(usize::from(file()?.generate.is_some()), names)
+        }
+        F::Generator => Value::Asset(path_of(game, file()?.generate.as_ref()?.world.as_deref())),
+        F::Offset => Value::Vector(file()?.generate.as_ref()?.position.to_vec()),
+        F::Lowest => Value::Number(file()?.generate.as_ref()?.bottom as f32),
+        F::Overhangs => Value::Number(file()?.generate.as_ref()?.overhangs),
+        F::Caves => Value::Number(file()?.generate.as_ref()?.caves),
+        F::TopBlock => block_choice(file()?, file()?.ground.top),
+        F::UnderBlock => block_choice(file()?, file()?.ground.under),
+        F::UnderDepth => Value::Number(file()?.ground.under_depth as f32),
+        F::BaseBlock => block_choice(file()?, file()?.ground.bottom),
+        F::Cover => Value::Toggle(kind()?.cover.is_some()),
+        F::CoverBiome => {
+            // Any, each biome, and its own ranges where they are none's.
+            let cover = kind()?.cover?;
+            let mut names = vec!["Any".to_string()];
+            names.extend(Biome::ALL.map(|biome| biome.name().to_string()));
+            let ranges = (cover.temperature, cover.humidity);
+            let at = match Biome::ALL.iter().position(|biome| biome.ranges() == ranges) {
+                _ if ranges == (None, None) => 0,
+                Some(at) => at + 1,
+                None => {
+                    names.push("Custom".to_string());
+                    names.len() - 1
+                }
+            };
+            Value::Choice(at, names)
+        }
+        F::TemperatureMask => Value::Toggle(kind()?.cover?.temperature.is_some()),
+        F::Temperatures => Value::Vector(kind()?.cover?.temperature?.to_vec()),
+        F::HumidityMask => Value::Toggle(kind()?.cover?.humidity.is_some()),
+        F::Humidities => Value::Vector(kind()?.cover?.humidity?.to_vec()),
+        F::HeightMask => Value::Toggle(kind()?.cover?.height.is_some()),
+        F::Heights => Value::Vector(kind()?.cover?.height?.to_vec()),
+        F::CoverDepth => Value::Number(kind()?.cover?.depth as f32),
     })
+}
+
+fn pair(value: &Value) -> Option<[f32; 2]> {
+    match value {
+        Value::Vector(v) if v.len() >= 2 => Some([v[0].min(v[1]), v[0].max(v[1])]),
+        _ => None,
+    }
+}
+
+/// Sets one of a cover's values.
+fn set_cover(cover: &mut BlockCover, field: BlockField, value: &Value) {
+    match (field, value) {
+        (F::CoverBiome, Value::Choice(at, _)) => match at.checked_sub(1).and_then(|at| Biome::ALL.get(at)) {
+            Some(biome) => (cover.temperature, cover.humidity) = biome.ranges(),
+            None if *at == 0 => (cover.temperature, cover.humidity) = (None, None),
+            None => {}
+        },
+        (F::TemperatureMask, Value::Toggle(on)) => {
+            cover.temperature = on.then_some(cover.temperature.unwrap_or([-10.0, 0.0]))
+        }
+        (F::Temperatures, v) => cover.temperature = pair(v).or(cover.temperature),
+        (F::HumidityMask, Value::Toggle(on)) => cover.humidity = on.then_some(cover.humidity.unwrap_or([0.0, 0.5])),
+        (F::Humidities, v) => cover.humidity = pair(v).map(|r| r.map(|h| h.clamp(0.0, 1.0))).or(cover.humidity),
+        (F::HeightMask, Value::Toggle(on)) => cover.height = on.then_some(cover.height.unwrap_or([0.0, 100.0])),
+        (F::Heights, v) => cover.height = pair(v).or(cover.height),
+        (F::CoverDepth, v) => cover.depth = number(v).unwrap_or(1.0).round().clamp(1.0, 64.0) as u32,
+        _ => {}
+    }
 }
 
 fn number(value: &Value) -> Option<f32> {
@@ -255,6 +408,50 @@ pub fn set(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, fie
         }
         (F::Name, Value::Text(name)) if picked < file.blocks.len() => file.blocks[picked].name = name.clone(),
         (F::Color, Value::Color(color)) if picked < file.blocks.len() => file.blocks[picked].color = *color,
+        (F::Ground, Value::Choice(at, _)) => {
+            file.generate = (*at == 1).then(|| file.generate.clone().unwrap_or_default());
+        }
+        (F::Offset, v) => {
+            let Some(generate) = &mut file.generate else { return false };
+            if let Value::Vector(v) = v
+                && v.len() >= 2
+            {
+                generate.position = [v[0], v[1]];
+            }
+        }
+        (F::Lowest, v) => {
+            let Some(generate) = &mut file.generate else { return false };
+            generate.bottom = number(v).unwrap_or(generate.bottom as f32).round().clamp(-1024.0, 1024.0) as i32;
+        }
+        (F::Overhangs, v) => {
+            let Some(generate) = &mut file.generate else { return false };
+            generate.overhangs = number(v).unwrap_or(generate.overhangs).clamp(0.0, 100.0);
+        }
+        (F::Caves, v) => {
+            let Some(generate) = &mut file.generate else { return false };
+            generate.caves = number(v).unwrap_or(generate.caves).clamp(0.0, 1.0);
+        }
+        (F::TopBlock | F::UnderBlock | F::BaseBlock, Value::Choice(at, _)) => {
+            let block = (*at).min(file.blocks.len()) as BlockId;
+            match field {
+                F::TopBlock => file.ground.top = block,
+                F::UnderBlock => file.ground.under = block,
+                _ => file.ground.bottom = block,
+            }
+        }
+        (F::UnderDepth, v) => {
+            file.ground.under_depth =
+                number(v).unwrap_or(file.ground.under_depth as f32).round().clamp(0.0, 256.0) as u32;
+        }
+        (F::Cover, Value::Toggle(on)) if picked < file.blocks.len() => {
+            let kind = &mut file.blocks[picked];
+            kind.cover = on.then(|| kind.cover.unwrap_or_default());
+        }
+        (F::CoverBiome | F::TemperatureMask | F::Temperatures | F::HumidityMask | F::Humidities, _)
+        | (F::HeightMask | F::Heights | F::CoverDepth, _) => {
+            let Some(cover) = file.blocks.get_mut(picked).and_then(|kind| kind.cover.as_mut()) else { return false };
+            set_cover(cover, field, &value);
+        }
         _ => return false,
     }
     change_file(game, renderer, entity, file, |blocks| blocks)
@@ -270,36 +467,71 @@ fn change_file(
     renderer: Option<&mut Renderer>,
     entity: Entity,
     file: BlockFile,
-    renumber: impl Fn(voxear_terrain::blocks::BlockMap) -> voxear_terrain::blocks::BlockMap,
+    renumber: impl Fn(BlockMap) -> BlockMap,
 ) -> bool {
-    let world = &mut game.engine.world;
-    let Some(old) = world.get::<BlockWorldAsset>(entity).map(|asset| asset.file.clone()) else { return false };
+    let world = &game.engine.world;
+    let Some((old, base)) = world.get::<BlockWorldAsset>(entity).map(|a| (a.file.clone(), a.base.clone())) else {
+        return false;
+    };
     let Some(blocks) = world.get::<BlockWorld>(entity).cloned() else { return false };
     if old == file {
         return false;
     }
     let (_, faces) = file.faces();
-    let remade =
-        if old.ground != file.ground || old.blocks.len() != file.blocks.len() || old.block_size != file.block_size {
-            // The new ground names its blocks by their new numbers already; the old ground and blocks are renumbered.
-            let mut map = file.make_ground();
-            let renumbered = renumber((*blocks.blocks).clone());
-            // The changes, renumbered as the blocks are, on the new ground.
-            BlockEdits::between(&renumber(old.make_ground()), &renumbered).apply(&mut map);
-            let mut made = BlockWorld::new(map, &faces, file.block_size);
-            made.cast_shadows = blocks.cast_shadows;
-            made
-        } else if *faces != *blocks.faces {
-            blocks.with_faces(&faces)
-        } else {
-            blocks
-        };
+    let grounded = old.ground != file.ground
+        || old.generate != file.generate
+        || old.blocks.len() != file.blocks.len()
+        || old.block_size != file.block_size
+        || old.blocks.iter().map(|k| k.cover).ne(file.blocks.iter().map(|k| k.cover));
+    let (base, remade) = if grounded {
+        // The new ground names its blocks by their new numbers already; the old ground and blocks are renumbered.
+        let ground = Arc::new(voxear_engine::blocks::ground(&mut game.content, &file));
+        let changes = BlockEdits::between(&renumber((*base).clone()), &renumber((*blocks.blocks).clone()));
+        let mut made = voxear_engine::blocks::make(&file, &ground, Some(&changes));
+        made.cast_shadows = blocks.cast_shadows;
+        (ground, made)
+    } else if *faces != *blocks.faces {
+        (base, blocks.with_faces(&faces))
+    } else {
+        (base, blocks)
+    };
+    let world = &mut game.engine.world;
     world.insert(entity, remade);
     if let Some(asset) = world.get_mut::<BlockWorldAsset>(entity) {
-        asset.file = file.clone();
+        (asset.file, asset.base) = (file.clone(), base);
     }
     restyle(game, renderer, entity, &file);
     true
+}
+
+/// Makes every world of blocks whose ground the world generator `guid`
+/// makes again from it, the changes built on its old ground kept, as after
+/// the generator changed.
+pub fn regenerate(game: &mut Game, guid: voxear_assets::AssetGuid) {
+    let world = &game.engine.world;
+    let using: Vec<Entity> = world
+        .query_ref::<(Entity, &BlockWorldAsset)>()
+        .into_iter()
+        .filter(|(_, asset)| {
+            let reference = asset.file.generate.as_ref().and_then(|g| g.world.as_deref());
+            reference.and_then(|r| game.content.parse(r).ok()).and_then(|parsed| parsed.guid()) == Some(guid)
+        })
+        .map(|(entity, _)| entity)
+        .collect();
+    for entity in using {
+        let world = &game.engine.world;
+        let (Some(asset), Some(blocks)) =
+            (world.get::<BlockWorldAsset>(entity).cloned(), world.get::<BlockWorld>(entity).cloned())
+        else {
+            continue;
+        };
+        let ground = Arc::new(voxear_engine::blocks::ground(&mut game.content, &asset.file));
+        let changes = BlockEdits::between(&asset.base, &blocks.blocks);
+        let mut made = voxear_engine::blocks::make(&asset.file, &ground, Some(&changes));
+        made.cast_shadows = blocks.cast_shadows;
+        game.engine.world.insert(entity, made);
+        game.engine.world.insert(entity, BlockWorldAsset { base: ground, ..asset });
+    }
 }
 
 /// Gives the world's look its file's surfaces again, each material loaded,
@@ -329,6 +561,7 @@ pub fn choices(game: &Game, field: BlockField) -> Vec<(String, Pick)> {
     match field {
         F::Data => fields::assets_of(game, Some(AssetKind::BlockWorld)),
         F::Material | F::Top | F::Bottom => fields::assets_of(game, Some(AssetKind::Material)),
+        F::Generator => fields::assets_of(game, Some(AssetKind::WorldGen)),
         _ => Vec::new(),
     }
 }
@@ -354,9 +587,14 @@ pub fn pick(
         let Some(mut file) = game.engine.world.get::<BlockWorldAsset>(entity).map(|a| a.file.clone()) else {
             return false;
         };
+        let written = reference.map(|r| r.to_string());
+        if field == F::Generator {
+            let Some(generate) = &mut file.generate else { return false };
+            generate.world = written;
+            return change_file(game, renderer, entity, file, |blocks| blocks);
+        }
         let picked = ui(&game.engine.world).block;
         let Some(kind) = file.blocks.get_mut(picked) else { return false };
-        let written = reference.map(|r| r.to_string());
         match field {
             F::Material => kind.material = written,
             F::Top => kind.top = written,

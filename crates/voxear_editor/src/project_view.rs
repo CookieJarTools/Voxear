@@ -256,6 +256,7 @@ impl Contents {
                 FileKind::Asset(AssetKind::PromptIcons) => "gamepad",
                 FileKind::Asset(AssetKind::Terrain) => "mountain",
                 FileKind::Asset(AssetKind::WorldGen) => "sprout",
+                FileKind::Asset(AssetKind::BlockWorld) => "blocks",
                 FileKind::Asset(AssetKind::Lighting) => "light",
                 FileKind::Asset(AssetKind::Data) => "file",
             },

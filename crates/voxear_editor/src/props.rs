@@ -122,6 +122,7 @@ pub enum Part {
     Foliage,
     /// Ground from heights (the Terrain module).
     Terrain,
+    BlockWorld,
     /// Leaves tracks in the ground where its Obj touches it.
     TrackMaker,
     /// A Model Renderer: a whole model drawn by the Obj.
@@ -174,6 +175,7 @@ impl Part {
             Part::FoliageInteraction => "foliage_interaction".into(),
             Part::Foliage => "foliage".into(),
             Part::Terrain => "terrain".into(),
+            Part::BlockWorld => "block_world".into(),
             Part::TrackMaker => "track_maker".into(),
             Part::Model => "model".into(),
             Part::Behaviour(name) => name.clone(),
@@ -189,7 +191,7 @@ impl Part {
             Part::Collider2D | Part::Rigidbody2D => Some(Module::Physics2D),
             Part::Seasons | Part::FoliageInteraction | Part::Foliage => Some(Module::Vegetation),
             Part::Ocean | Part::Pool | Part::DryArea | Part::Stream | Part::Buoyancy => Some(Module::Water),
-            Part::Terrain | Part::TrackMaker => Some(Module::Terrain),
+            Part::Terrain | Part::BlockWorld | Part::TrackMaker => Some(Module::Terrain),
             _ => None,
         }
     }
@@ -235,6 +237,7 @@ impl Part {
             Part::FoliageInteraction => "Foliage Interaction",
             Part::Foliage => "Foliage",
             Part::Terrain => "Terrain",
+            Part::BlockWorld => "Block World",
             Part::TrackMaker => "Track Maker",
             Part::Model => "Model Renderer",
             Part::Behaviour(name) => name.rsplit('.').next().unwrap_or(name),
@@ -306,6 +309,7 @@ impl Part {
             Part::FoliageInteraction => "move",
             Part::Foliage => "cube",
             Part::Terrain => "mountain",
+            Part::BlockWorld => "blocks",
             Part::TrackMaker => "move",
             Part::Model => "box",
             Part::Behaviour(_) => "code",
@@ -605,6 +609,7 @@ pub enum Prop {
     /// A Terrain's settings, its picked layer's values, or its brush's (see
     /// `terrain_props`).
     Terrain(crate::terrain_props::TerrainField),
+    BlockWorld(crate::block_props::BlockField),
     /// A Foliage's plants: their trunks, Cut prefab, and how they are painted (see `plants_props`).
     Plants(crate::plants_props::PlantsField),
     FieldOfView,
@@ -729,6 +734,7 @@ impl Prop {
         match self {
             Prop::Mesh | Prop::Material | Prop::LodBias => Part::Renderer,
             Prop::Terrain(_) => Part::Terrain,
+            Prop::BlockWorld(_) => Part::BlockWorld,
             Prop::Plants(_) => Part::Foliage,
             Prop::LightKind
             | Prop::LightAppearance
@@ -1027,6 +1033,7 @@ impl Prop {
     pub fn lock_key(&self) -> String {
         let name = match self {
             Prop::Terrain(field) => crate::terrain_props::key(*field),
+            Prop::BlockWorld(field) => crate::block_props::key(*field),
             Prop::Plants(field) => crate::plants_props::key(*field),
             Prop::Mesh => "mesh",
             Prop::Material => "material",
@@ -1458,6 +1465,9 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     if world.has::<voxear_terrain::Terrain>(entity) {
         parts.push(Part::Terrain);
     }
+    if world.has::<voxear_terrain::blocks::BlockWorld>(entity) {
+        parts.push(Part::BlockWorld);
+    }
     if world.has::<voxear_render::TrackMaker>(entity) {
         parts.push(Part::TrackMaker);
     }
@@ -1529,6 +1539,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
     match part {
         Part::Renderer => vec![Prop::Mesh, Prop::Material, Prop::LodBias],
         Part::Terrain => crate::terrain_props::props(world, entity),
+        Part::BlockWorld => crate::block_props::props(world, entity),
         Part::Light => {
             let kind = world.get::<Light>(entity).map_or(LightKind::Point, |l| l.kind);
             let temperature = world.get::<Light>(entity).and_then(|l| l.temperature).is_some();
@@ -1915,6 +1926,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
 pub fn label(prop: &Prop) -> String {
     let label = match prop {
         Prop::Terrain(field) => crate::terrain_props::label(*field),
+        Prop::BlockWorld(field) => crate::block_props::label(*field),
         Prop::Plants(field) => crate::plants_props::label(*field),
         Prop::Mesh => "Mesh",
         Prop::Material => "Material",
@@ -2249,6 +2261,7 @@ pub fn unit_on(world: &World, entity: Entity, prop: &Prop) -> Option<&'static st
         (Prop::SeasonPatchSize | Prop::FoliageSpread | Prop::FoliageImpostorDistance | Prop::NetRange, _) => Some("m"),
         (Prop::TrackWidth | Prop::TrackDepth, _) => Some("m"),
         (Prop::Terrain(field), _) => crate::terrain_props::unit(world, entity, *field),
+        (Prop::BlockWorld(field), _) => crate::block_props::unit(*field),
         (Prop::Plants(field), _) => crate::plants_props::unit(*field),
         (Prop::JointMin | Prop::JointMax, _) => match world.get::<Joint>(entity)?.kind {
             JointType::Hinge => Some("°"),
@@ -2301,6 +2314,9 @@ pub fn add(
     if *part == Part::Terrain {
         return crate::terrain_props::add(game, renderer, entity);
     }
+    if *part == Part::BlockWorld {
+        return crate::block_props::add(game, renderer, entity);
+    }
     if *part == Part::LodGroup {
         let group = LodGroup::of_levels(lod_levels_inside(game, entity));
         game.engine.world.insert(entity, group);
@@ -2309,7 +2325,7 @@ pub fn add(
     let world = &mut game.engine.world;
     match part {
         // A model is placed from the Project panel, so Add Component does not offer one.
-        Part::Renderer | Part::LodGroup | Part::Foliage | Part::Terrain | Part::Model => {}
+        Part::Renderer | Part::LodGroup | Part::Foliage | Part::Terrain | Part::BlockWorld | Part::Model => {}
         Part::Light => {
             world.insert(entity, default_light(LightKind::Point));
         }
@@ -2447,6 +2463,7 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
     match part {
         Part::Renderer => drop(world.remove::<MeshRenderer>(entity)),
         Part::Terrain => crate::terrain_props::remove(world, entity),
+        Part::BlockWorld => crate::block_props::remove(world, entity),
         Part::Light => drop(world.remove::<Light>(entity)),
         Part::Camera => drop(world.remove::<Camera>(entity)),
         Part::PostVolume => drop(world.remove::<PostVolume>(entity)),
@@ -2557,6 +2574,7 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
     let wheel = || world.get::<Wheel>(entity);
     Some(match prop {
         Prop::Terrain(field) => return crate::terrain_props::get(game, entity, *field),
+        Prop::BlockWorld(field) => return crate::block_props::get(game, entity, *field),
         Prop::Plants(field) => return crate::plants_props::get(game, entity, *field),
         Prop::Shape2D => {
             let shape = collider2d()?.shape;
@@ -3107,6 +3125,12 @@ pub fn set(
             choice.is_some_and(|(_, choice)| crate::terrain_props::pick(game, renderer, entity, *field, &choice))
         }
         (Prop::Terrain(field), value) => crate::terrain_props::set(game, entity, *field, value),
+        (Prop::BlockWorld(field), Value::Asset(label)) if crate::block_props::is_picked(*field) => {
+            let choice = crate::block_props::choices(game, *field).into_iter().find(|(l, _)| *l == label);
+            let renderer = renderer.as_deref_mut();
+            choice.is_some_and(|(_, choice)| crate::block_props::pick(game, renderer, entity, *field, &choice))
+        }
+        (Prop::BlockWorld(field), value) => crate::block_props::set(game, entity, *field, value),
         (Prop::Plants(field), Value::Asset(label)) if crate::plants_props::is_picked(*field) => {
             let choice = crate::plants_props::choices(game, *field).into_iter().find(|(l, _)| *l == label);
             choice.is_some_and(|(_, choice)| crate::plants_props::pick(game, entity, *field, &choice))
@@ -3150,6 +3174,9 @@ pub fn pick(
 ) -> bool {
     if let Prop::Terrain(field) = prop {
         return crate::terrain_props::pick(game, renderer, entity, *field, choice);
+    }
+    if let Prop::BlockWorld(field) = prop {
+        return crate::block_props::pick(game, renderer, entity, *field, choice);
     }
     if let Prop::Plants(field) = prop {
         return crate::plants_props::pick(game, entity, *field, choice);
@@ -3474,6 +3501,7 @@ pub fn set_lod_until(world: &mut World, entity: Entity, at: usize, until: f32) -
 pub fn choices(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Vec<(String, Pick)> {
     match prop {
         Prop::Terrain(field) => return crate::terrain_props::choices(game, *field),
+        Prop::BlockWorld(field) => return crate::block_props::choices(game, *field),
         Prop::Plants(field) => return crate::plants_props::choices(game, *field),
         // The Obj's own Mesh Renderer's first, then any mesh.
         Prop::DryMesh => {
@@ -3610,6 +3638,7 @@ pub fn title(types: &ScriptTypes, prop: &Prop) -> String {
         Prop::LodObj(..) | Prop::LodAdd(_) => "Obj".into(),
         Prop::JointConnected => "Rigidbody".into(),
         Prop::Terrain(field) if crate::terrain_props::is_picked(*field) => crate::terrain_props::label(*field).into(),
+        Prop::BlockWorld(field) if crate::block_props::is_picked(*field) => "Block World".into(),
         Prop::Plants(field) if crate::plants_props::is_picked(*field) => "Prefab".into(),
         Prop::Field { behaviour, path } => fields::kind_at(types, behaviour, path)
             .map_or_else(|| "Obj".into(), |kind| fields::takes(&kind).to_string()),

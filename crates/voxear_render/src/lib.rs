@@ -48,6 +48,7 @@ mod skeleton;
 mod skinning;
 mod smoke;
 mod grass;
+mod blocks;
 mod terrain;
 mod dug;
 mod erosion;
@@ -126,6 +127,7 @@ pub use particles::{EmitShape, ParticleBlend, ParticlePlayback, ParticleSystem};
 pub use mist::{MAX_MIST_POINTS, MIST_RISE, Mist, MistTrail};
 pub use smoke::{SMOKE_GRID, Smoke, SmokeBlast, SmokeCue, SmokeFill, SmokeHoles, SmokeShot, smoke_origin};
 pub use grass::GrassLook;
+pub use blocks::BlockLook;
 pub use terrain::{SurfaceLook, TerrainLook};
 pub use wind::{WindShape, WindZone};
 pub use ocean::{Ocean, OceanSampler, SeaEasing, SeaNow, SeaState, Weather, WindSource};
@@ -335,6 +337,8 @@ struct FrameBuffers {
     ui_panels: Buffer,
     /// This view's terrains and the patches it draws of them (see `terrain`).
     terrain: Buffer,
+    /// This view's worlds of blocks and their surfaces (see `blocks`).
+    blocks: Buffer,
     /// This view's grass: its jobs and draws, its draws' indirect commands,
     /// and its blades (see `grass`).
     grass: Buffer,
@@ -420,6 +424,7 @@ pub struct Renderer {
     skinning: skinning::Skinning,
     /// Every terrain's heights on the GPU (see `terrain`).
     terrains: terrain::Terrains,
+    blocks: blocks::BlockWorlds,
     gpu_decompression: bool,
     /// Meshlet culling draws with task and mesh shaders, where the GPU has them.
     mesh_shaders: bool,
@@ -497,6 +502,7 @@ impl Renderer {
             impostor_bakes: impostors::Bakes::default(),
             skinning: skinning::Skinning::default(),
             terrains: terrain::Terrains::default(),
+            blocks: blocks::BlockWorlds::default(),
             gpu_decompression: true,
             mesh_shaders: true,
             clear: [0.0, 0.0, 0.0, 1.0],
@@ -1100,6 +1106,7 @@ impl Renderer {
         // Every terrain's tiles that changed, staged to copy in before any view draws them.
         let assets = self.assets.as_mut().expect("assets live until drop");
         self.terrains.prepare(&self.gpu, assets, &mut self.frames, world, frame_index)?;
+        self.blocks.prepare(&self.gpu, assets, &mut self.frames, world, frame_index)?;
 
         let recording = profile_marker!("Record Passes").scope();
         let Self {
@@ -1116,6 +1123,7 @@ impl Renderer {
             impostor_bakes,
             skinning,
             terrains,
+            blocks,
             frames,
             frame_debugger,
             captures,
@@ -1130,6 +1138,7 @@ impl Renderer {
         impostor_bakes.record(&mut fg, pipelines, assets, gpu, bindless)?;
         skinning.record(&mut fg, *pipelines, frame.slot);
         let terrain_draws = terrains.record(&mut fg, frames);
+        let block_draws = blocks.record(&mut fg, frames);
         let ui = &ui_buffers[frame.slot];
         // The UI's shaded backgrounds read the time from `output`.
         let ui_push = Push { buffers: ui.pointers.address, output: time.to_bits(), ..Push::default() };
@@ -1187,6 +1196,7 @@ impl Renderer {
                 posed: skinning.posed.clone(),
                 panels: panel_textures.clone(),
                 terrains: terrain_draws.clone(),
+                blocks: block_draws.clone(),
             };
             let recorded =
                 view.record(&mut fg, (gpu, bindless, pipelines, assets), world, &setup, output, frame.slot)?;
@@ -1424,6 +1434,7 @@ impl Drop for Renderer {
         self.pipelines.destroy(gpu);
         self.skinning.destroy(gpu);
         self.terrains.destroy(gpu);
+        self.blocks.destroy(gpu);
         for view in std::mem::take(&mut self.views) {
             view.retire(&mut self.frames);
         }
@@ -1534,6 +1545,8 @@ struct ViewSetup {
     panels: Vec<ui_panels::PanelTexture>,
     /// This frame's terrains, as every view draws them.
     terrains: std::sync::Arc<[terrain::Drawn]>,
+    /// This frame's worlds of blocks, as every view draws them.
+    blocks: std::sync::Arc<[blocks::DrawnBlocks]>,
 }
 
 /// What a view gives the frame after it: its push constants, which the UI
@@ -1623,6 +1636,7 @@ impl View {
                 mist_points,
                 ui_panels,
                 terrain,
+                blocks,
                 grass,
                 grass_args,
                 grass_blades,
@@ -1652,6 +1666,7 @@ impl View {
                 mist_points,
                 ui_panels,
                 terrain,
+                blocks,
                 grass,
                 grass_args,
                 grass_blades,
@@ -1882,6 +1897,7 @@ impl View {
         }
         // Each terrain's meshes for rays, among the Objs the GI traces and the sea floor is drawn from.
         terrain::add_proxies(&setup.terrains, &mut extracted);
+        blocks::add_proxies(&setup.blocks, &mut extracted);
         if features.vegetation {
             self.foliage.gather(world, camera, &mut extracted, &|mesh| assets.mesh_sphere(mesh), &assets.impostors);
         }
@@ -1932,6 +1948,8 @@ impl View {
         let view_terrains =
             terrain::gather(&setup.terrains, &extracted.frame, &extracted.entities, extracted.has_sun, &buffers.terrain)
                 .map(|drawn| terrain::ViewTerrains { tracks: Some(tracks_id), ..drawn });
+        let view_blocks =
+            blocks::gather(&setup.blocks, &extracted.frame, &extracted.entities, extracted.has_sun, &buffers.blocks);
         // The grass this view scatters round its camera on the terrains.
         let view_grass = grass::gather(&setup.terrains, &extracted.frame, &buffers.grass).map(|(jobs, dispatches)| {
             grass::ViewGrass {
@@ -2235,6 +2253,7 @@ impl View {
                 grass_args: buffers.grass_args.address,
                 grass_blades: buffers.grass_blades.address,
                 grass_draws: grass::addresses(&buffers.grass)[1],
+                block_worlds: buffers.blocks.address,
             }],
         );
         buffers.instances.write(0, &extracted.instances[..instance_count]);
@@ -2323,6 +2342,7 @@ impl View {
             mists: mists.len() as u32,
             probes,
             terrain: view_terrains,
+            blocks: view_blocks,
             grass: view_grass,
             traced_reflections,
         };
@@ -2522,6 +2542,7 @@ fn create_frame_buffers(gpu: &Gpu, prefix: &str, slot: usize) -> Result<FrameBuf
             host,
         )?,
         terrain: gpu.create_buffer(&format!("{prefix}terrains {slot}"), terrain::FRAME_SIZE, storage, host)?,
+        blocks: gpu.create_buffer(&format!("{prefix}blocks {slot}"), blocks::FRAME_SIZE, storage, host)?,
         grass: gpu.create_buffer(&format!("{prefix}grass {slot}"), grass::FRAME_SIZE, storage, host)?,
         grass_args: gpu.create_buffer(
             &format!("{prefix}grass draws {slot}"),

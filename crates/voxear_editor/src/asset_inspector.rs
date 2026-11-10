@@ -1436,6 +1436,7 @@ fn kind_name(kind: ItemKind) -> &'static str {
         ItemKind::Asset(AssetKind::Data) => "Data asset",
         ItemKind::Asset(AssetKind::Terrain) => "Terrain",
         ItemKind::Asset(AssetKind::WorldGen) => "World Generator",
+        ItemKind::Asset(AssetKind::BlockWorld) => "Block World",
     }
 }
 
@@ -1463,6 +1464,7 @@ fn icon(kind: ItemKind) -> &'static str {
         ItemKind::Asset(AssetKind::Data) => "file",
         ItemKind::Asset(AssetKind::Terrain) => "mountain",
         ItemKind::Asset(AssetKind::WorldGen) => "sprout",
+        ItemKind::Asset(AssetKind::BlockWorld) => "blocks",
     }
 }
 

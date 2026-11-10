@@ -433,6 +433,7 @@ fn assets(game: &Game) -> Vec<Entry> {
                 AssetKind::PromptIcons => ("Prompt Icons", "gamepad"),
                 AssetKind::Terrain => ("Terrain", "mountain"),
                 AssetKind::WorldGen => ("World Generator", "sprout"),
+                AssetKind::BlockWorld => ("Block World", "blocks"),
                 AssetKind::Lighting => ("Lighting settings", "light"),
                 AssetKind::Data => ("Data asset", "file"),
             };

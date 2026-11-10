@@ -1,0 +1,755 @@
+//! Worlds of blocks on the GPU (see `voxear_terrain::blocks`): each world's
+//! chunks' quads in a pool of its own, a range of it a chunk, staged in
+//! when a chunk's faces change, by pointer, and drawn from it six vertices
+//! a quad with no vertex buffer (`blockVertex` in `shaders/blocks.slang`).
+//!
+//! Each view picks the chunks it sees and, of each, only the faces turned
+//! towards its camera; quads following on in the pool are drawn as one.
+//! The sun's cascades take every face of the chunks they see. Each chunk
+//! also gives the GI's rays a mesh of its own, its faces merged by surface
+//! alone, as the terrain's tiles do.
+
+use std::{collections::HashMap, sync::Arc};
+
+use anyhow::Result;
+use voxear_core::math::{Mat3, Mat4, Vec3, Vec4};
+use voxear_ecs::{Component, Entity, World};
+use voxear_rhi::{Buffer, FRAMES_IN_FLIGHT, Frames, Gpu, MemoryLocation, Retired, vk};
+use voxear_terrain::blocks::{
+    BlockWorld,
+    chunk::CHUNK,
+    mesh::{ChunkMesh, FACINGS},
+};
+
+use crate::{
+    MaterialHandle, MeshHandle,
+    alloc::{RangeAllocator, SlotAllocator},
+    assets::Assets,
+    gpu::{GpuInstance, INSTANCE_RAYS_ONLY, LIST_COUNT, LIST_EARLY, LIST_SHADOW, Push},
+    graph::{BufferAccess, BufferId, FrameGraph, ImageAccess, ImageId, PassContext},
+    mesh::{MeshData, NO_WIND_MASKS, Vertex},
+    passes::{attachment, begin_rendering, bind, set_viewport},
+    pipelines::Pipelines,
+    scene::{ExtractedFrame, Owner},
+    shadows::{CASCADE_RESOLUTION, CASCADES},
+    terrain::{GpuTerrainSurface, SurfaceLook, surface_flags},
+};
+
+/// How a world of blocks looks: the material a face with no surface of its
+/// own is drawn with, and its surfaces, the ways its faces are drawn (see
+/// `voxear_terrain::blocks::file::BlockFile::faces`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct BlockLook {
+    pub material: MaterialHandle,
+    pub surfaces: Arc<[SurfaceLook]>,
+}
+
+impl Component for BlockLook {}
+
+/// The most worlds of blocks a view draws.
+pub const MAX_BLOCK_WORLDS: usize = 16;
+
+/// The most surfaces a world of blocks has.
+pub const MAX_BLOCK_SURFACES: usize = 256;
+
+/// The most chunks with faces a world draws.
+const SLOTS: u32 = 65_536;
+
+/// Where a pool's quads start: after each slot's chunk's place.
+const QUADS_AT: u64 = SLOTS as u64 * 16;
+
+/// How many quads a pool starts with room for; it doubles when full.
+const FIRST_CAPACITY: u64 = 1 << 16;
+
+/// How many chunks get their meshes for rays in a frame, at most.
+const PROXIES_A_FRAME: usize = 8;
+
+/// A world of blocks as `shaders/blocks.slang` reads it (`BlockWorld` in
+/// `shaders/common.slang`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuBlockWorld {
+    pub corner: [f32; 3],
+    pub block_size: f32,
+    pub quads: u64,
+    pub origins: u64,
+    pub surfaces: u64,
+    pub surface_count: u32,
+    pub material: u32,
+    pub anchor: u32,
+    pub pad: u32,
+}
+
+/// Where a view's block buffer keeps its surfaces, after its worlds.
+const SURFACES_AT: usize = MAX_BLOCK_WORLDS * size_of::<GpuBlockWorld>();
+
+/// How large a view's block buffer is.
+pub const FRAME_SIZE: u64 =
+    (SURFACES_AT + MAX_BLOCK_WORLDS * MAX_BLOCK_SURFACES * size_of::<GpuTerrainSurface>()) as u64;
+
+/// One chunk in a pool: the faces it was made from, its slot, where its
+/// quads start, and the box it lies in, in metres from the world's corner.
+struct Held {
+    mesh: Arc<ChunkMesh>,
+    slot: u32,
+    first: u64,
+    bounds: [Vec3; 2],
+}
+
+/// One chunk as a view picks what to draw of it: its box, and where each
+/// facing's quads start in the pool and how many, +x first.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct ChunkDraw {
+    pub bounds: [Vec3; 2],
+    pub facings: [[u32; 2]; FACINGS],
+}
+
+/// What a view draws of a world's chunks seen from `camera` (in the
+/// world's space): those within `planes` (inward, in its space), and of
+/// each, with `facing_camera`, only the faces turned towards the camera;
+/// as first quads and counts, those that follow on in the pool drawn as
+/// one.
+pub(crate) fn pick(chunks: &[ChunkDraw], camera: Vec3, planes: &[[f32; 4]], facing_camera: bool) -> Vec<[u32; 2]> {
+    let mut picked: Vec<[u32; 2]> = Vec::new();
+    for chunk in chunks {
+        let [low, high] = chunk.bounds;
+        let seen = planes.iter().all(|&[x, y, z, d]| {
+            let corner = Vec3::new(
+                if x >= 0.0 { high.x } else { low.x },
+                if y >= 0.0 { high.y } else { low.y },
+                if z >= 0.0 { high.z } else { low.z },
+            );
+            x * corner.x + y * corner.y + z * corner.z + d >= 0.0
+        });
+        if !seen {
+            continue;
+        }
+        // A face is turned towards the camera when the camera is past its plane, along the way it faces.
+        let toward = [
+            camera.x > low.x,
+            camera.x < high.x,
+            camera.y > low.y,
+            camera.y < high.y,
+            camera.z > low.z,
+            camera.z < high.z,
+        ];
+        for (facing, &[first, count]) in chunk.facings.iter().enumerate() {
+            if count > 0 && (!facing_camera || toward[facing]) {
+                picked.push([first, count]);
+            }
+        }
+    }
+    picked.sort_unstable();
+    let mut merged: Vec<[u32; 2]> = Vec::with_capacity(picked.len());
+    for [first, count] in picked {
+        match merged.last_mut() {
+            Some(last) if last[0] + last[1] == first => last[1] += count,
+            _ => merged.push([first, count]),
+        }
+    }
+    merged
+}
+
+/// One world's chunks on the GPU: one buffer, each slot's chunk's place in
+/// blocks, then the quads; and each chunk's mesh for rays.
+struct Pool {
+    buffer: Buffer,
+    space: RangeAllocator,
+    slots: SlotAllocator,
+    capacity: u64,
+    held: HashMap<[i32; 3], Held>,
+    /// Ranges and slots given up, freed once the frames that may draw them
+    /// are done.
+    freeing: Vec<(u64, u64, u64, u32)>,
+    proxies: HashMap<[i32; 3], (Arc<ChunkMesh>, MeshHandle)>,
+    block_size: f32,
+    draws: Option<Arc<[ChunkDraw]>>,
+    seen: u64,
+}
+
+impl Pool {
+    fn create(gpu: &Gpu, capacity: u64) -> Result<Buffer> {
+        let usage = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
+        gpu.create_buffer("block quads", QUADS_AT + capacity * 8, usage, MemoryLocation::GpuOnly)
+    }
+
+    fn new(gpu: &Gpu, block_size: f32) -> Result<Self> {
+        Ok(Self {
+            buffer: Self::create(gpu, FIRST_CAPACITY)?,
+            space: RangeAllocator::new(FIRST_CAPACITY),
+            slots: SlotAllocator::new(SLOTS),
+            capacity: FIRST_CAPACITY,
+            held: HashMap::new(),
+            freeing: Vec::new(),
+            proxies: HashMap::new(),
+            block_size,
+            draws: None,
+            seen: 0,
+        })
+    }
+
+    /// Brings the pool up to `world`'s chunks: stages the quads of each
+    /// that changed, by pointer, with `stage(bytes, to)`, growing the pool
+    /// when they do not fit.
+    fn update(
+        &mut self,
+        gpu: &Gpu,
+        frames: &mut Frames,
+        world: &BlockWorld,
+        frame_index: u64,
+        stage: &mut dyn FnMut(&[u8], u64),
+    ) -> Result<()> {
+        let free_by = frame_index.saturating_sub(FRAMES_IN_FLIGHT as u64);
+        let (done, waiting): (Vec<_>, Vec<_>) = self.freeing.drain(..).partition(|(when, ..)| *when <= free_by);
+        self.freeing = waiting;
+        for (_, first, count, slot) in done {
+            self.space.free(first, count);
+            self.slots.free(slot);
+        }
+        let before = self.held.len();
+        let freeing = &mut self.freeing;
+        self.held.retain(|key, held| {
+            let kept = world.meshes.contains_key(key);
+            if !kept {
+                freeing.push((frame_index, held.first, held.mesh.quads.len() as u64, held.slot));
+            }
+            kept
+        });
+        let mut changed = self.held.len() != before;
+        let side = CHUNK as f32 * world.block_size;
+        for (key, mesh) in world.meshes.iter() {
+            if self.held.get(key).is_some_and(|held| Arc::ptr_eq(&held.mesh, mesh)) {
+                continue;
+            }
+            if let Some(old) = self.held.remove(key) {
+                self.freeing.push((frame_index, old.first, old.mesh.quads.len() as u64, old.slot));
+            }
+            let Some(slot) = self.slots.alloc() else {
+                tracing::warn!("a world of blocks has more chunks than {SLOTS}; the rest are left out");
+                continue;
+            };
+            let count = mesh.quads.len() as u64;
+            let first = match self.space.alloc(count) {
+                Some(first) => first,
+                None => {
+                    self.grow(gpu, frames, count, stage)?;
+                    self.space.alloc(count).expect("room after growing")
+                }
+            };
+            let quads: Vec<[u32; 2]> = mesh.quads.iter().map(|&[a, b]| [a, b | slot << 16]).collect();
+            stage(bytemuck::cast_slice(&quads), QUADS_AT + first * 8);
+            stage(bytemuck::cast_slice(&[key[0], key[1], key[2], 0]), u64::from(slot) * 16);
+            let low = Vec3::new(key[0] as f32, key[1] as f32, key[2] as f32) * side;
+            self.held.insert(*key, Held { mesh: mesh.clone(), slot, first, bounds: [low, low + Vec3::splat(side)] });
+            changed = true;
+        }
+        if changed {
+            self.draws = None;
+        }
+        Ok(())
+    }
+
+    /// A buffer twice as large, or more where `wanted` more quads need it,
+    /// with every chunk held staged into it again.
+    fn grow(&mut self, gpu: &Gpu, frames: &mut Frames, wanted: u64, stage: &mut dyn FnMut(&[u8], u64)) -> Result<()> {
+        let held: u64 = self.held.values().map(|held| held.mesh.quads.len() as u64).sum();
+        let mut capacity = self.capacity * 2;
+        while capacity < held + wanted {
+            capacity *= 2;
+        }
+        let old = std::mem::replace(&mut self.buffer, Self::create(gpu, capacity)?);
+        frames.retire(Retired::Buffer(old));
+        self.capacity = capacity;
+        self.space = RangeAllocator::new(capacity);
+        // Slots given up wait no longer: nothing draws from the old buffer's quads now.
+        for (_, _, _, slot) in self.freeing.drain(..) {
+            self.slots.free(slot);
+        }
+        for (key, held) in &mut self.held {
+            held.first = self.space.alloc(held.mesh.quads.len() as u64).expect("room in a larger pool");
+            let quads: Vec<[u32; 2]> = held.mesh.quads.iter().map(|&[a, b]| [a, b | held.slot << 16]).collect();
+            stage(bytemuck::cast_slice(&quads), QUADS_AT + held.first * 8);
+            stage(bytemuck::cast_slice(&[key[0], key[1], key[2], 0]), u64::from(held.slot) * 16);
+        }
+        self.draws = None;
+        Ok(())
+    }
+
+    /// Each chunk to draw, made again only when the pool changed.
+    fn draws(&mut self) -> Arc<[ChunkDraw]> {
+        if self.draws.is_none() {
+            let draws = self.held.values().map(|held| {
+                let buckets = held.mesh.buckets;
+                let facings = std::array::from_fn(|f| [held.first as u32 + buckets[f], buckets[f + 1] - buckets[f]]);
+                ChunkDraw { bounds: held.bounds, facings }
+            });
+            self.draws = Some(draws.collect());
+        }
+        self.draws.clone().expect("made above")
+    }
+}
+
+/// A world of blocks to draw this frame, as every view draws it.
+#[derive(Clone)]
+pub(crate) struct DrawnBlocks {
+    pub entity: Entity,
+    pub corner: Vec3,
+    pub block_size: f32,
+    /// Where its pool's chunks' places start, and its quads.
+    pub address: u64,
+    pub chunks: Arc<[ChunkDraw]>,
+    pub look: BlockLook,
+    pub cast_shadows: bool,
+    /// Its chunks' meshes for rays, each with where its chunk is from the
+    /// world's corner.
+    pub proxies: Vec<(MeshHandle, Vec3)>,
+    /// Its pool in this frame's graph, for every view to wait on.
+    pub id: Option<BufferId>,
+}
+
+/// A copy into a world's pool: from where in the staging buffer, into
+/// whose, where and how much.
+#[derive(Clone)]
+struct Copy {
+    from: u64,
+    key: Entity,
+    to: u64,
+    size: u64,
+}
+
+/// Every world of blocks on the GPU, and what to copy in this frame.
+#[derive(Default)]
+pub(crate) struct BlockWorlds {
+    resident: HashMap<Entity, Pool>,
+    copies: Vec<Copy>,
+    staging: Option<Buffer>,
+    drawn: Vec<DrawnBlocks>,
+}
+
+/// The axis `normal` lies most along: 0 for x, 1 for y, 2 for z.
+fn axis_of(normal: Vec3) -> usize {
+    let n = normal.abs();
+    if n.x >= n.y && n.x >= n.z {
+        0
+    } else if n.y >= n.z {
+        1
+    } else {
+        2
+    }
+}
+
+/// A chunk's mesh for rays: its faces merged by surface alone, in metres
+/// from its corner, its pictures repeated as the world's are from `from`,
+/// where the chunk is from the world's corner.
+fn proxy(mesh: &ChunkMesh, block_size: f32, from: Vec3, uv_scale: f32) -> MeshData {
+    let mut data = MeshData::default();
+    for triangle in mesh.indices.chunks(3) {
+        let [a, b, c] = [0, 1, 2].map(|i| Vec3::from(mesh.positions[triangle[i] as usize]) * block_size);
+        let normal = (b - a).cross(c - a).normalize_or(Vec3::Y);
+        let tangent = Vec3::new(normal.y, -normal.x, 0.0).normalize_or(Vec3::X);
+        let first = data.vertices.len() as u32;
+        for point in [a, b, c] {
+            let world = point + from;
+            // Each face's pictures from the side it faces, as the shaders draw them.
+            let uv = match axis_of(normal) {
+                0 => [world.z, -world.y],
+                1 => [world.x, -world.z],
+                _ => [world.x, -world.y],
+            };
+            data.vertices.push(Vertex {
+                position: point.to_array(),
+                normal: normal.to_array(),
+                uv: uv.map(|v| v * uv_scale),
+                tangent: [tangent.x, tangent.y, tangent.z, 1.0],
+                wind: NO_WIND_MASKS,
+            });
+        }
+        data.indices.extend([first, first + 1, first + 2]);
+    }
+    data
+}
+
+impl BlockWorlds {
+    /// Brings every world of blocks in `world` up to date on the GPU,
+    /// staging the chunks that changed, and lists what to draw.
+    pub fn prepare(
+        &mut self,
+        gpu: &Gpu,
+        assets: &mut Assets,
+        frames: &mut Frames,
+        world: &World,
+        frame_index: u64,
+    ) -> Result<()> {
+        self.drawn.clear();
+        self.copies.clear();
+        // Staged and never recorded: every chunk staged again.
+        if let Some(staging) = self.staging.take() {
+            frames.retire(Retired::Buffer(staging));
+            for (_, pool) in self.resident.drain() {
+                retire(pool, assets, frames, frame_index);
+            }
+        }
+        let features = world.resource::<crate::RenderFeatures>().copied().unwrap_or_default();
+        let any_hidden = world.query_ref::<&voxear_scene::Hidden>().into_iter().next().is_some();
+        let found: Vec<(Entity, &BlockWorld, Vec3)> = if features.terrain {
+            world
+                .query_ref::<(Entity, &BlockWorld, &voxear_scene::Transform, Option<&voxear_scene::WorldTransform>)>()
+                .without::<voxear_scene::Destroying>()
+                .into_iter()
+                .map(|(entity, blocks, local, placed)| {
+                    (entity, blocks, placed.map_or(local.position, |placed| placed.0.w_axis.truncate()))
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let mut staged: Vec<u8> = Vec::new();
+        let mut proxies_left = PROXIES_A_FRAME;
+        for (entity, blocks, corner) in found {
+            if any_hidden && crate::scene::hidden(world, entity) {
+                continue;
+            }
+            let look = world
+                .get::<BlockLook>(entity)
+                .cloned()
+                .unwrap_or_else(|| BlockLook { material: assets.default_material, surfaces: Arc::from([]) });
+            if self.resident.get(&entity).is_some_and(|pool| pool.block_size != blocks.block_size) {
+                let pool = self.resident.remove(&entity).expect("held");
+                retire(pool, assets, frames, frame_index);
+            }
+            if !self.resident.contains_key(&entity) {
+                self.resident.insert(entity, Pool::new(gpu, blocks.block_size)?);
+            }
+            let pool = self.resident.get_mut(&entity).expect("made above");
+            pool.seen = frame_index;
+            let copies = &mut self.copies;
+            let mut stage = |bytes: &[u8], to: u64| {
+                let from = staged.len() as u64;
+                staged.extend_from_slice(bytes);
+                copies.push(Copy { from, key: entity, to, size: bytes.len() as u64 });
+            };
+            pool.update(gpu, frames, blocks, frame_index, &mut stage)?;
+            // Each chunk's mesh for rays, a few a frame, the old one shown until the new one is made.
+            pool.proxies.retain(|key, (_, mesh)| {
+                let kept = blocks.meshes.contains_key(key);
+                if !kept {
+                    assets.free_mesh(*mesh, frame_index);
+                }
+                kept
+            });
+            let side = CHUNK as f32 * blocks.block_size;
+            let uv_scale = 1.0 / blocks.block_size.max(0.01);
+            for (key, mesh) in blocks.meshes.iter() {
+                if pool.proxies.get(key).is_some_and(|(made, _)| Arc::ptr_eq(made, mesh)) || proxies_left == 0 {
+                    continue;
+                }
+                proxies_left -= 1;
+                let from = Vec3::new(key[0] as f32, key[1] as f32, key[2] as f32) * side;
+                let data = proxy(mesh, blocks.block_size, from, uv_scale);
+                let handle = assets.add_mesh_with_lods(gpu, &data, &crate::lod::full_lod(&data))?;
+                if let Some((_, old)) = pool.proxies.insert(*key, (mesh.clone(), handle)) {
+                    assets.free_mesh(old, frame_index);
+                }
+            }
+            let placed = pool
+                .proxies
+                .iter()
+                .map(|(key, (_, mesh))| (*mesh, Vec3::new(key[0] as f32, key[1] as f32, key[2] as f32) * side))
+                .collect();
+            self.drawn.push(DrawnBlocks {
+                entity,
+                corner,
+                block_size: blocks.block_size,
+                address: pool.buffer.address,
+                chunks: pool.draws(),
+                look,
+                cast_shadows: blocks.cast_shadows,
+                proxies: placed,
+                id: None,
+            });
+        }
+        let gone: Vec<Entity> =
+            self.resident.iter().filter(|(_, pool)| pool.seen != frame_index).map(|(key, _)| *key).collect();
+        for key in gone {
+            let pool = self.resident.remove(&key).expect("held");
+            retire(pool, assets, frames, frame_index);
+        }
+        if !staged.is_empty() {
+            let usage = vk::BufferUsageFlags::TRANSFER_SRC;
+            let staging = gpu.create_buffer("block uploads", staged.len() as u64, usage, MemoryLocation::CpuToGpu)?;
+            staging.write(0, &staged);
+            self.staging = Some(staging);
+        }
+        Ok(())
+    }
+
+    /// Copies this frame's staged chunks in, and gives what every view
+    /// draws, each world's pool as the graph knows it.
+    pub fn record(&mut self, fg: &mut FrameGraph<'_>, frames: &mut Frames) -> Arc<[DrawnBlocks]> {
+        let mut ids = HashMap::new();
+        for drawn in &mut self.drawn {
+            let pool = &self.resident[&drawn.entity];
+            drawn.id = Some(*ids.entry(drawn.entity).or_insert_with(|| fg.import_buffer(&pool.buffer)));
+        }
+        if let Some(staging) = self.staging.take() {
+            let copies: Vec<(vk::Buffer, vk::BufferCopy)> = self
+                .copies
+                .iter()
+                .filter_map(|copy| {
+                    let region = vk::BufferCopy { src_offset: copy.from, dst_offset: copy.to, size: copy.size };
+                    Some((self.resident.get(&copy.key)?.buffer.handle, region))
+                })
+                .collect();
+            let written: Vec<(BufferId, BufferAccess)> =
+                ids.values().map(|&id| (id, BufferAccess::TransferWrite)).collect();
+            let source = staging.handle;
+            fg.add_pass("Block uploads", &[], &written, move |ctx| {
+                for (target, region) in &copies {
+                    unsafe { ctx.gpu.device.cmd_copy_buffer(ctx.cmd, source, *target, std::slice::from_ref(region)) };
+                }
+            });
+            frames.retire(Retired::Buffer(staging));
+        }
+        self.drawn.clone().into()
+    }
+
+    pub fn destroy(&mut self, gpu: &Gpu) {
+        if let Some(staging) = self.staging.take() {
+            gpu.destroy_buffer(staging);
+        }
+        for (_, pool) in self.resident.drain() {
+            gpu.destroy_buffer(pool.buffer);
+        }
+    }
+}
+
+fn retire(pool: Pool, assets: &mut Assets, frames: &mut Frames, frame_index: u64) {
+    frames.retire(Retired::Buffer(pool.buffer));
+    for (_, (_, mesh)) in pool.proxies {
+        assets.free_mesh(mesh, frame_index);
+    }
+}
+
+/// Adds each world's chunks' meshes for rays to the frame's instances, so
+/// the GI's rays see its blocks.
+pub(crate) fn add_proxies(drawn: &[DrawnBlocks], extracted: &mut ExtractedFrame) {
+    for blocks in drawn {
+        for (part, (mesh, at)) in blocks.proxies.iter().enumerate() {
+            let model = Mat4::from_translation(blocks.corner + *at);
+            let normal = Mat3::from_mat4(model).inverse().transpose();
+            extracted.instances.push(GpuInstance {
+                model: crate::gpu::cols(model),
+                prev_model: crate::gpu::cols(model),
+                normal: [normal.x_axis, normal.y_axis, normal.z_axis].map(|c| Vec4::from((c, 0.0)).to_array()),
+                mesh: mesh.0,
+                material: blocks.look.material.0,
+                flags: INSTANCE_RAYS_ONLY,
+                ..GpuInstance::default()
+            });
+            extracted.entities.push(Owner { entity: blocks.entity, plant: None, part: Some(part as u32) });
+        }
+    }
+}
+
+/// What a view draws of its worlds of blocks: for each world, its number in
+/// the view and the quads each list draws; their pools to wait on; and
+/// whether any casts the sun's shadows.
+#[derive(Clone)]
+pub(crate) struct ViewBlocks {
+    pub runs: Vec<(u32, Vec<Vec<[u32; 2]>>)>,
+    pub pools: Vec<BufferId>,
+    pub shadows: bool,
+}
+
+/// Picks each world's chunks and faces for this view and writes the
+/// worlds' records into `buffer`; `None` when there is nothing to draw.
+/// `entities` gives each instance's owner, from which each world finds its
+/// anchor among its meshes for rays.
+pub(crate) fn gather(
+    drawn: &[DrawnBlocks],
+    frame: &crate::gpu::GpuFrame,
+    entities: &[Owner],
+    has_sun: bool,
+    buffer: &Buffer,
+) -> Option<ViewBlocks> {
+    if drawn.is_empty() {
+        return None;
+    }
+    let mut anchors: HashMap<Entity, u32> = HashMap::new();
+    for (index, owner) in entities.iter().enumerate().take(crate::MAX_INSTANCES as usize) {
+        if owner.plant.is_none() && owner.part.is_some() {
+            anchors.entry(owner.entity).or_insert(index as u32);
+        }
+    }
+    let camera = Vec3::from(frame.camera_position);
+    let mut records = Vec::with_capacity(drawn.len().min(MAX_BLOCK_WORLDS));
+    let mut surfaces = vec![GpuTerrainSurface::default(); drawn.len().min(MAX_BLOCK_WORLDS) * MAX_BLOCK_SURFACES];
+    let mut runs = Vec::new();
+    for (number, blocks) in drawn.iter().take(MAX_BLOCK_WORLDS).enumerate() {
+        let looks = &blocks.look.surfaces[..blocks.look.surfaces.len().min(MAX_BLOCK_SURFACES)];
+        for (place, look) in surfaces[number * MAX_BLOCK_SURFACES..].iter_mut().zip(looks) {
+            *place = GpuTerrainSurface {
+                material: look.material.0,
+                uv_scale: 1.0 / look.size.max(0.01),
+                sharpness: 0.0,
+                flags: surface_flags(look),
+                tracks: 0.0,
+                fills_in: 0.0,
+            };
+        }
+        let surfaces_at = (SURFACES_AT + number * MAX_BLOCK_SURFACES * size_of::<GpuTerrainSurface>()) as u64;
+        records.push(GpuBlockWorld {
+            corner: blocks.corner.into(),
+            block_size: blocks.block_size,
+            quads: blocks.address + QUADS_AT,
+            origins: blocks.address,
+            surfaces: buffer.address + surfaces_at,
+            surface_count: looks.len() as u32,
+            material: blocks.look.material.0,
+            anchor: anchors.get(&blocks.entity).copied().unwrap_or(0),
+            pad: 0,
+        });
+        let local = camera - blocks.corner;
+        let mut lists = vec![Vec::new(); LIST_COUNT as usize];
+        let planes = voxear_terrain::lod::planes_from(&frame.planes, blocks.corner);
+        lists[LIST_EARLY as usize] = pick(&blocks.chunks, local, &planes, true);
+        if has_sun && blocks.cast_shadows {
+            for cascade in 0..CASCADES {
+                let planes = voxear_terrain::lod::planes_from(&frame.cascade_planes[cascade], blocks.corner);
+                lists[LIST_SHADOW as usize + cascade] = pick(&blocks.chunks, local, &planes, false);
+            }
+        }
+        runs.push((number as u32, lists));
+    }
+    buffer.write(0, &records);
+    buffer.write(SURFACES_AT as u64, &surfaces);
+    let shadows = runs.iter().any(|(_, lists)| (0..CASCADES).any(|c| !lists[LIST_SHADOW as usize + c].is_empty()));
+    let pools = drawn.iter().take(MAX_BLOCK_WORLDS).filter_map(|blocks| blocks.id).collect();
+    Some(ViewBlocks { runs, pools, shadows })
+}
+
+/// Each world's quads list `list` draws: six vertices a quad, the world's
+/// number in the view and one in `level`, and the run's first quad in
+/// `output`, as the shaders' vertex numbers leave a draw's first out.
+fn draw_runs(ctx: &PassContext, view: &ViewBlocks, push: &Push, list: u32) {
+    for (number, lists) in &view.runs {
+        for &[first, count] in &lists[list as usize] {
+            ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { list, level: number + 1, output: first, ..*push });
+            unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, count * 6, 1, 0, 0) };
+        }
+    }
+}
+
+/// Whether any world draws anything in list `list`.
+fn draws(view: &ViewBlocks, list: u32) -> bool {
+    view.runs.iter().any(|(_, lists)| !lists[list as usize].is_empty())
+}
+
+/// **Shadows (blocks)**: the faces each cascade sees, into its corner of
+/// the sun's atlas, over what the other shadow passes drew.
+pub(crate) fn record_shadows(
+    fg: &mut FrameGraph<'_>,
+    (pipelines, push): (Pipelines, Push),
+    view: &ViewBlocks,
+    atlas: ImageId,
+) {
+    if !view.shadows {
+        return;
+    }
+    let reads: Vec<_> = view.pools.iter().map(|&id| (id, BufferAccess::ShaderRead)).collect();
+    let view = view.clone();
+    fg.add_pass("Shadows (blocks)", &[(atlas, ImageAccess::DepthAttachment)], &reads, move |ctx| {
+        let size = CASCADE_RESOLUTION * 2;
+        let depth = attachment(ctx.view(atlas), vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL, None);
+        begin_rendering(ctx, vk::Extent2D { width: size, height: size }, &[], Some(&depth));
+        bind(ctx, pipelines.block_shadow, vk::PipelineBindPoint::GRAPHICS, &push);
+        for cascade in 0..CASCADES as u32 {
+            let offset = vk::Offset2D {
+                x: (cascade % 2 * CASCADE_RESOLUTION) as i32,
+                y: (cascade / 2 * CASCADE_RESOLUTION) as i32,
+            };
+            set_viewport(ctx, offset, vk::Extent2D { width: CASCADE_RESOLUTION, height: CASCADE_RESOLUTION });
+            draw_runs(ctx, &view, &push, LIST_SHADOW + cascade);
+        }
+        unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
+    });
+}
+
+/// **Depth (blocks)**: the faces in view as depth alone, with each pixel's
+/// normal and roughness, over what the depth pass drew.
+pub(crate) fn record_depth(
+    fg: &mut FrameGraph<'_>,
+    (pipelines, push): (Pipelines, Push),
+    view: &ViewBlocks,
+    (depth, surface): (ImageId, ImageId),
+) {
+    if !draws(view, LIST_EARLY) {
+        return;
+    }
+    let reads: Vec<_> = view.pools.iter().map(|&id| (id, BufferAccess::ShaderRead)).collect();
+    let images = [(depth, ImageAccess::DepthAttachment), (surface, ImageAccess::ColorAttachment)];
+    let view = view.clone();
+    fg.add_pass("Depth (blocks)", &images, &reads, move |ctx| {
+        let target = attachment(ctx.view(depth), vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL, None);
+        let rough = [attachment(ctx.view(surface), vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL, None)];
+        begin_rendering(ctx, ctx.extent(depth), &rough, Some(&target));
+        bind(ctx, pipelines.block_depth, vk::PipelineBindPoint::GRAPHICS, &push);
+        draw_runs(ctx, &view, &push, LIST_EARLY);
+        unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
+    });
+}
+
+/// **Opaque (blocks)**: the faces in view shaded, over what the opaque
+/// passes drew; `pipeline` writes depth or tests against the depth passes'.
+pub(crate) fn record_opaque(
+    fg: &mut FrameGraph<'_>,
+    push: Push,
+    pipeline: vk::Pipeline,
+    view: &ViewBlocks,
+    images: Vec<(ImageId, ImageAccess)>,
+    (hdr, velocity, depth): (ImageId, ImageId, ImageId),
+    buffers: &[(BufferId, BufferAccess)],
+) {
+    if !draws(view, LIST_EARLY) {
+        return;
+    }
+    let mut reads: Vec<_> = buffers.to_vec();
+    reads.extend(view.pools.iter().map(|&id| (id, BufferAccess::ShaderRead)));
+    let view = view.clone();
+    fg.add_pass("Opaque (blocks)", &images, &reads, move |ctx| {
+        let layout = vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL;
+        let color = [attachment(ctx.view(hdr), layout, None), attachment(ctx.view(velocity), layout, None)];
+        let target = attachment(ctx.view(depth), vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL, None);
+        begin_rendering(ctx, ctx.extent(hdr), &color, Some(&target));
+        bind(ctx, pipeline, vk::PipelineBindPoint::GRAPHICS, &push);
+        draw_runs(ctx, &view, &push, LIST_EARLY);
+        unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_view_draws_the_chunks_it_sees_and_only_their_faces_turned_towards_it() {
+        // Two chunks along x, 32 m each, the second's quads following on from the first's.
+        let chunk = |x: f32, first: u32| ChunkDraw {
+            bounds: [Vec3::new(x, 0.0, 0.0), Vec3::new(x + 32.0, 32.0, 32.0)],
+            facings: std::array::from_fn(|f| [first + 10 * f as u32, 10]),
+        };
+        let chunks = [chunk(0.0, 0), chunk(32.0, 60)];
+        // From above the first, beyond its +x side: no -y faces of either, and none of the second's +x.
+        let picked = pick(&chunks, Vec3::new(16.0, 40.0, 16.0), &[], true);
+        let has = |first: u32| picked.iter().any(|&[f, c]| f <= first && first < f + c);
+        assert!(has(0) && has(20), "the first's +x and +y faces");
+        assert!(!has(30) && !has(90), "no faces turned down");
+        assert!(!has(60), "the second's +x faces are beyond the camera");
+        assert!(has(70), "its -x faces face back towards it");
+        // Shadows take every face; quads following on are drawn as one.
+        assert_eq!(pick(&chunks, Vec3::new(16.0, 40.0, 16.0), &[], false), vec![[0, 120]]);
+        // Looking along +x from x = 40: only the second.
+        let ahead = pick(&chunks, Vec3::new(40.0, 16.0, 16.0), &[[1.0, 0.0, 0.0, -40.0]], false);
+        assert_eq!(ahead, vec![[60, 60]]);
+    }
+}

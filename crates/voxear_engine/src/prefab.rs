@@ -504,6 +504,8 @@ pub struct TemplateObj {
     pub foliage: Option<Box<(Option<Foliage>, voxear_scene::Plants, FoliageSource)>>,
     /// A Terrain, which few Objs have.
     pub terrain: Option<Box<TerrainParts>>,
+    /// A Block World, which fewer have.
+    pub block_world: Option<Box<BlockWorldParts>>,
     /// A whole model it draws, where there is a renderer to draw it, and how
     /// it was written.
     pub model: Option<Box<(Option<ModelRenderer>, ModelSource)>>,
@@ -730,6 +732,16 @@ impl Template {
                 }
                 world.insert(entity, parts.source.clone());
             }
+            if let Some(parts) = &obj.block_world {
+                world.insert(entity, parts.blocks.clone());
+                if let Some(look) = &parts.look {
+                    world.insert(entity, look.clone());
+                }
+                if let Some(asset) = &parts.asset {
+                    world.insert(entity, asset.clone());
+                }
+                world.insert(entity, parts.source.clone());
+            }
             if let Some(body) = obj.rigidbody {
                 world.insert(entity, body);
             }
@@ -930,6 +942,48 @@ pub fn terrain(content: &mut Content, renderer: Option<&mut Renderer>, data: &Te
     Ok(TerrainParts { terrain, look, asset, source: TerrainSource(data.clone()) })
 }
 
+/// What a Block World is made of: its blocks, its look where there is a
+/// renderer to draw it, its asset where it has one, and how it was written,
+/// for saving.
+#[derive(Clone, Debug)]
+pub struct BlockWorldParts {
+    pub blocks: voxear_terrain::blocks::BlockWorld,
+    pub look: Option<voxear_render::BlockLook>,
+    pub asset: Option<crate::blocks::BlockWorldAsset>,
+    pub source: crate::scene_file::BlockWorldSource,
+}
+
+/// A Block World as a scene writes it: its asset's blocks, made with or
+/// without a renderer, as physics stands things on them; its look, where
+/// there is a renderer to draw it. A world whose asset cannot be read has
+/// no blocks.
+pub fn block_world(
+    content: &mut Content,
+    renderer: Option<&mut Renderer>,
+    data: &crate::scene_file::BlockWorldData,
+) -> Result<BlockWorldParts> {
+    let guid = content.parse(&data.data).ok().and_then(|reference| reference.guid());
+    let loaded = guid.and_then(|guid| Some((guid, content.block_world(guid)?)));
+    let (mut blocks, asset) = match &loaded {
+        Some((guid, loaded)) => {
+            (loaded.world.clone(), Some(crate::blocks::BlockWorldAsset { guid: *guid, file: loaded.file.clone() }))
+        }
+        None => {
+            if !data.data.is_empty() {
+                tracing::warn!("the world of blocks {} could not be read; it has no blocks", data.data);
+            }
+            let empty = voxear_terrain::blocks::BlockMap::default();
+            (voxear_terrain::blocks::BlockWorld::new(empty, &[], 1.0), None)
+        }
+    };
+    blocks.cast_shadows = data.cast_shadows;
+    let look = match (renderer, &asset) {
+        (Some(renderer), Some(asset)) => Some(crate::blocks::look(content, renderer, &asset.file)?),
+        _ => None,
+    };
+    Ok(BlockWorldParts { blocks, look, asset, source: crate::scene_file::BlockWorldSource(data.clone()) })
+}
+
 /// How a Terrain looks: the material its scene gives it, and its asset's
 /// surfaces, each with its material loaded.
 pub fn terrain_look(
@@ -1117,6 +1171,10 @@ pub(crate) fn resolve_obj(
         Some(written) => Some(Box::new(terrain(content, gpu.as_deref_mut(), written)?)),
         None => None,
     };
+    let block_world = match &data.block_world {
+        Some(written) => Some(Box::new(block_world(content, gpu.as_deref_mut(), written)?)),
+        None => None,
+    };
     // A mesh Dry Area's mesh needs a renderer to load it, and its box for scripts' questions; without one it keeps
     // to the Obj's own.
     let dry_area = match &data.dry_area {
@@ -1147,6 +1205,7 @@ pub(crate) fn resolve_obj(
         path: obj.path.clone(),
         foliage,
         terrain,
+        block_world,
         model,
         parent,
         name: if data.name.is_empty() { "Obj".to_string() } else { data.name.clone() },

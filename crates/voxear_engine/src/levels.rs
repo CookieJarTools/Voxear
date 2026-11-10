@@ -555,6 +555,7 @@ impl Levels {
         }
         // Terrains the level changed, which are assets of their own.
         written.extend(crate::terrain::save(content, project)?);
+        written.extend(crate::blocks::save(content, project)?);
         Ok(written)
     }
 

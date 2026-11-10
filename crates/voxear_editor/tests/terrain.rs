@@ -1007,3 +1007,41 @@ fn an_endless_terrain_is_made_round_the_scene_view_wherever_it_looks_from() {
     assert_eq!(terrain.origin, None);
     assert!(!terrain.heights.has_holes());
 }
+
+#[test]
+fn a_block_world_is_added_on_an_asset_of_its_own_its_ground_changed_undone_and_saved() {
+    use voxear_engine::blocks::BlockWorldAsset;
+    use voxear_terrain::blocks::{BlockWorld, file::BlockFile};
+    let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {
+        eprintln!("skipping: no usable GPU");
+        return;
+    };
+    let dir = hello_with_a_field();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    let field = obj(&editor, "Field");
+    editor.select(Some(field));
+    frame(&mut editor, &mut renderer);
+    add_component(&mut editor, &mut renderer, "Block World");
+    // On a new asset of its own, named for its Obj: grass over dirt over stone, 64 blocks a side and 8 up.
+    let asset = editor.game.engine.world.get::<BlockWorldAsset>(field).expect("its asset").clone();
+    let path = editor.game.content.db().get(asset.guid).unwrap().path.clone();
+    assert_eq!(path, "Blocks/Field.blockworld");
+    let blocks = |editor: &voxear_editor::Editor| editor.game.engine.world.get::<BlockWorld>(field).unwrap().clone();
+    assert_eq!((blocks(&editor).blocks.get([0, 7, 0]), blocks(&editor).blocks.get([63, 0, 63])), (1, 3));
+    for label in ["Data", "Block size", "Ground size", "Ground height", "Cast shadows"] {
+        assert_eq!(prop_rows(&editor.ui, label).len(), 1, "the Block World's {label}");
+    }
+    shot(&mut renderer, "block-world.png");
+    // Its ground 3 blocks high: made again at once.
+    type_number(&mut editor, &mut renderer, "Ground height", "3");
+    assert_eq!((blocks(&editor).blocks.get([0, 2, 0]), blocks(&editor).blocks.get([0, 3, 0])), (1, 0));
+    // Undone, 8 again; saved, its file says so.
+    editor.undo(&mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(blocks(&editor).blocks.get([0, 7, 0]), 1);
+    editor.save();
+    let text = std::fs::read_to_string(dir.path().join(&path)).unwrap();
+    assert_eq!(BlockFile::parse(&text).unwrap().ground.height, 8);
+}

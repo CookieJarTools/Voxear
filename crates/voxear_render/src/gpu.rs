@@ -861,6 +861,8 @@ pub struct GpuBuffers {
     pub grass_draws: u64,
     /// This view's tracks in the ground round its camera (see `tracks`).
     pub tracks: u64,
+    /// This view's worlds of blocks (see `blocks`).
+    pub block_worlds: u64,
 }
 
 /// A UI panel as `uiPanelVertex` in `shaders/ui.slang` draws it: its top
@@ -1144,7 +1146,9 @@ mod tests {
         assert_eq!(size_of::<GpuDdgi>(), 32 * DDGI_CASCADES + 32 + 48);
         assert_eq!(size_of::<GpuLighting>(), lighting);
         assert_eq!(size_of::<GpuPost>(), post);
-        assert_eq!(size_of::<GpuBuffers>(), 58 * 8);
+        assert_eq!(size_of::<GpuBuffers>(), 59 * 8);
+        // Its corner and block size, three addresses, then four words.
+        assert_eq!(size_of::<crate::blocks::GpuBlockWorld>(), 16 + 24 + 16);
         assert_eq!(size_of::<GpuUiPanel>(), 48);
         assert_eq!(size_of::<GpuSmoke>(), 80);
         assert_eq!(size_of::<GpuMist>(), 64);

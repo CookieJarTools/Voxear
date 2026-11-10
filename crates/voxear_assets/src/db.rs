@@ -77,6 +77,9 @@ pub enum AssetKind {
     /// A `.worldgen` file: a world generator, its seed and how it shapes
     /// ground, which a terrain's Generate layer picks.
     WorldGen,
+    /// A `.blockworld` file: a world of blocks, its kinds of block and the
+    /// ground they start as, which a Block World picks.
+    BlockWorld,
 }
 
 impl AssetKind {
@@ -104,6 +107,7 @@ impl AssetKind {
             "terrain" => Self::Terrain,
             "prompticons" => Self::PromptIcons,
             "worldgen" => Self::WorldGen,
+            "blockworld" => Self::BlockWorld,
             _ => return None,
         })
     }

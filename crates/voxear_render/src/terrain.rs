@@ -191,7 +191,7 @@ const SURFACE_GLITTER: u32 = 16;
 
 /// A surface's flags for the shaders: drawn from the side, its liquid, and
 /// whether it glitters.
-fn surface_flags(look: &SurfaceLook) -> u32 {
+pub(crate) fn surface_flags(look: &SurfaceLook) -> u32 {
     use voxear_terrain::surfaces::Liquid;
     let liquid = match look.liquid {
         Liquid::None => 0,

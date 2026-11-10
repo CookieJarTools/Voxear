@@ -85,6 +85,9 @@ pub struct ObjState {
     /// A Terrain, its look, its asset and how it was written; its tiles are
     /// shared, so a step costs only the tiles it changed.
     pub terrain: Option<Box<TerrainState>>,
+    /// A Block World, its look, its asset and how it was written; its chunks
+    /// are shared.
+    pub block_world: Option<Box<BlockWorldState>>,
     pub joint: Option<Box<Joint>>,
     pub collider2d: Option<Box<Collider2D>>,
     pub rigidbody2d: Option<Box<Rigidbody2D>>,
@@ -112,6 +115,26 @@ impl TerrainState {
             look: world.get::<voxear_render::TerrainLook>(entity).cloned(),
             asset: world.get::<voxear_engine::terrain::TerrainAsset>(entity).cloned(),
             source: world.get::<voxear_engine::scene_file::TerrainSource>(entity).cloned(),
+        })
+    }
+}
+
+/// A Block World's parts, as an undo step keeps them.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BlockWorldState {
+    pub blocks: voxear_terrain::blocks::BlockWorld,
+    pub look: Option<voxear_render::BlockLook>,
+    pub asset: Option<voxear_engine::blocks::BlockWorldAsset>,
+    pub source: Option<voxear_engine::scene_file::BlockWorldSource>,
+}
+
+impl BlockWorldState {
+    fn of(world: &World, entity: Entity) -> Option<Self> {
+        Some(Self {
+            blocks: world.get::<voxear_terrain::blocks::BlockWorld>(entity)?.clone(),
+            look: world.get::<voxear_render::BlockLook>(entity).cloned(),
+            asset: world.get::<voxear_engine::blocks::BlockWorldAsset>(entity).cloned(),
+            source: world.get::<voxear_engine::scene_file::BlockWorldSource>(entity).cloned(),
         })
     }
 }
@@ -173,6 +196,7 @@ impl ObjState {
                 .zip(world.get::<ModelSource>(entity).cloned())
                 .map(Box::new),
             terrain: TerrainState::of(world, entity).map(Box::new),
+            block_world: BlockWorldState::of(world, entity).map(Box::new),
             joint: world.get::<Joint>(entity).copied().map(Box::new),
             collider2d: world.get::<Collider2D>(entity).copied().map(Box::new),
             rigidbody2d: world.get::<Rigidbody2D>(entity).copied().map(Box::new),
@@ -248,6 +272,11 @@ impl ObjState {
         put(world, entity, terrain.and_then(|state| state.look.clone()));
         put(world, entity, terrain.and_then(|state| state.asset.clone()));
         put(world, entity, terrain.and_then(|state| state.source.clone()));
+        let blocks = self.block_world.as_deref();
+        put(world, entity, blocks.map(|state| state.blocks.clone()));
+        put(world, entity, blocks.and_then(|state| state.look.clone()));
+        put(world, entity, blocks.and_then(|state| state.asset.clone()));
+        put(world, entity, blocks.and_then(|state| state.source.clone()));
         put(world, entity, self.joint.as_deref().copied());
         put(world, entity, self.collider2d.as_deref().copied());
         put(world, entity, self.rigidbody2d.as_deref().copied());

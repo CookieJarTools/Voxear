@@ -205,3 +205,35 @@ fn a_terrain_without_ends_ground_stays_where_it_is_as_its_window_moves() {
     assert!(down(&physics, 320.0, 320.0).is_some_and(|y| (y - 23.0).abs() < 0.01), "made now");
     assert!(down(&physics, 448.0, 64.0).is_some_and(|y| (y - 4.0).abs() < 0.01), "come into the window");
 }
+
+#[test]
+fn a_ball_comes_to_rest_on_a_world_of_blocks_and_a_ray_meets_its_top() {
+    use voxear_terrain::blocks::{BlockWorld, file::BlockFile};
+    // Ground 4 blocks high of half-metre blocks, from (-10, 1, -10), and a step 2 blocks higher at its middle.
+    let mut file = BlockFile::default();
+    file.ground.height = 4;
+    let mut blocks = file.make_ground();
+    for (x, z) in [(32, 32), (33, 32), (32, 33), (33, 33)] {
+        blocks.set([x, 4, z], 3);
+        blocks.set([x, 5, z], 3);
+    }
+    let (_, faces) = file.faces();
+    let mut world = World::new();
+    voxear_scene::register_obj_components(&mut world);
+    let corner = Vec3::new(-10.0, 1.0, -10.0);
+    let entity = world.spawn((BlockWorld::new(blocks, &faces, 0.5), Transform::from_position(corner)));
+    let ball = world.spawn((Transform::from_position(Vec3::new(0.0, 10.0, 0.0)),));
+    world.insert(ball, Collider { shape: ColliderShape::Sphere, radius: 0.2, ..Collider::default() });
+    world.insert(ball, Rigidbody { angular_drag: 2.0, ..Rigidbody::default() });
+    let mut physics = PhysicsScene::new();
+    assert!(PhysicsScene::wanted(&world));
+    for _ in 0..240 {
+        physics.step(&mut world, 1.0 / 60.0);
+    }
+    // Over block (20, ·, 20), the ground's top 4 blocks up: 3 m in the world.
+    let at = world.get::<Transform>(ball).unwrap().position;
+    assert!((at.y - 3.2).abs() < 0.05, "resting on the blocks: {at}");
+    let hit = physics.raycast(Vec3::new(6.2, 50.0, 6.2), Vec3::NEG_Y, 100.0, u32::MAX, false).expect("the step");
+    assert_eq!(hit.obj, entity);
+    assert!((hit.point.y - 4.0).abs() < 1e-3, "the step's top, 6 blocks up: {}", hit.point.y);
+}

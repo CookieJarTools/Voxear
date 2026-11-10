@@ -430,7 +430,8 @@ fn gather(
                 | AssetKind::Paths
                 | AssetKind::Data
                 | AssetKind::PromptIcons
-                | AssetKind::WorldGen => false,
+                | AssetKind::WorldGen
+                | AssetKind::BlockWorld => false,
             } && !models.stripped.contains(&guid);
             if owner == Some(guid) {
                 progress.scenes.lock().expect("never poisoned").entry(guid).or_insert((1.0, 0, 0));

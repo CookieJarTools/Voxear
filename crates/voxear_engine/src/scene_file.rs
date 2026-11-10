@@ -362,6 +362,10 @@ pub struct ObjData {
     /// Terrain module).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terrain: Option<TerrainData>,
+    /// A Block World, blocks from the Obj's position along +x, +y and +z
+    /// (the Terrain module).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub block_world: Option<BlockWorldData>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub character: Option<CharacterController>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -435,6 +439,7 @@ impl ObjData {
             track_maker: None,
             foliage: None,
             terrain: None,
+            block_world: None,
             rigidbody: None,
             character: None,
             joint: None,
@@ -1084,6 +1089,27 @@ fn default_detail_distance() -> f32 {
 pub struct TerrainSource(pub TerrainData);
 impl voxear_ecs::Component for TerrainSource {}
 
+/// A Block World as a scene writes it: the `.blockworld` its blocks are,
+/// and whether it casts the sun's shadows.
+/// ```toml
+/// [obj.block_world]
+/// data = "Blocks/Ground.blockworld"
+/// cast_shadows = true
+/// ```
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BlockWorldData {
+    pub data: String,
+    #[serde(default = "yes")]
+    pub cast_shadows: bool,
+}
+
+/// How the Obj's Block World was written, so a save writes it back as it
+/// was.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BlockWorldSource(pub BlockWorldData);
+impl voxear_ecs::Component for BlockWorldSource {}
+
 /// A Dry Area as a scene writes it: its shape and size, and for the Mesh
 /// shape the mesh, written as a Mesh Renderer's is, or none for the Obj's own
 /// Mesh Renderer's.
@@ -1715,6 +1741,9 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     if let Some(terrain) = actual.terrain.as_ref().filter(|t| Some(*t) != expected.terrain.as_ref()) {
         put("terrain", toml::Value::try_from(terrain)?);
     }
+    if let Some(blocks) = actual.block_world.as_ref().filter(|b| Some(*b) != expected.block_world.as_ref()) {
+        put("block_world", toml::Value::try_from(blocks)?);
+    }
     if let Some(wind) = actual.wind_zone.filter(|w| Some(*w) != expected.wind_zone) {
         put("wind_zone", whole(&wind, &WindZone::default())?);
     }
@@ -2062,6 +2091,13 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
         }
         if let Some(look) = world.get::<voxear_render::TerrainLook>(entity) {
             data.texture_size = look.texture_size;
+        }
+        data
+    });
+    obj.block_world = world.get::<BlockWorldSource>(entity).map(|source| {
+        let mut data = source.0.clone();
+        if let Some(blocks) = world.get::<voxear_terrain::blocks::BlockWorld>(entity) {
+            data.cast_shadows = blocks.cast_shadows;
         }
         data
     });

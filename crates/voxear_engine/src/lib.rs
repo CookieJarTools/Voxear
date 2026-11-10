@@ -56,6 +56,7 @@ pub mod shaders;
 mod stats_overlay;
 pub mod steam_language;
 pub mod terrain;
+pub mod blocks;
 pub mod ui_input;
 pub mod ui_panels;
 pub mod upgrade;

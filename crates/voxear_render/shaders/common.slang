@@ -981,6 +981,22 @@ struct TerrainSurface
 
 static const uint TERRAIN_HOLE_WORDS = (TERRAIN_TILE_LEN + 31) / 32;
 
+// A world of blocks as a view draws it (src/blocks.rs, blocks.slang): where its corner is and how large a block is,
+// its quads, two words each (voxear_terrain::blocks::mesh), each chunk's place in blocks by its number in the pool,
+// its surfaces (as a terrain's), its material where a surface has none, and the instance its fragments read.
+struct BlockWorld
+{
+    float3 corner;
+    float blockSize;
+    uint2* quads;
+    int4* origins;
+    TerrainSurface* surfaces;
+    uint surfaceCount;
+    uint material;
+    uint anchor;
+    uint pad;
+};
+
 // A vertex of a terrain's dug ground (src/dug.rs): where it is, in metres from the terrain's corner, then the way the
 // ground faces there in two 12-bit numbers folded onto an octahedron, and the surface digging laid there (0 for the
 // terrain's own) in its top byte.
@@ -1133,6 +1149,8 @@ struct Buffers
     GrassDraw* grassDraws;
     // This view's tracks in the ground round its camera (tracks.slang): how deep each texel was pressed, and when.
     float2* tracks;
+    // This view's worlds of blocks (blocks.slang).
+    BlockWorld* blockWorlds;
 };
 
 struct Push

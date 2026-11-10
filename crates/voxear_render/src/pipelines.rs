@@ -158,6 +158,14 @@ pub struct Pipelines {
     pub terrain_forward_on_depth: vk::Pipeline,
     pub terrain_wireframe: vk::Pipeline,
     pub terrain_shadow: vk::Pipeline,
+    /// Worlds of blocks' quads (see `blocks`), as terrain's: shaded, as
+    /// depth, shaded over the depth passes' depth, as edges, and into the
+    /// sun's cascades.
+    pub block_forward: vk::Pipeline,
+    pub block_depth: vk::Pipeline,
+    pub block_forward_on_depth: vk::Pipeline,
+    pub block_wireframe: vk::Pipeline,
+    pub block_shadow: vk::Pipeline,
     /// Grass (see `grass`): each draw's command made afresh, the blades
     /// scattered, the counts kept within their room; then drawn as depth,
     /// shaded writing depth, and shaded over the depth passes'.
@@ -241,6 +249,7 @@ impl Pipelines {
             module("grass")?,
             module("tracks")?,
             module("erosion")?,
+            module("blocks")?,
         ];
         let [
             cull,
@@ -268,6 +277,7 @@ impl Pipelines {
             grass,
             tracks,
             erosion,
+            blocks,
         ] = &modules;
         // Only a GPU with mesh shaders can load their modules.
         let meshlets = match gpu.mesh_shader {
@@ -582,6 +592,42 @@ impl Pipelines {
                 fragment_entry: Some(c"terrainShadowFragment"),
                 ..GraphicsPipelineDesc::depth_only("Shadows (terrain)", terrain, c"terrainShadowVertex", DEPTH_FORMAT)
             })?,
+            block_forward: graphics(&GraphicsPipelineDesc {
+                color_formats: scene_formats,
+                depth_format: Some(DEPTH_FORMAT),
+                depth_write: true,
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                ..GraphicsPipelineDesc::new("Opaque (blocks)", blocks, c"blockVertex", c"fragmentMain")
+            })?,
+            block_depth: graphics(&GraphicsPipelineDesc {
+                color_formats: &[SURFACE_FORMAT],
+                depth_format: Some(DEPTH_FORMAT),
+                depth_write: true,
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                ..GraphicsPipelineDesc::new("Depth (blocks)", blocks, c"blockVertex", c"depthFragment")
+            })?,
+            block_forward_on_depth: graphics(&GraphicsPipelineDesc {
+                color_formats: scene_formats,
+                depth_format: Some(DEPTH_FORMAT),
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                ..GraphicsPipelineDesc::new("Opaque (blocks)", blocks, c"blockVertex", c"fragmentMain")
+            })?,
+            block_wireframe: graphics(&GraphicsPipelineDesc {
+                color_formats: scene_formats,
+                depth_format: Some(DEPTH_FORMAT),
+                depth_write: true,
+                depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+                cull: vk::CullModeFlags::NONE,
+                polygon_mode: vk::PolygonMode::LINE,
+                ..GraphicsPipelineDesc::new("Wireframe (blocks)", blocks, c"blockVertex", c"fragmentMain")
+            })?,
+            block_shadow: graphics(&GraphicsPipelineDesc {
+                // Faces seen edge on by the sun still cast, and those turned from it.
+                cull: vk::CullModeFlags::NONE,
+                depth_bias: Some(SHADOW_BIAS),
+                depth_clamp: true,
+                ..GraphicsPipelineDesc::depth_only("Shadows (blocks)", blocks, c"blockShadowVertex", DEPTH_FORMAT)
+            })?,
             grass_reset: create_compute_pipeline(gpu, layout, "Grass reset", grass, c"grassReset")?,
             grass_scatter: create_compute_pipeline(gpu, layout, "Grass scatter", grass, c"grassScatter")?,
             grass_clamp: create_compute_pipeline(gpu, layout, "Grass clamp", grass, c"grassClamp")?,
@@ -794,6 +840,11 @@ impl Pipelines {
             self.terrain_forward_on_depth,
             self.terrain_wireframe,
             self.terrain_shadow,
+            self.block_forward,
+            self.block_depth,
+            self.block_forward_on_depth,
+            self.block_wireframe,
+            self.block_shadow,
             self.grass_reset,
             self.grass_scatter,
             self.grass_clamp,

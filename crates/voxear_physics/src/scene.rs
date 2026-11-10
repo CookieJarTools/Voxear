@@ -605,6 +605,8 @@ pub struct PhysicsScene {
     unsure: HashMap<(Entity, Entity), u8>,
     /// Each terrain's bodies, a height field for each of its tiles.
     terrains: HashMap<Entity, TerrainBodies>,
+    /// Each world of blocks' bodies, a mesh for each of its chunks with faces.
+    block_worlds: HashMap<Entity, BlockBodies>,
     plants: HashMap<Entity, PlantBodies>,
     /// Each plant trunk's body's plant, by its number in its Obj's plants.
     plant_bodies: HashMap<BodyId, u32>,
@@ -621,6 +623,16 @@ struct TerrainBodies {
     layer: u8,
     tiles: Vec<Option<(Arc<voxear_terrain::HeightTile>, BodyId, ShapeId)>>,
     dug: HashMap<voxear_terrain::dig::ChunkKey, DugBody>,
+}
+
+/// A world of blocks' bodies: where its Obj was, its layer, how large a
+/// block was, and for each chunk the faces it was made from, its body and
+/// its shape.
+struct BlockBodies {
+    corner: Vec3,
+    layer: u8,
+    block_size: f32,
+    chunks: HashMap<[i32; 3], (Arc<voxear_terrain::blocks::mesh::ChunkMesh>, BodyId, ShapeId)>,
 }
 
 /// A dug chunk's body: the chunk it was made from, and its body and shape
@@ -672,6 +684,7 @@ impl PhysicsScene {
             touching: HashSet::new(),
             unsure: HashMap::new(),
             terrains: HashMap::new(),
+            block_worlds: HashMap::new(),
             plants: HashMap::new(),
             plant_bodies: HashMap::new(),
         }
@@ -683,6 +696,7 @@ impl PhysicsScene {
         world.query_ref::<&Collider>().into_iter().next().is_some()
             || world.query_ref::<&CharacterController>().into_iter().next().is_some()
             || world.query_ref::<&voxear_terrain::Terrain>().into_iter().next().is_some()
+            || world.query_ref::<&voxear_terrain::blocks::BlockWorld>().into_iter().next().is_some()
             || world.query_ref::<&Plants>().into_iter().any(|plants| plants.trunk.is_some())
     }
 
@@ -811,6 +825,7 @@ impl PhysicsScene {
             self.sync_body(world, entity, collider, dt);
         }
         self.sync_terrains(world);
+        self.sync_block_worlds(world);
         self.sync_plants(world);
         self.sync_characters(world);
         self.sync_joints(world);
@@ -975,6 +990,89 @@ impl PhysicsScene {
             }
         }
         self.terrains.get_mut(&entity).expect("kept").dug = now;
+    }
+
+    /// Gives each world of blocks a static mesh for each of its chunks with
+    /// faces, made again for a chunk whose faces changed, by pointer, and
+    /// moved with its Obj.
+    fn sync_block_worlds(&mut self, world: &World) {
+        use voxear_terrain::blocks::{BlockWorld, chunk::CHUNK};
+        let found: Vec<(Entity, &BlockWorld, Vec3)> = world
+            .query_ref::<(Entity, &BlockWorld, &Transform, Option<&WorldTransform>)>()
+            .without::<Destroying>()
+            .into_iter()
+            .map(|(entity, blocks, local, placed)| (entity, blocks, voxear_terrain::corner(local, placed)))
+            .collect();
+        let gone: Vec<Entity> =
+            self.block_worlds.keys().copied().filter(|entity| !found.iter().any(|(e, ..)| e == entity)).collect();
+        for entity in gone {
+            self.remove_block_world(entity);
+        }
+        for (entity, blocks, corner) in found {
+            let layer = layer(world, entity);
+            let fits = self
+                .block_worlds
+                .get(&entity)
+                .is_some_and(|kept| kept.layer == layer && kept.block_size == blocks.block_size);
+            if !fits {
+                self.remove_block_world(entity);
+                let kept = BlockBodies { corner, layer, block_size: blocks.block_size, chunks: HashMap::new() };
+                self.block_worlds.insert(entity, kept);
+            }
+            let mut kept = self.block_worlds.remove(&entity).expect("kept above");
+            let moved = kept.corner != corner;
+            let side = CHUNK as f32 * blocks.block_size;
+            let at = |key: &[i32; 3]| corner + Vec3::new(key[0] as f32, key[1] as f32, key[2] as f32) * side;
+            kept.chunks.retain(|key, (_, body, shape)| {
+                let stays = blocks.meshes.contains_key(key);
+                if !stays {
+                    self.world.remove_body(*body);
+                    self.world.release_shape(*shape);
+                    self.owners.remove(body);
+                }
+                stays
+            });
+            for (key, mesh) in blocks.meshes.iter() {
+                if let Some((made, body, _)) = kept.chunks.get(key)
+                    && Arc::ptr_eq(made, mesh)
+                {
+                    if moved {
+                        self.world.set_transform(*body, at(key), Quat::IDENTITY);
+                    }
+                    continue;
+                }
+                if let Some((_, body, shape)) = kept.chunks.remove(key) {
+                    self.world.remove_body(body);
+                    self.world.release_shape(shape);
+                    self.owners.remove(&body);
+                }
+                let points: Vec<Vec3> = mesh.positions.iter().map(|p| Vec3::from(*p) * blocks.block_size).collect();
+                let Some(shape) = self.world.mesh_shape(&points, &mesh.indices) else { continue };
+                let mut desc = BodyDesc::new(shape, Motion::Static).at(at(key), Quat::IDENTITY);
+                desc.friction = Collider::default().friction;
+                desc.user_data = entity.to_bits();
+                desc.layer = layer;
+                let Some(body) = self.world.add_body(&desc) else {
+                    self.world.release_shape(shape);
+                    tracing::warn!("physics is full; a world of blocks' chunk is left out");
+                    continue;
+                };
+                self.owners.insert(body, entity);
+                kept.chunks.insert(*key, (mesh.clone(), body, shape));
+            }
+            kept.corner = corner;
+            self.block_worlds.insert(entity, kept);
+        }
+    }
+
+    fn remove_block_world(&mut self, entity: Entity) {
+        let Some(kept) = self.block_worlds.remove(&entity) else { return };
+        for (_, body, shape) in kept.chunks.into_values() {
+            self.world.remove_body(body);
+            self.world.release_shape(shape);
+            self.owners.remove(&body);
+        }
+        self.forget(entity);
     }
 
     /// Stands a static capsule up for the trunk of each plant still there,
@@ -1319,6 +1417,7 @@ impl PhysicsScene {
         if self.bodies.contains_key(&entity)
             || self.characters.contains_key(&entity)
             || self.terrains.contains_key(&entity)
+            || self.block_worlds.contains_key(&entity)
             || self.plants.contains_key(&entity)
         {
             return;

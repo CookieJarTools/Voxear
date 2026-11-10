@@ -89,6 +89,7 @@ mod profiler;
 mod project_files;
 mod project_view;
 mod props;
+mod block_props;
 mod plants_panel;
 mod plants_props;
 mod plants_tools;

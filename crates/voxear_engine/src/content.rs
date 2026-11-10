@@ -357,6 +357,13 @@ impl Released {
     }
 }
 
+/// A world of blocks as read: its file and the blocks it makes.
+#[derive(Clone, Debug)]
+pub struct LoadedBlockWorld {
+    pub file: voxear_terrain::blocks::file::BlockFile,
+    pub world: voxear_terrain::blocks::BlockWorld,
+}
+
 /// A terrain as its files have it: how large and how fine and its layers,
 /// its heights as they made them, its surfaces' shares, and what its
 /// brushes painted.
@@ -461,6 +468,9 @@ pub struct Content {
     /// changed since they were last written, as the editor changes them.
     terrains: HashMap<AssetGuid, Option<Arc<LoadedTerrain>>>,
     unsaved_terrains: std::collections::BTreeSet<AssetGuid>,
+    /// Each world of blocks' file and what it makes, read once.
+    block_worlds: HashMap<AssetGuid, Option<Arc<LoadedBlockWorld>>>,
+    unsaved_block_worlds: std::collections::BTreeSet<AssetGuid>,
     /// Heightmap pictures terrains' layers read, by GUID.
     terrain_greys: HashMap<AssetGuid, Option<Arc<voxear_terrain::import::Greys>>>,
     /// World generators terrains' Generate layers read, by GUID.
@@ -620,6 +630,8 @@ impl Content {
             gun_handlings: HashMap::new(),
             terrains: HashMap::new(),
             unsaved_terrains: Default::default(),
+            block_worlds: HashMap::new(),
+            unsaved_block_worlds: Default::default(),
             terrain_greys: HashMap::new(),
             world_gens: HashMap::new(),
             handlings_version: 0,
@@ -1311,6 +1323,57 @@ impl Content {
         let kept = read.map_err(|error| tracing::warn!("could not read the heightmap {reference}: {error:#}")).ok();
         self.terrain_greys.insert(guid, kept.clone());
         kept
+    }
+
+    /// The world of blocks at `guid`: its file and the blocks it makes, read
+    /// and made once.
+    pub fn block_world(&mut self, guid: AssetGuid) -> Option<Arc<LoadedBlockWorld>> {
+        if let Some(found) = self.block_worlds.get(&guid) {
+            return found.clone();
+        }
+        let read = self.db.get(guid).filter(|entry| entry.kind == AssetKind::BlockWorld).map(|e| e.path.clone());
+        let found = read
+            .context("no world of blocks with that GUID")
+            .and_then(|path| {
+                self.read_text(&path)
+                    .and_then(|text| voxear_terrain::blocks::file::BlockFile::parse(&text).with_context(|| path))
+            })
+            .map(|file| Arc::new(LoadedBlockWorld { world: crate::blocks::make(&file), file }))
+            .map_err(|error| tracing::warn!("could not read the world of blocks {guid}: {error:#}"))
+            .ok();
+        self.block_worlds.insert(guid, found.clone());
+        found
+    }
+
+    /// Keeps `file` as the world of blocks at `guid`'s, as after the editor
+    /// changed it, its blocks made again, and marks it to be written, unless
+    /// that is how it is already.
+    pub fn keep_block_world(&mut self, guid: AssetGuid, file: &voxear_terrain::blocks::file::BlockFile) {
+        if self.block_worlds.get(&guid).and_then(Option::as_ref).is_some_and(|kept| kept.file == *file) {
+            return;
+        }
+        let loaded = LoadedBlockWorld { world: crate::blocks::make(file), file: file.clone() };
+        self.block_worlds.insert(guid, Some(Arc::new(loaded)));
+        self.unsaved_block_worlds.insert(guid);
+    }
+
+    /// The worlds of blocks changed since they were last written, each with
+    /// its path, which are no longer marked.
+    pub fn take_unsaved_block_worlds(&mut self) -> Vec<(String, voxear_terrain::blocks::file::BlockFile)> {
+        let guids = std::mem::take(&mut self.unsaved_block_worlds);
+        guids
+            .into_iter()
+            .filter_map(|guid| {
+                let path = self.db.get(guid)?.path.clone();
+                Some((path, self.block_worlds.get(&guid)?.as_ref()?.file.clone()))
+            })
+            .collect()
+    }
+
+    /// Forgets a world of blocks, read again when next asked for, as after
+    /// it was changed outside the editor.
+    pub fn forget_block_world(&mut self, guid: AssetGuid) {
+        self.block_worlds.remove(&guid);
     }
 
     /// Forgets a terrain, read again when next asked for, as after it was

@@ -11,6 +11,7 @@
 //! and the engine each keep what they need of it, and see what changed by
 //! the tiles' pointers.
 
+pub mod blocks;
 pub mod brush;
 pub mod composite;
 pub mod dig;

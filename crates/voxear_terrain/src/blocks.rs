@@ -401,13 +401,17 @@ impl BlockWorld {
     }
 
     /// Makes chunks `keys`' faces again, on every core, from the blocks as
-    /// they are now.
+    /// they are now: drawn smooth, at their first level alone (see
+    /// `smooth::mesh_near`), as quick as can be for a change.
     pub fn remesh(&mut self, keys: &[[i32; 3]]) {
         voxear_core::profile_scope!("Block Meshing");
         let blocks = &self.blocks;
         let faces = &self.faces;
         let smooth = self.smooth;
-        let made = crate::workers::each(keys, |&key| mesh_any(blocks, key, faces, smooth));
+        let made = crate::workers::each(keys, |&key| match smooth {
+            true => smooth::mesh_near(blocks, key, faces),
+            false => mesh::mesh_chunk(blocks, key, faces),
+        });
         let meshes = Arc::make_mut(&mut self.meshes);
         for (key, mesh) in keys.iter().zip(made) {
             if mesh.is_empty() {

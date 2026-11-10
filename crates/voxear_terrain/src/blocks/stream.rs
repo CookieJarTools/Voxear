@@ -525,7 +525,10 @@ pub fn all_changes(base: &BlockMap, blocks: &BlockMap, pending: &BlockEdits) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{blocks::file::Ground, generate::Preset};
+    use crate::{
+        blocks::{file::Ground, mesh::FACINGS},
+        generate::Preset,
+    };
 
     fn making() -> BlockMaking {
         let file = BlockFile {
@@ -644,8 +647,15 @@ mod tests {
             let whole = |world: &BlockWorld, streamer: &BlockStreamer| {
                 for (key, mesh) in world.meshes.iter() {
                     assert!(streamer.drawn.contains(&[key[0], key[2]]), "{key:?} drawn outside the window");
+                    // A chunk changed is made again at its first level alone.
                     let made = mesh_any(&world.blocks, *key, &making.faces, smooth);
-                    assert_eq!(**mesh, made, "{key:?}, smooth: {smooth}");
+                    let first = |mesh: &ChunkMesh| {
+                        let near = if smooth { mesh.buckets[1] as usize } else { mesh.buckets[FACINGS] as usize };
+                        let (first, count) = mesh.water();
+                        let water = mesh.quads[first as usize..(first + count) as usize].to_vec();
+                        (mesh.quads[..near].to_vec(), water, mesh.positions.clone(), mesh.indices.clone())
+                    };
+                    assert_eq!(first(mesh), first(&made), "{key:?}, smooth: {smooth}");
                 }
             };
             whole(&world, &streamer);

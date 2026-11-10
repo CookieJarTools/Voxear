@@ -226,9 +226,22 @@ pub fn mesh_chunk(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces]) -> ChunkM
     mesh_within(map, key, faces, FLAT_ENOUGH)
 }
 
+/// Chunk `key`'s surface as [`mesh_chunk`] makes it, at its first level
+/// alone: quicker, for a chunk just changed, which is drawn so wherever it
+/// is.
+pub fn mesh_near(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces]) -> ChunkMesh {
+    mesh_levels(map, key, faces, FLAT_ENOUGH, false)
+}
+
 /// Chunk `key`'s surface, as [`mesh_chunk`] makes it, its triangles merged
 /// where the surface moves no more than `error` blocks.
 pub(crate) fn mesh_within(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], error: f32) -> ChunkMesh {
+    mesh_levels(map, key, faces, error, error > 0.0)
+}
+
+/// Chunk `key`'s surface, its triangles merged where it moves no more than
+/// `error` blocks, and its coarser levels after where `levels` says.
+fn mesh_levels(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], error: f32, levels: bool) -> ChunkMesh {
     let mut out = ChunkMesh::default();
     if !map.chunk(key).is_some_and(|chunk| chunk.has_blocks()) || map.buried(key, faces) {
         return out;
@@ -322,7 +335,7 @@ pub(crate) fn mesh_within(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], e
     }
     // Coarser levels after it, for far away, where they are made, merged as it is.
     let mut ends = [out.quads.len() as u32; LEVELS];
-    if error > 0.0 {
+    if levels {
         for (level, coarser) in COARSER.into_iter().enumerate() {
             let (points, normals, triangles) = simplified((&every.0, &every.1, &shared), looks.clone(), coarser);
             for (triangle, look) in triangles {
@@ -904,6 +917,12 @@ mod tests {
         // Each chunk drawn at any of its levels, whatever level the next is drawn at, still closed, and coarser
         // levels fewer triangles.
         let meshes: Vec<ChunkMesh> = keys.iter().map(|key| mesh_chunk(&map, *key, &faces)).collect();
+        // Made again after a change, its first level alone, the same.
+        for (key, mesh) in keys.iter().zip(&meshes) {
+            let near = mesh_near(&map, *key, &faces);
+            assert_eq!(near.quads[..near.buckets[1] as usize], mesh.quads[..mesh.buckets[1] as usize]);
+            assert!(near.buckets[1..].iter().all(|&end| end == near.buckets[1]), "no coarser levels");
+        }
         let drawn = |level_of: &dyn Fn(usize) -> usize| {
             let mut edges = std::collections::HashMap::new();
             let mut triangles = 0;

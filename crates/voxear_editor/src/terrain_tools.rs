@@ -154,6 +154,11 @@ fn on_level(game: &Game, camera: &ViewCamera, entity: Entity, point: [f32; 2], l
 }
 
 /// The corner of an Obj's terrain in the world.
+/// Whether the Obj's terrain goes on without end.
+fn is_endless(game: &Game, entity: Entity) -> bool {
+    game.engine.world.get::<TerrainAsset>(entity).is_some_and(|asset| asset.file.endless.is_some())
+}
+
 fn corner_of(game: &Game, entity: Entity) -> Option<Vec3> {
     let world = &game.engine.world;
     Some(voxear_terrain::corner(world.get(entity)?, world.get(entity)))
@@ -211,9 +216,11 @@ impl TerrainTools {
             return;
         }
         match terrain_props::ui(&game.engine.world).tool {
-            TerrainTool::Sculpt | TerrainTool::Paint | TerrainTool::Grass => {
+            // Brushes paint into rasters of a terrain of a set size; one without end has none.
+            TerrainTool::Sculpt | TerrainTool::Paint | TerrainTool::Grass if !is_endless(game, entity) => {
                 self.under = ground_under(game, camera, entity, point).map(|at| (entity, at));
             }
+            TerrainTool::Sculpt | TerrainTool::Paint | TerrainTool::Grass => {}
             TerrainTool::Layers => {
                 let Some(corner) = corner_of(game, entity) else { return };
                 let near = |at: Vec3| camera.project(at + corner).map(|p| (p[0] - point[0]).hypot(p[1] - point[1]));

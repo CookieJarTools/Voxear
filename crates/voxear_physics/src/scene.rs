@@ -576,6 +576,10 @@ pub struct PhysicsEvent {
 /// is made again, is kept touching once both are awake, to be told of again.
 const UNSURE_STEPS: u8 = 2;
 
+/// How many of a terrain without end's tiles get their bodies a step, at
+/// most, as its window moves: each takes a few milliseconds to make.
+const ENDLESS_TILES_A_STEP: usize = 4;
+
 /// The Jolt world for the Objs with colliders, while the game plays.
 pub struct PhysicsScene {
     world: PhysicsWorld,
@@ -606,8 +610,9 @@ pub struct PhysicsScene {
     plant_bodies: HashMap<BodyId, u32>,
 }
 
-/// A terrain's bodies: which heights they were made from, where its corner
-/// was, its layer, and for each tile the tile it was made from, its body
+/// A terrain's bodies: which heights they were made from, where its Obj
+/// was, its layer, and for each tile's slot (see
+/// `voxear_terrain::endless::slot_of`) the tile it was made from, its body
 /// and its shape; and for each dug chunk the chunk it was made from and,
 /// where it has ground in it, its mesh's body and shape.
 struct TerrainBodies {
@@ -813,7 +818,10 @@ impl PhysicsScene {
     }
 
     /// Gives each terrain a static height field for each of its tiles, made
-    /// again for a tile whose heights changed, and moved with its Obj.
+    /// again for a tile whose heights changed, and moved with its Obj. A
+    /// terrain without end's tiles get theirs a few a step, those nearest the
+    /// middle of its window, where the camera is, first; its tiles not made
+    /// yet get none.
     fn sync_terrains(&mut self, world: &World) {
         let found = voxear_terrain::terrains(world);
         let gone: Vec<Entity> =
@@ -835,14 +843,29 @@ impl PhysicsScene {
                 }
                 let tiles = vec![None; map.tiles().len()];
                 let dug = HashMap::new();
+                let corner = corner - terrain.offset();
                 self.terrains.insert(entity, TerrainBodies { heights: map.id(), corner, layer, tiles, dug });
             }
-            let moved = self.terrains[&entity].corner != corner;
+            let obj = corner - terrain.offset();
+            let moved = self.terrains[&entity].corner != obj;
             let width = voxear_terrain::TILE_QUADS as f32 * map.spacing();
-            for (index, tile) in map.tiles().iter().enumerate() {
+            let mut order: Vec<usize> = (0..map.tiles().len()).collect();
+            let mut left = usize::MAX;
+            if terrain.origin.is_some() {
+                let middle = |count: u32| (count / 2) as i64;
+                let (mx, mz) = (middle(map.tiles_x()), middle(map.tiles_z()));
+                order.sort_by_key(|&index| {
+                    let (tx, tz) = ((index as u32 % map.tiles_x()) as i64, (index as u32 / map.tiles_x()) as i64);
+                    (tx - mx).pow(2) + (tz - mz).pow(2)
+                });
+                left = ENDLESS_TILES_A_STEP;
+            }
+            for index in order {
+                let tile = &map.tiles()[index];
+                let slot = voxear_terrain::endless::slot_of(map, terrain.origin, index);
                 let (tx, tz) = (index as u32 % map.tiles_x(), index as u32 / map.tiles_x());
                 let at = corner + Vec3::new(tx as f32 * width, 0.0, tz as f32 * width);
-                let kept = self.terrains[&entity].tiles[index].clone();
+                let kept = self.terrains[&entity].tiles[slot].clone();
                 // A tile holed for ground dug in it stays as it was until that ground's triangles are made.
                 let waits = terrain.dug.as_ref().is_some_and(|dug| !dug.tile_meshed(tx, tz));
                 if let Some((made, body, _)) = &kept
@@ -853,10 +876,21 @@ impl PhysicsScene {
                     }
                     continue;
                 }
+                let unmade = voxear_terrain::endless::is_unmade(tile);
+                // Out of turns this step, the slot keeps the tile it had: one just gone from the window, still where
+                // it was.
+                if left == 0 && !unmade {
+                    continue;
+                }
+                left = left.saturating_sub(usize::from(!unmade));
                 if let Some((_, body, shape)) = kept {
                     self.world.remove_body(body);
                     self.world.release_shape(shape);
                     self.owners.remove(&body);
+                    self.terrains.get_mut(&entity).expect("kept").tiles[slot] = None;
+                }
+                if unmade {
+                    continue;
                 }
                 // A hole's samples have no ground, which cuts away every triangle touching them, as it is drawn.
                 let holed: Option<Vec<f32>> = tile.holes().map(|_| {
@@ -866,7 +900,7 @@ impl PhysicsScene {
                 let samples = holed.as_deref().unwrap_or(tile.samples());
                 let made = self.world.heightfield_shape(samples, voxear_terrain::TILE_SAMPLES, map.spacing());
                 let Some(shape) = made else {
-                    self.terrains.get_mut(&entity).expect("kept").tiles[index] = None;
+                    self.terrains.get_mut(&entity).expect("kept").tiles[slot] = None;
                     continue;
                 };
                 let mut desc = BodyDesc::new(shape, Motion::Static).at(at, Quat::IDENTITY);
@@ -879,10 +913,10 @@ impl PhysicsScene {
                     continue;
                 };
                 self.owners.insert(body, entity);
-                self.terrains.get_mut(&entity).expect("kept").tiles[index] = Some((tile.clone(), body, shape));
+                self.terrains.get_mut(&entity).expect("kept").tiles[slot] = Some((tile.clone(), body, shape));
             }
             self.sync_dug(entity, terrain, corner, moved, layer);
-            self.terrains.get_mut(&entity).expect("kept").corner = corner;
+            self.terrains.get_mut(&entity).expect("kept").corner = obj;
         }
     }
 

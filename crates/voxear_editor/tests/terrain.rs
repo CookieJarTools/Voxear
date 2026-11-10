@@ -921,3 +921,89 @@ fn a_surface_covers_by_its_biome_and_climate_over_a_generated_world() {
     assert!(points.iter().all(|&(x, z)| surface_at(&editor, x, z) == 1), "covering wherever it is mild");
     assert_eq!(row_text(&editor.ui, prop_rows(&editor.ui, "Biome")[0]), "Custom");
 }
+
+#[test]
+fn an_endless_terrain_is_made_round_the_scene_view_wherever_it_looks_from() {
+    use voxear_scene::{EditorOnly, Transform};
+    let Some((dir, mut renderer, mut editor, field)) = editor_with_a_terrain() else { return };
+    let add = first_with(&editor.ui, editor.ui.root(), "collection-add").expect("Add Layer");
+    click(&mut editor.ui, add);
+    frame(&mut editor, &mut renderer);
+    let generate = menu_item(&editor.ui, "Generate").expect("a Generate layer");
+    click(&mut editor.ui, generate);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    show_tool(&mut editor, &mut renderer, "Settings");
+    // Endless: its spacing and view distance in place of its size and resolution.
+    let endless = first_with(&editor.ui, prop_rows(&editor.ui, "Endless")[0], "checkbox").expect("Endless");
+    click(&mut editor.ui, endless);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let file =
+        |editor: &voxear_editor::Editor| editor.game.engine.world.get::<TerrainAsset>(field).unwrap().file.clone();
+    assert!(file(&editor).endless.is_some());
+    for (label, shown) in [("Spacing", 1), ("View distance", 1), ("Size", 0), ("Resolution", 0)] {
+        assert_eq!(prop_rows(&editor.ui, label).len(), shown, "{label}");
+    }
+    let spacing = first_with(&editor.ui, prop_rows(&editor.ui, "Spacing")[0], "value-choice").expect("its spacings");
+    choose(&mut editor, &mut renderer, spacing, 4);
+    type_number(&mut editor, &mut renderer, "View distance", "900");
+    assert_eq!(file(&editor).endless.map(|e| (e.spacing, e.distance)), Some((4.0, 900.0)));
+    // Made round where the Scene view looks from, wherever that is.
+    let camera = editor
+        .game
+        .engine
+        .world
+        .query_ref::<(voxear_ecs::Entity, &voxear_render::Camera, &EditorOnly)>()
+        .into_iter()
+        .next()
+        .expect("the Scene view's camera")
+        .0;
+    editor.game.engine.world.get_mut::<Transform>(camera).unwrap().position =
+        voxear_core::math::Vec3::new(-6000.0, 200.0, 9000.0);
+    for _ in 0..600 {
+        frame(&mut editor, &mut renderer);
+        if voxear_engine::terrain::streamed(&editor.game.engine.world)
+            && voxear_terrain::ground_at(&editor.game.engine.world, -6000.0, 9000.0).is_some()
+        {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let ground = voxear_terrain::ground_at(&editor.game.engine.world, -6000.0, 9000.0).expect("ground under the view");
+    assert_eq!(ground.terrain, field);
+    assert_eq!(editor.game.engine.world.get::<Terrain>(field).unwrap().heights.tiles_x(), 3);
+    // Only the layers that make ground without end are offered.
+    show_tool(&mut editor, &mut renderer, "Layers");
+    let add = first_with(&editor.ui, editor.ui.root(), "collection-add").expect("Add Layer");
+    click(&mut editor.ui, add);
+    frame(&mut editor, &mut renderer);
+    assert!(menu_item(&editor.ui, "Noise").is_some() && menu_item(&editor.ui, "Stamp").is_some());
+    for kind in ["Sculpt", "Dig", "Erosion", "Rivers", "Import", "Trench"] {
+        assert!(menu_item(&editor.ui, kind).is_none(), "{kind} is not offered");
+    }
+    editor.ui.key_down(Key::Escape);
+    frame(&mut editor, &mut renderer);
+    // Saved, its file says so, and no heights are kept beside it.
+    editor.save();
+    let path = editor
+        .game
+        .content
+        .db()
+        .get(editor.game.engine.world.get::<TerrainAsset>(field).unwrap().guid)
+        .unwrap()
+        .path
+        .clone();
+    let text = std::fs::read_to_string(dir.path().join(&path)).unwrap();
+    assert!(voxear_terrain::file::TerrainFile::parse(&text).unwrap().endless.is_some());
+    assert!(!dir.path().join(voxear_terrain::file::heights_file(&path)).exists());
+    // Undone, a terrain of a set size again, made whole from its Obj.
+    editor.undo(&mut renderer);
+    editor.undo(&mut renderer);
+    editor.undo(&mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(file(&editor).endless.is_none());
+    let terrain = editor.game.engine.world.get::<Terrain>(field).unwrap();
+    assert_eq!(terrain.origin, None);
+    assert!(!terrain.heights.has_holes());
+}

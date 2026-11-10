@@ -125,8 +125,10 @@ pub(crate) unsafe extern "C" fn terrain_edit(
     let material = unsafe { utf8(surface, surface_len) }.into_owned();
     let changed = with_world(|world| {
         let mut changed = 0;
+        // Edits are kept as changes to a terrain as built, which one without end, made as it is seen, never is.
         for (entity, terrain, corner) in voxear_terrain::terrains(world)
             .into_iter()
+            .filter(|(_, terrain, _)| terrain.origin.is_none())
             .map(|(entity, terrain, corner)| (entity, terrain.clone(), corner))
             .collect::<Vec<_>>()
         {

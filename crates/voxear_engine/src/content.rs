@@ -1102,6 +1102,19 @@ impl Content {
             Ok(bytes) => voxear_terrain::raster::read_rasters(&bytes).with_context(|| format!("reading {path}'s layers"))?,
             Err(_) => Default::default(),
         };
+        // One without end has no heights kept: its ground is made round the camera as the game goes (see
+        // `terrain::stream`).
+        if let Some((heights, _)) = voxear_terrain::endless::unmade_window(&file) {
+            let rasters = Arc::new(rasters);
+            return Ok(LoadedTerrain {
+                heights: Arc::new(heights),
+                weights: None,
+                grass: None,
+                file,
+                rasters,
+                dug: None,
+            });
+        }
         let stored = match self.read(&voxear_terrain::file::heights_file(&path)) {
             Ok(bytes) => Some(voxear_terrain::file::read_ground(&bytes).with_context(|| format!("reading {path}'s heights"))?),
             Err(_) => None,
@@ -1331,12 +1344,12 @@ impl Content {
             (Some(a), Some(b)) => Arc::ptr_eq(a, b),
             (a, b) => a.is_none() && b.is_none(),
         };
+        // A terrain without end's ground is made as it is seen, so only its file and what was painted are its own.
+        let endless = file.endless.is_some();
         let same = |kept: &LoadedTerrain| {
             kept.file == *file
-                && same_dug(kept)
-                && Arc::ptr_eq(&kept.heights, heights)
-                && same_weights(kept)
-                && same_grass(kept)
+                && (endless
+                    || same_dug(kept) && Arc::ptr_eq(&kept.heights, heights) && same_weights(kept) && same_grass(kept))
                 && Arc::ptr_eq(&kept.rasters, rasters)
         };
         if kept.is_some_and(|kept| same(kept)) {

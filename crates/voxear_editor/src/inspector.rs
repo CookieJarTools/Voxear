@@ -1993,7 +1993,11 @@ impl Inspector {
             items = lod_level_items(level, self.shown.and_then(|e| game.engine.world.get::<LodGroup>(e)));
             (clicked, at)
         } else if let Some(button) = self.terrain_panel.as_ref().and_then(|panel| panel.add_clicked(ui)) {
+            // A terrain without end is offered only the layers that make ground without end.
+            let endless = self.shown.and_then(|e| game.engine.world.get::<voxear_engine::terrain::TerrainAsset>(e));
+            let endless = endless.is_some_and(|asset| asset.file.endless.is_some());
             let kinds = crate::terrain_props::NEW_LAYERS.iter().enumerate();
+            let kinds = kinds.filter(|(kind, _)| !endless || crate::terrain_props::makes_endless(*kind));
             items = kinds.map(|(kind, name)| (MenuItem::new(name), Some(RowAction::AddTerrainLayer(kind)))).collect();
             let [x, y, _, height] = ui.rect(button);
             (button, (x, y + height + 4.0))

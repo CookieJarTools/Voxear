@@ -24,7 +24,7 @@ use crate::{
     heights::{Heightmap, TILE_LEN, TILE_QUADS, TILE_SAMPLES},
     layers::{Area, smoothstep, stable_hash},
     raster::Rasters,
-    surfaces::{Weights, slope_at},
+    surfaces::{SHARES, WeightTile, Weights, slope_of},
 };
 
 /// How many kinds of grass a terrain can have.
@@ -230,15 +230,18 @@ impl GrassMap {
     }
 }
 
+/// The surfaces' shares at a sample of the whole terrain, largest first.
+type SharesAt<'a> = &'a dyn Fn(i64, i64) -> [(u8, u8); SHARES];
+
 /// How thickly kind `index` grows at sample `(x, z)` by its cover alone, 0
 /// to 1: everywhere, nowhere, or as much as its surfaces cover there.
-fn cover_of(kind: &Grass, weights: Option<&Weights>, x: i64, z: i64) -> f32 {
+fn cover_of(kind: &Grass, weights: Option<SharesAt>, x: i64, z: i64) -> f32 {
     match kind.cover {
         GrassCover::Everywhere => 1.0,
         GrassCover::Painted => 0.0,
         GrassCover::Surfaces => {
             let Some(weights) = weights else { return 0.0 };
-            let shares = weights.shares_at(x, z);
+            let shares = weights(x, z);
             let on = shares.iter().filter(|(surface, _)| kind.surfaces.contains(&u32::from(*surface)));
             on.map(|(_, share)| f32::from(*share) / 255.0).sum::<f32>().min(1.0)
         }
@@ -249,7 +252,7 @@ fn cover_of(kind: &Grass, weights: Option<&Weights>, x: i64, z: i64) -> f32 {
 /// before the slope takes any away.
 fn painted_cover(
     file: &TerrainFile,
-    weights: Option<&Weights>,
+    weights: Option<SharesAt>,
     rasters: &Rasters,
     index: usize,
     x: i64,
@@ -260,16 +263,17 @@ fn painted_cover(
     (cover_of(kind, weights, x, z) + painted).clamp(0.0, 1.0)
 }
 
-/// Sample `(x, z)`'s densities, packed.
+/// Sample `(x, z)`'s densities, packed, over ground whose samples `sample`
+/// gives.
 fn densities_of(
     file: &TerrainFile,
-    (heights, weights): (&Heightmap, Option<&Weights>),
+    (sample, weights): (&impl Fn(i64, i64) -> f32, Option<SharesAt>),
     rasters: &Rasters,
     (x, z): (i64, i64),
     out: &mut [u32],
 ) {
     out.fill(0);
-    let (_, rise) = slope_at(heights, x, z);
+    let (_, rise) = slope_of(sample, file.spacing(), x, z);
     let degrees = rise.atan().to_degrees();
     for (index, kind) in file.grass.iter().enumerate().take(MAX_GRASS) {
         let steep = 1.0 - smoothstep(kind.steepest - 5.0, kind.steepest, degrees);
@@ -323,11 +327,14 @@ pub fn grow(
                         None => vec![0; TILE_LEN * words],
                     };
                     let (ox, oz) = (i64::from(tx * TILE_QUADS), i64::from(tz * TILE_QUADS));
+                    let ground = |x, z| heights.sample(x, z);
+                    let shares = |x, z| weights.map_or([(0, 255); SHARES], |weights| weights.shares_at(x, z));
+                    let shares: Option<SharesAt> = weights.map(|_| &shares as SharesAt);
                     for z in z0..=z1 {
                         for x in x0..=x1 {
                             let index = (z * TILE_SAMPLES + x) as usize * words;
-                            let sample = (ox + i64::from(x), oz + i64::from(z));
-                            densities_of(file, (heights, weights), rasters, sample, &mut samples[index..index + words]);
+                            let at = (ox + i64::from(x), oz + i64::from(z));
+                            densities_of(file, (&ground, shares), rasters, at, &mut samples[index..index + words]);
                         }
                     }
                     made.lock().expect("never poisoned").push((tx, tz, GrassTile::from_samples(samples)));
@@ -344,6 +351,34 @@ pub fn grow(
     }
     let tiles = tiles.into_iter().map(|tile| tile.expect("every tile made or kept")).collect();
     Some(GrassMap { tiles_x, tiles_z, words, tiles })
+}
+
+/// One tile's densities, its first sample `first` samples from the
+/// terrain's corner each way, over ground whose samples `sample` gives, as
+/// far as a sample past the tile, with its own shares: for a tile of a
+/// terrain without end, made alone.
+pub fn grow_tile(
+    file: &TerrainFile,
+    (sample, weights): (&impl Fn(i64, i64) -> f32, Option<&WeightTile>),
+    rasters: &Rasters,
+    first: [i64; 2],
+) -> GrassTile {
+    let words = words(file.grass.len());
+    let mut samples = vec![0; TILE_LEN * words];
+    let last = i64::from(TILE_QUADS);
+    let shares = |x: i64, z: i64| {
+        let at = |v: i64, from: i64| (v - from).clamp(0, last) as u32;
+        weights.map_or([(0, 255); SHARES], |tile| tile.shares(at(x, first[0]), at(z, first[1])))
+    };
+    let shares: Option<SharesAt> = weights.map(|_| &shares as SharesAt);
+    for z in 0..TILE_SAMPLES {
+        for x in 0..TILE_SAMPLES {
+            let index = (z * TILE_SAMPLES + x) as usize * words;
+            let at = (first[0] + i64::from(x), first[1] + i64::from(z));
+            densities_of(file, (sample, shares), rasters, at, &mut samples[index..index + words]);
+        }
+    }
+    GrassTile::from_samples(samples)
 }
 
 /// Gives kind `kind` a raster to paint into, if it has none; true if it was
@@ -386,6 +421,8 @@ pub fn paint(
     };
     let goal = if erase { 0.0 } else { 1.0 };
     let strength = brush.strength.clamp(0.0, 1.0);
+    let shares = |x, z| weights.map_or([(0, 255); SHARES], |weights| weights.shares_at(x, z));
+    let weights: Option<SharesAt> = weights.map(|_| &shares as SharesAt);
     for z in z0..=z1 {
         for x in x0..=x1 {
             let distance = ((x as f32 * spacing - at[0]).powi(2) + (z as f32 * spacing - at[1]).powi(2)).sqrt();

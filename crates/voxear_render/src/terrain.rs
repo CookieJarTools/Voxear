@@ -149,14 +149,17 @@ pub struct GpuTerrain {
     /// sample, as its heights are laid out; 0 for none.
     pub grass: u64,
     pub grass_words: u32,
-    pub grass_pad: u32,
+    /// For a terrain without end, how far its window's tiles are turned in
+    /// their slots along x, and `ring_z` along z: each tile keeps the slot
+    /// it came into as its window moves. 0 for a terrain of a set size.
+    pub ring_x: u32,
     /// Its dug chunks' vertices (see `dug`), drawn with the patches, and
     /// which of its columns of chunks are dug, a bit each, with how many a
     /// row has; 0 for a terrain not dug.
     pub dug: u64,
     pub dug_columns: u64,
     pub dug_columns_x: u32,
-    pub dug_pad: u32,
+    pub ring_z: u32,
 }
 
 /// A terrain's flag for having holes, so the shaders look for them.
@@ -221,7 +224,8 @@ pub const FRAME_SIZE: u64 = (PATCHES_AT + MAX_TERRAIN_PATCHES * size_of::<GpuTer
 
 /// One terrain's ground on the GPU: one buffer holding every tile's heights,
 /// then every tile's holes, then, where it has surfaces, every tile's
-/// shares, then, where it has grass, every tile's densities.
+/// shares, then, where it has grass, every tile's densities. Each is kept by
+/// its tile's slot (see `slot_of`).
 struct Resident {
     tiles: [u32; 2],
     spacing: f32,
@@ -237,8 +241,8 @@ struct Resident {
     /// The shares each slot holds now, by pointer.
     uploaded_weights: Vec<Option<Arc<WeightTile>>>,
     tree: Arc<LodTree>,
-    /// Each tile's mesh for rays, and the tile and dug chunks it was made
-    /// from.
+    /// Each slot's mesh for rays, in its tile's own space, and the tile and
+    /// dug chunks it was made from.
     proxies: Vec<Option<(Arc<HeightTile>, Vec<Arc<DugChunk>>, MeshHandle)>>,
     /// Each tile's dug chunks as last seen, to know when they change.
     dug_seen: Vec<Vec<Arc<DugChunk>>>,
@@ -247,6 +251,8 @@ struct Resident {
     seen: u64,
     /// Its dug chunks' triangles, once it is dug.
     dug: Option<crate::dug::DugPool>,
+    /// Where a terrain without end's window started when its tree was made.
+    origin: Option<[i32; 2]>,
 }
 
 /// A terrain to draw this frame, as every view draws it.
@@ -270,8 +276,12 @@ pub(crate) struct Drawn {
     pub ranges: LodRanges,
     pub look: TerrainLook,
     pub cast_shadows: bool,
-    /// Its tiles' meshes for rays, those made so far.
-    pub proxies: Vec<MeshHandle>,
+    /// For a terrain without end, how far its tiles are turned in their
+    /// slots, along x and z (see `GpuTerrain::ring_x`).
+    pub ring: [u32; 2],
+    /// Its tiles' meshes for rays, those made so far, each in its tile's own
+    /// space, with where its tile is from the corner.
+    pub proxies: Vec<(MeshHandle, Vec3)>,
     /// Where its dug chunks' vertices are, each chunk to draw (see
     /// `dug::pick`), and where its dug columns' bits are and how many a row
     /// has, where it is dug; the pool in this frame's graph.
@@ -302,6 +312,13 @@ fn regions(count: usize, weighted: bool, grass_words: usize) -> [u64; 5] {
     let weights = holes + (count * HOLE_WORDS * 4) as u64;
     let grass = weights + if weighted { (count * TILE_LEN * 8) as u64 } else { 0 };
     [0, holes, weights, grass, grass + (count * TILE_LEN * 4 * grass_words) as u64]
+}
+
+/// How far a terrain without end's window starting at tile `origin` turns
+/// its tiles in their slots, along x and z.
+fn ring_of(map: &Heightmap, origin: Option<[i32; 2]>) -> [u32; 2] {
+    origin
+        .map_or([0, 0], |[x, z]| [x.rem_euclid(map.tiles_x() as i32) as u32, z.rem_euclid(map.tiles_z() as i32) as u32])
 }
 
 /// Every terrain's heights on the GPU, and what to copy in this frame.
@@ -394,38 +411,44 @@ impl Terrains {
             {
                 dug.mesh_all(map);
             }
+            let origin = terrain.origin;
             for (index, tile) in map.tiles().iter().enumerate() {
-                if resident.uploaded[index].as_ref().is_some_and(|held| Arc::ptr_eq(held, tile)) {
+                let slot = voxear_terrain::endless::slot_of(map, origin, index);
+                if resident.uploaded[slot].as_ref().is_some_and(|held| Arc::ptr_eq(held, tile)) {
                     continue;
                 }
                 // A tile holed for ground dug in it is drawn as it was until that ground's triangles are made.
                 let (tx, tz) = (index as u32 % map.tiles_x(), index as u32 / map.tiles_x());
-                if resident.uploaded[index].is_some() && dug.is_some_and(|dug| !dug.tile_meshed(tx, tz)) {
+                if resident.uploaded[slot].is_some() && dug.is_some_and(|dug| !dug.tile_meshed(tx, tz)) {
                     continue;
                 }
-                stage(bytemuck::cast_slice(tile.samples()), (index * TILE_LEN * 4) as u64);
+                stage(bytemuck::cast_slice(tile.samples()), (slot * TILE_LEN * 4) as u64);
                 let holes = tile.holes().unwrap_or(&no_holes);
-                stage(bytemuck::cast_slice(holes), holes_at + (index * HOLE_WORDS * 4) as u64);
-                resident.uploaded[index] = Some(tile.clone());
-                resident.changed[index] = frame_index;
+                stage(bytemuck::cast_slice(holes), holes_at + (slot * HOLE_WORDS * 4) as u64);
+                resident.uploaded[slot] = Some(tile.clone());
+                resident.changed[slot] = frame_index;
                 changed = true;
             }
             for (index, tile) in weights.map_or(&[][..], |weights| weights.tiles()).iter().enumerate() {
-                if resident.uploaded_weights[index].as_ref().is_some_and(|held| Arc::ptr_eq(held, tile)) {
+                let slot = voxear_terrain::endless::slot_of(map, origin, index);
+                if resident.uploaded_weights[slot].as_ref().is_some_and(|held| Arc::ptr_eq(held, tile)) {
                     continue;
                 }
-                stage(bytemuck::cast_slice(tile.samples()), weights_at + (index * TILE_LEN * 8) as u64);
-                resident.uploaded_weights[index] = Some(tile.clone());
+                stage(bytemuck::cast_slice(tile.samples()), weights_at + (slot * TILE_LEN * 8) as u64);
+                resident.uploaded_weights[slot] = Some(tile.clone());
             }
             for (index, tile) in grass.map_or(&[][..], |grass| grass.tiles()).iter().enumerate() {
-                if resident.uploaded_grass[index].as_ref().is_some_and(|held| Arc::ptr_eq(held, tile)) {
+                let slot = voxear_terrain::endless::slot_of(map, origin, index);
+                if resident.uploaded_grass[slot].as_ref().is_some_and(|held| Arc::ptr_eq(held, tile)) {
                     continue;
                 }
-                stage(bytemuck::cast_slice(tile.samples()), grass_at + (index * TILE_LEN * 4 * grass_words) as u64);
-                resident.uploaded_grass[index] = Some(tile.clone());
+                stage(bytemuck::cast_slice(tile.samples()), grass_at + (slot * TILE_LEN * 4 * grass_words) as u64);
+                resident.uploaded_grass[slot] = Some(tile.clone());
             }
-            if changed {
+            // A window moved with no tile changed is drawn from tiles in other places: its tree is made again too.
+            if changed || resident.origin != origin {
                 resident.tree = Arc::new(LodTree::new(map));
+                resident.origin = origin;
             }
             // Its dug chunks' triangles, those that changed made again.
             match dug {
@@ -451,34 +474,49 @@ impl Terrains {
             let same = |a: &[Arc<DugChunk>], b: &[Arc<DugChunk>]| {
                 a.len() == b.len() && a.iter().zip(b).all(|(a, b)| Arc::ptr_eq(a, b))
             };
+            let width = TILE_QUADS as f32 * map.spacing();
+            let mut placed_proxies = Vec::new();
             for index in 0..map.tiles().len() {
                 let tile = &map.tiles()[index];
+                let slot = voxear_terrain::endless::slot_of(map, origin, index);
                 let (tx, tz) = (index as u32 % map.tiles_x(), index as u32 / map.tiles_x());
+                let at = Vec3::new(tx as f32 * width, 0.0, tz as f32 * width);
+                // A terrain without end's tile not made yet has nothing for rays to meet.
+                if voxear_terrain::endless::is_unmade(tile) {
+                    continue;
+                }
                 // Its dug chunks, which rays see in place of the ground they were dug out of; a change to them is a
                 // change to the tile.
                 let chunks: Vec<Arc<DugChunk>> = dug
                     .map(|dug| dug.tile_chunks(tx, tz).map(|(_, chunk)| chunk.clone()).collect())
                     .unwrap_or_default();
-                if !same(&resident.dug_seen[index], &chunks) {
-                    resident.dug_seen[index] = chunks.clone();
-                    resident.changed[index] = frame_index;
+                if !same(&resident.dug_seen[slot], &chunks) {
+                    resident.dug_seen[slot] = chunks.clone();
+                    resident.changed[slot] = frame_index;
                 }
-                let current = resident.proxies[index]
+                let current = resident.proxies[slot]
                     .as_ref()
                     .is_some_and(|(made, was, _)| Arc::ptr_eq(made, tile) && same(was, &chunks));
                 // A tile that has a mesh waits until it settles; one that has none gets one at once. Either waits for
                 // its dug ground's triangles.
-                let settling =
-                    resident.proxies[index].is_some() && frame_index < resident.changed[index] + PROXY_SETTLE;
+                let settling = resident.proxies[slot].is_some() && frame_index < resident.changed[slot] + PROXY_SETTLE;
                 let unmade = chunks.iter().any(|chunk| chunk.mesh().is_none());
-                if current || settling || unmade || proxies_left == 0 {
-                    continue;
+                if !(current || settling || unmade || proxies_left == 0) {
+                    proxies_left -= 1;
+                    // Its pictures repeated from where the tile is from the terrain's Obj, as the ground's are.
+                    let from = at + terrain.offset();
+                    let mesh = proxy(map, dug.map(|dug| &**dug), (tx, tz), from, 1.0 / look.seen().1.max(0.01));
+                    let handle = assets.add_mesh_with_lods(gpu, &mesh, &crate::lod::full_lod(&mesh))?;
+                    if let Some((_, _, old)) = resident.proxies[slot].replace((tile.clone(), chunks, handle)) {
+                        assets.free_mesh(old, frame_index);
+                    }
                 }
-                proxies_left -= 1;
-                let mesh = proxy(map, dug.map(|dug| &**dug), tx, tz, 1.0 / look.seen().1.max(0.01));
-                let handle = assets.add_mesh_with_lods(gpu, &mesh, &crate::lod::full_lod(&mesh))?;
-                if let Some((_, _, old)) = resident.proxies[index].replace((tile.clone(), chunks, handle)) {
-                    assets.free_mesh(old, frame_index);
+                // Shown only once made from this tile, so a slot that came to hold another tile shows nothing till
+                // then.
+                if let Some((made, _, mesh)) = &resident.proxies[slot]
+                    && Arc::ptr_eq(made, tile)
+                {
+                    placed_proxies.push((*mesh, at));
                 }
             }
             let tree = resident.tree.clone();
@@ -498,7 +536,8 @@ impl Terrains {
                 ranges,
                 look,
                 cast_shadows: terrain.cast_shadows,
-                proxies: resident.proxies.iter().flatten().map(|(_, _, mesh)| *mesh).collect(),
+                ring: ring_of(map, origin),
+                proxies: placed_proxies,
                 dug: resident
                     .dug
                     .as_mut()
@@ -602,6 +641,7 @@ impl Resident {
             changed: vec![0; count],
             seen: 0,
             dug: None,
+            origin: None,
         })
     }
 }
@@ -617,11 +657,13 @@ fn retire(resident: Resident, assets: &mut Assets, frames: &mut Frames, frame_in
 }
 
 /// Tile `(tx, tz)`'s mesh for rays: a vertex every `PROXY_STEP` samples,
-/// in the terrain's space, its pictures repeated as the ground's are; where
-/// it is dug, its dug chunks at their coarsest instead.
-fn proxy(map: &Heightmap, dug: Option<&Excavation>, tx: u32, tz: u32, uv_scale: f32) -> MeshData {
+/// in the tile's own space, its pictures repeated as the ground's are from
+/// `from`, where the tile is from the terrain's Obj; where it is dug, its dug
+/// chunks at their coarsest instead.
+fn proxy(map: &Heightmap, dug: Option<&Excavation>, (tx, tz): (u32, u32), from: Vec3, uv_scale: f32) -> MeshData {
     let across = TILE_QUADS / PROXY_STEP + 1;
     let spacing = map.spacing();
+    let corner = Vec3::new((tx * TILE_QUADS) as f32 * spacing, 0.0, (tz * TILE_QUADS) as f32 * spacing);
     let mut mesh = MeshData::default();
     for z in 0..across {
         for x in 0..across {
@@ -629,10 +671,11 @@ fn proxy(map: &Heightmap, dug: Option<&Excavation>, tx: u32, tz: u32, uv_scale: 
             let (lx, lz) = (sx as f32 * spacing, sz as f32 * spacing);
             let normal = map.normal_at(lx, lz);
             let tangent = Vec3::new(normal.y, -normal.x, 0.0).normalize_or(Vec3::X);
+            let (px, pz) = (lx - corner.x, lz - corner.z);
             mesh.vertices.push(Vertex {
-                position: [lx, map.sample(i64::from(sx), i64::from(sz)), lz],
+                position: [px, map.sample(i64::from(sx), i64::from(sz)), pz],
                 normal: normal.into(),
-                uv: [lx * uv_scale, -lz * uv_scale],
+                uv: [(px + from.x) * uv_scale, -(pz + from.z) * uv_scale],
                 tangent: [tangent.x, tangent.y, tangent.z, 1.0],
                 wind: NO_WIND_MASKS,
             });
@@ -657,10 +700,11 @@ fn proxy(map: &Heightmap, dug: Option<&Excavation>, tx: u32, tz: u32, uv_scale: 
         let first = mesh.vertices.len() as u32;
         for (&position, &normal) in coarsest.positions.iter().zip(&coarsest.normals) {
             let tangent = Vec3::new(normal[1], -normal[0], 0.0).normalize_or(Vec3::X);
+            let position = [position[0] - corner.x, position[1], position[2] - corner.z];
             mesh.vertices.push(Vertex {
                 position,
                 normal,
-                uv: [position[0] * uv_scale, -position[2] * uv_scale],
+                uv: [(position[0] + from.x) * uv_scale, -(position[2] + from.z) * uv_scale],
                 tangent: [tangent.x, tangent.y, tangent.z, 1.0],
                 wind: NO_WIND_MASKS,
             });
@@ -697,9 +741,9 @@ impl ViewTerrains {
 /// the plants, so the GI's rays and the sea floor see them.
 pub(crate) fn add_proxies(drawn: &[Drawn], extracted: &mut ExtractedFrame) {
     for terrain in drawn {
-        let model = Mat4::from_translation(terrain.corner);
-        let normal = Mat3::from_mat4(model).inverse().transpose();
-        for (tile, mesh) in terrain.proxies.iter().enumerate() {
+        for (tile, (mesh, at)) in terrain.proxies.iter().enumerate() {
+            let model = Mat4::from_translation(terrain.corner + *at);
+            let normal = Mat3::from_mat4(model).inverse().transpose();
             extracted.instances.push(GpuInstance {
                 model: crate::gpu::cols(model),
                 prev_model: crate::gpu::cols(model),
@@ -779,11 +823,11 @@ pub(crate) fn gather(
                 | if looks.iter().any(|look| look.tracks > 0.0) { TERRAIN_TRACKS } else { 0 },
             grass: terrain.grass.map_or(0, |(address, _)| address),
             grass_words: terrain.grass.map_or(0, |(_, words)| words),
-            grass_pad: 0,
+            ring_x: terrain.ring[0],
             dug: terrain.dug.as_ref().map_or(0, |(address, ..)| *address),
             dug_columns: terrain.dug.as_ref().map_or(0, |(.., (columns, _))| *columns),
             dug_columns_x: terrain.dug.as_ref().map_or(0, |(.., (_, across))| *across),
-            dug_pad: 0,
+            ring_z: terrain.ring[1],
         });
         let local = camera - terrain.corner;
         let pack = |patch: &Patch| GpuTerrainPatch {
@@ -987,13 +1031,15 @@ mod tests {
     #[test]
     fn a_tiles_mesh_for_rays_lies_on_its_ground_and_faces_up() {
         let map = Heightmap::from_fn(2, 1, 0.5, |x, z| (x * 0.1).sin() * 3.0 + z * 0.01);
-        let mesh = proxy(&map, None, 1, 0, 0.25);
+        // The second tile, 128 m along, in its own space.
+        let mesh = proxy(&map, None, (1, 0), Vec3::new(128.0, 0.0, 0.0), 0.25);
         assert_eq!(mesh.vertices.len(), 33 * 33);
         for vertex in &mesh.vertices {
             let [x, y, z] = vertex.position;
-            assert!((map.height_at(x, z) - y).abs() < 1e-4);
+            assert!((map.height_at(x + 128.0, z) - y).abs() < 1e-4);
         }
-        assert!(mesh.vertices[0].position[0] >= 128.0, "the second tile starts 128 m along");
+        assert_eq!(mesh.vertices[0].position[0], 0.0);
+        assert_eq!(mesh.vertices[0].uv[0], 32.0, "its pictures repeated as the ground's, from where it is");
         for triangle in mesh.indices.as_chunks::<3>().0 {
             let [a, b, c] = [0, 1, 2].map(|i| Vec3::from(mesh.vertices[triangle[i] as usize].position));
             assert!((b - a).cross(c - a).y > 0.0, "every triangle faces up");
@@ -1009,8 +1055,8 @@ mod tests {
         // A pit 3 m round in the column from 56 to 64 m each way.
         dug.carve(&map, &Shape::Ball { at: [60.0, 0.0, 60.0], radius: 3.0 }, Carve::Dig, None);
         dug.mesh_all(&map);
-        let mesh = proxy(&map, Some(&dug), 0, 0, 0.25);
-        let plain = proxy(&map, None, 0, 0, 0.25);
+        let mesh = proxy(&map, Some(&dug), (0, 0), Vec3::ZERO, 0.25);
+        let plain = proxy(&map, None, (0, 0), Vec3::ZERO, 0.25);
         let points = |mesh: &MeshData| -> Vec<Vec3> {
             mesh.indices.iter().map(|&i| Vec3::from(mesh.vertices[i as usize].position)).collect()
         };

@@ -751,6 +751,13 @@ impl Editor {
             if let Some(transform) = self.game.engine.world.get_mut::<Transform>(self.scene.camera) {
                 self.scene.fly.update_transform(transform, delta);
             }
+            // Terrains without end are made round where the Scene view looks from while editing; in play, round the
+            // game's camera.
+            let viewer = self.game.engine.world.get::<Transform>(self.scene.camera).map(|camera| camera.position);
+            match viewer.filter(|_| !self.is_playing()) {
+                Some(at) => self.game.engine.world.insert_resource(voxear_engine::terrain::TerrainViewer(at)),
+                None => drop(self.game.engine.world.remove_resource::<voxear_engine::terrain::TerrainViewer>()),
+            }
             if let Some(delta) = self.game_delta(delta) {
                 self.game.tick(delta, Some(renderer));
             }

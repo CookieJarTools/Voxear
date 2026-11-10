@@ -198,6 +198,13 @@ impl Heightmap {
         Self { tiles, ..self.clone() }
     }
 
+    /// The same terrain with every tile in place of its own, as many,
+    /// keeping its id: as a terrain without end's window moves.
+    pub fn with_shared_tiles(&self, tiles: Vec<Arc<HeightTile>>) -> Self {
+        assert_eq!(tiles.len(), self.tiles.len(), "a terrain has every tile");
+        Self { tiles, ..self.clone() }
+    }
+
     pub fn id(&self) -> u64 {
         self.id
     }

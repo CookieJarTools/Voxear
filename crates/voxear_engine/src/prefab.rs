@@ -908,6 +908,12 @@ pub fn terrain(content: &mut Content, renderer: Option<&mut Renderer>, data: &Te
             (std::sync::Arc::new(voxear_terrain::file::TerrainFile::default().flat()), None, None, None, None)
         }
     };
+    // One without end starts as holes round its Obj, its own, made as it is seen.
+    let endless = asset.as_ref().and_then(|asset| voxear_terrain::endless::unmade_window(&asset.file));
+    let (heights, origin) = match endless {
+        Some((window, origin)) => (std::sync::Arc::new(window), Some(origin)),
+        None => (heights, None),
+    };
     let terrain = voxear_terrain::Terrain {
         heights,
         weights,
@@ -915,6 +921,7 @@ pub fn terrain(content: &mut Content, renderer: Option<&mut Renderer>, data: &Te
         dug,
         detail_distance: data.detail_distance.max(1.0),
         cast_shadows: data.cast_shadows,
+        origin,
     };
     let look = match renderer {
         Some(renderer) => Some(terrain_look(content, renderer, data, asset.as_ref().map(|asset| &asset.file))?),

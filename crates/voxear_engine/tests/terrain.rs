@@ -213,3 +213,87 @@ fn a_trench_in_a_terrains_layers_is_dug_as_it_loads() {
     assert!((beside - 9.4).abs() < 0.01, "and the ground beside it as it was: {beside}");
 
 }
+
+/// A terrain without end made by a generator, 4 m between samples, and a camera far out over it.
+const ENDLESS: &str = "format = 1\n\n[[obj]]\nid = 1\nname = \"World\"\n[obj.terrain]\n\
+                       data = \"Terrains/World.terrain\"\n\n[[obj]]\nid = 2\nname = \"Eye\"\n\
+                       position = [5000.0, 300.0, -3000.0]\n[obj.camera]\nfov = 60.0\n";
+
+fn endless_project() -> tempfile::TempDir {
+    use voxear_terrain::{
+        file::Endless,
+        generate::Preset,
+        layers::{Layer, LayerKind},
+    };
+    let dir = project();
+    let generate = LayerKind::Generate { world: Some("Worlds/Hills.worldgen".into()), position: [100.0, 0.0] };
+    let file = TerrainFile {
+        layers: vec![Layer::new(generate)],
+        endless: Some(Endless { distance: 900.0, spacing: 4.0 }),
+        ..TerrainFile::default()
+    };
+    std::fs::write(dir.path().join("Scenes/Field.scene"), ENDLESS).unwrap();
+    std::fs::write(dir.path().join("Terrains/World.terrain"), file.to_text()).unwrap();
+    std::fs::create_dir_all(dir.path().join("Worlds")).unwrap();
+    std::fs::write(dir.path().join("Worlds/Hills.worldgen"), Preset::RollingHills.world().to_text()).unwrap();
+    dir
+}
+
+#[test]
+fn a_terrain_without_end_is_made_round_the_camera_and_follows_it() {
+    use voxear_terrain::generate::{Preset, WorldGen};
+    let dir = endless_project();
+    let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
+    game.start(None).unwrap();
+    let hills = WorldGen::parse(&Preset::RollingHills.world().to_text()).unwrap();
+    let (world_entity, eye) = {
+        let world = &game.engine.world;
+        let named = |name: &str| {
+            world
+                .query_ref::<(voxear_ecs::Entity, &voxear_scene::Name)>()
+                .into_iter()
+                .find(|(_, n)| n.0 == name)
+                .unwrap()
+                .0
+        };
+        (named("World"), named("Eye"))
+    };
+    // Before a frame, holes round its Obj: nothing to stand on yet.
+    assert!(voxear_terrain::ground_at(&game.engine.world, 5000.0, -3000.0).is_none());
+    // A frame: the ground under the camera made at once, as its generator makes it.
+    game.tick(1.0 / 60.0, None);
+    let ground = voxear_terrain::ground_at(&game.engine.world, 5000.0, -3000.0).expect("ground under the camera");
+    assert_eq!(ground.terrain, world_entity);
+    assert!((ground.height - hills.height_at(5100.0, -3000.0)).abs() < 0.05, "{} as made", ground.height);
+    let terrain = game.engine.world.get::<Terrain>(world_entity).unwrap();
+    assert_eq!(terrain.heights.tiles_x(), 3, "900 m each way of 1024 m tiles: the camera's and one each side");
+    assert_eq!(terrain.origin, Some([3, -4]));
+    // Physics stands things on it.
+    for _ in 0..3 {
+        game.tick(1.0 / 60.0, None);
+    }
+    assert!(voxear_engine::terrain::streamed(&game.engine.world));
+    // The camera gone 3 km on: the ground under it there, from the frame after it is placed there.
+    game.engine.world.get_mut::<voxear_scene::Transform>(eye).unwrap().position.x = 8000.0;
+    game.tick(1.0 / 60.0, None);
+    game.tick(1.0 / 60.0, None);
+    let ground = voxear_terrain::ground_at(&game.engine.world, 8000.0, -3000.0).expect("ground there now");
+    assert!((ground.height - hills.height_at(8100.0, -3000.0)).abs() < 0.05);
+    assert_eq!(game.engine.world.get::<Terrain>(world_entity).unwrap().origin, Some([6, -4]));
+    assert!(voxear_terrain::ground_at(&game.engine.world, 5000.0, -3000.0).is_none(), "left behind");
+
+    // Saved, it keeps no heights: its file alone.
+    voxear_engine::terrain::keep(&game.engine.world, &mut game.content);
+    let kept =
+        game.content.terrain(game.engine.world.get::<voxear_engine::terrain::TerrainAsset>(world_entity).unwrap().guid);
+    assert!(kept.is_some_and(|kept| kept.file.endless.is_some()));
+    let mut changed = game.engine.world.get::<voxear_engine::terrain::TerrainAsset>(world_entity).unwrap().clone();
+    changed.file.base = 1.0;
+    game.engine.world.insert(world_entity, changed);
+    voxear_engine::terrain::keep(&game.engine.world, &mut game.content);
+    let written = voxear_engine::terrain::save(&mut game.content, dir.path()).unwrap();
+    assert_eq!(written, vec!["Terrains/World.terrain".to_string()]);
+    assert!(!dir.path().join("Terrains/World.heights").exists());
+    let text = std::fs::read_to_string(dir.path().join("Terrains/World.terrain")).unwrap();
+    assert!(TerrainFile::parse(&text).unwrap().endless.is_some());
+}

@@ -34,7 +34,7 @@ use crate::{
 pub const PAD: u32 = 16;
 
 /// How many samples a padded tile is across.
-const SIDE: u32 = TILE_SAMPLES + 2 * PAD;
+pub(crate) const SIDE: u32 = TILE_SAMPLES + 2 * PAD;
 
 /// What finds a picture by the reference a layer has.
 pub type Pictures<'a> = &'a (dyn Fn(&str) -> Option<Arc<Greys>> + Sync);
@@ -138,7 +138,7 @@ impl Compositor {
                             }
                         };
                         for layer in &file.layers[start..] {
-                            apply(layer, &mut padded, (tx, tz), spacing, file, sources);
+                            apply(layer, &mut padded, (i64::from(tx), i64::from(tz)), spacing, file, sources);
                         }
                         let tile = HeightTile::from_samples(inner(&padded)).with_holes(hole_bits(file, sources.rasters, tx, tz));
                         made.lock().expect("never poisoned").push((tx, tz, tile));
@@ -168,7 +168,7 @@ impl Compositor {
         }
         let mut padded = vec![file.base; (SIDE * SIDE) as usize];
         for under in &file.layers[..layer] {
-            apply(under, &mut padded, (tx, tz), file.spacing(), file, sources);
+            apply(under, &mut padded, (i64::from(tx), i64::from(tz)), file.spacing(), file, sources);
         }
         let kept: Arc<[f32]> = padded.into();
         self.below.lock().expect("never poisoned").insert((tx, tz), kept.clone());
@@ -235,8 +235,19 @@ pub fn hole_bits(file: &TerrainFile, rasters: &Rasters, tx: u32, tz: u32) -> Opt
     Some(bits.into())
 }
 
+/// Tile `(tx, tz)` of a terrain without end, counted from its corner
+/// either way, padded: its base and every layer that makes ground without
+/// end.
+pub(crate) fn padded_tile(file: &TerrainFile, sources: &Sources, (tx, tz): (i64, i64)) -> Vec<f32> {
+    let mut padded = vec![file.base; (SIDE * SIDE) as usize];
+    for layer in file.layers.iter().filter(|layer| layer.kind.endless()) {
+        apply(layer, &mut padded, (tx, tz), file.spacing(), file, sources);
+    }
+    padded
+}
+
 /// A padded tile's own samples.
-fn inner(padded: &[f32]) -> Vec<f32> {
+pub(crate) fn inner(padded: &[f32]) -> Vec<f32> {
     let mut samples = Vec::with_capacity(TILE_LEN);
     for z in 0..TILE_SAMPLES {
         let row = ((z + PAD) * SIDE + PAD) as usize;
@@ -245,17 +256,21 @@ fn inner(padded: &[f32]) -> Vec<f32> {
     samples
 }
 
-/// Puts one layer on a padded tile.
-fn apply(layer: &Layer, padded: &mut [f32], (tx, tz): (u32, u32), spacing: f32, file: &TerrainFile, sources: &Sources) {
+/// Puts one layer on a padded tile, tile `(tx, tz)` from the terrain's
+/// corner.
+fn apply(layer: &Layer, padded: &mut [f32], (tx, tz): (i64, i64), spacing: f32, file: &TerrainFile, sources: &Sources) {
     // Digging is done into the ground every layer makes, after (see `dig::dig_layers`).
     if !layer.enabled || layer.opacity <= 0.0 || layer.kind.digs() {
         return;
     }
-    let (ox, oz) = (i64::from(tx * TILE_QUADS) - i64::from(PAD), i64::from(tz * TILE_QUADS) - i64::from(PAD));
-    let quads = i64::from(file.tiles() * TILE_QUADS);
-    // Each padded sample's place in metres, clamped to the terrain, as heights past its edge repeat its edge.
+    let quads = i64::from(TILE_QUADS);
+    let (ox, oz) = (tx * quads - i64::from(PAD), tz * quads - i64::from(PAD));
+    // A terrain of a set size ends: heights past its edge repeat its edge. One without end goes on.
+    let last = file.endless.is_none().then(|| i64::from(file.tiles()) * quads);
+    // Each padded sample's place, in samples and in metres.
     let place = |i: u32, j: u32| {
-        let (x, z) = ((ox + i64::from(i)).clamp(0, quads), (oz + i64::from(j)).clamp(0, quads));
+        let (x, z) = (ox + i64::from(i), oz + i64::from(j));
+        let (x, z) = last.map_or((x, z), |last| (x.clamp(0, last), z.clamp(0, last)));
         (x, z, x as f32 * spacing, z as f32 * spacing)
     };
     if let Some([x0, z0, x1, z1]) = layer.kind.area() {

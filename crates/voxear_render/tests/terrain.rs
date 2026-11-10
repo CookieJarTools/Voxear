@@ -834,3 +834,58 @@ fn erosion_wears_high_ground_down_into_low_keeping_its_volume_and_slumps_a_cliff
     assert!(steepest < 1.3, "no steeper than about a metre a metre: {steepest}");
     assert!(row(122) < 19.0 && row(134) > 1.0, "its top worn back and its foot heaped: {} and {}", row(122), row(134));
 }
+
+#[test]
+fn a_terrain_without_ends_window_moved_under_the_camera_draws_the_same_ground() {
+    use std::{collections::HashMap, sync::Arc};
+    use voxear_terrain::{HeightTile, TILE_QUADS, TILE_SAMPLES};
+    let Some(mut renderer) = renderer() else { return };
+    // Hills over the world, tile by tile, 128 m a tile, each made once and shared as a window keeps it.
+    let ground = |x: f32, z: f32| (x * 0.05).sin() * 6.0 + (z * 0.04).cos() * 5.0 + (x * 0.13 + z * 0.09).sin();
+    let mut made: HashMap<[i32; 2], Arc<HeightTile>> = HashMap::new();
+    let mut window = |origin: [i32; 2]| -> Vec<Arc<HeightTile>> {
+        (0..9)
+            .map(|i| [origin[0] + i % 3, origin[1] + i / 3])
+            .map(|at| {
+                made.entry(at)
+                    .or_insert_with(|| {
+                        let place = |tile: i32, sample: u32| (tile * TILE_QUADS as i32 + sample as i32) as f32 * 0.5;
+                        let samples = (0..TILE_SAMPLES * TILE_SAMPLES)
+                            .map(|i| ground(place(at[0], i % TILE_SAMPLES), place(at[1], i / TILE_SAMPLES)))
+                            .collect();
+                        Arc::new(HeightTile::from_samples(samples))
+                    })
+                    .clone()
+            })
+            .collect()
+    };
+    let mut world = World::new();
+    let grey = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let heights = Heightmap::from_tiles(3, 3, 0.5, window([-1, -1]));
+    let terrain = Terrain { origin: Some([-1, -1]), detail_distance: 40.0, ..Terrain::new(heights) };
+    // Seen from over the edge between its tiles (0, 0) and (1, 0), which both windows have.
+    let corner = Transform::from_position(Vec3::new(-64.0, 0.0, 0.0));
+    let entity = world.spawn((terrain, TerrainLook::new(grey, 4.0), corner));
+    look_down(&mut world, 60.0);
+    let sun = Quat::from_rotation_x(0.9) * Quat::from_rotation_y(-0.6);
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    let before = render(&mut renderer, &world, 4);
+    keep_image("terrain endless before.png", &before);
+    // A tile along x: the window from (0, -1), its tiles each where they were in the world, in their slots turned.
+    let moved = world.get::<Terrain>(entity).unwrap().heights.with_shared_tiles(window([0, -1]));
+    let terrain = world.get_mut::<Terrain>(entity).unwrap();
+    (terrain.heights, terrain.origin) = (Arc::new(moved), Some([0, -1]));
+    let after = render(&mut renderer, &world, 4);
+    keep_image("terrain endless after.png", &after);
+    let differences: Vec<i32> = before.iter().zip(&after).map(|(a, b)| (i32::from(*a) - i32::from(*b)).abs()).collect();
+    let far_off = differences.iter().filter(|&&d| d > 6).count();
+    assert!(far_off * 1000 < differences.len(), "{far_off} of {} values differ by more than 6", differences.len());
+    // And lit as hills: brighter facing the sun, darker away from it.
+    let values: Vec<i32> = (0..HEIGHT)
+        .step_by(9)
+        .flat_map(|y| (0..WIDTH).step_by(9).map(move |x| (x, y)))
+        .map(|(x, y)| rgb_at(&after, x, y).iter().sum())
+        .collect();
+    let (darkest, brightest) = (values.iter().min().unwrap(), values.iter().max().unwrap());
+    assert!(brightest - darkest > 60, "shaded by its slopes: from {darkest} to {brightest}");
+}

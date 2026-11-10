@@ -59,7 +59,30 @@ pub struct TerrainFile {
     /// The grass and details that grow on it (see `grass`).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub grass: Vec<Grass>,
+    /// For a terrain without end: how far round the camera its ground is
+    /// made, and how fine (see `endless`). Its size and resolution are then
+    /// left unused.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub endless: Option<Endless>,
 }
+
+/// How a terrain without end is made: out to how far round the camera, in
+/// metres, and how many metres apart its samples are, one of `SPACINGS`.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Endless {
+    pub distance: f32,
+    pub spacing: f32,
+}
+
+impl Default for Endless {
+    fn default() -> Self {
+        Self { distance: 1500.0, spacing: 1.0 }
+    }
+}
+
+/// How many metres apart a terrain without end's samples can be.
+pub const SPACINGS: [f32; 5] = [0.25, 0.5, 1.0, 2.0, 4.0];
 
 fn is_none(raster: &u32) -> bool {
     *raster == 0
@@ -77,6 +100,7 @@ struct Written {
     surfaces: Vec<Surface>,
     holes: u32,
     grass: Vec<Grass>,
+    endless: Option<Endless>,
     heightmap: Option<String>,
     height: f32,
 }
@@ -92,6 +116,7 @@ impl Default for Written {
             surfaces: Vec::new(),
             holes: 0,
             grass: Vec::new(),
+            endless: None,
             heightmap: None,
             height: 100.0,
         }
@@ -114,6 +139,7 @@ impl From<Written> for TerrainFile {
             surfaces: written.surfaces,
             holes: written.holes,
             grass: written.grass,
+            endless: written.endless,
         }
     }
 }
@@ -132,6 +158,7 @@ impl Default for TerrainFile {
             surfaces: Vec::new(),
             holes: 0,
             grass: Vec::new(),
+            endless: None,
         }
     }
 }
@@ -142,6 +169,10 @@ impl TerrainFile {
         ensure!(file.size > 0.0 && file.size.is_finite(), "a terrain's size is more than nothing");
         ensure!(RESOLUTIONS.contains(&file.resolution), "a terrain's resolution is one of {RESOLUTIONS:?}");
         ensure!(file.base.is_finite(), "a terrain's base is a number");
+        if let Some(endless) = &file.endless {
+            ensure!(SPACINGS.contains(&endless.spacing), "an endless terrain's spacing is one of {SPACINGS:?}");
+            ensure!(endless.distance > 0.0 && endless.distance.is_finite(), "an endless terrain reaches some way");
+        }
         Ok(file)
     }
 
@@ -150,10 +181,12 @@ impl TerrainFile {
     }
 
     /// A hash of what makes its ground: its size, resolution, base,
-    /// layers and holes.
+    /// layers and holes, and whether it is without end, and how fine.
     pub fn shape_hash(&self) -> u64 {
         let layers = crate::layers::hash_layers(self.base, &self.layers);
-        crate::layers::stable_hash(format!("{} {} {layers} {}", self.size, self.resolution, self.holes).as_bytes())
+        let endless = self.endless.map_or(String::new(), |endless| format!(" endless {}", endless.spacing));
+        let text = format!("{} {} {layers} {}{endless}", self.size, self.resolution, self.holes);
+        crate::layers::stable_hash(text.as_bytes())
     }
 
     /// The rasters its sculpt layers, surfaces and holes keep, for giving a
@@ -170,14 +203,21 @@ impl TerrainFile {
         sculpted.chain(painted).chain(grown).chain([self.holes]).filter(|&raster| raster != 0).collect()
     }
 
-    /// How many tiles it is across.
+    /// How many tiles it is across; for a terrain without end, how many it
+    /// keeps round the camera.
     pub fn tiles(&self) -> u32 {
-        (self.resolution - 1) / TILE_QUADS
+        match &self.endless {
+            Some(endless) => crate::endless::window_tiles(endless),
+            None => (self.resolution - 1) / TILE_QUADS,
+        }
     }
 
     /// How many metres apart its samples are.
     pub fn spacing(&self) -> f32 {
-        self.size / (self.resolution - 1) as f32
+        match &self.endless {
+            Some(endless) => endless.spacing,
+            None => self.size / (self.resolution - 1) as f32,
+        }
     }
 
     /// Flat ground as large and as fine as this says.

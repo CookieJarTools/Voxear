@@ -429,9 +429,15 @@ impl Weights {
 
 /// The ground's height there and how steeply it rises, in metres a metre.
 pub(crate) fn slope_at(heights: &Heightmap, x: i64, z: i64) -> (f32, f32) {
-    let dx = heights.sample(x + 1, z) - heights.sample(x - 1, z);
-    let dz = heights.sample(x, z + 1) - heights.sample(x, z - 1);
-    (heights.sample(x, z), (dx * dx + dz * dz).sqrt() / (2.0 * heights.spacing()))
+    slope_of(&|x, z| heights.sample(x, z), heights.spacing(), x, z)
+}
+
+/// The height at sample `(x, z)` of ground whose samples `sample` gives,
+/// `spacing` metres apart, and how steeply it rises there.
+pub(crate) fn slope_of(sample: &impl Fn(i64, i64) -> f32, spacing: f32, x: i64, z: i64) -> (f32, f32) {
+    let dx = sample(x + 1, z) - sample(x - 1, z);
+    let dz = sample(x, z + 1) - sample(x, z - 1);
+    (sample(x, z), (dx * dx + dz * dz).sqrt() / (2.0 * spacing))
 }
 
 /// How much surface `index` covers those below it at sample `(x, z)`: its
@@ -452,17 +458,17 @@ fn cover_at(
     (rule + painted).clamp(0.0, 1.0)
 }
 
-/// The shares of sample `(x, z)` of the whole terrain, packed, its climate
-/// from `climate`.
+/// The shares of sample `(x, z)` of the whole terrain, packed, its ground
+/// from `sample` and its climate from `climate`.
 fn shares_of(
     file: &TerrainFile,
-    heights: &Heightmap,
+    sample: &impl Fn(i64, i64) -> f32,
     rasters: &Rasters,
     climate: ClimateSource,
     x: i64,
     z: i64,
 ) -> [u32; 2] {
-    let ground = slope_at(heights, x, z);
+    let ground = slope_of(sample, file.spacing(), x, z);
     // Worked out once a sample, and only for a surface that asks.
     let known = std::cell::Cell::new(None);
     let spacing = file.spacing();
@@ -572,10 +578,11 @@ pub fn weigh(
                         None => vec![[0, 255]; TILE_LEN],
                     };
                     let (ox, oz) = (i64::from(tx * TILE_QUADS), i64::from(tz * TILE_QUADS));
+                    let sample = |x, z| heights.sample(x, z);
                     for z in z0..=z1 {
                         for x in x0..=x1 {
                             samples[(z * TILE_SAMPLES + x) as usize] =
-                                shares_of(file, heights, rasters, climate, ox + i64::from(x), oz + i64::from(z));
+                                shares_of(file, &sample, rasters, climate, ox + i64::from(x), oz + i64::from(z));
                         }
                     }
                     made.lock().expect("never poisoned").push((tx, tz, WeightTile::from_samples(samples)));
@@ -592,6 +599,25 @@ pub fn weigh(
     }
     let tiles = tiles.into_iter().map(|tile| tile.expect("every tile made or kept")).collect();
     Some(Weights { tiles_x, tiles_z, tiles })
+}
+
+/// One tile's shares, its first sample `first` samples from the terrain's
+/// corner each way, over ground whose samples `sample` gives, as far as a
+/// sample past the tile: for a tile of a terrain without end, made alone.
+pub fn weigh_tile(
+    file: &TerrainFile,
+    sample: &impl Fn(i64, i64) -> f32,
+    rasters: &Rasters,
+    climate: ClimateSource,
+    first: [i64; 2],
+) -> WeightTile {
+    let mut samples = Vec::with_capacity(TILE_LEN);
+    for z in 0..i64::from(TILE_SAMPLES) {
+        for x in 0..i64::from(TILE_SAMPLES) {
+            samples.push(shares_of(file, sample, rasters, climate, first[0] + x, first[1] + z));
+        }
+    }
+    WeightTile::from_samples(samples)
 }
 
 /// Gives surface `surface` and every surface above it a raster to paint

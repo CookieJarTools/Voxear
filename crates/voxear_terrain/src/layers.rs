@@ -292,6 +292,22 @@ impl LayerKind {
         matches!(self, LayerKind::Dig { .. } | LayerKind::Spline { dig: Some(_), .. })
     }
 
+    /// Whether it makes ground on a terrain without end: what is worked out
+    /// from where each sample is, not painted, read from a picture or
+    /// worked out over the whole terrain at once, as a terrain of a set size
+    /// is.
+    pub fn endless(&self) -> bool {
+        matches!(
+            self,
+            LayerKind::Generate { .. }
+                | LayerKind::Noise { .. }
+                | LayerKind::Stamp { .. }
+                | LayerKind::Spline { dig: None, .. }
+                | LayerKind::Terrace { .. }
+                | LayerKind::Smooth { .. }
+        )
+    }
+
     /// The blend a new layer of its kind starts with.
     pub fn usual_blend(&self) -> Blend {
         match self {

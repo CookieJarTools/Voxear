@@ -8,6 +8,14 @@
 
 #include "common.slang"
 
+// The slot of tile `tile` of the terrain's tiles: in its own place, but for a terrain without end, whose tiles each
+// keep the slot they came into as its window moves.
+uint terrainTileSlot(Terrain terrain, int2 tile)
+{
+    uint2 slot = (uint2(tile) + uint2(terrain.ringX, terrain.ringZ)) % terrain.tiles;
+    return slot.y * terrain.tiles.x + slot.x;
+}
+
 // Which tile slot holds sample `sample` of the whole terrain, clamped to its edges, and where in it.
 uint terrainSlot(Terrain terrain, int2 sample, out uint inside)
 {
@@ -16,7 +24,7 @@ uint terrainSlot(Terrain terrain, int2 sample, out uint inside)
     int2 tile = min(sample / int(TERRAIN_TILE_QUADS), int2(terrain.tiles) - 1);
     int2 at = sample - tile * int(TERRAIN_TILE_QUADS);
     inside = uint(at.y) * TERRAIN_TILE_SAMPLES + uint(at.x);
-    return uint(tile.y) * terrain.tiles.x + uint(tile.x);
+    return terrainTileSlot(terrain, tile);
 }
 
 bool terrainHoleAt(Terrain terrain, int2 sample)
@@ -50,7 +58,7 @@ float terrainSample(Terrain terrain, int2 sample)
     sample = clamp(sample, int2(0), quads);
     int2 tile = min(sample / int(TERRAIN_TILE_QUADS), int2(terrain.tiles) - 1);
     int2 inside = sample - tile * int(TERRAIN_TILE_QUADS);
-    uint slot = uint(tile.y) * terrain.tiles.x + uint(tile.x);
+    uint slot = terrainTileSlot(terrain, tile);
     return terrain.heights[slot * TERRAIN_TILE_LEN + uint(inside.y) * TERRAIN_TILE_SAMPLES + uint(inside.x)];
 }
 

@@ -14,6 +14,7 @@
 pub mod brush;
 pub mod composite;
 pub mod dig;
+pub mod endless;
 pub mod erosion;
 pub mod file;
 pub mod generate;
@@ -57,6 +58,10 @@ pub struct Terrain {
     pub detail_distance: f32,
     /// Whether it casts shadows from the sun.
     pub cast_shadows: bool,
+    /// For a terrain without end, the tile its heights start at, counted
+    /// from its Obj along x and z either way (see `endless`); `None` for a
+    /// terrain of a set size, whose heights start at its Obj.
+    pub origin: Option<[i32; 2]>,
 }
 
 impl Component for Terrain {}
@@ -78,6 +83,7 @@ impl PartialEq for Terrain {
             }
             && self.detail_distance == other.detail_distance
             && self.cast_shadows == other.cast_shadows
+            && self.origin == other.origin
     }
 }
 
@@ -92,12 +98,21 @@ impl Terrain {
             dug: None,
             detail_distance: Self::DEFAULT_DETAIL_DISTANCE,
             cast_shadows: true,
+            origin: None,
         }
+    }
+
+    /// How far its heights' corner is from its Obj: none for a terrain of a
+    /// set size; for one without end, its window's first tile's corner.
+    pub fn offset(&self) -> Vec3 {
+        let width = TILE_QUADS as f32 * self.heights.spacing();
+        self.origin.map_or(Vec3::ZERO, |[x, z]| Vec3::new(x as f32 * width, 0.0, z as f32 * width))
     }
 }
 
 /// Where an Obj's terrain starts: its corner, at the Obj's position in the
-/// world.
+/// world. A terrain without end's heights start where its window does,
+/// `Terrain::offset` from there.
 pub fn corner(transform: &Transform, placed: Option<&WorldTransform>) -> Vec3 {
     placed.map_or(transform.position, |world| world.0.w_axis.truncate())
 }
@@ -113,13 +128,14 @@ pub struct Ground {
     pub surface: usize,
 }
 
-/// Every terrain in `world`, with its corner.
+/// Every terrain in `world`, with its heights' corner: its Obj's, or for
+/// a terrain without end its window's.
 pub fn terrains(world: &World) -> Vec<(Entity, &Terrain, Vec3)> {
     world
         .query_ref::<(Entity, &Terrain, &Transform, Option<&WorldTransform>)>()
         .without::<Destroying>()
         .into_iter()
-        .map(|(entity, terrain, transform, placed)| (entity, terrain, corner(transform, placed)))
+        .map(|(entity, terrain, transform, placed)| (entity, terrain, corner(transform, placed) + terrain.offset()))
         .collect()
 }
 

@@ -954,13 +954,15 @@ struct Terrain
     // How thickly each kind of grass grows (terrain_ground.slang): grassWords words a sample, a byte a kind.
     uint* grass;
     uint grassWords;
-    uint grassPad;
+    // For a terrain without end, how far its window's tiles are turned in their slots along x, and below along z
+    // (terrain_ground.slang): each tile keeps its slot as the window moves. 0 for a terrain of a set size.
+    uint ringX;
     // Its dug chunks' vertices, three a triangle (terrain.slang); null where it is not dug. Which of its columns of
     // chunks are dug, a bit each, row after row, dugColumnsX a row; none where that is 0.
     DugVertex* dug;
     uint* dugColumns;
     uint dugColumnsX;
-    uint dugPad;
+    uint ringZ;
 };
 
 // One of a terrain's surfaces: its material, one over its pictures' size in metres, how sharply it meets the

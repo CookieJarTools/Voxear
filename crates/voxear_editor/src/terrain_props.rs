@@ -31,7 +31,7 @@ use voxear_terrain::{
     Terrain,
     brush::{Brush, BrushKind},
     composite::{Compositor, Dirty},
-    file::{RESOLUTIONS, TerrainFile},
+    file::{RESOLUTIONS, SPACINGS, TerrainFile},
     layers::{Area, Blend, Layer, LayerKind, Mask},
     noise::NoiseStyle,
     raster::Rasters,
@@ -108,6 +108,11 @@ pub fn ui_mut(world: &mut World) -> &mut TerrainUi {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum TerrainField {
     Data,
+    /// Whether the terrain goes on without end, made round the camera, and
+    /// then how far apart its samples are and how far round it is made.
+    Endless,
+    Spacing,
+    ViewDistance,
     Size,
     Resolution,
     Base,
@@ -305,8 +310,12 @@ pub fn props(world: &World, entity: Entity) -> Vec<Prop> {
     let fields = match ui(world).tool {
         TerrainTool::Settings => {
             let mut fields = vec![F::Data];
-            if world.has::<TerrainAsset>(entity) {
-                fields.extend([F::Size, F::Resolution, F::Base]);
+            if let Some(asset) = world.get::<TerrainAsset>(entity) {
+                fields.push(F::Endless);
+                match asset.file.endless {
+                    Some(_) => fields.extend([F::Spacing, F::ViewDistance, F::Base]),
+                    None => fields.extend([F::Size, F::Resolution, F::Base]),
+                }
             }
             fields.extend([F::Material, F::TextureSize, F::Detail, F::Shadows]);
             fields
@@ -383,6 +392,9 @@ fn layer_fields(layer: &Layer) -> Vec<TerrainField> {
 pub fn label(field: TerrainField) -> &'static str {
     match field {
         F::Data => "Data",
+        F::Endless => "Endless",
+        F::Spacing => "Spacing",
+        F::ViewDistance => "View distance",
         F::Size => "Size",
         F::Resolution => "Resolution",
         F::Base => "Base height",
@@ -480,6 +492,7 @@ pub fn key(field: TerrainField) -> &'static str {
 pub fn unit(world: &World, entity: Entity, field: TerrainField) -> Option<&'static str> {
     match field {
         F::Size | F::Base | F::TextureSize | F::Detail | F::Height | F::Position | F::StampSize | F::Scale => Some("m"),
+        F::ViewDistance => Some("m"),
         F::TrenchDepth | F::StepHeight | F::StepWidth | F::Parapet => Some("m"),
         F::Width | F::Step | F::Radius | F::Heights | F::BrushSize | F::BrushHeight | F::BrushStep | F::BumpSize => {
             Some("m")
@@ -532,6 +545,13 @@ pub fn get(game: &Game, entity: Entity, field: TerrainField) -> Option<Value> {
     let choice = |at: usize, names: Vec<&str>| Value::Choice(at, names.into_iter().map(str::to_string).collect());
     Some(match field {
         F::Data => Value::Asset(path_of(game, Some(&world.get::<TerrainSource>(entity)?.0.data))),
+        F::Endless => Value::Toggle(asset()?.file.endless.is_some()),
+        F::Spacing => {
+            let spacing = asset()?.file.endless?.spacing;
+            let at = SPACINGS.iter().position(|&s| s == spacing).unwrap_or_default();
+            Value::Choice(at, SPACINGS.iter().map(|s| format!("{s} m")).collect())
+        }
+        F::ViewDistance => Value::Number(asset()?.file.endless?.distance),
         F::Size => Value::Number(asset()?.file.size),
         F::Resolution => {
             let resolution = asset()?.file.resolution;
@@ -724,6 +744,27 @@ pub fn set(game: &mut Game, entity: Entity, field: TerrainField, value: Value) -
         F::Shadows => {
             let Value::Toggle(on) = value else { return false };
             return change(world, entity, |terrain: &mut Terrain| terrain.cast_shadows = on);
+        }
+        F::Endless => {
+            let Value::Toggle(on) = value else { return false };
+            return reshape(game, entity, |file| file.endless = on.then(|| file.endless.unwrap_or_default()));
+        }
+        F::Spacing => {
+            let Value::Choice(at, _) = value else { return false };
+            let Some(&spacing) = SPACINGS.get(at) else { return false };
+            return reshape(game, entity, |file| {
+                if let Some(endless) = &mut file.endless {
+                    endless.spacing = spacing;
+                }
+            });
+        }
+        F::ViewDistance => {
+            let Some(distance) = number(&value) else { return false };
+            return reshape(game, entity, |file| {
+                if let Some(endless) = &mut file.endless {
+                    endless.distance = distance.clamp(10.0, 100_000.0);
+                }
+            });
         }
         F::Size => {
             let Some(size) = number(&value) else { return false };
@@ -990,14 +1031,36 @@ pub fn remake_with(
     dirty: &Dirty,
     compositor: &Compositor,
 ) -> bool {
-    let Some((previous, dug)) =
-        game.engine.world.get::<Terrain>(entity).map(|terrain| (terrain.heights.clone(), terrain.dug.clone()))
+    let Some((previous, dug, origin)) = game
+        .engine
+        .world
+        .get::<Terrain>(entity)
+        .map(|terrain| (terrain.heights.clone(), terrain.dug.clone(), terrain.origin))
     else {
         return false;
     };
-    let heights = game.content.compose_terrain(&file, &rasters, Some(&previous), compositor, dirty);
+    // A terrain without end is made round where it is seen as it goes (see `voxear_engine::terrain::stream`), from
+    // its file: only that changes here. Just made endless, it starts as holes.
+    if file.endless.is_some() {
+        let world = &mut game.engine.world;
+        if origin.is_none()
+            && let Some((window, origin)) = voxear_terrain::endless::unmade_window(&file)
+        {
+            change(world, entity, |terrain: &mut Terrain| {
+                (terrain.heights, terrain.origin) = (Arc::new(window), Some(origin));
+                (terrain.weights, terrain.grass, terrain.dug) = (None, None, None);
+            });
+        }
+        return change(world, entity, |asset: &mut TerrainAsset| (asset.file, asset.rasters) = (file, rasters));
+    }
+    // One just made of a set size is made whole, from its Obj.
+    let previous = origin.is_none().then_some(previous);
+    if origin.is_some() {
+        change(&mut game.engine.world, entity, |terrain: &mut Terrain| terrain.origin = None);
+    }
+    let heights = game.content.compose_terrain(&file, &rasters, previous.as_deref(), compositor, dirty);
     // Then what the layers dig, kept as it was where they and the heights under it are.
-    let kept = dug.as_ref().map(|dug| (previous.as_ref(), dug));
+    let kept = dug.as_ref().zip(previous.as_deref()).map(|(dug, previous)| (previous, dug));
     let (heights, dug) = voxear_terrain::dig::redig(&file.layers, heights, kept);
     let world = &mut game.engine.world;
     let ground = (Arc::new(heights), dug);
@@ -1012,6 +1075,10 @@ pub fn reweigh(game: &mut Game, entity: Entity, dirty: &Dirty) -> bool {
     let Some(file) = game.engine.world.get::<TerrainAsset>(entity).map(|asset| asset.file.clone()) else {
         return false;
     };
+    // A terrain without end's tiles are each made with their shares and grass, again as its file changes.
+    if file.endless.is_some() {
+        return true;
+    }
     let (generator, position) = game.content.terrain_climate(&file);
     let climate = voxear_terrain::surfaces::ClimateSource { world: generator.as_deref(), position };
     let world = &mut game.engine.world;
@@ -1519,6 +1586,12 @@ pub fn new_layer(choice: usize, file: &TerrainFile, rasters: &Rasters) -> Layer 
     layer
 }
 
+/// Whether a layer of the kind `NEW_LAYERS[choice]` names makes ground on a
+/// terrain without end.
+pub fn makes_endless(choice: usize) -> bool {
+    new_layer(choice, &TerrainFile::default(), &Rasters::default()).kind.endless()
+}
+
 /// Adds a layer of the kind `NEW_LAYERS[choice]` names on top, and picks it.
 pub fn add_layer(game: &mut Game, entity: Entity, choice: usize) -> bool {
     let Some(asset) = game.engine.world.get::<TerrainAsset>(entity) else { return false };
@@ -1553,7 +1626,11 @@ pub fn worn_from(file: &TerrainFile, at: usize) -> u64 {
 /// its settings changed since it last was: none for another kind.
 pub fn worked_stale(world: &World, entity: Entity) -> Option<(bool, bool)> {
     let at = ui(world).layer;
+    // Worked out over the whole terrain at once, which a terrain without end never is.
     let file = &world.get::<TerrainAsset>(entity)?.file;
+    if file.endless.is_some() {
+        return None;
+    }
     let (rivers, made_from) = match file.layers.get(at)?.kind {
         LayerKind::Erosion { made_from, .. } => (false, made_from),
         LayerKind::Rivers { made_from, .. } => (true, made_from),
@@ -1589,7 +1666,9 @@ fn ground_under(
 pub fn erode(game: &mut Game, renderer: &Renderer, entity: Entity) -> bool {
     let world = &game.engine.world;
     let Some((at, layer)) = picked(world, entity) else { return false };
-    let Some(asset) = world.get::<TerrainAsset>(entity) else { return false };
+    let Some(asset) = world.get::<TerrainAsset>(entity).filter(|asset| asset.file.endless.is_none()) else {
+        return false;
+    };
     let (mut file, mut rasters) = (asset.file.clone(), (*asset.rasters).clone());
     let (ground, sea) = ground_under(game, &file, &rasters, at);
     let grid = voxear_terrain::erosion::grid(&ground);

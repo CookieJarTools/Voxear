@@ -385,6 +385,9 @@ struct Ocean
     // How wet the lens is, and where the waterline crosses each column of the screen (water.slang's
     // lensWetnessMain).
     uint waterline;
+    // How far into its tile each cascade's waves start, along x and z, as shares of the tile: where the world's
+    // middle is from the level's (src/gpu.rs's GpuOcean::phases), so the sea is the same when it moves.
+    float2 phases[6];
 };
 
 // A place along a Stream (src/gpu.rs, GpuStreamPoint): its surface in the middle, which way it runs, how wide it is,

@@ -225,6 +225,7 @@ pub fn build(
         development: profile.development.enabled,
         server: profile.target == build_profile::Target::Server,
         network: project.file.network.clone(),
+        floating_origin: project.file.floating_origin.clone(),
         validation_layers: profile.development.validation_layers,
         fullscreen: profile.player.window == "fullscreen",
         width: profile.player.width,

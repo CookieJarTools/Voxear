@@ -205,6 +205,7 @@ internal static class GameScripts
 		}
 
 		Level.Forget(previous);
+		Origin.Forget(previous);
 		ModuleHooks.Forget?.Invoke(previous);
 		SaveTypes.Forget(previous);
 		MainThreadContext.Instance.Forget(previous);

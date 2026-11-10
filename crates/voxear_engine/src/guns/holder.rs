@@ -179,6 +179,23 @@ pub struct GunHolderState {
 impl Component for GunHolderState {}
 
 impl GunHolderState {
+    /// Moves where the gun was and where its holder was last by `by`, as the
+    /// world's origin moves everything (see `crate::origin`), so the move
+    /// reads as no motion: no lag, no bob, and no brass thrown at its speed.
+    pub(crate) fn shift(world: &mut World, by: Vec3) {
+        for state in world.query::<&mut GunHolderState>() {
+            if let Some(held) = state.held.as_mut() {
+                *held = Mat4::from_translation(by) * *held;
+            }
+            if let Some(at) = state.at.as_mut() {
+                *at += by;
+            }
+            if let Some(shot) = state.shot.as_mut() {
+                shot.origin += by;
+            }
+        }
+    }
+
     fn new() -> Self {
         Self {
             play: None,

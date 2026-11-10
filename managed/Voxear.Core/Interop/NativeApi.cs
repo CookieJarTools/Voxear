@@ -169,4 +169,5 @@ internal unsafe struct NativeApi
 	public delegate* unmanaged[Cdecl]<int, Vector3*, Vector3*, int, int, int> BlockSet;
 	public delegate* unmanaged[Cdecl]<Vector3*, Vector3*, float, BlockHitData*, int> BlockRaycast;
 	public delegate* unmanaged[Cdecl]<int, byte*, int, byte*, int, int> BlockEdits;
+	public delegate* unmanaged[Cdecl]<long*, void> WorldOrigin;
 }

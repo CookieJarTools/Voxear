@@ -39,6 +39,17 @@ enum Kept {
     Value(Value),
 }
 
+/// A played Obj's state, a root's place measured from the level's real
+/// middle however far the world's moved while it played (see
+/// `voxear_scene::WorldOrigin`), as the level as edited has it.
+fn level_state(world: &voxear_ecs::World, played: Entity) -> Option<ObjState> {
+    let mut state = ObjState::of(world, played)?;
+    if !world.has::<voxear_scene::Parent>(played) {
+        state.transform.position = voxear_scene::WorldOrigin::of(world).to_level(state.transform.position).as_vec3();
+    }
+    Some(state)
+}
+
 /// How far Step moves a paused game.
 const STEP: f32 = 1.0 / 60.0;
 
@@ -330,7 +341,7 @@ impl Editor {
             .filter_map(|(played, field)| {
                 let value = match &field {
                     Field::Prop(prop) => Kept::Value(props::get(&self.game, &ScriptTypes::default(), played, prop)?),
-                    _ => Kept::State(ObjState::of(&self.game.engine.world, played)?),
+                    _ => Kept::State(level_state(&self.game.engine.world, played)?),
                 };
                 Some((self.game.levels.counterpart(played, &levels)?, field, value))
             })

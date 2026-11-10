@@ -159,6 +159,29 @@ fn waiting(world: &World) -> Vec<(Entity, Smoke, Vec3, Timing)> {
         .collect()
 }
 
+/// Moves every Smoke's cells, filled or filling, and its holes by `by`, as
+/// the world's origin moves everything (see `crate::origin`): its cells are
+/// kept, not filled again for a smoke that seems to have moved.
+pub(crate) fn shift(world: &mut World, by: Vec3) {
+    for filling in world.query::<&mut SmokeFilling>() {
+        filling.middle += by;
+        filling.fill.origin += by;
+    }
+    for fill in world.query::<&mut SmokeFill>() {
+        fill.origin += by;
+        fill.filled_for.1 += by;
+    }
+    for holes in world.query::<&mut SmokeHoles>() {
+        for shot in &mut holes.shots {
+            shot.from += by;
+            shot.to += by;
+        }
+        for blast in &mut holes.blasts {
+            blast.centre += by;
+        }
+    }
+}
+
 /// A Smoke's cells filled out from `middle`, nearest first, stepping to the
 /// 26 cells round each, straight or across, so it spreads as a low, lumpy
 /// dome until walls bend it: for each cell, 0 where it does not reach, or 1

@@ -557,6 +557,20 @@ impl Default for GameAudio {
 }
 
 impl GameAudio {
+    /// Moves where the listener and every source were last frame, and every
+    /// 3D voice, by `by`, as the world's origin moves everything (see
+    /// `crate::origin`): no voice is heard to move, and none bends in pitch
+    /// as though it had gone a kilometre in a frame.
+    pub fn shift(&mut self, by: Vec3) {
+        if let Some(was) = self.listener_was.as_mut() {
+            *was += by;
+        }
+        for was in self.sources.values_mut().filter_map(|playback| playback.was.as_mut()) {
+            *was += by;
+        }
+        self.audio.shift(by);
+    }
+
     pub fn new(audio: Audio) -> Self {
         Self {
             audio,

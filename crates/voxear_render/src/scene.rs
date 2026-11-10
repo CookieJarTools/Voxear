@@ -274,6 +274,9 @@ pub struct ExtractedFrame {
     pub water_bodies: crate::water::WaterBodies,
     /// The Track Makers over a terrain (see `tracks`).
     pub track_makers: Vec<crate::tracks::Maker>,
+    /// Where the world's middle is from the level's, in whole metres (see
+    /// `voxear_scene::WorldOrigin`).
+    pub origin: voxear_core::math::I64Vec3,
 }
 
 /// What an instance was made from: its Obj, for a plant of a Foliage its
@@ -719,6 +722,7 @@ pub fn extract(
         ocean,
         water_bodies,
         track_makers,
+        origin: voxear_scene::WorldOrigin::of(world).0,
     }
 }
 

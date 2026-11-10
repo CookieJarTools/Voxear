@@ -203,12 +203,26 @@ public sealed class SceneState
 		return node;
 	}
 
+	/// <summary>
+	/// A copy made from a prefab, to make again: its prefab, its parent and where it is. One with no parent is kept
+	/// where it is from the level's real middle, and while the world's middle has moved (see Origin), exactly too.
+	/// </summary>
 	private static SaveNode Copy((ulong Root, string Prefab, string? Parent) copy)
 	{
 		var node = SaveNode.NewTable();
 		node["prefab"] = copy.Prefab;
 		node["parent"] = SpawnedKeys.ForSave(copy.Parent);
-		node["place"] = SaveNode.From(new Obj(copy.Root).Transform);
+		var place = new Obj(copy.Root).Transform;
+		var level = Origin.ToLevel(place.Position);
+		if (copy.Parent == null)
+		{
+			place.Position = new System.Numerics.Vector3((float)level.X, (float)level.Y, (float)level.Z);
+		}
+		node["place"] = SaveNode.From(place);
+		if (copy.Parent == null && Origin.IsMoved)
+		{
+			node["level"] = SaveNode.NewList(level.X, level.Y, level.Z);
+		}
 		return node;
 	}
 
@@ -273,9 +287,26 @@ public sealed class SceneState
 		var obj = parent.IsValid ? prefab.Instantiate(parent) : prefab.Instantiate();
 		if (obj.IsValid)
 		{
-			obj.Transform = copy["place"].As<Transform>();
+			obj.Transform = Placed(copy, parent.IsValid);
 		}
 		return obj;
+	}
+
+	/// <summary>Where a copy goes: under its parent as it was, or with none, from the level's real middle.</summary>
+	private static Transform Placed(SaveNode copy, bool parented)
+	{
+		var place = copy["place"].As<Transform>();
+		if (parented)
+		{
+			return place;
+		}
+
+		var exact = copy.Has("level") ? copy["level"].Items : null;
+		var level = exact is { Count: 3 }
+			? new LevelPosition(exact[0].AsDouble(), exact[1].AsDouble(), exact[2].AsDouble())
+			: new LevelPosition(place.Position.X, place.Position.Y, place.Position.Z);
+		place.Position = Origin.FromLevel(level);
+		return place;
 	}
 
 	private static void Restore(SaveNode values)

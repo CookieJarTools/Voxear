@@ -116,6 +116,7 @@ unsafe extern "C" {
     pub fn vx_world_set_gravity(world: *mut VxWorld, x: f32, y: f32, z: f32);
     pub fn vx_world_set_layers(world: *mut VxWorld, collide: *const u32);
     pub fn vx_world_step(world: *mut VxWorld, dt: f32, steps: c_int);
+    pub fn vx_world_shift(world: *mut VxWorld, by: *const f32);
 
     pub fn vx_shape_box(world: *mut VxWorld, hx: f32, hy: f32, hz: f32) -> u32;
     pub fn vx_shape_sphere(world: *mut VxWorld, radius: f32) -> u32;

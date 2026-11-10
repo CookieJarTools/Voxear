@@ -172,6 +172,14 @@ internal static unsafe class Native
 		return transform;
 	}
 
+	/// <summary>Where the world's middle is from the level's, in whole metres.</summary>
+	public static LevelPosition WorldOrigin()
+	{
+		var origin = stackalloc long[3];
+		Api->WorldOrigin(origin);
+		return new LevelPosition(origin[0], origin[1], origin[2]);
+	}
+
 	public static void SetTransform(ulong obj, Transform transform)
 	{
 		Api->TransformSet(obj, &transform);

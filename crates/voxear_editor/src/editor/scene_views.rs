@@ -441,12 +441,16 @@ impl Editor {
         }
     }
 
-    /// Where each Scene view's camera is in the world playing, and its lens,
-    /// in the order `scene_cameras_back` takes them.
+    /// Where each Scene view's camera is in the world playing, measured from
+    /// the level's real middle however far the world's moved while it played
+    /// (see `voxear_scene::WorldOrigin`), and its lens, in the order
+    /// `scene_cameras_back` takes them.
     pub(super) fn scene_cameras_flown(&self) -> Vec<(Transform, Camera)> {
         let world = &self.game.engine.world;
+        let origin = voxear_scene::WorldOrigin::of(world);
         let flown = |view: &SceneView| {
-            let place = world.get::<Transform>(view.camera).copied().unwrap_or(Transform::IDENTITY);
+            let mut place = world.get::<Transform>(view.camera).copied().unwrap_or(Transform::IDENTITY);
+            place.position = origin.to_level(place.position).as_vec3();
             (place, world.get::<Camera>(view.camera).copied().unwrap_or_default())
         };
         self.all_scene_views().map(flown).collect()

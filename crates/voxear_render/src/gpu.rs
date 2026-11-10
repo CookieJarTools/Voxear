@@ -447,6 +447,11 @@ pub struct GpuOcean {
     /// How wet the lens is, and where the waterline crosses each column of
     /// the screen (see `water`): its image.
     pub waterline: u32,
+    /// How far into its tile each cascade's waves start, along x and z, as
+    /// shares of the tile: where the world's middle is from the level's
+    /// (see `voxear_scene::WorldOrigin`), so the sea is the same when it
+    /// moves.
+    pub phases: [[f32; 2]; crate::ocean::CASCADES],
 }
 
 /// A Pool, a Stream or a Dry Area (see `water_bodies`), as `WaterBody` in
@@ -1138,9 +1143,9 @@ mod tests {
         assert_eq!(LOCAL_SHADOW_ATLAS, [4096, 3072], "as LOCAL_SHADOW_ATLAS in the shaders");
         assert_eq!(
             size_of::<GpuFrame>(),
-            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi + 32 + 16 * MAX_PUSHERS + 4 * MAX_PUSHERS + 16 + seasons + local_shadows + 288 + tracks
+            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi + 32 + 16 * MAX_PUSHERS + 4 * MAX_PUSHERS + 16 + seasons + local_shadows + 336 + tracks
         );
-        assert_eq!(size_of::<GpuOcean>(), 288);
+        assert_eq!(size_of::<GpuOcean>(), 336);
         assert_eq!(size_of::<GpuStreamPoint>(), 48);
         assert_eq!(size_of::<GpuWaterBody>(), 208);
         assert_eq!(size_of::<GpuDdgi>(), 32 * DDGI_CASCADES + 32 + 48);

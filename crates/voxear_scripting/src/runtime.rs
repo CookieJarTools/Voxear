@@ -114,7 +114,8 @@ impl ScriptRuntime {
                 && managed.physics_events.is_some()
                 && managed.motion_marks.is_some()
                 && managed.take_net_fields.is_some()
-                && managed.set_enabled.is_some(),
+                && managed.set_enabled.is_some()
+                && managed.origin_moved.is_some(),
             "Voxear.Core left part of its interop table empty"
         );
         interop::set_create_behaviour(
@@ -401,6 +402,15 @@ impl ScriptRuntime {
         let text = marks.iter().map(|(_, mark)| mark.as_str()).collect::<Vec<_>>().join("\n");
         let _scope = WorldScope::enter(world);
         unsafe { send(entities.as_ptr(), entities.len() as i32, text.as_ptr(), text.len() as i32) };
+    }
+
+    /// Tells scripts the world's origin moved by `by` whole metres: their
+    /// `[WorldPosition]` fields move with every Obj, then `Origin.Moved` is
+    /// raised.
+    pub fn origin_moved(&mut self, world: &mut World, by: [i32; 3]) {
+        let send = self.api().origin_moved.expect("validated at start");
+        let _scope = WorldScope::enter(world);
+        unsafe { send(by.as_ptr()) };
     }
 
     /// Enables or disables a behaviour as its script setting `Enabled`

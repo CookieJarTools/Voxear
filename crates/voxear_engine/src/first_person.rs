@@ -115,6 +115,15 @@ pub struct FirstPersonState {
 }
 
 impl FirstPersonState {
+    /// Moves where the eyes are this frame by `by`, as the world's origin
+    /// moves everything (see `crate::origin`), for shots fired before the
+    /// eyes are placed again.
+    pub(crate) fn shift(world: &mut World, by: Vec3) {
+        for state in world.query::<&mut FirstPersonState>() {
+            state.eye = Mat4::from_translation(by) * state.eye;
+        }
+    }
+
     fn new(eyes: Vec3) -> Self {
         Self {
             eyes: Spring::new(eyes, SpringFeel::halflife(0.06)),

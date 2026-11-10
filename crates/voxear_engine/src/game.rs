@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use anyhow::{Context, Result};
 use voxear_assets::{AssetGuid, AssetKind};
 use voxear_core::{
-    math::{Quat, Vec2, Vec3},
+    math::{IVec3, Quat, Vec2, Vec3},
     profile_scope,
 };
 use voxear_ecs::{Entity, World};
@@ -342,6 +342,11 @@ impl Game {
         options: &LevelOptions,
         mut renderer: Option<&mut Renderer>,
     ) -> Result<LevelChange> {
+        // A level starts from its own middle: Objs that stay, as persistent ones do, move back with the world.
+        let origin = voxear_scene::WorldOrigin::of(&self.engine.world);
+        if origin.is_moved() {
+            self.move_origin(origin.0.as_ivec3(), renderer.as_deref_mut());
+        }
         let change =
             self.levels.load_with(&mut self.engine, &mut self.content, renderer.as_deref_mut(), level, options)?;
         log_change("level", level, &change);
@@ -588,6 +593,13 @@ impl Game {
             profile_scope!("Script Reload Check");
             self.reload_changed_scripts();
         }
+        // Between frames, before anything this frame reads where things are.
+        if !self.engine.is_edit_mode()
+            && let Some(by) = crate::origin::due(&self.engine.world, &self.project.file.floating_origin)
+        {
+            profile_scope!("Floating Origin");
+            self.move_origin(by, renderer.as_deref_mut());
+        }
         // Read once, before the scripts that ask about it.
         self.input.update(delta);
         let mouse = self.input.devices().mouse().delta;
@@ -714,6 +726,34 @@ impl Game {
         if std::mem::take(&mut self.unload_requested) {
             self.release_unused(renderer);
         }
+    }
+
+    /// Moves the world's middle by `by` whole metres (see `crate::origin`):
+    /// every Obj, physics, effects, sound and what the renderer keeps from
+    /// last frame move together, so nothing seen jumps, then scripts hear of
+    /// it. The game moves it itself as the viewer goes far out; this is for
+    /// a game that wants to move it somewhere else.
+    pub fn move_origin(&mut self, by: IVec3, mut renderer: Option<&mut Renderer>) {
+        self.engine.move_origin(by);
+        self.audio.shift(by.as_vec3());
+        if let Some(renderer) = renderer.as_deref_mut() {
+            renderer.shift_origin(by.as_vec3());
+        }
+        let mut services = GameServices {
+            content: &mut self.content,
+            loads: &mut self.loads,
+            levels: &self.levels,
+            renderer,
+            models: self.models,
+            unload_requested: &mut self.unload_requested,
+            previews: &mut self.previews,
+            ui: &mut self.ui,
+            display: &mut self.display,
+            audio: &mut self.audio,
+            input: &mut self.input,
+        };
+        let _scope = ServicesScope::enter(&mut services);
+        self.engine.tell_origin_moved(by);
     }
 
     /// Networked play's start of a frame: what arrived, this frame's input

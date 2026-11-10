@@ -9,7 +9,8 @@
 //
 // A world drawn smooth (voxear_terrain::blocks::smooth) holds triangles' corners in place of quads, two pairs of words
 // each, a vertex each: where it is in its chunk and the chunk's number, then the way the ground faces there and the
-// surfaces of its block of ground for its top, sides and bottom, which its fragments blend by the way they face.
+// surfaces of the ground there for its top, sides and bottom, which its fragments blend by the way they face. A
+// triangle's corners may be of three kinds of ground: its fragments blend them by how near each corner they are.
 
 #define TERRAIN_SHADING
 #include "shading.slang"
@@ -35,6 +36,19 @@ VertexOut blockVertex(uint vertexId : SV_VertexID)
     o.fade = 0;
     // Which world, for terrainShading (and a colour of its own in the meshlets view).
     o.cluster = push.level - 1;
+    if ((world.flags & BLOCKS_SMOOTH) != 0)
+    {
+        // Every vertex of a triangle carries all three corners' surfaces: the first's top, sides and bottom and the
+        // second's top beside them, the second's sides and the third's top and sides over the world's number; and,
+        // in place of a corner's shading, how much of the first and of the second corner it is.
+        uint first = vertexId - vertexId % 3;
+        uint a = smoothSurfaces(world, first);
+        uint second = smoothSurfaces(world, first + 1);
+        uint third = smoothSurfaces(world, first + 2);
+        o.lod = (a & 0xFFFFFF) | ((second & 0xFF) << 24);
+        o.cluster |= (((second >> 8) & 0xFF) << 8) | ((third & 0xFFFF) << 16);
+        o.uv = float2(vertexId % 3 == 0 ? 1.0 : 0.0, vertexId % 3 == 1 ? 1.0 : 0.0);
+    }
     o.currentClip = transform(frame->unjitteredViewProj, at);
     o.previousClip = transform(frame->prevViewProj, at);
     o.moved = 0.0;
@@ -50,15 +64,48 @@ TerrainLayer blockLayer(BlockWorld world, uint index, TerrainSpot spot, float3 n
     return terrainLayerAt(surface, spot, normal, tangent);
 }
 
+// One layer blended into another, `share` of it.
+void blendLayer(inout TerrainLayer layer, TerrainLayer other, float share)
+{
+    layer.base = lerp(layer.base, other.base, share);
+    layer.metallic = lerp(layer.metallic, other.metallic, share);
+    layer.roughness = lerp(layer.roughness, other.roughness, share);
+    layer.normal = lerp(layer.normal, other.normal, share);
+}
+
+// Ground of a kind drawn smooth, by its surfaces (top, sides, bottom): its top where the ground faces up, its bottom
+// where it faces down and its sides between, blended as the ground turns.
+TerrainLayer smoothLayer(BlockWorld world, uint3 surfaces, TerrainSpot spot, float3 normal, float4 tangent)
+{
+    // Wholly its top on slopes up to about 25 degrees, wholly its sides past about 50.
+    float up = smoothstep(0.65, 0.9, normal.y);
+    float down = smoothstep(0.65, 0.9, -normal.y);
+    // The top or bottom where the ground faces that way, and the sides as it turns from it.
+    uint toward = normal.y >= 0.0 ? surfaces.x : surfaces.z;
+    float flat = max(up, down);
+    if (flat >= 1.0 || toward == surfaces.y)
+    {
+        return blockLayer(world, toward, spot, normal, tangent);
+    }
+    TerrainLayer layer = blockLayer(world, surfaces.y, spot, normal, tangent);
+    if (flat > 0.0)
+    {
+        blendLayer(layer, blockLayer(world, toward, spot, normal, tangent), flat);
+    }
+    return layer;
+}
+
 // A face's own surface in place of the world's material: its pictures from the side it faces, each block's own,
-// darker where blocks close its corners in. Drawn smooth, its block's top where the ground faces up, its bottom where
-// it faces down and its sides between, blended as the ground turns.
+// darker where blocks close its corners in. Drawn smooth, each of its triangle's corners' kinds of ground as much as
+// the fragment is that corner's, a little sharpened, so sand meets grass over a soft edge rather than along the
+// triangles' own.
 bool terrainShading(
     VertexOut input, inout float4 base, inout float metallic, inout float roughness, out float3 normal, inout float3 emission)
 {
     normal = normalize(input.normal);
-    BlockWorld world = buffers()->blockWorlds[input.cluster];
-    float shade = lerp(0.35, 1.0, saturate(input.uv.x));
+    BlockWorld world = buffers()->blockWorlds[input.cluster & 0xFF];
+    bool smooth = (world.flags & BLOCKS_SMOOTH) != 0;
+    float shade = smooth ? 1.0 : lerp(0.35, 1.0, saturate(input.uv.x));
     if (world.surfaceCount == 0)
     {
         base.rgb *= shade;
@@ -69,27 +116,39 @@ bool terrainShading(
     spot.dx = ddx(spot.place);
     spot.dy = ddy(spot.place);
     TerrainLayer layer;
-    if ((world.flags & BLOCKS_SMOOTH) != 0)
+    if (smooth)
     {
-        uint3 surfaces = uint3(input.lod & 0xFF, (input.lod >> 8) & 0xFF, (input.lod >> 16) & 0xFF);
-        // Wholly its top on slopes up to about 25 degrees, wholly its sides past about 50.
-        float up = smoothstep(0.65, 0.9, normal.y);
-        float down = smoothstep(0.65, 0.9, -normal.y);
-        // The top or bottom where the ground faces that way, and the sides as it turns from it.
-        uint toward = normal.y >= 0.0 ? surfaces.x : surfaces.z;
-        float flat = max(up, down);
-        layer = blockLayer(world, surfaces.y, spot, normal, input.tangent);
-        if (flat > 0.0 && toward != surfaces.y)
+        // Each corner's top and sides (blockVertex); the first's bottom stands for all three.
+        uint3 tops = uint3(input.lod & 0xFF, input.lod >> 24, (input.cluster >> 16) & 0xFF);
+        uint3 sides = uint3((input.lod >> 8) & 0xFF, (input.cluster >> 8) & 0xFF, input.cluster >> 24);
+        uint bottom = (input.lod >> 16) & 0xFF;
+        layer = smoothLayer(world, uint3(tops.x, sides.x, bottom), spot, normal, input.tangent);
+        bool second = tops.y != tops.x || sides.y != sides.x;
+        bool third = tops.z != tops.x || sides.z != sides.x;
+        if (second || third)
         {
-            TerrainLayer other = blockLayer(world, toward, spot, normal, input.tangent);
-            layer.base = lerp(layer.base, other.base, flat);
-            layer.metallic = lerp(layer.metallic, other.metallic, flat);
-            layer.roughness = lerp(layer.roughness, other.roughness, flat);
-            layer.normal = normalizeOr(lerp(layer.normal, other.normal, flat), normal);
-        }
-        else if (flat > 0.0)
-        {
-            layer = blockLayer(world, toward, spot, normal, input.tangent);
+            float3 share = saturate(float3(input.uv.x, input.uv.y, 1.0 - input.uv.x - input.uv.y));
+            share *= share;
+            share /= max(share.x + share.y + share.z, 1e-5);
+            TerrainLayer first = layer;
+            TerrainLayer other = first;
+            if (second)
+            {
+                other = smoothLayer(world, uint3(tops.y, sides.y, bottom), spot, normal, input.tangent);
+            }
+            TerrainLayer last = first;
+            if (third && second && tops.z == tops.y && sides.z == sides.y)
+            {
+                last = other;
+            }
+            else if (third)
+            {
+                last = smoothLayer(world, uint3(tops.z, sides.z, bottom), spot, normal, input.tangent);
+            }
+            layer.base = first.base * share.x + other.base * share.y + last.base * share.z;
+            layer.metallic = first.metallic * share.x + other.metallic * share.y + last.metallic * share.z;
+            layer.roughness = first.roughness * share.x + other.roughness * share.y + last.roughness * share.z;
+            layer.normal = first.normal * share.x + other.normal * share.y + last.normal * share.z;
         }
     }
     else

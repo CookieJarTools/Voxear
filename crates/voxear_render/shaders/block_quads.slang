@@ -58,6 +58,14 @@ BlockPoint smoothPoint(BlockWorld world, uint vertexId)
     return b;
 }
 
+// The surfaces of corner `corner` of a world drawn smooth, counted from `push.output` on: its ground's top, sides and
+// bottom, a byte each.
+uint smoothSurfaces(BlockWorld world, uint corner)
+{
+    uint2 second = world.quads[push.output + corner * 2 + 1];
+    return (second.y & 0xFFFF) | ((second.x >> 24) << 16);
+}
+
 // Vertex `vertexId` of a quad of `world`: six to a quad, its quads one after another in the world's pool from
 // `push.output` on.
 BlockPoint cubePoint(BlockWorld world, uint vertexId)

@@ -469,7 +469,8 @@ mod tests {
         let mut caved = starters()[1].graph.clone();
         assert!(caved.add_voxels(crate::generate::OwnVoxels { overhangs: 0.0, caves: 0.4, roof: 3.0 }, false));
         let picked = starter.reshapes(&WorldGen::new(4, 1.0, 0.0, caved));
-        assert_eq!((picked.starter(), picked.caves().map(|caves| caves.rooms(None).len())), (Some("Cave Level"), Some(12)));
+        let rooms_of = |world: &WorldGen| world.caves().map(|caves| caves.rooms(None).len());
+        assert_eq!((picked.starter(), rooms_of(&picked)), (Some("Cave Level"), Some(12)));
         let hills = starters()[1].reshapes(&world);
         assert_eq!((hills.starter(), hills.caves().is_some()), (Some("Rolling Hills"), true));
         let other = starter.world(2, 1.0).caves().unwrap().rooms(None);

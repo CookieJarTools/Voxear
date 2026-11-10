@@ -1482,6 +1482,56 @@ fn a_block_world_made_of_smaller_blocks_stays_as_large_with_what_was_built_where
 }
 
 #[test]
+fn a_block_worlds_block_size_dragged_by_its_label_makes_it_again_once_when_let_go() {
+    use voxear_engine::blocks::BlockWorldAsset;
+    use voxear_terrain::blocks::BlockWorld;
+    let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {
+        eprintln!("skipping: no usable GPU");
+        return;
+    };
+    let dir = hello_with_a_field();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    let field = obj(&editor, "Field");
+    editor.select(Some(field));
+    frame(&mut editor, &mut renderer);
+    add_component(&mut editor, &mut renderer, "Block World");
+    show_block_tool(&mut editor, &mut renderer, "Settings");
+    let made =
+        |editor: &voxear_editor::Editor| editor.game.engine.world.get::<BlockWorld>(field).unwrap().blocks.clone();
+    let before = made(&editor);
+    // Its label dragged left a step a frame: the field follows, the world is not made again yet.
+    let row = prop_rows(&editor.ui, "Block size")[0];
+    let label = editor.ui.children(row)[0];
+    let [left, top, _, height] = editor.ui.rect(label);
+    let y = top + height / 2.0;
+    editor.ui.pointer_move(left + 20.0, y);
+    editor.ui.pointer_button(true);
+    for step in 1..=3 {
+        editor.ui.pointer_move(left + 20.0 - 5.0 * step as f32, y);
+        frame(&mut editor, &mut renderer);
+        assert!(std::sync::Arc::ptr_eq(&made(&editor), &before), "made again while dragged, at step {step}");
+    }
+    let row = prop_rows(&editor.ui, "Block size")[0];
+    assert_eq!(row_text(&editor.ui, row), "0.55 m", "the field shows where the drag is");
+    assert_eq!(editor.game.engine.world.get::<BlockWorldAsset>(field).unwrap().file.block_size, 1.0);
+    // Let go: made again once, of the blocks dragged to, as large in metres.
+    editor.ui.pointer_button(false);
+    frame(&mut editor, &mut renderer);
+    let world = &editor.game.engine.world;
+    let file = &world.get::<BlockWorldAsset>(field).unwrap().file;
+    assert!(
+        (file.block_size - 0.55).abs() < 1e-6 && world.get::<BlockWorld>(field).unwrap().block_size == file.block_size
+    );
+    assert_eq!(file.ground.size, [116, 116], "64 m across in blocks of 0.55 m");
+    // One step to undo.
+    editor.undo(&mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.game.engine.world.get::<BlockWorld>(field).unwrap().block_size, 1.0);
+}
+
+#[test]
 fn a_block_worlds_ground_is_generated_by_a_picked_generator_and_covered_by_a_kinds_biome() {
     use voxear_engine::blocks::BlockWorldAsset;
     use voxear_terrain::{

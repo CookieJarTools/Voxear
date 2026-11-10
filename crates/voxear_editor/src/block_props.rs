@@ -111,6 +111,44 @@ impl Default for BlockUi {
     }
 }
 
+/// Worlds' files changed while a number is dragged by its label, kept
+/// until it is let go: each world is made again once from the last, not at
+/// every step of the drag, as making a large one again takes a while.
+#[derive(Default)]
+struct HeldFiles {
+    holding: bool,
+    files: std::collections::HashMap<Entity, BlockFile>,
+}
+
+/// Holds changes to worlds' files from now on while `dragging`, a number
+/// dragged by its label; once it is not, makes each world held again from
+/// its last file. The Inspector calls it each frame before it reads its
+/// rows, so a world made again on letting go is one edit.
+pub fn hold(game: &mut Game, mut renderer: Option<&mut Renderer>, dragging: bool) {
+    let world = &mut game.engine.world;
+    if world.resource::<HeldFiles>().is_none() {
+        if !dragging {
+            return;
+        }
+        world.insert_resource(HeldFiles::default());
+    }
+    let held = world.resource_mut::<HeldFiles>().expect("inserted above");
+    held.holding = dragging;
+    if dragging || held.files.is_empty() {
+        return;
+    }
+    for (entity, file) in std::mem::take(&mut held.files) {
+        change_file(game, renderer.as_deref_mut(), entity, file);
+    }
+}
+
+/// The file a world of blocks shows: the one held for it while a number is
+/// dragged, or its asset's.
+fn shown_file(world: &World, entity: Entity) -> Option<&BlockFile> {
+    let held = world.resource::<HeldFiles>().and_then(|held| held.files.get(&entity));
+    held.or_else(|| world.get::<BlockWorldAsset>(entity).map(|asset| &asset.file))
+}
+
 /// The editor's block tools as they are.
 pub fn ui(world: &World) -> BlockUi {
     world.resource::<BlockUi>().copied().unwrap_or_default()
@@ -364,9 +402,17 @@ fn path_of(game: &Game, reference: Option<&str>) -> String {
 
 pub fn get(game: &Game, entity: Entity, field: BlockField) -> Option<Value> {
     let world = &game.engine.world;
-    // Its file as it is drawn: each block it lists with that block's look.
-    let file = || world.get::<BlockWorldAsset>(entity).map(|asset| &**asset.drawn);
-    let kind = || file().and_then(|file| Some(&file.blocks[picked(world, file)?]));
+    // What its rows show: its numbers from its file, as it is held while one is dragged (see `hold`), and each
+    // block it lists with that block's own name and look.
+    let file = || shown_file(world, entity);
+    let drawn = || world.get::<BlockWorldAsset>(entity).map(|asset| &**asset.drawn);
+    let entry = || file().and_then(|file| Some((picked(world, file)?, file)));
+    // A kind of the world's own is all in its file; a block's look is the block's.
+    let kind = || {
+        let (at, file) = entry()?;
+        if file.blocks[at].block.is_some() { drawn()?.blocks.get(at) } else { Some(&file.blocks[at]) }
+    };
+    let cover = || entry().and_then(|(at, file)| file.blocks[at].cover);
     let state = ui(world);
     Some(match field {
         F::Data => Value::Asset(path_of(game, Some(&world.get::<BlockWorldSource>(entity)?.0.data))),
@@ -405,15 +451,15 @@ pub fn get(game: &Game, entity: Entity, field: BlockField) -> Option<Value> {
         F::Endless => Value::Toggle(file()?.generate.as_ref()?.endless.is_some()),
         F::ViewDistance => Value::Number(file()?.generate.as_ref()?.endless?.distance),
         F::FarDistance => Value::Number(file()?.generate.as_ref()?.endless?.far),
-        F::TopBlock => block_choice(file()?, file()?.ground.top),
-        F::UnderBlock => block_choice(file()?, file()?.ground.under),
+        F::TopBlock => block_choice(drawn()?, file()?.ground.top),
+        F::UnderBlock => block_choice(drawn()?, file()?.ground.under),
         F::UnderDepth => Value::Number(file()?.ground.under_depth as f32),
-        F::BaseBlock => block_choice(file()?, file()?.ground.bottom),
-        F::SeaBlock => block_choice(file()?, file()?.generate.as_ref()?.sea),
-        F::Cover => Value::Toggle(kind()?.cover.is_some()),
+        F::BaseBlock => block_choice(drawn()?, file()?.ground.bottom),
+        F::SeaBlock => block_choice(drawn()?, file()?.generate.as_ref()?.sea),
+        F::Cover => Value::Toggle(entry().map(|_| cover().is_some())?),
         F::CoverBiome => {
             // Any, each biome, and its own ranges where they are none's.
-            let cover = kind()?.cover?;
+            let cover = cover()?;
             let mut names = vec!["Any".to_string()];
             names.extend(Biome::ALL.map(|biome| biome.name().to_string()));
             let ranges = (cover.temperature, cover.humidity);
@@ -427,13 +473,13 @@ pub fn get(game: &Game, entity: Entity, field: BlockField) -> Option<Value> {
             };
             Value::Choice(at, names)
         }
-        F::TemperatureMask => Value::Toggle(kind()?.cover?.temperature.is_some()),
-        F::Temperatures => Value::Vector(kind()?.cover?.temperature?.to_vec()),
-        F::HumidityMask => Value::Toggle(kind()?.cover?.humidity.is_some()),
-        F::Humidities => Value::Vector(kind()?.cover?.humidity?.to_vec()),
-        F::HeightMask => Value::Toggle(kind()?.cover?.height.is_some()),
-        F::Heights => Value::Vector(kind()?.cover?.height?.to_vec()),
-        F::CoverDepth => Value::Number(kind()?.cover?.depth as f32),
+        F::TemperatureMask => Value::Toggle(cover()?.temperature.is_some()),
+        F::Temperatures => Value::Vector(cover()?.temperature?.to_vec()),
+        F::HumidityMask => Value::Toggle(cover()?.humidity.is_some()),
+        F::Humidities => Value::Vector(cover()?.humidity?.to_vec()),
+        F::HeightMask => Value::Toggle(cover()?.height.is_some()),
+        F::Heights => Value::Vector(cover()?.height?.to_vec()),
+        F::CoverDepth => Value::Number(cover()?.depth as f32),
     })
 }
 
@@ -594,6 +640,10 @@ pub fn set(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, fie
             set_cover(cover, field, &value);
         }
         _ => return false,
+    }
+    // While a number is dragged by its label, its world is made again only once it is let go (see `hold`).
+    if let Some(held) = game.engine.world.resource_mut::<HeldFiles>().filter(|held| held.holding) {
+        return held.files.insert(entity, file.clone()).is_none_or(|was| was != file);
     }
     change_file(game, renderer, entity, file)
 }

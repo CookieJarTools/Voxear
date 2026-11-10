@@ -7,9 +7,18 @@
 //! ground, crests and floors are left as they were; nothing is cut under
 //! the generator's sea, and less towards it.
 //!
+//! In one thing it differs from a landmass: its octaves are joined (see
+//! `Gullied::joined`). A landmass's small gullies meet a larger gully's
+//! floor out of step from its two walls, which leaves a step in the ground
+//! along the floor, a metre or more high. A landmass keeps them, since the
+//! ground it makes is pinned; the node's gullies turn to run along the
+//! floor as they reach it, and meet.
+//!
 //! The slope is read from the height a little way off each way (0.15 of
 //! Spacing), so four more times than the place itself: everything behind
-//! the node is worked out at each.
+//! the node is worked out at each. Keep Spacing well under the width of the
+//! hills the gullies run down: where the slope turns within a gully's
+//! width, its stripes are sheared into arcs.
 //!
 //! Round a planet the height passes through as it is: gullies run down a
 //! slope along flat ground.
@@ -138,7 +147,7 @@ mod tests {
     };
 
     #[test]
-    fn gullies_cut_any_height_as_a_landmass_cuts_its_own_to_the_bit() {
+    fn gullies_cut_any_height_by_a_landmasss_maths_to_the_bit() {
         // Alpine with no gullies or bumps of its own, and a Gullies node after it with Alpine's gullies.
         let alpine = Preset::Alpine.landmass();
         let erosion = alpine.erosion;
@@ -173,6 +182,32 @@ mod tests {
             let around = [at(step, 0.0), at(-step, 0.0), at(0.0, step), at(0.0, -step)];
             assert_eq!(own.cut(x, z, at(0.0, 0.0), around).to_bits(), whole.height_at(x, z).to_bits());
         }
+    }
+
+    #[test]
+    fn a_nodes_gullies_join_where_a_landmasss_leave_steps_along_their_floors() {
+        // Hills 600 m across with gullies 180 m apart in three octaves, walked a quarter of a metre at a time: the
+        // most the ground rises or falls in one pace, joined and not.
+        let hills = Noise { size: 600.0, octaves: 3, low: 0.0, high: 120.0, ..Noise::default() };
+        let source = testing::world_of(NodeKind::Noise(hills), 0, &[]);
+        let erosion = Erosion { strength: 0.6, spacing: 180.0, octaves: 3 };
+        let largest_pace = |joined: bool| {
+            let cut = Gullied { erosion, scale: 1.0, sea_level: -1000.0, seed: 3, joined };
+            let step = cut.step();
+            let at = |x: f32, z: f32| {
+                let h = |dx: f32, dz: f32| source.height_at(x + dx, z + dz);
+                cut.cut(x, z, h(0.0, 0.0), [h(step, 0.0), h(-step, 0.0), h(0.0, step), h(0.0, -step)])
+            };
+            let (mut largest, mut last) = (0.0f32, at(0.0, 40.0));
+            for i in 1..24_000 {
+                let next = at(i as f32 * 0.25, 40.0 + i as f32 * 0.1);
+                (largest, last) = (largest.max((next - last).abs()), next);
+            }
+            largest
+        };
+        let (joined, stepped) = (largest_pace(true), largest_pace(false));
+        assert!(joined < 0.4, "joined, the ground changes by {joined} m in a pace at the most");
+        assert!(stepped > 1.0 && stepped > joined * 4.0, "not joined, by {stepped} m: {joined} m joined");
     }
 
     #[test]

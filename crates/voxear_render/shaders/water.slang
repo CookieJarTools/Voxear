@@ -1535,7 +1535,7 @@ struct StreamWake
 // What stands in the Stream round `world`, running `speed` metres a second along `way` with `beside` to its left:
 // looked for a few places straight upstream, a few out along each arm of a V upstream, and just downstream. Each
 // place a little nearer or further from pixel to pixel and frame to frame, so no step shows where one ends.
-StreamWake streamWake(Frame* frame, float3 world, float3 way, float3 beside, float speed, float2 pixel)
+StreamWake streamWake(Frame* frame, float3 world, float3 way, float3 beside, float speed, float2 pixel, bool spreading)
 {
     // As deep as this, water this fast runs over what is under it without breaking.
     float clear = min(0.04 + 0.08 * speed * speed, 0.35);
@@ -1550,8 +1550,8 @@ StreamWake streamWake(Frame* frame, float3 world, float3 way, float3 beside, flo
         float far = (float(i) + jitter) / 5.0;
         wake.trail = max(wake.trail, streamBlocked(frame, world - way * (0.15 + 3.2 * far * far) * reach, clear) * (1.0 - far));
     }
-    // The arms lie a little over twenty degrees either side of the flow.
-    for (uint i = 0; i < 3; i++)
+    // The arms lie a little over twenty degrees either side of the flow; not looked for without `spreading`.
+    for (uint i = 0; i < (spreading ? 3 : 0); i++)
     {
         float far = (float(i) + jitter) / 3.0;
         float off = (0.3 + 3.4 * far) * reach;
@@ -2284,7 +2284,8 @@ FragmentOut waterFragment(WaterOut input)
         met.bow = 0.0;
         if (moving > 0.0)
         {
-            met = streamWake(frame, input.world, way, normalize(cross(way, input.up)), speed, input.position.xy);
+            // In rapids a wake's arms are lost in the churn.
+            met = streamWake(frame, input.world, way, normalize(cross(way, input.up)), speed, input.position.xy, rapid < 0.7);
         }
         wake = met.trail * moving;
         arms = max(met.arms.x, met.arms.y) * (1.0 - met.trail) * moving;
@@ -2418,9 +2419,10 @@ FragmentOut waterFragment(WaterOut input)
     // As sharp as clear water shows what is under it, blurring only where it is deep or rough.
     float blur = sqrt(s.roughness) * 1.2 + log2(1.0 + thickness * 0.12);
     float3 behind = thickness < 1e3 ? glassBehind(push.texture, seenAt, blur) : 0.0;
-    if (stream && thickness < 1e3)
+    if (stream && thickness < 1e3 && rapid < 0.7)
     {
-        // The sun comes down to a Stream's bed in a web of light its ripples focus, carried along with them: the
+        // The sun comes down to a Stream's bed in a web of light its ripples focus, carried along with them (not
+        // looked for under rapids, whose white water hides their bed): the
         // ground under a Stream is lit as dry ground is, so the web is laid over what shows of it here, where the
         // sun reaches the bed.
         float3 bed = input.world + refract(-v, n, 1.0 / 1.33) * min(thickness, 10.0);

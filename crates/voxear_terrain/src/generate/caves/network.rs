@@ -551,11 +551,13 @@ impl Network {
         };
         let (foot, up) = grid.foot(mouth);
         let stand = Stand { foot, up, ..*stand };
-        // A little over the ground, so it comes out into the open.
-        let top = grid.lifted(&stand, ground, self.set.radius);
+        // A little over the ground, so it comes out into the open; and still climbing the way it was going
+        // rather than straight up, so its mouth is a slope to walk down and not a pit.
+        let top = grid.lifted(&stand, ground, self.set.radius * 0.5);
+        let down = unit(sub(times(up, -0.4), away), times(up, -1.0));
         let [x, y, z] = room.plan.region;
         let seed = mix(self.set.seed, &[x, y, z, 10]);
-        self.wound((from, away), (top, times(up, -1.0)), room.axes[1], seed, self.set.winding * 0.5, false)
+        self.wound((from, away), (top, down), room.axes[1], seed, self.set.winding * 0.5, false)
     }
 
     /// A tunnel from one end to another, each a place and the way out of

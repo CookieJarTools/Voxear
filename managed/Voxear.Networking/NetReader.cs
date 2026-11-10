@@ -65,6 +65,12 @@ public sealed class NetReader
 		return new Vector3(ReadFloat(), ReadFloat(), ReadFloat());
 	}
 
+	/// <summary>A position from the level's middle, as written by Write(LevelPosition).</summary>
+	public LevelPosition ReadLevelPosition()
+	{
+		return new LevelPosition(ReadDouble(), ReadDouble(), ReadDouble());
+	}
+
 	public Quaternion ReadQuaternion()
 	{
 		return new Quaternion(ReadFloat(), ReadFloat(), ReadFloat(), ReadFloat());

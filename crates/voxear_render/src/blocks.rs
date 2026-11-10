@@ -27,6 +27,7 @@ use voxear_terrain::blocks::{
     BlockWorld, ChunkMeshes,
     chunk::CHUNK,
     mesh::{ChunkMesh, FACINGS},
+    smooth,
 };
 
 use crate::{
@@ -151,14 +152,40 @@ pub(crate) enum Facing {
     Light(Vec3),
 }
 
+/// How finely a view draws smooth chunks: from where, in the world's space,
+/// how far their surface may move for each metre they are away, and how
+/// large the world's blocks are.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Detail {
+    pub camera: Vec3,
+    pub allowed: f32,
+    pub block_size: f32,
+}
+
+impl Detail {
+    /// The coarsest of a smooth chunk's levels (see
+    /// `voxear_terrain::blocks::smooth::LEVELS`) whose surface moves no more
+    /// than allowed for how far away it is, of those it has.
+    fn level(&self, chunk: &ChunkDraw) -> usize {
+        let [low, high] = chunk.bounds;
+        let distance = (self.camera.clamp(low, high) - self.camera).length();
+        let block = self.block_size * (1u32 << chunk.key[0].clamp(0, 16)) as f32;
+        (1..smooth::LEVELS)
+            .rev()
+            .find(|&level| chunk.facings[level][1] > 0 && smooth::COARSER[level - 1] * block <= self.allowed * distance)
+            .unwrap_or(0)
+    }
+}
+
 /// What a view draws of a world's chunks: those within `planes` (inward,
 /// in the world's space) and, where `seen` says which of its own chunks the
-/// camera can see into, those; and of each, the faces `facing` picks; as
-/// first quads and counts, those that follow on in the pool drawn as one.
+/// camera can see into, those; and of each, the faces `facing` picks, and of
+/// a smooth one the level `detail` picks; as first quads and counts, those
+/// that follow on in the pool drawn as one.
 pub(crate) fn pick(
     chunks: &[ChunkDraw],
     planes: &[[f32; 4]],
-    facing: Facing,
+    (facing, detail): (Facing, Option<Detail>),
     seen: Option<&HashSet<[i32; 3]>>,
 ) -> Vec<[u32; 2]> {
     // Turned towards the light, the faces whose way out goes against it.
@@ -176,10 +203,11 @@ pub(crate) fn pick(
             continue;
         }
         let [low, high] = chunk.bounds;
-        // A smooth chunk is drawn whole, unless every triangle in it is turned away.
+        // A smooth chunk is drawn whole at one of its levels, unless every triangle in it is turned away.
         if let Some(cone) = chunk.cone {
-            if !turned_away(cone, chunk.bounds, facing) {
-                picked.extend(chunk.facings.iter().filter(|[_, count]| *count > 0));
+            let [first, count] = chunk.facings[detail.map_or(0, |detail| detail.level(chunk))];
+            if count > 0 && !turned_away(cone, chunk.bounds, facing) {
+                picked.push([first, count]);
             }
             continue;
         }
@@ -883,7 +911,10 @@ pub(crate) fn gather(
             };
             voxear_terrain::blocks::sight::seen(map, sights, from, |key| within(&planes, bounds(key)))
         });
-        lists[LIST_EARLY as usize] = pick(&blocks.chunks, &planes, Facing::Camera(local), seen.as_ref());
+        // A smooth chunk drawn as coarse as its distance allows, as models' levels are picked.
+        let allowed = frame.lod_threshold / frame.lod_scale.max(1e-6);
+        let detail = Some(Detail { camera: local, allowed, block_size: blocks.block_size });
+        lists[LIST_EARLY as usize] = pick(&blocks.chunks, &planes, (Facing::Camera(local), detail), seen.as_ref());
         let wet = pick_water(&blocks.chunks, &planes, seen.as_ref());
         if !wet.is_empty() {
             water.push((number as u32, blocks.smooth, wet));
@@ -892,7 +923,7 @@ pub(crate) fn gather(
             let sunlit = Facing::Light(Vec3::from(frame.sun_direction));
             for cascade in 0..CASCADES {
                 let planes = voxear_terrain::lod::planes_from(&frame.cascade_planes[cascade], blocks.corner);
-                lists[LIST_SHADOW as usize + cascade] = pick(&blocks.chunks, &planes, sunlit, None);
+                lists[LIST_SHADOW as usize + cascade] = pick(&blocks.chunks, &planes, (sunlit, detail), None);
             }
         }
         runs.push((number as u32, blocks.smooth, lists));
@@ -1038,39 +1069,50 @@ mod tests {
         };
         let chunks = [chunk(0.0, 0), chunk(32.0, 60)];
         // From above the first, beyond its +x side: no -y faces of either, and none of the second's +x.
-        let picked = pick(&chunks, &[], Facing::Camera(Vec3::new(16.0, 40.0, 16.0)), None);
+        let picked = pick(&chunks, &[], (Facing::Camera(Vec3::new(16.0, 40.0, 16.0)), None), None);
         let has = |first: u32| picked.iter().any(|&[f, c]| f <= first && first < f + c);
         assert!(has(0) && has(20), "the first's +x and +y faces");
         assert!(!has(30) && !has(90), "no faces turned down");
         assert!(!has(60), "the second's +x faces are beyond the camera");
         assert!(has(70), "its -x faces face back towards it");
-        // Chunks whose faces face every way are drawn whole; quads following on are drawn as one.
-        let whole = chunks.map(|chunk| ChunkDraw { cone: Some(EVERY_WAY), ..chunk });
+        // Smooth chunks, three levels of 40, 15 and 5 quads' words each, the second's following on from the first's.
+        let smooth = |x: f32, first: u32, cone: [f32; 4]| {
+            let levels = [[first, 40], [first + 40, 15], [first + 55, 5]];
+            let facings = std::array::from_fn(|f| levels.get(f).copied().unwrap_or([first + 60, 0]));
+            ChunkDraw { facings, cone: Some(cone), ..chunk(x, first) }
+        };
+        // Facing every way, each drawn whole at its first level; the second's first following on from the first's.
+        let mut second = smooth(32.0, 60, EVERY_WAY);
+        second.facings[0] = [40, 40];
+        let whole = [smooth(0.0, 0, EVERY_WAY), second];
         let from = Facing::Camera(Vec3::new(16.0, 40.0, 16.0));
-        assert_eq!(pick(&whole, &[], from, None), vec![[0, 120]]);
+        assert_eq!(pick(&whole, &[], (from, None), None), vec![[0, 80]]);
         // Looking along +x from x = 40: only the second.
-        let ahead = pick(&whole, &[[1.0, 0.0, 0.0, -40.0]], Facing::Camera(Vec3::new(40.0, 16.0, 16.0)), None);
-        assert_eq!(ahead, vec![[60, 60]]);
+        let ahead = pick(&whole, &[[1.0, 0.0, 0.0, -40.0]], (Facing::Camera(Vec3::new(40.0, 16.0, 16.0)), None), None);
+        assert_eq!(ahead, vec![[40, 40]]);
         // Only the chunks the camera can see into, where it is known which.
         let seen = HashSet::from([[1, 0, 0]]);
-        assert_eq!(pick(&whole, &[], from, Some(&seen)), vec![[60, 60]]);
-        // A smooth chunk, its triangles all facing within a tenth of up: drawn whole from above or beside it, not at all
+        assert_eq!(pick(&whole, &[], (from, None), Some(&seen)), vec![[40, 40]]);
+        // Further away, coarser: 2 m blocks, half a block allowed at 1000 m and two blocks at 4000.
+        let at = |x: f32| Detail { camera: Vec3::new(x, 16.0, 16.0), allowed: 0.001, block_size: 2.0 };
+        let level = |x: f32| pick(&whole[..1], &[], (Facing::Camera(at(x).camera), Some(at(x))), None);
+        assert_eq!([level(-500.0), level(-2000.0), level(-9000.0)], [vec![[0, 40]], vec![[40, 15]], vec![[55, 5]]]);
+        // A smooth chunk, its triangles all facing within a tenth of up: drawn from above or beside it, not at all
         // from below, nor into the shadows of light coming up from under it.
-        let smooth = [ChunkDraw { cone: Some([0.0, 1.0, 0.0, 0.1]), ..chunk(0.0, 0) }];
-        assert_eq!(pick(&smooth, &[], Facing::Camera(Vec3::new(16.0, 60.0, 16.0)), None), vec![[0, 60]]);
-        assert_eq!(pick(&smooth, &[], Facing::Camera(Vec3::new(16.0, -60.0, 16.0)), None), Vec::<[u32; 2]>::new());
-        assert_eq!(pick(&smooth, &[], Facing::Camera(Vec3::new(60.0, 10.0, 16.0)), None), vec![[0, 60]], "beside it");
-        assert_eq!(pick(&smooth, &[], Facing::Light(Vec3::new(0.2, -1.0, 0.0)), None), vec![[0, 60]]);
-        assert_eq!(pick(&smooth, &[], Facing::Light(Vec3::new(0.2, 1.0, 0.0)), None), Vec::<[u32; 2]>::new());
-        // One facing every way, drawn whole from anywhere, though its triangles are kept as one facing's.
-        let facings = [[0, 60], [60, 0], [60, 0], [60, 0], [60, 0], [60, 0]];
-        let every = [ChunkDraw { cone: Some(EVERY_WAY), facings, ..chunk(0.0, 0) }];
+        let up = [smooth(0.0, 0, [0.0, 1.0, 0.0, 0.1])];
+        let drawn = |facing: Facing| !pick(&up, &[], (facing, None), None).is_empty();
+        assert!(drawn(Facing::Camera(Vec3::new(16.0, 60.0, 16.0))));
+        assert!(!drawn(Facing::Camera(Vec3::new(16.0, -60.0, 16.0))));
+        assert!(drawn(Facing::Camera(Vec3::new(60.0, 10.0, 16.0))), "beside it");
+        assert!(drawn(Facing::Light(Vec3::new(0.2, -1.0, 0.0))));
+        assert!(!drawn(Facing::Light(Vec3::new(0.2, 1.0, 0.0))));
+        // One facing every way, drawn from anywhere.
         for from in [Vec3::new(16.0, -60.0, 16.0), Vec3::new(-60.0, 10.0, 16.0)] {
-            assert_eq!(pick(&every, &[], Facing::Camera(from), None), vec![[0, 60]]);
+            assert_eq!(pick(&whole[..1], &[], (Facing::Camera(from), None), None), vec![[0, 40]]);
         }
-        assert_eq!(pick(&every, &[], Facing::Light(Vec3::new(0.2, 1.0, 0.0)), None), vec![[0, 60]]);
+        assert_eq!(pick(&whole[..1], &[], (Facing::Light(Vec3::new(0.2, 1.0, 0.0)), None), None), vec![[0, 40]]);
         // The sun's cascades: of each chunk, the faces turned towards sunlight going down, to -x and to +z.
-        let lit = pick(&chunks, &[], Facing::Light(Vec3::new(-0.3, -0.8, 0.5)), None);
+        let lit = pick(&chunks, &[], (Facing::Light(Vec3::new(-0.3, -0.8, 0.5)), None), None);
         let has = |first: u32| lit.iter().any(|&[f, c]| f <= first && first < f + c);
         assert!([0, 20, 50, 60, 80, 110].map(has).iter().all(|&h| h), "+x, +y and -z faces: {lit:?}");
         assert!(![10, 30, 40, 70, 90, 100].map(has).iter().any(|&h| h), "none turned away: {lit:?}");

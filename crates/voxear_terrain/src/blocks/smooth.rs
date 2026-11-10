@@ -14,7 +14,10 @@
 //! Where the surface is flat or gently curved, a chunk's triangles are then
 //! merged into fewer, moving it no more than [`FLAT_ENOUGH`]: each kind of
 //! ground apart, the points it shares with the chunks beside it and with
-//! other kinds kept where they are, so they still meet edge for edge.
+//! other kinds kept where they are, so they still meet edge for edge. Its
+//! corners are kept so a second and third time, merged further ([`COARSER`]),
+//! for drawing it far away: kept the same where chunks meet, a chunk at
+//! any level meets the next at any other.
 //!
 //! Each corner of a triangle is drawn as two pairs of words, as
 //! `smoothPoint` in `shaders/blocks.slang` reads them: where it is in its
@@ -294,25 +297,42 @@ pub(crate) fn mesh_within(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], e
             }
         }
     }
-    let looks = triangles.into_iter().map(|(triangle, block)| {
-        let BlockFaces { top, sides, bottom, .. } = faces.get(usize::from(block)).copied().unwrap_or_default();
-        (triangle, [top, sides, bottom])
-    });
-    let (points, normals, triangles) = simplified((&out.positions, &normals, &shared), looks.collect(), error);
+    let looks: Vec<([u32; 3], [u8; 3])> = triangles
+        .into_iter()
+        .map(|(triangle, block)| {
+            let BlockFaces { top, sides, bottom, .. } = faces.get(usize::from(block)).copied().unwrap_or_default();
+            (triangle, [top, sides, bottom])
+        })
+        .collect();
+    let every = (out.positions.clone(), normals.clone());
+    let (points, normals, triangles) = simplified((&out.positions, &normals, &shared), looks.clone(), error);
     out.positions = points;
-    for (triangle, [top, sides, bottom]) in triangles {
+    let corners = |points: &[[f32; 3]], normals: &[[f32; 3]], triangle: [u32; 3], [top, sides, bottom]: [u8; 3]| {
+        triangle.map(|i| {
+            let [x, y, z] = points[i as usize];
+            [
+                [quantise(x) | quantise(y) << 16, quantise(z)],
+                [pack_normal(normals[i as usize]) | u32::from(bottom) << 24, u32::from(top) | u32::from(sides) << 8],
+            ]
+        })
+    };
+    for (triangle, look) in triangles {
         out.indices.extend(triangle);
-        for i in triangle {
-            let [x, y, z] = out.positions[i as usize];
-            out.quads.push([quantise(x) | quantise(y) << 16, quantise(z)]);
-            out.quads.push([
-                pack_normal(normals[i as usize]) | u32::from(bottom) << 24,
-                u32::from(top) | u32::from(sides) << 8,
-            ]);
+        out.quads.extend(corners(&out.positions, &normals, triangle, look).into_iter().flatten());
+    }
+    // Coarser levels after it, for far away, where they are made, merged as it is.
+    let mut ends = [out.quads.len() as u32; LEVELS];
+    if error > 0.0 {
+        for (level, coarser) in COARSER.into_iter().enumerate() {
+            let (points, normals, triangles) = simplified((&every.0, &every.1, &shared), looks.clone(), coarser);
+            for (triangle, look) in triangles {
+                out.quads.extend(corners(&points, &normals, triangle, look).into_iter().flatten());
+            }
+            ends[level + 1] = out.quads.len() as u32;
         }
     }
-    let count = out.quads.len() as u32;
-    out.buckets = [0, count, count, count, count, count, count];
+    let last = ends[LEVELS - 1];
+    out.buckets = [0, ends[0], ends[1], ends[2], last, last, last];
     out.cone = cone(&out.positions, &out.indices);
     if map.chunk(key).is_some_and(|chunk| chunk.may_hold(|block| is_water(faces, block))) {
         out.quads.extend(water_surface(map, key, faces, &padded));
@@ -350,6 +370,15 @@ fn cone(points: &[[f32; 3]], indices: &[u32]) -> Option<[f32; 4]> {
 /// How far a smooth surface may move, in blocks, as its triangles are
 /// merged where it is flat or gently curved.
 pub const FLAT_ENOUGH: f32 = 0.1;
+
+/// How far each coarser level of a smooth chunk's surface may move, in
+/// blocks, for drawing it far away.
+pub const COARSER: [f32; 2] = [0.5, 2.0];
+
+/// How many levels a smooth chunk's surface is kept at: its own, then each
+/// coarser, its corners one level after another (see `mesh::ChunkMesh`'s
+/// buckets).
+pub const LEVELS: usize = 1 + COARSER.len();
 
 /// How much a turn of the way the ground faces counts against merging
 /// triangles, beside how far their surface moves, so its shading stays.
@@ -770,7 +799,7 @@ mod tests {
                 })
                 .collect()
         };
-        assert_eq!(mesh.water().0 as usize, mesh.indices.len() * 2);
+        assert_eq!((mesh.buckets[1] as usize, mesh.water().0), (mesh.indices.len() * 2, mesh.buckets[FACINGS]));
         let corners = water_corners(&mesh);
         assert!(!corners.is_empty() && corners.iter().all(|&(_, surface)| surface == 7));
         let middle: Vec<_> = corners.iter().filter(|(p, _)| inside(&p)).collect();
@@ -822,7 +851,7 @@ mod tests {
         };
         assert!(tops(&merged) * 4 < tops(&every), "{} triangles of {}", tops(&merged), tops(&every));
         assert!(merged.positions.iter().filter(|p| p[1] > 6.0).all(|p| (p[1] - 6.4).abs() < 0.02), "on the same plane");
-        assert_eq!(merged.quads.len(), merged.indices.len() * 2, "two pairs of words a corner");
+        assert_eq!(merged.buckets[1] as usize, merged.indices.len() * 2, "two pairs of words a corner");
         // A chunk of it holding its bottom faces every way; one of its top alone faces up.
         assert_eq!(merged.cone, None);
         let deep = ground([96, 96], |_, _| 40.4);
@@ -872,6 +901,41 @@ mod tests {
         // As many triangles back the other way: where two sheets touch, an edge has two each way.
         let open = merged.iter().filter(|&(&(a, b), count)| merged.get(&(b, a)) != Some(count)).count();
         assert_eq!(open, 0, "edges with no triangle back the other way, of {}", merged.len());
+        // Each chunk drawn at any of its levels, whatever level the next is drawn at, still closed, and coarser
+        // levels fewer triangles.
+        let meshes: Vec<ChunkMesh> = keys.iter().map(|key| mesh_chunk(&map, *key, &faces)).collect();
+        let drawn = |level_of: &dyn Fn(usize) -> usize| {
+            let mut edges = std::collections::HashMap::new();
+            let mut triangles = 0;
+            for (n, (key, mesh)) in keys.iter().zip(&meshes).enumerate() {
+                let level = level_of(n);
+                let words = &mesh.quads[mesh.buckets[level] as usize..mesh.buckets[level + 1] as usize];
+                let corner = |pair: &[[u32; 2]]| {
+                    let at = [pair[0][0] & 0xFFFF, pair[0][0] >> 16, pair[0][1] & 0xFFFF];
+                    [0, 1, 2].map(|k| at[k] as i64 + i64::from(key[k]) * i64::from(CHUNK) * 1024)
+                };
+                for t in words.chunks(6) {
+                    let [a, b, c] = [corner(&t[0..2]), corner(&t[2..4]), corner(&t[4..6])];
+                    triangles += 1;
+                    for (p, q) in [(a, b), (b, c), (c, a)] {
+                        *edges.entry((p, q)).or_insert(0) += 1;
+                    }
+                }
+            }
+            let open = edges.iter().filter(|&(&(a, b), count)| edges.get(&(b, a)) != Some(count)).count();
+            (open, triangles)
+        };
+        let counts: Vec<usize> = (0..LEVELS)
+            .map(|level| {
+                let (open, triangles) = drawn(&|_| level);
+                assert_eq!(open, 0, "level {level} open");
+                triangles
+            })
+            .collect();
+        assert!(counts.windows(2).all(|pair| pair[1] < pair[0]), "{counts:?}");
+        for mix in [&|n: usize| n % 2 * 2, &|n: usize| n % 3, &|n: usize| (n / 2) % 2] as [&dyn Fn(usize) -> usize; 3] {
+            assert_eq!(drawn(mix).0, 0, "levels mixed");
+        }
     }
 
     #[test]

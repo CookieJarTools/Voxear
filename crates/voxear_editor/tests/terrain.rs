@@ -1517,7 +1517,7 @@ fn a_voxel_terrain_is_added_drawn_smooth_and_built_on_in_balls_whose_edges_lie_b
     assert!(asset.file.smooth);
     let blocks = |editor: &voxear_editor::Editor| editor.game.engine.world.get::<BlockWorld>(field).unwrap().clone();
     assert!(blocks(&editor).smooth);
-    assert!(blocks(&editor).meshes.values().all(|mesh| mesh.quads.len() == mesh.indices.len() * 2));
+    assert!(blocks(&editor).meshes.values().all(|mesh| mesh.buckets[1] as usize == mesh.indices.len() * 2));
     fn texts(ui: &Ui, node: NodeId, out: &mut Vec<String>) {
         out.push(ui.text(node));
         ui.children(node).into_iter().for_each(|child| texts(ui, child, out));

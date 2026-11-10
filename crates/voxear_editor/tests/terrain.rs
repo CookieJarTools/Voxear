@@ -1532,6 +1532,65 @@ fn a_block_worlds_block_size_dragged_by_its_label_makes_it_again_once_when_let_g
 }
 
 #[test]
+fn a_large_block_world_is_made_again_in_the_background_showing_what_it_was_until_then() {
+    use std::{sync::Arc, time::Instant};
+    use voxear_engine::blocks::BlockWorldAsset;
+    use voxear_terrain::blocks::BlockWorld;
+    let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {
+        eprintln!("skipping: no usable GPU");
+        return;
+    };
+    let dir = hello_with_a_field();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    let field = obj(&editor, "Field");
+    editor.select(Some(field));
+    frame(&mut editor, &mut renderer);
+    add_component(&mut editor, &mut renderer, "Block World");
+    show_block_tool(&mut editor, &mut renderer, "Settings");
+    let made = |editor: &voxear_editor::Editor| editor.game.engine.world.get::<BlockWorld>(field).unwrap().clone();
+    let size = |editor: &voxear_editor::Editor| {
+        editor.game.engine.world.get::<BlockWorldAsset>(field).unwrap().file.block_size
+    };
+    let before = made(&editor);
+    // Blocks a fifth as large: 320 across, too many to make within a frame. The field shows the new size at once,
+    // the world what it was.
+    type_number(&mut editor, &mut renderer, "Block size", "0.2");
+    assert_eq!(row_text(&editor.ui, prop_rows(&editor.ui, "Block size")[0]), "0.2 m");
+    assert!(Arc::ptr_eq(&made(&editor).blocks, &before.blocks), "shown as it was while made");
+    assert_eq!(size(&editor), 1.0);
+    // Put in once made, as large in metres.
+    let start = Instant::now();
+    while made(&editor).block_size != 0.2 {
+        assert!(start.elapsed().as_secs() < 60, "made within a minute");
+        frame(&mut editor, &mut renderer);
+    }
+    let file = editor.game.engine.world.get::<BlockWorldAsset>(field).unwrap().file.clone();
+    assert_eq!((file.block_size, file.ground.size), (0.2, [320, 320]));
+    assert_eq!((made(&editor).blocks.get([300, 39, 300]), made(&editor).blocks.get([300, 40, 300])), (1, 0));
+    let took = start.elapsed();
+    // One step to undo, back to the world it was, and to do again.
+    editor.undo(&mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(Arc::ptr_eq(&made(&editor).blocks, &before.blocks) && size(&editor) == 1.0);
+    editor.redo(&mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!((made(&editor).block_size, size(&editor)), (0.2, 0.2));
+    editor.undo(&mut renderer);
+    frame(&mut editor, &mut renderer);
+    // Set back to the size it is while it is made, the change is let go, and the world stays as it was.
+    type_number(&mut editor, &mut renderer, "Block size", "0.15");
+    type_number(&mut editor, &mut renderer, "Block size", "1");
+    let start = Instant::now();
+    while start.elapsed() < took * 2 + std::time::Duration::from_secs(1) {
+        frame(&mut editor, &mut renderer);
+    }
+    assert_eq!(row_text(&editor.ui, prop_rows(&editor.ui, "Block size")[0]), "1 m");
+    assert!(Arc::ptr_eq(&made(&editor).blocks, &before.blocks) && size(&editor) == 1.0);
+}
+
+#[test]
 fn a_block_worlds_ground_is_generated_by_a_picked_generator_and_covered_by_a_kinds_biome() {
     use voxear_engine::blocks::BlockWorldAsset;
     use voxear_terrain::{

@@ -2920,7 +2920,11 @@ and each sun cascade only their faces turned towards the sun;
 each chunk's faces merged by surface alone are its collision mesh and its mesh for the GI's rays, the shapes made on
 every core and kept while a chunk's triangles stay the same, the ray meshes made a few a frame and uploaded and built
 in one GPU batch (`Gpu::batch`). A world whose faces did not change costs physics and the renderer no walk over its
-chunks. A change remakes
+chunks. A pool takes at most 16 MB of chunks a frame (`STAGED_A_FRAME`), grown once for all that are coming: each
+chunk shows as it was until its frame comes, and those the world no longer has go once all have come; a world whose
+blocks change size gets a new pool, and its old one is drawn until the new one has every chunk. In the editor, a
+world too large to make again within a frame is made on other threads and shown as it was until then
+(`block_props::Making`). A change remakes
 the chunks it reaches and those beside it it shades, on every core; changes are kept as what differs from what a
 world was made as (`blocks::edits`), in a `.blocks` file for the editor's and in a scene's save for scripts'.
 Generated block ground (`blocks::generate`) takes a world generator's heights a column at a time, and from its

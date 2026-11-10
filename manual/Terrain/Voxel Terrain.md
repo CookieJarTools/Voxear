@@ -12,7 +12,7 @@ Every setting of a Block World works the same here (see [[Block Worlds]]). Under
 
 | Setting | What it does |
 | --- | --- |
-| Block size | How many metres a block is a side: the finest detail its surface has |
+| Block size | How many metres a block is a side, from 0.1 to 10: the finest detail its surface has |
 | Smooth | Whether its surface runs smoothly between its blocks, or its blocks are cubes |
 | Ground | **Flat**, **Generated** by a world generator, or a **Planet** (see below) |
 

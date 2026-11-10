@@ -5,19 +5,20 @@
 //! world's own its name, colour and materials. Under Settings, the
 //! `.blockworld` asset its blocks are, how large a block is, the flat
 //! ground its blocks start as, and whether it casts the sun's shadows. A
-//! change to the asset's file makes its blocks again at once, the changes
-//! built since kept on them, kept in the world for saving and undo as a
-//! Terrain's are. A change to a block it lists is the block's own: written
+//! change to the asset's file makes its blocks again at once, or for a
+//! large world on other threads, shown as it was until then; the changes
+//! built since are kept on them, and kept in the world for saving and undo
+//! as a Terrain's are. A change to a block it lists is the block's own: written
 //! to its `.block` at once, taken up by every world listing it, and no
 //! step to undo.
 
 use anyhow::{Context, Result};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use voxear_assets::{AssetGuid, AssetKind};
 use voxear_ecs::{Entity, World};
 use voxear_engine::{
     Game,
-    blocks::BlockWorldAsset,
+    blocks::{BlockWorldAsset, Resolved},
     prefab::BlockWorldParts,
     scene_file::{BlockWorldData, BlockWorldSource},
 };
@@ -33,6 +34,7 @@ use voxear_terrain::{
         generate::BlockGenerate,
         vox::VoxFile,
     },
+    generate::WorldGen,
     surfaces::Biome,
 };
 
@@ -169,9 +171,7 @@ fn see_generators(game: &mut Game) {
 /// what it was; one placed elsewhere has its caves where the generator's
 /// are there.
 pub fn move_to_generator(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity) -> bool {
-    let Some(mut file) = game.engine.world.get::<BlockWorldAsset>(entity).map(|asset| asset.file.clone()) else {
-        return false;
-    };
+    let Some(mut file) = file_of(&game.engine.world, entity) else { return false };
     let Some(generate) = file.generate.as_mut() else { return false };
     let Some(reference) = generate.world.clone() else { return false };
     let Some(guid) = game.content.parse(&reference).ok().and_then(|parsed| parsed.guid()) else { return false };
@@ -226,10 +226,137 @@ pub fn hold(game: &mut Game, mut renderer: Option<&mut Renderer>, dragging: bool
 }
 
 /// The file a world of blocks shows: the one held for it while a number is
-/// dragged, or its asset's.
+/// dragged, the one it is being made again from, or its asset's.
 fn shown_file(world: &World, entity: Entity) -> Option<&BlockFile> {
     let held = world.resource::<HeldFiles>().and_then(|held| held.files.get(&entity));
-    held.or_else(|| world.get::<BlockWorldAsset>(entity).map(|asset| &asset.file))
+    held.or_else(|| making(world, entity).map(|remake| &remake.file))
+        .or_else(|| world.get::<BlockWorldAsset>(entity).map(|asset| &asset.file))
+}
+
+/// The file a change to a world of blocks starts from: the one it is being
+/// made again from, or its asset's.
+fn file_of(world: &World, entity: Entity) -> Option<BlockFile> {
+    let making = making(world, entity).map(|remake| &remake.file);
+    making.or_else(|| world.get::<BlockWorldAsset>(entity).map(|asset| &asset.file)).cloned()
+}
+
+/// A world of blocks' file as it is drawn, each block it lists with that
+/// block's look: the one it is being made again from, or its asset's.
+fn drawn_of(world: &World, entity: Entity) -> Option<&BlockFile> {
+    let making = making(world, entity).map(|remake| &**remake.drawn);
+    making.or_else(|| world.get::<BlockWorldAsset>(entity).map(|asset| &**asset.drawn))
+}
+
+/// Worlds of blocks being made again on other threads from a changed file,
+/// each too large to make within a frame: until its new blocks are made, a
+/// world shows what it was and its Inspector the file it is made from (see
+/// [`finish`]).
+#[derive(Default)]
+struct Making(std::collections::HashMap<Entity, Remake>);
+
+/// A world of blocks being made again: the file it is made from, as it is
+/// drawn and at which version of the blocks, what it was made from when it
+/// started (its file, its ground and its blocks), and where its new ground
+/// and world come once made.
+struct Remake {
+    file: BlockFile,
+    drawn: Arc<Resolved>,
+    derived: u64,
+    from: (BlockFile, Arc<BlockMap>, Arc<BlockMap>),
+    made: Arc<Mutex<Option<(Arc<BlockMap>, BlockWorld)>>>,
+}
+
+/// How many columns of blocks a world can have and still be made again
+/// within a frame; past it, it is made on other threads (see [`Making`]). A
+/// smooth one's count four times, as its faces take longer to work out.
+const MADE_AT_ONCE: f32 = 65_536.0;
+
+/// Whether `file`'s world takes too long to make within a frame.
+fn made_slowly(file: &BlockFile) -> bool {
+    let size = file.block_size.max(0.01);
+    let columns = match file.generate.as_ref().and_then(|generate| generate.planet) {
+        Some(planet) => 4.0 * std::f32::consts::PI * (planet.radius / size).powi(2),
+        None => file.ground.size[0] as f32 * file.ground.size[1] as f32,
+    };
+    columns * if file.smooth { 4.0 } else { 1.0 } > MADE_AT_ONCE
+}
+
+fn making(world: &World, entity: Entity) -> Option<&Remake> {
+    world.resource::<Making>().and_then(|making| making.0.get(&entity))
+}
+
+/// The worlds of blocks made on other threads, waiting for [`finish`].
+pub fn made(world: &World) -> Vec<Entity> {
+    let Some(making) = world.resource::<Making>() else { return Vec::new() };
+    let done = |remake: &Remake| remake.made.lock().is_ok_and(|made| made.is_some());
+    making.0.iter().filter(|(_, remake)| done(remake)).map(|(entity, _)| *entity).collect()
+}
+
+/// Puts in world `entity` as it was made on other threads, its asset given
+/// the file it was made from; whether it was. One whose blocks, ground or
+/// file changed while it was made, as by building, is made again from what
+/// it is now instead.
+pub fn finish(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity) -> bool {
+    let world = &mut game.engine.world;
+    let Some((ground, mut made)) = making(world, entity).and_then(|remake| remake.made.lock().ok()?.take()) else {
+        return false;
+    };
+    let remake = world.resource_mut::<Making>().and_then(|making| making.0.remove(&entity)).expect("found above");
+    let (old, base, blocks) = &remake.from;
+    let asset =
+        world.get::<BlockWorldAsset>(entity).filter(|asset| asset.file == *old && Arc::ptr_eq(&asset.base, base));
+    let now = world.get::<BlockWorld>(entity).filter(|now| Arc::ptr_eq(&now.blocks, blocks));
+    let (Some(_), Some(now)) = (asset, now) else {
+        change_file(game, renderer, entity, remake.file);
+        return false;
+    };
+    made.cast_shadows = now.cast_shadows;
+    world.insert(entity, made);
+    if let Some(asset) = world.get_mut::<BlockWorldAsset>(entity) {
+        (asset.file, asset.base, asset.drawn, asset.derived) =
+            (remake.file, ground, remake.drawn.clone(), remake.derived);
+    }
+    restyle(game, renderer, entity, &remake.drawn);
+    true
+}
+
+/// Lets go of every world of blocks being made again, each left as it is,
+/// as when an edit is undone or done again.
+pub fn stop_making(world: &mut World) {
+    if let Some(making) = world.resource_mut::<Making>() {
+        making.0.clear();
+    }
+}
+
+/// Starts making world `entity` again from `file`, drawn as `drawn` at
+/// blocks' version `derived`, on another thread, from what it is now
+/// (`from`: its file, its ground and its world), kept in [`Making`] until
+/// [`finish`] puts it in.
+fn start_making(
+    world: &mut World,
+    entity: Entity,
+    (file, drawn, derived): (BlockFile, Arc<Resolved>, u64),
+    (old, base, blocks): (BlockFile, Arc<BlockMap>, BlockWorld),
+    carried: Option<BlockEdits>,
+    generator: Option<Arc<WorldGen>>,
+) {
+    let made = Arc::new(Mutex::new(None));
+    let from = (old.clone(), base.clone(), blocks.blocks.clone());
+    let (job, making, drawing) = (made.clone(), file.clone(), drawn.clone());
+    voxear_terrain::workers::spawn(move || {
+        let ground = Arc::new(making.make_ground(generator.as_deref()));
+        // Let go of while its ground was made, as when another file took its place: nothing more to make.
+        if Arc::strong_count(&job) == 1 {
+            return;
+        }
+        let world = made_on((&making, &drawing), &ground, (&old, &base, &blocks), carried, None);
+        *job.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some((ground, world));
+    });
+    if world.resource::<Making>().is_none() {
+        world.insert_resource(Making::default());
+    }
+    let remake = Remake { file, drawn, derived, from, made };
+    world.resource_mut::<Making>().expect("inserted above").0.insert(entity, remake);
 }
 
 /// The editor's block tools as they are.
@@ -316,7 +443,7 @@ use BlockField as F;
 /// it has one.
 pub fn props(world: &World, entity: Entity) -> Vec<Prop> {
     let state = ui(world);
-    let file = world.get::<BlockWorldAsset>(entity).map(|asset| &**asset.drawn);
+    let file = drawn_of(world, entity);
     let fields = match (state.tool, file) {
         (BlockTool::Build, Some(file)) => {
             let mut fields = vec![F::Brush, if state.brush == BlockBrush::Model { F::Model } else { F::BrushSize }];
@@ -492,7 +619,7 @@ pub fn get(game: &Game, entity: Entity, field: BlockField) -> Option<Value> {
     // What its rows show: its numbers from its file, as it is held while one is dragged (see `hold`), and each
     // block it lists with that block's own name and look.
     let file = || shown_file(world, entity);
-    let drawn = || world.get::<BlockWorldAsset>(entity).map(|asset| &**asset.drawn);
+    let drawn = || drawn_of(world, entity);
     let entry = || file().and_then(|file| Some((picked(world, file)?, file)));
     // A kind of the world's own is all in its file; a block's look is the block's.
     let kind = || {
@@ -626,7 +753,7 @@ pub fn set(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, fie
         }
         _ => {}
     }
-    let Some(mut file) = world.get::<BlockWorldAsset>(entity).map(|asset| asset.file.clone()) else { return false };
+    let Some(mut file) = file_of(world, entity) else { return false };
     // No entry at all where none is picked: what follows asks for one within the list.
     let picked = picked(world, &file).unwrap_or(usize::MAX);
     // A block's colour and whether it is water are the block's own, written to its file.
@@ -642,7 +769,7 @@ pub fn set(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, fie
     }
     match (field, &value) {
         // Its ground stays as large in metres, counted again in blocks of the new size.
-        (F::BlockSize, v) => drop(file.set_block_size(number(v).unwrap_or(file.block_size).clamp(0.01, 100.0))),
+        (F::BlockSize, v) => drop(file.set_block_size(number(v).unwrap_or(file.block_size))),
         (F::Smooth, Value::Toggle(on)) => file.smooth = *on,
         (F::GroundSize, Value::Vector(v)) if v.len() >= 2 => {
             file.ground.size = [v[0], v[1]].map(|n| n.round().clamp(0.0, 4096.0) as u32);
@@ -763,17 +890,19 @@ fn change(
     file: BlockFile,
     renumber: Option<&dyn Fn(BlockId) -> BlockId>,
 ) -> bool {
+    // One being made again from an earlier file is let go: it is made from this one now.
+    let making = game.engine.world.resource_mut::<Making>();
+    let was_making = making.is_some_and(|making| making.0.remove(&entity).is_some());
     let world = &game.engine.world;
     let Some(asset) = world.get::<BlockWorldAsset>(entity).cloned() else { return false };
     let (old, base) = (asset.file.clone(), asset.base.clone());
     let Some(blocks) = world.get::<BlockWorld>(entity).cloned() else { return false };
     if old == file {
-        return false;
+        return was_making;
     }
     // Its file as it is drawn, each block it lists with that block's look, kept on its asset with the file.
     let drawn = Arc::new(voxear_engine::blocks::resolved(&mut game.content, &file, &asset.grown));
     let derived = game.content.blocks_version();
-    let renumbered = |map: &BlockMap| renumber.map_or_else(|| map.clone(), |change| map.remapped(change));
     let renumbered_edits = |edits: BlockEdits| match renumber {
         Some(change) => edits.remapped(change),
         None => edits,
@@ -819,23 +948,15 @@ fn change(
         || old.smooth != file.smooth
         || old.blocks.iter().map(|k| k.cover).ne(file.blocks.iter().map(|k| k.cover));
     let (base, remade) = if grounded {
-        // The new ground names its blocks by their new numbers already; the old ground and blocks are renumbered.
-        let ground = Arc::new(voxear_engine::blocks::ground(&mut game.content, &file));
-        let changes = match carried {
-            Some(carried) if resized => carried.resized(&resize),
-            Some(carried) => renumbered_edits(carried),
-            None if resized => {
-                let mut built = (*ground).clone();
-                let cells = edits::changed(&base, &blocks.blocks);
-                for (at, block, fill) in edits::resized(&cells, Some(&blocks.blocks), &resize) {
-                    built.set_cell(at, block, fill);
-                }
-                BlockEdits::between(&ground, &built)
-            }
-            None => BlockEdits::between(&renumbered(&base), &renumbered(&blocks.blocks)),
-        };
-        let mut made = voxear_engine::blocks::make(&drawn, &ground, Some(&changes));
-        made.cast_shadows = blocks.cast_shadows;
+        let generator = voxear_engine::blocks::generator(&mut game.content, &file);
+        // A large world is made on other threads, and shows what it was until then.
+        if renumber.is_none() && made_slowly(&file) {
+            let world = &mut game.engine.world;
+            start_making(world, entity, (file, drawn, derived), (old, base, blocks), carried, generator);
+            return true;
+        }
+        let ground = Arc::new(file.make_ground(generator.as_deref()));
+        let made = made_on((&file, &drawn), &ground, (&old, &base, &blocks), carried, renumber);
         (ground, made)
     } else if *faces != *blocks.faces {
         (base, blocks.restyled(&faces, file.smooth))
@@ -849,6 +970,42 @@ fn change(
     }
     restyle(game, renderer, entity, &drawn);
     true
+}
+
+/// The world of blocks `file` makes on `ground`, drawn as `drawn`, with
+/// what was built on the world `blocks`, which `old` made on `base`, kept on
+/// it: where it was in metres where blocks changed size, renumbered by
+/// `renumber` where a block was taken out; or, in their place, `carried`,
+/// every change a world without end had.
+fn made_on(
+    (file, drawn): (&BlockFile, &Resolved),
+    ground: &Arc<BlockMap>,
+    (old, base, blocks): (&BlockFile, &BlockMap, &BlockWorld),
+    carried: Option<BlockEdits>,
+    renumber: Option<&dyn Fn(BlockId) -> BlockId>,
+) -> BlockWorld {
+    let renumbered = |map: &BlockMap| renumber.map_or_else(|| map.clone(), |change| map.remapped(change));
+    let resized = old.block_size != file.block_size;
+    let water = |block: BlockId| voxear_terrain::blocks::is_water(&blocks.faces, block);
+    let resize = Resize { from: old.block_size, to: file.block_size, smooth: file.smooth, water: &water };
+    // The new ground names its blocks by their new numbers already; the old ground and blocks are renumbered.
+    let changes = match (carried, renumber) {
+        (Some(carried), _) if resized => carried.resized(&resize),
+        (Some(carried), Some(change)) => carried.remapped(change),
+        (Some(carried), None) => carried,
+        (None, _) if resized => {
+            let mut built = (**ground).clone();
+            let cells = edits::changed(base, &blocks.blocks);
+            for (at, block, fill) in edits::resized(&cells, Some(&blocks.blocks), &resize) {
+                built.set_cell(at, block, fill);
+            }
+            BlockEdits::between(ground, &built)
+        }
+        (None, _) => BlockEdits::between(&renumbered(base), &renumbered(&blocks.blocks)),
+    };
+    let mut made = voxear_engine::blocks::make(drawn, ground, Some(&changes));
+    made.cast_shadows = blocks.cast_shadows;
+    made
 }
 
 /// Makes every world of blocks whose ground the world generator `guid`
@@ -947,7 +1104,7 @@ pub fn pick(
         return std::mem::replace(&mut ui_mut(&mut game.engine.world).model, model) != model;
     }
     if field != F::Data {
-        let Some(mut file) = game.engine.world.get::<BlockWorldAsset>(entity).map(|a| a.file.clone()) else {
+        let Some(mut file) = file_of(&game.engine.world, entity) else {
             return false;
         };
         let written = reference.map(|r| r.to_string());
@@ -1010,7 +1167,7 @@ pub(crate) fn place_model(
     model: &VoxFile,
     at: [i32; 3],
 ) -> bool {
-    let Some(mut file) = game.engine.world.get::<BlockWorldAsset>(entity).map(|a| a.file.clone()) else {
+    let Some(mut file) = file_of(&game.engine.world, entity) else {
         return false;
     };
     let room = MAX_LOOKS.saturating_sub(looks(game, entity));
@@ -1086,7 +1243,7 @@ pub(crate) fn placed_by(game: &Game, guid: AssetGuid) -> bool {
 /// Lists the block `reference` names at the end of the world's list, and
 /// picks it; one it lists already is only picked.
 pub fn list_block(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, reference: &str) -> bool {
-    let Some(mut file) = game.engine.world.get::<BlockWorldAsset>(entity).map(|a| a.file.clone()) else {
+    let Some(mut file) = file_of(&game.engine.world, entity) else {
         return false;
     };
     let guid_of = |game: &Game, reference: &str| game.content.parse(reference).ok().and_then(|parsed| parsed.guid());
@@ -1112,7 +1269,7 @@ fn fresh_color(number: usize) -> [f32; 3] {
 /// Makes a new `.block` of a colour of its own in the project's Blocks
 /// folder, lists it at the end of the world's list and picks it.
 pub fn new_block(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity) -> bool {
-    let Some(file) = game.engine.world.get::<BlockWorldAsset>(entity).map(|a| a.file.clone()) else {
+    let Some(file) = file_of(&game.engine.world, entity) else {
         return false;
     };
     if !has_room(game, entity, &file) {
@@ -1134,7 +1291,7 @@ pub fn new_block(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entit
 /// Adds a kind of the world's own, of a colour of its own, at the end of
 /// the list, and picks it.
 pub fn add_block(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity) -> bool {
-    let Some(mut file) = game.engine.world.get::<BlockWorldAsset>(entity).map(|a| a.file.clone()) else {
+    let Some(mut file) = file_of(&game.engine.world, entity) else {
         return false;
     };
     if !has_room(game, entity, &file) {
@@ -1153,7 +1310,7 @@ pub fn add_block(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entit
 /// ground's layers of it too. Its place stays, empty, so every other block
 /// keeps its number.
 pub fn remove_block(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, at: usize) -> bool {
-    let Some(mut file) = game.engine.world.get::<BlockWorldAsset>(entity).map(|a| a.file.clone()) else {
+    let Some(mut file) = file_of(&game.engine.world, entity) else {
         return false;
     };
     if !file.blocks.get(at).is_some_and(BlockKind::is_live) {
@@ -1196,7 +1353,7 @@ pub fn make_block_assets(game: &mut Game, renderer: Option<&mut Renderer>, entit
 /// already of a kind's name taken as it is, whatever its look: how a new
 /// world comes by the project's own grass, dirt and stone.
 fn blocks_for_kinds(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, as_drawn: bool) -> bool {
-    let Some(mut file) = game.engine.world.get::<BlockWorldAsset>(entity).map(|a| a.file.clone()) else {
+    let Some(mut file) = file_of(&game.engine.world, entity) else {
         return false;
     };
     let root = game.project.root.clone();

@@ -10,12 +10,14 @@
 //! step, upright columns across its Collider's footprint are each pushed up
 //! as much as they are under water, so waves rock it and it rights itself,
 //! and slowed against the way the water there flows, so a Stream carries it.
+//! Up is against the pull where it is, and the push as strong as that pull:
+//! near a planet, out from its middle, where its blocks' water floats it.
 
 use voxear_core::math::{Mat4, Quat, Vec3};
 use voxear_ecs::{Component, Entity, World};
 use voxear_physics::{
     Push,
-    scene::{Collider, ColliderMesh, ColliderShape, PhysicsScene, Rigidbody},
+    scene::{Collider, ColliderMesh, ColliderShape, PLANET_REACH, PhysicsScene, Rigidbody},
 };
 use voxear_render::{DryArea, DryShape, Ocean, SeaEasing, SeaNow, WindZone, OceanSampler, ParticlePlayback, ParticleSystem, Pool, SeaState, Stream, StreamPoint, ocean, stream_over};
 use voxear_scene::{Destroying, Path, Transform, WorldTransform};
@@ -221,6 +223,39 @@ fn sample_wet(world: &World, physics: Option<&PhysicsScene>, at: Vec3) -> Option
     Some(WaterPoint { height, normal, flow })
 }
 
+/// Which way and how hard things fall at `at`, as physics pulls them in a
+/// world whose gravity is `gravity`: towards the middle of the nearest
+/// planet within `PLANET_REACH` of its radius, as strongly as `gravity`,
+/// and `gravity` itself away from planets.
+fn pull_at(world: &World, gravity: Vec3, at: Vec3) -> Vec3 {
+    let blocks = world.query_ref::<(&voxear_terrain::blocks::BlockWorld, &Transform, Option<&WorldTransform>)>();
+    let planets = blocks
+        .without::<Destroying>()
+        .into_iter()
+        .filter_map(|(blocks, local, placed)| Some((voxear_terrain::corner(local, placed), blocks.planet?)));
+    let near = planets.filter(|(middle, radius)| middle.distance(at) < radius * PLANET_REACH);
+    match near.min_by(|a, b| a.0.distance(at).total_cmp(&b.0.distance(at))) {
+        Some((middle, _)) => (middle - at).normalize_or_zero() * gravity.length(),
+        None => gravity,
+    }
+}
+
+/// How deep under water `at` is along `up`, in metres (less than nothing
+/// over it), and how the water there flows: where up is the world's, any
+/// water's (see `sample_wet`); elsewhere, as round a planet, its blocks'
+/// water, whose up is out from its middle.
+fn depth_at(world: &World, physics: Option<&PhysicsScene>, at: Vec3, up: Vec3) -> Option<(f32, Vec3)> {
+    if up.y > 0.999 {
+        return sample_wet(world, physics, at).map(|water| (water.height - at.y, water.flow));
+    }
+    let blocks = world.query_ref::<(&voxear_terrain::blocks::BlockWorld, &Transform, Option<&WorldTransform>)>();
+    blocks.into_iter().find_map(|(blocks, local, placed)| {
+        let corner = voxear_terrain::corner(local, placed);
+        let (depth, _) = blocks.water_depth((at - corner).to_array(), OVER_BLOCK_WATER)?;
+        Some((depth, Vec3::ZERO))
+    })
+}
+
 /// The water at a point as scripts take it: height, normal and flow.
 fn for_scripts(world: &World, at: [f32; 3]) -> Option<[f32; 7]> {
     let water = sample(world, Vec3::from(at))?;
@@ -272,7 +307,7 @@ pub fn float(world: &World, physics: &mut PhysicsScene) -> Vec<Floating> {
         .filter(|(.., body)| !body.kinematic)
         .map(|(entity, buoyancy, collider, body)| (entity, *buoyancy, *collider, body.mass.max(1e-3)))
         .collect();
-    let gravity = physics.gravity().length();
+    let gravity = physics.gravity();
     for (entity, buoyancy, collider, mass) in floating {
         let Some(body) = physics.body(entity) else { continue };
         let to_world: Mat4 = voxear_scene::world_matrix(world, entity);
@@ -281,12 +316,16 @@ pub fn float(world: &World, physics: &mut PhysicsScene) -> Vec<Floating> {
         let tall = to_world.transform_vector3(Vec3::new(0.0, reach.y * 2.0, 0.0)).length().max(1e-3);
         let centre = to_world.transform_point3(middle);
         let share = 1.0 / (COLUMNS * COLUMNS) as f32;
+        // Up against the pull here, and the water's push as strong as it.
+        let pull = pull_at(world, gravity, centre);
+        let strength = pull.length();
+        let up = if strength > 1e-6 { -pull / strength } else { Vec3::Y };
         // As strong a push, wholly under, as holds it up `submerged` under.
         let submerged = buoyancy.submerged.max(0.01);
-        let lift = mass * gravity / submerged * share;
+        let lift = mass * strength / submerged * share;
         // Drag measured against how it bobs: a spring as stiff as the water's push rising up it, and as much
         // drag, at 1, as stops it with no overshoot; turning, as far out as its sides are.
-        let stiff = mass * gravity / (submerged * tall);
+        let stiff = mass * strength / (submerged * tall);
         let damping = 2.0 * (stiff * mass).sqrt();
         let across = to_world.transform_vector3(Vec3::new(reach.x, 0.0, reach.z)).length_squared() / 3.0;
         let (moving, turning) = physics.world().velocity(body);
@@ -295,14 +334,14 @@ pub fn float(world: &World, physics: &mut PhysicsScene) -> Vec<Floating> {
             for j in 0..COLUMNS {
                 let spot = |k: usize| (k as f32 + 0.5) / COLUMNS as f32 * 2.0 - 1.0;
                 let at = to_world.transform_point3(middle + Vec3::new(reach.x * spot(i), 0.0, reach.z * spot(j)));
-                let Some(water) = sample_wet(world, Some(&*physics), at) else { continue };
-                let under = ((water.height - (at.y - tall * 0.5)) / tall).clamp(0.0, 1.0);
+                let Some((depth, flow)) = depth_at(world, Some(&*physics), at, up) else { continue };
+                let under = ((depth + tall * 0.5) / tall).clamp(0.0, 1.0);
                 if under <= 0.0 {
                     continue;
                 }
                 under_all += under * share;
-                let along = moving + turning.cross(at - centre) - water.flow;
-                let force = Vec3::Y * lift * under - along * buoyancy.drag * damping * share * under / submerged;
+                let along = moving + turning.cross(at - centre) - flow;
+                let force = up * lift * under - along * buoyancy.drag * damping * share * under / submerged;
                 physics.world_mut().push(body, Push::Force(force, Some(at)));
             }
         }
@@ -310,10 +349,10 @@ pub fn float(world: &World, physics: &mut PhysicsScene) -> Vec<Floating> {
             let slowing = buoyancy.angular_drag * damping * across * under_all / submerged;
             physics.world_mut().push(body, Push::Torque(-turning * slowing));
         }
-        let water = sample_wet(world, Some(&*physics), centre);
-        let surface = water.map_or(centre, |water| Vec3::new(centre.x, water.height, centre.z));
+        let water = depth_at(world, Some(&*physics), centre, up);
+        let surface = water.map_or(centre, |(depth, _)| centre + up * depth);
         let width = (across * 3.0).sqrt() * 2.0;
-        found.push(Floating { entity, under: under_all, surface, falling: -moving.y, width });
+        found.push(Floating { entity, under: under_all, surface, falling: -moving.dot(up), width });
     }
     found
 }
@@ -505,6 +544,48 @@ mod tests {
         let height = |entity: Entity| world.get::<Transform>(entity).unwrap().position.y;
         assert!(height(floating).abs() < 0.2, "half under, at the water's top: {}", height(floating));
         assert!((height(sinking) + 3.5).abs() < 0.1, "through the water onto the floor: {}", height(sinking));
+    }
+
+    #[test]
+    fn on_a_planets_side_a_buoyant_ball_floats_out_from_its_middle_and_one_without_sinks() {
+        use voxear_terrain::blocks::{
+            BlockMap, BlockWorld,
+            file::{BlockFile, BlockKind},
+        };
+        let mut world = World::new();
+        let mut file = BlockFile::default();
+        file.blocks.push(BlockKind { water: true, ..BlockKind::colored("Water", [0.04, 0.46, 0.33]) });
+        let (_, faces) = file.faces();
+        // A planet of stone 16 blocks a side round the world's middle, and on its +x side a sea 2 blocks deep.
+        let mut map = BlockMap::default();
+        for z in -8i32..8 {
+            for y in -8i32..8 {
+                for x in -8..10 {
+                    let sea = y.abs() < 6 && z.abs() < 6;
+                    let block = match x {
+                        ..8 => 3,
+                        _ if sea => 4,
+                        _ => 0,
+                    };
+                    map.set([x, y, z], block);
+                }
+            }
+        }
+        let mut blocks = BlockWorld::new(map, &faces, 1.0);
+        blocks.planet = Some(8.0);
+        world.spawn((blocks, Transform::default()));
+        // Two balls 4 m out over the sea, which the planet pulls towards its middle, along -x.
+        let sphere = Collider { shape: ColliderShape::Sphere, radius: 0.5, ..Collider::default() };
+        let body = Rigidbody { mass: 10.0, ..Rigidbody::default() };
+        let floating =
+            world.spawn((Buoyancy::default(), sphere, body, Transform::from_position(Vec3::new(14.0, 0.5, -2.5))));
+        let sinking = world.spawn((sphere, body, Transform::from_position(Vec3::new(14.0, 0.5, 2.5))));
+        play(&mut world, 8.0);
+        let at = |entity: Entity| world.get::<Transform>(entity).unwrap().position;
+        let (afloat, sunk) = (at(floating), at(sinking));
+        assert!((afloat.x - 10.0).abs() < 0.2, "half under, at the sea's top 10 m out: {afloat}");
+        assert!(afloat.y.abs() < 2.0 && (afloat.z + 2.5).abs() < 2.0, "where it came down: {afloat}");
+        assert!((sunk.x - 8.5).abs() < 0.1, "through the sea onto the stone 8 m out: {sunk}");
     }
 
     #[test]

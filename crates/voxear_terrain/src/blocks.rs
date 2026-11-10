@@ -175,6 +175,7 @@ impl BlockMap {
     /// Each chunk's faces, worked out on every core, each block drawn with
     /// the surfaces `faces` gives it (see `file::BlockFile::faces`).
     pub fn mesh_all(&self, faces: &[BlockFaces], smooth: bool) -> HashMap<[i32; 3], Arc<ChunkMesh>> {
+        voxear_core::profile_scope!("Block Meshing");
         let keys: Vec<[i32; 3]> = self.chunks.keys().copied().collect();
         let meshes = crate::workers::each(&keys, |&key| mesh_any(self, key, faces, smooth));
         keys.into_iter().zip(meshes).filter(|(_, mesh)| !mesh.is_empty()).map(|(k, m)| (k, Arc::new(m))).collect()
@@ -379,6 +380,7 @@ impl BlockWorld {
     /// Makes chunks `keys`' faces again, on every core, from the blocks as
     /// they are now.
     pub fn remesh(&mut self, keys: &[[i32; 3]]) {
+        voxear_core::profile_scope!("Block Meshing");
         let blocks = &self.blocks;
         let faces = &self.faces;
         let smooth = self.smooth;

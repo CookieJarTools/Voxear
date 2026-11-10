@@ -34,7 +34,19 @@ pub(crate) const SHEET: &str = include_str!("../ui/StatsOverlay.vss");
 /// The labels the numbers go in, by name, in the order [`refresh`] fills them.
 ///
 /// [`refresh`]: StatsOverlay::refresh
-const VALUES: [&str; 9] = ["fps", "frame", "gpu", "draws", "shadow-draws", "culled", "meshlets", "lights", "exposure"];
+const VALUES: [&str; 11] = [
+    "fps",
+    "frame",
+    "gpu",
+    "draws",
+    "shadow-draws",
+    "culled",
+    "meshlets",
+    "block-triangles",
+    "block-shadows",
+    "lights",
+    "exposure",
+];
 
 pub struct StatsOverlay {
     ui: Ui,
@@ -194,11 +206,13 @@ impl StatsOverlay {
             format!("{:.2} ms", ((seconds * 1000.0 - self.waited_ms) / frames).max(0.0)),
             // Adding zero turns a rounding's -0.00 into 0.00.
             format!("{:.2} ms", gpu_ms.max(0.0) + 0.0),
-            grouped(stats.drawn_early + stats.drawn_late),
-            grouped(stats.shadow_draws),
-            grouped(stats.frustum_culled + stats.occlusion_culled),
-            format!("{} / {}", grouped(stats.meshlets_drawn), grouped(stats.meshlets)),
-            grouped(stats.cluster_max_lights),
+            grouped(u64::from(stats.drawn_early + stats.drawn_late)),
+            grouped(u64::from(stats.shadow_draws)),
+            grouped(u64::from(stats.frustum_culled + stats.occlusion_culled)),
+            format!("{} / {}", grouped(u64::from(stats.meshlets_drawn)), grouped(u64::from(stats.meshlets))),
+            grouped(stats.blocks.triangles + stats.blocks.water_triangles),
+            grouped(stats.blocks.shadow_triangles),
+            grouped(u64::from(stats.cluster_max_lights)),
             exposure,
         ];
         for (node, text) in self.values.iter().zip(&texts) {
@@ -271,7 +285,7 @@ impl StatsOverlay {
 }
 
 /// `12345` as `12,345`.
-fn grouped(n: u32) -> String {
+fn grouped(n: u64) -> String {
     let digits = n.to_string();
     let mut out = String::with_capacity(digits.len() + digits.len() / 3);
     for (i, digit) in digits.chars().enumerate() {

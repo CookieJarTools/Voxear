@@ -463,6 +463,7 @@ impl BlockWorlds {
         world: &World,
         frame_index: u64,
     ) -> Result<()> {
+        voxear_core::profile_scope!("Block Uploads");
         self.drawn.clear();
         self.copies.clear();
         // Staged and never recorded: every chunk staged again.
@@ -655,6 +656,41 @@ impl ViewBlocks {
     pub fn has_water(&self) -> bool {
         !self.water.is_empty()
     }
+
+    /// How many draws and triangles its worlds take, in view and in the
+    /// sun's cascades.
+    pub fn counts(&self) -> BlockCounts {
+        let mut counts = BlockCounts::default();
+        for (_, smooth, lists) in &self.runs {
+            // A quad is two triangles; drawn smooth, a triangle is three corners of two pairs of words.
+            let triangles = |runs: &[[u32; 2]]| -> u64 {
+                runs.iter().map(|&[_, count]| if *smooth { u64::from(count) / 6 } else { u64::from(count) * 2 }).sum()
+            };
+            counts.draws += lists[LIST_EARLY as usize].len() as u32;
+            counts.triangles += triangles(&lists[LIST_EARLY as usize]);
+            for cascade in 0..CASCADES {
+                let list = &lists[LIST_SHADOW as usize + cascade];
+                counts.shadow_draws += list.len() as u32;
+                counts.shadow_triangles += triangles(list);
+            }
+        }
+        for (_, runs) in &self.water {
+            counts.draws += runs.len() as u32;
+            counts.water_triangles += runs.iter().map(|&[_, count]| u64::from(count) * 2).sum::<u64>();
+        }
+        counts
+    }
+}
+
+/// How many draws and triangles a view's worlds of blocks take: their
+/// ground in view, their water, and their ground in the sun's cascades.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BlockCounts {
+    pub draws: u32,
+    pub triangles: u64,
+    pub water_triangles: u64,
+    pub shadow_draws: u32,
+    pub shadow_triangles: u64,
 }
 
 /// Picks each world's chunks and faces for this view and writes the
@@ -671,6 +707,7 @@ pub(crate) fn gather(
     if drawn.is_empty() {
         return None;
     }
+    voxear_core::profile_scope!("Block Picking");
     let mut anchors: HashMap<Entity, u32> = HashMap::new();
     for (index, owner) in entities.iter().enumerate().take(crate::MAX_INSTANCES as usize) {
         if owner.plant.is_none() && owner.part.is_some() {

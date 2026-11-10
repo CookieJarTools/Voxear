@@ -4148,6 +4148,7 @@ dependencies = [
  "glam",
  "serde",
  "tracing",
+ "voxear_core",
  "voxear_ecs",
  "voxear_scene",
  "voxear_terrain",

@@ -1122,6 +1122,7 @@ impl PhysicsScene {
     /// moved with its Obj.
     fn sync_block_worlds(&mut self, world: &World) {
         use voxear_terrain::blocks::{BlockWorld, chunk::CHUNK};
+        voxear_core::profile_scope!("Block Bodies");
         let found: Vec<(Entity, &BlockWorld, Vec3)> = world
             .query_ref::<(Entity, &BlockWorld, &Transform, Option<&WorldTransform>)>()
             .without::<Destroying>()

@@ -1577,7 +1577,7 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     search is the object picker, with the kinds of node in their folders. The picked node shows in the Inspector
     as rows made from its kind's values (`world_gen_inspector::ValueRow`, one arm a kind of value), seldom-needed
     ones under Advanced, a value standing in for an input hidden while that input is wired; a context click on a
-    row's label exposes it, and the generator's own Inspector is the same rows: Preset while it is one landmass,
+    row's label exposes it, and the generator's own Inspector is the same rows: Preset while its shape is a preset's,
     Seed, Scale, Sea level, what it exposes, and Open Graph. The graph has its own undo (whole generators kept,
     changes within 800 ms to one value or to where nodes are merged), which Ctrl+Z, Ctrl+Y and Delete reach while
     its panel or the Inspector showing it was the last pressed in. Saved once nothing is held, so the level's
@@ -1605,8 +1605,12 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     and a few more values as rows. Files made from a landmass preset are untouched. Tests, for every node: its
     range, batches against single places flat and round, its text read back, what it does round a planet; a
     hash of each starter's ground, the same unoptimised and optimised; a tile of each timed against a
-    landmass's. Manual: Generator Nodes. To come with the graph editor: the starters in New ▸ World Generator and
-    the Preset row.
+    landmass's. Manual: Generator Nodes. In the editor, New ▸ World Generator makes the Rolling Hills starter, and a
+    generator's Preset row picks among the starters while its graph is one's still, whatever its rows are set to
+    (`Starter::shapes`); a single landmass, as a file from before graphs is, keeps a landmass's presets, and a
+    graph of its own has no Preset row, since a preset would take its place. A preset picked with the graph open
+    is a step of the graph's to undo. Tests: the row's kinds and a starter picked without a GPU; in the editor a
+    new generator's graph, another starter picked and undone, an angle typed in degrees.
   - biomes as nodes: where each is and what it brings (its shape, a Terrain's surfaces, a Block World's blocks),
     laid over one another as layers; surfaces' climate ranges and kinds' covers moved over
   - voxels: a Volume beside the height, with overhangs, tunnels and chambers as nodes; hillsides no longer pocked,

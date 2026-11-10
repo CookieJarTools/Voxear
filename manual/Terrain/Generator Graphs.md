@@ -2,7 +2,7 @@
 order: 3
 ---
 
-A world generator is a **graph**: nodes that each make a number at every place on the ground, joined by wires that carry what one node makes into another. One **Output** node takes the ground's height and its climate. A new generator's graph is a single Landmass wired to the Output with a Climate beside it, and most worlds never need more than its few rows in the Inspector (see [[Generating Terrain]]). The **Generator** panel is where you open the graph and build your own.
+A world generator is a **graph**: nodes that each make a number at every place on the ground, joined by wires that carry what one node makes into another. One **Output** node takes the ground's height and its climate. A new generator's graph is a preset's: a dozen or so nodes that shape one kind of ground, with a few of their values as rows in the Inspector, which is all most worlds need (see [[Generating Terrain]]). The **Generator** panel is where you open the graph, to change it or to build your own.
 
 ## Opening a generator's graph
 
@@ -49,19 +49,20 @@ A wire takes its colour from what it carries:
 
 The search lists the kinds of node in folders, as Add Component does. Type to search every folder at once; Up and Down move through the list, Enter picks, and Escape closes it.
 
-| Folder | Node | What it makes |
-| --- | --- | --- |
-| Sources | Landmass | Continents, ranges and gullies in one node: the ground a preset makes |
-| Sources | Noise | Fractal, ridged or billowing noise between two numbers |
-| Sources | Constant | The same number everywhere |
-| Shape | Curve | What is wired in, read through a curve you draw |
-| Shape | Math | Two numbers added, subtracted, multiplied, or the lesser or greater of them |
-| Climate | Climate | How warm and how wet each place is |
-| | Output | Takes the ground's height, temperature and humidity. A graph needs one |
+| Folder | Its nodes |
+| --- | --- |
+| Sources | Ground from nothing: noise, cells, a falloff, a constant, a whole landmass |
+| Shape | What is wired in, changed: a curve, sums, terraces, a clamp, a blend, a warp, smoothing |
+| Masks | Where something is, from 0 to 1: by height, slope, curvature or climate |
+| Erosion | Gullies cut down the slopes |
+| Climate | How warm and how wet each place is |
+| | Output, which takes the ground's height, temperature and humidity. A graph needs one |
+
+[[Generator Nodes]] lists every kind of node, with what goes into it, what comes out and its rows.
 
 ## A node's values
 
-Pick a node and the Inspector shows its values, one row each, with the ones it seldom needs under **Advanced**. Type in a row, or drag its label left or right to change its number. Curves are edited in their rows: drag a key to move it, press where there is none to add one, and drag a key off the graph to take it out.
+Pick a node and the Inspector shows its values, one row each, with the ones it seldom needs under **Advanced**. Type in a row, or drag its label left or right to change its number. An angle is typed in degrees. Curves are edited in their rows: drag a key to move it, press where there is none to add one, and drag a key off the graph to take it out.
 
 Some values stand in for an input: a Math node's **A** and **B** are the numbers it uses while nothing is wired into those inputs. Wire something in and the row goes, since the wire is what the node reads.
 
@@ -69,7 +70,7 @@ With no node picked, the Inspector shows the generator itself: press empty canva
 
 ## Exposing a value
 
-Right-click a row's label and choose **Expose**. The value becomes a row of the generator's own, shown in its Inspector under Seed, Scale and Sea level, so it can be changed without opening the graph. A new generator exposes its landmass's Height and its climate's Temperature and Humidity this way.
+Right-click a row's label and choose **Expose**. The value becomes a row of the generator's own, shown in its Inspector under Seed, Scale and Sea level, so it can be changed without opening the graph. A preset's rows, such as its Height and its Gullies, are values of its nodes exposed this way.
 
 An exposed row is named for its value. When another row has that name already, the node's name goes in front, as **Noise Size**. A value that is exposed has its label in the accent colour on its node's rows; **Stop Exposing** in the same menu takes the row away again.
 

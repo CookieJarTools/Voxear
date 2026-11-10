@@ -2871,7 +2871,9 @@ giving nodes neighbours: a place still depends on its own inputs alone, any batc
 cost is plain to see, five reads behind a slope or gullies and nine behind a smooth. `generate::starters()` gives
 five graphs built from the library under the presets' names (plains, hills, alpine, archipelago, canyons), each
 with its height and a few values exposed, their ground pinned by hash; the landmass presets and files made from
-them are untouched.
+them are untouched. The editor makes a new generator from the Rolling Hills starter, and a generator's Preset row
+picks among whichever presets its shape is still one of: the starters for a starter's graph, a landmass's for a
+single landmass, and none for a graph of its own.
 A terrain's Generate layer lays it from an offset in its world; compositing finds generators by reference as it
 finds pictures. Rivers and lakes on finished maps are a Rivers layer (`voxear_terrain::rivers`): priority-flood filling
 gives every cell the way it drains and the ground draining through it; rivers are cut where that is enough, lakes

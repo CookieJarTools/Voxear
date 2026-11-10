@@ -18,7 +18,7 @@ Sources make ground from nothing: they have no height input.
 
 ### Landmass
 
-Continents, mountain ranges and gullies in one node: all a generator was before generators were graphs. A generator made from a preset is this node wired to the Output. Its rows are the preset's settings, listed in [[Generating Terrain#How a generator shapes ground|How a generator shapes ground]].
+Continents, mountain ranges and gullies in one node: all a generator was before generators were graphs. A generator made then is this node wired to the Output still. Its rows are the preset's settings, listed in [[Generating Terrain#How a landmass shapes ground|How a landmass shapes ground]].
 
 **Out:** Height.
 

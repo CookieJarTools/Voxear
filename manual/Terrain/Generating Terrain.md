@@ -23,35 +23,49 @@ The same generator makes the same ground for every terrain that uses it, so terr
 
 ## World generators
 
-**New ▸ World Generator** in the Project panel makes one. Select it there and the Inspector shows its own rows, which are all most worlds need:
+**New ▸ World Generator** in the Project panel makes one: the **Rolling Hills** preset, with seed 1. Select it there and the Inspector shows its own rows, which are all most worlds need:
 
 | Setting | What it does |
 | --- | --- |
-| Preset | The kind of ground to start from (see below). Picking one reshapes the generator's landmass and climate, keeping its seed and scale |
+| Preset | The kind of ground to start from (see [[Generating Terrain#Presets|Presets]]). Picking one puts that preset's graph in place of the generator's, keeping its seed and scale |
 | Seed | Which world of that kind it makes. Each number makes other ground |
 | Scale | How large everything is: 2 makes every coast, range and valley twice as large |
 | Sea level | The height of the sea, in metres |
-| Height | How high the highest mountains rise above the sea, in metres |
+| Height | How high the ground rises, in metres |
 | Temperature | How warm it is by the sea on average, in °C |
 | Humidity | How wet it is on average, from 0 for dry to 1 for wet |
 
+Each preset has a row or two more of its own, listed with it below.
+
 **Open Graph**, under the rows, shows the generator's graph in the Generator panel; so does a double click on the generator in the Project panel.
 
-Seed, Scale and Sea level are the generator's own. Height, Temperature and Humidity are values of nodes in its graph that the graph **exposes** as rows here, and a graph can expose any others (see [[Generator Graphs#Exposing a value|Exposing a value]]). Preset shows while the graph is one landmass and its climate, as a new generator's is.
+Seed, Scale and Sea level are the generator's own. The rest are values of nodes in its graph that the graph **exposes** as rows here, and a graph can expose any others (see [[Generator Graphs#Exposing a value|Exposing a value]]).
 
-| Preset | Its ground |
-| --- | --- |
-| Battlefield Plains | Wide, nearly level farmland rolling gently, with no sea |
-| Rolling Hills | Hills and dales, with no sea |
-| Alpine | Ranges of high, sharp mountains with deep valleys, and coasts at their feet |
-| Archipelago | Islands scattered over a sea |
-| Canyons | High plateaus cut by steep-sided canyons |
+Each change is saved as you make it, and every terrain in the open level generated from it is made again at once, so you see the ground change as you type. A row dragged by its label makes the ground again when you let go. A generator edited in a text editor is read again when you come back to Voxear.
 
-Each change is saved as you make it, and every terrain in the open level generated from it is made again at once, so you see the ground change as you type. A generator edited in a text editor is read again when you come back to Voxear.
+## Presets
+
+A preset is a graph of nodes built and tuned for one kind of ground, with a few of its values as rows:
+
+| Preset | Its ground | Its own rows |
+| --- | --- | --- |
+| Battlefield Plains | Wide, nearly level farmland rolling gently, with low rises and the shallow dips of streams | **Streams**: how deeply the streams cut. **Craters**: shell holes where the shelling was heaviest; none at 0 |
+| Rolling Hills | Hills and dales whose valleys branch, with no sea | **Gullies**: how deeply water has cut the valleys |
+| Alpine | Ranges of high, sharp mountains with deep valleys, and coasts at their feet | **Gullies** |
+| Archipelago | Islands scattered over a sea, with ragged coasts, shallows and islets | **Gullies** |
+| Canyons | High ground in broad steps, cut by steep-sided canyons with ledges down their walls | **Ravines**: how deeply ravines cut back into the canyons' walls |
+
+The Preset row is there while the generator's graph is a preset's still, whatever its rows are set to. Change the graph itself, by adding a node, moving a wire or changing a value that is not one of its rows, and the ground is your own: the row goes, since picking a preset would put its graph in place of yours. [[Generator Graphs]] is about the graph, and [[Generator Nodes]] about what each node does.
+
+### Generators made before presets were graphs
+
+A generator made in an earlier version of Voxear is a single **Landmass** node, and makes exactly the ground it always made. Its Preset row picks among the landmass's own presets instead. They have the same five names and make the older ground, and **Custom** shows once the landmass's shape is its own.
+
+To give a terrain the newer ground, make a new generator and pick it in the Generate layer's **Generator** field.
 
 ## How a landmass shapes ground
 
-The rest of a preset's settings are on the **Landmass** node of the generator's graph. Open the graph and pick the node, and the Inspector shows them under **Advanced**. Change any of them and the preset shows **Custom**.
+A **Landmass** node is continents, mountain ranges and gullies in one node: what every generator was before generators were graphs, and a node you can still add to any graph. Open the graph and pick the node, and the Inspector shows its settings under **Advanced**. Change any of them and its preset shows **Custom**.
 
 A landmass reads three fields over its world, each from one end of its range to the other:
 

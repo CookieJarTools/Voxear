@@ -609,6 +609,7 @@ impl Game {
         give_collider_meshes(&mut self.engine.world, &mut self.content);
         // Before physics steps, so ground made round the camera stands things on it this frame.
         crate::terrain::stream(&mut self.engine.world, &mut self.content);
+        crate::blocks::refresh(&mut self.engine.world, &mut self.content, renderer.as_deref_mut());
         crate::blocks::stream(&mut self.engine.world, &mut self.content);
         crate::blocks::flow(&mut self.engine.world, delta);
         // The meshes' boxes, as the renderer has them, for the scripts that ask.
@@ -641,6 +642,8 @@ impl Game {
             let _scope = ServicesScope::enter(&mut services);
             self.engine.tick(delta);
         }
+        // A block a script put down where its world did not list it is drawn as it says from this frame.
+        crate::blocks::refresh(&mut self.engine.world, &mut self.content, renderer.as_deref_mut());
         // Screen UIs show while the game plays: those made this frame, without their Objs gone.
         if !self.engine.is_edit_mode() {
             self.ui.sync_screens(&mut self.engine.world, &mut self.content);
@@ -882,6 +885,30 @@ impl ScriptServices for GameServices<'_> {
 
     fn asset_fields(&mut self, reference: &str) -> Result<String> {
         self.content.data_asset_json(reference)
+    }
+
+    fn block_json(&mut self, reference: &str) -> Result<String> {
+        crate::blocks::block_json(self.content, reference)
+    }
+
+    fn blocks_version(&mut self) -> u64 {
+        self.content.blocks_version()
+    }
+
+    fn block_guid(&mut self, world: &World, entity: Entity, block: u16) -> Option<String> {
+        crate::blocks::block_guid(world, entity, block)
+    }
+
+    fn block_number(&mut self, world: &mut World, entity: Entity, reference: &str, grow: bool) -> Option<u16> {
+        crate::blocks::block_number(world, self.content, entity, reference, grow)
+    }
+
+    fn blocks_grown(&mut self, world: &World, entity: Entity) -> Vec<(u16, String)> {
+        crate::blocks::blocks_grown(world, entity)
+    }
+
+    fn block_listed(&mut self, world: &World, entity: Entity, block: u16) -> bool {
+        crate::blocks::block_listed(world, entity, block)
     }
 
     fn data_assets(&mut self) -> Result<String> {

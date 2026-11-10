@@ -594,6 +594,44 @@ fn a_data_asset_ships_when_a_field_names_it_and_not_otherwise() {
 }
 
 #[test]
+fn a_block_ships_with_the_world_that_lists_it_or_the_data_asset_that_names_it_with_what_it_names() {
+    let dir = project();
+    let write = |path: &str, text: &str| {
+        let path = dir.path().join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    };
+    // Grass is listed by the forest's world of blocks and drawn with a material; planks are named only by an item
+    // the wolf holds; nothing names marble.
+    write("Materials/Turf.material", MATERIAL);
+    write("Blocks/Grass.block", "color = [0.3, 0.5, 0.2]\ntop = \"Materials/Turf.material\"\n");
+    write("Blocks/Planks.block", "color = [0.6, 0.4, 0.2]\n");
+    write("Blocks/Marble.block", "color = [0.9, 0.9, 0.9]\n");
+    write("Blocks/Field.blockworld", "[[blocks]]\nblock = \"Blocks/Grass.block\"\n");
+    write("Items/Planks.asset", "type = \"Game.Item\"\n\n[fields]\nplaces = \"Blocks/Planks.block\"\n");
+    let field = "[[obj]]\nid = 3\nname = \"Field\"\n[obj.block_world]\ndata = \"Blocks/Field.blockworld\"\n";
+    write("Scenes/Forest.scene", &format!("{FOREST}{field}"));
+    let pack = "behaviours = [\"Game.Pack\"]\nfields.\"Game.Pack\" = { holds = \"Items/Planks.asset\" }\n";
+    write("Prefabs/Wolf.prefab", &format!("{WOLF}{pack}"));
+    let output = dir.path().join("Built");
+    let report = content_build::build(dir.path(), &output, &unmerged(), &[]).unwrap();
+    let shipped: Vec<&String> = report.bundles.iter().flat_map(|b| &b.assets).collect();
+    for path in ["Blocks/Field.blockworld", "Blocks/Grass.block", "Materials/Turf.material", "Blocks/Planks.block"] {
+        assert!(shipped.iter().any(|p| *p == path), "{path} ships: {shipped:?}");
+    }
+    assert!(report.excluded.iter().any(|p| p == "Blocks/Marble.block"), "nothing names the marble");
+    let catalog = Catalog::read(&output).unwrap();
+    let grass = catalog.assets.iter().find(|a| a.path == "Blocks/Grass.block").unwrap();
+    assert_eq!(grass.kind, voxear_assets::AssetKind::Block);
+    // A server reads its blocks too: whether one is a liquid is how its world is meshed and stood on.
+    let server = dir.path().join("Server");
+    let settings = ContentSettings { server: true, ..unmerged() };
+    let report = content_build::build(dir.path(), &server, &settings, &[]).unwrap();
+    let shipped: Vec<&String> = report.bundles.iter().flat_map(|b| &b.assets).collect();
+    assert!(shipped.iter().any(|p| *p == "Blocks/Grass.block"), "{shipped:?}");
+}
+
+#[test]
 fn a_clip_a_field_or_a_data_asset_names_ships_its_model_file() {
     let dir = project();
     let write = |path: &str, text: &str| {

@@ -22,6 +22,7 @@
 //! falling towards a planet's middle. A Voxel Terrain's water is smooth
 //! too, its surface made as its ground's is (see `smooth`).
 
+pub mod block;
 pub mod chunk;
 pub mod edits;
 pub mod file;
@@ -459,6 +460,19 @@ pub struct BlockHit {
 /// from the world's corner, meets within `max_distance` blocks: stepping
 /// from block to block along it, through every block it passes.
 pub fn raycast(blocks: &BlockMap, origin: [f32; 3], direction: [f32; 3], max_distance: f32) -> Option<BlockHit> {
+    raycast_where(blocks, origin, direction, max_distance, &|block| block != AIR)
+}
+
+/// As [`raycast`], meeting only the blocks `meets` picks: the ray passes
+/// through every other, as a hand reaching into water passes through it to
+/// the ground.
+pub fn raycast_where(
+    blocks: &BlockMap,
+    origin: [f32; 3],
+    direction: [f32; 3],
+    max_distance: f32,
+    meets: &dyn Fn(BlockId) -> bool,
+) -> Option<BlockHit> {
     let length = direction.iter().map(|v| v * v).sum::<f32>().sqrt();
     if length <= 0.0 {
         return None;
@@ -481,7 +495,7 @@ pub fn raycast(blocks: &BlockMap, origin: [f32; 3], direction: [f32; 3], max_dis
     let mut normal = [0; 3];
     let mut distance = 0.0;
     loop {
-        if blocks.get(at) != AIR {
+        if meets(blocks.get(at)) {
             return Some(BlockHit { block: at, normal, distance });
         }
         let axis = if next[0] < next[1] {
@@ -593,5 +607,12 @@ mod tests {
         assert_eq!(down.normal, [0, 1, 0]);
         assert!(raycast(&map, [0.5, 2.5, -2.5], [1.0, 0.0, 0.0], 3.0).is_none(), "too far");
         assert!(raycast(&map, [0.5, 2.5, -2.5], [-1.0, 0.2, 0.0], 100.0).is_none());
+        // Water before the block: a ray meets it, or passes through it to the block behind.
+        map.set([3, 2, -3], 2);
+        let (from, along) = ([0.5, 2.5, -2.5], [1.0, 0.0, 0.0]);
+        assert_eq!(raycast(&map, from, along, 100.0).unwrap().block, [3, 2, -3]);
+        let through = raycast_where(&map, from, along, 100.0, &|block| block == 1).expect("the block behind");
+        assert_eq!((through.block, through.normal), ([5, 2, -3], [-1, 0, 0]));
+        assert!((through.distance - 4.5).abs() < 1e-5);
     }
 }

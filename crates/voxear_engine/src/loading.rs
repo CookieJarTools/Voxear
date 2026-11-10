@@ -432,6 +432,7 @@ fn gather(
                 | AssetKind::PromptIcons
                 | AssetKind::WorldGen
                 | AssetKind::BlockWorld
+                | AssetKind::Block
                 | AssetKind::VoxModel => false,
             } && !models.stripped.contains(&guid);
             if owner == Some(guid) {

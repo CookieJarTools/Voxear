@@ -180,7 +180,14 @@ impl BlockTools {
     fn work(game: &mut Game, entity: Entity, hit: &BlockHit, brush: BlockBrush) -> [i32; 3] {
         let state = block_props::ui(&game.engine.world);
         let middle = Self::middle(hit, brush);
-        let picked = (state.block + 1) as BlockId;
+        let world = &game.engine.world;
+        let listed = world.get::<BlockWorldAsset>(entity).and_then(|asset| block_props::picked(world, &asset.file));
+        // With no block picked, as once the one picked was taken out, there is nothing to place or paint with.
+        let picked = match (listed, brush) {
+            (Some(at), _) => (at + 1) as BlockId,
+            (None, BlockBrush::Break) => AIR,
+            (None, _) => return middle,
+        };
         let Some(blocks) = game.engine.world.get_mut::<BlockWorld>(entity) else { return middle };
         let map = blocks.blocks.clone();
         if blocks.smooth {

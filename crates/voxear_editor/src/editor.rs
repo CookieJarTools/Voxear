@@ -4,6 +4,7 @@
 
 mod color_popup;
 mod component_clipboard;
+mod blocks;
 mod data_assets;
 mod debug_texts;
 mod desktop_windows;
@@ -1243,6 +1244,9 @@ impl Editor {
                 self.save_gun_handling(&path, &handling, rebuild);
             }
             AssetAction::SaveWorldGen { path, world, rebuild } => self.save_world_gen(&path, &world, rebuild),
+            AssetAction::SaveBlock { path, block, rebuild } => self.save_block(&path, &block, rebuild),
+            AssetAction::BrowseBlockRef { block, field, anchor } => self.browse_block_ref(&block, field, anchor),
+            AssetAction::DropBlockRef { block, field, source } => self.drop_block_ref(&block, field, &source),
             AssetAction::BrowsePromptIcon { icons, slot, anchor } => self.browse_prompt_icon(&icons, slot, anchor),
             AssetAction::DropPromptIcon { icons, slot, source } => self.drop_prompt_icon(&icons, &slot, &source),
             AssetAction::BrowseGunClip { handling, field, anchor } => self.browse_gun_clip(&handling, field, anchor),
@@ -2506,6 +2510,7 @@ impl Editor {
                 (PickFor::GunHandlingClip { handling, field }, Chosen::Value(pick)) => {
                     self.pick_gun_handling_clip(&handling, field, &pick);
                 }
+                (PickFor::BlockRef { block, field }, Chosen::Value(pick)) => self.pick_block_ref(&block, field, &pick),
                 (PickFor::PromptIcon { icons, slot }, Chosen::Value(pick)) => self.pick_prompt_icon(&icons, &slot, &pick),
                 (PickFor::InputPromptIcons, Chosen::Value(pick)) => self.pick_input_prompt_icons(&pick),
                 (PickFor::MaterialMap { material, map }, Chosen::Value(pick)) => {

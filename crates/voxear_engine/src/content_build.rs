@@ -371,6 +371,7 @@ pub fn server_reads(kind: AssetKind) -> bool {
         | AssetKind::Terrain
         | AssetKind::WorldGen
         | AssetKind::BlockWorld
+        | AssetKind::Block
         | AssetKind::VoxModel => true,
         AssetKind::Texture
         | AssetKind::Material
@@ -596,8 +597,9 @@ fn find_needs(db: &AssetDb, guid: AssetGuid, kind: AssetKind, path: &str) -> Res
         | AssetKind::GunHandling
         | AssetKind::Data
         | AssetKind::Terrain
-        // The materials a world of blocks' faces are drawn with.
+        // The blocks a world of blocks lists and the materials its own kinds' faces are drawn with; what a block names.
         | AssetKind::BlockWorld
+        | AssetKind::Block
         // The pictures a set of prompt icons shows, and the set the input actions name.
         | AssetKind::PromptIcons
         | AssetKind::InputActions => {

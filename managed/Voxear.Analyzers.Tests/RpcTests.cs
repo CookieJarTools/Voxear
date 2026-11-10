@@ -72,8 +72,49 @@ internal static class RpcTests
 		}
 	}
 
+	private static void TestWorldPositionsGoFromTheLevelMiddle()
+	{
+		const string code = """
+			using System.Numerics;
+			using Voxear;
+			namespace Game;
+			public sealed partial class Flag : Behaviour
+			{
+				[Replicated, WorldPosition] public partial Vector3 Rally { get; set; }
+				[Replicated] public partial Vector3 Wind { get; set; }
+				[ServerRpc]
+				private void Signal([WorldPosition] Vector3 at, Vector3 towards) { }
+				private void Use()
+				{
+					SignalOnServer(Rally, Wind);
+				}
+			}
+			""";
+		// The compiler these tests use predates partial properties, so only what the generators say counts.
+		var (generated, diagnostics) = Run(code, new ReplicatedGenerator());
+		var said = diagnostics.Where(d => d.Id.StartsWith("VOX", StringComparison.Ordinal)).ToList();
+		if (said.Count > 0)
+		{
+			throw new Exception($"wanted nothing, got {string.Join("; ", said.Select(d => d.ToString()))}");
+		}
+		var checks = new[]
+		{
+			"writer.Write(global::Voxear.Origin.ToLevel(replicatedRally))",
+			"writer.Write(replicatedWind)",
+			"[global::Voxear.WorldPosition]\n\tprivate global::System.Numerics.Vector3 replicatedRally;",
+			"writer.Write(global::Voxear.Origin.ToLevel(@at))",
+			"writer.Write(@towards)",
+			"global::Voxear.Origin.FromLevel(reader.ReadLevelPosition()), reader.ReadVector3()",
+		};
+		var missing = checks.Where(check => !generated.Replace("\r\n", "\n").Contains(check)).ToList();
+		if (missing.Count > 0)
+		{
+			throw new Exception($"missing {string.Join(" | ", missing)} in:\n{generated}");
+		}
+	}
+
 	/// <summary>Runs the generator over code compiled against Voxear.Core: what it wrote, and the errors after.</summary>
-	private static (string Generated, Diagnostic[] Diagnostics) Run(string code)
+	private static (string Generated, Diagnostic[] Diagnostics) Run(string code, IIncrementalGenerator? also = null)
 	{
 		var references = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!)
 			.Split(Path.PathSeparator)
@@ -85,7 +126,8 @@ internal static class RpcTests
 			[CSharpSyntaxTree.ParseText(code, new CSharpParseOptions(LanguageVersion.Latest))],
 			references,
 			new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
-		var driver = CSharpGeneratorDriver.Create(new RpcGenerator()).RunGeneratorsAndUpdateCompilation(compilation, out var output, out var reported);
+		IIncrementalGenerator[] generators = also == null ? [new RpcGenerator()] : [new RpcGenerator(), also];
+		var driver = CSharpGeneratorDriver.Create(generators).RunGeneratorsAndUpdateCompilation(compilation, out var output, out var reported);
 		var generated = string.Join("\n", driver.GetRunResult().GeneratedTrees.Select(tree => tree.ToString()));
 		var errors = output.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error);
 		return (generated, reported.Concat(errors).ToArray());

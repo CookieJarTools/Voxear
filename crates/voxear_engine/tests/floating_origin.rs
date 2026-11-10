@@ -14,6 +14,9 @@ use voxear_engine::{
 };
 use voxear_scene::{Name, Transform, WorldOrigin};
 
+/// A project's floating origin switched on for levels with ground without end.
+const ENDLESS_ONLY: &str = "\n[floating_origin]\nmode = \"endless\"\n";
+
 fn find(world: &voxear_ecs::World, name: &str) -> Entity {
     world.query_ref::<(Entity, &Name)>().into_iter().find(|(_, n)| n.0 == name).unwrap().0
 }
@@ -102,7 +105,7 @@ fn endless_terrain() -> tempfile::TempDir {
     write(
         dir.path(),
         &[
-            ("voxear.toml", "[project]\nname = \"Far\"\nstart_level = \"Levels/Main.level\"\n".into()),
+            ("voxear.toml", format!("[project]\nname = \"Far\"\nstart_level = \"Levels/Main.level\"\n{ENDLESS_ONLY}")),
             ("Levels/Main.level", "format = 1\n[[scene]]\nscene = \"Scenes/World.scene\"\n".into()),
             ("Scenes/World.scene", scene.into()),
             ("Terrains/World.terrain", file.to_text()),
@@ -258,10 +261,12 @@ fn a_level_of_a_set_size_keeps_its_middle_where_it_is() {
     let dir = tempfile::tempdir().unwrap();
     let scene =
         "format = 1\n\n[[obj]]\nid = 1\nname = \"Eye\"\nposition = [6000.0, 2.0, 0.0]\n[obj.camera]\nfov = 60.0\n";
+    // Switched on for endless worlds only.
+    let project = format!("[project]\nname = \"Field\"\nstart_level = \"Levels/Main.level\"\n{ENDLESS_ONLY}");
     write(
         dir.path(),
         &[
-            ("voxear.toml", "[project]\nname = \"Field\"\nstart_level = \"Levels/Main.level\"\n".into()),
+            ("voxear.toml", project.into()),
             ("Levels/Main.level", "format = 1\n[[scene]]\nscene = \"Scenes/Field.scene\"\n".into()),
             ("Scenes/Field.scene", scene.into()),
         ],

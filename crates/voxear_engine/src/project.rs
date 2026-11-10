@@ -238,6 +238,29 @@ impl Project {
         Ok(())
     }
 
+    /// Writes the project's floating origin into `voxear.toml`: only what
+    /// differs from the defaults, so a project that never switches it on
+    /// has no `[floating_origin]` at all. The rest of the file is kept as it
+    /// is, comments and all.
+    pub fn set_floating_origin(&mut self, settings: &crate::origin::OriginSettings) -> Result<()> {
+        use crate::origin::OriginSettings;
+        let path = self.root.join(PROJECT_FILE);
+        let text = std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+        let mut document: toml_edit::DocumentMut =
+            text.parse().with_context(|| format!("reading {}", path.display()))?;
+        let defaults = OriginSettings::default();
+        let mode = toml::Value::try_from(settings.mode)?.as_str().unwrap_or_default().to_string();
+        let mode = (settings.mode != defaults.mode).then(|| toml_edit::value(mode));
+        let distance = (settings.distance != defaults.distance).then(|| toml_edit::value(f64::from(settings.distance)));
+        let step = (settings.step != defaults.step).then(|| toml_edit::value(i64::from(settings.step)));
+        set_key(&mut document, "floating_origin", "mode", mode);
+        set_key(&mut document, "floating_origin", "distance", distance);
+        set_key(&mut document, "floating_origin", "step", step);
+        std::fs::write(&path, document.to_string()).with_context(|| format!("writing {}", path.display()))?;
+        self.file.floating_origin = settings.clone();
+        Ok(())
+    }
+
     /// The modules the project has.
     pub fn modules(&self) -> crate::modules::Modules {
         self.file.modules.unwrap_or_else(crate::modules::Modules::older_project)
@@ -366,6 +389,24 @@ mod tests {
         assert_eq!(reopened.modules(), project.modules());
         assert!(reopened.modules().has(Module::Guns) && !reopened.modules().has(Module::Water));
         assert_eq!(written.matches(" = ").count(), 1 + Module::ALL.len(), "the name and every module: {written}");
+    }
+
+    #[test]
+    fn the_floating_origin_is_written_only_where_it_differs_from_the_defaults() {
+        use crate::origin::{OriginMode, OriginSettings};
+        let folder = tempfile::tempdir().unwrap();
+        std::fs::write(folder.path().join(PROJECT_FILE), "# Orbit\n[project]\nname = \"Orbit\"\n").unwrap();
+        let mut project = Project::open(folder.path()).unwrap();
+        assert_eq!(project.file.floating_origin.mode, OriginMode::Off, "off until switched on");
+        let on = OriginSettings { mode: OriginMode::Endless, step: 512, ..OriginSettings::default() };
+        project.set_floating_origin(&on).unwrap();
+        let written = std::fs::read_to_string(folder.path().join(PROJECT_FILE)).unwrap();
+        assert!(written.starts_with("# Orbit\n") && written.contains("mode = \"endless\""), "{written}");
+        assert!(!written.contains("distance"), "the default distance is left out: {written}");
+        assert_eq!(Project::open(folder.path()).unwrap().file.floating_origin, on);
+        project.set_floating_origin(&OriginSettings::default()).unwrap();
+        let written = std::fs::read_to_string(folder.path().join(PROJECT_FILE)).unwrap();
+        assert!(!written.contains("floating_origin"), "switched off again, the section goes: {written}");
     }
 
     #[test]

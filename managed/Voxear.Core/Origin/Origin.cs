@@ -18,11 +18,12 @@ namespace Voxear;
 /// <code>
 /// [WorldPosition] Vector3 lastSeen;
 ///
-/// Origin.Moved += by => path.Offset(by);
+/// Origin.Moved += by => heardAt += by;
 /// var fromLevel = Origin.ToLevel(Obj.WorldPosition);
 /// </code>
-/// Voxear.toml's [floating_origin] says when it moves: by default only in levels with ground without end or a
-/// planet, never in a networked game.
+/// It moves only in a project that switches it on, in Project Settings ▸ World. In a networked game the server keeps
+/// the level's middle and each player's machine moves its own; positions go between them from the level's middle,
+/// script positions too where a [Replicated] property or an RPC argument is marked [WorldPosition].
 /// </summary>
 public static class Origin
 {

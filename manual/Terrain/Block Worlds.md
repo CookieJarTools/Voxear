@@ -14,13 +14,42 @@ Along the top of the Block World in the Inspector are its tools: **Build**, its 
 | --- | --- |
 | Data | The `.blockworld` asset its blocks are |
 | Block size | How many metres a block is a side |
+| Ground | **Flat**, or **Generated** by a world generator (see below) |
 | Ground size | How many blocks its ground reaches along X and Z |
-| Ground height | How many blocks high its ground is |
+| Ground height | With flat ground, how many blocks high it is |
+| Top block, Under block, Base block | The kinds of block its ground is made of: its top, the layers under that, and the rest |
+| Under depth | How many layers of the under block there are |
 | Cast shadows | Whether its blocks cast the sun's shadows |
 
 A change to its ground makes its blocks again at once, what you built on it kept. Each change is one step to undo, and is written to the asset when you save the level.
 
 Its blocks are made from its ground as it loads, the same on every machine. What you built since is kept beside the `.blockworld` in a `.blocks` file of the same name, holding only the chunks you changed, each as its changed blocks one by one while they are few, or whole once that is smaller: a house on a field takes a few hundred bytes. Keep the two together when you move or copy them. A built game ships both.
+
+## Generated ground
+
+With **Ground** set to **Generated**, a [[Generating Terrain|world generator]] makes the ground: the same mountains, coasts and climate a terrain's Generate layer lays, a column of blocks at a time. Each column rises as high as the generator's ground there, its top the top block, the under block below that, and the base block the rest.
+
+| Setting | What it does |
+| --- | --- |
+| Generator | The `.worldgen` its ground comes from |
+| Offset | Where its corner is in the generator's world, in metres |
+| Lowest block | How far down its ground goes, in blocks from its corner: below that is air |
+| Overhangs | How far its surface is pushed in and out, in metres, so cliffs lean and overhang |
+| Caves | How much of the ground below is hollowed out, from 0 for none to 1: long tunnels, and chambers here and there |
+
+Caves keep three blocks under the surface whole, so they open onto it only where a slope cuts into them.
+
+A kind of block can **cover** generated ground in place of its top block, by the ground's climate and height. Under **Build**, tick a kind's **Cover**, and its rows show:
+
+| Setting | What it does |
+| --- | --- |
+| Biome | Sets its temperatures and humidities to a biome's at once (see [[Surfaces#Biomes|Biomes]]) |
+| Temperature, Temperatures | Covers only between two temperatures, in °C |
+| Humidity, Humidities | Covers only between two humidities, from 0 for dry to 1 for wet |
+| Height, Heights | Covers only between two heights in the generator's world, in metres |
+| Depth | How many blocks deep it lies |
+
+Snow covering where it is below freezing, sand where it is hot and dry and low, gravel on the tops: later kinds in the list cover those before them. A change to the generator makes the ground again, with what you built on it kept.
 
 ## Kinds of block
 

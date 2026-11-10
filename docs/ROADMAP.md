@@ -1626,6 +1626,16 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     `CaptureEdits` and `ApplyEdits`, saved with the scene (API 68). Tests: chunks remade beside a change, changes
     kept small and read back, a world loading with them, the editor placing, breaking, undoing, adding and taking
     out kinds and saving, scripts asking, building, blasting and putting back.
+  - ~~**Generation:**~~ done: a `.blockworld`'s `[generate]` (`blocks::generate::BlockGenerate`: world generator,
+    offset, lowest block, overhangs in metres, caves 0 to 1) makes its ground a column at a time from the
+    generator's heights, pushed in and out by 3D noise (`noise::gradient3`), tunnels where two noises meet nothing
+    and chambers where a third is high, three blocks under the surface kept whole; kinds of block cover it by
+    climate and height (`file::BlockCover`, biomes), later kinds over earlier; every chunk column on every core.
+    Each world's asset keeps the ground its file made (`BlockWorldAsset::base`, chunks shared with its blocks), so
+    changes are kept across a changed ground or generator; worlds are made again when their generator changes.
+    Editor: Ground (Flat or Generated) and its rows, the ground's blocks, each kind's Cover rows. Tests: 3D noise,
+    columns at their generator's heights, snow where cold, caves hollowing, overhangs, a generated world loading
+    with its changes, the editor picking a generator and a kind covering by its biome. Not done: water blocks.
   - face-connectivity cave culling.
 - **Smooth voxel terrain, flat and planets:** marching cubes with Transvoxel on an octree, caves and overhangs from
   3D density, planets with their own gravity, and a floating origin.

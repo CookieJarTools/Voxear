@@ -2846,7 +2846,9 @@ way they face. A world's quads live in a pool of its own and are drawn six verti
 (`blocks.rs`, `shaders/blocks.slang`), each view drawing only the chunks in view and their faces turned towards it;
 each chunk's faces merged by surface alone are its collision mesh and its mesh for the GI's rays. A change remakes
 the chunks it reaches and those beside it it shades, on every core; changes are kept as what differs from what a
-world was made as (`blocks::edits`), in a `.blocks` file for the editor's and in a scene's save for scripts'. To come:
+world was made as (`blocks::edits`), in a `.blocks` file for the editor's and in a scene's save for scripts'.
+Generated block ground (`blocks::generate`) takes a world generator's heights a column at a time, pushed in and out
+by 3D noise and hollowed by caves, its top covered by kinds of block by climate and height. To come:
 face-connectivity cave culling, and far views through rings of coarser chunks. Smooth voxels: density and material
 a voxel, marching cubes with Transvoxel between levels on an octree; planets add their own gravity and a floating origin. Digging into a
 heightmap terrain turns its columns into smooth-voxel chunks that start from its heights (`voxear_terrain::dig`,

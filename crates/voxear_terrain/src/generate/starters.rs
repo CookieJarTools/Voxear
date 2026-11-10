@@ -34,9 +34,22 @@ impl Starter {
         WorldGen::new(seed, scale, self.sea_level, self.graph.clone())
     }
 
+    /// `world` with this starter's ground in place of its own: its seed,
+    /// its scale and the area its previews show kept, and the nodes that
+    /// make its Volume carried over with their rows (see
+    /// [`Graph::take_volume`]).
+    pub fn reshapes(&self, world: &WorldGen) -> WorldGen {
+        let mut graph = self.graph.clone();
+        graph.take_volume(world.graph());
+        WorldGen::new(world.seed(), world.scale(), self.sea_level, graph).with_preview_area(world.preview_area())
+    }
+
     /// Whether `graph` is this starter's still: the same nodes and wires,
-    /// whatever its rows are set to and wherever its nodes lie.
+    /// whatever its rows are set to and wherever its nodes lie. The nodes
+    /// that make its Volume alone are not looked at: a starter is the
+    /// ground, and stays that starter with overhangs and caves wired in.
     pub fn shapes(&self, graph: &Graph) -> bool {
+        let graph = &graph.without_volume();
         if graph.exposed != self.graph.exposed {
             return false;
         }

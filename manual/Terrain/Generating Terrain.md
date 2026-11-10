@@ -55,7 +55,7 @@ A preset is a graph of nodes built and tuned for one kind of ground, with a few 
 | Archipelago | Islands scattered over a sea, with ragged coasts, shallows and islets | **Gullies** |
 | Canyons | High ground in broad steps, cut by steep-sided canyons with ledges down their walls | **Ravines**: how deeply ravines cut back into the canyons' walls |
 
-The Preset row is there while the generator's graph is a preset's still, whatever its rows are set to. Change the graph itself, by adding a node, moving a wire or changing a value that is not one of its rows, and the ground is your own: the row goes, since picking a preset would put its graph in place of yours. [[Generator Graphs]] is about the graph, and [[Generator Nodes]] about what each node does.
+The Preset row is there while the generator's graph is a preset's still, whatever its rows are set to. Change the graph itself, by adding a node, moving a wire or changing a value that is not one of its rows, and the ground is your own: the row goes, since picking a preset would put its graph in place of yours. Overhangs and caves moved into the generator from a Block World (see [[Block Worlds#Overhangs and caves in the generator|Overhangs and caves in the generator]]) are no part of a preset: the row stays, and a preset picked keeps them, with their rows. [[Generator Graphs]] is about the graph, and [[Generator Nodes]] about what each node does.
 
 ### Generators made before presets were graphs
 

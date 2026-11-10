@@ -668,12 +668,13 @@ struct TerrainBodies {
 }
 
 /// A world of blocks' bodies: where its Obj was, its layer, how large a
-/// block was, and for each chunk the faces it was made from, its body and
-/// its shape.
+/// block was, its chunks' faces as they were made from, and for each chunk
+/// the faces it was made from, its body and its shape.
 struct BlockBodies {
     corner: Vec3,
     layer: u8,
     block_size: f32,
+    meshes: Option<Arc<voxear_terrain::blocks::ChunkMeshes>>,
     chunks: HashMap<[i32; 3], (Arc<voxear_terrain::blocks::mesh::ChunkMesh>, BodyId, ShapeId)>,
 }
 
@@ -1142,11 +1143,17 @@ impl PhysicsScene {
                 .is_some_and(|kept| kept.layer == layer && kept.block_size == blocks.block_size);
             if !fits {
                 self.remove_block_world(entity);
-                let kept = BlockBodies { corner, layer, block_size: blocks.block_size, chunks: HashMap::new() };
+                let kept =
+                    BlockBodies { corner, layer, block_size: blocks.block_size, meshes: None, chunks: HashMap::new() };
                 self.block_worlds.insert(entity, kept);
             }
+            // Nothing to do where its faces are those its bodies were made from, and it has not moved.
+            let moved = self.block_worlds[&entity].corner != corner;
+            let same = self.block_worlds[&entity].meshes.as_ref().is_some_and(|made| Arc::ptr_eq(made, &blocks.meshes));
+            if !moved && same {
+                continue;
+            }
             let mut kept = self.block_worlds.remove(&entity).expect("kept above");
-            let moved = kept.corner != corner;
             let side = CHUNK as f32 * blocks.block_size;
             let at = |key: &[i32; 3]| corner + Vec3::new(key[0] as f32, key[1] as f32, key[2] as f32) * side;
             kept.chunks.retain(|key, (_, body, shape)| {
@@ -1203,6 +1210,7 @@ impl PhysicsScene {
                 kept.chunks.insert(*key, (mesh.clone(), body, shape));
             }
             kept.corner = corner;
+            kept.meshes = Some(blocks.meshes.clone());
             self.block_worlds.insert(entity, kept);
         }
     }

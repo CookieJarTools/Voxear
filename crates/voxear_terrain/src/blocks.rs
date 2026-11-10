@@ -197,6 +197,9 @@ impl BlockMap {
     }
 }
 
+/// A world's chunks' faces, by chunk.
+pub type ChunkMeshes = HashMap<[i32; 3], Arc<ChunkMesh>>;
+
 /// A world of blocks: its blocks, each chunk's faces, the surfaces each
 /// block's top, sides and bottom are drawn with and which are water (see
 /// `file::BlockFile::faces`), how large a block is in metres, whether it is

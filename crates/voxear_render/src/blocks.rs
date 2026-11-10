@@ -24,7 +24,7 @@ use voxear_core::math::{Mat3, Mat4, Vec3, Vec4};
 use voxear_ecs::{Component, Entity, World};
 use voxear_rhi::{Buffer, FRAMES_IN_FLIGHT, Frames, Gpu, MemoryLocation, Retired, vk};
 use voxear_terrain::blocks::{
-    BlockWorld,
+    BlockWorld, ChunkMeshes,
     chunk::CHUNK,
     mesh::{ChunkMesh, FACINGS},
 };
@@ -268,6 +268,13 @@ struct Pool {
     /// with its draws.
     sights: Option<Arc<HashMap<[i32; 3], u16>>>,
     seen: u64,
+    /// The world's faces, its own and coarser, as the pool was last brought
+    /// up to them, and as every one of its own had its mesh for rays made.
+    made_from: Option<(Arc<ChunkMeshes>, Arc<HashMap<[i32; 4], Arc<ChunkMesh>>>)>,
+    proxied: Option<Arc<ChunkMeshes>>,
+    /// Its chunks' meshes for rays, each with where its chunk is from the
+    /// world's corner, made again as they change.
+    placed: Option<Arc<[(MeshHandle, Vec3)]>>,
 }
 
 impl Pool {
@@ -290,6 +297,9 @@ impl Pool {
             draws: None,
             sights: None,
             seen: 0,
+            made_from: None,
+            proxied: None,
+            placed: None,
         })
     }
 
@@ -311,6 +321,14 @@ impl Pool {
             self.space.free(first, count);
             self.slots.free(slot);
         }
+        // Nothing to bring up where its faces are those it was last brought up to.
+        let same = |(meshes, far): &(Arc<ChunkMeshes>, Arc<HashMap<[i32; 4], Arc<ChunkMesh>>>)| {
+            Arc::ptr_eq(meshes, &world.meshes) && Arc::ptr_eq(far, &world.far)
+        };
+        if self.made_from.as_ref().is_some_and(same) {
+            return Ok(());
+        }
+        self.made_from = Some((world.meshes.clone(), world.far.clone()));
         let before = self.held.len();
         let freeing = &mut self.freeing;
         let has = |key: &[i32; 4]| match key[0] {
@@ -379,6 +397,7 @@ impl Pool {
         frames.retire(Retired::Buffer(old));
         self.capacity = capacity;
         self.space = RangeAllocator::new(capacity);
+        self.made_from = None;
         // Slots given up wait no longer: nothing draws from the old buffer's quads now.
         for (_, _, _, slot) in self.freeing.drain(..) {
             self.slots.free(slot);
@@ -438,7 +457,7 @@ pub(crate) struct DrawnBlocks {
     pub cast_shadows: bool,
     /// Its chunks' meshes for rays, each with where its chunk is from the
     /// world's corner.
-    pub proxies: Vec<(MeshHandle, Vec3)>,
+    pub proxies: Arc<[(MeshHandle, Vec3)]>,
     /// Its pool in this frame's graph, for every view to wait on.
     pub id: Option<BufferId>,
 }
@@ -582,52 +601,72 @@ impl BlockWorlds {
             };
             pool.update(gpu, frames, blocks, frame_index, &mut stage)?;
             // Each chunk's mesh for rays, a few a frame, the old one shown until the new one is made.
-            pool.proxies.retain(|key, (_, mesh)| {
-                let kept = blocks.meshes.contains_key(key);
-                if !kept {
-                    assets.free_mesh(*mesh, frame_index);
-                }
-                kept
-            });
-            let side = CHUNK as f32 * blocks.block_size;
-            let uv_scale = 1.0 / blocks.block_size.max(0.01);
-            // Uploaded and built together, waited for once.
-            let batch = gpu.batch();
-            for (key, mesh) in blocks.meshes.iter() {
-                if pool.proxies.get(key).is_some_and(|(made, _)| Arc::ptr_eq(made, mesh)) || proxies_left == 0 {
-                    continue;
-                }
-                proxies_left -= 1;
-                let from = Vec3::new(key[0] as f32, key[1] as f32, key[2] as f32) * side;
-                let making = voxear_core::profile_marker!("Ray Mesh Make").scope();
-                let data = proxy(mesh, blocks.block_size, from, uv_scale);
-                let lods = crate::lod::rays_only(&data);
-                drop(making);
-                let _uploading = voxear_core::profile_marker!("Ray Mesh Upload").scope();
-                // Out of room, the rest wait: the GI's rays miss them, but the frame goes on.
-                let handle = match assets.add_mesh_with_lods(gpu, &data, &lods) {
-                    Ok(handle) => handle,
-                    Err(error) => {
-                        if !std::mem::replace(&mut self.warned_full, true) {
-                            tracing::warn!("a world of blocks' chunks are left out of the GI's rays: {error:#}");
-                        }
-                        proxies_left = 0;
+            if !pool.proxied.as_ref().is_some_and(|made| Arc::ptr_eq(made, &blocks.meshes)) {
+                let before = pool.proxies.len();
+                pool.proxies.retain(|key, (_, mesh)| {
+                    let kept = blocks.meshes.contains_key(key);
+                    if !kept {
+                        assets.free_mesh(*mesh, frame_index);
+                    }
+                    kept
+                });
+                let mut changed = pool.proxies.len() != before;
+                let mut all = true;
+                let side = CHUNK as f32 * blocks.block_size;
+                let uv_scale = 1.0 / blocks.block_size.max(0.01);
+                // Uploaded and built together, waited for once.
+                let batch = gpu.batch();
+                for (key, mesh) in blocks.meshes.iter() {
+                    if pool.proxies.get(key).is_some_and(|(made, _)| Arc::ptr_eq(made, mesh)) {
                         continue;
                     }
-                };
-                if let Some((_, old)) = pool.proxies.insert(*key, (mesh.clone(), handle)) {
-                    assets.free_mesh(old, frame_index);
+                    if proxies_left == 0 {
+                        all = false;
+                        break;
+                    }
+                    proxies_left -= 1;
+                    let from = Vec3::new(key[0] as f32, key[1] as f32, key[2] as f32) * side;
+                    let making = voxear_core::profile_marker!("Ray Mesh Make").scope();
+                    let data = proxy(mesh, blocks.block_size, from, uv_scale);
+                    let lods = crate::lod::rays_only(&data);
+                    drop(making);
+                    let _uploading = voxear_core::profile_marker!("Ray Mesh Upload").scope();
+                    // Out of room, the rest wait: the GI's rays miss them, but the frame goes on.
+                    let handle = match assets.add_mesh_with_lods(gpu, &data, &lods) {
+                        Ok(handle) => handle,
+                        Err(error) => {
+                            if !std::mem::replace(&mut self.warned_full, true) {
+                                tracing::warn!("a world of blocks' chunks are left out of the GI's rays: {error:#}");
+                            }
+                            // Tried again once its faces change, as room may be made by then.
+                            proxies_left = 0;
+                            break;
+                        }
+                    };
+                    if let Some((_, old)) = pool.proxies.insert(*key, (mesh.clone(), handle)) {
+                        assets.free_mesh(old, frame_index);
+                    }
+                    changed = true;
+                }
+                {
+                    let _uploading = voxear_core::profile_marker!("Ray Mesh Upload").scope();
+                    batch.finish()?;
+                }
+                if all {
+                    pool.proxied = Some(blocks.meshes.clone());
+                }
+                if changed {
+                    pool.placed = None;
                 }
             }
-            {
-                let _uploading = voxear_core::profile_marker!("Ray Mesh Upload").scope();
-                batch.finish()?;
-            }
+            let side = CHUNK as f32 * blocks.block_size;
             let placed = pool
-                .proxies
-                .iter()
-                .map(|(key, (_, mesh))| (*mesh, Vec3::new(key[0] as f32, key[1] as f32, key[2] as f32) * side))
-                .collect();
+                .placed
+                .get_or_insert_with(|| {
+                    let at = |key: &[i32; 3]| Vec3::new(key[0] as f32, key[1] as f32, key[2] as f32) * side;
+                    pool.proxies.iter().map(|(key, (_, mesh))| (*mesh, at(key))).collect()
+                })
+                .clone();
             self.drawn.push(DrawnBlocks {
                 entity,
                 corner,

@@ -694,6 +694,24 @@ mod tests {
     }
 
     #[test]
+    fn round_heights_and_climate_are_the_same_bits_too() {
+        let world = Preset::Alpine.world();
+        let at = |i: usize| [i as f32 * 3.7 - 5000.0, 4000.0 - i as f32 * 1.9, i as f32 * 2.3 + 100.0];
+        let round: Vec<u32> = (0..2048).map(|i| world.height_round(at(i)).to_bits()).collect();
+        let hash = crate::layers::stable_hash(bytemuck::cast_slice(&round));
+        assert_eq!(hash, 0x04d6_4ff4_749d_2b1f, "a planet's ground changed: was it meant to? {hash:#x}");
+        let mut climate = Vec::new();
+        for i in 0..2048 {
+            let (x, z, height) = (i as f32 * 53.0 - 40_000.0, i as f32 * 31.0, i as f32 * 0.4 - 50.0);
+            let (warmth, wet) = world.climate(x, z, height);
+            let (cold, damp) = world.climate_round(at(i), height);
+            climate.extend([warmth, wet, cold, damp].map(f32::to_bits));
+        }
+        let hash = crate::layers::stable_hash(bytemuck::cast_slice(&climate));
+        assert_eq!(hash, 0x88c9_2696_6aa8_c038, "the climate changed: was it meant to? {hash:#x}");
+    }
+
+    #[test]
     fn gullies_only_cut_run_down_the_slope_and_leave_level_ground_alone() {
         let world = Preset::Alpine.world();
         let dry = WorldGen { erosion: Erosion { strength: 0.0, ..world.erosion }, ..world.clone() };

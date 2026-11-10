@@ -575,6 +575,78 @@ mod tests {
         assert!(overhanging, "air under the ground somewhere above the caves' reach");
     }
 
+    /// A hash of every block and fill of `chunks`, in their order.
+    fn hash_of<'a>(chunks: impl IntoIterator<Item = (&'a [i32; 3], &'a Chunk)>) -> u64 {
+        let mut bytes = Vec::new();
+        for (key, chunk) in chunks {
+            bytes.extend(key.iter().flat_map(|v| v.to_le_bytes()));
+            for (x, y, z) in (0..CHUNK).flat_map(|y| (0..CHUNK).flat_map(move |z| (0..CHUNK).map(move |x| (x, y, z)))) {
+                bytes.extend(chunk.get(x, y, z).to_le_bytes());
+                bytes.push(chunk.fill(x, y, z));
+            }
+        }
+        crate::layers::stable_hash(&bytes)
+    }
+
+    /// Three chunk columns of `file`'s ground at `level`, hashed: over the first high ground found in `world`, so
+    /// they hold mountainsides, snow and caves rather than sea floor.
+    fn columns_hash(file: &BlockFile, world: &WorldGen, level: u32) -> u64 {
+        let spots = (0..200).flat_map(|i| (0..200).map(move |j| [i as f32 * 250.0, j as f32 * 250.0]));
+        let position = spots.into_iter().find(|&[x, z]| world.height_at(x, z) > 150.0).expect("high ground");
+        let generate = BlockGenerate { position, ..file.generate.clone().expect("generated") };
+        let made: Vec<([i32; 3], Chunk)> = [[0, 0], [1, 0], [-3, 7]]
+            .into_iter()
+            .flat_map(|at| column_chunks(file, &generate, world, level, at, None))
+            .collect();
+        let kinds: std::collections::BTreeSet<BlockId> =
+            made.iter().flat_map(|(_, chunk)| (0..CHUNK).map(|v| chunk.get(v, v, v))).collect();
+        assert!(made.len() >= 3 && kinds.len() >= 3, "{} chunks of {kinds:?}", made.len());
+        hash_of(made.iter().map(|(key, chunk)| (key, chunk)))
+    }
+
+    #[test]
+    fn generated_chunks_are_the_same_blocks_to_the_bit_as_cubes_and_smooth_near_and_far() {
+        // As they were made before generators were graphs: covered by climate, hollowed by caves, with a sea.
+        let (mut file, world) = generated(0.5, 0.0);
+        file.blocks.push(BlockKind { water: true, ..BlockKind::colored("Water", [0.04, 0.46, 0.33]) });
+        file.generate.as_mut().unwrap().sea = file.blocks.len() as BlockId;
+        let smooth = BlockFile { smooth: true, ..file.clone() };
+        let hashes = [columns_hash(&file, &world, 0), columns_hash(&file, &world, 2), columns_hash(&smooth, &world, 0)];
+        assert_eq!(
+            hashes,
+            [0xb5c2_959f_3398_5e27, 0x06fa_ee9e_a714_aca3, 0x7257_8dd2_041f_3d95],
+            "generated blocks changed: were they meant to? {hashes:#x?}"
+        );
+    }
+
+    #[test]
+    fn generated_chunks_with_overhangs_are_the_same_blocks_to_the_bit() {
+        // Apart from those without: ground pushed in and out is the part due to change.
+        let (file, world) = generated(0.5, 6.0);
+        let smooth = BlockFile { smooth: true, ..file.clone() };
+        let hashes = [columns_hash(&file, &world, 0), columns_hash(&file, &world, 2), columns_hash(&smooth, &world, 0)];
+        assert_eq!(
+            hashes,
+            [0xa8ae_cec1_d46b_1412, 0xd161_297f_6f71_c39c, 0x252f_5388_bfff_6927],
+            "overhanging blocks changed: were they meant to? {hashes:#x?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "a planet's grid takes its angles from the machine's own tan and atan, so these bits are this machine's"]
+    fn a_planets_blocks_are_the_same_to_the_bit_on_this_machine() {
+        let mut world = Preset::RollingHills.world();
+        world.height = 12.0;
+        let planet = BlockPlanet { radius: 60.0 };
+        let generate = BlockGenerate { world: Some("hills".into()), caves: 0.3, planet: Some(planet), ..Default::default() };
+        let file = BlockFile { generate: Some(generate), smooth: true, ..BlockFile::default() };
+        let map = file.make_ground(Some(&world));
+        let mut chunks: Vec<_> = map.chunks().map(|(key, chunk)| (key, &**chunk)).collect();
+        chunks.sort_unstable_by_key(|(key, _)| **key);
+        let hash = hash_of(chunks);
+        assert_eq!(hash, 0x036e_d4ff_b4fd_c0dd, "a planet's blocks changed: were they meant to? {hash:#x}");
+    }
+
     #[test]
     fn generated_ground_below_its_sea_lies_under_water_up_to_the_sea() {
         let (mut file, _) = generated(0.0, 0.0);

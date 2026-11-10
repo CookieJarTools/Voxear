@@ -37,8 +37,9 @@ With **Ground** set to **Generated**, a [[Generating Terrain|world generator]] m
 | Lowest block | How far down its ground goes, in blocks from its corner: below that is air |
 | Overhangs | How far its surface is pushed in and out, in metres, so cliffs lean and overhang |
 | Caves | How much of the ground below is hollowed out, from 0 for none to 1: long tunnels, and chambers here and there |
+| Sea block | The kind of block the air below the generator's sea level is filled with, a kind of [[Block Worlds#Water|water]]; Air for none |
 
-Caves keep three blocks under the surface whole, so they open onto it only where a slope cuts into them.
+Caves keep three blocks under the surface whole, so they open onto it only where a slope cuts into them. The sea fills only the open air over the ground: caves under it stay dry.
 
 A kind of block can **cover** generated ground in place of its top block, by the ground's climate and height. Under **Build**, tick a kind's **Cover**, and its rows show:
 
@@ -72,7 +73,8 @@ Under **Build**, the world's kinds of block are listed, numbered from 1 in the o
 | Setting | What it does |
 | --- | --- |
 | Name | What it is called |
-| Color | Its colour, where a face has no material |
+| Water | Whether it is [[Block Worlds#Water|water]] |
+| Color | Its colour, where a face has no material; for water, the water's own |
 | Material | The material every face is drawn with, but its top and bottom where they have their own |
 | Top | Its top's material |
 | Bottom | Its bottom's material |
@@ -80,6 +82,20 @@ Under **Build**, the world's kinds of block are listed, numbered from 1 in the o
 A face with a material is drawn with it, its pictures repeated a block at a time and taken from the side the face looks, so stripes on a side run straight down it. A face with none is drawn in the block's colour.
 
 **Add Block** adds a kind of a colour of its own at the end. Drag a kind by its grip to move it, and its cross takes it out: its blocks with it, and the kinds after it a number up, every block renumbered to match. Each change to the list is one step to undo.
+
+## Water
+
+Tick a kind's **Water** and its blocks are water, drawn see-through with the same look as the sea and Pools. Its **Color** is the water's own colour, the colour it shows where it is deep: lake green, sea blue or a muddy brown. Water has no materials, so its Material, Top and Bottom rows go. Build with it as with any kind.
+
+Water shows its faces only where it meets air: a pond in a hollow is its top alone. The ground under it and round it shows through it, bent as light bends going into water, and dimmed by as much water as the view goes through: a shallow edge is clear, a deep middle shows its colour. Its top ripples, catching the sky and the sun, with a line of foam where it meets the shore. From under the water, its top shows the world above it.
+
+Nothing stands on water. Physics leaves it out, so things fall through it to the ground under it, and a Rigidbody with **Buoyancy** floats in it as it does on a Pool: the top of the water in its column is the surface. Water stays where it is put: it does not flow or spread when the ground beside it is dug away.
+
+For a sea, pick a kind of water as the **Sea block** of generated ground: the air below the generator's sea level is filled with it. A planet's sea lies its **Radius** from its middle.
+
+In a [[Voxel Terrain]], water stays cubes: its top is flat at its blocks' tops, with the smooth ground running on under it. Its sides show wherever it meets anything but water, so a shore where the ground dips below the water's edge still shows the water there.
+
+Not done yet: with the camera in water blocks, the view is not fogged by the water round it, as it is under the sea and in Pools.
 
 ## Building
 
@@ -103,9 +119,11 @@ For a world of small coloured blocks to sculpt with, make **Block size** small: 
 
 ## How blocks are drawn
 
-The blocks are kept in chunks of 32 a side, only the chunks with blocks in them, so a world is as large as its blocks and no larger. A face is drawn only where a block meets air, and faces side by side drawn the same way are drawn as one, so a field of grass is a handful of quads. Each corner of a face is a little darker as the blocks round it close it in, which gives edges and hollows their depth.
+The blocks are kept in chunks of 32 a side, only the chunks with blocks in them, so a world is as large as its blocks and no larger. A face is drawn only where a block meets air or water, and faces side by side drawn the same way are drawn as one, so a field of grass is a handful of quads. Each corner of a face is a little darker as the blocks round it close it in, which gives edges and hollows their depth.
 
-The camera draws only the chunks in view, and of each only the faces turned towards it. Caves and rooms closed off from it are passed over too: each chunk notes which of its sides see each other through its air, and only the chunks the camera can see into through them are drawn, so a mountain full of caves costs no more than its outside until a tunnel opens onto one. The sun's shadows fall from every face. Blocks light the world round them too, as the GI's rays see them.
+The camera draws only the chunks in view, and of each only the faces turned towards it. Caves and rooms closed off from it are passed over too: each chunk notes which of its sides see each other through its air and water, and only the chunks the camera can see into through them are drawn, so a mountain full of caves costs no more than its outside until a tunnel opens onto one. The sun's shadows fall from every face. Blocks light the world round them too, as the GI's rays see them.
+
+Water's faces are drawn after the rest of the scene, with the sea and Pools: every face of the water in the chunks the camera sees, from either side. Water casts no shadow, and the GI's rays pass through it.
 
 ## Blocks from scripts
 
@@ -133,8 +151,10 @@ Blocks.Break(impact, 2f);
 | `Blocks.Break(middle, radius)` | Takes away every block in a ball |
 | `Blocks.Place(hit, block)` and `Blocks.Break(hit)` | Puts a block against the face a ray met, or takes away the block it met |
 
+A ray from **Blocks.Raycast** meets water as it meets any block, so a script can take water away or build on it. To build on the ground under a pond, take the water away first.
+
 Physics and drawing follow a change at once: only the chunks it changed are made again, and those beside them whose faces it meets. A save of the scene keeps what scripts changed, as only what differs from the world as its level built it, and `Blocks.CaptureEdits` and `Blocks.ApplyEdits` give the same bytes to a player joining a game.
 
 ## Collision
 
-A world of blocks collides as it is drawn: physics stands things on its blocks, a mesh for each chunk, and rays from **Physics.Raycast** meet them, its Obj as what they hit. It needs no Collider. Its Obj's **Layer** is its blocks' layer.
+A world of blocks collides as it is drawn: physics stands things on its blocks, a mesh for each chunk, and rays from **Physics.Raycast** meet them, its Obj as what they hit. It needs no Collider. Its Obj's **Layer** is its blocks' layer. Its water does not collide: things fall into it, and those with Buoyancy float.

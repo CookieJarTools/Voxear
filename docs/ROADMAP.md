@@ -1635,7 +1635,7 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     changes are kept across a changed ground or generator; worlds are made again when their generator changes.
     Editor: Ground (Flat or Generated) and its rows, the ground's blocks, each kind's Cover rows. Tests: 3D noise,
     columns at their generator's heights, snow where cold, caves hollowing, overhangs, a generated world loading
-    with its changes, the editor picking a generator and a kind covering by its biome. Not done: water blocks.
+    with its changes, the editor picking a generator and a kind covering by its biome.
   - ~~**Without end, and far views:**~~ done: generated ground's `[generate.endless]` (view and far distances)
     streams chunk columns round the camera on the background threads, nearest first (`blocks::stream`): near
     columns into the world's own blocks, changes kept for them made as they come (`BlockWorldAsset::pending`) and
@@ -1658,6 +1658,24 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     links, never back along an axis, within the frustum (`sight::seen`), drawing only the chunks it reaches; worlds
     drawn smooth, far rings and shadows are drawn without it. Tests: a wall's sides apart, a closed cave passed
     over and one down a shaft seen, a view drawing only the chunks it can see into.
+  - ~~**Water blocks:**~~ done: a kind of block can be water (`BlockKind::water`; `BlockFaces`, each kind's surfaces
+    and whether it is water, replace the meshers' `[u8; 3]`). The cube mesher draws the ground's faces where it
+    meets air or water, closing no corners in with water, and water's faces only where it meets air, merged by
+    surface, after the ground's quads (`ChunkMesh::water`), with no triangles, so physics and the GI's rays pass
+    through; chunks see through water (`sight::sights`), and a whole chunk of water buries nothing. The renderer
+    draws them with the Pools and Streams (`water::record`, `blocks::draw_water`): a pass finds where each pixel's
+    view leaves the water (`blockWaterExitFragment`), then `blockWaterFragment` shades each face as a Pool's still
+    water, the kind's colour its Deep, its top rippled, bent and dimmed by as much water as the view goes through,
+    foam at the shore, its underside from below. `BlockWorld::water_over` gives Buoyancy the top of the water in
+    a column. Generated ground fills the open air below its generator's sea level with its sea block
+    (`BlockGenerate::sea`; a planet's sea its radius). A Voxel Terrain keeps its water as cubes, the smooth ground
+    running under it, each block of water taken as a block further out than the ground beside it, its sides drawn
+    against anything not water; balls add ground in place of water and never take it. Editor: each kind's Water
+    (its materials' rows hidden), and Sea block under generated ground's settings. Tests: water's faces apart and
+    the ground's under it, a chunk of ground beside one of water, sights through water, water over smooth ground,
+    a generated sea up to its level, water's top in a column, a ball floating and one sinking to the floor, the GPU
+    drawing a pond over its floor, the editor making a kind water, placing it and picking a sea block. Not done:
+    the view fogged from in water blocks; water that flows.
 - **Smooth voxel terrain, flat and planets**, in parts: smooth ground you can see, stand on, generate and build on;
   planets with their own gravity; a floating origin.
   - ~~**Voxel Terrain:**~~ done: a Block World drawn smooth (`BlockFile::smooth`, `BlockWorld::smooth`). Each chunk

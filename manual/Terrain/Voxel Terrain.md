@@ -44,6 +44,8 @@ Each kind of block is drawn with its **Top** where the ground faces up, its **Bo
 
 The surface takes the way the ground faces from the blocks round it, so light runs smoothly over hills. It casts the sun's shadows, the GI's rays see it, and physics stands things on it and rays meet it where it is drawn. Chunks meet without gaps.
 
+Water stays cubes in a Voxel Terrain, its top flat, the smooth ground running on under it (see [[Block Worlds#Water|Water]]).
+
 ## Building
 
 The brushes under **Build** work as balls whose surface lies between blocks:

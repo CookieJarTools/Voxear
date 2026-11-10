@@ -109,11 +109,16 @@ impl FirstPersonView {
     }
 }
 
-/// A view's level carried to `up` by the least turn, so it never spins
-/// about it; kept as it was where nothing pulls.
-fn level_to(level: Quat, up: Vec3) -> Quat {
+/// A level carried to `up` by the least turn, so it never spins about it;
+/// kept as it was where nothing pulls, and exactly as it was where it
+/// already stands that way, so flat ground never drifts.
+pub(crate) fn level_to(level: Quat, up: Vec3) -> Quat {
     let Some(up) = up.try_normalize() else { return level };
-    (Quat::from_rotation_arc(level * Vec3::Y, up) * level).normalize()
+    let now = level * Vec3::Y;
+    if now.cross(up) == Vec3::ZERO && now.dot(up) > 0.0 {
+        return level;
+    }
+    (Quat::from_rotation_arc(now, up) * level).normalize()
 }
 
 /// What the view keeps from frame to frame: where the eyes were, steadied.

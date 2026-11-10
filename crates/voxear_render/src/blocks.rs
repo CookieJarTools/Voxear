@@ -684,9 +684,10 @@ impl ViewBlocks {
                 counts.shadow_triangles += triangles(list);
             }
         }
-        for (_, runs) in &self.water {
+        for (_, smooth, runs) in &self.water {
             counts.draws += runs.len() as u32;
-            counts.water_triangles += runs.iter().map(|&[_, count]| u64::from(count) * 2).sum::<u64>();
+            let triangles = |count: u32| if *smooth { u64::from(count) / 6 } else { u64::from(count) * 2 };
+            counts.water_triangles += runs.iter().map(|&[_, count]| triangles(count)).sum::<u64>();
         }
         counts
     }

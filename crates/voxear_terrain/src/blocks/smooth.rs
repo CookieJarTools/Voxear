@@ -479,12 +479,15 @@ fn water_surface(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], padded: &P
     }
     let wet = Padded { blocks: padded.blocks.clone(), depths: field };
     let mut numbers = vec![u32::MAX; CUBES * CUBES * CUBES];
-    let mut points: Vec<([f32; 3], [f32; 3])> = Vec::new();
+    let (mut points, mut normals, mut shared) = (Vec::new(), Vec::new(), Vec::new());
     let mut number = |low: [i32; 3]| -> u32 {
         let [x, y, z] = low.map(|v| (v + CUBES_BEFORE) as usize);
         let slot = &mut numbers[(y * CUBES + z) * CUBES + x];
         if *slot == u32::MAX {
-            points.push(wet.point(low));
+            let (place, normal) = wet.point(low);
+            points.push(place);
+            normals.push(normal);
+            shared.push(low.iter().any(|&v| v < 0 || v >= CHUNK as i32 - 1));
             *slot = points.len() as u32 - 1;
         }
         *slot
@@ -509,16 +512,20 @@ fn water_surface(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], padded: &P
             }
         }
     }
-    let triangles = quads
-        .into_iter()
-        .flat_map(|(quad, block)| split(quad, |i| points[i as usize].0).into_iter().map(move |t| (t, block)));
+    let triangles = quads.into_iter().flat_map(|(quad, block)| {
+        let surface = faces.get(usize::from(block)).copied().unwrap_or_default().top;
+        split(quad, |i| points[i as usize]).into_iter().map(move |t| (t, [surface; 3]))
+    });
+    // Merged where it lies flat or gently curved, as the ground is.
+    let triangles = triangles.collect();
+    let (points, normals, triangles) = simplified((&points, &normals, &shared), triangles, FLAT_ENOUGH);
     let mut words = Vec::new();
-    for (triangle, block) in triangles.collect::<Vec<_>>() {
-        let surface = u32::from(faces.get(usize::from(block)).copied().unwrap_or_default().top);
+    for (triangle, [surface, ..]) in triangles {
+        let surface = u32::from(surface);
         for i in triangle {
-            let ([x, y, z], normal) = points[i as usize];
+            let [x, y, z] = points[i as usize];
             words.push([quantise(x) | quantise(y) << 16, quantise(z)]);
-            words.push([pack_normal(normal) | surface << 24, surface | surface << 8]);
+            words.push([pack_normal(normals[i as usize]) | surface << 24, surface | surface << 8]);
         }
     }
     words
@@ -832,5 +839,49 @@ mod tests {
         // As many triangles back the other way: where two sheets touch, an edge has two each way.
         let open = merged.iter().filter(|&(&(a, b), count)| merged.get(&(b, a)) != Some(count)).count();
         assert_eq!(open, 0, "edges with no triangle back the other way, of {}", merged.len());
+    }
+
+    #[test]
+    fn a_lake_over_two_chunks_is_merged_flat_and_meets_itself_edge_for_edge_where_they_meet() {
+        let faces = [BlockFaces::default(), BlockFaces::new(1, 1, 1), BlockFaces::water(7)];
+        // Ground 3.3 blocks up over two chunks along x, a lake on it up to 6 blocks across where they meet.
+        let mut map = ground([64, 32], |_, _| 3.3);
+        for y in 3..6 {
+            for z in 6..26 {
+                for x in 8..56 {
+                    if map.get([x, y, z]) == AIR {
+                        map.set([x, y, z], 2);
+                    }
+                }
+            }
+        }
+        // Each chunk's water's triangles, by where their corners are in the world, in 1024ths of a block.
+        let water = |key: [i32; 3]| -> Vec<[[i64; 3]; 3]> {
+            let mesh = mesh_chunk(&map, key, &faces);
+            let words = &mesh.quads[mesh.water().0 as usize..];
+            let corner = |pair: &[[u32; 2]]| {
+                let at = [pair[0][0] & 0xFFFF, pair[0][0] >> 16, pair[0][1] & 0xFFFF];
+                [0, 1, 2].map(|k| at[k] as i64 + ((key[k] * CHUNK as i32) as f32 + POINT_FROM) as i64 * 1024)
+            };
+            words.chunks(6).map(|t| [corner(&t[0..2]), corner(&t[2..4]), corner(&t[4..6])]).collect()
+        };
+        let triangles: Vec<_> = water([0, 0, 0]).into_iter().chain(water([1, 0, 0])).collect();
+        // Its flat top in far fewer triangles than two a block.
+        let top = triangles.iter().filter(|t| t.iter().all(|p| p[1] == 6 * 1024)).count();
+        assert!(top > 0 && top < 48 * 20 / 4, "{top} triangles over its top");
+        // Away from its shore, every edge met by a triangle going back the other way, across the chunks' seam too.
+        let mut edges = std::collections::HashMap::new();
+        for t in &triangles {
+            for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
+                *edges.entry((a, b)).or_insert(0) += 1;
+            }
+        }
+        let inside = |p: [i64; 3]| {
+            p[1] > 5 * 1024 && (12 * 1024..52 * 1024).contains(&p[0]) && (10 * 1024..22 * 1024).contains(&p[2])
+        };
+        let open: Vec<_> =
+            edges.keys().filter(|(a, b)| inside(*a) && inside(*b) && !edges.contains_key(&(*b, *a))).collect();
+        assert!(open.is_empty(), "{open:?}");
+        assert!(edges.keys().any(|(a, b)| a[0] == 32 * 1024 && b[0] == 32 * 1024), "edges on the seam");
     }
 }

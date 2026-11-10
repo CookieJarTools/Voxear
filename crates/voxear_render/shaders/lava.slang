@@ -229,6 +229,21 @@ float lavaParallax(float edge, float nearing, float slant, float here, float the
     return reached;
 }
 
+// How high molten lava heaves at `plate` across its plates, in metres, at
+// time `t`: slow swells a couple of metres across that rise and sink over
+// several seconds, where it has cooled `cooled` of its Cooling or less.
+// Crust lies still.
+float lavaHeave(float2 plate, float t, float cooled)
+{
+    float molten = 1.0 - smoothstep(0.35, 0.95, cooled);
+    if (molten <= 0.0)
+    {
+        return 0.0;
+    }
+    float swell = lavaNoise(plate * 0.42 + float2(t * 0.05, -t * 0.035)) + 0.5 * lavaNoise(plate * 0.9 - float2(t * 0.07, t * 0.045) + 4.0);
+    return 0.12 * molten * (swell - 0.75);
+}
+
 // ---------------------------------------------------------------- Bubbles
 
 // About how long a lava lake's surface lasts before it turns over, in seconds.

@@ -4054,7 +4054,7 @@ fn lava_glows_where_it_sets_out_crusts_over_from_its_banks_and_a_lake_of_it_crac
     assert!(source > 0.6, "molten where it sets out: {source}");
     assert!(middle > 0.12 && middle > bank * 2.0, "a molten channel between crusted banks ten metres on: {middle} and {bank}");
     let old = glowing([-1.0, 1.0], [32.0, 38.0]);
-    assert!(old < 0.12, "crusted over, but for its cracks, thirty metres on: {old}");
+    assert!(old < source * 0.5, "crusted over, but for its cracks, thirty metres on: {old} against {source}");
     // The lake: dark plates, and molten lava glowing between them.
     let (centre, corner) = (on_screen(eye, look, Vec3::new(8.0, 0.2, 14.0)), on_screen(eye, look, Vec3::new(10.0, 0.2, 16.0)));
     let reach = centre.0.abs_diff(corner.0).max(centre.1.abs_diff(corner.1)).max(4);

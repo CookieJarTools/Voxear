@@ -73,6 +73,10 @@ const FIRST_CAPACITY: u64 = 1 << 16;
 /// How many chunks get their meshes for rays in a frame, at most.
 const PROXIES_A_FRAME: usize = 8;
 
+/// How many bytes of chunks a frame stages into a pool at most, past its
+/// first: a world of many new chunks comes over several frames.
+const STAGED_A_FRAME: u64 = 16 << 20;
+
 /// A world of blocks as `shaders/blocks.slang` reads it (`BlockWorld` in
 /// `shaders/common.slang`).
 #[repr(C)]
@@ -303,6 +307,9 @@ struct Pool {
     /// Its chunks' meshes for rays, each with where its chunk is from the
     /// world's corner, made again as they change.
     placed: Option<Arc<[(MeshHandle, Vec3)]>>,
+    /// The world as it last drew it, drawn in place of the pool that follows
+    /// it until that one has every chunk.
+    shown: Option<DrawnBlocks>,
 }
 
 impl Pool {
@@ -328,12 +335,16 @@ impl Pool {
             made_from: None,
             proxied: None,
             placed: None,
+            shown: None,
         })
     }
 
     /// Brings the pool up to `world`'s chunks: stages the quads of each
     /// that changed, by pointer, with `stage(bytes, to)`, growing the pool
-    /// when they do not fit.
+    /// once for all of them. A frame stages `STAGED_A_FRAME` bytes of them
+    /// at most, past the first; each of the rest shows as it was until its
+    /// frame comes, and those the world no longer has go once none is left.
+    /// Whether the pool is up to the world.
     fn update(
         &mut self,
         gpu: &Gpu,
@@ -341,7 +352,7 @@ impl Pool {
         world: &BlockWorld,
         frame_index: u64,
         stage: &mut dyn FnMut(&[u8], u64),
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let free_by = frame_index.saturating_sub(FRAMES_IN_FLIGHT as u64);
         let (done, waiting): (Vec<_>, Vec<_>) = self.freeing.drain(..).partition(|(when, ..)| *when <= free_by);
         self.freeing = waiting;
@@ -354,22 +365,8 @@ impl Pool {
             Arc::ptr_eq(meshes, &world.meshes) && Arc::ptr_eq(far, &world.far)
         };
         if self.made_from.as_ref().is_some_and(same) {
-            return Ok(());
+            return Ok(true);
         }
-        self.made_from = Some((world.meshes.clone(), world.far.clone()));
-        let before = self.held.len();
-        let freeing = &mut self.freeing;
-        let has = |key: &[i32; 4]| match key[0] {
-            0 => world.meshes.contains_key(&[key[1], key[2], key[3]]),
-            _ => world.far.contains_key(key),
-        };
-        self.held.retain(|key, held| {
-            let kept = has(key);
-            if !kept {
-                freeing.push((frame_index, held.first, held.mesh.quads.len() as u64, held.slot));
-            }
-            kept
-        });
         let side = CHUNK as f32 * world.block_size;
         let near = world.meshes.iter().map(|(k, mesh)| ([0, k[0], k[1], k[2]], mesh));
         let held = &self.held;
@@ -377,12 +374,6 @@ impl Pool {
             .chain(world.far.iter().map(|(k, mesh)| (*k, mesh)))
             .filter(|(key, mesh)| !held.get(key).is_some_and(|held| Arc::ptr_eq(&held.mesh, mesh)))
             .collect();
-        for (key, _) in &coming {
-            if let Some(old) = self.held.remove(key) {
-                self.freeing.push((frame_index, old.first, old.mesh.quads.len() as u64, old.slot));
-            }
-        }
-        let changed = self.held.len() != before || !coming.is_empty();
         // Grown at once to hold every chunk coming, so those held are staged again once, not at each doubling.
         let quads = |count: u64, held: &Held| count + held.mesh.quads.len() as u64;
         let used = self.held.values().fold(0, quads) + self.freeing.iter().map(|freed| freed.2).sum::<u64>();
@@ -390,13 +381,25 @@ impl Pool {
         if used + wanted > self.capacity {
             self.grow(gpu, frames, wanted, stage)?;
         }
+        // As many as a frame stages, at least one; the rest come over the next frames, each shown as it was till then.
+        let mut left = STAGED_A_FRAME;
+        let mut changed = false;
+        let mut whole = true;
         for (key, mesh) in coming {
-            let key = &key;
+            let count = mesh.quads.len() as u64;
+            if changed && count * 8 > left {
+                whole = false;
+                break;
+            }
+            left = left.saturating_sub(count * 8);
+            changed = true;
+            if let Some(old) = self.held.remove(&key) {
+                self.freeing.push((frame_index, old.first, old.mesh.quads.len() as u64, old.slot));
+            }
             let Some(slot) = self.slots.alloc() else {
                 tracing::warn!("a world of blocks has more chunks than {SLOTS}; the rest are left out");
                 continue;
             };
-            let count = mesh.quads.len() as u64;
             let first = match self.space.alloc(count) {
                 Some(first) => first,
                 None => {
@@ -414,13 +417,31 @@ impl Pool {
             let low = Vec3::new(key[1] as f32, key[2] as f32, key[3] as f32) * side;
             let margin = if self.smooth { Vec3::splat(2.0 * self.block_size * scale) } else { Vec3::ZERO };
             let bounds = [low - margin, low + Vec3::splat(side) + margin];
-            self.held.insert(*key, Held { mesh: mesh.clone(), slot, first, bounds });
+            self.held.insert(key, Held { mesh: mesh.clone(), slot, first, bounds });
+        }
+        // Those the world no longer has go once every one coming has come, so none leaves a gap till then.
+        if whole {
+            let before = self.held.len();
+            let freeing = &mut self.freeing;
+            let has = |key: &[i32; 4]| match key[0] {
+                0 => world.meshes.contains_key(&[key[1], key[2], key[3]]),
+                _ => world.far.contains_key(key),
+            };
+            self.held.retain(|key, held| {
+                let kept = has(key);
+                if !kept {
+                    freeing.push((frame_index, held.first, held.mesh.quads.len() as u64, held.slot));
+                }
+                kept
+            });
+            changed |= self.held.len() != before;
+            self.made_from = Some((world.meshes.clone(), world.far.clone()));
         }
         if changed {
             self.draws = None;
             self.sights = None;
         }
-        Ok(())
+        Ok(whole)
     }
 
     /// A buffer twice as large, or more where `wanted` more quads need it,
@@ -514,6 +535,9 @@ struct Copy {
 #[derive(Default)]
 pub(crate) struct BlockWorlds {
     resident: HashMap<Entity, Pool>,
+    /// Each world's pool of blocks of another size, drawn until its new
+    /// pool has every chunk.
+    leaving: HashMap<Entity, Pool>,
     copies: Vec<Copy>,
     staging: Option<Buffer>,
     drawn: Vec<DrawnBlocks>,
@@ -593,7 +617,7 @@ impl BlockWorlds {
         // Staged and never recorded: every chunk staged again.
         if let Some(staging) = self.staging.take() {
             frames.retire(Retired::Buffer(staging));
-            for (_, pool) in self.resident.drain() {
+            for (_, pool) in self.resident.drain().chain(self.leaving.drain()) {
                 retire(pool, assets, frames, frame_index);
             }
         }
@@ -624,7 +648,11 @@ impl BlockWorlds {
             let changed = |pool: &Pool| pool.block_size != blocks.block_size || pool.smooth != blocks.smooth;
             if self.resident.get(&entity).is_some_and(changed) {
                 let pool = self.resident.remove(&entity).expect("held");
-                retire(pool, assets, frames, frame_index);
+                // Drawn as it was until the new pool has every chunk, unless an older one already is.
+                match pool.shown.is_some() && !self.leaving.contains_key(&entity) {
+                    true => drop(self.leaving.insert(entity, pool)),
+                    false => retire(pool, assets, frames, frame_index),
+                }
             }
             if !self.resident.contains_key(&entity) {
                 self.resident.insert(entity, Pool::new(gpu, blocks.block_size, blocks.smooth)?);
@@ -637,7 +665,7 @@ impl BlockWorlds {
                 staged.extend_from_slice(bytes);
                 copies.push(Copy { from, key: entity, to, size: bytes.len() as u64 });
             };
-            pool.update(gpu, frames, blocks, frame_index, &mut stage)?;
+            let whole = pool.update(gpu, frames, blocks, frame_index, &mut stage)?;
             // Each chunk's mesh for rays, a few a frame, the old one shown until the new one is made.
             if !pool.proxied.as_ref().is_some_and(|made| Arc::ptr_eq(made, &blocks.meshes)) {
                 let before = pool.proxies.len();
@@ -705,7 +733,7 @@ impl BlockWorlds {
                     pool.proxies.iter().map(|(key, (_, mesh))| (*mesh, at(key))).collect()
                 })
                 .clone();
-            self.drawn.push(DrawnBlocks {
+            let drawn = DrawnBlocks {
                 entity,
                 corner,
                 block_size: blocks.block_size,
@@ -717,13 +745,29 @@ impl BlockWorlds {
                 cast_shadows: blocks.cast_shadows,
                 proxies: placed,
                 id: None,
-            });
+            };
+            if whole && let Some(old) = self.leaving.remove(&entity) {
+                retire(old, assets, frames, frame_index);
+            }
+            // Until then, the pool of blocks of the old size is drawn where the world is now, as it last drew.
+            match self.leaving.get(&entity).and_then(|old| old.shown.clone()) {
+                Some(old) => {
+                    self.drawn.push(DrawnBlocks { corner, look: drawn.look, cast_shadows: drawn.cast_shadows, ..old })
+                }
+                None => {
+                    pool.shown = Some(drawn.clone());
+                    self.drawn.push(drawn);
+                }
+            }
         }
         let gone: Vec<Entity> =
             self.resident.iter().filter(|(_, pool)| pool.seen != frame_index).map(|(key, _)| *key).collect();
         for key in gone {
             let pool = self.resident.remove(&key).expect("held");
             retire(pool, assets, frames, frame_index);
+            if let Some(old) = self.leaving.remove(&key) {
+                retire(old, assets, frames, frame_index);
+            }
         }
         if !staged.is_empty() {
             let usage = vk::BufferUsageFlags::TRANSFER_SRC;
@@ -737,20 +781,21 @@ impl BlockWorlds {
     /// Copies this frame's staged chunks in, and gives what every view
     /// draws, each world's pool as the graph knows it.
     pub fn record(&mut self, fg: &mut FrameGraph<'_>, frames: &mut Frames) -> Arc<[DrawnBlocks]> {
+        // Each pool once, by where its buffer is: a world drawn from the pool it is leaving is copied into the next.
         let mut ids = HashMap::new();
+        let pools: Vec<&Pool> = self.resident.values().chain(self.leaving.values()).collect();
         for drawn in &mut self.drawn {
-            let pool = &self.resident[&drawn.entity];
-            drawn.id = Some(*ids.entry(drawn.entity).or_insert_with(|| fg.import_buffer(&pool.buffer)));
+            let Some(pool) = pools.iter().find(|pool| pool.buffer.address == drawn.address) else { continue };
+            drawn.id = Some(*ids.entry(drawn.address).or_insert_with(|| fg.import_buffer(&pool.buffer)));
         }
         if let Some(staging) = self.staging.take() {
-            let copies: Vec<(vk::Buffer, vk::BufferCopy)> = self
-                .copies
-                .iter()
-                .filter_map(|copy| {
-                    let region = vk::BufferCopy { src_offset: copy.from, dst_offset: copy.to, size: copy.size };
-                    Some((self.resident.get(&copy.key)?.buffer.handle, region))
-                })
-                .collect();
+            let mut copies: Vec<(vk::Buffer, vk::BufferCopy)> = Vec::with_capacity(self.copies.len());
+            for copy in &self.copies {
+                let Some(pool) = self.resident.get(&copy.key) else { continue };
+                ids.entry(pool.buffer.address).or_insert_with(|| fg.import_buffer(&pool.buffer));
+                let region = vk::BufferCopy { src_offset: copy.from, dst_offset: copy.to, size: copy.size };
+                copies.push((pool.buffer.handle, region));
+            }
             let written: Vec<(BufferId, BufferAccess)> =
                 ids.values().map(|&id| (id, BufferAccess::TransferWrite)).collect();
             let source = staging.handle;
@@ -768,7 +813,7 @@ impl BlockWorlds {
         if let Some(staging) = self.staging.take() {
             gpu.destroy_buffer(staging);
         }
-        for (_, pool) in self.resident.drain() {
+        for (_, pool) in self.resident.drain().chain(self.leaving.drain()) {
             gpu.destroy_buffer(pool.buffer);
         }
     }

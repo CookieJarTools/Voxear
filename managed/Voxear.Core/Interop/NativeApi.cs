@@ -175,4 +175,5 @@ internal unsafe struct NativeApi
 	public delegate* unmanaged[Cdecl]<ulong, int, byte*, int, int> BlockOf;
 	public delegate* unmanaged[Cdecl]<int, Vector3*, Vector3*, byte*, int, int, int> BlockSetNamed;
 	public delegate* unmanaged[Cdecl]<ulong> BlocksVersion;
+	public delegate* unmanaged[Cdecl]<Vector3*, float, int> WaterSplash;
 }

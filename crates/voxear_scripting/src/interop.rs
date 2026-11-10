@@ -497,6 +497,9 @@ pub(crate) struct NativeApi {
     ) -> i32,
     /// Goes up whenever a block is saved, so `Block` reads it again.
     pub blocks_version: unsafe extern "C" fn() -> u64,
+    /// `Water.Splash`: throws up a splash where the water is over or under
+    /// a point, so wide; 0 where there is no water.
+    pub water_splash: unsafe extern "C" fn(at: *const [f32; 3], size: f32) -> i32,
 }
 
 /// The kinds of component scripts reach through one entry, `kind_value`,
@@ -621,6 +624,17 @@ static WATER: std::sync::OnceLock<WaterSampler> = std::sync::OnceLock::new();
 /// Sets what answers `Water` in scripts; the first set is kept.
 pub fn set_water_sampler(sampler: WaterSampler) {
     let _ = WATER.set(sampler);
+}
+
+/// What throws up a splash for scripts where the water is over or under a
+/// point, so wide: the engine's, set when it starts. Whether there was water
+/// there.
+pub type WaterSplasher = fn(&mut World, [f32; 3], f32) -> bool;
+static SPLASHER: std::sync::OnceLock<WaterSplasher> = std::sync::OnceLock::new();
+
+/// Sets what `Water.Splash` in scripts calls; the first set is kept.
+pub fn set_water_splasher(splasher: WaterSplasher) {
+    let _ = SPLASHER.set(splasher);
 }
 
 /// What reads, or with a value writes, a value of one of an Obj's
@@ -927,6 +941,15 @@ unsafe fn component_value(values: Option<&ComponentValues>, entity: u64, what: i
         }
         None => 0,
     }
+}
+
+unsafe extern "C" fn water_splash(at: *const [f32; 3], size: f32) -> i32 {
+    if at.is_null() {
+        return 0;
+    }
+    let at = unsafe { *at };
+    let made = SPLASHER.get().and_then(|splasher| with_world(|world| Some(splasher(world, at, size))));
+    i32::from(made == Some(true))
 }
 
 unsafe extern "C" fn water_sample(at: *const [f32; 3], out: *mut [f32; 7]) -> i32 {
@@ -1930,6 +1953,7 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         block_of: crate::blocks::block_of,
         block_set_named: crate::blocks::block_set_named,
         blocks_version: crate::blocks::blocks_version,
+        water_splash,
     }
 }
 

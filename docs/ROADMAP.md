@@ -1239,10 +1239,29 @@ The sea, lakes, rivers and lava, built in. Manual: `manual/Water`.
 - **Paths and Streams:** `voxear_scene::Path` (centripetal Catmull-Rom, widths per point), edited in the Scene view
   (`path_handles.rs`: drag, width, insert, extend, Shift-click to remove, one undo step each). A Stream samples its
   Path each frame into world points with Manning speed, rapids foam carried downstream and travel time; drawn as a
-  strip with two-phase flow on the sea's small cascades and foam lines along the current.
-- **Lava:** Pools and Streams of lava glow by Planck's law; crust forms with travel time in plates placed by when the
-  lava set out, cracks narrowing as it cools, pahoehoe ropes bowed at the banks; lakes of drifting plates; crusted
-  at once under the sea.
+  strip, 16 quads across and four rows a point, with two-phase flow on the sea's finest cascades. Its look goes by
+  how fast it runs: calm water near flat and glassy, its bed dappled with the caustics carried along with it and no
+  foam on still shallows; faster water rougher and drawn out into streaks along the current; rapids raised into
+  standing waves and churn (`streamSwell`, the strip and its shading alike), froth with broken edges and glints on
+  their crests and clear green troughs, with fine spray the renderer adds as a particle system for each Stream with
+  rapids (`streamSprayVertex`). What stands in fast water has a bow wave upstream, a white collar, and a wake that
+  spreads downstream in a V with a trail of white down its middle, and water fast over a shallow bed breaks white:
+  all found in the picture's depth behind the water, a few places straight upstream, out along each arm of the V,
+  and just downstream (`streamWake`). Tests: rapids white and the level stretch not, calm smooth against fast rough, white
+  water below a rock in fast water and none in calm, spray gathered only for rapids.
+- **Lava:** Pools and Streams of lava glow by Planck's law, yellow-white where it wells up to dull red. A skin sets
+  on molten rock in small cells with bright seams; crust forms in plates, each from its middle out, that stand above
+  the molten rock between them, seen down into past the near plate's edge (`lavaParallax`, worked out from the plates
+  themselves); gaps narrow to cracks as it cools, sooner in some stretches than others, and crust breaks up in
+  places into smaller pieces with dull red cracks between. Molten rock heaves in slow swells (`lavaHeave`, the
+  surface's points and its shading alike) and its skin folds against the crust. A flow stands as high as it is deep with
+  rounded sides and ends, crusts from its banks in on a molten channel, its plates placed by when the lava set out,
+  with pahoehoe ropes bowed at the banks. A lake turns over in wandering patches. Bubbles swell into domes, break
+  the crust, burst and leave a ring that heals, throwing up blobs of molten rock that cool as they fly; vents spit
+  one burst after another. All of it is worked out from place and time, alike on every machine. Lava lights what is
+  round it with rectangle lights the renderer adds, without shadows. Crusted at once under the sea. Tests: molten
+  channel and crusted banks, plates against cracks, bubbles and spatter over time and none on a crusted lake, a
+  wall lit by a lake.
 - **Queries and Buoyancy:** `voxear_engine::water` keeps a CPU copy of the two longest cascades (the same waves, on
   every machine) and the Streams' points, for `Water.HeightAt`, `NormalAt`, `FlowAt`, `IsUnderwater` and
   `TrySample` in C#. Buoyancy pushes nine columns across a body's Collider up by how far each is under, with drag
@@ -1268,8 +1287,10 @@ The sea, lakes, rivers and lava, built in. Manual: `manual/Water`.
   they light.
 - **Spray and splashes:** an Ocean's Spray throws drops off where its foam is fresh, breaking crests and surf, as a
   particle system the renderer adds of itself (`sprayVertex`): each drop tries a few places in a square tiled over
-  the sea round the camera, so drops stay put as it moves. A floating body that goes into the water fast enough
-  throws up a burst of drops, as big as it is fast and wide, cleared once they have fallen (`water::splash`).
+  the sea round the camera, so drops stay put as it moves. A body that goes into the water fast enough, floating or
+  not, throws up a burst of drops, as big as it is fast and wide, cleared once they have fallen (`water::splash`);
+  one that ploughs through half in it throws up smaller ones as it goes; lava throws up blobs of molten rock.
+  `Water.Splash` makes one from C#.
 
 ## M6 — Animation
 

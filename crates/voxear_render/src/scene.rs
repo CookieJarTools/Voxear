@@ -628,6 +628,9 @@ pub fn extract(
         (*ocean, position.y, now.map_or_else(blown, |now| now.0))
     });
     let water_bodies = water_bodies(world, position);
+    // Lava lights what is round it.
+    lights.extend(crate::water_bodies::lava_lights(&water_bodies, position));
+    frame.light_count = lights.len() as u32;
     // And the first Seasons turns all its plants.
     let seasons = world.query_ref::<(Entity, &crate::Seasons)>().without::<Destroying>();
     if let Some((_, seasons)) = seasons.into_iter().find(|(entity, _)| on(*entity, Switch::Seasons)) {

@@ -3935,9 +3935,16 @@ fn a_stream_runs_along_its_path_and_breaks_white_where_it_runs_steep() {
     assert!(water[1] > water[0] + 10, "the stream's water: {water:?}");
     let sand = patch_rgb(&pixels, on_screen(eye, look, Vec3::new(5.0, -3.0, 6.0)), 2);
     assert!(sand[0] > sand[2] + 10, "dry sand beside it: {sand:?}");
-    // White water from the drop, churning on past its foot.
-    let rapids = patch_rgb(&pixels, on_screen(eye, look, Vec3::new(0.0, -1.5, 18.5)), 2);
-    assert!(rapids.iter().all(|&c| c > 120), "rapids: {rapids:?}");
+    // White water down the drop and churning on past its foot, and none on the level stretch above it: how much of
+    // each stretch is white.
+    let white = |z: [f32; 2], y: [f32; 2]| {
+        let (a, b) = (on_screen(eye, look, Vec3::new(-1.5, y[1], z[1])), on_screen(eye, look, Vec3::new(1.5, y[0], z[0])));
+        let spots: Vec<[i32; 3]> =
+            (a.1.min(b.1)..=a.1.max(b.1)).flat_map(|y| (a.0.min(b.0)..=a.0.max(b.0)).map(move |x| (x, y))).map(|at| rgb_at(&pixels, at)).collect();
+        spots.iter().filter(|c| c.iter().all(|&channel| channel > 130)).count() as f32 / spots.len() as f32
+    };
+    let (level, steep) = (white([3.0, 9.0], [0.0, 0.0]), white([13.0, 18.5], [-0.4, -1.5]));
+    assert!(steep > 0.15 && level < 0.02, "rapids white, the level stretch not: {steep} and {level}");
     // Its ripples drift downstream: half a second on, the water there is not as it was.
     let (later, ..) = stream_render(10.5).unwrap();
     let at = on_screen(eye, look, Vec3::new(0.0, 0.0, 6.0));
@@ -3945,8 +3952,69 @@ fn a_stream_runs_along_its_path_and_breaks_white_where_it_runs_steep() {
     assert!(changed > 16, "its ripples move: {changed} of 64 pixels changed");
 }
 
+/// A level stream six metres wide flowing at `speed`, with a rock standing
+/// in its middle fourteen metres down it, seen from downstream of the rock,
+/// looking back up at it; over sand a metre under it, or with `deep` over
+/// dark ground far below, so only its surface shows.
+fn rock_in_stream_render(speed: f32, deep: bool) -> Option<(Vec<u8>, Vec3, Quat)> {
+    use voxear_render::{Sky, Stream};
+    use voxear_scene::{Path, PathPoint};
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    let eye = Vec3::new(3.5, 3.0, 21.0);
+    let look = Quat::from_rotation_arc(Vec3::Z, (Vec3::new(0.0, 0.0, 14.5) - eye).normalize());
+    world.spawn((Camera::default(), Transform::new(eye, look, Vec3::ONE)));
+    // The sun behind the camera, so its glare on the water is out of the picture.
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(-0.4, -0.6, -0.6).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.6, ..Sky::default() });
+    world.insert_resource(steady_post());
+    let plane = renderer.primitive(Primitive::Plane).unwrap();
+    let (colour, under) = if deep { ([0.03, 0.03, 0.03, 1.0], -8.0) } else { ([0.76, 0.66, 0.48, 1.0], -1.0) };
+    let bed = renderer.add_material(&MaterialDesc { base_color: colour, roughness: 0.9, ..MaterialDesc::default() }).unwrap();
+    world.spawn((MeshRenderer::new(plane, bed), Transform::new(Vec3::new(0.0, under, 0.0), Quat::IDENTITY, Vec3::splat(200.0))));
+    let sphere = renderer.primitive(Primitive::Sphere).unwrap();
+    let stone = renderer.add_material(&MaterialDesc { base_color: [0.3, 0.3, 0.3, 1.0], roughness: 0.9, ..MaterialDesc::default() }).unwrap();
+    world.spawn((MeshRenderer::new(sphere, stone), Transform::new(Vec3::new(0.0, -0.1, 14.0), Quat::IDENTITY, Vec3::splat(1.4))));
+    let point = |z: f32| PathPoint { position: [0.0, 0.0, z], width: 6.0 };
+    let path = Path { points: vec![point(0.0), point(20.0), point(40.0)], closed: false };
+    world.spawn((Stream { speed, ..Stream::default() }, path, Transform::default()));
+    run(&mut renderer, &world, &mut 10.0, 6);
+    Some((renderer.read_pixels().unwrap().2, eye, look))
+}
+
 #[test]
-fn lava_glows_where_it_sets_out_crusts_over_as_it_runs_and_a_lake_of_it_cracks() {
+fn a_calm_stream_lies_smooth_a_fast_one_is_rough_and_leaves_white_water_below_a_rock() {
+    let Some((calm, eye, look)) = rock_in_stream_render(0.5, false) else { return };
+    let (fast, ..) = rock_in_stream_render(3.5, false).unwrap();
+    keep_image("stream calm.png", &calm);
+    keep_image("stream fast.png", &fast);
+    // How much each pixel differs from the next over a patch of open water beside the rock, with nothing showing
+    // through it: ripples make it large.
+    let rough = |speed: f32| {
+        let (pixels, ..) = rock_in_stream_render(speed, true).unwrap();
+        let pixels = &pixels[..];
+        let at = on_screen(eye, look, Vec3::new(-1.8, 0.0, 15.0));
+        let grey = |p: (u32, u32)| rgb_at(pixels, p).iter().sum::<i32>();
+        let spots = (0..24u32).flat_map(|dy| (0..40u32).map(move |dx| (at.0 - 20 + dx, at.1 - 12 + dy)));
+        spots.map(|p| (grey((p.0 + 1, p.1)) - grey(p)).abs()).sum::<i32>() as f32 / (24.0 * 40.0)
+    };
+    let (smooth, rippled) = (rough(0.5), rough(3.5));
+    assert!(rippled > smooth * 1.5 + 0.5, "fast water rougher than calm: {rippled} and {smooth}");
+    // How white the water is a metre below the rock, where what it disturbs is carried, and a metre and a half
+    // above it, where the water has not met it yet: by its dimmest colour.
+    let whiteness = |pixels: &[u8], z: f32| *patch_rgb(pixels, on_screen(eye, look, Vec3::new(0.0, 0.0, z)), 3).iter().min().unwrap();
+    let (below, above) = (whiteness(&fast, 15.7), whiteness(&fast, 11.8));
+    assert!(below > above + 20, "white water below a rock in fast water: {below} against {above} above it");
+    let (still_below, still_above) = (whiteness(&calm, 15.7), whiteness(&calm, 11.8));
+    assert!(still_below - still_above < (below - above) / 2, "and none in calm water: {still_below} against {still_above}");
+    // Calm water over sand shows the sand, and is nowhere white.
+    let open = patch_rgb(&calm, on_screen(eye, look, Vec3::new(-1.8, 0.0, 15.0)), 4);
+    assert!(open.iter().all(|&c| c < 215) && open[0] + 25 > open[2], "the bed through calm water: {open:?}");
+}
+
+#[test]
+fn lava_glows_where_it_sets_out_crusts_over_from_its_banks_and_a_lake_of_it_cracks() {
     use voxear_render::{Liquid, Pool, Sky, Stream};
     use voxear_scene::{Path, PathPoint};
     let Some(mut renderer) = renderer() else { return };
@@ -3962,7 +4030,8 @@ fn lava_glows_where_it_sets_out_crusts_over_as_it_runs_and_a_lake_of_it_cracks()
     let rock = MaterialDesc { base_color: [0.12, 0.11, 0.1, 1.0], roughness: 0.8, ..MaterialDesc::default() };
     let rock = renderer.add_material(&rock).unwrap();
     world.spawn((MeshRenderer::new(plane, rock), Transform::new(Vec3::ZERO, Quat::IDENTITY, Vec3::splat(200.0))));
-    // Level, at a metre a second: as many seconds old as metres from where it sets out, crusted over after ten.
+    // Level, at a metre a second: as many seconds old as metres from where it sets out. Its banks have crusted over
+    // after a few metres; its middle runs on molten for some twenty.
     let point = |z: f32| PathPoint { position: [0.0, 0.3, z], width: 4.0 };
     let path = Path { points: vec![point(0.0), point(20.0), point(40.0)], closed: false };
     world.spawn((Stream { liquid: Liquid::Lava, cooling: 10.0, ..Stream::default() }, path, Transform::default()));
@@ -3971,10 +4040,21 @@ fn lava_glows_where_it_sets_out_crusts_over_as_it_runs_and_a_lake_of_it_cracks()
     run(&mut renderer, &world, &mut 100.0, 10);
     let pixels = renderer.read_pixels().unwrap().2;
     keep_image("lava.png", &pixels);
-    let fresh = patch_rgb(&pixels, on_screen(eye, look, Vec3::new(0.0, 0.3, 3.5)), 3);
-    assert!(fresh[0] > 150 && fresh[0] > fresh[1] + 50 && fresh[1] > fresh[2], "molten orange where it sets out: {fresh:?}");
-    let old = patch_rgb(&pixels, on_screen(eye, look, Vec3::new(0.0, 0.3, 30.0)), 4);
-    assert!((old[0] - old[2]) * 4 < fresh[0] - fresh[2], "crusted over, its glow gone, thirty metres on: {old:?}");
+    // How much of a stretch of the flow glows: across its middle half, or along one bank.
+    let shown = &pixels;
+    let glowing = |x: [f32; 2], z: [f32; 2]| {
+        let (a, b) = (on_screen(eye, look, Vec3::new(x[0], 0.3, z[1])), on_screen(eye, look, Vec3::new(x[1], 0.3, z[0])));
+        let spots: Vec<[i32; 3]> =
+            (a.1.min(b.1)..=a.1.max(b.1)).flat_map(|y| (a.0.min(b.0)..=a.0.max(b.0)).map(move |x| rgb_at(shown, (x, y)))).collect();
+        spots.iter().filter(|c| c[0] > 120 && c[0] > c[2] + 60).count() as f32 / spots.len() as f32
+    };
+    let fresh = patch_rgb(&pixels, on_screen(eye, look, Vec3::new(0.0, 0.3, 3.0)), 3);
+    assert!(fresh[0] > 120 && fresh[0] > fresh[1] + 10 && fresh[1] > fresh[2] + 20, "molten where it sets out: {fresh:?}");
+    let (source, middle, bank) = (glowing([-1.0, 1.0], [2.5, 5.0]), glowing([-0.8, 0.8], [7.0, 15.0]), glowing([1.2, 1.7], [7.0, 15.0]));
+    assert!(source > 0.6, "molten where it sets out: {source}");
+    assert!(middle > 0.12 && middle > bank * 2.0, "a molten channel between crusted banks ten metres on: {middle} and {bank}");
+    let old = glowing([-1.0, 1.0], [32.0, 38.0]);
+    assert!(old < source * 0.5, "crusted over, but for its cracks, thirty metres on: {old} against {source}");
     // The lake: dark plates, and molten lava glowing between them.
     let (centre, corner) = (on_screen(eye, look, Vec3::new(8.0, 0.2, 14.0)), on_screen(eye, look, Vec3::new(10.0, 0.2, 16.0)));
     let reach = centre.0.abs_diff(corner.0).max(centre.1.abs_diff(corner.1)).max(4);
@@ -3982,9 +4062,85 @@ fn lava_glows_where_it_sets_out_crusts_over_as_it_runs_and_a_lake_of_it_cracks()
         .flat_map(|y| (centre.0 - reach..centre.0 + reach).map(move |x| (x, y)))
         .map(|at| rgb_at(&pixels, at))
         .collect();
-    let glowing = area.iter().filter(|c| c[0] > 120 && c[0] > c[2] + 60).count();
-    let dark = area.iter().filter(|c| c[0] < 50).count();
-    assert!(glowing * 20 > area.len() && dark * 4 > area.len(), "plates and cracks: {glowing} glowing, {dark} dark of {}", area.len());
+    // Its cracks are a pixel or so wide from here, so they glow less than the flow's molten rock does.
+    let glowing = area.iter().filter(|c| c[0] > 90 && c[0] > c[2] + 40).count();
+    // Crust is dim, and no redder than the dusk makes the rock round it.
+    let dark = area.iter().filter(|c| c[0] < 90 && c[0] < c[2] + 15).count();
+    assert!(glowing * 25 > area.len() && dark * 4 > area.len(), "plates and cracks: {glowing} glowing, {dark} dark of {}", area.len());
+    // The molten rock far brighter than the crust: the brightest of it against the darkest fifth.
+    let mut reds: Vec<i32> = area.iter().map(|c| c[0]).collect();
+    reds.sort_unstable();
+    let (darkest, brightest) = (reds[reds.len() / 5], reds[reds.len() * 49 / 50]);
+    assert!(brightest > 130 && brightest > darkest * 2, "molten rock against crust: {brightest} against {darkest}");
+}
+
+/// A lake of lava twenty metres a side at night, seen from its edge along
+/// its surface, with nothing else to see: how many pixels above it glow at
+/// `time`, where only what stands up out of it shows, a bubble's dome or
+/// the blobs one threw up.
+fn lava_standing(renderer: &mut Renderer, cooling: f32, time: f32) -> (usize, Vec<u8>) {
+    use voxear_render::{Liquid, Pool, Sky};
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 0.3, -10.5))));
+    world.insert_resource(Sky { zenith: Vec3::ZERO, horizon: Vec3::ZERO, ground: Vec3::ZERO, ambient: 0.0, stars: 0.0, ..Sky::default() });
+    world.insert_resource(steady_post());
+    world.spawn((Pool { liquid: Liquid::Lava, size: [20.0, 20.0], depth: 1.0, cooling, ..Pool::default() }, Transform::default()));
+    let mut time = time;
+    run(renderer, &world, &mut time, 1);
+    let pixels = renderer.read_pixels().unwrap().2;
+    // The lake's far edge lies a few pixels under the middle of the picture.
+    let above = (0..172u32).flat_map(|y| (0..640u32).map(move |x| (x, y))).filter(|&at| rgb_at(&pixels, at)[0] > 60).count();
+    (above, pixels)
+}
+
+#[test]
+fn a_lava_lakes_bubbles_swell_and_burst_and_throw_up_spatter_and_a_crusted_one_lies_still() {
+    let Some(mut renderer) = renderer() else { return };
+    // Twelve seconds of a lake that is mostly molten, a picture every 0.4 s.
+    let counts: Vec<usize> = (0..30)
+        .map(|i| {
+            let (above, pixels) = lava_standing(&mut renderer, 40.0, 100.0 + 0.4 * i as f32);
+            if i % 6 == 0 {
+                keep_image(&format!("lava bubbles {i}.png"), &pixels);
+            }
+            above
+        })
+        .collect();
+    let most = *counts.iter().max().unwrap();
+    let showing = counts.iter().filter(|&&count| count > 12).count();
+    assert!(most > 60, "a dome or spatter stands well up out of it at some moment: {counts:?}");
+    assert!(showing >= 8, "and something does at many moments: {counts:?}");
+    let changes = counts.windows(2).filter(|pair| pair[0].abs_diff(pair[1]) > 8).count();
+    assert!(changes >= 8, "they come and go: {counts:?}");
+    // One that crusts over in a second lies still.
+    let still: usize = (0..10).map(|i| lava_standing(&mut renderer, 1.0, 100.0 + 1.1 * i as f32).0).sum();
+    assert_eq!(still, 0, "nothing rises from a crusted lake");
+}
+
+#[test]
+fn lava_lights_the_rock_beside_it() {
+    use voxear_render::{Liquid, Pool, Sky};
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    let eye = Vec3::new(7.0, 5.0, -13.0);
+    let look = Quat::from_rotation_arc(Vec3::Z, (Vec3::new(7.0, 1.0, 5.0) - eye).normalize());
+    world.spawn((Camera::default(), Transform::new(eye, look, Vec3::ONE)));
+    world.insert_resource(Sky { zenith: Vec3::ZERO, horizon: Vec3::ZERO, ground: Vec3::ZERO, ambient: 0.0, stars: 0.0, ..Sky::default() });
+    world.insert_resource(steady_post());
+    world.spawn((Pool { liquid: Liquid::Lava, size: [8.0, 8.0], depth: 1.0, ..Pool::default() }, Transform::default()));
+    // A pale wall at the lake's far edge, and another like it fourteen metres along.
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let pale = renderer.add_material(&MaterialDesc { base_color: [0.8, 0.8, 0.8, 1.0], roughness: 0.9, ..MaterialDesc::default() }).unwrap();
+    for x in [0.0, 14.0] {
+        world.spawn((MeshRenderer::new(cube, pale), Transform::new(Vec3::new(x, 1.5, 5.0), Quat::IDENTITY, Vec3::new(6.0, 3.0, 1.0))));
+    }
+    run(&mut renderer, &world, &mut 100.0, 4);
+    let pixels = renderer.read_pixels().unwrap().2;
+    keep_image("lava light.png", &pixels);
+    let beside = patch_rgb(&pixels, on_screen(eye, look, Vec3::new(0.0, 1.5, 4.5)), 3);
+    let far = patch_rgb(&pixels, on_screen(eye, look, Vec3::new(14.0, 1.5, 4.5)), 3);
+    assert!(beside[0] > 40 && beside[0] > beside[2] * 2, "lit orange by the lake at its foot: {beside:?}");
+    assert!(far[0] * 8 < beside[0], "and the one out of its reach dark: {far:?}");
 }
 
 #[test]

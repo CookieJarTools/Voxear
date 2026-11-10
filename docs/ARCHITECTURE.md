@@ -2803,6 +2803,73 @@ Effekseer and Houdini. The pattern is clear:
 - Click-to-inspect particles, pause, step and seed lock.
 - A "why can't I see it?" checker covering bounds, culling, alpha and depth.
 
+## Water
+
+The roadmap's Water section lists what the sea, Pools and Streams do. This is how lava is put together, as its parts
+are split three ways and the reasons are not in the code.
+
+### Lava *(implemented)*
+
+Everything lava does is a function of place and time, with nothing kept between frames: the same lava on every machine,
+no simulation to run, and nothing to save. `shaders/lava.slang` holds what Pools, Streams and terrain surfaces of lava
+share (Planck's light, the plates, the skin, the bubbles); `lavaFragment` in `shaders/water.slang` is the surface.
+
+- **In the surface's shader:** the crust and what shows between it. A plate's edge is the exact distance to the line
+  between two cell points, which is a straight line, so how far a view going down into the gap beside it gets before
+  it meets the far plate's side or the molten rock is worked out from one lookup of the plates, a few steps along a
+  line, with no height map to march. That gives crust that stands above the molten rock, hides it from a low view and
+  shows its lit side, at the cost of a loop of arithmetic. The same lookup says where the molten rock is, so its skin
+  (a finer scatter of cells) is worked out only there and the crust's lumps only on the crust. The view is followed
+  only as far as the gap runs straight, to where the next nearest gap joins it, and the crust's edge is softened to
+  a pixel; the crust's drift is given as motion, so the edges settle from frame to frame.
+- **As geometry:** what has an outline, and what is broad. Molten rock heaves in swells a couple of metres across
+  (`lavaHeave`), which the surface's points can follow: they are raised by it and the fragment adds the same
+  height to what it shades. A Stream's strip is fine enough (16 quads across, four rows a point) for lava
+  to stand as high as it is deep with rounded sides and ends. A bubble's dome is a small mesh of its own
+  (`lavaDomeVertex`), since the surface's points are a quarter of a metre apart and would make a tent of it; it has
+  the shape the surface's shader gives the lava there, so the same shader shades both and no seam shows. The lava's
+  own surface is not raised at all: the ring a burst leaves is narrower than its points are apart, and is only
+  shaded.
+- **As particles:** what leaves the surface. The blobs a bursting bubble throws up are quads placed in the vertex
+  shader along the arc each flies (`lavaSpatterVertex`), drawn in the water's pass with depth, so rock hides them and
+  they hide the lava behind. They are not Particle Systems, which are Objs: the bubbles are found where they are
+  drawn, and the CPU never knows of them.
+
+Bubbles rise one at a time in each square of a grid laid over the lava's plates, so they ride with a flow; a bubble
+keeps to the middle of its square, so only the four squares nearest a place are looked in. Whether one rises is asked
+of how long the lava at its middle had cooled when it began (`lavaCooledAt`), so it lasts its whole life.
+
+Lava lights what is round it with rectangle lights the renderer adds of itself (`water_bodies::lava_lights`): one on a
+lake, one along each stretch of a flow, as bright as about how much of it is molten. They cast no shadows, as a
+shadowed one takes six views of the local shadow atlas.
+
+What goes into lava splashes as into water (`voxear_engine::water::splash`), with blobs of molten rock: those are
+Particle Systems, since the engine knows where the body went in.
+
+### Streams *(implemented)*
+
+A Stream's look is a function of how fast it runs at each place (`streamQuick`) and how far its rapids have it
+towards white water (the foam its points carry downstream), so calm, fast and rapid water are one shader that
+changes smoothly along it, with nothing for the user to place.
+
+- **The surface** is the sea's finest cascades carried down it in two phases, scaled by its speed and squeezed along
+  the current. Standing waves and churn are one function (`streamSwell`) that the strip's vertices are raised by
+  and the fragment takes its slopes from, so white water has a shape and its shading agrees with it.
+- **Rocks and shallows** are not captured or simulated. The fragment looks a few places upstream of itself on the
+  water's surface and reads the picture's depth behind the water there (`streamWake`): something in front of the
+  surface is standing in the water, and a bed just under it is a riffle. Straight upstream gives the trail of white
+  below a rock; out along two lines a little over twenty degrees either side gives the arms of its V; just
+  downstream gives the bow wave against it. It costs thirteen depth reads where the water runs fast and none where
+  it is calm, works for whatever is drawn, moving or not, and sees nothing that is off screen or hidden. Where the
+  sea's ripples are read is never squeezed along the current: dividing a place along the Stream by a number that
+  changes with its speed bends them into rings. A capture from above, as the sea
+  has of its floor, would see those, but the sea's is kept about the sea's own level and a Stream runs at any height.
+- **The bed's dappled light** is laid over what shows through the water, where the sun reaches the bed: the opaque
+  passes do not know a Stream is over them (they look only for the sea and Pools, as finding a Stream means walking
+  its points), so the bed is lit as dry ground and the Stream adds the web.
+- **Spray** is a particle system the renderer adds for each of the nearest Streams with rapids, its drops finding
+  white water along the Stream's points in the vertex shader, as the sea's finds fresh foam.
+
 ## Terrain
 
 Three kinds of terrain, each a component of its own under the Terrain module: **Terrain** (heights), **Block

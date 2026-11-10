@@ -2323,7 +2323,8 @@ impl View {
         buffers.instances.write(0, &extracted.instances[..instance_count]);
         buffers.lights.write(0, &extracted.lights[..light_count]);
         let camera = voxear_core::math::Vec3::from(extracted.frame.camera_position);
-        let (particle_systems, particles, spray) = particles::gather(world, camera, setup.time);
+        let (particle_systems, particles, spray, rapids) =
+            particles::gather(world, camera, setup.time, &extracted.water_bodies);
         buffers.particle_systems.write(0, &particle_systems);
         let (smokes, smoke_cells, smoke_holes) = smoke::gather(world, camera, setup.time);
         buffers.smokes.write(0, &smokes);
@@ -2401,6 +2402,7 @@ impl View {
             glass,
             particles,
             spray,
+            rapids,
             smokes: smokes.len() as u32,
             smoke_noise: assets.smoke_noise.0,
             mists: mists.len() as u32,

@@ -36,6 +36,32 @@ use glam::{Quat, Vec3};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ShapeId(u32);
 
+/// A shape made apart from any world, on any thread, for a world to keep
+/// ([`PhysicsWorld::keep_shape`]): many made at once on every core, as a
+/// world of blocks' chunks are.
+#[derive(Debug)]
+pub struct MadeShape(*const std::ffi::c_void);
+
+// Jolt's shapes are counted atomically and never changed once made.
+unsafe impl Send for MadeShape {}
+
+impl MadeShape {
+    /// A triangle mesh, for what does not move, as
+    /// [`PhysicsWorld::mesh_shape`] makes one; `None` where it cannot be made.
+    pub fn mesh(vertices: &[Vec3], indices: &[u32]) -> Option<Self> {
+        let flat: Vec<f32> = vertices.iter().flat_map(|p| p.to_array()).collect();
+        let triangles = (indices.len() / 3) as u32;
+        let made = unsafe { ffi::vx_mesh_make(flat.as_ptr(), vertices.len() as u32, indices.as_ptr(), triangles) };
+        (!made.is_null()).then_some(Self(made))
+    }
+}
+
+impl Drop for MadeShape {
+    fn drop(&mut self) {
+        unsafe { ffi::vx_made_drop(self.0) };
+    }
+}
+
 /// A body, by Jolt's id for it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct BodyId(pub u32);
@@ -360,6 +386,13 @@ impl PhysicsWorld {
             ffi::vx_shape_mesh(self.world, flat.as_ptr(), vertices.len() as u32, indices.as_ptr(), triangles)
         };
         (shape != 0).then_some(ShapeId(shape))
+    }
+
+    /// Gives the world a shape made apart from it ([`MadeShape::mesh`]).
+    pub fn keep_shape(&mut self, made: MadeShape) -> ShapeId {
+        let shape = unsafe { ffi::vx_made_keep(self.world, made.0) };
+        std::mem::forget(made);
+        ShapeId(shape)
     }
 
     /// Ground as heights: `count` by `count` samples, row after row along

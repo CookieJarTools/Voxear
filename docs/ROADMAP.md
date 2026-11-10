@@ -1570,8 +1570,25 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   - the graph editor: a canvas that pans and zooms, typed ports and wires, search to add a node, undo; the
     Inspector for the picked node, values exposed from their rows; a preview on every node and a 3D preview that
     refines while a value is dragged
-  - more nodes (cells, falloff, warp, terrace, blend, smooth; masks from height, slope and curvature; gullies as a
-    node of their own) and the five presets rebuilt as graphs
+  - ~~**The node library and starter graphs:**~~ done: twelve more kinds of node, a file each. Sources: Cells
+    (the ground nearest each of a scatter of points: how far the point, how far the cell's border, a number of the
+    cell's own) and Falloff. Shape: Terrace, Clamp (its corners rounded), Blend by a mask, Warp, Smooth; Math
+    divides too. Masks eased in over a feather as a layer's are: Height Mask, Slope Mask, Curvature (ridges and
+    valleys apart), Climate Mask (the eight biomes' ranges as presets). Gullies as a node on any height, by a
+    landmass's maths (`landmass::Gullied`, which both use), each octave joining the floors of the one before with
+    no step. A node that reads round a place (a slope, a curvature, an average, gullies) makes rows of places and
+    asks for its input there; round a planet those lie along two tangents of its surface, and gullies pass their
+    input through. Angles are rows in degrees kept as rise over run (`ValueKind::Angle`), their feathers turned
+    by sums and products, so nothing that makes ground uses trigonometry. Five graphs to start from
+    (`generate::starters()`), under the presets' names and tuned by eye against them: Battlefield Plains (streams
+    cut into nearly level ground, shell holes from two scatters behind a Craters row), Rolling Hills (smooth hills
+    with valleys that branch), Alpine, Archipelago (ragged coasts, shallows, islets) and Canyons (stepped high
+    ground, canyons along ridged lines with floors at one level, ravines down their walls), each with its height
+    and a few more values as rows. Files made from a landmass preset are untouched. Tests, for every node: its
+    range, batches against single places flat and round, its text read back, what it does round a planet; a
+    hash of each starter's ground, the same unoptimised and optimised; a tile of each timed against a
+    landmass's. Manual: Generator Nodes. To come with the graph editor: the starters in New ▸ World Generator and
+    the Preset row.
   - biomes as nodes: where each is and what it brings (its shape, a Terrain's surfaces, a Block World's blocks),
     laid over one another as layers; surfaces' climate ranges and kinds' covers moved over
   - voxels: a Volume beside the height, with overhangs, tunnels and chambers as nodes; hillsides no longer pocked,

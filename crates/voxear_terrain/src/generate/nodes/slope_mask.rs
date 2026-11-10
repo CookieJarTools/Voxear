@@ -132,7 +132,8 @@ mod tests {
         // Scaled to 300 m high it falls at 16.7°, to 2000 m at 63.4°.
         let cone = |height: f32, mask: SlopeMask| {
             let mut graph = crate::generate::Graph::default();
-            let cone = graph.add(NodeKind::Falloff(Falloff { radius: 0.0, feather: 1000.0, ..Falloff::default() }), [0.0; 2]);
+            let cone =
+                graph.add(NodeKind::Falloff(Falloff { radius: 0.0, feather: 1000.0, ..Falloff::default() }), [0.0; 2]);
             // A falloff eases; a straight curve from its distance would be a cone. Its middle stretch is steepest:
             // 1.5 times the even slope half way down.
             let high = graph.add(
@@ -176,7 +177,11 @@ mod tests {
         assert_eq!(testing::checked(&rough), (0.0, 1.0));
         assert_eq!(testing::round_range(&rough), (0.0, 1.0));
         // Level ground has no slope, and nothing wired in is level.
-        let level = testing::world_of(NodeKind::SlopeMask(from(5.0, 90.0)), 0, &[Some(NodeKind::Constant(Constant { value: 9.0 }))]);
+        let level = testing::world_of(
+            NodeKind::SlopeMask(from(5.0, 90.0)),
+            0,
+            &[Some(NodeKind::Constant(Constant { value: 9.0 }))],
+        );
         assert_eq!((level.height_at(1.0, 1.0), level.height_round([0.0, 0.0, 800.0])), (0.0, 0.0));
         assert_eq!(testing::world_of(NodeKind::SlopeMask(from(0.0, 90.0)), 0, &[]).height_at(1.0, 1.0), 1.0);
     }

@@ -37,7 +37,7 @@ mod slope_mask;
 mod smooth;
 mod terrace;
 #[cfg(test)]
-mod testing;
+pub(crate) mod testing;
 mod warp;
 
 pub use blend::Blend;

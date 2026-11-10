@@ -140,7 +140,9 @@ mod tests {
     fn curvature_finds_crests_and_floors_and_nothing_on_an_even_slope() {
         let hills = Noise { size: 150.0, low: 0.0, high: 80.0, ..Noise::default() };
         let curvature = Curvature { size: 30.0, bend: rise_of(8.0), feather: rise_of(4.0) };
-        let world = |port: usize| testing::world_of(NodeKind::Curvature(curvature.clone()), port, &[Some(NodeKind::Noise(hills.clone()))]);
+        let world = |port: usize| {
+            testing::world_of(NodeKind::Curvature(curvature.clone()), port, &[Some(NodeKind::Noise(hills.clone()))])
+        };
         let (ridges, valleys) = (world(Curvature::RIDGES), world(Curvature::VALLEYS));
         assert_eq!(testing::checked(&ridges), (0.0, 1.0));
         assert_eq!(testing::checked(&valleys), (0.0, 1.0));
@@ -187,7 +189,11 @@ mod tests {
         assert_eq!((at(&ridges, 170.0), at(&valleys, 170.0)), (0.0, 1.0));
         assert_eq!((at(&ridges, 430.0), at(&valleys, 430.0)), (1.0, 0.0));
         // Level ground does not bend, and nothing wired in is nothing.
-        let level = testing::world_of(NodeKind::Curvature(curvature.clone()), 0, &[Some(NodeKind::Constant(Constant { value: 4.0 }))]);
+        let level = testing::world_of(
+            NodeKind::Curvature(curvature.clone()),
+            0,
+            &[Some(NodeKind::Constant(Constant { value: 4.0 }))],
+        );
         assert_eq!((level.height_at(2.0, 2.0), level.height_round([0.0, 700.0, 0.0])), (0.0, 0.0));
         assert_eq!(testing::world_of(NodeKind::Curvature(curvature), 1, &[]).height_at(2.0, 2.0), 0.0);
     }

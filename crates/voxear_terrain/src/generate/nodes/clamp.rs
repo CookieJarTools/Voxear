@@ -154,7 +154,8 @@ mod tests {
         assert_eq!(testing::checked(&hard), (20.0, 70.0));
         let (low, high) = testing::checked(&soft);
         assert!(low >= 20.0 && high <= 70.0 && high - low > 45.0, "{low} to {high}");
-        let (was, held, rounded) = (testing::flat(&source, 4000), testing::flat(&hard, 4000), testing::flat(&soft, 4000));
+        let (was, held, rounded) =
+            (testing::flat(&source, 4000), testing::flat(&hard, 4000), testing::flat(&soft, 4000));
         for i in 0..4000 {
             assert_eq!(held[i], was[i].clamp(20.0, 70.0));
             // Rounded, it is the same away from the ends and never further from them than a quarter of Smooth.
@@ -173,9 +174,13 @@ mod tests {
             last = next;
         }
         // A Max under the Min holds everything at the Min; Smooth wider than the ends are apart is held to half.
-        assert_eq!(testing::flat(&testing::world_of(NodeKind::Clamp(Clamp { min: 5.0, max: 1.0, smooth: 3.0 }), 0, &[]), 9)[4], 5.0);
+        assert_eq!(
+            testing::flat(&testing::world_of(NodeKind::Clamp(Clamp { min: 5.0, max: 1.0, smooth: 3.0 }), 0, &[]), 9)[4],
+            5.0
+        );
         let narrow = Clamp { min: 20.0, max: 30.0, smooth: 400.0 };
-        let (low, high) = testing::checked(&testing::world_of(NodeKind::Clamp(narrow), 0, &[Some(NodeKind::Noise(hills))]));
+        let (low, high) =
+            testing::checked(&testing::world_of(NodeKind::Clamp(narrow), 0, &[Some(NodeKind::Noise(hills))]));
         assert!(low >= 20.0 && high <= 30.0, "{low} to {high}");
         // Round a planet each place is held as on flat ground.
         let (was, round) = (testing::round(&source, 2000), testing::round(&hard, 2000));

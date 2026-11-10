@@ -296,11 +296,11 @@ mod tests {
 
     #[test]
     fn a_cell_has_one_value_a_point_at_its_middle_and_borders_at_its_edges() {
-        let cells = |jitter: f32, port: usize| {
-            testing::world_of(NodeKind::Cells(Cells { size: 50.0, jitter }), port, &[])
-        };
+        let cells =
+            |jitter: f32, port: usize| testing::world_of(NodeKind::Cells(Cells { size: 50.0, jitter }), port, &[]);
         // With no jitter the points lie on the middle of each square: nothing far at one, and a border between two.
-        let (distance, edges, value) = (cells(0.0, Cells::DISTANCE), cells(0.0, Cells::EDGES), cells(0.0, Cells::VALUE));
+        let (distance, edges, value) =
+            (cells(0.0, Cells::DISTANCE), cells(0.0, Cells::EDGES), cells(0.0, Cells::VALUE));
         assert!(distance.height_at(25.0, 75.0).abs() < 1e-5);
         assert!((distance.height_at(40.0, 75.0) - 0.3).abs() < 1e-5, "15 m of 50 from its point");
         assert!(edges.height_at(50.0, 20.0).abs() < 1e-5 && (edges.height_at(25.0, 25.0) - 1.0).abs() < 1e-5);

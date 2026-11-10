@@ -188,14 +188,27 @@ mod tests {
         // A mask from 30° to 50° with 5° of feather: nothing by 25° and 55°, all between 30° and 50°.
         let slopes = Slopes::new(rise_of(30.0), rise_of(50.0), rise_of(5.0));
         let cover = |degrees: f32| slopes.cover(rise_of(degrees));
-        assert_eq!([cover(10.0), cover(24.9), cover(30.1), cover(49.9), cover(55.1), cover(89.0)], [0.0, 0.0, 1.0, 1.0, 0.0, 0.0]);
+        assert_eq!(
+            [cover(10.0), cover(24.9), cover(30.1), cover(49.9), cover(55.1), cover(89.0)],
+            [0.0, 0.0, 1.0, 1.0, 0.0, 0.0]
+        );
         assert!((0.3..0.7).contains(&cover(27.5)) && (0.3..0.7).contains(&cover(52.5)));
         // To straight up there is no upper edge, and from level no lower one.
         let steep = Slopes::new(rise_of(40.0), STEEPEST, rise_of(5.0));
         assert_eq!([steep.cover(rise_of(30.0)), steep.cover(rise_of(41.0)), steep.cover(1.0e9)], [0.0, 1.0, 1.0]);
         assert_eq!(Slopes::new(0.0, rise_of(10.0), rise_of(5.0)).cover(0.0), 1.0);
+        // A row keeps an angle as its rise over run, from level to straight up, and nothing that is no number.
+        let row = crate::generate::ValueSpec::angle("min", "Min");
+        let kept = |rise: f32| row.kept(crate::generate::Value::Number(rise)).and_then(|value| value.number());
+        assert_eq!(
+            [kept(0.5), kept(-3.0), kept(f32::MAX), kept(f32::NAN)],
+            [Some(0.5), Some(0.0), Some(STEEPEST), None]
+        );
+        assert_eq!(row.kept(crate::generate::Value::Choice(1)), None);
         assert_eq!(within(10.0, 20.0, 5.0, 4.0), 0.0);
         assert_eq!((within(10.0, 20.0, 5.0, 15.0), within(10.0, 20.0, 5.0, 26.0)), (1.0, 0.0));
-        assert!((within(10.0, 20.0, 5.0, 7.5) - 0.5).abs() < 1e-6 && (within(10.0, 20.0, 5.0, 22.5) - 0.5).abs() < 1e-6);
+        assert!(
+            (within(10.0, 20.0, 5.0, 7.5) - 0.5).abs() < 1e-6 && (within(10.0, 20.0, 5.0, 22.5) - 0.5).abs() < 1e-6
+        );
     }
 }

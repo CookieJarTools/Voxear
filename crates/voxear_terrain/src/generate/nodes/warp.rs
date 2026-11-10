@@ -98,7 +98,11 @@ impl Kind for Bend {
             Places::Flat { x, z } => Places::Flat { x: moved(cx, 0, false, &[x, z]), z: moved(cx, 1, false, &[x, z]) },
             Places::Round { x, y, z } => {
                 let rows = [x, y, z];
-                Places::Round { x: moved(cx, 0, true, &rows), y: moved(cx, 1, true, &rows), z: moved(cx, 2, true, &rows) }
+                Places::Round {
+                    x: moved(cx, 0, true, &rows),
+                    y: moved(cx, 1, true, &rows),
+                    z: moved(cx, 2, true, &rows),
+                }
             }
         };
         cx.input(node, 0, from).unwrap_or_else(|| cx.constant(0.0))
@@ -163,7 +167,8 @@ mod tests {
         let (bent, straight) = (warp(80.0), warp(0.0));
         let (low, high) = testing::checked(&bent);
         assert!(low >= 10.0 && high <= 90.0 && high - low > 30.0, "its input's range still: {low} to {high}");
-        let (was, now, left) = (testing::flat(&source, 4000), testing::flat(&bent, 4000), testing::flat(&straight, 4000));
+        let (was, now, left) =
+            (testing::flat(&source, 4000), testing::flat(&bent, 4000), testing::flat(&straight, 4000));
         assert_eq!(left, was, "no strength, no warp");
         let moved = (0..4000).filter(|&i| (now[i] - was[i]).abs() > 1.0).count();
         assert!(moved > 2000, "bent nearly everywhere: {moved} of 4000 places");

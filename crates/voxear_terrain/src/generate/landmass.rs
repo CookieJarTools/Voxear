@@ -425,8 +425,9 @@ const GULLY_REACH: f32 = 1.5;
 /// along x and z, per cell. Each cell has a point of its own, its gullies'
 /// stripes laid round it at a phase of its own, and blended with its
 /// neighbours' as they reach, so gullies wander and end rather than run in
-/// rows.
-fn gullies(x: f32, z: f32, along: [f32; 2], seed: u32) -> (f32, f32, f32) {
+/// rows. With `joined`, how it changes eases to nothing on the floors, where
+/// it would turn about from one wall to the other.
+fn gullies(x: f32, z: f32, along: [f32; 2], seed: u32, joined: bool) -> (f32, f32, f32) {
     let across = [-along[1], along[0]];
     let reach2 = GULLY_REACH * GULLY_REACH;
     let (mut sum, mut weights) = (0.0f32, 0.0f32);
@@ -450,7 +451,14 @@ fn gullies(x: f32, z: f32, along: [f32; 2], seed: u32) -> (f32, f32, f32) {
             let s = dx * across[0] + dz * across[1] + phase;
             let u = s - s.floor();
             let wave = 8.0 * u * (1.0 - u) - 1.0;
-            let slope = 8.0 - 16.0 * u;
+            let mut slope = 8.0 - 16.0 * u;
+            if joined {
+                // Whole from an eighth of the way up either wall.
+                let up = if u < 0.5 { u } else { 1.0 - u };
+                if up < 0.125 {
+                    slope *= up * 8.0;
+                }
+            }
             sum += w * wave;
             weights += w;
             for axis in 0..2 {
@@ -477,6 +485,15 @@ pub(crate) struct Gullied {
     pub scale: f32,
     pub sea_level: f32,
     pub seed: u32,
+    /// Whether each octave's gullies join the floors of the octave before
+    /// without a step. An octave runs down the slope the one before left,
+    /// and that slope turns about across a gully's floor, from one wall's to
+    /// the other's: so the next octave's gullies meet there out of step,
+    /// which leaves a step in the ground along the floor. Joined, the slope
+    /// they follow eases to the floor's own as they near it, so they turn
+    /// to run along it and meet. A landmass's are not joined: its ground is
+    /// what it was.
+    pub joined: bool,
 }
 
 impl Gullied {
@@ -507,7 +524,8 @@ impl Gullied {
             let slope = (gx * gx + gz * gz).sqrt();
             if slope > 1e-4 {
                 let along = [gx / slope, gz / slope];
-                let (value, dx, dz) = gullies(x / spacing, z / spacing, along, seed_of(self.seed, 20 + octave));
+                let seed = seed_of(self.seed, 20 + octave);
+                let (value, dx, dz) = gullies(x / spacing, z / spacing, along, seed, self.joined);
                 // From nothing between gullies to their whole depth on their floors, deepest from about 30° up.
                 let depth = self.erosion.strength * spacing * 0.25 * crate::layers::smoothstep(0.0, 0.6, slope);
                 let share = (value - 1.0) * 0.5;
@@ -716,8 +734,13 @@ impl Landmass {
     /// (see [`Gullied`]), which are read from its height a little way off
     /// each way.
     fn eroded(&self, x: f32, z: f32, height: f32) -> f32 {
-        let cut =
-            Gullied { erosion: self.erosion, scale: self.scale, sea_level: self.sea_level, seed: self.seed };
+        let cut = Gullied {
+            erosion: self.erosion,
+            scale: self.scale,
+            sea_level: self.sea_level,
+            seed: self.seed,
+            joined: false,
+        };
         let step = cut.step();
         let at = |dx: f32, dz: f32| self.shaped(Spot::Flat(x + dx, z + dz)).0.height;
         cut.cut(x, z, height, [at(step, 0.0), at(-step, 0.0), at(0.0, step), at(0.0, -step)])
@@ -798,7 +821,7 @@ mod tests {
         let (mut along, mut across) = (0.0, 0.0);
         for i in 0..4000 {
             let (x, z) = ((i % 64) as f32 * 0.173, (i / 64) as f32 * 0.191);
-            let (_, dx, dz) = gullies(x, z, [1.0, 0.0], 7);
+            let (_, dx, dz) = gullies(x, z, [1.0, 0.0], 7, false);
             (along, across) = (along + dx.abs(), across + dz.abs());
         }
         assert!(across > along * 3.0, "across {across}, along {along}");

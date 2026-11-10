@@ -114,7 +114,8 @@ mod tests {
         let constant = |value: f32| Some(NodeKind::Constant(Constant { value }));
         let mask = Noise { size: 250.0, low: -2.0, high: 3.0, ..Noise::default() };
         let blend = NodeKind::Blend(Blend::default());
-        let world = testing::world_of(blend.clone(), 0, &[constant(-30.0), constant(50.0), Some(NodeKind::Noise(mask))]);
+        let world =
+            testing::world_of(blend.clone(), 0, &[constant(-30.0), constant(50.0), Some(NodeKind::Noise(mask))]);
         // A mask past either end is held to it, so the ground never leaves what lies between its two inputs.
         assert_eq!(testing::checked(&world), (-30.0, 50.0));
         let heights = testing::flat(&world, 4000);

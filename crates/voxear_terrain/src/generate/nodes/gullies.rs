@@ -100,6 +100,7 @@ impl Kind for Gullies {
             scale: cx.world.scale,
             sea_level: cx.world.sea_level,
             seed: node_seed(cx.world, node),
+            joined: true,
         };
         let [a, b, c, d] = around::four(cx, at, cut.step()).map(|from| cx.input(node, 0, from).unwrap_or(height));
         cx.run(Cut(cut), &[x, z, height, a, b, c, d])
@@ -114,9 +115,9 @@ struct Cut(Gullied);
 
 impl Kernel for Cut {
     fn key(&self, key: &mut Key) {
-        let Gullied { erosion, scale, sea_level, seed } = self.0;
+        let Gullied { erosion, scale, sea_level, seed, joined } = self.0;
         key.name("gullies").number(erosion.strength).number(erosion.spacing).whole(erosion.octaves);
-        key.number(scale).number(sea_level).whole(seed);
+        key.number(scale).number(sea_level).whole(seed).whole(u32::from(joined));
     }
 
     fn run(&self, inputs: &[&[f32]], out: &mut [f32]) {
@@ -148,7 +149,7 @@ mod tests {
         let bare = Landmass { scale: 1.3, sea_level: 20.0, ..bare };
         // The node's gullies are its own, from its number: node 2 here.
         let seed = node_seed(crate::generate::compile::World { seed: 1, scale: 1.3, sea_level: 20.0 }, NodeId(2));
-        let cut = Gullied { erosion, scale: 1.3, sea_level: 20.0, seed };
+        let cut = Gullied { erosion, scale: 1.3, sea_level: 20.0, seed, joined: true };
         let step = cut.step();
         let (mut lower, mut cuts) = (0.0, 0);
         for i in 0..3000 {
@@ -164,7 +165,7 @@ mod tests {
         assert!(lower / 3000.0 > 0.5 && cuts > 300, "cut into the mountains: {} m on average", lower / 3000.0);
         // With the landmass's own seed in place of the node's, they are the landmass's own gullies: the ground
         // Alpine makes, less its bumps.
-        let own = Gullied { erosion, scale: 1.3, sea_level: 20.0, seed: 1 };
+        let own = Gullied { erosion, scale: 1.3, sea_level: 20.0, seed: 1, joined: false };
         let whole = Landmass { scale: 1.3, sea_level: 20.0, bumps: 0.0, ..alpine };
         for i in 0..500 {
             let (x, z) = (i as f32 * 53.0 - 9000.0, i as f32 * 29.0 + 500.0);
@@ -199,7 +200,11 @@ mod tests {
         // Round a planet the height passes through, to the bit.
         assert_eq!(testing::round(&world, 4000), testing::round(&source, 4000));
         // Level ground has no slope to run down; nothing wired in is nothing.
-        let level = testing::world_of(NodeKind::Gullies(Gullies::default()), 0, &[Some(NodeKind::Constant(Constant { value: 50.0 }))]);
+        let level = testing::world_of(
+            NodeKind::Gullies(Gullies::default()),
+            0,
+            &[Some(NodeKind::Constant(Constant { value: 50.0 }))],
+        );
         assert_eq!(level.height_at(40.0, 40.0), 50.0);
         assert_eq!(testing::world_of(NodeKind::Gullies(Gullies::default()), 0, &[]).height_at(40.0, 40.0), 0.0);
         // Twice the scale, the same gullies twice as far apart in ground twice as wide: as deep as its slopes,

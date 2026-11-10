@@ -33,11 +33,13 @@ float2 cellPoint(float2 cell)
 }
 
 // The plates of crust round a place: how far it is from the nearest gap
-// between two of them, in plates; the way to that gap; its own plate's
-// number, from 0 to 1, and that of the plate across the gap.
+// between two of them, in plates, and from the next nearest; the way to the
+// nearest; its own plate's number, from 0 to 1, and that of the plate
+// across the gap.
 struct LavaPlates
 {
     float edge;
+    float next;
     float2 toEdge;
     float plate;
     float beyond;
@@ -79,6 +81,7 @@ LavaPlates lavaPlates(float2 p, float churn)
     // Half way to each neighbour, across the line between them.
     LavaPlates plates;
     plates.edge = 8.0;
+    plates.next = 8.0;
     plates.toEdge = float2(1.0, 0.0);
     plates.plate = cellPoint(n + nearestCell + 0.5).x;
     plates.beyond = plates.plate;
@@ -96,9 +99,14 @@ LavaPlates lavaPlates(float2 p, float churn)
                 float d = dot(0.5 * (nearest + r), way);
                 if (d < plates.edge)
                 {
+                    plates.next = plates.edge;
                     plates.edge = d;
                     plates.toEdge = way;
                     plates.beyond = cellPoint(n + g + 0.5).x;
+                }
+                else
+                {
+                    plates.next = min(plates.next, d);
                 }
             }
         }
@@ -185,12 +193,15 @@ float lavaSunk(float side, float bevel, float depth)
 // view sinks `slant` metres a metre; it started `edge` metres from the
 // middle of the gap, on its own plate's side, and nears it by `nearing` a
 // metre; the gap reaches `here` metres into its own plate's side and
-// `there` into the other's.
-float lavaParallax(float edge, float nearing, float slant, float here, float there, float bevel, float depth)
+// `there` into the other's. No further than `straight` metres, as far as
+// the gap is one straight gap: past that another gap joins it, and the view
+// is left where it is rather than followed into the wrong one.
+float lavaParallax(float edge, float nearing, float slant, float here, float there, float bevel, float depth, float straight)
 {
-    // No further than where it would reach the molten rock, nor past what a flat gap is a fair picture of.
-    float most = min(depth / max(slant, 1e-3), 0.7);
-    static const uint STEPS = 8;
+    // No further than where it would reach the molten rock.
+    float most = min(min(depth / max(slant, 1e-3), 0.7), straight);
+    // In steps no longer than half the slope of a plate's side, so none is stepped over.
+    static const uint STEPS = 20;
     float before = 0.0;
     float reached = most;
     for (uint i = 1; i <= STEPS; i++)
@@ -206,7 +217,7 @@ float lavaParallax(float edge, float nearing, float slant, float here, float the
         before = s;
     }
     // Between the last step over it and the first under it.
-    for (uint k = 0; k < 3; k++)
+    for (uint k = 0; k < 5; k++)
     {
         float s = (before + reached) * 0.5;
         float d = edge - s * nearing;
@@ -353,14 +364,17 @@ float3 lavaBubbleShape(LavaBubble bubble, float off)
     float ring = exp(-pow((off - ringAt) / (0.2 * r + 0.04), 2.0));
     float inside = 1.0 - smoothstep(ringAt * 0.55, ringAt, off);
     float open = (1.0 - smoothstep(ringAt * 1.05, ringAt * 1.3, off)) * (1.0 - smoothstep(0.6, 1.0, healed));
-    return float3((ring * 0.2 - inside * 0.07 * (1.0 - healed)) * r * left, inside * left, open);
+    return float3((ring * 0.2 - inside * 0.07 * (1.0 - healed)) * r * left, 0.8 * inside * left, open);
 }
 
 // The bubbles round `plate` across `field`'s lava, in metres: how high they
 // raise it there, in metres (x), how much hotter it shows (y) and how much
 // they have broken its crust open (z). A flow's plates are `crowded`
 // plates' metres a metre along it, and its bubbles keep to the middle
-// `half` metres either side.
+// `half` metres either side. The lava's own points are too far apart to
+// take these shapes, a dome or the narrow ring a burst leaves, without
+// standing up as corners: a dome is a mesh of its own (water.slang's
+// lavaDomeVertex), and a ring is only shaded.
 float3 lavaBubbles(LavaField field, float2 plate, float crowded, float half)
 {
     float2 at = plate / BUBBLE_CELL;

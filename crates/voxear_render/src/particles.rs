@@ -269,20 +269,21 @@ pub(crate) fn gather(
     (gpus, counts, spray, rapids)
 }
 
-/// The spray over `white` square metres of a Stream's white water: fine
-/// drops thrown up a metre or so, drifting into mist as they fall back.
+/// The spray over `white` square metres of a Stream's white water: many
+/// fine drops thrown up a metre or so and falling back, each too small to
+/// show as a puff.
 fn rapids_spray(white: f32) -> ParticleSystem {
     ParticleSystem {
-        rate: (white * 14.0).min(3000.0),
-        lifetime: [0.5, 1.1],
-        speed: [1.0, 2.8],
-        size: [0.12, 0.32],
-        size_end: 2.8,
-        color: [1.0, 1.0, 1.0, 0.4],
+        rate: (white * 60.0).min(9000.0),
+        lifetime: [0.35, 0.8],
+        speed: [1.2, 3.2],
+        size: [0.02, 0.06],
+        size_end: 1.5,
+        color: [1.0, 1.0, 1.0, 0.6],
         color_end: [1.0, 1.0, 1.0, 0.0],
         gravity: 1.0,
         drag: 0.7,
-        softness: 0.1,
+        softness: 0.05,
         seed: 0x5712EA,
         ..ParticleSystem::default()
     }

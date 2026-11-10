@@ -46,9 +46,9 @@ A script that moves a character adds its fall itself, so near a planet it falls 
 Obj.CharacterController.SimpleMove(Obj.Forward * 4f);
 ```
 
-A [[First-Person View]] on the character turns about the same up, so its Obj and its camera tilt with it. Without one, turning the character's Obj to its up is the script's to do, as turning it to face where it walks is.
+A [[First-Person View]] on the character turns about the same up, so its Obj and its camera tilt with it. A [[Motion Matching|Motion Matcher]] stands its body up the same way, though its Obj stays as it is, and turns and walks it about that up. Without either, turning the character's Obj to its up is the script's to do, as turning it to face where it walks is.
 
-A planet is made all at once, never without end, so a large one takes a while: one 200 m across takes a few seconds to make and draw, most of it for its caves. Not done yet: the Motion Matcher still turns about the world's up; and far from the scene's middle, past about 10 km, things are drawn and moved less exactly, as everywhere, until a floating origin comes.
+A planet is made all at once, never without end, so a large one takes a while: one 200 m across takes a few seconds to make and draw, most of it for its caves. Not done yet: far from the scene's middle, past about 10 km, things are drawn and moved less exactly, as everywhere, until a floating origin comes.
 
 ## How it is drawn
 

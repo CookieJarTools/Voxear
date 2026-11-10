@@ -1692,10 +1692,14 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     C#: `Physics.GravityAt(position)`, `CharacterController.Up`, and `SimpleMove` falling along it (native API 69).
     The First-Person View turns about the up where its Obj is: a level of its own (`FirstPersonView::level`, C#
     `Level`), carried by the least turn each frame, so its yaw goes round with it, its Obj, camera, body twist and
-    gun holder all following. Tests: a character dropped beside a planet landing on its side, upright to it, and
-    walking round it; a view on a planet's side turned about its up and its yaw carried over the top; a script doing
-    the same through `GravityAt` and `SimpleMove`, its view and Obj upright. Not done: the Motion Matcher turns
-    about the world's up.
+    gun holder all following. The Motion Matcher measures its body's facing, the velocity wanted and seen and its
+    clips' travel in a level of its own (`MotionMatcherState::level`), carried to its Character Controller's up or
+    else the pull where it is: its body stands away from a planet's middle whatever its Obj's turn, and root motion
+    presses it to the ground along that up; off planets nothing is turned. Tests: a character dropped beside a planet
+    landing on its side, upright to it, and walking round it; a view on a planet's side turned about its up and its
+    yaw carried over the top; a script doing the same through `GravityAt` and `SimpleMove`, its view and Obj upright;
+    a motion-matched character walking round a planet's side by its clips, its body upright to it and facing the way
+    it goes.
   - a floating origin, engine-wide (transforms, physics, audio), for worlds past about 10 km.
 - Throughout: chunks culled against the frustum and last frame's depth, and the smallest save and network data
   (only changes from what a build or a seed makes, as commands while few and compacted deltas once many).

@@ -2889,17 +2889,27 @@ Block worlds (`voxear_terrain::blocks`): chunks of 32³ blocks kept sparse by wh
 blocks in it and indices in as few bits as it needs; faces where a block meets air, shaded at their corners by the
 blocks closing them in and merged into quads by surface and shading (greedy meshing), two words a quad, kept by the
 way they face. A world's quads live in a pool of its own and are drawn six vertices a quad with no vertex buffer
-(`blocks.rs`, `shaders/blocks.slang`), each view drawing only the chunks in view and their faces turned towards it;
-each chunk's faces merged by surface alone are its collision mesh and its mesh for the GI's rays. A change remakes
+(`blocks.rs`, `shaders/blocks.slang`), each view drawing only the chunks in view and their faces turned towards it,
+and each sun cascade only their faces turned towards the sun;
+each chunk's faces merged by surface alone are its collision mesh and its mesh for the GI's rays, the shapes made on
+every core and kept while a chunk's triangles stay the same, the ray meshes made a few a frame and uploaded and built
+in one GPU batch (`Gpu::batch`). A world whose faces did not change costs physics and the renderer no walk over its
+chunks. A change remakes
 the chunks it reaches and those beside it it shades, on every core; changes are kept as what differs from what a
 world was made as (`blocks::edits`), in a `.blocks` file for the editor's and in a scene's save for scripts'.
 Generated block ground (`blocks::generate`) takes a world generator's heights a column at a time, pushed in and out
 by 3D noise and hollowed by caves, its top covered by kinds of block by climate and height. Generated ground without
 end streams chunk columns round the camera (`blocks::stream`), the world's own near, and beyond them rings of
-coarser chunks, each twice the last's block size, kept by level in the renderer's pool. Models of small coloured
+coarser chunks, each twice the last's block size, kept by level in the renderer's pool; near columns' blocks are made
+a column past those drawn, and each column's faces on the same background threads once the columns round it have
+blocks, so none is meshed twice and the frame waits for none. Models of small coloured
 blocks come from `.vox` files (`blocks::vox`), each colour built as a kind of block. A world drawn smooth (a Voxel
 Terrain) keeps how full each block is near its surface and is meshed by surface nets (`blocks::smooth`), drawn from
-the same pool as triangles' corners. A planet's ground lies all round its world's corner, its generator read round
+the same pool as triangles' corners; each chunk's triangles merged where the surface is flat (a tenth of a block),
+and twice more, coarser, for far away, each kind of ground apart and the points chunks share kept, so any level
+meets any other; a view picks a chunk's level by its distance as models' are, and passes over a chunk whose
+triangles all face away (`ChunkMesh::cone`).
+A planet's ground lies all round its world's corner, its generator read round
 it in three dimensions on a cube's faces once; physics pulls bodies near it towards its middle, and characters near
 it stand away from its middle, their First-Person Views and Motion Matchers turning about that up
 (`PhysicsScene::gravity_at`, shared by all). Each chunk of cubes

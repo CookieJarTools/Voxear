@@ -1690,8 +1690,8 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     the editor's water running out and undone with it. Buoyancy pushes against the pull where a body is, as strongly
     as it pulls (towards a planet's middle near one, as physics pulls), reading how deep it is along the water's own
     up (`BlockWorld::water_depth`), so things float on a planet's sides; tested with a ball floating out from a
-    planet's middle and one sinking to its stone. Not done: the view fogged from in water blocks; scripts' `Water`
-    finding a planet's water off its top.
+    planet's middle and one sinking to its stone. Not done: an under-water view on a planet's sides; scripts'
+    `Water` finding a planet's water off its top.
     After a first look: still water spreads over water (falling water only over ground), so a lake runs into a hole
     dug beside it, and a block between two sources becomes one; a Voxel Terrain's water is smooth, its surface made
     by surface nets over a field of water's and ground's depths, faces only where water meets air, a generated sea's
@@ -1700,6 +1700,20 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     while playing; terrains' and block worlds' looks count as using their materials, so their colours survive play
     (they were freed as a level loaded). Tests: a lake running into a hole, a gap filling, smooth water at its top and
     at a sea's level, a block world's colours kept loaded.
+    After a second look: drawn smooth, a generated sea takes every block whose ground lies under it
+    (`generate::pushed`), and its surface runs a block into the shore (`smooth::water_surface`: ground beside the
+    water's top with air over it takes the water's level and a face, up being the map's, `BlockMap::round` on a planet),
+    so it meets the ground with no gaps; each smooth corner takes the kind of the ground nearest the surface among its
+    eight blocks (`Padded::kind`) and a triangle's three kinds blend by how near each corner a fragment is
+    (`blockVertex` packs them in `lod` and `cluster`), which also keeps dirt from showing through a thin top layer on
+    slopes. Under water in blocks: the water round the camera is a body among the Pools (`water_bodies::block_water`,
+    `WATER_BLOCKS`), level with the top of the camera's column and as far as that top runs along x and z, in the kind's
+    colour (`BlockFaces::color`), so the under-water view, the waterline and the wet lens are a Pool's; it draws no
+    surface or walls and leaves the sea alone. Block size keeps the world's size: `BlockFile::set_block_size` counts its
+    ground again in blocks of the new size, and what was built is read again in them (`edits::changed`,
+    `edits::resized`: nearest for kinds, between the old blocks' middles for how full smooth ground is; a world without
+    end's kept changes block by block). Tests: a sea's surface whole over a gentle shore, smooth sea generation, a
+    pond's body of water, pillars and holes resized and back, a mound's surface kept, the editor halving Block size.
 - **Smooth voxel terrain, flat and planets**, in parts: smooth ground you can see, stand on, generate and build on;
   planets with their own gravity; a floating origin.
   - ~~**Voxel Terrain:**~~ done: a Block World drawn smooth (`BlockFile::smooth`, `BlockWorld::smooth`). Each chunk
@@ -1715,8 +1729,8 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     fills say, a slope with no steps, chunks meeting at the same points, a closed blob, balls added, taken and
     painted, changes with fills read back and version 1 read, the GPU drawing a hill's top and sides with no gaps,
     a ball resting on it, a generated world on its generator's heights, the editor adding one and building a ball.
-    Not done: blending between kinds within a triangle (each triangle takes its block's kind); levels of detail
-    that meet (far rings are drawn smooth but meet with seams).
+    Not done: levels of detail that meet (far rings are drawn smooth but meet with seams). (Kinds blend within a
+    triangle since the water blocks' second look, above.)
   - ~~**Planets:**~~ done: generated ground as a planet (`BlockGenerate::planet`, `BlockPlanet { radius }`) all round
     a middle at its world's corner, its generator read round it in three dimensions (`WorldGen::height_round`,
     `climate_round`, colder towards the poles; fields read through a flat or round `Spot`, `noise::fractal3`), once,

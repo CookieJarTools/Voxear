@@ -13,14 +13,32 @@ namespace Voxear;
 /// </summary>
 public static class Recipes
 {
+	private static readonly List<Recipe> made = [];
 	private static IReadOnlyList<Recipe>? all;
 
-	/// <summary>Every recipe of the project, by path. Read once, and again after <see cref="Refresh"/>.</summary>
-	public static IReadOnlyList<Recipe> All => all ??= Definition.All<Recipe>();
+	/// <summary>
+	/// Every recipe of the project, by path, and after them those added in code. Read once, and again after
+	/// <see cref="Refresh"/>.
+	/// </summary>
+	public static IReadOnlyList<Recipe> All => all ??= [.. Definition.All<Recipe>(), .. made];
 
 	/// <summary>Reads the project's recipes again, as after one was made while the game runs.</summary>
 	public static void Refresh()
 	{
+		all = null;
+	}
+
+	/// <summary>Adds a recipe made in code, as a game that makes its recipes up does, until the game ends.</summary>
+	public static void Add(Recipe recipe)
+	{
+		made.Add(recipe);
+		all = null;
+	}
+
+	/// <summary>Forgets every recipe read and added, as a run of the game ends.</summary>
+	internal static void Reset()
+	{
+		made.Clear();
 		all = null;
 	}
 

@@ -59,7 +59,7 @@ internal static class Definitions
 		loaded.Clear();
 		// What was read through them: the next asking reads the files again.
 		Items.Refresh();
-		Recipes.Refresh();
+		Recipes.Reset();
 		BlockInfos.Clear();
 	}
 

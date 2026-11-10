@@ -36,6 +36,19 @@ internal static class SaveTests
 	}
 
 	[Test]
+	private static void ADataAssetIsKeptAsWhichFileItIsAndOneMadeInCodeAsWhatItSays()
+	{
+		// A stack of an item from a file: the item is kept as its file's GUID, so every stack of it is the same item.
+		var pick = new Item { Name = "Pick", Guid = "0123456789abcdef0123456789abcdef", Durability = 60 };
+		var node = SaveNode.From(new ItemStack(pick, 1, 12));
+		Check.True(node["Item"].AsString() == pick.Guid, "which item, by its GUID");
+		Check.True(node["Count"].AsLong() == 1 && node["Wear"].AsLong() == 12, "how many and how worn");
+		// One made in code is no file's, so it is kept as its fields.
+		var made = SaveNode.From(new ItemStack(new Item { Name = "Made", StackSize = 5 }, 2));
+		Check.True(made["Item"].Kind == SaveNodeKind.Table && made["Item"]["StackSize"].AsLong() == 5, "field by field");
+	}
+
+	[Test]
 	private static void JsonReadsAsAPersonWouldWriteIt()
 	{
 		var json = SaveFormat.Json.Write(SaveNode.From(new TestSettings { Volume = 0.5f, Subtitles = true }));

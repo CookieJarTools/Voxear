@@ -1,11 +1,15 @@
 //! A World Generator in the Inspector, and a node of its graph.
 //!
 //! Selected in the Project, a generator shows its own values first, which
-//! are all most worlds need: its preset, while its graph is one landmass
-//! and nothing more, its seed, scale and sea level, and a row for each
-//! value its graph exposes ([`WorldFields`]). Picking a preset reshapes its
-//! landmass and climate, keeping its seed and scale. Open Graph shows its
-//! graph in the Generator panel (see `generator_panel`), where the rest is.
+//! are all most worlds need: its preset, its seed, scale and sea level, and
+//! a row for each value its graph exposes ([`WorldFields`]). A preset is a
+//! starter graph (`generate::starters`), and the row is there while the
+//! generator's graph is a starter's still: picking another puts that
+//! starter's graph in its place, keeping its seed and scale. A generator
+//! that is one landmass and nothing more, as a file from before graphs is,
+//! picks among a landmass's presets instead, which make the ground they
+//! always made. Open Graph shows its graph in the Generator panel (see
+//! `generator_panel`), where the rest is.
 //!
 //! A node picked there shows a row for each of its values ([`NodeView`]),
 //! those it seldom needs under Advanced. A value that stands in for an
@@ -18,10 +22,12 @@
 //! is kept as the slope's rise over run. Each change is saved as it is made, and terrains generated
 //! from the generator are made again (see `editor::generators`).
 
+use std::sync::OnceLock;
+
 use voxear_terrain::generate::{
-    Exposed, NodeId as GraphNode, NodeKind, Preset, Value, ValueKind, ValueSpec, WorldGen,
+    Exposed, NodeId as GraphNode, NodeKind, Preset, Starter, Value, ValueKind, ValueSpec, WorldGen,
     nodes::{Land, Output, degrees_of, rise_of},
-    smooth,
+    smooth, starters,
 };
 use voxear_ui::{MenuItem, NodeId, Style, Ui};
 
@@ -170,48 +176,90 @@ fn write(ui: &mut Ui, field: NodeId, text: &str) {
 pub enum WorldChange {
     /// A value changed: saved as it is shown.
     Typed,
+    /// Another preset picked, which reshapes the generator: saved, and a step of its own to undo.
+    Preset,
     /// Open Graph pressed.
     OpenGraph,
 }
 
-/// What a generator's rows were built for: whether it has a preset to
-/// pick, and the values it exposes.
-#[derive(Clone, Debug, PartialEq)]
-struct Built {
-    landmass: bool,
-    exposed: Vec<Exposed>,
+/// The graphs a generator can start from, made once.
+pub(crate) fn starter_graphs() -> &'static [Starter] {
+    static STARTERS: OnceLock<Vec<Starter>> = OnceLock::new();
+    STARTERS.get_or_init(starters)
 }
 
-impl Built {
-    fn of(world: &WorldGen) -> Self {
-        Self { landmass: world.as_landmass().is_some(), exposed: world.graph().exposed.clone() }
+/// What a generator's Preset row picks among. A preset takes the place of the whole shape, so the
+/// row is there only while the shape is a preset's still.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Presets {
+    /// Its graph is a starter's still, whatever its rows are set to: the starters.
+    Starters,
+    /// Its graph is one landmass and nothing more, as a file from before graphs is: a landmass's
+    /// presets, exact as they were, and Custom for a shape of its own.
+    Landmass,
+    /// A graph of its own: no row.
+    None,
+}
+
+/// What a generator's Preset row picks among, and which of them the generator is now.
+fn presets_of(world: &WorldGen) -> (Presets, usize) {
+    if let Some(land) = world.as_landmass() {
+        let picked = land.preset().and_then(|preset| Preset::ALL.iter().position(|&other| other == preset));
+        return (Presets::Landmass, picked.unwrap_or(Preset::ALL.len()));
+    }
+    match starter_graphs().iter().position(|starter| starter.shapes(world.graph())) {
+        Some(picked) => (Presets::Starters, picked),
+        None => (Presets::None, 0),
     }
 }
 
-/// A generator's own rows, and the generator as they show it: its preset
-/// (for one landmass and nothing more), seed, scale and sea level, the
-/// values its graph exposes, and Open Graph.
+/// What a generator's rows were built for: what its preset is picked among, and the values it
+/// exposes.
+#[derive(Clone, Debug, PartialEq)]
+struct Built {
+    presets: Presets,
+    exposed: Vec<Exposed>,
+}
+
+/// A generator's own rows, and the generator as they show it: its preset (while its graph is a
+/// starter's or a single landmass), seed, scale and sea level, the values its graph exposes, and
+/// Open Graph.
 pub struct WorldFields {
     pub world: WorldGen,
+    /// Where its rows are, to build them again in once they are other rows.
+    rows: NodeId,
+    built: Built,
+    /// The Preset row's dropdown, and which preset it shows.
     preset: Option<NodeId>,
+    picked: usize,
     seed: ValueRow,
     scale: ValueRow,
     sea_level: ValueRow,
     /// Each exposed row, by its place among the graph's.
     exposed: Vec<(usize, ValueRow)>,
     open: NodeId,
-    built: Built,
 }
 
 impl WorldFields {
     pub fn new(ui: &mut Ui, root: NodeId, world: WorldGen) -> Self {
         let rows = part(ui, root, "World Generator", "sprout");
-        let built = Built::of(&world);
-        let preset = built.landmass.then(|| {
-            let mut presets: Vec<&str> = Preset::ALL.iter().map(|preset| preset.name()).collect();
-            presets.push("Custom");
+        Self::build(ui, rows, world)
+    }
+
+    /// The rows of `world` in `rows`, in place of what it held.
+    fn build(ui: &mut Ui, rows: NodeId, world: WorldGen) -> Self {
+        for child in ui.children(rows) {
+            ui.remove(child);
+        }
+        let (presets, picked) = presets_of(&world);
+        let names: Vec<&str> = match presets {
+            Presets::Starters => starter_graphs().iter().map(|starter| starter.name).collect(),
+            Presets::Landmass => Preset::ALL.iter().map(|preset| preset.name()).chain(["Custom"]).collect(),
+            Presets::None => Vec::new(),
+        };
+        let preset = (presets != Presets::None).then(|| {
             let row = prop(ui, rows, "Preset");
-            let dropdown = ui.dropdown(row, &presets, picked_preset(&world));
+            let dropdown = ui.dropdown(row, &names, picked);
             ui.add_class(dropdown, "value-choice");
             dropdown
         });
@@ -228,7 +276,8 @@ impl WorldFields {
         let open = ui.button(rows, "Open Graph");
         ui.add_class(open, "add-component");
         ui.add_class(open, "open-graph");
-        Self { world, preset, seed, scale, sea_level, exposed, open, built }
+        let built = Built { presets, exposed: graph.exposed.clone() };
+        Self { world, rows, built, preset, picked, seed, scale, sea_level, exposed, open }
     }
 
     /// What was done this frame, the generator changed to match; its rows then show it as it is.
@@ -236,48 +285,72 @@ impl WorldFields {
         if ui.clicked(self.open) {
             return Some(WorldChange::OpenGraph);
         }
-        let before = self.world.clone();
+        let mut changed = false;
+        let mut reshaped = false;
         if let Some(dropdown) = self.preset.filter(|&dropdown| ui.changed(dropdown))
-            && let Some(&preset) = Preset::ALL.get(ui.selected_option(dropdown))
+            && let Some(world) = self.with_preset(ui.selected_option(dropdown))
         {
-            self.world = reshaped(&self.world, preset);
+            (self.world, changed, reshaped) = (world, true, true);
         }
         if let Some(Value::Whole(seed)) = self.seed.changed(ui, Value::Whole(self.world.seed())) {
-            self.world = self.world.with_seed(seed);
+            (self.world, changed) = (self.world.with_seed(seed), true);
         }
         if let Some(Value::Number(scale)) = self.scale.changed(ui, Value::Number(self.world.scale())) {
-            self.world = self.world.with_scale(scale);
+            (self.world, changed) = (self.world.with_scale(scale), true);
         }
         if let Some(Value::Number(level)) = self.sea_level.changed(ui, Value::Number(self.world.sea_level())) {
-            self.world = self.world.with_sea_level(level);
+            (self.world, changed) = (self.world.with_sea_level(level), true);
         }
         for (at, row) in &self.exposed {
             let Some(now) = self.world.graph().exposed_value(*at) else { continue };
             if let Some(world) = row.changed(ui, now).and_then(|value| self.world.with_exposed(*at, value)) {
-                self.world = world;
+                (self.world, changed) = (world, true);
             }
         }
-        self.show(ui);
-        (self.world != before).then_some(WorldChange::Typed)
+        match changed {
+            true => self.refresh(ui),
+            false => self.show(ui),
+        }
+        changed.then_some(if reshaped { WorldChange::Preset } else { WorldChange::Typed })
     }
 
-    /// Shows `world`, as changed elsewhere: false, and nothing shown, where its rows are no longer
-    /// the ones built, so they have to be built again.
-    pub fn follow(&mut self, ui: &mut Ui, world: &WorldGen) -> bool {
-        if Built::of(world) != self.built {
-            return false;
-        }
+    /// Shows `world`, as changed elsewhere.
+    pub fn follow(&mut self, ui: &mut Ui, world: &WorldGen) {
         self.world = world.clone();
+        self.refresh(ui);
+    }
+
+    /// The generator shaped as the preset at `picked` in its Preset row, keeping its seed and
+    /// scale: a starter's graph in place of its own, or for a landmass, the landmass's preset.
+    fn with_preset(&self, picked: usize) -> Option<WorldGen> {
+        match self.built.presets {
+            Presets::Starters => {
+                let starter = starter_graphs().get(picked)?;
+                let made = starter.world(self.world.seed(), self.world.scale());
+                Some(made.with_preview_area(self.world.preview_area()))
+            }
+            Presets::Landmass => Some(reshaped(&self.world, *Preset::ALL.get(picked)?)),
+            Presets::None => None,
+        }
+    }
+
+    /// Shows the generator after it changed: in the rows it has, or in new ones where its preset
+    /// is picked among others now or it exposes other values.
+    fn refresh(&mut self, ui: &mut Ui) {
+        let (presets, picked) = presets_of(&self.world);
+        if presets != self.built.presets || self.world.graph().exposed != self.built.exposed {
+            *self = Self::build(ui, self.rows, self.world.clone());
+            return;
+        }
+        self.picked = picked;
         self.show(ui);
-        true
     }
 
     fn show(&self, ui: &mut Ui) {
-        if let Some(dropdown) = self.preset {
-            let picked = picked_preset(&self.world);
-            if ui.selected_option(dropdown) != picked {
-                ui.set_selected_option(dropdown, picked);
-            }
+        if let Some(dropdown) = self.preset
+            && ui.selected_option(dropdown) != self.picked
+        {
+            ui.set_selected_option(dropdown, self.picked);
         }
         self.seed.show(ui, Value::Whole(self.world.seed()));
         self.scale.show(ui, Value::Number(self.world.scale()));
@@ -288,11 +361,6 @@ impl WorldFields {
             }
         }
     }
-}
-
-/// Where a generator's preset is among the presets, or past them for a shape of its own.
-fn picked_preset(world: &WorldGen) -> usize {
-    world.preset().and_then(|preset| Preset::ALL.iter().position(|&other| other == preset)).unwrap_or(Preset::ALL.len())
 }
 
 /// `world` shaped as `preset`: the landmass its ground is and the climate beside it become the
@@ -574,7 +642,7 @@ mod tests {
         }
         let spare = graph.add(NodeKind::Output(Output::default()), [0.0, 900.0]);
         let world = WorldGen::new(9, 2.0, 3.0, graph.clone());
-        assert_eq!((picked_preset(&world), world.preset()), (1, Some(Preset::RollingHills)));
+        assert_eq!((presets_of(&world), world.preset()), ((Presets::Landmass, 1), Some(Preset::RollingHills)));
         let alpine = reshaped(&world, Preset::Alpine);
         assert_eq!((alpine.preset(), alpine.seed(), alpine.scale()), (Some(Preset::Alpine), 9, 2.0));
         assert_eq!(alpine.sea_level(), Preset::Alpine.landmass().sea_level);
@@ -587,6 +655,78 @@ mod tests {
         // A shape of its own is past the presets, as Custom.
         let mut own_shape = alpine.as_landmass().unwrap();
         own_shape.sharpness = 0.33;
-        assert_eq!(picked_preset(&WorldGen::from(own_shape)), Preset::ALL.len());
+        assert_eq!(presets_of(&WorldGen::from(own_shape)), (Presets::Landmass, Preset::ALL.len()));
+    }
+
+    /// The labels of the rows under `node`, in order.
+    fn labels(ui: &Ui, node: NodeId, found: &mut Vec<String>) {
+        if ui.has_class(node, "prop") {
+            found.extend(ui.children(node).first().map(|&label| ui.text(label)));
+        }
+        for child in ui.children(node) {
+            labels(ui, child, found);
+        }
+    }
+
+    #[test]
+    fn a_generators_preset_is_picked_among_starters_or_for_a_landmass_among_its_own() {
+        // The starters carry the presets' names, in the presets' order, and a new generator is one of them.
+        let starters = starter_graphs();
+        assert!(
+            starters.len() == Preset::ALL.len() && starters.iter().zip(Preset::ALL).all(|(s, p)| s.name == p.name())
+        );
+        let new = crate::project_files::new_world();
+        assert_eq!(
+            (presets_of(&new), new.starter(), new.seed(), new.scale()),
+            ((Presets::Starters, 1), Some("Rolling Hills"), 1, 1.0)
+        );
+        assert!(new.faults().is_empty() && new.as_landmass().is_none());
+        // A starter is that starter still whatever its rows are set to and wherever its nodes lie.
+        let canyons = starters[4].world(3, 2.0);
+        let mut moved = canyons.with_exposed(0, Value::Number(90.0)).expect("its height").graph().clone();
+        moved.nodes.iter_mut().for_each(|node| node.at[0] += 400.0);
+        assert_eq!(presets_of(&canyons.with_graph(moved).with_sea_level(-5.0)), (Presets::Starters, 4));
+        // A node more, or a value more shown as a row, and its graph is its own: no preset to pick.
+        let mut grown = canyons.graph().clone();
+        let spare = grown.add(NodeKind::Output(Output::default()), [0.0, 0.0]);
+        assert_eq!(presets_of(&canyons.with_graph(grown.clone())).0, Presets::None);
+        assert!(grown.nodes.len() > 4 && spare.0 as usize == grown.nodes.len());
+        // A file from before graphs picks among a landmass's presets, as it always did.
+        assert_eq!(presets_of(&Preset::Alpine.world()), (Presets::Landmass, 2));
+
+        // Its rows: Preset, its own three, and what its graph exposes.
+        let (mut ui, root) = rows();
+        let mut fields = WorldFields::new(&mut ui, root, new.clone());
+        let shown = |ui: &Ui| {
+            let mut found = Vec::new();
+            labels(ui, root, &mut found);
+            found
+        };
+        let rolling = ["Preset", "Seed", "Scale", "Sea level", "Height", "Gullies", "Temperature", "Humidity"];
+        assert_eq!(shown(&ui), rolling);
+        let dropdown = fields.preset.expect("a Preset row");
+        assert_eq!(ui.selected_option(dropdown), 1);
+        // Another starter picked takes the place of its graph, keeping its seed and scale; its rows are that
+        // starter's.
+        let kept = new.with_seed(8).with_scale(1.5);
+        fields.follow(&mut ui, &kept);
+        let picked = fields.with_preset(4).expect("Canyons");
+        assert_eq!((picked.starter(), picked.seed(), picked.scale()), (Some("Canyons"), 8, 1.5));
+        assert_eq!(picked.sea_level(), starters[4].sea_level);
+        fields.follow(&mut ui, &picked);
+        assert_eq!(
+            shown(&ui),
+            ["Preset", "Seed", "Scale", "Sea level", "Height", "Ravines", "Temperature", "Humidity"]
+        );
+        assert_eq!(fields.preset.map(|dropdown| ui.selected_option(dropdown)), Some(4));
+        // A graph of its own has no Preset row; a landmass has a landmass's presets, and Custom after them.
+        fields.follow(&mut ui, &canyons.with_graph(grown));
+        assert_eq!(shown(&ui)[..2], ["Seed", "Scale"]);
+        assert!(fields.preset.is_none() && fields.with_preset(0).is_none());
+        fields.follow(&mut ui, &Preset::Alpine.world());
+        assert_eq!(shown(&ui), ["Preset", "Seed", "Scale", "Sea level", "Height", "Temperature", "Humidity"]);
+        let alpine = fields.with_preset(4).expect("a landmass's Canyons");
+        assert_eq!((alpine.preset(), alpine.starter()), (Some(Preset::Canyons), None), "a landmass still");
+        assert!(fields.with_preset(Preset::ALL.len()).is_none(), "Custom is nothing to pick");
     }
 }

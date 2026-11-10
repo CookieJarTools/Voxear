@@ -707,10 +707,13 @@ fn a_generate_layer_lays_a_world_generators_ground_and_follows_it_as_it_changes(
         .collect();
     let [path] = made.as_slice() else { panic!("one generator made: {made:?}") };
     assert!(path.ends_with(".worldgen"));
+    // A new generator is the Rolling Hills starter graph, with seed 1.
     let text = std::fs::read_to_string(dir.path().join(path)).unwrap();
-    assert_eq!(WorldGen::parse(&text).unwrap().preset(), Some(Preset::RollingHills));
+    let rolling = WorldGen::parse(&text).unwrap();
+    assert_eq!((rolling.starter(), rolling.seed(), rolling.as_landmass()), (Some("Rolling Hills"), 1, None));
+    let starters = voxear_terrain::generate::starters();
+    assert_eq!(rolling, starters[1].world(1, 1.0));
     // The ground is the generator's, from the corner of its world.
-    let rolling = WorldGen::default();
     for (x, z) in [(100.0, 100.0), (300.0, 50.0), (256.0, 400.0)] {
         let made = rolling.height_at(x, z);
         let laid = height(&editor, field, x, z);
@@ -718,10 +721,11 @@ fn a_generate_layer_lays_a_world_generators_ground_and_follows_it_as_it_changes(
     }
     shot(&mut renderer, "terrain-generate.png");
 
-    // In its Inspector, Alpine picked: saved, and the terrain's ground made again from it at once.
+    // In its Inspector, Alpine picked: that starter's graph in its place, saved, its rows shown, and the
+    // terrain's ground made again from it at once.
     assert!(editor.inspect_path(path));
     frame(&mut editor, &mut renderer);
-    for label in ["Preset", "Seed", "Scale", "Sea level", "Height"] {
+    for label in ["Preset", "Seed", "Scale", "Sea level", "Height", "Gullies", "Temperature", "Humidity"] {
         assert_eq!(prop_rows(&editor.ui, label).len(), 1, "the generator's {label}");
     }
     let presets = first_with(&editor.ui, prop_rows(&editor.ui, "Preset")[0], "value-choice").expect("its presets");
@@ -730,11 +734,33 @@ fn a_generate_layer_lays_a_world_generators_ground_and_follows_it_as_it_changes(
     frame(&mut editor, &mut renderer);
     let text = std::fs::read_to_string(dir.path().join(path)).unwrap();
     let alpine = WorldGen::parse(&text).unwrap();
-    assert_eq!(alpine.preset(), Some(Preset::Alpine), "saved as it was picked");
+    assert_eq!((alpine.starter(), alpine.seed()), (Some("Alpine"), 1), "saved as it was picked");
+    assert_eq!(row_text(&editor.ui, prop_rows(&editor.ui, "Preset")[0]), "Alpine");
+    let shown = row_text(&editor.ui, prop_rows(&editor.ui, "Height")[0]);
+    assert!(shown.starts_with("900"), "the rows are the Alpine starter's: {shown}");
     let made = alpine.height_at(100.0, 100.0);
     let laid = height(&editor, field, 100.0, 100.0);
     assert!((laid - made).abs() < 1e-2, "made again: {laid} not {made}");
     shot(&mut renderer, "terrain-generate-alpine.png");
+
+    // A generator written before generators were graphs is one landmass: its Preset picks among a landmass's
+    // presets, which make the ground they always made.
+    std::fs::write(dir.path().join(path), Preset::RollingHills.world().to_text()).unwrap();
+    assert!(editor.inspect_path(path));
+    frame(&mut editor, &mut renderer);
+    for label in ["Preset", "Seed", "Scale", "Sea level", "Height"] {
+        assert_eq!(prop_rows(&editor.ui, label).len(), 1, "the landmass's {label}");
+    }
+    assert_eq!(prop_rows(&editor.ui, "Gullies").len(), 0);
+    let presets = first_with(&editor.ui, prop_rows(&editor.ui, "Preset")[0], "value-choice").expect("its presets");
+    assert_eq!(row_text(&editor.ui, prop_rows(&editor.ui, "Preset")[0]), "Rolling Hills");
+    choose(&mut editor, &mut renderer, presets, 2);
+    frame(&mut editor, &mut renderer);
+    let land = WorldGen::parse(&std::fs::read_to_string(dir.path().join(path)).unwrap()).unwrap();
+    assert_eq!((land.preset(), land.starter()), (Some(Preset::Alpine), None), "a landmass still");
+    assert_eq!(land.hash(), Preset::Alpine.world().hash());
+    let (made, laid) = (land.height_at(100.0, 100.0), height(&editor, field, 100.0, 100.0));
+    assert!((laid - made).abs() < 1e-2, "made again from the landmass: {laid} not {made}");
 
     // A generator with a graph of its own shows its seed, scale and sea level, and a row for each value it exposes.
     use voxear_terrain::generate::{Graph, NodeKind, nodes};
@@ -824,7 +850,15 @@ fn an_erosion_layer_wears_the_ground_below_it_and_again_once_its_weather_changes
 #[test]
 fn a_rivers_layer_cuts_rivers_where_water_gathers_and_adds_water_for_them_and_their_lakes() {
     use voxear_terrain::layers::LayerKind;
-    let Some((_dir, mut renderer, mut editor, field)) = editor_with_a_terrain() else { return };
+    let Some((dir, mut renderer, mut editor, field)) = editor_with_a_terrain() else { return };
+    // The hills of a landmass, which the counts below were found on, for the Generate layer to pick: a new
+    // generator's own hills have their valleys cut already, and take fewer beds.
+    let hills = voxear_terrain::generate::Preset::RollingHills.world();
+    std::fs::create_dir_all(dir.path().join("Worlds")).unwrap();
+    std::fs::write(dir.path().join("Worlds/Hills.worldgen"), hills.to_text()).unwrap();
+    editor.handle(&winit::event::WindowEvent::Focused(true));
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
     let add = |editor: &mut voxear_editor::Editor, renderer: &mut Renderer, kind: &str| {
         let add = first_with(&editor.ui, editor.ui.root(), "collection-add").expect("Add Layer");
         click(&mut editor.ui, add);

@@ -111,10 +111,12 @@ pub enum AssetAction {
         source: DragSource,
     },
     /// Write the World Generator at this path as this, and make the terrains
-    /// generated from it again.
+    /// generated from it again. `reshaped` when a preset was picked, which
+    /// takes the place of its whole shape.
     SaveWorldGen {
         path: String,
         world: voxear_terrain::generate::WorldGen,
+        reshaped: bool,
     },
     /// Show the graph of the World Generator at this path in the Generator
     /// panel.
@@ -669,11 +671,12 @@ impl AssetView {
             && let Some(change) = fields.update(ui)
         {
             let path = self.item.path.clone();
+            use crate::world_gen_inspector::WorldChange;
+            let world = fields.world.clone();
             return Some(match change {
-                crate::world_gen_inspector::WorldChange::Typed => {
-                    AssetAction::SaveWorldGen { path, world: fields.world.clone() }
-                }
-                crate::world_gen_inspector::WorldChange::OpenGraph => AssetAction::OpenGraph(path),
+                WorldChange::Typed => AssetAction::SaveWorldGen { path, world, reshaped: false },
+                WorldChange::Preset => AssetAction::SaveWorldGen { path, world, reshaped: true },
+                WorldChange::OpenGraph => AssetAction::OpenGraph(path),
             });
         }
         if let Some(fields) = self.block.as_mut()

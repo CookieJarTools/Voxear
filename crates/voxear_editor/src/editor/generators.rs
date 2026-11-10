@@ -254,25 +254,24 @@ impl Editor {
         if !self.inspector.shown_asset().is_some_and(|item| item.path == open) {
             return;
         }
-        let follows = match self.inspector.asset_view().and_then(|view| view.world_fields()) {
-            Some(fields) => fields.world == *world || fields.follow(&mut self.ui, world),
-            None => true,
-        };
-        if !follows && let Some(item) = self.project.item(open) {
-            self.inspector.show_asset(&mut self.ui, &self.game, &item);
-            if let Some(fields) = self.inspector.asset_view().and_then(|view| view.world_fields()) {
-                fields.follow(&mut self.ui, world);
-            }
+        if let Some(fields) = self.inspector.asset_view().and_then(|view| view.world_fields())
+            && fields.world != *world
+        {
+            fields.follow(&mut self.ui, world);
         }
     }
 
     /// The generator's own rows changed in its Inspector: into the open
     /// graph when it is this generator's, as a step to undo there, or else
     /// to its file, once nothing is held: a label dragged saves, and makes
-    /// the level's ground again, when it is let go.
-    pub(super) fn world_gen_edited(&mut self, path: &str, world: &WorldGen) {
+    /// the level's ground again, when it is let go. `reshaped` when a
+    /// preset was picked: a step of its own, with the new graph in view.
+    pub(super) fn world_gen_edited(&mut self, path: &str, world: &WorldGen, reshaped: bool) {
         if self.generator.path() == Some(path) {
-            self.generator.change(world.clone(), Some(EditKey::Own));
+            match reshaped {
+                true => self.generator.replace(world.clone()),
+                false => self.generator.change(world.clone(), Some(EditKey::Own)),
+            }
         } else {
             self.world_gen_to_save = Some((path.to_string(), world.clone()));
             self.save_edited_world_gen();

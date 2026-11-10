@@ -169,6 +169,22 @@ fn show_tool(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, tool: 
     frame(editor, renderer);
 }
 
+/// Runs frames until the open graph's previews are as fine as they get, when pictures are being kept: a
+/// picture then shows them.
+fn settle(editor: &mut voxear_editor::Editor, renderer: &mut Renderer) {
+    if std::env::var("VOXEAR_TEST_OUTPUT").is_err() {
+        return;
+    }
+    let waited = std::time::Instant::now();
+    while !editor.generator().previews_settled() && waited.elapsed() < std::time::Duration::from_secs(120) {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        frame(editor, renderer);
+    }
+    for _ in 0..4 {
+        frame(editor, renderer);
+    }
+}
+
 fn shot(renderer: &mut Renderer, name: &str) {
     let Ok(dir) = std::env::var("VOXEAR_TEST_OUTPUT") else { return };
     let (width, height, pixels) = renderer.read_pixels().unwrap();
@@ -179,9 +195,22 @@ fn shot(renderer: &mut Renderer, name: &str) {
 }
 
 /// A copy of Hello open in the editor, with a Terrain on its field whose one layer generates its
-/// ground from a new World Generator: the project, the editor, the terrain's Obj and the
-/// generator's path.
+/// ground from a World Generator that is one landmass, as a file from before generators were
+/// graphs is: the project, the editor, the terrain's Obj and the generator's path.
 fn editor_with_generated_ground() -> Option<(tempfile::TempDir, Renderer, voxear_editor::Editor, Entity, String)> {
+    let (dir, mut renderer, mut editor, field, path) = editor_with_a_new_generator()?;
+    // Written outside the editor, which reads it again when it has the focus back.
+    std::fs::write(dir.path().join(&path), Preset::RollingHills.world().to_text()).unwrap();
+    editor.handle(&winit::event::WindowEvent::Focused(true));
+    for _ in 0..3 {
+        frame(&mut editor, &mut renderer);
+    }
+    Some((dir, renderer, editor, field, path))
+}
+
+/// A copy of Hello open in the editor, with a Terrain on its field whose one layer generates its
+/// ground from the World Generator that Add Layer made for it.
+fn editor_with_a_new_generator() -> Option<(tempfile::TempDir, Renderer, voxear_editor::Editor, Entity, String)> {
     let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {
         eprintln!("skipping: no usable GPU");
         return None;
@@ -580,4 +609,108 @@ fn open_graph_in_a_generators_inspector_shows_its_graph_and_a_preset_reshapes_it
         editor.generator().world().map(|world| (world.seed(), world.preset())),
         Some((7, Some(Preset::Canyons)))
     );
+}
+
+#[test]
+fn a_new_generator_is_a_starter_graph_whose_preset_picks_another_and_an_angle_is_typed_in_degrees() {
+    use voxear_terrain::generate::nodes::{STEEPEST, SlopeMask};
+    let Some((dir, mut renderer, mut editor, field, path)) = editor_with_a_new_generator() else { return };
+    let rolling = saved(&dir, &path);
+    assert_eq!((rolling.starter(), rolling.as_landmass()), (Some("Rolling Hills"), None));
+    assert!(follows(&editor, field, &rolling));
+
+    // Its graph opens whole: many nodes, wired, none at fault, with Gullies among them.
+    assert!(editor.open_path(&path, &mut renderer));
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let titles = |editor: &voxear_editor::Editor| -> Vec<String> {
+        editor.generator().drawn().unwrap().nodes.iter().map(|node| node.title.clone()).collect()
+    };
+    let nodes = titles(&editor);
+    assert!(nodes.len() > 8 && nodes.contains(&"Gullies".to_string()) && nodes.contains(&"Output".to_string()));
+    assert!(editor.generator().drawn().unwrap().nodes.iter().all(|node| node.fault.is_empty()));
+    assert_eq!(
+        row_labels(&editor.ui)[4..],
+        ["Preset", "Seed", "Scale", "Sea level", "Height", "Gullies", "Temperature", "Humidity"]
+    );
+
+    // Canyons picked in its Preset row, with the graph open: that starter's graph on the canvas, its rows in
+    // the Inspector, the terrain's ground made again, and one step of the graph's to undo.
+    let presets = first_with(&editor.ui, prop_rows(&editor.ui, "Preset")[0], "value-choice").expect("its presets");
+    click(&mut editor.ui, presets);
+    frame(&mut editor, &mut renderer);
+    let mut options = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "dropdown-option", &mut options);
+    assert_eq!(options.len(), 5, "the five starters, and no Custom");
+    click(&mut editor.ui, options[4]);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let canyons = saved(&dir, &path);
+    assert_eq!((canyons.starter(), canyons.seed()), (Some("Canyons"), 1));
+    assert_ne!(titles(&editor), nodes);
+    assert!(titles(&editor).contains(&"Terrace".to_string()));
+    assert_eq!(prop_rows(&editor.ui, "Ravines").len(), 1, "Canyons' own row");
+    assert!(follows(&editor, field, &canyons));
+    settle(&mut editor, &mut renderer);
+    shot(&mut renderer, "generator-starter.png");
+    // Its Height typed is the starter's row still, so it is Canyons still.
+    type_number(&mut editor, &mut renderer, "Height", "150");
+    frame(&mut editor, &mut renderer);
+    assert_eq!(saved(&dir, &path).starter(), Some("Canyons"));
+    assert_eq!(prop_rows(&editor.ui, "Preset").len(), 1);
+
+    // A Slope Mask added from the search, in the Masks folder: its angles are rows in degrees, kept as the
+    // slope's rise over run. With a node more the graph is its own, and has no preset to pick.
+    let panel = editor.ui.find(editor.ui.root(), "generator-panel").expect("the Generator panel");
+    let add = first_with(&editor.ui, panel, "console-button").expect("Add Node");
+    click(&mut editor.ui, add);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(picker_row(&editor.ui, "Masks").is_some() && picker_row(&editor.ui, "Erosion").is_some());
+    pick_node(&mut editor, &mut renderer, "Slope Mask");
+    let mask = node(&editor, "Slope Mask");
+    assert_eq!(editor.generator().picked(), [mask]);
+    assert_eq!(row_labels(&editor.ui), ["Min", "Max", "Feather", "Step"]);
+    let shown = |editor: &voxear_editor::Editor, label: &str| {
+        let field = first_with(&editor.ui, prop_rows(&editor.ui, label)[0], "value-input").expect("its field");
+        editor.ui.text(field)
+    };
+    let slope = |world: &WorldGen| match world.graph().node(mask).map(|node| node.kind.clone()) {
+        Some(NodeKind::SlopeMask(slope)) => slope,
+        other => panic!("a Slope Mask, not {other:?}"),
+    };
+    let SlopeMask { min, max, .. } = slope(&saved(&dir, &path));
+    let degrees = |rise: f32| voxear_terrain::generate::nodes::degrees_of(rise);
+    assert_eq!(shown(&editor, "Min").parse::<f32>().ok(), Some(degrees(min).round()), "its least, in degrees");
+    assert_eq!(max, STEEPEST, "to straight up as it is made");
+    assert_eq!(shown(&editor, "Max"), "90");
+    type_number(&mut editor, &mut renderer, "Min", "45");
+    frame(&mut editor, &mut renderer);
+    let kept = slope(&saved(&dir, &path)).min;
+    assert!((kept - 1.0).abs() < 1e-4, "45 degrees is a rise of 1 in 1, kept as {kept}");
+    assert_eq!(shown(&editor, "Min"), "45");
+    settle(&mut editor, &mut renderer);
+    shot(&mut renderer, "generator-angles.png");
+    assert_eq!(saved(&dir, &path).starter(), None, "a graph of its own now");
+    // The canvas left for empty ground shows the generator, with no Preset row.
+    let canvas = first_with(&editor.ui, panel, "graph-canvas").expect("the canvas");
+    let [left, top, ..] = editor.ui.rect(canvas);
+    click_at(&mut editor, &mut renderer, (left + 12.0, top + 12.0));
+    frame(&mut editor, &mut renderer);
+    assert!(editor.generator().picked().is_empty());
+    assert_eq!((prop_rows(&editor.ui, "Preset").len(), prop_rows(&editor.ui, "Height").len()), (0, 1));
+
+    // Undone back to the starter it was, and then to the one before: each a step of the graph's.
+    editor.undo(&mut renderer);
+    editor.undo(&mut renderer);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(saved(&dir, &path).starter(), Some("Canyons"));
+    assert_eq!(prop_rows(&editor.ui, "Preset").len(), 1, "its preset to pick again");
+    editor.undo(&mut renderer);
+    editor.undo(&mut renderer);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(saved(&dir, &path), rolling);
+    assert!(follows(&editor, field, &rolling));
 }

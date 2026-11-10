@@ -391,6 +391,14 @@ impl GeneratorPanel {
         (open.world, open.unsaved, open.stale) = (world, true, true);
     }
 
+    /// The open generator becomes `world`, a generator of another shape, as when a preset is
+    /// picked for it: a step of its own to undo, with the whole of its graph in view.
+    pub fn replace(&mut self, world: WorldGen) {
+        self.change(world, None);
+        self.canvas.pick(Vec::new());
+        self.canvas.frame_all();
+    }
+
     /// The open generator's file was written elsewhere and now reads as `world`: followed, as a
     /// step to undo, with nothing to save.
     pub fn reread(&mut self, world: WorldGen) {

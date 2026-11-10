@@ -1266,7 +1266,7 @@ impl Editor {
             AssetAction::SaveGunHandling { path, handling, rebuild } => {
                 self.save_gun_handling(&path, &handling, rebuild);
             }
-            AssetAction::SaveWorldGen { path, world } => self.world_gen_edited(&path, &world),
+            AssetAction::SaveWorldGen { path, world, reshaped } => self.world_gen_edited(&path, &world, reshaped),
             AssetAction::OpenGraph(path) => {
                 self.open_generator(&path);
             }

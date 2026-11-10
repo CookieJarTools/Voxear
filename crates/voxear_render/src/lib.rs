@@ -127,7 +127,7 @@ pub use particles::{EmitShape, ParticleBlend, ParticlePlayback, ParticleSystem};
 pub use mist::{MAX_MIST_POINTS, MIST_RISE, Mist, MistTrail};
 pub use smoke::{SMOKE_GRID, Smoke, SmokeBlast, SmokeCue, SmokeFill, SmokeHoles, SmokeShot, smoke_origin};
 pub use grass::GrassLook;
-pub use blocks::BlockLook;
+pub use blocks::{BlockCounts, BlockLook};
 pub use terrain::{SurfaceLook, TerrainLook};
 pub use wind::{WindShape, WindZone};
 pub use ocean::{Ocean, OceanSampler, SeaEasing, SeaNow, SeaState, Weather, WindSource};
@@ -199,6 +199,9 @@ pub struct RenderStats {
     /// luminance. Both stay zero while auto exposure is off.
     pub exposure_ev: f32,
     pub average_luminance: f32,
+    /// What the main view drew of its worlds of blocks this frame: its
+    /// draws and triangles, and those of the sun's cascades.
+    pub blocks: BlockCounts,
 }
 
 impl RenderStats {
@@ -226,6 +229,7 @@ impl RenderStats {
             dice_overflow: counters[stat::DICE_OVERFLOW],
             exposure_ev: exposure[0],
             average_luminance: exposure[2],
+            blocks: BlockCounts::default(),
         }
     }
 }
@@ -539,7 +543,7 @@ impl Renderer {
 
     /// Culling and LOD counts from a recent frame.
     pub fn stats(&self) -> RenderStats {
-        self.stats
+        RenderStats { blocks: self.views[0].block_counts, ..self.stats }
     }
 
     /// The first 3D view's camera and look.
@@ -1485,6 +1489,8 @@ struct View {
     /// What each slot's top level was last built from, so a frame whose
     /// instances are the same, as most are in a still level, reuses it.
     top_level_built: Vec<(u64, Vec<voxear_rhi::Instance>)>,
+    /// What it drew of its worlds of blocks in its last frame.
+    block_counts: BlockCounts,
     /// Without ray tracing, the scene's hierarchy over its instances and the
     /// instances it names, one pair a frame in flight, made when first needed.
     scene_hierarchies: Vec<Option<(Buffer, Buffer)>>,
@@ -1598,6 +1604,7 @@ impl View {
             number,
             top_levels: (0..FRAMES_IN_FLIGHT).map(|_| None).collect(),
             top_level_built: (0..FRAMES_IN_FLIGHT).map(|_| (0, Vec::new())).collect(),
+            block_counts: BlockCounts::default(),
             scene_hierarchies: (0..FRAMES_IN_FLIGHT).map(|_| None).collect(),
             output: OutputId::MAIN,
             rect: None,
@@ -2002,6 +2009,7 @@ impl View {
                 .map(|drawn| terrain::ViewTerrains { tracks: Some(tracks_id), ..drawn });
         let view_blocks =
             blocks::gather(&setup.blocks, &extracted.frame, &extracted.entities, extracted.has_sun, &buffers.blocks);
+        self.block_counts = view_blocks.as_ref().map(blocks::ViewBlocks::counts).unwrap_or_default();
         // The grass this view scatters round its camera on the terrains.
         let view_grass = grass::gather(&setup.terrains, &extracted.frame, &buffers.grass).map(|(jobs, dispatches)| {
             grass::ViewGrass {

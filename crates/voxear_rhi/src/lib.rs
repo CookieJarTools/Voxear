@@ -26,7 +26,7 @@ pub use gpu_allocator::MemoryLocation;
 pub use pipeline::{Blend, GraphicsPipelineDesc, ShaderModule, create_compute_pipeline, create_graphics_pipeline};
 pub use renderdoc::RenderDoc;
 pub use resources::{
-    Buffer, GpuMemory, Image, ImageDesc, Retired, Transition, full_mip_count, is_depth, mip_barrier,
+    Buffer, GpuBatch, GpuMemory, Image, ImageDesc, Retired, Transition, full_mip_count, is_depth, mip_barrier,
 };
 pub use swapchain::Swapchain;
 pub use timer::GpuTimer;

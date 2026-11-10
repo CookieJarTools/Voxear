@@ -62,6 +62,9 @@ pub struct Gpu {
     /// Names and labels for RenderDoc, Nsight and validation messages.
     debug_utils: Option<ext::debug_utils::Device>,
     messenger: Option<(ext::debug_utils::Instance, vk::DebugUtilsMessengerEXT)>,
+    /// Uploads and builds gathered while a batch is open, done together when
+    /// it closes (see [`Gpu::begin_batch`]).
+    pub(crate) batch: Mutex<crate::resources::Batch>,
 }
 
 /// A window to present to.
@@ -179,6 +182,7 @@ impl Gpu {
             swapchain_loader,
             allocator: ManuallyDrop::new(Mutex::new(allocator)),
             messenger,
+            batch: Mutex::default(),
         };
         Ok((gpu, surface))
     }

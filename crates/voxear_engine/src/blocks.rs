@@ -373,6 +373,7 @@ struct Streams(std::collections::HashMap<voxear_ecs::Entity, voxear_terrain::blo
 /// else the game's camera. Without a camera or a generator, left as it is.
 pub fn stream(world: &mut World, content: &mut Content) {
     use voxear_scene::{Transform, WorldTransform};
+    voxear_core::profile_scope!("Block Streaming");
     let endless: Vec<(voxear_ecs::Entity, BlockWorldAsset, voxear_core::math::Vec3)> = world
         .query_ref::<(voxear_ecs::Entity, &BlockWorld, &BlockWorldAsset, &Transform, Option<&WorldTransform>)>()
         .without::<Destroying>()

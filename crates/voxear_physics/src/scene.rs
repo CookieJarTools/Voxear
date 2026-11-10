@@ -668,12 +668,13 @@ struct TerrainBodies {
 }
 
 /// A world of blocks' bodies: where its Obj was, its layer, how large a
-/// block was, and for each chunk the faces it was made from, its body and
-/// its shape.
+/// block was, its chunks' faces as they were made from, and for each chunk
+/// the faces it was made from, its body and its shape.
 struct BlockBodies {
     corner: Vec3,
     layer: u8,
     block_size: f32,
+    meshes: Option<Arc<voxear_terrain::blocks::ChunkMeshes>>,
     chunks: HashMap<[i32; 3], (Arc<voxear_terrain::blocks::mesh::ChunkMesh>, BodyId, ShapeId)>,
 }
 
@@ -1122,6 +1123,7 @@ impl PhysicsScene {
     /// moved with its Obj.
     fn sync_block_worlds(&mut self, world: &World) {
         use voxear_terrain::blocks::{BlockWorld, chunk::CHUNK};
+        voxear_core::profile_scope!("Block Bodies");
         let found: Vec<(Entity, &BlockWorld, Vec3)> = world
             .query_ref::<(Entity, &BlockWorld, &Transform, Option<&WorldTransform>)>()
             .without::<Destroying>()
@@ -1141,11 +1143,17 @@ impl PhysicsScene {
                 .is_some_and(|kept| kept.layer == layer && kept.block_size == blocks.block_size);
             if !fits {
                 self.remove_block_world(entity);
-                let kept = BlockBodies { corner, layer, block_size: blocks.block_size, chunks: HashMap::new() };
+                let kept =
+                    BlockBodies { corner, layer, block_size: blocks.block_size, meshes: None, chunks: HashMap::new() };
                 self.block_worlds.insert(entity, kept);
             }
+            // Nothing to do where its faces are those its bodies were made from, and it has not moved.
+            let moved = self.block_worlds[&entity].corner != corner;
+            let same = self.block_worlds[&entity].meshes.as_ref().is_some_and(|made| Arc::ptr_eq(made, &blocks.meshes));
+            if !moved && same {
+                continue;
+            }
             let mut kept = self.block_worlds.remove(&entity).expect("kept above");
-            let moved = kept.corner != corner;
             let side = CHUNK as f32 * blocks.block_size;
             let at = |key: &[i32; 3]| corner + Vec3::new(key[0] as f32, key[1] as f32, key[2] as f32) * side;
             kept.chunks.retain(|key, (_, body, shape)| {
@@ -1157,10 +1165,13 @@ impl PhysicsScene {
                 }
                 stays
             });
+            let mut wanted: Vec<([i32; 3], &Arc<voxear_terrain::blocks::mesh::ChunkMesh>)> = Vec::new();
             for (key, mesh) in blocks.meshes.iter() {
-                if let Some((made, body, _)) = kept.chunks.get(key)
-                    && Arc::ptr_eq(made, mesh)
+                // Faces made again with the same triangles, as when only a neighbour's shading changed, keep their body.
+                if let Some((made, body, _)) = kept.chunks.get_mut(key)
+                    && (Arc::ptr_eq(made, mesh) || made.positions == mesh.positions && made.indices == mesh.indices)
                 {
+                    *made = mesh.clone();
                     if moved {
                         self.world.set_transform(*body, at(key), Quat::IDENTITY);
                     }
@@ -1172,11 +1183,20 @@ impl PhysicsScene {
                     self.owners.remove(&body);
                 }
                 // A chunk of water alone has no ground to stand on.
-                if mesh.indices.is_empty() {
-                    continue;
+                if !mesh.indices.is_empty() {
+                    wanted.push((*key, mesh));
                 }
-                let points: Vec<Vec3> = mesh.positions.iter().map(|p| Vec3::from(*p) * blocks.block_size).collect();
-                let Some(shape) = self.world.mesh_shape(&points, &mesh.indices) else { continue };
+            }
+            // The new chunks' shapes made on every core, then given bodies here.
+            let block_size = blocks.block_size;
+            let made = voxear_terrain::workers::each(&wanted, |(_, mesh)| {
+                let points: Vec<Vec3> = mesh.positions.iter().map(|p| Vec3::from(*p) * block_size).collect();
+                crate::MadeShape::mesh(&points, &mesh.indices)
+            });
+            for ((key, mesh), shape) in wanted.into_iter().zip(made) {
+                let Some(shape) = shape else { continue };
+                let shape = self.world.keep_shape(shape);
+                let key = &key;
                 let mut desc = BodyDesc::new(shape, Motion::Static).at(at(key), Quat::IDENTITY);
                 desc.friction = Collider::default().friction;
                 desc.user_data = entity.to_bits();
@@ -1190,6 +1210,7 @@ impl PhysicsScene {
                 kept.chunks.insert(*key, (mesh.clone(), body, shape));
             }
             kept.corner = corner;
+            kept.meshes = Some(blocks.meshes.clone());
             self.block_worlds.insert(entity, kept);
         }
     }
@@ -2140,5 +2161,38 @@ mod tests {
             physics.step(&mut world, 1.0 / 60.0);
         }
         assert!((y(&world, ghost) - 0.5).abs() < 0.05, "{}", y(&world, ghost));
+    }
+
+    #[test]
+    fn a_chunk_of_blocks_made_again_with_the_same_triangles_keeps_its_body_and_a_changed_one_gets_one_as_drawn() {
+        use voxear_terrain::blocks::{BlockFaces, BlockMap, BlockWorld};
+        // Ground 4 blocks high over two chunks along x, a metre a block.
+        let mut blocks = BlockMap::default();
+        for z in 0..32 {
+            for x in 0..64 {
+                for y in 0..4 {
+                    blocks.set([x, y, z], 1);
+                }
+            }
+        }
+        let faces = [BlockFaces::default(), BlockFaces::new(1, 2, 3)];
+        let mut world = World::new();
+        voxear_scene::register_obj_components(&mut world);
+        let entity = world.spawn((BlockWorld::new(blocks, &faces, 1.0), Transform::default()));
+        let mut physics = PhysicsScene::new();
+        physics.step(&mut world, 1.0 / 60.0);
+        let body = |physics: &PhysicsScene, key: [i32; 3]| physics.block_worlds[&entity].chunks[&key].1;
+        let (west, east) = (body(&physics, [0, 0, 0]), body(&physics, [1, 0, 0]));
+        // A block on the second chunk's edge: the first's faces made again, only their shading changed.
+        world.get_mut::<BlockWorld>(entity).unwrap().set_blocks([([32, 4, 5], 1)]);
+        let drawn = world.get::<BlockWorld>(entity).unwrap().meshes.clone();
+        physics.step(&mut world, 1.0 / 60.0);
+        assert_eq!(body(&physics, [0, 0, 0]), west, "the same triangles, the same body");
+        assert!(Arc::ptr_eq(&physics.block_worlds[&entity].chunks[&[0, 0, 0]].0, &drawn[&[0, 0, 0]]));
+        assert_ne!(body(&physics, [1, 0, 0]), east, "new triangles, a new body");
+        // Rays meet the ground as it is drawn: the new block's top, and the ground's beside it.
+        let down = |x: f32| physics.raycast(Vec3::new(x, 20.0, 5.5), Vec3::NEG_Y, 40.0, u32::MAX, false).unwrap();
+        assert!((down(32.5).point.y - 5.0).abs() < 1e-4 && (down(31.5).point.y - 4.0).abs() < 1e-4);
+        assert_eq!(down(32.5).obj, entity);
     }
 }

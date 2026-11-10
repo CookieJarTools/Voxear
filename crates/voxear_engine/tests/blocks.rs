@@ -284,7 +284,7 @@ fn a_generated_world_drawn_smooth_lies_on_its_generators_heights_and_keeps_a_smo
         assert!((surface(&blocks.blocks, x, z) - height).abs() < 0.1, "column ({x}, {z}) at {height} m");
     }
     assert_eq!((blocks.blocks.get([4, scooped, 4]), blocks.blocks.fill([4, scooped, 4])), (2, 140), "kept");
-    assert!(blocks.meshes.values().all(|mesh| mesh.quads.len() == mesh.indices.len() * 2), "drawn smooth");
+    assert!(blocks.meshes.values().all(|mesh| mesh.buckets[1] as usize == mesh.indices.len() * 2), "drawn smooth");
 }
 
 #[test]

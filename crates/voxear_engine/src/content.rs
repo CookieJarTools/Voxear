@@ -1332,40 +1332,54 @@ impl Content {
             return found.clone();
         }
         let read = self.db.get(guid).filter(|entry| entry.kind == AssetKind::BlockWorld).map(|e| e.path.clone());
-        let found = read
-            .context("no world of blocks with that GUID")
-            .and_then(|path| {
-                self.read_text(&path)
-                    .and_then(|text| voxear_terrain::blocks::file::BlockFile::parse(&text).with_context(|| path))
-            })
-            .map(|file| Arc::new(LoadedBlockWorld { world: crate::blocks::make(&file), file }))
-            .map_err(|error| tracing::warn!("could not read the world of blocks {guid}: {error:#}"))
-            .ok();
+        let found = read.context("no world of blocks with that GUID").and_then(|path| {
+            let text = self.read_text(&path)?;
+            let file = voxear_terrain::blocks::file::BlockFile::parse(&text).with_context(|| path.clone())?;
+            // The editor's changes from its ground, where it has any, beside it.
+            let changes = voxear_terrain::blocks::edits::blocks_file(&path);
+            let edits = match self.read(&changes) {
+                Ok(bytes) => {
+                    Some(voxear_terrain::blocks::edits::BlockEdits::from_bytes(&bytes).with_context(|| changes)?)
+                }
+                Err(_) => None,
+            };
+            Ok(Arc::new(LoadedBlockWorld { world: crate::blocks::make(&file, edits.as_ref()), file }))
+        });
+        let found = found.map_err(|error| tracing::warn!("could not read the world of blocks {guid}: {error:#}")).ok();
         self.block_worlds.insert(guid, found.clone());
         found
     }
 
-    /// Keeps `file` as the world of blocks at `guid`'s, as after the editor
-    /// changed it, its blocks made again, and marks it to be written, unless
+    /// Keeps `file` and `world`'s blocks as the world of blocks at `guid`'s,
+    /// as after the editor changed them, and marks it to be written, unless
     /// that is how it is already.
-    pub fn keep_block_world(&mut self, guid: AssetGuid, file: &voxear_terrain::blocks::file::BlockFile) {
-        if self.block_worlds.get(&guid).and_then(Option::as_ref).is_some_and(|kept| kept.file == *file) {
+    pub fn keep_block_world(
+        &mut self,
+        guid: AssetGuid,
+        file: &voxear_terrain::blocks::file::BlockFile,
+        world: &voxear_terrain::blocks::BlockWorld,
+    ) {
+        let kept = self.block_worlds.get(&guid).and_then(Option::as_ref);
+        if kept.is_some_and(|kept| kept.file == *file && Arc::ptr_eq(&kept.world.blocks, &world.blocks)) {
             return;
         }
-        let loaded = LoadedBlockWorld { world: crate::blocks::make(file), file: file.clone() };
+        let loaded = LoadedBlockWorld { world: world.clone(), file: file.clone() };
         self.block_worlds.insert(guid, Some(Arc::new(loaded)));
         self.unsaved_block_worlds.insert(guid);
     }
 
     /// The worlds of blocks changed since they were last written, each with
-    /// its path, which are no longer marked.
-    pub fn take_unsaved_block_worlds(&mut self) -> Vec<(String, voxear_terrain::blocks::file::BlockFile)> {
+    /// its path and file, and what it is now, which are no longer marked.
+    pub fn take_unsaved_block_worlds(
+        &mut self,
+    ) -> Vec<(String, voxear_terrain::blocks::file::BlockFile, Arc<LoadedBlockWorld>)> {
         let guids = std::mem::take(&mut self.unsaved_block_worlds);
         guids
             .into_iter()
             .filter_map(|guid| {
                 let path = self.db.get(guid)?.path.clone();
-                Some((path, self.block_worlds.get(&guid)?.as_ref()?.file.clone()))
+                let loaded = self.block_worlds.get(&guid)?.clone()?;
+                Some((path, loaded.file.clone(), loaded))
             })
             .collect()
     }

@@ -55,3 +55,24 @@ fn a_block_world_is_made_from_its_asset_stood_on_and_saved_as_written() {
     assert_eq!((written.data.as_str(), written.cast_shadows), ("Blocks/Field.blockworld", true));
     assert!(game.engine.world.get::<BlockWorldSource>(field).is_some());
 }
+
+#[test]
+fn a_block_world_loads_with_the_changes_kept_beside_it() {
+    use voxear_terrain::blocks::edits::BlockEdits;
+    let dir = project();
+    // A tower of stone on the grass, kept as changes from the ground.
+    let mut file = BlockFile::default();
+    file.ground.size = [32, 32];
+    file.ground.height = 6;
+    let base = file.make_ground();
+    let mut built = base.clone();
+    for y in 6..10 {
+        built.set([5, y, 5], 3);
+    }
+    let edits = BlockEdits::between(&base, &built);
+    std::fs::write(dir.path().join("Blocks/Field.blocks"), edits.to_bytes()).unwrap();
+    let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
+    game.start(None).unwrap();
+    let blocks = game.engine.world.query_ref::<&BlockWorld>().into_iter().next().expect("the world").clone();
+    assert_eq!([5, 6, 9, 10].map(|y| blocks.blocks.get([5, y, 5])), [1, 3, 3, 0]);
+}

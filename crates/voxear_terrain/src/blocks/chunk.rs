@@ -115,6 +115,40 @@ impl Chunk {
     pub fn bits(&self) -> u32 {
         self.bits
     }
+
+    /// Its palette, how many bits each block's place in it takes, and the
+    /// words they are packed in: for writing it.
+    pub fn parts(&self) -> (&[BlockId], u32, &[u64]) {
+        (&self.palette, self.bits, &self.words)
+    }
+
+    /// A chunk from its parts, as [`Chunk::parts`] gives them; `None` where
+    /// they do not make one.
+    pub fn from_parts(palette: Vec<BlockId>, bits: u32, words: Vec<u64>) -> Option<Self> {
+        if palette.is_empty() || bits != bits_for(palette.len()).max(bits) || ![0, 1, 2, 4, 8, 16].contains(&bits) {
+            return None;
+        }
+        let wanted = if bits == 0 { 0 } else { CHUNK_LEN.div_ceil((64 / bits) as usize) };
+        if words.len() != wanted {
+            return None;
+        }
+        let mut chunk = Self { palette, bits, words: words.into_boxed_slice(), solid: 0 };
+        let entries: Vec<usize> = chunk.entries().collect();
+        if entries.iter().any(|&entry| entry >= chunk.palette.len()) {
+            return None;
+        }
+        chunk.solid = entries.iter().filter(|&&entry| chunk.palette[entry] != AIR).count() as u32;
+        Some(chunk)
+    }
+
+    /// The same blocks, each by the number `change` gives it.
+    pub fn remapped(&self, change: impl Fn(BlockId) -> BlockId) -> Self {
+        let mut chunk = self.clone();
+        chunk.palette.iter_mut().for_each(|block| *block = change(*block));
+        let entries: Vec<usize> = chunk.entries().collect();
+        chunk.solid = entries.iter().filter(|&&entry| chunk.palette[entry] != AIR).count() as u32;
+        chunk
+    }
 }
 
 /// The fewest bits, 0, 1, 2, 4, 8 or 16, that number `entries` palette

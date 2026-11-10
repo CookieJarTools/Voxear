@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 67;
+pub(crate) const API_VERSION: u32 = 68;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -454,6 +454,23 @@ pub(crate) struct NativeApi {
     /// Every data asset of the project, as JSON for `Definition.All`: its
     /// length, written when it fits, or -1.
     pub data_assets: unsafe extern "C" fn(buffer: *mut u8, capacity: i32) -> i32,
+    /// `Blocks.At`: the block at a point in the first world of blocks with
+    /// one there, and its Obj; 0 for air (see `blocks`).
+    pub block_at: unsafe extern "C" fn(at: *const [f32; 3], obj: *mut u64) -> i32,
+    /// `Blocks.Set`, `Fill` and `Ball`: sets the blocks a shape reaches in
+    /// every world of blocks; how many changed.
+    pub block_set:
+        unsafe extern "C" fn(shape: i32, a: *const [f32; 3], b: *const [f32; 3], block: i32, only: i32) -> i32,
+    /// `Blocks.Raycast`: the first block a ray meets within a distance.
+    pub block_raycast: unsafe extern "C" fn(
+        origin: *const [f32; 3],
+        direction: *const [f32; 3],
+        distance: f32,
+        hit: *mut crate::blocks::BlockHitData,
+    ) -> i32,
+    /// `Blocks.CaptureEdits` and `Blocks.ApplyEdits`: every changed world of
+    /// blocks' changes as bytes, and back.
+    pub block_edits: unsafe extern "C" fn(what: i32, data: *const u8, len: i32, out: *mut u8, capacity: i32) -> i32,
 }
 
 /// The kinds of component scripts reach through one entry, `kind_value`,
@@ -1866,6 +1883,10 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         terrain_edits: crate::terrain::terrain_edits,
         ui_style_property: crate::ui::ui_style_property,
         data_assets: crate::services::data_assets,
+        block_at: crate::blocks::block_at,
+        block_set: crate::blocks::block_set,
+        block_raycast: crate::blocks::block_raycast,
+        block_edits: crate::blocks::block_edits,
     }
 }
 

@@ -417,6 +417,8 @@ pub struct Inspector {
     group_lods: Option<GroupLods>,
     /// A Terrain's tools and its layers (see `terrain_panel`).
     terrain_panel: Option<crate::terrain_panel::TerrainPanel>,
+    /// A Block World's tools and its kinds of block (see `block_panel`).
+    block_panel: Option<crate::block_panel::BlockPanel>,
     /// A Foliage's tools (see `plants_panel`).
     plants_panel: Option<crate::plants_panel::PlantsPanel>,
     lod_eye: Option<LodEye>,
@@ -486,6 +488,7 @@ impl Inspector {
             mesh_lods: None,
             group_lods: None,
             terrain_panel: None,
+            block_panel: None,
             plants_panel: None,
             lod_eye: None,
             lod_edge: None,
@@ -1039,6 +1042,7 @@ impl Inspector {
         self.group_tabs.clear();
         self.group_foldouts.clear();
         (self.mesh_lods, self.group_lods, self.terrain_panel, self.plants_panel) = (None, None, None, None);
+        self.block_panel = None;
         let Some(entity) = self.shown else {
             let hint = ui.add_label(self.root, "Select an Obj in the Hierarchy to see it here.");
             ui.add_class(hint, "placeholder");
@@ -1154,6 +1158,9 @@ impl Inspector {
             // A Terrain's tools come first, as in Unity, and under Layers its layers, the picked one's settings after.
             if *part == Part::Terrain {
                 self.terrain_panel = Some(crate::terrain_panel::TerrainPanel::new(ui, rows, game, entity));
+            }
+            if *part == Part::BlockWorld {
+                self.block_panel = Some(crate::block_panel::BlockPanel::new(ui, rows, game, entity));
             }
             if *part == Part::Foliage {
                 self.plants_panel = Some(crate::plants_panel::PlantsPanel::new(ui, rows, world));
@@ -1629,6 +1636,7 @@ impl Inspector {
         let measure = game.engine.world.get::<LodGroup>(entity).map(|group| group.measure);
         let remeasured = self.group_lods.as_ref().is_some_and(|lods| Some(lods.measure) != measure);
         let restacked = self.terrain_panel.as_ref().is_some_and(|panel| panel.stale(&game.engine.world, entity))
+            || self.block_panel.as_ref().is_some_and(|panel| panel.stale(&game.engine.world, entity))
             || self.plants_panel.as_ref().is_some_and(|panel| panel.stale(&game.engine.world));
         if layout != self.built.0
             || playing != self.built.1
@@ -1646,6 +1654,7 @@ impl Inspector {
             self.also.iter().filter_map(|&other| Some((other, ObjState::of(world, other)?))).collect();
         if self.update_lists(ui, game, entity, renderer.as_deref_mut())
             || self.terrain_panel.as_ref().is_some_and(|panel| panel.update(ui, game, entity))
+            || self.block_panel.as_ref().is_some_and(|panel| panel.update(ui, game, renderer.as_deref_mut(), entity))
             || self.plants_panel.as_ref().is_some_and(|panel| panel.update(ui, game))
         {
             self.show(ui, game, Some(entity), playing);

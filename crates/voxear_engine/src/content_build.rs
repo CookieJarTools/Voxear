@@ -613,6 +613,11 @@ fn find_needs(db: &AssetDb, guid: AssetGuid, kind: AssetKind, path: &str) -> Res
             if kind == AssetKind::Level && db.file(&paths).is_file() {
                 needs.companions.push(paths);
             }
+            // A world of blocks' changes from its ground go with it.
+            let changes = voxear_terrain::blocks::edits::blocks_file(path);
+            if kind == AssetKind::BlockWorld && db.file(&changes).is_file() {
+                needs.companions.push(changes);
+            }
             // A terrain's heights go with it.
             let heights = voxear_terrain::file::heights_file(path);
             if kind == AssetKind::Terrain && db.file(&heights).is_file() {

@@ -16,6 +16,7 @@ mod input;
 mod inspector;
 mod interop;
 mod layers;
+mod blocks;
 mod physics;
 mod plants;
 mod playing;

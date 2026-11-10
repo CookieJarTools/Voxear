@@ -3130,7 +3130,9 @@ pub fn set(
             let renderer = renderer.as_deref_mut();
             choice.is_some_and(|(_, choice)| crate::block_props::pick(game, renderer, entity, *field, &choice))
         }
-        (Prop::BlockWorld(field), value) => crate::block_props::set(game, entity, *field, value),
+        (Prop::BlockWorld(field), value) => {
+            crate::block_props::set(game, renderer.as_deref_mut(), entity, *field, value)
+        }
         (Prop::Plants(field), Value::Asset(label)) if crate::plants_props::is_picked(*field) => {
             let choice = crate::plants_props::choices(game, *field).into_iter().find(|(l, _)| *l == label);
             choice.is_some_and(|(_, choice)| crate::plants_props::pick(game, entity, *field, &choice))

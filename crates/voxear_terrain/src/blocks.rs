@@ -11,6 +11,7 @@
 //! things on and the GI's rays see.
 
 pub mod chunk;
+pub mod edits;
 pub mod file;
 pub mod mesh;
 
@@ -75,6 +76,16 @@ impl BlockMap {
         self.chunks.iter()
     }
 
+    /// The same blocks, each by the number `change` gives it: as after a
+    /// kind of block is taken out of its world's list.
+    pub fn remapped(&self, change: impl Fn(BlockId) -> BlockId) -> Self {
+        let mut map = Self::default();
+        for (key, chunk) in &self.chunks {
+            map.put_chunk(*key, chunk.remapped(&change));
+        }
+        map
+    }
+
     /// Each chunk's faces, worked out on every core, each block drawn with
     /// the surfaces `faces` gives it (see `file::BlockFile::faces`).
     pub fn mesh_all(&self, faces: &[[u8; 3]]) -> HashMap<[i32; 3], Arc<ChunkMesh>> {
@@ -84,12 +95,15 @@ impl BlockMap {
     }
 }
 
-/// A world of blocks: its blocks, each chunk's faces, how large a block is
-/// in metres, and whether it casts the sun's shadows.
+/// A world of blocks: its blocks, each chunk's faces, the surfaces each
+/// block's top, sides and bottom are drawn with (see
+/// `file::BlockFile::faces`), how large a block is in metres, and whether it
+/// casts the sun's shadows.
 #[derive(Clone, Debug)]
 pub struct BlockWorld {
     pub blocks: Arc<BlockMap>,
     pub meshes: Arc<HashMap<[i32; 3], Arc<ChunkMesh>>>,
+    pub faces: Arc<[[u8; 3]]>,
     pub block_size: f32,
     pub cast_shadows: bool,
 }
@@ -100,6 +114,7 @@ impl PartialEq for BlockWorld {
     fn eq(&self, other: &Self) -> bool {
         (Arc::ptr_eq(&self.blocks, &other.blocks) || self.blocks == other.blocks)
             && (Arc::ptr_eq(&self.meshes, &other.meshes) || self.meshes == other.meshes)
+            && self.faces == other.faces
             && self.block_size == other.block_size
             && self.cast_shadows == other.cast_shadows
     }
@@ -109,9 +124,85 @@ impl BlockWorld {
     /// A world of `blocks`, every chunk's faces worked out with `faces`.
     pub fn new(blocks: BlockMap, faces: &[[u8; 3]], block_size: f32) -> Self {
         let meshes = blocks.mesh_all(faces);
-        Self { blocks: Arc::new(blocks), meshes: Arc::new(meshes), block_size, cast_shadows: true }
+        Self { blocks: Arc::new(blocks), meshes: Arc::new(meshes), faces: faces.into(), block_size, cast_shadows: true }
+    }
+
+    /// The block at `at`, a point in metres from the world's corner, and
+    /// which block that is.
+    pub fn block_at(&self, at: [f32; 3]) -> ([i32; 3], BlockId) {
+        let block = at.map(|v| (v / self.block_size).floor() as i32);
+        (block, self.blocks.get(block))
+    }
+
+    /// Puts each block of `changes` in place, each by where it is in blocks
+    /// from the world's corner, and makes the faces again of every chunk a
+    /// change reaches: its own, and those beside it whose faces it meets or
+    /// shades. How many blocks changed.
+    pub fn set_blocks(&mut self, changes: impl IntoIterator<Item = ([i32; 3], BlockId)>) -> usize {
+        let mut changed = 0;
+        let mut reached: Vec<[i32; 3]> = Vec::new();
+        let blocks = Arc::make_mut(&mut self.blocks);
+        let last = CHUNK - 1;
+        for (at, block) in changes {
+            if blocks.get(at) == block {
+                continue;
+            }
+            blocks.set(at, block);
+            changed += 1;
+            // A block on a chunk's side is in the next chunk's padded blocks too.
+            let (key, local) = BlockMap::chunk_of(at);
+            let near = |axis: usize| -> Vec<i32> {
+                match local[axis] {
+                    0 => vec![key[axis] - 1, key[axis]],
+                    l if l == last => vec![key[axis], key[axis] + 1],
+                    _ => vec![key[axis]],
+                }
+            };
+            for x in near(0) {
+                for y in near(1) {
+                    for z in near(2) {
+                        reached.push([x, y, z]);
+                    }
+                }
+            }
+        }
+        reached.sort_unstable();
+        reached.dedup();
+        self.remesh(&reached);
+        changed
+    }
+
+    /// Makes chunks `keys`' faces again, on every core, from the blocks as
+    /// they are now.
+    pub fn remesh(&mut self, keys: &[[i32; 3]]) {
+        let blocks = &self.blocks;
+        let faces = &self.faces;
+        let made = crate::workers::each(keys, |&key| mesh::mesh_chunk(blocks, key, faces));
+        let meshes = Arc::make_mut(&mut self.meshes);
+        for (key, mesh) in keys.iter().zip(made) {
+            if mesh.is_empty() {
+                meshes.remove(key);
+            } else {
+                meshes.insert(*key, Arc::new(mesh));
+            }
+        }
+    }
+
+    /// The same blocks drawn with other `faces`, every chunk's faces made
+    /// again: as after its kinds of block changed how they are drawn.
+    pub fn with_faces(&self, faces: &[[u8; 3]]) -> Self {
+        let meshes = self.blocks.mesh_all(faces);
+        Self { meshes: Arc::new(meshes), faces: faces.into(), ..self.clone() }
     }
 }
+
+/// A world of blocks as its level built it, kept once a script first
+/// changes it, so its changes since can be saved as only what differs (see
+/// `edits::BlockEdits`).
+#[derive(Clone, Debug)]
+pub struct BuiltBlocks(pub Arc<BlockMap>);
+
+impl Component for BuiltBlocks {}
 
 /// Where a ray met a block: which block, the way the face it met faces, and
 /// how far along the ray, in blocks.
@@ -185,6 +276,41 @@ mod tests {
         map.set([-1, 0, 40], AIR);
         map.set([-2, 0, 40], AIR);
         assert_eq!(map.chunks().count(), 0);
+    }
+
+    #[test]
+    fn a_change_makes_its_chunks_faces_again_and_those_beside_it_where_it_meets_them() {
+        let file = file::BlockFile::default();
+        let (_, faces) = file.faces();
+        let mut world = BlockWorld::new(file.make_ground(), &faces, 1.0);
+        let before = world.meshes.clone();
+        // A block dug out of the middle of chunk (0, 0, 0): its faces alone made again.
+        assert_eq!(world.set_blocks([([10, 7, 10], AIR)]), 1);
+        assert!(!Arc::ptr_eq(&world.meshes[&[0, 0, 0]], &before[&[0, 0, 0]]));
+        assert!(Arc::ptr_eq(&world.meshes[&[1, 0, 0]], &before[&[1, 0, 0]]));
+        // One dug on its +x side: the next chunk's too, whose side it opens.
+        let before = world.meshes.clone();
+        world.set_blocks([
+            ([31, 3, 10], AIR),
+            ([31, 4, 10], AIR),
+            ([31, 5, 10], AIR),
+            ([31, 6, 10], AIR),
+            ([31, 7, 10], AIR),
+        ]);
+        assert!(!Arc::ptr_eq(&world.meshes[&[1, 0, 0]], &before[&[1, 0, 0]]));
+        let opened = world.meshes[&[1, 0, 0]].quads.iter().any(|&q| {
+            let (at, _, facing, ..) = mesh::unpack(q);
+            facing == 1 && at[0] == 0 && at[2] == 10
+        });
+        assert!(opened, "the next chunk's block beside the hole shows its -x face");
+        // The same block again changes nothing.
+        assert_eq!(world.set_blocks([([31, 7, 10], AIR)]), 0);
+        // A block placed above the ground in a chunk of its own.
+        world.set_blocks([([5, 40, 5], 3)]);
+        assert!(world.meshes.contains_key(&[0, 1, 0]));
+        world.set_blocks([([5, 40, 5], AIR)]);
+        assert!(!world.meshes.contains_key(&[0, 1, 0]), "let go once empty");
+        assert_eq!(world.block_at([5.5, 7.5, 10.2]), ([5, 7, 10], 1));
     }
 
     #[test]

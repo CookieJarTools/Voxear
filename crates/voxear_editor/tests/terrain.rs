@@ -1030,6 +1030,7 @@ fn a_block_world_is_added_on_an_asset_of_its_own_its_ground_changed_undone_and_s
     assert_eq!(path, "Blocks/Field.blockworld");
     let blocks = |editor: &voxear_editor::Editor| editor.game.engine.world.get::<BlockWorld>(field).unwrap().clone();
     assert_eq!((blocks(&editor).blocks.get([0, 7, 0]), blocks(&editor).blocks.get([63, 0, 63])), (1, 3));
+    show_block_tool(&mut editor, &mut renderer, "Settings");
     for label in ["Data", "Block size", "Ground size", "Ground height", "Cast shadows"] {
         assert_eq!(prop_rows(&editor.ui, label).len(), 1, "the Block World's {label}");
     }
@@ -1044,4 +1045,113 @@ fn a_block_world_is_added_on_an_asset_of_its_own_its_ground_changed_undone_and_s
     editor.save();
     let text = std::fs::read_to_string(dir.path().join(&path)).unwrap();
     assert_eq!(BlockFile::parse(&text).unwrap().ground.height, 8);
+}
+
+/// Picks one of the Block World's tools by its segment.
+fn show_block_tool(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, tool: &str) {
+    let strip = first_with(&editor.ui, editor.ui.root(), "block-tools").expect("the Block World's tools");
+    let segment = editor.ui.children(strip).into_iter().find(|&s| editor.ui.text(s) == tool).expect("the tool");
+    click(&mut editor.ui, segment);
+    frame(editor, renderer);
+    frame(editor, renderer);
+}
+
+/// Clicks the Scene view at `point`: pressed, a frame, released. The
+/// pointer comes to it from beside it, so the editor sees it move there
+/// after a click on the Inspector moved the UI's pointer alone.
+fn click_scene(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, point: [f32; 2]) {
+    pointer_to(editor, [point[0] + 1.0, point[1]]);
+    pointer_to(editor, point);
+    frame(editor, renderer);
+    left_button(editor, true);
+    frame(editor, renderer);
+    left_button(editor, false);
+    frame(editor, renderer);
+}
+
+#[test]
+fn blocks_are_placed_broken_and_their_kinds_changed_in_the_scene_view_each_a_step_to_undo() {
+    use voxear_engine::blocks::BlockWorldAsset;
+    use voxear_terrain::blocks::{BlockWorld, edits::BlockEdits};
+    let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {
+        eprintln!("skipping: no usable GPU");
+        return;
+    };
+    let dir = hello_with_a_field();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    let field = obj(&editor, "Field");
+    editor.select(Some(field));
+    frame(&mut editor, &mut renderer);
+    add_component(&mut editor, &mut renderer, "Block World");
+    for label in ["Brush", "Size", "Name", "Color", "Material", "Top", "Bottom"] {
+        assert_eq!(prop_rows(&editor.ui, label).len(), 1, "Build's {label}");
+    }
+    // The world moved under the bottom middle of the Scene view, its top half a metre up, under the camera.
+    let camera = editor.scene_camera().expect("the Scene view");
+    let [x, y, w, h] = camera.rect;
+    let point = [x + w / 2.0, y + h * 0.8];
+    let (origin, direction) = camera.ray(point);
+    let hit = origin + direction * ((0.5 - origin.y) / direction.y);
+    let corner = voxear_core::math::Vec3::new(hit.x - 32.0, -7.5, hit.z - 32.0);
+    editor.game.engine.world.get_mut::<voxear_scene::Transform>(field).unwrap().position = corner;
+    frame(&mut editor, &mut renderer);
+    let under = [(hit.x - corner.x).floor() as i32, (hit.z - corner.z).floor() as i32];
+    let block = |editor: &voxear_editor::Editor, y: i32| {
+        editor.game.engine.world.get::<BlockWorld>(field).unwrap().blocks.get([under[0], y, under[1]])
+    };
+    // A click puts grass on the grass under it; Shift and a click takes it away again.
+    click_scene(&mut editor, &mut renderer, point);
+    assert_eq!(block(&editor, 8), 1, "placed on the face clicked");
+    shot(&mut renderer, "blocks-placed.png");
+    shift_key(&mut editor, true);
+    click_scene(&mut editor, &mut renderer, point);
+    shift_key(&mut editor, false);
+    assert_eq!(block(&editor, 8), 0, "broken");
+    editor.undo(&mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(block(&editor, 8), 1, "the break undone, the block back");
+    // A new kind, placed: number 4; then Grass taken out of the list, its blocks with it, the rest a number up.
+    let add = first_with(&editor.ui, editor.ui.root(), "collection-add").expect("Add Block");
+    click(&mut editor.ui, add);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let kinds = |editor: &voxear_editor::Editor| {
+        editor.game.engine.world.get::<BlockWorldAsset>(field).unwrap().file.blocks.len()
+    };
+    assert_eq!(kinds(&editor), 4);
+    // Where the click lands now: against the face of the grass block it meets, likely its side.
+    let blocks_now = editor.game.engine.world.get::<BlockWorld>(field).unwrap().blocks.clone();
+    let from = (origin - corner).to_array();
+    let met = voxear_terrain::blocks::raycast(&blocks_now, from, direction.to_array(), 500.0).expect("a block");
+    let against = [0, 1, 2].map(|i| met.block[i] + met.normal[i]);
+    click_scene(&mut editor, &mut renderer, point);
+    let world_blocks =
+        |editor: &voxear_editor::Editor| editor.game.engine.world.get::<BlockWorld>(field).unwrap().blocks.clone();
+    assert_eq!(world_blocks(&editor).get(against), 4, "the new kind placed against the face it meets");
+    let mut removes = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "collection-remove", &mut removes);
+    removes.retain(|&r| editor.ui.is_visible(r));
+    click(&mut editor.ui, removes[0]);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(kinds(&editor), 3);
+    // Dirt is now 1 and stone 2; the ground's grass top is air, and the new kind 3.
+    assert_eq!([8, 7, 5, 3].map(|y| block(&editor, y)), [0, 0, 1, 2]);
+    assert_eq!(world_blocks(&editor).get(against), 3);
+    // Saved, its changes from its ground are kept beside it, small.
+    editor.save();
+    let path = editor
+        .game
+        .content
+        .db()
+        .get(editor.game.engine.world.get::<BlockWorldAsset>(field).unwrap().guid)
+        .unwrap()
+        .path
+        .clone();
+    let changes =
+        std::fs::read(dir.path().join(voxear_terrain::blocks::edits::blocks_file(&path))).expect("its changes");
+    let edits = BlockEdits::from_bytes(&changes).unwrap();
+    assert!(!edits.is_empty() && changes.len() < 200, "{} bytes", changes.len());
 }

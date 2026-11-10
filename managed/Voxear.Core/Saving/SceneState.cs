@@ -53,6 +53,7 @@ public sealed class SceneState
 			root["components"] = SaveNode.NewList(SceneComponents.Capture());
 			root["plants"] = SaveNode.NewList(RemovedPlants().Select(PlantsNode));
 			root["terrains"] = SaveNode.Bytes(Terrain.CaptureEdits());
+			root["blocks"] = SaveNode.Bytes(Blocks.CaptureEdits());
 		}
 		return new SceneState(root);
 	}
@@ -97,6 +98,12 @@ public sealed class SceneState
 		if (!Root["terrains"].IsNull)
 		{
 			Terrain.ApplyEdits(Root["terrains"].AsBytes());
+		}
+
+		// The blocks scripts changed, each world of blocks from as its level built it.
+		if (!Root["blocks"].IsNull)
+		{
+			Blocks.ApplyEdits(Root["blocks"].AsBytes());
 		}
 
 		var made = MakeCopies();

@@ -971,6 +971,9 @@ pub fn block_world(
                 file: loaded.file.clone(),
                 base: loaded.base.clone(),
                 pending: loaded.pending.clone(),
+                grown: Vec::new(),
+                drawn: Arc::new(crate::blocks::resolved(content, &loaded.file, &[])),
+                derived: loaded.derived,
             };
             (loaded.world.clone(), Some(asset))
         }
@@ -984,7 +987,7 @@ pub fn block_world(
     };
     blocks.cast_shadows = data.cast_shadows;
     let look = match (renderer, &asset) {
-        (Some(renderer), Some(asset)) => Some(crate::blocks::look(content, renderer, &asset.file)?),
+        (Some(renderer), Some(asset)) => Some(crate::blocks::look(content, renderer, &asset.drawn)?),
         _ => None,
     };
     Ok(BlockWorldParts { blocks, look, asset, source: crate::scene_file::BlockWorldSource(data.clone()) })

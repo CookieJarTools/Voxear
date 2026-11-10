@@ -94,11 +94,20 @@ internal static class ScriptCatalog
 		return found;
 	}
 
-	/// <summary>Every Definition a data asset can hold: not abstract, and not generic.</summary>
+	/// <summary>
+	/// Every Definition a data asset can hold: not abstract, and not generic. The engine's own come with the game's,
+	/// so its items, recipes and kinds of tool are made and edited as a game's Definitions are.
+	/// </summary>
 	private static List<Type> DefinitionTypes(IReadOnlyList<Assembly> assemblies)
 	{
 		var found = new List<Type>();
-		foreach (var type in Loadable(assemblies))
+		var engine = typeof(Definition).Assembly;
+		List<Assembly> all = [.. assemblies];
+		if (!all.Contains(engine))
+		{
+			all.Add(engine);
+		}
+		foreach (var type in Loadable(all))
 		{
 			if (type != null && typeof(Definition).IsAssignableFrom(type) && !type.IsAbstract && !type.ContainsGenericParameters)
 			{

@@ -22,6 +22,10 @@ internal static class ContentRootTests
 		var lines = ContentRoots.Describe(new[] { typeof(ContentRootTests).Assembly }).Split('\n');
 
 		Check.True(lines.Contains("Prefabs/Minion.prefab\tVoxear.Tests.BossSpawner.minions"), "pattern, tab, source");
-		Check.True(lines.Length == 5 && lines[^1].Length == 0, "four lines, each ending in a newline");
+		// A Definition whose every data asset ships has a line of its own: the engine's recipes, and a game's kind of them.
+		Check.True(lines.Contains("type:Voxear.Recipe\tVoxear.Recipe"), "every recipe");
+		Check.True(lines.Contains("type:Voxear.Tests.TestSmelting\tVoxear.Tests.TestSmelting"), "and a recipe of the game's own");
+		Check.True(!lines.Any(line => line.StartsWith("type:Voxear.Item")), "an item ships when something names it");
+		Check.True(lines.Length == 7 && lines[^1].Length == 0, $"six lines, each ending in a newline, got {lines.Length - 1}");
 	}
 }

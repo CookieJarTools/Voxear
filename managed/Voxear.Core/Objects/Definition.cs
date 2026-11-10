@@ -24,8 +24,8 @@ namespace Voxear;
 /// </summary>
 public abstract class Definition
 {
-	/// <summary>The file's name, without its folder or extension.</summary>
-	public string Name { get; internal set; } = string.Empty;
+	/// <summary>The file's name, without its folder or extension. One made in code has the name it is given.</summary>
+	public string Name { get; set; } = string.Empty;
 
 	/// <summary>The file's project path, as <c>Weapons/Rifle.asset</c>.</summary>
 	public string Path { get; internal set; } = string.Empty;

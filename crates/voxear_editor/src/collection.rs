@@ -17,6 +17,8 @@ pub(crate) struct Collection {
     pub items: NodeId,
     pub empty: NodeId,
     pub add: Option<NodeId>,
+    /// The row its add button is in, for a list with more to offer there.
+    pub footer: Option<NodeId>,
 }
 
 /// One element's item, where its own values go, and its remove button.
@@ -38,9 +40,12 @@ pub(crate) fn collection(ui: &mut Ui, parent: NodeId, count: usize, editable: bo
     let empty = ui.add_label(frame, "Empty");
     ui.add_class(empty, "collection-empty");
     show_count(ui, items, empty, count);
-    let add = editable.then(|| {
+    let footer = editable.then(|| {
         let footer = ui.panel(frame, Style::row());
         ui.add_class(footer, "collection-footer");
+        footer
+    });
+    let add = footer.map(|footer| {
         let button = match add {
             Some(text) => ui.button(footer, text),
             None => ui.icon_button(footer, "plus"),
@@ -48,7 +53,14 @@ pub(crate) fn collection(ui: &mut Ui, parent: NodeId, count: usize, editable: bo
         ui.add_class(button, "collection-add");
         button
     });
-    Collection { frame, items, empty, add }
+    Collection { frame, items, empty, add, footer }
+}
+
+/// Another button beside a collection field's add button, saying `text`.
+pub(crate) fn footer_button(ui: &mut Ui, footer: NodeId, text: &str) -> NodeId {
+    let button = ui.button(footer, text);
+    ui.add_class(button, "collection-add");
+    button
 }
 
 /// Shows a collection field as holding `count` items: its box when it has
@@ -61,15 +73,27 @@ pub(crate) fn show_count(ui: &mut Ui, items: NodeId, empty: NodeId, count: usize
 /// An item at `place` in a collection field's box of `items`, from the top:
 /// a grip, its body, and when `editable`, a remove button.
 pub(crate) fn item(ui: &mut Ui, items: NodeId, place: usize, editable: bool) -> CollectionItem {
+    placed_item(ui, items, place, editable, true)
+}
+
+/// An item of a list whose order is not its own to change: its body and a
+/// remove button, with no grip to drag it by.
+pub(crate) fn fixed_item(ui: &mut Ui, items: NodeId, place: usize) -> CollectionItem {
+    placed_item(ui, items, place, true, false)
+}
+
+fn placed_item(ui: &mut Ui, items: NodeId, place: usize, editable: bool, moves: bool) -> CollectionItem {
     let row = ui.panel(items, Style::row());
     ui.add_class(row, "collection-item");
     ui.set_class(row, "first", place == 0);
     ui.set_class(row, "odd", place % 2 == 1);
-    let grip = ui.icon(row, "grip");
-    ui.add_class(grip, "collection-grip");
-    ui.set_class(grip, "disabled", !editable);
-    if editable {
-        ui.set_reorder_handle(grip, true);
+    if moves {
+        let grip = ui.icon(row, "grip");
+        ui.add_class(grip, "collection-grip");
+        ui.set_class(grip, "disabled", !editable);
+        if editable {
+            ui.set_reorder_handle(grip, true);
+        }
     }
     let body = ui.panel(row, Style::column());
     ui.add_class(body, "collection-body");

@@ -57,6 +57,10 @@ internal static class Definitions
 	public static void Clear()
 	{
 		loaded.Clear();
+		// What was read through them: the next asking reads the files again.
+		Items.Refresh();
+		Recipes.Reset();
+		BlockInfos.Clear();
 	}
 
 	/// <summary>

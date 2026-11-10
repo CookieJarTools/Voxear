@@ -231,6 +231,11 @@ impl UiNumbers {
             UiAsk::SetTooltip(text) => ui.set_tooltip(node, text, None),
             UiAsk::SetPlaceholder(text) => ui.set_placeholder(node, text),
             UiAsk::SetOptions(options) => ui.set_options(node, &options.lines().collect::<Vec<_>>()),
+            UiAsk::SetImage(image) => {
+                ui.set_image(node, image.map(|(texture, uv)| voxear_ui::ImageRef { texture, uv }));
+            }
+            // A picture is found by whatever has the project's pictures, which asks SetImage with it.
+            UiAsk::SetPicture(_) => {}
             // Only the game's own UI fills lists and key maps from scripts.
             UiAsk::Items { .. } | UiAsk::Keymap { .. } | UiAsk::KeymapClicked => {}
         }

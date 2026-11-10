@@ -2944,7 +2944,16 @@ end streams chunk columns round the camera (`blocks::stream`), the world's own n
 coarser chunks, each twice the last's block size, kept by level in the renderer's pool; near columns' blocks are made
 a column past those drawn, and each column's faces on the same background threads once the columns round it have
 blocks, so none is meshed twice and the frame waits for none. Models of small coloured
-blocks come from `.vox` files (`blocks::vox`), each colour built as a kind of block. A world drawn smooth (a Voxel
+blocks come from `.vox` files (`blocks::vox`), each colour built as a kind of the world's own. A block is an asset
+(`.block`, `blocks::block`): its look and liquid are read natively, by meshing, flow, physics and servers, and its
+rules (hardness, tool kind, tier, drops, sounds) are kept with them for scripts to apply. A world's file lists its
+blocks by reference; a block's number is its place in that list, which never changes, a place taken out left empty.
+The engine keeps the file as written and draws from a copy with each entry given its block's look
+(`voxear_engine::blocks::resolved`), made again for every world listing a block once the block is saved
+(`blocks::refresh`, by a version `Content` counts). A block placed in play that its world does not list is numbered
+in the game alone, and saved changes carry which block each such number is. Items, tool kinds, stations and recipes
+are C# Definitions of Voxear.Core's own, so games derive from them; `Blocks.Mine`, `Place`, `Scoop` and
+`Recipes.Match` apply the rules, and what holds items is a package's. A world drawn smooth (a Voxel
 Terrain) keeps how full each block is near its surface and is meshed by surface nets (`blocks::smooth`), drawn from
 the same pool as triangles' corners; each chunk's triangles merged where the surface is flat (a tenth of a block),
 and twice more, coarser, for far away, the points beside another kind and those chunks share kept, so kinds blend

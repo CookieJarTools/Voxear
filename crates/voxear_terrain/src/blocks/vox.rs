@@ -224,40 +224,53 @@ impl VoxFile {
     }
 }
 
-/// `vox`'s blocks as changes to a world whose kinds of block `file` lists,
-/// standing at `at` (its lowest blocks there, its middle over it): each of
-/// its colours a kind of block of that colour, those `file` has already
-/// with no material kept, the rest added to its list while there is room,
-/// and the colours past it the nearest kind there is.
-pub fn place(file: &mut super::file::BlockFile, vox: &VoxFile, at: [i32; 3]) -> Vec<([i32; 3], super::chunk::BlockId)> {
+/// `vox`'s blocks as changes to a world whose blocks `file` lists, standing
+/// at `at` (its lowest blocks there, its middle over it): each of its
+/// colours a kind of block of that colour, those `file` has already as kinds
+/// of its own with no material kept, the rest added to its list while it
+/// has `room` for more ways of drawing a face, and the colours past that
+/// the nearest such kind there is. With no kind of a colour at all, those
+/// blocks are left out.
+pub fn place(
+    file: &mut super::file::BlockFile,
+    vox: &VoxFile,
+    at: [i32; 3],
+    mut room: usize,
+) -> Vec<([i32; 3], super::chunk::BlockId)> {
     use super::file::{BlockKind, MAX_BLOCKS};
     let blocks = vox.blocks();
-    let mut kind_of: HashMap<u8, super::chunk::BlockId> = HashMap::new();
+    // A colour builds only with a kind of the world's own that is a colour alone: never a block, nor water.
+    let colour_alone = |kind: &BlockKind| {
+        kind.is_inline() && !kind.water && kind.material.is_none() && kind.top.is_none() && kind.bottom.is_none()
+    };
+    let mut kind_of: HashMap<u8, Option<super::chunk::BlockId>> = HashMap::new();
     for &(_, colour) in &blocks {
         if kind_of.contains_key(&colour) {
             continue;
         }
         let wanted = vox.palette[usize::from(colour.max(1)) - 1];
-        let same = file.blocks.iter().position(|kind| {
-            kind.material.is_none() && kind.top.is_none() && kind.bottom.is_none() && kind.color == wanted
-        });
+        let same = file.blocks.iter().position(|kind| colour_alone(kind) && kind.color == wanted);
         let kind = match same {
-            Some(found) => found,
-            None if file.blocks.len() < MAX_BLOCKS => {
+            Some(found) => Some(found),
+            None if room > 0 && file.blocks.len() < MAX_BLOCKS => {
+                room -= 1;
                 file.blocks.push(BlockKind::colored(&format!("Color {colour}"), wanted));
-                file.blocks.len() - 1
+                Some(file.blocks.len() - 1)
             }
             // No room for more kinds: the nearest colour there is.
             None => {
                 let away = |c: [f32; 3]| (0..3).map(|i| (c[i] - wanted[i]).powi(2)).sum::<f32>();
                 (0..file.blocks.len())
+                    .filter(|&kind| colour_alone(&file.blocks[kind]))
                     .min_by(|&a, &b| away(file.blocks[a].color).total_cmp(&away(file.blocks[b].color)))
-                    .unwrap_or(0)
             }
         };
-        kind_of.insert(colour, (kind + 1) as super::chunk::BlockId);
+        kind_of.insert(colour, kind.map(|kind| (kind + 1) as super::chunk::BlockId));
     }
-    blocks.into_iter().map(|(p, colour)| ([at[0] + p[0], at[1] + p[1], at[2] + p[2]], kind_of[&colour])).collect()
+    blocks
+        .into_iter()
+        .filter_map(|(p, colour)| Some(([at[0] + p[0], at[1] + p[1], at[2] + p[2]], kind_of[&colour]?)))
+        .collect()
 }
 
 /// A palette for files with none of their own: greys and the colour wheel,
@@ -366,10 +379,27 @@ mod tests {
         // Placed in a world: a kind of block each colour, those it has already kept.
         let mut world = crate::blocks::file::BlockFile::default();
         world.blocks.push(crate::blocks::file::BlockKind::colored("Red", file.palette[4]));
-        let changes = place(&mut world, &file, [100, 7, 50]);
+        let changes = place(&mut world, &file, [100, 7, 50], 250);
         assert_eq!(changes.len(), 3);
         assert_eq!(world.blocks.len(), 4 + 2, "colours 1 and 2 added, colour 5 the red it had");
         assert!(changes.contains(&([110, 9, 50], 4)), "the red kind, number 4");
         assert!(changes.iter().all(|(p, _)| p[1] >= 7), "standing at the place given");
+
+        // A block of the same colour is no kind of the world's own, nor is a place one was taken out of: a colour
+        // passes over both, and takes a number after them.
+        use crate::blocks::file::{BlockFile, BlockKind};
+        let red = BlockKind { color: file.palette[4], ..BlockKind::of("Blocks/Red.block") };
+        let mut world = BlockFile { blocks: vec![red, BlockKind::gap()], ..BlockFile::default() };
+        let changes = place(&mut world, &file, [0, 0, 0], 250);
+        assert_eq!(world.blocks.len(), 2 + 3, "a kind for each of its three colours");
+        assert!(changes.iter().all(|&(_, block)| block >= 3), "{changes:?}");
+        // With room for one more way of drawing a face, the first colour is added and the rest are the nearest to
+        // them; with no kind of a colour at all, its blocks are left out.
+        let mut world = BlockFile { blocks: vec![BlockKind::of("Blocks/Red.block")], ..BlockFile::default() };
+        assert_eq!(place(&mut world, &file, [0, 0, 0], 1).len(), 3);
+        assert_eq!(world.blocks.len(), 2);
+        let mut world = BlockFile { blocks: vec![BlockKind::of("Blocks/Red.block")], ..BlockFile::default() };
+        assert!(place(&mut world, &file, [0, 0, 0], 0).is_empty());
+        assert_eq!(world.blocks.len(), 1);
     }
 }

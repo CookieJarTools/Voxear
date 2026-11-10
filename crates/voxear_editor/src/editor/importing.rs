@@ -47,6 +47,9 @@ pub(super) struct Imports {
     dropped: Vec<(PathBuf, Option<String>)>,
     /// Whether to look at the files again, as after the window got the focus.
     look: bool,
+    /// The project's list of assets as last looked at, by where it is kept:
+    /// another once files were made from the Inspector, as a new block is.
+    scanned: usize,
     /// The file chooser open for Import New Asset, and the folder its files
     /// go into.
     choosing: Option<(Receiver<std::io::Result<Vec<PathBuf>>>, String)>,
@@ -188,6 +191,11 @@ impl Editor {
         if !self.imports.dropped.is_empty() {
             self.bring_in_dropped(renderer);
         }
+        // Files the Inspector made, as a Block World's new blocks, show in the Project panel at once.
+        let scanned = std::ptr::from_ref(self.game.content.db()) as usize;
+        if std::mem::replace(&mut self.imports.scanned, scanned) != scanned {
+            self.imports.look = true;
+        }
         if std::mem::take(&mut self.imports.look) {
             self.look_at_files(renderer);
         }
@@ -249,6 +257,7 @@ impl Editor {
         let prompt_icons = changed.iter().any(|path| path.ends_with(".prompticons"));
         let world_gens: Vec<String> =
             changed.iter().filter(|path| path.ends_with(".worldgen")).map(|path| path.to_string()).collect();
+        let blocks = changed.iter().any(|path| path.ends_with(".block"));
         // A material may pick a built-in shader no other did, which is compiled in then.
         let shaders = changed.iter().any(|path| path.ends_with(".shader") || path.ends_with(".material"));
         if came_or_went {
@@ -280,6 +289,10 @@ impl Editor {
                     crate::terrain_props::regenerate(&mut self.game, guid);
                     crate::block_props::regenerate(&mut self.game, guid);
                 }
+            }
+            // Blocks edited outside the editor are read again, and the worlds of blocks listing them drawn as they say.
+            if blocks {
+                self.game.content.forget_blocks();
             }
             // A shader saved from a code editor compiles again, and its materials draw with it; nothing
             // compiles again when the shaders the materials pick are as they were.

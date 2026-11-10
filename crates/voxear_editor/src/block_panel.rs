@@ -1,49 +1,58 @@
 //! The top of a Block World's Inspector section: its tools, **Build** and
-//! **Settings**, and under Build the list of its kinds of block, each by
-//! its name and colour. A click picks the kind the brush builds with, whose
-//! name, colour and materials show below; a drag by its grip moves it,
-//! every block of every kind renumbered with it; its cross takes it out,
-//! its blocks with it; Add Block adds one of a colour of its own. Each
-//! change to the list is a step to undo; picking a tool or a kind is not.
+//! **Settings**, and under Build the list of the blocks it is made of, each
+//! by its name and colour. A click picks the block the brush builds with,
+//! whose settings show below. Its cross takes it out, its blocks with it,
+//! and leaves its place empty, so every other block keeps its number: the
+//! list has no order to change. Add Block lists a `.block` of the project,
+//! as one dragged onto the list from the Project panel is; New Block makes
+//! one and lists it; Add Color adds a kind of the world's own, a colour
+//! alone. While the world keeps kinds of its own that are more than a
+//! model's colours, Make Block Assets makes blocks of them. Each change to
+//! the list is a step to undo; picking a tool or a block is not.
 
 use std::hash::{Hash, Hasher};
 
 use voxear_ecs::{Entity, World};
 use voxear_engine::{Game, blocks::BlockWorldAsset};
 use voxear_render::Renderer;
-use voxear_ui::{NodeId, Style, Ui};
+use voxear_ui::{DragSource, NodeId, Style, Ui};
 
 use crate::{
     block_props::{self, BlockTool},
     collection::{self, Collection},
 };
 
-/// One row of the list: its kind's place, the part a click picks it by,
-/// and its cross.
+/// One row of the list: its block's place in the world's list, the part a
+/// click picks it by, and its cross.
 struct Row {
     place: usize,
     body: NodeId,
     remove: Option<NodeId>,
 }
 
-/// The tools and the list of kinds of block of the Block World the
-/// Inspector shows.
+/// The tools and the list of blocks of the Block World the Inspector
+/// shows.
 pub struct BlockPanel {
     tools: NodeId,
     list: Option<Collection>,
     rows: Vec<Row>,
+    /// New Block, Add Color, and Make Block Assets while there are kinds to
+    /// make blocks of.
+    new_block: Option<NodeId>,
+    add_color: Option<NodeId>,
+    make_assets: Option<NodeId>,
     signature: u64,
 }
 
-/// What the panel shows of an Obj's world: the tool, the picked kind, and
-/// each kind's name and colour.
+/// What the panel shows of an Obj's world: the tool, the picked block, and
+/// each block's name and colour, as its file is drawn.
 fn signature(world: &World, entity: Entity) -> u64 {
     let state = block_props::ui(world);
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     (state.tool, state.block).hash(&mut hasher);
     if let Some(asset) = world.get::<BlockWorldAsset>(entity) {
-        for kind in &asset.file.blocks {
-            kind.name.hash(&mut hasher);
+        for kind in &asset.drawn.blocks {
+            (&kind.name, &kind.block, kind.removed).hash(&mut hasher);
             kind.color.map(f32::to_bits).hash(&mut hasher);
         }
     }
@@ -62,18 +71,24 @@ impl BlockPanel {
         let at = BlockTool::ALL.iter().position(|&tool| tool == state.tool).unwrap_or_default();
         ui.set_segment(tools, at);
         let mut shown = Vec::new();
-        let file = world.get::<BlockWorldAsset>(entity).map(|asset| &asset.file);
+        let (mut new_block, mut add_color, mut make_assets) = (None, None, None);
+        let file = world.get::<BlockWorldAsset>(entity).map(|asset| &**asset.drawn);
         let list = match (state.tool, file) {
             (BlockTool::Build, Some(file)) => {
-                let list = collection::collection(ui, rows, file.blocks.len(), true, Some("Add Block"));
+                let listed = file.blocks.iter().filter(|kind| kind.is_live()).count();
+                let list = collection::collection(ui, rows, listed, true, Some("Add Block"));
+                // A block's place is its number, which nothing moves.
+                ui.set_reorderable(list.items, false);
+                ui.accept_drops(list.frame, true);
                 ui.add_class(list.frame, "terrain-layers");
-                ui.set_text(list.empty, "No kinds of block");
-                for (place, kind) in file.blocks.iter().enumerate() {
-                    let item = collection::item(ui, list.items, place, true);
-                    ui.set_class(item.node, "selected", place == state.block);
+                ui.set_text(list.empty, "No blocks");
+                let picked = block_props::picked(world, file);
+                for (place, kind) in file.blocks.iter().enumerate().filter(|(_, kind)| kind.is_live()) {
+                    let item = collection::fixed_item(ui, list.items, shown.len());
+                    ui.set_class(item.node, "selected", Some(place) == picked);
                     let line = ui.panel(item.body, Style::row());
                     ui.add_class(line, "terrain-layer");
-                    let swatch = ui.icon(line, "blocks");
+                    let swatch = ui.icon(line, "block");
                     ui.add_class(swatch, "terrain-layer-icon");
                     let [r, g, b] = kind.color.map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u8);
                     ui.set_inline_style(swatch, &format!("color: #{r:02x}{g:02x}{b:02x}"));
@@ -83,11 +98,18 @@ impl BlockPanel {
                     ui.add_class(number, "terrain-layer-kind");
                     shown.push(Row { place, body: line, remove: item.remove });
                 }
+                if let Some(footer) = list.footer {
+                    new_block = Some(collection::footer_button(ui, footer, "New Block"));
+                    add_color = Some(collection::footer_button(ui, footer, "Add Color"));
+                    if block_props::kinds_to_make(file) > 0 {
+                        make_assets = Some(collection::footer_button(ui, footer, "Make Block Assets"));
+                    }
+                }
                 Some(list)
             }
             _ => None,
         };
-        Self { tools, list, rows: shown, signature: signature(world, entity) }
+        Self { tools, list, rows: shown, new_block, add_color, make_assets, signature: signature(world, entity) }
     }
 
     /// Whether what it shows changed since it was built.
@@ -95,8 +117,21 @@ impl BlockPanel {
         signature(world, entity) != self.signature
     }
 
-    /// Does what was clicked or dragged: a tool or a kind picked, a kind
-    /// added, moved or taken out. Whether anything changed.
+    /// Add Block, where it was clicked: the button the picker of blocks
+    /// opens under.
+    pub fn add_block_clicked(&self, ui: &Ui) -> Option<NodeId> {
+        self.list.as_ref()?.add.filter(|&add| ui.clicked(add))
+    }
+
+    /// What was dropped onto the list, as a block dragged from the Project
+    /// panel is.
+    pub fn dropped(&self, ui: &Ui) -> Option<DragSource> {
+        ui.dropped_onto(self.list.as_ref()?.frame)
+    }
+
+    /// Does what was clicked: a tool or a block picked, a block made, a
+    /// colour added, blocks made of the world's own kinds, or a block taken
+    /// out. Whether anything changed.
     pub fn update(&self, ui: &Ui, game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity) -> bool {
         let world = &mut game.engine.world;
         let tool = BlockTool::ALL[ui.segment(self.tools).min(BlockTool::ALL.len() - 1)];
@@ -104,15 +139,21 @@ impl BlockPanel {
             block_props::show_tool(world, tool);
             return true;
         }
-        let Some(list) = &self.list else { return false };
-        if list.add.is_some_and(|add| ui.clicked(add)) {
+        if self.list.is_none() {
+            return false;
+        }
+        let clicked = |button: Option<NodeId>| button.is_some_and(|button| ui.clicked(button));
+        if clicked(self.new_block) {
+            return block_props::new_block(game, renderer, entity);
+        }
+        if clicked(self.add_color) {
             return block_props::add_block(game, renderer, entity);
         }
-        if let Some((from, to)) = collection::moved(ui, list.items) {
-            return block_props::move_block(game, renderer, entity, from, to);
+        if clicked(self.make_assets) {
+            return block_props::make_block_assets(game, renderer, entity);
         }
         for row in &self.rows {
-            if row.remove.is_some_and(|remove| ui.clicked(remove)) {
+            if clicked(row.remove) {
                 return block_props::remove_block(game, renderer, entity, row.place);
             }
             if ui.clicked(row.body) && block_props::ui(&game.engine.world).block != row.place {

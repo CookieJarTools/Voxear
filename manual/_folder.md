@@ -27,6 +27,7 @@ Then read [[Objs and Components]] and [[Your First Script]].
 - **[[Content and Builds]]**: what goes into a build, and how the game loads things and lets them go.
 - **[[Networking]]**: hosting and joining games, players' input over the network, and dedicated servers.
 - **[[Guns]]**: guns held, aimed, fired and reloaded in your character's own hands, with no animation clips.
+- **[[Items and Crafting]]**: items, tools and recipes, and digging and building with a block's rules.
 - **[[Finding Problems]]**: the Console, the Profiler, and the other tools for finding out why.
 - **[[VoxDocs]]**: writing your project's own pages, guides that do the work for the reader, and linking code to pages.
 - **[[Packages]]**: sharing scripts, tools and assets between projects, from Git, folders and registries.

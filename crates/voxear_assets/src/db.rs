@@ -77,9 +77,12 @@ pub enum AssetKind {
     /// A `.worldgen` file: a world generator, its seed and how it shapes
     /// ground, which a terrain's Generate layer picks.
     WorldGen,
-    /// A `.blockworld` file: a world of blocks, its kinds of block and the
-    /// ground they start as, which a Block World picks.
+    /// A `.blockworld` file: a world of blocks, the blocks it is made of and
+    /// the ground they start as, which a Block World picks.
     BlockWorld,
+    /// A `.block` file: one block, how it looks and whether it is a liquid,
+    /// which the worlds of blocks made of it list.
+    Block,
     /// A `.vox` file: a model of small coloured blocks, as voxel sculpting
     /// tools save it, which a Block World's Model brush builds.
     VoxModel,
@@ -111,6 +114,7 @@ impl AssetKind {
             "prompticons" => Self::PromptIcons,
             "worldgen" => Self::WorldGen,
             "blockworld" => Self::BlockWorld,
+            "block" => Self::Block,
             "vox" => Self::VoxModel,
             _ => return None,
         })

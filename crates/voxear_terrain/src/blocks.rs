@@ -162,6 +162,21 @@ impl BlockMap {
         self.chunks.iter()
     }
 
+    /// Puts a chunk shared with another map at `key`, as it is.
+    pub fn put_shared(&mut self, key: [i32; 3], chunk: Arc<Chunk>) {
+        self.chunks.insert(key, chunk);
+    }
+
+    /// How many chunks have blocks.
+    pub fn len(&self) -> usize {
+        self.chunks.len()
+    }
+
+    /// Whether no chunk has blocks.
+    pub fn is_empty(&self) -> bool {
+        self.chunks.is_empty()
+    }
+
     /// The same blocks, each by the number `change` gives it: as after a
     /// kind of block is taken out of its world's list.
     pub fn remapped(&self, change: impl Fn(BlockId) -> BlockId) -> Self {

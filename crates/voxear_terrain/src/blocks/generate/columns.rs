@@ -97,10 +97,11 @@ pub fn column_chunks(
                 let under = column.surface - middle[1];
                 let place = middle.map(|v| v * size);
                 let (block, depth, open) = cell_at(column, under, place, size, &coarse, push, seed, f32::INFINITY);
-                // The sea fills the open air below its level; drawn smooth, also the ground's top blocks whose
-                // surface lies under it, so its surface reaches the shore.
+                // The sea fills the open air below its level. Drawn smooth, it also takes the ground's top block
+                // where the ground's surface lies under the sea and the block over it stands clear of it, which
+                // would else leave no sea there: so the sea's surface reaches the shore, and keeps its floor.
                 let over = sea_level - middle[1];
-                let shore = file.smooth && block != AIR && depth < over && pushed(under, place, push, seed) < over;
+                let shore = file.smooth && block != AIR && over <= 1.0 && pushed(under, place, push, seed) < over;
                 let block = if over > 0.0 && (open || shore) { sea } else { block };
                 let (lx, lz) = ((x - cx * side) as u32, (z - cz * side) as u32);
                 // Drawn smooth, the air a block from the surface keeps how far it is from it too, and the sea's top

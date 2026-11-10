@@ -8,7 +8,9 @@ namespace Voxear;
 /// they make and how many. Shaped, the items must lie as the grid shows them, anywhere in the crafting grid or
 /// mirrored; shapeless, they may lie anywhere. <see cref="Recipes"/> finds the recipe a grid makes.
 /// </summary>
+/// <remarks>Every recipe ships in a build, named by anything or not, as they are found all at once.</remarks>
 [CreateAsset("Items/Recipe")]
+[ContentRoot]
 public class Recipe : Definition
 {
 	public RecipeShape Shape;

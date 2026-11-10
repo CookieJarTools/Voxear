@@ -13,16 +13,43 @@ internal static class ContentRoots
 		BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance |
 		BindingFlags.DeclaredOnly;
 
-	/// <summary>One line per pattern: the pattern, a tab, then the type or member that declares it.</summary>
+	/// <summary>What comes before a Definition's name in the pattern of a root that is every data asset holding it.</summary>
+	public const string TypeRoot = "type:";
+
+	/// <summary>
+	/// One line per pattern: the pattern, a tab, then the type or member that declares it. A Definition marked
+	/// [ContentRoot] with no pattern, or deriving from one that is, gives a line for its every data asset: the
+	/// engine's own among them, as a recipe is.
+	/// </summary>
 	public static string Describe(IEnumerable<Assembly> assemblies)
 	{
 		var lines = new StringBuilder();
-		foreach (var (pattern, source) in assemblies.SelectMany(Find))
+		var scripts = assemblies.ToList();
+		foreach (var (pattern, source) in scripts.SelectMany(Find).Concat(WholeDefinitions(scripts)))
 		{
 			lines.Append(pattern).Append('\t').Append(source).Append('\n');
 		}
 
 		return lines.ToString();
+	}
+
+	/// <summary>
+	/// The Definitions whose every data asset ships: those marked [ContentRoot] with no pattern, and those deriving
+	/// from them, in <paramref name="assemblies"/> and the engine's own.
+	/// </summary>
+	public static List<(string Pattern, string Source)> WholeDefinitions(IReadOnlyList<Assembly> assemblies)
+	{
+		var found = new List<(string Pattern, string Source)>();
+		var engine = typeof(Definition).Assembly;
+		foreach (var type in assemblies.Append(engine).Distinct().SelectMany(LoadableTypes))
+		{
+			var whole = type.GetCustomAttributes(typeof(ContentRootAttribute), true).Cast<ContentRootAttribute>();
+			if (typeof(Definition).IsAssignableFrom(type) && !type.IsAbstract && whole.Any(root => root.Patterns.Count == 0))
+			{
+				found.Add((TypeRoot + type.FullName, type.FullName ?? type.Name));
+			}
+		}
+		return found;
 	}
 
 	public static List<(string Pattern, string Source)> Find(Assembly assembly)

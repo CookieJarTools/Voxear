@@ -2840,6 +2840,26 @@ shadowed one takes six views of the local shadow atlas.
 What goes into lava splashes as into water (`voxear_engine::water::splash`), with blobs of molten rock: those are
 Particle Systems, since the engine knows where the body went in.
 
+### Streams *(implemented)*
+
+A Stream's look is a function of how fast it runs at each place (`streamQuick`) and how far its rapids have it
+towards white water (the foam its points carry downstream), so calm, fast and rapid water are one shader that
+changes smoothly along it, with nothing for the user to place.
+
+- **The surface** is the sea's finest cascades carried down it in two phases, scaled by its speed and squeezed along
+  the current. Standing waves and churn are one function (`streamSwell`) that the strip's vertices are raised by
+  and the fragment takes its slopes from, so white water has a shape and its shading agrees with it.
+- **Rocks and shallows** are not captured or simulated. The fragment looks a few places upstream of itself on the
+  water's surface and reads the picture's depth behind the water there (`streamWake`): something in front of the
+  surface is standing in the water, and a bed just under it is a riffle. It costs five depth reads, works for
+  whatever is drawn, moving or not, and sees nothing that is off screen or hidden. A capture from above, as the sea
+  has of its floor, would see those, but the sea's is kept about the sea's own level and a Stream runs at any height.
+- **The bed's dappled light** is laid over what shows through the water, where the sun reaches the bed: the opaque
+  passes do not know a Stream is over them (they look only for the sea and Pools, as finding a Stream means walking
+  its points), so the bed is lit as dry ground and the Stream adds the web.
+- **Spray** is a particle system the renderer adds for each of the nearest Streams with rapids, its drops finding
+  white water along the Stream's points in the vertex shader, as the sea's finds fresh foam.
+
 ## Terrain
 
 Three kinds of terrain, each a component of its own under the Terrain module: **Terrain** (heights), **Block

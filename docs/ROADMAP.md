@@ -1239,7 +1239,15 @@ The sea, lakes, rivers and lava, built in. Manual: `manual/Water`.
 - **Paths and Streams:** `voxear_scene::Path` (centripetal Catmull-Rom, widths per point), edited in the Scene view
   (`path_handles.rs`: drag, width, insert, extend, Shift-click to remove, one undo step each). A Stream samples its
   Path each frame into world points with Manning speed, rapids foam carried downstream and travel time; drawn as a
-  strip with two-phase flow on the sea's small cascades and foam lines along the current.
+  strip, 16 quads across and four rows a point, with two-phase flow on the sea's finest cascades. Its look goes by
+  how fast it runs: calm water near flat and glassy, its bed dappled with the caustics carried along with it and no
+  foam on still shallows; faster water rougher, its ripples drawn out along the current, with low standing waves;
+  rapids raised into standing waves and churn (`streamSwell`, the strip and its shading alike), white on the crests,
+  pale with air, with spray the renderer adds as a particle system for each Stream with rapids
+  (`streamSprayVertex`). What stands in fast water has a white collar and leaves rough white water downstream, and
+  water fast over a shallow bed breaks white, both found in the picture's depth behind the water a few places
+  upstream (`streamWake`). Tests: rapids white and the level stretch not, calm smooth against fast rough, white
+  water below a rock in fast water and none in calm, spray gathered only for rapids.
 - **Lava:** Pools and Streams of lava glow by Planck's law, yellow-white where it wells up to dull red. A skin sets
   on molten rock in small cells with bright seams; crust forms in plates, each from its middle out, that stand above
   the molten rock between them, seen down into past the near plate's edge (`lavaParallax`, worked out from the plates

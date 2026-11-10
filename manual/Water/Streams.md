@@ -18,13 +18,23 @@ Each change is one step to undo. The Path runs smoothly through every point, so 
 
 A Path is a component of its own, under **Add Component ▸ Paths**, so other things can follow one later.
 
-## How it flows
+## How a Stream flows
 
 A Stream flows down its Path from the first point to the last, at **Speed** where its bed is level. Downhill it runs faster, as real rivers do, worked out from how steeply it falls and how deep it is, so a mountain brook rushes and a wide river on the plain idles along. In the middle it runs fastest; at its banks, a third as fast.
 
-Where it falls more steeply than **Rapids**, a slope (0.1 is a metre's drop every ten metres), it breaks white, and the white water churns on past the foot of the rapids before it clears.
+How a Stream looks follows how fast it runs, and changes smoothly from one to the next along it:
 
-Its ripples drift down it at its speed, with lines of foam drawn out along the current the faster it runs.
+- **Calm water**, at a metre a second or less, lies near flat: dark and glassy, with slow ripples drifting down it and clear reflections of what stands over it. In its shallows the bed shows through, with the sun's light dappled on it. Still shallows stay clear; they do not foam.
+- **Faster water** is rougher. Its ripples are drawn out along the current, it stands in low waves that stay where they are, and thin streaks of foam ride down it.
+- **Rapids**, where it falls more steeply than its **Rapids** setting (a slope: 0.1 is a metre's drop every ten metres), are white water. The surface heaves up into standing waves and churns, white on the crests with dark water between, pale where it is full of air, with spray over it. The white water runs on past the foot of the rapids and fades back to calm.
+
+## Rocks and banks
+
+Whatever stands in a Stream disturbs it as fast as it runs. In calm water a rock has only a faint line round it. In fast water it has a white collar, and the water downstream of it is rough, with a trail of white carried away from it. Water running fast over a bed just under its surface breaks white there too, so a shelf of stones makes a riffle.
+
+Nothing needs setting up for this: the Stream sees what is in the picture where it is drawn. That has one limit. A rock that is out of view, or hidden behind something nearer, disturbs nothing until it is seen.
+
+## Where a Stream ends
 
 Where a Stream of water runs into the sea or a Pool, it becomes that water over ten metres from where it reaches it: its surface rises and falls with the waves there, its own ripples give way to them, and it fades into the water from its banks in. Running into the sea, it churns the sea white where it pours in, a jet of foam carried out as far as it runs fast.
 
@@ -35,7 +45,7 @@ Where a Stream of water ends in another that runs on past it, as a brook joins a
 | Liquid | Water, or [[Lava]] |
 | Depth | How deep it runs, in metres. Deeper water runs faster downhill |
 | Speed | How fast it flows where its bed is level, in metres a second |
-| Rapids | How steep it runs before it breaks white |
+| Rapids | How steep it runs, as a slope, before it breaks into white water |
 | Deep, Scatter, Clarity, Murk | Its water's colours, as [[The Ocean]] describes them |
 
 Scripts asking about the water over a Stream get its surface and the way it flows, so a [[Floating Objects|floating]] Obj is carried along it.

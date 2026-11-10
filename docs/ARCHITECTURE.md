@@ -2839,9 +2839,14 @@ the pixel and samples its surfaces there, as the terrain does.
 
 **Voxels.** Chunks of 32³, in one GPU geometry pool filled through an asynchronous upload ring, culled on the GPU
 against the frustum and last frame's depth and drawn by multi-draw-indirect, with compact vertices of their own.
-Block worlds: palette-compressed chunks, binary greedy meshing, faces bucketed by direction, face-connectivity cave
-culling, and far views through rings of coarser chunks. Smooth voxels: density and material a voxel, marching cubes
-with Transvoxel between levels on an octree; planets add their own gravity and a floating origin. Digging into a
+Block worlds (`voxear_terrain::blocks`): chunks of 32³ blocks kept sparse by where they are, each a palette of the
+blocks in it and indices in as few bits as it needs; faces where a block meets air, shaded at their corners by the
+blocks closing them in and merged into quads by surface and shading (greedy meshing), two words a quad, kept by the
+way they face. A world's quads live in a pool of its own and are drawn six vertices a quad with no vertex buffer
+(`blocks.rs`, `shaders/blocks.slang`), each view drawing only the chunks in view and their faces turned towards it;
+each chunk's faces merged by surface alone are its collision mesh and its mesh for the GI's rays. To come:
+face-connectivity cave culling, and far views through rings of coarser chunks. Smooth voxels: density and material
+a voxel, marching cubes with Transvoxel between levels on an octree; planets add their own gravity and a floating origin. Digging into a
 heightmap terrain turns its columns into smooth-voxel chunks that start from its heights (`voxear_terrain::dig`,
 two voxels a sample), holes the heights in them, and meshes them by marching tetrahedra, which meet the heights
 exactly along the columns' edges. Dug chunks' triangles are made on the CPU when they change and drawn from a pool

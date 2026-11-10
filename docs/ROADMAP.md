@@ -1600,8 +1600,22 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   - trees and other plants scattered by surface and biome
   - stream-power erosion for ranges
   - far tiles of endless worlds made and kept coarser
-- **Block worlds:** palette-compressed chunks, greedy meshing, editing, far views through levels of chunks,
-  face-connectivity cave culling.
+- **Block worlds**, in parts: blocks you can see and stand on; generation from world generators, with caves;
+  editing in the editor and from scripts; far views through levels of chunks; small coloured blocks.
+  - ~~**Blocks you can see and stand on:**~~ done: `.blockworld` assets (`voxear_terrain::blocks::file`: block
+    size, kinds of block each with a colour and materials for every face, its top and its bottom, and flat
+    ground to start as), chunks of 32³ kept sparse with palettes in as few bits as they need (`blocks::chunk`),
+    faces merged into quads by surface and corner shading, two words a quad, kept by facing (`blocks::mesh`), and
+    a ray stepping block to block (`blocks::raycast`). The renderer keeps a world's quads in a pool of its own and
+    draws them six vertices a quad with block pipelines of their own (`blocks.rs`, `shaders/blocks.slang`, the
+    terrain's surface shading), each view only the chunks in view and their faces towards it, the cascades every
+    face; each chunk's faces merged by surface alone give its collision mesh and its mesh for the GI. Engine:
+    `AssetKind::BlockWorld`, `[obj.block_world]`, `blocks::{BlockWorldAsset, make, look, keep, save}`. Editor: Add
+    Component ▸ Terrain ▸ Block World on a new `Blocks/<Obj>.blockworld`, its rows (Data, Block size, Ground size,
+    Ground height, Cast shadows), undo. Tests: palettes, greedy quads covering exactly the faces a block at a time
+    would, corner shading, files, rays, the GPU drawing a field and a pillar shaded at its foot and shadowing, a
+    ball resting on blocks, the engine loading and saving, the editor adding one. Manual: Block Worlds.
+  - face-connectivity cave culling.
 - **Smooth voxel terrain, flat and planets:** marching cubes with Transvoxel on an octree, caves and overhangs from
   3D density, planets with their own gravity, and a floating origin.
 - Throughout: chunks culled against the frustum and last frame's depth, and the smallest save and network data

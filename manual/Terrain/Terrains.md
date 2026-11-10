@@ -8,6 +8,8 @@ A **Terrain** is a stretch of ground: a field, a valley or a range of hills. It 
 
 Select an Obj and pick **Add Component ▸ Terrain ▸ Terrain**. It starts flat, 512 metres each way, on a new asset of its own in the project's **Terrains** folder, named for its Obj: `Terrains/Ground.terrain`. You can also make one with **New ▸ New Terrain** in the Project panel and pick it as a Terrain's **Data**.
 
+For ground made of blocks, see [[Block Worlds]].
+
 The asset holds the ground, so every Terrain that picks the same asset has the same ground, as two copies of a level would. Changes to the ground are written to the asset when you save the level. Beside the `.terrain` file are its heights, holes and surfaces as drawn, in a `.heights` file of the same name, and what its brushes painted, in a `.layers` file. Keep them together when you move or copy them. A built game ships only the `.terrain` and its `.heights`.
 
 ## The Terrain's tools

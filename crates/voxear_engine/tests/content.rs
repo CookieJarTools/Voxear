@@ -689,3 +689,41 @@ fn a_clip_a_field_or_a_data_asset_names_ships_its_model_file() {
     assert!(shipped.iter().any(|p| *p == "Models/Reloads.gltf"), "its rifle's reload: {shipped:?}");
     assert!(report.excluded.iter().any(|p| p == "Models/Idles.gltf"), "nothing names the idles");
 }
+
+/// A field whose hill was stamped from a picture, covered with grass drawn by a material and grown with blades.
+const FIELD_TERRAIN: &str = "size = 128.0\nresolution = 257\n\n[[layers]]\nname = \"Hill\"\nkind = \"stamp\"\n\
+                             picture = \"Terrains/Hill.png\"\nposition = [64.0, 64.0]\nsize = [40.0, 40.0]\n\
+                             height = 10.0\n\n[[surfaces]]\nmaterial = \"Materials/Grass.material\"\n\n\
+                             [[grass]]\nmesh = \"Models/Blade.gltf#mesh0.0\"\nmaterial = \"Materials/Blade.material\"\n";
+
+#[test]
+fn a_terrain_ships_what_draws_its_ground_and_not_what_made_its_heights() {
+    let dir = project();
+    let write = |path: &str, bytes: &[u8]| {
+        let path = dir.path().join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, bytes).unwrap();
+    };
+    let scene = "format = 1\n[[obj]]\nid = 1\nname = \"Field\"\n[obj.terrain]\ndata = \"Terrains/Field.terrain\"\n";
+    write("Levels/Field.level", level(&["Scenes/Field.scene"]).as_bytes());
+    write("Scenes/Field.scene", scene.as_bytes());
+    write("Terrains/Field.terrain", FIELD_TERRAIN.as_bytes());
+    write("Terrains/Hill.png", &noise_png(3));
+    write("Materials/Grass.material", MATERIAL.as_bytes());
+    write("Materials/Blade.material", MATERIAL.as_bytes());
+    write("Models/Blade.gltf", TREE.as_bytes());
+    let file = voxear_terrain::file::TerrainFile::parse(FIELD_TERRAIN).unwrap();
+    write("Terrains/Field.heights", &voxear_terrain::file::write_heights(&file.flat(), file.shape_hash()));
+
+    let report = content_build::build(dir.path(), &dir.path().join("Built"), &unmerged(), &[]).unwrap();
+    let shipped: Vec<&String> = report.bundles.iter().flat_map(|b| &b.assets).collect();
+    let drawn = ["Terrains/Field.terrain", "Materials/Grass.material", "Models/Blade.gltf", "Materials/Blade.material"];
+    for path in drawn {
+        assert!(shipped.iter().any(|p| *p == path), "{path} ships, as the field draws with it: {shipped:?}");
+    }
+    assert!(report.excluded.iter().any(|p| p == "Terrains/Hill.png"), "the stamp made the heights, which ship");
+    let mut built = Content::open_bundles(dir.path(), &dir.path().join("Built")).unwrap();
+    let heights = built.read("Terrains/Field.heights").expect("its heights ship beside it");
+    let (_, made_from) = voxear_terrain::file::read_heights(&heights).unwrap();
+    assert_eq!(made_from, file.shape_hash());
+}

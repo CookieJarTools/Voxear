@@ -1654,8 +1654,23 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     models, placing into a world's kinds, the editor building one and undoing it, and moving a kind the ground
     has none of.
   - face-connectivity cave culling.
-- **Smooth voxel terrain, flat and planets:** marching cubes with Transvoxel on an octree, caves and overhangs from
-  3D density, planets with their own gravity, and a floating origin.
+- **Smooth voxel terrain, flat and planets**, in parts: smooth ground you can see, stand on, generate and build on;
+  planets with their own gravity; a floating origin.
+  - ~~**Voxel Terrain:**~~ done: a Block World drawn smooth (`BlockFile::smooth`, `BlockWorld::smooth`). Each chunk
+    keeps how full each block is where the surface passes (`chunk::Fill`, a byte a block, kept only for chunks that
+    need it), generation writes it from the generator's depth (overhangs and caves too), and `blocks::smooth` meshes
+    it by surface nets: a point a cube between eight blocks' middles where the surface crosses its edges on
+    average, faces where ground meets air, the way the ground faces from the blocks round each point, points kept
+    in 1024ths of a block so chunks meet exactly. The renderer draws a smooth world's triangles from the same pool
+    (`BLOCKS_SMOOTH`, two pairs of words a corner), its kinds' top, sides and bottom blended by the way the ground
+    faces. Brushes and `Blocks.Ball`/`Break` make balls whose surface lies between blocks (`smooth::ball`); saved
+    changes carry fills (`VXBLOCKS` 2, 1 still read). Editor: Add Component ▸ Terrain ▸ Voxel Terrain on
+    `Voxels/<Obj>.blockworld`, Smooth under Settings, its section titled Voxel Terrain. Tests: a surface where its
+    fills say, a slope with no steps, chunks meeting at the same points, a closed blob, balls added, taken and
+    painted, changes with fills read back and version 1 read, the GPU drawing a hill's top and sides with no gaps,
+    a ball resting on it, a generated world on its generator's heights, the editor adding one and building a ball.
+    Not done: blending between kinds within a triangle (each triangle takes its block's kind); levels of detail
+    that meet (far rings are drawn smooth but meet with seams); planets.
 - Throughout: chunks culled against the frustum and last frame's depth, and the smallest save and network data
   (only changes from what a build or a seed makes, as commands while few and compacted deltas once many).
 

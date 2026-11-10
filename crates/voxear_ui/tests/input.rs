@@ -322,3 +322,27 @@ fn dragging_a_numbers_label_changes_it_as_typing_would() {
     ui.pointer_button(false);
     assert_eq!(ui.text(text), "Rock");
 }
+
+#[test]
+fn the_middle_button_is_held_on_what_it_went_down_on_and_clicks_nothing() {
+    let mut ui = Ui::new();
+    let root = ui.root();
+    let canvas = ui.panel(root, Style::default().at(10.0, 10.0).width(300.0).height(200.0));
+    let inside = ui.panel(canvas, Style::default().at(20.0, 20.0).width(50.0).height(50.0));
+    let beside = ui.panel(root, Style::default().at(400.0, 10.0).width(100.0).height(100.0));
+    ui.frame(WIDTH, HEIGHT, 1.0);
+
+    ui.pointer_move(50.0, 50.0);
+    assert!(ui.pointer_middle(true), "over the UI");
+    assert!(ui.is_middle_pressed(inside) && ui.is_middle_pressed(canvas) && !ui.is_middle_pressed(beside));
+    assert!(!ui.is_pressed(canvas), "it is not the first button");
+    // Held while the pointer moves off what it went down on, as a canvas dragged by it needs.
+    ui.pointer_move(450.0, 50.0);
+    assert!(ui.is_middle_pressed(canvas) && !ui.is_middle_pressed(beside));
+    assert!(ui.pointer_middle(false), "its release is the UI's too");
+    assert!(!ui.is_middle_pressed(canvas));
+    assert!(!ui.clicked(canvas) && !ui.context_clicked(canvas), "and it clicked nothing");
+    // Off the UI it is nobody's.
+    ui.pointer_move(700.0, 500.0);
+    assert!(!ui.pointer_middle(true) && !ui.pointer_middle(false));
+}

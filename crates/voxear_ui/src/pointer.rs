@@ -38,6 +38,8 @@ pub(crate) struct Pointer {
     /// elements context clicked since the last frame.
     context_pressed: Vec<taffy::NodeId>,
     pub context_clicks: Vec<taffy::NodeId>,
+    /// What the middle button is held down on, and everything it is in.
+    middle_pressed: Vec<taffy::NodeId>,
     /// Where and when the last click was, to tell a double click.
     last_click: Option<((f32, f32), f32)>,
     /// A scrollbar being dragged: its element, and where on the thumb it was
@@ -56,6 +58,7 @@ impl Pointer {
             &mut self.double_clicks,
             &mut self.context_pressed,
             &mut self.context_clicks,
+            &mut self.middle_pressed,
         ];
         for list in lists {
             list.retain(|&n| n != node);
@@ -208,6 +211,23 @@ impl Ui {
             self.row_context_clicked(target);
         }
         !path.is_empty()
+    }
+
+    /// The middle button went down or up. It clicks nothing: what it is held
+    /// on is for code to drag by, as a canvas is moved (see
+    /// [`is_middle_pressed`](Self::is_middle_pressed)). Returns whether the
+    /// UI is under the pointer.
+    pub fn pointer_middle(&mut self, pressed: bool) -> bool {
+        let path = if pressed { self.hit_path() } else { Vec::new() };
+        let held = !path.is_empty() || !self.pointer.middle_pressed.is_empty();
+        self.pointer.middle_pressed = path;
+        held
+    }
+
+    /// Whether the middle button is held down on `node`, or on anything in
+    /// it.
+    pub fn is_middle_pressed(&self, node: NodeId) -> bool {
+        self.pointer.middle_pressed.iter().any(|&target| self.is_within(NodeId(target), node))
     }
 
     /// Whether `node`, or anything in it, was context clicked since the last

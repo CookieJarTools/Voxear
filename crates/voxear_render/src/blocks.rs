@@ -524,17 +524,27 @@ impl BlockWorlds {
             });
             let side = CHUNK as f32 * blocks.block_size;
             let uv_scale = 1.0 / blocks.block_size.max(0.01);
+            // Uploaded and built together, waited for once.
+            let batch = gpu.batch();
             for (key, mesh) in blocks.meshes.iter() {
                 if pool.proxies.get(key).is_some_and(|(made, _)| Arc::ptr_eq(made, mesh)) || proxies_left == 0 {
                     continue;
                 }
                 proxies_left -= 1;
                 let from = Vec3::new(key[0] as f32, key[1] as f32, key[2] as f32) * side;
+                let making = voxear_core::profile_marker!("Ray Mesh Make").scope();
                 let data = proxy(mesh, blocks.block_size, from, uv_scale);
-                let handle = assets.add_mesh_with_lods(gpu, &data, &crate::lod::full_lod(&data))?;
+                let lods = crate::lod::rays_only(&data);
+                drop(making);
+                let _uploading = voxear_core::profile_marker!("Ray Mesh Upload").scope();
+                let handle = assets.add_mesh_with_lods(gpu, &data, &lods)?;
                 if let Some((_, old)) = pool.proxies.insert(*key, (mesh.clone(), handle)) {
                     assets.free_mesh(old, frame_index);
                 }
+            }
+            {
+                let _uploading = voxear_core::profile_marker!("Ray Mesh Upload").scope();
+                batch.finish()?;
             }
             let placed = pool
                 .proxies

@@ -22,6 +22,41 @@ pub struct Buffer {
 unsafe impl Send for Buffer {}
 unsafe impl Sync for Buffer {}
 
+/// An open batch of uploads and builds (see [`Gpu::batch`]).
+#[must_use = "a batch is done when it is finished or dropped"]
+pub struct GpuBatch<'a> {
+    gpu: &'a Gpu,
+    open: bool,
+}
+
+impl GpuBatch<'_> {
+    /// Closes the batch, doing what it gathered when it is the outermost.
+    pub fn finish(mut self) -> Result<()> {
+        self.open = false;
+        self.gpu.end_batch()
+    }
+}
+
+impl Drop for GpuBatch<'_> {
+    fn drop(&mut self) {
+        if self.open
+            && let Err(error) = self.gpu.end_batch()
+        {
+            tracing::error!("a batch of uploads failed: {error:#}");
+        }
+    }
+}
+
+/// Uploads and builds gathered while a batch is open (see [`Gpu::batch`]): how many batches are open, the bytes to upload and
+/// where each run of them goes, and the bottom levels to build after.
+#[derive(Default)]
+pub(crate) struct Batch {
+    pub open: u32,
+    pub bytes: Vec<u8>,
+    pub copies: Vec<(vk::Buffer, vk::BufferCopy)>,
+    pub builds: Vec<crate::accel::BottomLevelBuild>,
+}
+
 impl Buffer {
     /// The CPU-visible mapping, for buffers created in `CpuToGpu` or
     /// `GpuToCpu` memory.
@@ -229,6 +264,66 @@ impl Gpu {
         Ok(unsafe { self.device.create_sampler(info, None)? })
     }
 
+    /// Opens a batch: until it closes, uploads ([`Gpu::upload_buffer`]) and
+    /// bottom levels' builds ([`Gpu::build_bottom_level`]) are gathered rather
+    /// than each submitted and waited for, and then done in one submission,
+    /// the uploads first. What they write must not be read before then.
+    /// [`GpuBatch::finish`] closes it, or dropping it; batches nest, and the
+    /// outermost one's close does the work.
+    pub fn batch(&self) -> GpuBatch<'_> {
+        self.batch.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).open += 1;
+        GpuBatch { gpu: self, open: true }
+    }
+
+    /// Closes a batch, and when it is the outermost, submits what it
+    /// gathered and waits for it.
+    fn end_batch(&self) -> Result<()> {
+        let batch = {
+            let mut batch = self.batch.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            batch.open = batch.open.saturating_sub(1);
+            if batch.open > 0 {
+                return Ok(());
+            }
+            std::mem::take(&mut *batch)
+        };
+        if batch.copies.is_empty() && batch.builds.is_empty() {
+            return Ok(());
+        }
+        let staging = match batch.bytes.is_empty() {
+            true => None,
+            false => {
+                let usage = vk::BufferUsageFlags::TRANSFER_SRC;
+                let staging =
+                    self.create_buffer("staging", batch.bytes.len() as u64, usage, MemoryLocation::CpuToGpu)?;
+                staging.write(0, &batch.bytes);
+                Some(staging)
+            }
+        };
+        let done = self.immediate(|cmd| unsafe {
+            if let Some(staging) = &staging {
+                for (dst, region) in &batch.copies {
+                    self.device.cmd_copy_buffer(cmd, staging.handle, *dst, std::slice::from_ref(region));
+                }
+            }
+            if !batch.builds.is_empty() {
+                let written = vk::MemoryBarrier2::default()
+                    .src_stage_mask(vk::PipelineStageFlags2::COPY)
+                    .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                    .dst_stage_mask(vk::PipelineStageFlags2::ACCELERATION_STRUCTURE_BUILD_KHR)
+                    .dst_access_mask(vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::ACCELERATION_STRUCTURE_READ_KHR);
+                self.device.cmd_pipeline_barrier2(cmd, &vk::DependencyInfo::default().memory_barriers(&[written]));
+                self.record_bottom_levels(cmd, &batch.builds);
+            }
+        });
+        if let Some(staging) = staging {
+            self.destroy_buffer(staging);
+        }
+        for build in batch.builds {
+            self.destroy_buffer(build.scratch);
+        }
+        done
+    }
+
     /// Records commands, submits them and waits. For load-time uploads; the
     /// streaming path will use the transfer queue instead.
     pub fn immediate(&self, record: impl FnOnce(vk::CommandBuffer)) -> Result<()> {
@@ -254,10 +349,22 @@ impl Gpu {
         Ok(())
     }
 
-    /// Uploads into a device-local buffer through a temporary staging buffer.
+    /// Uploads into a device-local buffer through a temporary staging buffer;
+    /// while a batch is open, when it closes (see [`Gpu::batch`]).
     pub fn upload_buffer(&self, dst: &Buffer, offset: u64, data: &[u8]) -> Result<()> {
         if data.is_empty() {
             return Ok(());
+        }
+        {
+            let mut batch = self.batch.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            if batch.open > 0 {
+                let src_offset = batch.bytes.len() as u64;
+                batch.bytes.extend_from_slice(data);
+                batch
+                    .copies
+                    .push((dst.handle, vk::BufferCopy { src_offset, dst_offset: offset, size: data.len() as u64 }));
+                return Ok(());
+            }
         }
         let staging = self.create_buffer(
             "staging",
@@ -492,4 +599,34 @@ fn color_range(mip: u32, count: u32) -> vk::ImageSubresourceRange {
         .base_mip_level(mip)
         .level_count(count)
         .layer_count(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn uploads_in_a_batch_land_together_when_its_outermost_closes_as_one_at_a_time_would() {
+        let Ok(gpu) = Gpu::new_headless() else { return };
+        let usage = vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::TRANSFER_SRC;
+        let buffer = gpu.create_buffer("batched", 64, usage, MemoryLocation::GpuOnly).unwrap();
+        gpu.upload_buffer(&buffer, 0, &[0; 64]).unwrap();
+        let outer = gpu.batch();
+        gpu.upload_buffer(&buffer, 0, &[1; 16]).unwrap();
+        let inner = gpu.batch();
+        gpu.upload_buffer(&buffer, 32, &[2; 16]).unwrap();
+        inner.finish().unwrap();
+        assert_eq!(gpu.batch.lock().unwrap().copies.len(), 2, "an inner batch's close leaves its work to the outer's");
+        outer.finish().unwrap();
+        let read = gpu.read_buffer(&buffer, 0, 64).unwrap();
+        assert_eq!((&read[..16], &read[16..32], &read[32..48]), (&[1; 16][..], &[0; 16][..], &[2; 16][..]));
+        // A batch left on the way out of an error still does its work.
+        {
+            let _left = gpu.batch();
+            gpu.upload_buffer(&buffer, 48, &[3; 16]).unwrap();
+        }
+        assert_eq!(gpu.read_buffer(&buffer, 48, 16).unwrap(), [3; 16]);
+        assert_eq!(gpu.batch.lock().unwrap().open, 0);
+        gpu.destroy_buffer(buffer);
+    }
 }

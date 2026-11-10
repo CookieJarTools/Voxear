@@ -184,6 +184,12 @@ pub fn full_lod(mesh: &MeshData) -> Vec<Lod> {
     vec![Lod::new(&mesh.indices, 0.0, &mesh.vertices)]
 }
 
+/// A mesh only rays see, as a terrain's or a world of blocks' for the GI:
+/// its triangles as they are, with no meshlets, as nothing draws it.
+pub fn rays_only(mesh: &MeshData) -> Vec<Lod> {
+    vec![Lod { indices: mesh.indices.clone(), error: 0.0, meshlets: crate::meshlets::LodMeshlets::default() }]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

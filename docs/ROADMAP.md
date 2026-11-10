@@ -1690,9 +1690,12 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     elsewhere. Each Character Controller stands against it, its capsule turned from its last up by the least turn
     (`vx_character_set_up`), its steps, slopes and floor measured along that up, and the move told that gravity.
     C#: `Physics.GravityAt(position)`, `CharacterController.Up`, and `SimpleMove` falling along it (native API 69).
-    Tests: a character dropped beside a planet landing on its side, upright to it, and walking round it; a script
-    doing the same through `GravityAt` and `SimpleMove`. Not done: the First-Person View and the Motion Matcher
-    turn about the world's up.
+    The First-Person View turns about the up where its Obj is: a level of its own (`FirstPersonView::level`, C#
+    `Level`), carried by the least turn each frame, so its yaw goes round with it, its Obj, camera, body twist and
+    gun holder all following. Tests: a character dropped beside a planet landing on its side, upright to it, and
+    walking round it; a view on a planet's side turned about its up and its yaw carried over the top; a script doing
+    the same through `GravityAt` and `SimpleMove`, its view and Obj upright. Not done: the Motion Matcher turns
+    about the world's up.
   - a floating origin, engine-wide (transforms, physics, audio), for worlds past about 10 km.
 - Throughout: chunks culled against the frustum and last frame's depth, and the smallest save and network data
   (only changes from what a build or a seed makes, as commands while few and compacted deltas once many).

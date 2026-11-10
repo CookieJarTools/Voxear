@@ -1,5 +1,5 @@
 ---
-order: 9
+order: 10
 ---
 
 A **hole** cuts a terrain's ground away: a way down into a cave, a bunker or a cellar built under it. Nothing is drawn there, nothing stands on it, and rays pass through it.

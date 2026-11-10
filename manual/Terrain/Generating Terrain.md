@@ -92,4 +92,4 @@ A generator's world has a climate: how warm and wet each place is, which its ter
 
 ## The same ground everywhere
 
-A generator's ground is worked out with nothing but sums, products, square roots and rounding down, so a seed makes exactly the same ground on every machine. A terrain keeps the heights it made in its `.heights` file, so a built game reads them as made and needs no generator.
+A generator's ground is worked out with nothing but sums, products, square roots and rounding down, so a seed makes exactly the same ground on every machine. A terrain keeps the heights it made in its `.heights` file, so a built game reads them as made and needs no generator. A terrain without end makes its ground as it is seen, from its generator, in the game as in the editor: see [[Endless Worlds]].

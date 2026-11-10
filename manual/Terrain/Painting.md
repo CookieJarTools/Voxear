@@ -1,5 +1,5 @@
 ---
-order: 8
+order: 9
 ---
 
 Pick **Paint** along the top of the Terrain in the Inspector, pick a surface in its list (see [[Surfaces]]), and paint it on the ground in the Scene view with the left mouse button. A ring on the ground shows the brush, with an inner ring where it is strongest.

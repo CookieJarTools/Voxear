@@ -35,6 +35,8 @@ The distance between heights is the **Size** over one less than the **Resolution
 
 A heightmap from another tool goes in as an **Import** layer (see [[Layers]]).
 
+Tick **Endless** for ground without an edge, made round the camera as it goes: see [[Endless Worlds]].
+
 ## How it is drawn
 
 These are under **Settings** too.

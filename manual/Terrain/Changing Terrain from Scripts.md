@@ -1,5 +1,5 @@
 ---
-order: 15
+order: 16
 ---
 
 Scripts change the ground while the game runs: a shell blows a crater, an engineer digs a gun pit flat, a cart paints mud along its track, a charge cuts a way into a bunker, a fire leaves the grass burnt away. Physics stands things on the new ground at once and the terrain is drawn as it is now, from the tiles the change reached and no others.
@@ -13,7 +13,7 @@ private void Landed(Vector3 at)
 }
 ```
 
-A change from a script is made straight to the ground the terrain has, and the terrain's [[Layers]] are left as they are: they are what the editor builds the ground from, and a built game has the ground alone. Play mode in the editor works the same way, and when play stops the terrain is back as you made it.
+A change from a script is made straight to the ground the terrain has, and the terrain's [[Layers]] are left as they are: they are what the editor builds the ground from, and a built game has the ground alone. Play mode in the editor works the same way, and when play stops the terrain is back as you made it. A terrain without end is made as it is seen (see [[Endless Worlds]]), so changes from scripts leave it as it is.
 
 ## Changes to the ground
 

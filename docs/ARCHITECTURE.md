@@ -2802,8 +2802,11 @@ pictures. Rivers and lakes on finished maps are a Rivers layer (`voxear_terrain:
 gives every cell the way it drains and the ground draining through it; rivers are cut where that is enough, lakes
 stand in the filled hollows, and the editor makes Streams and Pools for them. A generator's climate (temperature
 and humidity fields, cooling with height) feeds surfaces' rules, so biomes choose surfaces and the grass on them.
-To come: rivers along valleys in endless worlds; biomes choosing trees and blocks. For voxels, 3D density from the same
-fields, with caves.
+A terrain without end (`voxear_terrain::endless`) keeps a window of tiles round the camera, each made alone on
+background threads from the layers worked out from where each sample is, with its shares and grass from its padded
+ground; renderer and physics keep each tile in a slot by where it is in the world, so a moving window copies in
+only the tiles that came into it. To come: rivers along valleys in endless worlds; biomes choosing trees and
+blocks. For voxels, 3D density from the same fields, with caves.
 
 **Rendering.** CDLOD: a quadtree of patches, each a grid of 32 quads drawn from one index buffer, picked on the CPU
 for the camera and each sun cascade, each vertex sliding onto the next level's grid near its level's far distance.

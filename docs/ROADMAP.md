@@ -1582,12 +1582,24 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   surfaces follows. Tests: climate fields and cooling, snow where cold and desert where hot and dry, the editor (a
   Snow surface nowhere in a mild world, everywhere once its temperatures widen). Manual: Surfaces, Generating
   Terrain. Not done: trees scattered by rules (a Foliage's plants by surface or biome).
+- ~~**Endless worlds:**~~ done: a terrain's Endless setting (`[endless]` in its file: view distance and spacing,
+  0.25 to 4 m) keeps a window of tiles round the camera (`voxear_terrain::endless`), up to 33 a side, its heights
+  starting at `Terrain::origin`. Each tile is made alone on the terrain's background threads from the layers that
+  make ground without end (Generate, Noise, Stamp, Spline, Terrace, Smooth), with its shares and grass from its
+  padded ground, so tiles meet exactly; nearest first, the 3 by 3 round the camera at once, holes until made. A
+  change remakes only what it reaches: tiles under moved layers, or just shares and grass. The renderer and physics
+  keep each tile in a slot by where it is in the world (`endless::slot_of`, `terrainTileSlot` in the shaders), so
+  a moved window uploads and builds only the tiles that came in; physics builds four a step, middle first. The
+  engine streams round the game's camera or the editor's Scene view (`terrain::stream`, `TerrainViewer`); no
+  `.heights` is kept, builds carry what its layers name. Brushes, Import, Erosion, Rivers, holes, digging and
+  script edits stay with terrains of a set size. Tests: tiles meet and match a set-size terrain, slots, the window
+  following and keeping tiles, what a change remakes, physics as the window moves, the engine round a camera and
+  saving, the editor's Endless setting, the GPU drawing the same ground after a move. Manual: Endless Worlds. Not
+  done: a floating origin past 10 km, coarser far tiles, rivers along valleys without end.
 - **More terrain generation:** feeding the layer stack so it can be painted and stamped over afterwards:
   - trees and other plants scattered by surface and biome
   - stream-power erosion for ranges
-  - rivers and lakes carved by flow, as Streams and Pools
-  - biomes and climate choosing surfaces and scatter
-  - generation at runtime, in chunks, for endless worlds, as well as baked in the editor
+  - far tiles of endless worlds made and kept coarser
 - **Block worlds:** palette-compressed chunks, greedy meshing, editing, far views through levels of chunks,
   face-connectivity cave culling.
 - **Smooth voxel terrain, flat and planets:** marching cubes with Transvoxel on an octree, caves and overhangs from

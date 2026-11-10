@@ -24,6 +24,7 @@ use super::{
     BlockMap,
     chunk::{AIR, BlockId, CHUNK, Chunk, fill_of},
     file::BlockFile,
+    flow::surface_fill,
 };
 use crate::{generate::WorldGen, noise::gradient3};
 
@@ -222,8 +223,13 @@ pub fn column_chunks(
                 let (block, depth, open) = cell_at(column, depth, place, size, &coarse, push, seed, f32::INFINITY);
                 let block = if open && middle[1] < sea_level { sea } else { block };
                 let (lx, lz) = ((x - cx * side) as u32, (z - cz * side) as u32);
-                // Drawn smooth, the air a block from the surface keeps how far it is from it too; the sea, none.
-                if file.smooth && (sea == AIR || block != sea) && (block != AIR || depth > -1.0) {
+                // Drawn smooth, the air a block from the surface keeps how far it is from it too, and the sea's top
+                // blocks where its surface lies.
+                let is_sea = sea != AIR && block == sea;
+                if file.smooth && is_sea {
+                    chunk.set_cell(lx, ly as u32, lz, sea, surface_fill(sea_level - middle[1]));
+                    any = true;
+                } else if file.smooth && (block != AIR || depth > -1.0) {
                     chunk.set_cell(lx, ly as u32, lz, block, fill_of(depth, block != AIR));
                     any = true;
                 } else if block != AIR {
@@ -461,7 +467,10 @@ pub fn planet_ground(
                     let (block, depth, open) =
                         cell_at(&column, depth, place, size, generate, push / size, seed, caves / size);
                     let block = if open && out < sea_out { sea } else { block };
-                    if file.smooth && (sea == AIR || block != sea) && (block != AIR || depth > -1.0) {
+                    if file.smooth && sea != AIR && block == sea {
+                        chunk.set_cell(lx, ly, lz, sea, surface_fill((sea_out - out) / size));
+                        any = true;
+                    } else if file.smooth && (block != AIR || depth > -1.0) {
                         chunk.set_cell(lx, ly, lz, block, fill_of(depth, block != AIR));
                         any = true;
                     } else if block != AIR {

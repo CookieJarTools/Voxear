@@ -59,7 +59,7 @@ BlockPoint smoothPoint(BlockWorld world, uint vertexId)
 }
 
 // Vertex `vertexId` of a quad of `world`: six to a quad, its quads one after another in the world's pool from
-// `push.output` on. A world drawn smooth keeps its water so, after its ground.
+// `push.output` on.
 BlockPoint cubePoint(BlockWorld world, uint vertexId)
 {
     uint2 quad = world.quads[push.output + vertexId / 6];

@@ -2903,7 +2903,9 @@ Buoyancy pushes against the pull where a body is, as strongly as it pulls, readi
 own up (`BlockWorld::water_depth`), so things float round a planet. Water flows (`blocks::flow`) from
 sources, down (towards a planet's middle) and then out over ground, a level lower each block, its level and way up kept
 in its fill: a step looks only at the blocks near the last step's changes, each from the blocks as they were, so every
-machine flows alike, five steps a second in the game's tick. Far out, the world's middle follows the camera (see the
+machine flows alike, five steps a second in the game's tick. In a world drawn smooth, water has a smooth surface of its
+own, by surface nets over how deep into water or ground each block's middle is, a generated sea's top blocks keeping
+where its surface lies in their fill. Far out, the world's middle follows the camera (see the
 floating origin, under the Obj model), and chunk keys count from the world's Obj, so none is made again.
 Digging into a
 heightmap terrain turns its columns into smooth-voxel chunks that start from its heights (`voxear_terrain::dig`,

@@ -19,8 +19,8 @@
 //! ground; the ground's faces show where they meet it as they do air.
 //! Nothing stands on it, and things float in it ([`BlockWorld::water_over`]).
 //! It flows ([`flow`]): from water placed, down and then out sideways,
-//! falling towards a planet's middle. A Voxel Terrain keeps its water as
-//! cubes, its top flat, the smooth ground running under it.
+//! falling towards a planet's middle. A Voxel Terrain's water is smooth
+//! too, its surface made as its ground's is (see `smooth`).
 
 pub mod chunk;
 pub mod edits;
@@ -306,9 +306,14 @@ impl BlockWorld {
             }
             block = next;
         }
-        let (height, _) = flow::Water::of(self.blocks.fill(block)).height();
+        // Drawn smooth, its surface stands where the smooth water's does.
+        let fill = self.blocks.fill(block);
+        let height = match self.smooth {
+            true => 0.5 + flow::smooth_surface(fill),
+            false => f32::from(flow::Water::of(fill).height().0) / 16.0,
+        };
         let foot = if toward > 0 { block[axis] } else { block[axis] + 1 } as f32;
-        let top = (foot + toward as f32 * f32::from(height) / 16.0) * self.block_size;
+        let top = (foot + toward as f32 * height) * self.block_size;
         Some(((top - at[axis]) * toward as f32, up))
     }
 

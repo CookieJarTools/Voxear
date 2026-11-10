@@ -2,13 +2,15 @@
 //!
 //! Water placed, or a generated sea, is a **source**: full, still, never
 //! draining. Water runs from it: down first, into the block under it,
-//! which is then full and **falling**; and where it stands on ground, out
-//! sideways, an eighth of a block lower each block it goes, until after
-//! [`REACH`] blocks it runs out. Water falling, or landing on water, runs
-//! out no further, so a waterfall keeps to its column and a lake it falls
-//! into takes it. Water no longer fed dries a step at a time, from where its
-//! feed was cut. On a planet, down is towards its middle: along whichever
-//! axis a block lies furthest out from it.
+//! which is then full and **falling**; and where it stands on ground or on
+//! water not falling, out sideways, an eighth of a block lower each block it goes, until
+//! after [`REACH`] blocks it runs out, so a lake runs into a hole dug beside
+//! it. Falling water runs out sideways only where it lands on ground, so a
+//! waterfall keeps to its column and a lake it falls into takes it. A block
+//! between two sources, on ground or water, becomes a source itself, so a
+//! gap between two pools fills to the brim. Water no longer fed dries a step
+//! at a time, from where its feed was cut. On a planet, down is towards its
+//! middle: along whichever axis a block lies furthest out from it.
 //!
 //! A step looks only at the blocks near where something changed the step
 //! before (or was built, broken or dug), each worked out from the blocks as
@@ -40,6 +42,35 @@ const FALLING: Fill = 254;
 
 /// Where flowing water's fills start: then eight a way up, a level each.
 const FLOWING: Fill = 128;
+
+/// Where a source's fills start that say how high its surface stands in a
+/// world drawn smooth (see [`surface_fill`]), and how many steps of a half
+/// block they have.
+const SURFACE: Fill = 176;
+const SURFACE_STEPS: f32 = 77.0;
+
+/// The fill of a source whose surface, in a world drawn smooth, stands
+/// `above` blocks over its middle, from nothing to a half (its top): as a
+/// generated sea's top blocks are, so it lies at its sea level. To flowing
+/// it is a source like any other.
+pub fn surface_fill(above: f32) -> Fill {
+    SURFACE + (above.clamp(0.0, 0.5) / 0.5 * SURFACE_STEPS).round() as Fill
+}
+
+/// How far over a block of water's middle its surface stands in a world
+/// drawn smooth, in blocks: a half for a full block, its top; as its fill
+/// says for a sea's top block; and for flowing water as high as it flows,
+/// but never under a twentieth of a block, so the thinnest still shows.
+pub fn smooth_surface(fill: Fill) -> f32 {
+    let above = match fill {
+        SURFACE..FALLING => f32::from(fill - SURFACE) / SURFACE_STEPS * 0.5,
+        _ => match Water::of(fill) {
+            Water::Flowing { level, .. } => f32::from(level) / 8.0 - 0.5,
+            _ => 0.5,
+        },
+    };
+    above.max(0.05)
+}
 
 /// One block of water.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -162,6 +193,8 @@ pub fn step(
     let block = |at: [i32; 3]| inside(at).then(|| map.get(at));
     let water = |at: [i32; 3]| block(at).filter(|&b| is_water(faces, b)).map(|b| (b, Water::of(map.fill(at))));
     let on_ground = |at: [i32; 3]| block(at).is_none_or(|b| is_ground(faces, b));
+    // What water can stand on: ground, or more water that is not falling away under it.
+    let held = |at: [i32; 3]| on_ground(at) || water(at).is_some_and(|(_, water)| water != Water::Falling);
     let mut changes = Vec::new();
     for &at in near {
         let Some(now) = block(at) else { continue };
@@ -173,23 +206,34 @@ pub fn step(
             continue;
         }
         let up = fall.up(at);
-        // Fed from above, it falls; else by the fullest water beside it that cannot fall itself.
+        // Fed from above, it falls; else by the fullest water beside it that stands on something, falling water
+        // only on ground; and between two sources, on something itself, it is one.
         let fed = match water(beside(at, up)) {
             Some((kind, _)) => Some((kind, Water::Falling)),
             None => {
                 let mut best: Option<(u8, BlockId)> = None;
+                let mut sources: Option<(u32, BlockId)> = None;
                 for facing in (0..6).filter(|facing| facing / 2 != up / 2) {
                     let from = beside(at, facing);
                     let Some((kind, feeding)) = water(from) else { continue };
-                    if !on_ground(beside(from, fall.up(from) ^ 1)) {
+                    let under = beside(from, fall.up(from) ^ 1);
+                    let stands = if feeding == Water::Falling { on_ground(under) } else { held(under) };
+                    if !stands {
                         continue;
+                    }
+                    if feeding == Water::Source {
+                        let (count, least) = sources.unwrap_or((0, kind));
+                        sources = Some((count + 1, least.min(kind)));
                     }
                     let level = feeding.feeds();
                     if level > 0 && best.is_none_or(|(l, k)| level > l || level == l && kind < k) {
                         best = Some((level, kind));
                     }
                 }
-                best.map(|(level, kind)| (kind, Water::Flowing { level, up: up as u8 }))
+                match sources {
+                    Some((count, kind)) if count >= 2 && held(beside(at, up ^ 1)) => Some((kind, Water::Source)),
+                    _ => best.map(|(level, kind)| (kind, Water::Flowing { level, up: up as u8 })),
+                }
             }
         };
         match (was, fed) {
@@ -254,6 +298,10 @@ mod tests {
             assert_eq!(Water::of(water.fill()), water);
         }
         assert_eq!(Water::of(200), Water::Source, "any other fill of water is a source");
+        // A sea's top block drawn smooth keeps where its surface lies, and is a source.
+        assert_eq!(Water::of(surface_fill(0.2)), Water::Source);
+        assert!((smooth_surface(surface_fill(0.2)) - 0.2).abs() < 0.01);
+        assert_eq!((smooth_surface(FULL), smooth_surface(Water::Flowing { level: 6, up: 2 }.fill())), (0.5, 0.25));
         assert_eq!(Water::Flowing { level: 7, up: 2 }.height(), (14, Some(2)));
         assert_eq!(Water::Falling.height(), (16, None));
         // On a planet, up is out from its middle along the axis a block lies furthest out along.
@@ -333,6 +381,46 @@ mod tests {
         settle(&mut world, 100);
         assert_eq!(water(&world, [8, 3, 0]), None);
         assert_eq!(world.blocks.fill([8, 3, 0]), 127);
+    }
+
+    #[test]
+    fn a_lake_runs_into_a_hole_dug_beside_it_and_a_gap_between_two_fills_to_the_brim() {
+        // A lake 3 deep and 6 across in a stone bank, a hole 2 deep dug into the bank beside it.
+        let faces = faces();
+        let mut map = BlockMap::default();
+        for z in 0..12 {
+            for x in 0..20 {
+                for y in 0..4 {
+                    map.set([x, y, z], 1);
+                }
+            }
+        }
+        for z in 3..9 {
+            for x in 3..9 {
+                for y in 1..4 {
+                    map.set([x, y, z], 2);
+                }
+            }
+        }
+        let mut world = BlockWorld::new(map, &faces, 1.0);
+        world.set_blocks((9..13).flat_map(|x| (2..4).map(move |y| ([x, y, 5], AIR))));
+        settle(&mut world, 100);
+        let water = |at: [i32; 3]| (world.blocks.get(at) == 2).then(|| Water::of(world.blocks.fill(at)));
+        assert_eq!(water([9, 3, 5]), Some(Water::Flowing { level: 7, up: 2 }), "its top runs in");
+        assert_eq!(water([9, 2, 5]), Some(Water::Falling), "filled to its floor");
+        // Landed on the hole's floor, it runs on along it, lower further in.
+        let floor = [10, 11, 12].map(|x| water([x, 2, 5]));
+        assert_eq!(floor, [7, 6, 5].map(|level| Some(Water::Flowing { level, up: 2 })));
+        // A gap a block wide between two pools: a source, full, once both are beside it.
+        let mut gap = BlockMap::default();
+        for x in 0..7 {
+            gap.set([x, 0, 0], 1);
+        }
+        let mut world = BlockWorld::new(gap, &faces, 1.0);
+        world.set_blocks([([1, 1, 0], 2), ([3, 1, 0], 2)]);
+        settle(&mut world, 20);
+        assert_eq!(Water::of(world.blocks.fill([2, 1, 0])), Water::Source);
+        assert_eq!(Water::of(world.blocks.fill([4, 1, 0])), Water::Flowing { level: 7, up: 2 });
     }
 
     #[test]

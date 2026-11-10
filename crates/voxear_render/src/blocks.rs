@@ -650,13 +650,13 @@ pub(crate) fn add_proxies(drawn: &[DrawnBlocks], extracted: &mut ExtractedFrame)
 
 /// What a view draws of its worlds of blocks: for each world, its number in
 /// the view, whether it is drawn smooth, and the quads (or corners' words)
-/// each list draws; for each world with water in view, its number and its
-/// water's quads; their pools to wait on; and whether any casts the sun's
-/// shadows.
+/// each list draws; for each world with water in view, its number, whether
+/// it is drawn smooth and its water's quads (or corners' words); their pools
+/// to wait on; and whether any casts the sun's shadows.
 #[derive(Clone)]
 pub(crate) struct ViewBlocks {
     pub runs: Vec<(u32, bool, Vec<Vec<[u32; 2]>>)>,
-    pub water: Vec<(u32, Vec<[u32; 2]>)>,
+    pub water: Vec<(u32, bool, Vec<[u32; 2]>)>,
     pub pools: Vec<BufferId>,
     pub shadows: bool,
 }
@@ -770,7 +770,7 @@ pub(crate) fn gather(
         lists[LIST_EARLY as usize] = pick(&blocks.chunks, local, &planes, !blocks.smooth, seen.as_ref());
         let wet = pick_water(&blocks.chunks, &planes, seen.as_ref());
         if !wet.is_empty() {
-            water.push((number as u32, wet));
+            water.push((number as u32, blocks.smooth, wet));
         }
         if has_sun && blocks.cast_shadows {
             for cascade in 0..CASCADES {
@@ -801,17 +801,19 @@ fn draw_runs(ctx: &PassContext, view: &ViewBlocks, push: &Push, list: u32) {
     }
 }
 
-/// Each world's water in view, six vertices a quad, as `draw_runs` draws
-/// its ground: drawn with the water (`water::record`), with `pipeline`.
+/// Each world's water in view, six vertices a quad (drawn smooth, a vertex
+/// every two pairs of words), as `draw_runs` draws its ground: drawn with
+/// the water (`water::record`), with `pipeline`.
 pub(crate) fn draw_water(ctx: &PassContext, view: &ViewBlocks, push: &Push, pipeline: vk::Pipeline) {
     if !view.has_water() {
         return;
     }
     bind(ctx, pipeline, vk::PipelineBindPoint::GRAPHICS, push);
-    for (number, runs) in &view.water {
+    for (number, smooth, runs) in &view.water {
         for &[first, count] in runs {
             ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { level: number + 1, output: first, ..*push });
-            unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, count * 6, 1, 0, 0) };
+            let vertices = if *smooth { count / 2 } else { count * 6 };
+            unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, vertices, 1, 0, 0) };
         }
     }
 }

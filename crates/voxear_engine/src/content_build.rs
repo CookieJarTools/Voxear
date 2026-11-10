@@ -208,7 +208,7 @@ pub fn build_mounted(
 
     // Every asset as it will ship: models and pictures cooked, sounds wrapped,
     // everything else as written, and a UI document's sheets, a sound's import
-    // settings and a level's baked paths beside it.
+    // settings, a level's baked paths and a terrain's heights beside it.
     let mut cooker = Cooker::open(root, db.mounts())?;
     let mut stored = HashMap::with_capacity(usage.len());
     let mut beside: HashMap<AssetGuid, Vec<(String, Vec<u8>)>> = HashMap::new();
@@ -241,10 +241,11 @@ pub fn build_mounted(
             let meta = format!("{}.{}", entry.path, voxear_assets::META_EXTENSION);
             beside.insert(*guid, vec![(meta.clone(), read(db.mounts(), &meta)?)]);
         }
-        if matches!(entry.kind, AssetKind::Ui | AssetKind::Sound | AssetKind::Level) {
+        if matches!(entry.kind, AssetKind::Ui | AssetKind::Sound | AssetKind::Level | AssetKind::Terrain) {
             let why = match entry.kind {
                 AssetKind::Ui => "names",
                 AssetKind::Sound => "keeps its import settings in",
+                AssetKind::Terrain => "keeps its heights in",
                 _ => "keeps its paths in",
             };
             let files = needs[guid].companions.iter().map(|file| {

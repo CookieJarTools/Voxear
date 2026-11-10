@@ -11,6 +11,11 @@
 //! has it, from the same blocks, so chunks meet without gaps; a face
 //! belongs to the chunk its block of ground is in.
 //!
+//! Where the surface is flat or gently curved, a chunk's triangles are then
+//! merged into fewer, moving it no more than [`FLAT_ENOUGH`]: each kind of
+//! ground apart, the points it shares with the chunks beside it and with
+//! other kinds kept where they are, so they still meet edge for edge.
+//!
 //! Each corner of a triangle is drawn as two pairs of words, as
 //! `smoothPoint` in `shaders/blocks.slang` reads them: where it is in its
 //! chunk and the chunk's number in its world's pool (which the renderer
@@ -210,6 +215,12 @@ impl Padded {
 /// surfaces `faces` gives its block of ground (its top, sides and bottom),
 /// by its number.
 pub fn mesh_chunk(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces]) -> ChunkMesh {
+    mesh_within(map, key, faces, FLAT_ENOUGH)
+}
+
+/// Chunk `key`'s surface, as [`mesh_chunk`] makes it, its triangles merged
+/// where the surface moves no more than `error` blocks.
+pub(crate) fn mesh_within(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], error: f32) -> ChunkMesh {
     let mut out = ChunkMesh::default();
     if !map.chunk(key).is_some_and(|chunk| chunk.has_blocks()) || map.buried(key, faces) {
         return out;
@@ -218,6 +229,8 @@ pub fn mesh_chunk(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces]) -> ChunkM
     // Each cube's point's number among the mesh's points, made as faces come to it.
     let mut numbers = vec![u32::MAX; CUBES * CUBES * CUBES];
     let mut normals: Vec<[f32; 3]> = Vec::new();
+    // Whether each point's cube is on the chunk's outer layer, where the chunks beside it may share it.
+    let mut shared: Vec<bool> = Vec::new();
     let mut number = |low: [i32; 3], out: &mut ChunkMesh| -> u32 {
         let [x, y, z] = low.map(|v| (v + CUBES_BEFORE) as usize);
         let slot = &mut numbers[(y * CUBES + z) * CUBES + x];
@@ -225,6 +238,7 @@ pub fn mesh_chunk(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces]) -> ChunkM
             let (place, normal) = padded.point(low);
             out.positions.push(place);
             normals.push(normal);
+            shared.push(low.iter().any(|&v| v < 0 || v >= CHUNK as i32 - 1));
             *slot = out.positions.len() as u32 - 1;
         }
         *slot
@@ -275,8 +289,13 @@ pub fn mesh_chunk(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces]) -> ChunkM
             }
         }
     }
-    for (triangle, block) in triangles {
+    let looks = triangles.into_iter().map(|(triangle, block)| {
         let BlockFaces { top, sides, bottom, .. } = faces.get(usize::from(block)).copied().unwrap_or_default();
+        (triangle, [top, sides, bottom])
+    });
+    let (points, normals, triangles) = simplified((&out.positions, &normals, &shared), looks.collect(), error);
+    out.positions = points;
+    for (triangle, [top, sides, bottom]) in triangles {
         out.indices.extend(triangle);
         for i in triangle {
             let [x, y, z] = out.positions[i as usize];
@@ -294,6 +313,84 @@ pub fn mesh_chunk(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces]) -> ChunkM
         out.quads.extend(super::mesh::water_quads((&|at| padded.block(at), &fills), faces, |_| true));
     }
     out
+}
+
+/// How far a smooth surface may move, in blocks, as its triangles are
+/// merged where it is flat or gently curved.
+pub const FLAT_ENOUGH: f32 = 0.1;
+
+/// How much a turn of the way the ground faces counts against merging
+/// triangles, beside how far their surface moves, so its shading stays.
+const TURN_WEIGHT: f32 = 0.25;
+
+/// A chunk's triangles, each with its surfaces (top, sides, bottom), merged
+/// into fewer where the surface moves no more than `error` blocks: each
+/// kind of ground apart, and the edges of each, where it meets the chunk's
+/// sides or another kind, kept where they are, so chunks and kinds still
+/// meet point for point. `shared` says which points the chunks beside it
+/// may have too, which stay. The points the triangles use, with the way the
+/// ground faces at each, and the triangles numbered among them.
+#[allow(clippy::type_complexity)]
+fn simplified(
+    (points, normals, shared): (&[[f32; 3]], &[[f32; 3]], &[bool]),
+    triangles: Vec<([u32; 3], [u8; 3])>,
+    error: f32,
+) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<([u32; 3], [u8; 3])>) {
+    use meshopt::{SimplifyOptions, simplify_with_attributes_and_locks_decoder};
+    let mut kinds: Vec<([u8; 3], Vec<u32>)> = Vec::new();
+    // Points two kinds meet at stay too, though they lie inside each kind's ground, as where two touch at a corner.
+    let mut locks = shared.to_vec();
+    let mut kind_of: Vec<Option<usize>> = vec![None; points.len()];
+    for (triangle, look) in triangles {
+        let kind = match kinds.iter().position(|(kind, _)| *kind == look) {
+            Some(kind) => kind,
+            None => {
+                kinds.push((look, Vec::new()));
+                kinds.len() - 1
+            }
+        };
+        kinds[kind].1.extend(triangle);
+        for i in triangle.map(|i| i as usize) {
+            match kind_of[i] {
+                Some(other) if other != kind => locks[i] = true,
+                _ => kind_of[i] = Some(kind),
+            }
+        }
+    }
+    let attributes: Vec<f32> = normals.iter().flatten().copied().collect();
+    let options = SimplifyOptions::LockBorder | SimplifyOptions::ErrorAbsolute | SimplifyOptions::Sparse;
+    let mut numbers = vec![u32::MAX; points.len()];
+    let (mut kept, mut ways, mut merged) = (Vec::new(), Vec::new(), Vec::new());
+    for (look, indices) in kinds {
+        let fewer = match error > 0.0 {
+            true => simplify_with_attributes_and_locks_decoder(
+                &indices,
+                points,
+                &attributes,
+                &[TURN_WEIGHT; 3],
+                size_of::<[f32; 3]>(),
+                &locks,
+                0,
+                error,
+                options,
+                None,
+            ),
+            false => indices,
+        };
+        for triangle in fewer.chunks_exact(3) {
+            let numbered = [0, 1, 2].map(|k| {
+                let i = triangle[k] as usize;
+                if numbers[i] == u32::MAX {
+                    numbers[i] = kept.len() as u32;
+                    kept.push(points[i]);
+                    ways.push(normals[i]);
+                }
+                numbers[i]
+            });
+            merged.push((numbered, look));
+        }
+    }
+    (kept, ways, merged)
 }
 
 /// What a ball does to a world drawn smooth: adds ground of a kind where
@@ -380,7 +477,8 @@ mod tests {
     fn a_smooth_surface_lies_where_its_blocks_fill_says_and_faces_away_from_the_ground() {
         let faces = [BlockFaces::default(), BlockFaces::new(1, 2, 3)];
         let map = ground([32, 32], |_, _| 10.3);
-        let mesh = mesh_chunk(&map, [0, 0, 0], &faces);
+        // Every point, none merged away.
+        let mesh = mesh_within(&map, [0, 0, 0], &faces, 0.0);
         assert!(!mesh.is_empty());
         // Away from the ground's edges, its top: flat at 10.3 blocks, facing up.
         let tops: Vec<usize> = (0..mesh.positions.len())
@@ -413,6 +511,7 @@ mod tests {
         let faces = [BlockFaces::default(), BlockFaces::new(1, 1, 1)];
         // A gentle slope across two chunks: a block up every eight along x.
         let map = ground([64, 8], |x, _| 6.0 + x as f32 / 8.0);
+        let every = mesh_within(&map, [0, 0, 0], &faces, 0.0);
         let (first, second) = (mesh_chunk(&map, [0, 0, 0], &faces), mesh_chunk(&map, [1, 0, 0], &faces));
         // On the slope, its top rises steadily, with no steps.
         let height_at = |mesh: &ChunkMesh, x: f32| {
@@ -425,7 +524,7 @@ mod tests {
         // Its points lie between the columns, each halfway between two columns' heights.
         for x in [9.0f32, 13.0, 17.0, 22.0] {
             let expected = 6.0 + (x - 0.5) / 8.0;
-            assert!((height_at(&first, x) - expected).abs() < 0.1, "at {x}: {}", height_at(&first, x));
+            assert!((height_at(&every, x) - expected).abs() < 0.1, "at {x}: {}", height_at(&every, x));
         }
         // The points where the two chunks meet are the same points, each in its own chunk's terms.
         let border = |mesh: &ChunkMesh, x: f32| -> Vec<[i32; 3]> {
@@ -524,5 +623,62 @@ mod tests {
         }
         assert!(edges.keys().all(|&(a, b)| edges.get(&(b, a)) == Some(&1)));
         assert!(mesh_chunk(&map, [1, 0, 0], &faces).is_empty(), "no faces where it has no ground");
+    }
+
+    #[test]
+    fn flat_ground_is_merged_into_few_triangles_and_stays_where_it_was() {
+        let faces = [BlockFaces::default(), BlockFaces::new(1, 2, 3)];
+        let map = ground([32, 32], |_, _| 6.4);
+        let (merged, every) = (mesh_chunk(&map, [0, 0, 0], &faces), mesh_within(&map, [0, 0, 0], &faces, 0.0));
+        let tops = |mesh: &ChunkMesh| {
+            mesh.indices.chunks(3).filter(|t| t.iter().all(|&i| mesh.positions[i as usize][1] > 6.0)).count()
+        };
+        assert!(tops(&merged) * 4 < tops(&every), "{} triangles of {}", tops(&merged), tops(&every));
+        assert!(merged.positions.iter().filter(|p| p[1] > 6.0).all(|p| (p[1] - 6.4).abs() < 0.02), "on the same plane");
+        assert_eq!(merged.quads.len(), merged.indices.len() * 2, "two pairs of words a corner");
+    }
+
+    #[test]
+    fn a_hill_over_eight_chunks_merged_stays_closed_its_chunks_and_kinds_meeting_edge_for_edge() {
+        // A ball of ground round the corner eight chunks share, its top half of another kind, on hills of noise.
+        let faces = [BlockFaces::default(), BlockFaces::new(1, 1, 1), BlockFaces::new(2, 2, 2)];
+        let mut map = BlockMap::default();
+        let middle = [32.0, 32.0, 32.0];
+        let changes = ball(&map, middle, 20.0, Ball::Add(1), &faces);
+        for (at, block, fill) in changes {
+            map.set_cell(at, block, fill);
+        }
+        for (at, _, fill) in ball(&map, [32.0, 44.0, 32.0], 14.0, Ball::Paint(2), &faces) {
+            map.set_cell(at, 2, fill);
+        }
+        for (at, block, fill) in ball(&map, [40.0, 50.0, 30.0], 6.0, Ball::Take, &faces) {
+            map.set_cell(at, block, fill);
+        }
+        let keys: Vec<[i32; 3]> = (0..8).map(|i| [i & 1, (i >> 1) & 1, (i >> 2) & 1]).collect();
+        // Every edge, by where its ends are in the world, and how many triangles go along it that way.
+        let edges = |error: f32| {
+            let mut edges = std::collections::HashMap::new();
+            let mut triangles = 0;
+            for key in &keys {
+                let mesh = mesh_within(&map, *key, &faces, error);
+                let at = |i: u32| {
+                    let p = mesh.positions[i as usize];
+                    [0, 1, 2].map(|k| ((p[k] + (key[k] * CHUNK as i32) as f32) * 1024.0).round() as i64)
+                };
+                for t in mesh.indices.chunks(3) {
+                    triangles += 1;
+                    for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
+                        *edges.entry((at(a), at(b))).or_insert(0) += 1;
+                    }
+                }
+            }
+            (edges, triangles)
+        };
+        let (merged, fewer) = edges(FLAT_ENOUGH);
+        let (_, every) = edges(0.0);
+        assert!(fewer * 3 < every * 2, "{fewer} triangles of {every}");
+        // As many triangles back the other way: where two sheets touch, an edge has two each way.
+        let open = merged.iter().filter(|&(&(a, b), count)| merged.get(&(b, a)) != Some(count)).count();
+        assert_eq!(open, 0, "edges with no triangle back the other way, of {}", merged.len());
     }
 }

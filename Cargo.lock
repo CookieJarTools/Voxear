@@ -4246,6 +4246,7 @@ dependencies = [
  "bytemuck",
  "image",
  "lz4_flex",
+ "meshopt",
  "serde",
  "toml",
  "voxear_core",

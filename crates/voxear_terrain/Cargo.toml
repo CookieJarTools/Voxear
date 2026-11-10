@@ -13,6 +13,7 @@ voxear_ecs.workspace = true
 voxear_scene.workspace = true
 anyhow.workspace = true
 bytemuck.workspace = true
+meshopt.workspace = true
 image.workspace = true
 lz4_flex.workspace = true
 serde.workspace = true

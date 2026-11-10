@@ -26,7 +26,7 @@ Obj.LookAt(new Vector3(0f, 0f, 10f));
 
 Distances are in metres and angles in degrees. Y is up and Z is forward.
 
-In a world without end, the middle of the world moves along with the camera now and then, and every position moves with it. A position a script keeps in a field of its own moves too when the field is marked `[WorldPosition]` (see [[Floating Origin]]).
+With the [[Floating Origin]] switched on, the middle of the world moves along with the camera now and then, and every position moves with it. A position a script keeps in a field of its own moves too when the field is marked `[WorldPosition]`.
 
 Vectors and rotations are .NET's own `Vector3` and `Quaternion`, from `System.Numerics`. Voxear adds the helpers Unity users expect, such as `Vector3.Up`, `Vector3.MoveTowards`, `Quaternion.AngleAxis`, `Quaternion.RotateTowards` and `Mathf`.
 

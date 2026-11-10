@@ -16,6 +16,7 @@ pub mod file;
 pub mod generate;
 pub mod mesh;
 pub mod stream;
+pub mod vox;
 
 use std::{collections::HashMap, sync::Arc};
 

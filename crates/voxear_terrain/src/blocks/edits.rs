@@ -87,6 +87,18 @@ impl BlockEdits {
         self.chunks.is_empty()
     }
 
+    /// These changes with every block they make renumbered by `change`, as
+    /// for a world whose kinds of block were taken out or moved.
+    pub fn remapped(&self, change: impl Fn(BlockId) -> BlockId) -> Self {
+        let renumber = |kept: &ChunkChange| match kept {
+            ChunkChange::Blocks(changed) => {
+                ChunkChange::Blocks(changed.iter().map(|&(index, block)| (index, change(block))).collect())
+            }
+            ChunkChange::Whole(chunk) => ChunkChange::Whole(chunk.remapped(&change)),
+        };
+        Self { chunks: self.chunks.iter().map(|(key, kept)| (*key, renumber(kept))).collect() }
+    }
+
     /// Makes these changes to `blocks`; the chunks changed, by where they are.
     pub fn apply(&self, blocks: &mut BlockMap) -> Vec<[i32; 3]> {
         for (key, change) in &self.chunks {

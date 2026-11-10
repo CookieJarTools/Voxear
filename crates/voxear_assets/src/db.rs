@@ -80,6 +80,9 @@ pub enum AssetKind {
     /// A `.blockworld` file: a world of blocks, its kinds of block and the
     /// ground they start as, which a Block World picks.
     BlockWorld,
+    /// A `.vox` file: a model of small coloured blocks, as voxel sculpting
+    /// tools save it, which a Block World's Model brush builds.
+    VoxModel,
 }
 
 impl AssetKind {
@@ -108,6 +111,7 @@ impl AssetKind {
             "prompticons" => Self::PromptIcons,
             "worldgen" => Self::WorldGen,
             "blockworld" => Self::BlockWorld,
+            "vox" => Self::VoxModel,
             _ => return None,
         })
     }

@@ -1517,7 +1517,7 @@ impl Editor {
 
     /// The Scene view's tools: the tool strip's settings, a click to
     /// select, the handles under the pointer, and dragging them.
-    fn update_scene_tools(&mut self, renderer: &Renderer) {
+    fn update_scene_tools(&mut self, renderer: &mut Renderer) {
         self.tools.tool = Tool::from_index(self.ui.segment(self.scene.tool));
         let selected = self.selected();
         self.draw_other_scene_views(renderer);
@@ -1551,7 +1551,7 @@ impl Editor {
                 }
             } else if let Some(entity) = editing.filter(|_| self.block_tools.is_hovered()) {
                 let before = ObjState::of(world, entity);
-                if self.block_tools.begin(&mut self.game, &camera, entity, point, self.shift) {
+                if self.block_tools.begin(&mut self.game, renderer, &camera, entity, point, self.shift) {
                     self.field_drag_start = before;
                 }
             } else if let Some(entity) = editing.filter(|_| self.plants_tools.is_hovered()) {

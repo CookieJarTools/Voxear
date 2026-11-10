@@ -431,7 +431,8 @@ fn gather(
                 | AssetKind::Data
                 | AssetKind::PromptIcons
                 | AssetKind::WorldGen
-                | AssetKind::BlockWorld => false,
+                | AssetKind::BlockWorld
+                | AssetKind::VoxModel => false,
             } && !models.stripped.contains(&guid);
             if owner == Some(guid) {
                 progress.scenes.lock().expect("never poisoned").entry(guid).or_insert((1.0, 0, 0));

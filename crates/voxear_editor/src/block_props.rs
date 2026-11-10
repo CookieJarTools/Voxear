@@ -9,7 +9,7 @@
 
 use anyhow::{Context, Result};
 use std::sync::Arc;
-use voxear_assets::AssetKind;
+use voxear_assets::{AssetGuid, AssetKind};
 use voxear_ecs::{Entity, World};
 use voxear_engine::{
     Game,
@@ -25,6 +25,7 @@ use voxear_terrain::{
         chunk::{AIR, BlockId},
         edits::BlockEdits,
         file::{BlockCover, BlockFile, BlockKind, MAX_BLOCKS},
+        vox::VoxFile,
     },
     surfaces::Biome,
 };
@@ -57,42 +58,47 @@ impl BlockTool {
 }
 
 /// What the brush does where it is clicked: puts the picked block against
-/// the face under it, takes away the block under it, or turns the blocks
-/// under it into the picked one.
+/// the face under it, takes away the block under it, turns the blocks under
+/// it into the picked one, or builds the picked model of blocks standing on
+/// the face under it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum BlockBrush {
     #[default]
     Place,
     Break,
     Paint,
+    Model,
 }
 
 impl BlockBrush {
-    pub const ALL: [BlockBrush; 3] = [BlockBrush::Place, BlockBrush::Break, BlockBrush::Paint];
+    pub const ALL: [BlockBrush; 4] = [BlockBrush::Place, BlockBrush::Break, BlockBrush::Paint, BlockBrush::Model];
 
     pub fn name(self) -> &'static str {
         match self {
             BlockBrush::Place => "Place",
             BlockBrush::Break => "Break",
             BlockBrush::Paint => "Paint",
+            BlockBrush::Model => "Model",
         }
     }
 }
 
 /// What the editor is doing with worlds of blocks: the tool shown, the
-/// kind of block picked, by its place in the list, and the brush and how
-/// many blocks across it reaches. Kept in the edit world, not saved.
+/// kind of block picked, by its place in the list, the brush, how many
+/// blocks across it reaches and the `.vox` model it builds. Kept in the edit
+/// world, not saved.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BlockUi {
     pub tool: BlockTool,
     pub block: usize,
     pub brush: BlockBrush,
     pub size: u32,
+    pub model: Option<AssetGuid>,
 }
 
 impl Default for BlockUi {
     fn default() -> Self {
-        Self { tool: BlockTool::Build, block: 0, brush: BlockBrush::Place, size: 1 }
+        Self { tool: BlockTool::Build, block: 0, brush: BlockBrush::Place, size: 1, model: None }
     }
 }
 
@@ -138,9 +144,11 @@ pub enum BlockField {
     UnderBlock,
     UnderDepth,
     BaseBlock,
-    /// The brush: what it does and how many blocks across.
+    /// The brush: what it does, and how many blocks across or the model it
+    /// builds.
     Brush,
     BrushSize,
+    Model,
     /// The picked kind of block's name, colour and materials.
     Name,
     Color,
@@ -170,7 +178,7 @@ pub fn props(world: &World, entity: Entity) -> Vec<Prop> {
     let file = world.get::<BlockWorldAsset>(entity).map(|asset| &asset.file);
     let fields = match (state.tool, file) {
         (BlockTool::Build, Some(file)) => {
-            let mut fields = vec![F::Brush, F::BrushSize];
+            let mut fields = vec![F::Brush, if state.brush == BlockBrush::Model { F::Model } else { F::BrushSize }];
             if let Some(kind) = file.blocks.get(state.block) {
                 fields.extend([F::Name, F::Color, F::Material, F::Top, F::Bottom]);
                 // Covers lay blocks on generated ground.
@@ -220,6 +228,7 @@ pub fn label(field: BlockField) -> &'static str {
         F::Shadows => "Cast shadows",
         F::Brush => "Brush",
         F::BrushSize => "Size",
+        F::Model => "Model",
         F::Name => "Name",
         F::Color => "Color",
         F::Material => "Material",
@@ -278,7 +287,7 @@ pub fn range(field: BlockField) -> Option<[f32; 2]> {
 
 /// Whether the value is an asset picked from a list.
 pub fn is_picked(field: BlockField) -> bool {
-    matches!(field, F::Data | F::Material | F::Top | F::Bottom | F::Generator)
+    matches!(field, F::Data | F::Material | F::Top | F::Bottom | F::Generator | F::Model)
 }
 
 /// A choice of the world's kinds of block, air first, with `block` chosen.
@@ -310,6 +319,9 @@ pub fn get(game: &Game, entity: Entity, field: BlockField) -> Option<Value> {
             Value::Choice(at, BlockBrush::ALL.iter().map(|b| b.name().to_string()).collect())
         }
         F::BrushSize => Value::Number(state.size as f32),
+        F::Model => Value::Asset(
+            state.model.and_then(|guid| game.content.db().get(guid)).map_or("None".into(), |e| e.path.clone()),
+        ),
         F::Name => Value::Text(kind()?.name.clone()),
         F::Color => Value::Color(kind()?.color),
         F::Material => Value::Asset(path_of(game, kind()?.material.as_deref())),
@@ -484,20 +496,36 @@ pub fn set(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, fie
         }
         _ => return false,
     }
-    change_file(game, renderer, entity, file, |blocks| blocks)
+    change_file(game, renderer, entity, file)
 }
 
 /// Puts `file` on the world's asset and makes its blocks again from it: its
 /// ground anew where that changed, with the changes built on the old ground
-/// kept on it, the blocks renumbered by `renumber` where its kinds were
-/// taken out or moved, and its look made again where its faces are drawn
-/// another way.
-fn change_file(
+/// kept on it, and its look made again where its faces are drawn another
+/// way.
+fn change_file(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, file: BlockFile) -> bool {
+    change(game, renderer, entity, file, None)
+}
+
+/// As [`change_file`], for a file whose kinds of block were taken out or
+/// moved: every block, the ground and every change kept renumbered by
+/// `renumber`.
+fn renumber_file(
     game: &mut Game,
     renderer: Option<&mut Renderer>,
     entity: Entity,
     file: BlockFile,
-    renumber: impl Fn(BlockMap) -> BlockMap,
+    renumber: &dyn Fn(BlockId) -> BlockId,
+) -> bool {
+    change(game, renderer, entity, file, Some(renumber))
+}
+
+fn change(
+    game: &mut Game,
+    renderer: Option<&mut Renderer>,
+    entity: Entity,
+    file: BlockFile,
+    renumber: Option<&dyn Fn(BlockId) -> BlockId>,
 ) -> bool {
     let world = &game.engine.world;
     let Some(asset) = world.get::<BlockWorldAsset>(entity).cloned() else { return false };
@@ -506,22 +534,28 @@ fn change_file(
     if old == file {
         return false;
     }
+    let renumbered = |map: &BlockMap| renumber.map_or_else(|| map.clone(), |change| map.remapped(change));
+    let renumbered_edits = |edits: BlockEdits| match renumber {
+        Some(change) => edits.remapped(change),
+        None => edits,
+    };
     // A world without end is made round where it is seen as it goes (see `voxear_engine::blocks::stream`), from its
-    // file: only that changes here, and a world just made endless starts with nothing made, its changes kept.
+    // file: only that changes here. One just made endless, or renumbered, starts again with nothing made and every
+    // change kept.
     let endless = |file: &BlockFile| file.generate.as_ref().is_some_and(|g| g.endless.is_some());
     if endless(&file) {
         let world = &mut game.engine.world;
-        if !endless(&old) {
-            let changes =
-                Arc::new(BlockEdits::between(&renumber((*base).clone()), &renumber((*blocks.blocks).clone())));
+        if !endless(&old) || renumber.is_some() {
+            let changes = match endless(&old) {
+                true => voxear_terrain::blocks::stream::all_changes(&base, &blocks.blocks, &asset.pending),
+                false => BlockEdits::between(&base, &blocks.blocks),
+            };
             let (_, faces) = file.faces();
             let mut empty = BlockWorld::new(BlockMap::default(), &faces, file.block_size);
             empty.cast_shadows = blocks.cast_shadows;
             world.insert(entity, empty);
-            world.insert(
-                entity,
-                BlockWorldAsset { file: file.clone(), base: Arc::default(), pending: changes, ..asset },
-            );
+            let pending = Arc::new(renumbered_edits(changes));
+            world.insert(entity, BlockWorldAsset { file: file.clone(), base: Arc::default(), pending, ..asset });
         } else if let Some(kept) = world.get_mut::<BlockWorldAsset>(entity) {
             kept.file = file.clone();
         }
@@ -532,16 +566,19 @@ fn change_file(
     let carried =
         endless(&old).then(|| voxear_terrain::blocks::stream::all_changes(&base, &blocks.blocks, &asset.pending));
     let (_, faces) = file.faces();
+    // Kinds added at the end leave the ground as it was; those taken out or moved renumber it.
     let grounded = old.ground != file.ground
         || old.generate != file.generate
-        || old.blocks.len() != file.blocks.len()
+        || renumber.is_some()
         || old.block_size != file.block_size
         || old.blocks.iter().map(|k| k.cover).ne(file.blocks.iter().map(|k| k.cover));
     let (base, remade) = if grounded {
         // The new ground names its blocks by their new numbers already; the old ground and blocks are renumbered.
         let ground = Arc::new(voxear_engine::blocks::ground(&mut game.content, &file));
-        let changes = carried
-            .unwrap_or_else(|| BlockEdits::between(&renumber((*base).clone()), &renumber((*blocks.blocks).clone())));
+        let changes = match carried {
+            Some(carried) => renumbered_edits(carried),
+            None => BlockEdits::between(&renumbered(&base), &renumbered(&blocks.blocks)),
+        };
         let mut made = voxear_engine::blocks::make(&file, &ground, Some(&changes));
         made.cast_shadows = blocks.cast_shadows;
         (ground, made)
@@ -621,6 +658,7 @@ pub fn choices(game: &Game, field: BlockField) -> Vec<(String, Pick)> {
         F::Data => fields::assets_of(game, Some(AssetKind::BlockWorld)),
         F::Material | F::Top | F::Bottom => fields::assets_of(game, Some(AssetKind::Material)),
         F::Generator => fields::assets_of(game, Some(AssetKind::WorldGen)),
+        F::Model => fields::assets_of(game, Some(AssetKind::VoxModel)),
         _ => Vec::new(),
     }
 }
@@ -642,6 +680,10 @@ pub fn pick(
         },
         None => None,
     };
+    if field == F::Model {
+        let model = reference.and_then(|r| r.guid());
+        return std::mem::replace(&mut ui_mut(&mut game.engine.world).model, model) != model;
+    }
     if field != F::Data {
         let Some(mut file) = game.engine.world.get::<BlockWorldAsset>(entity).map(|a| a.file.clone()) else {
             return false;
@@ -650,7 +692,7 @@ pub fn pick(
         if field == F::Generator {
             let Some(generate) = &mut file.generate else { return false };
             generate.world = written;
-            return change_file(game, renderer, entity, file, |blocks| blocks);
+            return change_file(game, renderer, entity, file);
         }
         let picked = ui(&game.engine.world).block;
         let Some(kind) = file.blocks.get_mut(picked) else { return false };
@@ -660,7 +702,7 @@ pub fn pick(
             F::Bottom => kind.bottom = written,
             _ => return false,
         }
-        return change_file(game, renderer, entity, file, |blocks| blocks);
+        return change_file(game, renderer, entity, file);
     }
     let Some(source) = game.engine.world.get::<BlockWorldSource>(entity).cloned() else { return false };
     let data = BlockWorldData { data: reference.map_or_else(String::new, |r| r.to_string()), ..source.0 };
@@ -675,6 +717,26 @@ pub fn pick(
             false
         }
     }
+}
+
+/// Builds `model` in the world, its lowest blocks at `at` and its middle
+/// over it: a kind of block for each of its colours the world has none of,
+/// as long as there is room in the list.
+pub(crate) fn place_model(
+    game: &mut Game,
+    renderer: Option<&mut Renderer>,
+    entity: Entity,
+    model: &VoxFile,
+    at: [i32; 3],
+) -> bool {
+    let Some(mut file) = game.engine.world.get::<BlockWorldAsset>(entity).map(|a| a.file.clone()) else {
+        return false;
+    };
+    let changes = voxear_terrain::blocks::vox::place(&mut file, model, at);
+    change_file(game, renderer, entity, file);
+    let Some(blocks) = game.engine.world.get_mut::<BlockWorld>(entity) else { return false };
+    blocks.set_blocks(changes);
+    true
 }
 
 /// Picks kind `at` of block to build with and show.
@@ -696,12 +758,15 @@ pub fn add_block(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entit
     if file.blocks.len() >= MAX_BLOCKS {
         return false;
     }
-    // Colours round the wheel, one after another.
-    let hue = file.blocks.len() as f32 * 0.38;
+    // Numbered from its place in the list, past any name taken, its colour from its number round the wheel.
+    let number = (file.blocks.len() + 1..)
+        .find(|n| !file.blocks.iter().any(|kind| kind.name == format!("Block {n}")))
+        .expect("names enough");
+    let hue = (number - 1) as f32 * 0.38;
     let color = [0.0, 2.0, 4.0].map(|offset: f32| 0.45 + 0.3 * ((hue + offset / 3.0) * std::f32::consts::TAU).cos());
-    file.blocks.push(BlockKind::colored(&format!("Block {}", file.blocks.len() + 1), color));
+    file.blocks.push(BlockKind::colored(&format!("Block {number}"), color));
     ui_mut(&mut game.engine.world).block = file.blocks.len() - 1;
-    change_file(game, renderer, entity, file, |blocks| blocks)
+    change_file(game, renderer, entity, file)
 }
 
 /// Takes kind `at` of block out of the list: its blocks become air, those
@@ -726,7 +791,7 @@ pub fn remove_block(game: &mut Game, renderer: Option<&mut Renderer>, entity: En
     (ground.top, ground.under, ground.bottom) = (renumber(ground.top), renumber(ground.under), renumber(ground.bottom));
     let state = ui_mut(&mut game.engine.world);
     state.block = state.block.min(file.blocks.len().saturating_sub(1));
-    change_file(game, renderer, entity, file, move |blocks| blocks.remapped(&renumber))
+    renumber_file(game, renderer, entity, file, &renumber)
 }
 
 /// Moves kind `from` of block to place `to` in the list, every block
@@ -753,7 +818,7 @@ pub fn move_block(game: &mut Game, renderer: Option<&mut Renderer>, entity: Enti
     let ground = &mut file.ground;
     (ground.top, ground.under, ground.bottom) = (renumber(ground.top), renumber(ground.under), renumber(ground.bottom));
     ui_mut(&mut game.engine.world).block = to;
-    change_file(game, renderer, entity, file, move |blocks| blocks.remapped(&renumber))
+    renumber_file(game, renderer, entity, file, &renumber)
 }
 
 fn put(world: &mut World, entity: Entity, parts: BlockWorldParts) {

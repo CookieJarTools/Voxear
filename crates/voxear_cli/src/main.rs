@@ -1050,6 +1050,7 @@ fn assets(path: &Path) -> Result<()> {
             AssetKind::PromptIcons => "prompts",
             AssetKind::WorldGen => "worldgen",
             AssetKind::BlockWorld => "blockworld",
+            AssetKind::VoxModel => "vox",
         };
         println!("  {:<9} {}  {}", kind, entry.guid, entry.path);
     }

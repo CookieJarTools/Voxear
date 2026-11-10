@@ -1140,6 +1140,33 @@ fn blocks_are_placed_broken_and_their_kinds_changed_in_the_scene_view_each_a_ste
     // Dirt is now 1 and stone 2; the ground's grass top is air, and the new kind 3.
     assert_eq!([8, 7, 5, 3].map(|y| block(&editor, y)), [0, 0, 1, 2]);
     assert_eq!(world_blocks(&editor).get(against), 3);
+    // Another kind added, then dragged by its grip above the one placed: the ground has neither, and the placed
+    // block keeps its kind by its new number.
+    let add = first_with(&editor.ui, editor.ui.root(), "collection-add").expect("Add Block");
+    click(&mut editor.ui, add);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(kinds(&editor), 4);
+    let mut grips = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "collection-grip", &mut grips);
+    grips.retain(|&g| editor.ui.is_visible(g));
+    let ([gx, gy, gw, gh], top) = (editor.ui.rect(grips[3]), editor.ui.rect(grips[2])[1]);
+    let from = [gx + gw / 2.0, gy + gh / 2.0];
+    editor.ui.pointer_move(from[0], from[1]);
+    editor.ui.pointer_button(true);
+    frame(&mut editor, &mut renderer);
+    for step in 1..=4 {
+        editor.ui.pointer_move(from[0], from[1] + (top - 2.0 - from[1]) * step as f32 / 4.0);
+        frame(&mut editor, &mut renderer);
+    }
+    editor.ui.pointer_button(false);
+    frame(&mut editor, &mut renderer);
+    let names = |editor: &voxear_editor::Editor| {
+        let file = &editor.game.engine.world.get::<BlockWorldAsset>(field).unwrap().file;
+        file.blocks.iter().map(|kind| kind.name.clone()).collect::<Vec<_>>()
+    };
+    assert_eq!(names(&editor)[2..], ["Block 5", "Block 4"], "the second named past the first, and moved above it");
+    assert_eq!(world_blocks(&editor).get(against), 4, "the placed block still the kind placed");
     // Saved, its changes from its ground are kept beside it, small.
     editor.save();
     let path = editor
@@ -1290,4 +1317,103 @@ fn a_generated_block_world_made_endless_is_made_round_the_scene_view() {
     let blocks = editor.game.engine.world.get::<BlockWorld>(field).unwrap().clone();
     assert!((-16..200).any(|y| blocks.blocks.get([local[0], y, local[1]]) != 0), "ground under the view");
     assert!(!blocks.far.is_empty(), "coarser chunks beyond");
+}
+
+/// A `.vox` file of one model `size` blocks across, z up, of `blocks`, each
+/// a place and a colour, and a palette whose colour 1 is red and colour 2
+/// white.
+fn vox_file(size: [i32; 3], blocks: &[[u8; 4]]) -> Vec<u8> {
+    let chunk = |id: &[u8; 4], content: &[u8], children: &[u8]| {
+        let mut bytes = id.to_vec();
+        bytes.extend((content.len() as u32).to_le_bytes());
+        bytes.extend((children.len() as u32).to_le_bytes());
+        bytes.extend(content);
+        bytes.extend(children);
+        bytes
+    };
+    let mut xyzi = (blocks.len() as u32).to_le_bytes().to_vec();
+    blocks.iter().for_each(|b| xyzi.extend(b));
+    let mut palette = vec![255u8, 0, 0, 255, 255, 255, 255, 255];
+    palette.resize(256 * 4, 128);
+    let mut children = chunk(b"SIZE", &size.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<_>>(), &[]);
+    children.extend(chunk(b"XYZI", &xyzi, &[]));
+    children.extend(chunk(b"RGBA", &palette, &[]));
+    let mut bytes = b"VOX ".to_vec();
+    bytes.extend(200u32.to_le_bytes());
+    bytes.extend(chunk(b"MAIN", &[], &children));
+    bytes
+}
+
+#[test]
+fn a_vox_model_is_built_where_the_model_brush_is_clicked_as_one_step_to_undo() {
+    use voxear_engine::blocks::BlockWorldAsset;
+    use voxear_terrain::blocks::BlockWorld;
+    let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {
+        eprintln!("skipping: no usable GPU");
+        return;
+    };
+    let dir = hello_with_a_field();
+    // A tower 2 by 2 and 3 high: two layers of red, a white top.
+    let mut tower = Vec::new();
+    for z in 0..3u8 {
+        for y in 0..2u8 {
+            for x in 0..2u8 {
+                tower.push([x, y, z, if z < 2 { 1 } else { 2 }]);
+            }
+        }
+    }
+    std::fs::create_dir_all(dir.path().join("Models")).unwrap();
+    std::fs::write(dir.path().join("Models/Tower.vox"), vox_file([2, 2, 3], &tower)).unwrap();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    let field = obj(&editor, "Field");
+    editor.select(Some(field));
+    frame(&mut editor, &mut renderer);
+    add_component(&mut editor, &mut renderer, "Block World");
+    // The world moved under the bottom middle of the Scene view, its top half a metre up, under the camera.
+    let camera = editor.scene_camera().expect("the Scene view");
+    let [x, y, w, h] = camera.rect;
+    let point = [x + w / 2.0, y + h * 0.8];
+    let (origin, direction) = camera.ray(point);
+    let hit = origin + direction * ((0.5 - origin.y) / direction.y);
+    let corner = voxear_core::math::Vec3::new(hit.x - 32.0, -7.5, hit.z - 32.0);
+    editor.game.engine.world.get_mut::<voxear_scene::Transform>(field).unwrap().position = corner;
+    frame(&mut editor, &mut renderer);
+    // The Model brush: its model in place of its size.
+    let brush = first_with(&editor.ui, prop_rows(&editor.ui, "Brush")[0], "value-choice").expect("its brush");
+    choose(&mut editor, &mut renderer, brush, 3);
+    frame(&mut editor, &mut renderer);
+    assert_eq!((prop_rows(&editor.ui, "Size").len(), prop_rows(&editor.ui, "Model").len()), (0, 1));
+    let picker = first_with(&editor.ui, prop_rows(&editor.ui, "Model")[0], "value-picker").expect("its picker");
+    let arrow = first_with(&editor.ui, picker, "picker-arrow").expect("its arrow");
+    click(&mut editor.ui, arrow);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let row = picker_row(&editor.ui, "Tower.vox").expect("the model is offered");
+    click(&mut editor.ui, row);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    // Built standing on the top it is clicked on, its middle over the block clicked: a kind for each colour.
+    let blocks = |editor: &voxear_editor::Editor| editor.game.engine.world.get::<BlockWorld>(field).unwrap().clone();
+    let from = (origin - corner).to_array();
+    let met = voxear_terrain::blocks::raycast(&blocks(&editor).blocks, from, direction.to_array(), 500.0).unwrap();
+    assert_eq!(met.normal, [0, 1, 0], "the ground's top under the click");
+    let at = [met.block[0], met.block[1] + 1, met.block[2]];
+    click_scene(&mut editor, &mut renderer, point);
+    shot(&mut renderer, "blocks-model.png");
+    let kinds = |editor: &voxear_editor::Editor| {
+        editor.game.engine.world.get::<BlockWorldAsset>(field).unwrap().file.blocks.clone()
+    };
+    assert_eq!(kinds(&editor).len(), 5, "red and white added");
+    assert_eq!(kinds(&editor)[3].color, [1.0, 0.0, 0.0]);
+    let built = blocks(&editor);
+    let tower_at = |dx: i32, dy: i32, dz: i32| built.blocks.get([at[0] + dx, at[1] + dy, at[2] + dz]);
+    assert_eq!([tower_at(0, 0, 0), tower_at(-1, 1, 1), tower_at(0, 2, 0), tower_at(-1, 2, 1)], [4, 4, 5, 5]);
+    assert_eq!([tower_at(1, 0, 0), tower_at(0, 3, 0), tower_at(-2, 0, 0)], [0, 0, 0], "no wider and no higher");
+    // The click is one step to undo, its kinds with it.
+    editor.undo(&mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(kinds(&editor).len(), 3);
+    assert_eq!(blocks(&editor).blocks.get(at), 0, "the tower gone");
 }

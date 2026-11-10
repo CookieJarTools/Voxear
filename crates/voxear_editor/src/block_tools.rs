@@ -3,14 +3,21 @@
 //! the block there away, or turns it into the picked kind, as the brush
 //! says (Shift places where it would break, and breaks where it would
 //! place); dragging goes on block by block. A brush larger than a block
-//! reaches a ball of blocks that many across. A stroke is one step to undo.
+//! reaches a ball of blocks that many across. The Model brush builds the
+//! picked `.vox` model standing on the face clicked, once a click. A stroke
+//! is one step to undo.
 
+use std::sync::Arc;
+
+use voxear_assets::AssetGuid;
 use voxear_core::math::Vec3;
 use voxear_ecs::Entity;
 use voxear_engine::{Game, blocks::BlockWorldAsset};
+use voxear_render::Renderer;
 use voxear_terrain::blocks::{
     BlockHit, BlockWorld,
     chunk::{AIR, BlockId},
+    vox::VoxFile,
 };
 use voxear_ui::{Color, Shape};
 
@@ -25,13 +32,33 @@ const COLOR: u32 = 0xF5C542;
 /// How far into the world a click reaches for a block, in metres.
 const REACH: f32 = 2000.0;
 
+/// A model the Model brush builds, and the blocks it reaches from where it
+/// stands: from its lowest corner to past its highest.
+struct Model {
+    file: Arc<VoxFile>,
+    reach: [[i32; 3]; 2],
+}
+
 /// The Scene view's brush for worlds of blocks: the block under the
-/// pointer, and while a stroke goes on, its world and the block it last
-/// worked on.
+/// pointer, while a stroke goes on its world and the block it last worked
+/// on, and the picked model as last read, none if it could not be.
 #[derive(Default)]
 pub struct BlockTools {
     under: Option<(Entity, BlockHit)>,
     stroke: Option<(Entity, [i32; 3])>,
+    model: Option<(AssetGuid, Option<Model>)>,
+}
+
+/// The `.vox` model `guid`, read from its file.
+fn read_model(game: &Game, guid: AssetGuid) -> Option<Model> {
+    let db = game.content.db();
+    let entry = db.get(guid)?;
+    let read = std::fs::read(db.file(&entry.path)).map_err(anyhow::Error::from).and_then(|b| VoxFile::read(&b));
+    let file = read.map_err(|error| tracing::warn!("{}: {error:#}", entry.path)).ok()?;
+    let blocks = file.blocks();
+    let low = [0, 1, 2].map(|i| blocks.iter().map(|(p, _)| p[i]).min().unwrap_or(0));
+    let high = [0, 1, 2].map(|i| blocks.iter().map(|(p, _)| p[i] + 1).max().unwrap_or(1));
+    Some(Model { file: Arc::new(file), reach: [low, high] })
 }
 
 /// Where the Obj's world of blocks starts.
@@ -90,13 +117,26 @@ impl BlockTools {
             return;
         }
         self.under = block_under(game, camera, entity, point).map(|hit| (entity, hit));
+        if block_props::ui(world).brush == BlockBrush::Model {
+            self.keep_model(game, false);
+        }
+    }
+
+    /// Keeps the picked model read: again from its file where `again`, else
+    /// only once it is another model.
+    fn keep_model(&mut self, game: &Game, again: bool) {
+        let picked = block_props::ui(&game.engine.world).model;
+        if !again && self.model.as_ref().map(|(guid, _)| *guid) == picked {
+            return;
+        }
+        self.model = picked.map(|guid| (guid, read_model(game, guid)));
     }
 
     /// The block a click on `hit` works on: the air before the face for one
     /// placing, else the block itself.
     fn middle(hit: &BlockHit, brush: BlockBrush) -> [i32; 3] {
         match brush {
-            BlockBrush::Place => [0, 1, 2].map(|i| hit.block[i] + hit.normal[i]),
+            BlockBrush::Place | BlockBrush::Model => [0, 1, 2].map(|i| hit.block[i] + hit.normal[i]),
             _ => hit.block,
         }
     }
@@ -126,6 +166,7 @@ impl BlockTools {
                     BlockBrush::Place => (now == AIR).then_some(picked),
                     BlockBrush::Break => (now != AIR).then_some(AIR),
                     BlockBrush::Paint => (now != AIR).then_some(picked),
+                    BlockBrush::Model => None,
                 }?;
                 Some((at, wanted))
             })
@@ -139,6 +180,7 @@ impl BlockTools {
     pub fn begin(
         &mut self,
         game: &mut Game,
+        renderer: &mut Renderer,
         camera: &ViewCamera,
         entity: Entity,
         point: [f32; 2],
@@ -147,6 +189,17 @@ impl BlockTools {
         self.hover(game, camera, Some(entity), Some(point));
         let Some((_, hit)) = self.under.filter(|(e, _)| *e == entity) else { return false };
         let brush = Self::brush(game, shift);
+        if brush == BlockBrush::Model {
+            // Read again, as its file may have changed since.
+            self.keep_model(game, true);
+            let Some((_, Some(model))) = &self.model else { return false };
+            let (file, at) = (model.file.clone(), Self::middle(&hit, brush));
+            if !block_props::place_model(game, Some(renderer), entity, &file, at) {
+                return false;
+            }
+            self.stroke = Some((entity, at));
+            return true;
+        }
         let last = Self::work(game, entity, &hit, brush);
         self.stroke = Some((entity, last));
         true
@@ -158,6 +211,10 @@ impl BlockTools {
         let Some((entity, last)) = self.stroke else { return };
         let Some(hit) = block_under(game, camera, entity, point) else { return };
         let brush = Self::brush(game, shift);
+        // A model is built once a click.
+        if brush == BlockBrush::Model {
+            return;
+        }
         // Placing builds on what it placed, so it waits until the pointer leaves the block it last worked on.
         if Self::middle(&hit, brush) == last || hit.block == last {
             return;
@@ -182,14 +239,24 @@ impl BlockTools {
             return Vec::new();
         };
         let state = block_props::ui(&game.engine.world);
-        let middle = Self::middle(&hit, Self::brush(game, shift));
+        let brush = Self::brush(game, shift);
+        let middle = Self::middle(&hit, brush).map(|v| v as f32);
         let size = blocks.block_size;
-        let half = (state.size as f32 * 0.5).max(0.5);
-        let centre = Vec3::new(middle[0] as f32 + 0.5, middle[1] as f32 + 0.5, middle[2] as f32 + 0.5);
+        // From its lowest corner to its highest, in blocks: the model where it would stand, else the brush's reach.
+        let [low, high] = match (brush, &self.model) {
+            (BlockBrush::Model, Some((_, Some(model)))) => {
+                model.reach.map(|r| [0, 1, 2].map(|i| middle[i] + r[i] as f32))
+            }
+            (BlockBrush::Model, _) => return Vec::new(),
+            _ => {
+                let half = (state.size as f32 * 0.5).max(0.5);
+                [-half, half].map(|h| middle.map(|v| v + 0.5 + h))
+            }
+        };
         let corners: Vec<Vec3> = (0..8)
             .map(|i| {
-                let sign = |bit: u32| if i & bit == 0 { -half } else { half };
-                corner + (centre + Vec3::new(sign(1), sign(2), sign(4))) * size
+                let pick = |bit: u32, axis: usize| if i & bit == 0 { low[axis] } else { high[axis] };
+                corner + Vec3::new(pick(1, 0), pick(2, 1), pick(4, 2)) * size
             })
             .collect();
         let local = |p: [f32; 2]| [p[0] - camera.rect[0], p[1] - camera.rect[1]];

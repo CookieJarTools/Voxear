@@ -370,7 +370,8 @@ pub fn server_reads(kind: AssetKind) -> bool {
         | AssetKind::Data
         | AssetKind::Terrain
         | AssetKind::WorldGen
-        | AssetKind::BlockWorld => true,
+        | AssetKind::BlockWorld
+        | AssetKind::VoxModel => true,
         AssetKind::Texture
         | AssetKind::Material
         | AssetKind::Ui
@@ -639,13 +640,14 @@ fn find_needs(db: &AssetDb, guid: AssetGuid, kind: AssetKind, path: &str) -> Res
             needs.companions = sheets.into_iter().map(beside).collect();
         }
         AssetKind::Sound => needs.companions = vec![format!("{path}.{}", voxear_assets::META_EXTENSION)],
-        // A world generator names nothing else.
+        // A world generator and a model of blocks name nothing else.
         AssetKind::Texture
         | AssetKind::Strings
         | AssetKind::Paths
         | AssetKind::LightProfile
         | AssetKind::Shader
-        | AssetKind::WorldGen => {}
+        | AssetKind::WorldGen
+        | AssetKind::VoxModel => {}
     }
     needs.direct.remove(&guid);
     needs.named.remove(&guid);

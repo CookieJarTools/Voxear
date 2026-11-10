@@ -17,7 +17,7 @@ use voxear_core::math::{Mat4, Quat, Vec3};
 use voxear_ecs::{Component, Entity, World};
 use voxear_physics::{
     Push,
-    scene::{Collider, ColliderMesh, ColliderShape, PLANET_REACH, PhysicsScene, Rigidbody},
+    scene::{Collider, ColliderMesh, ColliderShape, PhysicsScene, Rigidbody},
 };
 use voxear_render::{DryArea, DryShape, Ocean, SeaEasing, SeaNow, WindZone, OceanSampler, ParticlePlayback, ParticleSystem, Pool, SeaState, Stream, StreamPoint, ocean, stream_over};
 use voxear_scene::{Destroying, Path, Transform, WorldTransform};
@@ -223,23 +223,6 @@ fn sample_wet(world: &World, physics: Option<&PhysicsScene>, at: Vec3) -> Option
     Some(WaterPoint { height, normal, flow })
 }
 
-/// Which way and how hard things fall at `at`, as physics pulls them in a
-/// world whose gravity is `gravity`: towards the middle of the nearest
-/// planet within `PLANET_REACH` of its radius, as strongly as `gravity`,
-/// and `gravity` itself away from planets.
-fn pull_at(world: &World, gravity: Vec3, at: Vec3) -> Vec3 {
-    let blocks = world.query_ref::<(&voxear_terrain::blocks::BlockWorld, &Transform, Option<&WorldTransform>)>();
-    let planets = blocks
-        .without::<Destroying>()
-        .into_iter()
-        .filter_map(|(blocks, local, placed)| Some((voxear_terrain::corner(local, placed), blocks.planet?)));
-    let near = planets.filter(|(middle, radius)| middle.distance(at) < radius * PLANET_REACH);
-    match near.min_by(|a, b| a.0.distance(at).total_cmp(&b.0.distance(at))) {
-        Some((middle, _)) => (middle - at).normalize_or_zero() * gravity.length(),
-        None => gravity,
-    }
-}
-
 /// How deep under water `at` is along `up`, in metres (less than nothing
 /// over it), and how the water there flows: where up is the world's, any
 /// water's (see `sample_wet`); elsewhere, as round a planet, its blocks'
@@ -307,7 +290,6 @@ pub fn float(world: &World, physics: &mut PhysicsScene) -> Vec<Floating> {
         .filter(|(.., body)| !body.kinematic)
         .map(|(entity, buoyancy, collider, body)| (entity, *buoyancy, *collider, body.mass.max(1e-3)))
         .collect();
-    let gravity = physics.gravity();
     for (entity, buoyancy, collider, mass) in floating {
         let Some(body) = physics.body(entity) else { continue };
         let to_world: Mat4 = voxear_scene::world_matrix(world, entity);
@@ -317,7 +299,7 @@ pub fn float(world: &World, physics: &mut PhysicsScene) -> Vec<Floating> {
         let centre = to_world.transform_point3(middle);
         let share = 1.0 / (COLUMNS * COLUMNS) as f32;
         // Up against the pull here, and the water's push as strong as it.
-        let pull = pull_at(world, gravity, centre);
+        let pull = physics.gravity_at(world, centre);
         let strength = pull.length();
         let up = if strength > 1e-6 { -pull / strength } else { Vec3::Y };
         // As strong a push, wholly under, as holds it up `submerged` under.

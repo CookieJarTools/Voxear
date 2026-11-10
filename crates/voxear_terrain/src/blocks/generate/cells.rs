@@ -22,6 +22,16 @@ const CHAMBER_SIZE: f32 = 40.0;
 /// it only here and there.
 const CAVE_ROOF: f32 = 3.0;
 
+/// How deep under its column's surface a block `depth` under it is once the
+/// surface is pushed in and out at `place`, as [`cell_at`] pushes it.
+pub(super) fn pushed(depth: f32, place: [f32; 3], push: f32, seed: u32) -> f32 {
+    if push > 0.0 && depth.abs() < push + 1.0 {
+        let s = OVERHANG_SIZE;
+        return depth + gradient3(place[0] / s, place[1] / s, place[2] / s, seed.wrapping_add(41)) * push;
+    }
+    depth
+}
+
 /// The block `depth` blocks under its column's surface at `place`, in
 /// metres from the world's corner, about how far into the ground its
 /// middle is, in blocks (out of it where negative), and whether it is the

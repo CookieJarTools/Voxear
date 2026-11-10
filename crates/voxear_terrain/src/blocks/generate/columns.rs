@@ -2,7 +2,10 @@
 //! surface and layers from its generator's heights and climate, asked for
 //! at once, then each cell down it (see `cells`).
 
-use super::{BlockGenerate, cells::cell_at};
+use super::{
+    BlockGenerate,
+    cells::{cell_at, pushed},
+};
 use crate::{
     blocks::{
         chunk::{AIR, BlockId, CHUNK, Chunk, fill_of},
@@ -91,16 +94,20 @@ pub fn column_chunks(
                     continue;
                 }
                 let middle = [*x as f32 + 0.5, y as f32 + 0.5, *z as f32 + 0.5];
-                let depth = column.surface - middle[1];
+                let under = column.surface - middle[1];
                 let place = middle.map(|v| v * size);
-                let (block, depth, open) = cell_at(column, depth, place, size, &coarse, push, seed, f32::INFINITY);
-                let block = if open && middle[1] < sea_level { sea } else { block };
+                let (block, depth, open) = cell_at(column, under, place, size, &coarse, push, seed, f32::INFINITY);
+                // The sea fills the open air below its level; drawn smooth, also the ground's top blocks whose
+                // surface lies under it, so its surface reaches the shore.
+                let over = sea_level - middle[1];
+                let shore = file.smooth && block != AIR && depth < over && pushed(under, place, push, seed) < over;
+                let block = if over > 0.0 && (open || shore) { sea } else { block };
                 let (lx, lz) = ((x - cx * side) as u32, (z - cz * side) as u32);
                 // Drawn smooth, the air a block from the surface keeps how far it is from it too, and the sea's top
                 // blocks where its surface lies.
                 let is_sea = sea != AIR && block == sea;
                 if file.smooth && is_sea {
-                    chunk.set_cell(lx, ly as u32, lz, sea, surface_fill(sea_level - middle[1]));
+                    chunk.set_cell(lx, ly as u32, lz, sea, surface_fill(over));
                     any = true;
                 } else if file.smooth && (block != AIR || depth > -1.0) {
                     chunk.set_cell(lx, ly as u32, lz, block, fill_of(depth, block != AIR));

@@ -488,6 +488,10 @@ impl Water {
 /// enough that the last reaches all of its footprint; a Pool too small for
 /// rings has its own grid, as one.
 fn pool_draw(pool: &GpuWaterBody, camera: Vec3) -> (u32, u32) {
+    // A world of blocks' water has no surface of its own to draw: its faces are its world's.
+    if pool.kind != crate::water_bodies::WATER_POOL {
+        return (0, 0);
+    }
     let [x, _, z] = pool.size;
     if x.max(z) <= RINGED_POOL {
         return (POOL_QUADS, 1);
@@ -1016,7 +1020,7 @@ fn record_layer(
             unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, QUADS * QUADS * 6, RINGS, 0, 0) };
         }
         // Each Pool its rings round the camera, or its own grid.
-        for (pool, &(quads, rings)) in draws.pools.iter().enumerate() {
+        for (pool, &(quads, rings)) in draws.pools.iter().enumerate().filter(|(_, draw)| draw.0 > 0) {
             bind(ctx, pipelines.water_pool, vk::PipelineBindPoint::GRAPHICS, &Push { list: pool as u32, ..push });
             unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, quads * quads * 6, rings, 0, 0) };
         }

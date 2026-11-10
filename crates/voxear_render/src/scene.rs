@@ -1003,6 +1003,10 @@ fn water_bodies(world: &World, camera: Vec3) -> crate::water::WaterBodies {
         (*points, *pours) = (joined, poured);
     }
     pools.sort_by(|a, b| a.0.total_cmp(&b.0));
+    // The blocks' water the camera is in, first: a Pool over the same place is found after it, and is the one seen.
+    if let Some(body) = crate::water_bodies::block_water(world, camera) {
+        pools.insert(0, (0.0, body));
+    }
     streams.sort_by(|a, b| a.0.total_cmp(&b.0));
     dries.extend(gusts);
     dries.sort_by(|a, b| a.0.total_cmp(&b.0));

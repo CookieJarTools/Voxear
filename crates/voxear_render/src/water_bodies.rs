@@ -582,10 +582,119 @@ pub const WATER_STREAM: u32 = 3;
 /// A Sphere or Box Wind Zone, among the Dry Areas, making the sea's short
 /// waves rougher or calmer inside it (`WATER_WIND`).
 pub const WATER_WIND: u32 = 4;
+/// A world of blocks' water round the camera, among the Pools
+/// (`WATER_BLOCKS`): the view under it and its waterline are a Pool's, but
+/// it has no surface or walls of its own, its faces being drawn with its
+/// world's (see `blocks`).
+pub const WATER_BLOCKS: u32 = 5;
+
+/// How far over a world of blocks' water the camera is still beside it, for
+/// its waterline and the wet lens, in metres.
+const NEAR_BLOCK_WATER: f32 = 2.0;
+
+/// How far from the camera's column, and how far down, the blocks' water it
+/// is in is looked for at most, in metres.
+const BLOCK_WATER_REACH: f32 = 96.0;
+
+/// The water of a world of blocks that `camera` is in or just over, as a
+/// body among the Pools: level with the top of the water in the camera's
+/// column, as far along x and z as that top reaches from the column (so the
+/// ground beside a pond is not taken to be under it) and as deep as the
+/// water goes along those ways, in the colours its faces are drawn in
+/// (`blockWaterLook` in `shaders/water.slang`). None on a planet's sides,
+/// where up is not the world's.
+pub(crate) fn block_water(world: &voxear_ecs::World, camera: Vec3) -> Option<GpuWaterBody> {
+    use voxear_scene::{Destroying, Transform, WorldTransform};
+    use voxear_terrain::blocks::BlockWorld;
+    let worlds = world.query_ref::<(&BlockWorld, &Transform, Option<&WorldTransform>)>().without::<Destroying>();
+    worlds.into_iter().find_map(|(blocks, local, placed)| {
+        let corner = placed.map_or(local.position, |placed| placed.0.w_axis.truncate());
+        let at = camera - corner;
+        let (depth, up) = blocks.water_depth(at.to_array(), NEAR_BLOCK_WATER)?;
+        if up != 2 {
+            return None;
+        }
+        // The kind of the water at its top, just under its surface.
+        let size = blocks.block_size;
+        let top = at + Vec3::Y * (depth - size * 0.01);
+        let ([x, row, z], kind) = blocks.block_at(top.to_array());
+        let faces = blocks.faces.get(usize::from(kind)).filter(|faces| faces.water)?;
+        let water =
+            |at: [i32; 3]| blocks.faces.get(usize::from(blocks.blocks.get(at))).is_some_and(|faces| faces.water);
+        let most = (BLOCK_WATER_REACH / size).ceil() as i32;
+        // How many blocks its top runs on from the camera's column each way, and how deep it is along them.
+        let ways = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+        let reach =
+            ways.map(|[dx, dz]| (1..=most).take_while(|&i| water([x + dx * i, row, z + dz * i])).count() as i32);
+        let deep = |x: i32, z: i32| (1..=most).take_while(|&i| water([x, row - i, z])).count() as i32 + 1;
+        let along =
+            ways.iter().zip(reach).flat_map(|([dx, dz], far)| (4..=far).step_by(4).map(move |i| (dx * i, dz * i)));
+        let deepest = along.map(|(dx, dz)| deep(x + dx, z + dz)).fold(deep(x, z), i32::max);
+        // A block more each way: drawn smooth, its surface runs on that far into the shore.
+        let low = corner + Vec3::new((x - reach[0] - 1) as f32, 0.0, (z - reach[2] - 1) as f32) * size;
+        let high = corner + Vec3::new((x + reach[1] + 2) as f32, 0.0, (z + reach[3] + 2) as f32) * size;
+        let linear = |c: u8| {
+            let c = f32::from(c) / 255.0;
+            if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+        };
+        let color = faces.color.map(linear);
+        let most = color.iter().copied().fold(1e-3, f32::max);
+        let middle = (low + high) * 0.5;
+        let to_world = Mat4::from_translation(Vec3::new(middle.x, camera.y + depth, middle.z));
+        Some(GpuWaterBody {
+            to_world: cols(to_world),
+            to_local: cols(to_world.inverse()),
+            size: [high.x - low.x, (deepest + 1) as f32 * size, high.z - low.z],
+            kind: WATER_BLOCKS,
+            deep: color,
+            shape: 0,
+            scatter: color.map(|c| 0.75 * c.sqrt()),
+            waves: 0.0,
+            absorb: color.map(|c| -(1.0 + (c / most - 1.0) * 0.55).ln() + 0.05),
+            liquid: Liquid::Water as u32,
+            lava: [0.0; 4],
+        })
+    })
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_camera_in_a_pond_of_blocks_has_a_body_of_water_as_large_as_the_pond_in_its_colour() {
+        use voxear_scene::Transform;
+        use voxear_terrain::blocks::{BlockFaces, BlockMap, BlockWorld};
+        // A pond 6 blocks by 4 and 3 deep in stone, its top 5 blocks up, the world's corner at (10, 0, 20).
+        let mut map = BlockMap::default();
+        for z in 0..16 {
+            for x in 0..16 {
+                for y in 0..5 {
+                    let pond = (4..10).contains(&x) && (6..10).contains(&z) && y >= 2;
+                    map.set([x, y, z], if pond { 2 } else { 1 });
+                }
+            }
+        }
+        let water = BlockFaces { color: [0, 128, 255], ..BlockFaces::water(1) };
+        let faces = [BlockFaces::default(), BlockFaces::new(0, 0, 0), water];
+        let mut world = voxear_ecs::World::new();
+        world.spawn((BlockWorld::new(map, &faces, 1.0), Transform::from_position(Vec3::new(10.0, 0.0, 20.0))));
+        // In it, a block under its top; and just over it.
+        for camera in [Vec3::new(16.5, 4.0, 27.5), Vec3::new(16.5, 5.8, 27.5)] {
+            let body = block_water(&world, camera).expect("in or just over the pond");
+            assert_eq!((body.kind, body.shape, body.liquid), (WATER_BLOCKS, 0, Liquid::Water as u32));
+            let at = Mat4::from_cols_array_2d(&body.to_world).w_axis.truncate();
+            // Level with the pond's top, over its middle, a block wider each way and a block deeper.
+            assert!((at - Vec3::new(17.0, 5.0, 28.0)).length() < 1e-4, "{at}");
+            assert_eq!(body.size, [8.0, 4.0, 6.0]);
+            // Its own colour, linear: no red, so red is what it takes most of.
+            assert!(body.deep[0] == 0.0 && body.deep[2] > 0.99 && (body.deep[1] - 0.2158).abs() < 1e-3);
+            assert!(body.absorb[0] > body.absorb[1] && body.absorb[1] > body.absorb[2]);
+        }
+        // Over the stone beside it, or high over it, none.
+        assert!(block_water(&world, Vec3::new(12.5, 5.5, 27.5)).is_none());
+        assert!(block_water(&world, Vec3::new(16.5, 9.0, 27.5)).is_none());
+    }
 
     #[test]
     fn a_bilge_stays_level_as_its_hull_rocks() {

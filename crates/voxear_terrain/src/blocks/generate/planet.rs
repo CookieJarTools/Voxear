@@ -3,7 +3,11 @@
 //! faces of a cube about a block apart, and every block's depth measured
 //! out from the middle.
 
-use super::{BlockGenerate, BlockPlanet, cells::cell_at, columns::Column};
+use super::{
+    BlockGenerate, BlockPlanet,
+    cells::{cell_at, pushed},
+    columns::Column,
+};
 use crate::{
     blocks::{
         BlockMap,
@@ -188,12 +192,15 @@ pub fn planet_ground(
                         layers: [top, (known(ground.under), ground.under_depth as f32)],
                         bottom,
                     };
-                    let depth = (point.surface - out) / size;
+                    let under = (point.surface - out) / size;
                     let (block, depth, open) =
-                        cell_at(&column, depth, place, size, generate, push / size, seed, caves / size);
-                    let block = if open && out < sea_out { sea } else { block };
+                        cell_at(&column, under, place, size, generate, push / size, seed, caves / size);
+                    let over = (sea_out - out) / size;
+                    let shore =
+                        file.smooth && block != AIR && depth < over && pushed(under, place, push / size, seed) < over;
+                    let block = if over > 0.0 && (open || shore) { sea } else { block };
                     if file.smooth && sea != AIR && block == sea {
-                        chunk.set_cell(lx, ly, lz, sea, surface_fill((sea_out - out) / size));
+                        chunk.set_cell(lx, ly, lz, sea, surface_fill(over));
                         any = true;
                     } else if file.smooth && (block != AIR || depth > -1.0) {
                         chunk.set_cell(lx, ly, lz, block, fill_of(depth, block != AIR));
@@ -207,7 +214,7 @@ pub fn planet_ground(
         }
         any.then_some(chunk)
     });
-    let mut map = BlockMap::default();
+    let mut map = BlockMap { round: true, ..BlockMap::default() };
     for (key, chunk) in keys.into_iter().zip(made) {
         if let Some(chunk) = chunk {
             map.put_chunk(key, chunk);

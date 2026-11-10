@@ -2854,7 +2854,8 @@ coarser chunks, each twice the last's block size, kept by level in the renderer'
 blocks come from `.vox` files (`blocks::vox`), each colour built as a kind of block. A world drawn smooth (a Voxel
 Terrain) keeps how full each block is near its surface and is meshed by surface nets (`blocks::smooth`), drawn from
 the same pool as triangles' corners. A planet's ground lies all round its world's corner, its generator read round
-it in three dimensions on a cube's faces once; physics pulls bodies near it towards its middle. Each chunk of cubes
+it in three dimensions on a cube's faces once; physics pulls bodies near it towards its middle, and characters near
+it stand away from its middle (`PhysicsScene::gravity_at`, shared by both). Each chunk of cubes
 notes which of its sides see each other through its air, and each view draws only the chunks a walk from the
 camera's chunk through those reaches (`blocks::sight`). To come: a floating origin, for worlds past about 10 km.
 Digging into a

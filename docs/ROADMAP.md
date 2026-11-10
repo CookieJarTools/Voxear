@@ -1683,8 +1683,16 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     `BlockWorld::planet` gives physics its radius: moving bodies within four radii fall towards its middle in place
     of gravity (`PhysicsScene::pull_to_planets`). Editor: Ground ▸ Planet and Radius. Tests: a planet on its
     generator's heights out every way, no step across a cube's edges, colder poles, a ball falling onto a planet's
-    side, the GPU drawing it round and lit on one side, the editor making one and undoing it. Not done: characters
-    walking round a planet (their up stays the world's); erosion's gullies on planets.
+    side, the GPU drawing it round and lit on one side, the editor making one and undoing it. Not done: erosion's
+    gullies on planets.
+  - ~~**Walking round planets:**~~ done: bodies and characters share gravity at a point (`scene::gravity_at`,
+    `PhysicsScene::gravity_at`): towards the nearest planet's middle within four radii, the world's gravity
+    elsewhere. Each Character Controller stands against it, its capsule turned from its last up by the least turn
+    (`vx_character_set_up`), its steps, slopes and floor measured along that up, and the move told that gravity.
+    C#: `Physics.GravityAt(position)`, `CharacterController.Up`, and `SimpleMove` falling along it (native API 69).
+    Tests: a character dropped beside a planet landing on its side, upright to it, and walking round it; a script
+    doing the same through `GravityAt` and `SimpleMove`. Not done: the First-Person View and the Motion Matcher
+    turn about the world's up.
   - a floating origin, engine-wide (transforms, physics, audio), for worlds past about 10 km.
 - Throughout: chunks culled against the frustum and last frame's depth, and the smallest save and network data
   (only changes from what a build or a seed makes, as commands while few and compacted deltas once many).

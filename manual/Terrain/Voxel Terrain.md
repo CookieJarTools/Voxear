@@ -36,7 +36,19 @@ A planet a few hundred metres round shows only a small piece of its generator's 
 
 Physics pulls everything with a Rigidbody near a planet towards its middle, as strongly as gravity pulls elsewhere and in place of it: near is within four times its radius of its middle. A ball dropped beside it falls onto its side and comes to rest there.
 
-A planet is made all at once, never without end, so a large one takes a while: one 200 m across takes a few seconds to make and draw, most of it for its caves. Not done yet: characters keep their own up, so a Character Controller walks only on its top; and far from the scene's middle, past about 10 km, things are drawn and moved less exactly, as everywhere, until a floating origin comes.
+### Walking round a planet
+
+A Character Controller near a planet stands away from its middle, so it can walk all the way round. Its capsule tilts as it goes, and the ground it stands on, the slopes it climbs and its steps are all measured against that up. `CharacterController.Up` says which way it stands.
+
+A script that moves a character adds its fall itself, so near a planet it falls by the pull where the character is, `Physics.GravityAt(Obj.WorldPosition)`, in place of `Physics.Gravity`. `SimpleMove` already does this, and leaves out the part of its speed along the character's up, as it leaves out Y on flat ground:
+
+```csharp
+Obj.CharacterController.SimpleMove(Obj.Forward * 4f);
+```
+
+The character's Obj keeps its own rotation: turning it, and its camera, to the character's up is the script's to do, as turning it to face where it walks is.
+
+A planet is made all at once, never without end, so a large one takes a while: one 200 m across takes a few seconds to make and draw, most of it for its caves. Not done yet: the First-Person View and the Motion Matcher still turn about the world's up; and far from the scene's middle, past about 10 km, things are drawn and moved less exactly, as everywhere, until a floating origin comes.
 
 ## How it is drawn
 

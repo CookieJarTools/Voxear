@@ -1909,11 +1909,18 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   Planet level: 146k triangles where it drew 265k, its sea 21k where 62k; a planet 250 blocks round, 2.0M where 4.1M,
   which before failed to draw at all), and passes over chunks facing away; smooth water is merged as the ground is; a
   chunk changed is made again at its first level alone. Cascades draw only cubes' faces turned towards the sun (about
-  half). A world whose faces did not change costs physics and the renderer no walk over its chunks. Costs: a smooth
-  world loads slower (three levels a chunk, Voxel Terrain 34 ms to 67). Not done: the coarse rings made and kept on the
-  GPU, as nothing but drawing needs them; coarser levels past the chunks' fixed sides (resampled blocks, so a far planet
-  drops below its locked edges); a coarser mesh for the GI's rays (very large worlds still fill the shared mesh pool); a
-  frame's draws merged across a chunk's levels.
+  half). A world whose faces did not change costs physics and the renderer no walk over its chunks. Small blocks: a
+  block is 0.1 m to 10 m a side (`file::SMALLEST_BLOCK`, `LARGEST_BLOCK`; at 0.01 m a 64 m world was 4096 blocks
+  across), and in the editor a world too large to make within a frame is made again on other threads, shown as it was
+  until then and put in as one edit (`block_props::Making`): Voxel Terrain set to 0.4 m blocks froze the editor for
+  2.9 s, and now its frames go on and the new world comes over about 14 frames, the slowest 33 ms: a pool grows
+  once for every chunk coming (it staged 474 MB for 220) and takes 16 MB of them a frame, the old pool drawn until
+  the new one has them all. Costs: a smooth world loads slower (three levels a chunk, Voxel Terrain 34 ms
+  to 67). Not done: the coarse rings made and kept on the GPU, as nothing but drawing needs them; coarser levels past
+  the chunks' fixed sides (resampled blocks, so a far planet drops below its locked edges); a coarser mesh for the GI's
+  rays (very large worlds still fill the shared mesh pool); a frame's draws merged across a chunk's levels; ground
+  generated per metre rather than per block, as noise for caves and overhangs is worked out for every block under
+  the surface.
 - Throughout: chunks culled against the frustum and last frame's depth, and the smallest save and network data
   (only changes from what a build or a seed makes, as commands while few and compacted deltas once many).
 

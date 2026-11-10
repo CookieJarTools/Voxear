@@ -13,7 +13,7 @@ Along the top of the Block World in the Inspector are its tools: **Build**, the 
 | Setting | What it does |
 | --- | --- |
 | Data | The `.blockworld` asset its blocks are |
-| Block size | How many metres a block is a side: smaller blocks make the same world finer, not smaller (see below) |
+| Block size | How many metres a block is a side, from 0.1 to 10: smaller blocks make the same world finer, not smaller (see below) |
 | Smooth | Whether its surface runs smoothly between its blocks rather than as cubes: a [[Voxel Terrain]] |
 | Ground | **Flat**, **Generated** by a world generator (see below), or a **Planet** (see [[Voxel Terrain#Planets|Planets]]) |
 | Ground size | How many blocks its ground reaches along X and Z |
@@ -24,7 +24,7 @@ Along the top of the Block World in the Inspector are its tools: **Build**, the 
 
 A change to its ground makes its blocks again at once, what you built on it kept. Each change is one step to undo, and is written to the asset when you save the level.
 
-Changing **Block size** keeps the world as it is in metres and makes it again from blocks of the new size. Its ground stays as wide, as high and as deep, so the rows counted in blocks (Ground size, Ground height, Under depth, Lowest block, a kind's cover Depth) are counted again: halve the block size and each doubles. What you built stays where it was: a wall a metre thick is two blocks thick at half the size, and in a Voxel Terrain the ground's surface stays where it lay. Going to larger blocks loses what was finer than they are. Flat ground is at most 4096 blocks a side, which sets how small its blocks can go. Dragging a number by its label, as Block size or Ground size, shows the number as you drag and makes the world again once you let go.
+Changing **Block size** keeps the world as it is in metres and makes it again from blocks of the new size. Its ground stays as wide, as high and as deep, so the rows counted in blocks (Ground size, Ground height, Under depth, Lowest block, a kind's cover Depth) are counted again: halve the block size and each doubles. What you built stays where it was: a wall a metre thick is two blocks thick at half the size, and in a Voxel Terrain the ground's surface stays where it lay. Going to larger blocks loses what was finer than they are. A block is 0.1 m a side at the smallest and 10 m at the largest, and flat ground is at most 4096 blocks a side, which can keep its blocks larger still. Dragging a number by its label, as Block size or Ground size, shows the number as you drag and makes the world again once you let go. A large world, such as one of small blocks, is made again in the background: the Inspector shows the new numbers at once, and the Scene view shows the world as it was until the new one is ready, after a second or two. Undo takes it back in one step; undoing before it is ready lets the change go.
 
 Its blocks are made from its ground as it loads, the same on every machine. What you built since is kept beside the `.blockworld` in a `.blocks` file of the same name, holding only the chunks you changed, each as its changed blocks one by one while they are few, or whole once that is smaller: a house on a field takes a few hundred bytes. Keep the two together when you move or copy them. A built game ships both.
 

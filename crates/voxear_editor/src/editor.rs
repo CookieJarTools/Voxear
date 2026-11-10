@@ -2185,6 +2185,8 @@ impl Editor {
             Command::Undo | Command::Redo => {
                 // A field being typed in would keep its text over the undone value.
                 self.ui.blur();
+                // A world of blocks still being made from a new file is let go, so it shows what the history puts back.
+                crate::block_props::stop_making(&mut self.game.engine.world);
                 let game = &mut self.game;
                 let step = match command {
                     Command::Undo => self.history.undo(game, Some(renderer)),

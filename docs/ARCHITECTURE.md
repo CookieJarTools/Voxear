@@ -2916,9 +2916,12 @@ it stand away from its middle, their First-Person Views and Motion Matchers turn
 notes which of its sides see each other through its air, and each view draws only the chunks a walk from the
 camera's chunk through those reaches (`blocks::sight`). Kinds of block can be water (`BlockFaces::water`): the ground
 shows its faces where it meets water as where it meets air, and water's own faces, where it meets air, follow the
-ground's quads in a chunk's mesh and are no part of its triangles, so physics and the GI's rays pass through it. They
-are drawn with the Pools (`water::record`): first the farthest face turned from the camera at each pixel, which is
-where the view leaves the water, then the faces turned towards it shaded as still water over a copy of the picture.
+ground's quads in a chunk's mesh and are no part of its triangles, so physics and the GI's rays pass through it. In a
+world without end none faces a chunk column not made (`BlockWorld::columns`; drawn smooth, the water's surface reads
+one as the made column beside it), and every coarse ring's sea stands as high as the finest's, so the rings meet
+without walls or steps. Water's faces are drawn with the Pools (`water::record`): first the farthest face turned from
+the camera at each pixel, which is where the view leaves the water, then the faces turned towards it shaded as still
+water over a copy of the picture.
 Buoyancy pushes against the pull where a body is, as strongly as it pulls, reading how deep it is along the water's
 own up (`BlockWorld::water_depth`), so things float round a planet. Water flows (`blocks::flow`) from
 sources, down (towards a planet's middle) and then out over ground, a level lower each block, its level and way up kept

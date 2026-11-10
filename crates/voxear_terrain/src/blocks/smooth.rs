@@ -36,7 +36,9 @@
 //! under it is not drawn twice. A full block's surface is its top; a sea's
 //! top block keeps where its surface lies (`flow::surface_fill`), so a
 //! generated sea lies flat at its sea level and round a planet; flowing
-//! water stands as high as it flows.
+//! water stands as high as it flows. In a world without end, past the chunk
+//! columns made the water reads as the column beside it, so it shows no
+//! side there and its surface runs on flat.
 
 use super::{
     BlockFaces, BlockMap,
@@ -223,25 +225,40 @@ impl Padded {
 /// surfaces `faces` gives its block of ground (its top, sides and bottom),
 /// by its number.
 pub fn mesh_chunk(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces]) -> ChunkMesh {
-    mesh_within(map, key, faces, FLAT_ENOUGH)
+    mesh_made(map, key, faces, &|_| true)
 }
 
-/// Chunk `key`'s surface as [`mesh_chunk`] makes it, at its first level
+/// Chunk `key`'s surface in `map`, as [`mesh_chunk`] makes it, where only
+/// the chunk columns `made` picks, by place along x and z, are made: past
+/// the others the world goes on, so its water shows no face towards them.
+pub fn mesh_made(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], made: &dyn Fn([i32; 2]) -> bool) -> ChunkMesh {
+    mesh_levels(map, key, faces, (FLAT_ENOUGH, true), made)
+}
+
+/// Chunk `key`'s surface as [`mesh_made`] makes it, at its first level
 /// alone: quicker, for a chunk just changed, which is drawn so wherever it
 /// is.
-pub fn mesh_near(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces]) -> ChunkMesh {
-    mesh_levels(map, key, faces, FLAT_ENOUGH, false)
+pub fn mesh_near(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], made: &dyn Fn([i32; 2]) -> bool) -> ChunkMesh {
+    mesh_levels(map, key, faces, (FLAT_ENOUGH, false), made)
 }
 
 /// Chunk `key`'s surface, as [`mesh_chunk`] makes it, its triangles merged
 /// where the surface moves no more than `error` blocks.
-pub(crate) fn mesh_within(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], error: f32) -> ChunkMesh {
-    mesh_levels(map, key, faces, error, error > 0.0)
+#[cfg(test)]
+fn mesh_within(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], error: f32) -> ChunkMesh {
+    mesh_levels(map, key, faces, (error, error > 0.0), &|_| true)
 }
 
 /// Chunk `key`'s surface, its triangles merged where it moves no more than
-/// `error` blocks, and its coarser levels after where `levels` says.
-fn mesh_levels(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], error: f32, levels: bool) -> ChunkMesh {
+/// `error` blocks, and its coarser levels after where `levels` says; its
+/// water as [`mesh_made`] says.
+fn mesh_levels(
+    map: &BlockMap,
+    key: [i32; 3],
+    faces: &[BlockFaces],
+    (error, levels): (f32, bool),
+    made: &dyn Fn([i32; 2]) -> bool,
+) -> ChunkMesh {
     let mut out = ChunkMesh::default();
     if !map.chunk(key).is_some_and(|chunk| chunk.has_blocks()) || map.buried(key, faces) {
         return out;
@@ -348,7 +365,7 @@ fn mesh_levels(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], error: f32, 
     out.buckets = [0, ends[0], ends[1], ends[2], last, last, last];
     out.cone = cone(&out.positions, &out.indices);
     if map.chunk(key).is_some_and(|chunk| chunk.may_hold(|block| is_water(faces, block))) {
-        out.quads.extend(water_surface(map, key, faces, &padded));
+        out.quads.extend(water_surface(map, key, faces, &padded, made));
     }
     out
 }
@@ -504,14 +521,42 @@ fn round_line(at: [i32; 3], facing: usize) -> [[i32; 3]; 4] {
 /// (water's by how high its surface stands, see `flow::smooth_surface`;
 /// the ground's by its fill), the air a block further out than the water
 /// beside it, whatever the ground near it. Each corner is two pairs of words, as the ground's are, its
-/// surface the water's.
-fn water_surface(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], padded: &Padded) -> Vec<[u32; 2]> {
-    let fills = super::mesh::fills(map, key);
+/// surface the water's. Past the chunk columns `made` picks, the world goes on as the column beside it, so the
+/// water shows no side there and its surface runs on flat.
+fn water_surface(
+    map: &BlockMap,
+    key: [i32; 3],
+    faces: &[BlockFaces],
+    padded: &Padded,
+    made: &dyn Fn([i32; 2]) -> bool,
+) -> Vec<[u32; 2]> {
     let span = SPAN as i32;
     let place = |index: usize| {
         let index = index as i32;
         [index % span, index / (span * span), (index / span) % span].map(|v| v - BEFORE)
     };
+    // Each block read from where the world goes on as it does: itself, or the nearest made along x, z or both.
+    let held = super::mesh::held(key, made);
+    let side = CHUNK as i32;
+    let from = |at: [i32; 3]| -> [i32; 3] {
+        let along_x = [at[0].clamp(0, side - 1), at[1], at[2]];
+        let along_z = [at[0], at[1], at[2].clamp(0, side - 1)];
+        [at, along_x, along_z].into_iter().find(|&at| held(at)).unwrap_or([along_x[0], at[1], along_z[2]])
+    };
+    let all_made = (-1..=1).all(|dz| (-1..=1).all(|dx| held([dx * side, 0, dz * side])));
+    let going_on;
+    let padded = if all_made {
+        padded
+    } else {
+        let read = |index: usize| Padded::index(from(place(index)));
+        going_on = Padded {
+            blocks: (0..padded.blocks.len()).map(|index| padded.blocks[read(index)]).collect(),
+            depths: (0..padded.depths.len()).map(|index| padded.depths[read(index)]).collect(),
+        };
+        &going_on
+    };
+    let fills = super::mesh::fills(map, key);
+    let fills = |at: [i32; 3]| fills(from(at));
     let mut field: Vec<f32> = (0..padded.blocks.len())
         .map(|index| {
             let block = padded.blocks[index];
@@ -919,7 +964,7 @@ mod tests {
         let meshes: Vec<ChunkMesh> = keys.iter().map(|key| mesh_chunk(&map, *key, &faces)).collect();
         // Made again after a change, its first level alone, the same.
         for (key, mesh) in keys.iter().zip(&meshes) {
-            let near = mesh_near(&map, *key, &faces);
+            let near = mesh_near(&map, *key, &faces, &|_| true);
             assert_eq!(near.quads[..near.buckets[1] as usize], mesh.quads[..mesh.buckets[1] as usize]);
             assert!(near.buckets[1..].iter().all(|&end| end == near.buckets[1]), "no coarser levels");
         }

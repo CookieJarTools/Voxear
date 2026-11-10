@@ -1700,6 +1700,15 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     while playing; terrains' and block worlds' looks count as using their materials, so their colours survive play
     (they were freed as a level loaded). Tests: a lake running into a hole, a gap filling, smooth water at its top and
     at a sea's level, a block world's colours kept loaded.
+    In a world without end, water shows no face towards a chunk column not made (`BlockWorld::columns`,
+    `blocks::mesh_made`): a coarse column is meshed with only itself made, near chunks with the near columns, and the
+    water beside columns let go is meshed again; drawn smooth, the water's surface reads a column not made as the made
+    one beside it, so it runs on flat. So a sea shows no walls where its rings meet. Every level's sea stands as high,
+    so the rings meet without steps: of cubes where the finest level's does, a coarse column's top block of it only as
+    full as that, in eighths (a flowing fill; coarse blocks never flow); drawn smooth at its sea level, a top block's
+    surface standing up to a whole block over its middle (`surface_fill`, a half before). Tests: a streamed sea, cubes
+    and smooth, with no water faces on its columns' sides towards columns not made and every level's top as high,
+    water put in the air showing every side, a chunk of water showing its sides at a world's edge.
 - **Smooth voxel terrain, flat and planets**, in parts: smooth ground you can see, stand on, generate and build on;
   planets with their own gravity; a floating origin.
   - ~~**Voxel Terrain:**~~ done: a Block World drawn smooth (`BlockFile::smooth`, `BlockWorld::smooth`). Each chunk

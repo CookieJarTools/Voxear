@@ -66,6 +66,8 @@ Beyond its view distance, it is drawn in rings of coarser blocks, each ring's bl
 
 Its own blocks are made a column of chunks further out than they are drawn, and each column's faces are made on those threads too, once the columns round it have their blocks. So every column is made once, its edges meeting the ground beside it, and the game never waits for one.
 
+A [[Block Worlds#Water|sea]] runs on across the rings unbroken: it stands as high in every ring, and its water shows no sides where they meet, nor at the edge of what is made, where the world goes on.
+
 What you build is kept as it goes out of reach and made again as it comes back, and saving keeps it all, near or away, in its `.blocks` file. In a game it is made round the camera; in the editor, round where the Scene view looks from.
 
 With the [[Floating Origin]] switched on, positions stay exact however far the camera goes: the world's middle moves along with it, and the chunks already made stay as they were.

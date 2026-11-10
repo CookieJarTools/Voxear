@@ -1,7 +1,8 @@
 //! Scripts on a planet: a behaviour asks which way gravity pulls beside one
 //! and far from it, and walks a Character Controller dropped beside it onto
-//! its side and round it, upright to it all the way. Builds a copy of Hello
-//! with a planet added; skips itself without .NET and the managed build.
+//! its side and round it, upright to it all the way, as its First-Person
+//! View and its Obj are. Builds a copy of Hello with a planet added; skips
+//! itself without .NET and the managed build.
 
 use voxear_core::logging::LogCapture;
 use voxear_engine::{Engine, Game, Project, scripts};
@@ -38,7 +39,9 @@ public sealed class PlanetWalker : Behaviour
 			var at = Obj.WorldPosition - middle;
 			var round = MathF.Atan2(at.Y, at.X) * 180f / MathF.PI;
 			var upright = Vector3.Dot(controller.Up, Vector3.Normalize(at));
-			Log.Info($"frame {frame}: {at.Length():0.00} out, {round:0.0} round, {Math.Abs(at.Z):0.00} aside, grounded {grounded}, upright {upright:0.0000}");
+			var looking = Vector3.Dot(Vector3.Transform(Vector3.UnitY, Obj.FirstPersonView.Rotation), Vector3.Normalize(at));
+			var standing = Vector3.Dot(Obj.Up, Vector3.Normalize(at));
+			Log.Info($"frame {frame}: {at.Length():0.00} out, {round:0.0} round, {Math.Abs(at.Z):0.00} aside, grounded {grounded}, upright {upright:0.0000}, view {looking:0.0000}, obj {standing:0.0000}");
 		}
 	}
 }
@@ -58,6 +61,7 @@ name = "Walker"
 position = [136.0, 0.0, 0.0]
 behaviours = ["Hello.PlanetWalker"]
 [obj.character]
+[obj.first_person]
 "#;
 
 fn hello_copy() -> tempfile::TempDir {
@@ -111,7 +115,7 @@ fn a_script_asks_which_way_a_planet_pulls_and_walks_a_character_round_it() {
     let said = |text: &str| lines.iter().any(|line| line == text);
     // 6 m over its +x side: pulled along -x, the world's own gravity far off, standing away from its middle.
     assert!(said("pulled -9.81 of 9.81 by it, -9.81 far off, up 1.00"), "{lines:?}");
-    let at_frame = |frame: u32| -> [f32; 5] {
+    let at_frame = |frame: u32| -> [f32; 7] {
         let line = lines.iter().find_map(|line| line.strip_prefix(&format!("frame {frame}: "))).expect("its line");
         let numbers: Vec<f32> = line
             .split([' ', ','])
@@ -121,14 +125,16 @@ fn a_script_asks_which_way_a_planet_pulls_and_walks_a_character_round_it() {
                 _ => word.parse().ok(),
             })
             .collect();
-        numbers.try_into().unwrap_or_else(|_| panic!("five numbers: {line}"))
+        numbers.try_into().unwrap_or_else(|_| panic!("seven numbers: {line}"))
     };
-    // Fallen along -x to its ground, upright to it.
-    let [out, round, aside, grounded, upright] = at_frame(120);
+    // Fallen along -x to its ground, upright to it, its First-Person View and Obj too.
+    let [out, round, aside, grounded, upright, view, obj] = at_frame(120);
     assert!((out - 30.0).abs() < 0.6 && round.abs() < 1.0 && aside < 0.5, "on its +x side: {lines:?}");
     assert!(grounded == 1.0 && upright > 0.999, "standing on it: {lines:?}");
+    assert!(view > 0.999 && obj > 0.999, "its view and Obj upright to it: {lines:?}");
     // 4 s at 3 m/s round it: 12 m of 30 m round, about 23 degrees.
-    let [out, round, aside, grounded, upright] = at_frame(360);
+    let [out, round, aside, grounded, upright, view, obj] = at_frame(360);
     assert!((out - 30.0).abs() < 0.6 && round > 18.0 && aside < 0.5, "walked round it: {lines:?}");
     assert!(grounded == 1.0 && upright > 0.999, "still standing on it: {lines:?}");
+    assert!(view > 0.999 && obj > 0.999, "its view and Obj still upright to it: {lines:?}");
 }

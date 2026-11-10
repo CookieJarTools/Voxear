@@ -8,7 +8,8 @@ namespace Voxear;
 /// An Obj's First-Person View: a camera in a character's own head. The mouse turns it, and the Obj with it; the upper
 /// body leans into where it looks, and the camera rides the head, steadied, with the head hidden. It finds the body,
 /// the first Model Renderer under its Obj whose skeleton has a head and arms, and the camera, the first under it or
-/// else in the level, unless told.
+/// else in the level, unless told. Near a planet it turns about the up where its Obj is, so it tilts, its Obj and its
+/// camera with it, as a character walks round.
 /// <code>
 /// var view = player.AddFirstPersonView();
 /// view.Sensitivity = 0.1f;
@@ -36,6 +37,7 @@ public readonly struct FirstPersonView : IEquatable<FirstPersonView>, IObjCompon
 	private const int PunchValue = 17;
 	private const int GlanceValue = 18;
 	private const int FrameEyesValue = 19;
+	private const int LevelValue = 20;
 
 	public static readonly FirstPersonView None = default;
 
@@ -64,9 +66,22 @@ public readonly struct FirstPersonView : IEquatable<FirstPersonView>, IObjCompon
 		set { Set(PitchValue, value); }
 	}
 
+	/// <summary>
+	/// Which way up it is: the world's own, unturned, away from planets, and near one, turned to stand away from its
+	/// middle. Yaw turns about its up, from its forward.
+	/// </summary>
+	public Quaternion Level
+	{
+		get
+		{
+			var turn = Get(LevelValue);
+			return turn == Vector4.Zero ? Quaternion.Identity : new Quaternion(turn.X, turn.Y, turn.Z, turn.W);
+		}
+	}
+
 	/// <summary>Where it looks, as a turn in the world.</summary>
 	public Quaternion Rotation =>
-		Quaternion.CreateFromAxisAngle(Vector3.UnitY, Mathf.Deg2Rad * Yaw) * Quaternion.CreateFromAxisAngle(Vector3.UnitX, -Mathf.Deg2Rad * Pitch);
+		Level * Quaternion.CreateFromAxisAngle(Vector3.UnitY, Mathf.Deg2Rad * Yaw) * Quaternion.CreateFromAxisAngle(Vector3.UnitX, -Mathf.Deg2Rad * Pitch);
 
 	/// <summary>The way it looks, in the world.</summary>
 	public Vector3 Forward => Vector3.Transform(Vector3.UnitZ, Rotation);

@@ -3,12 +3,17 @@
 //! upper body leans into where the view looks. The camera rides the head
 //! bone, steadied so the head's bob reaches it only in part, and the head
 //! itself is hidden so the camera does not see inside it.
+//!
+//! The view turns about the up where its Obj is, against the pull there
+//! (see `PhysicsScene::gravity_at`): on a planet, away from its middle, so
+//! the view, its Obj and its camera tilt as a character walks round it.
 
 use serde::{Deserialize, Serialize};
 use voxear_core::math::{Mat4, Quat, Vec2, Vec3};
 use voxear_core::spring::{Spring, SpringFeel};
 use voxear_core::time::Time;
 use voxear_ecs::{Component, Entity, World};
+use voxear_physics::EARTH_GRAVITY;
 use voxear_render::{Camera, ModelRenderer, Pose};
 use voxear_scene::{Parent, Transform, world_matrix};
 
@@ -37,9 +42,15 @@ pub struct FirstPersonView {
     #[serde(skip)]
     pub camera: Option<Entity>,
     /// Where it looks, in degrees: the turn about up from +Z, and the tilt,
-    /// up positive.
+    /// up positive. Both are measured in `level`.
     pub yaw: f32,
     pub pitch: f32,
+    /// Its level, which way up it is: turned from the world's own by the
+    /// least turn to the up where its Obj is each frame, so walking round a
+    /// planet carries its yaw round with it. The world's own up, unturned,
+    /// away from planets.
+    #[serde(skip)]
+    pub level: Quat,
     /// Whether the mouse turns it, by `sensitivity` degrees a pixel.
     pub mouse_look: bool,
     pub sensitivity: f32,
@@ -71,6 +82,7 @@ impl Default for FirstPersonView {
             camera: None,
             yaw: 0.0,
             pitch: 0.0,
+            level: Quat::IDENTITY,
             mouse_look: true,
             sensitivity: 0.12,
             pitch_limits: [-85.0, 85.0],
@@ -87,8 +99,21 @@ impl Default for FirstPersonView {
 impl FirstPersonView {
     /// Where it looks, as a turn in the world.
     pub fn rotation(&self) -> Quat {
-        Quat::from_rotation_y(self.yaw.to_radians()) * Quat::from_rotation_x(-self.pitch.to_radians())
+        self.facing() * Quat::from_rotation_x(-self.pitch.to_radians())
     }
+
+    /// Which way it faces along the ground, untilted: the turn the Obj it
+    /// is on takes.
+    pub fn facing(&self) -> Quat {
+        self.level * Quat::from_rotation_y(self.yaw.to_radians())
+    }
+}
+
+/// A view's level carried to `up` by the least turn, so it never spins
+/// about it; kept as it was where nothing pulls.
+fn level_to(level: Quat, up: Vec3) -> Quat {
+    let Some(up) = up.try_normalize() else { return level };
+    (Quat::from_rotation_arc(level * Vec3::Y, up) * level).normalize()
 }
 
 /// What the view keeps from frame to frame: where the eyes were, steadied.
@@ -171,27 +196,35 @@ pub struct MouseLook {
     pub delta: Vec2,
 }
 
-/// Turns each view by the mouse, and the Obj it is on with it: run in
-/// Update, after the behaviours, so a script can turn it first and the
-/// body faces where it looks this frame.
+/// Levels each view to the up where its Obj is, and turns this machine's
+/// own by the mouse, and the Obj it is on with it: run in Update, after the
+/// behaviours, so a script can turn it first and the body faces where it
+/// looks this frame.
 pub fn look(world: &mut World) {
     if crate::editing(world) {
         return;
     }
     let delta = world.resource::<MouseLook>().map_or(Vec2::ZERO, |mouse| mouse.delta);
+    let gravity = world.resource::<crate::physics::PhysicsScene>().map_or(EARTH_GRAVITY, |scene| scene.gravity());
     let views: Vec<Entity> = world.query_ref::<(Entity, &FirstPersonView)>().into_iter().map(|(e, _)| e).collect();
-    let views: Vec<Entity> = views.into_iter().filter(|&entity| is_own(world, entity)).collect();
     for entity in views {
+        let at = world_matrix(world, entity).w_axis.truncate();
+        let up = -crate::physics::gravity_at(world, gravity, at);
+        let own = is_own(world, entity);
         let Some(view) = world.get_mut::<FirstPersonView>(entity) else { continue };
+        view.level = level_to(view.level, up);
+        if !own {
+            continue;
+        }
         if view.mouse_look {
             view.yaw += delta.x * view.sensitivity;
             view.pitch -= delta.y * view.sensitivity;
         }
         view.yaw = (view.yaw + 180.0).rem_euclid(360.0) - 180.0;
         view.pitch = view.pitch.clamp(view.pitch_limits[0], view.pitch_limits[1]);
-        let (turn, yaw) = (view.turn_obj, view.yaw);
+        let (turn, facing) = (view.turn_obj, view.facing());
         if turn && let Some(transform) = world.get_mut::<Transform>(entity) {
-            transform.rotation = Quat::from_rotation_y(yaw.to_radians());
+            transform.rotation = facing;
         }
     }
 }
@@ -275,7 +308,7 @@ fn pose_body(world: &mut World, entity: Entity, view: &FirstPersonView, own: boo
     let into_body = placed.inverse();
     // The upper body turns to face where the view looks, though the legs, turning at their own pace, lag
     // behind: the chest, its arms and what they hold stay with the eyes.
-    let up = into_body.transform_vector3(Vec3::Y).normalize_or_zero();
+    let up = into_body.transform_vector3(view.level * Vec3::Y).normalize_or_zero();
     let looking = into_body.transform_vector3(view.rotation() * Vec3::Z);
     let shoulders = edit.position(rig.arms[1].upper) - edit.position(rig.arms[0].upper);
     let facing = shoulders.cross(up);
@@ -327,6 +360,7 @@ const EYE_ROTATION: i32 = 16;
 const PUNCH: i32 = 17;
 const GLANCE: i32 = 18;
 const FRAME_EYES: i32 = 19;
+const LEVEL: i32 = 20;
 
 pub(crate) fn register() {
     voxear_scripting::set_kind_values(voxear_scripting::ComponentKind::FirstPersonView, values);
@@ -368,6 +402,7 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
             HIDE_HEAD => Some(flag(view.hide_head)),
             BODY => Some(obj_value(view.body)),
             CAMERA => Some(obj_value(view.camera)),
+            LEVEL => Some(view.level.to_array()),
             _ => None,
         };
     };
@@ -552,6 +587,43 @@ mod tests {
         place(&mut world);
         let kicked = values(&mut world, player, EYE_ROTATION, None).unwrap();
         assert!(Quat::from_array(kicked).angle_between(Quat::from_array(turn)) > 1e-3, "the kick turns the eyes");
+    }
+
+    #[test]
+    fn a_view_on_a_planets_side_stands_away_from_its_middle_and_carries_its_yaw_round() {
+        use voxear_terrain::blocks::{BlockMap, BlockWorld, file::BlockFile};
+        let mut world = World::new();
+        let (player, _, camera) = player(&mut world);
+        // A planet 30 m round, its middle 30 m along -x from the player at (2, 0, 0): its up there is +x.
+        let (_, faces) = BlockFile::default().faces();
+        let mut planet = BlockWorld::made(BlockMap::default(), &faces, 1.0, false);
+        planet.planet = Some(30.0);
+        let middle = Vec3::new(-28.0, 0.0, 0.0);
+        world.spawn((planet, Transform::from_position(middle)));
+        world.insert_resource(MouseLook { delta: Vec2::new(750.0, 0.0) });
+        look(&mut world);
+        let view = world.get::<FirstPersonView>(player).unwrap().clone();
+        let up = view.level * Vec3::Y;
+        assert!(up.abs_diff_eq(Vec3::X, 1e-5), "level to the planet: {up}");
+        let turned = world.get::<Transform>(player).unwrap().rotation;
+        assert!((turned * Vec3::Y).abs_diff_eq(Vec3::X, 1e-4), "the player stands away from its middle: {turned}");
+        let ninety = Quat::from_axis_angle(up, 90f32.to_radians()) * (view.level * Vec3::Z);
+        assert!((turned * Vec3::Z).abs_diff_eq(ninety, 1e-4), "the mouse turns it about that up");
+
+        world.insert_resource(MouseLook { delta: Vec2::ZERO });
+        place(&mut world);
+        let eye = world.get::<Transform>(camera).unwrap().rotation;
+        assert!(eye.angle_between(view.rotation()) < 1e-4, "the camera looks where the view does");
+        assert!((eye * Vec3::Y).dot(Vec3::X) > 0.999, "its up the planet's: {}", eye * Vec3::Y);
+
+        // Carried a quarter of the way round to the planet's top: level with the world again, its yaw kept.
+        world.get_mut::<Transform>(player).unwrap().position = middle + Vec3::new(0.0, 30.0, 0.0);
+        look(&mut world);
+        let view = world.get::<FirstPersonView>(player).unwrap();
+        assert!(view.level.angle_between(Quat::IDENTITY) < 1e-4, "level on top: {}", view.level);
+        assert!((view.yaw - 90.0).abs() < 1e-3, "{}", view.yaw);
+        let turned = world.get::<Transform>(player).unwrap().rotation;
+        assert!(turned.angle_between(Quat::from_rotation_y(90f32.to_radians())) < 1e-3, "{turned}");
     }
 
     #[test]

@@ -335,12 +335,12 @@ pub fn fire(world: &mut World, entity: Entity) -> Option<Shot> {
     if let Some((yaw, pitch)) = state.view {
         state.view = Some((yaw + aside, pitch + up));
     }
-    let rotation = view.rotation();
+    let (rotation, view_up) = (view.rotation(), view.level * Vec3::Y);
 
     // The line: from the camera, along the view, within a cone that narrows as the gun comes up to the eye.
     // From the view's eyes, which the camera is at for this machine's player and others' heads are for theirs.
     let eye = world.get::<crate::first_person::FirstPersonState>(entity).map(|state| state.eye.w_axis.truncate());
-    let origin = eye.unwrap_or_else(|| world_matrix(world, entity).w_axis.truncate() + Vec3::Y * 1.6);
+    let origin = eye.unwrap_or_else(|| world_matrix(world, entity).w_axis.truncate() + view_up * 1.6);
     let spread = (2.2 - 2.05 * aimed).to_radians();
     let (a, b) = (state.random(), state.random());
     let off = Quat::from_euler(EulerRot::YXZ, a * spread, b * spread, 0.0);
@@ -477,7 +477,7 @@ pub fn hold(world: &mut World) {
 
         // A gun held by clips stands as they hold it, the upper body still under the eyes: not bladed.
         if let Some(body) = body.filter(|_| !handling.pack.holds()) {
-            blade(world, body, &gun);
+            blade(world, body, &gun, view.level * Vec3::Y);
         }
         // A clip the action is based on moves the body, before the gun is placed by it, and gives how the gun is
         // carried and the elbows bend.
@@ -757,7 +757,8 @@ fn place_gun(
     state.velocity = velocity;
 
     // Bob: a kick at each footfall, alternating sides, as hard as the walk is quick.
-    let speed = Vec3::new(velocity.x, 0.0, velocity.z).length();
+    let view_up = view.level * Vec3::Y;
+    let speed = (velocity - view_up * velocity.dot(view_up)).length();
     let feet = body.and_then(|body| world.get::<MotionMatcherState>(body)).map(MotionMatcherState::feet_down);
     let footfall = match feet {
         Some(feet) => {
@@ -921,16 +922,16 @@ fn hand_aims(
 }
 
 /// Turns the chest for a long gun, its fore-end far out, bringing the
-/// support shoulder forward to meet it: before the gun is placed, so its
-/// butt goes to the shoulder where the shoulder ends up.
-fn blade(world: &mut World, body: Entity, gun: &Gun) {
+/// support shoulder forward to meet it, about `up`, the view's: before the
+/// gun is placed, so its butt goes to the shoulder where the shoulder ends up.
+fn blade(world: &mut World, body: Entity, gun: &Gun, up: Vec3) {
     if gun.kind.is_handgun() {
         return;
     }
     let Some(animation) = world.get::<ModelRenderer>(body).and_then(|model| model.animation.clone()) else { return };
     let (Some(pose), Some(rig)) = (world.get::<Pose>(body).cloned(), Rig::find(&animation.skeleton)) else { return };
     let mut edit = PoseEdit::new(&animation.skeleton, &pose.bones);
-    let up = world_matrix(world, body).inverse().transform_vector3(Vec3::Y).normalize_or_zero();
+    let up = world_matrix(world, body).inverse().transform_vector3(up).normalize_or_zero();
     let bladed = (gun.support.position[2] - gun.grip.position[2]).clamp(0.0, 0.6) * 40.0;
     turn_spine(&mut edit, &rig.spine, Quat::from_axis_angle(up, bladed.to_radians()));
     world.insert(body, Pose { bones: edit.matrices().into() });
@@ -1026,7 +1027,7 @@ fn steady_eyes(
     }
     let seen = state.seen_from.as_ref()?;
     let (obj, placed) = (world_matrix(world, entity), world_matrix(world, body));
-    let eyes = placed.transform_point3(seen.middle) + Quat::from_rotation_y(view.yaw.to_radians()) * seen.from_middle;
+    let eyes = placed.transform_point3(seen.middle) + view.facing() * seen.from_middle;
     Some(obj.inverse().transform_point3(eyes))
 }
 

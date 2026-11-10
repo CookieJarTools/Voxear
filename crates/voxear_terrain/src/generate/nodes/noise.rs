@@ -4,12 +4,11 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{Kind, Port, Value, ValueSpec};
+use super::{Kind, Port, Value, ValueSpec, node_seed};
 use crate::{
     generate::{
         compile::{Compiler, Kernel, Key, Places, V},
         graph::NodeId,
-        landmass::seed_of,
     },
     noise::{self, NoiseStyle},
 };
@@ -31,10 +30,6 @@ impl Default for Noise {
         Self { style: NoiseStyle::Fractal, size: 200.0, octaves: 4, low: 0.0, high: 1.0 }
     }
 }
-
-/// The part of a generator's seed nodes' own noise starts from: past every
-/// part a landmass uses.
-const NODE_SEEDS: u32 = 0x1000;
 
 const VALUES: &[ValueSpec] = &[
     ValueSpec::choice("style", "Style", &["Fractal", "Ridged", "Billow"]),
@@ -85,7 +80,7 @@ impl Kind for Noise {
             style: self.style,
             size: (self.size * cx.world.scale.max(0.01)).max(0.01),
             octaves: self.octaves,
-            seed: seed_of(cx.world.seed, NODE_SEEDS.wrapping_add(node.0)),
+            seed: node_seed(cx.world, node),
             low: self.low,
             span: self.high - self.low,
             round: matches!(at, Places::Round { .. }),

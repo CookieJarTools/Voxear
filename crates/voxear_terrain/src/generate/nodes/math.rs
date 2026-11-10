@@ -1,6 +1,7 @@
 //! The Math node: two numbers added, taken from one another, multiplied,
-//! or the lesser or greater of them, at each place. Either is what is
-//! wired in, or the node's own value with no wire.
+//! divided, or the lesser or greater of them, at each place. Either is
+//! what is wired in, or the node's own value with no wire. A number
+//! divided by nothing is nothing.
 
 use serde::{Deserialize, Serialize};
 
@@ -20,11 +21,18 @@ pub enum Operation {
     Multiply,
     Min,
     Max,
+    Divide,
 }
 
 impl Operation {
-    pub const ALL: [Operation; 5] =
-        [Operation::Add, Operation::Subtract, Operation::Multiply, Operation::Min, Operation::Max];
+    pub const ALL: [Operation; 6] = [
+        Operation::Add,
+        Operation::Subtract,
+        Operation::Multiply,
+        Operation::Min,
+        Operation::Max,
+        Operation::Divide,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -33,6 +41,7 @@ impl Operation {
             Operation::Multiply => "Multiply",
             Operation::Min => "Min",
             Operation::Max => "Max",
+            Operation::Divide => "Divide",
         }
     }
 }
@@ -46,7 +55,7 @@ pub struct Math {
 }
 
 const VALUES: &[ValueSpec] = &[
-    ValueSpec::choice("operation", "Operation", &["Add", "Subtract", "Multiply", "Min", "Max"]),
+    ValueSpec::choice("operation", "Operation", &["Add", "Subtract", "Multiply", "Min", "Max", "Divide"]),
     ValueSpec::number("a", "A", f32::MIN, f32::MAX, "").for_input(0),
     ValueSpec::number("b", "B", f32::MIN, f32::MAX, "").for_input(1),
 ];
@@ -114,6 +123,7 @@ impl Kernel for Two {
             Operation::Multiply => pairs.for_each(|(out, (a, b))| *out = a * b),
             Operation::Min => pairs.for_each(|(out, (&a, &b))| *out = if a < b { a } else { b }),
             Operation::Max => pairs.for_each(|(out, (&a, &b))| *out = if a > b { a } else { b }),
+            Operation::Divide => pairs.for_each(|(out, (&a, &b))| *out = if b == 0.0 { 0.0 } else { a / b }),
         }
     }
 }

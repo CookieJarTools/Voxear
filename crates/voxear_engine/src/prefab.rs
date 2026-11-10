@@ -431,6 +431,8 @@ fn apply_instance(root: &mut ObjData, instance: &ObjData) {
     root.seasons = instance.seasons.or(root.seasons);
     root.foliage_interaction = instance.foliage_interaction.or(root.foliage_interaction);
     root.track_maker = instance.track_maker.or(root.track_maker);
+    root.cave_shape = instance.cave_shape.or(root.cave_shape);
+    root.cave_exit = instance.cave_exit.or(root.cave_exit);
     root.rigidbody = instance.rigidbody.or(root.rigidbody);
     root.character = instance.character.or(root.character);
     if instance.joint.is_some() {
@@ -499,6 +501,8 @@ pub struct TemplateObj {
     pub seasons: Option<Seasons>,
     pub foliage_interaction: Option<FoliageInteraction>,
     pub track_maker: Option<voxear_render::TrackMaker>,
+    pub cave_shape: Option<voxear_terrain::generate::CaveShape>,
+    pub cave_exit: Option<voxear_terrain::generate::CaveExit>,
     /// A Foliage, where there is a renderer to draw it, and how it was
     /// written, which few Objs have.
     pub foliage: Option<Box<(Option<Foliage>, voxear_scene::Plants, FoliageSource)>>,
@@ -708,6 +712,12 @@ impl Template {
             }
             if let Some(maker) = obj.track_maker {
                 world.insert(entity, maker);
+            }
+            if let Some(shape) = obj.cave_shape {
+                world.insert(entity, shape);
+            }
+            if let Some(exit) = obj.cave_exit {
+                world.insert(entity, exit);
             }
             if let Some(foliage) = &obj.foliage {
                 if let Some(drawn) = &foliage.0 {
@@ -1256,6 +1266,8 @@ pub(crate) fn resolve_obj(
         seasons: data.seasons,
         foliage_interaction: data.foliage_interaction,
         track_maker: data.track_maker,
+        cave_shape: data.cave_shape,
+        cave_exit: data.cave_exit,
         layer: data.layer.clone(),
         joint: data.joint.clone(),
         collider2d: data.collider2d,

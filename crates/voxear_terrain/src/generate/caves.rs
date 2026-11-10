@@ -19,9 +19,11 @@ use std::sync::Arc;
 mod grid;
 mod level;
 pub(crate) mod network;
+mod parts;
 mod rooms;
 
 pub use network::CaveLayout;
+pub use parts::{CaveExit, CaveMode, CaveShape};
 pub use rooms::{Room, RoomExit, RoomForm, RoomShape, UNTURNED};
 
 pub(crate) use network::{Network, Settings};
@@ -55,6 +57,10 @@ pub struct PlacedRoom {
     /// A place on its floor with room to stand.
     pub floor: [f32; 3],
     pub exits: Vec<PlacedExit>,
+    /// The rooms a tunnel joins it to: each one's region, and for a level
+    /// its place among the rooms. More than its exits lead to, where two
+    /// tunnels leave by one exit.
+    pub joined: Vec<([i32; 3], Option<usize>)>,
 }
 
 /// One of a placed room's exits.
@@ -219,5 +225,9 @@ fn shown(
         bounds: [add(room.bounds.low, lift), add(room.bounds.high, lift)],
         floor: add(at, out(floor)),
         exits: exits.collect(),
+        joined: (0..4)
+            .filter(|&slot| room.plan.links[slot])
+            .map(|slot| (room.plan.beside[slot], index_of(room.plan.beside[slot])))
+            .collect(),
     }
 }

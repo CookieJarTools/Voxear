@@ -895,6 +895,10 @@ impl ScriptServices for GameServices<'_> {
         self.content.blocks_version()
     }
 
+    fn caves_json(&mut self, world: &World, obj: u64, what: i32, at: [f32; 4]) -> Result<String> {
+        crate::caves::caves_json(world, self.content, obj, what, at)
+    }
+
     fn block_guid(&mut self, world: &World, entity: Entity, block: u16) -> Option<String> {
         crate::blocks::block_guid(world, entity, block)
     }

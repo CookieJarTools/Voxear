@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 71;
+pub(crate) const API_VERSION: u32 = 72;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -497,6 +497,9 @@ pub(crate) struct NativeApi {
     ) -> i32,
     /// Goes up whenever a block is saved, so `Block` reads it again.
     pub blocks_version: unsafe extern "C" fn() -> u64,
+    /// The cave rooms of a world of blocks, as JSON for `Caves`.
+    pub caves_info:
+        unsafe extern "C" fn(obj: u64, what: i32, at: *const [f32; 4], buffer: *mut u8, capacity: i32) -> i32,
 }
 
 /// The kinds of component scripts reach through one entry, `kind_value`,
@@ -1930,6 +1933,7 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         block_of: crate::blocks::block_of,
         block_set_named: crate::blocks::block_set_named,
         blocks_version: crate::blocks::blocks_version,
+        caves_info: crate::services::caves_info,
     }
 }
 

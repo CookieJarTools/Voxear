@@ -59,6 +59,7 @@ use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use voxear_assets::{AssetGuid, AssetRef};
 use voxear_core::math::{EulerRot, Quat, Vec3};
+use voxear_terrain::generate::{CaveExit, CaveShape};
 use voxear_ecs::{Entity, World};
 use voxear_render::{
     Camera, Foliage, FoliageInteraction, Light, LightKind, LodGroup, Look, LookName, MAX_TRANSITIONS, MeshRenderer, PostProcess, PostVolume, Renderer,
@@ -355,6 +356,11 @@ pub struct ObjData {
     /// Leaves tracks in the ground where the Obj touches it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub track_maker: Option<voxear_render::TrackMaker>,
+    /// One shape of a cave room, and where a tunnel may join one: what a Cave Network's rooms are made of.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cave_shape: Option<CaveShape>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cave_exit: Option<CaveExit>,
     /// One plant, grown in many places without an Obj each.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub foliage: Option<FoliageData>,
@@ -437,6 +443,8 @@ impl ObjData {
             seasons: None,
             foliage_interaction: None,
             track_maker: None,
+            cave_shape: None,
+            cave_exit: None,
             foliage: None,
             terrain: None,
             block_world: None,
@@ -1612,6 +1620,12 @@ fn capture_instance(
     if root.track_maker.is_some() && root.track_maker != prefab_root.track_maker {
         instance.track_maker = root.track_maker;
     }
+    if root.cave_shape.is_some() && root.cave_shape != prefab_root.cave_shape {
+        instance.cave_shape = root.cave_shape;
+    }
+    if root.cave_exit.is_some() && root.cave_exit != prefab_root.cave_exit {
+        instance.cave_exit = root.cave_exit;
+    }
     if root.rigidbody.is_some() && root.rigidbody != prefab_root.rigidbody {
         instance.rigidbody = root.rigidbody;
     }
@@ -1809,6 +1823,12 @@ pub(crate) fn differences(content: &Content, expected: &ObjData, actual: &ObjDat
     }
     if let Some(maker) = actual.track_maker.filter(|m| Some(*m) != expected.track_maker) {
         put("track_maker", whole(&maker, &voxear_render::TrackMaker::default())?);
+    }
+    if let Some(shape) = actual.cave_shape.filter(|s| Some(*s) != expected.cave_shape) {
+        put("cave_shape", whole(&shape, &CaveShape::default())?);
+    }
+    if let Some(exit) = actual.cave_exit.filter(|e| Some(*e) != expected.cave_exit) {
+        put("cave_exit", whole(&exit, &CaveExit::default())?);
     }
     if let Some(body) = actual.rigidbody.filter(|b| Some(*b) != expected.rigidbody) {
         put("rigidbody", whole(&body, &crate::physics::Rigidbody::default())?);
@@ -2069,6 +2089,8 @@ pub(crate) fn capture_obj(world: &World, content: &Content, entity: Entity, ids:
     obj.seasons = world.get::<Seasons>(entity).copied();
     obj.foliage_interaction = world.get::<FoliageInteraction>(entity).copied();
     obj.track_maker = world.get::<voxear_render::TrackMaker>(entity).copied();
+    obj.cave_shape = world.get::<CaveShape>(entity).copied();
+    obj.cave_exit = world.get::<CaveExit>(entity).copied();
     obj.model = world.get::<ModelSource>(entity).map(|source| {
         let lod_bias = world.get::<voxear_render::ModelRenderer>(entity).map_or(source.0.lod_bias, |drawn| drawn.lod_bias);
         ModelData { lod_bias, ..source.0.clone() }

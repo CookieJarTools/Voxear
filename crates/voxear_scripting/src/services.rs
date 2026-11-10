@@ -237,6 +237,17 @@ pub trait ScriptServices {
         0
     }
 
+    /// The cave rooms of the world of blocks on `obj` (the first with any,
+    /// for 0), for `Caves` in Voxear.Core, as JSON: the world's Obj, its
+    /// network's layout, and rooms as they lie in the level. `what` picks
+    /// which rooms, by `at`: 0 for a level's own, in order; 1 for those
+    /// within `at[3]` metres of the place `at`; 2 for the one that place is
+    /// inside; 3 for the one of the region whose three numbers `at` holds;
+    /// 4 for none, the network alone.
+    fn caves_json(&mut self, _world: &World, obj: u64, _what: i32, _at: [f32; 4]) -> Result<String> {
+        anyhow::bail!("caves are read only in a running game, not here (Obj {obj})")
+    }
+
     /// The GUID of the block numbered `block` in the world of blocks on
     /// `entity`: none for air, or a kind the world keeps itself.
     fn block_guid(&mut self, _world: &World, _entity: Entity, _block: u16) -> Option<String> {
@@ -569,6 +580,28 @@ pub(crate) unsafe extern "C" fn block_info(reference: *const u8, len: i32, buffe
     let reference = unsafe { crate::interop::utf8(reference, len) };
     // No block by that name is an answer, not an error: `Block.Load` says so itself.
     let said = with_services(|services| services.block_json(&reference).ok());
+    let Some(Some(json)) = said else { return -1 };
+    if !buffer.is_null() && json.len() <= capacity.max(0) as usize {
+        unsafe { std::ptr::copy_nonoverlapping(json.as_ptr(), buffer, json.len()) };
+    }
+    json.len() as i32
+}
+
+/// The cave rooms of a world of blocks as JSON for `Caves` in Voxear.Core
+/// (see [`ScriptServices::caves_json`]), written when it fits: its length,
+/// or -1 where there are none.
+pub(crate) unsafe extern "C" fn caves_info(
+    obj: u64,
+    what: i32,
+    at: *const [f32; 4],
+    buffer: *mut u8,
+    capacity: i32,
+) -> i32 {
+    let at = if at.is_null() { [0.0; 4] } else { unsafe { *at } };
+    // A level with no caves is an answer, not an error: `Caves.Rooms` is empty there.
+    let said = crate::interop::with_world(|world| {
+        with_services(|services| services.caves_json(world, obj, what, at).ok())
+    });
     let Some(Some(json)) = said else { return -1 };
     if !buffer.is_null() && json.len() <= capacity.max(0) as usize {
         unsafe { std::ptr::copy_nonoverlapping(json.as_ptr(), buffer, json.len()) };

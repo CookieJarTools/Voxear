@@ -99,13 +99,13 @@ Water flows. Each block of water you place is a **source**: it stays full and ne
 
 Water flows five blocks a second, the same on every machine, both in play and in the editor as you build; while a game is paused, it stands still. It starts wherever something changes, so a generated sea stays as it was made until you dig into it or build beside it. It stays within the chunks its world reaches: at the world's edge it stops as if at a wall. Saving keeps the water where it has run to.
 
-On a planet, down is towards its middle. Water falls towards the middle and runs out across the planet's surface, whichever side it is on.
+On a planet, down is towards its middle. Water falls towards the middle and runs out across the planet's surface, whichever side it is on. Things float in it on any side too, pushed out from the middle as strongly as the planet pulls them in.
 
 For a sea, pick a kind of water as the **Sea block** of generated ground: the air below the generator's sea level is filled with it. A planet's sea lies its **Radius** from its middle.
 
 In a [[Voxel Terrain]], water stays cubes: its top is flat at its blocks' tops, with the smooth ground running on under it. Its sides show wherever it meets anything but water, so a shore where the ground dips below the water's edge still shows the water there. It flows there as it does among cubes.
 
-Not done yet: with the camera in water blocks, the view is not fogged by the water round it, as it is under the sea and in Pools. On a planet, Buoyancy floats things only on its top, where the planet's up is the world's.
+Not done yet: with the camera in water blocks, the view is not fogged by the water round it, as it is under the sea and in Pools. A script asking **Water** about a point finds a planet's water only on its top, where the planet's up is the world's.
 
 ## Building
 

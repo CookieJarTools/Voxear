@@ -1687,8 +1687,11 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     runs five a second in `Game::tick`, editing and playing, at most four a frame. Tests: levels, reach, falling off
     an edge, drying, a Voxel Terrain planet's water running round it, a step a block from the blocks as they were,
     quads' shapes, the engine's steps the same however frames fall, the GPU drawing water lower the further it runs,
-    the editor's water running out and undone with it. Not done: the view fogged from in water blocks; floating on
-    a planet's sides (Buoyancy's up stays the world's).
+    the editor's water running out and undone with it. Buoyancy pushes against the pull where a body is, as strongly
+    as it pulls (towards a planet's middle near one, as physics pulls), reading how deep it is along the water's own
+    up (`BlockWorld::water_depth`), so things float on a planet's sides; tested with a ball floating out from a
+    planet's middle and one sinking to its stone. Not done: the view fogged from in water blocks; scripts' `Water`
+    finding a planet's water off its top.
 - **Smooth voxel terrain, flat and planets**, in parts: smooth ground you can see, stand on, generate and build on;
   planets with their own gravity; a floating origin.
   - ~~**Voxel Terrain:**~~ done: a Block World drawn smooth (`BlockFile::smooth`, `BlockWorld::smooth`). Each chunk

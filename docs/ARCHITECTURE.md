@@ -2899,7 +2899,8 @@ shows its faces where it meets water as where it meets air, and water's own face
 ground's quads in a chunk's mesh and are no part of its triangles, so physics and the GI's rays pass through it. They
 are drawn with the Pools (`water::record`): first the farthest face turned from the camera at each pixel, which is
 where the view leaves the water, then the faces turned towards it shaded as still water over a copy of the picture.
-Buoyancy reads the top of the water in a point's column (`BlockWorld::water_over`). Water flows (`blocks::flow`) from
+Buoyancy pushes against the pull where a body is, as strongly as it pulls, reading how deep it is along the water's
+own up (`BlockWorld::water_depth`), so things float round a planet. Water flows (`blocks::flow`) from
 sources, down (towards a planet's middle) and then out over ground, a level lower each block, its level and way up kept
 in its fill: a step looks only at the blocks near the last step's changes, each from the blocks as they were, so every
 machine flows alike, five steps a second in the game's tick. Far out, the world's middle follows the camera (see the

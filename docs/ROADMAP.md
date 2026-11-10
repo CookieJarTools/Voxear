@@ -1700,6 +1700,28 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     while playing; terrains' and block worlds' looks count as using their materials, so their colours survive play
     (they were freed as a level loaded). Tests: a lake running into a hole, a gap filling, smooth water at its top and
     at a sea's level, a block world's colours kept loaded.
+  - ~~**Blocks, items and recipes:**~~ done: a block is an asset of its own (`.block`, `blocks::block::BlockDef`): its
+    look and liquid, which the engine reads, and its rules, hardness, the kind of tool, a tier, drops, sounds and a
+    data asset of the game's, which scripts apply. A world's `[[blocks]]` list names its blocks by reference, keeps a
+    colour alone as a kind of its own (as `.vox` models bring theirs), and leaves a place taken out empty
+    (`BlockKind::block`, `removed`), so a block's number never changes and older worlds load untouched; ids are 16 bits,
+    and a world draws 256 looks at most, refused past that rather than aliased. The engine keeps the file as written
+    and draws from it resolved (`blocks::resolved`, kept on `BlockWorldAsset::drawn` with the blocks' version it was
+    made at); a block saved is taken up by every world listing it in the next tick (`blocks::refresh`), remeshed only
+    where its faces differ. A script may place a block a world does not list: the world numbers it in the game alone
+    (`BlockWorldAsset::grown`), and the changes kept for saves and joining players say which block each such number
+    is, after bytes that read as they always did. Rays pass through liquids unless asked, a block placed takes a
+    liquid's place, and an item that leaves another holds a liquid (a bucket). C#: `Block`, `BlockHit.Definition`,
+    `Blocks.Mine`, `Place` and `Scoop`, `BlockMiner`, events and `BlockRules`; `Item`, `ToolKind`, `Station`,
+    `Recipe` and `Recipes.Match` as Definitions of the engine's own, described for the editor with a game's; every
+    recipe ships (`[ContentRoot]` with no pattern on a Definition); a save keeps a data asset as which file it is; an
+    `Image` shows a project picture in game UI. Editor: a Block's Inspector (Look, Breaking, Drops, Sounds, Data, Make
+    Item), a Block World's list with Add Block, New Block, Add Color and Make Block Assets, brushes building through
+    water. The inventory, its hotbar and screen, a crafting grid, a miner and a sample are a package of their own,
+    `voxear-inventory`. Tests: an older world written back byte for byte, a place left empty, looks from blocks and a
+    block saved taken up, shipping, captures old and new and renumbered, scripts mining by rules, placing unlisted
+    blocks and reaching through water, recipes moved, mirrored and at a station, the Inspectors, and the package
+    played in a game.
 - **Smooth voxel terrain, flat and planets**, in parts: smooth ground you can see, stand on, generate and build on;
   planets with their own gravity; a floating origin.
   - ~~**Voxel Terrain:**~~ done: a Block World drawn smooth (`BlockFile::smooth`, `BlockWorld::smooth`). Each chunk

@@ -2,7 +2,7 @@
 order: 18
 ---
 
-A **Voxel Terrain** is ground you can dig into and build up anywhere, with caves, overhangs and arches, its surface running smoothly rather than in steps. It is a [[Block Worlds|Block World]] drawn smooth: the same kinds of block, the same generated ground and the same brushes and scripts, but each block also keeps how full it is where the ground's surface passes, and the surface runs between the blocks' middles as full as each one is.
+A **Voxel Terrain** is ground you can dig into and build up anywhere, with caves, overhangs and arches, its surface running smoothly rather than in steps. It is a [[Block Worlds|Block World]] drawn smooth: the same [[Blocks|blocks]], the same generated ground and the same brushes and scripts, but each block also keeps how full it is where the ground's surface passes, and the surface runs between the blocks' middles as full as each one is.
 
 ## Making a Voxel Terrain
 
@@ -30,7 +30,7 @@ With **Ground** set to **Planet**, its ground lies all round a middle at its Obj
 | Radius | How far its sea is from its middle, in metres |
 | Overhangs, Caves | As for generated ground |
 
-Its ground is as high over its sea as its generator's heights are over the generator's sea level, read all round it in three dimensions, so it has no seams and its poles are no different from anywhere else, but colder: up to 30 °C colder than round its middle, so snow covers them where a kind of block covers by temperature. Without a generator it is a ball, level with its sea. Its caves reach 64 m under its surface; below them it is its base block. Gullies a generator wears into flat ground are left out on a planet.
+Its ground is as high over its sea as its generator's heights are over the generator's sea level, read all round it in three dimensions, so it has no seams and its poles are no different from anywhere else, but colder: up to 30 °C colder than round its middle, so snow covers them where a block covers by temperature. Without a generator it is a ball, level with its sea. Its caves reach 64 m under its surface; below them it is its base block. Gullies a generator wears into flat ground are left out on a planet.
 
 A planet a few hundred metres round shows only a small piece of its generator's world, often a single kind of ground. Make the generator's **Scale** smaller to fit its coasts and ranges round it.
 
@@ -53,7 +53,7 @@ A [[First-Person View]] on the character turns about the same up, so its Obj and
 
 ## How it is drawn
 
-Each kind of block is drawn with its **Top** where the ground faces up, its **Bottom** where it faces down, and its **Material** where it is steep, blended as the ground turns: wholly its top on slopes up to about 25 degrees, wholly its sides past about 50. A kind of grass with a grass top and a rock material covers gentle hills in grass and turns to rock on the cliffs, with no painting.
+Each block is drawn with its **Top** where the ground faces up, its **Bottom** where it faces down, and its **Material** where it is steep, blended as the ground turns: wholly its top on slopes up to about 25 degrees, wholly its sides past about 50. A grass block with a grass top and a rock material covers gentle hills in grass and turns to rock on the cliffs, with no painting.
 
 The surface takes the way the ground faces from the blocks round it, so light runs smoothly over hills. It casts the sun's shadows, the GI's rays see it, and physics stands things on it and rays meet it where it is drawn. Chunks meet without gaps.
 
@@ -65,9 +65,9 @@ The brushes under **Build** work as balls whose surface lies between blocks:
 
 | Brush | What it does |
 | --- | --- |
-| Place | Adds ground of the picked kind, a ball **Size** blocks across, against the face under the pointer |
+| Place | Adds ground of the picked block, a ball **Size** blocks across, against the face under the pointer |
 | Break | Takes the ground in the ball away |
-| Paint | Turns the ground in the ball to the picked kind, as full as it was |
+| Paint | Turns the ground in the ball to the picked block, as full as it was |
 
 Drag to go on, Shift to break while placing. Each stroke is one step to undo. A **Model** brush builds its model block by block, each block wholly ground.
 

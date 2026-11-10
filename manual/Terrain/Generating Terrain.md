@@ -4,6 +4,8 @@ order: 3
 
 A **world generator** makes ground from a seed: coasts, plains, hills and mountain ranges, as large as you like. Rather than noise that is equally bumpy everywhere, it reads a few broad fields over its world and shapes the ground from them, so plains lie beside ranges and valleys run between them. A terrain lays its ground with a **Generate** layer, and you can stamp, sculpt and dig over it as over any other.
 
+A generator is a graph of nodes underneath. This page is the short way: a preset and a few rows. To build ground of your own from nodes, see [[Generator Graphs]].
+
 ## Generating a terrain
 
 1. Pick **Layers** along the top of the Terrain in the Inspector.
@@ -21,17 +23,21 @@ The same generator makes the same ground for every terrain that uses it, so terr
 
 ## World generators
 
-**New ▸ World Generator** in the Project panel makes one. The first settings are all most worlds need:
+**New ▸ World Generator** in the Project panel makes one. Select it there and the Inspector shows its own rows, which are all most worlds need:
 
 | Setting | What it does |
 | --- | --- |
-| Preset | The kind of ground to start from (see below). Picking one reshapes the generator, keeping its seed and scale |
+| Preset | The kind of ground to start from (see below). Picking one reshapes the generator's landmass and climate, keeping its seed and scale |
 | Seed | Which world of that kind it makes. Each number makes other ground |
 | Scale | How large everything is: 2 makes every coast, range and valley twice as large |
 | Sea level | The height of the sea, in metres |
 | Height | How high the highest mountains rise above the sea, in metres |
 | Temperature | How warm it is by the sea on average, in °C |
 | Humidity | How wet it is on average, from 0 for dry to 1 for wet |
+
+**Open Graph**, under the rows, shows the generator's graph in the Generator panel; so does a double click on the generator in the Project panel.
+
+Seed, Scale and Sea level are the generator's own. Height, Temperature and Humidity are values of nodes in its graph that the graph **exposes** as rows here, and a graph can expose any others (see [[Generator Graphs#Exposing a value|Exposing a value]]). Preset shows while the graph is one landmass and its climate, as a new generator's is.
 
 | Preset | Its ground |
 | --- | --- |
@@ -41,19 +47,19 @@ The same generator makes the same ground for every terrain that uses it, so terr
 | Archipelago | Islands scattered over a sea |
 | Canyons | High plateaus cut by steep-sided canyons |
 
-Change anything under **Advanced** and the preset shows **Custom**.
-
 Each change is saved as you make it, and every terrain in the open level generated from it is made again at once, so you see the ground change as you type. A generator edited in a text editor is read again when you come back to Voxear.
 
-## How a generator shapes ground
+## How a landmass shapes ground
 
-A generator reads three fields over its world, each from one end of its range to the other:
+The rest of a preset's settings are on the **Landmass** node of the generator's graph. Open the graph and pick the node, and the Inspector shows them under **Advanced**. Change any of them and the preset shows **Custom**.
+
+A landmass reads three fields over its world, each from one end of its range to the other:
 
 - **Continents**: from deep sea, through the coast, to far inland.
 - **Ruggedness**: from smooth country to rugged.
 - **Ridges**: from the valleys between ranges to their crests, which run in long lines that wind and branch.
 
-Four curves turn those into ground, each edited in its row under **Advanced** by dragging its keys. A press where there is no key adds one, and a key dragged off the graph is taken out.
+Four curves turn those into ground, each edited in its row by dragging its keys. A press where there is no key adds one, and a key dragged off the graph is taken out.
 
 | Curve | Across | What it gives |
 | --- | --- | --- |
@@ -75,10 +81,6 @@ The ground stands at the **Coast** curve's height and rises or falls from there 
 | Gully spacing | How far apart the largest gullies are, in metres |
 | Gully octaves | In how many sizes gullies are cut, each half as far apart as the last |
 | Bumps | How high the small bumps over all the ground are, in metres |
-| Climate size | How wide its warmer and colder, wetter and drier places are, in metres. Smaller gives more biomes on one terrain |
-| Temperature range | How far its temperature strays from its average, in °C |
-| Humidity range | How far its humidity strays from its average |
-| Cooling | How many °C colder it is for every 1000 m the ground rises above the sea |
 
 ## Gullies
 
@@ -89,6 +91,15 @@ Gullies make mountains look worn by weather rather than stretched noise, and can
 ## Climate
 
 A generator's world has a climate: how warm and wet each place is, which its terrains' surfaces can cover by (see [[Surfaces#Biomes|Biomes]]), so deserts, forests and snowfields fall where the world puts them and follow the ground as it changes. Each preset has a climate to suit it: Canyons hot and dry, Archipelago warm and wet, Alpine cool.
+
+The climate is the **Climate** node of the generator's graph. Its Temperature and Humidity are rows of the generator; pick the node in the graph for the rest, under **Advanced**:
+
+| Setting | What it does |
+| --- | --- |
+| Climate size | How wide its warmer and colder, wetter and drier places are, in metres. Smaller gives more biomes on one terrain |
+| Temperature range | How far its temperature strays from its average, in °C |
+| Humidity range | How far its humidity strays from its average |
+| Cooling | How many °C colder it is for every 1000 m the ground rises above the sea |
 
 ## The same ground everywhere
 

@@ -86,10 +86,19 @@ With **Build** showing, the brush works in the Scene view over the selected worl
 
 | Setting | What it does |
 | --- | --- |
-| Brush | **Place** puts the picked kind against the face under the pointer; **Break** takes the block there away; **Paint** turns it into the picked kind |
+| Brush | **Place** puts the picked kind against the face under the pointer; **Break** takes the block there away; **Paint** turns it into the picked kind; **Model** builds a model of blocks (see below) |
 | Size | How many blocks across it reaches: 1 for a block at a time, more for a ball of them |
+| Model | With the Model brush, the `.vox` model it builds |
 
 Click to build; drag to go on block by block. Hold **Shift** to break while placing, and to place while breaking. Each stroke is one step to undo.
+
+## Models of small blocks
+
+A **Block Model** is a `.vox` file, as voxel sculpting tools save them: a model of coloured blocks, or a scene of several placed together. Put one in the project like any other asset. With the brush on **Model**, its **Model** row picks one, its outline shows where it would stand, and a click builds it standing on the face under the pointer, its middle over the block clicked. Up in the file is up in the world, and each model of a scene stands where the scene puts it.
+
+Each of its colours builds with a kind of block of that colour: one the world has already, of that colour and with no material, or a new one added at the end of the list. A world has room for 255 kinds; once the list is full, a colour builds with the nearest one there is. A click builds the model once, and is one step to undo, the kinds it added with it.
+
+For a world of small coloured blocks to sculpt with, make **Block size** small: at 0.1 m, a model 32 blocks high stands about three metres tall.
 
 ## How blocks are drawn
 

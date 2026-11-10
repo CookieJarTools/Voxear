@@ -2850,7 +2850,8 @@ world was made as (`blocks::edits`), in a `.blocks` file for the editor's and in
 Generated block ground (`blocks::generate`) takes a world generator's heights a column at a time, pushed in and out
 by 3D noise and hollowed by caves, its top covered by kinds of block by climate and height. Generated ground without
 end streams chunk columns round the camera (`blocks::stream`), the world's own near, and beyond them rings of
-coarser chunks, each twice the last's block size, kept by level in the renderer's pool. To come: face-connectivity
+coarser chunks, each twice the last's block size, kept by level in the renderer's pool. Models of small coloured
+blocks come from `.vox` files (`blocks::vox`), each colour built as a kind of block. To come: face-connectivity
 cave culling. Smooth voxels: density and material
 a voxel, marching cubes with Transvoxel between levels on an octree; planets add their own gravity and a floating origin. Digging into a
 heightmap terrain turns its columns into smooth-voxel chunks that start from its heights (`voxear_terrain::dig`,

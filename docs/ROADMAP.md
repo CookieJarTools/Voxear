@@ -1646,6 +1646,13 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     Endless, View distance, Far distance. Tests: windows, columns coming with their changes and going keeping
     them, coarse columns never over made fine ones, the engine streaming round a camera and saving a far change
     with a near one, the GPU drawing a coarse chunk twice as large, the editor making one round the Scene view.
+  - ~~**Small coloured blocks:**~~ done: `.vox` models (`AssetKind::VoxModel`, Block Model; `blocks::vox`: models,
+    the palette, and a scene's transforms and groups placing several, z up there and y up here) built by the
+    editor's Model brush standing on the face clicked, each colour a kind of its colour, those the world has kept
+    and the nearest once its list is full, a click a step to undo with its kinds. Moving a kind of block now
+    renumbers every block and kept change even where the ground stays the same. Tests: reading a scene of two
+    models, placing into a world's kinds, the editor building one and undoing it, and moving a kind the ground
+    has none of.
   - face-connectivity cave culling.
 - **Smooth voxel terrain, flat and planets:** marching cubes with Transvoxel on an octree, caves and overhangs from
   3D density, planets with their own gravity, and a floating origin.

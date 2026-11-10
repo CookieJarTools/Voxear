@@ -735,6 +735,30 @@ fn a_generate_layer_lays_a_world_generators_ground_and_follows_it_as_it_changes(
     let laid = height(&editor, field, 100.0, 100.0);
     assert!((laid - made).abs() < 1e-2, "made again: {laid} not {made}");
     shot(&mut renderer, "terrain-generate-alpine.png");
+
+    // A generator with a graph of its own shows its seed, scale and sea level, and a row for each value it exposes.
+    use voxear_terrain::generate::{Graph, NodeKind, nodes};
+    let mut graph = Graph::default();
+    let noise = graph.add(NodeKind::Noise(nodes::Noise { size: 300.0, high: 40.0, ..Default::default() }), [0.0, 0.0]);
+    let base = graph.add(NodeKind::Constant(nodes::Constant { value: 5.0 }), [0.0, 150.0]);
+    let sum = graph.add(NodeKind::Math(nodes::Math::default()), [200.0, 0.0]);
+    let output = graph.add(NodeKind::Output(nodes::Output::default()), [400.0, 0.0]);
+    assert!(graph.connect(noise, 0, sum, 0) && graph.connect(base, 0, sum, 1) && graph.connect(sum, 0, output, 0));
+    assert!(graph.expose(base, 0, "Base"));
+    std::fs::write(dir.path().join(path), WorldGen::new(3, 1.0, 0.0, graph).to_text()).unwrap();
+    assert!(editor.inspect_path(path));
+    frame(&mut editor, &mut renderer);
+    for (label, rows) in [("Seed", 1), ("Scale", 1), ("Sea level", 1), ("Base", 1), ("Preset", 0), ("Height", 0)] {
+        assert_eq!(prop_rows(&editor.ui, label).len(), rows, "the graph's {label}");
+    }
+    // Its exposed row typed in: saved into the node it shows, and the terrain made again from the graph.
+    type_number(&mut editor, &mut renderer, "Base", "30");
+    frame(&mut editor, &mut renderer);
+    let hills = WorldGen::parse(&std::fs::read_to_string(dir.path().join(path)).unwrap()).unwrap();
+    assert_eq!(hills.graph().exposed_value(0).and_then(|value| value.number()), Some(30.0));
+    assert_eq!((hills.seed(), hills.preset()), (3, None));
+    let (made, laid) = (hills.height_at(100.0, 100.0), height(&editor, field, 100.0, 100.0));
+    assert!((30.0..=70.0).contains(&made) && (laid - made).abs() < 1e-2, "the graph's ground: {laid} not {made}");
 }
 
 #[test]
@@ -1273,9 +1297,10 @@ fn a_block_worlds_ground_is_generated_by_a_picked_generator_and_covered_by_a_kin
     };
     let dir = hello_with_a_field();
     // A cold world of hills, snow on its tops.
-    let mut hills = Preset::RollingHills.world();
+    let mut hills = Preset::RollingHills.landmass();
     hills.climate.temperature = -4.0;
     hills.climate.temperature_range = 1.0;
+    let hills = WorldGen::from(hills);
     std::fs::create_dir_all(dir.path().join("Worlds")).unwrap();
     std::fs::write(dir.path().join("Worlds/Cold.worldgen"), hills.to_text()).unwrap();
     let project = Project::open(dir.path()).unwrap();

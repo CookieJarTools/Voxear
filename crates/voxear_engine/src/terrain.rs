@@ -76,7 +76,8 @@ pub fn save(content: &mut Content, project: &Path) -> Result<Vec<String>> {
         let painted = |tx, tz| voxear_terrain::composite::hole_bits(&loaded.file, &loaded.rasters, tx, tz);
         let undug = loaded.dug.as_deref().map(|dug| voxear_terrain::dig::undug(&loaded.heights, dug, painted));
         let ground = undug.as_ref().unwrap_or(&loaded.heights);
-        let bytes = voxear_terrain::file::write_ground(ground, loaded.file.shape_hash(), weights, grass);
+        let made_from = content.terrain_shape(&loaded.file);
+        let bytes = voxear_terrain::file::write_ground(ground, made_from, weights, grass);
         std::fs::write(project.join(&heights), bytes).with_context(|| format!("saving {heights}"))?;
         let layers = project.join(voxear_terrain::raster::layers_file(&path));
         if loaded.rasters.tiles().next().is_some() {

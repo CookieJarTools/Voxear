@@ -22,11 +22,17 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     BlockMap,
-    chunk::{AIR, BlockId, CHUNK, Chunk, fill_of},
+    chunk::{AIR, BlockId, CHUNK},
     file::BlockFile,
-    flow::surface_fill,
 };
-use crate::{generate::WorldGen, noise::gradient3};
+use crate::generate::WorldGen;
+
+mod cells;
+mod columns;
+mod planet;
+
+pub use columns::column_chunks;
+pub use planet::planet_ground;
 
 /// How a world of blocks' ground is generated: by the world generator
 /// `world` names (a reference to a `.worldgen`), from `position` metres in
@@ -91,10 +97,6 @@ impl Default for BlockPlanet {
     }
 }
 
-/// How deep under a planet's surface its caves reach, in metres: below
-/// them it is solid, so its middle need not be read block by block.
-const PLANET_CAVES: f32 = 64.0;
-
 /// How far round the camera a world of blocks without end is made: its own
 /// chunks out to `distance` metres, and coarser ones drawn out to `far`.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -108,26 +110,6 @@ impl Default for BlockEndless {
     fn default() -> Self {
         Self { distance: 128.0, far: 1024.0 }
     }
-}
-
-/// How far apart the bumps of the ground's push in and out are, in metres.
-const OVERHANG_SIZE: f32 = 14.0;
-
-/// How wide caves' tunnels wind, and how far apart their chambers are, in
-/// metres.
-const TUNNEL_SIZE: f32 = 22.0;
-const CHAMBER_SIZE: f32 = 40.0;
-
-/// How many blocks under the surface caves keep clear of, so they open onto
-/// it only here and there.
-const CAVE_ROOF: f32 = 3.0;
-
-/// One column of the ground: its surface's height in blocks, and the blocks
-/// its top layers are, deepest last, as `(block, layers)`.
-struct Column {
-    surface: f32,
-    layers: [(BlockId, f32); 2],
-    bottom: BlockId,
 }
 
 /// The ground `generate` makes for `file` with generator `world`: its
@@ -148,363 +130,24 @@ pub fn generate(file: &BlockFile, generate: &BlockGenerate, world: &WorldGen) ->
     map
 }
 
-/// The chunks of chunk column `[cx, cz]` of the ground `generate` makes for
-/// `file` with generator `world`, at level `level` of coarseness: each level
-/// blocks twice as large as the one before, counted in its own blocks and
-/// chunks, for far views; its columns within `limit` blocks along x and z
-/// from the world's corner where it has one. Coarser levels leave out caves.
-pub fn column_chunks(
-    file: &BlockFile,
-    generate: &BlockGenerate,
-    world: &WorldGen,
-    level: u32,
-    [cx, cz]: [i32; 2],
-    limit: Option<[u32; 2]>,
-) -> Vec<([i32; 3], Chunk)> {
-    let scale = (1u32 << level.min(16)) as f32;
-    let size = file.block_size.max(0.01) * scale;
-    let ground = &file.ground;
-    let known = |block: BlockId| if usize::from(block) <= file.blocks.len() { block } else { AIR };
-    let seed = world.seed;
-    // Each column's surface and layers, worked out once.
-    let column = |x: i32, z: i32| -> Column {
-        let (px, pz) = (generate.position[0] + (x as f32 + 0.5) * size, generate.position[1] + (z as f32 + 0.5) * size);
-        let height = world.height_at(px, pz);
-        let climate = world.climate(px, pz, height);
-        let cover = file.blocks.iter().enumerate().rev().find_map(|(at, kind)| {
-            kind.cover.filter(|c| c.covers(height, climate)).map(|c| ((at + 1) as BlockId, c.depth))
-        });
-        // Layers as many metres deep at every level, at least a block.
-        let top = match cover {
-            Some((block, depth)) => (block, (depth.max(1) as f32 / scale).max(1.0)),
-            None => (known(ground.top), 1.0),
-        };
-        Column {
-            surface: height / size,
-            layers: [top, (known(ground.under), ground.under_depth as f32 / scale)],
-            bottom: known(ground.bottom),
-        }
-    };
-    let side = CHUNK as i32;
-    let reach = |v: i32, limit: Option<u32>| {
-        let end = (v + 1) * side;
-        v * side..limit.map_or(end, |limit| end.min(limit.div_ceil(scale as u32) as i32))
-    };
-    let mut columns = Vec::with_capacity((side * side) as usize);
-    for z in reach(cz, limit.map(|l| l[1])) {
-        for x in reach(cx, limit.map(|l| l[0])) {
-            columns.push(((x, z), column(x, z)));
-        }
-    }
-    if columns.is_empty() {
-        return Vec::new();
-    }
-    let push = generate.overhangs.max(0.0) / size;
-    let coarse = BlockGenerate { caves: if level == 0 { generate.caves } else { 0.0 }, ..generate.clone() };
-    // The sea's top, in this level's blocks, where it has a sea.
-    let sea = known(generate.sea);
-    let sea_level = if sea == AIR { f32::MIN } else { world.sea_level / size };
-    let highest = columns.iter().map(|(_, c)| c.surface).fold(f32::MIN, f32::max).max(sea_level) + push + 1.0;
-    let low = generate.bottom.div_euclid(scale as i32);
-    let mut chunks: Vec<([i32; 3], Chunk)> = Vec::new();
-    let (low_key, high_key) = (low.div_euclid(side), (highest.ceil() as i32).div_euclid(side));
-    for cy in low_key..=high_key {
-        let mut chunk = Chunk::filled(AIR);
-        let mut any = false;
-        for ((x, z), column) in &columns {
-            for ly in 0..side {
-                let y = cy * side + ly;
-                if y < low {
-                    continue;
-                }
-                let middle = [*x as f32 + 0.5, y as f32 + 0.5, *z as f32 + 0.5];
-                let depth = column.surface - middle[1];
-                let place = middle.map(|v| v * size);
-                let (block, depth, open) = cell_at(column, depth, place, size, &coarse, push, seed, f32::INFINITY);
-                let block = if open && middle[1] < sea_level { sea } else { block };
-                let (lx, lz) = ((x - cx * side) as u32, (z - cz * side) as u32);
-                // Drawn smooth, the air a block from the surface keeps how far it is from it too, and the sea's top
-                // blocks where its surface lies.
-                let is_sea = sea != AIR && block == sea;
-                if file.smooth && is_sea {
-                    chunk.set_cell(lx, ly as u32, lz, sea, surface_fill(sea_level - middle[1]));
-                    any = true;
-                } else if file.smooth && (block != AIR || depth > -1.0) {
-                    chunk.set_cell(lx, ly as u32, lz, block, fill_of(depth, block != AIR));
-                    any = true;
-                } else if block != AIR {
-                    chunk.set(lx, ly as u32, lz, block);
-                    any = true;
-                }
-            }
-        }
-        if any {
-            chunks.push(([cx, cy, cz], chunk));
-        }
-    }
-    chunks
-}
-
-/// The block `depth` blocks under its column's surface at `place`, in
-/// metres from the world's corner, about how far into the ground its
-/// middle is, in blocks (out of it where negative), and whether it is the
-/// open air over the ground rather than a cave: ground below the surface
-/// pushed in and out, but in caves no deeper than `caves_until` blocks, of
-/// the column's layer that deep.
-#[allow(clippy::too_many_arguments)]
-fn cell_at(
-    column: &Column,
-    depth: f32,
-    place: [f32; 3],
-    size: f32,
-    generate: &BlockGenerate,
-    push: f32,
-    seed: u32,
-    caves_until: f32,
-) -> (BlockId, f32, bool) {
-    let mut depth = depth;
-    if push > 0.0 && depth.abs() < push + 1.0 {
-        let s = OVERHANG_SIZE;
-        depth += gradient3(place[0] / s, place[1] / s, place[2] / s, seed.wrapping_add(41)) * push;
-    }
-    if depth <= 0.0 {
-        return (AIR, depth, true);
-    }
-    // Caves: tunnels where two noises are both near nothing, chambers where a third is high. How far out of one
-    // each is, in blocks, reads its noise's distance from where the cave starts as about half its size a unit.
-    let mut inside = depth;
-    if generate.caves > 0.0 && depth > CAVE_ROOF - 1.0 && depth < caves_until {
-        let caves = generate.caves.clamp(0.0, 1.0);
-        let t = TUNNEL_SIZE;
-        let tunnel = gradient3(place[0] / t, place[1] / t, place[2] / t, seed.wrapping_add(53)).abs()
-            + gradient3(place[0] / t, place[1] / t, place[2] / t, seed.wrapping_add(67)).abs();
-        let c = CHAMBER_SIZE;
-        let chamber = gradient3(place[0] / c, place[1] / (c * 0.6), place[2] / c, seed.wrapping_add(79));
-        let out_of_tunnel = (tunnel - 0.14 * caves.sqrt()) * t * 0.5 / size;
-        let out_of_chamber = (0.62 - 0.22 * caves - chamber) * c * 0.5 / size;
-        // Within the roof under the surface, the ground stays whole.
-        inside = inside.min((CAVE_ROOF - depth).max(out_of_tunnel.min(out_of_chamber)));
-    }
-    if inside <= 0.0 {
-        return (AIR, inside, false);
-    }
-    let [(top, top_depth), (under, under_depth)] = column.layers;
-    let block = if depth <= top_depth {
-        top
-    } else if depth <= top_depth + under_depth {
-        under
-    } else {
-        column.bottom
-    };
-    (block, inside, false)
-}
-
-/// One point of a planet's ground all round: how far out its surface is
-/// from the middle, its height in its generator's world, and its climate.
-#[derive(Clone, Copy, Debug, Default)]
-struct RoundPoint {
-    surface: f32,
-    height: f32,
-    warmth: f32,
-    humidity: f32,
-}
-
-/// A planet's ground all round, read once: on each face of a cube round its
-/// middle, a grid of points evenly apart by angle, about a block apart at its
-/// sea, and how low and high its surface goes.
-struct Round {
-    steps: usize,
-    points: Vec<RoundPoint>,
-    lowest: f32,
-    highest: f32,
-}
-
-/// The way out from a planet's middle through face `face` of a cube round it
-/// (+x, -x, +y, -y, +z, -z) at angles `a` and `b` across it, each from -1 to
-/// 1 for a quarter turn.
-fn way_out(face: usize, a: f32, b: f32) -> [f32; 3] {
-    let (axis, sign) = (face / 2, if face % 2 == 0 { 1.0 } else { -1.0 });
-    let quarter = std::f32::consts::FRAC_PI_4;
-    let mut way = [0.0f32; 3];
-    way[axis] = sign;
-    way[(axis + 1) % 3] = (a * quarter).tan();
-    way[(axis + 2) % 3] = (b * quarter).tan();
-    let length = way.iter().map(|v| v * v).sum::<f32>().sqrt();
-    way.map(|v| v / length)
-}
-
-/// Which face of a cube `way` leaves through, and at which angles across it.
-fn face_of(way: [f32; 3]) -> (usize, f32, f32) {
-    let axis = (0..3).max_by(|&i, &j| way[i].abs().total_cmp(&way[j].abs())).unwrap_or(1);
-    let along = way[axis].abs().max(1e-9);
-    let quarter = std::f32::consts::FRAC_PI_4;
-    let angle = |v: f32| (v / along).atan() / quarter;
-    (axis * 2 + usize::from(way[axis] < 0.0), angle(way[(axis + 1) % 3]), angle(way[(axis + 2) % 3]))
-}
-
-impl Round {
-    /// A planet's ground with no generator to read: its sea all round, mild.
-    fn level(radius: f32) -> Self {
-        let point = RoundPoint { surface: radius, height: 0.0, warmth: 15.0, humidity: 0.5 };
-        Self { steps: 2, points: vec![point; 6 * 2 * 2], lowest: radius, highest: radius }
-    }
-
-    fn of(world: &WorldGen, radius: f32, size: f32) -> Self {
-        let steps = ((radius * std::f32::consts::FRAC_PI_2 / size).ceil() as usize + 1).clamp(8, 4096);
-        let rows: Vec<(usize, usize)> = (0..6).flat_map(|face| (0..steps).map(move |row| (face, row))).collect();
-        let angle = |i: usize| -1.0 + 2.0 * i as f32 / (steps - 1) as f32;
-        let made = crate::workers::each(&rows, |&(face, row)| {
-            (0..steps)
-                .map(|column| {
-                    let at = way_out(face, angle(column), angle(row)).map(|v| v * radius);
-                    let height = world.height_round(at);
-                    let (warmth, humidity) = world.climate_round(at, height);
-                    RoundPoint { surface: radius + height - world.sea_level, height, warmth, humidity }
-                })
-                .collect::<Vec<_>>()
-        });
-        let points: Vec<RoundPoint> = made.into_iter().flatten().collect();
-        let lowest = points.iter().map(|p| p.surface).fold(f32::MAX, f32::min);
-        let highest = points.iter().map(|p| p.surface).fold(f32::MIN, f32::max);
-        Self { steps, points, lowest, highest }
-    }
-
-    /// The ground the way `way` goes out, read between the points round it.
-    fn at(&self, way: [f32; 3]) -> RoundPoint {
-        let (face, a, b) = face_of(way);
-        let last = (self.steps - 1) as f32;
-        let (x, y) = (((a + 1.0) * 0.5 * last).clamp(0.0, last), ((b + 1.0) * 0.5 * last).clamp(0.0, last));
-        let (x0, y0) = ((x.floor() as usize).min(self.steps - 2), (y.floor() as usize).min(self.steps - 2));
-        let (tx, ty) = (x - x0 as f32, y - y0 as f32);
-        let point = |column: usize, row: usize| self.points[(face * self.steps + row) * self.steps + column];
-        let mix = |a: RoundPoint, b: RoundPoint, t: f32| RoundPoint {
-            surface: a.surface + (b.surface - a.surface) * t,
-            height: a.height + (b.height - a.height) * t,
-            warmth: a.warmth + (b.warmth - a.warmth) * t,
-            humidity: a.humidity + (b.humidity - a.humidity) * t,
-        };
-        let near = mix(point(x0, y0), point(x0 + 1, y0), tx);
-        let far = mix(point(x0, y0 + 1), point(x0 + 1, y0 + 1), tx);
-        mix(near, far, ty)
-    }
-}
-
-/// A planet's ground for `file`, all round a middle at the world's corner,
-/// as generator `world` shapes it, or level with its sea without one: every
-/// chunk its surface, overhangs and caves reach made on every core, and
-/// those wholly under its caves its base block alone.
-pub fn planet_ground(
-    file: &BlockFile,
-    generate: &BlockGenerate,
-    world: Option<&WorldGen>,
-    planet: BlockPlanet,
-) -> BlockMap {
-    let size = file.block_size.max(0.01);
-    let radius = planet.radius.max(size * 4.0);
-    let round = world.map_or_else(|| Round::level(radius), |world| Round::of(world, radius, size));
-    let seed = world.map_or(0, |world| world.seed);
-    let push = generate.overhangs.max(0.0);
-    let known = |block: BlockId| if usize::from(block) <= file.blocks.len() { block } else { AIR };
-    // Its sea, its radius out from its middle, where it has one.
-    let sea = known(generate.sea);
-    let sea_out = if sea == AIR { f32::MIN } else { radius };
-    let outer = (round.highest + push).max(sea_out) + 2.0 * size;
-    let caves = if generate.caves > 0.0 { PLANET_CAVES } else { 0.0 };
-    let solid = round.lowest - push - 2.0 * size - caves;
-    let side = CHUNK as f32 * size;
-    let reach = (outer / side).ceil() as i32;
-    let distances = |key: [i32; 3]| {
-        let low = key.map(|v| v as f32 * side);
-        let near: f32 = (0..3).map(|i| (low[i].max(0.0) + (-(low[i] + side)).max(0.0)).powi(2)).sum::<f32>();
-        let far: f32 = (0..3).map(|i| low[i].abs().max((low[i] + side).abs()).powi(2)).sum::<f32>();
-        (near.sqrt(), far.sqrt())
-    };
-    let keys: Vec<[i32; 3]> = (-reach..reach)
-        .flat_map(|y| (-reach..reach).flat_map(move |z| (-reach..reach).map(move |x| [x, y, z])))
-        .filter(|&key| distances(key).0 <= outer)
-        .collect();
-    let ground = &file.ground;
-    let bottom = known(ground.bottom);
-    let made = crate::workers::each(&keys, |&key| {
-        if distances(key).1 < solid {
-            return (bottom != AIR).then(|| Chunk::filled(bottom));
-        }
-        let mut chunk = Chunk::filled(AIR);
-        let mut any = false;
-        let base = key.map(|v| v * CHUNK as i32);
-        for ly in 0..CHUNK {
-            for lz in 0..CHUNK {
-                for lx in 0..CHUNK {
-                    let middle =
-                        [base[0] + lx as i32, base[1] + ly as i32, base[2] + lz as i32].map(|v| v as f32 + 0.5);
-                    let place = middle.map(|v| v * size);
-                    let out = place.iter().map(|v| v * v).sum::<f32>().sqrt();
-                    if out > outer {
-                        continue;
-                    }
-                    if out < solid {
-                        if bottom != AIR {
-                            chunk.set(lx, ly, lz, bottom);
-                            any = true;
-                        }
-                        continue;
-                    }
-                    let point = round.at(place.map(|v| v / out.max(1e-6)));
-                    let cover = file.blocks.iter().enumerate().rev().find_map(|(at, kind)| {
-                        let climate = (point.warmth, point.humidity);
-                        kind.cover.filter(|c| c.covers(point.height, climate)).map(|c| ((at + 1) as BlockId, c.depth))
-                    });
-                    let top = match cover {
-                        Some((block, depth)) => (block, depth.max(1) as f32),
-                        None => (known(ground.top), 1.0),
-                    };
-                    let column = Column {
-                        surface: 0.0,
-                        layers: [top, (known(ground.under), ground.under_depth as f32)],
-                        bottom,
-                    };
-                    let depth = (point.surface - out) / size;
-                    let (block, depth, open) =
-                        cell_at(&column, depth, place, size, generate, push / size, seed, caves / size);
-                    let block = if open && out < sea_out { sea } else { block };
-                    if file.smooth && sea != AIR && block == sea {
-                        chunk.set_cell(lx, ly, lz, sea, surface_fill((sea_out - out) / size));
-                        any = true;
-                    } else if file.smooth && (block != AIR || depth > -1.0) {
-                        chunk.set_cell(lx, ly, lz, block, fill_of(depth, block != AIR));
-                        any = true;
-                    } else if block != AIR {
-                        chunk.set(lx, ly, lz, block);
-                        any = true;
-                    }
-                }
-            }
-        }
-        any.then_some(chunk)
-    });
-    let mut map = BlockMap::default();
-    for (key, chunk) in keys.into_iter().zip(made) {
-        if let Some(chunk) = chunk {
-            map.put_chunk(key, chunk);
-        }
-    }
-    map
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{planet::Round, *};
     use crate::{
-        blocks::file::{BlockCover, BlockKind, Ground},
+        blocks::{
+            chunk::Chunk,
+            file::{BlockCover, BlockKind, Ground},
+        },
         generate::Preset,
         surfaces::Biome,
     };
 
     fn generated(caves: f32, overhangs: f32) -> (BlockFile, WorldGen) {
         // Mountains 300 m high in a cold world, so some of it is snowed.
-        let mut world = Preset::Alpine.world();
-        world.height = 300.0;
-        world.climate.temperature = 0.0;
+        let mut land = Preset::Alpine.landmass();
+        land.height = 300.0;
+        land.climate.temperature = 0.0;
+        let world = WorldGen::from(land);
         let mut file = BlockFile {
             block_size: 2.0,
             ground: Ground { size: [64, 64], ..Ground::default() },
@@ -635,8 +278,9 @@ mod tests {
     #[test]
     #[ignore = "a planet's grid takes its angles from the machine's own tan and atan, so these bits are this machine's"]
     fn a_planets_blocks_are_the_same_to_the_bit_on_this_machine() {
-        let mut world = Preset::RollingHills.world();
-        world.height = 12.0;
+        let mut land = Preset::RollingHills.landmass();
+        land.height = 12.0;
+        let world = WorldGen::from(land);
         let planet = BlockPlanet { radius: 60.0 };
         let generate = BlockGenerate { world: Some("hills".into()), caves: 0.3, planet: Some(planet), ..Default::default() };
         let file = BlockFile { generate: Some(generate), smooth: true, ..BlockFile::default() };
@@ -657,7 +301,7 @@ mod tests {
         let spots = (0..400).flat_map(|i| (0..400).map(move |j| (i as f32 * 25.0, j as f32 * 25.0)));
         let (px, pz) = spots
             .into_iter()
-            .find(|&(px, pz)| (6.0..12.0).contains(&(world.sea_level - world.height_at(px, pz))))
+            .find(|&(px, pz)| (6.0..12.0).contains(&(world.sea_level() - world.height_at(px, pz))))
             .expect("sea floor somewhere");
         let (x, z) = (30, 40);
         let generate = file.generate.as_mut().unwrap();
@@ -667,14 +311,14 @@ mod tests {
         let top = (-40..400).rev().find(|&y| map.get([x, y, z]) != AIR).expect("the column");
         assert_eq!(map.get([x, top, z]), water, "water over it");
         let middle = |y: i32| (y as f32 + 0.5) * 2.0;
-        assert!(middle(top) < world.sea_level && middle(top + 1) >= world.sea_level, "up to the sea");
+        assert!(middle(top) < world.sea_level() && middle(top + 1) >= world.sea_level(), "up to the sea");
         let ground = (-40..top).rev().find(|&y| map.get([x, y, z]) != water).unwrap();
-        let deep = world.sea_level - world.height_at(px, pz);
+        let deep = world.sea_level() - world.height_at(px, pz);
         assert!(((top - ground) as f32 - deep / 2.0).abs() <= 1.0, "{} blocks for {deep} m", top - ground);
         // Nowhere is water above the sea.
         for (key, chunk) in map.chunks() {
             for y in 0..32 {
-                let above = middle(key[1] * 32 + y as i32) >= world.sea_level;
+                let above = middle(key[1] * 32 + y as i32) >= world.sea_level();
                 assert!(!above || (0..32).all(|z| (0..32).all(|x| chunk.get(x, y, z) != water)));
             }
         }
@@ -685,9 +329,9 @@ mod tests {
 
     #[test]
     fn a_planets_ground_lies_all_round_its_middle_on_its_generators_heights_read_round_it() {
-        let mut world = Preset::RollingHills.world();
-        world.height = 12.0;
-        let world = WorldGen::parse(&world.to_text()).unwrap();
+        let mut land = Preset::RollingHills.landmass();
+        land.height = 12.0;
+        let world = WorldGen::parse(&WorldGen::from(land).to_text()).unwrap();
         let planet = BlockPlanet { radius: 60.0 };
         let generate =
             BlockGenerate { world: Some("hills".into()), caves: 0.0, planet: Some(planet), ..Default::default() };
@@ -711,7 +355,7 @@ mod tests {
         for way in [[1.0, 0.0, 0.0], [0.0, -1.0, 0.0], [0.0, 0.0, 1.0], [0.6, 0.7, -0.4], [-0.5, 0.5, 0.5]] {
             let length = way.iter().map(|v: &f32| v * v).sum::<f32>().sqrt();
             let at = way.map(|v| v / length * planet.radius);
-            let expected = planet.radius + world.height_round(at) - world.sea_level;
+            let expected = planet.radius + world.height_round(at) - world.sea_level();
             assert!((surface(way) - expected).abs() < 1.0, "out along {way:?}: {} for {expected}", surface(way));
         }
         // Read on a cube's faces, its ground runs on across their edges: no step where two faces meet.

@@ -1550,6 +1550,34 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   up to about 30°, never raising it, so small gullies run down the walls of large ones and into them; ridges and
   valley floors left; shallower towards the sea and never below it. Polynomials only, still the same bits for a
   seed. Tests: only cutting, gullies across the slope, level ground left, the hash. Manual: Generating Terrain.
+- **Generator graphs**, in parts: a world generator as a graph of nodes; a graph editor with a preview on every
+  node; more kinds of node and the presets as graphs; biomes as nodes; overhangs, caves and cave rooms as nodes.
+  - ~~**The graph and its evaluator:**~~ done: a `.worldgen` holds its seed, scale and sea level and a graph
+    (`generate::Graph`: nodes with numbers of their own, wires from outputs to inputs, and the values it exposes as
+    rows of the generator's own). Kinds of node a file each under `generate/nodes/`, saying their ports and values
+    for the editor to draw: Landmass (all a generator was, in one node, the same bits), Climate, Noise, Constant,
+    Math, Curve, Output. Compiled when made (`generate::compile`) from the Output back along the wires into steps
+    that fill rows of numbers, shared where two do the same work, in an order the wires alone set; run 512 places
+    at a time (`generate::eval`), each place by itself, so a batch gets the bits each point gets alone. A file from
+    before graphs reads as a Landmass and a Climate wired to the Output and makes the same ground. A generator is
+    never changed, only replaced, with a hash of all that decides its ground: saved with only a node moved it keeps
+    its place in `Content` and nothing is made again, and a terrain's kept heights remember their generators'
+    hashes. The Generate layer asks for a padded tile at once, block worlds for a chunk column, planets for a row.
+    A graph with a loop or no Output still makes ground and says what is wrong (`WorldGen::faults`). Inspector:
+    a landmass's settings as before; any other graph, its seed, scale, sea level and exposed rows. Tests: an old
+    file's hash, a landmass in a graph against itself flat and round, batches against single places, text read
+    back as written, the hash following the ground alone, broken graphs, block chunks by hash before and after.
+  - the graph editor: a canvas that pans and zooms, typed ports and wires, search to add a node, undo; the
+    Inspector for the picked node, values exposed from their rows; a preview on every node and a 3D preview that
+    refines while a value is dragged
+  - more nodes (cells, falloff, warp, terrace, blend, smooth; masks from height, slope and curvature; gullies as a
+    node of their own) and the five presets rebuilt as graphs
+  - biomes as nodes: where each is and what it brings (its shape, a Terrain's surfaces, a Block World's blocks),
+    laid over one another as layers; surfaces' climate ranges and kinds' covers moved over
+  - voxels: a Volume beside the height, with overhangs, tunnels and chambers as nodes; hillsides no longer pocked,
+    layers counted from the real surface
+  - cave rooms as prefabs of shapes and exits, strung together by a Cave Network node, as a bounded cave level or
+    under a world without end
 - ~~**Erosion layer:**~~ done: Add Layer ▸ Erosion wears the ground below it on the GPU (`shaders/erosion.slang`,
   `voxear_render::erosion`, `Renderer::erode`), once, in the editor: rain each step, water through pipes to its four
   neighbours sped by the drop and held to what each cell has, its depth and speed, carving where it can carry more

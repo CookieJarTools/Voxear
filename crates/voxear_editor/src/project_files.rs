@@ -220,9 +220,17 @@ pub fn create(root: &Path, folder: &str, kind: NewFile, namespace: &str) -> Resu
 /// its heights written beside it once it is shaped and the level saved.
 const NEW_TERRAIN: &str = "# Voxear terrain: how large and how fine the ground is; its heights are in the .heights file beside it.\n";
 
-/// What a new world generator's file holds: a heading, then Rolling Hills.
+/// What a new world generator's file holds: a heading, then the generator.
 pub(crate) fn new_world_gen() -> String {
-    NEW_WORLD_GEN.to_string() + &voxear_terrain::generate::WorldGen::default().to_text()
+    NEW_WORLD_GEN.to_string() + &new_world().to_text()
+}
+
+/// The generator a new file starts as: the Rolling Hills starter graph, with seed 1 at its own
+/// size. Its Preset row picks another starter.
+pub(crate) fn new_world() -> voxear_terrain::generate::WorldGen {
+    use voxear_terrain::generate::{Preset, WorldGen};
+    let hills = crate::world_gen_inspector::starter_graphs().iter().find(|s| s.name == Preset::RollingHills.name());
+    hills.map_or_else(WorldGen::default, |starter| starter.world(1, 1.0))
 }
 
 /// What a world generator's file starts with, before its settings.

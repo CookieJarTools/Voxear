@@ -253,6 +253,10 @@ enum Commands {
         /// Frames to run before a screenshot.
         #[arg(long, default_value_t = 30)]
         frames: u32,
+        /// An asset to open before a screenshot, as a double click on it in the Project does: a World Generator
+        /// shows its graph, and `Hills.worldgen#Noise` picks its Noise node too.
+        #[arg(long, value_name = "ASSET")]
+        open: Option<String>,
     },
     /// Render a project offscreen and save the image, with GPU timings.
     Render {
@@ -375,13 +379,13 @@ fn main() -> Result<()> {
         }
     };
     match cli.command {
-        Commands::Editor { project, screenshot, width, height, frames } => {
+        Commands::Editor { project, screenshot, width, height, frames, open } => {
             let log = log.expect("captured above");
             let project = Project::open(&project)?;
             let settings = RendererSettings { hot_reload: shaders_reload(), ..renderer_settings(&project, false) };
             match screenshot {
                 Some(out) => {
-                    voxear_editor::screenshot(project, &settings, log, &out, (width, height), frames)?;
+                    voxear_editor::screenshot(project, &settings, log, &out, (width, height), frames, open.as_deref())?;
                     println!("wrote {}", out.display());
                     Ok(())
                 }

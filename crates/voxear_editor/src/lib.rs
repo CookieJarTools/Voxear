@@ -37,6 +37,9 @@
 //!   `Docs` folder (see `voxear_docs`)
 //! - the **Levels** panel, as LayerCake's window: every level and loose
 //!   scene, to open, play, or while playing, change to
+//! - the **Generator** panel: a World Generator's graph of nodes on a canvas,
+//!   with a picture on every node of what it makes and the ground the whole
+//!   graph makes beside it, in 3D (see `generator_panel`)
 //! - the **Package Manager**, as Unity's: the project's packages with their
 //!   updates, added from Git, a folder or the registry, and asked about
 //!   first when one brings code (see `package_manager`)
@@ -61,7 +64,10 @@ mod field_handles;
 mod path_handles;
 mod fields;
 mod frame_debugger_panel;
+pub mod generator_panel;
+mod generator_previews;
 mod gizmos;
+pub mod graph_canvas;
 mod gun_handling_inspector;
 mod hierarchy;
 mod history;
@@ -131,6 +137,11 @@ pub use window::run_editor;
 /// Renders the editor offscreen after `frames` frames, with the first Obj
 /// that has a mesh selected, and writes it to `out` as a PNG. For checking the
 /// editor without a window, and for documentation.
+///
+/// With `open`, an asset's path in the project, the asset is opened first,
+/// as a double click on it in the Project does. A World Generator's graph
+/// shows once its previews are made; `Generators/Hills.worldgen#Noise`
+/// picks its first node of that name too, which the Inspector then shows.
 pub fn screenshot(
     project: Project,
     settings: &RendererSettings,
@@ -138,6 +149,7 @@ pub fn screenshot(
     out: &Path,
     (width, height): (u32, u32),
     frames: u32,
+    open: Option<&str>,
 ) -> Result<()> {
     let mut renderer = Renderer::new_offscreen(width, height, settings)?;
     let mut editor = Editor::open_without_memory(project, &mut renderer, log)?;
@@ -145,8 +157,29 @@ pub fn screenshot(
     for frame in 0..frames.max(2) {
         if frame == 1 {
             editor.select(selected);
+            if let Some(open) = open {
+                let (path, node) = open.split_once('#').map_or((open, None), |(path, node)| (path, Some(node)));
+                anyhow::ensure!(editor.open_path(path, &mut renderer), "{path} is not in the project");
+                // Laid out and drawn before a node of it is picked.
+                editor.update(&mut renderer, (width, height), 1.0, 1.0 / 60.0)?;
+                editor.update(&mut renderer, (width, height), 1.0, 1.0 / 60.0)?;
+                if let Some(node) = node {
+                    anyhow::ensure!(editor.pick_generator_node(node), "the graph of {path} has no {node} node");
+                }
+            }
         }
         editor.update(&mut renderer, (width, height), 1.0, 1.0 / 60.0)?;
+    }
+    // A graph's previews are made on a thread of their own: the picture waits for them, and for them to be drawn.
+    if editor.generator().path().is_some() {
+        let waited = std::time::Instant::now();
+        while !editor.generator().previews_settled() && waited.elapsed() < std::time::Duration::from_secs(60) {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            editor.update(&mut renderer, (width, height), 1.0, 1.0 / 60.0)?;
+        }
+        for _ in 0..4 {
+            editor.update(&mut renderer, (width, height), 1.0, 1.0 / 60.0)?;
+        }
     }
     let (width, height, pixels) = renderer.read_pixels()?;
     let file = std::fs::File::create(out).with_context(|| format!("creating {}", out.display()))?;

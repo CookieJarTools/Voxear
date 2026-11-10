@@ -110,13 +110,17 @@ pub enum AssetAction {
         slot: IconSlot,
         source: DragSource,
     },
-    /// Write the World Generator at this path as this, make the terrains
-    /// generated from it again, and when `rebuild`, show it again.
+    /// Write the World Generator at this path as this, and make the terrains
+    /// generated from it again. `reshaped` when a preset was picked, which
+    /// takes the place of its whole shape.
     SaveWorldGen {
         path: String,
         world: voxear_terrain::generate::WorldGen,
-        rebuild: bool,
+        reshaped: bool,
     },
+    /// Show the graph of the World Generator at this path in the Generator
+    /// panel.
+    OpenGraph(String),
     /// Write the block at this path as this, for the worlds of blocks
     /// listing it to take up, and when `rebuild`, show it again.
     SaveBlock {
@@ -255,9 +259,9 @@ pub struct AssetView {
     motion_set: Option<MotionSetFields>,
     /// A Gun Handling's holds and actions.
     gun_handling: Option<GunHandlingFields>,
-    world_gen: Option<crate::world_gen_inspector::WorldGenFields>,
+    /// A World Generator's own rows.
+    world_gen: Option<crate::world_gen_inspector::WorldFields>,
     block: Option<crate::block_inspector::BlockFields>,
-    world_graph: Option<crate::world_gen_inspector::GraphFields>,
     /// Prompt Icons' pictures, by device and control.
     prompt_icons: Option<PromptIconsFields>,
     /// The preview's frame, which takes drags, and its image.
@@ -436,7 +440,6 @@ impl AssetView {
             gun_handling: None,
             world_gen: None,
             block: None,
-            world_graph: None,
             prompt_icons: None,
             preview,
             listen: None,
@@ -466,13 +469,7 @@ impl AssetView {
             ItemKind::Asset(AssetKind::WorldGen) => {
                 let text = std::fs::read_to_string(&file).unwrap_or_default();
                 let world = voxear_terrain::generate::WorldGen::parse(&text).unwrap_or_default();
-                // One landmass and nothing more shows as a landmass's settings; any other graph, the rows it exposes.
-                match world.as_landmass() {
-                    Some(land) => {
-                        view.world_gen = Some(crate::world_gen_inspector::WorldGenFields::new(ui, root, land));
-                    }
-                    None => view.world_graph = Some(crate::world_gen_inspector::GraphFields::new(ui, root, world)),
-                }
+                view.world_gen = Some(crate::world_gen_inspector::WorldFields::new(ui, root, world));
             }
             ItemKind::Asset(AssetKind::Block) => {
                 let text = std::fs::read_to_string(&file).unwrap_or_default();
@@ -594,7 +591,6 @@ impl AssetView {
             gun_handling: None,
             world_gen: None,
             block: None,
-            world_graph: None,
             prompt_icons: None,
             preview: None,
             listen: None,
@@ -674,9 +670,14 @@ impl AssetView {
         if let Some(fields) = self.world_gen.as_mut()
             && let Some(change) = fields.update(ui)
         {
-            let (path, world) = (self.item.path.clone(), fields.world.clone().into());
-            let rebuild = matches!(change, crate::world_gen_inspector::WorldGenChange::Shape);
-            return Some(AssetAction::SaveWorldGen { path, world, rebuild });
+            let path = self.item.path.clone();
+            use crate::world_gen_inspector::WorldChange;
+            let world = fields.world.clone();
+            return Some(match change {
+                WorldChange::Typed => AssetAction::SaveWorldGen { path, world, reshaped: false },
+                WorldChange::Preset => AssetAction::SaveWorldGen { path, world, reshaped: true },
+                WorldChange::OpenGraph => AssetAction::OpenGraph(path),
+            });
         }
         if let Some(fields) = self.block.as_mut()
             && let Some(change) = fields.update(ui)
@@ -691,12 +692,6 @@ impl AssetView {
                 BlockChange::Ping(path) => AssetAction::Ping(path),
                 BlockChange::MakeItem => AssetAction::MakeBlockItem(path),
             });
-        }
-        if let Some(fields) = self.world_graph.as_mut()
-            && fields.update(ui)
-        {
-            let (path, world) = (self.item.path.clone(), fields.world.clone());
-            return Some(AssetAction::SaveWorldGen { path, world, rebuild: false });
         }
         if let Some(change) = self.prompt_icons.as_mut().and_then(|fields| fields.update(ui)) {
             let icons = self.item.path.clone();
@@ -970,6 +965,11 @@ impl AssetView {
 
     pub fn item(&self) -> &ProjectItem {
         &self.item
+    }
+
+    /// A World Generator's own rows, when that is what it shows.
+    pub fn world_fields(&mut self) -> Option<&mut crate::world_gen_inspector::WorldFields> {
+        self.world_gen.as_mut()
     }
 }
 

@@ -1588,11 +1588,50 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     a landmass's settings as before; any other graph, its seed, scale, sea level and exposed rows. Tests: an old
     file's hash, a landmass in a graph against itself flat and round, batches against single places, text read
     back as written, the hash following the ground alone, broken graphs, block chunks by hash before and after.
-  - the graph editor: a canvas that pans and zooms, typed ports and wires, search to add a node, undo; the
-    Inspector for the picked node, values exposed from their rows; a preview on every node and a 3D preview that
-    refines while a value is dragged
-  - more nodes (cells, falloff, warp, terrace, blend, smooth; masks from height, slope and curvature; gullies as a
-    node of their own) and the five presets rebuilt as graphs
+  - ~~**The graph editor:**~~ done: the Generator panel, opened by a double click on a `.worldgen` or Open Graph in
+    its Inspector. A canvas that knows nothing of generators (`graph_canvas`, for other graphs later): drawn, as
+    the UI cannot scale a subtree, each node a pooled element of shapes with labels at a font size that follows
+    the zoom, wires as short lines; the wheel zooms in steps about the pointer, the middle button or Alt moves
+    the view (the UI's pointer now hears the middle button), a drag moves the picked nodes on a grid or boxes
+    them, a drag from port to port wires them where the owner allows (`Graph::connect` on a copy decides), a wire
+    let go on nothing asks for the search, and Delete, Ctrl+D, Ctrl+C and Ctrl+V, F and Space do as they say. The
+    search is the object picker, with the kinds of node in their folders. The picked node shows in the Inspector
+    as rows made from its kind's values (`world_gen_inspector::ValueRow`, one arm a kind of value), seldom-needed
+    ones under Advanced, a value standing in for an input hidden while that input is wired; a context click on a
+    row's label exposes it, and the generator's own Inspector is the same rows: Preset while its shape is a preset's,
+    Seed, Scale, Sea level, what it exposes, and Open Graph. The graph has its own undo (whole generators kept,
+    changes within 800 ms to one value or to where nodes are merged), which Ctrl+Z, Ctrl+Y and Delete reach while
+    its panel or the Inspector showing it was the last pressed in. Saved once nothing is held, so the level's
+    ground is made again when a drag ends; the previews follow every step, on a thread of their own
+    (`generator_previews`): a picture of every node's first output from one texture, and the ground in 3D as a
+    block coloured by height, coarse at once and refined to 257 by 257, turned by a drag. The square of the
+    world they show is kept in the file (`generate::PreviewArea`), out of the hash. A graph's faults show on the
+    nodes at fault. Tests: the canvas without a GPU (zoom, moving, picking, wiring, the search, what is drawn),
+    the history and copies, the previews' image and mesh, and in the editor a graph opened, a node added from the
+    search, wired, undone and redone, a value exposed, and the terrain following. Manual: Generator Graphs.
+  - ~~**The node library and starter graphs:**~~ done: twelve more kinds of node, a file each. Sources: Cells
+    (the ground nearest each of a scatter of points: how far the point, how far the cell's border, a number of the
+    cell's own) and Falloff. Shape: Terrace, Clamp (its corners rounded), Blend by a mask, Warp, Smooth; Math
+    divides too. Masks eased in over a feather as a layer's are: Height Mask, Slope Mask, Curvature (ridges and
+    valleys apart), Climate Mask (the eight biomes' ranges as presets). Gullies as a node on any height, by a
+    landmass's maths (`landmass::Gullied`, which both use), each octave joining the floors of the one before with
+    no step. A node that reads round a place (a slope, a curvature, an average, gullies) makes rows of places and
+    asks for its input there; round a planet those lie along two tangents of its surface, and gullies pass their
+    input through. Angles are rows in degrees kept as rise over run (`ValueKind::Angle`), their feathers turned
+    by sums and products, so nothing that makes ground uses trigonometry. Five graphs to start from
+    (`generate::starters()`), under the presets' names and tuned by eye against them: Battlefield Plains (streams
+    cut into nearly level ground, shell holes from two scatters behind a Craters row), Rolling Hills (smooth hills
+    with valleys that branch), Alpine, Archipelago (ragged coasts, shallows, islets) and Canyons (stepped high
+    ground, canyons along ridged lines with floors at one level, ravines down their walls), each with its height
+    and a few more values as rows. Files made from a landmass preset are untouched. Tests, for every node: its
+    range, batches against single places flat and round, its text read back, what it does round a planet; a
+    hash of each starter's ground, the same unoptimised and optimised; a tile of each timed against a
+    landmass's. Manual: Generator Nodes. In the editor, New ▸ World Generator makes the Rolling Hills starter, and a
+    generator's Preset row picks among the starters while its graph is one's still, whatever its rows are set to
+    (`Starter::shapes`); a single landmass, as a file from before graphs is, keeps a landmass's presets, and a
+    graph of its own has no Preset row, since a preset would take its place. A preset picked with the graph open
+    is a step of the graph's to undo. Tests: the row's kinds and a starter picked without a GPU; in the editor a
+    new generator's graph, another starter picked and undone, an angle typed in degrees.
   - biomes as nodes: where each is and what it brings (its shape, a Terrain's surfaces, a Block World's blocks),
     laid over one another as layers; surfaces' climate ranges and kinds' covers moved over
   - ~~**Voxels:**~~ done: the Output has a **Volume** beside its height, how far into the ground each place in

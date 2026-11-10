@@ -1,6 +1,7 @@
 //! The Math node: two numbers added, taken from one another, multiplied,
-//! or the lesser or greater of them, at each place. Either is what is
-//! wired in, or the node's own value with no wire.
+//! divided, or the lesser or greater of them, at each place. Either is
+//! what is wired in, or the node's own value with no wire. A number
+//! divided by nothing is nothing.
 
 use serde::{Deserialize, Serialize};
 
@@ -20,11 +21,12 @@ pub enum Operation {
     Multiply,
     Min,
     Max,
+    Divide,
 }
 
 impl Operation {
-    pub const ALL: [Operation; 5] =
-        [Operation::Add, Operation::Subtract, Operation::Multiply, Operation::Min, Operation::Max];
+    pub const ALL: [Operation; 6] =
+        [Operation::Add, Operation::Subtract, Operation::Multiply, Operation::Min, Operation::Max, Operation::Divide];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -33,6 +35,7 @@ impl Operation {
             Operation::Multiply => "Multiply",
             Operation::Min => "Min",
             Operation::Max => "Max",
+            Operation::Divide => "Divide",
         }
     }
 }
@@ -46,7 +49,7 @@ pub struct Math {
 }
 
 const VALUES: &[ValueSpec] = &[
-    ValueSpec::choice("operation", "Operation", &["Add", "Subtract", "Multiply", "Min", "Max"]),
+    ValueSpec::choice("operation", "Operation", &["Add", "Subtract", "Multiply", "Min", "Max", "Divide"]),
     ValueSpec::number("a", "A", f32::MIN, f32::MAX, "").for_input(0),
     ValueSpec::number("b", "B", f32::MIN, f32::MAX, "").for_input(1),
 ];
@@ -114,6 +117,40 @@ impl Kernel for Two {
             Operation::Multiply => pairs.for_each(|(out, (a, b))| *out = a * b),
             Operation::Min => pairs.for_each(|(out, (&a, &b))| *out = if a < b { a } else { b }),
             Operation::Max => pairs.for_each(|(out, (&a, &b))| *out = if a > b { a } else { b }),
+            Operation::Divide => pairs.for_each(|(out, (&a, &b))| *out = if b == 0.0 { 0.0 } else { a / b }),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::generate::{
+        NodeKind,
+        nodes::{Constant, Noise, testing},
+    };
+
+    #[test]
+    fn math_divides_and_a_number_divided_by_nothing_is_nothing() {
+        let hills = Noise { size: 300.0, low: -40.0, high: 90.0, ..Noise::default() };
+        let divide = |by: f32| {
+            let kind = NodeKind::Math(Math { operation: Operation::Divide, b: by, ..Math::default() });
+            testing::world_of(kind, 0, &[Some(NodeKind::Noise(hills.clone()))])
+        };
+        let (quarter, none) = (divide(4.0), divide(0.0));
+        let (low, high) = testing::checked(&quarter);
+        assert!(low >= -10.0 && high <= 22.5 && high - low > 10.0, "{low} to {high}");
+        assert_eq!(testing::checked(&none), (0.0, 0.0));
+        let was = testing::flat(&testing::world_of(NodeKind::Noise(hills.clone()), 0, &[]), 4000);
+        assert!(testing::flat(&quarter, 4000).iter().zip(&was).all(|(made, was)| *made == was / 4.0));
+        // Each operation is one of the row's choices, by its place among them; round a planet the same sum.
+        let constant = |value: f32| Some(NodeKind::Constant(Constant { value }));
+        for (at, meant) in [9.0, 3.0, 18.0, 3.0, 6.0, 2.0].into_iter().enumerate() {
+            let mut kind = NodeKind::Math(Math::default());
+            kind.set_value(0, Value::Choice(at));
+            assert_eq!(kind.value(0), Some(Value::Choice(at)));
+            let world = testing::world_of(kind, 0, &[constant(6.0), constant(3.0)]);
+            assert_eq!((world.height_at(1.0, 2.0), world.height_round([0.0, 500.0, 0.0])), (meant, meant));
         }
     }
 }

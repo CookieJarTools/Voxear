@@ -72,6 +72,9 @@ pub enum Chosen {
     Shader(crate::project_files::ShaderStart),
     /// The Definition a new data asset holds, by its full name.
     Definition(String),
+    /// A node to add to the graph in the Generator panel, by its place among
+    /// the kinds of node there are.
+    GraphNode(usize),
 }
 
 /// What a pick is for: a reference of an Obj's, or a scene of a level's.
@@ -115,6 +118,8 @@ pub enum PickFor {
     PromptIcon { icons: String, slot: crate::prompt_icons_inspector::IconSlot },
     /// The Prompt Icons the project's input actions name.
     InputPromptIcons,
+    /// The graph open in the Generator panel, for a node to add to it.
+    GraphNode,
 }
 
 /// What the picker is open for, and the field it opened from.

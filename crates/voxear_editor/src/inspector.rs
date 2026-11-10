@@ -344,6 +344,8 @@ pub struct Inspector {
     part: Option<PartView>,
     /// The project's layers, when that is what it shows.
     layers: Option<LayersView>,
+    /// A node of a World Generator's graph, when that is what it shows.
+    node: Option<crate::world_gen_inspector::NodeView>,
     /// Add Layer… was picked from the Layer menu, for the editor to show
     /// the project's layers.
     wants_layers: bool,
@@ -457,6 +459,7 @@ impl Inspector {
             data: None,
             part: None,
             layers: None,
+            node: None,
             wants_layers: false,
             conditions: Vec::new(),
             group_tabs: Vec::new(),
@@ -903,7 +906,7 @@ impl Inspector {
         (self.fields, self.transform_menu, self.add, self.menu) = (None, None, None, None);
         self.headers.clear();
         self.rows.clear();
-        self.layers = None;
+        (self.layers, self.node) = (None, None);
         self.asset = Some(AssetView::build(ui, self.root, item, game, &self.types, self.dark));
     }
 
@@ -919,7 +922,7 @@ impl Inspector {
         (self.fields, self.transform_menu, self.add, self.menu) = (None, None, None, None);
         self.headers.clear();
         self.rows.clear();
-        (self.asset, self.layers) = (None, None);
+        (self.asset, self.layers, self.node) = (None, None, None);
         self.part = Some(view);
     }
 
@@ -941,11 +944,48 @@ impl Inspector {
         (self.fields, self.transform_menu, self.add, self.menu) = (None, None, None, None);
         self.headers.clear();
         self.rows.clear();
-        self.asset = None;
+        (self.asset, self.node) = (None, None);
         for child in ui.children(self.root) {
             ui.remove(child);
         }
         self.layers = Some(LayersView::build(ui, self.root, layers));
+    }
+
+    /// Shows node `node` of the graph of `world`, the World Generator at `path`, in place of an
+    /// Obj (see `world_gen_inspector`). False, and nothing changed, where the graph has no such
+    /// node.
+    pub fn show_graph_node(
+        &mut self,
+        ui: &mut Ui,
+        path: &str,
+        world: &voxear_terrain::generate::WorldGen,
+        node: voxear_terrain::generate::NodeId,
+    ) -> bool {
+        let Some(view) = crate::world_gen_inspector::NodeView::build(ui, self.root, path, world, node) else {
+            return false;
+        };
+        self.shown = None;
+        (self.part, self.data, self.asset, self.layers) = (None, None, None, None);
+        (self.fields, self.transform_menu, self.add, self.menu) = (None, None, None, None);
+        self.headers.clear();
+        self.rows.clear();
+        self.node = Some(view);
+        true
+    }
+
+    /// The graph's node shown, with its generator's file, when it shows one.
+    pub fn shown_graph_node(&self) -> Option<(&str, voxear_terrain::generate::NodeId)> {
+        self.node.as_ref().map(crate::world_gen_inspector::NodeView::shown)
+    }
+
+    /// The view of the graph's node shown.
+    pub fn graph_node_view(&mut self) -> Option<&mut crate::world_gen_inspector::NodeView> {
+        self.node.as_mut()
+    }
+
+    /// Where its rows are built, which takes its presses.
+    pub fn root(&self) -> NodeId {
+        self.root
     }
 
     /// The change made to the project's layers this frame, when it shows them.
@@ -1006,6 +1046,7 @@ impl Inspector {
     pub fn show(&mut self, ui: &mut Ui, game: &Game, entity: Option<Entity>, playing: bool) {
         self.asset = None;
         self.layers = None;
+        self.node = None;
         self.part = None;
         // A data asset shows while its Obj does, built again as any Obj is; anything else shown ends it.
         if self.data.as_ref().is_some_and(|(_, holder)| Some(*holder) != entity) {

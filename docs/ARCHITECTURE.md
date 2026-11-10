@@ -2924,6 +2924,23 @@ gets the bits each point gets alone. Places are rows too, so a node that reads i
 behind it again at the rows it made. A generator is never changed, only replaced, and carries a hash of everything
 that decides its ground: one saved with only a node moved keeps its place in `Content`, and nothing is made again.
 Only sums, products, divisions, square roots and `floor`, so the same seed makes the same bits on every machine.
+The node library beside the Landmass: sources (Noise, Cells, Falloff, Constant), shape (Curve, Terrace, Clamp, Math,
+Blend, Warp, Smooth), masks (height, slope, curvature, climate) and Gullies. A node that needs the ground round a
+place (`nodes/around.rs`) makes rows of places a step off and asks for its input at them: along x and z on flat
+ground; round a planet along two tangents of its surface, found with a cross product and a square root, where
+gullies pass their input through as a landmass's do. A mask's angles are kept as rise over run
+(`ValueKind::Angle`, which a row shows in degrees) and a feathered edge is the tangent of a sum or a difference of
+angles, worked out from the two tangents, so slopes need no trigonometry either. The Gullies node and the Landmass
+share one piece of maths (`landmass::Gullied`); the node's octaves follow a slope eased to nothing on the floors of
+the octave before, where a landmass's turns about, which is what left steps along its gully floors, so a
+landmass keeps its bits and a graph's gullies join without them. Chose reading the input again at moved rows over
+giving nodes neighbours: a place still depends on its own inputs alone, any batch gets the same bits, and the
+cost is plain to see, five reads behind a slope or gullies and nine behind a smooth. `generate::starters()` gives
+five graphs built from the library under the presets' names (plains, hills, alpine, archipelago, canyons), each
+with its height and a few values exposed, their ground pinned by hash; the landmass presets and files made from
+them are untouched. The editor makes a new generator from the Rolling Hills starter, and a generator's Preset row
+picks among whichever presets its shape is still one of: the starters for a starter's graph, a landmass's for a
+single landmass, and none for a graph of its own.
 The Output's **Volume** is the ground in three dimensions, for worlds of blocks: how many metres into the ground
 each place in space is. It compiles into two programs (`compile::Voxels`). One runs once a column and makes what
 the Volume's nodes read of the ground, a height or a mask, the same for every cell up the column; the other runs
@@ -2943,9 +2960,19 @@ and humidity fields, cooling with height) feeds surfaces' rules, so biomes choos
 A terrain without end (`voxear_terrain::endless`) keeps a window of tiles round the camera, each made alone on
 background threads from the layers worked out from where each sample is, with its shares and grass from its padded
 ground; renderer and physics keep each tile in a slot by where it is in the world, so a moving window copies in
-only the tiles that came into it. To come: the graph editor, with a preview on every node; more kinds of node
-(warps, terraces, masks from the ground's own height and slope); biomes as nodes, bringing their surfaces and
-blocks; cave rooms joined by tunnels, as a node; rivers along valleys in endless worlds.
+only the tiles that came into it. The editor's Generator panel (`voxear_editor::generator_panel`) edits a
+generator's graph on a canvas that knows nothing of generators (`graph_canvas`): its owner describes the graph
+each frame as nodes, ports and wires, and carries out the events it hears back (nodes moved, a wire drawn or
+pulled off, a search asked for), deciding itself which wires may be. Voxear UI cannot scale a subtree, so the
+canvas is drawn: each node an element from a pool whose box and ports are shapes, its labels at a font size that
+follows the zoom, and wires as runs of short lines. Since a generator is never changed, every edit makes another
+and the panel keeps the ones before as its own undo history, apart from the level's; the file is written once
+nothing is held, which is when the level's ground is made again, while the previews (a picture for each node and
+the ground in 3D, worked out on a thread of their own and refined while nothing changes) follow every step. The
+Inspector's rows for a node and for a generator's exposed values are built from the kinds' own descriptions of
+their values (`world_gen_inspector::ValueRow`), so a new kind of node needs nothing in the editor. To come:
+biomes as nodes, bringing their surfaces and blocks; cave rooms joined by tunnels, as a node; rivers along valleys
+in endless worlds.
 
 **Rendering.** CDLOD: a quadtree of patches, each a grid of 32 quads drawn from one index buffer, picked on the CPU
 for the camera and each sun cascade, each vertex sliding onto the next level's grid near its level's far distance.

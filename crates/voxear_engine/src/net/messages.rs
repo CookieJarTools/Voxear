@@ -1,5 +1,6 @@
 //! What a session's ends say to each other, packed as few bits as they need.
 
+use voxear_core::math::I64Vec3;
 use voxear_input::ActionState;
 use voxear_net::{BitReader, BitWriter};
 
@@ -63,6 +64,7 @@ pub const BLANK: ObjState = ObjState {
     rotation: voxear_core::math::Quat::IDENTITY,
     scale: voxear_core::math::Vec3::ONE,
     mist: None,
+    root: true,
 };
 
 const WELCOME: u32 = 0;
@@ -82,7 +84,9 @@ const OWNER: u32 = 12;
 pub const KIND_BITS: u32 = 4;
 
 impl Message {
-    pub fn encode(&self) -> Vec<u8> {
+    /// The message as bytes, from a machine whose world's middle is
+    /// `origin` from the level's (see `replication`).
+    pub fn encode(&self, world_origin: I64Vec3) -> Vec<u8> {
         let mut w = BitWriter::new();
         match self {
             Message::Welcome { player, tick, rate, shared } => {
@@ -137,7 +141,7 @@ impl Message {
                     }
                 }
                 w.write_varint(*tick);
-                write_state(&mut w, state, super::replication::ALL);
+                write_state(&mut w, state, super::replication::ALL, world_origin);
                 write_fields(&mut w, fields);
             }
             Message::Despawn(id) => {
@@ -150,7 +154,7 @@ impl Message {
                 for (id, mask, state, fields) in entries {
                     w.write_bool(true);
                     w.write_varint(u64::from(id.0));
-                    write_state(&mut w, state, *mask);
+                    write_state(&mut w, state, *mask, world_origin);
                     if mask & FIELDS != 0 {
                         write_fields(&mut w, fields.as_ref().unwrap_or(&Fields::new()));
                     }
@@ -184,8 +188,9 @@ impl Message {
         w.finish()
     }
 
-    /// The message in `bytes`, or `None` for anything malformed.
-    pub fn decode(bytes: &[u8]) -> Option<Message> {
+    /// The message in `bytes`, or `None` for anything malformed, on a
+    /// machine whose world's middle is `origin` from the level's.
+    pub fn decode(bytes: &[u8], world_origin: I64Vec3) -> Option<Message> {
         let mut r = BitReader::new(bytes);
         Some(match r.read_bits(KIND_BITS)? {
             WELCOME => Message::Welcome {
@@ -231,7 +236,7 @@ impl Message {
                 };
                 let tick = r.read_varint()?;
                 let mut state = BLANK;
-                read_state(&mut r, &mut state)?;
+                read_state(&mut r, &mut state, world_origin)?;
                 let fields = read_fields(&mut r)?;
                 Message::Spawn { id, owner: has_owner.then_some(owner), origin, tick, state, fields }
             }
@@ -242,7 +247,7 @@ impl Message {
                 while r.read_bool()? {
                     let id = NetId(r.read_varint()? as u32);
                     let mut state = BLANK;
-                    let mask = read_state(&mut r, &mut state)?;
+                    let mask = read_state(&mut r, &mut state, world_origin)?;
                     let fields = if mask & FIELDS != 0 { Some(read_fields(&mut r)?) } else { None };
                     entries.push((id, mask, state, fields));
                 }
@@ -334,11 +339,13 @@ mod tests {
             Message::Rpc { id: NetId(12), key: 0xdead_beef, tick: 77, bytes: vec![1, 2, 3] },
         ];
         for message in messages {
-            assert_eq!(Message::decode(&message.encode()), Some(message.clone()), "{message:?}");
+            let sent = message.encode(I64Vec3::ZERO);
+            assert_eq!(Message::decode(&sent, I64Vec3::ZERO), Some(message.clone()), "{message:?}");
         }
-        let still = Message::Inputs { first: 0, commands: vec![vec![ActionState::default(); 20]], behind: 0.0 }.encode();
+        let still = Message::Inputs { first: 0, commands: vec![vec![ActionState::default(); 20]], behind: 0.0 };
+        let still = still.encode(I64Vec3::ZERO);
         assert!(still.len() <= 18, "twenty still actions, and what the player saw, in {} bytes", still.len());
-        assert_eq!(Message::decode(&[0xFF]), None);
-        assert_eq!(Message::decode(&[]), None);
+        assert_eq!(Message::decode(&[0xFF], I64Vec3::ZERO), None);
+        assert_eq!(Message::decode(&[], I64Vec3::ZERO), None);
     }
 }

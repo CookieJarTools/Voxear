@@ -1742,23 +1742,29 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     yaw carried over the top; a script doing the same through `GravityAt` and `SimpleMove`, its view and Obj upright;
     a motion-matched character walking round a planet's side by its clips, its body upright to it and facing the way
     it goes.
-  - ~~**Floating origin:**~~ done: once the viewer terrain streams round is past `[floating_origin]`'s distance (2048 m)
-    from the world's middle across the ground, the world moves back by whole steps (1024 m) between frames
-    (`origin::due`, `Game::move_origin`). `WorldOrigin` keeps where the middle is from the level's, in whole metres;
-    root Objs move, those not moved since put back exactly from f64 (`voxear_scene::move_objs`); with them tick
-    smoothing, Jolt in one call (`vx_world_shift`: bodies without waking, characters with their contacts; joints held to
-    the world held to a still anchor body), kept places and corners, sound (`Command::Shift`, acoustics measured from
-    the level's middle), smokes, mists, motion matching, first-person eyes, gun holders and debug draw; the renderer's
-    last-frame matrices, probes, tracks, foam, sea floor and foliage (`Renderer::shift_origin`); the sea's cascades
-    phased by the origin in f64, drawn and for buoyancy. Streaming counts from its Obj, so nothing is made again. Mode
-    Automatic (levels with ground without end or a planet), Always or Never; never while networked. Scripts (native API
-    70): `Origin.Moved`, `Origin.Position`, `ToLevel`, `FromLevel`, `LevelPosition`, and `[WorldPosition]` fields moved
-    for them; saves and the editor's play keep positions from the level's middle; a level loads from its own. Tests: a
-    ball 100 km out rolling within 0.02 mm of one at the middle (66 mm astray with the middle still), endless terrain
-    and blocks carried on with nothing made again and physics on the drawn ground, the GPU's frame after a move matching
-    the one before with motion blur on, scripts' fields and events, a prop back exactly after 100 km. Manual: Floating
-    Origin. Not done: shader patterns from absolute positions (grass, wind, seasons, puddles), moves up and down (sky
-    and fog heights), networked games with a middle per player.
+  - ~~**Floating origin:**~~ done, switched on in Project Settings ▸ World (`[floating_origin]`, off by default): once
+    the viewer terrain streams round is past its distance (2048 m) from the world's middle across the ground, the world
+    moves back by whole steps (1024 m) between frames (`origin::due`, `Game::move_origin`). `WorldOrigin` keeps where
+    the middle is from the level's, in whole metres; root Objs move, those not moved since put back exactly from f64
+    (`voxear_scene::move_objs`); with them tick smoothing, Jolt in one call (`vx_world_shift`: bodies without waking,
+    characters with their contacts; joints held to the world held to a still anchor body), kept places and corners,
+    sound (`Command::Shift`, acoustics measured from the level's middle), smokes, mists, motion matching, first-person
+    eyes, gun holders and debug draw; the renderer's last-frame matrices, probes, tracks, foam, sea floor and foliage
+    (`Renderer::shift_origin`); the sea's cascades phased by the origin in f64, drawn and for buoyancy. Streaming counts
+    from its Obj, so nothing is made again. Mode Off, Endless Worlds (levels with ground without end or a planet) or
+    Every Level. Networked: a server and a host keep the level's middle, each client moves its own; positions go between
+    them measured from the level's middle, each machine adding its origin as it sends and taking it away as it reads, a
+    root bit and a far bit each, 16 bits an axis more past 8 km (out to half a million km); clients' samples, spawns and
+    prediction history move with them. Scripts (native API 70): `Origin.Moved`, `Origin.Position`, `ToLevel`,
+    `FromLevel`, `LevelPosition`, and `[WorldPosition]` fields moved for them, and on `[Replicated]` properties and RPC
+    arguments sent from the level's middle; saves and the editor's play keep positions from the level's middle; a level
+    loads from its own. Tests: a ball 100 km out rolling within 0.02 mm of one at the middle (66 mm astray with the
+    middle still), endless terrain and blocks carried on with nothing made again and physics on the drawn ground, the
+    GPU's frame after a move matching the one before with motion blur on, scripts' fields and events, a prop back
+    exactly after 100 km, players far out seeing, predicting and moving Objs 20–50 km out as the server has them, a
+    player whose middle moved seeing and sending script positions from the level's. Manual: Floating Origin. Not done:
+    shader patterns from absolute positions (grass, wind, seasons, puddles), moves up and down (sky and fog heights), a
+    server exact for players far from the level's middle.
 - Throughout: chunks culled against the frustum and last frame's depth, and the smallest save and network data
   (only changes from what a build or a seed makes, as commands while few and compacted deltas once many).
 

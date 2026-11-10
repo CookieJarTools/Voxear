@@ -184,7 +184,7 @@ pub(super) fn send_owned(world: &World, session: &mut NetSession) {
         })
         .collect();
     let message = Message::Snapshot { tick: session.tick, entries };
-    let _ = client.send(Channel::UNRELIABLE, &message.encode());
+    let _ = client.send(Channel::UNRELIABLE, &message.encode(session.origin));
 }
 
 /// Sends a player's own Obj's replicated properties to the server, from
@@ -195,7 +195,7 @@ pub(super) fn send_fields(session: &mut NetSession, id: NetId, key: u32, bytes: 
     }
     let End::Client(client) = &mut session.end else { return false };
     let fields: Fields = [(key, bytes)].into_iter().collect();
-    client.send(Channel::RELIABLE, &Message::Fields { id, fields }.encode()).is_ok()
+    client.send(Channel::RELIABLE, &Message::Fields { id, fields }.encode(session.origin)).is_ok()
 }
 
 /// Whether this machine decides what an Obj does: the server, but for a
@@ -221,7 +221,9 @@ pub fn claim(world: &mut World, entity: Entity) {
     }
     let local = session.local;
     match &mut session.end {
-        End::Client(client) => drop(client.send(Channel::RELIABLE, &Message::Claim(networked.id).encode())),
+        End::Client(client) => {
+            drop(client.send(Channel::RELIABLE, &Message::Claim(networked.id).encode(session.origin)));
+        }
         End::Server(_) => {
             if let Some(local) = local {
                 session.authority.claims.push((networked.id, local));

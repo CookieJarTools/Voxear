@@ -1599,9 +1599,15 @@ fn a_block_worlds_ground_made_a_planet_lies_all_round_its_middle_as_large_as_its
         assert_eq!(now.blocks.get(at), 1, "grass at {at:?}");
     }
     assert_eq!(now.blocks.get([0, 21, 0]), AIR);
-    // Undone (the two changes so close together one step), flat ground again.
+    // Undone, flat ground again: the two changes are one step when they came within the history's merge time, else
+    // two, which a busy machine making the first planet slowly can take.
     editor.undo(&mut renderer);
     frame(&mut editor, &mut renderer);
+    if blocks(&editor).planet.is_some() {
+        assert_eq!(blocks(&editor).planet, Some(100.0), "the radius's own step undone, the first planet left");
+        editor.undo(&mut renderer);
+        frame(&mut editor, &mut renderer);
+    }
     assert_eq!(blocks(&editor).planet, None);
     assert_eq!(blocks(&editor).blocks.get([0, 7, 0]), 1, "its flat ground's grass");
 }

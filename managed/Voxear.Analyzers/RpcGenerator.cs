@@ -60,7 +60,7 @@ public sealed class RpcGenerator : IIncrementalGenerator
 		foreach (var (parameter, written) in method.Parameters.Zip(syntax.ParameterList.Parameters, (p, s) => (p, s)))
 		{
 			var sent = parameter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-			rpc.Parameters.Add(new RpcParameter(parameter.Name, sent, NetTypes.RpcKind(parameter.Type), written.Default?.Value.ToString()));
+			rpc.Parameters.Add(new RpcParameter(parameter.Name, sent, NetTypes.RpcKind(parameter), written.Default?.Value.ToString()));
 		}
 		foreach (var named in found.Attributes[0].NamedArguments)
 		{

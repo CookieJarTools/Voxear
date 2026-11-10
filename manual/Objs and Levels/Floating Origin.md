@@ -12,28 +12,28 @@ Positions in a game are kept as floats, which are exact to a step that grows the
 | 100 km | 8 mm |
 | 1000 km | 6 cm |
 
-Past a few kilometres, things that move begin to shake, and physics loses its footing. So in a world that goes on without end, the engine now and then moves everything back towards the camera by whole metres, keeping the camera near the middle. This is the **floating origin**: the middle of the world floats along with the camera, and the player never sees it move.
+Past a few kilometres, things that move begin to shake, and physics loses its footing. So in a world that goes on without end, the engine can now and then move everything back towards the camera by whole metres, keeping the camera near the middle. This is the **floating origin**: the middle of the world floats along with the camera, and the player never sees it move.
 
-## When the middle moves
+## Switching the floating origin on
 
-Once the camera is more than 2 km from the middle across the ground, everything moves back by whole kilometres, between two frames. A level of a set size never moves: only levels with an [[Endless Worlds|endless terrain]], an endless [[Block Worlds|Block World]] or a [[Voxel Terrain#Planets|planet]] do.
-
-The project's `voxear.toml` can change that:
-
-```toml
-[floating_origin]
-mode = "automatic"   # or "always", or "never"
-distance = 2048      # metres from the middle before it moves
-step = 1024          # metres it moves by, a whole number of them
-```
+The floating origin is off until a project switches it on, in **Project Settings ▸ World ▸ Floating Origin**:
 
 | Setting | What it does |
 | --- | --- |
-| Mode | **Automatic** moves the middle only in levels with ground without end or a planet; **Always** in every level; **Never** keeps it where the level put it |
-| Distance | How far the camera goes from the middle, across the ground, before it moves |
-| Step | How far it moves at a time. The default, 1024 m, is a whole number of terrain tiles and block chunks, so ground lines up the same after a move |
+| Mode | **Off** keeps the middle where the level puts it. **Endless Worlds** moves it only in levels with ground without end or a planet. **Every Level** moves it in all of them |
+| Distance | How far the camera goes from the middle, across the ground, before it moves: 2048 m |
+| Step | How far it moves at a time: 1024 m, a whole number of terrain tiles and block chunks, so ground lines up the same after a move |
 
-The middle moves across the ground only, never up or down, and never in a networked game: each player's machine would have a middle of its own, and the server keeps one for everyone.
+Ground without end is an [[Endless Worlds|endless terrain]] or an endless [[Block Worlds|Block World]]; a planet is a [[Voxel Terrain#Planets|Block World made a planet]]. Once the camera is further than the distance from the middle, everything moves back by whole steps, between two frames. The middle moves across the ground only, never up or down. The settings are kept in the project's `voxear.toml`:
+
+```toml
+[floating_origin]
+mode = "endless"
+distance = 2048
+step = 1024
+```
+
+A game whose levels stay within about 8 km of their middle needs none of this: positions there are exact to half a millimetre.
 
 ## What moves with the middle
 
@@ -79,6 +79,23 @@ private void Moved(Vector3 by)
 
 A save of the scene keeps where things are from the level's middle (see [[Saving the Game]]), so a game saved far out loads in the right place.
 
+## In a networked game
+
+A server keeps its middle where the level puts it, as its world is every player's; a host does too. Each player's own machine moves its middle with its own camera, so two players far apart each see their part of the world exactly.
+
+Positions go between machines measured from the level's middle: each machine adds its own middle's place as it sends a position, and takes it away as it reads one. Players and the server never need to know where each other's middles are. Positions up to 8 km from the level's middle cost what they always did, a millimetre's steps in 24 bits an axis and a bit more for being near; further out, they take 16 bits an axis more, out to half a million kilometres.
+
+A script's own positions go the same way when they are marked:
+
+```csharp
+[Replicated, WorldPosition] public partial Vector3 Rally { get; set; }
+
+[ServerRpc]
+private void Signal([WorldPosition] Vector3 at) { }
+```
+
+The server's own physics works from the level's middle, so what it moves more than about 10 km from there is moved less exactly, as in a game with no floating origin. Keep a networked game's play within that, or its server's Objs near the middle.
+
 ## In the editor
 
 The level being edited never moves. While it plays, its middle moves as it would in the game; when play stops, the Scene view's camera comes back where it flew to, measured from the level's middle.
@@ -87,4 +104,4 @@ The level being edited never moves. While it plays, its middle moves as it would
 
 - Grass, wind, the seasons' patches and a few other looks take their pattern from where they are in the world, so they change a little when the middle moves.
 - The middle moves only across the ground, so a camera flying more than a few kilometres up is drawn less exactly.
-- Networked games keep their middle where it is.
+- A server's physics stays at the level's middle, so players more than about 10 km from it are moved less exactly on the server.

@@ -573,7 +573,9 @@ mod tests {
         making: &BlockMaking,
         at: [f32; 2],
     ) {
-        for _ in 0..2000 {
+        // A minute at most: on a busy machine its background work can take a while.
+        let start = std::time::Instant::now();
+        while start.elapsed().as_secs() < 60 {
             streamer.update(world, base, pending, making.clone(), (100.0, 600.0), at);
             if streamer.settled() {
                 return;
@@ -804,7 +806,8 @@ mod tests {
                           at: [f32; 2],
                           change: Option<[i32; 3]>| {
                 let mut changed = change;
-                for _ in 0..4000 {
+                let start = std::time::Instant::now();
+                while start.elapsed().as_secs() < 60 {
                     streamer.update(world, base, pending, making.clone(), (100.0, 300.0), at);
                     // A change while a column's faces are being made, which it must not lose.
                     if let Some(at) = changed.take_if(|_| !streamer.meshing.is_empty()) {

@@ -12,9 +12,10 @@
 //! belongs to the chunk its block of ground is in.
 //!
 //! Where the surface is flat or gently curved, a chunk's triangles are then
-//! merged into fewer, moving it no more than [`FLAT_ENOUGH`]: each kind of
-//! ground apart, the points it shares with the chunks beside it and with
-//! other kinds kept where they are, so they still meet edge for edge. Its
+//! merged into fewer, moving it no more than [`FLAT_ENOUGH`], each point
+//! keeping its kind: the points it shares with the chunks beside it, and
+//! those beside a point of another kind, kept where they are, so chunks
+//! still meet edge for edge and kinds blend where they did. Its
 //! corners are kept so a second and third time, merged further ([`COARSER`]),
 //! for drawing it far away: kept the same where chunks meet, a chunk at
 //! any level meets the next at any other.
@@ -23,9 +24,11 @@
 //! `smoothPoint` in `shaders/blocks.slang` reads them: where it is in its
 //! chunk and the chunk's number in its world's pool (which the renderer
 //! fills in); then the way the ground faces there, and the surfaces of the
-//! block of ground its face comes from, for its top, sides and bottom. The
-//! same triangles, their corners shared, are kept for collision and the
-//! GI's rays.
+//! ground there, for its top, sides and bottom: those of the block of
+//! ground nearest the surface among the eight round the corner's point, so
+//! a corner is the same kind in every triangle and chunk that has it, and
+//! kinds blend across a triangle whose corners differ. The same triangles,
+//! their corners shared, are kept for collision and the GI's rays.
 //!
 //! Water is not ground: the surface runs between the ground and the water
 //! as it does the air, each block of water taken as far out of the ground as
@@ -43,7 +46,7 @@
 use super::{
     BlockFaces, BlockMap,
     chunk::{AIR, BlockId, CHUNK, FULL, Fill, depth_of, fill_of},
-    flow::smooth_surface,
+    flow::{beside, smooth_surface},
     is_ground, is_water,
     mesh::{ChunkMesh, FACINGS},
 };
@@ -165,6 +168,21 @@ impl Padded {
         self.depths[Self::index(at)]
     }
 
+    /// The kind of ground at the point of the cube whose lowest corner is
+    /// block `low`'s middle: of its eight blocks, the ground nearest the
+    /// surface, the least deep; air where none is ground.
+    fn kind(&self, low: [i32; 3], faces: &[BlockFaces]) -> BlockId {
+        let mut found: Option<(f32, BlockId)> = None;
+        for c in 0..8 {
+            let at = [low[0] + (c & 1), low[1] + ((c >> 1) & 1), low[2] + ((c >> 2) & 1)];
+            let (block, depth) = (self.block(at), self.depth(at));
+            if is_ground(faces, block) && found.is_none_or(|(d, b)| depth < d || depth == d && block < b) {
+                found = Some((depth, block));
+            }
+        }
+        found.map_or(AIR, |(_, block)| block)
+    }
+
     /// The point of the cube whose lowest corner is block `low`'s middle, in
     /// blocks from the chunk's corner, and the way the ground faces there.
     fn point(&self, low: [i32; 3]) -> ([f32; 3], [f32; 3]) {
@@ -264,9 +282,10 @@ fn mesh_levels(
         return out;
     }
     let padded = Padded::of(map, key, faces);
-    // Each cube's point's number among the mesh's points, made as faces come to it.
+    // Each cube's point's number among the mesh's points, made as faces come to it, with the way the ground faces
+    // there and its kind.
     let mut numbers = vec![u32::MAX; CUBES * CUBES * CUBES];
-    let mut normals: Vec<[f32; 3]> = Vec::new();
+    let mut normals: Vec<([f32; 3], BlockId)> = Vec::new();
     // Whether each point's cube is on the chunk's outer layer, where the chunks beside it may share it.
     let mut shared: Vec<bool> = Vec::new();
     let mut number = |low: [i32; 3], out: &mut ChunkMesh| -> u32 {
@@ -275,13 +294,13 @@ fn mesh_levels(
         if *slot == u32::MAX {
             let (place, normal) = padded.point(low);
             out.positions.push(place);
-            normals.push(normal);
+            normals.push((normal, padded.kind(low, faces)));
             shared.push(low.iter().any(|&v| v < 0 || v >= CHUNK as i32 - 1));
             *slot = out.positions.len() as u32 - 1;
         }
         *slot
     };
-    let mut triangles: Vec<([u32; 3], BlockId)> = Vec::new();
+    let mut triangles: Vec<[u32; 3]> = Vec::new();
     let side = CHUNK as i32;
     for y in 0..side {
         for z in 0..side {
@@ -320,43 +339,35 @@ fn mesh_levels(
                     for triangle in split {
                         let [i, j, k] = triangle;
                         if i != j && j != k && i != k {
-                            triangles.push((triangle, block));
+                            triangles.push(triangle);
                         }
                     }
                 }
             }
         }
     }
-    let looks: Vec<([u32; 3], [u8; 3])> = triangles
-        .into_iter()
-        .map(|(triangle, block)| {
-            let BlockFaces { top, sides, bottom, .. } = faces.get(usize::from(block)).copied().unwrap_or_default();
-            (triangle, [top, sides, bottom])
+    // Each point drawn with its kind's surfaces, merged where the surface is flat enough.
+    let ways: Vec<([f32; 3], [u8; 3])> = normals
+        .iter()
+        .map(|&(normal, kind)| {
+            let BlockFaces { top, sides, bottom, .. } = faces.get(usize::from(kind)).copied().unwrap_or_default();
+            (normal, [top, sides, bottom])
         })
         .collect();
-    let every = (out.positions.clone(), normals.clone());
-    let (points, normals, triangles) = simplified((&out.positions, &normals, &shared), looks.clone(), error);
+    let every = (out.positions.clone(), ways);
+    let (points, ways, merged) = simplified((&every.0, &every.1, &shared), &triangles, error);
     out.positions = points;
-    let corners = |points: &[[f32; 3]], normals: &[[f32; 3]], triangle: [u32; 3], [top, sides, bottom]: [u8; 3]| {
-        triangle.map(|i| {
-            let [x, y, z] = points[i as usize];
-            [
-                [quantise(x) | quantise(y) << 16, quantise(z)],
-                [pack_normal(normals[i as usize]) | u32::from(bottom) << 24, u32::from(top) | u32::from(sides) << 8],
-            ]
-        })
-    };
-    for (triangle, look) in triangles {
+    for &triangle in &merged {
         out.indices.extend(triangle);
-        out.quads.extend(corners(&out.positions, &normals, triangle, look).into_iter().flatten());
+        out.quads.extend(corners(&out.positions, &ways, triangle));
     }
     // Coarser levels after it, for far away, where they are made, merged as it is.
     let mut ends = [out.quads.len() as u32; LEVELS];
     if levels {
         for (level, coarser) in COARSER.into_iter().enumerate() {
-            let (points, normals, triangles) = simplified((&every.0, &every.1, &shared), looks.clone(), coarser);
-            for (triangle, look) in triangles {
-                out.quads.extend(corners(&points, &normals, triangle, look).into_iter().flatten());
+            let (points, ways, coarse) = simplified((&every.0, &every.1, &shared), &triangles, coarser);
+            for triangle in coarse {
+                out.quads.extend(corners(&points, &ways, triangle));
             }
             ends[level + 1] = out.quads.len() as u32;
         }
@@ -414,47 +425,50 @@ pub const LEVELS: usize = 1 + COARSER.len();
 /// triangles, beside how far their surface moves, so its shading stays.
 const TURN_WEIGHT: f32 = 0.25;
 
-/// A chunk's triangles, each with its surfaces (top, sides, bottom), merged
-/// into fewer where the surface moves no more than `error` blocks: each
-/// kind of ground apart, and the edges of each, where it meets the chunk's
-/// sides or another kind, kept where they are, so chunks and kinds still
-/// meet point for point. `shared` says which points the chunks beside it
-/// may have too, which stay. The points the triangles use, with the way the
-/// ground faces at each, and the triangles numbered among them.
+/// A triangle's corners as two pairs of words each, as `smoothPoint` reads
+/// them: where each is, and the way the ground faces there and the
+/// surfaces it is drawn with (top, sides, bottom).
+fn corners(points: &[[f32; 3]], ways: &[([f32; 3], [u8; 3])], triangle: [u32; 3]) -> [[u32; 2]; 6] {
+    let [a, b, c] = triangle.map(|i| {
+        let [x, y, z] = points[i as usize];
+        let (normal, [top, sides, bottom]) = ways[i as usize];
+        [
+            [quantise(x) | quantise(y) << 16, quantise(z)],
+            [pack_normal(normal) | u32::from(bottom) << 24, u32::from(top) | u32::from(sides) << 8],
+        ]
+    });
+    [a[0], a[1], b[0], b[1], c[0], c[1]]
+}
+
+/// A chunk's triangles merged into fewer where the surface moves no more
+/// than `error` blocks, each point keeping the surfaces it is drawn with.
+/// The points `shared` says the chunks beside it may have too stay where
+/// they are, so chunks still meet edge for edge, and so do those beside a
+/// point drawn otherwise, so blends between kinds stay where they were and
+/// a point merges only into one drawn as it is. The points the triangles
+/// use, with the way the ground faces and its surfaces at each, and the
+/// triangles numbered among them.
 #[allow(clippy::type_complexity)]
 fn simplified(
-    (points, normals, shared): (&[[f32; 3]], &[[f32; 3]], &[bool]),
-    triangles: Vec<([u32; 3], [u8; 3])>,
+    (points, ways, shared): (&[[f32; 3]], &[([f32; 3], [u8; 3])], &[bool]),
+    triangles: &[[u32; 3]],
     error: f32,
-) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<([u32; 3], [u8; 3])>) {
+) -> (Vec<[f32; 3]>, Vec<([f32; 3], [u8; 3])>, Vec<[u32; 3]>) {
     use meshopt::{SimplifyOptions, simplify_with_attributes_and_locks_decoder};
-    let mut kinds: Vec<([u8; 3], Vec<u32>)> = Vec::new();
-    // Points two kinds meet at stay too, though they lie inside each kind's ground, as where two touch at a corner.
     let mut locks = shared.to_vec();
-    let mut kind_of: Vec<Option<usize>> = vec![None; points.len()];
-    for (triangle, look) in triangles {
-        let kind = match kinds.iter().position(|(kind, _)| *kind == look) {
-            Some(kind) => kind,
-            None => {
-                kinds.push((look, Vec::new()));
-                kinds.len() - 1
-            }
-        };
-        kinds[kind].1.extend(triangle);
-        for i in triangle.map(|i| i as usize) {
-            match kind_of[i] {
-                Some(other) if other != kind => locks[i] = true,
-                _ => kind_of[i] = Some(kind),
+    for triangle in triangles {
+        for (i, j) in [(0, 1), (1, 2), (2, 0)].map(|(i, j)| (triangle[i] as usize, triangle[j] as usize)) {
+            if ways[i].1 != ways[j].1 {
+                (locks[i], locks[j]) = (true, true);
             }
         }
     }
-    let attributes: Vec<f32> = normals.iter().flatten().copied().collect();
-    let options = SimplifyOptions::LockBorder | SimplifyOptions::ErrorAbsolute | SimplifyOptions::Sparse;
-    let mut numbers = vec![u32::MAX; points.len()];
-    let (mut kept, mut ways, mut merged) = (Vec::new(), Vec::new(), Vec::new());
-    for (look, indices) in kinds {
-        let fewer = match error > 0.0 {
-            true => simplify_with_attributes_and_locks_decoder(
+    let indices: Vec<u32> = triangles.iter().flatten().copied().collect();
+    let fewer = match error > 0.0 {
+        true => {
+            let attributes: Vec<f32> = ways.iter().flat_map(|(normal, _)| *normal).collect();
+            let options = SimplifyOptions::LockBorder | SimplifyOptions::ErrorAbsolute | SimplifyOptions::Sparse;
+            simplify_with_attributes_and_locks_decoder(
                 &indices,
                 points,
                 &attributes,
@@ -465,23 +479,24 @@ fn simplified(
                 error,
                 options,
                 None,
-            ),
-            false => indices,
-        };
-        for triangle in fewer.chunks_exact(3) {
-            let numbered = [0, 1, 2].map(|k| {
-                let i = triangle[k] as usize;
-                if numbers[i] == u32::MAX {
-                    numbers[i] = kept.len() as u32;
-                    kept.push(points[i]);
-                    ways.push(normals[i]);
-                }
-                numbers[i]
-            });
-            merged.push((numbered, look));
+            )
         }
+        false => indices,
+    };
+    let mut numbers = vec![u32::MAX; points.len()];
+    let (mut kept, mut kept_ways, mut merged) = (Vec::new(), Vec::new(), Vec::new());
+    for triangle in fewer.chunks_exact(3) {
+        merged.push([0, 1, 2].map(|k| {
+            let i = triangle[k] as usize;
+            if numbers[i] == u32::MAX {
+                numbers[i] = kept.len() as u32;
+                kept.push(points[i]);
+                kept_ways.push(ways[i]);
+            }
+            numbers[i]
+        }));
     }
-    (kept, ways, merged)
+    (kept, kept_ways, merged)
 }
 
 /// The faces between `quad`'s four cubes' points, each cube by its lowest
@@ -520,9 +535,13 @@ fn round_line(at: [i32; 3], facing: usize) -> [[i32; 3]; 4] {
 /// over a field of how far each block's middle is into water or ground
 /// (water's by how high its surface stands, see `flow::smooth_surface`;
 /// the ground's by its fill), the air a block further out than the water
-/// beside it, whatever the ground near it. Each corner is two pairs of words, as the ground's are, its
-/// surface the water's. Past the chunk columns `made` picks, the world goes on as the column beside it, so the
-/// water shows no side there and its surface runs on flat.
+/// beside it, whatever the ground near it. Ground beside the water's top
+/// with air over it, the shore, takes the water's level and a face over
+/// it, so the surface runs on a block into the shore and ends inside the
+/// ground, where the ground rises through it. Past the chunk columns `made`
+/// picks, the world goes on as the column beside it, so the water shows no
+/// side there and its surface runs on flat. Each corner is two pairs of
+/// words, as the ground's are, its surface the water's.
 fn water_surface(
     map: &BlockMap,
     key: [i32; 3],
@@ -569,20 +588,50 @@ fn water_surface(
             }
         })
         .collect();
-    // Air beside water: a block further out than the water's surface. How near the ground air is says nothing
-    // of the water, and would draw the water out over a beach.
-    let beside = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
+    // The shore: each block of ground with air over it and the water's top beside it, with that water's level
+    // and kind.
+    let inside = |at: [i32; 3]| at.iter().all(|&v| (-BEFORE..span - BEFORE).contains(&v));
+    let corner = key.map(|v| v * CHUNK as i32);
+    let fall = map.fall();
+    let up_of = |at: [i32; 3]| fall.up([0, 1, 2].map(|i| corner[i] + at[i]));
+    let mut shore: Vec<Option<(usize, BlockId)>> = vec![None; field.len()];
+    let mut levels = Vec::new();
+    for index in 0..field.len() {
+        if !is_ground(faces, padded.blocks[index]) {
+            continue;
+        }
+        let at = place(index);
+        let up = up_of(at);
+        let over = beside(at, up);
+        if !inside(over) || padded.block(over) != AIR {
+            continue;
+        }
+        let tops = (0..FACINGS)
+            .filter(|facing| facing / 2 != up / 2)
+            .map(|facing| beside(at, facing))
+            .filter(|&next| inside(next) && is_water(faces, padded.block(next)))
+            .filter(|&next| !inside(beside(next, up)) || !is_water(faces, padded.block(beside(next, up))));
+        let highest = tops.max_by(|a, b| field[Padded::index(*a)].total_cmp(&field[Padded::index(*b)]));
+        if let Some(water) = highest {
+            shore[index] = Some((up, padded.block(water)));
+            levels.push((index, field[Padded::index(water)]));
+        }
+    }
+    for (index, level) in levels {
+        field[index] = level;
+    }
+    // Air beside water or its shore: a block further out than the water's surface. How near the ground air is
+    // says nothing of the water, and would draw the water out over a beach.
+    let wet = |at: [i32; 3]| is_water(faces, padded.block(at)) || shore[Padded::index(at)].is_some();
     let mut out_of_water = Vec::new();
     for index in 0..field.len() {
         if padded.blocks[index] != AIR {
             continue;
         }
         let at = place(index);
-        let near = beside
-            .iter()
-            .map(|step| [0, 1, 2].map(|i| at[i] + step[i]))
-            .filter(|next| next.iter().all(|&v| (-BEFORE..span - BEFORE).contains(&v)))
-            .filter(|&next| is_water(faces, padded.block(next)))
+        let near = (0..FACINGS)
+            .map(|facing| beside(at, facing))
+            .filter(|&next| inside(next) && wet(next))
             .map(|next| field[Padded::index(next)] - 1.0)
             .fold(f32::MIN, f32::max);
         if near > f32::MIN {
@@ -592,14 +641,14 @@ fn water_surface(
     for (index, value) in out_of_water {
         field[index] = value;
     }
-    let wet = Padded { blocks: padded.blocks.clone(), depths: field };
+    let water = Padded { blocks: padded.blocks.clone(), depths: field };
     let mut numbers = vec![u32::MAX; CUBES * CUBES * CUBES];
     let (mut points, mut normals, mut shared) = (Vec::new(), Vec::new(), Vec::new());
     let mut number = |low: [i32; 3]| -> u32 {
         let [x, y, z] = low.map(|v| (v + CUBES_BEFORE) as usize);
         let slot = &mut numbers[(y * CUBES + z) * CUBES + x];
         if *slot == u32::MAX {
-            let (place, normal) = wet.point(low);
+            let (place, normal) = water.point(low);
             points.push(place);
             normals.push(normal);
             shared.push(low.iter().any(|&v| v < 0 || v >= CHUNK as i32 - 1));
@@ -614,36 +663,38 @@ fn water_surface(
             for x in 0..side {
                 let at = [x, y, z];
                 let block = padded.block(at);
+                // The shore's one face, over it.
+                if let Some((up, kind)) = shore[Padded::index(at)] {
+                    quads.push((round_line(at, up).map(&mut number), kind));
+                }
                 if !is_water(faces, block) {
                     continue;
                 }
                 for facing in 0..FACINGS {
-                    let mut next = at;
-                    next[facing / 2] += if facing % 2 == 0 { 1 } else { -1 };
-                    if padded.block(next) == AIR {
+                    if padded.block(beside(at, facing)) == AIR {
                         quads.push((round_line(at, facing).map(&mut number), block));
                     }
                 }
             }
         }
     }
-    let triangles = quads.into_iter().flat_map(|(quad, block)| {
+    // Each point drawn with the surface of the water whose face first reached it.
+    let mut ways: Vec<([f32; 3], Option<[u8; 3]>)> = normals.into_iter().map(|normal| (normal, None)).collect();
+    let mut triangles = Vec::new();
+    for (quad, block) in quads {
         let surface = faces.get(usize::from(block)).copied().unwrap_or_default().top;
-        split(quad, |i| points[i as usize]).into_iter().map(move |t| (t, [surface; 3]))
-    });
-    // Merged where it lies flat or gently curved, as the ground is.
-    let triangles = triangles.collect();
-    let (points, normals, triangles) = simplified((&points, &normals, &shared), triangles, FLAT_ENOUGH);
-    let mut words = Vec::new();
-    for (triangle, [surface, ..]) in triangles {
-        let surface = u32::from(surface);
-        for i in triangle {
-            let [x, y, z] = points[i as usize];
-            words.push([quantise(x) | quantise(y) << 16, quantise(z)]);
-            words.push([pack_normal(normals[i as usize]) | surface << 24, surface | surface << 8]);
+        for triangle in split(quad, |i| points[i as usize]) {
+            for i in triangle {
+                ways[i as usize].1.get_or_insert([surface; 3]);
+            }
+            triangles.push(triangle);
         }
     }
-    words
+    let ways: Vec<([f32; 3], [u8; 3])> =
+        ways.into_iter().map(|(normal, look)| (normal, look.unwrap_or_default())).collect();
+    // Merged where it lies flat or gently curved, as the ground is.
+    let (points, ways, triangles) = simplified((&points, &ways, &shared), &triangles, FLAT_ENOUGH);
+    triangles.into_iter().flat_map(|triangle| corners(&points, &ways, triangle)).collect()
 }
 
 /// What a ball does to a world drawn smooth: adds ground of a kind where
@@ -878,6 +929,54 @@ mod tests {
         assert!(added.iter().any(|&(at, block, _)| at == [16, 4, 16] && block == 1));
         let taken = ball(&map, [16.5, 4.5, 16.5], 1.0, Ball::Take, &faces);
         assert!(taken.iter().all(|&(at, ..)| map.get(at) != 2), "no water taken as ground");
+    }
+
+    #[test]
+    fn a_seas_surface_runs_flat_into_a_gentle_shore_with_no_gaps_before_the_ground_rises_through_it() {
+        use crate::blocks::flow::surface_fill;
+        let faces = [BlockFaces::default(), BlockFaces::new(1, 1, 1), BlockFaces::water(7)];
+        // A beach rising a block every four along x, and a sea 5.2 blocks up over it, as generation lays one:
+        // every block whose middle is under the sea and whose ground lies under it too is water.
+        let (height, sea) = (|x: i32| 2.0 + (x as f32 + 0.5) * 0.25, 5.2f32);
+        let mut map = BlockMap::default();
+        for z in 0..32 {
+            for x in 0..32 {
+                for y in 0..10 {
+                    let (depth, over) = (height(x) - (y as f32 + 0.5), sea - (y as f32 + 0.5));
+                    if over > 0.0 && depth < over {
+                        map.set_cell([x, y, z], 2, surface_fill(over));
+                    } else if depth > -1.0 {
+                        map.set_cell([x, y, z], if depth > 0.0 { 1 } else { AIR }, fill_of(depth, depth > 0.0));
+                    }
+                }
+            }
+        }
+        let mesh = mesh_chunk(&map, [0, 0, 0], &faces);
+        let (first, _) = mesh.water();
+        let corners: Vec<[f32; 3]> = mesh.quads[first as usize..]
+            .chunks(2)
+            .map(|pair| {
+                let at = [pair[0][0] & 0xFFFF, pair[0][0] >> 16, pair[0][1] & 0xFFFF];
+                at.map(|q| q as f32 / POINT_STEPS + POINT_FROM)
+            })
+            .collect();
+        // The ground rises through the sea 12.8 blocks along. Up to there the sea's surface is whole and flat at
+        // its level: every spot along a line across it lies under one of its triangles, at 5.2 blocks.
+        let covered = |x: f32, z: f32| {
+            corners.chunks(3).any(|t| {
+                let side = |a: [f32; 3], b: [f32; 3]| (b[0] - a[0]) * (z - a[2]) - (b[2] - a[2]) * (x - a[0]);
+                let (d0, d1, d2) = (side(t[0], t[1]), side(t[1], t[2]), side(t[2], t[0]));
+                let level = t.iter().all(|p| (p[1] - sea).abs() < 0.03);
+                level && ((d0 >= 0.0 && d1 >= 0.0 && d2 >= 0.0) || (d0 <= 0.0 && d1 <= 0.0 && d2 <= 0.0))
+            })
+        };
+        for step in 12..=51 {
+            let x = step as f32 * 0.25;
+            assert!(covered(x, 16.3), "the sea's surface {x} blocks along, where the ground is under it");
+        }
+        // And it ends within a block and a half past the shore, inside the ground.
+        let furthest = corners.iter().map(|p| p[0]).fold(f32::MIN, f32::max);
+        assert!(furthest > 12.8 && furthest < 14.6, "ends {furthest} blocks along");
     }
 
     #[test]

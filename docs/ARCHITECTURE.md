@@ -2906,8 +2906,8 @@ blocks, so none is meshed twice and the frame waits for none. Models of small co
 blocks come from `.vox` files (`blocks::vox`), each colour built as a kind of block. A world drawn smooth (a Voxel
 Terrain) keeps how full each block is near its surface and is meshed by surface nets (`blocks::smooth`), drawn from
 the same pool as triangles' corners; each chunk's triangles merged where the surface is flat (a tenth of a block),
-and twice more, coarser, for far away, each kind of ground apart and the points chunks share kept, so any level
-meets any other; a view picks a chunk's level by its distance as models' are, and passes over a chunk whose
+and twice more, coarser, for far away, the points beside another kind and those chunks share kept, so kinds blend
+where they did and any level meets any other; a view picks a chunk's level by its distance as models' are, and passes over a chunk whose
 triangles all face away (`ChunkMesh::cone`).
 A planet's ground lies all round its world's corner, its generator read round
 it in three dimensions on a cube's faces once; physics pulls bodies near it towards its middle, and characters near
@@ -2928,7 +2928,9 @@ sources, down (towards a planet's middle) and then out over ground, a level lowe
 in its fill: a step looks only at the blocks near the last step's changes, each from the blocks as they were, so every
 machine flows alike, five steps a second in the game's tick. In a world drawn smooth, water has a smooth surface of its
 own, by surface nets over how deep into water or ground each block's middle is, a generated sea's top blocks keeping
-where its surface lies in their fill. Far out, the world's middle follows the camera (see the
+where its surface lies in their fill; the water round the camera is one more body among the Pools for the view under it.
+A world's blocks can change size with the world staying as it is in metres: its ground is counted again and what was
+built read again in the new blocks (`blocks::edits::resized`). Far out, the world's middle follows the camera (see the
 floating origin, under the Obj model), and chunk keys count from the world's Obj, so none is made again.
 Digging into a
 heightmap terrain turns its columns into smooth-voxel chunks that start from its heights (`voxear_terrain::dig`,

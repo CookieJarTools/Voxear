@@ -50,10 +50,9 @@ const SURFACE: Fill = 176;
 const SURFACE_STEPS: f32 = 77.0;
 
 /// The fill of a source whose surface, in a world drawn smooth, stands
-/// `above` blocks over its middle, from nothing to a whole block (up into
-/// the air over it): as a generated sea's top blocks are, so it lies at its
-/// sea level wherever that is in a block. To flowing it is a source like any
-/// other.
+/// `above` blocks over its middle, from nothing to a whole block (the
+/// middle of the block over it): as a generated sea's top blocks are, so it
+/// lies at its sea level. To flowing it is a source like any other.
 pub fn surface_fill(above: f32) -> Fill {
     SURFACE + (above.clamp(0.0, 1.0) * SURFACE_STEPS).round() as Fill
 }

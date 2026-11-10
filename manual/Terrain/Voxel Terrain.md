@@ -59,6 +59,8 @@ A [[First-Person View]] on the character turns about the same up, so its Obj and
 
 Each kind of block is drawn with its **Top** where the ground faces up, its **Bottom** where it faces down, and its **Material** where it is steep, blended as the ground turns: wholly its top on slopes up to about 25 degrees, wholly its sides past about 50. A kind of grass with a grass top and a rock material covers gentle hills in grass and turns to rock on the cliffs, with no painting.
 
+Where two kinds of ground meet, they blend across the triangles between them, so sand runs into grass over a soft edge. Each point of the surface takes the kind of the ground nearest the surface round it, so a thin top layer of grass stays grass on a slope and the dirt under it does not show through.
+
 The surface takes the way the ground faces from the blocks round it, so light runs smoothly over hills. It casts the sun's shadows, the GI's rays see it, and physics stands things on it and rays meet it where it is drawn. Chunks meet without gaps.
 
 Water is smooth in a Voxel Terrain too, its surface meeting the ground at the shore: a generated sea lies flat at its sea level, and round a planet as a smooth sea. It flows as it does in a Block World, towards the middle on a planet (see [[Block Worlds#Water|Water]]).

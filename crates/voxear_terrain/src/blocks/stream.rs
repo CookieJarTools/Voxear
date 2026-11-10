@@ -216,6 +216,11 @@ impl BlockStreamer {
             self.number = self.latest.fetch_add(1, Ordering::AcqRel) + 1;
             self.making = Some(Arc::new(making));
             changed = true;
+        } else if self.making.as_ref().is_some_and(|kept| kept.faces != making.faces) {
+            // Its faces alone are others, as once a game numbers a block its file does not list: faces are made
+            // with them from here on, and nothing made is made again. A column's faces being made now with those
+            // before are right for its blocks as they were, and are made again if its blocks change.
+            self.making = Some(Arc::new(making));
         }
         let making = self.making.clone().expect("kept above");
         let windows = windows(&making.file, distance, far, camera);
@@ -755,6 +760,29 @@ mod tests {
                 "the coarser holds the finer"
             );
         }
+    }
+
+    #[test]
+    fn faces_alone_changed_are_taken_up_with_nothing_made_again() {
+        let making = making();
+        let mut world = BlockWorld::new(BlockMap::default(), &making.faces, 2.0);
+        let (mut base, mut pending) = (Arc::new(BlockMap::default()), Arc::new(BlockEdits::default()));
+        let mut streamer = BlockStreamer::default();
+        settle(&mut streamer, &mut world, (&mut base, &mut pending), &making, [10.0, 10.0]);
+        let (number, chunks) = (streamer.number, world.blocks.chunks().count());
+        assert!(chunks > 0);
+        // A block more than its file lists, numbered while the game runs: its faces at the end of the world's.
+        let mut faces = making.faces.to_vec();
+        faces.push(crate::blocks::BlockFaces::water(0));
+        let grown = BlockMaking { faces: faces.into(), ..making.clone() };
+        streamer.update(&mut world, &mut base, &mut pending, grown.clone(), (100.0, 600.0), [10.0, 10.0]);
+        assert_eq!((streamer.number, world.blocks.chunks().count()), (number, chunks), "nothing started again");
+        assert_eq!(streamer.making.as_ref().map(|kept| kept.faces.len()), Some(grown.faces.len()));
+        // A file that is another starts it again, as before.
+        let mut other = grown.clone();
+        other.file.ground.under_depth += 1;
+        streamer.update(&mut world, &mut base, &mut pending, other, (100.0, 600.0), [10.0, 10.0]);
+        assert_ne!(streamer.number, number);
     }
 
     #[test]

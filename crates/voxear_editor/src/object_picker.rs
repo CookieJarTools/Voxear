@@ -109,6 +109,8 @@ pub enum PickFor {
     ActionIcon,
     /// The clip an action of the Gun Handling at this path is based on.
     GunHandlingClip { handling: String, field: crate::gun_handling_inspector::HandlingClip },
+    /// A field naming an asset of the block at this path.
+    BlockRef { block: String, field: crate::block_inspector::BlockRef },
     /// A control's picture in the Prompt Icons at this path.
     PromptIcon { icons: String, slot: crate::prompt_icons_inspector::IconSlot },
     /// The Prompt Icons the project's input actions name.
@@ -536,6 +538,7 @@ fn asset(game: &Game, path: &str) -> (&'static str, String) {
         Some(AssetKind::Terrain) => "mountain",
         Some(AssetKind::WorldGen) => "sprout",
         Some(AssetKind::BlockWorld) => "blocks",
+        Some(AssetKind::Block) => "block",
         Some(AssetKind::VoxModel) => "blocks",
         Some(AssetKind::Lighting) => "light",
         Some(AssetKind::Data) => "file",

@@ -38,6 +38,11 @@ public sealed class CodeHud : SystemBase
 		Log.Info($"spare shown {spare.IsShown}, has waiting {spare.HasClass("waiting")}");
 		panel.Add(spare);
 		Log.Info($"spare shown {spare.IsShown}");
+
+		// A picture of the project, as an item's icon: an image, which shows it where there is a renderer to.
+		var icon = panel.Add(new Image(Texture.Load("Docs/How Hello Works/images/Day.png")));
+		icon.AddClass("icon");
+		Log.Info($"icon shown {icon.IsShown}, of {icon.Picture.IsSet}");
 	}
 
 	protected override void Update()
@@ -113,6 +118,11 @@ fn scripts_build_their_ui_in_code_and_hear_it() {
     let inside = inside.expect("the spare panel's label shows");
     let spare = ui.parent(inside).unwrap();
     assert!(ui.has_class(spare, "spare") && ui.has_class(spare, "waiting"), "its classes came with it");
+    // The image made in code is an image on screen, beside the spare panel.
+    assert!(lines.contains(&"icon shown True, of True".to_string()), "{lines:#?}");
+    let hud = ui.parent(spare).unwrap();
+    let icon = ui.children(hud).into_iter().find(|&node| ui.has_class(node, "icon")).expect("the icon");
+    assert_eq!(ui.kind(icon), Some(voxear_ui::Kind::Image));
 
     // A click on the made button reaches its handler at the start of the next frame.
     let mut buttons = Vec::new();

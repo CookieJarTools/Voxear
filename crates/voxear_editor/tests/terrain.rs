@@ -1052,6 +1052,13 @@ fn a_block_world_is_added_on_an_asset_of_its_own_its_ground_changed_undone_and_s
     let asset = editor.game.engine.world.get::<BlockWorldAsset>(field).expect("its asset").clone();
     let path = editor.game.content.db().get(asset.guid).unwrap().path.clone();
     assert_eq!(path, "Blocks/Field.blockworld");
+    // Its grass, dirt and stone are blocks of the project's, made beside it, which its file lists.
+    assert!(asset.file.blocks.iter().all(|kind| kind.block.is_some()), "{:?}", asset.file.blocks);
+    let names: Vec<&str> = asset.drawn.blocks.iter().map(|kind| kind.name.as_str()).collect();
+    assert_eq!(names, ["Grass", "Dirt", "Stone"]);
+    for name in names {
+        assert!(dir.path().join(format!("Blocks/{name}.block")).is_file(), "{name}'s block");
+    }
     let blocks = |editor: &voxear_editor::Editor| editor.game.engine.world.get::<BlockWorld>(field).unwrap().clone();
     assert_eq!((blocks(&editor).blocks.get([0, 7, 0]), blocks(&editor).blocks.get([63, 0, 63])), (1, 3));
     show_block_tool(&mut editor, &mut renderer, "Settings");
@@ -1069,6 +1076,8 @@ fn a_block_world_is_added_on_an_asset_of_its_own_its_ground_changed_undone_and_s
     editor.save();
     let text = std::fs::read_to_string(dir.path().join(&path)).unwrap();
     assert_eq!(BlockFile::parse(&text).unwrap().ground.height, 8);
+    assert_eq!(text.matches("block = ").count(), 3, "{text}");
+    assert!(!text.contains("color"), "how a block looks is in its own file: {text}");
 }
 
 /// Picks one of the Block World's tools by its segment.
@@ -1076,6 +1085,20 @@ fn show_block_tool(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, 
     let strip = first_with(&editor.ui, editor.ui.root(), "block-tools").expect("the Block World's tools");
     let segment = editor.ui.children(strip).into_iter().find(|&s| editor.ui.text(s) == tool).expect("the tool");
     click(&mut editor.ui, segment);
+    frame(editor, renderer);
+    frame(editor, renderer);
+}
+
+/// Clicks the button saying `text` under a Block World's list of blocks.
+fn block_list_button(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, text: &str) {
+    let mut buttons = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "collection-add", &mut buttons);
+    let said: Vec<String> = buttons.iter().map(|&button| editor.ui.text(button)).collect();
+    let button = buttons
+        .into_iter()
+        .find(|&button| editor.ui.is_visible(button) && editor.ui.text(button) == text)
+        .unwrap_or_else(|| panic!("no button says {text}: {said:?}"));
+    click(&mut editor.ui, button);
     frame(editor, renderer);
     frame(editor, renderer);
 }
@@ -1109,7 +1132,7 @@ fn blocks_are_placed_broken_and_their_kinds_changed_in_the_scene_view_each_a_ste
     editor.select(Some(field));
     frame(&mut editor, &mut renderer);
     add_component(&mut editor, &mut renderer, "Block World");
-    for label in ["Brush", "Size", "Name", "Color", "Material", "Top", "Bottom"] {
+    for label in ["Brush", "Size", "Block", "Color", "Material", "Top", "Bottom"] {
         assert_eq!(prop_rows(&editor.ui, label).len(), 1, "Build's {label}");
     }
     // The world moved under the bottom middle of the Scene view, its top half a metre up, under the camera.
@@ -1136,15 +1159,14 @@ fn blocks_are_placed_broken_and_their_kinds_changed_in_the_scene_view_each_a_ste
     editor.undo(&mut renderer);
     frame(&mut editor, &mut renderer);
     assert_eq!(block(&editor, 8), 1, "the break undone, the block back");
-    // A new kind, placed: number 4; then Grass taken out of the list, its blocks with it, the rest a number up.
-    let add = first_with(&editor.ui, editor.ui.root(), "collection-add").expect("Add Block");
-    click(&mut editor.ui, add);
-    frame(&mut editor, &mut renderer);
-    frame(&mut editor, &mut renderer);
+    // A colour of the world's own, placed: number 4; then Grass taken out of the list, its blocks with it. Its place
+    // stays, empty, so every other block keeps its number.
+    block_list_button(&mut editor, &mut renderer, "Add Color");
     let kinds = |editor: &voxear_editor::Editor| {
         editor.game.engine.world.get::<BlockWorldAsset>(field).unwrap().file.blocks.len()
     };
     assert_eq!(kinds(&editor), 4);
+    assert_eq!(prop_rows(&editor.ui, "Name").len(), 1, "a kind of the world's own is named here");
     // Where the click lands now: against the face of the grass block it meets, likely its side.
     let blocks_now = editor.game.engine.world.get::<BlockWorld>(field).unwrap().blocks.clone();
     let from = (origin - corner).to_array();
@@ -1154,43 +1176,50 @@ fn blocks_are_placed_broken_and_their_kinds_changed_in_the_scene_view_each_a_ste
     let world_blocks =
         |editor: &voxear_editor::Editor| editor.game.engine.world.get::<BlockWorld>(field).unwrap().blocks.clone();
     assert_eq!(world_blocks(&editor).get(against), 4, "the new kind placed against the face it meets");
+    // Changes to the list made in quick succession are one step to undo: this one is a step of its own.
+    let apart = std::time::Duration::from_millis(900);
+    std::thread::sleep(apart);
     let mut removes = Vec::new();
     with_class(&editor.ui, editor.ui.root(), "collection-remove", &mut removes);
     removes.retain(|&r| editor.ui.is_visible(r));
+    assert_eq!(removes.len(), 4);
     click(&mut editor.ui, removes[0]);
     frame(&mut editor, &mut renderer);
     frame(&mut editor, &mut renderer);
-    assert_eq!(kinds(&editor), 3);
-    // Dirt is now 1 and stone 2; the ground's grass top is air, and the new kind 3.
-    assert_eq!([8, 7, 5, 3].map(|y| block(&editor, y)), [0, 0, 1, 2]);
-    assert_eq!(world_blocks(&editor).get(against), 3);
-    // Another kind added, then dragged by its grip above the one placed: the ground has neither, and the placed
-    // block keeps its kind by its new number.
-    let add = first_with(&editor.ui, editor.ui.root(), "collection-add").expect("Add Block");
-    click(&mut editor.ui, add);
-    frame(&mut editor, &mut renderer);
-    frame(&mut editor, &mut renderer);
-    assert_eq!(kinds(&editor), 4);
+    assert_eq!(kinds(&editor), 4, "its place kept");
+    let file = |editor: &voxear_editor::Editor| {
+        editor.game.engine.world.get::<BlockWorldAsset>(field).unwrap().file.clone()
+    };
+    assert!(file(&editor).blocks[0].removed && file(&editor).ground.top == 0);
+    // Dirt is still 2 and stone 3; the ground's grass top is air, and the colour still 4.
+    assert_eq!([8, 7, 5, 3].map(|y| block(&editor, y)), [0, 0, 2, 3]);
+    assert_eq!(world_blocks(&editor).get(against), 4);
+    let mut removes = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "collection-remove", &mut removes);
+    removes.retain(|&r| editor.ui.is_visible(r));
+    assert_eq!(removes.len(), 3, "the list shows the three blocks left");
+    // The list has no order to change: no row has a grip to drag it by.
     let mut grips = Vec::new();
     with_class(&editor.ui, editor.ui.root(), "collection-grip", &mut grips);
-    grips.retain(|&g| editor.ui.is_visible(g));
-    let ([gx, gy, gw, gh], top) = (editor.ui.rect(grips[3]), editor.ui.rect(grips[2])[1]);
-    let from = [gx + gw / 2.0, gy + gh / 2.0];
-    editor.ui.pointer_move(from[0], from[1]);
-    editor.ui.pointer_button(true);
+    assert!(grips.iter().all(|&grip| !editor.ui.is_visible(grip)), "nothing to drag a block by");
+    // Undone, the grass and its blocks are back; made again, gone again.
+    editor.undo(&mut renderer);
     frame(&mut editor, &mut renderer);
-    for step in 1..=4 {
-        editor.ui.pointer_move(from[0], from[1] + (top - 2.0 - from[1]) * step as f32 / 4.0);
-        frame(&mut editor, &mut renderer);
-    }
-    editor.ui.pointer_button(false);
+    assert_eq!((kinds(&editor), block(&editor, 7), world_blocks(&editor).get(against)), (4, 1, 4), "grass back");
+    assert!(!file(&editor).blocks[0].removed);
+    editor.redo(&mut renderer);
     frame(&mut editor, &mut renderer);
-    let names = |editor: &voxear_editor::Editor| {
-        let file = &editor.game.engine.world.get::<BlockWorldAsset>(field).unwrap().file;
-        file.blocks.iter().map(|kind| kind.name.clone()).collect::<Vec<_>>()
-    };
-    assert_eq!(names(&editor)[2..], ["Block 5", "Block 4"], "the second named past the first, and moved above it");
-    assert_eq!(world_blocks(&editor).get(against), 4, "the placed block still the kind placed");
+    frame(&mut editor, &mut renderer);
+    assert_eq!((block(&editor, 7), world_blocks(&editor).get(against)), (0, 4), "and taken out again");
+    // Another colour takes the next number, never the one left empty.
+    std::thread::sleep(apart);
+    block_list_button(&mut editor, &mut renderer, "Add Color");
+    assert_eq!(kinds(&editor), 5);
+    let names: Vec<String> = file(&editor).blocks.iter().map(|kind| kind.name.clone()).collect();
+    assert_eq!(names[3..], ["Color 4", "Color 5"]);
+    click_scene(&mut editor, &mut renderer, point);
+    let placed: Vec<u16> = world_blocks(&editor).chunks().flat_map(|(_, chunk)| chunk.parts().0.to_vec()).collect();
+    assert!(placed.contains(&5) && !placed.contains(&1), "{placed:?}");
     // Saved, its changes from its ground are kept beside it, small.
     editor.save();
     let path = editor
@@ -1205,6 +1234,119 @@ fn blocks_are_placed_broken_and_their_kinds_changed_in_the_scene_view_each_a_ste
         std::fs::read(dir.path().join(voxear_terrain::blocks::edits::blocks_file(&path))).expect("its changes");
     let edits = BlockEdits::from_bytes(&changes).unwrap();
     assert!(!edits.is_empty() && changes.len() < 200, "{} bytes", changes.len());
+    // Its file keeps the empty place, so the world reads back with the same numbers.
+    let text = std::fs::read_to_string(dir.path().join(&path)).unwrap();
+    let read = voxear_terrain::blocks::file::BlockFile::parse(&text).unwrap();
+    assert!(read.blocks[0].removed && read.blocks[3].name == "Color 4", "{text}");
+}
+
+#[test]
+fn a_block_is_a_file_of_its_own_listed_by_worlds_changed_for_them_all_and_made_from_a_worlds_own_kinds() {
+    use voxear_engine::blocks::BlockWorldAsset;
+    use voxear_terrain::blocks::{BlockWorld, block::BlockDef, is_water};
+    let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {
+        eprintln!("skipping: no usable GPU");
+        return;
+    };
+    let dir = hello_with_a_field();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    let field = obj(&editor, "Field");
+    editor.select(Some(field));
+    frame(&mut editor, &mut renderer);
+    add_component(&mut editor, &mut renderer, "Block World");
+    type Editor = voxear_editor::Editor;
+    let asset = |editor: &Editor| editor.game.engine.world.get::<BlockWorldAsset>(field).unwrap().clone();
+    let world = |editor: &Editor| editor.game.engine.world.get::<BlockWorld>(field).unwrap().clone();
+    let read = |name: &str| BlockDef::parse(&std::fs::read_to_string(dir.path().join(name)).unwrap()).unwrap();
+
+    // New Block makes a block in the project's Blocks folder, lists it and picks it: number 4.
+    block_list_button(&mut editor, &mut renderer, "New Block");
+    assert!(dir.path().join("Blocks/Block.block").is_file());
+    assert_eq!(asset(&editor).file.blocks.len(), 4);
+    assert_eq!(asset(&editor).drawn.blocks[3].name, "Block");
+    assert!(asset(&editor).file.blocks[3].block.is_some());
+    assert_eq!((prop_rows(&editor.ui, "Block").len(), prop_rows(&editor.ui, "Name").len()), (1, 0));
+    // Made water here, it is water in its file, and so in the world once the game has ticked: its materials' rows
+    // go. That is the block's change, not the world's, and no step to undo: undoing takes it off the list instead.
+    let water = first_with(&editor.ui, prop_rows(&editor.ui, "Water")[0], "checkbox").expect("Water");
+    click(&mut editor.ui, water);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(std::fs::read_to_string(dir.path().join("Blocks/Block.block")).unwrap().contains("liquid = \"water\""));
+    assert!(is_water(&world(&editor).faces, 4) && asset(&editor).drawn.blocks[3].water);
+    assert_eq!(prop_rows(&editor.ui, "Material").len(), 0);
+    editor.undo(&mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(asset(&editor).file.blocks.len(), 3, "off the list again");
+    assert!(read("Blocks/Block.block").liquid == voxear_terrain::blocks::block::Liquid::Water, "its file as it was");
+
+    // Add Block offers the project's blocks: the one made is listed again, once however often it is picked.
+    for _ in 0..2 {
+        block_list_button(&mut editor, &mut renderer, "Add Block");
+        let row = picker_row(&editor.ui, "Block.block").expect("the block is offered");
+        click(&mut editor.ui, row);
+        frame(&mut editor, &mut renderer);
+        frame(&mut editor, &mut renderer);
+    }
+    assert_eq!(asset(&editor).file.blocks.len(), 4);
+    assert!(is_water(&world(&editor).faces, 4));
+
+    // A kind of the world's own, named: Make Block Assets makes a block of it, of its name and colour, and lists
+    // that in its place. A colour as a model brings one stays the world's.
+    block_list_button(&mut editor, &mut renderer, "Add Color");
+    block_list_button(&mut editor, &mut renderer, "Add Color");
+    let mut rows = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "terrain-layer", &mut rows);
+    rows.retain(|&row| editor.ui.is_visible(row));
+    click(&mut editor.ui, rows[4]);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    type_number(&mut editor, &mut renderer, "Name", "Marble");
+    let marble = asset(&editor).file.blocks[4].clone();
+    assert_eq!((marble.name.as_str(), marble.block.is_none()), ("Marble", true));
+    let before = world(&editor);
+    block_list_button(&mut editor, &mut renderer, "Make Block Assets");
+    let now = asset(&editor).file.blocks.clone();
+    assert!(now[4].block.is_some() && now[5].is_inline(), "{now:?}");
+    assert_eq!(read("Blocks/Marble.block").color, marble.color);
+    assert_eq!(asset(&editor).drawn.blocks[4].name, "Marble");
+    assert_eq!(*world(&editor).faces, *before.faces, "drawn as it was");
+    let mut buttons = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "collection-add", &mut buttons);
+    let said: Vec<String> = buttons.iter().filter(|&&b| editor.ui.is_visible(b)).map(|&b| editor.ui.text(b)).collect();
+    assert!(!said.iter().any(|text| text == "Make Block Assets"), "nothing left to make: {said:?}");
+
+    // The block's own Inspector: its colour typed there is written to its file, and the world listing it shows it.
+    editor.ping_asset("Blocks/Marble.block");
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let mut tiles = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "tile", &mut tiles);
+    tiles.retain(|&tile| editor.ui.is_visible(tile));
+    let name_of = |tile: NodeId| editor.ui.children(tile).get(1).map(|&name| editor.ui.text(name)).unwrap_or_default();
+    let names: Vec<String> = tiles.iter().map(|&tile| name_of(tile)).collect();
+    let tile = tiles.into_iter().find(|&tile| name_of(tile) == "Marble.block");
+    let tile = tile.unwrap_or_else(|| panic!("the block has no tile among {names:?}"));
+    click(&mut editor.ui, tile);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.inspected_asset().map(|item| item.path.as_str()), Some("Blocks/Marble.block"));
+    assert_eq!(prop_rows(&editor.ui, "Liquid").len(), 1, "the Block's own Inspector");
+    let color = first_with(&editor.ui, prop_rows(&editor.ui, "Color")[0], "axis-input").expect("its red");
+    editor.ui.focus(color);
+    editor.ui.set_modifiers(Modifiers { shift: false, control: true });
+    editor.ui.key_down(Key::Char('a'));
+    editor.ui.set_modifiers(Modifiers::default());
+    editor.ui.text_input("0.25");
+    frame(&mut editor, &mut renderer);
+    editor.ui.blur();
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(read("Blocks/Marble.block").color[0], 0.25);
+    assert_eq!(asset(&editor).drawn.blocks[4].color[0], 0.25, "the world listing it draws it so");
 }
 
 #[test]
@@ -1224,10 +1366,7 @@ fn a_kind_of_block_made_water_is_placed_flows_out_and_a_generated_world_can_fill
     frame(&mut editor, &mut renderer);
     add_component(&mut editor, &mut renderer, "Block World");
     // A new kind, made water: its materials' rows go, as water is drawn with its colour alone.
-    let add = first_with(&editor.ui, editor.ui.root(), "collection-add").expect("Add Block");
-    click(&mut editor.ui, add);
-    frame(&mut editor, &mut renderer);
-    frame(&mut editor, &mut renderer);
+    block_list_button(&mut editor, &mut renderer, "Add Color");
     let water = first_with(&editor.ui, prop_rows(&editor.ui, "Water")[0], "checkbox").expect("Water");
     click(&mut editor.ui, water);
     frame(&mut editor, &mut renderer);
@@ -1267,6 +1406,24 @@ fn a_kind_of_block_made_water_is_placed_flows_out_and_a_generated_world_can_fill
     assert_eq!(Water::of(blocks.blocks.fill(beside)), Water::Flowing { level: 7, up: 2 });
     assert_eq!(Water::of(blocks.blocks.fill(under)), Water::Source, "what was placed stays full");
     shot(&mut renderer, "blocks-water-flowing.png");
+    // Building with ground reaches through the water to the grass under it, and takes the water's place.
+    let rows = |editor: &voxear_editor::Editor| {
+        let mut rows = Vec::new();
+        with_class(&editor.ui, editor.ui.root(), "terrain-layer", &mut rows);
+        rows.retain(|&row| editor.ui.is_visible(row));
+        rows
+    };
+    let grass = rows(&editor)[0];
+    click(&mut editor.ui, grass);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    click_scene(&mut editor, &mut renderer, point);
+    let blocks = editor.game.engine.world.get::<BlockWorld>(field).unwrap().clone();
+    assert_eq!(blocks.blocks.get(under), 1, "grass where the water was");
+    editor.undo(&mut renderer);
+    frame(&mut editor, &mut renderer);
+    let blocks = editor.game.engine.world.get::<BlockWorld>(field).unwrap().clone();
+    assert_eq!(blocks.blocks.get(under), 4, "the water back");
     // Undone, the water it ran out into goes with it.
     editor.undo(&mut renderer);
     frame(&mut editor, &mut renderer);
@@ -1492,10 +1649,7 @@ fn a_block_worlds_ground_is_generated_by_a_picked_generator_and_covered_by_a_kin
     }
     // A kind that covers where it is below freezing, as Snow: everywhere in this cold world.
     show_block_tool(&mut editor, &mut renderer, "Build");
-    let add = first_with(&editor.ui, editor.ui.root(), "collection-add").expect("Add Block");
-    click(&mut editor.ui, add);
-    frame(&mut editor, &mut renderer);
-    frame(&mut editor, &mut renderer);
+    block_list_button(&mut editor, &mut renderer, "Add Color");
     let cover = first_with(&editor.ui, prop_rows(&editor.ui, "Cover")[0], "checkbox").expect("its cover");
     click(&mut editor.ui, cover);
     frame(&mut editor, &mut renderer);

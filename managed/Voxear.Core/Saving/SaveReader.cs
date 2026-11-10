@@ -226,6 +226,10 @@ internal sealed class SaveReader
 		{
 			found = type.GetMethod("Load", new[] { typeof(string) })!.Invoke(null, new object?[] { node.AsString()! });
 		}
+		else if (typeof(Definition).IsAssignableFrom(type) && node.Kind == SaveNodeKind.Text)
+		{
+			found = Definitions.Load(type, node.AsString());
+		}
 		else if (FieldValues.IsGeneric(type, typeof(Ref<>)))
 		{
 			found = Activator.CreateInstance(type, node.AsString()!);

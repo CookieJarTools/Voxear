@@ -224,6 +224,46 @@ pub trait ScriptServices {
         anyhow::bail!("data assets load only in a running game, not here ({reference})")
     }
 
+    /// What a block (a `.block` file) says, by project path or GUID, for
+    /// `Block` in Voxear.Core, as JSON: its GUID, its name, its look and its
+    /// rules.
+    fn block_json(&mut self, reference: &str) -> Result<String> {
+        anyhow::bail!("blocks are read only in a running game, not here ({reference})")
+    }
+
+    /// Goes up whenever a block is saved, so what scripts read of one is
+    /// read again.
+    fn blocks_version(&mut self) -> u64 {
+        0
+    }
+
+    /// The GUID of the block numbered `block` in the world of blocks on
+    /// `entity`: none for air, or a kind the world keeps itself.
+    fn block_guid(&mut self, _world: &World, _entity: Entity, _block: u16) -> Option<String> {
+        None
+    }
+
+    /// The number of the block `reference` names in the world of blocks on
+    /// `entity`: one it lists, or, with `grow`, a number given it now where
+    /// it lists none, its faces given to the world. None where there is no
+    /// such block, or no room for it.
+    fn block_number(&mut self, _world: &mut World, _entity: Entity, _reference: &str, _grow: bool) -> Option<u16> {
+        None
+    }
+
+    /// The blocks the world of blocks on `entity` numbered while the game
+    /// ran, which its level does not list: each number, and its block's
+    /// GUID.
+    fn blocks_grown(&mut self, _world: &World, _entity: Entity) -> Vec<(u16, String)> {
+        Vec::new()
+    }
+
+    /// Whether `block` is the number of a block in the world of blocks on
+    /// `entity`.
+    fn block_listed(&mut self, _world: &World, _entity: Entity, _block: u16) -> bool {
+        true
+    }
+
     /// Every data asset of the project, for `Definition.All`, as JSON: each
     /// one's GUID, its path and the type it names, by path.
     fn data_assets(&mut self) -> Result<String> {
@@ -293,6 +333,12 @@ pub enum UiAsk<'a> {
     SetPlaceholder(&'a str),
     /// A dropdown's options, one a line, keeping the one picked.
     SetOptions(&'a str),
+    /// The picture an image shows, by project path or GUID; empty for none.
+    /// Whatever has the pictures finds it and asks `SetImage`.
+    SetPicture(&'a str),
+    /// What an image shows: the renderer's index for a texture and the part
+    /// of it, as fractions (left, top, right, bottom); none for nothing.
+    SetImage(Option<(u32, [f32; 4])>),
     /// A list view's items: how many, how tall each row is, and for a tree
     /// view, each item's id and its parent's, 0 at the top, in order.
     Items {
@@ -514,6 +560,20 @@ pub fn ui_screen_document(world: &mut World, entity: Entity) -> Option<u32> {
 pub(crate) unsafe extern "C" fn asset_fields(reference: *const u8, len: i32, buffer: *mut u8, capacity: i32) -> i32 {
     let reference = unsafe { crate::interop::utf8(reference, len) };
     unsafe { answer_json(with_services(|services| services.asset_fields(&reference)), buffer, capacity) }
+}
+
+/// A block as JSON for `Block` in Voxear.Core (see
+/// [`ScriptServices::block_json`]), written when it fits: its length, or
+/// -1 when there is none.
+pub(crate) unsafe extern "C" fn block_info(reference: *const u8, len: i32, buffer: *mut u8, capacity: i32) -> i32 {
+    let reference = unsafe { crate::interop::utf8(reference, len) };
+    // No block by that name is an answer, not an error: `Block.Load` says so itself.
+    let said = with_services(|services| services.block_json(&reference).ok());
+    let Some(Some(json)) = said else { return -1 };
+    if !buffer.is_null() && json.len() <= capacity.max(0) as usize {
+        unsafe { std::ptr::copy_nonoverlapping(json.as_ptr(), buffer, json.len()) };
+    }
+    json.len() as i32
 }
 
 /// Every data asset of the project as JSON for `Definition.All` (see

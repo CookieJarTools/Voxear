@@ -107,12 +107,14 @@ pub enum NewFile {
     Terrain,
     /// A world generator, which a terrain's Generate layer picks.
     WorldGen,
+    /// A block, which worlds of blocks list.
+    Block,
     /// Pictures prompts show for controls, picked on the Input page.
     PromptIcons,
 }
 
 impl NewFile {
-    pub const ALL: [NewFile; 14] = [
+    pub const ALL: [NewFile; 15] = [
         NewFile::Folder,
         NewFile::Scene,
         NewFile::Level,
@@ -126,6 +128,7 @@ impl NewFile {
         NewFile::GunHandling,
         NewFile::Terrain,
         NewFile::WorldGen,
+        NewFile::Block,
         NewFile::PromptIcons,
     ];
 
@@ -133,7 +136,7 @@ impl NewFile {
     pub fn module(self) -> Option<voxear_engine::modules::Module> {
         match self {
             NewFile::GunHandling => Some(voxear_engine::modules::Module::Guns),
-            NewFile::Terrain | NewFile::WorldGen => Some(voxear_engine::modules::Module::Terrain),
+            NewFile::Terrain | NewFile::WorldGen | NewFile::Block => Some(voxear_engine::modules::Module::Terrain),
             _ => None,
         }
     }
@@ -154,6 +157,7 @@ impl NewFile {
             NewFile::GunHandling => "New Gun Handling",
             NewFile::Terrain => "New Terrain",
             NewFile::WorldGen => "New World Generator",
+            NewFile::Block => "New Block",
             NewFile::PromptIcons => "New Prompt Icons",
         }
     }
@@ -175,6 +179,7 @@ impl NewFile {
             NewFile::GunHandling => ("New Gun Handling", ".gunhandling"),
             NewFile::Terrain => ("New Terrain", ".terrain"),
             NewFile::WorldGen => ("New World Generator", ".worldgen"),
+            NewFile::Block => ("New Block", ".block"),
             NewFile::PromptIcons => ("New Prompt Icons", ".prompticons"),
         }
     }
@@ -201,6 +206,7 @@ pub fn create(root: &Path, folder: &str, kind: NewFile, namespace: &str) -> Resu
         NewFile::GunHandling => std::fs::write(&file, NEW_GUN_HANDLING),
         NewFile::Terrain => std::fs::write(&file, NEW_TERRAIN.to_string() + &TerrainFile::default().to_text()),
         NewFile::WorldGen => std::fs::write(&file, new_world_gen()),
+        NewFile::Block => std::fs::write(&file, block_text(&Default::default())),
         NewFile::PromptIcons => {
             let icons = voxear_engine::prompt_icons::PromptIconsFile { format: 1, ..Default::default() };
             std::fs::write(&file, icons.to_text()?)
@@ -263,9 +269,69 @@ pub fn create_block_world(root: &Path, folder: &str, name: &str, smooth: bool) -
 }
 
 /// What a new world of blocks' file says it is, and a new Voxel Terrain's.
-const NEW_BLOCK_WORLD: &str = "# Voxear world of blocks: its kinds of block and the ground they start as.\n";
+const NEW_BLOCK_WORLD: &str = "# Voxear world of blocks: the blocks it is made of and the ground they start as.\n";
 const NEW_VOXEL_TERRAIN: &str =
-    "# Voxear Voxel Terrain: a world of blocks drawn smooth, its kinds of block and the ground they start as.\n";
+    "# Voxear Voxel Terrain: a world of blocks drawn smooth, the blocks it is made of and the ground they start as.\n";
+
+/// What a block's file starts with, before its settings.
+const NEW_BLOCK: &str = "# Voxear block: how it looks, which the worlds of blocks made of it list.\n";
+
+/// A block's file as text: its heading, then what it is.
+pub(crate) fn block_text(block: &voxear_terrain::blocks::block::BlockDef) -> String {
+    NEW_BLOCK.to_string() + &block.to_text()
+}
+
+/// A name a file can have, from `name`: without what a path cannot hold,
+/// or `fallback` when nothing is left.
+fn file_stem(name: &str, fallback: &str) -> String {
+    let named: String =
+        name.chars().filter(|c| !matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|')).collect();
+    if named.trim().is_empty() { fallback.to_string() } else { named.trim().to_string() }
+}
+
+/// Makes a new `.block` in `folder` (from the project's folder) as `block`,
+/// named `name` and a number if that is taken, and returns its path.
+pub fn create_block(
+    root: &Path,
+    folder: &str,
+    name: &str,
+    block: &voxear_terrain::blocks::block::BlockDef,
+) -> Result<String> {
+    std::fs::create_dir_all(root.join(folder)).with_context(|| format!("making {folder}"))?;
+    let file = unique(&root.join(folder), &file_stem(name, "Block"), ".block");
+    let path = join(folder, &file);
+    std::fs::write(root.join(&path), block_text(block)).with_context(|| format!("making {path}"))?;
+    Ok(path)
+}
+
+/// The `.block` named `name` in `folder`, made as `block` where there is
+/// none: its path.
+pub fn block_named(
+    root: &Path,
+    folder: &str,
+    name: &str,
+    block: &voxear_terrain::blocks::block::BlockDef,
+) -> Result<String> {
+    let path = join(folder, &format!("{}.block", file_stem(name, "Block")));
+    if root.join(&path).is_file() { Ok(path) } else { create_block(root, folder, name, block) }
+}
+
+/// The `.block` in `folder` that is `block` under `name`: the one of that
+/// name there where it looks the same, or else a new one made, with a
+/// number after its name where that is taken. Its path.
+pub fn block_for(
+    root: &Path,
+    folder: &str,
+    name: &str,
+    block: &voxear_terrain::blocks::block::BlockDef,
+) -> Result<String> {
+    let path = join(folder, &format!("{}.block", file_stem(name, "Block")));
+    let same = std::fs::read_to_string(root.join(&path))
+        .ok()
+        .and_then(|text| voxear_terrain::blocks::block::BlockDef::parse(&text).ok())
+        .is_some_and(|there| there.looks_like(block));
+    if same { Ok(path) } else { create_block(root, folder, name, block) }
+}
 
 /// A new Motion Set: a state to walk about in, its clips to be picked.
 const NEW_MOTION_SET: &str = "# Voxear Motion Set: what a character can do, its states' looping clips and its actions.\n[[state]]\nname = \"Walking\"\nrole = \"grounded\"\n";

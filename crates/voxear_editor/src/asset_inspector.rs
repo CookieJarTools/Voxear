@@ -117,6 +117,27 @@ pub enum AssetAction {
         world: voxear_terrain::generate::WorldGen,
         rebuild: bool,
     },
+    /// Write the block at this path as this, for the worlds of blocks
+    /// listing it to take up, and when `rebuild`, show it again.
+    SaveBlock {
+        path: String,
+        block: voxear_terrain::blocks::block::BlockDef,
+        rebuild: bool,
+    },
+    /// Open the object picker under `anchor` for one of the fields naming
+    /// an asset of the block at this path, or take what was dragged onto it.
+    BrowseBlockRef {
+        block: String,
+        field: crate::block_inspector::BlockRef,
+        anchor: NodeId,
+    },
+    DropBlockRef {
+        block: String,
+        field: crate::block_inspector::BlockRef,
+        source: DragSource,
+    },
+    /// Make an item that places the block at this path, which drops it.
+    MakeBlockItem(String),
     /// Write the Gun Handling at this path as this, and when `rebuild`, show
     /// it again.
     SaveGunHandling {
@@ -235,6 +256,7 @@ pub struct AssetView {
     /// A Gun Handling's holds and actions.
     gun_handling: Option<GunHandlingFields>,
     world_gen: Option<crate::world_gen_inspector::WorldGenFields>,
+    block: Option<crate::block_inspector::BlockFields>,
     world_graph: Option<crate::world_gen_inspector::GraphFields>,
     /// Prompt Icons' pictures, by device and control.
     prompt_icons: Option<PromptIconsFields>,
@@ -413,6 +435,7 @@ impl AssetView {
             motion_set: None,
             gun_handling: None,
             world_gen: None,
+            block: None,
             world_graph: None,
             prompt_icons: None,
             preview,
@@ -450,6 +473,17 @@ impl AssetView {
                     }
                     None => view.world_graph = Some(crate::world_gen_inspector::GraphFields::new(ui, root, world)),
                 }
+            }
+            ItemKind::Asset(AssetKind::Block) => {
+                let text = std::fs::read_to_string(&file).unwrap_or_default();
+                let block = voxear_terrain::blocks::block::BlockDef::parse(&text).unwrap_or_default();
+                let db = game.content.db();
+                let path_of = |reference: &str| {
+                    let guid = game.content.parse(reference).ok()?.guid()?;
+                    Some(db.get(guid)?.path.clone())
+                };
+                let carried = db.guid_of(&item.path).is_some_and(|guid| crate::block_props::placed_by(game, guid));
+                view.block = Some(crate::block_inspector::BlockFields::new(ui, root, block, &path_of, carried));
             }
             ItemKind::Asset(AssetKind::PromptIcons) => {
                 let text = std::fs::read_to_string(&file).unwrap_or_default();
@@ -559,6 +593,7 @@ impl AssetView {
             motion_set: None,
             gun_handling: None,
             world_gen: None,
+            block: None,
             world_graph: None,
             prompt_icons: None,
             preview: None,
@@ -642,6 +677,20 @@ impl AssetView {
             let (path, world) = (self.item.path.clone(), fields.world.clone().into());
             let rebuild = matches!(change, crate::world_gen_inspector::WorldGenChange::Shape);
             return Some(AssetAction::SaveWorldGen { path, world, rebuild });
+        }
+        if let Some(fields) = self.block.as_mut()
+            && let Some(change) = fields.update(ui)
+        {
+            use crate::block_inspector::BlockChange;
+            let (path, block) = (self.item.path.clone(), fields.block.clone());
+            return Some(match change {
+                BlockChange::Typed => AssetAction::SaveBlock { path, block, rebuild: false },
+                BlockChange::Shape => AssetAction::SaveBlock { path, block, rebuild: true },
+                BlockChange::Browse(field, anchor) => AssetAction::BrowseBlockRef { block: path, field, anchor },
+                BlockChange::Drop(field, source) => AssetAction::DropBlockRef { block: path, field, source },
+                BlockChange::Ping(path) => AssetAction::Ping(path),
+                BlockChange::MakeItem => AssetAction::MakeBlockItem(path),
+            });
         }
         if let Some(fields) = self.world_graph.as_mut()
             && fields.update(ui)
@@ -813,6 +862,10 @@ impl AssetView {
     /// The material colour whose swatch was clicked, with the swatch and the
     /// colour as the picker shows it.
     pub fn color_clicked(&self, ui: &Ui) -> Option<(MaterialColor, NodeId, PickedColor)> {
+        // A block's colour is picked as a material's is.
+        if let Some((swatch, color)) = self.block.as_ref().and_then(|fields| fields.color_clicked(ui)) {
+            return Some((MaterialColor::Base, swatch, color));
+        }
         let fields = self.material.as_ref()?;
         if let Some((at, swatch, color)) = fields.shader.color_clicked(ui, &fields.data) {
             return Some((MaterialColor::Property(at), swatch, color));
@@ -825,6 +878,11 @@ impl AssetView {
     /// Sets a material colour from the colour picker, in its fields and
     /// swatch, and asks for the material to be saved.
     pub fn set_color(&mut self, ui: &mut Ui, which: MaterialColor, color: PickedColor) -> Option<AssetAction> {
+        if let Some(fields) = self.block.as_mut() {
+            fields.set_color(ui, color);
+            let (path, block) = (self.item.path.clone(), fields.block.clone());
+            return Some(AssetAction::SaveBlock { path, block, rebuild: false });
+        }
         let fields = self.material.as_mut()?;
         let (values, targets) = match which {
             MaterialColor::Base => (color.srgb, &mut fields.data.color),
@@ -1452,6 +1510,7 @@ fn kind_name(kind: ItemKind) -> &'static str {
         ItemKind::Asset(AssetKind::Terrain) => "Terrain",
         ItemKind::Asset(AssetKind::WorldGen) => "World Generator",
         ItemKind::Asset(AssetKind::BlockWorld) => "Block World",
+        ItemKind::Asset(AssetKind::Block) => "Block",
         ItemKind::Asset(AssetKind::VoxModel) => "Block Model",
     }
 }
@@ -1481,6 +1540,7 @@ fn icon(kind: ItemKind) -> &'static str {
         ItemKind::Asset(AssetKind::Terrain) => "mountain",
         ItemKind::Asset(AssetKind::WorldGen) => "sprout",
         ItemKind::Asset(AssetKind::BlockWorld) => "blocks",
+        ItemKind::Asset(AssetKind::Block) => "block",
         ItemKind::Asset(AssetKind::VoxModel) => "blocks",
     }
 }

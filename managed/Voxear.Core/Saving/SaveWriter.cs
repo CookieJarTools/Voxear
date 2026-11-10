@@ -151,6 +151,12 @@ internal sealed class SaveWriter
 		{
 			return AssetGuid(value, type);
 		}
+		// A data asset is its file, shared by whatever holds it: kept as which, not as a copy of what it says. One made
+		// in code is no file's, and is kept field by field as any other object is.
+		if (value is Definition { Guid.Length: > 0 } definition)
+		{
+			return definition.Guid;
+		}
 		if (FieldValues.IsGeneric(type, typeof(Ref<>)))
 		{
 			var reference = (string)type.GetProperty(nameof(Ref<Prefab>.Path))!.GetValue(value)!;

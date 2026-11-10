@@ -313,10 +313,38 @@ pub(crate) fn mesh_within(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], e
     }
     let count = out.quads.len() as u32;
     out.buckets = [0, count, count, count, count, count, count];
+    out.cone = cone(&out.positions, &out.indices);
     if map.chunk(key).is_some_and(|chunk| chunk.may_hold(|block| is_water(faces, block))) {
         out.quads.extend(water_surface(map, key, faces, &padded));
     }
     out
+}
+
+/// The cone the ways `indices`' triangles over `points` face lie within:
+/// its axis, the way they face on average, and the sine of the angle from
+/// it to the furthest; `None` for none, or where some turn a quarter or more
+/// from it.
+fn cone(points: &[[f32; 3]], indices: &[u32]) -> Option<[f32; 4]> {
+    let ways: Vec<[f32; 3]> = indices
+        .chunks_exact(3)
+        .filter_map(|t| {
+            let [a, b, c] = [0, 1, 2].map(|k| points[t[k] as usize]);
+            let (e, f) = ([0, 1, 2].map(|k| b[k] - a[k]), [0, 1, 2].map(|k| c[k] - a[k]));
+            let n = [e[1] * f[2] - e[2] * f[1], e[2] * f[0] - e[0] * f[2], e[0] * f[1] - e[1] * f[0]];
+            let length = n.iter().map(|v| v * v).sum::<f32>().sqrt();
+            (length > 1e-9).then(|| n.map(|v| v / length))
+        })
+        .collect();
+    let sum = ways.iter().fold([0.0f32; 3], |sum, n| [0, 1, 2].map(|k| sum[k] + n[k]));
+    let length = sum.iter().map(|v| v * v).sum::<f32>().sqrt();
+    if length < 1e-6 {
+        return None;
+    }
+    let axis = sum.map(|v| v / length);
+    let least = ways.iter().map(|n| (0..3).map(|k| n[k] * axis[k]).sum::<f32>()).fold(1.0f32, f32::min);
+    // A little wider than the triangles turn, for the rounding of their corners' places when drawn.
+    let least = least - 0.01;
+    (least > 0.0).then(|| [axis[0], axis[1], axis[2], (1.0 - least * least).max(0.0).sqrt()])
 }
 
 /// How far a smooth surface may move, in blocks, as its triangles are
@@ -795,6 +823,11 @@ mod tests {
         assert!(tops(&merged) * 4 < tops(&every), "{} triangles of {}", tops(&merged), tops(&every));
         assert!(merged.positions.iter().filter(|p| p[1] > 6.0).all(|p| (p[1] - 6.4).abs() < 0.02), "on the same plane");
         assert_eq!(merged.quads.len(), merged.indices.len() * 2, "two pairs of words a corner");
+        // A chunk of it holding its bottom faces every way; one of its top alone faces up.
+        assert_eq!(merged.cone, None);
+        let deep = ground([96, 96], |_, _| 40.4);
+        let [x, y, z, spread] = mesh_chunk(&deep, [1, 1, 1], &faces).cone.expect("all up");
+        assert!((y - 1.0).abs() < 1e-3 && x.abs() < 1e-3 && z.abs() < 1e-3 && spread < 0.15, "{:?}", [x, y, z, spread]);
     }
 
     #[test]

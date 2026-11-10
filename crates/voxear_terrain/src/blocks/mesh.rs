@@ -46,8 +46,9 @@ const AXES: [(usize, bool, usize, usize); FACINGS] =
 /// A chunk's faces: its quads, kept by facing, `buckets[f]..buckets[f + 1]`
 /// those of facing `f`, and after `buckets[FACINGS]` its water's; its
 /// ground's faces as triangles, in blocks from the chunk's corner, three
-/// indices a triangle, facing out; and which of the chunk's sides see each
-/// other through its air and water (see `sight`).
+/// indices a triangle, facing out; which of the chunk's sides see each
+/// other through its air and water (see `sight`); and, drawn smooth, the
+/// ways its triangles face.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ChunkMesh {
     pub quads: Vec<[u32; 2]>,
@@ -55,6 +56,11 @@ pub struct ChunkMesh {
     pub positions: Vec<[f32; 3]>,
     pub indices: Vec<u32>,
     pub sights: u16,
+    /// For a chunk drawn smooth, the ways its triangles face, all within a
+    /// cone: its axis, and the sine of how far from it the furthest turns.
+    /// `None` where they face every way, or for a chunk of cubes, whose
+    /// faces are kept by the way they face.
+    pub cone: Option<[f32; 4]>,
 }
 
 impl ChunkMesh {

@@ -4211,3 +4211,23 @@ DockSpace .resizable-columns > .split-divider:active > .split-handle {
 .collection-item.off .terrain-layer-name, .collection-item.off .terrain-layer-icon {
     opacity: 0.45;
 }
+
+/* A Cave Network's rooms in the Inspector: each its prefab, its weight and what removes it. */
+.room-row {
+    column-gap: 4px;
+    align-items: center;
+    min-height: 26px;
+}
+
+.room-prefab {
+    flex-grow: 1;
+    min-width: 0px;
+}
+
+.room-weight {
+    width: 48px;
+}
+
+.room-add {
+    margin-top: 2px;
+}

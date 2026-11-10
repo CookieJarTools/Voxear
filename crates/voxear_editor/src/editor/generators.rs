@@ -13,6 +13,7 @@ use voxear_ui::NodeId;
 use super::{Command, Editor};
 use crate::{
     generator_panel::{EditKey, GeneratorEvent, GeneratorPanel},
+    world_gen_inspector::{NodeEdit, RoomChoice},
     graph_canvas::CanvasKey,
     object_picker::{Choice, Chosen, PickFor},
 };
@@ -200,8 +201,62 @@ impl Editor {
         };
         let node = node.1;
         let edit = self.inspector.graph_node_view().and_then(|view| view.update(&mut self.ui, world));
-        if let Some(edit) = edit {
+        if let Some(mut edit) = edit {
+            // A room just picked has its shapes and exits read from its prefab before the graph takes it.
+            if let NodeEdit::Rooms(rooms) = &mut edit {
+                for room in rooms.iter_mut().filter(|room| room.shapes.is_empty()) {
+                    voxear_engine::caves::read_room(&mut self.game.content, room);
+                }
+            }
             self.generator.edit_node(node, edit);
+        }
+    }
+
+    /// The project's prefabs, for a Cave Network's rooms to pick among: each by its path, kept by its GUID.
+    fn room_choices(&self) -> Vec<RoomChoice> {
+        let entries = self.game.content.db().entries().filter(|entry| entry.kind == voxear_assets::AssetKind::Prefab);
+        let mut choices: Vec<RoomChoice> =
+            entries.map(|entry| RoomChoice { path: entry.path.clone(), reference: entry.guid.to_string() }).collect();
+        choices.sort_by(|a, b| a.path.cmp(&b.path));
+        choices
+    }
+
+    /// A prefab changed, at `path`, or with none every prefab may have: each world generator that lists a
+    /// changed one as a cave room reads the room's shapes and exits from it again, and is saved where they
+    /// changed. The graph open in the Generator panel takes the change as a step of its own; every other
+    /// starts from its file.
+    pub(super) fn cave_rooms_changed(&mut self, path: Option<&str>) {
+        let changed = path.map(|path| self.game.content.db().guid_of(path));
+        if changed == Some(None) {
+            return;
+        }
+        let changed = changed.flatten();
+        let lists = |content: &voxear_engine::Content, graph: &voxear_terrain::generate::Graph| match changed {
+            Some(guid) => voxear_engine::caves::lists_room(content, graph, guid),
+            None => graph.nodes.iter().any(|node| node.kind.rooms().is_some_and(|rooms| !rooms.is_empty())),
+        };
+        let open = self.generator.path().map(str::to_string);
+        if let Some(world) = self.generator.world().filter(|world| lists(&self.game.content, world.graph())).cloned()
+            && let Some(read) = voxear_engine::caves::read_rooms(&mut self.game.content, world.graph())
+        {
+            self.generator.change(world.with_graph(read), None);
+        }
+        let entries = self.game.content.db().entries().filter(|entry| entry.kind == voxear_assets::AssetKind::WorldGen);
+        let files: Vec<String> =
+            entries.map(|entry| entry.path.clone()).filter(|path| Some(path) != open.as_ref()).collect();
+        for file in files {
+            let Ok(text) = std::fs::read_to_string(self.game.project.root.join(&file)) else { continue };
+            // Before the file is read whole: few generators have a network at all.
+            if !text.contains("cave_network") {
+                continue;
+            }
+            let Ok(world) = WorldGen::parse(&text) else { continue };
+            if !lists(&self.game.content, world.graph()) {
+                continue;
+            }
+            if let Some(read) = voxear_engine::caves::read_rooms(&mut self.game.content, world.graph()) {
+                self.save_world_gen(&file, &world.with_graph(read));
+            }
         }
     }
 
@@ -221,7 +276,8 @@ impl Editor {
                     return;
                 }
                 self.select(None);
-                self.inspector.show_graph_node(&mut self.ui, &path, &world, node);
+                let prefabs = self.room_choices();
+                self.inspector.show_graph_node(&mut self.ui, &path, &world, node, &prefabs);
             }
             None => {
                 if self.inspector.shown_asset().is_some_and(|item| item.path == path) {
@@ -248,7 +304,8 @@ impl Editor {
         };
         if let Some((same, node)) = self.inspector.shown_graph_node().map(|(path, node)| (path == open, node)) {
             let stale = !same || self.inspector.graph_node_view().is_some_and(|view| view.stale(world));
-            if stale && !(same && self.inspector.show_graph_node(&mut self.ui, open, world, node)) {
+            let prefabs = if stale { self.room_choices() } else { Vec::new() };
+            if stale && !(same && self.inspector.show_graph_node(&mut self.ui, open, world, node, &prefabs)) {
                 // The node went: the generator shows in its place.
                 let open = open.to_string();
                 self.inspect_path(&open);

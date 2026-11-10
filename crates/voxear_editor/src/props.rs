@@ -45,6 +45,7 @@ use voxear_render::{
     EmitShape, ParticleBlend, ParticleSystem,
 };
 use voxear_scene::{BehaviourSpec, Behaviours, Name, Parent, SceneComponents, Switch};
+use voxear_terrain::generate::{CaveExit, CaveMode, CaveShape, RoomForm};
 
 use crate::fields::{self, Pick, Step};
 
@@ -69,6 +70,9 @@ const SOUND_SPACES: [&str; 2] = ["3D", "2D"];
 const SKY_BODIES: [&str; 2] = ["Sun", "Moon"];
 /// The sky bodies in `SKY_BODIES`'s order.
 const SKY_BODY_ORDER: [SkyBody; 2] = [SkyBody::Sun, SkyBody::Moon];
+/// A Cave Shape's forms, in `RoomForm::ALL`'s order, and its modes.
+const CAVE_FORMS: [&str; 3] = ["Ball", "Half Ball", "Box"];
+const CAVE_MODES: [&str; 2] = ["Carve", "Fill"];
 const VOLUME_SHAPES: [&str; 3] = ["Global", "Box", "Sphere"];
 /// The volume shapes in `VOLUME_SHAPES`'s order.
 const VOLUME_SHAPE_ORDER: [VolumeShape; 3] = [VolumeShape::Global, VolumeShape::Box, VolumeShape::Sphere];
@@ -112,6 +116,9 @@ pub enum Part {
     Ocean,
     Pool,
     DryArea,
+    /// One shape of a cave room, and where a tunnel may join one.
+    CaveShape,
+    CaveExit,
     /// A Path, and a Stream running along it.
     Path,
     Stream,
@@ -171,6 +178,8 @@ impl Part {
             Part::Ocean => "ocean".into(),
             Part::Pool => "pool".into(),
             Part::DryArea => "dry_area".into(),
+            Part::CaveShape => "cave_shape".into(),
+            Part::CaveExit => "cave_exit".into(),
             Part::Path => "path".into(),
             Part::Stream => "stream".into(),
             Part::Buoyancy => "buoyancy".into(),
@@ -195,6 +204,7 @@ impl Part {
             Part::Seasons | Part::FoliageInteraction | Part::Foliage => Some(Module::Vegetation),
             Part::Ocean | Part::Pool | Part::DryArea | Part::Stream | Part::Buoyancy => Some(Module::Water),
             Part::Terrain | Part::BlockWorld | Part::VoxelTerrain | Part::TrackMaker => Some(Module::Terrain),
+            Part::CaveShape | Part::CaveExit => Some(Module::Terrain),
             _ => None,
         }
     }
@@ -233,6 +243,8 @@ impl Part {
             Part::Ocean => "Ocean",
             Part::Pool => "Pool",
             Part::DryArea => "Dry Area",
+            Part::CaveShape => "Cave Shape",
+            Part::CaveExit => "Cave Exit",
             Part::Path => "Path",
             Part::Stream => "Stream",
             Part::Buoyancy => "Buoyancy",
@@ -306,6 +318,8 @@ impl Part {
             Part::Ocean => "globe",
             Part::Pool => "globe",
             Part::DryArea => "box",
+            Part::CaveShape => "box",
+            Part::CaveExit => "move",
             Part::Path => "move",
             Part::Stream => "globe",
             Part::Buoyancy => "move",
@@ -578,6 +592,13 @@ pub enum Prop {
     DryMesh,
     /// How deep the water in a Dry Area stands.
     DryBilge,
+    /// A Cave Shape's form, whether it carves or fills, its size, how likely a room has it, and how far in
+    /// its walls' roughness may come.
+    CaveForm,
+    CaveMode,
+    CaveSize,
+    CaveChance,
+    CaveMargin,
     /// A Seasons' time of year, and the season it is nearest, which the
     /// rows of a season's look below it are for.
     TimeOfYear,
@@ -922,6 +943,7 @@ impl Prop {
             Prop::DryShape | Prop::DrySize | Prop::DryWidth | Prop::DryHeight | Prop::DryMesh | Prop::DryBilge => {
                 Part::DryArea
             }
+            Prop::CaveForm | Prop::CaveMode | Prop::CaveSize | Prop::CaveChance | Prop::CaveMargin => Part::CaveShape,
             Prop::PathPoints | Prop::PathClosed => Part::Path,
             Prop::StreamLiquid
             | Prop::StreamDepth
@@ -1240,6 +1262,11 @@ impl Prop {
             Prop::DrySize | Prop::DryWidth | Prop::DryHeight => "size",
             Prop::DryMesh => "mesh",
             Prop::DryBilge => "bilge",
+            Prop::CaveForm => "shape",
+            Prop::CaveMode => "mode",
+            Prop::CaveSize => "size",
+            Prop::CaveChance => "chance",
+            Prop::CaveMargin => "margin",
             Prop::TimeOfYear | Prop::Season => "time_of_year",
             Prop::SeasonColor(season) => return format!("{}.color", season_key(*season)),
             Prop::SeasonColorAmount(season) => return format!("{}.color_amount", season_key(*season)),
@@ -1448,6 +1475,12 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     }
     if world.has::<DryArea>(entity) {
         parts.push(Part::DryArea);
+    }
+    if world.has::<CaveShape>(entity) {
+        parts.push(Part::CaveShape);
+    }
+    if world.has::<CaveExit>(entity) {
+        parts.push(Part::CaveExit);
     }
     if world.has::<voxear_scene::Path>(entity) {
         parts.push(Part::Path);
@@ -1780,6 +1813,8 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             DryShape::Capsule => vec![Prop::DryShape, Prop::DryWidth, Prop::DryHeight, Prop::DryBilge],
             DryShape::Mesh => vec![Prop::DryShape, Prop::DryMesh, Prop::DryBilge],
         },
+        Part::CaveShape => vec![Prop::CaveForm, Prop::CaveMode, Prop::CaveSize, Prop::CaveChance, Prop::CaveMargin],
+        Part::CaveExit => Vec::new(),
         // The look of the season the year is nearest, under the choice of it.
         Part::Seasons => {
             let season = world.get::<Seasons>(entity).map_or(Season::Summer, |seasons| seasons.season());
@@ -2136,6 +2171,11 @@ pub fn label(prop: &Prop) -> String {
         Prop::DryHeight => "Height",
         Prop::DryMesh => "Mesh",
         Prop::DryBilge => "Bilge",
+        Prop::CaveForm => "Shape",
+        Prop::CaveMode => "Mode",
+        Prop::CaveSize => "Size",
+        Prop::CaveChance => "Chance",
+        Prop::CaveMargin => "Inner Margin",
         Prop::TimeOfYear => "Time of year",
         Prop::Season => "Season",
         Prop::SeasonColor(_) => "Colour",
@@ -2430,6 +2470,12 @@ pub fn add(
         Part::DryArea => {
             world.insert(entity, DryArea::default());
         }
+        Part::CaveShape => {
+            world.insert(entity, CaveShape::default());
+        }
+        Part::CaveExit => {
+            world.insert(entity, CaveExit::default());
+        }
         Part::Path => {
             world.insert(entity, voxear_scene::Path::default());
         }
@@ -2535,6 +2581,8 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
         Part::Ocean => drop(world.remove::<Ocean>(entity)),
         Part::Pool => drop(world.remove::<Pool>(entity)),
         Part::DryArea => drop(world.remove::<DryArea>(entity)),
+        Part::CaveShape => drop(world.remove::<CaveShape>(entity)),
+        Part::CaveExit => drop(world.remove::<CaveExit>(entity)),
         Part::Path => drop(world.remove::<voxear_scene::Path>(entity)),
         Part::Stream => drop(world.remove::<Stream>(entity)),
         Part::Buoyancy => drop(world.remove::<voxear_engine::water::Buoyancy>(entity)),
@@ -2998,6 +3046,18 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
             Value::Choice(index, DryShape::ALL.iter().map(|s| s.name().to_string()).collect())
         }
         Prop::DrySize => Value::Vector(world.get::<DryArea>(entity)?.size.to_vec()),
+        Prop::CaveForm => {
+            let form = world.get::<CaveShape>(entity)?.shape;
+            let index = RoomForm::ALL.iter().position(|known| *known == form).unwrap_or(0);
+            Value::Choice(index, CAVE_FORMS.iter().map(|name| name.to_string()).collect())
+        }
+        Prop::CaveMode => {
+            let fill = world.get::<CaveShape>(entity)?.mode == CaveMode::Fill;
+            Value::Choice(usize::from(fill), CAVE_MODES.iter().map(|name| name.to_string()).collect())
+        }
+        Prop::CaveSize => Value::Vector(world.get::<CaveShape>(entity)?.size.to_vec()),
+        Prop::CaveChance => Value::Number(world.get::<CaveShape>(entity)?.chance),
+        Prop::CaveMargin => Value::Number(world.get::<CaveShape>(entity)?.margin),
         Prop::DryWidth => Value::Number(world.get::<DryArea>(entity)?.size[0]),
         Prop::DryHeight => Value::Number(world.get::<DryArea>(entity)?.size[1]),
         Prop::DryBilge => Value::Number(world.get::<DryArea>(entity)?.bilge),
@@ -4169,6 +4229,19 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         (Prop::DryWidth, Value::Number(n)) => with(world, entity, |d: &mut DryArea| d.size[0] = n.max(0.01)),
         (Prop::DryHeight, Value::Number(n)) => with(world, entity, |d: &mut DryArea| d.size[1] = n.max(0.01)),
         (Prop::DryBilge, Value::Number(n)) => with(world, entity, |d: &mut DryArea| d.bilge = n.max(0.0)),
+        (Prop::CaveForm, Value::Choice(index, _)) => {
+            let form = RoomForm::ALL.get(index).copied().unwrap_or_default();
+            with(world, entity, |c: &mut CaveShape| c.shape = form)
+        }
+        (Prop::CaveMode, Value::Choice(index, _)) => {
+            let mode = if index == 1 { CaveMode::Fill } else { CaveMode::Carve };
+            with(world, entity, |c: &mut CaveShape| c.mode = mode)
+        }
+        (Prop::CaveSize, Value::Vector(v)) if v.len() == 3 => {
+            with(world, entity, |c: &mut CaveShape| c.size = [v[0].max(0.01), v[1].max(0.01), v[2].max(0.01)])
+        }
+        (Prop::CaveChance, Value::Number(n)) => with(world, entity, |c: &mut CaveShape| c.chance = n.clamp(0.0, 1.0)),
+        (Prop::CaveMargin, Value::Number(n)) => with(world, entity, |c: &mut CaveShape| c.margin = n.max(0.0)),
         (Prop::TimeOfYear, Value::Number(n)) => {
             with(world, entity, |seasons: &mut Seasons| seasons.time_of_year = n.rem_euclid(4.0))
         }

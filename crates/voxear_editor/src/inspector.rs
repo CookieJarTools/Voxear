@@ -960,8 +960,9 @@ impl Inspector {
         path: &str,
         world: &voxear_terrain::generate::WorldGen,
         node: voxear_terrain::generate::NodeId,
+        prefabs: &[crate::world_gen_inspector::RoomChoice],
     ) -> bool {
-        let Some(view) = crate::world_gen_inspector::NodeView::build(ui, self.root, path, world, node) else {
+        let Some(view) = crate::world_gen_inspector::NodeView::build(ui, self.root, path, world, node, prefabs) else {
             return false;
         };
         self.shown = None;
@@ -2196,6 +2197,8 @@ impl Inspector {
             (Part::BlockWorld, "Terrain"),
             (Part::VoxelTerrain, "Terrain"),
             (Part::TrackMaker, "Terrain"),
+            (Part::CaveShape, "Terrain"),
+            (Part::CaveExit, "Terrain"),
             (Part::Audio, "Audio"),
             (Part::Listener, "Audio"),
             (Part::Collider, "Physics"),
@@ -2889,6 +2892,8 @@ fn part_paths(part: Option<&Part>) -> Vec<ValuePath> {
         Some(Part::Terrain) => "terrain",
         Some(Part::BlockWorld | Part::VoxelTerrain) => "block_world",
         Some(Part::TrackMaker) => "track_maker",
+        Some(Part::CaveShape) => "cave_shape",
+        Some(Part::CaveExit) => "cave_exit",
         Some(Part::Light) => "light",
         Some(Part::Camera) => "camera",
         Some(Part::Audio) => "audio",

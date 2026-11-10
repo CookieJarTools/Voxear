@@ -714,3 +714,202 @@ fn a_new_generator_is_a_starter_graph_whose_preset_picks_another_and_an_angle_is
     assert_eq!(saved(&dir, &path), rolling);
     assert!(follows(&editor, field, &rolling));
 }
+
+/// A cave room: a hall with a way out at its end.
+const HALL: &str = r#"format = 1
+
+[[obj]]
+id = 1
+name = "Hall"
+[obj.cave_shape]
+shape = "box"
+size = [16.0, 5.0, 6.0]
+
+[[obj]]
+id = 2
+name = "Way Out"
+parent = 1
+position = [8.0, 1.5, 0.0]
+rotation = [0.0, 90.0, 0.0]
+cave_exit = {}
+"#;
+
+/// What a row says after its label.
+fn row_text(ui: &Ui, row: NodeId) -> String {
+    fn texts(ui: &Ui, node: NodeId, out: &mut Vec<String>) {
+        out.push(ui.text(node));
+        ui.children(node).into_iter().for_each(|child| texts(ui, child, out));
+    }
+    let mut out = Vec::new();
+    ui.children(row).into_iter().skip(1).for_each(|part| texts(ui, part, &mut out));
+    out.retain(|text| !text.is_empty());
+    out.join(" ")
+}
+
+/// Everything a node and what is inside it says.
+fn all_text(ui: &Ui, node: NodeId) -> String {
+    let mut said = vec![ui.text(node)];
+    said.extend(ui.children(node).into_iter().map(|child| all_text(ui, child)));
+    said.retain(|text| !text.is_empty());
+    said.join(" ")
+}
+
+/// The rooms the first Cave Network of a generator lists.
+fn rooms_of(world: &WorldGen) -> Vec<voxear_terrain::generate::Room> {
+    world.graph().nodes.iter().find_map(|node| node.kind.rooms()).expect("a Cave Network").to_vec()
+}
+
+/// Picks option `option` of a dropdown, as a user does.
+fn choose(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, dropdown: NodeId, option: usize) {
+    click(&mut editor.ui, dropdown);
+    frame(editor, renderer);
+    let mut options = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "dropdown-option", &mut options);
+    click(&mut editor.ui, options[option]);
+    frame(editor, renderer);
+    frame(editor, renderer);
+}
+
+#[test]
+fn a_cave_networks_rooms_are_picked_from_prefabs_and_read_again_when_a_prefab_changes() {
+    let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {
+        return eprintln!("skipping: no usable GPU");
+    };
+    let dir = hello_with_a_field();
+    std::fs::write(dir.path().join("Prefabs/Hall.prefab"), HALL).unwrap();
+    // Two generators with a level of caves: one to open, and one left closed that lists the hall already,
+    // by its path, with nothing read from it yet.
+    let level = voxear_terrain::generate::starters().pop().unwrap().world(1, 1.0);
+    std::fs::create_dir_all(dir.path().join("Worlds")).unwrap();
+    std::fs::write(dir.path().join("Worlds/Cave.worldgen"), level.to_text()).unwrap();
+    let mut listed = level.graph().clone();
+    for node in &mut listed.nodes {
+        if let Some(rooms) = node.kind.rooms_mut() {
+            let prefab = Some("Prefabs/Hall.prefab".to_string());
+            rooms.push(voxear_terrain::generate::Room { prefab, ..Default::default() });
+        }
+    }
+    std::fs::write(dir.path().join("Worlds/Closed.worldgen"), level.with_graph(listed).to_text()).unwrap();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+
+    // The Cave Network picked in the open graph: its rows, and under them its rooms, none yet.
+    assert!(editor.open_path("Worlds/Cave.worldgen", &mut renderer));
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let network = node(&editor, "Cave Network");
+    let on = editor.generator().node_point(&editor.ui, network).expect("the Cave Network node");
+    click_at(&mut editor, &mut renderer, on);
+    frame(&mut editor, &mut renderer);
+    let labels = row_labels(&editor.ui);
+    assert_eq!(labels[..4], ["Layout", "Spacing", "Depth", "Tunnel Width"], "{labels:?}");
+    let inspector = editor.ui.find(editor.ui.root(), "inspector").unwrap();
+    assert!(first_with(&editor.ui, inspector, "room-row").is_none());
+    // Add Room lists the project's prefabs; the hall picked is read at once, and saved with its numbers.
+    let add = first_with(&editor.ui, inspector, "room-add").expect("Add Room");
+    click(&mut editor.ui, add);
+    frame(&mut editor, &mut renderer);
+    let mut options = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "dropdown-option", &mut options);
+    let offered: Vec<String> = options.iter().map(|&option| all_text(&editor.ui, option)).collect();
+    let hall = offered.iter().position(|option| option == "Prefabs/Hall.prefab");
+    let hall = hall.unwrap_or_else(|| panic!("{offered:?}"));
+    assert_eq!(offered[0], "Add Room");
+    click(&mut editor.ui, options[hall]);
+    for _ in 0..4 {
+        frame(&mut editor, &mut renderer);
+    }
+    let rooms = rooms_of(&saved(&dir, "Worlds/Cave.worldgen"));
+    assert_eq!(rooms.len(), 1);
+    let guid = editor.game.content.db().guid_of("Prefabs/Hall.prefab").unwrap().to_string();
+    assert_eq!(rooms[0].prefab.as_deref(), Some(guid.as_str()), "kept by its GUID");
+    assert_eq!((rooms[0].shapes.len(), rooms[0].exits.len(), rooms[0].shapes[0].size), (1, 1, [16.0, 5.0, 6.0]));
+    assert_eq!(rooms[0].exits[0].way, [1.0, 0.0, 0.0]);
+    // Its row: the prefab, its weight, and what removes it. A weight typed is saved.
+    let inspector = editor.ui.find(editor.ui.root(), "inspector").unwrap();
+    let row = first_with(&editor.ui, inspector, "room-row").expect("the room's row");
+    let prefab = first_with(&editor.ui, row, "room-prefab").unwrap();
+    assert_eq!(all_text(&editor.ui, prefab), "Prefabs/Hall.prefab");
+    let weight = first_with(&editor.ui, row, "room-weight").unwrap();
+    assert_eq!(editor.ui.text(weight), "1");
+    editor.ui.focus(weight);
+    editor.ui.set_modifiers(Modifiers { shift: false, control: true });
+    editor.ui.key_down(Key::Char('a'));
+    editor.ui.set_modifiers(Modifiers::default());
+    editor.ui.text_input("3");
+    frame(&mut editor, &mut renderer);
+    editor.ui.blur();
+    for _ in 0..3 {
+        frame(&mut editor, &mut renderer);
+    }
+    assert_eq!(rooms_of(&saved(&dir, "Worlds/Cave.worldgen"))[0].weight, 3.0);
+    settle(&mut editor, &mut renderer);
+    shot(&mut renderer, "generator-cave-network.png");
+
+    // The prefab changed outside the editor: both generators read the hall again, the open graph as a step
+    // of its own, the closed one from its file.
+    let longer = HALL.replace("[16.0, 5.0, 6.0]", "[20.0, 5.0, 6.0]");
+    std::fs::write(dir.path().join("Prefabs/Hall.prefab"), longer).unwrap();
+    editor.handle(&winit::event::WindowEvent::Focused(true));
+    for _ in 0..5 {
+        frame(&mut editor, &mut renderer);
+    }
+    for file in ["Worlds/Cave.worldgen", "Worlds/Closed.worldgen"] {
+        let rooms = rooms_of(&saved(&dir, file));
+        assert_eq!(rooms[0].shapes[0].size, [20.0, 5.0, 6.0], "{file} follows the prefab");
+    }
+    assert_eq!(rooms_of(&saved(&dir, "Worlds/Cave.worldgen"))[0].weight, 3.0, "and keeps what its graph had");
+    assert_eq!(rooms_of(editor.generator().world().unwrap())[0].shapes[0].size, [20.0, 5.0, 6.0]);
+
+    // The prefab opened and its hall made higher with the Inspector's Size, then saved: read again.
+    assert!(editor.open_path("Prefabs/Hall.prefab", &mut renderer));
+    frame(&mut editor, &mut renderer);
+    let world = &editor.game.engine.world;
+    let named = world.query_ref::<(Entity, &Name)>().into_iter().find(|(_, name)| name.0 == "Hall");
+    let hall = named.map(|(entity, _)| entity).expect("the prefab's root");
+    assert!(world.has::<voxear_terrain::generate::CaveShape>(hall));
+    editor.select(Some(hall));
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    for label in ["Shape", "Mode", "Size", "Chance", "Inner Margin"] {
+        assert_eq!(prop_rows(&editor.ui, label).len(), 1, "a Cave Shape's {label}");
+    }
+    let mode = first_with(&editor.ui, prop_rows(&editor.ui, "Mode")[0], "value-choice").expect("Carve or Fill");
+    assert_eq!(row_text(&editor.ui, prop_rows(&editor.ui, "Mode")[0]), "Carve");
+    type_number(&mut editor, &mut renderer, "Chance", "0.5");
+    shot(&mut renderer, "generator-cave-room-prefab.png");
+    editor.save();
+    for _ in 0..4 {
+        frame(&mut editor, &mut renderer);
+    }
+    for file in ["Worlds/Cave.worldgen", "Worlds/Closed.worldgen"] {
+        assert_eq!(rooms_of(&saved(&dir, file))[0].shapes[0].chance, 0.5, "{file} follows the prefab saved");
+    }
+    // Fill picked, and saved: the shape puts rock back.
+    choose(&mut editor, &mut renderer, mode, 1);
+    editor.save();
+    for _ in 0..4 {
+        frame(&mut editor, &mut renderer);
+    }
+    assert!(rooms_of(&saved(&dir, "Worlds/Closed.worldgen"))[0].shapes[0].fill);
+    // Add Component offers both, under Terrain.
+    let world = &editor.game.engine.world;
+    let named = world.query_ref::<(Entity, &Name)>().into_iter().find(|(_, name)| name.0 == "Way Out");
+    let exit = named.map(|(entity, _)| entity).expect("the exit");
+    assert!(world.has::<voxear_terrain::generate::CaveExit>(exit));
+    editor.select(Some(exit));
+    frame(&mut editor, &mut renderer);
+    let add = first_with(&editor.ui, editor.ui.root(), "add-component").expect("Add Component");
+    click(&mut editor.ui, add);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    editor.ui.text_input("Cave");
+    frame(&mut editor, &mut renderer);
+    assert!(picker_row(&editor.ui, "Cave Shape").is_some(), "Cave Shape is offered");
+    let row = picker_row(&editor.ui, "Cave Shape").unwrap();
+    click(&mut editor.ui, row);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(editor.game.engine.world.has::<voxear_terrain::generate::CaveShape>(exit));
+}

@@ -117,8 +117,10 @@ impl Editor {
     /// After a save: the prefab open is read from its file again when next
     /// used, so instances made or loaded from now on show what was saved.
     pub(super) fn prefab_saved(&mut self) {
-        if let Some(open) = &self.prefab {
-            self.game.content.forget(&open.path);
+        if let Some(path) = self.prefab.as_ref().map(|open| open.path.clone()) {
+            self.game.content.forget(&path);
+            // A cave room's prefab: the generators that list it read its shapes again.
+            self.cave_rooms_changed(Some(&path));
         }
     }
 

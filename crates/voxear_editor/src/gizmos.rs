@@ -19,6 +19,7 @@ use voxear_engine::{
 };
 use voxear_render::{Camera, DryArea, DryShape, Light, LightKind, Pool, PostVolume, VolumeShape, WindShape, WindZone};
 use voxear_scene::{Destroying, EditorOnly, Transform, WorldTransform};
+use voxear_terrain::generate::{CaveExit, CaveMode, CaveShape, RoomForm};
 use voxear_ui::{Color, Shape};
 
 use crate::scene_tools::{Markers, ViewCamera, ring};
@@ -56,6 +57,16 @@ const GUN: u32 = 0xe86f6f;
 /// How big a joint's anchor and a hinge's axis are drawn, on screen.
 const ANCHOR: f32 = 8.0;
 const AXIS: f32 = 36.0;
+/// A Cave Shape that carves and one that fills, selected and not, and a Cave Exit.
+const CAVE: u32 = 0xf2a14c;
+const CAVE_DIM: u32 = 0x8f6a3d;
+const CAVE_FILL: u32 = 0xc8ccd1;
+const CAVE_FILL_DIM: u32 = 0x767b82;
+const CAVE_EXIT: u32 = 0x7fe3a1;
+const CAVE_EXIT_DIM: u32 = 0x4f8a64;
+/// How long a Cave Exit's arrow is, and how wide its ring, in metres.
+const EXIT_ARROW: f32 = 3.0;
+const EXIT_RING: f32 = 2.0;
 /// How many pieces a capsule's half circle is drawn in.
 const CAP_SEGMENTS: usize = 16;
 
@@ -110,6 +121,7 @@ pub fn shapes(
     {
         colliders(&mut shapes, world, camera, entity);
     }
+    cave_rooms(&mut shapes, world, camera, selected);
     if let Some(entity) = selected {
         post_volume(&mut shapes, world, camera, entity);
         ui_panel(&mut shapes, world, camera, entity);
@@ -227,6 +239,82 @@ fn wind_zone(shapes: &mut Vec<Shape>, world: &World, camera: &ViewCamera, entity
         line(shapes, camera, start, tip, color);
         for side in [-1.0, 1.0] {
             line(shapes, camera, tip, tip - along * (size * 0.15) + across * (size * 0.1 * side), color);
+        }
+    }
+}
+
+/// Every Cave Shape's outline and every Cave Exit's way out, so a room shows
+/// whole while one of its shapes is worked on: those that carve in one
+/// colour, those that fill in another, the selected Obj's brighter and with
+/// its inner margin drawn inside it.
+fn cave_rooms(shapes: &mut Vec<Shape>, world: &World, camera: &ViewCamera, selected: Option<Entity>) {
+    for (entity, shape) in world.query_ref::<(Entity, &CaveShape)>().without::<Destroying>() {
+        let placed = voxear_scene::world_matrix(world, entity);
+        let chosen = selected == Some(entity);
+        let color = Color::hex(match (shape.mode, chosen) {
+            (CaveMode::Carve, true) => CAVE,
+            (CaveMode::Carve, false) => CAVE_DIM,
+            (CaveMode::Fill, true) => CAVE_FILL,
+            (CaveMode::Fill, false) => CAVE_FILL_DIM,
+        });
+        let size = Vec3::from(shape.size);
+        cave_outline(shapes, camera, &placed, shape.shape, size, color);
+        // How far in the walls' roughness may come: the same form, that much smaller every way, in metres.
+        let scale = Vec3::new(placed.x_axis.length(), placed.y_axis.length(), placed.z_axis.length());
+        let inner = size - Vec3::splat(shape.margin * 2.0) / scale.max(Vec3::splat(1.0e-4));
+        if chosen && shape.margin > 0.0 && inner.min_element() > 0.0 {
+            cave_outline(shapes, camera, &placed, shape.shape, inner, Color::hex(CAVE_DIM));
+        }
+    }
+    for (entity, _) in world.query_ref::<(Entity, &CaveExit)>().without::<Destroying>() {
+        let (_, rotation, position) = voxear_scene::world_matrix(world, entity).to_scale_rotation_translation();
+        let color = Color::hex(if selected == Some(entity) { CAVE_EXIT } else { CAVE_EXIT_DIM });
+        let (way, side, up) = (rotation * Vec3::Z, rotation * Vec3::X, rotation * Vec3::Y);
+        let tip = position + way * EXIT_ARROW;
+        polyline(shapes, camera, &ring(camera, position, way, EXIT_RING), color);
+        line(shapes, camera, position, tip, color);
+        for barb in [side, -side, up, -up] {
+            line(shapes, camera, tip, tip - way * 0.6 + barb * 0.35, color);
+        }
+    }
+}
+
+/// A Cave Shape's form `size` across, as its Obj's matrix places it: a
+/// box's edges, or a ball's three rounds, a half ball's level one whole and
+/// its upright two as arches.
+fn cave_outline(shapes: &mut Vec<Shape>, camera: &ViewCamera, placed: &Mat4, form: RoomForm, size: Vec3, color: Color) {
+    let at = |local: Vec3| placed.transform_point3(local);
+    let half = size * 0.5;
+    if form == RoomForm::Box {
+        let corner = |i: usize| {
+            let sign = |bit: usize| if i & bit == 0 { -1.0 } else { 1.0 };
+            at(half * Vec3::new(sign(1), sign(2), sign(4)))
+        };
+        for i in 0..8 {
+            for bit in [1, 2, 4] {
+                if i & bit == 0 {
+                    line(shapes, camera, corner(i), corner(i | bit), color);
+                }
+            }
+        }
+        return;
+    }
+    // A half ball stands on its Obj and is as high as its size; a ball is round its Obj.
+    let dome = form == RoomForm::HalfBall;
+    let radii = Vec3::new(half.x, if dome { size.y } else { half.y }, half.z);
+    let round = |a: Vec3, b: Vec3, whole: bool| {
+        let pieces = if whole { 2 * CAP_SEGMENTS } else { CAP_SEGMENTS };
+        let points: Option<Vec<[f32; 2]>> = (0..=pieces)
+            .map(|i| {
+                let angle = i as f32 / CAP_SEGMENTS as f32 * std::f32::consts::PI;
+                camera.project(at((a * angle.cos() + b * angle.sin()) * radii))
+            })
+            .collect();
+        points
+    };
+    for points in [round(Vec3::X, Vec3::Z, true), round(Vec3::X, Vec3::Y, !dome), round(Vec3::Z, Vec3::Y, !dome)] {
+        if let Some(points) = points {
+            polyline(shapes, camera, &points, color);
         }
     }
 }

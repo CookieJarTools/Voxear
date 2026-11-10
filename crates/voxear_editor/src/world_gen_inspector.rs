@@ -16,6 +16,10 @@
 //! input shows only while nothing is wired into it. A context click on a
 //! row's label exposes the value: it becomes a row of the generator's own.
 //!
+//! A Cave Network's rooms are no row of numbers: under its values it lists
+//! them, each a prefab picked from the project's and how often it is
+//! chosen, with a row to add one ([`RoomChoice`]).
+//!
 //! Both are made of [`ValueRow`]s, one for each kind of value a node can
 //! have, so a new kind of value is one more arm in each of its three
 //! methods. An angle is one such: its row shows degrees, while its value
@@ -25,7 +29,7 @@
 use std::sync::OnceLock;
 
 use voxear_terrain::generate::{
-    Exposed, NodeId as GraphNode, NodeKind, Preset, Starter, Value, ValueKind, ValueSpec, WorldGen,
+    Exposed, NodeId as GraphNode, NodeKind, Preset, Room, Starter, Value, ValueKind, ValueSpec, WorldGen,
     nodes::{Land, Output, degrees_of, rise_of},
     smooth, starters,
 };
@@ -389,6 +393,118 @@ pub enum NodeEdit {
     /// One of its values shown as a row of the generator's own, or no longer.
     Expose(usize),
     Hide(usize),
+    /// The rooms a Cave Network lists. One whose prefab was just picked has no shapes yet: whoever
+    /// takes the edit reads them from the prefab.
+    Rooms(Vec<Room>),
+}
+
+/// A prefab a Cave Network's room can be: the path its row shows, and the reference its file keeps.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RoomChoice {
+    pub path: String,
+    pub reference: String,
+}
+
+/// One listed room's row: its prefab, how often it is chosen, and what takes it off the list.
+struct RoomRow {
+    prefab: NodeId,
+    weight: NodeId,
+    remove: NodeId,
+}
+
+/// A Cave Network's rooms as rows, the row that adds one, and the prefabs they pick among.
+struct RoomRows {
+    rows: Vec<RoomRow>,
+    add: NodeId,
+    choices: Vec<RoomChoice>,
+}
+
+impl RoomRows {
+    fn build(ui: &mut Ui, root: NodeId, rooms: &[Room], choices: &[RoomChoice]) -> Self {
+        let line = ui.panel(root, Style::default());
+        ui.add_class(line, "divider");
+        let list = part(ui, root, "Rooms", "box");
+        let mut names: Vec<&str> = vec!["None"];
+        names.extend(choices.iter().map(|choice| choice.path.as_str()));
+        let mut rows = Vec::new();
+        for room in rooms {
+            let row = ui.panel(list, Style::row());
+            ui.add_class(row, "room-row");
+            // A prefab the project no longer has shows as missing, and keeps its reference until another is picked.
+            let picked = Self::picked(choices, room);
+            let prefab = match picked {
+                Some(picked) => ui.dropdown(row, &names, picked),
+                None => {
+                    let mut with_missing = names.clone();
+                    with_missing.push("Missing");
+                    ui.dropdown(row, &with_missing, names.len())
+                }
+            };
+            ui.add_class(prefab, "value-choice");
+            ui.add_class(prefab, "room-prefab");
+            let weight = ui.text_field(row, &number(room.weight));
+            ui.add_class(weight, "value-input");
+            ui.add_class(weight, "number-input");
+            ui.add_class(weight, "room-weight");
+            ui.set_tooltip(weight, "Weight", Some("How often the room is chosen, beside the others."));
+            let remove = ui.icon_button(row, "close");
+            ui.add_class(remove, "room-remove");
+            rows.push(RoomRow { prefab, weight, remove });
+        }
+        if rooms.is_empty() {
+            let hint = ui.add_label(list, "A plain chamber, until a room is added.");
+            ui.add_class(hint, "entities-hint");
+        }
+        let mut adding: Vec<&str> = vec!["Add Room"];
+        adding.extend(choices.iter().map(|choice| choice.path.as_str()));
+        let add = ui.dropdown(list, &adding, 0);
+        ui.add_class(add, "value-choice");
+        ui.add_class(add, "room-add");
+        Self { rows, add, choices: choices.to_vec() }
+    }
+
+    /// Which of a dropdown's options `room`'s prefab is: 0 for none, and none for one not among `choices`.
+    fn picked(choices: &[RoomChoice], room: &Room) -> Option<usize> {
+        let Some(reference) = room.prefab.as_deref() else { return Some(0) };
+        choices.iter().position(|choice| choice.reference == reference || choice.path == reference).map(|at| at + 1)
+    }
+
+    /// The rooms as the user left them this frame, where they changed `rooms`.
+    fn changed(&self, ui: &mut Ui, rooms: &[Room]) -> Option<Vec<Room>> {
+        let mut now = rooms.to_vec();
+        if ui.changed(self.add) {
+            let picked = ui.selected_option(self.add);
+            ui.set_selected_option(self.add, 0);
+            let choice = self.choices.get(picked.checked_sub(1)?)?;
+            now.push(Room { prefab: Some(choice.reference.clone()), ..Room::default() });
+            return Some(now);
+        }
+        for (at, row) in self.rows.iter().enumerate().take(now.len()) {
+            if ui.clicked(row.remove) {
+                now.remove(at);
+                return Some(now);
+            }
+            if ui.changed(row.prefab) {
+                let picked = ui.selected_option(row.prefab);
+                let chosen = |at: usize| self.choices.get(at).map(|choice| choice.reference.clone());
+                let prefab = picked.checked_sub(1).map(chosen);
+                // The last option of a row whose prefab is missing is that prefab still.
+                let Some(prefab) = prefab.map_or(Some(None), |found| found.map(Some)) else { continue };
+                now[at] = Room { prefab, weight: now[at].weight, ..Room::default() };
+                return Some(now);
+            }
+            if ui.changed(row.weight) {
+                let Ok(weight) = ui.text(row.weight).trim().parse::<f32>() else { continue };
+                if weight.is_finite() && weight.max(0.0) != now[at].weight {
+                    now[at].weight = weight.max(0.0);
+                    return Some(now);
+                }
+            } else {
+                write(ui, row.weight, &number(now[at].weight));
+            }
+        }
+        None
+    }
 }
 
 /// What a node's rows were built for: what it is, which of its inputs have
@@ -399,6 +515,8 @@ struct NodeBuilt {
     values: usize,
     wired: Vec<bool>,
     exposed: Vec<usize>,
+    /// The prefabs of the rooms a Cave Network lists.
+    rooms: Option<Vec<Option<String>>>,
 }
 
 impl NodeBuilt {
@@ -407,7 +525,8 @@ impl NodeBuilt {
         let kind = &graph.node(node)?.kind;
         let wired = (0..kind.inputs().len()).map(|input| graph.link_into(node, input).is_some()).collect();
         let exposed = graph.exposed.iter().filter(|shown| shown.node == node).map(|shown| shown.value).collect();
-        Some(Self { title: kind.title(), values: kind.values().len(), wired, exposed })
+        let rooms = kind.rooms().map(|rooms| rooms.iter().map(|room| room.prefab.clone()).collect());
+        Some(Self { title: kind.title(), values: kind.values().len(), wired, exposed, rooms })
     }
 }
 
@@ -422,12 +541,21 @@ pub struct NodeView {
     built: NodeBuilt,
     /// The row whose menu is open: its label, and its value.
     menu: Option<(NodeId, usize)>,
+    /// A Cave Network's rooms.
+    rooms: Option<RoomRows>,
 }
 
 impl NodeView {
     /// The rows of node `node` of `world`, the generator at `path`, built in `root` in place of
     /// what it held; none where the graph has no such node.
-    pub fn build(ui: &mut Ui, root: NodeId, path: &str, world: &WorldGen, node: GraphNode) -> Option<Self> {
+    pub fn build(
+        ui: &mut Ui,
+        root: NodeId,
+        path: &str,
+        world: &WorldGen,
+        node: GraphNode,
+        prefabs: &[RoomChoice],
+    ) -> Option<Self> {
         let built = NodeBuilt::of(world, node)?;
         let kind = &world.graph().node(node)?.kind;
         for child in ui.children(root) {
@@ -476,7 +604,8 @@ impl NodeView {
                 add(ui, advanced, at, spec);
             }
         }
-        Some(Self { path: path.to_string(), node, rows: made, built, menu: None })
+        let rooms = kind.rooms().map(|rooms| RoomRows::build(ui, root, rooms, prefabs));
+        Some(Self { path: path.to_string(), node, rows: made, built, menu: None, rooms })
     }
 
     /// The generator's file and the node shown.
@@ -514,6 +643,11 @@ impl NodeView {
                 Some(value) if edit.is_none() => edit = Some(NodeEdit::Set(*at, value)),
                 _ => row.show(ui, now),
             }
+        }
+        if let (Some(rows), Some(rooms)) = (&self.rooms, kind.rooms())
+            && let Some(rooms) = rows.changed(ui, rooms)
+        {
+            edit = edit.or(Some(NodeEdit::Rooms(rooms)));
         }
         edit
     }

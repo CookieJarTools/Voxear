@@ -257,6 +257,8 @@ impl Editor {
         let prompt_icons = changed.iter().any(|path| path.ends_with(".prompticons"));
         let world_gens: Vec<String> =
             changed.iter().filter(|path| path.ends_with(".worldgen")).map(|path| path.to_string()).collect();
+        let prefabs: Vec<String> =
+            changed.iter().filter(|path| path.ends_with(".prefab")).map(|path| path.to_string()).collect();
         let blocks = changed.iter().any(|path| path.ends_with(".block"));
         // A material may pick a built-in shader no other did, which is compiled in then.
         let shaders = changed.iter().any(|path| path.ends_with(".shader") || path.ends_with(".material"));
@@ -289,6 +291,12 @@ impl Editor {
                     crate::terrain_props::regenerate(&mut self.game, guid);
                     crate::block_props::regenerate(&mut self.game, guid);
                 }
+            }
+            // A prefab edited outside the editor is read again when next used, and a cave room's by the
+            // generators that list it.
+            for path in &prefabs {
+                self.game.content.forget(path);
+                self.cave_rooms_changed(Some(path));
             }
             // Blocks edited outside the editor are read again, and the worlds of blocks listing them drawn as they say.
             if blocks {

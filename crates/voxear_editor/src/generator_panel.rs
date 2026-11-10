@@ -427,6 +427,10 @@ impl GeneratorPanel {
                 graph.exposed.retain(|shown| !(shown.node == node && shown.value == at));
                 (graph.exposed.len() != before, None)
             }
+            NodeEdit::Rooms(rooms) => {
+                let listed = graph.node_mut(node).and_then(|found| found.kind.rooms_mut());
+                (listed.is_some_and(|listed| std::mem::replace(listed, rooms.clone()) != rooms), None)
+            }
         };
         if done {
             let world = open.world.with_graph(graph);

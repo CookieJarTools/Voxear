@@ -1653,7 +1653,11 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     renumbers every block and kept change even where the ground stays the same. Tests: reading a scene of two
     models, placing into a world's kinds, the editor building one and undoing it, and moving a kind the ground
     has none of.
-  - face-connectivity cave culling.
+  - ~~**Cave culling:**~~ done: each chunk's mesh notes which of its six sides see each other through its air
+    (`blocks::sight::sights`, flooded at mesh time), and each view walks from the camera's chunk through those
+    links, never back along an axis, within the frustum (`sight::seen`), drawing only the chunks it reaches; worlds
+    drawn smooth, far rings and shadows are drawn without it. Tests: a wall's sides apart, a closed cave passed
+    over and one down a shaft seen, a view drawing only the chunks it can see into.
 - **Smooth voxel terrain, flat and planets**, in parts: smooth ground you can see, stand on, generate and build on;
   planets with their own gravity; a floating origin.
   - ~~**Voxel Terrain:**~~ done: a Block World drawn smooth (`BlockFile::smooth`, `BlockWorld::smooth`). Each chunk

@@ -30,14 +30,16 @@ const AXES: [(usize, bool, usize, usize); FACINGS] =
     [(0, true, 1, 2), (0, false, 2, 1), (1, true, 2, 0), (1, false, 0, 2), (2, true, 0, 1), (2, false, 1, 0)];
 
 /// A chunk's faces: its quads, kept by facing, `buckets[f]..buckets[f + 1]`
-/// those of facing `f`; and its faces as triangles, in blocks from the
-/// chunk's corner, three indices a triangle, facing out.
+/// those of facing `f`; its faces as triangles, in blocks from the chunk's
+/// corner, three indices a triangle, facing out; and which of the chunk's
+/// sides see each other through its air (see `sight`).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ChunkMesh {
     pub quads: Vec<[u32; 2]>,
     pub buckets: [u32; FACINGS + 1],
     pub positions: Vec<[f32; 3]>,
     pub indices: Vec<u32>,
+    pub sights: u16,
 }
 
 impl ChunkMesh {
@@ -160,6 +162,7 @@ pub fn mesh_chunk(map: &BlockMap, key: [i32; 3], faces: &[[u8; 3]]) -> ChunkMesh
         }
     }
     mesh.buckets[FACINGS] = mesh.quads.len() as u32;
+    mesh.sights = super::sight::sights(chunk);
     mesh
 }
 

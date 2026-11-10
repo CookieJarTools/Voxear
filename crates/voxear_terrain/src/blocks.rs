@@ -19,6 +19,7 @@ pub mod edits;
 pub mod file;
 pub mod generate;
 pub mod mesh;
+pub mod sight;
 pub mod smooth;
 pub mod stream;
 pub mod vox;

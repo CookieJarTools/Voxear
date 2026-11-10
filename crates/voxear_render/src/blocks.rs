@@ -9,7 +9,10 @@
 //! also gives the GI's rays a mesh of its own, its faces merged by surface
 //! alone, as the terrain's tiles do.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use anyhow::Result;
 use voxear_core::math::{Mat3, Mat4, Vec3, Vec4};
@@ -101,34 +104,51 @@ struct Held {
     bounds: [Vec3; 2],
 }
 
-/// One chunk as a view picks what to draw of it: its box, and where each
-/// facing's quads start in the pool and how many, +x first.
+/// One chunk as a view picks what to draw of it: its level and place, its
+/// box, and where each facing's quads start in the pool and how many, +x
+/// first.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct ChunkDraw {
+    pub key: [i32; 4],
     pub bounds: [Vec3; 2],
     pub facings: [[u32; 2]; FACINGS],
 }
 
+/// Whether the box from `low` to `high` is within `planes`, inward.
+fn within(planes: &[[f32; 4]], [low, high]: [Vec3; 2]) -> bool {
+    planes.iter().all(|&[x, y, z, d]| {
+        let corner = Vec3::new(
+            if x >= 0.0 { high.x } else { low.x },
+            if y >= 0.0 { high.y } else { low.y },
+            if z >= 0.0 { high.z } else { low.z },
+        );
+        x * corner.x + y * corner.y + z * corner.z + d >= 0.0
+    })
+}
+
 /// What a view draws of a world's chunks seen from `camera` (in the
-/// world's space): those within `planes` (inward, in its space), and of
-/// each, with `facing_camera`, only the faces turned towards the camera;
+/// world's space): those within `planes` (inward, in its space) and, where
+/// `seen` says which of its own chunks the camera can see into, those; and
+/// of each, with `facing_camera`, only the faces turned towards the camera;
 /// as first quads and counts, those that follow on in the pool drawn as
 /// one.
-pub(crate) fn pick(chunks: &[ChunkDraw], camera: Vec3, planes: &[[f32; 4]], facing_camera: bool) -> Vec<[u32; 2]> {
+pub(crate) fn pick(
+    chunks: &[ChunkDraw],
+    camera: Vec3,
+    planes: &[[f32; 4]],
+    facing_camera: bool,
+    seen: Option<&HashSet<[i32; 3]>>,
+) -> Vec<[u32; 2]> {
     let mut picked: Vec<[u32; 2]> = Vec::new();
     for chunk in chunks {
-        let [low, high] = chunk.bounds;
-        let seen = planes.iter().all(|&[x, y, z, d]| {
-            let corner = Vec3::new(
-                if x >= 0.0 { high.x } else { low.x },
-                if y >= 0.0 { high.y } else { low.y },
-                if z >= 0.0 { high.z } else { low.z },
-            );
-            x * corner.x + y * corner.y + z * corner.z + d >= 0.0
-        });
-        if !seen {
+        let [level, x, y, z] = chunk.key;
+        if level == 0 && seen.is_some_and(|seen| !seen.contains(&[x, y, z])) {
             continue;
         }
+        if !within(planes, chunk.bounds) {
+            continue;
+        }
+        let [low, high] = chunk.bounds;
         // A face is turned towards the camera when the camera is past its plane, along the way it faces.
         let toward = [
             camera.x > low.x,
@@ -173,6 +193,9 @@ struct Pool {
     block_size: f32,
     smooth: bool,
     draws: Option<Arc<[ChunkDraw]>>,
+    /// Which of each of its own chunks' sides see each other, made again
+    /// with its draws.
+    sights: Option<Arc<HashMap<[i32; 3], u16>>>,
     seen: u64,
 }
 
@@ -194,6 +217,7 @@ impl Pool {
             block_size,
             smooth,
             draws: None,
+            sights: None,
             seen: 0,
         })
     }
@@ -267,6 +291,7 @@ impl Pool {
         }
         if changed {
             self.draws = None;
+            self.sights = None;
         }
         Ok(())
     }
@@ -294,16 +319,27 @@ impl Pool {
             stage(bytemuck::cast_slice(&[key[1], key[2], key[3], key[0]]), u64::from(held.slot) * 16);
         }
         self.draws = None;
+        self.sights = None;
         Ok(())
+    }
+
+    /// Which of each of its own chunks' sides see each other, made again
+    /// only when the pool changed.
+    fn sights(&mut self) -> Arc<HashMap<[i32; 3], u16>> {
+        if self.sights.is_none() {
+            let own = self.held.iter().filter(|(key, _)| key[0] == 0);
+            self.sights = Some(Arc::new(own.map(|(key, held)| ([key[1], key[2], key[3]], held.mesh.sights)).collect()));
+        }
+        self.sights.clone().expect("made above")
     }
 
     /// Each chunk to draw, made again only when the pool changed.
     fn draws(&mut self) -> Arc<[ChunkDraw]> {
         if self.draws.is_none() {
-            let draws = self.held.values().map(|held| {
+            let draws = self.held.iter().map(|(key, held)| {
                 let buckets = held.mesh.buckets;
                 let facings = std::array::from_fn(|f| [held.first as u32 + buckets[f], buckets[f + 1] - buckets[f]]);
-                ChunkDraw { bounds: held.bounds, facings }
+                ChunkDraw { key: *key, bounds: held.bounds, facings }
             });
             self.draws = Some(draws.collect());
         }
@@ -321,6 +357,9 @@ pub(crate) struct DrawnBlocks {
     /// Where its pool's chunks' places start, and its quads.
     pub address: u64,
     pub chunks: Arc<[ChunkDraw]>,
+    /// For a world of cubes, its blocks and which of each chunk's sides see
+    /// each other, for each view to pass over the chunks it cannot see into.
+    pub sights: Option<(Arc<voxear_terrain::blocks::BlockMap>, Arc<HashMap<[i32; 3], u16>>)>,
     pub look: BlockLook,
     pub cast_shadows: bool,
     /// Its chunks' meshes for rays, each with where its chunk is from the
@@ -487,6 +526,7 @@ impl BlockWorlds {
                 smooth: blocks.smooth,
                 address: pool.buffer.address,
                 chunks: pool.draws(),
+                sights: (!blocks.smooth).then(|| (blocks.blocks.clone(), pool.sights())),
                 look,
                 cast_shadows: blocks.cast_shadows,
                 proxies: placed,
@@ -638,12 +678,22 @@ pub(crate) fn gather(
         let local = camera - blocks.corner;
         let mut lists = vec![Vec::new(); LIST_COUNT as usize];
         let planes = voxear_terrain::lod::planes_from(&frame.planes, blocks.corner);
+        // The chunks the camera can see into, walking from its own through their sides that see each other.
+        let seen = blocks.sights.as_ref().and_then(|(map, sights)| {
+            let side = CHUNK as f32 * blocks.block_size;
+            let from = (local / side).floor().as_ivec3().to_array();
+            let bounds = |key: [i32; 3]| {
+                let low = Vec3::new(key[0] as f32, key[1] as f32, key[2] as f32) * side;
+                [low, low + Vec3::splat(side)]
+            };
+            voxear_terrain::blocks::sight::seen(map, sights, from, |key| within(&planes, bounds(key)))
+        });
         // A smooth surface faces every way in a chunk, so all of it is drawn.
-        lists[LIST_EARLY as usize] = pick(&blocks.chunks, local, &planes, !blocks.smooth);
+        lists[LIST_EARLY as usize] = pick(&blocks.chunks, local, &planes, !blocks.smooth, seen.as_ref());
         if has_sun && blocks.cast_shadows {
             for cascade in 0..CASCADES {
                 let planes = voxear_terrain::lod::planes_from(&frame.cascade_planes[cascade], blocks.corner);
-                lists[LIST_SHADOW as usize + cascade] = pick(&blocks.chunks, local, &planes, false);
+                lists[LIST_SHADOW as usize + cascade] = pick(&blocks.chunks, local, &planes, false, None);
             }
         }
         runs.push((number as u32, blocks.smooth, lists));
@@ -764,21 +814,25 @@ mod tests {
     fn a_view_draws_the_chunks_it_sees_and_only_their_faces_turned_towards_it() {
         // Two chunks along x, 32 m each, the second's quads following on from the first's.
         let chunk = |x: f32, first: u32| ChunkDraw {
+            key: [0, (x / 32.0) as i32, 0, 0],
             bounds: [Vec3::new(x, 0.0, 0.0), Vec3::new(x + 32.0, 32.0, 32.0)],
             facings: std::array::from_fn(|f| [first + 10 * f as u32, 10]),
         };
         let chunks = [chunk(0.0, 0), chunk(32.0, 60)];
         // From above the first, beyond its +x side: no -y faces of either, and none of the second's +x.
-        let picked = pick(&chunks, Vec3::new(16.0, 40.0, 16.0), &[], true);
+        let picked = pick(&chunks, Vec3::new(16.0, 40.0, 16.0), &[], true, None);
         let has = |first: u32| picked.iter().any(|&[f, c]| f <= first && first < f + c);
         assert!(has(0) && has(20), "the first's +x and +y faces");
         assert!(!has(30) && !has(90), "no faces turned down");
         assert!(!has(60), "the second's +x faces are beyond the camera");
         assert!(has(70), "its -x faces face back towards it");
         // Shadows take every face; quads following on are drawn as one.
-        assert_eq!(pick(&chunks, Vec3::new(16.0, 40.0, 16.0), &[], false), vec![[0, 120]]);
+        assert_eq!(pick(&chunks, Vec3::new(16.0, 40.0, 16.0), &[], false, None), vec![[0, 120]]);
         // Looking along +x from x = 40: only the second.
-        let ahead = pick(&chunks, Vec3::new(40.0, 16.0, 16.0), &[[1.0, 0.0, 0.0, -40.0]], false);
+        let ahead = pick(&chunks, Vec3::new(40.0, 16.0, 16.0), &[[1.0, 0.0, 0.0, -40.0]], false, None);
         assert_eq!(ahead, vec![[60, 60]]);
+        // Only the chunks the camera can see into, where it is known which.
+        let seen = HashSet::from([[1, 0, 0]]);
+        assert_eq!(pick(&chunks, Vec3::new(16.0, 40.0, 16.0), &[], false, Some(&seen)), vec![[60, 60]]);
     }
 }

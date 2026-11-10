@@ -477,7 +477,8 @@ mod tests {
     fn a_starters_ground_takes_overhangs_and_caves_flat_and_round_and_a_cell_alone_is_the_cell_in_a_batch() {
         // Each starter's graph under the Volume's nodes: the Overhangs' own mask reads the ground again round
         // every column, through the starter's warps, masks and gullies.
-        for starter in crate::generate::starters() {
+        // The five that are ground alone: the cave level has a Volume of its own.
+        for starter in crate::generate::starters().into_iter().take(5) {
             let name = starter.name;
             let mut graph = starter.graph.clone();
             assert!(graph.add_voxels(OwnVoxels { overhangs: 6.0, caves: 0.5, roof: 3.0 }, false), "{name}");

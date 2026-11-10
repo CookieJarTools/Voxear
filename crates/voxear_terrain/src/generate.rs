@@ -31,6 +31,7 @@
 //! trigonometry or powers, so a seed makes the same ground on every
 //! machine, and a world made from one need only send its seed.
 
+pub mod caves;
 mod compile;
 mod eval;
 mod graph;
@@ -40,6 +41,7 @@ mod starters;
 mod voxels;
 mod world;
 
+pub use caves::{CaveLayout, Caves, PlacedExit, PlacedRoom, Room, RoomExit, RoomForm, RoomShape};
 pub use compile::Fault;
 pub use graph::{Exposed, Graph, Link, Node, NodeId};
 pub use landmass::{Climate, Erosion, Field, Landmass, POLES_COLDER, Preset, Sample, Warp, smooth};

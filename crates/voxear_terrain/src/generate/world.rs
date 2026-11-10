@@ -398,6 +398,13 @@ impl WorldGen {
         })
     }
 
+    /// Its caves of rooms, where its Volume reads a Cave Network: the rooms as they lie in the ground.
+    pub fn caves(&self) -> Option<super::caves::Caves> {
+        let flat = self.made.flat.volume.as_ref()?.caves.clone()?;
+        let round = self.made.round.volume.as_ref()?.caves.clone()?;
+        Some(super::caves::Caves::new(flat, round))
+    }
+
     /// What is wrong with its graph: nothing, for one that is whole.
     pub fn faults(&self) -> &[Fault] {
         &self.made.faults

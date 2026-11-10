@@ -30,6 +30,7 @@
 use std::{collections::HashMap, fmt, sync::Arc};
 
 use super::{
+    caves::Network,
     eval::{Given, MOST_INPUTS, Program, Step},
     graph::{Graph, NodeId},
     nodes::{Output, PortKind},
@@ -107,6 +108,21 @@ impl Key {
         self.0.extend(text.as_bytes());
         self
     }
+
+    /// Bytes as they are: a key made before.
+    pub fn raw(&mut self, bytes: &[u8]) -> &mut Self {
+        self.0.extend(bytes);
+        self
+    }
+
+    pub fn bytes(&self) -> Vec<u8> {
+        self.0.clone()
+    }
+
+    /// A hash of it, the same on every machine.
+    pub fn hash(&self) -> u64 {
+        crate::layers::stable_hash(&self.0)
+    }
 }
 
 /// What is wrong with a graph. It still makes ground: what cannot be read
@@ -164,6 +180,10 @@ pub(crate) struct Compiler<'a> {
     made: HashMap<(NodeId, usize, Places), V>,
     making: Vec<(NodeId, usize, Places)>,
     faults: Vec<Fault>,
+    /// The generator's own ground as a program of its own, once a node has asked for it.
+    own_ground: Option<Arc<Program>>,
+    /// The first network of cave rooms compiled into it.
+    caves: Option<Arc<Network>>,
 }
 
 /// The program run once a column beside one run once a cell, as it is
@@ -195,6 +215,8 @@ impl<'a> Compiler<'a> {
             made: HashMap::new(),
             making: Vec::new(),
             faults: Vec::new(),
+            own_ground: None,
+            caves: None,
         }
     }
 
@@ -279,6 +301,27 @@ impl<'a> Compiler<'a> {
         let output = self.graph.output().map(|node| node.id);
         let height = output.and_then(|output| self.input(output, Output::HEIGHT, at));
         height.unwrap_or_else(|| self.constant(self.world.sea_level))
+    }
+
+    /// The generator's own ground as a program of its own, flat or round as this one is: for a kernel that
+    /// asks the ground's height somewhere other than at the places it is run over.
+    pub fn own_ground(&mut self) -> Arc<Program> {
+        if let Some(program) = &self.own_ground {
+            return program.clone();
+        }
+        let mut cx = Compiler::new(self.graph, self.world, false, self.round);
+        let at = cx.places();
+        let output = self.graph.output().map(|node| node.id);
+        let height = output.and_then(|output| cx.input(output, Output::HEIGHT, at));
+        let height = height.unwrap_or_else(|| cx.constant(self.world.sea_level));
+        let program = Arc::new(cx.finish(&[height]).0);
+        self.own_ground = Some(program.clone());
+        program
+    }
+
+    /// Says `caves` is a network of cave rooms this program hollows: the first said is the generator's.
+    pub fn note_caves(&mut self, caves: Arc<Network>) {
+        self.caves.get_or_insert(caves);
     }
 
     /// The cells the program is given.
@@ -494,6 +537,8 @@ pub(crate) struct Voxels {
     /// How far over a column's ground its cells may be solid, in metres.
     pub reach: f32,
     pub hash: u64,
+    /// The network of cave rooms it hollows, where it has one.
+    pub caves: Option<Arc<Network>>,
 }
 
 /// The Volume wired into `graph`'s Output, compiled: none with no wire.
@@ -510,6 +555,7 @@ fn voxels(graph: &Graph, world: World, round: bool, faults: &mut Vec<Fault>) -> 
     let ground = cx.volume(output, Output::VOLUME, at)?;
     let (plain, reach) = (cx.plain.contains(&ground), cx.rise(ground).min(MOST_OVER));
     let carry = cx.carry.take()?;
+    let caves = cx.caves.take();
     let (cells, found) = cx.finish(&[whole, ground]);
     let Carry { columns, rows, between } = *carry;
     let (columns, more) = columns.finish(&rows);
@@ -527,7 +573,7 @@ fn voxels(graph: &Graph, world: World, round: bool, faults: &mut Vec<Fault>) -> 
     bytes.extend(cells.hash.to_le_bytes());
     bytes.extend(between.iter().map(|between| u8::from(*between)));
     let hash = crate::layers::stable_hash(&bytes);
-    Some(Voxels { columns, between, exact, spread, cells, coarse, plain, caved: whole != ground, reach, hash })
+    Some(Voxels { columns, between, exact, spread, cells, coarse, plain, caved: whole != ground, reach, hash, caves })
 }
 
 /// Compiles `graph` in `world`, for flat ground or `round` a planet, adding

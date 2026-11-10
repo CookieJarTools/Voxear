@@ -6,6 +6,9 @@
 //! They carry the names of a landmass's presets and make new ground under
 //! them: a file made from a landmass preset is a Landmass node still, and
 //! makes the ground it made.
+//!
+//! After the five comes one that is no kind of ground: a Cave Level, solid
+//! rock with one bounded cave of rooms in it, for worlds of blocks.
 
 use voxear_core::curve::Curve;
 
@@ -13,7 +16,8 @@ use super::{
     graph::{Graph, NodeId},
     landmass::Climate,
     nodes::{
-        Bend, Blend, Cellular, Clamp, Gullies, HeightMask, Math, NodeKind, Noise, Operation, Output, Remap, Terrace,
+        Bend, Blend, CaveNetwork, Cellular, Clamp, Combine, Combining, Constant, Gullies, HeightMask, Laid, Math,
+        NodeKind, Noise, Operation, Output, Remap, Solid, Terrace,
     },
     world::WorldGen,
 };
@@ -59,7 +63,7 @@ impl Starter {
 
 /// The graphs a generator can start from, in the order a list shows them.
 pub fn starters() -> Vec<Starter> {
-    vec![battlefield_plains(), rolling_hills(), alpine(), archipelago(), canyons()]
+    vec![battlefield_plains(), rolling_hills(), alpine(), archipelago(), canyons(), cave_level()]
 }
 
 impl WorldGen {
@@ -380,6 +384,31 @@ fn canyons() -> Starter {
     Starter { name: "Canyons", sea_level: 0.0, graph: g.finish(ground, climate) }
 }
 
+/// Solid rock with one bounded cave in it: a main path of rooms with side
+/// rooms off it, its first room Depth under the rock's top. For a world of
+/// blocks; a Terrain shows the rock's level top alone.
+fn cave_level() -> Starter {
+    let mut g = Layout::new();
+    let rock = g.add(NodeKind::Constant(Constant { value: 64.0 }));
+    g.expose(rock, "value", "Height");
+    g.next();
+    let solid = g.after(rock, NodeKind::Solid(Solid::default()));
+    let network = CaveNetwork { layout: Laid::Level, depth: 32.0, entrances: 0.0, ..CaveNetwork::default() };
+    let caves = g.add(NodeKind::CaveNetwork(network));
+    g.expose(caves, "main_rooms", "Rooms");
+    g.expose(caves, "side_rooms", "Side Rooms");
+    g.expose(caves, "depth", "Depth");
+    g.next();
+    let cut = g.add(NodeKind::Combine(Combine { operation: Combining::Subtract, ..Combine::default() }));
+    g.wire(solid, 0, cut, Combine::A);
+    g.wire(caves, 0, cut, Combine::B);
+    let mut graph = g.finish(rock, Climate::default());
+    let output = graph.output().map(|node| node.id);
+    let wired = output.is_some_and(|output| graph.connect(cut, 0, output, Output::VOLUME));
+    debug_assert!(wired, "the cave level's Volume");
+    Starter { name: "Cave Level", sea_level: 0.0, graph }
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Instant;
@@ -396,6 +425,35 @@ mod tests {
         crate::layers::stable_hash(bytemuck::cast_slice(&bits))
     }
 
+    /// The starters that are kinds of ground: the first five.
+    fn grounds() -> Vec<Starter> {
+        starters().into_iter().take(5).collect()
+    }
+
+    #[test]
+    fn the_cave_level_is_rock_with_a_cave_of_rooms_and_rows_for_its_size() {
+        let starter = starters().pop().unwrap();
+        assert_eq!(starter.name, "Cave Level");
+        let world = starter.world(1, 1.0);
+        assert!(world.faults().is_empty(), "{:?}", world.faults());
+        assert_eq!(world.starter(), Some("Cave Level"));
+        assert_eq!(WorldGen::parse(&world.to_text()).unwrap(), world);
+        let labels: Vec<&str> = world.graph().exposed.iter().map(|exposed| exposed.label.as_str()).collect();
+        assert_eq!(labels, ["Height", "Rooms", "Side Rooms", "Depth", "Temperature", "Humidity"]);
+        assert_eq!(world.height_at(123.0, -45.0), 64.0);
+        let volume = world.volume().expect("its Volume");
+        assert!(volume.plain() && volume.caved());
+        let rooms = world.caves().expect("its caves").rooms(None);
+        assert_eq!(rooms.len(), 12);
+        assert!(rooms.iter().all(|room| room.at[1] > 10.0 && room.at[1] < 54.0), "under the rock's top");
+        // Its Rooms row is the main path's length; another seed is another cave.
+        let longer = world.with_exposed(1, Value::Whole(12)).expect("its Rooms row");
+        assert_eq!(longer.caves().unwrap().rooms(None).len(), 16);
+        let other = starter.world(2, 1.0).caves().unwrap().rooms(None);
+        let regions = |rooms: &[crate::generate::PlacedRoom]| rooms.iter().map(|room| room.region).collect::<Vec<_>>();
+        assert_ne!(regions(&other), regions(&rooms));
+    }
+
     #[test]
     fn each_starter_makes_the_same_ground_to_the_bit_on_every_machine() {
         let hashes: [(&str, u64); 5] = [
@@ -405,7 +463,7 @@ mod tests {
             ("Archipelago", 0x7bff_4835_90c8_2cc7),
             ("Canyons", 0xbf21_c6c1_cfc9_9aeb),
         ];
-        let starters = starters();
+        let starters = grounds();
         assert_eq!(starters.len(), hashes.len());
         let mut changed = Vec::new();
         for (starter, (name, hash)) in starters.iter().zip(hashes) {
@@ -421,7 +479,7 @@ mod tests {
 
     #[test]
     fn starters_are_whole_graphs_with_rows_and_are_found_again_by_their_shape() {
-        let starters = starters();
+        let starters = grounds();
         let names: Vec<&str> = starters.iter().map(|starter| starter.name).collect();
         assert_eq!(names, Preset::ALL.map(Preset::name), "the presets' names, in their order");
         for starter in &starters {

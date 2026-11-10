@@ -40,6 +40,7 @@ mod terrace;
 pub(crate) mod testing;
 mod warp;
 
+mod cave_network;
 mod chambers;
 mod combine;
 mod noise3d;
@@ -67,6 +68,7 @@ pub use smooth::Smooth;
 pub use terrace::Terrace;
 pub use warp::Bend;
 
+pub use cave_network::{CaveNetwork, Laid};
 pub use chambers::Chambers;
 pub use combine::{Combine, Combining};
 pub use noise3d::Noise3d;
@@ -332,6 +334,8 @@ pub enum NodeKind {
     Tunnels(Tunnels),
     Chambers(Chambers),
     Combine(Combine),
+    #[serde(rename = "cave_network")]
+    CaveNetwork(CaveNetwork),
 }
 
 /// `$do` for the values of whichever kind `$node` is, as `$kind`.
@@ -363,6 +367,7 @@ macro_rules! each_kind {
             NodeKind::Tunnels($kind) => $do,
             NodeKind::Chambers($kind) => $do,
             NodeKind::Combine($kind) => $do,
+            NodeKind::CaveNetwork($kind) => $do,
         }
     };
 }
@@ -400,6 +405,7 @@ impl NodeKind {
             NodeKind::Tunnels(Tunnels::default()),
             NodeKind::Chambers(Chambers::default()),
             NodeKind::Combine(Combine::default()),
+            NodeKind::CaveNetwork(CaveNetwork::default()),
             NodeKind::Output(Output::default()),
         ]
     }
@@ -437,6 +443,22 @@ impl NodeKind {
         let before = self.clone();
         each_kind!(self, kind => kind.set(at, kept));
         *self != before
+    }
+
+    /// The rooms a Cave Network lists: none for any other kind. They are no row of numbers, so they are
+    /// read and set here rather than as a value.
+    pub fn rooms(&self) -> Option<&[super::caves::Room]> {
+        match self {
+            NodeKind::CaveNetwork(network) => Some(&network.rooms),
+            _ => None,
+        }
+    }
+
+    pub fn rooms_mut(&mut self) -> Option<&mut Vec<super::caves::Room>> {
+        match self {
+            NodeKind::CaveNetwork(network) => Some(&mut network.rooms),
+            _ => None,
+        }
     }
 
     pub(crate) fn compile(&self, cx: &mut Compiler, node: NodeId, port: usize, at: Places) -> V {

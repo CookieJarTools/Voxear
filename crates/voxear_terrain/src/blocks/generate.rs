@@ -386,6 +386,126 @@ mod tests {
         );
     }
 
+    /// Hills, or level rock, with a network of cave rooms taken out, and a world of metre blocks on it.
+    fn networked(layout: crate::generate::nodes::Laid, level: bool, caves: bool) -> (BlockFile, WorldGen) {
+        use crate::generate::{
+            Graph, NodeKind,
+            nodes::{CaveNetwork, Combine, Combining, Constant, Noise, Output, Solid},
+        };
+        let mut graph = Graph::default();
+        let height = match level {
+            true => graph.add(NodeKind::Constant(Constant { value: 70.0 }), [0.0, 0.0]),
+            false => {
+                graph.add(NodeKind::Noise(Noise { size: 300.0, low: 20.0, high: 90.0, ..Noise::default() }), [0.0, 0.0])
+            }
+        };
+        let solid = graph.add(NodeKind::Solid(Solid::default()), [0.0, 0.0]);
+        let output = graph.add(NodeKind::Output(Output::default()), [0.0, 0.0]);
+        assert!(graph.connect(height, 0, solid, Solid::HEIGHT) && graph.connect(height, 0, output, Output::HEIGHT));
+        if caves {
+            let network = CaveNetwork { layout, entrances: 0.5, ..CaveNetwork::default() };
+            let network = graph.add(NodeKind::CaveNetwork(network), [0.0, 0.0]);
+            let take = Combine { operation: Combining::Subtract, ..Combine::default() };
+            let take = graph.add(NodeKind::Combine(take), [0.0, 0.0]);
+            assert!(graph.connect(solid, 0, take, Combine::A) && graph.connect(network, 0, take, Combine::B));
+            assert!(graph.connect(take, 0, output, Output::VOLUME));
+        } else {
+            assert!(graph.connect(solid, 0, output, Output::VOLUME));
+        }
+        let world = WorldGen::new(11, 1.0, 0.0, graph);
+        assert!(world.faults().is_empty(), "{:?}", world.faults());
+        let file = BlockFile {
+            block_size: 1.0,
+            ground: Ground { size: [64, 64], ..Ground::default() },
+            generate: Some(BlockGenerate {
+                world: Some("caves".into()),
+                position: [0.0, 0.0],
+                bottom: -32,
+                overhangs: 0.0,
+                caves: 0.0,
+                sea: AIR,
+                endless: None,
+                planet: None,
+            }),
+            ..BlockFile::default()
+        };
+        (file, world)
+    }
+
+    #[test]
+    fn a_chunk_column_of_a_cave_network_made_alone_is_the_one_made_among_its_neighbours() {
+        use crate::generate::nodes::Laid;
+        for (layout, smooth) in [(Laid::Endless, false), (Laid::Endless, true), (Laid::Level, false)] {
+            let (file, world) = networked(layout, layout == Laid::Level, true);
+            let file = BlockFile { smooth, ..file };
+            let generate = file.generate.clone().unwrap();
+            // Over the level's first rooms, or wherever an endless network lies.
+            let columns: [[i32; 2]; 3] = [[0, 0], [1, 0], [0, 1]];
+            // Alone, each on a thread that has made nothing else.
+            let alone: Vec<u64> = columns
+                .iter()
+                .map(|&at| {
+                    let (file, generate, world) = (file.clone(), generate.clone(), world.clone());
+                    let made = std::thread::spawn(move || column_chunks(&file, &generate, &world, 0, at, None));
+                    let made = made.join().unwrap();
+                    hash_of(made.iter().map(|(key, chunk)| (key, chunk)))
+                })
+                .collect();
+            // Among their neighbours, on one thread, the ring round them made first and backwards.
+            let mut ring: Vec<[i32; 2]> = (-1..=2).flat_map(|x| (-1..=2).map(move |z| [x, z])).collect();
+            ring.reverse();
+            let mut hollow = 0;
+            for at in ring {
+                let made = column_chunks(&file, &generate, &world, 0, at, None);
+                // Air with ground somewhere over it in its chunk: a cave's.
+                let roofed = |chunk: &Chunk| {
+                    (0..CHUNK).any(|x| {
+                        let under = |y: u32, z: u32| chunk.get(x, y - 1, z) == AIR && chunk.get(x, y, z) != AIR;
+                        (0..CHUNK).any(|z| (1..CHUNK).any(|y| under(y, z)))
+                    })
+                };
+                hollow += made.iter().filter(|(_, chunk)| roofed(chunk)).count();
+            }
+            assert!(hollow > 0, "{layout:?}: no cave in sixteen chunk columns");
+            for (at, alone) in columns.iter().zip(&alone) {
+                let made = column_chunks(&file, &generate, &world, 0, *at, None);
+                let among = hash_of(made.iter().map(|(key, chunk)| (key, chunk)));
+                assert_eq!(among, *alone, "{layout:?}, smooth {smooth}: chunk column {at:?}");
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "a timing, to be read: run it optimised"]
+    fn timing_of_a_chunk_column_with_and_without_a_cave_network() {
+        use crate::generate::nodes::Laid;
+        let time = |file: &BlockFile, world: &WorldGen| {
+            let generate = file.generate.clone().unwrap();
+            let mut least = f32::MAX;
+            for _ in 0..3 {
+                let started = std::time::Instant::now();
+                for at in [[0, 0], [1, 0], [0, 1], [1, 1], [3, 5], [-4, 2], [7, -3], [2, 8]] {
+                    std::hint::black_box(column_chunks(file, &generate, world, 0, at, None));
+                }
+                least = least.min(started.elapsed().as_secs_f32() * 1000.0 / 8.0);
+            }
+            least
+        };
+        let kinds = [("endless under hills", Laid::Endless, false), ("a level in rock", Laid::Level, true)];
+        for (name, layout, level) in kinds {
+            let (file, with) = networked(layout, level, true);
+            let (_, without) = networked(layout, level, false);
+            let smooth = BlockFile { smooth: true, ..file.clone() };
+            println!(
+                "{name}: a chunk column of cubes {:.2} ms without, {:.2} ms with; smooth {:.2} and {:.2} ms",
+                time(&file, &without),
+                time(&file, &with),
+                time(&smooth, &without),
+                time(&smooth, &with)
+            );
+        }
+    }
+
     #[test]
     fn generated_chunks_with_overhangs_are_the_same_blocks_to_the_bit() {
         // Apart from those without. Pinned again when overhangs became a node: they push steep ground alone,

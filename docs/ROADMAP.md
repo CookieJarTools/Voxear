@@ -1595,7 +1595,7 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   script edits stay with terrains of a set size. Tests: tiles meet and match a set-size terrain, slots, the window
   following and keeping tiles, what a change remakes, physics as the window moves, the engine round a camera and
   saving, the editor's Endless setting, the GPU drawing the same ground after a move. Manual: Endless Worlds. Not
-  done: a floating origin past 10 km, coarser far tiles, rivers along valleys without end.
+  done: coarser far tiles, rivers along valleys without end.
 - **More terrain generation:** feeding the layer stack so it can be painted and stamped over afterwards:
   - trees and other plants scattered by surface and biome
   - stream-power erosion for ranges
@@ -1731,7 +1731,23 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     yaw carried over the top; a script doing the same through `GravityAt` and `SimpleMove`, its view and Obj upright;
     a motion-matched character walking round a planet's side by its clips, its body upright to it and facing the way
     it goes.
-  - a floating origin, engine-wide (transforms, physics, audio), for worlds past about 10 km.
+  - ~~**Floating origin:**~~ done: once the viewer terrain streams round is past `[floating_origin]`'s distance (2048 m)
+    from the world's middle across the ground, the world moves back by whole steps (1024 m) between frames
+    (`origin::due`, `Game::move_origin`). `WorldOrigin` keeps where the middle is from the level's, in whole metres;
+    root Objs move, those not moved since put back exactly from f64 (`voxear_scene::move_objs`); with them tick
+    smoothing, Jolt in one call (`vx_world_shift`: bodies without waking, characters with their contacts; joints held to
+    the world held to a still anchor body), kept places and corners, sound (`Command::Shift`, acoustics measured from
+    the level's middle), smokes, mists, motion matching, first-person eyes, gun holders and debug draw; the renderer's
+    last-frame matrices, probes, tracks, foam, sea floor and foliage (`Renderer::shift_origin`); the sea's cascades
+    phased by the origin in f64, drawn and for buoyancy. Streaming counts from its Obj, so nothing is made again. Mode
+    Automatic (levels with ground without end or a planet), Always or Never; never while networked. Scripts (native API
+    70): `Origin.Moved`, `Origin.Position`, `ToLevel`, `FromLevel`, `LevelPosition`, and `[WorldPosition]` fields moved
+    for them; saves and the editor's play keep positions from the level's middle; a level loads from its own. Tests: a
+    ball 100 km out rolling within 0.02 mm of one at the middle (66 mm astray with the middle still), endless terrain
+    and blocks carried on with nothing made again and physics on the drawn ground, the GPU's frame after a move matching
+    the one before with motion blur on, scripts' fields and events, a prop back exactly after 100 km. Manual: Floating
+    Origin. Not done: shader patterns from absolute positions (grass, wind, seasons, puddles), moves up and down (sky
+    and fog heights), networked games with a middle per player.
 - Throughout: chunks culled against the frustum and last frame's depth, and the smallest save and network data
   (only changes from what a build or a seed makes, as commands while few and compacted deltas once many).
 

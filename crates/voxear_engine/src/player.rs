@@ -63,6 +63,9 @@ pub struct PlayerSettings {
     /// The project's `[network]` settings.
     #[serde(default)]
     pub network: crate::net::NetworkSettings,
+    /// The project's `[floating_origin]` settings.
+    #[serde(default)]
+    pub floating_origin: crate::origin::OriginSettings,
     /// Vulkan's validation layers, when installed.
     pub validation_layers: bool,
     pub fullscreen: bool,
@@ -228,6 +231,7 @@ pub fn run_player(data: &Path, args: &PlayerArgs) -> Result<()> {
                 steam_audio: true,
             },
             network: settings.network.clone(),
+            floating_origin: settings.floating_origin.clone(),
             modules: Some(settings.modules),
         },
     };

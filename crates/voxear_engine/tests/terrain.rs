@@ -234,6 +234,10 @@ fn endless_project() -> tempfile::TempDir {
     };
     std::fs::write(dir.path().join("Scenes/Field.scene"), ENDLESS).unwrap();
     std::fs::write(dir.path().join("Terrains/World.terrain"), file.to_text()).unwrap();
+    // Positions in the world are checked here, so its middle stays put (tests/floating_origin.rs moves it).
+    let project =
+        "[project]\nname = \"Field\"\nstart_level = \"Levels/Main.level\"\n\n[floating_origin]\nmode = \"never\"\n";
+    std::fs::write(dir.path().join("voxear.toml"), project).unwrap();
     std::fs::create_dir_all(dir.path().join("Worlds")).unwrap();
     std::fs::write(dir.path().join("Worlds/Hills.worldgen"), Preset::RollingHills.world().to_text()).unwrap();
     dir

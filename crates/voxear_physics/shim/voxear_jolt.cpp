@@ -21,6 +21,7 @@
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
+#include <Jolt/Physics/Collision/Shape/EmptyShape.h>
 #include <Jolt/Physics/Collision/Shape/HeightFieldShape.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
@@ -165,6 +166,10 @@ struct VxWorld {
 	std::vector<RefConst<Shape>> shapes;
 	std::vector<Character> characters;
 	std::vector<Ref<Constraint>> joints;
+	// For each joint held to the world, the still body it is held to, which
+	// moves with everything else when the world's origin does; none for one
+	// between two bodies.
+	std::vector<BodyID> anchors;
 	std::vector<Vehicle> vehicles;
 
 	VxWorld(uint32_t max_bodies)
@@ -242,6 +247,30 @@ void vx_world_set_layers(VxWorld *world, const uint32_t collide[32]) {
 
 void vx_world_step(VxWorld *world, float dt, int steps) {
 	world->system.Update(dt, std::max(1, steps), &world->temp, &world->jobs);
+}
+
+// Moves everything by `by`, as the world's origin moves: every body, without
+// waking those asleep or changing how fast any goes, and every character,
+// which then finds what it touches where it is now.
+void vx_world_shift(VxWorld *world, const float by[3]) {
+	Vec3 offset(by[0], by[1], by[2]);
+	BodyInterface &bodies = world->system.GetBodyInterface();
+	BodyIDVector ids;
+	world->system.GetBodies(ids);
+	for (BodyID id : ids) {
+		bodies.SetPosition(id, bodies.GetPosition(id) + offset, EActivation::DontActivate);
+	}
+	world->system.OptimizeBroadPhase();
+	for (Character &character : world->characters) {
+		if (character.inner == nullptr) {
+			continue;
+		}
+		character.inner->SetPosition(character.inner->GetPosition() + offset);
+		ObjectLayer layer = object_layer(character.layer, true);
+		DefaultBroadPhaseLayerFilter broad(world->layer_vs_broad, layer);
+		DefaultObjectLayerFilter layers(world->layer_pairs, layer);
+		character.inner->RefreshContacts(broad, layers, {}, {}, world->temp);
+	}
 }
 
 // Shapes. Each is kept in a slot until released; 0 is none.
@@ -663,15 +692,32 @@ void vx_character_set_up(VxWorld *world, uint32_t character, const float up[3], 
 // A joint between two bodies, or between `a` and the world when `b` is
 // none (0xffffffff).
 uint32_t vx_joint_add(VxWorld *world, uint32_t kind, uint32_t a, uint32_t b, const float point[3], const float axis[3], float min, float max) {
-	bool to_world = b == BodyID::cInvalidBodyID;
+	RVec3 at(point[0], point[1], point[2]);
+	// One held to the world is held to a still body with nothing to touch, where the joint is, or for a fixed
+	// joint where its body is, so the point it holds by is found there.
+	BodyID anchor;
+	if (b == BodyID::cInvalidBodyID) {
+		BodyInterface &bodies = world->system.GetBodyInterface();
+		RVec3 place = kind == 0 ? bodies.GetCenterOfMassPosition(id_of(a)) : at;
+		BodyCreationSettings still(new EmptyShape(), place, Quat::sIdentity(), EMotionType::Static, object_layer(0, false));
+		anchor = bodies.CreateAndAddBody(still, EActivation::DontActivate);
+		if (anchor.IsInvalid()) {
+			return 0;
+		}
+		b = anchor.GetIndexAndSequenceNumber();
+	}
 	BodyID ids[2] = { id_of(a), id_of(b) };
-	BodyLockMultiWrite lock(world->system.GetBodyLockInterface(), ids, to_world ? 1 : 2);
+	BodyLockMultiWrite lock(world->system.GetBodyLockInterface(), ids, 2);
 	Body *first = lock.GetBody(0);
-	Body *second = to_world ? &Body::sFixedToWorld : lock.GetBody(1);
+	Body *second = lock.GetBody(1);
 	if (first == nullptr || second == nullptr) {
+		lock.ReleaseLocks();
+		if (!anchor.IsInvalid()) {
+			world->system.GetBodyInterface().RemoveBody(anchor);
+			world->system.GetBodyInterface().DestroyBody(anchor);
+		}
 		return 0;
 	}
-	RVec3 at(point[0], point[1], point[2]);
 	Vec3 along = Vec3(axis[0], axis[1], axis[2]).NormalizedOr(Vec3::sAxisY());
 	Ref<TwoBodyConstraintSettings> settings;
 	switch (kind) {
@@ -713,14 +759,17 @@ uint32_t vx_joint_add(VxWorld *world, uint32_t kind, uint32_t a, uint32_t b, con
 	}
 	}
 	Ref<Constraint> joint = settings->Create(*first, *second);
+	lock.ReleaseLocks();
 	world->system.AddConstraint(joint);
 	for (size_t at = 0; at < world->joints.size(); ++at) {
 		if (world->joints[at] == nullptr) {
 			world->joints[at] = joint;
+			world->anchors[at] = anchor;
 			return uint32_t(at + 1);
 		}
 	}
 	world->joints.push_back(joint);
+	world->anchors.push_back(anchor);
 	return uint32_t(world->joints.size());
 }
 
@@ -728,6 +777,12 @@ void vx_joint_remove(VxWorld *world, uint32_t joint) {
 	if (joint > 0 && joint <= world->joints.size() && world->joints[joint - 1] != nullptr) {
 		world->system.RemoveConstraint(world->joints[joint - 1]);
 		world->joints[joint - 1] = nullptr;
+		BodyID anchor = world->anchors[joint - 1];
+		if (!anchor.IsInvalid()) {
+			world->system.GetBodyInterface().RemoveBody(anchor);
+			world->system.GetBodyInterface().DestroyBody(anchor);
+			world->anchors[joint - 1] = BodyID();
+		}
 	}
 }
 

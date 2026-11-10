@@ -126,6 +126,9 @@ pub(crate) enum Command {
     Bus(Bus, f32),
     Master(f32),
     Listener(Listener),
+    /// Everything heard moved by this much, as the world's origin moves:
+    /// the listener and every 3D voice together, in one go.
+    Shift(Vec3),
     Headphones(bool),
     PauseGame(bool),
     StopGame,
@@ -398,6 +401,12 @@ impl Mixer {
                 Command::Bus(Bus::Preview, _) => {}
                 Command::Master(volume) => self.master.set(volume, self.transition),
                 Command::Listener(listener) => self.listener = listener,
+                Command::Shift(by) => {
+                    self.listener.position += by;
+                    for (position, _) in self.voices.iter_mut().filter_map(|voice| voice.params.spatial.as_mut()) {
+                        *position += by;
+                    }
+                }
                 Command::Headphones(on) => self.set_headphones(on),
                 Command::PauseGame(paused) => self.game_paused = paused,
                 Command::StopGame => {

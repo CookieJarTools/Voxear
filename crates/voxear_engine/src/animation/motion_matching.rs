@@ -233,6 +233,20 @@ struct FootLock {
 }
 
 impl MotionMatcherState {
+    /// Moves where the Obj was last and where its feet are held by `by`, as
+    /// the world's origin moves everything (see `crate::origin`), so the move
+    /// reads as no step at all.
+    pub(crate) fn shift(world: &mut World, by: Vec3) {
+        for state in world.query::<&mut MotionMatcherState>() {
+            if let Some(last) = state.last.as_mut() {
+                *last += by;
+            }
+            for lock in state.locks.iter_mut().flatten() {
+                lock.at += by;
+            }
+        }
+    }
+
     /// Which feet the clips have down, left then right: a foot coming down
     /// is a footfall, for what bobs with the steps.
     pub fn feet_down(&self) -> [bool; 2] {

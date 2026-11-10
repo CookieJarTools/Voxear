@@ -1,11 +1,11 @@
 use std::collections::{HashMap, HashSet};
 
 use anyhow::{Context, Result, bail};
-use voxear_core::{profile_scope, profiling, time::Time};
+use voxear_core::{math::IVec3, profile_scope, profiling, time::Time};
 use voxear_ecs::{Entity, Schedule, World};
 use voxear_scene::{
     AttachedBehaviour, BehaviourHandle, Callbacks, BehaviourHost, BehaviourSpec, Behaviours, Destroying, InstanceMarker,
-    Lifecycle, Name, Parent, Phase, Placement, SceneComponents, Transform, propagate_transforms,
+    Lifecycle, Name, Parent, Phase, Placement, SceneComponents, Transform, WorldOrigin, propagate_transforms,
     register_obj_components,
 };
 use voxear_render::Seasons;
@@ -682,6 +682,26 @@ impl Engine {
         if let Some(scripts) = self.scripts.as_mut().filter(|_| !told.is_empty()) {
             profile_scope!("Physics Messages");
             scripts.physics_events(&mut self.world, &told);
+            self.with_host(|lifecycle, host| lifecycle.apply_requests(host));
+            self.flush();
+        }
+    }
+
+    /// Moves the world's middle: every Obj and everything the engine keeps of
+    /// where things are moves by `by` whole metres (see `crate::origin`).
+    /// Gives where the world's middle now is from the level's. Scripts hear
+    /// of it from [`Self::tell_origin_moved`], once sound and drawing have
+    /// moved too.
+    pub fn move_origin(&mut self, by: IVec3) -> WorldOrigin {
+        crate::origin::shift(&mut self.world, by)
+    }
+
+    /// Tells scripts the world's middle moved by `by`: their
+    /// `[WorldPosition]` fields move, then `Origin.Moved` is raised.
+    pub fn tell_origin_moved(&mut self, by: IVec3) {
+        if let Some(scripts) = self.scripts.as_mut() {
+            profile_scope!("Origin Moved");
+            scripts.origin_moved(&mut self.world, by.to_array());
             self.with_host(|lifecycle, host| lifecycle.apply_requests(host));
             self.flush();
         }

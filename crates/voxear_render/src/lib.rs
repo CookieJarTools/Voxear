@@ -665,6 +665,18 @@ impl Renderer {
         Ok(())
     }
 
+    /// Moves what every view keeps from last frame by `by`, as the world's
+    /// origin moves everything (see `voxear_scene::WorldOrigin`): last
+    /// frame's camera and model matrices, so motion vectors, TAA and every
+    /// reprojection see nothing move; the GI's probes, the tracks, the foam
+    /// and the sea floor, so none starts again; and every Foliage's plants,
+    /// so none is built again. Call between frames, after the world moved.
+    pub fn shift_origin(&mut self, by: voxear_core::math::Vec3) {
+        for view in &mut self.views {
+            view.shift_origin(by);
+        }
+    }
+
     /// Forgets last frame for TAA and motion vectors. Call on camera cuts,
     /// where blending with the old view would smear.
     pub fn reset_history(&mut self) {
@@ -1807,6 +1819,46 @@ impl View {
         Ok(Some(index))
     }
 
+    fn shift_origin(&mut self, by: voxear_core::math::Vec3) {
+        use voxear_core::math::{Mat4, Vec4};
+        let moved = by.extend(0.0);
+        // A point now at p was at p - by last frame.
+        if let Some(before) = self.prev_view_proj.as_mut() {
+            *before = (Mat4::from_cols_array_2d(before) * Mat4::from_translation(-by)).to_cols_array_2d();
+        }
+        for model in self.prev_models.values_mut() {
+            model[3] = (Vec4::from(model[3]) + moved).to_array();
+        }
+        if let Some((camera, _)) = self.prev_camera.as_mut() {
+            *camera += by;
+        }
+        // Probes keep their slots, by their places mod the grid, only when the move is a whole number of grids.
+        if let Some((origins, spacing, _)) = self.ddgi_history.as_mut() {
+            let mut whole = true;
+            let mut moved_by = [[0i32; 3]; gpu::DDGI_CASCADES];
+            for (cascade, cells) in moved_by.iter_mut().enumerate() {
+                let size = *spacing * gpu::DDGI_CASCADE_SCALE.powi(cascade as i32);
+                for axis in 0..3 {
+                    let probes = by[axis] / size;
+                    let grids = (probes as i64).rem_euclid(i64::from(gpu::DDGI_PROBES[axis]));
+                    whole &= probes.fract() == 0.0 && grids == 0;
+                    cells[axis] = probes as i32;
+                }
+            }
+            for (origin, cells) in origins.iter_mut().zip(moved_by).filter(|_| whole) {
+                for axis in 0..3 {
+                    origin[axis] += cells[axis];
+                }
+            }
+            if !whole {
+                self.ddgi_history = None;
+            }
+        }
+        self.track_memory.shift(by);
+        self.ocean.shift(by);
+        self.foliage.shift(by);
+    }
+
     fn reset_history(&mut self) {
         self.taa_history = None;
         self.ao_history = None;
@@ -2131,7 +2183,7 @@ impl View {
                 fg,
                 (gpu, bindless),
                 (&mut self.ocean, slot),
-                (extracted.ocean, &extracted.water_bodies, block_water),
+                (extracted.ocean, &extracted.water_bodies, block_water, extracted.origin),
                 (extent, setup.time, camera),
                 (
                     &{

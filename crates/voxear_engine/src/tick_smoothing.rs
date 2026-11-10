@@ -14,7 +14,8 @@
 use std::collections::HashMap;
 
 use voxear_ecs::{Entity, World};
-use voxear_scene::Transform;
+use voxear_core::math::Vec3;
+use voxear_scene::{Parent, Transform};
 
 /// Ticked frames an Obj may stand still before it is no longer watched.
 const STILL_FRAMES: u32 = 120;
@@ -95,6 +96,23 @@ pub fn hide(world: &mut World) -> bool {
     }
     world.insert_resource(smoothing);
     shown
+}
+
+/// Moves the poses kept for root Objs by `by`, as the world's origin moves
+/// them (see `voxear_scene::move_objs`), so the move reads as neither a
+/// teleport nor a tick's motion. Children's poses are their parents'.
+pub fn shift(world: &mut World, by: Vec3) {
+    let Some(mut smoothing) = world.remove_resource::<TickSmoothing>() else { return };
+    for (&entity, obj) in &mut smoothing.objs {
+        let parent = world.get::<Parent>(entity).map(|parent| parent.0);
+        if parent.is_some_and(|parent| world.has::<Transform>(parent)) {
+            continue;
+        }
+        for pose in [&mut obj.before, &mut obj.after, &mut obj.shown] {
+            pose.position += by;
+        }
+    }
+    world.insert_resource(smoothing);
 }
 
 /// Shows each Obj the ticks move part-way between its last two ticks.

@@ -617,6 +617,10 @@ pub struct PhysicsScene {
     plant_bodies: HashMap<BodyId, u32>,
 }
 
+/// The most an Obj far from the middle can be from its body after the
+/// world's origin moves, by rounding alone, in metres.
+const ROUNDING: f32 = 0.01;
+
 /// How far from a planet's middle it pulls things, in its radii.
 pub const PLANET_REACH: f32 = 4.0;
 
@@ -849,6 +853,50 @@ impl PhysicsScene {
         self.write_back(world);
         self.write_back_vehicles(world);
         self.note_contacts();
+    }
+
+    /// Moves every body, character and joint by `by`, after the world's
+    /// origin has moved every Obj by as much (see
+    /// `voxear_scene::move_objs`): none wakes, each keeps how fast it goes,
+    /// and nothing is made again. An Obj far from the middle may have been
+    /// put back where it was exactly, a rounding step from where its body
+    /// went; that is taken as its body's place, and a still body is put there
+    /// too.
+    pub fn shift(&mut self, world: &World, by: Vec3) {
+        self.world.shift(by);
+        for (entity, kept) in &mut self.bodies {
+            kept.placed.0 += by;
+            let (_, rotation, position) = voxear_scene::world_matrix(world, *entity).to_scale_rotation_translation();
+            if same_place(kept.placed, (position, rotation)) || position.distance(kept.placed.0) > ROUNDING {
+                continue;
+            }
+            if kept.key.rigidbody.is_none() {
+                self.world.set_transform(kept.body, position, rotation);
+            }
+            kept.placed = (position, rotation);
+        }
+        for walker in self.characters.values_mut() {
+            walker.placed += by;
+            if let Some(state) = walker.state.as_mut() {
+                state.position += by;
+            }
+        }
+        for kept in self.terrains.values_mut() {
+            kept.corner += by;
+        }
+        for kept in self.block_worlds.values_mut() {
+            kept.corner += by;
+        }
+        for (entity, kept) in &mut self.plants {
+            kept.model.w_axis += by.extend(0.0);
+            // As the Obj's transforms will be worked out at the end of the frame.
+            let now = voxear_scene::world_matrix(world, *entity);
+            let model = kept.model;
+            let turned = [now.x_axis, now.y_axis, now.z_axis] == [model.x_axis, model.y_axis, model.z_axis];
+            if turned && now.w_axis.distance(kept.model.w_axis) < ROUNDING {
+                kept.model = now;
+            }
+        }
     }
 
     /// Pulls each moving body near a planet (see

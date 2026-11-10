@@ -31,4 +31,5 @@ internal unsafe struct ManagedApi
 	public delegate* unmanaged[Cdecl]<ulong*, int, byte*, int, void> MotionMarks;
 	public delegate* unmanaged[Cdecl]<void> TakeNetFields;
 	public delegate* unmanaged[Cdecl]<uint, int, void> SetEnabled;
+	public delegate* unmanaged[Cdecl]<int*, void> OriginMoved;
 }

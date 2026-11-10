@@ -293,6 +293,23 @@ pub fn advance(delta: f32) {
     });
 }
 
+/// Moves every shape still to be drawn by `by`, as the world's origin moves
+/// everything else (see `voxear_scene::move_objs`): those given time to
+/// last stay where they were drawn. Text in the view's corner stays put.
+pub fn shift(by: Vec3) {
+    let mut shapes = shapes();
+    for (line, _) in &mut shapes.lines {
+        line.from += by;
+        line.to += by;
+    }
+    for (triangle, _) in &mut shapes.triangles {
+        triangle.corners = triangle.corners.map(|corner| corner + by);
+    }
+    for (text, _) in shapes.texts.iter_mut().filter(|(text, _)| !text.on_screen) {
+        text.at += by;
+    }
+}
+
 /// The lines to draw now.
 pub fn lines() -> Vec<Line> {
     shapes().lines.iter().map(|(line, _)| *line).collect()

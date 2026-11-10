@@ -200,6 +200,24 @@ pub(crate) struct FoliageCache {
 }
 
 impl FoliageCache {
+    /// Moves every Foliage's built plants by `by`, as the world's origin
+    /// moves its Obj (see `voxear_scene::WorldOrigin`), so none is built
+    /// again for it.
+    pub fn shift(&mut self, by: Vec3) {
+        let moved = by.extend(0.0);
+        for built in self.built.values_mut() {
+            built.model.w_axis += moved;
+            for chunk in &mut built.chunks {
+                chunk.centre += by;
+            }
+            for instance in built.instances.iter_mut().chain(&mut built.impostors) {
+                for model in [&mut instance.model, &mut instance.prev_model] {
+                    model[3] = (Vec4::from(model[3]) + moved).to_array();
+                }
+            }
+        }
+    }
+
     /// Adds the plants within their draw distance of `camera` to the frame,
     /// building the instances of any Foliage that changed. `sphere` gives a
     /// mesh's bounding sphere.

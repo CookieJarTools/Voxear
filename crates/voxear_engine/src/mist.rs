@@ -57,6 +57,16 @@ pub fn trail_mists(world: &mut World, now: f64) {
 /// The engine's time, as trails are kept by.
 struct MistClock(f32);
 
+/// Moves every Mist's trail by `by`, as the world's origin moves everything
+/// (see `crate::origin`).
+pub(crate) fn shift(world: &mut World, by: Vec3) {
+    for trail in world.query::<&mut MistTrail>() {
+        for (at, _) in &mut trail.points {
+            *at += by;
+        }
+    }
+}
+
 /// How thick the mists are along the line from `from` to `to`, as light
 /// a metre takes added along it, without their swirls: for
 /// `smoke::see_through`.

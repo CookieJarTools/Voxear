@@ -25,6 +25,8 @@ pub struct ProjectFile {
     pub audio: AudioSettings,
     #[serde(default)]
     pub network: crate::net::NetworkSettings,
+    #[serde(default)]
+    pub floating_origin: crate::origin::OriginSettings,
     /// The modules the project has, or none for a project made before
     /// there were modules (see [`crate::modules`]).
     pub modules: Option<crate::modules::Modules>,

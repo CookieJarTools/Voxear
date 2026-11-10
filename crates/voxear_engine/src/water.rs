@@ -80,6 +80,7 @@ pub fn update(world: &mut World, time: f64) {
         .into_iter()
         .map(|(stream, path, transform, at)| (stream.points(path, at.map_or_else(|| transform.matrix(), |w| w.0)), stream.depth))
         .collect();
+    let origin = voxear_scene::WorldOrigin::of(world).0;
     if world.resource::<WaterQuery>().is_none() {
         world.insert_resource(WaterQuery::default());
     }
@@ -101,6 +102,7 @@ pub fn update(world: &mut World, time: f64) {
     }
     let sampler = query.sampler.as_mut().expect("made above");
     sampler.set_level(level);
+    sampler.set_origin([origin.x as f64, origin.z as f64]);
     sampler.set_time(time);
     world.insert(entity, SeaNow(sea));
 }

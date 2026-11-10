@@ -340,6 +340,15 @@ impl Audio {
         self.send(Command::Master(self.master));
     }
 
+    /// Moves the listener and every 3D voice by `by` at once, as the world's
+    /// origin moves everything: nothing heard changes, not even for the
+    /// length of one block of sound.
+    pub fn shift(&mut self, by: Vec3) {
+        if self.output.is_some() || self.mode == Mode::Offline {
+            self.send(Command::Shift(by));
+        }
+    }
+
     /// Who hears the 3D voices. Sent only while sound plays, so a game that
     /// plays none sends nothing.
     pub fn set_listener(&mut self, listener: Listener) {

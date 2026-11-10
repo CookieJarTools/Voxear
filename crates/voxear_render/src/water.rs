@@ -115,6 +115,19 @@ pub(crate) struct OceanBuffers {
 }
 
 impl OceanBuffers {
+    /// Moves the foam and the sea floor kept round the camera by `by`, as
+    /// the world's origin moves everything (see `voxear_scene::WorldOrigin`):
+    /// the foam carries on, and a slice of the floor moved by whole texels is
+    /// not drawn again.
+    pub(crate) fn shift(&mut self, by: voxear_core::math::Vec3) {
+        if let Some(origin) = self.foam_origin.as_mut() {
+            *origin = [origin[0] + by.x, origin[1] + by.z];
+        }
+        for origin in self.floor_origins.iter_mut().flatten() {
+            *origin = [origin[0] + by.x, origin[1] + by.z];
+        }
+    }
+
     pub fn new(gpu: &Gpu, named: &dyn Fn(&str) -> String, slots: usize) -> Result<Self> {
         let usage = vk::BufferUsageFlags::STORAGE_BUFFER;
         let waves = (CASCADES * N * N) as u64;
@@ -271,12 +284,18 @@ impl Water {
     /// there is one, else a sea drawn nowhere whose small waves the Pools
     /// take; its waves at `time`: its spectrum written if the sea changed,
     /// this frame's Pools and Dry Areas written into `slot`'s buffer, and
-    /// this frame's images; with the worlds of blocks' water in view.
+    /// this frame's images; with the worlds of blocks' water in view, and
+    /// the waves' phases where the world's middle is.
     pub(crate) fn new(
         fg: &mut FrameGraph<'_>,
         (gpu, bindless): (&Gpu, &mut Bindless),
         (buffers, slot): (&mut OceanBuffers, usize),
-        (found, bodies, blocks): (Option<(Ocean, f32, SeaState)>, &WaterBodies, Option<crate::blocks::ViewBlocks>),
+        (found, bodies, blocks, origin): (
+            Option<(Ocean, f32, SeaState)>,
+            &WaterBodies,
+            Option<crate::blocks::ViewBlocks>,
+            voxear_core::math::I64Vec3,
+        ),
         (extent, time, camera): (vk::Extent2D, f32, voxear_core::math::Vec3),
         (ground, dry_meshes): (&[Ground], Vec<DryMesh>),
     ) -> Result<Self> {
@@ -431,6 +450,7 @@ impl Water {
             caustics: fg.texture(caustics).0,
             caustic_origin,
             waterline: fg.texture(lens_now).0,
+            phases: ocean::phases([origin.x as f64, origin.z as f64]),
         };
         Ok(Self {
             displacement,

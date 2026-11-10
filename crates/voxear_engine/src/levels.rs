@@ -425,6 +425,16 @@ impl Levels {
             self.persistent.keys().filter(|(guid, _)| *guid == target.guid).map(|(_, path)| path.clone()).collect();
         let objs = scene_file::spawn(engine, content, renderer, &scene, &survivors)
             .with_context(|| format!("loading {}", target.path))?;
+        // A scene's Objs are where it puts them from the level's real middle, wherever the world's has got to.
+        if voxear_scene::WorldOrigin::of(&engine.world).is_moved() {
+            let world = &mut engine.world;
+            for &(_, entity) in &objs {
+                let Some(file) = world.get::<voxear_scene::Transform>(entity).map(|t| t.position) else { continue };
+                if !world.has::<Parent>(entity) {
+                    voxear_scene::place_at_level(world, entity, file.as_dvec3());
+                }
+            }
+        }
         let lighting = match scene.lighting {
             Some(reference) => {
                 let lit = content.lighting(&content.parse(&reference)?).with_context(|| format!("loading {reference}"))?;

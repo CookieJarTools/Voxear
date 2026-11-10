@@ -35,4 +35,4 @@ Brushes, **Import**, **Erosion** and **Rivers** layers, holes and digging work o
 
 ## Far from the middle
 
-Positions are kept to about a millimetre within 10 km of the world's middle. Further out, things that move begin to shake, and shadows with them. Keep play within that distance until the engine moves its middle with the camera.
+An endless terrain can be walked as far as the player likes: once the camera is 2 km from the world's middle, everything moves back towards it by whole kilometres, the ground with it, so positions stay exact (see [[Floating Origin]]). The tiles already made stay as they were, and the ground carries on round the camera.

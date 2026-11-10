@@ -29,7 +29,7 @@ use voxear_audio::{
 use voxear_core::math::{Mat4, Vec3};
 use voxear_ecs::{Entity, World};
 use voxear_physics::scene::{Acoustic, Collider, ColliderMesh, ColliderShape, Rigidbody};
-use voxear_scene::{Destroying, Switch, Switched, Transform, WorldTransform};
+use voxear_scene::{Destroying, Switch, Switched, Transform, WorldOrigin, WorldTransform};
 
 /// Rings from pole to pole, and points round each, of a sphere's or a
 /// capsule's walls: coarse, as sound does not need more.
@@ -98,7 +98,10 @@ impl Walls {
             acoustics.set_paths(self.paths.clone());
             self.has_paths = true;
         }
-        Some(acoustics.hear(listener, voices))
+        let offset = level_offset(world);
+        let listener = Listener { position: listener.position + offset, ..*listener };
+        let voices: Vec<_> = voices.iter().map(|&(key, at, settings)| (key, at + offset, settings)).collect();
+        Some(acoustics.hear(&listener, &voices))
     }
 
     /// Loads the paths from the level's `.paths` file the first time a
@@ -143,7 +146,7 @@ impl Walls {
             room.set_walls(self.walls.clone());
             *has = self.built;
         }
-        room.hear_from(*listener)
+        room.hear_from(Listener { position: listener.position + level_offset(world), ..*listener })
     }
 
     /// Lets the room's thread go, as when reverb goes off: the echoes it
@@ -211,9 +214,19 @@ pub fn material(acoustic: Acoustic) -> AcousticMaterial {
     }
 }
 
+/// How far a position in the world is from the same position measured from
+/// the level's real middle: the walls, the listener and the voices are all
+/// heard from there, so the world's origin moving (see `crate::origin`)
+/// changes none of the walls, and paths baked round the level still fit.
+fn level_offset(world: &World) -> Vec3 {
+    WorldOrigin::of(world).0.as_vec3()
+}
+
 /// The colliders that are walls: neither triggers nor moved by physics,
-/// each with where it is and its mesh, for a Mesh collider.
+/// each with where it is from the level's real middle and its mesh, for a
+/// Mesh collider.
 fn still_colliders(world: &World) -> Vec<(Collider, Mat4, Option<&ColliderMesh>)> {
+    let offset = level_offset(world).extend(0.0);
     let switched = Switched::of(world);
     world
         .query_ref::<(Entity, &Collider, &Transform, Option<&WorldTransform>, Option<&ColliderMesh>)>()
@@ -222,7 +235,9 @@ fn still_colliders(world: &World) -> Vec<(Collider, Mat4, Option<&ColliderMesh>)
         .into_iter()
         .filter(|(entity, collider, ..)| !collider.trigger && switched.is_on(world, *entity, Switch::Collider))
         .map(|(_, collider, local, placed, mesh)| {
-            (*collider, placed.map_or_else(|| local.matrix(), |placed| placed.0), mesh)
+            let mut matrix = placed.map_or_else(|| local.matrix(), |placed| placed.0);
+            matrix.w_axis += offset;
+            (*collider, matrix, mesh)
         })
         .collect()
 }

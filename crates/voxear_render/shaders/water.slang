@@ -1064,7 +1064,7 @@ struct WaterOut
 
 float2 cascadeUv(Frame* frame, uint cascade, float2 rest)
 {
-    return rest / frame->ocean.sizes[cascade] + 0.5 / float(OCEAN_N);
+    return rest / frame->ocean.sizes[cascade] + frame->ocean.phases[cascade] + 0.5 / float(OCEAN_N);
 }
 
 // How much of cascade `cascade` water has whose `swell` says how much of

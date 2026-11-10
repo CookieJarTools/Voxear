@@ -704,6 +704,15 @@ impl Displacement {
     }
 }
 
+/// How far into its tile each cascade's waves start, along x and z, as
+/// shares of the tile, for a world whose middle is `origin` from the
+/// level's, in metres (see `voxear_scene::WorldOrigin`): worked out in f64,
+/// as no whole number of metres is a whole number of every cascade's tiles,
+/// so the sea is the same wherever the middle has moved to.
+pub fn phases(origin: [f64; 2]) -> [[f32; 2]; CASCADES] {
+    std::array::from_fn(|c| origin.map(|at| (at / f64::from(CASCADE_SIZES[c])).rem_euclid(1.0) as f32))
+}
+
 /// A sea following its wind as it changes: its waves eased from where they
 /// were to the wind's new sea over a few seconds, a step every quarter of a
 /// second, so its spectrum is not made anew every frame. The same steps at the
@@ -763,6 +772,10 @@ impl Component for SeaNow {}
 pub struct OceanSampler {
     sea: SeaState,
     level: f32,
+    /// How far into its tile each cascade's waves start, in metres, along x
+    /// and z: where the world's middle is from the level's (see
+    /// [`phases`]).
+    shifts: [[f32; 2]; QUERY_CASCADES],
     initial: Vec<Vec<Complex>>,
     surfaces: Vec<Displacement>,
     time: f64,
@@ -775,7 +788,9 @@ pub struct OceanSampler {
 impl OceanSampler {
     pub fn new(sea: SeaState, level: f32) -> Self {
         let initial = (0..QUERY_CASCADES).map(|c| initial_spectrum(&sea.waves(), c, QUERY_RESOLUTION)).collect();
-        let mut sampler = Self { sea, level, initial, surfaces: Vec::new(), time: f64::NAN, previous: Vec::new(), step: 0.0 };
+        let shifts = [[0.0; 2]; QUERY_CASCADES];
+        let mut sampler =
+            Self { sea, level, shifts, initial, surfaces: Vec::new(), time: f64::NAN, previous: Vec::new(), step: 0.0 };
         sampler.set_time(0.0);
         sampler
     }
@@ -834,14 +849,23 @@ impl OceanSampler {
 
     /// How far the long waves move the water resting at `x`, `z`, where
     /// the sea is `depth` metres deep.
-    fn moved(&self, x: f32, z: f32, shallows: Shallows) -> [f32; 3] {
-        Self::moved_in(&self.surfaces, x, z, shallows)
+    /// Where the world's middle is from the level's, along x and z (see
+    /// `voxear_scene::WorldOrigin`), so its waves are where the GPU draws
+    /// them however far the world has moved.
+    pub fn set_origin(&mut self, origin: [f64; 2]) {
+        let phases = phases(origin);
+        self.shifts = std::array::from_fn(|c| phases[c].map(|share| share * CASCADE_SIZES[c]));
     }
 
-    fn moved_in(surfaces: &[Displacement], x: f32, z: f32, shallows: Shallows) -> [f32; 3] {
+    fn moved(&self, x: f32, z: f32, shallows: Shallows) -> [f32; 3] {
+        Self::moved_in(&self.surfaces, &self.shifts, x, z, shallows)
+    }
+
+    fn moved_in(surfaces: &[Displacement], shifts: &[[f32; 2]], x: f32, z: f32, shallows: Shallows) -> [f32; 3] {
         let mut total = [0.0; 3];
         for (cascade, surface) in surfaces.iter().enumerate() {
-            let d = surface.smooth_at(x, z);
+            let [sx, sz] = shifts.get(cascade).copied().unwrap_or_default();
+            let d = surface.smooth_at(x + sx, z + sz);
             let weight = shallow_weight(cascade, shallows);
             for i in 0..3 {
                 total[i] += d[i] * weight;
@@ -889,7 +913,8 @@ impl OceanSampler {
         }
         let shallows = shallows.into();
         let (rx, rz) = self.resting(x, z, shallows);
-        let (now, before) = (self.moved(rx, rz, shallows), Self::moved_in(&self.previous, rx, rz, shallows));
+        let now = self.moved(rx, rz, shallows);
+        let before = Self::moved_in(&self.previous, &self.shifts, rx, rz, shallows);
         let step = self.step as f32;
         Vec3::new(now[0] - before[0], now[1] - before[1], now[2] - before[2]) / step
     }

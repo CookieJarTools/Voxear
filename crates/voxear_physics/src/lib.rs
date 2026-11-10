@@ -322,6 +322,13 @@ impl PhysicsWorld {
         unsafe { ffi::vx_world_step(self.world, dt, steps.max(1) as i32) };
     }
 
+    /// Moves every body and character by `by`, as the world's origin moves
+    /// everything: none wakes, and each keeps how fast it goes.
+    pub fn shift(&mut self, by: Vec3) {
+        let by = by.to_array();
+        unsafe { ffi::vx_world_shift(self.world, by.as_ptr()) };
+    }
+
     pub fn box_shape(&mut self, half_extents: Vec3) -> ShapeId {
         let h = half_extents.max(Vec3::splat(1e-3));
         ShapeId(unsafe { ffi::vx_shape_box(self.world, h.x, h.y, h.z) })

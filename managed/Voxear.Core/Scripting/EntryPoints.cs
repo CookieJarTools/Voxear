@@ -243,6 +243,13 @@ internal static unsafe class EntryPoints
 		MotionMessages.Dispatch(new ReadOnlySpan<ulong>(objs, count), Encoding.UTF8.GetString(text, length));
 	}
 
+	/// <summary>Tells scripts the world's origin moved, moving their [WorldPosition] fields with every Obj.</summary>
+	[UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+	public static void OriginMoved(int* by)
+	{
+		Origin.Move(new System.Numerics.Vector3(by[0], by[1], by[2]));
+	}
+
 	/// <summary>Sets the replicated properties that came from the server now, for a predicted Obj put right.</summary>
 	[UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
 	public static void TakeNetFields()

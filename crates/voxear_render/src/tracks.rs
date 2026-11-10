@@ -114,6 +114,22 @@ pub struct TrackMemory {
 }
 
 impl TrackMemory {
+    /// Moves where each Track Maker was by `by`, as the world's origin moves
+    /// everything (see `voxear_scene::WorldOrigin`), and the map with them
+    /// when that is a whole number of maps' widths, as the default step is:
+    /// each texel keeps its place in the map. Moved by any other amount, the
+    /// map starts again.
+    pub fn shift(&mut self, by: Vec3) {
+        for (at, _) in self.last.values_mut() {
+            *at += by;
+        }
+        let texels = [by.x, by.z].map(|metres| metres / TRACK_TEXEL);
+        let whole = texels.iter().all(|t| t.fract() == 0.0 && (*t as i64).rem_euclid(TRACK_TEXELS as i64) == 0);
+        if let Some(origin) = self.origin.as_mut().filter(|_| whole) {
+            *origin = [origin[0] + texels[0] as i32, origin[1] + texels[1] as i32];
+        }
+    }
+
     /// This frame's presses for a camera at `camera`, from `makers`, the
     /// nearest first, each from where it was last frame to where it is now:
     /// only those over the map.

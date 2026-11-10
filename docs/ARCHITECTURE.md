@@ -297,6 +297,42 @@ if (Random.Chance(0.1f)) { /* ... */ }
 way. Their tests, in `managed/Voxear.Core.Tests`, check Unity's conventions: a positive yaw turns forward to the right,
 and a positive pitch looks down.
 
+### The floating origin *(implemented across the ground; shader patterns, height and networking planned)*
+
+Positions stay f32 everywhere: the C# `Transform` is written in place, Jolt is built single-precision and the GPU
+works in floats. Instead the world's middle follows the camera. `WorldOrigin` (a resource, whole metres as `I64Vec3`)
+says where the world's middle is from the level's; a position in the world plus it is the position from the level's
+middle, exactly, in f64. Once the viewer terrain streams round (`terrain::viewer`) is past the project's
+`[floating_origin]` distance (2048 m) from the middle on x or z, `origin::due` asks for a move of whole steps
+(1024 m, a whole number of tiles, chunks and every world-anchored GPU grid), and `Game::move_origin` makes it at the
+top of `Game::tick`, before anything that frame reads positions:
+
+- `voxear_scene::move_objs` moves root Objs and every `WorldTransform`. A root not moved since the last move is put
+  back from its place kept in f64, so a prop left 100 km behind returns bit-exact; scenes loaded after a move place
+  their roots from the level's middle (`place_at_level`).
+- `origin::shift` moves the rest of the world's state: tick smoothing's poses, `TerrainViewer`, physics
+  (`PhysicsScene::shift`: one `vx_world_shift` moves every body without waking it and every character, then
+  refreshes its contacts; kept places, terrain and block corners and plant models follow, rounding-sized differences
+  absorbed; joints held to the world are held to a still anchor body with an empty shape), smokes, mists, motion
+  matching, first-person eyes, gun holders and debug draw.
+- `GameAudio::shift` moves where sources and the listener were and every 3D voice in the mixer at once
+  (`Command::Shift`). The acoustics scene stays in the level's frame: walls, listener and voices get the origin
+  added, so a move never rebuilds it and baked paths still fit.
+- `Renderer::shift_origin` moves each view's last-frame view-projection (`· T(-by)`), model matrices (`T(by) ·`) and
+  camera, so motion vectors and every reprojection see nothing move; DDGI cascade origins, track memory, foam and
+  sea-floor origins move when the move is a whole number of their grids, else start again; the foliage cache's
+  instances move rather than rebuild. The sea's cascades share no period, so `GpuOcean::phases` and
+  `OceanSampler::set_origin` phase each by the origin, worked out in f64.
+- Scripts hear last (`ManagedApi::origin_moved`): `[WorldPosition]` fields of live behaviours move, then
+  `Origin.Moved` is raised. `Origin.Position`, `ToLevel` and `FromLevel` convert with `LevelPosition` doubles.
+
+Ground streamed round the viewer counts its tiles and chunks from its own Obj, which moves with the world, so a move
+changes no window and makes nothing again. Saves (`SceneState` copies, `SavedTransform`) keep roots from the
+level's middle; a level load moves the world back to its own middle first. Edit mode never moves; when play stops
+the Scene camera and kept values come back measured from the level's middle. Moves are on x and z only, as the
+atmosphere and fog measure height from the level's ground; a networked session keeps its middle still, as its
+messages carry positions from one middle for every machine.
+
 ## Scenes, Levels and Scene Persistence *(implemented)*
 
 - A **Scene** is a `.scene` TOML file (diff- and merge-friendly) holding Objs and their components. Each Obj has
@@ -2866,7 +2902,8 @@ where the view leaves the water, then the faces turned towards it shaded as stil
 Buoyancy reads the top of the water in a point's column (`BlockWorld::water_over`). Water flows (`blocks::flow`) from
 sources, down (towards a planet's middle) and then out over ground, a level lower each block, its level and way up kept
 in its fill: a step looks only at the blocks near the last step's changes, each from the blocks as they were, so every
-machine flows alike, five steps a second in the game's tick. To come: a floating origin, for worlds past about 10 km.
+machine flows alike, five steps a second in the game's tick. Far out, the world's middle follows the camera (see the
+floating origin, under the Obj model), and chunk keys count from the world's Obj, so none is made again.
 Digging into a
 heightmap terrain turns its columns into smooth-voxel chunks that start from its heights (`voxear_terrain::dig`,
 two voxels a sample), holes the heights in them, and meshes them by marching tetrahedra, which meet the heights

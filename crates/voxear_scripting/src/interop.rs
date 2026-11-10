@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 69;
+pub(crate) const API_VERSION: u32 = 70;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -474,6 +474,9 @@ pub(crate) struct NativeApi {
     /// `Physics.GravityAt`: which way and how hard things fall at a point,
     /// towards a planet's middle near one.
     pub physics_gravity_at: unsafe extern "C" fn(at: *const [f32; 3], gravity: *mut [f32; 3]) -> i32,
+    /// Where the world's middle is from the level's, in whole metres, as x,
+    /// y and z (see `voxear_scene::WorldOrigin`): zero until it first moves.
+    pub world_origin: unsafe extern "C" fn(out: *mut i64),
 }
 
 /// The kinds of component scripts reach through one entry, `kind_value`,
@@ -1013,6 +1016,10 @@ pub(crate) struct ManagedApi {
     /// Enables or disables a behaviour as a script setting its `Enabled`
     /// does, for the editor's tick: the engine hears of it as a request.
     pub set_enabled: Option<unsafe extern "C" fn(handle: u32, enabled: i32)>,
+    /// Tells scripts the world's origin moved, and how far every Obj moved,
+    /// in whole metres: fields marked `[WorldPosition]` move too, then
+    /// `Origin.Moved` is raised.
+    pub origin_moved: Option<unsafe extern "C" fn(by: *const i32)>,
 }
 
 pub(crate) type RunCheck = unsafe extern "C" fn(
@@ -1482,6 +1489,13 @@ unsafe extern "C" fn obj_world_transform(entity: u64, out: *mut Transform) -> i3
     1
 }
 
+unsafe extern "C" fn world_origin(out: *mut i64) {
+    let origin = with_world(|world| Some(voxear_scene::WorldOrigin::of(world))).unwrap_or_default();
+    for (axis, metres) in origin.0.to_array().into_iter().enumerate() {
+        unsafe { out.add(axis).write(metres) };
+    }
+}
+
 unsafe extern "C" fn obj_destroy(entity: u64) {
     push_obj_destroy(Entity::from_bits(entity));
 }
@@ -1891,6 +1905,7 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         block_raycast: crate::blocks::block_raycast,
         block_edits: crate::blocks::block_edits,
         physics_gravity_at: crate::physics::physics_gravity_at,
+        world_origin,
     }
 }
 

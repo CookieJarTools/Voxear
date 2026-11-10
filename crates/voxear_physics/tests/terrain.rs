@@ -318,3 +318,65 @@ fn a_ball_by_a_planet_falls_towards_its_middle_and_comes_to_rest_on_its_side() {
         at.length()
     );
 }
+
+#[test]
+fn a_character_dropped_beside_a_planet_lands_on_its_side_stands_up_to_it_and_walks_round_it() {
+    use voxear_physics::Ground;
+    use voxear_terrain::blocks::{
+        BlockWorld,
+        file::BlockFile,
+        generate::{BlockGenerate, BlockPlanet},
+    };
+    // A smooth planet, level all round 30 m from its middle at (100, 0, 0).
+    let planet = BlockPlanet { radius: 30.0 };
+    let generate = BlockGenerate { caves: 0.0, planet: Some(planet), ..BlockGenerate::default() };
+    let file = BlockFile { generate: Some(generate), smooth: true, ..BlockFile::default() };
+    let (_, faces) = file.faces();
+    let mut blocks = BlockWorld::made(file.make_ground(None), &faces, 1.0, true);
+    blocks.planet = Some(planet.radius);
+    let mut world = World::new();
+    voxear_scene::register_obj_components(&mut world);
+    let middle = Vec3::new(100.0, 0.0, 0.0);
+    world.spawn((blocks, Transform::from_position(middle)));
+    // 6 m over its +x side, where the world's own down runs along the ground.
+    let walker = world.spawn((Transform::from_position(middle + Vec3::new(36.0, 0.0, 0.0)),));
+    world.insert(walker, CharacterController::default());
+    let mut physics = PhysicsScene::new();
+    physics.step(&mut world, 1.0 / 60.0);
+    let dt = 1.0 / 60.0;
+    let gravity = physics.gravity_at(&world, middle + Vec3::new(36.0, 0.0, 0.0));
+    assert!(gravity.abs_diff_eq(Vec3::new(-9.81, 0.0, 0.0), 1e-4), "pulled to its middle: {gravity}");
+    let far = physics.gravity_at(&world, middle + Vec3::new(0.0, 200.0, 0.0));
+    assert_eq!(far, physics.gravity(), "the world's own gravity away from it");
+
+    // Dropped, as a script drops it: its fall the pull where it is, added up while nothing holds it.
+    let mut falling = Vec3::ZERO;
+    let mut state = None;
+    for _ in 0..180 {
+        let at = world.get::<Transform>(walker).unwrap().position;
+        let held = state.is_some_and(|state: voxear_physics::CharacterState| state.ground == Ground::Ground);
+        falling = if held { Vec3::ZERO } else { falling } + physics.gravity_at(&world, at) * dt;
+        state = physics.move_character(&mut world, walker, falling, dt);
+    }
+    let at = world.get::<Transform>(walker).unwrap().position - middle;
+    assert!(at.y.abs() < 0.5 && at.z.abs() < 0.5, "fell along -x to its side, not down past it: {at}");
+    assert!((at.length() - planet.radius).abs() < 0.6, "on its ground, {} from its middle", at.length());
+    assert_eq!(state.unwrap().ground, Ground::Ground, "standing, not sliding down a wall");
+    let up = physics.character_up(walker).unwrap();
+    assert!(up.dot(at.normalize()) > 0.999, "upright to the planet: up {up} at {at}");
+
+    // Walks round it in the x-y plane, at 3 m/s for 4 s: 12 m of 30 m round, about 23 degrees.
+    for _ in 0..240 {
+        let up = physics.character_up(walker).unwrap();
+        let ahead = Vec3::Z.cross(up).normalize();
+        state = physics.move_character(&mut world, walker, ahead * 3.0 - up * 2.0, dt);
+    }
+    let at = world.get::<Transform>(walker).unwrap().position - middle;
+    let round = at.y.atan2(at.x);
+    assert!(round > 0.35, "walked round it: {} degrees", round.to_degrees());
+    assert!(at.z.abs() < 0.5, "kept to its way round: {at}");
+    assert!((at.length() - planet.radius).abs() < 0.6, "still on its ground, {} from its middle", at.length());
+    assert_eq!(state.unwrap().ground, Ground::Ground);
+    let up = physics.character_up(walker).unwrap();
+    assert!(up.dot(at.normalize()) > 0.999, "still upright to the planet: up {up} at {at}");
+}

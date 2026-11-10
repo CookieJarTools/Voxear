@@ -12,6 +12,10 @@ namespace Voxear;
 /// Physics never moves a character on its own, so gravity is the script's to add: Move takes the whole motion, a
 /// jump included, and SimpleMove adds the fall itself.
 /// </para>
+/// <para>
+/// A character stands against the pull where it is: on a planet, away from its middle, so it walks all the way round.
+/// Up says which way that is, and Physics.GravityAt which way it falls.
+/// </para>
 /// <code>
 /// protected override void Update()
 /// {
@@ -80,6 +84,12 @@ public readonly struct CharacterController : IEquatable<CharacterController>, IO
 	public Vector3 GroundNormal => NativePhysics.Vector(Obj, NativePhysics.CharacterGroundNormal, Vector3.UnitY);
 
 	/// <summary>
+	/// Which way it stands, against the pull where it is: away from a planet's middle near one, and up elsewhere. Its
+	/// capsule tilts to it, and the ground it stands on, the slopes it climbs and its steps are measured against it.
+	/// </summary>
+	public Vector3 Up => NativePhysics.Vector(Obj, NativePhysics.CharacterUp, Vector3.UnitY);
+
+	/// <summary>
 	/// Moves it by motion, in metres, at once, sliding along what is in the way and climbing steps: usually a velocity
 	/// times Time.Delta. Gravity is not added, so a falling character's motion includes its fall.
 	/// </summary>
@@ -97,7 +107,8 @@ public readonly struct CharacterController : IEquatable<CharacterController>, IO
 
 	/// <summary>
 	/// Walks it at speed, in metres per second, across the ground, falling when nothing holds it up, as Unity's
-	/// SimpleMove: the speed's Y is left out. Call it once a frame. Returns whether it is on the ground.
+	/// SimpleMove: the speed along Up is left out, its Y on flat ground. On a planet it falls towards the planet's
+	/// middle. Call it once a frame. Returns whether it is on the ground.
 	/// </summary>
 	public bool SimpleMove(Vector3 speed)
 	{
@@ -107,9 +118,11 @@ public readonly struct CharacterController : IEquatable<CharacterController>, IO
 		}
 
 		var delta = Time.Delta;
-		var falling = IsGrounded ? 0f : Velocity.Y;
-		falling += Physics.Gravity.Y * delta;
-		Move(new Vector3(speed.X, falling, speed.Z) * delta);
+		var up = Up;
+		var falling = IsGrounded ? 0f : Vector3.Dot(Velocity, up);
+		falling += Vector3.Dot(Physics.GravityAt(Obj.WorldPosition), up) * delta;
+		var across = speed - Vector3.Dot(speed, up) * up;
+		Move((across + up * falling) * delta);
 		return IsGrounded;
 	}
 

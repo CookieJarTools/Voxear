@@ -608,20 +608,22 @@ void vx_character_remove(VxWorld *world, uint32_t character) {
 }
 
 // Moves a character for a step at `velocity`, its own; gravity is the
-// caller's to add, so a jump is a velocity up.
-void vx_character_move(VxWorld *world, uint32_t character, const float velocity[3], float dt, float step_height, VxCharacterState *state) {
+// caller's to add, so a jump is a velocity up. `gravity` is what pulls it
+// where it is, which it presses on what it stands on with; its steps are
+// climbed and its floor kept to along its own up.
+void vx_character_move(VxWorld *world, uint32_t character, const float velocity[3], float dt, float step_height, const float gravity[3], VxCharacterState *state) {
 	if (character == 0 || character > world->characters.size() || world->characters[character - 1].inner == nullptr) {
 		return;
 	}
 	CharacterVirtual &inner = *world->characters[character - 1].inner;
 	inner.SetLinearVelocity(Vec3(velocity[0], velocity[1], velocity[2]));
 	CharacterVirtual::ExtendedUpdateSettings settings;
-	settings.mWalkStairsStepUp = Vec3(0, step_height, 0);
-	settings.mStickToFloorStepDown = Vec3(0, -step_height, 0);
+	settings.mWalkStairsStepUp = inner.GetUp() * step_height;
+	settings.mStickToFloorStepDown = inner.GetUp() * -step_height;
 	ObjectLayer layer = object_layer(world->characters[character - 1].layer, true);
 	DefaultBroadPhaseLayerFilter broad(world->layer_vs_broad, layer);
 	DefaultObjectLayerFilter layers(world->layer_pairs, layer);
-	inner.ExtendedUpdate(dt, world->system.GetGravity(), settings, broad, layers, {}, {}, world->temp);
+	inner.ExtendedUpdate(dt, Vec3(gravity[0], gravity[1], gravity[2]), settings, broad, layers, {}, {}, world->temp);
 	RVec3 at = inner.GetPosition();
 	Vec3 moving = inner.GetLinearVelocity();
 	Vec3 ground = inner.GetGroundNormal();
@@ -640,6 +642,17 @@ void vx_character_move(VxWorld *world, uint32_t character, const float velocity[
 void vx_character_set_position(VxWorld *world, uint32_t character, const float position[3]) {
 	if (character > 0 && character <= world->characters.size() && world->characters[character - 1].inner != nullptr) {
 		world->characters[character - 1].inner->SetPosition(RVec3(position[0], position[1], position[2]));
+	}
+}
+
+// Stands a character along `up`, its capsule turned by `rotation` from
+// standing on +Y about its feet: the ground it stands on, the slopes it
+// climbs and its steps are all measured against that up.
+void vx_character_set_up(VxWorld *world, uint32_t character, const float up[3], const float rotation[4]) {
+	if (character > 0 && character <= world->characters.size() && world->characters[character - 1].inner != nullptr) {
+		CharacterVirtual &inner = *world->characters[character - 1].inner;
+		inner.SetUp(Vec3(up[0], up[1], up[2]).Normalized());
+		inner.SetRotation(Quat(rotation[0], rotation[1], rotation[2], rotation[3]).Normalized());
 	}
 }
 

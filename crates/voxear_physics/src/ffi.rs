@@ -180,9 +180,11 @@ unsafe extern "C" {
         velocity: *const f32,
         dt: f32,
         step_height: f32,
+        gravity: *const f32,
         state: *mut VxCharacterState,
     );
     pub fn vx_character_set_position(world: *mut VxWorld, character: u32, position: *const f32);
+    pub fn vx_character_set_up(world: *mut VxWorld, character: u32, up: *const f32, rotation: *const f32);
 
     pub fn vx_joint_add(
         world: *mut VxWorld,

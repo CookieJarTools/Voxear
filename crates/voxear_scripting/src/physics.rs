@@ -15,7 +15,7 @@ mod vehicles;
 use voxear_core::math::{Vec2, Vec3};
 use voxear_ecs::{Entity, World};
 use voxear_physics::{
-    Ground, Push,
+    EARTH_GRAVITY, Ground, Push,
     scene::{
         Acoustic, Buoyancy, CharacterController, Collider, ColliderShape, Joint, JointType, PhysicsEvent, PhysicsScene, Rigidbody,
     },
@@ -72,6 +72,7 @@ const CHARACTER_STEP_OFFSET: i32 = 46;
 const CHARACTER_GROUNDED: i32 = 47;
 const CHARACTER_VELOCITY: i32 = 48;
 const CHARACTER_GROUND_NORMAL: i32 = 49;
+const CHARACTER_UP: i32 = 50;
 // The world's:
 const GRAVITY: i32 = 60;
 // A Joint's; its limits are the least and the greatest, and whether it has them:
@@ -359,6 +360,16 @@ fn read(world: &mut World, entity: Entity, what: i32) -> Option<[f32; 4]> {
                 CHARACTER_VELOCITY => vector(state.map_or(Vec3::ZERO, |state| state.velocity)),
                 _ => vector(state.map_or(Vec3::Y, |state| state.ground_normal)),
             }
+        }
+        CHARACTER_UP => {
+            character()?;
+            let scene = world.resource::<PhysicsScene>();
+            // One physics has not made yet stands against the pull where its Obj is.
+            vector(scene.and_then(|scene| scene.character_up(entity)).unwrap_or_else(|| {
+                let at = voxear_scene::world_matrix(world, entity).w_axis.truncate();
+                let gravity = scene.map_or(EARTH_GRAVITY, PhysicsScene::gravity);
+                (-voxear_physics::scene::gravity_at(world, gravity, at)).try_normalize().unwrap_or(Vec3::Y)
+            }))
         }
         _ => return None,
     })
@@ -723,6 +734,23 @@ pub(crate) unsafe extern "C" fn physics_overlap(
         }
     }
     found.len() as i32
+}
+
+/// `Physics.GravityAt`: which way and how hard things fall at a point,
+/// towards a planet's middle near one (see
+/// `voxear_physics::scene::gravity_at`), written to `gravity`: 1 when it is.
+pub(crate) unsafe extern "C" fn physics_gravity_at(at: *const [f32; 3], gravity: *mut [f32; 3]) -> i32 {
+    if at.is_null() || gravity.is_null() {
+        return 0;
+    }
+    let at = Vec3::from_array(unsafe { *at });
+    let pull = with_world(|world| {
+        let world_gravity = world.resource::<PhysicsScene>().map_or(EARTH_GRAVITY, PhysicsScene::gravity);
+        Some(voxear_physics::scene::gravity_at(world, world_gravity, at))
+    });
+    let Some(pull) = pull else { return 0 };
+    unsafe { *gravity = pull.to_array() };
+    1
 }
 
 /// Moves an Obj's Character Controller by `motion` over `dt` seconds, as

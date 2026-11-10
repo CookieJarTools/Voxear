@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 68;
+pub(crate) const API_VERSION: u32 = 69;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -471,6 +471,9 @@ pub(crate) struct NativeApi {
     /// `Blocks.CaptureEdits` and `Blocks.ApplyEdits`: every changed world of
     /// blocks' changes as bytes, and back.
     pub block_edits: unsafe extern "C" fn(what: i32, data: *const u8, len: i32, out: *mut u8, capacity: i32) -> i32,
+    /// `Physics.GravityAt`: which way and how hard things fall at a point,
+    /// towards a planet's middle near one.
+    pub physics_gravity_at: unsafe extern "C" fn(at: *const [f32; 3], gravity: *mut [f32; 3]) -> i32,
 }
 
 /// The kinds of component scripts reach through one entry, `kind_value`,
@@ -1887,6 +1890,7 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         block_set: crate::blocks::block_set,
         block_raycast: crate::blocks::block_raycast,
         block_edits: crate::blocks::block_edits,
+        physics_gravity_at: crate::physics::physics_gravity_at,
     }
 }
 

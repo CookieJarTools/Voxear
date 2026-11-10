@@ -27,6 +27,18 @@ public static class Physics
 		set { NativePhysics.Set(Obj.None, NativePhysics.Gravity, new Vector4(value, 0f)); }
 	}
 
+	/// <summary>
+	/// Which way and how hard things fall at a point: towards the middle of a planet near it, as strongly as Gravity,
+	/// and Gravity itself away from planets. A planet pulls within four times its radius of its middle.
+	/// <code>
+	/// falling += Physics.GravityAt(Obj.WorldPosition) * Time.Delta;
+	/// </code>
+	/// </summary>
+	public static Vector3 GravityAt(Vector3 position)
+	{
+		return NativePhysics.GravityAt(position, Gravity);
+	}
+
 	/// <summary>Whether a ray from origin along direction meets a collider within maxDistance metres.</summary>
 	public static bool Raycast(Vector3 origin, Vector3 direction, float maxDistance = float.PositiveInfinity, int layerMask = -1, bool hitTriggers = false)
 	{

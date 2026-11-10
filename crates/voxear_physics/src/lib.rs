@@ -43,6 +43,9 @@ pub struct BodyId(pub u32);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct CharacterId(u32);
 
+/// Earth's gravity, which a world starts with, in metres per second per second.
+pub const EARTH_GRAVITY: Vec3 = Vec3::new(0.0, -9.81, 0.0);
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct JointId(u32);
 
@@ -299,7 +302,7 @@ impl PhysicsWorld {
         let world = unsafe { ffi::vx_world_create(max_bodies) };
         assert!(!world.is_null(), "Jolt made no world");
         let mut made = Self { world };
-        made.set_gravity(Vec3::new(0.0, -9.81, 0.0));
+        made.set_gravity(EARTH_GRAVITY);
         made
     }
 
@@ -567,17 +570,29 @@ impl PhysicsWorld {
 
     /// Moves a character on for `dt` seconds at `velocity`, climbing steps
     /// up to `step_height`. Gravity is the caller's to add to the velocity,
-    /// so that a jump is a velocity up.
+    /// so that a jump is a velocity up; `gravity` is what pulls it where it
+    /// is, which it presses on what it stands on with.
     pub fn move_character(
         &mut self,
         character: CharacterId,
         velocity: Vec3,
         dt: f32,
         step_height: f32,
+        gravity: Vec3,
     ) -> CharacterState {
         let mut state = ffi::VxCharacterState::default();
-        let velocity = velocity.to_array();
-        unsafe { ffi::vx_character_move(self.world, character.0, velocity.as_ptr(), dt, step_height, &mut state) };
+        let (velocity, gravity) = (velocity.to_array(), gravity.to_array());
+        unsafe {
+            ffi::vx_character_move(
+                self.world,
+                character.0,
+                velocity.as_ptr(),
+                dt,
+                step_height,
+                gravity.as_ptr(),
+                &mut state,
+            )
+        };
         CharacterState {
             position: Vec3::from_array(state.position),
             velocity: Vec3::from_array(state.velocity),
@@ -594,6 +609,14 @@ impl PhysicsWorld {
     pub fn set_character_position(&mut self, character: CharacterId, position: Vec3) {
         let position = position.to_array();
         unsafe { ffi::vx_character_set_position(self.world, character.0, position.as_ptr()) };
+    }
+
+    /// Stands a character along `up`, its capsule turned by `rotation` from
+    /// standing on +Y about its feet: the ground it stands on, the slopes
+    /// it climbs and the steps it takes are measured against that up.
+    pub fn set_character_up(&mut self, character: CharacterId, up: Vec3, rotation: Quat) {
+        let (up, rotation) = (up.to_array(), rotation.to_array());
+        unsafe { ffi::vx_character_set_up(self.world, character.0, up.as_ptr(), rotation.as_ptr()) };
     }
 
     /// Joins two bodies, or `None` when either is gone.
@@ -884,7 +907,7 @@ mod tests {
             world.add_character(&CharacterDesc { position: Vec3::new(0.0, 0.05, 0.0), ..Default::default() });
         let mut state = None;
         for _ in 0..120 {
-            state = Some(world.move_character(character, Vec3::new(3.0, -1.0, 0.0), 1.0 / 60.0, 0.3));
+            state = Some(world.move_character(character, Vec3::new(3.0, -1.0, 0.0), 1.0 / 60.0, 0.3, EARTH_GRAVITY));
         }
         let state = state.unwrap();
         assert_eq!(state.ground, Ground::Ground, "{state:?}");
@@ -930,7 +953,7 @@ mod tests {
         let walker = world.add_character(&walker);
         let mut state = None;
         for _ in 0..120 {
-            state = Some(world.move_character(walker, Vec3::new(-3.0, -1.0, 0.0), 1.0 / 60.0, 0.3));
+            state = Some(world.move_character(walker, Vec3::new(-3.0, -1.0, 0.0), 1.0 / 60.0, 0.3, EARTH_GRAVITY));
         }
         assert!(state.unwrap().position.x < -4.0, "through the wall: {state:?}");
     }

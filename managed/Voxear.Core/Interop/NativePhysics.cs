@@ -53,6 +53,7 @@ internal static unsafe class NativePhysics
 	public const int CharacterGrounded = 47;
 	public const int CharacterVelocity = 48;
 	public const int CharacterGroundNormal = 49;
+	public const int CharacterUp = 50;
 
 	public const int Gravity = 60;
 
@@ -174,6 +175,13 @@ internal static unsafe class NativePhysics
 	public static Vector2 Vector2(Obj obj, int what, Vector2 missing)
 	{
 		return Get(obj, what, out var value) ? new Vector2(value.X, value.Y) : missing;
+	}
+
+	/// <summary>Which way and how hard things fall at a point, or missing without the engine.</summary>
+	public static Vector3 GravityAt(Vector3 at, Vector3 missing)
+	{
+		var pull = default(Vector3);
+		return Native.IsConnected && Native.Api->PhysicsGravityAt(&at, &pull) == 1 ? pull : missing;
 	}
 
 	public static bool Push(Obj obj, int kind, Vector3 amount)

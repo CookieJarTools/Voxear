@@ -27,7 +27,31 @@ pub struct WorldGen {
     scale: f32,
     sea_level: f32,
     graph: Graph,
+    /// The ground the graph editor's previews show: nothing that makes ground reads it.
+    preview: PreviewArea,
     made: Arc<Made>,
+}
+
+/// The square of ground the graph editor's previews show: its middle, in
+/// metres in the generator's world, and how wide it is. Kept in the file,
+/// and no part of the generator's hash.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PreviewArea {
+    pub center: [f32; 2],
+    pub size: f32,
+}
+
+impl Default for PreviewArea {
+    fn default() -> Self {
+        Self { center: [0.0, 0.0], size: 4000.0 }
+    }
+}
+
+impl PreviewArea {
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 /// A generator's graph compiled, for flat ground and round a planet; a
@@ -60,6 +84,8 @@ struct File {
     scale: f32,
     #[serde(default)]
     sea_level: f32,
+    #[serde(default, skip_serializing_if = "PreviewArea::is_default")]
+    preview: PreviewArea,
     nodes: Vec<WrittenNode>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     links: Vec<WrittenLink>,
@@ -79,6 +105,7 @@ impl PartialEq for WorldGen {
     fn eq(&self, other: &Self) -> bool {
         (self.seed, self.scale, self.sea_level) == (other.seed, other.scale, other.sea_level)
             && self.graph == other.graph
+            && self.preview == other.preview
     }
 }
 
@@ -115,6 +142,7 @@ impl WorldGen {
             scale,
             sea_level,
             graph,
+            preview: PreviewArea::default(),
             made: Arc::new(Made { flat, round, hash, faults, previews: OnceLock::new() }),
         }
     }
@@ -150,20 +178,30 @@ impl WorldGen {
         &self.made.faults
     }
 
+    /// The ground the graph editor's previews show.
+    pub fn preview_area(&self) -> PreviewArea {
+        self.preview
+    }
+
+    /// Showing `preview` in the graph editor's previews: the same ground, compiled as it was.
+    pub fn with_preview_area(&self, preview: PreviewArea) -> Self {
+        Self { preview, ..self.clone() }
+    }
+
     pub fn with_seed(&self, seed: u32) -> Self {
-        Self::new(seed, self.scale, self.sea_level, self.graph.clone())
+        Self::new(seed, self.scale, self.sea_level, self.graph.clone()).with_preview_area(self.preview)
     }
 
     pub fn with_scale(&self, scale: f32) -> Self {
-        Self::new(self.seed, scale, self.sea_level, self.graph.clone())
+        Self::new(self.seed, scale, self.sea_level, self.graph.clone()).with_preview_area(self.preview)
     }
 
     pub fn with_sea_level(&self, sea_level: f32) -> Self {
-        Self::new(self.seed, self.scale, sea_level, self.graph.clone())
+        Self::new(self.seed, self.scale, sea_level, self.graph.clone()).with_preview_area(self.preview)
     }
 
     pub fn with_graph(&self, graph: Graph) -> Self {
-        Self::new(self.seed, self.scale, self.sea_level, graph)
+        Self::new(self.seed, self.scale, self.sea_level, graph).with_preview_area(self.preview)
     }
 
     /// With exposed row `row` set to `value`: none where it has no such
@@ -192,7 +230,7 @@ impl WorldGen {
 
     /// Shaped as `preset`, keeping its seed and scale.
     pub fn with_preset(&self, preset: Preset) -> Self {
-        Landmass { seed: self.seed, scale: self.scale, ..preset.landmass() }.into()
+        Self::from(Landmass { seed: self.seed, scale: self.scale, ..preset.landmass() }).with_preview_area(self.preview)
     }
 
     /// The ground's height at `(x, z)`, in metres in its own world.
@@ -289,13 +327,14 @@ impl WorldGen {
         }
         let file: File = toml::from_str(text)?;
         let graph = Graph::read(Written { nodes: file.nodes, links: file.links, exposed: file.exposed })?;
-        Ok(Self::new(file.seed, file.scale, file.sea_level, graph))
+        Ok(Self::new(file.seed, file.scale, file.sea_level, graph).with_preview_area(file.preview))
     }
 
     /// As a `.worldgen` file's text.
     pub fn to_text(&self) -> String {
         let Written { nodes, links, exposed } = self.graph.written();
-        let file = File { seed: self.seed, scale: self.scale, sea_level: self.sea_level, nodes, links, exposed };
+        let (seed, scale, sea_level, preview) = (self.seed, self.scale, self.sea_level, self.preview);
+        let file = File { seed, scale, sea_level, preview, nodes, links, exposed };
         toml::to_string(&file).unwrap_or_default()
     }
 }
@@ -529,6 +568,30 @@ cooling = 6.5
         let lower = alpine.with_exposed(0, Value::Number(300.0)).expect("its height");
         assert_eq!(lower.as_landmass().map(|land| land.height), Some(300.0));
         assert_eq!(lower.preset(), Some(Preset::Alpine), "its shape still");
+    }
+
+    #[test]
+    fn the_ground_its_previews_show_is_kept_in_its_file_and_out_of_its_hash() {
+        let world = hills();
+        assert_eq!(world.preview_area(), PreviewArea::default());
+        assert!(!world.to_text().contains("preview"), "left out of a file while it is the usual area");
+        let moved = world.with_preview_area(PreviewArea { center: [1200.0, -300.0], size: 900.0 });
+        assert_ne!(moved, world);
+        assert_eq!(moved.hash(), world.hash());
+        assert_eq!(moved.height_at(50.0, 60.0).to_bits(), world.height_at(50.0, 60.0).to_bits());
+        let read = WorldGen::parse(&moved.to_text()).unwrap();
+        assert_eq!(read, moved, "{}", moved.to_text());
+        assert_eq!(read.to_text(), moved.to_text());
+        // Whatever else of it changes, it shows the same ground still.
+        let area = moved.preview_area();
+        let others = [
+            moved.with_seed(9),
+            moved.with_scale(2.0),
+            moved.with_sea_level(1.0),
+            moved.with_preset(Preset::Alpine),
+            moved.with_graph(Graph::default()),
+        ];
+        assert!(others.iter().all(|other| other.preview_area() == area));
     }
 
     #[test]

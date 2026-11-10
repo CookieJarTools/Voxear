@@ -2853,7 +2853,9 @@ end streams chunk columns round the camera (`blocks::stream`), the world's own n
 coarser chunks, each twice the last's block size, kept by level in the renderer's pool. Models of small coloured
 blocks come from `.vox` files (`blocks::vox`), each colour built as a kind of block. A world drawn smooth (a Voxel
 Terrain) keeps how full each block is near its surface and is meshed by surface nets (`blocks::smooth`), drawn from
-the same pool as triangles' corners. To come: face-connectivity
+the same pool as triangles' corners. A planet's ground lies all round its world's corner, its generator read round
+it in three dimensions on a cube's faces once; physics pulls bodies near it towards its middle. To come:
+face-connectivity
 cave culling. Smooth voxels: density and material
 a voxel, marching cubes with Transvoxel between levels on an octree; planets add their own gravity and a floating origin. Digging into a
 heightmap terrain turns its columns into smooth-voxel chunks that start from its heights (`voxear_terrain::dig`,

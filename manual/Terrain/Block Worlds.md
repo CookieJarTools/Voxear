@@ -15,7 +15,7 @@ Along the top of the Block World in the Inspector are its tools: **Build**, its 
 | Data | The `.blockworld` asset its blocks are |
 | Block size | How many metres a block is a side |
 | Smooth | Whether its surface runs smoothly between its blocks rather than as cubes: a [[Voxel Terrain]] |
-| Ground | **Flat**, or **Generated** by a world generator (see below) |
+| Ground | **Flat**, **Generated** by a world generator (see below), or a **Planet** (see [[Voxel Terrain#Planets|Planets]]) |
 | Ground size | How many blocks its ground reaches along X and Z |
 | Ground height | With flat ground, how many blocks high it is |
 | Top block, Under block, Base block | The kinds of block its ground is made of: its top, the layers under that, and the rest |

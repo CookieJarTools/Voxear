@@ -443,3 +443,114 @@ impl NodeView {
         edit
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use voxear_ui::{Key, Modifiers};
+
+    use super::*;
+
+    /// A UI with somewhere to build rows.
+    fn rows() -> (Ui, NodeId) {
+        let mut ui = Ui::new();
+        let root = ui.root();
+        let rows = ui.panel(root, Style::column().at(10.0, 10.0).width(300.0));
+        (ui, rows)
+    }
+
+    fn field(row: &ValueRow) -> NodeId {
+        match row.control {
+            RowControl::Number(field) => field,
+            _ => panic!("a number's row"),
+        }
+    }
+
+    /// Types `text` over what a row's field holds, as a user does, in a frame of its own.
+    fn type_in(ui: &mut Ui, row: &ValueRow, text: &str) {
+        ui.frame(800, 600, 1.0);
+        ui.focus(field(row));
+        ui.set_modifiers(Modifiers { shift: false, control: true });
+        ui.key_down(Key::Char('a'));
+        ui.set_modifiers(Modifiers::default());
+        ui.text_input(text);
+    }
+
+    #[test]
+    fn a_row_shows_its_value_and_keeps_what_is_typed_as_its_kind_keeps_it() {
+        let (mut ui, rows) = rows();
+        // A number, held within its range.
+        let sharpness = own("sharpness", "Sharpness", ValueKind::Number { low: 0.0, high: 1.0, unit: "" });
+        let row = ValueRow::new(&mut ui, rows, "Sharpness", sharpness, Value::Number(0.25));
+        assert_eq!(ui.text(ui.children(row.row)[0]), "Sharpness");
+        assert_eq!(ui.text(field(&row)), "0.25");
+        assert_eq!(row.changed(&ui, Value::Number(0.25)), None, "nothing typed yet");
+        type_in(&mut ui, &row, "0.6");
+        assert_eq!(row.changed(&ui, Value::Number(0.25)), Some(Value::Number(0.6)));
+        type_in(&mut ui, &row, "7");
+        assert_eq!(row.changed(&ui, Value::Number(0.6)), Some(Value::Number(1.0)), "held to its most");
+        type_in(&mut ui, &row, "1");
+        assert_eq!(row.changed(&ui, Value::Number(1.0)), None, "what it already is, is no change");
+        type_in(&mut ui, &row, "steep");
+        assert_eq!(row.changed(&ui, Value::Number(1.0)), None, "nor is what is no number");
+        // What is being typed is left alone; once the field is left, it shows the value again.
+        row.show(&mut ui, Value::Number(1.0));
+        assert_eq!(ui.text(field(&row)), "steep");
+        ui.blur();
+        row.show(&mut ui, Value::Number(1.0));
+        assert_eq!(ui.text(field(&row)), "1");
+
+        // A number with a unit has it after its field.
+        let row = ValueRow::new(&mut ui, rows, SEA_LEVEL.label, SEA_LEVEL, Value::Number(-12.5));
+        assert_eq!(ui.text(field(&row)), "-12.5");
+        let beside = ui.children(ui.parent(field(&row)).unwrap());
+        assert_eq!(beside.last().map(|&unit| ui.text(unit)).as_deref(), Some("m"));
+
+        // A whole number keeps every digit of a large one, and the whole part of one with a fraction.
+        let row = ValueRow::new(&mut ui, rows, SEED.label, SEED, Value::Whole(7));
+        assert_eq!(ui.text(field(&row)), "7");
+        type_in(&mut ui, &row, "4000000001");
+        assert_eq!(row.changed(&ui, Value::Whole(7)), Some(Value::Whole(4_000_000_001)));
+        type_in(&mut ui, &row, "12.7");
+        assert_eq!(row.changed(&ui, Value::Whole(7)), Some(Value::Whole(12)));
+        ui.blur();
+        row.show(&mut ui, Value::Whole(4_000_000_001));
+        assert_eq!(ui.text(field(&row)), "4000000001");
+
+        // A choice shows the one picked, and follows it as it changes elsewhere.
+        let style = own("style", "Style", ValueKind::Choice(&["Fractal", "Ridged", "Billow"]));
+        let row = ValueRow::new(&mut ui, rows, "Style", style, Value::Choice(1));
+        let RowControl::Choice(dropdown) = row.control else { panic!("a dropdown") };
+        assert_eq!(ui.selected_option(dropdown), 1);
+        row.show(&mut ui, Value::Choice(2));
+        assert_eq!(ui.selected_option(dropdown), 2);
+        assert_eq!(row.changed(&ui, Value::Choice(2)), None);
+        // And a row marked as one its generator shows says so to the sheet.
+        row.set_exposed(&mut ui, true);
+        assert!(ui.has_class(row.row, "exposed"));
+    }
+
+    #[test]
+    fn a_preset_reshapes_the_landmass_and_climate_where_they_stand() {
+        let mut graph = Preset::RollingHills.world().graph().clone();
+        // Moved about, with a node of its own beside them that nothing reads.
+        for node in &mut graph.nodes {
+            node.at = [node.at[0] + 500.0, node.at[1] - 70.0];
+        }
+        let spare = graph.add(NodeKind::Output(Output::default()), [0.0, 900.0]);
+        let world = WorldGen::new(9, 2.0, 3.0, graph.clone());
+        assert_eq!((picked_preset(&world), world.preset()), (1, Some(Preset::RollingHills)));
+        let alpine = reshaped(&world, Preset::Alpine);
+        assert_eq!((alpine.preset(), alpine.seed(), alpine.scale()), (Some(Preset::Alpine), 9, 2.0));
+        assert_eq!(alpine.sea_level(), Preset::Alpine.landmass().sea_level);
+        let places = |graph: &voxear_terrain::generate::Graph| -> Vec<[f32; 2]> {
+            graph.nodes.iter().map(|node| node.at).collect()
+        };
+        assert_eq!(places(alpine.graph()), places(&graph), "its nodes where they were");
+        assert!(alpine.graph().node(spare).is_some(), "and the node of its own still there");
+        assert_eq!(alpine.hash(), Preset::Alpine.world().with_seed(9).with_scale(2.0).hash(), "the preset's ground");
+        // A shape of its own is past the presets, as Custom.
+        let mut own_shape = alpine.as_landmass().unwrap();
+        own_shape.sharpness = 0.33;
+        assert_eq!(picked_preset(&WorldGen::from(own_shape)), Preset::ALL.len());
+    }
+}

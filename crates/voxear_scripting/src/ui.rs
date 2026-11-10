@@ -147,13 +147,15 @@ pub(crate) unsafe extern "C" fn ui_keymap_clicked(element: i32, buffer: *mut u8,
 }
 
 /// One of the texts an element holds besides its own: its tooltip (0), a
-/// text field's placeholder (1), or a dropdown's options (2), one a line.
+/// text field's placeholder (1), a dropdown's options (2), one a line, or
+/// the picture an image shows (3), by project path or GUID.
 pub(crate) unsafe extern "C" fn ui_set_string(element: i32, which: i32, text: *const u8, len: i32) {
     let text = unsafe { utf8(text, len) };
     match which {
         0 => ask(element, UiAsk::SetTooltip(&text)),
         1 => ask(element, UiAsk::SetPlaceholder(&text)),
         2 => ask(element, UiAsk::SetOptions(&text)),
+        3 => ask(element, UiAsk::SetPicture(&text)),
         _ => None,
     };
 }

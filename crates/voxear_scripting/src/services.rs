@@ -333,6 +333,12 @@ pub enum UiAsk<'a> {
     SetPlaceholder(&'a str),
     /// A dropdown's options, one a line, keeping the one picked.
     SetOptions(&'a str),
+    /// The picture an image shows, by project path or GUID; empty for none.
+    /// Whatever has the pictures finds it and asks `SetImage`.
+    SetPicture(&'a str),
+    /// What an image shows: the renderer's index for a texture and the part
+    /// of it, as fractions (left, top, right, bottom); none for nothing.
+    SetImage(Option<(u32, [f32; 4])>),
     /// A list view's items: how many, how tall each row is, and for a tree
     /// view, each item's id and its parent's, 0 at the top, in order.
     Items {

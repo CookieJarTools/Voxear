@@ -979,6 +979,17 @@ impl ScriptServices for GameServices<'_> {
     }
 
     fn ui_ask(&mut self, element: u32, ask: UiAsk<'_>) -> UiAnswer {
+        // A picture is read here, where the project's pictures and the renderer are; with no renderer, an image
+        // shows nothing.
+        if let UiAsk::SetPicture(reference) = ask {
+            let guid = self.content.parse(reference).ok().and_then(|parsed| parsed.guid());
+            let shown = guid.zip(self.renderer.as_deref_mut()).and_then(|(guid, renderer)| {
+                let read = self.content.ui_picture(renderer, guid);
+                read.map_err(|error| tracing::warn!(target: "script", "{reference}: {error:#}")).ok()
+            });
+            let image = shown.map(|(texture, _)| (texture.0, [0.0, 0.0, 1.0, 1.0]));
+            return self.ui.ask(element, UiAsk::SetImage(image));
+        }
         self.ui.ask(element, ask)
     }
 

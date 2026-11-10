@@ -1351,7 +1351,8 @@ impl Content {
             // One without end starts with nothing made: its chunks are made round the camera as it goes.
             if file.generate.as_ref().is_some_and(|g| g.endless.is_some()) {
                 let (_, faces) = file.faces();
-                let world = voxear_terrain::blocks::BlockWorld::new(Default::default(), &faces, file.block_size);
+                let world =
+                    voxear_terrain::blocks::BlockWorld::made(Default::default(), &faces, file.block_size, file.smooth);
                 let pending = Arc::new(edits.unwrap_or_default());
                 return Ok(Arc::new(LoadedBlockWorld { world, base: Arc::default(), pending, file }));
             }

@@ -249,20 +249,23 @@ pub fn create_terrain(root: &Path, folder: &str, name: &str) -> Result<String> {
 /// Makes a new world of blocks in `folder`, named for `name` and kept apart
 /// from any there: the default kinds of block and flat ground. Gives its
 /// project path.
-pub fn create_block_world(root: &Path, folder: &str, name: &str) -> Result<String> {
+pub fn create_block_world(root: &Path, folder: &str, name: &str, smooth: bool) -> Result<String> {
     std::fs::create_dir_all(root.join(folder)).with_context(|| format!("making {folder}"))?;
     let named: String =
         name.chars().filter(|c| !matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|')).collect();
     let stem = if named.trim().is_empty() { "Blocks" } else { named.trim() };
     let file = unique(&root.join(folder), stem, ".blockworld");
     let path = join(folder, &file);
-    let text = NEW_BLOCK_WORLD.to_string() + &voxear_terrain::blocks::file::BlockFile::default().to_text();
+    let file = voxear_terrain::blocks::file::BlockFile { smooth, ..Default::default() };
+    let text = if smooth { NEW_VOXEL_TERRAIN } else { NEW_BLOCK_WORLD }.to_string() + &file.to_text();
     std::fs::write(root.join(&path), text).with_context(|| format!("making {path}"))?;
     Ok(path)
 }
 
-/// What a new world of blocks' file says it is.
+/// What a new world of blocks' file says it is, and a new Voxel Terrain's.
 const NEW_BLOCK_WORLD: &str = "# Voxear world of blocks: its kinds of block and the ground they start as.\n";
+const NEW_VOXEL_TERRAIN: &str =
+    "# Voxear Voxel Terrain: a world of blocks drawn smooth, its kinds of block and the ground they start as.\n";
 
 /// A new Motion Set: a state to walk about in, its clips to be picked.
 const NEW_MOTION_SET: &str = "# Voxear Motion Set: what a character can do, its states' looping clips and its actions.\n[[state]]\nname = \"Walking\"\nrole = \"grounded\"\n";

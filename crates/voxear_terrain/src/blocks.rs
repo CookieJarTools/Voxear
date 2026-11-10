@@ -9,12 +9,17 @@
 //! world is as large as its blocks and no larger. Each chunk's faces are
 //! worked out apart ([`mesh`]): what the renderer draws, physics stands
 //! things on and the GI's rays see.
+//!
+//! A world drawn smooth (a **Voxel Terrain**) keeps how full each block is
+//! where the ground's surface passes, and its surface runs smoothly between
+//! its blocks' middles ([`smooth`]) in place of their cubes' faces.
 
 pub mod chunk;
 pub mod edits;
 pub mod file;
 pub mod generate;
 pub mod mesh;
+pub mod smooth;
 pub mod stream;
 pub mod vox;
 
@@ -22,7 +27,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use voxear_ecs::Component;
 
-use chunk::{AIR, BlockId, CHUNK, Chunk};
+use chunk::{AIR, BlockId, CHUNK, Chunk, EMPTY, FULL, Fill};
 use mesh::ChunkMesh;
 
 /// Every block of a world, by chunk: chunks with no block in them are not
@@ -60,6 +65,25 @@ impl BlockMap {
         }
     }
 
+    /// How full the block at `at` is (see [`Fill`]).
+    pub fn fill(&self, at: [i32; 3]) -> Fill {
+        let (key, [x, y, z]) = Self::chunk_of(at);
+        self.chunks.get(&key).map_or(EMPTY, |chunk| chunk.fill(x, y, z))
+    }
+
+    /// Puts `block` at `at`, `fill` full, as [`BlockMap::set`] does.
+    pub fn set_cell(&mut self, at: [i32; 3], block: BlockId, fill: Fill) {
+        let (key, [x, y, z]) = Self::chunk_of(at);
+        if block == AIR && fill == EMPTY && !self.chunks.contains_key(&key) {
+            return;
+        }
+        let chunk = self.chunks.entry(key).or_insert_with(|| Arc::new(Chunk::filled(AIR)));
+        Arc::make_mut(chunk).set_cell(x, y, z, block, fill);
+        if block == AIR && chunk.is_air() {
+            self.chunks.remove(&key);
+        }
+    }
+
     /// Chunk `key`, if it has blocks.
     pub fn chunk(&self, key: [i32; 3]) -> Option<&Arc<Chunk>> {
         self.chunks.get(&key)
@@ -91,17 +115,17 @@ impl BlockMap {
 
     /// Each chunk's faces, worked out on every core, each block drawn with
     /// the surfaces `faces` gives it (see `file::BlockFile::faces`).
-    pub fn mesh_all(&self, faces: &[[u8; 3]]) -> HashMap<[i32; 3], Arc<ChunkMesh>> {
+    pub fn mesh_all(&self, faces: &[[u8; 3]], smooth: bool) -> HashMap<[i32; 3], Arc<ChunkMesh>> {
         let keys: Vec<[i32; 3]> = self.chunks.keys().copied().collect();
-        let meshes = crate::workers::each(&keys, |&key| mesh::mesh_chunk(self, key, faces));
+        let meshes = crate::workers::each(&keys, |&key| mesh_any(self, key, faces, smooth));
         keys.into_iter().zip(meshes).filter(|(_, mesh)| !mesh.is_empty()).map(|(k, m)| (k, Arc::new(m))).collect()
     }
 }
 
 /// A world of blocks: its blocks, each chunk's faces, the surfaces each
 /// block's top, sides and bottom are drawn with (see
-/// `file::BlockFile::faces`), how large a block is in metres, and whether it
-/// casts the sun's shadows.
+/// `file::BlockFile::faces`), how large a block is in metres, whether it is
+/// drawn smooth (see `smooth`), and whether it casts the sun's shadows.
 #[derive(Clone, Debug)]
 pub struct BlockWorld {
     pub blocks: Arc<BlockMap>,
@@ -111,6 +135,7 @@ pub struct BlockWorld {
     /// level and place in that level's chunks (see `stream`): drawn alone.
     pub far: Arc<HashMap<[i32; 4], Arc<ChunkMesh>>>,
     pub block_size: f32,
+    pub smooth: bool,
     pub cast_shadows: bool,
 }
 
@@ -123,6 +148,7 @@ impl PartialEq for BlockWorld {
             && self.faces == other.faces
             && (Arc::ptr_eq(&self.far, &other.far) || self.far == other.far)
             && self.block_size == other.block_size
+            && self.smooth == other.smooth
             && self.cast_shadows == other.cast_shadows
     }
 }
@@ -130,13 +156,20 @@ impl PartialEq for BlockWorld {
 impl BlockWorld {
     /// A world of `blocks`, every chunk's faces worked out with `faces`.
     pub fn new(blocks: BlockMap, faces: &[[u8; 3]], block_size: f32) -> Self {
-        let meshes = blocks.mesh_all(faces);
+        Self::made(blocks, faces, block_size, false)
+    }
+
+    /// A world of `blocks` drawn smooth or not as `smooth` says, every
+    /// chunk's faces worked out with `faces`.
+    pub fn made(blocks: BlockMap, faces: &[[u8; 3]], block_size: f32, smooth: bool) -> Self {
+        let meshes = blocks.mesh_all(faces, smooth);
         Self {
             blocks: Arc::new(blocks),
             meshes: Arc::new(meshes),
             faces: faces.into(),
             far: Arc::default(),
             block_size,
+            smooth,
             cast_shadows: true,
         }
     }
@@ -153,22 +186,29 @@ impl BlockWorld {
     /// change reaches: its own, and those beside it whose faces it meets or
     /// shades. How many blocks changed.
     pub fn set_blocks(&mut self, changes: impl IntoIterator<Item = ([i32; 3], BlockId)>) -> usize {
+        self.set_cells(changes.into_iter().map(|(at, block)| (at, block, if block == AIR { EMPTY } else { FULL })))
+    }
+
+    /// Puts each block of `changes` in place, as [`BlockWorld::set_blocks`]
+    /// does, each as full as it says (see [`Fill`]).
+    pub fn set_cells(&mut self, changes: impl IntoIterator<Item = ([i32; 3], BlockId, Fill)>) -> usize {
         let mut changed = 0;
         let mut reached: Vec<[i32; 3]> = Vec::new();
         let blocks = Arc::make_mut(&mut self.blocks);
-        let last = CHUNK - 1;
-        for (at, block) in changes {
-            if blocks.get(at) == block {
+        // How far into a chunk from either side a block is in the next chunk's padded blocks.
+        let (first, last) = if self.smooth { (smooth::REACH_AFTER, smooth::REACH_BELOW) } else { (0, CHUNK - 1) };
+        for (at, block, fill) in changes {
+            if blocks.get(at) == block && blocks.fill(at) == fill {
                 continue;
             }
-            blocks.set(at, block);
+            blocks.set_cell(at, block, fill);
             changed += 1;
             // A block on a chunk's side is in the next chunk's padded blocks too.
             let (key, local) = BlockMap::chunk_of(at);
             let near = |axis: usize| -> Vec<i32> {
                 match local[axis] {
-                    0 => vec![key[axis] - 1, key[axis]],
-                    l if l == last => vec![key[axis], key[axis] + 1],
+                    l if l <= first => vec![key[axis] - 1, key[axis]],
+                    l if l >= last => vec![key[axis], key[axis] + 1],
                     _ => vec![key[axis]],
                 }
             };
@@ -191,7 +231,8 @@ impl BlockWorld {
     pub fn remesh(&mut self, keys: &[[i32; 3]]) {
         let blocks = &self.blocks;
         let faces = &self.faces;
-        let made = crate::workers::each(keys, |&key| mesh::mesh_chunk(blocks, key, faces));
+        let smooth = self.smooth;
+        let made = crate::workers::each(keys, |&key| mesh_any(blocks, key, faces, smooth));
         let meshes = Arc::make_mut(&mut self.meshes);
         for (key, mesh) in keys.iter().zip(made) {
             if mesh.is_empty() {
@@ -202,11 +243,20 @@ impl BlockWorld {
         }
     }
 
-    /// The same blocks drawn with other `faces`, every chunk's faces made
-    /// again: as after its kinds of block changed how they are drawn.
-    pub fn with_faces(&self, faces: &[[u8; 3]]) -> Self {
-        let meshes = self.blocks.mesh_all(faces);
-        Self { meshes: Arc::new(meshes), faces: faces.into(), ..self.clone() }
+    /// The same blocks drawn with other `faces`, smooth or not as `smooth`
+    /// says, every chunk's faces made again: as after its kinds of block
+    /// changed how they are drawn.
+    pub fn with_faces(&self, faces: &[[u8; 3]], smooth: bool) -> Self {
+        let meshes = self.blocks.mesh_all(faces, smooth);
+        Self { meshes: Arc::new(meshes), faces: faces.into(), smooth, ..self.clone() }
+    }
+}
+
+/// Chunk `key`'s faces in `map`, drawn smooth or not as `smooth` says.
+pub fn mesh_any(map: &BlockMap, key: [i32; 3], faces: &[[u8; 3]], smooth: bool) -> ChunkMesh {
+    match smooth {
+        true => smooth::mesh_chunk(map, key, faces),
+        false => mesh::mesh_chunk(map, key, faces),
     }
 }
 

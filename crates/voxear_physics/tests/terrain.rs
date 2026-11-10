@@ -237,3 +237,41 @@ fn a_ball_comes_to_rest_on_a_world_of_blocks_and_a_ray_meets_its_top() {
     assert_eq!(hit.obj, entity);
     assert!((hit.point.y - 4.0).abs() < 1e-3, "the step's top, 6 blocks up: {}", hit.point.y);
 }
+
+#[test]
+fn a_ball_comes_to_rest_on_a_world_drawn_smooth_where_its_surface_lies_between_blocks() {
+    use voxear_terrain::blocks::{
+        BlockMap, BlockWorld,
+        chunk::{AIR, fill_of},
+        file::BlockFile,
+    };
+    // Smooth ground of half-metre blocks from (-10, 1, -10), its surface 8.6 blocks up: 4.3 m over its corner.
+    let file = BlockFile { smooth: true, ..BlockFile::default() };
+    let mut blocks = BlockMap::default();
+    for z in 0..40 {
+        for x in 0..40 {
+            for y in 0..10 {
+                let depth = 8.6 - (y as f32 + 0.5);
+                blocks.set_cell([x, y, z], if depth > 0.0 { 1 } else { AIR }, fill_of(depth, depth > 0.0));
+            }
+        }
+    }
+    let (_, faces) = file.faces();
+    let mut world = World::new();
+    voxear_scene::register_obj_components(&mut world);
+    let corner = Vec3::new(-10.0, 1.0, -10.0);
+    let entity = world.spawn((BlockWorld::made(blocks, &faces, 0.5, true), Transform::from_position(corner)));
+    let ball = world.spawn((Transform::from_position(Vec3::new(0.0, 10.0, 0.0)),));
+    world.insert(ball, Collider { shape: ColliderShape::Sphere, radius: 0.2, ..Collider::default() });
+    world.insert(ball, Rigidbody { angular_drag: 2.0, ..Rigidbody::default() });
+    let mut physics = PhysicsScene::new();
+    for _ in 0..240 {
+        physics.step(&mut world, 1.0 / 60.0);
+    }
+    // 1 m up for its corner and 4.3 m of ground: the surface at 5.3 m, the ball's middle 0.2 m over it.
+    let at = world.get::<Transform>(ball).unwrap().position;
+    assert!((at.y - 5.5).abs() < 0.05, "resting on the smooth ground: {at}");
+    let hit = physics.raycast(Vec3::new(2.0, 50.0, 3.0), Vec3::NEG_Y, 100.0, u32::MAX, false).expect("the ground");
+    assert_eq!(hit.obj, entity);
+    assert!((hit.point.y - 5.3).abs() < 0.01, "its surface: {}", hit.point.y);
+}

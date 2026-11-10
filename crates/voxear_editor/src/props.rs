@@ -123,6 +123,9 @@ pub enum Part {
     /// Ground from heights (the Terrain module).
     Terrain,
     BlockWorld,
+    /// A Block World drawn smooth, as Add Component offers it: once added,
+    /// an Obj's Block World is its part, smooth or not.
+    VoxelTerrain,
     /// Leaves tracks in the ground where its Obj touches it.
     TrackMaker,
     /// A Model Renderer: a whole model drawn by the Obj.
@@ -175,7 +178,7 @@ impl Part {
             Part::FoliageInteraction => "foliage_interaction".into(),
             Part::Foliage => "foliage".into(),
             Part::Terrain => "terrain".into(),
-            Part::BlockWorld => "block_world".into(),
+            Part::BlockWorld | Part::VoxelTerrain => "block_world".into(),
             Part::TrackMaker => "track_maker".into(),
             Part::Model => "model".into(),
             Part::Behaviour(name) => name.clone(),
@@ -191,7 +194,7 @@ impl Part {
             Part::Collider2D | Part::Rigidbody2D => Some(Module::Physics2D),
             Part::Seasons | Part::FoliageInteraction | Part::Foliage => Some(Module::Vegetation),
             Part::Ocean | Part::Pool | Part::DryArea | Part::Stream | Part::Buoyancy => Some(Module::Water),
-            Part::Terrain | Part::BlockWorld | Part::TrackMaker => Some(Module::Terrain),
+            Part::Terrain | Part::BlockWorld | Part::VoxelTerrain | Part::TrackMaker => Some(Module::Terrain),
             _ => None,
         }
     }
@@ -238,6 +241,7 @@ impl Part {
             Part::Foliage => "Foliage",
             Part::Terrain => "Terrain",
             Part::BlockWorld => "Block World",
+            Part::VoxelTerrain => "Voxel Terrain",
             Part::TrackMaker => "Track Maker",
             Part::Model => "Model Renderer",
             Part::Behaviour(name) => name.rsplit('.').next().unwrap_or(name),
@@ -310,6 +314,7 @@ impl Part {
             Part::Foliage => "cube",
             Part::Terrain => "mountain",
             Part::BlockWorld => "blocks",
+            Part::VoxelTerrain => "mountain",
             Part::TrackMaker => "move",
             Part::Model => "box",
             Part::Behaviour(_) => "code",
@@ -1539,7 +1544,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
     match part {
         Part::Renderer => vec![Prop::Mesh, Prop::Material, Prop::LodBias],
         Part::Terrain => crate::terrain_props::props(world, entity),
-        Part::BlockWorld => crate::block_props::props(world, entity),
+        Part::BlockWorld | Part::VoxelTerrain => crate::block_props::props(world, entity),
         Part::Light => {
             let kind = world.get::<Light>(entity).map_or(LightKind::Point, |l| l.kind);
             let temperature = world.get::<Light>(entity).and_then(|l| l.temperature).is_some();
@@ -2315,7 +2320,10 @@ pub fn add(
         return crate::terrain_props::add(game, renderer, entity);
     }
     if *part == Part::BlockWorld {
-        return crate::block_props::add(game, renderer, entity);
+        return crate::block_props::add(game, renderer, entity, false);
+    }
+    if *part == Part::VoxelTerrain {
+        return crate::block_props::add(game, renderer, entity, true);
     }
     if *part == Part::LodGroup {
         let group = LodGroup::of_levels(lod_levels_inside(game, entity));
@@ -2325,7 +2333,13 @@ pub fn add(
     let world = &mut game.engine.world;
     match part {
         // A model is placed from the Project panel, so Add Component does not offer one.
-        Part::Renderer | Part::LodGroup | Part::Foliage | Part::Terrain | Part::BlockWorld | Part::Model => {}
+        Part::Renderer
+        | Part::LodGroup
+        | Part::Foliage
+        | Part::Terrain
+        | Part::BlockWorld
+        | Part::VoxelTerrain
+        | Part::Model => {}
         Part::Light => {
             world.insert(entity, default_light(LightKind::Point));
         }
@@ -2463,7 +2477,7 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
     match part {
         Part::Renderer => drop(world.remove::<MeshRenderer>(entity)),
         Part::Terrain => crate::terrain_props::remove(world, entity),
-        Part::BlockWorld => crate::block_props::remove(world, entity),
+        Part::BlockWorld | Part::VoxelTerrain => crate::block_props::remove(world, entity),
         Part::Light => drop(world.remove::<Light>(entity)),
         Part::Camera => drop(world.remove::<Camera>(entity)),
         Part::PostVolume => drop(world.remove::<PostVolume>(entity)),

@@ -994,8 +994,12 @@ struct BlockWorld
     uint surfaceCount;
     uint material;
     uint anchor;
-    uint pad;
+    // BLOCKS_SMOOTH where it is drawn smooth.
+    uint flags;
 };
+
+// A world of blocks drawn smooth: its pool holds triangles' corners, two pairs of words each (src/blocks.rs).
+static const uint BLOCKS_SMOOTH = 1;
 
 // A vertex of a terrain's dug ground (src/dug.rs): where it is, in metres from the terrain's corner, then the way the
 // ground faces there in two 12-bit numbers folded onto an octahedron, and the surface digging laid there (0 for the

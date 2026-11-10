@@ -174,3 +174,48 @@ fn a_block_world_without_end_is_made_round_the_camera_and_saves_every_change() {
     assert!(saved.chunks.contains_key(&[31, 3, 0]), "the far change kept");
     assert!(saved.chunks.keys().any(|key| key[0] == 0 && key[2] == 0), "the near one with it");
 }
+
+#[test]
+fn a_generated_world_drawn_smooth_lies_on_its_generators_heights_and_keeps_a_smooth_hollow() {
+    use voxear_terrain::{
+        blocks::{BlockMap, chunk::depth_of, edits::BlockEdits, generate::BlockGenerate},
+        generate::{Preset, WorldGen},
+    };
+    let dir = project();
+    let hills = Preset::RollingHills.world();
+    std::fs::create_dir_all(dir.path().join("Worlds")).unwrap();
+    std::fs::write(dir.path().join("Worlds/Hills.worldgen"), hills.to_text()).unwrap();
+    let mut file = BlockFile { smooth: true, ..BlockFile::default() };
+    file.ground.size = [32, 32];
+    file.generate = Some(BlockGenerate {
+        world: Some("Worlds/Hills.worldgen".into()),
+        bottom: -8,
+        caves: 0.0,
+        ..Default::default()
+    });
+    std::fs::write(dir.path().join("Blocks/Field.blockworld"), file.to_text()).unwrap();
+    // A hollow scooped out of the ground half a block deep at (4, ·, 4), kept as a change from it.
+    let hills = WorldGen::parse(&hills.to_text()).unwrap();
+    let base = file.make_ground(Some(&hills));
+    let top = |map: &BlockMap, x: i32, z: i32| (-8..200).rev().find(|&y| map.get([x, y, z]) != 0).unwrap();
+    let mut built = base.clone();
+    let scooped = top(&base, 4, 4);
+    built.set_cell([4, scooped, 4], 2, 140);
+    let edits = BlockEdits::between(&base, &built);
+    std::fs::write(dir.path().join("Blocks/Field.blocks"), edits.to_bytes()).unwrap();
+    let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
+    game.start(None).unwrap();
+    let blocks = game.engine.world.query_ref::<&BlockWorld>().into_iter().next().expect("the world").clone();
+    assert!(blocks.smooth);
+    // Each column's surface, where its top block's fill puts it, within a tenth of a block of its generator's.
+    let surface = |map: &BlockMap, x: i32, z: i32| {
+        let y = top(map, x, z);
+        y as f32 + 0.5 + depth_of(map.fill([x, y, z]))
+    };
+    for (x, z) in [(1, 2), (20, 30), (31, 0)] {
+        let height = hills.height_at(x as f32 + 0.5, z as f32 + 0.5);
+        assert!((surface(&blocks.blocks, x, z) - height).abs() < 0.1, "column ({x}, {z}) at {height} m");
+    }
+    assert_eq!((blocks.blocks.get([4, scooped, 4]), blocks.blocks.fill([4, scooped, 4])), (2, 140), "kept");
+    assert!(blocks.meshes.values().all(|mesh| mesh.quads.len() == mesh.indices.len() * 2), "drawn smooth");
+}

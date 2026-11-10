@@ -2,6 +2,9 @@
 //! a short index into the chunk's own palette of the blocks in it, as few
 //! bits as its palette needs. A chunk of one block, air or stone, keeps no
 //! indices at all.
+//!
+//! A world drawn smooth keeps how full each block is beside it, where the
+//! ground's surface passes through or near it (see [`Chunk::fill`]).
 
 /// How many blocks a chunk is a side.
 pub const CHUNK: u32 = 32;
@@ -15,6 +18,30 @@ pub type BlockId = u16;
 /// Air: no block.
 pub const AIR: BlockId = 0;
 
+/// How full a block is, for a world drawn smooth: 255 wholly, a block or
+/// more inside the ground; 0 not at all, a block or more out of it; and the
+/// ground's surface where it crosses from 127 to 128, at a block's middle.
+pub type Fill = u8;
+
+/// The fill of a whole block, and of none.
+pub const FULL: Fill = 255;
+pub const EMPTY: Fill = 0;
+
+/// How far into the ground a block's middle is, in blocks from -1 to 1, for
+/// its fill.
+pub fn depth_of(fill: Fill) -> f32 {
+    (f32::from(fill) - 127.5) / 127.5
+}
+
+/// The fill of a block whose middle is `depth` blocks into the ground (out
+/// of it where negative), for a block that is ground or not as `solid`
+/// says: at least 128 for ground and at most 127 for air, so the two always
+/// agree.
+pub fn fill_of(depth: f32, solid: bool) -> Fill {
+    let fill = (127.5 + depth.clamp(-1.0, 1.0) * 127.5).round() as i32;
+    if solid { fill.clamp(128, 255) as Fill } else { fill.clamp(0, 127) as Fill }
+}
+
 /// One chunk's blocks.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Chunk {
@@ -23,6 +50,9 @@ pub struct Chunk {
     words: Box<[u64]>,
     /// How many of its blocks are not air.
     solid: u32,
+    /// How full each block is, kept as its blocks are, where any is neither
+    /// wholly ground nor wholly air (see [`Fill`]).
+    fills: Option<Box<[Fill]>>,
 }
 
 impl Chunk {
@@ -33,6 +63,7 @@ impl Chunk {
             bits: 0,
             words: Box::new([]),
             solid: if block == AIR { 0 } else { CHUNK_LEN as u32 },
+            fills: None,
         }
     }
 
@@ -54,9 +85,51 @@ impl Chunk {
         self.palette[((word >> shift) & ((1 << self.bits) - 1)) as usize]
     }
 
-    /// Puts `block` at `(x, y, z)`, its palette and indices grown to hold it.
+    /// How full the block at `(x, y, z)` is: wholly ground or wholly air,
+    /// but where the chunk keeps how full each block is.
+    pub fn fill(&self, x: u32, y: u32, z: u32) -> Fill {
+        match &self.fills {
+            Some(fills) => fills[Self::index(x, y, z)],
+            None if self.get(x, y, z) == AIR => EMPTY,
+            None => FULL,
+        }
+    }
+
+    /// Whether it keeps how full each block is.
+    pub fn has_fills(&self) -> bool {
+        self.fills.is_some()
+    }
+
+    /// Puts `block` at `(x, y, z)`, `fill` full: at least half for ground,
+    /// less for air.
+    pub fn set_cell(&mut self, x: u32, y: u32, z: u32, block: BlockId, fill: Fill) {
+        let fill = if block == AIR { fill.min(127) } else { fill.max(128) };
+        self.set(x, y, z, block);
+        let whole = if block == AIR { EMPTY } else { FULL };
+        if self.fills.is_none() && fill == whole {
+            return;
+        }
+        let index = Self::index(x, y, z);
+        if self.fills.is_none() {
+            let fills: Vec<Fill> = (0..CHUNK_LEN).map(|i| self.whole_fill(i)).collect();
+            self.fills = Some(fills.into_boxed_slice());
+        }
+        self.fills.as_mut().expect("made above")[index] = fill;
+    }
+
+    /// The fill of block `index` wholly what it is.
+    fn whole_fill(&self, index: usize) -> Fill {
+        let (x, rest) = (index as u32 % CHUNK, index as u32 / CHUNK);
+        if self.get(x, rest / CHUNK, rest % CHUNK) == AIR { EMPTY } else { FULL }
+    }
+
+    /// Puts `block` at `(x, y, z)`, its palette and indices grown to hold
+    /// it, wholly ground or wholly air.
     pub fn set(&mut self, x: u32, y: u32, z: u32, block: BlockId) {
         let was = self.get(x, y, z);
+        if let Some(fills) = &mut self.fills {
+            fills[Self::index(x, y, z)] = if block == AIR { EMPTY } else { FULL };
+        }
         if was == block {
             return;
         }
@@ -85,13 +158,15 @@ impl Chunk {
 
     /// The same blocks kept in `bits` bits each.
     fn repack(&mut self, bits: u32) {
-        let old = std::mem::replace(self, Self { palette: Vec::new(), bits: 0, words: Box::new([]), solid: 0 });
+        let empty = Self { palette: Vec::new(), bits: 0, words: Box::new([]), solid: 0, fills: None };
+        let old = std::mem::replace(self, empty);
         let per_word = (64 / bits) as usize;
         let mut words = vec![0u64; CHUNK_LEN.div_ceil(per_word)];
         for (index, entry) in old.entries().enumerate() {
             words[index / per_word] |= (entry as u64) << ((index % per_word) as u32 * bits);
         }
-        *self = Self { palette: old.palette, bits, words: words.into_boxed_slice(), solid: old.solid };
+        *self =
+            Self { palette: old.palette, bits, words: words.into_boxed_slice(), solid: old.solid, fills: old.fills };
     }
 
     /// Each block's place in the palette, in the order blocks are kept.
@@ -106,9 +181,36 @@ impl Chunk {
         })
     }
 
-    /// Whether every block of it is air.
+    /// Whether every block of it is wholly air, so there is nothing of it
+    /// to keep.
     pub fn is_air(&self) -> bool {
-        self.solid == 0
+        self.solid == 0 && self.fills.as_ref().is_none_or(|fills| fills.iter().all(|&f| f == EMPTY))
+    }
+
+    /// Whether any block of it is ground.
+    pub fn has_blocks(&self) -> bool {
+        self.solid > 0
+    }
+
+    /// How full each block is, in the order blocks are kept, where it keeps
+    /// that: for writing it.
+    pub fn fills(&self) -> Option<&[Fill]> {
+        self.fills.as_deref()
+    }
+
+    /// The same chunk with `fills` for how full each block is, in the order
+    /// blocks are kept; `None` where there are not as many as its blocks, or
+    /// one disagrees with its block.
+    pub fn with_fills(mut self, fills: Vec<Fill>) -> Option<Self> {
+        if fills.len() != CHUNK_LEN {
+            return None;
+        }
+        let agree = self.entries().zip(&fills).all(|(entry, &fill)| (self.palette[entry] != AIR) == (fill >= 128));
+        if !agree {
+            return None;
+        }
+        self.fills = Some(fills.into_boxed_slice());
+        Some(self)
     }
 
     /// How many bits each block takes.
@@ -132,7 +234,7 @@ impl Chunk {
         if words.len() != wanted {
             return None;
         }
-        let mut chunk = Self { palette, bits, words: words.into_boxed_slice(), solid: 0 };
+        let mut chunk = Self { palette, bits, words: words.into_boxed_slice(), solid: 0, fills: None };
         let entries: Vec<usize> = chunk.entries().collect();
         if entries.iter().any(|&entry| entry >= chunk.palette.len()) {
             return None;
@@ -147,6 +249,14 @@ impl Chunk {
         chunk.palette.iter_mut().for_each(|block| *block = change(*block));
         let entries: Vec<usize> = chunk.entries().collect();
         chunk.solid = entries.iter().filter(|&&entry| chunk.palette[entry] != AIR).count() as u32;
+        // Ground that became air is wholly air.
+        if let Some(fills) = &mut chunk.fills {
+            for (fill, &entry) in fills.iter_mut().zip(&entries) {
+                if chunk.palette[entry] == AIR && *fill >= 128 {
+                    *fill = EMPTY;
+                }
+            }
+        }
         chunk
     }
 }

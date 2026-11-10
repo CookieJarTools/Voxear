@@ -190,3 +190,95 @@ fn a_coarser_chunk_of_a_world_without_end_is_drawn_twice_as_large() {
         at(110.0)
     );
 }
+
+#[test]
+fn a_world_drawn_smooth_is_a_round_hill_its_top_and_sides_blended_with_no_gaps_between_chunks() {
+    use voxear_terrain::blocks::{
+        BlockMap,
+        chunk::{AIR, fill_of},
+        file::BlockKind,
+    };
+    let Some(mut renderer) = renderer() else { return };
+    // One kind of block, its top one surface and its sides another.
+    let mut file = BlockFile { smooth: true, ..BlockFile::default() };
+    file.blocks = vec![BlockKind { top: Some("Top".into()), material: Some("Sides".into()), ..BlockKind::default() }];
+    // Ground 4 blocks up, 64 a side, and a round hill 20 higher in its middle, steepest 11.5 m out, at 57 degrees.
+    let height = |x: f32, z: f32| {
+        let away = ((x - 32.0).powi(2) + (z - 32.0).powi(2)) / (20.0f32 * 20.0);
+        4.0 + 20.0 * (1.0 - away).max(0.0).powi(2)
+    };
+    let mut blocks = BlockMap::default();
+    for z in 0..64 {
+        for x in 0..64 {
+            let surface = height(x as f32 + 0.5, z as f32 + 0.5);
+            for y in 0..(surface.ceil() as i32 + 1) {
+                let depth = surface - (y as f32 + 0.5);
+                let block = if depth > 0.0 { 1 } else { AIR };
+                blocks.set_cell([x, y, z], block, fill_of(depth, depth > 0.0));
+            }
+        }
+    }
+    let (looks, faces) = file.faces();
+    assert_eq!(faces[1], [0, 1, 1], "top, sides and bottom");
+    let surfaces: Vec<SurfaceLook> = looks
+        .iter()
+        .map(|look| {
+            // Its top green, its sides brown.
+            let color = if look.material.as_deref() == Some("Top") { [0.2, 0.6, 0.15] } else { [0.5, 0.3, 0.15] };
+            let [r, g, b] = color;
+            let material =
+                renderer.add_material(&MaterialDesc { base_color: [r, g, b, 1.0], ..MaterialDesc::default() });
+            SurfaceLook {
+                material: material.unwrap(),
+                size: 1.0,
+                sharpness: 0.0,
+                triplanar: true,
+                tracks: 0.0,
+                fills_in: 0.0,
+                liquid: Default::default(),
+                glitter: false,
+            }
+        })
+        .collect();
+    let default = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let mut world = World::new();
+    let look = BlockLook { material: default, surfaces: Arc::from(surfaces) };
+    world.spawn((BlockWorld::made(blocks, &faces, 1.0, true), look, Transform::default()));
+    let down = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+    world.spawn((Camera::default(), Transform::new(Vec3::new(32.0, 44.0, 32.0), down, Vec3::ONE)));
+    // The sun in the west (-x), shining east.
+    let towards_sun = Vec3::new(-40f32.to_radians().cos(), 40f32.to_radians().sin(), 0.0);
+    let sun = Quat::from_rotation_arc(Vec3::Z, -towards_sun);
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.3, ..Sky::default() });
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
+    world.insert_resource(PostProcess { anti_aliasing, ..PostProcess::neutral() });
+    let pixels = render(&mut renderer, &world, 4);
+    keep_image("blocks smooth hill.png", &pixels);
+    // Seen from 44 m: a point on the ground below, as far below the camera as the ground there.
+    let at = |x: f32, z: f32| {
+        let (px, py) = from_above(44.0 - height(x, z), x, z);
+        rgb_at(&pixels, px, py)
+    };
+    let green = |[r, g, b]: [i32; 3]| g > r + 10 && g > b;
+    let brown = |[r, g, b]: [i32; 3]| r > g + 10 && g > b;
+    assert!(green(at(32.0, 32.0)), "the hill's flat top: {:?}", at(32.0, 32.0));
+    assert!(green(at(4.0, 50.0)), "the flat ground: {:?}", at(4.0, 50.0));
+    // Its steepest side facing the sun: its sides' surface.
+    assert!(brown(at(20.5, 32.0)), "the hill's steep side: {:?}", at(20.5, 32.0));
+    // Lit on the side facing the sun, darker away from it.
+    let brightness = |x: f32, z: f32| at(x, z).iter().sum::<i32>();
+    assert!(brightness(22.0, 32.0) > brightness(42.0, 32.0), "lit from the west");
+    // Across where its chunks meet (x 32 and z 32, down the middle of the view), ground everywhere, never the sky.
+    let sky = |[r, g, b]: [i32; 3]| b > r + 15 && b > g + 5;
+    for y in HEIGHT / 8..HEIGHT * 7 / 8 {
+        for x in [WIDTH / 2 - 1, WIDTH / 2] {
+            assert!(!sky(rgb_at(&pixels, x, y)), "a gap at ({x}, {y}): {:?}", rgb_at(&pixels, x, y));
+        }
+    }
+    for x in WIDTH / 8..WIDTH * 7 / 8 {
+        for y in [HEIGHT / 2 - 1, HEIGHT / 2] {
+            assert!(!sky(rgb_at(&pixels, x, y)), "a gap at ({x}, {y}): {:?}", rgb_at(&pixels, x, y));
+        }
+    }
+}

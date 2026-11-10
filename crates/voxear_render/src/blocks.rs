@@ -77,8 +77,13 @@ pub struct GpuBlockWorld {
     pub surface_count: u32,
     pub material: u32,
     pub anchor: u32,
-    pub pad: u32,
+    /// `BLOCKS_SMOOTH` where it is drawn smooth.
+    pub flags: u32,
 }
+
+/// A world of blocks' flag for being drawn smooth: its pool holds triangles'
+/// corners, two pairs of words each, in place of quads.
+pub const BLOCKS_SMOOTH: u32 = 1;
 
 /// Where a view's block buffer keeps its surfaces, after its worlds.
 const SURFACES_AT: usize = MAX_BLOCK_WORLDS * size_of::<GpuBlockWorld>();
@@ -151,7 +156,8 @@ pub(crate) fn pick(chunks: &[ChunkDraw], camera: Vec3, planes: &[[f32; 4]], faci
 }
 
 /// One world's chunks on the GPU: one buffer, each slot's chunk's place in
-/// blocks, then the quads; and each chunk's mesh for rays.
+/// blocks, then the quads (or, drawn smooth, its triangles' corners); and
+/// each chunk's mesh for rays.
 struct Pool {
     buffer: Buffer,
     space: RangeAllocator,
@@ -165,6 +171,7 @@ struct Pool {
     freeing: Vec<(u64, u64, u64, u32)>,
     proxies: HashMap<[i32; 3], (Arc<ChunkMesh>, MeshHandle)>,
     block_size: f32,
+    smooth: bool,
     draws: Option<Arc<[ChunkDraw]>>,
     seen: u64,
 }
@@ -175,7 +182,7 @@ impl Pool {
         gpu.create_buffer("block quads", QUADS_AT + capacity * 8, usage, MemoryLocation::GpuOnly)
     }
 
-    fn new(gpu: &Gpu, block_size: f32) -> Result<Self> {
+    fn new(gpu: &Gpu, block_size: f32, smooth: bool) -> Result<Self> {
         Ok(Self {
             buffer: Self::create(gpu, FIRST_CAPACITY)?,
             space: RangeAllocator::new(FIRST_CAPACITY),
@@ -185,6 +192,7 @@ impl Pool {
             freeing: Vec::new(),
             proxies: HashMap::new(),
             block_size,
+            smooth,
             draws: None,
             seen: 0,
         })
@@ -247,10 +255,14 @@ impl Pool {
             let quads: Vec<[u32; 2]> = mesh.quads.iter().map(|&[a, b]| [a, b | slot << 16]).collect();
             stage(bytemuck::cast_slice(&quads), QUADS_AT + first * 8);
             stage(bytemuck::cast_slice(&[key[1], key[2], key[3], key[0]]), u64::from(slot) * 16);
-            // A coarser level's chunk is as many times larger as its blocks are.
-            let side = side * (1u32 << key[0].clamp(0, 16)) as f32;
+            // A coarser level's chunk is as many times larger as its blocks are; drawn smooth, its surface
+            // reaches up to two blocks before it and past it.
+            let scale = (1u32 << key[0].clamp(0, 16)) as f32;
+            let side = side * scale;
             let low = Vec3::new(key[1] as f32, key[2] as f32, key[3] as f32) * side;
-            self.held.insert(*key, Held { mesh: mesh.clone(), slot, first, bounds: [low, low + Vec3::splat(side)] });
+            let margin = if self.smooth { Vec3::splat(2.0 * self.block_size * scale) } else { Vec3::ZERO };
+            let bounds = [low - margin, low + Vec3::splat(side) + margin];
+            self.held.insert(*key, Held { mesh: mesh.clone(), slot, first, bounds });
             changed = true;
         }
         if changed {
@@ -305,6 +317,7 @@ pub(crate) struct DrawnBlocks {
     pub entity: Entity,
     pub corner: Vec3,
     pub block_size: f32,
+    pub smooth: bool,
     /// Where its pool's chunks' places start, and its quads.
     pub address: u64,
     pub chunks: Arc<[ChunkDraw]>,
@@ -423,12 +436,13 @@ impl BlockWorlds {
                 .get::<BlockLook>(entity)
                 .cloned()
                 .unwrap_or_else(|| BlockLook { material: assets.default_material, surfaces: Arc::from([]) });
-            if self.resident.get(&entity).is_some_and(|pool| pool.block_size != blocks.block_size) {
+            let changed = |pool: &Pool| pool.block_size != blocks.block_size || pool.smooth != blocks.smooth;
+            if self.resident.get(&entity).is_some_and(changed) {
                 let pool = self.resident.remove(&entity).expect("held");
                 retire(pool, assets, frames, frame_index);
             }
             if !self.resident.contains_key(&entity) {
-                self.resident.insert(entity, Pool::new(gpu, blocks.block_size)?);
+                self.resident.insert(entity, Pool::new(gpu, blocks.block_size, blocks.smooth)?);
             }
             let pool = self.resident.get_mut(&entity).expect("made above");
             pool.seen = frame_index;
@@ -470,6 +484,7 @@ impl BlockWorlds {
                 entity,
                 corner,
                 block_size: blocks.block_size,
+                smooth: blocks.smooth,
                 address: pool.buffer.address,
                 chunks: pool.draws(),
                 look,
@@ -562,11 +577,12 @@ pub(crate) fn add_proxies(drawn: &[DrawnBlocks], extracted: &mut ExtractedFrame)
 }
 
 /// What a view draws of its worlds of blocks: for each world, its number in
-/// the view and the quads each list draws; their pools to wait on; and
-/// whether any casts the sun's shadows.
+/// the view, whether it is drawn smooth, and the quads (or corners' words)
+/// each list draws; their pools to wait on; and whether any casts the sun's
+/// shadows.
 #[derive(Clone)]
 pub(crate) struct ViewBlocks {
-    pub runs: Vec<(u32, Vec<Vec<[u32; 2]>>)>,
+    pub runs: Vec<(u32, bool, Vec<Vec<[u32; 2]>>)>,
     pub pools: Vec<BufferId>,
     pub shadows: bool,
 }
@@ -617,42 +633,45 @@ pub(crate) fn gather(
             surface_count: looks.len() as u32,
             material: blocks.look.material.0,
             anchor: anchors.get(&blocks.entity).copied().unwrap_or(0),
-            pad: 0,
+            flags: if blocks.smooth { BLOCKS_SMOOTH } else { 0 },
         });
         let local = camera - blocks.corner;
         let mut lists = vec![Vec::new(); LIST_COUNT as usize];
         let planes = voxear_terrain::lod::planes_from(&frame.planes, blocks.corner);
-        lists[LIST_EARLY as usize] = pick(&blocks.chunks, local, &planes, true);
+        // A smooth surface faces every way in a chunk, so all of it is drawn.
+        lists[LIST_EARLY as usize] = pick(&blocks.chunks, local, &planes, !blocks.smooth);
         if has_sun && blocks.cast_shadows {
             for cascade in 0..CASCADES {
                 let planes = voxear_terrain::lod::planes_from(&frame.cascade_planes[cascade], blocks.corner);
                 lists[LIST_SHADOW as usize + cascade] = pick(&blocks.chunks, local, &planes, false);
             }
         }
-        runs.push((number as u32, lists));
+        runs.push((number as u32, blocks.smooth, lists));
     }
     buffer.write(0, &records);
     buffer.write(SURFACES_AT as u64, &surfaces);
-    let shadows = runs.iter().any(|(_, lists)| (0..CASCADES).any(|c| !lists[LIST_SHADOW as usize + c].is_empty()));
+    let shadows = runs.iter().any(|(_, _, lists)| (0..CASCADES).any(|c| !lists[LIST_SHADOW as usize + c].is_empty()));
     let pools = drawn.iter().take(MAX_BLOCK_WORLDS).filter_map(|blocks| blocks.id).collect();
     Some(ViewBlocks { runs, pools, shadows })
 }
 
-/// Each world's quads list `list` draws: six vertices a quad, the world's
-/// number in the view and one in `level`, and the run's first quad in
-/// `output`, as the shaders' vertex numbers leave a draw's first out.
+/// Each world's quads list `list` draws: six vertices a quad (drawn
+/// smooth, a vertex every two pairs of words), the world's number in the
+/// view and one in `level`, and the run's first quad in `output`, as the
+/// shaders' vertex numbers leave a draw's first out.
 fn draw_runs(ctx: &PassContext, view: &ViewBlocks, push: &Push, list: u32) {
-    for (number, lists) in &view.runs {
+    for (number, smooth, lists) in &view.runs {
         for &[first, count] in &lists[list as usize] {
             ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { list, level: number + 1, output: first, ..*push });
-            unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, count * 6, 1, 0, 0) };
+            let vertices = if *smooth { count / 2 } else { count * 6 };
+            unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, vertices, 1, 0, 0) };
         }
     }
 }
 
 /// Whether any world draws anything in list `list`.
 fn draws(view: &ViewBlocks, list: u32) -> bool {
-    view.runs.iter().any(|(_, lists)| !lists[list as usize].is_empty())
+    view.runs.iter().any(|(_, _, lists)| !lists[list as usize].is_empty())
 }
 
 /// **Shadows (blocks)**: the faces each cascade sees, into its corner of

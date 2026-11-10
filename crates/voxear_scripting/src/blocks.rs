@@ -12,6 +12,7 @@ use voxear_terrain::blocks::{
     BlockWorld, BuiltBlocks,
     chunk::{AIR, BlockId},
     edits::BlockEdits,
+    smooth::Ball,
 };
 
 use crate::{interop::with_world, services::with_services};
@@ -96,6 +97,28 @@ pub(crate) unsafe extern "C" fn block_set(
         for (entity, corner) in worlds(world) {
             let Some(mut blocks) = world.get::<BlockWorld>(entity).cloned() else { continue };
             let size = blocks.block_size;
+            // Drawn smooth, a ball's surface lies between blocks.
+            if shape == BALL && blocks.smooth {
+                let does = match (block, only) {
+                    (AIR, _) => Ball::Take,
+                    (_, BLOCKS_ONLY) => Ball::Paint(block),
+                    _ => Ball::Add(block),
+                };
+                let middle = ((a - corner) / size).to_array();
+                let changes = voxear_terrain::blocks::smooth::ball(&blocks.blocks, middle, b.x.max(0.0) / size, does);
+                if changes.is_empty() {
+                    continue;
+                }
+                if !world.has::<BuiltBlocks>(entity) {
+                    world.insert(entity, BuiltBlocks(blocks.blocks.clone()));
+                }
+                let count = blocks.set_cells(changes);
+                if count > 0 {
+                    world.insert(entity, blocks);
+                    changed += count as i32;
+                }
+                continue;
+            }
             let cell = |p: Vec3| ((p - corner) / size).floor().as_ivec3();
             let reached: Vec<[i32; 3]> = match shape {
                 ONE => vec![cell(a).to_array()],
@@ -247,7 +270,7 @@ fn restore(world: &mut World, bytes: &[u8]) -> anyhow::Result<i32> {
         let built = world.get::<BuiltBlocks>(entity).map_or_else(|| now.blocks.clone(), |built| built.0.clone());
         let mut blocks = (*built).clone();
         edits.apply(&mut blocks);
-        let mut remade = BlockWorld::new(blocks, &now.faces, now.block_size);
+        let mut remade = BlockWorld::made(blocks, &now.faces, now.block_size, now.smooth);
         remade.cast_shadows = now.cast_shadows;
         world.insert(entity, remade);
         world.insert(entity, BuiltBlocks(built));

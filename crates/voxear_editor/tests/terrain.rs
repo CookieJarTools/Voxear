@@ -1417,3 +1417,68 @@ fn a_vox_model_is_built_where_the_model_brush_is_clicked_as_one_step_to_undo() {
     assert_eq!(kinds(&editor).len(), 3);
     assert_eq!(blocks(&editor).blocks.get(at), 0, "the tower gone");
 }
+
+#[test]
+fn a_voxel_terrain_is_added_drawn_smooth_and_built_on_in_balls_whose_edges_lie_between_blocks() {
+    use voxear_engine::blocks::BlockWorldAsset;
+    use voxear_terrain::blocks::{BlockWorld, chunk::AIR};
+    let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {
+        eprintln!("skipping: no usable GPU");
+        return;
+    };
+    let dir = hello_with_a_field();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    let field = obj(&editor, "Field");
+    editor.select(Some(field));
+    frame(&mut editor, &mut renderer);
+    add_component(&mut editor, &mut renderer, "Voxel Terrain");
+    // A Block World drawn smooth, on a new asset in the Voxels folder, its section named for what it is.
+    let asset = editor.game.engine.world.get::<BlockWorldAsset>(field).expect("its asset").clone();
+    assert_eq!(editor.game.content.db().get(asset.guid).unwrap().path, "Voxels/Field.blockworld");
+    assert!(asset.file.smooth);
+    let blocks = |editor: &voxear_editor::Editor| editor.game.engine.world.get::<BlockWorld>(field).unwrap().clone();
+    assert!(blocks(&editor).smooth);
+    assert!(blocks(&editor).meshes.values().all(|mesh| mesh.quads.len() == mesh.indices.len() * 2));
+    fn texts(ui: &Ui, node: NodeId, out: &mut Vec<String>) {
+        out.push(ui.text(node));
+        ui.children(node).into_iter().for_each(|child| texts(ui, child, out));
+    }
+    let mut shown = Vec::new();
+    texts(&editor.ui, editor.ui.find(editor.ui.root(), "inspector").unwrap(), &mut shown);
+    assert!(shown.iter().any(|text| text == "Voxel Terrain"), "its section's title");
+    // The world moved under the bottom middle of the Scene view, its top half a metre up, under the camera.
+    let camera = editor.scene_camera().expect("the Scene view");
+    let [x, y, w, h] = camera.rect;
+    let point = [x + w / 2.0, y + h * 0.8];
+    let (origin, direction) = camera.ray(point);
+    let hit = origin + direction * ((0.5 - origin.y) / direction.y);
+    let corner = voxear_core::math::Vec3::new(hit.x - 32.0, -7.5, hit.z - 32.0);
+    editor.game.engine.world.get_mut::<voxear_scene::Transform>(field).unwrap().position = corner;
+    frame(&mut editor, &mut renderer);
+    let from = (origin - corner).to_array();
+    let met = voxear_terrain::blocks::raycast(&blocks(&editor).blocks, from, direction.to_array(), 500.0).unwrap();
+    assert_eq!(met.normal, [0, 1, 0]);
+    let middle = [met.block[0], met.block[1] + 1, met.block[2]];
+    // A brush 3 blocks across: a ball of ground on the top clicked, its edge falling between blocks.
+    type_number(&mut editor, &mut renderer, "Size", "3");
+    click_scene(&mut editor, &mut renderer, point);
+    shot(&mut renderer, "voxel-terrain-ball.png");
+    let now = blocks(&editor);
+    assert_eq!((now.blocks.get(middle), now.blocks.fill(middle)), (1, 255), "its middle wholly ground");
+    let above = [middle[0], middle[1] + 2, middle[2]];
+    assert_eq!(now.blocks.get(above), AIR);
+    assert!((50..80).contains(&now.blocks.fill(above)), "half a block past its edge: {}", now.blocks.fill(above));
+    editor.undo(&mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!((blocks(&editor).blocks.get(middle), blocks(&editor).blocks.fill(above)), (AIR, 0), "undone");
+    // Smooth off: a Block World of cubes again, its quads facing six ways.
+    show_block_tool(&mut editor, &mut renderer, "Settings");
+    let smooth = first_with(&editor.ui, prop_rows(&editor.ui, "Smooth")[0], "checkbox").expect("its Smooth");
+    click(&mut editor.ui, smooth);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(!blocks(&editor).smooth);
+    assert!(blocks(&editor).meshes.values().all(|mesh| mesh.quads.len() * 3 != mesh.indices.len() * 2));
+}

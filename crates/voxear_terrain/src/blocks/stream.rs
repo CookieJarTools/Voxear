@@ -26,7 +26,8 @@ use super::{
     edits::{BlockEdits, ChunkChange},
     file::BlockFile,
     generate::{BlockGenerate, column_chunks},
-    mesh::{ChunkMesh, mesh_chunk},
+    mesh::ChunkMesh,
+    mesh_any,
 };
 use crate::generate::WorldGen;
 
@@ -168,7 +169,7 @@ impl BlockStreamer {
                 Arc::make_mut(pending).chunks.extend(BlockEdits::between(base, &world.blocks).chunks);
             }
             *base = Arc::new(BlockMap::default());
-            *world = BlockWorld::new(BlockMap::default(), &making.faces, making.file.block_size);
+            *world = BlockWorld::made(BlockMap::default(), &making.faces, making.file.block_size, making.file.smooth);
             (self.near, self.coarse, self.asked) = (HashSet::new(), HashMap::new(), HashSet::new());
             self.number = self.latest.fetch_add(1, Ordering::AcqRel) + 1;
             self.making = Some(Arc::new(making));
@@ -295,7 +296,10 @@ impl BlockStreamer {
                         for (key, chunk) in &chunks {
                             alone.put_chunk(*key, chunk.clone());
                         }
-                        chunks.iter().map(|(key, _)| (*key, mesh_chunk(&alone, *key, &making.faces))).collect()
+                        chunks
+                            .iter()
+                            .map(|(key, _)| (*key, mesh_any(&alone, *key, &making.faces, making.file.smooth)))
+                            .collect()
                     };
                     let _ = send.send(Finished { number, level, at, chunks, meshes });
                 }
@@ -336,7 +340,11 @@ impl BlockStreamer {
 pub fn all_changes(base: &BlockMap, blocks: &BlockMap, pending: &BlockEdits) -> BlockEdits {
     let mut all = pending.clone();
     all.chunks.extend(BlockEdits::between(base, blocks).chunks);
-    all.chunks.retain(|_, change| !matches!(change, ChunkChange::Blocks(list) if list.is_empty()));
+    all.chunks.retain(|_, change| match change {
+        ChunkChange::Blocks(list) => !list.is_empty(),
+        ChunkChange::Cells(list) => !list.is_empty(),
+        ChunkChange::Whole(_) => true,
+    });
     all
 }
 

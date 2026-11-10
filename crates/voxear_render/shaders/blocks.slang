@@ -6,6 +6,10 @@
 //
 // Its faces are shaded by shading.slang's fragment shaders, as the terrain's are: each face with its surface's
 // material, its pictures repeated each block, darker at the corners blocks close in.
+//
+// A world drawn smooth (voxear_terrain::blocks::smooth) holds triangles' corners in place of quads, two pairs of words
+// each, a vertex each: where it is in its chunk and the chunk's number, then the way the ground faces there and the
+// surfaces of its block of ground for its top, sides and bottom, which its fragments blend by the way they face.
 
 #define TERRAIN_SHADING
 #include "shading.slang"
@@ -35,11 +39,40 @@ struct BlockPoint
     float shade;
 };
 
+// Vertex `vertexId` of a world drawn smooth: its corners one after another in the world's pool from `push.output` on,
+// two pairs of words each. Its surface is its block's top, sides and bottom, a byte each.
+BlockPoint smoothPoint(BlockWorld world, uint vertexId)
+{
+    uint at = push.output + vertexId * 2;
+    uint2 first = world.quads[at];
+    uint2 second = world.quads[at + 1];
+    // In 1024ths of a block from two blocks before its chunk's corner.
+    float3 local = float3(first.x & 0xFFFF, first.x >> 16, first.y & 0xFFFF) / 1024.0 - 2.0;
+    int4 chunk = world.origins[first.y >> 16];
+    float blockSize = world.blockSize * float(1u << uint(chunk.w));
+    float2 folded = float2(second.x & 0xFFF, (second.x >> 12) & 0xFFF) / 4095.0 * 2.0 - 1.0;
+    float3 n = float3(folded.x, 1.0 - abs(folded.x) - abs(folded.y), folded.y);
+    if (n.y < 0.0)
+    {
+        n.xz = (1.0 - abs(folded.yx)) * select(folded >= 0.0, float2(1.0), float2(-1.0));
+    }
+    BlockPoint b;
+    b.world = world.corner + (float3(chunk.xyz * 32) + local) * blockSize;
+    b.normal = normalize(n);
+    b.surface = (second.y & 0xFFFF) | ((second.x >> 24) << 16);
+    b.shade = 1.0;
+    return b;
+}
+
 // Vertex `vertexId` of the world `push.level` names (its number and one): six to a quad, its quads one after
-// another in the world's pool from `push.output` on.
+// another in the world's pool from `push.output` on; or, drawn smooth, a triangle's corner.
 BlockPoint blockPoint(uint vertexId)
 {
     BlockWorld world = buffers()->blockWorlds[push.level - 1];
+    if ((world.flags & BLOCKS_SMOOTH) != 0)
+    {
+        return smoothPoint(world, vertexId);
+    }
     uint2 quad = world.quads[push.output + vertexId / 6];
     uint first = quad.x;
     uint3 at = uint3(first & 31, (first >> 5) & 31, (first >> 10) & 31);
@@ -92,8 +125,17 @@ VertexOut blockVertex(uint vertexId : SV_VertexID)
     return o;
 }
 
+// Surface `index` of a world, its pictures from the side the ground faces.
+TerrainLayer blockLayer(BlockWorld world, uint index, TerrainSpot spot, float3 normal, float4 tangent)
+{
+    TerrainSurface surface = world.surfaces[min(index, world.surfaceCount - 1)];
+    surface.flags |= TERRAIN_SURFACE_TRIPLANAR;
+    return terrainLayerAt(surface, spot, normal, tangent);
+}
+
 // A face's own surface in place of the world's material: its pictures from the side it faces, each block's own,
-// darker where blocks close its corners in.
+// darker where blocks close its corners in. Drawn smooth, its block's top where the ground faces up, its bottom where
+// it faces down and its sides between, blended as the ground turns.
 bool terrainShading(
     VertexOut input, inout float4 base, inout float metallic, inout float roughness, out float3 normal, inout float3 emission)
 {
@@ -105,13 +147,38 @@ bool terrainShading(
         base.rgb *= shade;
         return false;
     }
-    TerrainSurface surface = world.surfaces[min(input.lod, world.surfaceCount - 1)];
-    surface.flags |= TERRAIN_SURFACE_TRIPLANAR;
     TerrainSpot spot;
     spot.place = input.worldPosition - world.corner;
     spot.dx = ddx(spot.place);
     spot.dy = ddy(spot.place);
-    TerrainLayer layer = terrainLayerAt(surface, spot, normal, input.tangent);
+    TerrainLayer layer;
+    if ((world.flags & BLOCKS_SMOOTH) != 0)
+    {
+        uint3 surfaces = uint3(input.lod & 0xFF, (input.lod >> 8) & 0xFF, (input.lod >> 16) & 0xFF);
+        // Wholly its top on slopes up to about 25 degrees, wholly its sides past about 50.
+        float up = smoothstep(0.65, 0.9, normal.y);
+        float down = smoothstep(0.65, 0.9, -normal.y);
+        // The top or bottom where the ground faces that way, and the sides as it turns from it.
+        uint toward = normal.y >= 0.0 ? surfaces.x : surfaces.z;
+        float flat = max(up, down);
+        layer = blockLayer(world, surfaces.y, spot, normal, input.tangent);
+        if (flat > 0.0 && toward != surfaces.y)
+        {
+            TerrainLayer other = blockLayer(world, toward, spot, normal, input.tangent);
+            layer.base = lerp(layer.base, other.base, flat);
+            layer.metallic = lerp(layer.metallic, other.metallic, flat);
+            layer.roughness = lerp(layer.roughness, other.roughness, flat);
+            layer.normal = normalizeOr(lerp(layer.normal, other.normal, flat), normal);
+        }
+        else if (flat > 0.0)
+        {
+            layer = blockLayer(world, toward, spot, normal, input.tangent);
+        }
+    }
+    else
+    {
+        layer = blockLayer(world, input.lod, spot, normal, input.tangent);
+    }
     base = layer.base;
     base.rgb *= shade;
     metallic = layer.metallic;

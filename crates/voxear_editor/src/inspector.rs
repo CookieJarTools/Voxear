@@ -1073,7 +1073,16 @@ impl Inspector {
                     HeaderEnd::Switch(voxear_scene::is_component_on(world, entity, switch))
                 }),
             };
-            let title = if data.is_some() { props::nice_name(part.title()) } else { part.title().to_string() };
+            let title = match part {
+                _ if data.is_some() => props::nice_name(part.title()),
+                // A Block World drawn smooth is a Voxel Terrain.
+                Part::BlockWorld
+                    if world.get::<voxear_terrain::blocks::BlockWorld>(entity).is_some_and(|b| b.smooth) =>
+                {
+                    Part::VoxelTerrain.title().to_string()
+                }
+                _ => part.title().to_string(),
+            };
             let (header, rows, tick) = section(ui, self.root, &title, icon, end);
             if data.is_none() {
                 self.headers.push((Some(part.clone()), header));
@@ -2133,6 +2142,7 @@ impl Inspector {
             (Part::Foliage, "Rendering"),
             (Part::Terrain, "Terrain"),
             (Part::BlockWorld, "Terrain"),
+            (Part::VoxelTerrain, "Terrain"),
             (Part::TrackMaker, "Terrain"),
             (Part::Audio, "Audio"),
             (Part::Listener, "Audio"),
@@ -2147,7 +2157,9 @@ impl Inspector {
         ];
         let mut choices: Vec<Choice> = built_in
             .into_iter()
-            .filter(|(part, _)| !has(part) && part.module().is_none_or(|module| modules.has(module)))
+            // A Voxel Terrain is a Block World drawn smooth: an Obj has one or the other.
+            .filter(|(part, _)| !has(part) && !(*part == Part::VoxelTerrain && has(&Part::BlockWorld)))
+            .filter(|(part, _)| part.module().is_none_or(|module| modules.has(module)))
             .map(|(part, folder)| choice(part.clone(), part.title(), folder, part.icon()))
             .collect();
         if playing {
@@ -2823,7 +2835,7 @@ fn part_paths(part: Option<&Part>) -> Vec<ValuePath> {
         None => return ["position", "rotation", "scale"].map(|key| ValuePath::new(&[key])).to_vec(),
         Some(Part::Renderer) => "renderer",
         Some(Part::Terrain) => "terrain",
-        Some(Part::BlockWorld) => "block_world",
+        Some(Part::BlockWorld | Part::VoxelTerrain) => "block_world",
         Some(Part::TrackMaker) => "track_maker",
         Some(Part::Light) => "light",
         Some(Part::Camera) => "camera",

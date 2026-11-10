@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     BlockMap,
-    chunk::{AIR, BlockId, CHUNK, Chunk},
+    chunk::{AIR, BlockId, CHUNK, Chunk, fill_of},
     file::BlockFile,
 };
 use crate::{generate::WorldGen, noise::gradient3};
@@ -162,9 +162,14 @@ pub fn column_chunks(
                 if y < low {
                     continue;
                 }
-                let block = block_at(column, [*x, y, *z], size, &coarse, push, seed);
-                if block != AIR {
-                    chunk.set((x - cx * side) as u32, ly as u32, (z - cz * side) as u32, block);
+                let (block, depth) = cell_at(column, [*x, y, *z], size, &coarse, push, seed);
+                let (lx, lz) = ((x - cx * side) as u32, (z - cz * side) as u32);
+                // Drawn smooth, the air a block from the surface keeps how far it is from it too.
+                if file.smooth && (block != AIR || depth > -1.0) {
+                    chunk.set_cell(lx, ly as u32, lz, block, fill_of(depth, block != AIR));
+                    any = true;
+                } else if block != AIR {
+                    chunk.set(lx, ly as u32, lz, block);
                     any = true;
                 }
             }
@@ -176,9 +181,11 @@ pub fn column_chunks(
     chunks
 }
 
-/// The block at `at` in its column: solid below its surface pushed in and
-/// out, hollowed by caves, of the column's layer that deep.
-fn block_at(column: &Column, at: [i32; 3], size: f32, generate: &BlockGenerate, push: f32, seed: u32) -> BlockId {
+/// The block at `at` in its column, and about how far into the ground its
+/// middle is, in blocks (out of it where negative): ground below its
+/// surface pushed in and out, but in caves, of the column's layer that
+/// deep.
+fn cell_at(column: &Column, at: [i32; 3], size: f32, generate: &BlockGenerate, push: f32, seed: u32) -> (BlockId, f32) {
     let [x, y, z] = at;
     let middle = y as f32 + 0.5;
     let place = [x as f32 + 0.5, middle, z as f32 + 0.5].map(|v| v * size);
@@ -188,28 +195,35 @@ fn block_at(column: &Column, at: [i32; 3], size: f32, generate: &BlockGenerate, 
         depth += gradient3(place[0] / s, place[1] / s, place[2] / s, seed.wrapping_add(41)) * push;
     }
     if depth <= 0.0 {
-        return AIR;
+        return (AIR, depth);
     }
-    // Caves: tunnels where two noises are both near nothing, chambers where a third is high.
-    if generate.caves > 0.0 && depth > CAVE_ROOF {
+    // Caves: tunnels where two noises are both near nothing, chambers where a third is high. How far out of one
+    // each is, in blocks, reads its noise's distance from where the cave starts as about half its size a unit.
+    let mut inside = depth;
+    if generate.caves > 0.0 && depth > CAVE_ROOF - 1.0 {
         let caves = generate.caves.clamp(0.0, 1.0);
         let t = TUNNEL_SIZE;
         let tunnel = gradient3(place[0] / t, place[1] / t, place[2] / t, seed.wrapping_add(53)).abs()
             + gradient3(place[0] / t, place[1] / t, place[2] / t, seed.wrapping_add(67)).abs();
         let c = CHAMBER_SIZE;
         let chamber = gradient3(place[0] / c, place[1] / (c * 0.6), place[2] / c, seed.wrapping_add(79));
-        if tunnel < 0.14 * caves.sqrt() || chamber > 0.62 - 0.22 * caves {
-            return AIR;
-        }
+        let out_of_tunnel = (tunnel - 0.14 * caves.sqrt()) * t * 0.5 / size;
+        let out_of_chamber = (0.62 - 0.22 * caves - chamber) * c * 0.5 / size;
+        // Within the roof under the surface, the ground stays whole.
+        inside = inside.min((CAVE_ROOF - depth).max(out_of_tunnel.min(out_of_chamber)));
+    }
+    if inside <= 0.0 {
+        return (AIR, inside);
     }
     let [(top, top_depth), (under, under_depth)] = column.layers;
-    if depth <= top_depth {
+    let block = if depth <= top_depth {
         top
     } else if depth <= top_depth + under_depth {
         under
     } else {
         column.bottom
-    }
+    };
+    (block, inside)
 }
 
 #[cfg(test)]

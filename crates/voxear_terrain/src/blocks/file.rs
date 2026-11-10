@@ -45,6 +45,10 @@ pub struct BlockFile {
     /// and how (see `generate`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub generate: Option<super::generate::BlockGenerate>,
+    /// Whether it is drawn smooth, its surface running between its blocks'
+    /// middles as full as each is (see `smooth`): a Voxel Terrain.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub smooth: bool,
 }
 
 /// A kind of block: its name, its colour where its faces have no material,
@@ -145,6 +149,7 @@ impl Default for BlockFile {
             ],
             ground: Ground::default(),
             generate: None,
+            smooth: false,
         }
     }
 }

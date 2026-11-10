@@ -15,8 +15,9 @@ use voxear_ecs::Entity;
 use voxear_engine::{Game, blocks::BlockWorldAsset};
 use voxear_render::Renderer;
 use voxear_terrain::blocks::{
-    BlockHit, BlockWorld,
-    chunk::{AIR, BlockId},
+    BlockHit, BlockMap, BlockWorld,
+    chunk::{AIR, BlockId, Fill},
+    smooth::{self, Ball},
     vox::VoxFile,
 };
 use voxear_ui::{Color, Shape};
@@ -95,6 +96,26 @@ fn reached(middle: [i32; 3], size: u32) -> Vec<[i32; 3]> {
     found
 }
 
+/// What a brush `size` blocks across does round `middle` in a world drawn
+/// smooth: a ball whose surface lies between blocks as far out as it
+/// reaches, adding to the ground where it places, taking from it where it
+/// breaks, and turning the ground in it to `picked` where it paints.
+fn smooth_ball(
+    map: &BlockMap,
+    middle: [i32; 3],
+    size: u32,
+    brush: BlockBrush,
+    picked: BlockId,
+) -> Vec<([i32; 3], BlockId, Fill)> {
+    let does = match brush {
+        BlockBrush::Place => Ball::Add(picked),
+        BlockBrush::Break => Ball::Take,
+        BlockBrush::Paint => Ball::Paint(picked),
+        BlockBrush::Model => return Vec::new(),
+    };
+    smooth::ball(map, middle.map(|v| v as f32 + 0.5), size as f32 * 0.5, does)
+}
+
 impl BlockTools {
     pub fn is_dragging(&self) -> bool {
         self.stroke.is_some()
@@ -158,6 +179,10 @@ impl BlockTools {
         let picked = (state.block + 1) as BlockId;
         let Some(blocks) = game.engine.world.get_mut::<BlockWorld>(entity) else { return middle };
         let map = blocks.blocks.clone();
+        if blocks.smooth {
+            blocks.set_cells(smooth_ball(&map, middle, state.size, brush, picked));
+            return middle;
+        }
         let changes: Vec<([i32; 3], BlockId)> = reached(middle, state.size)
             .into_iter()
             .filter_map(|at| {

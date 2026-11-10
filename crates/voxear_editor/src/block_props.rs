@@ -35,8 +35,10 @@ use crate::{
     props::{Prop, Value},
 };
 
-/// Where Add Component puts a new world of blocks' asset.
+/// Where Add Component puts a new world of blocks' asset, and a new Voxel
+/// Terrain's.
 const FOLDER: &str = "Blocks";
+const SMOOTH_FOLDER: &str = "Voxels";
 
 /// Which of a Block World's tools its Inspector shows.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -120,6 +122,8 @@ pub fn ui_mut(world: &mut World) -> &mut BlockUi {
 pub enum BlockField {
     Data,
     BlockSize,
+    /// Whether it is drawn smooth: a Voxel Terrain.
+    Smooth,
     /// How many blocks its ground reaches along x and z, and how many up.
     GroundSize,
     GroundHeight,
@@ -199,7 +203,7 @@ pub fn props(world: &World, entity: Entity) -> Vec<Prop> {
         }
         (BlockTool::Build, None) => vec![F::Data],
         (BlockTool::Settings, Some(file)) => {
-            let mut fields = vec![F::Data, F::BlockSize, F::Ground];
+            let mut fields = vec![F::Data, F::BlockSize, F::Smooth, F::Ground];
             match file.generate {
                 Some(ref generate) => {
                     fields.extend([F::Generator, F::Offset, F::Endless]);
@@ -223,6 +227,7 @@ pub fn label(field: BlockField) -> &'static str {
     match field {
         F::Data => "Data",
         F::BlockSize => "Block size",
+        F::Smooth => "Smooth",
         F::GroundSize => "Ground size",
         F::GroundHeight => "Ground height",
         F::Shadows => "Cast shadows",
@@ -311,6 +316,7 @@ pub fn get(game: &Game, entity: Entity, field: BlockField) -> Option<Value> {
     Some(match field {
         F::Data => Value::Asset(path_of(game, Some(&world.get::<BlockWorldSource>(entity)?.0.data))),
         F::BlockSize => Value::Number(file()?.block_size),
+        F::Smooth => Value::Toggle(file()?.smooth),
         F::GroundSize => Value::Vector(file()?.ground.size.map(|v| v as f32).to_vec()),
         F::GroundHeight => Value::Number(file()?.ground.height as f32),
         F::Shadows => Value::Toggle(world.get::<BlockWorld>(entity)?.cast_shadows),
@@ -430,6 +436,7 @@ pub fn set(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, fie
     let picked = ui(world).block;
     match (field, &value) {
         (F::BlockSize, v) => file.block_size = number(v).unwrap_or(file.block_size).clamp(0.01, 100.0),
+        (F::Smooth, Value::Toggle(on)) => file.smooth = *on,
         (F::GroundSize, Value::Vector(v)) if v.len() >= 2 => {
             file.ground.size = [v[0], v[1]].map(|n| n.round().clamp(0.0, 4096.0) as u32);
         }
@@ -551,7 +558,7 @@ fn change(
                 false => BlockEdits::between(&base, &blocks.blocks),
             };
             let (_, faces) = file.faces();
-            let mut empty = BlockWorld::new(BlockMap::default(), &faces, file.block_size);
+            let mut empty = BlockWorld::made(BlockMap::default(), &faces, file.block_size, file.smooth);
             empty.cast_shadows = blocks.cast_shadows;
             world.insert(entity, empty);
             let pending = Arc::new(renumbered_edits(changes));
@@ -571,6 +578,7 @@ fn change(
         || old.generate != file.generate
         || renumber.is_some()
         || old.block_size != file.block_size
+        || old.smooth != file.smooth
         || old.blocks.iter().map(|k| k.cover).ne(file.blocks.iter().map(|k| k.cover));
     let (base, remade) = if grounded {
         // The new ground names its blocks by their new numbers already; the old ground and blocks are renumbered.
@@ -583,7 +591,7 @@ fn change(
         made.cast_shadows = blocks.cast_shadows;
         (ground, made)
     } else if *faces != *blocks.faces {
-        (base, blocks.with_faces(&faces))
+        (base, blocks.with_faces(&faces, file.smooth))
     } else {
         (base, blocks)
     };
@@ -835,11 +843,14 @@ fn put(world: &mut World, entity: Entity, parts: BlockWorldParts) {
 }
 
 /// Add Component's Block World: flat ground of grass, dirt and stone on a
-/// new asset of its own, named for its Obj, in the project's Blocks folder.
-pub fn add(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity) -> Result<()> {
+/// new asset of its own, named for its Obj, in the project's Blocks folder;
+/// or, `smooth`, its Voxel Terrain, the same drawn smooth, in its Voxels
+/// folder.
+pub fn add(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, smooth: bool) -> Result<()> {
     let name = game.engine.world.get::<voxear_scene::Name>(entity).map_or("Blocks".into(), |n| n.0.clone());
     let root = game.project.root.clone();
-    let path = crate::project_files::create_block_world(&root, FOLDER, &name)?;
+    let folder = if smooth { SMOOTH_FOLDER } else { FOLDER };
+    let path = crate::project_files::create_block_world(&root, folder, &name, smooth)?;
     game.content.rescan()?;
     let guid = game.content.parse(&path)?.guid().with_context(|| format!("{path} is not an asset"))?;
     let data = BlockWorldData { data: guid.to_string(), cast_shadows: true };

@@ -224,6 +224,7 @@ Voxel nodes make the ground in three dimensions, for worlds of blocks and voxels
 | Overhangs | Ground pushed in and out where its Mask says, and steep ground alone with no mask wired in |
 | Tunnels | Long winding caves |
 | Chambers | Wide low caves |
+| Cave Network | Rooms made as prefabs, joined by winding tunnels: without end, or as one bounded level (see [[Caves]]) |
 | Noise 3D | Noise through space |
 | Combine | Two of these made one: Union, Subtract or Smooth |
 

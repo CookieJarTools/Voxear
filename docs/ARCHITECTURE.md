@@ -2903,9 +2903,20 @@ and the panel keeps the ones before as its own undo history, apart from the leve
 nothing is held, which is when the level's ground is made again, while the previews (a picture for each node and
 the ground in 3D, worked out on a thread of their own and refined while nothing changes) follow every step. The
 Inspector's rows for a node and for a generator's exposed values are built from the kinds' own descriptions of
-their values (`world_gen_inspector::ValueRow`), so a new kind of node needs nothing in the editor. To come:
-biomes as nodes, bringing their surfaces and blocks; cave rooms joined by tunnels, as a node; rivers along valleys
-in endless worlds.
+their values (`world_gen_inspector::ValueRow`), so a new kind of node needs nothing in the editor.
+
+Caves of rooms (`generate::caves`) are the one part of a generator made somewhere other than in its graph: a room
+is a prefab of Cave Shape and Cave Exit Objs, and `voxear_terrain` reads no prefabs. So the Cave Network node keeps
+each room as numbers beside its prefab's reference, and the editor reads them from the prefab
+(`voxear_engine::caves::room_of`) when one is picked and whenever a prefab changes, writing the generator's file
+from the open graph or from the file. They are part of the kernel's key, so a room changed is other ground, as any
+value changed is. The kernel finds what is near a cell from the cell's own region of a grid: the rooms and tunnels
+of that region and the two rings round it are worked out from the regions' numbers and the seed, with the ground's
+height asked at each room's middle through the generator's own height program, held by the kernel. That gathering
+is kept for a while on each thread, by network, planet and region; it is the same numbers made again or kept, so a
+cell alone still gets the bits it gets in a batch. A level's rooms are laid out when the graph is compiled and
+held by the kernel whole. To come: biomes as nodes, bringing their surfaces and blocks; a room's props and spawn
+points placed with it; rivers along valleys in endless worlds.
 
 **Rendering.** CDLOD: a quadtree of patches, each a grid of 32 quads drawn from one index buffer, picked on the CPU
 for the camera and each sun cascade, each vertex sliding onto the next level's grid near its level's far distance.

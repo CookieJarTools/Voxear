@@ -1633,8 +1633,24 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     without one; each node; a Field carried and bent; grids agreeing where they overlap; layers on overhanging
     ground of cubes and smooth; the moved numbers making the same ground; the editor moving them. Manual: Block
     Worlds, Voxel Terrain.
-  - cave rooms as prefabs of shapes and exits, strung together by a Cave Network node, as a bounded cave level or
-    under a world without end
+  - ~~**Cave rooms:**~~ done: a room is a prefab of **Cave Shape** Objs (Ball, Half Ball or Box; Carve or Fill;
+    Chance; Inner Margin) and **Cave Exit** Objs, outlined in the Scene view and built with the usual tools. A
+    **Cave Network** node (`generate/nodes/cave_network.rs`, `generate/caves`) lists rooms by prefab and weight and
+    keeps each one's shapes and exits as numbers in the generator's file, which the editor reads from the prefab
+    when it is picked, saved or changed on disk (`voxear_engine::caves`), so making ground reads no prefab and a
+    joining player needs the generator alone. Rooms lie in the regions of a grid, turned by quarter turns and
+    mirrored so their exits face what they join, with tunnels from exit to exit: wound lines of sixteen pieces with
+    a level floor. **Endless**: a room a region from a hash of the region, a tunnel between neighbours where a
+    hash of the pair says so, each room Depth under the ground at its own middle, some with a way up to the
+    surface; whatever reaches a region is gathered from it and the two rings round it, so a chunk made alone
+    meets its neighbours. Round a planet the grid lies on the six sides of a cube in whole numbers, so sides join.
+    **Level**: a main path walked over the grid without crossing itself and side rooms off it, laid out when the
+    generator is compiled. `WorldGen::caves` gives the rooms as they lie, and scripts read them as `Caves.Rooms`,
+    `Caves.Start`, `room.Exits`, `room.SpawnPoint()`, with `Caves.Of(world)` and `RoomsNear` under them. A **Cave
+    Level** preset beside the five. Tests: a cell alone against a batch, flat and round; a chunk column alone
+    against one made among its neighbours; hollows whole across region lines; every room of a level reached from
+    the first through the blocks; a prefab read, changed and read again, in the engine and in the editor; a
+    script finding rooms, exits and floors. Manual: Caves.
 - ~~**Erosion layer:**~~ done: Add Layer ▸ Erosion wears the ground below it on the GPU (`shaders/erosion.slang`,
   `voxear_render::erosion`, `Renderer::erode`), once, in the editor: rain each step, water through pipes to its four
   neighbours sped by the drop and held to what each cell has, its depth and speed, carving where it can carry more

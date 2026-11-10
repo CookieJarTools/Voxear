@@ -79,6 +79,7 @@ The nodes are wired into the **Volume** of the graph's Output, which is the grou
 | Overhangs | Ground pushed in and out by **Amount** metres, in bulges **Size** metres across with **Octaves** finer ones over them. It pushes where its **Mask** says, and steep ground alone with no mask wired in |
 | Tunnels | Long winding caves, **Amount** wide and winding over **Size** metres, kept **Roof** metres under the ground |
 | Chambers | Wide low caves **Size** metres apart, taking **Amount** of the ground, kept **Roof** metres under it |
+| Cave Network | Rooms you make as prefabs, joined by winding tunnels, without end or as one bounded level. [[Caves]] is about them |
 | Noise 3D | Noise through space, from **Low** to **High** |
 | Combine | Two of these made one: **Union**, **Subtract** or **Smooth**, which runs them together over **Blend** metres |
 
@@ -187,6 +188,8 @@ The camera draws only the chunks in view, and of each only the faces turned towa
 Water's faces are drawn after the rest of the scene, with the sea and Pools: every face of the water in the chunks the camera sees, from either side, flowing water as high as it stands. Water casts no shadow, and the GI's rays pass through it.
 
 ## Blocks from scripts
+
+A script reads the rooms of a world's caves with **Caves** (see [[Caves#Caves from scripts|Caves from scripts]]).
 
 **Blocks** in a script asks which block is where and changes them, in every Block World a change reaches. A script names a block by its `Block`, a field picked in the Inspector, which is the same block in every world.
 

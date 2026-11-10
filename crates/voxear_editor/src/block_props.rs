@@ -701,7 +701,7 @@ fn change(
         made.cast_shadows = blocks.cast_shadows;
         (ground, made)
     } else if *faces != *blocks.faces {
-        (base, blocks.with_faces(&faces, file.smooth))
+        (base, blocks.restyled(&faces, file.smooth))
     } else {
         (base, blocks)
     };

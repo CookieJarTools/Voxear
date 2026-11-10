@@ -271,7 +271,7 @@ pub fn refresh(world: &mut World, content: &mut Content, mut renderer: Option<&m
         let remade = world
             .get::<BlockWorld>(entity)
             .filter(|blocks| !endless && *blocks.faces != faces[..])
-            .map(|blocks| blocks.with_faces(&faces, file.smooth));
+            .map(|blocks| blocks.restyled(&faces, file.smooth));
         if let Some(remade) = remade {
             world.insert(entity, remade);
         }

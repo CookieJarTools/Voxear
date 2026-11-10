@@ -417,6 +417,17 @@ impl BlockWorld {
         let meshes = self.blocks.mesh_all(faces, smooth);
         Self { meshes: Arc::new(meshes), faces: faces.into(), smooth, ..self.clone() }
     }
+
+    /// As [`with_faces`](Self::with_faces), making nothing again where
+    /// `faces` differ from its own only in colours, which no mesh keeps: as
+    /// while a block's colour is dragged.
+    pub fn restyled(&self, faces: &[BlockFaces], smooth: bool) -> Self {
+        let drawn = |faces: &BlockFaces| (faces.top, faces.sides, faces.bottom, faces.water);
+        if smooth == self.smooth && faces.iter().map(drawn).eq(self.faces.iter().map(drawn)) {
+            return Self { faces: faces.into(), ..self.clone() };
+        }
+        self.with_faces(faces, smooth)
+    }
 }
 
 /// The blocks of water running in `map` (see [`flow`]): every block of it

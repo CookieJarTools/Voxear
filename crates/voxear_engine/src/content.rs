@@ -1391,7 +1391,7 @@ impl Content {
             let (_, faces) = file.faces();
             let world = match *stale.world.faces == faces[..] {
                 true => stale.world.clone(),
-                false => stale.world.with_faces(&faces, file.smooth),
+                false => stale.world.restyled(&faces, file.smooth),
             };
             let found = Some(Arc::new(LoadedBlockWorld { world, derived: self.blocks_version, ..(**stale).clone() }));
             self.block_worlds.insert(guid, found.clone());

@@ -107,7 +107,7 @@ impl ClipHand {
 
 /// Where the clip `reference` holds the gun and has the hands `at` seconds
 /// in, looping or not: the gun carried by the bone `carrier` of its
-/// skeleton, or by one named `gun_carrier`, or by the right hand, and sitting
+/// skeleton, or by the right hand, and sitting
 /// `offset` from it; its eyes `eyes` from its head as the clip starts, in
 /// its space, which go where the holder's eyes are; and with the holder's
 /// `body`, its arms as it poses them there. None before the clip is read, or for a skeleton
@@ -224,11 +224,10 @@ fn under(skeleton: &Skeleton, bone: usize) -> Vec<usize> {
     found
 }
 
-/// The bone that carries the gun: the one named, else one named
-/// `gun_carrier`, else the right hand.
+/// The bone that carries the gun: the one named, else the right hand.
 fn carried_by(skeleton: &Skeleton, rig: &Rig, named: &str) -> usize {
     let named = (!named.is_empty()).then(|| skeleton.find(named)).flatten();
-    named.or_else(|| skeleton.find("gun_carrier")).unwrap_or(rig.arms[1].hand)
+    named.unwrap_or(rig.arms[1].hand)
 }
 
 /// How much each holding clip holds the gun now, idle, walking, running

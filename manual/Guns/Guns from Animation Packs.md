@@ -5,7 +5,7 @@ order: 7
 Some guns come with animation of their own, in an animation pack. Such a pack usually has:
 
 - **The gun**: one skinned model whose moving pieces, the bolt, the trigger, the rounds, are bones, with clips of its own that move them.
-- **Arms clips**: clips of a character's arms holding the gun, for each thing they do with it. The gun rides a bone of its own, often called `gun_carrier`, and the hands are on it.
+- **Arms clips**: clips of a character's arms holding the gun, for each thing they do with it. The gun often rides a bone of its own, and the hands are on it.
 - **Clips in pairs**: an arms clip and a gun clip of the same name and length, played together, as working the bolt is both the arms' moves and the bolt's.
 
 Voxear holds such a gun by its clips, in your character's own hands. The clips say where the gun goes and where each hand holds it; your character's body reaches there, as it reaches for any gun. So the clips hold the gun alike on any character with arms, hands and fingers, whatever its skeleton names them, and its legs and back stay its own.
@@ -34,7 +34,7 @@ Select the gun's handling, and in its **Clips** part:
 - Put the clips that start a run and a sprint, if the pack has them, in **Run Start** and **Sprint Start**. Setting off from standing or walking, the start plays first, and the run or sprint carries on from its first frame, where the start leaves off. Without one, the hold blends into the run.
 - Put the gun's clip it stands still in, if it has one, in **Rest**.
 - Put the shot's arms clips in **Fire** and **Aimed Fire**, and the gun's own in **Gun Fire**.
-- **Carrier** finds the bone the gun rides by itself when it is called `gun_carrier`. For another, pick it from the list. If the gun sits off that bone in the pack, as when it is attached with an offset, set **Carrier At** and **Carrier Turn**.
+- Pick the bone the gun rides in **Carrier**. Left on **Auto**, the gun rides the right hand. If the gun sits off that bone in the pack, as when it is attached with an offset, set **Carrier At** and **Carrier Turn**.
 
 **Eyes** is where the camera the clips were filmed from sat, from the clips' head bone: right, up and forward, in metres. At 0 the gun is framed for a camera at the head bone itself, but packs are often filmed from a little lower. Compare your view with the pack's own videos:
 

@@ -226,8 +226,11 @@ fn gun_from_eye(scene: &Scene) -> Mat4 {
         * voxear_scene::world_matrix(&scene.world, scene.gun)
 }
 
+/// The bone [`clip_of_hold`] carries the gun by, which a handling names.
+const CARRIER: &str = "Gun Carrier";
+
 /// An arms clip made from how the gun's own hold has a body: its pose, and
-/// a `gun_carrier` bone under the hips where the gun was, a still clip of a
+/// a [`CARRIER`] bone under the hips where the gun was, a still clip of a
 /// second. Gives the clip's file, with where its palms are on the gun.
 fn clip_of_hold(scene: &mut Scene) -> (Arc<ModelAnimation>, [Vec3; 2]) {
     use crate::animation::ik::PoseEdit;
@@ -239,7 +242,7 @@ fn clip_of_hold(scene: &mut Scene) -> (Arc<ModelAnimation>, [Vec3; 2]) {
     let hips = 0;
     let (scale, rotation, translation) = (posed[hips].inverse() * gun).to_scale_rotation_translation();
     skeleton.bones.push(Bone {
-        name: "gun_carrier".into(),
+        name: CARRIER.into(),
         parent: Some(hips),
         rest: BonePose { translation, rotation, scale },
     });
@@ -273,6 +276,7 @@ fn held_from(scene: &mut Scene, arms: &Arc<ModelAnimation>, camera: super::handl
     scene.world.insert_resource(clips);
     let mut handling = GunHandling::default();
     handling.pack.idle = "Arms#clip:Hold".into();
+    handling.pack.carrier = CARRIER.into();
     // The clip was made with the holder's own eyes, which sit up and forward of its head.
     handling.pack.eyes = crate::first_person::FirstPersonView::default().eyes;
     handling.pack.camera = camera;
@@ -694,7 +698,7 @@ fn a_clip_that_snaps_a_hand_back_at_its_very_end_is_found_letting_go_as_the_hand
     let place = super::handling::Place::default();
     let found = |name: &str| {
         let reference = format!("{name}#clip:Lifted");
-        super::clip_hold::snaps_back_at(&own.world, &reference, ("", &place), Vec3::ZERO, 0.35).expect("read")
+        super::clip_hold::snaps_back_at(&own.world, &reference, (CARRIER, &place), Vec3::ZERO, 0.35).expect("read")
     };
     let snaps = found("Snaps").expect("a snap back");
     assert!((snaps - 0.9).abs() < 0.03, "found as the hands set off: {snaps} s");
@@ -717,6 +721,7 @@ fn setting_off_into_a_run_plays_its_start_clip_then_the_run_from_its_first_frame
     }
     let mut handling = GunHandling::default();
     handling.pack.idle = "Idle#clip:Lifted".into();
+    handling.pack.carrier = CARRIER.into();
     handling.pack.run = "Run#clip:Lifted".into();
     handling.pack.run_start = "Start#clip:Lifted".into();
     (handling.pack.walk_speed, handling.pack.run_speed) = (0.5, 1.0);

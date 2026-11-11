@@ -144,7 +144,8 @@ impl Foliage {
         }
         let spread = self.color_spread.max(0.1);
         let level = (at.as_dvec3() + origin.as_dvec3()).to_array();
-        let level = level.map(|metres| metres.rem_euclid(crate::gpu::ORIGIN_WRAP) as f32);
+        let wrap = crate::gpu::ORIGIN_WRAP;
+        let level = level.map(|metres| (metres - (metres / wrap + 0.5).floor() * wrap) as f32);
         let dry = smooth_noise(level[0] / spread, level[2] / spread);
         let linear = |c: f32| if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) };
         let [r, g, b] = std::array::from_fn(|i| {

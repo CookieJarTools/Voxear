@@ -767,14 +767,15 @@ struct Frame
 };
 
 // Where `world` is from the level's real middle, wrapped every `period` metres, a power of two up to ORIGIN_WRAP
-// (65536). A pattern read from it (noise, hashed cells, tiling) keeps its place as the world's middle moves with the
-// camera (voxear_scene::WorldOrigin), and is as exact far out as near the middle: to a quarter of a millimetre in a
-// period of 4096 m, 4 mm in one of 65536. It repeats every `period`, so a pattern that does not tile meets itself
+// (65536), into half a period either side of it. A pattern read from it (noise, hashed cells, tiling) keeps its place
+// as the world's middle moves with the camera (voxear_scene::WorldOrigin), and is as exact far out as near the
+// middle: to a quarter of a millimetre in a period of 4096 m, 4 mm in one of 65536. Within half a period of the
+// level's middle it is the place itself. It repeats every `period`, so a pattern that does not tile meets itself
 // along lines that far apart in the level.
 float3 levelPosition(Frame* frame, float3 world, float period)
 {
     float3 at = world + fmod(frame->origin.xyz, period);
-    return at - floor(at / period) * period;
+    return at - floor(at / period + 0.5) * period;
 }
 
 // As levelPosition, across the ground.

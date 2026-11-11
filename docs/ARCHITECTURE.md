@@ -336,7 +336,8 @@ base taken down by the origin's height in `extract`).
 
 Patterns read from where things are measured from the level's middle, so a move changes no look and far out they
 stay exact. `GpuFrame::origin` carries the origin wrapped every 65 536 m, whole metres and so exact in a float, and
-`levelPosition(frame, world, period)` gives a position from the level's middle wrapped every `period`, a power of two:
+`levelPosition(frame, world, period)` gives a position from the level's middle wrapped every `period` into half a period
+either side (so within that of the level's middle, a pattern is as it always was), `period` a power of two:
 1024 m for hashes of fine cells, as sine hashes lose their quality on large inputs, 4096 m for smooth noise, 65 536 m
 for broad patches. A pattern that does not tile meets itself along lines that far apart. Grass cells are counted from
 the level's middle on the CPU in f64, each job carrying its first cell's corner in the world, and hashed by their place

@@ -101,6 +101,7 @@ A shader has any of these three functions, each taking its struct, with the mate
 | `time` | Seconds since the game started |
 | `glass` | Whether the material is **Glass** |
 | `thickness` | For **Glass**, how far the view goes through it to what lies behind, in metres: shallow water at the shore, deep water further out. 1000 for anything else |
+| `levelPosition` | Its place measured from the level's middle, repeating every 4096 m. Read patterns from it, rather than from `position`, and they stay where they are when the [[Floating Origin]] moves the world's middle |
 
 `surface` starts as the material makes it, for you to change:
 
@@ -118,7 +119,7 @@ A shader has any of these three functions, each taking its struct, with the mate
 
 ### The vertex function
 
-`vertex(shader, input)` moves each vertex, for waving flags, bobbing buoys or swaying grass. It returns how far to move the vertex, in metres, in the world. `VertexInput` has the vertex's `position`, `normal` and `uv`, and the `objectPosition` and `time` as above.
+`vertex(shader, input)` moves each vertex, for waving flags, bobbing buoys or swaying grass. It returns how far to move the vertex, in metres, in the world. `VertexInput` has the vertex's `position`, `normal` and `uv`, and the `objectPosition`, `time` and `levelPosition` as above.
 
 ```slang
 [MaxOffset(0.2)]

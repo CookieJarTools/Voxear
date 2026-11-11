@@ -1911,8 +1911,9 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     a motion-matched character walking round a planet's side by its clips, its body upright to it and facing the way
     it goes.
   - ~~**Floating origin:**~~ done, switched on in Project Settings ▸ World (`[floating_origin]`, off by default): once
-    the viewer terrain streams round is past its distance (2048 m) from the world's middle across the ground, the world
-    moves back by whole steps (1024 m) between frames (`origin::due`, `Game::move_origin`). `WorldOrigin` keeps where
+    the viewer terrain streams round is past its distance (2048 m) from the world's middle any way, up and down too, the
+    world moves back by whole steps (1024 m) between frames (`origin::due`, `Game::move_origin`); the sky and fog
+    measure heights from the level's ground (`GpuFrame::origin.w`, `levelHeight`). `WorldOrigin` keeps where
     the middle is from the level's, in whole metres; root Objs move, those not moved since put back exactly from f64
     (`voxear_scene::move_objs`); with them tick smoothing, Jolt in one call (`vx_world_shift`: bodies without waking,
     characters with their contacts; joints held to the world held to a still anchor body), kept places and corners,
@@ -1930,9 +1931,15 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     middle still), endless terrain and blocks carried on with nothing made again and physics on the drawn ground, the
     GPU's frame after a move matching the one before with motion blur on, scripts' fields and events, a prop back
     exactly after 100 km, players far out seeing, predicting and moving Objs 20–50 km out as the server has them, a
-    player whose middle moved seeing and sending script positions from the level's. Manual: Floating Origin. Not done:
-    shader patterns from absolute positions (grass, wind, seasons, puddles), moves up and down (sky and fog heights), a
-    server exact for players far from the level's middle.
+    player whose middle moved seeing and sending script positions from the level's. Patterns read from where things
+    are measured from the level's middle (`GpuFrame::origin`, wrapped every 65 536 m; `levelPosition` wrapping each
+    pattern every 1024, 4096 or 65 536 m): grass cells counted from it (`GpuGrassJob::corner`), wind, seasons,
+    puddles, rivulets, lava and glitter, the ground blend and wet edges, foam, caustics, streams, lava lakes (one shift
+    a Pool), underwater specks, spray, glows, the sun's cookie and its cascades' texels, smoke (from its corner) and
+    mist, the foliage tint baked on the CPU, and custom shaders' new `levelPosition`. Tests: on the GPU, a patterned
+    scene after a 3 km move matching the picture before it, and 131 km out matching it near; cascades' texels kept.
+    Not done: a server exact for players far from the level's middle; GI probe spacings other than powers of two
+    placed again on a move.
 - ~~**Speed of block worlds and Voxel Terrains:**~~ done, measured on a test project with a level of each kind
   (`vox render --level --profile --fly`; the stats overlay and the Profiler count block triangles in view and in
   shadows). Each chunk's mesh for the GI's rays waited on the GPU about seven times; a frame's are now uploaded and

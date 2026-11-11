@@ -297,7 +297,7 @@ if (Random.Chance(0.1f)) { /* ... */ }
 way. Their tests, in `managed/Voxear.Core.Tests`, check Unity's conventions: a positive yaw turns forward to the right,
 and a positive pitch looks down.
 
-### The floating origin *(implemented across the ground, networked too; shader patterns and height planned)*
+### The floating origin *(implemented, networked too; a server exact for far-apart players planned)*
 
 Positions stay f32 everywhere: the C# `Transform` is written in place, Jolt is built single-precision and the GPU
 works in floats. Instead the world's middle follows the camera. `WorldOrigin` (a resource, whole metres as `I64Vec3`)
@@ -330,8 +330,19 @@ top of `Game::tick`, before anything that frame reads positions:
 Ground streamed round the viewer counts its tiles and chunks from its own Obj, which moves with the world, so a move
 changes no window and makes nothing again. Saves (`SceneState` copies, `SavedTransform`) keep roots from the
 level's middle; a level load moves the world back to its own middle first. Edit mode never moves; when play stops
-the Scene camera and kept values come back measured from the level's middle. Moves are on x and z only, as the
-atmosphere and fog measure height from the level's ground.
+the Scene camera and kept values come back measured from the level's middle. Moves are on all three axes; the
+atmosphere and the height fog measure heights from the level's ground (`GpuFrame::origin.w`, `levelHeight`, the fog's
+base taken down by the origin's height in `extract`).
+
+Patterns read from where things are measured from the level's middle, so a move changes no look and far out they
+stay exact. `GpuFrame::origin` carries the origin wrapped every 65 536 m, whole metres and so exact in a float, and
+`levelPosition(frame, world, period)` gives a position from the level's middle wrapped every `period`, a power of two:
+1024 m for hashes of fine cells, as sine hashes lose their quality on large inputs, 4096 m for smooth noise, 65 536 m
+for broad patches. A pattern that does not tile meets itself along lines that far apart. Grass cells are counted from
+the level's middle on the CPU in f64, each job carrying its first cell's corner in the world, and hashed by their place
+in a square of 65 536 cells. Bodies use one shift each (`levelShift` at a Pool's middle) so their patterns have no
+seam across them; smoke reads from its own corner. On the CPU, the foliage tint and the sun's cascade texels are
+anchored the same way, and custom shaders get `levelPosition` in their inputs.
 
 Networked, a server and a host keep the level's middle (their world is every player's) and each client moves its
 own (`net::origin_may_move`). Positions go between them measured from the level's middle: `write_state` adds the

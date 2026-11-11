@@ -42,7 +42,7 @@ A planet a few hundred metres round shows only a small piece of its generator's 
 
 Physics pulls everything with a Rigidbody near a planet towards its middle, as strongly as gravity pulls elsewhere and in place of it: near is within four times its radius of its middle. A ball dropped beside it falls onto its side and comes to rest there.
 
-A planet is made all at once, never without end, so a large one takes a while: one 200 m across takes a few seconds to make and draw, most of it for its caves. With the [[Floating Origin]] switched on, the world's middle moves along with the camera across the ground, but not up or down, so a planet far below or above the level's middle is still drawn and moved less exactly.
+A planet is made all at once, never without end, so a large one takes a while: one 200 m across takes a few seconds to make and draw, most of it for its caves. With the [[Floating Origin]] switched on, the world's middle moves along with the camera, up and down as well as across, so a planet far from the level's middle is drawn and moved as exactly as one at it.
 
 ### Walking round a planet
 

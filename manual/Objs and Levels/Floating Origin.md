@@ -21,10 +21,10 @@ The floating origin is off until a project switches it on, in **Project Settings
 | Setting | What it does |
 | --- | --- |
 | Mode | **Off** keeps the middle where the level puts it. **Endless Worlds** moves it only in levels with ground without end or a planet. **Every Level** moves it in all of them |
-| Distance | How far the camera goes from the middle, across the ground, before it moves: 2048 m |
+| Distance | How far the camera goes from the middle, any way, up and down too, before it moves: 2048 m |
 | Step | How far it moves at a time: 1024 m, a whole number of terrain tiles and block chunks, so ground lines up the same after a move |
 
-Ground without end is an [[Endless Worlds|endless terrain]] or an endless [[Block Worlds|Block World]]; a planet is a [[Voxel Terrain#Planets|Block World made a planet]]. Once the camera is further than the distance from the middle, everything moves back by whole steps, between two frames. The middle moves across the ground only, never up or down. The settings are kept in the project's `voxear.toml`:
+Ground without end is an [[Endless Worlds|endless terrain]] or an endless [[Block Worlds|Block World]]; a planet is a [[Voxel Terrain#Planets|Block World made a planet]]. Once the camera is further than the distance from the middle, everything moves back by whole steps, between two frames. It moves up and down as well as across, so a planet or a level high above or far below the level's middle is as exact as one at it; the sky and the fog still measure heights from the level's ground. The settings are kept in the project's `voxear.toml`:
 
 ```toml
 [floating_origin]
@@ -46,6 +46,14 @@ Everything moves together, so nothing the player sees or hears changes:
 - ground made round the camera, which carries on from where it was without making anything again.
 
 A prop left far behind comes back exactly where it was put, however far the camera goes and returns. Loading a level starts again from its own middle, and Objs that stay through it, such as the player, move with the world.
+
+## Patterns far out
+
+Grass, wind gusts, the seasons' patches, puddles and glitter on the ground, foam, caustics and streams on water, lava's plates, glows' flicker, the sun's cookie and its shadows' texels all take their pattern from where things are measured from the level's middle. They stay where they are when the middle moves, and are as fine 100 km out as at the middle.
+
+Such patterns repeat every 4096 m, or 65 536 m for the broadest, along straight lines across the level. Grass and other patterns made of random cells show no line there; a smooth one, such as the seasons' patches, may show a faint edge.
+
+A [[Custom Shaders|custom shader]] reads its patterns from `levelPosition` in the same way, rather than from `position`.
 
 ## Positions in scripts
 
@@ -102,6 +110,5 @@ The level being edited never moves. While it plays, its middle moves as it would
 
 ## Not done yet
 
-- Grass, wind, the seasons' patches and a few other looks take their pattern from where they are in the world, so they change a little when the middle moves.
-- The middle moves only across the ground, so a camera flying more than a few kilometres up is drawn less exactly.
+- With the GI's **Probe Spacing** other than a whole metre, a half or a quarter of one, or two metres, its probes are placed again when the middle moves, and the light settles again over a moment.
 - A server's physics stays at the level's middle, so players more than about 10 km from it are moved less exactly on the server.

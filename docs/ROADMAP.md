@@ -1297,11 +1297,19 @@ The sea, lakes, rivers and lava, built in. Manual: `manual/Water`.
   one that ploughs through half in it throws up smaller ones as it goes; lava throws up blobs of molten rock.
   `Water.Splash` makes one from C#.
 
-## M6 — Animation
+## M6 — Animation (in progress)
 
-- GPU skinning, blend shapes, state machines, blend trees, layers and root motion.
-- Motion matching: the feature database, then search, then inertialisation, then GPU crowd search.
-- IK.
+- [x] GPU skinning, and an Animator playing clips from any model file whose skeleton names its bones as the model's
+  does, with root motion; a change of clip never pops (inertialisation)
+- [x] motion matching: Motion Sets of states and their clips, the feature database, and a Motion Matcher that
+  searches it for how the character is wanted to move and blends the best matches
+- [x] Actions: clips played once over a state's, on the whole body or a part of it
+- [x] rigs found on any skeleton (arms, hands, fingers, spine, head), and IK that reaches a hand, aims it and turns
+  the spine
+- [x] Bone Attachments, and bones read and posed from scripts after animation
+- [x] the First-Person View: the camera in a body that is seen, with kick, glance and framing
+- [ ] blend shapes, state machines, blend trees and layers
+- [ ] GPU crowd search
 
 ## Gameplay kits: game-ready systems
 
@@ -1310,7 +1318,10 @@ weeks. Each is a component with sensible defaults as the easy way in, and every 
 one: settings to tune in the Inspector, events to hook, and the code itself to read and change, since a kit is
 plain C# in a package (see Packages). They build on input and physics (M4) and, for characters, animation (M6).
 
-- **Gun kit:**
+- **Gun kit (in progress).** Built so far: guns held, aimed, fired, cycled and reloaded in a character's own hands,
+  worked out as it happens from what the gun is; recoil through the First-Person View; guns held by arms clips; a
+  Gun Handling asset and its Inspector; and guns over the network. They are moving out of the engine into a
+  package of their own. Still to come:
   - hitscan and projectile weapons, fire modes (single, burst, automatic), ammo, magazines and reloads
   - procedural recoil: kick and climb from curves, recovery, and camera and weapon sway, so guns feel weighty
     with no animation authored
@@ -1987,10 +1998,14 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
 - Camera Rig presets, the composable rig API, blends and shakes.
 - Timeline.
 
-## M10 — 2D and networking
+## M10 — 2D and networking (in progress)
 
-- Sprites and atlases, tilemaps with rule tiles, 2D lights, and the pixel-perfect camera.
-- Replication, RPCs, prediction and rollback, interpolation, the network simulator, and multi-instance play mode.
+- [ ] Sprites and atlases, tilemaps with rule tiles, 2D lights, and the pixel-perfect camera.
+- [x] The transport (`voxear_net`): encrypted, authenticated connections over UDP, joined with a connect token,
+  with reliable and unreliable channels, and a simulator of bad networks.
+- [x] Networked play as a server, a host or a client, in ticks: Objs shared with every player, RPCs, movement
+  predicted and corrected, lag compensation, and shared authority.
+- [ ] Multi-instance play mode.
 
 ## M11 — Modding and platform services
 

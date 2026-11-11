@@ -18,7 +18,7 @@ has a Rust core, a Vulkan renderer, C# scripting on .NET, and an editor laid out
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/roadmap-dark.svg">
-  <img alt="Voxear's roadmap. Done: the foundation, the rendering core, content, scenes and levels, packages, vegetation and water. In progress: the editor and Voxear UI, input, localization, audio and physics, lighting, materials and particles, and terrain. Planned: animation, gameplay kits, navigation and cameras, 2D and networking, modding and platform services, shipping, and virtualised geometry." src="docs/images/roadmap-light.svg">
+  <img alt="Voxear's roadmap. Done: the foundation, the rendering core, content, scenes and levels, packages, vegetation and water. In progress: the editor and Voxear UI, input, localization, audio and physics, lighting, animation, gameplay kits, materials and particles, terrain, and 2D and networking. Planned: navigation, cameras and Timeline, modding and platform services, shipping, and virtualised geometry." src="docs/images/roadmap-light.svg">
 </picture>
 
 - [Roadmap](docs/ROADMAP.md): each milestone in full, and open questions.

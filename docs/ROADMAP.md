@@ -1405,7 +1405,7 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   - depth collision, ribbons and flipbook baking
   - the particle debugger
 
-## M8 — Terrain
+## M8 — Terrain (in progress)
 
 Heightmap terrain first, then digging, generation, block worlds, and smooth voxels and planets: each its own
 component, sharing generation, surfaces and plants where they fit. Gameplay data (heights, voxels, collision, saves)

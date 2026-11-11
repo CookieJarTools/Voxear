@@ -554,3 +554,79 @@ fn flowing_water_is_drawn_as_high_as_it_stands_lower_the_further_it_runs() {
     assert!(apart(near, sky) > 30, "water near the source at 1.6: {near:?} against the sky's {sky:?}");
     assert!(apart(far_low, sky) > 30, "the far water low down: {far_low:?} against the sky's {sky:?}");
 }
+
+#[test]
+fn a_smooth_world_without_end_runs_to_the_horizon_with_no_gaps_where_its_rings_meet() {
+    use voxear_terrain::{
+        blocks::{
+            BlockMap,
+            edits::BlockEdits,
+            generate::BlockGenerate,
+            stream::{BlockMaking, BlockStreamer},
+        },
+        generate::Preset,
+    };
+    let Some(mut renderer) = renderer() else { return };
+    // Rolling hills without end, in blocks 1 m a side, near chunks out to 64 m and coarser rings to 1500 m.
+    let generate = BlockGenerate { caves: 0.0, ..BlockGenerate::default() };
+    let file = BlockFile { generate: Some(generate.clone()), smooth: true, ..BlockFile::default() };
+    let (looks, faces) = file.faces();
+    let hills = Arc::new(Preset::RollingHills.world());
+    let making = BlockMaking { file, generate, world: hills.clone(), faces: faces.clone().into() };
+    let mut blocks = BlockWorld::made(BlockMap::default(), &faces, 1.0, true);
+    let (mut base, mut pending) = (Arc::new(BlockMap::default()), Arc::new(BlockEdits::default()));
+    let mut streamer = BlockStreamer::default();
+    let start = std::time::Instant::now();
+    loop {
+        streamer.update(&mut blocks, &mut base, &mut pending, making.clone(), (64.0, 1500.0), [0.0, 0.0]);
+        if streamer.settled() {
+            break;
+        }
+        assert!(start.elapsed().as_secs() < 240, "never settled");
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    assert!(!blocks.far.is_empty() && blocks.far.keys().any(|key| key[0] >= 3), "rings out to the third at least");
+    let surfaces: Vec<SurfaceLook> = looks
+        .iter()
+        .map(|look| {
+            let [r, g, b] = look.color;
+            let material =
+                renderer.add_material(&MaterialDesc { base_color: [r, g, b, 1.0], ..MaterialDesc::default() });
+            SurfaceLook {
+                material: material.unwrap(),
+                size: 1.0,
+                sharpness: 0.0,
+                triplanar: true,
+                tracks: 0.0,
+                fills_in: 0.0,
+                liquid: Default::default(),
+                glitter: false,
+            }
+        })
+        .collect();
+    let default = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let mut world = World::new();
+    world.spawn((blocks, BlockLook { material: default, surfaces: Arc::from(surfaces) }, Transform::default()));
+    // From 40 m over the ground at the middle, looking along +x and a little down, the sun low from one side so
+    // any groove or wall across the ground shows.
+    let ground = hills.height_at(0.0, 0.0);
+    let look = Quat::from_rotation_y(-std::f32::consts::FRAC_PI_2) * Quat::from_rotation_x(-0.2);
+    world.spawn((Camera::default(), Transform::new(Vec3::new(0.0, ground + 40.0, 0.0), look, Vec3::ONE)));
+    let towards_sun = Vec3::new(0.3, 0.35, 1.0).normalize();
+    let sun = Quat::from_rotation_arc(Vec3::Z, -towards_sun);
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.3, ..Sky::default() });
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
+    world.insert_resource(PostProcess { anti_aliasing, ..PostProcess::neutral() });
+    let pixels = render(&mut renderer, &world, 6);
+    keep_image("blocks rings.png", &pixels);
+    // Below the horizon, ground everywhere: no sky through a gap between rings.
+    let sky = |[r, g, b]: [i32; 3]| b > r + 15 && b > g + 5;
+    let mut gaps = 0;
+    for y in HEIGHT * 3 / 4..HEIGHT {
+        for x in 0..WIDTH {
+            gaps += u32::from(sky(rgb_at(&pixels, x, y)));
+        }
+    }
+    assert_eq!(gaps, 0, "pixels of sky through the ground");
+}

@@ -254,4 +254,4 @@ Round a planet (see [[Voxel Terrain#Planets|Planets]]) the same graph makes the 
 - Noise, Cells and Warp are read in three dimensions.
 - A Falloff's middle is the point of the planet's upper half over its X and Z: the north pole, with both at 0.
 - Slope Mask, Curvature and Smooth read the ground round each place along the planet's surface.
-- Gullies leave the ground as it is: they need flat ground to run down.
+- Gullies run down the slopes the ground has along the planet's surface, all round it.

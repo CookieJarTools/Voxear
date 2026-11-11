@@ -2927,8 +2927,9 @@ Only sums, products, divisions, square roots and `floor`, so the same seed makes
 The node library beside the Landmass: sources (Noise, Cells, Falloff, Constant), shape (Curve, Terrace, Clamp, Math,
 Blend, Warp, Smooth), masks (height, slope, curvature, climate) and Gullies. A node that needs the ground round a
 place (`nodes/around.rs`) makes rows of places a step off and asks for its input at them: along x and z on flat
-ground; round a planet along two tangents of its surface, found with a cross product and a square root, where
-gullies pass their input through as a landmass's do. A mask's angles are kept as rise over run
+ground; round a planet along two tangents of its surface, found with a cross product and a square root. Gullies
+round a planet keep the slope as a direction in space and lay their stripes round points scattered through space
+(`Gullied::cut_round`), so nothing shows where the tangents turn over. A mask's angles are kept as rise over run
 (`ValueKind::Angle`, which a row shows in degrees) and a feathered edge is the tangent of a sum or a difference of
 angles, worked out from the two tangents, so slopes need no trigonometry either. The Gullies node and the Landmass
 share one piece of maths (`landmass::Gullied`); the node's octaves follow a slope eased to nothing on the floors of

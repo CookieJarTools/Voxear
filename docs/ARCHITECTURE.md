@@ -2814,14 +2814,32 @@ Everything lava does is a function of place and time, with nothing kept between 
 no simulation to run, and nothing to save. `shaders/lava.slang` holds what Pools, Streams and terrain surfaces of lava
 share (Planck's light, the plates, the skin, the bubbles); `lavaFragment` in `shaders/water.slang` is the surface.
 
-- **In the surface's shader:** the crust and what shows between it. A plate's edge is the exact distance to the line
-  between two cell points, which is a straight line, so how far a view going down into the gap beside it gets before
-  it meets the far plate's side or the molten rock is worked out from one lookup of the plates, a few steps along a
-  line, with no height map to march. That gives crust that stands above the molten rock, hides it from a low view and
-  shows its lit side, at the cost of a loop of arithmetic. The same lookup says where the molten rock is, so its skin
-  (a finer scatter of cells) is worked out only there and the crust's lumps only on the crust. The view is followed
-  only as far as the gap runs straight, to where the next nearest gap joins it, and the crust's edge is softened to
-  a pixel; the crust's drift is given as motion, so the edges settle from frame to frame.
+- **In the surface's shader:** the crust and what shows between it. The plates are found once a pixel: the plate the
+  pixel is on and the six round it (`lavaCrust`), their middles scattered on a lattice of three ways, so their edges
+  meet three at a corner. From those seven middles the distance to the nearest edge anywhere near the pixel is plain
+  arithmetic, with no further lookup, so a view going down into a gap is followed across the plates as they are
+  (`lavaInto`): over the gap as far at a time as stays clear of its sides, then in short steps, then halved onto a
+  plate's side. A gap is the same gap from whichever side it is seen, round a corner and where three gaps join; an
+  earlier version followed only the nearest edge, which left flat patches at joins and gaps that ended at a line.
+  The edges wander by three waves (`lavaWander`) worked out again at every step, so the view follows them too. Only
+  the two broad bends of the plates are taken as straight along the view, from their slopes (`lavaNoiseSloped`), and
+  a gap's width as what it is at the pixel, which is why width changes slowly from place to place. That gives crust
+  that stands above the molten rock, hides it from a low view and shows its lit side, at the cost of a loop of
+  arithmetic for the pixels in or beside a gap and nothing for those on a plate's top. The same lookup says where
+  the molten rock is, so its skin (a finer scatter of cells) is worked out only there and the crust's ropes and lumps
+  only on the crust. The crust's edge is softened to a pixel, and its drift is given as motion, so the edges settle
+  from frame to frame.
+- **Its cells' numbers:** hashed in whole numbers (`lavaCell`). A cell's numbers taken from a sine go by the last
+  bits of the sum under the sine, and a GPU's compiler reckons that sum differently from one use to the next, so the
+  corner two cells share got different numbers in each: the noise was broken along its lattice, which showed as
+  plates cut off at straight lines and molten rock ending at a hard edge. Whole numbers come out the same wherever
+  they are worked out, in the fragment shader and in the vertex shaders that place a bubble's dome and its spatter
+  alike.
+- **Its colour:** temperature through Planck's law, and the tonemapper does the rest, so what matters is how far
+  apart the temperatures are. Red at 1300 K is some six times dimmer than at 1440 K and four times brighter than at
+  1200 K. The skin is set near 1250 K, the rock in its torn seams between 1330 and 1400 K, the rock against the
+  crust 175 K under that, so the bulk lands where the tonemapper keeps it saturated and only the seams, a burst and
+  what it throws reach the pale end of its curve.
 - **As geometry:** what has an outline, and what is broad. Molten rock heaves in swells a couple of metres across
   (`lavaHeave`), which the surface's points can follow: they are raised by it and the fragment adds the same
   height to what it shades. A Stream's strip is fine enough (16 quads across, four rows a point) for lava
@@ -2832,7 +2850,8 @@ share (Planck's light, the plates, the skin, the bubbles); `lavaFragment` in `sh
   shaded.
 - **As particles:** what leaves the surface. The blobs a bursting bubble throws up are quads placed in the vertex
   shader along the arc each flies (`lavaSpatterVertex`), drawn in the water's pass with depth, so rock hides them and
-  they hide the lava behind. They are not Particle Systems, which are Objs: the bubbles are found where they are
+  they hide the lava behind. Up to 144 a bubble, most of them a fine spray drawn out into streaks, some drops, a few
+  clots; never drawn smaller than about a pixel, so a burst far off still shows. They are not Particle Systems, which are Objs: the bubbles are found where they are
   drawn, and the CPU never knows of them.
 
 Bubbles rise one at a time in each square of a grid laid over the lava's plates, so they ride with a flow; a bubble

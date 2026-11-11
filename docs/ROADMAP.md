@@ -1249,16 +1249,21 @@ The sea, lakes, rivers and lava, built in. Manual: `manual/Water`.
   all found in the picture's depth behind the water, a few places straight upstream, out along each arm of the V,
   and just downstream (`streamWake`). Tests: rapids white and the level stretch not, calm smooth against fast rough, white
   water below a rock in fast water and none in calm, spray gathered only for rapids.
-- **Lava:** Pools and Streams of lava glow by Planck's law, yellow-white where it wells up to dull red. A skin sets
-  on molten rock in small cells with bright seams; crust forms in plates, each from its middle out, that stand above
-  the molten rock between them, seen down into past the near plate's edge (`lavaParallax`, worked out from the plates
-  themselves); gaps narrow to cracks as it cools, sooner in some stretches than others, and crust breaks up in
-  places into smaller pieces with dull red cracks between. Molten rock heaves in slow swells (`lavaHeave`, the
-  surface's points and its shading alike) and its skin folds against the crust. A flow stands as high as it is deep with
-  rounded sides and ends, crusts from its banks in on a molten channel, its plates placed by when the lava set out,
-  with pahoehoe ropes bowed at the banks. A lake turns over in wandering patches. Bubbles swell into domes, break
-  the crust, burst and leave a ring that heals, throwing up blobs of molten rock that cool as they fly; vents spit
-  one burst after another. All of it is worked out from place and time, alike on every machine. Lava lights what is
+- **Lava:** Pools and Streams of lava glow by Planck's law: yellow-white only where it has just welled up, orange
+  across a lead, deep red against the crust. A skin sets on molten rock in small cells with bright seams; crust forms
+  in plates, each from its middle out, on a lattice of three ways so they meet three at a corner, their edges
+  wandering. The plates stand above the molten rock between them, which is seen down into past the near plate's
+  edge (`lavaInto`, followed across the plates as they are, round corners and where gaps join); gaps narrow as it
+  cools to leads in some stretches and cracks in most, and crust breaks up in places into smaller pieces with dull
+  red cracks between. Crust is thick and ropey: folded round each plate's rim, the rim proud, each plate leaning its
+  own way. Molten rock heaves in slow swells (`lavaHeave`, the surface's points and its shading alike) and its skin
+  folds against the crust. A flow stands as high as it is deep with rounded sides and ends, crusts from its banks in
+  on a molten channel, its plates placed by when the lava set out, with pahoehoe ropes bowed at the banks. A lake
+  turns over in wandering patches a few metres across. Bubbles swell into domes, break the crust, burst and leave a
+  ring that heals; a burst is a small explosion, up to 144 drops and clots in a spread of sizes that cool as they
+  fly; vents spit one burst after another. All of it is worked out from place and time, alike on every machine: its
+  cells' numbers are hashed in whole numbers (`lavaCell`), since numbers taken from a sine differ from one use to the
+  next and left the noise broken along its lattice. Lava lights what is
   round it with rectangle lights the renderer adds, without shadows. Crusted at once under the sea. Tests: molten
   channel and crusted banks, plates against cracks, bubbles and spatter over time and none on a crusted lake, a
   wall lit by a lake.

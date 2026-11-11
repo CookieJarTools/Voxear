@@ -2011,7 +2011,8 @@ impl View {
             blocks::gather(&setup.blocks, &extracted.frame, &extracted.entities, extracted.has_sun, &buffers.blocks);
         self.block_counts = view_blocks.as_ref().map(blocks::ViewBlocks::counts).unwrap_or_default();
         // The grass this view scatters round its camera on the terrains.
-        let view_grass = grass::gather(&setup.terrains, &extracted.frame, &buffers.grass).map(|(jobs, dispatches)| {
+        let gathered = grass::gather(&setup.terrains, &extracted.frame, extracted.origin, &buffers.grass);
+        let view_grass = gathered.map(|(jobs, dispatches)| {
             grass::ViewGrass {
                 jobs: dispatches,
                 draws: jobs.iter().map(|job| job.lod_count).sum(),

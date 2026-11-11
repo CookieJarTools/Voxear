@@ -11,7 +11,7 @@
 //! light, a little wider than its cone or its face, so the filter that
 //! softens the shadow's edge stays inside the view at its rim.
 
-use voxear_core::math::{Mat4, Quat, Vec3, camera::lh::proj::vulkan, camera::lh::view::look_to_mat4};
+use voxear_core::math::{I64Vec3, Mat4, Quat, Vec3, camera::lh::proj::vulkan, camera::lh::view::look_to_mat4};
 
 pub const CASCADES: usize = 4;
 /// Pixels per cascade side; the atlas holds the four cascades in a 2×2 grid.
@@ -43,6 +43,11 @@ pub struct View {
     pub fov_y: f32,
     pub aspect: f32,
     pub near: f32,
+    /// Where the world's middle is from the level's (see
+    /// `voxear_scene::WorldOrigin`): the sun's cascades snap to texels
+    /// measured from the level's middle, repeating every `ORIGIN_WRAP`
+    /// metres, so the world's middle moving shifts no shadow's edge.
+    pub origin: I64Vec3,
 }
 
 /// The way each face of a light's cube looks, and which way is up in it.
@@ -121,9 +126,14 @@ pub fn cascades(view: &View, light_direction: Vec3, distance: f32, split: f32) -
         let radius = (radius * 16.0).ceil() / 16.0;
         let texel = radius * 2.0 / CASCADE_RESOLUTION as f32;
 
+        // On texels counted from the level's middle, in f64, as the world's middle may be far from it; repeating
+        // every `ORIGIN_WRAP` metres, as the shaders' patterns do.
+        let wrapped = view.origin.as_dvec3().to_array().map(|metres| metres.rem_euclid(crate::gpu::ORIGIN_WRAP));
+        let level = rotation_only.as_dmat4().transform_vector3(voxear_core::math::DVec3::from_array(wrapped));
         let mut snapped = rotation_only.transform_point3(center);
-        snapped.x = (snapped.x / texel).floor() * texel;
-        snapped.y = (snapped.y / texel).floor() * texel;
+        let snap = |v: f32, by: f64| (((f64::from(v) + by) / f64::from(texel)).floor() * f64::from(texel) - by) as f32;
+        snapped.x = snap(snapped.x, level.x);
+        snapped.y = snap(snapped.y, level.y);
         center = rotation_only.inverse().transform_point3(snapped);
 
         let eye = center - direction * radius;
@@ -175,6 +185,7 @@ mod tests {
             fov_y: 1.0,
             aspect: 16.0 / 9.0,
             near: 0.1,
+            origin: I64Vec3::ZERO,
         }
     }
 
@@ -255,5 +266,21 @@ mod tests {
         a.rotation = Quat::from_rotation_y(0.0001);
         let second = cascades(&a, Vec3::new(0.3, -1.0, 0.4), SHADOW_DISTANCE, SHADOW_SPLIT);
         assert_eq!(first[0].texel, second[0].texel);
+    }
+
+    #[test]
+    fn cascades_keep_their_texels_where_they_were_as_the_worlds_middle_moves() {
+        let sun = Vec3::new(0.3, -1.0, 0.4);
+        let near = cascades(&view(), sun, SHADOW_DISTANCE, SHADOW_SPLIT);
+        // The world moved 3 km back along x: the camera with it, the middle 3 km out.
+        let by = Vec3::new(-3072.0, 0.0, 0.0);
+        let moved = View { position: view().position + by, origin: I64Vec3::new(3072, 0, 0), ..view() };
+        let far = cascades(&moved, sun, SHADOW_DISTANCE, SHADOW_SPLIT);
+        for (near, far) in near.iter().zip(&far) {
+            let (point, moved_point) = (Vec3::new(1.3, 0.2, 4.1), Vec3::new(1.3, 0.2, 4.1) + by);
+            let (a, b) = (near.view_proj.project_point3(point), far.view_proj.project_point3(moved_point));
+            // A texel is 2/2048 across: a fifth of one is float rounding, not a texel's snap.
+            assert!(a.distance(b) < 2e-4, "the same point on the same texel: {a} and {b}");
+        }
     }
 }

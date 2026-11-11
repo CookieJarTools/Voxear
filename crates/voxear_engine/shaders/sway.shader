@@ -20,7 +20,9 @@ float3 vertex(Sway sway, VertexInput input)
     float3 tip = sway.reach / reach;
     // Still at the foot, swaying most at the far end.
     float far = saturate(dot(along, tip) / reach);
-    float own = frac(sin(dot(input.objectPosition, float3(12.9898, 78.233, 37.719))) * 43758.5453) * 2.0 * PI;
+    // Each Obj its own phase, by where it stands from the level's middle.
+    float3 placed = input.levelPosition - along;
+    float own = frac(sin(dot(placed, float3(12.9898, 78.233, 37.719))) * 43758.5453) * 2.0 * PI;
     float phase = 2.0 * PI * (sway.speed * input.time - dot(along, tip) / sway.rippleLength) + own;
     float3 way = normalize(sway.direction + float3(1e-5, 0.0, 0.0));
     float3 across = cross(way, tip);

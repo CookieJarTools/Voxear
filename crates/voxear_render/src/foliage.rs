@@ -28,7 +28,7 @@
 use std::{collections::HashMap, ops::Range, sync::Arc};
 
 use serde::{Deserialize, Serialize};
-use voxear_core::math::{Mat3, Mat4, Vec3, Vec4};
+use voxear_core::math::{I64Vec3, Mat3, Mat4, Vec3, Vec4};
 use voxear_ecs::{Component, Entity, World};
 use voxear_rhi::vk;
 pub use voxear_scene::plants::{Plant, PlantSet, Plants, scatter};
@@ -133,14 +133,19 @@ impl Foliage {
         (self.mesh, self.material, [g, h, i, a, b, c, d, e, f, self.color_spread.to_bits()])
     }
 
-    /// A plant's tint standing at `at` in the world, packed as the GPU
-    /// reads it (RGBA8 in an instance's `fade.z`), or 0 for none.
-    fn tint(&self, at: Vec3) -> u32 {
+    /// A plant's tint standing at `at` in a world whose middle is `origin`
+    /// from the level's, packed as the GPU reads it (RGBA8 in an instance's
+    /// `fade.z`), or 0 for none. Its patches are read from the level's middle,
+    /// as the shaders' are (`levelPosition`), so they stay where they are as
+    /// the world's middle moves.
+    fn tint(&self, at: Vec3, origin: I64Vec3) -> u32 {
         if self.healthy_color == [1.0; 3] && self.dry_color == [1.0; 3] {
             return 0;
         }
         let spread = self.color_spread.max(0.1);
-        let dry = smooth_noise(at.x / spread, at.z / spread);
+        let level = (at.as_dvec3() + origin.as_dvec3()).to_array();
+        let level = level.map(|metres| metres.rem_euclid(crate::gpu::ORIGIN_WRAP) as f32);
+        let dry = smooth_noise(level[0] / spread, level[2] / spread);
         let linear = |c: f32| if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) };
         let [r, g, b] = std::array::from_fn(|i| {
             let mixed = linear(self.healthy_color[i]) * (1.0 - dry) + linear(self.dry_color[i]) * dry;
@@ -229,6 +234,7 @@ impl FoliageCache {
         sphere: &dyn Fn(MeshHandle) -> Option<(Vec3, f32)>,
         impostors: &crate::impostors::ImpostorTable,
     ) {
+        let origin = voxear_scene::WorldOrigin::of(world).0;
         let mut seen = Vec::new();
         let found = world
             .query_ref::<(Entity, &Foliage, &Plants, &Transform, Option<&WorldTransform>)>()
@@ -258,7 +264,8 @@ impl FoliageCache {
                     || built.impostor_from != impostor_from.unwrap_or(f32::MAX)
             });
             if stale {
-                let made = build(foliage, &plants.plants, model, look, bounds, impostor, impostor_from.unwrap_or(f32::MAX));
+                let from = impostor_from.unwrap_or(f32::MAX);
+                let made = build(foliage, &plants.plants, model, look, bounds, impostor, from, origin);
                 self.built.insert(entity, made);
             }
             let built = &self.built[&entity];
@@ -304,13 +311,14 @@ fn build(
     bounds: (Vec3, f32),
     impostor: Option<(crate::Impostor, MeshHandle)>,
     impostor_from: f32,
+    origin: I64Vec3,
 ) -> Built {
     let (mesh_centre, mesh_radius) = bounds;
     let fade = [(foliage.draw_distance - foliage.fade_distance).max(0.0), foliage.draw_distance.max(0.0), 0.0, 0.0];
     let instance = |plant: &Plant| {
         let placed = plant.matrix(model);
         let normal = Mat3::from_mat4(placed).inverse().transpose();
-        let tint = f32::from_bits(foliage.tint(placed.w_axis.truncate()));
+        let tint = f32::from_bits(foliage.tint(placed.w_axis.truncate(), origin));
         let [near, far, ..] = fade;
         GpuInstance {
             model: placed.to_cols_array_2d(),

@@ -435,7 +435,12 @@ impl Water {
         caustic_desc.mip_levels = CAUSTIC_MIPS;
         let caustics = fg.create_image(gpu, bindless, "ocean caustics", caustic_desc)?;
         let caustic_texel = CAUSTIC_SPAN / CAUSTIC_TEXELS as f32;
-        let caustic_origin = [camera.x, camera.z].map(|v| (v / caustic_texel).floor() * caustic_texel - CAUSTIC_SPAN * 0.5);
+        // On texels counted from the level's middle, in f64, so the world's middle moving shifts none of them.
+        let texel = f64::from(caustic_texel);
+        let caustic_origin = [(camera.x, origin.x), (camera.z, origin.z)].map(|(v, from)| {
+            let level = f64::from(v) + from as f64;
+            ((level / texel).floor() * texel - from as f64) as f32 - CAUSTIC_SPAN * 0.5
+        });
         let texture = |id: ImageId| fg.texture(id).0;
         let frame = GpuOcean {
             sizes: CASCADE_SIZES,

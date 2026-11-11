@@ -28,7 +28,8 @@ float glowAmount(Frame* frame, Material material, float3 origin)
     {
         return 1.0;
     }
-    float phase = glowHash(floor(origin * 7.0));
+    // Each thing its own phase, by where it stands from the level's middle, kept as the world's middle moves.
+    float phase = glowHash(floor(levelPosition(frame, origin, 1024.0) * 7.0));
     float t = frame->time * material.glowSpeed + phase;
     float wave = 0.5 + 0.5 * sin(t * 2.0 * PI);
     switch (motion)

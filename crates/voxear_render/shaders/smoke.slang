@@ -141,14 +141,16 @@ float smokeDensity(Smoke smoke, float3 world, bool swirls)
     float gone = smoke.dispersed;
     if (swirls)
     {
-        float3 w = world * 1.1 + smoke.seed * 0.37 + float3(0.0, -smoke.age * 0.2, 0.0);
+        // Its swirls are its own, read from its corner, so they stay with it as the world's middle moves.
+        float3 own = world - smoke.origin;
+        float3 w = own * 1.1 + smoke.seed * 0.37 + float3(0.0, -smoke.age * 0.2, 0.0);
         float3 warp = smokeNoise(w).rgb - 0.5;
         // Far enough, near a cell, that the cloud's edge follows no row of them, but not so far the puffs smear.
         world += warp * smoke.cell * 2.0 - float3(0.0, 1.5 * gone * gone, 0.0);
         if (gone > 0.0)
         {
             // Drifting apart in broad, slow swirls, a metre or two across.
-            float3 broad = world * 0.3 + smoke.seed * 0.11 + float3(smoke.age * 0.05, 0.0, 0.0);
+            float3 broad = own * 0.3 + smoke.seed * 0.11 + float3(smoke.age * 0.05, 0.0, 0.0);
             float3 apart = smokeNoise(broad + 7.7).rgb - 0.5;
             world += apart * 2.5 * gone;
         }
@@ -174,7 +176,7 @@ float smokeDensity(Smoke smoke, float3 world, bool swirls)
         return filled * smoke.density * (1.0 - gone) * smokeLeft(smoke, world, 0.0);
     }
     // Rolling slowly upward and over, as a fresh cloud churns.
-    float3 q = world * 0.45 + smoke.seed + float3(0.0, -smoke.age * 0.12, 0.0);
+    float3 q = (world - smoke.origin) * 0.45 + smoke.seed + float3(0.0, -smoke.age * 0.12, 0.0);
     float n = smokeBody(q);
     // The holes' edges ragged by the same swirls.
     // Eaten into between its puffs at its edge, so its outline is round billows; thick through and through, a
@@ -214,12 +216,14 @@ static const float MIST_RISE = 0.4;
 // of its line, as wide as that piece has widened and as thick as it has
 // yet to thin; with `swirls`, eaten into by drifting noise as smoke is,
 // more as it ages, so it breaks into wisps.
-float mistDensity(Mist mist, float3 world, float time, bool swirls)
+float mistDensity(Frame* frame, Mist mist, float3 world, float time, bool swirls)
 {
+    // Its swirls are read from the level's middle, so they stay where they are as the world's middle moves.
+    float3 level = levelPosition(frame, world, 1024.0);
     if (swirls)
     {
         // Swirls as fine as the trail is narrow.
-        float3 w = world * (1.6 / mist.width) + mist.seed * 0.37 + float3(0.0, -time * 0.6, 0.0);
+        float3 w = level * (1.6 / mist.width) + mist.seed * 0.37 + float3(0.0, -time * 0.6, 0.0);
         float3 warp = smokeNoise(w).rgb - 0.5;
         world += warp * mist.width * 1.5;
     }
@@ -249,7 +253,7 @@ float mistDensity(Mist mist, float3 world, float time, bool swirls)
     {
         return shape * mist.density;
     }
-    float3 q = world * (2.2 / mist.width) + mist.seed + float3(0.0, -time * 0.9, 0.0);
+    float3 q = level * (2.2 / mist.width) + mist.seed + float3(0.0, -time * 0.9, 0.0);
     float n = smokeBody(q);
     // Eaten into from its edge most, and more as it ages, so it frays into wisps.
     // Whole where it was left last, round whatever is in it, and fraying fast as it ages.
@@ -267,7 +271,7 @@ float mistsAt(Frame* frame, uint count, float3 world, bool swirls)
         Mist mist = buffers()->mists[i];
         if (all(world >= mist.low) && all(world <= mist.high))
         {
-            total += mistDensity(mist, world, frame->time, swirls);
+            total += mistDensity(frame, mist, world, frame->time, swirls);
         }
     }
     return total;

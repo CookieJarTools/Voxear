@@ -39,7 +39,8 @@ void shadowMesh(
         world.xyz += windOffset(push.frame, material, data.model.c3.xyz, height, world.xyz, normal, v.wind, push.frame->time);
         if (material.shader != STANDARD_SHADER)
         {
-            VertexInput moved = { world.xyz, normal, v.uv, data.model.c3.xyz, push.frame->time };
+            float3 level = levelPosition(push.frame, world.xyz, 4096.0);
+            VertexInput moved = { world.xyz, normal, v.uv, data.model.c3.xyz, push.frame->time, level };
             world.xyz += customVertex(drawn.data.material, moved);
         }
         vertices[i].position = transform(shadowViewProj(push.frame, push.list, push.level), world);

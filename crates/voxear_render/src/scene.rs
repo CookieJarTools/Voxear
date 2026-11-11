@@ -483,6 +483,9 @@ pub fn extract(
 
     let mut gpu_post = post.to_gpu(sky.horizon);
     gpu_post.ao_unproject = [1.0 / projection.x_axis.x, 1.0 / projection.y_axis.y];
+    // The fog's base is measured from the level's ground, wherever the world's middle has moved to.
+    let origin = voxear_scene::WorldOrigin::of(world).0;
+    gpu_post.fog_base_height = (f64::from(gpu_post.fog_base_height) - origin.y as f64) as f32;
     gpu_post.lut_texture = post.grading.lut.map_or(NO_TEXTURE, |lut| lut.0);
     let mut frame = GpuFrame {
         view_proj: cols(view_proj),
@@ -529,6 +532,7 @@ pub fn extract(
             aerial_perspective: NO_TEXTURE,
             ..GpuLighting::default()
         },
+        origin: crate::gpu::frame_origin(origin),
         ..Default::default()
     };
 
@@ -638,7 +642,7 @@ pub fn extract(
     }
 
     if sun_found {
-        let view = shadows::View { position, rotation, fov_y: fov, aspect, near: camera.near };
+        let view = shadows::View { position, rotation, fov_y: fov, aspect, near: camera.near, origin };
         let (distance, split) = sun_look.map_or((shadows::SHADOW_DISTANCE, shadows::SHADOW_SPLIT), |look| {
             (look.shadow_distance, look.shadow_split)
         });

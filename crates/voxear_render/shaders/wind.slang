@@ -94,9 +94,11 @@ float3 surgeOffset(Frame* frame, float3 origin, float height, float below, bool 
 {
     float3 along = float3(cos(frame->ocean.wind), 0.0, sin(frame->ocean.wind));
     float3 across = float3(-along.z, 0.0, along.x);
-    // The swell passing over: each plant a little out of step with the next, as the wave reaches it.
-    float phase = dot(origin.xz, along.xz) * 0.12 + windHash(floor(origin.xz * 3.0)) * 0.8;
-    float period = sea ? 5.0 + windHash(floor(origin.xz * 0.5)) : 4.0;
+    // The swell passing over: each plant a little out of step with the next, as the wave reaches it. Where the plant
+    // stands is read from the level's middle, so it keeps its step as the world's middle moves.
+    float2 place = levelPosition(frame, origin, 4096.0).xz;
+    float phase = dot(place, along.xz) * 0.12 + windHash(floor(place * 3.0)) * 0.8;
+    float period = sea ? 5.0 + windHash(floor(place * 0.5)) : 4.0;
     float beat = time * 6.2831853 / period - phase - up * 1.2;
     float strength = sea ? (0.12 + 0.25 * saturate(frame->ocean.waveHeight * frame->ocean.waveScale / 3.0)) * exp(-below / 8.0) : 0.06;
     float to = sin(beat) * 0.8 + sin(beat * 2.3 + 1.3) * 0.2;
@@ -162,12 +164,14 @@ float3 windOffset(Frame* frame, Material material, float3 origin, float height, 
     }
     float3 along = float3(wind.direction.x, 0.0, wind.direction.y);
     float3 across = float3(-wind.direction.y, 0.0, wind.direction.x);
-    // The gust over the plant: noise drifting downwind, so it sweeps across the level.
-    float2 drift = origin.xz / wind.gustSize - wind.direction * (time * wind.gustSpeed / wind.gustSize);
+    // The gust over the plant: noise drifting downwind, so it sweeps across the level. Where the plant stands is
+    // read from the level's middle, so gusts and sways stay where they are as the world's middle moves.
+    float2 place = levelPosition(frame, origin, 4096.0).xz;
+    float2 drift = place / wind.gustSize - wind.direction * (time * wind.gustSpeed / wind.gustSize);
     float gust = windNoise(drift) * 0.7 + windNoise(drift * 2.3 + 17.0) * 0.3;
     float push = wind.strength * (1.0 + wind.gusts * (gust * 2.0 - 0.6));
     // Each plant sways at its own phase, so they never move in step.
-    float phase = windHash(floor(origin.xz * 4.0)) * 6.2831;
+    float phase = windHash(floor(place * 4.0)) * 6.2831;
     float sway = sin(time * 1.6 + phase) * 0.6 + sin(time * 2.7 + phase * 1.7) * 0.4;
     float rock = sin(time * 2.1 + phase * 2.3);
 
@@ -186,7 +190,7 @@ float3 windOffset(Frame* frame, Material material, float3 origin, float height, 
     offset += (along * (0.6 + 0.4 * swing) + float3(0.0, 0.5 * swing, 0.0)) * reach;
 
     // Leaves flutter along their faces, quickly and a little, more out at the tips.
-    float flicker = dot(world, float3(3.1, 2.3, 4.7)) + own;
+    float flicker = dot(levelPosition(frame, world, 1024.0), float3(3.1, 2.3, 4.7)) + own;
     float flutter = sin(time * 13.0 + flicker) * 0.6 + sin(time * 21.0 + flicker * 1.7) * 0.4;
     offset += normal * flutter * flutters * material.windFlutter * WIND_FLUTTER * max(push, 0.0) * (0.3 + 0.7 * up);
     return offset;

@@ -77,10 +77,12 @@ VertexOut forwardVertex(uint instanceIndex, uint lod, uint fade, uint cluster, u
     float3 moved = 0.0;
     if (material.shader != STANDARD_SHADER)
     {
-        VertexInput now = { world.xyz, normal, v.uv, instance.model.c3.xyz, frame->time };
+        float3 level = levelPosition(frame, world.xyz, 4096.0);
+        VertexInput now = { world.xyz, normal, v.uv, instance.model.c3.xyz, frame->time, level };
         moved = customVertex(instance.material, now);
         world.xyz += moved;
-        VertexInput before = { previous.xyz, normal, v.uv, instance.prevModel.c3.xyz, earlier };
+        float3 levelBefore = levelPosition(frame, previous.xyz, 4096.0);
+        VertexInput before = { previous.xyz, normal, v.uv, instance.prevModel.c3.xyz, earlier, levelBefore };
         previous.xyz += customVertex(instance.material, before);
     }
 
@@ -800,11 +802,13 @@ void waterWetSurface(Frame* frame, float3 world, float3 normal, inout float3 alb
     {
         return;
     }
-    // Along a wall the noise runs round it; over the ground, across it.
-    float2 along = abs(normal.y) < 0.7 ? float2(world.x + world.z, world.y * 0.3) : world.xz;
+    // Along a wall the noise runs round it; over the ground, across it. Read from the level's middle, so the wet
+    // line stays where it is as the world's middle moves.
+    float3 level = levelPosition(frame, world, 4096.0);
+    float2 along = abs(normal.y) < 0.7 ? float2(level.x + level.z, level.y * 0.3) : level.xz;
     float uneven = 0.7 + 0.5 * wetNoise(along * 2.0) + 0.15 * wetNoise(along * 7.0);
     // A drip down a few narrow columns of a wall, each its own length.
-    float across = (world.x + world.z) * 18.0;
+    float across = (level.x + level.z) * 18.0;
     float column = frac(sin(floor(across) * 12.9898) * 43758.5453);
     float drips = abs(normal.y) < 0.5 && column > 0.82 ? (column - 0.82) * 4.0 * pow(sin(frac(across) * PI), 4.0) : 0.0;
     float top = reach * (uneven + drips);
@@ -844,7 +848,7 @@ bool groundUnder(float3 world, float3 dx, float3 dy, out float height, out Terra
         float slopeZ = terrainHeight(terrain, local + float2(0.0, w)) - terrainHeight(terrain, local - float2(0.0, w));
         float3 ground = normalize(float3(-slopeX, 2.0 * w, -slopeZ));
         TerrainSpot spot;
-        spot.place = float3(local.x, height, local.y);
+        spot.place = float3(local.x, height - terrain.corner.y, local.y);
         spot.dx = dx;
         spot.dy = dy;
         float4 tangent = float4(1.0, 0.0, 0.0, 1.0);
@@ -892,7 +896,7 @@ bool groundUnder(float3 world, float3 dx, float3 dy, out float height, out Terra
 // ground up as many metres as the blend says, its edge wandering, it takes the ground's own look there, as earth and
 // snow creep up a rock's foot, more on what faces up. All ground where it meets it, facing as the ground faces, so
 // no seam shows.
-void groundBlend(Material material, float3 world, inout float4 base, inout float metallic, inout float roughness, inout float3 normal)
+void groundBlend(Frame* frame, Material material, float3 world, inout float4 base, inout float metallic, inout float roughness, inout float3 normal)
 {
     if (material.groundBlend <= 0.0)
     {
@@ -908,7 +912,8 @@ void groundBlend(Material material, float3 world, inout float4 base, inout float
         return;
     }
     // Further up what faces up, and all ground where it meets it, whichever way it faces.
-    float reach = material.groundBlend * (0.6 + 0.8 * wetNoise(world.xz * 1.7 + world.y * 0.5));
+    float3 level = levelPosition(frame, world, 4096.0);
+    float reach = material.groundBlend * (0.6 + 0.8 * wetNoise(level.xz * 1.7 + level.y * 0.5));
     reach *= lerp(0.6, 1.4, saturate(normal.y * 0.5 + 0.5));
     float covered = 1.0 - smoothstep(0.0, reach, world.y - height);
     if (covered <= 0.001)
@@ -988,7 +993,8 @@ float3 underwaterSunUnder(Frame* frame, float3 world, WaterOver over, out float3
 SurfaceOutput customSurfaceAt(Frame* frame, VertexOut input, SurfaceOutput surface, float3 origin, float thickness, bool glass)
 {
     float3 view = normalize(frame->cameraPosition - input.worldPosition);
-    SurfaceInput at = { input.uv, input.worldPosition, normalize(input.normal), view, origin, frame->time, thickness, glass };
+    float3 level = levelPosition(frame, input.worldPosition, 4096.0);
+    SurfaceInput at = { input.uv, input.worldPosition, normalize(input.normal), view, origin, frame->time, thickness, glass, level };
     customSurface(input.material, at, surface);
     surface.normal = normalizeOr(surface.normal, at.normal);
     surface.metallic = saturate(surface.metallic);
@@ -1055,7 +1061,7 @@ FragmentOut fragmentMain(VertexOut input)
     emission += terrainLight;
 #endif
     // A model's foot blended into the ground under it.
-    groundBlend(material, input.worldPosition, base, metallic, roughness, normal);
+    groundBlend(frame, material, input.worldPosition, base, metallic, roughness, normal);
     SurfaceOutput surface = materialSurface(base.rgb, base.a, normal, metallic, roughness, emission);
     if (custom)
     {

@@ -36,7 +36,7 @@ PreviewOut previewVertex(uint vertexId : SV_VertexID)
     // A custom shader moves its vertices in its preview as anywhere, at the preview's own time.
     if (buffers()->materials[instance.material].shader != STANDARD_SHADER)
     {
-        VertexInput moved = { world.xyz, normalize(normal), v.uv, instance.model.c3.xyz, push.frame->time };
+        VertexInput moved = { world.xyz, normalize(normal), v.uv, instance.model.c3.xyz, push.frame->time, world.xyz };
         world.xyz += customVertex(instance.material, moved);
     }
     PreviewOut o;
@@ -70,7 +70,7 @@ float4 previewFragment(PreviewOut input) : SV_Target
     SurfaceOutput surface = materialSurface(base.rgb, base.a, normal, metallic, roughness, emission);
     if (custom)
     {
-        SurfaceInput at = { input.uv, input.world, normal, view, float3(0.0), frame->time, SOLID_THICKNESS, false };
+        SurfaceInput at = { input.uv, input.world, normal, view, float3(0.0), frame->time, SOLID_THICKNESS, false, input.world };
         customSurface(input.material, at, surface);
         if (material.alphaCutoff > 0.0 && surface.alpha < material.alphaCutoff)
         {

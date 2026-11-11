@@ -30,7 +30,7 @@ void surface(Hologram hologram, SurfaceInput input, inout SurfaceOutput surface)
     float shown = 1.0;
     if (hologram.lines > 0.0)
     {
-        float band = frac((input.position.y - input.time * hologram.scroll) * hologram.lines);
+        float band = frac((input.levelPosition.y - input.time * hologram.scroll) * hologram.lines);
         shown = lerp(1.0, 0.35, smoothstep(0.75, 0.85, band) * (1.0 - smoothstep(0.92, 1.0, band)));
     }
     // Now and then a sudden dip, over a constant shimmer.

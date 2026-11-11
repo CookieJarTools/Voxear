@@ -38,9 +38,11 @@ void grassScatter(uint3 id : SV_DispatchThreadID)
         return;
     }
     Frame* frame = push.frame;
-    int2 cell = job.firstCell + int2(id.xy);
+    // Counted from the level's middle (src/grass.rs), hashed by its place in a square of 65536 cells: each blade
+    // where it is however the world's middle moves, as the rest of a scene's patterns repeat.
+    int2 cell = (job.firstCell + int2(id.xy)) & 0xFFFF;
     uint seed = job.terrain * 64 + job.kind;
-    float2 at = (float2(cell) + float2(grassHash(cell, seed, 0), grassHash(cell, seed, 1))) * job.cellSize;
+    float2 at = job.corner + (float2(id.xy) + float2(grassHash(cell, seed, 0), grassHash(cell, seed, 1))) * job.cellSize;
     float away = distance(at, frame->cameraPosition.xz);
     if (away > job.drawDistance || grassHash(cell, seed, 2) < smoothstep(job.drawDistance * 0.8, job.drawDistance, away))
     {

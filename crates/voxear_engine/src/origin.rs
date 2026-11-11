@@ -75,14 +75,12 @@ impl Default for OriginSettings {
 
 impl OriginSettings {
     /// How far everything moves to bring `viewer` back near the middle, in
-    /// whole steps across the ground, x and z: none while it is within the
-    /// distance along both. Heights stay as they are, as the sky and fog are
-    /// measured from the level's ground.
+    /// whole steps: none while it is within the distance along every axis,
+    /// up and down too.
     pub fn move_for(&self, viewer: Vec3) -> Option<IVec3> {
         let step = self.step.max(1) as f32;
-        let across = Vec3::new(viewer.x, 0.0, viewer.z);
-        let far = across.abs().max_element() > self.distance.max(step * 0.5) && across.is_finite();
-        far.then(|| -((across / step).round() * step).as_ivec3())
+        let far = viewer.abs().max_element() > self.distance.max(step * 0.5) && viewer.is_finite();
+        far.then(|| -((viewer / step).round() * step).as_ivec3())
     }
 }
 
@@ -152,9 +150,9 @@ mod tests {
     fn moves_by_whole_steps_once_past_the_distance() {
         let settings = OriginSettings::default();
         assert_eq!(settings.move_for(Vec3::new(2000.0, 0.0, -1500.0)), None);
-        // Past 2 km on x: back by two steps, z with it to the nearest step, and never up or down.
-        assert_eq!(settings.move_for(Vec3::new(2100.0, 3000.0, -1600.0)), Some(IVec3::new(-2048, 0, 2048)));
-        assert_eq!(settings.move_for(Vec3::new(0.0, -5000.0, 0.0)), None);
+        // Past 2 km on x: back by two steps, y and z with it to the nearest step.
+        assert_eq!(settings.move_for(Vec3::new(2100.0, 3000.0, -1600.0)), Some(IVec3::new(-2048, -3072, 2048)));
+        assert_eq!(settings.move_for(Vec3::new(0.0, -5000.0, 0.0)), Some(IVec3::new(0, 5120, 0)));
         assert_eq!(settings.move_for(Vec3::NAN), None);
     }
 

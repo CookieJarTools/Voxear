@@ -58,7 +58,10 @@ static const float SOLID_THICKNESS = 1000.0;
 // in the world, the way to the camera, the Obj's place, and the time in
 // seconds. For a Glass material, `glass` is true and `thickness` is how far
 // the view goes through it, in metres, to what lies behind: shallow water
-// at a shore, deep in the middle. For any other, SOLID_THICKNESS.
+// at a shore, deep in the middle. For any other, SOLID_THICKNESS. Last,
+// its place measured from the level's middle, wrapped every 4096 metres:
+// patterns read from it rather than from `position` stay where they are as
+// the world's middle moves with the camera, and as exact far out.
 struct SurfaceInput
 {
     float2 uv;
@@ -69,6 +72,7 @@ struct SurfaceInput
     float time;
     float thickness;
     bool glass;
+    float3 levelPosition;
 };
 
 // A surface as `surface` sets it, starting as the material's own: its
@@ -98,7 +102,8 @@ SurfaceOutput materialSurface(float3 color, float alpha, float3 normal, float me
 }
 
 // A vertex, for `vertex`: its place and normal in the world, its UV, the
-// Obj's place and the time in seconds.
+// Obj's place and the time in seconds; and its place measured from the
+// level's middle, wrapped every 4096 metres, as SurfaceInput's.
 struct VertexInput
 {
     float3 position;
@@ -106,6 +111,7 @@ struct VertexInput
     float2 uv;
     float3 objectPosition;
     float time;
+    float3 levelPosition;
 };
 
 // A light falling on a surface, for `light`: the way to it, its colour as

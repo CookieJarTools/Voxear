@@ -63,11 +63,14 @@ float raySphere(float3 origin, float3 direction, float radius)
     return far >= 0.0 ? far : -1.0;
 }
 
-// Where the camera is relative to the planet's centre, in kilometres.
+// Where the camera is relative to the planet's centre, in kilometres: as high as it is over the level's ground,
+// wherever the world's middle has moved to.
 float3 cameraInAtmosphere(Frame* frame)
 {
     Atmosphere atmosphere = frame->lighting.atmosphere;
-    float3 position = frame->cameraPosition * 0.001 + float3(0.0, atmosphere.bottomRadius, 0.0);
+    float3 camera = frame->cameraPosition;
+    float3 position = float3(camera.x, levelHeight(frame, camera), camera.z) * 0.001;
+    position += float3(0.0, atmosphere.bottomRadius, 0.0);
     float height = length(position);
     float lowest = atmosphere.bottomRadius + PLANET_OFFSET;
     return height < lowest ? position * (lowest / height) : position;

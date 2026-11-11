@@ -284,7 +284,12 @@ mod tests {
         let (was, cut) = (testing::round(&source, 4000), testing::round(&world, 4000));
         let mut lower = 0.0;
         for i in 0..4000 {
-            assert!(cut[i] <= was[i] + 1e-3 && cut[i] >= was[i] - 0.6 * 90.0 * 0.25 * 2.0, "{} cut to {}", was[i], cut[i]);
+            assert!(
+                cut[i] <= was[i] + 1e-3 && cut[i] >= was[i] - 0.6 * 90.0 * 0.25 * 2.0,
+                "{} cut to {}",
+                was[i],
+                cut[i]
+            );
             lower += was[i] - cut[i];
         }
         assert!(lower / 4000.0 > 0.3, "{} m on average", lower / 4000.0);

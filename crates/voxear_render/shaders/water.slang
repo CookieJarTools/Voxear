@@ -1481,6 +1481,21 @@ float streamQuick(float speed)
     return saturate((speed - 1.0) / 2.5);
 }
 
+// Smooth noise from 0 to 1, a unit across, for a Stream's waves, churn and streaks. Its cells' numbers are taken
+// from a sine (cellPoint), which do not come out the same from one use to the next, so it can break along its
+// lattice (lava.slang's lavaCell says why, and lava no longer uses it). Streams were tuned with it as it is.
+float streamNoise(float2 p)
+{
+    float2 n = floor(p);
+    float2 f = frac(p);
+    f = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+    float a = cellPoint(n).x;
+    float b = cellPoint(n + float2(1, 0)).x;
+    float c = cellPoint(n + float2(0, 1)).x;
+    float d = cellPoint(n + float2(1, 1)).x;
+    return lerp(lerp(a, b, f.x), lerp(c, d, f.x), f.y);
+}
+
 // How high a Stream's water stands over its surface at `xz`, in metres, flowing `flow` metres a second across the
 // ground, `rapids` of the way to white water (0 to 1). Rapids ride over their bed in standing waves, which stay
 // where they are, their crests across the flow, longer the faster it runs, in trains here and there, and churn as
@@ -1496,9 +1511,9 @@ float streamSwell(float2 xz, float2 flow, float rapids, float time)
     float2 along = flow / max(speed, 1e-4);
     float s = dot(xz, along);
     float t = dot(xz, float2(-along.y, along.x));
-    float trains = lavaNoise(float2(s * 0.11, t * 0.6) + 3.0);
-    float wave = sin(6.2832 * s / clamp(0.5 * speed * speed, 0.6, 2.8) + 2.5 * lavaNoise(float2(s * 0.45, t * 0.16))) * smoothstep(0.3, 0.75, trains);
-    float churn = lavaNoise(xz * 1.4 - flow * time * 0.6) + 0.5 * lavaNoise(xz * 3.1 + 7.0 - flow * time * 0.9) - 0.75;
+    float trains = streamNoise(float2(s * 0.11, t * 0.6) + 3.0);
+    float wave = sin(6.2832 * s / clamp(0.5 * speed * speed, 0.6, 2.8) + 2.5 * streamNoise(float2(s * 0.45, t * 0.16))) * smoothstep(0.3, 0.75, trains);
+    float churn = streamNoise(xz * 1.4 - flow * time * 0.6) + 0.5 * streamNoise(xz * 3.1 + 7.0 - flow * time * 0.9) - 0.75;
     return standing * wave + 0.14 * rapids * churn;
 }
 
@@ -2297,7 +2312,7 @@ FragmentOut waterFragment(WaterOut input)
         variance *= rough * rough;
         // Fast water is drawn out into streaks along the current, carried down it.
         float2 streaked = float2((dot(rest, downstream) - speed * frame->time) * 0.11, dot(rest, beside) * 2.3);
-        slope += beside * (lavaNoise(streaked + float2(0.0, 0.2)) - lavaNoise(streaked)) * 0.35 * quick * own;
+        slope += beside * (streamNoise(streaked + float2(0.0, 0.2)) - streamNoise(streaked)) * 0.35 * quick * own;
         // The water piles up against what stands in it, and each arm of its wake is a low ridge leaning away
         // from the trough between them.
         slope -= downstream * bow * 0.3;
@@ -2599,30 +2614,34 @@ float streamCooling(float across)
 
 // How far a gap between two plates of lava's crust reaches into a plate, in
 // plates: all of it while the lava is fresh, as it has no crust yet; then
-// each plate sets from its middle out, sooner in some stretches than
-// others (`early`, 0 to 1), so islands of crust stand in molten rock before
-// they close up; then a crack, `wide` as wide as most, narrowing as it
-// cools. `cooled` is how long the lava has cooled, against its Cooling.
-float lavaGap(float cooled, float early, float wide)
+// each plate sets from its middle out, so islands of crust stand in molten
+// rock before they close up; then what is left between them, a lead of
+// molten rock in some stretches and a crack in most (`wide`, 0 to 1),
+// narrowing as it cools. `set` is how far the lava has set: 0 as it wells
+// up, 1 as it crusts over.
+float lavaGap(float set, float wide)
 {
-    float set = cooled + (early - 0.5) * 0.3;
     float open = 1.0 - smoothstep(0.1, 1.0, set);
-    float crack = (0.05 * (1.0 - saturate(set / 3.0)) + 0.008) * wide;
-    return lerp(crack, 0.8, open * open);
+    float left = (0.016 + 0.19 * wide * wide * wide) * (1.0 - 0.7 * saturate((set - 1.0) / 2.5));
+    return lerp(left, 0.8, open * open);
 }
 
 // Lava's surface (`body` a Pool or, with `stream`, a Stream of it). Molten
-// where it is fresh, glowing by its temperature, under a skin that sets in
-// small cells with bright seams between them. As it cools it crusts over in
-// plates, each from its middle out, that stand above the molten rock in the
-// gaps between them: the gaps are seen down into, past the near plate's
-// edge, with the far plate's side lit from below. The gaps narrow to cracks
-// as it cools, and the crust thickens. Along a Stream the plates ride with
-// the flow and crowd together where it slows, and the skin is pushed into
-// ropes across it while it is soft, bowed downstream as the middle runs
-// faster than the banks. A Pool is a lake of it, its plates jostling as it
-// turns over. Bubbles swell up through it and burst (lavaBubbles). Under
-// the sea it crusts over at once. Nothing shows through it.
+// where it is fresh, glowing by its temperature: yellow-white only where it
+// wells up, orange in the middle of a lead, deep red against the crust,
+// under a skin that sets in small cells with bright seams between them. As
+// it cools it crusts over in plates, each from its middle out, that stand
+// above the molten rock in the gaps between them: the gaps are seen down
+// into, past the near plate's edge, with the far plate's side lit from
+// below. The gaps narrow as it cools, to leads in some stretches and cracks
+// in most, and the crust thickens. Crust is thick and ropey: folded into
+// ropes while it was soft, each plate its own way, its rim pushed up where
+// it met the next, leaning a little. Along a Stream the plates ride with
+// the flow and crowd together where it slows, and the ropes lie across it,
+// bowed downstream as the middle runs faster than the banks. A Pool is a
+// lake of it, its plates jostling as it turns over. Bubbles swell up
+// through it and burst (lavaBubbles). Under the sea it crusts over at once.
+// Nothing shows through it.
 FragmentOut lavaFragment(Frame* frame, WaterOut input, WaterBody body, bool stream)
 {
     float cooling = body.lava.x;
@@ -2675,22 +2694,25 @@ FragmentOut lavaFragment(Frame* frame, WaterOut input, WaterBody body, bool stre
     LavaField field = { stream, t, pace, cooling };
     float3 bubbles = lavaBubbles(field, plate, crowded, 0.55 * input.reach.x);
 
-    // Plates as irregular as torn crust is: their shapes bent by noise, large and small, their edges ragged, their
-    // cracks wider in places.
+    // Plates as irregular as torn crust is: their shapes bent by noise, large and small. How many plates a metre
+    // is each way once they are bent is kept, for following the view across them.
     float2 scaled = plate / plateSize;
-    scaled += (float2(lavaNoise(scaled * 0.45), lavaNoise(scaled * 0.45 + 17.0)) - 0.5) * 1.3;
-    scaled += (float2(lavaNoise(scaled * 1.9 + 4.0), lavaNoise(scaled * 1.9 + 23.0)) - 0.5) * 0.3;
-    LavaPlates plates = lavaPlates(scaled, churn);
-    float ragged = lavaClouds(scaled * 4.3 + 2.0);
-    float edge = (plates.edge + (ragged - 0.5) * 0.1) * plateSize;
-    float wide = 0.4 + 1.2 * lavaNoise(scaled * 1.3 + 5.0);
+    float3 bendX = lavaNoiseSloped(scaled * 0.45);
+    float3 bendY = lavaNoiseSloped(scaled * 0.45 + 17.0);
+    float2x2 bent = float2x2(1.0 + 0.585 * bendX.y, 0.585 * bendX.z, 0.585 * bendY.y, 1.0 + 0.585 * bendY.z);
+    scaled += (float2(bendX.x, bendY.x) - 0.5) * 1.3;
+    bendX = lavaNoiseSloped(scaled * 1.9 + 4.0);
+    bendY = lavaNoiseSloped(scaled * 1.9 + 23.0);
+    bent = mul(float2x2(1.0 + 0.57 * bendX.y, 0.57 * bendX.z, 0.57 * bendY.y, 1.0 + 0.57 * bendY.z), bent) / plateSize;
+    scaled += (float2(bendX.x, bendY.x) - 0.5) * 0.3;
+    LavaCrust crust = lavaCrust(scaled, churn);
     // Sooner set in some stretches than others, a few plates across: plate by plate, one still molten among set
-    // ones would show as a flat patch with straight sides. A bubble breaks the crust over it open.
-    float early = lavaNoise(scaled * 0.45 + 31.0);
-    float here = lavaGap(cooled, early, wide) * plateSize + bubbles.z * 2.0;
-    float there = here;
+    // ones would show as a flat patch with straight sides.
+    float set = cooled + (lavaNoise(scaled * 0.45 + 31.0) - 0.5) * 0.5;
+    // Its gaps wider in places. A bubble breaks the crust over it open.
+    float gap = lavaGap(set, lavaNoise(scaled * 1.3 + 5.0)) * plateSize + bubbles.z * 2.0;
     // The crust thickens as it cools, its edge sloping down into the gap.
-    float depth = (0.02 + 0.13 * smoothstep(0.2, 2.2, cooled)) * (1.0 - bubbles.z);
+    float depth = (0.03 + 0.19 * smoothstep(0.2, 2.2, cooled)) * (1.0 - bubbles.z);
     float bevel = 0.015 + 0.4 * depth;
 
     // The view on from where it crossed the crust's top, down into the gap: along the surface away from the
@@ -2703,42 +2725,51 @@ FragmentOut lavaFragment(Frame* frame, WaterOut input, WaterBody body, bool stre
     // The same way across the plates.
     float2 right = float2(along.y, -along.x);
     float2 awayPlate = stream ? float2(-dot(away.xz, along) * crowded, dot(away.xz, right)) : away.xz;
-    float nearing = dot(awayPlate, plates.toEdge);
-    // How far the gap runs on as one: to where the next nearest joins it.
-    float straight = max(plates.next - plates.edge, 0.0) * plateSize;
-    float gone = lavaParallax(edge, nearing, slant, here, there, bevel, depth, straight);
+    LavaRay viewed = lavaRay(scaled, mul(bent, awayPlate));
+    // The plate it meets, or the gap beside it: how far out of the gap, less than nothing on the molten rock.
+    // On the crust's top it has met it already.
+    LavaPlace met = lavaPlace(crust, lavaRayAt(viewed, 0.0));
+    float side = met.edge * plateSize - gap;
+    float gone = 0.0;
+    if (side < bevel)
+    {
+        gone = lavaInto(crust, viewed, side, slant, plateSize, gap, bevel, depth);
+        met = lavaPlace(crust, lavaRayAt(viewed, gone));
+        side = met.edge * plateSize - gap;
+    }
     float2 seen = plate + awayPlate * gone;
-    float met = edge - gone * nearing;
-    bool far = met < 0.0;
-    // How far out of the gap, on whichever plate: less than nothing on the molten rock.
-    float side = far ? -met - there : met - here;
+    float2 toGap = met.way;
+    float2 own = lavaPlateNumbers(crust, met.plate);
     // No sharper than a pixel, so its edge does not step from one to the next.
     float2 grain = fwidth(plate);
     float footprint = max(grain.x, grain.y);
     float soften = max(0.004, 0.75 * footprint);
     float rock = smoothstep(-soften, soften, side);
     float top = smoothstep(0.0, bevel, side);
-    float own = far ? plates.beyond : plates.plate;
-    float set = cooled + (early - 0.5) * 0.3;
-    // How wide the gap is: a crack shows the rock under the crust, as hot as it wells up; a wide one has had time
-    // to skin over, and cools against the crust either side.
-    float lead = saturate((far ? there : here) / 0.3);
-    // The rock in the gap as it wells up, before its skin: dimmer in the cracks of crust long set.
-    float welling = LAVA_MOLTEN - 50.0 * saturate(cooled * 0.6) - 320.0 * smoothstep(1.3, 3.6, cooled) - 40.0 * (1.0 - lead);
+    // How wide the gap is: a crack shows the rock under the crust; a lead has had time to skin over.
+    float lead = saturate(gap / 0.3);
+    // The rock under the skin, in the middle of a gap: hottest where it has only now welled up, dull in the cracks
+    // of crust long set.
+    float fresh = 1.0 - smoothstep(0.05, 0.7, cooled);
+    float dulled = 300.0 * smoothstep(1.3, 3.6, cooled);
+    float welling = lerp(1300.0, 1350.0, fresh) - dulled;
 
     // How much of the skin's cells a pixel shows: none of them once they are smaller than it, where they would only
-    // glitter.
+    // glitter. And of the crust's ropes.
     float shown = saturate(1.5 - footprint / 0.13 * 3.0);
+    float roped = saturate(1.6 - footprint / 0.1);
     float3 emitted;
     // Molten rock heaves, slowly, as its points are raised (poolPoint, streamVertex).
     float heave = lavaHeave(plate, t, cooled);
     float height = bubbles.x + heave;
     float basalt = 0.0;
     float roughness = 0.35;
+    // How much of the molten rock's light the crust beside a gap catches, on a side turned to it.
+    float lit = 0.0;
     if (rock < 0.999)
     {
         // The molten rock: its skin set in small cells, drawn out along a flow, their seams still bright; hottest
-        // in the middle of a gap, cooler against the crust either side.
+        // in the middle of a gap, deep red against the crust either side.
         float2 fine = (stream ? float2(seen.x * 0.4, seen.y) : seen) / 0.13;
         fine += (float2(lavaNoise(fine * 0.23), lavaNoise(fine * 0.23 + 9.0)) - 0.5) * 2.4;
         float2 skin = lavaSkin(fine);
@@ -2749,11 +2780,15 @@ FragmentOut lavaFragment(Frame* frame, WaterOut input, WaterBody body, bool stre
         float skinned = saturate((0.3 + 0.7 * smoothstep(0.02, 0.5, cooled)) * smoothstep(0.15, 0.75, drift) * 1.4 * lead) * (1.0 - 0.85 * bubbles.y);
         // Against the crust its skin is pushed into folds that run along the crust's edge, their tops cooler.
         float folds = sin(side * 6.2832 / 0.1 + 7.0 * drift + 5.0 * lavaNoise(fine * 0.37 + 2.0)) * exp(side / 0.4) * skinned;
-        float beside = exp(min(side, 0.0) / 0.12) * lead;
-        float molten = welling - (40.0 + 120.0 * drift) * lead;
-        molten -= skinned * (1.0 - seam) * (LAVA_MOLTEN - LAVA_SKIN + 110.0 * (skin.y - 0.5)) + 190.0 * beside;
+        // How far in from the crust, against how far the gap's middle is, or half a metre.
+        float inward = saturate(-side / clamp(gap, 0.03, 0.5));
+        // Its skin is orange, redder the thicker it has set; where the skin has torn the rock under it shows,
+        // yellow where that has only now welled up. A crack is too narrow for a skin.
+        float under = lerp(1325.0, 1405.0, fresh) + 50.0 * (0.5 - drift) - dulled;
+        float over = lerp(1230.0, 1272.0, fresh) - 105.0 * skinned + 70.0 * (skin.y - 0.5) - dulled;
+        float molten = lerp(lerp(under - 45.0, over, lead), under, seam);
+        molten -= 175.0 * (1.0 - inward) * (1.0 - inward) + 70.0 * max(folds, 0.0);
         // A bubble's skin thins as it swells, and what it leaves as it bursts is fresh.
-        molten -= 75.0 * max(folds, 0.0);
         molten = lerp(molten, LAVA_MOLTEN, bubbles.y);
         emitted = lavaLight(molten);
         float bulge = saturate(skin.x / 0.45);
@@ -2763,55 +2798,74 @@ FragmentOut lavaFragment(Frame* frame, WaterOut input, WaterBody body, bool stre
     {
         // How far onto the crust: never less than none, where a pixel at its edge is part molten rock.
         float out = max(side, 0.0);
-        // Pahoehoe's ropes: the skin folded while it is still soft, before it sets, hotter in their troughs.
-        float2 grain = stream ? plate : seen;
-        float mottled = lavaClouds(grain * 1.1);
-        float soft = smoothstep(0.1, 0.4, set) * (1.0 - smoothstep(1.5, 3.0, set));
-        float ropes = 0.0;
+        float2 place = stream ? plate : seen;
+        float mottled = lavaClouds(place * 1.1);
+        // Pahoehoe's ropes: the skin folded while it was soft, in patches, hotter in their troughs while they
+        // cool. A flow's lie across it, bowed downstream, and it is drawn out into strings along it. A lake's
+        // plates are folded round their rims, where each was pushed against the next, less towards its middle.
+        float ropes;
+        float strings = 0.0;
         if (stream)
         {
-            float folds = smoothstep(0.35, 0.65, lavaNoise(plate * 0.45 + 3.0));
-            ropes = sin(6.2832 * (plate.x + bow) / 0.3 + 7.0 * mottled) * soft * folds;
+            float patches = smoothstep(0.3, 0.6, lavaNoise(plate * 0.45 + 3.0));
+            float rope = 6.2832 * (plate.x + bow) / lerp(0.22, 0.32, own.x) + 7.0 * mottled + 6.2832 * own.y;
+            ropes = (sin(rope) + 0.25 * sin(2.0 * rope + 1.3)) * patches;
+            strings = lavaClouds(float2(plate.x * 0.7, plate.y * 11.0) + own.y * 9.0) - 0.5;
         }
+        else
+        {
+            float within = max(met.rounded * plateSize - gap, 0.0);
+            float patches = 0.25 + 0.75 * smoothstep(0.25, 0.6, lavaNoise(seen * 0.6 + own.x * 40.0));
+            float rope = 6.2832 * within / lerp(0.15, 0.21, own.x) + 11.0 * mottled;
+            ropes = (sin(rope) + 0.25 * sin(2.0 * rope + 1.3)) * patches * (0.3 + 0.7 * exp(-within / 0.6));
+        }
+        float soft = smoothstep(0.1, 0.4, set);
+        ropes *= soft * roped;
         // The crust: cooling fast once it forms, the tops of its ropes first, in patches; its edge by a gap still
         // hot, and its side down into the gap lit by the molten rock it stands in.
-        float crust = lerp(1130.0, 480.0, saturate((set - 0.15) * 1.1)) - 60.0 * max(ropes, 0.0) + 110.0 * max(-ropes, 0.0) - 150.0 * mottled;
-        crust = lerp(crust, max(crust, welling - 190.0), exp(-out / (0.02 + 0.35 * bevel)));
-        crust = lerp(crust, max(crust, LAVA_SKIN), bubbles.y);
-        basalt = lerp(0.02, 0.045, own) * (0.55 + 0.9 * mottled) * lerp(0.6, 1.0, saturate(set - 0.5));
-        float lit = exp(-out / 0.2) * (1.0 - 0.75 * top) * saturate((far ? there : here) / 0.12);
-        float3 solid = lavaLight(crust) + lavaLight(welling - 60.0) * basalt * lit;
-        // Its top rough and lumpy.
-        float lumps = mottled * 0.07 + lavaClouds(seen * 5.0 + 1.7) * 0.02;
-        height += (ropes * 0.012 + lumps) * top;
-        // Broken up in places, most along its edges, while it is not long set: into smaller pieces, each standing
-        // a little higher or lower than the next, the rock under them glowing in the cracks between.
-        float broken = saturate(smoothstep(0.4, 0.7, lavaNoise(scaled * 0.8 + 3.0)) + 0.8 * exp(-out / 0.3)) * (1.0 - smoothstep(2.0, 3.5, set));
+        float cold = lerp(1130.0, 480.0, saturate((set - 0.15) * 1.1)) - 60.0 * max(ropes, 0.0) + 110.0 * max(-ropes, 0.0) - 150.0 * mottled;
+        // Its side hotter the further down it.
+        cold = lerp(cold, max(cold, welling - 175.0), exp(-out / (0.02 + 0.35 * bevel)));
+        cold = lerp(cold, max(cold, welling - 110.0), (1.0 - top) * (1.0 - top));
+        cold = lerp(cold, max(cold, LAVA_SKIN), bubbles.y);
+        // Basalt nearly black, darker and lighter from plate to plate; duller the longer it has been set.
+        basalt = lerp(0.022, 0.05, own.x) * (0.55 + 0.9 * mottled) * lerp(0.6, 1.0, saturate(set - 0.5)) * (0.35 + 0.65 * top);
+        lit = exp(-out / 0.35) * saturate(gap / 0.12);
+        float3 solid = lavaLight(cold);
+        // Its top lumpy, its rim pushed up where it met the next plate.
+        float lumps = mottled * 0.07 + lavaNoise(seen * 6.0 + 1.7) * 0.015 + lavaNoise(seen * 23.0) * 0.004 * saturate(2.0 - footprint / 0.02);
+        float rim = 0.035 * exp(-out / 0.25) * smoothstep(0.5, 1.2, set);
+        height += (ropes * (stream ? 0.013 : 0.012) + strings * 0.02 * soft * roped + lumps + rim) * top;
+        // Broken up in places, most along its edges, while it is not long set: into smaller pieces, each leaning
+        // its own way, a little higher or lower than the next, the rock under them glowing in the cracks between.
+        float broken = saturate(smoothstep(0.45, 0.75, lavaNoise(scaled * 0.8 + 3.0)) + 0.6 * exp(-out / 0.3)) * (1.0 - smoothstep(2.0, 3.5, set));
         if (broken > 0.01)
         {
-            float2 torn = (float2(lavaNoise(scaled * 2.3 + 1.0), lavaNoise(scaled * 2.3 + 13.0)) - 0.5) * 1.5;
-            LavaPlates pieces = lavaPlates(scaled * 3.3 + 7.3 + torn, 0.0);
-            float between = pieces.edge * plateSize / 3.3;
-            float crackle = (1.0 - smoothstep(0.004, 0.018 + 0.6 * footprint, between)) * broken * top;
-            solid = lerp(solid, lavaLight(welling - 150.0 - 250.0 * saturate(set - 0.6)), crackle);
+            float2 pieces = lavaSkin(scaled * 3.3 + 7.3 + lavaWander(lavaWanderAt(scaled * 1.3)) * 2.5);
+            float between = pieces.x * plateSize / 6.6;
+            float crackle = (1.0 - smoothstep(0.003, 0.012 + 0.6 * footprint, between)) * broken * top;
+            solid = lerp(solid, lavaLight(welling - 130.0 - 250.0 * saturate(set - 0.6)), crackle);
             basalt *= 1.0 - 0.6 * crackle;
-            height += (pieces.plate - 0.5) * 0.05 * broken * top;
+            // Each piece sloping down to its cracks, so it reads as a piece and not a line drawn on a slab.
+            height += ((pieces.y - 0.5) * 0.04 + 0.02 * smoothstep(0.0, 0.08, between)) * broken * top;
         }
         emitted = rock < 0.999 ? lerp(emitted, solid, rock) : solid;
         // Never glossier at its edge, where a pixel is part crust and part molten rock: the sun's glint there
         // would outshine the lava.
         roughness = lerp(0.7, 0.93, saturate(set - 0.5));
     }
-    emitted *= glow;
 
     // Where the lava lies under a bubble's dome (a mesh of its own, which says so in place of its foam), which the
     // bumps are measured from.
     float3 n = bumped(input.world - float3(0.0, bubbles.x * input.stream.z + heave, 0.0), up, height);
-    // The gap's side slopes down to the molten rock.
-    float2 toGap = far ? -plates.toEdge : plates.toEdge;
+    // The gap's side slopes down to the molten rock, and each plate leans a little its own way.
+    float2 lean = toGap * (depth / bevel * 6.0 * saturate(side / bevel) * (1.0 - saturate(side / bevel))) + (own.yx - 0.5) * 0.07 * top;
+    float3 leanWay = stream ? float3(along.x * -lean.x + right.x * lean.y, 0.0, along.y * -lean.x + right.y * lean.y) : float3(lean.x, 0.0, lean.y);
+    n = normalize(n + leanWay * rock);
+    // What of the crust is turned to the gap beside it catches the molten rock's light.
     float3 gapWay = stream ? float3(along.x * -toGap.x + right.x * toGap.y, 0.0, along.y * -toGap.x + right.y * toGap.y) : float3(toGap.x, 0.0, toGap.y);
-    float within = saturate(side / bevel);
-    n = normalize(n + gapWay * (depth / bevel * 6.0 * within * (1.0 - within) * rock));
+    emitted += lavaLight(welling - 40.0) * (basalt * lit * rock * saturate(0.15 + 2.5 * dot(n, gapWay)));
+    emitted *= glow;
 
     float3 l = -frame->sunDirection;
     bool atmosphere = frame->lighting.sky == SKY_ATMOSPHERE;
@@ -2820,7 +2874,6 @@ FragmentOut lavaFragment(Frame* frame, WaterOut input, WaterBody body, bool stre
     Surface s;
     s.normal = n;
     s.view = v;
-    // Basalt nearly black, darker and lighter from plate to plate; duller the longer it has been set.
     s.diffuse = basalt * rock;
     s.f0 = 0.04;
     s.roughness = roughness;
@@ -2829,7 +2882,8 @@ FragmentOut lavaFragment(Frame* frame, WaterOut input, WaterBody body, bool stre
     float fresnel = 0.04 + 0.96 * pow(1.0 - saturate(dot(n, v)), 5.0) * gloss;
     float3 reflected = surroundingsReflection(frame, input.world, n, reflect(-v, n), s.roughness, ambient, atmosphere);
     // Molten rock shows only its own light: the sun's and the sky's glints on it would read as froth.
-    float3 color = s.diffuse * ambient + (min(shade(s, l, sunLight), 2.0) * shadow + fresnel * reflected) * rock + emitted;
+    // Nor does a plate's side glint: it is rough broken rock, facing the gap.
+    float3 color = s.diffuse * ambient + (min(shade(s, l, sunLight), 2.0) * shadow + fresnel * reflected) * (rock * (0.2 + 0.8 * top)) + emitted;
 
     float2 pixel = input.position.xy;
     if (atmosphere)
@@ -2847,7 +2901,7 @@ FragmentOut lavaFragment(Frame* frame, WaterOut input, WaterBody body, bool stre
 
 // How many blobs of molten rock a bursting bubble throws up at most
 // (src/water.rs's SPATTER_BLOBS).
-static const uint SPATTER_BLOBS = 20;
+static const uint SPATTER_BLOBS = 144;
 
 struct SpatterOut
 {
@@ -2923,9 +2977,13 @@ bool streamAtAge(WaterBody body, uint points, float age, out StreamPoint at)
 // A corner of a blob of molten rock thrown up by one of lava's bubbles as
 // it bursts (lavaBubble), over Pool or Stream push.list: SPATTER_BLOBS to
 // each of the push.size squares of its plates looked in, a Stream's back
-// from where it sets out along its push.level points. Each flies up and out
-// from the bubble, falls back, and cools from yellow to red as it goes;
-// drawn as a round blob facing the camera, drawn out along the way it flies.
+// from where it sets out along its push.level points. A burst is a small
+// explosion: most of what it throws is a spray of fine drops, fast and
+// wide; then drops, and a few heavy clots that barely clear the lava; and
+// it spits a little more for a moment after. Each flies up and out from
+// the bubble, falls back, and cools from yellow-white to red as it goes,
+// the smaller the sooner; drawn as a lump facing the camera, drawn out
+// along the way it flies.
 [shader("vertex")]
 SpatterOut lavaSpatterVertex(uint vertexId : SV_VertexID)
 {
@@ -2940,28 +2998,38 @@ SpatterOut lavaSpatterVertex(uint vertexId : SV_VertexID)
     float pace = stream ? max(body.lava.z, 0.02) : 1.0;
     LavaField field = { stream, t, pace, body.lava.x };
     LavaBubble bubble = lavaBubble(field, spatterSquare(frame, body, square, t, pace));
-    // A small bubble throws few.
-    if (float(which) > 5.0 + 15.0 * bubble.radius / 0.55 || !lavaBubbleRises(field, bubble))
+    // A small bubble throws less, and a vent a little at a time.
+    float big = saturate((bubble.radius - 0.2) / 0.35);
+    float share = bubble.vent ? 0.3 : 0.35 + 0.65 * big;
+    if (float(which) >= float(SPATTER_BLOBS) * share || !lavaBubbleRises(field, bubble))
     {
         return noSpatter();
     }
     uint h = particleHash(uint(bubble.own.x * 65521.0) ^ particleHash(uint(bubble.own.z * 65521.0) + which * 7919u));
-    // A vent spits for a while; a bubble throws all it has as it bursts.
-    float flown = bubble.begun - bubble.swells - particleRandom(h) * (bubble.vent ? 0.45 : 0.12);
+    // How heavy: from the finest spray, most of them, to a clot.
+    float heavy = pow(particleRandom(h), 2.2);
+    // A vent spits for a while. A bubble throws nearly all it has as it bursts, and the rest just after.
+    float late = particleRandom(h);
+    float after = particleRandom(h);
+    float waited = bubble.vent ? late * 0.45 : (after < 0.8 ? late * (0.03 + 0.12 * heavy) : 0.15 + 0.4 * late);
+    float flown = bubble.begun - bubble.swells - waited;
     float turned = particleRandom(h) * 2.0 * PI;
-    float tilt = particleRandom(h) * (bubble.vent ? 0.3 : 1.2);
+    // Out as a crown more than straight up, the spray widest.
+    float tilt = bubble.vent ? particleRandom(h) * 0.3 : (0.15 + particleRandom(h) * lerp(1.5, 0.8, heavy)) * (after < 0.8 ? 1.0 : 0.5);
     float3 way = normalize(float3(cos(turned) * tilt, 1.0, sin(turned) * tilt));
     float quick = particleRandom(h);
-    float speed = bubble.vent ? lerp(3.0, 5.6, quick) : lerp(1.3, 3.6, quick * quick) * (0.7 + 1.4 * bubble.radius);
+    float speed = bubble.vent
+        ? lerp(3.0, 5.6, quick)
+        : lerp(lerp(2.8, 7.6, quick * quick), lerp(1.4, 3.4, quick), heavy) * (0.55 + 0.45 * big) * (after < 0.8 ? 1.0 : 0.6);
     float3 velocity = way * speed;
     float lands = 2.0 * velocity.y / PARTICLE_GRAVITY;
     if (flown < 0.0 || flown > lands)
     {
         return noSpatter();
     }
-    // Where it left the lava, as the bubble burst.
+    // Where it left the lava, as the bubble burst: off the dome's skin.
     float burst = t - flown;
-    float2 from = bubble.middle + way.xz * bubble.radius * 0.5;
+    float2 from = bubble.middle + way.xz * bubble.radius * (0.3 + 0.6 * particleRandom(h));
     float3 start;
     if (stream)
     {
@@ -2983,28 +3051,29 @@ SpatterOut lavaSpatterVertex(uint vertexId : SV_VertexID)
             return noSpatter();
         }
     }
-    start.y += bubble.radius * 0.4;
-    // Mostly drops, a few of them clots.
-    float large = pow(particleRandom(h), 4.0);
-    float size = lerp(0.012, 0.075, large) * (1.0 - 0.3 * flown / lands);
+    start.y += bubble.radius * 0.3;
     float3 world = start + velocity * flown - float3(0.0, 0.5 * PARTICLE_GRAVITY * flown * flown, 0.0);
     float before = max(flown - frame->deltaTime, 0.0);
     float3 worldBefore = start + velocity * before - float3(0.0, 0.5 * PARTICLE_GRAVITY * before * before, 0.0);
-    // Facing the camera, drawn out along the way it flies across the view.
+    // From a centimetre to a clot a hand across, larger from a larger bubble; never smaller than shows, far off.
+    float far = length(frame->cameraPosition - world);
+    float size = 0.011 * exp(2.3 * heavy) * (0.75 + 0.5 * big) * (1.0 - 0.3 * flown / lands);
+    size = max(size, 0.001 * far);
+    // Facing the camera, drawn out along the way it flies across the view, the spray into streaks.
     float3 moving = velocity - float3(0.0, PARTICLE_GRAVITY * flown, 0.0);
-    float3 toCamera = normalize(frame->cameraPosition - world);
+    float3 toCamera = (frame->cameraPosition - world) / max(far, 1e-4);
     float3 across = moving - toCamera * dot(moving, toCamera);
     float seen = length(across);
     float3 flying = seen > 1e-3 ? across / seen : float3(0.0, 1.0, 0.0);
     float3 beside = normalize(cross(toCamera, flying));
-    float3 offset = flying * corner.x * size * (1.0 + min(seen * 0.12, 1.3)) + beside * corner.y * size;
+    float3 offset = flying * corner.x * size * (1.0 + min(seen * lerp(0.6, 0.12, heavy), 5.0)) + beside * corner.y * size;
     SpatterOut o;
     o.position = transform(frame->viewProj, float4(world + offset, 1.0));
     o.corner = corner;
     // The smaller, the sooner it cools.
-    float kelvin = LAVA_MOLTEN + 60.0 - (130.0 + 260.0 * (1.0 - large)) * flown / lands;
+    float kelvin = LAVA_MOLTEN + 40.0 - (170.0 + 100.0 * (1.0 - heavy)) * flown / lands;
     o.color = lavaLight(kelvin) * body.lava.y;
-    o.lumpy = float2(0.1 + 0.25 * particleRandom(h), particleRandom(h) * 2.0 * PI);
+    o.lumpy = float2(0.1 + 0.3 * heavy + 0.2 * particleRandom(h), particleRandom(h) * 2.0 * PI);
     o.currentClip = transform(frame->unjitteredViewProj, float4(world + offset, 1.0));
     o.previousClip = transform(frame->prevViewProj, float4(worldBefore + offset, 1.0));
     return o;

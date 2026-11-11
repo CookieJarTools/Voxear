@@ -55,7 +55,7 @@ const STREAM_ALONG: u32 = 4;
 /// `SPATTER_BLOBS` in `shaders/water.slang` and `BUBBLE_CELL` in
 /// `shaders/lava.slang`. And how many of those squares are looked in for
 /// bubbles at most: a side of a lake's, and along a flow.
-const SPATTER_BLOBS: u32 = 20;
+const SPATTER_BLOBS: u32 = 144;
 const BUBBLE_CELL: f32 = 2.4;
 /// How many quads a bubble's dome is drawn with, as `DOME_RINGS` times
 /// `DOME_SEGMENTS` in `shaders/water.slang`.

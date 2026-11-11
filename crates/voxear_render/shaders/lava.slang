@@ -32,6 +32,30 @@ float2 cellPoint(float2 cell)
     return frac(sin(float2(dot(cell, float2(127.1, 311.7)), dot(cell, float2(269.5, 183.3)))) * 43758.5453);
 }
 
+// Two numbers from 0 to 1 that belong to whole-numbered `cell`, a different
+// two for each `salt`. Reckoned in whole numbers, so they are the same
+// wherever they are worked out. Numbers taken from a sine are not: their
+// last bits go by how the sum under the sine was reckoned, which differs
+// from one use to the next, and the corners two cells share then get
+// different numbers in each, so nothing made of them joins up.
+float2 lavaCell(float2 cell, uint salt)
+{
+    uint2 whole = uint2(int2(floor(cell + 0.5)));
+    uint mixed = whole.x * 1597334677u ^ whole.y * 3812015801u ^ salt * 2654435761u;
+    uint2 v;
+    v.x = (mixed ^ (mixed >> 15u)) * 2246822519u;
+    v.y = (v.x ^ (v.x >> 13u)) * 3266489917u;
+    v ^= v >> 16u;
+    return float2(v >> 8u) * (1.0 / 16777216.0);
+}
+
+// Which numbers of a cell are whose: where its plate's middle is, its
+// plate's own numbers, its noise, and its bubbles'.
+static const uint CELL_PLATE = 0;
+static const uint CELL_OWN = 1;
+static const uint CELL_NOISE = 2;
+static const uint CELL_BUBBLE = 3;
+
 // The plates of crust round a place: how far it is from the nearest gap
 // between two of them, in plates, and from the next nearest; the way to the
 // nearest; its own plate's number, from 0 to 1, and that of the plate
@@ -51,7 +75,7 @@ struct LavaPlates
 // own.
 float2 platePoint(float2 cell, float churn)
 {
-    float2 at = cellPoint(cell);
+    float2 at = lavaCell(cell, CELL_PLATE);
     return 0.27 + 0.46 * at + 0.07 * sin(churn + 6.2831 * at.yx);
 }
 
@@ -83,7 +107,7 @@ LavaPlates lavaPlates(float2 p, float churn)
     plates.edge = 8.0;
     plates.next = 8.0;
     plates.toEdge = float2(1.0, 0.0);
-    plates.plate = cellPoint(n + nearestCell + 0.5).x;
+    plates.plate = lavaCell(n + nearestCell, CELL_OWN).x;
     plates.beyond = plates.plate;
     for (int j = -1; j <= 1; j++)
     {
@@ -102,7 +126,7 @@ LavaPlates lavaPlates(float2 p, float churn)
                     plates.next = plates.edge;
                     plates.edge = d;
                     plates.toEdge = way;
-                    plates.beyond = cellPoint(n + g + 0.5).x;
+                    plates.beyond = lavaCell(n + g, CELL_OWN).x;
                 }
                 else
                 {
@@ -137,7 +161,7 @@ float2 lavaSkin(float2 p)
         for (int i = -1; i <= 1; i++)
         {
             float2 g = float2(i, j);
-            float2 r = g + cellPoint(n + g) - f;
+            float2 r = g + lavaCell(n + g, CELL_PLATE) - f;
             float d = dot(r, r);
             if (d < first)
             {
@@ -151,7 +175,7 @@ float2 lavaSkin(float2 p)
             }
         }
     }
-    return float2(sqrt(second) - sqrt(first), cellPoint(cell + 0.5).y);
+    return float2(sqrt(second) - sqrt(first), lavaCell(cell, CELL_OWN).y);
 }
 
 // Smooth noise from 0 to 1, a unit across.
@@ -160,11 +184,27 @@ float lavaNoise(float2 p)
     float2 n = floor(p);
     float2 f = frac(p);
     f = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
-    float a = cellPoint(n).x;
-    float b = cellPoint(n + float2(1, 0)).x;
-    float c = cellPoint(n + float2(0, 1)).x;
-    float d = cellPoint(n + float2(1, 1)).x;
+    float a = lavaCell(n, CELL_NOISE).x;
+    float b = lavaCell(n + float2(1, 0), CELL_NOISE).x;
+    float c = lavaCell(n + float2(0, 1), CELL_NOISE).x;
+    float d = lavaCell(n + float2(1, 1), CELL_NOISE).x;
     return lerp(lerp(a, b, f.x), lerp(c, d, f.x), f.y);
+}
+
+// Smooth noise from 0 to 1, a unit across (x), as lavaNoise, and how fast it
+// rises across `p` each way (yz).
+float3 lavaNoiseSloped(float2 p)
+{
+    float2 n = floor(p);
+    float2 f = frac(p);
+    float2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+    float2 du = 30.0 * f * f * (f * (f - 2.0) + 1.0);
+    float a = lavaCell(n, CELL_NOISE).x;
+    float b = lavaCell(n + float2(1, 0), CELL_NOISE).x;
+    float c = lavaCell(n + float2(0, 1), CELL_NOISE).x;
+    float d = lavaCell(n + float2(1, 1), CELL_NOISE).x;
+    float twist = a - b - c + d;
+    return float3(lerp(lerp(a, b, u.x), lerp(c, d, u.x), u.y), float2(b - a + twist * u.y, c - a + twist * u.x) * du);
 }
 
 // Noise from 0 to 1 in three sizes, each turned from the last so no grid
@@ -188,45 +228,246 @@ float lavaSunk(float side, float bevel, float depth)
     return depth * (1.0 - smoothstep(0.0, bevel, side));
 }
 
-// Where a view going down into a gap in lava's crust meets it: how far on
-// along the surface from where it crossed the crust's top, in metres. The
-// view sinks `slant` metres a metre; it started `edge` metres from the
-// middle of the gap, on its own plate's side, and nears it by `nearing` a
-// metre; the gap reaches `here` metres into its own plate's side and
-// `there` into the other's. No further than `straight` metres, as far as
-// the gap is one straight gap: past that another gap joins it, and the view
-// is left where it is rather than followed into the wrong one.
-float lavaParallax(float edge, float nearing, float slant, float here, float there, float bevel, float depth, float straight)
+// The plates of crust a view into a gap can meet from a place: the plate the
+// place is on, the first of them, and the six round it. Where each has its
+// middle, from the place, in plates; and the cell of the place's own.
+static const uint CRUST_PLATES = 7;
+struct LavaCrust
 {
-    // No further than where it would reach the molten rock.
-    float most = min(min(depth / max(slant, 1e-3), 0.7), straight);
-    // In steps no longer than half the slope of a plate's side, so none is stepped over.
-    static const uint STEPS = 20;
-    float before = 0.0;
-    float reached = most;
-    for (uint i = 1; i <= STEPS; i++)
+    float2 to[CRUST_PLATES];
+    float2 cell;
+};
+
+// Which cells those are, from the place's own: on a lattice of three ways a
+// cell has six round it.
+static const float2 CRUST_CELLS[CRUST_PLATES] = {
+    float2(0, 0), float2(1, 0), float2(-1, 0), float2(0, 1), float2(0, -1), float2(1, -1), float2(-1, 1)
+};
+
+// Where the plate of `cell` has its middle, in its cell, wandering slowly
+// round with `churn`, a phase, as plates jostle. Kept well away from its
+// cell's sides, so the plates a plate meets are the six round its own.
+float2 crustPoint(float2 cell, float churn)
+{
+    float2 at = lavaCell(cell, CELL_PLATE);
+    return 0.31 + 0.38 * at + 0.03 * sin(churn + 6.2831 * at.yx);
+}
+
+// The plates round `p`, about a unit each, jostling as `churn` goes on.
+// Their middles are scattered on a lattice of three ways, not two, so their
+// edges meet three at a corner at wide angles, as cracks do, and no plate
+// is near square.
+LavaCrust lavaCrust(float2 p, float churn)
+{
+    float2 skewed = float2(p.x - p.y * 0.57735, p.y * 1.1547);
+    float2 n = floor(skewed);
+    float2 f = frac(skewed);
+    float2 nearest = 0.0;
+    float best = 8.0;
+    for (int j = -1; j <= 1; j++)
     {
-        float s = most * float(i) / float(STEPS);
-        float d = edge - s * nearing;
-        float sunk = lavaSunk(d >= 0.0 ? d - here : -d - there, bevel, depth);
-        if (s * slant >= sunk)
+        for (int i = -1; i <= 1; i++)
         {
-            reached = s;
-            break;
+            float2 g = float2(i, j);
+            float2 r = g + crustPoint(n + g, churn) - f;
+            r = float2(r.x + 0.5 * r.y, r.y * 0.866025);
+            float d = dot(r, r);
+            if (d < best)
+            {
+                best = d;
+                nearest = g;
+            }
         }
-        before = s;
     }
-    // Between the last step over it and the first under it.
-    for (uint k = 0; k < 5; k++)
+    LavaCrust crust;
+    crust.cell = n + nearest;
+    for (uint k = 0; k < CRUST_PLATES; k++)
     {
-        float s = (before + reached) * 0.5;
-        float d = edge - s * nearing;
-        float sunk = lavaSunk(d >= 0.0 ? d - here : -d - there, bevel, depth);
-        bool under = s * slant >= sunk;
+        float2 g = nearest + CRUST_CELLS[k];
+        float2 r = g + crustPoint(n + g, churn) - f;
+        crust.to[k] = float2(r.x + 0.5 * r.y, r.y * 0.866025);
+    }
+    return crust;
+}
+
+// Two numbers of the `which`th of `crust`'s plates, from 0 to 1 each, its
+// own from one plate to the next.
+float2 lavaPlateNumbers(LavaCrust crust, uint which)
+{
+    return lavaCell(crust.cell + CRUST_CELLS[which], CELL_OWN);
+}
+
+// How plates' edges wander, so none runs straight: three waves across the
+// plates, each shifting them sideways along itself. Which way each runs and
+// how many turns a plate; and how far each shifts, in plates.
+static const float2 WANDER_WAYS[3] = { float2(0.83, 0.56) * 11.4, float2(-0.44, 0.9) * 23.3, float2(0.97, -0.26) * 48.3 };
+static const float2 WANDER_SHIFTS[3] = { float2(-0.56, 0.83) * 0.04, float2(-0.9, -0.44) * 0.019, float2(0.26, 0.97) * 0.009 };
+
+// How far along each of those waves `p` is, in plates across the lava.
+float3 lavaWanderAt(float2 p)
+{
+    return float3(dot(p, WANDER_WAYS[0]), dot(p, WANDER_WAYS[1]), dot(p, WANDER_WAYS[2]));
+}
+
+// How far a place that far along each wave is shifted, in plates.
+float2 lavaWander(float3 phase)
+{
+    float3 wave = sin(phase);
+    return WANDER_SHIFTS[0] * wave.x + WANDER_SHIFTS[1] * wave.y + WANDER_SHIFTS[2] * wave.z;
+}
+
+// What of `crust`'s plates is found at a place: how far it is to the nearest
+// edge between two of them, in plates; the same `rounded`, measured to all
+// the plate's edges together, so it turns a corner of the plate in a curve
+// and not at a line; the way from the plate to the nearest edge; and which
+// plate it is.
+struct LavaPlace
+{
+    float edge;
+    float rounded;
+    float2 way;
+    uint plate;
+};
+
+// How far it is to the nearest edge between two of `crust`'s plates, in
+// plates, from `at`, in plates from the crust's place.
+float lavaEdge(LavaCrust crust, float2 at)
+{
+    float far[CRUST_PLATES];
+    float best = 1e9;
+    float2 mine = 0.0;
+    for (uint k = 0; k < CRUST_PLATES; k++)
+    {
+        float2 r = crust.to[k] - at;
+        far[k] = dot(r, r);
+        mine = far[k] < best ? crust.to[k] : mine;
+        best = min(best, far[k]);
+    }
+    // Half way to each of the others, across the line between the two.
+    float edge = 8.0;
+    for (uint k = 0; k < CRUST_PLATES; k++)
+    {
+        float2 between = crust.to[k] - mine;
+        float apart = dot(between, between);
+        edge = apart > 1e-6 ? min(edge, (far[k] - best) * 0.5 * rsqrt(apart)) : edge;
+    }
+    return edge;
+}
+
+// What of `crust`'s plates is found `at`, in plates from the crust's place.
+LavaPlace lavaPlace(LavaCrust crust, float2 at)
+{
+    static const float SHARP = 12.0;
+    float far[CRUST_PLATES];
+    float best = 1e9;
+    float2 mine = 0.0;
+    LavaPlace place;
+    place.plate = 0;
+    for (uint k = 0; k < CRUST_PLATES; k++)
+    {
+        float2 r = crust.to[k] - at;
+        far[k] = dot(r, r);
+        if (far[k] < best)
+        {
+            best = far[k];
+            mine = crust.to[k];
+            place.plate = k;
+        }
+    }
+    place.edge = 8.0;
+    place.way = float2(1.0, 0.0);
+    float together = 0.0;
+    for (uint k = 0; k < CRUST_PLATES; k++)
+    {
+        float2 between = crust.to[k] - mine;
+        float apart = dot(between, between);
+        if (apart > 1e-6)
+        {
+            float closeness = rsqrt(apart);
+            float d = (far[k] - best) * 0.5 * closeness;
+            together += exp(-SHARP * d);
+            if (d < place.edge)
+            {
+                place.edge = d;
+                place.way = between * closeness;
+            }
+        }
+    }
+    place.rounded = -log(max(together, 1e-20)) / SHARP;
+    return place;
+}
+
+// A view going on across lava's plates from a place: by how many plates a
+// metre, how far along each of the waves its edges wander by it starts,
+// and how fast it goes along them.
+struct LavaRay
+{
+    float2 along;
+    float3 phase;
+    float3 turning;
+};
+
+// The view from `p` across the plates, going `along` plates a metre.
+LavaRay lavaRay(float2 p, float2 along)
+{
+    LavaRay ray = { along, lavaWanderAt(p), lavaWanderAt(along) };
+    return ray;
+}
+
+// Where `s` metres along `ray` is, in plates from where it started, as the
+// plates' edges wander.
+float2 lavaRayAt(LavaRay ray, float s)
+{
+    return ray.along * s + lavaWander(ray.phase + ray.turning * s);
+}
+
+// Where a view going down into lava's crust meets it: how far on along the
+// surface from where it crossed the crust's top, in metres. `ray` is the
+// view across `crust`'s plates, `size` metres each, and it sinks `slant`
+// metres a metre; where it starts it is `side` metres out of the nearest
+// gap, less than nothing in it. Every gap between two plates reaches `gap`
+// metres into each, the crust is `depth` thick and its edge slopes down
+// over `bevel`. The plates are followed as they are, round corners and
+// where gaps join, so a gap is the same gap from whichever side it is seen.
+float lavaInto(LavaCrust crust, LavaRay ray, float side, float slant, float size, float gap, float bevel, float depth)
+{
+    // No further than where it would reach the molten rock: until then it meets only a plate's side, if anything.
+    float most = min(depth / max(slant, 1e-3), 0.7);
+    // How fast it can near a plate's side at most, in metres a metre, with how the edges wander.
+    float nearing = length(ray.along) * size * 1.3 + 1e-4;
+    // Too far out in a gap to come to either side of it.
+    if (side + most * nearing < 0.0)
+    {
+        return most;
+    }
+    // Over a gap, as far at a time as stays clear of its sides; by one, in short steps, so no sliver of crust is
+    // stepped over.
+    float least = most / clamp(ceil(most / 0.03), 2.0, 12.0);
+    float before = 0.0;
+    float s = 0.0;
+    bool met = false;
+    for (uint i = 0; i < 12 && !met && s < most; i++)
+    {
+        s = min(s + max(-side / nearing, least), most);
+        side = lavaEdge(crust, lavaRayAt(ray, s)) * size - gap;
+        met = s * slant >= lavaSunk(side, bevel, depth);
+        before = met ? before : s;
+    }
+    // Nothing but the molten rock, or what lies under where the view is given up.
+    if (!met || side <= 0.0)
+    {
+        return met ? s : most;
+    }
+    // A plate's side: between the last step over it and the first under it.
+    float reached = s;
+    for (uint k = 0; k < 4; k++)
+    {
+        s = (before + reached) * 0.5;
+        bool under = s * slant >= lavaSunk(lavaEdge(crust, lavaRayAt(ray, s)) * size - gap, bevel, depth);
         before = under ? before : s;
         reached = under ? s : reached;
     }
-    return reached;
+    return (before + reached) * 0.5;
 }
 
 // How high molten lava heaves at `plate` across its plates, in metres, at
@@ -261,7 +502,7 @@ static const float BUBBLE_HEAL = 1.8;
 // middle of each, which wander.
 float lakeAge(float2 p, float t)
 {
-    return 0.12 + 1.5 * smoothstep(0.15, 0.85, lavaNoise(p * 0.08 + t * 0.01));
+    return 0.12 + 1.5 * smoothstep(0.15, 0.85, lavaNoise(p * 0.15 + t * 0.012));
 }
 
 // How far a lava lake's plates have drifted by time `t`, in metres.
@@ -315,15 +556,17 @@ struct LavaBubble
 // it rises at all is lavaBubbleRises.
 LavaBubble lavaBubble(LavaField field, float2 cell)
 {
-    float2 a = cellPoint(cell + 31.7);
-    float2 b = cellPoint(cell + 73.1);
+    float2 a = lavaCell(cell, CELL_BUBBLE);
+    float2 b = lavaCell(cell, CELL_BUBBLE + 1);
     LavaBubble bubble;
     bubble.vent = b.y < 0.06;
     float period = bubble.vent ? lerp(2.0, 2.8, a.x) : lerp(4.5, 8.0, a.x);
     float into = field.time + a.y * period;
     float turn = floor(into / period);
-    float2 c = cellPoint(cell + 0.37 + frac(turn * float2(0.618, 0.414)) * 91.0);
-    float2 d = cellPoint(cell + 0.71 + frac(turn * float2(0.303, 0.877)) * 57.0);
+    // Its own numbers, new each turn.
+    uint turned = uint(int(turn)) * 2u + CELL_BUBBLE + 2;
+    float2 c = lavaCell(cell, turned);
+    float2 d = lavaCell(cell, turned + 1);
     bubble.begun = into - turn * period;
     bubble.middle = (cell + 0.25 + 0.5 * (bubble.vent ? b.xx * float2(1.0, 0.6) + float2(0.0, 0.3 * a.x) : c)) * BUBBLE_CELL;
     bubble.radius = bubble.vent ? lerp(0.14, 0.24, d.x) : lerp(0.2, 0.55, d.x * d.x);

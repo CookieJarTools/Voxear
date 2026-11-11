@@ -4035,7 +4035,8 @@ fn lava_glows_where_it_sets_out_crusts_over_from_its_banks_and_a_lake_of_it_crac
     let point = |z: f32| PathPoint { position: [0.0, 0.3, z], width: 4.0 };
     let path = Path { points: vec![point(0.0), point(20.0), point(40.0)], closed: false };
     world.spawn((Stream { liquid: Liquid::Lava, cooling: 10.0, ..Stream::default() }, path, Transform::default()));
-    let lake = Pool { liquid: Liquid::Lava, size: [6.0, 6.0], depth: 0.5, ..Pool::default() };
+    // A lake that crusts over in a few seconds, so that even where it has just turned over it has plates to show.
+    let lake = Pool { liquid: Liquid::Lava, size: [6.0, 6.0], depth: 0.5, cooling: 6.0, ..Pool::default() };
     world.spawn((lake, Transform::from_position(Vec3::new(8.0, 0.2, 14.0))));
     run(&mut renderer, &world, &mut 100.0, 10);
     let pixels = renderer.read_pixels().unwrap().2;

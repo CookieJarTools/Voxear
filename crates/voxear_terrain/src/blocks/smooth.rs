@@ -259,31 +259,110 @@ pub fn mesh_chunk(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces]) -> ChunkM
 /// the chunk columns `made` picks, by place along x and z, are made: past
 /// the others the world goes on, so its water shows no face towards them.
 pub fn mesh_made(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], made: &dyn Fn([i32; 2]) -> bool) -> ChunkMesh {
-    mesh_levels(map, key, faces, (FLAT_ENOUGH, true), made)
+    mesh_levels(map, key, faces, (FLAT_ENOUGH, true, 0.0), made)
 }
 
 /// Chunk `key`'s surface as [`mesh_made`] makes it, at its first level
 /// alone: quicker, for a chunk just changed, which is drawn so wherever it
 /// is.
 pub fn mesh_near(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], made: &dyn Fn([i32; 2]) -> bool) -> ChunkMesh {
-    mesh_levels(map, key, faces, (FLAT_ENOUGH, false), made)
+    mesh_levels(map, key, faces, (FLAT_ENOUGH, false, 0.0), made)
+}
+
+/// How far a far chunk's skirts hang, in its blocks.
+pub const SKIRT: f32 = 2.0;
+
+/// Chunk `key`'s surface as [`mesh_made`] makes it, for a far chunk of a
+/// world without end, with skirts: where its surface meets its column's
+/// sides, a strip hanging [`SKIRT`] blocks down from its edge, facing out.
+/// A ring of coarser chunks meets the finer ring inside it along such a
+/// side, each with the same ground as its own blocks have it, so not quite
+/// edge to edge: where the coarser stands higher, its skirt closes the
+/// gap; where it stands lower, the gap faces away from the camera, which
+/// is within the finer. Beside a chunk of its own ring its edge is met,
+/// and its skirt hangs unseen under the ground. Skirts are drawn and
+/// nothing else: nothing stands on them.
+pub fn mesh_skirted(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], made: &dyn Fn([i32; 2]) -> bool) -> ChunkMesh {
+    mesh_levels(map, key, faces, (FLAT_ENOUGH, true, SKIRT), made)
+}
+
+/// The skirts of `triangles` over `points`: for each edge only one of them
+/// has, both its points on the same side of the chunk's column along x or
+/// z, and the triangle facing up at all, two triangles down from it to
+/// `depth` blocks under it, facing out,
+/// their lower points added to `points` and `ways`, drawn as the points
+/// over them and facing the way the skirt does.
+fn skirts(
+    points: &mut Vec<[f32; 3]>,
+    ways: &mut Vec<([f32; 3], [u8; 3])>,
+    triangles: &[[u32; 3]],
+    depth: f32,
+) -> Vec<[u32; 3]> {
+    use std::collections::{HashMap, HashSet};
+    // A point of a cube on the column's edge lies half a block either side of it.
+    let side = |point: [f32; 3]| -> [bool; 4] {
+        let far = CHUNK as f32 - 0.5;
+        [point[0] <= 0.5, point[0] >= far, point[2] <= 0.5, point[2] >= far]
+    };
+    let edges: HashSet<(u32, u32)> = triangles.iter().flat_map(|&[a, b, c]| [(a, b), (b, c), (c, a)]).collect();
+    let mut under: HashMap<(u32, [u32; 3]), u32> = HashMap::new();
+    let mut out = Vec::new();
+    for &[a, b, c] in triangles {
+        for (from, to, other) in [(a, b, c), (b, c, a), (c, a, b)] {
+            if edges.contains(&(to, from)) {
+                continue;
+            }
+            let (p, q, r) = (points[from as usize], points[to as usize], points[other as usize]);
+            let (on_p, on_q) = (side(p), side(q));
+            if !(0..4).any(|i| on_p[i] && on_q[i]) {
+                continue;
+            }
+            // Out from the triangle across its edge, level.
+            let (e, f) = ([0, 1, 2].map(|k| q[k] - p[k]), [0, 1, 2].map(|k| r[k] - p[k]));
+            let n = [e[1] * f[2] - e[2] * f[1], e[2] * f[0] - e[0] * f[2], e[0] * f[1] - e[1] * f[0]];
+            // Ground that faces up at all: the underside of the ground and its sheer walls hang none.
+            if n[1] <= 0.05 * (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt() {
+                continue;
+            }
+            let away = [e[1] * n[2] - e[2] * n[1], 0.0, e[0] * n[1] - e[1] * n[0]];
+            let length = (away[0] * away[0] + away[2] * away[2]).sqrt();
+            if length <= 1e-9 {
+                continue;
+            }
+            let away = away.map(|v| v / length);
+            let mut lower = |over: u32| {
+                let key = (over, away.map(f32::to_bits));
+                *under.entry(key).or_insert_with(|| {
+                    let [x, y, z] = points[over as usize];
+                    points.push([x, (y - depth).max(POINT_FROM), z]);
+                    ways.push((away, ways[over as usize].1));
+                    points.len() as u32 - 1
+                })
+            };
+            let (under_from, under_to) = (lower(from), lower(to));
+            out.push([to, from, under_from]);
+            out.push([to, under_from, under_to]);
+        }
+    }
+    out
 }
 
 /// Chunk `key`'s surface, as [`mesh_chunk`] makes it, its triangles merged
 /// where the surface moves no more than `error` blocks.
 #[cfg(test)]
 fn mesh_within(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], error: f32) -> ChunkMesh {
-    mesh_levels(map, key, faces, (error, error > 0.0), &|_| true)
+    mesh_levels(map, key, faces, (error, error > 0.0, 0.0), &|_| true)
 }
 
 /// Chunk `key`'s surface, its triangles merged where it moves no more than
-/// `error` blocks, and its coarser levels after where `levels` says; its
-/// water as [`mesh_made`] says.
+/// `error` blocks, and its coarser levels after where `levels` says, each
+/// with skirts `skirt` blocks deep where that is more than none (see
+/// [`mesh_skirted`]); its water as [`mesh_made`] says.
 fn mesh_levels(
     map: &BlockMap,
     key: [i32; 3],
     faces: &[BlockFaces],
-    (error, levels): (f32, bool),
+    (error, levels, skirt): (f32, bool, f32),
     made: &dyn Fn([i32; 2]) -> bool,
 ) -> ChunkMesh {
     let mut out = ChunkMesh::default();
@@ -370,13 +449,25 @@ fn mesh_levels(
         out.indices.extend(triangle);
         out.quads.extend(corners(&out.positions, &ways, triangle));
     }
+    // Its skirts, drawn alone: their points are not among those kept for collision.
+    let skirted = |points: &[[f32; 3]], ways: &[([f32; 3], [u8; 3])], triangles: &[[u32; 3]]| {
+        let (mut points, mut ways) = (points.to_vec(), ways.to_vec());
+        let hanging = skirts(&mut points, &mut ways, triangles, skirt);
+        hanging.into_iter().flat_map(|triangle| corners(&points, &ways, triangle)).collect::<Vec<_>>()
+    };
+    if skirt > 0.0 {
+        out.quads.extend(skirted(&out.positions, &ways, &merged));
+    }
     // Coarser levels after it, for far away, where they are made, merged as it is.
     let mut ends = [out.quads.len() as u32; LEVELS];
     if levels {
         for (level, coarser) in COARSER.into_iter().enumerate() {
             let (points, ways, coarse) = simplified((&every.0, &every.1, &shared), &triangles, coarser);
-            for triangle in coarse {
+            for &triangle in &coarse {
                 out.quads.extend(corners(&points, &ways, triangle));
+            }
+            if skirt > 0.0 {
+                out.quads.extend(skirted(&points, &ways, &coarse));
             }
             ends[level + 1] = out.quads.len() as u32;
         }
@@ -1199,5 +1290,57 @@ mod tests {
             edges.keys().filter(|(a, b)| inside(*a) && inside(*b) && !edges.contains_key(&(*b, *a))).collect();
         assert!(open.is_empty(), "{open:?}");
         assert!(edges.keys().any(|(a, b)| a[0] == 32 * 1024 && b[0] == 32 * 1024), "edges on the seam");
+    }
+
+    #[test]
+    fn a_far_chunks_skirts_hang_from_its_columns_sides_alone_facing_out() {
+        let faces = [BlockFaces::default(), BlockFaces::new(1, 2, 3)];
+        // A slope over three chunks along x and z, the middle one's surface running off every side of it.
+        let map = ground([96, 96], |x, z| 8.0 + x as f32 * 0.11 + z as f32 * 0.07);
+        let (plain, skirted) = (mesh_chunk(&map, [1, 0, 1], &faces), mesh_skirted(&map, [1, 0, 1], &faces, &|_| true));
+        // What stands and is hit is the same; only more is drawn, at each level.
+        assert_eq!((&plain.positions, &plain.indices), (&skirted.positions, &skirted.indices));
+        let place = |words: [u32; 2]| -> [f32; 3] {
+            let at = |v: u32| v as f32 / POINT_STEPS + POINT_FROM;
+            [at(words[0] & 0xFFFF), at(words[0] >> 16), at(words[1])]
+        };
+        let (mut was, mut now) = (0, 0);
+        for level in 0..LEVELS {
+            let own = (plain.buckets[level + 1] - plain.buckets[level]) as usize;
+            let (from, to) = (skirted.buckets[level] as usize, skirted.buckets[level + 1] as usize);
+            // Its own triangles first, as they were.
+            assert_eq!(skirted.quads[from..from + own], plain.quads[was..was + own], "level {level}");
+            let hanging: Vec<[[f32; 3]; 3]> = skirted.quads[from + own..to]
+                .chunks_exact(6)
+                .map(|corner| {
+                    [
+                        place([corner[0][0], corner[0][1]]),
+                        place([corner[2][0], corner[2][1]]),
+                        place([corner[4][0], corner[4][1]]),
+                    ]
+                })
+                .collect();
+            assert!(hanging.len() >= 16, "level {level}: {} skirt triangles", hanging.len());
+            for [a, b, c] in hanging {
+                // On one side of the column, upright, reaching two blocks down, facing out of the chunk.
+                let on = |axis: usize, low: bool| {
+                    [a, b, c].iter().all(|p| if low { p[axis] <= 0.5 } else { p[axis] >= CHUNK as f32 - 0.5 })
+                };
+                let side =
+                    [(0, true), (0, false), (2, true), (2, false)].into_iter().find(|&(axis, low)| on(axis, low));
+                let Some((axis, low)) = side else { panic!("a skirt off the sides: {a:?} {b:?} {c:?}") };
+                let (e, f) = ([0, 1, 2].map(|k| b[k] - a[k]), [0, 1, 2].map(|k| c[k] - a[k]));
+                let n = [e[1] * f[2] - e[2] * f[1], e[2] * f[0] - e[0] * f[2], e[0] * f[1] - e[1] * f[0]];
+                assert!(
+                    n[1].abs() < 1e-3 && (n[axis] < 0.0) == low && n[axis] != 0.0,
+                    "facing {n:?} on {axis}: {a:?} {b:?} {c:?}"
+                );
+                let ys = [a[1], b[1], c[1]];
+                let drop = ys.iter().fold(f32::MIN, |m, &y| m.max(y)) - ys.iter().fold(f32::MAX, |m, &y| m.min(y));
+                assert!(drop > SKIRT - 0.5 && drop < SKIRT + 4.0, "hanging {drop} blocks");
+            }
+            (was, now) = (was + own, to);
+        }
+        assert_eq!(now, skirted.quads.len(), "no water, nothing after the levels");
     }
 }

@@ -117,7 +117,7 @@ void surface(Lava lava, SurfaceInput input, inout SurfaceOutput surface)
     float size = lava.plateSize;
     float fineSize = size * 0.3;
     // Bent by slow noise, so the plates are rounded and uneven rather than tiles.
-    float2 flowing = input.position.xz - lava.flow * time;
+    float2 flowing = input.levelPosition.xz - lava.flow * time;
     float2 p = flowing + (float2(layered(flowing / size * 0.4), layered(flowing / size * 0.4 + 9.3)) - 0.5) * size * 0.9;
     float3 plate = cellEdge(p / size, time, lava.churn);
     float3 fine = cellEdge(p / fineSize + 17.0, time, lava.churn);

@@ -387,6 +387,23 @@ pub struct GpuFrame {
     pub local_shadows: GpuLocalShadows,
     pub ocean: GpuOcean,
     pub tracks: crate::tracks::GpuTracks,
+    /// Where the world's middle is from the level's real middle (see
+    /// `voxear_scene::WorldOrigin`): x, y and z wrapped every
+    /// `ORIGIN_WRAP` metres, exact as whole metres in a float, for patterns
+    /// that keep their place as the middle moves (`levelPosition` in the
+    /// shaders); and its height, whole, for the sky and fog, which measure
+    /// heights from the level's ground.
+    pub origin: [f32; 4],
+}
+
+/// How often the origin's x, y and z wrap in `GpuFrame::origin`, in metres:
+/// the longest a pattern can be before it repeats, exact to 4 mm out there.
+pub const ORIGIN_WRAP: f64 = 65536.0;
+
+/// `GpuFrame::origin` for a world whose middle is `origin` from the level's.
+pub fn frame_origin(origin: voxear_core::math::I64Vec3) -> [f32; 4] {
+    let wrapped = origin.as_dvec3().to_array().map(|metres| metres.rem_euclid(ORIGIN_WRAP) as f32);
+    [wrapped[0], wrapped[1], wrapped[2], origin.y as f32]
 }
 
 /// The sea, as `Ocean` in `shaders/common.slang` (see `ocean`).
@@ -1143,7 +1160,7 @@ mod tests {
         assert_eq!(LOCAL_SHADOW_ATLAS, [4096, 3072], "as LOCAL_SHADOW_ATLAS in the shaders");
         assert_eq!(
             size_of::<GpuFrame>(),
-            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi + 32 + 16 * MAX_PUSHERS + 4 * MAX_PUSHERS + 16 + seasons + local_shadows + 336 + tracks
+            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi + 32 + 16 * MAX_PUSHERS + 4 * MAX_PUSHERS + 16 + seasons + local_shadows + 336 + tracks + 16
         );
         assert_eq!(size_of::<GpuOcean>(), 336);
         assert_eq!(size_of::<GpuStreamPoint>(), 48);

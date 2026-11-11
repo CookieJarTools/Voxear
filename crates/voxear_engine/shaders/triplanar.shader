@@ -24,7 +24,7 @@ float3 laid(Picture picture, float3 p, float3 weights)
 
 void surface(Triplanar triplanar, SurfaceInput input, inout SurfaceOutput surface)
 {
-    float3 p = triplanar.local ? input.position - input.objectPosition : input.position;
+    float3 p = triplanar.local ? input.position - input.objectPosition : input.levelPosition;
     float3 weights = pow(abs(input.normal), triplanar.sharpness);
     weights /= max(weights.x + weights.y + weights.z, 1e-4);
     float3 color = laid(triplanar.picture, p / triplanar.size, weights) * triplanar.tint;

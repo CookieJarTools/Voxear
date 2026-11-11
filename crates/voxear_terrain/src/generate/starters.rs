@@ -481,11 +481,11 @@ mod tests {
     #[test]
     fn each_starter_makes_the_same_ground_to_the_bit_on_every_machine() {
         let hashes: [(&str, u64); 5] = [
-            ("Battlefield Plains", 0xf61d_7f19_9276_6b02),
-            ("Rolling Hills", 0xc807_4899_6df0_60ae),
-            ("Alpine", 0x1d47_111f_7d82_50c7),
+            ("Battlefield Plains", 0x523a_538e_8b31_d1e2),
+            ("Rolling Hills", 0xd333_23e9_32fd_3311),
+            ("Alpine", 0x0391_73e0_f540_f21c),
             ("Archipelago", 0x7bff_4835_90c8_2cc7),
-            ("Canyons", 0xbf21_c6c1_cfc9_9aeb),
+            ("Canyons", 0x9476_55b1_f345_908c),
         ];
         let starters = grounds();
         assert_eq!(starters.len(), hashes.len());

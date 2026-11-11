@@ -761,7 +761,42 @@ struct Frame
     LocalShadows localShadows;
     Ocean ocean;
     Tracks tracks;
+    // Where the world's middle is from the level's (src/gpu.rs's GpuFrame::origin): x, y and z wrapped every
+    // ORIGIN_WRAP metres, exact, for levelPosition; and its height, whole, for the sky and fog.
+    float4 origin;
 };
+
+// Where `world` is from the level's real middle, wrapped every `period` metres, a power of two up to ORIGIN_WRAP
+// (65536), into half a period either side of it. A pattern read from it (noise, hashed cells, tiling) keeps its place
+// as the world's middle moves with the camera (voxear_scene::WorldOrigin), and is as exact far out as near the
+// middle: to a quarter of a millimetre in a period of 4096 m, 4 mm in one of 65536. Within half a period of the
+// level's middle it is the place itself. It repeats every `period`, so a pattern that does not tile meets itself
+// along lines that far apart in the level.
+float3 levelPosition(Frame* frame, float3 world, float period)
+{
+    float3 at = world + fmod(frame->origin.xyz, period);
+    return at - floor(at / period + 0.5) * period;
+}
+
+// As levelPosition, across the ground.
+float2 levelXZ(Frame* frame, float2 xz, float period)
+{
+    return levelPosition(frame, float3(xz.x, 0.0, xz.y), period).xz;
+}
+
+// What to add to positions across the ground near `anchor` for where they are from the level's middle, wrapped as
+// levelPosition wraps `anchor`: whole metres, exact, the same for all of them, so a body's patterns read with it have
+// no seam across the body however near a wrap it stands.
+float2 levelShift(Frame* frame, float2 anchor, float period)
+{
+    return levelXZ(frame, anchor, period) - anchor;
+}
+
+// How high `world` is above the level's ground, for heights measured from it: the sky's, the fog's.
+float levelHeight(Frame* frame, float3 world)
+{
+    return world.y + frame->origin.w;
+}
 
 // The projection a shadow draw puts its vertices through: a cascade's, or
 // for a local light's list the view `level` names.
@@ -1042,6 +1077,8 @@ struct GrassJob
     float4 lodReach;
     uint4 offsets;
     uint4 capacities;
+    // Where its first cell's corner is in the world, cells counted from the level's middle (src/grass.rs).
+    float2 corner;
 };
 
 // A blade as a view keeps it: where it stands, and packed, its turn (10 bits), its size between its kind's

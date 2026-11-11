@@ -20,7 +20,8 @@ float4 shadowVertex(uint vertexId : SV_VertexID, uint drawId : SV_DrawIndex) : S
     // A custom shader's vertex function moves its shadow too.
     if (material.shader != STANDARD_SHADER)
     {
-        VertexInput moved = { world.xyz, normal, v.uv, origin, push.frame->time };
+        float3 level = levelPosition(push.frame, world.xyz, 4096.0);
+        VertexInput moved = { world.xyz, normal, v.uv, origin, push.frame->time, level };
         world.xyz += customVertex(instance.material, moved);
     }
     return transform(shadowViewProj(push.frame, push.list, push.level), world);

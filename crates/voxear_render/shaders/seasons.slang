@@ -32,7 +32,8 @@ struct PlantSeason
 PlantSeason plantSeason(Frame* frame, float3 origin)
 {
     Seasons seasons = frame->seasons;
-    float early = (windNoise(origin.xz / seasons.patchSize) - 0.5) * seasons.variation;
+    // Read from the level's middle, so the patches stay where they are as the world's middle moves.
+    float early = (windNoise(levelPosition(frame, origin, 65536.0).xz / seasons.patchSize) - 0.5) * seasons.variation;
     float time = seasons.time + early;
     time -= 4.0 * floor(time / 4.0);
     uint from = min(uint(time), 3u);
@@ -70,7 +71,7 @@ void seasonalSurface(Frame* frame, Material material, float3 origin, float3 norm
     {
         // The texture's light and dark, so a season's colour keeps the leaf's veins and edges.
         float detail = min(seasonLuminance(albedo) / max(seasonLuminance(material.baseColor.rgb), 1e-3), 2.0);
-        float2 patch = origin.xz / seasons.patchSize;
+        float2 patch = levelPosition(frame, origin, 65536.0).xz / seasons.patchSize;
         if ((material.flags & MATERIAL_LEAVES_STAY) == 0)
         {
             // Some plants redder, some yellower, as a wood in autumn.

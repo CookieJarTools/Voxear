@@ -307,13 +307,15 @@ float terrainHollow(Terrain terrain, float2 local)
 void terrainPuddles(Frame* frame, float3 world, float3 ground, float hollow, inout TerrainLayer layer)
 {
     terrainWet(layer);
-    float edge = 0.005 + 0.025 * wetNoise(world.xz * 1.3);
+    // Read from the level's middle, so the water stays where it is as the world's middle moves.
+    float2 level = levelPosition(frame, world, 4096.0).xz;
+    float edge = 0.005 + 0.025 * wetNoise(level * 1.3);
     float standing = smoothstep(edge, edge + 0.035, hollow);
     float slope = 1.0 - ground.y;
     float2 down = ground.xz / max(length(ground.xz), 1e-4);
     float2 across = float2(-down.y, down.x);
     float speed = 0.3 + 4.0 * slope;
-    float2 flow = float2(dot(world.xz, across) * 1.2, (dot(world.xz, down) - frame->time * speed) * 0.35);
+    float2 flow = float2(dot(level, across) * 1.2, (dot(level, down) - frame->time * speed) * 0.35);
     // Fewer and wider than a pixel: those thinner fade, rather than flicker.
     float fine = 1.0 - smoothstep(0.15, 0.4, fwidth(flow.x));
     float running = smoothstep(0.6, 0.7, wetNoise(flow)) * smoothstep(0.03, 0.08, slope) * (1.0 - smoothstep(0.45, 0.7, slope)) * fine;
@@ -324,7 +326,7 @@ void terrainPuddles(Frame* frame, float3 world, float3 ground, float hollow, ino
     }
     // Ripples: blown across standing water by the wind, carried down with running water.
     Wind wind = frame->wind;
-    float2 blown = world.xz * 3.0 - wind.direction * frame->time * (0.5 + wind.strength);
+    float2 blown = level * 3.0 - wind.direction * frame->time * (0.5 + wind.strength);
     float2 rippled = standing >= running ? blown : float2(flow.x, flow.y * 6.0);
     float lift = standing >= running ? 0.04 + 0.1 * saturate(wind.strength) : 0.25;
     float2 bend = (float2(wetNoise(rippled), wetNoise(rippled + 31.7)) - 0.5) * lift;
@@ -362,7 +364,8 @@ float3 terrainLava(Frame* frame, float3 world, float3 ground, inout TerrainLayer
     {
         float turn = frac(frame->time / CARRIED + 0.5 * float(set));
         float weight = 1.0 - abs(2.0 * turn - 1.0);
-        float2 crust = terrainLavaCrust(frame, world.xz + float2(31.0, 17.0) * float(set) - fall * turn * CARRIED);
+        float2 at = levelPosition(frame, world, 4096.0).xz;
+        float2 crust = terrainLavaCrust(frame, at + float2(31.0, 17.0) * float(set) - fall * turn * CARRIED);
         lava += float2(crust.x, crust.y) * weight;
     }
     float crack = saturate(lava.x);
@@ -381,7 +384,7 @@ float3 terrainGlitter(Frame* frame, float3 world, float3 normal)
     {
         return float3(0.0);
     }
-    float2 grain = floor(world.xz * 45.0);
+    float2 grain = floor(levelPosition(frame, world, 1024.0).xz * 45.0);
     float3 random = frac(sin(float3(dot(grain, float2(127.1, 311.7)), dot(grain, float2(269.5, 183.3)), dot(grain, float2(419.2, 371.9)))) * 43758.5453);
     if (random.z > 0.33)
     {
@@ -434,7 +437,7 @@ bool terrainShading(VertexOut input, inout float4 base, inout float metallic, in
     Terrain terrain = buffers()->terrains[input.cluster];
     float2 local = input.worldPosition.xz - terrain.corner.xz;
     TerrainSpot spot;
-    spot.place = float3(local.x, input.worldPosition.y, local.y);
+    spot.place = float3(local.x, input.worldPosition.y - terrain.corner.y, local.y);
     spot.dx = ddx(spot.place);
     spot.dy = ddy(spot.place);
     // Dug ground is where holes are cut for it, and its walls stand up, so every surface is drawn from the sides too.

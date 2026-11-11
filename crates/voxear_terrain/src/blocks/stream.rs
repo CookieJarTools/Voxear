@@ -14,11 +14,20 @@
 //! each are drawn, so near and far never both draw the same ground, and the
 //! coarse ground shows until the fine is drawn.
 //!
-//! Where a chunk column's neighbours are not made, as a coarse column's,
-//! made alone, and the near columns' past the last made, its blocks meet no
-//! blocks there; its ground's faces show as cliffs, hidden by the ground
-//! beside them, but its water shows none (see `BlockWorld::columns`), or a
-//! sea would be cut by walls of water.
+//! A world of cubes makes each coarse column's faces alone, the columns
+//! beside it not made: its blocks meet no blocks there, and its ground's
+//! faces show as cliffs, hidden by the ground beside them, but its water
+//! shows none (see `BlockWorld::columns`), or a sea would be cut by walls of
+//! water. So do the near columns past the last made.
+//!
+//! A world drawn smooth would show every such side as a groove, its surface
+//! rounded off into it. Its coarse columns' blocks are made a column further
+//! out than they are drawn, as the near ones' are, and kept; a column's
+//! faces are made once the eight columns round it have their blocks, so a
+//! ring's ground runs on across its columns. Where a ring meets the finer
+//! ring inside it, the two are the same ground at two sizes of block, and
+//! the coarser has skirts to close what lies between (see
+//! `smooth::mesh_skirted`).
 
 use std::{
     collections::{HashMap, HashSet},
@@ -72,7 +81,14 @@ enum Finished {
     /// A near column's chunks' faces, and the chunks round it they were made
     /// from.
     Meshed { number: u64, at: [i32; 2], meshes: Vec<([i32; 3], ChunkMesh)>, from: BlockMap },
+    /// A smooth coarse column's chunks' faces, made from its blocks and
+    /// those of the columns round it.
+    Joined { number: u64, level: u32, at: [i32; 2], meshes: Vec<([i32; 3], ChunkMesh)> },
 }
+
+/// A coarse column's chunks, kept for making its faces and those of the
+/// columns round it.
+type ColumnChunks = Arc<Vec<([i32; 3], Arc<Chunk>)>>;
 
 /// The chunk columns of each level a window keeps round the camera: from
 /// `low` to `high` (not reached) along x and z, in that level's columns.
@@ -133,6 +149,10 @@ pub struct BlockStreamer {
     latest: Arc<AtomicU64>,
     /// The coarse columns made, by level and place: their chunks' faces.
     coarse: HashMap<(u32, [i32; 2]), Vec<([i32; 3], Arc<ChunkMesh>)>>,
+    /// The blocks of a smooth world's coarse columns, by level and place.
+    coarse_blocks: HashMap<(u32, [i32; 2]), ColumnChunks>,
+    /// The smooth coarse columns whose faces are being made.
+    joining: HashSet<(u32, [i32; 2])>,
     /// The near columns whose blocks are made, by place.
     near: HashSet<[i32; 2]>,
     /// The near columns drawn: their faces made.
@@ -162,6 +182,8 @@ impl Default for BlockStreamer {
             number: 0,
             latest: Arc::new(AtomicU64::new(0)),
             coarse: HashMap::new(),
+            coarse_blocks: HashMap::new(),
+            joining: HashSet::new(),
             near: HashSet::new(),
             drawn: HashSet::new(),
             meshing: HashSet::new(),
@@ -184,6 +206,7 @@ impl BlockStreamer {
         self.waiting == 0
             && self.asked.is_empty()
             && self.meshing.is_empty()
+            && self.joining.is_empty()
             && self.making_now.load(Ordering::Acquire) == 0
     }
 
@@ -213,6 +236,7 @@ impl BlockStreamer {
             world.columns = Some(Arc::default());
             (self.near, self.drawn, self.meshing) = (HashSet::new(), HashSet::new(), HashSet::new());
             (self.coarse, self.asked) = (HashMap::new(), HashSet::new());
+            (self.coarse_blocks, self.joining) = (HashMap::new(), HashSet::new());
             self.number = self.latest.fetch_add(1, Ordering::AcqRel) + 1;
             self.making = Some(Arc::new(making));
             changed = true;
@@ -229,6 +253,8 @@ impl BlockStreamer {
         changed |= self.take_finished(world, (base, pending), (shown, made));
         changed |= self.let_go(world, (base, pending), (shown, made));
         self.coarse.retain(|(level, at), _| windows.get(*level as usize).is_some_and(|window| window.contains(*at)));
+        self.coarse_blocks
+            .retain(|(level, at), _| windows.get(*level as usize).is_some_and(|window| window.grown().contains(*at)));
         // Faces made since for columns not drawn, as where water flowed or a change reached, are not drawn: the
         // coarse ground is drawn there.
         if !self.seen.as_ref().is_some_and(|seen| Arc::ptr_eq(seen, &world.meshes)) {
@@ -277,7 +303,8 @@ impl BlockStreamer {
         let mut came: Vec<[i32; 2]> = Vec::new();
         for done in finished {
             match done {
-                Finished::Made { number, .. } | Finished::Meshed { number, .. } if number != self.number => {}
+                Finished::Made { number, .. } | Finished::Meshed { number, .. } | Finished::Joined { number, .. }
+                    if number != self.number => {}
                 Finished::Made { level: 0, at, chunks, .. } => {
                     self.asked.remove(&(0, at));
                     if !made.contains(at) || self.near.contains(&at) {
@@ -295,8 +322,21 @@ impl BlockStreamer {
                     came.push(at);
                     changed = true;
                 }
-                Finished::Made { level, at, meshes, .. } => {
+                Finished::Made { level, at, chunks, meshes, .. } => {
                     self.asked.remove(&(level, at));
+                    if self.making.as_ref().is_some_and(|making| making.file.smooth) {
+                        // Kept, for its faces and those of the columns round it, made once theirs are.
+                        let chunks = chunks.into_iter().map(|(key, chunk)| (key, Arc::new(chunk))).collect();
+                        self.coarse_blocks.insert((level, at), Arc::new(chunks));
+                        self.again = true;
+                        continue;
+                    }
+                    let meshes = meshes.into_iter().map(|(key, mesh)| (key, Arc::new(mesh))).collect();
+                    self.coarse.insert((level, at), meshes);
+                    changed = true;
+                }
+                Finished::Joined { level, at, meshes, .. } => {
+                    self.joining.remove(&(level, at));
                     let meshes = meshes.into_iter().map(|(key, mesh)| (key, Arc::new(mesh))).collect();
                     self.coarse.insert((level, at), meshes);
                     changed = true;
@@ -390,8 +430,11 @@ impl BlockStreamer {
         voxear_core::profile_scope!("Ask");
         let (shown, made) = (windows[0], windows[0].grown());
         let mut columns = None;
+        let smooth = making.file.smooth;
         // What to make: its level (0 for a near column's blocks, and none for its faces), place and how far away.
         let mut wanted: Vec<(Option<u32>, [i32; 2], i64)> = Vec::new();
+        // And the smooth coarse columns whose faces to make, their blocks and those round them made.
+        let mut joins: Vec<(u32, [i32; 2], i64)> = Vec::new();
         for (level, window) in windows.iter().enumerate() {
             let level = level as u32;
             let size = CHUNK as f32 * making.file.block_size * (1u32 << level) as f32;
@@ -406,9 +449,31 @@ impl BlockStreamer {
                     }
                 }
             }
-            let window = if level == 0 { made } else { *window };
+            if level > 0 && smooth {
+                for at in window.columns() {
+                    let key = (level, at);
+                    let ready = round(at).all(|column| self.coarse_blocks.contains_key(&(level, column)));
+                    if ready && !self.coarse.contains_key(&key) && !self.joining.contains(&key) {
+                        joins.push((level, at, (away(at) * 16.0) as i64 + i64::from(level) * 4 - 2));
+                    }
+                }
+            }
+            let window = if level == 0 {
+                made
+            } else if smooth {
+                window.grown()
+            } else {
+                *window
+            };
             for at in window.columns() {
-                let done = if level == 0 { self.near.contains(&at) } else { self.coarse.contains_key(&(level, at)) };
+                let done = if level == 0 {
+                    self.near.contains(&at)
+                } else if smooth {
+                    // A column gone from the blocks kept but drawn still needs none.
+                    self.coarse_blocks.contains_key(&(level, at))
+                } else {
+                    self.coarse.contains_key(&(level, at))
+                };
                 if done || self.asked.contains(&(level, at)) {
                     continue;
                 }
@@ -416,8 +481,39 @@ impl BlockStreamer {
             }
         }
         wanted.sort_by_key(|(_, _, away)| *away);
-        let room = MOST_MAKING.saturating_sub(self.making_now.load(Ordering::Acquire));
-        self.waiting = wanted.len().saturating_sub(room);
+        joins.sort_by_key(|(_, _, away)| *away);
+        let mut room = MOST_MAKING.saturating_sub(self.making_now.load(Ordering::Acquire));
+        // Faces first: they are what shows, and are quick beside blocks.
+        let joined = joins.len().min(room);
+        self.waiting = wanted.len().saturating_sub(room - joined) + (joins.len() - joined);
+        for (level, at, _) in joins.into_iter().take(joined) {
+            self.making_now.fetch_add(1, Ordering::AcqRel);
+            self.joining.insert((level, at));
+            let (making, latest, making_now, send) =
+                (making.clone(), self.latest.clone(), self.making_now.clone(), self.send.clone());
+            let number = self.number;
+            let columns: Vec<ColumnChunks> =
+                round(at).filter_map(|column| self.coarse_blocks.get(&(level, column)).cloned()).collect();
+            crate::workers::spawn(move || {
+                if latest.load(Ordering::Acquire) == number {
+                    let mut from = BlockMap::default();
+                    for (key, chunk) in columns.iter().flat_map(|column| column.iter()) {
+                        if !chunk.is_air() {
+                            from.put_shared(*key, chunk.clone());
+                        }
+                    }
+                    let keys: Vec<[i32; 3]> =
+                        from.chunks().map(|(key, _)| *key).filter(|key| [key[0], key[2]] == at).collect();
+                    let meshes = keys
+                        .into_iter()
+                        .map(|key| (key, super::smooth::mesh_skirted(&from, key, &making.faces, &|_| true)))
+                        .collect();
+                    let _ = send.send(Finished::Joined { number, level, at, meshes });
+                }
+                making_now.fetch_sub(1, Ordering::AcqRel);
+            });
+        }
+        room -= joined;
         for (level, at, _) in wanted.into_iter().take(room) {
             self.making_now.fetch_add(1, Ordering::AcqRel);
             let (making, latest, making_now, send) =
@@ -447,7 +543,7 @@ impl BlockStreamer {
                 if latest.load(Ordering::Acquire) == number {
                     let chunks = column_chunks(&making.file, &making.generate, &making.world, level, at, None);
                     // A coarse column's faces made here, alone: the columns beside it not made.
-                    let meshes = if level == 0 {
+                    let meshes = if level == 0 || making.file.smooth {
                         Vec::new()
                     } else {
                         let mut alone = BlockMap::default();
@@ -745,6 +841,41 @@ mod tests {
         assert!(closed(reach(inner)), "towards the column beside it: {:?}", reach(inner));
         let [[_, out], ..] = reach(edge);
         assert!(out > 0.45, "running on past the window's edge: {out}");
+    }
+
+    #[test]
+    fn a_smooth_worlds_coarse_columns_meet_edge_for_edge_within_their_ring() {
+        let mut making = making();
+        making.file.smooth = true;
+        let mut world = BlockWorld::made(BlockMap::default(), &making.faces, 2.0, true);
+        let (mut base, mut pending) = (Arc::new(BlockMap::default()), Arc::new(BlockEdits::default()));
+        let mut streamer = BlockStreamer::default();
+        settle(&mut streamer, &mut world, (&mut base, &mut pending), &making, [10.0, 10.0]);
+        // Every coarse chunk with another of its level beside it along x: each point on its side there is a point
+        // of the other's, where a column made alone rounded its ground off into a groove.
+        let (mut sides, mut points, mut met) = (0, 0, 0);
+        let mut levels = HashSet::new();
+        for (key, mesh) in world.far.iter() {
+            let Some(beside) = world.far.get(&[key[0], key[1] + 1, key[2], key[3]]) else { continue };
+            let edge: Vec<[f32; 3]> = mesh.positions.iter().copied().filter(|p| p[0] >= CHUNK as f32 - 0.5).collect();
+            if edge.is_empty() {
+                continue;
+            }
+            sides += 1;
+            levels.insert(key[0]);
+            for p in edge {
+                let there = [p[0] - CHUNK as f32, p[1], p[2]];
+                points += 1;
+                met += usize::from(beside.positions.iter().any(|q| (0..3).all(|k| (q[k] - there[k]).abs() < 2e-3)));
+            }
+        }
+        assert!(sides > 20 && levels.len() >= 2, "{sides} sides at levels {levels:?}");
+        assert!(met * 100 >= points * 97, "{met} of {points} points on a side met by the chunk beside it");
+        // A column's blocks are kept only a column past where it is drawn.
+        let windows = streamer.windows.clone().unwrap();
+        for (level, at) in streamer.coarse_blocks.keys() {
+            assert!(windows[*level as usize].grown().contains(*at), "level {level}'s {at:?} kept");
+        }
     }
 
     #[test]

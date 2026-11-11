@@ -1621,8 +1621,8 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     valleys apart), Climate Mask (the eight biomes' ranges as presets). Gullies as a node on any height, by a
     landmass's maths (`landmass::Gullied`, which both use), each octave joining the floors of the one before with
     no step. A node that reads round a place (a slope, a curvature, an average, gullies) makes rows of places and
-    asks for its input there; round a planet those lie along two tangents of its surface, and gullies pass their
-    input through. Angles are rows in degrees kept as rise over run (`ValueKind::Angle`), their feathers turned
+    asks for its input there; round a planet those lie along two tangents of its surface (gullies run round a
+    planet since, see Planets below). Angles are rows in degrees kept as rise over run (`ValueKind::Angle`), their feathers turned
     by sums and products, so nothing that makes ground uses trigonometry. Five graphs to start from
     (`generate::starters()`), under the presets' names and tuned by eye against them: Battlefield Plains (streams
     cut into nearly level ground, shell holes from two scatters behind a Craters row), Rolling Hills (smooth hills
@@ -1888,8 +1888,11 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     fills say, a slope with no steps, chunks meeting at the same points, a closed blob, balls added, taken and
     painted, changes with fills read back and version 1 read, the GPU drawing a hill's top and sides with no gaps,
     a ball resting on it, a generated world on its generator's heights, the editor adding one and building a ball.
-    Not done: an endless world's far rings meeting without seams (a bounded world's chunks are drawn coarser far away
-    and meet, see Speed below). (Kinds blend within a triangle since the water blocks' second look, above.)
+    An endless world's far rings meet too: a smooth world keeps its coarse columns' blocks, made a column further out
+    than drawn, and makes a column's faces once the eight round it have theirs, so a ring's ground runs on across its
+    columns; where a ring meets the finer one inside it, the coarser hangs skirts two blocks down its columns' sides
+    (`smooth::mesh_skirted`), drawn and not stood on. Tests: skirts on the sides alone and facing out, coarse columns
+    meeting point for point, the GPU drawing hills to the horizon with no sky through them. (Kinds blend within a triangle since the water blocks' second look, above.)
   - ~~**Planets:**~~ done: generated ground as a planet (`BlockGenerate::planet`, `BlockPlanet { radius }`) all round
     a middle at its world's corner, its generator read round it in three dimensions (`WorldGen::height_round`,
     `climate_round`, colder towards the poles; fields read through a flat or round `Spot`, `noise::fractal3`), once,
@@ -1898,8 +1901,10 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     `BlockWorld::planet` gives physics its radius: moving bodies within four radii fall towards its middle in place
     of gravity (`PhysicsScene::pull_to_planets`). Editor: Ground ▸ Planet and Radius. Tests: a planet on its
     generator's heights out every way, no step across a cube's edges, colder poles, a ball falling onto a planet's
-    side, the GPU drawing it round and lit on one side, the editor making one and undoing it. Not done: erosion's
-    gullies on planets.
+    side, the GPU drawing it round and lit on one side, the editor making one and undoing it. Gullies run down a
+    planet's slopes too (`Gullied::cut_round`): the slope kept as a direction in space, the stripes laid round
+    points scattered through space in place of a plane, so they wrap it with no seam and no pole shows; a landmass's
+    own and a Gullies node's alike. Tests: only cutting, no step walked round three great circles.
   - ~~**Walking round planets:**~~ done: bodies and characters share gravity at a point (`scene::gravity_at`,
     `PhysicsScene::gravity_at`): towards the nearest planet's middle within four radii, the world's gravity
     elsewhere. Each Character Controller stands against it, its capsule turned from its last up by the least turn
@@ -1916,8 +1921,9 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     a motion-matched character walking round a planet's side by its clips, its body upright to it and facing the way
     it goes.
   - ~~**Floating origin:**~~ done, switched on in Project Settings ▸ World (`[floating_origin]`, off by default): once
-    the viewer terrain streams round is past its distance (2048 m) from the world's middle across the ground, the world
-    moves back by whole steps (1024 m) between frames (`origin::due`, `Game::move_origin`). `WorldOrigin` keeps where
+    the viewer terrain streams round is past its distance (2048 m) from the world's middle any way, up and down too, the
+    world moves back by whole steps (1024 m) between frames (`origin::due`, `Game::move_origin`); the sky and fog
+    measure heights from the level's ground (`GpuFrame::origin.w`, `levelHeight`). `WorldOrigin` keeps where
     the middle is from the level's, in whole metres; root Objs move, those not moved since put back exactly from f64
     (`voxear_scene::move_objs`); with them tick smoothing, Jolt in one call (`vx_world_shift`: bodies without waking,
     characters with their contacts; joints held to the world held to a still anchor body), kept places and corners,
@@ -1935,9 +1941,15 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     middle still), endless terrain and blocks carried on with nothing made again and physics on the drawn ground, the
     GPU's frame after a move matching the one before with motion blur on, scripts' fields and events, a prop back
     exactly after 100 km, players far out seeing, predicting and moving Objs 20–50 km out as the server has them, a
-    player whose middle moved seeing and sending script positions from the level's. Manual: Floating Origin. Not done:
-    shader patterns from absolute positions (grass, wind, seasons, puddles), moves up and down (sky and fog heights), a
-    server exact for players far from the level's middle.
+    player whose middle moved seeing and sending script positions from the level's. Patterns read from where things
+    are measured from the level's middle (`GpuFrame::origin`, wrapped every 65 536 m; `levelPosition` wrapping each
+    pattern every 1024, 4096 or 65 536 m): grass cells counted from it (`GpuGrassJob::corner`), wind, seasons,
+    puddles, rivulets, lava and glitter, the ground blend and wet edges, foam, caustics, streams, lava lakes (one shift
+    a Pool), underwater specks, spray, glows, the sun's cookie and its cascades' texels, smoke (from its corner) and
+    mist, the foliage tint baked on the CPU, and custom shaders' new `levelPosition`. Tests: on the GPU, a patterned
+    scene after a 3 km move matching the picture before it, and 131 km out matching it near; cascades' texels kept.
+    Not done: a server exact for players far from the level's middle; GI probe spacings other than powers of two
+    placed again on a move.
 - ~~**Speed of block worlds and Voxel Terrains:**~~ done, measured on a test project with a level of each kind
   (`vox render --level --profile --fly`; the stats overlay and the Profiler count block triangles in view and in
   shadows). Each chunk's mesh for the GI's rays waited on the GPU about seven times; a frame's are now uploaded and

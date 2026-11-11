@@ -120,16 +120,17 @@ float cells(float2 p)
 
 float3 vertex(Water water, VertexInput input)
 {
-    return displacement(water, input.position.xz, input.time);
+    return displacement(water, input.levelPosition.xz, input.time);
 }
 
 void surface(Water water, SurfaceInput input, inout SurfaceOutput surface)
 {
     // Where the water drawn here rests: the waves moved it across as well as up, so step back from where it is.
-    float2 rest = input.position.xz;
+    // Measured from the level's middle, so the waves stay where they are as the world's middle moves.
+    float2 rest = input.levelPosition.xz;
     for (int n = 0; n < 2; n++)
     {
-        rest = input.position.xz - displacement(water, rest, input.time).xz;
+        rest = input.levelPosition.xz - displacement(water, rest, input.time).xz;
     }
 
     // Every wave's tilt, and how the big ones squeeze the water towards their crests, where it breaks.

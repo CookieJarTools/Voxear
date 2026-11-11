@@ -551,6 +551,8 @@ float3 sunCookieAt(Frame* frame, float3 position)
     {
         return 1.0;
     }
-    float2 uv = float2(dot(position, lighting.sunRight), -dot(position, lighting.sunUp)) / max(lighting.sunCookieSize, 1e-3);
+    // Tiled from the level's middle, so the pattern stays where it is as the world's middle moves.
+    float3 level = levelPosition(frame, position, 4096.0);
+    float2 uv = float2(dot(level, lighting.sunRight), -dot(level, lighting.sunUp)) / max(lighting.sunCookieSize, 1e-3);
     return textures[lighting.sunCookie].Sample(samplers[SAMPLER_LINEAR_REPEAT], uv).rgb;
 }

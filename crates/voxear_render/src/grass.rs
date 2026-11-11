@@ -81,6 +81,11 @@ pub struct GpuGrassJob {
     /// there is room for.
     pub offsets: [u32; 4],
     pub capacities: [u32; 4],
+    /// Where its first cell's corner is in the world. Cells are counted from
+    /// the level's middle, so each blade grows in the same place however the
+    /// world's middle moves (see `voxear_scene::WorldOrigin`), and stands
+    /// exactly where it should however far out.
+    pub corner: [f32; 2],
 }
 
 /// One draw, as its vertex shader reads it: where its blades start, its job.
@@ -144,6 +149,7 @@ const RINGS: [f32; MAX_LODS] = [0.125, 0.25, 0.5, 1.0];
 pub(crate) fn gather(
     drawn: &[Drawn],
     frame: &crate::gpu::GpuFrame,
+    origin: voxear_core::math::I64Vec3,
     buffer: &Buffer,
 ) -> Option<(Vec<GpuGrassJob>, Vec<[u32; 2]>)> {
     let camera = Vec3::from(frame.camera_position);
@@ -201,9 +207,15 @@ pub(crate) fn gather(
         if low[0] >= high[0] || low[1] >= high[1] {
             continue;
         }
-        job.first_cell = low.map(|v| (v / cell).floor() as i32);
-        job.cells = [0, 1]
-            .map(|axis| (((high[axis] / cell).ceil() as i32 - job.first_cell[axis]).max(0) as u32 + 1).min(MAX_CELLS));
+        // Counted from the level's middle, in f64, as it may be far from the world's.
+        let (from, size) = ([origin.x as f64, origin.z as f64], f64::from(cell));
+        let first = [0, 1].map(|axis| ((f64::from(low[axis]) + from[axis]) / size).floor());
+        job.first_cell = first.map(|cells| cells as i32);
+        job.corner = [0, 1].map(|axis| (first[axis] * size - from[axis]) as f32);
+        job.cells = [0, 1].map(|axis| {
+            let last = ((f64::from(high[axis]) + from[axis]) / size).ceil();
+            ((last - first[axis]).max(0.0) as u32 + 1).min(MAX_CELLS)
+        });
         for lod in 0..lod_count {
             let inner = if lod == 0 { 0.0 } else { RINGS[lod - 1] * reach };
             let outer = RINGS[lod] * reach;
@@ -332,7 +344,7 @@ mod tests {
 
     #[test]
     fn a_ring_has_room_for_a_blade_in_every_cell_it_reaches() {
-        const { assert!(size_of::<GpuGrassJob>() == 108 && size_of::<GpuGrassDraw>() == 8) };
+        const { assert!(size_of::<GpuGrassJob>() == 116 && size_of::<GpuGrassDraw>() == 8) };
         // A disc 10 m round of half-metre cells: about 1,257 cells, and its edge's.
         let room = ring_cells(0.0, 10.0, 0.5);
         assert!((1257..1600).contains(&room), "{room}");

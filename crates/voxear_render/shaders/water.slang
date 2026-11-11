@@ -998,13 +998,14 @@ void oceanFoamMain(uint3 id : SV_DispatchThreadID)
         float front = saturate((crest - oceanMoved(frame, here, FOAM_TEXEL, true).y) / dt * 2.0);
         float tall = saturate((crest - 0.45 * restingDepth) / (0.3 * restingDepth + 0.1));
         float reach = wavesReach(frame, here, restingDepth);
-        breaking = max(breaking, tall * front * reach * smoothstep(0.3, 0.7, foamNoise(here * 0.25 + frame->time * 0.05)));
+        float2 place = levelXZ(frame, here, 4096.0);
+        breaking = max(breaking, tall * front * reach * smoothstep(0.3, 0.7, foamNoise(place * 0.25 + frame->time * 0.05)));
     }
     // Only as the waves move the water against the ground: shallow water lying still, as over a flooded floor, stays
     // clear, however long it lies there.
     float surging = saturate(rising * 3.0);
     float moving = 0.02 + saturate(abs(rising) * 3.0);
-    float churn = contact * moving * (0.2 + 1.4 * foamNoise(here * 0.4 + frame->time * 0.1)) * 3.0 * dt;
+    float churn = contact * moving * (0.2 + 1.4 * foamNoise(levelXZ(frame, here, 4096.0) * 0.4 + frame->time * 0.1)) * 3.0 * dt;
     float poured = pouredIn(frame, here) * 2.0 * dt;
     float amount = saturate(max(kept.r * exp(-dt / 6.0), breaking) + churn + poured);
     float fresh = min(saturate(max(kept.g * exp(-dt / 1.0), breaking) + churn * surging + poured), amount);
@@ -1278,8 +1279,9 @@ float3 poolPoint(Frame* frame, WaterBody pool, float2 across, float sampled, boo
         // Lava is too thick for waves: where it is molten it heaves, slowly (lavaFragment's, at the same places),
         // where its points are near enough each other to show it. Its bubbles' domes are meshes of their own.
         float t = frame->time;
-        float cooled = LAKE_TURNOVER * lakeAge(flat.xz, t) / pool.lava.x;
-        moved = float3(0.0, lavaHeave(flat.xz + lakeDrift(t), t, cooled) * saturate(2.0 - sampled / 0.6), 0.0);
+        float2 lake = flat.xz + levelShift(frame, pool.toWorld.c3.xz, 4096.0);
+        float cooled = LAKE_TURNOVER * lakeAge(lake, t) / pool.lava.x;
+        moved = float3(0.0, lavaHeave(lake + lakeDrift(t), t, cooled) * saturate(2.0 - sampled / 0.6), 0.0);
     }
     else
     {
@@ -1661,7 +1663,8 @@ WaterOut streamVertex(uint vertexId : SV_VertexID)
         // its banks, and none at its ends or where it becomes the water it runs into.
         float2 flow = level * p.speed * (0.3 + 0.7 * (1.0 - across * across));
         float raised = saturate(ends / 2.0) * (1.0 - p.mouth) * min(body.size.y, 1.0);
-        sunk = -streamSwell((p.position + right * across * half).xz, flow, p.foam, frame->time) * raised;
+        float2 bed = (p.position + right * across * half).xz;
+        sunk = -streamSwell(bed + levelShift(frame, bed, 4096.0), flow, p.foam, frame->time) * raised;
     }
     float3 world = p.position + right * across * half - float3(0.0, sunk, 0.0);
     // At its mouth it eases to the height of the water it runs into, rising and falling with the sea's waves there.
@@ -2059,8 +2062,10 @@ void causticsMain(uint3 id : SV_DispatchThreadID)
     float2 flat = down.xz / max(-down.y, 0.2);
     float2 swayed = crossed + (causticSlant(frame, crossed, 0.15) - flat) * 1.5;
     float time = frame->ocean.time;
-    float large = driftingEdge(swayed, 0.5, time * 0.8);
-    float small = driftingEdge(swayed + 7.3, 0.27, time * 1.1);
+    // Read from the level's middle, so the web stays where it is as the world's middle moves.
+    float2 webbed = levelXZ(frame, swayed, 1024.0);
+    float large = driftingEdge(webbed, 0.5, time * 0.8);
+    float small = driftingEdge(webbed + 7.3, 0.27, time * 1.1);
     float2 bright;
     for (uint i = 0; i < 2; i++)
     {
@@ -2311,7 +2316,8 @@ FragmentOut waterFragment(WaterOut input)
         slope *= rough;
         variance *= rough * rough;
         // Fast water is drawn out into streaks along the current, carried down it.
-        float2 streaked = float2((dot(rest, downstream) - speed * frame->time) * 0.11, dot(rest, beside) * 2.3);
+        float2 placed = levelXZ(frame, rest, 4096.0);
+        float2 streaked = float2((dot(placed, downstream) - speed * frame->time) * 0.11, dot(placed, beside) * 2.3);
         slope += beside * (streamNoise(streaked + float2(0.0, 0.2)) - streamNoise(streaked)) * 0.35 * quick * own;
         // The water piles up against what stands in it, and each arm of its wake is a low ridge leaning away
         // from the trough between them.
@@ -2320,9 +2326,10 @@ FragmentOut waterFragment(WaterOut input)
         // The standing waves and the churn its strip is raised by (streamVertex), and their slopes.
         float raised = saturate(input.stream.w / 2.0) * own * min(pool.size.y, 1.0);
         static const float STEP = 0.1;
-        float standing = streamSwell(rest, flow, rapid, frame->time);
+        float2 swelling = rest + levelShift(frame, rest, 4096.0);
+        float standing = streamSwell(swelling, flow, rapid, frame->time);
         swell = standing * raised;
-        float2 lean = float2(streamSwell(rest + float2(STEP, 0.0), flow, rapid, frame->time), streamSwell(rest + float2(0.0, STEP), flow, rapid, frame->time)) - standing;
+        float2 lean = float2(streamSwell(swelling + float2(STEP, 0.0), flow, rapid, frame->time), streamSwell(swelling + float2(0.0, STEP), flow, rapid, frame->time)) - standing;
         slope += lean * raised / STEP;
         if (input.mouth > 0.0)
         {
@@ -2458,7 +2465,9 @@ FragmentOut waterFragment(WaterOut input)
     float shore = ground > -1e8 ? shoreEdge(waterY - ground) : saturate(1.0 - thickness / 0.6);
     // And a thin line where it meets whatever stands in it, a post or a wall, moving or not, by how little water
     // the view goes through there, swelling and thinning as the water laps against it.
-    float lapping = 0.18 + 0.08 * sin(frame->time * 2.1 + dot(rest, float2(1.3, 0.7)));
+    // Patterns are read from the level's middle, so they stay where they are as the world's middle moves.
+    float2 toLevel = levelShift(frame, rest, 4096.0);
+    float lapping = 0.18 + 0.08 * sin(frame->time * 2.1 + dot(rest + toLevel, float2(1.3, 0.7)));
     float contact = oceanHas(frame, OCEAN_WET_EDGES) ? saturate(1.0 - thickness / lapping) : 0.0;
     shore = max(shore, 0.65 * contact * contact);
     if (stream)
@@ -2473,20 +2482,20 @@ FragmentOut waterFragment(WaterOut input)
     // What breaking crests and the surf left, carried with the water (the sea's only). Some stretches of sea hold
     // their foam longer than others, the patches shifting slowly.
     float4 trail = sea ? keptFoam(frame, rest) : 0.0;
-    float patchy = 0.6 + 0.8 * foamNoise(rest / 40.0 + frame->time * 0.02);
+    float patchy = 0.6 + 0.8 * foamNoise((rest + toLevel) / 40.0 + frame->time * 0.02);
     float fresh = max(max(breaking, shore), trail.g * 1.2 * patchy);
     // Where on the foam's pattern: riding the waves; down a Stream, drawn out along it and carried with it.
     FoamSpot spot;
     spot.shift = moved.xz * 0.3;
     spot.age = 0.0;
-    float2 bubbleAt = rest - v.xz / max(v.y, 0.2) * 0.25;
+    float2 bubbleAt = rest + toLevel - v.xz / max(v.y, 0.2) * 0.25;
     float streamPattern = 0.0;
     if (stream)
     {
         // Drawn out along the current, less where rapids churn it.
         float drawnOut = lerp(0.35, 0.75, rapid);
-        float2 a = float2(dot(restA, downstream) * drawnOut, dot(restA, beside));
-        float2 b = float2(dot(restB, downstream) * drawnOut, dot(restB, beside));
+        float2 a = float2(dot(restA + toLevel, downstream) * drawnOut, dot(restA + toLevel, beside));
+        float2 b = float2(dot(restB + toLevel, downstream) * drawnOut, dot(restB + toLevel, beside));
         // Streaks of foam down fast water; white water where its rapids throw it up, most on the crests of its
         // standing waves and where it churns; and what a rock or its own shallows upstream leave behind them.
         // Its troughs run clear and green, its crests and its churn white.
@@ -2507,9 +2516,9 @@ FragmentOut waterFragment(WaterOut input)
     float coverage = saturate(max(max(breaking, shore), trail.r * 1.2 * patchy));
     // Old foam breaks up into islands as its bubbles burst, rather than thinning evenly.
     spot.age = coverage > 0.0 ? 1.0 - saturate(fresh / coverage) : 0.0;
-    coverage *= 1.0 - spot.age * 0.6 * smoothstep(0.35, 0.65, foamNoise(rest * 0.6 + frame->time * 0.05));
+    coverage *= 1.0 - spot.age * 0.6 * smoothstep(0.35, 0.65, foamNoise((rest + toLevel) * 0.6 + frame->time * 0.05));
     float domes = 0.0;
-    float pattern = stream ? streamPattern : frothPattern(frame, rest, spot, domes);
+    float pattern = stream ? streamPattern : frothPattern(frame, rest + toLevel, spot, domes);
     // Bubbles a hand's breadth under the foam, seen through the water, a pale turquoise, more as it ages.
     float bubbles = coverage > 0.1 ? smoothstep(0.1, 0.5, coverage) * foamPatternAt(frame, bubbleAt, 4.0).y * (0.3 + 0.4 * spot.age) : 0.0;
     float3 bubbleLit = (scatter * 0.6 + 0.2) * (ambient + sunLight * shadow * 0.25);
@@ -2680,8 +2689,9 @@ FragmentOut lavaFragment(Frame* frame, WaterOut input, WaterBody body, bool stre
     {
         // A lake: its plates drifting and jostling, its surface turning over in places every quarter of a minute or
         // so, so a shorter Cooling crusts more of it over.
-        plate = p + lakeDrift(t);
-        age = LAKE_TURNOVER * lakeAge(p, t);
+        float2 lake = p + levelShift(frame, body.toWorld.c3.xz, 4096.0);
+        plate = lake + lakeDrift(t);
+        age = LAKE_TURNOVER * lakeAge(lake, t);
         plateSize = 2.6;
         churn = t * 0.11;
     }
@@ -2942,7 +2952,8 @@ float2 spatterSquare(Frame* frame, WaterBody body, uint square, float t, float p
     }
     bool whole = length(body.size.xz) <= float(push.size.x) * BUBBLE_CELL;
     float2 middle = whole ? body.toWorld.c3.xz : frame->cameraPosition.xz;
-    return floor((middle + lakeDrift(t)) / BUBBLE_CELL) - floor(float2(push.size) * 0.5) + at;
+    float2 lake = middle + levelShift(frame, body.toWorld.c3.xz, 4096.0);
+    return floor((lake + lakeDrift(t)) / BUBBLE_CELL) - floor(float2(push.size) * 0.5) + at;
 }
 
 // Where along Stream `body`, of `points` points, what has run for `age`
@@ -3043,7 +3054,7 @@ SpatterOut lavaSpatterVertex(uint vertexId : SV_VertexID)
     }
     else
     {
-        float2 xz = from - lakeDrift(burst);
+        float2 xz = from - lakeDrift(burst) - levelShift(frame, body.toWorld.c3.xz, 4096.0);
         start = float3(xz.x, body.toWorld.c3.y, xz.y);
         float3 local = transform(body.toLocal, float4(start, 1.0)).xyz;
         if (any(abs(local.xz) > body.size.xz * 0.5 - bubble.radius))
@@ -3162,7 +3173,7 @@ WaterOut lavaDomeVertex(uint vertexId : SV_VertexID)
     else
     {
         // All of it or none: a bubble at the lake's edge has no dome.
-        float2 middle = bubble.middle - lakeDrift(t);
+        float2 middle = bubble.middle - lakeDrift(t) - levelShift(frame, body.toWorld.c3.xz, 4096.0);
         float3 local = transform(body.toLocal, float4(middle.x, body.toWorld.c3.y, middle.y, 1.0)).xyz;
         if (any(abs(local.xz) > body.size.xz * 0.5 - bubble.radius))
         {
@@ -3171,9 +3182,10 @@ WaterOut lavaDomeVertex(uint vertexId : SV_VertexID)
         world = float3(middle.x + out.x, body.toWorld.c3.y, middle.y + out.y);
     }
     o.rest = world.xz;
+    float2 lakeShift = levelShift(frame, body.toWorld.c3.xz, 4096.0);
     // On the lava as it heaves there.
     float heaved = stream ? lavaHeave(float2((t - o.lava.x) * pace, o.lava.y * o.reach.x), t, o.lava.x * streamCooling(o.lava.y) / body.lava.x)
-                          : lavaHeave(world.xz + lakeDrift(t), t, LAKE_TURNOVER * lakeAge(world.xz, t) / body.lava.x);
+                          : lavaHeave(world.xz + lakeShift + lakeDrift(t), t, LAKE_TURNOVER * lakeAge(world.xz + lakeShift, t) / body.lava.x);
     world.y += high + heaved;
     o.position = transform(frame->viewProj, float4(world, 1.0));
     o.world = world;
@@ -3282,7 +3294,9 @@ float wallSurface(Frame* frame, WaterBody water, float3 world)
 // hotter the deeper they are, as its outside has cooled and its inside has not.
 FragmentOut lavaWall(Frame* frame, WallOut input, WaterBody lava, float below)
 {
-    float2 across = float2(dot(input.world.xz, float2(input.normal.z, -input.normal.x)), input.world.y);
+    // Measured from the Pool's middle, so its cracks stay with it.
+    float3 own = input.world - lava.toWorld.c3.xyz;
+    float2 across = float2(dot(own.xz, float2(input.normal.z, -input.normal.x)), own.y);
     float2 cell = cellEdge(across / 0.9);
     float crack = 1.0 - smoothstep(0.02, 0.05, cell.x);
     float kelvin = lerp(600.0, 1350.0, saturate(below / max(lava.size.y, 0.1) + 0.3));
@@ -3576,10 +3590,11 @@ FragmentOut blockWaterFragment(BlockWaterOut input)
     // A thin line of foam on its top where it meets the ground, swelling and thinning as the water laps against it.
     if (face.y > 0.5 && oceanHas(frame, OCEAN_WET_EDGES))
     {
-        float lapping = 0.18 + 0.08 * sin(frame->time * 2.1 + dot(input.world.xz, float2(1.3, 0.7)));
+        float2 level = levelXZ(frame, input.world.xz, 4096.0);
+        float lapping = 0.18 + 0.08 * sin(frame->time * 2.1 + dot(level, float2(1.3, 0.7)));
         float contact = saturate(1.0 - thickness / lapping);
         float coverage = 0.65 * contact * contact;
-        float pattern = foamPatternAt(frame, input.world.xz).x;
+        float pattern = foamPatternAt(frame, level).x;
         float from = max(1.0 - coverage * 1.8, 0.03);
         float foam = smoothstep(from, from + max(0.3, fwidth(pattern) * 1.5), pattern) * saturate(coverage * 4.0);
         float wrapped = saturate((dot(n, l) + 0.4) / 1.4);
@@ -3880,7 +3895,9 @@ float3 waterSpecks(Frame* frame, Under u, float reach, float3 sunLight, float3 s
 {
     static const float CELL = 0.5;
     static const uint CELLS = 16;
-    float3 origin = frame->cameraPosition;
+    // The grid is walked from the level's middle, so the specks stay where they are as the world's middle moves.
+    float3 shift = levelPosition(frame, frame->cameraPosition, 1024.0) - frame->cameraPosition;
+    float3 origin = frame->cameraPosition + shift;
     float3 way = u.view;
     float tall = length(float3(frame->viewProj.c0.y, frame->viewProj.c1.y, frame->viewProj.c2.y));
     // How many metres a pixel spans a metre away.
@@ -3934,7 +3951,7 @@ float3 waterSpecks(Frame* frame, Under u, float reach, float3 sunLight, float3 s
                 bright = 5.0;
             }
             float along = dot(at - origin, way);
-            float below = u.surface - at.y;
+            float below = u.surface - (at.y - shift.y);
             if (along <= 0.08 || along >= reach || below <= 0.0)
             {
                 continue;
@@ -4241,10 +4258,12 @@ ParticleOut sprayVertex(uint vertexId : SV_VertexID)
     float tile = SPRAY_REACH * 2.0;
     float2 rest = 0.0;
     bool found = false;
+    // Tiled from the level's middle, so a drop in flight stays where it is as the world's middle moves.
+    float2 shift = levelShift(frame, frame->cameraPosition.xz, 4096.0);
     for (uint attempt = 0; attempt < SPRAY_TRIES && !found; attempt++)
     {
         float2 cell = float2(particleRandom(h), particleRandom(h)) * tile;
-        rest = cell + tile * round((frame->cameraPosition.xz - cell) / tile);
+        rest = cell + tile * round((frame->cameraPosition.xz + shift - cell) / tile) - shift;
         float fresh = saturate(keptFoam(frame, rest).g * 1.5);
         found = particleRandom(h) < fresh;
     }

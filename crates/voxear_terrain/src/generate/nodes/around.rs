@@ -10,6 +10,7 @@
 //! slope's steepness, a curvature, an average) barely changes with it.
 
 use super::STEEPEST;
+pub(super) use crate::generate::landmass::tangents;
 use crate::{
     generate::compile::{Compiler, Kernel, Key, Places, V},
     layers::smoothstep,
@@ -74,27 +75,6 @@ impl Kernel for Tangent {
             *out = place[self.axis] + self.a * first[self.axis] + self.b * second[self.axis];
         }
     }
-}
-
-/// Two directions along a planet's surface at `place`, in metres from its
-/// middle: each of length 1, at right angles to each other and to the way
-/// out.
-pub(super) fn tangents([x, y, z]: [f32; 3]) -> ([f32; 3], [f32; 3]) {
-    let length = (x * x + y * y + z * z).sqrt();
-    if length <= 1e-6 {
-        return ([1.0, 0.0, 0.0], [0.0, 0.0, 1.0]);
-    }
-    let out = [x / length, y / length, z / length];
-    // The first lies across the way out and y, or across x near a pole, where the way out is nearly y.
-    let across = if out[1].abs() < 0.9 { [0.0, 1.0, 0.0] } else { [1.0, 0.0, 0.0] };
-    let first = cross(across, out);
-    let size = (first[0] * first[0] + first[1] * first[1] + first[2] * first[2]).sqrt();
-    let first = [first[0] / size, first[1] / size, first[2] / size];
-    (first, cross(out, first))
-}
-
-fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
-    [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
 }
 
 /// How much a mask from `low` to `high` covers `value`: all of it between

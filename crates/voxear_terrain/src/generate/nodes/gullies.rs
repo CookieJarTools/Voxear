@@ -20,8 +20,9 @@
 //! hills the gullies run down: where the slope turns within a gully's
 //! width, its stripes are sheared into arcs.
 //!
-//! Round a planet the height passes through as it is: gullies run down a
-//! slope along flat ground.
+//! Round a planet the gullies run down the slope the ground has along its
+//! surface, their stripes laid through space so they wrap it with no seam
+//! (see `Gullied::cut_round`).
 
 use serde::{Deserialize, Serialize};
 
@@ -100,7 +101,6 @@ impl Kind for Gullies {
 
     fn compile(&self, cx: &mut Compiler, node: NodeId, _: usize, at: Places) -> V {
         let Some(height) = cx.input(node, 0, at) else { return cx.constant(0.0) };
-        let Places::Flat { x, z } = at else { return height };
         if self.strength <= 0.0 || self.octaves == 0 {
             return height;
         }
@@ -112,7 +112,32 @@ impl Kind for Gullies {
             joined: true,
         };
         let [a, b, c, d] = around::four(cx, at, cut.step()).map(|from| cx.input(node, 0, from).unwrap_or(height));
-        cx.run(Cut(cut), &[x, z, height, a, b, c, d])
+        match at {
+            Places::Flat { x, z } => cx.run(Cut(cut), &[x, z, height, a, b, c, d]),
+            Places::Round { x, y, z } => cx.run(CutRound(cut), &[x, y, z, height, a, b, c, d]),
+        }
+    }
+}
+
+/// A height round a planet with gullies cut down it: from rows of x, y and
+/// z, the height there, and the height a step off each way along the two
+/// tangents `around::four` moves along.
+#[derive(Debug)]
+struct CutRound(Gullied);
+
+impl Kernel for CutRound {
+    fn key(&self, key: &mut Key) {
+        let Gullied { erosion, scale, sea_level, seed, joined } = self.0;
+        key.name("gullies round").number(erosion.strength).number(erosion.spacing).whole(erosion.octaves);
+        key.number(scale).number(sea_level).whole(seed).whole(u32::from(joined));
+    }
+
+    fn run(&self, inputs: &[&[f32]], out: &mut [f32]) {
+        for (at, out) in out.iter_mut().enumerate() {
+            let place = [inputs[0][at], inputs[1][at], inputs[2][at]];
+            let around = [inputs[4][at], inputs[5][at], inputs[6][at], inputs[7][at]];
+            *out = self.0.cut_round(place, around::tangents(place), inputs[3][at], around);
+        }
     }
 }
 
@@ -211,7 +236,7 @@ mod tests {
     }
 
     #[test]
-    fn gullies_leave_level_ground_and_planets_as_they_are() {
+    fn gullies_leave_level_ground_as_it_is() {
         let hills = Noise { size: 500.0, low: -30.0, high: 220.0, ..Noise::default() };
         let source = testing::world_of(NodeKind::Noise(hills.clone()), 0, &[]);
         let gullies = |strength: f32| {
@@ -232,8 +257,6 @@ mod tests {
         }
         assert!(lower / 4000.0 > 0.3, "{} m on average", lower / 4000.0);
         assert_eq!(testing::flat(&none, 4000), was, "no strength, no gullies");
-        // Round a planet the height passes through, to the bit.
-        assert_eq!(testing::round(&world, 4000), testing::round(&source, 4000));
         // Level ground has no slope to run down; nothing wired in is nothing.
         let level = testing::world_of(
             NodeKind::Gullies(Gullies::default()),
@@ -246,5 +269,45 @@ mod tests {
         // half as steep, let them be.
         let wide = world.with_scale(2.0);
         assert!(wide.height_at(600.0, 200.0) <= source.with_scale(2.0).height_at(600.0, 200.0));
+    }
+
+    #[test]
+    fn gullies_run_down_a_planets_slopes_with_no_step_anywhere_round_it() {
+        // Hills 300 m across on a planet 1000 m in radius, gullies 90 m apart in three octaves.
+        let hills = Noise { size: 300.0, octaves: 3, low: 0.0, high: 120.0, ..Noise::default() };
+        let source = testing::world_of(NodeKind::Noise(hills.clone()), 0, &[]);
+        let kind = NodeKind::Gullies(Gullies { strength: 0.6, spacing: 90.0, octaves: 3 });
+        let world = testing::world_of(kind, 0, &[Some(NodeKind::Noise(hills))]);
+        let world = WorldGen::new(1, 1.0, -1000.0, world.graph().clone());
+        let source = WorldGen::new(1, 1.0, -1000.0, source.graph().clone());
+        // Only cut, by no more than a gully's depth, and cut on the whole.
+        let (was, cut) = (testing::round(&source, 4000), testing::round(&world, 4000));
+        let mut lower = 0.0;
+        for i in 0..4000 {
+            assert!(cut[i] <= was[i] + 1e-3 && cut[i] >= was[i] - 0.6 * 90.0 * 0.25 * 2.0, "{} cut to {}", was[i], cut[i]);
+            lower += was[i] - cut[i];
+        }
+        assert!(lower / 4000.0 > 0.3, "{} m on average", lower / 4000.0);
+        // Walked a quarter of a metre at a time round three great circles, over both poles and the rings where the
+        // tangents turn over: the ground never changes by more in a pace than a joined gully's wall lets it.
+        let radius = 1000.0f32;
+        let paces = (std::f32::consts::TAU * radius / 0.25) as usize;
+        for circle in 0..3 {
+            let (mut largest, mut last) = (0.0f32, f32::NAN);
+            for i in 0..=paces {
+                let (sin, cos) = (i as f32 / paces as f32 * std::f32::consts::TAU).sin_cos();
+                let at = match circle {
+                    0 => [radius * cos, radius * sin, 0.0],
+                    1 => [0.0, radius * cos, radius * sin],
+                    _ => [radius * cos * 0.6, radius * sin, radius * cos * 0.8],
+                };
+                let next = world.height_round(at);
+                if i > 0 {
+                    largest = largest.max((next - last).abs());
+                }
+                last = next;
+            }
+            assert!(largest < 0.6, "round circle {circle} the ground changes by {largest} m in a pace");
+        }
     }
 }

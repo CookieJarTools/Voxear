@@ -1386,7 +1386,7 @@ impl Content {
     /// and made once.
     pub fn block_world(&mut self, guid: AssetGuid) -> Option<Arc<LoadedBlockWorld>> {
         if let Some(found) = self.block_worlds.get(&guid).cloned() {
-            // A block it lists changed since: its faces as the blocks are now.
+            // A block it holds changed since: its faces as the blocks are now.
             let Some(stale) = found.as_ref().filter(|found| found.derived != self.blocks_version) else {
                 return found;
             };
@@ -1434,7 +1434,7 @@ impl Content {
     /// Keeps `file` and `world`'s blocks as the world of blocks at `guid`'s,
     /// as after the editor changed them, and marks it to be written, unless
     /// that is how it is already. Its faces made again at `derived`, as
-    /// after a block it lists changed, are kept too, and are nothing to
+    /// after a block it holds changed, are kept too, and are nothing to
     /// write.
     pub fn keep_block_world(
         &mut self,
@@ -1542,7 +1542,7 @@ impl Content {
     }
 
     /// Forgets a block, read again when next asked for, as after it was
-    /// saved: the worlds of blocks listing it take up its look at once (see
+    /// saved: the worlds of blocks holding it take up its look at once (see
     /// `blocks::refresh`).
     pub fn forget_block(&mut self, guid: AssetGuid) {
         self.blocks.remove(&guid);

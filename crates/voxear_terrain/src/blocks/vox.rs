@@ -227,7 +227,7 @@ impl VoxFile {
 /// `vox`'s blocks as changes to a world whose blocks `file` lists, standing
 /// at `at` (its lowest blocks there, its middle over it): each of its
 /// colours a kind of block of that colour, those `file` has already as kinds
-/// of its own with no material kept, the rest added to its list while it
+/// of its own with no material kept, the rest added to its palette while it
 /// has `room` for more ways of drawing a face, and the colours past that
 /// the nearest such kind there is. With no kind of a colour at all, those
 /// blocks are left out.

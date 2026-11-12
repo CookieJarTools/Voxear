@@ -642,7 +642,7 @@ impl Game {
             let _scope = ServicesScope::enter(&mut services);
             self.engine.tick(delta);
         }
-        // A block a script put down where its world did not list it is drawn as it says from this frame.
+        // A block a script put down in a world that had not held it is drawn as it says from this frame.
         crate::blocks::refresh(&mut self.engine.world, &mut self.content, renderer.as_deref_mut());
         // Screen UIs show while the game plays: those made this frame, without their Objs gone.
         if !self.engine.is_edit_mode() {

@@ -1307,12 +1307,26 @@ fn blocks_are_placed_and_broken_in_the_scene_view_with_any_block_of_the_project_
     assert_eq!(read.blocks[4].block.as_deref(), Some(guid(&editor, "Ores/Ruby.block").to_string().as_str()));
 }
 
-/// The Blocks panel, opened beside the Project panel: its panel.
+/// The tab of the docked panel titled `title`, where it shows.
+fn dock_tab(ui: &Ui, title: &str) -> Option<NodeId> {
+    let mut tabs = Vec::new();
+    with_class(ui, ui.root(), "tab", &mut tabs);
+    // A tab with an icon has its title in a label beside it.
+    let says = |tab: NodeId| ui.text(tab) == title || ui.children(tab).iter().any(|&part| ui.text(part) == title);
+    tabs.into_iter().find(|&tab| ui.is_visible(tab) && says(tab))
+}
+
+/// The Blocks panel, opened as a user opens it, from the top bar's Window
+/// button: its panel.
 fn open_blocks_panel(editor: &mut voxear_editor::Editor, renderer: &mut Renderer) -> NodeId {
-    let dock = editor.ui.find(editor.ui.root(), "dock").expect("the dock");
-    editor.ui.open_dock_panel_beside(dock, "blocks", "project");
+    let windows = editor.ui.find(editor.ui.root(), "windows").expect("the Window button");
+    click(&mut editor.ui, windows);
+    frame(editor, renderer);
+    let blocks = menu_item(&editor.ui, "Blocks").expect("the Window menu lists Blocks");
+    click(&mut editor.ui, blocks);
     frame(editor, renderer);
     frame(editor, renderer);
+    assert!(dock_tab(&editor.ui, "Blocks").is_some(), "the Blocks panel is open");
     editor.ui.find(editor.ui.root(), "blocks-panel").expect("the Blocks panel")
 }
 

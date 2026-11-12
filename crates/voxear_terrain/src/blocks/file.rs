@@ -78,7 +78,7 @@ pub struct BlockFile {
     pub smooth: bool,
 }
 
-/// An entry of a world's list of blocks. One naming a `block` is drawn as
+/// An entry of a world's palette. One naming a `block` is drawn as
 /// that asset says, and its own look is filled in from it where the world
 /// is made (the file keeps only which). One naming none is a kind of the
 /// world's own: its name, its colour where its faces have no material, and
@@ -302,13 +302,13 @@ impl BlockFile {
         Ok(file)
     }
 
-    /// Whether `block` is one of its blocks: an entry of its list not taken
+    /// Whether `block` is one of its blocks: an entry of its palette not taken
     /// out.
     pub fn lists(&self, block: BlockId) -> bool {
         usize::from(block).checked_sub(1).and_then(|at| self.blocks.get(at)).is_some_and(BlockKind::is_live)
     }
 
-    /// The block numbered `block`'s entry, where it lists one.
+    /// The block numbered `block`'s entry, where it has one.
     pub fn kind(&self, block: BlockId) -> Option<&BlockKind> {
         usize::from(block).checked_sub(1).and_then(|at| self.blocks.get(at)).filter(|kind| kind.is_live())
     }

@@ -285,7 +285,7 @@ public static unsafe class Blocks
 			return Native.IsConnected;
 		}
 
-		// A world may number blocks it did not list, as the changes name them.
+		// A world may number blocks it had not held, as the changes name them.
 		BlockInfos.Renumbered();
 		fixed (byte* from = edits)
 		{
@@ -306,7 +306,7 @@ public static unsafe class Blocks
 			return 0;
 		}
 		var changed = NativeBlocks.Set(shape, a, b, block.Key, only);
-		// A world that did not list the block has numbered it now.
+		// A world that had not held the block has numbered it now.
 		BlockInfos.Renumbered();
 		return changed;
 	}

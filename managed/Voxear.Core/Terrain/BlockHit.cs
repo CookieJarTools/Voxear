@@ -5,7 +5,7 @@ namespace Voxear;
 /// <summary>
 /// Where a ray met a block in a Block World: the world's Obj, the point on the face it met, the way that face faces,
 /// how far along the ray, the middle of the block and how large a block is, and which block it is: its
-/// <see cref="Definition"/>, and its number in the world's list.
+/// <see cref="Definition"/>, and its number in its world.
 /// </summary>
 public readonly struct BlockHit(Obj obj, Vector3 point, Vector3 normal, float distance, Vector3 middle, float blockSize, ushort block)
 {

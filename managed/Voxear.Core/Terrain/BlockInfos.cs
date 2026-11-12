@@ -95,7 +95,7 @@ internal static class BlockInfos
 	}
 
 	/// <summary>
-	/// Forgets which block a number is in each world, as after a world numbered a block it did not list: a number is
+	/// Forgets which block a number is in each world, as after a world numbered a block it had not held: a number is
 	/// given once and never changes, so only what was not a block before can be one now.
 	/// </summary>
 	public static void Renumbered()

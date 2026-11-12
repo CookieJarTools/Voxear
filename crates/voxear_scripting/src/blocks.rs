@@ -116,7 +116,7 @@ pub(crate) unsafe extern "C" fn block_set(
 
 /// As [`block_set`], with the block named by its `.block`, a project path
 /// or GUID: in each world the number that world has it by, one given it
-/// there now where the world does not list it.
+/// there now where the world has not held it.
 pub(crate) unsafe extern "C" fn block_set_named(
     shape: i32,
     a: *const [f32; 3],
@@ -322,7 +322,7 @@ pub(crate) unsafe extern "C" fn blocks_version() -> u64 {
 }
 
 /// What follows the changes in the bytes `capture` gives, where a world
-/// numbered blocks its level does not list: this mark, a version, how many
+/// numbered blocks since its file was read: this mark, a version, how many
 /// worlds, and for each its key and the blocks it numbered, each number
 /// with its block's GUID. Bytes without it, as they were kept before blocks
 /// were assets of their own, read as they did.
@@ -433,7 +433,7 @@ fn capture(world: &World) -> Vec<u8> {
 /// was built, then makes its changes; how many it found. A block the
 /// changes numbered is the number this game has it by, one given it now
 /// where the world has none yet; a number of no block here, as of one taken
-/// out of the world's list since, is air.
+/// out of the world since, is air.
 fn restore(world: &mut World, bytes: &[u8]) -> anyhow::Result<i32> {
     use anyhow::Context;
     let mut found = 0;
@@ -551,7 +551,7 @@ mod tests {
     #[test]
     fn changes_put_back_take_this_games_numbers_for_their_blocks_and_air_for_blocks_gone() {
         use voxear_terrain::blocks::{BlockFaces, BlockMap};
-        // This game's world: planks numbered 5 here, the block once numbered 2 taken out of its list since.
+        // This game's world: planks numbered 5 here, the block once numbered 2 taken out of it since.
         struct Numbers(Entity);
         impl crate::services::ScriptServices for Numbers {
             fn obj_by_key(&self, _world: &World, key: &str) -> Option<Entity> {

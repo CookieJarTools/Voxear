@@ -299,7 +299,7 @@ impl Editor {
                 self.game.content.forget(path);
                 self.cave_rooms_changed(Some(path));
             }
-            // Blocks edited outside the editor are read again, and the worlds of blocks listing them drawn as they say.
+            // Blocks edited outside the editor are read again, and the worlds of blocks holding them drawn as they say.
             if !blocks.is_empty() {
                 self.game.content.forget_blocks();
                 self.blocks_saved.extend(blocks);

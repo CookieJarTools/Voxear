@@ -242,7 +242,7 @@ impl Editor {
         }
     }
 
-    /// Writes a block, for the worlds of blocks listing it to take up (see
+    /// Writes a block, for the worlds of blocks holding it to take up (see
     /// `voxear_engine::blocks::refresh`), and when `rebuild`, shows it again.
     pub(super) fn save_block(&mut self, path: &str, block: &BlockDef, rebuild: bool) {
         let file = self.game.content.db().file(path);

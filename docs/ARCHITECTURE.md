@@ -2792,6 +2792,28 @@ Blend shapes are supported.
 
 **IK and procedural.** Two-bone IK, FABRIK, look-at, foot placement on terrain, and procedural layers.
 
+**Box models.** A `.boxmodel` is a model built of boxes under bones, with pixels on every face, for the blocky
+characters of block worlds (`voxear_render::box_model`). It is not a second kind of model: `prepare_model` reads
+it into the same `PreparedModel` a `.glb` becomes, so it is `AssetKind::Model` and everything that places, draws,
+poses, previews, reimports or cooks a model does a box model with no path of its own.
+- **The file** is TOML, measured in the model's own pixels (`pixels_per_block` of them a metre): the sheet's size
+  and pixels, then the bones, each with a pivot from its parent's, a rest rotation and its boxes. A box has a least
+  corner from its bone's pivot, a size in whole pixels, and its faces' places on the sheet, either unfolded from
+  one corner (`uv`, with `mirror`) or a rectangle a face (`faces`, a face left out not drawn), with `inflate` and a
+  rotation about its middle. A side of no pixels makes a flat two-sided sheet.
+- **The pixels** are kept in the file: a palette and a byte a pixel where the sheet has 256 colours or fewer, raw
+  otherwise, lz4-compressed, as base64 (`Sheet::to_text`).
+- **What it is built as:** one skinned mesh, each box's corners bound whole to its bone's joint; the bones as the
+  skeleton, at rest where their pivots put them; one skin of every bone; one RGBA8 texture, never compressed; one
+  cut-out material. Face corners sit a sixty-fourth of a pixel inside their rectangles.
+- **Sharp pixels** are a material flag, `MaterialDesc::pixels` (`MATERIAL_PIXELS`): the shaders read the base
+  colour at the middle of the pixel a UV falls in, with the UV's own slopes picking the mip
+  (`baseColorUv`, `sampleBaseColor` in `common.slang`), in the forward, depth and preview passes and for traced
+  cut-outs. Cooked models carry the flag (`COOKED_VERSION` 11).
+- **Planned on top:** a Model window to build and paint in, bones made from a model's shape, motion made from how
+  a character moves, a raised second layer of small blocks, clips keyed on a timeline, and a component that walks
+  one through a block world.
+
 ## Particles *(the stateless and simulated paths, depth collision, forces, effects and starters implemented; the rest planned)*
 
 A Particle System runs one of three ways, whichever its settings need. The engine chooses, the Inspector says

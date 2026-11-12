@@ -6280,3 +6280,109 @@ float4 customUi(uint shader, uint first, UiInput input)
     run(&mut renderer, &world, &mut 0.0, 1);
     assert_eq!(at(&renderer.read_pixels().unwrap().2), [0, 255, 0], "the shader's green");
 }
+
+/// A box model of a body with a head on it, each a block across, their
+/// fronts four pixels of the sheet: red and green over blue and white.
+fn four_pixel_figure() -> voxear_render::BoxModel {
+    use voxear_render::{BoxModel, BoxSkin, Face, Sheet};
+    let mut sheet = Sheet::filled(2, 2, [255; 4]);
+    sheet.set(0, 0, [255, 0, 0, 255]);
+    sheet.set(1, 0, [0, 255, 0, 255]);
+    sheet.set(0, 1, [0, 0, 255, 255]);
+    let mut model = BoxModel { pixels_per_block: 2.0, sheet, ..BoxModel::default() };
+    let mut faces = [None; 6];
+    faces[Face::Front.index()] = Some([0.0, 0.0, 2.0, 2.0]);
+    let body = model.add_bone("Body", None, Vec3::ZERO);
+    model.add_box(body, Vec3::new(-1.0, 0.0, -1.0), [2, 2, 2], [0, 0]).skin = BoxSkin::Faces(faces);
+    let head = model.add_bone("Head", Some(body), Vec3::new(0.0, 2.0, 0.0));
+    model.add_box(head, Vec3::new(-1.0, 0.0, -1.0), [2, 2, 2], [0, 0]).skin = BoxSkin::Faces(faces);
+    model
+}
+
+/// The figure seen from in front, read from its file's text or cooked
+/// first, at rest or with its head turned a quarter over onto its side.
+fn figure_render(cooked: bool, turned_head: bool) -> Option<Vec<u8>> {
+    use std::sync::Arc;
+    use voxear_render::{ModelPart, ModelRenderer, Pose, Sky};
+    let mut renderer = renderer()?;
+    let text = four_pixel_figure().to_text();
+    let model = voxear_render::prepare_model("Figure.boxmodel", &mut |file| match file {
+        "Figure.boxmodel" => Ok(text.clone().into_bytes()),
+        other => anyhow::bail!("no {other}"),
+    })
+    .unwrap();
+    let imported = match cooked {
+        true => {
+            let bytes = model.cook().unwrap().to_bytes();
+            renderer.upload_cooked(&CookedModel::from_bytes("Figure.boxmodel", &bytes).unwrap()).unwrap()
+        }
+        false => renderer.upload_model(&model).unwrap(),
+    };
+    let mut world = World::new();
+    let toward = Quat::from_rotation_y(std::f32::consts::PI);
+    world.spawn((Camera::default(), Transform::new(Vec3::new(0.0, 1.0, 4.0), toward, Vec3::ONE)));
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, toward, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 1.0, ..Sky::default() });
+    let parts = imported
+        .nodes
+        .iter()
+        .map(|node| ModelPart {
+            mesh: node.mesh,
+            material: node.material,
+            transform: voxear_core::math::Mat4::IDENTITY,
+            node: 0,
+            skin: node.skin.map(|s| s as u32),
+        })
+        .collect();
+    let animation = imported.animation.clone().unwrap();
+    let mut pose = animation.skeleton.rest();
+    if turned_head {
+        pose[1].rotation = Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
+    }
+    let bones: Arc<[voxear_core::math::Mat4]> = animation.skeleton.model_matrices(&pose).into();
+    world.spawn((ModelRenderer { animation: Some(animation), ..ModelRenderer::new(parts) }, Pose { bones }, Transform::default()));
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let dark = renderer.add_material(&MaterialDesc { base_color: [0.02, 0.02, 0.02, 1.0], ..MaterialDesc::default() }).unwrap();
+    world.spawn((MeshRenderer::new(cube, dark), Transform::new(Vec3::new(0.0, 1.0, -3.0), Quat::IDENTITY, Vec3::new(20.0, 20.0, 0.2))));
+    world.insert_resource(steady_post());
+    run(&mut renderer, &world, &mut 0.0, 4);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+#[test]
+fn a_box_model_draws_its_pixels_sharp_and_its_boxes_follow_their_bones() {
+    let Some(rest) = figure_render(false, false) else { return };
+    let turned = figure_render(false, true).unwrap();
+    let cooked = figure_render(true, false).unwrap();
+    keep_image("box model rest.png", &rest);
+    keep_image("box model head turned.png", &turned);
+    let (eye, ahead) = (Vec3::new(0.0, 1.0, 4.0), Quat::from_rotation_y(std::f32::consts::PI));
+    let at = |pixels: &[u8], x: f32, y: f32| rgb_at(pixels, on_screen(eye, ahead, Vec3::new(x, y, 0.5)));
+    let red = |[r, g, b]: [i32; 3]| r > g.max(b) + 80;
+    let green = |[r, g, b]: [i32; 3]| g > r.max(b) + 80;
+    let blue = |[r, g, b]: [i32; 3]| b > r.max(g) + 80;
+    let grey = |[r, g, b]: [i32; 3]| r.max(g).max(b) - r.min(g).min(b) < 20;
+    let white = |colour: [i32; 3]| grey(colour) && colour[0] > 170;
+    // The dark wall behind, which the exposure lifts to a middle grey.
+    let wall = |colour: [i32; 3]| grey(colour) && colour[0] < 150;
+
+    for pixels in [&rest, &cooked] {
+        // The body's front: the sheet's upper left pixel at the model's right, which is the left as it is faced.
+        assert!(red(at(pixels, 0.25, 0.75)), "{:?}", at(pixels, 0.25, 0.75));
+        assert!(green(at(pixels, -0.25, 0.75)), "{:?}", at(pixels, -0.25, 0.75));
+        assert!(blue(at(pixels, 0.25, 0.25)), "{:?}", at(pixels, 0.25, 0.25));
+        assert!(white(at(pixels, -0.25, 0.25)), "{:?}", at(pixels, -0.25, 0.25));
+        // Each pixel is one colour right up to the next: nothing of the green a twentieth of a pixel from it.
+        let (edge, middle) = (at(pixels, 0.025, 0.75), at(pixels, 0.25, 0.75));
+        assert!(red(edge) && (0..3).all(|c| (edge[c] - middle[c]).abs() < 12), "{edge:?} beside {middle:?}");
+        let (edge, middle) = (at(pixels, -0.025, 0.75), at(pixels, -0.25, 0.75));
+        assert!(green(edge) && (0..3).all(|c| (edge[c] - middle[c]).abs() < 12), "{edge:?} beside {middle:?}");
+        // The head stands on the body.
+        assert!(red(at(pixels, 0.25, 1.75)) && wall(at(pixels, -0.75, 1.25)));
+    }
+    // Turned a quarter about where it meets the body, the head lies out to one side, its pixels turned with it.
+    assert!(wall(at(&turned, 0.25, 1.75)), "{:?}", at(&turned, 0.25, 1.75));
+    assert!(red(at(&turned, -0.75, 1.25)), "{:?}", at(&turned, -0.75, 1.25));
+    assert!(green(at(&turned, -0.75, 0.75)), "{:?}", at(&turned, -0.75, 0.75));
+    assert!(red(at(&turned, 0.25, 0.75)), "the body stays");
+}

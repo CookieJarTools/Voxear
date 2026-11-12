@@ -4,7 +4,8 @@
 //! project folder or from a content bundle. [`prepare`] does the slow work
 //! (parsing, decoding images, building LODs) on any thread, and [`upload`]
 //! then needs only the GPU. FBX files are read by `fbx_import` into the same
-//! [`PreparedModel`]; [`prepare`] and [`companion_files`] take either.
+//! [`PreparedModel`], and box models by `box_model`; [`prepare`] and
+//! [`companion_files`] take any of them.
 //!
 //! A model's import settings come from its `.meta` file, read through the
 //! same callback (see `voxear_assets::ModelImport` and `mesh_tools`), as do
@@ -331,6 +332,9 @@ fn bound_skins(model: &mut PreparedModel) {
 }
 
 fn read_model(path: &str, read: &mut ReadFile, settings: &ModelImport) -> Result<PreparedModel> {
+    if crate::box_model::is_box_model(path) {
+        return crate::box_model::prepare(path, read).with_context(|| format!("reading {path}"));
+    }
     if fbx_import::is_fbx(path) {
         return fbx_import::prepare(path, read, settings).with_context(|| format!("reading {path}"));
     }
@@ -699,6 +703,10 @@ impl Preparer {
 /// folder: its buffers and images, but not those embedded in it. For an FBX
 /// file, the textures it may read.
 pub fn companion_files(path: &str, bytes: &[u8]) -> Result<Vec<String>> {
+    // A box model's pixels are in its own file.
+    if crate::box_model::is_box_model(path) {
+        return Ok(Vec::new());
+    }
     if fbx_import::is_fbx(path) {
         return fbx_import::companion_files(path, bytes);
     }

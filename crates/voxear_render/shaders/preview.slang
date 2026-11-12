@@ -53,7 +53,7 @@ float4 previewFragment(PreviewOut input) : SV_Target
 {
     Frame* frame = push.frame;
     Material material = buffers()->materials[input.material];
-    float4 base = material.baseColor * sampleTexture(material.baseColorTexture, input.uv);
+    float4 base = material.baseColor * sampleBaseColor(material, input.uv);
     bool custom = material.shader != STANDARD_SHADER;
     if (!custom && material.alphaCutoff > 0.0 && base.a < material.alphaCutoff)
     {
@@ -130,7 +130,7 @@ ImpostorPicture impostorBakeFragment(PreviewOut input)
 {
     Frame* frame = push.frame;
     Material material = buffers()->materials[input.material];
-    float4 base = material.baseColor * sampleTexture(material.baseColorTexture, input.uv);
+    float4 base = material.baseColor * sampleBaseColor(material, input.uv);
     if (material.alphaCutoff > 0.0 && base.a < material.alphaCutoff)
     {
         discard;

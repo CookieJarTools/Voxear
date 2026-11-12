@@ -1311,6 +1311,31 @@ The sea, lakes, rivers and lava, built in. Manual: `manual/Water`.
 - [x] the First-Person View: the camera in a body that is seen, with kick, glance and framing
 - [ ] blend shapes, state machines, blend trees and layers
 - [ ] GPU crowd search
+- **Box models**, for the blocky characters of block worlds, in parts: the asset; a window to build and paint one
+  in; bones made from its shape; motion made from how it moves; a raised second layer; walking in a block world;
+  clips keyed on a timeline.
+  - ~~**The asset:**~~ done: `.boxmodel` files (`voxear_render::box_model`: `BoxModel`, its `Sheet` of pixels kept in
+    the file as a palette, compressed, and `BoxBone`s each with `ModelBox`es whose faces are unfolded on the sheet or
+    placed one by one, mirrored, inflated, turned, or flat). `prepare_model` reads one into a `PreparedModel` (one
+    skinned mesh, each box bound whole to its bone; the bones its skeleton; the sheet its texture), so it is
+    `AssetKind::Model` and is placed, drawn, posed, previewed, imported again when its file changes and cooked as any
+    model. Sharp pixels: `MaterialDesc::pixels`, `MATERIAL_PIXELS`, `sampleBaseColor`; `COOKED_VERSION` 11. Editor: New
+    Box Model (a grey block on one bone), its kind and a Box Model section in the Inspector (Scale, Sheet, Bones,
+    Boxes), previews showing its face. A model imported again gives the Objs drawing it its bones as they now are
+    (`Game::reimport_model`), and a menu with more items than its window has room for keeps to the window and scrolls
+    (`Ui::place_menu`). Tests: files read back, palettes, refused files, the unfolded layout, faces wound and mapped the
+    right way round, boxes placed by their bones, flat and inflated boxes, the prepared model; the GPU drawing one with
+    each pixel one colour to its edge, from source and cooked, and a box following its posed bone; the engine reading
+    its bones headless, a scene's Obj getting them, and builds cooking it; the editor making one, showing it and
+    following its file to a new bone; a long menu scrolled to its last item. Manual: Box Models.
+  - [ ] **The Model window:** a viewport, the tree of bones and boxes, moving and sizing boxes, pivots, mirroring,
+    undo; then painting on the model and on its sheet
+  - [ ] **Bones from its shape:** legs, arms, head, body and tail found from the boxes, and a limb split for a joint
+  - [ ] **Motion from how it moves:** walking by its gait, idling, looking, attacking, and parts that lag behind
+  - [ ] **A raised second layer:** a layer's pixels standing out as small blocks, flat again far away
+  - [ ] **In a block world:** a component that walks one over blocks and through water, paths on the blocks, and
+    the C# API
+  - [ ] **Clips keyed on a timeline**
 
 ## Gameplay kits: game-ready systems
 

@@ -50,7 +50,7 @@ float4 depthFragment(VertexOut input) : SV_Target0
     bool custom = material.shader != STANDARD_SHADER;
     if (material.alphaCutoff > 0.0 && !custom)
     {
-        float alpha = material.baseColor.a * sampleTexture(material.baseColorTexture, input.uv).a;
+        float alpha = material.baseColor.a * sampleBaseColor(material, input.uv).a;
         if (alpha < material.alphaCutoff)
         {
             discard;
@@ -77,7 +77,7 @@ float4 depthFragment(VertexOut input) : SV_Target0
     // A custom shader's surface, cut out and as rough as shading has it.
     if (custom)
     {
-        float4 base = material.baseColor * sampleTexture(material.baseColorTexture, input.uv);
+        float4 base = material.baseColor * sampleBaseColor(material, input.uv);
         float metallic = material.metallic * sampleTexture(material.metallicRoughnessTexture, input.uv).b;
         SurfaceOutput surface = materialSurface(albedo, base.a, normal, metallic, roughness, material.emissive);
         surface = customSurfaceAt(push.frame, input, surface, origin, SOLID_THICKNESS, false);

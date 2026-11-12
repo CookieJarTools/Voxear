@@ -29,8 +29,8 @@ use crate::{
 /// meshlet order, and its meshlets ship in the payload. 5: coarse LODs past
 /// a mesh's seams, by sloppy simplification (see `lod`). 8: skinned meshes'
 /// skin data in the payload, nodes' skins, and the model's skeleton, skins
-/// and clips.
-pub const COOKED_VERSION: u32 = 10;
+/// and clips. 11: whether a material's pixels are drawn sharp.
+pub const COOKED_VERSION: u32 = 11;
 const MAGIC: &[u8; 8] = b"VXMODEL\0";
 const NONE: u32 = u32::MAX;
 /// Where each part of the payload starts, a multiple of a compressed
@@ -225,6 +225,7 @@ impl CookedModel {
             w.f32s(&desc.emissive);
             w.f32(desc.normal_scale);
             w.option(desc.alpha_cutoff.map(f32::to_bits));
+            w.u32(u32::from(desc.pixels));
             for texture in [material.base_color, material.metallic_roughness, material.normal, material.emissive] {
                 w.option(texture.map(|t| t as u32));
             }
@@ -327,6 +328,7 @@ fn read(path: &str, bytes: &[u8]) -> Result<CookedModel> {
         let emissive = r.f32s()?;
         let normal_scale = r.f32()?;
         let alpha_cutoff = r.option()?.map(f32::from_bits);
+        let pixels = r.u32()? != 0;
         let desc = MaterialDesc {
             base_color: [r0, g, b, a],
             metallic,
@@ -334,6 +336,7 @@ fn read(path: &str, bytes: &[u8]) -> Result<CookedModel> {
             emissive,
             normal_scale,
             alpha_cutoff,
+            pixels,
             ..MaterialDesc::default()
         };
         let mut texture = || r.option().map(|t| t.map(|t| t as usize));

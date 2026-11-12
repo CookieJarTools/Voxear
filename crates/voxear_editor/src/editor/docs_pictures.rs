@@ -35,7 +35,7 @@ const PER_FRAME: usize = 2;
 const LIVE_SIZE: u32 = 256;
 const LIVE_PATIENCE: u32 = 240;
 /// The kinds of asset a page can show live, by their extensions.
-const LIVE_KINDS: [&str; 5] = ["prefab", "material", "gltf", "glb", "fbx"];
+const LIVE_KINDS: [&str; 6] = ["prefab", "material", "gltf", "glb", "fbx", "boxmodel"];
 
 /// A live asset a page shows: its file, the asset, the preview last handed
 /// to the page, and how many frames it has waited for one.

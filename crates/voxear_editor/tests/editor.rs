@@ -7563,6 +7563,55 @@ fn project_settings_world_tab_switches_the_floating_origin_on_in_the_project_fil
     assert_eq!(editor.game.project.file.floating_origin, on, "and the game plays with it");
 }
 
+#[test]
+fn project_settings_world_tab_sets_the_block_worlds_budget_by_preset_or_by_number() {
+    use voxear_terrain::{WorldBudget, WorldQuality};
+    let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {
+        return eprintln!("skipping: no usable GPU");
+    };
+    let dir = hello_copy();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    let budget = |editor: &voxear_editor::Editor| WorldBudget::of(&editor.game.engine.world);
+    assert_eq!(budget(&editor), WorldBudget::default(), "High until the project says otherwise");
+    editor.open_drawer(Some(voxear_editor::Drawer::Project));
+    frame(&mut editor, &mut renderer);
+    let tabs = editor.ui.find(editor.ui.root(), "project-tabs").unwrap();
+    let world = label_starting(&editor.ui, tabs, "World").expect("a World tab");
+    click(&mut editor.ui, world);
+    frame(&mut editor, &mut renderer);
+    let heading = label_starting(&editor.ui, editor.ui.root(), "Block Worlds").expect("its section");
+    let body = editor.ui.parent(heading).unwrap();
+    assert!(editor.ui.is_visible(body), "on the World tab");
+    // Low: every number its own, in the file and in the world at once.
+    let mut choices = Vec::new();
+    with_class(&editor.ui, body, "value-choice", &mut choices);
+    choose(&mut editor, &mut renderer, choices[1], 0);
+    frame(&mut editor, &mut renderer);
+    let low = WorldQuality::Low.budget().unwrap();
+    assert_eq!(Project::open(dir.path()).unwrap().file.world, low, "voxear.toml has it");
+    assert_eq!(budget(&editor), low, "and worlds take it up from now on");
+    let mut fields = Vec::new();
+    with_class(&editor.ui, body, "number-input", &mut fields);
+    // After the floating origin's distance and step: threads, columns, upload, view and far distance.
+    let shown: Vec<String> = fields[2..].iter().map(|&field| editor.ui.text(field)).collect();
+    assert_eq!(shown, ["2", "2", "4", "64", "512"]);
+    // A number typed makes it Custom, the rest kept.
+    type_into(&mut editor.ui, fields[3], "6");
+    editor.ui.key_down(Key::Enter);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let custom = WorldBudget { quality: WorldQuality::Custom, columns: 6, ..low };
+    assert_eq!(Project::open(dir.path()).unwrap().file.world, custom);
+    assert_eq!(budget(&editor), custom);
+    assert_eq!(editor.ui.selected_option(choices[1]), 4, "Custom shows");
+    shot(&mut renderer, "project-settings-block-worlds.png");
+    // High again, the file says nothing of it.
+    editor.set_world_budget(&WorldBudget::default());
+    let text = std::fs::read_to_string(dir.path().join("voxear.toml")).unwrap();
+    assert!(!text.contains("[world]"), "{text}");
+}
+
 
 /// A model file with two clips, Walk and Sneak, on a two-bone skeleton, its
 /// data beside it.

@@ -1,7 +1,8 @@
 //! Project Settings: switching the project's modules on and off, its
-//! quality settings and its floating origin. Each choice is written into
-//! `voxear.toml` at once; a module and a quality setting are put into effect
-//! at once, the floating origin the next time the game plays.
+//! quality settings, its floating origin and its block worlds' budget. Each
+//! choice is written into `voxear.toml` at once; a module, a quality setting
+//! and the budget are put into effect at once, the floating origin the next
+//! time the game plays.
 
 use voxear_engine::modules::Module;
 
@@ -20,6 +21,9 @@ impl Editor {
         let quality = self.project_settings.quality_changed(&self.ui, &self.game.project.file.quality);
         if let Some(quality) = quality {
             self.set_quality(&quality);
+        }
+        if let Some(budget) = self.project_settings.budget_changed(&self.ui, &self.game.project.file.world) {
+            self.set_world_budget(&budget);
         }
         if let Some(module) = self.inspector.module_wanted(&self.ui) {
             self.set_module(module, true);
@@ -44,6 +48,18 @@ impl Editor {
         let quality = self.game.project.file.quality.clone();
         quality.put(&mut self.game.engine.world);
         self.project_settings.show_quality(&mut self.ui, &quality);
+    }
+
+    /// Sets what making worlds of blocks may spend (see
+    /// `voxear_terrain::WorldBudget`), from now on: worlds streaming take it
+    /// up as they go, with nothing made again.
+    pub fn set_world_budget(&mut self, budget: &voxear_terrain::WorldBudget) {
+        if let Err(error) = self.game.project.set_world(budget) {
+            tracing::error!("{error:#}");
+        }
+        let budget = self.game.project.file.world;
+        budget.put(&mut self.game.engine.world);
+        self.project_settings.show_budget(&mut self.ui, &budget);
     }
 
     /// Switches a module on or off for the project.

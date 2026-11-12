@@ -3201,6 +3201,17 @@ the ground in 3D, worked out on a thread of their own and refined while nothing 
 Inspector's rows for a node and for a generator's exposed values are built from the kinds' own descriptions of
 their values (`world_gen_inspector::ValueRow`), so a new kind of node needs nothing in the editor.
 
+**Tall columns and ground apart from the ground.** A Volume is read no further than 64 m over a column's ground, and
+everything under the ground would be asked about, unless nodes say more. Each Volume row has a *depth*
+(`Compiler::set_depth`): how far under the ground it may be anything but solid. Solid's is 0, Overhangs adds its
+amount, and noise through space leaves it without end. A node whose ground stands, or is hollowed, far from the
+column's own says between which heights (`Compiler::note_span`), as two rows made once a column: a Cave Network
+its rooms' and tunnels' reach, Arches and Raised Land their undersides and tops. `column_chunks` then asks only the
+cells near the surface and within the spans, takes the rest as plain rock or air, and keeps whole chunks of rock
+under everything as one block. Spans where ground stands (`Volume::standing`) are added to far tiles as runs.
+Arches and Raised Land find what they make a region at a time from the generator's own ground program, kept per
+thread, so a chunk made alone holds the same bridge or island as its neighbours.
+
 Caves of rooms (`generate::caves`) are the one part of a generator made somewhere other than in its graph: a room
 is a prefab of Cave Shape and Cave Exit Objs, and `voxear_terrain` reads no prefabs. So the Cave Network node keeps
 each room as numbers beside its prefab's reference, and the editor reads them from the prefab

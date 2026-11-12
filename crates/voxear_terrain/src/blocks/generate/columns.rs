@@ -181,6 +181,23 @@ pub fn column_chunks(
         false => Default::default(),
     };
     let columns = columns_at(file, world, level, (&xs, &zs, &heights));
+    // Ground standing apart from a column's own, an arch or raised land, takes the layers of ground as high
+    // as its top: the cover its own height and climate give it, and not the valley's under it.
+    let stood: Vec<(usize, f32)> = match asked && volume.spanned() {
+        true => (0..places.len()).filter_map(|at| Some((at, volume.stands(&carried, at)?))).collect(),
+        false => Vec::new(),
+    };
+    let mut raised: Vec<Option<Column>> = Vec::new();
+    if !stood.is_empty() {
+        let pick = |from: &[f32]| stood.iter().map(|&(at, _)| from[at]).collect::<Vec<f32>>();
+        let tops: Vec<f32> = stood.iter().map(|&(_, top)| top).collect();
+        let made = columns_at(file, world, level, (&pick(&xs), &pick(&zs), &tops));
+        raised.resize_with(places.len(), || None);
+        for (&(at, _), column) in stood.iter().zip(made) {
+            // Kept apart from the ground's own surface, which its cells are measured from.
+            raised[at] = Some(Column { surface: columns[at].surface, ..column });
+        }
+    }
     // How far over a column's surface its ground may reach, in blocks.
     let over_reach = volume.reach() / size;
     let (sea, sea_top) = sea_of(file, generate, world, level);
@@ -330,7 +347,10 @@ pub fn column_chunks(
         }
     }
     for at in (0..places.len()).filter(|&at| own(places[at])) {
-        let ((x, z), column) = (places[at], &columns[at]);
+        let ((x, z), ground_column) = (places[at], &columns[at]);
+        let raised_column = raised.get(at).and_then(Option::as_ref);
+        // What stands clear of the column's own ground: from this block up.
+        let clear = (ground_column.surface + over_reach + 3.0).floor() as i32;
         let from = if ring == 0 { 0 } else { at * tall };
         if ring == 0 {
             read[at] = read_column(at, &mut inside[..tall], &mut under[..tall], &mut row, &mut ground_row);
@@ -341,6 +361,7 @@ pub fn column_chunks(
         let mut above = 0.0;
         for y in (rock_from..=top).rev().chain((low..rock_to).rev()) {
             let k = (y - first_y) as usize;
+            let column = raised_column.filter(|_| y >= clear).unwrap_or(ground_column);
             // Under the rock left out every block is deeper than any layer.
             if y == rock_to - 1 {
                 above = DEEP;

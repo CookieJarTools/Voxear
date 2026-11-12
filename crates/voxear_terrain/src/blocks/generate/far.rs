@@ -261,13 +261,16 @@ pub fn far_tile(file: &BlockFile, generate: &BlockGenerate, world: &WorldGen, le
     for (at, spans) in standing.iter().enumerate() {
         let place = [at as u32 % CHUNK, at as u32 / CHUNK];
         for [foot, top] in spans {
+            // Its top block is that of ground as high as it stands.
+            let raised = columns_at(file, world, level, (&xs[at..=at], &zs[at..=at], &[*top]));
+            let cover = raised.first().map_or(columns[at].layers[0].0, |column| column.layers[0].0);
             let (from, to) = ((foot / size - 0.5).ceil() as i32, (top / size - 0.5).floor() as i32 + 1);
             let from = from.max((columns[at].surface - 0.5).floor() as i32 + 1);
             // What is thinner than a block of this level is a block still, where it stands clear of the ground.
             let to = if to <= from && top - foot > 0.0 && (top / size).floor() as i32 >= from { from + 1 } else { to };
             if to > from {
                 tile.add(place, from, to - 1, columns[at].bottom);
-                tile.add(place, to - 1, to, columns[at].layers[0].0);
+                tile.add(place, to - 1, to, cover);
             }
         }
     }

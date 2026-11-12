@@ -283,13 +283,15 @@ Islands of ground standing high over the land below, flat on top and tapering un
 
 **In:** Ground. **Out:** Ground.
 
-Arches and raised land say where they stand, a column at a time, so a world of blocks asks about no more air than they fill, and they show in the far view. Overhangs after either roughens them. A Volume is read no further than 64 m over the generator's ground but for these two.
+An arch's top and an island's take the blocks of ground as high as they stand: the cover their own height and climate give them, not the valley's under them. Arches and raised land say where they stand, a column at a time, so a world of blocks asks about no more air than they fill, and they show in the far view. Overhangs after either roughens them. A Volume is read no further than 64 m over the generator's ground but for these two.
 
 ## Output
 
 What the generator makes. With nothing wired into Height the ground lies at the sea level; with no climate wired in it is 15 °C by the sea, cooler higher up, and half wet. With nothing wired into Volume a world of blocks makes the ground under the height solid, with the world's own Overhangs and Caves.
 
-**In:** Height, Temperature, Humidity, Volume.
+**Rock** takes a mask of where the ground is bare. Where it is over a half, a world of blocks leaves the top and under blocks off the column and shows its base block, so walls and crags are rock and not striped with soil. Wire a Slope Mask into it, or a Plateaus node's Walls.
+
+**In:** Height, Temperature, Humidity, Volume, Rock.
 
 ## What a node costs
 

@@ -168,6 +168,16 @@ impl Volume<'_> {
         spans.filter_map(move |([foot, top], _)| Some([read(*foot)?, read(*top)?])).filter(|[foot, top]| top > foot)
     }
 
+    /// The top of the highest ground standing apart from column `at` of
+    /// `carried`'s own, in metres up: an arch's or raised land's, whose
+    /// layers are those of ground that high. None where none stands.
+    pub fn stands(&self, carried: &Carried, at: usize) -> Option<f32> {
+        let read = move |place: usize| carried.rows.get(place).and_then(|row| row.get(at)).copied();
+        let spans = self.voxels.spans.iter().filter(|(_, stands)| *stands);
+        let tops = spans.filter_map(|([foot, top], _)| Some((read(*foot)?, read(*top)?)));
+        tops.filter(|(foot, top)| top > foot).map(|(_, top)| top).reduce(f32::max)
+    }
+
     /// The ground that stands apart from the columns' own at each
     /// `(xs[i], zs[i])`, whose ground is `heights[i]` high: for each column
     /// the spans of it, a foot and a top in metres up. Arches and raised

@@ -62,21 +62,53 @@ pub(super) fn columns_at(
     let known = |block: BlockId| if usize::from(block) <= file.blocks.len() { block } else { AIR };
     let (mut warmth, mut wetness) = (vec![0.0; xs.len()], vec![0.0; xs.len()]);
     world.climates(xs, zs, heights, &mut warmth, &mut wetness);
-    let column = |height: f32, climate: (f32, f32)| -> Column {
+    // How steeply the ground rises at each column, where a biome has blocks for steep ground: from its height a
+    // block further along x and along z.
+    let placed = file.generate.as_ref().and_then(|generate| generate.placed.as_deref());
+    let placed = placed.filter(|placed| !placed.biomes.is_empty());
+    let slopes: Vec<f32> = match placed.filter(|placed| placed.any_steep()) {
+        Some(_) => {
+            let beside = |shift: [f32; 2]| {
+                let (xs, zs): (Vec<f32>, Vec<f32>) = xs.iter().zip(zs).map(|(x, z)| (x + shift[0], z + shift[1])).unzip();
+                let mut heights = vec![0.0; xs.len()];
+                world.heights(&xs, &zs, &mut heights);
+                heights
+            };
+            let (along_x, along_z) = (beside([size, 0.0]), beside([0.0, size]));
+            (0..heights.len())
+                .map(|at| {
+                    let (dx, dz) = ((along_x[at] - heights[at]) / size, (along_z[at] - heights[at]) / size);
+                    (dx * dx + dz * dz).sqrt()
+                })
+                .collect()
+        }
+        None => Vec::new(),
+    };
+    let sea_level = world.sea_level();
+    let column = |at: usize| -> Column {
+        let (height, climate) = (heights[at], (warmth[at], wetness[at]));
         let cover = file.blocks.iter().enumerate().rev().find_map(|(at, kind)| {
             kind.cover.filter(|c| c.covers(height, climate)).map(|c| ((at + 1) as BlockId, c.depth))
         });
+        // The blocks of the biome the place is, each left to the world's own where the biome names none.
+        let above_sea = height - sea_level;
+        let place = crate::generate::biomes::Place { temperature: climate.0, humidity: climate.1, above_sea };
+        let biome = placed.and_then(|placed| placed.at(xs[at], zs[at], place));
+        let (biome_top, biome_under) =
+            biome.map_or((AIR, AIR), |blocks| blocks.at(above_sea, slopes.get(at).copied().unwrap_or(0.0)));
+        let or = |block: BlockId, own: BlockId| if known(block) == AIR { known(own) } else { block };
         let top = match cover {
             Some((block, depth)) => (block, (depth.max(1) as f32 / scale).max(1.0)),
-            None => (known(ground.top), 1.0),
+            None => (or(biome_top, ground.top), 1.0),
         };
+        let under_depth = biome.filter(|blocks| blocks.under != AIR).map_or(ground.under_depth, |b| b.under_depth);
         Column {
             surface: height / size,
-            layers: [top, (known(ground.under), ground.under_depth as f32 / scale)],
-            bottom: known(ground.bottom),
+            layers: [top, (or(biome_under, ground.under), under_depth as f32 / scale)],
+            bottom: or(biome.map_or(AIR, |blocks| blocks.deep), ground.bottom),
         }
     };
-    (0..heights.len()).map(|at| column(heights[at], (warmth[at], wetness[at]))).collect()
+    (0..heights.len()).map(column).collect()
 }
 
 /// The sea's block, air for none, and its top in level `level`'s blocks, as

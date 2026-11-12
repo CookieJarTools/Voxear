@@ -33,7 +33,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::noise;
+use crate::{
+    blocks::chunk::{AIR, BlockId},
+    noise,
+};
 
 /// What a `.biome` file holds.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -226,9 +229,129 @@ impl Biomes {
     }
 }
 
+/// The blocks of one of a world's biomes, by the numbers the world gives
+/// them: air for one the biome leaves to the world.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BiomeBlocks {
+    pub top: BlockId,
+    pub under: BlockId,
+    pub under_depth: u32,
+    pub deep: BlockId,
+    pub steep: BlockId,
+    /// As rise over run.
+    pub steep_slope: f32,
+    pub shore: BlockId,
+    pub shore_height: f32,
+}
+
+impl Default for BiomeBlocks {
+    fn default() -> Self {
+        Self {
+            top: AIR,
+            under: AIR,
+            under_depth: 3,
+            deep: AIR,
+            steep: AIR,
+            steep_slope: 0.84,
+            shore: AIR,
+            shore_height: 2.0,
+        }
+    }
+}
+
+impl BiomeBlocks {
+    /// A biome's ground with each block it names numbered by `number`: air
+    /// for one it does not name or the world cannot number.
+    pub fn of(ground: &BiomeGround, mut number: impl FnMut(&str) -> BlockId) -> Self {
+        let mut block = |named: &Option<String>| named.as_deref().map_or(AIR, &mut number);
+        Self {
+            top: block(&ground.top),
+            under: block(&ground.under),
+            under_depth: ground.under_depth,
+            deep: block(&ground.deep),
+            steep: block(&ground.steep),
+            steep_slope: slope_of(ground.steep_slope),
+            shore: block(&ground.shore),
+            shore_height: ground.shore_height.max(0.0),
+        }
+    }
+
+    /// The top and under blocks of ground `above_sea` metres over the sea
+    /// that rises `slope` for every metre along: its shore's near the sea,
+    /// its steep ground's where it is steep, its own elsewhere. Air for one
+    /// left to the world.
+    pub fn at(&self, above_sea: f32, slope: f32) -> (BlockId, BlockId) {
+        if self.steep != AIR && slope >= self.steep_slope {
+            (self.steep, self.steep)
+        } else if self.shore != AIR && above_sea.abs() <= self.shore_height {
+            (self.shore, if self.under == AIR { self.shore } else { self.under })
+        } else {
+            (self.top, self.under)
+        }
+    }
+}
+
+/// How much ground at `degrees` rises for every metre along, with sums and
+/// products alone: the tangent, good to a part in a thousand under 80°.
+fn slope_of(degrees: f32) -> f32 {
+    let x = degrees.clamp(0.0, 85.0) * (std::f32::consts::PI / 180.0);
+    let x2 = x * x;
+    // Sine and cosine by their series, as far as they matter here.
+    let sin = x * (1.0 - x2 / 6.0 * (1.0 - x2 / 20.0 * (1.0 - x2 / 42.0 * (1.0 - x2 / 72.0))));
+    let cos = 1.0 - x2 / 2.0 * (1.0 - x2 / 12.0 * (1.0 - x2 / 30.0 * (1.0 - x2 / 56.0)));
+    sin / cos.max(1e-3)
+}
+
+/// A world's biomes with the blocks of each, as the world numbers them.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WorldBiomes {
+    pub biomes: Biomes,
+    pub blocks: Vec<BiomeBlocks>,
+}
+
+impl WorldBiomes {
+    /// Whether any of them has blocks for steep ground, so slopes are worth
+    /// working out.
+    pub fn any_steep(&self) -> bool {
+        self.blocks.iter().any(|blocks| blocks.steep != AIR)
+    }
+
+    /// The blocks of the biome the place at `(x, z)` is, with `climate`
+    /// there; none where the world lists no biomes.
+    pub fn at(&self, x: f32, z: f32, climate: Place) -> Option<&BiomeBlocks> {
+        self.biomes.at(x, z, climate).and_then(|biome| self.blocks.get(biome))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_biomes_blocks_are_its_shores_near_the_sea_its_steep_grounds_where_steep_and_its_own_elsewhere() {
+        let ground = BiomeGround {
+            top: Some("grass".into()),
+            under: Some("dirt".into()),
+            steep: Some("rock".into()),
+            shore: Some("sand".into()),
+            deep: Some("missing".into()),
+            ..BiomeGround::default()
+        };
+        let number =
+            |name: &str| ["", "grass", "dirt", "rock", "sand"].iter().position(|n| *n == name).unwrap_or(0) as BlockId;
+        let blocks = BiomeBlocks::of(&ground, number);
+        assert_eq!((blocks.top, blocks.under, blocks.steep, blocks.shore, blocks.deep), (1, 2, 3, 4, AIR));
+        // 40 degrees is 0.839 in 1.
+        assert!((blocks.steep_slope - 0.8391).abs() < 1e-3, "{}", blocks.steep_slope);
+        assert!((slope_of(45.0) - 1.0).abs() < 1e-3 && (slope_of(70.0) - 2.7475).abs() < 3e-3);
+        assert_eq!(blocks.at(30.0, 0.2), (1, 2), "grass over dirt on gentle ground");
+        assert_eq!(blocks.at(30.0, 1.0), (3, 3), "rock where it is steep");
+        assert_eq!(blocks.at(1.5, 0.2), (4, 2), "sand by the sea, and just under it");
+        assert_eq!(blocks.at(-1.5, 0.2), (4, 2));
+        assert_eq!(blocks.at(1.5, 1.0), (3, 3), "steep ground by the sea is rock still");
+        // One that names nothing leaves all to the world.
+        assert_eq!(BiomeBlocks::of(&BiomeGround::default(), number).at(1.0, 2.0), (AIR, AIR));
+    }
 
     fn biome(temperature: [f32; 2], humidity: [f32; 2], height: Option<[f32; 2]>) -> BiomeDef {
         BiomeDef { temperature, humidity, height, ..BiomeDef::default() }

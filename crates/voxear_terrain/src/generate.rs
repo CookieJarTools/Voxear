@@ -42,7 +42,7 @@ mod starters;
 mod voxels;
 mod world;
 
-pub use biomes::{BiomeDef, BiomeGround, Biomes};
+pub use biomes::{BiomeBlocks, BiomeDef, BiomeGround, Biomes, WorldBiomes};
 pub use caves::{
     CaveExit, CaveLayout, CaveMode, CaveShape, Caves, PlacedExit, PlacedRoom, PlacedSpot, Room, RoomExit, RoomForm, RoomRules,
     RoomSample, RoomShape,

@@ -1461,6 +1461,8 @@ impl Content {
         let found = read.context("no world of blocks with that GUID").and_then(|path| {
             let text = self.read_text(&path)?;
             let file = voxear_terrain::blocks::file::BlockFile::parse(&text).with_context(|| path.clone())?;
+            // Its biomes read, and the blocks they name numbered.
+            let file = crate::blocks::with_biomes(self, &file);
             // The editor's changes from its ground, where it has any, beside it.
             let changes = voxear_terrain::blocks::edits::blocks_file(&path);
             let edits = match self.read(&changes) {

@@ -58,11 +58,31 @@ pub struct BlockGenerate {
     /// (see `stream`). Its ground's size is then left unused.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub endless: Option<BlockEndless>,
+    /// The biomes its ground has, each a reference to a `.biome`: each place
+    /// takes the blocks of the one its climate is nearest (see
+    /// `crate::generate::biomes`). None, and its ground is the world's own
+    /// layers everywhere.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub biomes: Vec<String>,
+    /// Its biomes as read, with their blocks by this world's numbers: filled
+    /// in by whoever has the project's files, before ground is made.
+    #[serde(skip)]
+    pub placed: Option<std::sync::Arc<crate::generate::WorldBiomes>>,
 }
 
 impl Default for BlockGenerate {
     fn default() -> Self {
-        Self { world: None, position: [0.0, 0.0], bottom: -16, overhangs: 0.0, caves: 0.3, sea: AIR, endless: None }
+        Self {
+            world: None,
+            position: [0.0, 0.0],
+            bottom: -16,
+            overhangs: 0.0,
+            caves: 0.3,
+            sea: AIR,
+            endless: None,
+            biomes: Vec::new(),
+            placed: None,
+        }
     }
 }
 
@@ -128,7 +148,7 @@ mod tests {
                 overhangs,
                 caves,
                 sea: AIR,
-                endless: None,
+                ..BlockGenerate::default()
             }),
             ..BlockFile::default()
         };
@@ -139,6 +159,84 @@ mod tests {
             ..BlockKind::colored("Snow", [0.95; 3])
         });
         (file, world)
+    }
+
+    #[test]
+    fn generated_ground_takes_its_blocks_from_the_biome_each_place_is() {
+        use crate::generate::{BiomeBlocks, BiomeDef, Biomes, WorldBiomes};
+        let (mut file, world) = generated(0.0, 0.0);
+        // No snow cover: the biomes say what lies on top. Blocks 1 to 3 are the world's grass, dirt and stone;
+        // 4 to 7 are moss, peat, ice and scree.
+        file.blocks.truncate(3);
+        for name in ["Moss", "Peat", "Ice", "Scree"] {
+            file.blocks.push(BlockKind::colored(name, [0.5; 3]));
+        }
+        let without = file.make_ground(Some(&world));
+        // A colder biome of ice, with scree on its steeper ground, and a milder one of moss over peat: split where
+        // half this stretch of ground is colder, and at a slope a fair part of it is steeper than.
+        let columns = |z: i32| (0..64).map(move |x| (500.0 + (x as f32 + 0.5) * 2.0, 800.0 + (z as f32 + 0.5) * 2.0));
+        let mut warmths: Vec<f32> = (0..64)
+            .flat_map(columns)
+            .map(|(px, pz)| world.climate(px, pz, world.height_at(px, pz)).0)
+            .collect();
+        warmths.sort_by(f32::total_cmp);
+        let slope_at = |(px, pz): (f32, f32)| {
+            let height = world.height_at(px, pz);
+            let (dx, dz) = (world.height_at(px + 2.0, pz) - height, world.height_at(px, pz + 2.0) - height);
+            (dx * dx + dz * dz).sqrt() / 2.0
+        };
+        let mut slopes: Vec<f32> = (0..64).flat_map(columns).map(slope_at).collect();
+        slopes.sort_by(f32::total_cmp);
+        let (split, steep) = (warmths[warmths.len() / 2], slopes[slopes.len() * 3 / 4]);
+        let cold = BiomeDef { temperature: [-60.0, split], humidity: [0.0, 1.0], ..BiomeDef::default() };
+        let mild = BiomeDef { temperature: [split, 40.0], humidity: [0.0, 1.0], ..BiomeDef::default() };
+        let blocks = vec![
+            BiomeBlocks { top: 6, steep: 7, steep_slope: steep, ..BiomeBlocks::default() },
+            BiomeBlocks { top: 4, under: 5, under_depth: 2, ..BiomeBlocks::default() },
+        ];
+        let biomes = Biomes::new(vec![cold, mild], 15.0, 0.3, world.seed()).wandering(0.0, 48.0);
+        let placed = WorldBiomes { biomes, blocks };
+        file.generate.as_mut().unwrap().placed = Some(std::sync::Arc::new(placed));
+        let map = file.make_ground(Some(&world));
+        let surface = |map: &BlockMap, x: i32, z: i32| (-40..400).rev().find(|&y| map.get([x, y, z]) != AIR);
+        let (mut ice, mut scree, mut moss) = (0, 0, 0);
+        for z in 0..64 {
+            for x in 0..64 {
+                let (px, pz) = (500.0 + (x as f32 + 0.5) * 2.0, 800.0 + (z as f32 + 0.5) * 2.0);
+                let height = world.height_at(px, pz);
+                let (dx, dz) = (world.height_at(px + 2.0, pz) - height, world.height_at(px, pz + 2.0) - height);
+                let slope = (dx * dx + dz * dz).sqrt() / 2.0;
+                let top = surface(&map, x, z).expect("ground in every column");
+                assert_eq!(surface(&without, x, z), Some(top), "the ground's shape is the generator's, biomes or none");
+                let block = map.get([x, top, z]);
+                let warmth = world.climate(px, pz, height).0;
+                // Within a hair of the split or the slope, either is right.
+                if (warmth - split).abs() < 1e-3 || (slope - steep).abs() < 1e-3 {
+                    continue;
+                }
+                let cold = warmth < split;
+                let wanted = match (cold, slope >= steep) {
+                    (true, true) => 7,
+                    (true, false) => 6,
+                    (false, _) => 4,
+                };
+                assert_eq!(block, wanted, "column ({x}, {z}): {height} m, slope {slope}");
+                (ice, scree, moss) = (ice + usize::from(block == 6), scree + usize::from(block == 7), moss + usize::from(block == 4));
+                // Under moss, two blocks of peat and then the world's stone; under ice, the world's dirt.
+                if block == 4 {
+                    assert_eq!((map.get([x, top - 1, z]), map.get([x, top - 2, z])), (5, 5));
+                    assert_eq!(map.get([x, top - 4, z]), 3);
+                } else if block == 6 {
+                    assert_eq!(map.get([x, top - 1, z]), 2);
+                }
+            }
+        }
+        assert!(ice > 100 && scree > 20 && moss > 100, "{ice} of ice, {scree} of scree, {moss} of moss");
+        // The file says which biomes, and what was read of them is not written.
+        file.generate.as_mut().unwrap().biomes = vec!["Biomes/Cold.biome".into()];
+        let text = file.to_text();
+        assert!(text.contains("biomes = [\"Biomes/Cold.biome\"]") && !text.contains("placed"), "{text}");
+        assert_eq!(BlockFile::parse(&text).unwrap().generate.unwrap().placed, None);
     }
 
     #[test]
@@ -387,7 +485,7 @@ mod tests {
                 overhangs: 0.0,
                 caves: 0.0,
                 sea: AIR,
-                endless: None,
+                ..BlockGenerate::default()
             }),
             ..BlockFile::default()
         };

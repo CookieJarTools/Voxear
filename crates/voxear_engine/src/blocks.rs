@@ -163,6 +163,53 @@ pub fn with_block(content: &mut Content, file: &BlockFile, guid: AssetGuid) -> O
     (drawn.looks() <= MAX_LOOKS).then_some((file, drawn))
 }
 
+/// `file` with its generated ground's biomes read (see
+/// `voxear_terrain::generate::biomes`): each biome its `[generate]` lists,
+/// with the blocks it names numbered by the world, a block the world did
+/// not hold yet numbered after those it has, in the order the biomes name
+/// them, so the same file gives the same numbers on every machine. A biome
+/// or a block that cannot be found is left out, with a warning; a file
+/// that lists no biomes comes back as it was.
+pub fn with_biomes(content: &mut Content, file: &BlockFile) -> BlockFile {
+    use voxear_terrain::generate::{BiomeBlocks, Biomes, WorldBiomes};
+    let Some(generate) = file.generate.as_ref().filter(|generate| !generate.biomes.is_empty()) else {
+        return file.clone();
+    };
+    let mut file = file.clone();
+    let seed = generator(content, &file).map_or(0, |world| world.seed());
+    let (mut list, mut blocks) = (Vec::new(), Vec::new());
+    for reference in &generate.biomes {
+        let Some((_, biome)) = content.biome(reference) else {
+            tracing::warn!("a world of blocks lists the biome {reference}, which is not in the project");
+            continue;
+        };
+        let numbered = BiomeBlocks::of(&biome.ground, |named| {
+            let Some((guid, _)) = content.block(named) else {
+                tracing::warn!("the biome {reference} names the block {named}, which is not in the project");
+                return voxear_terrain::blocks::chunk::AIR;
+            };
+            if let Some(number) = resolved(content, &file).number_of(guid) {
+                return number;
+            }
+            match with_block(content, &file, guid) {
+                Some((grown, _)) => {
+                    file = grown;
+                    file.blocks.len() as BlockId
+                }
+                None => voxear_terrain::blocks::chunk::AIR,
+            }
+        });
+        list.push((*biome).clone());
+        blocks.push(numbered);
+    }
+    // How far a world's climate strays, for weighing temperature against humidity: a generator's usual spread.
+    let biomes = Biomes::new(list, 15.0, 0.3, seed);
+    if let Some(generate) = file.generate.as_mut() {
+        generate.placed = Some(Arc::new(WorldBiomes { biomes, blocks }));
+    }
+    file
+}
+
 /// Says, once for each world, that the world of blocks at `world` has no
 /// room for the block at `block`.
 pub fn say_full(content: &mut Content, world: AssetGuid, block: AssetGuid) {

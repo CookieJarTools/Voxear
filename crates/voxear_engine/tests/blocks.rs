@@ -246,6 +246,65 @@ fn a_generated_block_world_follows_its_generator_and_keeps_changes_from_that_gro
 }
 
 #[test]
+fn a_generated_block_worlds_biomes_put_their_blocks_on_its_ground_numbered_as_it_loads() {
+    use voxear_engine::blocks::BlockWorldAsset;
+    use voxear_terrain::{blocks::generate::BlockGenerate, generate::Preset};
+    let dir = project();
+    let hills = Preset::RollingHills.world();
+    std::fs::create_dir_all(dir.path().join("Worlds")).unwrap();
+    std::fs::create_dir_all(dir.path().join("Biomes")).unwrap();
+    std::fs::write(dir.path().join("Worlds/Hills.worldgen"), hills.to_text()).unwrap();
+    // Two blocks the world does not hold, and two biomes that between them take in every climate: a cooler one
+    // of moss, a warmer one of sand over sandstone, which is not in the project.
+    std::fs::write(dir.path().join("Blocks/Moss.block"), "color = [0.2, 0.5, 0.2]\n").unwrap();
+    std::fs::write(dir.path().join("Blocks/Sand.block"), "color = [0.9, 0.8, 0.5]\n").unwrap();
+    let split = hills.climate(16.0, 16.0, hills.height_at(16.0, 16.0)).0;
+    let cool =
+        format!("temperature = [-60.0, {split}]\nhumidity = [0.0, 1.0]\n\n[ground]\ntop = \"Blocks/Moss.block\"\n");
+    let warm = format!(
+        "temperature = [{split}, 60.0]\nhumidity = [0.0, 1.0]\n\n[ground]\ntop = \"Blocks/Sand.block\"\n\
+         under = \"Blocks/Sandstone.block\"\n"
+    );
+    std::fs::write(dir.path().join("Biomes/Cool.biome"), cool).unwrap();
+    std::fs::write(dir.path().join("Biomes/Warm.biome"), warm).unwrap();
+    let mut file = BlockFile::default();
+    file.ground.size = [32, 32];
+    file.generate = Some(BlockGenerate {
+        world: Some("Worlds/Hills.worldgen".into()),
+        bottom: -8,
+        caves: 0.0,
+        biomes: vec!["Biomes/Cool.biome".into(), "Biomes/Warm.biome".into(), "Biomes/Gone.biome".into()],
+        ..BlockGenerate::default()
+    });
+    let held = file.blocks.len();
+    std::fs::write(dir.path().join("Blocks/Field.blockworld"), file.to_text()).unwrap();
+    let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
+    game.start(None).unwrap();
+    let world = &game.engine.world;
+    let blocks = world.query_ref::<&BlockWorld>().into_iter().next().expect("the world").clone();
+    let asset = world.query_ref::<&BlockWorldAsset>().into_iter().next().expect("its asset").clone();
+    // Moss and sand numbered after the blocks it held, in the order the biomes name them; the block and the biome
+    // that are not there left out.
+    assert_eq!(asset.file.blocks.len(), held + 2);
+    let (moss, sand) = ((held + 1) as u16, (held + 2) as u16);
+    let top = |x: i32, z: i32| {
+        let y = (-8..200).rev().find(|&y| blocks.blocks.get([x, y, z]) != 0).unwrap();
+        (blocks.blocks.get([x, y, z]), blocks.blocks.get([x, y - 1, z]))
+    };
+    let (mut mossy, mut sandy) = (0, 0);
+    for z in 0..32 {
+        for x in 0..32 {
+            let (on_top, under) = top(x, z);
+            assert!(on_top == moss || on_top == sand, "column ({x}, {z}) has {on_top} on top");
+            // Sandstone is not there, so under sand lies the world's own under block, as under moss.
+            assert_eq!(under, file.ground.under, "column ({x}, {z})");
+            (mossy, sandy) = (mossy + usize::from(on_top == moss), sandy + usize::from(on_top == sand));
+        }
+    }
+    assert!(mossy > 30 && sandy > 30, "{mossy} of moss, {sandy} of sand");
+}
+
+#[test]
 fn a_block_world_without_end_is_made_round_the_camera_and_saves_every_change() {
     use voxear_terrain::{
         blocks::{

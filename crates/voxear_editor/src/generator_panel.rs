@@ -649,7 +649,15 @@ impl GeneratorPanel {
         let Some(open) = self.open.as_mut() else { return };
         let [_, _, width, height] = ui.rect(self.ground_frame);
         let pixels = (width.min(height) * scale).round().max(1.0) as u32;
-        if self.previews.update(renderer, &open.world, pixels) {
+        // A Cave Network picked by itself with a room made by rules: that room, in place of the ground.
+        let room = match self.canvas.picked() {
+            [node] => {
+                let rooms = open.world.graph().node(GraphNode(*node as u32)).and_then(|node| node.kind.rooms());
+                rooms.and_then(|rooms| rooms.iter().find_map(|room| room.rules))
+            }
+            _ => None,
+        };
+        if self.previews.update(renderer, &open.world, pixels, room) {
             open.stale = true;
         }
         self.previews.drag(renderer, ui.is_pressed(self.ground_frame), ui.pointer_position());
@@ -657,7 +665,11 @@ impl GeneratorPanel {
         ui.set_image(self.ground, image);
         ui.set_visible(self.ground, image.is_some());
         let across = self.previews.ground_across();
-        let note = if across == 0 { String::new() } else { format!("{across} × {across}") };
+        let note = match (across, self.previews.shows_room()) {
+            (0, _) => String::new(),
+            (_, true) => "Room".to_string(),
+            (across, false) => format!("{across} × {across}"),
+        };
         if ui.text(self.ground_note) != note {
             ui.set_text(self.ground_note, &note);
         }

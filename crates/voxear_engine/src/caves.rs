@@ -178,8 +178,17 @@ pub fn caves_json(world: &World, content: &mut Content, obj: u64, what: i32, at:
                 .iter()
                 .map(|(region, index)| serde_json::json!({ "to": region, "toIndex": index }))
                 .collect();
+            // Places on its rock: where, then the way out of the rock.
+            let spots = |spots: &[voxear_terrain::generate::PlacedSpot]| -> Vec<[f32; 6]> {
+                let spot = |spot: &voxear_terrain::generate::PlacedSpot| {
+                    let (at, [nx, ny, nz]) = (moved(spot.at), spot.normal);
+                    [at[0], at[1], at[2], nx, ny, nz]
+                };
+                spots.iter().map(spot).collect()
+            };
             serde_json::json!({
-                "joined": joined,
+                "joined": joined, "made": room.made,
+                "walls": spots(&room.walls), "floors": spots(&room.floors), "ceilings": spots(&room.ceilings),
                 "index": room.index, "region": room.region, "room": room.room, "prefab": room.prefab,
                 "at": moved(room.at), "x": room.axes[0], "y": room.axes[1], "z": room.axes[2],
                 "mirrored": room.mirrored, "turns": room.turns, "main": room.main,

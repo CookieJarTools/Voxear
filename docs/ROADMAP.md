@@ -1740,6 +1740,26 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     against one made among its neighbours; hollows whole across region lines; every room of a level reached from
     the first through the blocks; a prefab read, changed and read again, in the engine and in the editor; a
     script finding rooms, exits and floors. Manual: Caves.
+  - ~~**Caves made by rules:**~~ done: a Cave Network's list holds rooms made by rules beside prefabs, each kind
+    with a weight (`generate/caves/made.rs`, `RoomRules`: Size from and to, Shapes, Height, Roughness, Floor,
+    Pillars, Hanging Rock, Ledges, Exits, Exits Apart). A made room is round shapes that overlap (domes, balls,
+    squashed balls) run together smoothly into one hollow, sized and placed from the room's own seed; a level
+    floor through its lowest third; pillars, hanging rock and ledges put back, none in the way to an exit or
+    between two shapes; exits set at its walls. Its walls come in no further than a margin it works out from its
+    own shapes, and the noise is coarser the rougher the walls, so roughness closes nothing and opens no hollow
+    apart. Tunnels: a width for each between **Tunnel Width** and **Widest**, **Wander**, a **Slope Limit** (one
+    too steep is wound wider, so longer and gentler), **Branches** (dead ends off a tunnel) and **Loops**. An
+    endless network's regions are taken sixteen at a time (`caves/joins.rs`): the largest group of rooms that
+    touch are joined as a tree by numbers from the seed, with some of the joins left over made for loops, and two
+    sixteens join through a pair of facing rooms both pick alike. A level takes made rooms and loops too. Places
+    on a room's walls, floor and roof (`PlacedRoom::walls`, `floors`, `ceilings`; `room.WallPoints`,
+    `FloorPoints`, `CeilingPoints` for scripts), for ore, crystals and plants to come. The Inspector lists a
+    generated room's rules under it, and the Generator panel shows one such room by itself, its roof away, while
+    its Cave Network is picked. A **Caves** preset: hills over halls and chambers without end. Tests: a made
+    room one hollow whatever its seed, its exits open at the roughest; a cell alone against a batch and the
+    same bytes from the file; a chunk alone against one among its neighbours; every room of sixteen regions
+    reached from any other through the blocks, and the next sixteen through their side; a level of made rooms;
+    places on rock. Manual: Caves.
 - ~~**Erosion layer:**~~ done: Add Layer ▸ Erosion wears the ground below it on the GPU (`shaders/erosion.slang`,
   `voxear_render::erosion`, `Renderer::erode`), once, in the editor: rain each step, water through pipes to its four
   neighbours sped by the drop and held to what each cell has, its depth and speed, carving where it can carry more

@@ -11,6 +11,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::made::RoomRules;
 use crate::generate::compile::Key;
 
 /// What nothing hollow is worth: further outside any hollow than anything
@@ -151,7 +152,7 @@ impl RoomShape {
 }
 
 /// How far inside a ball of half sizes `r` round nothing `q` is.
-fn ball(q: [f32; 3], r: [f32; 3]) -> f32 {
+pub(crate) fn ball(q: [f32; 3], r: [f32; 3]) -> f32 {
     let least = lesser(r[0], lesser(r[1], r[2]));
     let a = [q[0] / r[0], q[1] / r[1], q[2] / r[2]];
     let b = [a[0] / r[0], a[1] / r[1], a[2] / r[2]];
@@ -176,8 +177,10 @@ impl Default for RoomExit {
     }
 }
 
-/// A room a Cave Network places: the prefab it was read from, how often it
-/// is chosen beside the others, and its shapes and exits as last read.
+/// A room a Cave Network places, and how often it is chosen beside the
+/// others. Either a prefab's: the prefab it was read from, and its shapes
+/// and exits as last read. Or one made by rules, each room of the network
+/// its own (see `made`).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Room {
@@ -185,6 +188,9 @@ pub struct Room {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prefab: Option<String>,
     pub weight: f32,
+    /// The rules it is made by: none for a prefab's room.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rules: Option<RoomRules>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub shapes: Vec<RoomShape>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -193,7 +199,7 @@ pub struct Room {
 
 impl Default for Room {
     fn default() -> Self {
-        Self { prefab: None, weight: 1.0, shapes: Vec::new(), exits: Vec::new() }
+        Self { prefab: None, weight: 1.0, rules: None, shapes: Vec::new(), exits: Vec::new() }
     }
 }
 
@@ -214,14 +220,28 @@ impl Room {
         Self {
             prefab: None,
             weight: 1.0,
+            rules: None,
             shapes: vec![dome, side],
             exits: vec![exit(1.0, 0.0), exit(-1.0, 0.0), exit(0.0, 1.0), exit(0.0, -1.0)],
         }
     }
 
+    /// A room made by `rules`.
+    pub fn made(rules: RoomRules) -> Self {
+        Self { rules: Some(rules), ..Self::default() }
+    }
+
+    /// Whether a network can place it: it has rules, or a shape.
+    pub fn placeable(&self) -> bool {
+        self.rules.is_some() || !self.shapes.is_empty()
+    }
+
     /// No place in it, and none of its exits, is further than this from its
     /// origin.
     pub(crate) fn reach(&self) -> f32 {
+        if let Some(rules) = &self.rules {
+            return rules.reach();
+        }
         let exits = self.exits.iter().map(|exit| {
             let [x, y, z] = exit.at;
             (x * x + y * y + z * z).sqrt()
@@ -251,6 +271,9 @@ impl Room {
 
     pub(crate) fn key(&self, key: &mut Key) {
         key.text(self.prefab.as_deref().unwrap_or("")).number(self.weight);
+        if let Some(rules) = &self.rules {
+            return rules.key(key);
+        }
         key.whole(self.shapes.len() as u32).whole(self.exits.len() as u32);
         for shape in &self.shapes {
             shape.key(key);

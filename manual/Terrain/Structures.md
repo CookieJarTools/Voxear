@@ -9,7 +9,7 @@ A structure is built of one of three things:
 - **A model**: its own blocks, kept in its file.
 - **A plant**: a tree or a bush grown from a `.voxplant` afresh at every place, so no two trees of a wood are alike.
 - **A town**: houses and a middle, each a structure with a model, laid out along streets (see [Towns](#towns)).
-- **A dungeon**: rooms under the ground joined by corridors (see [Dungeons](#dungeons)).
+- **A dungeon**: rooms under the ground joined by corridors, on one floor or several (see [Dungeons](#dungeons)).
 
 ## Where structures stand
 
@@ -76,11 +76,13 @@ With **Roads** on, a town is joined to the towns of its kind next to it. A road 
 
 ## Dungeons
 
-A dungeon is rooms under the ground joined by corridors, reached by a stair winding down from the surface. It is laid out the way well-loved dungeons are:
+A dungeon is rooms under the ground joined by corridors, reached by a stair winding down from the surface. It goes down floor by floor: each floor is laid out afresh, and a stair at the far end of its main path winds down to the next, which starts at the stair's foot. Each floor is laid out the way well-loved dungeons are:
 
-- **A main path** of rooms leads from the stair's foot to the **boss's room** at its far end. Some rooms along it are **great halls**.
+- **A main path** of rooms leads from the stair's foot to its far end: the stair down to the next floor, or on the last floor the **boss's room**. Some rooms along it are **great halls**.
 - **Side branches** leave the main path, one to three rooms long, each ending in a dead end where the **loot** is.
-- **Loops** join rooms that lie near each other but are three or more corridors apart along the paths, so not every way back is the way you came. A loop never reaches the boss's room or a loot room, so those stay dead ends with one way in.
+- **Loops** join rooms that lie near each other but are three or more corridors apart along the paths, so not every way back is the way you came. A loop never reaches the boss's room, a loot room or the stair down, so those stay dead ends with one way in.
+
+So every floor has its loot, and the boss waits at the bottom.
 
 Rooms come in many sizes and are fitted on one at a time beside the room they leave, so every room can be reached. Paths turn now and then rather than running in a line.
 
@@ -93,20 +95,22 @@ A dungeon's rooms are kinds you list, each a structure with a model, each with a
 | Any | Any room on the main path or a side branch |
 | Hall | A great hall on the main path |
 | Loot | A dead end at the end of a side branch |
-| Boss | The room at the end of the main path |
+| Boss | The room at the end of the last floor's main path |
 
-Each kind also has the rules a town's houses have: **Weight** against the others of its role, **Most** a dungeon has, and a **Zone**, here how far from the stair as a share of the way to the furthest room. Where no kind of a room's role may stand, a plain room of the dungeon's walls is built, as large as that role's rooms are. So a dungeon with no kinds at all still has halls, loot rooms and a boss's room, and listing a throne room as Boss swaps it in for the plain one.
+Each kind also has the rules a town's houses have: **Weight** against the others of its role, **Most** a floor has, and a **Zone**, here how far from the floor's stair as a share of the way to its furthest room. Where no kind of a room's role may stand, a plain room of the dungeon's walls is built, as large as that role's rooms are. So a dungeon with no kinds at all still has halls, loot rooms and a boss's room, and listing a throne room as Boss swaps it in for the plain one.
 
 | Setting | What it does |
 | --- | --- |
 | Entrance | The structure at the surface over the stair: a crypt door, a ruined tower. None for a bare stair |
 | Rooms | The kinds of room it builds, each with its role and rules |
-| Count | How many rooms, from and to |
-| Main path | The share of its rooms on the main path to the boss |
+| Count | How many rooms on each floor, from and to |
+| Floors | How many floors, one under the next, from and to |
+| Floor gap | How far down each floor is from the one over it, in blocks. Never less than its tallest room needs |
+| Main path | The share of a floor's rooms on its main path |
 | Halls | The share of the main path that is great halls |
 | Corridor | How long its corridors are, in blocks, from and to |
 | Loops | How many of the joins between near rooms are made, from 0 to 1 |
-| Depth | How far under the ground its floor is, in blocks, from and to |
+| Depth | How far under the ground its first floor is, in blocks, from and to |
 | Wall, Floor | The blocks its walls, plain rooms and stair are made of, and its floors |
 | Corridor width, Corridor height | How wide and high its corridors are |
 | Room size, Hall size, Loot size, Boss size | The sizes of its plain rooms of each role, in blocks along x, up and along z |

@@ -223,7 +223,7 @@ fn number_named(content: &mut Content, file: &mut BlockFile, owner: &str, named:
 /// among the world's own. A structure, plant or block that cannot be found
 /// is left out, with a warning.
 pub fn with_structures(content: &mut Content, file: &BlockFile) -> BlockFile {
-    use voxear_terrain::blocks::structure::{PlacedStructure, StructureBlocks, WorldStructures};
+    use voxear_terrain::blocks::structure::{PlacedStructure, StructureBlocks, Town, TownPiece, WorldStructures};
     let Some(generate) = file.generate.as_ref().filter(|generate| !generate.structures.is_empty()) else {
         return file.clone();
     };
@@ -260,7 +260,38 @@ pub fn with_structures(content: &mut Content, file: &BlockFile) -> BlockFile {
                 let (wood, leaves) = (number(&def.wood), number(&def.leaves));
                 StructureBlocks::Plant { plant: (*def).clone(), wood, leaves }
             }
-            (None, None) => continue,
+            (None, None) => {
+                let Some(town) = &structure.town else { continue };
+                // Each of its pieces a structure with a model, read and numbered as one would be.
+                let mut piece = |content: &mut Content, file: &mut BlockFile, named: &str| -> Option<TownPiece> {
+                    let (_, part) = content.structure(named).or_else(|| {
+                        tracing::warn!("the town {reference} names {named}, which is not in the project");
+                        None
+                    })?;
+                    let model = part.model.as_ref()?;
+                    let entries = model.blocks()?;
+                    let numbers: Vec<BlockId> =
+                        model.palette.iter().map(|block| number_named(content, file, named, block)).collect();
+                    let blocks =
+                        entries.iter().map(|&e| if e == 0 { 0 } else { numbers[usize::from(e) - 1] }).collect();
+                    Some(TownPiece { size: model.size, blocks, ground: part.ground, sink: part.sink })
+                };
+                let middle = town.middle.as_deref().and_then(|named| piece(content, &mut file, named));
+                let houses = town
+                    .houses
+                    .iter()
+                    .filter_map(|house| piece(content, &mut file, &house.structure).map(|piece| (piece, house.weight)))
+                    .collect();
+                let path = town.path.as_deref().map_or(0, |named| number_named(content, &mut file, reference, named));
+                StructureBlocks::Town(Town {
+                    middle,
+                    houses,
+                    count: town.count,
+                    radius: town.radius,
+                    path,
+                    path_width: town.path_width,
+                })
+            }
         };
         // The world's biomes it stands in, by their place in the world's list.
         let wanted: Vec<Option<AssetGuid>> =

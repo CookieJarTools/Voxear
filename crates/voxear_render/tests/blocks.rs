@@ -1069,3 +1069,203 @@ fn a_generated_world_builds_a_wood_of_grown_trees_and_huts_standing_level_on_its
     }
     assert!(green > 4000, "{green} pixels of leaves");
 }
+
+#[test]
+fn a_generated_world_builds_a_village_of_houses_round_a_well_with_paths_from_their_doors() {
+    use voxear_terrain::{
+        blocks::{
+            file::{BlockKind, Ground},
+            generate::BlockGenerate,
+            plant::PlantDef,
+            structure::{GroundFit, PlacedStructure, StructureBlocks, Town, TownPiece, WorldStructures},
+        },
+        generate::{Preset, structures::Placement},
+    };
+    let Some(mut renderer) = renderer() else { return };
+    let world = Preset::RollingHills.world();
+    let mut file = BlockFile {
+        block_size: 1.0,
+        ground: Ground { size: [160, 160], ..Ground::default() },
+        generate: Some(BlockGenerate { caves: 0.0, bottom: -12, ..BlockGenerate::default() }),
+        ..BlockFile::default()
+    };
+    let first = file.blocks.len() as u16 + 1;
+    for (name, colour) in [
+        ("Stone", [0.5, 0.5, 0.52]),
+        ("Planks", [0.74, 0.56, 0.35]),
+        ("Roof", [0.62, 0.22, 0.16]),
+        ("Gravel", [0.62, 0.58, 0.5]),
+        ("Water", [0.15, 0.35, 0.6]),
+        ("Log", [0.36, 0.26, 0.17]),
+        ("Leaves", [0.22, 0.48, 0.18]),
+    ] {
+        file.blocks.push(BlockKind::colored(name, colour));
+    }
+    let [stone, planks, roof, gravel, water, log, leaves] = std::array::from_fn(|i| first + i as u16);
+    // A house: a stone footing, plank walls with a door in the middle of its -z side and windows, a roof that
+    // steps in to a ridge.
+    let house = |[sx, wall, sz]: [usize; 3]| {
+        let sy = wall + 1 + sx.div_ceil(2);
+        let mut blocks = vec![0u16; sx * sy * sz];
+        for y in 0..sy {
+            for z in 0..sz {
+                for x in 0..sx {
+                    let edge = x == 0 || z == 0 || x == sx - 1 || z == sz - 1;
+                    let door = z == 0 && x == sx / 2 && (1..3).contains(&y);
+                    let window = y == 2 && edge && !door && (x + z) % 3 == 1 && !(x == 0 && z == 0);
+                    let up = y.saturating_sub(wall + 1);
+                    let roofed = y > wall && x >= up && x < sx - up;
+                    let ridge = roofed && (x == up || x == sx - 1 - up || y == sy - 1 || z == 0 || z == sz - 1);
+                    blocks[(y * sz + z) * sx + x] = match () {
+                        _ if y == 0 => stone,
+                        _ if y <= wall && edge && !door && !window => planks,
+                        _ if y > wall && ridge => roof,
+                        _ => 0,
+                    };
+                }
+            }
+        }
+        TownPiece { size: [sx as u32, sy as u32, sz as u32], blocks, ground: GroundFit::Flatten, sink: 0 }
+    };
+    // A well: a ring of stone round water, under a small roof on posts.
+    let mut well = vec![0u16; 5 * 5 * 5];
+    for y in 0..5 {
+        for z in 0..5 {
+            for x in 0..5 {
+                let edge = x == 0 || z == 0 || x == 4 || z == 4;
+                let post = (x == 0 || x == 4) && (z == 0 || z == 4);
+                well[(y * 5 + z) * 5 + x] = match y {
+                    0 => {
+                        if edge {
+                            stone
+                        } else {
+                            water
+                        }
+                    }
+                    1 => {
+                        if edge {
+                            stone
+                        } else {
+                            0
+                        }
+                    }
+                    2 | 3 => {
+                        if post {
+                            log
+                        } else {
+                            0
+                        }
+                    }
+                    _ => roof,
+                };
+            }
+        }
+    }
+    let village = Town {
+        middle: Some(TownPiece { size: [5, 5, 5], blocks: well, ground: GroundFit::Flatten, sink: 0 }),
+        houses: vec![(house([7, 4, 9]), 2.0), (house([5, 3, 7]), 2.0), (house([9, 4, 7]), 1.0)],
+        count: [7, 10],
+        radius: [11.0, 30.0],
+        path: gravel,
+        path_width: 2,
+    };
+    let land = |spacing: f32, separation: f32, chance: f32, slope: f32, salt: u32| Placement {
+        spacing,
+        separation,
+        chance,
+        slope,
+        salt,
+        height: Some([1.0, 1000.0]),
+        ..Placement::default()
+    };
+    let list = vec![
+        PlacedStructure {
+            placement: land(400.0, 200.0, 1.0, 12.0, 9),
+            ground: GroundFit::Leave,
+            sink: 0,
+            blocks: StructureBlocks::Town(village),
+            biomes: Vec::new(),
+        },
+        PlacedStructure {
+            placement: land(15.0, 7.0, 0.5, 35.0, 1),
+            ground: GroundFit::Leave,
+            sink: 0,
+            blocks: StructureBlocks::Plant { plant: PlantDef::default(), wood: log, leaves },
+            biomes: Vec::new(),
+        },
+    ];
+    // Where the village stands: the first site its placement keeps whose ground fits, within 2 km.
+    let site = list[0]
+        .placement
+        .tries_near(world.seed(), [-2000.0; 2], [2000.0; 2], 0.0)
+        .into_iter()
+        .find(|site| {
+            let height = world.height_at(site.at[0], site.at[1]);
+            let east = world.height_at(site.at[0] + 1.0, site.at[1]);
+            let north = world.height_at(site.at[0], site.at[1] + 1.0);
+            let slope = ((east - height).powi(2) + (north - height).powi(2)).sqrt();
+            height > world.sea_level() + 1.0 && slope < 0.2
+        })
+        .expect("a village site within 2 km");
+    let position = [site.at[0] - 80.0, site.at[1] - 80.0];
+    file.generate.as_mut().unwrap().position = position;
+    file.generate.as_mut().unwrap().built = Some(Arc::new(WorldStructures { list }));
+    let (looks, faces) = file.faces();
+    let surfaces: Vec<SurfaceLook> = looks
+        .iter()
+        .map(|look| {
+            let [r, g, b] = look.color;
+            let material =
+                renderer.add_material(&MaterialDesc { base_color: [r, g, b, 1.0], ..MaterialDesc::default() });
+            SurfaceLook {
+                material: material.unwrap(),
+                size: 1.0,
+                sharpness: 0.0,
+                triplanar: true,
+                tracks: 0.0,
+                fills_in: 0.0,
+                liquid: Default::default(),
+                glitter: false,
+            }
+        })
+        .collect();
+    let default = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let made = BlockWorld::made(file.make_ground(Some(&world)), &faces, 1.0, false);
+    let count = |block: u16| -> usize {
+        let mut n = 0;
+        for z in 0..160 {
+            for x in 0..160 {
+                for y in -12..200 {
+                    n += usize::from(made.blocks.get([x, y, z]) == block);
+                }
+            }
+        }
+        n
+    };
+    let (roofs, paths) = (count(roof), count(gravel));
+    assert!(roofs > 300 && paths > 150, "roof {roofs}, paths {paths}");
+    let middle_height = world.height_at(site.at[0], site.at[1]);
+    let mut scene = World::new();
+    let look = BlockLook { material: default, surfaces: Arc::from(surfaces) };
+    scene.spawn((made, look, Transform::default()));
+    // From 45 m over the village's south-west, looking at its middle; cameras look along +z.
+    let turn = Quat::from_rotation_y(0.785) * Quat::from_rotation_x(0.62);
+    let eye = Vec3::new(52.0, middle_height + 45.0, 52.0);
+    scene.spawn((Camera::default(), Transform::new(eye, turn, Vec3::ONE)));
+    let towards_sun = Vec3::new(-0.4, 0.75, -0.5).normalize();
+    let sun = Quat::from_rotation_arc(Vec3::Z, -towards_sun);
+    scene.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    scene.insert_resource(Sky { ambient: 0.4, ..Sky::default() });
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
+    scene.insert_resource(PostProcess { anti_aliasing, ..PostProcess::neutral() });
+    let pixels = render(&mut renderer, &scene, 120);
+    keep_image("blocks village.png", &pixels);
+    let mut red = 0;
+    for y in 0..HEIGHT {
+        for x in 0..WIDTH {
+            let [r, g, b] = rgb_at(&pixels, x, y);
+            red += u32::from(r > g + 40 && r > b + 40);
+        }
+    }
+    assert!(red > 1500, "{red} pixels of roof");
+}

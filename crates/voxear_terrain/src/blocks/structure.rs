@@ -127,11 +127,73 @@ pub struct StructureDef {
     pub plant: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<StructureModel>,
+    /// A town of other structures laid out round a middle, in place of a
+    /// model or a plant.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub town: Option<TownDef>,
 }
 
 impl Default for StructureDef {
     fn default() -> Self {
-        Self { ground: GroundFit::Foundation, sink: 0, placement: Placement::default(), plant: None, model: None }
+        Self {
+            ground: GroundFit::Foundation,
+            sink: 0,
+            placement: Placement::default(),
+            plant: None,
+            model: None,
+            town: None,
+        }
+    }
+}
+
+/// A town: a middle (a well, a square, a hall), houses round it, each a
+/// structure with a model, chosen by weight, and a path from each house's
+/// door to the middle. Houses face the middle, their doors on the side of
+/// their model that faces -z, in its middle.
+///
+/// ```toml
+/// [town]
+/// middle = "Structures/Well.structure"
+/// count = [5, 9]              # houses, from and to
+/// radius = [10.0, 30.0]       # blocks from the middle, from and to
+/// path = "Blocks/Gravel.block"
+/// path_width = 2
+///
+/// [[town.houses]]
+/// structure = "Structures/Cottage.structure"
+/// weight = 3.0
+/// ```
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct TownDef {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub middle: Option<String>,
+    pub houses: Vec<TownHouse>,
+    pub count: [u32; 2],
+    pub radius: [f32; 2],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    pub path_width: u32,
+}
+
+impl Default for TownDef {
+    fn default() -> Self {
+        Self { middle: None, houses: Vec::new(), count: [5, 9], radius: [10.0, 30.0], path: None, path_width: 2 }
+    }
+}
+
+/// One kind of house of a town, by reference to a `.structure` with a
+/// model, and how often it is chosen against the others.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct TownHouse {
+    pub structure: String,
+    pub weight: f32,
+}
+
+impl Default for TownHouse {
+    fn default() -> Self {
+        Self { structure: String::new(), weight: 1.0 }
     }
 }
 
@@ -151,6 +213,36 @@ impl StructureDef {
 pub enum StructureBlocks {
     Model { size: [u32; 3], blocks: Vec<BlockId> },
     Plant { plant: PlantDef, wood: BlockId, leaves: BlockId },
+    Town(Town),
+}
+
+/// A piece of a town: a model and how the ground meets it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TownPiece {
+    pub size: [u32; 3],
+    pub blocks: Vec<BlockId>,
+    pub ground: GroundFit,
+    pub sink: i32,
+}
+
+impl TownPiece {
+    /// How far from its middle it stands along the ground, in blocks.
+    fn radius(&self) -> f32 {
+        self.size[0].max(self.size[2]) as f32 * 0.71 + 1.0
+    }
+}
+
+/// A town as a world builds it: its pieces by the world's numbers, how many
+/// houses and how far out, in blocks, and its paths' block (air for none)
+/// and width.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Town {
+    pub middle: Option<TownPiece>,
+    pub houses: Vec<(TownPiece, f32)>,
+    pub count: [u32; 2],
+    pub radius: [f32; 2],
+    pub path: BlockId,
+    pub path_width: u32,
 }
 
 /// A structure as a world builds it: where, how the ground meets it, how
@@ -181,21 +273,7 @@ impl PlacedStructure {
     /// as the site is; a model is centred on its site along x and z.
     fn pieces(&self, site: &Site) -> Vec<Piece> {
         let raw: Vec<Piece> = match &self.blocks {
-            StructureBlocks::Model { size, blocks } => {
-                let [sx, sy, sz] = size.map(|v| v as i32);
-                let mut out = Vec::new();
-                for y in 0..sy {
-                    for z in 0..sz {
-                        for x in 0..sx {
-                            let block = blocks[((y * sz + z) * sx + x) as usize];
-                            if block != AIR {
-                                out.push(([x - sx / 2, y, z - sz / 2], block));
-                            }
-                        }
-                    }
-                }
-                out
-            }
+            StructureBlocks::Model { size, blocks } => model_pieces(*size, blocks),
             StructureBlocks::Plant { plant, wood, leaves } => plant
                 .grow(site.seed)
                 .blocks
@@ -203,19 +281,10 @@ impl PlacedStructure {
                 .map(|(at, part)| (at, if part == PlantPart::Leaf { *leaves } else { *wood }))
                 .filter(|(_, block)| *block != AIR)
                 .collect(),
+            // A town's are its pieces', each built at its own place (see `town_layout`).
+            StructureBlocks::Town(_) => Vec::new(),
         };
-        raw.into_iter()
-            .map(|([x, y, z], block)| {
-                let x = if site.mirrored { -x } else { x };
-                let [x, z] = match site.turns % 4 {
-                    0 => [x, z],
-                    1 => [-z, x],
-                    2 => [-x, -z],
-                    _ => [z, -x],
-                };
-                ([x, y, z], block)
-            })
-            .collect()
+        turned(raw, site.turns, site.mirrored)
     }
 
     /// How far from its site it stands on the ground, in blocks: what keeps
@@ -225,6 +294,7 @@ impl PlacedStructure {
         match &self.blocks {
             StructureBlocks::Model { size, .. } => (size[0].max(size[2]) as f32 * 0.71) + 1.0,
             StructureBlocks::Plant { plant, .. } => plant.trunk.max(1.0) + 2.0,
+            StructureBlocks::Town(town) => town.reach(),
         }
     }
 
@@ -234,7 +304,211 @@ impl PlacedStructure {
         match &self.blocks {
             StructureBlocks::Model { size, .. } => (size[0].max(size[2]) as f32 * 0.71) + 1.0,
             StructureBlocks::Plant { plant, .. } => plant.crown_width[1].max(plant.trunk) * 0.6 + 4.0,
+            StructureBlocks::Town(town) => town.reach(),
         }
+    }
+}
+
+/// `pieces` turned `turns` quarter turns about the up axis, mirrored along
+/// x first where `mirrored` says.
+fn turned(pieces: Vec<Piece>, turns: u8, mirrored: bool) -> Vec<Piece> {
+    pieces
+        .into_iter()
+        .map(|([x, y, z], block)| {
+            let x = if mirrored { -x } else { x };
+            ([turn([x, z], turns)[0], y, turn([x, z], turns)[1]], block)
+        })
+        .collect()
+}
+
+/// `[x, z]` turned `turns` quarter turns about the up axis.
+fn turn([x, z]: [i32; 2], turns: u8) -> [i32; 2] {
+    match turns % 4 {
+        0 => [x, z],
+        1 => [-z, x],
+        2 => [-x, -z],
+        _ => [z, -x],
+    }
+}
+
+/// A model's blocks, centred along x and z on its middle, from its foot up.
+fn model_pieces(size: [u32; 3], blocks: &[BlockId]) -> Vec<Piece> {
+    let [sx, sy, sz] = size.map(|v| v as i32);
+    let mut out = Vec::new();
+    for y in 0..sy {
+        for z in 0..sz {
+            for x in 0..sx {
+                let block = blocks[((y * sz + z) * sx + x) as usize];
+                if block != AIR {
+                    out.push(([x - sx / 2, y, z - sz / 2], block));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Numbers from a seed, one after another: the same on every machine.
+struct Draws(u32);
+
+impl Draws {
+    fn next(&mut self) -> u32 {
+        self.0 = self.0.wrapping_add(0x6D2B_79F5);
+        let mut h = self.0;
+        h = (h ^ (h >> 15)).wrapping_mul(h | 1);
+        h ^= h.wrapping_add((h ^ (h >> 7)).wrapping_mul(h | 61));
+        h ^ (h >> 14)
+    }
+
+    fn unit(&mut self) -> f32 {
+        unit_of(self.next())
+    }
+
+    fn between(&mut self, [from, to]: [f32; 2]) -> f32 {
+        from + (to - from) * self.unit()
+    }
+}
+
+fn unit_of(hash: u32) -> f32 {
+    (hash >> 8) as f32 / 16_777_216.0
+}
+
+/// A building of a town as laid out: where its middle stands, in blocks,
+/// its blocks turned to face the town's middle, and how the ground meets it.
+struct Part {
+    at: [i32; 2],
+    pieces: Vec<Piece>,
+    ground: GroundFit,
+    sink: i32,
+    radius: f32,
+}
+
+impl Town {
+    /// How far its buildings reach from its middle, in blocks.
+    fn reach(&self) -> f32 {
+        let largest = self.houses.iter().map(|(house, _)| house.radius()).fold(0.0f32, f32::max);
+        self.radius[1].max(self.radius[0]) + largest + 1.0
+    }
+
+    /// Its buildings and paths at a site whose middle is block `centre`, on
+    /// `ground`: the middle there, then up to its count of houses round it
+    /// where each finds ground that is level enough and room clear of the
+    /// rest, each turned so its door faces the middle; and the blocks along
+    /// x and z its paths run over, from each door to the middle.
+    fn layout(&self, seed: u32, centre: [i32; 2], ground: &Ground) -> (Vec<Part>, Vec<[i32; 2]>) {
+        let mut draws = Draws(seed ^ 0x7A3C_15E1);
+        let mut parts = Vec::new();
+        if let Some(middle) = &self.middle {
+            let pieces = model_pieces(middle.size, &middle.blocks);
+            parts.push(Part { at: centre, pieces, ground: middle.ground, sink: middle.sink, radius: middle.radius() });
+        }
+        let middle_radius = self.middle.as_ref().map_or(1.5, TownPiece::radius);
+        let total: f32 = self.houses.iter().map(|(_, weight)| weight.max(0.0)).sum();
+        let [least, most] = [self.count[0].min(self.count[1]), self.count[0].max(self.count[1])];
+        let wanted = least + (draws.next() % (most - least + 1).max(1));
+        let mut paths = Vec::new();
+        if total <= 0.0 {
+            return (parts, paths);
+        }
+        let (mut placed, mut tries) = (0, 0);
+        while placed < wanted && tries < wanted * 12 {
+            tries += 1;
+            // A kind of house by weight.
+            let mut pick = draws.unit() * total;
+            let house = self.houses.iter().find(|(_, weight)| {
+                pick -= weight.max(0.0);
+                pick < 0.0
+            });
+            let Some((house, _)) = house.or(self.houses.last()) else { break };
+            // A way out from the middle, evenly round, and how far.
+            let way = loop {
+                let (x, z) = (draws.unit() * 2.0 - 1.0, draws.unit() * 2.0 - 1.0);
+                let length = (x * x + z * z).sqrt();
+                if length > 0.2 && length <= 1.0 {
+                    break [x / length, z / length];
+                }
+            };
+            let out = draws.between(self.radius).max(middle_radius + house.radius() + 1.0);
+            let at = [centre[0] + (way[0] * out).round() as i32, centre[1] + (way[1] * out).round() as i32];
+            let radius = house.radius();
+            let clear = parts.iter().all(|part: &Part| {
+                let (dx, dz) = ((part.at[0] - at[0]) as f32, (part.at[1] - at[1]) as f32);
+                (dx * dx + dz * dz).sqrt() >= part.radius + radius + 1.0
+            });
+            // Level enough: its corners' ground within four blocks of each other.
+            let half = [house.size[0] as i32 / 2, house.size[2] as i32 / 2];
+            let corners = [[-1, -1], [1, -1], [-1, 1], [1, 1]]
+                .map(|[sx, sz]| ground.top(at[0] + sx * half[0], at[1] + sz * half[1]));
+            let (low, high) = (corners.iter().min().copied().unwrap_or(0), corners.iter().max().copied().unwrap_or(0));
+            if !clear || high - low > 4 {
+                continue;
+            }
+            // Turned so its front, -z in its model, faces the middle.
+            let towards = [(centre[0] - at[0]) as f32, (centre[1] - at[1]) as f32];
+            let fronts = [[0.0, -1.0], [1.0, 0.0], [0.0, 1.0], [-1.0, 0.0]];
+            let turns = (0..4u8)
+                .max_by(|&a, &b| {
+                    let dot = |t: u8| fronts[t as usize][0] * towards[0] + fronts[t as usize][1] * towards[1];
+                    dot(a).total_cmp(&dot(b))
+                })
+                .unwrap_or(0);
+            let pieces = turned(model_pieces(house.size, &house.blocks), turns, false);
+            let door = turn([0, -(house.size[2] as i32) / 2 - 1], turns);
+            let door = [at[0] + door[0], at[1] + door[1]];
+            // Its path, from its door to the middle's edge, as wide as the town's paths.
+            let path = self.path_from(door, centre, middle_radius);
+            // Kept only where its path runs past every building, and it stands on no path laid before.
+            let half = (house.size[0].max(house.size[2]) / 2) as i32;
+            let covers = |part_at: [i32; 2], half: i32, cell: [i32; 2]| {
+                (cell[0] - part_at[0]).abs() <= half && (cell[1] - part_at[1]).abs() <= half
+            };
+            let crosses = parts.iter().any(|part| {
+                let half = part.pieces.iter().map(|([x, _, z], _)| x.abs().max(z.abs())).max().unwrap_or(0);
+                path.iter().any(|&cell| covers(part.at, half, cell))
+            });
+            if crosses || paths.iter().any(|&cell| covers(at, half, cell)) {
+                continue;
+            }
+            parts.push(Part { at, pieces, ground: house.ground, sink: house.sink, radius });
+            placed += 1;
+            for cell in path {
+                if !paths.contains(&cell) {
+                    paths.push(cell);
+                }
+            }
+        }
+        (parts, paths)
+    }
+
+    /// The blocks along x and z a path from `door` to the middle at
+    /// `centre` runs over, stopping at the middle's edge where it has one.
+    fn path_from(&self, door: [i32; 2], centre: [i32; 2], middle_radius: f32) -> Vec<[i32; 2]> {
+        let mut cells = Vec::new();
+        if self.path == AIR {
+            return cells;
+        }
+        let length = (((centre[0] - door[0]).pow(2) + (centre[1] - door[1]).pow(2)) as f32).sqrt();
+        let steps = (length * 2.0).ceil() as i32;
+        let width = self.path_width.max(1) as i32;
+        let (from, to) = (-(width - 1) / 2, width / 2);
+        for step in 0..=steps {
+            let t = step as f32 / steps.max(1) as f32;
+            let x = door[0] as f32 + (centre[0] - door[0]) as f32 * t;
+            let z = door[1] as f32 + (centre[1] - door[1]) as f32 * t;
+            let from_middle = ((x - centre[0] as f32).powi(2) + (z - centre[1] as f32).powi(2)).sqrt();
+            if self.middle.is_some() && from_middle < middle_radius - 1.0 {
+                break;
+            }
+            for dz in from..=to {
+                for dx in from..=to {
+                    let cell = [x.round() as i32 + dx, z.round() as i32 + dz];
+                    if !cells.contains(&cell) {
+                        cells.push(cell);
+                    }
+                }
+            }
+        }
+        cells
     }
 }
 
@@ -289,7 +563,6 @@ pub fn build(
         // Sites of earlier structures that may stand in this one's way are found further out, by its reach too.
         for site in structure.placement.tries_near(world.seed(), low, high, (reach + 64.0) * size) {
             let block = [0, 1].map(|axis| ((site.at[axis] - position[axis]) / size).floor() as i32);
-            let foot = ground.top(block[0], block[1]);
             let height = world.height_at(site.at[0], site.at[1]);
             let (east, north) =
                 (world.height_at(site.at[0] + size, site.at[1]), world.height_at(site.at[0], site.at[1] + size));
@@ -323,8 +596,6 @@ pub fn build(
             {
                 continue;
             }
-            let base = foot + 1 - structure.sink;
-            let pieces = structure.pieces(&site);
             let mut put = |x: i32, y: i32, z: i32, block: BlockId| {
                 if !within(x, z) || y < bottom {
                     return;
@@ -340,38 +611,73 @@ pub fn build(
                 let (lx, ly, lz) = ((x - cx * side) as u32, y.rem_euclid(side) as u32, (z - cz * side) as u32);
                 chunks[at].1.set(lx, ly, lz, block);
             };
-            if structure.ground != GroundFit::Leave {
-                // Each column of its footprint: its lowest block, cleared over, and built up under.
-                let mut footprint: Vec<([i32; 2], i32, BlockId)> = Vec::new();
-                for &([x, y, z], piece) in &pieces {
-                    let column = [block[0] + x, block[1] + z];
-                    match footprint.iter_mut().find(|(at, ..)| *at == column) {
-                        Some(found) if y < found.1 => (found.1, found.2) = (y, piece),
-                        Some(_) => {}
-                        None => footprint.push((column, y, piece)),
-                    }
-                }
-                let tallest = pieces.iter().map(|(at, _)| at[1]).max().unwrap_or(0);
-                for ([x, z], lowest, _) in footprint {
-                    let top = ground.top(x, z);
-                    let floor = base + lowest;
-                    for y in (top + 1).min(floor)..floor {
-                        put(x, y, z, under);
-                    }
-                    if structure.ground == GroundFit::Flatten {
-                        for y in floor..=top.max(floor).min(base + tallest + 2) {
+            let parts = match &structure.blocks {
+                StructureBlocks::Town(town) => {
+                    let (parts, paths) = town.layout(site.seed, block, &ground);
+                    // Paths first, along the ground, the air over them cleared a few blocks up.
+                    for [x, z] in paths {
+                        if !within(x, z) {
+                            continue;
+                        }
+                        let top = ground.top(x, z);
+                        put(x, top, z, town.path);
+                        for y in top + 1..top + 4 {
                             put(x, y, z, AIR);
                         }
                     }
+                    parts
                 }
-            }
-            for ([x, y, z], piece) in pieces {
-                put(block[0] + x, base + y, block[1] + z, piece);
+                _ => vec![Part {
+                    at: block,
+                    pieces: structure.pieces(&site),
+                    ground: structure.ground,
+                    sink: structure.sink,
+                    radius: footprint,
+                }],
+            };
+            for part in parts {
+                let foot = ground.top(part.at[0], part.at[1]);
+                build_part(&mut put, &ground, &part, foot, under);
             }
         }
     }
     chunks.retain(|(_, chunk)| !chunk.is_air());
     chunks.sort_by_key(|(key, _)| key[1]);
+}
+
+/// Builds `part` standing on block `foot` of its column: the ground built up
+/// under it, or cleared over it too, as its fit says, then its blocks.
+fn build_part(put: &mut impl FnMut(i32, i32, i32, BlockId), ground: &Ground, part: &Part, foot: i32, under: BlockId) {
+    let (block, pieces) = (part.at, &part.pieces);
+    let base = foot + 1 - part.sink;
+    if part.ground != GroundFit::Leave {
+        // Each column of its footprint: its lowest block, cleared over, and built up under.
+        let mut footprint: Vec<([i32; 2], i32, BlockId)> = Vec::new();
+        for &([x, y, z], piece) in pieces {
+            let column = [block[0] + x, block[1] + z];
+            match footprint.iter_mut().find(|(at, ..)| *at == column) {
+                Some(found) if y < found.1 => (found.1, found.2) = (y, piece),
+                Some(_) => {}
+                None => footprint.push((column, y, piece)),
+            }
+        }
+        let tallest = pieces.iter().map(|(at, _)| at[1]).max().unwrap_or(0);
+        for ([x, z], lowest, _) in footprint {
+            let top = ground.top(x, z);
+            let floor = base + lowest;
+            for y in (top + 1).min(floor)..floor {
+                put(x, y, z, under);
+            }
+            if part.ground == GroundFit::Flatten {
+                for y in floor..=top.max(floor).min(base + tallest + 2) {
+                    put(x, y, z, AIR);
+                }
+            }
+        }
+    }
+    for &([x, y, z], piece) in pieces {
+        put(block[0] + x, base + y, block[1] + z, piece);
+    }
 }
 
 #[cfg(test)]
@@ -543,5 +849,134 @@ mod tests {
             }
         }
         assert!(huts >= 1, "a hut found whole");
+    }
+
+    /// A town of block 11's paths: a well of block 10, 5 by 3 by 5, and cottages of walls 12 with a door in the
+    /// middle of their -z side, 7 by 5 by 7 and 5 by 4 by 5.
+    fn village() -> Town {
+        let model = |[sx, sy, sz]: [usize; 3], wall: BlockId| {
+            let mut blocks = vec![AIR; sx * sy * sz];
+            for y in 0..sy {
+                for z in 0..sz {
+                    for x in 0..sx {
+                        let edge = x == 0 || z == 0 || x == sx - 1 || z == sz - 1;
+                        let door = z == 0 && x == sx / 2 && (1..3).contains(&y);
+                        blocks[(y * sz + z) * sx + x] = if y == 0 || (edge && !door) { wall } else { AIR };
+                    }
+                }
+            }
+            TownPiece { size: [sx as u32, sy as u32, sz as u32], blocks, ground: GroundFit::Flatten, sink: 0 }
+        };
+        Town {
+            middle: Some(model([5, 3, 5], 10)),
+            houses: vec![(model([7, 5, 7], 12), 2.0), (model([5, 4, 5], 12), 1.0)],
+            count: [5, 8],
+            radius: [9.0, 24.0],
+            path: 11,
+            path_width: 2,
+        }
+    }
+
+    #[test]
+    fn a_town_lays_its_houses_round_its_middle_apart_facing_it_with_paths_from_their_doors() {
+        let world = Preset::RollingHills.world();
+        let ground = Ground { world: &world, size: 1.0, position: [0.0, 0.0] };
+        let town = village();
+        let mut houses_laid = 0;
+        for seed in 0..12u32 {
+            let centre = [seed as i32 * 97 - 600, 300 - seed as i32 * 53];
+            let (parts, paths) = town.layout(seed, centre, &ground);
+            assert_eq!(town.layout(seed, centre, &ground).1, paths, "the same from the same seed");
+            assert_eq!(parts[0].at, centre, "the well in the middle");
+            let houses = &parts[1..];
+            assert!(houses.len() <= 8, "seed {seed}: {} houses", houses.len());
+            houses_laid += houses.len();
+            for (i, a) in parts.iter().enumerate() {
+                for b in &parts[i + 1..] {
+                    let apart = (((a.at[0] - b.at[0]).pow(2) + (a.at[1] - b.at[1]).pow(2)) as f32).sqrt();
+                    assert!(apart >= a.radius + b.radius + 1.0, "seed {seed}: two buildings {apart} blocks apart");
+                }
+            }
+            for house in houses {
+                // Its door: the gap in its lowest wall row, on the side facing the middle.
+                let wall: Vec<[i32; 2]> =
+                    house.pieces.iter().filter(|(at, _)| at[1] == 1).map(|(at, _)| [at[0], at[2]]).collect();
+                let half = wall.iter().map(|[x, z]| x.abs().max(z.abs())).max().unwrap();
+                let ring: Vec<[i32; 2]> =
+                    (-half..=half).flat_map(|a| [[a, -half], [a, half], [-half, a], [half, a]]).collect();
+                let door = ring.iter().find(|cell| !wall.contains(cell)).expect("a door");
+                let towards = [centre[0] - house.at[0], centre[1] - house.at[1]];
+                assert!(
+                    door[0] * towards[0] + door[1] * towards[1] > 0,
+                    "seed {seed}: a door facing away from the middle"
+                );
+                // A path starts just outside it.
+                let outside = [house.at[0] + door[0] + door[0].signum(), house.at[1] + door[1] + door[1].signum()];
+                let near =
+                    paths.iter().any(|cell| (cell[0] - outside[0]).abs() <= 1 && (cell[1] - outside[1]).abs() <= 1);
+                assert!(near, "seed {seed}: no path at the door of the house at {:?}", house.at);
+            }
+            // Paths run on to the middle: each cell is joined to the well's edge through the others.
+            let mut reached: Vec<[i32; 2]> = paths
+                .iter()
+                .filter(|cell| (((cell[0] - centre[0]).pow(2) + (cell[1] - centre[1]).pow(2)) as f32).sqrt() < 6.0)
+                .copied()
+                .collect();
+            let mut at = 0;
+            while at < reached.len() {
+                let cell = reached[at];
+                for next in paths.iter().filter(|o| (o[0] - cell[0]).abs() <= 1 && (o[1] - cell[1]).abs() <= 1) {
+                    if !reached.contains(next) {
+                        reached.push(*next);
+                    }
+                }
+                at += 1;
+            }
+            assert_eq!(reached.len(), paths.len(), "seed {seed}: every path joined to the middle");
+        }
+        assert!(houses_laid >= 12 * 4, "{houses_laid} houses in twelve towns");
+    }
+
+    #[test]
+    fn a_town_is_built_across_chunk_columns_the_same_from_any_of_them() {
+        let world = Preset::RollingHills.world();
+        let town = PlacedStructure {
+            placement: Placement {
+                spacing: 120.0,
+                separation: 60.0,
+                chance: 1.0,
+                slope: 25.0,
+                height: Some([1.0, 400.0]),
+                ..Placement::default()
+            },
+            ground: GroundFit::Leave,
+            sink: 0,
+            blocks: StructureBlocks::Town(village()),
+            biomes: Vec::new(),
+        };
+        let structures = WorldStructures { list: vec![town] };
+        let make = |[cx, cz]: [i32; 2]| {
+            let mut chunks: Vec<([i32; 3], Chunk)> = Vec::new();
+            build(&mut chunks, &structures, &world, None, (1.0, [0.0, 0.0], -4), [cx, cz], 2);
+            chunks
+        };
+        let count = |chunks: &[([i32; 3], Chunk)], block: BlockId| -> usize {
+            chunks
+                .iter()
+                .map(|(_, c)| (0..32 * 32 * 32).filter(|i| c.get(i % 32, i / 1024, (i / 32) % 32) == block).count())
+                .sum()
+        };
+        let columns: Vec<Vec<([i32; 3], Chunk)>> = (0..36).map(|i| make([i % 6 - 3, i / 6 - 3])).collect();
+        let (wells, walls, paths): (usize, usize, usize) = (
+            columns.iter().map(|c| count(c, 10)).sum(),
+            columns.iter().map(|c| count(c, 12)).sum(),
+            columns.iter().map(|c| count(c, 11)).sum(),
+        );
+        assert!(wells >= 25 && walls >= 400 && paths >= 60, "well {wells}, walls {walls}, paths {paths}");
+        for i in [7, 14, 21, 28] {
+            let again = make([i as i32 % 6 - 3, i as i32 / 6 - 3]);
+            assert_eq!(count(&again, 12), count(&columns[i], 12), "column {i} made again");
+            assert_eq!(count(&again, 11), count(&columns[i], 11));
+        }
     }
 }

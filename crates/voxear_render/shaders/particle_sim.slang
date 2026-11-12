@@ -266,7 +266,8 @@ void simulateMain(uint3 id : SV_DispatchThreadID)
         // A new one, taking the place of the system's oldest.
         uint number = system->emitted + since;
         uint h = particleHash(system->seed ^ particleHash(number * 2654435761u + 0x7F4A7C15u));
-        particle.seed = h;
+        // A mesh particle's number keeps how far it has tumbled in its low half: nothing yet.
+        particle.seed = (flags & PARTICLES_MESH) != 0 ? h & ~PARTICLE_TURNED : h;
         particle.life = lerp(system->lifetime.x, system->lifetime.y, particleRandom(h));
         float3 from;
         float3 way;
@@ -386,6 +387,12 @@ void simulateMain(uint3 id : SV_DispatchThreadID)
             velocity = going;
         }
         particle.velocity = velocity;
+        if ((flags & PARTICLES_MESH) != 0)
+        {
+            // Tumbling on as fast as it is going, so one that has come to rest lies still.
+            uint more = uint(abs(system->spin) * particleTumbling(velocity) * step * (65536.0 / (2.0 * PI)) + 0.5);
+            particle.seed = (particle.seed & ~PARTICLE_TURNED) | ((particle.seed + more) & PARTICLE_TURNED);
+        }
     }
     *kept = particle;
     if (tailed && born)

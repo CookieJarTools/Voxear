@@ -657,7 +657,7 @@ pub fn record(
         let pool = frame.particle_pool;
         let index_buffer = draws.index_buffer;
         let particle_targets =
-            crate::particles::Targets { hdr, depth, sampled, clusters, pool, index_buffer, extent: frame.extent };
+            crate::particles::Targets { hdr, velocity, depth, sampled, clusters, pool, index_buffer, extent: frame.extent };
         let (counts, rapids) = (frame.particles.clone(), frame.rapids.clone());
         let step = frame.particle_step;
         particles = Some(crate::particles::Draw { step, counts, spray, rapids, targets: particle_targets });

@@ -730,6 +730,9 @@ pub struct Step {
 #[derive(Clone)]
 pub struct Targets {
     pub hdr: ImageId,
+    /// How far each pixel moved since last frame, which particles drawn as
+    /// meshes add their own motion to, for anti-aliasing and motion blur.
+    pub velocity: ImageId,
     /// The scene's depth, which the particles test themselves against and
     /// fade before.
     pub depth: ImageId,
@@ -759,7 +762,7 @@ pub(crate) fn record(
     fog_volume: Option<ImageId>,
 ) {
     let Draw { step, counts, spray, rapids, targets } = draw;
-    let Targets { hdr, depth, sampled, clusters, pool, index_buffer, extent } = targets;
+    let Targets { hdr, velocity, depth, sampled, clusters, pool, index_buffer, extent } = targets;
     let depth_texture = fg.texture(depth);
     if let (Some(step), Some(pool)) = (step, pool) {
         let stepping = (pipelines.particle_sim, Push { textures: [depth_texture.0, 0, 0, 0], ..push });
@@ -770,11 +773,13 @@ pub(crate) fn record(
     let buffers: Vec<_> = [Some(clusters), pool].into_iter().flatten().map(|b| (b, BufferAccess::ShaderRead)).collect();
     let meshes: Vec<(u32, Drawn)> = (0..).zip(counts.iter().copied()).filter(|(_, drawn)| drawn.mesh.is_some()).collect();
     if !meshes.is_empty() {
-        let mut images = vec![(hdr, ImageAccess::ColorAttachment), (depth, ImageAccess::DepthAttachment)];
+        let drawn = ImageAccess::ColorAttachment;
+        let mut images = vec![(hdr, drawn), (velocity, drawn), (depth, ImageAccess::DepthAttachment)];
         images.extend(&read);
         let push = Push { textures: [crate::gpu::NO_TEXTURE, volume, 0, 0], ..push };
         fg.add_pass("Particle meshes", &images, &buffers, move |ctx| {
-            let color = [attachment(ctx.view(hdr), vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL, None)];
+            let layout = vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL;
+            let color = [attachment(ctx.view(hdr), layout, None), attachment(ctx.view(velocity), layout, None)];
             let target = attachment(ctx.view(depth), vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL, None);
             begin_rendering(ctx, extent, &color, Some(&target));
             bind(ctx, pipelines.particle_meshes, vk::PipelineBindPoint::GRAPHICS, &push);
@@ -909,6 +914,7 @@ pub(crate) fn gpu(
         (system.space == ParticleSpace::World, WORLD),
         (system.collision == ParticleCollision::Depth, COLLIDE),
         (system.animate, ANIMATE),
+        (system.mesh.is_some(), MESH),
         (system.trails == ParticleTrails::Particles, TRAILS),
         (system.trails == ParticleTrails::Ribbon, RIBBON),
         (system.trails == ParticleTrails::Ribbon && sending(system, time - started, playback.stopped.map(|s| s - started)), RIBBON_FED),

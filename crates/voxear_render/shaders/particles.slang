@@ -25,6 +25,9 @@ struct ParticleNow
     float age;
     float aged;
     uint h;
+    // For one drawn as a mesh, how far it has tumbled, in radians, and how fast it is tumbling, in radians a second.
+    float turned;
+    float turning;
 };
 
 // The simulated particle drawn `drawn`th of its system, the oldest first, as the pool has it (particle_sim.slang):
@@ -37,7 +40,11 @@ bool particleKept(ParticleSystem system, uint drawn, out ParticleNow now)
     now.going = inWorld ? particle.velocity : transform(system.model, float4(particle.velocity, 0.0)).xyz;
     now.age = particle.age;
     now.aged = particle.age / max(particle.life, 1e-6);
-    now.h = particleHash(particle.seed);
+    // A mesh particle's number keeps how far it has tumbled in its low half (particle_sim.slang).
+    bool meshes = (system.flags & PARTICLES_MESH) != 0;
+    now.h = particleHash(meshes ? particle.seed & ~PARTICLE_TURNED : particle.seed);
+    now.turned = float(particle.seed & PARTICLE_TURNED) * (2.0 * PI / 65536.0);
+    now.turning = abs(system.spin) * particleTumbling(particle.velocity);
     return particle.life > 0.0 && particle.age < particle.life;
 }
 
@@ -54,6 +61,8 @@ bool particleNow(ParticleSystem system, uint slot, out ParticleNow now)
     now.age = 0.0;
     now.aged = 0.0;
     now.h = 0;
+    now.turned = 0.0;
+    now.turning = 0.0;
     float spawn;
     uint round;
     if (!particleSpawn(system, slot, spawn, round))
@@ -79,6 +88,9 @@ bool particleNow(ParticleSystem system, uint slot, out ParticleNow now)
     now.age = age;
     now.aged = age / life;
     now.h = h;
+    // Worked out from its age alone, it tumbles all its life.
+    now.turned = abs(system.spin) * age;
+    now.turning = abs(system.spin);
     return true;
 }
 
@@ -196,6 +208,8 @@ bool ribbonPoint(ParticleSystem system, uint n, out ParticleNow point)
     point.going = 0.0;
     point.age = 0.0;
     point.aged = 0.0;
+    point.turned = 0.0;
+    point.turning = 0.0;
     point.h = particleHash(system.seed);
     return n == system.capacity && (system.flags & PARTICLES_RIBBON_FED) != 0;
 }
@@ -256,6 +270,9 @@ struct MeshParticleOut
     nointerpolation float4 air : AIR;
     nointerpolation uint material : MATERIAL;
     nointerpolation uint lit : LIT;
+    // Where it is on screen without the frame's jitter, and where it was a frame ago, for its motion.
+    float4 currentClip : CURRENT;
+    float4 previousClip : PREVIOUS;
 };
 
 // `v` turned `angle` round `axis`.
@@ -266,7 +283,7 @@ float3 turnedAbout(float3 v, float3 axis, float angle)
 
 // A system whose particles are meshes (PARTICLES_MESH): each instance a particle, its mesh as wide as the
 // particle's size across its furthest corners, turned some way of its own and tumbling round an axis of its own
-// as fast as the system's Spin says.
+// as fast as the system's Spin says; a simulated one as fast as it is going, so it lies still once at rest.
 [shader("vertex")]
 MeshParticleOut particleMeshVertex(uint vertexId : SV_VertexID, uint slot : SV_InstanceID)
 {
@@ -281,6 +298,8 @@ MeshParticleOut particleMeshVertex(uint vertexId : SV_VertexID, uint slot : SV_I
     output.air = float4(0.0, 0.0, 0.0, 1.0);
     output.material = 0;
     output.lit = 0;
+    output.currentClip = float4(0.0, 0.0, 0.0, 1.0);
+    output.previousClip = float4(0.0, 0.0, 0.0, 1.0);
     ParticleNow now;
     if (!particleNow(system, slot, now))
     {
@@ -291,10 +310,18 @@ MeshParticleOut particleMeshVertex(uint vertexId : SV_VertexID, uint slot : SV_I
     float wide = particleWide(system, now.aged, now.h);
     uint own = particleHash(now.h ^ 0x9E3779B9u);
     float3 axis = anyWay(own);
-    float angle = particleRandom(own) * 2.0 * PI + system.spin * now.age * (particleRandom(own) < 0.5 ? -1.0 : 1.0);
+    float started = particleRandom(own) * 2.0 * PI;
+    float way = particleRandom(own) < 0.5 ? -1.0 : 1.0;
+    float turning = now.turning * way;
+    float angle = started + now.turned * way;
     float3 local = (v.position - mesh.center) * (wide / max(mesh.radius * 2.0, 1e-5));
     float3 world = now.at + turnedAbout(local, axis, angle);
     float4 clip = transform(frame->viewProj, float4(world, 1.0));
+    // Where this corner was a frame ago: its particle back along its way, turned as it was then.
+    float ago = min(frame->deltaTime, now.age);
+    float3 before = now.at - now.going * ago + turnedAbout(local, axis, angle - turning * ago);
+    output.currentClip = transform(frame->unjitteredViewProj, float4(world, 1.0));
+    output.previousClip = transform(frame->prevViewProj, float4(before, 1.0));
 
     float4 color = lerp(system.color, system.colorEnd, now.aged);
     if (system.curveCounts.w > 0)
@@ -320,18 +347,21 @@ MeshParticleOut particleMeshVertex(uint vertexId : SV_VertexID, uint slot : SV_I
 // colour; lit by the sun, the sky and the lamps as any surface is, or glowing as it is when the system is not lit.
 // As it fades it thins out, pixel by pixel, rather than turning clear, so it still hides what is behind it.
 [shader("fragment")]
-float4 particleMeshFragment(MeshParticleOut input) : SV_Target0
+FragmentOut particleMeshFragment(MeshParticleOut input)
 {
     Frame* frame = push.frame;
     if (input.color.a < 1.0 && bayer4(uint2(input.position.xy)) >= input.color.a)
     {
         discard;
     }
+    FragmentOut output;
+    output.velocity = motion(input.currentClip, input.previousClip);
     Material material = buffers()->materials[input.material];
     float3 albedo = input.color.rgb * material.baseColor.rgb * sampleTexture(material.baseColorTexture, input.uv).rgb;
     if (input.lit == 0)
     {
-        return float4(albedo * input.air.a + input.air.rgb, 1.0);
+        output.color = float4(albedo * input.air.a + input.air.rgb, 1.0);
+        return output;
     }
     Surface s;
     s.normal = normalizeOr(input.normal, float3(0.0, 1.0, 0.0));
@@ -346,5 +376,6 @@ float4 particleMeshFragment(MeshParticleOut input) : SV_Target0
     float3 lit = ambientLight(frame, input.world, s, sunLight, atmosphere) * s.diffuse;
     lit += shade(s, -frame->sunDirection, sunLight * sunCookieAt(frame, input.world)) * sunShadow(frame, input.world, s.normal);
     lit += localLights(frame, s, input.world, input.position.xy);
-    return float4(lit * input.air.a + input.air.rgb, 1.0);
+    output.color = float4(lit * input.air.a + input.air.rgb, 1.0);
+    return output;
 }

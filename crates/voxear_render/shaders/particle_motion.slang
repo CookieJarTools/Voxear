@@ -31,6 +31,17 @@ static const uint PARTICLES_RIBBON = 1024;
 static const uint PARTICLES_RIBBON_FED = 2048;
 // Each particle is drawn as a mesh, tumbling, rather than as a flat picture.
 static const uint PARTICLES_MESH = 4096;
+// How fast a simulated mesh particle must be going, in metres a second, to tumble at its system's full Spin: slower,
+// it turns less, and at rest not at all. How far it has turned is kept in the low half of its number
+// (PARTICLE_TURNED), in 65536ths of a turn, which leaves the high half to pick its random numbers.
+static const float PARTICLE_TUMBLE_SPEED = 1.0;
+static const uint PARTICLE_TURNED = 0xFFFFu;
+
+// How much of its system's Spin a mesh particle going at `velocity` turns with.
+float particleTumbling(float3 velocity)
+{
+    return saturate(length(velocity) / PARTICLE_TUMBLE_SPEED);
+}
 
 // Its shapes, as particles::EmitShape.
 static const uint EMIT_POINT = 0;

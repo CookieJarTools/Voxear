@@ -579,9 +579,10 @@ impl Pipelines {
                 blend: Blend::Premultiplied,
                 ..GraphicsPipelineDesc::new("Particle ribbons", particles, c"ribbonVertex", c"particleFragment")
             })?,
-            // Meshes hide one another and what is behind them, so they test against the depth and draw into it.
+            // Meshes hide one another and what is behind them, so they test against the depth and draw into it; and
+            // they say how far they moved, as the scene's surfaces do.
             particle_meshes: graphics(&GraphicsPipelineDesc {
-                color_formats: hdr,
+                color_formats: scene_formats,
                 depth_format: Some(DEPTH_FORMAT),
                 depth_write: true,
                 depth_compare: vk::CompareOp::GREATER_OR_EQUAL,

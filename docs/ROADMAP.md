@@ -1567,17 +1567,19 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   couple of pixels, fading instead. **Mesh** draws each particle as a mesh that tumbles as its Spin says, as wide
   as its Size across: a built-in Cube, Ball, Chunk or Rod (`voxear_render::particle_meshes`) or a model's first
   mesh with its own material under the system's colour, lit as a surface is, in a pass of its own that draws
-  into the depth, so meshes hide one another and the flat particles behind them. The Sparks, Explosion, Fire
+  into the depth, so meshes hide one another and the flat particles behind them, and writes its own motion for
+  anti-aliasing and motion blur; a simulated one tumbles as fast as it is going, so it lies still once landed.
+  The Sparks, Explosion, Fire
   and Magic starters' sparks, embers and motes have tails, and the Explosion's debris and the Mud's clods are
   Chunks. `samples/Effects` has a ribbon, rubble and shell cases. C# `Trails`, `TrailTime`, `TrailWidth`. Tests:
-  the meshes, a tail's room and its values without a GPU; on one, tails, a ribbon, and meshes lit, glowing and
-  hiding sparks.
+  the meshes, a tail's room and its values without a GPU; on one, tails, a ribbon, and meshes lit, glowing,
+  hiding sparks and lying still once landed.
 - Particles, still to come, in this order (the design is in [ARCHITECTURE.md](ARCHITECTURE.md#particles)):
   - collision with what is out of view: the ground and colliders, and the scene's rays
   - sub-emitters and events; values an effect shows on the Particle System that plays it
   - sorting, half-size drawing, particles in the fog volume, flipbooks blended by motion vectors, and
-    anti-aliasing told about fast particles and mesh particles; a picture along a ribbon; a mesh's LODs
-    and shadows for mesh particles
+    anti-aliasing told about fast flat particles; a picture along a ribbon; a mesh's LODs and shadows for
+    mesh particles
   - `Particles.Play(effect, position)`, bursts at a place, picked parameters, hit events, curves from C#
   - the graph compiler shared with Shader Graph, graph mode, custom Slang modules, and each node's cost shown
   - sleeping off screen, level of detail by distance, and the particle debugger

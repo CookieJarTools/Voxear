@@ -2970,8 +2970,12 @@ of their own before the flat particles, forward, lit a pixel at a time as a surf
 material under the system's colour, and into the depth: so they hide one another whatever order they are drawn
 in, flat particles fade before them, and one fading out thins by a dither rather than blending. Chose that over
 putting them among the scene's instances: those are listed on the CPU and culled by the GPU, and a simulated
-particle's place is only on the GPU. What that costs them is what the opaque passes give: they cast no shadows,
-take no ambient occlusion and have no motion of their own for anti-aliasing. A mesh is named as a texture is,
+particle's place is only on the GPU. What that costs them is what the opaque passes give: they cast no shadows
+and take no ambient occlusion. Their motion they write themselves, into the scene's velocity beside their
+colour, each corner against where it was a frame ago by its particle's speed and turn, so anti-aliasing and
+motion blur follow them. A simulated one's turn is kept, not worked out from its age: in the low half of the
+particle's number, the high half left to pick its random numbers, and added to each step as fast as the particle
+is going, so rubble that has landed lies still rather than spinning where it lies. A mesh is named as a texture is,
 built in or a model's GUID (`ParticleMesh`), and the engine lists the models' meshes and materials for the
 renderer with the pictures (`ParticleMeshes`).
 
@@ -2985,8 +2989,8 @@ renderer with the pictures (`ParticleMeshes`).
   it.
 - **Drawing.** Flipbooks blended by motion vectors; lighting worked out once a particle rather than once a
   corner; mist, dust and lingering smoke put into the fog volume; sorting only where blending needs it, big
-  soft particles at half size, and anti-aliasing told about fast particles and mesh particles; a picture along
-  a ribbon; a coarser LOD for far mesh particles, and their shadows.
+  soft particles at half size, and anti-aliasing told about fast flat particles; a picture along a ribbon; a
+  coarser LOD for far mesh particles, and their shadows.
 - **Scripts.** `Particles.Play(effect, position)` returning a handle, bursts at a place, picked parameters
   rather than names, hit and finished events, curves and gradients.
 - **Scaling.** Off-screen systems asleep, far ones sending out less and stepping every other frame, the least

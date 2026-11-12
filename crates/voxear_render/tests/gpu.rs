@@ -5265,6 +5265,11 @@ fn sparks_draw_tails_behind_them_and_a_ribbon_joins_a_moving_systems_particles()
 
 /// The scene `floor_render` draws, with `systems` at the fountain's foot, two seconds of frames after they started.
 fn meshes_render(systems: &[voxear_render::ParticleSystem]) -> Option<Vec<u8>> {
+    meshes_render_twice(systems, 120, 0).map(|(pixels, _)| pixels)
+}
+
+/// The same, `frames` frames after they started, and again `more` frames later.
+fn meshes_render_twice(systems: &[voxear_render::ParticleSystem], frames: u32, more: u32) -> Option<(Vec<u8>, Vec<u8>)> {
     use voxear_render::{ParticlePlayback, Sky};
     let mut renderer = renderer()?;
     let mut world = World::new();
@@ -5284,8 +5289,10 @@ fn meshes_render(systems: &[voxear_render::ParticleSystem]) -> Option<Vec<u8>> {
         world.spawn((system, ParticlePlayback { started: time, stopped: None }, Transform::from_position(Vec3::ZERO)));
     }
     world.insert_resource(steady_post());
-    run(&mut renderer, &world, &mut time, 120);
-    Some(renderer.read_pixels().unwrap().2)
+    run(&mut renderer, &world, &mut time, frames);
+    let first = renderer.read_pixels().unwrap().2;
+    run(&mut renderer, &world, &mut time, more);
+    Some((first, renderer.read_pixels().unwrap().2))
 }
 
 #[test]
@@ -5354,6 +5361,22 @@ fn particles_drawn_as_meshes_are_solid_lit_and_hide_what_is_behind_them() {
     };
     let (seen, behind) = (near_foot(&open), near_foot(&hidden));
     assert!(seen > 100 && behind * 20 < seen, "sparks at its foot: {seen} pixels in the open, {behind} behind the cube");
+
+    // Rubble that lands and stops lies still, though its Spin would have it tumbling: it turns as fast as it goes.
+    let landing = ParticleSystem {
+        speed: [2.0, 3.0],
+        gravity: 1.0,
+        collision: voxear_render::ParticleCollision::Depth,
+        bounce: 0.0,
+        friction: 1.0,
+        ..rubble
+    };
+    let (in_flight, a_moment_on) = meshes_render_twice(&[landing], 12, 6).unwrap();
+    let (landed, later) = meshes_render_twice(&[landing], 200, 20).unwrap();
+    keep_image("particles meshes landed.png", &landed);
+    let (flying, resting) = (differing_pixels(&in_flight, &a_moment_on), differing_pixels(&landed, &later));
+    assert!(changed(&landed).len() > 300, "the rubble lies on the floor: {} pixels", changed(&landed).len());
+    assert!(flying > 500 && resting * 8 < flying, "tumbling in the air, still on the floor: {flying} pixels change, then {resting}");
 }
 
 #[test]

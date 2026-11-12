@@ -174,12 +174,12 @@ The stats overlay (**F1** in a game) and the Profiler show **Particles**: how ma
 | Rod | A short rod, three and a half times as long as it is wide |
 
 - **Size** is how wide each one is across its furthest corners, in metres, whatever size the model was made.
-- **Spin** is how fast each tumbles, in degrees a second, round an axis of its own. At 0 each keeps the turn it started with.
+- **Spin** is how fast each tumbles, in degrees a second, round an axis of its own. At 0 each keeps the turn it started with. A [simulated](#simulated-systems) one tumbles as fast as it is going, at its full Spin above a metre a second, so one that has landed lies still.
 - **Color** tints the mesh's own material. A built-in mesh is plain white, so it takes the colour as it is. A model keeps its own colours, roughness and metal under the tint.
 - **Lit** particles are lit as any surface is, by the sun, the sky and lamps. Unlit ones show their colour as it is, for things that glow.
 - As a mesh particle fades it thins out pixel by pixel rather than turning clear, so fade it only over the last tenth of its life or so.
 
-A model's first mesh is used, at its full detail, so keep models for particles simple: a few dozen triangles each is plenty for debris. Mesh particles hide one another and the flat particles behind them, as solid things do. They don't cast shadows.
+A model's first mesh is used, at its full detail, so keep models for particles simple: a few dozen triangles each is plenty for debris. Mesh particles hide one another and the flat particles behind them, as solid things do, and anti-aliasing and motion blur follow them as they fly. They don't cast shadows.
 
 Give them **Collision** with a little **Bounce** and plenty of **Friction** and they land and come to rest.
 

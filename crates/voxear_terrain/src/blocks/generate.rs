@@ -498,7 +498,16 @@ mod tests {
         let kinds = [
             ("a room of set shapes", with(vec![Room::chamber()])),
             ("rooms made by rules", with(vec![Room::made(RoomRules::default())])),
-            ("the Caves starter", caves),
+            ("the Caves starter", caves.clone()),
+            ("the Caves starter's ground and tunnels with a room of set shapes", {
+                let mut graph = caves.graph().clone();
+                for node in &mut graph.nodes {
+                    if let NodeKind::CaveNetwork(network) = &mut node.kind {
+                        network.rooms = vec![Room::chamber()];
+                    }
+                }
+                caves.with_graph(graph)
+            }),
         ];
         let smooth = BlockFile { smooth: true, ..file.clone() };
         for (name, world) in &kinds {

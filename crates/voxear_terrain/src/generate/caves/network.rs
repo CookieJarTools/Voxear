@@ -418,7 +418,21 @@ impl Network {
             add(add(times(stand.x, v[0]), times(stand.up, v[1])), times(stand.z, v[2]))
         };
         let axes = [along([1.0, 0.0, 0.0]), stand.up, along([0.0, 0.0, 1.0])];
-        let bounds = Bounds::round(at, self.room_reach(&plan));
+        let bounds = match &plan.made {
+            // A made room's own box, as the room is turned: it lies along the axes whichever way that is.
+            Some(made) => {
+                let [low, high] = made.bounds();
+                let mut bounds = Bounds::NONE;
+                for corner in 0..8 {
+                    let pick = |axis: usize| if corner >> axis & 1 == 0 { low[axis] } else { high[axis] };
+                    let v = [pick(0), pick(1), pick(2)];
+                    let p = add(at, add(add(times(axes[0], v[0]), times(axes[1], v[1])), times(axes[2], v[2])));
+                    bounds = bounds.with(Bounds { low: p, high: p });
+                }
+                bounds
+            }
+            None => Bounds::round(at, self.room_reach(&plan)),
+        };
         Placed { plan, at, axes, bounds }
     }
 
@@ -739,6 +753,18 @@ impl Gathered {
     pub fn bound(&mut self) {
         let boxes = self.rooms.iter().map(|room| room.bounds).chain(self.tunnels.iter().map(|tunnel| tunnel.bounds));
         self.bounds = boxes.reduce(Bounds::with);
+    }
+
+    /// The rooms and tunnels that reach over the column at `x` and `z`:
+    /// rooms by their place, tunnels by theirs past the rooms, as
+    /// [`Gathered::inside`] takes them.
+    pub fn over(&self, x: f32, z: f32, list: &mut Vec<u16>) {
+        list.clear();
+        let holds = |bounds: &Bounds| {
+            x >= bounds.low[0] && x <= bounds.high[0] && z >= bounds.low[2] && z <= bounds.high[2]
+        };
+        let boxes = self.rooms.iter().map(|room| &room.bounds).chain(self.tunnels.iter().map(|tunnel| &tunnel.bounds));
+        list.extend(boxes.enumerate().filter(|(_, bounds)| holds(bounds)).map(|(at, _)| at as u16));
     }
 
     /// How far inside its hollows `p` is, in metres, for cells `size`

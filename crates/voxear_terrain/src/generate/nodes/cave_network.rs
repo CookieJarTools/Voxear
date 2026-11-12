@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{Kind, Port, Solid, Value, ValueSpec, noise3d::seed_for};
 use crate::generate::{
-    caves::{CaveLayout, Network, Room, Settings, network::NO_LIMIT},
+    caves::{CaveLayout, NOTHING, Network, Room, Settings, network::NO_LIMIT},
     compile::{Cells, Compiler, Kernel, Key, Places, V},
     graph::NodeId,
 };
@@ -287,6 +287,9 @@ impl Kernel for Hollow {
         let grid = net.grid();
         let mut held = None;
         let mut lifted = None;
+        // What reaches over the column the cell before was in, while this one is in the same.
+        let mut over: Vec<u16> = Vec::new();
+        let mut column: Option<(u32, u32, [i32; 3])> = None;
         for (at, out) in out.iter_mut().enumerate() {
             // A cell or more over the ground nothing changes what a cell holds. Under it and over the roof an
             // entrance may still come up, so those cells are asked.
@@ -307,7 +310,15 @@ impl Kernel for Hollow {
                         Some((known, gathered)) if known == region => gathered,
                         _ => net.gathered(&grid, region),
                     };
-                    let inside = gathered.inside(net, p, size, None);
+                    let now = (p[0].to_bits(), p[2].to_bits(), region);
+                    if column != Some(now) {
+                        gathered.over(p[0], p[2], &mut over);
+                        column = Some(now);
+                    }
+                    let inside = match over.is_empty() {
+                        true => (NOTHING, NOTHING),
+                        false => gathered.inside(net, p, size, Some(&over)),
+                    };
                     held = Some((region, gathered));
                     inside
                 }

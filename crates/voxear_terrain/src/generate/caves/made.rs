@@ -211,16 +211,7 @@ impl RoomSample {
 
     /// The corners of a box that holds it, roughness and all.
     pub fn bounds(&self) -> [[f32; 3]; 2] {
-        let pad = self.made.roughest() + self.made.blend;
-        let (mut low, mut high) = ([f32::MAX; 3], [f32::MIN; 3]);
-        for blob in &self.made.blobs {
-            for axis in 0..3 {
-                let down = if axis == 1 && blob.half { 0.0 } else { blob.half_sizes[axis] };
-                low[axis] = lesser(low[axis], blob.at[axis] - down - pad);
-                high[axis] = greater(high[axis], blob.at[axis] + blob.half_sizes[axis] + pad);
-            }
-        }
-        [low, high]
+        self.made.bounds()
     }
 
     /// Where its exits are, and the way out of each.
@@ -553,6 +544,12 @@ impl Made {
     /// times its roughness and inward no further than its margin.
     pub fn inside(&self, p: V3, noise: Option<[f32; 2]>) -> f32 {
         // Lumps of a few metres and detail of a block or two, together.
+        // Under its floor at its lowest it is rock whatever its walls do: how far under says so, near enough.
+        if let Some(floor) = self.floor
+            && p[1] <= floor
+        {
+            return p[1] - floor;
+        }
         let moved = noise.map_or(0.0, |[lumps, detail]| greater(lumps * self.rough + detail * self.fine, -self.margin));
         let mut hollow = self.shell(p) + moved;
         if let Some(floor) = self.floor {
@@ -560,13 +557,18 @@ impl Made {
             // the detail over it: never under its lowest, which is what a room's exits are set over.
             let raised = match noise {
                 Some([lumps, detail]) if self.rise() > 0.0 => {
+                    // About a third of a floor at its lowest, a third a step up and a third two.
                     let rolls = greater(lesser(lumps + 1.0, 2.0), 0.0) * 0.5 * self.roll;
-                    let steps = if lumps > 0.5 { 2.0 } else if lumps > 0.05 { 1.0 } else { 0.0 };
+                    let steps = if lumps > 0.2 { 2.0 } else if lumps > -0.2 { 1.0 } else { 0.0 };
                     lesser(rolls + steps * self.step + greater(detail, 0.0) * self.fine * 0.4, self.rise())
                 }
                 _ => 0.0,
             };
             hollow = lesser(hollow, p[1] - floor - raised);
+        }
+        // Rock is only ever put back into what is hollow.
+        if hollow <= 0.0 {
+            return hollow;
         }
         for rock in &self.rocks {
             // Rock put back is roughened a third as much, and never grows by it.
@@ -584,6 +586,27 @@ impl Made {
             far(blob.at) + greater(x, greater(y, z))
         });
         blobs.chain(self.exits.iter().map(|exit| far(exit.at))).fold(1.0, greater) + self.roughest() + self.blend
+    }
+
+    /// The corners of a box, in its own space, that holds its hollow however its walls are roughened, and its
+    /// exits, with a metre to spare.
+    pub fn bounds(&self) -> [V3; 2] {
+        let pad = self.roughest() + self.blend + 1.0;
+        let (mut low, mut high) = ([f32::MAX; 3], [f32::MIN; 3]);
+        for blob in &self.blobs {
+            for axis in 0..3 {
+                let down = if axis == 1 && blob.half { 0.0 } else { blob.half_sizes[axis] };
+                low[axis] = lesser(low[axis], blob.at[axis] - down - pad);
+                high[axis] = greater(high[axis], blob.at[axis] + blob.half_sizes[axis] + pad);
+            }
+        }
+        for exit in &self.exits {
+            for axis in 0..3 {
+                low[axis] = lesser(low[axis], exit.at[axis] - 1.0);
+                high[axis] = greater(high[axis], exit.at[axis] + 1.0);
+            }
+        }
+        [low, high]
     }
 
     /// The furthest a wall or its floor is moved by roughness, in metres.

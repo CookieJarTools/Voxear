@@ -30,6 +30,7 @@ pub use rooms::{Room, RoomExit, RoomForm, RoomShape, UNTURNED};
 use network::{mix, share};
 
 pub(crate) use network::{Network, Settings};
+pub(crate) use rooms::NOTHING;
 
 use grid::{Region, V3, add, dot, sub, times, unit};
 use network::Placed;

@@ -454,8 +454,8 @@ fn ground(world: &WorldGen, across: usize) -> MeshData {
 }
 
 /// A cave room `rules` make from `seed`, cut open: each face between a hollow cell and rock,
-/// facing into the hollow, up to a little over half the room's height and none above. So from
-/// above one looks down into it, at its floor, its pillars and its ledges. In cells small enough that its longest
+/// facing into the hollow, up to a fifth of the room's height over its floor and none above. So
+/// it shows as its floor with a low rim of wall round it, its steps, its pillars and its ledges. In cells small enough that its longest
 /// side is `across` of them, and never under a quarter of a metre.
 fn room(rules: &RoomRules, seed: u32, across: usize) -> MeshData {
     let sample = rules.sample(seed);
@@ -476,7 +476,8 @@ fn room(rules: &RoomRules, seed: u32, across: usize) -> MeshData {
         }
     }
     let floor = sample.floor();
-    let cut = floor + (high[1] - floor) * 0.55;
+    // Cut low, so its walls are a rim round its floor and none stands between the eye and the room.
+    let cut = floor + ((high[1] - floor) * 0.2).max(3.0);
     let mut mesh = MeshData::default();
     // Each way out of a cell: the way, and two more with it, the first crossed with the second the way itself.
     let ways: [([i32; 3], Vec3, Vec3); 6] = [

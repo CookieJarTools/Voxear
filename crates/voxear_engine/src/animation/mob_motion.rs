@@ -414,7 +414,21 @@ pub fn animate_mobs(world: &mut World, delta: f32) {
             Some((entity, motion.clone(), model.animation.clone()?, bones.roles.clone()))
         })
         .collect();
+    // An Obj whose Animator has a clip is the clip's to pose: Mob Motion waits until it has none, and
+    // starts afresh then.
+    let playing: Vec<Entity> = world
+        .query_ref::<(Entity, &super::Animator, &MobMotion)>()
+        .into_iter()
+        .filter(|(_, animator, _)| !animator.clip.is_empty())
+        .map(|(entity, ..)| entity)
+        .collect();
+    for entity in &playing {
+        world.remove::<MobMotionState>(*entity);
+    }
     for (entity, mut motion, animation, roles) in mobs {
+        if playing.contains(&entity) {
+            continue;
+        }
         let skeleton = &animation.skeleton;
         let made_for = Arc::as_ptr(&animation) as usize;
         let mut state = world

@@ -43,7 +43,10 @@ use super::{
     chunk::{CHUNK, Chunk},
     edits::{BlockEdits, ChunkChange},
     file::BlockFile,
-    generate::{BlockGenerate, column_chunks},
+    generate::{
+        BlockGenerate, column_chunks,
+        far::{self, FarTile, far_chunks, far_tile},
+    },
     mesh::ChunkMesh,
     mesh_any, mesh_made,
 };
@@ -53,8 +56,14 @@ use crate::generate::WorldGen;
 /// until the streamer is told otherwise (see `WorldBudget::columns`).
 const MOST_MAKING: usize = 24;
 
-/// The most rings of coarser chunks a world draws.
-pub const MOST_LEVELS: u32 = 6;
+/// The most levels a world draws: its own chunks, and rings of coarser
+/// chunks, each twice as large as the one inside it, out to 128 times as
+/// large, 16 km off with metre blocks at four columns a ring.
+pub const MOST_LEVELS: u32 = 8;
+
+/// The first level made as the far view (see `generate::far`): from the
+/// generator's heights alone, kept on disk where the world has a folder.
+pub const FAR_FROM: u32 = 3;
 
 /// What a world of blocks without end's chunks are made from: its file, the
 /// way it generates, its generator, and the surfaces its blocks' faces are
@@ -65,6 +74,9 @@ pub struct BlockMaking {
     pub generate: BlockGenerate,
     pub world: Arc<WorldGen>,
     pub faces: Arc<[super::BlockFaces]>,
+    /// Where its far view's tiles are kept, the world's own folder, in which
+    /// they go into a folder of what they were made from; none to keep none.
+    pub far_folder: Option<std::path::PathBuf>,
 }
 
 impl BlockMaking {
@@ -72,8 +84,45 @@ impl BlockMaking {
     /// generator, every block this drew drawn the same. Faces more at the
     /// end, as of blocks the world came to hold since, change nothing made.
     fn same(&self, other: &BlockMaking) -> bool {
-        self.file == other.file && Arc::ptr_eq(&self.world, &other.world) && other.faces.starts_with(&self.faces)
+        self.file == other.file
+            && Arc::ptr_eq(&self.world, &other.world)
+            && other.faces.starts_with(&self.faces)
+            && self.far_folder == other.far_folder
     }
+
+    /// The folder its far view's tiles are kept in, named by what they are
+    /// made from, so a world made another way keeps its own.
+    fn far_tiles(&self) -> Option<std::path::PathBuf> {
+        let made_from = format!("{}\n{:016x}\n{}", self.file.to_text(), self.world.hash(), far::MADE_AS);
+        let hash = crate::layers::stable_hash(made_from.as_bytes());
+        self.far_folder.as_ref().map(|folder| folder.join(format!("{hash:016x}")))
+    }
+}
+
+/// The far view's tile `at` of level `level`, as kept in `folder` where it
+/// was kept, else made and kept there. Not kept where the folder cannot be
+/// written to, as in a game installed where it may not write.
+fn far_tile_kept(making: &BlockMaking, folder: Option<&std::path::Path>, level: u32, at: [i32; 2]) -> FarTile {
+    let path = folder.map(|folder| folder.join(format!("{level}_{}_{}.far", at[0], at[1])));
+    let read = path.as_ref().and_then(|path| std::fs::read(path).ok());
+    let kept = read.and_then(|bytes| FarTile::from_bytes(&bytes).ok());
+    if let Some(tile) = kept.filter(|tile| tile.level == level && tile.at == at) {
+        return tile;
+    }
+    let tile = far_tile(&making.file, &making.generate, &making.world, level, at);
+    if let Some(path) = path {
+        // Written whole beside it, then put in its place, so a tile read as it is written is never half of one.
+        static WRITING: AtomicU64 = AtomicU64::new(0);
+        let writing = path.with_extension(format!("far.{}", WRITING.fetch_add(1, Ordering::Relaxed)));
+        let written = path.parent().map(std::fs::create_dir_all).transpose().and_then(|_| {
+            std::fs::write(&writing, tile.to_bytes())?;
+            std::fs::rename(&writing, &path)
+        });
+        if written.is_err() {
+            let _ = std::fs::remove_file(&writing);
+        }
+    }
+    tile
 }
 
 /// Work done in the background, each by the number of what it was made
@@ -172,8 +221,13 @@ pub struct BlockStreamer {
     /// asked for again.
     again: bool,
     asked: HashSet<(u32, [i32; 2])>,
+    /// Coarse columns made before changes were kept for the ground under
+    /// them, made again to show what was built, the old drawn till then.
+    stale: HashSet<(u32, [i32; 2])>,
     waiting: usize,
     making_now: Arc<AtomicUsize>,
+    /// The folder the far view's tiles of what it makes are kept in.
+    far_tiles: Option<std::path::PathBuf>,
     /// How many columns it makes at once, at most: their blocks or their
     /// faces. Changed as it streams, it takes hold from the next update.
     pub at_once: usize,
@@ -198,8 +252,10 @@ impl Default for BlockStreamer {
             windows: None,
             again: false,
             asked: HashSet::new(),
+            stale: HashSet::new(),
             waiting: 0,
             making_now: Arc::new(AtomicUsize::new(0)),
+            far_tiles: None,
             at_once: MOST_MAKING,
             send,
             finished: Mutex::new(finished),
@@ -243,9 +299,10 @@ impl BlockStreamer {
             *world = BlockWorld::made(BlockMap::default(), &making.faces, making.file.block_size, making.file.smooth);
             world.columns = Some(Arc::default());
             (self.near, self.drawn, self.meshing) = (HashSet::new(), HashSet::new(), HashSet::new());
-            (self.coarse, self.asked) = (HashMap::new(), HashSet::new());
+            (self.coarse, self.asked, self.stale) = (HashMap::new(), HashSet::new(), HashSet::new());
             (self.coarse_blocks, self.joining) = (HashMap::new(), HashSet::new());
             self.number = self.latest.fetch_add(1, Ordering::AcqRel) + 1;
+            self.far_tiles = making.far_tiles();
             self.making = Some(Arc::new(making));
             changed = true;
         } else if self.making.as_ref().is_some_and(|kept| kept.faces != making.faces) {
@@ -281,7 +338,7 @@ impl BlockStreamer {
         // Asked again only where something came or went, or the camera moved, or there is still more to make.
         let moved = self.windows.as_deref() != Some(&windows[..]);
         if changed || moved || self.waiting > 0 || std::mem::take(&mut self.again) {
-            self.ask(world, &making, &windows, camera);
+            self.ask(world, &making, &windows, (camera, pending));
         }
         if changed || moved {
             changed |= self.show_coarse(world, &windows);
@@ -334,7 +391,13 @@ impl BlockStreamer {
                 }
                 Finished::Made { level, at, chunks, meshes, .. } => {
                     self.asked.remove(&(level, at));
+                    let was_stale = self.stale.remove(&(level, at));
                     if self.making.as_ref().is_some_and(|making| making.file.smooth) {
+                        // Its faces made again with those round it, its old ones drawn till then.
+                        if was_stale {
+                            self.joining.remove(&(level, at));
+                            self.coarse.remove(&(level, at));
+                        }
                         // Kept, for its faces and those of the columns round it, made once theirs are.
                         let chunks = chunks.into_iter().map(|(key, chunk)| (key, Arc::new(chunk))).collect();
                         self.coarse_blocks.insert((level, at), Arc::new(chunks));
@@ -415,7 +478,18 @@ impl BlockStreamer {
         for (key, chunk) in world.blocks.chunks().filter(|(key, _)| leaving(key)) {
             now.put_shared(*key, chunk.clone());
         }
-        Arc::make_mut(pending).chunks.extend(BlockEdits::between(&was, &now).chunks);
+        let changes = BlockEdits::between(&was, &now);
+        // The coarse columns over what was built are made again with it, so it shows as the camera goes.
+        for key in changes.chunks.keys() {
+            for level in 1..MOST_LEVELS {
+                let at = [key[0] >> level, key[2] >> level];
+                let made = self.coarse.contains_key(&(level, at)) || self.coarse_blocks.contains_key(&(level, at));
+                if made {
+                    self.stale.insert((level, at));
+                }
+            }
+        }
+        Arc::make_mut(pending).chunks.extend(changes.chunks);
         let blocks = Arc::make_mut(&mut world.blocks);
         let kept = Arc::make_mut(base);
         for (key, _) in now.chunks() {
@@ -436,7 +510,13 @@ impl BlockStreamer {
     /// first, as many as there is room for: the faces of near columns whose
     /// blocks and their neighbours' are made, the blocks of near columns,
     /// and coarse columns.
-    fn ask(&mut self, world: &BlockWorld, making: &Arc<BlockMaking>, windows: &[Window], camera: [f32; 2]) {
+    fn ask(
+        &mut self,
+        world: &BlockWorld,
+        making: &Arc<BlockMaking>,
+        windows: &[Window],
+        (camera, pending): ([f32; 2], &BlockEdits),
+    ) {
         voxear_core::profile_scope!("Ask");
         let (shown, made) = (windows[0], windows[0].grown());
         let mut columns = None;
@@ -484,7 +564,8 @@ impl BlockStreamer {
                 } else {
                     self.coarse.contains_key(&(level, at))
                 };
-                if done || self.asked.contains(&(level, at)) {
+                let stale = self.stale.contains(&(level, at));
+                if done && !stale || self.asked.contains(&(level, at)) {
                     continue;
                 }
                 wanted.push((Some(level), at, (away(at) * 16.0) as i64 + i64::from(level) * 4));
@@ -549,9 +630,22 @@ impl BlockStreamer {
                 continue;
             };
             self.asked.insert((level, at));
+            let far_tiles = self.far_tiles.clone();
+            // What was built on the ground a coarse column covers, kept for chunks not near.
+            let mut built = BlockEdits::default();
+            if level > 0 {
+                let under = |key: &[i32; 3]| [key[0] >> level, key[2] >> level] == at;
+                built.chunks.extend(pending.chunks.iter().filter(|(key, _)| under(key)).map(|(k, c)| (*k, c.clone())));
+            }
             crate::workers::spawn(move || {
                 if latest.load(Ordering::Acquire) == number {
-                    let chunks = column_chunks(&making.file, &making.generate, &making.world, level, at, None);
+                    let mut chunks = if level >= FAR_FROM {
+                        let tile = far_tile_kept(&making, far_tiles.as_deref(), level, at);
+                        far_chunks(&tile, making.file.smooth)
+                    } else {
+                        column_chunks(&making.file, &making.generate, &making.world, level, at, None)
+                    };
+                    raise(&mut chunks, &built, level, making.file.smooth);
                     // A coarse column's faces made here, alone: the columns beside it not made.
                     let meshes = if level == 0 || making.file.smooth {
                         Vec::new()
@@ -602,6 +696,48 @@ impl BlockStreamer {
             world.far = Arc::new(far);
         }
         !same_far
+    }
+}
+
+/// How many of a coarse block's blocks must have been built for it to be
+/// made of what was built, as a part of all of them: an eighth, so a large
+/// building shows far off and a pole does not grow into a tower.
+const BUILT_SHOWS: u32 = 8;
+
+/// Puts what `built` placed into `chunks`, of level `level`'s coarser
+/// blocks: each coarse block that was air made of the last block built in
+/// it, where at least an eighth of it was built, so what was built near
+/// shows from far off. Taking ground out shows only once it is near.
+fn raise(chunks: &mut Vec<([i32; 3], Chunk)>, built: &BlockEdits, level: u32, smooth: bool) {
+    if built.chunks.is_empty() {
+        return;
+    }
+    let side = CHUNK as i32;
+    let mut cells: HashMap<[i32; 3], (u32, super::chunk::BlockId)> = HashMap::new();
+    for (place, block) in built.placed() {
+        let cell = cells.entry(place.map(|v| v >> level)).or_insert((0, block));
+        *cell = (cell.0 + 1, block);
+    }
+    let whole = 1u32 << (3 * level.min(10));
+    let mut found: HashMap<[i32; 3], usize> = chunks.iter().enumerate().map(|(at, (key, _))| (*key, at)).collect();
+    for (cell, (count, block)) in cells {
+        if count * BUILT_SHOWS < whole {
+            continue;
+        }
+        let key = cell.map(|v| v.div_euclid(side));
+        let at = *found.entry(key).or_insert_with(|| {
+            chunks.push((key, Chunk::filled(super::chunk::AIR)));
+            chunks.len() - 1
+        });
+        let [x, y, z] = cell.map(|v| v.rem_euclid(side) as u32);
+        let chunk = &mut chunks[at].1;
+        if chunk.get(x, y, z) != super::chunk::AIR {
+            continue;
+        }
+        match smooth {
+            true => chunk.set_cell(x, y, z, block, super::chunk::FULL),
+            false => chunk.set(x, y, z, block),
+        }
     }
 }
 
@@ -673,7 +809,8 @@ mod tests {
         };
         let (_, faces) = file.faces();
         let generate = file.generate.clone().unwrap();
-        BlockMaking { file, generate, world: Arc::new(Preset::RollingHills.world()), faces: faces.into() }
+        let world = Arc::new(Preset::RollingHills.world());
+        BlockMaking { file, generate, world, faces: faces.into(), far_folder: None }
     }
 
     /// Brings `world` round `at` and waits until every column is made.
@@ -697,6 +834,132 @@ mod tests {
     }
 
     #[test]
+    fn what_was_built_shows_in_coarse_chunks_where_it_fills_an_eighth_of_a_coarse_block() {
+        // A tower four blocks square and forty high, and a pole a block square beside it.
+        let mut built = BlockMap::default();
+        for y in 10..50 {
+            for (x, z) in (64..68).flat_map(|x| (64..68).map(move |z| (x, z))) {
+                built.set([x, y, z], 3);
+            }
+            built.set([100, y, 100], 3);
+        }
+        let built = BlockEdits::between(&BlockMap::default(), &built);
+        // Blocks four times as large: the tower a block square, the pole too thin to show.
+        let mut chunks = vec![([0, 0, 0], Chunk::filled(AIR))];
+        chunks[0].1.set(16, 5, 16, 1);
+        raise(&mut chunks, &built, 2, false);
+        let block = |cell: [i32; 3]| {
+            let key = cell.map(|v| v.div_euclid(CHUNK as i32));
+            let [x, y, z] = cell.map(|v| v.rem_euclid(CHUNK as i32) as u32);
+            chunks.iter().find(|(k, _)| *k == key).map_or(AIR, |(_, chunk)| chunk.get(x, y, z))
+        };
+        assert!((2..=12).all(|y| y == 5 || block([16, y, 16]) == 3), "the tower, half a block at its foot");
+        assert_eq!(block([16, 5, 16]), 1, "ground already there kept");
+        assert_eq!((block([16, 13, 16]), block([17, 4, 16])), (AIR, AIR), "nothing past it");
+        assert!((0..16).all(|y| block([25, y, 25]) == AIR), "a pole a sixteenth of a block across shows not");
+    }
+
+    #[test]
+    fn a_tower_built_near_stays_in_the_coarse_rings_once_the_camera_goes_away() {
+        let making = making();
+        let fly = |tower: bool| {
+            let mut world = BlockWorld::made(BlockMap::default(), &making.faces, 2.0, false);
+            let (mut base, mut pending) = (Arc::new(BlockMap::default()), Arc::new(BlockEdits::default()));
+            let mut streamer = BlockStreamer::default();
+            let settle = |streamer: &mut BlockStreamer, world: &mut BlockWorld, base: &mut _, pending: &mut _, at| {
+                let start = std::time::Instant::now();
+                loop {
+                    streamer.update(world, base, pending, making.clone(), (100.0, 3000.0), at);
+                    if streamer.settled() {
+                        return;
+                    }
+                    assert!(start.elapsed().as_secs() < 60, "never settled");
+                    std::thread::sleep(std::time::Duration::from_millis(2));
+                }
+            };
+            settle(&mut streamer, &mut world, &mut base, &mut pending, [10.0, 10.0]);
+            if tower {
+                // Sixteen blocks square and eighty high, standing over the ground.
+                let blocks = (16..32).flat_map(|x| (16..32).flat_map(move |z| (60..140).map(move |y| ([x, y, z], 3))));
+                world.set_blocks(blocks);
+            }
+            // Away along x, its near columns let go with the tower kept in what is pending.
+            settle(&mut streamer, &mut world, &mut base, &mut pending, [900.0, 10.0]);
+            world
+        };
+        let (bare, built) = (fly(false), fly(true));
+        // The tower's faces in the coarse chunks over it, at whichever levels draw them.
+        let over = |key: &[i32; 4]| [key[1], key[3]] == [0, 0] && key[0] >= 1;
+        let quads = |world: &BlockWorld| -> usize {
+            world.far.iter().filter(|(k, _)| over(k)).map(|(_, m)| m.quads.len()).sum()
+        };
+        assert!(quads(&bare) > 0, "the ground there drawn coarse");
+        assert!(quads(&built) > quads(&bare), "and the tower with it: {} against {}", quads(&built), quads(&bare));
+    }
+
+    #[test]
+    fn far_levels_come_from_the_far_view_kept_on_disk_so_they_come_back_as_kept() {
+        let folder = std::env::temp_dir().join(format!("voxear-far-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        let making = BlockMaking { far_folder: Some(folder.clone()), ..making() };
+        let streamed = || {
+            let mut world = BlockWorld::made(BlockMap::default(), &making.faces, 2.0, false);
+            let (mut base, mut pending) = (Arc::new(BlockMap::default()), Arc::new(BlockEdits::default()));
+            let mut streamer = BlockStreamer::default();
+            let start = std::time::Instant::now();
+            loop {
+                streamer.update(&mut world, &mut base, &mut pending, making.clone(), (100.0, 6000.0), [10.0, 10.0]);
+                if streamer.settled() {
+                    return world;
+                }
+                assert!(start.elapsed().as_secs() < 60, "never settled");
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+        };
+        let world = streamed();
+        let levels: HashSet<i32> = world.far.keys().map(|key| key[0]).collect();
+        assert!((1..=6).all(|level| levels.contains(&level)), "rings out to 6 km: {levels:?}");
+        // Each far tile kept, by level and place, in a folder of what it was made from.
+        let kept: Vec<std::path::PathBuf> = std::fs::read_dir(&folder).unwrap().flatten().map(|e| e.path()).collect();
+        assert_eq!(kept.len(), 1);
+        let tiles: Vec<String> =
+            std::fs::read_dir(&kept[0]).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into()).collect();
+        assert!(tiles.iter().all(|name| name.ends_with(".far")) && tiles.iter().any(|name| name.starts_with("3_")));
+        assert!(!tiles.iter().any(|name| name.starts_with("2_")), "nearer rings are made in full: {tiles:?}");
+        // A tower put into a kept tile shows as the world is made again: the tile was read back, not made anew.
+        let (name, key) = world
+            .far
+            .keys()
+            .filter(|key| key[0] == 6)
+            .map(|key| (format!("6_{}_{}.far", key[1], key[3]), *key))
+            .find(|(name, _)| tiles.contains(name))
+            .expect("a level 6 tile drawn");
+        let path = kept[0].join(&name);
+        let mut tile = FarTile::from_bytes(&std::fs::read(&path).unwrap()).unwrap();
+        let top = tile.column([16, 16]).last().map_or(0, |run| run.to);
+        tile.add([16, 16], top, top + 40, 3);
+        std::fs::write(&path, tile.to_bytes()).unwrap();
+        let again = streamed();
+        let quads = |world: &BlockWorld| -> usize {
+            world
+                .far
+                .iter()
+                .filter(|(k, _)| [k[0], k[1], k[3]] == [key[0], key[1], key[3]])
+                .map(|(_, m)| m.quads.len())
+                .sum()
+        };
+        assert!(quads(&again) > quads(&world), "the tower's faces too");
+        let elsewhere = |world: &BlockWorld| -> Vec<usize> {
+            let mut all: Vec<_> =
+                world.far.iter().filter(|(k, _)| k[0] == 5).map(|(k, m)| (*k, m.quads.len())).collect();
+            all.sort();
+            all.into_iter().map(|(_, n)| n).collect()
+        };
+        assert_eq!(elsewhere(&again), elsewhere(&world), "the rest as it was");
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
     fn a_world_makes_no_more_columns_at_once_than_its_budget_which_takes_hold_as_it_streams() {
         let making = making();
         let mut world = BlockWorld::made(BlockMap::default(), &making.faces, 2.0, false);
@@ -708,8 +971,11 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(2));
             streamer.making_now.load(Ordering::Acquire)
         };
+        // Until a few columns are made, however busy the threads are with other work.
         let mut most = 0;
-        for _ in 0..60 {
+        let start = std::time::Instant::now();
+        while streamer.near.len() < 4 {
+            assert!(start.elapsed().as_secs() < 60, "nothing made");
             let now = step(&mut streamer, &mut world, &mut base, &mut pending);
             assert!(now <= 2, "{now} columns at once on Low");
             most = most.max(now);

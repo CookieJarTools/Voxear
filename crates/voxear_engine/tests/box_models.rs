@@ -5,7 +5,7 @@
 use voxear_assets::AssetKind;
 use voxear_core::math::Vec3;
 use voxear_engine::{Content, ContentSettings, Engine, Levels, content_build};
-use voxear_render::{BoneRole, BoxModel, ModelRenderer, Pose};
+use voxear_render::{BoneRole, BoxKey, BoxModel, ModelRenderer, Pose};
 use voxear_scene::{Name, Transform};
 
 const LEVEL: &str = "format = 1\n[[scene]]\nscene = \"Scenes/Field.scene\"\n";
@@ -158,4 +158,49 @@ fn a_mob_motion_walks_a_box_model_by_its_bones_roles_from_its_file_or_from_built
     })
     .unwrap();
     assert!(saved.contains("leg_swing = 20.0") && !saved.contains("look_at") && !saved.contains("attacks"), "{saved}");
+}
+
+/// A scene whose Walker has an Animator playing the model's own Kick, and a Mob Motion.
+const KICKING: &str = "format = 1\n[[obj]]\nid = 1\nname = \"Walker\"\n[obj.model]\nmodel = \"Mobs/Walker.boxmodel\"\n[obj.animator]\nclip = \"Kick\"\nlooping = false\n[obj.mob_motion]\n";
+
+#[test]
+fn a_box_models_clip_plays_on_an_animator_by_its_name_and_mob_motion_waits_while_it_does() {
+    let dir = project();
+    // The walker with a clip of its own: its right leg swung forward in half a second, and held there.
+    let mut model = BoxModel::parse(&walker()).unwrap();
+    let kick = model.add_clip("Kick");
+    model.clips[kick].looping = false;
+    model.clips[kick].set_length(0.5);
+    model.clips[kick].set_key("RightLeg", BoxKey::turned(0.0, Vec3::ZERO));
+    model.clips[kick].set_key("RightLeg", BoxKey::turned(0.5, Vec3::X * -60.0));
+    std::fs::write(dir.path().join("Mobs/Walker.boxmodel"), model.to_text()).unwrap();
+    std::fs::write(dir.path().join("Scenes/Field.scene"), KICKING).unwrap();
+
+    let mut content = Content::open(dir.path()).unwrap();
+    let (mut engine, mut levels) = (Engine::new(), Levels::default());
+    levels.load(&mut engine, &mut content, None, "Levels/Field.level").unwrap();
+    let walker = engine.world.query_ref::<(voxear_ecs::Entity, &Name)>().into_iter().find(|(_, name)| name.0 == "Walker");
+    let walker = walker.expect("the scene's Walker").0;
+    let clips = engine.world.get::<ModelRenderer>(walker).unwrap().animation.clone().unwrap().clips.clone();
+    assert_eq!(clips.iter().map(|clip| (clip.name.as_str(), clip.frames)).collect::<Vec<_>>(), [("Kick", 31)]);
+
+    // Walking with the clip playing: the kick is what shows, and the other leg is not swung.
+    let [right, left] = walk(&mut engine, &mut content, 1.5);
+    assert!((right - 0.75 * 60f32.to_radians().sin()).abs() < 0.02, "kicked as far as its last key says: {right}");
+    assert!(left.abs() < 1e-3, "the leg the clip leaves alone stays under it: {left}");
+
+    // With no clip to play, Mob Motion walks it again.
+    engine.world.get_mut::<voxear_engine::animation::Animator>(walker).unwrap().clip.clear();
+    let walking = walk(&mut engine, &mut content, 1.5);
+    assert!(walking[1] > 0.3, "walking, the other foot swings forward: {walking:?}");
+
+    // The clip is cooked with the model.
+    let output = dir.path().join("Built");
+    let settings = ContentSettings { merge_below_kb: 0, ..ContentSettings::default() };
+    content_build::build(dir.path(), &output, &settings, &[]).unwrap();
+    let mut built = Content::open_bundles(dir.path(), &output).unwrap();
+    let (mut engine, mut levels) = (Engine::new(), Levels::default());
+    levels.load(&mut engine, &mut built, None, "Levels/Field.level").unwrap();
+    let [right, left] = walk(&mut engine, &mut built, 1.5);
+    assert!(right > 0.6 && left.abs() < 1e-3, "{right} {left}");
 }

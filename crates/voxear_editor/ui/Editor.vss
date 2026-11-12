@@ -4369,3 +4369,96 @@ DockSpace .resizable-columns > .split-divider:active > .split-handle {
 .model-sheet-image {
     position: absolute;
 }
+
+/* The timeline under the model, while its clips are keyed: the clip's own things over a row for each bone it moves. */
+.model-timeline {
+    flex-direction: column;
+    flex-shrink: 0;
+    height: 190px;
+    border-top: 1px solid var(--vx-line);
+}
+
+.model-timeline-bar {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    flex-shrink: 0;
+    min-height: 30px;
+    padding: 4px 8px;
+    column-gap: 6px;
+    row-gap: 4px;
+    border-bottom: 1px solid var(--vx-line);
+}
+
+.model-timeline-clips {
+    flex-shrink: 0;
+    width: 130px;
+}
+
+.model-timeline-label {
+    flex-shrink: 0;
+    color: var(--vx-muted);
+}
+
+.model-timeline-name-field {
+    flex-shrink: 0;
+    width: 110px;
+}
+
+.model-timeline-length {
+    flex-shrink: 0;
+    width: 54px;
+}
+
+.model-timeline-moment {
+    flex-shrink: 0;
+    width: 52px;
+    text-align: right;
+    font-family: mono;
+    color: var(--vx-text-2);
+}
+
+.model-timeline-body {
+    flex-direction: row;
+    align-items: stretch;
+    flex-grow: 1;
+    flex-basis: 0px;
+    min-height: 0px;
+    overflow: hidden;
+}
+
+/* The bones' names, each beside its row, under the room the times take. */
+.model-timeline-names {
+    flex-direction: column;
+    flex-shrink: 0;
+    width: 220px;
+    padding-top: 18px;
+    border-right: 1px solid var(--vx-line);
+}
+
+.model-timeline-row {
+    flex-shrink: 0;
+    height: 20px;
+    padding: 3px 10px 0px 10px;
+    color: var(--vx-text-2);
+}
+
+.model-timeline-row-lit {
+    color: var(--vx-text);
+}
+
+.model-timeline-lane {
+    flex-grow: 1;
+    flex-basis: 0px;
+    min-width: 0px;
+    overflow: hidden;
+    background-color: var(--vx-bg);
+}
+
+.model-timeline-tick {
+    position: absolute;
+    top: 5px;
+    font-family: mono;
+    font-size: 9px;
+    color: var(--vx-muted);
+}

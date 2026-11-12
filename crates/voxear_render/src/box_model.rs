@@ -51,11 +51,13 @@ use crate::{
     skeleton::{Bone, BonePose, ModelAnimation, Skeleton, Skin, SkinVertex},
 };
 
+mod clips;
 mod edit;
 mod layer;
 mod paint;
 mod rig;
 
+pub use clips::{BoxClip, BoxKey, BoxTrack, Ease, KEY_STEP, LONGEST_CLIP, on_step};
 pub use edit::BoxHit;
 
 /// A box model's file extension.
@@ -394,11 +396,18 @@ pub struct BoxModel {
     pub sheet: Sheet,
     /// Its bones, every parent before its children.
     pub bones: Vec<BoxBone>,
+    /// Its clips: its bones moved by keys.
+    pub clips: Vec<BoxClip>,
 }
 
 impl Default for BoxModel {
     fn default() -> Self {
-        Self { pixels_per_block: PIXELS_PER_BLOCK, sheet: Sheet::filled(64, 64, [0; 4]), bones: Vec::new() }
+        Self {
+            pixels_per_block: PIXELS_PER_BLOCK,
+            sheet: Sheet::filled(64, 64, [0; 4]),
+            bones: Vec::new(),
+            clips: Vec::new(),
+        }
     }
 }
 
@@ -412,6 +421,8 @@ struct FileModel {
     pixels: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     bones: Vec<FileBone>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    clips: Vec<clips::FileClip>,
 }
 
 fn pixels_per_block() -> f32 {
@@ -537,7 +548,9 @@ impl BoxModel {
                 name: bone.name,
             });
         }
-        Ok(Self { pixels_per_block: file.pixels_per_block, sheet, bones })
+        let mut model = Self { pixels_per_block: file.pixels_per_block, sheet, bones, clips: Vec::new() };
+        model.clips = clips::read(file.clips, &model).context("reading its clips")?;
+        Ok(model)
     }
 
     /// The model as its file's text.
@@ -558,6 +571,7 @@ impl BoxModel {
                     boxes: bone.boxes.iter().map(write_box).collect(),
                 })
                 .collect(),
+            clips: clips::write(self),
         };
         HEADING.to_string() + &toml::to_string(&file).expect("a box model is plain values")
     }
@@ -693,7 +707,11 @@ impl BoxModel {
             textures: Vec::new(),
             materials: Vec::new(),
             nodes: Vec::new(),
-            animation: Some(ModelAnimation { skeleton, skins: vec![skin], clips: Vec::new() }),
+            animation: Some(ModelAnimation {
+                skeleton,
+                skins: vec![skin],
+                clips: self.clips.iter().map(|clip| self.baked(clip)).collect(),
+            }),
             roles: self.bones.iter().map(|bone| bone.role).collect(),
         };
         let (data, far) = self.build(&self.rest_matrices());

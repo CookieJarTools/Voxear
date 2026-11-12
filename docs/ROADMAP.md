@@ -1398,7 +1398,18 @@ The sea, lakes, rivers and lava, built in. Manual: `manual/Water`.
     up a step, down a ledge, through a ford; a mob standing on a level's blocks, walking to a point with its legs
     swinging, climbing a block, going round a wall, wandering within its reach; a script adding and telling
     both. Manual: Block Mobs, Mob Motion.
-  - [ ] **Clips keyed on a timeline**
+  - ~~**Clips keyed on a timeline:**~~ done: a box model carries clips (`BoxClip`, `[[clips]]` in the file):
+    for each bone that moves, keys saying how far it is turned, moved and sized from rest at a moment, with how
+    it goes on to the next (`Ease`: linear, smooth through the keys either side, step). A looping clip goes from
+    its last key round to its first. `BoxModel::baked` makes every frame of one, and `prepared` gives the
+    model's clips as a model file's own, so an Animator plays one by its name and builds cook them. While an
+    Obj's Animator has a clip, its Mob Motion waits. The Model window's **Animate** mode shows a timeline under
+    the view (`model_timeline`): clips made, named, sized and looped, the moment shown, a row of keys a bone,
+    keys dragged along their rows, Play. The bone picked has rings to turn it (`Handle::Turn`), and Key rows in
+    the Inspector; either keys it at the moment shown. Tests: easing, loops, keys on steps, the file, baking;
+    a clip played by an Animator from the file and from built content with Mob Motion waiting; a clip made,
+    keyed by a ring and by a typed number, a key dragged, played, undone, in the editor. Manual: Box Models,
+    Mob Motion. Not done: timeline zoom, copying keys, moving several at once.
 
 ## Gameplay kits: game-ready systems
 
@@ -2196,6 +2207,22 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   and far distance. Presets Low to Ultra, Low making two columns at a time on two threads; a number changed makes it
   Custom. Tests: Low never has more than two columns in flight, raising it as a world streams makes nothing again;
   a pool never works more jobs at once than its limit; the file, the editor's page and a script set it.
+- ~~**The far view:**~~ done: from the third ring out, a world without end's ground is kept as columns of runs, each a
+  block from one height to another, made from the generator's heights, climate and sea alone (`blocks::generate::far`,
+  `FarTile`), the same blocks as a coarse ring's chunks wherever the ground is plain (tested chunk for chunk, cubes and
+  smooth), made into chunks and meshed as the rings are, so the renderer draws them unchanged. Eight levels at most
+  (`stream::MOST_LEVELS`), 16 km with metre blocks; each tile kept compressed in `.voxear/FarView/<world>/<what it
+  was made from>/` (500 tiles for 16 km, 4 MB), so ground seen once comes back at once. What was built shows in every
+  coarse ring where it fills an eighth of a ring's block, its rings made again once the camera leaves it
+  (`stream::raise`); `FarTile::add` takes more blocks into a column, for structures and trees later. Measured on a copy
+  of TerrainTypes' Endless Block World: to 4 km before and after alike (the same pictures, frame times within noise);
+  16 km costs 118k triangles in view against 92k at 4 km, 636 MB against 556 MB, and is made by frame 192 against 148
+  (a second), a second visit by frame 155. The presets reach 1 km on Low to 16 km on Ultra. Tests: a far tile's chunks
+  against a coarse column's, its bytes and blocks added, tiles read back from disk, a tower built near kept in the
+  rings, and mountains on the horizon 16 km off with no sky through the ground. Not done: a dithered overlap between
+  levels in place of skirts; overhangs and caves far off (the manual says so); ground taken out showing far off.
+  A far column of cubes takes water wherever its ground lies under the sea, its top block at least an eighth full or
+  the ground's own top block the sea's, as 64 m blocks and more rounded a shallow sea away to its floor.
 - Throughout: chunks culled against the frustum and last frame's depth, and the smallest save and network data
   (only changes from what a build or a seed makes, as commands while few and compacted deltas once many).
 

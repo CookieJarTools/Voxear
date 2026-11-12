@@ -6,7 +6,7 @@
 //! them, as when a handle moves what they show.
 
 use voxear_core::math::Vec3;
-use voxear_render::{BoneRole, BoxModel, BoxSkin};
+use voxear_render::{BoneRole, BoxKey, BoxModel, BoxSkin, Ease};
 use voxear_ui::{NodeId, Style, Ui};
 
 use crate::{
@@ -33,6 +33,12 @@ pub enum BoxPartEdit {
     /// Whether it has a layer, and how far the layer's pixels stand out.
     Layer(bool),
     LayerHeight(f32),
+    /// The bone's key at the moment the timeline shows: how far it is
+    /// turned, moved and sized from rest there, and how it goes on.
+    KeyRotation(Vec3),
+    KeyOffset(Vec3),
+    KeyScale(Vec3),
+    KeyEase(Ease),
 }
 
 impl BoxPartEdit {
@@ -50,6 +56,10 @@ impl BoxPartEdit {
             BoxPartEdit::Role(_) => 7,
             BoxPartEdit::Layer(_) => 8,
             BoxPartEdit::LayerHeight(_) => 9,
+            BoxPartEdit::KeyRotation(_) => 10,
+            BoxPartEdit::KeyOffset(_) => 11,
+            BoxPartEdit::KeyScale(_) => 12,
+            BoxPartEdit::KeyEase(_) => 13,
         }
     }
 }
@@ -61,6 +71,7 @@ enum Rows {
         role: NodeId,
         pivot: [NodeId; 3],
         rotation: [NodeId; 3],
+        key: KeyRows,
     },
     Box {
         position: [NodeId; 3],
@@ -72,6 +83,16 @@ enum Rows {
         layer: NodeId,
         layer_height: NodeId,
     },
+}
+
+/// The rows of a bone's key, shown while the timeline is: the section's
+/// line and heading, to hide with it, and its fields.
+struct KeyRows {
+    section: [NodeId; 2],
+    rotation: [NodeId; 3],
+    offset: [NodeId; 3],
+    scale: [NodeId; 3],
+    ease: NodeId,
 }
 
 pub struct BoxPartView {
@@ -117,7 +138,26 @@ impl BoxPartView {
                 let rows = part_rows(ui, root, "Transform", "transform");
                 let pivot = vector_row(ui, rows, "Pivot").1;
                 let rotation = vector_row(ui, rows, "Rotation").1;
-                Rows::Bone { name, role, pivot, rotation }
+                // The key, under a heading of its own, hidden until a clip is worked on.
+                let line = ui.panel(root, Style::default());
+                ui.add_class(line, "divider");
+                let foldout = ui.foldout(root, "Key", true);
+                ui.add_class(foldout, "section");
+                ui.set_foldout_icon(foldout, "rotate");
+                let rows = ui.foldout_content(foldout).expect("a foldout has content");
+                let key = KeyRows {
+                    section: [line, foldout],
+                    rotation: vector_row(ui, rows, "Rotation").1,
+                    offset: vector_row(ui, rows, "Position").1,
+                    scale: vector_row(ui, rows, "Scale").1,
+                    ease: {
+                        let row = prop(ui, rows, "Ease");
+                        ui.dropdown(row, &Ease::ALL.map(Ease::label), 0)
+                    },
+                };
+                ui.set_visible(line, false);
+                ui.set_visible(foldout, false);
+                Rows::Bone { name, role, pivot, rotation, key }
             }
             Some(model_box) => {
                 let rows = part_rows(ui, root, "Transform", "transform");
@@ -164,7 +204,7 @@ impl BoxPartView {
             }
         };
         let view = Self { path: path.to_string(), part, title, rows };
-        view.follow(ui, model);
+        view.follow(ui, model, None);
         Some(view)
     }
 
@@ -194,16 +234,18 @@ impl BoxPartView {
 
     /// What was typed or dragged in a row this frame, as a change to the
     /// part; with none, the rows are written from `model`, so they follow
-    /// what changes it elsewhere.
-    pub fn update(&mut self, ui: &mut Ui, model: &BoxModel) -> Option<BoxPartEdit> {
-        let edit = self.read(ui, model);
+    /// what changes it elsewhere. `key` is how a clip has the bone at the
+    /// moment its timeline shows, while one is worked on: a bone's rows
+    /// then show it too, to key the bone by.
+    pub fn update(&mut self, ui: &mut Ui, model: &BoxModel, key: Option<BoxKey>) -> Option<BoxPartEdit> {
+        let edit = self.read(ui, model, key);
         if edit.is_none() {
-            self.follow(ui, model);
+            self.follow(ui, model, key);
         }
         edit
     }
 
-    fn read(&self, ui: &Ui, model: &BoxModel) -> Option<BoxPartEdit> {
+    fn read(&self, ui: &Ui, model: &BoxModel, key: Option<BoxKey>) -> Option<BoxPartEdit> {
         let bone = model.bones.get(self.part.bone())?;
         let vector = |fields: &[NodeId; 3], now: Vec3| {
             let read = read_numbers(ui, fields, &now.to_array());
@@ -211,7 +253,18 @@ impl BoxPartView {
             (read != now && read.is_finite()).then_some(read)
         };
         match (&self.rows, self.part) {
-            (Rows::Bone { name, role, pivot, rotation }, _) => {
+            (Rows::Bone { name, role, pivot, rotation, key: rows }, _) => {
+                if let Some(key) = key {
+                    let eased = Ease::ALL.get(ui.selected_option(rows.ease)).copied().unwrap_or_default();
+                    let edit = vector(&rows.rotation, key.rotation)
+                        .map(BoxPartEdit::KeyRotation)
+                        .or_else(|| vector(&rows.offset, key.offset).map(BoxPartEdit::KeyOffset))
+                        .or_else(|| vector(&rows.scale, key.scale).map(BoxPartEdit::KeyScale))
+                        .or_else(|| (ui.changed(rows.ease) && eased != key.ease).then_some(BoxPartEdit::KeyEase(eased)));
+                    if edit.is_some() {
+                        return edit;
+                    }
+                }
                 let typed = ui.text(*name).trim().to_string();
                 if ui.submitted(*name) && !typed.is_empty() && typed != bone.name {
                     return Some(BoxPartEdit::Name(typed));
@@ -271,7 +324,7 @@ impl BoxPartView {
     }
 
     /// Writes the rows from `model`, but for a field being typed in.
-    fn follow(&self, ui: &mut Ui, model: &BoxModel) {
+    fn follow(&self, ui: &mut Ui, model: &BoxModel, key: Option<BoxKey>) {
         let Some(bone) = model.bones.get(self.part.bone()) else { return };
         let title = match self.part {
             Picked::Bone(_) => bone.name.clone(),
@@ -281,7 +334,21 @@ impl BoxPartView {
             ui.set_text(self.title, &title);
         }
         match (&self.rows, self.part) {
-            (Rows::Bone { name, role, pivot, rotation }, _) => {
+            (Rows::Bone { name, role, pivot, rotation, key: rows }, _) => {
+                for node in rows.section {
+                    if ui.is_visible(node) != key.is_some() {
+                        ui.set_visible(node, key.is_some());
+                    }
+                }
+                if let Some(key) = key {
+                    write_numbers(ui, &rows.rotation, &key.rotation.to_array());
+                    write_numbers(ui, &rows.offset, &key.offset.to_array());
+                    write_numbers(ui, &rows.scale, &key.scale.to_array());
+                    let eased = Ease::ALL.iter().position(|other| *other == key.ease).unwrap_or(0);
+                    if ui.selected_option(rows.ease) != eased {
+                        ui.set_selected_option(rows.ease, eased);
+                    }
+                }
                 if ui.focused() != Some(*name) && ui.text(*name) != bone.name {
                     ui.set_text(*name, &bone.name);
                 }
@@ -322,6 +389,15 @@ impl BoxPartView {
         match &self.rows {
             Rows::Bone { pivot, rotation, .. } => [*pivot, *rotation].get(row).copied(),
             Rows::Box { position, size, rotation, .. } => [*position, *size, *rotation].get(row).copied(),
+        }
+    }
+
+    /// The fields of a bone's key, for a test to type in: Rotation,
+    /// Position, then Scale.
+    pub fn key_fields(&self, row: usize) -> Option<[NodeId; 3]> {
+        match &self.rows {
+            Rows::Bone { key, .. } => [key.rotation, key.offset, key.scale].get(row).copied(),
+            Rows::Box { .. } => None,
         }
     }
 

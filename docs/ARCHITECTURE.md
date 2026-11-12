@@ -2839,7 +2839,13 @@ poses, previews, reimports or cooks a model does a box model with no path of its
   blocks placed and dug are seen at the next search) and walks it with the Obj's Character Controller, which is
   what collides. It only moves the Obj; Mob Motion sees the movement and animates. What a creature decides to do
   is left to games and packages.
-- **Planned on top:** clips keyed on a timeline.
+- **Clips** (`box_model/clips.rs`) are the made path to animation, for what Mob Motion does not do. They are
+  kept sparse, as they are made: keys only for bones that move, only at the moments that matter, each saying how
+  far the bone is from rest. What plays clips wants every bone at every frame, so `prepared` bakes each one
+  (`BoxModel::baked`) into the same `Clip` an imported model brings, and nothing above knows the difference: an
+  Animator plays one by name, and a build cooks the baked frames. Keys name their bone, not its place, so
+  hanging a bone elsewhere keeps them. The Model window keys them on a timeline (`model_timeline`) with the
+  model drawn posed on the CPU (`clip_matrices`, `mesh_posed`), as its Motion mode draws it.
 
 ## Particles *(the stateless and simulated paths, depth collision, forces, effects, lit smoke, lights, trails, meshes and half-size drawing implemented; the rest planned)*
 
@@ -3278,7 +3284,11 @@ a column past those drawn, and each column's faces on the same background thread
 blocks, so none is meshed twice and the frame waits for none. How many columns are made at once, how many threads
 make terrain, how far it reaches and how much goes up a frame is the project's `WorldBudget` (`voxear_terrain::budget`),
 a resource the streamer and renderer read each frame and scripts set, so a change takes hold with nothing made
-again. Models of small coloured
+again. From the third ring out (`stream::FAR_FROM`) a ring's columns come from the far view (`blocks::generate::far`):
+columns of runs made from the generator's heights, climate and sea, with no block's depth asked of its Volume, kept
+compressed under `.voxear/FarView`, and filled into chunks for the same meshing and drawing as the nearer rings.
+Changes kept for ground not near are raised into every ring's chunks (`stream::raise`) where they fill an eighth of a
+ring's block. Models of small coloured
 blocks come from `.vox` files (`blocks::vox`), each colour built as a kind of the world's own. A block is an asset
 (`.block`, `blocks::block`): its look and liquid are read natively, by meshing, flow, physics and servers, and its
 rules (hardness, tool kind, tier, drops, sounds) are kept with them for scripts to apply. Every `.block` of the

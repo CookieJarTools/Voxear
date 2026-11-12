@@ -44,10 +44,10 @@ impl WorldQuality {
     /// The preset's numbers; none for Custom, which keeps whatever they are.
     pub fn budget(self) -> Option<WorldBudget> {
         let (threads, columns, upload, view_distance, far_distance) = match self {
-            WorldQuality::Low => (2, 2, 4, 64.0, 512.0),
-            WorldQuality::Medium => (4, 8, 8, 128.0, 1024.0),
-            WorldQuality::High => (8, 24, 16, 192.0, 2048.0),
-            WorldQuality::Ultra => (16, 48, 32, 256.0, 4096.0),
+            WorldQuality::Low => (2, 2, 4, 64.0, 1024.0),
+            WorldQuality::Medium => (4, 8, 8, 128.0, 4096.0),
+            WorldQuality::High => (8, 24, 16, 192.0, 8192.0),
+            WorldQuality::Ultra => (16, 48, 32, 256.0, 16_384.0),
             WorldQuality::Custom => return None,
         };
         Some(WorldBudget { quality: self, threads, columns, upload, view_distance, far_distance })

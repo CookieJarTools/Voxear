@@ -349,7 +349,7 @@ mod tests {
     /// Hills, or level rock, with a network of cave rooms taken out, and a world of metre blocks on it.
     fn networked(layout: crate::generate::nodes::Laid, level: bool, caves: bool) -> (BlockFile, WorldGen) {
         use crate::generate::{
-            Graph, NodeKind,
+            Graph, NodeKind, Room, RoomRules,
             nodes::{CaveNetwork, Combine, Combining, Constant, Noise, Output, Solid},
         };
         let mut graph = Graph::default();
@@ -363,7 +363,9 @@ mod tests {
         let output = graph.add(NodeKind::Output(Output::default()), [0.0, 0.0]);
         assert!(graph.connect(height, 0, solid, Solid::HEIGHT) && graph.connect(height, 0, output, Output::HEIGHT));
         if caves {
-            let network = CaveNetwork { layout, entrances: 0.5, ..CaveNetwork::default() };
+            // Rooms made by rules among a room of set shapes, as a prefab's is.
+            let rooms = vec![Room::made(RoomRules::default()), Room::chamber()];
+            let network = CaveNetwork { layout, entrances: 0.5, rooms, ..CaveNetwork::default() };
             let network = graph.add(NodeKind::CaveNetwork(network), [0.0, 0.0]);
             let take = Combine { operation: Combining::Subtract, ..Combine::default() };
             let take = graph.add(NodeKind::Combine(take), [0.0, 0.0]);

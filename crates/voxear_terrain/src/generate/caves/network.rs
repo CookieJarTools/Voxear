@@ -18,8 +18,10 @@ use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 use super::{
     grid::{Grid, Region, Stand, V3, add, cross, dot, sub, times, unit},
+    joins::Joins,
     level::Level,
-    rooms::{NOTHING, Room, greater, lesser},
+    made::Made,
+    rooms::{NOTHING, Room, RoomExit, greater, lesser},
 };
 use crate::{
     generate::eval::{Givens, Program},
@@ -39,10 +41,8 @@ pub enum CaveLayout {
 /// How many pieces a tunnel's line is made of.
 const PIECES: usize = 16;
 
-/// How likely a region of an endless network has a room, and two rooms
-/// side by side a tunnel between them.
-const ROOMED: f32 = 0.9;
-const JOINED: f32 = 0.7;
+/// The steepest a tunnel is held to where it has no limit: none.
+pub(crate) const NO_LIMIT: f32 = 1.0e6;
 
 /// How far under a tunnel's middle its floor lies, of half its width.
 const FLOOR: f32 = 0.55;
@@ -54,9 +54,15 @@ pub(crate) struct Settings {
     pub layout: CaveLayout,
     pub spacing: f32,
     pub depth: f32,
-    /// Half a tunnel's width.
+    /// Half a tunnel's width, the narrowest and the widest.
     pub radius: f32,
+    pub radius_to: f32,
     pub winding: f32,
+    /// The steepest a tunnel runs, as rise over run, where there is room to wind it longer.
+    pub slope: f32,
+    /// How many tunnels have a dead end off them, and how many joins make loops, 0 to 1.
+    pub branches: f32,
+    pub loops: f32,
     pub rough: f32,
     pub roof: f32,
     pub entrances: f32,
@@ -129,6 +135,8 @@ pub(crate) struct Plan {
     pub ways: [V3; 4],
     /// Which of its shapes it has, a bit each.
     pub present: u64,
+    /// The room itself, where it is made by rules.
+    pub made: Option<Arc<Made>>,
     /// Where between its least and greatest depth it lies, 0 to 1.
     pub deep: f32,
     pub entrance: bool,
@@ -173,6 +181,8 @@ pub(crate) struct Network {
     pub ground: Arc<Program>,
     /// What tells it from every other network, for what is kept of it.
     pub id: u64,
+    /// The furthest any of its walls is pushed in or out, in metres.
+    pub roughest: f32,
     pub level: Option<Level>,
 }
 
@@ -195,7 +205,12 @@ impl Settings {
     /// How far a tunnel may stray from the straight line between its ends
     /// and a wall from where its shape puts it, in metres.
     pub fn stray(&self) -> f32 {
-        self.radius + self.rough + 2.0
+        greater(self.radius, self.radius_to) + self.rough + 2.0
+    }
+
+    /// The furthest any wall is pushed in or out: its own roughness, or that of a room made by rules.
+    pub fn roughest(&self) -> f32 {
+        self.rooms.iter().filter_map(|room| room.rules).map(|rules| rules.kept().roughness).fold(self.rough, greater)
     }
 
     /// How far from its region's middle a room may be moved, of half the
@@ -234,7 +249,8 @@ fn turned(v: V3, turns: u8, mirrored: bool) -> V3 {
 impl Network {
     /// A network of these values under `ground`, known from every other by `id`: a level laid out.
     pub fn new(set: Settings, ground: Arc<Program>, id: u64) -> Self {
-        let mut network = Network { set, ground, id, level: None };
+        let roughest = set.roughest();
+        let mut network = Network { set, ground, id, roughest, level: None };
         if network.set.layout == CaveLayout::Level {
             network.level = Some(Level::laid(&network));
         }
@@ -244,6 +260,14 @@ impl Network {
     /// The grid its regions lie on.
     pub fn grid(&self) -> Grid {
         Grid { spacing: self.set.spacing }
+    }
+
+    /// The noise its walls are roughened by at `p`, about -1 to 1.
+    pub fn noise(&self, p: V3) -> f32 {
+        // Coarser the rougher the walls, so a wall pushed far is pushed far over a long way, and no hollow
+        // opens apart from its room.
+        let grain = 4.0 + 2.0 * self.roughest;
+        gradient3(p[0] / grain, p[1] / grain, p[2] / grain, self.set.seed.wrapping_add(11))
     }
 
     /// The ground's height over each of `feet`.
@@ -257,28 +281,37 @@ impl Network {
         heights
     }
 
-    /// Whether an endless network has a room in `region`.
-    fn roomed(&self, region: Region) -> bool {
-        share(mix(self.set.seed, &[region[0], region[1], region[2], 1])) < ROOMED
+    /// The exits of `plan`'s room, in the room's own space.
+    pub fn exits<'a>(&'a self, plan: &'a Plan) -> &'a [RoomExit] {
+        match &plan.made {
+            Some(made) => &made.exits,
+            None => &self.set.rooms[plan.room].exits,
+        }
     }
 
-    /// Whether a tunnel joins the rooms of two regions side by side, both
-    /// with a room: the same asked from either.
-    fn joined(&self, a: Region, b: Region) -> bool {
-        let (low, high) = if a <= b { (a, b) } else { (b, a) };
-        share(mix(self.set.seed, &[low[0], low[1], low[2], high[0], high[1], high[2], 2])) < JOINED
+    /// How far inside the hollow of `plan`'s room `own` is, a place in the room's space, its walls moved
+    /// by `noise`, about -1 to 1, where it is given.
+    pub fn room_inside(&self, plan: &Plan, own: V3, noise: Option<f32>) -> f32 {
+        match &plan.made {
+            Some(made) => made.inside(own, noise),
+            None => self.set.rooms[plan.room].inside(own, plan.present, noise.map(|noise| noise * self.set.rough)),
+        }
+    }
+
+    /// No place of `plan`'s room is further than this from its origin.
+    pub fn room_reach(&self, plan: &Plan) -> f32 {
+        match &plan.made {
+            Some(made) => made.reach(),
+            None => self.set.rooms[plan.room].reach() + self.set.rough,
+        }
     }
 
     /// The room of `region` in an endless network, before its height: none
     /// where the region has none.
     pub fn plan(&self, grid: &Grid, region: Region) -> Option<Plan> {
-        if !self.roomed(region) {
-            return None;
-        }
         let set = &self.set;
+        let links = Joins { seed: set.seed, loops: set.loops }.links([region[0], region[2]])?;
         let at = |part: i32| share(mix(set.seed, &[region[0], region[1], region[2], part]));
-        let beside = grid.beside(region);
-        let links = beside.map(|next| self.roomed(next) && self.joined(region, next));
         let loose = set.loose();
         let jitter = [(at(3) * 2.0 - 1.0) * loose, (at(4) * 2.0 - 1.0) * loose];
         let entrance = at(8) < set.entrances;
@@ -306,7 +339,13 @@ impl Network {
             let away = sub(grid.stand(next, [0.0, 0.0]).foot, middle);
             unit([dot(away, stand.x), 0.0, dot(away, stand.z)], [1.0, 0.0, 0.0])
         });
-        let exits = &set.rooms[room].exits;
+        let made = set.rooms[room].rules.map(|rules| {
+            Arc::new(Made::of(&rules, mix(set.seed, &[region[0], region[1], region[2], 40])))
+        });
+        let exits: &[RoomExit] = match &made {
+            Some(made) => &made.exits,
+            None => &set.rooms[room].exits,
+        };
         // Each way of turning it, from one the region picks: the first whose exits face its tunnels best.
         let first = mix(set.seed, &[region[0], region[1], region[2], 7]) % 8;
         let mut best: Option<(f32, u8, bool, [Option<usize>; 4])> = None;
@@ -347,7 +386,7 @@ impl Network {
             let has = share(mix(set.seed, &[region[0], region[1], region[2], 16 + at as i32])) < shape.chance;
             present |= u64::from(has) << at;
         }
-        Plan { region, room, stand, turns, mirrored, beside, links, toward, ways, present, deep, entrance }
+        Plan { region, room, stand, turns, mirrored, beside, links, toward, ways, present, made, deep, entrance }
     }
 
     /// `plan`'s room where the ground over its foot is `ground` metres
@@ -360,7 +399,7 @@ impl Network {
             add(add(times(stand.x, v[0]), times(stand.up, v[1])), times(stand.z, v[2]))
         };
         let axes = [along([1.0, 0.0, 0.0]), stand.up, along([0.0, 0.0, 1.0])];
-        let bounds = Bounds::round(at, self.set.rooms[plan.room].reach() + self.set.rough);
+        let bounds = Bounds::round(at, self.room_reach(&plan));
         Placed { plan, at, axes, bounds }
     }
 
@@ -468,10 +507,10 @@ impl Network {
     /// Where a tunnel leaves `room` toward the region in its slot `slot`,
     /// and the way it leaves by.
     fn end(&self, room: &Placed, slot: usize) -> (V3, V3) {
-        let own = &self.set.rooms[room.plan.room];
+        let exits = self.exits(&room.plan);
         let out = |v: V3| add(add(times(room.axes[0], v[0]), times(room.axes[1], v[1])), times(room.axes[2], v[2]));
         match room.plan.toward[slot] {
-            Some(exit) => (add(room.at, out(own.exits[exit].at)), out(own.exits[exit].way)),
+            Some(exit) => (add(room.at, out(exits[exit].at)), out(exits[exit].way)),
             // A room with no exits: from its middle, the way its neighbour lies.
             None => {
                 let stand = &room.plan.stand;
@@ -483,15 +522,38 @@ impl Network {
     }
 
     /// The tunnel between two rooms side by side, the lesser region's
-    /// first: none where either does not know the other.
-    pub fn tunnel(&self, a: &Placed, b: &Placed) -> Option<Tunnel> {
-        let slot_a = a.plan.beside.iter().position(|&next| next == b.plan.region)?;
-        let slot_b = b.plan.beside.iter().position(|&next| next == a.plan.region)?;
+    /// first, and the dead end off it where it has one: none where either
+    /// room does not know the other.
+    pub fn tunnel(&self, a: &Placed, b: &Placed) -> Vec<Tunnel> {
+        let slots = |a: &Placed, b: &Placed| a.plan.beside.iter().position(|&next| next == b.plan.region);
+        let (Some(slot_a), Some(slot_b)) = (slots(a, b), slots(b, a)) else { return Vec::new() };
         let (from, to) = (self.end(a, slot_a), self.end(b, slot_b));
         let [x, y, z] = a.plan.region;
-        let seed = mix(self.set.seed, &[x, y, z, b.plan.region[0], b.plan.region[1], b.plan.region[2], 9]);
+        let set = &self.set;
+        let seed = mix(set.seed, &[x, y, z, b.plan.region[0], b.plan.region[1], b.plan.region[2], 9]);
         let up = unit(add(a.axes[1], b.axes[1]), a.axes[1]);
-        Some(self.wound(from, to, up, seed, self.set.winding, true))
+        // As wide as the seed says between its narrowest and its widest.
+        let radius = match set.radius_to > set.radius {
+            true => set.radius + (set.radius_to - set.radius) * share(mix(seed, &[12])),
+            false => set.radius,
+        };
+        let main = self.wound(from, to, up, seed, set.winding, true, radius);
+        if share(mix(seed, &[13])) >= set.branches {
+            return vec![main];
+        }
+        // A dead end: off one side from somewhere along its middle, a little narrower, a fifth of a region
+        // long or so.
+        let at = 5 + (mix(seed, &[14]) % 7) as usize;
+        let along = unit(sub(main.line[at + 1], main.line[at - 1]), [1.0, 0.0, 0.0]);
+        let side = if mix(seed, &[15]) % 2 == 0 { 1.0 } else { -1.0 };
+        let aside = times(unit(cross(up, along), [0.0, 0.0, 1.0]), side);
+        let long = set.spacing * (0.12 + 0.14 * share(mix(seed, &[16])));
+        let lean = (share(mix(seed, &[17])) - 0.5) * 0.8;
+        let end = add(main.line[at], add(times(aside, long), times(along, long * lean)));
+        let narrow = greater(radius * 0.8, 0.75);
+        let (from, to) = ((main.line[at], aside), (end, times(aside, -1.0)));
+        let spur = self.wound(from, to, up, mix(seed, &[18]), set.winding, true, narrow);
+        vec![main, spur]
     }
 
     /// Where the entrance of `plan`'s room comes out: the foot of the
@@ -507,7 +569,7 @@ impl Network {
     /// The exit an entrance leaves `plan`'s room by, and the way along the
     /// room's floor it goes: an exit no tunnel has, or its last.
     fn spare(&self, plan: &Plan) -> (Option<usize>, V3) {
-        let exits = &self.set.rooms[plan.room].exits;
+        let exits = self.exits(plan);
         let taken = |exit: usize| plan.toward.contains(&Some(exit));
         let exit = (0..exits.len()).find(|&exit| !taken(exit)).or(exits.len().checked_sub(1));
         let way = match exit {
@@ -523,10 +585,10 @@ impl Network {
         let (exit, way) = self.spare(&room.plan);
         let stand = &room.plan.stand;
         let away = add(times(stand.x, way[0]), times(stand.z, way[2]));
-        let own = &self.set.rooms[room.plan.room];
+        let exits = self.exits(&room.plan);
         let out = |v: V3| add(add(times(room.axes[0], v[0]), times(room.axes[1], v[1])), times(room.axes[2], v[2]));
         let from = match exit {
-            Some(exit) => add(room.at, out(own.exits[exit].at)),
+            Some(exit) => add(room.at, out(exits[exit].at)),
             None => add(room.at, times(room.axes[1], 1.2)),
         };
         let (foot, up) = grid.foot(mouth);
@@ -537,14 +599,25 @@ impl Network {
         let down = unit(sub(times(up, -0.4), away), times(up, -1.0));
         let [x, y, z] = room.plan.region;
         let seed = mix(self.set.seed, &[x, y, z, 10]);
-        self.wound((from, away), (top, down), room.axes[1], seed, self.set.winding * 0.5, false)
+        self.wound((from, away), (top, down), room.axes[1], seed, self.set.winding * 0.5, false, self.set.radius)
     }
 
     /// A tunnel from one end to another, each a place and the way out of
     /// it: leaving each the way it faces, and wound sideways between by
-    /// amounts from `seed`.
-    fn wound(&self, from: (V3, V3), to: (V3, V3), up: V3, seed: u32, winding: f32, roofed: bool) -> Tunnel {
-        let radius = self.set.radius;
+    /// amounts from `seed`. One that would run steeper than the network's
+    /// limit is wound further, so it is longer and climbs more gently, as
+    /// far as a region leaves it room to.
+    #[allow(clippy::too_many_arguments)]
+    fn wound(
+        &self,
+        from: (V3, V3),
+        to: (V3, V3),
+        up: V3,
+        seed: u32,
+        winding: f32,
+        roofed: bool,
+        radius: f32,
+    ) -> Tunnel {
         // Its ends a little inside the rooms, so it opens into them.
         let (a, b) = (sub(from.0, times(from.1, radius * 0.5)), sub(to.0, times(to.1, radius * 0.5)));
         let across = sub(b, a);
@@ -552,7 +625,8 @@ impl Network {
         let side = unit(cross(up, across), [1.0, 0.0, 0.0]);
         let pull = length * 0.5;
         let (leave, arrive) = (times(from.1, pull), times(to.1, -pull));
-        let most = greater(winding, 0.0) * lesser(length * 0.15, self.set.spacing * 0.2);
+        let widest = self.set.spacing * 0.2;
+        let mut most = greater(winding, 0.0) * lesser(length * 0.15, widest);
         // How far aside and how far up it is pushed at each of four places along it, and not at all at its ends.
         let knot = |at: usize, part: i32| match at {
             1..=4 => share(mix(seed, &[at as i32, part])) * 2.0 - 1.0,
@@ -568,17 +642,42 @@ impl Network {
             (low + (high - low) * eased) * 4.0 * t * (1.0 - t)
         };
         let mut line = [[0.0; 3]; PIECES + 1];
+        let lay = |line: &mut [V3; PIECES + 1], most: f32| {
+            for (at, point) in line.iter_mut().enumerate() {
+                let t = at as f32 / PIECES as f32;
+                let (t2, t3) = (t * t, t * t * t);
+                let weights = [2.0 * t3 - 3.0 * t2 + 1.0, t3 - 2.0 * t2 + t, 3.0 * t2 - 2.0 * t3, t3 - t2];
+                let straight = add(
+                    add(times(a, weights[0]), times(leave, weights[1])),
+                    add(times(b, weights[2]), times(arrive, weights[3])),
+                );
+                let aside = add(times(side, most * pushed(t, 0)), times(up, most * 0.25 * pushed(t, 1)));
+                *point = add(straight, aside);
+            }
+        };
+        lay(&mut line, most);
+        if roofed && self.set.slope < NO_LIMIT {
+            // How far it runs along the ground against how far it climbs: wound wider while that is too steep.
+            let climb = dot(across, up);
+            let climb = if climb < 0.0 { -climb } else { climb };
+            for _ in 0..6 {
+                let run: f32 = line
+                    .windows(2)
+                    .map(|piece| {
+                        let step = sub(piece[1], piece[0]);
+                        let level = sub(step, times(up, dot(step, up)));
+                        dot(level, level).sqrt()
+                    })
+                    .sum();
+                if climb <= self.set.slope * run || most >= widest {
+                    break;
+                }
+                most = lesser(greater(most * 1.6, length * 0.06), widest);
+                lay(&mut line, most);
+            }
+        }
         let mut bounds = Bounds::NONE;
-        for (at, point) in line.iter_mut().enumerate() {
-            let t = at as f32 / PIECES as f32;
-            let (t2, t3) = (t * t, t * t * t);
-            let weights = [2.0 * t3 - 3.0 * t2 + 1.0, t3 - 2.0 * t2 + t, 3.0 * t2 - 2.0 * t3, t3 - t2];
-            let straight = add(
-                add(times(a, weights[0]), times(leave, weights[1])),
-                add(times(b, weights[2]), times(arrive, weights[3])),
-            );
-            let aside = add(times(side, most * pushed(t, 0)), times(up, most * 0.25 * pushed(t, 1)));
-            *point = add(straight, aside);
+        for point in &line {
             bounds = bounds.with(Bounds::round(*point, radius + self.set.rough));
         }
         Tunnel { line, up, radius, roofed, bounds }
@@ -618,19 +717,18 @@ impl Gathered {
         if !self.bounds.is_some_and(|bounds| bounds.holds(p)) {
             return (NOTHING, NOTHING);
         }
-        let rough = net.set.rough;
+        let rough = net.roughest;
         let plain = self.measured(net, p, None, only);
         // Roughness moves a wall no further than itself: further off than that and a cell, it changes nothing.
         let near = |hollow: f32| hollow.abs() <= rough + size;
         if rough <= 0.0 || !(near(plain.0) || near(plain.1)) {
             return plain;
         }
-        let grain = 4.0 + 2.0 * rough;
-        let wobble = gradient3(p[0] / grain, p[1] / grain, p[2] / grain, net.set.seed.wrapping_add(11)) * rough;
-        self.measured(net, p, Some(wobble), only)
+        self.measured(net, p, Some(net.noise(p)), only)
     }
 
-    fn measured(&self, net: &Network, p: V3, wobble: Option<f32>, only: Option<&[u16]>) -> (f32, f32) {
+    /// The same with its walls moved by `noise`, about -1 to 1, where it is given.
+    fn measured(&self, net: &Network, p: V3, noise: Option<f32>, only: Option<&[u16]>) -> (f32, f32) {
         let (mut roofed, mut open) = (NOTHING, NOTHING);
         let mut room = |room: &Placed| {
             if !room.bounds.holds(p) {
@@ -638,7 +736,7 @@ impl Gathered {
             }
             let from = sub(p, room.at);
             let own = [dot(from, room.axes[0]), dot(from, room.axes[1]), dot(from, room.axes[2])];
-            roofed = greater(roofed, net.set.rooms[room.plan.room].inside(own, room.plan.present, wobble));
+            roofed = greater(roofed, net.room_inside(&room.plan, own, noise));
         };
         match only {
             Some(only) => only.iter().filter_map(|&at| self.rooms.get(usize::from(at))).for_each(&mut room),
@@ -649,7 +747,7 @@ impl Gathered {
                 return;
             }
             // A tunnel's walls come in no further than a quarter of its half width.
-            let moved = wobble.map_or(0.0, |wobble| greater(wobble, -tunnel.radius * 0.25));
+            let moved = noise.map_or(0.0, |noise| greater(noise * net.set.rough, -tunnel.radius * 0.25));
             let hollow = tunnel.inside(p) + moved;
             match tunnel.roofed {
                 true => roofed = greater(roofed, hollow),

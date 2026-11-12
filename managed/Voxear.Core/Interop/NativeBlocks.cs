@@ -1,3 +1,4 @@
+using System;
 using System.Numerics;
 using System.Text;
 
@@ -30,6 +31,23 @@ internal static unsafe class NativeBlocks
 		}
 	}
 
+	/// <summary>Every block of the project, by GUID, in the order of their paths.</summary>
+	public static string[] All()
+	{
+		if (!Native.IsConnected)
+		{
+			return [];
+		}
+		var buffer = new byte[4096];
+		var length = ReadAll(buffer);
+		if (length > buffer.Length)
+		{
+			buffer = new byte[length];
+			length = ReadAll(buffer);
+		}
+		return Encoding.UTF8.GetString(buffer, 0, length).Split('\n', StringSplitOptions.RemoveEmptyEntries);
+	}
+
 	/// <summary>The GUID of the block numbered <paramref name="block"/> in the world on an Obj; null for air or a kind of the world's own.</summary>
 	public static string? Of(ulong obj, int block)
 	{
@@ -53,6 +71,14 @@ internal static unsafe class NativeBlocks
 		fixed (byte* given = named)
 		{
 			return Native.Api->BlockSetNamed(shape, &a, &b, given, named.Length, only);
+		}
+	}
+
+	private static int ReadAll(byte[] buffer)
+	{
+		fixed (byte* answer = buffer)
+		{
+			return Native.Api->BlocksAll(answer, buffer.Length);
 		}
 	}
 

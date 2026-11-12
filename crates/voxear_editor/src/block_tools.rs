@@ -1,11 +1,15 @@
 //! The Scene view's brush for a Block World under its Build tool: a click
-//! puts the picked block against the face under the pointer, takes the
-//! block there away, or turns it into the picked block, as the brush says
+//! puts the block picked against the face under the pointer, takes the
+//! block there away, or turns it into the block picked, as the brush says
 //! (Shift places where it would break, and breaks where it would place);
 //! dragging goes on block by block. A brush larger than a block reaches a
 //! ball of blocks that many across. The Model brush builds the picked
 //! `.vox` model standing on the face clicked, once a click. A stroke is one
 //! step to undo.
+//!
+//! The block picked is one of the project's, and any world can hold it: a
+//! world that has not held it yet numbers it as a stroke first builds with
+//! it (see `block_props::number_block`).
 //!
 //! A brush that builds reaches through water to the ground under it, and
 //! what it places takes the water's place; building with water itself, or
@@ -20,6 +24,7 @@ use voxear_engine::{Game, blocks::BlockWorldAsset};
 use voxear_render::Renderer;
 use voxear_terrain::blocks::{
     BlockFaces, BlockHit, BlockMap, BlockWorld,
+    block::Liquid,
     chunk::{AIR, BlockId, Fill},
     is_water,
     smooth::{self, Ball},
@@ -78,11 +83,16 @@ fn corner_of(game: &Game, entity: Entity) -> Option<Vec3> {
 }
 
 /// The number of the block picked to build with in `entity`'s world, where
-/// one is: none once the one picked was taken out of its list.
+/// the world holds it.
 fn picked(game: &Game, entity: Entity) -> Option<BlockId> {
-    let world = &game.engine.world;
-    let at = block_props::picked(world, &world.get::<BlockWorldAsset>(entity)?.file)?;
-    Some((at + 1) as BlockId)
+    let guid = block_props::built_with(game)?;
+    game.engine.world.get::<BlockWorldAsset>(entity)?.drawn.number_of(guid)
+}
+
+/// Whether the block picked to build with is water.
+fn builds_water(game: &Game) -> bool {
+    let picked = block_props::built_with(game).and_then(|guid| game.content.loaded_block(guid));
+    picked.is_some_and(|block| block.liquid == Liquid::Water)
 }
 
 /// The block under `point` in the selected Obj's world for `brush`, and the
@@ -100,8 +110,7 @@ fn block_under(
     let (origin, direction) = camera.ray(point);
     let size = blocks.block_size;
     let from = ((origin - corner) / size).to_array();
-    let builds_water = picked(game, entity).is_some_and(|block| is_water(&blocks.faces, block));
-    let through = brush != BlockBrush::Break && !builds_water;
+    let through = brush != BlockBrush::Break && !builds_water(game);
     let meets = |block: BlockId| block != AIR && !(through && is_water(&blocks.faces, block));
     voxear_terrain::blocks::raycast_where(&blocks.blocks, from, direction.to_array(), REACH / size, &meets)
 }
@@ -203,7 +212,7 @@ impl BlockTools {
     fn work(game: &mut Game, entity: Entity, hit: &BlockHit, brush: BlockBrush) -> [i32; 3] {
         let state = block_props::ui(&game.engine.world);
         let middle = Self::middle(hit, brush);
-        // With no block picked, as once the one picked was taken out, there is nothing to place or paint with.
+        // With no block picked, or one the world has no room for, there is nothing to place or paint with.
         let picked = match (picked(game, entity), brush) {
             (Some(block), _) => block,
             (None, BlockBrush::Break) => AIR,
@@ -264,6 +273,12 @@ impl BlockTools {
             }
             self.stroke = Some((entity, at, point));
             return true;
+        }
+        // The world numbers the block as it first builds with it, here where there is a renderer for its look.
+        if brush != BlockBrush::Break
+            && let Some(guid) = block_props::built_with(game)
+        {
+            block_props::number_block(game, Some(renderer), entity, guid);
         }
         let last = Self::work(game, entity, &hit, brush);
         self.stroke = Some((entity, last, point));

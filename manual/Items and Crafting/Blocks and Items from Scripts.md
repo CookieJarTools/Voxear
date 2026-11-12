@@ -24,7 +24,7 @@ else
 
 ## What a block says
 
-`hit.Definition` is the [[Blocks|block]] a ray met, and a `Block` field in the Inspector picks one.
+`hit.Definition` is the [[Blocks|block]] a ray met, and a `Block` field in the Inspector picks one. `Blocks.All` is every block of the project, to fill a creative menu or look one up by name.
 
 | Member | What it gives |
 | --- | --- |
@@ -36,7 +36,7 @@ else
 | `BreakTime(held)` | How many seconds it takes to break with that item in hand |
 | `DropsFor(held)` | Whether that item gets its drops |
 
-A kind a world keeps itself, a colour alone, has no rules: its `Definition` is `Block.None`, and it breaks at once and drops nothing.
+A colour a world keeps itself, as a model of small blocks brings, has no rules: its `Definition` is `Block.None`, and it breaks at once and drops nothing.
 
 ## Digging
 
@@ -107,4 +107,4 @@ public sealed class OreRules : BlockRules
 
 ## Over the network
 
-Decide on the server: call `Blocks.Mine` and `Blocks.Place` there, and tell the others which `Block` or `Item` went where. A block's number in a world is that machine's own where the world numbered the block in play, so it is never what to send.
+Decide on the server: call `Blocks.Mine` and `Blocks.Place` there, and tell the others which `Block` or `Item` went where. A block's number in a world is that machine's own where the world first held the block in play, so it is never what to send.

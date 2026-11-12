@@ -90,7 +90,8 @@ use voxear_rhi::{
 pub use assets::AssetUsage;
 pub use assets::{MaterialDesc, MaterialHandle, MeshHandle, TextureSource};
 pub use box_model::{
-    BoneRole, BoxBone, BoxHit, BoxLayer, BoxModel, BoxSkin, Face, FaceRect, ModelBox, Sheet, is_box_model,
+    BoneRole, BoxBone, BoxClip, BoxHit, BoxKey, BoxLayer, BoxModel, BoxSkin, BoxTrack, Ease, Face, FaceRect, KEY_STEP,
+    LONGEST_CLIP, ModelBox, Sheet, is_box_model, on_step,
 };
 pub use capture::{Capture, CapturedImage};
 pub use cooked::{COOKED_VERSION, CookedModel};

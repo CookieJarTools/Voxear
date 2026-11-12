@@ -2839,7 +2839,13 @@ poses, previews, reimports or cooks a model does a box model with no path of its
   blocks placed and dug are seen at the next search) and walks it with the Obj's Character Controller, which is
   what collides. It only moves the Obj; Mob Motion sees the movement and animates. What a creature decides to do
   is left to games and packages.
-- **Planned on top:** clips keyed on a timeline.
+- **Clips** (`box_model/clips.rs`) are the made path to animation, for what Mob Motion does not do. They are
+  kept sparse, as they are made: keys only for bones that move, only at the moments that matter, each saying how
+  far the bone is from rest. What plays clips wants every bone at every frame, so `prepared` bakes each one
+  (`BoxModel::baked`) into the same `Clip` an imported model brings, and nothing above knows the difference: an
+  Animator plays one by name, and a build cooks the baked frames. Keys name their bone, not its place, so
+  hanging a bone elsewhere keeps them. The Model window keys them on a timeline (`model_timeline`) with the
+  model drawn posed on the CPU (`clip_matrices`, `mesh_posed`), as its Motion mode draws it.
 
 ## Particles *(the stateless and simulated paths, depth collision, forces, effects, lit smoke, lights, trails and meshes implemented; the rest planned)*
 

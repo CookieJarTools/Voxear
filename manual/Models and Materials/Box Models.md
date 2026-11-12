@@ -137,6 +137,42 @@ Turn **Layer** off in the bar to paint the box's own pixels again. You can also 
 
 A layer costs nothing where it has no pixels, and pixels next to each other share their faces. From far away, where single pixels cannot be seen, the engine draws each layer as a flat picture instead, so a crowd of creatures stays cheap.
 
+### Clips made with keys
+
+A box model can carry **clips**: short animations you make yourself, for what [[Mob Motion]] does not do. A wave, a bite, a lid opening.
+
+Click **Animate** in the bar. A timeline opens under the model.
+
+1. Click **New Clip**. A clip starts one second long and loops. Give it a **Name** and a **Length** in the timeline's bar.
+2. Click a part of the model to pick its bone. Three rings appear round the bone's pivot, one for each of its axes.
+3. Click on the timeline to choose a moment.
+4. Drag a ring to turn the bone. That makes a **key**: how the bone stands at that moment. Between two keys the bone goes from one to the other.
+5. Click **Play** to watch the clip.
+
+Each bone with keys has a row on the timeline, and each key is a dot on it. Drag a dot to move the key to another moment. Keys stand on steps of 0.05 seconds.
+
+| Button | What it does |
+| --- | --- |
+| Key | Keys the picked bone as it stands at the moment shown. Use it to hold a pose until a later key |
+| Remove Key | Takes away the picked bone's key at the moment shown. The Delete key does the same |
+| Loop | The clip goes on from its last key round to its first, so a walk needs no key at its end to match its start |
+| Delete Clip | Takes the clip shown out of the model |
+
+With a bone picked, the Inspector has a **Key** section. It shows the bone at the moment shown, and typing in a row keys the bone there:
+
+| Row | What it does |
+| --- | --- |
+| Rotation | How far the bone is turned from rest, in degrees about X, Y and Z |
+| Position | How far its pivot is moved from rest, in pixels |
+| Scale | How large the bone and everything under it is. 1 is as built |
+| Ease | How the bone goes on to the next key: **Linear** straight there, **Smooth** in a curve through the keys either side, **Step** held until the next key |
+
+Only the bones that move need keys. A bone with none stays at rest.
+
+A box model's clips are clips like any model's (see [[Animation Clips]]). Open the model out in the Project panel to see them, and give one to an [[Animator]] to play it in your level.
+
+Going back to **Shape** puts the model at rest. Renaming a bone keeps its keys.
+
 ### Undo and saving
 
 **Ctrl+Z** and **Ctrl+Y** undo and redo changes to the model while the Model window is the one you last clicked in. One drag is one step.
@@ -265,14 +301,43 @@ faces = { front = [0, 0, 8, 8], back = [8, 0, 16, 8] }
 
 Writing the right edge before the left, or the bottom before the top, draws the face turned over.
 
+### Clips
+
+Each `[[clips]]` table is one clip, and each `[[clips.bones]]` table under it holds one bone's keys:
+
+```toml
+[[clips]]
+name = "Wave"
+length = 1.0
+looping = true
+
+[[clips.bones]]
+bone = "RightArm"
+times = [0.0, 0.5]
+rotation = [[0.0, 0.0, 0.0], [0.0, 0.0, -120.0]]
+```
+
+| Setting | What it does |
+| --- | --- |
+| `name` | What the clip is called. No two clips share a name |
+| `length` | How long it lasts, in seconds, up to 60 |
+| `looping` | `true` for a clip that goes round from its last key to its first. Left out, it holds at its ends |
+| `bone` | The bone these keys move, by name |
+| `times` | When each key is, in seconds from the clip's start |
+| `rotation` | For each key, how far the bone is turned from rest, in degrees. Left out when no key turns it |
+| `move` | For each key, how far the bone's pivot is moved, in pixels. Left out when no key moves it |
+| `scale` | For each key, how large the bone is. Left out when every key leaves it at 1 |
+| `ease` | For each key, how the bone goes on to the next: `linear`, `smooth` or `step`. Left out when every key is `linear` |
+
 ## Bones and animation
 
-A box model's bones are a skeleton like any animated model's, and every box moves whole with its bone. So what works on a model's bones works here: [[Bone Attachments]] for things held or worn, and scripts that read and turn bones (see [[Bones in Scripts]]). A box model has no clips of its own yet.
+A box model's bones are a skeleton like any animated model's, and every box moves whole with its bone. So what works on a model's bones works here: [[Bone Attachments]] for things held or worn, scripts that read and turn bones (see [[Bones in Scripts]]), and an [[Animator]] playing the model's own clips.
 
 To make one walk, add a [[Mob Motion]] to the Obj that draws it, and a [[Block Mobs|Block Mob]] to have it find its own way through a Block World. It animates the model from how the Obj moves, using the roles of its bones. The Model window's **Motion** mode shows the same motion on the model while you build it.
 
 ## Not done yet
 
 - A brush wider than one pixel, and bringing a sheet in from a picture file or saving it as one.
-- Animation clips made on a timeline.
+- On the timeline: zooming in on a long clip, copying keys, and moving several keys at once.
+- Rings that move or size a bone. Position and Scale are typed in the Inspector.
 - A cut-out face casts the shadow of the whole face, holes included.

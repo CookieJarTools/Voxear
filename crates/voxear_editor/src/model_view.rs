@@ -30,6 +30,10 @@ const TURN_PER_PIXEL: f32 = 0.008;
 /// the pointer must be to a handle to take it, in logical pixels.
 const HANDLE_LENGTH: f32 = 64.0;
 const HANDLE_REACH: f32 = 9.0;
+/// How far from a bone's pivot the rings that turn it are drawn, in logical
+/// pixels, and how many straight pieces each is drawn in.
+const RING: f32 = 58.0;
+const RING_STEPS: usize = 48;
 /// How many blocks across the floor is.
 const FLOOR: f32 = 8.0;
 
@@ -61,6 +65,9 @@ pub enum Handle {
     Move(usize),
     /// Moves one face of a box, sizing it.
     Face(Face),
+    /// Turns a bone about its own X, Y or Z as it stands posed, by the
+    /// axis's number: a drag from it is counted in degrees.
+    Turn(usize),
 }
 
 /// What the view asks of the panel.
@@ -69,7 +76,7 @@ pub enum ViewEvent {
     /// A click picked this box, or with none, nothing.
     Pick(Option<Picked>),
     /// A drag from a handle began, went on to this many pixels from where
-    /// it began, or ended.
+    /// it began, or for a handle that turns this many degrees, or ended.
     DragBegan(Handle),
     Dragged(Handle, f32),
     DragEnded,
@@ -95,6 +102,9 @@ pub enum ViewMode {
     Paint { mirror: bool, layer: bool },
     /// The model is only looked at, as while it is shown moving.
     Look,
+    /// A click picks the bone of the box under it, and handles round the
+    /// bone picked turn it, as it stands posed.
+    Pose,
 }
 
 /// Where the camera is: going round `target`, `distance` metres from it.
@@ -144,6 +154,18 @@ struct Dragging {
     pressed_at: f32,
     pixel: f32,
     last: f32,
+    /// For a handle that turns: how far round the pointer has taken it.
+    turn: Option<Turning>,
+}
+
+/// A drag from a ring that turns: where in the view it was pressed, which
+/// way across the view the ring runs there as the bone turns on, and how
+/// many logical pixels along that way turn it a radian.
+#[derive(Clone, Copy)]
+struct Turning {
+    pressed: Vec2,
+    along: Vec2,
+    per_radian: f32,
 }
 
 /// A press on the view not yet let go: where it was made, where it was last
@@ -177,6 +199,8 @@ pub struct ModelView {
     dragging: Option<Dragging>,
     /// Where a stroke of paint last was in the view, while one goes on.
     stroke: Option<Vec2>,
+    /// Where each bone is while the model is shown posed, in its space.
+    posed: Option<Vec<Mat4>>,
     dark: bool,
     /// Asked to draw again, as when the model or the camera changed.
     stale: bool,
@@ -208,6 +232,7 @@ impl ModelView {
             panning: None,
             dragging: None,
             stroke: None,
+            posed: None,
             dark: true,
             stale: true,
         }
@@ -256,7 +281,7 @@ impl ModelView {
             renderer.free_material(material);
             renderer.free_texture(texture);
         }
-        self.stale = true;
+        (self.stale, self.posed) = (true, None);
         // Drawn as it stands, with nothing posing it: no skin is needed.
         let data = MeshData { skin: Vec::new(), ..model.mesh() };
         if data.indices.is_empty() {
@@ -300,7 +325,12 @@ impl ModelView {
         scale: f32,
     ) -> Vec<ViewEvent> {
         // Painting, nothing has handles.
-        let handled = picked.filter(|_| mode == ViewMode::Shape);
+        let handled = picked.filter(|_| matches!(mode, ViewMode::Shape | ViewMode::Pose));
+        // Where the bones are: as last posed, while a pose is what is shown.
+        let bones = match (mode, &self.posed) {
+            (ViewMode::Pose, Some(posed)) if posed.len() == model.bones.len() => posed.clone(),
+            _ => model.rest_matrices(),
+        };
         let [_, _, width, height] = ui.rect(self.frame);
         if width < 1.0 || height < 1.0 {
             return Vec::new();
@@ -317,16 +347,16 @@ impl ModelView {
             (self.size, self.stale) = (size, true);
         }
         let seen = Seen { camera: self.orbit.camera(), width, height };
-        let handles = handles(model, handled, &seen);
-        let events = self.pointer(ui, model, &seen, &handles, mode);
+        let handles = handles(model, &bones, handled, &seen, mode);
+        let events = self.pointer(ui, model, &bones, &seen, &handles, mode);
         // Seen again from where the pointer just put the camera.
         let seen = Seen { camera: self.orbit.camera(), width, height };
-        let handles = self::handles(model, handled, &seen);
+        let handles = self::handles(model, &bones, handled, &seen, mode);
         let hot = self.dragging.map(|drag| drag.handle).or_else(|| {
             let pointer = self.pointer_in(ui)?;
-            (!self.is_dragging()).then(|| nearest_handle(&handles, pointer)).flatten()
+            (!self.is_dragging()).then(|| nearest_handle(&handles, pointer, &seen)).flatten()
         });
-        let mut drawn = shapes(model, picked, &seen, &handles, hot);
+        let mut drawn = shapes(model, &bones, picked, &seen, &handles, hot);
         // Painting, the pixel under the pointer is marked.
         if let (ViewMode::Paint { .. }, Some(pointer), false) = (mode, self.pointer_in(ui), self.is_dragging()) {
             let bones = model.rest_matrices();
@@ -363,6 +393,7 @@ impl ModelView {
         &mut self,
         ui: &mut Ui,
         model: &BoxModel,
+        bones: &[Mat4],
         seen: &Seen,
         handles: &[(Handle, HandleLine)],
         mode: ViewMode,
@@ -396,6 +427,15 @@ impl ModelView {
             // A drag from a handle goes on.
             (true, _, Some(local)) if self.dragging.is_some() => {
                 let drag = self.dragging.as_mut().expect("checked");
+                // From a ring that turns: by how far the pointer has gone the way the ring runs.
+                if let Some(turn) = drag.turn {
+                    let degrees = ((local - turn.pressed).dot(turn.along) / turn.per_radian).to_degrees().round();
+                    if degrees != drag.last {
+                        drag.last = degrees;
+                        events.push(ViewEvent::Dragged(drag.handle, degrees));
+                    }
+                    return events;
+                }
                 let (origin, direction) = seen.ray(local);
                 let now = along_line(drag.from, drag.along, origin, direction);
                 let pixels = ((now - drag.pressed_at) / drag.pixel).round();
@@ -431,15 +471,39 @@ impl ModelView {
                 self.stroke = Some(local);
             }
             // A press begins: on a handle, or on the view.
-            (true, Some(now), Some(local)) => match nearest_handle(handles, local) {
+            (true, Some(now), Some(local)) => match nearest_handle(handles, local, seen) {
                 Some(handle) => {
                     let line = handles.iter().find(|(other, _)| *other == handle).map(|(_, line)| *line);
                     let line = line.expect("found among them");
                     let (origin, direction) = seen.ray(local);
                     let pressed_at = along_line(line.from, line.along, origin, direction);
                     let pixel = model.pixel_size();
-                    self.dragging =
-                        Some(Dragging { handle, from: line.from, along: line.along, pressed_at, pixel, last: 0.0 });
+                    // A ring is taken hold of at its point nearest the press, and turns as the pointer goes
+                    // the way it runs there in the view.
+                    let turn = matches!(handle, Handle::Turn(_)).then(|| {
+                        let points = ring(&line, seen);
+                        let away = |drawn: &Option<Vec2>| drawn.map_or(f32::INFINITY, |drawn| drawn.distance(local));
+                        let held = points.iter().min_by(|a, b| away(&a.1).total_cmp(&away(&b.1)));
+                        let held = held.map_or(line.from, |(at, _)| *at);
+                        let out = held - line.from;
+                        let on = line.along.cross(out).normalize_or_zero() * out.length() * 0.05;
+                        let moved = seen.project(held + on).zip(seen.project(held)).map(|(to, from)| to - from);
+                        let moved = moved.unwrap_or(Vec2::X);
+                        Turning {
+                            pressed: local,
+                            along: moved.try_normalize().unwrap_or(Vec2::X),
+                            per_radian: (moved.length() / 0.05).max(RING * 0.25),
+                        }
+                    });
+                    self.dragging = Some(Dragging {
+                        handle,
+                        from: line.from,
+                        along: line.along,
+                        pressed_at,
+                        pixel,
+                        last: 0.0,
+                        turn,
+                    });
                     events.push(ViewEvent::DragBegan(handle));
                 }
                 None => self.press = Some(Press { at: now, last: now, moved: false }),
@@ -462,8 +526,13 @@ impl ModelView {
                         ViewMode::Look => {}
                         ViewMode::Shape => {
                             let (origin, direction) = seen.ray(local);
-                            let hit = model.pick(&model.rest_matrices(), origin, direction);
+                            let hit = model.pick(bones, origin, direction);
                             events.push(ViewEvent::Pick(hit.map(|hit| Picked::Box(hit.bone, hit.index))));
+                        }
+                        ViewMode::Pose => {
+                            let (origin, direction) = seen.ray(local);
+                            let hit = model.pick(bones, origin, direction);
+                            events.push(ViewEvent::Pick(hit.map(|hit| Picked::Bone(hit.bone))));
                         }
                         // A press made and let go between two frames paints its pixel all the same.
                         ViewMode::Paint { .. } => {
@@ -510,7 +579,11 @@ impl ModelView {
     /// Draws the model with its bones where `bones` puts them rather than
     /// at rest, one for each bone, for showing it move.
     pub fn show_posed(&mut self, renderer: &mut Renderer, model: &BoxModel, bones: &[Mat4]) {
-        let Some((mesh, texture, material)) = self.drawn else { return self.model_changed(renderer, model) };
+        if self.drawn.is_none() {
+            self.model_changed(renderer, model);
+        }
+        self.posed = Some(bones.to_vec());
+        let Some((mesh, texture, material)) = self.drawn else { return };
         let data = MeshData { skin: Vec::new(), ..model.mesh_posed(bones) };
         if data.indices.is_empty() {
             return;
@@ -625,6 +698,11 @@ impl ModelView {
         self.floor
     }
 
+    /// Whether the model is drawn posed, rather than as it stands at rest.
+    pub fn is_posed(&self) -> bool {
+        self.posed.is_some()
+    }
+
     /// Where a point of the model's space is drawn in the window, for a
     /// test to press on.
     pub fn point(&self, ui: &Ui, at: Vec3) -> Option<(f32, f32)> {
@@ -638,7 +716,13 @@ impl ModelView {
     pub fn handle_point(&self, ui: &Ui, model: &BoxModel, picked: Picked, handle: Handle) -> Option<(f32, f32)> {
         let [left, top, width, height] = ui.rect(self.frame);
         let seen = Seen { camera: self.orbit.camera(), width, height };
-        let handles = handles(model, Some(picked), &seen);
+        let turning = matches!(handle, Handle::Turn(_));
+        let (mode, bones) = match (turning, &self.posed) {
+            (true, Some(posed)) if posed.len() == model.bones.len() => (ViewMode::Pose, posed.clone()),
+            (true, _) => (ViewMode::Pose, model.rest_matrices()),
+            (false, _) => (ViewMode::Shape, model.rest_matrices()),
+        };
+        let handles = handles(model, &bones, Some(picked), &seen, mode);
         let line = handles.iter().find(|(other, _)| *other == handle)?.1;
         Some((left + line.end.x, top + line.end.y))
     }
@@ -702,11 +786,39 @@ struct HandleLine {
 
 /// The handles on what is picked: an arrow each for X, Y and Z, along the
 /// axes of what it is measured from, and for a box a knob on each face.
-fn handles(model: &BoxModel, picked: Option<Picked>, seen: &Seen) -> Vec<(Handle, HandleLine)> {
+fn handles(
+    model: &BoxModel,
+    bones: &[Mat4],
+    picked: Option<Picked>,
+    seen: &Seen,
+    mode: ViewMode,
+) -> Vec<(Handle, HandleLine)> {
     let Some(picked) = picked else { return Vec::new() };
-    let bones = model.rest_matrices();
-    let Some(bone) = model.bones.get(picked.bone()) else { return Vec::new() };
+    let Some(bone) = model.bones.get(picked.bone()).filter(|_| bones.len() == model.bones.len()) else {
+        return Vec::new();
+    };
     let mut found = Vec::new();
+    // Posing, a knob on a ring round each of the bone's own axes, which a drag takes round it.
+    if mode == ViewMode::Pose {
+        let place = bones[picked.bone()];
+        let pivot = place.w_axis.truncate();
+        let Some(start) = seen.project(pivot) else { return found };
+        let axes = [place.x_axis, place.y_axis, place.z_axis].map(|axis| axis.truncate().normalize_or_zero());
+        let lines = [0, 1, 2].map(|axis| HandleLine { from: pivot, along: axes[axis], start, end: start, color: AXES[axis].1 });
+        let rings = lines.map(|line| ring(&line, seen));
+        for (axis, line) in lines.into_iter().enumerate() {
+            // Its end is where it is best taken hold of: on the near side, as far from the other rings as it gets.
+            let near = |at: Vec3| (at - pivot).dot(seen.camera.position - pivot) > 0.0;
+            let clear = |drawn: Vec2| {
+                let others = rings.iter().enumerate().filter(|(other, _)| *other != axis).flat_map(|(_, ring)| ring);
+                others.filter_map(|(_, other)| Some(other.as_ref()?.distance(drawn))).fold(f32::INFINITY, f32::min)
+            };
+            let drawn = rings[axis].iter().filter(|(at, _)| near(*at)).filter_map(|(_, drawn)| *drawn);
+            let end = drawn.max_by(|a, b| clear(*a).total_cmp(&clear(*b))).unwrap_or(start);
+            found.push((Handle::Turn(axis), HandleLine { end, ..line }));
+        }
+        return found;
+    }
     // A bone moves in its parent's space, a box in its bone's.
     let (space, middle) = match picked {
         Picked::Bone(at) => {
@@ -738,9 +850,30 @@ fn handles(model: &BoxModel, picked: Option<Picked>, seen: &Seen) -> Vec<(Handle
     found
 }
 
-/// The handle whose end the pointer is nearest, within reach of it.
-fn nearest_handle(handles: &[(Handle, HandleLine)], pointer: Vec2) -> Option<Handle> {
-    let near = handles.iter().map(|(handle, line)| (*handle, line.end.distance(pointer)));
+/// The points of the ring a handle that turns is drawn as, about the
+/// bone's pivot: each in the model's space, and where it is in the view.
+fn ring(line: &HandleLine, seen: &Seen) -> Vec<(Vec3, Option<Vec2>)> {
+    let reach = seen.metres_per_pixel((line.from - seen.camera.position).length()) * RING;
+    let (across, up) = line.along.any_orthonormal_pair();
+    let point = |step: usize| {
+        let angle = step as f32 / RING_STEPS as f32 * std::f32::consts::TAU;
+        let at = line.from + (across * angle.cos() + up * angle.sin()) * reach;
+        (at, seen.project(at))
+    };
+    (0..RING_STEPS).map(point).collect()
+}
+
+/// The handle whose end the pointer is nearest, within reach of it; for
+/// one that turns, whose ring it is nearest.
+fn nearest_handle(handles: &[(Handle, HandleLine)], pointer: Vec2, seen: &Seen) -> Option<Handle> {
+    let away = |handle: &Handle, line: &HandleLine| match handle {
+        Handle::Turn(_) => {
+            let drawn = ring(line, seen).into_iter().filter_map(|(_, drawn)| drawn);
+            drawn.map(|drawn| drawn.distance(pointer)).fold(f32::INFINITY, f32::min)
+        }
+        _ => line.end.distance(pointer),
+    };
+    let near = handles.iter().map(|(handle, line)| (*handle, away(handle, line)));
     near.filter(|(_, distance)| *distance <= HANDLE_REACH).min_by(|a, b| a.1.total_cmp(&b.1)).map(|(handle, _)| handle)
 }
 
@@ -759,14 +892,16 @@ fn along_line(from: Vec3, along: Vec3, origin: Vec3, direction: Vec3) -> f32 {
 /// marked, and the handles.
 fn shapes(
     model: &BoxModel,
+    bones: &[Mat4],
     picked: Option<Picked>,
     seen: &Seen,
     handles: &[(Handle, HandleLine)],
     hot: Option<Handle>,
 ) -> Vec<Shape> {
     let Some(picked) = picked else { return Vec::new() };
-    let bones = model.rest_matrices();
-    let Some(bone) = model.bones.get(picked.bone()) else { return Vec::new() };
+    let Some(bone) = model.bones.get(picked.bone()).filter(|_| bones.len() == model.bones.len()) else {
+        return Vec::new();
+    };
     let mut shapes = Vec::new();
     let mut outline = |index: usize, color: Color| {
         let Some(model_box) = bone.boxes.get(index) else { return };
@@ -789,6 +924,17 @@ fn shapes(
     for (handle, line) in handles {
         let lit = hot == Some(*handle);
         let color = if lit { Color::WHITE } else { line.color };
+        // A handle that turns is its ring: a circle about the bone's pivot, across the axis it turns about.
+        if matches!(handle, Handle::Turn(_)) {
+            let points = ring(line, seen);
+            for (step, (_, from)) in points.iter().enumerate() {
+                if let (Some(from), Some(to)) = (from, points[(step + 1) % points.len()].1) {
+                    let width = if lit { 2.5 } else { 1.5 };
+                    shapes.push(Shape::Line { from: from.to_array(), to: to.to_array(), width, color });
+                }
+            }
+            continue;
+        }
         if matches!(handle, Handle::Move(_)) {
             shapes.push(Shape::Line { from: line.start.to_array(), to: line.end.to_array(), width: 2.0, color });
         }
@@ -850,18 +996,29 @@ mod tests {
         let model = BoxModel::starter();
         let orbit = Orbit::default();
         let seen = Seen { camera: orbit.camera(), width: 800.0, height: 600.0 };
-        let found = handles(&model, Some(Picked::Box(0, 0)), &seen);
+        let bones = model.rest_matrices();
+        let found = handles(&model, &bones, Some(Picked::Box(0, 0)), &seen, ViewMode::Shape);
         assert_eq!(found.len(), 9);
         let arrow = found.iter().find(|(handle, _)| *handle == Handle::Move(1)).unwrap().1;
         // About as long on screen wherever it is: a little shorter for being seen from above.
         let drawn = arrow.start.distance(arrow.end);
         assert!((HANDLE_LENGTH * 0.75..=HANDLE_LENGTH + 2.0).contains(&drawn), "{drawn}");
         assert!(arrow.end.y < arrow.start.y, "up is up");
-        assert_eq!(nearest_handle(&found, arrow.end + Vec2::new(3.0, 2.0)), Some(Handle::Move(1)));
-        assert_eq!(nearest_handle(&found, Vec2::new(5.0, 5.0)), None);
+        assert_eq!(nearest_handle(&found, arrow.end + Vec2::new(3.0, 2.0), &seen), Some(Handle::Move(1)));
+        assert_eq!(nearest_handle(&found, Vec2::new(5.0, 5.0), &seen), None);
         // A bone has the arrows alone, from its pivot.
-        let found = handles(&model, Some(Picked::Bone(0)), &seen);
+        let found = handles(&model, &bones, Some(Picked::Bone(0)), &seen, ViewMode::Shape);
         assert_eq!(found.len(), 3);
-        assert!(handles(&model, None, &seen).is_empty());
+        assert!(handles(&model, &bones, None, &seen, ViewMode::Shape).is_empty());
+        // Posing, a bone has a ring to turn it about each of its axes, and nothing to move it by.
+        let found = handles(&model, &bones, Some(Picked::Bone(0)), &seen, ViewMode::Pose);
+        let turns: Vec<Handle> = found.iter().map(|(handle, _)| *handle).collect();
+        assert_eq!(turns, [Handle::Turn(0), Handle::Turn(1), Handle::Turn(2)]);
+        for (handle, line) in &found {
+            let drawn: Vec<Vec2> = ring(line, &seen).into_iter().filter_map(|(_, drawn)| drawn).collect();
+            let far = drawn.iter().map(|point| point.distance(line.start)).fold(0.0, f32::max);
+            assert!((far - RING).abs() < 6.0, "a ring is as large in the view wherever it is: {far}");
+            assert_eq!(nearest_handle(&found, line.end, &seen), Some(*handle), "taken hold of where it is clear");
+        }
     }
 }

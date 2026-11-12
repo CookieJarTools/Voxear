@@ -1398,7 +1398,18 @@ The sea, lakes, rivers and lava, built in. Manual: `manual/Water`.
     up a step, down a ledge, through a ford; a mob standing on a level's blocks, walking to a point with its legs
     swinging, climbing a block, going round a wall, wandering within its reach; a script adding and telling
     both. Manual: Block Mobs, Mob Motion.
-  - [ ] **Clips keyed on a timeline**
+  - ~~**Clips keyed on a timeline:**~~ done: a box model carries clips (`BoxClip`, `[[clips]]` in the file):
+    for each bone that moves, keys saying how far it is turned, moved and sized from rest at a moment, with how
+    it goes on to the next (`Ease`: linear, smooth through the keys either side, step). A looping clip goes from
+    its last key round to its first. `BoxModel::baked` makes every frame of one, and `prepared` gives the
+    model's clips as a model file's own, so an Animator plays one by its name and builds cook them. While an
+    Obj's Animator has a clip, its Mob Motion waits. The Model window's **Animate** mode shows a timeline under
+    the view (`model_timeline`): clips made, named, sized and looped, the moment shown, a row of keys a bone,
+    keys dragged along their rows, Play. The bone picked has rings to turn it (`Handle::Turn`), and Key rows in
+    the Inspector; either keys it at the moment shown. Tests: easing, loops, keys on steps, the file, baking;
+    a clip played by an Animator from the file and from built content with Mob Motion waiting; a clip made,
+    keyed by a ring and by a typed number, a key dragged, played, undone, in the editor. Manual: Box Models,
+    Mob Motion. Not done: timeline zoom, copying keys, moving several at once.
 
 ## Gameplay kits: game-ready systems
 

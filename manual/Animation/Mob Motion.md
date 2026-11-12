@@ -57,6 +57,10 @@ motion.Attack();
 
 To have a creature walk about by itself in a Block World, add a [[Block Mobs|Block Mob]] as well.
 
+## With clips of your own
+
+For a movement Mob Motion does not make, key a clip in the Model window (see **Clips made with keys** in [[Box Models]]) and add an [[Animator]] to the same Obj. While the Animator has a clip, the clip poses the model and Mob Motion waits. Clear the Animator's clip and Mob Motion carries on from standing.
+
 ## Watching it in the Model window
 
 You can see a model move before it is in a level. Open it in the Model window and click **Motion** in the bar. Pick **Stand**, **Walk** or **Run**, and click **Attack** or **Hurt** to see those. Nothing about the model changes while you watch, and going back to **Shape** puts it at rest.
@@ -64,4 +68,4 @@ You can see a model move before it is in a level. Open it in the Model window an
 ## Not done yet
 
 - Feet placed on uneven ground.
-- Mob Motion over a clip, for creatures that mix made animation with this.
+- Mob Motion and a clip at once, as a creature that walks while a clip moves its arms.

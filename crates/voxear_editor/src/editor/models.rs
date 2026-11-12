@@ -193,7 +193,8 @@ impl Editor {
         else {
             return;
         };
-        let edit = self.inspector.box_part_view().and_then(|view| view.update(&mut self.ui, model));
+        let key = self.model.key_shown();
+        let edit = self.inspector.box_part_view().and_then(|view| view.update(&mut self.ui, model, key));
         if let Some(edit) = edit {
             self.model.edit(part, edit);
         }

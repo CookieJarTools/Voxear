@@ -8,6 +8,12 @@
 //! each of its faces. The bar over both adds a bone or a box, copies what
 //! is picked, makes its mirror across the body, or takes it out.
 //!
+//! The bar's Shape, Paint, Motion and Animate say what the window is for.
+//! Animate shows the model's clips on a timeline under the view (see
+//! `model_timeline`): the model stands as the clip shown has it at the
+//! moment shown, and turning the bone picked by the rings round it, or
+//! typing in its Key rows in the Inspector, keys it there.
+//!
 //! The bone or box picked shows its numbers in the Inspector (see
 //! `box_part_inspector`). Every change makes a step to undo, which Ctrl+Z
 //! and Ctrl+Y reach while the window is the one last pressed in; changes
@@ -23,12 +29,13 @@ use std::{
 
 use voxear_core::math::Vec3;
 use voxear_engine::animation::{MobMotion, MobPoser, MotionInput};
-use voxear_render::{BoxModel, BoxSkin, Face, Renderer};
+use voxear_render::{BoxKey, BoxModel, BoxSkin, Face, Renderer, on_step};
 use voxear_ui::{ColorPicker, DropPlace, NodeId, PickedColor, Style, TreeItems, Ui};
 
 use crate::{
     box_part_inspector::BoxPartEdit,
     model_sheet::SheetView,
+    model_timeline::{TimelineEvent, TimelineView},
     model_view::{Handle, ModelView, Picked, ViewEvent, ViewMode},
 };
 
@@ -54,16 +61,19 @@ pub enum EditKey {
     Drag,
     /// A stroke of paint.
     Stroke,
+    /// The length of the clip shown.
+    Length,
 }
 
 /// What the window is for at the moment: shaping the model, painting it,
-/// or watching it move.
+/// watching it move, or keying its clips.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Mode {
     #[default]
     Shape,
     Paint,
     Motion,
+    Animate,
 }
 
 /// How fast the model is shown moving.
@@ -275,6 +285,20 @@ pub struct ModelPanel {
     /// What moves it while it is watched, made for the model's bones as they now are, and when it last moved.
     poser: Option<(MobPoser, Vec<voxear_render::BoneRole>, usize)>,
     moved_at: Option<Instant>,
+    /// Keying its clips: the timeline, the clip shown by its place among
+    /// the model's, the moment of it shown, in seconds, and whether it
+    /// plays, with when it last moved on.
+    timeline: TimelineView,
+    clip: usize,
+    time: f32,
+    playing: bool,
+    played_at: Option<Instant>,
+    /// The clip and moment the view last posed the model at, and whether
+    /// the model has changed since.
+    posed: Option<(usize, u32)>,
+    pose_stale: bool,
+    /// How many frames from now the whole model is brought into view; 0 for not at all.
+    frame_in: u8,
     mode: Mode,
     tool: Tool,
     tree: NodeId,
@@ -306,6 +330,7 @@ impl ModelPanel {
         ui.add_segment(modes, "Shape", None);
         ui.add_segment(modes, "Paint", None);
         ui.add_segment(modes, "Motion", None);
+        ui.add_segment(modes, "Animate", None);
         let group = |ui: &mut Ui| {
             let group = ui.panel(bar, Style::row());
             ui.add_class(group, "model-bar-group");
@@ -380,6 +405,8 @@ impl ModelPanel {
         ui.add_class(picker_frame, "model-picker");
         let picker = ColorPicker::new(ui, picker_frame);
         ui.set_visible(picker_frame, false);
+        let timeline = TimelineView::new(ui, body);
+        ui.set_visible(timeline.frame_node(), false);
         ui.set_visible(body, false);
         Self {
             modes,
@@ -402,6 +429,14 @@ impl ModelPanel {
             hurt,
             poser: None,
             moved_at: None,
+            timeline,
+            clip: 0,
+            time: 0.0,
+            playing: false,
+            played_at: None,
+            posed: None,
+            pose_stale: true,
+            frame_in: 0,
             mode: Mode::Shape,
             tool: Tool::Pencil,
             sheet,
@@ -445,6 +480,7 @@ impl ModelPanel {
             repainted: true,
         });
         self.active = true;
+        (self.clip, self.time, self.playing, self.pose_stale) = (0, 0.0, false, true);
     }
 
     fn show_name(&mut self, ui: &mut Ui, path: &str) {
@@ -531,6 +567,87 @@ impl ModelPanel {
         self.mode
     }
 
+    /// The timeline of the model's clips, which shows while they are keyed.
+    pub fn timeline(&self) -> &TimelineView {
+        &self.timeline
+    }
+
+    /// The clip the timeline shows, by its place among the model's, and
+    /// the moment of it shown, in seconds.
+    pub fn clip(&self) -> usize {
+        self.clip
+    }
+
+    pub fn time(&self) -> f32 {
+        self.time
+    }
+
+    /// Shows a moment of the clip, on the step nearest it, stopped there.
+    pub fn set_time(&mut self, time: f32) {
+        (self.time, self.playing) = (on_step(time.max(0.0)), false);
+    }
+
+    pub fn is_playing(&self) -> bool {
+        self.playing
+    }
+
+    /// Plays the clip shown, or stops it where it is.
+    pub fn play(&mut self, on: bool) {
+        (self.playing, self.played_at) = (on, None);
+        // From the start, where one that does not loop had come to its end.
+        let ended = |clip: &voxear_render::BoxClip| !clip.looping && self.time >= clip.length;
+        if on && self.model().and_then(|model| model.clips.get(self.clip)).is_some_and(ended) {
+            self.time = 0.0;
+        }
+    }
+
+    /// How the clip shown has the picked bone at the moment shown, while
+    /// clips are keyed: what its Key rows in the Inspector show.
+    pub fn key_shown(&self) -> Option<BoxKey> {
+        let open = self.open.as_ref().filter(|_| self.mode == Mode::Animate)?;
+        let bone = open.model.bones.get(open.picked?.bone())?;
+        Some(match open.model.clips.get(self.clip) {
+            Some(clip) => clip.value(&bone.name, self.time),
+            None => BoxKey::at_rest(0.0),
+        })
+    }
+
+    /// Keys the bone picked, in the clip shown at the moment shown, as it
+    /// stands there. A model with no clip gets one.
+    pub fn add_key(&mut self) {
+        let Some((open, picked)) = self.open.as_ref().and_then(|open| Some((open, open.picked?))) else { return };
+        let model = open.model.clone();
+        self.key_with(model, picked.bone(), None, |_| {});
+    }
+
+    /// Takes away the key the bone picked has at the moment shown.
+    pub fn remove_key(&mut self) {
+        let Some((open, picked)) = self.open.as_ref().and_then(|open| Some((open, open.picked?))) else { return };
+        let mut model = open.model.clone();
+        let Some(name) = model.bones.get(picked.bone()).map(|bone| bone.name.clone()) else { return };
+        let time = self.time;
+        if model.clips.get_mut(self.clip).is_some_and(|clip| clip.remove_key(&name, time).is_some()) {
+            self.change(model, None);
+        }
+    }
+
+    /// Keys a bone of `model` in the clip shown, at the moment shown: as
+    /// it stands there, and then as `edit` leaves it. The open model
+    /// becomes `model` so keyed, a step to undo.
+    fn key_with(&mut self, mut model: BoxModel, bone: usize, key: Option<EditKey>, edit: impl FnOnce(&mut BoxKey)) {
+        let Some(name) = model.bones.get(bone).map(|bone| bone.name.clone()) else { return };
+        if model.clips.is_empty() {
+            model.add_clip("Clip");
+        }
+        let clip = self.clip.min(model.clips.len() - 1);
+        let time = on_step(self.time.clamp(0.0, model.clips[clip].length));
+        let mut made = BoxKey { time, ..model.clips[clip].value(&name, time) };
+        edit(&mut made);
+        model.clips[clip].set_key(&name, made);
+        (self.clip, self.time, self.playing) = (clip, time, false);
+        self.change(model, key);
+    }
+
     /// Shapes the model, or paints it.
     pub fn set_mode(&mut self, ui: &mut Ui, mode: Mode) {
         // Taken up at the next frame, as a press on the bar is.
@@ -597,6 +714,7 @@ impl ModelPanel {
             || (layered && model.sheet != open.model.sheet);
         (open.stale, open.repainted) = (open.stale || reshaped, open.repainted || model.sheet != open.model.sheet);
         (open.model, open.unsaved) = (model, true);
+        self.pose_stale = true;
         if open.picked.is_some_and(|picked| !has(&open.model, picked)) {
             open.picked = None;
             self.pending.push(ModelEvent::Inspect(None));
@@ -621,6 +739,7 @@ impl ModelPanel {
         to.push((open.model.clone(), open.picked));
         history.last = None;
         (open.model, open.unsaved, open.stale, open.repainted, open.held) = (model, true, true, true, None);
+        self.pose_stale = true;
         let picked = picked.filter(|picked| has(&open.model, *picked));
         if open.picked != picked {
             open.picked = picked;
@@ -659,8 +778,12 @@ impl ModelPanel {
         self.pick(Some(Picked::Box(bone, index)));
     }
 
-    /// Takes out what is picked: a box, or a bone with all under it.
+    /// Takes out what is picked: a box, or a bone with all under it. While
+    /// clips are keyed, the picked bone's key at the moment shown instead.
     pub fn delete_picked(&mut self) {
+        if self.mode == Mode::Animate {
+            return self.remove_key();
+        }
         let Some((open, picked)) = self.open.as_ref().and_then(|open| Some((open, open.picked?))) else { return };
         let mut model = open.model.clone();
         match picked {
@@ -683,6 +806,10 @@ impl ModelPanel {
     }
 
     fn copy_picked(&mut self, mirrored: bool) {
+        // Keying its clips, the model's shape is left as it is.
+        if self.mode == Mode::Animate {
+            return;
+        }
         let Some((open, picked)) = self.open.as_ref().and_then(|open| Some((open, open.picked?))) else { return };
         let mut model = open.model.clone();
         let made = match picked {
@@ -739,11 +866,21 @@ impl ModelPanel {
         }
         let key = EditKey::Row(part, edit.row());
         match (edit, part) {
-            (BoxPartEdit::Name(name), Picked::Bone(at)) => {
-                // No two bones of a name.
-                model.bones[at].name.clear();
-                model.bones[at].name = model.unique_name(&name);
+            // The bone's key at the moment the timeline shows.
+            (BoxPartEdit::KeyRotation(rotation), part) => {
+                return self.key_with(model, part.bone(), Some(key), |made| made.rotation = rotation);
             }
+            (BoxPartEdit::KeyOffset(offset), part) => {
+                return self.key_with(model, part.bone(), Some(key), |made| made.offset = offset);
+            }
+            (BoxPartEdit::KeyScale(scale), part) => {
+                return self.key_with(model, part.bone(), Some(key), |made| made.scale = scale);
+            }
+            (BoxPartEdit::KeyEase(ease), part) => {
+                return self.key_with(model, part.bone(), Some(key), |made| made.ease = ease);
+            }
+            // No two bones of a name, and its keys go with it.
+            (BoxPartEdit::Name(name), Picked::Bone(at)) => model.rename_bone(at, &name),
             (BoxPartEdit::Pivot(pivot), Picked::Bone(at)) => match self.pivot_alone {
                 true => model.move_pivot(at, pivot),
                 false => model.bones[at].pivot = pivot,
@@ -813,16 +950,24 @@ impl ModelPanel {
             return std::mem::take(&mut self.pending);
         }
         if shown {
+            if self.frame_in > 0 {
+                self.frame_in -= 1;
+                if self.frame_in == 0 {
+                    self.frame();
+                }
+            }
             self.update_bar(ui);
             self.update_paint_bar(ui);
             self.update_tree(ui);
             self.update_view(ui, renderer, scale);
             self.show(ui, renderer);
             self.update_motion(ui, renderer);
+            self.update_clips(ui, renderer);
         }
         let mut events = std::mem::take(&mut self.pending);
         // Saved once nothing is held: when a drag ends, not at each step of it.
-        let held = ui.holds_press() || self.view.is_dragging() || self.sheet.is_painting();
+        let held =
+            ui.holds_press() || self.view.is_dragging() || self.sheet.is_painting() || self.timeline.is_dragging();
         if let Some(open) = self.open.as_mut().filter(|open| open.unsaved && !held) {
             open.unsaved = false;
             events.push(ModelEvent::Save(open.path.clone(), open.model.clone()));
@@ -836,24 +981,30 @@ impl ModelPanel {
         let mode = match ui.segment(self.modes) {
             1 => Mode::Paint,
             2 => Mode::Motion,
+            3 => Mode::Animate,
             _ => Mode::Shape,
         };
         let painting = mode == Mode::Paint;
         if mode != self.mode {
-            // Back from being watched moving, it stands at rest again.
-            if let (Mode::Motion, Some(open)) = (self.mode, self.open.as_mut()) {
+            // Back from being watched moving, or posed by a clip, it stands at rest again.
+            if let (Mode::Motion | Mode::Animate, Some(open)) = (self.mode, self.open.as_mut()) {
                 open.stale = true;
             }
             (self.poser, self.moved_at) = (None, None);
-        }
-        self.mode = mode;
-        if ui.is_visible(self.paint_bar) != painting || ui.is_visible(self.motion_bar) != (mode == Mode::Motion) {
+            (self.playing, self.played_at, self.pose_stale) = (false, None, true);
             ui.set_visible(self.paint_bar, painting);
             ui.set_visible(self.shape_bar, mode == Mode::Shape);
             ui.set_visible(self.motion_bar, mode == Mode::Motion);
             ui.set_visible(self.sheet.frame_node(), painting);
+            ui.set_visible(self.timeline.frame_node(), mode == Mode::Animate);
             ui.set_visible(self.picker_frame, false);
+            // The timeline takes room from the view: the whole model is brought into what is left, once
+            // the view has its new shape.
+            if mode == Mode::Animate {
+                self.frame_in = 2;
+            }
         }
+        self.mode = mode;
         if !painting {
             return;
         }
@@ -946,6 +1097,98 @@ impl ModelPanel {
         let input = MotionInput { velocity: Vec3::Z * leg * pace.legs_a_second(), delta, ..MotionInput::default() };
         let pose = poser.pose(&skeleton, &MobMotion::default(), input);
         self.view.show_posed(renderer, &open.model, &skeleton.model_matrices(&pose));
+    }
+
+    /// Keying the model's clips: what the timeline was asked, the clip
+    /// played on while it plays, and the model drawn as the clip has it at
+    /// the moment shown.
+    fn update_clips(&mut self, ui: &mut Ui, renderer: &mut Renderer) {
+        let Some(open) = self.open.as_ref().filter(|_| self.mode == Mode::Animate) else { return };
+        self.clip = self.clip.min(open.model.clips.len().saturating_sub(1));
+        let picked = open.picked.map(Picked::bone);
+        let events = self.timeline.update(ui, &open.model, self.clip, self.time, self.playing, picked);
+        for event in events {
+            self.timeline_event(event);
+        }
+        let now = Instant::now();
+        let delta = self.played_at.replace(now).map_or(0.0, |last| (now - last).as_secs_f32().min(0.1));
+        let Some(open) = self.open.as_ref() else { return };
+        let shown = open.model.clips.get(self.clip);
+        if let Some(clip) = shown {
+            let on = self.time + if self.playing { delta } else { 0.0 };
+            match (clip.looping, on > clip.length) {
+                (true, true) => self.time = on.rem_euclid(clip.length.max(1e-3)),
+                (false, true) => (self.time, self.playing) = (clip.length, false),
+                _ => self.time = on.max(0.0),
+            }
+        }
+        let at = (self.clip, self.time.to_bits());
+        if self.pose_stale || !self.view.is_posed() || self.posed != Some(at) {
+            let bones = match shown {
+                Some(clip) => open.model.clip_matrices(clip, self.time),
+                None => open.model.rest_matrices(),
+            };
+            self.view.show_posed(renderer, &open.model, &bones);
+            (self.pose_stale, self.posed) = (false, Some(at));
+        }
+    }
+
+    /// What the timeline asked: of the clips, of the clip shown, or of a
+    /// bone's keys in it.
+    fn timeline_event(&mut self, event: TimelineEvent) {
+        let Some(open) = self.open.as_mut() else { return };
+        let mut model = open.model.clone();
+        let clip = self.clip;
+        match event {
+            TimelineEvent::NewClip => {
+                (self.clip, self.time, self.playing) = (model.add_clip("Clip"), 0.0, false);
+                self.change(model, None);
+            }
+            TimelineEvent::DeleteClip => {
+                if clip < model.clips.len() {
+                    model.clips.remove(clip);
+                    (self.clip, self.time, self.playing) = (clip.saturating_sub(1), 0.0, false);
+                    self.change(model, None);
+                }
+            }
+            TimelineEvent::PickClip(clip) => {
+                (self.clip, self.time, self.playing, self.pose_stale) = (clip, 0.0, false, true);
+            }
+            TimelineEvent::Rename(name) => {
+                model.rename_clip(clip, &name);
+                self.change(model, None);
+            }
+            TimelineEvent::Length(length) => {
+                let Some(shown) = model.clips.get_mut(clip) else { return };
+                shown.set_length(length);
+                self.time = self.time.min(shown.length);
+                self.change(model, Some(EditKey::Length));
+            }
+            TimelineEvent::Looping(on) => {
+                let Some(shown) = model.clips.get_mut(clip) else { return };
+                shown.looping = on;
+                self.change(model, None);
+            }
+            TimelineEvent::Play(on) => self.play(on),
+            TimelineEvent::Scrub(time) => (self.time, self.playing) = (time, false),
+            TimelineEvent::PickBone(bone) => self.pick(Some(Picked::Bone(bone))),
+            TimelineEvent::AddKey => self.add_key(),
+            TimelineEvent::RemoveKey => self.remove_key(),
+            // From how the drag found the model: a key dragged over another does not take its place until
+            // it is let go there.
+            TimelineEvent::MoveKey { bone, from, to } => {
+                let mut held = open.held.get_or_insert(model).clone();
+                let Some(name) = held.bones.get(bone).map(|bone| bone.name.clone()) else { return };
+                if held.clips.get_mut(clip).is_some_and(|shown| shown.move_key(&name, from, to)) {
+                    self.time = to;
+                    self.change(held, Some(EditKey::Drag));
+                }
+            }
+            TimelineEvent::MoveEnded => {
+                open.held = None;
+                open.history.seal();
+            }
+        }
     }
 
     /// One pixel of a stroke: coloured, made a hole, filled from, or its
@@ -1049,6 +1292,7 @@ impl ModelPanel {
                 ViewMode::Paint { mirror: ui.is_checked(self.symmetry), layer: ui.is_checked(self.on_layer) }
             }
             Mode::Motion => ViewMode::Look,
+            Mode::Animate => ViewMode::Pose,
         };
         let mut events = self.view.update(ui, renderer, &open.model, open.picked, mode, scale);
         if self.mode == Mode::Paint {
@@ -1087,6 +1331,10 @@ impl ModelPanel {
         };
         let mut model = held;
         match (handle, picked) {
+            // A ring round a bone turns it at the moment the timeline shows, which keys it there.
+            (Handle::Turn(axis), picked) => {
+                return self.key_with(model, picked.bone(), Some(EditKey::Drag), |made| made.turn_about(axis, pixels));
+            }
             (Handle::Move(axis), Picked::Bone(bone)) => {
                 let mut pivot = model.bones[bone].pivot;
                 pivot[axis] += pixels;

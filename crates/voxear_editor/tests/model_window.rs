@@ -583,3 +583,154 @@ fn a_box_is_given_a_layer_whose_painted_pixels_stand_out_from_it() {
     frames(&mut editor, &mut renderer, 2);
     assert_eq!(boxed(&editor).layer.unwrap().height, 2.0);
 }
+
+#[test]
+fn a_clip_is_keyed_on_the_timeline_by_turning_a_bone_and_plays() {
+    let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {
+        return eprintln!("skipping: no usable GPU");
+    };
+    let project = hello_copy();
+    let dir = project.path().to_path_buf();
+    let mut editor =
+        voxear_editor::Editor::open_without_memory(Project::open(&dir).unwrap(), &mut renderer, LogCapture::default())
+            .unwrap();
+    frames(&mut editor, &mut renderer, 2);
+    assert!(editor.open_path(PATH, &mut renderer));
+    frames(&mut editor, &mut renderer, 3);
+    let keys = |editor: &voxear_editor::Editor| -> Vec<(f32, Vec3)> {
+        let model = editor.model_window().model().unwrap();
+        let track = model.clips.first().and_then(|clip| clip.track("Head"));
+        track.map(|track| track.keys.iter().map(|key| (key.time, key.rotation)).collect()).unwrap_or_default()
+    };
+
+    // Animate shows the timeline; New Clip makes a clip a second long that loops, saved with the model.
+    editor.set_model_mode(Mode::Animate);
+    frames(&mut editor, &mut renderer, 3);
+    assert!(editor.ui.is_visible(editor.model_window().timeline().frame_node()));
+    press(&mut editor.ui, "New Clip");
+    frames(&mut editor, &mut renderer, 3);
+    let clips = editor.model_window().model().unwrap().clips.clone();
+    assert_eq!(clips.len(), 1);
+    assert_eq!((clips[0].name.as_str(), clips[0].length, clips[0].looping), ("Clip", 1.0, true));
+    assert_eq!(saved(&dir).clips, clips);
+
+    // A click on the head picks its bone: it gets a row on the timeline, and its Key rows in the Inspector.
+    let head_front = editor.model_window().view().point(&editor.ui, Vec3::new(0.0, 1.75, 0.25)).expect("in view");
+    click_at(&mut editor.ui, head_front);
+    frames(&mut editor, &mut renderer, 3);
+    assert_eq!(editor.model_window().picked(), Some(Picked::Bone(1)));
+    assert_eq!(editor.model_window().timeline().rows(), [1]);
+    let inspector = editor.ui.find(editor.ui.root(), "inspector").unwrap();
+    let shown = texts_in(&editor.ui, inspector);
+    for label in ["Key", "Ease", "Scale"] {
+        assert!(shown.contains(&label.to_string()), "no {label}: {shown:#?}");
+    }
+
+    // Key keys it as it stands at the moment shown, the clip's start.
+    press(&mut editor.ui, "Key");
+    frames(&mut editor, &mut renderer, 3);
+    assert_eq!(keys(&editor), [(0.0, Vec3::ZERO)]);
+
+    // A press on its row half a second in shows that moment.
+    let model = editor.model_window().model().unwrap().clone();
+    let at = editor.model_window().timeline().point(&editor.ui, &model, 0, 1, 0.5).expect("the head has a row");
+    click_at(&mut editor.ui, at);
+    frames(&mut editor, &mut renderer, 3);
+    assert_eq!(editor.model_window().time(), 0.5);
+    assert!(editor.model_window().view().is_posed());
+
+    // The ring about its Y, dragged along itself, turns the head there: a key, saved once let go, one step.
+    let handle = editor.model_window().view().handle_point(&editor.ui, &model, Picked::Bone(1), Handle::Turn(1));
+    let (x, y) = handle.expect("the ring is in view");
+    editor.ui.pointer_move(x, y);
+    frame(&mut editor, &mut renderer);
+    editor.ui.pointer_button(true);
+    frame(&mut editor, &mut renderer);
+    for step in 1..=5 {
+        editor.ui.pointer_move(x + step as f32 * 8.0, y);
+        frame(&mut editor, &mut renderer);
+    }
+    assert_eq!(saved(&dir).clips[0].track("Head").unwrap().keys.len(), 1, "nothing is saved while it is held");
+    editor.ui.pointer_button(false);
+    frames(&mut editor, &mut renderer, 3);
+    let turned = keys(&editor);
+    assert_eq!(turned.len(), 2, "{turned:?}");
+    let (time, rotation) = turned[1];
+    assert_eq!(time, 0.5);
+    assert!(rotation.y.abs() >= 10.0 && rotation.y.fract() == 0.0, "turned about Y by whole degrees: {rotation}");
+    assert!(rotation.x.abs() < 1e-2 && rotation.z.abs() < 1e-2, "about its own axis alone: {rotation}");
+    assert_eq!(saved(&dir), *editor.model_window().model().unwrap());
+    assert!(editor.model_window_mut().undo());
+    frames(&mut editor, &mut renderer, 2);
+    assert_eq!(keys(&editor).len(), 1, "the whole drag is one step");
+    assert!(editor.model_window_mut().redo());
+    frames(&mut editor, &mut renderer, 2);
+
+    // A number typed in the Inspector's Key rows changes the key at the moment shown.
+    let mut fields = Vec::new();
+    with_class(&editor.ui, inspector, "axis-input", &mut fields);
+    assert_eq!(fields.len(), 15, "Pivot, Rotation, then the key's Rotation, Position and Scale");
+    type_into(&mut editor.ui, fields[6], "25");
+    frames(&mut editor, &mut renderer, 3);
+    assert_eq!(keys(&editor)[1], (0.5, Vec3::new(25.0, rotation.y, rotation.z)));
+
+    // The key dragged along its row moves to another moment, as one step.
+    let model = editor.model_window().model().unwrap().clone();
+    let from = editor.model_window().timeline().point(&editor.ui, &model, 0, 1, 0.5).unwrap();
+    let to = editor.model_window().timeline().point(&editor.ui, &model, 0, 1, 0.8).unwrap();
+    editor.ui.pointer_move(from.0, from.1);
+    frame(&mut editor, &mut renderer);
+    editor.ui.pointer_button(true);
+    frame(&mut editor, &mut renderer);
+    for step in 1..=4 {
+        editor.ui.pointer_move(from.0 + (to.0 - from.0) * step as f32 / 4.0, from.1);
+        frame(&mut editor, &mut renderer);
+    }
+    editor.ui.pointer_button(false);
+    frames(&mut editor, &mut renderer, 3);
+    let times: Vec<f32> = keys(&editor).iter().map(|(time, _)| *time).collect();
+    assert_eq!(times, [0.0, 0.8]);
+    assert_eq!(editor.model_window().time(), 0.8);
+    assert_eq!(saved(&dir), *editor.model_window().model().unwrap());
+    assert!(editor.model_window_mut().undo());
+    frames(&mut editor, &mut renderer, 2);
+    assert_eq!(keys(&editor).iter().map(|(time, _)| *time).collect::<Vec<_>>(), [0.0, 0.5]);
+    assert!(editor.model_window_mut().redo());
+    frames(&mut editor, &mut renderer, 2);
+
+    // The clip made longer, and played: the moment shown goes on as time does.
+    let length = editor.model_window().timeline().length_field();
+    type_into(&mut editor.ui, length, "2");
+    frames(&mut editor, &mut renderer, 3);
+    assert_eq!(editor.model_window().model().unwrap().clips[0].length, 2.0);
+    editor.model_window_mut().set_time(0.0);
+    frames(&mut editor, &mut renderer, 2);
+    press(&mut editor.ui, "Play");
+    let mut moments = Vec::new();
+    for _ in 0..10 {
+        std::thread::sleep(std::time::Duration::from_millis(15));
+        frame(&mut editor, &mut renderer);
+        moments.push(editor.model_window().time());
+    }
+    assert!(editor.model_window().is_playing());
+    assert!(moments.windows(2).all(|pair| pair[1] >= pair[0]) && moments[9] > moments[0] + 0.05, "{moments:?}");
+    keep_picture(&mut renderer, "model window animate.png");
+    press(&mut editor.ui, "Play");
+    frames(&mut editor, &mut renderer, 2);
+    assert!(!editor.model_window().is_playing());
+
+    // Delete, while clips are keyed, takes the key at the moment shown and leaves the bone.
+    editor.model_window_mut().set_time(0.8);
+    frames(&mut editor, &mut renderer, 2);
+    editor.model_window_mut().delete_picked();
+    frames(&mut editor, &mut renderer, 3);
+    assert_eq!(keys(&editor).len(), 1);
+    assert_eq!(editor.model_window().model().unwrap().bones.len(), 2);
+    assert_eq!(saved(&dir), *editor.model_window().model().unwrap());
+
+    // Shaping again, it stands at rest.
+    editor.set_model_mode(Mode::Shape);
+    frames(&mut editor, &mut renderer, 3);
+    assert!(!editor.model_window().view().is_posed());
+    assert!(!editor.ui.is_visible(editor.model_window().timeline().frame_node()));
+}

@@ -17,11 +17,6 @@
 //! full as that, in eighths. Every
 //! chunk is made apart, on every core, from where its blocks are alone, so
 //! the same ground comes from the same file anywhere.
-//!
-//! A planet's ground lies all round a middle at its world's corner (see
-//! [`BlockPlanet`]): its generator's heights and climate read round it, once,
-//! on the six faces of a cube about a block apart, and every block's depth
-//! measured out from the middle.
 
 use serde::{Deserialize, Serialize};
 
@@ -34,11 +29,9 @@ use crate::generate::WorldGen;
 
 mod cells;
 mod columns;
-mod planet;
 
 pub use cells::CAVE_ROOF;
 pub use columns::column_chunks;
-pub use planet::planet_ground;
 
 /// How a world of blocks' ground is generated: by the world generator
 /// `world` names (a reference to a `.worldgen`), from `position` metres in
@@ -57,52 +50,23 @@ pub struct BlockGenerate {
     pub overhangs: f32,
     pub caves: f32,
     /// The block the air below its generator's sea level is filled with, by
-    /// its place in the list from 1: air for none. A planet's sea is its
-    /// radius from its middle.
+    /// its place in the list from 1: air for none.
     #[serde(skip_serializing_if = "is_air")]
     pub sea: BlockId,
     /// For a world without end, made round the camera as it goes: how far
     /// (see `stream`). Its ground's size is then left unused.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub endless: Option<BlockEndless>,
-    /// For a planet, its ground all round a middle at the world's corner: how
-    /// large. Its ground's size, its place in its generator's world, its
-    /// lowest block and going on without end are then left unused.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub planet: Option<BlockPlanet>,
 }
 
 impl Default for BlockGenerate {
     fn default() -> Self {
-        Self {
-            world: None,
-            position: [0.0, 0.0],
-            bottom: -16,
-            overhangs: 0.0,
-            caves: 0.3,
-            sea: AIR,
-            endless: None,
-            planet: None,
-        }
+        Self { world: None, position: [0.0, 0.0], bottom: -16, overhangs: 0.0, caves: 0.3, sea: AIR, endless: None }
     }
 }
 
 fn is_air(block: &BlockId) -> bool {
     *block == AIR
-}
-
-/// A planet: its sea `radius` metres from its middle, and its ground as high
-/// over that as its generator's heights are over its sea level.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct BlockPlanet {
-    pub radius: f32,
-}
-
-impl Default for BlockPlanet {
-    fn default() -> Self {
-        Self { radius: 100.0 }
-    }
 }
 
 /// How far round the camera a world of blocks without end is made: its own
@@ -123,9 +87,6 @@ impl Default for BlockEndless {
 /// The ground `generate` makes for `file` with generator `world`: its
 /// ground's size of chunk columns, each on every core.
 pub fn generate(file: &BlockFile, generate: &BlockGenerate, world: &WorldGen) -> BlockMap {
-    if let Some(planet) = generate.planet {
-        return planet_ground(file, generate, Some(world), planet);
-    }
     let ground = &file.ground;
     let columns_x = ground.size[0].div_ceil(CHUNK) as i32;
     let columns_z = ground.size[1].div_ceil(CHUNK) as i32;
@@ -140,7 +101,7 @@ pub fn generate(file: &BlockFile, generate: &BlockGenerate, world: &WorldGen) ->
 
 #[cfg(test)]
 mod tests {
-    use super::{planet::Round, *};
+    use super::*;
     use crate::{
         blocks::{
             chunk::Chunk,
@@ -167,7 +128,6 @@ mod tests {
                 caves,
                 sea: AIR,
                 endless: None,
-                planet: None,
             }),
             ..BlockFile::default()
         };
@@ -425,7 +385,6 @@ mod tests {
                 caves: 0.0,
                 sea: AIR,
                 endless: None,
-                planet: None,
             }),
             ..BlockFile::default()
         };
@@ -522,22 +481,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "a planet's grid takes its angles from the machine's own tan and atan, so these bits are this machine's"]
-    fn a_planets_blocks_are_the_same_to_the_bit_on_this_machine() {
-        let mut land = Preset::RollingHills.landmass();
-        land.height = 12.0;
-        let world = WorldGen::from(land);
-        let planet = BlockPlanet { radius: 60.0 };
-        let generate = BlockGenerate { world: Some("hills".into()), caves: 0.3, planet: Some(planet), ..Default::default() };
-        let file = BlockFile { generate: Some(generate), smooth: true, ..BlockFile::default() };
-        let map = file.make_ground(Some(&world));
-        let mut chunks: Vec<_> = map.chunks().map(|(key, chunk)| (key, &**chunk)).collect();
-        chunks.sort_unstable_by_key(|(key, _)| **key);
-        let hash = hash_of(chunks);
-        assert_eq!(hash, 0x036e_d4ff_b4fd_c0dd, "a planet's blocks changed: were they meant to? {hash:#x}");
-    }
-
-    #[test]
     fn generated_ground_below_its_sea_lies_under_water_up_to_the_sea() {
         let (mut file, _) = generated(0.0, 0.0);
         let world = Preset::Archipelago.world();
@@ -597,47 +540,5 @@ mod tests {
         // Without a sea block, none.
         file.generate.as_mut().unwrap().sea = AIR;
         assert_ne!(file.make_ground(Some(&world)).get([x, top, z]), water);
-    }
-
-    #[test]
-    fn a_planets_ground_lies_all_round_its_middle_on_its_generators_heights_read_round_it() {
-        let mut land = Preset::RollingHills.landmass();
-        land.height = 12.0;
-        let world = WorldGen::parse(&WorldGen::from(land).to_text()).unwrap();
-        let planet = BlockPlanet { radius: 60.0 };
-        let generate =
-            BlockGenerate { world: Some("hills".into()), caves: 0.0, planet: Some(planet), ..Default::default() };
-        let file = BlockFile { generate: Some(generate), smooth: true, ..BlockFile::default() };
-        let map = file.make_ground(Some(&world));
-        // Its middle is its base block, and far out is air.
-        assert_eq!(map.get([0, 0, 0]), file.ground.bottom);
-        assert_eq!(map.get([0, 100, 0]), AIR);
-        // Out along six ways and between them, the surface where the generator's heights put it, to a tenth of a block.
-        let surface = |way: [f32; 3]| {
-            let length = way.iter().map(|v| v * v).sum::<f32>().sqrt();
-            let way = way.map(|v| v / length);
-            let at = |r: f32| way.map(|v| (v * r - 0.5).round() as i32);
-            // The last block of ground going out, and how far into the ground its middle is.
-            let r = (0..1200).map(|i| i as f32 * 0.1).filter(|&r| map.get(at(r)) != AIR).fold(0.0, f32::max);
-            let block = at(r);
-            let middle = block.map(|v| v as f32 + 0.5);
-            let out = middle.iter().map(|v| v * v).sum::<f32>().sqrt();
-            out + super::super::chunk::depth_of(map.fill(block))
-        };
-        for way in [[1.0, 0.0, 0.0], [0.0, -1.0, 0.0], [0.0, 0.0, 1.0], [0.6, 0.7, -0.4], [-0.5, 0.5, 0.5]] {
-            let length = way.iter().map(|v: &f32| v * v).sum::<f32>().sqrt();
-            let at = way.map(|v| v / length * planet.radius);
-            let expected = planet.radius + world.height_round(at) - world.sea_level();
-            assert!((surface(way) - expected).abs() < 1.0, "out along {way:?}: {} for {expected}", surface(way));
-        }
-        // Read on a cube's faces, its ground runs on across their edges: no step where two faces meet.
-        let source = cells::source(file.generate.as_ref().unwrap(), &world, 1.0);
-        let round = Round::of(source.world(), source.world().volume().unwrap(), planet.radius, 1.0);
-        let either = |e: f32| round.at([1.0, 1.0 + e, 0.3]).surface;
-        assert!((either(0.002) - either(-0.002)).abs() < 0.1, "{} and {}", either(0.002), either(-0.002));
-        // Colder at its poles than round its middle.
-        let (pole, _) = world.climate_round([0.0, planet.radius, 0.0], 0.0);
-        let (middle, _) = world.climate_round([planet.radius, 0.0, 0.0], 0.0);
-        assert!(pole < middle - 10.0, "{pole} at a pole, {middle} round its middle");
     }
 }

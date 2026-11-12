@@ -9,8 +9,7 @@
 //! small bumps.
 //!
 //! Its angles are kept as rise over run, and its feathered edges turned
-//! from them with sums and products, so no place needs trigonometry. Round
-//! a planet the four places lie along two tangents of its surface.
+//! from them with sums and products, so no place needs trigonometry.
 
 use serde::{Deserialize, Serialize};
 
@@ -166,23 +165,17 @@ mod tests {
         assert_eq!(cone(400.0, from(0.0, 20.0)).height_at(0.0, 0.0), 1.0, "level ground is within 0° to 20°");
         // Twice the scale, the same hill twice as wide is half as steep.
         assert_eq!(world.with_scale(2.0).height_at(1000.0, 0.0), 0.0, "0.3, about 17°");
-        // Round a planet the hill is over its north pole, and as steep along its surface.
-        assert_eq!(world.height_round([0.0, 3000.0, 0.0]), 0.0);
-        assert_eq!(world.height_round([497.7, 2958.4, 0.0]), 1.0, "500 m from the pole");
-        assert_eq!(world.height_round([0.0, 2958.4, -497.7]), 1.0);
-        assert_eq!(world.height_round([3000.0, 0.0, 0.0]), 0.0);
-        // Hills of noise: steep in places and level in others, and the same bits in any batch round a planet too.
+        // Hills of noise: steep in places and level in others, and the same bits in any batch.
         let hills = Noise { size: 120.0, low: 0.0, high: 60.0, ..Noise::default() };
         let rough = testing::world_of(NodeKind::SlopeMask(from(20.0, 90.0)), 0, &[Some(NodeKind::Noise(hills))]);
         assert_eq!(testing::checked(&rough), (0.0, 1.0));
-        assert_eq!(testing::round_range(&rough), (0.0, 1.0));
         // Level ground has no slope, and nothing wired in is level.
         let level = testing::world_of(
             NodeKind::SlopeMask(from(5.0, 90.0)),
             0,
             &[Some(NodeKind::Constant(Constant { value: 9.0 }))],
         );
-        assert_eq!((level.height_at(1.0, 1.0), level.height_round([0.0, 0.0, 800.0])), (0.0, 0.0));
+        assert_eq!(level.height_at(1.0, 1.0), 0.0);
         assert_eq!(testing::world_of(NodeKind::SlopeMask(from(0.0, 90.0)), 0, &[]).height_at(1.0, 1.0), 1.0);
     }
 }

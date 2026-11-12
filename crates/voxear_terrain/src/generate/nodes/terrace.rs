@@ -149,12 +149,5 @@ mod tests {
             out[0]
         };
         assert_eq!([flat(36.0), flat(40.0), flat(44.9), flat(50.0), flat(-3.0)], [40.0, 40.0, 40.0, 50.0, 0.0]);
-        // Round a planet each place is cut as it is on flat ground: the hills read round it, in the same steps.
-        let (was, cut) = (testing::round(&source, 2000), testing::round(&half, 2000));
-        for i in 0..2000 {
-            let mut out = [0.0];
-            Steps { step: 20.0, riser: 0.5 }.run(&[&[was[i]]], &mut out);
-            assert_eq!(cut[i].to_bits(), out[0].to_bits());
-        }
     }
 }

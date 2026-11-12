@@ -7,7 +7,7 @@
 //! the nodes that make them (`generate::Graph::add_voxels`), so ground is
 //! made one way whichever keeps the numbers.
 
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 
 use super::{BlockGenerate, columns::Column};
 use crate::{
@@ -15,7 +15,7 @@ use crate::{
         chunk::{AIR, BlockId, Fill, fill_of},
         flow::{Water, surface_fill},
     },
-    generate::{Graph, NodeKind, OwnVoxels, WorldGen, nodes::Output},
+    generate::{NodeKind, OwnVoxels, WorldGen, nodes::Output},
 };
 
 /// How many blocks under the surface a world's own caves keep clear of, so
@@ -91,16 +91,6 @@ pub(super) fn source<'a>(generate: &BlockGenerate, world: &'a WorldGen, block_si
     }
     moved.push((key, made.clone()));
     Source::Moved(made)
-}
-
-/// A generator of level ground at its sea, for a planet made with none.
-pub(super) fn level() -> &'static WorldGen {
-    static LEVEL: OnceLock<WorldGen> = OnceLock::new();
-    LEVEL.get_or_init(|| {
-        let mut graph = Graph::default();
-        graph.add(NodeKind::Output(Output::default()), [0.0, 0.0]);
-        WorldGen::new(0, 1.0, 0.0, graph)
-    })
 }
 
 /// How deep under the surface a block of ground is, in blocks, for its

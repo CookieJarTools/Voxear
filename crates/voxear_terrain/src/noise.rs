@@ -136,7 +136,7 @@ pub fn fractal(style: NoiseStyle, x: f32, z: f32, octaves: u32, seed: u32) -> f3
 }
 
 /// Fractal noise of `style` at `(x, y, z)`, 0 to 1, as [`fractal`] makes
-/// it in two dimensions: for a world generator read round a planet.
+/// it in two dimensions.
 pub fn fractal3(style: NoiseStyle, at: [f32; 3], octaves: u32, seed: u32) -> f32 {
     let (mut sum, mut total, mut amplitude, mut frequency) = (0.0, 0.0, 1.0, 1.0);
     let mut weight = 1.0f32;

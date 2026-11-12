@@ -83,16 +83,12 @@ impl Kind for Noise {
             seed: node_seed(cx.world, node),
             low: self.low,
             span: self.high - self.low,
-            round: matches!(at, Places::Round { .. }),
         };
-        match at {
-            Places::Flat { x, z } => cx.run(fractal, &[x, z]),
-            Places::Round { x, y, z } => cx.run(fractal, &[x, y, z]),
-        }
+        cx.run(fractal, &[at.x, at.z])
     }
 }
 
-/// Fractal noise from rows of x and z, or of x, y and z round a planet.
+/// Fractal noise from rows of x and z.
 #[derive(Debug)]
 struct Fractal {
     style: NoiseStyle,
@@ -101,27 +97,18 @@ struct Fractal {
     seed: u32,
     low: f32,
     span: f32,
-    round: bool,
 }
 
 impl Kernel for Fractal {
     fn key(&self, key: &mut Key) {
         key.name("fractal").text(self.style.name()).number(self.size).whole(self.octaves).whole(self.seed);
-        key.number(self.low).number(self.span).whole(u32::from(self.round));
+        key.number(self.low).number(self.span);
     }
 
     fn run(&self, inputs: &[&[f32]], out: &mut [f32]) {
         let size = self.size;
         for (at, out) in out.iter_mut().enumerate() {
-            let noise = match self.round {
-                false => {
-                    noise::fractal(self.style, inputs[0][at] / size, inputs[1][at] / size, self.octaves, self.seed)
-                }
-                true => {
-                    let place = [inputs[0][at] / size, inputs[1][at] / size, inputs[2][at] / size];
-                    noise::fractal3(self.style, place, self.octaves, self.seed)
-                }
-            };
+            let noise = noise::fractal(self.style, inputs[0][at] / size, inputs[1][at] / size, self.octaves, self.seed);
             *out = self.low + noise * self.span;
         }
     }

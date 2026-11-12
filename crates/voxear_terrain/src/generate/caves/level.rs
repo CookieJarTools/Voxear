@@ -20,7 +20,7 @@ const CLIMB: f32 = 0.12;
 const DRIFT: f32 = 0.5;
 
 /// The four ways from a region to those beside it, in the order
-/// `Grid::beside` gives them on flat ground.
+/// `Grid::beside` gives them.
 const WAYS: [[i32; 2]; 4] = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 
 /// A level laid out.
@@ -47,7 +47,7 @@ impl Level {
     /// The level `net`'s values lay out.
     pub fn laid(net: &Network) -> Level {
         let set = &net.set;
-        let grid = Grid::Flat { spacing: set.spacing };
+        let grid = Grid { spacing: set.spacing };
         let roll = |step: i32, part: i32| mix(set.seed, &[step, part, 31]);
         // The walk: each step to a free region beside the last, keeping on the way it was going more often
         // than not, and not into a region with no way on while there are rooms to come.

@@ -126,8 +126,6 @@ mod tests {
             }
         };
         check(&testing::flat(&source, 4000), &testing::flat(&world, 4000));
-        // Round a planet it masks the heights it is given there.
-        check(&testing::round(&source, 4000), &testing::round(&world, 4000));
         // With no feather its edge is sheer; with nothing wired in it reads a height of nothing.
         let sheer = Between { min: 10.0, max: 20.0, feather: 0.0 };
         let mut out = [0.0; 4];

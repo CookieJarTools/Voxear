@@ -265,13 +265,23 @@ pub struct FaceLook {
     pub color: [f32; 3],
 }
 
+/// A key a file's generated ground may still hold, from when ground could
+/// lie all round a middle: left unread, so the file reads as the flat
+/// ground it otherwise says.
+const OLD_ROUND: &str = "planet";
+
 impl BlockFile {
     pub fn parse(text: &str) -> Result<Self> {
-        let mut file: Self = toml::from_str(text)?;
-        // A planet is made all at once, never without end.
-        if let Some(generate) = file.generate.as_mut().filter(|generate| generate.planet.is_some()) {
-            generate.endless = None;
-        }
+        let mut file: Self = match text.contains(OLD_ROUND) {
+            false => toml::from_str(text)?,
+            true => {
+                let mut table: toml::Table = toml::from_str(text)?;
+                if let Some(toml::Value::Table(generate)) = table.get_mut("generate") {
+                    generate.remove(OLD_ROUND);
+                }
+                table.try_into()?
+            }
+        };
         ensure!(file.block_size > 0.0 && file.block_size.is_finite(), "a block is some size");
         file.block_size = file.block_size.clamp(SMALLEST_BLOCK, LARGEST_BLOCK);
         ensure!(file.blocks.len() <= MAX_BLOCKS, "a world lists at most {MAX_BLOCKS} blocks");
@@ -384,10 +394,6 @@ impl BlockFile {
     /// generated and the generator could be found, else flat. Blocks naming
     /// no kind it has are left out.
     pub fn make_ground(&self, generator: Option<&crate::generate::WorldGen>) -> BlockMap {
-        // A planet is round with or without its generator.
-        if let Some((generate, planet)) = self.generate.as_ref().and_then(|g| Some((g, g.planet?))) {
-            return super::generate::planet_ground(self, generate, generator, planet);
-        }
         if let (Some(generate), Some(world)) = (&self.generate, generator) {
             return super::generate::generate(self, generate, world);
         }
@@ -521,6 +527,49 @@ bottom = 2
         // An entry is one thing: a look written beside a block it names is the block's, not the file's.
         let both = "[[blocks]]\nblock = \"Blocks/Grass.block\"\nname = \"Mine\"\ncolor = [1.0, 0.0, 0.0]\n";
         assert_eq!(BlockFile::parse(both).unwrap().blocks[0], BlockKind::of("Blocks/Grass.block"));
+    }
+
+    #[test]
+    fn a_file_whose_generated_ground_names_a_planet_reads_as_flat_ground() {
+        // As a world was written while its ground could lie all round a middle.
+        let older = r#"block_size = 1.0
+
+[[blocks]]
+name = "Planet Rock"
+color = [0.5, 0.5, 0.5]
+
+[ground]
+size = [48, 48]
+height = 8
+top = 1
+under = 1
+under_depth = 3
+bottom = 1
+
+[generate]
+world = "0123456789abcdef0123456789abcdef"
+position = [0.0, 0.0]
+bottom = -16
+overhangs = 0.0
+caves = 0.3
+
+[generate.planet]
+radius = 60.0
+"#;
+        let file = BlockFile::parse(older).expect("an old file still reads");
+        let now = BlockFile::parse(&older.replace("\n[generate.planet]\nradius = 60.0\n", "")).unwrap();
+        assert_eq!(file, now, "as the same file with no planet");
+        assert_eq!(file.blocks[0].name, "Planet Rock");
+        assert!(!file.to_text().contains("[generate.planet]"), "and is written back without one");
+        // Its ground is its generator's, flat: nothing below its lowest block, and the same all along its edge.
+        let world = crate::generate::Preset::RollingHills.world();
+        let map = file.make_ground(Some(&world));
+        assert_eq!(map, now.make_ground(Some(&world)));
+        assert!((0..48).all(|x| map.get([x, -16, 0]) != AIR && map.get([x, -17, 0]) == AIR));
+        // Written inline it reads the same; any other key it does not know is still an error.
+        let inline = older.replace("\n[generate.planet]\nradius = 60.0\n", "planet = { radius = 60.0 }\n");
+        assert_eq!(BlockFile::parse(&inline).unwrap(), now);
+        assert!(BlockFile::parse(&inline.replace("planet = {", "moon = {")).is_err());
     }
 
     #[test]

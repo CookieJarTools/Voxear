@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 75;
+pub(crate) const API_VERSION: u32 = 76;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -508,6 +508,11 @@ pub(crate) struct NativeApi {
     /// `Blocks.All`: every block of the project, by GUID, a line each; the
     /// text's length, written when it fits.
     pub blocks_all: unsafe extern "C" fn(buffer: *mut u8, capacity: i32) -> i32,
+    /// `World.Quality` and the numbers under it: what making worlds of
+    /// blocks may spend, read by number.
+    pub world_budget: unsafe extern "C" fn(which: i32) -> f32,
+    /// Sets one of them, taken up at once.
+    pub set_world_budget: unsafe extern "C" fn(which: i32, value: f32),
 }
 
 /// The kinds of component scripts reach through one entry, `kind_value`,
@@ -1986,6 +1991,8 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         caves_info: crate::services::caves_info,
         particle_blast,
         blocks_all: crate::blocks::blocks_all,
+        world_budget: crate::blocks::world_budget,
+        set_world_budget: crate::blocks::set_world_budget,
     }
 }
 

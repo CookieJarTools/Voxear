@@ -227,6 +227,7 @@ pub fn build(
         network: project.file.network.clone(),
         floating_origin: project.file.floating_origin.clone(),
         particles: project.file.quality.particles,
+        world: project.file.world,
         validation_layers: profile.development.validation_layers,
         fullscreen: profile.player.window == "fullscreen",
         width: profile.player.width,

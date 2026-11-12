@@ -65,6 +65,20 @@ pub(super) struct SceneView {
     pub(super) prefab_name: NodeId,
     pub(super) prefab_back: NodeId,
     pub(super) prefab_close: NodeId,
+    /// What the bar says is open, a prefab or a particle effect: its icon,
+    /// its hint and what Close is called.
+    pub(super) prefab_icon: NodeId,
+    pub(super) prefab_hint: NodeId,
+    pub(super) prefab_close_label: NodeId,
+    /// The particles' playback: play or pause with its icon, Restart, the
+    /// speed, the scrubber and the time.
+    pub(super) particle_strip: NodeId,
+    pub(super) particle_play: NodeId,
+    pub(super) particle_play_icon: NodeId,
+    pub(super) particle_restart: NodeId,
+    pub(super) particle_speed: NodeId,
+    pub(super) particle_scrub: NodeId,
+    pub(super) particle_time: NodeId,
     /// The camera it looks through, which the Hierarchy leaves out.
     pub(super) camera: Entity,
     pub(super) fly: FlyCamera,
@@ -105,6 +119,16 @@ impl SceneView {
             prefab_name: find(ui, "prefab-name"),
             prefab_back: find(ui, "prefab-back"),
             prefab_close: find(ui, "prefab-close"),
+            prefab_icon: find(ui, "prefab-icon"),
+            prefab_hint: find(ui, "prefab-hint"),
+            prefab_close_label: find(ui, "prefab-close-label"),
+            particle_strip: find(ui, "particle-strip"),
+            particle_play: find(ui, "particle-play"),
+            particle_play_icon: find(ui, "particle-play-icon"),
+            particle_restart: find(ui, "particle-restart"),
+            particle_speed: find(ui, "particle-speed"),
+            particle_scrub: find(ui, "particle-scrub"),
+            particle_time: find(ui, "particle-time"),
             camera,
             fly: FlyCamera::default(),
             shading: 0,
@@ -113,6 +137,7 @@ impl SceneView {
             edit_camera: None,
         };
         ui.set_visible(view.prefab_bar, false);
+        ui.set_visible(view.particle_strip, false);
         view
     }
 
@@ -478,9 +503,18 @@ impl Editor {
     /// or hides it.
     pub(super) fn show_prefab_bars(&mut self, prefab: Option<&str>) {
         let name = prefab.map(|path| path.rsplit('/').next().unwrap_or(path));
+        // A particle effect open on its own is named as one, with what its Objs are.
+        let effect = prefab.is_some_and(|path| path.ends_with(".particles"));
+        let (icon, hint, close) = match effect {
+            true => ("particles", "Each Obj with a Particle System is an emitter", "Close Effect"),
+            false => ("cube", "Lock a component for designers from its menu", "Close Prefab"),
+        };
         for view in std::iter::once(&self.scene).chain(&self.scene_views) {
             if let Some(name) = name {
                 self.ui.set_text(view.prefab_name, name);
+                self.ui.set_icon(view.prefab_icon, icon);
+                self.ui.set_text(view.prefab_hint, hint);
+                self.ui.set_text(view.prefab_close_label, close);
             }
             self.ui.set_visible(view.prefab_bar, name.is_some());
         }

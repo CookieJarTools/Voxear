@@ -416,10 +416,17 @@ impl Levels {
         target: &Target,
     ) -> Result<LoadedScene> {
         // A prefab opened on its own reads as a scene: both are a list of Objs.
-        let prefab = content.db().get(target.guid).is_some_and(|entry| entry.kind == AssetKind::Prefab);
-        let kind = if prefab { AssetKind::Prefab } else { AssetKind::Scene };
+        // And a particle effect opened on its own as a scene of its emitters, an Obj each.
+        let kind = content.db().get(target.guid).map_or(AssetKind::Scene, |entry| entry.kind);
+        let kind = if matches!(kind, AssetKind::Prefab | AssetKind::Particles) { kind } else { AssetKind::Scene };
         let (text, path) = content.asset_text(target.guid, kind)?;
-        let scene = scene_file::parse(&text, &path)?;
+        let scene = match kind {
+            AssetKind::Particles => {
+                let effect = voxear_render::ParticleEffect::from_toml(&text);
+                crate::particles::effect_scene(&effect.map_err(|error| anyhow::anyhow!("reading {path}: {error}"))?)
+            }
+            _ => scene_file::parse(&text, &path)?,
+        };
         self.persistent.retain(|_, entity| engine.world.is_alive(*entity));
         let survivors: HashSet<ObjPath> =
             self.persistent.keys().filter(|(guid, _)| *guid == target.guid).map(|(_, path)| path.clone()).collect();
@@ -548,6 +555,17 @@ impl Levels {
             (captured.sky, captured.post) = (scene.sky, scene.post.clone());
             captured.lighting = scene.lighting.as_ref().map(|(reference, _)| reference.clone());
             let file = project.join(&scene.path);
+            // A particle effect open as a scene goes back to its file as an effect: its Objs' Particle Systems.
+            if scene.path.ends_with(".particles") {
+                let effect = crate::particles::scene_effect(&captured);
+                let text = effect.to_toml().map_err(|error| anyhow::anyhow!("saving {}: {error}", scene.path))?;
+                if std::fs::read_to_string(&file).ok().as_deref() != Some(text.as_str()) {
+                    std::fs::write(&file, text).with_context(|| format!("saving {}", scene.path))?;
+                    content.forget_particle_effect(scene.guid);
+                    written.push(scene.path.clone());
+                }
+                continue;
+            }
             let on_disk = scene_file::read(&file).ok().and_then(|s| toml::to_string(&s).ok());
             if on_disk.is_some() && on_disk == toml::to_string(&captured).ok() {
                 continue;
@@ -923,8 +941,8 @@ fn read_chain(
 fn find_scene(content: &Content, reference: &str) -> Result<(AssetGuid, String)> {
     let guid = content.parse(reference)?.guid().with_context(|| format!("`{reference}` is not a scene"))?;
     let entry = content.db().get(guid).with_context(|| format!("no asset with GUID {guid}"))?;
-    if !matches!(entry.kind, AssetKind::Scene | AssetKind::Prefab) {
-        bail!("{} is not a .scene or .prefab file", entry.path);
+    if !matches!(entry.kind, AssetKind::Scene | AssetKind::Prefab | AssetKind::Particles) {
+        bail!("{} is not a .scene, .prefab or .particles file", entry.path);
     }
     Ok((guid, entry.path.clone()))
 }

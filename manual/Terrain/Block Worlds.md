@@ -104,6 +104,38 @@ What you build is kept as it goes out of reach and made again as it comes back, 
 
 With the [[Floating Origin]] switched on, positions stay exact however far the camera goes: the world's middle moves along with it, and the chunks already made stay as they were.
 
+### On slow machines
+
+How much making worlds without end may spend is the project's, in **Project Settings ▸ World ▸ Block Worlds**, and a game's options can change it while the game runs. **Quality** picks a preset; changing a number under it makes it **Custom**.
+
+| Setting | What it does |
+| --- | --- |
+| Quality | Low, Medium, High or Ultra; Custom once a number is changed |
+| Threads | How many threads make terrain at once, heightmap tiles too |
+| Columns at once | How many columns of chunks are made at once, the nearest first |
+| Upload a frame | How many megabytes of chunks go to the GPU a frame: a world with more to show comes over several frames, shown as it was until then |
+| View distance | How far a world's own blocks reach, in metres, at most |
+| Far distance | How far its coarser blocks reach, in metres, at most |
+
+| | Low | Medium | High | Ultra |
+| --- | --- | --- | --- | --- |
+| Threads | 2 | 4 | 8 | 16 |
+| Columns at once | 2 | 8 | 24 | 48 |
+| Upload a frame | 4 MB | 8 MB | 16 MB | 32 MB |
+| View distance | 64 m | 128 m | 192 m | 256 m |
+| Far distance | 512 m | 1 km | 2 km | 4 km |
+
+A project starts on High. A world is drawn as far as its own View distance and Far distance say, and no further than these: on High, a world of 128 m and 1 km is drawn just as it says, and on Low only to 64 m and 512 m. A machine never uses more threads than one fewer than its cores, whatever the setting says.
+
+A change takes hold at once, even while a world is being made round the camera, and nothing already made is made again. From a script:
+
+```csharp
+World.Quality = WorldQuality.Low;
+World.ViewDistance = 96f;
+```
+
+`World.Threads`, `World.ColumnsAtOnce`, `World.UploadMegabytes`, `World.ViewDistance` and `World.FarDistance` read and set the numbers, and setting one makes `World.Quality` Custom. What a script sets is not written to the project: keep the player's choice with the game's own settings, and set it again as the game starts.
+
 ## The blocks a world holds
 
 A world can hold any [[Blocks|block]] of the project, with nothing to set up. Pick one for the brush, for the ground or for the sea, and build.

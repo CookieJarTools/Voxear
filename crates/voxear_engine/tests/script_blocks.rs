@@ -1,7 +1,7 @@
 //! Scripts and blocks: a behaviour asks which block is where, casts a ray
 //! onto a Block World, breaks and places blocks and blasts a hole, physics
 //! follows, and the changes come back from their bytes and from a save of
-//! the scene. Builds a copy of Hello with a world of blocks added; skips
+//! the scene; and another sets how much making worlds may spend. Builds a copy of Hello with a world of blocks added; skips
 //! itself without .NET and the managed build.
 
 use voxear_core::logging::LogCapture;
@@ -72,6 +72,11 @@ data = "Blocks/Field.blockworld"
 id = 42
 name = "Builder"
 behaviours = ["Hello.Builder"]
+
+[[obj]]
+id = 43
+name = "Options"
+behaviours = ["Hello.Quality"]
 "#;
 
 fn hello_copy() -> tempfile::TempDir {
@@ -103,6 +108,7 @@ fn scripts_ask_about_blocks_change_them_and_put_them_back() {
     let _logging = tracing::subscriber::set_default(voxear_core::logging::capturing_only(log.clone()));
     let dir = hello_copy();
     std::fs::write(dir.path().join("Scripts/Builder.cs"), BUILDER).unwrap();
+    std::fs::write(dir.path().join("Scripts/Quality.cs"), QUALITY).unwrap();
     let mut file = BlockFile::default();
     file.ground.size = [32, 32];
     std::fs::create_dir_all(dir.path().join("Blocks")).unwrap();
@@ -134,4 +140,30 @@ fn scripts_ask_about_blocks_change_them_and_put_them_back() {
     assert!(said("saved scene, blast 0"), "{lines:?}");
     // Down to the block 2 m under its middle, whose top is 4 m up.
     assert!(said("physics met the blast hole at 4.0"), "physics follows the blocks: {lines:?}");
+    // How much making worlds may spend: as the project has it, then a preset, then a number set by hand.
+    use voxear_terrain::{WorldBudget, WorldQuality};
+    assert!(said("quality High, columns 24"), "as the project has it: {lines:?}");
+    assert!(said("quality Low, threads 2, columns 2, upload 4"), "a preset sets every number: {lines:?}");
+    assert!(said("quality Custom, view 80, far 512"), "a number set by hand makes it Custom: {lines:?}");
+    let low = WorldQuality::Low.budget().unwrap();
+    let custom = WorldBudget { quality: WorldQuality::Custom, view_distance: 80.0, ..low };
+    assert_eq!(WorldBudget::of(&game.engine.world), custom, "the streamer and the renderer read it");
+    assert_eq!(voxear_terrain::workers::threads(), 2, "two threads make terrain");
 }
+
+const QUALITY: &str = r#"using Voxear;
+
+namespace Hello;
+
+public sealed class Quality : Behaviour
+{
+	protected override void Start()
+	{
+		Log.Info($"quality {World.Quality}, columns {World.ColumnsAtOnce}");
+		World.Quality = WorldQuality.Low;
+		Log.Info($"quality {World.Quality}, threads {World.Threads}, columns {World.ColumnsAtOnce}, upload {World.UploadMegabytes}");
+		World.ViewDistance = 80f;
+		Log.Info($"quality {World.Quality}, view {World.ViewDistance}, far {World.FarDistance}");
+	}
+}
+"#;

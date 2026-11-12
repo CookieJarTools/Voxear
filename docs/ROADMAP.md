@@ -1451,10 +1451,18 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   pictures the world's systems name for the renderer each frame (`particles::resolve`). An effect that plays
   once plays again while selected in the editor. `samples/Effects` has a row of starters. C# `Stretch`,
   `Delay`. Tests: references, the built-in textures, an effect's file, and each starter drawn on a GPU.
+- **Editing effects, and playback ✅.** A `.particles` asset opens on its own as a prefab does, in place of the
+  level: an Obj an emitter, each with a Particle System (`particles::effect_scene`), so the Hierarchy adds,
+  removes, renames and orders emitters and the Inspector edits them, with undo and copy and paste as anywhere.
+  Save writes the Objs' Particle Systems back as the effect (`scene_effect`, in `Levels::save`), and systems
+  playing it take it up. The bar over the Scene view names the effect, with Back and Close Effect. A playback
+  strip over the Scene view, for a selected Particle System or every emitter of an open effect: pause, Restart,
+  a speed (1×, 0.5×, 0.25×, 0.1×, 2×) and a scrubber; an effect that ends plays again. Particles run on a time
+  of their own for it (`ParticleTime`, `ParticlePreview`), the engine's but for the preview. Tests: the
+  particles' time, an effect to a scene and back, and in the editor an effect opened, played, edited and saved.
 - Particles, still to come, in this order (the design is in [ARCHITECTURE.md](ARCHITECTURE.md#particles)):
   - collision with what is out of view: the ground and colliders, and the scene's rays
-  - editing an effect's emitters in the editor, with play, pause and scrub; sub-emitters and events; values an
-    effect shows on the Particle System that plays it
+  - sub-emitters and events; values an effect shows on the Particle System that plays it
   - flipbooks blended by motion vectors, smoke lit from six sides, meshes, trails, sorting, half-size drawing,
     lights from effects, particles in the fog volume
   - `Particles.Play(effect, position)`, bursts at a place, picked parameters, hit events, curves from C#
@@ -2059,6 +2067,14 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   rays (very large worlds still fill the shared mesh pool); a frame's draws merged across a chunk's levels; ground
   generated per metre rather than per block, as noise for caves and overhangs is worked out for every block under
   the surface.
+- ~~**Budgets for making chunks:**~~ done: what making worlds of blocks may spend is a setting
+  (`voxear_terrain::WorldBudget`, `[world]` in `voxear.toml`, Project Settings ▸ World ▸ Block Worlds, `World.Quality`
+  and the numbers under it for scripts): how many threads make terrain at once (a gate on the worker pool, so it
+  changes as the game runs, heightmap tiles too), how many chunk columns a world makes at once
+  (`BlockStreamer::at_once`), how many megabytes of chunks go up a frame, shared by every world, and the most view
+  and far distance. Presets Low to Ultra, Low making two columns at a time on two threads; a number changed makes it
+  Custom. Tests: Low never has more than two columns in flight, raising it as a world streams makes nothing again;
+  a pool never works more jobs at once than its limit; the file, the editor's page and a script set it.
 - Throughout: chunks culled against the frustum and last frame's depth, and the smallest save and network data
   (only changes from what a build or a seed makes, as commands while few and compacted deltas once many).
 

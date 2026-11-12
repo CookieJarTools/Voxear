@@ -23,9 +23,31 @@ Every project has these starters:
 | Magic | Glowing motes round a pulsing light |
 | Mud | Clods and spatter thrown up, once |
 
-An effect that plays once plays over again while its Obj is selected in the editor, so you can watch it. In a game it plays once each time it starts: `Play()` starts it over.
+In a game an effect that plays once plays once each time it starts: `Play()` starts it over.
 
-To make an effect of your own, choose **New Particle Effect…** in the Project panel and pick the starter to begin from. That makes a `.particles` file, a copy that's yours to change, and it shows in every Particle System's Effect list. Selecting it shows its emitters. The file is text: each `[[emitter]]` has a `name` and then the same settings a Particle System has, written as a scene writes them, and a Particle System playing it takes up your changes as you save. Editing an effect's emitters in the editor itself is still to come.
+### Making your own effect
+
+Choose **New Particle Effect…** in the Project panel and pick the starter to begin from. That makes a `.particles` file, a copy that's yours to change, and it shows in every Particle System's Effect list.
+
+Double-click the file to open the effect on its own, in place of the level, as a prefab opens:
+
+- **Each emitter is an Obj** with a Particle System. Select one and the Inspector shows its settings, everything on this page.
+- **Add an emitter** with the Hierarchy's **+ ▸ Particle System**, take one out by deleting its Obj, and rename an Obj to rename its emitter. Emitters draw in the Hierarchy's order, the last on top.
+- **Save** (Ctrl+S) writes the effect, and every Particle System playing it takes up the change.
+- **Back**, on the bar over the Scene view, returns to the level.
+
+Only the Particle Systems are the effect: where an emitter's Obj stands isn't kept, nor anything else you put on it.
+
+## Watching particles play
+
+While a Particle System is selected, or an effect is open, a strip at the foot of the Scene view plays it:
+
+- **Pause** and **Play** hold the particles still and let them go.
+- **Restart** plays from the start.
+- The **speed** button goes round 1×, 0.5×, 0.25×, 0.1× and 2×, for watching a fast effect slowly.
+- Drag the **scrubber** to hold the effect at a time. Particles the wind or a collision moved are shown where their age alone has them while you scrub.
+
+An effect that plays once, as an explosion does, plays over again when it ends, until you pause it. Only the editor's view of the level is paused or slowed: a game plays particles at full speed.
 
 With Effect set to None, the Particle System uses its own settings, the rest of this page.
 
@@ -148,4 +170,4 @@ A behaviour can also have a `ParticleSystem` field, picked in the Inspector, to 
 
 ## What's coming
 
-Still to come: editing an effect's emitters in the editor, collision with what's out of view, trails, flipbooks blended frame to frame, smoke lit from every side, and editing an effect as a graph.
+Still to come: collision with what's out of view, trails, flipbooks blended frame to frame, smoke lit from every side, and editing an effect as a graph.

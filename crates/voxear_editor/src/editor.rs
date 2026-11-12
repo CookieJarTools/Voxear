@@ -326,6 +326,8 @@ pub struct Editor {
     drawer: Option<Drawer>,
     /// The prefab open on its own to edit, if one is.
     prefab: Option<prefab_mode::OpenPrefab>,
+    /// Where the particles' scrubber was last put by the editor, from 0 to 1, to tell a drag of it from that.
+    particle_scrubbed: f32,
     /// The layouts to pick from, the one showing, and whether Save Layout
     /// As's box has yet to take the focus.
     layouts: Vec<windows::Layout>,
@@ -573,8 +575,8 @@ impl Editor {
         let settings_panel = SettingsPanel::new(&mut ui, tabs, view, filter, &memory.settings);
         let (tabs, view) = (find(&ui, "project-tabs"), find(&ui, "project-settings"));
         let (modules, origin) = (game.project.modules(), &game.project.file.floating_origin);
-        let quality = &game.project.file.quality;
-        let project_settings = ProjectSettingsPanel::new(&mut ui, (tabs, view), &modules, origin, quality);
+        let (quality, budget) = (&game.project.file.quality, &game.project.file.world);
+        let project_settings = ProjectSettingsPanel::new(&mut ui, (tabs, view), &modules, (origin, budget), quality);
         let (top, tabs, view) = (find(&ui, "lighting-scene"), find(&ui, "lighting-tabs"), find(&ui, "lighting"));
         let lighting_panel = LightingPanel::new(&mut ui, top, tabs, view);
         let profiler = Profiler::new(&mut ui, nodes.profiler_panel);
@@ -654,6 +656,7 @@ impl Editor {
             window_menu: None,
             drawer: None,
             prefab: None,
+            particle_scrubbed: 0.0,
             layouts: windows::built_in_layouts(),
             layout: 0,
             naming_layout: false,
@@ -958,7 +961,7 @@ impl Editor {
         }
         self.update_drawer();
         self.update_modules();
-        self.replay_selected_effect();
+        self.update_particle_preview();
         self.update_lighting(renderer);
         self.update_side_bar();
         self.update_prefab_mode(renderer);
@@ -1255,7 +1258,7 @@ impl Editor {
         match item.kind {
             ItemKind::Asset(AssetKind::Level) => self.level_action(LevelAction::Open(item.path.clone()), renderer),
             ItemKind::Asset(AssetKind::Scene) => self.level_action(LevelAction::OpenScene(item.path.clone()), renderer),
-            ItemKind::Asset(AssetKind::Prefab) => self.open_prefab(&item.path.clone(), renderer),
+            ItemKind::Asset(AssetKind::Prefab | AssetKind::Particles) => self.open_prefab(&item.path.clone(), renderer),
             ItemKind::Script => {
                 let file = self.game.content.db().file(&item.path);
                 self.open_source(&file, 1);
@@ -1718,8 +1721,9 @@ impl Editor {
     /// A click on the 3D view itself, not on what floats over it, selects
     /// the Obj under it, or nothing.
     fn click_to_select(&mut self, renderer: &Renderer, camera: &ViewCamera, point: Option<[f32; 2]>) {
+        let scene = &self.scene;
         let (viewport, overlays) =
-            (self.scene.viewport, [self.scene.tool_strip, self.scene.stats, self.scene.view_gizmo]);
+            (scene.viewport, [scene.tool_strip, scene.stats, scene.view_gizmo, scene.particle_strip]);
         if !self.ui.clicked(viewport) || overlays.iter().any(|&o| self.ui.clicked(o)) {
             return;
         }

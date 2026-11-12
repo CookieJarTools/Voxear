@@ -448,7 +448,7 @@ fn throw_up(world: &mut World, surface: Vec3, falling: f32, width: f32, liquid: 
         Liquid::Lava => lava_drops(falling, width),
     };
     let lasts = f64::from(drops.lifetime[1]) + 0.2;
-    let playback = ParticlePlayback { started: now as f32, stopped: None };
+    let playback = ParticlePlayback { started: crate::particles::now(world) as f32, stopped: None };
     world.spawn((drops, playback, Splash { until: now + lasts }, Transform::from_position(surface)));
 }
 

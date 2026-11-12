@@ -779,6 +779,37 @@
     text-align: right;
 }
 
+/* A selected Particle System's playback, over the foot of the Scene view, clear of the stats beside it in a
+   narrow view. */
+.particle-strip {
+    left: 50%;
+    bottom: 40px;
+    margin-left: -170px;
+    width: 340px;
+    flex-direction: row;
+    align-items: center;
+    padding: 2px 8px 2px 2px;
+    gap: 2px;
+}
+
+.particle-scrub {
+    flex-grow: 1;
+    margin: 0px 6px;
+}
+
+.particle-scrub > .slider-value {
+    display: none;
+}
+
+.particle-time {
+    width: 52px;
+    flex-shrink: 0;
+    font-family: mono;
+    font-size: 11px;
+    color: var(--vx-text-2);
+    text-align: right;
+}
+
 /* The move, rotate and scale handles, drawn as shapes over the 3D view. */
 .handles {
     position: absolute;

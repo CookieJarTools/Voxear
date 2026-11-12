@@ -78,6 +78,16 @@ float4 fogFragment(PostOut input) : SV_Target
 
     float glow = pow(saturate(dot(direction, -frame->sunDirection)), 8.0) * frame->post.fogSunGlow;
     float3 color = (fogColourToward(frame, direction) + frame->sunColor * glow * 0.15) * fogOpenness(frame, point.xyz / point.w);
+    // What falls from weather far off, between here and there, as its own fog.
+    float sand, dark;
+    float through = weatherCurtain(frame, direction, distance, sand, dark);
+    if (through < 1.0)
+    {
+        float3 curtain = curtainColour(fogColourToward(frame, direction), sand, dark);
+        float kept = (1.0 - saturate(amount)) * through;
+        color = (color * saturate(amount) + curtain * (1.0 - saturate(amount)) * (1.0 - through)) / max(1.0 - kept, 1e-5);
+        amount = 1.0 - kept;
+    }
     return float4(color, saturate(amount));
 }
 

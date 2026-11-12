@@ -547,7 +547,16 @@ pub fn extract(
         Some(_) => scene_post,
         None => {
             let blended = crate::post_volume::blend_volumes(world, scene_post, position);
-            PostProcess { fog: weather.fog(blended.fog), ..blended }
+            let mut fog = weather.fog(blended.fog, sky.horizon);
+            // What falls from weather far off is drawn with the fog: on, however thin, wherever any does.
+            let falls = |place: &crate::weather::WeatherPlace| {
+                place.amounts.rain > 0.0 || place.amounts.snow > 0.0 || place.amounts.dust > 0.0
+            };
+            let curtains = world.resource::<crate::weather::WeatherPlaces>().is_some_and(|places| places.0.iter().any(falls));
+            if curtains && !(fog.enabled && fog.density > 0.0) {
+                fog = crate::post::Fog { enabled: true, density: 1e-7, ..fog };
+            }
+            PostProcess { fog, ..blended }
         }
     };
     let post = match options.debug_view {
@@ -730,8 +739,17 @@ pub fn extract(
     if let Some((zone, rotation)) = zone {
         frame.wind = zone.gpu(rotation);
     }
-    if let Some(sea) = world.resource::<crate::sea::RoughSea>() {
-        frame.sea = sea.gpu();
+    // Weather over parts of the level, and the sea under it.
+    let places = world.resource::<crate::weather::WeatherPlaces>();
+    let places = places.map_or(&[][..], |places| &places.0[..]);
+    let sea = world.resource::<crate::sea::RoughSea>();
+    if sea.is_some() || !places.is_empty() {
+        let flat = crate::sea::RoughSea { look: crate::sea::SeaLook::Flat, ..Default::default() };
+        frame.sea = sea.unwrap_or(&flat).gpu(places);
+        // A sky with no clouds of its own has them over weather that brings them.
+        if places.iter().any(|place| place.amounts.cloud > 0.0) && frame.lighting.clouds.cover <= 0.0 {
+            frame.lighting.clouds.cover = 1e-4;
+        }
     }
     // The first Ocean is the sea, at its Obj's height: as its wind has eased it where the engine runs, or as its wind
     // makes it now.

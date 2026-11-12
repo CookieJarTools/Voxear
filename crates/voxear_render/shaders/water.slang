@@ -3412,9 +3412,7 @@ float seaRough(Frame* frame, float2 xz)
     float rough = frame->sea.everywhere;
     for (uint i = 0; i < frame->sea.storms; i++)
     {
-        float4 place = frame->sea.places[i];
-        float far = length(xz - place.xy) / place.z;
-        rough = max(rough, place.w * (1.0 - smoothstep(0.3, 1.0, far)));
+        rough = max(rough, frame->sea.roughs[i] * weatherShare(frame, i, xz));
     }
     return rough;
 }
@@ -3430,7 +3428,7 @@ float seaSunk(Frame* frame, float2 xz, out float crest, out float rough)
     for (uint i = 0; i < SEA_WAVES; i++)
     {
         float4 wave = frame->sea.waves[i];
-        float phase = dot(at, wave.xy) - frame->time * wave.z;
+        float phase = dot(at, wave.xy) - wave.z;
         // Peaked at its crest and round in its trough, as a wave near breaking is.
         swell += wave.w * lerp(0.5 + 0.5 * cos(phase), 1.0 - abs(sin(phase * 0.5)), 0.6);
     }
@@ -3445,7 +3443,7 @@ float seaSunk(Frame* frame, float2 xz, out float crest, out float rough)
         {
             float into = 1.0 - far;
             // Arms that wind in to its middle, turning.
-            float arms = sin(atan2(from.y, from.x) * 3.0 + 7.0 * log(max(far, 0.02)) + frame->time * 1.6);
+            float arms = sin(atan2(from.y, from.x) * 3.0 + 7.0 * log(max(far, 0.02)) + frame->sea.spin);
             float funnel = pool.w * into * into * (0.4 + 0.6 * into);
             sunk = lerp(sunk, 0.0, smoothstep(0.0, 0.5, into)) + funnel + 0.1 * pool.w * into * (0.5 + 0.5 * arms) * smoothstep(0.0, 0.2, far);
             // Its arms are white water.
@@ -3470,7 +3468,8 @@ bool blockSwell(Frame* frame, BlockWorld world, float3 from, float3 ray, out flo
     at = from;
     facing = float3(0.0, 1.0, 0.0);
     float down = max(-ray.y, 1e-4);
-    float column = frame->sea.column;
+    float column = frame->sea.column * world.blockSize;
+    float stepHigh = frame->sea.step * world.blockSize;
     if (column <= 0.0)
     {
         // Smooth: down along the ray until it is under the swell, then back to where it crossed.
@@ -3532,7 +3531,7 @@ bool blockSwell(Frame* frame, BlockWorld world, float3 from, float3 ray, out flo
     {
         float2 middle = world.corner.xz + (float2(cell) + 0.5) * column;
         float sunk = seaSunk(frame, middle, crest, rough);
-        sunk = round(sunk / frame->sea.step) * frame->sea.step;
+        sunk = round(sunk / stepHigh) * stepHigh;
         if (down * entered > sunk + 1e-4)
         {
             // It came in under this column's top: it meets its side.
@@ -3679,7 +3678,8 @@ FragmentOut blockWaterFragment(BlockWaterOut input)
     float crest = 0.0;
     float rough = 0.0;
     bool swollen = false;
-    if (face.y > 0.5 && v.y > 0.0 && frame->sea.look != SEA_FLAT)
+    bool sea = abs(input.world.y - world.corner.y - world.seaTop) < 0.02 * world.blockSize || world.seaTop < -1.0e8;
+    if (face.y > 0.5 && v.y > 0.0 && sea && frame->sea.look != SEA_FLAT && (frame->sea.storms + frame->sea.whirlpools > 0 || frame->sea.everywhere > 0.0))
     {
         swollen = blockSwell(frame, world, input.world, -v, at, face, crest, rough);
     }
@@ -3797,14 +3797,15 @@ FragmentOut blockWaterFragment(BlockWaterOut input)
     // White water: a crest's top breaks where the sea is rough, a column at a time where it is columns.
     if (swollen && level)
     {
-        float column = max(frame->sea.column, 0.25);
+        float column = max(frame->sea.column, 0.25) * world.blockSize;
         int2 cell = int2(floor((at.xz - world.corner.xz) / column));
         float2 middle = frame->sea.column > 0.0 ? world.corner.xz + (float2(cell) + 0.5) * column : at.xz;
         float c, r;
         float sunk = seaSunk(frame, middle, c, r);
-        sunk = frame->sea.step > 0.0 ? round(sunk / frame->sea.step) * frame->sea.step : sunk;
+        float stepHigh = frame->sea.step * world.blockSize;
+        sunk = stepHigh > 0.0 ? round(sunk / stepHigh) * stepHigh : sunk;
         // White water comes in patches along the crests, a few metres across, that drift with them.
-        float2 drifted = levelXZ(frame, middle, 4096.0) / 3.5 + frame->time * float2(0.21, 0.13);
+        float2 drifted = levelXZ(frame, middle, 4096.0) / 3.5 + frame->sea.drift;
         int2 patch = int2(floor(drifted));
         float2 within = drifted - floor(drifted);
         within = within * within * (3.0 - 2.0 * within);

@@ -9,7 +9,8 @@ use voxear_ecs::World;
 use voxear_render::{
     AntiAliasing, AntiAliasingMode, BlockLook, Camera, Light, MaterialDesc, PostProcess, Renderer, RendererSettings,
     Sky, SurfaceLook,
-    sea::{RoughPlace, RoughSea, SeaLook, Whirlpool},
+    sea::{RoughSea, SeaLook, Whirlpool},
+    weather::{Weather, WeatherKind, WeatherPlace, WeatherPlaces},
 };
 use voxear_scene::Transform;
 use voxear_terrain::blocks::{
@@ -138,7 +139,7 @@ fn a_rough_sea_is_drawn_as_steps_as_small_cubes_or_smooth() {
         ("from above", (Vec3::new(middle + 34.0, top + 20.0, middle + 38.0), Vec3::new(middle - 4.0, top, middle - 6.0))),
     ];
     for (look, name) in LOOKS {
-        world.insert_resource(RoughSea { look, everywhere: 0.85, heading: 0.6, height: 3.0, ..RoughSea::default() });
+        world.insert_resource(RoughSea { look, everywhere: 0.85, heading: 0.6, time: 20.0, ..RoughSea::default() });
         for (view, camera) in views {
             let pixels = seen(&mut renderer, &mut world, camera, 20.0);
             keep_image(&format!("sea {name} {view}.png"), &pixels);
@@ -151,11 +152,16 @@ fn a_storm_roughens_the_sea_under_it_and_a_whirlpool_draws_it_down() {
     let Some(mut renderer) = renderer() else { return };
     let mut world = sea(&mut renderer);
     let (middle, top) = (SIDE as f32 * 0.5, TOP as f32);
-    let storm = RoughPlace { middle: Vec2::new(middle - 55.0, middle - 45.0), radius: 60.0, strength: 1.0 };
+    let storm = WeatherPlace {
+        middle: Vec2::new(middle - 55.0, middle - 45.0),
+        radius: 60.0,
+        rough: 1.0,
+        ..WeatherPlace::default()
+    };
+    world.insert_resource(WeatherPlaces(vec![storm]));
     let pool = Whirlpool { middle: Vec2::new(middle + 2.0, middle - 44.0), radius: 16.0, depth: 7.0 };
     for (look, name) in LOOKS.into_iter().skip(1) {
-        let rough = RoughSea { look, heading: 0.6, height: 3.0, storms: vec![storm], whirlpools: vec![pool], ..RoughSea::default() };
-        world.insert_resource(rough);
+        world.insert_resource(RoughSea { look, heading: 0.6, time: 20.0, whirlpools: vec![pool], ..RoughSea::default() });
         // Calm water at the island's shore, the storm's sea beyond it.
         let towards_storm = (Vec3::new(middle + 12.0, top + 14.0, middle + 14.0), Vec3::new(middle - 40.0, top, middle - 34.0));
         let pixels = seen(&mut renderer, &mut world, towards_storm, 20.0);
@@ -164,4 +170,55 @@ fn a_storm_roughens_the_sea_under_it_and_a_whirlpool_draws_it_down() {
         let pixels = seen(&mut renderer, &mut world, over_pool, 20.0);
         keep_image(&format!("sea {name} whirlpool.png"), &pixels);
     }
+}
+
+/// How bright a pixel is, from 0 to 255.
+fn bright(pixels: &[u8], x: u32, y: u32) -> i32 {
+    let i = ((y * WIDTH + x) * 4) as usize;
+    (i32::from(pixels[i]) + i32::from(pixels[i + 1]) + i32::from(pixels[i + 2])) / 3
+}
+
+#[test]
+fn a_storm_far_off_is_a_dark_cloud_over_its_place_with_a_curtain_under_it_in_a_clear_sky() {
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = sea(&mut renderer);
+    let (middle, top) = (SIDE as f32 * 0.5, TOP as f32);
+    world.insert_resource(Sky { ambient: 0.35, clouds: voxear_render::Clouds { height: 500.0, thickness: 400.0, ..voxear_render::Clouds::blocks(0.25) }, ..Sky::default() });
+    // From the island, looking west over the sea, the storm three kilometres off and a little to the right.
+    let camera = (Vec3::new(middle, top + 6.0, middle), Vec3::new(middle - 400.0, top + 90.0, middle));
+    let clear = seen(&mut renderer, &mut world, camera, 20.0);
+    keep_image("storm far off clear.png", &clear);
+    let storm = |kind: WeatherKind| WeatherPlace {
+        middle: Vec2::new(middle - 3000.0, middle + 900.0),
+        radius: 900.0,
+        amounts: kind.amounts(),
+        rough: 1.0,
+        ..WeatherPlace::default()
+    };
+    world.insert_resource(WeatherPlaces(vec![storm(WeatherKind::Storm)]));
+    let stormy = seen(&mut renderer, &mut world, camera, 20.0);
+    keep_image("storm far off.png", &stormy);
+    world.insert_resource(WeatherPlaces(vec![storm(WeatherKind::Sandstorm)]));
+    let sand = seen(&mut renderer, &mut world, camera, 20.0);
+    keep_image("sandstorm far off.png", &sand);
+    // The sky towards the storm, under its cloud, is darker than it was; away from it, as it was.
+    let over = |pixels: &[u8], x: u32| (0..60).map(|y| bright(pixels, x, HEIGHT / 2 + 40 + y)).sum::<i32>() / 60;
+    let towards = WIDTH * 2 / 3;
+    assert!(over(&stormy, towards) < over(&clear, towards) - 12, "{} and {}", over(&stormy, towards), over(&clear, towards));
+    let away = WIDTH / 6;
+    assert!((over(&stormy, away) - over(&clear, away)).abs() < 12, "{} and {}", over(&stormy, away), over(&clear, away));
+    // Blown sand is dun where rain is grey.
+    let dun = |pixels: &[u8]| {
+        let i = (((HEIGHT / 2 + 110) * WIDTH + towards) * 4) as usize;
+        i32::from(pixels[i]) - i32::from(pixels[i + 2])
+    };
+    assert!(dun(&sand) > dun(&stormy) + 10, "{} and {}", dun(&sand), dun(&stormy));
+    // Standing under it, the weather is the viewer's own: the whole sky dark.
+    let mut weather = Weather::default();
+    weather.set_here(WeatherKind::Storm.amounts());
+    world.insert_resource(weather);
+    world.insert_resource(WeatherPlaces(vec![WeatherPlace { middle: Vec2::new(middle, middle), ..storm(WeatherKind::Storm) }]));
+    let under = seen(&mut renderer, &mut world, camera, 20.0);
+    keep_image("storm overhead.png", &under);
+    assert!(over(&under, away) < over(&clear, away) - 20, "{} and {}", over(&under, away), over(&clear, away));
 }

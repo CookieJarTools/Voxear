@@ -87,6 +87,12 @@ pub enum AssetKind {
     /// height and the blocks its ground is made of, which a world of
     /// blocks' generated ground lists.
     Biome,
+    /// A `.structure` file: something a world's generator builds where its
+    /// placement finds ground, a model of blocks or a plant.
+    Structure,
+    /// A `.voxplant` file: a tree or a bush of blocks grown from a few
+    /// numbers and a seed.
+    Plant,
     /// A `.vox` file: a model of small coloured blocks, as voxel sculpting
     /// tools save it, which a Block World's Model brush builds.
     VoxModel,
@@ -123,6 +129,8 @@ impl AssetKind {
             "blockworld" => Self::BlockWorld,
             "block" => Self::Block,
             "biome" => Self::Biome,
+            "structure" => Self::Structure,
+            "voxplant" => Self::Plant,
             "vox" => Self::VoxModel,
             "particles" => Self::Particles,
             _ => return None,

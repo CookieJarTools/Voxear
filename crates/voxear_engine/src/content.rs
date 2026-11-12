@@ -489,6 +489,8 @@ pub struct Content {
     blocks: HashMap<AssetGuid, Option<Arc<voxear_terrain::blocks::block::BlockDef>>>,
     blocks_version: u64,
     biomes: HashMap<AssetGuid, Option<Arc<voxear_terrain::generate::BiomeDef>>>,
+    structures: HashMap<AssetGuid, Option<Arc<voxear_terrain::blocks::structure::StructureDef>>>,
+    plants: HashMap<AssetGuid, Option<Arc<voxear_terrain::blocks::plant::PlantDef>>>,
     /// Heightmap pictures terrains' layers read, by GUID.
     terrain_greys: HashMap<AssetGuid, Option<Arc<voxear_terrain::import::Greys>>>,
     /// World generators terrains' Generate layers read, by GUID.
@@ -669,6 +671,8 @@ impl Content {
             blocks: HashMap::new(),
             blocks_version: 0,
             biomes: HashMap::new(),
+            structures: HashMap::new(),
+            plants: HashMap::new(),
             terrain_greys: HashMap::new(),
             world_gens: HashMap::new(),
             handlings_version: 0,
@@ -1463,6 +1467,8 @@ impl Content {
             let file = voxear_terrain::blocks::file::BlockFile::parse(&text).with_context(|| path.clone())?;
             // Its biomes read, and the blocks they name numbered.
             let file = crate::blocks::with_biomes(self, &file);
+            // And its structures, their blocks numbered after.
+            let file = crate::blocks::with_structures(self, &file);
             // The editor's changes from its ground, where it has any, beside it.
             let changes = voxear_terrain::blocks::edits::blocks_file(&path);
             let edits = match self.read(&changes) {
@@ -1624,6 +1630,45 @@ impl Content {
         };
         self.biomes.insert(guid, kept.clone());
         kept.map(|biome| (guid, biome))
+    }
+
+    /// The structure `reference` names, read once, with its GUID.
+    pub fn structure(
+        &mut self,
+        reference: &str,
+    ) -> Option<(AssetGuid, Arc<voxear_terrain::blocks::structure::StructureDef>)> {
+        let guid = self.parse(reference).ok().and_then(|parsed| parsed.guid())?;
+        if let Some(kept) = self.structures.get(&guid) {
+            return kept.clone().map(|kept| (guid, kept));
+        }
+        let path = self.db.get(guid).filter(|entry| entry.kind == AssetKind::Structure)?.path.clone();
+        let read =
+            self.read_text(&path).and_then(|text| voxear_terrain::blocks::structure::StructureDef::parse(&text));
+        let kept = read.map(Arc::new).map_err(|error| tracing::warn!("{path} could not be read: {error:#}")).ok();
+        self.structures.insert(guid, kept.clone());
+        kept.map(|kept| (guid, kept))
+    }
+
+    /// The plant `reference` names, read once, with its GUID.
+    pub fn plant(&mut self, reference: &str) -> Option<(AssetGuid, Arc<voxear_terrain::blocks::plant::PlantDef>)> {
+        let guid = self.parse(reference).ok().and_then(|parsed| parsed.guid())?;
+        if let Some(kept) = self.plants.get(&guid) {
+            return kept.clone().map(|kept| (guid, kept));
+        }
+        let path = self.db.get(guid).filter(|entry| entry.kind == AssetKind::Plant)?.path.clone();
+        let read = self.read_text(&path).and_then(|text| voxear_terrain::blocks::plant::PlantDef::parse(&text));
+        let kept = read.map(Arc::new).map_err(|error| tracing::warn!("{path} could not be read: {error:#}")).ok();
+        self.plants.insert(guid, kept.clone());
+        kept.map(|kept| (guid, kept))
+    }
+
+    /// Forgets a structure or a plant, read again when next asked for, as
+    /// after it was saved; worlds made from it are made again as their
+    /// blocks are when one of those is saved.
+    pub fn forget_structure(&mut self, guid: AssetGuid) {
+        self.structures.remove(&guid);
+        self.plants.remove(&guid);
+        self.blocks_version += 1;
     }
 
     /// What the biome at `guid` is called: its file's name.

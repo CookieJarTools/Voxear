@@ -392,6 +392,8 @@ pub fn server_reads(kind: AssetKind) -> bool {
         | AssetKind::BlockWorld
         | AssetKind::Block
         | AssetKind::Biome
+        | AssetKind::Structure
+        | AssetKind::Plant
         | AssetKind::VoxModel => true,
         AssetKind::Texture
         | AssetKind::Material
@@ -626,8 +628,10 @@ fn find_needs(db: &AssetDb, guid: AssetGuid, kind: AssetKind, path: &str) -> Res
         // The blocks a world of blocks lists and the materials its own kinds' faces are drawn with; what a block names.
         | AssetKind::BlockWorld
         | AssetKind::Block
-        // The blocks a biome's ground is made of.
+        // The blocks a biome's ground is made of; a structure's blocks, plant and biomes; a plant's wood and leaves.
         | AssetKind::Biome
+        | AssetKind::Structure
+        | AssetKind::Plant
         // The pictures a set of prompt icons shows, and the set the input actions name.
         | AssetKind::PromptIcons
         | AssetKind::InputActions => {

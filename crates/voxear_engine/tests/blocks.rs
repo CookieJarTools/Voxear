@@ -305,6 +305,98 @@ fn a_generated_block_worlds_biomes_put_their_blocks_on_its_ground_numbered_as_it
 }
 
 #[test]
+fn a_generated_block_world_builds_its_structures_trees_grown_from_a_plant_and_huts_from_a_model() {
+    use voxear_engine::blocks::BlockWorldAsset;
+    use voxear_terrain::{
+        blocks::{
+            generate::BlockGenerate,
+            plant::PlantDef,
+            structure::{GroundFit, StructureDef, StructureModel},
+        },
+        generate::{Preset, structures::Placement},
+    };
+    let dir = project();
+    for folder in ["Worlds", "Plants", "Structures"] {
+        std::fs::create_dir_all(dir.path().join(folder)).unwrap();
+    }
+    std::fs::write(dir.path().join("Worlds/Hills.worldgen"), Preset::RollingHills.world().to_text()).unwrap();
+    for (name, colour) in [("Log", "[0.4, 0.3, 0.2]"), ("Leaves", "[0.2, 0.5, 0.2]"), ("Planks", "[0.7, 0.5, 0.3]")] {
+        std::fs::write(dir.path().join(format!("Blocks/{name}.block")), format!("color = {colour}\n")).unwrap();
+    }
+    let oak = PlantDef {
+        wood: Some("Blocks/Log.block".into()),
+        leaves: Some("Blocks/Leaves.block".into()),
+        ..PlantDef::default()
+    };
+    std::fs::write(dir.path().join("Plants/Oak.voxplant"), oak.to_text()).unwrap();
+    let wood = StructureDef {
+        ground: GroundFit::Leave,
+        plant: Some("Plants/Oak.voxplant".into()),
+        placement: Placement { spacing: 16.0, separation: 6.0, chance: 0.8, slope: 40.0, ..Placement::default() },
+        ..StructureDef::default()
+    };
+    // A box of planks 4 by 3 by 4, open inside, anywhere with some slope.
+    let blocks: Vec<u16> = (0..48)
+        .map(|i| {
+            let (x, z) = (i % 4, (i / 4) % 4);
+            if i < 16 || x == 0 || x == 3 || z == 0 || z == 3 { 1 } else { 0 }
+        })
+        .collect();
+    let hut = StructureDef {
+        ground: GroundFit::Flatten,
+        model: Some(StructureModel::of([4, 3, 4], vec!["Blocks/Planks.block".into()], &blocks)),
+        placement: Placement {
+            spacing: 40.0,
+            separation: 12.0,
+            chance: 1.0,
+            slope: 30.0,
+            salt: 3,
+            ..Placement::default()
+        },
+        ..StructureDef::default()
+    };
+    std::fs::write(dir.path().join("Structures/Wood.structure"), wood.to_text()).unwrap();
+    std::fs::write(dir.path().join("Structures/Hut.structure"), hut.to_text()).unwrap();
+    let mut file = BlockFile::default();
+    file.ground.size = [64, 64];
+    file.generate = Some(BlockGenerate {
+        world: Some("Worlds/Hills.worldgen".into()),
+        bottom: -8,
+        caves: 0.0,
+        structures: vec![
+            "Structures/Hut.structure".into(),
+            "Structures/Wood.structure".into(),
+            "Structures/Gone.structure".into(),
+        ],
+        ..BlockGenerate::default()
+    });
+    let held = file.blocks.len();
+    std::fs::write(dir.path().join("Blocks/Field.blockworld"), file.to_text()).unwrap();
+    let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
+    game.start(None).unwrap();
+    let world = &game.engine.world;
+    let blocks = world.query_ref::<&BlockWorld>().into_iter().next().expect("the world").clone();
+    let asset = world.query_ref::<&BlockWorldAsset>().into_iter().next().expect("its asset").clone();
+    // Planks, then log and leaves, numbered after what it held, in the order the structures name them.
+    assert_eq!(asset.file.blocks.len(), held + 3);
+    let (planks, log, leaves) = ((held + 1) as u16, (held + 2) as u16, (held + 3) as u16);
+    let mut counts = [0usize; 3];
+    for z in 0..64 {
+        for x in 0..64 {
+            for y in -8..120 {
+                let block = blocks.blocks.get([x, y, z]);
+                for (at, wanted) in [planks, log, leaves].into_iter().enumerate() {
+                    counts[at] += usize::from(block == wanted);
+                }
+            }
+        }
+    }
+    let [planks, log, leaves] = counts;
+    assert!(planks >= 40, "{planks} planks: a hut at least");
+    assert!(log > 100 && leaves > 500, "{log} of log, {leaves} of leaves: a wood");
+}
+
+#[test]
 fn a_block_world_without_end_is_made_round_the_camera_and_saves_every_change() {
     use voxear_terrain::{
         blocks::{

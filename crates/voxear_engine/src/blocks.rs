@@ -183,22 +183,7 @@ pub fn with_biomes(content: &mut Content, file: &BlockFile) -> BlockFile {
             tracing::warn!("a world of blocks lists the biome {reference}, which is not in the project");
             continue;
         };
-        let numbered = BiomeBlocks::of(&biome.ground, |named| {
-            let Some((guid, _)) = content.block(named) else {
-                tracing::warn!("the biome {reference} names the block {named}, which is not in the project");
-                return voxear_terrain::blocks::chunk::AIR;
-            };
-            if let Some(number) = resolved(content, &file).number_of(guid) {
-                return number;
-            }
-            match with_block(content, &file, guid) {
-                Some((grown, _)) => {
-                    file = grown;
-                    file.blocks.len() as BlockId
-                }
-                None => voxear_terrain::blocks::chunk::AIR,
-            }
-        });
+        let numbered = BiomeBlocks::of(&biome.ground, |named| number_named(content, &mut file, reference, named));
         list.push((*biome).clone());
         blocks.push(numbered);
     }
@@ -206,6 +191,96 @@ pub fn with_biomes(content: &mut Content, file: &BlockFile) -> BlockFile {
     let biomes = Biomes::new(list, 15.0, 0.3, seed);
     if let Some(generate) = file.generate.as_mut() {
         generate.placed = Some(Arc::new(WorldBiomes { biomes, blocks }));
+    }
+    file
+}
+
+/// The number `file` gives the block `named`, which `owner` names: the one
+/// it has, or the next after those it has, `file` growing to hold it. Air,
+/// with a warning, for a block not in the project or one the world has no
+/// room for.
+fn number_named(content: &mut Content, file: &mut BlockFile, owner: &str, named: &str) -> BlockId {
+    let Some((guid, _)) = content.block(named) else {
+        tracing::warn!("{owner} names the block {named}, which is not in the project");
+        return voxear_terrain::blocks::chunk::AIR;
+    };
+    if let Some(number) = resolved(content, file).number_of(guid) {
+        return number;
+    }
+    match with_block(content, file, guid) {
+        Some((grown, _)) => {
+            *file = grown;
+            file.blocks.len() as BlockId
+        }
+        None => voxear_terrain::blocks::chunk::AIR,
+    }
+}
+
+/// `file` with its generated ground's structures read (see
+/// `voxear_terrain::blocks::structure`): each structure its `[generate]`
+/// lists, its blocks or its plant's wood and leaves numbered by the world as
+/// [`with_biomes`] numbers a biome's, and the biomes it stands in found
+/// among the world's own. A structure, plant or block that cannot be found
+/// is left out, with a warning.
+pub fn with_structures(content: &mut Content, file: &BlockFile) -> BlockFile {
+    use voxear_terrain::blocks::structure::{PlacedStructure, StructureBlocks, WorldStructures};
+    let Some(generate) = file.generate.as_ref().filter(|generate| !generate.structures.is_empty()) else {
+        return file.clone();
+    };
+    let (references, biomes) = (generate.structures.clone(), generate.biomes.clone());
+    let mut file = file.clone();
+    let biome_guids: Vec<Option<AssetGuid>> =
+        biomes.iter().map(|reference| content.biome(reference).map(|(guid, _)| guid)).collect();
+    let mut list = Vec::new();
+    for reference in &references {
+        let Some((_, structure)) = content.structure(reference) else {
+            tracing::warn!("a world of blocks lists the structure {reference}, which is not in the project");
+            continue;
+        };
+        let blocks = match (&structure.model, &structure.plant) {
+            (Some(model), _) => {
+                let Some(entries) = model.blocks() else {
+                    tracing::warn!("the structure {reference} has a model whose blocks do not fill its size");
+                    continue;
+                };
+                let numbers: Vec<BlockId> =
+                    model.palette.iter().map(|named| number_named(content, &mut file, reference, named)).collect();
+                let blocks =
+                    entries.iter().map(|&entry| if entry == 0 { 0 } else { numbers[usize::from(entry) - 1] }).collect();
+                StructureBlocks::Model { size: model.size, blocks }
+            }
+            (None, Some(plant)) => {
+                let Some((_, def)) = content.plant(plant) else {
+                    tracing::warn!("the structure {reference} grows the plant {plant}, which is not in the project");
+                    continue;
+                };
+                let mut number = |named: &Option<String>| {
+                    named.as_deref().map_or(0, |named| number_named(content, &mut file, plant, named))
+                };
+                let (wood, leaves) = (number(&def.wood), number(&def.leaves));
+                StructureBlocks::Plant { plant: (*def).clone(), wood, leaves }
+            }
+            (None, None) => continue,
+        };
+        // The world's biomes it stands in, by their place in the world's list.
+        let wanted: Vec<Option<AssetGuid>> =
+            structure.placement.biomes.iter().map(|named| content.biome(named).map(|(guid, _)| guid)).collect();
+        let in_biomes = biome_guids
+            .iter()
+            .enumerate()
+            .filter(|(_, guid)| guid.is_some() && wanted.contains(guid))
+            .map(|(at, _)| at)
+            .collect();
+        list.push(PlacedStructure {
+            placement: structure.placement.clone(),
+            ground: structure.ground,
+            sink: structure.sink,
+            blocks,
+            biomes: in_biomes,
+        });
+    }
+    if let Some(generate) = file.generate.as_mut() {
+        generate.built = Some(Arc::new(WorldStructures { list }));
     }
     file
 }

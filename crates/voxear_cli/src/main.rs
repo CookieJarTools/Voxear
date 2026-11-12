@@ -1263,6 +1263,8 @@ fn assets(path: &Path) -> Result<()> {
             AssetKind::BlockWorld => "blockworld",
             AssetKind::Block => "block",
             AssetKind::Biome => "biome",
+            AssetKind::Structure => "structure",
+            AssetKind::Plant => "voxplant",
             AssetKind::VoxModel => "vox",
         };
         println!("  {:<9} {}  {}", kind, entry.guid, entry.path);

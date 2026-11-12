@@ -912,3 +912,160 @@ fn a_generated_worlds_biomes_show_as_different_country_snow_forest_grass_desert_
     let kinds = [white, green, sandy, grey].iter().filter(|&&count| count > 300).count();
     assert!(kinds >= 3, "snow {white}, green {green}, sand {sandy}, rock {grey}");
 }
+
+#[test]
+fn a_generated_world_builds_a_wood_of_grown_trees_and_huts_standing_level_on_its_hills() {
+    use voxear_terrain::{
+        blocks::{
+            file::{BlockKind, Ground},
+            generate::BlockGenerate,
+            plant::{PlantDef, PlantKind},
+            structure::{GroundFit, PlacedStructure, StructureBlocks, WorldStructures},
+        },
+        generate::{Preset, structures::Placement},
+    };
+    let Some(mut renderer) = renderer() else { return };
+    let world = Preset::RollingHills.world();
+    let mut file = BlockFile {
+        block_size: 1.0,
+        ground: Ground { size: [128, 128], ..Ground::default() },
+        generate: Some(BlockGenerate { caves: 0.0, bottom: -12, ..BlockGenerate::default() }),
+        ..BlockFile::default()
+    };
+    let first = file.blocks.len() as u16 + 1;
+    for (name, colour) in [
+        ("Oak Log", [0.36, 0.26, 0.17]),
+        ("Oak Leaves", [0.22, 0.48, 0.18]),
+        ("Pine Log", [0.3, 0.2, 0.14]),
+        ("Pine Needles", [0.1, 0.3, 0.17]),
+        ("Planks", [0.72, 0.55, 0.34]),
+        ("Roof", [0.55, 0.2, 0.15]),
+    ] {
+        file.blocks.push(BlockKind::colored(name, colour));
+    }
+    let [oak_log, oak_leaves, pine_log, pine_needles, planks, roof] = std::array::from_fn(|i| first + i as u16);
+    // A hut 7 by 7: a floor and walls of planks with a door, under a roof that steps in.
+    let (sx, sy, sz) = (7usize, 7usize, 7usize);
+    let mut hut = vec![0u16; sx * sy * sz];
+    for y in 0..sy {
+        for z in 0..sz {
+            for x in 0..sx {
+                let edge = x == 0 || z == 0 || x == sx - 1 || z == sz - 1;
+                let door = z == 0 && x == 3 && (1..3).contains(&y);
+                let inset = y.saturating_sub(4);
+                let in_roof = y >= 4 && x >= inset && z >= inset && x < sx - inset && z < sz - inset;
+                hut[(y * sz + z) * sx + x] = match () {
+                    _ if y == 0 => planks,
+                    _ if in_roof
+                        && (y == sy - 1 || x == inset || z == inset || x == sx - 1 - inset || z == sz - 1 - inset) =>
+                    {
+                        roof
+                    }
+                    _ if y < 4 && edge && !door => planks,
+                    _ => 0,
+                };
+            }
+        }
+    }
+    let land = |spacing: f32, separation: f32, chance: f32, slope: f32, salt: u32| Placement {
+        spacing,
+        separation,
+        chance,
+        slope,
+        salt,
+        height: Some([1.0, 1000.0]),
+        ..Placement::default()
+    };
+    let pine = PlantDef {
+        kind: PlantKind::Conifer,
+        height: [12.0, 17.0],
+        crown_width: [6.0, 8.0],
+        crown_height: [9.0, 12.0],
+        bend: 0.05,
+        ..PlantDef::default()
+    };
+    let list = vec![
+        PlacedStructure {
+            placement: land(48.0, 20.0, 1.0, 18.0, 5),
+            ground: GroundFit::Flatten,
+            sink: 0,
+            blocks: StructureBlocks::Model { size: [7, 7, 7], blocks: hut },
+            biomes: Vec::new(),
+        },
+        PlacedStructure {
+            placement: land(13.0, 6.0, 0.7, 35.0, 1),
+            ground: GroundFit::Leave,
+            sink: 0,
+            blocks: StructureBlocks::Plant { plant: PlantDef::default(), wood: oak_log, leaves: oak_leaves },
+            biomes: Vec::new(),
+        },
+        PlacedStructure {
+            placement: land(17.0, 7.0, 0.6, 40.0, 2),
+            ground: GroundFit::Leave,
+            sink: 0,
+            blocks: StructureBlocks::Plant { plant: pine, wood: pine_log, leaves: pine_needles },
+            biomes: Vec::new(),
+        },
+    ];
+    file.generate.as_mut().unwrap().built = Some(Arc::new(WorldStructures { list }));
+    let (looks, faces) = file.faces();
+    let surfaces: Vec<SurfaceLook> = looks
+        .iter()
+        .map(|look| {
+            let [r, g, b] = look.color;
+            let material =
+                renderer.add_material(&MaterialDesc { base_color: [r, g, b, 1.0], ..MaterialDesc::default() });
+            SurfaceLook {
+                material: material.unwrap(),
+                size: 1.0,
+                sharpness: 0.0,
+                triplanar: true,
+                tracks: 0.0,
+                fills_in: 0.0,
+                liquid: Default::default(),
+                glitter: false,
+            }
+        })
+        .collect();
+    let default = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let mut scene = World::new();
+    let made = BlockWorld::made(file.make_ground(Some(&world)), &faces, 1.0, false);
+    let count = |block: u16| -> usize {
+        let mut n = 0;
+        for z in 0..128 {
+            for x in 0..128 {
+                for y in -12..160 {
+                    n += usize::from(made.blocks.get([x, y, z]) == block);
+                }
+            }
+        }
+        n
+    };
+    let (huts, oaks, pines) = (count(roof), count(oak_log), count(pine_log));
+    assert!(huts > 50 && oaks > 100 && pines > 100, "roof {huts}, oak {oaks}, pine {pines}");
+    let ground_at = |x: f32, z: f32| world.height_at(x, z);
+    let look = BlockLook { material: default, surfaces: Arc::from(surfaces) };
+    scene.spawn((made, look, Transform::default()));
+    // From over one corner of the hills, 30 m up, looking across them and a little down.
+    // Cameras look along +z; turned to look back towards the world's corner.
+    let turn = Quat::from_rotation_y(3.927) * Quat::from_rotation_x(0.32);
+    let eye = Vec3::new(134.0, ground_at(134.0, 134.0).max(ground_at(110.0, 110.0)) + 30.0, 134.0);
+    scene.spawn((Camera::default(), Transform::new(eye, turn, Vec3::ONE)));
+    let towards_sun = Vec3::new(-0.5, 0.6, -0.3).normalize();
+    let sun = Quat::from_rotation_arc(Vec3::Z, -towards_sun);
+    scene.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    scene.insert_resource(Sky { ambient: 0.35, ..Sky::default() });
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
+    scene.insert_resource(PostProcess { anti_aliasing, ..PostProcess::neutral() });
+    let pixels = render(&mut renderer, &scene, 120);
+    keep_image("blocks structures.png", &pixels);
+    // Leaves of both kinds in view.
+    let mut green = 0;
+    for y in 0..HEIGHT {
+        for x in 0..WIDTH {
+            let [r, g, b] = rgb_at(&pixels, x, y);
+            green += u32::from(g > r + 15 && g > b + 10);
+        }
+    }
+    assert!(green > 4000, "{green} pixels of leaves");
+}

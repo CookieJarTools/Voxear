@@ -586,6 +586,8 @@ pub fn asset_choices(game: &Game, types: &ScriptTypes, kind: &FieldKind) -> Vec<
         Some("MotionSet") => Some(AssetKind::MotionSet),
         Some("Block") => Some(AssetKind::Block),
         Some("Biome") => Some(AssetKind::Biome),
+        Some("Structure") => Some(AssetKind::Structure),
+        Some("Plant") => Some(AssetKind::Plant),
         Some("MotionSetState") => return set_parts(game, STATE_PART),
         Some("MotionAction") => return set_parts(game, ACTION_PART),
         Some("MotionMark") => return set_parts(game, MARK_PART),

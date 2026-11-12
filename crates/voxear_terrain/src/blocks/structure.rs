@@ -218,6 +218,16 @@ impl PlacedStructure {
             .collect()
     }
 
+    /// How far from its site it stands on the ground, in blocks: what keeps
+    /// it clear of another structure's site. A model's whole footprint; a
+    /// plant's trunk and a little round it, so a wood's crowns may meet.
+    fn footprint(&self) -> f32 {
+        match &self.blocks {
+            StructureBlocks::Model { size, .. } => (size[0].max(size[2]) as f32 * 0.71) + 1.0,
+            StructureBlocks::Plant { plant, .. } => plant.trunk.max(1.0) + 2.0,
+        }
+    }
+
     /// How far from its site it reaches along the ground, in blocks, at the
     /// most.
     fn reach(&self) -> f32 {
@@ -253,7 +263,9 @@ impl Ground<'_> {
 /// ground going down to block `bottom`, its biomes `biomes` where it has
 /// any: every structure whose site's ground fits and which reaches the
 /// column, the parts of it within the column, in the order they are
-/// listed, a structure's site left out where an earlier one's reaches it.
+/// listed, a structure's site left out where its footprint meets an
+/// earlier one's (its own sites are kept apart by its placement alone, and
+/// a plant's footprint is its trunk, so a wood's crowns may meet).
 #[allow(clippy::too_many_arguments)]
 pub fn build(
     chunks: &mut Vec<([i32; 3], Chunk)>,
@@ -271,9 +283,9 @@ pub fn build(
     let high = [low[0] + side as f32 * size, low[1] + side as f32 * size];
     // Every site kept, with its place in blocks and the blocks it takes up along the ground, to leave out a later
     // structure's where an earlier one's stands.
-    let mut kept: Vec<([i32; 2], f32)> = Vec::new();
-    for structure in &structures.list {
-        let reach = structure.reach();
+    let mut kept: Vec<([i32; 2], f32, usize)> = Vec::new();
+    for (which, structure) in structures.list.iter().enumerate() {
+        let (reach, footprint) = (structure.reach(), structure.footprint());
         // Sites of earlier structures that may stand in this one's way are found further out, by its reach too.
         for site in structure.placement.tries_near(world.seed(), low, high, (reach + 64.0) * size) {
             let block = [0, 1].map(|axis| ((site.at[axis] - position[axis]) / size).floor() as i32);
@@ -292,14 +304,15 @@ pub fn build(
             if !fits {
                 continue;
             }
-            let crowded = kept.iter().any(|(other, other_reach)| {
+            // Kept clear of an earlier structure's sites; its own are kept apart by its placement's separation.
+            let crowded = kept.iter().filter(|(.., of)| *of != which).any(|(other, other_reach, _)| {
                 let (dx, dz) = ((other[0] - block[0]) as f32, (other[1] - block[1]) as f32);
-                (dx * dx + dz * dz).sqrt() < other_reach + reach
+                (dx * dx + dz * dz).sqrt() < other_reach + footprint
             });
             if crowded {
                 continue;
             }
-            kept.push((block, reach));
+            kept.push((block, footprint, which));
             // Only its blocks within this column are built here.
             let within = |x: i32, z: i32| x.div_euclid(side) == cx && z.div_euclid(side) == cz;
             let (lowest, highest) = (cx * side - reach.ceil() as i32 - 1, (cx + 1) * side + reach.ceil() as i32 + 1);

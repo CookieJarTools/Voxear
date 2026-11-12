@@ -434,6 +434,8 @@ fn gather(
                 | AssetKind::BlockWorld
                 | AssetKind::Block
                 | AssetKind::Biome
+                | AssetKind::Structure
+                | AssetKind::Plant
                 | AssetKind::VoxModel
                 // A particle effect is read when a Particle System first plays it.
                 | AssetKind::Particles => false,

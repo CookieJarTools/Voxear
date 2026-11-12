@@ -37,7 +37,7 @@ The **map** covers the screen, and keeps its middle and its bottom left clear:
 - Top left, the country's name over where the map looks, along x and z.
 - Top right, the time, the temperature and the humidity.
 - Bottom right, a compass lying on the ground as the map does, its needle pointing north, over buttons that zoom in and out a step.
-- Over the player, a dot, and their name on a tag over it.
+- Over the player, an arrow lying on the ground, pointing the way they face, and their name on a tag over it.
 
 The country's name is how warm and wet the world's generator makes that place, as Forest or Tundra. The time is whatever your game says it is, with `Map.Time`, and shows only once it says. The player's name is `Map.PlayerName`, or the label of their Map Marker.
 
@@ -51,7 +51,7 @@ Pick **Open Map** from the project's input actions (see [[Reading Input]]). Pres
 | Move over the ground | Drag with the middle button |
 | Zoom | Turn the wheel |
 
-Zooming keeps the map the size it is on the screen and shows more or less ground. The player's dot stays at the ground's edge, towards where they are, once the map is moved off them. With **Pointer Control** off the pointer does none of this, and a script steers the map (see [Steering a map](#steering-a-map)).
+Zooming keeps the map the size it is on the screen and shows more or less ground. The player's arrow stays at the ground's edge, towards where they are, once the map is moved off them. With **Pointer Control** off the pointer does none of this, and a script steers the map (see [Steering a map](#steering-a-map)).
 
 ## Markers
 
@@ -67,7 +67,7 @@ A **Map Marker** marks its Obj on every map, where it is. Add one with **Add Com
 
 Put a Map Marker on your player's prefab and every player shows on the others' maps, as long as that player's Obj reaches them. In a small co-op game, give the player's Net Object a range of 0 so it reaches everyone (see [[Sharing Objs]]).
 
-What the maps follow has a mark of its own, the accent dot, so its Map Marker is not drawn as well.
+What the maps follow has a mark of its own, the accent arrow, so its Map Marker is not drawn as well.
 
 ## Maps from scripts
 
@@ -102,7 +102,7 @@ public sealed class Guide : Behaviour
 | `Map.Follow` | The Obj the maps follow, in place of the camera |
 | `Map.Title` | The country's name, in place of the generator's |
 | `Map.Time` | The time shown, as you write it: `Map.Time = $"{hour:00}:{minute:00}";` |
-| `Map.PlayerName` | The name over the player's dot on the opened map |
+| `Map.PlayerName` | The name over the player's arrow on the opened map |
 
 `Obj.Map` is an Obj's Map, with the settings above and `Open()`, `Close()` and `IsOpen`. `Obj.AddMap()` gives an Obj one. Hold it in a variable to change its settings:
 
@@ -143,6 +143,7 @@ Both have every setting below, by the same names in markup as attributes. Each c
 | `Round` | `round` | Cuts the ground round rather than square |
 | `Tilt` | `tilt` | How far over the ground it is seen from to begin with, in degrees |
 | `Fill` | `fill` | How wide the ground is drawn, as a share of the view's height |
+| `CoversView` | `cover` | Whether the ground is drawn larger than that where it takes it for none of its edges to show. On for a minimap, off for a map |
 | `PointerControl` | `controls` | Whether the pointer turns, moves and zooms it |
 | `MinZoom`, `MaxZoom` | `min-zoom`, `max-zoom` | The fewest and the most blocks a cell may be as it zooms |
 | `Shadows` | `shadows` | How dark its shadows are, 0 to 1 |

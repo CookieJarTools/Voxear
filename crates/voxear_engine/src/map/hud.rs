@@ -222,11 +222,12 @@ impl Maps {
                 labels.push((at + Vec2::new(radius + 6.0 * scale, -10.0), marker.label.clone()));
             }
         }
-        // What the map follows: a dot in a ring; at the slab's edge, towards where it is, once the map was moved
-        // off it. A map names it over the dot, on a stem.
+        // What the map follows: an arrow lying on the ground, pointing the way it faces, in a ring; at the
+        // slab's edge, towards where it is, once the map was moved off it. A map names it over the arrow, on a
+        // stem.
         let followed = shown.point(viewer.position).filter(|_| settings.arrow);
-        let dot = if large { 8.0 } else { 6.0 } * scale;
-        let ring = dot + if large { 5.0 } else { 8.0 } * scale;
+        let long = if large { 15.0 } else { 11.0 } * scale;
+        let ring = long * 1.35;
         let mark = followed.and_then(|(at, inside)| match inside && in_view(at) {
             true => Some((at, true)),
             false => Some((at_edge(viewer.position, ring).filter(|_| settings.arrow_at_edge)?, false)),
@@ -237,26 +238,50 @@ impl Maps {
         });
         let named = mark.filter(|(_, on_ground)| *on_ground).zip(name).zip(parts.tag.zip(parts.tag_name));
         if let Some((at, _)) = mark {
+            // The ground's ways as the view sees them: east along its right, north up it by how far it is tilted.
+            let [_, right, up] = shown.camera.axes();
+            let way =
+                |east: f32, north: f32| Vec2::new(right.x * east + right.z * north, -(up.x * east + up.z * north));
             if named.is_some() {
                 let stem = Shape::Line {
-                    from: (at - Vec2::Y * dot).to_array(),
-                    to: (at - Vec2::Y * (dot + 26.0 * scale)).to_array(),
+                    from: (at - Vec2::Y * long).to_array(),
+                    to: (at - Vec2::Y * (long + 26.0 * scale)).to_array(),
                     width: 2.0 * scale,
                     color: Color::WHITE,
                 };
                 shapes.push(stem);
             }
+            let line = |from: Vec2, to: Vec2, width: f32, color: Color| Shape::Line {
+                from: from.to_array(),
+                to: to.to_array(),
+                width,
+                color,
+            };
+            // A faint disc under it, lying on the ground as the arrow does.
             let faint = Color::rgba(255, 255, 255, if large { 87 } else { 102 });
-            shapes.push(Shape::Circle { center: at.to_array(), radius: ring, fill: faint, border: None });
-            let border = Some((3.0 * scale, INK));
-            shapes.push(Shape::Circle { center: at.to_array(), radius: dot, fill: ACCENT, border });
+            let flat = Vec2::new(right.x, right.z).length().max(1e-3);
+            let squash = (Vec2::new(up.x, up.z).length() / flat).clamp(0.05, 1.0);
+            disc(&mut shapes, ui.rect(parts.overlay)[1], at, (ring, squash), faint);
+            // The arrow: its tip ahead, its corners behind to either side, notched between them; filled with
+            // strokes from its tip, the ink's wider under the accent's so it is outlined.
+            let (sin, cos) = viewer.heading.sin_cos();
+            let ahead =
+                |along: f32, across: f32| at + way(sin * along + cos * across, cos * along - sin * across) * long;
+            let (tip, left, notch, right) = (ahead(1.0, 0.0), ahead(-0.8, -0.72), ahead(-0.35, 0.0), ahead(-0.8, 0.72));
+            let back = |along: f32| match along < 0.5 {
+                true => left.lerp(notch, along * 2.0),
+                false => notch.lerp(right, along * 2.0 - 1.0),
+            };
+            for (width, color) in [(7.0 * scale, INK), (3.2 * scale, ACCENT)] {
+                shapes.extend((0..=10).map(|step| line(tip, back(step as f32 / 10.0), width, color)));
+            }
         }
         match named {
             Some((((at, _), name), (tag, tag_name))) => {
                 self.write(ui, tag_name, name);
                 // Over the stem, as wide as it was last laid out.
                 let [_, _, width, height] = ui.rect(tag);
-                let top = at.y - dot - 26.0 * scale - height;
+                let top = at.y - long - 26.0 * scale - height;
                 ui.set_inline_property(tag, "left", &format!("{:.1}px", at.x - width * 0.5));
                 ui.set_inline_property(tag, "top", &format!("{top:.1}px"));
                 show(ui, Some(tag), true);
@@ -435,6 +460,20 @@ fn show(ui: &mut Ui, part: Option<NodeId>, on: bool) {
     }
 }
 
+/// A disc lying on the ground of a tilted map: an ellipse `reach` to either
+/// side of `centre` and `squash` times as high, in an element whose top is
+/// at `top` on the screen. Filled a row of pixels at a time, each row on
+/// the screen's own rows so no seam shows between two.
+fn disc(shapes: &mut Vec<Shape>, top: f32, centre: Vec2, (reach, squash): (f32, f32), fill: Color) {
+    let (middle_row, high) = (top + centre.y, reach * squash);
+    for row in (middle_row - high).ceil() as i32..(middle_row + high).floor() as i32 {
+        let y = row as f32 + 0.5 - middle_row;
+        let half = reach * (1.0 - (y / high).powi(2)).max(0.0).sqrt();
+        let strip = [centre.x - half, row as f32 - top, half * 2.0, 1.0];
+        shapes.push(Shape::Rect { rect: strip, radius: 0.0, fill });
+    }
+}
+
 /// Draws a view's compass: a disc lying on the ground as the map is turned
 /// and tilted, hairlines across it, a needle from its middle to north, and
 /// its letters where each way lies.
@@ -451,16 +490,7 @@ fn draw_compass(ui: &mut Ui, parts: &voxear_ui::MapViewParts, shown: &ShownMap, 
     let flat = Vec2::new(right.x, right.z).length().max(1e-3);
     let squash = (Vec2::new(up.x, up.z).length() / flat).clamp(0.05, 1.0);
     let mut shapes = Vec::new();
-    // The disc: an ellipse as wide as the compass and as high as it is tilted, filled a row of pixels at a time,
-    // each row on the screen's own rows so no seam shows between two.
-    let fill = Color::rgba(13, 16, 22, 209);
-    let (middle_row, high) = (rect[1] + centre.y, reach * squash);
-    for row in (middle_row - high).ceil() as i32..(middle_row + high).floor() as i32 {
-        let y = row as f32 + 0.5 - middle_row;
-        let half = reach * (1.0 - (y / high).powi(2)).max(0.0).sqrt();
-        let strip = [centre.x - half, row as f32 - rect[1], half * 2.0, 1.0];
-        shapes.push(Shape::Rect { rect: strip, radius: 0.0, fill });
-    }
+    disc(&mut shapes, rect[1], centre, (reach, squash), Color::rgba(13, 16, 22, 209));
     let line = |from: Vec2, to: Vec2, width: f32, color: Color| Shape::Line {
         from: (centre + from).to_array(),
         to: (centre + to).to_array(),

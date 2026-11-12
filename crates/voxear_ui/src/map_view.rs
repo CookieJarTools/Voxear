@@ -46,6 +46,10 @@ pub struct MapViewSettings {
     /// How wide the ground is drawn, as a share of the view's height: at 1
     /// it is as wide as the view is high.
     pub fill: f32,
+    /// Whether the ground covers the view: drawn larger than its fill
+    /// where it takes that for none of its edges to show. A ground cut
+    /// round keeps its edge in sight.
+    pub cover: bool,
     /// Whether the pointer turns, moves and zooms it.
     pub controls: bool,
     /// The fewest and the most blocks a cell may be, as it is zoomed.
@@ -75,12 +79,13 @@ pub struct MapViewSettings {
 
 impl MapViewSettings {
     /// Every setting's name, as markup and scripts name it.
-    pub const NAMES: [&'static str; 19] = [
+    pub const NAMES: [&'static str; 20] = [
         "zoom",
         "turns",
         "round",
         "tilt",
         "fill",
+        "cover",
         "controls",
         "min-zoom",
         "max-zoom",
@@ -105,8 +110,9 @@ impl MapViewSettings {
             turns: !large,
             round: false,
             tilt: if large { 42.0 } else { 58.0 },
-            // A minimap's ground runs past its window on every side.
-            fill: if large { 1.15 } else { 1.7 },
+            // A map's ground is seen whole, a minimap's runs past its window on every side.
+            fill: if large { 0.92 } else { 1.7 },
+            cover: !large,
             controls: large,
             zoom_range: [1, 64],
             shadows: 0.4,
@@ -143,8 +149,8 @@ impl MapViewSettings {
         };
         let (number, flag) = match (name, number, flag) {
             (
-                "turns" | "round" | "controls" | "arrow" | "arrow-at-edge" | "labels" | "title" | "readout" | "compass"
-                | "zoom-control",
+                "turns" | "round" | "cover" | "controls" | "arrow" | "arrow-at-edge" | "labels" | "title" | "readout"
+                | "compass" | "zoom-control",
                 _,
                 Some(flag),
             ) => (0.0, flag),
@@ -161,6 +167,7 @@ impl MapViewSettings {
             "round" => self.round = flag,
             "tilt" => self.tilt = number.clamp(20.0, 90.0),
             "fill" => self.fill = number.clamp(0.1, 3.0),
+            "cover" => self.cover = flag,
             "controls" => self.controls = flag,
             "min-zoom" => self.zoom_range[0] = Self::zoom_of(number).min(self.zoom_range[1]),
             "max-zoom" => self.zoom_range[1] = Self::zoom_of(number).max(self.zoom_range[0]),
@@ -189,6 +196,7 @@ impl MapViewSettings {
             "round" => flag(self.round),
             "tilt" => Some(self.tilt.to_string()),
             "fill" => Some(self.fill.to_string()),
+            "cover" => flag(self.cover),
             "controls" => flag(self.controls),
             "min-zoom" => Some(self.zoom_range[0].to_string()),
             "max-zoom" => Some(self.zoom_range[1].to_string()),

@@ -78,7 +78,7 @@ impl Default for Map {
             round: false,
             tilt: 58.0,
             map_zoom: 4,
-            map_size: 1.15,
+            map_size: 0.92,
             map_tilt: 42.0,
             pointer_control: true,
             open_action: None,

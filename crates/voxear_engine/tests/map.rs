@@ -424,24 +424,41 @@ fn a_script_steers_how_a_map_is_seen_and_what_it_follows_stays_at_its_edge() {
     let number = game.engine.world.get::<Map>(hud).unwrap().views.expect("on the screen")[1];
     let shown = |game: &Game| *game.maps.shown(large).unwrap();
     let seen = |game: &Game| game.engine.world.resource::<MapScript>().unwrap().seen[&number].clone();
-    // What the map follows is a dot of the accent colour over the ground.
+    // What the map follows is an arrow of the accent colour lying on the ground: strokes from its tip.
     let accent = voxear_ui::Color::rgb(0xff, 0xd2, 0x3f);
-    let arrow = |game: &mut Game| -> Vec<Vec2> {
+    let strokes = |game: &mut Game| -> Vec<(Vec2, Vec2)> {
         let ui = game.ui.ui();
         let overlay = ui.map_view_parts(large).unwrap().overlay;
-        let dots = ui.shapes(overlay).iter().filter_map(|shape| match shape {
-            Shape::Circle { center, fill, .. } if *fill == accent => Some(Vec2::from(*center)),
+        let lines = ui.shapes(overlay).iter().filter_map(|shape| match shape {
+            Shape::Line { from, to, color, .. } if *color == accent => Some((Vec2::from(*from), Vec2::from(*to))),
             _ => None,
         });
-        dots.collect()
+        lines.collect()
     };
+    let arrow = |game: &mut Game| -> Vec<Vec2> { strokes(game).into_iter().map(|(tip, _)| tip).collect() };
 
-    // Opened, its ground is drawn wider than the screen is high, and what it follows is at its middle.
+    // Opened, its ground is drawn a little less wide than the screen is high, so all of it is on the screen
+    // however it is tilted, and what it follows is at its middle.
     let first = shown(&game);
     let wide = first.reach / (first.camera.distance * (first.camera.fov * 0.5).tan());
-    assert!((wide - 1.15).abs() < 1e-3, "its ground's width over the view's height: {wide}");
+    assert!((wide - 0.92).abs() < 1e-3, "its ground's width over the view's height: {wide}");
     let middle = first.size * 0.5;
     assert!((arrow(&mut game)[0] - middle).length() < 30.0);
+    // It points the way what it follows faces: the camera looks north, so its tip is over its back, up the
+    // view; turned to face east, its tip is to the right.
+    let pointing = |game: &mut Game| {
+        let all = strokes(game);
+        let back = all.iter().fold(Vec2::ZERO, |sum, (_, back)| sum + *back) / all.len() as f32;
+        all[0].0 - back
+    };
+    let north = pointing(&mut game);
+    assert!(north.y < -5.0 && north.x.abs() < 1.0, "facing north: {north:?}");
+    let eye = find(&game, "Eye");
+    let east = voxear_core::math::Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
+    game.engine.world.get_mut::<voxear_scene::Transform>(eye).unwrap().rotation = east;
+    settle(&mut game, None);
+    let turned = pointing(&mut game);
+    assert!(turned.x > 5.0 && turned.y.abs() < 1.0, "facing east: {turned:?}");
 
     // A map's buttons zoom to the next power of two, and its panel says which.
     let parts = game.ui.ui().map_view_parts(large).unwrap();

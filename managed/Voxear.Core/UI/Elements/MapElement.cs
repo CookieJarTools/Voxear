@@ -27,6 +27,7 @@ public abstract class MapElement : UiElement
 	private float thickness;
 	private bool showArrow = true;
 	private bool arrowStaysAtEdge = true;
+	private bool coversView;
 	private bool showLabels;
 	private bool showTitle = true;
 	private bool showReadout = true;
@@ -190,6 +191,17 @@ public abstract class MapElement : UiElement
 		}
 	}
 
+	/// <summary>Whether the ground covers the view, drawn larger than its <see cref="Fill"/> where it takes that for none of its edges to show. A minimap's does to begin with. A ground cut round keeps its edge in sight.</summary>
+	public bool CoversView
+	{
+		get { return coversView; }
+		set
+		{
+			coversView = value;
+			Send("cover", value ? "true" : "false");
+		}
+	}
+
 	/// <summary>Whether that arrow stays at the ground's edge, towards what it marks, once the map is moved off it.</summary>
 	public bool ArrowStaysAtEdge
 	{
@@ -276,7 +288,7 @@ public abstract class MapElement : UiElement
 		{
 			return;
 		}
-		var settings = string.Create(CultureInfo.InvariantCulture, $"zoom={zoom} turns={turnsWithView} round={round} tilt={tilt} fill={fill} controls={pointerControl} min-zoom={minZoom} max-zoom={maxZoom} shadows={shadows} edges={edgeLines} thick={thickness} arrow={showArrow} arrow-at-edge={arrowStaysAtEdge} labels={showLabels} title={showTitle} readout={showReadout} compass={showCompass} zoom-control={showZoom} reference={referenceHeight}");
+		var settings = string.Create(CultureInfo.InvariantCulture, $"zoom={zoom} turns={turnsWithView} round={round} tilt={tilt} fill={fill} cover={coversView} controls={pointerControl} min-zoom={minZoom} max-zoom={maxZoom} shadows={shadows} edges={edgeLines} thick={thickness} arrow={showArrow} arrow-at-edge={arrowStaysAtEdge} labels={showLabels} title={showTitle} readout={showReadout} compass={showCompass} zoom-control={showZoom} reference={referenceHeight}");
 		SendString(StringMapView, settings.ToLowerInvariant());
 	}
 
@@ -285,7 +297,8 @@ public abstract class MapElement : UiElement
 		zoom = large ? 4 : 2;
 		turnsWithView = !large;
 		tilt = large ? 42f : 58f;
-		fill = large ? 1.15f : 1.7f;
+		fill = large ? 0.92f : 1.7f;
+		coversView = !large;
 		pointerControl = large;
 		thickness = large ? 4f : 2f;
 		showLabels = large;
@@ -315,6 +328,7 @@ public abstract class MapElement : UiElement
 			case "thick": thickness = number; break;
 			case "arrow": showArrow = on; break;
 			case "arrow-at-edge": arrowStaysAtEdge = on; break;
+			case "cover": coversView = on; break;
 			case "labels": showLabels = on; break;
 			case "title": showTitle = on; break;
 			case "readout": showReadout = on; break;

@@ -129,6 +129,8 @@ struct View {
     still: u32,
     /// How far its slab reached from its middle when last shown, in cells.
     reach: f32,
+    /// How wide its ground was last drawn, as a share of its view's height.
+    fill: f32,
     drawn: Option<MapDraw>,
     /// The frame it was last seen in the UI.
     seen: u64,
@@ -155,6 +157,7 @@ impl View {
             held: None,
             still: 0,
             reach: side as f32 * 0.3,
+            fill: settings.fill,
             drawn: None,
             seen: 0,
         }
@@ -582,7 +585,7 @@ impl Maps {
             view.zoom = settings.zoom as f32 / 2f32.powf((now.log2() + 0.01).floor() + 1.0);
         }
         if settings.controls {
-            hear_pointer(view, ui, (node, parts.picture), settings.fill);
+            hear_pointer(view, ui, (node, parts.picture));
         }
         if settings.turns {
             view.turn = viewer.heading;
@@ -710,9 +713,15 @@ impl Maps {
         let looked = Vec3::new(middle.x - corner[0] as f32, followed.y - low as f32, middle.y - corner[1] as f32);
         let looked = Vec3::new(looked.x, looked.y.clamp(0.0, (high - low) as f32), looked.z);
         let tilt = view.tilt.clamp(MAP_LEAST_TILT, std::f32::consts::FRAC_PI_2);
-        // As wide on the screen as its settings say: its fill is its width over the view's height.
+        // As wide on the screen as its settings say: its fill is its width over the view's height. Nearer
+        // where it is to cover its view and that takes it.
         let fits = reach / settings.fill.max(0.05) / (FOV * 0.5).tan();
         let camera = MapCamera { middle: looked, turn: view.turn, tilt, distance: fits, fov: FOV };
+        let covering = settings.cover && !settings.round;
+        let any_turn = settings.turns;
+        let distance = if covering { covers(camera, rect[2] / rect[3], reach, any_turn) } else { fits };
+        let camera = MapCamera { distance, ..camera };
+        view.fill = reach / distance.max(1e-3) / (FOV * 0.5).tan();
         let mut draw = MapDraw {
             size,
             corner,
@@ -762,9 +771,51 @@ impl Maps {
     }
 }
 
+/// How far `camera` may be from what it looks at, at most its own distance,
+/// for a slab reaching `reach` cells to cover a view `aspect` times as wide
+/// as high: every corner of the view looks at ground within the slab,
+/// however the view is turned when `any_turn`. Ground may lie lower than
+/// what the camera looks at, further off along the view than it is, so the
+/// corners are held to ground a tenth of the reach lower.
+fn covers(camera: MapCamera, aspect: f32, reach: f32, any_turn: bool) -> f32 {
+    let half = (camera.fov * 0.5).tan();
+    let (down, along) = camera.tilt.clamp(MAP_LEAST_TILT, std::f32::consts::FRAC_PI_2).sin_cos();
+    let (sin, cos) = camera.turn.sin_cos();
+    let (lower, within) = (reach * 0.1, reach * 0.98);
+    // Where a corner of the view meets that ground, from the middle: to the view's right and ahead of it.
+    let meets = |distance: f32, [across, up]: [f32; 2]| {
+        let falls = down - up * along;
+        let far = (distance * down + lower) / falls.max(1e-3);
+        Vec2::new(far * across, far * (along + up * down) - distance * along)
+    };
+    let inside = |distance: f32| {
+        let corners =
+            [[-1.0, -1.0], [1.0, -1.0], [-1.0, 1.0], [1.0, 1.0]].map(|[x, y]: [f32; 2]| [x * aspect * half, y * half]);
+        corners.into_iter().all(|corner| {
+            let at = meets(distance, corner);
+            // East and north of the middle.
+            let over = Vec2::new(cos * at.x + sin * at.y, cos * at.y - sin * at.x);
+            match any_turn {
+                true => at.length() <= within,
+                false => over.x.abs().max(over.y.abs()) <= within,
+            }
+        })
+    };
+    if inside(camera.distance) {
+        return camera.distance;
+    }
+    // The furthest that covers, between as near as a twentieth of its distance and where it is.
+    let (mut near, mut far) = (camera.distance * 0.05, camera.distance);
+    for _ in 0..24 {
+        let middle = (near + far) * 0.5;
+        if inside(middle) { near = middle } else { far = middle }
+    }
+    near
+}
+
 /// Hears the pointer on a map: a drag turns and tilts it, a drag with the
 /// middle button moves it over the ground, and the wheel zooms it.
-fn hear_pointer(view: &mut View, ui: &mut Ui, (node, picture): (NodeId, NodeId), fill: f32) {
+fn hear_pointer(view: &mut View, ui: &mut Ui, (node, picture): (NodeId, NodeId)) {
     ui.take_wheel(node, true);
     // The wheel turned away brings the ground nearer, as it does in the editor's views.
     let wheel = ui.wheeled(node)[1];
@@ -785,8 +836,50 @@ fn hear_pointer(view: &mut View, ui: &mut Ui, (node, picture): (NodeId, NodeId),
     }
     // Moved with the ground under the pointer: a pixel is as many metres as the slab is wide over the view.
     let rect = ui.rect(picture);
-    let metres = view.reach * 2.0 / fill.max(0.05) / rect[3].max(1.0) * view.cell;
+    let metres = view.reach * 2.0 / view.fill.max(0.05) / rect[3].max(1.0) * view.cell;
     let (sin, cos) = view.turn.sin_cos();
     let (right, ahead) = (Vec2::new(cos, -sin), Vec2::new(sin, cos));
     view.moved -= (right * dx - ahead * dy / view.tilt.sin().max(0.3)) * metres;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// How far from the middle, in the slab's own reach, the ground a corner of the view looks at is: east or
+    /// north, whichever is more, or straight off when the slab is to cover however it is turned.
+    fn furthest(camera: MapCamera, size: Vec2, reach: f32, any_turn: bool) -> f32 {
+        let corners = [Vec2::ZERO, Vec2::new(size.x, 0.0), Vec2::new(0.0, size.y), size];
+        let far = corners.map(|pixel| {
+            let (from, way) = camera.ray(pixel, size);
+            let at = from + way * ((camera.middle.y - from.y) / way.y) - camera.middle;
+            if any_turn { Vec2::new(at.x, at.z).length() } else { at.x.abs().max(at.z.abs()) }
+        });
+        far.into_iter().fold(0.0, f32::max) / reach
+    }
+
+    #[test]
+    fn a_covering_view_comes_no_nearer_than_it_takes_for_its_corners_to_look_at_the_slab() {
+        let (size, reach) = (Vec2::new(368.0, 254.0), 100.0);
+        let fits = reach / 1.7 / (FOV * 0.5).tan();
+        let camera =
+            |turn: f32| MapCamera { middle: Vec3::new(0.0, 20.0, 0.0), turn, tilt: 1.0, distance: fits, fov: FOV };
+
+        // Turned an eighth round, a square slab's corners are in the window: nearer, they are not, and no
+        // nearer than that takes.
+        let turned = camera(0.8);
+        assert!(furthest(turned, size, reach, false) > 1.0);
+        let near = covers(turned, size.x / size.y, reach, false);
+        let seen = furthest(MapCamera { distance: near, ..turned }, size, reach, false);
+        assert!(near < fits && seen < 1.0 && seen > 0.85, "{near} of {fits}: {seen}");
+
+        // One that turns with the view covers it however it is turned, so it is as near at every turn.
+        let any = covers(turned, size.x / size.y, reach, true);
+        assert!(any <= near && (covers(camera(2.1), size.x / size.y, reach, true) - any).abs() < 1e-3);
+        assert!(furthest(MapCamera { distance: any, ..camera(2.1) }, size, reach, true) < 1.0);
+
+        // A view its slab covers already stays where it is.
+        let far = MapCamera { distance: fits * 0.3, ..camera(0.0) };
+        assert_eq!(covers(far, size.x / size.y, reach, false), far.distance);
+    }
 }

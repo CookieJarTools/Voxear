@@ -736,8 +736,7 @@ pub(crate) unsafe extern "C" fn physics_overlap(
     found.len() as i32
 }
 
-/// `Physics.GravityAt`: which way and how hard things fall at a point,
-/// towards a planet's middle near one (see
+/// `Physics.GravityAt`: which way and how hard things fall at a point (see
 /// `voxear_physics::scene::gravity_at`), written to `gravity`: 1 when it is.
 pub(crate) unsafe extern "C" fn physics_gravity_at(at: *const [f32; 3], gravity: *mut [f32; 3]) -> i32 {
     if at.is_null() || gravity.is_null() {

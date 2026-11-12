@@ -7,7 +7,7 @@ use super::{Kind, Port, Value, ValueSpec};
 use crate::generate::{
     compile::{Compiler, Kernel, Key, Places, V, World},
     graph::NodeId,
-    landmass::{Climate, Spot, colder_towards_poles},
+    landmass::{Climate, Spot},
 };
 
 const VALUES: &[ValueSpec] = &[
@@ -79,21 +79,15 @@ impl Kind for Climate {
     fn compile(&self, cx: &mut Compiler, node: NodeId, port: usize, at: Places) -> V {
         let (climate, world) = (*self, cx.world);
         if port == Self::HUMIDITY_OUT {
-            return match at {
-                Places::Flat { x, z } => cx.run(Wetness { climate, world, round: false }, &[x, z]),
-                Places::Round { x, y, z } => cx.run(Wetness { climate, world, round: true }, &[x, y, z]),
-            };
+            return cx.run(Wetness { climate, world }, &[at.x, at.z]);
         }
         let ground = cx.input(node, Self::HEIGHT_IN, at).unwrap_or_else(|| cx.ground(node));
-        match at {
-            Places::Flat { x, z } => cx.run(Warmth { climate, world, round: false }, &[x, z, ground]),
-            Places::Round { x, y, z } => cx.run(Warmth { climate, world, round: true }, &[x, y, z, ground]),
-        }
+        cx.run(Warmth { climate, world }, &[at.x, at.z, ground])
     }
 }
 
-fn key_of(key: &mut Key, name: &str, climate: &Climate, world: World, round: bool) {
-    key.name(name).whole(world.seed).number(world.scale).number(world.sea_level).whole(u32::from(round));
+fn key_of(key: &mut Key, name: &str, climate: &Climate, world: World) {
+    key.name(name).whole(world.seed).number(world.scale).number(world.sea_level);
     for number in [
         climate.size,
         climate.temperature,
@@ -106,61 +100,43 @@ fn key_of(key: &mut Key, name: &str, climate: &Climate, world: World, round: boo
     }
 }
 
-/// How warm it is, in °C: on flat ground from rows of x, z and the
-/// ground's height; round a planet from x, y, z and the ground's height,
-/// and colder towards its poles.
+/// How warm it is, in °C: from rows of x, z and the ground's height.
 #[derive(Debug)]
 struct Warmth {
     climate: Climate,
     world: World,
-    round: bool,
 }
 
 impl Kernel for Warmth {
     fn key(&self, key: &mut Key) {
-        key_of(key, "warmth", &self.climate, self.world, self.round);
+        key_of(key, "warmth", &self.climate, self.world);
     }
 
     fn run(&self, inputs: &[&[f32]], out: &mut [f32]) {
         let World { seed, scale, sea_level } = self.world;
         for (at, out) in out.iter_mut().enumerate() {
-            *out = match self.round {
-                false => {
-                    let spot = Spot::Flat(inputs[0][at], inputs[1][at]);
-                    self.climate.warmth(spot, inputs[2][at] - sea_level, seed, scale)
-                }
-                true => {
-                    let place = [inputs[0][at], inputs[1][at], inputs[2][at]];
-                    let warmth = self.climate.warmth(Spot::Round(place), inputs[3][at] - sea_level, seed, scale);
-                    warmth - colder_towards_poles(place)
-                }
-            };
+            let spot = Spot(inputs[0][at], inputs[1][at]);
+            *out = self.climate.warmth(spot, inputs[2][at] - sea_level, seed, scale);
         }
     }
 }
 
-/// How wet it is, 0 to 1: from rows of x and z, or of x, y and z round a
-/// planet.
+/// How wet it is, 0 to 1: from rows of x and z.
 #[derive(Debug)]
 struct Wetness {
     climate: Climate,
     world: World,
-    round: bool,
 }
 
 impl Kernel for Wetness {
     fn key(&self, key: &mut Key) {
-        key_of(key, "wetness", &self.climate, self.world, self.round);
+        key_of(key, "wetness", &self.climate, self.world);
     }
 
     fn run(&self, inputs: &[&[f32]], out: &mut [f32]) {
         let World { seed, scale, .. } = self.world;
         for (at, out) in out.iter_mut().enumerate() {
-            let spot = match self.round {
-                false => Spot::Flat(inputs[0][at], inputs[1][at]),
-                true => Spot::Round([inputs[0][at], inputs[1][at], inputs[2][at]]),
-            };
-            *out = self.climate.wetness(spot, seed, scale);
+            *out = self.climate.wetness(Spot(inputs[0][at], inputs[1][at]), seed, scale);
         }
     }
 }

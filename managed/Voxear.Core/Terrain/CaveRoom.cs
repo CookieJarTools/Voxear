@@ -73,7 +73,7 @@ public sealed class CaveRoom
 
 	public bool Mirrored { get; }
 
-	/// <summary>The way up in it: straight up on flat ground, away from a planet's middle on one.</summary>
+	/// <summary>The way up in it: straight up.</summary>
 	public Vector3 Up { get; }
 
 	/// <summary>Whether it is on a level's main path, rather than off to its side.</summary>

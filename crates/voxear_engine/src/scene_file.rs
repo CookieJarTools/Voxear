@@ -128,8 +128,8 @@ pub struct LightingPost(pub toml::Table);
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SkyData {
-    /// `"gradient"`, the colours below, or `"atmosphere"`, the sky of a
-    /// planet like Earth lit by the sun.
+    /// `"gradient"`, the colours below, or `"atmosphere"`, the Earth's sky
+    /// lit by the sun.
     #[serde(default, skip_serializing_if = "is_gradient")]
     pub mode: SkyModeData,
     pub zenith: [f32; 3],

@@ -2,7 +2,7 @@
 order: 18
 ---
 
-Caves made of rooms: chambers you build as prefabs, set in the ground by a world generator and joined by winding tunnels. A **Cave Network** node places them, either without end under a whole world or as one bounded level to play in. They are for [[Block Worlds]] and [[Voxel Terrain|Voxel Terrains]], flat or round a planet.
+Caves made of rooms: chambers you build as prefabs, set in the ground by a world generator and joined by winding tunnels. A **Cave Network** node places them, either without end under a whole world or as one bounded level to play in. They are for [[Block Worlds]] and [[Voxel Terrain|Voxel Terrains]].
 
 The winding caves a world makes from noise, [[Block Worlds#Overhangs and caves in the generator|Tunnels and Chambers]], need no rooms and can run beside these.
 
@@ -64,13 +64,13 @@ A room is turned by quarter turns and mirrored as it is placed, so a few prefabs
 
 Rooms in every direction, one to a region of the grid `Spacing` across, each set a little differently in its region and `Depth` under the ground at its own middle, give or take a quarter. Most neighbouring rooms are joined by a tunnel. **Entrances** gives that share of rooms a tunnel up to the open air; the rest are reached from below.
 
-Any part of the world is made by itself and meets what is made beside it, as far as the world goes. Round a planet the regions lie on the six sides of a cube pressed onto the sphere, rooms stand upright wherever they are, and tunnels cross from side to side.
+Any part of the world is made by itself and meets what is made beside it, as far as the world goes.
 
 ### Level
 
 One bounded cave, laid out once from the seed: a main path of **Main Rooms** that never crosses itself, and **Side Rooms** off it, each a dead end or the start of one. Every room is joined by a tunnel to the room it was reached from, so all of it can be walked from the first room. The first room lies `Depth` under the ground over it, and the others within half of `Depth` above or below.
 
-A level wants rock to be carved from. The **Cave Level** preset is that: level rock with one cave in it, its **Height**, **Rooms**, **Side Rooms** and **Depth** as rows. Make a generator, pick Cave Level as its Preset, and give it to a Block World whose ground reaches round the level and down past it. Round a planet a level lies flat under the planet's top.
+A level wants rock to be carved from. The **Cave Level** preset is that: level rock with one cave in it, its **Height**, **Rooms**, **Side Rooms** and **Depth** as rows. Make a generator, pick Cave Level as its Preset, and give it to a Block World whose ground reaches round the level and down past it.
 
 ## Caves from scripts
 

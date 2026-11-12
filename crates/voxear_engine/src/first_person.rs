@@ -5,8 +5,8 @@
 //! itself is hidden so the camera does not see inside it.
 //!
 //! The view turns about the up where its Obj is, against the pull there
-//! (see `PhysicsScene::gravity_at`): on a planet, away from its middle, so
-//! the view, its Obj and its camera tilt as a character walks round it.
+//! (see `PhysicsScene::gravity_at`), so the view, its Obj and its camera
+//! tilt with a world whose gravity is not straight down.
 
 use serde::{Deserialize, Serialize};
 use voxear_core::math::{Mat4, Quat, Vec2, Vec3};
@@ -46,9 +46,9 @@ pub struct FirstPersonView {
     pub yaw: f32,
     pub pitch: f32,
     /// Its level, which way up it is: turned from the world's own by the
-    /// least turn to the up where its Obj is each frame, so walking round a
-    /// planet carries its yaw round with it. The world's own up, unturned,
-    /// away from planets.
+    /// least turn to the up where its Obj is each frame, so its yaw is
+    /// carried with it. The world's own up, unturned, while gravity pulls
+    /// straight down.
     #[serde(skip)]
     pub level: Quat,
     /// Whether the mouse turns it, by `sensitivity` degrees a pixel.
@@ -604,23 +604,20 @@ mod tests {
     }
 
     #[test]
-    fn a_view_on_a_planets_side_stands_away_from_its_middle_and_carries_its_yaw_round() {
-        use voxear_terrain::blocks::{BlockMap, BlockWorld, file::BlockFile};
+    fn a_view_stands_against_gravity_that_pulls_sideways_and_levels_again_when_it_pulls_down() {
         let mut world = World::new();
         let (player, _, camera) = player(&mut world);
-        // A planet 30 m round, its middle 30 m along -x from the player at (2, 0, 0): its up there is +x.
-        let (_, faces) = BlockFile::default().faces();
-        let mut planet = BlockWorld::made(BlockMap::default(), &faces, 1.0, false);
-        planet.planet = Some(30.0);
-        let middle = Vec3::new(-28.0, 0.0, 0.0);
-        world.spawn((planet, Transform::from_position(middle)));
+        // Gravity along -x: up is +x.
+        let mut physics = crate::physics::PhysicsScene::new();
+        physics.set_gravity(Vec3::new(-9.81, 0.0, 0.0));
+        world.insert_resource(physics);
         world.insert_resource(MouseLook { delta: Vec2::new(750.0, 0.0) });
         look(&mut world);
         let view = world.get::<FirstPersonView>(player).unwrap().clone();
         let up = view.level * Vec3::Y;
-        assert!(up.abs_diff_eq(Vec3::X, 1e-5), "level to the planet: {up}");
+        assert!(up.abs_diff_eq(Vec3::X, 1e-5), "level against the pull: {up}");
         let turned = world.get::<Transform>(player).unwrap().rotation;
-        assert!((turned * Vec3::Y).abs_diff_eq(Vec3::X, 1e-4), "the player stands away from its middle: {turned}");
+        assert!((turned * Vec3::Y).abs_diff_eq(Vec3::X, 1e-4), "the player stands against the pull: {turned}");
         let ninety = Quat::from_axis_angle(up, 90f32.to_radians()) * (view.level * Vec3::Z);
         assert!((turned * Vec3::Z).abs_diff_eq(ninety, 1e-4), "the mouse turns it about that up");
 
@@ -628,13 +625,13 @@ mod tests {
         place(&mut world);
         let eye = world.get::<Transform>(camera).unwrap().rotation;
         assert!(eye.angle_between(view.rotation()) < 1e-4, "the camera looks where the view does");
-        assert!((eye * Vec3::Y).dot(Vec3::X) > 0.999, "its up the planet's: {}", eye * Vec3::Y);
+        assert!((eye * Vec3::Y).dot(Vec3::X) > 0.999, "its up against the pull: {}", eye * Vec3::Y);
 
-        // Carried a quarter of the way round to the planet's top: level with the world again, its yaw kept.
-        world.get_mut::<Transform>(player).unwrap().position = middle + Vec3::new(0.0, 30.0, 0.0);
+        // Gravity straight down again: level with the world again, its yaw kept.
+        world.resource_mut::<crate::physics::PhysicsScene>().unwrap().set_gravity(Vec3::new(0.0, -9.81, 0.0));
         look(&mut world);
         let view = world.get::<FirstPersonView>(player).unwrap();
-        assert!(view.level.angle_between(Quat::IDENTITY) < 1e-4, "level on top: {}", view.level);
+        assert!(view.level.angle_between(Quat::IDENTITY) < 1e-4, "level again: {}", view.level);
         assert!((view.yaw - 90.0).abs() < 1e-3, "{}", view.yaw);
         let turned = world.get::<Transform>(player).unwrap().rotation;
         assert!(turned.angle_between(Quat::from_rotation_y(90f32.to_radians())) < 1e-3, "{turned}");

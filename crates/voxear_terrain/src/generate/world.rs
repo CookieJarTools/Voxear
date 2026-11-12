@@ -54,13 +54,11 @@ impl PreviewArea {
     }
 }
 
-/// A generator's graph compiled, for flat ground and round a planet; a
-/// hash of everything that decides the ground and climate it makes; and
-/// what is wrong with the graph.
+/// A generator's graph compiled; a hash of everything that decides the
+/// ground and climate it makes; and what is wrong with the graph.
 #[derive(Debug)]
 struct Made {
-    flat: Compiled,
-    round: Compiled,
+    compiled: Compiled,
     hash: u64,
     faults: Vec<Fault>,
     /// Every node's outputs, compiled when first asked for.
@@ -85,9 +83,8 @@ const PREVIEW_UNDER: f32 = 8.0;
 /// ground cells are, given their columns' rows ([`Volume::densities`]).
 #[derive(Clone, Copy, Debug)]
 pub struct Volume<'a> {
-    flat: &'a Voxels,
-    round: &'a Voxels,
-    /// The generator's own heights on flat ground.
+    voxels: &'a Voxels,
+    /// The generator's own heights.
     height: &'a Program,
 }
 
@@ -133,7 +130,7 @@ impl Volume<'_> {
     /// solid and nothing more: a cell's number there is then its depth
     /// under its column's surface.
     pub fn plain(&self) -> bool {
-        self.flat.plain
+        self.voxels.plain
     }
 
     /// Whether anything is taken out of its ground: whether it has caves.
@@ -141,12 +138,12 @@ impl Volume<'_> {
     /// ground as its column's height is over it, and there is nothing to
     /// ask.
     pub fn caved(&self) -> bool {
-        self.flat.caved
+        self.voxels.caved
     }
 
     /// How far over a column's ground its cells may be solid, in metres.
     pub fn reach(&self) -> f32 {
-        self.flat.reach
+        self.voxels.reach
     }
 
     /// What it reads of the columns at each `(xs[i], zs[i])`, in metres in
@@ -154,7 +151,7 @@ impl Volume<'_> {
     /// generator's own heights there.
     pub fn carried(&self, xs: &[f32], zs: &[f32], heights: &[f32]) -> Carried {
         let count = xs.len().min(zs.len()).min(heights.len());
-        made(&self.flat.columns, count, Givens { x: xs, z: zs, ground: heights, ..Givens::default() })
+        made(&self.voxels.columns, count, Givens { x: xs, z: zs, ground: heights, ..Givens::default() })
     }
 
     /// What it reads of a grid of columns, as [`Volume::carried`] gives it
@@ -180,7 +177,7 @@ impl Volume<'_> {
         let (xs, zs): (Vec<f32>, Vec<f32>) =
             columns(1).flat_map(|z| columns(0).map(move |x| (x, z))).map(|(x, z)| (place(0, x), place(1, z))).unzip();
         let all = xs.len().min(heights.len());
-        let voxels = self.flat;
+        let voxels = self.voxels;
         let mut exact = made(&voxels.exact, all, Givens { x: &xs, z: &zs, ground: heights, ..Givens::default() }).rows;
         if !voxels.between.contains(&true) || all == 0 {
             return Carried { rows: exact };
@@ -236,15 +233,6 @@ impl Volume<'_> {
         Carried { rows: rows.map(Option::unwrap_or_default).collect() }
     }
 
-    /// What it reads of the columns out through each of `at` on the surface
-    /// of a planet of `radius` metres, whose ground is `heights[i]` high
-    /// (see [`WorldGen::height_round`]).
-    pub fn carried_round(&self, at: &[[f32; 3]], heights: &[f32], radius: f32) -> Carried {
-        let count = at.len().min(heights.len());
-        let [x, y, z] = apart(&at[..count]);
-        made(&self.round.columns, count, Givens { x: &x, y: &y, z: &z, ground: heights, radius, ..Givens::default() })
-    }
-
     /// How far into the ground each of `cells` is, in metres, out of it
     /// where negative, into `density`; and into `ground` the same with its
     /// caves left whole, which tells the open air (out of both) from a
@@ -255,14 +243,7 @@ impl Volume<'_> {
     /// The numbers are exact within a cell of a surface. Further in or out
     /// they say which side a cell is on, and no less than a cell.
     pub fn densities(&self, cells: Cells, coarse: bool, density: &mut [f32], ground: &mut [f32]) {
-        run_cells(self.flat, cells, 0.0, coarse, density, ground);
-    }
-
-    /// How far into the ground each of `cells` round a planet of `radius`
-    /// metres is (see [`Volume::densities`]): their `x`, `y` and `z` are
-    /// metres from its middle.
-    pub fn densities_round(&self, cells: Cells, radius: f32, coarse: bool, density: &mut [f32], ground: &mut [f32]) {
-        run_cells(self.round, cells, radius, coarse, density, ground);
+        run_cells(self.voxels, cells, coarse, density, ground);
     }
 }
 
@@ -274,10 +255,10 @@ fn made(columns: &Program, count: usize, given: Givens) -> Carried {
     Carried { rows }
 }
 
-fn run_cells(voxels: &Voxels, cells: Cells, radius: f32, coarse: bool, density: &mut [f32], ground: &mut [f32]) {
+fn run_cells(voxels: &Voxels, cells: Cells, coarse: bool, density: &mut [f32], ground: &mut [f32]) {
     let count = density.len().min(ground.len());
     let Cells { x, y, z, carried, size } = cells;
-    let given = Givens { x, y, z, carried, size, radius, ..Givens::default() };
+    let given = Givens { x, y, z, carried, size, ..Givens::default() };
     if coarse {
         voxels.coarse.run(count, given, &mut [&mut ground[..count]]);
         density[..count].copy_from_slice(&ground[..count]);
@@ -338,17 +319,16 @@ impl WorldGen {
     pub fn new(seed: u32, scale: f32, sea_level: f32, graph: Graph) -> Self {
         let world = World { seed, scale, sea_level };
         let mut faults = Vec::new();
-        let flat = compile::compile(&graph, world, false, &mut faults);
-        let round = compile::compile(&graph, world, true, &mut Vec::new());
+        let compiled = compile::compile(&graph, world, &mut faults);
         let mut bytes = Vec::new();
         bytes.extend(seed.to_le_bytes());
         bytes.extend(scale.to_bits().to_le_bytes());
         bytes.extend(sea_level.to_bits().to_le_bytes());
-        for program in [&flat.height, &flat.climate, &round.height, &round.climate] {
+        for program in [&compiled.height, &compiled.climate] {
             bytes.extend(program.hash.to_le_bytes());
         }
-        // A generator with no Volume keeps the hash it had before there were any.
-        for voxels in [&flat.volume, &round.volume].into_iter().flatten() {
+        // A generator with no Volume has the hash of its ground and climate alone.
+        if let Some(voxels) = &compiled.volume {
             bytes.extend(voxels.hash.to_le_bytes());
         }
         let hash = crate::layers::stable_hash(&bytes);
@@ -358,7 +338,7 @@ impl WorldGen {
             sea_level,
             graph,
             preview: PreviewArea::default(),
-            made: Arc::new(Made { flat, round, hash, faults, previews: OnceLock::new() }),
+            made: Arc::new(Made { compiled, hash, faults, previews: OnceLock::new() }),
         }
     }
 
@@ -391,18 +371,12 @@ impl WorldGen {
     /// Its Volume, the ground in three dimensions, where its Output has one
     /// wired in.
     pub fn volume(&self) -> Option<Volume<'_>> {
-        Some(Volume {
-            flat: self.made.flat.volume.as_ref()?,
-            round: self.made.round.volume.as_ref()?,
-            height: &self.made.flat.height,
-        })
+        Some(Volume { voxels: self.made.compiled.volume.as_ref()?, height: &self.made.compiled.height })
     }
 
     /// Its caves of rooms, where its Volume reads a Cave Network: the rooms as they lie in the ground.
     pub fn caves(&self) -> Option<super::caves::Caves> {
-        let flat = self.made.flat.volume.as_ref()?.caves.clone()?;
-        let round = self.made.round.volume.as_ref()?.caves.clone()?;
-        Some(super::caves::Caves::new(flat, round))
+        Some(super::caves::Caves::new(self.made.compiled.volume.as_ref()?.caves.clone()?))
     }
 
     /// What is wrong with its graph: nothing, for one that is whole.
@@ -476,25 +450,7 @@ impl WorldGen {
     /// bits [`WorldGen::height_at`] gives for each alone.
     pub fn heights(&self, xs: &[f32], zs: &[f32], heights: &mut [f32]) {
         let count = xs.len().min(zs.len()).min(heights.len());
-        self.made.flat.height.run(count, Givens { x: xs, z: zs, ..Givens::default() }, &mut [heights]);
-    }
-
-    /// The ground's height at `at` on a planet's surface, in metres from its
-    /// middle along the way out to it, its graph read round the planet so
-    /// it has no seams. Nodes that need flat ground to work on (a
-    /// landmass's gullies, which run down its slope) leave it as it is.
-    pub fn height_round(&self, at: [f32; 3]) -> f32 {
-        let mut height = [0.0];
-        self.heights_round(&[at], &mut height);
-        height[0]
-    }
-
-    /// The ground's height at each of `at` on a planet's surface, into
-    /// `heights` (see [`WorldGen::height_round`]).
-    pub fn heights_round(&self, at: &[[f32; 3]], heights: &mut [f32]) {
-        let count = at.len().min(heights.len());
-        let [x, y, z] = apart(&at[..count]);
-        self.made.round.height.run(count, Givens { x: &x, y: &y, z: &z, ..Givens::default() }, &mut [heights]);
+        self.made.compiled.height.run(count, Givens { x: xs, z: zs, ..Givens::default() }, &mut [heights]);
     }
 
     /// How warm and wet it is at `(x, z)`, in metres in its own world, on
@@ -512,26 +468,7 @@ impl WorldGen {
     pub fn climates(&self, xs: &[f32], zs: &[f32], heights: &[f32], warmth: &mut [f32], wetness: &mut [f32]) {
         let count = xs.len().min(zs.len()).min(heights.len()).min(warmth.len()).min(wetness.len());
         let given = Givens { x: xs, z: zs, ground: heights, ..Givens::default() };
-        self.made.flat.climate.run(count, given, &mut [warmth, wetness]);
-    }
-
-    /// How warm and wet it is at `at` on a planet's surface, in metres from
-    /// its middle, on ground `height` metres high (see
-    /// [`WorldGen::height_round`]): as [`WorldGen::climate`] says, and
-    /// colder towards its poles, along y.
-    pub fn climate_round(&self, at: [f32; 3], height: f32) -> (f32, f32) {
-        let (mut warmth, mut wetness) = ([0.0], [0.0]);
-        self.climates_round(&[at], &[height], &mut warmth, &mut wetness);
-        (warmth[0], wetness[0])
-    }
-
-    /// How warm and wet it is at each of `at` on a planet's surface, on
-    /// ground `heights[i]` metres high, into `warmth` and `wetness`.
-    pub fn climates_round(&self, at: &[[f32; 3]], heights: &[f32], warmth: &mut [f32], wetness: &mut [f32]) {
-        let count = at.len().min(heights.len()).min(warmth.len()).min(wetness.len());
-        let [x, y, z] = apart(&at[..count]);
-        let given = Givens { x: &x, y: &y, z: &z, ground: heights, ..Givens::default() };
-        self.made.round.climate.run(count, given, &mut [warmth, wetness]);
+        self.made.compiled.climate.run(count, given, &mut [warmth, wetness]);
     }
 
     /// What every output of every node makes at each `(xs[i], zs[i])`, in
@@ -575,11 +512,6 @@ impl WorldGen {
     }
 }
 
-/// Points' x, y and z, each in a row of its own.
-fn apart(at: &[[f32; 3]]) -> [Vec<f32>; 3] {
-    [0, 1, 2].map(|axis| at.iter().map(|point| point[axis]).collect())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -592,8 +524,8 @@ mod tests {
         values.iter().map(|value| value.to_bits()).collect()
     }
 
-    /// The hash of the Alpine preset's generator as it was before generators had Volumes.
-    const ALPINE_HASH: u64 = 0x5331_b75a_e91a_a738;
+    /// The hash of the Alpine preset's generator, which has no Volume.
+    const ALPINE_HASH: u64 = 0x92a5_08a6_e616_4acd;
 
     /// Hills of noise shaped by a curve, raised by a constant: a graph of every plain kind of node.
     fn hills() -> WorldGen {
@@ -629,12 +561,11 @@ mod tests {
     }
 
     #[test]
-    fn cells_asked_together_get_the_bits_each_gets_alone_flat_and_round() {
+    fn cells_asked_together_get_the_bits_each_gets_alone() {
         let world = hollow_hills();
         assert!(world.faults().is_empty(), "{:?}", world.faults());
         let volume = world.volume().expect("a Volume wired in");
         assert!(!volume.plain() && volume.reach() > 6.0);
-        let radius = 400.0;
         for count in [1usize, 7, 289, 513, 1500] {
             // Cells scattered through the ground and the air over it, each in a column of its own.
             let xs: Vec<f32> = (0..count).map(|i| i as f32 * 3.7 - 600.0).collect();
@@ -662,44 +593,6 @@ mod tests {
                 assert!(inside.iter().zip(&ground).all(|(inside, ground)| inside <= ground));
                 assert!(!coarse || bits(&inside) == bits(&ground));
                 assert!(coarse || count < 200 || bits(&inside) != bits(&ground), "caves among {count} cells");
-            }
-            // Round a planet, cells along ways out from its middle.
-            let ways: Vec<[f32; 3]> = (0..count)
-                .map(|i| {
-                    let way = [
-                        (i as f32 * 0.37).fract() - 0.5,
-                        (i as f32 * 0.61).fract() - 0.5,
-                        (i as f32 * 0.83).fract() - 0.4,
-                    ];
-                    let long = way.iter().map(|v| v * v).sum::<f32>().sqrt();
-                    way.map(|v| v / long)
-                })
-                .collect();
-            let on: Vec<[f32; 3]> = ways.iter().map(|way| way.map(|v| v * radius)).collect();
-            world.heights_round(&on, &mut heights);
-            let carried = volume.carried_round(&on, &heights, radius);
-            let rows: Vec<&[f32]> = carried.rows().iter().map(Vec::as_slice).collect();
-            let out = |i: usize| radius + heights[i] - world.sea_level() + 7.0 - (i % 19) as f32;
-            let [x, y, z] = [0, 1, 2].map(|axis| (0..count).map(|i| ways[i][axis] * out(i)).collect::<Vec<f32>>());
-            let (mut inside, mut ground) = (vec![0.0; count], vec![0.0; count]);
-            volume.densities_round(
-                Cells { x: &x, y: &y, z: &z, carried: &rows, size: 1.0 },
-                radius,
-                false,
-                &mut inside,
-                &mut ground,
-            );
-            let (mut alone, mut alone_ground) = (vec![0.0; count], vec![0.0; count]);
-            for i in 0..count {
-                let cells = Cells { x: &x[i..=i], y: &y[i..=i], z: &z[i..=i], carried: &carried.column(i), size: 1.0 };
-                volume.densities_round(cells, radius, false, &mut alone[i..=i], &mut alone_ground[i..=i]);
-            }
-            assert_eq!(bits(&inside), bits(&alone), "{count} cells round a planet");
-            assert_eq!(bits(&ground), bits(&alone_ground));
-            if count > 100 {
-                for found in [&inside, &ground] {
-                    assert!(found.iter().any(|&v| v > 0.0) && found.iter().any(|&v| v < 0.0), "ground and air");
-                }
             }
         }
         // A column's cells asked for at once, its place and rows each one number: what block worlds ask.
@@ -794,7 +687,6 @@ mod tests {
 
     #[test]
     fn a_generators_hash_follows_its_volume_and_one_with_none_keeps_its_own() {
-        // As it was before generators had Volumes: nothing a terrain was made from has changed.
         let alpine = Preset::Alpine.world();
         assert!(alpine.volume().is_none());
         assert_eq!(alpine.hash(), ALPINE_HASH, "a generator with no Volume changed its hash: {:#x}", alpine.hash());
@@ -930,18 +822,14 @@ cooling = 6.5
     }
 
     #[test]
-    fn a_landmass_in_a_graph_makes_its_ground_and_climate_to_the_bit_flat_and_round() {
+    fn a_landmass_in_a_graph_makes_its_ground_and_climate_to_the_bit() {
         for preset in Preset::ALL {
             let land = Landmass { seed: 7, scale: 1.3, sea_level: 4.0, ..preset.landmass() };
             let world = WorldGen::from(land.clone());
             for i in 0..600 {
                 let (x, z, height) = (i as f32 * 41.7 - 9000.0, 3000.0 - i as f32 * 17.3, i as f32 * 1.7 - 80.0);
-                let at = [x, i as f32 * 5.1 - 900.0, z];
                 assert_eq!(world.height_at(x, z).to_bits(), land.height_at(x, z).to_bits(), "{preset:?} at {x}, {z}");
-                assert_eq!(world.height_round(at).to_bits(), land.height_round(at).to_bits(), "{preset:?} at {at:?}");
                 let (made, meant) = (world.climate(x, z, height), land.climate(x, z, height));
-                assert_eq!([made.0.to_bits(), made.1.to_bits()], [meant.0.to_bits(), meant.1.to_bits()]);
-                let (made, meant) = (world.climate_round(at, height), land.climate_round(at, height));
                 assert_eq!([made.0.to_bits(), made.1.to_bits()], [meant.0.to_bits(), meant.1.to_bits()]);
             }
         }
@@ -954,7 +842,6 @@ cooling = 6.5
                 let xs: Vec<f32> = (0..count).map(|i| i as f32 * 13.7 - 2000.0).collect();
                 let zs: Vec<f32> = (0..count).map(|i| 900.0 - i as f32 * 3.3).collect();
                 let grounds: Vec<f32> = (0..count).map(|i| i as f32 * 0.9 - 30.0).collect();
-                let round: Vec<[f32; 3]> = (0..count).map(|i| [xs[i], i as f32 * 2.0 - 500.0, zs[i]]).collect();
                 let (mut heights, mut warmth, mut wetness) = (vec![0.0; count], vec![0.0; count], vec![0.0; count]);
                 world.heights(&xs, &zs, &mut heights);
                 assert_eq!(
@@ -965,11 +852,6 @@ cooling = 6.5
                 let alone: Vec<(f32, f32)> = (0..count).map(|i| world.climate(xs[i], zs[i], grounds[i])).collect();
                 assert_eq!(bits(&warmth), bits(&alone.iter().map(|c| c.0).collect::<Vec<_>>()));
                 assert_eq!(bits(&wetness), bits(&alone.iter().map(|c| c.1).collect::<Vec<_>>()));
-                world.heights_round(&round, &mut heights);
-                assert_eq!(bits(&heights), bits(&round.iter().map(|&at| world.height_round(at)).collect::<Vec<_>>()));
-                world.climates_round(&round, &grounds, &mut warmth, &mut wetness);
-                let alone: Vec<(f32, f32)> = (0..count).map(|i| world.climate_round(round[i], grounds[i])).collect();
-                assert_eq!(bits(&warmth), bits(&alone.iter().map(|c| c.0).collect::<Vec<_>>()));
             }
         }
         // And the same from every core at once as from one.
@@ -1010,9 +892,6 @@ cooling = 6.5
         assert_eq!(bits(&previews[4].values), bits(&ground));
         assert!(previews[0].values.iter().all(|noise| (0.0..=2.0).contains(noise)));
         assert_eq!(previews[2].values, vec![12.0; 3]);
-        // Round a planet the same graph is read in three dimensions.
-        let round = world.height_round([300.0, 400.0, -200.0]);
-        assert!((12.0..=52.0).contains(&round), "{round}");
     }
 
     #[test]

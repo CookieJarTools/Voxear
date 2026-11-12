@@ -9,8 +9,7 @@
 //! waterfall keeps to its column and a lake it falls into takes it. A block
 //! between two sources, on ground or water, becomes a source itself, so a
 //! gap between two pools fills to the brim. Water no longer fed dries a step
-//! at a time, from where its feed was cut. On a planet, down is towards its
-//! middle: along whichever axis a block lies furthest out from it.
+//! at a time, from where its feed was cut.
 //!
 //! A step looks only at the blocks near where something changed the step
 //! before (or was built, broken or dug), each worked out from the blocks as
@@ -126,35 +125,8 @@ impl Water {
     }
 }
 
-/// Which way water falls in a world.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Fall {
-    /// Down, along -y.
-    Down,
-    /// Towards the world's corner, a planet's middle.
-    Middle,
-}
-
-impl Fall {
-    /// The way up from block `at`, as a facing (+x, -x, +y, -y, +z, -z): on
-    /// a planet, out from its middle along the axis the block's middle lies
-    /// furthest out along, the first of those as far.
-    pub fn up(self, at: [i32; 3]) -> usize {
-        match self {
-            Self::Down => 2,
-            Self::Middle => {
-                let middle = at.map(|v| v as f32 + 0.5);
-                let mut axis = 0;
-                for i in 1..3 {
-                    if middle[i].abs() > middle[axis].abs() {
-                        axis = i;
-                    }
-                }
-                axis * 2 + usize::from(middle[axis] < 0.0)
-            }
-        }
-    }
-}
+/// The way up from water, as a facing (+x, -x, +y, -y, +z, -z).
+pub const UP: usize = 2;
 
 /// The block one step from `at` the way facing `facing` faces.
 pub fn beside(at: [i32; 3], facing: usize) -> [i32; 3] {
@@ -178,12 +150,11 @@ fn bounds(map: &BlockMap) -> Option<([i32; 3], [i32; 3])> {
 /// The changes one step of flowing makes to `map`, each block given in
 /// blocks from the world's corner as it becomes: for each of the blocks
 /// `near`, the water that feeds it now, or none. `faces` says which kinds
-/// are water, `fall` which way is down, and `smooth` whether the world is
+/// are water, and `smooth` whether the world is
 /// drawn smooth, where dried blocks keep how far out of the ground they are.
 pub fn step(
     map: &BlockMap,
     faces: &[BlockFaces],
-    fall: Fall,
     smooth: bool,
     near: &BTreeSet<[i32; 3]>,
 ) -> Vec<([i32; 3], BlockId, Fill)> {
@@ -205,7 +176,7 @@ pub fn step(
         if matches!(was, Some((_, Water::Source))) {
             continue;
         }
-        let up = fall.up(at);
+        let up = UP;
         // Fed from above, it falls; else by the fullest water beside it that stands on something, falling water
         // only on ground; and between two sources, on something itself, it is one.
         let fed = match water(beside(at, up)) {
@@ -216,7 +187,7 @@ pub fn step(
                 for facing in (0..6).filter(|facing| facing / 2 != up / 2) {
                     let from = beside(at, facing);
                     let Some((kind, feeding)) = water(from) else { continue };
-                    let under = beside(from, fall.up(from) ^ 1);
+                    let under = beside(from, up ^ 1);
                     let stands = if feeding == Water::Falling { on_ground(under) } else { held(under) };
                     if !stands {
                         continue;
@@ -305,8 +276,6 @@ mod tests {
         assert_eq!((smooth_surface(FULL), smooth_surface(Water::Flowing { level: 6, up: 2 }.fill())), (0.5, 0.25));
         assert_eq!(Water::Flowing { level: 7, up: 2 }.height(), (14, Some(2)));
         assert_eq!(Water::Falling.height(), (16, None));
-        // On a planet, up is out from its middle along the axis a block lies furthest out along.
-        assert_eq!([Fall::Down.up([5, -40, 2]), Fall::Middle.up([5, -40, 2]), Fall::Middle.up([30, 2, -9])], [2, 3, 0]);
     }
 
     #[test]
@@ -352,36 +321,6 @@ mod tests {
         settle(&mut far, 200);
         let left = (0..40).flat_map(|x| (0..8).flat_map(move |y| (0..20).map(move |z| [x, y, z])));
         assert_eq!(left.filter(|&at| far.blocks.get(at) == 2).count(), 0);
-    }
-
-    #[test]
-    fn on_a_voxel_terrain_planet_water_falls_towards_its_middle_and_dries_back_to_air_by_the_ground() {
-        // A ball of stone round the corner, drawn smooth, a source on its +x side: it runs out over that side,
-        // never up.
-        let faces = faces();
-        let mut map = BlockMap::default();
-        for z in -8..8 {
-            for y in -8..8 {
-                for x in -8..8 {
-                    map.set([x, y, z], 1);
-                }
-            }
-        }
-        let mut world = BlockWorld::made(map, &faces, 1.0, true);
-        world.planet = Some(8.0);
-        world.set_blocks([([8, 0, 0], 2)]);
-        settle(&mut world, 100);
-        let water =
-            |world: &BlockWorld, at: [i32; 3]| (world.blocks.get(at) == 2).then(|| Water::of(world.blocks.fill(at)));
-        assert_eq!(water(&world, [8, 3, 0]), Some(Water::Flowing { level: 5, up: 0 }), "along the side, up along +x");
-        assert_eq!(water(&world, [8, 0, -2]), Some(Water::Flowing { level: 6, up: 0 }));
-        assert_eq!(water(&world, [9, 0, 0]), None, "never out from the middle");
-        assert!(world.meshes.values().any(|mesh| mesh.water().1 > 0), "drawn as cubes");
-        // Its source taken away, it dries, each block air just out of the ground beside it.
-        world.set_blocks([([8, 0, 0], AIR)]);
-        settle(&mut world, 100);
-        assert_eq!(water(&world, [8, 3, 0]), None);
-        assert_eq!(world.blocks.fill([8, 3, 0]), 127);
     }
 
     #[test]
@@ -437,7 +376,7 @@ mod tests {
         map.set([12, 1, 9], 2);
         let near: BTreeSet<[i32; 3]> = (0..20).flat_map(|x| (0..20).map(move |z| [x, 1, z])).collect();
         // Only the blocks beside each source, though those beside them are looked at after them.
-        let once = step(&map, &faces, Fall::Down, false, &near);
+        let once = step(&map, &faces, false, &near);
         assert_eq!(once.len(), 8, "four round each source");
         let beside_a_source = |at: [i32; 3]| [[5, 1, 5], [12, 1, 9]].iter().any(|s| reached(*s).any(|r| r == at));
         assert!(once.iter().all(|&(at, block, fill)| beside_a_source(at) && block == 2 && fill == 128 + 16 + 7));

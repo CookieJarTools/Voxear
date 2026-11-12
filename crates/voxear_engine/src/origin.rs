@@ -34,7 +34,7 @@ pub enum OriginMode {
     /// Never: the middle stays where the level puts it.
     #[default]
     Off,
-    /// In levels with ground without end, or a planet, only: a level of a
+    /// In levels with ground without end only: a level of a
     /// set size keeps its middle where it is.
     Endless,
     /// In every level.
@@ -99,8 +99,8 @@ pub fn due(world: &World, settings: &OriginSettings) -> Option<IVec3> {
     settings.move_for(crate::terrain::viewer(world)?).filter(|by| *by != IVec3::ZERO)
 }
 
-/// Whether the world has ground without end or a planet, which a game can
-/// go as far into as it likes.
+/// Whether the world has ground without end, which a game can go as far
+/// into as it likes.
 fn without_end(world: &World) -> bool {
     let endless_terrain = world
         .query_ref::<&TerrainAsset>()
@@ -108,9 +108,11 @@ fn without_end(world: &World) -> bool {
         .into_iter()
         .any(|asset| asset.file.endless.is_some());
     let endless_blocks = || {
-        world.query_ref::<&crate::blocks::BlockWorldAsset>().without::<Destroying>().into_iter().any(|asset| {
-            asset.file.generate.as_ref().is_some_and(|generate| generate.endless.is_some() || generate.planet.is_some())
-        })
+        world
+            .query_ref::<&crate::blocks::BlockWorldAsset>()
+            .without::<Destroying>()
+            .into_iter()
+            .any(|asset| asset.file.generate.as_ref().is_some_and(|generate| generate.endless.is_some()))
     };
     endless_terrain || endless_blocks()
 }

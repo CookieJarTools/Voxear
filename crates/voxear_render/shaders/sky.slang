@@ -250,8 +250,8 @@ float4 multiScatteringFragment(LutOut input) : SV_Target0
     Atmosphere atmosphere = frame->lighting.atmosphere;
     float2 uv = fromSubUvsToUnit(input.position.xy / MULTI_SCATTERING_SIZE, MULTI_SCATTERING_SIZE);
     float cosSun = uv.x * 2.0 - 1.0;
-    float height = atmosphere.bottomRadius + saturate(uv.y) * (atmosphere.topRadius - atmosphere.bottomRadius - PLANET_OFFSET)
-        + PLANET_OFFSET;
+    float height = atmosphere.bottomRadius + saturate(uv.y) * (atmosphere.topRadius - atmosphere.bottomRadius - GROUND_OFFSET)
+        + GROUND_OFFSET;
     float3 origin = float3(0.0, height, 0.0);
     // The table's own sun, by its angle from straight up.
     float3 sun = float3(sqrt(max(1.0 - cosSun * cosSun, 0.0)), cosSun, 0.0);

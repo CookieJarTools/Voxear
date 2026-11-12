@@ -182,8 +182,5 @@ mod tests {
         let (low, high) =
             testing::checked(&testing::world_of(NodeKind::Clamp(narrow), 0, &[Some(NodeKind::Noise(hills))]));
         assert!(low >= 20.0 && high <= 30.0, "{low} to {high}");
-        // Round a planet each place is held as on flat ground.
-        let (was, round) = (testing::round(&source, 2000), testing::round(&hard, 2000));
-        assert!((0..2000).all(|i| round[i] == was[i].clamp(20.0, 70.0)));
     }
 }

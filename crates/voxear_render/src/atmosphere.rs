@@ -1,4 +1,4 @@
-//! The physically based sky: a planet's atmosphere, as Hillaire models it in
+//! The physically based sky: the Earth's atmosphere, as Hillaire models it in
 //! "A Scalable and Production Ready Sky and Atmosphere Rendering Technique"
 //! (2020). The shaders are `shaders/atmosphere.slang` and the table passes
 //! in `shaders/sky.slang`.
@@ -42,7 +42,7 @@ const AERIAL_PERSPECTIVE: (u32, u32) = (32 * 32, 32);
 
 /// Earth's atmosphere, as Hillaire's paper gives it: air that scatters blue
 /// most, aerosols that scatter every colour forward, and ozone, over a
-/// planet of 6,360 km with 100 km of air. The sun's disc is half a degree
+/// globe of 6,360 km with 100 km of air. The sun's disc is half a degree
 /// across.
 pub fn earth() -> GpuAtmosphere {
     GpuAtmosphere {

@@ -432,12 +432,10 @@ mod tests {
     use super::*;
     use crate::generate::{Preset, Value, nodes::testing};
 
-    /// A hash of a generator's ground: its height at places over flat ground and round a planet, to the bit.
+    /// A hash of a generator's ground: its height at places over it, to the bit.
     fn ground_hash(world: &WorldGen) -> u64 {
-        let mut bits: Vec<u32> =
+        let bits: Vec<u32> =
             (0..4096).map(|i| world.height_at(i as f32 * 7.3 - 9000.0, i as f32 * 3.1).to_bits()).collect();
-        let round = |i: usize| [i as f32 * 3.7 - 5000.0, 4000.0 - i as f32 * 1.9, i as f32 * 2.3 + 100.0];
-        bits.extend((0..1024).map(|i| world.height_round(round(i)).to_bits()));
         crate::layers::stable_hash(bytemuck::cast_slice(&bits))
     }
 
@@ -459,21 +457,21 @@ mod tests {
         assert_eq!(world.height_at(123.0, -45.0), 64.0);
         let volume = world.volume().expect("its Volume");
         assert!(volume.plain() && volume.caved());
-        let rooms = world.caves().expect("its caves").rooms(None);
+        let rooms = world.caves().expect("its caves").rooms();
         assert_eq!(rooms.len(), 12);
         assert!(rooms.iter().all(|room| room.at[1] > 10.0 && room.at[1] < 54.0), "under the rock's top");
         // Its Rooms row is the main path's length; another seed is another cave.
         let longer = world.with_exposed(1, Value::Whole(12)).expect("its Rooms row");
-        assert_eq!(longer.caves().unwrap().rooms(None).len(), 16);
+        assert_eq!(longer.caves().unwrap().rooms().len(), 16);
         // Picked for a generator with caves of its own, it keeps its cave; hills picked for it take the cave along.
         let mut caved = starters()[1].graph.clone();
         assert!(caved.add_voxels(crate::generate::OwnVoxels { overhangs: 0.0, caves: 0.4, roof: 3.0 }, false));
         let picked = starter.reshapes(&WorldGen::new(4, 1.0, 0.0, caved));
-        let rooms_of = |world: &WorldGen| world.caves().map(|caves| caves.rooms(None).len());
+        let rooms_of = |world: &WorldGen| world.caves().map(|caves| caves.rooms().len());
         assert_eq!((picked.starter(), rooms_of(&picked)), (Some("Cave Level"), Some(12)));
         let hills = starters()[1].reshapes(&world);
         assert_eq!((hills.starter(), hills.caves().is_some()), (Some("Rolling Hills"), true));
-        let other = starter.world(2, 1.0).caves().unwrap().rooms(None);
+        let other = starter.world(2, 1.0).caves().unwrap().rooms();
         let regions = |rooms: &[crate::generate::PlacedRoom]| rooms.iter().map(|room| room.region).collect::<Vec<_>>();
         assert_ne!(regions(&other), regions(&rooms));
     }
@@ -481,11 +479,11 @@ mod tests {
     #[test]
     fn each_starter_makes_the_same_ground_to_the_bit_on_every_machine() {
         let hashes: [(&str, u64); 5] = [
-            ("Battlefield Plains", 0x523a_538e_8b31_d1e2),
-            ("Rolling Hills", 0xd333_23e9_32fd_3311),
-            ("Alpine", 0x0391_73e0_f540_f21c),
-            ("Archipelago", 0x7bff_4835_90c8_2cc7),
-            ("Canyons", 0x9476_55b1_f345_908c),
+            ("Battlefield Plains", 0xa2b9_e986_fb60_f2e3),
+            ("Rolling Hills", 0x5678_e709_8974_f830),
+            ("Alpine", 0x55de_f55e_af01_7b20),
+            ("Archipelago", 0xb060_b6af_bb14_4e66),
+            ("Canyons", 0x299d_7c2d_8373_cc20),
         ];
         let starters = grounds();
         assert_eq!(starters.len(), hashes.len());
@@ -507,7 +505,7 @@ mod tests {
         let names: Vec<&str> = starters.iter().map(|starter| starter.name).collect();
         assert_eq!(names, Preset::ALL.map(Preset::name), "the presets' names, in their order");
         for starter in &starters {
-            // Whole, the same bits in any batch flat and round, and read back from its text as written.
+            // Whole, the same bits in any batch, and read back from its text as written.
             let world = starter.world(1, 1.0);
             let (low, high) = testing::checked(&world);
             assert!(low > -400.0 && high < 1400.0 && high - low > 10.0, "{}: {low} to {high} m", starter.name);

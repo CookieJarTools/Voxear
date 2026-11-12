@@ -200,14 +200,11 @@ impl Kind for Land {
     fn compile(&self, cx: &mut Compiler, _: NodeId, _: usize, at: Places) -> V {
         let world = cx.world;
         let land = Arc::new(self.landmass(world.seed, world.scale, world.sea_level, Climate::default()));
-        match at {
-            Places::Flat { x, z } => cx.run(Ground(land), &[x, z]),
-            Places::Round { x, y, z } => cx.run(RoundGround(land), &[x, y, z]),
-        }
+        cx.run(Ground(land), &[at.x, at.z])
     }
 }
 
-/// A landmass's height on flat ground.
+/// A landmass's height.
 #[derive(Debug)]
 struct Ground(Arc<Landmass>);
 
@@ -219,22 +216,6 @@ impl Kernel for Ground {
     fn run(&self, inputs: &[&[f32]], out: &mut [f32]) {
         for ((out, &x), &z) in out.iter_mut().zip(inputs[0]).zip(inputs[1]) {
             *out = self.0.height_at(x, z);
-        }
-    }
-}
-
-/// A landmass's height round a planet.
-#[derive(Debug)]
-struct RoundGround(Arc<Landmass>);
-
-impl Kernel for RoundGround {
-    fn key(&self, key: &mut Key) {
-        key.name("landmass round").text(&self.0.to_text());
-    }
-
-    fn run(&self, inputs: &[&[f32]], out: &mut [f32]) {
-        for (at, out) in out.iter_mut().enumerate() {
-            *out = self.0.height_round([inputs[0][at], inputs[1][at], inputs[2][at]]);
         }
     }
 }

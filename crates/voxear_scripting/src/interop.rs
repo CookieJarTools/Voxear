@@ -473,8 +473,7 @@ pub(crate) struct NativeApi {
     /// `Blocks.CaptureEdits` and `Blocks.ApplyEdits`: every changed world of
     /// blocks' changes as bytes, and back.
     pub block_edits: unsafe extern "C" fn(what: i32, data: *const u8, len: i32, out: *mut u8, capacity: i32) -> i32,
-    /// `Physics.GravityAt`: which way and how hard things fall at a point,
-    /// towards a planet's middle near one.
+    /// `Physics.GravityAt`: which way and how hard things fall at a point.
     pub physics_gravity_at: unsafe extern "C" fn(at: *const [f32; 3], gravity: *mut [f32; 3]) -> i32,
     /// Where the world's middle is from the level's, in whole metres, as x,
     /// y and z (see `voxear_scene::WorldOrigin`): zero until it first moves.

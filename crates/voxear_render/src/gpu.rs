@@ -659,7 +659,7 @@ pub struct GpuLighting {
     pub moon: u32,
 }
 
-/// A planet's atmosphere, in kilometres and per kilometre, as Hillaire's
+/// The Earth's atmosphere, in kilometres and per kilometre, as Hillaire's
 /// "A Scalable and Production Ready Sky and Atmosphere Rendering
 /// Technique" (2020) models it. Mirrors `Atmosphere` in the shaders.
 #[repr(C)]

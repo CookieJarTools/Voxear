@@ -31,7 +31,6 @@ use voxear_terrain::{
         chunk::{AIR, BlockId},
         edits::{self, BlockEdits, Resize},
         file::{BlockCover, BlockFile, BlockKind, MAX_BLOCKS, MAX_LOOKS},
-        generate::BlockGenerate,
         vox::VoxFile,
     },
     generate::WorldGen,
@@ -292,11 +291,7 @@ const MADE_AT_ONCE: f32 = 65_536.0;
 
 /// Whether `file`'s world takes too long to make within a frame.
 fn made_slowly(file: &BlockFile) -> bool {
-    let size = file.block_size.max(0.01);
-    let columns = match file.generate.as_ref().and_then(|generate| generate.planet) {
-        Some(planet) => 4.0 * std::f32::consts::PI * (planet.radius / size).powi(2),
-        None => file.ground.size[0] as f32 * file.ground.size[1] as f32,
-    };
+    let columns = file.ground.size[0] as f32 * file.ground.size[1] as f32;
     columns * if file.smooth { 4.0 } else { 1.0 } > MADE_AT_ONCE
 }
 
@@ -407,8 +402,6 @@ pub enum BlockField {
     /// far its surface is pushed in and out, and how much is caves.
     Ground,
     Generator,
-    /// For a planet, how far its sea is from its middle.
-    Radius,
     Offset,
     Lowest,
     Overhangs,
@@ -496,11 +489,6 @@ pub fn props(world: &World, entity: Entity) -> Vec<Prop> {
             // A generator whose graph has a Volume makes the overhangs and caves itself.
             let own_voxels = if generator_has_volume(world, entity) { vec![] } else { vec![F::Overhangs, F::Caves] };
             match file.generate {
-                // A planet lies all round its middle, made at once: no size, place, lowest block or end.
-                Some(ref generate) if generate.planet.is_some() => {
-                    fields.extend([F::Generator, F::Radius]);
-                    fields.extend(own_voxels);
-                }
                 Some(ref generate) => {
                     fields.extend([F::Generator, F::Offset, F::Endless]);
                     match generate.endless {
@@ -544,7 +532,6 @@ pub fn label(field: BlockField) -> &'static str {
         F::Bottom => "Bottom",
         F::Ground => "Ground",
         F::Generator => "Generator",
-        F::Radius => "Radius",
         F::Offset => "Offset",
         F::Lowest => "Lowest block",
         F::Overhangs => "Overhangs",
@@ -581,9 +568,7 @@ pub fn key(field: BlockField) -> &'static str {
 
 pub fn unit(field: BlockField) -> Option<&'static str> {
     match field {
-        F::BlockSize | F::Offset | F::Overhangs | F::Heights | F::ViewDistance | F::FarDistance | F::Radius => {
-            Some("m")
-        }
+        F::BlockSize | F::Offset | F::Overhangs | F::Heights | F::ViewDistance | F::FarDistance => Some("m"),
         F::Temperatures => Some("°C"),
         _ => None,
     }
@@ -671,11 +656,9 @@ pub fn get(game: &Game, entity: Entity, field: BlockField) -> Option<Value> {
         F::Top => Value::Asset(path_of(game, kind()?.top.as_deref())),
         F::Bottom => Value::Asset(path_of(game, kind()?.bottom.as_deref())),
         F::Ground => {
-            let names = ["Flat", "Generated", "Planet"].map(String::from).to_vec();
-            let generate = file()?.generate.as_ref();
-            Value::Choice(generate.map_or(0, |generate| if generate.planet.is_some() { 2 } else { 1 }), names)
+            let names = ["Flat", "Generated"].map(String::from).to_vec();
+            Value::Choice(usize::from(file()?.generate.is_some()), names)
         }
-        F::Radius => Value::Number(file()?.generate.as_ref()?.planet?.radius),
         F::Generator => Value::Asset(path_of(game, file()?.generate.as_ref()?.world.as_deref())),
         F::Offset => Value::Vector(file()?.generate.as_ref()?.position.to_vec()),
         F::Lowest => Value::Number(file()?.generate.as_ref()?.bottom as f32),
@@ -801,18 +784,7 @@ pub fn set(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, fie
         (F::Water, Value::Toggle(on)) if picked < file.blocks.len() => file.blocks[picked].water = *on,
         (F::Ground, Value::Choice(at, _)) => {
             let generate = file.generate.clone().unwrap_or_default();
-            file.generate = match at {
-                1 => Some(BlockGenerate { planet: None, ..generate }),
-                // A planet is made all at once, never without end.
-                2 => {
-                    Some(BlockGenerate { planet: Some(generate.planet.unwrap_or_default()), endless: None, ..generate })
-                }
-                _ => None,
-            };
-        }
-        (F::Radius, v) => {
-            let Some(planet) = file.generate.as_mut().and_then(|g| g.planet.as_mut()) else { return false };
-            planet.radius = number(v).unwrap_or(planet.radius).clamp(8.0, 20_000.0);
+            file.generate = (*at == 1).then_some(generate);
         }
         (F::Offset, v) => {
             let Some(generate) = &mut file.generate else { return false };

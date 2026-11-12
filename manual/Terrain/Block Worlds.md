@@ -15,7 +15,7 @@ Along the top of the Block World in the Inspector are its tools: **Build**, the 
 | Data | The `.blockworld` asset its blocks are |
 | Block size | How many metres a block is a side, from 0.1 to 10: smaller blocks make the same world finer, not smaller (see below) |
 | Smooth | Whether its surface runs smoothly between its blocks rather than as cubes: a [[Voxel Terrain]] |
-| Ground | **Flat**, **Generated** by a world generator (see below), or a **Planet** (see [[Voxel Terrain#Planets|Planets]]) |
+| Ground | **Flat**, or **Generated** by a world generator (see below) |
 | Ground size | How many blocks its ground reaches along X and Z |
 | Ground height | With flat ground, how many blocks high it is |
 | Top block, Under block, Base block | The blocks its ground is made of, of those it lists: its top, the layers under that, and the rest |
@@ -149,15 +149,13 @@ Water flows. Each block of water you place is a **source**: it stays full and ne
 
 Water flows five blocks a second, the same on every machine, both in play and in the editor as you build; while a game is paused, it stands still. It starts wherever something changes, so a generated sea stays as it was made until you dig into it or build beside it. It stays within the chunks its world reaches: at the world's edge it stops as if at a wall. Saving keeps the water where it has run to.
 
-On a planet, down is towards its middle. Water falls towards the middle and runs out across the planet's surface, whichever side it is on. Things float in it on any side too, pushed out from the middle as strongly as the planet pulls them in.
+For a sea, pick a block of water as the **Sea block** of generated ground: the air below the generator's sea level is filled with it.
 
-For a sea, pick a block of water as the **Sea block** of generated ground: the air below the generator's sea level is filled with it. A planet's sea lies its **Radius** from its middle.
-
-In a [[Voxel Terrain]], water is smooth too: its surface runs between its blocks as the ground's does. A full block's surface is its top, and flowing water stands as high as it flows. A generated sea lies flat at its generator's sea level, and on a planet it lies round the planet as a smooth sea; it lies over the ground wherever the ground is under it, however shallow, and its surface runs on a block into the shore, so the waterline is where the ground rises through it, with no gaps. It flows as it does among cubes.
+In a [[Voxel Terrain]], water is smooth too: its surface runs between its blocks as the ground's does. A full block's surface is its top, and flowing water stands as high as it flows. A generated sea lies flat at its generator's sea level; it lies over the ground wherever the ground is under it, however shallow, and its surface runs on a block into the shore, so the waterline is where the ground rises through it, with no gaps. It flows as it does among cubes.
 
 With the camera in the water, the view is the same as under a Pool: the water's own colour thickening with distance, light fading with depth, the surface from below, a waterline across the lens as you come up. The water round the camera is found from the top of its column, as far as that top runs along X and Z, so the ground beside a pond stays dry to look at. The waterline lies level, as the water's top is flat, and the ground under the water is lit as it is from far off, whether the camera is near the water or not.
 
-Not done yet: on a planet's sides there is no under-water view, a script asking **Water** about a point finds a planet's water only on its top, where the planet's up is the world's, and the ground under the water has no dappled light, as a Pool's bed has.
+Not done yet: the ground under the water has no dappled light, as a Pool's bed has.
 
 ## Building
 

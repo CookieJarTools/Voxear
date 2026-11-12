@@ -1,4 +1,4 @@
-// A physically based sky: the planet's atmosphere as Hillaire models it in
+// A physically based sky: the Earth's atmosphere as Hillaire models it in
 // "A Scalable and Production Ready Sky and Atmosphere Rendering Technique"
 // (2020). Air scatters blue light (Rayleigh), aerosols scatter all colours
 // forward (Mie), and ozone absorbs some red and green.
@@ -12,8 +12,8 @@
 // - aerial perspective: what the air between the camera and each distance
 //   adds and takes away, over 32 slices of 32×32 froxels laid side by side,
 //   which the forward pass lays over distant geometry.
-// Everything here is in kilometres, with the planet's centre below the
-// world's origin, so the scene's ground at y = 0 is the planet's surface.
+// Everything here is in kilometres, with the Earth's centre below the
+// world's origin, so the scene's ground at y = 0 is the Earth's surface.
 
 #pragma once
 
@@ -25,7 +25,7 @@ static const float2 SKY_VIEW_SIZE = float2(192.0, 108.0);
 static const float AERIAL_SLICES = 32.0;
 static const float AERIAL_KM_PER_SLICE = 4.0;
 // Points are kept this far above the ground, so rays from them do not hit it at once.
-static const float PLANET_OFFSET = 0.01;
+static const float GROUND_OFFSET = 0.01;
 // How much brighter the sun's disc is than the light it gives, to show as the sun without flooding bloom.
 static const float SUN_DISC_BRIGHTNESS = 20.0;
 // How bright the sky looks under the moon, against the moon's light: games make moonlight bright enough to see
@@ -42,7 +42,7 @@ float2 fromSubUvsToUnit(float2 uv, float2 size)
     return (uv - 0.5 / size) * (size / (size - 1.0));
 }
 
-// The distance along a ray to a sphere round the planet's centre: the near
+// The distance along a ray to a sphere round the Earth's centre: the near
 // hit, or the far one from inside; -1 when it misses or is behind.
 float raySphere(float3 origin, float3 direction, float radius)
 {
@@ -63,7 +63,7 @@ float raySphere(float3 origin, float3 direction, float radius)
     return far >= 0.0 ? far : -1.0;
 }
 
-// Where the camera is relative to the planet's centre, in kilometres: as high as it is over the level's ground,
+// Where the camera is relative to the Earth's centre, in kilometres: as high as it is over the level's ground,
 // wherever the world's middle has moved to.
 float3 cameraInAtmosphere(Frame* frame)
 {
@@ -72,7 +72,7 @@ float3 cameraInAtmosphere(Frame* frame)
     float3 position = float3(camera.x, levelHeight(frame, camera), camera.z) * 0.001;
     position += float3(0.0, atmosphere.bottomRadius, 0.0);
     float height = length(position);
-    float lowest = atmosphere.bottomRadius + PLANET_OFFSET;
+    float lowest = atmosphere.bottomRadius + GROUND_OFFSET;
     return height < lowest ? position * (lowest / height) : position;
 }
 
@@ -124,7 +124,7 @@ float miePhase(float g, float cosTheta)
     return k * (1.0 + cosTheta * cosTheta) / pow(max(1.0 + g * g - 2.0 * g * cosTheta, 1e-4), 1.5);
 }
 
-// The transmittance table's coordinates for a height (from the planet's
+// The transmittance table's coordinates for a height (from the Earth's
 // centre) and the cosine of the angle from straight up (Bruneton 2017).
 float2 transmittanceUv(Atmosphere atmosphere, float height, float cosZenith)
 {
@@ -237,7 +237,7 @@ Scattered integrate(
         float3 up = position / height;
         float cosSun = dot(sun, up);
         float3 sunTransmittance = transmittanceToSpace(lighting, height, cosSun);
-        float shadow = raySphere(position + up * PLANET_OFFSET, sun, atmosphere.bottomRadius) >= 0.0 ? 0.0 : 1.0;
+        float shadow = raySphere(position + up * GROUND_OFFSET, sun, atmosphere.bottomRadius) >= 0.0 ? 0.0 : 1.0;
         float3 phased = isotropic ? medium.scattering / (4.0 * PI) : medium.rayleigh * rayleigh + medium.mie * mie;
         float3 multiplied = multiple ? multiScatteringAt(lighting, height, cosSun) * medium.scattering : 0.0;
         float3 scattered = shadow * sunTransmittance * phased + multiplied;

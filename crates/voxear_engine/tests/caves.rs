@@ -118,7 +118,7 @@ fn a_room_prefab_is_read_into_a_generators_numbers_and_again_when_it_changes() {
     let read = listed.with_graph(read);
     assert_ne!(read.hash(), listed.hash(), "other ground than with the room not yet read");
     assert!(caves::read_rooms(&mut game.content, read.graph()).is_none(), "read again, nothing changed");
-    let rooms = read.caves().unwrap().rooms(None);
+    let rooms = read.caves().unwrap().rooms();
     assert!(rooms.iter().all(|room| room.prefab.as_deref() == Some("Prefabs/Hall.prefab") && room.exits.len() == 1));
     let guid = game.content.parse("Prefabs/Hall.prefab").unwrap().guid().unwrap();
     assert!(

@@ -52,19 +52,17 @@ pub(crate) const MOST_OVER: f32 = 64.0;
 /// change, so what was made by the old ones is made again.
 const VERSION: u32 = 1;
 
-/// Where a node is asked for its output: on flat ground at rows of `x` and
-/// `z`, in metres in the generator's world, or round a planet at rows of
-/// `x`, `y` and `z`, in metres from its middle.
+/// Where a node is asked for its output: at rows of `x` and `z`, in metres
+/// in the generator's world.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum Places {
-    Flat { x: V, z: V },
-    Round { x: V, y: V, z: V },
+pub(crate) struct Places {
+    pub x: V,
+    pub z: V,
 }
 
 /// Where a node is asked for a Volume: at cells, rows of where their
-/// middles are. On flat ground `x` and `z` are metres in the generator's
-/// world and `y` metres up; round a planet all three are metres from its
-/// middle.
+/// middles are: `x` and `z` in metres in the generator's world, and `y`
+/// metres up.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct Cells {
     pub x: V,
@@ -154,8 +152,6 @@ pub(crate) struct Compiler<'a> {
     pub world: World,
     /// Whether it is given the height of the ground asked about.
     grounded: bool,
-    /// Round a planet rather than on flat ground.
-    round: bool,
     /// In a program run once a cell: the program run once a column beside
     /// it, and the rows of that carried up to the cells.
     carry: Option<Box<Carry<'a>>>,
@@ -196,12 +192,11 @@ struct Carry<'a> {
 }
 
 impl<'a> Compiler<'a> {
-    fn new(graph: &'a Graph, world: World, grounded: bool, round: bool) -> Self {
+    fn new(graph: &'a Graph, world: World, grounded: bool) -> Self {
         Self {
             graph,
             world,
             grounded,
-            round,
             carry: None,
             ground_from: None,
             carving: true,
@@ -279,11 +274,6 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    /// Whether it compiles for round a planet rather than flat ground.
-    pub fn round(&self) -> bool {
-        self.round
-    }
-
     /// Whether what a node takes away from a Volume is taken: not while the
     /// ground under its caves is compiled, when the node passes on what it
     /// would take from.
@@ -303,13 +293,13 @@ impl<'a> Compiler<'a> {
         height.unwrap_or_else(|| self.constant(self.world.sea_level))
     }
 
-    /// The generator's own ground as a program of its own, flat or round as this one is: for a kernel that
-    /// asks the ground's height somewhere other than at the places it is run over.
+    /// The generator's own ground as a program of its own: for a kernel that asks the ground's height somewhere
+    /// other than at the places it is run over.
     pub fn own_ground(&mut self) -> Arc<Program> {
         if let Some(program) = &self.own_ground {
             return program.clone();
         }
-        let mut cx = Compiler::new(self.graph, self.world, false, self.round);
+        let mut cx = Compiler::new(self.graph, self.world, false);
         let at = cx.places();
         let output = self.graph.output().map(|node| node.id);
         let height = output.and_then(|output| cx.input(output, Output::HEIGHT, at));
@@ -332,11 +322,6 @@ impl<'a> Compiler<'a> {
     /// How large the cells asked about are, in metres.
     pub fn size(&mut self) -> V {
         self.given(Given::Size)
-    }
-
-    /// The radius of the planet the cells asked about are round, in metres.
-    pub fn radius(&mut self) -> V {
-        self.given(Given::Radius)
     }
 
     /// A row made once for each column the cells `at` are in, by `make`
@@ -373,19 +358,7 @@ impl<'a> Compiler<'a> {
             debug_assert!(place < 256, "{place} rows carried up");
             return self.given(Given::Carried(place.min(255) as u8));
         }
-        let places = self.places_of(at);
-        make(self, places)
-    }
-
-    /// The columns the cells `at` are in. Round a planet a cell's column is
-    /// where the way out to it crosses the planet's sea.
-    fn places_of(&mut self, at: Cells) -> Places {
-        if !self.round {
-            return Places::Flat { x: at.x, z: at.z };
-        }
-        let radius = self.radius();
-        let [x, y, z] = [0, 1, 2].map(|axis| self.run(OnSphere(axis), &[at.x, at.y, at.z, radius]));
-        Places::Round { x, y, z }
+        make(self, Places { x: at.x, z: at.z })
     }
 
     /// What is wired into Volume input `input` of `node`, at cells `at`:
@@ -476,12 +449,9 @@ impl<'a> Compiler<'a> {
         row
     }
 
-    /// The places the program is given, flat or round.
+    /// The places the program is given.
     fn places(&mut self) -> Places {
-        match self.round {
-            false => Places::Flat { x: self.given(Given::X), z: self.given(Given::Z) },
-            true => Places::Round { x: self.given(Given::X), y: self.given(Given::Y), z: self.given(Given::Z) },
-        }
+        Places { x: self.given(Given::X), z: self.given(Given::Z) }
     }
 
     /// The program making `outputs`, and what was found wrong on the way.
@@ -499,10 +469,9 @@ impl<'a> Compiler<'a> {
     }
 }
 
-/// A graph's programs for flat ground or round a planet: its ground's
-/// height at each place, its climate there (how warm, then how wet) on
-/// ground of a height it is given, and its Volume, where its Output has
-/// one wired in.
+/// A graph's programs: its ground's height at each place, its climate
+/// there (how warm, then how wet) on ground of a height it is given, and
+/// its Volume, where its Output has one wired in.
 #[derive(Debug)]
 pub(crate) struct Compiled {
     pub height: Program,
@@ -542,12 +511,12 @@ pub(crate) struct Voxels {
 }
 
 /// The Volume wired into `graph`'s Output, compiled: none with no wire.
-fn voxels(graph: &Graph, world: World, round: bool, faults: &mut Vec<Fault>) -> Option<Voxels> {
+fn voxels(graph: &Graph, world: World, faults: &mut Vec<Fault>) -> Option<Voxels> {
     let output = graph.output()?.id;
     graph.link_into(output, Output::VOLUME)?;
-    let mut columns = Compiler::new(graph, world, true, round);
+    let mut columns = Compiler::new(graph, world, true);
     columns.ground_from = graph.link_into(output, Output::HEIGHT).map(|link| (link.from, link.output));
-    let mut cx = Compiler::new(graph, world, false, round);
+    let mut cx = Compiler::new(graph, world, false);
     cx.carry = Some(Box::new(Carry { columns, rows: Vec::new(), between: Vec::new() }));
     let at = cx.cells();
     let whole = cx.volume(output, Output::VOLUME, at)?;
@@ -576,11 +545,10 @@ fn voxels(graph: &Graph, world: World, round: bool, faults: &mut Vec<Fault>) -> 
     Some(Voxels { columns, between, exact, spread, cells, coarse, plain, caved: whole != ground, reach, hash, caves })
 }
 
-/// Compiles `graph` in `world`, for flat ground or `round` a planet, adding
-/// what is wrong with it to `faults`.
-pub(crate) fn compile(graph: &Graph, world: World, round: bool, faults: &mut Vec<Fault>) -> Compiled {
+/// Compiles `graph` in `world`, adding what is wrong with it to `faults`.
+pub(crate) fn compile(graph: &Graph, world: World, faults: &mut Vec<Fault>) -> Compiled {
     let output = graph.output().map(|node| node.id);
-    let mut cx = Compiler::new(graph, world, false, round);
+    let mut cx = Compiler::new(graph, world, false);
     if output.is_none() {
         cx.fault(Fault::NoOutput);
     }
@@ -590,7 +558,7 @@ pub(crate) fn compile(graph: &Graph, world: World, round: bool, faults: &mut Vec
     let (height, found) = cx.finish(&[height]);
     faults.extend(found);
 
-    let mut cx = Compiler::new(graph, world, true, round);
+    let mut cx = Compiler::new(graph, world, true);
     let at = cx.places();
     let warmth = output.and_then(|output| cx.input(output, Output::TEMPERATURE, at));
     let warmth = warmth.unwrap_or_else(|| {
@@ -605,17 +573,17 @@ pub(crate) fn compile(graph: &Graph, world: World, round: bool, faults: &mut Vec
             faults.push(fault);
         }
     }
-    let volume = voxels(graph, world, round, faults);
+    let volume = voxels(graph, world, faults);
     Compiled { height, climate, volume }
 }
 
-/// A program making every output of every node of `graph` at flat places,
+/// A program making every output of every node of `graph` at its places,
 /// given the ground's height for what reads it, and which node and output
 /// each row it makes is: what the graph editor draws each node's preview
 /// from. A Volume is made at cells as high as the program is given, of the
 /// size it is given.
 pub(crate) fn compile_all(graph: &Graph, world: World) -> (Program, Vec<(NodeId, usize)>) {
-    let mut cx = Compiler::new(graph, world, true, false);
+    let mut cx = Compiler::new(graph, world, true);
     let (at, cells) = (cx.places(), cx.cells());
     let mut order: Vec<&super::graph::Node> = graph.nodes.iter().collect();
     order.sort_by_key(|node| node.id);
@@ -643,27 +611,6 @@ impl Kernel for Constant {
 
     fn run(&self, _: &[&[f32]], out: &mut [f32]) {
         out.fill(self.0);
-    }
-}
-
-/// One of the three numbers of where the way out from a planet's middle to
-/// a cell crosses the planet's sea: from rows of the cell's x, y and z and
-/// the planet's radius.
-#[derive(Debug)]
-struct OnSphere(usize);
-
-impl Kernel for OnSphere {
-    fn key(&self, key: &mut Key) {
-        key.name("on sphere").whole(self.0 as u32);
-    }
-
-    fn run(&self, inputs: &[&[f32]], out: &mut [f32]) {
-        for (at, out) in out.iter_mut().enumerate() {
-            let (x, y, z) = (inputs[0][at], inputs[1][at], inputs[2][at]);
-            let far = (x * x + y * y + z * z).sqrt();
-            // At the very middle there is no way out: the planet's top stands in.
-            *out = if far > 0.0 { inputs[self.0][at] / far * inputs[3][at] } else { [0.0, inputs[3][at], 0.0][self.0] };
-        }
     }
 }
 
@@ -716,9 +663,9 @@ mod tests {
         let output = graph.add(NodeKind::Output(Output::default()), [400.0, 0.0]);
         assert!(graph.connect(hills, 0, solid, Solid::HEIGHT) && graph.connect(hills, 0, output, Output::HEIGHT));
         let world = World { seed: 3, scale: 1.0, sea_level: 0.0 };
-        let mut columns = Compiler::new(&graph, world, true, false);
+        let mut columns = Compiler::new(&graph, world, true);
         columns.ground_from = Some((hills, 0));
-        let mut cx = Compiler::new(&graph, world, false, false);
+        let mut cx = Compiler::new(&graph, world, false);
         cx.carry = Some(Box::new(Carry { columns, rows: Vec::new(), between: Vec::new() }));
         // The hills made solid at the cells asked about, and at cells 25 m along x from them.
         let own = cx.cells();
@@ -731,7 +678,7 @@ mod tests {
         assert!(faults.is_empty(), "{faults:?}");
         // Run over cells up one column: the carried height serves the first, and the second works the hills
         // out again 25 m away, at every cell.
-        let height = compile(&graph, world, false, &mut Vec::new()).height;
+        let height = compile(&graph, world, &mut Vec::new()).height;
         let at = |x: f32, z: f32| {
             let mut found = [0.0];
             height.run(1, Givens { x: &[x], z: &[z], ..Givens::default() }, &mut [&mut found]);

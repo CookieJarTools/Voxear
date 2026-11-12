@@ -18,9 +18,9 @@
 //! only where it meets air, and are drawn apart, see-through, after the
 //! ground; the ground's faces show where they meet it as they do air.
 //! Nothing stands on it, and things float in it ([`BlockWorld::water_over`]).
-//! It flows ([`flow`]): from water placed, down and then out sideways,
-//! falling towards a planet's middle. A Voxel Terrain's water is smooth
-//! too, its surface made as its ground's is (see `smooth`).
+//! It flows ([`flow`]): from water placed, down and then out sideways. A
+//! Voxel Terrain's water is smooth too, its surface made as its ground's
+//! is (see `smooth`).
 
 pub mod block;
 pub mod chunk;
@@ -85,9 +85,6 @@ pub fn is_ground(faces: &[BlockFaces], block: BlockId) -> bool {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct BlockMap {
     chunks: HashMap<[i32; 3], Arc<Chunk>>,
-    /// Whether its blocks lie all round its corner, as a planet's do: up is
-    /// then out from the corner (see `flow::Fall`).
-    pub round: bool,
 }
 
 impl BlockMap {
@@ -136,15 +133,8 @@ impl BlockMap {
         }
     }
 
-    /// Which way its water falls: down, or towards its corner where its
-    /// blocks lie round it.
-    pub fn fall(&self) -> flow::Fall {
-        if self.round { flow::Fall::Middle } else { flow::Fall::Down }
-    }
-
     /// Whether chunk `key` and the six beside it are all ground through and
-    /// through, none of it water as `faces` says, so it has no faces to draw:
-    /// as deep in a planet.
+    /// through, none of it water as `faces` says, so it has no faces to draw.
     pub fn buried(&self, key: [i32; 3], faces: &[BlockFaces]) -> bool {
         let whole = |key: [i32; 3]| {
             self.chunks
@@ -192,7 +182,7 @@ impl BlockMap {
     /// The same blocks, each by the number `change` gives it: as after a
     /// kind of block is taken out of its world's list.
     pub fn remapped(&self, change: impl Fn(BlockId) -> BlockId) -> Self {
-        let mut map = Self { round: self.round, ..Self::default() };
+        let mut map = Self::default();
         for (key, chunk) in &self.chunks {
             map.put_chunk(*key, chunk.remapped(&change));
         }
@@ -232,10 +222,6 @@ pub struct BlockWorld {
     pub block_size: f32,
     pub smooth: bool,
     pub cast_shadows: bool,
-    /// For a planet, how far its sea is from its middle, the world's corner,
-    /// in metres: physics pulls things near it towards its middle, and its
-    /// water falls towards it.
-    pub planet: Option<f32>,
     /// The blocks its water's next step looks at (see [`flow`]): those near
     /// where its blocks changed since the last.
     pub flowing: Arc<BTreeSet<[i32; 3]>>,
@@ -253,7 +239,6 @@ impl PartialEq for BlockWorld {
             && self.block_size == other.block_size
             && self.smooth == other.smooth
             && self.cast_shadows == other.cast_shadows
-            && self.planet == other.planet
             && (Arc::ptr_eq(&self.flowing, &other.flowing) || self.flowing == other.flowing)
     }
 }
@@ -279,7 +264,6 @@ impl BlockWorld {
             block_size,
             smooth,
             cast_shadows: true,
-            planet: None,
             flowing: Arc::new(flowing),
         }
     }
@@ -291,7 +275,7 @@ impl BlockWorld {
             return 0;
         }
         let near = std::mem::take(Arc::make_mut(&mut self.flowing));
-        let changes = flow::step(&self.blocks, &self.faces, self.fall(), self.smooth, &near);
+        let changes = flow::step(&self.blocks, &self.faces, self.smooth, &near);
         self.set_cells(changes)
     }
 
@@ -302,31 +286,23 @@ impl BlockWorld {
         (block, self.blocks.get(block))
     }
 
-    /// Which way its water falls: down, or towards its middle on a planet.
-    pub fn fall(&self) -> flow::Fall {
-        if self.planet.is_some() { flow::Fall::Middle } else { self.blocks.fall() }
-    }
-
-    /// How deep under its water `at` is, a point in metres from its corner,
-    /// and the way up from the water there (a facing, see `flow::Fall::up`):
+    /// How deep under its water `at` is, a point in metres from its corner:
     /// where `at` is in its water, or over it within `reach` metres of air,
-    /// how far the top of the water in its column along that way is above
-    /// it, in metres, less than nothing over the water. `None` where no
-    /// water is there, or ground is between.
-    pub fn water_depth(&self, at: [f32; 3], reach: f32) -> Option<(f32, usize)> {
+    /// how far the top of the water in its column is above it, in metres,
+    /// less than nothing over the water. `None` where no water is there, or
+    /// ground is between.
+    pub fn water_depth(&self, at: [f32; 3], reach: f32) -> Option<f32> {
         let (mut block, kind) = self.block_at(at);
-        let up = self.fall().up(block);
-        let (axis, toward) = (up / 2, if up & 1 == 0 { 1 } else { -1 });
         let water = |block: [i32; 3]| is_water(&self.faces, self.blocks.get(block));
         if !water(block) {
             if kind != AIR {
                 return None;
             }
             // Down through the air to the water's top, if it comes before the ground and within reach.
-            let last = ((at[axis] - toward as f32 * reach.max(0.0)) / self.block_size).floor() as i32;
+            let last = ((at[1] - reach.max(0.0)) / self.block_size).floor() as i32;
             loop {
-                block[axis] -= toward;
-                if (block[axis] - last) * toward < 0 || self.blocks.get(block) != AIR && !water(block) {
+                block[1] -= 1;
+                if block[1] < last || self.blocks.get(block) != AIR && !water(block) {
                     return None;
                 }
                 if water(block) {
@@ -336,8 +312,7 @@ impl BlockWorld {
         }
         // Up to the top of the water above it, as high as it stands in its block.
         loop {
-            let mut next = block;
-            next[axis] += toward;
+            let next = [block[0], block[1] + 1, block[2]];
             if !water(next) {
                 break;
             }
@@ -349,20 +324,17 @@ impl BlockWorld {
             true => 0.5 + flow::smooth_surface(fill),
             false => f32::from(flow::Water::of(fill).height().0) / 16.0,
         };
-        let foot = if toward > 0 { block[axis] } else { block[axis] + 1 } as f32;
-        let top = (foot + toward as f32 * height) * self.block_size;
-        Some(((top - at[axis]) * toward as f32, up))
+        let top = (block[1] as f32 + height) * self.block_size;
+        Some(top - at[1])
     }
 
     /// How high the water over `at` stands, in metres from the world's
     /// corner, where `at` (a point in metres from its corner) is in its
-    /// water or over it within `reach` metres of air, and up is up: the top
-    /// of the water in its column (see [`BlockWorld::water_depth`]). `None`
-    /// where no water is there, ground is between, or, on a planet's sides,
-    /// its water's up is another way.
+    /// water or over it within `reach` metres of air: the top of the water
+    /// in its column (see [`BlockWorld::water_depth`]). `None` where no
+    /// water is there, or ground is between.
     pub fn water_over(&self, at: [f32; 3], reach: f32) -> Option<f32> {
-        let (depth, up) = self.water_depth(at, reach)?;
-        (up == 2).then_some(at[1] + depth)
+        Some(at[1] + self.water_depth(at, reach)?)
     }
 
     /// Puts each block of `changes` in place, each by where it is in blocks
@@ -702,16 +674,6 @@ mod tests {
         assert_eq!(world.water_over([1.0, 13.0, 1.0], 1.0), None, "too far over it");
         assert_eq!(world.water_over([1.0, 1.0, 1.0], 1.0), None, "in the ground under it");
         assert_eq!(world.water_over([3.0, 5.0, 1.0], 1.0), None, "beside it");
-        // On a planet's side, water's up is out from its middle: a point 1.5 m out over water whose top is 10 m out.
-        let mut side = BlockMap::default();
-        for x in 0..5 {
-            side.set([x, 0, 0], if x < 3 { 3 } else { 4 });
-        }
-        let mut planet = BlockWorld::new(side, &faces, 2.0);
-        planet.planet = Some(4.0);
-        assert_eq!(planet.water_depth([11.5, 1.0, 1.0], 2.0), Some((-1.5, 0)));
-        assert_eq!(planet.water_depth([7.0, 1.0, 1.0], 2.0), Some((3.0, 0)), "in it, 3 m under its top");
-        assert_eq!(planet.water_over([7.0, 1.0, 1.0], 2.0), None, "its up is not the world's");
     }
 
     #[test]

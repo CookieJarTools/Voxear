@@ -9,8 +9,6 @@
 //! whole from Bend up, and eases to nothing over Feather below it. Size is
 //! how wide the crests and floors it finds are: the ground is read half of
 //! it away each way, so four more times than the place itself.
-//!
-//! Round a planet the four places lie along two tangents of its surface.
 
 use serde::{Deserialize, Serialize};
 
@@ -152,10 +150,6 @@ mod tests {
         let count = |masks: &[f32], of: f32| masks.iter().filter(|&&mask| mask == of).count();
         let neither = (0..4000).filter(|&i| crests[i] == 0.0 && floors[i] == 0.0).count();
         assert!(neither > 300 && count(&crests, 1.0) > 300 && count(&floors, 1.0) > 300, "{neither} neither");
-        // Round a planet the same hills have crests and floors along its surface.
-        assert_eq!((testing::round_range(&ridges), testing::round_range(&valleys)), ((0.0, 1.0), (0.0, 1.0)));
-        let (crests, floors) = (testing::round(&ridges, 4000), testing::round(&valleys, 4000));
-        assert!((0..4000).all(|i| crests[i] == 0.0 || floors[i] == 0.0));
         // A square falloff is a ridge with a level top, even sides and level ground beyond: bent only at its
         // shoulders and its feet. 400 m of feather eased over makes them gentle, so the masks are read finely.
         let ridge = Falloff { shape: FalloffShape::Square, radius: 100.0, feather: 400.0, ..Falloff::default() };
@@ -194,7 +188,7 @@ mod tests {
             0,
             &[Some(NodeKind::Constant(Constant { value: 4.0 }))],
         );
-        assert_eq!((level.height_at(2.0, 2.0), level.height_round([0.0, 700.0, 0.0])), (0.0, 0.0));
+        assert_eq!(level.height_at(2.0, 2.0), 0.0);
         assert_eq!(testing::world_of(NodeKind::Curvature(curvature), 1, &[]).height_at(2.0, 2.0), 0.0);
     }
 }

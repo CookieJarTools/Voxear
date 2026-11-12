@@ -4,8 +4,6 @@
 //! axis and at the corners between, and weighs the nearer ones more. Nine
 //! reads make it one of the dearer nodes: everything behind it is worked
 //! out nine times.
-//!
-//! Round a planet the eight places lie along two tangents of its surface.
 
 use serde::{Deserialize, Serialize};
 
@@ -138,19 +136,14 @@ mod tests {
         assert!(rough(&flattened) < rough(&was) * 0.35, "{} from {}", rough(&flattened), rough(&was));
         assert!(rough(&kept) > rough(&was) * 0.9, "{} from {}", rough(&kept), rough(&was));
         assert_eq!(testing::flat(&none, 4000), was, "no radius, no smoothing");
-        // Level ground stays where it is, on flat ground and round a planet; nothing wired in is nothing.
+        // Level ground stays where it is; nothing wired in is nothing.
         let level = testing::world_of(
             NodeKind::Smooth(Smooth::default()),
             0,
             &[Some(NodeKind::Constant(Constant { value: 7.0 }))],
         );
-        assert_eq!((level.height_at(3.0, 4.0), level.height_round([10.0, 2000.0, -30.0])), (7.0, 7.0));
+        assert_eq!(level.height_at(3.0, 4.0), 7.0);
         assert_eq!(testing::world_of(NodeKind::Smooth(Smooth::default()), 0, &[]).height_at(3.0, 4.0), 0.0);
-        // Round a planet it averages along the surface: the same bumps, read round it, flattened as much.
-        let (was, flattened) = (testing::round(&source, 4000), testing::round(&wide, 4000));
-        assert!(rough(&flattened) < rough(&was) * 0.45, "{} from {}", rough(&flattened), rough(&was));
-        let (low, high) = testing::range(&flattened);
-        assert!(low >= -10.0 && high <= 10.0, "{low} to {high}");
         // Twice the scale, the same ground twice as wide.
         assert_eq!(wide.with_scale(2.0).height_at(26.0, -9.0), wide.height_at(13.0, -4.5));
     }

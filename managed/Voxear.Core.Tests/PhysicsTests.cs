@@ -34,7 +34,7 @@ internal static class PhysicsTests
 	private static void QuestionsFindNothingWithoutTheEngine()
 	{
 		Check.True(Physics.Gravity == new Vector3(0f, -9.81f, 0f), "gravity starts down");
-		Check.True(Physics.GravityAt(new Vector3(100f, 0f, 0f)) == Physics.Gravity, "down everywhere with no planets");
+		Check.True(Physics.GravityAt(new Vector3(100f, 0f, 0f)) == Physics.Gravity, "the same everywhere");
 		Check.True(!Physics.Raycast(Vector3.Zero, Vector3.UnitX, out var hit) && hit.Obj == Obj.None, "no ray meets anything");
 		Check.True(Physics.OverlapSphere(Vector3.Zero, 10f).Length == 0 && !Physics.CheckSphere(Vector3.Zero, 1f), "nor any sphere");
 	}

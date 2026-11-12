@@ -142,15 +142,9 @@ impl Kind for Overhangs {
 /// ways, whose difference is the ground's climb there.
 fn steep(cx: &mut Compiler, at: Places, reach: f32) -> V {
     let heights = [0, 1, 2, 3].map(|corner| {
-        let moved = match at {
-            Places::Flat { x, z } => Places::Flat {
-                x: cx.run(Moved(reach * ROUND[corner][0]), &[x]),
-                z: cx.run(Moved(reach * ROUND[corner][1]), &[z]),
-            },
-            Places::Round { x, y, z } => {
-                let [x, y, z] = [0, 1, 2].map(|axis| cx.run(MovedRound { corner, axis, reach }, &[x, y, z]));
-                Places::Round { x, y, z }
-            }
+        let moved = Places {
+            x: cx.run(Moved(reach * ROUND[corner][0]), &[at.x]),
+            z: cx.run(Moved(reach * ROUND[corner][1]), &[at.z]),
         };
         cx.ground_at(moved)
     });
@@ -172,55 +166,6 @@ impl Kernel for Moved {
     fn run(&self, inputs: &[&[f32]], out: &mut [f32]) {
         for (out, at) in out.iter_mut().zip(inputs[0]) {
             *out = at + self.0;
-        }
-    }
-}
-
-/// One of the three numbers of a place on a planet moved `reach` metres
-/// along its ground, towards corner `corner` of the four round it: from
-/// rows of the place's x, y and z.
-#[derive(Debug)]
-struct MovedRound {
-    corner: usize,
-    axis: usize,
-    reach: f32,
-}
-
-impl Kernel for MovedRound {
-    fn key(&self, key: &mut Key) {
-        key.name("moved round").whole(self.corner as u32).whole(self.axis as u32).number(self.reach);
-    }
-
-    fn run(&self, inputs: &[&[f32]], out: &mut [f32]) {
-        let [along, across] = ROUND[self.corner];
-        for (at, out) in out.iter_mut().enumerate() {
-            let place = [inputs[0][at], inputs[1][at], inputs[2][at]];
-            // Two ways along the ground: across the axis the place is least along, and across that and the way out.
-            let size = place.map(|v| if v < 0.0 { -v } else { v });
-            let least = if size[0] <= size[1] && size[0] <= size[2] {
-                0
-            } else if size[1] <= size[2] {
-                1
-            } else {
-                2
-            };
-            let (b, c) = ((least + 1) % 3, (least + 2) % 3);
-            let mut first = [0.0f32; 3];
-            (first[b], first[c]) = (-place[c], place[b]);
-            let length = (first[b] * first[b] + first[c] * first[c]).sqrt();
-            let far = (place[0] * place[0] + place[1] * place[1] + place[2] * place[2]).sqrt();
-            if length <= 0.0 || far <= 0.0 {
-                *out = place[self.axis];
-                continue;
-            }
-            let first = first.map(|v| v / length);
-            let out_way = place.map(|v| v / far);
-            let second = [
-                out_way[1] * first[2] - out_way[2] * first[1],
-                out_way[2] * first[0] - out_way[0] * first[2],
-                out_way[0] * first[1] - out_way[1] * first[0],
-            ];
-            *out = place[self.axis] + self.reach * (along * first[self.axis] + across * second[self.axis]);
         }
     }
 }

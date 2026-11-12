@@ -200,10 +200,10 @@ impl Kind for CaveNetwork {
     fn compile_volume(&self, cx: &mut Compiler, node: NodeId, _: usize, at: Cells) -> V {
         let ground = cx.volume(node, Self::GROUND, at).unwrap_or_else(|| Solid::of_ground(cx, at));
         let set = self.settings(seed_for(cx, node, self.seed));
-        let (heights, round, sea_level) = (cx.own_ground(), cx.round(), cx.world.sea_level);
+        let heights = cx.own_ground();
         // Everything that tells this network from another: what its kernel is known by, and what is kept of it.
         let mut key = Key::default();
-        key.name("cave network").whole(u32::from(round)).number(sea_level);
+        key.name("cave network");
         key.whole(heights.hash as u32).whole((heights.hash >> 32) as u32);
         key.whole(set.layout as u32).number(set.spacing).number(set.depth).number(set.radius);
         key.number(set.winding).number(set.rough).number(set.roof).number(set.entrances);
@@ -211,20 +211,15 @@ impl Kind for CaveNetwork {
         for room in &set.rooms {
             room.key(&mut key);
         }
-        let network = Arc::new(Network::new(set, heights, round, sea_level, key.hash()));
+        let network = Arc::new(Network::new(set, heights, key.hash()));
         cx.note_caves(network.clone());
         let size = cx.size();
-        let mut inputs = vec![ground, at.x, at.y, at.z, size];
-        if round {
-            inputs.push(cx.radius());
-        }
-        cx.run(Hollow { network, key: key.bytes() }, &inputs)
+        cx.run(Hollow { network, key: key.bytes() }, &[ground, at.x, at.y, at.z, size])
     }
 }
 
 /// How far inside a network's hollows each cell is, from rows of how far
-/// into the ground it is, its x, y and z, the cells' size, and round a
-/// planet its radius.
+/// into the ground it is, its x, y and z, and the cells' size.
 struct Hollow {
     network: Arc<Network>,
     key: Vec<u8>,
@@ -243,8 +238,8 @@ impl Kernel for Hollow {
 
     fn run(&self, inputs: &[&[f32]], out: &mut [f32]) {
         let net = &*self.network;
-        // What the cell before read, while this one is in the same region of the same planet.
-        let mut grid = None;
+        // What the cell before read, while this one is in the same region.
+        let grid = net.grid();
         let mut held = None;
         let mut lifted = None;
         for (at, out) in out.iter_mut().enumerate() {
@@ -256,29 +251,19 @@ impl Kernel for Hollow {
                 continue;
             }
             let p = [inputs[1][at], inputs[2][at], inputs[3][at]];
-            let radius = if net.round { inputs[5][at] } else { 0.0 };
             let (roofed, open) = match &net.level {
                 Some(level) => {
-                    let lift = match lifted {
-                        Some((planet, lift)) if planet == radius.to_bits() => lift,
-                        _ => net.level_height(radius),
-                    };
-                    lifted = Some((radius.to_bits(), lift));
+                    let lift = *lifted.get_or_insert_with(|| net.level_height());
                     level.inside(net, [p[0], p[1] - lift, p[2]], size)
                 }
                 None => {
-                    let own = match grid {
-                        Some((planet, own)) if planet == radius.to_bits() => own,
-                        _ => net.grid(radius),
-                    };
-                    grid = Some((radius.to_bits(), own));
-                    let region = own.region(p);
+                    let region = grid.region(p);
                     let gathered = match held.take() {
-                        Some((planet, known, gathered)) if (planet, known) == (radius.to_bits(), region) => gathered,
-                        _ => net.gathered(&own, radius, region),
+                        Some((known, gathered)) if known == region => gathered,
+                        _ => net.gathered(&grid, region),
                     };
                     let inside = gathered.inside(net, p, size, None);
-                    held = Some((radius.to_bits(), region, gathered));
+                    held = Some((region, gathered));
                     inside
                 }
             };
@@ -321,33 +306,15 @@ mod tests {
     }
 
     /// How far into the ground each of `cells` is, asked all at once.
-    fn asked(world: &WorldGen, cells: &[[f32; 3]], planet: Option<f32>) -> Vec<f32> {
+    fn asked(world: &WorldGen, cells: &[[f32; 3]]) -> Vec<f32> {
         let volume = world.volume().expect("a Volume");
         let (mut inside, mut ground) = (vec![0.0; cells.len()], vec![0.0; cells.len()]);
         let [x, y, z] = [0, 1, 2].map(|axis| cells.iter().map(|cell| cell[axis]).collect::<Vec<f32>>());
-        let carried: Carried = match planet {
-            None => {
-                let heights: Vec<f32> = cells.iter().map(|cell| world.height_at(cell[0], cell[2])).collect();
-                volume.carried(&x, &z, &heights)
-            }
-            Some(radius) => {
-                let feet: Vec<[f32; 3]> = cells
-                    .iter()
-                    .map(|cell| {
-                        let far = (cell[0] * cell[0] + cell[1] * cell[1] + cell[2] * cell[2]).sqrt();
-                        cell.map(|v| v / far * radius)
-                    })
-                    .collect();
-                let heights: Vec<f32> = feet.iter().map(|&foot| world.height_round(foot)).collect();
-                volume.carried_round(&feet, &heights, radius)
-            }
-        };
+        let heights: Vec<f32> = cells.iter().map(|cell| world.height_at(cell[0], cell[2])).collect();
+        let carried: Carried = volume.carried(&x, &z, &heights);
         let rows: Vec<&[f32]> = carried.rows().iter().map(Vec::as_slice).collect();
         let cells = Asked { x: &x, y: &y, z: &z, carried: &rows, size: 1.0 };
-        match planet {
-            None => volume.densities(cells, false, &mut inside, &mut ground),
-            Some(radius) => volume.densities_round(cells, radius, false, &mut inside, &mut ground),
-        }
+        volume.densities(cells, false, &mut inside, &mut ground);
         inside
     }
 
@@ -369,32 +336,32 @@ mod tests {
         cells
     }
 
-    fn open(world: &WorldGen, at: [f32; 3], planet: Option<f32>) -> bool {
-        asked(world, &[at], planet)[0] < 0.0
+    fn open(world: &WorldGen, at: [f32; 3]) -> bool {
+        asked(world, &[at])[0] < 0.0
     }
 
     #[test]
     fn a_network_hollows_rooms_and_tunnels_under_the_ground_and_none_without_one() {
         let caves = world(CaveNetwork::default(), None, 3);
-        let rooms = caves.caves().expect("its caves").rooms_near(None, [0.0, 40.0, 0.0], 400.0);
+        let rooms = caves.caves().expect("its caves").rooms_near([0.0, 40.0, 0.0], 400.0);
         assert!(rooms.len() > 20, "{} rooms within 400 m", rooms.len());
         for room in &rooms {
             let ground = caves.height_at(room.at[0], room.at[2]);
             let under = ground - room.at[1];
             assert!((17.0..=31.0).contains(&under), "a room {under} m under the ground");
-            assert!(open(&caves, room.floor.map(|v| v + 0.5), None), "open over its floor at {:?}", room.floor);
-            assert!(!open(&caves, [room.floor[0], room.floor[1] - 1.5, room.floor[2]], None), "rock under it");
+            assert!(open(&caves, room.floor.map(|v| v + 0.5)), "open over its floor at {:?}", room.floor);
+            assert!(!open(&caves, [room.floor[0], room.floor[1] - 1.5, room.floor[2]]), "rock under it");
             // Along a tunnel's exit and a little way out, it is open.
             for exit in room.exits.iter().filter(|exit| exit.leads_to.is_some()) {
                 let out = [0, 1, 2].map(|axis| exit.at[axis] + exit.way[axis] * 1.5);
-                assert!(open(&caves, out, None), "open out of an exit at {out:?}");
+                assert!(open(&caves, out), "open out of an exit at {out:?}");
             }
         }
         // Entrances come out into the open: over this ground some places just under its top are hollow.
         let mut mouths = 0;
         for i in 0..40000 {
             let (x, z) = ((i % 200) as f32 * 2.0 - 200.0, (i / 200) as f32 * 2.0 - 200.0);
-            mouths += usize::from(open(&caves, [x, caves.height_at(x, z) - 0.5, z], None));
+            mouths += usize::from(open(&caves, [x, caves.height_at(x, z) - 0.5, z]));
         }
         assert!(mouths > 8, "{mouths} places open at the ground's top over {} rooms", rooms.len());
         // Nothing is hollow over the roof, where no entrance is.
@@ -403,44 +370,27 @@ mod tests {
             let (x, z) = (i as f32 * 3.7 - 500.0, i as f32 * 2.9 - 300.0);
             let ground = plain.height_at(x, z);
             for up in [2.5, 1.0] {
-                assert!(!open(&plain, [x, ground - up, z], None), "open {up} m under the ground at {x}, {z}");
+                assert!(!open(&plain, [x, ground - up, z]), "open {up} m under the ground at {x}, {z}");
             }
         }
     }
 
     #[test]
-    fn a_cell_alone_is_the_cell_in_a_batch_flat_and_round_a_planet_and_other_seeds_other_caves() {
+    fn a_cell_alone_is_the_cell_in_a_batch_and_other_seeds_other_caves() {
         for layout in Laid::ALL {
             let made = world(CaveNetwork { layout, ..CaveNetwork::default() }, None, 9);
             let middle = made.height_at(30.0, 30.0) - 24.0;
             let cells = grid([-70.0, middle - 14.0, -70.0], [29, 15, 29], 5.0);
-            let batch = asked(&made, &cells, None);
+            let batch = asked(&made, &cells);
             assert!(batch.iter().any(|inside| *inside < 0.0), "{layout:?}: hollows among the cells");
             // One at a time, backwards: whatever was kept from another region, the bits are the same.
             for (at, cell) in cells.iter().enumerate().rev().step_by(7) {
-                assert_eq!(asked(&made, &[*cell], None)[0].to_bits(), batch[at].to_bits(), "{layout:?} at {cell:?}");
+                assert_eq!(asked(&made, &[*cell])[0].to_bits(), batch[at].to_bits(), "{layout:?} at {cell:?}");
             }
             assert_ne!(
-                bits(&asked(&world(CaveNetwork { layout, ..CaveNetwork::default() }, None, 10), &cells, None)),
+                bits(&asked(&world(CaveNetwork { layout, ..CaveNetwork::default() }, None, 10), &cells)),
                 bits(&batch)
             );
-            // Round a planet 400 m from its middle to its sea: cells under its top and under one of its edges.
-            let radius = 400.0;
-            for toward in [[0.0, 1.0, 0.0], [0.72, 0.69, 0.05]] {
-                let far = radius + 55.0 - 24.0;
-                let cells: Vec<[f32; 3]> = grid([-60.0, -12.0, -60.0], [25, 13, 25], 5.0)
-                    .into_iter()
-                    .map(|cell| [0, 1, 2].map(|axis| toward[axis] * far + cell[axis]))
-                    .collect();
-                let batch = asked(&made, &cells, Some(radius));
-                if layout == Laid::Endless || toward[1] == 1.0 {
-                    assert!(batch.iter().any(|inside| *inside < 0.0), "{layout:?}: hollows toward {toward:?}");
-                }
-                for (at, cell) in cells.iter().enumerate().rev().step_by(11) {
-                    let alone = asked(&made, &[*cell], Some(radius))[0];
-                    assert_eq!(alone.to_bits(), batch[at].to_bits(), "{layout:?} round a planet at {cell:?}");
-                }
-            }
         }
     }
 
@@ -459,7 +409,7 @@ mod tests {
                     for (near, far) in
                         [([edge - 0.5, y, t], [edge + 0.5, y, t]), ([t, y, edge - 0.5], [t, y, edge + 0.5])]
                     {
-                        let pair = asked(&made, &[near, far], None);
+                        let pair = asked(&made, &[near, far]);
                         if pair[0] < -1.3 || pair[1] < -1.3 {
                             seen += 1;
                             walls += usize::from((pair[0] < 0.0) != (pair[1] < 0.0));
@@ -477,7 +427,7 @@ mod tests {
     fn flooded(made: &WorldGen, from: [f32; 3], low: [f32; 3], high: [f32; 3]) -> impl Fn([f32; 3]) -> bool {
         let count = [0, 1, 2].map(|axis| (high[axis] - low[axis]).ceil() as usize + 1);
         let cells = grid(low, [count[0], count[1], count[2]], 1.0);
-        let inside = asked(made, &cells, None);
+        let inside = asked(made, &cells);
         let place = move |cell: [usize; 3]| (cell[2] * count[0] + cell[0]) * count[1] + cell[1];
         let cell_of = move |at: [f32; 3]| {
             [0, 1, 2].map(|axis| ((at[axis] - low[axis]).round().max(0.0) as usize).min(count[axis] - 1))
@@ -521,7 +471,7 @@ mod tests {
             let made = world(set, Some(100.0), seed);
             let caves = made.caves().expect("its caves");
             assert_eq!(caves.layout(), CaveLayout::Level);
-            let rooms = caves.rooms(None);
+            let rooms = caves.rooms();
             assert_eq!(rooms.len(), 14, "seed {seed}");
             assert!(rooms[..9].iter().all(|room| room.main) && rooms[9..].iter().all(|room| !room.main));
             assert!((rooms[0].at[1] - 40.0).abs() < 1e-3, "the first room 60 m under ground 100 m high");
@@ -546,7 +496,7 @@ mod tests {
             // Bounded: nothing is open outside the box round its rooms and tunnels.
             for i in 0..2000 {
                 let (x, z) = (low[0] - 3.0 - (i % 40) as f32 * 9.0, low[2] + (i / 40) as f32 * 11.0);
-                assert!(!open(&made, [x, rooms[0].at[1] + 2.0, z], None));
+                assert!(!open(&made, [x, rooms[0].at[1] + 2.0, z]));
             }
         }
     }
@@ -566,7 +516,7 @@ mod tests {
         let set =
             CaveNetwork { layout: Laid::Level, roughness: 0.0, rooms: vec![room.clone()], ..CaveNetwork::default() };
         let made = world(set, Some(100.0), 4);
-        let rooms = made.caves().unwrap().rooms(None);
+        let rooms = made.caves().unwrap().rooms();
         let mut turns = Vec::new();
         for placed in &rooms {
             assert_eq!(placed.prefab, room.prefab);
@@ -575,9 +525,9 @@ mod tests {
                 [0, 1, 2].map(|axis| placed.at[axis] + placed.axes[0][axis] * far + placed.axes[1][axis] * 2.5)
             };
             for far in [-3.0, 0.0, 6.0, 13.0] {
-                assert!(open(&made, along(far), None), "the hall of {:?}, {far} m along it", placed.index);
+                assert!(open(&made, along(far)), "the hall of {:?}, {far} m along it", placed.index);
             }
-            assert!(!open(&made, along(-6.0), None), "rock behind the hall of {:?}", placed.index);
+            assert!(!open(&made, along(-6.0)), "rock behind the hall of {:?}", placed.index);
             assert_eq!(placed.exits.len(), 1);
             let exit = &placed.exits[0];
             assert!(exit.leads_to_index.is_some(), "an exit unused in a room joined to another");
@@ -605,6 +555,6 @@ mod tests {
         }
         let wider = made.with_graph(wider);
         assert_ne!(wider.hash(), made.hash());
-        assert!(wider.caves().unwrap().rooms(None).iter().all(|placed| placed.room == 0));
+        assert!(wider.caves().unwrap().rooms().iter().all(|placed| placed.room == 0));
     }
 }

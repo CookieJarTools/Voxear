@@ -13,8 +13,7 @@ namespace Voxear;
 /// jump included, and SimpleMove adds the fall itself.
 /// </para>
 /// <para>
-/// A character stands against the pull where it is: on a planet, away from its middle, so it walks all the way round.
-/// Up says which way that is, and Physics.GravityAt which way it falls.
+/// A character stands against gravity's pull. Up says which way that is, and Physics.GravityAt which way it falls.
 /// </para>
 /// <code>
 /// protected override void Update()
@@ -84,8 +83,8 @@ public readonly struct CharacterController : IEquatable<CharacterController>, IO
 	public Vector3 GroundNormal => NativePhysics.Vector(Obj, NativePhysics.CharacterGroundNormal, Vector3.UnitY);
 
 	/// <summary>
-	/// Which way it stands, against the pull where it is: away from a planet's middle near one, and up elsewhere. Its
-	/// capsule tilts to it, and the ground it stands on, the slopes it climbs and its steps are measured against it.
+	/// Which way it stands, against gravity's pull: up, while gravity pulls straight down. Its capsule tilts to it, and
+	/// the ground it stands on, the slopes it climbs and its steps are measured against it.
 	/// </summary>
 	public Vector3 Up => NativePhysics.Vector(Obj, NativePhysics.CharacterUp, Vector3.UnitY);
 
@@ -107,8 +106,8 @@ public readonly struct CharacterController : IEquatable<CharacterController>, IO
 
 	/// <summary>
 	/// Walks it at speed, in metres per second, across the ground, falling when nothing holds it up, as Unity's
-	/// SimpleMove: the speed along Up is left out, its Y on flat ground. On a planet it falls towards the planet's
-	/// middle. Call it once a frame. Returns whether it is on the ground.
+	/// SimpleMove: the speed along Up is left out, its Y while gravity pulls straight down. Call it once a frame.
+	/// Returns whether it is on the ground.
 	/// </summary>
 	public bool SimpleMove(Vector3 speed)
 	{

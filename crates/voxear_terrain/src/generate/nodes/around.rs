@@ -2,30 +2,17 @@
 //! way off along the ground, and masks eased in at their edges.
 //!
 //! A slope, a curvature or an average is read from what feeds a node at a
-//! few places round each one. On flat ground those lie along x and z. Round
-//! a planet they lie along two tangents of its surface there, at right
-//! angles to each other and to the way out, found with sums, products and a
-//! square root alone. Which way the two tangents point turns over a ring
-//! near each pole, along y; what is read at the same distance each way (a
-//! slope's steepness, a curvature, an average) barely changes with it.
+//! few places round each one, along x and z.
 
 use super::STEEPEST;
-pub(super) use crate::generate::landmass::tangents;
 use crate::{
     generate::compile::{Compiler, Kernel, Key, Places, V},
     layers::smoothstep,
 };
 
-/// `at` moved `a` metres one way along the ground and `b` the other: along
-/// x and z on flat ground, along its two tangents round a planet.
+/// `at` moved `a` metres along x and `b` along z.
 pub(super) fn moved(cx: &mut Compiler, at: Places, a: f32, b: f32) -> Places {
-    match at {
-        Places::Flat { x, z } => Places::Flat { x: shifted(cx, x, a), z: shifted(cx, z, b) },
-        Places::Round { x, y, z } => {
-            let mut axis = |axis: usize| cx.run(Tangent { axis, a, b }, &[x, y, z]);
-            Places::Round { x: axis(0), y: axis(1), z: axis(2) }
-        }
-    }
+    Places { x: shifted(cx, at.x, a), z: shifted(cx, at.z, b) }
 }
 
 /// The four places `step` metres from `at`: further along the first way,
@@ -50,29 +37,6 @@ impl Kernel for Shift {
     fn run(&self, inputs: &[&[f32]], out: &mut [f32]) {
         for (out, &value) in out.iter_mut().zip(inputs[0]) {
             *out = value + self.0;
-        }
-    }
-}
-
-/// One axis of places round a planet, each moved `a` metres along one
-/// tangent of its surface there and `b` along the other.
-#[derive(Debug)]
-struct Tangent {
-    axis: usize,
-    a: f32,
-    b: f32,
-}
-
-impl Kernel for Tangent {
-    fn key(&self, key: &mut Key) {
-        key.name("tangent").whole(self.axis as u32).number(self.a).number(self.b);
-    }
-
-    fn run(&self, inputs: &[&[f32]], out: &mut [f32]) {
-        for (at, out) in out.iter_mut().enumerate() {
-            let place = [inputs[0][at], inputs[1][at], inputs[2][at]];
-            let (first, second) = tangents(place);
-            *out = place[self.axis] + self.a * first[self.axis] + self.b * second[self.axis];
         }
     }
 }
@@ -135,22 +99,6 @@ impl Slopes {
 mod tests {
     use super::*;
     use crate::generate::nodes::{degrees_of, rise_of};
-
-    #[test]
-    fn a_planets_tangents_are_at_right_angles_to_each_other_and_to_the_way_out() {
-        let dot = |a: [f32; 3], b: [f32; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-        for i in 0..4000 {
-            // All round the planet, its poles and the ring where the tangents turn among them.
-            let (turn, tilt) = (i as f32 * 0.37, (i % 200) as f32 / 199.0 * std::f32::consts::PI);
-            let place = [tilt.sin() * turn.cos() * 3000.0, tilt.cos() * 3000.0, tilt.sin() * turn.sin() * 3000.0];
-            let (first, second) = tangents(place);
-            let out = place.map(|v| v / 3000.0);
-            assert!((dot(first, first) - 1.0).abs() < 1e-4 && (dot(second, second) - 1.0).abs() < 1e-4, "{place:?}");
-            assert!(dot(first, second).abs() < 1e-4 && dot(first, out).abs() < 1e-4, "{place:?}");
-            assert!(dot(second, out).abs() < 1e-4, "{place:?}");
-        }
-        assert_eq!(tangents([0.0, 0.0, 0.0]), ([1.0, 0.0, 0.0], [0.0, 0.0, 1.0]), "something at its middle");
-    }
 
     #[test]
     fn slopes_turn_by_an_angle_with_no_trigonometry() {

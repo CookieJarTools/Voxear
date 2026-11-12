@@ -44,7 +44,7 @@ mod world;
 pub use caves::{CaveExit, CaveLayout, CaveMode, CaveShape, Caves, PlacedExit, PlacedRoom, Room, RoomExit, RoomForm, RoomShape};
 pub use compile::Fault;
 pub use graph::{Exposed, Graph, Link, Node, NodeId};
-pub use landmass::{Climate, Erosion, Field, Landmass, POLES_COLDER, Preset, Sample, Warp, smooth};
+pub use landmass::{Climate, Erosion, Field, Landmass, Preset, Sample, Warp, smooth};
 pub use nodes::{NodeKind, Port, PortKind, Value, ValueKind, ValueSpec};
 pub use starters::{Starter, starters};
 pub use voxels::OwnVoxels;

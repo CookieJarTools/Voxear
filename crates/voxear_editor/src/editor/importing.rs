@@ -254,6 +254,7 @@ impl Editor {
         let actions = changed.iter().any(|path| path.ends_with(".inputactions"));
         let lighting = changed.iter().any(|path| path.ends_with(".lighting"));
         let looks = changed.iter().any(|path| path.ends_with(".lookpack"));
+        let texture_packs = changed.iter().any(|path| path.ends_with(".texturepack"));
         let documents = changed.iter().any(|path| path.ends_with(".vui") || path.ends_with(".vss"));
         let prompt_icons = changed.iter().any(|path| path.ends_with(".prompticons"));
         let world_gens: Vec<String> =
@@ -338,6 +339,15 @@ impl Editor {
                     voxear_engine::look_packs::wear(&mut game.engine.world, &mut game.content, &reference)
                 });
                 if let Some(Err(error)) = again {
+                    tracing::error!("{error:#}");
+                }
+                self.refresh_lighting_page();
+            }
+            // A texture pack edited outside the editor is worn as it now is, where the scene is shown under it.
+            if texture_packs {
+                self.game.content.forget_kind(voxear_assets::AssetKind::TexturePack);
+                let worn = voxear_engine::texture_packs::worn(&self.game.content).map(str::to_string);
+                if let Some(Err(error)) = worn.map(|worn| voxear_engine::texture_packs::wear_again(&mut self.game.content, &worn)) {
                     tracing::error!("{error:#}");
                 }
                 self.refresh_lighting_page();

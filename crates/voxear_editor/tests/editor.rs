@@ -6833,6 +6833,21 @@ fn the_lighting_page_names_the_scenes_lighting_and_edits_its_asset() {
     assert!(voxear_engine::look_packs::worn(&editor.game.engine.world).is_none());
     assert!(editor.game.engine.world.resource::<voxear_render::WornLook>().is_none());
 
+    // Texture pack shows the scene under a pack the same way: the first after None is the engine's Pixel Grain.
+    // Nothing of it is the scene's, and None takes it off again.
+    let textures = editor.lighting_texture_menu();
+    editor.ui.focus(textures);
+    editor.ui.key_down(Key::Down);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(voxear_engine::texture_packs::worn(&editor.game.content), Some("builtin:pixel_grain"));
+    assert_eq!(editor.ui.selected_option(textures), 1, "the menu shows the pack worn");
+    editor.ui.focus(textures);
+    editor.ui.key_down(Key::Up);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(voxear_engine::texture_packs::worn(&editor.game.content).is_none());
+
     // New lighting settings made from a scene without any carry its own sky over, and the scene names them.
     let top = editor.ui.find(editor.ui.root(), "lighting-scene").unwrap();
     let copy = first_with(&editor.ui, top, "lighting-copy").unwrap();

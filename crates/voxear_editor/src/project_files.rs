@@ -116,6 +116,37 @@ intensity = 0.15
 # voxels = 8
 ";
 
+/// A new texture pack: it names nothing yet, so it changes nothing, and
+/// says how blocks and materials are given pictures.
+const NEW_TEXTURE_PACK: &str = "# A Voxear texture pack: the pictures blocks and materials are drawn with in place of their own.
+# Whoever plays the game picks one, with TexturePacks.Use or the ready-made TexturePackScreen.
+format = 1
+
+# A line for the menu the pack is picked from.
+description = \"Other pictures for the blocks.\"
+
+# Pixel art stays sharp however near. Leave it out for smooth pictures.
+pixels = true
+
+# A block's pictures: `all` for every face, or `sides`, `top` and `bottom`. Name the block and the pictures by
+# their paths in the project. Take the # off to use it.
+# [[block]]
+# block = \"Blocks/Grass.block\"
+# top = \"Packs/grass_top.png\"
+# sides = \"Packs/grass_side.png\"
+# bottom = \"Packs/dirt.png\"
+
+# A material's pictures, wherever it is drawn: color_map, normal_map, metallic_map, emissive_map, height_map.
+# [[material]]
+# material = \"Materials/Planks.material\"
+# color_map = \"Packs/planks.png\"
+
+# A speckled picture, made of its colour, for every block of a colour alone the pack names no picture for.
+# [grain]
+# pixels = 16
+# strength = 0.5
+";
+
 /// Something the Project panel makes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NewFile {
@@ -126,6 +157,8 @@ pub enum NewFile {
     Lighting,
     /// A look pack, which whoever plays the game picks.
     LookPack,
+    /// A texture pack, which whoever plays the game picks.
+    TexturePack,
     Shader,
     UnlitShader,
     /// A shader a UI element's background is drawn with.
@@ -147,13 +180,14 @@ pub enum NewFile {
 }
 
 impl NewFile {
-    pub const ALL: [NewFile; 18] = [
+    pub const ALL: [NewFile; 19] = [
         NewFile::Folder,
         NewFile::Scene,
         NewFile::Level,
         NewFile::Material,
         NewFile::Lighting,
         NewFile::LookPack,
+        NewFile::TexturePack,
         NewFile::Shader,
         NewFile::UnlitShader,
         NewFile::UiShader,
@@ -188,6 +222,7 @@ impl NewFile {
             NewFile::Material => "New Material",
             NewFile::Lighting => "New Lighting Settings",
             NewFile::LookPack => "New Look Pack",
+            NewFile::TexturePack => "New Texture Pack",
             NewFile::Shader => "New Shader",
             NewFile::UnlitShader => "New Unlit Shader",
             NewFile::UiShader => "New UI Shader",
@@ -213,6 +248,7 @@ impl NewFile {
             NewFile::Material => ("New Material", ".material"),
             NewFile::Lighting => ("New Lighting", ".lighting"),
             NewFile::LookPack => ("New Look Pack", ".lookpack"),
+            NewFile::TexturePack => ("New Texture Pack", ".texturepack"),
             NewFile::Shader => ("New Shader", ".shader"),
             NewFile::UnlitShader => ("New Unlit Shader", ".shader"),
             NewFile::UiShader => ("New UI Shader", ".shader"),
@@ -243,6 +279,7 @@ pub fn create(root: &Path, folder: &str, kind: NewFile, namespace: &str) -> Resu
         NewFile::Material => std::fs::write(&file, "color = [0.8, 0.8, 0.8]\nmetallic = 0.0\nroughness = 0.5\n"),
         NewFile::Lighting => std::fs::write(&file, NEW_LIGHTING),
         NewFile::LookPack => std::fs::write(&file, NEW_LOOK_PACK),
+        NewFile::TexturePack => std::fs::write(&file, NEW_TEXTURE_PACK),
         NewFile::Shader => std::fs::write(&file, shader(NEW_SHADER, &name[..name.len() - extension.len()])),
         NewFile::UnlitShader => std::fs::write(&file, shader(NEW_UNLIT_SHADER, &name[..name.len() - extension.len()])),
         NewFile::UiShader => std::fs::write(&file, shader(NEW_UI_SHADER, &name[..name.len() - extension.len()])),
@@ -808,6 +845,21 @@ mod tests {
         let file: voxear_engine::lighting::LightingFile = toml::from_str(&text).unwrap();
         assert_eq!(file.look.as_deref(), Some("golden_hour"));
         file.resolve().unwrap();
+    }
+
+    #[test]
+    fn a_new_texture_pack_reads_back_and_names_nothing_yet() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = create(dir.path(), "", NewFile::TexturePack, "Game").unwrap();
+        assert_eq!(path, "New Texture Pack.texturepack");
+        let text = std::fs::read_to_string(dir.path().join(&path)).unwrap();
+        let pack = voxear_engine::texture_packs::TexturePackFile::parse(&text).unwrap();
+        assert!(pack.pixels && pack.blocks.is_empty() && pack.materials.is_empty() && pack.grain.is_none());
+        // What it says of blocks, materials and grain reads as a pack once its # are taken off.
+        let on = text.lines().map(|line| line.strip_prefix("# ").filter(|rest| !rest.contains(' ') || rest.contains('=') || rest.starts_with('[')).unwrap_or(line));
+        let on: Vec<&str> = on.filter(|line| !line.starts_with('#')).collect();
+        let pack = voxear_engine::texture_packs::TexturePackFile::parse(&on.join("\n")).unwrap();
+        assert_eq!((pack.blocks.len(), pack.materials.len(), pack.grain.is_some()), (1, 1, true));
     }
 
     #[test]

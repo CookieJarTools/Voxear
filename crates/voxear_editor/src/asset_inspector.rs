@@ -553,6 +553,10 @@ impl AssetView {
                 look_pack_rows(ui, root, &file);
                 code(ui, root, &file, "toml", dark);
             }
+            ItemKind::Asset(AssetKind::TexturePack) => {
+                texture_pack_rows(ui, root, game, &file);
+                code(ui, root, &file, "toml", dark);
+            }
             // Every setting to change in place, a tab for each group, not the file's text.
             ItemKind::Asset(AssetKind::Lighting) => {
                 let rows = part(ui, root, "Lighting", "light");
@@ -1105,6 +1109,38 @@ fn look_pack_rows(ui: &mut Ui, root: NodeId, file: &std::path::Path) {
     text_row(ui, rows, "Changes", &changed);
 }
 
+/// What a texture pack says of itself and how much of the project it
+/// draws, over its file's text: the blocks and materials it names that are
+/// there, and how many it names that are not.
+fn texture_pack_rows(ui: &mut Ui, root: NodeId, game: &Game, file: &std::path::Path) {
+    let rows = part(ui, root, "Texture Pack", "image");
+    let text = std::fs::read_to_string(file).unwrap_or_default();
+    let pack = match voxear_engine::texture_packs::TexturePackFile::parse(&text) {
+        Ok(pack) => pack,
+        Err(error) => return text_row(ui, rows, "Not read", &format!("{error:#}")),
+    };
+    text_row(ui, rows, "Description", if pack.description.is_empty() { "None" } else { &pack.description });
+    text_row(ui, rows, "Pixels", if pack.pixels { "Sharp" } else { "Smooth" });
+    // How many of those it names are in the project, and how many are not.
+    let found = |named: &mut dyn Iterator<Item = &str>, kind: AssetKind| {
+        let db = game.content.db();
+        let is = |named: &str| {
+            let guid = game.content.parse(named).ok().and_then(|parsed| parsed.guid());
+            guid.and_then(|guid| db.get(guid)).is_some_and(|entry| entry.kind == kind)
+        };
+        let (there, missing): (Vec<&str>, Vec<&str>) = named.partition(|named| is(named));
+        match missing.len() {
+            0 => there.len().to_string(),
+            missing => format!("{}, {missing} not found", there.len()),
+        }
+    };
+    text_row(ui, rows, "Blocks", &found(&mut pack.blocks.iter().map(|entry| entry.block.as_str()), AssetKind::Block));
+    let materials = &mut pack.materials.iter().map(|entry| entry.material.as_str());
+    text_row(ui, rows, "Materials", &found(materials, AssetKind::Material));
+    let grain = pack.grain.map(|grain| format!("{} px", grain.pixels));
+    text_row(ui, rows, "Grain", grain.as_deref().unwrap_or("None"));
+}
+
 /// A box model's size on its sheet and in the world, and how much it is
 /// made of.
 fn box_model_rows(ui: &mut Ui, root: NodeId, file: &std::path::Path) {
@@ -1628,6 +1664,7 @@ fn kind_name(kind: ItemKind) -> &'static str {
         ItemKind::Asset(AssetKind::LightProfile) => "IES light profile",
         ItemKind::Asset(AssetKind::Lighting) => "Lighting settings",
         ItemKind::Asset(AssetKind::LookPack) => "Look pack",
+        ItemKind::Asset(AssetKind::TexturePack) => "Texture pack",
         ItemKind::Asset(AssetKind::Shader) => "Shader",
         ItemKind::Asset(AssetKind::MotionSet) => "Motion Set",
         ItemKind::Asset(AssetKind::GunHandling) => "Gun Handling",
@@ -1663,6 +1700,7 @@ fn icon(kind: ItemKind) -> &'static str {
         ItemKind::Asset(AssetKind::LightProfile) => "light",
         ItemKind::Asset(AssetKind::Lighting) => "light",
         ItemKind::Asset(AssetKind::LookPack) => "eye",
+        ItemKind::Asset(AssetKind::TexturePack) => "image",
         ItemKind::Asset(AssetKind::Shader) => "shader",
         ItemKind::Asset(AssetKind::MotionSet) => "play",
         ItemKind::Asset(AssetKind::GunHandling) => "crosshair",

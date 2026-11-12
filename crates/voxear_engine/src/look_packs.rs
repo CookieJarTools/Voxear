@@ -114,10 +114,17 @@ fn look_pack_format() -> u32 {
 #[serde(deny_unknown_fields)]
 pub struct BlocksLook {
     /// How many small cubes a block's side is drawn as; 0 for plain faces.
+    #[serde(default = "usual_voxels")]
     pub voxels: u32,
     /// How many small cubes deep the deepest sink.
     #[serde(default = "usual_relief")]
     pub relief: f32,
+}
+
+/// What a `[blocks]` that names no number of small cubes gives a block's
+/// side: a pack that writes the section wants them.
+fn usual_voxels() -> u32 {
+    8
 }
 
 fn usual_relief() -> f32 {

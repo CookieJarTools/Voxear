@@ -549,9 +549,16 @@ impl AssetView {
                 code(ui, root, &file, "slang", dark);
             }
             ItemKind::Asset(AssetKind::AssetTable) => code(ui, root, &file, "toml", dark),
+            // As lighting settings are shown, a tab for each group: a row is empty where the pack leaves a setting
+            // to the level.
             ItemKind::Asset(AssetKind::LookPack) => {
-                look_pack_rows(ui, root, &file);
-                code(ui, root, &file, "toml", dark);
+                let rows = part(ui, root, "Look Pack", "eye");
+                let tabs = ui.panel(rows, Style::row());
+                ui.add_class(tabs, "lighting-asset-tabs");
+                let body = ui.panel(rows, Style::column());
+                let mut fields = LightingFields::for_pack(ui, tabs, body);
+                fields.show_file(ui, &file);
+                view.lighting = Some((fields, file.clone()));
             }
             // Every setting to change in place, a tab for each group, not the file's text.
             ItemKind::Asset(AssetKind::Lighting) => {
@@ -1081,28 +1088,6 @@ fn particle_effect(ui: &mut Ui, root: NodeId, file: &std::path::Path) {
     if effect.emitters.is_empty() {
         text_row(ui, rows, "Emitters", "None");
     }
-}
-
-/// What a look pack says of itself and which parts of a level's lighting
-/// it changes, over its file's text.
-fn look_pack_rows(ui: &mut Ui, root: NodeId, file: &std::path::Path) {
-    let rows = part(ui, root, "Look Pack", "eye");
-    let text = std::fs::read_to_string(file).unwrap_or_default();
-    let pack = match voxear_engine::look_packs::LookPackFile::parse(&text) {
-        Ok(pack) => pack,
-        Err(error) => return text_row(ui, rows, "Not read", &format!("{error:#}")),
-    };
-    text_row(ui, rows, "Description", if pack.description.is_empty() { "None" } else { &pack.description });
-    let changes = [
-        ("the whole look", pack.look.is_some()),
-        ("sky", pack.sky.is_some()),
-        ("sun", pack.sun.is_some()),
-        ("post-processing", pack.post.is_some()),
-        ("blocks", pack.blocks.is_some()),
-    ];
-    let named: Vec<&str> = changes.into_iter().filter(|(_, changed)| *changed).map(|(name, _)| name).collect();
-    let changed = if named.is_empty() { "Nothing".to_string() } else { named.join(", ") };
-    text_row(ui, rows, "Changes", &changed);
 }
 
 /// A box model's size on its sheet and in the world, and how much it is

@@ -224,7 +224,7 @@ fn number_named(content: &mut Content, file: &mut BlockFile, owner: &str, named:
 /// is left out, with a warning.
 pub fn with_structures(content: &mut Content, file: &BlockFile) -> BlockFile {
     use voxear_terrain::blocks::structure::{
-        PlacedStructure, StructureBlocks, Town, TownHouseKind, TownPiece, WorldStructures,
+        Dungeon, PlacedStructure, StructureBlocks, Town, TownHouseKind, TownPiece, WorldStructures,
     };
     let Some(generate) = file.generate.as_ref().filter(|generate| !generate.structures.is_empty()) else {
         return file.clone();
@@ -261,6 +261,51 @@ pub fn with_structures(content: &mut Content, file: &BlockFile) -> BlockFile {
                 };
                 let (wood, leaves) = (number(&def.wood), number(&def.leaves));
                 StructureBlocks::Plant { plant: (*def).clone(), wood, leaves }
+            }
+            (None, None) if structure.dungeon.is_some() => {
+                let dungeon = structure.dungeon.as_ref().expect("checked above");
+                let mut piece = |content: &mut Content, file: &mut BlockFile, named: &str| -> Option<TownPiece> {
+                    let (_, part) = content.structure(named).or_else(|| {
+                        tracing::warn!("the dungeon {reference} names {named}, which is not in the project");
+                        None
+                    })?;
+                    let model = part.model.as_ref()?;
+                    let entries = model.blocks()?;
+                    let numbers: Vec<BlockId> =
+                        model.palette.iter().map(|block| number_named(content, file, named, block)).collect();
+                    let blocks =
+                        entries.iter().map(|&e| if e == 0 { 0 } else { numbers[usize::from(e) - 1] }).collect();
+                    Some(TownPiece { size: model.size, blocks, ground: part.ground, sink: part.sink })
+                };
+                let entrance = dungeon.entrance.as_deref().and_then(|named| piece(content, &mut file, named));
+                let mut rooms = Vec::new();
+                for room in &dungeon.rooms {
+                    let Some(piece) = piece(content, &mut file, &room.structure) else { continue };
+                    rooms.push(TownHouseKind {
+                        piece,
+                        weight: room.weight,
+                        most: room.most,
+                        zone: room.zone,
+                        biomes: Vec::new(),
+                    });
+                }
+                let mut block = |named: &Option<String>| {
+                    named.as_deref().map_or(0, |named| number_named(content, &mut file, reference, named))
+                };
+                let (wall, floor) = (block(&dungeon.wall), block(&dungeon.floor));
+                StructureBlocks::Dungeon(Dungeon {
+                    entrance,
+                    rooms,
+                    count: dungeon.count,
+                    spacing: dungeon.spacing,
+                    depth: dungeon.depth,
+                    wall,
+                    floor,
+                    corridor_width: dungeon.corridor_width,
+                    corridor_height: dungeon.corridor_height,
+                    loops: dungeon.loops,
+                    room_size: dungeon.room_size,
+                })
             }
             (None, None) => {
                 let Some(town) = &structure.town else { continue };

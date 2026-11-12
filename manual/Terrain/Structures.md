@@ -9,6 +9,7 @@ A structure is built of one of three things:
 - **A model**: its own blocks, kept in its file.
 - **A plant**: a tree or a bush grown from a `.voxplant` afresh at every place, so no two trees of a wood are alike.
 - **A town**: houses and a middle, each a structure with a model, laid out along streets (see [Towns](#towns)).
+- **A dungeon**: rooms under the ground joined by corridors (see [Dungeons](#dungeons)).
 
 ## Where structures stand
 
@@ -72,6 +73,24 @@ A small hamlet and a large town are two structures, each with a town of its own 
 ### Roads between towns
 
 With **Roads** on, a town is joined to the towns of its kind next to it. A road leaves one town and heads for the next, curving round hills where it is far from either and heading straight in as it nears a town. It crosses water on a bridge a block over the water, with posts down to the bed. Which towns are joined is decided by the two towns alone, so a road is the same from every chunk it crosses.
+
+## Dungeons
+
+A dungeon is rooms under the ground joined by corridors, reached by a winding stair down from the surface. Its rooms lie on a grid and grow out one at a time from the stair's foot, so every room can be reached, and a few more corridors make loops. Each room is a kind with the same rules as a town's houses: weight, most, and a zone, here how far from the stair as a share of the way to the furthest room, so a treasure room can come only at the far end. Where no kind may stand, a plain room of the dungeon's walls is built.
+
+| Setting | What it does |
+| --- | --- |
+| Entrance | The structure at the surface over the stair: a crypt door, a ruined tower. None for a bare stair |
+| Rooms | The kinds of room it builds, each a structure with a model, with its rules |
+| Count | How many rooms, from and to |
+| Spacing | How far apart its rooms' middles are, in blocks. Raised to fit its largest room |
+| Depth | How far under the ground its floor is, in blocks, from and to |
+| Wall, Floor | The blocks its walls, plain rooms and stair are made of, and its floors |
+| Corridor width, Corridor height | How wide and high its corridors are |
+| Loops | How many more corridors join rooms already joined, from 0 to 1 |
+| Room size | A plain room's size, in blocks along x, up and along z |
+
+A room's doors are in the middles of its sides, a block over its floor: the corridors open its walls there. The stair winds round a pillar, a block up for every block along.
 
 ## Not yet
 

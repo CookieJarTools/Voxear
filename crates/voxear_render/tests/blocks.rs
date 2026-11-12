@@ -1416,3 +1416,151 @@ fn towns_are_joined_by_roads_that_follow_the_ground_and_cross_water_on_bridges()
     let pixels = render(&mut renderer, &scene, 200);
     keep_image("blocks roads.png", &pixels);
 }
+
+#[test]
+fn a_dungeon_cut_open_shows_its_rooms_joined_by_corridors_and_its_stair() {
+    use voxear_terrain::{
+        blocks::{
+            file::{BlockKind, Ground},
+            generate::BlockGenerate,
+            structure::{
+                Dungeon, GroundFit, PlacedStructure, StructureBlocks, TownHouseKind, TownPiece, WorldStructures,
+            },
+        },
+        generate::{Preset, structures::Placement},
+    };
+    let Some(mut renderer) = renderer() else { return };
+    let world = Preset::RollingHills.world();
+    let mut file = BlockFile {
+        block_size: 1.0,
+        ground: Ground { size: [160, 160], ..Ground::default() },
+        generate: Some(BlockGenerate { caves: 0.0, bottom: -60, ..BlockGenerate::default() }),
+        ..BlockFile::default()
+    };
+    let first = file.blocks.len() as u16 + 1;
+    for (name, colour) in [
+        ("Bricks", [0.42, 0.42, 0.46]),
+        ("Flagstones", [0.62, 0.58, 0.5]),
+        ("Gold", [0.95, 0.75, 0.2]),
+        ("Moss", [0.25, 0.45, 0.2]),
+    ] {
+        file.blocks.push(BlockKind::colored(name, colour));
+    }
+    let [bricks, flagstones, gold, moss] = std::array::from_fn(|i| first + i as u16);
+    // A treasure room: walls of bricks round a floor with a heap of gold in its middle, far from the stair.
+    let room = |size: [usize; 3], middle: u16| {
+        let [sx, sy, sz] = size;
+        let mut blocks = vec![0u16; sx * sy * sz];
+        for y in 0..sy {
+            for z in 0..sz {
+                for x in 0..sx {
+                    let edge = x == 0 || z == 0 || x == sx - 1 || z == sz - 1 || y == sy - 1;
+                    let heap = y == 1 && (x as i32 - sx as i32 / 2).abs() <= 1 && (z as i32 - sz as i32 / 2).abs() <= 1;
+                    blocks[(y * sz + z) * sx + x] = match () {
+                        _ if y == 0 => flagstones,
+                        _ if edge => bricks,
+                        _ if heap => middle,
+                        _ => 0,
+                    };
+                }
+            }
+        }
+        TownPiece { size: [sx as u32, sy as u32, sz as u32], blocks, ground: GroundFit::Leave, sink: 0 }
+    };
+    let dungeon = Dungeon {
+        entrance: None,
+        rooms: vec![
+            TownHouseKind { piece: room([9, 5, 9], gold), weight: 5.0, most: 1, zone: [0.7, 1.0], biomes: Vec::new() },
+            TownHouseKind { piece: room([7, 5, 7], moss), weight: 1.0, most: 0, zone: [0.0, 1.0], biomes: Vec::new() },
+        ],
+        count: [10, 14],
+        spacing: 16,
+        depth: [26, 30],
+        wall: bricks,
+        floor: flagstones,
+        corridor_width: 3,
+        corridor_height: 3,
+        loops: 0.3,
+        room_size: [7, 5, 7],
+    };
+    let placement = Placement {
+        spacing: 600.0,
+        separation: 100.0,
+        chance: 1.0,
+        slope: 40.0,
+        height: Some([2.0, 1000.0]),
+        ..Placement::default()
+    };
+    // Over the first site within 2 km on land.
+    let site = placement
+        .tries_near(world.seed(), [-2000.0; 2], [2000.0; 2], 0.0)
+        .into_iter()
+        .find(|site| world.height_at(site.at[0], site.at[1]) > world.sea_level() + 2.0)
+        .expect("a site on land");
+    file.generate.as_mut().unwrap().position = [site.at[0] - 80.0, site.at[1] - 80.0];
+    let list = vec![PlacedStructure {
+        placement,
+        ground: GroundFit::Leave,
+        sink: 0,
+        blocks: StructureBlocks::Dungeon(dungeon),
+        biomes: Vec::new(),
+    }];
+    file.generate.as_mut().unwrap().built = Some(Arc::new(WorldStructures { list }));
+    let (looks, faces) = file.faces();
+    let mut map = file.make_ground(Some(&world));
+    // Cut open: everything from four blocks over the dungeon's floor up taken away, its ceilings with it.
+    let mut floors = std::collections::HashMap::<i32, usize>::new();
+    for z in 0..160 {
+        for x in 0..160 {
+            for y in -60..200 {
+                if map.get([x, y, z]) == flagstones {
+                    *floors.entry(y).or_default() += 1;
+                }
+            }
+        }
+    }
+    let floor = floors.iter().max_by_key(|(_, count)| **count).map(|(y, _)| *y).expect("a dungeon floor");
+    let golds =
+        (0..160 * 160 * 8).filter(|i| map.get([i % 160, floor + 1 + (i / 25600), (i / 160) % 160]) == gold).count();
+    assert!(golds >= 9, "{golds} blocks of gold: the treasure room");
+    for z in 0..160 {
+        for x in 0..160 {
+            for y in floor + 4..200 {
+                map.set([x, y, z], 0);
+            }
+        }
+    }
+    let surfaces: Vec<SurfaceLook> = looks
+        .iter()
+        .map(|look| {
+            let [r, g, b] = look.color;
+            let material =
+                renderer.add_material(&MaterialDesc { base_color: [r, g, b, 1.0], ..MaterialDesc::default() });
+            SurfaceLook {
+                material: material.unwrap(),
+                size: 1.0,
+                sharpness: 0.0,
+                triplanar: true,
+                tracks: 0.0,
+                fills_in: 0.0,
+                liquid: Default::default(),
+                glitter: false,
+            }
+        })
+        .collect();
+    let default = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let mut scene = World::new();
+    let look = BlockLook { material: default, surfaces: Arc::from(surfaces) };
+    scene.spawn((BlockWorld::made(map, &faces, 1.0, false), look, Transform::default()));
+    // Straight down from high over its middle; cameras look along +z.
+    let turn = Quat::from_rotation_x(1.3);
+    scene.spawn((Camera::default(), Transform::new(Vec3::new(96.0, floor as f32 + 95.0, 62.0), turn, Vec3::ONE)));
+    let towards_sun = Vec3::new(-0.3, 0.9, -0.2).normalize();
+    let sun = Quat::from_rotation_arc(Vec3::Z, -towards_sun);
+    scene.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    scene.insert_resource(Sky { ambient: 0.45, ..Sky::default() });
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
+    scene.insert_resource(PostProcess { anti_aliasing, ..PostProcess::neutral() });
+    let pixels = render(&mut renderer, &scene, 150);
+    keep_image("blocks dungeon.png", &pixels);
+}

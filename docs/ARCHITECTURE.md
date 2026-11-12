@@ -2839,6 +2839,14 @@ poses, previews, reimports or cooks a model does a box model with no path of its
   blocks placed and dug are seen at the next search) and walks it with the Obj's Character Controller, which is
   what collides. It only moves the Obj; Mob Motion sees the movement and animates. What a creature decides to do
   is left to games and packages.
+- **Cubes** (`box_model/voxels.rs`) are a box's other way of being drawn: a grid of small cubes the size of
+  the box in pixels, each a place in the model's palette, for shapes six faces do not make. They are a
+  property of a box, not a second kind of part, so picking, moving, sizing, mirroring, joints and the tree all
+  treat a sculpted box as a box. Colour needs no second material: the palette's colours are pixels of the
+  model's texture, in rows under the sheet (`BoxModel::texture`), and every face of a cube points at the middle
+  of its colour's pixel, which sharp sampling reads exactly. Faces of one colour are merged, so a part of a
+  few hundred cubes is a few dozen quads. Plants and trees are meant to be made this way and grown by a
+  Foliage, whose rays for the ground meet a Block World's blocks.
 - **Clips** (`box_model/clips.rs`) are the made path to animation, for what Mob Motion does not do. They are
   kept sparse, as they are made: keys only for bones that move, only at the moments that matter, each saying how
   far the bone is from rest. What plays clips wants every bone at every frame, so `prepared` bakes each one

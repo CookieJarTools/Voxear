@@ -39,6 +39,8 @@ pub enum BoxPartEdit {
     KeyOffset(Vec3),
     KeyScale(Vec3),
     KeyEase(Ease),
+    /// Whether the box is sculpted from cubes.
+    Voxels(bool),
 }
 
 impl BoxPartEdit {
@@ -60,6 +62,7 @@ impl BoxPartEdit {
             BoxPartEdit::KeyOffset(_) => 11,
             BoxPartEdit::KeyScale(_) => 12,
             BoxPartEdit::KeyEase(_) => 13,
+            BoxPartEdit::Voxels(_) => 14,
         }
     }
 }
@@ -82,6 +85,7 @@ enum Rows {
         inflate: NodeId,
         layer: NodeId,
         layer_height: NodeId,
+        voxels: NodeId,
     },
 }
 
@@ -164,6 +168,8 @@ impl BoxPartView {
                 let position = vector_row(ui, rows, "Position").1;
                 let size = vector_row(ui, rows, "Size").1;
                 let rotation = vector_row(ui, rows, "Rotation").1;
+                let row = prop(ui, rows, "Voxels");
+                let voxels = ui.toggle(row, "", model_box.voxels.is_some());
                 let rows = part_rows(ui, root, "Faces", "texture");
                 let unfolded = matches!(model_box.skin, BoxSkin::Unfolded { .. });
                 let (sheet, mirror) = if unfolded {
@@ -185,7 +191,11 @@ impl BoxPartView {
                     (Some(fields), Some(mirror))
                 } else {
                     let row = prop(ui, rows, "Sheet");
-                    let note = ui.add_label(row, "A place for each face");
+                    let note = match model_box.voxels.is_some() {
+                        true => "Coloured by its cubes",
+                        false => "A place for each face",
+                    };
+                    let note = ui.add_label(row, note);
                     ui.add_class(note, "value");
                     (None, None)
                 };
@@ -200,7 +210,7 @@ impl BoxPartView {
                 let layer_height = ui.text_field(row, "");
                 ui.add_class(layer_height, "value-input");
                 ui.add_class(layer_height, "number-input");
-                Rows::Box { position, size, rotation, sheet, mirror, inflate, layer, layer_height }
+                Rows::Box { position, size, rotation, sheet, mirror, inflate, layer, layer_height, voxels }
             }
         };
         let view = Self { path: path.to_string(), part, title, rows };
@@ -278,12 +288,15 @@ impl BoxPartView {
                 pivot.or_else(|| vector(rotation, bone.rotation).map(BoxPartEdit::BoneRotation))
             }
             (
-                Rows::Box { position, size, rotation, sheet, mirror, inflate, layer, layer_height },
+                Rows::Box { position, size, rotation, sheet, mirror, inflate, layer, layer_height, voxels },
                 Picked::Box(_, index),
             ) => {
                 let model_box = bone.boxes.get(index)?;
                 if let Some(at) = vector(position, model_box.from) {
                     return Some(BoxPartEdit::Position(at));
+                }
+                if ui.changed(*voxels) && ui.is_checked(*voxels) != model_box.voxels.is_some() {
+                    return Some(BoxPartEdit::Voxels(ui.is_checked(*voxels)));
                 }
                 if ui.changed(*layer) && ui.is_checked(*layer) != model_box.layer.is_some() {
                     return Some(BoxPartEdit::Layer(ui.is_checked(*layer)));
@@ -360,10 +373,13 @@ impl BoxPartView {
                 write_numbers(ui, rotation, &bone.rotation.to_array());
             }
             (
-                Rows::Box { position, size, rotation, sheet, mirror, inflate, layer, layer_height },
+                Rows::Box { position, size, rotation, sheet, mirror, inflate, layer, layer_height, voxels },
                 Picked::Box(_, index),
             ) => {
                 let Some(model_box) = bone.boxes.get(index) else { return };
+                if ui.is_checked(*voxels) != model_box.voxels.is_some() {
+                    ui.set_checked(*voxels, model_box.voxels.is_some());
+                }
                 if ui.is_checked(*layer) != model_box.layer.is_some() {
                     ui.set_checked(*layer, model_box.layer.is_some());
                 }

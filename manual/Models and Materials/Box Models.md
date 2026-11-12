@@ -102,6 +102,38 @@ A picked **box** shows:
 | Layer | Whether the box has a layer of raised pixels |
 | Height | How far the layer's pixels stand out, in pixels |
 
+### Sculpting with cubes
+
+A plain box is six flat faces. For rounded and stepped shapes, such as hair, ears, hands, leaves or the crown of a tree, make a box of small **cubes** instead and shape it one cube at a time. Each cube is one pixel across and one colour.
+
+Click **Sculpt** in the bar, then press on the model.
+
+| Tool | What it does |
+| --- | --- |
+| Add | Puts a cube against the face under the pointer, in the colour you have picked |
+| Remove | Takes out the cube under the pointer |
+| Paint | Colours the cube under the pointer |
+| Pick | Takes the colour of the cube under the pointer to sculpt with |
+
+The first time you sculpt on a plain box it becomes a box of cubes that looks the same: as many cubes as it had pixels each way, each taking the colour painted on the nearest face. From then on its shape is its cubes.
+
+Drag to work along a surface. One stroke adds one layer of cubes or takes one layer away, however long you hold it, so you never dig a hole by mistake. A cube added past the edge of the box makes the box bigger to hold it. The face you are over is marked with a white square.
+
+The large square in the bar is the colour you sculpt with, and the small squares are the colours the model's cubes already use. **Symmetry** does the same to the other side of the body.
+
+In **Shape** mode a box of cubes is moved, turned and sized like any box. Making it smaller cuts cubes off. **Voxels** in the Inspector turns a box into cubes, or back into a plain box of the same size, which loses its cubes.
+
+A box of cubes has no faces on the sheet and no raised layer. **Mirror**, **Duplicate** and **Add Joint** work on it as on any box, and everything that animates the model moves it with its bone.
+
+A good way to build a creature in this style is one box of cubes for each part that moves: head, body, each arm and leg. Then **Make Bones** hangs each from its own bone.
+
+### Plants and trees
+
+Flowers, bushes, mushrooms and trees are box models too. Sculpt one, usually on a single bone, and use it like any model:
+
+- Drag it into the Scene view to stand one in your level. On a [[Block Worlds|Block World]] it lands on the blocks.
+- Give it to a [[Foliage]] to grow many of it, and paint them onto the ground or onto a Block World's blocks (see [[Painting and Cutting Plants]]). A box model's mesh is `Plants/Oak.boxmodel#mesh0.0` and its material `Plants/Oak.boxmodel#material0`.
+
 ### Painting
 
 Click **Paint** in the bar to paint the model's pixels. The bar changes to the painting tools, and the model's **sheet** shows flat beside the model, with the part each box's faces take outlined.
@@ -301,6 +333,24 @@ faces = { front = [0, 0, 8, 8], back = [8, 0, 16, 8] }
 
 Writing the right edge before the left, or the bottom before the top, draws the face turned over.
 
+### Cubes
+
+A box sculpted from cubes has `voxels` in place of `uv` or `faces`, and the model has a `palette` its cubes take their colours from:
+
+```toml
+palette = ["e25454", "f0c8a0"]
+
+[[bones.boxes]]
+from = [-5.0, 0.0, -5.0]
+size = [10, 10, 10]
+voxels = "…"
+```
+
+| Setting | What it does |
+| --- | --- |
+| `palette` | The colours of the model's cubes, each as `rrggbb`, up to 255. Change one here and every cube of that colour changes |
+| `voxels` | The box's cubes, one for each pixel of its `size`, packed as text. Each side is from 1 to 64 |
+
 ### Clips
 
 Each `[[clips]]` table is one clip, and each `[[clips.bones]]` table under it holds one bone's keys:
@@ -338,6 +388,8 @@ To make one walk, add a [[Mob Motion]] to the Obj that draws it, and a [[Block M
 ## Not done yet
 
 - A brush wider than one pixel, and bringing a sheet in from a picture file or saving it as one.
+- Sculpting: bringing in a `.vox` file as a box of cubes, filling or carving more than one cube at a time, and making a character from parts picked at random.
+- Plants and trees placed by a Block World's generator, by surface and climate. They are placed by hand or painted for now.
 - On the timeline: zooming in on a long clip, copying keys, and moving several keys at once.
 - Rings that move or size a bone. Position and Scale are typed in the Inspector.
 - A cut-out face casts the shadow of the whole face, holes included.

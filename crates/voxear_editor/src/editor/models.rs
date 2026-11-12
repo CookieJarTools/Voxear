@@ -61,6 +61,11 @@ impl Editor {
         self.model.set_mode(&mut self.ui, mode);
     }
 
+    /// Picks what a stroke of sculpting does in the Model window.
+    pub fn set_model_carve(&mut self, carve: crate::model_panel::Carve) {
+        self.model.set_carve(&mut self.ui, carve);
+    }
+
     /// Picks what a stroke of paint does in the Model window.
     pub fn set_model_tool(&mut self, tool: Tool) {
         self.model.set_tool(&mut self.ui, tool);

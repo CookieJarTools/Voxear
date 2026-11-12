@@ -52,6 +52,8 @@ const GROUND_REACH: f32 = 200.0;
 /// How far along a ray from the Scene view's camera a terrain is looked
 /// for, in metres.
 const TERRAIN_REACH: f32 = 20_000.0;
+/// How far a ray is followed through a world of blocks, in metres.
+const BLOCK_REACH: f32 = 1024.0;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Tool {
@@ -249,9 +251,10 @@ pub fn surface_past(
 }
 
 /// The ground straight below `(x, z)`, from `top` metres up down, on any
-/// mesh or terrain but plants and the Objs in `skip`: where it is, and the
-/// way it faces there, from the ground half a metre round.
-pub(crate) fn ground_below(
+/// mesh, terrain or world of blocks but plants and the Objs in `skip`:
+/// where it is, and the way it faces there, from the ground half a metre
+/// round.
+pub fn ground_below(
     world: &World,
     renderer: &Renderer,
     (x, z, top): (f32, f32, f32),
@@ -328,6 +331,23 @@ fn mesh_hits(
         let local = origin - corner;
         if let Some(hit) = voxear_terrain::raycast_terrain(terrain, local, direction, TERRAIN_REACH) {
             grounds.push((hit.distance, hit.point + corner, entity));
+        }
+    }
+    // A world of blocks by its blocks: the first that is ground, through its water, as what is planted or
+    // dropped stands on the bottom.
+    let block_worlds = world
+        .query_ref::<(Entity, &voxear_terrain::blocks::BlockWorld, &Transform, Option<&WorldTransform>)>()
+        .without::<EditorOnly>()
+        .without::<Destroying>();
+    for (entity, blocks, transform, placed) in block_worlds {
+        let corner = voxear_terrain::corner(transform, placed);
+        let size = blocks.block_size.max(1e-3);
+        let from = ((origin - corner) / size).to_array();
+        let ground = |block| voxear_terrain::blocks::is_ground(&blocks.faces, block);
+        let reach = BLOCK_REACH / size;
+        let hit = voxear_terrain::blocks::raycast_where(&blocks.blocks, from, direction.to_array(), reach, &ground);
+        if let Some(hit) = hit {
+            grounds.push((hit.distance * size, origin + direction * hit.distance * size, entity));
         }
     }
     let foliage = world

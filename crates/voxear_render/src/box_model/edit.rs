@@ -11,7 +11,8 @@ use super::{BoxBone, BoxModel, BoxSkin, Face, FaceRect, ModelBox, degrees, turne
 /// What a ray met of a model: the box, by its bone and its place among the
 /// bone's boxes, the face it went in by, how far along the ray, in metres,
 /// and where, in the model's space, and the pixel of the sheet there, for a
-/// face that is drawn.
+/// face that is drawn; for a sculpted box, the cube it met, and the face
+/// that of the cube.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BoxHit {
     pub bone: usize,
@@ -20,6 +21,7 @@ pub struct BoxHit {
     pub distance: f32,
     pub point: Vec3,
     pub pixel: Option<[u32; 2]>,
+    pub cell: Option<[u32; 3]>,
 }
 
 /// How thick a flat box is to a ray, in metres, so it can be met at all.
@@ -37,14 +39,26 @@ impl BoxModel {
                 let (place, reach) = self.box_place(in_model, model_box);
                 let inverse = place.inverse();
                 let (from, along) = (inverse.transform_point3(origin), inverse.transform_vector3(direction));
-                let Some((distance, face)) = enter(from, along, reach.max(Vec3::splat(PAPER))) else { continue };
+                // A sculpted box is met at its first cube in the ray's way, and not at all where it has none.
+                let met = match &model_box.voxels {
+                    Some(cubes) => super::voxels::enter(cubes, model_box.size, from, along, reach)
+                        .map(|(distance, face, cell)| (distance, face, Some(cell))),
+                    None => enter(from, along, reach.max(Vec3::splat(PAPER))).map(|(distance, face)| (distance, face, None)),
+                };
+                let Some((distance, face, cell)) = met else { continue };
                 if nearest.is_some_and(|hit| hit.distance <= distance) {
                     continue;
                 }
                 let inside = from + along * distance;
                 let pixel = model_box.face_rect(face).map(|rect| pixel_at(rect, face, inside, reach));
+                // A plain box says which cube it would be met at, were it sculpted.
+                let cell = cell.or_else(|| {
+                    let sides = Vec3::from(model_box.size.map(|side| side.max(1) as f32));
+                    let within = (inside - face.normal() * 1e-4 + reach) / (reach * 2.0).max(Vec3::splat(PAPER)) * sides;
+                    Some(std::array::from_fn(|axis| (within[axis].floor().max(0.0) as u32).min(sides[axis] as u32 - 1)))
+                });
                 let point = origin + direction * distance;
-                nearest = Some(BoxHit { bone: at, index, face, distance, point, pixel });
+                nearest = Some(BoxHit { bone: at, index, face, distance, point, pixel, cell });
             }
         }
         nearest
@@ -323,7 +337,7 @@ fn enter(from: Vec3, along: Vec3, reach: Vec3) -> Option<(f32, Face)> {
 
 /// The sheet's pixel under a point of a face, the point in the box's own
 /// space.
-fn pixel_at([left, top, right, bottom]: FaceRect, face: Face, point: Vec3, reach: Vec3) -> [u32; 2] {
+pub(super) fn pixel_at([left, top, right, bottom]: FaceRect, face: Face, point: Vec3, reach: Vec3) -> [u32; 2] {
     let (across, down) = face.across_and_down();
     let share = |along: Vec3| {
         let most = (along * reach).length().max(f32::EPSILON);
@@ -343,6 +357,9 @@ fn mirror_box(model_box: &mut ModelBox) {
     model_box.from.x = -(model_box.from.x + model_box.size[0] as f32);
     model_box.rotation = Vec3::new(model_box.rotation.x, -model_box.rotation.y, -model_box.rotation.z);
     model_box.skin = mirror_skin(model_box.skin);
+    if let Some(cubes) = model_box.voxels.as_mut() {
+        *cubes = cubes.mirrored(model_box.size);
+    }
     if let Some(layer) = model_box.layer.as_mut() {
         layer.skin = mirror_skin(layer.skin);
     }

@@ -15,7 +15,7 @@
 
 use voxear_core::math::{Mat4, Vec2, Vec3};
 use voxear_render::{
-    BoxModel, Face, MAX_VIEW_SIZE, MaterialDesc, MaterialHandle, MeshData, MeshHandle, PreviewCamera, PreviewId,
+    BoxHit, BoxModel, Face, MAX_VIEW_SIZE, MaterialDesc, MaterialHandle, MeshData, MeshHandle, PreviewCamera, PreviewId,
     PreviewOptions, PreviewPart, Renderer, TextureId, TextureSource, Vertex,
 };
 use voxear_ui::{Color, ImageRef, NodeId, Shape, Style, Ui};
@@ -88,6 +88,8 @@ pub enum ViewEvent {
     },
     /// The stroke was let go.
     PaintEnded,
+    /// A stroke of sculpting met this cube of a box, by this face of it.
+    Sculpt(BoxHit),
 }
 
 /// What a press on the model does.
@@ -100,6 +102,9 @@ pub enum ViewMode {
     /// the pixel across the body from it too; with `layer`, the pixel of
     /// the box's layer that lies over it, where the box has one.
     Paint { mirror: bool, layer: bool },
+    /// A press on the model adds, takes or colours the cube under it,
+    /// and with `mirror` the one across the body from it too.
+    Sculpt { mirror: bool },
     /// The model is only looked at, as while it is shown moving.
     Look,
     /// A click picks the bone of the box under it, and handles round the
@@ -287,7 +292,7 @@ impl ModelView {
         if data.indices.is_empty() {
             return;
         }
-        let sheet = &model.sheet;
+        let sheet = &model.texture();
         let source = TextureSource {
             name: "box model sheet",
             width: sheet.width,
@@ -357,11 +362,16 @@ impl ModelView {
             (!self.is_dragging()).then(|| nearest_handle(&handles, pointer, &seen)).flatten()
         });
         let mut drawn = shapes(model, &bones, picked, &seen, &handles, hot);
-        // Painting, the pixel under the pointer is marked.
-        if let (ViewMode::Paint { .. }, Some(pointer), false) = (mode, self.pointer_in(ui), self.is_dragging()) {
+        // Painting, the pixel under the pointer is marked; sculpting, the face of the cube.
+        if let (ViewMode::Paint { .. } | ViewMode::Sculpt { .. }, Some(pointer), false) =
+            (mode, self.pointer_in(ui), self.is_dragging())
+        {
             let bones = model.rest_matrices();
             let (origin, direction) = seen.ray(pointer);
-            let corners = model.pick(&bones, origin, direction).and_then(|hit| model.pixel_corners(&bones, &hit));
+            let corners = model.pick(&bones, origin, direction).and_then(|hit| match mode {
+                ViewMode::Sculpt { .. } => model.cube_corners(&bones, &hit),
+                _ => model.pixel_corners(&bones, &hit),
+            });
             if let Some(corners) = corners.map(|corners| corners.map(|corner| seen.project(corner))) {
                 for (a, b) in [(0, 1), (1, 2), (2, 3), (3, 0)] {
                     if let (Some(from), Some(to)) = (corners[a], corners[b]) {
@@ -466,7 +476,8 @@ impl ModelView {
             }
             // A press on the model, painting, begins a stroke.
             (true, Some(_), Some(local))
-                if matches!(mode, ViewMode::Paint { .. }) && self.dab(model, seen, local, mode, &mut events) =>
+                if matches!(mode, ViewMode::Paint { .. } | ViewMode::Sculpt { .. })
+                    && self.dab(model, seen, local, mode, &mut events) =>
             {
                 self.stroke = Some(local);
             }
@@ -535,7 +546,7 @@ impl ModelView {
                             events.push(ViewEvent::Pick(hit.map(|hit| Picked::Bone(hit.bone))));
                         }
                         // A press made and let go between two frames paints its pixel all the same.
-                        ViewMode::Paint { .. } => {
+                        ViewMode::Paint { .. } | ViewMode::Sculpt { .. } => {
                             if self.dab(model, seen, local, mode, &mut events) {
                                 events.push(ViewEvent::PaintEnded);
                             }
@@ -555,9 +566,14 @@ impl ModelView {
         let (origin, direction) = seen.ray(at);
         let Some(hit) = model.pick(&bones, origin, direction) else { return false };
         let across = Vec3::new(-1.0, 1.0, 1.0);
-        let mirrored = matches!(mode, ViewMode::Paint { mirror: true, .. })
+        let mirrored = matches!(mode, ViewMode::Paint { mirror: true, .. } | ViewMode::Sculpt { mirror: true })
             .then(|| model.pick(&bones, origin * across, direction * across))
             .flatten();
+        // Sculpting, the cube met is what is said, and across the body the one met there.
+        if matches!(mode, ViewMode::Sculpt { .. }) {
+            events.extend([Some(hit), mirrored].into_iter().flatten().map(ViewEvent::Sculpt));
+            return true;
+        }
         let on_layer = matches!(mode, ViewMode::Paint { layer: true, .. });
         for hit in [Some(hit), mirrored].into_iter().flatten() {
             let model_box = &model.bones[hit.bone].boxes[hit.index];
@@ -598,7 +614,7 @@ impl ModelView {
     /// again, behind the material the model is drawn with.
     pub fn sheet_changed(&mut self, renderer: &mut Renderer, model: &BoxModel) {
         let Some((mesh, texture, material)) = self.drawn else { return self.model_changed(renderer, model) };
-        let sheet = &model.sheet;
+        let sheet = &model.texture();
         let source = TextureSource {
             name: "box model sheet",
             width: sheet.width,

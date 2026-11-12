@@ -1410,6 +1410,21 @@ The sea, lakes, rivers and lava, built in. Manual: `manual/Water`.
     a clip played by an Animator from the file and from built content with Mob Motion waiting; a clip made,
     keyed by a ring and by a typed number, a key dragged, played, undone, in the editor. Manual: Box Models,
     Mob Motion. Not done: timeline zoom, copying keys, moving several at once.
+  - ~~**Boxes sculpted from cubes:**~~ done: a box can be made of small cubes, one to each pixel of its size,
+    each a colour of the model's palette or left out (`ModelBox::voxels`, `BoxModel::palette`; `voxels` and
+    `palette` in the file), for rounded and stepped shapes: hair, hands, leaves, a tree's crown. Only the faces
+    that show are built, those of one colour side by side as one, into the model's one mesh, coloured from the
+    palette's pixels under the sheet in its texture, so bones, Mob Motion, clips and cooking are unchanged. A
+    ray meets the first cube in its way (`BoxHit::cell`). `to_voxels` makes a plain box one of cubes that looks
+    the same; `set_voxel` grows the box to hold a cube put past its edge. The Model window's **Sculpt** mode
+    adds, removes, paints and picks cubes, a stroke working one layer of the model as it found it, with
+    Symmetry; the Inspector's Voxels toggle turns a box either way. Plants and trees are box models too: rays
+    for dropping and for painting a Foliage's plants meet a Block World's ground (`scene_tools::mesh_hits`).
+    Tests: cubes from a box's pixels, faces built and merged, growing, the ray, the file, mirroring; a head
+    sculpted, coloured, mirrored and undone in the editor; the ground of a Block World found from above.
+    Manual: Box Models, Painting and Cutting Plants. Not done: `.vox` files brought in as boxes of cubes,
+    tools that fill or carve many cubes at once, characters made from parts picked at random, plants and trees
+    placed by a Block World's generator.
 
 ## Gameplay kits: game-ready systems
 

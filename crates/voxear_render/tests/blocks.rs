@@ -1590,3 +1590,185 @@ fn a_dungeon_cut_open_shows_its_rooms_joined_by_corridors_and_its_stair() {
     let pixels = render(&mut renderer, &scene, 150);
     keep_image("blocks dungeon.png", &pixels);
 }
+
+/// A world of blocks `size` a side, `side` blocks across, made from
+/// `world` with its corner at `position`, with `biomes` (each a biome and
+/// its top block's name and colour) after the world's own three blocks,
+/// seen from `eye` metres up over its corner, turned `yaw` round and tipped
+/// `pitch` down, and kept as `name`. Gives the pixels and how many chunks
+/// were drawn.
+fn generated_view(
+    renderer: &mut Renderer,
+    world: &voxear_terrain::generate::WorldGen,
+    (size, side, position): (f32, u32, [f32; 2]),
+    biomes: &[(voxear_terrain::generate::BiomeDef, &str, [f32; 3])],
+    (eye, yaw, pitch): (Vec3, f32, f32),
+    name: &str,
+) -> (Vec<u8>, usize) {
+    use voxear_terrain::{
+        blocks::{
+            file::{BlockKind, Ground},
+            generate::BlockGenerate,
+        },
+        generate::{BiomeBlocks, Biomes, WorldBiomes},
+    };
+    let generate = BlockGenerate { caves: 0.0, bottom: -200, position, ..BlockGenerate::default() };
+    let mut file = BlockFile {
+        block_size: size,
+        ground: Ground { size: [side, side], ..Ground::default() },
+        generate: Some(generate),
+        ..BlockFile::default()
+    };
+    file.blocks.push(BlockKind { water: true, ..BlockKind::colored("Water", [0.05, 0.3, 0.45]) });
+    file.generate.as_mut().unwrap().sea = file.blocks.len() as u16;
+    let mut defs = Vec::new();
+    let mut blocks = Vec::new();
+    for (biome, block, colour) in biomes {
+        file.blocks.push(BlockKind::colored(block, *colour));
+        defs.push(biome.clone());
+        blocks.push(BiomeBlocks { top: file.blocks.len() as u16, ..BiomeBlocks::default() });
+    }
+    if !defs.is_empty() {
+        let placed = WorldBiomes { biomes: Biomes::new(defs, 15.0, 0.3, world.seed()), blocks };
+        file.generate.as_mut().unwrap().placed = Some(Arc::new(placed));
+    }
+    let (looks, faces) = file.faces();
+    let surfaces: Vec<SurfaceLook> = looks
+        .iter()
+        .map(|look| {
+            let [r, g, b] = look.color;
+            let material =
+                renderer.add_material(&MaterialDesc { base_color: [r, g, b, 1.0], ..MaterialDesc::default() });
+            SurfaceLook {
+                material: material.unwrap(),
+                size: 1.0,
+                sharpness: 0.0,
+                triplanar: true,
+                tracks: 0.0,
+                fills_in: 0.0,
+                liquid: Default::default(),
+                glitter: false,
+            }
+        })
+        .collect();
+    let default = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let mut scene = World::new();
+    let look = BlockLook { material: default, surfaces: Arc::from(surfaces) };
+    let made = BlockWorld::made(file.make_ground(Some(world)), &faces, size, false);
+    let chunks = made.meshes.len();
+    scene.spawn((made, look, Transform::default()));
+    let turn = Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch);
+    scene.spawn((Camera::default(), Transform::new(eye, turn, Vec3::ONE)));
+    let towards_sun = Vec3::new(0.45, 0.7, 0.25).normalize();
+    let sun = Quat::from_rotation_arc(Vec3::Z, -towards_sun);
+    scene.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    scene.insert_resource(Sky { ambient: 0.4, ..Sky::default() });
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
+    scene.insert_resource(PostProcess { anti_aliasing, ..PostProcess::neutral() });
+    let pixels = render(renderer, &scene, 150);
+    keep_image(name, &pixels);
+    (pixels, chunks)
+}
+
+/// How many pixels are sky: brighter blue than anything on the ground.
+fn sky_pixels(pixels: &[u8]) -> usize {
+    (0..WIDTH * HEIGHT)
+        .filter(|at| {
+            let [r, _, b] = rgb_at(pixels, at % WIDTH, at / WIDTH);
+            b > r + 15 && b > 120
+        })
+        .count()
+}
+
+#[test]
+fn fantasy_presets_stand_towers_blades_and_great_peaks_and_cut_rifts_down_to_floors_of_their_own() {
+    use voxear_terrain::generate::{BiomeDef, starters};
+    let Some(mut renderer) = renderer() else { return };
+    let preset = |name: &str| starters().into_iter().find(|starter| starter.name == name).unwrap().world(1, 1.0);
+    let land = BiomeDef { temperature: [-60.0, 60.0], humidity: [0.0, 1.0], ..BiomeDef::default() };
+    let grass = (land.clone(), "Grass", [0.36, 0.6, 0.22]);
+    // An eye `over` metres over the ground at `at` in a world whose corner is at `corner`, in the world's own metres.
+    let eye = |world: &voxear_terrain::generate::WorldGen, corner: [f32; 2], at: [f32; 2], over: f32| {
+        Vec3::new(at[0], world.height_at(corner[0] + at[0], corner[1] + at[1]) + over, at[1])
+    };
+    // Towers of karst over a green plain, from a little over the plain at one corner.
+    let karst = preset("Karst");
+    let (pixels, chunks) = generated_view(
+        &mut renderer,
+        &karst,
+        (2.0, 400, [0.0, 0.0]),
+        std::slice::from_ref(&grass),
+        (eye(&karst, [0.0, 0.0], [20.0, 20.0], 40.0), 0.785, 0.08),
+        "blocks karst.png",
+    );
+    assert!(chunks > 100, "{chunks} chunks of karst");
+    assert!(sky_pixels(&pixels) < (WIDTH * HEIGHT) as usize * 3 / 4, "towers stand into the sky");
+    // Blades of rock across green valleys.
+    let shattered = preset("Shattered");
+    let (_, chunks) = generated_view(
+        &mut renderer,
+        &shattered,
+        (2.0, 400, [0.0, 0.0]),
+        std::slice::from_ref(&grass),
+        (eye(&shattered, [0.0, 0.0], [20.0, 20.0], 30.0), 0.785, 0.1),
+        "blocks shattered.png",
+    );
+    assert!(chunks > 100, "{chunks} chunks of blades");
+    // Great peaks from the level land between their ranges, in blocks 8 m a side: the tallest summit within
+    // 8 km two thirds of the way across, looked at from the near corner.
+    let peaks = preset("Great Peaks");
+    let summit = (0..1600)
+        .map(|at| [(at % 40) as f32 * 400.0 - 8000.0, (at / 40) as f32 * 400.0 - 8000.0])
+        .max_by(|a, b| peaks.height_at(a[0], a[1]).total_cmp(&peaks.height_at(b[0], b[1])))
+        .unwrap();
+    let corner = [summit[0] - 2800.0, summit[1] - 2800.0];
+    let snow = (BiomeDef { height: Some([900.0, 9000.0]), ..land.clone() }, "Snow", [0.93, 0.95, 0.97]);
+    let (_, chunks) = generated_view(
+        &mut renderer,
+        &peaks,
+        (8.0, 512, corner),
+        &[grass.clone(), snow],
+        (eye(&peaks, corner, [60.0, 60.0], 150.0), 0.785, -0.12),
+        "blocks great peaks.png",
+    );
+    assert!(chunks > 100, "{chunks} chunks of peaks");
+    // Rifts from over their rim, looking down into the deepest within 4 km: fern on the floors, grass on the land.
+    let rifts = preset("Rifts");
+    let (xs, zs): (Vec<f32>, Vec<f32>) =
+        (0..6400).map(|at| ((at % 80) as f32 * 50.0 - 2000.0, (at / 80) as f32 * 50.0 - 2000.0)).unzip();
+    let mut heights = vec![0.0; xs.len()];
+    rifts.heights(&xs, &zs, &mut heights);
+    let sunk = rifts.sunk(&xs, &zs, &heights).expect("the rifts' Sunk");
+    // The deepest place open to the sky, with no roof standing over it.
+    let roofed = rifts.volume().expect("the rifts' Volume").standing(&xs, &zs, &heights);
+    let open = (0..xs.len()).filter(|&at| roofed[at].is_empty());
+    let deepest = open.max_by(|&a, &b| sunk[a].total_cmp(&sunk[b])).unwrap();
+    let corner = [xs[deepest] - 600.0, zs[deepest] - 600.0];
+    let fern = (BiomeDef { sunk: Some([40.0, 5000.0]), ..land.clone() }, "Fern", [0.1, 0.5, 0.45]);
+    let fern_again = fern.clone();
+    let (_, chunks) = generated_view(
+        &mut renderer,
+        &rifts,
+        (2.0, 512, corner),
+        &[grass, fern_again],
+        (eye(&rifts, corner, [520.0, 520.0], 80.0), 0.785, 0.85),
+        "blocks rifts.png",
+    );
+    assert!(chunks > 100, "{chunks} chunks of rifts");
+    // Straight down into it from over its deepest open place: fern on its floor.
+    let (pixels, _) = generated_view(
+        &mut renderer,
+        &rifts,
+        (2.0, 512, corner),
+        &[(land.clone(), "Grass", [0.36, 0.6, 0.22]), fern],
+        (eye(&rifts, corner, [600.0, 600.0], sunk[deepest] + 60.0), 0.0, std::f32::consts::FRAC_PI_2),
+        "blocks rift floor.png",
+    );
+    let teal = (0..WIDTH * HEIGHT)
+        .filter(|at| {
+            let [r, g, b] = rgb_at(&pixels, at % WIDTH, at / WIDTH);
+            g > r + 30 && b > r + 20
+        })
+        .count();
+    assert!(teal > 500, "{teal} pixels of fern on the rift's floor");
+}

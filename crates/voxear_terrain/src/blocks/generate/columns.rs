@@ -69,7 +69,8 @@ pub(super) fn columns_at(
     let slopes: Vec<f32> = match placed.filter(|placed| placed.any_steep()) {
         Some(_) => {
             let beside = |shift: [f32; 2]| {
-                let (xs, zs): (Vec<f32>, Vec<f32>) = xs.iter().zip(zs).map(|(x, z)| (x + shift[0], z + shift[1])).unzip();
+                let (xs, zs): (Vec<f32>, Vec<f32>) =
+                    xs.iter().zip(zs).map(|(x, z)| (x + shift[0], z + shift[1])).unzip();
                 let mut heights = vec![0.0; xs.len()];
                 world.heights(&xs, &zs, &mut heights);
                 heights
@@ -217,9 +218,15 @@ pub fn column_chunks(
     };
     let columns = columns_at(file, world, level, (&xs, &zs, &heights));
     // Ground standing apart from a column's own, an arch or raised land, takes the layers of ground as high
-    // as its top: the cover its own height and climate give it, and not the valley's under it.
+    // as its top: the cover its own height and climate give it, and not the valley's under it. Every span reaching
+    // well over the column's ground counts, not only those whole from foot to top: a tower's edge is as much of it.
     let stood: Vec<(usize, f32)> = match asked && volume.spanned() {
-        true => (0..places.len()).filter_map(|at| Some((at, volume.stands(&carried, at)?))).collect(),
+        true => (0..places.len())
+            .filter_map(|at| {
+                let over = volume.spans(&carried, at).map(|[_, top]| top).filter(|&top| top > heights[at] + 3.0);
+                Some((at, over.reduce(f32::max).or_else(|| volume.stands(&carried, at))?))
+            })
+            .collect(),
         false => Vec::new(),
     };
     let mut raised: Vec<Option<Column>> = Vec::new();
@@ -229,8 +236,10 @@ pub fn column_chunks(
         let made = columns_at(file, world, level, (&pick(&xs), &pick(&zs), &tops));
         raised.resize_with(places.len(), || None);
         for (&(at, _), column) in stood.iter().zip(made) {
-            // Kept apart from the ground's own surface, which its cells are measured from.
-            raised[at] = Some(Column { surface: columns[at].surface, ..column });
+            // Kept apart from the ground's own surface, which its cells are measured from. Its top block over rock:
+            // the ledges of a tower or an island's sides are rock with green on them, not striped with soil.
+            let layers = [column.layers[0], (column.bottom, 0.0)];
+            raised[at] = Some(Column { surface: columns[at].surface, layers, ..column });
         }
     }
     // How far over a column's surface its ground may reach, in blocks.

@@ -53,6 +53,12 @@ Nothing limits how high a generator's ground stands or how far down **Lowest blo
 
 Depth costs little. Rock that nothing is hollowed out of is kept as whole chunks of one block, which are not made a block at a time, take almost no memory and are never drawn. A Cave Network, Arches and Raised Land say how high and how low they reach over each column, so only the cells between are asked about. A chunk column of plain ground takes about 3 ms at 256 blocks tall and 4 ms at 1024; one over three layers of caves about 28 ms and 39 ms. Tunnels, Chambers and Noise 3D can hollow rock at any depth, so with those every block down to Lowest block is asked about: keep such a world shallower.
 
+### Deep ground
+
+Deep does not have to mean underground. A generator can cut chasms hundreds of metres down and leave their floors open to the sky, or roof them over at the land's height with holes where light falls through (see the [[Generator Nodes#Chasms|Chasms]] and [[Generator Nodes#Roof|Roof]] nodes, and the **Rifts** preset). A chasm's floor is the generator's ground: it takes the top block, the under block and the base block like any other column, and plants and structures stand on it. A roof's top takes the blocks of ground as high as it stands, so the land over a cavern looks like the land round it.
+
+A biome can keep to ground that is sunk, by its **Sunk** range: how far under the land round about its ground lies, in metres, as the generator's Output's **Sunk** says. A biome with a Sunk of 40 m to 2000 m covers every chasm and cavern floor at least 40 m down, whatever the climate there, so a forest of ferns can grow at the bottom of a rift in desert country. Where no biome keeps to sunk ground, a chasm's floor is the biome of its climate and height, as anywhere else.
+
 A block can **cover** generated ground in place of its top block, by the ground's climate and height. Under **Build**, pick the block for the brush and tick **Cover**, and its rows show:
 
 | Setting | What it does |

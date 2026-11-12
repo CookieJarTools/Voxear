@@ -692,7 +692,12 @@ fn shattered() -> Starter {
     g.next();
     let rough = g.after(fins, NodeKind::Overhangs(Overhangs { amount: 2.5, size: 14.0, ..Overhangs::default() }));
     let climate = Climate { temperature: 10.0, humidity: 0.75, ..Climate::default() };
-    Starter { name: "Shattered", sea_level: 0.0, graph: with_volume(g.finish(land, climate), rough) }
+    // The blades are bare rock.
+    let mut graph = with_volume(g.finish(land, climate), rough);
+    let output = graph.output().map(|node| node.id);
+    let wired = output.is_some_and(|output| graph.connect(fins, 1, output, Output::ROCK));
+    debug_assert!(wired, "the blades' rock");
+    Starter { name: "Shattered", sea_level: 0.0, graph }
 }
 
 /// Great mountains: ranges of sharp ridges with horns standing far over
@@ -722,12 +727,12 @@ fn great_peaks() -> Starter {
     g.expose(spires, "often", "Spires");
     g.next();
     let islands = RaisedLand {
-        size_from: 30.0,
-        size_to: 120.0,
-        height_from: 120.0,
-        height_to: 380.0,
-        often: 0.25,
-        thickness: 90.0,
+        size_from: 50.0,
+        size_to: 180.0,
+        height_from: 140.0,
+        height_to: 420.0,
+        often: 0.07,
+        thickness: 110.0,
         joined: Joined::Floating,
         seed: 0,
     };

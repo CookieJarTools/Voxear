@@ -1941,6 +1941,18 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     and **Highlands**. Tests: a tall column the blocks it is asked whole; levels and walls; a ramp walked up;
     an arch's opening and top; a window through a ridge with the ridge whole over it; islands clear of the
     ground; both in far tiles. Not built: shelves hanging off cliffs.
+  - ~~**Spires, fins, chasms, roofs and great peaks:**~~ done: **Spires** (towers of rock, tapering, leaning and
+    banded, in clusters), **Fins** (thin tilted blades in rows that run alike across the land), **Chasms** (rifts
+    and sinkholes cut into the ground wired in, sheer or in ledges, with Floor, Walls, Sunk and Rim beside the
+    height), **Roof** (ground laid back over a chasm at its Rim, with holes and pillars, so a chasm becomes a
+    cavern under land like any other) and **Peaks** (ranges of sharp ridges with horns over level land). Spires,
+    fins and roofs say where they stand a column at a time, as raised land does. The Output's **Sunk** lets a
+    biome keep to ground sunk under the land round about (`BiomeDef::sunk`, `WorldGen::sunk`), so a chasm's
+    floor and a cavern's grow their own. Presets **Karst**, **Shattered**, **Great Peaks** and **Rifts**. Tests:
+    spires solid up their cores and open beside; fins thin and leaning their dip; chasms sheer, sunk as deep as
+    cut, kept to a mask; a roof at the land's height with holes open to the floor and pillars to it; peaks with
+    level land between and narrower tops the sharper; a chasm's floor taking the sunk biome under a roof taking
+    the land's; each preset pinned; GPU renders of all four.
 - ~~**Erosion layer:**~~ done: Add Layer ▸ Erosion wears the ground below it on the GPU (`shaders/erosion.slang`,
   `voxear_render::erosion`, `Renderer::erode`), once, in the editor: rain each step, water through pipes to its four
   neighbours sped by the drop and held to what each cell has, its depth and speed, carving where it can carry more

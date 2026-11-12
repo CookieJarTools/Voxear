@@ -22,6 +22,21 @@ Continents, mountain ranges and gullies in one node: all a generator was before 
 
 **Out:** Height.
 
+### Peaks
+
+Great mountains. Ranges of sharp ridges rise from level land, and over them stand summits far higher than the rest, horns with ridges running down from them.
+
+| Row | What it does |
+| --- | --- |
+| Size | How far apart the great summits are, in metres |
+| Height | How high the tallest stand over Base, in metres |
+| Base | The height of the level land between the ranges |
+| Ranges | How much of the land is mountains, 0 to 1 |
+| Sharpness | From rounded summits at 0 to horns and knife-edged ridges at 1 |
+| Ridges | How much the ridges running from a summit stand out against the summit itself, 0 to 1 |
+
+**Out:** Height, Crests (1 along the ridges' crests).
+
 ### Noise
 
 Noise over the ground, from **Low** where it is least to **High** where it is most.
@@ -113,6 +128,27 @@ Under Advanced: **Ramp Slope** (how steep the stairs climb), **Step** (how high 
 A mask wired into **Ramps** keeps the ramps to where it is over a half.
 
 **In:** Ramps. **Out:** Height, Walls (1 on walls and rubble), Floor (1 on the lowest level, clear of the walls).
+
+### Chasms
+
+The ground wired in, cut open by rifts and sinkholes: sheer-walled, hundreds of metres deep if you like, with ground at their floors as open to the sky as any other. A chasm's floor takes its column's layers, its biome, plants and structures as the land over it does.
+
+| Row | What it does |
+| --- | --- |
+| Kind | **Rifts**, long winding cracks that run for kilometres and taper out at their ends; **Sinkholes**, round pits with ragged rims; or **Both** |
+| Size | How far a rift runs before it bends, in metres. Sinkholes are a quarter of that apart |
+| Width From, Width To | How wide a rift or a sinkhole is, in metres |
+| Depth From, Depth To | How far down its floor lies under the ground it cuts, in metres |
+| How Often | How much of the land has one, 0 to 1 |
+| Wall | How steep the walls stand |
+| Ledges | Over 0, the walls cut into shelves every so many metres down |
+| Floor | How high the low hills its floor rolls in are, in metres |
+
+A mask wired into **Mask** keeps the chasms to where it is over a half.
+
+**In:** Ground, Mask. **Out:** Height, Floor (1 on the floors), Walls (1 on the walls and their ledges), Sunk (how far under the ground it cut the ground lies, in metres), Rim (the ground as it was before it was cut).
+
+Wire Sunk into the Output's **Sunk** for biomes that keep to chasm floors, Walls into its **Rock** for bare walls, and Rim into a Roof's **Top** to cover chasms over into caverns.
 
 ### Clamp
 
@@ -251,6 +287,9 @@ Voxel nodes make the ground in three dimensions, for worlds of blocks and voxels
 | Cave Network | Rooms made as prefabs, joined by winding tunnels: without end, or as one bounded level (see [[Caves]]) |
 | Arches | Natural bridges, laid where two high places face one another across low ground |
 | Raised Land | Islands of land standing high over the ground, floating or on a stalk |
+| Spires | Towers of rock standing sheer out of the ground, grown over on top |
+| Fins | Thin tilted blades of rock in rows |
+| Roof | Ground laid back over low ground at a height wired in, so a chasm becomes a cavern under land like any other |
 | Noise 3D | Noise through space |
 | Combine | Two of these made one: Union, Subtract or Smooth |
 
@@ -284,7 +323,61 @@ Islands of ground standing high over the land below, flat on top and tapering un
 
 **In:** Ground. **Out:** Ground.
 
-An arch's top and an island's take the blocks of ground as high as they stand: the cover their own height and climate give them, not the valley's under them. Arches and raised land say where they stand, a column at a time, so a world of blocks asks about no more air than they fill, and they show in the far view. Overhangs after either roughens them. A Volume is read no further than 64 m over the generator's ground but for these two.
+### Spires
+
+Towers of rock standing up out of the ground, from squat stacks to needles many times as tall as they are wide, sheer-sided and grooved where softer layers weathered back, their tops rounded and grown over.
+
+| Row | What it does |
+| --- | --- |
+| Size From, Size To | How wide a spire is at its foot, in metres |
+| Height From, Height To | How high its top stands over the ground at its foot, in metres |
+| Spacing | How far apart the places a spire could stand are, in metres |
+| How Often | How many of those places have one, 0 to 1 |
+| Taper | How much it narrows towards its top, from a column at 0 to a point at 1 |
+| Lean | How far it tips over, each its own way, 0 to 1 |
+| Bands | How far apart the grooves round it are, in metres. 0 for none |
+| Clusters | From scattered alone at 0 to gathered in groups with open ground between at 1 |
+
+**In:** Ground. **Out:** Ground, Footprint (1 over every column a spire stands over).
+
+### Fins
+
+Blades of rock jutting from the ground, thin and tilted, standing in rows as tilted layers of hard rock stand where softer ground round them wore away. Neighbouring rows run the same way, turning slowly across the land, so a field of them reads as one tilted layer.
+
+| Row | What it does |
+| --- | --- |
+| Length From, Length To | How long a fin runs along the ground, in metres |
+| Height From, Height To | How high it stands, in metres |
+| Thickness | How thick it is at its foot, in metres. It thins to an edge along its top |
+| Dip | How far it leans, from upright |
+| Rows | Up to how many stand side by side in a group |
+| Spacing | How far apart the places a group could stand are, in metres |
+| How Often | How many of those places have one, 0 to 1 |
+| Jagged | How much its top is broken into teeth, 0 to 1 |
+
+**In:** Ground. **Out:** Ground, Footprint (1 over every column a fin stands over).
+
+Wire a Footprint into the Output's **Rock** and the fins or spires are bare rock from foot to top. Without it, a spire's top and every ledge on its sides are grown over.
+
+### Roof
+
+Ground laid back over low ground as a lid at the height wired into **Top**. Wire a Chasms node's Rim into it, and the roof's top lies where the land was before the chasm was cut: walking over it the land goes on as it did, until a hole shows the floor far below. A roof is laid only where Top is higher over the ground than the roof is thick, so it meets a chasm's walls where they are shallow and leaves the land round it alone.
+
+| Row | What it does |
+| --- | --- |
+| Thickness | How thick the roof is, in metres |
+| Cover | How much of the low ground is roofed over, 0 to 1, in broad stretches, so some chasms are open and some are caverns |
+| Openings | How much of a roof has fallen in, 0 to 1 |
+| Opening Size | How wide the holes are, in metres |
+| Pillars | How many columns of rock stand from the floor up to the roof, 0 to 1 |
+
+A mask wired into **Mask** keeps the roof to where it is over a half.
+
+**In:** Ground, Top, Mask. **Out:** Ground.
+
+The floor under a roof is the generator's ground, with its own layers, biome, plants and structures: a forest can grow in a cavern, lit through the holes over it.
+
+An arch's top, an island's, a spire's, a fin's and a roof's take the top block of ground as high as they stand: the cover their own height and climate give it, not the valley's under them. Under that top block they are rock, so a tower's ledges and an island's sides are rock with green on them, not striped with soil. These nodes say where they stand, a column at a time, so a world of blocks asks about no more air than they fill, and they show in the far view. Overhangs after them roughens them. A Volume is read no further than 64 m over the generator's ground but for these.
 
 ## Output
 
@@ -292,7 +385,9 @@ What the generator makes. With nothing wired into Height the ground lies at the 
 
 **Rock** takes a mask of where the ground is bare. Where it is over a half, a world of blocks leaves the top and under blocks off the column and shows its base block, so walls and crags are rock and not striped with soil. Wire a Slope Mask into it, or a Plateaus node's Walls.
 
-**In:** Height, Temperature, Humidity, Volume, Rock.
+**Sunk** takes how far under the land round about the ground lies, in metres: a Chasms node's Sunk. A world's biomes can keep to ground sunk so far (see [[Block Worlds#Deep ground|Deep ground]]), so a chasm's floor or a cavern's grows country of its own.
+
+**In:** Height, Temperature, Humidity, Volume, Rock, Sunk.
 
 ## What a node costs
 

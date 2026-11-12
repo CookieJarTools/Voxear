@@ -20,6 +20,9 @@
 //! says, a column at a time, between which heights a spire stands, so a
 //! world of blocks asks about no more air than that, and a far view shows
 //! the spires.
+//!
+//! Its Footprint is 1 over every column a spire stands over: wire it into
+//! the Output's Rock and the spires are bare rock, tops and all.
 
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
@@ -97,7 +100,7 @@ const VALUES: &[ValueSpec] = &[
 
 const INPUTS: &[Port] = &[Port::volume("ground", "Ground")];
 
-const OUTPUTS: &[Port] = &[Port::volume("ground", "Ground")];
+const OUTPUTS: &[Port] = &[Port::volume("ground", "Ground"), Port::field("footprint", "Footprint")];
 
 impl Kind for Spires {
     const TITLE: &'static str = "Spires";
@@ -149,8 +152,13 @@ impl Kind for Spires {
         }
     }
 
-    fn compile(&self, cx: &mut Compiler, _: NodeId, _: usize, _: Places) -> V {
-        cx.constant(0.0)
+    /// Its Footprint: 1 over every column one of its spires stands over.
+    fn compile(&self, cx: &mut Compiler, node: NodeId, _: usize, at: Places) -> V {
+        if self.often <= 0.0 || self.often.is_nan() {
+            return cx.constant(0.0);
+        }
+        let finder = Arc::new(Finder::new(self, seed_for(cx, node, self.seed), cx.own_ground()));
+        cx.run(Over { finder, what: 4 }, &[at.x, at.z])
     }
 
     fn compile_volume(&self, cx: &mut Compiler, node: NodeId, _: usize, at: Cells) -> V {
@@ -371,7 +379,8 @@ impl std::fmt::Debug for Finder {
 /// For each column, from rows of its x and z: with `what` 0 the lowest
 /// foot of a spire reaching it, with 1 the highest it may reach there, and
 /// with 2 how high it is surely solid all the way up from that foot, in
-/// metres up. A top under its foot where none is.
+/// metres up, a top under its foot where none is; with 4, 1 where any spire
+/// reaches the column and 0 where none.
 #[derive(Debug)]
 struct Over {
     finder: Arc<Finder>,
@@ -429,6 +438,7 @@ impl Kernel for Over {
             *out = match self.what {
                 0 => foot,
                 1 => top,
+                4 => f32::from(u8::from(top > foot)),
                 _ if core > foot => core,
                 _ => foot - 1.0,
             };

@@ -3246,7 +3246,12 @@ its rooms' and tunnels' reach, Arches and Raised Land their undersides and tops.
 cells near the surface and within the spans, takes the rest as plain rock or air, and keeps whole chunks of rock
 under everything as one block. Spans where ground stands (`Volume::standing`) are added to far tiles as runs.
 Arches and Raised Land find what they make a region at a time from the generator's own ground program, kept per
-thread, so a chunk made alone holds the same bridge or island as its neighbours.
+thread, so a chunk made alone holds the same bridge or island as its neighbours. Spires and Fins do the same a cell
+at a time, and note two spans a column: all they may reach, read, and where they are whole across the column, which
+the far view shows. A Roof reads its Top and the column's ground once a column, so a cavern's lid is a span and its
+floor is the generator's height, with its own layers. Chasms are a height node: their floors are the ground, and
+what grows there follows from the Output's Sunk, which `WorldGen::sunk` lessens by however much higher the height
+asked about stands (a roof's top over a floor is sunk not at all).
 
 Caves of rooms (`generate::caves`) are the one part of a generator made somewhere other than in its graph: a room
 is a prefab of Cave Shape and Cave Exit Objs, and `voxear_terrain` reads no prefabs. So the Cave Network node keeps

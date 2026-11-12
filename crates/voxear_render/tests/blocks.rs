@@ -484,8 +484,9 @@ fn flowing_water_is_drawn_as_high_as_it_stands_lower_the_further_it_runs() {
 }
 
 /// Grass 4 blocks up, 64 a side, with a pit 24 blocks a side and 3 deep in its middle, its floor sand, full of
-/// water to the grass's top; and the look it is drawn with, the sun high in the west.
-fn pond(renderer: &mut Renderer) -> World {
+/// water to the grass's top, but for a pillar of stone as high as the water in each of the columns `pillars`; and the
+/// look it is drawn with, the sun high in the west.
+fn pond(renderer: &mut Renderer, pillars: &[[i32; 2]]) -> World {
     use voxear_terrain::blocks::{chunk::BlockId, file::BlockKind};
     let mut file = BlockFile::default();
     file.ground.size = [64, 64];
@@ -499,7 +500,7 @@ fn pond(renderer: &mut Renderer) -> World {
         for x in 20..44 {
             blocks.set([x, 0, z], sand);
             for y in 1..4 {
-                blocks.set([x, y, z], water);
+                blocks.set([x, y, z], if pillars.contains(&[x, z]) { 3 } else { water });
             }
         }
     }
@@ -540,7 +541,7 @@ fn pond(renderer: &mut Renderer) -> World {
 #[test]
 fn the_bed_under_water_blocks_is_lit_the_same_with_the_camera_near_the_water_as_far_from_it() {
     let Some(mut renderer) = renderer() else { return };
-    let mut world = pond(&mut renderer);
+    let mut world = pond(&mut renderer, &[]);
     // Straight down onto the pond's middle: from 2.6 m over the water, then from 1.5 m, where the camera is near
     // enough for the water round it to be a body for the view under it.
     let down = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
@@ -562,9 +563,40 @@ fn the_bed_under_water_blocks_is_lit_the_same_with_the_camera_near_the_water_as_
 }
 
 #[test]
+fn water_blocks_look_the_same_inside_the_stretch_of_them_round_the_camera_as_outside_it() {
+    let Some(mut renderer) = renderer() else { return };
+    // Down across the pond from 1.6 m over it. A pillar to the water's top six blocks on ends the stretch of water
+    // round the camera there, so the water past the pillar lies outside it; and with a pillar under the camera too,
+    // out of sight, there is no such stretch at all.
+    let across = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2) * Quat::from_rotation_x(30f32.to_radians());
+    let mut seen = |pillars: &[[i32; 2]], name: &str| {
+        let mut world = pond(&mut renderer, pillars);
+        world.spawn((Camera::default(), Transform::new(Vec3::new(26.5, 5.6, 32.5), across, Vec3::ONE)));
+        let pixels = render(&mut renderer, &world, 12);
+        keep_image(name, &pixels);
+        pixels
+    };
+    let with = seen(&[[32, 32]], "blocks stretch round the camera.png");
+    let without = seen(&[[32, 32], [26, 32]], "blocks no stretch round the camera.png");
+    // The two pictures alike all over, but for a pixel here and there of the sun's glints.
+    let apart = |a: [i32; 3], b: [i32; 3]| (0..3).map(|i| (a[i] - b[i]).abs()).sum::<i32>();
+    let (mut total, mut off, mut count) = (0, 0, 0);
+    for y in (8..HEIGHT - 8).step_by(4) {
+        for x in (8..WIDTH - 8).step_by(4) {
+            let d = apart(rgb_at(&with, x, y), rgb_at(&without, x, y));
+            total += d;
+            off += usize::from(d > 40);
+            count += 1;
+        }
+    }
+    let mean = total as f32 / count as f32;
+    assert!(mean < 6.0 && off * 200 < count, "apart by {mean:.1} a pixel, {off} of {count} by more than 40");
+}
+
+#[test]
 fn a_camera_just_under_water_blocks_sees_air_over_one_level_waterline_and_water_under_it() {
     let Some(mut renderer) = renderer() else { return };
-    let mut world = pond(&mut renderer);
+    let mut world = pond(&mut renderer, &[]);
     // In the pond, 3 cm under its top, looking level along it: the near plane's top is out of the water.
     world.spawn((Camera::default(), Transform::new(Vec3::new(32.0, 3.97, 23.0), Quat::IDENTITY, Vec3::ONE)));
     // Where the near plane, 0.1 m off and 60 degrees tall, crosses the water's top: this far down the picture.

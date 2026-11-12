@@ -340,9 +340,10 @@ pub fn wear(world: &mut World, content: &mut Content, reference: &str) -> Result
     Ok(())
 }
 
-/// The look shader a pack names, among the project's shaders as they were
-/// last read.
-fn look_shader(content: &Content, named: &ShaderData) -> Result<LookShader> {
+/// The look shader a pack names, among the project's shaders, read again
+/// so one just made is there.
+fn look_shader(content: &mut Content, named: &ShaderData) -> Result<LookShader> {
+    content.read_shaders();
     let found: crate::shaders::ShaderRef = match content.parse(&named.shader)?.guid() {
         Some(guid) => crate::shaders::ShaderRef::Asset(guid),
         None => named.shader.parse().map_err(|_| anyhow::anyhow!("`{}` is not a shader", named.shader))?,

@@ -1103,7 +1103,12 @@ that in their place and passes its small cubes on to every world of blocks (`Ext
 worked out again only when the level's lighting or the pack has changed, so wearing one costs a comparison a tick.
 Weather goes over the worn look as it goes over the level's own. Packs are the engine's (`BUILTIN`), the project's
 assets, or files in the player's `Looks` folder beside the saves; the reference of the one chosen is kept in
-`look.txt` there, and `Game::wear_remembered_look` wears it as a game starts.
+`look.txt` there, and `Game::wear_remembered_look` wears it as a game starts. A pack's `[water]` is laid over the sea
+and each Pool of water as they are extracted (`WaterLook`), and over the water of worlds of blocks as one colour in
+the ocean's record. A pack's `[shader]` names a look shader, a `.shader` with a `look` function: the engine writes
+every such shader into `project_look_shaders.slang` behind `customLook` (as it writes UI shaders behind `customUi`),
+the `post` module is compiled with it, and Composite calls it last with the pixel's colour, by the number and the
+values the frame's post settings carry.
 
 **Post-processing.** Built in and on by default as the Voxear Look. See
 [Post-processing and the Voxear Look](#post-processing-and-the-voxear-look) below.

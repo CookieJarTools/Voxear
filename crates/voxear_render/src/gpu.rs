@@ -396,6 +396,8 @@ pub struct GpuFrame {
     /// shaders); and its height, whole, for the sky and fog, which measure
     /// heights from the level's ground.
     pub origin: [f32; 4],
+    /// How rough a world of blocks' sea is, and where (see `sea`).
+    pub sea: crate::sea::GpuSea,
 }
 
 /// How often the origin's x, y and z wrap in `GpuFrame::origin`, in metres:
@@ -1330,7 +1332,7 @@ mod tests {
         assert_eq!(LOCAL_SHADOW_ATLAS, [4096, 3072], "as LOCAL_SHADOW_ATLAS in the shaders");
         assert_eq!(
             size_of::<GpuFrame>(),
-            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi + 32 + 16 * MAX_PUSHERS + 4 * MAX_PUSHERS + 16 + seasons + local_shadows + 336 + tracks + 16
+            64 * 2 + 96 + 16 * 9 + cascades + 64 + 16 * 3 + motion + post + meshlets + lighting + ddgi + 32 + 16 * MAX_PUSHERS + 4 * MAX_PUSHERS + 16 + seasons + local_shadows + 336 + tracks + 16 + size_of::<crate::sea::GpuSea>()
         );
         assert_eq!(size_of::<GpuOcean>(), 336);
         assert_eq!(size_of::<GpuStreamPoint>(), 48);

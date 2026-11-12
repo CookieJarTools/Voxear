@@ -720,6 +720,9 @@ pub fn extract(
     if let Some((zone, rotation)) = zone {
         frame.wind = zone.gpu(rotation);
     }
+    if let Some(sea) = world.resource::<crate::sea::RoughSea>() {
+        frame.sea = sea.gpu();
+    }
     // The first Ocean is the sea, at its Obj's height: as its wind has eased it where the engine runs, or as its wind
     // makes it now.
     let seas = world.query_ref::<(&crate::Ocean, &Transform, Option<&WorldTransform>, Option<&crate::SeaNow>)>().without::<Destroying>();

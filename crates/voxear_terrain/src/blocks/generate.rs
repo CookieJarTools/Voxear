@@ -68,6 +68,15 @@ pub struct BlockGenerate {
     /// in by whoever has the project's files, before ground is made.
     #[serde(skip)]
     pub placed: Option<std::sync::Arc<crate::generate::WorldBiomes>>,
+    /// The structures its generator builds, each a reference to a
+    /// `.structure`, earlier ones first where two would stand together (see
+    /// `blocks::structure`).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub structures: Vec<String>,
+    /// Its structures as read, with their blocks by this world's numbers:
+    /// filled in as `placed` is.
+    #[serde(skip)]
+    pub built: Option<std::sync::Arc<super::structure::WorldStructures>>,
 }
 
 impl Default for BlockGenerate {
@@ -82,6 +91,8 @@ impl Default for BlockGenerate {
             endless: None,
             biomes: Vec::new(),
             placed: None,
+            structures: Vec::new(),
+            built: None,
         }
     }
 }

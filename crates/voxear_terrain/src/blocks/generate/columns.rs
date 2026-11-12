@@ -309,5 +309,17 @@ pub fn column_chunks(
             put(x, y, z, block, fill);
         }
     }
-    (low_key..).zip(chunks).filter_map(|(cy, chunk)| Some(([cx, cy, cz], chunk?))).collect()
+    let mut chunks: Vec<([i32; 3], Chunk)> =
+        (low_key..).zip(chunks).filter_map(|(cy, chunk)| Some(([cx, cy, cz], chunk?))).collect();
+    // What its generator builds on its ground, at its own level alone: far off, structures are too small to see.
+    let built = generate.built.as_deref().filter(|built| !built.list.is_empty());
+    if let Some(built) = built.filter(|_| level == 0) {
+        let biomes = generate.placed.as_deref().map(|placed| &placed.biomes).filter(|biomes| !biomes.is_empty());
+        // Built up under with the world's own under block.
+        let under = file.ground.under;
+        let under = if usize::from(under) <= file.blocks.len() { under } else { AIR };
+        let at = (size, generate.position, generate.bottom);
+        crate::blocks::structure::build(&mut chunks, built, world, biomes, at, [cx, cz], under);
+    }
+    chunks
 }

@@ -35,6 +35,7 @@ pub mod path;
 pub mod plant;
 pub mod sight;
 pub mod smooth;
+pub mod structure;
 pub mod stream;
 pub mod vox;
 

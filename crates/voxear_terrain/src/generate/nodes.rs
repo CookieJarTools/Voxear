@@ -33,6 +33,7 @@ mod landmass;
 mod math;
 mod noise;
 mod output;
+mod plateaus;
 mod slope_mask;
 mod smooth;
 mod terrace;
@@ -63,6 +64,7 @@ pub use landmass::Land;
 pub use math::{Math, Operation};
 pub use noise::Noise;
 pub use output::Output;
+pub use plateaus::Plateaus;
 pub use slope_mask::SlopeMask;
 pub use smooth::Smooth;
 pub use terrace::Terrace;
@@ -316,6 +318,7 @@ pub enum NodeKind {
     Cells(Cellular),
     Falloff(Falloff),
     Terrace(Terrace),
+    Plateaus(Plateaus),
     Clamp(Clamp),
     Blend(Blend),
     Warp(Bend),
@@ -352,6 +355,7 @@ macro_rules! each_kind {
             NodeKind::Cells($kind) => $do,
             NodeKind::Falloff($kind) => $do,
             NodeKind::Terrace($kind) => $do,
+            NodeKind::Plateaus($kind) => $do,
             NodeKind::Clamp($kind) => $do,
             NodeKind::Blend($kind) => $do,
             NodeKind::Warp($kind) => $do,
@@ -388,6 +392,7 @@ impl NodeKind {
             NodeKind::Constant(Constant::default()),
             NodeKind::Curve(Remap::default()),
             NodeKind::Terrace(Terrace::default()),
+            NodeKind::Plateaus(Plateaus::default()),
             NodeKind::Clamp(Clamp::default()),
             NodeKind::Math(Math::default()),
             NodeKind::Blend(Blend::default()),

@@ -18,7 +18,7 @@ use super::{
     landmass::Climate,
     nodes::{
         Bend, Blend, CaveNetwork, Cellular, Clamp, Combine, Combining, Constant, Gullies, HeightMask, Laid, Math,
-        NodeKind, Noise, Operation, Output, Remap, Solid, Terrace,
+        NodeKind, Noise, Operation, Output, Plateaus, Remap, Solid, Terrace,
     },
     world::WorldGen,
 };
@@ -80,7 +80,16 @@ impl Starter {
 
 /// The graphs a generator can start from, in the order a list shows them.
 pub fn starters() -> Vec<Starter> {
-    vec![battlefield_plains(), rolling_hills(), alpine(), archipelago(), canyons(), caves(), cave_level()]
+    vec![
+        battlefield_plains(),
+        rolling_hills(),
+        alpine(),
+        archipelago(),
+        canyons(),
+        caves(),
+        mesas(),
+        cave_level(),
+    ]
 }
 
 impl WorldGen {
@@ -460,6 +469,35 @@ fn caves() -> Starter {
     let wired = output.is_some_and(|output| graph.connect(cut, 0, output, Output::VOLUME));
     debug_assert!(wired, "the caves' Volume");
     Starter { name: "Caves", sea_level: 0.0, graph }
+}
+
+/// Wide flat-topped tablelands at several heights, hundreds of metres over
+/// valley floors of their own, with sheer walls between, stairs of broad
+/// steps from level to level here and there, and a river's bed winding
+/// along the floors.
+fn mesas() -> Starter {
+    let mut g = Layout::new();
+    let land = Plateaus {
+        size: 900.0,
+        levels: 5,
+        low: 0.0,
+        high: 260.0,
+        wall: 6.0,
+        ramps: 0.4,
+        talus: 10.0,
+        valleys: 0.4,
+        river: 4.0,
+        ..Plateaus::default()
+    };
+    let land = g.add(NodeKind::Plateaus(land));
+    g.expose(land, "high", "Height");
+    g.expose(land, "levels", "Levels");
+    g.expose(land, "ramps", "Ramps");
+    let roll = g.noise(Fractal, 110.0, 2, -1.2, 1.2);
+    g.next();
+    let ground = g.math(Add, land, roll);
+    let climate = Climate { temperature: 20.0, humidity: 0.5, ..Climate::default() };
+    Starter { name: "Mesas", sea_level: -1.6, graph: g.finish(ground, climate) }
 }
 
 /// Solid rock with one bounded cave in it: a main path of rooms with side

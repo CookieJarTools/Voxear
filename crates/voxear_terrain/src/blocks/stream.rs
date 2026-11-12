@@ -68,8 +68,11 @@ pub struct BlockMaking {
 }
 
 impl BlockMaking {
+    /// Whether `other` makes what this made: the same ground from the same
+    /// generator, every block this drew drawn the same. Faces more at the
+    /// end, as of blocks the world came to hold since, change nothing made.
     fn same(&self, other: &BlockMaking) -> bool {
-        self.file == other.file && Arc::ptr_eq(&self.world, &other.world)
+        self.file == other.file && Arc::ptr_eq(&self.world, &other.world) && other.faces.starts_with(&self.faces)
     }
 }
 
@@ -246,10 +249,12 @@ impl BlockStreamer {
             self.making = Some(Arc::new(making));
             changed = true;
         } else if self.making.as_ref().is_some_and(|kept| kept.faces != making.faces) {
-            // Its faces alone are others, as once a game numbers a block its file does not list: faces are made
-            // with them from here on, and nothing made is made again. A column's faces being made now with those
-            // before are right for its blocks as they were, and are made again if its blocks change.
+            // It has faces more, as once it holds a block it had not held: faces are made with them from here on,
+            // and nothing made is made again. A column's faces being made now with those before are right for its
+            // blocks as they were, and are made again if its blocks change.
+            world.faces = making.faces.clone();
             self.making = Some(Arc::new(making));
+            changed = true;
         }
         let making = self.making.clone().expect("kept above");
         let windows = windows(&making.file, distance, far, camera);
@@ -951,13 +956,21 @@ mod tests {
         settle(&mut streamer, &mut world, (&mut base, &mut pending), &making, [10.0, 10.0]);
         let (number, chunks) = (streamer.number, world.blocks.chunks().count());
         assert!(chunks > 0);
-        // A block more than its file lists, numbered while the game runs: its faces at the end of the world's.
+        // A block the world had not held, numbered since: its faces at the end of the world's.
         let mut faces = making.faces.to_vec();
         faces.push(crate::blocks::BlockFaces::water(0));
         let grown = BlockMaking { faces: faces.into(), ..making.clone() };
         streamer.update(&mut world, &mut base, &mut pending, grown.clone(), (100.0, 600.0), [10.0, 10.0]);
         assert_eq!((streamer.number, world.blocks.chunks().count()), (number, chunks), "nothing started again");
         assert_eq!(streamer.making.as_ref().map(|kept| kept.faces.len()), Some(grown.faces.len()));
+        assert_eq!(world.faces.len(), grown.faces.len(), "the world builds with them from here on");
+        // A block it draws drawn another way is no face more: what was made is made again.
+        let mut faces = grown.faces.to_vec();
+        faces[1] = crate::blocks::BlockFaces::water(0);
+        let redrawn = BlockMaking { faces: faces.into(), ..grown.clone() };
+        streamer.update(&mut world, &mut base, &mut pending, redrawn, (100.0, 600.0), [10.0, 10.0]);
+        assert_ne!(streamer.number, number, "started again");
+        let number = streamer.number;
         // A file that is another starts it again, as before.
         let mut other = grown.clone();
         other.file.ground.under_depth += 1;

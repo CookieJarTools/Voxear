@@ -9,16 +9,18 @@
 //! them in the game's content as the asset's, and saving the level writes
 //! each changed asset's files ([`save`]).
 //!
-//! A world's file lists its blocks, most of them `.block` assets by
-//! reference. How its faces are drawn comes from the file with each such
-//! entry given its block's look ([`resolved`]), and a block saved since is
-//! taken up by every world listing it ([`refresh`]).
+//! A world can hold any block of the project, and numbers a block the
+//! first time it holds one ([`block_number`]): its file keeps that
+//! numbering, its palette, which only ever grows, so no number changes. How
+//! its faces are drawn comes from its file with each entry naming a block
+//! given that block's look ([`resolved`]), and a block saved since is taken
+//! up by every world holding it ([`refresh`]).
 //!
-//! While a game runs, a script may put down a block a world does not list.
-//! The world numbers it then, after those its file lists
-//! ([`block_number`]): in the game alone, never in its file. Such a number
-//! is this machine's own, so what scripts changed is kept with which block
-//! each is (`voxear_scripting::blocks`).
+//! The editor's world keeps what it numbers in its asset, saved with the
+//! level. A game's world numbers a block a script puts down the same way,
+//! but nothing writes its file: such a number is that machine's own, so
+//! what scripts changed is kept with which block each is
+//! (`voxear_scripting::blocks`).
 
 use std::path::Path;
 
@@ -53,33 +55,16 @@ pub struct BlockWorldAsset {
     /// For a world without end, the changes kept for its chunks not made
     /// now (see `voxear_terrain::blocks::stream`).
     pub pending: Arc<BlockEdits>,
-    /// The blocks it numbered while the game ran, which its file does not
-    /// list: numbered on from its file's, in this order (see
-    /// [`block_number`]). None in the editor's own world.
-    pub grown: Vec<AssetGuid>,
-    /// Its file with each block it lists given that block's look, and
-    /// those it numbered since after them (see [`resolved`]), as its
-    /// world's faces and look were made from it, and the blocks' version
-    /// that was at: how things are kept, and no part of what it is.
-    /// [`refresh`] makes it anew once a block was saved since.
+    /// How many blocks its file had numbered as it was read. One numbered
+    /// since by a game is numbered on this machine alone (see
+    /// [`blocks_numbered_since`]).
+    pub from_file: usize,
+    /// Its file with each block it holds given that block's look (see
+    /// [`resolved`]), as its world's faces and look were made from it, and
+    /// the blocks' version that was at: how things are kept, and no part of
+    /// what it is. [`refresh`] makes it anew once a block was saved since.
     pub drawn: Arc<Resolved>,
     pub derived: u64,
-}
-
-impl BlockWorldAsset {
-    /// The number of the first block it numbered while the game ran: one
-    /// past its file's.
-    pub fn first_grown(&self) -> usize {
-        self.file.blocks.len() + 1
-    }
-
-    /// Its file as it is drawn, without the blocks numbered while the game
-    /// ran: what its ground is made from.
-    pub fn listed(&self) -> BlockFile {
-        let mut file = (**self.drawn).clone();
-        file.blocks.truncate(self.file.blocks.len());
-        file
-    }
 }
 
 impl Component for BlockWorldAsset {}
@@ -139,12 +124,10 @@ impl Resolved {
 }
 
 /// `file` with each entry naming a block drawn as the block says and
-/// called as its file is, and after its own entries one for each block in
-/// `grown`. One whose block cannot be found is drawn in a colour loud
-/// enough to see.
-pub fn resolved(content: &mut Content, file: &BlockFile, grown: &[AssetGuid]) -> Resolved {
+/// called as its file is. One whose block cannot be found is drawn in a
+/// colour loud enough to see.
+pub fn resolved(content: &mut Content, file: &BlockFile) -> Resolved {
     let mut file = file.clone();
-    file.blocks.extend(grown.iter().map(|guid| BlockKind::of(&guid.to_string())));
     let mut guids = Vec::with_capacity(file.blocks.len());
     for kind in &mut file.blocks {
         let Some(reference) = kind.block.clone().filter(|_| kind.is_live()) else {
@@ -167,11 +150,34 @@ pub fn resolved(content: &mut Content, file: &BlockFile, grown: &[AssetGuid]) ->
     Resolved { file, guids }
 }
 
+/// `file` with the block at `guid` numbered after those it has, and that
+/// file as it is drawn: none where the world can number no more, or draw no
+/// more ways than it does (see `MAX_LOOKS`).
+pub fn with_block(content: &mut Content, file: &BlockFile, guid: AssetGuid) -> Option<(BlockFile, Resolved)> {
+    if file.blocks.len() >= MAX_BLOCKS {
+        return None;
+    }
+    let mut file = file.clone();
+    file.blocks.push(BlockKind::of(&guid.to_string()));
+    let drawn = resolved(content, &file);
+    (drawn.looks() <= MAX_LOOKS).then_some((file, drawn))
+}
+
+/// Says, once for each world, that the world of blocks at `world` has no
+/// room for the block at `block`.
+pub fn say_full(content: &mut Content, world: AssetGuid, block: AssetGuid) {
+    if !content.block_world_full(world) {
+        return;
+    }
+    let path = |guid| content.db().get(guid).map_or_else(|| guid.to_string(), |entry| entry.path.clone());
+    let block = content.block_name(block).unwrap_or_else(|| path(block));
+    tracing::warn!("{} is full: a world draws {MAX_LOOKS} looks at most. {block} was not added.", path(world));
+}
+
 /// The number of the block `reference` names in the world of blocks on
-/// `entity`: one its file lists, one it numbered before, or, with `grow`,
-/// the next number after those, which is the block's from now on in this
-/// game. None where there is no such block, the world is not an asset's,
-/// or it can draw no more.
+/// `entity`: the one it has, or, with `grow`, the next after those it has
+/// numbered, which is the block's from now on. None where there is no such
+/// block, the world is not an asset's, or it can draw no more.
 pub fn block_number(
     world: &mut World,
     content: &mut Content,
@@ -187,20 +193,16 @@ pub fn block_number(
     if !grow {
         return None;
     }
-    if asset.drawn.blocks.len() >= MAX_BLOCKS || asset.drawn.looks() + 3 > MAX_LOOKS {
-        let most = MAX_LOOKS;
-        tracing::warn!(target: "script", "A world of blocks draws its faces {most} ways at most: no room for a block");
+    let Some((file, drawn)) = with_block(content, &asset.file, guid) else {
+        say_full(content, asset.guid, guid);
         return None;
-    }
-    let mut asset = asset.clone();
-    asset.grown.push(guid);
-    asset.drawn = Arc::new(resolved(content, &asset.file, &asset.grown));
+    };
     // Its faces take the new block's on at their end, so nothing made is made again; its look is taken up by
     // `refresh`, which has the renderer.
-    asset.derived = u64::MAX;
-    let (_, faces) = asset.drawn.faces();
+    let (_, faces) = drawn.faces();
+    let number = file.blocks.len() as BlockId;
+    let asset = BlockWorldAsset { file, drawn: Arc::new(drawn), derived: u64::MAX, ..asset.clone() };
     world.get_mut::<BlockWorld>(entity)?.faces = faces.into();
-    let number = asset.drawn.blocks.len() as BlockId;
     world.insert(entity, asset);
     Some(number)
 }
@@ -212,18 +214,27 @@ pub fn block_guid(world: &World, entity: voxear_ecs::Entity, block: BlockId) -> 
     Some(world.get::<BlockWorldAsset>(entity)?.drawn.guid(block)?.to_string())
 }
 
-/// The blocks the world of blocks on `entity` numbered while the game ran,
-/// each with its number.
-pub fn blocks_grown(world: &World, entity: voxear_ecs::Entity) -> Vec<(BlockId, String)> {
+/// The blocks the world of blocks on `entity` numbered since its file was
+/// read, each with its number: those whose numbers are this machine's own
+/// in a game.
+pub fn blocks_numbered_since(world: &World, entity: voxear_ecs::Entity) -> Vec<(BlockId, String)> {
     let Some(asset) = world.get::<BlockWorldAsset>(entity) else { return Vec::new() };
-    let first = asset.first_grown();
-    asset.grown.iter().enumerate().map(|(at, guid)| ((first + at) as BlockId, guid.to_string())).collect()
+    let since = asset.from_file + 1..=asset.drawn.blocks.len();
+    since.filter_map(|at| Some((at as BlockId, asset.drawn.guid(at as BlockId)?.to_string()))).collect()
 }
 
 /// Whether `block` is the number of a block in the world of blocks on
 /// `entity`: any number in a world that is no asset's.
 pub fn block_listed(world: &World, entity: voxear_ecs::Entity, block: BlockId) -> bool {
     world.get::<BlockWorldAsset>(entity).is_none_or(|asset| asset.drawn.lists(block))
+}
+
+/// Every block of the project, by its GUID, in the order of their paths.
+pub fn every_block(content: &Content) -> Vec<String> {
+    let blocks = content.db().entries().filter(|entry| entry.kind == voxear_assets::AssetKind::Block);
+    let mut found: Vec<_> = blocks.collect();
+    found.sort_by(|a, b| a.path.cmp(&b.path));
+    found.into_iter().map(|entry| entry.guid.to_string()).collect()
 }
 
 /// What the block `reference` names says, for scripts, as JSON: its GUID,
@@ -265,7 +276,7 @@ pub fn refresh(world: &mut World, content: &mut Content, mut renderer: Option<&m
         .map(|(entity, asset)| (entity, asset.clone()))
         .collect();
     for (entity, asset) in stale {
-        let file = Arc::new(resolved(content, &asset.file, &asset.grown));
+        let file = Arc::new(resolved(content, &asset.file));
         let endless = file.generate.as_ref().is_some_and(|generate| generate.endless.is_some());
         let (_, faces) = file.faces();
         let remade = world
@@ -391,11 +402,11 @@ pub fn stream(world: &mut World, content: &mut Content) {
         let Some(generate) = asset.file.generate.clone() else { continue };
         let Some(far) = generate.endless else { continue };
         let Some(generator) = generator(content, &asset.file) else { continue };
-        // Its file as its blocks are now, so a block saved since makes it anew; a block numbered while the game
-        // runs changes its faces alone, and nothing made is made again.
+        // Its file as its blocks are now, so a block saved since makes it anew; a block it comes to hold changes
+        // its faces alone, and nothing made is made again.
         let (_, faces) = asset.drawn.faces();
         let making = voxear_terrain::blocks::stream::BlockMaking {
-            file: asset.listed(),
+            file: asset.drawn.for_ground(),
             generate,
             world: generator,
             faces: faces.into(),

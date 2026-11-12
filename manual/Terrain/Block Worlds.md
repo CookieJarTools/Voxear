@@ -2,13 +2,13 @@
 order: 17
 ---
 
-A **Block World** is ground made of blocks: a cube each, of the [[Blocks|blocks]] its world lists, grass, dirt, stone or anything you make, from big blocks to build with down to small ones to sculpt with. It reaches from its Obj's position along +X, +Y and +Z, and only the Obj's position places it.
+A **Block World** is ground made of blocks: a cube each, of any of the project's [[Blocks|blocks]], grass, dirt, stone or anything you make, from big blocks to build with down to small ones to sculpt with. It reaches from its Obj's position along +X, +Y and +Z, and only the Obj's position places it.
 
 ## Making a world of blocks
 
-Select an Obj and pick **Add Component ▸ Terrain ▸ Block World**. It starts as flat ground 64 blocks a side and 8 up, grass over three layers of dirt over stone, on a new asset of its own in the project's **Blocks** folder, named for its Obj: `Blocks/Ground.blockworld`. Its grass, dirt and stone are the project's blocks of those names, `Blocks/Grass.block` and the rest, made the first time a world wants them. Every Block World that picks the same asset has the same blocks.
+Select an Obj and pick **Add Component ▸ Terrain ▸ Block World**. It starts as flat ground 64 blocks a side and 8 up, grass over three layers of dirt over stone, on a new asset of its own in the project's **Blocks** folder, named for its Obj: `Blocks/Ground.blockworld`. Its grass, dirt and stone are the project's blocks of those names, `Blocks/Grass.block` and the rest, made the first time a world wants them, and its brush starts with the grass. Every Block World that picks the same asset has the same blocks.
 
-Along the top of the Block World in the Inspector are its tools: **Build**, the blocks it lists and the brush that builds with them, and **Settings**:
+Along the top of the Block World in the Inspector are its tools: **Build**, the brush and the block it builds with, and **Settings**:
 
 | Setting | What it does |
 | --- | --- |
@@ -18,13 +18,13 @@ Along the top of the Block World in the Inspector are its tools: **Build**, the 
 | Ground | **Flat**, or **Generated** by a world generator (see below) |
 | Ground size | How many blocks its ground reaches along X and Z |
 | Ground height | With flat ground, how many blocks high it is |
-| Top block, Under block, Base block | The blocks its ground is made of, of those it lists: its top, the layers under that, and the rest |
+| Top block, Under block, Base block | The blocks its ground is made of, each picked from the project's blocks: its top, the layers under that, and the rest. None for air |
 | Under depth | How many layers of the under block there are |
 | Cast shadows | Whether its blocks cast the sun's shadows |
 
 A change to its ground makes its blocks again at once, what you built on it kept. Each change is one step to undo, and is written to the asset when you save the level.
 
-Changing **Block size** keeps the world as it is in metres and makes it again from blocks of the new size. Its ground stays as wide, as high and as deep, so the rows counted in blocks (Ground size, Ground height, Under depth, Lowest block, a kind's cover Depth) are counted again: halve the block size and each doubles. What you built stays where it was: a wall a metre thick is two blocks thick at half the size, and in a Voxel Terrain the ground's surface stays where it lay. Going to larger blocks loses what was finer than they are. A block is 0.1 m a side at the smallest and 10 m at the largest, and flat ground is at most 4096 blocks a side, which can keep its blocks larger still. Dragging a number by its label, as Block size or Ground size, shows the number as you drag and makes the world again once you let go. A large world, such as one of small blocks, is made again in the background: the Inspector shows the new numbers at once, and the Scene view shows the world as it was until the new one is ready, after a second or two. Undo takes it back in one step; undoing before it is ready lets the change go.
+Changing **Block size** keeps the world as it is in metres and makes it again from blocks of the new size. Its ground stays as wide, as high and as deep, so the rows counted in blocks (Ground size, Ground height, Under depth, Lowest block, a block's cover Depth) are counted again: halve the block size and each doubles. What you built stays where it was: a wall a metre thick is two blocks thick at half the size, and in a Voxel Terrain the ground's surface stays where it lay. Going to larger blocks loses what was finer than they are. A block is 0.1 m a side at the smallest and 10 m at the largest, and flat ground is at most 4096 blocks a side, which can keep its blocks larger still. Dragging a number by its label, as Block size or Ground size, shows the number as you drag and makes the world again once you let go. A large world, such as one of small blocks, is made again in the background: the Inspector shows the new numbers at once, and the Scene view shows the world as it was until the new one is ready, after a second or two. Undo takes it back in one step; undoing before it is ready lets the change go.
 
 Its blocks are made from its ground as it loads, the same on every machine. What you built since is kept beside the `.blockworld` in a `.blocks` file of the same name, holding only the chunks you changed, each as its changed blocks one by one while they are few, or whole once that is smaller: a house on a field takes a few hundred bytes. Keep the two together when you move or copy them. A built game ships both.
 
@@ -39,7 +39,7 @@ With **Ground** set to **Generated**, a [[Generating Terrain|world generator]] m
 | Lowest block | How far down its ground goes, in blocks from its corner: below that is air |
 | Overhangs | How far its steep ground is pushed in and out, in metres, so cliffs lean, bulge and overhang |
 | Caves | How much of the ground below is hollowed out, from 0 for none to 1: long tunnels, and chambers here and there |
-| Sea block | The block the air below the generator's sea level is filled with, one that is [[Block Worlds#Water|water]]; Air for none |
+| Sea block | The block the air below the generator's sea level is filled with, one that is [[Block Worlds#Water|water]]; None for none |
 
 Overhangs push cliffs and leave hillsides alone: ground steeper than about 30° is pushed a little, and ground steeper than about 45° by the whole amount. The bulges are about 14 m across, so the ground hangs over open air once Overhangs is 9 m or so; under that, cliffs lean and bulge. The far rings of a world without end, whose blocks are too large to hold a bulge, are left unpushed.
 
@@ -47,7 +47,7 @@ The ground's layers follow the pushed ground. The top block is whatever has open
 
 Caves keep three blocks under the surface whole, so they open onto it only where a slope cuts into them. The sea fills only the open air over the ground: caves under it stay dry.
 
-A block the world lists can **cover** generated ground in place of its top block, by the ground's climate and height. Under **Build**, pick the block and tick its **Cover**, and its rows show:
+A block can **cover** generated ground in place of its top block, by the ground's climate and height. Under **Build**, pick the block for the brush and tick **Cover**, and its rows show:
 
 | Setting | What it does |
 | --- | --- |
@@ -57,7 +57,7 @@ A block the world lists can **cover** generated ground in place of its top block
 | Height, Heights | Covers only between two heights in the generator's world, in metres |
 | Depth | How many blocks deep it lies |
 
-Snow covering where it is below freezing, sand where it is hot and dry and low, gravel on the tops: blocks later in the list cover those before them. A cover is the world's, not the block's: the same snow can cover one world's peaks and none of another's. A change to the generator makes the ground again, with what you built on it kept.
+Snow covering where it is below freezing, sand where it is hot and dry and low, gravel on the tops. Where two blocks would cover the same ground, the one the world came to hold later lies on top. A cover is the world's, not the block's: the same snow can cover one world's peaks and none of another's. A change to the generator makes the ground again, with what you built on it kept.
 
 ### Overhangs and caves in the generator
 
@@ -136,36 +136,21 @@ World.ViewDistance = 96f;
 
 `World.Threads`, `World.ColumnsAtOnce`, `World.UploadMegabytes`, `World.ViewDistance` and `World.FarDistance` read and set the numbers, and setting one makes `World.Quality` Custom. What a script sets is not written to the project: keep the player's choice with the game's own settings, and set it again as the game starts.
 
-## The world's blocks
+## The blocks a world holds
 
-Under **Build**, the blocks the world is made of are listed, each with its colour and its number. A click picks the one the brush builds with.
+A world can hold any [[Blocks|block]] of the project, with nothing to set up. Pick one for the brush, for the ground or for the sea, and build.
 
-Most are [[Blocks|blocks]]: `.block` assets, each with its look and its rules in a file of its own, which every world listing it shares.
+The first time a world holds a block, it gives the block a number, and it keeps that numbering in its `.blockworld` file. You never see it and never edit it. A number is given once and never changes, so nothing you built changes as the project gains blocks or loses them.
 
-| Button | What it does |
-| --- | --- |
-| Add Block | Lists a block of the project, picked from them all. A `.block` dragged onto the list from the Project panel is listed too |
-| New Block | Makes a block of a colour of its own in the project's **Blocks** folder, and lists it |
-| Add Color | Adds a kind of the world's own: a name and a colour, kept in the world's file. Models of small blocks bring their colours this way |
-| Make Block Assets | Shows while the world keeps kinds of its own that are more than a model's colours, as worlds made before blocks were assets do: makes a block of each, and lists it in the kind's place |
+A world draws its faces 256 ways at most: a way for each colour or material a face is drawn with, so a plain block takes one and a block with a top and a bottom of its own takes three. A world with no room left says so once in the Console, and the block is not placed.
 
-Under the list, the picked block shows:
+A block deleted from the project while a world holds it is drawn bright pink in that world, so it is easy to find. The [[Blocks#The Blocks panel|Blocks panel]] says which worlds hold a block before it deletes one.
 
-| Setting | What it does |
-| --- | --- |
-| Block | The `.block` it is. Pick another and every block of its number is that one. Double-click it to open the block itself, for its rules |
-| Water | Whether it is [[Block Worlds#Water|water]] |
-| Color | Its colour, where a face has no material; for water, the water's own |
-| Material, Top, Bottom | The materials its faces are drawn with |
-| Cover | With generated ground, where it covers the ground in place of its top block |
+### Worlds made before blocks were assets
 
-A block's water, colour and materials are the block's own. Changed here, they are written to its file at once and change it in every world that lists it, and they are no step to undo. A kind of the world's own has a **Name** in place of Block, and its changes are the world's, undone like any other.
+An older world kept its kinds of block in its own file. When such a world opens in the editor, each kind you made by hand becomes a block, named after the kind, in a **Blocks** folder beside the world, and the Console says how many. The world then holds those blocks by the numbers its kinds had, and its file is written at once. Nothing built changes, and it is drawn as it was.
 
-### A block's number never changes
-
-A block's number is its place in the world's list, from 1, and what the world's blocks are kept by. A block's cross takes it out of the list, its blocks with it. Its place stays, empty, so every other block keeps its number, and the next block added takes a new one. The list has no order to change. Each change to the list is one step to undo.
-
-A world made before blocks were assets keeps loading exactly as it was, kinds and all, until you choose **Make Block Assets**. Nothing built changes when you do: each block keeps its number.
+A game loads an older world as it is, without the editor, and draws it the same.
 
 ## Water
 
@@ -197,15 +182,18 @@ With **Build** showing, the brush works in the Scene view over the selected worl
 | --- | --- |
 | Brush | **Place** puts the picked block against the face under the pointer; **Break** takes the block there away; **Paint** turns it into the picked block; **Model** builds a model of blocks (see below) |
 | Size | How many blocks across it reaches: 1 for a block at a time, more for a ball of them |
+| Block | The block it builds with, picked from all the project's blocks. The ones you built with last come first |
 | Model | With the Model brush, the `.vox` model it builds |
 
-Click to build once; drag to go on, the brush working again as the pointer moves on by half its size. A brush that builds reaches through water to the ground under it, and what it places takes the water's place; with water itself picked, or breaking, it meets the water. Hold **Shift** to break while placing, and to place while breaking. Each stroke is one step to undo. The brushes work while playing too, on the world selected: what you build there goes when play stops, as everything played does.
+A block double-clicked in the [[Blocks#The Blocks panel|Blocks panel]], or dragged from it onto **Block**, is picked too.
+
+Click to build once; drag to go on, the brush working again as the pointer moves on by half its size. A brush that builds reaches through water to the ground under it, and what it places takes the water's place; with water itself picked, or breaking, it meets the water. Hold **Shift** to break while placing, and to place while breaking. Each stroke is one step to undo, the number a world gave a new block with it. The brushes work while playing too, on the world selected: what you build there goes when play stops, as everything played does.
 
 ## Models of small blocks
 
 A **Block Model** is a `.vox` file, as voxel sculpting tools save them: a model of coloured blocks, or a scene of several placed together. Put one in the project like any other asset. With the brush on **Model**, its **Model** row picks one, its outline shows where it would stand, and a click builds it standing on the face under the pointer, its middle over the block clicked. Up in the file is up in the world, and each model of a scene stands where the scene puts it.
 
-Each of its colours builds with a kind of the world's own of that colour: one the world has already, or a new one added at the end of the list. Colours stay the world's, so a model of two hundred colours is not two hundred files. A world draws its faces 256 ways at most, a way for each colour or material; once it has no room for more, a colour builds with the nearest one there is. A click builds the model once, and is one step to undo, the kinds it added with it.
+Each of its colours builds with a colour of the world's own: one the world has already, or a new one. A model's colours are kept in the world's file with its numbering, out of sight, and are no blocks of the project, so a model of two hundred colours is not two hundred files. Once the world has no room for more ways to draw a face, a colour builds with the nearest one there is. A click builds the model once, and is one step to undo, the colours it added with it.
 
 For a world of small coloured blocks to sculpt with, make **Block size** small before you build: at 0.1 m, a model 32 blocks high stands about three metres tall.
 
@@ -239,6 +227,7 @@ Blocks.Break(impact, 2f);
 
 | Call | What it does |
 | --- | --- |
+| `Blocks.All` | Every block of the project |
 | `Blocks.DefinitionAt(position)` | The block at a point; `Block.None` for air |
 | `Blocks.Raycast(origin, direction, out hit, maxDistance)` | The first block a ray meets: its Obj, point, face, the block's middle, and `hit.Definition`, the block it is |
 | `Blocks.Set(position, block)` | Sets one block |
@@ -249,13 +238,13 @@ Blocks.Break(impact, 2f);
 
 A ray passes through water to what lies behind it, as a hand reaching into a pond does, and a block placed where water is takes the water's place. Pass `liquids: true` to **Blocks.Raycast** to meet the water instead, as a bucket does.
 
-A block the world does not list can be placed all the same: the world numbers it then, for as long as the game runs, and never in its file.
+Any block of the project can be placed in any world: one that has not held it numbers it then. A game writes no world's file, so that number lasts as long as the game runs.
 
 Breaking by a block's rules, how long it takes with a tool, what it drops, and items that place blocks are in [[Blocks and Items from Scripts]].
 
 ### Blocks by number
 
-Every call also takes a block's number in its world's list, from 1, with 0 for air: `Blocks.At(position)`, `hit.Block`, `Blocks.Set(position, 3)`. A number is one world's own. For a block the world numbered while the game ran, it is this machine's own too, so over the network send the `Block`, or the item that places it, never its number.
+Every call also takes a block's number in its world, from 1, with 0 for air: `Blocks.At(position)`, `hit.Block`, `Blocks.Set(position, 3)`. A number is one world's own. For a block the world first held while the game ran, it is this machine's own too, so over the network send the `Block`, or the item that places it, never its number.
 
 Physics and drawing follow a change at once: only the chunks it changed are made again, and those beside them whose faces it meets. A save of the scene keeps what scripts changed, as only what differs from the world as its level built it, and `Blocks.CaptureEdits` and `Blocks.ApplyEdits` give the same bytes to a player joining a game. The bytes say which block each number given in play is, so they read in a game that numbered its blocks another way.
 

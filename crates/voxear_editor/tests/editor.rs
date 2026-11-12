@@ -1517,8 +1517,9 @@ fn the_command_palette_finds_and_runs_things() {
     editor.ui.focus(field);
     editor.ui.text_input("tool");
     frame(&mut editor, &mut renderer);
+    // The four tools lead, with the manual's page on tool kinds among them.
     let results = palette_results(&editor.ui);
-    assert!(results.iter().take(4).all(|r| r.ends_with("tool")), "{results:?}");
+    assert_eq!(results.iter().take(5).filter(|r| r.ends_with("tool")).count(), 4, "{results:?}");
     let list = editor.ui.find(root, "palette-list").unwrap();
     let rotate = results.iter().position(|r| r == "Rotate tool").unwrap();
     let mut rows: Vec<NodeId> = editor

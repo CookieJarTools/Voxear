@@ -1,8 +1,8 @@
 //! Scripts and blocks' rules: a behaviour reads what a block says, mines
 //! blocks by hand and with a tool for what they drop, takes the time a
-//! block takes, puts down a block its world does not list, reaches through
-//! water and takes it up in a bucket, and puts its changes back from their
-//! bytes. Builds a copy of Hello with a world of blocks, blocks and items
+//! block takes, lists every block of the project, puts down a block its
+//! world has not held, reaches through water and takes it up in a bucket,
+//! and puts its changes back from their bytes. Builds a copy of Hello with a world of blocks, blocks and items
 //! added; skips itself without .NET and the managed build. A test of its
 //! own, as the .NET runtime starts once in a process.
 
@@ -10,7 +10,8 @@ use voxear_core::logging::LogCapture;
 use voxear_engine::{Engine, Game, Project, scripts};
 use voxear_terrain::blocks::file::BlockFile;
 
-const MINER: &str = r#"using System.Numerics;
+const MINER: &str = r#"using System.Linq;
+using System.Numerics;
 using Voxear;
 
 namespace Hello;
@@ -51,6 +52,7 @@ public sealed class Miner : Behaviour
 	{
 		var stone = Block.Load("Blocks/Stone.block");
 		var pick = Definition.Load<Item>("Items/Pick.asset");
+		Log.Info($"every block: {string.Join(", ", Blocks.All.Select(block => block.Name))}");
 		Log.Info($"{stone.Name}: hardness {stone.Hardness}, tool {stone.Tool?.Name}, tier {stone.Tier}, drops {stone.Drops.Count}");
 		Log.Info($"by hand {stone.BreakTime():0.0} s, with the pick {stone.BreakTime(pick):0.0} s, drops to a hand {stone.DropsFor()}, to the pick {stone.DropsFor(pick)}");
 		Blocks.Raycast(new Vector3(0.5f, 20f, 0.5f), Down, out var hit);
@@ -121,7 +123,7 @@ fn scripts_mine_blocks_by_their_rules_place_blocks_a_world_does_not_list_and_rea
         std::fs::write(path, text).unwrap();
     };
     write("Scripts/Miner.cs", MINER);
-    // Stone wants a pickaxe of the first tier and drops two cobblestones; planks are a block the world does not list.
+    // Stone wants a pickaxe of the first tier and drops two cobblestones; planks are a block the world has not held.
     let stone = "color = [0.5, 0.5, 0.52]\nhardness = 2.0\ntool = \"Tools/Pickaxe.asset\"\ntier = 1\n\n\
                  [[drops]]\nitem = \"Items/Cobblestone.asset\"\ncount = [2, 2]\n";
     write("Blocks/Stone.block", stone);
@@ -137,7 +139,7 @@ fn scripts_mine_blocks_by_their_rules_place_blocks_a_world_does_not_list_and_rea
     write("Items/Bucket.asset", "type = \"Voxear.Item\"\n");
     let full = "type = \"Voxear.Item\"\n\n[fields]\nplaces = \"Blocks/Water.block\"\nleaves = \"Items/Bucket.asset\"\n";
     write("Items/Water Bucket.asset", full);
-    // Its world: stone over dirt, a kind of its own, with water listed third.
+    // Its world: stone over dirt, a kind of its own, with water numbered third.
     let mut file = BlockFile::default();
     file.ground.size = [32, 32];
     file.blocks = vec![
@@ -161,6 +163,8 @@ fn scripts_mine_blocks_by_their_rules_place_blocks_a_world_does_not_list_and_rea
     }
     let lines: Vec<String> = log.lock().unwrap().lines.iter().map(|line| line.message.clone()).collect();
     let said = |text: &str| lines.iter().any(|line| line == text);
+    // Every block of the project, whether a world holds it or not, in the order of their paths.
+    assert!(said("every block: Planks, Stone, Water"), "{lines:?}");
     // A block's rules, as its file has them, and what they come to with a tool.
     assert!(said("Stone: hardness 2, tool Pickaxe, tier 1, drops 1"), "{lines:?}");
     assert!(said("by hand 2.0 s, with the pick 0.5 s, drops to a hand False, to the pick True"), "{lines:?}");
@@ -169,7 +173,7 @@ fn scripts_mine_blocks_by_their_rules_place_blocks_a_world_does_not_list_and_rea
     assert!(said("by hand got 0, left 0") && said("mined Stone with a hand"), "{lines:?}");
     assert!(said("with the pick got 1: 2 Cobblestone") && said("mined Stone with Pick"), "{lines:?}");
     assert!(said("dug 0.3 s: False, 0.6 through") && said("dug 0.6 s: True, got 1, left 0"), "{lines:?}");
-    // Planks, which the world does not list, are numbered after its three while the game runs.
+    // Planks, which the world had not held, are numbered after its three as they are first put down.
     assert!(said("planks placed True, numbered 4, named Planks") && said("put down Planks from Planks"), "{lines:?}");
     // A ray passes through water to the ground, or meets it when asked; only what holds water takes it up, and a
     // block is placed through it, taking its place.
@@ -181,9 +185,17 @@ fn scripts_mine_blocks_by_their_rules_place_blocks_a_world_does_not_list_and_rea
     // What was changed is kept with which block each number is, and comes back as it was.
     assert!(said("cleared, planks 0"), "{lines:?}");
     assert!(said("applied True, planks 4 named Planks"), "{lines:?}");
-    // Its file lists three blocks still: the planks were numbered in the game alone.
-    let asset = game.engine.world.query_ref::<&voxear_engine::blocks::BlockWorldAsset>().into_iter().next().unwrap();
-    assert_eq!((asset.file.blocks.len(), asset.grown.len(), asset.drawn.blocks.len()), (3, 1, 4));
+    // The world keeps the planks' number with its other three; its file had three as it was read, and is not
+    // written by a game, so the planks' number is this machine's own, and said with the changes kept.
+    let asset = game.engine.world.query_ref::<(voxear_ecs::Entity, &voxear_engine::blocks::BlockWorldAsset)>();
+    let (entity, asset) = asset.into_iter().next().unwrap();
+    assert_eq!((asset.from_file, asset.file.blocks.len(), asset.drawn.blocks.len()), (3, 4, 4));
+    assert!(asset.file.blocks[3].block.is_some() && asset.file.blocks[3].is_live());
+    let since = voxear_engine::blocks::blocks_numbered_since(&game.engine.world, entity);
+    assert_eq!(since.len(), 1);
+    assert_eq!(since[0].0, 4);
+    let on_disk = BlockFile::parse(&std::fs::read_to_string(dir.path().join("Blocks/Field.blockworld")).unwrap());
+    assert_eq!(on_disk.unwrap().blocks.len(), 3);
 }
 
 fn hello_copy() -> tempfile::TempDir {

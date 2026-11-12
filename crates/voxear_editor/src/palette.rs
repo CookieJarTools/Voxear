@@ -37,7 +37,7 @@ const TALLEST: f32 = 336.0;
 /// How much more a recent result counts when typed for, against one match.
 const RECENT_BONUS: i32 = 30 * 64;
 /// The docked panels, by id, as the palette offers to show them.
-const PANELS: [(&str, &str); 14] = [
+const PANELS: [(&str, &str); 15] = [
     ("Hierarchy", "hierarchy"),
     ("Levels", "levels"),
     ("Scene", "scene"),
@@ -50,6 +50,7 @@ const PANELS: [(&str, &str); 14] = [
     ("Localization Tables", "localization"),
     ("Package Manager", "packages"),
     ("Generator", "generator"),
+    ("Blocks", "blocks"),
     ("Inspector", "inspector"),
     ("Settings", "settings"),
 ];

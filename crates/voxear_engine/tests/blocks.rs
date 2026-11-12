@@ -124,6 +124,67 @@ fn a_block_worlds_blocks_are_drawn_as_their_files_say_and_a_block_saved_is_taken
 }
 
 #[test]
+fn a_world_holds_any_block_of_the_project_numbers_each_once_and_says_once_that_it_is_full() {
+    use voxear_engine::blocks::{BlockWorldAsset, block_number, blocks_numbered_since, every_block};
+    let dir = project();
+    // More blocks than a world can draw, each a colour of its own.
+    std::fs::create_dir_all(dir.path().join("Ores")).unwrap();
+    let ore = |number: usize| format!("Ores/Ore {number:03}.block");
+    for number in 0..300 {
+        let text = format!("color = [{}, {}, 0.5]\n", (number % 20) as f32 / 20.0, (number / 20) as f32 / 20.0);
+        std::fs::write(dir.path().join(ore(number)), text).unwrap();
+    }
+    let log = voxear_core::logging::LogCapture::default();
+    let _logging = tracing::subscriber::set_default(voxear_core::logging::capturing_only(log.clone()));
+    let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
+    game.start(None).unwrap();
+    let field = game.engine.world.query_ref::<(voxear_ecs::Entity, &BlockWorld)>().into_iter().next().unwrap().0;
+    let asset = |game: &Game| game.engine.world.get::<BlockWorldAsset>(field).unwrap().clone();
+    // Every block of the project is there to hold, in the order of their paths, whatever worlds hold.
+    let every = every_block(&game.content);
+    assert_eq!(every.len(), 300);
+    assert_eq!(every[7], game.content.db().guid_of(&ore(7)).unwrap().to_string());
+    // The world as written keeps three kinds of its own, as worlds did before blocks were assets: it loads and is
+    // drawn from them as it was, and a game makes no blocks of them.
+    assert!(asset(&game).file.blocks.iter().all(|kind| kind.is_inline()));
+    assert_eq!((asset(&game).from_file, asset(&game).drawn.looks()), (3, 3));
+    let mut number = |game: &mut Game, block: usize, grow: bool| {
+        block_number(&mut game.engine.world, &mut game.content, field, &ore(block), grow)
+    };
+    // A block it has not held has no number until it holds it: then the next, which is its number from then on.
+    assert_eq!(number(&mut game, 0, false), None);
+    assert_eq!(number(&mut game, 0, true), Some(4));
+    assert_eq!((number(&mut game, 0, true), number(&mut game, 0, false)), (Some(4), Some(4)));
+    assert_eq!(number(&mut game, 9, true), Some(5));
+    // The numbering is kept in its file as it is in the game, the blocks named by their assets.
+    let held = asset(&game);
+    assert_eq!((held.file.blocks.len(), held.from_file), (5, 3));
+    assert_eq!(held.file.blocks[3].block.as_deref(), Some(every[0].as_str()));
+    assert_eq!(held.drawn.blocks[4].name, "Ore 009");
+    assert_eq!(game.engine.world.get::<BlockWorld>(field).unwrap().faces.len(), 6, "air and five blocks");
+    // Its ground is made from what it was made from before: blocks numbered since are none of its ground's.
+    assert_eq!(held.drawn.for_ground().blocks.len(), 3);
+    // What it numbered since its file was read is said with which block each is, for a save or a joining player.
+    let since = blocks_numbered_since(&game.engine.world, field);
+    assert_eq!(since, vec![(4, every[0].clone()), (5, every[9].clone())]);
+    // It draws 256 looks at most: three of its own and 253 more. Past that a block gets no number, and the Console
+    // is told once, plainly.
+    let numbered: Vec<Option<u16>> = (0..300).map(|block| number(&mut game, block, true)).collect();
+    assert_eq!(numbered.iter().flatten().count(), 253);
+    assert!(numbered[253..].iter().all(Option::is_none), "{:?}", &numbered[250..]);
+    assert_eq!(asset(&game).drawn.looks(), 256);
+    assert_eq!(number(&mut game, 0, true), Some(4), "what it holds keeps its number");
+    game.tick(1.0 / 60.0, None);
+    let lines: Vec<String> = log.lock().unwrap().lines.iter().map(|line| line.message.clone()).collect();
+    let full: Vec<&String> = lines.iter().filter(|line| line.contains("is full")).collect();
+    assert_eq!(full.len(), 1, "{full:?}");
+    assert!(full[0].starts_with("Blocks/Field.blockworld is full: a world draws 256 looks at most."), "{}", full[0]);
+    // A game writes no world's file: its three kinds are all it says still.
+    let text = std::fs::read_to_string(dir.path().join("Blocks/Field.blockworld")).unwrap();
+    assert_eq!(BlockFile::parse(&text).unwrap().blocks.len(), 3);
+}
+
+#[test]
 fn a_block_world_loads_with_the_changes_kept_beside_it() {
     use voxear_terrain::blocks::edits::BlockEdits;
     let dir = project();

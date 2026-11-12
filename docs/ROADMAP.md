@@ -1915,6 +1915,27 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     block saved taken up, shipping, captures old and new and renumbered, scripts mining by rules, placing unlisted
     blocks and reaching through water, recipes moved, mirrored and at a station, the Inspectors, and the package
     played in a game.
+  - ~~**Blocks as the project's database:**~~ done: a world lists no blocks. Every `.block` of the project is one any
+    Block World or Voxel Terrain can hold, and a world numbers a block the first time it holds one: in the editor as
+    a brush first builds with it or its ground, its sea or a cover is first made of it (`block_props::number_block`),
+    in a game as a script first puts it down (`blocks::block_number`). The numbering is the world's `[[blocks]]` as
+    before, now its palette: kept in its file, shown nowhere, added to at its end and never renumbered, so older
+    files and saves read as they did. What a game numbered since its file was read is what its saved changes name
+    (`BlockWorldAsset::from_file`, `blocks_numbered_since`, in place of the list kept beside the file). A world's
+    ground is made from its file cut after the last entry the ground can name (`BlockFile::for_ground`), so a block
+    numbered later starts no world without end again. The 256 looks a world draws stay, as a quad names its look in
+    eight bits; a world with no room says so once in the Console (`blocks::say_full`). Editor: the Block World's
+    Inspector has no list, Add Block, New Block, Add Color or Make Block Assets; Block, Top block, Under block, Base
+    block and Sea block pick from the project's blocks in the object picker, with thumbnails (a block's preview is
+    a cube of it) and those built with last first (`Memory::recent_blocks`); Cover is the brush's block's. A
+    **Blocks** panel (`block_database`, Window ▸ Blocks) shows every block as tiles made a row at a time, with
+    search, New Block, Duplicate and Delete, which says which worlds hold a block and asks again. An older world's
+    kinds made by hand become blocks in a Blocks folder beside it as it opens in the editor, its file written at
+    once (`make_kinds_blocks`); a game still loads one as it is. Scripts: `Blocks.All` (native API 75). A build
+    ships every block of the project. Tests: a file's ground unchanged by later numbers, a world numbering each
+    block once and full at 256 looks said once, the brush numbering what it builds with as one step to undo, the
+    picker's order, the Blocks panel's grid, search, copies and deletes, an older world made blocks and drawn as it
+    was, every block in a build, `Blocks.All` in a game.
 - **Smooth voxel terrain**, in parts: smooth ground you can see, stand on, generate and build on; a floating
   origin. Planets (ground all round a middle, with gravity towards it) were built here and taken out again.
   - ~~**Voxel Terrain:**~~ done: a Block World drawn smooth (`BlockFile::smooth`, `BlockWorld::smooth`). Each chunk

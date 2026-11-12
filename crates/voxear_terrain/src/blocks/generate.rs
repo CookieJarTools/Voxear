@@ -502,7 +502,8 @@ mod tests {
         ];
         let smooth = BlockFile { smooth: true, ..file.clone() };
         for (name, world) in &kinds {
-            println!("{name}: a chunk column of cubes {:.2} ms, smooth {:.2} ms", time(&file, world), time(&smooth, world));
+            let (cubes, smooth) = (time(&file, world), time(&smooth, world));
+            println!("{name}: a chunk column of cubes {cubes:.2} ms, smooth {smooth:.2} ms");
         }
     }
 

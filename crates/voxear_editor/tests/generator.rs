@@ -951,7 +951,7 @@ fn a_cave_network_of_rooms_made_by_rules_shows_their_rules_and_one_room_alone_in
         assert_eq!(labels.iter().filter(|label| *label == rule).count(), 2, "{rule} for each room: {labels:?}");
     }
     // The preview shows a room by itself while the network is picked, and the ground again once it is not.
-    for _ in 0..600 {
+    for _ in 0..3000 {
         if note(&editor) == "Room" && editor.generator().previews_settled() {
             break;
         }
@@ -959,6 +959,7 @@ fn a_cave_network_of_rooms_made_by_rules_shows_their_rules_and_one_room_alone_in
         frame(&mut editor, &mut renderer);
     }
     assert_eq!(note(&editor), "Room");
+    assert!(editor.generator().previews_settled(), "the room's own mesh is shown, not the ground's still");
     for _ in 0..4 {
         frame(&mut editor, &mut renderer);
     }

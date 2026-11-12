@@ -35,10 +35,14 @@ const EXIT_HEIGHT: f32 = 1.2;
 /// How large the fine roughness of a made room's walls is, in metres: about a block or two.
 pub(crate) const DETAIL: f32 = 1.9;
 
-/// How far the fine roughness moves a wall at most, in metres; and how far an uneven floor rises over its
-/// lowest, for each part of 1 its Floor is short of level.
+/// How far the fine roughness moves a wall at most, in metres.
 const FINE: f32 = 0.45;
-const RISE: f32 = 2.5;
+
+/// How far a floor `uneven` short of level, 0 to a half, rolls over its lowest, and how high each of its two
+/// steps is: a metre once it is well short, so a step is a block in a world of blocks.
+fn rolled(uneven: f32) -> (f32, f32) {
+    (uneven, lesser(uneven * 2.5, 1.0))
+}
 
 /// The rules a cave room is made by.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -167,7 +171,8 @@ impl RoomRules {
 
     /// The furthest a room made by these has a wall or its floor moved by roughness, in metres.
     pub(crate) fn roughest(&self) -> f32 {
-        self.roughness + lesser(FINE, self.roughness * 0.5) + lesser(1.0 - self.floor, 0.5) * RISE
+        let (roll, step) = rolled(lesser(1.0 - self.floor, 0.5));
+        self.roughness + lesser(FINE, self.roughness * 0.5) + roll + step * 2.0
     }
 
     pub(crate) fn key(&self, key: &mut Key) {
@@ -202,6 +207,20 @@ impl RoomSample {
     /// The height of its floor at its middle.
     pub fn floor(&self) -> f32 {
         self.made.stood()
+    }
+
+    /// The corners of a box that holds it, roughness and all.
+    pub fn bounds(&self) -> [[f32; 3]; 2] {
+        let pad = self.made.roughest() + self.made.blend;
+        let (mut low, mut high) = ([f32::MAX; 3], [f32::MIN; 3]);
+        for blob in &self.made.blobs {
+            for axis in 0..3 {
+                let down = if axis == 1 && blob.half { 0.0 } else { blob.half_sizes[axis] };
+                low[axis] = lesser(low[axis], blob.at[axis] - down - pad);
+                high[axis] = greater(high[axis], blob.at[axis] + blob.half_sizes[axis] + pad);
+            }
+        }
+        [low, high]
     }
 
     /// Where its exits are, and the way out of each.
@@ -419,7 +438,7 @@ impl Made {
         let open = self.margin + 1.0;
         // Over the floor at its highest, too, where it is uneven.
         let over = match self.floor {
-            Some(_) => EXIT_HEIGHT + self.uneven * RISE,
+            Some(_) => EXIT_HEIGHT + self.rise(),
             None => greater(EXIT_HEIGHT, open + 0.5),
         };
         let height = stood + over;
@@ -530,9 +549,10 @@ impl Made {
             // the detail over it: never under its lowest, which is what a room's exits are set over.
             let raised = match noise {
                 Some([lumps, detail]) if self.uneven > 0.0 => {
-                    let roll = greater(lesser(lumps + 1.0, 2.0), 0.0) * 0.5;
-                    let steps = if lumps > 0.55 { 1.5 } else if lumps > 0.1 { 0.75 } else { 0.0 };
-                    self.uneven * (roll + steps) + greater(detail, 0.0) * self.fine * 0.4
+                    let (roll, step) = rolled(self.uneven);
+                    let rolls = greater(lesser(lumps + 1.0, 2.0), 0.0) * 0.5 * roll;
+                    let steps = if lumps > 0.5 { 2.0 } else if lumps > 0.05 { 1.0 } else { 0.0 };
+                    lesser(rolls + steps * step + greater(detail, 0.0) * self.fine * 0.4, self.rise())
                 }
                 _ => 0.0,
             };
@@ -558,7 +578,13 @@ impl Made {
 
     /// The furthest a wall or its floor is moved by roughness, in metres.
     pub fn roughest(&self) -> f32 {
-        self.rough + self.fine + self.uneven * RISE
+        self.rough + self.fine + self.rise()
+    }
+
+    /// The furthest its floor rises over its lowest.
+    fn rise(&self) -> f32 {
+        let (roll, step) = rolled(self.uneven);
+        if self.uneven > 0.0 { roll + step * 2.0 } else { 0.0 }
     }
 
     /// The height of its floor at its middle.

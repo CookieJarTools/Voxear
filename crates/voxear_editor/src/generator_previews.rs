@@ -320,8 +320,8 @@ impl Worker {
                     }
                     // A room by itself: in cells of a metre, then half a metre, and no finer.
                     let mesh = match (&request.room, across) {
-                        (Some(rules), across) if across == GROUND_STEPS[0] => room(rules, request.world.seed(), 1.0),
-                        (Some(rules), across) if across == GROUND_STEPS[3] => room(rules, request.world.seed(), 0.5),
+                        (Some(rules), across) if across == GROUND_STEPS[0] => room(rules, request.world.seed(), 48),
+                        (Some(rules), across) if across == GROUND_STEPS[3] => room(rules, request.world.seed(), 112),
                         (Some(_), _) => continue,
                         (None, across) => ground(&request.world, across),
                     };
@@ -453,23 +453,30 @@ fn ground(world: &WorldGen, across: usize) -> MeshData {
     mesh
 }
 
-/// A cave room `rules` make from `seed`, as its rock seen from outside with the near side away:
-/// each face between a hollow cell, `cell` metres a side, and rock, facing into the hollow. So
-/// from above the roof does not show and the floor, the pillars and the ledges do.
-fn room(rules: &RoomRules, seed: u32, cell: f32) -> MeshData {
+/// A cave room `rules` make from `seed`, cut open: each face between a hollow cell and rock,
+/// facing into the hollow, up to a little over half the room's height and none above. So from
+/// above one looks down into it, at its floor, its pillars and its ledges. In cells small enough that its longest
+/// side is `across` of them, and never under a quarter of a metre.
+fn room(rules: &RoomRules, seed: u32, across: usize) -> MeshData {
     let sample = rules.sample(seed);
-    let half = (sample.reach() / cell).ceil() as i32 + 1;
-    let side = (half * 2 + 1) as usize;
-    let at = |x: i32, y: i32, z: i32| ((y + half) as usize * side + (z + half) as usize) * side + (x + half) as usize;
-    let mut open = vec![false; side * side * side];
-    for y in -half..=half {
-        for z in -half..=half {
-            for x in -half..=half {
-                open[at(x, y, z)] = sample.inside([x as f32 * cell, y as f32 * cell, z as f32 * cell]) > 0.0;
+    let [low, high] = sample.bounds();
+    let longest = (0..3).map(|axis| high[axis] - low[axis]).fold(1.0, f32::max);
+    let cell = (longest / across as f32).max(0.25);
+    let count = [0, 1, 2].map(|axis| ((high[axis] - low[axis]) / cell).ceil() as i32 + 2);
+    let middle_of = |x: i32, y: i32, z: i32| {
+        Vec3::new(low[0] + (x as f32 - 0.5) * cell, low[1] + (y as f32 - 0.5) * cell, low[2] + (z as f32 - 0.5) * cell)
+    };
+    let at = |x: i32, y: i32, z: i32| ((y * count[2] + z) * count[0] + x) as usize;
+    let mut open = vec![false; (count[0] * count[1] * count[2]) as usize];
+    for y in 1..count[1] - 1 {
+        for z in 1..count[2] - 1 {
+            for x in 1..count[0] - 1 {
+                open[at(x, y, z)] = sample.inside(middle_of(x, y, z).to_array()) > 0.0;
             }
         }
     }
     let floor = sample.floor();
+    let cut = floor + (high[1] - floor) * 0.55;
     let mut mesh = MeshData::default();
     // Each way out of a cell: the way, and two more with it, the first crossed with the second the way itself.
     let ways: [([i32; 3], Vec3, Vec3); 6] = [
@@ -480,13 +487,16 @@ fn room(rules: &RoomRules, seed: u32, cell: f32) -> MeshData {
         ([0, 0, 1], Vec3::X, Vec3::Y),
         ([0, 0, -1], Vec3::Y, Vec3::X),
     ];
-    for y in -half + 1..half {
-        for z in -half + 1..half {
-            for x in -half + 1..half {
+    for y in 1..count[1] - 1 {
+        for z in 1..count[2] - 1 {
+            for x in 1..count[0] - 1 {
                 if !open[at(x, y, z)] {
                     continue;
                 }
-                let middle = Vec3::new(x as f32, y as f32, z as f32) * cell;
+                let middle = middle_of(x, y, z);
+                if middle.y > cut {
+                    continue;
+                }
                 for (way, u, v) in ways {
                     if open[at(x + way[0], y + way[1], z + way[2])] {
                         continue;
@@ -501,7 +511,7 @@ fn room(rules: &RoomRules, seed: u32, cell: f32) -> MeshData {
                             position: point.to_array(),
                             normal: normal.to_array(),
                             // Coloured by how high over the room's floor it is, as ground over the sea.
-                            uv: [shade((point.y - floor + 1.0) * 60.0), 0.5],
+                            uv: [shade((point.y - floor + 1.0) * 14.0), 0.5],
                             tangent: [1.0, 0.0, 0.0, 1.0],
                             ..Vertex::default()
                         });
@@ -568,7 +578,8 @@ mod tests {
     #[test]
     fn every_node_has_a_picture_in_one_image_with_its_least_and_most() {
         let world = Preset::RollingHills.world();
-        let Made::Thumbs { size, rgba, cells, .. } = thumbs(&Request { generation: 1, world: world.clone(), room: None }) else {
+        let request = Request { generation: 1, world: world.clone(), room: None };
+        let Made::Thumbs { size, rgba, cells, .. } = thumbs(&request) else {
             panic!("pictures")
         };
         // A landmass's height, and its climate's temperature and humidity: three in a square of four.

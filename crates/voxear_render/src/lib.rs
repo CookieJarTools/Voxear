@@ -64,6 +64,7 @@ pub use erosion::MOST_STEPS as MOST_EROSION_STEPS;
 mod tracks;
 mod payload;
 mod pipelines;
+pub mod portals;
 mod post;
 mod post_passes;
 mod post_volume;
@@ -161,6 +162,7 @@ pub use scene::{
     ViewOptions,
     temperature_color,
 };
+pub use portals::{Carry, Portal, PortalFar, PortalPose, PortalSide};
 pub use voxear_rhi::TextureId;
 pub use hot_reload::{CustomCode, compile_custom_shaders, engine_shader_dir};
 
@@ -372,6 +374,8 @@ struct FrameBuffers {
     terrain: Buffer,
     /// This view's worlds of blocks and their surfaces (see `blocks`).
     blocks: Buffer,
+    /// The openings of the Portals this view sees (see `portals`).
+    portal_quads: Buffer,
     /// This view's grass: its jobs and draws, its draws' indirect commands,
     /// and its blades (see `grass`).
     grass: Buffer,
@@ -1310,7 +1314,7 @@ impl Renderer {
                 blocks: block_draws.clone(),
             };
             let recorded =
-                view.record(&mut fg, (gpu, bindless, pipelines, assets), world, &setup, output, frame.slot)?;
+                view.record(&mut fg, (gpu, bindless, pipelines, assets), world, &setup, output, frame.slot, None)?;
             if first {
                 backdrops[at] = recorded.backdrop;
             }
@@ -1643,6 +1647,67 @@ struct View {
     ddgi_history: Option<([[i32; 4]; gpu::DDGI_CASCADES], f32, u32)>,
     /// It has said its scene has too many meshlets to cull one by one.
     warned_meshlets: bool,
+    /// The views through the Portals it sees, kept from frame to frame.
+    portals: Vec<PortalChild>,
+}
+
+/// A view through a Portal, kept by the view it is seen in for as long as
+/// that view sees the Portal: which Portal, and the frame it last drew in.
+struct PortalChild {
+    portal: voxear_ecs::Entity,
+    view: Box<View>,
+    used: u64,
+}
+
+/// What a view through a Portal draws into, and what it takes from the view
+/// it is seen in (see `portals`).
+#[derive(Clone, Copy)]
+struct PortalPass {
+    through: portals::Through,
+    /// The colour and motion of the view it is seen in, which it draws
+    /// over, and a depth of its own, opened where its Portal shows.
+    hdr: ImageId,
+    velocity: ImageId,
+    depth: ImageId,
+    /// The size of the view it is seen in, and its options: its own.
+    size: (u32, u32),
+    options: ViewOptions,
+    /// That view's sky tables and sky light, which it reads, and how far
+    /// its clouds have drifted.
+    atmosphere: Option<atmosphere::Tables>,
+    sky_light: u64,
+    cloud_drift: [f64; 2],
+    /// The sun casts shadows on its side.
+    shadows: bool,
+    /// How many Portals deep it is: 1 for one seen straight from a camera.
+    level: u32,
+}
+
+/// The Portals a view sees, and what the views through them need of it.
+#[derive(Clone)]
+struct Sees {
+    /// Those whose far sides are drawn: the first of its openings.
+    seen: Vec<portals::PortalSeen>,
+    /// Each opening's share of mist, in its buffer's order.
+    mists: Vec<f32>,
+    /// Its camera, in its own space, whose middle is `offset` from the
+    /// world's, and its projection without jitter.
+    eye: voxear_core::math::Vec3,
+    offset: voxear_core::math::Vec3,
+    rotation: voxear_core::math::Quat,
+    projection: voxear_core::math::Mat4,
+    /// Its push constants, which name its openings, and its depth.
+    push: Push,
+    depth: ImageId,
+    /// The size it is drawn at, and the size of the view it is drawn for.
+    extent: vk::Extent2D,
+    size: (u32, u32),
+    options: ViewOptions,
+    atmosphere: Option<atmosphere::Tables>,
+    sky_light: u64,
+    cloud_drift: [f64; 2],
+    /// How many Portals deep it is itself: 0 for a camera's own view.
+    level: u32,
 }
 
 /// What every view's frame shares.
@@ -1686,6 +1751,9 @@ struct ViewRecorded {
     backdrop: Option<(ImageId, [u32; 2], vk::Rect2D)>,
     /// How large each UI panel showed in the view, in pixels.
     panel_sizes: Vec<(voxear_ecs::Entity, [f32; 2])>,
+    /// The Portals a view through a Portal sees in turn, for the view it
+    /// is seen in to draw the far sides of.
+    sees: Option<Sees>,
 }
 
 impl View {
@@ -1742,11 +1810,15 @@ impl View {
             ocean: water::OceanBuffers::new(gpu, &named, FRAMES_IN_FLIGHT)?,
             ddgi_history: None,
             warned_meshlets: false,
+            portals: Vec::new(),
         })
     }
 
     /// Lets its buffers go once no frame in flight uses them.
     fn retire(self, frames: &mut Frames) {
+        for child in self.portals {
+            child.view.retire(frames);
+        }
         for buffers in self.buffers {
             let FrameBuffers {
                 frame,
@@ -1769,6 +1841,7 @@ impl View {
                 ui_panels,
                 terrain,
                 blocks,
+                portal_quads,
                 grass,
                 grass_args,
                 grass_blades,
@@ -1799,6 +1872,7 @@ impl View {
                 ui_panels,
                 terrain,
                 blocks,
+                portal_quads,
                 grass,
                 grass_args,
                 grass_blades,
@@ -1977,6 +2051,18 @@ impl View {
         self.track_memory.shift(by);
         self.ocean.shift(by);
         self.foliage.shift(by);
+        // A view through a Portal has a space of its own, which moves with its Portal: only the plants it keeps
+        // where the world has them move.
+        for child in &mut self.portals {
+            child.view.shift_plants(by);
+        }
+    }
+
+    fn shift_plants(&mut self, by: voxear_core::math::Vec3) {
+        self.foliage.shift(by);
+        for child in &mut self.portals {
+            child.view.shift_plants(by);
+        }
     }
 
     fn reset_history(&mut self) {
@@ -1989,6 +2075,9 @@ impl View {
         self.prev_models.clear();
         self.prev_view_proj = None;
         self.prev_camera = None;
+        for child in &mut self.portals {
+            child.view.reset_history();
+        }
     }
 
     /// Its rectangle within an output of `full`, at least a pixel each way.
@@ -2040,14 +2129,40 @@ impl View {
         setup: &ViewSetup,
         output: ImageId,
         slot: usize,
+        portal: Option<&PortalPass>,
     ) -> Result<ViewRecorded> {
-        let view = self.rect_in(setup.full);
+        // A view through a Portal is the size of the view it is seen in, with its options.
+        let view = match portal {
+            Some(pass) => {
+                self.options = pass.options;
+                let extent = vk::Extent2D { width: pass.size.0, height: pass.size.1 };
+                vk::Rect2D { offset: vk::Offset2D::default(), extent }
+            }
+            None => self.rect_in(setup.full),
+        };
         let extent = view.extent;
+        let through = portal.map(|pass| pass.through);
+        // Where the view's own space has its middle: the world's, but for a view through a Portal.
+        let offset = through.map_or(voxear_core::math::Vec3::ZERO, |through| through.offset);
         let extracting = profile_marker!("Extract").scope();
-        let mut extracted =
-            scene::extract(world, (extent.width, extent.height), (setup.time, setup.frame_index), &self.options, &|mesh| {
-                assets.mesh_sphere(mesh)
-            });
+        let mut extracted = scene::extract(
+            world,
+            (extent.width, extent.height),
+            (setup.time, setup.frame_index),
+            &self.options,
+            &|mesh| assets.mesh_sphere(mesh),
+            through.as_ref(),
+        );
+        // What a view through a Portal goes without: what reads the screen, bounced light, and water.
+        if portal.is_some() {
+            let post = &mut extracted.post;
+            post.ambient_occlusion.enabled = false;
+            post.contact_shadows.enabled = false;
+            post.reflections.enabled = false;
+            post.global_illumination.enabled = false;
+            post.fog.volumetric = false;
+            extracted.ocean = None;
+        }
         // What the project's modules leave out is not drawn.
         let features = world.resource::<RenderFeatures>().copied().unwrap_or_default();
         // What presses into the ground, from where each was last frame.
@@ -2069,10 +2184,21 @@ impl View {
             extracted.post.fog.enabled = false;
         }
         // Each terrain's meshes for rays, among the Objs the GI traces and the sea floor is drawn from.
-        terrain::add_proxies(&setup.terrains, &mut extracted);
-        blocks::add_proxies(&setup.blocks, &mut extracted);
+        if portal.is_none() {
+            terrain::add_proxies(&setup.terrains, &mut extracted);
+            blocks::add_proxies(&setup.blocks, &mut extracted);
+        }
         if features.vegetation {
-            self.foliage.gather(world, camera, &mut extracted, &|mesh| assets.mesh_sphere(mesh), &assets.impostors);
+            // The plants round the camera where the world has it, moved into the view's own space.
+            let first = extracted.instances.len();
+            let seen_from = camera + offset;
+            self.foliage.gather(world, seen_from, &mut extracted, &|mesh| assets.mesh_sphere(mesh), &assets.impostors);
+            if portal.is_some() {
+                for plant in &mut extracted.instances[first..] {
+                    scene::rebase(&mut plant.model, offset);
+                    scene::rebase(&mut plant.prev_model, offset);
+                }
+            }
         }
         if extracted.instances.len() > MAX_INSTANCES as usize && !std::mem::replace(&mut self.warned_instances, true) {
             let count = extracted.instances.len();
@@ -2118,14 +2244,17 @@ impl View {
         let buffers = &self.buffers[slot];
         // The terrains' patches this view draws, for its camera and the sun's cascades, and the tracks in them.
         let tracks_id = fg.import_buffer(&self.tracks);
+        let no_terrains: &[terrain::Drawn] = &[];
+        let terrains = if portal.is_some() { no_terrains } else { &setup.terrains };
         let view_terrains =
-            terrain::gather(&setup.terrains, &extracted.frame, &extracted.entities, extracted.has_sun, &buffers.terrain)
+            terrain::gather(terrains, &extracted.frame, &extracted.entities, extracted.has_sun, &buffers.terrain)
                 .map(|drawn| terrain::ViewTerrains { tracks: Some(tracks_id), ..drawn });
+        let sun_shadows = portal.is_none_or(|pass| pass.shadows);
         let view_blocks =
-            blocks::gather(&setup.blocks, &extracted, &buffers.blocks);
+            blocks::gather(&setup.blocks, &extracted, &buffers.blocks, (offset, portal.is_none(), sun_shadows));
         self.block_counts = view_blocks.as_ref().map(blocks::ViewBlocks::counts).unwrap_or_default();
         // The grass this view scatters round its camera on the terrains.
-        let gathered = grass::gather(&setup.terrains, &extracted.frame, extracted.origin, &buffers.grass);
+        let gathered = grass::gather(terrains, &extracted.frame, extracted.origin, &buffers.grass);
         let view_grass = gathered.map(|(jobs, dispatches)| {
             grass::ViewGrass {
                 jobs: dispatches,
@@ -2140,29 +2269,25 @@ impl View {
         });
         let color_usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
         let depth_usage = vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
-        let hdr = fg.create_image(
-            gpu,
-            bindless,
-            "hdr",
-            ImageDesc::new(extent.width, extent.height, HDR_FORMAT, color_usage),
-        )?;
-        let velocity = fg.create_image(
-            gpu,
-            bindless,
-            "velocity",
-            ImageDesc::new(extent.width, extent.height, VELOCITY_FORMAT, color_usage),
-        )?;
-        let depth = fg.create_image(
-            gpu,
-            bindless,
-            "depth",
-            ImageDesc::new(extent.width, extent.height, DEPTH_FORMAT, depth_usage),
-        )?;
+        let (hdr, velocity, depth) = match portal {
+            Some(pass) => (pass.hdr, pass.velocity, pass.depth),
+            None => {
+                let sized = |format, usage| ImageDesc::new(extent.width, extent.height, format, usage);
+                (
+                    fg.create_image(gpu, bindless, "hdr", sized(HDR_FORMAT, color_usage))?,
+                    fg.create_image(gpu, bindless, "velocity", sized(VELOCITY_FORMAT, color_usage))?,
+                    fg.create_image(gpu, bindless, "depth", sized(DEPTH_FORMAT, depth_usage))?,
+                )
+            }
+        };
         let pyramid_desc = pyramid_desc(extent);
         let pyramid = fg.create_image(gpu, bindless, "depth pyramid", pyramid_desc)?;
-        let shadows = if extracted.has_sun {
+        let shadows = if extracted.has_sun && sun_shadows {
             let desc = ImageDesc::new(ATLAS_RESOLUTION, ATLAS_RESOLUTION, DEPTH_FORMAT, depth_usage);
-            Some(fg.shared_image(gpu, bindless, "shadow atlas", desc)?)
+            // The views through Portals share an atlas of their own: the view they are seen in still reads its
+            // own after they are drawn.
+            let name = if portal.is_some() { "portal shadow atlas" } else { "shadow atlas" };
+            Some(fg.shared_image(gpu, bindless, name, desc)?)
         } else {
             None
         };
@@ -2283,7 +2408,7 @@ impl View {
                 traced_reflections = true;
             }
         }
-        let panes = match wireframe {
+        let panes = match wireframe || portal.is_some() {
             true => Vec::new(),
             false => glass::panes(&extracted.instances[..instance_count], opaque_count, assets),
         };
@@ -2301,7 +2426,7 @@ impl View {
             || extracted.water_bodies.pools > 0
             || !extracted.water_bodies.streams.is_empty()
             || block_water.is_some();
-        let water = match wet && !wireframe {
+        let water = match wet && !wireframe && portal.is_none() {
             true => Some(water::Water::new(
                 fg,
                 (gpu, bindless),
@@ -2344,10 +2469,17 @@ impl View {
         let current = (frame_data.lighting.sky == SKY_ATMOSPHERE).then_some(frame_data.lighting.atmosphere);
         let kept = self.atmosphere_tables.as_ref().map(bytemuck::bytes_of);
         let fresh = kept != current.as_ref().map(bytemuck::bytes_of);
-        self.atmosphere_tables = current;
-        let atmosphere = match current {
-            Some(_) => Some(atmosphere::Tables::new(fg, gpu, bindless, fresh)?),
-            None => None,
+        // A view through a Portal reads the sky tables of the view it is seen in.
+        let atmosphere = match (current, portal) {
+            (Some(_), Some(pass)) => pass.atmosphere,
+            (Some(_), None) => {
+                self.atmosphere_tables = current;
+                Some(atmosphere::Tables::new(fg, gpu, bindless, fresh)?)
+            }
+            (None, _) => {
+                self.atmosphere_tables = None;
+                None
+            }
         };
         if let Some(tables) = atmosphere {
             frame_data.lighting.transmittance = fg.texture(tables.transmittance).0;
@@ -2366,7 +2498,11 @@ impl View {
             let wind = frame_data.wind.direction;
             let blows = if wind[0].hypot(wind[1]) > 1e-3 { wind } else { [1.0, 0.0] };
             let moved = frame_data.lighting.clouds.speed * setup.delta_time;
-            self.cloud_drift = [0, 1].map(|axis| self.cloud_drift[axis] + f64::from(blows[axis] * moved));
+            self.cloud_drift = match portal {
+                // The same clouds as in the view it is seen in, as far along.
+                Some(pass) => pass.cloud_drift,
+                None => [0, 1].map(|axis| self.cloud_drift[axis] + f64::from(blows[axis] * moved)),
+            };
             let camera = frame_data.camera_position;
             // From where the pattern is in the level, so it keeps its place as the world's middle moves.
             let middle = [extracted.origin.x, extracted.origin.z];
@@ -2433,7 +2569,11 @@ impl View {
                 foliage_pushes: self.foliage_pushes.address,
                 tracks: self.tracks.address,
                 // Only under the atmosphere, which works it out.
-                sky_light: if atmosphere.is_some() { buffers.sky_light.address } else { 0 },
+                sky_light: match (atmosphere, portal) {
+                    (Some(_), Some(pass)) => pass.sky_light,
+                    (Some(_), None) => buffers.sky_light.address,
+                    (None, _) => 0,
+                },
                 material_properties: assets.material_properties.address,
                 ocean_spectrum: self.ocean.spectra[slot].address,
                 ocean_fft: self.ocean.fft.address,
@@ -2470,6 +2610,7 @@ impl View {
                 particle_steps: particle_step.map_or(0, |step| step.systems),
                 particle_trails: setup.simulated.1,
                 particle_hits: particle_step.map_or(0, |step| step.hits_address),
+                portal_quads: buffers.portal_quads.address,
             }],
         );
         buffers.instances.write(0, &extracted.instances[..instance_count]);
@@ -2500,14 +2641,26 @@ impl View {
         };
         let drawing =
             (&*setup.simulated.0, particles::Looks { find: &particle_texture, puff_lit, mesh: &particle_mesh });
-        let (particle_systems, particles, spray, rapids) =
-            particles::gather(world, camera, particles::time_of(world, setup.time), &extracted.water_bodies, drawing);
+        // Particles, smoke and mist are not drawn through a Portal.
+        let (particle_systems, particles, spray, rapids) = match portal {
+            Some(_) => Default::default(),
+            None => {
+                let now = particles::time_of(world, setup.time);
+                particles::gather(world, camera, now, &extracted.water_bodies, drawing)
+            }
+        };
         buffers.particle_systems.write(0, &particle_systems);
-        let (smokes, smoke_cells, smoke_holes) = smoke::gather(world, camera, setup.time);
+        let (smokes, smoke_cells, smoke_holes) = match portal {
+            Some(_) => Default::default(),
+            None => smoke::gather(world, camera, setup.time),
+        };
         buffers.smokes.write(0, &smokes);
         buffers.smoke_cells.write(0, &smoke_cells);
         buffers.smoke_holes.write(0, &smoke_holes);
-        let (mists, mist_points) = mist::gather(world, camera, setup.time);
+        let (mists, mist_points) = match portal {
+            Some(_) => Default::default(),
+            None => mist::gather(world, camera, setup.time),
+        };
         buffers.mists.write(0, &mists);
         buffers.mist_points.write(0, &mist_points);
 
@@ -2516,6 +2669,59 @@ impl View {
             buffers: buffers.pointers.address,
             max_draws: MAX_INSTANCES as u32,
             ..Default::default()
+        };
+        // The Portals in view: their openings, and for those whose far sides are drawn, the views through them.
+        let quality = world.resource::<portals::PortalQuality>().copied().unwrap_or_default();
+        let level = portal.map_or(0, |pass| pass.level);
+        let most = match level {
+            _ if wireframe || level >= quality.depth.min(portals::MAX_PORTAL_DEPTH) => 0,
+            0 => quality.views as usize,
+            // A view through a Portal draws fewer in turn.
+            _ => (quality.views as usize).min(2),
+        };
+        let unjittered = voxear_core::math::Mat4::from_cols_array_2d(&extracted.frame.unjittered_view_proj);
+        let jittered = voxear_core::math::Mat4::from_cols_array_2d(&extracted.frame.view_proj);
+        let sight = portals::in_sight(world, (camera, offset), unjittered, most, through.map(|through| through.out_of));
+        let openings: Vec<portals::GpuPortalQuad> = sight
+            .openings
+            .iter()
+            .map(|(pose, size, colour, mist)| portals::GpuPortalQuad::new(pose, *size, (offset, jittered), *colour, *mist))
+            .collect();
+        if !openings.is_empty() {
+            buffers.portal_quads.write(0, &openings);
+        }
+        let sees = (!openings.is_empty()).then(|| {
+            let view_matrix = voxear_core::math::Mat4::from_cols_array_2d(&extracted.frame.view);
+            let (_, rotation, _) = view_matrix.inverse().to_scale_rotation_translation();
+            Sees {
+                seen: sight.seen.clone(),
+                mists: openings.iter().map(|opening| opening.mist[3]).collect(),
+                eye: camera,
+                offset,
+                rotation,
+                projection: unjittered * view_matrix.inverse(),
+                push,
+                depth,
+                extent,
+                size: (view.extent.width, view.extent.height),
+                options: self.options,
+                atmosphere,
+                sky_light: match (atmosphere, portal) {
+                    (Some(_), Some(pass)) => pass.sky_light,
+                    (Some(_), None) => buffers.sky_light.address,
+                    (None, _) => 0,
+                },
+                cloud_drift: self.cloud_drift,
+                level,
+            }
+        });
+        // What the passes after the scene read as its depth: with far sides drawn, theirs where they show.
+        let seen_depth = match (&sees, portal) {
+            (Some(sees), None) if !sees.seen.is_empty() => {
+                let desc = ImageDesc::new(extent.width, extent.height, pipelines::PYRAMID_FORMAT, color_usage);
+                Some(fg.create_image(gpu, bindless, "seen depth", desc)?)
+            }
+            _ => None,
         };
         let targets = passes::Targets {
             hdr,
@@ -2591,8 +2797,28 @@ impl View {
             blocks: view_blocks,
             grass: view_grass,
             traced_reflections,
+            portal_openings: openings.len() as u32,
+            through: portal.is_some(),
         };
-        let (under_water, particles, smoke) = passes::record(fg, &frame_setup, &targets, &draws);
+        // A camera's own view draws the far sides of the Portals it sees once its own surfaces are in, and those
+        // seen through them after each; a view through a Portal leaves its own to the view it is seen in.
+        let mut children = std::mem::take(&mut self.portals);
+        let mut failed = None;
+        let mut far_sides = |fg: &mut FrameGraph<'_>| {
+            let (Some(sees), Some(seen_depth)) = (sees.as_ref(), seen_depth) else { return };
+            let targets = (hdr, velocity, seen_depth);
+            let services = (gpu, &mut *bindless, pipelines, assets);
+            failed = draw_portals(&mut children, fg, services, (world, setup, slot), sees, targets).err();
+        };
+        let (under_water, particles, smoke) = passes::record(fg, &frame_setup, &targets, &draws, &mut far_sides);
+        // A view not seen for a while lets its buffers go with the view it was seen in.
+        self.portals = children;
+        if let Some(error) = failed {
+            return Err(error);
+        }
+        if portal.is_some() {
+            return Ok(ViewRecorded { push, backdrop: None, panel_sizes: Vec::new(), sees });
+        }
         let post = post_passes::PostInput {
             pipelines: *pipelines,
             push,
@@ -2601,7 +2827,7 @@ impl View {
             settings: extracted.post,
             hdr,
             velocity,
-            depth,
+            depth: seen_depth.unwrap_or(depth),
             output,
             output_rect: (view.extent != setup.full).then_some(view),
             clear: setup.clear,
@@ -2637,7 +2863,146 @@ impl View {
         let gizmos = self.options.gizmos;
         let debug = (pipelines.debug, pipelines.debug_solid, push);
         debug_pass::record(fg, debug, (&buffers.debug_lines, &buffers.debug_triangles), (output, view), depth, gizmos);
-        Ok(ViewRecorded { push, backdrop, panel_sizes })
+        Ok(ViewRecorded { push, backdrop, panel_sizes, sees: None })
+    }
+}
+
+/// Draws the far sides of the Portals a view `sees`, each by a view of its
+/// own kept in `children`, over the colour and motion of the camera's view,
+/// and lays each one's depth over `seen_depth`; then the far sides of the
+/// Portals each of those sees in turn; and last the mist of the view's own
+/// openings.
+fn draw_portals(
+    children: &mut Vec<PortalChild>,
+    fg: &mut FrameGraph<'_>,
+    (gpu, bindless, pipelines, assets): (&Gpu, &mut Bindless, &Pipelines, &Assets),
+    (world, setup, slot): (&World, &ViewSetup, usize),
+    sees: &Sees,
+    (hdr, velocity, seen_depth): (ImageId, ImageId, ImageId),
+) -> Result<()> {
+    let quality = world.resource::<portals::PortalQuality>().copied().unwrap_or_default();
+    let pipelines = *pipelines;
+    let outer = fg.prefix().to_string();
+    let extent = sees.extent;
+    let level = sees.level + 1;
+    let (parent_depth, parent_push) = (sees.depth, sees.push);
+    let parent_texture = fg.texture(parent_depth).0;
+    if sees.level == 0 {
+        // The camera's own depth first, for the far sides to be laid over.
+        let push = Push { textures: [parent_texture, 0, 0, 0], ..parent_push };
+        let images = [(parent_depth, ImageAccess::Sampled), (seen_depth, ImageAccess::ColorAttachment)];
+        fg.add_pass("Portal depth", &images, &[], move |ctx| {
+            portal_fullscreen(ctx, pipelines.portal_depth, &push, seen_depth);
+        });
+    }
+    for (index, seen) in sees.seen.iter().enumerate() {
+        let at = match children.iter().position(|child| child.portal == seen.entity) {
+            Some(at) => at,
+            None => {
+                // The view of a Portal no longer seen, or a new one.
+                let idle = children.iter().position(|child| child.used + PORTAL_VIEW_KEPT < setup.frame_index);
+                match idle {
+                    Some(at) => {
+                        children[at].view.reset_history();
+                        children[at].portal = seen.entity;
+                        at
+                    }
+                    None => {
+                        let number = PORTAL_VIEW_NUMBERS * level as usize + children.len();
+                        let view = Box::new(View::new(gpu, number)?);
+                        children.push(PortalChild { portal: seen.entity, view, used: 0 });
+                        children.len() - 1
+                    }
+                }
+            }
+        };
+        let child = &mut children[at];
+        child.used = setup.frame_index;
+        // A depth for each level, which its views use in turn: the furthest where the opening shows, the nearest
+        // everywhere else.
+        fg.set_prefix(&format!("portal level {level} "));
+        let usage = vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
+        let depth = fg.create_image(gpu, bindless, "depth", ImageDesc::new(extent.width, extent.height, DEPTH_FORMAT, usage))?;
+        let mask = Push { texture: parent_texture, level: index as u32, ..parent_push };
+        let images = [(parent_depth, ImageAccess::Sampled), (depth, ImageAccess::DepthAttachment)];
+        fg.add_pass("Portal mask", &images, &[], move |ctx| {
+            let layout = vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL;
+            let target = passes::attachment(ctx.view(depth), layout, Some(passes::clear_depth(1.0)));
+            passes::begin_rendering(ctx, ctx.extent(depth), &[], Some(&target));
+            passes::bind(ctx, pipelines.portal_mask, vk::PipelineBindPoint::GRAPHICS, &mask);
+            unsafe {
+                ctx.gpu.device.cmd_draw(ctx.cmd, 6, 1, 0, 0);
+                ctx.gpu.device.cmd_end_rendering(ctx.cmd);
+            }
+        });
+        // From the near Portal's place, in the seeing view's own small numbers.
+        let from_near = sees.eye - (seen.near.position - sees.offset);
+        let pass = PortalPass {
+            through: portals::Through::new(seen, from_near, sees.rotation, sees.projection),
+            hdr,
+            velocity,
+            depth,
+            size: sees.size,
+            options: sees.options,
+            atmosphere: sees.atmosphere,
+            sky_light: sees.sky_light,
+            cloud_drift: sees.cloud_drift,
+            shadows: seen.distance < quality.shadow_distance,
+            level,
+        };
+        fg.set_prefix(&format!("portal view {} ", child.view.number));
+        let recorded = child.view.record(fg, (gpu, &mut *bindless, &pipelines, assets), world, setup, hdr, slot, Some(&pass))?;
+        let over = Push { textures: [fg.texture(depth).0, 0, 0, 0], ..parent_push };
+        let images = [(depth, ImageAccess::Sampled), (seen_depth, ImageAccess::ColorAttachment)];
+        fg.add_pass("Portal depth over", &images, &[], move |ctx| {
+            portal_fullscreen(ctx, pipelines.portal_depth_over, &over, seen_depth);
+        });
+        // The Portals seen through it, while its depth still stands.
+        if let Some(nested) = recorded.sees {
+            let mut deeper = std::mem::take(&mut child.view.portals);
+            let services = (gpu, &mut *bindless, &pipelines, assets);
+            let drawn = draw_portals(&mut deeper, fg, services, (world, setup, slot), &nested, (hdr, velocity, seen_depth));
+            children[at].view.portals = deeper;
+            drawn?;
+        }
+    }
+    fg.set_prefix(&outer);
+    // The mist of each opening that shows any, over what shows in it.
+    let misted: Vec<u32> = (0..sees.mists.len() as u32).filter(|&opening| sees.mists[opening as usize] > 0.0).collect();
+    if !misted.is_empty() {
+        let mist = Push { texture: parent_texture, ..parent_push };
+        let images = [(parent_depth, ImageAccess::Sampled), (hdr, ImageAccess::ColorAttachment)];
+        fg.add_pass("Portal mist", &images, &[], move |ctx| {
+            let layout = vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL;
+            let color = [passes::attachment(ctx.view(hdr), layout, None)];
+            passes::begin_rendering(ctx, ctx.extent(hdr), &color, None);
+            passes::bind(ctx, pipelines.portal_mist, vk::PipelineBindPoint::GRAPHICS, &mist);
+            for opening in misted {
+                ctx.bindless.push(ctx.gpu, ctx.cmd, &Push { level: opening, ..mist });
+                unsafe { ctx.gpu.device.cmd_draw(ctx.cmd, 6, 1, 0, 0) };
+            }
+            unsafe { ctx.gpu.device.cmd_end_rendering(ctx.cmd) };
+        });
+    }
+    Ok(())
+}
+
+/// How many frames a view through a Portal is kept for a Portal no longer
+/// seen, before another Portal takes it.
+const PORTAL_VIEW_KEPT: u64 = 120;
+
+/// Where the numbers of each level's views through Portals start, as
+/// `View::number`: past any camera's own.
+const PORTAL_VIEW_NUMBERS: usize = 64;
+
+/// A triangle over all of `target`, drawn with `pipeline`.
+fn portal_fullscreen(ctx: &graph::PassContext, pipeline: vk::Pipeline, push: &Push, target: ImageId) {
+    let color = [passes::attachment(ctx.view(target), vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL, None)];
+    passes::begin_rendering(ctx, ctx.extent(target), &color, None);
+    passes::bind(ctx, pipeline, vk::PipelineBindPoint::GRAPHICS, push);
+    unsafe {
+        ctx.gpu.device.cmd_draw(ctx.cmd, 3, 1, 0, 0);
+        ctx.gpu.device.cmd_end_rendering(ctx.cmd);
     }
 }
 
@@ -2789,6 +3154,12 @@ fn create_frame_buffers(gpu: &Gpu, prefix: &str, slot: usize) -> Result<FrameBuf
         )?,
         terrain: gpu.create_buffer(&format!("{prefix}terrains {slot}"), terrain::FRAME_SIZE, storage, host)?,
         blocks: gpu.create_buffer(&format!("{prefix}blocks {slot}"), blocks::FRAME_SIZE, storage, host)?,
+        portal_quads: gpu.create_buffer(
+            &format!("{prefix}portal openings {slot}"),
+            (portals::MAX_PORTAL_QUADS * size_of::<portals::GpuPortalQuad>()) as u64,
+            storage,
+            host,
+        )?,
         grass: gpu.create_buffer(&format!("{prefix}grass {slot}"), grass::FRAME_SIZE, storage, host)?,
         grass_args: gpu.create_buffer(
             &format!("{prefix}grass draws {slot}"),

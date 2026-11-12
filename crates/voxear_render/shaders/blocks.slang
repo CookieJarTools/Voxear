@@ -72,6 +72,7 @@ VertexOut blockVertex(uint vertexId : SV_VertexID)
     VertexOut o;
     o.position = transform(frame->viewProj, at);
     o.worldPosition = b.world;
+    o.cut = cutAt(push.frame, o.worldPosition);
     o.normal = b.normal;
     o.tangent = float4(normalizeOr(float3(b.normal.y, -b.normal.x, 0.0), float3(1.0, 0.0, 0.0)), 1.0);
     // The corner's shading, for blockShading to darken by.

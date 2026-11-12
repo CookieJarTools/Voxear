@@ -360,6 +360,11 @@ impl<'a> FrameGraph<'a> {
         self.prefix = prefix.to_string();
     }
 
+    /// What the images kept now are named with before their own names.
+    pub fn prefix(&self) -> &str {
+        &self.prefix
+    }
+
     fn transient(
         &mut self,
         gpu: &Gpu,

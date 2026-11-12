@@ -947,16 +947,20 @@ pub struct BlockCounts {
 /// Picks each world's chunks and faces for this view and writes the
 /// worlds' records into `buffer`; `None` when there is nothing to draw.
 /// `entities` gives each instance's owner, from which each world finds its
-/// anchor among its meshes for rays.
+/// anchor among its meshes for rays. A view through a Portal has a space of
+/// its own, its middle `offset` from the world's (see `portals::Through`),
+/// looks from outside the world's chunks, so every chunk in view counts as
+/// seen into (`sights` false), and may go without the sun's shadows.
 pub(crate) fn gather(
     drawn: &[DrawnBlocks],
     extracted: &crate::scene::ExtractedFrame,
     buffer: &Buffer,
+    (offset, sights, shadows): (Vec3, bool, bool),
 ) -> Option<ViewBlocks> {
     if drawn.is_empty() {
         return None;
     }
-    let (frame, entities, has_sun) = (&extracted.frame, extracted.entities.as_slice(), extracted.has_sun);
+    let (frame, entities, has_sun) = (&extracted.frame, extracted.entities.as_slice(), extracted.has_sun && shadows);
     voxear_core::profile_scope!("Block Picking");
     let mut anchors: HashMap<Entity, u32> = HashMap::new();
     for (index, owner) in entities.iter().enumerate().take(crate::MAX_INSTANCES as usize) {
@@ -984,8 +988,10 @@ pub(crate) fn gather(
         let surfaces_at = (SURFACES_AT + number * MAX_BLOCK_SURFACES * size_of::<GpuTerrainSurface>()) as u64;
         // A look pack the player wears says how every world's faces are cut into small cubes.
         let voxels = extracted.block_voxels.unwrap_or(blocks.look.voxels);
+        // Whole metres off the world's own corner, so its far chunks keep their place to the millimetre.
+        let corner = blocks.corner - offset;
         records.push(GpuBlockWorld {
-            corner: blocks.corner.into(),
+            corner: corner.into(),
             block_size: blocks.block_size,
             quads: blocks.address + QUADS_AT,
             origins: blocks.address,
@@ -997,11 +1003,11 @@ pub(crate) fn gather(
             voxels: if blocks.smooth { 0.0 } else { voxels.count.min(BlockVoxels::MOST) as f32 },
             relief: voxels.relief.clamp(0.0, BlockVoxels::DEEPEST),
         });
-        let local = camera - blocks.corner;
+        let local = camera - corner;
         let mut lists = vec![Vec::new(); LIST_COUNT as usize];
-        let planes = voxear_terrain::lod::planes_from(&frame.planes, blocks.corner);
+        let planes = voxear_terrain::lod::planes_from(&frame.planes, corner);
         // The chunks the camera can see into, walking from its own through their sides that see each other.
-        let seen = blocks.sights.as_ref().and_then(|(map, sights)| {
+        let seen = blocks.sights.as_ref().filter(|_| sights).and_then(|(map, sights)| {
             let side = CHUNK as f32 * blocks.block_size;
             let from = (local / side).floor().as_ivec3().to_array();
             let bounds = |key: [i32; 3]| {
@@ -1021,7 +1027,7 @@ pub(crate) fn gather(
         if has_sun && blocks.cast_shadows {
             let sunlit = Facing::Light(Vec3::from(frame.sun_direction));
             for cascade in 0..CASCADES {
-                let planes = voxear_terrain::lod::planes_from(&frame.cascade_planes[cascade], blocks.corner);
+                let planes = voxear_terrain::lod::planes_from(&frame.cascade_planes[cascade], corner);
                 lists[LIST_SHADOW as usize + cascade] = pick(&blocks.chunks, &planes, (sunlit, detail), None);
             }
         }

@@ -1,4 +1,6 @@
 using System;
+using System.Globalization;
+using System.Linq;
 using System.Numerics;
 using Voxear.Interop;
 
@@ -314,6 +316,52 @@ public readonly struct ParticleSystem : IEquatable<ParticleSystem>, IObjComponen
 		}
 	}
 
+	/// <summary>
+	/// Whether scripts hear of each strike its particles make, as OnParticleHit on its Obj's behaviours and
+	/// Particles.Hit. Only with Collision on. The first 512 strikes a frame among every system are told.
+	/// </summary>
+	public bool HitEvents
+	{
+		get { return Number(NativeParticles.HitEvents) != 0f; }
+		set { Set(NativeParticles.HitEvents, value ? 1f : 0f); }
+	}
+
+	/// <summary>How wide each is over its life, times how wide it started: with keys, in place of growing or shrinking to SizeEnd.</summary>
+	public Curve SizeCurve
+	{
+		get { return ReadCurve(NativeParticles.SizeCurve); }
+		set { WriteCurve(NativeParticles.SizeCurve, value); }
+	}
+
+	/// <summary>How opaque each is over its life, times how opaque it started: with keys, in place of fading to ColorEnd's alpha.</summary>
+	public Curve OpacityCurve
+	{
+		get { return ReadCurve(NativeParticles.OpacityCurve); }
+		set { WriteCurve(NativeParticles.OpacityCurve, value); }
+	}
+
+	/// <summary>How fast each flies over its life, times how fast it set out.</summary>
+	public Curve SpeedCurve
+	{
+		get { return ReadCurve(NativeParticles.SpeedCurve); }
+		set { WriteCurve(NativeParticles.SpeedCurve, value); }
+	}
+
+	/// <summary>Each one's colour over its life: with keys, in place of fading from Color to ColorEnd. Opacity is OpacityCurve's.</summary>
+	public Gradient ColorGradient
+	{
+		get
+		{
+			var keys = Keys(NativeParticles.ColorGradient, 4);
+			return new Gradient([.. keys.Select(key => (key[0], new Color(key[1], key[2], key[3])))]);
+		}
+		set
+		{
+			var lines = value.Keys.ToArray().Select(key => Words(key.Time, key.Color.R, key.Color.G, key.Color.B));
+			Tell(NativeParticles.ColorGradient, string.Join('\n', lines));
+		}
+	}
+
 	/// <summary>Which particles: two systems alike but for this send out different ones.</summary>
 	public int Seed
 	{
@@ -367,6 +415,38 @@ public readonly struct ParticleSystem : IEquatable<ParticleSystem>, IObjComponen
 	public override string ToString()
 	{
 		return $"{Obj}'s Particle System";
+	}
+
+	private static string Words(params ReadOnlySpan<float> numbers)
+	{
+		return string.Join(' ', numbers.ToArray().Select(number => number.ToString("R", CultureInfo.InvariantCulture)));
+	}
+
+	private Curve ReadCurve(int which)
+	{
+		return new Curve([.. Keys(which, 2).Select(key => (key[0], key[1]))]);
+	}
+
+	private void WriteCurve(int which, Curve curve)
+	{
+		Tell(which, string.Join('\n', curve.Keys.ToArray().Select(key => Words(key.Time, key.Value))));
+	}
+
+	/// <summary>A curve's or the gradient's keys, each so many numbers; none away from the engine.</summary>
+	private float[][] Keys(int which, int numbers)
+	{
+		var text = NativeComponent.Text(NativeComponent.Particles, Obj, which) ?? string.Empty;
+		var lines = text.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+		var read = lines.Select(line => line.Split(' ').Select(word => float.Parse(word, CultureInfo.InvariantCulture)).ToArray());
+		return [.. read.Where(key => key.Length == numbers)];
+	}
+
+	private void Tell(int which, string keys)
+	{
+		if (!NativeComponent.Tell(NativeComponent.Particles, Obj, which + NativeParticles.Change, keys) && Native.IsConnected)
+		{
+			Log.Error($"{Obj} has no Particle System; give it one with AddParticles.");
+		}
 	}
 
 	private float Number(int what)

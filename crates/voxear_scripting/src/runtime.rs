@@ -115,7 +115,8 @@ impl ScriptRuntime {
                 && managed.motion_marks.is_some()
                 && managed.take_net_fields.is_some()
                 && managed.set_enabled.is_some()
-                && managed.origin_moved.is_some(),
+                && managed.origin_moved.is_some()
+                && managed.particle_hits.is_some(),
             "Voxear.Core left part of its interop table empty"
         );
         interop::set_create_behaviour(
@@ -389,6 +390,17 @@ impl ScriptRuntime {
         let send = self.api().physics_events.expect("validated at start");
         let _scope = WorldScope::enter(world);
         unsafe { send(events.as_ptr(), events.len() as i32) };
+    }
+
+    /// Tells scripts of particles' strikes, as `OnParticleHit` on the
+    /// behaviours of each system's Obj and `Particles.Hit`.
+    pub fn particle_hits(&mut self, world: &mut World, hits: &[crate::physics::ParticleHitData]) {
+        if hits.is_empty() {
+            return;
+        }
+        let send = self.api().particle_hits.expect("validated at start");
+        let _scope = WorldScope::enter(world);
+        unsafe { send(hits.as_ptr(), hits.len() as i32) };
     }
 
     /// Tells behaviours of the marks actions passed, as `OnMotionMark`:

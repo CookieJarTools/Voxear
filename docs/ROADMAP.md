@@ -1410,6 +1410,21 @@ The sea, lakes, rivers and lava, built in. Manual: `manual/Water`.
     a clip played by an Animator from the file and from built content with Mob Motion waiting; a clip made,
     keyed by a ring and by a typed number, a key dragged, played, undone, in the editor. Manual: Box Models,
     Mob Motion. Not done: timeline zoom, copying keys, moving several at once.
+  - ~~**Boxes sculpted from cubes:**~~ done: a box can be made of small cubes, one to each pixel of its size,
+    each a colour of the model's palette or left out (`ModelBox::voxels`, `BoxModel::palette`; `voxels` and
+    `palette` in the file), for rounded and stepped shapes: hair, hands, leaves, a tree's crown. Only the faces
+    that show are built, those of one colour side by side as one, into the model's one mesh, coloured from the
+    palette's pixels under the sheet in its texture, so bones, Mob Motion, clips and cooking are unchanged. A
+    ray meets the first cube in its way (`BoxHit::cell`). `to_voxels` makes a plain box one of cubes that looks
+    the same; `set_voxel` grows the box to hold a cube put past its edge. The Model window's **Sculpt** mode
+    adds, removes, paints and picks cubes, a stroke working one layer of the model as it found it, with
+    Symmetry; the Inspector's Voxels toggle turns a box either way. Plants and trees are box models too: rays
+    for dropping and for painting a Foliage's plants meet a Block World's ground (`scene_tools::mesh_hits`).
+    Tests: cubes from a box's pixels, faces built and merged, growing, the ray, the file, mirroring; a head
+    sculpted, coloured, mirrored and undone in the editor; the ground of a Block World found from above.
+    Manual: Box Models, Painting and Cutting Plants. Not done: `.vox` files brought in as boxes of cubes,
+    tools that fill or carve many cubes at once, characters made from parts picked at random, plants and trees
+    placed by a Block World's generator.
 
 ## Gameplay kits: game-ready systems
 
@@ -1600,14 +1615,21 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   field of it picked in the Inspector from the starters and the project's effects, and `ParticleSystem.Effect`
   reads and sets a system's. `samples/Effects` plays its explosions, muzzle flashes and mud from a script.
   Tests: plays, seeds and clearing up without a GPU, and the C# API without the engine.
+- **Particle hits and curves from scripts ✅.** A Particle System's **Hit Events** (with Collision on) has the
+  step write each strike, where, the surface's facing and how hard, the first 512 a frame among every system,
+  copied back with the counters and read once that frame is done (`particle_sim::ParticleHit`,
+  `Renderer::take_particle_hits`); the engine tells scripts before LateUpdate, `OnParticleHit` on the behaviours
+  of the system's Obj and `Particles.Hit` for every listener (managed callback `particle_hits`, API version
+  78). C# `Curve` and `Gradient` types, and `ParticleSystem.SizeCurve`, `OpacityCurve`, `SpeedCurve`,
+  `ColorGradient` and `HitEvents`. Tests: on a GPU, strikes on a floor from the system that tells and none from
+  one that does not; curves in words and hits told only of systems still there; the C# types.
 - Particles, still to come, in this order (the design is in [ARCHITECTURE.md](ARCHITECTURE.md#particles)):
   - collision with what is out of view: the ground and colliders, and the scene's rays
   - sub-emitters and events; values an effect shows on the Particle System that plays it
   - sorting, particles in the fog volume, flipbooks blended by motion vectors, and anti-aliasing told about
     fast flat particles; a picture along a ribbon; a mesh's LODs and shadows for
     mesh particles
-  - bursts sent out at a place from a system already playing, values an effect shows that a play sets, hit
-    events, curves and gradients from C#
+  - bursts sent out at a place from a system already playing, and values an effect shows that a play sets
   - the graph compiler shared with Shader Graph, graph mode, custom Slang modules, and each node's cost shown
   - sleeping off screen, level of detail by distance, and the particle debugger
   - decals on hit, heat distortion, shadows cast by particles, blending in any order

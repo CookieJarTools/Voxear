@@ -199,6 +199,13 @@ impl BoxModel {
         let share = low_size as f32 / whole.size[axis] as f32;
         (low.skin, high.skin) =
             (halved(&whole, whole.skin, axis, share, false), halved(&whole, whole.skin, axis, share, true));
+        // Its cubes go with the half they are in.
+        if let Some(cubes) = &whole.voxels {
+            let mut shift = [0; 3];
+            shift[axis] = -(low_size as i32);
+            low.voxels = Some(cubes.resized(whole.size, low.size, [0; 3]));
+            high.voxels = Some(cubes.resized(whole.size, high.size, shift));
+        }
         // Its layer is cut with it.
         if let Some(layer) = whole.layer {
             let half =

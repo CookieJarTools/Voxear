@@ -31,6 +31,8 @@ static const uint PARTICLES_RIBBON = 1024;
 static const uint PARTICLES_RIBBON_FED = 2048;
 // Each particle is drawn as a mesh, tumbling, rather than as a flat picture.
 static const uint PARTICLES_MESH = 4096;
+// Its particles' strikes on what they meet are written out for the CPU, for scripts to hear of.
+static const uint PARTICLES_HITS = 8192;
 // How fast a simulated mesh particle must be going, in metres a second, to tumble at its system's full Spin: slower,
 // it turns less, and at rest not at all. How far it has turned is kept in the low half of its number
 // (PARTICLE_TURNED), in 65536ths of a turn, which leaves the high half to pick its random numbers.

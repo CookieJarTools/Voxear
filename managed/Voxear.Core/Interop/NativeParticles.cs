@@ -55,10 +55,21 @@ internal static unsafe class NativeParticles
 	public const int Trails = 42;
 	public const int TrailTime = 43;
 	public const int TrailWidth = 44;
+	public const int HitEvents = 45;
 
 	/// <summary>What is asked in words, through NativeComponent's texts: the effect a system plays, read and set.</summary>
 	public const int Effect = 0;
 	public const int SetEffect = 1;
+
+	/// <summary>
+	/// A curve or the gradient, as words: SizeCurve and the rest read it, plus Change to set it. Keys a line each,
+	/// where then what; a gradient's colour as it looks on screen.
+	/// </summary>
+	public const int SizeCurve = 10;
+	public const int OpacityCurve = 11;
+	public const int SpeedCurve = 12;
+	public const int ColorGradient = 13;
+	public const int Change = 10;
 	private const int PlayEffect = 2;
 	private const int AnswerRoom = 32;
 

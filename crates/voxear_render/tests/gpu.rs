@@ -5379,6 +5379,38 @@ fn particles_drawn_as_meshes_are_solid_lit_and_hide_what_is_behind_them() {
     assert!(flying > 500 && resting * 8 < flying, "tumbling in the air, still on the floor: {flying} pixels change, then {resting}");
 }
 
+#[test]
+fn sparks_with_hit_events_tell_where_they_struck_the_floor_and_others_tell_nothing() {
+    use voxear_render::{ParticleCollision, ParticlePlayback, ParticleSystem, Sky};
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 1.5, -6.0))));
+    world.insert_resource(Sky { ambient: 0.1, ..Sky::default() });
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let grey = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let slab = Transform::new(Vec3::new(0.0, -0.5, 0.0), Quat::IDENTITY, Vec3::new(12.0, 1.0, 12.0));
+    world.spawn((MeshRenderer::new(cube, grey), slab));
+    let mut time = 10.0;
+    let falling = ParticleSystem { lifetime: [3.0, 3.0], collision: ParticleCollision::Depth, bounce: 0.2, ..sparks() };
+    let telling = world.spawn((ParticleSystem { hit_events: true, ..falling }, ParticlePlayback { started: time, stopped: None }, Transform::from_position(Vec3::new(-1.5, 0.0, 0.0))));
+    world.spawn((falling, ParticlePlayback { started: time, stopped: None }, Transform::from_position(Vec3::new(1.5, 0.0, 0.0))));
+    world.insert_resource(steady_post());
+    let mut hits = Vec::new();
+    for _ in 0..120 {
+        run(&mut renderer, &world, &mut time, 0);
+        hits.extend(renderer.take_particle_hits());
+    }
+    assert!(hits.len() > 50, "the sparks landing: {} strikes", hits.len());
+    assert!(hits.iter().all(|hit| hit.entity == telling && hit.emitter == 0), "only the system that tells");
+    // On the floor's top, round the fountain's foot, the floor facing up, struck going down fast.
+    let on_floor = hits.iter().filter(|hit| hit.position.y.abs() < 0.15 && hit.normal.y > 0.9).count();
+    assert!(on_floor * 10 > hits.len() * 9, "{on_floor} of {} on the floor facing up", hits.len());
+    let round_foot = hits.iter().filter(|hit| (hit.position.x + 1.5).abs() < 4.0 && hit.position.z.abs() < 4.0).count();
+    assert!(round_foot * 10 > hits.len() * 9, "round the fountain's foot: {round_foot} of {}", hits.len());
+    assert!(hits.iter().all(|hit| hit.speed > 0.0) && hits.iter().any(|hit| hit.speed > 3.0), "some hard");
+    assert!(renderer.take_particle_hits().len() < hits.len(), "taken once");
+}
+
 /// A fat column of smoke, `smoke` puffs a second, with a post standing in front of it, its soft particles drawn at
 /// half size or not; or with none, the post alone. With the picture, the least of sixty frames' time drawing
 /// particles, in milliseconds, and which of the half-size passes ran.

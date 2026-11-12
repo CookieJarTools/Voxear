@@ -7,7 +7,7 @@
 use voxear_core::logging::LogCapture;
 use voxear_core::math::Vec3;
 use voxear_editor::box_part_inspector::BoxPartEdit;
-use voxear_editor::model_panel::{Mode, Pace, Tool};
+use voxear_editor::model_panel::{Carve, Mode, Pace, Tool};
 use voxear_editor::model_view::{Handle, Picked};
 use voxear_engine::Project;
 use voxear_render::{BoneRole, BoxModel, BoxSkin, Face, Renderer, RendererSettings};
@@ -733,4 +733,84 @@ fn a_clip_is_keyed_on_the_timeline_by_turning_a_bone_and_plays() {
     frames(&mut editor, &mut renderer, 3);
     assert!(!editor.model_window().view().is_posed());
     assert!(!editor.ui.is_visible(editor.model_window().timeline().frame_node()));
+}
+
+#[test]
+fn a_box_is_sculpted_from_cubes_added_taken_and_coloured() {
+    let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {
+        return eprintln!("skipping: no usable GPU");
+    };
+    let project = hello_copy();
+    let dir = project.path().to_path_buf();
+    let mut editor =
+        voxear_editor::Editor::open_without_memory(Project::open(&dir).unwrap(), &mut renderer, LogCapture::default())
+            .unwrap();
+    frames(&mut editor, &mut renderer, 2);
+    assert!(editor.open_path(PATH, &mut renderer));
+    frames(&mut editor, &mut renderer, 3);
+    let (red, blue) = ([226, 84, 84, 255], [60, 90, 200, 255]);
+    // The middle of a pixel of the head's front: the fifth along and the fifth up.
+    let on_front = Vec3::new(0.5, 24.0 + 4.5, 4.0) / 16.0;
+    let click_front = |editor: &mut voxear_editor::Editor, renderer: &mut Renderer| {
+        let at = editor.model_window().view().point(&editor.ui, on_front).expect("in view");
+        click_at(&mut editor.ui, at);
+        frames(editor, renderer, 3);
+    };
+    let head = |editor: &voxear_editor::Editor| editor.model_window().model().unwrap().bones[1].boxes[0].clone();
+    let cube = |editor: &voxear_editor::Editor, cell: [i32; 3]| {
+        let head = head(editor);
+        let cubes = head.voxels.expect("made of cubes");
+        editor.model_window().model().unwrap().voxel_color(cubes.get(head.size, cell))
+    };
+
+    // Sculpt, with Add: a click on the head makes it one of cubes, as large, with one more against the face.
+    editor.set_model_mode(Mode::Sculpt);
+    frames(&mut editor, &mut renderer, 3);
+    assert_eq!(editor.model_window().carve(), Carve::Add);
+    editor.model_window_mut().set_color(red);
+    click_front(&mut editor, &mut renderer);
+    let made = head(&editor);
+    assert_eq!(made.size, [8, 8, 9], "a cube deeper, to hold the one added");
+    assert_eq!(made.voxels.as_ref().unwrap().solid(), 8 * 8 * 8 + 1);
+    assert_eq!(cube(&editor, [4, 4, 8]), red);
+    assert_eq!(saved(&dir), *editor.model_window().model().unwrap());
+    assert!(editor.model_window_mut().undo());
+    frames(&mut editor, &mut renderer, 2);
+    assert_eq!(editor.model_window().model(), Some(&figure()), "making it of cubes and adding to it is one step");
+    assert!(editor.model_window_mut().redo());
+    frames(&mut editor, &mut renderer, 2);
+
+    // Remove takes the cube met, the one just added; Paint then colours the one behind it.
+    editor.set_model_carve(Carve::Remove);
+    frames(&mut editor, &mut renderer, 2);
+    click_front(&mut editor, &mut renderer);
+    assert_eq!(head(&editor).voxels.unwrap().solid(), 8 * 8 * 8);
+    editor.set_model_carve(Carve::Paint);
+    editor.model_window_mut().set_color(blue);
+    frames(&mut editor, &mut renderer, 2);
+    click_front(&mut editor, &mut renderer);
+    assert_eq!(cube(&editor, [4, 4, 7]), blue);
+    assert_eq!(head(&editor).voxels.unwrap().solid(), 8 * 8 * 8, "painting adds nothing");
+
+    // Pick takes a cube's colour to sculpt with; with Symmetry, Add puts a cube each side of the body.
+    editor.model_window_mut().set_color(red);
+    editor.set_model_carve(Carve::Pick);
+    frames(&mut editor, &mut renderer, 2);
+    click_front(&mut editor, &mut renderer);
+    assert_eq!(editor.model_window().color(), blue);
+    editor.set_model_carve(Carve::Add);
+    editor.set_model_symmetry(true);
+    frames(&mut editor, &mut renderer, 2);
+    click_front(&mut editor, &mut renderer);
+    assert_eq!(head(&editor).voxels.unwrap().solid(), 8 * 8 * 8 + 2);
+    assert_eq!((cube(&editor, [4, 4, 8]), cube(&editor, [3, 4, 8])), (blue, blue));
+    keep_picture(&mut renderer, "model window sculpt.png");
+    assert_eq!(saved(&dir), *editor.model_window().model().unwrap());
+
+    // Voxels off in the Inspector's rows makes it a plain box again, of the size it had grown to.
+    editor.model_window_mut().edit(Picked::Box(1, 0), BoxPartEdit::Voxels(false));
+    frames(&mut editor, &mut renderer, 3);
+    let plain = head(&editor);
+    assert!(plain.voxels.is_none() && plain.size == [8, 8, 9]);
+    assert!(editor.model_window().model().unwrap().palette.is_empty());
 }

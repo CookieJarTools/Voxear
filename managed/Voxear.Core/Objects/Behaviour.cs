@@ -187,6 +187,20 @@ public abstract class Behaviour
 		OnMotionMark(mark);
 	}
 
+	/// <summary>
+	/// Called when a particle of the Obj's Particle System strikes something, with Hit Events on: where, the way the
+	/// surface faces, and how fast it went in, for a hiss where a spark lands or a clink where a shell case does. It
+	/// comes before LateUpdate, a few frames after the strike.
+	/// </summary>
+	protected virtual void OnParticleHit(ParticleHit hit)
+	{
+	}
+
+	internal void HitByParticle(ParticleHit hit)
+	{
+		OnParticleHit(hit);
+	}
+
 	internal void Collide(uint kind, Collision collision)
 	{
 		var (point, normal) = (collision.Point, collision.Normal);

@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 77;
+pub(crate) const API_VERSION: u32 = 78;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -1131,6 +1131,9 @@ pub(crate) struct ManagedApi {
     /// in whole metres: fields marked `[WorldPosition]` move too, then
     /// `Origin.Moved` is raised.
     pub origin_moved: Option<unsafe extern "C" fn(by: *const i32)>,
+    /// Tells scripts of particles' strikes (`OnParticleHit` on the
+    /// behaviours of each system's Obj, and `Particles.Hit`).
+    pub particle_hits: Option<unsafe extern "C" fn(hits: *const crate::physics::ParticleHitData, count: i32)>,
 }
 
 pub(crate) type RunCheck = unsafe extern "C" fn(

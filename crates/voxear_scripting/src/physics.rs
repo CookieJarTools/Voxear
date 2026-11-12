@@ -174,6 +174,22 @@ pub struct PhysicsEventData {
 
 const _: () = assert!(size_of::<PhysicsEventData>() == 48, "PhysicsEventData in Voxear.Core is 48 bytes");
 
+/// A particle's strike, as scripts are told of it (`OnParticleHit`,
+/// `Particles.Hit`): the Obj of its Particle System, which of its effect's
+/// emitters, how fast it went into what it struck, where, in the world, and
+/// the way the surface faces there. Mirrors ParticleHitData in Voxear.Core.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ParticleHitData {
+    pub entity: u64,
+    pub emitter: u32,
+    pub speed: f32,
+    pub point: [f32; 3],
+    pub normal: [f32; 3],
+}
+
+const _: () = assert!(size_of::<ParticleHitData>() == 40, "ParticleHitData in Voxear.Core is 40 bytes");
+
 impl PhysicsEventData {
     /// The event as each Obj in it is told: once with it as `a`, once as `b`.
     pub fn both(event: &PhysicsEvent) -> [Self; 2] {

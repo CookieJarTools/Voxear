@@ -1022,6 +1022,19 @@ struct Particle
 
 // How many particles a chunk of the pool holds: the simulation steps whole chunks (particle_sim::CHUNK).
 static const uint PARTICLE_CHUNK = 256;
+// A particle striking what the main view sees (GpuParticleHit in src/gpu.rs): where, in the world; which of the
+// frame's stepped systems; the way the surface faces; and how fast it was going into it.
+struct ParticleHit
+{
+    float3 position;
+    uint system;
+    float3 normal;
+    float speed;
+};
+
+// The most strikes a frame's step writes (particle_sim::MAX_HITS).
+static const uint PARTICLE_MAX_HITS = 512;
+
 // How many points of its way a particle with a trail keeps, and how many particles' room in the pool they take, three
 // points to a particle's (particles::TRAIL_POINTS, TRAIL_ROOM).
 static const uint PARTICLE_TRAIL_POINTS = 15;
@@ -1307,6 +1320,8 @@ struct Buffers
     ParticleSystem* particleSteps;
     // The pool again, read as the points of particles' trails.
     float3* particleTrails;
+    // The strikes of systems that report them (PARTICLES_HITS), counted in particleCounters[1].
+    ParticleHit* particleHits;
 };
 
 struct Push

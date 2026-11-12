@@ -6,7 +6,7 @@ A **Foliage** grows one plant in many places at once: a meadow of grass, a fores
 
 ## Adding foliage
 
-Add a **Foliage** to an Obj (Add Component, then Rendering). It starts as small cubes scattered over ten metres round the Obj; change its mesh and material in the scene file to your plant's, as a Mesh Renderer names them.
+Add a **Foliage** to an Obj (Add Component, then Rendering). It starts as small cubes scattered over ten metres round the Obj; change its mesh and material in the scene file to your plant's, as a Mesh Renderer names them. A plant can be a [[Box Models|box model]] sculpted in the editor.
 
 | Setting | What it does |
 | --- | --- |

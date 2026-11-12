@@ -928,6 +928,8 @@ impl Content {
         std::fs::write(&file, toml::to_string(data)?).with_context(|| format!("writing {}", file.display()))?;
         let Some(guid) = self.db.guid_of(path) else { return Ok(()) };
         self.texts.remove(&guid);
+        // A block drawn with it may be seen through now, or no longer: worlds of blocks take their blocks up again.
+        self.blocks_version += 1;
         let own = self.asset_materials.get(&AssetRef::asset(guid, None)).copied();
         let remapped = self.remapped_to(guid);
         if own.is_none() && remapped.is_empty() {

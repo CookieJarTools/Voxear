@@ -3376,6 +3376,16 @@ and trenches (a cross-section swept along a spline) are layers that lay no heigh
 in order, as a terrain loads and again in the editor only when they or the heights under their columns change, so
 saved heights keep none of their holes (`dig::redig`).
 
+**See-through blocks.** Whether a block is seen through is not a setting of its own: it follows from its
+materials. `engine::blocks::resolved` marks an entry `cutout` where any of its faces' materials has a cutoff, and
+`BlockFile::faces` hands that to the mesher as `BlockFaces::see_through`. The mesher asks two things of a block
+where it asked one: whether it is ground (`is_ground`: it closes corners, is stood on, is triangles) and whether it
+hides what is behind it (`hides`: ground not seen through). A face is made wherever ground meets a block that
+does not hide it, so leaves keep their faces against leaves and a trunk keeps its faces under them; `buried` and
+the sights between a chunk's sides use `hides` too. Drawing needs no second pass or pipeline: `blocks.slang` reads
+the face's surface's material and discards under its cutoff inside `terrainShading`, which the depth pass and the
+shaded pass both call, so the two agree. The shadow pass has no fragment stage, so a leaf block's shadow is whole.
+
 **Plants a Block World grows.** A Foliage under a Block World with a `grow` section has its plants worked out from
 the world's ground rather than placed. Where they stand is pure data, in `voxear_terrain::blocks::grow`: a rule
 (blocks, climate and height ranges, steepest slope, spacing, separation, chance, patches, seed) asks the shared

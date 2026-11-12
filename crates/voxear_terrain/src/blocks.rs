@@ -14,6 +14,12 @@
 //! where the ground's surface passes, and its surface runs smoothly between
 //! its blocks' middles ([`smooth`]) in place of their cubes' faces.
 //!
+//! A kind of block can be see-through (`file::BlockKind::cutout`): its faces
+//! are drawn from a picture with holes in it, as leaves are, so what is
+//! behind it shows. Blocks beside it keep their faces towards it, it keeps
+//! its own towards another of its kind, and it is ground in every other
+//! way: stood on, built on, dug.
+//!
 //! A kind of block can be water (`file::BlockKind::water`): its faces show
 //! only where it meets air, and are drawn apart, see-through, after the
 //! ground; the ground's faces show where they meet it as they do air.
@@ -48,26 +54,28 @@ use mesh::ChunkMesh;
 
 /// How a kind of block's faces are drawn, by its number in its world (see
 /// `file::BlockFile::faces`): the surfaces its top, its sides and its
-/// bottom are drawn with, whether it is water, and its own colour, sRGB a
-/// byte each, which water takes from in it.
+/// bottom are drawn with, whether it is water, whether it is seen through
+/// where its faces' pictures are clear, and its own colour, sRGB a byte
+/// each, which water takes from in it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BlockFaces {
     pub top: u8,
     pub sides: u8,
     pub bottom: u8,
     pub water: bool,
+    pub see_through: bool,
     pub color: [u8; 3],
 }
 
 impl BlockFaces {
     /// A kind of ground drawn with these surfaces.
     pub const fn new(top: u8, sides: u8, bottom: u8) -> Self {
-        Self { top, sides, bottom, water: false, color: [0; 3] }
+        Self { top, sides, bottom, water: false, see_through: false, color: [0; 3] }
     }
 
     /// Water drawn with surface `surface`.
     pub const fn water(surface: u8) -> Self {
-        Self { top: surface, sides: surface, bottom: surface, water: true, color: [0; 3] }
+        Self { top: surface, sides: surface, bottom: surface, water: true, see_through: false, color: [0; 3] }
     }
 }
 
@@ -79,6 +87,17 @@ pub fn is_water(faces: &[BlockFaces], block: BlockId) -> bool {
 /// Whether block `block` is ground: neither air nor water.
 pub fn is_ground(faces: &[BlockFaces], block: BlockId) -> bool {
     block != AIR && !is_water(faces, block)
+}
+
+/// Whether block `block` is ground seen through, as leaves are.
+pub fn is_see_through(faces: &[BlockFaces], block: BlockId) -> bool {
+    faces.get(usize::from(block)).is_some_and(|faces| faces.see_through && !faces.water)
+}
+
+/// Whether block `block` hides what is behind it: ground that is not seen
+/// through. A face against such a block is never seen, and is not made.
+pub fn hides(faces: &[BlockFaces], block: BlockId) -> bool {
+    is_ground(faces, block) && !is_see_through(faces, block)
 }
 
 /// Every block of a world, by chunk: chunks with no block in them are not
@@ -136,12 +155,11 @@ impl BlockMap {
     }
 
     /// Whether chunk `key` and the six beside it are all ground through and
-    /// through, none of it water as `faces` says, so it has no faces to draw.
+    /// through, none of it water or seen through as `faces` says, so it has
+    /// no faces to draw.
     pub fn buried(&self, key: [i32; 3], faces: &[BlockFaces]) -> bool {
         let whole = |key: [i32; 3]| {
-            self.chunks
-                .get(&key)
-                .is_some_and(|chunk| chunk.is_whole() && !chunk.may_hold(|block| is_water(faces, block)))
+            self.chunks.get(&key).is_some_and(|chunk| chunk.is_whole() && !chunk.may_hold(|block| !hides(faces, block)))
         };
         let beside = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
         whole(key) && beside.iter().all(|step| whole([0, 1, 2].map(|i| key[i] + step[i])))

@@ -5,7 +5,8 @@
 // corners, so its shading runs smoothly across it.
 //
 // Its faces are shaded by shading.slang's fragment shaders, as the terrain's are: each face with its surface's
-// material, its pictures repeated each block, darker at the corners blocks close in.
+// material, its pictures repeated each block, darker at the corners blocks close in. A face whose material is cut
+// out is drawn only where its picture is solid, in the depth pass as in the shaded one.
 //
 // A world drawn smooth (voxear_terrain::blocks::smooth) holds triangles' corners in place of quads, two pairs of words
 // each, a vertex each: where it is in its chunk and the chunk's number, then the way the ground faces there and the
@@ -154,6 +155,12 @@ bool terrainShading(
     else
     {
         layer = blockLayer(world, input.lod, spot, normal, input.tangent);
+        // A face whose material is cut out, as leaves are, is not there where its picture is clear.
+        float cutoff = buffers()->materials[world.surfaces[min(input.lod, world.surfaceCount - 1)].material].alphaCutoff;
+        if (cutoff > 0.0 && layer.base.a < cutoff)
+        {
+            discard;
+        }
     }
     base = layer.base;
     base.rgb *= shade;

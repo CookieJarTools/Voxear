@@ -147,6 +147,15 @@ pub fn resolved(content: &mut Content, file: &BlockFile) -> Resolved {
             }
         }
     }
+    // A block drawn with a material that is cut out is seen through, as leaves are: every face against it shows.
+    for kind in file.blocks.iter_mut().filter(|kind| kind.is_live()) {
+        let mut cut_out = |material: &Option<String>| {
+            let guid = material.as_deref().and_then(|reference| content.parse(reference).ok()?.guid());
+            guid.and_then(|guid| content.material_data(guid).ok())
+                .is_some_and(|data| data.cutout.is_some_and(|c| c > 0.0))
+        };
+        kind.cutout = cut_out(&kind.material) || cut_out(&kind.top) || cut_out(&kind.bottom);
+    }
     Resolved { file, guids }
 }
 

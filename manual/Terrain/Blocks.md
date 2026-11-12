@@ -37,6 +37,17 @@ Pick a block, and the Inspector shows:
 
 A face with a material is drawn with it, its pictures repeated a block at a time and taken from the side the face looks, so stripes on a side run straight down it. A face with none is drawn in the block's colour. A liquid is drawn in its colour alone, so its materials go.
 
+### Leaves and other see-through blocks
+
+A block drawn with a material that is **cut out** is see-through: leaves, a grating, a web. Give the material a colour map with clear parts and a `cutout` (see [[Materials]]), and use it on the block. Nothing else needs setting.
+
+- Its faces are drawn only where the picture is solid, and what is behind shows through the rest.
+- Blocks beside it keep their faces towards it, so a trunk shows through its leaves.
+- It keeps its own faces towards other see-through blocks, its own kind too, so a crown of leaves is leaves all the way in, darker inside.
+- It is a block in every other way: stood on, built on, dug, and it shades the corners of the blocks round it.
+
+If any of a block's materials is cut out (its sides', its top's or its bottom's), the whole block is see-through. Its shadow is still a whole block's, and far off, in the coarser rings, it is drawn like any block.
+
 ### Breaking
 
 | Setting | What it does |

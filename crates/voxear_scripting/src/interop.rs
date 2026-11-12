@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 73;
+pub(crate) const API_VERSION: u32 = 74;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -502,6 +502,9 @@ pub(crate) struct NativeApi {
     /// The cave rooms of a world of blocks, as JSON for `Caves`.
     pub caves_info:
         unsafe extern "C" fn(obj: u64, what: i32, at: *const [f32; 4], buffer: *mut u8, capacity: i32) -> i32,
+    /// Sets off a blast at a point, so wide, that throws the particles round
+    /// it out, those at its middle so fast.
+    pub particle_blast: unsafe extern "C" fn(at: *const [f32; 3], radius: f32, speed: f32) -> i32,
     /// `World.Quality` and the numbers under it: what making worlds of
     /// blocks may spend, read by number.
     pub world_budget: unsafe extern "C" fn(which: i32) -> f32,
@@ -527,6 +530,8 @@ pub enum ComponentKind {
     Hierarchy = 7,
     /// A document shown over the game's view.
     ScreenUi = 8,
+    /// What moves the particles round an Obj.
+    ForceField = 9,
     Gun = 16,
     GunHolder = 17,
 }
@@ -642,6 +647,16 @@ static SPLASHER: std::sync::OnceLock<WaterSplasher> = std::sync::OnceLock::new()
 /// Sets what `Water.Splash` in scripts calls; the first set is kept.
 pub fn set_water_splasher(splasher: WaterSplasher) {
     let _ = SPLASHER.set(splasher);
+}
+
+/// What sets off a blast for scripts at a point, so wide, throwing
+/// particles out so fast: the engine's, set when it starts.
+pub type ParticleBlaster = fn(&mut World, [f32; 3], f32, f32);
+static BLASTER: std::sync::OnceLock<ParticleBlaster> = std::sync::OnceLock::new();
+
+/// Sets what `Particles.Push` in scripts calls; the first set is kept.
+pub fn set_particle_blaster(blaster: ParticleBlaster) {
+    let _ = BLASTER.set(blaster);
 }
 
 /// What reads, or with a value writes, a value of one of an Obj's
@@ -948,6 +963,15 @@ unsafe fn component_value(values: Option<&ComponentValues>, entity: u64, what: i
         }
         None => 0,
     }
+}
+
+unsafe extern "C" fn particle_blast(at: *const [f32; 3], radius: f32, speed: f32) -> i32 {
+    if at.is_null() {
+        return 0;
+    }
+    let at = unsafe { *at };
+    let set_off = BLASTER.get().and_then(|blaster| with_world(|world| Some(blaster(world, at, radius, speed))));
+    i32::from(set_off.is_some())
 }
 
 unsafe extern "C" fn water_splash(at: *const [f32; 3], size: f32) -> i32 {
@@ -1962,6 +1986,7 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         blocks_version: crate::blocks::blocks_version,
         water_splash,
         caves_info: crate::services::caves_info,
+        particle_blast,
         world_budget: crate::blocks::world_budget,
         set_world_budget: crate::blocks::set_world_budget,
     }

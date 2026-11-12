@@ -20,7 +20,7 @@ use voxear_engine::{
     scene_file::{FoliageSource, ModelSource},
 };
 use voxear_render::{
-    Camera, Foliage, FoliageInteraction, Light, LodGroup, MeshRenderer, ModelRenderer, Ocean, ParticleSystem, Renderer, Seasons, WindZone, DryArea, Pool, Stream,
+    Camera, Foliage, FoliageInteraction, ForceField, Light, LodGroup, MeshRenderer, ModelRenderer, Ocean, ParticleSystem, Renderer, Seasons, WindZone, DryArea, Pool, Stream,
 };
 use voxear_scene::{Inactive, Layer, Name, OffComponents, ScenePersistence, Transform};
 
@@ -56,6 +56,7 @@ pub struct ObjState {
     pub character: Option<Box<CharacterController>>,
     pub wind_zone: Option<Box<WindZone>>,
     pub particles: Option<Box<ParticleSystem>>,
+    pub force_field: Option<ForceField>,
     pub smoke: Option<Box<voxear_render::Smoke>>,
     pub mist: Option<Box<voxear_render::Mist>>,
     pub ui_panel: Option<Box<voxear_render::UiPanel>>,
@@ -161,6 +162,7 @@ impl ObjState {
             character: world.get::<CharacterController>(entity).copied().map(Box::new),
             wind_zone: world.get::<WindZone>(entity).copied().map(Box::new),
             particles: world.get::<ParticleSystem>(entity).copied().map(Box::new),
+            force_field: world.get::<ForceField>(entity).copied(),
             smoke: world.get::<voxear_render::Smoke>(entity).copied().map(Box::new),
             mist: world.get::<voxear_render::Mist>(entity).copied().map(Box::new),
             ui_panel: world.get::<voxear_render::UiPanel>(entity).copied().map(Box::new),
@@ -245,6 +247,7 @@ impl ObjState {
         put(world, entity, self.character.as_deref().copied());
         put(world, entity, self.wind_zone.as_deref().copied());
         put(world, entity, self.particles.as_deref().copied());
+        put(world, entity, self.force_field);
         put(world, entity, self.smoke.as_deref().copied());
         put(world, entity, self.mist.as_deref().copied());
         put(world, entity, self.ui_panel.as_deref().copied());

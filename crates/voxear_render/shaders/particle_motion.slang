@@ -16,6 +16,8 @@ static const uint PARTICLES_LIT = 4;
 static const uint PARTICLES_SIMULATED = 8;
 static const uint PARTICLES_WORLD = 16;
 static const uint PARTICLES_FRESH = 32;
+// Its particles meet what the main view sees, by its depth.
+static const uint PARTICLES_COLLIDE = 64;
 
 // Its shapes, as particles::EmitShape.
 static const uint EMIT_POINT = 0;

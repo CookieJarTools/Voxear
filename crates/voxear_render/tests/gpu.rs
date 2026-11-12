@@ -4878,6 +4878,110 @@ fn particles_in_the_world_stay_behind_as_their_obj_moves_on() {
 }
 
 #[test]
+fn a_force_field_pulls_particles_its_way_and_a_blast_throws_them_out() {
+    use voxear_render::{Blast, EmitShape, ForceField, ForceKind, ParticleBlasts, ParticleSystem};
+    let Some(empty) = particles_render(None, Vec3::ZERO, 0.0) else { return };
+    // A ball of sparks hanging in the air a metre and a half up, which only forces move.
+    let hanging = ParticleSystem {
+        shape: EmitShape::Sphere,
+        radius: 0.6,
+        speed: [0.0, 0.0],
+        gravity: 0.0,
+        lifetime: [3.0, 3.0],
+        forces: 1.0,
+        ..sparks()
+    };
+    let lifted = |world: &mut World, obj| world.get_mut::<Transform>(obj).unwrap().position.y = 1.5;
+    let pulled = |side: f32| {
+        let stir = |world: &mut World| {
+            let field = ForceField { kind: ForceKind::Attract, strength: 6.0, radius: 8.0 };
+            world.spawn((field, Transform::from_position(Vec3::new(3.0 * side, 1.5, 0.0))));
+        };
+        simulated_render(hanging, 90, stir, lifted).unwrap().0
+    };
+    let (one_way, other_way) = (pulled(1.0), pulled(-1.0));
+    keep_image("particles attracted.png", &one_way);
+    let ((_, one, _), (_, other, _)) = (bright_spread(&one_way, &empty), bright_spread(&other_way, &empty));
+    assert!((one - other).abs() > 60.0, "pulled apart by fields to either side: {one} and {other} across");
+    assert!((one - 320.0) * (other - 320.0) < 0.0, "one to each side of where they hang: {one} and {other}");
+    // A blast in the ball's middle, half a second in: it is thrown wide. One that takes no forces hangs on.
+    let blast = |world: &mut World| {
+        let blast = Blast { at: Vec3::new(0.0, 1.5, 0.0), radius: 4.0, speed: 5.0, started: 10.5 };
+        world.insert_resource(ParticleBlasts(vec![blast]));
+    };
+    let still = simulated_render(hanging, 75, |_| {}, lifted).unwrap().0;
+    let thrown = simulated_render(hanging, 75, blast, lifted).unwrap().0;
+    let deaf = ParticleSystem { forces: 0.0, wind: 0.0001, ..hanging };
+    let unmoved = simulated_render(deaf, 75, blast, lifted).unwrap().0;
+    keep_image("particles blast.png", &thrown);
+    let ((_, _, hung), (_, _, wide), (_, _, same)) =
+        (bright_spread(&still, &empty), bright_spread(&thrown, &empty), bright_spread(&unmoved, &empty));
+    assert!(wide > hung + 80, "thrown out by the blast: {wide} pixels across against {hung}");
+    assert!(same.abs_diff(hung) < 20, "one that takes no forces is not: {same} against {hung}");
+}
+
+/// How many pixels of `pixels` in rows `rows` are much brighter in red than in `before`.
+fn brighter_in_rows(pixels: &[u8], before: &[u8], rows: std::ops::Range<u32>) -> usize {
+    let all = rows.flat_map(|y| (0..640u32).map(move |x| (x, y)));
+    all.filter(|&at| rgb_at(pixels, at)[0] > rgb_at(before, at)[0] + 40).count()
+}
+
+#[test]
+fn particles_that_collide_land_on_the_floor_and_those_that_do_not_fall_through_it() {
+    use voxear_render::{ParticleCollision, ParticleSystem};
+    let render = floor_render;
+    let Some(empty) = render(None) else { return };
+    // Sparks thrown up to fall back three seconds later, long after they have landed.
+    let falling = ParticleSystem { lifetime: [3.0, 3.0], wind: 0.0001, ..sparks() };
+    let through = render(Some(falling)).unwrap();
+    // Landing dead: no bounce, and stopped where they land.
+    let landing = ParticleSystem { collision: ParticleCollision::Depth, bounce: 0.0, friction: 1.0, ..falling };
+    let landed = render(Some(landing)).unwrap();
+    keep_image("particles through floor.png", &through);
+    keep_image("particles landed.png", &landed);
+    // The floor round the fountain's foot is these rows of the picture; the sparks in flight are above them.
+    let on_floor = 250..330;
+    let (fell, lay) = (brighter_in_rows(&through, &empty, on_floor.clone()), brighter_in_rows(&landed, &empty, on_floor.clone()));
+    assert!(lay > 150 && lay > fell * 3, "sparks lie on the floor: {lay} pixels against {fell} falling through");
+    // Dying where they strike, none lie there.
+    let dying = render(Some(ParticleSystem { life_lost: 1.0, ..landing })).unwrap();
+    let dead = brighter_in_rows(&dying, &empty, on_floor.clone());
+    assert!(dead * 3 < lay, "none lie where they died: {dead} pixels against {lay}");
+    // Bouncing, they are back in the air: more of them above the floor than when they land dead.
+    let bouncing = render(Some(ParticleSystem { bounce: 0.9, friction: 0.0, ..landing })).unwrap();
+    keep_image("particles bouncing.png", &bouncing);
+    let above = 0..250;
+    let (up, down) = (brighter_in_rows(&bouncing, &empty, above.clone()), brighter_in_rows(&landed, &empty, above));
+    assert!(up > down + 100, "bounced back up: {up} pixels in the air against {down}");
+}
+
+/// The scene `simulated_render` draws with a floor under it, its top at the fountain's foot, and `system` there,
+/// three seconds of frames after it started.
+fn floor_render(system: Option<voxear_render::ParticleSystem>) -> Option<Vec<u8>> {
+    use voxear_render::{ParticlePlayback, Sky};
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 1.5, -6.0))));
+    world.insert_resource(Sky { ambient: 0.1, ..Sky::default() });
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let grey = MaterialDesc { base_color: [0.3, 0.3, 0.3, 1.0], ..MaterialDesc::default() };
+    let grey = renderer.add_material(&grey).unwrap();
+    let wall = Transform::new(Vec3::new(0.0, 2.0, 3.0), Quat::IDENTITY, Vec3::new(12.0, 6.0, 0.2));
+    world.spawn((MeshRenderer::new(cube, grey), wall));
+    let slab = Transform::new(Vec3::new(0.0, -0.5, 0.0), Quat::IDENTITY, Vec3::new(12.0, 1.0, 12.0));
+    world.spawn((MeshRenderer::new(cube, grey), slab));
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.3, -0.6, 1.0).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 1.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    let mut time = 10.0;
+    if let Some(system) = system {
+        world.spawn((system, ParticlePlayback { started: time, stopped: None }, Transform::from_position(Vec3::ZERO)));
+    }
+    world.insert_resource(steady_post());
+    run(&mut renderer, &world, &mut time, 180);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+#[test]
 fn a_system_with_no_room_in_the_budget_is_left_out_and_counted() {
     use voxear_render::{ParticleSpace, ParticleSystem};
     let Some(mut renderer) = renderer() else { return };

@@ -214,6 +214,41 @@ public readonly struct ParticleSystem : IEquatable<ParticleSystem>, IObjComponen
 		set { Set(NativeParticles.TurbulenceSize, value); }
 	}
 
+	/// <summary>What its particles meet on their way, and bounce off or stop at.</summary>
+	public ParticleCollision Collision
+	{
+		get { return (ParticleCollision)(int)Number(NativeParticles.Collision); }
+		set { Set(NativeParticles.Collision, (int)value); }
+	}
+
+	/// <summary>How much of its speed into what it meets a particle keeps, away from it: 0 stops dead, 1 bounces as fast as it came.</summary>
+	public float Bounce
+	{
+		get { return Number(NativeParticles.Bounce); }
+		set { Set(NativeParticles.Bounce, value); }
+	}
+
+	/// <summary>How much of its speed along what it meets a particle loses each time: 0 slides on, 1 stops.</summary>
+	public float Friction
+	{
+		get { return Number(NativeParticles.Friction); }
+		set { Set(NativeParticles.Friction, value); }
+	}
+
+	/// <summary>How much of the life it has left a particle loses each time it strikes something: 1 and it dies there.</summary>
+	public float LifeLost
+	{
+		get { return Number(NativeParticles.LifeLost); }
+		set { Set(NativeParticles.LifeLost, value); }
+	}
+
+	/// <summary>How much Force Fields, blasts and what passes by move its particles: 0 not at all.</summary>
+	public float Forces
+	{
+		get { return Number(NativeParticles.Forces); }
+		set { Set(NativeParticles.Forces, value); }
+	}
+
 	/// <summary>Which particles: two systems alike but for this send out different ones.</summary>
 	public int Seed
 	{

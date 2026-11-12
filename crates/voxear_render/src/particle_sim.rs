@@ -1,7 +1,9 @@
 //! Simulated particles: the Particle Systems whose particles need more than
 //! their age to say where they are (see `particles`), kept on the GPU from
 //! frame to frame and stepped there once a frame, for every view
-//! (`shaders/particle_sim.slang`).
+//! (`shaders/particle_sim.slang`). The main view records the step among its
+//! own passes, once its depth is drawn, which is what colliding particles
+//! meet; a frame that does not draw the main view steps nothing.
 //!
 //! All of them share one pool. A system has a run of it to itself, as many
 //! particles as it can have out at once, and fills it in a ring: each new
@@ -28,10 +30,9 @@ use voxear_rhi::{Buffer, Frames, Gpu, MemoryLocation, Retired, vk};
 use voxear_scene::{Destroying, Switch, Switched, Transform, WorldOrigin, WorldTransform};
 
 use crate::{
-    gpu::{GpuBuffers, GpuParticle, GpuParticleSim, GpuParticleSystem, GpuWind, Push},
-    graph::{BufferAccess, BufferId, FrameGraph},
-    particles::{self, ParticlePlayback, ParticleSpace, ParticleSystem, Placed, PlacedSystems},
-    pipelines::Pipelines,
+    gpu::{GpuParticle, GpuParticleSim, GpuParticleSystem, GpuWind},
+    graph::{BufferId, FrameGraph},
+    particles::{self, ParticlePlayback, ParticleSpace, ParticleSystem, Placed, PlacedSystems, Step},
 };
 
 /// How many particles a chunk of the pool holds (`PARTICLE_CHUNK` in the
@@ -52,7 +53,7 @@ pub struct ParticleBudget(pub u32);
 /// How many chunks the pool starts with.
 const FIRST_CHUNKS: u32 = 64;
 /// How many bytes the pass's counters take.
-const COUNTERS: u64 = 16;
+pub(crate) const COUNTERS: u64 = 16;
 /// How long after a system's last particle should have died it is still
 /// stepped, in seconds, so the last are seen out.
 const SEEN_OUT: f32 = 0.5;
@@ -190,14 +191,13 @@ fn sent(system: &ParticleSystem, last: Option<f32>, now: f32, stopped: f32, owed
 }
 
 /// One frame in flight's buffers: the systems, the chunks to step, what the
-/// pass reads of the frame, the pointers to them all, and what its counters
-/// came to, copied out for the CPU once it is done.
+/// pass reads of the frame, and what its counters came to, copied out for
+/// the CPU once it is done.
 struct SimBuffers {
     systems: Buffer,
     chunks: Buffer,
     frame: Buffer,
     counted: Buffer,
-    pointers: Buffer,
     /// How many chunks `chunks` has room for.
     room: u32,
 }
@@ -396,29 +396,21 @@ impl ParticleSim {
             return Ok(());
         }
         self.fit_pool(gpu, frames)?;
-        let pool = self.pool.as_ref().expect("fitted above").address;
-        let counters = self.counters.as_ref().expect("fitted above").address;
         let buffers = self.fit_buffers(gpu, frames, slot, chunks.len() as u32)?;
         buffers.systems.write(0, &systems);
         buffers.chunks.write(0, &chunks);
-        let header = GpuParticleSim {
+        let mut header = GpuParticleSim {
             time,
             delta_time,
             chunks: chunks.len() as u32,
-            _pad: 0,
             wind: wind(world),
             origin: crate::gpu::frame_origin(WorldOrigin::of(world).0),
+            ..GpuParticleSim::default()
         };
+        let forces = crate::forces::gather(world, time);
+        header.force_count = forces.len() as u32;
+        header.forces[..forces.len()].copy_from_slice(&forces);
         buffers.frame.write(0, &[header]);
-        let table = GpuBuffers {
-            particle_systems: buffers.systems.address,
-            particles: pool,
-            particle_chunks: buffers.chunks.address,
-            particle_sim: buffers.frame.address,
-            particle_counters: counters,
-            ..bytemuck::Zeroable::zeroed()
-        };
-        buffers.pointers.write(0, &[table]);
         Ok(())
     }
 
@@ -457,7 +449,7 @@ impl ParticleSim {
     fn fit_buffers(&mut self, gpu: &Gpu, frames: &mut Frames, slot: usize, chunks: u32) -> Result<&SimBuffers> {
         if self.buffers[slot].as_ref().is_some_and(|buffers| buffers.room < chunks) {
             let old = self.buffers[slot].take().expect("checked above");
-            for buffer in [old.systems, old.chunks, old.frame, old.counted, old.pointers] {
+            for buffer in [old.systems, old.chunks, old.frame, old.counted] {
                 frames.retire(Retired::Buffer(buffer));
             }
         }
@@ -483,7 +475,6 @@ impl ParticleSim {
                     storage | vk::BufferUsageFlags::TRANSFER_DST,
                     MemoryLocation::GpuToCpu,
                 )?,
-                pointers: gpu.create_buffer(&named("pointers"), size_of::<GpuBuffers>() as u64, storage, host)?,
                 room,
             });
         }
@@ -496,44 +487,28 @@ impl ParticleSim {
         self.pool.as_ref().map(|pool| fg.import_buffer(pool))
     }
 
-    /// Records this frame's step, before anything draws.
-    pub fn record(&self, fg: &mut FrameGraph<'_>, pipelines: Pipelines, slot: usize, pool: Option<BufferId>) {
-        let (Some(pool), Some(buffers), true) = (pool, &self.buffers[slot], self.stepped > 0) else { return };
-        let Some(counters) = &self.counters else { return };
-        let push = Push { buffers: buffers.pointers.address, ..Push::default() };
-        let groups = self.stepped * (CHUNK / 64);
-        let (counters, counted) = (counters.handle, buffers.counted.handle);
-        let counted_id = fg.import_buffer(&buffers.counted);
-        let written = [(pool, BufferAccess::ComputeWrite), (counted_id, BufferAccess::TransferWrite)];
-        fg.add_pass("Particle simulation", &[], &written, move |ctx| {
-            use vk::{AccessFlags2 as A, PipelineStageFlags2 as S};
-            // The counters start from nothing, are added to as the particles are stepped, and are copied out: each
-            // after the one before.
-            let after = |from: (S, A), to: (S, A)| {
-                let barrier = [vk::MemoryBarrier2::default()
-                    .src_stage_mask(from.0)
-                    .src_access_mask(from.1)
-                    .dst_stage_mask(to.0)
-                    .dst_access_mask(to.1)];
-                let dependency = vk::DependencyInfo::default().memory_barriers(&barrier);
-                unsafe { ctx.gpu.device.cmd_pipeline_barrier2(ctx.cmd, &dependency) };
-            };
-            let stepping = (S::COMPUTE_SHADER, A::SHADER_STORAGE_READ | A::SHADER_STORAGE_WRITE);
-            unsafe { ctx.gpu.device.cmd_fill_buffer(ctx.cmd, counters, 0, COUNTERS, 0) };
-            after((S::ALL_TRANSFER, A::TRANSFER_WRITE), stepping);
-            crate::passes::bind(ctx, pipelines.particle_sim, vk::PipelineBindPoint::COMPUTE, &push);
-            unsafe { ctx.gpu.device.cmd_dispatch(ctx.cmd, groups, 1, 1) };
-            after(stepping, (S::ALL_TRANSFER, A::TRANSFER_READ));
-            let region = vk::BufferCopy { src_offset: 0, dst_offset: 0, size: COUNTERS };
-            unsafe { ctx.gpu.device.cmd_copy_buffer(ctx.cmd, counters, counted, &[region]) };
-        });
-        fg.sync_buffer(counted_id, BufferAccess::HostRead);
+    /// This frame's step for the main view to record among its passes, once
+    /// its depth is drawn; none with nothing to step.
+    pub fn step(&self, fg: &mut FrameGraph<'_>, slot: usize) -> Option<Step> {
+        let (Some(buffers), Some(counters), true) = (&self.buffers[slot], &self.counters, self.stepped > 0) else {
+            return None;
+        };
+        Some(Step {
+            groups: self.stepped * (CHUNK / 64),
+            counters: counters.handle,
+            counted: buffers.counted.handle,
+            counted_id: fg.import_buffer(&buffers.counted),
+            systems: buffers.systems.address,
+            chunks: buffers.chunks.address,
+            frame: buffers.frame.address,
+            counters_address: counters.address,
+        })
     }
 
     /// Frees the pool and every frame's buffers.
     pub fn destroy(&mut self, gpu: &Gpu) {
         for buffers in self.buffers.iter_mut().filter_map(Option::take) {
-            for buffer in [buffers.systems, buffers.chunks, buffers.frame, buffers.counted, buffers.pointers] {
+            for buffer in [buffers.systems, buffers.chunks, buffers.frame, buffers.counted] {
                 gpu.destroy_buffer(buffer);
             }
         }

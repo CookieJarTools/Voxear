@@ -763,6 +763,7 @@ fn has_component(world: &World, entity: Entity, name: &str) -> bool {
         "Buoyancy" => world.has::<voxear_engine::water::Buoyancy>(entity),
         "Light" => world.has::<voxear_render::Light>(entity),
         "ParticleSystem" => world.has::<voxear_render::ParticleSystem>(entity),
+        "ForceField" => world.has::<voxear_render::ForceField>(entity),
         "Smoke" => world.has::<voxear_render::Smoke>(entity),
         "Mist" => world.has::<voxear_render::Mist>(entity),
         "UiPanel" => world.has::<voxear_render::UiPanel>(entity),

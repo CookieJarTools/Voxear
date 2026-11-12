@@ -144,7 +144,7 @@ fn scripts_ask_about_blocks_change_them_and_put_them_back() {
     use voxear_terrain::{WorldBudget, WorldQuality};
     assert!(said("quality High, columns 24"), "as the project has it: {lines:?}");
     assert!(said("quality Low, threads 2, columns 2, upload 4"), "a preset sets every number: {lines:?}");
-    assert!(said("quality Custom, view 80, far 512"), "a number set by hand makes it Custom: {lines:?}");
+    assert!(said("quality Custom, view 80, far 1024"), "a number set by hand makes it Custom: {lines:?}");
     let low = WorldQuality::Low.budget().unwrap();
     let custom = WorldBudget { quality: WorldQuality::Custom, view_distance: 80.0, ..low };
     assert_eq!(WorldBudget::of(&game.engine.world), custom, "the streamer and the renderer read it");

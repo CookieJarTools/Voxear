@@ -7595,7 +7595,7 @@ fn project_settings_world_tab_sets_the_block_worlds_budget_by_preset_or_by_numbe
     with_class(&editor.ui, body, "number-input", &mut fields);
     // After the floating origin's distance and step: threads, columns, upload, view and far distance.
     let shown: Vec<String> = fields[2..].iter().map(|&field| editor.ui.text(field)).collect();
-    assert_eq!(shown, ["2", "2", "4", "64", "512"]);
+    assert_eq!(shown, ["2", "2", "4", "64", "1024"]);
     // A number typed makes it Custom, the rest kept.
     type_into(&mut editor.ui, fields[3], "6");
     editor.ui.key_down(Key::Enter);

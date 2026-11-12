@@ -96,7 +96,7 @@ impl RoomRules {
     /// than this from its origin.
     pub(crate) fn reach(&self) -> f32 {
         let kept = self.kept();
-        let (wide, high) = (kept.size[1] * 0.7, kept.height * 1.3);
+        let (wide, high) = (kept.size[1] * 0.7, kept.height * 1.3 / (1.0 - kept.floor / 3.0));
         (wide * wide + high * high).sqrt() + kept.roughness + 1.0
     }
 
@@ -323,8 +323,15 @@ impl Made {
                     (middle, across * wide)
                 }
             };
-            let tall = rules.height * between(0.75, 1.0, roll(6, part));
-            let form = roll(7, part);
+            // Height is from the floor up, and the floor fills the lowest third at its flattest: so much taller
+            // the shapes are made.
+            let tall = rules.height / (1.0 - rules.floor / 3.0) * between(0.75, 1.0, roll(6, part));
+            // The first, the room's middle, is never squashed.
+            let form = match (at, roll(7, part)) {
+                (0, form) if form < 0.5 => 0.0,
+                (0, _) => 1.0,
+                (_, form) => form,
+            };
             let sides = [radius * between(0.85, 1.15, roll(8, part)), radius * between(0.85, 1.15, roll(9, part))];
             // A third each: a half ball standing on the floor, a ball squashed, a ball.
             let blob = if form < 0.34 {

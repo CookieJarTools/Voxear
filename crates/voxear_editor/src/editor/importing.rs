@@ -261,6 +261,7 @@ impl Editor {
             changed.iter().filter(|path| path.ends_with(".prefab")).map(|path| path.to_string()).collect();
         let blocks: Vec<String> =
             changed.iter().filter(|path| path.ends_with(".block")).map(|path| path.to_string()).collect();
+        let biomes = changed.iter().any(|path| path.ends_with(".biome"));
         let effects: Vec<String> =
             changed.iter().filter(|path| path.ends_with(".particles")).map(|path| path.to_string()).collect();
         let box_models: Vec<String> =
@@ -317,6 +318,10 @@ impl Editor {
             if !blocks.is_empty() {
                 self.game.content.forget_blocks();
                 self.blocks_saved.extend(blocks);
+            }
+            // Biomes edited outside the editor are read again, and the worlds listing them made again from them.
+            if biomes {
+                self.game.content.forget_biomes();
             }
             // A shader saved from a code editor compiles again, and its materials draw with it; nothing
             // compiles again when the shaders the materials pick are as they were.

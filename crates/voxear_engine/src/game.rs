@@ -929,6 +929,14 @@ impl ScriptServices for GameServices<'_> {
         crate::blocks::every_block(self.content)
     }
 
+    fn biome_json(&mut self, reference: &str) -> Result<String> {
+        crate::blocks::biome_json(self.content, reference)
+    }
+
+    fn biome_at(&mut self, world: &World, at: [f32; 3]) -> Option<String> {
+        crate::blocks::biome_at(world, self.content, at.into()).map(|guid| guid.to_string())
+    }
+
     fn caves_json(&mut self, world: &World, obj: u64, what: i32, at: [f32; 4]) -> Result<String> {
         crate::caves::caves_json(world, self.content, obj, what, at)
     }

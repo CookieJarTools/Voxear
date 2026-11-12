@@ -107,8 +107,10 @@ pub enum NewFile {
     Terrain,
     /// A world generator, which a terrain's Generate layer picks.
     WorldGen,
-    /// A block, which worlds of blocks list.
+    /// A block, which any world of blocks can hold.
     Block,
+    /// A biome, which a generated world of blocks lists for its ground.
+    Biome,
     /// Pictures prompts show for controls, picked on the Input page.
     PromptIcons,
     /// A model built of boxes under bones, with its own pixels.
@@ -116,7 +118,7 @@ pub enum NewFile {
 }
 
 impl NewFile {
-    pub const ALL: [NewFile; 16] = [
+    pub const ALL: [NewFile; 17] = [
         NewFile::Folder,
         NewFile::Scene,
         NewFile::Level,
@@ -131,6 +133,7 @@ impl NewFile {
         NewFile::Terrain,
         NewFile::WorldGen,
         NewFile::Block,
+        NewFile::Biome,
         NewFile::PromptIcons,
         NewFile::BoxModel,
     ];
@@ -139,7 +142,9 @@ impl NewFile {
     pub fn module(self) -> Option<voxear_engine::modules::Module> {
         match self {
             NewFile::GunHandling => Some(voxear_engine::modules::Module::Guns),
-            NewFile::Terrain | NewFile::WorldGen | NewFile::Block => Some(voxear_engine::modules::Module::Terrain),
+            NewFile::Terrain | NewFile::WorldGen | NewFile::Block | NewFile::Biome => {
+                Some(voxear_engine::modules::Module::Terrain)
+            }
             _ => None,
         }
     }
@@ -161,6 +166,7 @@ impl NewFile {
             NewFile::Terrain => "New Terrain",
             NewFile::WorldGen => "New World Generator",
             NewFile::Block => "New Block",
+            NewFile::Biome => "New Biome",
             NewFile::PromptIcons => "New Prompt Icons",
             NewFile::BoxModel => "New Box Model",
         }
@@ -184,6 +190,7 @@ impl NewFile {
             NewFile::Terrain => ("New Terrain", ".terrain"),
             NewFile::WorldGen => ("New World Generator", ".worldgen"),
             NewFile::Block => ("New Block", ".block"),
+            NewFile::Biome => ("New Biome", ".biome"),
             NewFile::PromptIcons => ("New Prompt Icons", ".prompticons"),
             NewFile::BoxModel => ("New Box Model", ".boxmodel"),
         }
@@ -212,6 +219,7 @@ pub fn create(root: &Path, folder: &str, kind: NewFile, namespace: &str) -> Resu
         NewFile::Terrain => std::fs::write(&file, NEW_TERRAIN.to_string() + &TerrainFile::default().to_text()),
         NewFile::WorldGen => std::fs::write(&file, new_world_gen()),
         NewFile::Block => std::fs::write(&file, block_text(&Default::default())),
+        NewFile::Biome => std::fs::write(&file, biome_text(&Default::default())),
         NewFile::PromptIcons => {
             let icons = voxear_engine::prompt_icons::PromptIconsFile { format: 1, ..Default::default() };
             std::fs::write(&file, icons.to_text()?)
@@ -293,6 +301,14 @@ const NEW_BLOCK: &str = "# Voxear block: how it looks, which the worlds of block
 /// A block's file as text: its heading, then what it is.
 pub(crate) fn block_text(block: &voxear_terrain::blocks::block::BlockDef) -> String {
     NEW_BLOCK.to_string() + &block.to_text()
+}
+
+/// What a biome's file starts with, before its settings.
+const NEW_BIOME: &str = "# Voxear biome: where it lies by climate and height, and the blocks its ground is made of.\n";
+
+/// A biome's file as text: its heading, then what it is.
+pub(crate) fn biome_text(biome: &voxear_terrain::generate::BiomeDef) -> String {
+    NEW_BIOME.to_string() + &biome.to_text()
 }
 
 /// A name a file can have, from `name`: without what a path cannot hold,

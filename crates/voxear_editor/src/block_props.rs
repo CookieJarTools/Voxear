@@ -431,6 +431,10 @@ pub enum BlockField {
     Model,
     /// The block of the project the brush builds with.
     Block,
+    /// The biomes its generated ground has: where its list of them goes
+    /// among its rows (see `block_panel`), and the one to add to it.
+    Biomes,
+    NewBiome,
     /// Where the brush's block covers this world's generated ground:
     /// whether it does, by which biome, between which temperatures,
     /// humidities and heights, and how many blocks deep.
@@ -463,8 +467,10 @@ pub fn props(world: &World, entity: Entity) -> Vec<Prop> {
             } else {
                 let mut fields = vec![F::Brush, F::BrushSize, F::Block];
                 let held = held_at(world, entity).and_then(|at| file.blocks.get(at));
-                // Covers lay a block on generated ground; its sea, water.
-                if file.generate.is_some() && state.block.is_some() && !held.is_some_and(|kind| kind.water) {
+                // Covers lay a block on generated ground; its sea, water. A world that lists biomes takes its ground's
+                // blocks from them, and shows no covers to set.
+                let covered = file.generate.as_ref().is_some_and(|generate| generate.biomes.is_empty());
+                if covered && state.block.is_some() && !held.is_some_and(|kind| kind.water) {
                     fields.push(F::Cover);
                     if let Some(cover) = held.and_then(|kind| kind.cover) {
                         fields.extend([F::CoverBiome, F::TemperatureMask]);
@@ -493,6 +499,7 @@ pub fn props(world: &World, entity: Entity) -> Vec<Prop> {
                     }
                     fields.push(F::Lowest);
                     fields.extend(own_voxels);
+                    fields.push(F::Biomes);
                 }
                 None => fields.extend([F::GroundSize, F::GroundHeight]),
             }
@@ -521,6 +528,8 @@ pub fn label(field: BlockField) -> &'static str {
         F::BrushSize => "Size",
         F::Model => "Model",
         F::Block => "Block",
+        F::Biomes => "Biomes",
+        F::NewBiome => "Biome",
         F::Ground => "Ground",
         F::Generator => "Generator",
         F::Offset => "Offset",
@@ -591,6 +600,7 @@ fn takes(field: BlockField) -> Option<AssetKind> {
         F::Model => Some(AssetKind::VoxModel),
         F::AddPlant => Some(AssetKind::Model),
         F::Block | F::TopBlock | F::UnderBlock | F::BaseBlock | F::SeaBlock => Some(AssetKind::Block),
+        F::NewBiome => Some(AssetKind::Biome),
         _ => None,
     }
 }
@@ -599,6 +609,7 @@ fn takes(field: BlockField) -> Option<AssetKind> {
 pub fn takes_name(field: BlockField) -> &'static str {
     match takes(field) {
         Some(AssetKind::Block) => "Block",
+        Some(AssetKind::Biome) => "Biome",
         Some(AssetKind::WorldGen) => "Generator",
         Some(AssetKind::VoxModel | AssetKind::Model) => "Model",
         _ => "Block World",
@@ -695,6 +706,9 @@ pub fn get(game: &Game, entity: Entity, field: BlockField) -> Option<Value> {
         F::Block => Value::Asset(
             state.block.and_then(|guid| game.content.db().get(guid)).map_or("None".into(), |e| e.path.clone()),
         ),
+        // The list is the panel's to show; the one to add is picked into it.
+        F::Biomes => Value::Fixed(String::new()),
+        F::NewBiome => Value::Asset(String::new()),
         F::Ground => {
             let names = ["Flat", "Generated"].map(String::from).to_vec();
             Value::Choice(usize::from(file()?.generate.is_some()), names)
@@ -882,6 +896,8 @@ pub fn set(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, fie
 /// kept on it, and its look made again where its faces are drawn another
 /// way. A block numbered after those the world has changes neither.
 fn change_file(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, file: BlockFile) -> bool {
+    // Its biomes as it lists them now and as their files have them, the blocks they name numbered.
+    let file = voxear_engine::blocks::with_biomes(&mut game.content, &file);
     // One being made again from an earlier file is let go: it is made from this one now.
     let making = game.engine.world.resource_mut::<Making>();
     let was_making = making.is_some_and(|making| making.0.remove(&entity).is_some());
@@ -1059,7 +1075,7 @@ fn restyle(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, fil
 pub fn choices(game: &Game, field: BlockField) -> Vec<(String, Pick)> {
     let Some(kind) = takes(field) else { return Vec::new() };
     let mut found = fields::assets_of(game, Some(kind));
-    if field == F::Block {
+    if matches!(field, F::Block | F::NewBiome) {
         found.retain(|(_, pick)| *pick != Pick::Asset(None));
     }
     // A plant to grow: any model, or a starter plant the project has not yet, made as it is picked.
@@ -1098,6 +1114,7 @@ pub fn pick(
     match field {
         F::Model => std::mem::replace(&mut ui_mut(&mut game.engine.world).model, guid) != guid,
         F::Block => guid.is_some_and(|guid| build_with(game, guid)),
+        F::NewBiome => guid.is_some_and(|guid| add_biome(game, renderer, entity, guid)),
         F::Generator => {
             let Some(mut file) = file_of(&game.engine.world, entity) else { return false };
             let Some(generate) = &mut file.generate else { return false };
@@ -1201,6 +1218,88 @@ pub(crate) fn placed_by(game: &Game, guid: AssetGuid) -> bool {
     })
 }
 
+/// One of the biomes a world's generated ground lists, as its list shows
+/// it: what it is called, its file where the project has it, and its
+/// colour once it is read.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ListedBiome {
+    pub name: String,
+    pub path: Option<String>,
+    pub color: Option<[f32; 3]>,
+}
+
+/// The biomes the world's generated ground lists, in its order: those of
+/// the file it shows, as held while it is being made again.
+pub fn biomes(game: &Game, entity: Entity) -> Vec<ListedBiome> {
+    let Some(file) = shown_file(&game.engine.world, entity) else { return Vec::new() };
+    let listed = file.generate.as_ref().map(|generate| generate.biomes.as_slice()).unwrap_or_default();
+    let db = game.content.db();
+    let shown = |reference: &String| {
+        let guid = game.content.parse(reference).ok().and_then(|parsed| parsed.guid());
+        let entry = guid.and_then(|guid| db.get(guid)).filter(|entry| entry.kind == AssetKind::Biome);
+        ListedBiome {
+            name: entry.map_or("Missing Biome".into(), |entry| file_stem(&entry.path).to_string()),
+            path: entry.map(|entry| entry.path.clone()),
+            color: guid.and_then(|guid| game.content.loaded_biome(guid)).map(|biome| biome.color),
+        }
+    };
+    listed.iter().map(shown).collect()
+}
+
+fn file_stem(path: &str) -> &str {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    name.rsplit_once('.').map_or(name, |(stem, _)| stem)
+}
+
+/// Lists the biome at `guid` at the end of the world's biomes, and makes
+/// its ground again with it; one listed already is not listed twice.
+pub fn add_biome(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, guid: AssetGuid) -> bool {
+    list_biomes(game, renderer, entity, &[guid])
+}
+
+/// Lists each of `biomes` the world does not list yet at the end of its
+/// biomes, and makes its ground again once with them all.
+pub fn list_biomes(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, biomes: &[AssetGuid]) -> bool {
+    let Some(mut file) = file_of(&game.engine.world, entity) else { return false };
+    let Some(generate) = file.generate.as_mut() else { return false };
+    let listed = |generate: &voxear_terrain::blocks::generate::BlockGenerate, guid: AssetGuid| {
+        let is = |reference: &String| game.content.parse(reference).ok().and_then(|parsed| parsed.guid());
+        generate.biomes.iter().any(|reference| is(reference) == Some(guid))
+    };
+    for &guid in biomes {
+        if !listed(generate, guid) {
+            generate.biomes.push(guid.to_string());
+        }
+    }
+    change_file(game, renderer, entity, file)
+}
+
+/// Takes the biome at `at` out of the world's biomes, and makes its ground
+/// again without it. The blocks it brought stay numbered.
+pub fn remove_biome(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, at: usize) -> bool {
+    let Some(mut file) = file_of(&game.engine.world, entity) else { return false };
+    let Some(generate) = file.generate.as_mut().filter(|generate| at < generate.biomes.len()) else { return false };
+    generate.biomes.remove(at);
+    change_file(game, renderer, entity, file)
+}
+
+/// Moves the biome at `from` in the world's biomes to `to`. Of two biomes
+/// a place is as much within and that are as narrow, the one listed first
+/// has it.
+pub fn move_biome(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, from: usize, to: usize) -> bool {
+    let Some(mut file) = file_of(&game.engine.world, entity) else { return false };
+    let Some(generate) = file.generate.as_mut().filter(|generate| from < generate.biomes.len()) else { return false };
+    let moved = generate.biomes.remove(from);
+    generate.biomes.insert(to.min(generate.biomes.len()), moved);
+    change_file(game, renderer, entity, file)
+}
+
+/// The path of the world of blocks on `entity`, where it has an asset.
+pub fn world_path(game: &Game, entity: Entity) -> Option<String> {
+    let asset = game.engine.world.get::<BlockWorldAsset>(entity)?;
+    Some(game.content.db().get(asset.guid)?.path.clone())
+}
+
 /// A colour of its own for the `number`th block made: round the wheel.
 pub(crate) fn fresh_color(number: usize) -> [f32; 3] {
     let hue = number.saturating_sub(1) as f32 * 0.38;
@@ -1224,7 +1323,7 @@ pub fn kinds_to_make(file: &BlockFile) -> usize {
 
 /// Where the blocks made of the kinds of the world at `path` go: a Blocks
 /// folder beside it, or its own folder where that is one.
-fn blocks_beside(path: &str) -> String {
+pub(crate) fn blocks_beside(path: &str) -> String {
     let folder = path.rsplit_once('/').map_or("", |(folder, _)| folder);
     match folder.rsplit('/').next() {
         Some(BLOCKS_FOLDER) => folder.to_string(),

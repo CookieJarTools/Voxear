@@ -421,7 +421,7 @@ pub struct Inspector {
     group_lods: Option<GroupLods>,
     /// A Terrain's tools and its layers (see `terrain_panel`).
     terrain_panel: Option<crate::terrain_panel::TerrainPanel>,
-    /// A Block World's tools (see `block_panel`).
+    /// A Block World's tools and its biomes (see `block_panel`).
     block_panel: Option<crate::block_panel::BlockPanel>,
     /// A Foliage's tools (see `plants_panel`).
     plants_panel: Option<crate::plants_panel::PlantsPanel>,
@@ -1272,6 +1272,13 @@ impl Inspector {
                 {
                     continue;
                 }
+                // A generated world's biomes are a list of its own, here among its rows.
+                if let Prop::BlockWorld(crate::block_props::BlockField::Biomes) = value {
+                    if let Some(panel) = self.block_panel.as_mut() {
+                        panel.add_biomes(ui, rows, game, entity);
+                    }
+                    continue;
+                }
                 // While playing, a drawn value shows as it would without its drawers.
                 if !attributes::shows(game, &self.types, entity, value)
                     || attributes::drawn_by_list(&self.types, value, &self.pages)
@@ -1725,7 +1732,7 @@ impl Inspector {
         let measure = game.engine.world.get::<LodGroup>(entity).map(|group| group.measure);
         let remeasured = self.group_lods.as_ref().is_some_and(|lods| Some(lods.measure) != measure);
         let restacked = self.terrain_panel.as_ref().is_some_and(|panel| panel.stale(&game.engine.world, entity))
-            || self.block_panel.as_ref().is_some_and(|panel| panel.stale(&game.engine.world, entity))
+            || self.block_panel.as_ref().is_some_and(|panel| panel.stale(game, entity))
             || self.plants_panel.as_ref().is_some_and(|panel| panel.stale(&game.engine.world));
         if layout != self.built.0
             || playing != self.built.1
@@ -2053,6 +2060,14 @@ impl Inspector {
         }
         if let Some(add) = self.terrain_panel.as_ref().and_then(|panel| panel.add_grass_clicked(ui)) {
             return Some(RowAction::Browse(Prop::Terrain(crate::terrain_props::TerrainField::NewGrass), add));
+        }
+        // Add Biome picks the biome to list, and one dropped on the list is listed.
+        let new_biome = Prop::BlockWorld(crate::block_props::BlockField::NewBiome);
+        if let Some(add) = self.block_panel.as_ref().and_then(|panel| panel.add_biome_clicked(ui)) {
+            return Some(RowAction::Browse(new_biome, add));
+        }
+        if let Some(source) = self.block_panel.as_ref().and_then(|panel| panel.dropped(ui)) {
+            return Some(RowAction::Dropped(new_biome, source));
         }
         if self.terrain_panel.as_ref().is_some_and(|panel| panel.erode_clicked(ui)) {
             return Some(RowAction::ErodeTerrain);

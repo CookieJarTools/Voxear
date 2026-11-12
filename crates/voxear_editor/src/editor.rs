@@ -2,6 +2,7 @@
 //! view, which looks through the editor's own camera, and the Game view,
 //! which looks through the level's. Play mode is in [`play`].
 
+mod biomes;
 mod color_popup;
 mod component_clipboard;
 mod blocks;
@@ -1325,6 +1326,9 @@ impl Editor {
             AssetAction::BrowseBlockRef { block, field, anchor } => self.browse_block_ref(&block, field, anchor),
             AssetAction::DropBlockRef { block, field, source } => self.drop_block_ref(&block, field, &source),
             AssetAction::MakeBlockItem(block) => self.make_block_item(&block),
+            AssetAction::SaveBiome { path, biome, rebuild } => self.save_biome(&path, &biome, rebuild),
+            AssetAction::BrowseBiomeRef { biome, field, anchor } => self.browse_biome_ref(&biome, field, anchor),
+            AssetAction::DropBiomeRef { biome, field, source } => self.drop_biome_ref(&biome, field, &source),
             AssetAction::BrowsePromptIcon { icons, slot, anchor } => self.browse_prompt_icon(&icons, slot, anchor),
             AssetAction::DropPromptIcon { icons, slot, source } => self.drop_prompt_icon(&icons, &slot, &source),
             AssetAction::BrowseGunClip { handling, field, anchor } => self.browse_gun_clip(&handling, field, anchor),
@@ -1512,6 +1516,7 @@ impl Editor {
                 self.obj_action(ObjAction::CreateFrom { entry, parent: None, scene: None }, renderer)
             }
             PaletteAction::ShowPanel(id) => self.show_panel(id),
+            PaletteAction::NewBiome => self.new_biome(renderer),
             PaletteAction::Select(entity) => {
                 self.show_panel("hierarchy");
                 self.select(Some(entity));
@@ -2630,6 +2635,7 @@ impl Editor {
                     self.pick_gun_handling_clip(&handling, field, &pick);
                 }
                 (PickFor::BlockRef { block, field }, Chosen::Value(pick)) => self.pick_block_ref(&block, field, &pick),
+                (PickFor::BiomeRef { biome, field }, Chosen::Value(pick)) => self.pick_biome_ref(&biome, field, &pick),
                 (PickFor::PromptIcon { icons, slot }, Chosen::Value(pick)) => self.pick_prompt_icon(&icons, &slot, &pick),
                 (PickFor::InputPromptIcons, Chosen::Value(pick)) => self.pick_input_prompt_icons(&pick),
                 (PickFor::MaterialMap { material, map }, Chosen::Value(pick)) => {

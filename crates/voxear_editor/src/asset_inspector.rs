@@ -142,6 +142,26 @@ pub enum AssetAction {
     },
     /// Make an item that places the block at this path, which drops it.
     MakeBlockItem(String),
+    /// Write the biome at this path as this, for the worlds of blocks
+    /// listing it to make their ground again, and when `rebuild`, show it
+    /// again.
+    SaveBiome {
+        path: String,
+        biome: voxear_terrain::generate::BiomeDef,
+        rebuild: bool,
+    },
+    /// Open the object picker under `anchor` for one of the blocks of the
+    /// biome at this path, or take what was dragged onto it.
+    BrowseBiomeRef {
+        biome: String,
+        field: crate::biome_inspector::BiomeRef,
+        anchor: NodeId,
+    },
+    DropBiomeRef {
+        biome: String,
+        field: crate::biome_inspector::BiomeRef,
+        source: DragSource,
+    },
     /// Write the Gun Handling at this path as this, and when `rebuild`, show
     /// it again.
     SaveGunHandling {
@@ -262,6 +282,7 @@ pub struct AssetView {
     /// A World Generator's own rows.
     world_gen: Option<crate::world_gen_inspector::WorldFields>,
     block: Option<crate::block_inspector::BlockFields>,
+    biome: Option<crate::biome_inspector::BiomeFields>,
     /// Prompt Icons' pictures, by device and control.
     prompt_icons: Option<PromptIconsFields>,
     /// The preview's frame, which takes drags, and its image.
@@ -442,6 +463,7 @@ impl AssetView {
             gun_handling: None,
             world_gen: None,
             block: None,
+            biome: None,
             prompt_icons: None,
             preview,
             listen: None,
@@ -483,6 +505,16 @@ impl AssetView {
                 };
                 let carried = db.guid_of(&item.path).is_some_and(|guid| crate::block_props::placed_by(game, guid));
                 view.block = Some(crate::block_inspector::BlockFields::new(ui, root, block, &path_of, carried));
+            }
+            ItemKind::Asset(AssetKind::Biome) => {
+                let text = std::fs::read_to_string(&file).unwrap_or_default();
+                let biome = voxear_terrain::generate::BiomeDef::parse(&text).unwrap_or_default();
+                let db = game.content.db();
+                let path_of = |reference: &str| {
+                    let guid = game.content.parse(reference).ok()?.guid()?;
+                    Some(db.get(guid)?.path.clone())
+                };
+                view.biome = Some(crate::biome_inspector::BiomeFields::new(ui, root, biome, &path_of));
             }
             ItemKind::Asset(AssetKind::Particles) => particle_effect(ui, root, &file),
             ItemKind::Asset(AssetKind::PromptIcons) => {
@@ -595,6 +627,7 @@ impl AssetView {
             gun_handling: None,
             world_gen: None,
             block: None,
+            biome: None,
             prompt_icons: None,
             preview: None,
             listen: None,
@@ -695,6 +728,19 @@ impl AssetView {
                 BlockChange::Drop(field, source) => AssetAction::DropBlockRef { block: path, field, source },
                 BlockChange::Ping(path) => AssetAction::Ping(path),
                 BlockChange::MakeItem => AssetAction::MakeBlockItem(path),
+            });
+        }
+        if let Some(fields) = self.biome.as_mut()
+            && let Some(change) = fields.update(ui)
+        {
+            use crate::biome_inspector::BiomeChange;
+            let (path, biome) = (self.item.path.clone(), fields.biome.clone());
+            return Some(match change {
+                BiomeChange::Typed => AssetAction::SaveBiome { path, biome, rebuild: false },
+                BiomeChange::Shape => AssetAction::SaveBiome { path, biome, rebuild: true },
+                BiomeChange::Browse(field, anchor) => AssetAction::BrowseBiomeRef { biome: path, field, anchor },
+                BiomeChange::Drop(field, source) => AssetAction::DropBiomeRef { biome: path, field, source },
+                BiomeChange::Ping(path) => AssetAction::Ping(path),
             });
         }
         if let Some(change) = self.prompt_icons.as_mut().and_then(|fields| fields.update(ui)) {
@@ -861,8 +907,11 @@ impl AssetView {
     /// The material colour whose swatch was clicked, with the swatch and the
     /// colour as the picker shows it.
     pub fn color_clicked(&self, ui: &Ui) -> Option<(MaterialColor, NodeId, PickedColor)> {
-        // A block's colour is picked as a material's is.
+        // A block's colour is picked as a material's is, and a biome's.
         if let Some((swatch, color)) = self.block.as_ref().and_then(|fields| fields.color_clicked(ui)) {
+            return Some((MaterialColor::Base, swatch, color));
+        }
+        if let Some((swatch, color)) = self.biome.as_ref().and_then(|fields| fields.color_clicked(ui)) {
             return Some((MaterialColor::Base, swatch, color));
         }
         let fields = self.material.as_ref()?;
@@ -881,6 +930,11 @@ impl AssetView {
             fields.set_color(ui, color);
             let (path, block) = (self.item.path.clone(), fields.block.clone());
             return Some(AssetAction::SaveBlock { path, block, rebuild: false });
+        }
+        if let Some(fields) = self.biome.as_mut() {
+            fields.set_color(ui, color);
+            let (path, biome) = (self.item.path.clone(), fields.biome.clone());
+            return Some(AssetAction::SaveBiome { path, biome, rebuild: false });
         }
         let fields = self.material.as_mut()?;
         let (values, targets) = match which {

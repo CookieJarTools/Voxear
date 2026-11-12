@@ -1448,17 +1448,32 @@ impl Content {
     /// and made once.
     pub fn block_world(&mut self, guid: AssetGuid) -> Option<Arc<LoadedBlockWorld>> {
         if let Some(found) = self.block_worlds.get(&guid).cloned() {
-            // A block it holds changed since: its faces as the blocks are now.
+            // A block it holds or a biome it lists changed since: its faces as the blocks are now, and its ground
+            // made again where its biomes are others, with what was built on it kept.
             let Some(stale) = found.as_ref().filter(|found| found.derived != self.blocks_version) else {
                 return found;
             };
-            let file = crate::blocks::resolved(self, &stale.file);
+            let placed = crate::blocks::with_biomes(self, &stale.file);
+            let regrown = placed.generate != stale.file.generate;
+            let file = crate::blocks::resolved(self, &placed);
             let (_, faces) = file.faces();
-            let world = match *stale.world.faces == faces[..] {
-                true => stale.world.clone(),
-                false => stale.world.restyled(&faces, file.smooth),
-            };
-            let found = Some(Arc::new(LoadedBlockWorld { world, derived: self.blocks_version, ..(**stale).clone() }));
+            let endless = placed.generate.as_ref().is_some_and(|generate| generate.endless.is_some());
+            let (derived, mut loaded) = (self.blocks_version, (**stale).clone());
+            use voxear_terrain::blocks::{BlockWorld, edits::BlockEdits, stream::all_changes};
+            if regrown && endless {
+                // One without end starts again with nothing made, every change kept for its chunks as they come.
+                loaded.pending = Arc::new(all_changes(&stale.base, &stale.world.blocks, &stale.pending));
+                loaded.base = Arc::default();
+                loaded.world = BlockWorld::made(Default::default(), &faces, placed.block_size, placed.smooth);
+            } else if regrown {
+                let changes = BlockEdits::between(&stale.base, &stale.world.blocks);
+                loaded.base = Arc::new(crate::blocks::ground(self, &placed));
+                loaded.world = crate::blocks::make(&file, &loaded.base, Some(&changes));
+            } else if *stale.world.faces != faces[..] {
+                loaded.world = stale.world.restyled(&faces, file.smooth);
+            }
+            loaded.world.cast_shadows = stale.world.cast_shadows;
+            let found = Some(Arc::new(LoadedBlockWorld { file: placed, derived, ..loaded }));
             self.block_worlds.insert(guid, found.clone());
             return found;
         }
@@ -1673,6 +1688,11 @@ impl Content {
         self.blocks_version += 1;
     }
 
+    /// The biome at `guid`, where it was read already.
+    pub fn loaded_biome(&self, guid: AssetGuid) -> Option<Arc<voxear_terrain::generate::BiomeDef>> {
+        self.biomes.get(&guid)?.clone()
+    }
+
     /// What the biome at `guid` is called: its file's name.
     pub fn biome_name(&self, guid: AssetGuid) -> Option<String> {
         let path = &self.db.get(guid).filter(|entry| entry.kind == AssetKind::Biome)?.path;
@@ -1684,6 +1704,12 @@ impl Content {
     /// one of those is saved.
     pub fn forget_biome(&mut self, guid: AssetGuid) {
         self.biomes.remove(&guid);
+        self.blocks_version += 1;
+    }
+
+    /// Forgets every biome, as after their files changed outside the editor.
+    pub fn forget_biomes(&mut self) {
+        self.biomes.clear();
         self.blocks_version += 1;
     }
 

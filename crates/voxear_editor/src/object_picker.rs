@@ -118,6 +118,8 @@ pub enum PickFor {
     GunHandlingClip { handling: String, field: crate::gun_handling_inspector::HandlingClip },
     /// A field naming an asset of the block at this path.
     BlockRef { block: String, field: crate::block_inspector::BlockRef },
+    /// One of the blocks of the biome at this path.
+    BiomeRef { biome: String, field: crate::biome_inspector::BiomeRef },
     /// A control's picture in the Prompt Icons at this path.
     PromptIcon { icons: String, slot: crate::prompt_icons_inspector::IconSlot },
     /// The Prompt Icons the project's input actions name.

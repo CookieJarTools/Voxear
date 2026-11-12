@@ -243,6 +243,18 @@ pub trait ScriptServices {
         Vec::new()
     }
 
+    /// What a biome (a `.biome` file) says, by project path or GUID, for
+    /// `Biome` in Voxear.Core, as JSON: its GUID, its name and its colour.
+    fn biome_json(&mut self, reference: &str) -> Result<String> {
+        anyhow::bail!("biomes are read only in a running game, not here ({reference})")
+    }
+
+    /// The biome the place `at` is, by its GUID, for `Biomes.At` in
+    /// Voxear.Core: none where no world of blocks with biomes reaches.
+    fn biome_at(&mut self, _world: &World, _at: [f32; 3]) -> Option<String> {
+        None
+    }
+
     /// The cave rooms of the world of blocks on `obj` (the first with any,
     /// for 0), for `Caves` in Voxear.Core, as JSON: the world's Obj, its
     /// network's layout, and rooms as they lie in the level. `what` picks
@@ -595,6 +607,36 @@ pub(crate) unsafe extern "C" fn block_info(reference: *const u8, len: i32, buffe
         unsafe { std::ptr::copy_nonoverlapping(json.as_ptr(), buffer, json.len()) };
     }
     json.len() as i32
+}
+
+/// A biome as JSON for `Biome` in Voxear.Core (see
+/// [`ScriptServices::biome_json`]), written when it fits: its length, or
+/// -1 when there is none.
+pub(crate) unsafe extern "C" fn biome_info(reference: *const u8, len: i32, buffer: *mut u8, capacity: i32) -> i32 {
+    let reference = unsafe { crate::interop::utf8(reference, len) };
+    // No biome by that name is an answer, not an error: `Biome.Load` says so itself.
+    let said = with_services(|services| services.biome_json(&reference).ok());
+    let Some(Some(json)) = said else { return -1 };
+    if !buffer.is_null() && json.len() <= capacity.max(0) as usize {
+        unsafe { std::ptr::copy_nonoverlapping(json.as_ptr(), buffer, json.len()) };
+    }
+    json.len() as i32
+}
+
+/// The GUID of the biome the place `at` is (see
+/// [`ScriptServices::biome_at`]), written into `buffer` when it fits: its
+/// length, or 0 where no world of blocks with biomes reaches.
+pub(crate) unsafe extern "C" fn biome_at(at: *const [f32; 3], buffer: *mut u8, capacity: i32) -> i32 {
+    if at.is_null() {
+        return 0;
+    }
+    let at = unsafe { *at };
+    let found = crate::interop::with_world(|world| with_services(|services| services.biome_at(world, at)).flatten());
+    let Some(guid) = found else { return 0 };
+    if !buffer.is_null() && guid.len() <= capacity.max(0) as usize {
+        unsafe { std::ptr::copy_nonoverlapping(guid.as_ptr(), buffer, guid.len()) };
+    }
+    guid.len() as i32
 }
 
 /// The cave rooms of a world of blocks as JSON for `Caves` in Voxear.Core

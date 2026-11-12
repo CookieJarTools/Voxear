@@ -519,6 +519,12 @@ pub(crate) struct NativeApi {
     /// Reads, or with `set` writes, value `what` of an Obj's Block Mob, as
     /// `light_value` does an Obj's Light.
     pub block_mob_value: unsafe extern "C" fn(entity: u64, what: i32, set: i32, value: *mut [f32; 4]) -> i32,
+    /// `Biome`: what a `.biome` says, by project path or GUID, as JSON; its
+    /// length, written when it fits, or -1.
+    pub biome_info: unsafe extern "C" fn(reference: *const u8, len: i32, buffer: *mut u8, capacity: i32) -> i32,
+    /// `Biomes.At`: the GUID of the biome a place is; its length, or 0 where
+    /// no world of blocks with biomes reaches.
+    pub biome_at: unsafe extern "C" fn(at: *const [f32; 3], buffer: *mut u8, capacity: i32) -> i32,
 }
 
 /// The kinds of component scripts reach through one entry, `kind_value`,
@@ -2032,6 +2038,8 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         set_world_budget: crate::blocks::set_world_budget,
         mob_motion_value,
         block_mob_value,
+        biome_info: crate::services::biome_info,
+        biome_at: crate::services::biome_at,
     }
 }
 

@@ -32,6 +32,7 @@ public readonly struct Map : IEquatable<Map>, IObjComponent
 	private const int TiltValue = 9;
 	private const int MapZoomValue = 10;
 	private const int OpenValue = 11;
+	private const int ShowsValue = 12;
 	private const int FollowValue = 100;
 	private const int PlaceClearValue = 105;
 	private const int ActionRead = 1;
@@ -115,6 +116,16 @@ public readonly struct Map : IEquatable<Map>, IObjComponent
 	{
 		get { return new InputActionRef(NativeComponent.Text(NativeComponent.Map, Obj, ActionRead) ?? string.Empty); }
 		set { NativeComponent.Tell(NativeComponent.Map, Obj, ActionWrite, value.Id); }
+	}
+
+	/// <summary>
+	/// What the maps show of the world: all of it, what was explored, or only what scripts reveal with
+	/// MapKnowledge. Ground not known is drawn as blank paper.
+	/// </summary>
+	public MapShows Shows
+	{
+		get { return (MapShows)(int)Number(ShowsValue); }
+		set { Write(ShowsValue, (int)value); }
 	}
 
 	/// <summary>Whether its map is open over the game.</summary>

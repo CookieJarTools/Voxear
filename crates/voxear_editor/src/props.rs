@@ -107,6 +107,10 @@ pub enum Part {
     UiPanel,
     /// A Screen UI: a UI document shown over the game's view.
     ScreenUi,
+    /// A Map: the world of blocks as a minimap and a map on the screen.
+    Map,
+    /// A Map Marker: its Obj marked on every map.
+    MapMarker,
     NetObject,
     Animator,
     MobMotion,
@@ -172,6 +176,8 @@ impl Part {
             Part::Mist => "mist".into(),
             Part::UiPanel => "ui_panel".into(),
             Part::ScreenUi => "screen_ui".into(),
+            Part::Map => "map".into(),
+            Part::MapMarker => "map_marker".into(),
             Part::NetObject => "net".into(),
             Part::Animator => "animator".into(),
             Part::MobMotion => "mob_motion".into(),
@@ -240,6 +246,8 @@ impl Part {
             Part::Mist => "Mist",
             Part::UiPanel => "UI Panel",
             Part::ScreenUi => "Screen UI",
+            Part::Map => "Map",
+            Part::MapMarker => "Map Marker",
             Part::NetObject => "Net Object",
             Part::Animator => "Animator",
             Part::MobMotion => "Mob Motion",
@@ -320,6 +328,8 @@ impl Part {
             Part::Smoke => "particles",
             Part::Mist => "particles",
             Part::UiPanel | Part::ScreenUi => "panels",
+            Part::Map => "globe",
+            Part::MapMarker => "map-pin",
             Part::NetObject => "globe",
             Part::Animator => "play",
             Part::MobMotion => "play",
@@ -492,6 +502,21 @@ pub enum Prop {
     UiPanelClickable,
     ScreenUiDocument,
     ScreenUiOrder,
+    MapMinimap,
+    MapCorner,
+    MapSize,
+    MapZoom,
+    MapTurns,
+    MapRound,
+    MapTilt,
+    MapOpenZoom,
+    MapOpenAction,
+    MapShows,
+    MarkerIcon,
+    MarkerLabel,
+    MarkerColor,
+    MarkerShows,
+    MarkerEdge,
     /// A Net Object's priority and range.
     NetPriority,
     NetRange,
@@ -937,6 +962,19 @@ impl Prop {
             | Prop::UiPanelTwoSided
             | Prop::UiPanelClickable => Part::UiPanel,
             Prop::ScreenUiDocument | Prop::ScreenUiOrder => Part::ScreenUi,
+            Prop::MapMinimap
+            | Prop::MapCorner
+            | Prop::MapSize
+            | Prop::MapZoom
+            | Prop::MapTurns
+            | Prop::MapRound
+            | Prop::MapTilt
+            | Prop::MapOpenZoom
+            | Prop::MapOpenAction
+            | Prop::MapShows => Part::Map,
+            Prop::MarkerIcon | Prop::MarkerLabel | Prop::MarkerColor | Prop::MarkerShows | Prop::MarkerEdge => {
+                Part::MapMarker
+            }
             Prop::NetPriority | Prop::NetRange => Part::NetObject,
             Prop::AnimatorClip
             | Prop::AnimatorSpeed
@@ -1275,6 +1313,21 @@ impl Prop {
             Prop::UiPanelClickable => "clickable",
             Prop::ScreenUiDocument => "document",
             Prop::ScreenUiOrder => "order",
+            Prop::MapMinimap => "minimap",
+            Prop::MapCorner => "corner",
+            Prop::MapSize => "size",
+            Prop::MapZoom => "zoom",
+            Prop::MapTurns => "turns",
+            Prop::MapRound => "round",
+            Prop::MapTilt => "tilt",
+            Prop::MapOpenZoom => "map_zoom",
+            Prop::MapOpenAction => "open_action",
+            Prop::MapShows => "shows",
+            Prop::MarkerIcon => "icon",
+            Prop::MarkerLabel => "label",
+            Prop::MarkerColor => "color",
+            Prop::MarkerShows => "shows",
+            Prop::MarkerEdge => "stays_at_edge",
             Prop::AnimatorClip => "clip",
             Prop::AnimatorSpeed => "speed",
             Prop::AnimatorLooping => "looping",
@@ -1584,6 +1637,12 @@ pub fn parts(world: &World, entity: Entity) -> Vec<Part> {
     if world.has::<voxear_engine::screen_ui::ScreenUi>(entity) {
         parts.push(Part::ScreenUi);
     }
+    if world.has::<voxear_engine::map::Map>(entity) {
+        parts.push(Part::Map);
+    }
+    if world.has::<voxear_engine::map::MapMarker>(entity) {
+        parts.push(Part::MapMarker);
+    }
     if world.has::<voxear_engine::net::NetObject>(entity) {
         parts.push(Part::NetObject);
     }
@@ -1798,6 +1857,21 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             Prop::UiPanelClickable,
         ],
         Part::ScreenUi => vec![Prop::ScreenUiDocument, Prop::ScreenUiOrder],
+        Part::Map => vec![
+            Prop::MapMinimap,
+            Prop::MapCorner,
+            Prop::MapSize,
+            Prop::MapZoom,
+            Prop::MapTurns,
+            Prop::MapRound,
+            Prop::MapTilt,
+            Prop::MapOpenAction,
+            Prop::MapOpenZoom,
+            Prop::MapShows,
+        ],
+        Part::MapMarker => {
+            vec![Prop::MarkerIcon, Prop::MarkerLabel, Prop::MarkerColor, Prop::MarkerShows, Prop::MarkerEdge]
+        }
         Part::NetObject => vec![Prop::NetPriority, Prop::NetRange],
         Part::Animator => vec![
             Prop::AnimatorClip,
@@ -2289,6 +2363,21 @@ pub fn label(prop: &Prop) -> String {
         Prop::UiPanelClickable => "Clickable",
         Prop::ScreenUiDocument => "Document",
         Prop::ScreenUiOrder => "Order",
+        Prop::MapMinimap => "Minimap",
+        Prop::MapCorner => "Corner",
+        Prop::MapSize => "Size",
+        Prop::MapZoom => "Zoom",
+        Prop::MapTurns => "Turn With View",
+        Prop::MapRound => "Round",
+        Prop::MapTilt => "Tilt",
+        Prop::MapOpenZoom => "Map Zoom",
+        Prop::MapOpenAction => "Open Map",
+        Prop::MapShows => "Shows",
+        Prop::MarkerIcon => "Icon",
+        Prop::MarkerLabel => "Label",
+        Prop::MarkerColor => "Colour",
+        Prop::MarkerShows => "Shows On",
+        Prop::MarkerEdge => "Stay At Edge",
         Prop::AnimatorClip => "Clip",
         Prop::AnimatorSpeed => "Speed",
         Prop::AnimatorLooping => "Looping",
@@ -2685,6 +2774,12 @@ pub fn add(
         Part::ScreenUi => {
             world.insert(entity, voxear_engine::screen_ui::ScreenUi::default());
         }
+        Part::Map => {
+            world.insert(entity, voxear_engine::map::Map::default());
+        }
+        Part::MapMarker => {
+            world.insert(entity, voxear_engine::map::MapMarker::default());
+        }
         Part::NetObject => {
             world.insert(entity, voxear_engine::net::NetObject::default());
         }
@@ -2803,6 +2898,12 @@ pub fn remove(world: &mut World, entity: Entity, part: &Part) {
         Part::ScreenUi => {
             world.remove::<voxear_engine::screen_ui::ScreenUi>(entity);
             world.remove::<voxear_engine::screen_ui::ScreenDocument>(entity);
+        }
+        Part::Map => {
+            world.remove::<voxear_engine::map::Map>(entity);
+        }
+        Part::MapMarker => {
+            world.remove::<voxear_engine::map::MapMarker>(entity);
         }
         Part::NetObject => {
             world.remove::<voxear_engine::net::NetObject>(entity);
@@ -3168,6 +3269,45 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
             Value::Asset(document.and_then(|guid| game.content.db().get(guid)).map_or("None".into(), |e| e.path.clone()))
         }
         Prop::ScreenUiOrder => Value::Whole(i64::from(world.get::<voxear_engine::screen_ui::ScreenUi>(entity)?.order)),
+        Prop::MapMinimap => Value::Toggle(world.get::<voxear_engine::map::Map>(entity)?.minimap),
+        Prop::MapCorner => {
+            use voxear_engine::map::MapCorner;
+            let corner = world.get::<voxear_engine::map::Map>(entity)?.corner;
+            let index = MapCorner::ALL.iter().position(|c| *c == corner).unwrap_or(0);
+            Value::Choice(index, MapCorner::ALL.iter().map(|c| c.name().to_string()).collect())
+        }
+        Prop::MapSize => Value::Number(world.get::<voxear_engine::map::Map>(entity)?.size),
+        Prop::MapZoom => map_zoom(world.get::<voxear_engine::map::Map>(entity)?.zoom),
+        Prop::MapTurns => Value::Toggle(world.get::<voxear_engine::map::Map>(entity)?.turns),
+        Prop::MapRound => Value::Toggle(world.get::<voxear_engine::map::Map>(entity)?.round),
+        Prop::MapTilt => Value::Number(world.get::<voxear_engine::map::Map>(entity)?.tilt),
+        Prop::MapOpenZoom => map_zoom(world.get::<voxear_engine::map::Map>(entity)?.map_zoom),
+        Prop::MapOpenAction => {
+            let action = world.get::<voxear_engine::map::Map>(entity)?.open_action.clone();
+            let names = world.resource::<voxear_engine::ActionNames>();
+            Value::Asset(action.map_or("None".to_string(), |id| names.map_or(id.clone(), |names| names.label(&id))))
+        }
+        Prop::MapShows => {
+            use voxear_engine::map::MapShows;
+            let shows = world.get::<voxear_engine::map::Map>(entity)?.shows;
+            let index = MapShows::ALL.iter().position(|s| *s == shows).unwrap_or(0);
+            Value::Choice(index, MapShows::ALL.iter().map(|s| s.name().to_string()).collect())
+        }
+        Prop::MarkerIcon => {
+            use voxear_engine::map::MapIcon;
+            let icon = world.get::<voxear_engine::map::MapMarker>(entity)?.icon;
+            let index = MapIcon::ALL.iter().position(|i| *i == icon).unwrap_or(0);
+            Value::Choice(index, MapIcon::ALL.iter().map(|i| i.name().to_string()).collect())
+        }
+        Prop::MarkerLabel => Value::Text(world.get::<voxear_engine::map::MapMarker>(entity)?.label.clone()),
+        Prop::MarkerColor => Value::Color(world.get::<voxear_engine::map::MapMarker>(entity)?.color.map(round3)),
+        Prop::MarkerShows => {
+            use voxear_engine::map::MarkerShows;
+            let shows = world.get::<voxear_engine::map::MapMarker>(entity)?.shows;
+            let index = MarkerShows::ALL.iter().position(|s| *s == shows).unwrap_or(0);
+            Value::Choice(index, MarkerShows::ALL.iter().map(|s| s.name().to_string()).collect())
+        }
+        Prop::MarkerEdge => Value::Toggle(world.get::<voxear_engine::map::MapMarker>(entity)?.stays_at_edge),
         Prop::UiPanelPixels => Value::Number(world.get::<voxear_render::UiPanel>(entity)?.pixels_per_metre),
         Prop::UiPanelFaceCamera => Value::Toggle(world.get::<voxear_render::UiPanel>(entity)?.face_camera),
         Prop::UiPanelTwoSided => Value::Toggle(world.get::<voxear_render::UiPanel>(entity)?.two_sided),
@@ -3508,7 +3648,8 @@ pub fn set(
             | Prop::LightCookie
             | Prop::LightProfile
             | Prop::UiPanelDocument
-            | Prop::ScreenUiDocument,
+            | Prop::ScreenUiDocument
+            | Prop::MapOpenAction,
             Value::Asset(label),
         )
         | (Prop::LodObj(..) | Prop::LodAdd(_) | Prop::JointConnected, Value::Obj(label)) => {
@@ -3745,6 +3886,9 @@ pub fn pick(
                 },
             };
             with(&mut game.engine.world, entity, |screen: &mut voxear_engine::screen_ui::ScreenUi| screen.document = document)
+        }
+        (Prop::MapOpenAction, Pick::Key(choice)) => {
+            with(&mut game.engine.world, entity, |map: &mut voxear_engine::map::Map| map.open_action = choice.clone())
         }
         (Prop::MatcherMotionSet, Pick::Asset(choice)) => {
             let set = match choice {
@@ -3995,6 +4139,7 @@ pub fn choices(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) ->
         }
         Prop::MatcherMotionSet => return fields::assets_of(game, Some(AssetKind::MotionSet)),
         Prop::UiPanelDocument | Prop::ScreenUiDocument => return fields::assets_of(game, Some(AssetKind::Ui)),
+        Prop::MapOpenAction => return fields::action_choices(game),
         Prop::GunHandling => return fields::assets_of(game, Some(AssetKind::GunHandling)),
         Prop::ParticleEffect => {
             // None, the starters, then the project's own.
@@ -4112,6 +4257,7 @@ pub fn title(types: &ScriptTypes, prop: &Prop) -> String {
         Prop::LightCookie => "Texture".into(),
         Prop::LightProfile => "IES profile".into(),
         Prop::UiPanelDocument | Prop::ScreenUiDocument => "UI Document".into(),
+        Prop::MapOpenAction => "Input Action".into(),
         Prop::LodObj(..) | Prop::LodAdd(_) => "Obj".into(),
         Prop::JointConnected => "Rigidbody".into(),
         Prop::Terrain(field) if crate::terrain_props::is_picked(*field) => crate::terrain_props::label(*field).into(),
@@ -4551,6 +4697,12 @@ fn set_component(world: &mut World, entity: Entity, prop: &Prop, value: Value) -
         (prop, value) if prop.part() == Part::UiPanel => {
             with(world, entity, |panel: &mut voxear_render::UiPanel| set_panel(panel, prop, value))
         }
+        (prop, value) if prop.part() == Part::Map => {
+            with(world, entity, |map: &mut voxear_engine::map::Map| set_map(map, prop, value))
+        }
+        (prop, value) if prop.part() == Part::MapMarker => {
+            with(world, entity, |marker: &mut voxear_engine::map::MapMarker| set_marker(marker, prop, value))
+        }
         (Prop::ScreenUiOrder, Value::Whole(order)) => {
             let order = order.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
             with(world, entity, |screen: &mut voxear_engine::screen_ui::ScreenUi| screen.order = order)
@@ -4794,6 +4946,45 @@ fn mist_value(mist: &voxear_render::Mist, prop: &Prop) -> Option<Value> {
 }
 
 /// Sets a UI Panel's field from the Inspector, kept within what it can be.
+/// The zooms a map can show, "1:1" to "1:64", with the one of `zoom`
+/// blocks to a cell picked.
+fn map_zoom(zoom: u32) -> Value {
+    let zooms: Vec<String> = (0..7).map(|level| format!("1:{}", 1 << level)).collect();
+    Value::Choice(zoom.max(1).ilog2().min(6) as usize, zooms)
+}
+
+fn set_map(map: &mut voxear_engine::map::Map, prop: &Prop, value: Value) {
+    use voxear_engine::map::MapCorner;
+    match (prop, value) {
+        (Prop::MapMinimap, Value::Toggle(on)) => map.minimap = on,
+        (Prop::MapCorner, Value::Choice(index, _)) => map.corner = MapCorner::ALL.get(index).copied().unwrap_or_default(),
+        (Prop::MapSize, Value::Number(n)) => map.size = n.clamp(48.0, 1024.0),
+        (Prop::MapZoom, Value::Choice(index, _)) => map.zoom = 1 << index.min(6),
+        (Prop::MapTurns, Value::Toggle(on)) => map.turns = on,
+        (Prop::MapRound, Value::Toggle(on)) => map.round = on,
+        (Prop::MapTilt, Value::Number(n)) => map.tilt = n.clamp(20.0, 90.0),
+        (Prop::MapOpenZoom, Value::Choice(index, _)) => map.map_zoom = 1 << index.min(6),
+        (Prop::MapShows, Value::Choice(index, _)) => {
+            map.shows = voxear_engine::map::MapShows::ALL.get(index).copied().unwrap_or_default();
+        }
+        _ => {}
+    }
+}
+
+fn set_marker(marker: &mut voxear_engine::map::MapMarker, prop: &Prop, value: Value) {
+    use voxear_engine::map::{MapIcon, MarkerShows};
+    match (prop, value) {
+        (Prop::MarkerIcon, Value::Choice(index, _)) => marker.icon = MapIcon::ALL.get(index).copied().unwrap_or_default(),
+        (Prop::MarkerLabel, Value::Text(label)) => marker.label = label,
+        (Prop::MarkerColor, Value::Color(color)) => marker.color = color,
+        (Prop::MarkerShows, Value::Choice(index, _)) => {
+            marker.shows = MarkerShows::ALL.get(index).copied().unwrap_or_default();
+        }
+        (Prop::MarkerEdge, Value::Toggle(on)) => marker.stays_at_edge = on,
+        _ => {}
+    }
+}
+
 fn set_panel(panel: &mut voxear_render::UiPanel, prop: &Prop, value: Value) {
     match (prop, value) {
         (Prop::UiPanelSize, Value::Vector(size)) if size.len() == 2 => {
@@ -5455,6 +5646,41 @@ mod tests {
         let field = *world.get::<ForceField>(entity).unwrap();
         assert_eq!((field.kind, field.radius), (ForceKind::Vortex, 0.0), "never less than no reach");
         assert_eq!(Prop::ForceRadius.lock_key(), "radius");
+    }
+
+    #[test]
+    fn a_map_and_a_map_marker_show_their_settings_and_take_them_within_what_a_map_can_show() {
+        use voxear_engine::map::{Map, MapCorner, MapIcon, MapMarker, MarkerShows};
+        let mut world = World::new();
+        let entity = world.spawn((Map::default(), MapMarker::default()));
+        let types = ScriptTypes::default();
+        let found = parts(&world, entity);
+        assert!(found.contains(&Part::Map) && found.contains(&Part::MapMarker));
+        let shown = props(&world, entity, &Part::Map, &types);
+        assert_eq!(shown[..3], [Prop::MapMinimap, Prop::MapCorner, Prop::MapSize]);
+        assert_eq!(shown[shown.len() - 3..], [Prop::MapOpenAction, Prop::MapOpenZoom, Prop::MapShows]);
+        assert!(set_component(&mut world, entity, &Prop::MapShows, Value::Choice(1, Vec::new())));
+        assert_eq!(world.get::<Map>(entity).unwrap().shows, voxear_engine::map::MapShows::Explored);
+        // A zoom is picked from the zooms a map has, 1:1 to 1:64.
+        assert!(set_component(&mut world, entity, &Prop::MapZoom, Value::Choice(3, Vec::new())));
+        assert!(set_component(&mut world, entity, &Prop::MapCorner, Value::Choice(2, Vec::new())));
+        assert!(set_component(&mut world, entity, &Prop::MapSize, Value::Number(9000.0)));
+        assert!(set_component(&mut world, entity, &Prop::MapTilt, Value::Number(5.0)));
+        let map = world.get::<Map>(entity).unwrap().clone();
+        assert_eq!((map.zoom, map.corner, map.size, map.tilt), (8, MapCorner::BottomLeft, 1024.0, 20.0));
+        assert_eq!(map_zoom(8), Value::Choice(3, (0..7).map(|level| format!("1:{}", 1 << level)).collect()));
+
+        let shown = props(&world, entity, &Part::MapMarker, &types);
+        assert_eq!(shown, [Prop::MarkerIcon, Prop::MarkerLabel, Prop::MarkerColor, Prop::MarkerShows, Prop::MarkerEdge]);
+        assert!(set_component(&mut world, entity, &Prop::MarkerIcon, Value::Choice(2, Vec::new())));
+        assert!(set_component(&mut world, entity, &Prop::MarkerLabel, Value::Text("Oakrest".into())));
+        assert!(set_component(&mut world, entity, &Prop::MarkerShows, Value::Choice(2, Vec::new())));
+        assert!(set_component(&mut world, entity, &Prop::MarkerColor, Value::Color([0.1, 0.2, 0.3])));
+        let marker = world.get::<MapMarker>(entity).unwrap().clone();
+        assert_eq!((marker.icon, marker.label.as_str(), marker.shows), (MapIcon::Town, "Oakrest", MarkerShows::Map));
+        assert_eq!(marker.color, [0.1, 0.2, 0.3]);
+        assert_eq!(Prop::MapOpenAction.lock_key().as_str(), "open_action");
+        assert_eq!(Prop::MarkerEdge.lock_key().as_str(), "stays_at_edge");
     }
 
     #[test]

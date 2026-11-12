@@ -29,6 +29,7 @@ pub mod file;
 pub mod flow;
 pub mod generate;
 pub mod map;
+pub mod map_known;
 pub mod mesh;
 pub mod path;
 pub mod sight;

@@ -59,6 +59,7 @@ pub struct GpuMapColumn {
     piece0_blocks: u32,
     piece1: u32,
     piece1_blocks: u32,
+    tint: u32,
 }
 
 impl GpuMapColumn {
@@ -74,7 +75,26 @@ impl GpuMapColumn {
         piece0_blocks: 0,
         piece1: 0,
         piece1_blocks: 0,
+        tint: 0,
     };
+
+    /// Ground a map does not know, drawn as blank paper of the colour of
+    /// `block`: flat, as high as the lowest ground of whatever slab is cut
+    /// (`PAPER_COLUMN` in the shader), so it tells nothing of what stands
+    /// there.
+    pub fn paper(block: u16) -> Self {
+        let blocks = u32::from(block) | u32::from(block) << 16;
+        let top = i32::MIN + 1;
+        GpuMapColumn { top, water: top, highest: top, layers: blocks, deep: blocks, depths: 255, ..Self::NONE }
+    }
+
+    /// The column with its colours drawn towards `color`, sRGB, by
+    /// `strength`, from 0 for not at all to 1 for wholly: how news of a
+    /// place shows on its ground.
+    pub fn tinted(self, color: [u8; 3], strength: f32) -> Self {
+        let strength = (strength.clamp(0.0, 1.0) * 255.0).round() as u8;
+        GpuMapColumn { tint: u32::from_le_bytes([color[0], color[1], color[2], strength]), ..self }
+    }
 
     pub fn of(column: &MapColumn) -> Self {
         if !column.is_some() {
@@ -95,6 +115,7 @@ impl GpuMapColumn {
             piece0_blocks: pair(first.top, first.side),
             piece1: span(second),
             piece1_blocks: pair(second.top, second.side),
+            tint: 0,
         }
     }
 }
@@ -540,7 +561,7 @@ mod tests {
 
     #[test]
     fn a_maps_gpu_structs_are_laid_out_as_its_shader_reads_them() {
-        assert_eq!(size_of::<GpuMapColumn>(), 40);
+        assert_eq!(size_of::<GpuMapColumn>(), 44);
         assert_eq!(size_of::<GpuMapView>(), 128);
     }
 
@@ -559,6 +580,13 @@ mod tests {
         assert_eq!((packed.layers, packed.deep, packed.depths), (3 | 2 << 16, 1 | 4 << 16, 1 | 3 << 8));
         assert_eq!((packed.piece0, packed.piece0_blocks, packed.piece1), (4 | 7 << 16, 6 | 5 << 16, 0));
         assert_eq!(GpuMapColumn::of(&MapColumn::NONE), GpuMapColumn::NONE);
+        // Unknown ground is one block all the way down; news of a place is a colour and how strongly it shows.
+        let paper = GpuMapColumn::paper(9);
+        assert_eq!(
+            (paper.top, paper.highest, paper.layers, paper.piece0),
+            (i32::MIN + 1, i32::MIN + 1, 9 | 9 << 16, 0)
+        );
+        assert_eq!(packed.tinted([255, 0, 16], 0.5).tint, u32::from_le_bytes([255, 0, 16, 128]));
     }
 
     #[test]

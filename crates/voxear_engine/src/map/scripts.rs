@@ -11,8 +11,10 @@ use voxear_scripting::ComponentKind;
 
 use super::{
     hud::PlacedMarker,
+    known::{MapKnown, MapLayerLook, MapShows},
     parts::{Map, MapCorner, MapIcon, MapMarker, MarkerShows},
 };
+use voxear_terrain::blocks::map_known::MapKnowledge;
 
 /// What scripts asked of every map: the Obj it follows in place of the
 /// camera, its title in place of the country it looks at, and the markers
@@ -45,6 +47,7 @@ const ROUND: i32 = 8;
 const TILT: i32 = 9;
 const MAP_ZOOM: i32 = 10;
 const OPEN: i32 = 11;
+const SHOWS_WHAT: i32 = 12;
 // Of every map, whatever Obj is named.
 const FOLLOW: i32 = 100;
 const PLACE_AT: i32 = 101;
@@ -159,6 +162,7 @@ fn map_values(world: &mut World, entity: Entity, what: i32, written: Option<[f32
         (TILT, None) => number(map.tilt),
         (MAP_ZOOM, None) => number(map.map_zoom as f32),
         (OPEN, None) => flag(map.open),
+        (SHOWS_WHAT, None) => number(place_of(&MapShows::ALL, &map.shows)),
         (_, None) => None,
         (_, Some([value, ..])) => {
             match what {
@@ -171,6 +175,7 @@ fn map_values(world: &mut World, entity: Entity, what: i32, written: Option<[f32
                 TILT => map.tilt = value.clamp(20.0, 90.0),
                 MAP_ZOOM => map.map_zoom = voxear_ui::MapViewSettings::zoom_of(value),
                 OPEN => map.open = value != 0.0,
+                SHOWS_WHAT => map.shows = pick(&MapShows::ALL, value),
                 _ => return None,
             }
             DONE
@@ -182,6 +187,9 @@ fn map_values(world: &mut World, entity: Entity, what: i32, written: Option<[f32
 /// map: its title, and a placed marker's label, as its number, a line
 /// break and the label.
 fn map_texts(world: &mut World, entity: Entity, what: i32, text: &str) -> Option<String> {
+    if what >= KNOWN_NEW {
+        return known_texts(world, what, text);
+    }
     match what {
         TITLE => {
             script(world).title = (!text.is_empty()).then(|| text.to_string());
@@ -197,6 +205,136 @@ fn map_texts(world: &mut World, entity: Entity, what: i32, text: &str) -> Option
         TEXT_SET => {
             world.get_mut::<Map>(entity)?.open_action = (!text.is_empty()).then(|| text.to_string());
             Some(String::new())
+        }
+        _ => None,
+    }
+}
+
+// What scripts ask of the maps' knowledge, each with its numbers in its text, a space between: the knowledge's own
+// number first, places as the scene has them along x and z.
+const KNOWN_NEW: i32 = 200;
+const KNOWN_DROP: i32 = 201;
+const KNOWN_SHOW: i32 = 202;
+const KNOWN_SHOWN: i32 = 203;
+const KNOWN_REVEAL: i32 = 204;
+const KNOWN_ALL: i32 = 205;
+const KNOWN_FORGET: i32 = 206;
+const KNOWN_KNOWS: i32 = 207;
+const KNOWN_PAINT: i32 = 208;
+const KNOWN_NEWS: i32 = 209;
+const KNOWN_BYTES: i32 = 210;
+const KNOWN_LOAD: i32 = 211;
+const KNOWN_MERGE: i32 = 212;
+const KNOWN_CHANGES: i32 = 213;
+const KNOWN_STAMP: i32 = 214;
+const KNOWN_LAYER: i32 = 215;
+const KNOWN_PAPER: i32 = 216;
+const KNOWN_EXPLORE: i32 = 217;
+const KNOWN_JOIN: i32 = 218;
+
+fn known(world: &mut World) -> &mut MapKnown {
+    if world.resource::<MapKnown>().is_none() {
+        world.insert_resource(MapKnown::default());
+    }
+    world.resource_mut::<MapKnown>().expect("put there above")
+}
+
+/// Answers what a script asks of the maps' knowledge (see the numbers
+/// above): `None` for what cannot be read, or a knowledge there is none of.
+fn known_texts(world: &mut World, what: i32, text: &str) -> Option<String> {
+    let mut words = text.split_whitespace();
+    let numbers: Vec<f32> = text.split_whitespace().map_while(|word| word.parse().ok()).collect();
+    let done = Some(String::new());
+    // Places are told as the scene has them: the knowledge keeps them from the world of blocks' corner.
+    let corner = super::corner(world).unwrap_or_default();
+    let place = |x: f32, z: f32| [x - corner.x, z - corner.z];
+    let known = known(world);
+    match (what, &numbers[..]) {
+        (KNOWN_SHOWN, _) => return Some(known.shown.to_string()),
+        (KNOWN_LAYER, [layer, lr, lg, lb, la, hr, hg, hb, ha]) => {
+            let look = MapLayerLook { low: [*lr, *lg, *lb, *la], high: [*hr, *hg, *hb, *ha] };
+            known.layers.insert(*layer as u8, look);
+            known.looks += 1;
+            return done;
+        }
+        (KNOWN_PAPER, [r, g, b]) => {
+            known.paper = [*r, *g, *b].map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u8);
+            known.looks += 1;
+            return done;
+        }
+        (KNOWN_EXPLORE, [radius]) => {
+            known.explore = radius.max(0.0);
+            return done;
+        }
+        _ => {}
+    }
+    let id: u32 = words.next()?.parse().ok()?;
+    match (what, &numbers[1.min(numbers.len())..]) {
+        (KNOWN_NEW, _) => {
+            known.all.insert(id, MapKnowledge::new());
+            return done;
+        }
+        (KNOWN_DROP, _) => {
+            // The one there is to begin with stays, and so does the one shown.
+            if id != 0 && id != known.shown {
+                known.all.remove(&id);
+            }
+            return done;
+        }
+        (KNOWN_SHOW, _) => {
+            known.shown = if known.all.contains_key(&id) { id } else { known.shown };
+            return done;
+        }
+        (KNOWN_JOIN, [other]) => {
+            let other = known.all.get(&(*other as u32))?.clone();
+            known.all.get_mut(&id)?.merge(&other);
+            return done;
+        }
+        _ => {}
+    }
+    let knowledge = known.all.get_mut(&id)?;
+    match (what, &numbers[1.min(numbers.len())..]) {
+        (KNOWN_REVEAL, [x, z, radius]) => {
+            let [x, z] = place(*x, *z);
+            Some(u8::from(knowledge.reveal(x, z, *radius)).to_string())
+        }
+        (KNOWN_ALL, [all]) => {
+            knowledge.reveal_all(*all != 0.0);
+            done
+        }
+        (KNOWN_FORGET, _) => {
+            knowledge.forget();
+            done
+        }
+        (KNOWN_KNOWS, [x, z]) => {
+            let [x, z] = place(*x, *z);
+            Some(u8::from(knowledge.knows(x, z)).to_string())
+        }
+        (KNOWN_PAINT, [layer, x, z, radius, value, heard]) => {
+            knowledge.paint(*layer as u8, place(*x, *z), *radius, *value, *heard as u32);
+            done
+        }
+        (KNOWN_NEWS, [layer, x, z]) => {
+            let [x, z] = place(*x, *z);
+            let news = knowledge.news(*layer as u8, x, z);
+            Some(news.map_or(String::new(), |(value, heard)| format!("{value} {heard}")))
+        }
+        (KNOWN_BYTES, _) => Some(base64::encode(knowledge.to_bytes())),
+        (KNOWN_CHANGES, [since]) => Some(base64::encode(knowledge.changes_since(*since as u32))),
+        (KNOWN_STAMP, _) => Some(knowledge.stamp().to_string()),
+        (KNOWN_LOAD | KNOWN_MERGE, _) => {
+            let read = MapKnowledge::from_bytes(&base64::decode(words.next()?).ok()?).ok()?;
+            match what {
+                KNOWN_LOAD => {
+                    // Its stamp goes on from where it was, so what the maps drew of it is drawn again.
+                    let stamp = knowledge.stamp();
+                    knowledge.forget();
+                    knowledge.merge(&read);
+                    debug_assert!(knowledge.stamp() > stamp);
+                }
+                _ => knowledge.merge(&read),
+            }
+            done
         }
         _ => None,
     }
@@ -303,5 +441,47 @@ mod tests {
         assert!(pit.marker.stays_at_edge && pit.marker.label == "The Pit");
         map_values(&mut world, none, PLACE_REMOVE, Some([id, 0.0, 0.0, 0.0]));
         assert!(world.resource::<MapScript>().unwrap().placed.is_empty());
+    }
+
+    #[test]
+    fn scripts_keep_a_map_for_each_player_reveal_and_paint_them_and_pass_them_as_text() {
+        let mut world = World::new();
+        let none = Entity::from_bits(0);
+        let mut ask = |what: i32, text: &str| map_texts(&mut world, none, what, text);
+        // The one there is to begin with, 0, is the one shown; another is made for a second player.
+        assert_eq!(ask(KNOWN_SHOWN, ""), Some("0".into()));
+        ask(KNOWN_NEW, "7");
+        assert_eq!(ask(KNOWN_REVEAL, "0 100 -40 30"), Some("1".into()));
+        assert_eq!(ask(KNOWN_REVEAL, "0 100 -40 30"), Some("0".into()), "nothing new the second time");
+        assert_eq!(ask(KNOWN_KNOWS, "0 100 -40"), Some("1".into()));
+        assert_eq!(ask(KNOWN_KNOWS, "7 100 -40"), Some("0".into()), "the other player has not been there");
+        assert_eq!(ask(KNOWN_KNOWS, "9 100 -40"), None, "there is no such map");
+        // News heard by one, then passed to the other as text, as over the network or into a save.
+        ask(KNOWN_PAINT, "0 1 500 500 0 0.75 42");
+        let before: u32 = ask(KNOWN_STAMP, "7").unwrap().parse().unwrap();
+        let sent = ask(KNOWN_BYTES, "0").unwrap();
+        assert!(sent.len() < 400 && !sent.contains(' '), "{sent}");
+        assert_eq!(ask(KNOWN_MERGE, &format!("7 {sent}")), Some(String::new()));
+        assert_eq!(ask(KNOWN_KNOWS, "7 100 -40"), Some("1".into()));
+        let news = ask(KNOWN_NEWS, "7 1 500 500").unwrap();
+        let heard: Vec<f32> = news.split(' ').map(|word| word.parse().unwrap()).collect();
+        assert!((heard[0] - 0.75).abs() < 0.01 && heard[1] == 42.0, "{news}");
+        assert_eq!(ask(KNOWN_NEWS, "7 1 0 0"), Some(String::new()), "nothing heard of there");
+        assert!(ask(KNOWN_STAMP, "7").unwrap().parse::<u32>().unwrap() > before);
+        // Loaded, a map is what was saved and no more; joined, it has both.
+        ask(KNOWN_REVEAL, "7 -900 -900 10");
+        ask(KNOWN_LOAD, &format!("7 {sent}"));
+        assert_eq!(ask(KNOWN_KNOWS, "7 -900 -900"), Some("0".into()));
+        ask(KNOWN_REVEAL, "7 -900 -900 10");
+        ask(KNOWN_JOIN, "0 7");
+        assert_eq!(ask(KNOWN_KNOWS, "0 -900 -900"), Some("1".into()));
+        // The other player's map shown in place of the first; layers' colours and the paper's are the game's.
+        ask(KNOWN_SHOW, "7");
+        ask(KNOWN_LAYER, "1 0 1 0 0 1 0 0 0.8");
+        ask(KNOWN_PAPER, "1 1 1");
+        ask(KNOWN_DROP, "7");
+        let known = world.resource::<MapKnown>().unwrap();
+        assert_eq!((known.shown, known.paper, known.all.len()), (7, [255; 3], 2), "the one shown is not dropped");
+        assert_eq!(known.layers[&1].high, [1.0, 0.0, 0.0, 0.8]);
     }
 }

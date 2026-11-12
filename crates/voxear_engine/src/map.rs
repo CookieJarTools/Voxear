@@ -31,10 +31,12 @@ use voxear_ui::{ImageRef, MapViewKind, MapViewSettings, NodeId, Ui};
 use crate::{Content, blocks::BlockWorldAsset};
 
 mod hud;
+mod known;
 mod parts;
 mod scripts;
 
 pub use hud::PlacedMarker;
+pub use known::{MapKnown, MapLayerLook, MapShows};
 pub use parts::{Map, MapCorner, MapData, MapIcon, MapMarker, MarkerShows, map_data, map_of};
 pub use scripts::MapScript;
 pub(crate) use scripts::register;
@@ -100,10 +102,13 @@ struct View {
     level: u32,
     /// The window's lowest cell, a multiple of a tile's side.
     corner: [i32; 2],
-    /// The tiles written into the window, each by the time it was made: 0
-    /// for one written empty, waiting to be made.
-    written: HashMap<[i32; 2], u64>,
+    /// The tiles written into the window, each by the time it was made (0
+    /// for one written empty, waiting to be made) and by the stamp of what
+    /// the maps knew of it then.
+    written: HashMap<[i32; 2], (u64, u64)>,
+    /// The blocks' colours its palette was made from, and the paper's.
     faces: Option<Arc<[BlockFaces]>>,
+    paper: [u8; 3],
     /// A map's own turn and tilt, in radians, how far it is zoomed in, and
     /// how far it was moved from what it follows, in cells.
     turn: f32,
@@ -132,6 +137,7 @@ impl View {
             corner: [0, 0],
             written: HashMap::new(),
             faces: None,
+            paper: [0; 3],
             turn: 0.0,
             tilt: settings.tilt.to_radians(),
             zoom: 1.0,
@@ -255,6 +261,13 @@ fn block_world(world: &World) -> Option<(Entity, BlockWorld, BlockWorldAsset, Ve
         })
 }
 
+/// The corner of the world of blocks a map shows, in the scene.
+fn corner(world: &World) -> Option<Vec3> {
+    let found = world.query_ref::<(Entity, &BlockWorld, &Transform, Option<&WorldTransform>)>().without::<Destroying>();
+    let first = found.into_iter().min_by_key(|(entity, ..)| entity.index());
+    first.map(|(_, _, local, placed)| voxear_terrain::corner(local, placed))
+}
+
 /// Where the game is seen from and the way it looks: the first camera
 /// switched on, of the game's own.
 fn camera(world: &World) -> Option<MapViewer> {
@@ -343,6 +356,8 @@ impl Maps {
         self.grounds.retain(|entity, _| found.as_ref().is_some_and(|(found, ..)| found == entity));
         self.take_made();
         let viewer = self.viewer(world);
+        let unset = MapKnown::default();
+        let known = world.resource::<MapKnown>().unwrap_or(&unset);
         for node in nodes {
             let Some(settings) = ui.map_view_settings(node) else { continue };
             let view = self.views.entry(node).or_insert_with(|| View::new(&settings));
@@ -354,7 +369,7 @@ impl Maps {
             if !ui.is_visible(node) {
                 continue;
             }
-            self.show(*entity, viewer, (node, &settings), renderer.as_deref_mut(), (ui, scale));
+            self.show((*entity, known), viewer, (node, &settings), renderer.as_deref_mut(), (ui, scale));
             self.overlay(world, ui, (node, &settings), viewer);
         }
         self.written.retain(|node, _| ui.is_visible(*node));
@@ -465,7 +480,7 @@ impl Maps {
     /// Shows the world round `viewer` in one view.
     fn show(
         &mut self,
-        entity: Entity,
+        (entity, known): (Entity, &MapKnown),
         viewer: MapViewer,
         (node, settings): (NodeId, &MapViewSettings),
         mut renderer: Option<&mut Renderer>,
@@ -524,14 +539,18 @@ impl Maps {
                 view.written.clear();
                 view.faces = None;
             }
-            let colours_changed = view.faces.as_ref().is_none_or(|kept| kept[..] != faces[..]);
+            let colours_changed =
+                view.faces.as_ref().is_none_or(|kept| kept[..] != faces[..]) || view.paper != known.paper;
             if let (Some(map), true) = (view.map, colours_changed) {
-                let colors: Vec<[u8; 3]> = faces.iter().map(|faces| faces.color).collect();
+                // The paper's colour after every block's, as the block ground not known is made of.
+                let mut colors: Vec<[u8; 3]> = faces.iter().map(|faces| faces.color).collect();
+                colors.push(known.paper);
                 if renderer.set_map_palette(map, &colors).is_ok() {
-                    view.faces = Some(faces.clone());
+                    (view.faces, view.paper) = (Some(faces.clone()), known.paper);
                 }
             }
         }
+        let paper = faces.len().min(usize::from(u16::MAX)) as u16;
         // Each tile of the window: written as kept, or empty until it is made; asked for nearest the middle first.
         let across = side / tile;
         let mut places: Vec<[i32; 2]> =
@@ -551,12 +570,14 @@ impl Maps {
             match self.tiles.get_mut(&key) {
                 Some(kept) => {
                     kept.shown = frame;
-                    if view.written.get(&cells) != Some(&kept.made) {
+                    // Written again when it was made again, or when what the maps know of it changed.
+                    let low = cells.map(|at| at as f32 * cell);
+                    let stamp = known.stamp_within(low, low.map(|at| at + tile as f32 * cell));
+                    if view.written.get(&cells) != Some(&(kept.made, stamp)) {
                         if let (Some(map), Some(renderer)) = (map, renderer.as_deref_mut()) {
-                            let columns: Vec<GpuMapColumn> = kept.tile.columns.iter().map(GpuMapColumn::of).collect();
-                            renderer.write_map_tile(map, cells, &columns);
+                            renderer.write_map_tile(map, cells, &known.columns(&kept.tile, cell, paper));
                         }
-                        view.written.insert(cells, kept.made);
+                        view.written.insert(cells, (kept.made, stamp));
                     }
                     // Only the tiles the slab reaches into count for how high it stands.
                     let reaches = (0..2).all(|axis| {
@@ -577,7 +598,7 @@ impl Maps {
                         if let (Some(map), Some(renderer)) = (map, renderer.as_deref_mut()) {
                             renderer.write_map_tile(map, cells, &[GpuMapColumn::NONE; MAP_TILE * MAP_TILE]);
                         }
-                        view.written.insert(cells, 0);
+                        view.written.insert(cells, (0, 0));
                     }
                     wanted_tiles.push(key);
                 }

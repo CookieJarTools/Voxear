@@ -4051,6 +4051,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "arboard",
+ "base64 0.13.1",
  "image",
  "libc",
  "libloading 0.9.0",

@@ -11,7 +11,7 @@ use voxear_terrain::{blocks::map::MapGround, surfaces::Biome};
 use voxear_ui::{Color, ElementKind, MapViewKind, MapViewSettings, NodeId, Shape, Ui};
 
 use super::{
-    MapScript, MapViewer, Maps, ShownMap,
+    MapKnown, MapScript, MapShows, MapViewer, Maps, ShownMap,
     parts::{Map, MapCorner, MapMarker, MarkerShows},
 };
 use crate::{game::Display, game_ui::GameUi};
@@ -70,6 +70,15 @@ impl Maps {
             release(hud.held, input, display);
             ui.close(hud.document);
         }
+        // What the first Map says maps show is what they show, and seen from where they follow, ground is explored.
+        if let Some((_, map)) = found.first() {
+            if world.resource::<MapKnown>().is_none_or(|known| known.shows != map.shows) {
+                let mut known = world.remove_resource::<MapKnown>().unwrap_or_default();
+                known.shows = map.shows;
+                world.insert_resource(known);
+            }
+        }
+        self.explore(world);
         for (entity, mut map) in found {
             if !self.huds.contains_key(&entity) {
                 let Some(hud) = make(ui) else { continue };
@@ -104,6 +113,20 @@ impl Maps {
                 (false, true) => release(hud.held.take(), input, display),
                 _ => {}
             }
+        }
+    }
+
+    /// Where the maps show what was explored, sees the ground round where
+    /// they follow, in the knowledge they show.
+    fn explore(&self, world: &mut World) {
+        if world.resource::<MapKnown>().is_none_or(|known| known.shows != MapShows::Explored) {
+            return;
+        }
+        let (Some(viewer), Some((_, _, _, corner))) = (self.viewer(world), super::block_world(world)) else { return };
+        let Some(known) = world.resource_mut::<MapKnown>() else { return };
+        let (shown, radius) = (known.shown, known.explore);
+        if let Some(knowledge) = known.all.get_mut(&shown) {
+            knowledge.reveal(viewer.position.x - corner.x, viewer.position.z - corner.z, radius);
         }
     }
 

@@ -4,6 +4,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::known::MapShows;
+
 /// The corner of the screen a Map's minimap sits in.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -49,6 +51,9 @@ pub struct Map {
     pub map_zoom: u32,
     /// The input action that opens and closes the map, by its id.
     pub open_action: Option<String>,
+    /// What the maps show of the world: all of it, what was explored, or
+    /// what the game reveals.
+    pub shows: MapShows,
     /// Whether the map is open now: not saved.
     pub open: bool,
 }
@@ -65,6 +70,7 @@ impl Default for Map {
             tilt: 58.0,
             map_zoom: 4,
             open_action: None,
+            shows: MapShows::Everything,
             open: false,
         }
     }
@@ -86,6 +92,7 @@ pub struct MapData {
     pub map_zoom: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub open_action: Option<String>,
+    pub shows: MapShows,
 }
 
 impl Default for MapData {
@@ -106,6 +113,7 @@ pub fn map_data(map: &Map) -> MapData {
         tilt: map.tilt,
         map_zoom: map.map_zoom,
         open_action: map.open_action.clone(),
+        shows: map.shows,
     }
 }
 
@@ -121,6 +129,7 @@ pub fn map_of(data: &MapData) -> Map {
         tilt: data.tilt.clamp(20.0, 90.0),
         map_zoom: voxear_ui::MapViewSettings::zoom_of(data.map_zoom as f32),
         open_action: data.open_action.clone(),
+        shows: data.shows,
         open: false,
     }
 }

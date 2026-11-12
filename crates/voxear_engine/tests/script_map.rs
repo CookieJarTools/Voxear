@@ -40,6 +40,20 @@ public sealed class MapScript : Behaviour
 		var gone = Map.AddMarker(Vector3.Zero, MapIcon.Skull);
 		gone.Remove();
 
+		// This player's map knows what it is shown; another's, what it is sent.
+		map.Shows = MapShows.GameDecides;
+		var threat = MapLayer.Create(Color.Clear, new Color(0.9f, 0.1f, 0.1f, 0.7f));
+		var mine = MapKnowledge.Shown;
+		mine.Reveal(new Vector3(100f, 0f, 100f), 40f);
+		var before = mine.Stamp;
+		mine.Paint(threat, new Vector3(600f, 0f, 0f), 50f, 0.5f, 12);
+		var theirs = new MapKnowledge();
+		theirs.Merge(mine.ChangesSince(before));
+		var saved = mine.ToBytes();
+		var loaded = new MapKnowledge();
+		loaded.Load(saved);
+		Log.Info($"known {mine.Knows(new Vector3(100f, 0f, 100f))} {theirs.Knows(new Vector3(100f, 0f, 100f))} {theirs.News(threat, new Vector3(600f, 0f, 0f))} {theirs.NewsHeard(threat, new Vector3(600f, 0f, 0f))} {loaded.Knows(new Vector3(100f, 0f, 100f))} {saved.Length < 600}");
+
 		var hud = UiDocument.Create();
 		hud.Root.Add(new Minimap { Zoom = 16, TurnsWithView = false, Tilt = 90f });
 		Log.Info($"map {map.IsValid} {map.Corner} {map.Zoom} {map.Round} follows {Map.Follow == Obj} marker {Obj.MapMarker.Label} {Obj.MapMarker.Icon}");
@@ -113,6 +127,13 @@ fn a_script_sets_up_a_map_marks_an_obj_and_a_place_and_makes_a_minimap_of_its_ow
     let lines: Vec<String> = log.lock().unwrap().lines.iter().map(|line| line.message.clone()).collect();
     let said = "map True BottomLeft 8 True follows True marker Me Player";
     assert!(lines.iter().any(|line| line == said), "{lines:?}");
+    // Its own map knows what it revealed; the other's only the news it was sent; one loaded, what was saved.
+    assert!(
+        lines.iter().any(|line| line.starts_with("known True False 0.5") && line.ends_with("12 True True")),
+        "{lines:?}"
+    );
+    let known = game.engine.world.resource::<voxear_engine::map::MapKnown>().unwrap();
+    assert_eq!((known.shows, known.all.len(), known.layers.len()), (voxear_engine::map::MapShows::GameDecides, 3, 1));
     // The Map on its Obj is as the script set it, and shut; its marker marks it.
     let map = game.engine.world.get::<Map>(obj).unwrap().clone();
     assert_eq!((map.corner, map.zoom, map.round, map.open), (MapCorner::BottomLeft, 8, true, false));

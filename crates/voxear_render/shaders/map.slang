@@ -30,9 +30,14 @@ struct MapColumn
     uint piece0Blocks;
     uint piece1;
     uint piece1Blocks;
+    // A colour its own are drawn towards, sRGB, and how far in the high byte: news of the place.
+    uint tint;
 };
 
 static const int NO_COLUMN = int(0x80000000);
+// The top of a column of ground the map does not know: drawn as paper, flat, as high as the slab's lowest ground,
+// wherever the slab is cut.
+static const int PAPER_COLUMN = int(0x80000001);
 
 // What a map is drawn as this frame; mirrors GpuMapView in src/map.rs. Places are in cells from the window's
 // corner along x and z, and from `base` up.
@@ -113,13 +118,24 @@ float groupTop(MapView* view, int2 group, int size)
     int2 kept = (group + (view->corner >> shift)) & (across - 1);
     int first = size == 0 ? 0 : int(view->side >> SKIPS[0]) * int(view->side >> SKIPS[0]);
     int top = mapPush.tops[first + kept.y * across + kept.x];
+    if (top == PAPER_COLUMN)
+    {
+        return ceil(view->lowest);
+    }
     return top == NO_COLUMN ? -1e9 : float(top - view->base);
 }
 
 MapColumn columnAt(MapView* view, int2 cell)
 {
     int2 kept = (cell + view->corner) & int(view->side - 1);
-    return mapPush.columns[kept.y * int(view->side) + kept.x];
+    MapColumn column = mapPush.columns[kept.y * int(view->side) + kept.x];
+    if (column.top == PAPER_COLUMN)
+    {
+        column.top = view->base + int(ceil(view->lowest));
+        column.water = column.top;
+        column.highest = column.top;
+    }
+    return column;
 }
 
 float3 linearOf(float3 srgb)
@@ -558,6 +574,13 @@ float4 shade(MapView* view, float2 pixel)
     {
         float reaches = lampReaches(view, at + hit.normal * 0.02 + view->sun * 0.02);
         light *= lerp(1.0 - view->shadows, 1.0, reaches);
+    }
+    // News of the place colours it, whatever stands there.
+    uint tint = columnAt(view, hit.cell).tint;
+    if ((tint >> 24) != 0)
+    {
+        float3 towards = linearOf(float3(tint & 0xff, (tint >> 8) & 0xff, (tint >> 16) & 0xff) / 255.0);
+        color = lerp(color, towards, float(tint >> 24) / 255.0);
     }
     // Higher ground a little lighter, so hills read from straight above.
     float high = saturate((hit.height - view->lowest) / max(view->ceiling - view->lowest, 1.0));

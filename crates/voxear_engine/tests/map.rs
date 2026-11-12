@@ -202,3 +202,83 @@ fn the_minimap_and_the_map_are_drawn_over_the_game() {
     keep("game-map.png", picture);
     assert_ne!(middle, beside, "the map covers the view");
 }
+
+#[test]
+fn maps_show_only_the_ground_they_know_as_the_game_reveals_it_or_as_it_is_explored() {
+    use voxear_engine::map::{MapKnown, MapLayerLook, MapShows};
+    let dir = project();
+    let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
+    game.start(None).unwrap();
+    settle(&mut game, None);
+    let hud = find(&game, "Hud");
+    // Explored: seen from where the maps follow, the ground round the camera is known, and no further.
+    game.engine.world.get_mut::<Map>(hud).unwrap().shows = MapShows::Explored;
+    settle(&mut game, None);
+    let known = game.engine.world.resource::<MapKnown>().unwrap().clone();
+    assert_eq!(known.shows, MapShows::Explored);
+    let seen = &known.all[&known.shown];
+    assert!(seen.knows(40.0, 40.0) && seen.knows(80.0, 40.0) && !seen.knows(400.0, 40.0));
+    // Walked on, more is known, and what was seen stays seen.
+    let eye = find(&game, "Eye");
+    game.engine.world.get_mut::<voxear_scene::Transform>(eye).unwrap().position.x += 300.0;
+    settle(&mut game, None);
+    let seen = game.engine.world.resource::<MapKnown>().unwrap().all[&0].clone();
+    assert!(seen.knows(340.0, 40.0) && seen.knows(40.0, 40.0));
+
+    // The game decides: nothing is seen by walking; a script's own map for another player knows what it is told.
+    game.engine.world.get_mut::<Map>(hud).unwrap().shows = MapShows::GameDecides;
+    let mut known = game.engine.world.remove_resource::<MapKnown>().unwrap();
+    known.all.insert(3, Default::default());
+    known.shown = 3;
+    known.all.get_mut(&3).unwrap().reveal(700.0, 40.0, 30.0);
+    known.layers.insert(1, MapLayerLook { low: [0.0; 4], high: [0.9, 0.1, 0.1, 0.7] });
+    game.engine.world.insert_resource(known);
+    game.engine.world.get_mut::<voxear_scene::Transform>(eye).unwrap().position.x += 300.0;
+    settle(&mut game, None);
+    let known = game.engine.world.resource::<MapKnown>().unwrap();
+    assert!(!known.all[&3].knows(640.0, 40.0), "walking reveals nothing when the game decides");
+    assert!(known.all[&3].knows(700.0, 40.0) && !known.all[&0].knows(700.0, 40.0), "each map knows its own");
+}
+
+#[test]
+fn ground_a_map_does_not_know_is_drawn_as_paper_and_news_colours_what_it_does() {
+    use voxear_engine::map::{MapKnown, MapLayerLook, MapShows};
+    let settings = voxear_render::RendererSettings::default();
+    let Ok(mut renderer) = voxear_render::Renderer::new_offscreen(1280, 720, &settings) else {
+        return eprintln!("skipping: no usable GPU");
+    };
+    let dir = project();
+    let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
+    game.start(Some(&mut renderer)).unwrap();
+    let hud = find(&game, "Hud");
+    game.engine.world.get_mut::<Map>(hud).unwrap().shows = MapShows::GameDecides;
+    Maps::set_open(&mut game.engine.world, hud, true);
+    let mut known = MapKnown { shows: MapShows::GameDecides, ..MapKnown::default() };
+    // Two places seen, and of one of them the news that it is dangerous.
+    known.all.get_mut(&0).unwrap().reveal(40.0, 40.0, 150.0);
+    known.all.get_mut(&0).unwrap().reveal(-200.0, 250.0, 90.0);
+    known.layers.insert(1, MapLayerLook { low: [0.9, 0.1, 0.1, 0.0], high: [0.9, 0.1, 0.1, 0.75] });
+    known.all.get_mut(&0).unwrap().paint(1, [-200.0, 250.0], 60.0, 1.0, 3);
+    game.engine.world.insert_resource(known);
+    for _ in 0..8 {
+        settle(&mut game, Some(&mut renderer));
+    }
+    let large = view(&mut game, MapViewKind::Map);
+    let shown = *game.maps.shown(large).unwrap();
+    let picture = renderer.read_pixels().unwrap();
+    let at = |place: Vec3| {
+        let (pixel, _) = shown.point(place).unwrap();
+        let i = ((pixel.y as u32 * 1280 + pixel.x as u32) * 4) as usize;
+        [picture.2[i], picture.2[i + 1], picture.2[i + 2]].map(i32::from)
+    };
+    // Paper where nothing is known; green ground where it is; red where the news is of danger.
+    let column =
+        |x: f32, z: f32| game.maps.column(shown.world, 2, Vec3::new(x, 0.0, z)).unwrap().highest() as f32 * 4.0;
+    let ground = at(Vec3::new(40.0, column(40.0, 120.0), 120.0));
+    let danger = at(Vec3::new(-200.0, column(-200.0, 250.0), 250.0));
+    let paper = at(Vec3::new(330.0, shown.base as f32 * 4.0, -330.0));
+    keep("game-known.png", picture.clone());
+    assert!(ground[1] > ground[0] + 20 && ground[1] > ground[2] + 20, "grass where it is known: {ground:?}");
+    assert!(danger[0] > danger[1] + 40, "red where it is dangerous: {danger:?}");
+    assert!((paper[0] - paper[2]).abs() < 90 && paper[0] > paper[2] && paper[0] > 110, "paper: {paper:?}");
+}

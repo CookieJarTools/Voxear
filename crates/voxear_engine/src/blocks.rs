@@ -394,11 +394,14 @@ pub fn stream(world: &mut World, content: &mut Content) {
         // Its file as its blocks are now, so a block saved since makes it anew; a block numbered while the game
         // runs changes its faces alone, and nothing made is made again.
         let (_, faces) = asset.drawn.faces();
+        // Its far view kept in the project's own folder of what is made, so ground seen once comes back at once.
+        let far_folder = Some(content.db().root().join(".voxear").join("FarView").join(asset.guid.to_string()));
         let making = voxear_terrain::blocks::stream::BlockMaking {
             file: asset.listed(),
             generate,
             world: generator,
             faces: faces.into(),
+            far_folder,
         };
         let Some(mut blocks) = world.get::<BlockWorld>(entity).cloned() else { continue };
         let camera = [viewer.x - corner.x, viewer.z - corner.z];

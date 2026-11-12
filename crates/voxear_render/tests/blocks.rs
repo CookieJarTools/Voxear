@@ -645,7 +645,7 @@ fn a_smooth_world_without_end_runs_to_the_horizon_with_no_gaps_where_its_rings_m
     let file = BlockFile { generate: Some(generate.clone()), smooth: true, ..BlockFile::default() };
     let (looks, faces) = file.faces();
     let hills = Arc::new(Preset::RollingHills.world());
-    let making = BlockMaking { file, generate, world: hills.clone(), faces: faces.clone().into() };
+    let making = BlockMaking { file, generate, world: hills.clone(), faces: faces.clone().into(), far_folder: None };
     let mut blocks = BlockWorld::made(BlockMap::default(), &faces, 1.0, true);
     let (mut base, mut pending) = (Arc::new(BlockMap::default()), Arc::new(BlockEdits::default()));
     let mut streamer = BlockStreamer::default();
@@ -702,4 +702,85 @@ fn a_smooth_world_without_end_runs_to_the_horizon_with_no_gaps_where_its_rings_m
         }
     }
     assert_eq!(gaps, 0, "pixels of sky through the ground");
+}
+
+#[test]
+fn mountains_stand_on_the_horizon_sixteen_kilometres_off_with_no_gaps_where_the_far_views_levels_meet() {
+    use voxear_terrain::{
+        blocks::{
+            BlockMap,
+            edits::BlockEdits,
+            generate::BlockGenerate,
+            stream::{BlockMaking, BlockStreamer},
+        },
+        generate::Preset,
+    };
+    let Some(mut renderer) = renderer() else { return };
+    // Mountains without end, in blocks 1 m a side, near chunks out to 128 m and the far view to 16 km.
+    let generate = BlockGenerate { caves: 0.0, position: [2000.0, 3000.0], bottom: -600, ..BlockGenerate::default() };
+    let file = BlockFile { generate: Some(generate.clone()), ..BlockFile::default() };
+    let (looks, faces) = file.faces();
+    let alps = Arc::new(Preset::Alpine.world());
+    let making = BlockMaking { file, generate, world: alps.clone(), faces: faces.clone().into(), far_folder: None };
+    let mut blocks = BlockWorld::made(BlockMap::default(), &faces, 1.0, false);
+    let (mut base, mut pending) = (Arc::new(BlockMap::default()), Arc::new(BlockEdits::default()));
+    let mut streamer = BlockStreamer::default();
+    let start = std::time::Instant::now();
+    loop {
+        streamer.update(&mut blocks, &mut base, &mut pending, making.clone(), (128.0, 16_000.0), [0.0, 0.0]);
+        if streamer.settled() {
+            break;
+        }
+        assert!(start.elapsed().as_secs() < 240, "never settled");
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    let levels: std::collections::BTreeSet<i32> = blocks.far.keys().map(|key| key[0]).collect();
+    assert_eq!(levels.last(), Some(&7), "out to the eighth level, 4 km columns: {levels:?}");
+    let surfaces: Vec<SurfaceLook> = looks
+        .iter()
+        .map(|look| {
+            let [r, g, b] = look.color;
+            let material =
+                renderer.add_material(&MaterialDesc { base_color: [r, g, b, 1.0], ..MaterialDesc::default() });
+            SurfaceLook {
+                material: material.unwrap(),
+                size: 1.0,
+                sharpness: 0.0,
+                triplanar: true,
+                tracks: 0.0,
+                fills_in: 0.0,
+                liquid: Default::default(),
+                glitter: false,
+            }
+        })
+        .collect();
+    let default = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let mut world = World::new();
+    world.spawn((blocks, BlockLook { material: default, surfaces: Arc::from(surfaces) }, Transform::default()));
+    // From 150 m over the ground at the middle, looking along +x at the horizon, the sun low from one side.
+    let ground = alps.height_at(2000.0, 3000.0);
+    let look = Quat::from_rotation_y(-std::f32::consts::FRAC_PI_2) * Quat::from_rotation_x(-0.06);
+    world.spawn((Camera::default(), Transform::new(Vec3::new(0.0, ground + 150.0, 0.0), look, Vec3::ONE)));
+    let towards_sun = Vec3::new(0.3, 0.35, 1.0).normalize();
+    let sun = Quat::from_rotation_arc(Vec3::Z, -towards_sun);
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    world.insert_resource(Sky { ambient: 0.3, ..Sky::default() });
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
+    world.insert_resource(PostProcess { anti_aliasing, ..PostProcess::neutral() });
+    let pixels = render(&mut renderer, &world, 6);
+    keep_image("blocks far view.png", &pixels);
+    // The sky's own light blue: dark faces in shadow are blueish too, but far darker.
+    let sky = |[r, g, b]: [i32; 3]| b > r + 15 && b > g + 5 && b > 120;
+    // Under the highest ground in each column of pixels, ground all the way down: no sky through a join.
+    let mut tops = Vec::new();
+    let mut gaps = 0;
+    for x in 0..WIDTH {
+        let Some(top) = (0..HEIGHT).find(|&y| !sky(rgb_at(&pixels, x, y))) else { continue };
+        tops.push(top);
+        gaps += (top..HEIGHT).filter(|&y| sky(rgb_at(&pixels, x, y))).count();
+    }
+    assert!(gaps <= 4, "{gaps} pixels of sky through the ground, past a few on the peaks' edges");
+    // The horizon is mountains: it rises and falls across the picture.
+    let (high, low) = (tops.iter().min().copied().unwrap_or(0), tops.iter().max().copied().unwrap_or(0));
+    assert!(tops.len() == WIDTH as usize && low - high > 10, "a horizon of peaks, from row {high} to {low}");
 }

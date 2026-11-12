@@ -36,6 +36,11 @@ impl Editor {
         self.lighting_panel.shown()
     }
 
+    /// The Lighting page's menu of look packs to show the scene under.
+    pub fn lighting_look_menu(&self) -> voxear_ui::NodeId {
+        self.lighting_panel.look_menu()
+    }
+
     /// Shows the active scene's lighting on the page as it now is, and the
     /// lighting the Inspector shows.
     pub(super) fn refresh_lighting_page(&mut self) {
@@ -57,6 +62,11 @@ impl Editor {
                 })
             }
             LightingAction::Copy => self.copy_lighting(renderer),
+            LightingAction::Wear(reference) => {
+                let game = &mut self.game;
+                let reference = reference.as_deref().unwrap_or_default();
+                voxear_engine::look_packs::wear(&mut game.engine.world, &mut game.content, reference)
+            }
         };
         if let Err(error) = done {
             tracing::error!("{error:#}");
@@ -70,7 +80,7 @@ impl Editor {
     /// file.
     pub(super) fn scene_lighting_action(&mut self, scene: &str, action: LightingAction, renderer: &mut Renderer) {
         let done = match action {
-            LightingAction::Set { .. } => return self.lighting_action(action, renderer),
+            LightingAction::Set { .. } | LightingAction::Wear(_) => return self.lighting_action(action, renderer),
             LightingAction::SetScene(reference) => self.set_lighting_of(scene, reference.as_deref()),
             LightingAction::Copy => self.copy_lighting_of(scene, renderer),
         };

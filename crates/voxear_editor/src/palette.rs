@@ -446,6 +446,7 @@ fn assets(game: &Game) -> Vec<Entry> {
                 AssetKind::Plant => ("Plant", "sprout"),
                 AssetKind::VoxModel => ("Block Model", "blocks"),
                 AssetKind::Lighting => ("Lighting settings", "light"),
+                AssetKind::LookPack => ("Look pack", "eye"),
                 AssetKind::Data => ("Data asset", "file"),
             };
             let (action, key) = match kind {

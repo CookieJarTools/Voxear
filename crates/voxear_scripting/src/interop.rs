@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 80;
+pub(crate) const API_VERSION: u32 = 81;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -531,6 +531,12 @@ pub(crate) struct NativeApi {
     /// over `seconds` to a kind, or with `amounts`, the first seven of those, to them.
     pub weather_state: unsafe extern "C" fn(state: *mut [f32; 10], turning: *mut i32) -> i32,
     pub weather_set: unsafe extern "C" fn(kind: i32, amounts: *const [f32; 7], seconds: f32),
+    /// `LookPacks.Use`: wears the look pack a reference names from the next frame, or with none, takes off the
+    /// one worn; and, with `remember`, keeps the choice beside the saves for the game's next run.
+    pub look_pack_wear: unsafe extern "C" fn(reference: *const u8, len: i32, remember: i32),
+    /// `LookPacks`: every look pack there is to wear, which is worn and where a player keeps their own, as JSON;
+    /// its length, or -1 when there is none.
+    pub look_packs_info: unsafe extern "C" fn(buffer: *mut u8, capacity: i32) -> i32,
 }
 
 /// The kinds of component scripts reach through one entry, `kind_value`,
@@ -1175,6 +1181,7 @@ thread_local! {
     static REQUESTS: RefCell<Vec<Request>> = const { RefCell::new(Vec::new()) };
     static LEVEL_REQUESTS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     static LIGHTING_REQUESTS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    static LOOK_PACK_REQUESTS: RefCell<Vec<(String, bool)>> = const { RefCell::new(Vec::new()) };
     /// The level's time of year, as `Seasons.TimeOfYear` reads it: NaN
     /// without Seasons. Scripts setting it change it here at once, and the
     /// engine takes what they set after the frame.
@@ -1237,6 +1244,10 @@ pub(crate) fn take_level_requests() -> Vec<String> {
 
 pub(crate) fn take_lighting_requests() -> Vec<String> {
     LIGHTING_REQUESTS.take()
+}
+
+pub(crate) fn take_look_pack_requests() -> Vec<(String, bool)> {
+    LOOK_PACK_REQUESTS.take()
 }
 
 /// The level's weather as scripts read it: its kind, by its place among the kinds; what it adds this moment
@@ -1519,6 +1530,11 @@ unsafe extern "C" fn level_load(level: *const u8, len: i32) {
 unsafe extern "C" fn lighting_apply(reference: *const u8, len: i32) {
     let reference = unsafe { utf8(reference, len) }.into_owned();
     LIGHTING_REQUESTS.with_borrow_mut(|r| r.push(reference));
+}
+
+unsafe extern "C" fn look_pack_wear(reference: *const u8, len: i32, remember: i32) {
+    let reference = unsafe { utf8(reference, len) }.into_owned();
+    LOOK_PACK_REQUESTS.with_borrow_mut(|r| r.push((reference, remember != 0)));
 }
 
 unsafe extern "C" fn seasons_time() -> f32 {
@@ -2097,6 +2113,8 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         biome_at: crate::services::biome_at,
         weather_state,
         weather_set,
+        look_pack_wear,
+        look_packs_info: crate::services::look_packs_info,
     }
 }
 

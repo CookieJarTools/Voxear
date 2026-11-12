@@ -950,14 +950,13 @@ pub struct BlockCounts {
 /// anchor among its meshes for rays.
 pub(crate) fn gather(
     drawn: &[DrawnBlocks],
-    frame: &crate::gpu::GpuFrame,
-    entities: &[Owner],
-    has_sun: bool,
+    extracted: &crate::scene::ExtractedFrame,
     buffer: &Buffer,
 ) -> Option<ViewBlocks> {
     if drawn.is_empty() {
         return None;
     }
+    let (frame, entities, has_sun) = (&extracted.frame, extracted.entities.as_slice(), extracted.has_sun);
     voxear_core::profile_scope!("Block Picking");
     let mut anchors: HashMap<Entity, u32> = HashMap::new();
     for (index, owner) in entities.iter().enumerate().take(crate::MAX_INSTANCES as usize) {
@@ -983,6 +982,8 @@ pub(crate) fn gather(
             };
         }
         let surfaces_at = (SURFACES_AT + number * MAX_BLOCK_SURFACES * size_of::<GpuTerrainSurface>()) as u64;
+        // A look pack the player wears says how every world's faces are cut into small cubes.
+        let voxels = extracted.block_voxels.unwrap_or(blocks.look.voxels);
         records.push(GpuBlockWorld {
             corner: blocks.corner.into(),
             block_size: blocks.block_size,
@@ -993,8 +994,8 @@ pub(crate) fn gather(
             material: blocks.look.material.0,
             anchor: anchors.get(&blocks.entity).copied().unwrap_or(0),
             flags: if blocks.smooth { BLOCKS_SMOOTH } else { 0 },
-            voxels: if blocks.smooth { 0.0 } else { blocks.look.voxels.count.min(BlockVoxels::MOST) as f32 },
-            relief: blocks.look.voxels.relief.clamp(0.0, BlockVoxels::DEEPEST),
+            voxels: if blocks.smooth { 0.0 } else { voxels.count.min(BlockVoxels::MOST) as f32 },
+            relief: voxels.relief.clamp(0.0, BlockVoxels::DEEPEST),
         });
         let local = camera - blocks.corner;
         let mut lists = vec![Vec::new(); LIST_COUNT as usize];

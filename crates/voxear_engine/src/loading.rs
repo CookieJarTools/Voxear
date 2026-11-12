@@ -422,6 +422,7 @@ fn gather(
                 // assets as they load them.
                 AssetKind::Texture
                 | AssetKind::LightProfile
+                | AssetKind::LookPack
                 | AssetKind::Shader
                 | AssetKind::Ui
                 | AssetKind::InputActions

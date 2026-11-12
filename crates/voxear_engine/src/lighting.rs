@@ -134,6 +134,27 @@ pub struct SunData {
     pub shadow_split: Option<f32>,
 }
 
+impl SunData {
+    /// Changes `sun` to what is written here, leaving the rest of it as it
+    /// is: a temperature gives its tint, a tint colours that, and the
+    /// others take the place of its own.
+    pub fn lay_over(&self, sun: &mut SunLook) {
+        if let Some(kelvin) = self.temperature {
+            sun.tint = temperature_color(kelvin);
+        }
+        if let Some(tint) = self.tint {
+            sun.tint *= Vec3::from(linear(tint));
+        }
+        sun.strength = self.strength.unwrap_or(sun.strength).max(0.0);
+        sun.softness = self.softness.unwrap_or(sun.softness).clamp(0.0, 20.0);
+        if let Some(shadow) = self.shadow_tint {
+            sun.shadow_tint = Vec3::from(linear(shadow));
+        }
+        sun.shadow_distance = self.shadow_distance.unwrap_or(sun.shadow_distance).clamp(5.0, 1000.0);
+        sun.shadow_split = self.shadow_split.unwrap_or(sun.shadow_split).clamp(0.0, 1.0);
+    }
+}
+
 /// Lighting settings worked out: what a scene's environment starts from.
 #[derive(Clone, Debug)]
 pub struct Lighting {
@@ -176,19 +197,7 @@ impl LightingFile {
         }
         let mut sun = look.map_or_else(plain_sun, |look| look.sun);
         if let Some(over) = self.sun {
-            if let Some(kelvin) = over.temperature {
-                sun.tint = temperature_color(kelvin);
-            }
-            if let Some(tint) = over.tint {
-                sun.tint *= Vec3::from(linear(tint));
-            }
-            sun.strength = over.strength.unwrap_or(sun.strength).max(0.0);
-            sun.softness = over.softness.unwrap_or(sun.softness).clamp(0.0, 20.0);
-            if let Some(shadow) = over.shadow_tint {
-                sun.shadow_tint = Vec3::from(linear(shadow));
-            }
-            sun.shadow_distance = over.shadow_distance.unwrap_or(sun.shadow_distance).clamp(5.0, 1000.0);
-            sun.shadow_split = over.shadow_split.unwrap_or(sun.shadow_split).clamp(0.0, 1.0);
+            over.lay_over(&mut sun);
         }
         let mut post = toml::Table::new();
         if let Some(name) = &self.look {

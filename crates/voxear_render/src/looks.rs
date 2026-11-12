@@ -124,6 +124,25 @@ pub struct SunLook {
     pub shadow_split: f32,
 }
 
+/// What the level is drawn with while a look pack is worn, as a world
+/// resource: its own sky, sun look and post-processing with the pack's
+/// laid over them, and what the pack sets of how blocks' faces are drawn.
+/// The level's own stay in the world as they are, for the editor and
+/// scripts to read and change; a frame is drawn with these in their place.
+/// The engine works them out whenever the level's or the pack changes
+/// (`voxear_engine::look_packs`), and takes the resource away with the
+/// pack.
+#[derive(Clone, Copy, Debug)]
+pub struct WornLook {
+    pub sky: Sky,
+    /// None where neither the level nor the pack changes the sun.
+    pub sun: Option<SunLook>,
+    pub post: PostProcess,
+    /// How many small cubes every world of blocks' faces are drawn as, and
+    /// how deep; none for each world's own.
+    pub voxels: Option<crate::blocks::BlockVoxels>,
+}
+
 /// A look's settings.
 #[derive(Clone, Copy, Debug)]
 pub struct Look {

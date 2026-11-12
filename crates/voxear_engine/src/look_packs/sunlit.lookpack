@@ -1,0 +1,33 @@
+# A Voxear look pack: laid over whatever lighting a level has.
+format = 1
+description = "Soft sunlight, blue shade, a little glow and rich, clean colour."
+
+# The sun keeps its own colour, which the sky's follows: a warmer sun would grey a blue sky.
+[sun]
+softness = 1.2
+shadow_tint = [0.08, 0.13, 0.26]
+
+# Richer colour, cool in the shade and a touch of cream in the light. The level keeps its own tonemapper and
+# exposure.
+[post.grading]
+saturation = 1.32
+lift = [0.0, 0.003, 0.01]
+gain = [1.03, 1.01, 1.0]
+
+[post.bloom]
+enabled = true
+intensity = 0.16
+scatter = 0.8
+
+# The sun's shafts show in whatever mist the level has; none is added, which would grey the sky.
+[post.fog]
+volumetric = true
+volumetric_distance = 96.0
+anisotropy = 0.7
+
+[post.global_illumination]
+enabled = true
+strength = 1.1
+
+[post.vignette]
+intensity = 0.1

@@ -1,0 +1,27 @@
+# A Voxear look pack: laid over whatever lighting a level has.
+format = 1
+description = "Nothing over the picture: no glow, no mist, no dark corners, and plain faces on every block."
+
+[sun]
+shadow_tint = [0.0, 0.0, 0.0]
+
+[post]
+chromatic_aberration = 0.0
+
+[post.bloom]
+enabled = false
+
+[post.fog]
+enabled = false
+
+[post.vignette]
+intensity = 0.0
+
+[post.depth_of_field]
+enabled = false
+
+[post.motion_blur]
+enabled = false
+
+[blocks]
+voxels = 0

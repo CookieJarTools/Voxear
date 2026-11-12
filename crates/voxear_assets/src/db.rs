@@ -55,6 +55,9 @@ pub enum AssetKind {
     /// A `.lighting` file: a scene's lighting settings, its sky, how its sun
     /// looks and its post-processing, which scenes name and code applies.
     Lighting,
+    /// A `.lookpack` file: a few lighting settings laid over whatever
+    /// lighting a level has, which whoever plays the game picks.
+    LookPack,
     /// A `.shader` file: a custom shader in Slang, its properties and how it
     /// works out a surface, moves vertices or takes light, which materials
     /// pick.
@@ -119,6 +122,7 @@ impl AssetKind {
             "assettable" => Self::AssetTable,
             "ies" => Self::LightProfile,
             "lighting" => Self::Lighting,
+            "lookpack" => Self::LookPack,
             "shader" => Self::Shader,
             "motionset" => Self::MotionSet,
             "gunhandling" => Self::GunHandling,

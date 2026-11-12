@@ -1094,6 +1094,17 @@ publishes the weather's state before scripts run, and takes the last `Weather.Se
 raises `Weather.Changed` and `Weather.Struck` from its per-frame dispatch, by comparing what it reads with last
 frame's.
 
+**Look packs** (`voxear_engine::look_packs`) are the other thing laid over a level's lighting, and the player's to
+choose. A `.lookpack` is the `[sky]`, `[sun]` and `[post]` of lighting settings, partly written, with `[blocks]`. The
+pack worn is the world's `Wearing`; the level's own `Sky`, `SunLook` and `PostProcess` are never changed by it. Each
+tick `look_packs::update` merges the pack's tables over those three as they are (the same `merge` lighting settings
+use over a look) and leaves the result in the world as `voxear_render::WornLook`, and `extract` draws the frame with
+that in their place and passes its small cubes on to every world of blocks (`ExtractedFrame::block_voxels`). It is
+worked out again only when the level's lighting or the pack has changed, so wearing one costs a comparison a tick.
+Weather goes over the worn look as it goes over the level's own. Packs are the engine's (`BUILTIN`), the project's
+assets, or files in the player's `Looks` folder beside the saves; the reference of the one chosen is kept in
+`look.txt` there, and `Game::wear_remembered_look` wears it as a game starts.
+
 **Post-processing.** Built in and on by default as the Voxear Look. See
 [Post-processing and the Voxear Look](#post-processing-and-the-voxear-look) below.
 

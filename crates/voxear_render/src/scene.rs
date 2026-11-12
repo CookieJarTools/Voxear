@@ -265,6 +265,9 @@ pub struct ExtractedFrame {
     /// What each instance was made from, for tracking motion between frames.
     pub entities: Vec<Owner>,
     pub post: PostProcess,
+    /// The small cubes every world of blocks' faces are drawn as, where a
+    /// look pack the player wears says (`WornLook::voxels`).
+    pub block_voxels: Option<crate::blocks::BlockVoxels>,
     /// The size the scene is drawn at: the view's own, or less when TAA
     /// upscales it (see `AntiAliasing::render_scale`).
     pub render_size: (u32, u32),
@@ -520,7 +523,10 @@ pub fn extract(
     // The weather is laid over the level's lighting: its sky, sun, fog and wind as they are, and what it adds.
     let weathered = world.resource::<crate::weather::Weather>().copied().unwrap_or_default();
     let weather = weathered.now();
-    let mut sky = weather.sky(world.resource::<Sky>().copied().unwrap_or_default());
+    // A look pack the player wears is laid over the level's lighting first: the engine has worked that out.
+    let worn = world.resource::<crate::looks::WornLook>().copied();
+    let own_sky = worn.map(|worn| worn.sky).or_else(|| world.resource::<Sky>().copied()).unwrap_or_default();
+    let mut sky = weather.sky(own_sky);
     // Lightning lights the sky for a moment, and all it lights: a gradient's own colours here, the atmosphere's
     // sky light as it is worked out.
     let flash = weathered.flash() * crate::weather::FLASH_LIGHT;
@@ -534,7 +540,8 @@ pub fn extract(
     let unjittered = projection * view;
     // Debug views show their colours as they are, the ambient occlusion view
     // the scene's own occlusion, on even where the scene turns it off.
-    let scene_post = options.post_override.or_else(|| world.resource::<PostProcess>().copied()).unwrap_or_default();
+    let own_post = worn.map(|worn| worn.post).or_else(|| world.resource::<PostProcess>().copied());
+    let scene_post = options.post_override.or(own_post).unwrap_or_default();
     // Post volumes blend in where the camera is, unless a view sets its own settings.
     let scene_post = match options.post_override {
         Some(_) => scene_post,
@@ -638,7 +645,10 @@ pub fn extract(
     let mut shadowed = Vec::new();
     let mut sun_found = false;
     let shining = world.query_ref::<(Entity, &Light, &Transform)>().without::<Destroying>();
-    let sun_look = world.resource::<crate::looks::SunLook>().copied();
+    let sun_look = match worn {
+        Some(worn) => worn.sun,
+        None => world.resource::<crate::looks::SunLook>().copied(),
+    };
     let lit = shining.into_iter().filter(|(entity, ..)| !lods.hidden.contains(entity) && on(*entity, Switch::Light));
     for (_, light, transform) in lit {
         // A look changes the sun's colour and strength, and gives what the light leaves at its default.
@@ -823,6 +833,7 @@ pub fn extract(
     frame.instance_count = instances.len() as u32;
 
     ExtractedFrame {
+        block_voxels: worn.and_then(|worn| worn.voxels),
         frame,
         instances,
         lights,

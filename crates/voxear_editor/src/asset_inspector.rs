@@ -549,6 +549,10 @@ impl AssetView {
                 code(ui, root, &file, "slang", dark);
             }
             ItemKind::Asset(AssetKind::AssetTable) => code(ui, root, &file, "toml", dark),
+            ItemKind::Asset(AssetKind::LookPack) => {
+                look_pack_rows(ui, root, &file);
+                code(ui, root, &file, "toml", dark);
+            }
             // Every setting to change in place, a tab for each group, not the file's text.
             ItemKind::Asset(AssetKind::Lighting) => {
                 let rows = part(ui, root, "Lighting", "light");
@@ -1079,6 +1083,28 @@ fn particle_effect(ui: &mut Ui, root: NodeId, file: &std::path::Path) {
     }
 }
 
+/// What a look pack says of itself and which parts of a level's lighting
+/// it changes, over its file's text.
+fn look_pack_rows(ui: &mut Ui, root: NodeId, file: &std::path::Path) {
+    let rows = part(ui, root, "Look Pack", "eye");
+    let text = std::fs::read_to_string(file).unwrap_or_default();
+    let pack = match voxear_engine::look_packs::LookPackFile::parse(&text) {
+        Ok(pack) => pack,
+        Err(error) => return text_row(ui, rows, "Not read", &format!("{error:#}")),
+    };
+    text_row(ui, rows, "Description", if pack.description.is_empty() { "None" } else { &pack.description });
+    let changes = [
+        ("the whole look", pack.look.is_some()),
+        ("sky", pack.sky.is_some()),
+        ("sun", pack.sun.is_some()),
+        ("post-processing", pack.post.is_some()),
+        ("blocks", pack.blocks.is_some()),
+    ];
+    let named: Vec<&str> = changes.into_iter().filter(|(_, changed)| *changed).map(|(name, _)| name).collect();
+    let changed = if named.is_empty() { "Nothing".to_string() } else { named.join(", ") };
+    text_row(ui, rows, "Changes", &changed);
+}
+
 /// A box model's size on its sheet and in the world, and how much it is
 /// made of.
 fn box_model_rows(ui: &mut Ui, root: NodeId, file: &std::path::Path) {
@@ -1601,6 +1627,7 @@ fn kind_name(kind: ItemKind) -> &'static str {
         ItemKind::Asset(AssetKind::Paths) => "Sound paths",
         ItemKind::Asset(AssetKind::LightProfile) => "IES light profile",
         ItemKind::Asset(AssetKind::Lighting) => "Lighting settings",
+        ItemKind::Asset(AssetKind::LookPack) => "Look pack",
         ItemKind::Asset(AssetKind::Shader) => "Shader",
         ItemKind::Asset(AssetKind::MotionSet) => "Motion Set",
         ItemKind::Asset(AssetKind::GunHandling) => "Gun Handling",
@@ -1635,6 +1662,7 @@ fn icon(kind: ItemKind) -> &'static str {
         ItemKind::Asset(AssetKind::Paths) => "branch",
         ItemKind::Asset(AssetKind::LightProfile) => "light",
         ItemKind::Asset(AssetKind::Lighting) => "light",
+        ItemKind::Asset(AssetKind::LookPack) => "eye",
         ItemKind::Asset(AssetKind::Shader) => "shader",
         ItemKind::Asset(AssetKind::MotionSet) => "play",
         ItemKind::Asset(AssetKind::GunHandling) => "crosshair",

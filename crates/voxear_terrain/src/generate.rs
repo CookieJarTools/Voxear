@@ -43,7 +43,7 @@ mod world;
 
 pub use caves::{
     CaveExit, CaveLayout, CaveMode, CaveShape, Caves, PlacedExit, PlacedRoom, PlacedSpot, Room, RoomExit, RoomForm, RoomRules,
-    RoomShape,
+    RoomSample, RoomShape,
 };
 pub use compile::Fault;
 pub use graph::{Exposed, Graph, Link, Node, NodeId};

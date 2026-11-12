@@ -13,6 +13,7 @@
 use voxear_core::curve::Curve;
 
 use super::{
+    caves::{Room, RoomRules},
     graph::{Graph, NodeId},
     landmass::Climate,
     nodes::{
@@ -79,7 +80,7 @@ impl Starter {
 
 /// The graphs a generator can start from, in the order a list shows them.
 pub fn starters() -> Vec<Starter> {
-    vec![battlefield_plains(), rolling_hills(), alpine(), archipelago(), canyons(), cave_level()]
+    vec![battlefield_plains(), rolling_hills(), alpine(), archipelago(), canyons(), caves(), cave_level()]
 }
 
 impl WorldGen {
@@ -400,6 +401,60 @@ fn canyons() -> Starter {
     Starter { name: "Canyons", sea_level: 0.0, graph: g.finish(ground, climate) }
 }
 
+/// Rocky hills over caves without end, every room made by rules: halls
+/// with pillars and ledges and smaller chambers between, joined by winding
+/// tunnels of many widths, with ways round and dead ends, and here and
+/// there a way up to the surface. For a world of blocks; a Terrain shows
+/// the hills alone.
+fn caves() -> Starter {
+    let mut g = Layout::new();
+    let hills = Noise { size: 420.0, octaves: 4, low: 48.0, high: 110.0, ..Noise::default() };
+    let hills = g.add(NodeKind::Noise(hills));
+    g.expose(hills, "high", "Height");
+    g.next();
+    let solid = g.after(hills, NodeKind::Solid(Solid::default()));
+    let hall = RoomRules {
+        size: [30.0, 46.0],
+        shapes: 5,
+        height: 14.0,
+        roughness: 1.2,
+        floor: 0.8,
+        pillars: 4,
+        hanging: 10,
+        ledges: 3,
+        exits: 5,
+        exits_apart: 0.8,
+    };
+    let chamber = RoomRules { size: [14.0, 22.0], shapes: 3, height: 7.0, pillars: 1, hanging: 4, ledges: 1, ..hall };
+    let network = CaveNetwork {
+        spacing: 96.0,
+        depth: 34.0,
+        tunnel_width: 4.0,
+        tunnel_width_max: 7.0,
+        winding: 0.8,
+        slope_limit: 0.6,
+        branches: 0.3,
+        loops: 0.35,
+        roughness: 1.0,
+        entrances: 0.2,
+        rooms: vec![Room { weight: 2.0, ..Room::made(hall) }, Room { weight: 3.0, ..Room::made(chamber) }],
+        ..CaveNetwork::default()
+    };
+    let caves = g.add(NodeKind::CaveNetwork(network));
+    g.expose(caves, "depth", "Depth");
+    g.expose(caves, "loops", "Loops");
+    g.expose(caves, "entrances", "Entrances");
+    g.next();
+    let cut = g.add(NodeKind::Combine(Combine { operation: Combining::Subtract, ..Combine::default() }));
+    g.wire(solid, 0, cut, Combine::A);
+    g.wire(caves, 0, cut, Combine::B);
+    let mut graph = g.finish(hills, Climate::default());
+    let output = graph.output().map(|node| node.id);
+    let wired = output.is_some_and(|output| graph.connect(cut, 0, output, Output::VOLUME));
+    debug_assert!(wired, "the caves' Volume");
+    Starter { name: "Caves", sea_level: 0.0, graph }
+}
+
 /// Solid rock with one bounded cave in it: a main path of rooms with side
 /// rooms off it, its first room Depth under the rock's top. For a world of
 /// blocks; a Terrain shows the rock's level top alone.
@@ -442,6 +497,30 @@ mod tests {
     /// The starters that are kinds of ground: the first five.
     fn grounds() -> Vec<Starter> {
         starters().into_iter().take(5).collect()
+    }
+
+    #[test]
+    fn the_caves_are_hills_over_rooms_made_by_rules_without_end() {
+        let starter = starters().into_iter().find(|starter| starter.name == "Caves").expect("the caves");
+        let world = starter.world(1, 1.0);
+        assert!(world.faults().is_empty(), "{:?}", world.faults());
+        assert_eq!(world.starter(), Some("Caves"));
+        assert_eq!(WorldGen::parse(&world.to_text()).unwrap(), world);
+        let labels: Vec<&str> = world.graph().exposed.iter().map(|exposed| exposed.label.as_str()).collect();
+        assert_eq!(labels, ["Height", "Depth", "Loops", "Entrances", "Temperature", "Humidity"]);
+        let caves = world.caves().expect("its caves");
+        assert_eq!(caves.layout(), crate::generate::CaveLayout::Endless);
+        let rooms = caves.rooms_near([0.0, 40.0, 0.0], 600.0);
+        assert!(rooms.len() > 30 && rooms.iter().all(|room| room.made), "{} rooms", rooms.len());
+        // Halls and chambers both, each under the hills, with places on its rock.
+        let wide = |room: &crate::generate::PlacedRoom| room.bounds[1][0] - room.bounds[0][0];
+        assert!(rooms.iter().any(|room| wide(room) > 60.0) && rooms.iter().any(|room| wide(room) < 45.0));
+        for room in &rooms {
+            let under = world.height_at(room.at[0], room.at[2]) - room.at[1];
+            assert!((20.0..=50.0).contains(&under), "a room {under} m under the hills");
+            assert!(!room.floors.is_empty() && !room.ceilings.is_empty());
+        }
+        assert_ne!(starter.world(2, 1.0).caves().unwrap().rooms_near([0.0, 40.0, 0.0], 600.0), rooms);
     }
 
     #[test]

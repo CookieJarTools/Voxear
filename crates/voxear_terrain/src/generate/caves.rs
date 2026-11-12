@@ -22,7 +22,7 @@ pub(crate) mod network;
 mod parts;
 mod rooms;
 
-pub use made::RoomRules;
+pub use made::{RoomRules, RoomSample};
 pub use network::CaveLayout;
 pub use parts::{CaveExit, CaveMode, CaveShape};
 pub use rooms::{Room, RoomExit, RoomForm, RoomShape, UNTURNED};

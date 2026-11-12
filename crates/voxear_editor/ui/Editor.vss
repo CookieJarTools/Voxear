@@ -4228,6 +4228,12 @@ DockSpace .resizable-columns > .split-divider:active > .split-handle {
     width: 48px;
 }
 
+/* The rules of a room made by rules, under its row. */
+.room-rules {
+    padding-left: 12px;
+    margin-bottom: 6px;
+}
+
 .room-add {
     margin-top: 2px;
 }

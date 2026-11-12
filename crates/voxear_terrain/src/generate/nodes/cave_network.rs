@@ -591,7 +591,7 @@ mod tests {
         for room in &rooms {
             assert_eq!(caves.room(room.region).as_ref(), Some(room), "asked for again");
             let found = (room.walls.len(), room.floors.len(), room.ceilings.len());
-            assert!(found.0 >= 3 && found.1 >= 3 && found.2 >= 3, "{found:?} places in {:?}", room.region);
+            assert!(found.1 >= 3 && found.2 >= 3, "{found:?} places in {:?}", room.region);
             // A floor place in a tunnel's mouth has the tunnel's floor, a little lower, under it.
             for spot in &room.floors {
                 assert!(open(&made, off(spot.at, [0.0, 1.0, 0.0], 0.3)), "open over a floor place");
@@ -613,6 +613,8 @@ mod tests {
                 }
             }
         }
+        // Fewer on the walls of a small room with tunnels on every side, most of whose wall is their mouths.
+        assert!(walls >= rooms.len() * 6, "{walls} wall places in {} rooms", rooms.len());
         assert!(backed * 10 >= walls * 9, "{backed} of {walls} wall places have rock behind them");
         assert!(stood * 10 >= floors * 8, "{stood} of {floors} floor places face up over rock");
         assert!(under * 10 >= roofs * 8, "{under} of {roofs} roof places face down under rock");

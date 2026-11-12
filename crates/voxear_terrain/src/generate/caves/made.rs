@@ -21,7 +21,13 @@ use super::{
     network::{mix, share},
     rooms::{NOTHING, RoomExit, ball, greater, lesser},
 };
-use crate::generate::compile::Key;
+use crate::{
+    generate::{
+        compile::Key,
+        nodes::{Value, ValueSpec},
+    },
+    noise::gradient3,
+};
 
 /// How high over a room's floor its exits lie, in metres.
 const EXIT_HEIGHT: f32 = 1.2;
@@ -94,10 +100,98 @@ impl RoomRules {
         (wide * wide + high * high).sqrt() + kept.roughness + 1.0
     }
 
+    /// Its values as rows for an Inspector, in the order [`RoomRules::value`] counts them.
+    pub const VALUES: &'static [ValueSpec] = &[
+        ValueSpec::number("size", "Size", 6.0, 400.0, "m"),
+        ValueSpec::number("size_to", "Largest", 6.0, 400.0, "m"),
+        ValueSpec::whole("shapes", "Shapes", 1, 8),
+        ValueSpec::number("height", "Height", 4.0, 120.0, "m"),
+        ValueSpec::number("roughness", "Roughness", 0.0, 8.0, "m"),
+        ValueSpec::number("floor", "Floor", 0.0, 1.0, ""),
+        ValueSpec::whole("pillars", "Pillars", 0, 12),
+        ValueSpec::whole("hanging", "Hanging Rock", 0, 32),
+        ValueSpec::whole("ledges", "Ledges", 0, 8),
+        ValueSpec::whole("exits", "Exits", 1, 8),
+        ValueSpec::number("exits_apart", "Exits Apart", 0.0, 1.0, ""),
+    ];
+
+    /// Value `at` among its values, as its row shows it.
+    pub fn value(&self, at: usize) -> Option<Value> {
+        Some(match at {
+            0 => Value::Number(self.size[0]),
+            1 => Value::Number(self.size[1]),
+            2 => Value::Whole(self.shapes),
+            3 => Value::Number(self.height),
+            4 => Value::Number(self.roughness),
+            5 => Value::Number(self.floor),
+            6 => Value::Whole(self.pillars),
+            7 => Value::Whole(self.hanging),
+            8 => Value::Whole(self.ledges),
+            9 => Value::Whole(self.exits),
+            10 => Value::Number(self.exits_apart),
+            _ => return None,
+        })
+    }
+
+    /// Sets value `at`, held to its row's range, its largest size never under its least.
+    pub fn set_value(&mut self, at: usize, value: Value) {
+        let Some(kept) = Self::VALUES.get(at).and_then(|spec| spec.kept(value)) else { return };
+        match (at, kept) {
+            (0, Value::Number(number)) => self.size = [number, greater(self.size[1], number)],
+            (1, Value::Number(number)) => self.size = [lesser(self.size[0], number), number],
+            (2, Value::Whole(whole)) => self.shapes = whole,
+            (3, Value::Number(number)) => self.height = number,
+            (4, Value::Number(number)) => self.roughness = number,
+            (5, Value::Number(number)) => self.floor = number,
+            (6, Value::Whole(whole)) => self.pillars = whole,
+            (7, Value::Whole(whole)) => self.hanging = whole,
+            (8, Value::Whole(whole)) => self.ledges = whole,
+            (9, Value::Whole(whole)) => self.exits = whole,
+            (10, Value::Number(number)) => self.exits_apart = number,
+            _ => {}
+        }
+    }
+
+    /// One room these rules make, from `seed`, to look at by itself.
+    pub fn sample(&self, seed: u32) -> RoomSample {
+        RoomSample { made: Made::of(self, seed), seed }
+    }
+
     pub(crate) fn key(&self, key: &mut Key) {
         key.name("rules").number(self.size[0]).number(self.size[1]).whole(self.shapes).number(self.height);
         key.number(self.roughness).number(self.floor).whole(self.pillars).whole(self.hanging);
         key.whole(self.ledges).whole(self.exits).number(self.exits_apart);
+    }
+}
+
+/// A room made by rules, by itself: for a picture of what the rules make.
+#[derive(Clone, Debug)]
+pub struct RoomSample {
+    made: Made,
+    seed: u32,
+}
+
+impl RoomSample {
+    /// How far inside its hollow `p` is, in metres, a place in the room's own space: its walls roughened as
+    /// a network roughens them.
+    pub fn inside(&self, p: [f32; 3]) -> f32 {
+        let grain = 4.0 + 2.0 * self.made.rough;
+        self.made.inside(p, Some(gradient3(p[0] / grain, p[1] / grain, p[2] / grain, self.seed.wrapping_add(11))))
+    }
+
+    /// No place in it is further than this from its origin.
+    pub fn reach(&self) -> f32 {
+        self.made.reach()
+    }
+
+    /// The height of its floor at its middle.
+    pub fn floor(&self) -> f32 {
+        self.made.stood()
+    }
+
+    /// Where its exits are, and the way out of each.
+    pub fn exits(&self) -> impl Iterator<Item = ([f32; 3], [f32; 3])> + '_ {
+        self.made.exits.iter().map(|exit| (exit.at, exit.way))
     }
 }
 
@@ -408,7 +502,6 @@ impl Made {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::noise::gradient3;
 
     /// How many open cells of `made`, half a metre a side and with its walls roughened by noise from
     /// `seed`, are not reached from its middle, and how many open cells there are.

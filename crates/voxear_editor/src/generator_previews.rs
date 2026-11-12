@@ -28,7 +28,7 @@ use voxear_render::{
     MaterialDesc, MaterialHandle, MeshData, MeshHandle, PreviewId, PreviewOptions, PreviewPart, Renderer, TextureId,
     TextureSource, Vertex,
 };
-use voxear_terrain::generate::{Link, NodeId as GraphNode, NodeKind, PreviewArea, WorldGen};
+use voxear_terrain::generate::{Link, NodeId as GraphNode, NodeKind, PreviewArea, RoomRules, WorldGen};
 use voxear_ui::ImageRef;
 
 /// How many places across a node's picture is worked out at.
@@ -71,12 +71,15 @@ struct Asked {
     area: PreviewArea,
     nodes: Vec<(GraphNode, NodeKind)>,
     links: Vec<Link>,
+    /// The rules of the cave room shown by itself, in place of the ground.
+    room: Option<RoomRules>,
 }
 
 impl Asked {
-    fn of(world: &WorldGen) -> Self {
+    fn of(world: &WorldGen, room: Option<RoomRules>) -> Self {
         let graph = world.graph();
         Self {
+            room,
             seed: world.seed(),
             scale: world.scale(),
             sea_level: world.sea_level(),
@@ -90,6 +93,7 @@ impl Asked {
 struct Request {
     generation: u64,
     world: WorldGen,
+    room: Option<RoomRules>,
 }
 
 /// What the thread hands back.
@@ -135,14 +139,15 @@ pub(crate) struct Previews {
 
 impl Previews {
     /// Asks for `world`'s previews when what they show changed, and takes in what has been made
-    /// since. `pixels` is how large the ground shows. Returns whether the nodes' pictures changed.
-    pub fn update(&mut self, renderer: &mut Renderer, world: &WorldGen, pixels: u32) -> bool {
-        let asked = Asked::of(world);
+    /// since. `pixels` is how large the ground shows. With `room`, a cave room those rules make
+    /// is shown by itself in place of the ground. Returns whether the nodes' pictures changed.
+    pub fn update(&mut self, renderer: &mut Renderer, world: &WorldGen, pixels: u32, room: Option<RoomRules>) -> bool {
+        let asked = Asked::of(world, room);
         if self.asked.as_ref() != Some(&asked) {
             self.generation += 1;
             let worker = self.worker.get_or_insert_with(Worker::start);
             worker.latest.store(self.generation, Ordering::Relaxed);
-            let _ = worker.requests.send(Request { generation: self.generation, world: world.clone() });
+            let _ = worker.requests.send(Request { generation: self.generation, world: world.clone(), room });
             self.asked = Some(asked);
         }
         let pixels = pixels.clamp(64, voxear_render::MAX_PREVIEW_SIZE);
@@ -194,6 +199,11 @@ impl Previews {
     /// A node's output's picture, once it is made.
     pub fn thumb(&self, node: GraphNode, output: usize) -> Option<Thumb> {
         self.thumbs.get(&(node, output)).copied()
+    }
+
+    /// Whether a cave room is shown by itself in place of the ground.
+    pub fn shows_room(&self) -> bool {
+        self.asked.as_ref().is_some_and(|asked| asked.room.is_some())
     }
 
     /// How many places a side the ground shown is worked out at; 0 before any is.
@@ -308,7 +318,13 @@ impl Worker {
                     if across != GROUND_STEPS[0] && newest.load(Ordering::Relaxed) != request.generation {
                         break;
                     }
-                    let mesh = ground(&request.world, across);
+                    // A room by itself: in cells of a metre, then half a metre, and no finer.
+                    let mesh = match (&request.room, across) {
+                        (Some(rules), across) if across == GROUND_STEPS[0] => room(rules, request.world.seed(), 1.0),
+                        (Some(rules), across) if across == GROUND_STEPS[3] => room(rules, request.world.seed(), 0.5),
+                        (Some(_), _) => continue,
+                        (None, across) => ground(&request.world, across),
+                    };
                     if done.send(Made::Ground { generation: request.generation, across, mesh }).is_err() {
                         return;
                     }
@@ -437,6 +453,67 @@ fn ground(world: &WorldGen, across: usize) -> MeshData {
     mesh
 }
 
+/// A cave room `rules` make from `seed`, as its rock seen from outside with the near side away:
+/// each face between a hollow cell, `cell` metres a side, and rock, facing into the hollow. So
+/// from above the roof does not show and the floor, the pillars and the ledges do.
+fn room(rules: &RoomRules, seed: u32, cell: f32) -> MeshData {
+    let sample = rules.sample(seed);
+    let half = (sample.reach() / cell).ceil() as i32 + 1;
+    let side = (half * 2 + 1) as usize;
+    let at = |x: i32, y: i32, z: i32| ((y + half) as usize * side + (z + half) as usize) * side + (x + half) as usize;
+    let mut open = vec![false; side * side * side];
+    for y in -half..=half {
+        for z in -half..=half {
+            for x in -half..=half {
+                open[at(x, y, z)] = sample.inside([x as f32 * cell, y as f32 * cell, z as f32 * cell]) > 0.0;
+            }
+        }
+    }
+    let floor = sample.floor();
+    let mut mesh = MeshData::default();
+    // Each way out of a cell: the way, and two more with it, the first crossed with the second the way itself.
+    let ways: [([i32; 3], Vec3, Vec3); 6] = [
+        ([1, 0, 0], Vec3::Y, Vec3::Z),
+        ([-1, 0, 0], Vec3::Z, Vec3::Y),
+        ([0, 1, 0], Vec3::Z, Vec3::X),
+        ([0, -1, 0], Vec3::X, Vec3::Z),
+        ([0, 0, 1], Vec3::X, Vec3::Y),
+        ([0, 0, -1], Vec3::Y, Vec3::X),
+    ];
+    for y in -half + 1..half {
+        for z in -half + 1..half {
+            for x in -half + 1..half {
+                if !open[at(x, y, z)] {
+                    continue;
+                }
+                let middle = Vec3::new(x as f32, y as f32, z as f32) * cell;
+                for (way, u, v) in ways {
+                    if open[at(x + way[0], y + way[1], z + way[2])] {
+                        continue;
+                    }
+                    // The face on that side, facing back into the cell.
+                    let out = Vec3::new(way[0] as f32, way[1] as f32, way[2] as f32);
+                    let (normal, u, v) = (-out, v * cell, u * cell);
+                    let corner = middle + out * (cell * 0.5) - (u + v) * 0.5;
+                    let first = mesh.vertices.len() as u32;
+                    for point in [corner, corner + u, corner + u + v, corner + v] {
+                        mesh.vertices.push(Vertex {
+                            position: point.to_array(),
+                            normal: normal.to_array(),
+                            // Coloured by how high over the room's floor it is, as ground over the sea.
+                            uv: [shade((point.y - floor + 1.0) * 60.0), 0.5],
+                            tangent: [1.0, 0.0, 0.0, 1.0],
+                            ..Vertex::default()
+                        });
+                    }
+                    mesh.indices.extend([first, first + 1, first + 3, first + 3, first + 1, first + 2]);
+                }
+            }
+        }
+    }
+    mesh
+}
+
 /// How many colours wide the ground's picture of colours by height is.
 const RAMP: usize = 256;
 
@@ -491,7 +568,7 @@ mod tests {
     #[test]
     fn every_node_has_a_picture_in_one_image_with_its_least_and_most() {
         let world = Preset::RollingHills.world();
-        let Made::Thumbs { size, rgba, cells, .. } = thumbs(&Request { generation: 1, world: world.clone() }) else {
+        let Made::Thumbs { size, rgba, cells, .. } = thumbs(&Request { generation: 1, world: world.clone(), room: None }) else {
             panic!("pictures")
         };
         // A landmass's height, and its climate's temperature and humidity: three in a square of four.

@@ -1,3 +1,4 @@
 [project]
 name = "Effects"
+scripts = "Scripts/Effects.Scripts.csproj"
 start_level = "Levels/Effects.level"

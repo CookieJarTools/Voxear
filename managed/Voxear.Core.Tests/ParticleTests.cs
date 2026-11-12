@@ -39,6 +39,25 @@ internal static class ParticleTests
 	}
 
 	[Test]
+	private static void EffectsAreNamedByStarterOrPathAndPlayNothingWithoutTheEngine()
+	{
+		Check.True(ParticleEffect.Explosion.IsValid && ParticleEffect.Explosion.IsStarter, "a starter");
+		Check.True(ParticleEffect.Load("builtin:muzzle_flash") == ParticleEffect.MuzzleFlash, "a starter by its name");
+		Check.True(ParticleEffect.Fire != ParticleEffect.Smoke && ParticleEffect.None != ParticleEffect.Fire, "each its own");
+		Check.True(!ParticleEffect.None.IsValid && !ParticleEffect.Load(string.Empty).IsValid, "none is none");
+		var blast = ParticleEffect.Load("Effects/Blast.particles");
+		Check.True(blast.IsValid && !blast.IsStarter, "a project's effect, kept by its path away from the engine");
+		Check.True(blast == ParticleEffect.Load("Effects/Blast.particles"), "the same path, the same effect");
+		Check.True(Particles.Play(ParticleEffect.Explosion, Vector3.Zero) == ParticleSystem.None, "nothing plays");
+		Check.True(Particles.Play(ParticleEffect.Sparks, Vector3.Zero, Vector3.UnitX) == ParticleSystem.None, "nor thrown out sideways");
+		Check.True(Particles.Play(ParticleEffect.MuzzleFlash, Obj.None, 7) == ParticleSystem.None, "nor on no Obj");
+		Check.True(blast.Play(Vector3.One) == ParticleSystem.None, "nor from the effect");
+		var sparks = Obj.None.Particles;
+		sparks.Effect = ParticleEffect.Sparks;
+		Check.True(sparks.Effect == ParticleEffect.None, "no system to give an effect");
+	}
+
+	[Test]
 	private static void AnObjWithoutAForceFieldReadsAsNoneAndABlastWithoutTheEngineDoesNothing()
 	{
 		var field = Obj.None.ForceField;

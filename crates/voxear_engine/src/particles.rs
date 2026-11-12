@@ -2,12 +2,18 @@
 //! from then (`voxear_render::ParticlePlayback`), and scripts play and stop
 //! it. For C#, `ParticleSystem` in Voxear.Core reads and writes an Obj's
 //! system through one call, by number, as `lights` does a Light's.
+//!
+//! An effect is also played at a place, without an Obj made for it first
+//! ([`play`], `Particles.Play` in C#): it gets an Obj of its own, which is
+//! taken away when the effect is over.
 
+use voxear_core::math::{Quat, Vec3};
 use voxear_ecs::{Entity, World};
 use voxear_render::{
-    Blast, EmitShape, ForceField, ForceKind, ParticleBlasts, ParticleBlend, ParticleCollision, ParticlePlayback,
-    ParticleSpace, ParticleSystem, ParticleTrails,
+    Blast, EffectRef, EmitShape, ForceField, ForceKind, ParticleBlasts, ParticleBlend, ParticleCollision,
+    ParticlePlayback, ParticleSpace, ParticleSystem, ParticleTrails,
 };
+use voxear_scene::{Name, Parent, Transform};
 
 use crate::content::{linear, srgb};
 
@@ -110,9 +116,114 @@ pub(crate) fn scene_effect(scene: &crate::scene_file::SceneFile) -> voxear_rende
     voxear_render::ParticleEffect { emitters: emitters.collect() }
 }
 
-/// Sets what answers `ParticleSystem`, `ForceField` and `Particles.Push` in
-/// scripts.
+/// A Particle System that [`play`] made to play an effect at a place: its
+/// Obj is taken away once the effect is over, the last of its particles
+/// gone; one that loops, once it has been stopped and its last have gone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PlayedEffect;
+
+impl voxear_ecs::Component for PlayedEffect {}
+
+/// How many effects [`play`] has started, which gives each a seed of its
+/// own.
+#[derive(Clone, Copy, Debug, Default)]
+struct Plays(u32);
+
+/// How long past its end a played effect's Obj is kept, in seconds; and how
+/// long one whose effect cannot be read is, before it is given up on.
+const PLAYED_OUT: f32 = 0.5;
+const UNREAD_FOR: f32 = 10.0;
+
+/// Plays `effect` at `at`, turned by `rotation`, on an Obj of its own that
+/// is taken away when the effect is over: an explosion where a shell lands,
+/// a flash at a muzzle. Under `parent`, the place is in the parent's space
+/// and the effect goes where the parent goes. Each play sends out particles
+/// of its own, or with a `seed`, the same as every other play with that
+/// seed, as every machine of a networked game must.
+pub fn play(
+    world: &mut World,
+    effect: EffectRef,
+    (at, rotation): (Vec3, Quat),
+    parent: Option<Entity>,
+    seed: Option<u32>,
+) -> Entity {
+    let plays = world.resource::<Plays>().map_or(0, |plays| plays.0);
+    world.insert_resource(Plays(plays.wrapping_add(1)));
+    let seed = seed.unwrap_or(plays.wrapping_mul(0x9E37_79B9).wrapping_add(1));
+    let system = ParticleSystem { effect: Some(effect), seed, ..ParticleSystem::default() };
+    let playback = ParticlePlayback { started: now(world) as f32, stopped: None };
+    let name = match effect {
+        EffectRef::Builtin(starter) => starter.name(),
+        EffectRef::Asset(_) => "Effect",
+    };
+    let transform = Transform::new(at, rotation, Vec3::ONE);
+    let entity = world.spawn((Name(name.to_string()), system, playback, PlayedEffect, transform));
+    if let Some(parent) = parent.filter(|parent| world.is_alive(*parent)) {
+        world.insert(entity, Parent(parent));
+    }
+    entity
+}
+
+/// Whether a played effect is over `now`: the last of its particles gone,
+/// since it ended or since it was stopped; or its effect still not read
+/// long after it started.
+fn played_out(
+    library: Option<&voxear_render::ParticleEffects>,
+    system: &ParticleSystem,
+    playback: &ParticlePlayback,
+    now: f32,
+) -> bool {
+    let since = now - playback.started;
+    let Some(longest) = voxear_render::particles_longest_life(library, system) else { return since > UNREAD_FOR };
+    let ended = voxear_render::particles_end_after(library, system).is_some_and(|end| since > end + PLAYED_OUT);
+    ended || playback.stopped.is_some_and(|stopped| now > stopped + longest + PLAYED_OUT)
+}
+
+/// What scripts ask of Particle Systems in words: the effect one plays, by
+/// its reference, read or set; and an effect played at a place.
+const EFFECT: i32 = 0;
+const SET_EFFECT: i32 = 1;
+const PLAY_EFFECT: i32 = 2;
+
+/// Answers scripts' asks in words (see [`EFFECT`]). To play an effect the
+/// text is four lines: the effect's reference, where, how it is turned, and
+/// its seed or nothing; `entity` is what it is played under, if alive; and
+/// the answer is the new Obj's number.
+fn texts(world: &mut World, entity: Entity, what: i32, text: &str) -> Option<String> {
+    match what {
+        EFFECT => {
+            let effect = world.is_alive(entity).then(|| world.get::<ParticleSystem>(entity))??.effect;
+            Some(effect.map_or(String::new(), |effect| effect.to_string()))
+        }
+        SET_EFFECT => {
+            let effect = if text.is_empty() { None } else { Some(text.parse::<EffectRef>().ok()?) };
+            let started = now(world) as f32;
+            world.is_alive(entity).then(|| world.get_mut::<ParticleSystem>(entity))??.effect = effect;
+            // Played from its start, so one that plays once is seen.
+            world.insert(entity, ParticlePlayback { started, stopped: None });
+            Some(String::new())
+        }
+        PLAY_EFFECT => {
+            let mut lines = text.lines();
+            let effect = lines.next()?.parse::<EffectRef>().ok()?;
+            let mut numbers = |count: usize| -> Option<Vec<f32>> {
+                let read: Vec<f32> = lines.next()?.split_whitespace().filter_map(|n| n.parse().ok()).collect();
+                (read.len() == count && read.iter().all(|n| n.is_finite())).then_some(read)
+            };
+            let at = Vec3::from_slice(&numbers(3)?);
+            let rotation = Quat::from_slice(&numbers(4)?).normalize();
+            let seed = lines.next().and_then(|seed| seed.trim().parse::<u32>().ok());
+            let parent = world.is_alive(entity).then_some(entity);
+            Some(play(world, effect, (at, rotation), parent, seed).to_bits().to_string())
+        }
+        _ => None,
+    }
+}
+
+/// Sets what answers `ParticleSystem`, `ForceField`, `Particles.Push` and
+/// `Particles.Play` in scripts.
 pub(crate) fn register() {
+    voxear_scripting::set_kind_texts(voxear_scripting::ComponentKind::Particles, texts);
     voxear_scripting::set_particle_values(values);
     voxear_scripting::set_kind_values(voxear_scripting::ComponentKind::ForceField, field_values);
     voxear_scripting::set_particle_blaster(|world, at, radius, speed| blast(world, at.into(), radius, speed));
@@ -263,6 +374,17 @@ pub fn start(world: &mut World, engine: f64) {
         .collect();
     for entity in waiting {
         world.insert(entity, ParticlePlayback { started: now as f32, stopped: None });
+    }
+    // Effects played at a place that are over are taken away, their Objs with them.
+    let library = world.resource::<voxear_render::ParticleEffects>();
+    let over: Vec<Entity> = world
+        .query_ref::<(Entity, &ParticleSystem, &ParticlePlayback, &PlayedEffect)>()
+        .into_iter()
+        .filter(|(_, system, playback, _)| played_out(library, system, playback, now as f32))
+        .map(|(entity, ..)| entity)
+        .collect();
+    for entity in over {
+        world.despawn(entity);
     }
 }
 
@@ -476,6 +598,84 @@ mod tests {
         let system = *world.get::<ParticleSystem>(obj).unwrap();
         assert_eq!((system.trails, system.trail_time, system.trail_width), (ParticleTrails::Particles, 0.01, 0.75));
         assert_eq!(values(&mut world, obj, TRAILS, None), Some([1.0, 0.0, 0.0, 0.0]));
+    }
+
+    #[test]
+    fn an_effect_played_at_a_place_has_an_obj_of_its_own_that_goes_when_it_is_over() {
+        use voxear_render::Starter;
+        let mut world = World::new();
+        start(&mut world, 5.0);
+        let explosion = EffectRef::Builtin(Starter::Explosion);
+        let upright = Quat::IDENTITY;
+        let first = play(&mut world, explosion, (Vec3::new(1.0, 2.0, 3.0), upright), None, None);
+        let second = play(&mut world, explosion, (Vec3::ZERO, upright), None, None);
+        let (a, b) = (*world.get::<ParticleSystem>(first).unwrap(), *world.get::<ParticleSystem>(second).unwrap());
+        assert_eq!((a.effect, world.get::<Transform>(first).unwrap().position), (Some(explosion), Vec3::new(1.0, 2.0, 3.0)));
+        assert_eq!(world.get::<ParticlePlayback>(first), Some(&ParticlePlayback { started: 5.0, stopped: None }));
+        assert_ne!(a.seed, b.seed, "each play its own particles");
+        let seeded = play(&mut world, explosion, (Vec3::ZERO, upright), None, Some(7));
+        assert_eq!(world.get::<ParticleSystem>(seeded).unwrap().seed, 7, "unless told which");
+        // Gone once the last of its particles has died, and not before.
+        let end = f64::from(voxear_render::particles_end_after(None, &a).expect("an explosion ends"));
+        start(&mut world, 5.0 + end);
+        assert!(world.is_alive(first) && world.is_alive(second));
+        start(&mut world, 5.0 + end + 1.0);
+        assert!(!world.is_alive(first) && !world.is_alive(second) && !world.is_alive(seeded));
+        // One that loops stays until it is stopped, then as long as its longest lived lives.
+        let fire = play(&mut world, EffectRef::Builtin(Starter::Fire), (Vec3::ZERO, upright), None, None);
+        let longest = f64::from(voxear_render::particles_longest_life(None, world.get::<ParticleSystem>(fire).unwrap()).unwrap());
+        start(&mut world, 1000.0);
+        assert!(world.is_alive(fire), "a fire burns on");
+        values(&mut world, fire, STOP, Some([0.0; 4]));
+        start(&mut world, 1000.0 + longest);
+        assert!(world.is_alive(fire), "its last smoke still out");
+        start(&mut world, 1000.0 + longest + 1.0);
+        assert!(!world.is_alive(fire));
+        // Under an Obj, it is the Obj's child; and a system nobody played is left alone however long it has run.
+        let gun = world.spawn((Transform::default(),));
+        let own = world.spawn((ParticleSystem { looping: false, ..ParticleSystem::default() },));
+        let flash = play(&mut world, EffectRef::Builtin(Starter::MuzzleFlash), (Vec3::ZERO, upright), Some(gun), None);
+        assert_eq!(world.get::<Parent>(flash).map(|parent| parent.0), Some(gun));
+        // An effect that cannot be read is given up on after a while.
+        let missing = EffectRef::Asset(voxear_assets::AssetGuid::new_random());
+        let lost = play(&mut world, missing, (Vec3::ZERO, upright), None, None);
+        start(&mut world, 1005.0 + longest);
+        assert!(world.is_alive(lost) && world.is_alive(own));
+        start(&mut world, 1020.0 + longest);
+        assert!(!world.is_alive(lost) && !world.is_alive(flash) && world.is_alive(own));
+    }
+
+    #[test]
+    fn scripts_play_effects_and_set_a_systems_effect_in_words() {
+        use voxear_render::Starter;
+        let mut world = World::new();
+        start(&mut world, 2.0);
+        let nobody = Entity::from_bits(0);
+        let asked = "builtin:explosion\n1 2.5 -3\n0 0 0 1\n9";
+        let made = texts(&mut world, nobody, PLAY_EFFECT, asked).expect("it plays");
+        let made = Entity::from_bits(made.parse().expect("the new Obj's number"));
+        let system = *world.get::<ParticleSystem>(made).expect("with a Particle System");
+        assert_eq!((system.effect, system.seed), (Some(EffectRef::Builtin(Starter::Explosion)), 9));
+        assert_eq!(world.get::<Transform>(made).unwrap().position, Vec3::new(1.0, 2.5, -3.0));
+        assert!(world.has::<PlayedEffect>(made) && !world.has::<Parent>(made));
+        // No seed, a seed of its own; under an Obj, its child; what is no effect or no place plays nothing.
+        let gun = world.spawn((Transform::default(),));
+        let on_gun = texts(&mut world, gun, PLAY_EFFECT, "builtin:muzzle_flash\n0 0 0\n0 0 0 1\n").expect("it plays");
+        let on_gun = Entity::from_bits(on_gun.parse().unwrap());
+        assert_eq!(world.get::<Parent>(on_gun).map(|parent| parent.0), Some(gun));
+        assert_eq!(texts(&mut world, nobody, PLAY_EFFECT, "builtin:nothing\n0 0 0\n0 0 0 1\n"), None);
+        assert_eq!(texts(&mut world, nobody, PLAY_EFFECT, "builtin:fire\n0 0\n0 0 0 1\n"), None);
+        // A system's effect, read and set by its reference; setting it plays it from its start.
+        let obj = world.spawn((ParticleSystem::default(),));
+        assert_eq!(texts(&mut world, obj, EFFECT, ""), Some(String::new()));
+        start(&mut world, 6.0);
+        assert_eq!(texts(&mut world, obj, SET_EFFECT, "builtin:fire"), Some(String::new()));
+        assert_eq!(texts(&mut world, obj, EFFECT, ""), Some("builtin:fire".to_string()));
+        assert_eq!(world.get::<ParticlePlayback>(obj).unwrap().started, 6.0);
+        assert_eq!(texts(&mut world, obj, SET_EFFECT, ""), Some(String::new()));
+        assert_eq!(world.get::<ParticleSystem>(obj).unwrap().effect, None);
+        assert_eq!(texts(&mut world, obj, SET_EFFECT, "builtin:nothing"), None);
+        assert_eq!((texts(&mut world, gun, EFFECT, ""), texts(&mut world, nobody, EFFECT, "")), (None, None));
     }
 
     #[test]

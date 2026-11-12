@@ -134,7 +134,7 @@ pub use impostors::Impostor;
 pub use model_renderer::{ModelPart, ModelRenderer};
 pub use seasons::{Leaves, Season, SeasonLook, Seasons};
 pub use effects::{
-    BuiltinTexture, EffectRef, Emitter, MAX_EMITTERS, ends_after as particles_end_after, ParticleEffect, ParticleEffects, ParticlePictures, ParticleTexture, Starter,
+    BuiltinTexture, EffectRef, Emitter, MAX_EMITTERS, ends_after as particles_end_after, longest_life as particles_longest_life, ParticleEffect, ParticleEffects, ParticlePictures, ParticleTexture, Starter,
 };
 pub use forces::{BLAST_TIME, Blast, ForceField, ForceKind, MAX_FORCES, ParticleBlasts};
 pub use particle_meshes::{BuiltinMesh, ParticleMesh, ParticleMeshes};

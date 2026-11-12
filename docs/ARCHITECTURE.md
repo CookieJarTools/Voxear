@@ -2997,6 +2997,20 @@ then the rest over them. A spark deep in near smoke therefore shows through it, 
 rule over a setting: soft particles that size show no difference, and a hard-edged one (Softness 0) is never
 halved. `ParticleHalfSize(false)` as a resource of the world turns it off, for comparing.
 
+**Played at a place** *(implemented)*. A game's effects mostly happen where something lands or fires, so
+`Particles.Play(effect, position)` asks for no Obj beforehand. The engine makes one
+(`voxear_engine::particles::play`): a Particle System that plays the effect, started now, marked `PlayedEffect`,
+under a parent when it is to follow one. Each tick the marked ones that are over are despawned: an effect that
+ends, once as long has gone by as its last emitter's delay, round and longest life; one that loops, once it is
+stopped and its longest lived has died; one whose asset cannot be read, after ten seconds. Chose an Obj a play
+over a pool of emitters the renderer keeps apart: everything already works on it, the Hierarchy shows it while it
+lasts, a script can stop or move it, and a play costs one spawn. What a play returns is that Obj's Particle
+System, not a handle of another kind. An emitter's seed is its own mixed with the seed of the system that plays
+its effect (`particles::seed_of`), and `play` gives each play the next of a run of seeds unless told one; so plays
+differ, and the same seed gives the same particles on every machine. Scripts reach `play` and a system's Effect
+through the text call components share (`ComponentKind::Particles`), the play as four lines: effect, place,
+rotation, seed.
+
 **Planned, in the order it is built.**
 
 - **Physics.** Two more levels of collision beside depth: the terrain's heights and the nearest colliders,
@@ -3009,8 +3023,8 @@ halved. `ParticleHalfSize(false)` as a resource of the world turns it off, for c
   corner; mist, dust and lingering smoke put into the fog volume; sorting only where blending needs it, and
   anti-aliasing told about fast flat particles; a picture along a ribbon; a
   coarser LOD for far mesh particles, and their shadows.
-- **Scripts.** `Particles.Play(effect, position)` returning a handle, bursts at a place, picked parameters
-  rather than names, hit and finished events, curves and gradients.
+- **Scripts.** Bursts sent out at a place from a system already playing, values an effect shows for a play to
+  set, hit and finished events, curves and gradients.
 - **Scaling.** Off-screen systems asleep, far ones sending out less and stepping every other frame, the least
   significant thinned first when over budget; per-effect counts and GPU time in a debugger.
 - **Later.** Decals on hit (with a decal renderer), heat distortion, shadows cast by particles, blending in any

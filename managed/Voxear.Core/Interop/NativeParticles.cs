@@ -1,4 +1,6 @@
+using System;
 using System.Numerics;
+using System.Text;
 
 namespace Voxear.Interop;
 
@@ -54,6 +56,12 @@ internal static unsafe class NativeParticles
 	public const int TrailTime = 43;
 	public const int TrailWidth = 44;
 
+	/// <summary>What is asked in words, through NativeComponent's texts: the effect a system plays, read and set.</summary>
+	public const int Effect = 0;
+	public const int SetEffect = 1;
+	private const int PlayEffect = 2;
+	private const int AnswerRoom = 32;
+
 	/// <summary>A value of an Obj's Particle System, or false when the Obj has none.</summary>
 	public static bool Get(Obj obj, int what, out Vector4 value)
 	{
@@ -72,5 +80,27 @@ internal static unsafe class NativeParticles
 	public static float Number(Obj obj, int what, float missing)
 	{
 		return Get(obj, what, out var value) ? value.X : missing;
+	}
+
+	/// <summary>
+	/// Plays an effect at a place, under an Obj or under none, as the engine's particles.rs reads it: the effect's
+	/// key, where, how it is turned and its seed or nothing, a line each. The new Obj, or None. Asked once, with
+	/// room for the answer, as asking twice would play it twice.
+	/// </summary>
+	public static Obj PlayAt(Obj under, string asked)
+	{
+		if (!Native.IsConnected)
+		{
+			return Obj.None;
+		}
+
+		var text = Encoding.UTF8.GetBytes(asked);
+		var answer = stackalloc byte[AnswerRoom];
+		fixed (byte* written = text)
+		{
+			var length = Native.Api->KindText(NativeComponent.Particles, under.Id, PlayEffect, written, text.Length, answer, AnswerRoom);
+			var made = length is > 0 and <= AnswerRoom && ulong.TryParse(new ReadOnlySpan<byte>(answer, length), out var id) ? id : 0;
+			return made == 0 ? Obj.None : new Obj(made);
+		}
 	}
 }

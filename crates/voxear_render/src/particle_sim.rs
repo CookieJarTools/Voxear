@@ -378,7 +378,7 @@ impl ParticleSim {
                     emit_burst: burst,
                     burst_age: sent.burst_age,
                     emitted: kept.emitted,
-                    seed: particles::emitter_seed(stepped.seed, emitter),
+                    seed: particles::seed_of(own, system, emitter),
                     stream_ages: sent.stream_ages,
                     moved: (origin - kept.origin).to_array(),
                     shift: if system.space == ParticleSpace::World { kept.shift.to_array() } else { [0.0; 3] },

@@ -298,6 +298,22 @@ public readonly struct ParticleSystem : IEquatable<ParticleSystem>, IObjComponen
 		set { Set(NativeParticles.TrailWidth, value); }
 	}
 
+	/// <summary>
+	/// The effect it plays in place of its own settings: a starter, or one of the project's. None for its own
+	/// settings. Setting it plays it from its start.
+	/// </summary>
+	public ParticleEffect Effect
+	{
+		get { return ParticleEffect.FromKey(NativeComponent.Text(NativeComponent.Particles, Obj, NativeParticles.Effect)); }
+		set
+		{
+			if (!NativeComponent.Tell(NativeComponent.Particles, Obj, NativeParticles.SetEffect, value.Key) && Native.IsConnected)
+			{
+				Log.Error($"{Obj} has no Particle System; give it one with AddParticles.");
+			}
+		}
+	}
+
 	/// <summary>Which particles: two systems alike but for this send out different ones.</summary>
 	public int Seed
 	{

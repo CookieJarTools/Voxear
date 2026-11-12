@@ -618,13 +618,13 @@ pub(crate) fn gather(
     let effects = world.resource::<ParticleEffects>();
     let halving = world.resource::<ParticleHalfSize>().is_none_or(|halving| halving.0);
     let mut systems: Vec<(f32, GpuParticleSystem, Drawn)> = Vec::new();
-    for (entity, system, transform, at, playback) in query.without::<Destroying>() {
+    for (entity, own, transform, at, playback) in query.without::<Destroying>() {
         let model = at.map_or_else(|| transform.matrix(), |w| w.0);
         let distance = model.w_axis.truncate().distance_squared(camera);
         // Its effect's emitters, each a system of its own in the order the effect lists them, or itself.
-        for (emitter, system) in (0..).zip(crate::effects::emitters(effects, system)) {
+        for (emitter, system) in (0..).zip(crate::effects::emitters(effects, own)) {
             let drawn = textured(gpu(system, model, time, playback.copied()), system, textures);
-            let mut drawn = GpuParticleSystem { seed: emitter_seed(drawn.seed, emitter), ..drawn };
+            let mut drawn = GpuParticleSystem { seed: seed_of(own, system, emitter), ..drawn };
             // Drawn as meshes: nothing until its model is loaded.
             let mesh = system.mesh.map(|mesh| (textures.mesh)(mesh));
             if let Some(mesh) = mesh {
@@ -1068,6 +1068,15 @@ pub(crate) fn emitter_seed(seed: u32, emitter: u32) -> u32 {
     seed.wrapping_add(emitter.wrapping_mul(0x9E37_79B9))
 }
 
+/// The seed emitter `emitter` of what `own` plays draws its particles from:
+/// its own; or, playing an effect, the emitter's mixed with the seed of the
+/// system that plays it, so two plays of one effect with different seeds
+/// send out different particles, and two with the same seed the same.
+pub(crate) fn seed_of(own: &ParticleSystem, system: &ParticleSystem, emitter: u32) -> u32 {
+    let mixed = if own.effect.is_some() { system.seed ^ own.seed.wrapping_mul(0x85EB_CA6B) } else { system.seed };
+    emitter_seed(mixed, emitter)
+}
+
 /// `drawn` with the texture `system` draws with, as `textures` finds it.
 pub(crate) fn textured(drawn: GpuParticleSystem, system: &ParticleSystem, textures: Looks<'_>) -> GpuParticleSystem {
     // A built-in texture knows how many pictures it holds; a project's picture is told.
@@ -1158,7 +1167,7 @@ pub(crate) fn lights(world: &World, camera: Vec3, time: f32) -> Vec<crate::gpu::
             }
             let started = playback.started + system.delay.max(0.0);
             let stopped = playback.stopped.map_or(f32::INFINITY, |stopped| stopped - started);
-            let seed = emitter_seed(system.seed, emitter) ^ entity.to_bits() as u32;
+            let seed = seed_of(own, system, emitter) ^ entity.to_bits() as u32;
             let bright = light_now(system, time - started, stopped, seed);
             if bright <= 0.001 {
                 continue;
@@ -1215,6 +1224,19 @@ mod tests {
         assert_eq!(cast.len(), 2);
         assert_eq!((cast[0].position, cast[0].range), ([0.0, 1.0, 2.0], LIGHT_RANGE));
         assert!(cast[0].color[1] > 0.0 && cast[0].color[2] == 0.0 && cast[0].color[0] > cast[0].color[1], "{:?}", cast[0].color);
+    }
+
+    #[test]
+    fn two_plays_of_an_effect_send_out_different_particles_unless_their_seeds_are_the_same() {
+        let effect = Some(EffectRef::Builtin(crate::effects::Starter::Explosion));
+        let play = |seed: u32| ParticleSystem { effect, seed, ..ParticleSystem::default() };
+        let emitter = ParticleSystem { seed: 5, ..ParticleSystem::default() };
+        assert_ne!(seed_of(&play(1), &emitter, 0), seed_of(&play(2), &emitter, 0));
+        assert_eq!(seed_of(&play(3), &emitter, 2), seed_of(&play(3), &emitter, 2));
+        assert_ne!(seed_of(&play(3), &emitter, 0), seed_of(&play(3), &emitter, 1), "each emitter its own");
+        // A system with its own settings draws from its own seed, and an effect played with none from its emitters'.
+        assert_eq!(seed_of(&emitter, &emitter, 0), emitter_seed(5, 0));
+        assert_eq!(seed_of(&play(0), &emitter, 1), emitter_seed(5, 1));
     }
 
     #[test]

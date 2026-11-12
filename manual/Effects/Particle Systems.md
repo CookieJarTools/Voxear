@@ -23,7 +23,7 @@ Every project has these starters:
 | Magic | Glowing motes that draw threads of light, round a pulsing light |
 | Mud | Clods and spatter thrown up, once |
 
-In a game an effect that plays once plays once each time it starts: `Play()` starts it over.
+In a game an effect that plays once plays once each time it starts: `Play()` starts it over. To play one where something happens, with no Obj set up for it, see [Playing an effect at a place](#playing-an-effect-at-a-place).
 
 ### Making your own effect
 
@@ -184,9 +184,34 @@ A model's first mesh is used, at its full detail, so keep models for particles s
 
 Give them **Collision** with a little **Bounce** and plenty of **Friction** and they land and come to rest.
 
+## Playing an effect at a place
+
+Most effects in a game aren't standing in a level: they happen where something lands, hits or fires. `Particles.Play` plays one there.
+
+```csharp
+public ParticleEffect Impact;
+
+// An explosion where the shell lands.
+Particles.Play(ParticleEffect.Explosion, shell.WorldPosition);
+
+// Dust and sparks thrown out from the surface a shot hit.
+Particles.Play(Impact, hit.Point, hit.Normal);
+
+// A flash that stays on the muzzle as the gun moves.
+Particles.Play(ParticleEffect.MuzzleFlash, muzzle);
+```
+
+- **The effect** is a `ParticleEffect`: a starter, as `ParticleEffect.Explosion`, or one of the project's. A `ParticleEffect` field on a behaviour is picked in the Inspector from the same list a Particle System's Effect shows.
+- **The place** is a point in the world, and with a third value either the way its up points or a full rotation. Give it an Obj instead and the effect plays on the Obj and goes where it goes.
+- **Nothing to clear up.** Each play gets an Obj of its own, named for the effect, which is gone once the last of its particles has died. An effect that goes on for good, such as Fire, stays until you stop it, then goes the same way.
+- **What comes back** is the new Obj's Particle System. Keep it to `Stop()` the effect early or to move its Obj. Most of the time there's no need to keep it.
+- **Each play is different.** Two explosions side by side don't send out the same sparks. Give two plays the same `seed` and they do, which is how every player's machine shows the same explosion in a game on a network: send the seed with the message that says where it went off.
+
+`samples/Effects` plays its explosions, muzzle flashes and mud this way, from `Scripts/EffectRepeater.cs`.
+
 ## From scripts
 
-`Obj.Particles` is the Obj's Particle System, and `Obj.AddParticles()` gives an Obj one. Every setting above can be read and changed but the Effect, Texture and Mesh, which are picked in the Inspector. `Play()` starts it over from the start of a round, with its burst, and `Stop()` sends out no more particles while those already out live on. `IsSimulated` says whether its settings have it simulated. `Particles.Push` sets off a blast that throws the particles of every system that takes forces (see [[Force Fields]]).
+`Obj.Particles` is the Obj's Particle System, and `Obj.AddParticles()` gives an Obj one. Every setting above can be read and changed but the Texture and Mesh, which are picked in the Inspector. `Effect` is the effect it plays in place of its own settings: setting it plays that effect from its start, and `ParticleEffect.None` goes back to its own. `Play()` starts it over from the start of a round, with its burst, and `Stop()` sends out no more particles while those already out live on. `IsSimulated` says whether its settings have it simulated. `Particles.Push` sets off a blast that throws the particles of every system that takes forces (see [[Force Fields]]).
 
 ```csharp
 // A burst of sparks where the hammer lands.
@@ -213,4 +238,4 @@ A behaviour can also have a `ParticleSystem` field, picked in the Inspector, to 
 
 ## What's coming
 
-Still to come: collision with what's out of view, a picture along a ribbon, mesh particles that cast shadows, mist and dust in the fog, and editing an effect as a graph.
+Still to come: an event when a particle hits something, curves and gradients from scripts, collision with what's out of view, a picture along a ribbon, mesh particles that cast shadows, mist and dust in the fog, and editing an effect as a graph.

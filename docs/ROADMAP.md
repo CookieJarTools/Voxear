@@ -1591,13 +1591,23 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   bleeds over what stands in front. Systems further off than any of those are drawn before, the rest after.
   6,000 overlapping puffs draw in 0.70 ms against 2.26 ms at full size (640×360, RTX 3070). Tests: on a GPU, a
   column of smoke the same either way, a post in front of it kept clean, and the cost.
+- **Playing effects from scripts ✅.** `Particles.Play(effect, position)` plays an effect at a place, upright,
+  with its up along a direction, turned, or on an Obj to go where it goes; `voxear_engine::particles::play`
+  gives it an Obj of its own (`PlayedEffect`) that the engine takes away once the last of its particles has
+  died, or for one that loops, once stopped. Each play has a seed of its own, mixed into every emitter's
+  (`particles::seed_of`), so two explosions differ; the same seed gives the same particles, for a networked
+  game. C# `ParticleEffect` is an asset type with the starters as `ParticleEffect.Explosion` and the rest, a
+  field of it picked in the Inspector from the starters and the project's effects, and `ParticleSystem.Effect`
+  reads and sets a system's. `samples/Effects` plays its explosions, muzzle flashes and mud from a script.
+  Tests: plays, seeds and clearing up without a GPU, and the C# API without the engine.
 - Particles, still to come, in this order (the design is in [ARCHITECTURE.md](ARCHITECTURE.md#particles)):
   - collision with what is out of view: the ground and colliders, and the scene's rays
   - sub-emitters and events; values an effect shows on the Particle System that plays it
   - sorting, particles in the fog volume, flipbooks blended by motion vectors, and anti-aliasing told about
     fast flat particles; a picture along a ribbon; a mesh's LODs and shadows for
     mesh particles
-  - `Particles.Play(effect, position)`, bursts at a place, picked parameters, hit events, curves from C#
+  - bursts sent out at a place from a system already playing, values an effect shows that a play sets, hit
+    events, curves and gradients from C#
   - the graph compiler shared with Shader Graph, graph mode, custom Slang modules, and each node's cost shown
   - sleeping off screen, level of detail by distance, and the particle debugger
   - decals on hit, heat distortion, shadows cast by particles, blending in any order

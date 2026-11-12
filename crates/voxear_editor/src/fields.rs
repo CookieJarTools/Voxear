@@ -589,7 +589,14 @@ pub fn asset_choices(game: &Game, types: &ScriptTypes, kind: &FieldKind) -> Vec<
         Some("MotionAction") => return set_parts(game, ACTION_PART),
         Some("MotionMark") => return set_parts(game, MARK_PART),
         Some("GunHandling") => Some(AssetKind::GunHandling),
-        Some("ParticleEffect") => Some(AssetKind::Particles),
+        Some("ParticleEffect") => {
+            // None, the starters, then the project's own, as a Particle System's Effect lists them.
+            let mut found = vec![("None".to_string(), Pick::Asset(None))];
+            let starters = voxear_render::Starter::ALL;
+            found.extend(starters.map(|starter| (starter.name().to_string(), Pick::Asset(Some(starter.reference())))));
+            found.extend(assets_of(game, Some(AssetKind::Particles)).into_iter().skip(1));
+            return found;
+        }
         Some("GunHandlingAction") => return handling_actions(game),
         _ => None,
     };

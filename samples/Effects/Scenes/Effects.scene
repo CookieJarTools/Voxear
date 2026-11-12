@@ -276,7 +276,7 @@ kind = "vortex"
 strength = 8.0
 radius = 3.5
 
-# The starters, each played by a Particle System's Effect: the ones that play once start over with the level.
+# The starters that go on for good, each played by a Particle System's Effect.
 [[obj]]
 id = 18
 name = "Starter Fire"
@@ -298,26 +298,36 @@ position = [-2.2, 1.0, -2.5]
 [obj.particles]
 effect = "builtin:magic"
 
+# Effects played from a script, as a game plays them (Scripts/EffectRepeater.cs): each play has an Obj of its own
+# while it lasts.
 [[obj]]
 id = 21
-name = "Starter Muzzle Flash"
+name = "Muzzle"
 position = [-0.8, 1.0, -3.5]
-[obj.particles]
+behaviours = ["Effects.EffectRepeater"]
+[obj.fields."Effects.EffectRepeater"]
 effect = "builtin:muzzle_flash"
+every = 0.8
+follows = true
 
 [[obj]]
 id = 22
-name = "Starter Explosion"
+name = "Shells Landing"
 position = [3.4, 0.4, -0.5]
-[obj.particles]
+behaviours = ["Effects.EffectRepeater"]
+[obj.fields."Effects.EffectRepeater"]
 effect = "builtin:explosion"
+every = 5.0
+blast = 6.0
 
 [[obj]]
 id = 23
-name = "Starter Mud"
+name = "Mud Thrown Up"
 position = [2.6, 0.1, -3.0]
-[obj.particles]
+behaviours = ["Effects.EffectRepeater"]
+[obj.fields."Effects.EffectRepeater"]
 effect = "builtin:mud"
+every = 3.0
 
 [[obj]]
 id = 24

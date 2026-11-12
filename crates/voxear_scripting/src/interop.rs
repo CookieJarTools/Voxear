@@ -541,6 +541,8 @@ pub enum ComponentKind {
     ScreenUi = 8,
     /// What moves the particles round an Obj.
     ForceField = 9,
+    /// A Particle System's effect, and effects played at a place.
+    Particles = 10,
     Gun = 16,
     GunHolder = 17,
 }

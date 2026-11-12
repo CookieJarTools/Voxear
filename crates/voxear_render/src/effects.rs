@@ -565,6 +565,14 @@ pub fn ends_after(library: Option<&ParticleEffects>, system: &ParticleSystem) ->
     end
 }
 
+/// How long the longest lived of `system`'s particles lives, in seconds, over
+/// all its emitters: how long after it is stopped it has nothing left out.
+/// None while its effect is not read yet.
+pub fn longest_life(library: Option<&ParticleEffects>, system: &ParticleSystem) -> Option<f32> {
+    let lives = emitters(library, system).map(|emitter| emitter.lifetime[0].max(emitter.lifetime[1]).max(0.0));
+    lives.reduce(f32::max)
+}
+
 /// Keys for a curve that fades in over the first `rise` of a life, then out to nothing by its end.
 fn swell(rise: f32) -> Curve {
     Curve::new(&[[0.0, 0.0], [rise, 1.0], [1.0, 0.0]])

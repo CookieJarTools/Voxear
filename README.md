@@ -90,7 +90,7 @@ scene changes it in a `[post]` section; `samples/Lights` has an example, and
 More samples:
 - `samples/Stress` has 1,600 spheres and a wall, for trying culling and LODs.
 - `samples/Lights` has 256 coloured point lights at night, for clustered lighting.
-- `samples/Effects` has Particle Systems in a wind: a campfire, sparks with tails, dust, a ribbon, tumbling rubble, and a million simulated sparks.
+- `samples/Effects` has Particle Systems in a wind: a campfire, sparks with tails, dust, a ribbon, tumbling rubble, explosions played from a script, and a million simulated sparks.
 
 `--debug-view` takes `lod`, `cascades`, `lights` or `normals`.
 

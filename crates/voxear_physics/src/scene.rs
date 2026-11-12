@@ -50,8 +50,7 @@ use voxear_scene::{Destroying, Layer, Layers, Parent, Plant, PlantSet, Plants, T
 mod vehicles;
 
 use crate::{
-    BodyDesc, BodyId, CharacterDesc, CharacterId, CharacterState, JointId, JointKind, Motion, PhysicsWorld, Push,
-    ShapeId,
+    BodyDesc, BodyId, CharacterDesc, CharacterId, CharacterState, JointId, JointKind, Motion, PhysicsWorld, ShapeId,
 };
 
 /// A collider's shape.
@@ -621,37 +620,10 @@ pub struct PhysicsScene {
 /// world's origin moves, by rounding alone, in metres.
 const ROUNDING: f32 = 0.01;
 
-/// How far from a planet's middle it pulls things, in its radii.
-pub const PLANET_REACH: f32 = 4.0;
-
-/// The planets in a world (see `voxear_terrain::blocks::BlockWorld::planet`):
-/// each one's middle and its sea's radius.
-fn planets(world: &World) -> Vec<(Vec3, f32)> {
-    world
-        .query_ref::<(&voxear_terrain::blocks::BlockWorld, &Transform, Option<&WorldTransform>)>()
-        .without::<Destroying>()
-        .into_iter()
-        .filter_map(|(blocks, local, placed)| Some((voxear_terrain::corner(local, placed), blocks.planet?)))
-        .collect()
-}
-
-/// What pulls at `at` among `planets`: towards the nearest one's middle,
-/// as strongly as `gravity`, within `PLANET_REACH` of its radius; else
-/// `gravity` itself.
-fn pull_among(planets: &[(Vec3, f32)], gravity: Vec3, at: Vec3) -> Vec3 {
-    let near = planets.iter().filter(|(middle, radius)| middle.distance(at) < radius * PLANET_REACH);
-    match near.min_by(|a, b| a.0.distance(at).total_cmp(&b.0.distance(at))) {
-        Some((middle, _)) => (*middle - at).normalize_or_zero() * gravity.length(),
-        None => gravity,
-    }
-}
-
 /// Which way and how hard things fall at a point, in metres per second per
-/// second, in a world whose gravity is `gravity`: towards the middle of the
-/// nearest planet within `PLANET_REACH` of its radius, as strongly as
-/// `gravity`, and `gravity` itself away from planets.
-pub fn gravity_at(world: &World, gravity: Vec3, at: Vec3) -> Vec3 {
-    pull_among(&planets(world), gravity, at)
+/// second, in a world whose gravity is `gravity`: the same everywhere.
+pub fn gravity_at(_world: &World, gravity: Vec3, _at: Vec3) -> Vec3 {
+    gravity
 }
 
 /// A terrain's bodies: which heights they were made from, where its Obj
@@ -753,8 +725,8 @@ impl PhysicsScene {
         self.world.set_gravity(gravity);
     }
 
-    /// Which way and how hard things fall at a point: towards a planet's
-    /// middle near one (see [`gravity_at`]), else the world's gravity.
+    /// Which way and how hard things fall at a point: the world's gravity
+    /// (see [`gravity_at`]).
     pub fn gravity_at(&self, world: &World, at: Vec3) -> Vec3 {
         gravity_at(world, self.gravity, at)
     }
@@ -810,7 +782,7 @@ impl PhysicsScene {
     }
 
     /// Which way an Obj's Character Controller stands: against what pulls
-    /// it where it is (see [`gravity_at`]), up away from planets.
+    /// it where it is (see [`gravity_at`]).
     pub fn character_up(&self, entity: Entity) -> Option<Vec3> {
         Some(self.characters.get(&entity)?.up)
     }
@@ -848,7 +820,6 @@ impl PhysicsScene {
     /// where physics put them, and the step's contacts noted.
     pub fn step(&mut self, world: &mut World, dt: f32) {
         self.sync(world, dt);
-        self.pull_to_planets(world);
         self.stepped = true;
         self.world.step(dt, 1);
         self.write_back(world);
@@ -897,32 +868,6 @@ impl PhysicsScene {
             if turned && now.w_axis.distance(kept.model.w_axis) < ROUNDING {
                 kept.model = now;
             }
-        }
-    }
-
-    /// Pulls each moving body near a planet (see
-    /// `voxear_terrain::blocks::BlockWorld::planet`) towards the nearest
-    /// one's middle, as strongly as the world's gravity and in place of it:
-    /// near, within `PLANET_REACH` of its radius. A body asleep is left be,
-    /// as gravity leaves it.
-    fn pull_to_planets(&mut self, world: &World) {
-        let planets = planets(world);
-        if planets.is_empty() {
-            return;
-        }
-        for kept in self.bodies.values() {
-            let Some(body) = kept.key.rigidbody.filter(|body| body.gravity && !body.kinematic) else { continue };
-            if !self.world.is_active(kept.body) {
-                continue;
-            }
-            let (at, _) = self.world.transform(kept.body);
-            let pull = pull_among(&planets, self.gravity, at);
-            if pull == self.gravity {
-                continue;
-            }
-            // The world's gravity still pulls it too, so the push takes that away.
-            let force = (pull - self.gravity) * body.mass.max(1e-3);
-            self.world.push(kept.body, Push::Force(force, None));
         }
     }
 
@@ -1614,25 +1559,18 @@ impl PhysicsScene {
             self.remove_character(entity);
             self.forget(entity);
         }
-        let planets = planets(world);
         for (entity, controller) in wanted {
-            self.sync_character(world, entity, controller, &planets);
+            self.sync_character(world, entity, controller);
         }
     }
 
     /// Brings an Obj's character to its Character Controller, made again
     /// when that or its layer changed, to where the game put the Obj, and
     /// stands it against what pulls it there.
-    fn sync_character(
-        &mut self,
-        world: &World,
-        entity: Entity,
-        controller: CharacterController,
-        planets: &[(Vec3, f32)],
-    ) {
+    fn sync_character(&mut self, world: &World, entity: Entity, controller: CharacterController) {
         let position = voxear_scene::world_matrix(world, entity).w_axis.truncate();
         let layer = layer(world, entity);
-        let gravity = pull_among(planets, self.gravity, position);
+        let gravity = gravity_at(world, self.gravity, position);
         match self.characters.get_mut(&entity) {
             Some(walker) if walker.controller == controller && walker.layer == layer => {
                 if !walker.placed.abs_diff_eq(position, 1e-4) {
@@ -1689,8 +1627,8 @@ impl PhysicsScene {
 
     /// Moves an Obj's Character Controller at `velocity` for `dt` seconds,
     /// at once, as Unity's CharacterController.Move does, and its Obj with
-    /// it, standing against what pulls it where it is: up, or away from a
-    /// planet's middle near one. Gravity is the caller's to add (see
+    /// it, standing against what pulls it where it is. Gravity is the
+    /// caller's to add (see
     /// [`PhysicsScene::gravity_at`]). `None` for an Obj without one.
     pub fn move_character(
         &mut self,
@@ -1700,10 +1638,9 @@ impl PhysicsScene {
         dt: f32,
     ) -> Option<CharacterState> {
         let controller = *world.get::<CharacterController>(entity)?;
-        let planets = planets(world);
-        self.sync_character(world, entity, controller, &planets);
+        self.sync_character(world, entity, controller);
         let walker = self.characters.get_mut(&entity)?;
-        let gravity = pull_among(&planets, self.gravity, walker.placed);
+        let gravity = gravity_at(world, self.gravity, walker.placed);
         let state = self.world.move_character(walker.id, velocity, dt, walker.controller.step_offset, gravity);
         walker.placed = state.position;
         walker.state = Some(state);

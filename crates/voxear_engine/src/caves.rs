@@ -118,18 +118,16 @@ pub fn lists_room(content: &Content, graph: &Graph, guid: voxear_assets::AssetGu
         .any(|reference| content.parse(reference).ok().and_then(|reference| reference.guid()) == Some(guid))
 }
 
-/// The caves of the world of blocks on `entity`: its generator's, the
-/// radius of its planet where it is one, and how far its generator's world
-/// is from the level's.
-fn caves_of(world: &World, content: &mut Content, entity: Entity) -> Option<(Caves, Option<f32>, Vec3)> {
+/// The caves of the world of blocks on `entity`: its generator's, and how
+/// far its generator's world is from the level's.
+fn caves_of(world: &World, content: &mut Content, entity: Entity) -> Option<(Caves, Vec3)> {
     let asset = world.get::<BlockWorldAsset>(entity)?;
     let generate = asset.file.generate.as_ref()?;
-    let (planet, [x, z]) = (generate.planet.map(|planet| planet.radius), generate.position);
+    let [x, z] = generate.position;
     let caves = crate::blocks::generator(content, &asset.file)?.caves()?;
     let corner = voxear_terrain::corner(world.get::<Transform>(entity)?, world.get::<WorldTransform>(entity));
-    // A planet's middle is its corner; flat ground starts `position` into its generator's world.
-    let apart = if planet.is_some() { corner } else { corner - Vec3::new(x, 0.0, z) };
-    Some((caves, planet, apart))
+    // Its ground starts `position` into its generator's world.
+    Some((caves, corner - Vec3::new(x, 0.0, z)))
 }
 
 /// The cave rooms of a world of blocks as JSON, for scripts (see
@@ -152,13 +150,13 @@ pub fn caves_json(world: &World, content: &mut Content, obj: u64, what: i32, at:
             caves_of(world, content, entity).map(|caves| (entity, caves))
         }
     };
-    let Some((entity, (caves, planet, apart))) = found else { bail!("no world of blocks with a cave network") };
+    let Some((entity, (caves, apart))) = found else { bail!("no world of blocks with a cave network") };
     let place = (Vec3::new(at[0], at[1], at[2]) - apart).to_array();
     let rooms: Vec<PlacedRoom> = match what {
-        0 => caves.rooms(planet),
-        1 => caves.rooms_near(planet, place, at[3].max(0.0)),
-        2 => caves.room_at(planet, place).into_iter().collect(),
-        3 => caves.room(planet, [at[0] as i32, at[1] as i32, at[2] as i32]).into_iter().collect(),
+        0 => caves.rooms(),
+        1 => caves.rooms_near(place, at[3].max(0.0)),
+        2 => caves.room_at(place).into_iter().collect(),
+        3 => caves.room([at[0] as i32, at[1] as i32, at[2] as i32]).into_iter().collect(),
         4 => Vec::new(),
         other => bail!("caves asked for {other}, which is nothing"),
     };

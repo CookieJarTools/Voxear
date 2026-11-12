@@ -28,8 +28,7 @@ public static class Physics
 	}
 
 	/// <summary>
-	/// Which way and how hard things fall at a point: towards the middle of a planet near it, as strongly as Gravity,
-	/// and Gravity itself away from planets. A planet pulls within four times its radius of its middle.
+	/// Which way and how hard things fall at a point: Gravity, the same everywhere.
 	/// <code>
 	/// falling += Physics.GravityAt(Obj.WorldPosition) * Time.Delta;
 	/// </code>

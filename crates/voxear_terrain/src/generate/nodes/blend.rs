@@ -120,11 +120,10 @@ mod tests {
         assert_eq!(testing::checked(&world), (-30.0, 50.0));
         let heights = testing::flat(&world, 4000);
         assert!(heights.iter().any(|&height| height > -20.0 && height < 40.0), "and mixes them between");
-        assert_eq!(testing::round_range(&world), (-30.0, 50.0), "the same round a planet");
         // With nothing wired in, its own values: half way from A to B.
         let own = Blend { a: 10.0, b: 30.0, mask: 0.25 };
         assert_eq!(testing::world_of(NodeKind::Blend(own), 0, &[]).height_at(5.0, 5.0), 15.0);
         let half = testing::world_of(blend, 0, &[constant(4.0), constant(8.0)]);
-        assert_eq!((half.height_at(1.0, 2.0), half.height_round([0.0, 900.0, 0.0])), (6.0, 6.0));
+        assert_eq!(half.height_at(1.0, 2.0), 6.0);
     }
 }

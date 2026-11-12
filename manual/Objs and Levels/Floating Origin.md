@@ -20,11 +20,11 @@ The floating origin is off until a project switches it on, in **Project Settings
 
 | Setting | What it does |
 | --- | --- |
-| Mode | **Off** keeps the middle where the level puts it. **Endless Worlds** moves it only in levels with ground without end or a planet. **Every Level** moves it in all of them |
+| Mode | **Off** keeps the middle where the level puts it. **Endless Worlds** moves it only in levels with ground without end. **Every Level** moves it in all of them |
 | Distance | How far the camera goes from the middle, any way, up and down too, before it moves: 2048 m |
 | Step | How far it moves at a time: 1024 m, a whole number of terrain tiles and block chunks, so ground lines up the same after a move |
 
-Ground without end is an [[Endless Worlds|endless terrain]] or an endless [[Block Worlds|Block World]]; a planet is a [[Voxel Terrain#Planets|Block World made a planet]]. Once the camera is further than the distance from the middle, everything moves back by whole steps, between two frames. It moves up and down as well as across, so a planet or a level high above or far below the level's middle is as exact as one at it; the sky and the fog still measure heights from the level's ground. The settings are kept in the project's `voxear.toml`:
+Ground without end is an [[Endless Worlds|endless terrain]] or an endless [[Block Worlds|Block World]]. Once the camera is further than the distance from the middle, everything moves back by whole steps, between two frames. It moves up and down as well as across, so a level high above or far below the level's middle is as exact as one at it; the sky and the fog still measure heights from the level's ground. The settings are kept in the project's `voxear.toml`:
 
 ```toml
 [floating_origin]

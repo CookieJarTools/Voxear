@@ -171,18 +171,16 @@ pub(crate) struct Network {
     pub set: Settings,
     /// The generator's own ground, for the heights rooms lie under.
     pub ground: Arc<Program>,
-    pub round: bool,
-    pub sea_level: f32,
     /// What tells it from every other network, for what is kept of it.
     pub id: u64,
     pub level: Option<Level>,
 }
 
 thread_local! {
-    /// What was last gathered on this thread, by network, planet and region.
-    static GATHERED: RefCell<Vec<(u64, u32, Region, Rc<Gathered>)>> = const { RefCell::new(Vec::new()) };
-    /// The heights levels were last found to lie at, by network and planet.
-    static LEVELS: RefCell<Vec<(u64, u32, f32)>> = const { RefCell::new(Vec::new()) };
+    /// What was last gathered on this thread, by network and region.
+    static GATHERED: RefCell<Vec<(u64, Region, Rc<Gathered>)>> = const { RefCell::new(Vec::new()) };
+    /// The heights levels were last found to lie at, by network.
+    static LEVELS: RefCell<Vec<(u64, f32)>> = const { RefCell::new(Vec::new()) };
 }
 
 /// How many gatherings a thread keeps.
@@ -235,22 +233,17 @@ fn turned(v: V3, turns: u8, mirrored: bool) -> V3 {
 
 impl Network {
     /// A network of these values under `ground`, known from every other by `id`: a level laid out.
-    pub fn new(set: Settings, ground: Arc<Program>, round: bool, sea_level: f32, id: u64) -> Self {
-        let mut network = Network { set, ground, round, sea_level, id, level: None };
+    pub fn new(set: Settings, ground: Arc<Program>, id: u64) -> Self {
+        let mut network = Network { set, ground, id, level: None };
         if network.set.layout == CaveLayout::Level {
             network.level = Some(Level::laid(&network));
         }
         network
     }
 
-    /// The grid its regions lie on, round a planet of `radius` metres
-    /// where it is compiled for one.
-    pub fn grid(&self, radius: f32) -> Grid {
-        match self.round {
-            // A level lies flat under the planet's top.
-            true if self.set.layout == CaveLayout::Endless => Grid::round(self.set.spacing, radius, self.sea_level),
-            _ => Grid::Flat { spacing: self.set.spacing },
-        }
+    /// The grid its regions lie on.
+    pub fn grid(&self) -> Grid {
+        Grid { spacing: self.set.spacing }
     }
 
     /// The ground's height over each of `feet`.
@@ -259,8 +252,8 @@ impl Network {
         if feet.is_empty() {
             return heights;
         }
-        let [x, y, z] = [0, 1, 2].map(|axis| feet.iter().map(|foot| foot[axis]).collect::<Vec<f32>>());
-        self.ground.run(feet.len(), Givens { x: &x, y: &y, z: &z, ..Givens::default() }, &mut [&mut heights]);
+        let [x, z] = [0, 2].map(|axis| feet.iter().map(|foot| foot[axis]).collect::<Vec<f32>>());
+        self.ground.run(feet.len(), Givens { x: &x, z: &z, ..Givens::default() }, &mut [&mut heights]);
         heights
     }
 
@@ -436,14 +429,10 @@ impl Network {
         gathered
     }
 
-    /// What can reach into `region` round a planet of `radius` metres (0
-    /// on flat ground): gathered now, or as it was kept.
-    pub fn gathered(&self, grid: &Grid, radius: f32, region: Region) -> Rc<Gathered> {
-        let key = (self.id, radius.to_bits());
+    /// What can reach into `region`: gathered now, or as it was kept.
+    pub fn gathered(&self, grid: &Grid, region: Region) -> Rc<Gathered> {
         let kept = GATHERED.with_borrow(|kept| {
-            kept.iter()
-                .find(|(id, planet, known, _)| (*id, *planet) == key && *known == region)
-                .map(|kept| kept.3.clone())
+            kept.iter().find(|(id, known, _)| *id == self.id && *known == region).map(|kept| kept.2.clone())
         });
         if let Some(kept) = kept {
             return kept;
@@ -453,34 +442,25 @@ impl Network {
             if kept.len() >= KEPT {
                 kept.remove(0);
             }
-            kept.push((key.0, key.1, region, made.clone()));
+            kept.push((self.id, region, made.clone()));
         });
         made
     }
 
-    /// How high a level's first room lies, round a planet of `radius`
-    /// metres (0 on flat ground): `depth` under the ground over it.
-    pub fn level_height(&self, radius: f32) -> f32 {
+    /// How high a level's first room lies: `depth` under the ground over
+    /// it.
+    pub fn level_height(&self) -> f32 {
         let Some(level) = &self.level else { return 0.0 };
-        let key = (self.id, radius.to_bits());
-        let kept =
-            LEVELS.with_borrow(|kept| kept.iter().find(|(id, planet, _)| (*id, *planet) == key).map(|kept| kept.2));
+        let kept = LEVELS.with_borrow(|kept| kept.iter().find(|(id, _)| *id == self.id).map(|kept| kept.1));
         if let Some(kept) = kept {
             return kept;
         }
-        let first = level.first;
-        let height = match self.round {
-            false => self.grounds(&[first])[0] - self.set.depth,
-            true => {
-                let foot = times(unit([first[0], radius, first[2]], [0.0, 1.0, 0.0]), radius);
-                radius + self.grounds(&[foot])[0] - self.sea_level - self.set.depth
-            }
-        };
+        let height = self.grounds(&[level.first])[0] - self.set.depth;
         LEVELS.with_borrow_mut(|kept| {
             if kept.len() >= KEPT {
                 kept.remove(0);
             }
-            kept.push((key.0, key.1, height));
+            kept.push((self.id, height));
         });
         height
     }

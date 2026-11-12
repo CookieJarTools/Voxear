@@ -32,21 +32,9 @@ pub fn flat_places(count: usize) -> (Vec<f32>, Vec<f32>) {
     (xs, zs)
 }
 
-/// `count` places all round a planet 3000 m from its middle, its poles
-/// among them.
-pub fn round_places(count: usize) -> Vec<[f32; 3]> {
-    (0..count)
-        .map(|i| {
-            let (turn, tilt) = (i as f32 * 0.61, (i % 97) as f32 / 96.0 * std::f32::consts::PI);
-            [tilt.sin() * turn.cos() * 3000.0, tilt.cos() * 3000.0, tilt.sin() * turn.sin() * 3000.0]
-        })
-        .collect()
-}
-
 /// Checks what every generator must hold to: its graph is whole; however
-/// many places are asked for at once, on flat ground and round a planet,
-/// each gets the bits it gets alone; and it reads back from its text as it
-/// was written. Gives the least and most of its ground over flat places.
+/// many places are asked for at once, each gets the bits it gets alone; and
+/// it reads back from its text as it was written. Gives the least and most of its ground over flat places.
 pub fn checked(world: &WorldGen) -> (f32, f32) {
     assert!(world.faults().is_empty(), "{:?}", world.faults());
     for count in [1usize, 7, 289, 513, 1300] {
@@ -54,11 +42,7 @@ pub fn checked(world: &WorldGen) -> (f32, f32) {
         let mut heights = vec![0.0; count];
         world.heights(&xs, &zs, &mut heights);
         let alone: Vec<f32> = (0..count).map(|i| world.height_at(xs[i], zs[i])).collect();
-        assert_eq!(bits(&heights), bits(&alone), "{count} flat places at once");
-        let round = round_places(count);
-        world.heights_round(&round, &mut heights);
-        let alone: Vec<f32> = round.iter().map(|&at| world.height_round(at)).collect();
-        assert_eq!(bits(&heights), bits(&alone), "{count} places round a planet at once");
+        assert_eq!(bits(&heights), bits(&alone), "{count} places at once");
     }
     let text = world.to_text();
     let read = WorldGen::parse(&text).unwrap_or_else(|error| panic!("{error}: {text}"));
@@ -75,18 +59,6 @@ pub fn flat(world: &WorldGen, count: usize) -> Vec<f32> {
     let mut heights = vec![0.0; count];
     world.heights(&xs, &zs, &mut heights);
     heights
-}
-
-/// Its ground at places all round a planet.
-pub fn round(world: &WorldGen, count: usize) -> Vec<f32> {
-    let mut heights = vec![0.0; count];
-    world.heights_round(&round_places(count), &mut heights);
-    heights
-}
-
-/// The least and most of its ground round a planet.
-pub fn round_range(world: &WorldGen) -> (f32, f32) {
-    range(&round(world, 4000))
 }
 
 /// The least and most of `values`, none of which may be anything but a

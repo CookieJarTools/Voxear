@@ -208,7 +208,7 @@ mod tests {
     }
 
     #[test]
-    fn solid_is_how_far_under_a_height_each_cell_is_flat_and_round() {
+    fn solid_is_how_far_under_a_height_each_cell_is() {
         // With nothing wired in, the generator's own ground.
         let (graph, solid, output) = solid_hills(40.0);
         let made = world(graph.clone());
@@ -220,20 +220,6 @@ mod tests {
         assert_eq!(bits(&inside), bits(&under));
         assert_eq!(bits(&ground), bits(&under), "no caves in it");
         assert!(under.iter().any(|&v| v > 1.0) && under.iter().any(|&v| v < -1.0));
-        // Round a planet the surface lies as high over the planet's sea as the height is over the sea level.
-        let radius = 300.0;
-        let on = [[180.0, -200.0, 133.0], [0.0, 300.0, 0.0], [-290.0, 20.0, 70.0]];
-        for at in on {
-            let far = at.iter().map(|v| v * v).sum::<f32>().sqrt();
-            let surface = at.map(|v| v / far * radius);
-            let height = made.height_round(surface);
-            let carried = volume.carried_round(&[surface], &[height], radius);
-            let (mut inside, mut ground) = ([0.0], [0.0]);
-            let cell = Cells { x: &at[0..1], y: &at[1..2], z: &at[2..3], carried: &carried.column(0), size: 1.0 };
-            volume.densities_round(cell, radius, false, &mut inside, &mut ground);
-            let expected = radius + height - SEA - (at[0] * at[0] + at[1] * at[1] + at[2] * at[2]).sqrt();
-            assert_eq!(inside[0].to_bits(), expected.to_bits(), "at {at:?}");
-        }
         // The same height wired in by hand is the same ground; another height is its own, and no plain ground.
         let ground_from = graph.link_into(output, Output::HEIGHT).unwrap().from;
         let mut wired = graph.clone();
@@ -349,39 +335,6 @@ mod tests {
         let mut seeded = graph;
         seeded.node_mut(node).unwrap().kind.set_value(3, Value::Whole(41));
         assert_ne!(bits(&asked(&world(seeded), &cells, 1.0, false).0), bits(&pushed));
-        // Round a planet the same ground leans too, no further than its amount.
-        let radius = 500.0;
-        let on: Vec<[f32; 3]> = (0..400)
-            .map(|i| {
-                let way =
-                    [(i as f32 * 0.37).fract() - 0.5, (i as f32 * 0.61).fract() - 0.5, (i as f32 * 0.83).fract() - 0.4];
-                let long = way.iter().map(|v| v * v).sum::<f32>().sqrt();
-                way.map(|v| v / long * radius)
-            })
-            .collect();
-        let round = |world: &WorldGen| -> Vec<f32> {
-            let volume = world.volume().unwrap();
-            let mut heights = vec![0.0; on.len()];
-            world.heights_round(&on, &mut heights);
-            let carried = volume.carried_round(&on, &heights, radius);
-            let rows: Vec<&[f32]> = carried.rows().iter().map(Vec::as_slice).collect();
-            // Each cell on its column's own surface.
-            let out: Vec<[f32; 3]> =
-                (0..on.len()).map(|i| on[i].map(|v| v / radius * (radius + heights[i] - SEA))).collect();
-            let [x, y, z] = [0, 1, 2].map(|axis| out.iter().map(|cell| cell[axis]).collect::<Vec<f32>>());
-            let (mut inside, mut ground) = (vec![0.0; on.len()], vec![0.0; on.len()]);
-            volume.densities_round(
-                Cells { x: &x, y: &y, z: &z, carried: &rows, size: 1.0 },
-                radius,
-                false,
-                &mut inside,
-                &mut ground,
-            );
-            inside
-        };
-        let (leaning, standing) = (round(&made), round(&plain));
-        let by: Vec<f32> = leaning.iter().zip(&standing).map(|(pushed, was)| (pushed - was).abs()).collect();
-        assert!(by.iter().all(|by| *by <= 6.0) && by.iter().any(|by| *by > 0.5) && by.contains(&0.0));
     }
 
     /// The hills made solid with caves of `kind` taken out of them: the graph, and the caves' node.
@@ -577,7 +530,7 @@ mod tests {
     }
 
     #[test]
-    fn a_starters_ground_takes_overhangs_and_caves_flat_and_round_and_a_cell_alone_is_the_cell_in_a_batch() {
+    fn a_starters_ground_takes_overhangs_and_caves_and_a_cell_alone_is_the_cell_in_a_batch() {
         // Each starter's graph under the Volume's nodes: the Overhangs' own mask reads the ground again round
         // every column, through the starter's warps, masks and gullies.
         // The five that are ground alone: the cave level has a Volume of its own.
@@ -589,7 +542,7 @@ mod tests {
             assert!(made.faults().is_empty(), "{name}: {:?}", made.faults());
             let volume = made.volume().expect("a Volume");
             assert!(!volume.plain() && volume.caved() && volume.reach() >= 6.0, "{name}");
-            // Flat: columns of cells through the ground, from 30 m under it to 15 m over it.
+            // Columns of cells through the ground, from 30 m under it to 15 m over it.
             let cells: Vec<[f32; 3]> = (0..10)
                 .flat_map(|i| {
                     let (x, z) = (i as f32 * 137.5 - 600.0, i as f32 * 71.3 + 40.0);
@@ -606,34 +559,6 @@ mod tests {
             for found in [&inside, &ground] {
                 assert!(found.iter().any(|&v| v > 1.0) && found.iter().any(|&v| v < -1.0), "{name}: ground and air");
             }
-            // Round a planet: cells along ways out from its middle, about its surface.
-            let radius = 400.0;
-            let ways: Vec<[f32; 3]> = (0..60)
-                .map(|i| {
-                    let i = i as f32;
-                    let way = [(i * 0.37).fract() - 0.5, (i * 0.61).fract() - 0.5, (i * 0.83).fract() - 0.4];
-                    let long = way.iter().map(|v| v * v).sum::<f32>().sqrt();
-                    way.map(|v| v / long)
-                })
-                .collect();
-            let on: Vec<[f32; 3]> = ways.iter().map(|way| way.map(|v| v * radius)).collect();
-            let mut heights = vec![0.0; on.len()];
-            made.heights_round(&on, &mut heights);
-            let carried = volume.carried_round(&on, &heights, radius);
-            let rows: Vec<&[f32]> = carried.rows().iter().map(Vec::as_slice).collect();
-            let out = |i: usize| radius + heights[i] - made.sea_level() + 7.0 - (i % 19) as f32;
-            let [x, y, z] = [0, 1, 2].map(|axis| (0..on.len()).map(|i| ways[i][axis] * out(i)).collect::<Vec<f32>>());
-            let (mut inside, mut ground) = (vec![0.0; on.len()], vec![0.0; on.len()]);
-            let all = Cells { x: &x, y: &y, z: &z, carried: &rows, size: 1.0 };
-            volume.densities_round(all, radius, false, &mut inside, &mut ground);
-            for i in 0..on.len() {
-                let (mut one, mut one_ground) = ([0.0], [0.0]);
-                let cell = Cells { x: &x[i..=i], y: &y[i..=i], z: &z[i..=i], carried: &carried.column(i), size: 1.0 };
-                volume.densities_round(cell, radius, false, &mut one, &mut one_ground);
-                assert_eq!(one[0].to_bits(), inside[i].to_bits(), "{name}, round a planet at {i}");
-                assert_eq!(one_ground[0].to_bits(), ground[i].to_bits(), "{name}, its ground round a planet at {i}");
-            }
-            assert!(inside.iter().any(|&v| v > 0.0) && inside.iter().any(|&v| v < 0.0), "{name}: round ground and air");
         }
     }
 }

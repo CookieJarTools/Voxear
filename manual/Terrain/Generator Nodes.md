@@ -246,12 +246,3 @@ Most nodes work each place out once. A few read the ground round each place, and
 | Smooth | 9 times |
 
 These multiply. A Gullies node behind a Smooth works its own input out 45 times. Put the dear nodes as far along the graph as they will go, and add fine detail after them rather than before.
-
-## Nodes on a planet
-
-Round a planet (see [[Voxel Terrain#Planets|Planets]]) the same graph makes the ground, with no seams:
-
-- Noise, Cells and Warp are read in three dimensions.
-- A Falloff's middle is the point of the planet's upper half over its X and Z: the north pole, with both at 0.
-- Slope Mask, Curvature and Smooth read the ground round each place along the planet's surface.
-- Gullies run down the slopes the ground has along the planet's surface, all round it.

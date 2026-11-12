@@ -157,14 +157,6 @@ impl Climate {
     }
 }
 
-/// How many degrees colder than its middle a planet is at `at`, in metres
-/// from its middle: up to `POLES_COLDER` at its poles, along y.
-pub(crate) fn colder_towards_poles(at: [f32; 3]) -> f32 {
-    let length = at.iter().map(|v| v * v).sum::<f32>().sqrt().max(1e-6);
-    let toward_pole = at[1] / length;
-    POLES_COLDER * toward_pole * toward_pole
-}
-
 /// How a generator bends the world before it reads its fields: over how
 /// many metres, and how many metres at most.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -333,56 +325,34 @@ pub(crate) fn signed(value: f32) -> f32 {
     ((value - 0.5) * 2.0 * SPREAD).clamp(-1.0, 1.0)
 }
 
-/// How many degrees colder a planet's poles are than its middle.
-pub const POLES_COLDER: f32 = 30.0;
-
-/// Where a world generator reads its fields: a point of its flat world, in
-/// metres along x and z, or of a round one's surface, in metres from its
-/// middle, read in three dimensions so a planet has no seams.
+/// Where a world generator reads its fields: a point of its world, in
+/// metres along x and z.
 #[derive(Clone, Copy, Debug)]
-pub(crate) enum Spot {
-    Flat(f32, f32),
-    Round([f32; 3]),
-}
+pub(crate) struct Spot(pub f32, pub f32);
 
 impl Spot {
     /// The same spot measured in units `size` metres long.
     fn over(self, size: f32) -> Self {
-        match self {
-            Spot::Flat(x, z) => Spot::Flat(x / size, z / size),
-            Spot::Round(at) => Spot::Round(at.map(|v| v / size)),
-        }
+        Spot(self.0 / size, self.1 / size)
     }
 
     fn times(self, by: f32) -> Self {
-        match self {
-            Spot::Flat(x, z) => Spot::Flat(x * by, z * by),
-            Spot::Round(at) => Spot::Round(at.map(|v| v * by)),
-        }
+        Spot(self.0 * by, self.1 * by)
     }
 
     /// Fractal noise of `style` here, 0 to 1.
     fn fractal(self, style: NoiseStyle, octaves: u32, seed: u32) -> f32 {
-        match self {
-            Spot::Flat(x, z) => noise::fractal(style, x, z, octaves, seed),
-            Spot::Round(at) => noise::fractal3(style, at, octaves, seed),
-        }
+        noise::fractal(style, self.0, self.1, octaves, seed)
     }
 
     /// Gradient noise here, about -1 to 1.
     fn gradient(self, seed: u32) -> f32 {
-        match self {
-            Spot::Flat(x, z) => noise::gradient(x, z, seed),
-            Spot::Round([x, y, z]) => noise::gradient3(x, y, z, seed),
-        }
+        noise::gradient(self.0, self.1, seed)
     }
 
     /// The spot moved by `bend(part)` metres along each of its axes.
     fn bent(self, bend: impl Fn(u32) -> f32) -> Self {
-        match self {
-            Spot::Flat(x, z) => Spot::Flat(x + bend(1), z + bend(2)),
-            Spot::Round([x, y, z]) => Spot::Round([x + bend(1), y + bend(10), z + bend(2)]),
-        }
+        Spot(self.0 + bend(1), self.1 + bend(2))
     }
 }
 
@@ -404,27 +374,6 @@ fn ridged(spot: Spot, octaves: u32, seed: u32, soft: f32) -> f32 {
         frequency *= 2.0;
     }
     (sum / total).clamp(0.0, 1.0)
-}
-
-/// Two directions along a planet's surface at `place`, in metres from its
-/// middle: each of length 1, at right angles to each other and to the way
-/// out.
-pub(crate) fn tangents([x, y, z]: [f32; 3]) -> ([f32; 3], [f32; 3]) {
-    let length = (x * x + y * y + z * z).sqrt();
-    if length <= 1e-6 {
-        return ([1.0, 0.0, 0.0], [0.0, 0.0, 1.0]);
-    }
-    let out = [x / length, y / length, z / length];
-    // The first lies across the way out and y, or across x near a pole, where the way out is nearly y.
-    let across = if out[1].abs() < 0.9 { [0.0, 1.0, 0.0] } else { [1.0, 0.0, 0.0] };
-    let first = cross(across, out);
-    let size = (first[0] * first[0] + first[1] * first[1] + first[2] * first[2]).sqrt();
-    let first = [first[0] / size, first[1] / size, first[2] / size];
-    (first, cross(out, first))
-}
-
-fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
-    [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
 }
 
 /// A number for lattice cell `(x, z)`, well mixed.
@@ -496,70 +445,6 @@ fn gullies(x: f32, z: f32, along: [f32; 2], seed: u32, joined: bool) -> (f32, f3
     (value, d(0), d(1))
 }
 
-/// A number for lattice cell `(x, y, z)`, well mixed.
-fn cell_hash3(x: i32, y: i32, z: i32, seed: u32) -> u32 {
-    cell_hash(x, z, seed ^ (y as u32).wrapping_mul(0xC2B2_AE3D).rotate_left(13))
-}
-
-/// How far, in cells, a cell's gullies reach round its point where cells
-/// fill space: a little further than across a cell from corner to corner,
-/// so some cell's point is always within reach.
-const GULLY_REACH_ROUND: f32 = 1.75;
-
-/// Gullies at `at` (in cells, a gully's width each) on a planet's surface,
-/// running along `along`, a direction along the ground there, `across` the
-/// direction along the ground at right angles to it: as [`gullies`] makes
-/// them, with cells that fill space in place of a plane, so the stripes
-/// wrap a planet with no seam. How it changes is along each of the three
-/// axes, per cell.
-fn gullies_round(at: [f32; 3], across: [f32; 3], seed: u32, joined: bool) -> (f32, [f32; 3]) {
-    let reach2 = GULLY_REACH_ROUND * GULLY_REACH_ROUND;
-    let (mut sum, mut weights) = (0.0f32, 0.0f32);
-    let (mut dsum, mut dweights) = ([0.0f32; 3], [0.0f32; 3]);
-    let first = at.map(|v| (v - GULLY_REACH_ROUND).floor() as i32);
-    let last = at.map(|v| (v + GULLY_REACH_ROUND).floor() as i32);
-    let jitter = |bits: u32| (bits & 0xFFFF) as f32 / 65536.0;
-    for cz in first[2]..=last[2] {
-        for cy in first[1]..=last[1] {
-            for cx in first[0]..=last[0] {
-                let h = cell_hash3(cx, cy, cz, seed);
-                let more = cell_hash3(cx, cy, cz, seed ^ 0x5bd1_e995);
-                let point = [cx as f32 + jitter(h), cy as f32 + jitter(h >> 16), cz as f32 + jitter(more >> 16)];
-                let d = [at[0] - point[0], at[1] - point[1], at[2] - point[2]];
-                let r2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
-                if r2 >= reach2 {
-                    continue;
-                }
-                let t = 1.0 - r2 / reach2;
-                let w = t * t * t;
-                let s = d[0] * across[0] + d[1] * across[1] + d[2] * across[2] + jitter(more);
-                let u = s - s.floor();
-                let wave = 8.0 * u * (1.0 - u) - 1.0;
-                let mut slope = 8.0 - 16.0 * u;
-                if joined {
-                    // Whole from an eighth of the way up either wall.
-                    let up = if u < 0.5 { u } else { 1.0 - u };
-                    if up < 0.125 {
-                        slope *= up * 8.0;
-                    }
-                }
-                sum += w * wave;
-                weights += w;
-                for axis in 0..3 {
-                    let dw = -6.0 * t * t * d[axis] / reach2;
-                    dsum[axis] += dw * wave + w * slope * across[axis];
-                    dweights[axis] += dw;
-                }
-            }
-        }
-    }
-    if weights <= 1e-6 {
-        return (0.0, [0.0; 3]);
-    }
-    let d = |axis: usize| (dsum[axis] * weights - sum * dweights[axis]) / (weights * weights);
-    (sum / weights, [d(0), d(1), d(2)])
-}
-
 /// Gullies cut down the slopes of any ground: how deeply, how far apart
 /// and in how many octaves; in a world of this scale and sea level; from
 /// this seed. A landmass cuts its own with them, and a graph's Gullies node
@@ -625,50 +510,6 @@ impl Gullied {
         let deepest = self.erosion.strength * self.erosion.spacing * scale * 0.25;
         let above = crate::layers::smoothstep(self.sea_level, self.sea_level + deepest.max(1.0), height);
         // And never below the sea from above it, so no pools are left along the shore.
-        (height + cut * above).max(height.min(self.sea_level))
-    }
-
-    /// `height`, the ground at `at` on a planet's surface (in metres from
-    /// its middle), with gullies cut down its slopes as [`Gullied::cut`]
-    /// cuts flat ground's. `around` is the ground's height
-    /// [`Gullied::step`] metres off along `tangents`, two directions along
-    /// the ground there at right angles: further along the first, back
-    /// along it, further along the second, back along it. The slope is
-    /// kept as a direction in space, so which way the tangents point does
-    /// not show in the ground.
-    pub fn cut_round(&self, at: [f32; 3], tangents: ([f32; 3], [f32; 3]), height: f32, around: [f32; 4]) -> f32 {
-        let scale = self.scale.max(0.01);
-        // None under the sea, as on flat ground: and there nothing to work out.
-        let deepest = self.erosion.strength * self.erosion.spacing * scale * 0.25;
-        let above = crate::layers::smoothstep(self.sea_level, self.sea_level + deepest.max(1.0), height);
-        if above <= 0.0 {
-            return height;
-        }
-        let mut spacing = self.spacing();
-        let step = spacing * 0.15;
-        let (first, second) = tangents;
-        let (a, b) = ((around[0] - around[1]) / (2.0 * step), (around[2] - around[3]) / (2.0 * step));
-        let mut g = [0, 1, 2].map(|axis| a * first[axis] + b * second[axis]);
-        // The way out, which the slope is kept at right angles to.
-        let out = cross(first, second);
-        let mut cut = 0.0;
-        for octave in 0..self.erosion.octaves.min(8) {
-            let slope = (g[0] * g[0] + g[1] * g[1] + g[2] * g[2]).sqrt();
-            if slope > 1e-4 {
-                let along = g.map(|v| v / slope);
-                let across = cross(out, along);
-                let seed = seed_of(self.seed, 20 + octave);
-                let (value, d) = gullies_round(at.map(|v| v / spacing), across, seed, self.joined);
-                let depth = self.erosion.strength * spacing * 0.25 * crate::layers::smoothstep(0.0, 0.6, slope);
-                cut += depth * (value - 1.0) * 0.5;
-                // The next octave runs down the slope as this one left it, along the ground.
-                let up = d[0] * out[0] + d[1] * out[1] + d[2] * out[2];
-                for axis in 0..3 {
-                    g[axis] += depth * 0.5 * (d[axis] - up * out[axis]) / spacing;
-                }
-            }
-            spacing *= 0.5;
-        }
         (height + cut * above).max(height.min(self.sea_level))
     }
 }
@@ -767,16 +608,7 @@ impl Landmass {
     /// ground `height` metres high: its temperature, in °C, and its
     /// humidity, 0 to 1.
     pub fn climate(&self, x: f32, z: f32, height: f32) -> (f32, f32) {
-        self.climate_at(Spot::Flat(x, z), height)
-    }
-
-    /// How warm and wet it is at `at` on a planet's surface, in metres from
-    /// its middle, on ground `height` metres high (see
-    /// [`Landmass::height_round`]): as [`Landmass::climate`] says, and up to
-    /// `POLES_COLDER` degrees colder towards its poles, along y.
-    pub fn climate_round(&self, at: [f32; 3], height: f32) -> (f32, f32) {
-        let (warmth, humidity) = self.climate_at(Spot::Round(at), height);
-        (warmth - colder_towards_poles(at), humidity)
+        self.climate_at(Spot(x, z), height)
     }
 
     fn climate_at(&self, spot: Spot, height: f32) -> (f32, f32) {
@@ -791,39 +623,12 @@ impl Landmass {
 
     /// What it reads and makes at `(x, z)`, in metres in its own world.
     pub fn sample(&self, x: f32, z: f32) -> Sample {
-        let (mut sample, relief) = self.shaped(Spot::Flat(x, z));
+        let (mut sample, relief) = self.shaped(Spot(x, z));
         if self.erosion.strength > 0.0 && self.erosion.octaves > 0 {
             sample.height = self.eroded(x, z, sample.height);
         }
-        sample.height += self.bumped(Spot::Flat(x, z), relief);
+        sample.height += self.bumped(Spot(x, z), relief);
         sample
-    }
-
-    /// The ground's height at `at` on a planet's surface, in metres from its
-    /// middle along the way out to it, its fields read round the planet so
-    /// they have no seams: as [`Landmass::height_at`] gives it on flat
-    /// ground, its gullies cut down the slope it has along the planet's
-    /// surface there (see [`Gullied::cut_round`]).
-    pub fn height_round(&self, at: [f32; 3]) -> f32 {
-        let (sample, relief) = self.shaped(Spot::Round(at));
-        let mut height = sample.height;
-        if self.erosion.strength > 0.0 && self.erosion.octaves > 0 {
-            let cut = Gullied {
-                erosion: self.erosion,
-                scale: self.scale,
-                sea_level: self.sea_level,
-                seed: self.seed,
-                joined: true,
-            };
-            let step = cut.step();
-            let (first, second) = tangents(at);
-            let off = |by: [f32; 3], sign: f32| {
-                self.shaped(Spot::Round([0, 1, 2].map(|axis| at[axis] + by[axis] * step * sign))).0.height
-            };
-            let around = [off(first, 1.0), off(first, -1.0), off(second, 1.0), off(second, -1.0)];
-            height = cut.cut_round(at, (first, second), height, around);
-        }
-        height + self.bumped(Spot::Round(at), relief)
     }
 
     /// How far bumps raise the ground at `spot`, with `relief` there.
@@ -889,7 +694,7 @@ impl Landmass {
             joined: false,
         };
         let step = cut.step();
-        let at = |dx: f32, dz: f32| self.shaped(Spot::Flat(x + dx, z + dz)).0.height;
+        let at = |dx: f32, dz: f32| self.shaped(Spot(x + dx, z + dz)).0.height;
         cut.cut(x, z, height, [at(step, 0.0), at(-step, 0.0), at(0.0, step), at(0.0, -step)])
     }
 
@@ -927,24 +732,6 @@ mod tests {
         assert_eq!(hash, 0x121a7f7a90c39192, "the ground changed: was it meant to? {hash:#x}");
         let other = Landmass { seed: 2, ..world.clone() };
         assert_ne!(other.height_at(100.0, 100.0), world.height_at(100.0, 100.0));
-    }
-
-    #[test]
-    fn round_heights_and_climate_are_the_same_bits_too() {
-        let world = Preset::Alpine.landmass();
-        let at = |i: usize| [i as f32 * 3.7 - 5000.0, 4000.0 - i as f32 * 1.9, i as f32 * 2.3 + 100.0];
-        let round: Vec<u32> = (0..2048).map(|i| world.height_round(at(i)).to_bits()).collect();
-        let hash = crate::layers::stable_hash(bytemuck::cast_slice(&round));
-        assert_eq!(hash, 0x2c83_3130_d725_f030, "a planet's ground changed: was it meant to? {hash:#x}");
-        let mut climate = Vec::new();
-        for i in 0..2048 {
-            let (x, z, height) = (i as f32 * 53.0 - 40_000.0, i as f32 * 31.0, i as f32 * 0.4 - 50.0);
-            let (warmth, wet) = world.climate(x, z, height);
-            let (cold, damp) = world.climate_round(at(i), height);
-            climate.extend([warmth, wet, cold, damp].map(f32::to_bits));
-        }
-        let hash = crate::layers::stable_hash(bytemuck::cast_slice(&climate));
-        assert_eq!(hash, 0x88c9_2696_6aa8_c038, "the climate changed: was it meant to? {hash:#x}");
     }
 
     #[test]

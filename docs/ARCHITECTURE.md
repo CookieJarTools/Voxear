@@ -2949,8 +2949,7 @@ changes smoothly along it, with nothing for the user to place.
 ## Terrain
 
 Three kinds of terrain, each a component of its own under the Terrain module: **Terrain** (heights), **Block
-World** (blocky voxels, from big blocks down to small coloured ones) and **Voxel Terrain** (smooth, flat or a
-planet). They share generation (`.worldgen`), ground surfaces (materials laid by rules and paint) and plants where
+World** (blocky voxels, from big blocks down to small coloured ones) and **Voxel Terrain** (smooth). They share generation (`.worldgen`), ground surfaces (materials laid by rules and paint) and plants where
 those fit.
 
 **Where the work runs.** Gameplay data is worked out on the CPU, the same on every machine: heights, voxels,
@@ -3002,10 +3001,7 @@ that decides its ground: one saved with only a node moved keeps its place in `Co
 Only sums, products, divisions, square roots and `floor`, so the same seed makes the same bits on every machine.
 The node library beside the Landmass: sources (Noise, Cells, Falloff, Constant), shape (Curve, Terrace, Clamp, Math,
 Blend, Warp, Smooth), masks (height, slope, curvature, climate) and Gullies. A node that needs the ground round a
-place (`nodes/around.rs`) makes rows of places a step off and asks for its input at them: along x and z on flat
-ground; round a planet along two tangents of its surface, found with a cross product and a square root. Gullies
-round a planet keep the slope as a direction in space and lay their stripes round points scattered through space
-(`Gullied::cut_round`), so nothing shows where the tangents turn over. A mask's angles are kept as rise over run
+place (`nodes/around.rs`) makes rows of places a step off along x and z and asks for its input at them. A mask's angles are kept as rise over run
 (`ValueKind::Angle`, which a row shows in degrees) and a feathered edge is the tangent of a sum or a difference of
 angles, worked out from the two tangents, so slopes need no trigonometry either. The Gullies node and the Landmass
 share one piece of maths (`landmass::Gullied`); the node's octaves follow a slope eased to nothing on the floors of
@@ -3026,8 +3022,7 @@ out a cell at a time only where a node moved the cells it asks about. The Volume
 program, whole and as the ground under its caves, with what a Combine node subtracts left in: the second is what
 far levels are made from, what tells open air from a cave's, and what layers are counted in. Volume nodes
 (Solid, Noise 3D, Overhangs, Tunnels, Chambers, Combine) take their sizes in metres whatever the generator's scale.
-`WorldGen::volume` hands this to whatever makes blocks: `carried` for columns, `densities` for cells, flat and
-round a planet; masks, which are slow to make, are made at every fourth column of a grid and read between
+`WorldGen::volume` hands this to whatever makes blocks: `carried` for columns, `densities` for cells; masks, which are slow to make, are made at every fourth column of a grid and read between
 (`carried_grid`), the same for a column whichever chunk asks.
 A terrain's Generate layer lays it from an offset in its world; compositing finds generators by reference as it
 finds pictures. Rivers and lakes on finished maps are a Rivers layer (`voxear_terrain::rivers`): priority-flood filling
@@ -3057,7 +3052,7 @@ from the open graph or from the file. They are part of the kernel's key, so a ro
 value changed is. The kernel finds what is near a cell from the cell's own region of a grid: the rooms and tunnels
 of that region and the two rings round it are worked out from the regions' numbers and the seed, with the ground's
 height asked at each room's middle through the generator's own height program, held by the kernel. That gathering
-is kept for a while on each thread, by network, planet and region; it is the same numbers made again or kept, so a
+is kept for a while on each thread, by network and region; it is the same numbers made again or kept, so a
 cell alone still gets the bits it gets in a batch. A level's rooms are laid out when the graph is compiled and
 held by the kernel whole. To come: biomes as nodes, bringing their surfaces and blocks; a room's props and spawn
 points placed with it; rivers along valleys in endless worlds.
@@ -3138,9 +3133,7 @@ where they did and any level meets any other; a view picks a chunk's level by it
 triangles all face away (`ChunkMesh::cone`). A corner of the surface is the kind of the ground it passes beside:
 of the eight blocks round it, the least deep with a block that is not ground next to it, so a block deeper down
 that lies near another surface, a cave's roof under a hillside, does not show on the hill.
-A planet's ground lies all round its world's corner, its generator read round
-it in three dimensions on a cube's faces once; physics pulls bodies near it towards its middle, and characters near
-it stand away from its middle, their First-Person Views and Motion Matchers turning about that up
+Characters stand against gravity, their First-Person Views and Motion Matchers turning about that up
 (`PhysicsScene::gravity_at`, shared by all). Each chunk of cubes
 notes which of its sides see each other through its air, and each view draws only the chunks a walk from the
 camera's chunk through those reaches (`blocks::sight`). Kinds of block can be water (`BlockFaces::water`): the ground
@@ -3151,9 +3144,9 @@ one as the made column beside it), and every coarse ring's sea stands as high as
 without walls or steps. Water's faces are drawn with the Pools (`water::record`): first the farthest face turned from
 the camera at each pixel, which is where the view leaves the water, then the faces turned towards it shaded as still
 water over a copy of the picture.
-Buoyancy pushes against the pull where a body is, as strongly as it pulls, reading how deep it is along the water's
-own up (`BlockWorld::water_depth`), so things float round a planet. Water flows (`blocks::flow`) from
-sources, down (towards a planet's middle) and then out over ground, a level lower each block, its level and way up kept
+Buoyancy pushes against the pull where a body is, as strongly as it pulls, reading how deep it is under the water's
+top (`BlockWorld::water_depth`). Water flows (`blocks::flow`) from
+sources, down and then out over ground, a level lower each block, its level and way up kept
 in its fill: a step looks only at the blocks near the last step's changes, each from the blocks as they were, so every
 machine flows alike, five steps a second in the game's tick. In a world drawn smooth, water has a smooth surface of its
 own, by surface nets over how deep into water or ground each block's middle is, a generated sea's top blocks keeping

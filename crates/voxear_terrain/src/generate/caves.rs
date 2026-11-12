@@ -6,9 +6,7 @@
 //! from a prefab). A network sets rooms in the regions of a grid and joins
 //! them with tunnels (`network`): without end, a room a region
 //! ([`CaveLayout::Endless`]), or as one bounded level laid out once
-//! ([`CaveLayout::Level`], `level`). Round a planet an endless network's
-//! grid lies on the six sides of a cube pressed onto the sphere (`grid`),
-//! and a level lies flat under the planet's top.
+//! ([`CaveLayout::Level`], `level`).
 //!
 //! [`Caves`] gives the rooms as they lie in the generator's world:
 //! [`WorldGen::caves`](super::WorldGen::caves) has it for a generator
@@ -75,14 +73,11 @@ pub struct PlacedExit {
     pub leads_to_index: Option<usize>,
 }
 
-/// The cave network of a generator: its rooms, where they lie.
-///
-/// Everything is in the generator's world on flat ground, or with `planet`
-/// the radius of a planet, in metres from its middle.
+/// The cave network of a generator: its rooms, where they lie in the
+/// generator's world.
 #[derive(Clone, Debug)]
 pub struct Caves {
-    flat: Arc<Network>,
-    round: Arc<Network>,
+    net: Arc<Network>,
 }
 
 /// How many regions a search for rooms near a place looks through at
@@ -90,27 +85,20 @@ pub struct Caves {
 const SEARCHED: usize = 2048;
 
 impl Caves {
-    pub(crate) fn new(flat: Arc<Network>, round: Arc<Network>) -> Self {
-        Self { flat, round }
-    }
-
-    fn network(&self, planet: Option<f32>) -> (&Network, f32) {
-        match planet {
-            Some(radius) => (&self.round, radius),
-            None => (&self.flat, 0.0),
-        }
+    pub(crate) fn new(net: Arc<Network>) -> Self {
+        Self { net }
     }
 
     pub fn layout(&self) -> CaveLayout {
-        self.flat.set.layout
+        self.net.set.layout
     }
 
     /// The rooms of a level, the main path's first and in order, then its
     /// side rooms: none for an endless network.
-    pub fn rooms(&self, planet: Option<f32>) -> Vec<PlacedRoom> {
-        let (net, radius) = self.network(planet);
+    pub fn rooms(&self) -> Vec<PlacedRoom> {
+        let net = &*self.net;
         let Some(level) = &net.level else { return Vec::new() };
-        let lift = [0.0, net.level_height(radius), 0.0];
+        let lift = [0.0, net.level_height(), 0.0];
         let index = |region: Region| level.all.rooms.iter().position(|room| room.plan.region == region);
         let rooms = level.all.rooms.iter().enumerate();
         rooms.map(|(at, room)| shown(net, room, lift, Some(at), at < level.main, &index)).collect()
@@ -118,16 +106,16 @@ impl Caves {
 
     /// The rooms whose origin lies within `reach` metres of `at`, nearest
     /// first: of a level, or of an endless network.
-    pub fn rooms_near(&self, planet: Option<f32>, at: [f32; 3], reach: f32) -> Vec<PlacedRoom> {
-        let (net, radius) = self.network(planet);
+    pub fn rooms_near(&self, at: [f32; 3], reach: f32) -> Vec<PlacedRoom> {
+        let net = &*self.net;
         let apart = |room: &PlacedRoom| {
             let away = sub(room.at, at);
             dot(away, away)
         };
         let mut rooms = match &net.level {
-            Some(_) => self.rooms(planet),
+            Some(_) => self.rooms(),
             None => {
-                let grid = net.grid(radius);
+                let grid = net.grid();
                 // Outward from the region `at` is in, a region at a time, while they are near enough.
                 let (foot, _) = grid.foot(at);
                 let near = |region: Region| {
@@ -144,7 +132,7 @@ impl Caves {
                     }
                     looked += 1;
                 }
-                regions.into_iter().filter_map(|region| self.room(planet, region)).collect()
+                regions.into_iter().filter_map(|region| self.room(region)).collect()
             }
         };
         rooms.retain(|room| apart(room) <= reach * reach);
@@ -153,12 +141,12 @@ impl Caves {
     }
 
     /// The room of `region`: none where it has none.
-    pub fn room(&self, planet: Option<f32>, region: [i32; 3]) -> Option<PlacedRoom> {
-        let (net, radius) = self.network(planet);
+    pub fn room(&self, region: [i32; 3]) -> Option<PlacedRoom> {
+        let net = &*self.net;
         if net.level.is_some() {
-            return self.rooms(planet).into_iter().find(|room| room.region == region);
+            return self.rooms().into_iter().find(|room| room.region == region);
         }
-        let grid = net.grid(radius);
+        let grid = net.grid();
         let plan = net.plan(&grid, region)?;
         let ground = net.grounds(&[plan.stand.foot])[0];
         let rise = -net.set.depth * (0.75 + 0.5 * plan.deep);
@@ -167,9 +155,9 @@ impl Caves {
     }
 
     /// The room whose hollow `at` is in: none in a tunnel or in rock.
-    pub fn room_at(&self, planet: Option<f32>, at: [f32; 3]) -> Option<PlacedRoom> {
-        let (net, _) = self.network(planet);
-        let rooms = self.rooms_near(planet, at, net.set.reach() + net.set.spacing);
+    pub fn room_at(&self, at: [f32; 3]) -> Option<PlacedRoom> {
+        let net = &*self.net;
+        let rooms = self.rooms_near(at, net.set.reach() + net.set.spacing);
         rooms.into_iter().find(|room| {
             let from = sub(at, room.at);
             let own = [dot(from, room.axes[0]), dot(from, room.axes[1]), dot(from, room.axes[2])];

@@ -5,7 +5,7 @@ order: 2
 A scene's sky is one of two kinds:
 
 - **A gradient**, the default: a smooth blend of three colours you choose, one straight up, one at the horizon, and one below it.
-- **The atmosphere**: the air of a planet like Earth, lit by the level's sun. It is blue by day and pale near the horizon, glows round the sun, and turns orange and red as the sun sets. Distant things fade into its haze.
+- **The atmosphere**: the Earth's air, lit by the level's sun. It is blue by day and pale near the horizon, glows round the sun, and turns orange and red as the sun sets. Distant things fade into its haze.
 
 Either way, the sun's disc is drawn in the sky, in the direction and colour of the level's sun.
 

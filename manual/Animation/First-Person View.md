@@ -29,10 +29,6 @@ In networked play, only this machine's own player's view moves the camera, hides
 
 While playing, the camera it places sees from 5 cm away rather than the usual 10 cm, so the gun held at the eye and the hands working right before it are not cut off, while the neck and shoulders round the camera stay out of sight.
 
-## On a planet
-
-Near a planet, the view turns about the up where its Obj is, away from the planet's middle, so the view, its Obj and the camera tilt as the character walks round it (see [[Voxel Terrain]]). `view.Yaw` turns about that up, and the view carries it along as it goes, so walking straight ahead goes straight round the planet. `view.Level` is which way up the view is: the world's own away from planets.
-
 ## Guns
 
 A [[Holding and Aiming|Gun Holder]] holds its gun in front of the view's eyes.

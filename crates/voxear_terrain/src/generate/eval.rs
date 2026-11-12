@@ -19,9 +19,8 @@ pub(crate) const MOST_INPUTS: usize = 8;
 /// What a program is given for every place it is run over: where the place
 /// is along each axis, and how high the ground asked about is there. A
 /// program run once a cell is also given how large the cells asked about
-/// are, in metres, the radius of the planet they are round, and the rows
-/// carried up to each cell from its column (see `compile::Carry`), by
-/// their place among them.
+/// are, in metres, and the rows carried up to each cell from its column
+/// (see `compile::Carry`), by their place among them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Given {
     X,
@@ -29,7 +28,6 @@ pub(crate) enum Given {
     Z,
     Ground,
     Size,
-    Radius,
     Carried(u8),
 }
 
@@ -44,8 +42,7 @@ impl Given {
             Given::Z => vec![2],
             Given::Ground => vec![3],
             Given::Size => vec![4],
-            Given::Radius => vec![5],
-            Given::Carried(row) => vec![6, row],
+            Given::Carried(row) => vec![5, row],
         }
     }
 }
@@ -62,8 +59,7 @@ pub(crate) enum Step {
 /// ground's height there, as many of each as there are places, or none of
 /// one the program does not read; one number alone stands for every place,
 /// as a column's `x` and `z` do for each cell up it. For cells, also the
-/// rows carried up from their columns, the cells' size and their planet's
-/// radius.
+/// rows carried up from their columns and the cells' size.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct Givens<'a> {
     pub x: &'a [f32],
@@ -72,7 +68,6 @@ pub(crate) struct Givens<'a> {
     pub ground: &'a [f32],
     pub carried: &'a [&'a [f32]],
     pub size: f32,
-    pub radius: f32,
 }
 
 /// A compiled graph: its steps in the order they run, the rows that are
@@ -145,7 +140,6 @@ impl Program {
                             Given::Z => given.z,
                             Given::Ground => given.ground,
                             Given::Size => std::slice::from_ref(&given.size),
-                            Given::Radius => std::slice::from_ref(&given.radius),
                             Given::Carried(row) => given.carried.get(usize::from(row)).copied().unwrap_or(&[]),
                         };
                         match (all, all.get(start..start + len)) {

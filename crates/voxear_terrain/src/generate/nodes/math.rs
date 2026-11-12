@@ -143,14 +143,14 @@ mod tests {
         assert_eq!(testing::checked(&none), (0.0, 0.0));
         let was = testing::flat(&testing::world_of(NodeKind::Noise(hills.clone()), 0, &[]), 4000);
         assert!(testing::flat(&quarter, 4000).iter().zip(&was).all(|(made, was)| *made == was / 4.0));
-        // Each operation is one of the row's choices, by its place among them; round a planet the same sum.
+        // Each operation is one of the row's choices, by its place among them.
         let constant = |value: f32| Some(NodeKind::Constant(Constant { value }));
         for (at, meant) in [9.0, 3.0, 18.0, 3.0, 6.0, 2.0].into_iter().enumerate() {
             let mut kind = NodeKind::Math(Math::default());
             kind.set_value(0, Value::Choice(at));
             assert_eq!(kind.value(0), Some(Value::Choice(at)));
             let world = testing::world_of(kind, 0, &[constant(6.0), constant(3.0)]);
-            assert_eq!((world.height_at(1.0, 2.0), world.height_round([0.0, 500.0, 0.0])), (meant, meant));
+            assert_eq!(world.height_at(1.0, 2.0), meant);
         }
     }
 }

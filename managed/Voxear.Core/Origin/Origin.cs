@@ -7,10 +7,10 @@ using Voxear.Scripting;
 namespace Voxear;
 
 /// <summary>
-/// Where the world's middle is. Far from the middle a float loses its smallest steps, so in a world without end, or
-/// on a planet, the engine now and then moves everything back towards the middle by whole metres, keeping the
-/// camera near it. Objs, physics, sound and effects all move together, between two frames, and every position a
-/// script reads is where things are now.
+/// Where the world's middle is. Far from the middle a float loses its smallest steps, so in a world without end the
+/// engine now and then moves everything back towards the middle by whole metres, keeping the camera near it. Objs,
+/// physics, sound and effects all move together, between two frames, and every position a script reads is where
+/// things are now.
 /// <para>
 /// A field keeping a position in the world moves too when it is marked [WorldPosition]. Anything else that keeps
 /// one can move it in Moved, or keep it as a LevelPosition, which the middle moving does not change.

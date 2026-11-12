@@ -38,7 +38,7 @@
 //! the ground's surface, and only where water meets air, so the ground
 //! under it is not drawn twice. A full block's surface is its top; a sea's
 //! top block keeps where its surface lies (`flow::surface_fill`), so a
-//! generated sea lies flat at its sea level and round a planet; flowing
+//! generated sea lies flat at its sea level; flowing
 //! water stands as high as it flows. In a world without end, past the chunk
 //! columns made the water reads as the column beside it, so it shows no
 //! side there and its surface runs on flat.
@@ -46,7 +46,7 @@
 use super::{
     BlockFaces, BlockMap,
     chunk::{AIR, BlockId, CHUNK, FULL, Fill, depth_of, fill_of},
-    flow::{beside, smooth_surface},
+    flow::{UP, beside, smooth_surface},
     is_ground, is_water,
     mesh::{ChunkMesh, FACINGS},
 };
@@ -691,9 +691,6 @@ fn water_surface(
     // The shore: each block of ground with air over it and the water's top beside it, with that water's level
     // and kind.
     let inside = |at: [i32; 3]| at.iter().all(|&v| (-BEFORE..span - BEFORE).contains(&v));
-    let corner = key.map(|v| v * CHUNK as i32);
-    let fall = map.fall();
-    let up_of = |at: [i32; 3]| fall.up([0, 1, 2].map(|i| corner[i] + at[i]));
     let mut shore: Vec<Option<(usize, BlockId)>> = vec![None; field.len()];
     let mut levels = Vec::new();
     for index in 0..field.len() {
@@ -701,7 +698,7 @@ fn water_surface(
             continue;
         }
         let at = place(index);
-        let up = up_of(at);
+        let up = UP;
         let over = beside(at, up);
         if !inside(over) || padded.block(over) != AIR {
             continue;

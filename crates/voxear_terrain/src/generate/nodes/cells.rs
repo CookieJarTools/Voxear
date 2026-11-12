@@ -13,9 +13,6 @@
 //!   the walls between pans of dried mud.
 //! - **Value**: a number of its cell's own, the same all over the cell.
 //!   Each cell is a step of its own height: mesas, fields, paving.
-//!
-//! Round a planet the points lie in the cubes of a grid through it, so the
-//! cells have no seams.
 
 use serde::{Deserialize, Serialize};
 
@@ -87,49 +84,39 @@ impl Kind for Cellular {
             size: (self.size * cx.world.scale.max(0.01)).max(0.01),
             jitter: self.jitter.clamp(0.0, 1.0),
             seed: node_seed(cx.world, node),
-            round: matches!(at, Places::Round { .. }),
         };
-        match at {
-            Places::Flat { x, z } => cx.run(scatter, &[x, z]),
-            Places::Round { x, y, z } => cx.run(scatter, &[x, y, z]),
-        }
+        cx.run(scatter, &[at.x, at.z])
     }
 }
 
-/// One of a Cells node's outputs, from rows of x and z, or of x, y and z
-/// round a planet.
+/// One of a Cells node's outputs, from rows of x and z.
 #[derive(Debug)]
 struct Scatter {
     what: usize,
     size: f32,
     jitter: f32,
     seed: u32,
-    round: bool,
 }
 
 impl Kernel for Scatter {
     fn key(&self, key: &mut Key) {
         key.name("cells").whole(self.what as u32).number(self.size).number(self.jitter).whole(self.seed);
-        key.whole(u32::from(self.round));
     }
 
     fn run(&self, inputs: &[&[f32]], out: &mut [f32]) {
         for (at, out) in out.iter_mut().enumerate() {
-            *out = match self.round {
-                false => self.read([inputs[0][at], inputs[1][at]]),
-                true => self.read([inputs[0][at], inputs[1][at], inputs[2][at]]),
-            };
+            *out = self.read([inputs[0][at], inputs[1][at]]);
         }
     }
 }
 
-/// The most points looked at round one place: those of the cubes two away
-/// each way, in three dimensions.
-const MOST: usize = 125;
+/// The most points looked at round one place: those of the squares two
+/// away each way.
+const MOST: usize = 25;
 
-/// A number for a square or cube of the grid, well mixed.
-fn mixed<const N: usize>(cell: [i32; N], seed: u32) -> u32 {
-    const BY: [u32; 3] = [0x8DA6_B343, 0xD816_3841, 0xCB1A_B31F];
+/// A number for a square of the grid, well mixed.
+fn mixed(cell: [i32; 2], seed: u32) -> u32 {
+    const BY: [u32; 2] = [0x8DA6_B343, 0xD816_3841];
     let mut h = seed;
     for (axis, &at) in cell.iter().enumerate() {
         h ^= (at as u32).wrapping_mul(BY[axis]);
@@ -149,13 +136,13 @@ fn again(mut h: u32) -> u32 {
 
 /// The points found round a place, each by where it lies from the place, in
 /// cells along each axis, and its cell's number.
-struct Found<const N: usize> {
-    from: [[f32; N]; MOST],
+struct Found {
+    from: [[f32; 2]; MOST],
     cell: [u32; MOST],
     count: usize,
 }
 
-impl<const N: usize> Found<N> {
+impl Found {
     /// The nearest of them, and how far it is, squared.
     fn nearest(&self) -> (usize, f32) {
         let (mut nearest, mut least) = (0, f32::MAX);
@@ -177,7 +164,7 @@ impl<const N: usize> Found<N> {
         for at in (0..self.count).filter(|&at| at != nearest) {
             let other = self.from[at];
             let (mut along, mut length) = (0.0, 0.0);
-            for axis in 0..N {
+            for axis in 0..2 {
                 let apart = other[axis] - own[axis];
                 along += (own[axis] + other[axis]) * 0.5 * apart;
                 length += apart * apart;
@@ -195,10 +182,10 @@ impl<const N: usize> Found<N> {
 
 impl Scatter {
     /// Its output at `place`, in metres.
-    fn read<const N: usize>(&self, place: [f32; N]) -> f32 {
-        // The square or cube of the grid the place is in, where in it the place lies, and how near its nearest side.
-        let (mut cell, mut inside, mut margin) = ([0i32; N], [0.0f32; N], 1.0f32);
-        for axis in 0..N {
+    fn read(&self, place: [f32; 2]) -> f32 {
+        // The square of the grid the place is in, where in it the place lies, and how near its nearest side.
+        let (mut cell, mut inside, mut margin) = ([0i32; 2], [0.0f32; 2], 1.0f32);
+        for axis in 0..2 {
             let scaled = place[axis] / self.size;
             let floor = scaled.floor();
             (cell[axis], inside[axis]) = (floor as i32, scaled - floor);
@@ -209,7 +196,7 @@ impl Scatter {
         }
         // The points of the cells round it; and of those a cell further out only where one of them might be nearer
         // than what was found, which is seldom. A point that far out is at least `1 + margin` cells away.
-        let mut found = Found { from: [[0.0; N]; MOST], cell: [0; MOST], count: 0 };
+        let mut found = Found { from: [[0.0; 2]; MOST], cell: [0; MOST], count: 0 };
         self.gather(&mut found, cell, inside, 1, 0);
         let (mut nearest, mut least) = found.nearest();
         let reach = 1.0 + margin;
@@ -245,11 +232,10 @@ impl Scatter {
 
     /// Adds to `found` the points of the cells up to `reach` from `cell`
     /// each way, but for those within `within` of it, which it has.
-    fn gather<const N: usize>(&self, found: &mut Found<N>, cell: [i32; N], inside: [f32; N], reach: i32, within: i32) {
+    fn gather(&self, found: &mut Found, cell: [i32; 2], inside: [f32; 2], reach: i32, within: i32) {
         let side = (2 * reach + 1) as usize;
-        let cells = if N == 2 { side * side } else { side * side * side };
-        for index in 0..cells {
-            let (mut off, mut rest, mut furthest) = ([0i32; N], index, 0);
+        for index in 0..side * side {
+            let (mut off, mut rest, mut furthest) = ([0i32; 2], index, 0);
             for step in &mut off {
                 *step = (rest % side) as i32 - reach;
                 rest /= side;
@@ -259,14 +245,14 @@ impl Scatter {
                 continue;
             }
             let mut at = cell;
-            for axis in 0..N {
+            for axis in 0..2 {
                 at[axis] = cell[axis].wrapping_add(off[axis]);
             }
             let number = mixed(at, self.seed);
-            // Sixteen bits of the cell's number move its point along each axis: the third axis from it mixed again.
-            let bits = [number & 0xFFFF, number >> 16, again(number) & 0xFFFF];
-            let mut from = [0.0f32; N];
-            for axis in 0..N {
+            // Sixteen bits of the cell's number move its point along each axis.
+            let bits = [number & 0xFFFF, number >> 16];
+            let mut from = [0.0f32; 2];
+            for axis in 0..2 {
                 let moved = (bits[axis] as f32 / 65536.0 - 0.5) * self.jitter + 0.5;
                 from[axis] = off[axis] as f32 + moved - inside[axis];
             }
@@ -289,8 +275,6 @@ mod tests {
             let (low, high) = testing::checked(&world);
             assert!(low >= 0.0 && high <= 1.0, "output {port}: {low} to {high}");
             assert!(low < 0.05 && high > 0.7, "output {port} fills its range: {low} to {high}");
-            let (low, high) = testing::round_range(&world);
-            assert!(low >= 0.0 && high <= 1.0 && low < 0.1 && high > 0.6, "output {port} round: {low} to {high}");
         }
     }
 

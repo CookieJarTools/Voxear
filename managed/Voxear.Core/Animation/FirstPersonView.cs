@@ -8,8 +8,8 @@ namespace Voxear;
 /// An Obj's First-Person View: a camera in a character's own head. The mouse turns it, and the Obj with it; the upper
 /// body leans into where it looks, and the camera rides the head, steadied, with the head hidden. It finds the body,
 /// the first Model Renderer under its Obj whose skeleton has a head and arms, and the camera, the first under it or
-/// else in the level, unless told. Near a planet it turns about the up where its Obj is, so it tilts, its Obj and its
-/// camera with it, as a character walks round.
+/// else in the level, unless told. It turns about the up where its Obj is, against gravity, so where gravity does not
+/// pull straight down it tilts, its Obj and its camera with it.
 /// <code>
 /// var view = player.AddFirstPersonView();
 /// view.Sensitivity = 0.1f;
@@ -67,8 +67,8 @@ public readonly struct FirstPersonView : IEquatable<FirstPersonView>, IObjCompon
 	}
 
 	/// <summary>
-	/// Which way up it is: the world's own, unturned, away from planets, and near one, turned to stand away from its
-	/// middle. Yaw turns about its up, from its forward.
+	/// Which way up it is: the world's own, unturned, while gravity pulls straight down, and else turned to stand
+	/// against it. Yaw turns about its up, from its forward.
 	/// </summary>
 	public Quaternion Level
 	{

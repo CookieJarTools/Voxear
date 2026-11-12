@@ -224,8 +224,6 @@ mod tests {
         let snow = testing::flat(&mask(Biome::Snow), 4000);
         assert!((0..4000).all(|i| (snow[i] == 1.0) == (warmths[i] < -2.0) || warmths[i] > -2.0 && warmths[i] < 1.0));
         assert_eq!(testing::world_of(NodeKind::ClimateMask(ClimateMask::default()), 0, &[]).height_at(0.0, 0.0), 1.0);
-        // Round a planet it masks the climate it is given there, the same bits in any batch.
-        assert_eq!(testing::round_range(&world), (0.0, 1.0));
         // Each biome's ranges are found again by its mask, and a range changed by hand is Custom.
         for (at, biome) in Biome::ALL.into_iter().enumerate() {
             let mut kind = NodeKind::ClimateMask(ClimateMask::of(Biome::Desert));

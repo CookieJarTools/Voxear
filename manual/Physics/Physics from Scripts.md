@@ -126,7 +126,7 @@ var grounded = Physics.Raycast(Obj.WorldPosition, -Vector3.UnitY, out var hit, 1
 
 A mask is a bit for each layer, so `1 << 8` is layer 8 alone and `~0` is every layer. A ray finds Objs on its mask's layers whether or not those layers collide with anything.
 
-`Physics.Gravity` is which way and how hard everything falls. It starts at 9.81 metres per second per second, downwards. Near a planet, things fall towards its middle instead (see Voxel Terrain), and `Physics.GravityAt(position)` says which way and how hard they fall at a point: `Physics.Gravity` itself away from planets.
+`Physics.Gravity` is which way and how hard everything falls. It starts at 9.81 metres per second per second, downwards. `Physics.GravityAt(position)` says which way and how hard things fall at a point: `Physics.Gravity`, the same everywhere.
 
 ## Walking a character
 
@@ -159,7 +159,7 @@ controller.Move((across + Vector3.UnitY * falling) * Time.Delta);
 
 `IsGrounded` says whether it stood on walkable ground after its last move, and `Velocity` how fast it really went once walls and the ground stopped what they could. `GroundNormal` is the way the ground under it faces.
 
-`Up` is which way the character stands: up, or away from a planet's middle near one. To jump and fall on a planet as well as on flat ground, keep the falling speed along `Up` and take it from `Physics.GravityAt`:
+`Up` is which way the character stands, against gravity: straight up, unless a game turns `Physics.Gravity` another way. To jump and fall whichever way gravity pulls, keep the falling speed along `Up` and take it from `Physics.GravityAt`:
 
 ```csharp
 var up = controller.Up;

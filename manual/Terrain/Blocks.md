@@ -44,9 +44,10 @@ A block drawn with a material that is **cut out** is see-through: leaves, a grat
 - Its faces are drawn only where the picture is solid, and what is behind shows through the rest.
 - Blocks beside it keep their faces towards it, so a trunk shows through its leaves.
 - It keeps its own faces towards other see-through blocks, its own kind too, so a crown of leaves is leaves all the way in, darker inside.
+- The sun passes where the picture is clear, so its shadow is its picture's: dappled under a crown of leaves.
 - It is a block in every other way: stood on, built on, dug, and it shades the corners of the blocks round it.
 
-If any of a block's materials is cut out (its sides', its top's or its bottom's), the whole block is see-through. Its shadow is still a whole block's, and far off, in the coarser rings, it is drawn like any block.
+If any of a block's materials is cut out (its sides', its top's or its bottom's), the whole block is see-through. Far off, in the coarser rings, it is drawn like any block. Bounced light takes it as solid, and a see-through block is lit as any block is: light does not glow through a leaf from behind.
 
 ### Breaking
 

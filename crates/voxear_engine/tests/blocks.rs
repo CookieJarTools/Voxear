@@ -506,4 +506,15 @@ fn leaves_cut_out_of_their_picture_show_the_sky_and_the_trunk_through_them() {
     assert!(crown > 5000, "{crown} pixels of crown");
     let share = through as f32 / crown as f32;
     assert!((0.03..0.6).contains(&share), "{:.0}% of the crown is seen through", share * 100.0);
+    // The sun passes the leaves where their picture is clear: the tree's shadow on the grass, a whole block's
+    // dark where they are drawn whole, has lit ground in it where they are cut out.
+    let light = |p: &[u8]| u32::from(p[0]) + u32::from(p[1]) + u32::from(p[2]);
+    let grass = |p: &[u8]| p[1] > p[0] && p[1] > p[2];
+    let shaded: Vec<usize> = (0..whole.len() / 4)
+        .filter(|at| at / 640 > 300 && grass(&whole[at * 4..at * 4 + 4]) && light(&whole[at * 4..at * 4 + 4]) < 150)
+        .collect();
+    assert!(shaded.len() > 1500, "{} pixels of the whole tree's shadow", shaded.len());
+    let lit = shaded.iter().filter(|&&at| light(&holes[at * 4..at * 4 + 4]) > light(&whole[at * 4..at * 4 + 4]) + 30);
+    let share = lit.count() as f32 / shaded.len() as f32;
+    assert!(share > 0.1, "{:.0}% of the shadow is lit through the leaves", share * 100.0);
 }

@@ -3384,7 +3384,8 @@ hides what is behind it (`hides`: ground not seen through). A face is made where
 does not hide it, so leaves keep their faces against leaves and a trunk keeps its faces under them; `buried` and
 the sights between a chunk's sides use `hides` too. Drawing needs no second pass or pipeline: `blocks.slang` reads
 the face's surface's material and discards under its cutoff inside `terrainShading`, which the depth pass and the
-shaded pass both call, so the two agree. The shadow pass has no fragment stage, so a leaf block's shadow is whole.
+shaded pass both call, so the two agree. The shadow pass has a fragment stage of its own for it
+(`blockShadowFragment`), which returns at once for a face that is not cut out and else samples the same picture.
 
 **Plants a Block World grows.** A Foliage under a Block World with a `grow` section has its plants worked out from
 the world's ground rather than placed. Where they stand is pure data, in `voxear_terrain::blocks::grow`: a rule

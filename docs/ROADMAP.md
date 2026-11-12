@@ -2286,10 +2286,12 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   (`blocks::mesh`, `blocks::hides`): a face shows against a see-through block as against air, a see-through block
   keeps its faces against its own kind, corners are still closed in by it, its faces are triangles to stand on,
   and a chunk of it through and through still has faces and is seen through by the cave culling. The block shader
-  drops a face's fragments under its material's cutoff, in the depth pass and the shaded one. Tests: the faces of a
-  tree of leaves against the same tree of solid blocks, the engine (read from the material, stood on), a GPU
-  picture with the sky through a crown. Manual: Blocks. Not done: shadows cut out (a leaf block casts a whole
-  block's), the same for a world drawn smooth, and rays for bounced light, which take it as solid.
+  drops a face's fragments under its material's cutoff, in the depth pass, the shaded one and the sun's shadow
+  pass (`blockShadowFragment`), so a crown's shadow is dappled. Tests: the faces of a tree of leaves against the
+  same tree of solid blocks, the engine (read from the material, stood on), a GPU picture with the sky through a
+  crown and lit ground in its shadow. Manual: Blocks. Not done: the same for a world drawn smooth, rays for
+  bounced light, which take it as solid, and light through a leaf from behind (a material's foliage lighting is
+  not read for block faces).
 - Throughout: chunks culled against the frustum and last frame's depth, and the smallest save and network data
   (only changes from what a build or a seed makes, as commands while few and compacted deltas once many).
 

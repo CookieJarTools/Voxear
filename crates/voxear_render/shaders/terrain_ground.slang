@@ -250,11 +250,29 @@ float2 terrainBend(Material material, TerrainSpot spot, uint side, float scale)
     return (terrainPicture(material.normalTexture, spot, side, scale).xy * 2.0 - 1.0) * material.normalScale;
 }
 
+// A surface's colour picture at the spot. One drawn with sharp pixels (a box model's, a texture pack's) is read at
+// the middle of the pixel the spot falls in, so each of its pixels is a square of one colour however near; many of
+// them in one of the screen's are still averaged, as the spot itself slopes, so far ground does not shimmer.
+float4 terrainColour(Material material, TerrainSpot spot, uint side, float scale)
+{
+    if ((material.flags & MATERIAL_PIXELS) == 0)
+    {
+        return terrainPicture(material.baseColorTexture, spot, side, scale);
+    }
+    uint width, height;
+    textures[NonUniformResourceIndex(material.baseColorTexture)].GetDimensions(width, height);
+    float2 size = float2(width, height);
+    float2 uv = (floor(terrainSide(spot.place, side) * scale * size) + 0.5) / size;
+    float2 dx = terrainSide(spot.dx, side) * scale;
+    float2 dy = terrainSide(spot.dy, side) * scale;
+    return textures[NonUniformResourceIndex(material.baseColorTexture)].SampleGrad(samplers[SAMPLER_LINEAR_REPEAT], uv, dx, dy);
+}
+
 // One side of a surface's pictures, `weight` of it, added to `layer`.
 void terrainAddSide(inout TerrainLayer layer, Material material, TerrainSpot spot, uint side, float scale, float weight)
 {
     float4 metalRough = terrainPicture(material.metallicRoughnessTexture, spot, side, scale);
-    layer.base += material.baseColor * terrainPicture(material.baseColorTexture, spot, side, scale) * weight;
+    layer.base += material.baseColor * terrainColour(material, spot, side, scale) * weight;
     layer.metallic += material.metallic * metalRough.b * weight;
     layer.roughness += material.roughness * metalRough.g * weight;
 }

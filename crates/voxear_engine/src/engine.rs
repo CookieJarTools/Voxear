@@ -340,6 +340,7 @@ impl Engine {
         scripts.take_level_requests();
         scripts.take_lighting_requests();
         scripts.take_look_pack_requests();
+        scripts.take_texture_pack_requests();
         Some(scripts)
     }
 

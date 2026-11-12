@@ -512,6 +512,9 @@ pub struct Content {
     /// What a world set aside still draws and plays, as the editor's edited
     /// level while the game plays, which `release_unused` keeps.
     aside: InUse,
+    /// The texture pack worn, and what the renderer holds for it (see
+    /// `texture_packs`).
+    textures: crate::texture_packs::Worn,
 }
 
 /// The meshes, materials, prefab instances and sounds a world uses.
@@ -685,7 +688,23 @@ impl Content {
             prefabs: PrefabCache::default(),
             sounds: SoundCache::default(),
             aside: InUse::default(),
+            textures: Default::default(),
         }
+    }
+
+    /// The texture pack worn, and what the renderer holds for it.
+    pub(crate) fn textures(&self) -> &crate::texture_packs::Worn {
+        &self.textures
+    }
+
+    pub(crate) fn textures_mut(&mut self) -> &mut crate::texture_packs::Worn {
+        &mut self.textures
+    }
+
+    /// Has every world of blocks take its blocks up again, as after the
+    /// texture pack worn changed how they are drawn.
+    pub(crate) fn blocks_changed(&mut self) {
+        self.blocks_version += 1;
     }
 
     /// Reads one of an asset's files by project path.
@@ -905,7 +924,7 @@ impl Content {
             }
             let data = self.material_data(guid)?;
             if data.shader.is_some() {
-                let look = self.look(renderer, &data)?;
+                let look = self.material_look(renderer, guid, &data)?;
                 renderer.update_material(handle, &look)?;
             }
         }
@@ -941,7 +960,27 @@ impl Content {
         if own.is_none() && remapped.is_empty() {
             return Ok(());
         }
-        let look = self.look(renderer, data)?;
+        let look = self.material_look(renderer, guid, data)?;
+        if let Some(handle) = own {
+            renderer.update_material(handle, &look)?;
+        }
+        for (model, part) in remapped {
+            self.show_remapped(renderer, model, &part, &look)?;
+        }
+        Ok(())
+    }
+
+    /// Uploads the `.material` asset at `guid` again wherever it is drawn,
+    /// as its file and the texture pack worn have it now. One not loaded is
+    /// left alone: it is read as they have it when it loads.
+    pub(crate) fn upload_material_again(&mut self, renderer: &mut Renderer, guid: AssetGuid) -> Result<()> {
+        let own = self.asset_materials.get(&AssetRef::asset(guid, None)).copied();
+        let remapped = self.remapped_to(guid);
+        if own.is_none() && remapped.is_empty() {
+            return Ok(());
+        }
+        let data = self.material_data(guid)?;
+        let look = self.material_look(renderer, guid, &data)?;
         if let Some(handle) = own {
             renderer.update_material(handle, &look)?;
         }
@@ -1949,7 +1988,7 @@ impl Content {
         let meta = format!("{path}.{}", voxear_assets::META_EXTENSION);
         let remap = self.read_text(&meta).map(|text| MaterialRemap::from_meta(&text)).unwrap_or_default();
         for (part, &material) in &remap.0 {
-            let look = self.material_data(material).and_then(|data| self.look(renderer, &data));
+            let look = self.material_data(material).and_then(|data| self.material_look(renderer, material, &data));
             let result = look.and_then(|look| self.show_remapped(renderer, guid, part, &look));
             if let Err(error) = result {
                 tracing::warn!("{path}: {part} keeps the file's material: {error:#}");
@@ -1976,8 +2015,17 @@ impl Content {
         toml::from_str(&text).with_context(|| format!("reading {path}"))
     }
 
+    /// What the GPU draws the `.material` asset at `guid` with: `data`, its
+    /// file's values, with the pictures the texture pack worn draws it with
+    /// in place of its own.
+    fn material_look(&mut self, renderer: &mut Renderer, guid: AssetGuid, data: &MaterialData) -> Result<MaterialDesc> {
+        let mut look = self.look(renderer, data)?;
+        crate::texture_packs::dress_material(self, renderer, guid, &mut look)?;
+        Ok(look)
+    }
+
     /// What the GPU draws a material with, its maps' pictures loaded.
-    fn look(&mut self, renderer: &mut Renderer, data: &MaterialData) -> Result<MaterialDesc> {
+    pub(crate) fn look(&mut self, renderer: &mut Renderer, data: &MaterialData) -> Result<MaterialDesc> {
         let mut textures = [None; 5];
         for (texture, map) in textures.iter_mut().zip(MaterialMap::ALL) {
             if let Some(picture) = data.map(map) {
@@ -2134,7 +2182,7 @@ impl Content {
 
     /// A picture asset as a texture, read and uploaded on first use at the
     /// size its import settings allow.
-    fn picture(&mut self, renderer: &mut Renderer, guid: AssetGuid, srgb: bool) -> Result<TextureId> {
+    pub(crate) fn picture(&mut self, renderer: &mut Renderer, guid: AssetGuid, srgb: bool) -> Result<TextureId> {
         if let Some(&texture) = self.pictures.get(&(guid, srgb)) {
             return Ok(texture);
         }
@@ -2234,7 +2282,7 @@ impl Content {
         let handle = match entry.kind {
             AssetKind::Material => {
                 let data = self.material_data(guid)?;
-                let look = self.look(renderer, &data)?;
+                let look = self.material_look(renderer, guid, &data)?;
                 renderer.add_material(&look)?
             }
             AssetKind::Model => {

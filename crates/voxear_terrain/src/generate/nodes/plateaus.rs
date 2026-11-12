@@ -362,7 +362,7 @@ impl Kernel for Cut {
             }
         };
         // Three sizes of bend, the widest moving a line furthest.
-        let bends = [(1.3, 0.2), (0.35, 0.06), (0.1, 0.015)]
+        let bends = [(1.3, 0.26), (0.45, 0.1), (0.12, 0.018)]
             .map(|(wide, far)| (self.size * wide, self.wander * self.size * far));
         let wide = self.size * 0.1 + 12.0;
         for (at, out) in out.iter_mut().enumerate() {
@@ -433,11 +433,13 @@ impl Kernel for Cut {
                 if beside > wide * 0.5 {
                     continue;
                 }
-                let stair = top - (away * self.ramp_slope / self.step).ceil() * self.step;
+                // Its steps curve round the middle of its top, each a wide tread bowed out from the wall.
+                let out = (away * away + 0.3 * beside * beside).sqrt();
+                let stair = top - (out * self.ramp_slope / self.step).ceil() * self.step;
                 if stair > high {
                     (high, walled) = (stair, 0.0);
                 }
-                let reach = away - rise / self.ramp_slope;
+                let reach = out - rise / self.ramp_slope;
                 clear = if reach < clear { reach } else { clear };
             }
             // The level's own edge over lower ground: a lip raised along it, or the edge rounded off.

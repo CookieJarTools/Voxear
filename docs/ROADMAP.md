@@ -1907,8 +1907,8 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     time across low ground between two high places) and **Raised Land** (islands over the ground, floating or
     on a stalk). Both show in the far view (`Volume::standing`, `far_tile`). Presets **Mesas**, **Sky Islands**
     and **Highlands**. Tests: a tall column the blocks it is asked whole; levels and walls; a ramp walked up;
-    an arch's opening and top; islands clear of the ground; both in far tiles. Not built: windows through thin
-    ridges, shelves hanging off cliffs.
+    an arch's opening and top; a window through a ridge with the ridge whole over it; islands clear of the
+    ground; both in far tiles. Not built: shelves hanging off cliffs.
 - ~~**Erosion layer:**~~ done: Add Layer ▸ Erosion wears the ground below it on the GPU (`shaders/erosion.slang`,
   `voxear_render::erosion`, `Renderer::erode`), once, in the editor: rain each step, water through pipes to its four
   neighbours sped by the drop and held to what each cell has, its depth and speed, carving where it can carry more

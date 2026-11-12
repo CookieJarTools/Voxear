@@ -641,7 +641,22 @@ fn voxels(graph: &Graph, world: World, faults: &mut Vec<Fault>) -> Option<Voxels
     bytes.extend(between.iter().map(|between| u8::from(*between)));
     let hash = crate::layers::stable_hash(&bytes);
     let caved = whole != ground;
-    Some(Voxels { columns, between, exact, spread, cells, coarse, plain, caved, reach, depth, spans, spanned, hash, caves })
+    Some(Voxels {
+        columns,
+        between,
+        exact,
+        spread,
+        cells,
+        coarse,
+        plain,
+        caved,
+        reach,
+        depth,
+        spans,
+        spanned,
+        hash,
+        caves,
+    })
 }
 
 /// Compiles `graph` in `world`, adding what is wrong with it to `faults`.

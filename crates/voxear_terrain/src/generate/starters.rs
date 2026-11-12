@@ -491,6 +491,7 @@ fn mesas() -> Starter {
         valleys: 0.4,
         river: 4.0,
         canyon: 110.0,
+        wander: 0.75,
         ..Plateaus::default()
     };
     let land = g.add(NodeKind::Plateaus(land));
@@ -570,7 +571,8 @@ fn highlands() -> Starter {
     g.next();
     let ground = g.math(Add, ledges, bumps);
     g.next();
-    let arches = Arches { span_from: 40.0, span_to: 130.0, thickness: 7.0, width: 16.0, often: 0.8, seed: 0 };
+    let arches =
+        Arches { span_from: 40.0, span_to: 130.0, thickness: 7.0, width: 16.0, often: 0.8, windows: 0.6, seed: 0 };
     let arches = g.add(NodeKind::Arches(arches));
     let hall = RoomRules {
         size: [30.0, 52.0],
@@ -691,7 +693,7 @@ mod tests {
     #[test]
     fn mesas_sky_islands_and_highlands_stand_hundreds_of_metres_tall_with_a_volume_each() {
         let pins: [(&str, u64, f32); 3] = [
-            ("Mesas", 0x642f_a272_1498_4fb1, 200.0),
+            ("Mesas", 0x5696_96e7_ca84_2c3f, 200.0),
             ("Sky Islands", 0x3f7d_04bc_1fc6_a925, 40.0),
             ("Highlands", 0x2d6a_a25a_149d_c1b0, 350.0),
         ];

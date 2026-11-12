@@ -263,9 +263,10 @@ A span of ground from one high place to another across lower ground, with an ope
 | Row | What it does |
 | --- | --- |
 | Span From, Span To | How short and how long a bridge may be, in metres |
-| Thickness | How thick it is at its middle, in metres. It is three times as thick where it springs from the ground |
+| Thickness | How thick it is at its middle, in metres. Its underside is an arch, thicker by a sixth of its span where it springs from the ground, and rounded across |
 | How Often | How many of the places a bridge could stand get one, 0 to 1 |
 | Width | How wide its top is, in metres |
+| Windows | How many smaller openings are cut clean through thin ridges and walls, 0 to 1: a round way through at the height of the lower ground either side, with the ridge left whole over it |
 
 **In:** Ground. **Out:** Ground.
 

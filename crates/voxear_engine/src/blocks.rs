@@ -292,6 +292,13 @@ pub fn with_structures(content: &mut Content, file: &BlockFile) -> BlockFile {
                     path_width: town.path_width,
                     wander: town.wander,
                     branching: town.branching,
+                    road: town.road.as_deref().map_or(0, |named| number_named(content, &mut file, reference, named)),
+                    road_width: town.road_width,
+                    bridge: town
+                        .bridge
+                        .as_deref()
+                        .map_or(0, |named| number_named(content, &mut file, reference, named)),
+                    link: town.link,
                 })
             }
         };

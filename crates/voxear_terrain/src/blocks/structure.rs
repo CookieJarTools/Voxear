@@ -164,6 +164,10 @@ impl Default for StructureDef {
 /// path_width = 3
 /// wander = 0.5                # how much its streets bend, 0 for straight
 /// branching = 0.5             # how often they branch, 0 for never
+/// road = "Blocks/Gravel.block" # roads to the next towns of its kind; none for none
+/// road_width = 3
+/// bridge = "Blocks/Planks.block" # where a road crosses water
+/// link = 0.7                  # how many of the roads to its nearest towns are made, 0 to 1
 ///
 /// [[town.houses]]
 /// structure = "Structures/Cottage.structure"
@@ -182,6 +186,12 @@ pub struct TownDef {
     pub path_width: u32,
     pub wander: f32,
     pub branching: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub road: Option<String>,
+    pub road_width: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bridge: Option<String>,
+    pub link: f32,
 }
 
 impl Default for TownDef {
@@ -195,6 +205,10 @@ impl Default for TownDef {
             path_width: 3,
             wander: 0.5,
             branching: 0.5,
+            road: None,
+            road_width: 3,
+            bridge: None,
+            link: 0.7,
         }
     }
 }
@@ -251,7 +265,9 @@ impl TownPiece {
 
 /// A town as a world builds it: its pieces by the world's numbers, how many
 /// houses and how far its main streets run, in blocks, its streets' block
-/// (air for none) and width, and how much they bend and branch.
+/// (air for none) and width, and how much they bend and branch; and its
+/// roads to the next towns of its kind: their block (air for none), width,
+/// the block of their bridges over water, and how many are made.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Town {
     pub middle: Option<TownPiece>,
@@ -262,6 +278,10 @@ pub struct Town {
     pub path_width: u32,
     pub wander: f32,
     pub branching: f32,
+    pub road: BlockId,
+    pub road_width: u32,
+    pub bridge: BlockId,
+    pub link: f32,
 }
 
 /// A structure as a world builds it: where, how the ground meets it, how
@@ -623,6 +643,63 @@ impl Town {
     }
 }
 
+impl Town {
+    /// The road from the town at block `from` to the one at block `to`,
+    /// each step's place, in blocks: out of the first town's middle and
+    /// on to the second's, two blocks a step, each step the way of five
+    /// round the way it heads that climbs least and turns it least from its
+    /// end, pulled harder to its end the nearer it is, so far from either
+    /// town it curves round hills and nearer it heads in; a little wander in
+    /// it from `seed`, and water crossed where there is no way round near. Worked out from its two towns alone, so every
+    /// chunk it crosses finds the same road.
+    fn road_between(&self, seed: u32, from: [i32; 2], to: [i32; 2], ground: &Ground) -> Vec<[f32; 2]> {
+        // Turning by 18 and 35 degrees either side, without trigonometry.
+        const TURNS: [(f32, f32); 5] =
+            [(0.8192, -0.5736), (0.9511, -0.3090), (1.0, 0.0), (0.9511, 0.3090), (0.8192, 0.5736)];
+        let rotate = |[x, z]: [f32; 2], (c, s): (f32, f32)| [x * c - z * s, x * s + z * c];
+        let height = |p: [f32; 2]| ground.top(p[0].round() as i32, p[1].round() as i32) as f32;
+        let wet = |p: [f32; 2]| ground.under_sea(p[0].round() as i32, p[1].round() as i32);
+        let mut draws = Draws(seed ^ 0x51ED_270B);
+        let end = [to[0] as f32, to[1] as f32];
+        let gap = self.radius[0].min(self.radius[1]) * 0.5;
+        let towards = |p: [f32; 2]| {
+            let (dx, dz) = (end[0] - p[0], end[1] - p[1]);
+            let length = (dx * dx + dz * dz).sqrt().max(1e-3);
+            ([dx / length, dz / length], length)
+        };
+        let (way, length) = towards([from[0] as f32, from[1] as f32]);
+        let mut at = [from[0] as f32 + way[0] * gap, from[1] as f32 + way[1] * gap];
+        let mut heading = way;
+        let mut points = vec![at];
+        for _ in 0..((length / 2.0) * 2.0) as usize + 8 {
+            let (way, left) = towards(at);
+            if left <= gap {
+                break;
+            }
+            let here = height(at);
+            // Nearer its end it must head there; further off it may wander round what is in its way.
+            let pull = 1.0 + 6.0 * (1.0 - (left / length).clamp(0.0, 1.0)).powi(2);
+            let best = TURNS
+                .iter()
+                .map(|&turning| {
+                    let turned = rotate(heading, turning);
+                    let next = [at[0] + turned[0] * 2.0, at[1] + turned[1] * 2.0];
+                    let climb = (height(next) - here).abs();
+                    let off = (1.0 - (turned[0] * way[0] + turned[1] * way[1])) * pull;
+                    let water = if wet(next) { 1.5 } else { 0.0 };
+                    let cost = climb * 2.0 + off + water + draws.unit() * 0.6 * self.wander.clamp(0.0, 1.0);
+                    (cost, turned, next)
+                })
+                .min_by(|a, b| a.0.total_cmp(&b.0))
+                .expect("five ways");
+            heading = best.1;
+            at = best.2;
+            points.push(at);
+        }
+        points
+    }
+}
+
 /// A street as grown: each step's place, in blocks, and the way it heads
 /// there.
 struct Street {
@@ -699,23 +776,62 @@ pub fn build(
     // Every site kept, with its place in blocks and the blocks it takes up along the ground, to leave out a later
     // structure's where an earlier one's stands.
     let mut kept: Vec<Taken> = Vec::new();
+    // Whether the ground at a site fits a structure's placement.
+    let fits = |structure: &PlacedStructure, site: &Site| {
+        let height = world.height_at(site.at[0], site.at[1]);
+        let (east, north) =
+            (world.height_at(site.at[0] + size, site.at[1]), world.height_at(site.at[0], site.at[1] + size));
+        let slope = ((east - height) * (east - height) + (north - height) * (north - height)).sqrt() / size;
+        let above_sea = height - world.sea_level();
+        let biome = biomes.and_then(|biomes| {
+            let (temperature, humidity) = world.climate(site.at[0], site.at[1], height);
+            biomes.at(site.at[0], site.at[1], Place { temperature, humidity, above_sea })
+        });
+        structure.placement.fits(SiteGround { above_sea, slope, biome }, |b| structure.biomes.contains(&b))
+    };
+    let within = |x: i32, z: i32| x.div_euclid(side) == cx && z.div_euclid(side) == cz;
     for (which, structure) in structures.list.iter().enumerate() {
         let (reach, footprint) = (structure.reach(), structure.footprint());
+        // A town's roads to the next towns of its kind, laid before any of its buildings.
+        if let StructureBlocks::Town(town) = &structure.blocks
+            && town.road != AIR
+        {
+            let roads = roads_near(structure, town, world.seed(), (low, high), &ground, &fits);
+            let mut cells: Vec<[i32; 2]> = Vec::new();
+            for road in &roads {
+                for &point in road {
+                    lay(&mut cells, point, town.road_width.max(1) as f32);
+                }
+            }
+            let sea_top = (world.sea_level() / size - 0.5).ceil() as i32 - 1;
+            for &[x, z] in cells.iter().filter(|&&[x, z]| within(x, z)) {
+                let mut put = |y: i32, block: BlockId| put_block(chunks, [cx, cz], bottom, [x, y, z], block);
+                let top = ground.top(x, z);
+                if ground.under_sea(x, z) && town.bridge != AIR {
+                    // A deck a block over the water, posts down to the bed every few blocks.
+                    let deck = sea_top + 1;
+                    put(deck, town.bridge);
+                    for y in deck + 1..deck + 4 {
+                        put(y, AIR);
+                    }
+                    if x.rem_euclid(4) == 0 && z.rem_euclid(4) == 0 {
+                        for y in top + 1..deck {
+                            put(y, town.bridge);
+                        }
+                    }
+                } else {
+                    put(top, town.road);
+                    for y in top + 1..top + 4 {
+                        put(y, AIR);
+                    }
+                }
+            }
+            kept.push(Taken { which, round: None, buildings: Vec::new(), streets: cells });
+        }
         // Sites of earlier structures that may stand in this one's way are found further out, by its reach too.
         for site in structure.placement.tries_near(world.seed(), low, high, (reach + 64.0) * size) {
             let block = [0, 1].map(|axis| ((site.at[axis] - position[axis]) / size).floor() as i32);
-            let height = world.height_at(site.at[0], site.at[1]);
-            let (east, north) =
-                (world.height_at(site.at[0] + size, site.at[1]), world.height_at(site.at[0], site.at[1] + size));
-            let slope = ((east - height) * (east - height) + (north - height) * (north - height)).sqrt() / size;
-            let above_sea = height - world.sea_level();
-            let biome = biomes.and_then(|biomes| {
-                let (temperature, humidity) = world.climate(site.at[0], site.at[1], height);
-                biomes.at(site.at[0], site.at[1], Place { temperature, humidity, above_sea })
-            });
-            let fits =
-                structure.placement.fits(SiteGround { above_sea, slope, biome }, |b| structure.biomes.contains(&b));
-            if !fits {
+            if !fits(structure, &site) {
                 continue;
             }
             // Kept clear of what earlier structures take up; its own are kept apart by its placement's separation.
@@ -733,7 +849,6 @@ pub fn build(
             };
             kept.push(Taken { which, round: layout.is_none().then_some((block, footprint)), buildings, streets });
             // Only its blocks within this column are built here.
-            let within = |x: i32, z: i32| x.div_euclid(side) == cx && z.div_euclid(side) == cz;
             let (lowest, highest) = (cx * side - reach.ceil() as i32 - 1, (cx + 1) * side + reach.ceil() as i32 + 1);
             if block[0] < lowest
                 || block[0] > highest
@@ -743,19 +858,9 @@ pub fn build(
                 continue;
             }
             let mut put = |x: i32, y: i32, z: i32, block: BlockId| {
-                if !within(x, z) || y < bottom {
-                    return;
+                if within(x, z) {
+                    put_block(chunks, [cx, cz], bottom, [x, y, z], block);
                 }
-                let key = [cx, y.div_euclid(side), cz];
-                let at = match chunks.iter().position(|(k, _)| *k == key) {
-                    Some(at) => at,
-                    None => {
-                        chunks.push((key, Chunk::filled(AIR)));
-                        chunks.len() - 1
-                    }
-                };
-                let (lx, ly, lz) = ((x - cx * side) as u32, y.rem_euclid(side) as u32, (z - cz * side) as u32);
-                chunks[at].1.set(lx, ly, lz, block);
             };
             let parts = match (&structure.blocks, layout) {
                 (StructureBlocks::Town(town), Some((parts, paths))) => {
@@ -787,6 +892,85 @@ pub fn build(
     }
     chunks.retain(|(_, chunk)| !chunk.is_air());
     chunks.sort_by_key(|(key, _)| key[1]);
+}
+
+/// Puts `block` at block `at` of chunk column `[cx, cz]`'s chunks, a chunk
+/// made where there is none, and nothing below block `bottom`.
+fn put_block(
+    chunks: &mut Vec<([i32; 3], Chunk)>,
+    [cx, cz]: [i32; 2],
+    bottom: i32,
+    [x, y, z]: [i32; 3],
+    block: BlockId,
+) {
+    let side = CHUNK as i32;
+    if y < bottom {
+        return;
+    }
+    let key = [cx, y.div_euclid(side), cz];
+    let at = match chunks.iter().position(|(k, _)| *k == key) {
+        Some(at) => at,
+        None => {
+            chunks.push((key, Chunk::filled(AIR)));
+            chunks.len() - 1
+        }
+    };
+    let (lx, ly, lz) = ((x - cx * side) as u32, y.rem_euclid(side) as u32, (z - cz * side) as u32);
+    chunks[at].1.set(lx, ly, lz, block);
+}
+
+/// The roads of `town`, a town `structure` builds, that may cross the box
+/// from `low` to `high`, in metres in the generator's world: each a road's
+/// steps (see `Town::road_between`). Towns join the towns in the cells next
+/// to theirs along x, along z and one way corner to corner, each pair by its own
+/// chance of `link`, decided from the pair's cells alone, so every chunk
+/// agrees which roads there are.
+fn roads_near(
+    structure: &PlacedStructure,
+    town: &Town,
+    seed: u32,
+    (low, high): ([f32; 2], [f32; 2]),
+    ground: &Ground,
+    fits: &dyn Fn(&PlacedStructure, &Site) -> bool,
+) -> Vec<Vec<[f32; 2]>> {
+    let size = ground.size;
+    let spacing = structure.placement.spacing.max(1.0);
+    // Towns as far off as a road between two cells' towns could bend through here.
+    let reach = spacing * 2.6;
+    let towns: Vec<Site> = structure
+        .placement
+        .tries_near(seed, low, high, reach)
+        .into_iter()
+        .filter(|site| fits(structure, site))
+        .collect();
+    let block = |site: &Site| [0, 1].map(|axis| ((site.at[axis] - ground.position[axis]) / size).floor() as i32);
+    let mut roads = Vec::new();
+    for a in &towns {
+        // One way corner to corner alone, so no two roads cross in an X between four towns.
+        for step in [[1, 0], [0, 1], [1, 1]] {
+            let cell = [a.cell[0] + step[0], a.cell[1] + step[1]];
+            let Some(b) = towns.iter().find(|b| b.cell == cell) else { continue };
+            let pair = a.cell[0].wrapping_mul(73_856_093)
+                ^ a.cell[1].wrapping_mul(19_349_663)
+                ^ cell[0].wrapping_mul(83_492_791)
+                ^ cell[1].wrapping_mul(50_331_653);
+            let pair = Draws(seed ^ structure.placement.salt ^ pair as u32).next();
+            if unit_of(pair) >= town.link.clamp(0.0, 1.0) {
+                continue;
+            }
+            // Only those whose way could cross the box are worked out: within half their length of the line.
+            let (from, to) = (block(a), block(b));
+            let length = (((to[0] - from[0]).pow(2) + (to[1] - from[1]).pow(2)) as f32).sqrt();
+            let margin = (length * 0.5 + town.road_width as f32) * size;
+            let box_low = [a.at[0].min(b.at[0]) - margin, a.at[1].min(b.at[1]) - margin];
+            let box_high = [a.at[0].max(b.at[0]) + margin, a.at[1].max(b.at[1]) + margin];
+            if box_high[0] < low[0] || box_low[0] > high[0] || box_high[1] < low[1] || box_low[1] > high[1] {
+                continue;
+            }
+            roads.push(town.road_between(pair, from, to, ground));
+        }
+    }
+    roads
 }
 
 /// What a kept site takes up along the ground: a round footprint, or the
@@ -1051,6 +1235,10 @@ mod tests {
             path_width: 3,
             wander: 0.5,
             branching: 0.6,
+            road: AIR,
+            road_width: 3,
+            bridge: AIR,
+            link: 0.8,
         }
     }
 
@@ -1151,5 +1339,66 @@ mod tests {
             assert_eq!(count(&again, 12), count(&columns[i], 12), "column {i} made again");
             assert_eq!(count(&again, 11), count(&columns[i], 11));
         }
+    }
+
+    #[test]
+    fn roads_join_neighbouring_towns_over_the_ground_the_same_from_every_chunk_they_cross() {
+        let world = Preset::RollingHills.world();
+        let ground = Ground { world: &world, size: 1.0, position: [0.0, 0.0] };
+        let town = Town { road: 13, bridge: 14, ..village() };
+        let structure = PlacedStructure {
+            placement: Placement {
+                spacing: 260.0,
+                separation: 120.0,
+                chance: 1.0,
+                slope: 30.0,
+                ..Placement::default()
+            },
+            ground: GroundFit::Leave,
+            sink: 0,
+            blocks: StructureBlocks::Town(town.clone()),
+            biomes: Vec::new(),
+        };
+        let fits = |_: &PlacedStructure, _: &Site| true;
+        // Every road through a 2 km square, asked for at once and a 64 m box at a time.
+        let all = roads_near(&structure, &town, 4, ([-1000.0; 2], [1000.0; 2]), &ground, &fits);
+        assert!(all.len() >= 30, "{} roads", all.len());
+        for road in &all {
+            // Steps two blocks apart, each its road's own, ending near the next town.
+            for pair in road.windows(2) {
+                let apart = ((pair[0][0] - pair[1][0]).powi(2) + (pair[0][1] - pair[1][1]).powi(2)).sqrt();
+                assert!(apart < 2.5, "a step of {apart}");
+            }
+        }
+        for z in -3..3 {
+            for x in -3..3 {
+                let (low, high) = ([x as f32 * 64.0, z as f32 * 64.0], [(x + 1) as f32 * 64.0, (z + 1) as f32 * 64.0]);
+                for road in roads_near(&structure, &town, 4, (low, high), &ground, &fits) {
+                    assert!(all.contains(&road), "a road from one box is the same road from all of them");
+                }
+            }
+        }
+        // Each road ends at a town: within its gap of a site of the placement.
+        let sites = structure.placement.tries_near(4, [-3000.0; 2], [3000.0; 2], 0.0);
+        for road in &all {
+            let last = road.last().unwrap();
+            let near = sites.iter().any(|site| {
+                ((site.at[0] - last[0]).powi(2) + (site.at[1] - last[1]).powi(2)).sqrt() <= town.radius[0] * 0.5 + 2.5
+            });
+            assert!(near, "a road ending at {last:?}, nowhere near a town");
+        }
+        // Roads keep to the gentler ground: on these hills, most steps climb no more than a block.
+        let steps: Vec<f32> = all
+            .iter()
+            .flat_map(|road| {
+                road.windows(2).map(|pair| {
+                    (ground.top(pair[0][0].round() as i32, pair[0][1].round() as i32)
+                        - ground.top(pair[1][0].round() as i32, pair[1][1].round() as i32))
+                    .abs() as f32
+                })
+            })
+            .collect();
+        let gentle = steps.iter().filter(|&&climb| climb <= 1.0).count();
+        assert!(gentle * 100 >= steps.len() * 95, "{gentle} of {} steps climb a block or less", steps.len());
     }
 }

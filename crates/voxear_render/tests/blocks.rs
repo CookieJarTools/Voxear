@@ -1170,6 +1170,10 @@ fn a_generated_world_builds_a_village_of_houses_round_a_well_with_paths_from_the
         path_width: 3,
         wander: 0.5,
         branching: 0.6,
+        road: 0,
+        road_width: 3,
+        bridge: 0,
+        link: 0.0,
     };
     let land = |spacing: f32, separation: f32, chance: f32, slope: f32, salt: u32| Placement {
         spacing,
@@ -1270,4 +1274,139 @@ fn a_generated_world_builds_a_village_of_houses_round_a_well_with_paths_from_the
         }
     }
     assert!(red > 1500, "{red} pixels of roof");
+}
+
+#[test]
+fn towns_are_joined_by_roads_that_follow_the_ground_and_cross_water_on_bridges() {
+    use voxear_terrain::{
+        blocks::{
+            file::{BlockKind, Ground},
+            generate::BlockGenerate,
+            structure::{GroundFit, PlacedStructure, StructureBlocks, Town, TownPiece, WorldStructures},
+        },
+        generate::{Preset, structures::Placement},
+    };
+    let Some(mut renderer) = renderer() else { return };
+    let world = Preset::RollingHills.world();
+    let mut file = BlockFile {
+        block_size: 2.0,
+        ground: Ground { size: [400, 400], ..Ground::default() },
+        generate: Some(BlockGenerate { caves: 0.0, bottom: -20, ..BlockGenerate::default() }),
+        ..BlockFile::default()
+    };
+    let first = file.blocks.len() as u16 + 1;
+    for (name, colour) in [
+        ("Planks", [0.74, 0.56, 0.35]),
+        ("Roof", [0.62, 0.22, 0.16]),
+        ("Gravel", [0.66, 0.62, 0.54]),
+        ("Road", [0.45, 0.36, 0.26]),
+        ("Water", [0.12, 0.32, 0.55]),
+    ] {
+        file.blocks.push(BlockKind { water: name == "Water", ..BlockKind::colored(name, colour) });
+    }
+    let [planks, roof, gravel, road, water] = std::array::from_fn(|i| first + i as u16);
+    file.generate.as_mut().unwrap().sea = water;
+    // Small houses of planks under a roof, 4 by 4 blocks of 2 m.
+    let mut house = vec![0u16; 4 * 4 * 4];
+    for y in 0..4 {
+        for z in 0..4 {
+            for x in 0..4 {
+                let edge = x == 0 || z == 0 || x == 3 || z == 3;
+                house[(y * 4 + z) * 4 + x] = match y {
+                    0 => planks,
+                    1 | 2 if edge && !(z == 0 && x == 2 && y == 1) => planks,
+                    3 => roof,
+                    _ => 0,
+                };
+            }
+        }
+    }
+    let piece = TownPiece { size: [4, 4, 4], blocks: house, ground: GroundFit::Flatten, sink: 0 };
+    let town = Town {
+        middle: Some(TownPiece { size: [3, 1, 3], blocks: vec![gravel; 9], ground: GroundFit::Flatten, sink: 0 }),
+        houses: vec![(piece, 1.0)],
+        count: [6, 10],
+        radius: [14.0, 24.0],
+        path: gravel,
+        path_width: 2,
+        wander: 0.5,
+        branching: 0.5,
+        road,
+        road_width: 2,
+        bridge: planks,
+        link: 1.0,
+    };
+    let placement = Placement {
+        spacing: 300.0,
+        separation: 120.0,
+        chance: 1.0,
+        slope: 25.0,
+        height: Some([2.0, 400.0]),
+        ..Placement::default()
+    };
+    // An 800 m square with at least four towns' sites on land in it, looked for a kilometre at a time.
+    let on_land = |corner: [f32; 2]| {
+        placement
+            .tries_near(world.seed(), [corner[0] + 60.0, corner[1] + 60.0], [corner[0] + 740.0, corner[1] + 740.0], 0.0)
+            .iter()
+            .filter(|site| world.height_at(site.at[0], site.at[1]) > world.sea_level() + 2.0)
+            .count()
+    };
+    let corner = (0..400)
+        .map(|i| [(i % 20) as f32 * 1000.0 - 10_000.0, (i / 20) as f32 * 1000.0 - 10_000.0])
+        .find(|&corner| on_land(corner) >= 4)
+        .expect("four towns' sites on land within 10 km");
+    file.generate.as_mut().unwrap().position = corner;
+    let list = vec![PlacedStructure {
+        placement,
+        ground: GroundFit::Leave,
+        sink: 0,
+        blocks: StructureBlocks::Town(town),
+        biomes: Vec::new(),
+    }];
+    file.generate.as_mut().unwrap().built = Some(Arc::new(WorldStructures { list }));
+    let (looks, faces) = file.faces();
+    let surfaces: Vec<SurfaceLook> = looks
+        .iter()
+        .map(|look| {
+            let [r, g, b] = look.color;
+            let material =
+                renderer.add_material(&MaterialDesc { base_color: [r, g, b, 1.0], ..MaterialDesc::default() });
+            SurfaceLook {
+                material: material.unwrap(),
+                size: 1.0,
+                sharpness: 0.0,
+                triplanar: true,
+                tracks: 0.0,
+                fills_in: 0.0,
+                liquid: Default::default(),
+                glitter: false,
+            }
+        })
+        .collect();
+    let default = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let made = BlockWorld::made(file.make_ground(Some(&world)), &faces, 2.0, false);
+    let mut roads = 0;
+    for z in 0..400 {
+        for x in 0..400 {
+            for y in -20..200 {
+                roads += usize::from(made.blocks.get([x, y, z]) == road);
+            }
+        }
+    }
+    assert!(roads > 300, "{roads} blocks of road");
+    let mut scene = World::new();
+    let look = BlockLook { material: default, surfaces: Arc::from(surfaces) };
+    scene.spawn((made, look, Transform::default()));
+    // From high over the middle of the 800 m square, looking down at it; cameras look along +z.
+    let turn = Quat::from_rotation_y(0.0) * Quat::from_rotation_x(1.2);
+    scene.spawn((Camera::default(), Transform::new(Vec3::new(400.0, 520.0, 160.0), turn, Vec3::ONE)));
+    let towards_sun = Vec3::new(-0.4, 0.8, -0.4).normalize();
+    let sun = Quat::from_rotation_arc(Vec3::Z, -towards_sun);
+    scene.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    scene.insert_resource(Sky { ambient: 0.4, ..Sky::default() });
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
+    scene.insert_resource(PostProcess { anti_aliasing, ..PostProcess::neutral() });
+    let pixels = render(&mut renderer, &scene, 200);
+    keep_image("blocks roads.png", &pixels);
 }

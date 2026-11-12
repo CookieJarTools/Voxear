@@ -1254,6 +1254,7 @@ fn assets(path: &Path) -> Result<()> {
             AssetKind::Shader => "shader",
             AssetKind::MotionSet => "motion set",
             AssetKind::GunHandling => "gun handling",
+            AssetKind::Particles => "particles",
             AssetKind::Data => "data",
             AssetKind::Terrain => "terrain",
             AssetKind::PromptIcons => "prompts",

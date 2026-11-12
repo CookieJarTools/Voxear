@@ -985,6 +985,11 @@ struct ParticleSystem
     float3 shift;
     // How much Force Fields, blasts and what passes by move its particles.
     float forces;
+    // The texture its particles are drawn with, or NO_TEXTURE for the round Dot; how many pictures it holds across
+    // and down; and how much longer each is drawn along its way, in metres for each metre a second.
+    uint texture;
+    uint2 tiles;
+    float stretch;
 };
 
 // A simulated particle, kept from frame to frame (GpuParticle in src/gpu.rs): where it is and how fast it goes, in

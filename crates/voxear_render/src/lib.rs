@@ -40,6 +40,7 @@ mod meshlets;
 mod model_lods;
 mod model_renderer;
 mod impostors;
+mod effects;
 mod forces;
 mod particle_sim;
 mod particles;
@@ -125,6 +126,9 @@ pub use assets::Glow;
 pub use impostors::Impostor;
 pub use model_renderer::{ModelPart, ModelRenderer};
 pub use seasons::{Leaves, Season, SeasonLook, Seasons};
+pub use effects::{
+    BuiltinTexture, EffectRef, Emitter, MAX_EMITTERS, ends_after as particles_end_after, ParticleEffect, ParticleEffects, ParticlePictures, ParticleTexture, Starter,
+};
 pub use forces::{BLAST_TIME, Blast, ForceField, ForceKind, MAX_FORCES, ParticleBlasts};
 pub use particle_sim::{DEFAULT_PARTICLE_BUDGET, MAX_PARTICLE_BUDGET, ParticleBudget, ParticleCounts};
 pub use particles::{EmitShape, ParticleBlend, ParticleCollision, ParticlePlayback, ParticleSpace, ParticleSystem};
@@ -2360,8 +2364,18 @@ impl View {
         buffers.instances.write(0, &extracted.instances[..instance_count]);
         buffers.lights.write(0, &extracted.lights[..light_count]);
         let camera = voxear_core::math::Vec3::from(extracted.frame.camera_position);
+        // The texture each system draws with: a built-in one of the renderer's, or a picture the engine has loaded.
+        let pictures = world.resource::<ParticlePictures>();
+        let particle_texture = |texture: ParticleTexture| match texture {
+            ParticleTexture::Builtin(builtin) => {
+                let slot = BuiltinTexture::PICTURES.iter().position(|picture| *picture == builtin)?;
+                Some(assets.particle_textures[slot].0)
+            }
+            ParticleTexture::Asset(guid) => pictures.and_then(|pictures| pictures.0.get(&guid)).map(|id| id.0),
+        };
+        let drawing = (&*setup.simulated.0, &particle_texture as particles::Textures<'_>);
         let (particle_systems, particles, spray, rapids) =
-            particles::gather(world, camera, setup.time, &extracted.water_bodies, &setup.simulated.0);
+            particles::gather(world, camera, setup.time, &extracted.water_bodies, drawing);
         buffers.particle_systems.write(0, &particle_systems);
         let (smokes, smoke_cells, smoke_holes) = smoke::gather(world, camera, setup.time);
         buffers.smokes.write(0, &smokes);

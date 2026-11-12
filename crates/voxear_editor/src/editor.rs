@@ -34,6 +34,7 @@ mod model_materials;
 mod model_parts;
 mod modules;
 mod multiplayer;
+mod particle_effects;
 mod path_bakes;
 mod placing;
 mod play;
@@ -957,6 +958,7 @@ impl Editor {
         }
         self.update_drawer();
         self.update_modules();
+        self.replay_selected_effect();
         self.update_lighting(renderer);
         self.update_side_bar();
         self.update_prefab_mode(renderer);
@@ -1181,6 +1183,7 @@ impl Editor {
             ProjectEvent::Move { path, folder } => self.move_in_project(&path, &folder, renderer),
             ProjectEvent::Import { folder } => self.choose_imports(folder),
             ProjectEvent::NewShader { folder, anchor } => self.browse_shader_starts(folder, anchor),
+            ProjectEvent::NewEffect { folder, anchor } => self.browse_effect_starters(folder, anchor),
             ProjectEvent::NewDataAsset { folder, anchor } => self.browse_definitions(folder, anchor),
             ProjectEvent::WantsParts(path) => {
                 let parts = objs::model_parts(&mut self.game, renderer, &path);
@@ -2598,6 +2601,7 @@ impl Editor {
                     self.pick_shader_picture(&material, &property, &pick, renderer);
                 }
                 (PickFor::NewShader { folder }, Chosen::Shader(start)) => self.make_shader(&folder, start, renderer),
+                (PickFor::NewEffect { folder }, Chosen::Effect(starter)) => self.make_effect(&folder, starter, renderer),
                 (PickFor::NewDataAsset { folder }, Chosen::Definition(definition)) => {
                     self.make_data_asset(&folder, &definition, renderer);
                 }

@@ -589,6 +589,7 @@ pub fn asset_choices(game: &Game, types: &ScriptTypes, kind: &FieldKind) -> Vec<
         Some("MotionAction") => return set_parts(game, ACTION_PART),
         Some("MotionMark") => return set_parts(game, MARK_PART),
         Some("GunHandling") => Some(AssetKind::GunHandling),
+        Some("ParticleEffect") => Some(AssetKind::Particles),
         Some("GunHandlingAction") => return handling_actions(game),
         _ => None,
     };

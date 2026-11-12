@@ -261,6 +261,8 @@ impl Editor {
             changed.iter().filter(|path| path.ends_with(".prefab")).map(|path| path.to_string()).collect();
         let blocks: Vec<String> =
             changed.iter().filter(|path| path.ends_with(".block")).map(|path| path.to_string()).collect();
+        let effects: Vec<String> =
+            changed.iter().filter(|path| path.ends_with(".particles")).map(|path| path.to_string()).collect();
         // A material may pick a built-in shader no other did, which is compiled in then.
         let shaders = changed.iter().any(|path| path.ends_with(".shader") || path.ends_with(".material"));
         if came_or_went {
@@ -291,6 +293,12 @@ impl Editor {
                 {
                     crate::terrain_props::regenerate(&mut self.game, guid);
                     crate::block_props::regenerate(&mut self.game, guid);
+                }
+            }
+            // A particle effect edited outside the editor is read again, and the systems playing it take it up.
+            for path in &effects {
+                if let Some(guid) = self.game.content.db().guid_of(path) {
+                    self.game.content.forget_particle_effect(guid);
                 }
             }
             // A prefab edited outside the editor is read again when next used, and a cave room's by the

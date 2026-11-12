@@ -18,6 +18,8 @@ static const uint PARTICLES_WORLD = 16;
 static const uint PARTICLES_FRESH = 32;
 // Its particles meet what the main view sees, by its depth.
 static const uint PARTICLES_COLLIDE = 64;
+// Each particle plays through its texture's pictures over its life, rather than keeping one of them.
+static const uint PARTICLES_ANIMATE = 128;
 
 // Its shapes, as particles::EmitShape.
 static const uint EMIT_POINT = 0;

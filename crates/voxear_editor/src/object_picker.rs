@@ -70,6 +70,8 @@ pub enum Chosen {
     Icon(Option<&'static str>),
     /// What a new shader starts as.
     Shader(crate::project_files::ShaderStart),
+    /// The starter a new particle effect is a copy of.
+    Effect(voxear_render::Starter),
     /// The Definition a new data asset holds, by its full name.
     Definition(String),
     /// A node to add to the graph in the Generator panel, by its place among
@@ -104,6 +106,8 @@ pub enum PickFor {
     ShaderPicture { material: String, property: String },
     /// What a new shader in this folder starts as.
     NewShader { folder: String },
+    /// The starter a new particle effect in this folder is a copy of.
+    NewEffect { folder: String },
     /// The Definition a new data asset in this folder holds.
     NewDataAsset { folder: String },
     /// The control of the binding picked in the Input Actions window.
@@ -467,6 +471,11 @@ pub fn decorate(game: &Game, choices: Vec<(String, Pick)>) -> Vec<Choice> {
                 Pick::Asset(Some(reference)) if BuiltinShader::from_reference(reference).is_some() => {
                     ("shader", "Built in".into())
                 }
+                // A starter effect or a built-in particle texture: not something to draw a preview of.
+                Pick::Asset(Some(reference)) if builtin_particles(reference) => {
+                    let texture = voxear_render::BuiltinTexture::from_reference(reference).is_some();
+                    (if texture { "texture" } else { "particles" }, "Built in".into())
+                }
                 Pick::Asset(Some(reference)) if reference.starts_with("builtin:") => ("cube", "Built in".into()),
                 // A clip, beside the model file it is in.
                 Pick::Asset(Some(reference)) if reference.contains("#clip:") => {
@@ -487,6 +496,7 @@ pub fn decorate(game: &Game, choices: Vec<(String, Pick)>) -> Vec<Choice> {
             let preview = match &pick {
                 Pick::Asset(Some(reference)) if builtin_material(reference) => None,
                 Pick::Asset(Some(reference)) if BuiltinShader::from_reference(reference).is_some() => None,
+                Pick::Asset(Some(reference)) if builtin_particles(reference) => None,
                 Pick::Asset(Some(reference)) if reference.starts_with("builtin:") => Some(reference.clone()),
                 Pick::Asset(Some(path)) => {
                     let db = game.content.db();
@@ -498,6 +508,12 @@ pub fn decorate(game: &Game, choices: Vec<(String, Pick)>) -> Vec<Choice> {
             Choice { label, detail, icon, pick: Chosen::Value(pick), preview, folder: String::new() }
         })
         .collect()
+}
+
+/// Whether `reference` names a starter particle effect or a built-in particle texture.
+fn builtin_particles(reference: &str) -> bool {
+    voxear_render::Starter::from_reference(reference).is_some()
+        || voxear_render::BuiltinTexture::from_reference(reference).is_some()
 }
 
 /// An input action's controls, as its prompt names them on each device.
@@ -539,6 +555,7 @@ fn asset(game: &Game, path: &str) -> (&'static str, String) {
         Some(AssetKind::Shader) => "shader",
         Some(AssetKind::MotionSet) => "play",
         Some(AssetKind::GunHandling) => "crosshair",
+        Some(AssetKind::Particles) => "particles",
         Some(AssetKind::PromptIcons) => "gamepad",
         Some(AssetKind::Terrain) => "mountain",
         Some(AssetKind::WorldGen) => "sprout",

@@ -86,6 +86,9 @@ pub enum AssetKind {
     /// A `.vox` file: a model of small coloured blocks, as voxel sculpting
     /// tools save it, which a Block World's Model brush builds.
     VoxModel,
+    /// A `.particles` file: a particle effect of several emitters, which a
+    /// Particle System plays in place of its own settings.
+    Particles,
 }
 
 impl AssetKind {
@@ -116,6 +119,7 @@ impl AssetKind {
             "blockworld" => Self::BlockWorld,
             "block" => Self::Block,
             "vox" => Self::VoxModel,
+            "particles" => Self::Particles,
             _ => return None,
         })
     }

@@ -408,15 +408,30 @@ fn add_surface(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, name
 
 /// Holds the left button over `point` in the Scene view for a few frames.
 fn stroke(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, point: [f32; 2], shift: bool) {
+    stroke_held(editor, renderer, point, shift, std::time::Duration::ZERO);
+}
+
+/// As [`stroke`], held down for `at_least` that long however quickly frames come: a brush that lays its paint by how
+/// long it is held lays as much on a fast machine as on a slow one.
+fn stroke_held(
+    editor: &mut voxear_editor::Editor,
+    renderer: &mut Renderer,
+    point: [f32; 2],
+    shift: bool,
+    at_least: std::time::Duration,
+) {
     pointer_to(editor, point);
     frame(editor, renderer);
     if shift {
         shift_key(editor, true);
     }
     left_button(editor, true);
-    for _ in 0..6 {
+    let start = std::time::Instant::now();
+    let mut frames = 0;
+    while frames < 6 || start.elapsed() < at_least {
         frame(editor, renderer);
         std::thread::sleep(std::time::Duration::from_millis(20));
+        frames += 1;
     }
     left_button(editor, false);
     if shift {
@@ -466,7 +481,8 @@ fn surfaces_are_added_painted_and_holes_cut_in_the_scene_view_each_a_step_to_und
         terrain.weights.as_ref().expect("shares").surface_at(terrain.heights.spacing(), local.0, local.1)
     };
     assert_eq!(surface(&editor), 0, "mud before painting");
-    stroke(&mut editor, &mut renderer, point, false);
+    // Held long enough to lay more snow than there is mud, however quickly frames come.
+    stroke_held(&mut editor, &mut renderer, point, false, std::time::Duration::from_millis(300));
     shot(&mut renderer, "terrain-paint.png");
     assert_eq!(surface(&editor), 1, "snow painted");
     editor.undo(&mut renderer);

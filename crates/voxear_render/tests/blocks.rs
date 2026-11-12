@@ -784,3 +784,131 @@ fn mountains_stand_on_the_horizon_sixteen_kilometres_off_with_no_gaps_where_the_
     let (high, low) = (tops.iter().min().copied().unwrap_or(0), tops.iter().max().copied().unwrap_or(0));
     assert!(tops.len() == WIDTH as usize && low - high > 10, "a horizon of peaks, from row {high} to {low}");
 }
+
+#[test]
+fn a_generated_worlds_biomes_show_as_different_country_snow_forest_grass_desert_rock_and_shore() {
+    use voxear_terrain::{
+        blocks::{
+            file::{BlockKind, Ground},
+            generate::BlockGenerate,
+        },
+        generate::{BiomeBlocks, BiomeDef, Biomes, Preset, WorldBiomes},
+    };
+    let Some(mut renderer) = renderer() else { return };
+    // Mountains 2 km across in blocks 8 m a side, their climate changing over 700 m so several biomes lie in view,
+    // and tall enough to be cold on top.
+    let mut land = Preset::Alpine.landmass();
+    land.climate.size = 700.0;
+    land.climate.temperature = 14.0;
+    land.climate.temperature_range = 16.0;
+    land.climate.humidity_range = 0.45;
+    land.height = 320.0;
+    let world = voxear_terrain::generate::WorldGen::from(land);
+    // Where the generator has land with a coast: the first stretch found, looked for a kilometre at a time, that
+    // is mostly over the sea with some of it under.
+    let over_sea = |corner: [f32; 2]| {
+        let high = |i: usize| world.height_at(corner[0] + (i % 5) as f32 * 500.0, corner[1] + (i / 5) as f32 * 500.0);
+        (0..25).filter(|&i| high(i) > world.sea_level() + 10.0).count()
+    };
+    let position = (0..1600)
+        .map(|i| [(i % 40) as f32 * 1000.0 - 20_000.0, (i / 40) as f32 * 1000.0 - 20_000.0])
+        .find(|&corner| (17..24).contains(&over_sea(corner)))
+        .expect("land with a coast somewhere within 20 km");
+    let generate = BlockGenerate { caves: 0.0, bottom: -48, position, ..BlockGenerate::default() };
+    let mut file = BlockFile {
+        block_size: 8.0,
+        ground: Ground { size: [256, 256], ..Ground::default() },
+        generate: Some(generate),
+        ..BlockFile::default()
+    };
+    // A sea to its generator's sea level.
+    file.blocks.push(BlockKind { water: true, ..BlockKind::colored("Water", [0.05, 0.3, 0.45]) });
+    file.generate.as_mut().unwrap().sea = file.blocks.len() as u16;
+    // The world's own three blocks, then each biome's.
+    let colours: [(&str, [f32; 3]); 8] = [
+        ("Snow", [0.93, 0.95, 0.97]),
+        ("Tundra", [0.52, 0.55, 0.42]),
+        ("Needles", [0.13, 0.3, 0.17]),
+        ("Grass", [0.36, 0.6, 0.22]),
+        ("Sand", [0.9, 0.82, 0.55]),
+        ("Dry Grass", [0.72, 0.66, 0.3]),
+        ("Rock", [0.42, 0.4, 0.4]),
+        ("Jungle", [0.1, 0.42, 0.12]),
+    ];
+    let first = file.blocks.len() as u16 + 1;
+    for (name, colour) in colours {
+        file.blocks.push(BlockKind::colored(name, colour));
+    }
+    let [snow, tundra, needles, grass, sand, dry, rock, jungle] = std::array::from_fn(|i| first + i as u16);
+    let biome = |temperature: [f32; 2], humidity: [f32; 2]| BiomeDef { temperature, humidity, ..BiomeDef::default() };
+    let of = |top: u16| BiomeBlocks {
+        top,
+        steep: rock,
+        steep_slope: 0.9,
+        shore: sand,
+        shore_height: 6.0,
+        ..BiomeBlocks::default()
+    };
+    let list = vec![
+        (biome([-60.0, -2.0], [0.0, 1.0]), BiomeBlocks { shore: 0, ..of(snow) }),
+        (biome([-2.0, 5.0], [0.0, 1.0]), of(tundra)),
+        (biome([5.0, 12.0], [0.45, 1.0]), of(needles)),
+        (biome([5.0, 22.0], [0.0, 0.55]), of(grass)),
+        (biome([22.0, 60.0], [0.0, 0.3]), of(sand)),
+        (biome([22.0, 60.0], [0.3, 0.6]), of(dry)),
+        (biome([12.0, 60.0], [0.6, 1.0]), of(jungle)),
+    ];
+    let (defs, blocks): (Vec<_>, Vec<_>) = list.into_iter().unzip();
+    let placed = WorldBiomes { biomes: Biomes::new(defs, 16.0, 0.45, world.seed()), blocks };
+    file.generate.as_mut().unwrap().placed = Some(Arc::new(placed));
+    let (looks, faces) = file.faces();
+    let surfaces: Vec<SurfaceLook> = looks
+        .iter()
+        .map(|look| {
+            let [r, g, b] = look.color;
+            let material =
+                renderer.add_material(&MaterialDesc { base_color: [r, g, b, 1.0], ..MaterialDesc::default() });
+            SurfaceLook {
+                material: material.unwrap(),
+                size: 1.0,
+                sharpness: 0.0,
+                triplanar: true,
+                tracks: 0.0,
+                fills_in: 0.0,
+                liquid: Default::default(),
+                glitter: false,
+            }
+        })
+        .collect();
+    let default = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let mut scene = World::new();
+    let look = BlockLook { material: default, surfaces: Arc::from(surfaces) };
+    let made = BlockWorld::made(file.make_ground(Some(&world)), &faces, 8.0, false);
+    assert!(made.meshes.len() > 40, "{} chunks drawn", made.meshes.len());
+    scene.spawn((made, look, Transform::default()));
+    // From high over one corner, looking across it and down.
+    let turn = Quat::from_rotation_y(0.785) * Quat::from_rotation_x(0.62);
+    scene.spawn((Camera::default(), Transform::new(Vec3::new(150.0, 950.0, 150.0), turn, Vec3::ONE)));
+    let towards_sun = Vec3::new(0.4, 0.8, 0.3).normalize();
+    let sun = Quat::from_rotation_arc(Vec3::Z, -towards_sun);
+    scene.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    scene.insert_resource(Sky { ambient: 0.35, ..Sky::default() });
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
+    scene.insert_resource(PostProcess { anti_aliasing, ..PostProcess::neutral() });
+    // A world this large comes to the GPU over many frames.
+    let pixels = render(&mut renderer, &scene, 120);
+    keep_image("blocks biomes.png", &pixels);
+    // Country of at least four kinds in view: pixels nearest each biome's colour, by which channel leads.
+    let (mut white, mut green, mut sandy, mut grey) = (0, 0, 0, 0);
+    for y in 0..HEIGHT {
+        for x in 0..WIDTH {
+            let [r, g, b] = rgb_at(&pixels, x, y);
+            white += u32::from(r > 170 && g > 170 && b > 170);
+            green += u32::from(g > r + 20 && g > b + 20);
+            sandy += u32::from(r > b + 40 && g > b + 25 && r >= g);
+            grey += u32::from((r - g).abs() < 12 && (g - b).abs() < 12 && r > 50 && r < 150);
+        }
+    }
+    let kinds = [white, green, sandy, grey].iter().filter(|&&count| count > 300).count();
+    assert!(kinds >= 3, "snow {white}, green {green}, sand {sandy}, rock {grey}");
+}

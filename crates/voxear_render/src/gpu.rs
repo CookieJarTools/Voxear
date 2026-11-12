@@ -85,6 +85,8 @@ pub const MATERIAL_IMPOSTOR: u32 = 128;
 /// Displaced by its height map: diced finely enough to show it near the
 /// camera (see `dice`).
 pub const MATERIAL_DISPLACED: u32 = 256;
+/// Its base colour's pixels drawn sharp, each a square of one colour.
+pub const MATERIAL_PIXELS: u32 = 512;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
@@ -1038,6 +1040,10 @@ pub struct GpuParticleSystem {
     pub texture: u32,
     pub tiles: [u32; 2],
     pub stretch: f32,
+    /// Lit from six sides, the second of its two maps (its texture is the
+    /// first), or `NO_TEXTURE`.
+    pub light_map: u32,
+    pub _pad_light: [u32; 3],
 }
 
 /// A simulated particle, as `shaders/particle_sim.slang` keeps it from
@@ -1258,7 +1264,7 @@ mod tests {
         assert_eq!(size_of::<GpuUiPanel>(), 48);
         assert_eq!(size_of::<GpuSmoke>(), 80);
         assert_eq!(size_of::<GpuMist>(), 64);
-        assert_eq!(size_of::<GpuParticleSystem>(), 64 + 16 * 9 + 64 * 3 + 128 + 16 + 64 + 16 * 6);
+        assert_eq!(size_of::<GpuParticleSystem>(), 64 + 16 * 9 + 64 * 3 + 128 + 16 + 64 + 16 * 7);
         assert_eq!(size_of::<GpuParticle>(), 36);
         assert_eq!(size_of::<GpuParticleSim>(), 16 + 32 + 16 + 48 * crate::forces::MAX_FORCES);
         assert_eq!(size_of::<GpuDebugLine>(), 48);

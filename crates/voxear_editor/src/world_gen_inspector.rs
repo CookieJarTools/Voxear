@@ -29,7 +29,7 @@
 use std::sync::OnceLock;
 
 use voxear_terrain::generate::{
-    Exposed, NodeId as GraphNode, NodeKind, Preset, Room, Starter, Value, ValueKind, ValueSpec, WorldGen,
+    Exposed, NodeId as GraphNode, NodeKind, Preset, Room, RoomRules, Starter, Value, ValueKind, ValueSpec, WorldGen,
     nodes::{Land, Output, degrees_of, rise_of},
     smooth, starters,
 };
@@ -404,12 +404,18 @@ pub struct RoomChoice {
     pub reference: String,
 }
 
-/// One listed room's row: its prefab, how often it is chosen, and what takes it off the list.
+/// One listed room's row: what it is, how often it is chosen, and what takes it off the list; and
+/// under it, for a room made by rules, a row for each rule.
 struct RoomRow {
     prefab: NodeId,
     weight: NodeId,
     remove: NodeId,
+    rules: Vec<ValueRow>,
 }
+
+/// How many options come before the prefabs where a room's kind is picked: none, and one made by
+/// rules.
+const KINDS: usize = 2;
 
 /// A Cave Network's rooms as rows, the row that adds one, and the prefabs they pick among.
 struct RoomRows {
@@ -423,7 +429,7 @@ impl RoomRows {
         let line = ui.panel(root, Style::default());
         ui.add_class(line, "divider");
         let list = part(ui, root, "Rooms", "box");
-        let mut names: Vec<&str> = vec!["None"];
+        let mut names: Vec<&str> = vec!["None", "Generated"];
         names.extend(choices.iter().map(|choice| choice.path.as_str()));
         let mut rows = Vec::new();
         for room in rooms {
@@ -448,13 +454,22 @@ impl RoomRows {
             ui.set_tooltip(weight, "Weight", Some("How often the room is chosen, beside the others."));
             let remove = ui.icon_button(row, "close");
             ui.add_class(remove, "room-remove");
-            rows.push(RoomRow { prefab, weight, remove });
+            let mut rules = Vec::new();
+            if let Some(made) = &room.rules {
+                let under = ui.panel(list, Style::column());
+                ui.add_class(under, "room-rules");
+                for (at, spec) in RoomRules::VALUES.iter().enumerate() {
+                    let Some(value) = made.value(at) else { continue };
+                    rules.push(ValueRow::new(ui, under, spec.label, *spec, value));
+                }
+            }
+            rows.push(RoomRow { prefab, weight, remove, rules });
         }
         if rooms.is_empty() {
             let hint = ui.add_label(list, "A plain chamber, until a room is added.");
             ui.add_class(hint, "entities-hint");
         }
-        let mut adding: Vec<&str> = vec!["Add Room"];
+        let mut adding: Vec<&str> = vec!["Add Room", "Generated"];
         adding.extend(choices.iter().map(|choice| choice.path.as_str()));
         let add = ui.dropdown(list, &adding, 0);
         ui.add_class(add, "value-choice");
@@ -462,10 +477,15 @@ impl RoomRows {
         Self { rows, add, choices: choices.to_vec() }
     }
 
-    /// Which of a dropdown's options `room`'s prefab is: 0 for none, and none for one not among `choices`.
+    /// Which of a dropdown's options `room` is: 0 for none, 1 for one made by rules, then its prefab among
+    /// `choices`, and none for a prefab not among them.
     fn picked(choices: &[RoomChoice], room: &Room) -> Option<usize> {
+        if room.rules.is_some() {
+            return Some(1);
+        }
         let Some(reference) = room.prefab.as_deref() else { return Some(0) };
-        choices.iter().position(|choice| choice.reference == reference || choice.path == reference).map(|at| at + 1)
+        let found = choices.iter().position(|choice| choice.reference == reference || choice.path == reference);
+        found.map(|at| at + KINDS)
     }
 
     /// The rooms as the user left them this frame, where they changed `rooms`.
@@ -474,7 +494,11 @@ impl RoomRows {
         if ui.changed(self.add) {
             let picked = ui.selected_option(self.add);
             ui.set_selected_option(self.add, 0);
-            let choice = self.choices.get(picked.checked_sub(1)?)?;
+            if picked == 1 {
+                now.push(Room::made(RoomRules::default()));
+                return Some(now);
+            }
+            let choice = self.choices.get(picked.checked_sub(KINDS)?)?;
             now.push(Room { prefab: Some(choice.reference.clone()), ..Room::default() });
             return Some(now);
         }
@@ -485,12 +509,34 @@ impl RoomRows {
             }
             if ui.changed(row.prefab) {
                 let picked = ui.selected_option(row.prefab);
+                if picked == 1 {
+                    now[at] = Room { weight: now[at].weight, ..Room::made(RoomRules::default()) };
+                    return Some(now);
+                }
                 let chosen = |at: usize| self.choices.get(at).map(|choice| choice.reference.clone());
-                let prefab = picked.checked_sub(1).map(chosen);
+                let prefab = picked.checked_sub(KINDS).map(chosen);
                 // The last option of a row whose prefab is missing is that prefab still.
                 let Some(prefab) = prefab.map_or(Some(None), |found| found.map(Some)) else { continue };
                 now[at] = Room { prefab, weight: now[at].weight, ..Room::default() };
                 return Some(now);
+            }
+            // A rule typed or scrubbed.
+            if let Some(mut made) = now[at].rules {
+                let mut set = false;
+                for (rule, shown) in row.rules.iter().enumerate() {
+                    let Some(value) = made.value(rule) else { continue };
+                    match shown.changed(ui, value) {
+                        Some(value) if !set => {
+                            made.set_value(rule, value);
+                            set = true;
+                        }
+                        _ => shown.show(ui, value),
+                    }
+                }
+                if set && Some(made) != now[at].rules {
+                    now[at].rules = Some(made);
+                    return Some(now);
+                }
             }
             if ui.changed(row.weight) {
                 let Ok(weight) = ui.text(row.weight).trim().parse::<f32>() else { continue };
@@ -514,8 +560,8 @@ struct NodeBuilt {
     values: usize,
     wired: Vec<bool>,
     exposed: Vec<usize>,
-    /// The prefabs of the rooms a Cave Network lists.
-    rooms: Option<Vec<Option<String>>>,
+    /// The rooms a Cave Network lists: each one's prefab, and whether it is made by rules.
+    rooms: Option<Vec<(Option<String>, bool)>>,
 }
 
 impl NodeBuilt {
@@ -524,7 +570,8 @@ impl NodeBuilt {
         let kind = &graph.node(node)?.kind;
         let wired = (0..kind.inputs().len()).map(|input| graph.link_into(node, input).is_some()).collect();
         let exposed = graph.exposed.iter().filter(|shown| shown.node == node).map(|shown| shown.value).collect();
-        let rooms = kind.rooms().map(|rooms| rooms.iter().map(|room| room.prefab.clone()).collect());
+        let listed = |room: &Room| (room.prefab.clone(), room.rules.is_some());
+        let rooms = kind.rooms().map(|rooms| rooms.iter().map(listed).collect());
         Some(Self { title: kind.title(), values: kind.values().len(), wired, exposed, rooms })
     }
 }
@@ -738,6 +785,36 @@ mod tests {
     }
 
     #[test]
+    fn a_cave_networks_list_adds_a_room_made_by_rules_and_its_rules_are_rows() {
+        let (mut ui, root) = rows();
+        let prefabs = [RoomChoice { path: "Prefabs/Hall.prefab".into(), reference: "abcd".into() }];
+        let rooms = [Room::made(RoomRules::default())];
+        let hall = [Room { prefab: Some("abcd".into()), ..Room::default() }];
+        // Generated comes before the project's prefabs where a room's kind is picked.
+        assert_eq!((RoomRows::picked(&prefabs, &rooms[0]), RoomRows::picked(&prefabs, &hall[0])), (Some(1), Some(2)));
+        // Listed, a made room says Generated and has a row for each rule; a prefab's has none.
+        let listed = [rooms[0].clone(), hall[0].clone()];
+        let shown = RoomRows::build(&mut ui, root, &listed, &prefabs);
+        assert_eq!(ui.selected_option(shown.rows[0].prefab), 1);
+        assert_eq!(ui.selected_option(shown.rows[1].prefab), 2);
+        assert_eq!((shown.rows[0].rules.len(), shown.rows[1].rules.len()), (RoomRules::VALUES.len(), 0));
+        let labels: Vec<String> = shown.rows[0].rules.iter().map(|row| ui.text(row.label)).collect();
+        assert_eq!(labels[..4], ["Size", "Largest", "Shapes", "Height"]);
+        assert!(shown.changed(&mut ui, &listed).is_none(), "nothing typed yet");
+        // A rule typed changes that room's rules, held to the rule's range.
+        let pillars = RoomRules::VALUES.iter().position(|spec| spec.label == "Pillars").unwrap();
+        type_in(&mut ui, &shown.rows[0].rules[pillars], "40");
+        let typed = shown.changed(&mut ui, &listed).expect("its pillars typed");
+        assert_eq!(typed[0].rules.map(|rules| rules.pillars), Some(12));
+        assert_eq!(typed[1], listed[1]);
+        // A size typed past the largest takes the largest with it.
+        ui.blur();
+        type_in(&mut ui, &shown.rows[0].rules[0], "50");
+        let wider = shown.changed(&mut ui, &listed).expect("its size typed");
+        assert_eq!(wider[0].rules.map(|rules| rules.size), Some([50.0, 50.0]));
+    }
+
+    #[test]
     fn an_angles_row_shows_degrees_and_keeps_the_slopes_rise_over_run() {
         use voxear_terrain::generate::nodes::STEEPEST;
         let (mut ui, rows) = rows();
@@ -803,11 +880,12 @@ mod tests {
 
     #[test]
     fn a_generators_preset_is_picked_among_starters_or_for_a_landmass_among_its_own() {
-        // The starters carry the presets' names, in the presets' order, with the Cave Level after them, and a
-        // new generator is one of them.
+        // The starters carry the presets' names, in the presets' order, with the two of caves after them, and
+        // a new generator is one of them.
         let starters = starter_graphs();
         assert!(starters.iter().zip(Preset::ALL).all(|(s, p)| s.name == p.name()));
-        assert_eq!(starters[Preset::ALL.len()..].iter().map(|s| s.name).collect::<Vec<_>>(), ["Cave Level"]);
+        let caves: Vec<&str> = starters[Preset::ALL.len()..].iter().map(|s| s.name).collect();
+        assert_eq!(caves, ["Caves", "Cave Level"]);
         let new = crate::project_files::new_world();
         assert_eq!(
             (presets_of(&new), new.starter(), new.seed(), new.scale()),

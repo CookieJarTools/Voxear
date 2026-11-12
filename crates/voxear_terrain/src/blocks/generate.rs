@@ -350,7 +350,7 @@ mod tests {
     /// Hills, or level rock, with a network of cave rooms taken out, and a world of metre blocks on it.
     fn networked(layout: crate::generate::nodes::Laid, level: bool, caves: bool) -> (BlockFile, WorldGen) {
         use crate::generate::{
-            Graph, NodeKind,
+            Graph, NodeKind, Room, RoomRules,
             nodes::{CaveNetwork, Combine, Combining, Constant, Noise, Output, Solid},
         };
         let mut graph = Graph::default();
@@ -364,7 +364,9 @@ mod tests {
         let output = graph.add(NodeKind::Output(Output::default()), [0.0, 0.0]);
         assert!(graph.connect(height, 0, solid, Solid::HEIGHT) && graph.connect(height, 0, output, Output::HEIGHT));
         if caves {
-            let network = CaveNetwork { layout, entrances: 0.5, ..CaveNetwork::default() };
+            // Rooms made by rules among a room of set shapes, as a prefab's is.
+            let rooms = vec![Room::made(RoomRules::default()), Room::chamber()];
+            let network = CaveNetwork { layout, entrances: 0.5, rooms, ..CaveNetwork::default() };
             let network = graph.add(NodeKind::CaveNetwork(network), [0.0, 0.0]);
             let take = Combine { operation: Combining::Subtract, ..Combine::default() };
             let take = graph.add(NodeKind::Combine(take), [0.0, 0.0]);
@@ -463,6 +465,55 @@ mod tests {
                 time(&smooth, &without),
                 time(&smooth, &with)
             );
+        }
+    }
+
+    #[test]
+    #[ignore = "a timing, to be read: run it optimised"]
+    fn timing_of_a_chunk_column_of_rooms_made_by_rules_against_rooms_of_set_shapes() {
+        use crate::generate::{NodeKind, Room, RoomRules, nodes::Laid, starters};
+        let time = |file: &BlockFile, world: &WorldGen| {
+            let generate = file.generate.clone().unwrap();
+            let mut least = f32::MAX;
+            for _ in 0..3 {
+                let started = std::time::Instant::now();
+                for at in [[0, 0], [1, 0], [0, 1], [1, 1], [3, 5], [-4, 2], [7, -3], [2, 8]] {
+                    std::hint::black_box(column_chunks(file, &generate, world, 0, at, None));
+                }
+                least = least.min(started.elapsed().as_secs_f32() * 1000.0 / 8.0);
+            }
+            least
+        };
+        let (file, mixed) = networked(Laid::Endless, false, true);
+        // The same hills and network with these rooms listed.
+        let with = |rooms: Vec<Room>| {
+            let mut graph = mixed.graph().clone();
+            for node in &mut graph.nodes {
+                if let NodeKind::CaveNetwork(network) = &mut node.kind {
+                    network.rooms = rooms.clone();
+                }
+            }
+            mixed.with_graph(graph)
+        };
+        let caves = starters().into_iter().find(|starter| starter.name == "Caves").unwrap().world(11, 1.0);
+        let kinds = [
+            ("a room of set shapes", with(vec![Room::chamber()])),
+            ("rooms made by rules", with(vec![Room::made(RoomRules::default())])),
+            ("the Caves starter", caves.clone()),
+            ("the Caves starter's ground and tunnels with a room of set shapes", {
+                let mut graph = caves.graph().clone();
+                for node in &mut graph.nodes {
+                    if let NodeKind::CaveNetwork(network) = &mut node.kind {
+                        network.rooms = vec![Room::chamber()];
+                    }
+                }
+                caves.with_graph(graph)
+            }),
+        ];
+        let smooth = BlockFile { smooth: true, ..file.clone() };
+        for (name, world) in &kinds {
+            let (cubes, smooth) = (time(&file, world), time(&smooth, world));
+            println!("{name}: a chunk column of cubes {cubes:.2} ms, smooth {smooth:.2} ms");
         }
     }
 

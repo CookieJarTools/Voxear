@@ -254,7 +254,8 @@ enum Commands {
         #[arg(long, default_value_t = 30)]
         frames: u32,
         /// An asset to open before a screenshot, as a double click on it in the Project does: a World Generator
-        /// shows its graph, and `Hills.worldgen#Noise` picks its Noise node too.
+        /// shows its graph, and `Hills.worldgen#Noise` picks its Noise node too; a box model shows in the Model
+        /// window, and `Pig.boxmodel#Head` picks its Head bone's first box too.
         #[arg(long, value_name = "ASSET")]
         open: Option<String>,
     },

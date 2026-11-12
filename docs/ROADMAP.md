@@ -1311,6 +1311,94 @@ The sea, lakes, rivers and lava, built in. Manual: `manual/Water`.
 - [x] the First-Person View: the camera in a body that is seen, with kick, glance and framing
 - [ ] blend shapes, state machines, blend trees and layers
 - [ ] GPU crowd search
+- **Box models**, for the blocky characters of block worlds, in parts: the asset; a window to build and paint one
+  in; bones made from its shape; motion made from how it moves; a raised second layer; walking in a block world;
+  clips keyed on a timeline.
+  - ~~**The asset:**~~ done: `.boxmodel` files (`voxear_render::box_model`: `BoxModel`, its `Sheet` of pixels kept in
+    the file as a palette, compressed, and `BoxBone`s each with `ModelBox`es whose faces are unfolded on the sheet or
+    placed one by one, mirrored, inflated, turned, or flat). `prepare_model` reads one into a `PreparedModel` (one
+    skinned mesh, each box bound whole to its bone; the bones its skeleton; the sheet its texture), so it is
+    `AssetKind::Model` and is placed, drawn, posed, previewed, imported again when its file changes and cooked as any
+    model. Sharp pixels: `MaterialDesc::pixels`, `MATERIAL_PIXELS`, `sampleBaseColor`; `COOKED_VERSION` 11. Editor: New
+    Box Model (a grey block on one bone), its kind and a Box Model section in the Inspector (Scale, Sheet, Bones,
+    Boxes), previews showing its face. A model imported again gives the Objs drawing it its bones as they now are
+    (`Game::reimport_model`), and a menu with more items than its window has room for keeps to the window and scrolls
+    (`Ui::place_menu`). Tests: files read back, palettes, refused files, the unfolded layout, faces wound and mapped the
+    right way round, boxes placed by their bones, flat and inflated boxes, the prepared model; the GPU drawing one with
+    each pixel one colour to its edge, from source and cooked, and a box following its posed bone; the engine reading
+    its bones headless, a scene's Obj getting them, and builds cooking it; the editor making one, showing it and
+    following its file to a new bone; a long menu scrolled to its last item. Manual: Box Models.
+  - ~~**The Model window:**~~ done: a `model` dock panel (`model_panel::ModelPanel`), opened by a double click on a
+    `.boxmodel`. A tree of bones with their boxes, to pick from and drag onto one another; the model on a floor of
+    blocks (`model_view::ModelView`), drawn as a preview with a camera of its own (`PreviewCamera`,
+    `PreviewOptions::camera`, up to `MAX_VIEW_SIZE` 1024 pixels) and cut to the view's shape, the camera turned by a
+    drag, moved by the middle button and brought nearer by the wheel; a click picks the box under it by a ray
+    (`BoxModel::pick`), and what is picked is outlined with an arrow an axis and, on a box, a knob a face, which
+    move and size it a whole pixel at a time. The bar adds a bone or a box (given free room on the sheet,
+    `free_place`), duplicates, mirrors across the body (`mirror_bone`, `mirrored_box`), deletes, and with Pivot
+    Only moves a bone's pivot alone (`move_pivot`). The part picked shows in the Inspector
+    (`box_part_inspector::BoxPartView`, `Inspector::show_box_part`). Its own undo and redo while it has the keys,
+    one drag one step; saved on let go, and Objs drawing the model follow (`editor/models.rs`). Tests: rays to
+    box, face and pixel; bones removed, hung elsewhere, copied and mirrored with nothing moving; pivots moved;
+    free room on the sheet; a view preview drawn where its camera projects; the view's rays and handles; the
+    editor opening, picking, dragging a handle, typing a size and a name, adding, mirroring, deleting and undoing,
+    with the file saved once let go. Manual: Box Models.
+  - ~~**Painting:**~~ done: the Model window's Paint mode. A press on the model paints the sheet's pixel the ray
+    meets (`BoxHit::pixel`), a drag every pixel passed over, and Symmetry the pixel across the body too; the pixel
+    under the pointer is outlined on its face (`BoxModel::pixel_corners`). The sheet shows flat beside the model
+    (`model_sheet::SheetView`), each pixel a square over a chequered ground, the faces' places outlined, painted
+    the same way. Pencil, Eraser, Fill (`Sheet::flood`, no further than the face) and Pick; the colour from a
+    picker or from the sheet's own colours (`Sheet::colors`); Lay Out (`BoxModel::lay_out`: every unfolded box
+    given room afresh with its pixels, shared pixels kept shared, placed faces left, the sheet doubling while too
+    small). A stroke is one step to undo; pixels alone changed upload the sheet behind the same material. Tests:
+    fills, a sheet's colours, faces' places, laying out; the editor painting on the model and the sheet, a drag
+    filling a row however fast, symmetry, fill, pick, erase, laying out and undoing each. Manual: Box Models.
+  - ~~**Bones from its shape:**~~ done: `BoxModel::make_bones` (`box_model/rig.rs`) takes the box most others
+    touch for the body, what stands on the ground under or beside it for legs, what hangs tall at its sides for
+    arms and flat for wings, the largest on or before it for the head, what trails it for the tail, and gives the
+    rest to the part nearest; each gets a bone pivoted where it meets the body, named by part and side, with a
+    `BoneRole` (kept in the file) for what animates it to go by. `add_joint` cuts a box across its longest side and
+    hangs the far half from a bone at the cut, each half showing the pixels it showed. Editor: Make Bones and Add
+    Joint in the bar, a bone's Role in the Inspector. Tests: a figure on two legs, a beast on four with head and
+    tail, a blob, wings, a knee and an elbow; the editor making bones, showing a role, cutting a leg and undoing.
+    Manual: Box Models.
+  - ~~**Motion from how it moves:**~~ done: `animation::MobMotion` (`mob_motion.rs`, `[obj.mob_motion]`, Add
+    Component ▸ Animation ▸ Mob Motion) poses a model each frame from how its Obj moved, with no clips. `MobPoser`
+    is the motion alone, from a skeleton, its bones' roles and a `MotionInput`: legs by gait (two in turn, four as
+    diagonal pairs, more as two sets) stepping by ground covered, lower halves bending as they come through, arms
+    against the legs, the body bobbing, leaning and rolling, the head turned to a point within its limit and not
+    at once, a tail sprung by turning, wings lifting, breathing at rest, an attack and a flinch over it all.
+    Roles reach it through the model: `PreparedModel`/`CookedModel`/`ImportedModel::roles` (`COOKED_VERSION` 12),
+    `Content::bone_roles`, `give_mob_bones`. The Model window's Motion mode shows it on the model, posed on the
+    CPU (`BoxModel::mesh_posed`), standing, walking or running. Tests: gaits, knees, steps matching ground
+    covered, look limit and lag, tail, attack and flinch; the engine walking a model from its file and from built
+    content; the editor showing it walk and putting it back. Manual: Mob Motion. Still to come with the block
+    world component: its C# side.
+  - ~~**A raised second layer:**~~ done: `ModelBox::layer` (`BoxLayer { skin, height }`, `[bones.boxes.layer]` in
+    the file), a second place on the sheet whose solid pixels are built standing out from the box's faces
+    (`box_model/layer.rs`): on the box grown by the layer's height, so faces' layers meet at its edges; a row of
+    pixels sharing one top; walls only where a solid pixel has nothing solid beside it, and none under. The mesh
+    carries each layer flat as well, as a second LOD whose error is the layer's height, so far off it is drawn as
+    a picture. Laying out, mirroring and cutting a joint take layers with them; `layer_pixel` gives the layer's
+    pixel over a face's. Editor: Layer and Height on a box in the Inspector, Layer in the paint bar sending
+    strokes to the layer of the box under the pointer, layers' places outlined on the sheet. Tests: a block's
+    bounds, winding and pixels, shared tops and walls, a flat layer, the far level, the file; room for a layer
+    and its pixels over the box's; the editor adding a layer, painting it raised, changing its height and
+    undoing. Manual: Box Models.
+  - ~~**In a block world:**~~ done: `block_mob::BlockMob` (`[obj.block_mob]`, Add Component ▸ Terrain ▸ Block Mob,
+    which adds the Character Controller it walks with) walks its Obj through a world of blocks: to a point, after
+    an Obj, or wandering near where it began (`MobGoal`). Ways are found on the blocks
+    (`voxear_terrain::blocks::path::find_path`: a block at a time, up one, down three, as many clear over the
+    ground as it is tall, water waded a block deep and gone round deeper, a search that gives up after so many
+    places), found afresh every three quarters of a second, and walked with `PhysicsScene::move_character`, its
+    step a block high; it turns to face its way, falls, and swims up in deep water. It runs before animation, so
+    a Mob Motion on the same Obj walks the model. C#: `Obj.BlockMob`/`AddBlockMob` (`MoveTo`, `Follow`, `Wander`,
+    `Stop`, `Arrived`, `Goal`, `Speed`, `TurnSpeed`, `Swims`) and `Obj.MobMotion`/`AddMobMotion` (`LookAt`,
+    `LookAhead`, `Attack`, `Hurt`, `MoveAs`, its amounts); native API 77. Tests: ways over a floor, round a wall,
+    up a step, down a ledge, through a ford; a mob standing on a level's blocks, walking to a point with its legs
+    swinging, climbing a block, going round a wall, wandering within its reach; a script adding and telling
+    both. Manual: Block Mobs, Mob Motion.
+  - [ ] **Clips keyed on a timeline**
 
 ## Gameplay kits: game-ready systems
 
@@ -1451,12 +1539,30 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   pictures the world's systems name for the renderer each frame (`particles::resolve`). An effect that plays
   once plays again while selected in the editor. `samples/Effects` has a row of starters. C# `Stretch`,
   `Delay`. Tests: references, the built-in textures, an effect's file, and each starter drawn on a GPU.
+- **Editing effects, and playback ✅.** A `.particles` asset opens on its own as a prefab does, in place of the
+  level: an Obj an emitter, each with a Particle System (`particles::effect_scene`), so the Hierarchy adds,
+  removes, renames and orders emitters and the Inspector edits them, with undo and copy and paste as anywhere.
+  Save writes the Objs' Particle Systems back as the effect (`scene_effect`, in `Levels::save`), and systems
+  playing it take it up. The bar over the Scene view names the effect, with Back and Close Effect. A playback
+  strip over the Scene view, for a selected Particle System or every emitter of an open effect: pause, Restart,
+  a speed (1×, 0.5×, 0.25×, 0.1×, 2×) and a scrubber; an effect that ends plays again. Particles run on a time
+  of their own for it (`ParticleTime`, `ParticlePreview`), the engine's but for the preview. Tests: the
+  particles' time, an effect to a scene and back, and in the editor an effect opened, played, edited and saved.
+- **Lit smoke and lights from effects ✅.** A lit particle with two maps is lit from six sides: the light from
+  its right, left, top, bottom, front and back is worked out where its quad is placed, the sun's through its
+  shadow and each lamp's from its cluster, and each pixel takes its share of each from the maps
+  (`particleLightSix`). The built-in Puff has maps of its own, made with it as a ball of smoke, so every lit
+  Puff is; a project's picture names its second as its **Light Map**. Animated pictures fade one into the
+  next. A system's **Light** casts a point light in its colour, a stream's flickering and a burst's flashing
+  and fading as its particles die, to its **Light Range**; the 16 nearest shine (`particles::lights`, added
+  beside the lamps). The Fire, Explosion, Muzzle Flash and Magic starters cast one. C# `Light`,
+  `LightRange`. Tests: the maps, a flicker and a flash, and on a GPU a puff lit from either side by a lamp and
+  a floor lit by a system.
 - Particles, still to come, in this order (the design is in [ARCHITECTURE.md](ARCHITECTURE.md#particles)):
   - collision with what is out of view: the ground and colliders, and the scene's rays
-  - editing an effect's emitters in the editor, with play, pause and scrub; sub-emitters and events; values an
-    effect shows on the Particle System that plays it
-  - flipbooks blended by motion vectors, smoke lit from six sides, meshes, trails, sorting, half-size drawing,
-    lights from effects, particles in the fog volume
+  - sub-emitters and events; values an effect shows on the Particle System that plays it
+  - trails, meshes, sorting, half-size drawing, particles in the fog volume, flipbooks blended by motion
+    vectors, and anti-aliasing told about fast particles
   - `Particles.Play(effect, position)`, bursts at a place, picked parameters, hit events, curves from C#
   - the graph compiler shared with Shader Graph, graph mode, custom Slang modules, and each node's cost shown
   - sleeping off screen, level of detail by distance, and the particle debugger
@@ -1732,6 +1838,32 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     against one made among its neighbours; hollows whole across region lines; every room of a level reached from
     the first through the blocks; a prefab read, changed and read again, in the engine and in the editor; a
     script finding rooms, exits and floors. Manual: Caves.
+  - ~~**Caves made by rules:**~~ done: a Cave Network's list holds rooms made by rules beside prefabs, each kind
+    with a weight (`generate/caves/made.rs`, `RoomRules`: Size from and to, Shapes, Height, Roughness, Floor,
+    Pillars, Hanging Rock, Ledges, Exits, Exits Apart). A made room is round shapes that overlap (domes, balls,
+    squashed balls) run together smoothly into one hollow, sized and placed from the room's own seed; a level
+    floor through its lowest third; pillars, hanging rock and ledges put back, none in the way to an exit or
+    between two shapes; exits set at its walls. Its walls come in no further than a margin it works out from its
+    own shapes, and the noise is coarser the rougher the walls, so roughness closes nothing and opens no hollow
+    apart. Tunnels: a width for each between **Tunnel Width** and **Widest**, **Wander**, a **Slope Limit** (one
+    too steep is wound wider, so longer and gentler), **Branches** (dead ends off a tunnel) and **Loops**. An
+    endless network's regions are taken sixteen at a time (`caves/joins.rs`): the largest group of rooms that
+    touch are joined as a tree by numbers from the seed, with some of the joins left over made for loops, and two
+    sixteens join through a pair of facing rooms both pick alike. A level takes made rooms and loops too. Places
+    on a room's walls, floor and roof (`PlacedRoom::walls`, `floors`, `ceilings`; `room.WallPoints`,
+    `FloorPoints`, `CeilingPoints` for scripts), for ore, crystals and plants to come. The Inspector lists a
+    generated room's rules under it, and the Generator panel shows one such room by itself, its roof away, while
+    its Cave Network is picked. A **Caves** preset: hills over halls and chambers without end. Tests: a made
+    room one hollow whatever its seed, its exits open at the roughest; a cell alone against a batch and the
+    same bytes from the file; a chunk alone against one among its neighbours; every room of sixteen regions
+    reached from any other through the blocks, and the next sixteen through their side; a level of made rooms;
+    places on rock. Manual: Caves.
+  - ~~**Caves at several depths:**~~ done: an endless Cave Network has **Layers** of rooms, **Layer Depth**
+    apart, for tall worlds. A region's middle number is its layer; each layer is joined as one network by its own
+    numbers, and ramps join a room to the room beside it one layer down (`Joins::ramps`: one a district of sixteen
+    regions, more with Loops), wound longer under the Slope Limit as any tunnel is. What reaches a region is
+    gathered for every layer at once. Tests: a ramp in every district, both ends agreeing; rooms at each depth;
+    two layers one cave through the blocks; a cell alone against a batch; one layer the bits it was.
 - ~~**Erosion layer:**~~ done: Add Layer ▸ Erosion wears the ground below it on the GPU (`shaders/erosion.slang`,
   `voxear_render::erosion`, `Renderer::erode`), once, in the editor: rain each step, water through pipes to its four
   neighbours sped by the drop and held to what each cell has, its depth and speed, carving where it can carry more

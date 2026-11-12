@@ -215,7 +215,7 @@ impl Editor {
     pub(super) fn open_panel(&mut self, id: &str) {
         match id {
             // Wide windows open over the Scene view.
-            "build" | "input" | "audio" | "localization" | "packages" | "generator" => {
+            "build" | "input" | "audio" | "localization" | "packages" | "generator" | "model" => {
                 self.ui.open_dock_panel_beside(self.nodes.dock, id, "scene")
             }
             // The project's blocks open by its files.

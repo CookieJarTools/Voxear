@@ -95,6 +95,9 @@ pub struct MaterialDesc {
     pub normal_scale: f32,
     pub emissive_texture: Option<TextureId>,
     pub alpha_cutoff: Option<f32>,
+    /// Its base colour's pixels drawn sharp however near, each a square of
+    /// one colour, as a box model's are, rather than smoothed into the next.
+    pub pixels: bool,
     /// How many metres up from where it meets a terrain a model drawn with
     /// it blends into the ground's own look; 0 for not at all.
     pub ground_blend: f32,
@@ -154,6 +157,7 @@ impl Default for MaterialDesc {
             normal_scale: 1.0,
             emissive_texture: None,
             alpha_cutoff: None,
+            pixels: false,
             ground_blend: 0.0,
             foliage: false,
             glass: false,
@@ -315,6 +319,9 @@ pub struct Assets {
     /// The built-in textures particles are drawn with, made once, as
     /// `effects::BuiltinTexture::PICTURES` lists them.
     pub particle_textures: [TextureId; 5],
+    /// The Puff's two maps for being lit from six sides (see
+    /// `effects::BuiltinTexture::light_maps`).
+    pub puff_light_maps: [TextureId; 2],
     /// Plants' impostors, baked and asked for (see `impostors`).
     pub impostors: crate::impostors::ImpostorTable,
     /// Materials drawn as leaves are, so an impostor of a plant is too.
@@ -394,6 +401,7 @@ impl Assets {
             ltc: [TextureId(0); 2],
             smoke_noise: TextureId(0),
             particle_textures: [TextureId(0); 5],
+            puff_light_maps: [TextureId(0); 2],
         };
         let white = TextureSource { name: "white", width: 1, height: 1, rgba: &[255; 4], srgb: false };
         assets.white = assets.add_texture(gpu, bindless, &white)?;
@@ -413,6 +421,12 @@ impl Assets {
             let name = format!("particle {}", texture.name().to_lowercase());
             let source = TextureSource { name: &name, width: side, height: side, rgba: &rgba, srgb: false };
             assets.particle_textures[slot] = assets.add_texture(gpu, bindless, &source)?;
+        }
+        if let Some((side, maps)) = crate::effects::BuiltinTexture::Puff.light_maps() {
+            for (slot, (name, rgba)) in ["particle puff lit a", "particle puff lit b"].into_iter().zip(&maps).enumerate() {
+                let source = TextureSource { name, width: side, height: side, rgba, srgb: false };
+                assets.puff_light_maps[slot] = assets.add_texture(gpu, bindless, &source)?;
+            }
         }
         Ok(assets)
     }
@@ -931,6 +945,7 @@ impl Assets {
             flags: if desc.normal_texture.is_some() { MATERIAL_NORMAL_MAP } else { 0 }
                 | if desc.foliage { MATERIAL_FOLIAGE } else { 0 }
                 | if desc.glass { MATERIAL_GLASS } else { 0 }
+                | if desc.pixels { crate::gpu::MATERIAL_PIXELS } else { 0 }
                 | desc.leaves.flags()
                 | if desc.impostor { crate::gpu::MATERIAL_IMPOSTOR } else { 0 }
                 | if displaced { crate::gpu::MATERIAL_DISPLACED } else { 0 }

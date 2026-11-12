@@ -17,6 +17,7 @@ mod framing;
 mod gun_handlings;
 mod world_gens;
 mod generators;
+mod models;
 mod river_water;
 mod hierarchies;
 mod importing;
@@ -91,6 +92,7 @@ use crate::{
     frame_debugger_panel::FrameDebuggerPanel,
     generator_panel::GeneratorPanel,
     gizmos,
+    model_panel::ModelPanel,
     hierarchy::EditorOnly,
     hierarchy::Hierarchy,
     hierarchy::ObjAction,
@@ -188,6 +190,8 @@ struct Nodes {
     frame_debugger_panel: NodeId,
     /// The Generator panel's content, a World Generator's graph.
     generator_panel: NodeId,
+    /// The Model window's content, a box model to build.
+    model_panel: NodeId,
     memory_panel: NodeId,
     audio_panel: NodeId,
     blocks_panel: NodeId,
@@ -326,6 +330,8 @@ pub struct Editor {
     drawer: Option<Drawer>,
     /// The prefab open on its own to edit, if one is.
     prefab: Option<prefab_mode::OpenPrefab>,
+    /// Where the particles' scrubber was last put by the editor, from 0 to 1, to tell a drag of it from that.
+    particle_scrubbed: f32,
     /// The layouts to pick from, the one showing, and whether Save Layout
     /// As's box has yet to take the focus.
     layouts: Vec<windows::Layout>,
@@ -339,6 +345,9 @@ pub struct Editor {
     /// The World Generator's graph open to edit, and its file, to follow it when it is renamed.
     generator: GeneratorPanel,
     generator_guid: Option<voxear_assets::AssetGuid>,
+    /// The box model open to build, and its file, to follow it when it is renamed.
+    model: ModelPanel,
+    model_guid: Option<voxear_assets::AssetGuid>,
     /// A World Generator changed in its Inspector by a drag still held, to save once it is let go.
     world_gen_to_save: Option<(String, voxear_terrain::generate::WorldGen)>,
     memory_profiler: MemoryPanel,
@@ -523,6 +532,7 @@ impl Editor {
             entities_panel: find(&ui, "entities-panel"),
             frame_debugger_panel: find(&ui, "frame-debugger-panel"),
             generator_panel: find(&ui, "generator-panel"),
+            model_panel: find(&ui, "model-panel"),
             memory_panel: find(&ui, "memory-panel"),
             audio_panel: find(&ui, "audio-panel"),
             blocks_panel: find(&ui, "blocks-panel"),
@@ -581,6 +591,7 @@ impl Editor {
         let entities = EntitiesPanel::new(&mut ui, nodes.entities_panel);
         let frame_debugger = FrameDebuggerPanel::new(&mut ui, nodes.frame_debugger_panel);
         let generator = GeneratorPanel::new(&mut ui, nodes.generator_panel);
+        let model = ModelPanel::new(&mut ui, nodes.model_panel);
         let memory_profiler = MemoryPanel::new(&mut ui, nodes.memory_panel);
         let audio = AudioPanel::new(&mut ui, nodes.audio_panel);
         let block_database = BlockDatabase::new(&mut ui, nodes.blocks_panel);
@@ -654,6 +665,7 @@ impl Editor {
             window_menu: None,
             drawer: None,
             prefab: None,
+            particle_scrubbed: 0.0,
             layouts: windows::built_in_layouts(),
             layout: 0,
             naming_layout: false,
@@ -662,6 +674,8 @@ impl Editor {
             frame_debugger,
             generator,
             generator_guid: None,
+            model,
+            model_guid: None,
             world_gen_to_save: None,
             memory_profiler,
             audio,
@@ -958,7 +972,7 @@ impl Editor {
         }
         self.update_drawer();
         self.update_modules();
-        self.replay_selected_effect();
+        self.update_particle_preview();
         self.update_lighting(renderer);
         self.update_side_bar();
         self.update_prefab_mode(renderer);
@@ -972,6 +986,7 @@ impl Editor {
             self.docs.set_dark(&mut self.ui, theme.is_dark());
             self.packages.set_dark(theme.is_dark());
             self.generator.set_dark(theme.is_dark());
+            self.model.set_dark(theme.is_dark());
             for inspector in self.inspectors_mut() {
                 inspector.set_dark(theme.is_dark());
             }
@@ -992,6 +1007,10 @@ impl Editor {
             {
                 profile_scope!("Generator");
                 self.update_generator(renderer);
+            }
+            {
+                profile_scope!("Model");
+                self.update_model(renderer);
             }
             self.fill_model_materials(renderer);
             self.fill_model_clips();
@@ -1255,7 +1274,7 @@ impl Editor {
         match item.kind {
             ItemKind::Asset(AssetKind::Level) => self.level_action(LevelAction::Open(item.path.clone()), renderer),
             ItemKind::Asset(AssetKind::Scene) => self.level_action(LevelAction::OpenScene(item.path.clone()), renderer),
-            ItemKind::Asset(AssetKind::Prefab) => self.open_prefab(&item.path.clone(), renderer),
+            ItemKind::Asset(AssetKind::Prefab | AssetKind::Particles) => self.open_prefab(&item.path.clone(), renderer),
             ItemKind::Script => {
                 let file = self.game.content.db().file(&item.path);
                 self.open_source(&file, 1);
@@ -1263,6 +1282,9 @@ impl Editor {
             ItemKind::Asset(AssetKind::InputActions) => self.show_panel("input"),
             ItemKind::Asset(AssetKind::WorldGen) => {
                 self.open_generator(&item.path);
+            }
+            ItemKind::Asset(AssetKind::Model) if voxear_render::is_box_model(&item.path) => {
+                self.open_model(&item.path);
             }
             _ => self.inspect_asset(item),
         }
@@ -1718,8 +1740,9 @@ impl Editor {
     /// A click on the 3D view itself, not on what floats over it, selects
     /// the Obj under it, or nothing.
     fn click_to_select(&mut self, renderer: &Renderer, camera: &ViewCamera, point: Option<[f32; 2]>) {
+        let scene = &self.scene;
         let (viewport, overlays) =
-            (self.scene.viewport, [self.scene.tool_strip, self.scene.stats, self.scene.view_gizmo]);
+            (scene.viewport, [scene.tool_strip, scene.stats, scene.view_gizmo, scene.particle_strip]);
         if !self.ui.clicked(viewport) || overlays.iter().any(|&o| self.ui.clicked(o)) {
             return;
         }
@@ -2186,6 +2209,10 @@ impl Editor {
     fn run(&mut self, command: Command, renderer: &mut Renderer) {
         // The open graph's, while its panel is the one last pressed in.
         if self.graph_command(command) {
+            return;
+        }
+        // The open box model's, while its window is.
+        if self.model_command(command) {
             return;
         }
         let selected = self.selected();

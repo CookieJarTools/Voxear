@@ -12,6 +12,7 @@ mod alloc;
 mod ambient_occlusion;
 mod assets;
 mod atmosphere;
+mod box_model;
 mod bvh;
 mod capture;
 mod cooked;
@@ -87,6 +88,9 @@ use voxear_rhi::{
 
 pub use assets::AssetUsage;
 pub use assets::{MaterialDesc, MaterialHandle, MeshHandle, TextureSource};
+pub use box_model::{
+    BoneRole, BoxBone, BoxHit, BoxLayer, BoxModel, BoxSkin, Face, FaceRect, ModelBox, Sheet, is_box_model,
+};
 pub use capture::{Capture, CapturedImage};
 pub use cooked::{COOKED_VERSION, CookedModel};
 pub use cooked_picture::{COOKED_PICTURE_VERSION, CookedPicture, PictureUse};
@@ -114,7 +118,8 @@ pub use post::{
     Grading, MotionBlur, PostProcess, Tonemap, Tonemapper, Vignette,
 };
 pub use previews::{
-    MAX_PREVIEW_SIZE, PREVIEW_ATLAS_SIZE, PreviewId, PreviewImage, PreviewOptions, PreviewPart, PreviewPixels,
+    MAX_PREVIEW_SIZE, MAX_VIEW_SIZE, PREVIEW_ATLAS_SIZE, PreviewCamera, PreviewId, PreviewImage, PreviewOptions,
+    PreviewPart, PreviewPixels,
 };
 pub use ies::IesProfile;
 pub use looks::{Look, LookName, SunLook};
@@ -131,7 +136,9 @@ pub use effects::{
 };
 pub use forces::{BLAST_TIME, Blast, ForceField, ForceKind, MAX_FORCES, ParticleBlasts};
 pub use particle_sim::{DEFAULT_PARTICLE_BUDGET, MAX_PARTICLE_BUDGET, ParticleBudget, ParticleCounts};
-pub use particles::{EmitShape, ParticleBlend, ParticleCollision, ParticlePlayback, ParticleSpace, ParticleSystem};
+pub use particles::{
+    MAX_PARTICLE_LIGHTS, EmitShape, ParticleBlend, ParticleCollision, ParticlePlayback, ParticleSpace, ParticleSystem, ParticleTime,
+};
 pub use mist::{MAX_MIST_POINTS, MIST_RISE, Mist, MistTrail};
 pub use smoke::{SMOKE_GRID, Smoke, SmokeBlast, SmokeCue, SmokeFill, SmokeHoles, SmokeShot, smoke_origin};
 pub use grass::GrassLook;
@@ -756,7 +763,7 @@ impl Renderer {
         self.assets.as_mut().expect("assets live until drop").set_material(&self.gpu, handle, desc)
     }
 
-    /// Loads a `.gltf`, `.glb` or `.fbx` file and returns its drawable pieces.
+    /// Loads a `.gltf`, `.glb`, `.fbx` or `.boxmodel` file and returns its drawable pieces.
     /// `path` is the model's project path, and `read` reads it and every file
     /// it names, from wherever the content lives.
     pub fn import_model(&mut self, path: &str, read: &mut ReadFile) -> Result<ImportedModel> {
@@ -1141,7 +1148,7 @@ impl Renderer {
         self.terrains.prepare(&self.gpu, assets, &mut self.frames, world, frame_index)?;
         self.blocks.prepare(&self.gpu, assets, &mut self.frames, world, frame_index)?;
         // Every simulated particle's step, for all the views.
-        let stepping = ((time, delta_time), (frame_index, frame.slot));
+        let stepping = (particles::time_of(world, time), (frame_index, frame.slot));
         self.particle_sim.prepare(&self.gpu, &mut self.frames, world, stepping.0, stepping.1)?;
         self.stats.particles = self.particle_sim.counts();
 
@@ -2373,9 +2380,10 @@ impl View {
             }
             ParticleTexture::Asset(guid) => pictures.and_then(|pictures| pictures.0.get(&guid)).map(|id| id.0),
         };
-        let drawing = (&*setup.simulated.0, &particle_texture as particles::Textures<'_>);
+        let puff_lit = Some(assets.puff_light_maps.map(|map| map.0));
+        let drawing = (&*setup.simulated.0, particles::Textures { find: &particle_texture, puff_lit });
         let (particle_systems, particles, spray, rapids) =
-            particles::gather(world, camera, setup.time, &extracted.water_bodies, drawing);
+            particles::gather(world, camera, particles::time_of(world, setup.time), &extracted.water_bodies, drawing);
         buffers.particle_systems.write(0, &particle_systems);
         let (smokes, smoke_cells, smoke_holes) = smoke::gather(world, camera, setup.time);
         buffers.smokes.write(0, &smokes);

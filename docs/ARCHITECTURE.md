@@ -2792,7 +2792,56 @@ Blend shapes are supported.
 
 **IK and procedural.** Two-bone IK, FABRIK, look-at, foot placement on terrain, and procedural layers.
 
-## Particles *(the stateless and simulated paths, depth collision, forces, effects and starters implemented; the rest planned)*
+**Box models.** A `.boxmodel` is a model built of boxes under bones, with pixels on every face, for the blocky
+characters of block worlds (`voxear_render::box_model`). It is not a second kind of model: `prepare_model` reads
+it into the same `PreparedModel` a `.glb` becomes, so it is `AssetKind::Model` and everything that places, draws,
+poses, previews, reimports or cooks a model does a box model with no path of its own.
+- **The file** is TOML, measured in the model's own pixels (`pixels_per_block` of them a metre): the sheet's size
+  and pixels, then the bones, each with a pivot from its parent's, a rest rotation and its boxes. A box has a least
+  corner from its bone's pivot, a size in whole pixels, and its faces' places on the sheet, either unfolded from
+  one corner (`uv`, with `mirror`) or a rectangle a face (`faces`, a face left out not drawn), with `inflate` and a
+  rotation about its middle. A side of no pixels makes a flat two-sided sheet.
+- **The pixels** are kept in the file: a palette and a byte a pixel where the sheet has 256 colours or fewer, raw
+  otherwise, lz4-compressed, as base64 (`Sheet::to_text`).
+- **What it is built as:** one skinned mesh, each box's corners bound whole to its bone's joint; the bones as the
+  skeleton, at rest where their pivots put them; one skin of every bone; one RGBA8 texture, never compressed; one
+  cut-out material. Face corners sit a sixty-fourth of a pixel inside their rectangles.
+- **Sharp pixels** are a material flag, `MaterialDesc::pixels` (`MATERIAL_PIXELS`): the shaders read the base
+  colour at the middle of the pixel a UV falls in, with the UV's own slopes picking the mip
+  (`baseColorUv`, `sampleBaseColor` in `common.slang`), in the forward, depth and preview passes and for traced
+  cut-outs. Cooked models carry the flag (`COOKED_VERSION` 11).
+- **The Model window** (`voxear_editor::model_panel`, `model_view`, `box_part_inspector`, `editor/models.rs`) edits
+  one as the Generator panel edits a graph: the panel owns the model and a history of whole models, the editor
+  saves it when nothing is held and has the level's Objs follow, and the Inspector shows the bone or box picked.
+  Its view is not a second world: the model's mesh and a floor are drawn as a preview with a camera of its own
+  (`PreviewCamera`, up to `MAX_VIEW_SIZE` pixels, square, shown cut to the view), so what is under the pointer is
+  a ray from that camera against the boxes (`BoxModel::pick`, which also gives the face and the sheet's pixel),
+  and outlines and handles are UI shapes projected with it. What changes a model (`box_model/edit.rs`: removing,
+  hanging, copying and mirroring bones, moving pivots, moving boxes between bones, free room on the sheet) is
+  kept with the model, so scripts and tools change one the same way.
+- **Painting** is the same ray: `BoxHit::pixel` is the sheet's pixel under the pointer, so a stroke changes the
+  model's `Sheet` and nothing else, and the views upload the sheet again behind the material they have. The flat
+  sheet beside the model (`model_sheet`) paints the same pixels directly. `box_model/paint.rs` holds what a sheet
+  can do to itself: fill, list its colours, and lay its boxes out again with their pixels.
+- **Bones from shape** (`box_model/rig.rs`): `make_bones` reads the boxes as a body with parts round it and gives
+  each a bone with a `BoneRole` (body, head, leg, arm, tail, wing). Roles, not names, are what animation goes
+  by, so a renamed bone still walks. `add_joint` splits a limb's box for a knee or an elbow.
+- **Mob Motion** (`voxear_engine::animation::mob_motion`) is the easy path to animation for these: a component
+  that poses a model from how its Obj moved, by its bones' roles, writing the same `Pose` an Animator does. The
+  motion is a pure `MobPoser`, so the Model window shows it on a model that stands nowhere. Roles travel with the
+  model through import and cooking, since a build has no `.boxmodel` to read them from.
+- **A raised layer** (`box_model/layer.rs`) is a second skin on a box whose solid pixels become geometry: small
+  blocks over the faces, built with the mesh, bound to the box's bone like everything else, so they bend where
+  the limb is cut for a joint. The cost is vertices, so tops are shared along rows, walls exist only at edges,
+  and the mesh has a flat version of every layer as a coarser LOD for the engine to pick by distance.
+- **Block Mob** (`voxear_engine::block_mob`) is how one gets about a block world: a component that finds a way
+  on the blocks themselves (`voxear_terrain::blocks::path`, a search over places to stand, not a baked mesh, so
+  blocks placed and dug are seen at the next search) and walks it with the Obj's Character Controller, which is
+  what collides. It only moves the Obj; Mob Motion sees the movement and animates. What a creature decides to do
+  is left to games and packages.
+- **Planned on top:** clips keyed on a timeline.
+
+## Particles *(the stateless and simulated paths, depth collision, forces, effects, lit smoke and lights implemented; the rest planned)*
 
 A Particle System runs one of three ways, whichever its settings need. The engine chooses, the Inspector says
 which and why, and all three are drawn by the same code, so an effect looks the same as it moves from one to the
@@ -2866,18 +2915,49 @@ once read, so that is a few lookups a system. The starters are made in code from
 are made on the CPU when the renderer starts: white shapes in alpha, most of them four to a picture so particles
 differ, their outermost pixels clear so one never shows in the next.
 
+**Editing an effect** *(implemented)*. A `.particles` file opens as a scene opens, through the same door a prefab
+uses (`Levels::open_scene`): read as an effect, it is handed on as a scene of an Obj an emitter
+(`particles::effect_scene`), and on Save the scene's Objs go back as an effect, each one's Particle System an
+emitter in the Hierarchy's order (`scene_effect`). Chose that over a panel with an emitter list and a module
+stack of its own: the Hierarchy, the Inspector with its curves and gradients, undo, copy and paste and the Scene
+view already edit Particle Systems, and an effect is nothing but Particle Systems. What an effect cannot keep,
+where an emitter's Obj stands and its other components, is dropped when it is saved.
+
+**Playback.** Particles run on a time of their own, the engine's unless something holds it back
+(`voxear_engine::particles::ParticleClock`, published to the renderer as `ParticleTime`): every playback is in it,
+and the renderer draws and steps particles by it, taking the step's length from how far it moved. The editor's
+strip over the Scene view sets how fast it runs (`ParticlePreview`: paused, or a share of full speed) and restarts
+the systems being watched; scrubbing pauses it and starts them as long ago as the scrubber says, which the
+simulation answers as it answers any system first seen running, each particle where its age has it.
+
+**Lit from six sides** *(implemented)*. A lit particle with two maps is not lit all over alike but as a puff of
+smoke is. Where its quad is placed, the light reaching it is gathered from six sides of it, its picture's right,
+left, top and bottom as it is turned, its front and its back: the sky's and GI's from all alike, the sun's through
+its shadow and each of its cluster's lamps on the sides that face them (`particleLightSix`). Each pixel then takes
+its share of each from the maps: the first map's red, green and blue are how bright it is lit from the right, from
+above and from behind, the second's from the left, from below and from in front. That is two texture reads a
+pixel and no light worked out there, so smoke that fills the screen costs what unlit smoke does. The built-in
+Puff's maps are made with it, as a ball of smoke: a side lights the half that faces it and the folds that catch
+it, less the further the light has come through the ball, and light from behind comes through where it is thin.
+A puff has no shadow from the puffs beside it; that waits on particles in the fog volume.
+
+**Lights from effects** *(implemented)*. An emitter's Light is a point light at its Obj, worked out on the CPU
+from when it started (`particles::lights`): steady with a flicker while a stream runs, full as a burst goes off
+and fading with the square of how far through its particles' lives it is. They join the frame's lamps before
+clustering, the 16 nearest the camera, with no shadows.
+
 **Planned, in the order it is built.**
 
 - **Physics.** Two more levels of collision beside depth: the terrain's heights and the nearest colliders,
   which work off screen; and the scene's rays, hardware or software, capped per frame, for what must land
   behind things. Particles stay visual only: gameplay gets hit events a frame or two late for sounds and
   marks, effects start on every machine by RPC with a seed, and a server simulates none.
-- **Editing effects.** An effect's emitters edited in the editor as stacks of modules in fixed stages (spawn,
-  start, update, events, draw), with sub-emitters and values an effect shows on the Particle System that plays
-  it; a panel with play, pause, restart, scrub and speed, and the same in the Scene view.
-- **Drawing.** Meshes, trails as short chains per particle; flipbooks blended by motion vectors; smoke lit from six sides; lighting worked out once a particle rather than once a corner; lights from
-  effects; mist, dust and lingering smoke put into the fog volume; sorting only where blending needs it, big
-  soft particles at half size, and anti-aliasing told about fast particles.
+- **More in an effect.** Sub-emitters and events, and values an effect shows on the Particle System that plays
+  it.
+- **Drawing.** Meshes, trails as short chains per particle; flipbooks blended by motion vectors; lighting
+  worked out once a particle rather than once a corner; mist, dust and lingering smoke put into the fog volume;
+  sorting only where blending needs it, big soft particles at half size, and anti-aliasing told about fast
+  particles.
 - **Scripts.** `Particles.Play(effect, position)` returning a handle, bursts at a place, picked parameters
   rather than names, hit and finished events, curves and gradients.
 - **Scaling.** Off-screen systems asleep, far ones sending out less and stepping every other frame, the least
@@ -3080,7 +3160,15 @@ of that region and the two rings round it are worked out from the regions' numbe
 height asked at each room's middle through the generator's own height program, held by the kernel. That gathering
 is kept for a while on each thread, by network and region; it is the same numbers made again or kept, so a
 cell alone still gets the bits it gets in a batch. A level's rooms are laid out when the graph is compiled and
-held by the kernel whole. To come: biomes as nodes, bringing their surfaces and blocks; a room's props and spawn
+held by the kernel whole. A room can also be made by rules (`caves::made`): the node keeps the rules, and a
+region's room is worked out from them and the region's own seed each time the region is planned, so it is in no
+file and every machine makes the same one. Its shapes are joined smoothly, which is safe because one room's
+shapes are always asked together; rooms and tunnels are still joined to each other by the greater alone. Which
+rooms a tunnel joins is decided sixteen regions at a time (`caves::joins`), a tree with loops, and across each
+side by a number the two sixteens work out alike from which of their facing regions keep a room: a region asks
+what it is joined to from its own sixteen and the four round it, with nothing made first. Chose a tree over a
+chance for each pair, so every room is reached; the cost is that an endless network made before this has other
+tunnels. To come: biomes as nodes, bringing their surfaces and blocks; a room's props and spawn
 points placed with it; rivers along valleys in endless worlds.
 
 **Rendering.** CDLOD: a quadtree of patches, each a grid of 32 quads drawn from one index buffer, picked on the CPU

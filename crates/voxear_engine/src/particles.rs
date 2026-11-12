@@ -52,10 +52,60 @@ const LIFE_LOST: i32 = 36;
 const FORCES: i32 = 37;
 const STRETCH: i32 = 38;
 const DELAY: i32 = 39;
+const LIGHT: i32 = 40;
+const LIGHT_RANGE: i32 = 41;
 
-/// The engine's time, as Particle Systems are played and stopped by.
+/// The time Particle Systems are played and stopped by, and blasts go off
+/// in: the engine's, but for how the editor's preview holds it back; and
+/// the engine's time when it was last brought up to date.
 #[derive(Clone, Copy, Debug, Default)]
-struct ParticleClock(f64);
+struct ParticleClock {
+    now: f64,
+    engine: Option<f64>,
+}
+
+/// How fast particles' time runs against the engine's, a resource of the
+/// world: paused, or at a share of full speed, as the editor's preview
+/// asks. Without one, at full speed.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ParticlePreview {
+    pub paused: bool,
+    pub speed: f32,
+}
+
+impl Default for ParticlePreview {
+    fn default() -> Self {
+        Self { paused: false, speed: 1.0 }
+    }
+}
+
+/// The time Particle Systems are played by now, which a `ParticlePlayback`
+/// started at is in.
+pub fn now(world: &World) -> f64 {
+    world.resource::<ParticleClock>().map_or(0.0, |clock| clock.now)
+}
+
+/// An effect as a scene, to open on its own and edit as one: an Obj an
+/// emitter, in the effect's order, named for it, with its settings as its
+/// Particle System.
+pub(crate) fn effect_scene(effect: &voxear_render::ParticleEffect) -> crate::scene_file::SceneFile {
+    let objs = effect.emitters.iter().zip(1..).map(|(emitter, id)| crate::scene_file::ObjData {
+        particles: Some(emitter.system),
+        ..crate::scene_file::ObjData::new(id, &emitter.name)
+    });
+    crate::scene_file::SceneFile { objs: objs.collect(), ..Default::default() }
+}
+
+/// The effect a scene opened from one is now: each of its Objs that has a
+/// Particle System an emitter, in the scene's order. Where the Objs stand
+/// and what else they have is not part of an effect.
+pub(crate) fn scene_effect(scene: &crate::scene_file::SceneFile) -> voxear_render::ParticleEffect {
+    let emitters = scene.objs.iter().filter_map(|obj| {
+        let system = ParticleSystem { effect: None, ..obj.particles? };
+        Some(voxear_render::Emitter { name: obj.name.clone(), system })
+    });
+    voxear_render::ParticleEffect { emitters: emitters.collect() }
+}
 
 /// Sets what answers `ParticleSystem`, `ForceField` and `Particles.Push` in
 /// scripts.
@@ -77,12 +127,13 @@ pub fn resolve(world: &mut World, content: &mut crate::content::Content, rendere
     let mut wanted = std::collections::HashSet::new();
     for (system,) in world.query_ref::<(&ParticleSystem,)>() {
         let emitters: Vec<ParticleTexture> = match system.effect {
-            None => vec![system.texture],
+            None => vec![system.texture, system.light_map],
             Some(EffectRef::Builtin(_)) => Vec::new(),
             Some(EffectRef::Asset(guid)) => {
                 let found = effects.0.get(&guid).cloned().or_else(|| content.particle_effect(guid));
                 let Some(effect) = found else { continue };
-                let textures = effect.emitters.iter().map(|emitter| emitter.system.texture).collect();
+                let both = |emitter: &voxear_render::Emitter| [emitter.system.texture, emitter.system.light_map];
+                let textures = effect.emitters.iter().flat_map(both).collect();
                 effects.0.insert(guid, effect);
                 textures
             }
@@ -116,7 +167,7 @@ pub fn blast(world: &mut World, at: voxear_core::math::Vec3, radius: f32, speed:
     if !(radius > 0.0 && speed > 0.0 && at.is_finite()) {
         return;
     }
-    let started = world.resource::<ParticleClock>().map_or(0.0, |clock| clock.0) as f32;
+    let started = now(world) as f32;
     let blast = Blast { at, radius, speed, started };
     match world.resource_mut::<ParticleBlasts>() {
         Some(blasts) => blasts.0.push(blast),
@@ -170,8 +221,15 @@ fn field_values(world: &mut World, entity: Entity, what: i32, written: Option<[f
 }
 
 /// Starts every Particle System that has not started yet, at `now`.
-pub fn start(world: &mut World, now: f64) {
-    world.insert_resource(ParticleClock(now));
+pub fn start(world: &mut World, engine: f64) {
+    // The particles' time follows the engine's, as fast as the preview lets it; it starts as the engine's.
+    let clock = world.resource::<ParticleClock>().copied().unwrap_or_default();
+    let preview = world.resource::<ParticlePreview>().copied().unwrap_or_default();
+    let passed = clock.engine.map_or(0.0, |last| (engine - last).max(0.0));
+    let rate = if preview.paused { 0.0 } else { f64::from(preview.speed.max(0.0)) };
+    let now = if clock.engine.is_some() { clock.now + passed * rate } else { engine };
+    world.insert_resource(ParticleClock { now, engine: Some(engine) });
+    world.insert_resource(voxear_render::ParticleTime(now as f32));
     // Blasts that are over are forgotten.
     if let Some(blasts) = world.resource_mut::<ParticleBlasts>() {
         blasts.keep_live(now as f32);
@@ -193,7 +251,7 @@ fn values(world: &mut World, entity: Entity, what: i32, written: Option<[f32; 4]
     if !world.is_alive(entity) {
         return None;
     }
-    let now = world.resource::<ParticleClock>().map_or(0.0, |clock| clock.0) as f32;
+    let now = now(world) as f32;
     match (what, written) {
         (HAS, None) => return Some(flag(world.has::<ParticleSystem>(entity))),
         (ADD, Some(_)) => {
@@ -270,6 +328,8 @@ fn read(system: &ParticleSystem, what: i32) -> Option<[f32; 4]> {
         FORCES => number(system.forces),
         STRETCH => number(system.stretch),
         DELAY => number(system.delay),
+        LIGHT => number(system.light),
+        LIGHT_RANGE => number(system.light_range),
         _ => return None,
     })
 }
@@ -315,6 +375,8 @@ fn write(system: &mut ParticleSystem, what: i32, [x, y, z, w]: [f32; 4]) {
         FORCES => system.forces = x.max(0.0),
         STRETCH => system.stretch = x.max(0.0),
         DELAY => system.delay = x.max(0.0),
+        LIGHT => system.light = x.max(0.0),
+        LIGHT_RANGE => system.light_range = x.max(0.0),
         _ => {}
     }
 }
@@ -380,6 +442,44 @@ mod tests {
         values(&mut world, obj, LIFE_LOST, Some([0.25, 0.0, 0.0, 0.0]));
         let system = *world.get::<ParticleSystem>(obj).unwrap();
         assert_eq!((system.collision, system.bounce, system.life_lost), (ParticleCollision::Depth, 1.0, 0.25));
+    }
+
+    #[test]
+    fn particles_time_follows_the_engines_but_for_the_preview() {
+        let mut world = World::new();
+        start(&mut world, 10.0);
+        assert_eq!(now(&world), 10.0, "it starts as the engine's");
+        start(&mut world, 11.0);
+        assert_eq!(now(&world), 11.0);
+        world.insert_resource(ParticlePreview { paused: true, speed: 1.0 });
+        start(&mut world, 14.0);
+        assert_eq!(now(&world), 11.0, "paused, it stands still");
+        world.insert_resource(ParticlePreview { paused: false, speed: 0.25 });
+        start(&mut world, 18.0);
+        assert_eq!(now(&world), 12.0, "at a quarter speed");
+        assert_eq!(world.resource::<voxear_render::ParticleTime>().unwrap().0, 12.0, "as the renderer plays them");
+        // A system that appears now starts now, by the particles' time.
+        let obj = world.spawn((ParticleSystem::default(),));
+        start(&mut world, 18.0);
+        assert_eq!(world.get::<ParticlePlayback>(obj).unwrap().started, 12.0);
+    }
+
+    #[test]
+    fn an_effect_opens_as_a_scene_of_its_emitters_and_goes_back_as_it_was() {
+        use voxear_render::Starter;
+        let effect = Starter::Explosion.effect();
+        let scene = effect_scene(effect);
+        let names: Vec<&str> = scene.objs.iter().map(|obj| obj.name.as_str()).collect();
+        assert_eq!(names, ["Flash", "Fireball", "Smoke", "Sparks", "Debris", "Shockwave"]);
+        assert_eq!(scene.objs[1].particles, Some(effect.emitters[1].system));
+        assert_eq!(&scene_effect(&scene), effect);
+        // An Obj with no Particle System is no emitter, and an emitter plays no effect of its own.
+        let mut edited = effect_scene(effect);
+        edited.objs.insert(0, crate::scene_file::ObjData::new(9, "Light"));
+        edited.objs[1].particles.as_mut().unwrap().effect = Some(voxear_render::EffectRef::Builtin(Starter::Fire));
+        let back = scene_effect(&edited);
+        assert_eq!((back.emitters.len(), back.emitters[0].name.as_str()), (6, "Flash"));
+        assert_eq!(back.emitters[0].system.effect, None);
     }
 
     #[test]

@@ -111,10 +111,12 @@ pub enum NewFile {
     Block,
     /// Pictures prompts show for controls, picked on the Input page.
     PromptIcons,
+    /// A model built of boxes under bones, with its own pixels.
+    BoxModel,
 }
 
 impl NewFile {
-    pub const ALL: [NewFile; 15] = [
+    pub const ALL: [NewFile; 16] = [
         NewFile::Folder,
         NewFile::Scene,
         NewFile::Level,
@@ -130,6 +132,7 @@ impl NewFile {
         NewFile::WorldGen,
         NewFile::Block,
         NewFile::PromptIcons,
+        NewFile::BoxModel,
     ];
 
     /// The module it belongs to, without which the menu leaves it out.
@@ -159,6 +162,7 @@ impl NewFile {
             NewFile::WorldGen => "New World Generator",
             NewFile::Block => "New Block",
             NewFile::PromptIcons => "New Prompt Icons",
+            NewFile::BoxModel => "New Box Model",
         }
     }
 
@@ -181,6 +185,7 @@ impl NewFile {
             NewFile::WorldGen => ("New World Generator", ".worldgen"),
             NewFile::Block => ("New Block", ".block"),
             NewFile::PromptIcons => ("New Prompt Icons", ".prompticons"),
+            NewFile::BoxModel => ("New Box Model", ".boxmodel"),
         }
     }
 }
@@ -211,6 +216,7 @@ pub fn create(root: &Path, folder: &str, kind: NewFile, namespace: &str) -> Resu
             let icons = voxear_engine::prompt_icons::PromptIconsFile { format: 1, ..Default::default() };
             std::fs::write(&file, icons.to_text()?)
         }
+        NewFile::BoxModel => std::fs::write(&file, voxear_render::BoxModel::starter().to_text()),
     }
     .with_context(|| format!("making {}", file.display()))?;
     Ok(path)

@@ -263,6 +263,20 @@ public readonly struct ParticleSystem : IEquatable<ParticleSystem>, IObjComponen
 		set { Set(NativeParticles.Delay, value); }
 	}
 
+	/// <summary>How bright a light it casts on what is round it, as a Point Light's Intensity: 0 none. A stream's flickers, and a burst's flashes and fades.</summary>
+	public float Light
+	{
+		get { return Number(NativeParticles.Light); }
+		set { Set(NativeParticles.Light, value); }
+	}
+
+	/// <summary>How far its light reaches, in metres.</summary>
+	public float LightRange
+	{
+		get { return Number(NativeParticles.LightRange); }
+		set { Set(NativeParticles.LightRange, value); }
+	}
+
 	/// <summary>Which particles: two systems alike but for this send out different ones.</summary>
 	public int Seed
 	{

@@ -109,13 +109,19 @@ impl Level {
         }
         // Each room joined to the one it was reached from and to those reached from it.
         let region = |cell: [i32; 2]| -> Region { [cell[0], 0, cell[1]] };
-        let joined = |a: usize, b: usize| from[a] == Some(b) || from[b] == Some(a);
+        // And, for loops, to some of the rooms beside it that it was not.
+        let looped = |a: usize, b: usize| {
+            let (low, high) = (a.min(b) as i32, a.max(b) as i32);
+            share(mix(set.seed, &[low, high, 33])) < set.loops
+        };
+        let joined = |a: usize, b: usize| from[a] == Some(b) || from[b] == Some(a) || looped(a, b);
         let loose = (1.0 - 2.0 * (set.reach() + set.stray()) / set.spacing).clamp(0.0, 0.6);
         let mut all = Gathered::default();
         for (at, &cell) in cells.iter().enumerate() {
-            let links = [0, 1, 2, 3].map(|way| {
-                let next = step(cell, way);
-                cells.iter().position(|&other| other == next).is_some_and(|other| joined(at, other))
+            // A level is one layer: only the four beside a room.
+            let links = std::array::from_fn(|slot| {
+                let next = step(cell, slot % 4);
+                slot < 4 && cells.iter().position(|&other| other == next).is_some_and(|other| joined(at, other))
             });
             let part = |part: i32| share(roll(at as i32, 10 + part));
             let jitter = [(part(0) * 2.0 - 1.0) * loose, (part(1) * 2.0 - 1.0) * loose];
@@ -128,6 +134,19 @@ impl Level {
             let (a, b) = if a.plan.region <= b.plan.region { (a, b) } else { (b, a) };
             let tunnel = net.tunnel(a, b);
             all.tunnels.extend(tunnel);
+        }
+        for at in 0..all.rooms.len() {
+            for way in [0, 2] {
+                let next = step(cells[at], way);
+                let Some(other) = cells.iter().position(|&cell| cell == next) else { continue };
+                if from[at] == Some(other) || from[other] == Some(at) || !looped(at, other) {
+                    continue;
+                }
+                let (a, b) = (&all.rooms[at], &all.rooms[other]);
+                let (a, b) = if a.plan.region <= b.plan.region { (a, b) } else { (b, a) };
+                let tunnel = net.tunnel(a, b);
+                all.tunnels.extend(tunnel);
+            }
         }
         all.bound();
         let first = all.rooms[0].plan.stand.foot;

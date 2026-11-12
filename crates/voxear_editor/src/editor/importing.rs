@@ -263,6 +263,8 @@ impl Editor {
             changed.iter().filter(|path| path.ends_with(".block")).map(|path| path.to_string()).collect();
         let effects: Vec<String> =
             changed.iter().filter(|path| path.ends_with(".particles")).map(|path| path.to_string()).collect();
+        let box_models: Vec<String> =
+            changed.iter().filter(|path| path.ends_with(".boxmodel")).map(|path| path.to_string()).collect();
         // A material may pick a built-in shader no other did, which is compiled in then.
         let shaders = changed.iter().any(|path| path.ends_with(".shader") || path.ends_with(".material"));
         if came_or_went {
@@ -306,6 +308,10 @@ impl Editor {
             for path in &prefabs {
                 self.game.content.forget(path);
                 self.cave_rooms_changed(Some(path));
+            }
+            // A box model edited outside the editor is read again by the Model window it is open in.
+            for path in &box_models {
+                self.model_file_changed(path);
             }
             // Blocks edited outside the editor are read again, and the worlds of blocks holding them drawn as they say.
             if !blocks.is_empty() {

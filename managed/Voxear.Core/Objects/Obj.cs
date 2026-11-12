@@ -413,6 +413,29 @@ public readonly struct Obj : IEquatable<Obj>
 		return new BoneAttachment(this);
 	}
 
+	/// <summary>The Obj's Mob Motion, which animates its model from how it moves. Not valid when it has none.</summary>
+	public MobMotion MobMotion => new MobMotion(this);
+
+	/// <summary>Gives the Obj a Mob Motion with the usual settings, unless it has one, and returns it.</summary>
+	public MobMotion AddMobMotion()
+	{
+		NativeMobMotion.Set(this, NativeMobMotion.Add, Vector4.Zero);
+		return new MobMotion(this);
+	}
+
+	/// <summary>The Obj's Block Mob, which walks it through a Block World. Not valid when it has none.</summary>
+	public BlockMob BlockMob => new BlockMob(this);
+
+	/// <summary>
+	/// Gives the Obj a Block Mob with the usual settings, unless it has one, and the Character Controller it walks
+	/// with where it has none, and returns it.
+	/// </summary>
+	public BlockMob AddBlockMob()
+	{
+		NativeBlockMob.Set(this, NativeBlockMob.Add, Vector4.Zero);
+		return new BlockMob(this);
+	}
+
 	/// <summary>The Obj's Character Controller, which walks it. Not valid when it has none.</summary>
 	public CharacterController CharacterController => new CharacterController(this);
 

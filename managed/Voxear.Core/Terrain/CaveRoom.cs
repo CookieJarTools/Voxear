@@ -50,6 +50,8 @@ public sealed class CaveRoom
 				toIndex.ValueKind == JsonValueKind.Number ? toIndex.GetInt32() : null));
 		}
 		Exits = exits;
+		Generated = json.GetProperty("made").GetBoolean();
+		(WallPoints, FloorPoints, CeilingPoints) = (Points(json, "walls"), Points(json, "floors"), Points(json, "ceilings"));
 		foreach (var other in json.GetProperty("joined").EnumerateArray())
 		{
 			var toIndex = other.GetProperty("toIndex");
@@ -85,6 +87,18 @@ public sealed class CaveRoom
 	public Vector3 BoundsMax { get; }
 
 	public IReadOnlyList<CaveExit> Exits { get; }
+
+	/// <summary>Whether it was made by the network's rules, rather than from a prefab.</summary>
+	public bool Generated { get; }
+
+	/// <summary>Places on its walls, each with the way out of the rock there: for ore, crystals and what grows on a wall. The same places every time, none in a tunnel's mouth.</summary>
+	public IReadOnlyList<CavePoint> WallPoints { get; }
+
+	/// <summary>Places on its floor, about the room: for what stands or grows there.</summary>
+	public IReadOnlyList<CavePoint> FloorPoints { get; }
+
+	/// <summary>Places on its roof: for what hangs.</summary>
+	public IReadOnlyList<CavePoint> CeilingPoints { get; }
 
 	/// <summary>The prefab it was made from, loaded the first time it is asked for; None for the room a network places while it lists none.</summary>
 	public Prefab Prefab
@@ -131,6 +145,18 @@ public sealed class CaveRoom
 	{
 		var (along, across) = ((random.NextSingle() * 2f - 1f) * reach, (random.NextSingle() * 2f - 1f) * reach);
 		return floor + x * along + z * across;
+	}
+
+	private static List<CavePoint> Points(JsonElement json, string name)
+	{
+		List<CavePoint> points = [];
+		foreach (var point in json.GetProperty(name).EnumerateArray())
+		{
+			points.Add(new CavePoint(
+				new Vector3(point[0].GetSingle(), point[1].GetSingle(), point[2].GetSingle()),
+				new Vector3(point[3].GetSingle(), point[4].GetSingle(), point[5].GetSingle())));
+		}
+		return points;
 	}
 
 	private static Vector3 Read(JsonElement json)

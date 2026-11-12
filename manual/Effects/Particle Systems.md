@@ -23,9 +23,31 @@ Every project has these starters:
 | Magic | Glowing motes round a pulsing light |
 | Mud | Clods and spatter thrown up, once |
 
-An effect that plays once plays over again while its Obj is selected in the editor, so you can watch it. In a game it plays once each time it starts: `Play()` starts it over.
+In a game an effect that plays once plays once each time it starts: `Play()` starts it over.
 
-To make an effect of your own, choose **New Particle Effect…** in the Project panel and pick the starter to begin from. That makes a `.particles` file, a copy that's yours to change, and it shows in every Particle System's Effect list. Selecting it shows its emitters. The file is text: each `[[emitter]]` has a `name` and then the same settings a Particle System has, written as a scene writes them, and a Particle System playing it takes up your changes as you save. Editing an effect's emitters in the editor itself is still to come.
+### Making your own effect
+
+Choose **New Particle Effect…** in the Project panel and pick the starter to begin from. That makes a `.particles` file, a copy that's yours to change, and it shows in every Particle System's Effect list.
+
+Double-click the file to open the effect on its own, in place of the level, as a prefab opens:
+
+- **Each emitter is an Obj** with a Particle System. Select one and the Inspector shows its settings, everything on this page.
+- **Add an emitter** with the Hierarchy's **+ ▸ Particle System**, take one out by deleting its Obj, and rename an Obj to rename its emitter. Emitters draw in the Hierarchy's order, the last on top.
+- **Save** (Ctrl+S) writes the effect, and every Particle System playing it takes up the change.
+- **Back**, on the bar over the Scene view, returns to the level.
+
+Only the Particle Systems are the effect: where an emitter's Obj stands isn't kept, nor anything else you put on it.
+
+## Watching particles play
+
+While a Particle System is selected, or an effect is open, a strip at the foot of the Scene view plays it:
+
+- **Pause** and **Play** hold the particles still and let them go.
+- **Restart** plays from the start.
+- The **speed** button goes round 1×, 0.5×, 0.25×, 0.1× and 2×, for watching a fast effect slowly.
+- Drag the **scrubber** to hold the effect at a time. Particles the wind or a collision moved are shown where their age alone has them while you scrub.
+
+An effect that plays once, as an explosion does, plays over again when it ends, until you pause it. Only the editor's view of the level is paused or slowed: a game plays particles at full speed.
 
 With Effect set to None, the Particle System uses its own settings, the rest of this page.
 
@@ -110,11 +132,13 @@ The stats overlay (**F1** in a game) and the Profiler show **Particles**: how ma
 
 - **Blend**: **Alpha** particles cover what's behind them, as smoke and dust do. **Additive** particles add their light to it, as sparks, fire and magic do, and never darken anything.
 - **Intensity**: how much brighter than their colour they glow. Sparks and fire want 2 or more, so they glow and bloom.
-- **Lit**: lit by the sun, the sky and lamps, as smoke is. Turn it off for particles that make their own light, such as sparks.
+- **Lit**: lit by the sun, the sky and lamps, as smoke is. Turn it off for particles that make their own light, such as sparks. A lit **Puff** is lit from six sides: each puff is brighter toward the sun or a lamp and darker away from it, so smoke has shape, and lets light from behind through its thin edges.
 - **Softness**: how far before the ground or a wall they fade out, in metres, rather than cutting a hard line where they meet it.
 - **Texture**: what each particle is drawn with. **Dot** is a soft round dot. **Puff**, **Flame**, **Ring**, **Flare** and **Shard** are built in, most of them four different shapes so no two particles need look alike, and white, so they take the particle's colour. Or pick one of the project's pictures.
 - **Tiles**: for a picture of your own that holds several, as a flipbook does: how many across and down. Each particle is drawn with one of them.
-- **Animate**: each particle plays through its texture's pictures over its life, rather than keeping one.
+- **Animate**: each particle plays through its texture's pictures over its life, rather than keeping one. Each picture fades into the next, so a few play smoothly.
+- **Light Map**: for a lit picture of your own, a second picture that lights it from six sides, as smoke baked in a simulation tool comes: the Texture says how bright each pixel is lit from the right (red), from above (green) and from behind (blue), with its shape in alpha, and the Light Map from the left, from below and from in front.
+- **Light**: how bright a light the system casts on what's round it, as a Point Light's Intensity, in the colour its particles start with. A stream's flickers, as a fire does. A burst's flashes and fades as its particles die, as an explosion's does. **Light Range** is how far it reaches, in metres. The 16 nearest the camera shine.
 - **Stretch**: draws each particle longer along the way it's going, in metres for each metre a second: sparks and rain become streaks. A stretched particle doesn't spin.
 - Particles sit in the scene's fog and haze as far off as they are: near ones show clearly, far ones fade into the mist.
 - **Seed**: two systems that are alike but for their Seed send out different particles.
@@ -148,4 +172,4 @@ A behaviour can also have a `ParticleSystem` field, picked in the Inspector, to 
 
 ## What's coming
 
-Still to come: editing an effect's emitters in the editor, collision with what's out of view, trails, flipbooks blended frame to frame, smoke lit from every side, and editing an effect as a graph.
+Still to come: collision with what's out of view, trails, particles drawn as meshes, mist and dust in the fog, and editing an effect as a graph.

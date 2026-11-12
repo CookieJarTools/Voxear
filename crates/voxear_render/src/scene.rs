@@ -634,6 +634,8 @@ pub fn extract(
     let water_bodies = water_bodies(world, position);
     // Lava lights what is round it.
     lights.extend(crate::water_bodies::lava_lights(&water_bodies, position));
+    // And Particle Systems that cast a light: a fire's flicker, an explosion's flash.
+    lights.extend(crate::particles::lights(world, position, crate::particles::time_of(world, time)));
     frame.light_count = lights.len() as u32;
     // And the first Seasons turns all its plants.
     let seasons = world.query_ref::<(Entity, &crate::Seasons)>().without::<Destroying>();

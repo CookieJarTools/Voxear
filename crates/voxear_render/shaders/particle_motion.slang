@@ -20,6 +20,9 @@ static const uint PARTICLES_FRESH = 32;
 static const uint PARTICLES_COLLIDE = 64;
 // Each particle plays through its texture's pictures over its life, rather than keeping one of them.
 static const uint PARTICLES_ANIMATE = 128;
+// Lit from six sides: its texture and its light map say how bright each pixel is lit from the right, the top and
+// behind, and from the left, below and in front.
+static const uint PARTICLES_SIX_WAY = 256;
 
 // Its shapes, as particles::EmitShape.
 static const uint EMIT_POINT = 0;

@@ -779,6 +779,37 @@
     text-align: right;
 }
 
+/* A selected Particle System's playback, over the foot of the Scene view, clear of the stats beside it in a
+   narrow view. */
+.particle-strip {
+    left: 50%;
+    bottom: 40px;
+    margin-left: -170px;
+    width: 340px;
+    flex-direction: row;
+    align-items: center;
+    padding: 2px 8px 2px 2px;
+    gap: 2px;
+}
+
+.particle-scrub {
+    flex-grow: 1;
+    margin: 0px 6px;
+}
+
+.particle-scrub > .slider-value {
+    display: none;
+}
+
+.particle-time {
+    width: 52px;
+    flex-shrink: 0;
+    font-family: mono;
+    font-size: 11px;
+    color: var(--vx-text-2);
+    text-align: right;
+}
+
 /* The move, rotate and scale handles, drawn as shapes over the 3D view. */
 .handles {
     position: absolute;
@@ -4244,6 +4275,97 @@ DockSpace .resizable-columns > .split-divider:active > .split-handle {
     width: 48px;
 }
 
+/* The rules of a room made by rules, under its row. */
+.room-rules {
+    padding-left: 12px;
+    margin-bottom: 6px;
+}
+
 .room-add {
     margin-top: 2px;
+}
+
+/* The Model window: a box model's bones and boxes in a tree, beside the model itself on a floor of blocks. */
+.model-panel {
+    flex-direction: column;
+    font-size: 11px;
+}
+
+.model-tree {
+    flex-shrink: 0;
+    width: 220px;
+    padding: 4px 0px;
+    border-right: 1px solid var(--vx-line);
+    min-height: 0px;
+}
+
+/* The model, which a drag turns: its picture fills it, with what is picked outlined over that. */
+.model-view {
+    flex-grow: 1;
+    flex-basis: 0px;
+    min-width: 0px;
+    min-height: 0px;
+    overflow: hidden;
+    background-color: var(--vx-bg);
+}
+
+.model-view-image, .model-view-overlay {
+    position: absolute;
+    left: 0px;
+    top: 0px;
+    width: 100%;
+    height: 100%;
+}
+
+/* A group of the Model window's bar: the buttons for shaping, or those for painting. */
+.model-bar-group {
+    flex-direction: row;
+    align-items: center;
+    flex-shrink: 0;
+    column-gap: 4px;
+}
+
+/* A colour to paint with: one of the sheet's own, or, larger, the one in hand. */
+.model-swatch {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    border-radius: 3px;
+    border: 1px solid var(--vx-line);
+}
+
+.model-swatch:hover {
+    border-color: var(--vx-text);
+}
+
+.model-swatch-own {
+    width: 22px;
+    height: 22px;
+    border-radius: 5px;
+}
+
+/* The colour picker, over the corner of the model's view while it is open. */
+.model-picker {
+    position: absolute;
+    left: 228px;
+    top: 8px;
+    padding: 8px;
+    width: 250px;
+    border-radius: 8px;
+    border: 1px solid var(--vx-line);
+    background-color: var(--vx-panel);
+}
+
+/* The sheet laid flat beside the model, while painting. */
+.model-sheet {
+    flex-shrink: 0;
+    width: 38%;
+    min-height: 0px;
+    overflow: hidden;
+    border-left: 1px solid var(--vx-line);
+    background-color: var(--vx-bg);
+}
+
+.model-sheet-image {
+    position: absolute;
 }

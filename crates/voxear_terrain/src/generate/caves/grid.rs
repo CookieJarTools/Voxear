@@ -1,7 +1,8 @@
 //! The regions a Cave Network's rooms lie in: squares along the ground.
 //!
 //! A region is three whole numbers: how many regions along x and z it
-//! lies, with nothing between.
+//! lies, and between them which layer of a network with several it is in,
+//! the topmost nothing.
 //!
 //! Only sums, products, divisions and square roots: the same regions on
 //! every machine.
@@ -58,10 +59,10 @@ impl Grid {
         [(p[0] / self.spacing).floor() as i32, 0, (p[2] / self.spacing).floor() as i32]
     }
 
-    /// The four regions beside `region`.
+    /// The four regions beside `region`, in its own layer.
     pub fn beside(&self, region: Region) -> [Region; 4] {
-        let [i, _, j] = region;
-        [[i + 1, 0, j], [i - 1, 0, j], [i, 0, j + 1], [i, 0, j - 1]]
+        let [i, layer, j] = region;
+        [[i + 1, layer, j], [i - 1, layer, j], [i, layer, j + 1], [i, layer, j - 1]]
     }
 
     /// Where the room of `region` stands, moved `jitter` of half a region

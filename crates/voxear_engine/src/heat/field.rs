@@ -161,11 +161,9 @@ pub fn sample(world: &mut World, at: Vec3) -> HeatSample {
     sample
 }
 
-pub(crate) fn sample_with(world: &World, heat: &mut HeatWorld, at: Vec3) -> HeatSample {
-    let level = climate(world);
-    let worlds = block_worlds(world);
-
-    // The climate: the generator's of the first world of blocks reaching here, else the level's.
+/// The climate at `at` and how wet it is: the generator's of the first world
+/// of blocks reaching there, else the level's.
+fn climate_at(heat: &HeatWorld, worlds: &[Blocks], level: Option<Climate>, at: Vec3) -> (f32, f32) {
     let generated = worlds.iter().find_map(|blocks| {
         let (generator, offset) = heat.generators.get(&blocks.entity)?;
         let local = at - blocks.corner;
@@ -179,10 +177,33 @@ pub(crate) fn sample_with(world: &World, heat: &mut HeatWorld, at: Vec3) -> Heat
         let level = level.unwrap_or_default();
         (level.celsius - LAPSE * at.y, level.humidity.clamp(0.0, 1.0))
     });
-    let humidity = humidity.clamp(0.0, 1.0);
+    (climate, humidity.clamp(0.0, 1.0))
+}
+
+/// What the time of day adds to a climate so wet: none without a clock, and
+/// more where it is dry.
+fn day_at(level: Option<Climate>, humidity: f32) -> f32 {
+    level.map_or(0.0, |level| level.day_swing * (1.5 - humidity) * day_curve(level.time_of_day))
+}
+
+/// How warm the open air is at `at`, in °C, and how wet, from 0 to 1: the
+/// climate there at this time of day, with nothing of shelter, water,
+/// zones or what is hot or cold near. What the weather goes by.
+pub fn open_air(world: &World, at: Vec3) -> (f32, f32) {
+    let level = climate(world);
+    let none = HeatWorld::default();
+    let heat = world.resource::<HeatWorld>().unwrap_or(&none);
+    let (climate, humidity) = climate_at(heat, &block_worlds(world), level, at);
+    (climate + day_at(level, humidity), humidity)
+}
+
+pub(crate) fn sample_with(world: &World, heat: &mut HeatWorld, at: Vec3) -> HeatSample {
+    let level = climate(world);
+    let worlds = block_worlds(world);
+    let (climate, humidity) = climate_at(heat, &worlds, level, at);
 
     // The day: none without a clock, and wider where it is dry.
-    let day = level.map_or(0.0, |level| level.day_swing * (1.5 - humidity) * day_curve(level.time_of_day));
+    let day = day_at(level, humidity);
     let open = climate + day;
 
     // Shelter, and water: drawn to the ground's own temperature, or the water's.

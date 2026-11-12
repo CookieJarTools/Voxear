@@ -101,6 +101,7 @@ internal static unsafe class EntryPoints
 			Loading.Update();
 			InputEvents.Dispatch();
 			Weather.Dispatch();
+			Storms.Dispatch();
 			ModuleHooks.Dispatch?.Invoke();
 			Localized.Dispatch();
 			SaveWrite.Update();

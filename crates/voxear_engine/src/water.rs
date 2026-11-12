@@ -218,12 +218,28 @@ fn sample_wet(world: &World, physics: Option<&PhysicsScene>, at: Vec3) -> Option
         return Some(WaterPoint { height, normal: Vec3::Y, flow: Vec3::ZERO, liquid });
     }
     // In a world of blocks' water, or over it: the top of its column, still.
-    let blocks = world.query_ref::<(&voxear_terrain::blocks::BlockWorld, &Transform, Option<&WorldTransform>)>();
-    let block_water = blocks.into_iter().find_map(|(blocks, local, placed)| {
+    let blocks = world.query_ref::<(
+        &voxear_terrain::blocks::BlockWorld,
+        &Transform,
+        Option<&WorldTransform>,
+        Option<&voxear_render::sea::SeaLevel>,
+    )>();
+    let block_water = blocks.into_iter().find_map(|(blocks, local, placed, sea)| {
         let corner = voxear_terrain::corner(local, placed);
-        Some(corner.y + blocks.water_over((at - corner).to_array(), OVER_BLOCK_WATER)?)
+        let top = blocks.water_over((at - corner).to_array(), OVER_BLOCK_WATER)?;
+        // Its sea, where it has a level, is the water that stands as high: ponds and rivers are no sea.
+        let is_sea = sea.is_none_or(|sea| (top - sea.0).abs() < 0.02 * blocks.block_size.max(0.01));
+        Some((corner.y + top, is_sea))
     });
-    if let Some(height) = block_water {
+    if let Some((height, is_sea)) = block_water {
+        // In rough weather the sea stands as far under its top as its swell has sunk it, and moves with it.
+        if let Some(sea) = world.resource::<crate::storms::SeaNow>().filter(|_| is_sea) {
+            let point = sea.0.at(at.x, at.z);
+            if point.sunk > 0.0 || point.rough > 0.0 {
+                let normal = sea.0.normal_at(at.x, at.z);
+                return Some(WaterPoint { height: height - point.sunk, normal, flow: point.flow, liquid: Liquid::Water });
+            }
+        }
         return Some(WaterPoint { height, normal: Vec3::Y, flow: Vec3::ZERO, liquid: Liquid::Water });
     }
     let query = world.resource::<WaterQuery>()?;

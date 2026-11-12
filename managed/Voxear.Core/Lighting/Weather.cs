@@ -18,10 +18,10 @@ namespace Voxear;
 /// </summary>
 public static unsafe class Weather
 {
-	private const int Numbers = 10;
-	private const int Wet = 7;
-	private const int Settled = 8;
-	private const int Bright = 9;
+	private const int Numbers = 11;
+	private const int Wet = 8;
+	private const int Settled = 9;
+	private const int Bright = 10;
 
 	private static WeatherKind? lastKind;
 	private static bool lit;
@@ -55,6 +55,7 @@ public static unsafe class Weather
 				Rain = state[4],
 				Snow = state[5],
 				Lightning = state[6],
+				Dust = state[7],
 			};
 		}
 	}
@@ -96,9 +97,16 @@ public static unsafe class Weather
 	/// </summary>
 	public static void Set(WeatherAmounts amounts, float seconds = 10f)
 	{
-		var given = stackalloc float[7]
+		var given = stackalloc float[8]
 		{
-			amounts.Cloud, amounts.Darkness, amounts.Fog, amounts.Wind, amounts.Rain, amounts.Snow, amounts.Lightning,
+			amounts.Cloud,
+			amounts.Darkness,
+			amounts.Fog,
+			amounts.Wind,
+			amounts.Rain,
+			amounts.Snow,
+			amounts.Lightning,
+			amounts.Dust,
 		};
 		Native.Api->WeatherSet((int)WeatherKind.Custom, given, seconds);
 	}

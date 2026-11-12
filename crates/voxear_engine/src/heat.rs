@@ -24,7 +24,7 @@ use voxear_ecs::{Entity, World};
 use voxear_render::{Light, LightKind};
 use voxear_scene::{Destroying, Transform, WorldTransform};
 
-pub use field::{Burst, HeatSample, HeatWorld, LAVA, climate, day_curve};
+pub use field::{Burst, HeatSample, HeatWorld, LAVA, climate, day_curve, open_air};
 pub use parts::{
     ChangeWhen, Climate, EXTREME, Feels, HeatBody, HeatChange, HeatSource, HeatState, HeatZone, ZoneMode, ZoneShape,
 };

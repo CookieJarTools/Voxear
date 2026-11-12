@@ -15,6 +15,8 @@ Along the top of the Block World in the Inspector are its tools: **Build**, the 
 | Data | The `.blockworld` asset its blocks are |
 | Block size | How many metres a block is a side, from 0.1 to 10: smaller blocks make the same world finer, not smaller (see below) |
 | Smooth | Whether its surface runs smoothly between its blocks rather than as cubes: a [[Voxel Terrain]] |
+| Voxels | How many small cubes each cube's faces are drawn as made of, along a block's side: 0 for plain faces, 8 or 16 for a world built of small cubes (see [Faces of small cubes](#faces-of-small-cubes)) |
+| Relief | With Voxels, how many small cubes deep the deepest of them are sunk into a face, from 0 to 4 in halves |
 | Ground | **Flat**, or **Generated** by a world generator (see below) |
 | Ground size | How many blocks its ground reaches along X and Z |
 | Ground height | With flat ground, how many blocks high it is |
@@ -224,6 +226,26 @@ The blocks are kept in chunks of 32 a side, only the chunks with blocks in them,
 The camera draws only the chunks in view, and of each only the faces turned towards it. Caves and rooms closed off from it are passed over too: each chunk notes which of its sides see each other through its air and water, and only the chunks the camera can see into through them are drawn, so a mountain full of caves costs no more than its outside until a tunnel opens onto one. The sun's shadows fall from every face. Blocks light the world round them too, as the GI's rays see them.
 
 Water's faces are drawn after the rest of the scene, with the sea and Pools: every face of the water in the chunks the camera sees, from either side, flowing water as high as it stands. Water casts no shadow, and the GI's rays pass through it.
+
+## Faces of small cubes
+
+Set **Voxels** and every face of the world's cubes is drawn as if built of small cubes: that many along a block's side, in one grid over the whole world, so faces side by side and round a corner line up.
+
+- Each small cube is one colour: its part of the block's picture. Give a block a picture as many pixels across as Voxels, 16 for 16, and each pixel becomes a small cube.
+- A small cube is sunk into the face where its part of the picture is darker than the picture is all over, so the mortar of a wall lies behind its bricks and the gaps of planks behind the planks. **Relief** is how many small cubes deep the darkest go: 0 leaves the face flat, a mosaic of squares.
+- A face with no picture, only the block's colour, has small cubes sunk here and there, more together in some places than others, each a slightly different shade.
+
+The small cubes are worked out as each face is drawn. The world's blocks, its mesh, its collision and what scripts read of it are the same with Voxels as without, and it costs nothing to change. A block's outline stays a cube: the small cubes are cut into its faces, never raised from them, and cast no shadows of their own. Far enough off that a small cube is under a pixel across, the faces are drawn plain, as the same picture looks from there.
+
+In the file, they are `voxels` and `relief`:
+
+```toml
+block_size = 1.0
+voxels = 16
+relief = 2.0
+```
+
+A Voxel Terrain, drawn smooth, has no faces to cut and no Voxels row.
 
 ## Blocks from scripts
 

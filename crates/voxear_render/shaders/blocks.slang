@@ -95,6 +95,162 @@ TerrainLayer smoothLayer(BlockWorld world, uint3 surfaces, TerrainSpot spot, flo
     return layer;
 }
 
+// A number from 0 to 1 for a small cube, from whole numbers alone.
+float blockGrain(int3 cube)
+{
+    uint h = uint(cube.x) * 0x8DA6B343u ^ uint(cube.y) * 0xD8163841u ^ uint(cube.z) * 0xCB1AB31Fu;
+    h ^= h >> 16;
+    h *= 0x7FEB352Du;
+    h ^= h >> 15;
+    h *= 0x846CA68Bu;
+    h ^= h >> 16;
+    return float(h >> 8) / 16777216.0;
+}
+
+// The most small cubes deep a face is cut, and the most of them a ray is walked across.
+static const int BLOCK_RELIEF_DEEPEST = 4;
+static const int BLOCK_CUBE_STEPS = 12;
+
+// A cube's face drawn as made of small cubes (src/blocks.rs, BlockVoxels): `world.voxels` of them along a block's
+// side, in a grid over the whole world, so faces side by side and round a corner agree. Each small cube is one
+// colour, the face's picture's there, and stands a whole number of small cubes below the face: deeper the darker
+// its part of the picture is than the picture is all over, or for a face with no picture, here and there. The ray
+// from the camera is walked across the grid from where it meets the face until it meets a small cube's top or the
+// side of the next, which gives the face's look its place to read the pictures at (`spot`, with a small cube's
+// width for the pixel's, so the picture is read one colour a small cube), the way the small cube's own face looks
+// (`facing`), how many small cubes down it is (`sunk`) and a number of its own (`grain`). Nothing is cut out and no
+// depth is written: the small cubes are in the shading alone. `shown` is how much of this the pixel takes, less
+// as the small cubes get too small on screen to tell apart, where the plain face takes over.
+bool blockCubes(
+    BlockWorld world,
+    uint index,
+    float3 at,
+    float3 normal,
+    inout TerrainSpot spot,
+    out float3 facing,
+    out float sunk,
+    out float grain,
+    out float shown)
+{
+    facing = normal;
+    sunk = 0.0;
+    grain = 0.5;
+    shown = 0.0;
+    if (world.voxels < 1.0)
+    {
+        return false;
+    }
+    float cube = world.blockSize / world.voxels;
+    shown = 1.0 - smoothstep(0.4, 0.8, max(length(spot.dx), length(spot.dy)) / cube);
+    if (shown <= 0.0)
+    {
+        return false;
+    }
+    // The face's own axis, and the two it lies along.
+    uint axis = abs(normal.x) > 0.5 ? 0 : (abs(normal.y) > 0.5 ? 1 : 2);
+    uint u = (axis + 1) % 3;
+    uint v = (axis + 2) % 3;
+    uint side = axis == 1 ? 0 : (axis == 0 ? 1 : 2);
+    float3 alongU = float3(0.0);
+    float3 alongV = float3(0.0);
+    alongU[u] = 1.0;
+    alongV[v] = 1.0;
+    float3 grid = spot.place / cube;
+    // The layer of small cubes just under the face.
+    int layer = int(round(grid[axis])) - (normal[axis] > 0.0 ? 1 : 0);
+    float3 ray = normalize(at - push.frame->cameraPosition);
+    float2 across = float2(ray[u], ray[v]);
+    // How fast the ray goes down into the face: never so slowly that it runs along it for ever.
+    float down = max(-dot(ray, normal), 0.05);
+
+    TerrainSurface surface = world.surfaces[min(index, world.surfaceCount - 1)];
+    Material material = buffers()->materials[surface.material];
+    uint width, height;
+    textures[NonUniformResourceIndex(material.baseColorTexture)].GetDimensions(width, height);
+    bool pictured = width > 2;
+    int deepest = clamp(int(round(world.relief)), 0, BLOCK_RELIEF_DEEPEST);
+    // The picture's brightness over a whole block, which each small cube's is set against.
+    TerrainSpot whole = spot;
+    whole.dx = alongU * world.blockSize;
+    whole.dy = alongV * world.blockSize;
+    float3 weights = float3(0.2126, 0.7152, 0.0722);
+    float3 all = pictured ? terrainPicture(material.baseColorTexture, whole, side, surface.uvScale).rgb : float3(0.0);
+    float usual = dot(all, weights);
+
+    TerrainSpot small;
+    small.place = spot.place;
+    small.dx = alongU * cube;
+    small.dy = alongV * cube;
+    float2 from = float2(grid[u], grid[v]);
+    int2 here = int2(floor(from));
+    int2 toward = int2(across.x >= 0.0 ? 1 : -1, across.y >= 0.0 ? 1 : -1);
+    float2 span = 1.0 / max(abs(across), 1e-6);
+    float2 next = (float2(here + max(toward, int2(0, 0))) - from) * float2(toward) * span;
+    float travelled = 0.0;
+    for (int i = 0; i < BLOCK_CUBE_STEPS; i++)
+    {
+        // How far down this small cube's top is.
+        int3 key = int3(0, 0, 0);
+        key[u] = here.x;
+        key[v] = here.y;
+        key[axis] = layer;
+        float own = blockGrain(key + int3(int(index) * 7919, 0, 0));
+        small.place[u] = (float(here.x) + 0.5) * cube;
+        small.place[v] = (float(here.y) + 0.5) * cube;
+        float low;
+        if (pictured)
+        {
+            float bright = dot(terrainPicture(material.baseColorTexture, small, side, surface.uvScale).rgb, weights);
+            low = saturate((usual - bright) / max(usual, 0.04) * 2.5);
+        }
+        else
+        {
+            // Without a picture, about a fifth of the small cubes are sunk, some deeper than others, more of them
+            // together in some places than others: each small cube's own number and that of the three by three
+            // it is one of.
+            int3 patch = int3(floor(float3(key) / 3.0));
+            float rough = own * 0.55 + blockGrain(patch + int3(int(index) * 7919, 31, 0)) * 0.45;
+            low = saturate((rough - 0.62) * 4.0);
+        }
+        float top = floor(low * float(deepest) + 0.5);
+        if (i > 0 && travelled * down > top)
+        {
+            // The ray came in below this small cube's top: it meets its side. `facing` was set as it stepped.
+            sunk = travelled * down;
+            grain = own;
+            break;
+        }
+        float leaves = min(next.x, next.y);
+        if (top <= leaves * down || i == BLOCK_CUBE_STEPS - 1)
+        {
+            // It reaches this small cube's top before it leaves it.
+            facing = normal;
+            sunk = top;
+            grain = own;
+            break;
+        }
+        travelled = leaves;
+        if (next.x < next.y)
+        {
+            here.x += toward.x;
+            next.x += span.x;
+            facing = -alongU * float(toward.x);
+        }
+        else
+        {
+            here.y += toward.y;
+            next.y += span.y;
+            facing = -alongV * float(toward.y);
+        }
+    }
+    // The pictures are read at the small cube's middle, a small cube wide; the plain face's place and width as
+    // the small cubes give way to it.
+    spot.place = lerp(spot.place, small.place, shown);
+    spot.dx = lerp(spot.dx, small.dx, shown);
+    spot.dy = lerp(spot.dy, small.dy, shown);
+    return true;
+}
+
 // A face's own surface in place of the world's material: its pictures from the side it faces, each block's own,
 // darker where blocks close its corners in. Drawn smooth, each of its triangle's corners' kinds of ground as much as
 // the fragment is that corner's, a little sharpened, so sand meets grass over a soft edge rather than along the
@@ -153,7 +309,21 @@ bool terrainShading(
     }
     else
     {
+        float3 facing;
+        float sunk, grain, shown;
+        bool cubes = blockCubes(world, input.lod, input.worldPosition, normal, spot, facing, sunk, grain, shown);
         layer = blockLayer(world, input.lod, spot, normal, input.tangent);
+        if (cubes)
+        {
+            // A small cube's own face in place of the picture's bumps, turned only a little from the face it is
+            // cut into: lit as a wall would be, a side away from the sun is black beside the face, where light
+            // finds its way into so shallow a pit. Its shade says the rest: darker the deeper a top lies, a side
+            // darker than the face, least towards the sun, and each small cube a shade of its own.
+            layer.normal = lerp(layer.normal, normalize(lerp(normal, facing, 0.25)), shown);
+            bool side = dot(facing, normal) < 0.5;
+            float lit = side ? lerp(0.55, 0.88, saturate(dot(facing, -push.frame->sunDirection) * 0.5 + 0.5)) : 1.0;
+            layer.base.rgb *= lerp(1.0, (1.0 - 0.18 * sunk) * lit * (0.94 + 0.12 * grain), shown);
+        }
     }
     base = layer.base;
     base.rgb *= shade;

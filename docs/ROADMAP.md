@@ -2230,6 +2230,16 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     scene after a 3 km move matching the picture before it, and 131 km out matching it near; cascades' texels kept.
     Not done: a server exact for players far from the level's middle; GI probe spacings other than powers of two
     placed again on a move.
+- ~~**Faces of small cubes:**~~ done: a Block World's **Voxels** (how many small cubes along a block's side) and
+  **Relief** (how many deep the deepest sink), `voxels` and `relief` in its file, `BlockVoxels` on its look. The
+  cubes' faces are shaded as a grid of small cubes over the whole world (`blockCubes` in `blocks.slang`): one
+  colour each, the picture's there; sunk where the picture is darker than it is all over, or by a hash of their
+  place where a face has only a colour; the ray walked across the grid to a top or a side, twelve small cubes at
+  most. The mesh, shadows, depth and collision are unchanged, and the faces go plain where a small cube is under
+  a pixel. About 0.1 ms a frame at 640×360 with faces near. GPU test: small cubes near, finer with more, flat
+  without relief, the same each time, and plain from far above; file and editor tests of the two rows.
+  - Later: a block's own relief, small cubes that stand out from a face and change its outline, their shadows,
+    small cubes on a Voxel Terrain.
 - ~~**Speed of block worlds and Voxel Terrains:**~~ done, measured on a test project with a level of each kind
   (`vox render --level --profile --fly`; the stats overlay and the Profiler count block triangles in view and in
   shadows). Each chunk's mesh for the GI's rays waited on the GPU about seven times; a frame's are now uploaded and

@@ -398,6 +398,10 @@ pub enum BlockField {
     BlockSize,
     /// Whether it is drawn smooth: a Voxel Terrain.
     Smooth,
+    /// How many small cubes its cubes' faces are drawn as made of along a
+    /// block's side, and how many deep they sink.
+    Voxels,
+    Relief,
     /// How many blocks its ground reaches along x and z, and how many up.
     GroundSize,
     GroundHeight,
@@ -478,7 +482,15 @@ pub fn props(world: &World, entity: Entity) -> Vec<Prop> {
         }
         (BlockTool::Build, None) => vec![F::Data],
         (BlockTool::Settings, Some(file)) => {
-            let mut fields = vec![F::Data, F::BlockSize, F::Smooth, F::Ground];
+            let mut fields = vec![F::Data, F::BlockSize, F::Smooth];
+            // Cubes' faces can be cut into small cubes; a smooth surface has no faces to cut.
+            if !file.smooth {
+                fields.push(F::Voxels);
+                if file.voxels > 0 {
+                    fields.push(F::Relief);
+                }
+            }
+            fields.push(F::Ground);
             // A generator whose graph has a Volume makes the overhangs and caves itself.
             let own_voxels = if generator_has_volume(world, entity) { vec![] } else { vec![F::Overhangs, F::Caves] };
             match file.generate {
@@ -510,6 +522,8 @@ pub fn label(field: BlockField) -> &'static str {
         F::Data => "Data",
         F::BlockSize => "Block size",
         F::Smooth => "Smooth",
+        F::Voxels => "Voxels",
+        F::Relief => "Relief",
         F::GroundSize => "Ground size",
         F::GroundHeight => "Ground height",
         F::Shadows => "Cast shadows",
@@ -676,6 +690,8 @@ pub fn get(game: &Game, entity: Entity, field: BlockField) -> Option<Value> {
         F::Data => Value::Asset(path_of(game, Some(&world.get::<BlockWorldSource>(entity)?.0.data))),
         F::BlockSize => Value::Number(file()?.block_size),
         F::Smooth => Value::Toggle(file()?.smooth),
+        F::Voxels => Value::Number(file()?.voxels as f32),
+        F::Relief => Value::Number(file()?.relief),
         F::GroundSize => Value::Vector(file()?.ground.size.map(|v| v as f32).to_vec()),
         F::GroundHeight => Value::Number(file()?.ground.height as f32),
         F::Shadows => Value::Toggle(world.get::<BlockWorld>(entity)?.cast_shadows),
@@ -796,6 +812,14 @@ pub fn set(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, fie
         // Its ground stays as large in metres, counted again in blocks of the new size.
         (F::BlockSize, v) => drop(file.set_block_size(number(v).unwrap_or(file.block_size))),
         (F::Smooth, Value::Toggle(on)) => file.smooth = *on,
+        (F::Voxels, v) => {
+            let most = voxear_terrain::blocks::file::MOST_VOXELS as f32;
+            file.voxels = number(v).map_or(file.voxels, |count| count.round().clamp(0.0, most) as u32);
+        }
+        (F::Relief, v) => {
+            let deepest = voxear_terrain::blocks::file::DEEPEST_RELIEF;
+            file.relief = number(v).map_or(file.relief, |deep| (deep * 2.0).round().clamp(0.0, deepest * 2.0) / 2.0);
+        }
         (F::GroundSize, Value::Vector(v)) if v.len() >= 2 => {
             file.ground.size = [v[0], v[1]].map(|n| n.round().clamp(0.0, 4096.0) as u32);
         }
@@ -1036,7 +1060,8 @@ fn restyle(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, fil
             let size = file.block_size;
             let surfaces: Vec<_> =
                 look.surfaces.iter().map(|surface| voxear_render::SurfaceLook { size, ..*surface }).collect();
-            game.engine.world.insert(entity, BlockLook { surfaces: surfaces.into(), ..look });
+            let voxels = voxear_render::BlockVoxels { count: file.voxels, relief: file.relief };
+            game.engine.world.insert(entity, BlockLook { surfaces: surfaces.into(), voxels, ..look });
         }
         return;
     };

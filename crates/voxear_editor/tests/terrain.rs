@@ -2312,12 +2312,29 @@ fn a_voxel_terrain_is_added_drawn_smooth_and_built_on_in_balls_whose_edges_lie_b
     assert_eq!((blocks(&editor).blocks.get(middle), blocks(&editor).blocks.fill(above)), (AIR, 0), "undone");
     // Smooth off: a Block World of cubes again, its quads facing six ways.
     show_block_tool(&mut editor, &mut renderer, "Settings");
+    assert!(prop_rows(&editor.ui, "Voxels").is_empty(), "a smooth surface has no faces to cut into small cubes");
     let smooth = first_with(&editor.ui, prop_rows(&editor.ui, "Smooth")[0], "checkbox").expect("its Smooth");
     click(&mut editor.ui, smooth);
     frame(&mut editor, &mut renderer);
     frame(&mut editor, &mut renderer);
     assert!(!blocks(&editor).smooth);
     assert!(blocks(&editor).meshes.values().all(|mesh| mesh.quads.len() * 3 != mesh.indices.len() * 2));
+    // Its cubes' faces cut into small cubes: Voxels to a block's side, and then how deep they sink.
+    let voxels = |editor: &voxear_editor::Editor| {
+        editor.game.engine.world.get::<voxear_render::BlockLook>(field).expect("its look").voxels
+    };
+    assert_eq!(voxels(&editor).count, 0, "none to begin with");
+    assert!(prop_rows(&editor.ui, "Relief").is_empty(), "nothing to sink until there are some");
+    let quads: usize = blocks(&editor).meshes.values().map(|mesh| mesh.quads.len()).sum();
+    type_number(&mut editor, &mut renderer, "Voxels", "8");
+    frame(&mut editor, &mut renderer);
+    assert_eq!(voxels(&editor).count, 8);
+    type_number(&mut editor, &mut renderer, "Relief", "3");
+    frame(&mut editor, &mut renderer);
+    assert_eq!(voxels(&editor), voxear_render::BlockVoxels { count: 8, relief: 3.0 });
+    let after: usize = blocks(&editor).meshes.values().map(|mesh| mesh.quads.len()).sum();
+    assert_eq!(after, quads, "the small cubes are drawn on the faces it has, not built");
+    shot(&mut renderer, "block-world-small-cubes.png");
 }
 
 #[test]

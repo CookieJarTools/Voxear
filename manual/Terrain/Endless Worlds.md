@@ -17,7 +17,7 @@ Give it a **Generate** layer (see [[Generating Terrain]]), and its generator's w
 
 ## How the ground is made
 
-The ground is made in tiles of 256 heights a side, 256 metres at a metre's spacing, as many round the camera as its **View distance** reaches, up to 33 each way. When the camera goes into another tile, the tiles left behind are let go and those that came into reach are made on threads of their own, the nearest first, so the game never waits for them. The ground under the camera and round it is made at once, so there is always ground to stand on. A tile not made yet is drawn as nothing, and nothing stands on it.
+The ground is made in tiles of 256 heights a side, 256 metres at a metre's spacing, as many round the camera as its **View distance** reaches, up to 33 each way. When the camera goes into another tile, the tiles left behind are let go and those that came into reach are made on threads of their own, the nearest first, so the game never waits for them. How many threads make terrain at once is the project's, in **Project Settings ▸ World** (see [[Block Worlds#On slow machines]]). The ground under the camera and round it is made at once, so there is always ground to stand on. A tile not made yet is drawn as nothing, and nothing stands on it.
 
 In a game the ground is made round the camera; in the editor, round where the Scene view looks from.
 

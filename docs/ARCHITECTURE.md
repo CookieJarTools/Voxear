@@ -3097,7 +3097,8 @@ and each sun cascade only their faces turned towards the sun;
 each chunk's faces merged by surface alone are its collision mesh and its mesh for the GI's rays, the shapes made on
 every core and kept while a chunk's triangles stay the same, the ray meshes made a few a frame and uploaded and built
 in one GPU batch (`Gpu::batch`). A world whose faces did not change costs physics and the renderer no walk over its
-chunks. A pool takes at most 16 MB of chunks a frame (`STAGED_A_FRAME`), grown once for all that are coming: each
+chunks. The frame's chunks go up within `WorldBudget::upload` megabytes, shared by every world (16 on High), each
+pool grown once for all that are coming: each
 chunk shows as it was until its frame comes, and those the world no longer has go once all have come; a world whose
 blocks change size gets a new pool, and its old one is drawn until the new one has every chunk. In the editor, a
 world too large to make again within a frame is made on other threads and shown as it was until then
@@ -3115,7 +3116,10 @@ by kinds of block by climate and height. Generated ground without
 end streams chunk columns round the camera (`blocks::stream`), the world's own near, and beyond them rings of
 coarser chunks, each twice the last's block size, kept by level in the renderer's pool; near columns' blocks are made
 a column past those drawn, and each column's faces on the same background threads once the columns round it have
-blocks, so none is meshed twice and the frame waits for none. Models of small coloured
+blocks, so none is meshed twice and the frame waits for none. How many columns are made at once, how many threads
+make terrain, how far it reaches and how much goes up a frame is the project's `WorldBudget` (`voxear_terrain::budget`),
+a resource the streamer and renderer read each frame and scripts set, so a change takes hold with nothing made
+again. Models of small coloured
 blocks come from `.vox` files (`blocks::vox`), each colour built as a kind of the world's own. A block is an asset
 (`.block`, `blocks::block`): its look and liquid are read natively, by meshing, flow, physics and servers, and its
 rules (hardness, tool kind, tier, drops, sounds) are kept with them for scripts to apply. A world's file lists its

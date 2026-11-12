@@ -1987,6 +1987,14 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   rays (very large worlds still fill the shared mesh pool); a frame's draws merged across a chunk's levels; ground
   generated per metre rather than per block, as noise for caves and overhangs is worked out for every block under
   the surface.
+- ~~**Budgets for making chunks:**~~ done: what making worlds of blocks may spend is a setting
+  (`voxear_terrain::WorldBudget`, `[world]` in `voxear.toml`, Project Settings ▸ World ▸ Block Worlds, `World.Quality`
+  and the numbers under it for scripts): how many threads make terrain at once (a gate on the worker pool, so it
+  changes as the game runs, heightmap tiles too), how many chunk columns a world makes at once
+  (`BlockStreamer::at_once`), how many megabytes of chunks go up a frame, shared by every world, and the most view
+  and far distance. Presets Low to Ultra, Low making two columns at a time on two threads; a number changed makes it
+  Custom. Tests: Low never has more than two columns in flight, raising it as a world streams makes nothing again;
+  a pool never works more jobs at once than its limit; the file, the editor's page and a script set it.
 - Throughout: chunks culled against the frustum and last frame's depth, and the smallest save and network data
   (only changes from what a build or a seed makes, as commands while few and compacted deltas once many).
 

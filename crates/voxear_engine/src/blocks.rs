@@ -290,6 +290,8 @@ pub fn with_structures(content: &mut Content, file: &BlockFile) -> BlockFile {
                     radius: town.radius,
                     path,
                     path_width: town.path_width,
+                    wander: town.wander,
+                    branching: town.branching,
                 })
             }
         };

@@ -1164,10 +1164,12 @@ fn a_generated_world_builds_a_village_of_houses_round_a_well_with_paths_from_the
     let village = Town {
         middle: Some(TownPiece { size: [5, 5, 5], blocks: well, ground: GroundFit::Flatten, sink: 0 }),
         houses: vec![(house([7, 4, 9]), 2.0), (house([5, 3, 7]), 2.0), (house([9, 4, 7]), 1.0)],
-        count: [7, 10],
-        radius: [11.0, 30.0],
+        count: [12, 18],
+        radius: [34.0, 60.0],
         path: gravel,
-        path_width: 2,
+        path_width: 3,
+        wander: 0.5,
+        branching: 0.6,
     };
     let land = |spacing: f32, separation: f32, chance: f32, slope: f32, salt: u32| Placement {
         spacing,
@@ -1248,9 +1250,9 @@ fn a_generated_world_builds_a_village_of_houses_round_a_well_with_paths_from_the
     let mut scene = World::new();
     let look = BlockLook { material: default, surfaces: Arc::from(surfaces) };
     scene.spawn((made, look, Transform::default()));
-    // From 45 m over the village's south-west, looking at its middle; cameras look along +z.
-    let turn = Quat::from_rotation_y(0.785) * Quat::from_rotation_x(0.62);
-    let eye = Vec3::new(52.0, middle_height + 45.0, 52.0);
+    // From 70 m over the village's south-west, looking at its middle; cameras look along +z.
+    let turn = Quat::from_rotation_y(0.785) * Quat::from_rotation_x(0.75);
+    let eye = Vec3::new(30.0, middle_height + 70.0, 30.0);
     scene.spawn((Camera::default(), Transform::new(eye, turn, Vec3::ONE)));
     let towards_sun = Vec3::new(-0.4, 0.75, -0.5).normalize();
     let sun = Quat::from_rotation_arc(Vec3::Z, -towards_sun);

@@ -146,18 +146,24 @@ impl Default for StructureDef {
     }
 }
 
-/// A town: a middle (a well, a square, a hall), houses round it, each a
-/// structure with a model, chosen by weight, and a path from each house's
-/// door to the middle. Houses face the middle, their doors on the side of
-/// their model that faces -z, in its middle.
+/// A town grown as a village grows: a middle (a well, a square, a hall),
+/// streets running out from it that follow the lie of the land, bending
+/// round slopes and branching as they go, and houses along them, each a
+/// structure with a model, chosen by weight, set back from the street and
+/// turned to face it, with a short path from its door. Houses come nearest
+/// the middle first, so a town is thickest there and thins out along its
+/// streets. A house's door is on the side of its model that faces -z, in
+/// its middle.
 ///
 /// ```toml
 /// [town]
 /// middle = "Structures/Well.structure"
-/// count = [5, 9]              # houses, from and to
-/// radius = [10.0, 30.0]       # blocks from the middle, from and to
+/// count = [8, 14]             # houses, from and to
+/// radius = [24.0, 48.0]       # how far its main streets run, in blocks, from and to
 /// path = "Blocks/Gravel.block"
-/// path_width = 2
+/// path_width = 3
+/// wander = 0.5                # how much its streets bend, 0 for straight
+/// branching = 0.5             # how often they branch, 0 for never
 ///
 /// [[town.houses]]
 /// structure = "Structures/Cottage.structure"
@@ -174,11 +180,22 @@ pub struct TownDef {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
     pub path_width: u32,
+    pub wander: f32,
+    pub branching: f32,
 }
 
 impl Default for TownDef {
     fn default() -> Self {
-        Self { middle: None, houses: Vec::new(), count: [5, 9], radius: [10.0, 30.0], path: None, path_width: 2 }
+        Self {
+            middle: None,
+            houses: Vec::new(),
+            count: [8, 14],
+            radius: [24.0, 48.0],
+            path: None,
+            path_width: 3,
+            wander: 0.5,
+            branching: 0.5,
+        }
     }
 }
 
@@ -233,8 +250,8 @@ impl TownPiece {
 }
 
 /// A town as a world builds it: its pieces by the world's numbers, how many
-/// houses and how far out, in blocks, and its paths' block (air for none)
-/// and width.
+/// houses and how far its main streets run, in blocks, its streets' block
+/// (air for none) and width, and how much they bend and branch.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Town {
     pub middle: Option<TownPiece>,
@@ -243,6 +260,8 @@ pub struct Town {
     pub radius: [f32; 2],
     pub path: BlockId,
     pub path_width: u32,
+    pub wander: f32,
+    pub branching: f32,
 }
 
 /// A structure as a world builds it: where, how the ground meets it, how
@@ -294,7 +313,9 @@ impl PlacedStructure {
         match &self.blocks {
             StructureBlocks::Model { size, .. } => (size[0].max(size[2]) as f32 * 0.71) + 1.0,
             StructureBlocks::Plant { plant, .. } => plant.trunk.max(1.0) + 2.0,
-            StructureBlocks::Town(town) => town.reach(),
+            // A town keeps clear of what came before it by its middle; what comes after keeps clear of its streets
+            // and buildings themselves (see `build`).
+            StructureBlocks::Town(town) => town.middle.as_ref().map_or(3.0, TownPiece::radius) + 2.0,
         }
     }
 
@@ -380,135 +401,246 @@ struct Part {
     pieces: Vec<Piece>,
     ground: GroundFit,
     sink: i32,
-    radius: f32,
+}
+
+impl Part {
+    /// How far its blocks reach from its middle along x and along z.
+    fn half(&self) -> [i32; 2] {
+        let reach = |axis: usize| self.pieces.iter().map(|(at, _)| at[axis].abs()).max().unwrap_or(0);
+        [reach(0), reach(2)]
+    }
 }
 
 impl Town {
-    /// How far its buildings reach from its middle, in blocks.
+    /// How far its buildings reach from its middle, in blocks: its longest
+    /// street, set back by the street's width and its largest house.
     fn reach(&self) -> f32 {
-        let largest = self.houses.iter().map(|(house, _)| house.radius()).fold(0.0f32, f32::max);
-        self.radius[1].max(self.radius[0]) + largest + 1.0
+        let largest =
+            self.houses.iter().map(|(house, _)| house.size[0].max(house.size[2]) as f32).fold(0.0f32, f32::max);
+        self.radius[1].max(self.radius[0]) + self.path_width as f32 + largest * 1.5 + 4.0
     }
 
-    /// Its buildings and paths at a site whose middle is block `centre`, on
-    /// `ground`: the middle there, then up to its count of houses round it
-    /// where each finds ground that is level enough and room clear of the
-    /// rest, each turned so its door faces the middle; and the blocks along
-    /// x and z its paths run over, from each door to the middle.
+    /// Its buildings and streets at a site whose middle is block `centre`,
+    /// on `ground`: the middle there; streets grown out from it (see
+    /// `streets`); houses along them, nearest the middle first, up to its
+    /// count, each on ground level enough and clear of the streets and the
+    /// rest, turned to face its street, with a short path from its door to
+    /// it. The blocks along x and z its streets and paths run over come
+    /// second.
     fn layout(&self, seed: u32, centre: [i32; 2], ground: &Ground) -> (Vec<Part>, Vec<[i32; 2]>) {
         let mut draws = Draws(seed ^ 0x7A3C_15E1);
         let mut parts = Vec::new();
         if let Some(middle) = &self.middle {
             let pieces = model_pieces(middle.size, &middle.blocks);
-            parts.push(Part { at: centre, pieces, ground: middle.ground, sink: middle.sink, radius: middle.radius() });
+            parts.push(Part { at: centre, pieces, ground: middle.ground, sink: middle.sink });
         }
         let middle_radius = self.middle.as_ref().map_or(1.5, TownPiece::radius);
+        let streets = self.streets(&mut draws, centre, middle_radius, ground);
+        let mut paths: Vec<[i32; 2]> = Vec::new();
+        let width = self.path_width.max(1) as f32;
+        for street in &streets {
+            for &(point, _) in &street.points {
+                lay(&mut paths, point, width);
+            }
+        }
         let total: f32 = self.houses.iter().map(|(_, weight)| weight.max(0.0)).sum();
         let [least, most] = [self.count[0].min(self.count[1]), self.count[0].max(self.count[1])];
         let wanted = least + (draws.next() % (most - least + 1).max(1));
-        let mut paths = Vec::new();
-        if total <= 0.0 {
+        if total <= 0.0 || self.path == AIR && streets.is_empty() {
             return (parts, paths);
         }
-        let (mut placed, mut tries) = (0, 0);
-        while placed < wanted && tries < wanted * 12 {
-            tries += 1;
-            // A kind of house by weight.
+        // Every place along a street a house might front, either side, nearest the middle first.
+        let mut lots: Vec<([f32; 2], [f32; 2], f32)> = Vec::new();
+        for street in &streets {
+            for (at, &(point, heading)) in street.points.iter().enumerate().skip(1) {
+                if at % 3 != 0 {
+                    continue;
+                }
+                for side in [1.0f32, -1.0] {
+                    let out = [-heading[1] * side, heading[0] * side];
+                    let away = ((point[0] - centre[0] as f32).powi(2) + (point[1] - centre[1] as f32).powi(2)).sqrt();
+                    lots.push((point, out, away + draws.unit() * 16.0));
+                }
+            }
+        }
+        lots.sort_by(|a, b| a.2.total_cmp(&b.2));
+        let fronts = [[0.0f32, -1.0], [1.0, 0.0], [0.0, 1.0], [-1.0, 0.0]];
+        let mut placed = 0;
+        let mut stubs: Vec<[i32; 2]> = Vec::new();
+        for (point, out, _) in lots {
+            if placed >= wanted {
+                break;
+            }
+            // A kind of house by weight; turned so its front faces back along `out`, to the street.
             let mut pick = draws.unit() * total;
             let house = self.houses.iter().find(|(_, weight)| {
                 pick -= weight.max(0.0);
                 pick < 0.0
             });
             let Some((house, _)) = house.or(self.houses.last()) else { break };
-            // A way out from the middle, evenly round, and how far.
-            let way = loop {
-                let (x, z) = (draws.unit() * 2.0 - 1.0, draws.unit() * 2.0 - 1.0);
-                let length = (x * x + z * z).sqrt();
-                if length > 0.2 && length <= 1.0 {
-                    break [x / length, z / length];
-                }
-            };
-            let out = draws.between(self.radius).max(middle_radius + house.radius() + 1.0);
-            let at = [centre[0] + (way[0] * out).round() as i32, centre[1] + (way[1] * out).round() as i32];
-            let radius = house.radius();
-            let clear = parts.iter().all(|part: &Part| {
-                let (dx, dz) = ((part.at[0] - at[0]) as f32, (part.at[1] - at[1]) as f32);
-                (dx * dx + dz * dz).sqrt() >= part.radius + radius + 1.0
-            });
-            // Level enough: its corners' ground within four blocks of each other.
-            let half = [house.size[0] as i32 / 2, house.size[2] as i32 / 2];
-            let corners = [[-1, -1], [1, -1], [-1, 1], [1, 1]]
-                .map(|[sx, sz]| ground.top(at[0] + sx * half[0], at[1] + sz * half[1]));
-            let (low, high) = (corners.iter().min().copied().unwrap_or(0), corners.iter().max().copied().unwrap_or(0));
-            if !clear || high - low > 4 {
-                continue;
-            }
-            // Turned so its front, -z in its model, faces the middle.
-            let towards = [(centre[0] - at[0]) as f32, (centre[1] - at[1]) as f32];
-            let fronts = [[0.0, -1.0], [1.0, 0.0], [0.0, 1.0], [-1.0, 0.0]];
             let turns = (0..4u8)
                 .max_by(|&a, &b| {
-                    let dot = |t: u8| fronts[t as usize][0] * towards[0] + fronts[t as usize][1] * towards[1];
+                    let dot = |t: u8| -(fronts[t as usize][0] * out[0] + fronts[t as usize][1] * out[1]);
                     dot(a).total_cmp(&dot(b))
                 })
                 .unwrap_or(0);
-            let pieces = turned(model_pieces(house.size, &house.blocks), turns, false);
-            let door = turn([0, -(house.size[2] as i32) / 2 - 1], turns);
-            let door = [at[0] + door[0], at[1] + door[1]];
-            // Its path, from its door to the middle's edge, as wide as the town's paths.
-            let path = self.path_from(door, centre, middle_radius);
-            // Kept only where its path runs past every building, and it stands on no path laid before.
-            let half = (house.size[0].max(house.size[2]) / 2) as i32;
-            let covers = |part_at: [i32; 2], half: i32, cell: [i32; 2]| {
-                (cell[0] - part_at[0]).abs() <= half && (cell[1] - part_at[1]).abs() <= half
-            };
-            let crosses = parts.iter().any(|part| {
-                let half = part.pieces.iter().map(|([x, _, z], _)| x.abs().max(z.abs())).max().unwrap_or(0);
-                path.iter().any(|&cell| covers(part.at, half, cell))
+            // How deep it is from its front, once turned, and set back that far and a block from the street's edge.
+            let deep = if turns % 2 == 0 { house.size[2] } else { house.size[0] } as f32;
+            let back = width * 0.5 + 1.5 + deep * 0.5;
+            let at = [(point[0] + out[0] * back).round() as i32, (point[1] + out[1] * back).round() as i32];
+            let half = [house.size[0] as i32 / 2, house.size[2] as i32 / 2];
+            let half = if turns % 2 == 0 { half } else { [half[1], half[0]] };
+            // Clear of every building by a block at least, footprint to footprint.
+            let clear = parts.iter().all(|part: &Part| {
+                let other = part.half();
+                (part.at[0] - at[0]).abs() > other[0] + half[0] + 1
+                    || (part.at[1] - at[1]).abs() > other[1] + half[1] + 1
             });
-            if crosses || paths.iter().any(|&cell| covers(at, half, cell)) {
+            let covers = |cell: &[i32; 2]| (cell[0] - at[0]).abs() <= half[0] && (cell[1] - at[1]).abs() <= half[1];
+            if !clear || paths.iter().any(covers) || stubs.iter().any(covers) {
                 continue;
             }
-            parts.push(Part { at, pieces, ground: house.ground, sink: house.sink, radius });
+            // Level enough: its corners' ground within three blocks of each other, and over the sea.
+            let corners = [[-1, -1], [1, -1], [-1, 1], [1, 1]]
+                .map(|[sx, sz]| ground.top(at[0] + sx * half[0], at[1] + sz * half[1]));
+            let (low, high) = (corners.iter().min().copied().unwrap_or(0), corners.iter().max().copied().unwrap_or(0));
+            if high - low > 3 || ground.under_sea(at[0], at[1]) {
+                continue;
+            }
+            let pieces = turned(model_pieces(house.size, &house.blocks), turns, false);
+            let door = turn([0, -(house.size[2] as i32) / 2 - 1], turns);
+            // Its path from the door back to the street; a house whose door does not reach one is not built.
+            let mut cell = [at[0] + door[0], at[1] + door[1]];
+            let step = [door[0].signum(), door[1].signum()];
+            let mut stub = Vec::new();
+            while !paths.contains(&cell) && stub.len() < 5 {
+                stub.push(cell);
+                cell = [cell[0] + step[0], cell[1] + step[1]];
+            }
+            if !paths.contains(&cell) {
+                continue;
+            }
+            stubs.extend(stub);
+            parts.push(Part { at, pieces, ground: house.ground, sink: house.sink });
             placed += 1;
-            for cell in path {
-                if !paths.contains(&cell) {
-                    paths.push(cell);
-                }
+        }
+        for cell in stubs {
+            if !paths.contains(&cell) {
+                paths.push(cell);
             }
         }
+        // No street under a building: streets were laid first, but a middle stands on its own ground.
+        paths.retain(|cell| {
+            !parts.iter().any(|part| {
+                part.pieces.iter().any(|([x, y, z], _)| *y == 0 && [part.at[0] + x, part.at[1] + z] == *cell)
+            })
+        });
         (parts, paths)
     }
 
-    /// The blocks along x and z a path from `door` to the middle at
-    /// `centre` runs over, stopping at the middle's edge where it has one.
-    fn path_from(&self, door: [i32; 2], centre: [i32; 2], middle_radius: f32) -> Vec<[i32; 2]> {
-        let mut cells = Vec::new();
-        if self.path == AIR {
-            return cells;
-        }
-        let length = (((centre[0] - door[0]).pow(2) + (centre[1] - door[1]).pow(2)) as f32).sqrt();
-        let steps = (length * 2.0).ceil() as i32;
-        let width = self.path_width.max(1) as i32;
-        let (from, to) = (-(width - 1) / 2, width / 2);
-        for step in 0..=steps {
-            let t = step as f32 / steps.max(1) as f32;
-            let x = door[0] as f32 + (centre[0] - door[0]) as f32 * t;
-            let z = door[1] as f32 + (centre[1] - door[1]) as f32 * t;
-            let from_middle = ((x - centre[0] as f32).powi(2) + (z - centre[1] as f32).powi(2)).sqrt();
-            if self.middle.is_some() && from_middle < middle_radius - 1.0 {
-                break;
+    /// Streets grown out from the middle at `centre`: three or four main
+    /// streets, evenly round with a little in it, each from the middle's
+    /// edge out as far as its radius, a step of two blocks at a time. At each
+    /// step a street goes on the way of three, ahead or a little to either
+    /// side, that climbs least, with a little wander in it, so it bends round
+    /// hills rather than over them; it stops at ground too steep to walk, at
+    /// the sea, or near another street. Now and then one branches off to a
+    /// side, shorter, and so may its branches once more.
+    fn streets(&self, draws: &mut Draws, centre: [i32; 2], middle_radius: f32, ground: &Ground) -> Vec<Street> {
+        // Turning by a small angle, without trigonometry: cos and sin of 12 and 24 degrees, and a right angle.
+        const TURNS: [(f32, f32); 3] = [(0.9781, 0.2079), (1.0, 0.0), (0.9781, -0.2079)];
+        let rotate = |[x, z]: [f32; 2], (c, s): (f32, f32)| [x * c - z * s, x * s + z * c];
+        let height = |p: [f32; 2]| ground.top(p[0].round() as i32, p[1].round() as i32) as f32;
+        let mains = 3 + draws.next() % 2;
+        let first = draws.unit();
+        let mut queue: Vec<([f32; 2], [f32; 2], f32, u32)> = Vec::new();
+        for main in 0..mains {
+            // Evenly round, by a turn of the first way through a whole turn's share, built from quarter and twelfth turns.
+            let share = (main as f32 + first * 0.6) / mains as f32;
+            let mut way = [1.0f32, 0.0];
+            let twelfths = (share * 30.0).round() as u32;
+            for _ in 0..twelfths {
+                way = rotate(way, (0.9781, 0.2079));
             }
-            for dz in from..=to {
-                for dx in from..=to {
-                    let cell = [x.round() as i32 + dx, z.round() as i32 + dz];
-                    if !cells.contains(&cell) {
-                        cells.push(cell);
-                    }
+            let start =
+                [centre[0] as f32 + way[0] * (middle_radius + 1.0), centre[1] as f32 + way[1] * (middle_radius + 1.0)];
+            queue.push((start, way, draws.between(self.radius), 0));
+        }
+        let mut streets: Vec<Street> = Vec::new();
+        let wander = self.wander.clamp(0.0, 1.0);
+        while let Some((start, mut heading, length, depth)) = queue.pop() {
+            let mut street = Street { points: vec![(start, heading)] };
+            let mut at = start;
+            let mut since_branch = 0;
+            let mut walked = 0.0;
+            while walked < length {
+                let here = height(at);
+                let best = TURNS
+                    .iter()
+                    .map(|&turning| {
+                        let way = rotate(heading, turning);
+                        let next = [at[0] + way[0] * 2.0, at[1] + way[1] * 2.0];
+                        // How steeply it climbs, and a little wander so streets on level ground still bend.
+                        let cost = (height(next) - here).abs() + draws.unit() * wander * 1.5;
+                        (cost, way, next)
+                    })
+                    .min_by(|a, b| a.0.total_cmp(&b.0))
+                    .expect("three ways");
+                let (_, way, next) = best;
+                // Too steep to walk, or into the sea, or onto another street: it ends here.
+                let near_other = streets.iter().any(|other| {
+                    other.points.iter().any(|&(p, _)| (p[0] - next[0]).powi(2) + (p[1] - next[1]).powi(2) < 9.0)
+                });
+                let from_middle = ((next[0] - centre[0] as f32).powi(2) + (next[1] - centre[1] as f32).powi(2)).sqrt();
+                // Another street is looked for only once this one is clear of the street it leaves.
+                let near_other = near_other && walked >= 6.0;
+                if (height(next) - here).abs() > 1.6
+                    || ground.under_sea(next[0].round() as i32, next[1].round() as i32)
+                    || near_other
+                    || from_middle < middle_radius
+                {
+                    break;
+                }
+                heading = way;
+                at = next;
+                walked += 2.0;
+                since_branch += 1;
+                street.points.push((at, heading));
+                // A branch off to one side, now and then, shorter than the street it leaves.
+                if depth < 2 && since_branch >= 6 && draws.unit() < self.branching.clamp(0.0, 1.0) * 0.18 {
+                    since_branch = 0;
+                    let side = if draws.next() & 1 == 0 { (0.0, 1.0) } else { (0.0, -1.0) };
+                    let out = rotate(heading, side);
+                    let start = [at[0] + out[0] * 2.0, at[1] + out[1] * 2.0];
+                    queue.push((start, out, (length - walked).max(8.0) * 0.6, depth + 1));
                 }
             }
+            if street.points.len() > 2 {
+                streets.push(street);
+            }
         }
-        cells
+        streets
+    }
+}
+
+/// A street as grown: each step's place, in blocks, and the way it heads
+/// there.
+struct Street {
+    points: Vec<([f32; 2], [f32; 2])>,
+}
+
+/// Lays a street `width` blocks wide round `point` into `cells`.
+fn lay(cells: &mut Vec<[i32; 2]>, point: [f32; 2], width: f32) {
+    let reach = width * 0.5;
+    let (from, to) = ((point[0] - reach).round() as i32, (point[0] + reach).round() as i32);
+    let (near, far) = ((point[1] - reach).round() as i32, (point[1] + reach).round() as i32);
+    for z in near..=far {
+        for x in from..=to {
+            let (dx, dz) = (x as f32 - point[0], z as f32 - point[1]);
+            if dx * dx + dz * dz <= reach * reach + 0.5 && !cells.contains(&[x, z]) {
+                cells.push([x, z]);
+            }
+        }
     }
 }
 
@@ -529,6 +661,15 @@ impl Ground<'_> {
             self.position[1] + (z as f32 + 0.5) * self.size,
         );
         (height / self.size - 0.5).ceil() as i32 - 1
+    }
+
+    /// Whether the ground in column `(x, z)` lies under its generator's sea.
+    fn under_sea(&self, x: i32, z: i32) -> bool {
+        let height = self.world.height_at(
+            self.position[0] + (x as f32 + 0.5) * self.size,
+            self.position[1] + (z as f32 + 0.5) * self.size,
+        );
+        height <= self.world.sea_level()
     }
 }
 
@@ -557,7 +698,7 @@ pub fn build(
     let high = [low[0] + side as f32 * size, low[1] + side as f32 * size];
     // Every site kept, with its place in blocks and the blocks it takes up along the ground, to leave out a later
     // structure's where an earlier one's stands.
-    let mut kept: Vec<([i32; 2], f32, usize)> = Vec::new();
+    let mut kept: Vec<Taken> = Vec::new();
     for (which, structure) in structures.list.iter().enumerate() {
         let (reach, footprint) = (structure.reach(), structure.footprint());
         // Sites of earlier structures that may stand in this one's way are found further out, by its reach too.
@@ -577,15 +718,20 @@ pub fn build(
             if !fits {
                 continue;
             }
-            // Kept clear of an earlier structure's sites; its own are kept apart by its placement's separation.
-            let crowded = kept.iter().filter(|(.., of)| *of != which).any(|(other, other_reach, _)| {
-                let (dx, dz) = ((other[0] - block[0]) as f32, (other[1] - block[1]) as f32);
-                (dx * dx + dz * dz).sqrt() < other_reach + footprint
-            });
-            if crowded {
+            // Kept clear of what earlier structures take up; its own are kept apart by its placement's separation.
+            if kept.iter().filter(|taken| taken.which != which).any(|taken| taken.meets(block, footprint, reach)) {
                 continue;
             }
-            kept.push((block, footprint, which));
+            // A town's layout, worked out once: what it takes up is its streets and buildings.
+            let layout = match &structure.blocks {
+                StructureBlocks::Town(town) => Some(town.layout(site.seed, block, &ground)),
+                _ => None,
+            };
+            let (buildings, streets) = match &layout {
+                Some((parts, paths)) => (parts.iter().map(|part| (part.at, part.half())).collect(), paths.clone()),
+                None => (Vec::new(), Vec::new()),
+            };
+            kept.push(Taken { which, round: layout.is_none().then_some((block, footprint)), buildings, streets });
             // Only its blocks within this column are built here.
             let within = |x: i32, z: i32| x.div_euclid(side) == cx && z.div_euclid(side) == cz;
             let (lowest, highest) = (cx * side - reach.ceil() as i32 - 1, (cx + 1) * side + reach.ceil() as i32 + 1);
@@ -611,9 +757,8 @@ pub fn build(
                 let (lx, ly, lz) = ((x - cx * side) as u32, y.rem_euclid(side) as u32, (z - cz * side) as u32);
                 chunks[at].1.set(lx, ly, lz, block);
             };
-            let parts = match &structure.blocks {
-                StructureBlocks::Town(town) => {
-                    let (parts, paths) = town.layout(site.seed, block, &ground);
+            let parts = match (&structure.blocks, layout) {
+                (StructureBlocks::Town(town), Some((parts, paths))) => {
                     // Paths first, along the ground, the air over them cleared a few blocks up.
                     for [x, z] in paths {
                         if !within(x, z) {
@@ -632,7 +777,6 @@ pub fn build(
                     pieces: structure.pieces(&site),
                     ground: structure.ground,
                     sink: structure.sink,
-                    radius: footprint,
                 }],
             };
             for part in parts {
@@ -643,6 +787,37 @@ pub fn build(
     }
     chunks.retain(|(_, chunk)| !chunk.is_air());
     chunks.sort_by_key(|(key, _)| key[1]);
+}
+
+/// What a kept site takes up along the ground: a round footprint, or the
+/// boxes of a town's buildings and streets, each a middle and how far it
+/// reaches along x and z.
+struct Taken {
+    which: usize,
+    round: Option<([i32; 2], f32)>,
+    /// A town's buildings, which what comes after keeps clear of by all it
+    /// reaches, so no crown hangs into a house; and its streets, kept clear
+    /// of by what stands on the ground.
+    buildings: Vec<([i32; 2], [i32; 2])>,
+    streets: Vec<[i32; 2]>,
+}
+
+impl Taken {
+    /// Whether something standing `footprint` blocks round `at` and
+    /// reaching `reach` blocks round it meets it.
+    fn meets(&self, at: [i32; 2], footprint: f32, reach: f32) -> bool {
+        let round = self.round.is_some_and(|(middle, other)| {
+            let (dx, dz) = ((middle[0] - at[0]) as f32, (middle[1] - at[1]) as f32);
+            (dx * dx + dz * dz).sqrt() < other + footprint
+        });
+        let (stands, reaches) = (footprint.ceil() as i32, reach.ceil() as i32);
+        let near = |middle: &[i32; 2], half: [i32; 2], by: i32| {
+            (middle[0] - at[0]).abs() <= half[0] + by && (middle[1] - at[1]).abs() <= half[1] + by
+        };
+        round
+            || self.buildings.iter().any(|(middle, half)| near(middle, *half, reaches))
+            || self.streets.iter().any(|cell| near(cell, [0, 0], stands))
+    }
 }
 
 /// Builds `part` standing on block `foot` of its column: the ground built up
@@ -870,15 +1045,17 @@ mod tests {
         Town {
             middle: Some(model([5, 3, 5], 10)),
             houses: vec![(model([7, 5, 7], 12), 2.0), (model([5, 4, 5], 12), 1.0)],
-            count: [5, 8],
-            radius: [9.0, 24.0],
+            count: [8, 14],
+            radius: [24.0, 44.0],
             path: 11,
-            path_width: 2,
+            path_width: 3,
+            wander: 0.5,
+            branching: 0.6,
         }
     }
 
     #[test]
-    fn a_town_lays_its_houses_round_its_middle_apart_facing_it_with_paths_from_their_doors() {
+    fn a_town_grows_streets_from_its_middle_with_houses_along_them_apart_facing_them() {
         let world = Preset::RollingHills.world();
         let ground = Ground { world: &world, size: 1.0, position: [0.0, 0.0] };
         let town = village();
@@ -889,12 +1066,13 @@ mod tests {
             assert_eq!(town.layout(seed, centre, &ground).1, paths, "the same from the same seed");
             assert_eq!(parts[0].at, centre, "the well in the middle");
             let houses = &parts[1..];
-            assert!(houses.len() <= 8, "seed {seed}: {} houses", houses.len());
+            assert!(houses.len() <= 14, "seed {seed}: {} houses", houses.len());
             houses_laid += houses.len();
             for (i, a) in parts.iter().enumerate() {
                 for b in &parts[i + 1..] {
-                    let apart = (((a.at[0] - b.at[0]).pow(2) + (a.at[1] - b.at[1]).pow(2)) as f32).sqrt();
-                    assert!(apart >= a.radius + b.radius + 1.0, "seed {seed}: two buildings {apart} blocks apart");
+                    let (ha, hb) = (a.half(), b.half());
+                    let apart = (a.at[0] - b.at[0]).abs() > ha[0] + hb[0] || (a.at[1] - b.at[1]).abs() > ha[1] + hb[1];
+                    assert!(apart, "seed {seed}: buildings at {:?} and {:?} overlap", a.at, b.at);
                 }
             }
             for house in houses {
@@ -905,11 +1083,6 @@ mod tests {
                 let ring: Vec<[i32; 2]> =
                     (-half..=half).flat_map(|a| [[a, -half], [a, half], [-half, a], [half, a]]).collect();
                 let door = ring.iter().find(|cell| !wall.contains(cell)).expect("a door");
-                let towards = [centre[0] - house.at[0], centre[1] - house.at[1]];
-                assert!(
-                    door[0] * towards[0] + door[1] * towards[1] > 0,
-                    "seed {seed}: a door facing away from the middle"
-                );
                 // A path starts just outside it.
                 let outside = [house.at[0] + door[0] + door[0].signum(), house.at[1] + door[1] + door[1].signum()];
                 let near =
@@ -932,9 +1105,9 @@ mod tests {
                 }
                 at += 1;
             }
-            assert_eq!(reached.len(), paths.len(), "seed {seed}: every path joined to the middle");
+            assert_eq!(reached.len(), paths.len(), "seed {seed}: every path joined to the middle, each block once");
         }
-        assert!(houses_laid >= 12 * 4, "{houses_laid} houses in twelve towns");
+        assert!(houses_laid >= 12 * 6, "{houses_laid} houses in twelve towns");
     }
 
     #[test]

@@ -2,13 +2,28 @@
 order: 19
 ---
 
-A **Block** is one kind of block: a `.block` asset with how it looks and its rules. [[Block Worlds]] and [[Voxel Terrain|Voxel Terrains]] list the blocks they are made of, so every world listing a block draws it the same, and a change to the block reaches them all.
+A **Block** is one kind of block: a `.block` asset with how it looks and its rules. Every block in the project is there for every [[Block Worlds|Block World]] and [[Voxel Terrain]] to hold: each draws it the same, and a change to the block reaches them all.
 
-## Making a block
+## The Blocks panel
 
-Right-click in the Project panel and choose **New Block**, or use **New Block** under a Block World's **Build** tool, which lists it in that world too. A block is called what its file is.
+**Window ▸ Blocks** opens the Blocks panel: every block of the project, each by its picture and its name. Type in its search box to narrow them, by name or by folder.
 
-Select it, and the Inspector shows:
+| Action | What it does |
+| --- | --- |
+| Click | Picks a block, and the Inspector shows it |
+| Double-click | Has the Scene view's brush build with it |
+| Drag | Onto a Block World's **Block**, or any field that takes a block |
+| New Block | Makes a block of a colour of its own in the project's **Blocks** folder |
+| Duplicate | Copies the picked block beside it |
+| Delete | Moves the picked block to the project's trash, `.voxear/Trash` |
+
+While worlds hold a block, **Delete** first says which, and offers **Delete Anyway**. A block deleted so is drawn bright pink in the worlds that hold it, until you put its file back.
+
+A block is called what its file is. Rename it in the Project panel, where **New Block** in a folder's menu makes one too.
+
+## A block's settings
+
+Pick a block, and the Inspector shows:
 
 ### Look
 
@@ -43,8 +58,8 @@ What it drops when it is broken: each an **Item**, how many of it, from the fewe
 
 **Break**, **Place** and **Step** are the sounds of breaking it, putting it down and walking on it. **Data** is a [[Data Assets|data asset]] of your own for it: whatever your scripts want to know of the block, or rules of its own (see [[Blocks and Items from Scripts#Rules of your own|Rules of your own]]).
 
-Each change is written to the block's file as you make it, and every world listing the block is drawn as it now says at once. There is nothing to save, and nothing to undo.
+Each change is written to the block's file as you make it, and every world holding the block is drawn as it now says at once. There is nothing to save, and nothing to undo.
 
 ## Blocks in a build
 
-A block ships with a world that lists it, or an item that places it, with the materials, items and sounds it names. A block only code loads by its path, with `Block.Load`, needs a `[ContentRoot]` as any asset loaded that way does (see [[Data Assets]]).
+Every block of the project ships, with the materials, items and sounds it names, so a game can place any of them and `Blocks.All` is the same list as in the editor. To leave some out, name them under `exclude` in the project's content settings; one a world holds or an item places ships all the same. A package's block ships when something the game ships uses it.

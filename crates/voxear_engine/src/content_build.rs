@@ -1,9 +1,9 @@
 //! The content build: packs a project's assets into bundles by how they are
 //! used, so a level loads exactly the bundles it needs.
 //!
-//! 1. **Roots** are what a game can ask for by name: every level, prefab and
-//!    UI document, and every asset a behaviour field names, since `Ref<T>`
-//!    loads those on their own. `[content]` in `voxear.toml` adds roots with `include` and
+//! 1. **Roots** are what a game can ask for by name: every level, prefab,
+//!    UI document and block, and every asset a behaviour field names, since
+//!    `Ref<T>` loads those on their own. `[content]` in `voxear.toml` adds roots with `include` and
 //!    takes them away with `exclude` (see [`ContentSettings`]). `[ContentRoot]`
 //!    in scripts names what code loads by path ([`CodeRoot`]); like a field,
 //!    it ships even when excluded.
@@ -487,9 +487,10 @@ fn usage_sets(
             let needed = named.contains(&e.guid) || code_roots.iter().any(rooted);
             // Code loads levels, prefabs and UI documents by path, which the build cannot see, and the game
             // reads its input actions and every string and asset table when it starts, an asset table taking
-            // each language's asset with it. The project's shaders all ship, as they are compiled in together. A
-            // package's levels, prefabs and UI documents ship only when the game uses them, so a package of many
-            // ships what the game takes from it; its tables still ship, since the game reads them all, and its
+            // each language's asset with it. The project's shaders all ship, as they are compiled in together. So
+            // do its blocks: any world can hold any of them, and scripts place them by name. A package's levels,
+            // prefabs, UI documents and blocks ship only when the game uses them, so a package of many ships what
+            // the game takes from it; its tables still ship, since the game reads them all, and its
             // input actions never stand in for the project's.
             let blanket = match e.mount {
                 Mount::Project => matches!(
@@ -501,6 +502,7 @@ fn usage_sets(
                         | AssetKind::Strings
                         | AssetKind::AssetTable
                         | AssetKind::Shader
+                        | AssetKind::Block
                 ),
                 Mount::Package(_) => matches!(e.kind, AssetKind::Strings | AssetKind::AssetTable),
             } || matches(&settings.include, &e.path);

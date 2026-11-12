@@ -81,6 +81,7 @@ use voxear_ui::{DragSource, NodeId, Theme, Ui};
 use crate::{
     asset_inspector::AssetAction,
     audio_panel::AudioPanel,
+    block_database::BlockDatabase,
     build_window::BuildWindow,
     console::Console,
     entities_panel::EntitiesPanel,
@@ -189,6 +190,7 @@ struct Nodes {
     generator_panel: NodeId,
     memory_panel: NodeId,
     audio_panel: NodeId,
+    blocks_panel: NodeId,
     localization_panel: NodeId,
     /// The Input Actions window's panel.
     input_panel: NodeId,
@@ -341,6 +343,16 @@ pub struct Editor {
     world_gen_to_save: Option<(String, voxear_terrain::generate::WorldGen)>,
     memory_profiler: MemoryPanel,
     audio: AudioPanel,
+    block_database: BlockDatabase,
+    /// The Block World that was selected when a block picked in the Blocks
+    /// panel took the Inspector, selected again once the brush is given
+    /// that block.
+    built_in: Option<Entity>,
+    /// The worlds of blocks looked at for kinds of their own to make blocks
+    /// of, since the level opened: each is looked at once.
+    older_worlds_seen: std::collections::HashSet<voxear_assets::AssetGuid>,
+    /// The blocks saved since their pictures were last drawn, by path.
+    blocks_saved: Vec<String>,
     localization: LocalizationPanel,
     input_actions: InputPanel,
     build_window: BuildWindow,
@@ -513,6 +525,7 @@ impl Editor {
             generator_panel: find(&ui, "generator-panel"),
             memory_panel: find(&ui, "memory-panel"),
             audio_panel: find(&ui, "audio-panel"),
+            blocks_panel: find(&ui, "blocks-panel"),
             localization_panel: find(&ui, "localization-panel"),
             input_panel: find(&ui, "input-panel"),
             build_panel: find(&ui, "build-panel"),
@@ -570,6 +583,7 @@ impl Editor {
         let generator = GeneratorPanel::new(&mut ui, nodes.generator_panel);
         let memory_profiler = MemoryPanel::new(&mut ui, nodes.memory_panel);
         let audio = AudioPanel::new(&mut ui, nodes.audio_panel);
+        let block_database = BlockDatabase::new(&mut ui, nodes.blocks_panel);
         let localization = LocalizationPanel::new(&mut ui, nodes.localization_panel);
         let input_actions = InputPanel::new(&mut ui, nodes.input_panel);
         let debug_texts = DebugTexts::new(&mut ui, nodes.debug_texts);
@@ -651,6 +665,10 @@ impl Editor {
             world_gen_to_save: None,
             memory_profiler,
             audio,
+            block_database,
+            built_in: None,
+            older_worlds_seen: Default::default(),
+            blocks_saved: Vec::new(),
             localization,
             input_actions,
             build_window,
@@ -925,6 +943,7 @@ impl Editor {
             if let Some(picked) = self.audio.update(&mut self.ui, audio_shown, &self.game) {
                 self.select(Some(picked));
             }
+            self.update_block_database(renderer);
             let tables_shown = self.shown(self.nodes.localization_panel);
             if let Some(TablesAction::Rename(table, old, new)) =
                 self.localization.update(&mut self.ui, tables_shown, &self.game)
@@ -1047,6 +1066,11 @@ impl Editor {
             (self.view_camera, self.view_debug) = (options.camera, options.debug_view);
         }
         views
+    }
+
+    /// The Blocks panel: the project's blocks.
+    pub fn block_database(&self) -> &BlockDatabase {
+        &self.block_database
     }
 
     /// The Profiler panel, and the frames it has taken.
@@ -1545,6 +1569,7 @@ impl Editor {
         self.leave_prefab_mode();
         self.history.clear();
         self.unsaved = false;
+        self.older_worlds_seen.clear();
         self.discard_armed = None;
         self.game.release_unused(Some(renderer));
         self.show_selection(None);
@@ -2528,6 +2553,11 @@ impl Editor {
     fn browse(&mut self, entity: Entity, prop: Prop, anchor: NodeId) {
         let types = self.inspector.types();
         let choices = object_picker::decorate(&self.game, props::choices(&self.game, types, entity, &prop));
+        // A block is picked from those built with last.
+        let choices = match &prop {
+            Prop::BlockWorld(field) if crate::block_props::is_block(*field) => self.recent_blocks_first(choices),
+            _ => choices,
+        };
         let title = props::title(types, &prop);
         let now = match props::get(&self.game, types, entity, &prop) {
             Some(props::Value::Asset(now) | props::Value::Obj(now)) => now,

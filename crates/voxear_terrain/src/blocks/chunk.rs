@@ -12,7 +12,7 @@ pub const CHUNK: u32 = 32;
 /// How many blocks a chunk holds.
 pub const CHUNK_LEN: usize = (CHUNK * CHUNK * CHUNK) as usize;
 
-/// A block's number in its world's list of blocks, counted from 1; 0 is air.
+/// A block's number in its world's palette, counted from 1; 0 is air.
 pub type BlockId = u16;
 
 /// Air: no block.

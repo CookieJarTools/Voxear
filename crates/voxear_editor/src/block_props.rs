@@ -1,16 +1,20 @@
 //! A Block World in the Inspector: its tools, **Build** and **Settings**.
-//! Under Build, the blocks it lists (see `block_panel`), the brush the
-//! Scene view builds with (see `block_tools`), and the picked block: which
-//! `.block` it is, with its colour and materials, or for a kind of the
-//! world's own its name, colour and materials. Under Settings, the
-//! `.blockworld` asset its blocks are, how large a block is, the flat
-//! ground its blocks start as, and whether it casts the sun's shadows. A
-//! change to the asset's file makes its blocks again at once, or for a
+//! Under Build, the brush the Scene view builds with (see `block_tools`)
+//! and the block it builds with, picked from the project's blocks. Under
+//! Settings, the `.blockworld` asset its blocks are, how large a block is,
+//! the ground its blocks start as and the blocks that ground is made of,
+//! and whether it casts the sun's shadows.
+//!
+//! A world can hold any block of the project. It numbers a block the first
+//! time it holds one, as the brush first builds with it or its ground is
+//! first made of it (see [`number_block`]): that numbering is kept in its
+//! file and shown nowhere. A block's own look and rules are the block's,
+//! edited in the Blocks panel (see `block_database`).
+//!
+//! A change to the asset's file makes its blocks again at once, or for a
 //! large world on other threads, shown as it was until then; the changes
 //! built since are kept on them, and kept in the world for saving and undo
-//! as a Terrain's are. A change to a block it lists is the block's own: written
-//! to its `.block` at once, taken up by every world listing it, and no
-//! step to undo.
+//! as a Terrain's are.
 
 use anyhow::{Context, Result};
 use std::sync::{Arc, Mutex};
@@ -27,10 +31,10 @@ use voxear_render::{BlockLook, Renderer};
 use voxear_terrain::{
     blocks::{
         BlockMap, BlockWorld,
-        block::{BlockDef, Liquid},
+        block::BlockDef,
         chunk::{AIR, BlockId},
         edits::{self, BlockEdits, Resize},
-        file::{BlockCover, BlockFile, BlockKind, MAX_BLOCKS, MAX_LOOKS},
+        file::{BlockCover, BlockFile, BlockKind, MAX_LOOKS},
         vox::VoxFile,
     },
     generate::WorldGen,
@@ -43,10 +47,11 @@ use crate::{
 };
 
 /// Where Add Component puts a new world of blocks' asset, and a new Voxel
-/// Terrain's; and where blocks made from a world's list go.
+/// Terrain's; and where the project's blocks go, as do those made of an
+/// older world's kinds, in a folder of that name beside the world.
 const FOLDER: &str = "Blocks";
 const SMOOTH_FOLDER: &str = "Voxels";
-const BLOCKS_FOLDER: &str = "Blocks";
+pub(crate) const BLOCKS_FOLDER: &str = "Blocks";
 
 /// Which of a Block World's tools its Inspector shows.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -94,13 +99,13 @@ impl BlockBrush {
 }
 
 /// What the editor is doing with worlds of blocks: the tool shown, the
-/// block picked, by its place in the world's list (one less than its
-/// number), the brush, how many blocks across it reaches and the `.vox`
-/// model it builds. Kept in the edit world, not saved.
+/// block of the project the brush builds with, the brush, how many blocks
+/// across it reaches and the `.vox` model it builds. Kept in the edit
+/// world, not saved.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BlockUi {
     pub tool: BlockTool,
-    pub block: usize,
+    pub block: Option<AssetGuid>,
     pub brush: BlockBrush,
     pub size: u32,
     pub model: Option<AssetGuid>,
@@ -108,7 +113,7 @@ pub struct BlockUi {
 
 impl Default for BlockUi {
     fn default() -> Self {
-        Self { tool: BlockTool::Build, block: 0, brush: BlockBrush::Place, size: 1, model: None }
+        Self { tool: BlockTool::Build, block: None, brush: BlockBrush::Place, size: 1, model: None }
     }
 }
 
@@ -258,11 +263,11 @@ fn file_of(world: &World, entity: Entity) -> Option<BlockFile> {
     making.or_else(|| world.get::<BlockWorldAsset>(entity).map(|asset| &asset.file)).cloned()
 }
 
-/// A world of blocks' file as it is drawn, each block it lists with that
+/// A world of blocks' file as it is drawn, each block it holds with that
 /// block's look: the one it is being made again from, or its asset's.
-fn drawn_of(world: &World, entity: Entity) -> Option<&BlockFile> {
-    let making = making(world, entity).map(|remake| &**remake.drawn);
-    making.or_else(|| world.get::<BlockWorldAsset>(entity).map(|asset| &**asset.drawn))
+fn drawn_of(world: &World, entity: Entity) -> Option<&Resolved> {
+    let making = making(world, entity).map(|remake| &*remake.drawn);
+    making.or_else(|| world.get::<BlockWorldAsset>(entity).map(|asset| &*asset.drawn))
 }
 
 /// Worlds of blocks being made again on other threads from a changed file,
@@ -363,7 +368,7 @@ fn start_making(
         if Arc::strong_count(&job) == 1 {
             return;
         }
-        let world = made_on((&making, &drawing), &ground, (&old, &base, &blocks), carried, None);
+        let world = made_on((&making, &drawing), &ground, (&old, &base, &blocks), carried);
         *job.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some((ground, world));
     });
     if world.resource::<Making>().is_none() {
@@ -424,20 +429,11 @@ pub enum BlockField {
     Brush,
     BrushSize,
     Model,
-    /// The `.block` the picked entry is, and the one a new entry is of.
+    /// The block of the project the brush builds with.
     Block,
-    NewBlock,
-    /// The picked block's name where it is a kind of the world's own,
-    /// whether it is water, its colour and materials.
-    Name,
-    Water,
-    Color,
-    Material,
-    Top,
-    Bottom,
-    /// Where the picked kind covers generated ground: whether it does, by
-    /// which biome, between which temperatures, humidities and heights, and
-    /// how many blocks deep.
+    /// Where the brush's block covers this world's generated ground:
+    /// whether it does, by which biome, between which temperatures,
+    /// humidities and heights, and how many blocks deep.
     Cover,
     CoverBiome,
     TemperatureMask,
@@ -458,19 +454,16 @@ pub fn props(world: &World, entity: Entity) -> Vec<Prop> {
     let file = drawn_of(world, entity);
     let fields = match (state.tool, file) {
         (BlockTool::Build, Some(file)) => {
-            let mut fields = vec![F::Brush, if state.brush == BlockBrush::Model { F::Model } else { F::BrushSize }];
-            if let Some(kind) = picked(world, file).map(|at| &file.blocks[at]) {
-                // A block is named by its file; a kind of the world's own, here.
-                fields.push(if kind.block.is_some() { F::Block } else { F::Name });
-                fields.extend([F::Water, F::Color]);
-                // Water is drawn with its colour alone.
-                if !kind.water {
-                    fields.extend([F::Material, F::Top, F::Bottom]);
-                }
-                // Covers lay blocks on generated ground; its sea, water.
-                if file.generate.is_some() && !kind.water {
+            // A model brings its own colours; any other brush builds with the block picked.
+            if state.brush == BlockBrush::Model {
+                vec![F::Brush, F::Model]
+            } else {
+                let mut fields = vec![F::Brush, F::BrushSize, F::Block];
+                let held = held_at(world, entity).and_then(|at| file.blocks.get(at));
+                // Covers lay a block on generated ground; its sea, water.
+                if file.generate.is_some() && state.block.is_some() && !held.is_some_and(|kind| kind.water) {
                     fields.push(F::Cover);
-                    if let Some(cover) = &kind.cover {
+                    if let Some(cover) = held.and_then(|kind| kind.cover) {
                         fields.extend([F::CoverBiome, F::TemperatureMask]);
                         fields.extend(cover.temperature.map(|_| F::Temperatures));
                         fields.push(F::HumidityMask);
@@ -480,8 +473,8 @@ pub fn props(world: &World, entity: Entity) -> Vec<Prop> {
                         fields.push(F::CoverDepth);
                     }
                 }
+                fields
             }
-            fields
         }
         (BlockTool::Build, None) => vec![F::Data],
         (BlockTool::Settings, Some(file)) => {
@@ -523,13 +516,7 @@ pub fn label(field: BlockField) -> &'static str {
         F::Brush => "Brush",
         F::BrushSize => "Size",
         F::Model => "Model",
-        F::Block | F::NewBlock => "Block",
-        F::Name => "Name",
-        F::Water => "Water",
-        F::Color => "Color",
-        F::Material => "Material",
-        F::Top => "Top",
-        F::Bottom => "Bottom",
+        F::Block => "Block",
         F::Ground => "Ground",
         F::Generator => "Generator",
         F::Offset => "Offset",
@@ -584,32 +571,91 @@ pub fn range(field: BlockField) -> Option<[f32; 2]> {
 
 /// Whether the value is an asset picked from a list.
 pub fn is_picked(field: BlockField) -> bool {
-    matches!(field, F::Data | F::Material | F::Top | F::Bottom | F::Generator | F::Model | F::Block | F::NewBlock)
+    takes(field).is_some()
 }
 
-/// The place in `file`'s list of the block picked, where it is one still:
-/// none once it was taken out, or with nothing listed.
-pub(crate) fn picked(world: &World, file: &BlockFile) -> Option<usize> {
-    let at = ui(world).block;
-    file.blocks.get(at).filter(|kind| kind.is_live()).map(|_| at)
+/// Whether the value is a block of the project's.
+pub fn is_block(field: BlockField) -> bool {
+    takes(field) == Some(AssetKind::Block)
 }
 
-/// The numbers of the blocks `file` lists, those taken out left out.
-fn listed(file: &BlockFile) -> Vec<BlockId> {
-    (1..=file.blocks.len()).filter(|&at| file.blocks[at - 1].is_live()).map(|at| at as BlockId).collect()
+/// The kind of asset the value is, for those picked from a list.
+fn takes(field: BlockField) -> Option<AssetKind> {
+    match field {
+        F::Data => Some(AssetKind::BlockWorld),
+        F::Generator => Some(AssetKind::WorldGen),
+        F::Model => Some(AssetKind::VoxModel),
+        F::Block | F::TopBlock | F::UnderBlock | F::BaseBlock | F::SeaBlock => Some(AssetKind::Block),
+        _ => None,
+    }
 }
 
-/// A choice of the world's blocks, air first, with `block` chosen.
-fn block_choice(file: &BlockFile, block: BlockId) -> Value {
-    let listed = listed(file);
-    let mut names = vec!["Air".to_string()];
-    names.extend(listed.iter().map(|&block| file.blocks[usize::from(block) - 1].name.clone()));
-    Value::Choice(listed.iter().position(|&known| known == block).map_or(0, |at| at + 1), names)
+/// What the picker of an asset's value calls what it takes.
+pub fn takes_name(field: BlockField) -> &'static str {
+    match takes(field) {
+        Some(AssetKind::Block) => "Block",
+        Some(AssetKind::WorldGen) => "Generator",
+        Some(AssetKind::VoxModel) => "Model",
+        _ => "Block World",
+    }
 }
 
-/// The block chosen at `at` of a choice of the world's blocks, air first.
-fn chosen_block(file: &BlockFile, at: usize) -> BlockId {
-    at.checked_sub(1).and_then(|at| listed(file).get(at).copied()).unwrap_or(AIR)
+/// The number `file` has the block at `guid` by, where it holds it.
+fn number_in(game: &Game, file: &BlockFile, guid: AssetGuid) -> Option<BlockId> {
+    let is = |kind: &BlockKind| {
+        let block = kind.block.as_deref().filter(|_| kind.is_live())?;
+        game.content.parse(block).ok()?.guid()
+    };
+    file.blocks.iter().position(|kind| is(kind) == Some(guid)).map(|at| (at + 1) as BlockId)
+}
+
+/// The place in the world's palette of the block the brush builds with,
+/// where the world holds it.
+fn held_at(world: &World, entity: Entity) -> Option<usize> {
+    let number = drawn_of(world, entity)?.number_of(ui(world).block?)?;
+    Some(usize::from(number) - 1)
+}
+
+/// The number the world on `entity` has the block at `guid` by: the one it
+/// has, or the next after those it has numbered, which is the block's from
+/// now on, kept in its file. None where the world can draw no more, which
+/// it says once.
+pub(crate) fn number_block(
+    game: &mut Game,
+    renderer: Option<&mut Renderer>,
+    entity: Entity,
+    guid: AssetGuid,
+) -> Option<BlockId> {
+    let mut file = file_of(&game.engine.world, entity)?;
+    let number = number_into(game, entity, &mut file, guid)?;
+    change_file(game, renderer, entity, file);
+    Some(number)
+}
+
+/// As [`number_block`], in `file`, the world's file about to be changed.
+fn number_into(game: &mut Game, entity: Entity, file: &mut BlockFile, guid: AssetGuid) -> Option<BlockId> {
+    if let Some(number) = number_in(game, file, guid) {
+        return Some(number);
+    }
+    let Some((with, _)) = voxear_engine::blocks::with_block(&mut game.content, file, guid) else {
+        if let Some(world) = game.engine.world.get::<BlockWorldAsset>(entity).map(|asset| asset.guid) {
+            voxear_engine::blocks::say_full(&mut game.content, world, guid);
+        }
+        return None;
+    };
+    *file = with;
+    Some(file.blocks.len() as BlockId)
+}
+
+/// What a row naming one of the world's blocks by its number shows: the
+/// block's file, a kind of the world's own by its name, or none for air.
+fn block_value(game: &Game, entity: Entity, number: BlockId) -> Value {
+    let drawn = drawn_of(&game.engine.world, entity);
+    let named = drawn.and_then(|drawn| match drawn.guid(number) {
+        Some(guid) => game.content.db().get(guid).map(|entry| entry.path.clone()),
+        None => drawn.kind(number).map(|kind| kind.name.clone()),
+    });
+    Value::Asset(named.unwrap_or_else(|| "None".into()))
 }
 
 /// An asset's path, by the reference a file holds, or "None".
@@ -620,17 +666,11 @@ fn path_of(game: &Game, reference: Option<&str>) -> String {
 
 pub fn get(game: &Game, entity: Entity, field: BlockField) -> Option<Value> {
     let world = &game.engine.world;
-    // What its rows show: its numbers from its file, as it is held while one is dragged (see `hold`), and each
-    // block it lists with that block's own name and look.
+    // What its rows show: its numbers from its file, as it is held while one is dragged (see `hold`).
     let file = || shown_file(world, entity);
-    let drawn = || drawn_of(world, entity);
-    let entry = || file().and_then(|file| Some((picked(world, file)?, file)));
-    // A kind of the world's own is all in its file; a block's look is the block's.
-    let kind = || {
-        let (at, file) = entry()?;
-        if file.blocks[at].block.is_some() { drawn()?.blocks.get(at) } else { Some(&file.blocks[at]) }
-    };
-    let cover = || entry().and_then(|(at, file)| file.blocks[at].cover);
+    // Where the block the brush builds with covers this world's ground, where the world holds the block.
+    let held = || held_at(world, entity).and_then(|at| file()?.blocks.get(at));
+    let cover = || held().and_then(|kind| kind.cover);
     let state = ui(world);
     Some(match field {
         F::Data => Value::Asset(path_of(game, Some(&world.get::<BlockWorldSource>(entity)?.0.data))),
@@ -647,14 +687,9 @@ pub fn get(game: &Game, entity: Entity, field: BlockField) -> Option<Value> {
         F::Model => Value::Asset(
             state.model.and_then(|guid| game.content.db().get(guid)).map_or("None".into(), |e| e.path.clone()),
         ),
-        F::Block => Value::Asset(path_of(game, kind()?.block.as_deref())),
-        F::NewBlock => Value::Asset(String::new()),
-        F::Name => Value::Text(kind()?.name.clone()),
-        F::Water => Value::Toggle(kind()?.water),
-        F::Color => Value::Color(kind()?.color),
-        F::Material => Value::Asset(path_of(game, kind()?.material.as_deref())),
-        F::Top => Value::Asset(path_of(game, kind()?.top.as_deref())),
-        F::Bottom => Value::Asset(path_of(game, kind()?.bottom.as_deref())),
+        F::Block => Value::Asset(
+            state.block.and_then(|guid| game.content.db().get(guid)).map_or("None".into(), |e| e.path.clone()),
+        ),
         F::Ground => {
             let names = ["Flat", "Generated"].map(String::from).to_vec();
             Value::Choice(usize::from(file()?.generate.is_some()), names)
@@ -667,12 +702,12 @@ pub fn get(game: &Game, entity: Entity, field: BlockField) -> Option<Value> {
         F::Endless => Value::Toggle(file()?.generate.as_ref()?.endless.is_some()),
         F::ViewDistance => Value::Number(file()?.generate.as_ref()?.endless?.distance),
         F::FarDistance => Value::Number(file()?.generate.as_ref()?.endless?.far),
-        F::TopBlock => block_choice(drawn()?, file()?.ground.top),
-        F::UnderBlock => block_choice(drawn()?, file()?.ground.under),
+        F::TopBlock => block_value(game, entity, file()?.ground.top),
+        F::UnderBlock => block_value(game, entity, file()?.ground.under),
         F::UnderDepth => Value::Number(file()?.ground.under_depth as f32),
-        F::BaseBlock => block_choice(drawn()?, file()?.ground.bottom),
-        F::SeaBlock => block_choice(drawn()?, file()?.generate.as_ref()?.sea),
-        F::Cover => Value::Toggle(entry().map(|_| cover().is_some())?),
+        F::BaseBlock => block_value(game, entity, file()?.ground.bottom),
+        F::SeaBlock => block_value(game, entity, file()?.generate.as_ref()?.sea),
+        F::Cover => Value::Toggle(cover().is_some()),
         F::CoverBiome => {
             // Any, each biome, and its own ranges where they are none's.
             let cover = cover()?;
@@ -756,19 +791,7 @@ pub fn set(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, fie
         _ => {}
     }
     let Some(mut file) = file_of(world, entity) else { return false };
-    // No entry at all where none is picked: what follows asks for one within the list.
-    let picked = picked(world, &file).unwrap_or(usize::MAX);
-    // A block's colour and whether it is water are the block's own, written to its file.
-    if let Some(block) = file.blocks.get(picked).and_then(|kind| kind.block.clone()) {
-        match (field, &value) {
-            (F::Color, Value::Color(color)) => return change_block(game, &block, |block| block.color = *color),
-            (F::Water, Value::Toggle(on)) => {
-                let liquid = if *on { Liquid::Water } else { Liquid::None };
-                return change_block(game, &block, |block| block.liquid = liquid);
-            }
-            _ => {}
-        }
-    }
+    let brush = ui(world).block;
     match (field, &value) {
         // Its ground stays as large in metres, counted again in blocks of the new size.
         (F::BlockSize, v) => drop(file.set_block_size(number(v).unwrap_or(file.block_size))),
@@ -779,9 +802,6 @@ pub fn set(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, fie
         (F::GroundHeight, v) => {
             file.ground.height = number(v).unwrap_or(file.ground.height as f32).round().clamp(0.0, 1024.0) as u32;
         }
-        (F::Name, Value::Text(name)) if picked < file.blocks.len() => file.blocks[picked].name = name.clone(),
-        (F::Color, Value::Color(color)) if picked < file.blocks.len() => file.blocks[picked].color = *color,
-        (F::Water, Value::Toggle(on)) if picked < file.blocks.len() => file.blocks[picked].water = *on,
         (F::Ground, Value::Choice(at, _)) => {
             let generate = file.generate.clone().unwrap_or_default();
             file.generate = (*at == 1).then_some(generate);
@@ -818,30 +838,27 @@ pub fn set(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, fie
                 _ => endless.far = distance,
             }
         }
-        (F::TopBlock | F::UnderBlock | F::BaseBlock, Value::Choice(at, _)) => {
-            let block = chosen_block(&file, *at);
-            match field {
-                F::TopBlock => file.ground.top = block,
-                F::UnderBlock => file.ground.under = block,
-                _ => file.ground.bottom = block,
-            }
-        }
-        (F::SeaBlock, Value::Choice(at, _)) => {
-            let sea = chosen_block(&file, *at);
-            let Some(generate) = &mut file.generate else { return false };
-            generate.sea = sea;
-        }
         (F::UnderDepth, v) => {
             file.ground.under_depth =
                 number(v).unwrap_or(file.ground.under_depth as f32).round().clamp(0.0, 256.0) as u32;
         }
-        (F::Cover, Value::Toggle(on)) if picked < file.blocks.len() => {
-            let kind = &mut file.blocks[picked];
+        (F::Cover, Value::Toggle(on)) => {
+            // A block the world does not hold yet is numbered as it first covers.
+            let Some(guid) = brush else { return false };
+            let number = match on {
+                true => number_into(game, entity, &mut file, guid),
+                false => number_in(game, &file, guid),
+            };
+            let Some(kind) = number.and_then(|number| file.blocks.get_mut(usize::from(number) - 1)) else {
+                return false;
+            };
             kind.cover = on.then(|| kind.cover.unwrap_or_default());
         }
         (F::CoverBiome | F::TemperatureMask | F::Temperatures | F::HumidityMask | F::Humidities, _)
         | (F::HeightMask | F::Heights | F::CoverDepth, _) => {
-            let Some(cover) = file.blocks.get_mut(picked).and_then(|kind| kind.cover.as_mut()) else { return false };
+            let number = brush.and_then(|guid| number_in(game, &file, guid));
+            let kind = number.and_then(|number| file.blocks.get_mut(usize::from(number) - 1));
+            let Some(cover) = kind.and_then(|kind| kind.cover.as_mut()) else { return false };
             set_cover(cover, field, &value);
         }
         _ => return false,
@@ -856,31 +873,8 @@ pub fn set(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, fie
 /// Puts `file` on the world's asset and makes its blocks again from it: its
 /// ground anew where that changed, with the changes built on the old ground
 /// kept on it, and its look made again where its faces are drawn another
-/// way.
+/// way. A block numbered after those the world has changes neither.
 fn change_file(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, file: BlockFile) -> bool {
-    change(game, renderer, entity, file, None)
-}
-
-/// As [`change_file`], for a file one of whose blocks was taken out: every
-/// block, the ground and every change kept renumbered by `renumber`, which
-/// makes its blocks air.
-fn renumber_file(
-    game: &mut Game,
-    renderer: Option<&mut Renderer>,
-    entity: Entity,
-    file: BlockFile,
-    renumber: &dyn Fn(BlockId) -> BlockId,
-) -> bool {
-    change(game, renderer, entity, file, Some(renumber))
-}
-
-fn change(
-    game: &mut Game,
-    renderer: Option<&mut Renderer>,
-    entity: Entity,
-    file: BlockFile,
-    renumber: Option<&dyn Fn(BlockId) -> BlockId>,
-) -> bool {
     // One being made again from an earlier file is let go: it is made from this one now.
     let making = game.engine.world.resource_mut::<Making>();
     let was_making = making.is_some_and(|making| making.0.remove(&entity).is_some());
@@ -891,24 +885,19 @@ fn change(
     if old == file {
         return was_making;
     }
-    // Its file as it is drawn, each block it lists with that block's look, kept on its asset with the file.
-    let drawn = Arc::new(voxear_engine::blocks::resolved(&mut game.content, &file, &asset.grown));
+    // Its file as it is drawn, each block it holds with that block's look, kept on its asset with the file.
+    let drawn = Arc::new(voxear_engine::blocks::resolved(&mut game.content, &file));
     let derived = game.content.blocks_version();
-    let renumbered_edits = |edits: BlockEdits| match renumber {
-        Some(change) => edits.remapped(change),
-        None => edits,
-    };
     // Blocks of another size: what was built stays where it was in metres, read again in the new blocks.
     let resized = old.block_size != file.block_size;
     let water = |block: BlockId| voxear_terrain::blocks::is_water(&blocks.faces, block);
     let resize = Resize { from: old.block_size, to: file.block_size, smooth: file.smooth, water: &water };
     // A world without end is made round where it is seen as it goes (see `voxear_engine::blocks::stream`), from its
-    // file: only that changes here. One just made endless, or renumbered, starts again with nothing made and every
-    // change kept.
+    // file: only that changes here. One just made endless starts again with nothing made and every change kept.
     let endless = |file: &BlockFile| file.generate.as_ref().is_some_and(|g| g.endless.is_some());
     if endless(&file) {
         let world = &mut game.engine.world;
-        if !endless(&old) || renumber.is_some() || resized {
+        if !endless(&old) || resized {
             let changes = match endless(&old) {
                 true => voxear_terrain::blocks::stream::all_changes(&base, &blocks.blocks, &asset.pending),
                 false => BlockEdits::between(&base, &blocks.blocks),
@@ -918,11 +907,19 @@ fn change(
             let mut empty = BlockWorld::made(BlockMap::default(), &faces, file.block_size, file.smooth);
             empty.cast_shadows = blocks.cast_shadows;
             world.insert(entity, empty);
-            let pending = Arc::new(renumbered_edits(changes));
+            let pending = Arc::new(changes);
             let kept = BlockWorldAsset { file, base: Arc::default(), pending, drawn: drawn.clone(), derived, ..asset };
             world.insert(entity, kept);
-        } else if let Some(kept) = world.get_mut::<BlockWorldAsset>(entity) {
-            (kept.file, kept.drawn, kept.derived) = (file, drawn.clone(), derived);
+        } else {
+            if let Some(kept) = world.get_mut::<BlockWorldAsset>(entity) {
+                (kept.file, kept.drawn, kept.derived) = (file, drawn.clone(), derived);
+            }
+            // A block numbered at the end joins the world's faces at once, so what is built with it this frame is
+            // drawn as it; its streamer makes nothing again for it.
+            let (_, faces) = drawn.faces();
+            if let Some(now) = world.get_mut::<BlockWorld>(entity).filter(|now| faces.starts_with(&now.faces)) {
+                now.faces = faces.into();
+            }
         }
         restyle(game, renderer, entity, &drawn);
         return true;
@@ -931,23 +928,22 @@ fn change(
     let carried =
         endless(&old).then(|| voxear_terrain::blocks::stream::all_changes(&base, &blocks.blocks, &asset.pending));
     let (_, faces) = drawn.faces();
-    // Blocks added at the end leave the ground as it was; one taken out makes its blocks air.
+    // Blocks numbered at the end leave the ground as it was.
     let grounded = old.ground != file.ground
         || old.generate != file.generate
-        || renumber.is_some()
         || old.block_size != file.block_size
         || old.smooth != file.smooth
         || old.blocks.iter().map(|k| k.cover).ne(file.blocks.iter().map(|k| k.cover));
     let (base, remade) = if grounded {
         let generator = voxear_engine::blocks::generator(&mut game.content, &file);
         // A large world is made on other threads, and shows what it was until then.
-        if renumber.is_none() && made_slowly(&file) {
+        if made_slowly(&file) {
             let world = &mut game.engine.world;
             start_making(world, entity, (file, drawn, derived), (old, base, blocks), carried, generator);
             return true;
         }
         let ground = Arc::new(file.make_ground(generator.as_deref()));
-        let made = made_on((&file, &drawn), &ground, (&old, &base, &blocks), carried, renumber);
+        let made = made_on((&file, &drawn), &ground, (&old, &base, &blocks), carried);
         (ground, made)
     } else if *faces != *blocks.faces {
         (base, blocks.restyled(&faces, file.smooth))
@@ -965,26 +961,21 @@ fn change(
 
 /// The world of blocks `file` makes on `ground`, drawn as `drawn`, with
 /// what was built on the world `blocks`, which `old` made on `base`, kept on
-/// it: where it was in metres where blocks changed size, renumbered by
-/// `renumber` where a block was taken out; or, in their place, `carried`,
-/// every change a world without end had.
+/// it, where it was in metres where blocks changed size; or, in their
+/// place, `carried`, every change a world without end had.
 fn made_on(
     (file, drawn): (&BlockFile, &Resolved),
     ground: &Arc<BlockMap>,
     (old, base, blocks): (&BlockFile, &BlockMap, &BlockWorld),
     carried: Option<BlockEdits>,
-    renumber: Option<&dyn Fn(BlockId) -> BlockId>,
 ) -> BlockWorld {
-    let renumbered = |map: &BlockMap| renumber.map_or_else(|| map.clone(), |change| map.remapped(change));
     let resized = old.block_size != file.block_size;
     let water = |block: BlockId| voxear_terrain::blocks::is_water(&blocks.faces, block);
     let resize = Resize { from: old.block_size, to: file.block_size, smooth: file.smooth, water: &water };
-    // The new ground names its blocks by their new numbers already; the old ground and blocks are renumbered.
-    let changes = match (carried, renumber) {
-        (Some(carried), _) if resized => carried.resized(&resize),
-        (Some(carried), Some(change)) => carried.remapped(change),
-        (Some(carried), None) => carried,
-        (None, _) if resized => {
+    let changes = match carried {
+        Some(carried) if resized => carried.resized(&resize),
+        Some(carried) => carried,
+        None if resized => {
             let mut built = (**ground).clone();
             let cells = edits::changed(base, &blocks.blocks);
             for (at, block, fill) in edits::resized(&cells, Some(&blocks.blocks), &resize) {
@@ -992,7 +983,7 @@ fn made_on(
             }
             BlockEdits::between(ground, &built)
         }
-        (None, _) => BlockEdits::between(&renumbered(base), &renumbered(&blocks.blocks)),
+        None => BlockEdits::between(base, &blocks.blocks),
     };
     let mut made = voxear_engine::blocks::make(drawn, ground, Some(&changes));
     made.cast_shadows = blocks.cast_shadows;
@@ -1055,26 +1046,21 @@ fn restyle(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, fil
     }
 }
 
-/// What a picker offers: the project's worlds of blocks, its blocks, or its
-/// materials.
+/// What a picker offers: the project's worlds of blocks, its blocks, its
+/// world generators or its models of small blocks. A ground's block may be
+/// none, for air; the brush always builds with some block.
 pub fn choices(game: &Game, field: BlockField) -> Vec<(String, Pick)> {
-    match field {
-        F::Data => fields::assets_of(game, Some(AssetKind::BlockWorld)),
-        // An entry is always of some block.
-        F::Block | F::NewBlock => {
-            let mut found = fields::assets_of(game, Some(AssetKind::Block));
-            found.retain(|(_, pick)| *pick != Pick::Asset(None));
-            found
-        }
-        F::Material | F::Top | F::Bottom => fields::assets_of(game, Some(AssetKind::Material)),
-        F::Generator => fields::assets_of(game, Some(AssetKind::WorldGen)),
-        F::Model => fields::assets_of(game, Some(AssetKind::VoxModel)),
-        _ => Vec::new(),
+    let Some(kind) = takes(field) else { return Vec::new() };
+    let mut found = fields::assets_of(game, Some(kind));
+    if field == F::Block {
+        found.retain(|(_, pick)| *pick != Pick::Asset(None));
     }
+    found
 }
 
-/// Takes what was picked: another asset for its blocks, or a material for
-/// the picked kind of block.
+/// Takes what was picked: another asset for its blocks, the block the
+/// brush builds with or the model it builds, its generator, or a block its
+/// ground is made of, which the world numbers where it has not held it yet.
 pub fn pick(
     game: &mut Game,
     renderer: Option<&mut Renderer>,
@@ -1090,62 +1076,67 @@ pub fn pick(
         },
         None => None,
     };
-    if field == F::Model {
-        let model = reference.and_then(|r| r.guid());
-        return std::mem::replace(&mut ui_mut(&mut game.engine.world).model, model) != model;
-    }
-    if field != F::Data {
-        let Some(mut file) = file_of(&game.engine.world, entity) else {
-            return false;
-        };
-        let written = reference.map(|r| r.to_string());
-        if field == F::Generator {
+    let guid = reference.as_ref().and_then(|reference| reference.guid());
+    match field {
+        F::Model => std::mem::replace(&mut ui_mut(&mut game.engine.world).model, guid) != guid,
+        F::Block => guid.is_some_and(|guid| build_with(game, guid)),
+        F::Generator => {
+            let Some(mut file) = file_of(&game.engine.world, entity) else { return false };
             let Some(generate) = &mut file.generate else { return false };
-            generate.world = written;
-            return change_file(game, renderer, entity, file);
+            generate.world = reference.map(|r| r.to_string());
+            change_file(game, renderer, entity, file)
         }
-        if field == F::NewBlock {
-            return written.is_some_and(|block| list_block(game, renderer, entity, &block));
+        F::TopBlock | F::UnderBlock | F::BaseBlock | F::SeaBlock => {
+            let Some(mut file) = file_of(&game.engine.world, entity) else { return false };
+            let block = match guid {
+                Some(guid) => match number_into(game, entity, &mut file, guid) {
+                    Some(number) => number,
+                    None => return false,
+                },
+                None => AIR,
+            };
+            match field {
+                F::TopBlock => file.ground.top = block,
+                F::UnderBlock => file.ground.under = block,
+                F::BaseBlock => file.ground.bottom = block,
+                _ => match &mut file.generate {
+                    Some(generate) => generate.sea = block,
+                    None => return false,
+                },
+            }
+            change_file(game, renderer, entity, file)
         }
-        let Some(picked) = picked(&game.engine.world, &file) else { return false };
-        let kind = &mut file.blocks[picked];
-        if field == F::Block {
-            // Another block in its place: every block of its number is that one now.
-            let Some(block) = written else { return false };
-            *kind = BlockKind { cover: kind.cover, ..BlockKind::of(&block) };
-            return change_file(game, renderer, entity, file);
+        F::Data => {
+            let Some(source) = game.engine.world.get::<BlockWorldSource>(entity).cloned() else { return false };
+            let data = BlockWorldData { data: reference.map_or_else(String::new, |r| r.to_string()), ..source.0 };
+            match voxear_engine::prefab::block_world(&mut game.content, renderer, &data) {
+                Ok(parts) => {
+                    put(&mut game.engine.world, entity, parts);
+                    true
+                }
+                Err(error) => {
+                    tracing::error!("{error:#}");
+                    false
+                }
+            }
         }
-        // A block's materials are the block's own, written to its file.
-        if let Some(block) = kind.block.clone() {
-            return change_block(game, &block, |block| match field {
-                F::Material => block.material = written,
-                F::Top => block.top = written,
-                F::Bottom => block.bottom = written,
-                _ => {}
-            });
-        }
-        match field {
-            F::Material => kind.material = written,
-            F::Top => kind.top = written,
-            F::Bottom => kind.bottom = written,
-            _ => return false,
-        }
-        return change_file(game, renderer, entity, file);
+        _ => false,
     }
-    let Some(source) = game.engine.world.get::<BlockWorldSource>(entity).cloned() else { return false };
-    let data = BlockWorldData { data: reference.map_or_else(String::new, |r| r.to_string()), ..source.0 };
-    match voxear_engine::prefab::block_world(&mut game.content, renderer, &data) {
-        Ok(parts) => {
-            let first = parts.asset.as_ref().and_then(|asset| asset.file.blocks.iter().position(BlockKind::is_live));
-            put(&mut game.engine.world, entity, parts);
-            ui_mut(&mut game.engine.world).block = first.unwrap_or(0);
-            true
-        }
-        Err(error) => {
-            tracing::error!("{error:#}");
-            false
-        }
+}
+
+/// Picks the block at `guid` for the brush to build with; whether it is
+/// another than it was.
+pub fn build_with(game: &mut Game, guid: AssetGuid) -> bool {
+    // Read now, so the brush knows whether it builds with water.
+    if game.content.block(&guid.to_string()).is_none() {
+        return false;
     }
+    std::mem::replace(&mut ui_mut(&mut game.engine.world).block, Some(guid)) != Some(guid)
+}
+
+/// The block the brush builds with, where one is picked and still there.
+pub fn built_with(game: &Game) -> Option<AssetGuid> {
+    ui(&game.engine.world).block.filter(|&guid| game.content.db().get(guid).is_some())
 }
 
 /// Builds `model` in the world, its lowest blocks at `at` and its middle
@@ -1175,48 +1166,9 @@ fn looks(game: &Game, entity: Entity) -> usize {
     game.engine.world.get::<BlockWorldAsset>(entity).map_or(0, |asset| asset.drawn.looks())
 }
 
-/// Whether the world can list one more block: one drawn as nothing it
-/// lists is needs a way of drawing a face or three, and a world has only
-/// so many.
-fn has_room(game: &Game, entity: Entity, file: &BlockFile) -> bool {
-    if file.blocks.len() >= MAX_BLOCKS || looks(game, entity) + 3 > MAX_LOOKS {
-        tracing::warn!("A world of blocks draws its faces {MAX_LOOKS} ways at most: this one has no room for more");
-        return false;
-    }
-    true
-}
-
-/// Picks the block at `at` of the list to build with and show.
-pub fn pick_block(world: &mut World, at: usize) {
-    ui_mut(world).block = at;
-}
-
 /// Shows tool `tool`.
 pub fn show_tool(world: &mut World, tool: BlockTool) {
     ui_mut(world).tool = tool;
-}
-
-/// Changes the block `reference` names and writes its file, so every world
-/// listing it takes it up (see `voxear_engine::blocks::refresh`). Whether
-/// anything changed.
-fn change_block(game: &mut Game, reference: &str, change: impl FnOnce(&mut BlockDef)) -> bool {
-    let Some((guid, block)) = game.content.block(reference) else { return false };
-    let mut changed = (*block).clone();
-    change(&mut changed);
-    changed != *block && write_block(game, guid, &changed)
-}
-
-/// Writes `block` as the `.block` at `guid`, read again by whatever lists
-/// it.
-pub(crate) fn write_block(game: &mut Game, guid: AssetGuid, block: &BlockDef) -> bool {
-    let Some(path) = game.content.db().get(guid).map(|entry| entry.path.clone()) else { return false };
-    let file = game.content.db().file(&path);
-    if let Err(error) = std::fs::write(&file, crate::project_files::block_text(block)) {
-        tracing::error!("Could not save {path}: {error}");
-        return false;
-    }
-    game.content.forget_block(guid);
-    true
 }
 
 /// Whether a data asset of the project places the block at `guid`: an item
@@ -1231,91 +1183,10 @@ pub(crate) fn placed_by(game: &Game, guid: AssetGuid) -> bool {
     })
 }
 
-/// Lists the block `reference` names at the end of the world's list, and
-/// picks it; one it lists already is only picked.
-pub fn list_block(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, reference: &str) -> bool {
-    let Some(mut file) = file_of(&game.engine.world, entity) else {
-        return false;
-    };
-    let guid_of = |game: &Game, reference: &str| game.content.parse(reference).ok().and_then(|parsed| parsed.guid());
-    let Some(guid) = guid_of(game, reference) else { return false };
-    let known = |kind: &BlockKind| kind.block.as_deref().and_then(|block| guid_of(game, block)) == Some(guid);
-    if let Some(at) = file.blocks.iter().position(|kind| kind.is_live() && known(kind)) {
-        return std::mem::replace(&mut ui_mut(&mut game.engine.world).block, at) != at;
-    }
-    if !has_room(game, entity, &file) {
-        return false;
-    }
-    file.blocks.push(BlockKind::of(&guid.to_string()));
-    ui_mut(&mut game.engine.world).block = file.blocks.len() - 1;
-    change_file(game, renderer, entity, file)
-}
-
 /// A colour of its own for the `number`th block made: round the wheel.
-fn fresh_color(number: usize) -> [f32; 3] {
+pub(crate) fn fresh_color(number: usize) -> [f32; 3] {
     let hue = number.saturating_sub(1) as f32 * 0.38;
     [0.0, 2.0, 4.0].map(|offset: f32| 0.45 + 0.3 * ((hue + offset / 3.0) * std::f32::consts::TAU).cos())
-}
-
-/// Makes a new `.block` of a colour of its own in the project's Blocks
-/// folder, lists it at the end of the world's list and picks it.
-pub fn new_block(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity) -> bool {
-    let Some(file) = file_of(&game.engine.world, entity) else {
-        return false;
-    };
-    if !has_room(game, entity, &file) {
-        return false;
-    }
-    let block = BlockDef::colored(fresh_color(file.blocks.len() + 1));
-    let root = game.project.root.clone();
-    let made = crate::project_files::create_block(&root, BLOCKS_FOLDER, "Block", &block)
-        .and_then(|path| game.content.rescan().map(|_| path));
-    match made {
-        Ok(path) => list_block(game, renderer, entity, &path),
-        Err(error) => {
-            tracing::error!("{error:#}");
-            false
-        }
-    }
-}
-
-/// Adds a kind of the world's own, of a colour of its own, at the end of
-/// the list, and picks it.
-pub fn add_block(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity) -> bool {
-    let Some(mut file) = file_of(&game.engine.world, entity) else {
-        return false;
-    };
-    if !has_room(game, entity, &file) {
-        return false;
-    }
-    // Numbered from its place in the list, past any name taken, its colour from its number round the wheel.
-    let number = (file.blocks.len() + 1..)
-        .find(|n| !file.blocks.iter().any(|kind| kind.name == format!("Color {n}")))
-        .expect("names enough");
-    file.blocks.push(BlockKind::colored(&format!("Color {number}"), fresh_color(number)));
-    ui_mut(&mut game.engine.world).block = file.blocks.len() - 1;
-    change_file(game, renderer, entity, file)
-}
-
-/// Takes the block at `at` out of the list: its blocks become air, and the
-/// ground's layers of it too. Its place stays, empty, so every other block
-/// keeps its number.
-pub fn remove_block(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, at: usize) -> bool {
-    let Some(mut file) = file_of(&game.engine.world, entity) else {
-        return false;
-    };
-    if !file.blocks.get(at).is_some_and(BlockKind::is_live) {
-        return false;
-    }
-    file.blocks[at] = BlockKind::gap();
-    file.forget_gaps();
-    let gone = (at + 1) as BlockId;
-    let renumber = move |block: BlockId| if block == gone { AIR } else { block };
-    // The block listed after it is picked, or else the one before.
-    let live = |at: &usize| file.blocks[*at].is_live();
-    let next = (at..file.blocks.len()).find(live).or_else(|| (0..at).rev().find(live));
-    ui_mut(&mut game.engine.world).block = next.unwrap_or(0);
-    renumber_file(game, renderer, entity, file, &renumber)
 }
 
 /// Whether a kind of the world's own is one a model of small blocks brought
@@ -1326,26 +1197,55 @@ fn is_model_color(kind: &BlockKind) -> bool {
     plain && kind.name.strip_prefix("Color ").is_some_and(|number| number.parse::<u32>().is_ok())
 }
 
-/// How many kinds of the world's own Make Block Assets would make blocks
-/// of: all but the colours models brought.
+/// How many kinds `file` keeps itself that are a block's to be: all but
+/// the colours models brought. A world written before blocks were assets
+/// kept every kind so.
 pub fn kinds_to_make(file: &BlockFile) -> usize {
     file.blocks.iter().filter(|kind| kind.is_inline() && !is_model_color(kind)).count()
 }
 
-/// Makes a `.block` in the project's Blocks folder of each kind the world
-/// keeps itself, but for the colours models brought, and lists the block in
-/// the kind's place: one there already of its name and look is the block.
-/// Every block keeps its number, so nothing built changes.
-pub fn make_block_assets(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity) -> bool {
-    blocks_for_kinds(game, renderer, entity, true)
+/// Where the blocks made of the kinds of the world at `path` go: a Blocks
+/// folder beside it, or its own folder where that is one.
+fn blocks_beside(path: &str) -> String {
+    let folder = path.rsplit_once('/').map_or("", |(folder, _)| folder);
+    match folder.rsplit('/').next() {
+        Some(BLOCKS_FOLDER) => folder.to_string(),
+        _ if folder.is_empty() => BLOCKS_FOLDER.to_string(),
+        _ => format!("{folder}/{BLOCKS_FOLDER}"),
+    }
 }
 
-/// As [`make_block_assets`]; or, not `as_drawn`, with the block there
-/// already of a kind's name taken as it is, whatever its look: how a new
-/// world comes by the project's own grass, dirt and stone.
-fn blocks_for_kinds(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity, as_drawn: bool) -> bool {
+/// Makes a block of each kind an older world keeps itself, but for the
+/// colours models brought, named after the kind, in a Blocks folder beside
+/// the world, and has the world hold the block in the kind's place: one
+/// there already of its name and look is the block. Every block keeps its
+/// number and its look, so nothing built changes. Gives the folder and how
+/// many kinds were made blocks, where any were.
+pub fn make_kinds_blocks(game: &mut Game, renderer: Option<&mut Renderer>, entity: Entity) -> Option<(String, usize)> {
+    let asset = game.engine.world.get::<BlockWorldAsset>(entity)?;
+    if kinds_to_make(&asset.file) == 0 {
+        return None;
+    }
+    // A package's world is the package's to change.
+    let entry = game.content.db().get(asset.guid).filter(|entry| entry.mount == voxear_assets::Mount::Project)?;
+    let folder = blocks_beside(&entry.path);
+    let made = blocks_for_kinds(game, renderer, entity, true, &folder);
+    (made > 0).then_some((folder, made))
+}
+
+/// As [`make_kinds_blocks`], into `folder`; or, not `as_drawn`, with the
+/// block there already of a kind's name taken as it is, whatever its look:
+/// how a new world comes by the project's own grass, dirt and stone. How
+/// many kinds were made blocks.
+fn blocks_for_kinds(
+    game: &mut Game,
+    renderer: Option<&mut Renderer>,
+    entity: Entity,
+    as_drawn: bool,
+    folder: &str,
+) -> usize {
     let Some(mut file) = file_of(&game.engine.world, entity) else {
-        return false;
+        return 0;
     };
     let root = game.project.root.clone();
     let mut made: Vec<(usize, String)> = Vec::new();
@@ -1355,8 +1255,8 @@ fn blocks_for_kinds(game: &mut Game, renderer: Option<&mut Renderer>, entity: En
         }
         let block = BlockDef::from_kind(kind);
         let found = match as_drawn {
-            true => crate::project_files::block_for(&root, BLOCKS_FOLDER, &kind.name, &block),
-            false => crate::project_files::block_named(&root, BLOCKS_FOLDER, &kind.name, &block),
+            true => crate::project_files::block_for(&root, folder, &kind.name, &block),
+            false => crate::project_files::block_named(&root, folder, &kind.name, &block),
         };
         match found {
             Ok(path) => made.push((at, path)),
@@ -1364,19 +1264,46 @@ fn blocks_for_kinds(game: &mut Game, renderer: Option<&mut Renderer>, entity: En
         }
     }
     if made.is_empty() {
-        return false;
+        return 0;
     }
     if let Err(error) = game.content.rescan() {
         tracing::error!("{error:#}");
-        return false;
+        return 0;
     }
+    let mut count = 0;
     for (at, path) in made {
         let Some(guid) = game.content.parse(&path).ok().and_then(|parsed| parsed.guid()) else { continue };
         // Read as it is now, where a block of that name was there already.
         game.content.forget_block(guid);
         file.blocks[at] = BlockKind { cover: file.blocks[at].cover, ..BlockKind::of(&guid.to_string()) };
+        count += 1;
     }
-    change_file(game, renderer, entity, file)
+    change_file(game, renderer, entity, file);
+    count
+}
+
+/// The worlds of blocks holding the block at `guid`, by path: those of the
+/// level open as they are now, and every other as its file has it.
+pub fn worlds_holding(game: &Game, guid: AssetGuid) -> Vec<String> {
+    let world = &game.engine.world;
+    let open: std::collections::HashMap<AssetGuid, &BlockFile> =
+        world.query_ref::<&BlockWorldAsset>().into_iter().map(|asset| (asset.guid, &asset.file)).collect();
+    let db = game.content.db();
+    let mut holding: Vec<String> = db
+        .entries()
+        .filter(|entry| entry.kind == AssetKind::BlockWorld)
+        .filter(|entry| match open.get(&entry.guid) {
+            Some(file) => number_in(game, file, guid).is_some(),
+            None => {
+                let read = std::fs::read_to_string(db.file(&entry.path)).ok();
+                let file = read.and_then(|text| BlockFile::parse(&text).ok());
+                file.is_some_and(|file| number_in(game, &file, guid).is_some())
+            }
+        })
+        .map(|entry| entry.path.clone())
+        .collect();
+    holding.sort();
+    holding
 }
 
 fn put(world: &mut World, entity: Entity, parts: BlockWorldParts) {
@@ -1396,7 +1323,8 @@ fn put(world: &mut World, entity: Entity, parts: BlockWorldParts) {
 /// new asset of its own, named for its Obj, in the project's Blocks folder;
 /// or, `smooth`, its Voxel Terrain, the same drawn smooth, in its Voxels
 /// folder. Its grass, dirt and stone are the project's blocks of those
-/// names, made where it has none.
+/// names, made where it has none, and a brush with no block yet builds with
+/// its grass.
 pub fn add(game: &mut Game, mut renderer: Option<&mut Renderer>, entity: Entity, smooth: bool) -> Result<()> {
     let name = game.engine.world.get::<voxear_scene::Name>(entity).map_or("Blocks".into(), |n| n.0.clone());
     let root = game.project.root.clone();
@@ -1407,7 +1335,11 @@ pub fn add(game: &mut Game, mut renderer: Option<&mut Renderer>, entity: Entity,
     let data = BlockWorldData { data: guid.to_string(), cast_shadows: true };
     let parts = voxear_engine::prefab::block_world(&mut game.content, renderer.as_deref_mut(), &data)?;
     put(&mut game.engine.world, entity, parts);
-    blocks_for_kinds(game, renderer, entity, false);
+    blocks_for_kinds(game, renderer, entity, false, BLOCKS_FOLDER);
+    if built_with(game).is_none() {
+        let first = drawn_of(&game.engine.world, entity).and_then(|drawn| drawn.guid(1));
+        ui_mut(&mut game.engine.world).block = first;
+    }
     Ok(())
 }
 

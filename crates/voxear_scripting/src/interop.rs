@@ -43,7 +43,7 @@ use crate::ui::{
     ui_style, ui_text, ui_value, ui_visible,
 };
 
-pub(crate) const API_VERSION: u32 = 74;
+pub(crate) const API_VERSION: u32 = 75;
 
 /// Engine functions scripts call.
 #[repr(C)]
@@ -505,6 +505,9 @@ pub(crate) struct NativeApi {
     /// Sets off a blast at a point, so wide, that throws the particles round
     /// it out, those at its middle so fast.
     pub particle_blast: unsafe extern "C" fn(at: *const [f32; 3], radius: f32, speed: f32) -> i32,
+    /// `Blocks.All`: every block of the project, by GUID, a line each; the
+    /// text's length, written when it fits.
+    pub blocks_all: unsafe extern "C" fn(buffer: *mut u8, capacity: i32) -> i32,
 }
 
 /// The kinds of component scripts reach through one entry, `kind_value`,
@@ -1982,6 +1985,7 @@ pub(crate) fn native_api(time: *const Time) -> NativeApi {
         water_splash,
         caves_info: crate::services::caves_info,
         particle_blast,
+        blocks_all: crate::blocks::blocks_all,
     }
 }
 

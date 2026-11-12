@@ -15,6 +15,8 @@ use voxear_ui::{Color, Theme};
 
 /// The most items the palette remembers having run.
 const RECENT: usize = 8;
+/// How many blocks the brush built with are remembered.
+const RECENT_BLOCKS: usize = 24;
 /// The snap distances the tool strip and Settings offer, in metres.
 pub const SNAPS: [f32; 4] = [0.1, 0.25, 0.5, 1.0];
 
@@ -497,6 +499,9 @@ pub struct Memory {
     /// How big the Project panel's tiles are, as its slider was left, from
     /// 0 for rows to 1; `None` for the starting size.
     pub tile_size: Option<f32>,
+    /// The blocks the brush last built with, by GUID, most recent first:
+    /// the order a picker of blocks offers them in.
+    pub recent_blocks: Vec<String>,
     /// Where it is kept, or `None` for an editor that remembers nothing.
     #[serde(skip)]
     path: Option<PathBuf>,
@@ -526,6 +531,15 @@ impl Memory {
         self.recent.retain(|k| k != key);
         self.recent.insert(0, key.to_string());
         self.recent.truncate(RECENT);
+        self.save();
+    }
+
+    /// Notes that the brush built with the block `guid` names, most recent
+    /// first.
+    pub fn built_with(&mut self, guid: &str) {
+        self.recent_blocks.retain(|known| known != guid);
+        self.recent_blocks.insert(0, guid.to_string());
+        self.recent_blocks.truncate(RECENT_BLOCKS);
         self.save();
     }
 

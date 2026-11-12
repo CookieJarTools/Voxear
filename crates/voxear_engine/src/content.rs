@@ -481,6 +481,8 @@ pub struct Content {
     /// Each world of blocks' file and what it makes, read once.
     block_worlds: HashMap<AssetGuid, Option<Arc<LoadedBlockWorld>>>,
     unsaved_block_worlds: std::collections::BTreeSet<AssetGuid>,
+    /// The worlds of blocks said to be full already (see `blocks::say_full`).
+    full_block_worlds: std::collections::BTreeSet<AssetGuid>,
     /// Blocks the worlds of blocks list, by GUID, read once.
     blocks: HashMap<AssetGuid, Option<Arc<voxear_terrain::blocks::block::BlockDef>>>,
     blocks_version: u64,
@@ -659,6 +661,7 @@ impl Content {
             unsaved_terrains: Default::default(),
             block_worlds: HashMap::new(),
             unsaved_block_worlds: Default::default(),
+            full_block_worlds: Default::default(),
             blocks: HashMap::new(),
             blocks_version: 0,
             terrain_greys: HashMap::new(),
@@ -1418,11 +1421,11 @@ impl Content {
     /// and made once.
     pub fn block_world(&mut self, guid: AssetGuid) -> Option<Arc<LoadedBlockWorld>> {
         if let Some(found) = self.block_worlds.get(&guid).cloned() {
-            // A block it lists changed since: its faces as the blocks are now.
+            // A block it holds changed since: its faces as the blocks are now.
             let Some(stale) = found.as_ref().filter(|found| found.derived != self.blocks_version) else {
                 return found;
             };
-            let file = crate::blocks::resolved(self, &stale.file, &[]);
+            let file = crate::blocks::resolved(self, &stale.file);
             let (_, faces) = file.faces();
             let world = match *stale.world.faces == faces[..] {
                 true => stale.world.clone(),
@@ -1446,7 +1449,7 @@ impl Content {
                 Err(_) => None,
             };
             // One without end starts with nothing made: its chunks are made round the camera as it goes.
-            let drawn = crate::blocks::resolved(self, &file, &[]);
+            let drawn = crate::blocks::resolved(self, &file);
             if file.generate.as_ref().is_some_and(|g| g.endless.is_some()) {
                 let (_, faces) = drawn.faces();
                 let world =
@@ -1466,7 +1469,7 @@ impl Content {
     /// Keeps `file` and `world`'s blocks as the world of blocks at `guid`'s,
     /// as after the editor changed them, and marks it to be written, unless
     /// that is how it is already. Its faces made again at `derived`, as
-    /// after a block it lists changed, are kept too, and are nothing to
+    /// after a block it holds changed, are kept too, and are nothing to
     /// write.
     pub fn keep_block_world(
         &mut self,
@@ -1525,6 +1528,24 @@ impl Content {
         self.block_worlds.remove(&guid);
     }
 
+    /// Takes the world of blocks at `guid` as written as it is now, as once
+    /// its file was written apart from a save of everything changed.
+    pub fn block_world_written(&mut self, guid: AssetGuid) {
+        self.unsaved_block_worlds.remove(&guid);
+    }
+
+    /// Whether the world of blocks at `guid` is changed since it was last
+    /// written.
+    pub fn block_world_unsaved(&self, guid: AssetGuid) -> bool {
+        self.unsaved_block_worlds.contains(&guid)
+    }
+
+    /// Notes that the world of blocks at `guid` can draw no more blocks:
+    /// true the first time, for it to be said once.
+    pub fn block_world_full(&mut self, guid: AssetGuid) -> bool {
+        self.full_block_worlds.insert(guid)
+    }
+
     /// The block `reference` names, read once, with its GUID.
     pub fn block(&mut self, reference: &str) -> Option<(AssetGuid, Arc<voxear_terrain::blocks::block::BlockDef>)> {
         let guid = self.parse(reference).ok().and_then(|parsed| parsed.guid())?;
@@ -1544,6 +1565,11 @@ impl Content {
         kept.map(|block| (guid, block))
     }
 
+    /// The block at `guid`, where it was read already.
+    pub fn loaded_block(&self, guid: AssetGuid) -> Option<Arc<voxear_terrain::blocks::block::BlockDef>> {
+        self.blocks.get(&guid)?.clone()
+    }
+
     /// What the block at `guid` is called: its file's name.
     pub fn block_name(&self, guid: AssetGuid) -> Option<String> {
         let path = &self.db.get(guid).filter(|entry| entry.kind == AssetKind::Block)?.path;
@@ -1551,7 +1577,7 @@ impl Content {
     }
 
     /// Forgets a block, read again when next asked for, as after it was
-    /// saved: the worlds of blocks listing it take up its look at once (see
+    /// saved: the worlds of blocks holding it take up its look at once (see
     /// `blocks::refresh`).
     pub fn forget_block(&mut self, guid: AssetGuid) {
         self.blocks.remove(&guid);

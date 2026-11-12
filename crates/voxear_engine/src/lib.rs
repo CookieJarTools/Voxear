@@ -27,6 +27,7 @@ pub mod map;
 mod levels;
 pub mod mesh_boxes;
 pub mod lighting;
+pub mod look_packs;
 mod lights;
 mod loading;
 pub mod memory;

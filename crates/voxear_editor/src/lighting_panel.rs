@@ -277,6 +277,9 @@ pub enum LightingAction {
     /// New lighting settings are made, a copy of those shown, and named in
     /// the active scene.
     Copy,
+    /// The scene is shown under a look pack, as a player who picked it
+    /// would see it, or under none. Nothing of it is saved.
+    Wear(Option<String>),
 }
 
 /// Two changes are the same when they write the same text: the file's values
@@ -290,6 +293,7 @@ impl PartialEq for LightingAction {
                 file == f && path == p && text(value) == text(v)
             }
             (Self::Copy, Self::Copy) => true,
+            (Self::Wear(a), Self::Wear(b)) => a == b,
             _ => false,
         }
     }
@@ -302,6 +306,10 @@ pub struct LightingPanel {
     choices: Vec<Option<String>>,
     note: NodeId,
     copy: NodeId,
+    /// The look pack the scene is shown under, and what each of its
+    /// menu's entries names.
+    look: NodeId,
+    looks: Vec<Option<String>>,
     fields: LightingFields,
     /// The lighting shown, as the scene names it.
     shown: Option<String>,
@@ -321,8 +329,17 @@ impl LightingPanel {
         ui.add_class(note, "lighting-note");
         let copy = ui.button(top, "Make a Copy");
         ui.add_class(copy, "lighting-copy");
+        let row = ui.panel(top, Style::default());
+        ui.add_class(row, "prop");
+        let label = ui.add_label(row, "Look pack");
+        ui.add_class(label, "prop-label");
+        let tip = "Shows the scene under a look pack, as a player who picked it would see it. It is not saved with \
+                   the scene: players pick their own";
+        ui.set_tooltip(label, tip, None);
+        let look = ui.dropdown(row, &["None"], 0);
+        ui.add_class(look, "value-choice");
         let fields = LightingFields::new(ui, tab_bar, view);
-        Self { scene, choices: vec![None], note, copy, fields, shown: None }
+        Self { scene, choices: vec![None], note, copy, look, looks: vec![None], fields, shown: None }
     }
 
     /// Shows the active scene's lighting as it now is: the menu's choices,
@@ -332,6 +349,33 @@ impl LightingPanel {
         let current = game.levels.scene_lighting().map(str::to_string);
         let own = world_own(game);
         self.show_scene(ui, game, current, own);
+        self.show_looks(ui, game);
+    }
+
+    /// Lists the look packs there are, the engine's and the project's, with
+    /// the one the scene is shown under picked.
+    fn show_looks(&mut self, ui: &mut Ui, game: &mut Game) {
+        let worn = voxear_engine::look_packs::worn(&game.engine.world).map(str::to_string);
+        let packs = voxear_engine::look_packs::list(&mut game.content, None);
+        let mut labels = vec!["None".to_string()];
+        let mut looks = vec![None];
+        for pack in packs {
+            labels.push(pack.name);
+            looks.push(Some(pack.reference));
+        }
+        let index = match looks.iter().position(|look| *look == worn) {
+            Some(index) => index,
+            // One worn that is not listed, as a player's own file a script wore.
+            None => {
+                labels.push(worn.clone().unwrap_or_default());
+                looks.push(worn);
+                looks.len() - 1
+            }
+        };
+        let labels: Vec<&str> = labels.iter().map(String::as_str).collect();
+        ui.set_options(self.look, &labels);
+        ui.set_selected_option(self.look, index);
+        self.looks = looks;
     }
 
     /// Shows a scene's lighting: `current`, the lighting settings it names,
@@ -400,7 +444,16 @@ impl LightingPanel {
         if ui.clicked(self.copy) {
             return Some(LightingAction::Copy);
         }
+        if ui.changed(self.look) {
+            let chosen = self.looks.get(ui.selected_option(self.look)).cloned().flatten();
+            return Some(LightingAction::Wear(chosen));
+        }
         self.fields.update(ui)
+    }
+
+    /// The menu the look pack the scene is shown under is picked from.
+    pub fn look_menu(&self) -> NodeId {
+        self.look
     }
 
     /// The colour setting whose swatch was clicked this frame.

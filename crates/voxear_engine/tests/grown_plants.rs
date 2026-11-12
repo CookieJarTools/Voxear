@@ -478,3 +478,68 @@ fn a_world_draws_the_starter_plants_it_grows() {
     let share = other.count() as f32 / (bare.len() / 4) as f32;
     assert!(share > 0.2, "{:.0}% of the picture changed", share * 100.0);
 }
+
+#[test]
+fn a_look_pack_changes_how_a_level_is_drawn_and_leaves_its_own_lighting_as_it_was() {
+    use voxear_engine::look_packs;
+    use voxear_render::{PostProcess, Renderer, RendererSettings, Sky, WornLook};
+    let Ok(mut renderer) = Renderer::new_offscreen(1280, 720, &RendererSettings::default()) else {
+        eprintln!("skipping: no usable GPU");
+        return;
+    };
+    // The world of starter plants, lit by a built-in look with clouds, seen a little more level to show some sky.
+    let dir = starter_project(true);
+    let scene = dir.path().join("Scenes/Field.scene");
+    let text = std::fs::read_to_string(&scene).unwrap();
+    let text = text.replacen("format = 1\n", "format = 1\nlighting = \"builtin:highland_summer\"\n", 1);
+    std::fs::write(&scene, text.replace("rotation = [22.0, 35.0, 0.0]", "rotation = [8.0, 35.0, 0.0]")).unwrap();
+    let mut game = Game::new(Project::open(dir.path()).unwrap(), Engine::new()).unwrap();
+    game.start(Some(&mut renderer)).unwrap();
+    for tick in 0..4000 {
+        game.tick(1.0 / 60.0, Some(&mut renderer));
+        let made = voxear_engine::blocks::streamed(&game.engine.world) && grown_plants::settled(&game.engine.world);
+        if made && tick >= 3 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    let mut draw = |game: &mut Game, name: &str| {
+        for _ in 0..60 {
+            game.tick(1.0 / 60.0, Some(&mut renderer));
+            renderer.render(&game.engine.world, 1.0).unwrap();
+        }
+        let (width, height, pixels) = renderer.read_pixels().unwrap();
+        if let Ok(out) = std::env::var("VOXEAR_TEST_OUTPUT") {
+            let file = std::fs::File::create(std::path::Path::new(&out).join(name)).unwrap();
+            let mut encoder = png::Encoder::new(file, width, height);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.write_header().unwrap().write_image_data(&pixels).unwrap();
+        }
+        pixels
+    };
+    let own = |game: &Game| {
+        let world = &game.engine.world;
+        (world.resource::<Sky>().map(scene_file::sky_data), world.resource::<PostProcess>().copied())
+    };
+    let level = own(&game);
+    let plain = draw(&mut game, "look pack none.png");
+    let unlike = |a: &[u8], b: &[u8]| {
+        let pairs = a.chunks_exact(4).zip(b.chunks_exact(4));
+        pairs.filter(|(a, b)| (0..3).any(|c| a[c].abs_diff(b[c]) > 8)).count() as f32 / (a.len() / 4) as f32
+    };
+    for (key, title, _) in look_packs::BUILTIN {
+        look_packs::wear(&mut game.engine.world, &mut game.content, &format!("builtin:{key}")).unwrap();
+        let worn = draw(&mut game, &format!("look pack {key}.png"));
+        assert!(game.engine.world.resource::<WornLook>().is_some(), "{title} is worn");
+        let changed = unlike(&worn, &plain);
+        eprintln!("{title}: {:.1}% of the picture changed", changed * 100.0);
+        assert!(changed > 0.01, "{title} shows: {changed}");
+        // The level's own lighting is as it was made, for the editor and scripts to read.
+        assert_eq!(own(&game), level, "under {title}");
+    }
+    // Taken off, the level is drawn as it was: but for its clouds, which have drifted on.
+    look_packs::wear(&mut game.engine.world, &mut game.content, "").unwrap();
+    let back = draw(&mut game, "look pack none again.png");
+    assert!(game.engine.world.resource::<WornLook>().is_none());
+    assert!(unlike(&back, &plain) < 0.25, "the level's own look again: {}", unlike(&back, &plain));
+}

@@ -583,6 +583,7 @@ pub fn asset_choices(game: &Game, types: &ScriptTypes, kind: &FieldKind) -> Vec<
         Some("Level" | "LevelAsset") => Some(AssetKind::Level),
         Some("Sound") => Some(AssetKind::Sound),
         Some("LightingSettings") => Some(AssetKind::Lighting),
+        Some("LookPack") => Some(AssetKind::LookPack),
         Some("MotionSet") => Some(AssetKind::MotionSet),
         Some("Block") => Some(AssetKind::Block),
         Some("Biome") => Some(AssetKind::Biome),

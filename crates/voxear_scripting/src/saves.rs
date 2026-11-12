@@ -64,6 +64,11 @@ pub(crate) fn configure(settings: SaveSettings) {
     *SETTINGS.lock().unwrap_or_else(|e| e.into_inner()) = settings;
 }
 
+/// Where saves are kept now; none where there is nowhere to keep them.
+pub fn saves_folder() -> Option<PathBuf> {
+    settings().folder
+}
+
 fn settings() -> SaveSettings {
     SETTINGS.lock().unwrap_or_else(|e| e.into_inner()).clone()
 }

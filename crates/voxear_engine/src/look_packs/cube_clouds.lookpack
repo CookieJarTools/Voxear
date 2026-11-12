@@ -1,0 +1,7 @@
+# A Voxear look pack: laid over whatever lighting a level has.
+format = 1
+description = "The level's clouds built of big soft cubes, their square shadows crossing the ground."
+
+[sky.clouds]
+kind = "blocks"
+softness = 0.35

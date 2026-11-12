@@ -89,6 +89,33 @@ look = \"golden_hour\"
 [post]
 ";
 
+/// A new look pack: laid over a level's lighting, it changes only what is
+/// written in it, so it starts with a little of each part.
+const NEW_LOOK_PACK: &str = "# A Voxear look pack: a few lighting settings laid over whatever lighting a level has.
+# Whoever plays the game picks one, with LookPacks.Use or the ready-made LookPackScreen.
+# Only what is written here changes; the level keeps its time of day, its weather and the rest.
+format = 1
+
+# A line for the menu the pack is picked from.
+description = \"Warmer light and a little more glow.\"
+
+# How the sun looks: temperature (kelvin), tint, strength, softness, shadow_tint.
+[sun]
+tint = [1.0, 0.95, 0.88]
+
+# The sky, as a scene's [sky] writes it. [sky.clouds] kind = \"blocks\" builds the level's clouds of cubes.
+[sky]
+
+# Post-processing, as a scene's [post] writes it: [post.bloom], [post.grading], [post.fog], [post.tonemap] and more.
+[post.bloom]
+intensity = 0.15
+
+# How every Block World's faces are drawn: voxels, the small cubes along a block's side (0 for plain faces), and
+# relief, how many deep the deepest sink. Take the # off to use it.
+# [blocks]
+# voxels = 8
+";
+
 /// Something the Project panel makes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NewFile {
@@ -97,6 +124,8 @@ pub enum NewFile {
     Level,
     Material,
     Lighting,
+    /// A look pack, which whoever plays the game picks.
+    LookPack,
     Shader,
     UnlitShader,
     /// A shader a UI element's background is drawn with.
@@ -118,12 +147,13 @@ pub enum NewFile {
 }
 
 impl NewFile {
-    pub const ALL: [NewFile; 17] = [
+    pub const ALL: [NewFile; 18] = [
         NewFile::Folder,
         NewFile::Scene,
         NewFile::Level,
         NewFile::Material,
         NewFile::Lighting,
+        NewFile::LookPack,
         NewFile::Shader,
         NewFile::UnlitShader,
         NewFile::UiShader,
@@ -157,6 +187,7 @@ impl NewFile {
             NewFile::Level => "New Level",
             NewFile::Material => "New Material",
             NewFile::Lighting => "New Lighting Settings",
+            NewFile::LookPack => "New Look Pack",
             NewFile::Shader => "New Shader",
             NewFile::UnlitShader => "New Unlit Shader",
             NewFile::UiShader => "New UI Shader",
@@ -181,6 +212,7 @@ impl NewFile {
             NewFile::Level => ("New Level", ".level"),
             NewFile::Material => ("New Material", ".material"),
             NewFile::Lighting => ("New Lighting", ".lighting"),
+            NewFile::LookPack => ("New Look Pack", ".lookpack"),
             NewFile::Shader => ("New Shader", ".shader"),
             NewFile::UnlitShader => ("New Unlit Shader", ".shader"),
             NewFile::UiShader => ("New UI Shader", ".shader"),
@@ -210,6 +242,7 @@ pub fn create(root: &Path, folder: &str, kind: NewFile, namespace: &str) -> Resu
         NewFile::Level => std::fs::write(&file, "# Voxear level: list its scenes as [[scene]] tables.\nformat = 1\n"),
         NewFile::Material => std::fs::write(&file, "color = [0.8, 0.8, 0.8]\nmetallic = 0.0\nroughness = 0.5\n"),
         NewFile::Lighting => std::fs::write(&file, NEW_LIGHTING),
+        NewFile::LookPack => std::fs::write(&file, NEW_LOOK_PACK),
         NewFile::Shader => std::fs::write(&file, shader(NEW_SHADER, &name[..name.len() - extension.len()])),
         NewFile::UnlitShader => std::fs::write(&file, shader(NEW_UNLIT_SHADER, &name[..name.len() - extension.len()])),
         NewFile::UiShader => std::fs::write(&file, shader(NEW_UI_SHADER, &name[..name.len() - extension.len()])),
@@ -775,6 +808,19 @@ mod tests {
         let file: voxear_engine::lighting::LightingFile = toml::from_str(&text).unwrap();
         assert_eq!(file.look.as_deref(), Some("golden_hour"));
         file.resolve().unwrap();
+    }
+
+    #[test]
+    fn a_new_look_pack_reads_back_and_changes_a_little_of_a_levels_lighting() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = create(dir.path(), "", NewFile::LookPack, "Game").unwrap();
+        assert_eq!(path, "New Look Pack.lookpack");
+        let text = std::fs::read_to_string(dir.path().join(&path)).unwrap();
+        let pack = voxear_engine::look_packs::LookPackFile::parse(&text).unwrap();
+        assert!(!pack.description.is_empty() && pack.sun.is_some() && pack.blocks.is_none());
+        let plain = voxear_render::PostProcess::default();
+        let worn = pack.worn(voxear_render::Sky::default(), None, plain).unwrap();
+        assert!(worn.post.bloom.intensity == 0.15 && worn.sun.is_some());
     }
 
     #[test]

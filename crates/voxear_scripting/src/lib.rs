@@ -52,7 +52,9 @@ pub use runtime::{
     ConsoleName, CreatedBehaviour, ManagedMemory, PACKAGE_ASSEMBLIES, Reloaded, ScriptHost, ScriptRuntime,
     package_assemblies,
 };
-pub use saves::{SAVE_EXTENSION, SaveError, SaveFolder, SavePart, SaveSettings, SlotEntry, saved_language};
+pub use saves::{
+    SAVE_EXTENSION, SaveError, SaveFolder, SavePart, SaveSettings, SlotEntry, saved_language, saves_folder,
+};
 pub use services::{
     AssetName, ContentStats, LevelInfo, LevelLoadOptions, LoadProgress, PreviewOptions, PreviewSource, PreviewState,
     SceneLoadOptions, SceneRequest, ScriptServices, ServicesScope, SpawnedPrefab, UiAnswer, UiAsk, ui_panel_document,

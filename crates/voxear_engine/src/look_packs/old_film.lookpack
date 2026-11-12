@@ -1,0 +1,18 @@
+# A Voxear look pack: laid over whatever lighting a level has.
+format = 1
+description = "Faded colour, deep contrast, dark corners and the fringing of an old lens."
+
+[post]
+chromatic_aberration = 0.35
+
+[post.grading]
+temperature = 0.08
+contrast = 1.15
+saturation = 0.55
+
+[post.bloom]
+enabled = true
+intensity = 0.1
+
+[post.vignette]
+intensity = 0.5

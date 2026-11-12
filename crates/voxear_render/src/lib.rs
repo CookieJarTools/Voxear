@@ -129,7 +129,7 @@ pub use previews::{
 };
 pub use ies::IesProfile;
 pub use map::{GpuMapColumn, MAP_LEAST_TILT, MAX_MAP_SIZE, MapCamera, MapDraw, MapId, MapImage, MapLook};
-pub use looks::{Look, LookName, SunLook};
+pub use looks::{Look, LookName, SunLook, WornLook};
 pub use shadows::{SHADOW_DISTANCE, SHADOW_SPLIT};
 pub use post_volume::{PostVolume, VolumeShape};
 pub use foliage::{Foliage, FoliageInteraction, Impostors, Plant, PlantSet, Plants, Walkers, scatter};
@@ -2122,7 +2122,7 @@ impl View {
             terrain::gather(&setup.terrains, &extracted.frame, &extracted.entities, extracted.has_sun, &buffers.terrain)
                 .map(|drawn| terrain::ViewTerrains { tracks: Some(tracks_id), ..drawn });
         let view_blocks =
-            blocks::gather(&setup.blocks, &extracted.frame, &extracted.entities, extracted.has_sun, &buffers.blocks);
+            blocks::gather(&setup.blocks, &extracted, &buffers.blocks);
         self.block_counts = view_blocks.as_ref().map(blocks::ViewBlocks::counts).unwrap_or_default();
         // The grass this view scatters round its camera on the terrains.
         let gathered = grass::gather(&setup.terrains, &extracted.frame, extracted.origin, &buffers.grass);

@@ -402,6 +402,7 @@ pub fn server_reads(kind: AssetKind) -> bool {
         | AssetKind::Paths
         | AssetKind::LightProfile
         | AssetKind::Lighting
+        | AssetKind::LookPack
         | AssetKind::Shader
         | AssetKind::PromptIcons => false,
     }
@@ -492,7 +493,8 @@ fn usage_sets(
             // Code loads levels, prefabs and UI documents by path, which the build cannot see, and the game
             // reads its input actions and every string and asset table when it starts, an asset table taking
             // each language's asset with it. The project's shaders all ship, as they are compiled in together. So
-            // do its blocks: any world can hold any of them, and scripts place them by name. A package's levels,
+            // do its blocks: any world can hold any of them, and scripts place them by name. And its look packs,
+            // which a player picks from a list of all there are. A package's levels,
             // prefabs, UI documents and blocks ship only when the game uses them, so a package of many ships what
             // the game takes from it; its tables still ship, since the game reads them all, and its
             // input actions never stand in for the project's.
@@ -507,6 +509,7 @@ fn usage_sets(
                         | AssetKind::AssetTable
                         | AssetKind::Shader
                         | AssetKind::Block
+                        | AssetKind::LookPack
                 ),
                 Mount::Package(_) => matches!(e.kind, AssetKind::Strings | AssetKind::AssetTable),
             } || matches(&settings.include, &e.path);
@@ -679,8 +682,9 @@ fn find_needs(db: &AssetDb, guid: AssetGuid, kind: AssetKind, path: &str) -> Res
             needs.companions = sheets.into_iter().map(beside).collect();
         }
         AssetKind::Sound => needs.companions = vec![format!("{path}.{}", voxear_assets::META_EXTENSION)],
-        // A world generator and a model of blocks name nothing else.
+        // A world generator and a model of blocks name nothing else, nor does a look pack.
         AssetKind::Texture
+        | AssetKind::LookPack
         | AssetKind::Strings
         | AssetKind::Paths
         | AssetKind::LightProfile

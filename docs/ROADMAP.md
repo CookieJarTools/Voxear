@@ -1055,6 +1055,30 @@ Done so far:
     and of a strike.
   - Later: rain and snow kept out from under roofs, bolts of lightning, sounds, the same weather on every machine
     of a networked game and in saves, weather by climate in generated worlds.
+- **Look packs:** `.lookpack` files (`AssetKind::LookPack`, `voxear_engine::look_packs`): a `description` and the
+  `[sky]`, `[sun]` and `[post]` of a `.lighting` file, with `[blocks]` for every Block World's small cubes, laid
+  over whatever lighting a level has rather than in place of it. The level's own sky, sun look and
+  post-processing stay in the world; each tick `look_packs::update` lays the pack worn (`Wearing`) over them as
+  they are then and leaves the result as the renderer's `WornLook`, which a frame is drawn with, worked out again
+  only when either changed. A pack that names a `look` starts from that built-in look instead. The weather is the
+  level's: a pack cannot set it.
+  - **Where packs come from:** six built in (`builtin:sunlit`, `cube_clouds`, `little_cubes`, `painted`,
+    `old_film`, `plain`), the project's assets, all of which ship in a build, and a player's own files in `Looks`
+    beside the game's saves (`file:` and a path). `look_packs::list` gives them all.
+  - **The choice is kept** beside the saves (`look.txt`, as the language is) and worn as a game starts, in a build
+    and when the editor plays.
+  - **Scripts:** `LookPacks.All`, `Current`, `Use(pack, remember)`, `UseNone`, `Folder`, `Changed`; `LookPack`
+    with its `Name`, `Description` and `Source`, the built-in ones by name, and as a field picked in the
+    Inspector; `LookPackScreen.Open()`, a ready-made menu down the screen's left. The script API is version 81.
+  - **Editor:** New Look Pack in the Project panel; the Inspector's description and what a pack changes over its
+    text; **Look pack** on the Lighting page, which shows the scene under a pack and saves nothing; a pack saved
+    from a text editor is worn again at once.
+  - Tests: laying packs over looks (what changes, what stays, a level with no sun look, a pack's own look,
+    settings there are not), every built-in pack, the worn look following the level's lighting, a player's
+    folder; a C# system listing, wearing, trying and taking off packs, and the game starting in the one kept; a
+    GPU picture of a Block World under each built-in pack with the level's own lighting unchanged.
+  - Later: water in a pack, pictures of a pack's own (a colour lookup table, block pictures), a pack's own
+    shader over the picture, a rows-and-tabs Inspector for a pack as lighting settings have.
 - **Cut-out materials in the rays:** the GI's and the reflections' rays pass through the holes of an alpha-tested
   material, as the depth pass discards them: a cut-out instance is in the top level as not opaque, and a ray query
   keeps each of its triangles only where the base colour's alpha reaches the cutoff; the software tracer tests

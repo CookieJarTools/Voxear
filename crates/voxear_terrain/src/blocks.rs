@@ -32,6 +32,7 @@ pub mod map;
 pub mod map_known;
 pub mod mesh;
 pub mod path;
+pub mod plant;
 pub mod sight;
 pub mod smooth;
 pub mod stream;

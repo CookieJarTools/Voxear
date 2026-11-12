@@ -164,7 +164,8 @@ impl Default for StructureDef {
 /// path_width = 3
 /// wander = 0.5                # how much its streets bend, 0 for straight
 /// branching = 0.5             # how often they branch, 0 for never
-/// road = "Blocks/Gravel.block" # roads to the next towns of its kind; none for none
+/// roads = true               # roads to the next towns of its kind; off unless switched on
+/// road = "Blocks/Gravel.block"
 /// road_width = 3
 /// bridge = "Blocks/Planks.block" # where a road crosses water
 /// link = 0.7                  # how many of the roads to its nearest towns are made, 0 to 1
@@ -172,7 +173,18 @@ impl Default for StructureDef {
 /// [[town.houses]]
 /// structure = "Structures/Cottage.structure"
 /// weight = 3.0
+///
+/// [[town.houses]]             # a rare one: once a town at most, near its middle, in two biomes
+/// structure = "Structures/Chapel.structure"
+/// weight = 0.5
+/// most = 1                    # at most so many in a town; 0 for no limit
+/// zone = [0.0, 0.4]           # how far out it stands, as a share of the town's reach, from and to
+/// biomes = ["Biomes/Grassland.biome", "Biomes/Forest.biome"]  # none for any
 /// ```
+///
+/// A small hamlet and a large town are two structures with towns of their
+/// own sizes, each with its own placement: the larger rarer, further apart
+/// and kept clear of the rest.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct TownDef {
@@ -186,6 +198,8 @@ pub struct TownDef {
     pub path_width: u32,
     pub wander: f32,
     pub branching: f32,
+    /// Whether it has roads to the next towns of its kind.
+    pub roads: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub road: Option<String>,
     pub road_width: u32,
@@ -205,6 +219,7 @@ impl Default for TownDef {
             path_width: 3,
             wander: 0.5,
             branching: 0.5,
+            roads: false,
             road: None,
             road_width: 3,
             bridge: None,
@@ -214,17 +229,28 @@ impl Default for TownDef {
 }
 
 /// One kind of house of a town, by reference to a `.structure` with a
-/// model, and how often it is chosen against the others.
+/// model: how often it is chosen against the others, at most how many a
+/// town has (0 for no limit), how far out from the middle it stands, as a
+/// share of the town's reach, and the biomes it stands in (none for any).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct TownHouse {
     pub structure: String,
     pub weight: f32,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub most: u32,
+    pub zone: [f32; 2],
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub biomes: Vec<String>,
+}
+
+fn is_zero(value: &u32) -> bool {
+    *value == 0
 }
 
 impl Default for TownHouse {
     fn default() -> Self {
-        Self { structure: String::new(), weight: 1.0 }
+        Self { structure: String::new(), weight: 1.0, most: 0, zone: [0.0, 1.0], biomes: Vec::new() }
     }
 }
 
@@ -263,6 +289,26 @@ impl TownPiece {
     }
 }
 
+/// A kind of house as a town builds it: its piece, weight, at most how many
+/// (0 for no limit), how far out as a share of the town's reach, and the
+/// world's biomes it stands in, by their place in the world's list (none
+/// for any).
+#[derive(Clone, Debug, PartialEq)]
+pub struct TownHouseKind {
+    pub piece: TownPiece,
+    pub weight: f32,
+    pub most: u32,
+    pub zone: [f32; 2],
+    pub biomes: Vec<usize>,
+}
+
+impl TownHouseKind {
+    /// A kind with `piece` and `weight` that stands anywhere in a town.
+    pub fn anywhere(piece: TownPiece, weight: f32) -> Self {
+        Self { piece, weight, most: 0, zone: [0.0, 1.0], biomes: Vec::new() }
+    }
+}
+
 /// A town as a world builds it: its pieces by the world's numbers, how many
 /// houses and how far its main streets run, in blocks, its streets' block
 /// (air for none) and width, and how much they bend and branch; and its
@@ -271,13 +317,14 @@ impl TownPiece {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Town {
     pub middle: Option<TownPiece>,
-    pub houses: Vec<(TownPiece, f32)>,
+    pub houses: Vec<TownHouseKind>,
     pub count: [u32; 2],
     pub radius: [f32; 2],
     pub path: BlockId,
     pub path_width: u32,
     pub wander: f32,
     pub branching: f32,
+    pub roads: bool,
     pub road: BlockId,
     pub road_width: u32,
     pub bridge: BlockId,
@@ -436,7 +483,7 @@ impl Town {
     /// street, set back by the street's width and its largest house.
     fn reach(&self) -> f32 {
         let largest =
-            self.houses.iter().map(|(house, _)| house.size[0].max(house.size[2]) as f32).fold(0.0f32, f32::max);
+            self.houses.iter().map(|kind| kind.piece.size[0].max(kind.piece.size[2]) as f32).fold(0.0f32, f32::max);
         self.radius[1].max(self.radius[0]) + self.path_width as f32 + largest * 1.5 + 4.0
     }
 
@@ -463,7 +510,9 @@ impl Town {
                 lay(&mut paths, point, width);
             }
         }
-        let total: f32 = self.houses.iter().map(|(_, weight)| weight.max(0.0)).sum();
+        let total: f32 = self.houses.iter().map(|kind| kind.weight.max(0.0)).sum();
+        let reach = self.reach().max(1.0);
+        let mut built = vec![0u32; self.houses.len()];
         let [least, most] = [self.count[0].min(self.count[1]), self.count[0].max(self.count[1])];
         let wanted = least + (draws.next() % (most - least + 1).max(1));
         if total <= 0.0 || self.path == AIR && streets.is_empty() {
@@ -491,13 +540,32 @@ impl Town {
             if placed >= wanted {
                 break;
             }
-            // A kind of house by weight; turned so its front faces back along `out`, to the street.
+            // A kind of house by weight, among those that may stand here: this far out, in this biome, not yet as
+            // many as it may be; turned so its front faces back along `out`, to the street.
+            let lot = [point[0].round() as i32, point[1].round() as i32];
+            let share = (((lot[0] - centre[0]).pow(2) + (lot[1] - centre[1]).pow(2)) as f32).sqrt() / reach;
+            let biome = if self.houses.iter().any(|kind| !kind.biomes.is_empty()) { ground.biome(lot) } else { None };
+            let may = |at: usize| {
+                let kind = &self.houses[at];
+                let [from, to] = [kind.zone[0].min(kind.zone[1]), kind.zone[0].max(kind.zone[1])];
+                (kind.most == 0 || built[at] < kind.most)
+                    && share >= from
+                    && share <= to.max(from)
+                    && (kind.biomes.is_empty() || biome.is_some_and(|biome| kind.biomes.contains(&biome)))
+            };
+            let total: f32 =
+                (0..self.houses.len()).filter(|&at| may(at)).map(|at| self.houses[at].weight.max(0.0)).sum();
+            if total <= 0.0 {
+                continue;
+            }
             let mut pick = draws.unit() * total;
-            let house = self.houses.iter().find(|(_, weight)| {
-                pick -= weight.max(0.0);
+            let Some(which) = (0..self.houses.len()).filter(|&at| may(at)).find(|&at| {
+                pick -= self.houses[at].weight.max(0.0);
                 pick < 0.0
-            });
-            let Some((house, _)) = house.or(self.houses.last()) else { break };
+            }) else {
+                continue;
+            };
+            let house = &self.houses[which].piece;
             let turns = (0..4u8)
                 .max_by(|&a, &b| {
                     let dot = |t: u8| -(fronts[t as usize][0] * out[0] + fronts[t as usize][1] * out[1]);
@@ -543,6 +611,7 @@ impl Town {
             stubs.extend(stub);
             parts.push(Part { at, pieces, ground: house.ground, sink: house.sink });
             placed += 1;
+            built[which] += 1;
         }
         for cell in stubs {
             if !paths.contains(&cell) {
@@ -727,6 +796,7 @@ struct Ground<'a> {
     world: &'a WorldGen,
     size: f32,
     position: [f32; 2],
+    biomes: Option<&'a Biomes>,
 }
 
 impl Ground<'_> {
@@ -738,6 +808,17 @@ impl Ground<'_> {
             self.position[1] + (z as f32 + 0.5) * self.size,
         );
         (height / self.size - 0.5).ceil() as i32 - 1
+    }
+
+    /// Which of the world's biomes column `(x, z)` is; none where it lists
+    /// none.
+    fn biome(&self, [x, z]: [i32; 2]) -> Option<usize> {
+        let biomes = self.biomes?;
+        let (px, pz) =
+            (self.position[0] + (x as f32 + 0.5) * self.size, self.position[1] + (z as f32 + 0.5) * self.size);
+        let height = self.world.height_at(px, pz);
+        let (temperature, humidity) = self.world.climate(px, pz, height);
+        biomes.at(px, pz, Place { temperature, humidity, above_sea: height - self.world.sea_level() })
     }
 
     /// Whether the ground in column `(x, z)` lies under its generator's sea.
@@ -769,7 +850,7 @@ pub fn build(
     under: BlockId,
 ) {
     let side = CHUNK as i32;
-    let ground = Ground { world, size, position };
+    let ground = Ground { world, size, position, biomes };
     // The column's own blocks, in metres in the generator's world.
     let low = [position[0] + (cx * side) as f32 * size, position[1] + (cz * side) as f32 * size];
     let high = [low[0] + side as f32 * size, low[1] + side as f32 * size];
@@ -790,10 +871,15 @@ pub fn build(
         structure.placement.fits(SiteGround { above_sea, slope, biome }, |b| structure.biomes.contains(&b))
     };
     let within = |x: i32, z: i32| x.div_euclid(side) == cx && z.div_euclid(side) == cz;
+    let farthest = structures.list.iter().map(PlacedStructure::reach).fold(0.0f32, f32::max);
+    let most_apart = structures.list.iter().map(|structure| structure.placement.apart).fold(0.0f32, f32::max);
+    let look = (farthest * 2.0 + 64.0) * size + most_apart.max(0.0);
     for (which, structure) in structures.list.iter().enumerate() {
         let (reach, footprint) = (structure.reach(), structure.footprint());
+        let apart = structure.placement.apart.max(0.0) / size;
         // A town's roads to the next towns of its kind, laid before any of its buildings.
         if let StructureBlocks::Town(town) = &structure.blocks
+            && town.roads
             && town.road != AIR
         {
             let roads = roads_near(structure, town, world.seed(), (low, high), &ground, &fits);
@@ -826,16 +912,29 @@ pub fn build(
                     }
                 }
             }
-            kept.push(Taken { which, round: None, buildings: Vec::new(), streets: cells });
+            kept.push(Taken { which, site: None, round: None, buildings: Vec::new(), streets: cells });
         }
         // Sites of earlier structures that may stand in this one's way are found further out, by its reach too.
-        for site in structure.placement.tries_near(world.seed(), low, high, (reach + 64.0) * size) {
+        // Sites are looked for as far out for every structure, so a later one finds every earlier site that may
+        // stand in its way or within its distance, from any chunk alike.
+        for site in structure.placement.tries_near(world.seed(), low, high, look) {
             let block = [0, 1].map(|axis| ((site.at[axis] - position[axis]) / size).floor() as i32);
             if !fits(structure, &site) {
                 continue;
             }
             // Kept clear of what earlier structures take up; its own are kept apart by its placement's separation.
-            if kept.iter().filter(|taken| taken.which != which).any(|taken| taken.meets(block, footprint, reach)) {
+            // And as far from another structure's site as the further either keeps.
+            let too_near = |taken: &Taken| {
+                taken.site.is_some_and(|(other, other_apart)| {
+                    let (dx, dz) = ((other[0] - block[0]) as f32, (other[1] - block[1]) as f32);
+                    (dx * dx + dz * dz).sqrt() < apart.max(other_apart)
+                })
+            };
+            if kept
+                .iter()
+                .filter(|taken| taken.which != which)
+                .any(|taken| taken.meets(block, footprint, reach) || too_near(taken))
+            {
                 continue;
             }
             // A town's layout, worked out once: what it takes up is its streets and buildings.
@@ -847,7 +946,14 @@ pub fn build(
                 Some((parts, paths)) => (parts.iter().map(|part| (part.at, part.half())).collect(), paths.clone()),
                 None => (Vec::new(), Vec::new()),
             };
-            kept.push(Taken { which, round: layout.is_none().then_some((block, footprint)), buildings, streets });
+            let taken_site = Some((block, apart));
+            kept.push(Taken {
+                which,
+                site: taken_site,
+                round: layout.is_none().then_some((block, footprint)),
+                buildings,
+                streets,
+            });
             // Only its blocks within this column are built here.
             let (lowest, highest) = (cx * side - reach.ceil() as i32 - 1, (cx + 1) * side + reach.ceil() as i32 + 1);
             if block[0] < lowest
@@ -978,6 +1084,9 @@ fn roads_near(
 /// reaches along x and z.
 struct Taken {
     which: usize,
+    /// Its site, in blocks, and the least its structure keeps between its
+    /// sites and another's, in blocks; none for a town's roads.
+    site: Option<([i32; 2], f32)>,
     round: Option<([i32; 2], f32)>,
     /// A town's buildings, which what comes after keeps clear of by all it
     /// reaches, so no crown hangs into a house; and its streets, kept clear
@@ -1121,7 +1230,7 @@ mod tests {
         let make = |[cx, cz]: [i32; 2]| {
             // Plain ground of block 1 up to the generator's height, a block a metre.
             let mut chunks: Vec<([i32; 3], Chunk)> = Vec::new();
-            let ground = Ground { world: &world, size: 1.0, position: [0.0, 0.0] };
+            let ground = Ground { world: &world, size: 1.0, position: [0.0, 0.0], biomes: None };
             for z in 0..32 {
                 for x in 0..32 {
                     let (gx, gz) = (cx * 32 + x, cz * 32 + z);
@@ -1228,13 +1337,17 @@ mod tests {
         };
         Town {
             middle: Some(model([5, 3, 5], 10)),
-            houses: vec![(model([7, 5, 7], 12), 2.0), (model([5, 4, 5], 12), 1.0)],
+            houses: vec![
+                TownHouseKind::anywhere(model([7, 5, 7], 12), 2.0),
+                TownHouseKind::anywhere(model([5, 4, 5], 12), 1.0),
+            ],
             count: [8, 14],
             radius: [24.0, 44.0],
             path: 11,
             path_width: 3,
             wander: 0.5,
             branching: 0.6,
+            roads: false,
             road: AIR,
             road_width: 3,
             bridge: AIR,
@@ -1245,7 +1358,7 @@ mod tests {
     #[test]
     fn a_town_grows_streets_from_its_middle_with_houses_along_them_apart_facing_them() {
         let world = Preset::RollingHills.world();
-        let ground = Ground { world: &world, size: 1.0, position: [0.0, 0.0] };
+        let ground = Ground { world: &world, size: 1.0, position: [0.0, 0.0], biomes: None };
         let town = village();
         let mut houses_laid = 0;
         for seed in 0..12u32 {
@@ -1344,8 +1457,8 @@ mod tests {
     #[test]
     fn roads_join_neighbouring_towns_over_the_ground_the_same_from_every_chunk_they_cross() {
         let world = Preset::RollingHills.world();
-        let ground = Ground { world: &world, size: 1.0, position: [0.0, 0.0] };
-        let town = Town { road: 13, bridge: 14, ..village() };
+        let ground = Ground { world: &world, size: 1.0, position: [0.0, 0.0], biomes: None };
+        let town = Town { roads: true, road: 13, bridge: 14, ..village() };
         let structure = PlacedStructure {
             placement: Placement {
                 spacing: 260.0,
@@ -1400,5 +1513,145 @@ mod tests {
             .collect();
         let gentle = steps.iter().filter(|&&climb| climb <= 1.0).count();
         assert!(gentle * 100 >= steps.len() * 95, "{gentle} of {} steps climb a block or less", steps.len());
+    }
+
+    #[test]
+    fn a_towns_houses_keep_to_their_rules_how_many_how_far_out_and_in_which_biomes() {
+        use crate::generate::{BiomeDef, biomes::Biomes};
+        let world = Preset::RollingHills.world();
+        // Two biomes split where this stretch of the world is half warmer: kind 3 stands only in the warmer.
+        let warmths: Vec<f32> = (0..400)
+            .map(|i| {
+                let (x, z) = ((i % 20) as f32 * 100.0 - 1000.0, (i / 20) as f32 * 100.0 - 1000.0);
+                world.climate(x, z, world.height_at(x, z)).0
+            })
+            .collect();
+        let mut sorted = warmths.clone();
+        sorted.sort_by(f32::total_cmp);
+        let split = sorted[200];
+        let cool = BiomeDef { temperature: [-60.0, split], humidity: [0.0, 1.0], ..BiomeDef::default() };
+        let warm = BiomeDef { temperature: [split, 60.0], humidity: [0.0, 1.0], ..BiomeDef::default() };
+        let biomes = Biomes::new(vec![cool, warm], 15.0, 0.3, world.seed());
+        let ground = Ground { world: &world, size: 1.0, position: [0.0, 0.0], biomes: Some(&biomes) };
+        let base = village();
+        let piece = |wall: BlockId| TownPiece {
+            blocks: base.houses[1].piece.blocks.iter().map(|&b| if b == AIR { AIR } else { wall }).collect(),
+            ..base.houses[1].piece.clone()
+        };
+        let town = Town {
+            houses: vec![
+                TownHouseKind::anywhere(piece(12), 3.0),
+                // A chapel: once a town at most, within the inner third.
+                TownHouseKind { piece: piece(13), weight: 2.0, most: 1, zone: [0.0, 0.33], biomes: Vec::new() },
+                // A barn: only out past the middle half.
+                TownHouseKind { piece: piece(14), weight: 2.0, most: 0, zone: [0.5, 1.0], biomes: Vec::new() },
+                // A warm house: only in the warmer biome.
+                TownHouseKind { piece: piece(15), weight: 2.0, most: 0, zone: [0.0, 1.0], biomes: vec![1] },
+            ],
+            count: [14, 20],
+            ..base
+        };
+        let reach = town.reach();
+        let (mut chapels, mut barns, mut warm_houses) = (0, 0, 0);
+        for seed in 0..24u32 {
+            let centre = [seed as i32 * 83 - 1000, 700 - seed as i32 * 61];
+            let (parts, _) = town.layout(seed, centre, &ground);
+            let wall = |part: &Part| part.pieces.iter().find(|(at, _)| at[1] == 1).map(|(_, block)| *block);
+            let mut chapels_here = 0;
+            for part in &parts[1..] {
+                let out = (((part.at[0] - centre[0]).pow(2) + (part.at[1] - centre[1]).pow(2)) as f32).sqrt() / reach;
+                match wall(part) {
+                    Some(13) => {
+                        chapels_here += 1;
+                        // Its lot is within the inner third; it stands a little further out than its lot.
+                        assert!(out <= 0.33 + 12.0 / reach, "seed {seed}: a chapel {out} of the way out");
+                    }
+                    Some(14) => {
+                        barns += 1;
+                        assert!(out >= 0.5 - 12.0 / reach, "seed {seed}: a barn {out} of the way out");
+                    }
+                    Some(15) => {
+                        warm_houses += 1;
+                    }
+                    _ => {}
+                }
+            }
+            assert!(chapels_here <= 1, "seed {seed}: {chapels_here} chapels");
+            chapels += chapels_here;
+            // A warm house only where it is warm, by its lot along the street, so near its own place.
+            for part in parts[1..].iter().filter(|part| wall(part) == Some(15)) {
+                let nearby = (-6..=6).flat_map(|dz| (-6..=6).map(move |dx| [part.at[0] + dx, part.at[1] + dz]));
+                assert!(
+                    nearby.into_iter().any(|cell| ground.biome(cell) == Some(1)),
+                    "seed {seed}: a warm house in the cold"
+                );
+            }
+        }
+        assert!(
+            chapels >= 8 && barns >= 8 && warm_houses >= 8,
+            "{chapels} chapels, {barns} barns, {warm_houses} warm houses"
+        );
+    }
+
+    #[test]
+    fn a_structure_keeps_its_distance_from_others_sites_from_any_chunk() {
+        let world = Preset::RollingHills.world();
+        let marker = |block: BlockId| StructureBlocks::Model { size: [1, 1, 1], blocks: vec![block] };
+        let place = |salt: u32, spacing: f32, apart: f32| Placement {
+            spacing,
+            separation: 16.0,
+            chance: 1.0,
+            slope: 80.0,
+            salt,
+            apart,
+            ..Placement::default()
+        };
+        let list = vec![
+            PlacedStructure {
+                placement: place(1, 110.0, 0.0),
+                ground: GroundFit::Leave,
+                sink: 0,
+                blocks: marker(20),
+                biomes: Vec::new(),
+            },
+            PlacedStructure {
+                placement: place(2, 40.0, 70.0),
+                ground: GroundFit::Leave,
+                sink: 0,
+                blocks: marker(21),
+                biomes: Vec::new(),
+            },
+        ];
+        let structures = WorldStructures { list };
+        let mut found: Vec<(BlockId, [i32; 3])> = Vec::new();
+        for cz in -5..5 {
+            for cx in -5..5 {
+                let mut chunks = Vec::new();
+                build(&mut chunks, &structures, &world, None, (1.0, [0.0, 0.0], -64), [cx, cz], 2);
+                for (key, chunk) in &chunks {
+                    for i in 0..32 * 32 * 32u32 {
+                        let block = chunk.get(i % 32, i / 1024, (i / 32) % 32);
+                        if block == 20 || block == 21 {
+                            found.push((
+                                block,
+                                [
+                                    key[0] * 32 + (i % 32) as i32,
+                                    key[1] * 32 + (i / 1024) as i32,
+                                    key[2] * 32 + ((i / 32) % 32) as i32,
+                                ],
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        let (a, b): (Vec<_>, Vec<_>) = found.iter().partition(|(block, _)| *block == 20);
+        assert!(a.len() >= 4 && b.len() >= 4, "{} of the first, {} of the second", a.len(), b.len());
+        for (_, first) in &a {
+            for (_, second) in &b {
+                let apart = (((first[0] - second[0]).pow(2) + (first[2] - second[2]).pow(2)) as f32).sqrt();
+                assert!(apart >= 69.0, "{first:?} and {second:?} only {apart} apart");
+            }
+        }
     }
 }

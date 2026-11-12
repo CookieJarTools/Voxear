@@ -1077,7 +1077,7 @@ fn a_generated_world_builds_a_village_of_houses_round_a_well_with_paths_from_the
             file::{BlockKind, Ground},
             generate::BlockGenerate,
             plant::PlantDef,
-            structure::{GroundFit, PlacedStructure, StructureBlocks, Town, TownPiece, WorldStructures},
+            structure::{GroundFit, PlacedStructure, StructureBlocks, Town, TownHouseKind, TownPiece, WorldStructures},
         },
         generate::{Preset, structures::Placement},
     };
@@ -1163,13 +1163,18 @@ fn a_generated_world_builds_a_village_of_houses_round_a_well_with_paths_from_the
     }
     let village = Town {
         middle: Some(TownPiece { size: [5, 5, 5], blocks: well, ground: GroundFit::Flatten, sink: 0 }),
-        houses: vec![(house([7, 4, 9]), 2.0), (house([5, 3, 7]), 2.0), (house([9, 4, 7]), 1.0)],
+        houses: vec![
+            TownHouseKind::anywhere(house([7, 4, 9]), 2.0),
+            TownHouseKind::anywhere(house([5, 3, 7]), 2.0),
+            TownHouseKind::anywhere(house([9, 4, 7]), 1.0),
+        ],
         count: [12, 18],
         radius: [34.0, 60.0],
         path: gravel,
         path_width: 3,
         wander: 0.5,
         branching: 0.6,
+        roads: false,
         road: 0,
         road_width: 3,
         bridge: 0,
@@ -1282,7 +1287,7 @@ fn towns_are_joined_by_roads_that_follow_the_ground_and_cross_water_on_bridges()
         blocks::{
             file::{BlockKind, Ground},
             generate::BlockGenerate,
-            structure::{GroundFit, PlacedStructure, StructureBlocks, Town, TownPiece, WorldStructures},
+            structure::{GroundFit, PlacedStructure, StructureBlocks, Town, TownHouseKind, TownPiece, WorldStructures},
         },
         generate::{Preset, structures::Placement},
     };
@@ -1324,13 +1329,14 @@ fn towns_are_joined_by_roads_that_follow_the_ground_and_cross_water_on_bridges()
     let piece = TownPiece { size: [4, 4, 4], blocks: house, ground: GroundFit::Flatten, sink: 0 };
     let town = Town {
         middle: Some(TownPiece { size: [3, 1, 3], blocks: vec![gravel; 9], ground: GroundFit::Flatten, sink: 0 }),
-        houses: vec![(piece, 1.0)],
+        houses: vec![TownHouseKind::anywhere(piece, 1.0)],
         count: [6, 10],
         radius: [14.0, 24.0],
         path: gravel,
         path_width: 2,
         wander: 0.5,
         branching: 0.5,
+        roads: true,
         road,
         road_width: 2,
         bridge: planks,

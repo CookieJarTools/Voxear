@@ -223,7 +223,9 @@ fn number_named(content: &mut Content, file: &mut BlockFile, owner: &str, named:
 /// among the world's own. A structure, plant or block that cannot be found
 /// is left out, with a warning.
 pub fn with_structures(content: &mut Content, file: &BlockFile) -> BlockFile {
-    use voxear_terrain::blocks::structure::{PlacedStructure, StructureBlocks, Town, TownPiece, WorldStructures};
+    use voxear_terrain::blocks::structure::{
+        PlacedStructure, StructureBlocks, Town, TownHouseKind, TownPiece, WorldStructures,
+    };
     let Some(generate) = file.generate.as_ref().filter(|generate| !generate.structures.is_empty()) else {
         return file.clone();
     };
@@ -277,11 +279,25 @@ pub fn with_structures(content: &mut Content, file: &BlockFile) -> BlockFile {
                     Some(TownPiece { size: model.size, blocks, ground: part.ground, sink: part.sink })
                 };
                 let middle = town.middle.as_deref().and_then(|named| piece(content, &mut file, named));
-                let houses = town
-                    .houses
-                    .iter()
-                    .filter_map(|house| piece(content, &mut file, &house.structure).map(|piece| (piece, house.weight)))
-                    .collect();
+                // Each kind of house with the world's biomes it stands in, by their place in the world's list.
+                let in_biomes = |content: &mut Content, named: &[String]| -> Vec<usize> {
+                    let wanted: Vec<Option<AssetGuid>> =
+                        named.iter().map(|named| content.biome(named).map(|(guid, _)| guid)).collect();
+                    let guids = biome_guids.iter().enumerate();
+                    guids.filter(|(_, guid)| guid.is_some() && wanted.contains(guid)).map(|(at, _)| at).collect()
+                };
+                let mut houses = Vec::new();
+                for house in &town.houses {
+                    let Some(piece) = piece(content, &mut file, &house.structure) else { continue };
+                    let biomes = in_biomes(content, &house.biomes);
+                    houses.push(TownHouseKind {
+                        piece,
+                        weight: house.weight,
+                        most: house.most,
+                        zone: house.zone,
+                        biomes,
+                    });
+                }
                 let path = town.path.as_deref().map_or(0, |named| number_named(content, &mut file, reference, named));
                 StructureBlocks::Town(Town {
                     middle,
@@ -292,6 +308,7 @@ pub fn with_structures(content: &mut Content, file: &BlockFile) -> BlockFile {
                     path_width: town.path_width,
                     wander: town.wander,
                     branching: town.branching,
+                    roads: town.roads,
                     road: town.road.as_deref().map_or(0, |named| number_named(content, &mut file, reference, named)),
                     road_width: town.road_width,
                     bridge: town

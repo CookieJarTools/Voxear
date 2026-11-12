@@ -15,6 +15,7 @@
 //! spacing = 320.0        # metres between tries
 //! separation = 96.0      # the least between two sites
 //! chance = 0.6           # how many tries are kept, 0 to 1
+//! apart = 200.0          # the least between a site and another structure's, in metres
 //! on = "land"            # or "water", "underground"
 //! height = [2.0, 180.0]  # metres over the sea; left out for any
 //! slope = 12.0           # the steepest ground it stands on, in degrees
@@ -49,6 +50,11 @@ pub struct Placement {
     pub separation: f32,
     /// How many of its tries are kept, from 0 for none to 1 for all.
     pub chance: f32,
+    /// The least between one of its sites and another structure's, in
+    /// metres, so a world is not crowded with them: the larger of the two
+    /// structures' is kept.
+    #[serde(skip_serializing_if = "is_zero_metres")]
+    pub apart: f32,
     /// What tells its sites from another placement's with the same numbers.
     #[serde(skip_serializing_if = "is_zero")]
     pub salt: u32,
@@ -69,12 +75,17 @@ fn is_zero(value: &u32) -> bool {
     *value == 0
 }
 
+fn is_zero_metres(value: &f32) -> bool {
+    *value == 0.0
+}
+
 impl Default for Placement {
     fn default() -> Self {
         Self {
             spacing: 320.0,
             separation: 96.0,
             chance: 0.6,
+            apart: 0.0,
             salt: 0,
             on: SiteOn::Land,
             height: None,

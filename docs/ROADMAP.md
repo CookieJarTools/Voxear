@@ -1984,7 +1984,8 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   (`ClimateSource`), or from height alone without one; Cover's Rules renamed from Height and Slope. Grass on
   surfaces follows. Tests: climate fields and cooling, snow where cold and desert where hot and dry, the editor (a
   Snow surface nowhere in a mild world, everywhere once its temperatures widen). Manual: Surfaces, Generating
-  Terrain. Not done: trees scattered by rules (a Foliage's plants by surface or biome).
+  Terrain. Not done: trees scattered by rules on a heightmap terrain (a Foliage's plants by surface or biome); a
+  Block World grows its own (see Block worlds, Plants a world grows).
 - ~~**Endless worlds:**~~ done: a terrain's Endless setting (`[endless]` in its file: view distance and spacing,
   0.25 to 4 m) keeps a window of tiles round the camera (`voxear_terrain::endless`), up to 33 a side, its heights
   starting at `Terrain::origin`. Each tile is made alone on the terrain's background threads from the layers that
@@ -2000,7 +2001,8 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   saving, the editor's Endless setting, the GPU drawing the same ground after a move. Manual: Endless Worlds. Not
   done: coarser far tiles, rivers along valleys without end.
 - **More terrain generation:** feeding the layer stack so it can be painted and stamped over afterwards:
-  - trees and other plants scattered by surface and biome
+  - trees and other plants scattered by surface and biome (done for Block Worlds, which grow their own; heightmap
+    terrains to come, with the same rule)
   - stream-power erosion for ranges
   - far tiles of endless worlds made and kept coarser
 - **Block worlds**, in parts: blocks you can see and stand on; generation from world generators, with caves;
@@ -2299,6 +2301,48 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   it; zooming keeps a map its size on the screen. Not done: heightmap Terrain as ground; trees and structures,
   which show once the far view carries them; turning the map with a gamepad without a script; a map keeping the
   ground as it was last seen.
+- ~~**Plants a world grows:**~~ done: a Foliage under a Block World grows by itself on the world's ground
+  (`[obj.foliage.grow]`, `scene_file::GrowData`): the blocks it stands on, temperature, humidity and height ranges
+  (a Biome sets the climate at once), steepest ground, spacing, least apart, chance, patch size, sizes, aligned to
+  blocks or free, and a seed. `voxear_terrain::blocks::grow` works a chunk column's plants out from that column's
+  generated blocks alone, on the placement grid structures share, so a column made alone agrees with its neighbours
+  and the same world grows the same plants on every machine. The engine (`grown_plants`) keeps each column's plants
+  on a hidden Obj of its own under the world, drawn and collided as the Foliage's, made as the column's blocks are
+  and dropped as it goes, within the Foliage's draw distance, eight columns a tick. A plant is gone while its block is
+  dug, changed or built over, and back when the ground is: worked out from the blocks, so nothing is saved or sent.
+  Past the world's own blocks, a column under a coarser ring that shows has the same plants from the generator's
+  heights (`grow::grow_far`, tested plant for plant against the blocks), each kept clear of the ring's coarser
+  ground, so trees drawn to 500 m stand on far hills and are the same trees once near. A plant a script takes away
+  is kept on its Foliage by column and number (`voxear_scene::CutPlants`), stays gone as its column comes and goes,
+  and travels with the blocks' changes in saves and to joining players.
+  Six starter plants made of small cubes (`voxear_render::StarterPlant`: Grass Tuft, Flower, Bush, Rock, Tree,
+  Pine), each a box model written into the project's Plants folder when picked. Editor: a Foliage's **Grow** tool,
+  and **Add plant** on a Block World's Settings, which takes any model or a starter and makes the Foliage, one step
+  to undo; a click on a grown plant picks its Foliage. Tests: the rule (same every time, a column alone, by block, climate, height and slope, separation,
+  patches, gone and back), the engine on a world without end (two rules, the camera moved and back, digging and
+  building, a second run the same), a GPU picture of all six starters, the editor (a starter picked, grown,
+  changed, undone). Manual: Foliage, Block Worlds, Box Models. Woods in the far view: a Foliage's `far_block` shows
+  its plants past where they are drawn as a wood of that block (`grow::Woods`), over the ground as high as they
+  stand on as many of a ring's columns as would hold a plant, or as the top block's colour in rings of far taller
+  blocks; from the first ring the plants do not reach (`Woods::first_past`), where the plants themselves stop.
+  The streamer takes it through a hook any generated thing can use (`stream::FarBuilt`: a stamp, the first ring,
+  and a tile to build into): far tiles are kept on disk without what is built into them, a nearer ring made in
+  full takes it block for block from the tile its ground would be, and a change builds those rings again and no
+  ground. Tests: a wood over grass and none over the sea, the hook (built in, changed, nearer rings, gone, the
+  near chunks untouched), a GPU world whose far view has faces of leaves. Not done: the same rule on heightmap
+  terrains.
+- ~~**See-through blocks:**~~ done: a block drawn with a material that is cut out (`cutout` in its `.material`)
+  is seen through, as leaves are. The engine reads it from the block's materials as a world's blocks are resolved
+  (`BlockKind::cutout`, never written; `BlockFaces::see_through`), and again when a material is saved. Meshing
+  (`blocks::mesh`, `blocks::hides`): a face shows against a see-through block as against air, a see-through block
+  keeps its faces against its own kind, corners are still closed in by it, its faces are triangles to stand on,
+  and a chunk of it through and through still has faces and is seen through by the cave culling. The block shader
+  drops a face's fragments under its material's cutoff, in the depth pass, the shaded one and the sun's shadow
+  pass (`blockShadowFragment`), so a crown's shadow is dappled. Tests: the faces of a tree of leaves against the
+  same tree of solid blocks, the engine (read from the material, stood on), a GPU picture with the sky through a
+  crown and lit ground in its shadow. Manual: Blocks. Not done: the same for a world drawn smooth, rays for
+  bounced light, which take it as solid, and light through a leaf from behind (a material's foliage lighting is
+  not read for block faces).
 - Throughout: chunks culled against the frustum and last frame's depth, and the smallest save and network data
   (only changes from what a build or a seed makes, as commands while few and compacted deltas once many).
 

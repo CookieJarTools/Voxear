@@ -5,7 +5,8 @@
 // corners, so its shading runs smoothly across it.
 //
 // Its faces are shaded by shading.slang's fragment shaders, as the terrain's are: each face with its surface's
-// material, its pictures repeated each block, darker at the corners blocks close in.
+// material, its pictures repeated each block, darker at the corners blocks close in. A face whose material is cut
+// out is drawn only where its picture is solid, in the depth pass as in the shaded one, and casts a shadow only there.
 //
 // A world drawn smooth (voxear_terrain::blocks::smooth) holds triangles' corners in place of quads, two pairs of words
 // each, a vertex each: where it is in its chunk and the chunk's number, then the way the ground faces there and the
@@ -154,6 +155,12 @@ bool terrainShading(
     else
     {
         layer = blockLayer(world, input.lod, spot, normal, input.tangent);
+        // A face whose material is cut out, as leaves are, is not there where its picture is clear.
+        float cutoff = buffers()->materials[world.surfaces[min(input.lod, world.surfaceCount - 1)].material].alphaCutoff;
+        if (cutoff > 0.0 && layer.base.a < cutoff)
+        {
+            discard;
+        }
     }
     base = layer.base;
     base.rgb *= shade;
@@ -163,10 +170,53 @@ bool terrainShading(
     return true;
 }
 
+struct BlockShadowOut
+{
+    float4 position : SV_Position;
+    // Where it is from its world's corner, and the way its face looks, for its surface's picture.
+    float3 place : TEXCOORD0;
+    float3 normal : NORMAL;
+    nointerpolation uint surface : SURFACE;
+    nointerpolation uint world : WORLD;
+};
+
 // A vertex in a sun cascade's view (push.list), placed as the camera's view places it.
 [shader("vertex")]
-float4 blockShadowVertex(uint vertexId : SV_VertexID) : SV_Position
+BlockShadowOut blockShadowVertex(uint vertexId : SV_VertexID)
 {
     BlockPoint b = blockPoint(vertexId);
-    return transform(shadowViewProj(push.frame, push.list, 0), float4(b.world, 1.0));
+    BlockWorld world = buffers()->blockWorlds[push.level - 1];
+    BlockShadowOut o;
+    o.position = transform(shadowViewProj(push.frame, push.list, 0), float4(b.world, 1.0));
+    o.place = b.world - world.corner;
+    o.normal = b.normal;
+    o.surface = b.surface;
+    o.world = push.level - 1;
+    return o;
+}
+
+// A face whose material is cut out, as leaves are, casts its picture's shadow: the sun passes where it is clear.
+[shader("fragment")]
+void blockShadowFragment(BlockShadowOut input)
+{
+    BlockWorld world = buffers()->blockWorlds[input.world];
+    if (world.surfaceCount == 0 || (world.flags & BLOCKS_SMOOTH) != 0)
+    {
+        return;
+    }
+    float cutoff = buffers()->materials[world.surfaces[min(input.surface, world.surfaceCount - 1)].material].alphaCutoff;
+    if (cutoff <= 0.0)
+    {
+        return;
+    }
+    TerrainSpot spot;
+    spot.place = input.place;
+    spot.dx = ddx(spot.place);
+    spot.dy = ddy(spot.place);
+    float3 normal = normalize(input.normal);
+    float4 tangent = float4(normalizeOr(float3(normal.y, -normal.x, 0.0), float3(1.0, 0.0, 0.0)), 1.0);
+    if (blockLayer(world, input.surface, spot, normal, tangent).base.a < cutoff)
+    {
+        discard;
+    }
 }

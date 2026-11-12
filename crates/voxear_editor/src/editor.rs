@@ -18,6 +18,7 @@ mod gun_handlings;
 mod world_gens;
 mod generators;
 mod models;
+mod grown_plants;
 mod river_water;
 mod hierarchies;
 mod importing;
@@ -1906,6 +1907,20 @@ impl Editor {
             let choices = self.inspector.component_choices(self.is_playing(), &self.game.project.modules());
             let target = (PickFor::AddComponent(entity), anchor);
             return self.picker.open(&mut self.ui, target, "Add Component", choices, "");
+        }
+        // A model picked for a Block World to grow, or dropped on that row, is made a plant of its own.
+        let add_plant = Prop::BlockWorld(crate::block_props::BlockField::AddPlant);
+        match &action {
+            RowAction::Pick(prop, Pick::Asset(Some(path))) if *prop == add_plant => {
+                return self.add_grown_plant(entity, &path.clone(), renderer);
+            }
+            RowAction::Dropped(prop, source) if *prop == add_plant => {
+                return match self.dragged_asset(source) {
+                    Some(path) => self.add_grown_plant(entity, &path, renderer),
+                    None => self.notify("Only a model grows as a plant"),
+                };
+            }
+            _ => {}
         }
         match &action {
             RowAction::ApplyOverrides(paths) => return self.apply_overrides(&[(entity, paths.clone())], renderer),

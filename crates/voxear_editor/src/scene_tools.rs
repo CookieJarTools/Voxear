@@ -17,7 +17,7 @@
 
 use voxear_core::math::{Mat4, Quat, Vec2, Vec3, Vec4, camera::lh::proj::vulkan};
 use voxear_ecs::{Entity, World};
-use voxear_engine::audio::AudioSource;
+use voxear_engine::{audio::AudioSource, grown_plants::GrownColumn};
 use voxear_render::{Camera, Foliage, Light, MeshHandle, MeshRenderer, ModelRenderer, Renderer};
 use voxear_scene::{Destroying, EditorOnly, Parent, Switch, Switched, Transform, WorldTransform};
 use voxear_ui::{Color, Shape};
@@ -360,6 +360,18 @@ fn mesh_hits(
         let obj = placed.map_or_else(|| transform.matrix(), |w| w.0);
         for (_, plant) in grown.standing() {
             try_box(entity, plant.matrix(obj), bounds, None);
+        }
+    }
+    // A plant a Block World grew is its Foliage's, though an Obj of the engine's own holds its column's.
+    let columns = world
+        .query_ref::<(&GrownColumn, &Foliage, &voxear_scene::Plants, &Transform, Option<&WorldTransform>)>()
+        .without::<Destroying>();
+    let columns = columns.into_iter().filter(|(column, ..)| plants && drawn(column.source, Switch::Foliage));
+    for (column, foliage, grown, transform, placed) in columns {
+        let Some(bounds) = renderer.mesh_bounds(foliage.mesh) else { continue };
+        let obj = placed.map_or_else(|| transform.matrix(), |w| w.0);
+        for (_, plant) in grown.standing() {
+            try_box(column.source, plant.matrix(obj), bounds, None);
         }
     }
     hits.extend(grounds);

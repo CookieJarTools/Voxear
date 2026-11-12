@@ -18,7 +18,7 @@ pub use layers::{LAYER_COUNT, Layer, Layers};
 pub use lifecycle::{Adopted, BehaviourHandle, BehaviourHost, Callbacks, Lifecycle, Phase, Registration, Request};
 pub use origin::{WorldOrigin, move_objs, place_at_level};
 pub use path::{Path, PathPoint, PathSample};
-pub use plants::{Plant, PlantSet, Plants, Trunk};
+pub use plants::{CutPlants, Plant, PlantSet, Plants, Trunk};
 pub use obj::{
     AttachedBehaviour, BehaviourSpec, Behaviours, Destroying, EditorOnly, Hidden, InstanceMarker, Name, Placement,
     SceneComponents, ScenePersistence, Transform, register_obj_components,

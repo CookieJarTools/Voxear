@@ -133,6 +133,9 @@ Flowers, bushes, mushrooms and trees are box models too. Sculpt one, usually on 
 
 - Drag it into the Scene view to stand one in your level. On a [[Block Worlds|Block World]] it lands on the blocks.
 - Give it to a [[Foliage]] to grow many of it, and paint them onto the ground or onto a Block World's blocks (see [[Painting and Cutting Plants]]). A box model's mesh is `Plants/Oak.boxmodel#mesh0.0` and its material `Plants/Oak.boxmodel#material0`.
+- Pick it on a Block World's **Add plant** row, and the world grows it by itself wherever its ground suits (see [[Block Worlds#Plants a world grows]]). That row also has six plants to start from, a grass tuft, a flower, a bush, a rock, a tree and a pine, each a box model you can open and reshape.
+
+Small plants read well at 8 pixels per block and trees at 4: larger cubes, and far fewer of them to draw.
 
 ### Painting
 

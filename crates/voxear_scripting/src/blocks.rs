@@ -15,7 +15,7 @@
 
 use voxear_core::math::Vec3;
 use voxear_ecs::{Entity, World};
-use voxear_scene::{Destroying, Transform, WorldTransform};
+use voxear_scene::{CutPlants, Destroying, Transform, WorldTransform};
 use voxear_terrain::blocks::{
     BlockWorld, BuiltBlocks,
     chunk::{AIR, BlockId},
@@ -375,6 +375,21 @@ pub(crate) unsafe extern "C" fn set_world_budget(which: i32, value: f32) {
 const NUMBERED: &[u8; 4] = b"VXBT";
 const NUMBERED_VERSION: u32 = 1;
 
+/// What follows those, where scripts took away plants a world of blocks
+/// grew by itself (see `voxear_scene::CutPlants`): this mark, a version, how
+/// many Foliage, and for each its Obj's key and its columns, each column's
+/// place and the numbers of its plants taken away.
+const CUT: &[u8; 4] = b"VXCP";
+const CUT_VERSION: u32 = 1;
+
+/// The plants scripts took from one Foliage's grown columns, as they are
+/// kept: its Obj's key, and each column's place with its plants' numbers.
+#[derive(Clone, Debug, PartialEq)]
+struct KeptCuts {
+    key: String,
+    columns: Vec<([i32; 2], Vec<u32>)>,
+}
+
 /// A world's changes as they are kept: its Obj's key, the changes since its
 /// level built it, and the blocks it numbered since.
 struct Kept {
@@ -386,6 +401,34 @@ struct Kept {
 /// `kept` as bytes: how many worlds, each one's key and changes, and then,
 /// where any numbered a block, which block each number is.
 fn to_bytes(kept: &[Kept]) -> Vec<u8> {
+    to_bytes_with(kept, &[])
+}
+
+/// As [`to_bytes`], and after them the plants `cuts` took away, where any.
+fn to_bytes_with(kept: &[Kept], cuts: &[KeptCuts]) -> Vec<u8> {
+    let mut out = worlds_bytes(kept);
+    if cuts.is_empty() {
+        return out;
+    }
+    out.extend_from_slice(CUT);
+    out.extend_from_slice(&CUT_VERSION.to_le_bytes());
+    out.extend_from_slice(&(cuts.len() as u32).to_le_bytes());
+    for foliage in cuts {
+        out.extend_from_slice(&(foliage.key.len() as u16).to_le_bytes());
+        out.extend_from_slice(foliage.key.as_bytes());
+        out.extend_from_slice(&(foliage.columns.len() as u32).to_le_bytes());
+        for ([x, z], numbers) in &foliage.columns {
+            out.extend_from_slice(&x.to_le_bytes());
+            out.extend_from_slice(&z.to_le_bytes());
+            out.extend_from_slice(&(numbers.len() as u32).to_le_bytes());
+            numbers.iter().for_each(|number| out.extend_from_slice(&number.to_le_bytes()));
+        }
+    }
+    out
+}
+
+/// The worlds' part of [`to_bytes`].
+fn worlds_bytes(kept: &[Kept]) -> Vec<u8> {
     let mut out = (kept.len() as u32).to_le_bytes().to_vec();
     for world in kept {
         out.extend_from_slice(&(world.key.len() as u16).to_le_bytes());
@@ -415,6 +458,45 @@ fn to_bytes(kept: &[Kept]) -> Vec<u8> {
 
 /// The worlds `bytes` keep (see [`to_bytes`]).
 fn from_bytes(bytes: &[u8]) -> anyhow::Result<Vec<Kept>> {
+    Ok(read_bytes(bytes)?.0)
+}
+
+/// The plants taken away that follow the worlds from `at` in `bytes`, where
+/// any do.
+fn cuts_from(bytes: &[u8], mut at: usize) -> anyhow::Result<Vec<KeptCuts>> {
+    use anyhow::Context;
+    if bytes.get(at..at + 4) != Some(CUT.as_slice()) {
+        return Ok(Vec::new());
+    }
+    let take = |at: usize, len: usize| bytes.get(at..at + len).context("plants taken away end early");
+    let whole = |at: usize| anyhow::Ok(u32::from_le_bytes(take(at, 4)?.try_into()?));
+    let version = whole(at + 4)?;
+    anyhow::ensure!(version == CUT_VERSION, "block changes from a newer Voxear (plants taken away, version {version})");
+    let count = whole(at + 8)?;
+    at += 12;
+    let mut cuts = Vec::new();
+    for _ in 0..count {
+        let key_len = usize::from(u16::from_le_bytes(take(at, 2)?.try_into()?));
+        let key = std::str::from_utf8(take(at + 2, key_len)?)?.to_string();
+        at += 2 + key_len;
+        let columns = whole(at)?;
+        at += 4;
+        let mut kept = Vec::new();
+        for _ in 0..columns {
+            let column = [whole(at)? as i32, whole(at + 4)? as i32];
+            let numbers = whole(at + 8)? as usize;
+            at += 12;
+            anyhow::ensure!(numbers <= bytes.len() / 4, "plants taken away end early");
+            kept.push((column, (0..numbers).map(|n| whole(at + n * 4)).collect::<anyhow::Result<Vec<u32>>>()?));
+            at += numbers * 4;
+        }
+        cuts.push(KeptCuts { key, columns: kept });
+    }
+    Ok(cuts)
+}
+
+/// The worlds `bytes` keep, and the plants taken away after them.
+fn read_bytes(bytes: &[u8]) -> anyhow::Result<(Vec<Kept>, Vec<KeptCuts>)> {
     use anyhow::Context;
     let take = |at: usize, len: usize| bytes.get(at..at + len).context("block changes end early");
     let short = |at: usize| anyhow::Ok(usize::from(u16::from_le_bytes(take(at, 2)?.try_into()?)));
@@ -431,7 +513,8 @@ fn from_bytes(bytes: &[u8]) -> anyhow::Result<Vec<Kept>> {
         at += 4 + len;
     }
     if bytes.get(at..at + 4) != Some(NUMBERED.as_slice()) {
-        return Ok(kept);
+        let cuts = cuts_from(bytes, at)?;
+        return Ok((kept, cuts));
     }
     let version = u32::from_le_bytes(take(at + 4, 4)?.try_into()?);
     let known = version == NUMBERED_VERSION;
@@ -455,7 +538,8 @@ fn from_bytes(bytes: &[u8]) -> anyhow::Result<Vec<Kept>> {
             world.numbered = numbered;
         }
     }
-    Ok(kept)
+    let cuts = cuts_from(bytes, at)?;
+    Ok((kept, cuts))
 }
 
 /// Every world of blocks scripts changed, by its Obj's key: its changes
@@ -472,7 +556,20 @@ fn capture(world: &World) -> Vec<u8> {
         })
         .collect();
     kept.sort_by(|a, b| a.key.cmp(&b.key));
-    to_bytes(&kept)
+    // The plants scripts took from what a world grew by itself, by their Foliage's key.
+    let mut cuts: Vec<KeptCuts> = world
+        .query_ref::<(Entity, &CutPlants)>()
+        .without::<Destroying>()
+        .into_iter()
+        .filter_map(|(entity, cut)| {
+            let columns: Vec<([i32; 2], Vec<u32>)> =
+                cut.0.iter().filter(|(_, gone)| !gone.is_empty()).map(|(at, gone)| (*at, gone.iter().collect())).collect();
+            let key = with_services(|services| services.obj_key(world, entity)).flatten()?;
+            (!columns.is_empty()).then_some(KeptCuts { key, columns })
+        })
+        .collect();
+    cuts.sort_by(|a, b| a.key.cmp(&b.key));
+    to_bytes_with(&kept, &cuts)
 }
 
 /// Puts each world of blocks `bytes` (from [`capture`]) names back as it
@@ -483,7 +580,21 @@ fn capture(world: &World) -> Vec<u8> {
 fn restore(world: &mut World, bytes: &[u8]) -> anyhow::Result<i32> {
     use anyhow::Context;
     let mut found = 0;
-    for kept in from_bytes(bytes)? {
+    let (worlds, cuts) = read_bytes(bytes)?;
+    // The plants taken away are those the bytes say, and no others: a Foliage they do not name has all of its.
+    let had: Vec<Entity> = world.query_ref::<(Entity, &CutPlants)>().into_iter().map(|(entity, _)| entity).collect();
+    for entity in had {
+        world.remove::<CutPlants>(entity);
+    }
+    for foliage in cuts {
+        let Some(entity) = with_services(|services| services.obj_by_key(world, &foliage.key)).flatten() else { continue };
+        let mut cut = CutPlants::default();
+        for (column, numbers) in foliage.columns {
+            cut.take(column, &numbers.into_iter().collect());
+        }
+        world.insert(entity, cut);
+    }
+    for kept in worlds {
         let mut edits =
             BlockEdits::from_bytes(&kept.edits).with_context(|| format!("the blocks of {}", kept.key))?;
         let Some(entity) = with_services(|services| services.obj_by_key(world, &kept.key)).flatten() else { continue };
@@ -592,6 +703,58 @@ mod tests {
         let mut newer = bytes.clone();
         newer[mark + 4] = 9;
         assert!(from_bytes(&newer).is_err());
+    }
+
+    #[test]
+    fn plants_scripts_took_from_what_a_world_grew_are_kept_with_its_changes_and_put_back() {
+        // Two Foliage with keys, and one made by a script, which has none.
+        struct Keys(Entity, Entity);
+        impl crate::services::ScriptServices for Keys {
+            fn obj_key(&self, _world: &World, entity: Entity) -> Option<String> {
+                [(self.0, "scene:7"), (self.1, "scene:9")].iter().find(|(e, _)| *e == entity).map(|(_, k)| k.to_string())
+            }
+            fn obj_by_key(&self, _world: &World, key: &str) -> Option<Entity> {
+                [(self.0, "scene:7"), (self.1, "scene:9")].iter().find(|(_, k)| *k == key).map(|(e, _)| *e)
+            }
+        }
+        let cut = |columns: &[([i32; 2], &[u32])]| {
+            let mut cut = CutPlants::default();
+            for (column, numbers) in columns {
+                cut.take(*column, &numbers.iter().copied().collect());
+            }
+            cut
+        };
+        let mut world = World::new();
+        let oaks = world.spawn((cut(&[([3, -2], &[0, 70]), ([0, 0], &[5])]), Transform::default()));
+        let pines = world.spawn((cut(&[([-1, 4], &[2])]), Transform::default()));
+        let keyless = world.spawn((cut(&[([1, 1], &[1])]), Transform::default()));
+        let mut services = Keys(oaks, pines);
+        let _scope = crate::services::ServicesScope::enter(&mut services);
+        let bytes = capture(&world);
+        let (worlds, cuts) = read_bytes(&bytes).unwrap();
+        assert!(worlds.is_empty());
+        let oak_cuts = KeptCuts { key: "scene:7".into(), columns: vec![([0, 0], vec![5]), ([3, -2], vec![0, 70])] };
+        assert_eq!(cuts, [oak_cuts, KeptCuts { key: "scene:9".into(), columns: vec![([-1, 4], vec![2])] }]);
+        assert!(from_bytes(&bytes).unwrap().is_empty(), "read as changes alone, they are no worlds' changes");
+        // Put back over a game that went on: what the bytes say, and nothing a Foliage lost since.
+        world.insert(oaks, cut(&[([8, 8], &[1])]));
+        world.remove::<CutPlants>(pines);
+        assert_eq!(restore(&mut world, &bytes).unwrap(), 0);
+        assert_eq!(world.get::<CutPlants>(oaks), Some(&cut(&[([3, -2], &[0, 70]), ([0, 0], &[5])])));
+        assert_eq!(world.get::<CutPlants>(pines), Some(&cut(&[([-1, 4], &[2])])));
+        assert!(world.get::<CutPlants>(keyless).is_none(), "one the bytes do not name has all its plants");
+        // Bytes with no plants taken away give every Foliage its plants back.
+        assert_eq!(restore(&mut world, &to_bytes(&[])).unwrap(), 0);
+        assert!(world.get::<CutPlants>(oaks).is_none() && world.get::<CutPlants>(pines).is_none());
+        // After the blocks' numbers too; a newer version is an error, and bytes cut short are.
+        let numbered = vec![Kept { key: "scene:4".into(), edits: vec![5], numbered: vec![(6, "planks".into())] }];
+        let both = to_bytes_with(&numbered, &cuts);
+        let (worlds, read) = read_bytes(&both).unwrap();
+        assert_eq!((worlds.len(), worlds[0].numbered.len(), read.len()), (1, 1, 2));
+        let mark = both.windows(4).position(|window| window == CUT).expect("its mark");
+        let mut newer = both.clone();
+        newer[mark + 4] = 9;
+        assert!(read_bytes(&newer).is_err() && read_bytes(&both[..both.len() - 3]).is_err());
     }
 
     #[test]

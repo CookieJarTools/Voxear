@@ -14,6 +14,12 @@
 //! Beside them, the same faces merged by surface alone, as triangles, for
 //! collision and for the GI's rays, which need no shading.
 //!
+//! A block seen through, as leaves are (`BlockFaces::see_through`), hides
+//! nothing: a face shows where its block meets one, and its own faces show
+//! where it meets air, water or another block seen through, its own kind
+//! too, so a crown of leaves is leaves all the way in. It is ground in
+//! every other way: it closes corners in, and is stood on.
+//!
 //! Water is seen through, so the ground's faces show where it meets water as
 //! where it meets air, and water closes no corners in. Water's own faces show
 //! only where it meets air, merged by surface, and are kept after the
@@ -33,7 +39,7 @@ use super::{
     BlockFaces, BlockMap,
     chunk::{AIR, BlockId, CHUNK, Fill},
     flow::Water,
-    is_ground, is_water,
+    hides, is_ground, is_water,
 };
 
 /// The ways a face can face, in the order quads are kept: +x, -x, +y, -y,
@@ -132,6 +138,7 @@ pub fn mesh_made(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], made: &dyn
     let block =
         |p: [i32; 3]| padded[((p[1] + 1) as usize * PADDED + (p[2] + 1) as usize) * PADDED + (p[0] + 1) as usize];
     let solid = |p: [i32; 3]| is_ground(faces, block(p));
+    let hidden_by = |p: [i32; 3]| hides(faces, block(p));
     let side = CHUNK as usize;
     let mut mesh = ChunkMesh::default();
     let mut shaded = vec![0u32; side * side];
@@ -149,7 +156,7 @@ pub fn mesh_made(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], made: &dyn
                     let id = block(p);
                     let mut beyond = p;
                     beyond[axis] += step;
-                    if !is_ground(faces, id) || solid(beyond) {
+                    if !is_ground(faces, id) || hidden_by(beyond) {
                         continue;
                     }
                     let look = surface(faces, id, facing);
@@ -195,7 +202,7 @@ pub fn mesh_made(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], made: &dyn
         let made = held(key, made);
         mesh.quads.extend(water_quads((&block, &fills(map, key)), faces, |at, beyond| beyond == AIR && made(at)));
     }
-    mesh.sights = super::sight::sights(chunk, |block| !is_ground(faces, block));
+    mesh.sights = super::sight::sights(chunk, |block| !hides(faces, block));
     mesh
 }
 
@@ -350,6 +357,58 @@ mod tests {
             }
         }
         count
+    }
+
+    #[test]
+    fn a_block_seen_through_hides_no_face_and_keeps_its_own_against_its_kind() {
+        // A floor of ground, a trunk of wood two high on it, and leaves round its top: three by three, two high.
+        let mut map = BlockMap::default();
+        for z in 0..8 {
+            for x in 0..8 {
+                map.set([x, 0, z], 1);
+            }
+        }
+        map.set([4, 1, 4], 2);
+        map.set([4, 2, 4], 2);
+        for y in 2..4 {
+            for z in 3..6 {
+                for x in 3..6 {
+                    if map.get([x, y, z]) == AIR {
+                        map.set([x, y, z], 3);
+                    }
+                }
+            }
+        }
+        let leaves = BlockFaces { see_through: true, ..BlockFaces::new(3, 3, 3) };
+        let faces = [BlockFaces::default(), BlockFaces::new(1, 1, 1), BlockFaces::new(2, 2, 2), leaves];
+        let mesh = mesh_chunk(&map, [0, 0, 0], &faces);
+        let quads: Vec<_> = mesh.quads.iter().map(|&q| unpack(q)).collect();
+        let area =
+            |look: u8| -> u32 { quads.iter().filter(|q| q.3 == look).map(|q| q.1.iter().product::<u32>()).sum() };
+        // Every face of every leaf block but the five against the wood: 17 blocks, six faces each.
+        assert_eq!(area(3), 17 * 6 - 5);
+        // The wood shows through the leaves: the upper block's four sides and its top, the lower's four sides.
+        assert_eq!(area(2), 9, "no face of the wood is hidden by leaves");
+        // The same crown of blocks that hide what is behind them: only its outside, and less of the wood.
+        let solid = [faces[0], faces[1], faces[2], BlockFaces::new(3, 3, 3)];
+        let closed: Vec<_> = mesh_chunk(&map, [0, 0, 0], &solid).quads.iter().map(|&q| unpack(q)).collect();
+        let closed_area =
+            |look: u8| -> u32 { closed.iter().filter(|q| q.3 == look).map(|q| q.1.iter().product::<u32>()).sum() };
+        assert_eq!((closed_area(3), closed_area(2)), (9 + 9 - 1 + 12 * 2, 4));
+        // Leaves are ground to stand on: their faces are triangles too; and they close corners in, as ground does.
+        assert!(mesh.indices.len() > mesh_chunk(&map, [0, 0, 0], &solid).indices.len());
+        let under = quads.iter().find(|q| q.3 == 3 && q.2 == 3).expect("a leaf's underside");
+        assert!(under.4.iter().any(|shade| *shade < 3), "the trunk and the leaves beside darken a corner");
+        // A chunk of leaves through and through still has faces, and is seen through from side to side.
+        let mut full = BlockMap::default();
+        full.put_chunk([0, 0, 0], crate::blocks::chunk::Chunk::filled(3));
+        for beside in [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]] {
+            full.put_chunk(beside, crate::blocks::chunk::Chunk::filled(3));
+        }
+        assert!(!full.buried([0, 0, 0], &faces) && full.buried([0, 0, 0], &solid));
+        let crown = mesh_chunk(&full, [0, 0, 0], &faces);
+        assert!(!crown.is_empty());
+        assert_eq!(crown.sights, crate::blocks::sight::ALL_SIGHTS);
     }
 
     #[test]

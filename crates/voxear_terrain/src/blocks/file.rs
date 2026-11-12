@@ -106,6 +106,12 @@ pub struct BlockKind {
     /// colour the water's own, its faces only where it meets air; nothing
     /// stands on it, and what floats floats in it.
     pub water: bool,
+    /// Whether it is seen through where its faces' pictures are clear, as
+    /// leaves are: so one of its materials is cut out. Never written: it
+    /// is read from its materials where the world is made (see
+    /// `voxear_engine::blocks::resolved`), as a named block's look is.
+    #[serde(skip)]
+    pub cutout: bool,
 }
 
 /// An entry as its file says it: one naming a block says which and where it
@@ -195,6 +201,7 @@ impl Default for BlockKind {
             bottom: None,
             cover: None,
             water: false,
+            cutout: false,
         }
     }
 }
@@ -399,7 +406,8 @@ impl BlockFile {
             let sides = find(&kind.material, kind.color);
             let bottom = find(&kind.bottom.clone().or_else(|| kind.material.clone()), kind.color);
             let color = kind.color.map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u8);
-            faces.push(BlockFaces { water: kind.water, color, ..BlockFaces::new(top, sides, bottom) });
+            let see_through = kind.cutout && !kind.water;
+            faces.push(BlockFaces { water: kind.water, see_through, color, ..BlockFaces::new(top, sides, bottom) });
         }
         (looks, faces)
     }

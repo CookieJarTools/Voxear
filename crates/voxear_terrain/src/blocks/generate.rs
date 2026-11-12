@@ -116,6 +116,34 @@ impl Default for BlockEndless {
     }
 }
 
+/// The ground's surface at places of a world's generated ground, where
+/// nothing pushes or hollows it: what the far view shows, and what stands
+/// on ground too far off to have its own blocks is stood on.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Surfaces {
+    /// How high the ground is at each place, in metres.
+    pub heights: Vec<f32>,
+    /// The block on top at each place.
+    pub tops: Vec<BlockId>,
+    /// How high its sea's top is, in the world's own blocks; none for a
+    /// world with no sea.
+    pub sea: Option<f32>,
+}
+
+/// The surface of `file`'s generated ground at each `(xs[i], zs[i])`, in
+/// metres in generator `world`'s world.
+pub fn surfaces(file: &BlockFile, generate: &BlockGenerate, world: &WorldGen, xs: &[f32], zs: &[f32]) -> Surfaces {
+    let mut heights = vec![0.0; xs.len().min(zs.len())];
+    world.heights(xs, zs, &mut heights);
+    let columns = columns::columns_at(file, world, 0, (xs, zs, &heights));
+    let (sea, sea_top) = columns::sea_of(file, generate, world, 0);
+    Surfaces {
+        tops: columns.iter().map(|column| column.layers[0].0).collect(),
+        heights,
+        sea: (sea != AIR).then_some(sea_top),
+    }
+}
+
 /// The ground `generate` makes for `file` with generator `world`: its
 /// ground's size of chunk columns, each on every core.
 pub fn generate(file: &BlockFile, generate: &BlockGenerate, world: &WorldGen) -> BlockMap {

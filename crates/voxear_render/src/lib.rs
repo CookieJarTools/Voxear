@@ -92,7 +92,7 @@ pub use assets::AssetUsage;
 pub use assets::{MaterialDesc, MaterialHandle, MeshHandle, TextureSource};
 pub use box_model::{
     BoneRole, BoxBone, BoxClip, BoxHit, BoxKey, BoxLayer, BoxModel, BoxSkin, BoxTrack, Ease, Face, FaceRect, KEY_STEP,
-    LARGEST_GRID, LONGEST_CLIP, MOST_COLORS, ModelBox, Sheet, Voxels, is_box_model, on_step,
+    LARGEST_GRID, LONGEST_CLIP, MOST_COLORS, ModelBox, Sheet, StarterPlant, Voxels, is_box_model, on_step,
 };
 pub use capture::{Capture, CapturedImage};
 pub use cooked::{COOKED_VERSION, CookedModel};

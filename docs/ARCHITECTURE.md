@@ -3406,6 +3406,51 @@ and trenches (a cross-section swept along a spline) are layers that lay no heigh
 in order, as a terrain loads and again in the editor only when they or the heights under their columns change, so
 saved heights keep none of their holes (`dig::redig`).
 
+**See-through blocks.** Whether a block is seen through is not a setting of its own: it follows from its
+materials. `engine::blocks::resolved` marks an entry `cutout` where any of its faces' materials has a cutoff, and
+`BlockFile::faces` hands that to the mesher as `BlockFaces::see_through`. The mesher asks two things of a block
+where it asked one: whether it is ground (`is_ground`: it closes corners, is stood on, is triangles) and whether it
+hides what is behind it (`hides`: ground not seen through). A face is made wherever ground meets a block that
+does not hide it, so leaves keep their faces against leaves and a trunk keeps its faces under them; `buried` and
+the sights between a chunk's sides use `hides` too. Drawing needs no second pass or pipeline: `blocks.slang` reads
+the face's surface's material and discards under its cutoff inside `terrainShading`, which the depth pass and the
+shaded pass both call, so the two agree. The shadow pass has a fragment stage of its own for it
+(`blockShadowFragment`), which returns at once for a face that is not cut out and else samples the same picture.
+
+**Plants a Block World grows.** A Foliage under a Block World with a `grow` section has its plants worked out from
+the world's ground rather than placed. Where they stand is pure data, in `voxear_terrain::blocks::grow`: a rule
+(blocks, climate and height ranges, steepest slope, spacing, separation, chance, patches, seed) asks the shared
+placement grid (`generate::structures::Placement`, one try a cell, whole-number hashes) for the tries in one chunk
+column, and keeps those whose highest block under the open sky is ground the rule likes. A column is read alone,
+its slope from its own blocks, so it grows what it grows among its neighbours, and the plants are the same on every
+machine. They are grown from the ground as made (`BlockWorldAsset::base`), never from what was built. The engine
+(`grown_plants`) keeps each column's plants on an Obj of its own under the world, unnamed and in no scene
+(`GrownColumn`), carrying the Foliage's mesh, distances, trunks and layer: the renderer and physics build a Foliage's
+plants whole whenever its list changes, so a list a column keeps them from building anything again as columns come
+and go. Only columns within the Foliage's draw distance of the viewer have plants, eight made a tick, nearest
+first, a column's highest blocks read once for every Foliage that grows on it. Where the draw distance passes the
+world's own blocks, a column under a coarser ring that shows (`BlockWorld::far`) is grown from the generator's
+heights instead (`grow_far`, `generate::surfaces`): the same tries, the same tests on the tops its blocks would
+have, so the same plants wherever the ground is a plain height, each stood no higher than the ground of the ring
+showing and the next out, and grown again from its blocks once they are made. Each plant remembers its block; when the faces of that block's chunk are made again, the column's
+plants are checked against the blocks and those whose ground changed are marked gone, a bit each, and unmarked when
+it is put back. So nothing of them is saved or sent: whoever has the blocks has the plants. A plant a script takes
+away shows as a bit the engine did not set; it is kept on the Foliage's Obj by column and number (`CutPlants`), put
+on again whenever that column's plants are made, and written after the blocks' changes (`VXCP`) that saves and
+joining players carry. The starter plants
+(`voxear_render::StarterPlant`) are box models of cubes made by code, written into a project as it picks them.
+Past where plants are drawn they show as blocks. The streamer has one hook for anything a generator builds
+beyond the near chunks (`stream::FarBuilt`, a list on `BlockMaking`): each says a stamp, the first ring it is
+built into, and builds into a far tile with `FarTile::add`. Tiles are cached on disk bare and built into as they
+are read, so the cache never depends on what is built; rings below the far view's first are real chunks, so
+there the bare tile and the built one are made from heights and their difference is put into the chunks. The
+list is no part of `BlockMaking::same`: when its stamps change, every coarse column from the first ring built
+into is marked stale and made again while the old shows, and a column that comes back made under an older stamp
+stays stale. A Foliage's wood (`grow::Woods`) is one such: per far column, the rule's tests on the tile's own
+top block, height and slope, its climate asked in one batch, kept with the chance a column of that size holds a
+plant. It starts at `Woods::first_past(draw distance, view distance)`, and the engine grows the Foliage's own
+plants only on rings inside that, so the two meet with no gap and no overlap however the rings are snapped.
+
 **Runtime editing.** A script's edit (raise, crater, flatten, paint, holes, grass: `voxear_terrain::runtime`) is a
 small command applied straight to the tiles it reaches, the layer stack left alone, with nothing but sums, products,
 square roots and smoothsteps, and heights set to whole steps of 1/1024 m: the same edits make the same ground on

@@ -147,6 +147,15 @@ pub fn resolved(content: &mut Content, file: &BlockFile) -> Resolved {
             }
         }
     }
+    // A block drawn with a material that is cut out is seen through, as leaves are: every face against it shows.
+    for kind in file.blocks.iter_mut().filter(|kind| kind.is_live()) {
+        let mut cut_out = |material: &Option<String>| {
+            let guid = material.as_deref().and_then(|reference| content.parse(reference).ok()?.guid());
+            guid.and_then(|guid| content.material_data(guid).ok())
+                .is_some_and(|data| data.cutout.is_some_and(|c| c > 0.0))
+        };
+        kind.cutout = cut_out(&kind.material) || cut_out(&kind.top) || cut_out(&kind.bottom);
+    }
     Resolved { file, guids }
 }
 
@@ -621,6 +630,8 @@ pub fn making(content: &mut Content, asset: &BlockWorldAsset) -> Option<voxear_t
         world: generator,
         faces: faces.into(),
         far_folder,
+        // Nothing built over its ground: who streams it adds what it grows.
+        far_built: Vec::new(),
     })
 }
 
@@ -651,7 +662,9 @@ pub fn stream(world: &mut World, content: &mut Content) {
     streams.0.retain(|entity, _| endless.iter().any(|(e, ..)| e == entity));
     for (entity, mut asset, corner) in endless {
         let Some(far) = asset.file.generate.as_ref().and_then(|generate| generate.endless) else { continue };
-        let Some(making) = making(content, &asset) else { continue };
+        let Some(mut making) = making(content, &asset) else { continue };
+        // Woods of the plants it grows, where they are thick enough to show so far off.
+        making.far_built = crate::grown_plants::far_built(world, content, entity);
         let Some(mut blocks) = world.get::<BlockWorld>(entity).cloned() else { continue };
         let camera = [viewer.x - corner.x, viewer.z - corner.z];
         let streamer = streams.0.entry(entity).or_default();

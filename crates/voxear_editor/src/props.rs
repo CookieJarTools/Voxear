@@ -4291,7 +4291,9 @@ pub fn title(types: &ScriptTypes, prop: &Prop) -> String {
         Prop::BlockWorld(field) if crate::block_props::is_picked(*field) => {
             crate::block_props::takes_name(*field).into()
         }
-        Prop::Plants(field) if crate::plants_props::is_picked(*field) => "Prefab".into(),
+        Prop::Plants(field) if crate::plants_props::is_picked(*field) => {
+            crate::plants_props::takes_name(*field).into()
+        }
         Prop::Field { behaviour, path } => fields::kind_at(types, behaviour, path)
             .map_or_else(|| "Obj".into(), |kind| fields::takes(&kind).to_string()),
         _ => String::new(),

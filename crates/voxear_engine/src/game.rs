@@ -633,6 +633,7 @@ impl Game {
         crate::blocks::refresh(&mut self.engine.world, &mut self.content, renderer.as_deref_mut());
         crate::blocks::stream(&mut self.engine.world, &mut self.content);
         crate::blocks::flow(&mut self.engine.world, delta);
+        crate::grown_plants::update(&mut self.engine.world, &mut self.content);
         // The meshes' boxes, as the renderer has them, for the scripts that ask.
         if let Some(renderer) = renderer.as_deref() {
             crate::mesh_boxes::refresh(&mut self.engine.world, renderer);

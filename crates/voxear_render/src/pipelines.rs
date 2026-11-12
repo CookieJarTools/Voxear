@@ -712,6 +712,8 @@ impl Pipelines {
                 cull: vk::CullModeFlags::NONE,
                 depth_bias: Some(SHADOW_BIAS),
                 depth_clamp: true,
+                // Its fragment shader cuts leaves and other cut-out faces from their pictures.
+                fragment_entry: Some(c"blockShadowFragment"),
                 ..GraphicsPipelineDesc::depth_only("Shadows (blocks)", blocks, c"blockShadowVertex", DEPTH_FORMAT)
             })?,
             grass_reset: create_compute_pipeline(gpu, layout, "Grass reset", grass, c"grassReset")?,

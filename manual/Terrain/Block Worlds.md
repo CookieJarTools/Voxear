@@ -217,6 +217,25 @@ Each of its colours builds with a colour of the world's own: one the world has a
 
 For a world of small coloured blocks to sculpt with, make **Block size** small before you build: at 0.1 m, a model 32 blocks high stands about three metres tall.
 
+## Plants a world grows
+
+A Block World can grow its own grass, flowers, bushes, rocks and trees. Under **Settings**, the **Add plant** row takes a model: pick one there, or drag one onto the row from the Project. It becomes a [[Foliage]] under the world's Obj that grows by itself on the world's top block, a plant here and there. Select that Foliage to change where and how thickly it grows (see [[Foliage#Growing on a Block World]]).
+
+The row also offers six **starter plants**, each made of small cubes to sit well among blocks: **Grass Tuft**, **Flower**, **Bush**, **Rock**, **Tree** and **Pine**. Picking one writes its model into the project's `Plants` folder as a [[Box Models|box model]] and grows it as suits it:
+
+| Plant | Where it grows |
+| --- | --- |
+| Grass Tuft | On more than half the world's top blocks |
+| Flower | In patches about 14 m across |
+| Bush | Here and there, about 7 m apart |
+| Rock | On any ground, steep slopes too, in many sizes |
+| Tree | Where it is wet enough, on gentle ground, drawn out to 400 m, and beyond as a wood of blocks. Its trunk collides |
+| Pine | Where it is cool, drawn out to 400 m, and beyond as a wood of blocks. Its trunk collides |
+
+A starter plant is a model like any other. Open it in the Model window to reshape or recolour it, and every one of them in the world changes with it. To grow a plant of your own, sculpt a box model from cubes (see [[Box Models#Plants and trees]]) and pick it on **Add plant**.
+
+A world without end grows its plants as its ground is made round the camera, the same plants every time. Trees reach past the world's own blocks, onto the coarser ground beyond, as far as they are drawn, and from there the far view shows them as woods of their **Far block**: for a starter tree, a block of its leaves' colour made beside its model. A plant goes when the block under it is dug or built over.
+
 ## How blocks are drawn
 
 The blocks are kept in chunks of 32 a side, only the chunks with blocks in them, so a world is as large as its blocks and no larger. A face is drawn only where a block meets air or water, and faces side by side drawn the same way are drawn as one, so a field of grass is a handful of quads. Each corner of a face is a little darker as the blocks round it close it in, which gives edges and hollows their depth.

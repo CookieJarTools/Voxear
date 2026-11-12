@@ -18,6 +18,11 @@
 //! block = "Blocks/Stone.block"
 //! all = { color_map = "stone.png", normal_map = "stone_n.png" }
 //!
+//! [[block]]
+//! block = "Blocks/Glass.block"
+//! all = "glass.png"   # five tiles side by side
+//! connected = true
+//!
 //! [[material]]
 //! material = "Materials/Planks.material"
 //! color_map = "planks.png"
@@ -27,7 +32,10 @@
 //! block with a material, and a material the pack names, keeps everything
 //! else its material says (its tint, how rough it is, whether it is cut
 //! out) and only its pictures change. `pixels` draws the pack's colour
-//! pictures sharp, each pixel a square of one colour however near. `[grain]`
+//! pictures sharp, each pixel a square of one colour however near. A block or
+//! a material that is `connected` has pictures of five tiles, and a block's
+//! faces drawn with them join those of its kind beside them (see
+//! `voxear_terrain::blocks::mesh`). `[grain]`
 //! gives every block of a colour alone that the pack has no picture for a
 //! speckled picture of its colour, made as the pack is worn.
 //!
@@ -58,7 +66,7 @@ use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use voxear_assets::{AssetGuid, AssetKind};
 use voxear_render::{MaterialDesc, MaterialHandle, Renderer, TextureId, TextureSource};
-use voxear_terrain::blocks::file::BlockKind;
+use voxear_terrain::blocks::file::{BlockKind, JOINS_BOTTOM, JOINS_SIDES, JOINS_TOP};
 
 use crate::{
     content::{Content, MaterialData, MaterialMap},
@@ -195,6 +203,10 @@ pub struct BlockPictures {
     pub top: Option<FacePictures>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bottom: Option<FacePictures>,
+    /// Whether its pictures here are five tiles each, its faces joining
+    /// those of its kind beside them (see `MaterialData::connected`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub connected: bool,
 }
 
 /// What a face is drawn with: a picture of its colour, or a picture for
@@ -255,6 +267,10 @@ pub struct MaterialPictures {
     pub emissive_map: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub height_map: Option<String>,
+    /// Whether its pictures here are five tiles each, for blocks' faces
+    /// that join (see `MaterialData::connected`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub connected: bool,
 }
 
 impl MaterialPictures {
@@ -303,6 +319,22 @@ pub enum Picture {
 /// A picture for each of a material's maps, in [`MaterialMap::ALL`]'s order.
 pub type Maps = [Option<Picture>; 5];
 
+/// What a pack draws a face or a material with: its pictures, and whether
+/// they are the five tiles of a face that joins those beside it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Face {
+    pub maps: Maps,
+    pub connected: bool,
+}
+
+impl Face {
+    /// Whether it brings a colour picture, which says whether a face
+    /// drawn with it joins; with none, the material's own says.
+    fn colors(&self) -> bool {
+        self.maps[0].is_some()
+    }
+}
+
 /// Which of a block's faces a pack's face is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Part {
@@ -346,8 +378,8 @@ pub struct Pack {
     pub description: String,
     pub pixels: bool,
     pub grain: Option<Grain>,
-    blocks: HashMap<AssetGuid, HashMap<Part, Maps>>,
-    materials: HashMap<AssetGuid, Maps>,
+    blocks: HashMap<AssetGuid, HashMap<Part, Face>>,
+    materials: HashMap<AssetGuid, Face>,
 }
 
 impl Pack {
@@ -380,19 +412,35 @@ impl Pack {
         if kind.water {
             return;
         }
-        if !self.blocks.contains_key(&guid) {
+        let Some(parts) = self.blocks.get(&guid) else {
             let plain = kind.material.is_none() && kind.top.is_none() && kind.bottom.is_none();
             if plain && self.grain.is_some() {
                 kind.material = Some(face_reference(guid, Part::Grain));
             }
             return;
-        }
-        let faces = [(Part::Sides, &mut kind.material), (Part::Top, &mut kind.top), (Part::Bottom, &mut kind.bottom)];
-        for (face, material) in faces {
-            if let Some(part) = self.part(guid, face) {
+        };
+        let faces = [
+            (Part::Sides, &mut kind.material, JOINS_SIDES),
+            (Part::Top, &mut kind.top, JOINS_TOP),
+            (Part::Bottom, &mut kind.bottom, JOINS_BOTTOM),
+        ];
+        // Before any is dressed: whether each face joins by its own material, its sides' where it has none.
+        let joins = kind.connected;
+        let own =
+            faces.each_ref().map(|(_, material, bit)| joins & if material.is_some() { *bit } else { JOINS_SIDES } != 0);
+        let mut connected = 0;
+        for ((face, material, bit), own) in faces.into_iter().zip(own) {
+            let part = self.part(guid, face);
+            if let Some(part) = part {
                 *material = Some(face_reference(guid, part));
             }
+            // A face joins as the pack's colour picture for it says; with none, as its own material does.
+            let dressed = part.and_then(|part| parts.get(&part)).filter(|face| face.colors());
+            if dressed.map_or(own, |face| face.connected) {
+                connected |= bit;
+            }
         }
+        kind.connected = connected;
     }
 }
 
@@ -497,8 +545,9 @@ fn found(content: &Content, reference: &str, file: &TexturePackFile, home: Home)
             (Part::Top, &entry.top),
             (Part::Bottom, &entry.bottom),
         ];
-        let parts: HashMap<Part, Maps> =
-            faces.into_iter().filter_map(|(part, face)| Some((part, maps(&face.as_ref()?.maps())?))).collect();
+        let face = |named: &FacePictures| Some(Face { maps: maps(&named.maps())?, connected: entry.connected });
+        let parts: HashMap<Part, Face> =
+            faces.into_iter().filter_map(|(part, named)| Some((part, face(named.as_ref()?)?))).collect();
         if !parts.is_empty() {
             pack.blocks.entry(guid).or_default().extend(parts);
         }
@@ -506,7 +555,7 @@ fn found(content: &Content, reference: &str, file: &TexturePackFile, home: Home)
     for entry in &file.materials {
         let Some(guid) = asset(&entry.material, AssetKind::Material) else { continue };
         if let Some(maps) = maps(&entry.maps()) {
-            pack.materials.insert(guid, maps);
+            pack.materials.insert(guid, Face { maps, connected: entry.connected });
         }
     }
     pack
@@ -600,10 +649,21 @@ pub(crate) fn dress_material(
     look: &mut MaterialDesc,
 ) -> Result<()> {
     let Some(pack) = content.textures().pack.clone() else { return Ok(()) };
-    let Some(maps) = pack.materials.get(&guid) else { return Ok(()) };
-    lay(content, renderer, &pack, maps, look)?;
+    let Some(face) = pack.materials.get(&guid) else { return Ok(()) };
+    lay(content, renderer, &pack, face, look)?;
     content.textures_mut().dressed.insert(guid);
     Ok(())
+}
+
+/// Whether the material at `guid` is drawn with the five tiles of a face
+/// that joins those beside it: as the pack worn says where it brings its
+/// colour picture, and else as its file does.
+pub(crate) fn material_connected(content: &mut Content, guid: AssetGuid) -> bool {
+    let dressed = content.textures().pack.as_ref().and_then(|pack| pack.materials.get(&guid));
+    match dressed.filter(|face| face.colors()) {
+        Some(face) => face.connected,
+        None => content.material_data(guid).is_ok_and(|data| data.connected),
+    }
 }
 
 /// The material of a face of the pack's, which `face` names after
@@ -639,11 +699,11 @@ pub fn face_material(content: &mut Content, renderer: &mut Renderer, face: &str)
             }
         };
         let mut look = content.look(renderer, &plain_face())?;
-        (look.base_color_texture, look.pixels) = (Some(texture), pack.pixels);
+        (look.base_color_texture, look.pixels, look.connected) = (Some(texture), pack.pixels, false);
         renderer.add_material(&look)?
     } else {
-        let maps = pack.blocks.get(&guid).and_then(|parts| parts.get(&part));
-        let maps = maps.with_context(|| format!("the texture pack has no `{face}`"))?;
+        let dressed = pack.blocks.get(&guid).and_then(|parts| parts.get(&part));
+        let dressed = dressed.with_context(|| format!("the texture pack has no `{face}`"))?;
         // The block's own material for the face: its tint, its roughness and whether it is cut out stay.
         let own = match part {
             Part::Top => block.top.as_ref().or(block.material.as_ref()),
@@ -653,7 +713,7 @@ pub fn face_material(content: &mut Content, renderer: &mut Renderer, face: &str)
         let own = own.and_then(|reference| content.parse(reference).ok()?.guid());
         let data = own.and_then(|guid| content.material_data(guid).ok()).unwrap_or_else(plain_face);
         let mut look = content.look(renderer, &data)?;
-        lay(content, renderer, &pack, maps, &mut look)?;
+        lay(content, renderer, &pack, dressed, &mut look)?;
         renderer.add_material(&look)?
     };
     content.textures_mut().faces.insert(face.to_string(), material);
@@ -672,19 +732,23 @@ fn plain_face() -> MaterialData {
     MaterialData { color: [1.0; 3], roughness: 1.0, ..default_material() }
 }
 
-/// Puts each picture of `maps` in `look` in place of the map it has.
+/// Puts each picture of `face` in `look` in place of the map it has. Its
+/// colour picture brings how it is drawn with it: sharp or smooth, and as
+/// one face or the five tiles of a face that joins.
 fn lay(
     content: &mut Content,
     renderer: &mut Renderer,
     pack: &Pack,
-    maps: &Maps,
+    face: &Face,
     look: &mut MaterialDesc,
 ) -> Result<()> {
-    for (picture, map) in maps.iter().zip(MaterialMap::ALL) {
+    for (picture, map) in face.maps.iter().zip(MaterialMap::ALL) {
         let Some(picture) = picture else { continue };
         let texture = Some(uploaded(content, renderer, picture, map.srgb())?);
         match map {
-            MaterialMap::Color => (look.base_color_texture, look.pixels) = (texture, pack.pixels),
+            MaterialMap::Color => {
+                (look.base_color_texture, look.pixels, look.connected) = (texture, pack.pixels, face.connected);
+            }
             MaterialMap::Metallic => look.metallic_roughness_texture = texture,
             MaterialMap::Normal => look.normal_texture = texture,
             MaterialMap::Emissive => look.emissive_texture = texture,
@@ -970,6 +1034,13 @@ mod tests {
         assert!(TexturePackFile::parse("[[material]]\ncolor_map = \"a.png\"").is_err(), "which material");
         assert!(TexturePackFile::parse("script = \"run.cs\"").is_err(), "pictures and settings alone");
         assert!(TexturePackFile::parse("format = 99").is_err(), "a newer Voxear's");
+        // A block or a material whose pictures are a joining face's five tiles says so.
+        let joined = "[[block]]\nblock = \"Blocks/Glass.block\"\nall = \"glass.png\"\nconnected = true\n\n\
+                      [[material]]\nmaterial = \"Materials/Tiles.material\"\ncolor_map = \"tiles.png\"\nconnected = true\n";
+        let joined = TexturePackFile::parse(joined).unwrap();
+        assert!(joined.blocks[0].connected && joined.materials[0].connected && !file.blocks[0].connected);
+        assert_eq!(TexturePackFile::parse(&joined.to_text()).unwrap(), joined);
+        assert!(!file.to_text().contains("connected"), "what does not join does not say so");
         let wild = TexturePackFile::parse("[grain]\npixels = 9000\nstrength = 7.0").unwrap().grain.unwrap();
         assert_eq!((wild.pixels, wild.strength), (Grain::MOST, 1.0));
     }
@@ -1015,7 +1086,8 @@ mod tests {
         assert_eq!(blocks, wanted, "the block that is gone is left out");
         assert_eq!(pack.materials().collect::<Vec<_>>(), [guid(&content, "Materials/Planks.material")]);
         let top = Picture::Asset(guid(&content, "Packs/Old/grass_top.png"));
-        assert_eq!(pack.blocks[&grass][&Part::Top][0], Some(top));
+        assert_eq!(pack.blocks[&grass][&Part::Top].maps[0], Some(top));
+        assert!(!pack.blocks[&grass][&Part::Top].connected);
         assert!(load(&mut content, "Blocks/Grass.block").is_err(), "a block is no pack");
         assert!(load(&mut content, "builtin:gloomy").is_err());
     }
@@ -1045,6 +1117,20 @@ mod tests {
         let (planks, mut kind) = entry(&mut content, "Blocks/Planks.block");
         grainy.dress(planks, &mut kind);
         assert_eq!(kind.material.as_deref(), Some("Materials/Planks.material"));
+        // A face joins as the pack's picture for it says: stone's every face, with a pack that says so, and
+        // planks, which join by their own material, no longer once a pack draws them with one picture.
+        let mut joining = pack.clone();
+        joining.blocks.get_mut(&stone).unwrap().get_mut(&Part::All).unwrap().connected = true;
+        let (_, mut kind) = entry(&mut content, "Blocks/Stone.block");
+        joining.dress(stone, &mut kind);
+        assert_eq!(kind.connected, JOINS_SIDES | JOINS_TOP | JOINS_BOTTOM);
+        let top = pack.blocks[&grass][&Part::Top].clone();
+        joining.blocks.insert(planks, HashMap::from([(Part::Top, top)]));
+        let (_, mut kind) = entry(&mut content, "Blocks/Planks.block");
+        kind.connected = JOINS_SIDES;
+        joining.dress(planks, &mut kind);
+        // Its bottom has no material of its own, so it is drawn as its sides are.
+        assert_eq!(kind.connected, JOINS_SIDES | JOINS_BOTTOM, "its top the pack's plain picture");
         // Grain: a block of a colour alone the pack has no picture for; water stays water.
         let (grass, mut kind) = entry(&mut content, "Blocks/Grass.block");
         Pack { grain: Some(Grain::default()), ..Pack::default() }.dress(grass, &mut kind);
@@ -1113,7 +1199,7 @@ mod tests {
         let pack = load(&mut content, &mine.reference).unwrap();
         let grass = guid(&content, "Blocks/Grass.block");
         assert_eq!(pack.blocks().collect::<Vec<_>>(), [grass]);
-        assert_eq!(pack.blocks[&grass][&Part::All][0], Some(Picture::File(textures.join("Mine/grass.png"))));
+        assert_eq!(pack.blocks[&grass][&Part::All].maps[0], Some(Picture::File(textures.join("Mine/grass.png"))));
         assert!(inside(&textures, "/etc/passwd").is_none() && inside(&textures, "a/../../b.png").is_none());
         assert_eq!(inside(&textures, "a/b.png"), Some(textures.join("a/b.png")));
     }

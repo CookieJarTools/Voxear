@@ -349,6 +349,10 @@ struct MaterialFields {
     /// How far its height map moves it, and how finely it is diced.
     displacement: NodeId,
     detail: NodeId,
+    /// Whether its colour map's pixels are drawn sharp, and whether its
+    /// maps are the five tiles of a block's face that joins those beside it.
+    pixels: NodeId,
+    connected: NodeId,
     foliage: NodeId,
     /// How much it bends in the wind, and its leaves flutter.
     wind: [NodeId; 2],
@@ -807,6 +811,7 @@ impl AssetView {
         let changed = fields.color.iter().chain(&fields.emissive)
             .chain([&fields.metallic, &fields.roughness, &fields.foliage, &fields.leaves, &fields.glass, &fields.ior])
             .chain([&fields.glow, &fields.glow_speed, &fields.displacement, &fields.detail])
+            .chain([&fields.pixels, &fields.connected])
             .chain(&fields.wind);
         if !changed.into_iter().any(|&field| ui.changed(field)) {
             return None;
@@ -835,6 +840,7 @@ impl AssetView {
         data.glow = Glow::ALL[ui.selected_option(fields.glow).min(Glow::ALL.len() - 1)];
         data.glow_speed = read(fields.glow_speed, data.glow_speed).clamp(0.0, 30.0);
         data.glass = ui.is_checked(fields.glass);
+        (data.pixels, data.connected) = (ui.is_checked(fields.pixels), ui.is_checked(fields.connected));
         data.ior = read(fields.ior, data.ior).clamp(1.0, 3.0);
         data.displacement = read(fields.displacement, data.displacement).clamp(-4.0, 4.0);
         data.detail = read(fields.detail, data.detail).clamp(1.0, 64.0);
@@ -1254,6 +1260,16 @@ fn material(ui: &mut Ui, root: NodeId, file: &std::path::Path, game: &Game) -> O
         (slot, path)
     });
     let (displacement, detail) = (one(ui, "Displacement", data.displacement), one(ui, "Detail", data.detail));
+    let row = prop(ui, rows, "Sharp pixels");
+    ui.set_tooltip(row, "Draws the colour map's pixels sharp however near, as pixel art is", None);
+    let pixels = ui.toggle(row, "", data.pixels);
+    ui.add_class(pixels, "checkbox");
+    let row = prop(ui, rows, "Connected tiles");
+    let tip = "Its maps are five tiles side by side, and a block's faces drawn with it join those of its kind \
+               beside them: alone, filled, joined left and right, joined up and down, joined all round";
+    ui.set_tooltip(row, tip, None);
+    let connected = ui.toggle(row, "", data.connected);
+    ui.add_class(connected, "checkbox");
     let row = prop(ui, rows, "Foliage");
     let foliage = ui.toggle(row, "", data.foliage);
     ui.add_class(foliage, "checkbox");
@@ -1279,6 +1295,8 @@ fn material(ui: &mut Ui, root: NodeId, file: &std::path::Path, game: &Game) -> O
         maps,
         displacement,
         detail,
+        pixels,
+        connected,
         foliage,
         wind,
         leaves,

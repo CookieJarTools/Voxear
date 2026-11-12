@@ -70,19 +70,25 @@ pub struct BlockFaces {
     pub water: bool,
     pub see_through: bool,
     pub sways: bool,
+    /// Which of its faces join those of its own kind beside it into one
+    /// surface (see `mesh`), a bit each as `file::JOINS_TOP`, `JOINS_SIDES`
+    /// and `JOINS_BOTTOM`: such a face is a quad of its own that says which
+    /// of the faces round it it joins. With any, no face shows between two
+    /// of it.
+    pub connects: u8,
     pub color: [u8; 3],
 }
 
 impl BlockFaces {
     /// A kind of ground drawn with these surfaces.
     pub const fn new(top: u8, sides: u8, bottom: u8) -> Self {
-        Self { top, sides, bottom, water: false, see_through: false, sways: false, color: [0; 3] }
+        Self { top, sides, bottom, water: false, see_through: false, sways: false, connects: 0, color: [0; 3] }
     }
 
     /// Water drawn with surface `surface`.
     pub const fn water(surface: u8) -> Self {
         let (top, sides, bottom) = (surface, surface, surface);
-        Self { top, sides, bottom, water: true, see_through: false, sways: false, color: [0; 3] }
+        Self { top, sides, bottom, water: true, see_through: false, sways: false, connects: 0, color: [0; 3] }
     }
 }
 
@@ -104,6 +110,12 @@ pub fn is_see_through(faces: &[BlockFaces], block: BlockId) -> bool {
 /// Whether block `block` is ground that sways in the wind, as leaves do.
 pub fn sways(faces: &[BlockFaces], block: BlockId) -> bool {
     faces.get(usize::from(block)).is_some_and(|faces| faces.sways && !faces.water)
+}
+
+/// Which of block `block`'s faces join those of its own kind beside it, a
+/// bit each (see [`BlockFaces::connects`]); 0 for none.
+pub fn connects(faces: &[BlockFaces], block: BlockId) -> u8 {
+    faces.get(usize::from(block)).filter(|faces| !faces.water).map_or(0, |faces| faces.connects)
 }
 
 /// Whether block `block` hides what is behind it: ground that is not seen
@@ -466,7 +478,11 @@ impl BlockWorld {
     /// `faces` differ from its own only in colours, which no mesh keeps: as
     /// while a block's colour is dragged.
     pub fn restyled(&self, faces: &[BlockFaces], smooth: bool) -> Self {
-        let drawn = |faces: &BlockFaces| (faces.top, faces.sides, faces.bottom, faces.water);
+        // What a mesh keeps of a block's faces: its surfaces, and what it shows, moves and joins.
+        let drawn = |faces: &BlockFaces| {
+            let shape = (faces.water, faces.see_through, faces.sways, faces.connects);
+            (faces.top, faces.sides, faces.bottom, shape)
+        };
         if smooth == self.smooth && faces.iter().map(drawn).eq(self.faces.iter().map(drawn)) {
             return Self { faces: faces.into(), ..self.clone() };
         }

@@ -2,7 +2,8 @@
 //! faces of its own and a material it names other pictures, a world takes
 //! it up as it is worn and lets go of it as it is taken off, and it is
 //! drawn so: the game's pictures, a player's own files, and a grain made of
-//! each block's colour.
+//! each block's colour. And faces that join: panes of glass, by their
+//! material, and a block a pack gives joining tiles.
 
 use voxear_ecs::Entity;
 use voxear_engine::{Engine, Game, Project, blocks::BlockWorldAsset, texture_packs};
@@ -254,4 +255,119 @@ fn a_pack_is_drawn_on_the_blocks_it_names_sharp_and_goes_again_when_taken_off() 
     texture_packs::wear(&mut game.content, "").unwrap();
     let back = draw(&mut game, "texture pack none again.png");
     assert!(unlike(&back, &plain) < 0.01, "as it was made: {}", unlike(&back, &plain));
+}
+
+/// The flat world of [`project`] with glass, a block whose material joins (the starter glass), and a pack that
+/// draws stone with joining tiles: a pale tile with a dark border.
+fn joined_project() -> tempfile::TempDir {
+    use voxear_engine::connected_tiles;
+    let dir = project();
+    connected_tiles::write_glass_block(&dir.path().join("Blocks"), "Glass").unwrap();
+    let mut file =
+        BlockFile::parse(&std::fs::read_to_string(dir.path().join("Blocks/Field.blockworld")).unwrap()).unwrap();
+    file.blocks.push(BlockKind::of("Blocks/Glass.block"));
+    std::fs::write(dir.path().join("Blocks/Field.blockworld"), file.to_text()).unwrap();
+    let tiles = connected_tiles::frame_tiles(16, 2, [60, 62, 70, 255], |x, y| {
+        let shade = shaded([176, 178, 186], 0.9 + speck(x, y, 9) * 0.2);
+        [shade[0], shade[1], shade[2], 255]
+    });
+    let joined = dir.path().join("Packs/Joined");
+    std::fs::create_dir_all(&joined).unwrap();
+    let mut encoder = png::Encoder::new(std::fs::File::create(joined.join("tiles.png")).unwrap(), 80, 16);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.write_header().unwrap().write_image_data(&tiles).unwrap();
+    let pack = "description = \"Stone in slabs that join.\"\npixels = true\n\n\
+                [[block]]\nblock = \"Blocks/Stone.block\"\nall = \"Packs/Joined/tiles.png\"\nconnected = true\n";
+    std::fs::write(joined.join("Joined.texturepack"), pack).unwrap();
+    dir
+}
+
+/// Glass and stone on the grass in front of the camera: a wall of glass five panes wide and three high with a
+/// pane more on top, a pane alone, a floor of stone three by three, and a wall of stone with a corner missing.
+fn build_joined(game: &mut Game) {
+    let field = field(game);
+    let mut blocks = game.engine.world.get::<BlockWorld>(field).unwrap().clone();
+    let wall = (6..9).flat_map(|y| (13..18).map(move |x| ([x, y, 16], 5u16)));
+    let more = [([15, 9, 16], 5u16), ([11, 6, 13], 5u16)];
+    let floor = (12..15).flat_map(|z| (19..22).map(move |x| ([x, 6, z], 3u16)));
+    let stone = (6..9).flat_map(|y| (19..22).map(move |x| ([x, y, 17], 3u16))).filter(|(at, _)| *at != [21, 8, 17]);
+    blocks.set_blocks(wall.chain(more).chain(floor).chain(stone));
+    game.engine.world.insert(field, blocks);
+}
+
+#[test]
+fn glass_joins_by_its_material_and_a_pack_makes_a_blocks_faces_join() {
+    use voxear_terrain::blocks::mesh;
+    let dir = joined_project();
+    let mut game = game(&dir);
+    game.start(None).unwrap();
+    build_joined(&mut game);
+    game.tick(1.0 / 60.0, None);
+    let field = field(&game);
+    let faces = |game: &Game| game.engine.world.get::<BlockWorld>(field).unwrap().faces.clone();
+    // Glass joins on every face, by its material, and is seen through; stone, a colour alone, does not.
+    let own = faces(&game);
+    assert_eq!((own[5].connects, own[5].see_through), (7, true));
+    assert_eq!(own[3].connects, 0);
+    let quads = |game: &Game, look: u8| -> Vec<[u32; 2]> {
+        let blocks = game.engine.world.get::<BlockWorld>(field).unwrap();
+        let all =
+            blocks.meshes.values().flat_map(|chunk| chunk.quads[..chunk.buckets[mesh::FACINGS] as usize].to_vec());
+        all.filter(|quad| quad[1] as u8 == look).collect()
+    };
+    // The wall's panes: a face each on its two sides and round its edge, none between two panes. Sixteen panes
+    // in the wall and the one on top, and one alone: 2 * 16 faces front and back, the wall's edge of 5 + 5 + 3 +
+    // 3 + 2 more round the pane on top, and the lone pane's six, less the faces on the ground, which are hidden.
+    let glass = quads(&game, own[5].sides);
+    assert_eq!(glass.len(), 32 + (4 + 3 + 3 + 3) + 5, "{} faces of glass", glass.len());
+    assert!(glass.iter().any(|&quad| mesh::joins(quad) == 0xFF), "a pane in the wall's middle joins all round");
+    assert!(glass.iter().filter(|&&quad| mesh::joins(quad) == 0).count() >= 5, "the lone pane joins nothing");
+
+    // The pack: stone's faces join, each a face of its own.
+    let merged = quads(&game, own[3].sides).len();
+    texture_packs::wear(&mut game.content, "Packs/Joined/Joined.texturepack").unwrap();
+    game.tick(1.0 / 60.0, None);
+    let worn = faces(&game);
+    assert_eq!(worn[3].connects, 7);
+    let stone = quads(&game, worn[3].sides);
+    assert!(stone.len() > merged && stone.iter().any(|&quad| mesh::joins(quad) != 0), "{merged} to {}", stone.len());
+    texture_packs::wear(&mut game.content, "").unwrap();
+    game.tick(1.0 / 60.0, None);
+    assert_eq!(faces(&game)[3].connects, 0);
+    assert_eq!(quads(&game, own[3].sides).len(), merged, "merged again");
+}
+
+#[test]
+fn faces_that_join_are_drawn_as_one_sheet_with_a_border_round_the_whole() {
+    use voxear_render::{Renderer, RendererSettings};
+    let Ok(mut renderer) = Renderer::new_offscreen(1280, 720, &RendererSettings::default()) else {
+        eprintln!("skipping: no usable GPU");
+        return;
+    };
+    let dir = joined_project();
+    let mut game = game(&dir);
+    game.start(Some(&mut renderer)).unwrap();
+    build_joined(&mut game);
+    let mut draw = |game: &mut Game, name: &str| {
+        for _ in 0..40 {
+            game.tick(1.0 / 60.0, Some(&mut renderer));
+            renderer.render(&game.engine.world, 1.0).unwrap();
+        }
+        let (width, height, pixels) = renderer.read_pixels().unwrap();
+        if let Ok(out) = std::env::var("VOXEAR_TEST_OUTPUT") {
+            let file = std::fs::File::create(std::path::Path::new(&out).join(name)).unwrap();
+            let mut encoder = png::Encoder::new(file, width, height);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.write_header().unwrap().write_image_data(&pixels).unwrap();
+        }
+        pixels
+    };
+    let unlike = |a: &[u8], b: &[u8]| {
+        let pairs = a.chunks_exact(4).zip(b.chunks_exact(4));
+        pairs.filter(|(a, b)| (0..3).any(|c| a[c].abs_diff(b[c]) > 8)).count() as f32 / (a.len() / 4) as f32
+    };
+    let own = draw(&mut game, "joined glass.png");
+    texture_packs::wear(&mut game.content, "Packs/Joined/Joined.texturepack").unwrap();
+    let worn = draw(&mut game, "joined glass and stone.png");
+    assert!(unlike(&own, &worn) > 0.02, "the stone's tiles show: {}", unlike(&own, &worn));
 }

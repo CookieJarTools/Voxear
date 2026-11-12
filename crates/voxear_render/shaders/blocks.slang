@@ -74,8 +74,8 @@ VertexOut blockVertex(uint vertexId : SV_VertexID)
     o.worldPosition = b.world;
     o.normal = b.normal;
     o.tangent = float4(normalizeOr(float3(b.normal.y, -b.normal.x, 0.0), float3(1.0, 0.0, 0.0)), 1.0);
-    // The corner's shading, for blockShading to darken by.
-    o.uv = float2(b.shade, 0.0);
+    // The corner's shading, for blockShading to darken by, and the faces round it a face that joins is joined to.
+    o.uv = float2(b.shade, float(b.joins));
     o.material = world.material;
     o.lod = b.surface;
     o.instance = world.anchor;
@@ -101,6 +101,59 @@ VertexOut blockVertex(uint vertexId : SV_VertexID)
     o.moved = swayed;
     o.hidden = 0.0;
     return o;
+}
+
+// For a face that joins those of its block beside it, where on its surface's pictures the spot is read. The pictures
+// are five tiles side by side: the face alone, its border all round; filled, with none; joined left and right;
+// joined up and down; and joined all round with its inner corners showing. Each quarter of the face is that quarter
+// of the tile its own three neighbours make it: the one beside it, the one above or below it, and the one between
+// them. `joins` says which of the eight faces round it the face is joined to (voxear_terrain::blocks::mesh::JOINS),
+// along its picture as terrainSide lays it. Any other face's spot comes back as it is.
+TerrainSpot blockJoined(BlockWorld world, uint index, TerrainSpot spot, float3 normal, uint joins)
+{
+    TerrainSurface surface = world.surfaces[min(index, world.surfaceCount - 1)];
+    Material material = buffers()->materials[surface.material];
+    if ((material.flags & MATERIAL_CONNECTED) == 0)
+    {
+        return spot;
+    }
+    uint side = abs(normal.y) > 0.5 ? 0 : (abs(normal.x) > 0.5 ? 1 : 2);
+    float2 within = frac(terrainSide(spot.place, side) * surface.uvScale);
+    bool right = within.x >= 0.5;
+    bool lower = within.y >= 0.5;
+    bool beside = ((joins >> (right ? 1 : 0)) & 1) != 0;
+    bool above = ((joins >> (lower ? 3 : 2)) & 1) != 0;
+    bool between = ((joins >> (4 + (right ? 1 : 0) + (lower ? 2 : 0))) & 1) != 0;
+    float tile = beside ? (above ? (between ? 1.0 : 4.0) : 2.0) : (above ? 3.0 : 0.0);
+    // Half a pixel in from the tile's sides, so a smoothed picture takes nothing from the tile beside it.
+    uint width, height;
+    textures[NonUniformResourceIndex(material.baseColorTexture)].GetDimensions(width, height);
+    float edge = 2.5 / float(max(width, 5));
+    float2 read = float2((tile + clamp(within.x, edge, 1.0 - edge)) / 5.0, within.y) / surface.uvScale;
+    // Back to a place terrainSide reads there, and a fifth as fast along the tiles.
+    TerrainSpot joined = spot;
+    if (side == 0)
+    {
+        joined.place.x = read.x;
+        joined.place.z = -read.y;
+        joined.dx.x *= 0.2;
+        joined.dy.x *= 0.2;
+    }
+    else if (side == 1)
+    {
+        joined.place.z = read.x;
+        joined.place.y = -read.y;
+        joined.dx.z *= 0.2;
+        joined.dy.z *= 0.2;
+    }
+    else
+    {
+        joined.place.x = read.x;
+        joined.place.y = -read.y;
+        joined.dx.x *= 0.2;
+        joined.dy.x *= 0.2;
+    }
+    return joined;
 }
 
 // Surface `index` of a world, its pictures from the side the ground faces.
@@ -184,6 +237,11 @@ bool blockCubes(
     grain = 0.5;
     shown = 0.0;
     if (world.voxels < 1.0)
+    {
+        return false;
+    }
+    // A face that joins those beside it is drawn plain: its pictures are tiles, not one face's.
+    if ((buffers()->materials[world.surfaces[min(index, world.surfaceCount - 1)].material].flags & MATERIAL_CONNECTED) != 0)
     {
         return false;
     }
@@ -361,6 +419,8 @@ bool terrainShading(
         float3 facing;
         float sunk, grain, shown;
         bool cubes = blockCubes(world, input.lod, stands, normal, spot, facing, sunk, grain, shown);
+        // A face that joins those beside it reads its pictures' tile for where on it this is.
+        spot = blockJoined(world, input.lod, spot, normal, uint(input.uv.y + 0.5));
         layer = blockLayer(world, input.lod, spot, normal, input.tangent);
         // A face whose material is cut out, as leaves are, is not there where its picture is clear.
         float cutoff = buffers()->materials[world.surfaces[min(input.lod, world.surfaceCount - 1)].material].alphaCutoff;
@@ -411,7 +471,8 @@ BlockShadowOut blockShadowVertex(uint vertexId : SV_VertexID)
     o.position = transform(shadowViewProj(push.frame, push.list, 0), float4(b.world, 1.0));
     o.place = stands - world.corner;
     o.normal = b.normal;
-    o.surface = b.surface;
+    // Over its surface, which of the faces round it a face that joins is joined to.
+    o.surface = b.surface | (b.joins << 24);
     o.world = push.level - 1;
     return o;
 }
@@ -425,7 +486,8 @@ void blockShadowFragment(BlockShadowOut input)
     {
         return;
     }
-    float cutoff = buffers()->materials[world.surfaces[min(input.surface, world.surfaceCount - 1)].material].alphaCutoff;
+    uint surface = input.surface & 0xFF;
+    float cutoff = buffers()->materials[world.surfaces[min(surface, world.surfaceCount - 1)].material].alphaCutoff;
     if (cutoff <= 0.0)
     {
         return;
@@ -436,7 +498,8 @@ void blockShadowFragment(BlockShadowOut input)
     spot.dy = ddy(spot.place);
     float3 normal = normalize(input.normal);
     float4 tangent = float4(normalizeOr(float3(normal.y, -normal.x, 0.0), float3(1.0, 0.0, 0.0)), 1.0);
-    if (blockLayer(world, input.surface, spot, normal, tangent).base.a < cutoff)
+    spot = blockJoined(world, surface, spot, normal, input.surface >> 24);
+    if (blockLayer(world, surface, spot, normal, tangent).base.a < cutoff)
     {
         discard;
     }

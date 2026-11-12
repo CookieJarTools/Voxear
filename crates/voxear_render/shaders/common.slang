@@ -204,6 +204,8 @@ static const uint MATERIAL_IMPOSTOR = 128;
 static const uint MATERIAL_DISPLACED = 256;
 // Its base colour's pixels drawn sharp, each a square of one colour (baseColorUv).
 static const uint MATERIAL_PIXELS = 512;
+// Its pictures are the five tiles of a block's face that joins those beside it (blocks.slang).
+static const uint MATERIAL_CONNECTED = 1024;
 
 struct Material
 {

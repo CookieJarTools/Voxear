@@ -82,6 +82,17 @@ pub struct MaterialData {
     /// cards and leaves are cut from their pictures; none for solid.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cutout: Option<f32>,
+    /// Its colour picture's pixels drawn sharp however near, each a square
+    /// of one colour, as pixel art is, rather than smoothed into the next.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pixels: bool,
+    /// Its pictures are five tiles side by side, for a block's faces that
+    /// join those of its kind beside them, as panes of glass do: the face
+    /// alone, filled, joined left and right, joined up and down, and joined
+    /// all round with its inner corners showing. A block drawn with it
+    /// joins (see `voxear_terrain::blocks::mesh`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub connected: bool,
     /// How many metres up from where a model drawn with it meets a terrain
     /// it blends into the ground's own look, as earth creeps up a rock's
     /// foot; 0 for not at all.
@@ -148,6 +159,8 @@ impl Default for MaterialData {
             foliage: false,
             glass: false,
             cutout: None,
+            pixels: false,
+            connected: false,
             ground_blend: 0.0,
             ior: default_ior(),
             wind_bend: None,
@@ -286,6 +299,8 @@ impl MaterialData {
             displacement: if height.is_some() { self.displacement } else { 0.0 },
             detail: self.detail,
             alpha_cutoff: self.cutout.filter(|cutout| *cutout > 0.0),
+            pixels: self.pixels,
+            connected: self.connected,
             ground_blend: self.ground_blend.max(0.0),
             ..MaterialDesc::default()
         }
@@ -297,6 +312,7 @@ impl MaterialData {
         let [er, eg, eb] = self.emissive.map(f32::to_bits);
         let (metallic, roughness, ior) = (self.metallic.to_bits(), self.roughness.to_bits(), self.ior.to_bits());
         let flags = u32::from(self.foliage) | u32::from(self.glass) << 1 | (self.leaves as u32) << 2 | (self.glow as u32) << 3;
+        let flags = flags | u32::from(self.pixels) << 8 | u32::from(self.connected) << 9;
         let wind = [self.wind_bend().to_bits(), self.wind_flutter().to_bits(), self.glow_speed.to_bits()];
         let (displacement, detail) = (self.displacement.to_bits(), self.detail.to_bits());
         // Cut out or not is in the custom part, so the array keeps its size.

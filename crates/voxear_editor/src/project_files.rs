@@ -171,6 +171,9 @@ pub enum NewFile {
     WorldGen,
     /// A block, which any world of blocks can hold.
     Block,
+    /// A block of glass whose panes join into one sheet, with its picture
+    /// and its material beside it.
+    GlassBlock,
     /// A biome, which a generated world of blocks lists for its ground.
     Biome,
     /// Pictures prompts show for controls, picked on the Input page.
@@ -180,7 +183,7 @@ pub enum NewFile {
 }
 
 impl NewFile {
-    pub const ALL: [NewFile; 19] = [
+    pub const ALL: [NewFile; 20] = [
         NewFile::Folder,
         NewFile::Scene,
         NewFile::Level,
@@ -197,6 +200,7 @@ impl NewFile {
         NewFile::Terrain,
         NewFile::WorldGen,
         NewFile::Block,
+        NewFile::GlassBlock,
         NewFile::Biome,
         NewFile::PromptIcons,
         NewFile::BoxModel,
@@ -206,7 +210,7 @@ impl NewFile {
     pub fn module(self) -> Option<voxear_engine::modules::Module> {
         match self {
             NewFile::GunHandling => Some(voxear_engine::modules::Module::Guns),
-            NewFile::Terrain | NewFile::WorldGen | NewFile::Block | NewFile::Biome => {
+            NewFile::Terrain | NewFile::WorldGen | NewFile::Block | NewFile::GlassBlock | NewFile::Biome => {
                 Some(voxear_engine::modules::Module::Terrain)
             }
             _ => None,
@@ -232,6 +236,7 @@ impl NewFile {
             NewFile::Terrain => "New Terrain",
             NewFile::WorldGen => "New World Generator",
             NewFile::Block => "New Block",
+            NewFile::GlassBlock => "New Glass Block",
             NewFile::Biome => "New Biome",
             NewFile::PromptIcons => "New Prompt Icons",
             NewFile::BoxModel => "New Box Model",
@@ -258,6 +263,7 @@ impl NewFile {
             NewFile::Terrain => ("New Terrain", ".terrain"),
             NewFile::WorldGen => ("New World Generator", ".worldgen"),
             NewFile::Block => ("New Block", ".block"),
+            NewFile::GlassBlock => ("New Glass", ".block"),
             NewFile::Biome => ("New Biome", ".biome"),
             NewFile::PromptIcons => ("New Prompt Icons", ".prompticons"),
             NewFile::BoxModel => ("New Box Model", ".boxmodel"),
@@ -289,6 +295,11 @@ pub fn create(root: &Path, folder: &str, kind: NewFile, namespace: &str) -> Resu
         NewFile::Terrain => std::fs::write(&file, NEW_TERRAIN.to_string() + &TerrainFile::default().to_text()),
         NewFile::WorldGen => std::fs::write(&file, new_world_gen()),
         NewFile::Block => std::fs::write(&file, block_text(&Default::default())),
+        NewFile::GlassBlock => {
+            let stem = &name[..name.len() - extension.len()];
+            voxear_engine::connected_tiles::write_glass_block(&root.join(folder), stem)
+                .map_err(|error| std::io::Error::other(format!("{error:#}")))
+        }
         NewFile::Biome => std::fs::write(&file, biome_text(&Default::default())),
         NewFile::PromptIcons => {
             let icons = voxear_engine::prompt_icons::PromptIconsFile { format: 1, ..Default::default() };
@@ -845,6 +856,21 @@ mod tests {
         let file: voxear_engine::lighting::LightingFile = toml::from_str(&text).unwrap();
         assert_eq!(file.look.as_deref(), Some("golden_hour"));
         file.resolve().unwrap();
+    }
+
+    #[test]
+    fn a_new_glass_block_comes_with_its_picture_and_a_material_that_joins() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("Blocks")).unwrap();
+        let path = create(dir.path(), "Blocks", NewFile::GlassBlock, "Game").unwrap();
+        assert_eq!(path, "Blocks/New Glass.block");
+        for beside in ["New Glass.png", "New Glass.png.meta", "New Glass.material", "New Glass.material.meta"] {
+            assert!(dir.path().join("Blocks").join(beside).is_file(), "{beside}");
+        }
+        let material = std::fs::read_to_string(dir.path().join("Blocks/New Glass.material")).unwrap();
+        assert!(material.contains("connected = true") && material.contains("pixels = true"), "{material}");
+        // A second is made beside the first, under a name of its own.
+        assert_eq!(create(dir.path(), "Blocks", NewFile::GlassBlock, "Game").unwrap(), "Blocks/New Glass 1.block");
     }
 
     #[test]

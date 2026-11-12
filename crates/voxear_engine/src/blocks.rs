@@ -164,6 +164,16 @@ pub fn resolved(content: &mut Content, file: &BlockFile) -> Resolved {
         };
         kind.sways |= bends(&kind.material) || bends(&kind.top) || bends(&kind.bottom);
     }
+    // And a face drawn with a material whose pictures are a joining face's five tiles joins those of its block
+    // beside it, as panes of glass do.
+    for kind in file.blocks.iter_mut().filter(|kind| kind.is_live()) {
+        use voxear_terrain::blocks::file::{JOINS_BOTTOM, JOINS_SIDES, JOINS_TOP};
+        let mut joins = |material: &Option<String>, bit: u8| {
+            let guid = material.as_deref().and_then(|reference| content.parse(reference).ok()?.guid());
+            if guid.is_some_and(|guid| crate::texture_packs::material_connected(content, guid)) { bit } else { 0 }
+        };
+        kind.connected = joins(&kind.material, JOINS_SIDES) | joins(&kind.top, JOINS_TOP) | joins(&kind.bottom, JOINS_BOTTOM);
+    }
     // The texture pack worn draws the blocks it names, and with a grain those of a colour alone, with faces of
     // its own: after what a block's own materials say of it is read, which stays so under any pack.
     if let Some(pack) = content.textures().pack().cloned() {

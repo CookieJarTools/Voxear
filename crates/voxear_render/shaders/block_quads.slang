@@ -35,6 +35,9 @@ struct BlockPoint
     // blocks it is, counted in blocks from the world's first: every face that meets there moves it alike.
     bool sways;
     int3 corner;
+    // For a face that joins those of its block beside it (voxear_terrain::blocks::mesh::joins): which of the eight
+    // round it, a bit each.
+    uint joins;
 };
 
 // Vertex `vertexId` of a world drawn smooth: its corners one after another in the world's pool from `push.output` on,
@@ -61,6 +64,7 @@ BlockPoint smoothPoint(BlockWorld world, uint vertexId)
     b.shade = 1.0;
     b.sways = false;
     b.corner = 0;
+    b.joins = 0;
     return b;
 }
 
@@ -80,6 +84,18 @@ BlockPoint cubePoint(BlockWorld world, uint vertexId)
     uint first = quad.x;
     uint3 at = uint3(first & 31, (first >> 5) & 31, (first >> 10) & 31);
     float2 size = float2(((first >> 15) & 31) + 1, ((first >> 20) & 31) + 1);
+    // A face drawn with a material whose pictures are a joining face's five tiles is one block, and keeps the faces
+    // round it that it joins where its size would be.
+    uint joins = 0;
+    if (world.surfaceCount > 0)
+    {
+        uint material = world.surfaces[min(quad.y & 0xFF, world.surfaceCount - 1)].material;
+        if ((buffers()->materials[material].flags & MATERIAL_CONNECTED) != 0)
+        {
+            joins = (first >> 15) & 0xFF;
+            size = float2(1.0, 1.0);
+        }
+    }
     uint facing = (first >> 25) & 7;
     uint4 shades = (uint4(quad.y) >> uint4(8, 10, 12, 14)) & 3;
     bool flip = shades.x + shades.z < shades.y + shades.w;
@@ -101,6 +117,7 @@ BlockPoint cubePoint(BlockWorld world, uint vertexId)
     // Only the world's own blocks sway: a far ring's are too large to.
     b.sways = chunk.w == 0 && ((first >> (28 + corner)) & 1) != 0;
     b.corner = chunk.xyz * 32 + int3(p);
+    b.joins = joins;
     return b;
 }
 

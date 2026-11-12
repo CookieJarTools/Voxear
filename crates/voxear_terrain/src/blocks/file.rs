@@ -138,7 +138,20 @@ pub struct BlockKind {
     /// where the world is made, as `cutout` is.
     #[serde(skip)]
     pub sways: bool,
+    /// Which of its faces join those of its own kind beside it, as panes
+    /// of glass do: those drawn with a material whose pictures are the five
+    /// tiles of a face that joins, a bit each ([`JOINS_SIDES`],
+    /// [`JOINS_TOP`], [`JOINS_BOTTOM`]). Never written: it is read from its
+    /// materials where the world is made, as `cutout` is.
+    #[serde(skip)]
+    pub connected: u8,
 }
+
+/// The bits of a kind's faces that join: its material's, on its sides and
+/// wherever its top or bottom has none of its own; its top's; its bottom's.
+pub const JOINS_SIDES: u8 = 1;
+pub const JOINS_TOP: u8 = 2;
+pub const JOINS_BOTTOM: u8 = 4;
 
 /// An entry as its file says it: one naming a block says which and where it
 /// covers, one taken out only that, and a kind of the world's own all its
@@ -229,6 +242,7 @@ impl Default for BlockKind {
             water: false,
             cutout: false,
             sways: false,
+            connected: 0,
         }
     }
 }
@@ -299,11 +313,14 @@ impl Default for BlockFile {
     }
 }
 
-/// How one face is drawn: with a material, or else its colour.
+/// How one face is drawn: with a material, or else its colour; and whether
+/// its material's pictures are the five tiles of a face that joins those
+/// beside it (see `mesh`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct FaceLook {
     pub material: Option<String>,
     pub color: [f32; 3],
+    pub connected: bool,
 }
 
 /// A key a file's generated ground may still hold, from when ground could
@@ -417,8 +434,9 @@ impl BlockFile {
     /// `block::BlockDef::fill`).
     pub fn faces(&self) -> (Vec<FaceLook>, Vec<BlockFaces>) {
         let mut looks: Vec<FaceLook> = Vec::new();
-        let mut find = |material: &Option<String>, color: [f32; 3]| {
-            let look = FaceLook { material: material.clone(), color };
+        let mut find = |material: &Option<String>, color: [f32; 3], connected: bool| {
+            // A face with no picture has nothing to join with.
+            let look = FaceLook { material: material.clone(), color, connected: connected && material.is_some() };
             let at = looks.iter().position(|kept| *kept == look).unwrap_or_else(|| {
                 looks.push(look);
                 looks.len() - 1
@@ -431,13 +449,20 @@ impl BlockFile {
                 faces.push(BlockFaces::default());
                 continue;
             }
-            let top = find(&kind.top.clone().or_else(|| kind.material.clone()), kind.color);
-            let sides = find(&kind.material, kind.color);
-            let bottom = find(&kind.bottom.clone().or_else(|| kind.material.clone()), kind.color);
+            // Which of its faces join: each by the material it is drawn with.
+            let joins = |own: &Option<String>, bit: u8| {
+                let bit = if own.is_some() { bit } else { JOINS_SIDES };
+                !kind.water && kind.connected & bit != 0 && (own.is_some() || kind.material.is_some())
+            };
+            let joined = [joins(&kind.top, JOINS_TOP), joins(&kind.material, JOINS_SIDES), joins(&kind.bottom, JOINS_BOTTOM)];
+            let top = find(&kind.top.clone().or_else(|| kind.material.clone()), kind.color, joined[0]);
+            let sides = find(&kind.material, kind.color, joined[1]);
+            let bottom = find(&kind.bottom.clone().or_else(|| kind.material.clone()), kind.color, joined[2]);
             let color = kind.color.map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u8);
             let (see_through, sways) = (kind.cutout && !kind.water, kind.sways && !kind.water);
+            let connects = u8::from(joined[0]) * JOINS_TOP | u8::from(joined[1]) * JOINS_SIDES | u8::from(joined[2]) * JOINS_BOTTOM;
             let drawn = BlockFaces::new(top, sides, bottom);
-            faces.push(BlockFaces { water: kind.water, see_through, sways, color, ..drawn });
+            faces.push(BlockFaces { water: kind.water, see_through, sways, connects, color, ..drawn });
         }
         (looks, faces)
     }

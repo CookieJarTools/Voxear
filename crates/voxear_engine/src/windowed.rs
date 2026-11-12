@@ -20,7 +20,7 @@ use winit::{
 use voxear_ui::Key as UiKey;
 
 use crate::{
-    dev_console::ConsoleAction, fly_camera::FlyCamera, game::Game, remote_console::RemoteConsole,
+    Engine, dev_console::ConsoleAction, fly_camera::FlyCamera, game::Game, remote_console::RemoteConsole,
     stats_overlay::StatsOverlay,
 };
 
@@ -72,12 +72,14 @@ pub fn run_windowed(game: Game, options: WindowOptions, settings: RendererSettin
             .inspect_err(|error| tracing::warn!("vox console cannot reach this game: {error:#}"))
             .ok()
     });
+    let free = options.tools && frees_camera(&game.engine);
     let mut app = App {
         remote,
         game,
         settings,
         debug_view: DEBUG_VIEW_NONE,
         fly: FlyCamera::default(),
+        free,
         overlay: StatsOverlay::new(options.stats),
         options,
         setup: Some(setup),
@@ -91,6 +93,13 @@ pub fn run_windowed(game: Game, options: WindowOptions, settings: RendererSettin
         Some(error) => Err(error),
         None => Ok(()),
     }
+}
+
+/// Whether the right mouse button flies the tools' camera from the start:
+/// where no scripts run, so nothing else reads the mouse; with scripts it is
+/// the game's, as a shooter aims with it, until F8.
+fn frees_camera(engine: &Engine) -> bool {
+    engine.scripts().is_none()
 }
 
 /// RenderDoc cannot capture Wayland windows (its layer hides
@@ -114,6 +123,9 @@ struct App {
     settings: RendererSettings,
     debug_view: u32,
     fly: FlyCamera,
+    /// Whether the right mouse button flies the tools' camera, rather than
+    /// being the game's (see `frees_camera`); F8 switches it.
+    free: bool,
     options: WindowOptions,
     setup: Option<Setup>,
     // Declared before the window so it is dropped first: the surface borrows the window.
@@ -142,20 +154,46 @@ impl App {
         self.renderer = Some(renderer);
         self.window = Some(window);
         if self.options.tools {
-            tracing::info!(
-                "hold the right mouse button to fly: WASD to move, Q/E down/up, Shift faster, wheel for speed"
-            );
+            self.say_camera();
             tracing::info!("F1 shows frame stats, and the key left of 1 opens the console");
         }
         Ok(())
     }
 
-    /// Captures the mouse while flying so it can turn without limit.
+    /// Says what the right mouse button does: flies the tools' camera, or is
+    /// the game's until F8 frees the camera.
+    fn say_camera(&self) {
+        if self.free {
+            tracing::info!(
+                "hold the right mouse button to fly: WASD to move, Q/E down/up, Shift faster, wheel for speed; \
+                 F8 gives the mouse back to the game"
+            );
+        } else {
+            tracing::info!("the mouse is the game's: F8 frees the camera, to fly it with the right mouse button");
+        }
+    }
+
+    /// Frees the tools' camera, or gives the mouse back to the game.
+    fn toggle_free(&mut self) {
+        self.free = !self.free;
+        if !self.free {
+            self.set_flying(false);
+        }
+        self.say_camera();
+    }
+
+    /// Captures the mouse while flying so it can turn without limit. The game
+    /// hears nothing while it flies, so starting lets go of all it holds, as
+    /// the right button just pressed: otherwise it would never hear them let
+    /// go, and an aim on that button would stay held.
     fn set_flying(&mut self, flying: bool) {
         if flying == self.fly.is_looking() {
             return;
         }
         self.fly.set_looking(flying);
+        if flying {
+            self.game.input.release_all();
+        }
         let Some(window) = &self.window else { return };
         if flying {
             if window.set_cursor_grab(CursorGrabMode::Locked).is_err() {
@@ -254,8 +292,11 @@ impl App {
     /// Development keys until the editor exists: F1 shows frame stats; F12
     /// captures a frame in RenderDoc; F2 to F7 toggle the LOD, shadow
     /// cascade, light complexity, normals, meshlets and ambient occlusion
-    /// views.
+    /// views; F8 frees the camera or gives the mouse back to the game.
     fn key(&mut self, key: &Key) {
+        if self.options.tools && *key == Key::Named(NamedKey::F8) {
+            return self.toggle_free();
+        }
         let Some(renderer) = self.renderer.as_mut().filter(|_| self.options.tools) else { return };
         let view = match key {
             Key::Named(NamedKey::F1) => return self.overlay.toggle(),
@@ -358,10 +399,10 @@ impl ApplicationHandler for App {
                     self.key(&event.logical_key);
                 }
             }
-            WindowEvent::MouseInput { state, button: MouseButton::Right, .. } if self.options.tools => {
+            WindowEvent::MouseInput { state, button: MouseButton::Right, .. } if self.options.tools && self.free => {
                 self.set_flying(state == ElementState::Pressed);
             }
-            WindowEvent::MouseWheel { delta, .. } if self.options.tools => {
+            WindowEvent::MouseWheel { delta, .. } if self.options.tools && self.free => {
                 let notches = match delta {
                     MouseScrollDelta::LineDelta(_, y) => y,
                     MouseScrollDelta::PixelDelta(position) => position.y as f32 / 40.0,
@@ -399,5 +440,15 @@ impl ApplicationHandler for App {
 
     fn exiting(&mut self, _: &ActiveEventLoop) {
         self.renderer = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn with_no_scripts_running_the_right_mouse_button_flies_at_once() {
+        assert!(frees_camera(&Engine::new()), "nothing else reads the mouse");
     }
 }

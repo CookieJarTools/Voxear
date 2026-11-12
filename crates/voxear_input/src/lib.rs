@@ -649,6 +649,21 @@ fn pad_label(family: Family, control: &str) -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn letting_go_of_everything_lets_go_of_a_held_mouse_button() {
+        // As when the window's tools take the mouse while the right button that aims is down.
+        let mut input = Input::without_gamepads();
+        let aim = input.action("Aim").unwrap();
+        input.devices_mut().set_mouse_button(winit::event::MouseButton::Right, true);
+        input.update(0.016);
+        assert!(input.state(aim).held, "aiming while the right button is down");
+        input.release_all();
+        input.update(0.016);
+        assert!(!input.state(aim).held, "no longer aiming once let go");
+        input.update(0.016);
+        assert!(!input.state(aim).held, "nor the frame after, with nothing pressed again");
+    }
+
     fn pad(id: u64, south: f32) -> Pad {
         let mut pad = Pad { id, name: format!("Pad {id}"), ..Pad::default() };
         pad.buttons.insert("South", south);

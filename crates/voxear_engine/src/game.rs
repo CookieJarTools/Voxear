@@ -1229,6 +1229,7 @@ impl ScriptServices for GameServices<'_> {
         };
         let options = PreviewOptions {
             size: options.size.clamp(1, MAX_PREVIEW_SIZE),
+            camera: None,
             background: options.background,
             rotation: Quat::from_array(options.rotation).normalize(),
             offset: Vec2::from(options.offset),

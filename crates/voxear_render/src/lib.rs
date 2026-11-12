@@ -88,7 +88,7 @@ use voxear_rhi::{
 
 pub use assets::AssetUsage;
 pub use assets::{MaterialDesc, MaterialHandle, MeshHandle, TextureSource};
-pub use box_model::{BoxBone, BoxModel, BoxSkin, Face, FaceRect, ModelBox, Sheet, is_box_model};
+pub use box_model::{BoxBone, BoxHit, BoxModel, BoxSkin, Face, FaceRect, ModelBox, Sheet, is_box_model};
 pub use capture::{Capture, CapturedImage};
 pub use cooked::{COOKED_VERSION, CookedModel};
 pub use cooked_picture::{COOKED_PICTURE_VERSION, CookedPicture, PictureUse};
@@ -116,7 +116,8 @@ pub use post::{
     Grading, MotionBlur, PostProcess, Tonemap, Tonemapper, Vignette,
 };
 pub use previews::{
-    MAX_PREVIEW_SIZE, PREVIEW_ATLAS_SIZE, PreviewId, PreviewImage, PreviewOptions, PreviewPart, PreviewPixels,
+    MAX_PREVIEW_SIZE, MAX_VIEW_SIZE, PREVIEW_ATLAS_SIZE, PreviewCamera, PreviewId, PreviewImage, PreviewOptions,
+    PreviewPart, PreviewPixels,
 };
 pub use ies::IesProfile;
 pub use looks::{Look, LookName, SunLook};

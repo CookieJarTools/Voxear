@@ -1272,6 +1272,60 @@ fn a_previews_pixels_read_back_and_save_as_a_png() {
 }
 
 #[test]
+fn a_preview_with_a_camera_of_its_own_is_seen_from_there_as_large_as_a_view_may_be() {
+    use voxear_render::{MAX_VIEW_SIZE, PreviewCamera, PreviewOptions, PreviewPart};
+
+    let Some(mut renderer) = renderer() else { return };
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::IDENTITY));
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let red =
+        renderer.add_material(&MaterialDesc { base_color: [0.9, 0.05, 0.05, 1.0], ..MaterialDesc::default() }).unwrap();
+    let part = PreviewPart { mesh: cube, material: red, transform: voxear_core::math::Mat4::IDENTITY };
+    // A few small previews first, so the view has to find room among them.
+    let small: Vec<_> = (0..3).map(|_| renderer.add_preview(vec![part], PreviewOptions::default())).collect();
+    // The cube from straight in front, four metres back, a little to one side: not where framing would put it.
+    let camera = PreviewCamera { position: Vec3::new(0.6, 0.0, -4.0), target: Vec3::new(0.6, 0.0, 0.0), near: 0.05 };
+    let options = PreviewOptions {
+        size: 4096,
+        camera: Some(camera),
+        rotation: Quat::IDENTITY,
+        background: [0.0, 0.0, 1.0, 1.0],
+        ..PreviewOptions::default()
+    };
+    let view = renderer.add_preview(vec![part], options);
+    renderer.read_preview(view);
+    let mut time = 0.0;
+    let mut pixels = None;
+    for _ in 0..8 {
+        run(&mut renderer, &world, &mut time, 0);
+        small.iter().for_each(|&id| drop(renderer.preview(id)));
+        pixels = pixels.or_else(|| renderer.preview_pixels(view));
+    }
+    let pixels = pixels.expect("read back within a few frames");
+    assert_eq!(pixels.size, MAX_VIEW_SIZE, "a view asked larger is drawn at the most a view may be");
+    assert_eq!(renderer.preview(view).unwrap().size, MAX_VIEW_SIZE);
+    assert!(small.iter().all(|&id| renderer.preview(id).is_some()), "the small ones are still drawn");
+
+    // Where its camera puts a point is where the point is drawn: just inside the cube's near upper corner is
+    // the cube, just outside is the background.
+    let size = pixels.size as f32;
+    let drawn = |point: Vec3| {
+        let clip = camera.view_projection(options.fov_degrees) * point.extend(1.0);
+        let (x, y) = ((clip.x / clip.w * 0.5 + 0.5) * size, (clip.y / clip.w * 0.5 + 0.5) * size);
+        let at = ((y as usize) * pixels.size as usize + x as usize) * 4;
+        [pixels.rgba[at], pixels.rgba[at + 1], pixels.rgba[at + 2]]
+    };
+    let inside = drawn(Vec3::new(0.47, 0.47, -0.5));
+    let outside = drawn(Vec3::new(0.53, 0.53, -0.5));
+    assert!(inside[0] > 80 && inside[0] > inside[2] * 2, "the red cube, got {inside:?}");
+    assert!(outside[2] > 200 && outside[0] < 40, "the blue background, got {outside:?}");
+    // To one side of the middle, as the camera is to the other.
+    let middle = drawn(Vec3::new(0.6, 0.0, -0.5));
+    assert!(middle[2] > 200, "the cube is left of the image's middle, got {middle:?}");
+}
+
+#[test]
 fn a_full_preview_atlas_grows_and_draws_everything_again() {
     use voxear_render::{PreviewOptions, PreviewPart};
 

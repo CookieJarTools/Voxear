@@ -51,6 +51,10 @@ use crate::{
     skeleton::{Bone, BonePose, ModelAnimation, Skeleton, Skin, SkinVertex},
 };
 
+mod edit;
+
+pub use edit::BoxHit;
+
 /// A box model's file extension.
 pub const EXTENSION: &str = "boxmodel";
 
@@ -499,17 +503,35 @@ impl BoxModel {
     /// Its boxes as one mesh in the model's space, in metres, as the bones
     /// stand at rest, each box's corners bound whole to its bone.
     pub fn mesh(&self) -> MeshData {
+        self.mesh_posed(&self.rest_matrices())
+    }
+
+    /// Each bone's place in the model's space as it stands at rest, in
+    /// metres.
+    pub fn rest_matrices(&self) -> Vec<Mat4> {
         let skeleton = self.skeleton();
-        let placed = skeleton.model_matrices(&skeleton.rest());
-        let (size, sheet) = (self.pixel_size(), Vec3::new(self.sheet.width as f32, self.sheet.height as f32, 1.0));
+        skeleton.model_matrices(&skeleton.rest())
+    }
+
+    /// Where a box is in the model's space, in metres, with its bone at
+    /// `bone`: its middle and how it is turned, and how far its faces
+    /// stand from its middle along its own X, Y and Z.
+    pub fn box_place(&self, bone: &Mat4, model_box: &ModelBox) -> (Mat4, Vec3) {
+        let size = self.pixel_size();
+        let half = Vec3::from(model_box.size.map(|side| side as f32)) * 0.5;
+        let in_bone = Mat4::from_rotation_translation(turned(model_box.rotation), (model_box.from + half) * size);
+        (*bone * in_bone, (half + Vec3::splat(model_box.inflate)) * size)
+    }
+
+    /// [`mesh`](Self::mesh) with each bone where `bones` puts it in the
+    /// model's space, one for each bone: the model posed without skinning,
+    /// as its boxes move whole.
+    pub fn mesh_posed(&self, bones: &[Mat4]) -> MeshData {
+        let sheet = Vec3::new(self.sheet.width as f32, self.sheet.height as f32, 1.0);
         let mut data = MeshData::default();
-        for ((bone, joint), in_model) in self.bones.iter().zip(0u16..).zip(&placed) {
+        for ((bone, joint), in_model) in self.bones.iter().zip(0u16..).zip(bones) {
             for model_box in &bone.boxes {
-                let half = Vec3::from(model_box.size.map(|side| side as f32)) * 0.5;
-                let middle = (model_box.from + half) * size;
-                let in_bone = Mat4::from_rotation_translation(turned(model_box.rotation), middle);
-                let place = *in_model * in_bone;
-                let reach = (half + Vec3::splat(model_box.inflate)) * size;
+                let (place, reach) = self.box_place(in_model, model_box);
                 for face in Face::ALL {
                     let Some(rect) = model_box.face_rect(face) else { continue };
                     let (normal, (across, down)) = (face.normal(), face.across_and_down());
@@ -624,8 +646,15 @@ const HEADING: &str = "# Voxear box model: boxes under bones, measured in the pi
 const SHEET: &str = "Sheet";
 
 /// Degrees about X, Y and Z as a rotation, turned as an Obj's are.
-fn turned(degrees: Vec3) -> Quat {
+pub(crate) fn turned(degrees: Vec3) -> Quat {
     Quat::from_euler(EulerRot::YXZ, degrees.y.to_radians(), degrees.x.to_radians(), degrees.z.to_radians())
+}
+
+/// A rotation as degrees about X, Y and Z, as [`turned`] reads them.
+pub(crate) fn degrees(rotation: Quat) -> Vec3 {
+    let (y, x, z) = rotation.to_euler(EulerRot::YXZ);
+    let whole = |radians: f32| (radians.to_degrees() * 1000.0).round() / 1000.0 + 0.0;
+    Vec3::new(whole(x), whole(y), whole(z))
 }
 
 /// A face's place on the sheet drawn in a little from each edge.

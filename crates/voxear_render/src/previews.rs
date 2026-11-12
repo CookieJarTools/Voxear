@@ -3,7 +3,9 @@
 //! icons, menus). A preview is the meshes and materials of one object, with
 //! where each sits in it, and [`PreviewOptions`]: its size, the background
 //! (any colour, or clear), how the object is turned, moved and zoomed, the
-//! field of view, and the light.
+//! field of view, and the light. One given a camera of its own
+//! ([`PreviewCamera`]) is a view instead: seen from exactly there, as large
+//! as [`MAX_VIEW_SIZE`], for an editor's window on a thing being made.
 //!
 //! Previews are drawn into cells of one atlas texture, a few each frame, in
 //! the frame's own graph before the UI, so one asked for shows a frame
@@ -43,14 +45,15 @@ const FIRST_ATLAS_SIZE: u32 = 1024;
 pub const PREVIEW_FORMAT: vk::Format = vk::Format::R8G8B8A8_SRGB;
 /// The largest preview, in pixels; one asked bigger is drawn at this.
 pub const MAX_PREVIEW_SIZE: u32 = 512;
+/// The largest a preview with a camera of its own is drawn.
+pub const MAX_VIEW_SIZE: u32 = 1024;
 /// The smallest cell; smaller previews take one this size.
 const SMALLEST_CELL: u32 = 32;
 /// How much bigger a preview is drawn than it shows, for smooth edges, at
-/// most: the drawn image is never larger than [`MAX_DRAWN`], so the
-/// largest previews get twice and small ones four times. It is as large as
-/// the largest preview drawn so far needs, from [`FIRST_DRAWN`].
+/// most, and twice at least: the largest previews and views get twice and
+/// small ones four times. The drawn image is as large as the largest
+/// preview drawn so far needs, from [`FIRST_DRAWN`].
 const SUPERSAMPLE: u32 = 4;
-const MAX_DRAWN: u32 = MAX_PREVIEW_SIZE * 2;
 const FIRST_DRAWN: u32 = 256;
 /// Previews drawn in one frame at most; the rest wait for the next.
 const PER_FRAME: usize = 8;
@@ -73,12 +76,45 @@ pub struct PreviewPart {
     pub transform: Mat4,
 }
 
+/// Where a preview is seen from, for one not framed to fit: the camera's
+/// place, the point it looks at, and how near it sees, all in the
+/// object's space once turned.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PreviewCamera {
+    pub position: Vec3,
+    pub target: Vec3,
+    pub near: f32,
+}
+
+impl PreviewCamera {
+    /// Which way it looks, and its right and up.
+    pub fn axes(&self) -> (Vec3, Vec3, Vec3) {
+        let forward = (self.target - self.position).try_normalize().unwrap_or(Vec3::Z);
+        let right = Vec3::Y.cross(forward).try_normalize().unwrap_or(Vec3::X);
+        (forward, right, forward.cross(right))
+    }
+
+    /// From the object's space to the image's clip space, for a square
+    /// image and a field of view in degrees: what the preview is drawn
+    /// with, for finding what is under a point of it.
+    pub fn view_projection(&self, fov_degrees: f32) -> Mat4 {
+        let fov = fov_degrees.clamp(1.0, 120.0).to_radians();
+        let (forward, _, _) = self.axes();
+        let view = look_at_mat4(self.position, self.position + forward, Vec3::Y);
+        vulkan::perspective_infinite_reverse(fov, 1.0, self.near.max(0.001)) * view
+    }
+}
+
 /// How a preview looks. The defaults suit an icon: a three-quarter view
 /// from a little above, framed to fit, on a clear background.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PreviewOptions {
-    /// Width and height in pixels, up to [`MAX_PREVIEW_SIZE`].
+    /// Width and height in pixels, up to [`MAX_PREVIEW_SIZE`], or to
+    /// [`MAX_VIEW_SIZE`] with a camera of its own.
     pub size: u32,
+    /// Seen from here rather than framed to fit; `offset` and `zoom` then
+    /// do nothing.
+    pub camera: Option<PreviewCamera>,
     /// Behind the object: sRGB colour and alpha, where an alpha of 0 leaves
     /// it clear.
     pub background: [f32; 4],
@@ -104,10 +140,19 @@ pub struct PreviewOptions {
     pub exposure: f32,
 }
 
+impl PreviewOptions {
+    /// The size it is drawn at: as asked, up to the most its kind may be.
+    pub fn drawn_size(&self) -> u32 {
+        let most = if self.camera.is_some() { MAX_VIEW_SIZE } else { MAX_PREVIEW_SIZE };
+        self.size.clamp(1, most)
+    }
+}
+
 impl Default for PreviewOptions {
     fn default() -> Self {
         Self {
             size: 128,
+            camera: None,
             background: [0.0; 4],
             rotation: Quat::from_rotation_y(-35f32.to_radians()),
             offset: Vec2::ZERO,
@@ -236,7 +281,7 @@ impl Previews {
         if let Some(parts) = parts {
             preview.parts = parts;
         }
-        if preview.cell.is_some_and(|cell| cell.size != cell_size(options.size)) {
+        if preview.cell.is_some_and(|cell| cell.size != cell_size(&options)) {
             self.cells.free(preview.cell.take().expect("checked"));
             preview.drawn = false;
         }
@@ -267,7 +312,7 @@ impl Previews {
         }
         let (cell, texture) = (preview.cell?, self.texture?);
         let atlas = self.cells.size as f32;
-        let shown = preview.options.size.min(MAX_PREVIEW_SIZE) as f32;
+        let shown = preview.options.drawn_size() as f32;
         let [x, y] = [cell.x as f32, cell.y as f32];
         Some(PreviewImage {
             texture,
@@ -455,7 +500,7 @@ impl Previews {
             frames.push(camera_frame(bounds, &options));
             jobs.push(Job {
                 cell,
-                shown: options.size.clamp(1, MAX_PREVIEW_SIZE),
+                shown: options.drawn_size(),
                 parts: (start, instances.len()),
                 frame: frames.len() - 1,
                 background: linear(options.background),
@@ -471,7 +516,7 @@ impl Previews {
     /// A preview's cell, finding it one if it has none: a free one, or else
     /// the cell of the preview looked at longest ago.
     fn cell_for(&mut self, id: PreviewId) -> Option<Cell> {
-        let size = cell_size(self.previews.get(&id)?.options.size);
+        let size = cell_size(&self.previews.get(&id)?.options);
         if let Some(cell) = self.previews[&id].cell {
             return Some(cell);
         }
@@ -545,7 +590,7 @@ impl Previews {
                 self.reads.push(id);
                 continue;
             };
-            let size = preview.options.size.min(MAX_PREVIEW_SIZE);
+            let size = preview.options.drawn_size();
             let usage = vk::BufferUsageFlags::TRANSFER_DST;
             let bytes = u64::from(size * size * 4);
             let buffer =
@@ -598,12 +643,12 @@ impl Previews {
 
 /// How many times bigger a cell's preview is drawn than it shows.
 fn scale_of(cell: Cell) -> u32 {
-    (MAX_DRAWN / cell.size).clamp(1, SUPERSAMPLE)
+    (MAX_VIEW_SIZE / cell.size).clamp(2, SUPERSAMPLE)
 }
 
-/// The cell a preview of `size` pixels takes: the next power of two.
-fn cell_size(size: u32) -> u32 {
-    size.clamp(SMALLEST_CELL, MAX_PREVIEW_SIZE).next_power_of_two()
+/// The cell a preview takes: its size's next power of two.
+fn cell_size(options: &PreviewOptions) -> u32 {
+    options.drawn_size().max(SMALLEST_CELL).next_power_of_two()
 }
 
 /// The sphere around the turned parts' own bounding spheres, as a centre
@@ -636,23 +681,31 @@ fn framing(assets: &Assets, parts: &[PreviewPart], rotation: Quat) -> (Vec3, f32
 /// zoomed and moved as the options say.
 fn camera_frame((center, radius): (Vec3, f32), options: &PreviewOptions) -> GpuFrame {
     let fov = options.fov_degrees.clamp(1.0, 120.0).to_radians();
-    // A little room around it, so it does not touch the edges.
-    let distance = radius * MARGIN / (fov * 0.5).sin() / options.zoom.max(0.01);
-    let toward = Vec3::new(0.0, 0.35, -1.0).normalize();
-    let forward = -toward;
-    let right = Vec3::Y.cross(forward).normalize();
-    let up = forward.cross(right);
-    // Moving the camera the other way moves the object across the image.
-    let across = (fov * 0.5).tan() * distance * 2.0;
-    let shift = right * (-options.offset.x * across) + up * (options.offset.y * across);
-    let position = center + toward * distance + shift;
-    let view = look_at_mat4(position, center + shift, Vec3::Y);
-    let near = (distance - radius * 1.5).max(distance * 0.01).max(0.001);
-    let projection = vulkan::perspective_infinite_reverse(fov, 1.0, near);
+    let (view_projection, position, forward, near) = match options.camera {
+        // Its own camera: as it says, whatever the object's size.
+        Some(camera) => {
+            (camera.view_projection(options.fov_degrees), camera.position, camera.axes().0, camera.near.max(0.001))
+        }
+        None => {
+            // A little room around it, so it does not touch the edges.
+            let distance = radius * MARGIN / (fov * 0.5).sin() / options.zoom.max(0.01);
+            let toward = Vec3::new(0.0, 0.35, -1.0).normalize();
+            let forward = -toward;
+            let right = Vec3::Y.cross(forward).normalize();
+            let up = forward.cross(right);
+            // Moving the camera the other way moves the object across the image.
+            let across = (fov * 0.5).tan() * distance * 2.0;
+            let shift = right * (-options.offset.x * across) + up * (options.offset.y * across);
+            let position = center + toward * distance + shift;
+            let view = look_at_mat4(position, center + shift, Vec3::Y);
+            let near = (distance - radius * 1.5).max(distance * 0.01).max(0.001);
+            (vulkan::perspective_infinite_reverse(fov, 1.0, near) * view, position, forward, near)
+        }
+    };
     let sky = crate::Sky::default();
     let light = options.light_from.try_normalize().unwrap_or(Vec3::Y);
     GpuFrame {
-        view_proj: cols(projection * view),
+        view_proj: cols(view_projection),
         camera_position: position.to_array(),
         camera_forward: forward.to_array(),
         near,

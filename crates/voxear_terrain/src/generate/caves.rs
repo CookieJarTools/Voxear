@@ -186,6 +186,23 @@ impl Caves {
         Some(shown(net, &room, [0.0; 3], None, false, &|_| None))
     }
 
+    /// The tunnels that reach into the region `at` is in, ramps and dead ends among them: each one's middle
+    /// line from end to end, as places along it, and how wide it is at its widest. Every tunnel of a level.
+    pub fn tunnels_near(&self, at: [f32; 3]) -> Vec<(Vec<[f32; 3]>, f32)> {
+        let net = &*self.net;
+        let line = |tunnel: &network::Tunnel, lift: f32| {
+            let places = tunnel.line.iter().map(|p| [p[0], p[1] + lift, p[2]]).collect();
+            (places, tunnel.radius * 2.0)
+        };
+        match &net.level {
+            Some(level) => level.all.tunnels.iter().map(|tunnel| line(tunnel, net.level_height())).collect(),
+            None => {
+                let grid = net.grid();
+                net.gathered(&grid, grid.region(at)).tunnels.iter().map(|tunnel| line(tunnel, 0.0)).collect()
+            }
+        }
+    }
+
     /// The room whose hollow `at` is in: none in a tunnel or in rock.
     pub fn room_at(&self, at: [f32; 3]) -> Option<PlacedRoom> {
         let net = &*self.net;

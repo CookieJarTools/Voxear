@@ -2912,6 +2912,13 @@ paint = { density = 25.0, spacing = 2.0 }
         assert_eq!((data.paint.density, data.paint.spacing, data.paint.lean), (25.0, 2.0, PaintData::default().lean));
         let again: FoliageData = toml::from_str(&toml::to_string(&data).unwrap()).unwrap();
         assert_eq!(again, data);
+        // A plant solid all through, as a rock is, collides as a box, and is written back as one.
+        let rocks: FoliageData = toml::from_str("mesh = \"builtin:cube\"\ntrunk = { box = [1.4, 0.7, 1.1] }").unwrap();
+        assert_eq!(rocks.grown().trunk, Some(voxear_scene::Trunk::solid([1.4, 0.7, 1.1])));
+        let written = toml::to_string(&rocks).unwrap();
+        assert!(written.contains("box = [1.4"), "{written}");
+        assert_eq!(toml::from_str::<FoliageData>(&written).unwrap(), rocks);
+        assert!(!toml::to_string(&data).unwrap().contains("box"), "a trunk writes no box");
         // Written to a millimetre and a tenth of a degree, upright plants with five numbers.
         let plant = Plant { position: [1.23456, 0.0, -2.0], yaw: 1.0, scale: 1.0, lean: [0.0; 2] };
         assert_eq!(PlantRow::of(&plant), PlantRow::Upright([1.235, 0.0, -2.0, 57.3, 1.0]));

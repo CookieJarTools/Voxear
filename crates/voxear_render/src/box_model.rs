@@ -408,6 +408,10 @@ pub struct BoxModel {
     /// The colours its sculpted boxes' cubes have, red, green, blue and
     /// how solid: a cube keeps its colour's place among them, and one.
     pub palette: Vec<[u8; 4]>,
+    /// How much it bends in the wind and away from what walks through it,
+    /// from its foot up, as a plant does (see `shaders/wind.slang`): 1 for
+    /// grass, less for a tree, 0 for anything that is not a plant.
+    pub wind_bend: f32,
 }
 
 impl Default for BoxModel {
@@ -418,15 +422,21 @@ impl Default for BoxModel {
             bones: Vec::new(),
             clips: Vec::new(),
             palette: Vec::new(),
+            wind_bend: 0.0,
         }
     }
 }
+
+/// The most a model bends in the wind.
+pub const MOST_WIND_BEND: f32 = 4.0;
 
 /// The model as its file has it.
 #[derive(Serialize, Deserialize)]
 struct FileModel {
     #[serde(default = "pixels_per_block")]
     pixels_per_block: f32,
+    #[serde(default, skip_serializing_if = "no_bend")]
+    wind_bend: f32,
     sheet: [u32; 2],
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pixels: String,
@@ -436,6 +446,10 @@ struct FileModel {
     bones: Vec<FileBone>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     clips: Vec<clips::FileClip>,
+}
+
+fn no_bend(value: &f32) -> bool {
+    *value == 0.0
 }
 
 fn pixels_per_block() -> f32 {
@@ -565,7 +579,9 @@ impl BoxModel {
                 name: bone.name,
             });
         }
-        let mut model = Self { pixels_per_block: file.pixels_per_block, sheet, bones, clips: Vec::new(), palette };
+        let wind_bend = if file.wind_bend.is_finite() { file.wind_bend.clamp(0.0, MOST_WIND_BEND) } else { 0.0 };
+        let mut model =
+            Self { pixels_per_block: file.pixels_per_block, sheet, bones, clips: Vec::new(), palette, wind_bend };
         model.clips = clips::read(file.clips, &model).context("reading its clips")?;
         Ok(model)
     }
@@ -574,6 +590,7 @@ impl BoxModel {
     pub fn to_text(&self) -> String {
         let file = FileModel {
             pixels_per_block: self.pixels_per_block,
+            wind_bend: self.wind_bend,
             sheet: [self.sheet.width, self.sheet.height],
             pixels: self.sheet.to_text(),
             palette: self.palette.iter().map(|color| voxels::color_text(*color)).collect(),
@@ -740,9 +757,12 @@ impl BoxModel {
             }),
             roles: self.bones.iter().map(|bone| bone.role).collect(),
         };
-        let (data, far) = self.build(&self.rest_matrices());
+        let (mut data, far) = self.build(&self.rest_matrices());
         if data.indices.is_empty() {
             return model;
+        }
+        if self.wind_bend > 0.0 {
+            sway_masks(&mut data);
         }
         let mut lods = full_lod(&data);
         // From far off, layers lie flat: as far out as the tallest stands, which is how wrong that looks.
@@ -763,7 +783,14 @@ impl BoxModel {
             compress: false,
             source: None,
         });
-        let desc = MaterialDesc { roughness: 1.0, alpha_cutoff: Some(0.5), pixels: true, ..MaterialDesc::default() };
+        // A plant bends whole: its cubes' faces would part if each fluttered along the way it faces.
+        let desc = MaterialDesc {
+            roughness: 1.0,
+            alpha_cutoff: Some(0.5),
+            pixels: true,
+            wind_bend: self.wind_bend.max(0.0),
+            ..MaterialDesc::default()
+        };
         model.materials.push(PreparedMaterial {
             name: SHEET.to_string(),
             desc,
@@ -802,6 +829,20 @@ impl BoxModel {
             model.sheet.fill([left as u32 + 1, top as u32 + 1], [side - 2, side - 2], [light, light, light, 255]);
         }
         model
+    }
+}
+
+/// Wind masks for a plant of boxes (see `mesh::Vertex::wind`): nothing
+/// flutters, and what reaches out from over its foot sways on its own as a
+/// branch does, the more the further out, so a tree's crown stirs while
+/// its trunk only leans. A vertex's masks follow from where it is alone,
+/// so faces that meet stay met.
+fn sway_masks(data: &mut MeshData) {
+    let out = |vertex: &Vertex| Vec3::from(vertex.position).with_y(0.0).length();
+    let reach = data.vertices.iter().map(out).fold(1e-6_f32, f32::max);
+    for vertex in &mut data.vertices {
+        let share = (out(vertex) / reach).clamp(0.0, 1.0);
+        vertex.wind = [0, 0, (share * share * 255.0).round() as u8, vertex.wind[3]];
     }
 }
 

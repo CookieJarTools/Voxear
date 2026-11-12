@@ -156,6 +156,14 @@ pub fn resolved(content: &mut Content, file: &BlockFile) -> Resolved {
         };
         kind.cutout = cut_out(&kind.material) || cut_out(&kind.top) || cut_out(&kind.bottom);
     }
+    // And one drawn with a material that bends in the wind, as a foliage material does, sways as leaves do.
+    for kind in file.blocks.iter_mut().filter(|kind| kind.is_live()) {
+        let mut bends = |material: &Option<String>| {
+            let guid = material.as_deref().and_then(|reference| content.parse(reference).ok()?.guid());
+            guid.and_then(|guid| content.material_data(guid).ok()).is_some_and(|data| data.wind_bend() > 0.0)
+        };
+        kind.sways |= bends(&kind.material) || bends(&kind.top) || bends(&kind.bottom);
+    }
     Resolved { file, guids }
 }
 
@@ -632,10 +640,17 @@ pub fn make(file: &Resolved, base: &Arc<BlockMap>, edits: Option<&BlockEdits>) -
     BlockWorld::made(blocks, &faces, file.block_size, file.smooth)
 }
 
+/// A face drawn with its block's colour alone: matt, as earth and stone
+/// are, so it shines back nothing of the sky. A block that should shine
+/// names a material.
+fn colored(color: [f32; 3]) -> MaterialData {
+    MaterialData { color, roughness: 1.0, ..default_material() }
+}
+
 /// How a world of blocks looks: each way its faces are drawn, with its
 /// material where it names one and else its colour, a picture a block.
 pub fn look(content: &mut Content, renderer: &mut Renderer, file: &Resolved) -> Result<BlockLook> {
-    let fallback = content.material(renderer, &MaterialSource::Inline(default_material()))?;
+    let fallback = content.material(renderer, &MaterialSource::Inline(colored(default_material().color)))?;
     let (looks, _) = file.faces();
     let mut surfaces = Vec::with_capacity(looks.len());
     for face in looks {
@@ -646,8 +661,7 @@ pub fn look(content: &mut Content, renderer: &mut Renderer, file: &Resolved) -> 
         let material = match named {
             Some(material) => material,
             None => {
-                let colored = MaterialData { color: face.color, ..default_material() };
-                content.material(renderer, &MaterialSource::Inline(colored))?
+                content.material(renderer, &MaterialSource::Inline(colored(face.color)))?
             }
         };
         surfaces.push(voxear_render::SurfaceLook {
@@ -814,6 +828,12 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn a_face_of_its_blocks_colour_alone_is_matt() {
+        let face = colored([0.2, 0.6, 0.1]);
+        assert_eq!((face.color, face.roughness, face.metallic), ([0.2, 0.6, 0.1], 1.0, 0.0));
+    }
 
     #[test]
     fn water_placed_flows_as_the_game_ticks_the_same_however_its_frames_fall() {

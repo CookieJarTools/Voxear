@@ -239,9 +239,11 @@ The row also offers six **starter plants**, each made of small cubes to sit well
 | Grass Tuft | On more than half the world's top blocks |
 | Flower | In patches about 14 m across |
 | Bush | Here and there, about 7 m apart |
-| Rock | On any ground, steep slopes too, in many sizes |
+| Rock | On any ground, steep slopes too, in many sizes. It is solid: walked round and climbed on |
 | Tree | Where it is wet enough, on gentle ground, drawn out to 400 m, and beyond as a wood of blocks. Its trunk collides |
 | Pine | Where it is cool, drawn out to 400 m, and beyond as a wood of blocks. Its trunk collides |
+
+The grass, flowers, bushes and trees bend in the [[Wind]] and away from whoever walks through them; the rock does neither.
 
 A starter plant is a model like any other. Open it in the Model window to reshape or recolour it, and every one of them in the world changes with it. To grow a plant of your own, sculpt a box model from cubes (see [[Box Models#Plants and trees]]) and pick it on **Add plant**.
 

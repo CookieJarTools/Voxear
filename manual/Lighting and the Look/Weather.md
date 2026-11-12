@@ -26,7 +26,7 @@ Each kind is seven amounts, each from 0 for none to 1:
 | **Cloud** | Fills the sky's clouds in towards overcast (see [[The Sky]]). At 1 the sky is covered whatever its own Cover |
 | **Darkness** | Makes the clouds heavier and their shadows darker, and takes the sun's light: under the atmosphere the sky dims with it |
 | **Fog** | Thickens the level's fog, turning it on where it was off, and the air's haze (see [[Post-Processing]]) |
-| **Wind** | Makes the level's Wind Zone blow harder, in harder gusts: plants, the sea, the clouds and the rain all feel it (see [[Wind]]). A level without a Wind Zone stays still |
+| **Wind** | Makes the level's Wind Zone blow harder, in harder gusts: plants, the sea, the clouds and the rain all feel it (see [[Wind]]). In a level without a Wind Zone the weather's own wind blows, along the level's X as its clouds drift, on plants, rain, smoke and the clouds; the sea takes its wind from a Wind Zone alone |
 | **Rain** | Rain falling round the camera |
 | **Snow** | Snow falling round the camera |
 | **Lightning** | How often lightning strikes: at 1, every eight seconds or so. A strike lights the sky and the level under it for a moment, in two or three flickers |

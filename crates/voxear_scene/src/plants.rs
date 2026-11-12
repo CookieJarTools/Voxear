@@ -154,17 +154,30 @@ impl FromIterator<u32> for PlantSet {
     }
 }
 
-/// What a plant's trunk collides as: an upright capsule `radius` metres
-/// round and `height` metres tall from the ground, scaled with the plant.
+/// What a plant collides as, sized with the plant: an upright capsule
+/// `radius` metres round and `height` metres tall from the ground, as a
+/// tree's trunk is; or, where `solid` gives one, a box that many metres
+/// along x, y and z, standing on the ground about the plant's middle and
+/// turned with it, as a rock is.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Trunk {
     pub radius: f32,
     pub height: f32,
+    #[serde(rename = "box", skip_serializing_if = "Option::is_none")]
+    pub solid: Option<[f32; 3]>,
 }
 
 impl Default for Trunk {
     fn default() -> Self {
-        Self { radius: 0.25, height: 4.0 }
+        Self { radius: 0.25, height: 4.0, solid: None }
+    }
+}
+
+impl Trunk {
+    /// A box `size` metres along x, y and z, standing on the ground.
+    pub fn solid(size: [f32; 3]) -> Self {
+        Self { solid: Some(size.map(|side| side.max(0.01))), ..Self::default() }
     }
 }
 

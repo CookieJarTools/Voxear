@@ -632,7 +632,9 @@ fn wind(world: &World) -> GpuWind {
     };
     let weather = crate::weather::Weather::in_world(world);
     let zone = zones.into_iter().find(global);
-    zone.map(|(_, zone, transform)| weather.wind(*zone).gpu(transform.rotation)).unwrap_or_default()
+    let zone = zone.map(|(_, zone, transform)| weather.wind(*zone).gpu(transform.rotation));
+    // With none, the weather's own wind blows.
+    zone.or_else(|| weather.wind_alone().map(|(zone, rotation)| zone.gpu(rotation))).unwrap_or_default()
 }
 
 #[cfg(test)]

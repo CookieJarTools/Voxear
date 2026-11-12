@@ -30,8 +30,9 @@ use crate::{
 /// a mesh's seams, by sloppy simplification (see `lod`). 8: skinned meshes'
 /// skin data in the payload, nodes' skins, and the model's skeleton, skins
 /// and clips. 11: whether a material's pixels are drawn sharp. 12: what part of
-/// a body each bone moves, for a model that says.
-pub const COOKED_VERSION: u32 = 12;
+/// a body each bone moves, for a model that says. 13: how much a material
+/// bends and flutters in the wind, for a plant that is a box model.
+pub const COOKED_VERSION: u32 = 13;
 const MAGIC: &[u8; 8] = b"VXMODEL\0";
 const NONE: u32 = u32::MAX;
 /// Where each part of the payload starts, a multiple of a compressed
@@ -235,6 +236,7 @@ impl CookedModel {
             w.f32(desc.normal_scale);
             w.option(desc.alpha_cutoff.map(f32::to_bits));
             w.u32(u32::from(desc.pixels));
+            w.f32s(&[desc.wind_bend, desc.wind_flutter]);
             for texture in [material.base_color, material.metallic_roughness, material.normal, material.emissive] {
                 w.option(texture.map(|t| t as u32));
             }
@@ -342,6 +344,7 @@ fn read(path: &str, bytes: &[u8]) -> Result<CookedModel> {
         let normal_scale = r.f32()?;
         let alpha_cutoff = r.option()?.map(f32::from_bits);
         let pixels = r.u32()? != 0;
+        let [wind_bend, wind_flutter] = r.f32s()?;
         let desc = MaterialDesc {
             base_color: [r0, g, b, a],
             metallic,
@@ -350,6 +353,8 @@ fn read(path: &str, bytes: &[u8]) -> Result<CookedModel> {
             normal_scale,
             alpha_cutoff,
             pixels,
+            wind_bend,
+            wind_flutter,
             ..MaterialDesc::default()
         };
         let mut texture = || r.option().map(|t| t.map(|t| t as usize));

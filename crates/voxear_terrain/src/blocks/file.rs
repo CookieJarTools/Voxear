@@ -133,6 +133,11 @@ pub struct BlockKind {
     /// `voxear_engine::blocks::resolved`), as a named block's look is.
     #[serde(skip)]
     pub cutout: bool,
+    /// Whether it sways in the wind, as leaves do: its block says so, or
+    /// one of its materials bends in the wind. Never written: it is read
+    /// where the world is made, as `cutout` is.
+    #[serde(skip)]
+    pub sways: bool,
 }
 
 /// An entry as its file says it: one naming a block says which and where it
@@ -223,6 +228,7 @@ impl Default for BlockKind {
             cover: None,
             water: false,
             cutout: false,
+            sways: false,
         }
     }
 }
@@ -429,8 +435,9 @@ impl BlockFile {
             let sides = find(&kind.material, kind.color);
             let bottom = find(&kind.bottom.clone().or_else(|| kind.material.clone()), kind.color);
             let color = kind.color.map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u8);
-            let see_through = kind.cutout && !kind.water;
-            faces.push(BlockFaces { water: kind.water, see_through, color, ..BlockFaces::new(top, sides, bottom) });
+            let (see_through, sways) = (kind.cutout && !kind.water, kind.sways && !kind.water);
+            let drawn = BlockFaces::new(top, sides, bottom);
+            faces.push(BlockFaces { water: kind.water, see_through, sways, color, ..drawn });
         }
         (looks, faces)
     }

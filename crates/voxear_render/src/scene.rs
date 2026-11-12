@@ -688,11 +688,13 @@ pub fn extract(
     let local_shadows = local_shadows(&mut frame, &mut lights, shadowed);
     // What pushes through foliage, the nearest the camera first.
     let pushing = world.query_ref::<(Entity, &crate::FoliageInteraction, &Transform, Option<&WorldTransform>)>();
+    let walkers = world.resource::<crate::Walkers>().map(|walkers| walkers.0.as_slice()).unwrap_or_default();
     let pushers = pushing
         .without::<Destroying>()
         .into_iter()
         .filter(|(entity, ..)| on(*entity, Switch::FoliageInteraction))
         .map(|(_, push, transform, at)| (at.map_or(transform.position, |w| w.0.w_axis.truncate()), *push))
+        .chain(walkers.iter().copied())
         .collect();
     frame.pushes = crate::foliage::pushes(position, pushers);
     // What presses tracks into the ground, each with how high it is above the ground under it.
@@ -713,6 +715,8 @@ pub fn extract(
         zone.shape == crate::WindShape::Global && on(*entity, Switch::WindZone)
     };
     let zone = zones.into_iter().find(global).map(|(_, zone, transform)| (weather.wind(*zone), transform.rotation));
+    // With none, the weather's own wind blows.
+    let zone = zone.or_else(|| weather.wind_alone());
     if let Some((zone, rotation)) = zone {
         frame.wind = zone.gpu(rotation);
     }

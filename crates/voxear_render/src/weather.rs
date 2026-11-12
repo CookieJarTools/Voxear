@@ -180,6 +180,16 @@ impl WeatherAmounts {
         Fog { enabled: true, density: own + FOG_DENSITY * self.fog, ..fog }
     }
 
+    /// The wind over a level with no Wind Zone under this weather, and the
+    /// way it is turned: none in still weather, and as hard as the
+    /// weather's own wind in rain or a storm, so plants stir in bad weather
+    /// with nothing set up. It blows along +X, the way clouds drift over a
+    /// level with no wind.
+    pub fn wind_alone(self) -> Option<(WindZone, voxear_core::math::Quat)> {
+        let along_x = voxear_core::math::Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
+        (self.wind > 0.0).then(|| (self.wind(WindZone { strength: 0.0, ..WindZone::default() }), along_x))
+    }
+
     /// The level's Wind Zone under this weather: blowing harder, in harder
     /// gusts.
     pub fn wind(self, zone: WindZone) -> WindZone {
@@ -382,6 +392,16 @@ impl Weather {
 mod tests {
     use super::*;
     use crate::scene::Clouds;
+
+    #[test]
+    fn a_storm_blows_over_a_level_with_no_wind_zone_and_clear_weather_does_not() {
+        assert!(WeatherAmounts::default().wind_alone().is_none(), "still on a clear day");
+        let storm = WeatherKind::Storm.amounts();
+        let (zone, turned) = storm.wind_alone().expect("a storm's own wind");
+        assert!(zone.strength >= storm.wind && zone.strength > 0.5, "as hard as the storm blows: {}", zone.strength);
+        let gpu = zone.gpu(turned);
+        assert!((gpu.direction[0] - 1.0).abs() < 1e-4 && gpu.direction[1].abs() < 1e-4, "along x: {:?}", gpu.direction);
+    }
 
     #[test]
     fn weather_eases_from_what_it_is_to_what_it_is_set_to() {

@@ -76,6 +76,7 @@ pub enum PlantsField {
     Trunk,
     TrunkRadius,
     TrunkHeight,
+    BoxSize,
     Cut,
     BrushSize,
     Strength,
@@ -130,11 +131,25 @@ pub fn props(world: &World, entity: Entity, settings: Vec<Prop>) -> Vec<Prop> {
     }
     let mut props = settings;
     props.push(Prop::Plants(F::Trunk));
-    if source(world, entity).is_some_and(|data| data.trunk.is_some()) {
-        props.extend([Prop::Plants(F::TrunkRadius), Prop::Plants(F::TrunkHeight)]);
+    match source(world, entity).and_then(|data| data.trunk) {
+        Some(Trunk { solid: Some(_), .. }) => props.push(Prop::Plants(F::BoxSize)),
+        Some(_) => props.extend([Prop::Plants(F::TrunkRadius), Prop::Plants(F::TrunkHeight)]),
+        None => {}
     }
     props.push(Prop::Plants(F::Cut));
     props
+}
+
+/// What a Foliage's plants collide as, as its Collider row offers them.
+const COLLIDERS: [&str; 3] = ["None", "Trunk", "Box"];
+
+/// How large the Foliage's plant is as modelled, in metres along x, y and
+/// z from the ground up, once the renderer has its mesh.
+fn model_size(world: &World, entity: Entity) -> Option<[f32; 3]> {
+    let mesh = world.get::<voxear_render::Foliage>(entity)?.mesh;
+    let (least, most) = world.resource::<voxear_engine::mesh_boxes::MeshBoxes>()?.of(mesh)?;
+    let round = |metres: f32| (metres.max(0.05) * 100.0).round() / 100.0;
+    Some([round(most.x - least.x), round(most.y.max(0.0)), round(most.z - least.z)])
 }
 
 fn source(world: &World, entity: Entity) -> Option<&voxear_engine::scene_file::FoliageData> {
@@ -143,9 +158,10 @@ fn source(world: &World, entity: Entity) -> Option<&voxear_engine::scene_file::F
 
 pub fn label(field: PlantsField) -> &'static str {
     match field {
-        F::Trunk => "Trunk collider",
+        F::Trunk => "Collider",
         F::TrunkRadius => "Trunk radius",
         F::TrunkHeight => "Trunk height",
+        F::BoxSize => "Box size",
         F::Cut => "Cut prefab",
         F::BrushSize => "Size",
         F::Strength => "Strength",
@@ -178,7 +194,7 @@ pub fn label(field: PlantsField) -> &'static str {
 /// The name a prefab's locks give the value.
 pub fn key(field: PlantsField) -> &'static str {
     match field {
-        F::Trunk | F::TrunkRadius | F::TrunkHeight => "trunk",
+        F::Trunk | F::TrunkRadius | F::TrunkHeight | F::BoxSize => "trunk",
         F::Cut => "cut",
         F::Density | F::Scale | F::Lean | F::Steepest | F::Spacing => "paint",
         // The brush is the editor's.
@@ -189,7 +205,7 @@ pub fn key(field: PlantsField) -> &'static str {
 
 pub fn unit(field: PlantsField) -> Option<&'static str> {
     match field {
-        F::TrunkRadius | F::TrunkHeight | F::BrushSize | F::Spacing => Some("m"),
+        F::TrunkRadius | F::TrunkHeight | F::BoxSize | F::BrushSize | F::Spacing => Some("m"),
         F::GrowSpacing | F::GrowSeparation | F::GrowHeights | F::GrowPatches => Some("m"),
         F::Steepest | F::GrowSteepest => Some("°"),
         F::GrowTemperatures => Some("°C"),
@@ -247,9 +263,17 @@ pub fn get(game: &Game, entity: Entity, field: PlantsField) -> Option<Value> {
         F::GrowAligned => Value::Toggle(grow()?.aligned),
         F::GrowSeed => Value::Whole(i64::from(grow()?.seed)),
         F::GrowFarBlock => Value::Asset(path_of(game, grow()?.far_block.as_deref())),
-        F::Trunk => Value::Toggle(data.trunk.is_some()),
+        F::Trunk => {
+            let at = match data.trunk {
+                None => 0,
+                Some(Trunk { solid: None, .. }) => 1,
+                Some(_) => 2,
+            };
+            Value::Choice(at, COLLIDERS.map(str::to_string).to_vec())
+        }
         F::TrunkRadius => Value::Number(data.trunk?.radius),
         F::TrunkHeight => Value::Number(data.trunk?.height),
+        F::BoxSize => Value::Vector(data.trunk?.solid?.to_vec()),
         F::Cut => Value::Asset(path_of(game, data.cut.as_deref())),
         F::BrushSize => Value::Number(brush.radius),
         F::Strength => Value::Number(brush.strength),
@@ -291,10 +315,23 @@ pub fn set(game: &mut Game, entity: Entity, field: PlantsField, value: Value) ->
     if key(field) == "grow" {
         return change(world, entity, |data| set_grow(data, field, &value));
     }
+    let fitted = model_size(world, entity);
     change(world, entity, |data| {
         let paint = &mut data.paint;
         match (field, &value) {
-            (F::Trunk, Value::Toggle(on)) => data.trunk = on.then(|| data.trunk.unwrap_or_default()),
+            (F::Trunk, Value::Choice(at, _)) => {
+                let kept = data.trunk.unwrap_or_default();
+                data.trunk = match at {
+                    0 => None,
+                    1 => Some(Trunk { solid: None, ..kept }),
+                    // A box starts as large as the plant's model, where that is known.
+                    _ => Some(Trunk { solid: kept.solid.or(Some(fitted.unwrap_or([1.0; 3]))), ..kept }),
+                };
+            }
+            (F::BoxSize, Value::Vector(v)) if v.len() >= 3 => {
+                let trunk = data.trunk.get_or_insert_with(Trunk::default);
+                trunk.solid = Some([v[0], v[1], v[2]].map(|side| side.clamp(0.01, 1000.0)));
+            }
             (F::TrunkRadius, v) => {
                 let trunk = data.trunk.get_or_insert_with(Trunk::default);
                 trunk.radius = number(v).unwrap_or(trunk.radius).clamp(0.01, 100.0);

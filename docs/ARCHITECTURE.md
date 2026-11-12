@@ -1037,7 +1037,8 @@ there, smaller puffs and swirls are bitten out of the edges, and below a quarter
 its outline, so all stand on one flat underside. With any cover, two passes run after the atmosphere's tables:
 
 1. **Cloud shadows** draws a 256² map of how much sun the layer lets through, 6 km each way round the camera,
-   snapped to its texels. `cloudShadowAt` reads it where the way from a point to the sun crosses the layer's middle,
+   snapped to its texels on a grid that drifts with the clouds (`shadow_middle`): each texel keeps its place in the
+   clouds' pattern, so the shadows glide with the drift and never step from texel to texel. `cloudShadowAt` reads it where the way from a point to the sun crosses the layer's middle,
    and `sunShadow` and `sunShadowHard` multiply by it, so everything the sun lights is under the clouds' shadows
    without knowing of them: opaque shading, blocks, plants, water, particles, smoke and the fog's froxels.
 2. **Clouds** marches the layer for each pixel at half the picture's size: the ray's stretch between the two
@@ -3352,7 +3353,8 @@ come. GPU culling of patches against last frame's depth, and horizon culling ove
 culling below.
 
 **Plants.** Placed plants (trees, rocks) are a Foliage's `Plants` (`voxear_scene`), numbered by their place, kept
-with or without a renderer, so trunks collide on servers too; one cut down is only marked gone, so nothing is built
+with or without a renderer, so trunks collide on servers too, as capsules, or as boxes for plants solid all through
+such as rocks (`Trunk::solid`, a Foliage's Collider row); one cut down is only marked gone, so nothing is built
 again and saves name it by its number. Grass and details are densities a byte a kind a sample, scattered on the GPU
 each frame round each view's camera on a grid fixed to the world, into runs of blades per kind and ring of
 distance, drawn by indirect draws outside the scene's instances (`grass.rs`, `shaders/grass.slang`).
@@ -3381,7 +3383,13 @@ them below the face by how dark its part of the picture is, or by a hash of its 
 until the ray meets a top or a side; the face's pictures are then read at that small cube's middle, one small cube
 wide, and its normal is the small cube's own face. Nothing is cut out and no depth is written, so the mesh, the
 shadows, the depth pass and collision are the plain world's, and the pixel takes less of it as the small cubes
-shrink on screen. Further,
+shrink on screen. A block that sways (`BlockFaces::sways`: its `.block`'s **Sways in wind**, or a material that bends
+in the wind) keeps a quad to each of its faces, and four spare bits of the quad's first word say which of its corners
+no still block touches (`mesh::swaying_corners`). `blockSway` moves those corners with the gust over them, each at a
+phase hashed from its whole-number place among the world's corners, so every face meeting at a corner moves it alike
+and held corners keep leaves on their wood: nothing parts. The depth and shadow passes move them too, last frame's
+place gives their motion, and a face's picture and bounced light are read where it stands (`VertexOut::moved`). A face
+drawn with its block's colour alone is matt (roughness 1). Further,
 each chunk's faces merged by surface alone are its collision mesh and its mesh for the GI's rays, the shapes made on
 every core and kept while a chunk's triangles stay the same, the ray meshes made a few a frame and uploaded and built
 in one GPU batch (`Gpu::batch`). A world whose faces did not change costs physics and the renderer no walk over its

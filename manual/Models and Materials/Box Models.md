@@ -99,6 +99,8 @@ A picked **box** shows:
 | Sheet | Where its unfolded faces start on the sheet |
 | Mirror | Turns its unfolded faces over from left to right |
 | Inflate | How far its faces stand out past its size, in pixels |
+| Layer | Whether the box has a layer of raised pixels |
+| Height | How far the layer's pixels stand out, in pixels |
 
 ### Painting
 
@@ -120,6 +122,20 @@ The large square beside the tools is the colour you paint with. Click it to open
 **Lay Out** gives every box room of its own on the sheet and moves its pixels with it. Use it after you have made boxes bigger or added boxes where the sheet was full, when two boxes show the same pixels by mistake. Boxes that share their pixels on purpose, such as a mirrored arm, still share them. The sheet doubles in size when it is too small.
 
 One stroke is one step to undo.
+
+### A raised layer
+
+A box can carry a **layer**: a second set of pixels over its own. Every pixel you paint on the layer stands out from the box as a small block, so hair, a hat brim, a collar or armour has real depth and catches the light, and you still only paint pixels.
+
+1. Pick the box and turn on **Layer** in the Inspector. The layer gets room of its own on the sheet.
+2. Click **Paint**, then turn on **Layer** in the bar.
+3. Paint on the model. Your strokes now go to the layer of the box under the pointer, and each pixel rises as you paint it. Use the **Eraser** to take pixels off again.
+
+Turn **Layer** off in the bar to paint the box's own pixels again. You can also paint a layer directly on the flat sheet, where its faces are outlined like any others.
+
+**Height** in the Inspector is how far the layer's pixels stand out, in pixels. 1 is a good start. At 0 the layer lies flat on the box, like a sticker.
+
+A layer costs nothing where it has no pixels, and pixels next to each other share their faces. From far away, where single pixels cannot be seen, the engine draws each layer as a flat picture instead, so a crowd of creatures stays cheap.
 
 ### Undo and saving
 
@@ -204,7 +220,22 @@ Each `[[bones.boxes]]` table under a bone is one box carried by that bone.
 | `inflate` | How many pixels each face stands out past the box's size. Its pixels stretch to fit. For clothes over a body |
 | `rotation` | How the box is turned about its own middle, in degrees |
 
+| `layer` | A raised layer over the box: where its faces are on the sheet, as `uv` or `faces`, and its `height` in pixels, 1 when left out |
+
 A box with a size of 0 along one axis is a flat sheet with two sides, good for hair, ears and cloth.
+
+A layer is written under its box:
+
+```toml
+[[bones.boxes]]
+from = [-4.0, 0.0, -4.0]
+size = [8, 8, 8]
+uv = [0, 0]
+
+[bones.boxes.layer]
+uv = [32, 0]
+height = 1.0
+```
 
 ### A box unfolded on the sheet
 
@@ -243,7 +274,6 @@ To make one walk, add a [[Mob Motion]] to the Obj that draws it. It animates the
 ## Not done yet
 
 - A brush wider than one pixel, and bringing a sheet in from a picture file or saving it as one.
-- A raised second layer, where painted pixels stand out from the surface as small blocks.
 - Animation clips made on a timeline.
 - A component that walks a box model through a Block World.
 - A cut-out face casts the shadow of the whole face, holes included.

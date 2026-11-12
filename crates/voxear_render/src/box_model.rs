@@ -52,6 +52,7 @@ use crate::{
 };
 
 mod edit;
+mod layer;
 mod paint;
 mod rig;
 
@@ -162,18 +163,45 @@ pub struct ModelBox {
     /// stretched to fit: for clothes over a body.
     pub inflate: f32,
     pub skin: BoxSkin,
+    /// A second set of pixels over its own, standing out from its faces.
+    pub layer: Option<BoxLayer>,
+}
+
+/// A second set of pixels over a box's own: what is solid of it stands out
+/// from the box's faces as small blocks, a pixel each, as clothes, hair and
+/// armour do over a body. Its faces are found on the sheet as a box's own
+/// are.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BoxLayer {
+    pub skin: BoxSkin,
+    /// How far its pixels stand out from the faces, in pixels; at 0 they
+    /// lie flat on them.
+    pub height: f32,
 }
 
 impl ModelBox {
     /// A box of `size` pixels from `from`, unfolded on the sheet at `uv`.
     pub fn new(from: Vec3, size: [u32; 3], uv: [u32; 2]) -> Self {
-        Self { from, size, rotation: Vec3::ZERO, inflate: 0.0, skin: BoxSkin::Unfolded { at: uv, mirror: false } }
+        let skin = BoxSkin::Unfolded { at: uv, mirror: false };
+        Self { from, size, rotation: Vec3::ZERO, inflate: 0.0, skin, layer: None }
     }
 
     /// Where `face`'s pixels are on the sheet, or `None` for a face that is
     /// not drawn.
     pub fn face_rect(&self, face: Face) -> Option<FaceRect> {
-        let (at, mirror) = match self.skin {
+        self.skin_rect(self.skin, face)
+    }
+
+    /// Where `face`'s pixels of its layer are on the sheet; `None` for a
+    /// box with no layer, or a face its layer leaves out.
+    pub fn layer_rect(&self, face: Face) -> Option<FaceRect> {
+        self.skin_rect(self.layer?.skin, face)
+    }
+
+    /// Where a face's pixels are on the sheet for a box of this size
+    /// skinned as `skin` says.
+    pub fn skin_rect(&self, skin: BoxSkin, face: Face) -> Option<FaceRect> {
+        let (at, mirror) = match skin {
             BoxSkin::Faces(faces) => return faces[face.index()],
             BoxSkin::Unfolded { at, mirror } => (at, mirror),
         };
@@ -419,6 +447,24 @@ struct FileBox {
     mirror: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     faces: Option<FileFaces>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    layer: Option<FileLayer>,
+}
+
+/// A box's layer as the file has it: where its faces are, as a box's own
+/// are said, and how far its pixels stand out.
+#[derive(Serialize, Deserialize)]
+struct FileLayer {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    uv: Option<[u32; 2]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    faces: Option<FileFaces>,
+    #[serde(default = "one")]
+    height: f32,
+}
+
+fn one() -> f32 {
+    1.0
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -578,11 +624,22 @@ impl BoxModel {
     /// model's space, one for each bone: the model posed without skinning,
     /// as its boxes move whole.
     pub fn mesh_posed(&self, bones: &[Mat4]) -> MeshData {
+        self.build(bones).0
+    }
+
+    /// The mesh, and the triangles to draw of it from far off, where boxes
+    /// have layers: the layers lying flat over their faces in place of
+    /// every pixel standing out. `None` where no box has a layer that
+    /// stands out.
+    pub(crate) fn build(&self, bones: &[Mat4]) -> (MeshData, Option<Vec<u32>>) {
         let sheet = Vec3::new(self.sheet.width as f32, self.sheet.height as f32, 1.0);
         let mut data = MeshData::default();
+        let mut far: Vec<u32> = Vec::new();
+        let mut raised = false;
         for ((bone, joint), in_model) in self.bones.iter().zip(0u16..).zip(bones) {
             for model_box in &bone.boxes {
                 let (place, reach) = self.box_place(in_model, model_box);
+                let before = data.indices.len();
                 for face in Face::ALL {
                     let Some(rect) = model_box.face_rect(face) else { continue };
                     let (normal, (across, down)) = (face.normal(), face.across_and_down());
@@ -611,10 +668,16 @@ impl BoxModel {
                     }
                     data.indices.extend([first, first + 1, first + 2, first, first + 2, first + 3]);
                 }
+                // The box itself is drawn near and far alike; its layer stands out near, and lies flat far.
+                far.extend_from_slice(&data.indices[before..]);
+                if let Some(layer) = model_box.layer {
+                    let on = layer::Onto { place, reach, joint, pixel: self.pixel_size() };
+                    raised |= layer::raise(&mut data, &mut far, &self.sheet, model_box, layer, &on);
+                }
             }
         }
         mesh_tools::calculate_tangents(&mut data);
-        data
+        (data, raised.then_some(far))
     }
 
     /// The model ready to upload, as a model file read from `path` is: its
@@ -633,11 +696,17 @@ impl BoxModel {
             animation: Some(ModelAnimation { skeleton, skins: vec![skin], clips: Vec::new() }),
             roles: self.bones.iter().map(|bone| bone.role).collect(),
         };
-        let data = self.mesh();
+        let (data, far) = self.build(&self.rest_matrices());
         if data.indices.is_empty() {
             return model;
         }
-        let lods = full_lod(&data);
+        let mut lods = full_lod(&data);
+        // From far off, layers lie flat: as far out as the tallest stands, which is how wrong that looks.
+        if let Some(far) = far {
+            let tallest =
+                self.boxes().filter_map(|(_, _, model_box)| Some(model_box.layer?.height)).fold(0.0, f32::max);
+            lods.push(crate::lod::Lod::new(&far, tallest * self.pixel_size(), &data.vertices));
+        }
         model.meshes.push((data, lods));
         model.textures.push(PreparedTexture {
             name: SHEET.to_string(),
@@ -715,13 +784,35 @@ fn inset([left, top, right, bottom]: FaceRect) -> FaceRect {
     [toward(left, right), toward(top, bottom), toward(right, left), toward(bottom, top)]
 }
 
-fn read_box(file: FileBox) -> Result<ModelBox> {
-    let skin = match (file.uv, file.faces) {
-        (Some(_), Some(_)) => bail!("a box with both uv and faces"),
+/// A skin as the file says it: unfolded from a corner, or a place a face.
+fn read_skin(uv: Option<[u32; 2]>, faces: Option<FileFaces>, mirror: bool) -> Result<BoxSkin> {
+    Ok(match (uv, faces) {
+        (Some(_), Some(_)) => bail!("both uv and faces"),
         (None, Some(faces)) => {
             BoxSkin::Faces([faces.right, faces.left, faces.top, faces.bottom, faces.front, faces.back])
         }
-        (uv, None) => BoxSkin::Unfolded { at: uv.unwrap_or_default(), mirror: file.mirror },
+        (uv, None) => BoxSkin::Unfolded { at: uv.unwrap_or_default(), mirror },
+    })
+}
+
+fn write_skin(skin: BoxSkin) -> (Option<[u32; 2]>, bool, Option<FileFaces>) {
+    match skin {
+        BoxSkin::Unfolded { at, mirror } => (Some(at), mirror, None),
+        BoxSkin::Faces([right, left, top, bottom, front, back]) => {
+            (None, false, Some(FileFaces { right, left, top, bottom, front, back }))
+        }
+    }
+}
+
+fn read_box(file: FileBox) -> Result<ModelBox> {
+    let skin = read_skin(file.uv, file.faces, file.mirror).context("a box's own faces")?;
+    // An unfolded layer is turned over as its box is.
+    let layer = match file.layer {
+        Some(layer) => Some(BoxLayer {
+            skin: read_skin(layer.uv, layer.faces, file.mirror).context("a box's layer")?,
+            height: layer.height.max(0.0),
+        }),
+        None => None,
     };
     Ok(ModelBox {
         from: file.from.into(),
@@ -729,16 +820,16 @@ fn read_box(file: FileBox) -> Result<ModelBox> {
         rotation: file.rotation.into(),
         inflate: file.inflate,
         skin,
+        layer,
     })
 }
 
 fn write_box(model_box: &ModelBox) -> FileBox {
-    let (uv, mirror, faces) = match model_box.skin {
-        BoxSkin::Unfolded { at, mirror } => (Some(at), mirror, None),
-        BoxSkin::Faces([right, left, top, bottom, front, back]) => {
-            (None, false, Some(FileFaces { right, left, top, bottom, front, back }))
-        }
-    };
+    let (uv, mirror, faces) = write_skin(model_box.skin);
+    let layer = model_box.layer.map(|layer| {
+        let (uv, _, faces) = write_skin(layer.skin);
+        FileLayer { uv, faces, height: layer.height }
+    });
     FileBox {
         from: model_box.from.into(),
         size: model_box.size,
@@ -747,6 +838,7 @@ fn write_box(model_box: &ModelBox) -> FileBox {
         uv,
         mirror,
         faces,
+        layer,
     }
 }
 

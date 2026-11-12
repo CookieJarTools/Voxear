@@ -2830,8 +2830,11 @@ poses, previews, reimports or cooks a model does a box model with no path of its
   that poses a model from how its Obj moved, by its bones' roles, writing the same `Pose` an Animator does. The
   motion is a pure `MobPoser`, so the Model window shows it on a model that stands nowhere. Roles travel with the
   model through import and cooking, since a build has no `.boxmodel` to read them from.
-- **Planned on top:** a raised second layer of small blocks, clips keyed on a timeline, and a component that walks
-  one through a block world.
+- **A raised layer** (`box_model/layer.rs`) is a second skin on a box whose solid pixels become geometry: small
+  blocks over the faces, built with the mesh, bound to the box's bone like everything else, so they bend where
+  the limb is cut for a joint. The cost is vertices, so tops are shared along rows, walls exist only at edges,
+  and the mesh has a flat version of every layer as a coarser LOD for the engine to pick by distance.
+- **Planned on top:** clips keyed on a timeline, and a component that walks one through a block world.
 
 ## Particles *(the stateless and simulated paths, depth collision, forces, effects and starters implemented; the rest planned)*
 

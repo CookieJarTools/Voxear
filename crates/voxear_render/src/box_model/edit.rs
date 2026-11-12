@@ -258,17 +258,20 @@ impl BoxModel {
     pub fn used_places(&self) -> Vec<[u32; 4]> {
         let mut used = Vec::new();
         for model_box in self.bones.iter().flat_map(|bone| &bone.boxes) {
-            match model_box.skin {
-                // The row of the top and bottom, and the row of the sides under it.
-                BoxSkin::Unfolded { at: [u, v], .. } => {
-                    let [w, h, d] = model_box.size;
-                    used.push([u + d, v, 2 * w, d]);
-                    used.push([u, v + d, 2 * (w + d), h]);
+            // Its own faces, and its layer's.
+            for skin in std::iter::once(model_box.skin).chain(model_box.layer.map(|layer| layer.skin)) {
+                match skin {
+                    // The row of the top and bottom, and the row of the sides under it.
+                    BoxSkin::Unfolded { at: [u, v], .. } => {
+                        let [w, h, d] = model_box.size;
+                        used.push([u + d, v, 2 * w, d]);
+                        used.push([u, v + d, 2 * (w + d), h]);
+                    }
+                    BoxSkin::Faces(faces) => used.extend(faces.iter().flatten().map(|&[left, top, right, bottom]| {
+                        let (x, y) = (left.min(right).floor(), top.min(bottom).floor());
+                        [x as u32, y as u32, ((left - right).abs().ceil()) as u32, ((top - bottom).abs().ceil()) as u32]
+                    })),
                 }
-                BoxSkin::Faces(faces) => used.extend(faces.iter().flatten().map(|&[left, top, right, bottom]| {
-                    let (x, y) = (left.min(right).floor(), top.min(bottom).floor());
-                    [x as u32, y as u32, ((left - right).abs().ceil()) as u32, ((top - bottom).abs().ceil()) as u32]
-                })),
             }
         }
         used.retain(|place| place[2] > 0 && place[3] > 0);
@@ -339,7 +342,15 @@ fn whole(pixels: Vec3) -> Vec3 {
 fn mirror_box(model_box: &mut ModelBox) {
     model_box.from.x = -(model_box.from.x + model_box.size[0] as f32);
     model_box.rotation = Vec3::new(model_box.rotation.x, -model_box.rotation.y, -model_box.rotation.z);
-    model_box.skin = match model_box.skin {
+    model_box.skin = mirror_skin(model_box.skin);
+    if let Some(layer) = model_box.layer.as_mut() {
+        layer.skin = mirror_skin(layer.skin);
+    }
+}
+
+/// A box's faces, or its layer's, as the box's mirror shows them.
+fn mirror_skin(skin: BoxSkin) -> BoxSkin {
+    match skin {
         BoxSkin::Unfolded { at, mirror } => BoxSkin::Unfolded { at, mirror: !mirror },
         // The sides change places, and every face runs the other way.
         BoxSkin::Faces(faces) => {
@@ -355,7 +366,7 @@ fn mirror_box(model_box: &mut ModelBox) {
             }
             BoxSkin::Faces(mirrored)
         }
-    };
+    }
 }
 
 /// A bone's name for the other side of the body: Left for Right and Right

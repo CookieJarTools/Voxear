@@ -265,6 +265,7 @@ pub struct ModelPanel {
     /// The colour the swatch and the picker last showed.
     color_shown: Option<[u8; 4]>,
     symmetry: NodeId,
+    on_layer: NodeId,
     lay_out: NodeId,
     /// Watching it move: how fast, and the buttons that have it attack and flinch.
     motion_bar: NodeId,
@@ -341,6 +342,8 @@ impl ModelPanel {
         let swatches = ui.panel(paint_bar, Style::row());
         ui.add_class(swatches, "model-bar-group");
         let symmetry = button(ui, paint_bar, "Symmetry", "A stroke on the model paints the other side of the body too");
+        let tip = "A stroke on the model paints the layer of the box under it, in place of the box's own pixels";
+        let on_layer = button(ui, paint_bar, "Layer", tip);
         let tip = "Gives every unfolded box room of its own on the sheet, with its pixels";
         let lay_out = button(ui, paint_bar, "Lay Out", tip);
         ui.set_visible(paint_bar, false);
@@ -391,6 +394,7 @@ impl ModelPanel {
             color: [226, 84, 84, 255],
             color_shown: None,
             symmetry,
+            on_layer,
             lay_out,
             motion_bar,
             paces,
@@ -556,6 +560,11 @@ impl ModelPanel {
         ui.set_checked(self.symmetry, on);
     }
 
+    /// Whether a stroke on the model paints the layer of the box under it.
+    pub fn set_paint_layer(&mut self, ui: &mut Ui, on: bool) {
+        ui.set_checked(self.on_layer, on);
+    }
+
     /// Whether moving a bone moves its pivot alone.
     pub fn pivot_only(&self, ui: &Ui) -> bool {
         ui.is_checked(self.pivot_only)
@@ -580,9 +589,12 @@ impl ModelPanel {
         }
         open.history.record(&open.model, open.picked, key);
         // Pixels alone changed on a sheet of the same size: the shape the views have still stands.
+        // A layer's pixels are its shape: which of them are solid is which stand out.
+        let layered = model.boxes().any(|(_, _, model_box)| model_box.layer.is_some());
         let reshaped = model.bones != open.model.bones
             || model.pixels_per_block != open.model.pixels_per_block
-            || (model.sheet.width, model.sheet.height) != (open.model.sheet.width, open.model.sheet.height);
+            || (model.sheet.width, model.sheet.height) != (open.model.sheet.width, open.model.sheet.height)
+            || (layered && model.sheet != open.model.sheet);
         (open.stale, open.repainted) = (open.stale || reshaped, open.repainted || model.sheet != open.model.sheet);
         (open.model, open.unsaved) = (model, true);
         if open.picked.is_some_and(|picked| !has(&open.model, picked)) {
@@ -745,6 +757,30 @@ impl ModelPanel {
                     BoxPartEdit::Size(size) => model_box.size = size,
                     BoxPartEdit::BoxRotation(rotation) => model_box.rotation = rotation,
                     BoxPartEdit::Inflate(inflate) => model_box.inflate = inflate,
+                    BoxPartEdit::Layer(false) => model_box.layer = None,
+                    BoxPartEdit::LayerHeight(height) => {
+                        if let Some(layer) = model_box.layer.as_mut() {
+                            layer.height = height;
+                        }
+                    }
+                    BoxPartEdit::Layer(true) => {
+                        // Unfolded as the box is, where the sheet has room; with none, over the box's own until
+                        // the sheet is laid out again, which is done at once.
+                        let (room, mirror) = (
+                            model_box.unfolded_size(),
+                            matches!(model_box.skin, BoxSkin::Unfolded { mirror: true, .. }),
+                        );
+                        let own = match model_box.skin {
+                            BoxSkin::Unfolded { at, .. } => at,
+                            BoxSkin::Faces(_) => [0, 0],
+                        };
+                        let found = model.free_place(room);
+                        let skin = BoxSkin::Unfolded { at: found.unwrap_or(own), mirror };
+                        model.bones[at].boxes[index].layer = Some(voxear_render::BoxLayer { skin, height: 1.0 });
+                        if found.is_none() {
+                            model.lay_out();
+                        }
+                    }
                     BoxPartEdit::Sheet(at) => {
                         if let BoxSkin::Unfolded { mirror, .. } = model_box.skin {
                             model_box.skin = BoxSkin::Unfolded { at, mirror };
@@ -822,9 +858,11 @@ impl ModelPanel {
             return;
         }
         self.tool = Tool::ALL[ui.segment(self.tools).min(Tool::ALL.len() - 1)];
-        if ui.clicked(self.symmetry) {
-            let on = !ui.is_checked(self.symmetry);
-            ui.set_checked(self.symmetry, on);
+        for toggle in [self.symmetry, self.on_layer] {
+            if ui.clicked(toggle) {
+                let on = !ui.is_checked(toggle);
+                ui.set_checked(toggle, on);
+            }
         }
         if ui.clicked(self.lay_out)
             && let Some(mut model) = self.open.as_ref().map(|open| open.model.clone())
@@ -1007,7 +1045,9 @@ impl ModelPanel {
         let Some(open) = self.open.as_ref() else { return };
         let mode = match self.mode {
             Mode::Shape => ViewMode::Shape,
-            Mode::Paint => ViewMode::Paint { mirror: ui.is_checked(self.symmetry) },
+            Mode::Paint => {
+                ViewMode::Paint { mirror: ui.is_checked(self.symmetry), layer: ui.is_checked(self.on_layer) }
+            }
             Mode::Motion => ViewMode::Look,
         };
         let mut events = self.view.update(ui, renderer, &open.model, open.picked, mode, scale);

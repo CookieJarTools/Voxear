@@ -30,6 +30,9 @@ pub enum BoxPartEdit {
     Sheet([u32; 2]),
     Mirror(bool),
     Inflate(f32),
+    /// Whether it has a layer, and how far the layer's pixels stand out.
+    Layer(bool),
+    LayerHeight(f32),
 }
 
 impl BoxPartEdit {
@@ -45,6 +48,8 @@ impl BoxPartEdit {
             BoxPartEdit::Mirror(_) => 5,
             BoxPartEdit::Inflate(_) => 6,
             BoxPartEdit::Role(_) => 7,
+            BoxPartEdit::Layer(_) => 8,
+            BoxPartEdit::LayerHeight(_) => 9,
         }
     }
 }
@@ -64,6 +69,8 @@ enum Rows {
         sheet: Option<[NodeId; 2]>,
         mirror: Option<NodeId>,
         inflate: NodeId,
+        layer: NodeId,
+        layer_height: NodeId,
     },
 }
 
@@ -146,7 +153,14 @@ impl BoxPartView {
                 let inflate = ui.text_field(row, "");
                 ui.add_class(inflate, "value-input");
                 ui.add_class(inflate, "number-input");
-                Rows::Box { position, size, rotation, sheet, mirror, inflate }
+                let rows = part_rows(ui, root, "Layer", "layers");
+                let row = prop(ui, rows, "Layer");
+                let layer = ui.toggle(row, "", model_box.layer.is_some());
+                let row = prop(ui, rows, "Height");
+                let layer_height = ui.text_field(row, "");
+                ui.add_class(layer_height, "value-input");
+                ui.add_class(layer_height, "number-input");
+                Rows::Box { position, size, rotation, sheet, mirror, inflate, layer, layer_height }
             }
         };
         let view = Self { path: path.to_string(), part, title, rows };
@@ -202,17 +216,30 @@ impl BoxPartView {
                 if ui.submitted(*name) && !typed.is_empty() && typed != bone.name {
                     return Some(BoxPartEdit::Name(typed));
                 }
+                // Only what the user picked: a role changed elsewhere, as by an undo, is followed, not put back.
                 let chosen = BoneRole::ALL.get(ui.selected_option(*role)).copied().unwrap_or_default();
-                if chosen != bone.role {
+                if ui.changed(*role) && chosen != bone.role {
                     return Some(BoxPartEdit::Role(chosen));
                 }
                 let pivot = vector(pivot, bone.pivot).map(BoxPartEdit::Pivot);
                 pivot.or_else(|| vector(rotation, bone.rotation).map(BoxPartEdit::BoneRotation))
             }
-            (Rows::Box { position, size, rotation, sheet, mirror, inflate }, Picked::Box(_, index)) => {
+            (
+                Rows::Box { position, size, rotation, sheet, mirror, inflate, layer, layer_height },
+                Picked::Box(_, index),
+            ) => {
                 let model_box = bone.boxes.get(index)?;
                 if let Some(at) = vector(position, model_box.from) {
                     return Some(BoxPartEdit::Position(at));
+                }
+                if ui.changed(*layer) && ui.is_checked(*layer) != model_box.layer.is_some() {
+                    return Some(BoxPartEdit::Layer(ui.is_checked(*layer)));
+                }
+                if let Some(has) = model_box.layer {
+                    let read = read_numbers(ui, &[*layer_height], &[has.height])[0];
+                    if read != has.height && read.is_finite() {
+                        return Some(BoxPartEdit::LayerHeight(read.clamp(0.0, 16.0)));
+                    }
                 }
                 let whole = |pixels: f32| pixels.round().clamp(0.0, 1024.0) as u32;
                 let sized = Vec3::from(model_box.size.map(|side| side as f32));
@@ -230,7 +257,9 @@ impl BoxPartView {
                     if typed != at {
                         return Some(BoxPartEdit::Sheet(typed));
                     }
-                    if let Some(toggle) = mirror.filter(|toggle| ui.is_checked(*toggle) != mirrored) {
+                    if let Some(toggle) =
+                        mirror.filter(|toggle| ui.changed(*toggle) && ui.is_checked(*toggle) != mirrored)
+                    {
                         return Some(BoxPartEdit::Mirror(ui.is_checked(toggle)));
                     }
                 }
@@ -263,8 +292,15 @@ impl BoxPartView {
                 write_numbers(ui, pivot, &bone.pivot.to_array());
                 write_numbers(ui, rotation, &bone.rotation.to_array());
             }
-            (Rows::Box { position, size, rotation, sheet, mirror, inflate }, Picked::Box(_, index)) => {
+            (
+                Rows::Box { position, size, rotation, sheet, mirror, inflate, layer, layer_height },
+                Picked::Box(_, index),
+            ) => {
                 let Some(model_box) = bone.boxes.get(index) else { return };
+                if ui.is_checked(*layer) != model_box.layer.is_some() {
+                    ui.set_checked(*layer, model_box.layer.is_some());
+                }
+                write_numbers(ui, &[*layer_height], &[model_box.layer.map_or(1.0, |layer| layer.height)]);
                 write_numbers(ui, position, &model_box.from.to_array());
                 write_numbers(ui, size, &model_box.size.map(|side| side as f32));
                 write_numbers(ui, rotation, &model_box.rotation.to_array());

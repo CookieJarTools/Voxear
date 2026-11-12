@@ -66,6 +66,12 @@ impl Editor {
         self.model.set_tool(&mut self.ui, tool);
     }
 
+    /// Whether a stroke on the model in the Model window paints the layer
+    /// of the box under it.
+    pub fn set_model_paint_layer(&mut self, on: bool) {
+        self.model.set_paint_layer(&mut self.ui, on);
+    }
+
     /// How fast the Model window shows its model moving, in its Motion mode.
     pub fn set_model_pace(&mut self, pace: crate::model_panel::Pace) {
         self.model.set_pace(&mut self.ui, pace);

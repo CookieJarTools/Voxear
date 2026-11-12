@@ -197,7 +197,14 @@ impl BoxModel {
         (low.size[axis], high.size[axis]) = (low_size, high_size);
         high.from[axis] = cut;
         let share = low_size as f32 / whole.size[axis] as f32;
-        (low.skin, high.skin) = (halved(&whole, axis, share, false), halved(&whole, axis, share, true));
+        (low.skin, high.skin) =
+            (halved(&whole, whole.skin, axis, share, false), halved(&whole, whole.skin, axis, share, true));
+        // Its layer is cut with it.
+        if let Some(layer) = whole.layer {
+            let half =
+                |high: bool| Some(super::BoxLayer { skin: halved(&whole, layer.skin, axis, share, high), ..layer });
+            (low.layer, high.layer) = (half(false), half(true));
+        }
 
         let mut at_cut = whole.from + Vec3::from(whole.size.map(|side| side as f32)) * 0.5;
         at_cut[axis] = cut;
@@ -262,10 +269,10 @@ fn names(limbs: &[usize], roles: &[BoneRole], standing: &[Standing], middle: Vec
 /// along it: the low half's, or the high half's, each showing the pixels
 /// that part of the whole box showed, with the face at the cut showing
 /// those of the end it looks towards.
-fn halved(whole: &ModelBox, axis: usize, share: f32, high: bool) -> BoxSkin {
+fn halved(whole: &ModelBox, skin: BoxSkin, axis: usize, share: f32, high: bool) -> BoxSkin {
     let mut faces: [Option<FaceRect>; 6] = [None; 6];
     for face in Face::ALL {
-        let Some([left, top, right, bottom]) = whole.face_rect(face) else { continue };
+        let Some([left, top, right, bottom]) = whole.skin_rect(skin, face) else { continue };
         let (across, down) = face.across_and_down();
         // Which way the cut's axis runs on this face: along its pixels across, down them, or out of it.
         let cut = if across[axis] != 0.0 {

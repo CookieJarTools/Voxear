@@ -90,8 +90,9 @@ pub enum ViewMode {
     #[default]
     Shape,
     /// A press on the model paints the pixel under it, and with `mirror`
-    /// the pixel across the body from it too.
-    Paint { mirror: bool },
+    /// the pixel across the body from it too; with `layer`, the pixel of
+    /// the box's layer that lies over it, where the box has one.
+    Paint { mirror: bool, layer: bool },
     /// The model is only looked at, as while it is shown moving.
     Look,
 }
@@ -485,12 +486,21 @@ impl ModelView {
         let (origin, direction) = seen.ray(at);
         let Some(hit) = model.pick(&bones, origin, direction) else { return false };
         let across = Vec3::new(-1.0, 1.0, 1.0);
-        let mirrored = matches!(mode, ViewMode::Paint { mirror: true })
+        let mirrored = matches!(mode, ViewMode::Paint { mirror: true, .. })
             .then(|| model.pick(&bones, origin * across, direction * across))
             .flatten();
+        let on_layer = matches!(mode, ViewMode::Paint { layer: true, .. });
         for hit in [Some(hit), mirrored].into_iter().flatten() {
-            let within = model.bones[hit.bone].boxes[hit.index].face_place(hit.face);
-            if let (Some(pixel), Some(within)) = (hit.pixel, within) {
+            let model_box = &model.bones[hit.bone].boxes[hit.index];
+            let painted = match on_layer {
+                // The layer's pixel over the one met, for a box that has a layer.
+                true => hit
+                    .pixel
+                    .and_then(|pixel| model_box.layer_pixel(hit.face, pixel))
+                    .zip(model_box.layer_place(hit.face)),
+                false => hit.pixel.zip(model_box.face_place(hit.face)),
+            };
+            if let Some((pixel, within)) = painted {
                 events.push(ViewEvent::Paint { pixel, within });
             }
         }

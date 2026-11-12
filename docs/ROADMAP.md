@@ -1374,7 +1374,17 @@ The sea, lakes, rivers and lava, built in. Manual: `manual/Water`.
     covered, look limit and lag, tail, attack and flinch; the engine walking a model from its file and from built
     content; the editor showing it walk and putting it back. Manual: Mob Motion. Still to come with the block
     world component: its C# side.
-  - [ ] **A raised second layer:** a layer's pixels standing out as small blocks, flat again far away
+  - ~~**A raised second layer:**~~ done: `ModelBox::layer` (`BoxLayer { skin, height }`, `[bones.boxes.layer]` in
+    the file), a second place on the sheet whose solid pixels are built standing out from the box's faces
+    (`box_model/layer.rs`): on the box grown by the layer's height, so faces' layers meet at its edges; a row of
+    pixels sharing one top; walls only where a solid pixel has nothing solid beside it, and none under. The mesh
+    carries each layer flat as well, as a second LOD whose error is the layer's height, so far off it is drawn as
+    a picture. Laying out, mirroring and cutting a joint take layers with them; `layer_pixel` gives the layer's
+    pixel over a face's. Editor: Layer and Height on a box in the Inspector, Layer in the paint bar sending
+    strokes to the layer of the box under the pointer, layers' places outlined on the sheet. Tests: a block's
+    bounds, winding and pixels, shared tops and walls, a flat layer, the far level, the file; room for a layer
+    and its pixels over the box's; the editor adding a layer, painting it raised, changing its height and
+    undoing. Manual: Box Models.
   - [ ] **In a block world:** a component that walks one over blocks and through water, paths on the blocks, and
     the C# API
   - [ ] **Clips keyed on a timeline**

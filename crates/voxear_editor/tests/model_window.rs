@@ -6,6 +6,7 @@
 
 use voxear_core::logging::LogCapture;
 use voxear_core::math::Vec3;
+use voxear_editor::box_part_inspector::BoxPartEdit;
 use voxear_editor::model_panel::{Mode, Pace, Tool};
 use voxear_editor::model_view::{Handle, Picked};
 use voxear_engine::Project;
@@ -504,4 +505,81 @@ fn the_model_window_shows_a_model_walking_and_puts_it_back_at_rest() {
     editor.set_model_mode(Mode::Shape);
     frames(&mut editor, &mut renderer, 3);
     assert_eq!(editor.model_window().walk_phase(), None, "at rest again");
+}
+
+#[test]
+fn a_box_is_given_a_layer_whose_painted_pixels_stand_out_from_it() {
+    let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {
+        return eprintln!("skipping: no usable GPU");
+    };
+    let project = hello_copy();
+    let dir = project.path().to_path_buf();
+    let mut grey = figure();
+    for place in grey.used_places() {
+        grey.sheet.fill([place[0], place[1]], [place[2], place[3]], [170, 150, 130, 255]);
+    }
+    std::fs::write(dir.join(PATH), grey.to_text()).unwrap();
+    let mut editor =
+        voxear_editor::Editor::open_without_memory(Project::open(&dir).unwrap(), &mut renderer, LogCapture::default())
+            .unwrap();
+    frames(&mut editor, &mut renderer, 2);
+    assert!(editor.open_path(PATH, &mut renderer));
+    frames(&mut editor, &mut renderer, 3);
+    let head = Picked::Box(1, 0);
+    let boxed = |editor: &voxear_editor::Editor| editor.model_window().model().unwrap().bones[1].boxes[0].clone();
+
+    // The head's box picked: the Inspector has its Layer rows, and turning Layer on gives it room on the sheet.
+    editor.model_window_mut().pick(Some(head));
+    frames(&mut editor, &mut renderer, 2);
+    let inspector = editor.ui.find(editor.ui.root(), "inspector").unwrap();
+    let shown = texts_in(&editor.ui, inspector);
+    assert!(shown.contains(&"Layer".to_string()) && shown.contains(&"Height".to_string()), "{shown:#?}");
+    editor.model_window_mut().edit(head, BoxPartEdit::Layer(true));
+    frames(&mut editor, &mut renderer, 3);
+    let layer = boxed(&editor).layer.expect("the head has a layer");
+    assert_eq!(layer.height, 1.0);
+    let [left, top, ..] = boxed(&editor).layer_place(Face::Front).unwrap();
+    assert_ne!([left, top], [8, 8], "in room of its own, not over the head's own pixels");
+    let plain = editor.model_window().model().unwrap().mesh().indices.len();
+
+    // Painting with Layer on: a press on the head's front paints the layer's pixel over the one under it, which
+    // stands out from the head; the head's own pixel is as it was.
+    editor.set_model_mode(Mode::Paint);
+    editor.set_model_paint_layer(true);
+    frames(&mut editor, &mut renderer, 3);
+    let brown = [96, 60, 36, 255];
+    editor.model_window_mut().set_color(brown);
+    let point = |editor: &voxear_editor::Editor, at: [u32; 2]| {
+        editor.model_window().view().point(&editor.ui, on_head_front(at)).unwrap()
+    };
+    // A fringe: the front's two upper rows, all across.
+    for row in [8, 9] {
+        let (from, to) = (point(&editor, [8, row]), point(&editor, [15, row]));
+        editor.ui.pointer_move(from.0, from.1);
+        editor.ui.pointer_button(true);
+        frame(&mut editor, &mut renderer);
+        editor.ui.pointer_move(to.0, to.1);
+        frame(&mut editor, &mut renderer);
+        editor.ui.pointer_button(false);
+        frames(&mut editor, &mut renderer, 2);
+    }
+    let model = editor.model_window().model().unwrap().clone();
+    assert!((0..8).all(|x| model.sheet.get(left + x, top) == brown && model.sheet.get(left + x, top + 1) == brown));
+    assert_eq!(model.sheet.get(8, 8), [170, 150, 130, 255], "the head's own pixel is not painted");
+    assert!(model.mesh().indices.len() > plain, "the painted pixels are built standing out");
+    assert_eq!(saved(&dir), model);
+    frames(&mut editor, &mut renderer, 3);
+    keep_picture(&mut renderer, "model window layer.png");
+
+    // Its height is the layer's own; turning Layer off takes it away, and undo brings it back.
+    editor.model_window_mut().edit(head, BoxPartEdit::LayerHeight(2.0));
+    frames(&mut editor, &mut renderer, 2);
+    assert_eq!(boxed(&editor).layer.unwrap().height, 2.0);
+    editor.model_window_mut().edit(head, BoxPartEdit::Layer(false));
+    frames(&mut editor, &mut renderer, 2);
+    assert_eq!(boxed(&editor).layer, None);
+    assert_eq!(editor.model_window().model().unwrap().mesh().indices.len(), 2 * 36);
+    assert!(editor.model_window_mut().undo());
+    frames(&mut editor, &mut renderer, 2);
+    assert_eq!(boxed(&editor).layer.unwrap().height, 2.0);
 }

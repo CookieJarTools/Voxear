@@ -62,9 +62,22 @@ impl ModelBox {
     /// The part of the sheet a face's pixels take, by its left, top, width
     /// and height in whole pixels; `None` for a face that is not drawn.
     pub fn face_place(&self, face: Face) -> Option<[u32; 4]> {
-        let [left, top, right, bottom] = self.face_rect(face)?;
-        let (x, y) = (left.min(right).floor().max(0.0), top.min(bottom).floor().max(0.0));
-        Some([x as u32, y as u32, (left - right).abs().ceil() as u32, (top - bottom).abs().ceil() as u32])
+        self.face_rect(face).map(whole_place)
+    }
+
+    /// The part of the sheet a face of its layer takes; `None` for a box
+    /// with no layer, or a face its layer leaves out.
+    pub fn layer_place(&self, face: Face) -> Option<[u32; 4]> {
+        self.layer_rect(face).map(whole_place)
+    }
+
+    /// The pixel of its layer that lies over a pixel of its own faces, on
+    /// `face`: the same way in from the face's corner. `None` for a box
+    /// with no layer there, or a pixel that is not of that face.
+    pub fn layer_pixel(&self, face: Face, [x, y]: [u32; 2]) -> Option<[u32; 2]> {
+        let ([own_x, own_y, width, height], [left, top, ..]) = (self.face_place(face)?, self.layer_place(face)?);
+        let (across, down) = (x.checked_sub(own_x)?, y.checked_sub(own_y)?);
+        (across < width && down < height).then_some([left + across, top + down])
     }
 
     /// The two parts of the sheet its unfolded faces take: its top and
@@ -73,6 +86,13 @@ impl ModelBox {
         let [w, h, d] = self.size;
         [[u + d, v, 2 * w, d], [u, v + d, 2 * (w + d), h]]
     }
+}
+
+/// A face's place on the sheet as whole pixels: its left, top, width and
+/// height, whichever way round it is drawn.
+fn whole_place([left, top, right, bottom]: super::FaceRect) -> [u32; 4] {
+    let (x, y) = (left.min(right).floor().max(0.0), top.min(bottom).floor().max(0.0));
+    [x as u32, y as u32, (left - right).abs().ceil() as u32, (top - bottom).abs().ceil() as u32]
 }
 
 /// Room for `width` × `height` pixels on a sheet of `sheet` pixels that
@@ -107,18 +127,28 @@ impl BoxModel {
     /// moved; `false`, with nothing changed, where no sheet is large
     /// enough.
     pub fn lay_out(&mut self) -> bool {
-        // Boxes by where they are unfolded and their size: those sharing both share their pixels.
-        let mut shared: Vec<([u32; 2], [u32; 3], Vec<(usize, usize)>)> = Vec::new();
+        // Boxes' own faces and their layers' by where they are unfolded and their size: those sharing both share
+        // their pixels, own faces with own faces and layers with layers. Each is a box's own faces, or its layer's.
+        let mut shared: Vec<([u32; 2], [u32; 3], Vec<(usize, usize, bool)>)> = Vec::new();
         let mut placed: Vec<[u32; 4]> = Vec::new();
         for (bone, index, model_box) in self.boxes() {
-            match model_box.skin {
-                BoxSkin::Unfolded { at, .. } => {
-                    match shared.iter_mut().find(|(other, size, _)| *other == at && *size == model_box.size) {
-                        Some((_, _, members)) => members.push((bone, index)),
-                        None => shared.push((at, model_box.size, vec![(bone, index)])),
+            let skins = [(model_box.skin, false)].into_iter().chain(model_box.layer.map(|layer| (layer.skin, true)));
+            for (skin, layer) in skins {
+                match skin {
+                    BoxSkin::Unfolded { at, .. } => {
+                        let same = |(other, size, members): &&mut ([u32; 2], [u32; 3], Vec<(usize, usize, bool)>)| {
+                            *other == at && *size == model_box.size && members[0].2 == layer
+                        };
+                        match shared.iter_mut().find(same) {
+                            Some((_, _, members)) => members.push((bone, index, layer)),
+                            None => shared.push((at, model_box.size, vec![(bone, index, layer)])),
+                        }
+                    }
+                    BoxSkin::Faces(_) => {
+                        let rect = |face: &Face| model_box.skin_rect(skin, *face);
+                        placed.extend(Face::ALL.iter().filter_map(rect).map(whole_place));
                     }
                 }
-                BoxSkin::Faces(_) => placed.extend(Face::ALL.iter().filter_map(|face| model_box.face_place(*face))),
             }
         }
         let unfolded = |size: [u32; 3]| [2 * (size[0] + size[2]), size[1] + size[2]];
@@ -161,9 +191,14 @@ impl BoxModel {
             for (from, to) in sized.unfolded_places(*at).into_iter().zip(sized.unfolded_places(*place)) {
                 laid.copy_from(&self.sheet, from, [to[0], to[1]]);
             }
-            for &(bone, index) in members {
-                if let BoxSkin::Unfolded { mirror, .. } = self.bones[bone].boxes[index].skin {
-                    self.bones[bone].boxes[index].skin = BoxSkin::Unfolded { at: *place, mirror };
+            for &(bone, index, layer) in members {
+                let model_box = &mut self.bones[bone].boxes[index];
+                let skin = match (layer, model_box.layer.as_mut()) {
+                    (true, Some(layer)) => &mut layer.skin,
+                    _ => &mut model_box.skin,
+                };
+                if let BoxSkin::Unfolded { mirror, .. } = *skin {
+                    *skin = BoxSkin::Unfolded { at: *place, mirror };
                 }
             }
         }
@@ -270,6 +305,28 @@ mod tests {
         let bone = apart.add_bone("Body", None, Vec3::ZERO);
         apart.add_box(bone, Vec3::ZERO, [8, 8, 8], [0, 0]);
         assert!(!apart.lay_out());
+    }
+
+    #[test]
+    fn a_layer_is_given_room_of_its_own_and_its_pixels_lie_over_the_boxs_own() {
+        let mut model = BoxModel { sheet: Sheet::filled(32, 16, [0; 4]), ..BoxModel::default() };
+        let bone = model.add_bone("Head", None, Vec3::ZERO);
+        // A box and its layer unfolded in the same place, as a layer just added without room would be.
+        let added = model.add_box(bone, Vec3::ZERO, [4, 4, 4], [0, 0]);
+        added.layer =
+            Some(super::super::BoxLayer { skin: BoxSkin::Unfolded { at: [0, 0], mirror: false }, height: 1.0 });
+        model.sheet.set(5, 5, [200, 100, 50, 255]);
+        assert!(model.lay_out());
+        let laid = &model.bones[bone].boxes[0];
+        let layer = laid.layer.unwrap();
+        assert_ne!(BoxSkin::Unfolded { at: [0, 0], mirror: false }, layer.skin, "one of them moved");
+        assert_eq!(model.free_place([16, 8]), Some([0, 8]), "side by side along the top, with room under them");
+        // The front's second pixel in and down: the layer's is the same way in from its own front's corner.
+        let [x, y, ..] = laid.face_place(Face::Front).unwrap();
+        let [left, top, ..] = laid.layer_place(Face::Front).unwrap();
+        assert_eq!(laid.layer_pixel(Face::Front, [x + 1, y + 1]), Some([left + 1, top + 1]));
+        assert_eq!(laid.layer_pixel(Face::Front, [x + 4, y]), None, "not a pixel of that face");
+        assert_eq!(ModelBox::new(Vec3::ZERO, [4, 4, 4], [0, 0]).layer_pixel(Face::Front, [5, 5]), None);
     }
 
     #[test]

@@ -176,6 +176,7 @@ fn faces(model: &BoxModel) -> Vec<((usize, usize), [u32; 4])> {
     let mut found = Vec::new();
     for (bone, index, model_box) in model.boxes() {
         found.extend(Face::ALL.iter().filter_map(|face| Some(((bone, index), model_box.face_place(*face)?))));
+        found.extend(Face::ALL.iter().filter_map(|face| Some(((bone, index), model_box.layer_place(*face)?))));
     }
     found.retain(|(_, place)| place[2] > 0 && place[3] > 0);
     found

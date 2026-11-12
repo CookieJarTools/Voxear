@@ -1898,3 +1898,101 @@ fn a_worlds_faces_are_cut_into_small_cubes_near_the_camera_and_plain_far_off() {
     keep_image("blocks small cubes far.png", &far_cubes);
     assert!(unlike(&far_cubes, &far_plain) < 0.01, "plain far off: {}", unlike(&far_cubes, &far_plain));
 }
+
+/// A tree of blocks on a field of grass, a trunk with a crown of leaves over it, seen from in front: its leaves
+/// swaying or not, in a Wind Zone of `wind` or none, as it is after one second and after a second and a half.
+fn leaves_render(sways: bool, wind: Option<f32>) -> Option<[Vec<u8>; 2]> {
+    use voxear_render::WindZone;
+    use voxear_terrain::blocks::file::BlockKind;
+    let mut renderer = renderer()?;
+    let mut file = BlockFile::default();
+    file.ground.size = [32, 32];
+    file.ground.height = 4;
+    file.blocks.push(BlockKind { sways, ..BlockKind::colored("Leaves", [0.16, 0.42, 0.12]) });
+    let leaves = file.blocks.len() as u16;
+    let mut blocks = file.make_ground(None);
+    for y in 7..11 {
+        for z in 14..19 {
+            for x in 14..19 {
+                blocks.set([x, y, z], leaves);
+            }
+        }
+    }
+    for y in 4..9 {
+        blocks.set([16, y, 16], 3);
+    }
+    let (looks, faces) = file.faces();
+    let surfaces: Vec<SurfaceLook> = looks
+        .iter()
+        .map(|look| {
+            let [r, g, b] = look.color;
+            let desc = MaterialDesc { base_color: [r, g, b, 1.0], roughness: 1.0, ..MaterialDesc::default() };
+            SurfaceLook {
+                material: renderer.add_material(&desc).unwrap(),
+                size: 1.0,
+                sharpness: 0.0,
+                triplanar: true,
+                tracks: 0.0,
+                fills_in: 0.0,
+                liquid: Default::default(),
+                glitter: false,
+            }
+        })
+        .collect();
+    let default = renderer.add_material(&MaterialDesc::default()).unwrap();
+    let mut world = World::new();
+    let look = BlockLook { material: default, surfaces: Arc::from(surfaces), voxels: Default::default() };
+    world.spawn((BlockWorld::new(blocks, &faces, 1.0), look, Transform::default()));
+    world.spawn((Camera::default(), Transform::from_position(Vec3::new(16.5, 7.5, 4.0))));
+    let towards_sun = Vec3::new(-0.5, 0.7, -0.5).normalize();
+    let sun = Quat::from_rotation_arc(Vec3::Z, -towards_sun);
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    if let Some(strength) = wind {
+        world.spawn((WindZone { strength, ..WindZone::default() }, Transform::default()));
+    }
+    world.insert_resource(Sky { ambient: 0.4, ..Sky::default() });
+    let anti_aliasing = AntiAliasing { mode: AntiAliasingMode::Off, ..AntiAliasing::default() };
+    world.insert_resource(PostProcess { anti_aliasing, ..PostProcess::neutral() });
+    let mut time = 0.0;
+    let mut after = |frames: u32| {
+        for _ in 0..frames {
+            time += 1.0 / 60.0;
+            renderer.render(&world, time).expect("frame renders");
+        }
+        renderer.read_pixels().expect("pixels").2
+    };
+    Some([after(60), after(30)])
+}
+
+#[test]
+fn leaves_that_sway_stir_in_the_wind_fixed_to_their_wood_and_nothing_else_moves() {
+    let Some([calm, calm_later]) = leaves_render(true, None) else { return };
+    let [windy, windy_later] = leaves_render(true, Some(2.0)).unwrap();
+    let [stiff, stiff_later] = leaves_render(false, Some(2.0)).unwrap();
+    keep_image("leaves calm.png", &calm);
+    keep_image("leaves in the wind.png", &windy);
+    keep_image("leaves in the wind later.png", &windy_later);
+    let unlike = |a: &[u8], b: &[u8], rows: std::ops::Range<u32>| {
+        let differs = |x: u32, y: u32| (0..3).any(|c| rgb_at(a, x, y)[c].abs_diff(rgb_at(b, x, y)[c]) > 6);
+        let count = rows.clone().flat_map(|y| (0..WIDTH).map(move |x| (x, y))).filter(|&(x, y)| differs(x, y)).count();
+        count as f32 / (rows.len() as u32 * WIDTH) as f32
+    };
+    let all = 0..HEIGHT;
+    assert!(unlike(&calm, &calm_later, all.clone()) < 0.001, "with no wind nothing moves");
+    assert!(unlike(&stiff, &stiff_later, all.clone()) < 0.001, "nor do leaves that do not sway");
+    assert!(unlike(&stiff, &calm, all.clone()) < 0.001, "which are as leaves in no wind");
+    let moved = unlike(&windy, &windy_later, all.clone());
+    assert!(moved > 0.004, "leaves that sway stir from moment to moment: {moved}");
+    assert!(unlike(&windy, &calm, all.clone()) > 0.004, "and stand apart from where they are in a calm");
+    // The grass at the camera's feet is as still as ever, past the crown's shadow.
+    let ground = HEIGHT * 5 / 6..HEIGHT;
+    assert!(unlike(&windy, &windy_later, ground.clone()) < 0.001, "the ground does not move");
+    assert!(unlike(&windy, &calm, ground) < 0.001, "nor did the wind change it");
+    // The trunk stands where it stood: its dark column is in the same place.
+    let trunk = |pixels: &[u8]| {
+        let dark: Vec<u32> = (0..WIDTH).filter(|&x| rgb_at(pixels, x, 225).iter().sum::<i32>() < 200).collect();
+        (dark.first().copied(), dark.last().copied())
+    };
+    let (stood, stands) = (trunk(&calm), trunk(&windy));
+    assert!(stood.0.is_some() && stands == stood, "{stands:?} against {stood:?}");
+}

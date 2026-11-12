@@ -183,11 +183,36 @@ impl StarterPlant {
         }
     }
 
+    /// How much it bends in the wind and away from what walks through it:
+    /// grass and flowers right over, a bush less, a tree only a little,
+    /// and a rock not at all. A low, wide plant bends less for the same
+    /// number than a tall, thin one (a plant's height is read from the
+    /// ball round its mesh), so a tuft has the most.
+    pub fn wind_bend(self) -> f32 {
+        match self {
+            StarterPlant::Tuft => 2.0,
+            StarterPlant::Flower => 1.5,
+            StarterPlant::Bush => 0.8,
+            StarterPlant::Rock => 0.0,
+            StarterPlant::Tree => 0.35,
+            StarterPlant::Pine => 0.25,
+        }
+    }
+
+    /// How large it is, in metres along X, Y and Z, standing on the ground
+    /// about its middle.
+    pub fn size(self) -> [f32; 3] {
+        let (cubes_per_metre, size) = self.grid();
+        size.map(|side| side as f32 / cubes_per_metre)
+    }
+
     /// The plant as a box model: one bone at its foot, one box of cubes
     /// standing on the ground about its middle.
     pub fn model(self) -> BoxModel {
         let (pixels_per_block, size) = self.grid();
-        let mut model = BoxModel { pixels_per_block, sheet: Sheet::filled(16, 16, [0; 4]), ..BoxModel::default() };
+        let wind_bend = self.wind_bend();
+        let sheet = Sheet::filled(16, 16, [0; 4]);
+        let mut model = BoxModel { pixels_per_block, sheet, wind_bend, ..BoxModel::default() };
         let bone = model.add_bone("Plant", None, Vec3::ZERO);
         let mut voxels = Voxels::filled(size, 0);
         for z in 0..size[2] as i32 {
@@ -244,5 +269,40 @@ mod tests {
         assert!(cubes(StarterPlant::Tuft) < 40 && cubes(StarterPlant::Tree) > 1000);
         let [wide, tall, _] = StarterPlant::Rock.grid().1;
         assert!(wide > tall);
+    }
+
+    #[test]
+    fn starter_plants_bend_in_the_wind_but_for_the_rock_and_a_trees_crown_sways_more_than_its_trunk() {
+        for plant in StarterPlant::ALL {
+            let prepared = plant.model().prepared("Plants/Test.boxmodel");
+            let (material, vertices) = (&prepared.materials[0].desc, &prepared.meshes[0].0.vertices);
+            assert_eq!(material.wind_bend > 0.0, plant != StarterPlant::Rock, "{}", plant.name());
+            assert_eq!(material.wind_flutter, 0.0, "cubes do not flutter apart");
+            if plant == StarterPlant::Rock {
+                continue;
+            }
+            // Nothing flutters; faces that meet at a place sway alike there; and what is further out sways more.
+            assert!(vertices.iter().all(|vertex| vertex.wind[0] == 0 && vertex.wind[1] == 0), "{}", plant.name());
+            let mut swayed = std::collections::HashMap::new();
+            for vertex in vertices {
+                let place = vertex.position.map(f32::to_bits);
+                assert_eq!(*swayed.entry(place).or_insert(vertex.wind[2]), vertex.wind[2], "{}", plant.name());
+            }
+            let out = |vertex: &crate::mesh::Vertex| vertex.position[0].hypot(vertex.position[2]);
+            let furthest = vertices.iter().max_by(|a, b| out(a).total_cmp(&out(b))).unwrap();
+            let nearest = vertices.iter().min_by(|a, b| out(a).total_cmp(&out(b))).unwrap();
+            assert!(furthest.wind[2] == 255 && nearest.wind[2] < 40, "{}", plant.name());
+        }
+        // A build keeps the bend: cooked and read back, the tuft's material has it.
+        let tuft = StarterPlant::Tuft.model().prepared("Plants/Tuft.boxmodel");
+        let cooked = tuft.cook().unwrap().to_bytes();
+        let back = crate::CookedModel::from_bytes("Plants/Tuft.boxmodel", &cooked).unwrap();
+        assert_eq!(back.materials[0].desc.wind_bend, StarterPlant::Tuft.wind_bend());
+        // Written with its bend, and read back with it; a model that does not bend writes nothing of it.
+        assert!(StarterPlant::Tuft.model().to_text().contains("wind_bend = 2.0"));
+        assert!(!StarterPlant::Rock.model().to_text().contains("wind_bend"));
+        assert!(StarterPlant::Pine.wind_bend() < StarterPlant::Bush.wind_bend());
+        let [wide, tall, deep] = StarterPlant::Rock.size();
+        assert_eq!([wide, tall, deep], [1.625, 0.75, 1.25]);
     }
 }

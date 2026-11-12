@@ -1012,6 +1012,8 @@ Done so far:
   - **Cloud shadows** pass: a 256² map of the sun let through, 6 km each way round the camera, read wherever the
     sun's shadow is (`sunShadow`, `sunShadowHard`), so cloud shadows cross ground, blocks, plants, water, smoke and
     particles, and the fog's shafts fall between clouds. Under the atmosphere the sky's light greys with cover.
+    The map's texels, 47 m wide, are on a grid that drifts with the clouds (`clouds::shadow_middle`), so a shadow
+    glides over the ground; on a grid fixed to the ground it crossed it a texel at a time, in jumps.
   - **Clouds built of cubes:** `kind = "blocks"` (`CloudKind::Blocks`) with `block`, a cube's width. A cube is
     cloud or not as its middle is, so the shadow map's shadows are square too; the Clouds pass walks the cubes
     along each ray, 128 at most, out to 16 km, to the first one's face, and lights the face all one colour by
@@ -1229,6 +1231,33 @@ Foliage shading (wrap lighting, light through the leaves, a rim of the sun's col
   strongest push outwards from each pusher. `wind.slang` reads it at each vertex, blended over four cells, and
   bends the plant away from the ground up, on an arc, with or without wind. GPU test: a pole leans from a pusher
   beside it and stands again once it has gone.
+- ~~**Plants of cubes, leaves of blocks, and characters:**~~ done.
+  - A box model has a `wind_bend` (the Model window's Inspector, under Model; `MaterialDesc::wind_bend` on its
+    material): it bends in the wind and from pushes as any plant, with no flutter, which would part its cubes'
+    faces, and masks of its own (`sway_masks`) that sway what reaches out from over its foot. The starter plants
+    have theirs: a tuft 2, a flower 1.5, a bush 0.8, trees 0.25 to 0.35, a rock 0.
+  - A block **sways** where its `.block` says so or one of its materials bends in the wind (`BlockKind::sways`,
+    read where the world is resolved, as `cutout` is). The mesher keeps such a block's faces a block each and
+    marks, in four spare bits of a quad's first word, which corners no still block touches
+    (`mesh::swaying_corners`); `blockSway` in `shaders/blocks.slang` moves those, by the gust over them and at a
+    phase hashed from the corner's own whole-number place, in the shaded, depth and shadow passes, with last
+    frame's for motion. Every face at a corner moves it alike and held corners stay, so nothing parts. Only the
+    world's first level sways. The face's picture and its bounced light are read where it stands.
+  - Every Obj with a Character Controller pushes foliage with nothing set up (`voxear_engine::walkers` notes them
+    in `voxear_render::Walkers` each tick; a Foliage Interaction of its own takes its place).
+  - The weather's wind blows in a level with no Wind Zone (`WeatherAmounts::wind_alone`), along +X as clouds
+    drift there, for plants and particles alike.
+  - **Solid plants:** a Foliage's **Collider** is None, Trunk or Box (`Trunk::solid`, `box = [x, y, z]` in a
+    scene's `[obj.foliage.trunk]`): a box standing on the ground, sized, turned and leaning with each plant, for
+    rocks, stumps and crates. Picking Box fits it to the plant's model. The starter rock has one.
+  - A cooked model keeps its materials' wind bend and flutter (`COOKED_VERSION` 13), so a built game's plants of
+    cubes bend too.
+  - A block's face drawn with its colour alone is matt (roughness 1, where it was the default 0.5 and shone).
+  - Tests: the mesher's free and held corners; GPU pictures of a pine leaning in a wind, a tuft pushed over by a
+    walker, a rock that does neither, and a tree of blocks whose leaves stir while its trunk and ground stay
+    still; a ray meeting a rock's box, turned and sized; the Model window's Wind bend typed, saved and undone.
+  - Later: a breeze on a clear day with no Wind Zone, block leaves pushed aside, a collider of a plant's own
+    cubes rather than a box, plants of an earlier project given their bend by `vox upgrade`.
 - ~~**Seasons and variation:**~~ done: a Seasons component (the level's first) with `time_of_year` from 0 to 4
   (spring, summer, autumn, winter, spring), each season's look (`color`, `color_amount`, `snow`), `variation`,
   `patch_size`, `dryness` and `dry_color`, and `wetness`; defaults leave plants as made at summer.

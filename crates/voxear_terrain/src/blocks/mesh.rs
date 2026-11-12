@@ -39,7 +39,7 @@ use super::{
     BlockFaces, BlockMap,
     chunk::{AIR, BlockId, CHUNK, Fill},
     flow::Water,
-    hides, is_ground, is_water,
+    hides, is_ground, is_water, sways,
 };
 
 /// The ways a face can face, in the order quads are kept: +x, -x, +y, -y,
@@ -92,6 +92,16 @@ pub fn pack(at: [u32; 3], size: [u32; 2], facing: usize, surface: u8, shade: [u8
     [first, u32::from(surface) | corners << 8]
 }
 
+/// Which of a quad's corners sway in the wind, a bit each from its first
+/// corner's: those of a block that sways (`BlockFaces::sways`) which no
+/// still block touches. Such a quad is one face of one block, never
+/// merged, so every face that meets at a corner has that corner, and all
+/// of them move it alike: nothing parts as leaves sway, and leaves stay
+/// fixed to the wood and the ground they touch.
+pub fn swaying_corners(quad: [u32; 2]) -> u8 {
+    (quad[0] >> 28) as u8
+}
+
 /// A quad's place in its chunk, its size, facing, surface and corners'
 /// shading, from its two words.
 pub fn unpack(quad: [u32; 2]) -> ([u32; 3], [u32; 2], usize, u8, [u8; 4]) {
@@ -139,6 +149,9 @@ pub fn mesh_made(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], made: &dyn
         |p: [i32; 3]| padded[((p[1] + 1) as usize * PADDED + (p[2] + 1) as usize) * PADDED + (p[0] + 1) as usize];
     let solid = |p: [i32; 3]| is_ground(faces, block(p));
     let hidden_by = |p: [i32; 3]| hides(faces, block(p));
+    // Ground that stands still holds every corner it touches.
+    let any_sway = faces.iter().any(|faces| faces.sways);
+    let still = |p: [i32; 3]| is_ground(faces, block(p)) && !sways(faces, block(p));
     let side = CHUNK as usize;
     let mut mesh = ChunkMesh::default();
     let mut shaded = vec![0u32; side * side];
@@ -170,7 +183,22 @@ pub fn mesh_made(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], made: &dyn
                         let (one, two, corner) = (at(su, 0), at(0, sv), at(su, sv));
                         if one == 1 && two == 1 { 0 } else { 3 - one - two - corner }
                     });
-                    let key = pack([0; 3], [1, 1], 0, look, shade)[1];
+                    let mut key = pack([0; 3], [1, 1], 0, look, shade)[1];
+                    if any_sway && sways(faces, id) {
+                        // Its corners that only air, water and other swaying blocks meet at are free to move.
+                        let mut free = 0u32;
+                        for (c, (cu, cv)) in [(0, 0), (1, 0), (1, 1), (0, 1)].into_iter().enumerate() {
+                            let mut corner = p;
+                            (corner[axis], corner[u], corner[v]) = (p[axis] + i32::from(out), p[u] + cu, p[v] + cv);
+                            let [x, y, z] = corner;
+                            let held = (0..8).any(|n| still([x - (n & 1), y - (n >> 1 & 1), z - (n >> 2)]));
+                            free |= u32::from(!held) << c;
+                        }
+                        // A face with a corner that moves is kept apart, by its own place in the layer.
+                        if free != 0 {
+                            key |= free << 16 | ((j * side + i) as u32 + 1) << 20;
+                        }
+                    }
                     shaded[j * side + i] = key + 1;
                     plain[j * side + i] = u32::from(look) + 1;
                 }
@@ -180,7 +208,8 @@ pub fn mesh_made(map: &BlockMap, key: [i32; 3], faces: &[BlockFaces], made: &dyn
                 let mut at = [0u32; 3];
                 (at[axis], at[u], at[v]) = (layer as u32, i as u32, j as u32);
                 let (look, shade) = (key as u8, std::array::from_fn(|c| ((key >> (8 + 2 * c)) & 3) as u8));
-                mesh.quads.push(pack(at, [w as u32, h as u32], facing, look, shade));
+                let [first, second] = pack(at, [w as u32, h as u32], facing, look, shade);
+                mesh.quads.push([first | ((key >> 16) & 15) << 28, second]);
             }
             // Merged by surface alone, as triangles.
             for (i, j, w, h, _) in merge(&mut plain, side) {
@@ -357,6 +386,64 @@ mod tests {
             }
         }
         count
+    }
+
+    #[test]
+    fn leaves_that_sway_keep_a_face_a_block_and_move_only_corners_no_still_block_touches() {
+        // A floor, a trunk two high on it, and leaves over and round its top: three by three, two high.
+        let mut map = BlockMap::default();
+        for z in 0..8 {
+            for x in 0..8 {
+                map.set([x, 0, z], 1);
+            }
+        }
+        map.set([4, 1, 4], 2);
+        map.set([4, 2, 4], 2);
+        for y in 3..5 {
+            for z in 3..6 {
+                for x in 3..6 {
+                    map.set([x, y, z], 3);
+                }
+            }
+        }
+        let leaves = BlockFaces { sways: true, ..BlockFaces::new(3, 3, 3) };
+        let ground = [BlockFaces::default(), BlockFaces::new(1, 1, 1), BlockFaces::new(2, 2, 2)];
+        let still = [ground[0], ground[1], ground[2], BlockFaces::new(3, 3, 3)];
+        let swaying = [still[0], still[1], still[2], leaves];
+        let (plain, mesh) = (mesh_chunk(&map, [0, 0, 0], &still), mesh_chunk(&map, [0, 0, 0], &swaying));
+        assert!(plain.quads.iter().all(|&quad| swaying_corners(quad) == 0), "nothing sways unless its block does");
+        let of_leaves = |mesh: &ChunkMesh| mesh.quads.iter().copied().filter(|&q| unpack(q).3 == 3).collect::<Vec<_>>();
+        // Still, its crown's faces are merged into a few quads. Swaying, each stays a block's: nine on top, eight
+        // under, where the trunk hides one, and six on each of its four sides.
+        assert!(of_leaves(&plain).len() < 16, "{} quads", of_leaves(&plain).len());
+        let quads = of_leaves(&mesh);
+        assert!(quads.iter().all(|&quad| unpack(quad).1 == [1, 1]), "a face a block");
+        assert_eq!(quads.len(), 9 + 8 + 4 * 6);
+        // Where each corner of a quad is, in the chunk's blocks.
+        let corners = |quad: [u32; 2]| -> [[u32; 3]; 4] {
+            let (at, _, facing, ..) = unpack(quad);
+            let (axis, out, u, v) = AXES[facing];
+            [(0, 0), (1, 0), (1, 1), (0, 1)].map(|(cu, cv)| {
+                let mut corner = at;
+                (corner[axis], corner[u], corner[v]) = (at[axis] + u32::from(out), at[u] + cu, at[v] + cv);
+                corner
+            })
+        };
+        let mut moved = std::collections::HashMap::new();
+        for &quad in &quads {
+            for (c, corner) in corners(quad).into_iter().enumerate() {
+                let sways = swaying_corners(quad) >> c & 1 == 1;
+                // Every face that meets at a corner says the same of it.
+                assert_eq!(*moved.entry(corner).or_insert(sways), sways, "corner {corner:?}");
+            }
+        }
+        // The four corners of the trunk's top are held, and no other: the leaves' other corners are in the open.
+        let held: Vec<_> = moved.iter().filter(|(_, sways)| !**sways).map(|(corner, _)| *corner).collect();
+        assert_eq!(held.len(), 4, "{held:?}");
+        assert!(held.iter().all(|c| c[1] == 3 && (4..=5).contains(&c[0]) && (4..=5).contains(&c[2])), "{held:?}");
+        // The ground and the wood are as they were.
+        let rest = |mesh: &ChunkMesh| mesh.quads.iter().copied().filter(|&q| unpack(q).3 != 3).collect::<Vec<_>>();
+        assert_eq!(rest(&plain), rest(&mesh));
     }
 
     #[test]

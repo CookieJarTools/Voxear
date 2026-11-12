@@ -118,6 +118,8 @@ pub struct BlockFields {
     liquid: NodeId,
     hardness: NodeId,
     unbreakable: NodeId,
+    /// Whether it sways in the wind; none for a liquid.
+    sways: Option<NodeId>,
     tier: NodeId,
     drops: Collection,
     drop_rows: Vec<DropRow>,
@@ -156,6 +158,13 @@ impl BlockFields {
                 field(ui, rows, which, label);
             }
         }
+        let sways = block.liquid.is_none().then(|| {
+            let row = prop(ui, rows, "Sways in wind");
+            let tip = "Its corners that touch no still block move with the level's wind, as leaves do. A block drawn \
+                       with a foliage material sways without this";
+            ui.set_tooltip(row, tip, None);
+            ui.toggle(row, "", block.sways)
+        });
         let row = prop(ui, rows, "Liquid");
         let picked = LIQUIDS.iter().position(|(liquid, _)| *liquid == block.liquid).unwrap_or_default();
         let liquid = ui.dropdown(row, &LIQUIDS.map(|(_, name)| name), picked);
@@ -200,7 +209,20 @@ impl BlockFields {
         field(ui, rows, BlockRef::Data, "Data");
 
         let fields =
-            Self { block, color, swatch, liquid, hardness, unbreakable, tier, drops, drop_rows, make_item, slots };
+            Self {
+                block,
+                color,
+                swatch,
+                liquid,
+                hardness,
+                unbreakable,
+                sways,
+                tier,
+                drops,
+                drop_rows,
+                make_item,
+                slots,
+            };
         fields.show_swatch(ui);
         fields
     }
@@ -249,6 +271,9 @@ impl BlockFields {
         }
         if ui.changed(self.unbreakable) {
             (block.unbreakable, typed) = (ui.is_checked(self.unbreakable), true);
+        }
+        if let Some(sways) = self.sways.filter(|&sways| ui.changed(sways)) {
+            (block.sways, typed) = (ui.is_checked(sways), true);
         }
         if let Some(tier) = changed_number(ui, self.tier) {
             (block.tier, typed) = (tier.round().clamp(0.0, 1000.0) as u32, true);

@@ -423,6 +423,13 @@ impl Default for FoliageInteraction {
     }
 }
 
+/// What else pushes through foliage this frame, with no Foliage Interaction
+/// of its own: where each is, and how it pushes. The engine notes the
+/// level's characters here, so a player bends the grass with nothing set
+/// up.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Walkers(pub Vec<(Vec3, FoliageInteraction)>);
+
 /// The pushers as shaders read them, the nearest to the camera first, at
 /// most `MAX_PUSHERS`, with the grid placed round the camera.
 pub(crate) fn pushes(camera: Vec3, mut pushers: Vec<(Vec3, FoliageInteraction)>) -> GpuPushes {

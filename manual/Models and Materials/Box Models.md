@@ -102,6 +102,12 @@ A picked **box** shows:
 | Layer | Whether the box has a layer of raised pixels |
 | Height | How far the layer's pixels stand out, in pixels |
 
+Under either, **Model** has what belongs to the whole model:
+
+| Row | What it is |
+| --- | --- |
+| Wind bend | How far the model bends in the wind and away from what walks through it, as a plant: 1 to 2 for grass, less for a tree, 0 for anything that is not a plant (see [[Wind#Plants of cubes]]) |
+
 ### Sculpting with cubes
 
 A plain box is six flat faces. For rounded and stepped shapes, such as hair, ears, hands, leaves or the crown of a tree, make a box of small **cubes** instead and shape it one cube at a time. Each cube is one pixel across and one colour.
@@ -136,6 +142,8 @@ Flowers, bushes, mushrooms and trees are box models too. Sculpt one, usually on 
 - Pick it on a Block World's **Add plant** row, and the world grows it by itself wherever its ground suits (see [[Block Worlds#Plants a world grows]]). That row also has six plants to start from, a grass tuft, a flower, a bush, a rock, a tree and a pine, each a box model you can open and reshape.
 
 Small plants read well at 8 pixels per block and trees at 4: larger cubes, and far fewer of them to draw.
+
+Give a plant a **Wind bend** and it sways in the wind and bends away from whoever walks through it (see [[Wind#Plants of cubes]]). A plant bends from its foot, so stand it at height 0 on its bone.
 
 ### Painting
 
@@ -230,6 +238,7 @@ A `.boxmodel` file is text:
 
 ```toml
 pixels_per_block = 16
+wind_bend = 0.5        # a plant's: left out for anything else
 sheet = [64, 32]
 pixels = "…"
 

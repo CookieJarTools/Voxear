@@ -1171,8 +1171,8 @@ impl PhysicsScene {
     }
 
     /// Stands a static capsule up for the trunk of each plant still there,
-    /// on Objs whose plants have trunks; a plant taken away takes only its
-    /// own body with it.
+    /// or a box for one that is solid all through, on Objs whose plants
+    /// have trunks; a plant taken away takes only its own body with it.
     fn sync_plants(&mut self, world: &World) {
         let found: Vec<(Entity, Plants, Mat4)> = world
             .query_ref::<(Entity, &Plants, &Transform, Option<&WorldTransform>)>()
@@ -1226,10 +1226,18 @@ impl PhysicsScene {
                 let placed = plant.matrix(model);
                 let (_, rotation, _) = placed.to_scale_rotation_translation();
                 let size = plant.scale * scale;
-                let radius = trunk.radius * size;
-                let half_height = (trunk.height * size * 0.5 - radius).max(0.01);
-                let centre = placed.transform_point3(Vec3::new(0.0, trunk.height * 0.5, 0.0));
-                let shape = self.world.capsule_shape(half_height, radius);
+                let (shape, centre) = match trunk.solid {
+                    Some(sides) => {
+                        let centre = placed.transform_point3(Vec3::new(0.0, sides[1] * 0.5, 0.0));
+                        (self.world.box_shape(Vec3::from(sides) * (size * 0.5)), centre)
+                    }
+                    None => {
+                        let radius = trunk.radius * size;
+                        let half_height = (trunk.height * size * 0.5 - radius).max(0.01);
+                        let centre = placed.transform_point3(Vec3::new(0.0, trunk.height * 0.5, 0.0));
+                        (self.world.capsule_shape(half_height, radius), centre)
+                    }
+                };
                 let mut desc = BodyDesc::new(shape, Motion::Static).at(centre, rotation);
                 desc.friction = Collider::default().friction;
                 desc.user_data = entity.to_bits();

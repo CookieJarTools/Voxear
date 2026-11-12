@@ -520,6 +520,8 @@ impl Engine {
         }
         // The weather turns, and its rain and snow fall round the viewer.
         crate::weather::update(&mut self.world, self.time.delta);
+        // Characters push through the plants they walk among.
+        crate::walkers::update(&mut self.world);
         crate::particles::start(&mut self.world, self.time.elapsed);
         crate::smoke::fill_smokes(&mut self.world, self.time.elapsed);
         crate::mist::trail_mists(&mut self.world, self.time.elapsed);

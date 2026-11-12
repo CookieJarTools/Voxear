@@ -22,11 +22,21 @@ Each plant painted is dropped onto whatever is below it, a terrain, a [[Block Wo
 
 These are written with the Foliage. A plant painted is placed one by one, in the scene file's `plants`.
 
-## Trunks
+## Trunks and solid plants
 
-Under **Settings**, turn on **Trunk collider** for plants that things bump into: trees, posts, tall rocks. Each plant gets an upright capsule of the **Trunk radius**, **Trunk height** metres tall from its foot, sized with the plant and leaning with it. Characters walk round them, what falls lands on them, and rays meet them. Grass and bushes need none.
+Under **Settings**, **Collider** says what things bump into:
 
-A trunk is a plant's own: a ray that meets one says which plant it was, and a plant taken away takes its trunk with it. Trunks are made on a server too, with no renderer.
+| Collider | What each plant gets |
+| --- | --- |
+| None | Nothing: it is walked through, as grass and bushes are |
+| Trunk | An upright capsule of the **Trunk radius**, **Trunk height** metres tall from its foot: trees and posts |
+| Box | A box of the **Box size**, in metres along X, Y and Z, standing on the ground about the plant's middle: rocks, stumps, crates |
+
+Either is sized with the plant, leans with it and turns with it. Characters walk round them or climb onto them, what falls lands on them, and rays meet them. Picking **Box** starts it as large as the plant's model; a rounded rock wants it a little smaller.
+
+A collider is a plant's own: a ray that meets one says which plant it was, and a plant taken away takes its collider with it. They are made on a server too, with no renderer.
+
+In a scene file, `trunk = { radius = 0.3, height = 5.0 }` or `trunk = { box = [1.4, 0.7, 1.1] }`.
 
 ## Cutting plants down
 

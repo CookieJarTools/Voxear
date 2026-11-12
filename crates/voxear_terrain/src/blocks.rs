@@ -59,8 +59,9 @@ use mesh::ChunkMesh;
 /// How a kind of block's faces are drawn, by its number in its world (see
 /// `file::BlockFile::faces`): the surfaces its top, its sides and its
 /// bottom are drawn with, whether it is water, whether it is seen through
-/// where its faces' pictures are clear, and its own colour, sRGB a byte
-/// each, which water takes from in it.
+/// where its faces' pictures are clear, whether it sways in the wind as
+/// leaves do, and its own colour, sRGB a byte each, which water takes from
+/// in it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BlockFaces {
     pub top: u8,
@@ -68,18 +69,20 @@ pub struct BlockFaces {
     pub bottom: u8,
     pub water: bool,
     pub see_through: bool,
+    pub sways: bool,
     pub color: [u8; 3],
 }
 
 impl BlockFaces {
     /// A kind of ground drawn with these surfaces.
     pub const fn new(top: u8, sides: u8, bottom: u8) -> Self {
-        Self { top, sides, bottom, water: false, see_through: false, color: [0; 3] }
+        Self { top, sides, bottom, water: false, see_through: false, sways: false, color: [0; 3] }
     }
 
     /// Water drawn with surface `surface`.
     pub const fn water(surface: u8) -> Self {
-        Self { top: surface, sides: surface, bottom: surface, water: true, see_through: false, color: [0; 3] }
+        let (top, sides, bottom) = (surface, surface, surface);
+        Self { top, sides, bottom, water: true, see_through: false, sways: false, color: [0; 3] }
     }
 }
 
@@ -96,6 +99,11 @@ pub fn is_ground(faces: &[BlockFaces], block: BlockId) -> bool {
 /// Whether block `block` is ground seen through, as leaves are.
 pub fn is_see_through(faces: &[BlockFaces], block: BlockId) -> bool {
     faces.get(usize::from(block)).is_some_and(|faces| faces.see_through && !faces.water)
+}
+
+/// Whether block `block` is ground that sways in the wind, as leaves do.
+pub fn sways(faces: &[BlockFaces], block: BlockId) -> bool {
+    faces.get(usize::from(block)).is_some_and(|faces| faces.sways && !faces.water)
 }
 
 /// Whether block `block` hides what is behind it: ground that is not seen

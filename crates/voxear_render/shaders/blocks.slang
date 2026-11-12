@@ -17,12 +17,57 @@
 #include "shading.slang"
 #include "block_quads.slang"
 
+// How far a swaying corner moves at wind strength 1, as a share of a block, and the furthest it ever does.
+static const float BLOCK_SWAY = 0.07;
+static const float BLOCK_SWAY_MOST = 0.22;
+
+// A number from 0 to 1 for a corner of the world's blocks, from whole numbers alone.
+float blockCornerPhase(int3 corner)
+{
+    uint h = uint(corner.x) * 0x9E3779B1u ^ uint(corner.y) * 0x85EBCA77u ^ uint(corner.z) * 0xC2B2AE3Du;
+    h ^= h >> 15;
+    h *= 0x2C1B3C6Du;
+    h ^= h >> 12;
+    h *= 0x297A2D39u;
+    h ^= h >> 15;
+    return float(h >> 8) / 16777216.0;
+}
+
+// How far the wind moves a corner of a block that sways, as leaves do, at `time`: downwind as hard as the wind and
+// the gust over it blow, to and fro, across and up and down at a pace of the corner's own, so a crown of leaves
+// stirs all over while a gust still crosses it whole. Every face that meets at the corner moves it alike, and a
+// corner a still block touches does not sway (voxear_terrain::blocks::mesh), so nothing parts.
+float3 blockSway(Frame* frame, BlockWorld world, BlockPoint b, float time)
+{
+    Wind wind = frame->wind;
+    if (!b.sways || wind.strength <= 0.0)
+    {
+        return 0.0;
+    }
+    float3 along = float3(wind.direction.x, 0.0, wind.direction.y);
+    float3 across = float3(-wind.direction.y, 0.0, wind.direction.x);
+    float push = max(windPush(wind, levelPosition(frame, b.world, 4096.0).xz, time), 0.0);
+    float phase = blockCornerPhase(b.corner) * 6.2831853;
+    float stir = 0.4 + 0.6 * saturate(wind.turbulence);
+    float to = sin(time * 2.1 + phase) * 0.6 + sin(time * 3.7 + phase * 1.7) * 0.4;
+    float side = sin(time * 2.9 + phase * 2.3);
+    float bob = sin(time * 3.3 + phase * 1.3);
+    float reach = min(BLOCK_SWAY * push, BLOCK_SWAY_MOST) * world.blockSize;
+    float3 swayed = along * (0.5 + 0.5 * to * stir) + across * (side * 0.45 * stir);
+    swayed.y += bob * 0.3 * stir;
+    return swayed * reach;
+}
+
 [shader("vertex")]
 VertexOut blockVertex(uint vertexId : SV_VertexID)
 {
     Frame* frame = push.frame;
     BlockPoint b = blockPoint(vertexId);
     BlockWorld world = buffers()->blockWorlds[push.level - 1];
+    // Leaves sway, now and as they were a frame ago, for their motion.
+    float3 swayed = blockSway(frame, world, b, frame->time);
+    float3 before = b.world + blockSway(frame, world, b, frame->time - frame->deltaTime);
+    b.world += swayed;
     float4 at = float4(b.world, 1.0);
     VertexOut o;
     o.position = transform(frame->viewProj, at);
@@ -51,8 +96,9 @@ VertexOut blockVertex(uint vertexId : SV_VertexID)
         o.uv = float2(vertexId % 3 == 0 ? 1.0 : 0.0, vertexId % 3 == 1 ? 1.0 : 0.0);
     }
     o.currentClip = transform(frame->unjitteredViewProj, at);
-    o.previousClip = transform(frame->prevViewProj, at);
-    o.moved = 0.0;
+    o.previousClip = transform(frame->prevViewProj, float4(before, 1.0));
+    // Bounced light is read where the block stands.
+    o.moved = swayed;
     o.hidden = 0.0;
     return o;
 }
@@ -268,8 +314,10 @@ bool terrainShading(
         base.rgb *= shade;
         return false;
     }
+    // Where the face stands, not where the wind has swayed it to: its picture moves with it.
+    float3 stands = input.worldPosition - input.moved;
     TerrainSpot spot;
-    spot.place = input.worldPosition - world.corner;
+    spot.place = stands - world.corner;
     spot.dx = ddx(spot.place);
     spot.dy = ddy(spot.place);
     TerrainLayer layer;
@@ -312,7 +360,7 @@ bool terrainShading(
     {
         float3 facing;
         float sunk, grain, shown;
-        bool cubes = blockCubes(world, input.lod, input.worldPosition, normal, spot, facing, sunk, grain, shown);
+        bool cubes = blockCubes(world, input.lod, stands, normal, spot, facing, sunk, grain, shown);
         layer = blockLayer(world, input.lod, spot, normal, input.tangent);
         // A face whose material is cut out, as leaves are, is not there where its picture is clear.
         float cutoff = buffers()->materials[world.surfaces[min(input.lod, world.surfaceCount - 1)].material].alphaCutoff;
@@ -356,9 +404,12 @@ BlockShadowOut blockShadowVertex(uint vertexId : SV_VertexID)
 {
     BlockPoint b = blockPoint(vertexId);
     BlockWorld world = buffers()->blockWorlds[push.level - 1];
+    // Its picture stays on its face as the face sways.
+    float3 stands = b.world;
+    b.world += blockSway(push.frame, world, b, push.frame->time);
     BlockShadowOut o;
     o.position = transform(shadowViewProj(push.frame, push.list, 0), float4(b.world, 1.0));
-    o.place = b.world - world.corner;
+    o.place = stands - world.corner;
     o.normal = b.normal;
     o.surface = b.surface;
     o.world = push.level - 1;

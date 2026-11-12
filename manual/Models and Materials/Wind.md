@@ -18,7 +18,7 @@ Add a **Wind Zone** to any Obj (Add Component, then Rendering). The wind blows a
 | Gust speed | How fast gusts travel downwind, in metres a second |
 | Turbulence | How much plants sway back and forth and across the wind, rather than lean steadily with it |
 
-Only the level's first Global Wind Zone blows over the whole level. Without one, nothing moves. It can also blow the sea's wind: see [[The Ocean]].
+Only the level's first Global Wind Zone blows over the whole level. Without one, nothing moves on a still day. [[Weather]] has wind of its own, so plants stir in rain and toss in a storm with no Wind Zone at all, and with one it blows harder. A Wind Zone can also blow the sea's wind: see [[The Ocean]].
 
 ### Wind over part of the sea
 
@@ -57,6 +57,26 @@ A plant bends from its pivot, its Obj's position, and reads its height from its 
 
 In a material file, `wind_bend = 1.0` and `wind_flutter = 0.5`.
 
+### Plants of cubes
+
+A [[Box Models|box model]] has its own **Wind bend**, in the Inspector while it is open in the Model window, under **Model**. Set it and every one of that plant bends in the wind and away from what walks through it, wherever it stands or grows. Nothing flutters: a plant of cubes leans whole, and what reaches out from over its foot, such as a tree's crown, sways a little on its own.
+
+| Plant | Wind bend |
+| --- | --- |
+| A tuft of grass | 2 |
+| A flower | 1.5 |
+| A bush | 0.8 |
+| A tree | 0.25 to 0.35 |
+| A rock, a character, a chest | 0 |
+
+A low, wide plant bends less for the same number than a tall, thin one, so a tuft wants more than a flower. The starter plants a Block World offers are made with these. One written into a project by an earlier Voxear has none: set its **Wind bend**, or delete its file from the `Plants` folder and pick it on **Add plant** again.
+
+### Blocks that sway
+
+Leaves built of blocks sway too. Turn on a block's **Sways in wind** (see [[Blocks]]), or draw it with a foliage material, and the corners of its faces move a little with the wind, each at its own pace, as gusts cross the crown. A corner that touches a block standing still does not move, so leaves stay fixed to their wood and to the ground, and no gap opens anywhere. A block's corner moves at most about a fifth of a block.
+
+Only the world's own blocks sway, not the larger ones of its far rings. Swaying faces are drawn a block at a time, not joined into larger ones, so a forest of swaying leaves is a little more to draw than a still one.
+
 ## Plants from other tools
 
 Without more to go by, a plant bends as one piece and its leaves flutter all over, trunk too. A tree's branches can sway on their own, and only its leaves flutter, when its model has **wind masks**. Set them in the model's Import Settings, under **Wind masks**:
@@ -71,7 +91,9 @@ A branch's sway rides on the plant's own bend, downwind and bobbing up and down,
 
 ## Pushing through foliage
 
-Add a **Foliage Interaction** to anything that should push plants aside as it passes: the player, other characters, vehicles, a rolling boulder (Add Component, then Rendering). Grass and plants round it lean away, bending from the ground up as they do in the wind, and spring back over about a second once it has gone, so a trail stays behind something running through a field.
+An Obj with a **Character Controller** pushes plants aside by itself: the player and every other character part the grass they walk through, about twice as far round as they are wide, with nothing to set up. Grass and plants lean away, bending from the ground up as they do in the wind, and spring back over about a second, so a trail stays behind someone running through a field.
+
+Add a **Foliage Interaction** to anything else that should push plants: vehicles, a rolling boulder, a creature moved by a script (Add Component, then Rendering). On a character it takes the place of the character's own push: set its size, or set **Strength** to 0 for a character that pushes nothing.
 
 | Setting | What it does |
 | --- | --- |

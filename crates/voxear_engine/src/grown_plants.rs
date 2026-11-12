@@ -630,9 +630,10 @@ fn starter_settings(plant: StarterPlant) -> (&'static str, Option<&'static str>,
             "spacing = 7.0\nseparation = 3.0\nchance = 0.4\nslope = 35.0\nseed = 2\nscale = [0.8, 1.4]\n",
             true,
         ),
+        // A rock is solid: a box a little inside its rounded shape.
         StarterPlant::Rock => (
             "draw_distance = 120.0\nshadow_distance = 40.0\n",
-            None,
+            Some("box = [1.35, 0.65, 1.05]\n"),
             "spacing = 9.0\nseparation = 3.0\nchance = 0.35\nslope = 70.0\nseed = 3\nscale = [0.6, 1.8]\n",
             false,
         ),

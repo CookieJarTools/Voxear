@@ -3515,6 +3515,83 @@ fn foliage_bends_away_from_what_passes_through_it_and_springs_back() {
     assert!(lean(&after).abs() < 2.0, "and springs back once it has gone: {}", lean(&after));
 }
 
+/// A starter plant standing at the level's middle against the sky, seen from `eye`, in a Wind Zone of `wind`
+/// blowing to the camera's right or none, with something walking at `walker` or nothing.
+fn starter_plant_render(
+    plant: voxear_render::StarterPlant,
+    eye: Vec3,
+    wind: Option<f32>,
+    walker: Option<Vec3>,
+) -> Option<Vec<u8>> {
+    use voxear_render::{FoliageInteraction, Sky, Walkers, WindZone};
+    let mut renderer = renderer()?;
+    let text = plant.model().to_text();
+    let model = voxear_render::prepare_model("Plant.boxmodel", &mut |file| match file {
+        "Plant.boxmodel" => Ok(text.clone().into_bytes()),
+        other => anyhow::bail!("no {other}"),
+    })
+    .unwrap();
+    let imported = renderer.upload_model(&model).unwrap();
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::from_position(eye)));
+    world.spawn((MeshRenderer::new(imported.nodes[0].mesh, imported.nodes[0].material), Transform::default()));
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.2, -0.7, 0.6).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    if let Some(strength) = wind {
+        // Steady, so the plant leans as far every frame.
+        let wind = WindZone { strength, gusts: 0.0, turbulence: 0.0, ..WindZone::default() };
+        world.spawn((wind, Transform::new(Vec3::ZERO, Quat::from_rotation_y(std::f32::consts::FRAC_PI_2), Vec3::ONE)));
+    }
+    if let Some(at) = walker {
+        world.insert_resource(Walkers(vec![(at, FoliageInteraction { radius: 1.2, strength: 1.0 })]));
+    }
+    world.insert_resource(Sky::default());
+    world.insert_resource(steady_post());
+    run(&mut renderer, &world, &mut 0.0, 3);
+    Some(renderer.read_pixels().unwrap().2)
+}
+
+/// How far right of its foot a green plant's top is, in pixels: the middle of its green across its highest rows
+/// against its lowest.
+fn green_lean(pixels: &[u8]) -> f32 {
+    let green = |x: u32, y: u32| {
+        let [r, g, b] = rgb_at(pixels, (x, y));
+        g > r + 8 && g > b + 8
+    };
+    let rows: Vec<u32> = (0..360).filter(|&y| (0..640).any(|x| green(x, y))).collect();
+    assert!(rows.len() > 20, "the plant is in view: {} rows of it", rows.len());
+    let middle = |rows: &[u32]| {
+        let across: Vec<u32> = rows.iter().flat_map(|&y| (0..640).filter(move |&x| green(x, y))).collect();
+        across.iter().sum::<u32>() as f32 / across.len() as f32
+    };
+    let band = (rows.len() / 6).max(2);
+    middle(&rows[..band]) - middle(&rows[rows.len() - band..])
+}
+
+#[test]
+fn a_plant_of_cubes_leans_in_the_wind_and_away_from_what_walks_through_it() {
+    use voxear_render::StarterPlant;
+    // A pine, eight metres tall, from far enough to see all of it.
+    let pine = |wind| starter_plant_render(StarterPlant::Pine, Vec3::new(0.0, 4.0, -13.0), wind, None);
+    let Some(still) = pine(None) else { return };
+    let windy = pine(Some(3.0)).unwrap();
+    keep_image("pine still.png", &still);
+    keep_image("pine in the wind.png", &windy);
+    let (stood, leant) = (green_lean(&still), green_lean(&windy));
+    assert!(leant - stood > 5.0, "its top leans downwind: {leant} against {stood}");
+    // A rock in the same wind is as it is without.
+    let rock = |wind| starter_plant_render(StarterPlant::Rock, Vec3::new(0.0, 0.6, -3.0), wind, None).unwrap();
+    assert!(rock(None) == rock(Some(3.0)), "a rock does not bend");
+
+    // A tuft of grass, from close by, with someone standing just left of it and no wind at all.
+    let tuft = |walker| starter_plant_render(StarterPlant::Tuft, Vec3::new(0.0, 0.35, -1.6), None, walker);
+    let (alone, pushed) = (tuft(None).unwrap(), tuft(Some(Vec3::new(-0.5, 0.0, 0.0))).unwrap());
+    keep_image("tuft alone.png", &alone);
+    keep_image("tuft pushed.png", &pushed);
+    let (stood, leant) = (green_lean(&alone), green_lean(&pushed));
+    assert!(leant - stood > 12.0, "its blades lean away from who stands beside it: {leant} against {stood}");
+}
+
 #[test]
 fn a_pulsing_glow_rises_and_falls_and_a_steady_one_stays() {
     use voxear_render::{Glow, Sky};
@@ -7101,6 +7178,40 @@ fn clouds_drift_and_their_shadows_cross_the_ground() {
     assert!(spreads[2] < spreads[0] + 12, "none with their shadows off: {spreads:?}");
     let moved = shaded.chunks_exact(4).zip(later.chunks_exact(4)).filter(|(a, b)| a[1].abs_diff(b[1]) > 30).count();
     assert!(moved * 20 > shaded.len() / 4, "the shadows have moved on: {moved} pixels");
+}
+
+#[test]
+fn cloud_shadows_glide_over_the_ground_and_do_not_jump() {
+    use voxear_render::Clouds;
+    // The ground from high up under drifting clouds built of cubes, whose edges are sharp, at moments a quarter of
+    // a second apart: ten metres of drift each, a fifth of one of the shadow map's texels.
+    let down = |wait: f32| {
+        let clouds = Clouds { drift: 40.0, ..Clouds::blocks(0.5) };
+        let looking = bearing(-60.0, 60.0);
+        let view = CloudView { looking, from: 800.0, ground: true, wait, ..CloudView::of(clouds) };
+        cloud_render(&view).map(|(pixels, _)| pixels)
+    };
+    let Some(first) = down(10.0) else { return };
+    let mut moments = vec![first];
+    moments.extend((1..9).map(|step| down(10.0 + step as f32 * 0.25).unwrap()));
+    // Where a shadow's edge passed, a pixel went from light to dark or back. Gliding, it took several moments over
+    // it, a part of the way in each; jumping, it went most of the way in one.
+    let green = |pixels: &[u8], i: usize| i32::from(pixels[i * 4 + 1]);
+    let (mut crossed, mut at_once) = (0u32, 0.0f32);
+    for i in 0..640 * 360 {
+        let seen: Vec<i32> = moments.iter().map(|pixels| green(pixels, i)).collect();
+        let range = seen.iter().max().unwrap() - seen.iter().min().unwrap();
+        if range < 40 {
+            continue;
+        }
+        let largest = seen.windows(2).map(|pair| (pair[1] - pair[0]).abs()).max().unwrap();
+        crossed += 1;
+        at_once += largest as f32 / range as f32;
+    }
+    let share = at_once / crossed.max(1) as f32;
+    eprintln!("cloud shadows: {crossed} pixels crossed, {share} of the way in their largest step");
+    assert!(crossed > 2000, "the shadows move: {crossed} pixels crossed");
+    assert!(share < 0.45, "and glide: {share} of the way in one step");
 }
 
 #[test]

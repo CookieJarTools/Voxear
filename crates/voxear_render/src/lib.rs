@@ -94,7 +94,8 @@ pub use assets::AssetUsage;
 pub use assets::{MaterialDesc, MaterialHandle, MeshHandle, TextureSource};
 pub use box_model::{
     BoneRole, BoxBone, BoxClip, BoxHit, BoxKey, BoxLayer, BoxModel, BoxSkin, BoxTrack, Ease, Face, FaceRect, KEY_STEP,
-    LARGEST_GRID, LONGEST_CLIP, MOST_COLORS, ModelBox, Sheet, StarterPlant, Voxels, is_box_model, on_step,
+    LARGEST_GRID, LONGEST_CLIP, MOST_COLORS, MOST_WIND_BEND, ModelBox, Sheet, StarterPlant, Voxels, is_box_model,
+    on_step,
 };
 pub use capture::{Capture, CapturedImage};
 pub use cooked::{COOKED_VERSION, CookedModel};
@@ -131,7 +132,7 @@ pub use map::{GpuMapColumn, MAP_LEAST_TILT, MAX_MAP_SIZE, MapCamera, MapDraw, Ma
 pub use looks::{Look, LookName, SunLook};
 pub use shadows::{SHADOW_DISTANCE, SHADOW_SPLIT};
 pub use post_volume::{PostVolume, VolumeShape};
-pub use foliage::{Foliage, FoliageInteraction, Impostors, Plant, PlantSet, Plants, scatter};
+pub use foliage::{Foliage, FoliageInteraction, Impostors, Plant, PlantSet, Plants, Walkers, scatter};
 pub use tracks::TrackMaker;
 pub use assets::Glow;
 pub use impostors::Impostor;
@@ -2373,7 +2374,7 @@ impl View {
             seen.shadow_map = fg.texture(images.shadows).0;
             seen.noise = assets.smoke_noise.0;
             seen.shadow_reach = clouds::SHADOW_REACH;
-            seen.shadow_middle = clouds::shadow_middle([camera[0], camera[2]]);
+            seen.shadow_middle = clouds::shadow_middle([camera[0], camera[2]], seen.drift);
             // A picture of another size has nothing of last frame's in it.
             seen.reset = u32::from(self.cloud_history != Some(extent));
         }

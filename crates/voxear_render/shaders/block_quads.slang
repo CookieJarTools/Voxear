@@ -31,6 +31,10 @@ struct BlockPoint
     uint surface;
     // How light the corner is, 0 closed in to 1 open.
     float shade;
+    // Whether the corner sways in the wind (voxear_terrain::blocks::mesh::swaying), and which corner of the world's
+    // blocks it is, counted in blocks from the world's first: every face that meets there moves it alike.
+    bool sways;
+    int3 corner;
 };
 
 // Vertex `vertexId` of a world drawn smooth: its corners one after another in the world's pool from `push.output` on,
@@ -55,6 +59,8 @@ BlockPoint smoothPoint(BlockWorld world, uint vertexId)
     b.normal = normalize(n);
     b.surface = (second.y & 0xFFFF) | ((second.x >> 24) << 16);
     b.shade = 1.0;
+    b.sways = false;
+    b.corner = 0;
     return b;
 }
 
@@ -92,6 +98,9 @@ BlockPoint cubePoint(BlockWorld world, uint vertexId)
     b.normal = blockAxis(axes.x) * (out ? 1.0 : -1.0);
     b.surface = quad.y & 0xFF;
     b.shade = float(shades[corner]) / 3.0;
+    // Only the world's own blocks sway: a far ring's are too large to.
+    b.sways = chunk.w == 0 && ((first >> (28 + corner)) & 1) != 0;
+    b.corner = chunk.xyz * 32 + int3(p);
     return b;
 }
 

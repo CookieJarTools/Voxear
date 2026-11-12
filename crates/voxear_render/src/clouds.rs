@@ -107,10 +107,14 @@ impl CloudImages {
 }
 
 /// Where the shadow map's middle is for a camera at `camera`, along x and
-/// z: on a texel's corner, so the map does not swim as the camera moves.
-pub fn shadow_middle(camera: [f32; 2]) -> [f32; 2] {
+/// z, over clouds drifted `drift` metres: on a texel's corner of a grid
+/// that drifts with the clouds. Each texel then keeps its own place in the
+/// clouds, so the map does not swim as the camera moves, and the shadows
+/// glide over the ground with the clouds; on a grid fixed to the ground
+/// they would cross it a texel at a time, in jumps tens of metres long.
+pub fn shadow_middle(camera: [f32; 2], drift: [f32; 2]) -> [f32; 2] {
     let texel = SHADOW_REACH * 2.0 / SHADOW_SIDE as f32;
-    camera.map(|v| (v / texel).round() * texel)
+    [0, 1].map(|axis| ((camera[axis] - drift[axis]) / texel).round() * texel + drift[axis])
 }
 
 /// Records the two passes. `tables` are the atmosphere's, where the sky is
@@ -135,4 +139,28 @@ fn draw(ctx: &PassContext, pipeline: vk::Pipeline, push: &Push, target: ImageId)
         .store_op(vk::AttachmentStoreOp::STORE)];
     begin_rendering(ctx, ctx.extent(target), &color, None);
     fullscreen(ctx, pipeline, push);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_shadow_maps_grid_drifts_with_the_clouds_and_stays_round_the_camera() {
+        let texel = SHADOW_REACH * 2.0 / SHADOW_SIDE as f32;
+        let camera = [100.0, -40.0];
+        // Clouds drifted part of a texel carry the map as far: each texel keeps its place in them.
+        let (still, drifted) = (shadow_middle(camera, [0.0, 0.0]), shadow_middle(camera, [7.5, -3.25]));
+        assert!((drifted[0] - still[0] - 7.5).abs() < 1e-3 && (drifted[1] - still[1] + 3.25).abs() < 1e-3);
+        // However far they drift, the map's middle is within half a texel of the camera, and on the clouds' grid.
+        for step in 0..400 {
+            let drift = [step as f32 * 3.7, step as f32 * -1.9];
+            let middle = shadow_middle(camera, drift);
+            for axis in 0..2 {
+                assert!((middle[axis] - camera[axis]).abs() <= texel * 0.5 + 0.01, "{middle:?} after {drift:?}");
+                let cells = (middle[axis] - drift[axis]) / texel;
+                assert!((cells - cells.round()).abs() < 1e-2, "{middle:?} after {drift:?}");
+            }
+        }
+    }
 }

@@ -2055,6 +2055,8 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   against a coarse column's, its bytes and blocks added, tiles read back from disk, a tower built near kept in the
   rings, and mountains on the horizon 16 km off with no sky through the ground. Not done: a dithered overlap between
   levels in place of skirts; overhangs and caves far off (the manual says so); ground taken out showing far off.
+  A far column of cubes takes water wherever its ground lies under the sea, its top block at least an eighth full or
+  the ground's own top block the sea's, as 64 m blocks and more rounded a shallow sea away to its floor.
 - Throughout: chunks culled against the frustum and last frame's depth, and the smallest save and network data
   (only changes from what a build or a seed makes, as commands while few and compacted deltas once many).
 

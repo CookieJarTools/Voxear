@@ -525,7 +525,7 @@ pub fn refresh(world: &mut World, content: &mut Content, mut renderer: Option<&m
     for (entity, mut asset) in stale {
         // Its biomes as their files have them now, the blocks they name numbered.
         let placed = with_biomes(content, &asset.file);
-        let regrown = placed.generate != asset.file.generate;
+        let regrown = regrown(&asset.file, &placed);
         asset.file = placed;
         let file = Arc::new(resolved(content, &asset.file));
         let endless = file.generate.as_ref().is_some_and(|generate| generate.endless.is_some());
@@ -552,6 +552,18 @@ pub fn refresh(world: &mut World, content: &mut Content, mut renderer: Option<&m
             }
         }
         world.insert(entity, BlockWorldAsset { drawn: file, derived: version, ..asset });
+    }
+}
+
+/// Whether `placed`, a file with its biomes read again, makes other ground
+/// than `was`: its biomes lie elsewhere or name other blocks. A biome's
+/// colour changed makes none.
+pub(crate) fn regrown(was: &BlockFile, placed: &BlockFile) -> bool {
+    let of = |file: &BlockFile| file.generate.as_ref().and_then(|generate| generate.placed.clone());
+    match (of(was), of(placed)) {
+        (None, None) => false,
+        (Some(was), Some(placed)) => !was.same_ground(&placed),
+        _ => true,
     }
 }
 

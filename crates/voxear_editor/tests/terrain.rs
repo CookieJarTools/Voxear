@@ -1154,8 +1154,25 @@ fn pick_asset(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, label
     frame(editor, renderer);
 }
 
-/// Opens the object picker of the Inspector row labelled `label`.
+/// Scrolls whatever holds `node` until it shows near the top, as a hand scrolls down to it.
+fn scroll_to(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, node: NodeId) {
+    let mut at = editor.ui.parent(node);
+    while let Some(parent) = at {
+        if editor.ui.scroll_max(parent)[1] > 0.0 {
+            let ([_, top, _, _], [_, y, _, _]) = (editor.ui.rect(parent), editor.ui.rect(node));
+            let [x, now] = editor.ui.scroll_offset(parent);
+            editor.ui.set_scroll(parent, [x, (now + y - top - 120.0).max(0.0)]);
+            frame(editor, renderer);
+            return;
+        }
+        at = editor.ui.parent(parent);
+    }
+}
+
+/// Opens the object picker of the Inspector row labelled `label`, scrolled to where it shows.
 fn open_picker(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, label: &str) {
+    let row = *prop_rows(&editor.ui, label).first().unwrap_or_else(|| panic!("no row says {label}"));
+    scroll_to(editor, renderer, row);
     let row = *prop_rows(&editor.ui, label).first().unwrap_or_else(|| panic!("no row says {label}"));
     let picker = first_with(&editor.ui, row, "value-picker").unwrap_or_else(|| panic!("{label} has a picker"));
     let arrow = first_with(&editor.ui, picker, "picker-arrow").expect("its arrow");
@@ -1168,8 +1185,11 @@ fn open_picker(editor: &mut voxear_editor::Editor, renderer: &mut Renderer, labe
 fn picker_rows(ui: &Ui) -> Vec<String> {
     let list = ui.find(ui.root(), "picker-list");
     let rows = list.map_or(Vec::new(), |list| ui.children(list));
-    let shown = rows.into_iter().filter(|&row| ui.has_class(row, "list-row") && ui.is_visible(row));
-    shown.map(|row| ui.text(ui.children(row)[1])).collect()
+    // From the top: a list's rows are used again as it is filled, so they are not in the order they were made.
+    let mut shown: Vec<NodeId> =
+        rows.into_iter().filter(|&row| ui.has_class(row, "list-row") && ui.is_visible(row)).collect();
+    shown.sort_by(|a, b| ui.rect(*a)[1].total_cmp(&ui.rect(*b)[1]));
+    shown.into_iter().map(|row| ui.text(ui.children(row)[1])).collect()
 }
 
 /// The button saying `text` in `panel`, where it has one showing.
@@ -2834,12 +2854,34 @@ fn a_biome_in_the_inspector_is_saved_as_it_is_edited_and_every_world_listing_it_
     shot(&mut renderer, "biome-inspector-edited.png");
     shot_scrolled(&mut editor, &mut renderer, "biome-inspector-ground.png", 400.0);
 
-    // New Biome, from the command palette, makes one in the project's Biomes folder, as new as any: no blocks.
-    run_command(&mut editor, &mut renderer, "new biome");
+    // New Biome in the Project panel's menu makes one in the folder it shows, as new as any: no blocks.
+    editor.ping_asset("Biomes/Cool.biome");
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let mut tiles = Vec::new();
+    with_class(&editor.ui, editor.ui.root(), "tile", &mut tiles);
+    let named = |tile: NodeId| editor.ui.children(tile).get(1).map(|&name| editor.ui.text(name)).unwrap_or_default();
+    let cool = tiles.into_iter().find(|&tile| editor.ui.is_visible(tile) && named(tile) == "Cool.biome");
+    let cool = cool.expect("the Project panel shows the Biomes folder");
+    context_click(&mut editor.ui, cool);
+    frame(&mut editor, &mut renderer);
+    // The menu has more to make than a small window has room for: scrolled to, as the wheel does.
+    let new = menu_item(&editor.ui, "New Biome").expect("the menu makes biomes");
+    scroll_to(&mut editor, &mut renderer, new);
+    let new = menu_item(&editor.ui, "New Biome").expect("the menu makes biomes");
+    click(&mut editor.ui, new);
+    frame(&mut editor, &mut renderer);
     frame(&mut editor, &mut renderer);
     let made = std::fs::read_to_string(dir.path().join("Biomes/New Biome.biome")).expect("a new biome");
     assert_eq!(BiomeDef::parse(&made).unwrap(), BiomeDef::default());
-    assert_eq!(editor.inspected_asset().map(|item| item.path.as_str()), Some("Biomes/New Biome.biome"));
+    // Its name let be. New Biome from the command palette makes another, in the project's Biomes folder, and
+    // shows it.
+    editor.ui.key_down(Key::Escape);
+    frame(&mut editor, &mut renderer);
+    run_command(&mut editor, &mut renderer, "new biome");
+    frame(&mut editor, &mut renderer);
+    assert!(dir.path().join("Biomes/New Biome 1.biome").is_file());
+    assert_eq!(editor.inspected_asset().map(|item| item.path.as_str()), Some("Biomes/New Biome 1.biome"));
 }
 
 #[test]
@@ -2959,7 +3001,8 @@ fn starter_biomes_on(
     // The first place, looked for half a kilometre at a time, whose ground suits.
     let (side, sea) = (block * columns as f32, world.sea_level());
     let heights = |corner: [f32; 2]| {
-        let at = |i: usize| world.height_at(corner[0] + (i % 9) as f32 * side / 8.0, corner[1] + (i / 9) as f32 * side / 8.0);
+        let step = side / 8.0;
+        let at = |i: usize| world.height_at(corner[0] + (i % 9) as f32 * step, corner[1] + (i / 9) as f32 * step);
         let heights: Vec<f32> = (0..81).map(at).collect();
         let least = heights.iter().copied().fold(f32::MAX, f32::min);
         (least - sea, heights.iter().copied().fold(f32::MIN, f32::max) - sea)
@@ -2973,7 +3016,8 @@ fn starter_biomes_on(
         .expect("ground that suits somewhere within 20 km");
     let (least, greatest) = heights(position);
     let mut file = BlockFile { block_size: block, ..BlockFile::default() };
-    file.blocks = ["Grass", "Dirt", "Stone", "Water"].map(|name| BlockKind::of(&format!("Blocks/{name}.block"))).to_vec();
+    let held = ["Grass", "Dirt", "Stone", "Water"];
+    file.blocks = held.map(|name| BlockKind::of(&format!("Blocks/{name}.block"))).to_vec();
     file.ground.size = [columns, columns];
     file.generate = Some(BlockGenerate {
         world: Some("Worlds/World.worldgen".into()),

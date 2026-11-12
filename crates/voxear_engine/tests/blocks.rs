@@ -322,7 +322,8 @@ fn a_biome_saved_makes_the_worlds_listing_it_again_and_a_place_says_which_biome_
     // Two biomes that between them take in every climate, split at how warm the world's middle is.
     let split = hills.climate(16.0, 16.0, hills.height_at(16.0, 16.0)).0;
     let cool = |top: &str| {
-        format!("color = [0.1, 0.2, 0.3]\ntemperature = [-60.0, {split}]\nhumidity = [0.0, 1.0]\n\n[ground]\ntop = \"{top}\"\n")
+        let lies = format!("color = [0.1, 0.2, 0.3]\ntemperature = [-60.0, {split}]\nhumidity = [0.0, 1.0]\n");
+        format!("{lies}\n[ground]\ntop = \"{top}\"\n")
     };
     let warm =
         format!("temperature = [{split}, 60.0]\nhumidity = [0.0, 1.0]\n\n[ground]\ntop = \"Blocks/Sand.block\"\n");
@@ -369,12 +370,14 @@ fn a_biome_saved_makes_the_worlds_listing_it_again_and_a_place_says_which_biome_
         let said = at(&mut game, x, z, 500.0).expect("a biome everywhere on its ground");
         assert_eq!(said, if top(x, z) == moss { cool_guid } else { warm_guid }, "column ({x}, {z})");
         assert_eq!(at(&mut game, x, z, -3.0), Some(said), "and deep under it the same");
-        (cool_places, warm_places) = (cool_places + usize::from(said == cool_guid), warm_places + usize::from(said == warm_guid));
+        cool_places += usize::from(said == cool_guid);
+        warm_places += usize::from(said == warm_guid);
     }
     assert!(cool_places > 3 && warm_places > 3);
     assert_eq!(at(&mut game, 40, 5, 10.0), None, "past the world's edge, none");
     // What a biome says, for scripts: which it is, its name and its colour.
-    let said: serde_json::Value = serde_json::from_str(&biome_json(&mut game.content, "Biomes/Cool.biome").unwrap()).unwrap();
+    let said = biome_json(&mut game.content, "Biomes/Cool.biome").unwrap();
+    let said: serde_json::Value = serde_json::from_str(&said).unwrap();
     assert_eq!((said["name"].as_str(), said["guid"].as_str()), (Some("Cool"), Some(cool_guid.to_string().as_str())));
     assert!((said["color"][2].as_f64().unwrap() - 0.3).abs() < 1e-6);
     assert!(biome_json(&mut game.content, "Biomes/Gone.biome").is_err());
@@ -388,11 +391,22 @@ fn a_biome_saved_makes_the_worlds_listing_it_again_and_a_place_says_which_biome_
     game.tick(1.0 / 60.0, None);
     let after = tops(&game);
     assert_eq!(game.engine.world.get::<BlockWorld>(field).unwrap().blocks.get(built), 1, "what was built is kept");
-    assert_eq!((after.get(&clay), after.get(&sand), after.len()), (before.get(&moss), before.get(&sand), 2), "{after:?}");
+    assert_eq!((after.get(&clay), after.get(&sand)), (before.get(&moss), before.get(&sand)), "{after:?}");
+    assert_eq!(after.len(), 2, "{after:?}");
     // The world numbered clay as it first held it; moss keeps its number, though no ground is moss now.
     let asset = game.engine.world.get::<BlockWorldAsset>(field).unwrap().clone();
     assert_eq!(asset.file.blocks.len(), usize::from(clay));
     assert_eq!(asset.drawn.number_of(game.content.db().guid_of("Blocks/Moss.block").unwrap()), Some(moss));
+    // Its colour changed alone makes no ground again: the world's blocks are the very ones they were.
+    let made = game.engine.world.get::<BlockWorld>(field).unwrap().blocks.clone();
+    write("Biomes/Cool.biome", &cool("Blocks/Clay.block").replace("0.1, 0.2, 0.3", "0.9, 0.2, 0.3"));
+    game.content.forget_biome(cool_guid);
+    game.tick(1.0 / 60.0, None);
+    assert!(std::sync::Arc::ptr_eq(&made, &game.engine.world.get::<BlockWorld>(field).unwrap().blocks));
+    let said = biome_json(&mut game.content, "Biomes/Cool.biome").unwrap();
+    let said: serde_json::Value = serde_json::from_str(&said).unwrap();
+    assert!((said["color"][0].as_f64().unwrap() - 0.9).abs() < 1e-6, "and its colour is read again");
+    let asset = game.engine.world.get::<BlockWorldAsset>(field).unwrap().clone();
     // A level loaded again takes the biome as it is now from what was kept, with no file read again.
     let again = game.content.block_world(asset.guid).expect("the world as kept");
     assert_eq!(again.file.generate, asset.file.generate);

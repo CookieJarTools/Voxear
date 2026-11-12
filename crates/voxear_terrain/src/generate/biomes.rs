@@ -337,6 +337,17 @@ impl WorldBiomes {
         self.biomes.list().iter().any(|biome| biome.sunk.is_some())
     }
 
+    /// Whether it makes the ground `other` makes: the same biomes in the
+    /// same places, of the same blocks, whatever colours they show on maps.
+    pub fn same_ground(&self, other: &Self) -> bool {
+        let lies = |biome: &BiomeDef| (biome.temperature, biome.humidity, biome.height, biome.sunk);
+        let (ours, theirs) = (&self.biomes, &other.biomes);
+        self.blocks == other.blocks
+            && (ours.spreads, ours.wander, ours.wander_size, ours.seed)
+                == (theirs.spreads, theirs.wander, theirs.wander_size, theirs.seed)
+            && ours.list.iter().map(lies).eq(theirs.list.iter().map(lies))
+    }
+
     /// The blocks of the biome the place at `(x, z)` is, with `climate`
     /// there; none where the world lists no biomes.
     pub fn at(&self, x: f32, z: f32, climate: Place) -> Option<&BiomeBlocks> {
@@ -434,6 +445,21 @@ mod tests {
         let text = biomes.list()[2].to_text();
         assert!(text.contains("sunk"), "{text}");
         assert_eq!(BiomeDef::parse(&text).unwrap(), biomes.list()[2]);
+    }
+
+    #[test]
+    fn a_worlds_biomes_make_the_same_ground_whatever_their_colours_and_other_ground_once_they_lie_elsewhere() {
+        let of = |list: Vec<BiomeDef>, top: BlockId| WorldBiomes {
+            blocks: list.iter().map(|_| BiomeBlocks { top, ..BiomeBlocks::default() }).collect(),
+            biomes: Biomes::new(list, 15.0, 0.3, 1),
+        };
+        let cool = biome([-40.0, 15.0], [0.0, 1.0], None);
+        let world = of(vec![cool.clone()], 4);
+        let recoloured = of(vec![BiomeDef { color: [1.0, 0.0, 0.0], ..cool.clone() }], 4);
+        assert!(world.same_ground(&recoloured) && world != recoloured);
+        assert!(!world.same_ground(&of(vec![cool.clone()], 5)), "another block on top");
+        assert!(!world.same_ground(&of(vec![BiomeDef { height: Some([0.0, 100.0]), ..cool.clone() }], 4)));
+        assert!(!world.same_ground(&of(vec![cool.clone(), cool], 4)), "one biome more");
     }
 
     #[test]

@@ -1454,7 +1454,7 @@ impl Content {
                 return found;
             };
             let placed = crate::blocks::with_biomes(self, &stale.file);
-            let regrown = placed.generate != stale.file.generate;
+            let regrown = crate::blocks::regrown(&stale.file, &placed);
             let file = crate::blocks::resolved(self, &placed);
             let (_, faces) = file.faces();
             let endless = placed.generate.as_ref().is_some_and(|generate| generate.endless.is_some());

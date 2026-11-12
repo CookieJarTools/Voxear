@@ -502,7 +502,8 @@ fn mesas() -> Starter {
     let ground = g.math(Add, land, roll);
     // Natural bridges carry a tableland across the river's canyon, and the walls lean and bulge.
     g.next();
-    let arches = g.add(NodeKind::Arches(Arches { span_from: 110.0, span_to: 230.0, thickness: 10.0, width: 30.0, ..Arches::default() }));
+    let arches = Arches { span_from: 110.0, span_to: 230.0, thickness: 10.0, width: 30.0, ..Arches::default() };
+    let arches = g.add(NodeKind::Arches(arches));
     g.expose(arches, "often", "Arches");
     g.next();
     let rough = g.after(arches, NodeKind::Overhangs(Overhangs { amount: 5.0, size: 22.0, ..Overhangs::default() }));
@@ -569,8 +570,20 @@ fn highlands() -> Starter {
     g.next();
     let ground = g.math(Add, ledges, bumps);
     g.next();
-    let arches = g.add(NodeKind::Arches(Arches { span_from: 40.0, span_to: 130.0, thickness: 7.0, width: 16.0, often: 0.8, seed: 0 }));
-    let hall = RoomRules { size: [30.0, 52.0], shapes: 5, height: 18.0, roughness: 1.5, floor: 0.5, pillars: 2, hanging: 4, ledges: 2, exits: 5, exits_apart: 0.8 };
+    let arches = Arches { span_from: 40.0, span_to: 130.0, thickness: 7.0, width: 16.0, often: 0.8, seed: 0 };
+    let arches = g.add(NodeKind::Arches(arches));
+    let hall = RoomRules {
+        size: [30.0, 52.0],
+        shapes: 5,
+        height: 18.0,
+        roughness: 1.5,
+        floor: 0.5,
+        pillars: 2,
+        hanging: 4,
+        ledges: 2,
+        exits: 5,
+        exits_apart: 0.8,
+    };
     let network = CaveNetwork {
         spacing: 84.0,
         depth: 50.0,
@@ -677,7 +690,11 @@ mod tests {
 
     #[test]
     fn mesas_sky_islands_and_highlands_stand_hundreds_of_metres_tall_with_a_volume_each() {
-        let pins: [(&str, u64, f32); 3] = [("Mesas", 0, 200.0), ("Sky Islands", 0, 40.0), ("Highlands", 0, 350.0)];
+        let pins: [(&str, u64, f32); 3] = [
+            ("Mesas", 0x642f_a272_1498_4fb1, 200.0),
+            ("Sky Islands", 0x3f7d_04bc_1fc6_a925, 40.0),
+            ("Highlands", 0x2d6a_a25a_149d_c1b0, 350.0),
+        ];
         let mut changed = Vec::new();
         for (name, hash, tall) in pins {
             let starter = starters().into_iter().find(|starter| starter.name == name).expect(name);

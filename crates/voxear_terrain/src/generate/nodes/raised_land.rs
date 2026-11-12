@@ -408,7 +408,8 @@ mod tests {
 
     fn world(joined: Joined) -> WorldGen {
         let mut graph = Graph::default();
-        let hills = graph.add(NodeKind::Noise(Noise { size: 400.0, low: 0.0, high: 80.0, ..Noise::default() }), [0.0; 2]);
+        let hills =
+            graph.add(NodeKind::Noise(Noise { size: 400.0, low: 0.0, high: 80.0, ..Noise::default() }), [0.0; 2]);
         let raised = RaisedLand { size_from: 60.0, size_to: 160.0, often: 0.7, joined, ..RaisedLand::default() };
         let raised = graph.add(NodeKind::RaisedLand(raised), [200.0, 0.0]);
         let output = graph.add(NodeKind::Output(Output::default()), [400.0, 0.0]);

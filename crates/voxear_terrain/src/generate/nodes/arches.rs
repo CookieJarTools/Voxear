@@ -245,7 +245,8 @@ impl Finder {
             let part = 1 + try_at as i32 * 4;
             let span = set.span_from + (set.span_to - set.span_from) * pick(part);
             let way = WAYS[(pick(part + 1) * 8.0) as usize % 8];
-            let middle = [(region[0] as f32 + pick(part + 2)) * self.region, (region[1] as f32 + pick(part + 3)) * self.region];
+            let middle =
+                [(region[0] as f32 + pick(part + 2)) * self.region, (region[1] as f32 + pick(part + 3)) * self.region];
             let from = [middle[0] - way[0] * span * 0.5, middle[1] - way[1] * span * 0.5];
             *line = (from, way, span);
             for read in 0..READ {
@@ -470,7 +471,12 @@ mod tests {
         }
         for at in 0..bridges {
             // Every bridge is clear of the ground by 16 m or more somewhere, and meets it at its ends.
-            assert!(open[at] >= 16.0 && flush[at] < 4.0, "bridge {at}: {} m clear, {} m off the ground", open[at], flush[at]);
+            assert!(
+                open[at] >= 16.0 && flush[at] < 4.0,
+                "bridge {at}: {} m clear, {} m off the ground",
+                open[at],
+                flush[at]
+            );
         }
         // The same cells asked in any order hold the same: a bridge is its region's, whoever asks.
         let other = self::world(3);

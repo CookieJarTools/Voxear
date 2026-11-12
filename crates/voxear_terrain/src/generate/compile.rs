@@ -455,6 +455,14 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    /// Whether rows made once a column for the cells `at` are carried up
+    /// to them: so for a Volume's own cells, and not for cells a node has
+    /// moved or a program that makes every node's preview, where such a
+    /// row would be made again for every cell.
+    pub fn carries(&mut self, at: Cells) -> bool {
+        at == self.cells() && self.carry.is_some()
+    }
+
     /// Whether `row` is a hollow that is nothing but within the spans
     /// noted, so that taking it out of ground leaves the ground solid as
     /// deep as it was everywhere else.
@@ -632,7 +640,8 @@ fn voxels(graph: &Graph, world: World, faults: &mut Vec<Fault>) -> Option<Voxels
     bytes.extend(cells.hash.to_le_bytes());
     bytes.extend(between.iter().map(|between| u8::from(*between)));
     let hash = crate::layers::stable_hash(&bytes);
-    Some(Voxels { columns, between, exact, spread, cells, coarse, plain, caved: whole != ground, reach, depth, spans, spanned, hash, caves })
+    let caved = whole != ground;
+    Some(Voxels { columns, between, exact, spread, cells, coarse, plain, caved, reach, depth, spans, spanned, hash, caves })
 }
 
 /// Compiles `graph` in `world`, adding what is wrong with it to `faults`.

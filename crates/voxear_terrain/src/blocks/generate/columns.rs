@@ -395,7 +395,8 @@ pub fn column_chunks(
             put(x, y, z, block, fill);
         }
     }
-    for chunk in &mut chunks[(rock_to.div_euclid(side) - low_key) as usize..(rock_from.div_euclid(side) - low_key) as usize] {
+    let whole_rock = (rock_to.div_euclid(side) - low_key) as usize..(rock_from.div_euclid(side) - low_key) as usize;
+    for chunk in &mut chunks[whole_rock] {
         *chunk = Some(Chunk::filled(rock));
     }
     (low_key..).zip(chunks).filter_map(|(cy, chunk)| Some(([cx, cy, cz], chunk?.tidied()))).collect()

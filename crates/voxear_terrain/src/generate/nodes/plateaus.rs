@@ -120,7 +120,8 @@ const VALUES: &[ValueSpec] = &[
 
 const INPUTS: &[Port] = &[Port::field("ramps", "Ramps")];
 
-const OUTPUTS: &[Port] = &[Port::field("height", "Height"), Port::field("walls", "Walls"), Port::field("floor", "Floor")];
+const OUTPUTS: &[Port] =
+    &[Port::field("height", "Height"), Port::field("walls", "Walls"), Port::field("floor", "Floor")];
 
 impl Kind for Plateaus {
     const TITLE: &'static str = "Plateaus";
@@ -337,11 +338,17 @@ impl Kernel for Cut {
             key.number(*height).number(*edge);
         }
         key.number(self.size).whole(self.seed).number(self.wall).number(self.talus).number(self.rim);
-        key.number(self.river).number(self.canyon).number(self.ramps).number(self.ramp_slope).number(self.step).number(self.wander);
+        key.number(self.river)
+            .number(self.canyon)
+            .number(self.ramps)
+            .number(self.ramp_slope)
+            .number(self.step)
+            .number(self.wander);
     }
 
     fn run(&self, inputs: &[&[f32]], out: &mut [f32]) {
-        let (raised, rounded) = (if self.rim > 0.0 { self.rim } else { 0.0 }, if self.rim < 0.0 { -self.rim } else { 0.0 });
+        let (raised, rounded) =
+            (if self.rim > 0.0 { self.rim } else { 0.0 }, if self.rim < 0.0 { -self.rim } else { 0.0 });
         let mut held: [Option<Site>; HELD] = [None; HELD];
         let mut site = |cell: [i32; 2]| {
             let slot = (cell[0].rem_euclid(8) * 8 + cell[1].rem_euclid(8)) as usize;
@@ -355,7 +362,8 @@ impl Kernel for Cut {
             }
         };
         // Three sizes of bend, the widest moving a line furthest.
-        let bends = [(1.3, 0.2), (0.35, 0.06), (0.1, 0.015)].map(|(wide, far)| (self.size * wide, self.wander * self.size * far));
+        let bends = [(1.3, 0.2), (0.35, 0.06), (0.1, 0.015)]
+            .map(|(wide, far)| (self.size * wide, self.wander * self.size * far));
         let wide = self.size * 0.1 + 12.0;
         for (at, out) in out.iter_mut().enumerate() {
             // The walls' lines are bent by reading the land a little way off.
@@ -409,13 +417,17 @@ impl Kernel for Cut {
                 // A ramp against this wall, for the pairs the seed picks: a stair as wide as `wide` down from the
                 // line, about the middle of it.
                 let (low, up) = if mine.cell < other.cell { (mine.cell, other.cell) } else { (other.cell, mine.cell) };
-                let pair = mix(self.seed, [low[0] ^ up[0].wrapping_mul(0x51ED), low[1] ^ up[1].wrapping_mul(0x2F0B), 3]);
+                let pair =
+                    mix(self.seed, [low[0] ^ up[0].wrapping_mul(0x51ED), low[1] ^ up[1].wrapping_mul(0x2F0B), 3]);
                 if share(pair) >= self.ramps || inputs[2][at] < 0.5 {
                     continue;
                 }
                 let (ux, uz) = (ax / between, az / between);
                 let along = share(mix(pair, [1, 2, 3])) - 0.5;
-                let (mx, mz) = ((mine.at[0] + other.at[0]) * 0.5 - uz * along * 0.3 * between, (mine.at[1] + other.at[1]) * 0.5 + ux * along * 0.3 * between);
+                let (mx, mz) = (
+                    (mine.at[0] + other.at[0]) * 0.5 - uz * along * 0.3 * between,
+                    (mine.at[1] + other.at[1]) * 0.5 + ux * along * 0.3 * between,
+                );
                 let beside = (px - mx) * -uz + (pz - mz) * ux;
                 let beside = if beside < 0.0 { -beside } else { beside };
                 if beside > wide * 0.5 {
@@ -505,7 +517,8 @@ mod tests {
         let share = level as f32 / (side * (side - 1)) as f32;
         assert!(share > 0.8, "{share} of the land is level");
         // Every level is somewhere in 1200 m, each with a fiftieth of the land or more.
-        let found: Vec<i32> = shares.iter().filter(|(_, count)| **count > side * side / 50).map(|(at, _)| *at).collect();
+        let found: Vec<i32> =
+            shares.iter().filter(|(_, count)| **count > side * side / 50).map(|(at, _)| *at).collect();
         assert_eq!(found.len(), 5, "{found:?} of {shares:?}");
         assert_eq!((found[0], found[4]), (10, 250));
         // Uneven: the steps between them are not all as high.
@@ -538,7 +551,12 @@ mod tests {
         let mut next = vec![start];
         while let Some(at) = next.pop() {
             let (x, z) = (at % side, at / side);
-            let beside = [(x > 0).then(|| at - 1), (x + 1 < side).then(|| at + 1), (z > 0).then(|| at - side), (z + 1 < side).then(|| at + side)];
+            let beside = [
+                (x > 0).then(|| at - 1),
+                (x + 1 < side).then(|| at + 1),
+                (z > 0).then(|| at - side),
+                (z + 1 < side).then(|| at + side),
+            ];
             for to in beside.into_iter().flatten() {
                 if !reached[to] && tops[to] - tops[at] <= 1 {
                     reached[to] = true;

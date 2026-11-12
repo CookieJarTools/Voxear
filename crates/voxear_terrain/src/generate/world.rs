@@ -189,7 +189,8 @@ impl Volume<'_> {
         if !self.voxels.spans.iter().any(|(_, stands)| *stands) {
             return found;
         }
-        let rows = made(&self.voxels.spanned, count, Givens { x: xs, z: zs, ground: heights, ..Givens::default() }).rows;
+        let given = Givens { x: xs, z: zs, ground: heights, ..Givens::default() };
+        let rows = made(&self.voxels.spanned, count, given).rows;
         for (span, (_, stands)) in self.voxels.spans.iter().enumerate() {
             let (feet, tops) = (&rows[span * 2], &rows[span * 2 + 1]);
             for at in (0..count).filter(|&at| *stands && tops[at] > feet[at]) {

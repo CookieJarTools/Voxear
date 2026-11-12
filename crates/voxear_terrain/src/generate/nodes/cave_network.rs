@@ -292,7 +292,7 @@ impl Kind for CaveNetwork {
         let size = cx.size();
         // An endless network says how low and how high its rooms and tunnels reach over each column, so that
         // rock far under them, and between them and the ground, is not asked about.
-        let endless = network.level.is_none();
+        let endless = network.level.is_none() && cx.carries(at);
         if endless {
             let end = |cx: &mut Compiler, top: bool| {
                 let (network, key) = (network.clone(), key.bytes());

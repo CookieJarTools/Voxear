@@ -400,7 +400,8 @@ mod tests {
             let mut graph = Graph::default();
             let (height, volume) = (graph.add(height, [0.0; 2]), graph.add(volume, [0.0; 2]));
             let output = graph.add(NodeKind::Output(Output::default()), [0.0; 2]);
-            assert!(graph.connect(height, 0, output, Output::HEIGHT) && graph.connect(volume, 0, output, Output::VOLUME));
+            assert!(graph.connect(height, 0, output, Output::HEIGHT));
+            assert!(graph.connect(volume, 0, output, Output::VOLUME));
             WorldGen::new(4, 1.0, -50.0, graph)
         };
         let hills = NodeKind::Noise(Noise { size: 400.0, low: 0.0, high: 80.0, ..Noise::default() });
@@ -426,7 +427,8 @@ mod tests {
                     assert!(gap[1].from as f32 > tile.surface(column), "it stands over the ground");
                     let y = gap[1].to - 1;
                     let chunk = chunks.iter().find(|(key, _)| key[1] == y.div_euclid(CHUNK as i32));
-                    let block = chunk.map(|(_, chunk)| chunk.get(column[0], y.rem_euclid(CHUNK as i32) as u32, column[1]));
+                    let within = y.rem_euclid(CHUNK as i32) as u32;
+                    let block = chunk.map(|(_, chunk)| chunk.get(column[0], within, column[1]));
                     assert_eq!(block, Some(gap[1].block), "a run is its chunk's blocks");
                     found += usize::from(gap[1].from - gap[0].to >= 3);
                 }

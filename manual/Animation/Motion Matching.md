@@ -48,10 +48,6 @@ While an action stands the character still or moves it itself, as a sit or a rol
 
 Going another way than it faces, the hips and legs turn towards the way it goes, up to **Leg Turn**, and the spine twists back so the chest still faces ahead. With only a forward and a backward walk, it walks forward and to the side, or backs away to the side, turning smoothly from one to the next. Steps to each side, if the model has them, take over once they fit better.
 
-## Walking round a planet
-
-Near a planet, the Motion Matcher stands the body away from the planet's middle, as its Character Controller stands, though its Obj stays as it is. It turns the body and walks it about that up, and reads `WantedVelocity` and `WantedFacing` along the ground there, so a script gives them in the world as it would anywhere. With Root Motion on, the clips carry the character round the planet and keep it pressed to the ground. See [[Voxel Terrain]].
-
 ## Settings
 
 - **Motion Set**: its states and actions. None plays the model's own clips, standing with the first loop that stands still.

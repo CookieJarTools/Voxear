@@ -1418,7 +1418,7 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
 
 ## M8 — Terrain (in progress)
 
-Heightmap terrain first, then digging, generation, block worlds, and smooth voxels and planets: each its own
+Heightmap terrain first, then digging, generation, block worlds and smooth voxels: each its own
 component, sharing generation, surfaces and plants where they fit. Gameplay data (heights, voxels, collision, saves)
 is worked out on the CPU, the same on every machine; drawing, culling and erosion run on the GPU. The design is in
 [ARCHITECTURE.md](ARCHITECTURE.md#terrain).
@@ -1599,10 +1599,10 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     before graphs reads as a Landmass and a Climate wired to the Output and makes the same ground. A generator is
     never changed, only replaced, with a hash of all that decides its ground: saved with only a node moved it keeps
     its place in `Content` and nothing is made again, and a terrain's kept heights remember their generators'
-    hashes. The Generate layer asks for a padded tile at once, block worlds for a chunk column, planets for a row.
+    hashes. The Generate layer asks for a padded tile at once, block worlds for a chunk column.
     A graph with a loop or no Output still makes ground and says what is wrong (`WorldGen::faults`). Inspector:
     a landmass's settings as before; any other graph, its seed, scale, sea level and exposed rows. Tests: an old
-    file's hash, a landmass in a graph against itself flat and round, batches against single places, text read
+    file's hash, a landmass in a graph against itself, batches against single places, text read
     back as written, the hash following the ground alone, broken graphs, block chunks by hash before and after.
   - ~~**The graph editor:**~~ done: the Generator panel, opened by a double click on a `.worldgen` or Open Graph in
     its Inspector. A canvas that knows nothing of generators (`graph_canvas`, for other graphs later): drawn, as
@@ -1632,15 +1632,14 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     valleys apart), Climate Mask (the eight biomes' ranges as presets). Gullies as a node on any height, by a
     landmass's maths (`landmass::Gullied`, which both use), each octave joining the floors of the one before with
     no step. A node that reads round a place (a slope, a curvature, an average, gullies) makes rows of places and
-    asks for its input there; round a planet those lie along two tangents of its surface (gullies run round a
-    planet since, see Planets below). Angles are rows in degrees kept as rise over run (`ValueKind::Angle`), their feathers turned
+    asks for its input there. Angles are rows in degrees kept as rise over run (`ValueKind::Angle`), their feathers turned
     by sums and products, so nothing that makes ground uses trigonometry. Five graphs to start from
     (`generate::starters()`), under the presets' names and tuned by eye against them: Battlefield Plains (streams
     cut into nearly level ground, shell holes from two scatters behind a Craters row), Rolling Hills (smooth hills
     with valleys that branch), Alpine, Archipelago (ragged coasts, shallows, islets) and Canyons (stepped high
     ground, canyons along ridged lines with floors at one level, ravines down their walls), each with its height
     and a few more values as rows. Files made from a landmass preset are untouched. Tests, for every node: its
-    range, batches against single places flat and round, its text read back, what it does round a planet; a
+    range, batches against single places, its text read back; a
     hash of each starter's ground, the same unoptimised and optimised; a tile of each timed against a
     landmass's. Manual: Generator Nodes. In the editor, New ▸ World Generator makes the Rolling Hills starter, and a
     generator's Preset row picks among the starters while its graph is one's still, whatever its rows are set to
@@ -1657,17 +1656,16 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     the caves is compiled beside the whole, for far levels, for telling open air from a cave's, and for layers.
     Nodes: Solid, Noise 3D, Overhangs (pushes through a mask, steep ground with none wired in, its octaves fading as
     blocks grow too large to hold them), Tunnels, Chambers, Combine (Union, Subtract, Smooth). `WorldGen::volume`
-    gives `carried`, `carried_grid` (masks made at every fourth column and read between) and `densities`, flat and
-    round. Block worlds, Voxel Terrains and planets make their ground from it (`blocks::generate`); a generator
+    gives `carried`, `carried_grid` (masks made at every fourth column and read between) and `densities`. Block
+    worlds and Voxel Terrains make their ground from it (`blocks::generate`); a generator
     with none has the world's own Overhangs and Caves wired into a copy of its graph as the same nodes, seeded as
     they were, so a world with Overhangs at 0 keeps its blocks to the bit, and **Move to Generator** in the Block
     World's Inspector writes them into the generator with their amounts as its rows. Hillsides are no longer
     pocked: only steep ground is pushed. Layers are counted down each column from the open air, through chunks and
-    past caves, and out along the radius on a planet, so the under block no longer shows through; drawn smooth,
+    past caves, so the under block no longer shows through; drawn smooth,
     fills are distances (the number over how fast it changes from block to block), the top block follows slopes as
     a skin and walls are bare, and a corner takes the kind of the ground its surface passes beside. Tests: cells in
-    a batch against each alone, flat and round, from every core; the hash following the Volume and unchanged
-    without one; each node; a Field carried and bent; grids agreeing where they overlap; layers on overhanging
+    a batch against each alone, from every core; the hash following the Volume; each node; a Field carried and bent; grids agreeing where they overlap; layers on overhanging
     ground of cubes and smooth; the moved numbers making the same ground; the editor moving them. Manual: Block
     Worlds, Voxel Terrain.
   - ~~**Cave rooms:**~~ done: a room is a prefab of **Cave Shape** Objs (Ball, Half Ball or Box; Carve or Fill;
@@ -1680,11 +1678,11 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     a level floor. **Endless**: a room a region from a hash of the region, a tunnel between neighbours where a
     hash of the pair says so, each room Depth under the ground at its own middle, some with a way up to the
     surface; whatever reaches a region is gathered from it and the two rings round it, so a chunk made alone
-    meets its neighbours. Round a planet the grid lies on the six sides of a cube in whole numbers, so sides join.
+    meets its neighbours.
     **Level**: a main path walked over the grid without crossing itself and side rooms off it, laid out when the
     generator is compiled. `WorldGen::caves` gives the rooms as they lie, and scripts read them as `Caves.Rooms`,
     `Caves.Start`, `room.Exits`, `room.SpawnPoint()`, with `Caves.Of(world)` and `RoomsNear` under them. A **Cave
-    Level** preset beside the five. Tests: a cell alone against a batch, flat and round; a chunk column alone
+    Level** preset beside the five. Tests: a cell alone against a batch; a chunk column alone
     against one made among its neighbours; hollows whole across region lines; every room of a level reached from
     the first through the blocks; a prefab read, changed and read again, in the engine and in the editor; a
     script finding rooms, exits and floors. Manual: Caves.
@@ -1806,7 +1804,7 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     water, the kind's colour its Deep, its top rippled, bent and dimmed by as much water as the view goes through,
     foam at the shore, its underside from below. `BlockWorld::water_over` gives Buoyancy the top of the water in
     a column. Generated ground fills the open air below its generator's sea level with its sea block
-    (`BlockGenerate::sea`; a planet's sea its radius). A Voxel Terrain kept its water as cubes (smooth since, below),
+    (`BlockGenerate::sea`). A Voxel Terrain kept its water as cubes (smooth since, below),
     the smooth ground running under it, each block of water taken as a block further out than the ground beside it, its
     sides drawn against anything not water; balls add ground in place of water and never take it. Editor: each kind's
     Water (its materials' rows hidden), and Sea block under generated ground's settings. Tests: water's faces apart and
@@ -1815,33 +1813,29 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     drawing a pond over its floor, the editor making a kind water, placing it and picking a sea block.
     Flowing (`blocks::flow`): water placed and a generated sea are sources, full for good; water runs from them
     down, then out over ground an eighth of a block lower each block, seven at most, falling as a column off an
-    edge, never running out from falling water or over water, and dries a step at a time once nothing feeds it. On a
-    planet, down is towards its middle along the axis a block lies furthest out along (`flow::Fall`). A flowing
+    edge, never running out from falling water or over water, and dries a step at a time once nothing feeds it. A flowing
     block keeps its level and its way up in its fill (`flow::Water`), so saves and the network carry it; the mesher
     lowers its top and sides and draws the strip over lower water, each such quad keeping its shape where the
     corners' shading was and its way up in its first word's top bits (`mesh::water_shape`), which `blockWaterVertex`
     moves its corners by. A step looks only at blocks near the last step's changes (`BlockWorld::flowing`, set by
     every change), each from the blocks as they were, so every machine flows the same; `voxear_engine::blocks::flow`
     runs five a second in `Game::tick`, editing and playing, at most four a frame. Tests: levels, reach, falling off
-    an edge, drying, a Voxel Terrain planet's water running round it, a step a block from the blocks as they were,
+    an edge, drying, a step a block from the blocks as they were,
     quads' shapes, the engine's steps the same however frames fall, the GPU drawing water lower the further it runs,
     the editor's water running out and undone with it. Buoyancy pushes against the pull where a body is, as strongly
-    as it pulls (towards a planet's middle near one, as physics pulls), reading how deep it is along the water's own
-    up (`BlockWorld::water_depth`), so things float on a planet's sides; tested with a ball floating out from a
-    planet's middle and one sinking to its stone. Not done: an under-water view on a planet's sides; scripts'
-    `Water` finding a planet's water off its top.
+    as it pulls, reading how deep it is under the water's top (`BlockWorld::water_depth`).
     After a first look: still water spreads over water (falling water only over ground), so a lake runs into a hole
     dug beside it, and a block between two sources becomes one; a Voxel Terrain's water is smooth, its surface made
     by surface nets over a field of water's and ground's depths, faces only where water meets air, a generated sea's
     top blocks keeping where its surface lies (`flow::surface_fill`, `smooth_surface`), so it lies flat at its sea
-    level and round a planet; block brushes work once a click, again only as the pointer moves half a brush on, and
+    level; block brushes work once a click, again only as the pointer moves half a brush on, and
     while playing; terrains' and block worlds' looks count as using their materials, so their colours survive play
     (they were freed as a level loaded). Tests: a lake running into a hole, a gap filling, smooth water at its top and
     at a sea's level, a block world's colours kept loaded.
     After a second look: drawn smooth, a generated sea takes the ground's top block where the ground lies under it with
     no block of sea over it (`generate::pushed`; the ground below stays, the sea's floor), and its surface runs a block
     into the shore (`smooth::water_surface`: ground beside the water's top with air over it takes the water's level and
-    a face, up being the map's, `BlockMap::round` on a planet), so it meets the ground with no gaps; each smooth corner
+    a face), so it meets the ground with no gaps; each smooth corner
     takes the kind of the ground nearest the surface among its eight blocks (`Padded::kind`) and a triangle's three
     kinds blend by how near each corner a fragment is (`blockVertex` packs them in `lod` and `cluster`), which also
     keeps dirt from showing through a thin top layer on slopes. Under water in blocks: the water round the camera is a
@@ -1884,8 +1878,8 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     block saved taken up, shipping, captures old and new and renumbered, scripts mining by rules, placing unlisted
     blocks and reaching through water, recipes moved, mirrored and at a station, the Inspectors, and the package
     played in a game.
-- **Smooth voxel terrain, flat and planets**, in parts: smooth ground you can see, stand on, generate and build on;
-  planets with their own gravity; a floating origin.
+- **Smooth voxel terrain**, in parts: smooth ground you can see, stand on, generate and build on; a floating
+  origin. Planets (ground all round a middle, with gravity towards it) were built here and taken out again.
   - ~~**Voxel Terrain:**~~ done: a Block World drawn smooth (`BlockFile::smooth`, `BlockWorld::smooth`). Each chunk
     keeps how full each block is where the surface passes (`chunk::Fill`, a byte a block, kept only for chunks that
     need it), generation writes it from the generator's depth (overhangs and caves too), and `blocks::smooth` meshes
@@ -1904,33 +1898,16 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     columns; where a ring meets the finer one inside it, the coarser hangs skirts two blocks down its columns' sides
     (`smooth::mesh_skirted`), drawn and not stood on. Tests: skirts on the sides alone and facing out, coarse columns
     meeting point for point, the GPU drawing hills to the horizon with no sky through them. (Kinds blend within a triangle since the water blocks' second look, above.)
-  - ~~**Planets:**~~ done: generated ground as a planet (`BlockGenerate::planet`, `BlockPlanet { radius }`) all round
-    a middle at its world's corner, its generator read round it in three dimensions (`WorldGen::height_round`,
-    `climate_round`, colder towards the poles; fields read through a flat or round `Spot`, `noise::fractal3`), once,
-    on a cube's six faces about a block apart and read between (`blocks::generate::Round`); chunks deep under its
-    caves its base block whole, the rest block by block on every core; level with its sea without a generator.
-    `BlockWorld::planet` gives physics its radius: moving bodies within four radii fall towards its middle in place
-    of gravity (`PhysicsScene::pull_to_planets`). Editor: Ground ▸ Planet and Radius. Tests: a planet on its
-    generator's heights out every way, no step across a cube's edges, colder poles, a ball falling onto a planet's
-    side, the GPU drawing it round and lit on one side, the editor making one and undoing it. Gullies run down a
-    planet's slopes too (`Gullied::cut_round`): the slope kept as a direction in space, the stripes laid round
-    points scattered through space in place of a plane, so they wrap it with no seam and no pole shows; a landmass's
-    own and a Gullies node's alike. Tests: only cutting, no step walked round three great circles.
-  - ~~**Walking round planets:**~~ done: bodies and characters share gravity at a point (`scene::gravity_at`,
-    `PhysicsScene::gravity_at`): towards the nearest planet's middle within four radii, the world's gravity
-    elsewhere. Each Character Controller stands against it, its capsule turned from its last up by the least turn
-    (`vx_character_set_up`), its steps, slopes and floor measured along that up, and the move told that gravity.
-    C#: `Physics.GravityAt(position)`, `CharacterController.Up`, and `SimpleMove` falling along it (native API 69).
-    The First-Person View turns about the up where its Obj is: a level of its own (`FirstPersonView::level`, C#
-    `Level`), carried by the least turn each frame, so its yaw goes round with it, its Obj, camera, body twist and
-    gun holder all following. The Motion Matcher measures its body's facing, the velocity wanted and seen and its
-    clips' travel in a level of its own (`MotionMatcherState::level`), carried to its Character Controller's up or
-    else the pull where it is: its body stands away from a planet's middle whatever its Obj's turn, and root motion
-    presses it to the ground along that up; off planets nothing is turned. Tests: a character dropped beside a planet
-    landing on its side, upright to it, and walking round it; a view on a planet's side turned about its up and its
-    yaw carried over the top; a script doing the same through `GravityAt` and `SimpleMove`, its view and Obj upright;
-    a motion-matched character walking round a planet's side by its clips, its body upright to it and facing the way
-    it goes.
+  - ~~**Standing against gravity:**~~ done: bodies and characters share gravity at a point (`scene::gravity_at`,
+    `PhysicsScene::gravity_at`), the world's own everywhere. Each Character Controller stands against it, its
+    capsule turned from its last up by the least turn (`vx_character_set_up`), its steps, slopes and floor measured
+    along that up, and the move told that gravity. C#: `Physics.GravityAt(position)`, `CharacterController.Up`, and
+    `SimpleMove` falling along it (native API 69). The First-Person View turns about the up where its Obj is: a
+    level of its own (`FirstPersonView::level`, C# `Level`), carried by the least turn each frame, its Obj, camera,
+    body twist and gun holder all following. The Motion Matcher measures its body's facing, the velocity wanted and
+    seen and its clips' travel in a level of its own (`MotionMatcherState::level`), carried to its Character
+    Controller's up or else against gravity; while gravity pulls straight down nothing is turned. Tests: a view
+    under gravity turned sideways standing against it, and level again once it pulls down.
   - ~~**Floating origin:**~~ done, switched on in Project Settings ▸ World (`[floating_origin]`, off by default): once
     the viewer terrain streams round is past its distance (2048 m) from the world's middle any way, up and down too, the
     world moves back by whole steps (1024 m) between frames (`origin::due`, `Game::move_origin`); the sky and fog
@@ -1941,7 +1918,7 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
     sound (`Command::Shift`, acoustics measured from the level's middle), smokes, mists, motion matching, first-person
     eyes, gun holders and debug draw; the renderer's last-frame matrices, probes, tracks, foam, sea floor and foliage
     (`Renderer::shift_origin`); the sea's cascades phased by the origin in f64, drawn and for buoyancy. Streaming counts
-    from its Obj, so nothing is made again. Mode Off, Endless Worlds (levels with ground without end or a planet) or
+    from its Obj, so nothing is made again. Mode Off, Endless Worlds (levels with ground without end) or
     Every Level. Networked: a server and a host keep the level's middle, each client moves its own; positions go between
     them measured from the level's middle, each machine adding its origin as it sends and taking it away as it reads, a
     root bit and a far bit each, 16 bits an axis more past 8 km (out to half a million km); clients' samples, spawns and
@@ -1965,14 +1942,13 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   (`vox render --level --profile --fly`; the stats overlay and the Profiler count block triangles in view and in
   shadows). Each chunk's mesh for the GI's rays waited on the GPU about seven times; a frame's are now uploaded and
   built in one batch (`Gpu::batch`), keep no meshlets, and share their corners; a full mesh pool leaves chunks out of
-  the GI rather than failing the frame (a planet 250 blocks round stopped drawing). Physics makes chunks' shapes on
+  the GI rather than failing the frame. Physics makes chunks' shapes on
   every core and keeps a body whose triangles did not change. An endless world makes its near blocks a column past those
   drawn and meshes each column once, in the background, when the columns round it have blocks, so a flight across it
   spends 53 ms streaming where it spent 861 ms, its ticks 0.3 ms where 1.9, its slowest frame 33 ms where 130, and the
   near window's edge shows no walls. Smooth surfaces are merged where flat (a tenth of a block), the points beside
-  another kind and those chunks share kept, and twice more for far away, a view drawing the coarsest its distance allows (the Voxel
-  Planet level: 146k triangles where it drew 265k, its sea 21k where 62k; a planet 250 blocks round, 2.0M where 4.1M,
-  which before failed to draw at all), and passes over chunks facing away; smooth water is merged as the ground is; a
+  another kind and those chunks share kept, and twice more for far away, a view drawing the coarsest its distance allows
+  (a Voxel Terrain level: 146k triangles where it drew 265k, its sea 21k where 62k), and passes over chunks facing away; smooth water is merged as the ground is; a
   chunk changed is made again at its first level alone. Cascades draw only cubes' faces turned towards the sun (about
   half). A world whose faces did not change costs physics and the renderer no walk over its chunks. Small blocks: a
   block is 0.1 m to 10 m a side (`file::SMALLEST_BLOCK`, `LARGEST_BLOCK`; at 0.01 m a 64 m world was 4096 blocks
@@ -1982,7 +1958,7 @@ is worked out on the CPU, the same on every machine; drawing, culling and erosio
   once for every chunk coming (it staged 474 MB for 220) and takes 16 MB of them a frame, the old pool drawn until
   the new one has them all. Costs: a smooth world loads slower (three levels a chunk, Voxel Terrain 34 ms
   to 67). Not done: the coarse rings made and kept on the GPU, as nothing but drawing needs them; coarser levels past
-  the chunks' fixed sides (resampled blocks, so a far planet drops below its locked edges); a coarser mesh for the GI's
+  the chunks' fixed sides (resampled blocks); a coarser mesh for the GI's
   rays (very large worlds still fill the shared mesh pool); a frame's draws merged across a chunk's levels; ground
   generated per metre rather than per block, as noise for caves and overhangs is worked out for every block under
   the surface.

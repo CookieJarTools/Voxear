@@ -68,6 +68,7 @@ pub mod generator_panel;
 mod generator_previews;
 pub mod box_part_inspector;
 pub mod model_panel;
+pub mod model_sheet;
 pub mod model_view;
 mod gizmos;
 pub mod graph_canvas;

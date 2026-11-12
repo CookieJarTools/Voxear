@@ -82,6 +82,27 @@ A picked **box** shows:
 | Mirror | Turns its unfolded faces over from left to right |
 | Inflate | How far its faces stand out past its size, in pixels |
 
+### Painting
+
+Click **Paint** in the bar to paint the model's pixels. The bar changes to the painting tools, and the model's **sheet** shows flat beside the model, with the part each box's faces take outlined.
+
+Press on the model to paint the pixel under the pointer, and drag to paint along a line. The pixel you are over is marked with a white square. You can paint on the flat sheet the same way, which is the easy way to reach faces that are hidden on the model. Dragging from the floor, off the model, still turns the camera.
+
+| Tool | What it does |
+| --- | --- |
+| Pencil | Paints pixels in the colour you have picked |
+| Eraser | Makes pixels into holes you can see through |
+| Fill | Paints the whole area of one colour under the pointer, no further than the face you pressed |
+| Pick | Takes the colour under the pointer to paint with |
+
+The large square beside the tools is the colour you paint with. Click it to open the colour picker, and click it again to put the picker away. The small squares after it are the colours the sheet already uses, most used first. Click one to paint with it again.
+
+**Symmetry** makes a stroke on the model paint the other side of the body as well, so a face or a pattern stays even.
+
+**Lay Out** gives every box room of its own on the sheet and moves its pixels with it. Use it after you have made boxes bigger or added boxes where the sheet was full, when two boxes show the same pixels by mistake. Boxes that share their pixels on purpose, such as a mirrored arm, still share them. The sheet doubles in size when it is too small.
+
+One stroke is one step to undo.
+
 ### Undo and saving
 
 **Ctrl+Z** and **Ctrl+Y** undo and redo changes to the model while the Model window is the one you last clicked in. One drag is one step.
@@ -200,7 +221,7 @@ A box model's bones are a skeleton like any animated model's, and every box move
 
 ## Not done yet
 
-- Painting a box model's pixels in the Model window.
+- A brush wider than one pixel, and bringing a sheet in from a picture file or saving it as one.
 - Bones made for you from the model's shape.
 - Motion made for you from how a model moves: walking, idling, looking, attacking.
 - A raised second layer, where painted pixels stand out from the surface as small blocks.

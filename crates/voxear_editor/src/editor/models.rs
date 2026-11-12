@@ -9,7 +9,7 @@ use voxear_render::{BoxModel, Renderer};
 
 use super::{Command, Editor};
 use crate::{
-    model_panel::{ModelEvent, ModelPanel},
+    model_panel::{Mode, ModelEvent, ModelPanel, Tool},
     model_view::Picked,
 };
 
@@ -53,6 +53,23 @@ impl Editor {
         self.model.pick(Some(if boxes > 0 { Picked::Box(bone, 0) } else { Picked::Bone(bone) }));
         self.model.set_active(true);
         true
+    }
+
+    /// Has the Model window shape its model, or paint it, as its bar's
+    /// Shape and Paint do.
+    pub fn set_model_mode(&mut self, mode: Mode) {
+        self.model.set_mode(&mut self.ui, mode);
+    }
+
+    /// Picks what a stroke of paint does in the Model window.
+    pub fn set_model_tool(&mut self, tool: Tool) {
+        self.model.set_tool(&mut self.ui, tool);
+    }
+
+    /// Whether a stroke on the model in the Model window paints the other
+    /// side of the body too.
+    pub fn set_model_symmetry(&mut self, on: bool) {
+        self.model.set_symmetry(&mut self.ui, on);
     }
 
     /// The Model window, and the model open in it.

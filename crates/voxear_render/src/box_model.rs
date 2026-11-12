@@ -52,6 +52,7 @@ use crate::{
 };
 
 mod edit;
+mod paint;
 
 pub use edit::BoxHit;
 
@@ -237,6 +238,9 @@ impl Sheet {
     }
 
     pub fn get(&self, x: u32, y: u32) -> [u8; 4] {
+        if x >= self.width || y >= self.height {
+            return [0; 4];
+        }
         let at = ((y * self.width + x) * 4) as usize;
         self.rgba.get(at..at + 4).map_or([0; 4], |pixel| [pixel[0], pixel[1], pixel[2], pixel[3]])
     }

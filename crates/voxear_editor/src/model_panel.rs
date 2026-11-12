@@ -23,11 +23,12 @@ use std::{
 
 use voxear_core::math::Vec3;
 use voxear_render::{BoxModel, BoxSkin, Face, Renderer};
-use voxear_ui::{DropPlace, NodeId, Style, TreeItems, Ui};
+use voxear_ui::{ColorPicker, DropPlace, NodeId, PickedColor, Style, TreeItems, Ui};
 
 use crate::{
     box_part_inspector::BoxPartEdit,
-    model_view::{Handle, ModelView, Picked, ViewEvent},
+    model_sheet::SheetView,
+    model_view::{Handle, ModelView, Picked, ViewEvent, ViewMode},
 };
 
 /// Changes to the same thing closer together than this are one step to undo, as an Obj's are.
@@ -40,6 +41,9 @@ const NEW_BOX: [u32; 3] = [4, 4, 4];
 /// box's is its bone's plus its own place and one.
 const BONE: u64 = 4096;
 
+/// The most of a sheet's colours the bar offers to paint with again.
+const SWATCHES: usize = 12;
+
 /// What a change is to, for changes close together to merge into one step.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum EditKey {
@@ -47,6 +51,43 @@ pub enum EditKey {
     Row(Picked, u8),
     /// A drag from a handle.
     Drag,
+    /// A stroke of paint.
+    Stroke,
+}
+
+/// What the window is for at the moment: shaping the model, or painting it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Mode {
+    #[default]
+    Shape,
+    Paint,
+}
+
+/// What a stroke does to the pixels it passes over.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Tool {
+    /// Colours them.
+    #[default]
+    Pencil,
+    /// Makes holes of them.
+    Eraser,
+    /// Colours every pixel of the face joined to the one pressed by pixels of its colour.
+    Fill,
+    /// Takes the colour of the one pressed to paint with.
+    Pick,
+}
+
+impl Tool {
+    const ALL: [Tool; 4] = [Tool::Pencil, Tool::Eraser, Tool::Fill, Tool::Pick];
+
+    fn label(self) -> &'static str {
+        match self {
+            Tool::Pencil => "Pencil",
+            Tool::Eraser => "Eraser",
+            Tool::Fill => "Fill",
+            Tool::Pick => "Pick",
+        }
+    }
 }
 
 /// The models an open one has been, to go back to and forward again.
@@ -90,6 +131,8 @@ struct Open {
     held: Option<BoxModel>,
     /// The view and the tree show an older model.
     stale: bool,
+    /// The views show older pixels, of a model whose shape they have.
+    repainted: bool,
 }
 
 /// What the panel asks of the editor.
@@ -181,9 +224,29 @@ pub struct ModelPanel {
     pivot_only: NodeId,
     frame: NodeId,
     summary: NodeId,
+    /// Shape or Paint, and the buttons of each, shown while it is the mode.
+    modes: NodeId,
+    shape_bar: NodeId,
+    paint_bar: NodeId,
+    tools: NodeId,
+    /// The colour painted with: its swatch, which opens the picker, the
+    /// picker in its frame, and the sheet's own colours to take again.
+    swatch: NodeId,
+    picker_frame: NodeId,
+    picker: ColorPicker,
+    swatches: NodeId,
+    offered: Vec<[u8; 4]>,
+    color: [u8; 4],
+    /// The colour the swatch and the picker last showed.
+    color_shown: Option<[u8; 4]>,
+    symmetry: NodeId,
+    lay_out: NodeId,
+    mode: Mode,
+    tool: Tool,
     tree: NodeId,
     rows: Rc<RefCell<Rows>>,
     view: ModelView,
+    sheet: SheetView,
     open: Option<Open>,
     /// The panel was the last one pressed in, so the keys are its model's.
     active: bool,
@@ -205,19 +268,46 @@ impl ModelPanel {
         ui.add_class(icon, "generator-icon");
         let name = ui.add_label(bar, "");
         ui.add_class(name, "generator-name");
-        let button = |ui: &mut Ui, text: &str, tip: &str| {
-            let button = ui.button(bar, text);
+        let modes = ui.segmented(bar);
+        ui.add_segment(modes, "Shape", None);
+        ui.add_segment(modes, "Paint", None);
+        let group = |ui: &mut Ui| {
+            let group = ui.panel(bar, Style::row());
+            ui.add_class(group, "model-bar-group");
+            group
+        };
+        let button = |ui: &mut Ui, parent: NodeId, text: &str, tip: &str| {
+            let button = ui.button(parent, text);
             ui.add_class(button, "console-button");
             ui.set_tooltip(button, tip, None);
             button
         };
-        let add_bone = button(ui, "Add Bone", "A bone under the one picked, or at the top");
-        let add_box = button(ui, "Add Box", "A box on the bone picked");
-        let duplicate = button(ui, "Duplicate", "A copy of what is picked");
-        let mirror = button(ui, "Mirror", "A copy of what is picked on the other side of the body");
-        let delete = button(ui, "Delete", "Takes out what is picked");
-        let pivot_only = button(ui, "Pivot Only", "Moving a bone moves its pivot and leaves its boxes where they are");
-        let frame = button(ui, "Frame", "Looks at the whole model");
+        let shape_bar = group(ui);
+        let add_bone = button(ui, shape_bar, "Add Bone", "A bone under the one picked, or at the top");
+        let add_box = button(ui, shape_bar, "Add Box", "A box on the bone picked");
+        let duplicate = button(ui, shape_bar, "Duplicate", "A copy of what is picked");
+        let mirror = button(ui, shape_bar, "Mirror", "A copy of what is picked on the other side of the body");
+        let delete = button(ui, shape_bar, "Delete", "Takes out what is picked");
+        let tip = "Moving a bone moves its pivot and leaves its boxes where they are";
+        let pivot_only = button(ui, shape_bar, "Pivot Only", tip);
+
+        let paint_bar = group(ui);
+        let tools = ui.segmented(paint_bar);
+        for tool in Tool::ALL {
+            ui.add_segment(tools, tool.label(), None);
+        }
+        let swatch = ui.panel(paint_bar, Style::default());
+        ui.add_class(swatch, "model-swatch");
+        ui.add_class(swatch, "model-swatch-own");
+        ui.set_tooltip(swatch, "The colour painted with", None);
+        let swatches = ui.panel(paint_bar, Style::row());
+        ui.add_class(swatches, "model-bar-group");
+        let symmetry = button(ui, paint_bar, "Symmetry", "A stroke on the model paints the other side of the body too");
+        let tip = "Gives every unfolded box room of its own on the sheet, with its pixels";
+        let lay_out = button(ui, paint_bar, "Lay Out", tip);
+        ui.set_visible(paint_bar, false);
+
+        let frame = button(ui, bar, "Frame", "Looks at the whole model");
         let summary = ui.add_label(bar, "");
         ui.add_class(summary, "profiler-summary");
         let line = ui.panel(body, Style::default());
@@ -233,8 +323,31 @@ impl ModelPanel {
         ui.add_class(tree, "fill");
         ui.set_rows_draggable(tree, true);
         let view = ModelView::new(ui, split);
+        let sheet = SheetView::new(ui, split);
+        ui.set_visible(sheet.frame_node(), false);
+        // Over the view's corner, while the colour is being picked.
+        let picker_frame = ui.panel(split, Style::default());
+        ui.add_class(picker_frame, "model-picker");
+        let picker = ColorPicker::new(ui, picker_frame);
+        ui.set_visible(picker_frame, false);
         ui.set_visible(body, false);
         Self {
+            modes,
+            shape_bar,
+            paint_bar,
+            tools,
+            swatch,
+            picker_frame,
+            picker,
+            swatches,
+            offered: Vec::new(),
+            color: [226, 84, 84, 255],
+            color_shown: None,
+            symmetry,
+            lay_out,
+            mode: Mode::Shape,
+            tool: Tool::Pencil,
+            sheet,
             hint,
             body,
             name,
@@ -270,6 +383,7 @@ impl ModelPanel {
             unsaved: false,
             held: None,
             stale: true,
+            repainted: true,
         });
         self.active = true;
     }
@@ -292,6 +406,7 @@ impl ModelPanel {
     pub fn close(&mut self, renderer: &mut Renderer) {
         self.open = None;
         self.view.clear(renderer);
+        self.sheet.clear(renderer);
     }
 
     /// The open model's file, by its path in the project.
@@ -348,6 +463,44 @@ impl ModelPanel {
         self.tree
     }
 
+    /// The flat view of the model's sheet, which shows while painting.
+    pub fn sheet_view(&self) -> &SheetView {
+        &self.sheet
+    }
+
+    pub fn mode(&self) -> Mode {
+        self.mode
+    }
+
+    /// Shapes the model, or paints it.
+    pub fn set_mode(&mut self, ui: &mut Ui, mode: Mode) {
+        ui.set_segment(self.modes, mode as usize);
+        self.mode = mode;
+    }
+
+    pub fn tool(&self) -> Tool {
+        self.tool
+    }
+
+    pub fn set_tool(&mut self, ui: &mut Ui, tool: Tool) {
+        ui.set_segment(self.tools, tool as usize);
+        self.tool = tool;
+    }
+
+    /// The colour painted with: red, green, blue and how solid.
+    pub fn color(&self) -> [u8; 4] {
+        self.color
+    }
+
+    pub fn set_color(&mut self, color: [u8; 4]) {
+        self.color = [color[0], color[1], color[2], 255];
+    }
+
+    /// Whether a stroke on the model paints the other side of the body too.
+    pub fn set_symmetry(&mut self, ui: &mut Ui, on: bool) {
+        ui.set_checked(self.symmetry, on);
+    }
+
     /// Whether moving a bone moves its pivot alone.
     pub fn pivot_only(&self, ui: &Ui) -> bool {
         ui.is_checked(self.pivot_only)
@@ -371,7 +524,12 @@ impl ModelPanel {
             return;
         }
         open.history.record(&open.model, open.picked, key);
-        (open.model, open.unsaved, open.stale) = (model, true, true);
+        // Pixels alone changed on a sheet of the same size: the shape the views have still stands.
+        let reshaped = model.bones != open.model.bones
+            || model.pixels_per_block != open.model.pixels_per_block
+            || (model.sheet.width, model.sheet.height) != (open.model.sheet.width, open.model.sheet.height);
+        (open.stale, open.repainted) = (open.stale || reshaped, open.repainted || model.sheet != open.model.sheet);
+        (open.model, open.unsaved) = (model, true);
         if open.picked.is_some_and(|picked| !has(&open.model, picked)) {
             open.picked = None;
             self.pending.push(ModelEvent::Inspect(None));
@@ -395,7 +553,7 @@ impl ModelPanel {
         let Some((model, picked)) = from.pop() else { return false };
         to.push((open.model.clone(), open.picked));
         history.last = None;
-        (open.model, open.unsaved, open.stale, open.held) = (model, true, true, None);
+        (open.model, open.unsaved, open.stale, open.repainted, open.held) = (model, true, true, true, None);
         let picked = picked.filter(|picked| has(&open.model, *picked));
         if open.picked != picked {
             open.picked = picked;
@@ -540,18 +698,99 @@ impl ModelPanel {
         }
         if shown {
             self.update_bar(ui);
+            self.update_paint_bar(ui);
             self.update_tree(ui);
             self.update_view(ui, renderer, scale);
             self.show(ui, renderer);
         }
         let mut events = std::mem::take(&mut self.pending);
         // Saved once nothing is held: when a drag ends, not at each step of it.
-        let held = ui.holds_press() || self.view.is_dragging();
+        let held = ui.holds_press() || self.view.is_dragging() || self.sheet.is_painting();
         if let Some(open) = self.open.as_mut().filter(|open| open.unsaved && !held) {
             open.unsaved = false;
             events.push(ModelEvent::Save(open.path.clone(), open.model.clone()));
         }
         events
+    }
+
+    /// The mode, and while painting the tool, the colour and its picker,
+    /// the sheet's colours to take again, Symmetry and Lay Out.
+    fn update_paint_bar(&mut self, ui: &mut Ui) {
+        let mode = if ui.segment(self.modes) == 1 { Mode::Paint } else { Mode::Shape };
+        let painting = mode == Mode::Paint;
+        self.mode = mode;
+        if ui.is_visible(self.paint_bar) != painting {
+            ui.set_visible(self.paint_bar, painting);
+            ui.set_visible(self.shape_bar, !painting);
+            ui.set_visible(self.sheet.frame_node(), painting);
+            ui.set_visible(self.picker_frame, false);
+        }
+        if !painting {
+            return;
+        }
+        self.tool = Tool::ALL[ui.segment(self.tools).min(Tool::ALL.len() - 1)];
+        if ui.clicked(self.symmetry) {
+            let on = !ui.is_checked(self.symmetry);
+            ui.set_checked(self.symmetry, on);
+        }
+        if ui.clicked(self.lay_out)
+            && let Some(mut model) = self.open.as_ref().map(|open| open.model.clone())
+            && model.lay_out()
+        {
+            self.change(model, None);
+        }
+        if ui.clicked(self.swatch) {
+            let open = !ui.is_visible(self.picker_frame);
+            ui.set_visible(self.picker_frame, open);
+        }
+        if let Some(picked) = self.picker.update(ui) {
+            let [r, g, b] = picked.srgb.map(|channel| (channel.clamp(0.0, 1.0) * 255.0).round() as u8);
+            (self.color, self.color_shown) = ([r, g, b, 255], Some([r, g, b, 255]));
+            ui.set_inline_style(self.swatch, &format!("background-color: #{r:02x}{g:02x}{b:02x}"));
+        }
+        // The sheet's own colours, each a press away.
+        let offered = self.open.as_ref().map(|open| open.model.sheet.colors(SWATCHES)).unwrap_or_default();
+        if offered != self.offered {
+            for child in ui.children(self.swatches) {
+                ui.remove(child);
+            }
+            for [r, g, b, _] in &offered {
+                let swatch = ui.panel(self.swatches, Style::default());
+                ui.add_class(swatch, "model-swatch");
+                ui.set_inline_style(swatch, &format!("background-color: #{r:02x}{g:02x}{b:02x}"));
+            }
+            self.offered = offered;
+        }
+        let taken = ui.children(self.swatches).into_iter().position(|swatch| ui.clicked(swatch));
+        if let Some(color) = taken.and_then(|at| self.offered.get(at)) {
+            self.color = *color;
+        }
+        if self.color_shown != Some(self.color) {
+            self.color_shown = Some(self.color);
+            let [r, g, b, _] = self.color;
+            ui.set_inline_style(self.swatch, &format!("background-color: #{r:02x}{g:02x}{b:02x}"));
+            self.picker.set(ui, PickedColor::srgb([r, g, b].map(|channel| f32::from(channel) / 255.0)), false);
+        }
+    }
+
+    /// One pixel of a stroke: coloured, made a hole, filled from, or its
+    /// colour taken, as the tool says.
+    fn paint(&mut self, pixel: [u32; 2], within: [u32; 4]) {
+        let Some(open) = self.open.as_ref() else { return };
+        let mut model = open.model.clone();
+        match self.tool {
+            Tool::Pencil => model.sheet.set(pixel[0], pixel[1], self.color),
+            Tool::Eraser => model.sheet.set(pixel[0], pixel[1], [0; 4]),
+            Tool::Fill => drop(model.sheet.flood(within, pixel, self.color)),
+            Tool::Pick => {
+                let under = model.sheet.get(pixel[0], pixel[1]);
+                if under[3] >= 128 {
+                    self.set_color(under);
+                }
+                return;
+            }
+        }
+        self.change(model, Some(EditKey::Stroke));
     }
 
     fn update_bar(&mut self, ui: &mut Ui) {
@@ -619,9 +858,22 @@ impl ModelPanel {
 
     fn update_view(&mut self, ui: &mut Ui, renderer: &mut Renderer, scale: f32) {
         let Some(open) = self.open.as_ref() else { return };
-        let events = self.view.update(ui, renderer, &open.model, open.picked, scale);
+        let mode = match self.mode {
+            Mode::Shape => ViewMode::Shape,
+            Mode::Paint => ViewMode::Paint { mirror: ui.is_checked(self.symmetry) },
+        };
+        let mut events = self.view.update(ui, renderer, &open.model, open.picked, mode, scale);
+        if self.mode == Mode::Paint {
+            events.extend(self.sheet.update(ui, &open.model, open.picked));
+        }
         for event in events {
             match event {
+                ViewEvent::Paint { pixel, within } => self.paint(pixel, within),
+                ViewEvent::PaintEnded => {
+                    if let Some(open) = self.open.as_mut() {
+                        open.history.seal();
+                    }
+                }
                 ViewEvent::Pick(picked) => self.pick(picked),
                 ViewEvent::DragBegan(_) => {
                     if let Some(open) = self.open.as_mut() {
@@ -679,8 +931,15 @@ impl ModelPanel {
     /// Shows the model as it now is in the tree and the view, once it or
     /// what is picked changed.
     fn show(&mut self, ui: &mut Ui, renderer: &mut Renderer) {
-        let Some(open) = self.open.as_mut().filter(|open| open.stale) else { return };
-        open.stale = false;
+        let Some(open) = self.open.as_mut().filter(|open| open.stale || open.repainted) else { return };
+        let (reshaped, repainted) = (open.stale, open.repainted);
+        (open.stale, open.repainted) = (false, false);
+        if repainted {
+            self.sheet.sheet_changed(renderer, &open.model.sheet);
+        }
+        if !reshaped {
+            return self.view.sheet_changed(renderer, &open.model);
+        }
         let rows = tree_rows(&open.model);
         let boxes: usize = open.model.bones.iter().map(|bone| bone.boxes.len()).sum();
         let summary = format!("{} bones · {} boxes", open.model.bones.len(), boxes);

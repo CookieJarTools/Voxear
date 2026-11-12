@@ -73,6 +73,25 @@ pub enum ViewEvent {
     DragBegan(Handle),
     Dragged(Handle, f32),
     DragEnded,
+    /// A stroke paints this pixel of the sheet; `within` is the part of the
+    /// sheet its face takes, by its left, top, width and height.
+    Paint {
+        pixel: [u32; 2],
+        within: [u32; 4],
+    },
+    /// The stroke was let go.
+    PaintEnded,
+}
+
+/// What a press on the model does.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ViewMode {
+    /// A click picks a box, and handles move and size what is picked.
+    #[default]
+    Shape,
+    /// A press on the model paints the pixel under it, and with `mirror`
+    /// the pixel across the body from it too.
+    Paint { mirror: bool },
 }
 
 /// Where the camera is: going round `target`, `distance` metres from it.
@@ -153,6 +172,8 @@ pub struct ModelView {
     press: Option<Press>,
     panning: Option<(f32, f32)>,
     dragging: Option<Dragging>,
+    /// Where a stroke of paint last was in the view, while one goes on.
+    stroke: Option<Vec2>,
     dark: bool,
     /// Asked to draw again, as when the model or the camera changed.
     stale: bool,
@@ -183,6 +204,7 @@ impl ModelView {
             press: None,
             panning: None,
             dragging: None,
+            stroke: None,
             dark: true,
             stale: true,
         }
@@ -199,7 +221,10 @@ impl ModelView {
 
     /// Whether a handle or the camera is being dragged.
     pub fn is_dragging(&self) -> bool {
-        self.dragging.is_some() || self.press.is_some_and(|press| press.moved) || self.panning.is_some()
+        self.dragging.is_some()
+            || self.stroke.is_some()
+            || self.press.is_some_and(|press| press.moved)
+            || self.panning.is_some()
     }
 
     /// Lets go of everything it holds on the GPU.
@@ -212,7 +237,7 @@ impl ModelView {
             renderer.free_material(material);
             renderer.free_texture(texture);
         }
-        (self.press, self.panning, self.dragging, self.stale) = (None, None, None, true);
+        (self.press, self.panning, self.dragging, self.stroke, self.stale) = (None, None, None, None, true);
     }
 
     /// Looks at the whole of `model`, or at the floor for one with nothing
@@ -268,8 +293,11 @@ impl ModelView {
         renderer: &mut Renderer,
         model: &BoxModel,
         picked: Option<Picked>,
+        mode: ViewMode,
         scale: f32,
     ) -> Vec<ViewEvent> {
+        // Painting, nothing has handles.
+        let handled = picked.filter(|_| mode == ViewMode::Shape);
         let [_, _, width, height] = ui.rect(self.frame);
         if width < 1.0 || height < 1.0 {
             return Vec::new();
@@ -286,16 +314,35 @@ impl ModelView {
             (self.size, self.stale) = (size, true);
         }
         let seen = Seen { camera: self.orbit.camera(), width, height };
-        let handles = handles(model, picked, &seen);
-        let events = self.pointer(ui, model, &seen, &handles);
+        let handles = handles(model, handled, &seen);
+        let events = self.pointer(ui, model, &seen, &handles, mode);
         // Seen again from where the pointer just put the camera.
         let seen = Seen { camera: self.orbit.camera(), width, height };
-        let handles = self::handles(model, picked, &seen);
+        let handles = self::handles(model, handled, &seen);
         let hot = self.dragging.map(|drag| drag.handle).or_else(|| {
             let pointer = self.pointer_in(ui)?;
             (!self.is_dragging()).then(|| nearest_handle(&handles, pointer)).flatten()
         });
-        ui.set_shapes(self.overlay, shapes(model, picked, &seen, &handles, hot));
+        let mut drawn = shapes(model, picked, &seen, &handles, hot);
+        // Painting, the pixel under the pointer is marked.
+        if let (ViewMode::Paint { .. }, Some(pointer), false) = (mode, self.pointer_in(ui), self.is_dragging()) {
+            let bones = model.rest_matrices();
+            let (origin, direction) = seen.ray(pointer);
+            let corners = model.pick(&bones, origin, direction).and_then(|hit| model.pixel_corners(&bones, &hit));
+            if let Some(corners) = corners.map(|corners| corners.map(|corner| seen.project(corner))) {
+                for (a, b) in [(0, 1), (1, 2), (2, 3), (3, 0)] {
+                    if let (Some(from), Some(to)) = (corners[a], corners[b]) {
+                        drawn.push(Shape::Line {
+                            from: from.to_array(),
+                            to: to.to_array(),
+                            width: 1.5,
+                            color: Color::WHITE,
+                        });
+                    }
+                }
+            }
+        }
+        ui.set_shapes(self.overlay, drawn);
         self.draw(ui, renderer, &seen);
         events
     }
@@ -315,6 +362,7 @@ impl ModelView {
         model: &BoxModel,
         seen: &Seen,
         handles: &[(Handle, HandleLine)],
+        mode: ViewMode,
     ) -> Vec<ViewEvent> {
         let mut events = Vec::new();
         let [left, top, _, _] = ui.rect(self.frame);
@@ -365,6 +413,20 @@ impl ModelView {
                 }
                 press.last = now;
             }
+            // A stroke goes on: every pixel the pointer passed over since the last frame.
+            (true, _, Some(local)) if self.stroke.is_some() => {
+                let last = self.stroke.replace(local).expect("checked");
+                let steps = (local.distance(last) / 1.5).ceil().max(1.0) as u32;
+                for step in 1..=steps {
+                    self.dab(model, seen, last.lerp(local, step as f32 / steps as f32), mode, &mut events);
+                }
+            }
+            // A press on the model, painting, begins a stroke.
+            (true, Some(_), Some(local))
+                if matches!(mode, ViewMode::Paint { .. }) && self.dab(model, seen, local, mode, &mut events) =>
+            {
+                self.stroke = Some(local);
+            }
             // A press begins: on a handle, or on the view.
             (true, Some(now), Some(local)) => match nearest_handle(handles, local) {
                 Some(handle) => {
@@ -386,14 +448,76 @@ impl ModelView {
                     events.push(ViewEvent::DragEnded);
                 }
                 let turned = self.press.take().is_some_and(|press| press.moved);
-                if let (true, false, false, Some(local)) = (ui.clicked(self.frame), dragged, turned, local) {
-                    let (origin, direction) = seen.ray(local);
-                    let hit = model.pick(&model.rest_matrices(), origin, direction);
-                    events.push(ViewEvent::Pick(hit.map(|hit| Picked::Box(hit.bone, hit.index))));
+                let stroked = self.stroke.take().is_some();
+                if stroked {
+                    events.push(ViewEvent::PaintEnded);
+                }
+                if let (true, false, false, false, Some(local)) =
+                    (ui.clicked(self.frame), dragged, turned, stroked, local)
+                {
+                    match mode {
+                        ViewMode::Shape => {
+                            let (origin, direction) = seen.ray(local);
+                            let hit = model.pick(&model.rest_matrices(), origin, direction);
+                            events.push(ViewEvent::Pick(hit.map(|hit| Picked::Box(hit.bone, hit.index))));
+                        }
+                        // A press made and let go between two frames paints its pixel all the same.
+                        ViewMode::Paint { .. } => {
+                            if self.dab(model, seen, local, mode, &mut events) {
+                                events.push(ViewEvent::PaintEnded);
+                            }
+                        }
+                    }
                 }
             }
         }
         events
+    }
+
+    /// Paints the pixel of the model under a point of the view, and with
+    /// the mode's mirror the one across the body from it. False where the
+    /// point is off the model.
+    fn dab(&self, model: &BoxModel, seen: &Seen, at: Vec2, mode: ViewMode, events: &mut Vec<ViewEvent>) -> bool {
+        let bones = model.rest_matrices();
+        let (origin, direction) = seen.ray(at);
+        let Some(hit) = model.pick(&bones, origin, direction) else { return false };
+        let across = Vec3::new(-1.0, 1.0, 1.0);
+        let mirrored = matches!(mode, ViewMode::Paint { mirror: true })
+            .then(|| model.pick(&bones, origin * across, direction * across))
+            .flatten();
+        for hit in [Some(hit), mirrored].into_iter().flatten() {
+            let within = model.bones[hit.bone].boxes[hit.index].face_place(hit.face);
+            if let (Some(pixel), Some(within)) = (hit.pixel, within) {
+                events.push(ViewEvent::Paint { pixel, within });
+            }
+        }
+        true
+    }
+
+    /// The model's sheet changed and nothing else: its pixels are uploaded
+    /// again, behind the material the model is drawn with.
+    pub fn sheet_changed(&mut self, renderer: &mut Renderer, model: &BoxModel) {
+        let Some((mesh, texture, material)) = self.drawn else { return self.model_changed(renderer, model) };
+        let sheet = &model.sheet;
+        let source = TextureSource {
+            name: "box model sheet",
+            width: sheet.width,
+            height: sheet.height,
+            rgba: &sheet.rgba,
+            srgb: true,
+        };
+        let Ok(painted) = renderer.add_texture(&source) else { return };
+        let desc = MaterialDesc {
+            roughness: 1.0,
+            alpha_cutoff: Some(0.5),
+            pixels: true,
+            base_color_texture: Some(painted),
+            ..MaterialDesc::default()
+        };
+        if renderer.update_material(material, &desc).is_ok() {
+            renderer.free_texture(texture);
+            (self.drawn, self.stale) = (Some((mesh, painted, material)), true);
+        }
     }
 
     /// Draws the picture again where anything changed, and shows it, cut to

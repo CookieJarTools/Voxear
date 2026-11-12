@@ -1343,7 +1343,16 @@ The sea, lakes, rivers and lava, built in. Manual: `manual/Water`.
     free room on the sheet; a view preview drawn where its camera projects; the view's rays and handles; the
     editor opening, picking, dragging a handle, typing a size and a name, adding, mirroring, deleting and undoing,
     with the file saved once let go. Manual: Box Models.
-  - [ ] **Painting:** pixels painted on the model and on its sheet, and the sheet laid out again as boxes change
+  - ~~**Painting:**~~ done: the Model window's Paint mode. A press on the model paints the sheet's pixel the ray
+    meets (`BoxHit::pixel`), a drag every pixel passed over, and Symmetry the pixel across the body too; the pixel
+    under the pointer is outlined on its face (`BoxModel::pixel_corners`). The sheet shows flat beside the model
+    (`model_sheet::SheetView`), each pixel a square over a chequered ground, the faces' places outlined, painted
+    the same way. Pencil, Eraser, Fill (`Sheet::flood`, no further than the face) and Pick; the colour from a
+    picker or from the sheet's own colours (`Sheet::colors`); Lay Out (`BoxModel::lay_out`: every unfolded box
+    given room afresh with its pixels, shared pixels kept shared, placed faces left, the sheet doubling while too
+    small). A stroke is one step to undo; pixels alone changed upload the sheet behind the same material. Tests:
+    fills, a sheet's colours, faces' places, laying out; the editor painting on the model and the sheet, a drag
+    filling a row however fast, symmetry, fill, pick, erase, laying out and undoing each. Manual: Box Models.
   - [ ] **Bones from its shape:** legs, arms, head, body and tail found from the boxes, and a limb split for a joint
   - [ ] **Motion from how it moves:** walking by its gait, idling, looking, attacking, and parts that lag behind
   - [ ] **A raised second layer:** a layer's pixels standing out as small blocks, flat again far away

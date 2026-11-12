@@ -2819,7 +2819,11 @@ poses, previews, reimports or cooks a model does a box model with no path of its
   and outlines and handles are UI shapes projected with it. What changes a model (`box_model/edit.rs`: removing,
   hanging, copying and mirroring bones, moving pivots, moving boxes between bones, free room on the sheet) is
   kept with the model, so scripts and tools change one the same way.
-- **Planned on top:** painting in the Model window, bones made from a model's shape, motion made from how a
+- **Painting** is the same ray: `BoxHit::pixel` is the sheet's pixel under the pointer, so a stroke changes the
+  model's `Sheet` and nothing else, and the views upload the sheet again behind the material they have. The flat
+  sheet beside the model (`model_sheet`) paints the same pixels directly. `box_model/paint.rs` holds what a sheet
+  can do to itself: fill, list its colours, and lay its boxes out again with their pixels.
+- **Planned on top:** bones made from a model's shape, motion made from how a
   character moves, a raised second layer of small blocks, clips keyed on a timeline, and a component that walks
   one through a block world.
 

@@ -4316,3 +4316,56 @@ DockSpace .resizable-columns > .split-divider:active > .split-handle {
     width: 100%;
     height: 100%;
 }
+
+/* A group of the Model window's bar: the buttons for shaping, or those for painting. */
+.model-bar-group {
+    flex-direction: row;
+    align-items: center;
+    flex-shrink: 0;
+    column-gap: 4px;
+}
+
+/* A colour to paint with: one of the sheet's own, or, larger, the one in hand. */
+.model-swatch {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    border-radius: 3px;
+    border: 1px solid var(--vx-line);
+}
+
+.model-swatch:hover {
+    border-color: var(--vx-text);
+}
+
+.model-swatch-own {
+    width: 22px;
+    height: 22px;
+    border-radius: 5px;
+}
+
+/* The colour picker, over the corner of the model's view while it is open. */
+.model-picker {
+    position: absolute;
+    left: 228px;
+    top: 8px;
+    padding: 8px;
+    width: 250px;
+    border-radius: 8px;
+    border: 1px solid var(--vx-line);
+    background-color: var(--vx-panel);
+}
+
+/* The sheet laid flat beside the model, while painting. */
+.model-sheet {
+    flex-shrink: 0;
+    width: 38%;
+    min-height: 0px;
+    overflow: hidden;
+    border-left: 1px solid var(--vx-line);
+    background-color: var(--vx-bg);
+}
+
+.model-sheet-image {
+    position: absolute;
+}

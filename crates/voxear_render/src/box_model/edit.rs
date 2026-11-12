@@ -50,6 +50,25 @@ impl BoxModel {
         nearest
     }
 
+    /// The four corners of the sheet's pixel a ray met, on the face it met,
+    /// in the model's space in metres: round from the pixel's upper left as
+    /// the sheet has it. `None` for a face that is not drawn.
+    pub fn pixel_corners(&self, bones: &[Mat4], hit: &BoxHit) -> Option<[Vec3; 4]> {
+        let model_box = self.bones.get(hit.bone)?.boxes.get(hit.index)?;
+        let [left, top, right, bottom] = model_box.face_rect(hit.face)?;
+        let [x, y] = hit.pixel?.map(|side| side as f32);
+        let (place, reach) = self.box_place(bones.get(hit.bone)?, model_box);
+        let (across, down) = hit.face.across_and_down();
+        // From one edge of the face to the other is from -1 to 1 of its reach.
+        let along = |edge: f32, from: f32, to: f32| (((edge - from) / (to - from)).clamp(0.0, 1.0)) * 2.0 - 1.0;
+        let (u, v) = (
+            [along(x, left, right), along(x + 1.0, left, right)],
+            [along(y, top, bottom), along(y + 1.0, top, bottom)],
+        );
+        let corner = |u: f32, v: f32| place.transform_point3((hit.face.normal() + across * u + down * v) * reach);
+        Some([corner(u[0], v[0]), corner(u[1], v[0]), corner(u[1], v[1]), corner(u[0], v[1])])
+    }
+
     /// The box round the whole model as it stands at rest, in metres, least
     /// and most; `None` for one with no boxes.
     pub fn bounds(&self) -> Option<(Vec3, Vec3)> {
@@ -258,26 +277,8 @@ impl BoxModel {
 
     /// Room on the sheet for `width` × `height` pixels no box's faces use,
     /// the nearest the top, then the left; `None` where the sheet has none.
-    pub fn free_place(&self, [width, height]: [u32; 2]) -> Option<[u32; 2]> {
-        let (sheet_width, sheet_height) = (self.sheet.width, self.sheet.height);
-        if width == 0 || height == 0 {
-            return Some([0, 0]);
-        }
-        let used = self.used_places();
-        for y in 0..=sheet_height.checked_sub(height)? {
-            let mut x = 0;
-            while x + width <= sheet_width {
-                let over = used
-                    .iter()
-                    .find(|[left, top, w, h]| x < left + w && *left < x + width && y < top + h && *top < y + height);
-                match over {
-                    // Past what is in the way.
-                    Some([left, _, w, _]) => x = left + w,
-                    None => return Some([x, y]),
-                }
-            }
-        }
-        None
+    pub fn free_place(&self, size: [u32; 2]) -> Option<[u32; 2]> {
+        super::paint::first_free(&self.used_places(), size, [self.sheet.width, self.sheet.height])
     }
 
     /// Adds a box of `size` pixels to a bone, standing on its pivot with
@@ -419,6 +420,9 @@ mod tests {
         assert_eq!((hit.bone, hit.index, hit.face), (1, 0, Face::Front));
         assert!((hit.distance - 4.75).abs() < 1e-4 && close(hit.point, Vec3::new(0.22, 1.97, 0.25)));
         assert_eq!(hit.pixel, Some([8, 8]), "the front's upper left, on an unfolded head at the sheet's corner");
+        // The pixel's own corners: a sixteenth of a metre square on the head's front, at its upper corner.
+        let corners = model.pixel_corners(&bones, &hit).unwrap();
+        assert!(close(corners[0], Vec3::new(0.25, 2.0, 0.25)) && close(corners[2], Vec3::new(0.1875, 1.9375, 0.25)));
         // The other corner of the same face.
         let hit = model.pick(&bones, Vec3::new(-0.22, 1.53, 5.0), Vec3::NEG_Z).unwrap();
         assert_eq!(hit.pixel, Some([15, 15]));

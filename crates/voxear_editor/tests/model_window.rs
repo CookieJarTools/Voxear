@@ -6,9 +6,10 @@
 
 use voxear_core::logging::LogCapture;
 use voxear_core::math::Vec3;
+use voxear_editor::model_panel::{Mode, Tool};
 use voxear_editor::model_view::{Handle, Picked};
 use voxear_engine::Project;
-use voxear_render::{BoxModel, Renderer, RendererSettings};
+use voxear_render::{BoxModel, BoxSkin, Face, Renderer, RendererSettings};
 use voxear_ui::{Key, Modifiers, NodeId, Ui};
 
 const SIZE: (u32, u32) = (1280, 800);
@@ -234,4 +235,147 @@ fn a_box_model_is_opened_built_on_picked_moved_and_undone_in_the_model_window() 
     frames(&mut editor, &mut renderer, 2);
     assert_eq!(editor.model_window().picked(), None);
     assert_eq!(editor.inspected_asset().map(|item| item.path.as_str()), Some(PATH));
+}
+
+/// Keeps the window as drawn, where `VOXEAR_TEST_OUTPUT` names a folder to keep pictures in.
+fn keep_picture(renderer: &mut Renderer, name: &str) {
+    let Ok(dir) = std::env::var("VOXEAR_TEST_OUTPUT") else { return };
+    let (width, height, pixels) = renderer.read_pixels().unwrap();
+    image::save_buffer(std::path::Path::new(&dir).join(name), &pixels, width, height, image::ExtendedColorType::Rgba8)
+        .unwrap();
+}
+
+/// Where a pixel of the head's front is on the model: its middle, in the model's space. The front's
+/// pixels start at 8, 8 on the sheet, its first at the head's upper corner on the model's right.
+fn on_head_front([x, y]: [u32; 2]) -> Vec3 {
+    Vec3::new(0.25 - (x as f32 - 8.0 + 0.5) / 16.0, 2.0 - (y as f32 - 8.0 + 0.5) / 16.0, 0.25)
+}
+
+#[test]
+fn a_box_model_is_painted_on_the_model_and_on_its_sheet_and_laid_out_again() {
+    let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {
+        return eprintln!("skipping: no usable GPU");
+    };
+    let project = hello_copy();
+    let dir = project.path().to_path_buf();
+    // The figure with every face a plain grey, to see it by.
+    let mut grey = figure();
+    for place in grey.used_places() {
+        grey.sheet.fill([place[0], place[1]], [place[2], place[3]], [150, 150, 150, 255]);
+    }
+    std::fs::write(dir.join(PATH), grey.to_text()).unwrap();
+    let mut editor =
+        voxear_editor::Editor::open_without_memory(Project::open(&dir).unwrap(), &mut renderer, LogCapture::default())
+            .unwrap();
+    frames(&mut editor, &mut renderer, 2);
+    assert!(editor.open_path(PATH, &mut renderer));
+    frames(&mut editor, &mut renderer, 3);
+    let sheet_frame = editor.model_window().sheet_view().frame_node();
+    assert!(!editor.ui.is_visible(sheet_frame), "the sheet shows only while painting");
+
+    editor.set_model_mode(Mode::Paint);
+    frames(&mut editor, &mut renderer, 3);
+    assert_eq!(editor.model_window().mode(), Mode::Paint);
+    assert!(editor.ui.is_visible(sheet_frame));
+    let pixel =
+        |editor: &voxear_editor::Editor, [x, y]: [u32; 2]| editor.model_window().model().unwrap().sheet.get(x, y);
+    let point = |editor: &voxear_editor::Editor, at: Vec3| editor.model_window().view().point(&editor.ui, at).unwrap();
+    let (red, blue) = ([220, 40, 40, 255], [40, 60, 220, 255]);
+
+    // The pencil, pressed on the head's front: the pixel under it takes the colour, and nothing is picked.
+    editor.model_window_mut().set_color(red);
+    let at = point(&editor, on_head_front([8, 8]));
+    click_at(&mut editor.ui, at);
+    frames(&mut editor, &mut renderer, 3);
+    assert_eq!(pixel(&editor, [8, 8]), red);
+    assert_eq!(pixel(&editor, [9, 8]), [150, 150, 150, 255], "and no other");
+    assert_eq!(editor.model_window().picked(), None, "a press paints, it does not pick");
+    assert_eq!(saved(&dir).sheet.get(8, 8), red, "saved once let go");
+
+    // Dragged across the face, it paints every pixel it passes over, however far it moves in a frame: one step.
+    let (from, to) = (point(&editor, on_head_front([8, 10])), point(&editor, on_head_front([15, 10])));
+    editor.ui.pointer_move(from.0, from.1);
+    editor.ui.pointer_button(true);
+    frame(&mut editor, &mut renderer);
+    editor.ui.pointer_move(to.0, to.1);
+    frame(&mut editor, &mut renderer);
+    editor.ui.pointer_button(false);
+    frames(&mut editor, &mut renderer, 3);
+    for x in 8..=15 {
+        assert_eq!(pixel(&editor, [x, 10]), red, "pixel {x} of the row");
+    }
+    assert!(editor.model_window_mut().undo());
+    frames(&mut editor, &mut renderer, 2);
+    assert_eq!(pixel(&editor, [12, 10]), [150, 150, 150, 255], "the whole stroke goes");
+    assert_eq!(pixel(&editor, [8, 8]), red, "the press before it stays");
+
+    // With Symmetry, a press on one side of the face paints the other side too.
+    editor.set_model_symmetry(true);
+    editor.model_window_mut().set_color(blue);
+    let at = point(&editor, on_head_front([9, 13]));
+    click_at(&mut editor.ui, at);
+    frames(&mut editor, &mut renderer, 3);
+    assert_eq!((pixel(&editor, [9, 13]), pixel(&editor, [14, 13])), (blue, blue));
+    editor.set_model_symmetry(false);
+
+    // Fill colours the face pressed, as far as pixels of its colour reach, and no other face.
+    editor.set_model_tool(Tool::Fill);
+    let body_front = point(&editor, Vec3::new(0.0, 1.0, 0.125));
+    click_at(&mut editor.ui, body_front);
+    frames(&mut editor, &mut renderer, 3);
+    assert_eq!(
+        (pixel(&editor, [20, 20]), pixel(&editor, [27, 31])),
+        (blue, blue),
+        "the body's front, corner to corner"
+    );
+    assert_eq!(pixel(&editor, [17, 25]), [150, 150, 150, 255], "its side is as it was");
+
+    // Pick takes the colour under the press to paint with.
+    editor.set_model_tool(Tool::Pick);
+    let at = point(&editor, on_head_front([8, 8]));
+    click_at(&mut editor.ui, at);
+    frames(&mut editor, &mut renderer, 2);
+    assert_eq!(editor.model_window().color(), red);
+
+    // On the sheet itself: the eraser makes a hole of the pixel pressed, and the pencil paints along a drag.
+    editor.set_model_tool(Tool::Eraser);
+    let at = editor.model_window().sheet_view().pixel_point(&editor.ui, [8, 8]);
+    click_at(&mut editor.ui, at);
+    frames(&mut editor, &mut renderer, 3);
+    assert_eq!(pixel(&editor, [8, 8]), [0, 0, 0, 0]);
+    editor.set_model_tool(Tool::Pencil);
+    let (from, to) = (
+        editor.model_window().sheet_view().pixel_point(&editor.ui, [40, 40]),
+        editor.model_window().sheet_view().pixel_point(&editor.ui, [40, 46]),
+    );
+    editor.ui.pointer_move(from.0, from.1);
+    editor.ui.pointer_button(true);
+    frame(&mut editor, &mut renderer);
+    editor.ui.pointer_move(to.0, to.1);
+    frame(&mut editor, &mut renderer);
+    editor.ui.pointer_button(false);
+    frames(&mut editor, &mut renderer, 3);
+    assert!((40..=46).all(|y| pixel(&editor, [40, y]) == red), "down the sheet, off any face");
+    keep_picture(&mut renderer, "model window painting.png");
+
+    // Lay Out gives the body room beside the head, taking its pixels with it.
+    press(&mut editor.ui, "Lay Out");
+    frames(&mut editor, &mut renderer, 3);
+    let model = editor.model_window().model().unwrap().clone();
+    assert_eq!(model.bones[0].boxes[0].skin, BoxSkin::Unfolded { at: [32, 0], mirror: false });
+    let [left, top, ..] = model.bones[0].boxes[0].face_place(Face::Front).unwrap();
+    assert_eq!(model.sheet.get(left, top), blue, "the body's front is still blue, where it now is");
+    assert_eq!(saved(&dir), model);
+    assert!(editor.model_window_mut().undo());
+    frames(&mut editor, &mut renderer, 2);
+    assert_eq!(pixel(&editor, [20, 20]), blue, "back where it was");
+
+    // Back to shaping, the sheet goes and a click picks again.
+    editor.set_model_mode(Mode::Shape);
+    frames(&mut editor, &mut renderer, 2);
+    assert!(!editor.ui.is_visible(sheet_frame));
+    let at = point(&editor, on_head_front([12, 12]));
+    click_at(&mut editor.ui, at);
+    frames(&mut editor, &mut renderer, 2);
+    assert_eq!(editor.model_window().picked(), Some(Picked::Box(1, 0)));
 }

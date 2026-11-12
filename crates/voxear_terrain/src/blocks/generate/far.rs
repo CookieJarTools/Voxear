@@ -53,6 +53,24 @@ pub struct FarTile {
 const MAGIC: &[u8; 4] = b"VXFR";
 const VERSION: u8 = 1;
 
+/// The way tiles are made, counted up when it changes, so tiles kept on
+/// disk made another way are made again (see `stream::BlockMaking`).
+pub const MADE_AS: u32 = 2;
+
+/// How the sea of `block`, its top `top` blocks up, stands at block `y` of
+/// a far tile's column whose ground's surface is `surface`: as `Sea::at`
+/// says, but where the ground lies under the sea, a block its top lies in is
+/// at least an eighth full. So the sea still shows far off, where a block is
+/// 64 m or more and the sea stands less than a sixteenth of one over its
+/// floor, and low land beside it, rounded down to the same block, stays land.
+fn far_sea(block: BlockId, top: f32, y: i32, (smooth, surface): (bool, f32)) -> Sea {
+    let mut sea = Sea::at(block, top, y, smooth);
+    if top > y as f32 && surface < top {
+        sea.eighths = sea.eighths.map(|eighths| eighths.max(1.0));
+    }
+    sea
+}
+
 const SIDE: usize = CHUNK as usize;
 
 impl FarTile {
@@ -203,12 +221,24 @@ pub fn far_tile(file: &BlockFile, generate: &BlockGenerate, world: &WorldGen, le
         let mut runs: Vec<Run> = Vec::new();
         for y in low..=high {
             let plainly = column.surface - (y as f32 + 0.5);
-            let made =
-                cell(column, plainly, plainly, plainly, plainly, Sea::at(sea, sea_top, y, file.smooth), file.smooth);
+            let sea_at = far_sea(sea, sea_top, y, (file.smooth, column.surface));
+            let made = cell(column, plainly, plainly, plainly, plainly, sea_at, file.smooth);
             let Some((block, _)) = made.filter(|(block, _)| *block != AIR) else { continue };
             match runs.last_mut() {
                 Some(last) if last.to == y && last.block == block => last.to = y + 1,
                 _ => runs.push(Run { from: y, to: y + 1, block }),
+            }
+        }
+        // Of cubes, ground under the sea whose top block reaches the sea's level shows no water over it: that block
+        // is the sea's, so a shallow sea far off is water, as drawn smooth it takes the ground's top block too.
+        let under_sea = sea != AIR && !file.smooth && column.surface < sea_top;
+        if let Some(last) = runs.last_mut().filter(|last| under_sea && last.block != sea) {
+            if last.to - last.from > 1 {
+                last.to -= 1;
+                let top = last.to;
+                runs.push(Run { from: top, to: top + 1, block: sea });
+            } else {
+                last.block = sea;
             }
         }
         tile.surfaces.push(column.surface);
@@ -240,7 +270,7 @@ pub fn far_chunks(tile: &FarTile, smooth: bool) -> Vec<([i32; 3], Chunk)> {
                 for y in run.from..run.to {
                     let fill = if sea != AIR && run.block == sea {
                         let over = sea_top - (y as f32 + 0.5);
-                        match Sea::at(sea, sea_top, y, smooth).eighths {
+                        match far_sea(sea, sea_top, y, (smooth, surface)).eighths {
                             _ if smooth => Some(surface_fill(over)),
                             Some(eighths) if eighths < 8.0 => {
                                 Some(Water::Flowing { level: eighths as u8, up: 2 }.fill())
@@ -281,11 +311,15 @@ mod tests {
             file::{BlockKind, Ground},
             generate::column_chunks,
         },
-        generate::Preset,
+        generate::{Landmass, Preset},
     };
 
     /// A world of plain ground: no overhangs or caves, and a sea.
     fn plain(smooth: bool) -> (BlockFile, BlockGenerate, WorldGen) {
+        plain_with(smooth, true)
+    }
+
+    fn plain_with(smooth: bool, sea: bool) -> (BlockFile, BlockGenerate, WorldGen) {
         let mut file =
             BlockFile { smooth, ground: Ground { size: [0, 0], ..Ground::default() }, ..BlockFile::default() };
         file.blocks.push(BlockKind { water: true, ..BlockKind::colored("Water", [0.04, 0.46, 0.33]) });
@@ -294,7 +328,7 @@ mod tests {
             overhangs: 0.0,
             caves: 0.0,
             bottom: -32,
-            sea: file.blocks.len() as BlockId,
+            sea: if sea { file.blocks.len() as BlockId } else { AIR },
             position: [300.0, -700.0],
             ..BlockGenerate::default()
         };
@@ -305,7 +339,8 @@ mod tests {
     #[test]
     fn a_far_tile_is_made_into_the_same_chunks_as_a_coarse_column_of_plain_ground() {
         for smooth in [false, true] {
-            let (file, generate, world) = plain(smooth);
+            // Of cubes, the far view's sea keeps to the ground under it, where coarse chunks keep to their blocks.
+            let (file, generate, world) = plain_with(smooth, smooth);
             for (level, at) in [(3, [0, 0]), (3, [-2, 1]), (5, [1, -1])] {
                 let tile = far_tile(&file, &generate, &world, level, at);
                 let mut made = far_chunks(&tile, smooth);
@@ -322,6 +357,33 @@ mod tests {
                 assert!(runs.max().unwrap() <= 5);
             }
         }
+    }
+
+    #[test]
+    fn the_sea_shows_in_the_farthest_tiles_where_it_stands_less_than_an_eighth_of_a_block_over_their_floor() {
+        let (file, mut generate, _) = plain(false);
+        generate.position = [0.0, 0.0];
+        let sea = generate.sea;
+        // Blocks 128 m a side, the sea at a block's floor and a few metres over it.
+        let mut wet = 0;
+        for (sea_level, at) in
+            [0.0, 3.0].into_iter().flat_map(|level| [[0, 0], [1, 0], [0, 1], [-1, -1]].map(|at| (level, at)))
+        {
+            let world: WorldGen = Landmass { sea_level, ..Preset::Archipelago.landmass() }.into();
+            let tile = far_tile(&file, &generate, &world, 7, at);
+            assert!(tile.sea.1.fract() < 1.0 / 16.0, "less than a sixteenth of a block: {}", tile.sea.1);
+            for column in (0..CHUNK).flat_map(|z| (0..CHUNK).map(move |x| [x, z])) {
+                // Water where the ground lies under the sea, and land where it does not, however near its level.
+                let top = tile.column(column).last().map(|run| run.block);
+                if tile.surface(column) < tile.sea.1 {
+                    assert_eq!(top, Some(sea), "{column:?} of {at:?}");
+                    wet += 1;
+                } else {
+                    assert_ne!(top, Some(sea), "{column:?} of {at:?}");
+                }
+            }
+        }
+        assert!(wet > 100, "sea far off: {wet} columns");
     }
 
     #[test]

@@ -45,7 +45,7 @@ use super::{
     file::BlockFile,
     generate::{
         BlockGenerate, column_chunks,
-        far::{FarTile, far_chunks, far_tile},
+        far::{self, FarTile, far_chunks, far_tile},
     },
     mesh::ChunkMesh,
     mesh_any, mesh_made,
@@ -93,7 +93,7 @@ impl BlockMaking {
     /// The folder its far view's tiles are kept in, named by what they are
     /// made from, so a world made another way keeps its own.
     fn far_tiles(&self) -> Option<std::path::PathBuf> {
-        let made_from = format!("{}\n{:016x}", self.file.to_text(), self.world.hash());
+        let made_from = format!("{}\n{:016x}\n{}", self.file.to_text(), self.world.hash(), far::MADE_AS);
         let hash = crate::layers::stable_hash(made_from.as_bytes());
         self.far_folder.as_ref().map(|folder| folder.join(format!("{hash:016x}")))
     }

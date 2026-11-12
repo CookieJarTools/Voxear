@@ -1031,6 +1031,13 @@ pub struct GpuParticleSystem {
     pub shift: [f32; 3],
     /// How much Force Fields, blasts and what passes by move its particles.
     pub forces: f32,
+    /// The texture its particles are drawn with, or `NO_TEXTURE` for the
+    /// round Dot; how many pictures it holds across and down; and how much
+    /// longer each particle is drawn along its way, in metres for each
+    /// metre a second.
+    pub texture: u32,
+    pub tiles: [u32; 2],
+    pub stretch: f32,
 }
 
 /// A simulated particle, as `shaders/particle_sim.slang` keeps it from
@@ -1251,7 +1258,7 @@ mod tests {
         assert_eq!(size_of::<GpuUiPanel>(), 48);
         assert_eq!(size_of::<GpuSmoke>(), 80);
         assert_eq!(size_of::<GpuMist>(), 64);
-        assert_eq!(size_of::<GpuParticleSystem>(), 64 + 16 * 9 + 64 * 3 + 128 + 16 + 64 + 16 * 5);
+        assert_eq!(size_of::<GpuParticleSystem>(), 64 + 16 * 9 + 64 * 3 + 128 + 16 + 64 + 16 * 6);
         assert_eq!(size_of::<GpuParticle>(), 36);
         assert_eq!(size_of::<GpuParticleSim>(), 16 + 32 + 16 + 48 * crate::forces::MAX_FORCES);
         assert_eq!(size_of::<GpuDebugLine>(), 48);

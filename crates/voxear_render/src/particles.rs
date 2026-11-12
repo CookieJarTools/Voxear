@@ -24,6 +24,7 @@ use voxear_scene::{Destroying, Transform, WorldTransform};
 use voxear_rhi::vk;
 
 use crate::{
+    effects::{EffectRef, ParticleEffects, ParticleTexture},
     gpu::{GpuParticleSystem, Push},
     graph::{BufferAccess, BufferId, FrameGraph, ImageAccess, ImageId},
     passes::{begin_rendering, bind},
@@ -247,6 +248,38 @@ pub struct ParticleSystem {
     /// at all.
     #[serde(skip_serializing_if = "is_zero")]
     pub forces: f32,
+    /// What each is drawn with: the soft round Dot, another built-in
+    /// texture, or one of the project's pictures.
+    #[serde(skip_serializing_if = "ParticleTexture::is_dot")]
+    pub texture: ParticleTexture,
+    /// How many pictures a project's picture holds, across and down, as a
+    /// flipbook does; a built-in texture knows its own.
+    #[serde(skip_serializing_if = "is_one_tile")]
+    pub tiles: [u32; 2],
+    /// Each plays through its texture's pictures over its life, rather
+    /// than keeping one of them.
+    #[serde(skip_serializing_if = "is_false")]
+    pub animate: bool,
+    /// How much longer each is drawn along the way it is going, in metres
+    /// for each metre a second: sparks and rain as streaks.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub stretch: f32,
+    /// How long after it starts before it sends anything out, in seconds.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub delay: f32,
+    /// An effect played in place of all of the above: a starter, or one of
+    /// the project's `.particles` assets, each of its emitters a system of
+    /// its own.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effect: Option<EffectRef>,
+}
+
+fn is_one_tile(tiles: &[u32; 2]) -> bool {
+    *tiles == [1, 1]
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// The bounce and friction a system starts with.
@@ -309,6 +342,12 @@ impl Default for ParticleSystem {
             friction: FRICTION,
             life_lost: 0.0,
             forces: 0.0,
+            texture: ParticleTexture::default(),
+            tiles: [1, 1],
+            animate: false,
+            stretch: 0.0,
+            delay: 0.0,
+            effect: None,
         }
     }
 }
@@ -365,8 +404,13 @@ pub(crate) struct Placed {
     pub oldest: u32,
 }
 
-/// This frame's simulated systems that have particles out, by their Objs.
-pub(crate) type PlacedSystems = std::collections::HashMap<Entity, Placed>;
+/// This frame's simulated systems that have particles out, by their Objs
+/// and which of their effect's emitters they are.
+pub(crate) type PlacedSystems = std::collections::HashMap<(Entity, u32), Placed>;
+
+/// The texture a system draws with as the shaders find it; `None` for the
+/// Dot, or for a picture not loaded yet, which draws as the Dot.
+pub(crate) type Textures<'a> = &'a dyn Fn(ParticleTexture) -> Option<u32>;
 
 /// When a Particle System started, and stopped, in the renderer's time: set
 /// by the engine as it plays and stops it. Without one, it has been going
@@ -399,27 +443,34 @@ pub(crate) fn gather(
     camera: Vec3,
     time: f32,
     bodies: &crate::water::WaterBodies,
-    placed: &PlacedSystems,
+    (placed, textures): (&PlacedSystems, Textures<'_>),
 ) -> (Vec<GpuParticleSystem>, Vec<u32>, Option<u32>, Vec<RapidsSpray>) {
     let query =
         world.query_ref::<(Entity, &ParticleSystem, &Transform, Option<&WorldTransform>, Option<&ParticlePlayback>)>();
-    let mut systems: Vec<(f32, GpuParticleSystem, u32)> = query
-        .without::<Destroying>()
-        .into_iter()
-        .filter_map(|(entity, system, transform, at, playback)| {
-            let model = at.map_or_else(|| transform.matrix(), |w| w.0);
-            let distance = model.w_axis.truncate().distance_squared(camera);
-            let drawn = gpu(system, model, time, playback.copied());
+    let effects = world.resource::<ParticleEffects>();
+    let mut systems: Vec<(f32, GpuParticleSystem, u32)> = Vec::new();
+    for (entity, system, transform, at, playback) in query.without::<Destroying>() {
+        let model = at.map_or_else(|| transform.matrix(), |w| w.0);
+        let distance = model.w_axis.truncate().distance_squared(camera);
+        // Its effect's emitters, each a system of its own in the order the effect lists them, or itself.
+        for (emitter, system) in (0..).zip(crate::effects::emitters(effects, system)) {
+            let drawn = textured(gpu(system, model, time, playback.copied()), system, textures);
+            let drawn = GpuParticleSystem { seed: emitter_seed(drawn.seed, emitter), ..drawn };
             if !system.is_simulated() {
-                return (system.slots() > 0).then(|| (distance, drawn, system.slots()));
+                if system.slots() > 0 {
+                    systems.push((distance, drawn, system.slots()));
+                }
+                continue;
             }
-            let at = placed.get(&entity)?;
+            let Some(at) = placed.get(&(entity, emitter)) else { continue };
             let drawn = GpuParticleSystem { pool_first: at.first, capacity: at.capacity, head: at.oldest, ..drawn };
-            Some((distance, drawn, at.capacity))
-        })
-        .collect();
+            systems.push((distance, drawn, at.capacity));
+        }
+    }
+    // The farthest first; one Obj's emitters stay in their effect's order.
     systems.sort_by(|a, b| b.0.total_cmp(&a.0));
-    systems.truncate(MAX_PARTICLE_SYSTEMS - 1 - SPRAYING_STREAMS);
+    let over = systems.len().saturating_sub(MAX_PARTICLE_SYSTEMS - 1 - SPRAYING_STREAMS);
+    systems.drain(..over);
     let (mut gpus, counts): (Vec<GpuParticleSystem>, Vec<u32>) =
         systems.into_iter().map(|(_, gpu, slots)| (gpu, slots)).unzip();
     let seas = world.query_ref::<(&crate::Ocean, &Transform, Option<&WorldTransform>)>();
@@ -633,6 +684,8 @@ const LIT: u32 = 4;
 const SIMULATED: u32 = 8;
 const WORLD: u32 = 16;
 const COLLIDE: u32 = 64;
+/// Each particle plays through its texture's pictures over its life.
+const ANIMATE: u32 = 128;
 /// Its room in the pool holds none of its own particles yet: only for the
 /// pass that steps them.
 pub(crate) const FRESH: u32 = 32;
@@ -644,6 +697,8 @@ pub(crate) fn gpu(
     playback: Option<ParticlePlayback>,
 ) -> GpuParticleSystem {
     let playback = playback.unwrap_or(ParticlePlayback { started: 0.0, stopped: None });
+    // Its own start is its Delay after its playback's.
+    let started = playback.started + system.delay.max(0.0);
     let range = |r: [f32; 2]| [r[0].min(r[1]), r[0].max(r[1])];
     let flags = [
         (system.looping, LOOPING),
@@ -652,6 +707,7 @@ pub(crate) fn gpu(
         (system.is_simulated(), SIMULATED),
         (system.space == ParticleSpace::World, WORLD),
         (system.collision == ParticleCollision::Depth, COLLIDE),
+        (system.animate, ANIMATE),
     ];
     let flags = flags
         .into_iter()
@@ -670,7 +726,7 @@ pub(crate) fn gpu(
         drag: system.drag.max(0.0),
         rate: system.rate.max(0.0),
         duration: system.duration.max(0.01),
-        time: time - playback.started,
+        time: time - started,
         shape: system.shape as u32,
         radius: system.radius.max(0.0),
         angle: system.angle.clamp(0.0, 180.0).to_radians(),
@@ -681,7 +737,7 @@ pub(crate) fn gpu(
         slots: system.slots(),
         seed: system.seed,
         flags,
-        stopped: playback.stopped.map_or(f32::INFINITY, |stopped| stopped - playback.started),
+        stopped: playback.stopped.map_or(f32::INFINITY, |stopped| stopped - started),
         intensity: system.intensity.max(0.0),
         wind: system.wind.max(0.0),
         turbulence: system.turbulence.max(0.0),
@@ -701,7 +757,29 @@ pub(crate) fn gpu(
         friction: system.friction.clamp(0.0, 1.0),
         life_lost: system.life_lost.clamp(0.0, 1.0),
         forces: system.forces.max(0.0),
+        texture: crate::gpu::NO_TEXTURE,
+        tiles: [1, 1],
+        stretch: system.stretch.max(0.0),
         ..GpuParticleSystem::default()
+    }
+}
+
+/// The seed emitter `emitter` of an effect draws its particles from, given
+/// its own: each emitter's are different, though their seeds be the same.
+pub(crate) fn emitter_seed(seed: u32, emitter: u32) -> u32 {
+    seed.wrapping_add(emitter.wrapping_mul(0x9E37_79B9))
+}
+
+/// `drawn` with the texture `system` draws with, as `textures` finds it.
+pub(crate) fn textured(drawn: GpuParticleSystem, system: &ParticleSystem, textures: Textures<'_>) -> GpuParticleSystem {
+    // A built-in texture knows how many pictures it holds; a project's picture is told.
+    let tiles = match system.texture {
+        ParticleTexture::Builtin(texture) => texture.tiles(),
+        ParticleTexture::Asset(_) => system.tiles.map(|n| n.clamp(1, 64)),
+    };
+    match textures(system.texture) {
+        Some(texture) => GpuParticleSystem { texture, tiles, ..drawn },
+        None => drawn,
     }
 }
 
@@ -742,7 +820,7 @@ mod tests {
         world.spawn((ParticleSystem::default(), Transform::from_position(Vec3::new(0.0, 0.0, 2.0))));
         let far = world.spawn((ParticleSystem::default(), Transform::from_position(Vec3::new(0.0, 0.0, 20.0))));
         world.insert(far, ParticlePlayback { started: 3.0, stopped: Some(5.0) });
-        let (systems, slots, spray, rapids) = gather(&world, Vec3::ZERO, 10.0, &Default::default(), &PlacedSystems::new());
+        let (systems, slots, spray, rapids) = gather(&world, Vec3::ZERO, 10.0, &Default::default(), (&PlacedSystems::new(), &|_| None));
         assert_eq!(spray, None, "no sea, no spray");
         assert!(rapids.is_empty(), "no Streams, none over rapids");
         assert_eq!(slots.len(), 2);
@@ -766,10 +844,10 @@ mod tests {
             crate::water::WaterBodies { bodies: vec![body], pools: 0, streams: vec![points.len() as u32], points, dry_meshes: Vec::new() }
         };
         let world = World::new();
-        let (systems, _, _, rapids) = gather(&world, Vec3::ZERO, 10.0, &bodies(&level), &PlacedSystems::new());
+        let (systems, _, _, rapids) = gather(&world, Vec3::ZERO, 10.0, &bodies(&level), (&PlacedSystems::new(), &|_| None));
         assert!(systems.is_empty() && rapids.is_empty(), "a level stream throws up none");
         let steep = bodies(&steep);
-        let (systems, _, _, rapids) = gather(&world, Vec3::ZERO, 10.0, &steep, &PlacedSystems::new());
+        let (systems, _, _, rapids) = gather(&world, Vec3::ZERO, 10.0, &steep, (&PlacedSystems::new(), &|_| None));
         assert_eq!((systems.len(), rapids.len()), (1, 1));
         let (system, body, points, drops) = rapids[0];
         assert_eq!((system, body, points), (0, 0, steep.streams[0]), "its own system, for the Stream's body and points");

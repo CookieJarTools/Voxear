@@ -482,6 +482,7 @@ impl AssetView {
                 let carried = db.guid_of(&item.path).is_some_and(|guid| crate::block_props::placed_by(game, guid));
                 view.block = Some(crate::block_inspector::BlockFields::new(ui, root, block, &path_of, carried));
             }
+            ItemKind::Asset(AssetKind::Particles) => particle_effect(ui, root, &file),
             ItemKind::Asset(AssetKind::PromptIcons) => {
                 let text = std::fs::read_to_string(&file).unwrap_or_default();
                 let icons = toml::from_str(&text).unwrap_or_default();
@@ -996,6 +997,31 @@ pub(crate) fn part(ui: &mut Ui, root: NodeId, title: &str, icon: &str) -> NodeId
     ui.foldout_content(foldout).expect("a foldout has content")
 }
 
+/// A particle effect's emitters: each by name, with what it draws with, how many particles it has room for and
+/// whether it is simulated; or why its file could not be read.
+fn particle_effect(ui: &mut Ui, root: NodeId, file: &std::path::Path) {
+    let rows = part(ui, root, "Emitters", "particles");
+    let text = std::fs::read_to_string(file).unwrap_or_default();
+    let effect = match voxear_render::ParticleEffect::from_toml(&text) {
+        Ok(effect) => effect,
+        Err(error) => return text_row(ui, rows, "Error", &error),
+    };
+    for emitter in &effect.emitters {
+        let system = &emitter.system;
+        let texture = match system.texture {
+            voxear_render::ParticleTexture::Builtin(texture) => texture.name(),
+            voxear_render::ParticleTexture::Asset(_) => "Picture",
+        };
+        let simulated = system.is_simulated();
+        let room = if simulated { system.capacity() } else { system.slots() };
+        let how = if simulated { "simulated" } else { "by age" };
+        text_row(ui, rows, &emitter.name, &format!("{texture} · {room} · {how}"));
+    }
+    if effect.emitters.is_empty() {
+        text_row(ui, rows, "Emitters", "None");
+    }
+}
+
 fn text_row(ui: &mut Ui, rows: NodeId, label: &str, value: &str) {
     let row = prop(ui, rows, label);
     let value = ui.add_label(row, value);
@@ -1505,6 +1531,7 @@ fn kind_name(kind: ItemKind) -> &'static str {
         ItemKind::Asset(AssetKind::Shader) => "Shader",
         ItemKind::Asset(AssetKind::MotionSet) => "Motion Set",
         ItemKind::Asset(AssetKind::GunHandling) => "Gun Handling",
+        ItemKind::Asset(AssetKind::Particles) => "Particle Effect",
         ItemKind::Asset(AssetKind::PromptIcons) => "Prompt Icons",
         ItemKind::Asset(AssetKind::Data) => "Data asset",
         ItemKind::Asset(AssetKind::Terrain) => "Terrain",
@@ -1535,6 +1562,7 @@ fn icon(kind: ItemKind) -> &'static str {
         ItemKind::Asset(AssetKind::Shader) => "shader",
         ItemKind::Asset(AssetKind::MotionSet) => "play",
         ItemKind::Asset(AssetKind::GunHandling) => "crosshair",
+        ItemKind::Asset(AssetKind::Particles) => "particles",
         ItemKind::Asset(AssetKind::PromptIcons) => "gamepad",
         ItemKind::Asset(AssetKind::Data) => "file",
         ItemKind::Asset(AssetKind::Terrain) => "mountain",

@@ -608,6 +608,7 @@ impl Game {
         self.net_begin(delta, renderer.as_deref_mut());
         self.models = ModelWork::for_renderer(renderer.as_deref());
         give_collider_meshes(&mut self.engine.world, &mut self.content);
+        crate::particles::resolve(&mut self.engine.world, &mut self.content, renderer.as_deref_mut());
         // Before physics steps, so ground made round the camera stands things on it this frame.
         crate::terrain::stream(&mut self.engine.world, &mut self.content);
         crate::blocks::refresh(&mut self.engine.world, &mut self.content, renderer.as_deref_mut());

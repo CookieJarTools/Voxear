@@ -50,6 +50,8 @@ const BOUNCE: i32 = 34;
 const FRICTION: i32 = 35;
 const LIFE_LOST: i32 = 36;
 const FORCES: i32 = 37;
+const STRETCH: i32 = 38;
+const DELAY: i32 = 39;
 
 /// The engine's time, as Particle Systems are played and stopped by.
 #[derive(Clone, Copy, Debug, Default)]
@@ -61,6 +63,49 @@ pub(crate) fn register() {
     voxear_scripting::set_particle_values(values);
     voxear_scripting::set_kind_values(voxear_scripting::ComponentKind::ForceField, field_values);
     voxear_scripting::set_particle_blaster(|world, at, radius, speed| blast(world, at.into(), radius, speed));
+}
+
+/// Reads what the world's Particle Systems name, for the renderer to find
+/// (see `voxear_render::effects`): the effects they play, from the
+/// project's `.particles` assets, and the pictures they and those effects'
+/// emitters draw with, which need `renderer` to load. Each is read once and
+/// kept by `content`, so this is a few lookups a system each frame, and an
+/// effect whose file changed is taken up as soon as `content` forgets it.
+pub fn resolve(world: &mut World, content: &mut crate::content::Content, renderer: Option<&mut voxear_render::Renderer>) {
+    use voxear_render::{EffectRef, ParticleEffects, ParticlePictures, ParticleTexture};
+    let mut effects = ParticleEffects::default();
+    let mut wanted = std::collections::HashSet::new();
+    for (system,) in world.query_ref::<(&ParticleSystem,)>() {
+        let emitters: Vec<ParticleTexture> = match system.effect {
+            None => vec![system.texture],
+            Some(EffectRef::Builtin(_)) => Vec::new(),
+            Some(EffectRef::Asset(guid)) => {
+                let found = effects.0.get(&guid).cloned().or_else(|| content.particle_effect(guid));
+                let Some(effect) = found else { continue };
+                let textures = effect.emitters.iter().map(|emitter| emitter.system.texture).collect();
+                effects.0.insert(guid, effect);
+                textures
+            }
+        };
+        wanted.extend(emitters.into_iter().filter_map(|texture| match texture {
+            ParticleTexture::Asset(guid) => Some(guid),
+            ParticleTexture::Builtin(_) => None,
+        }));
+    }
+    if world.resource::<ParticleEffects>() != Some(&effects) {
+        world.insert_resource(effects);
+    }
+    let Some(renderer) = renderer else { return };
+    let mut pictures = ParticlePictures::default();
+    for guid in wanted {
+        match content.particle_picture(renderer, guid) {
+            Ok(texture) => drop(pictures.0.insert(guid, texture)),
+            Err(error) => tracing::debug!("a Particle System's picture {guid} could not be read: {error:#}"),
+        }
+    }
+    if world.resource::<ParticlePictures>() != Some(&pictures) {
+        world.insert_resource(pictures);
+    }
 }
 
 /// Sets off a blast at `at`, `radius` metres wide: the particles of every
@@ -223,6 +268,8 @@ fn read(system: &ParticleSystem, what: i32) -> Option<[f32; 4]> {
         FRICTION => number(system.friction),
         LIFE_LOST => number(system.life_lost),
         FORCES => number(system.forces),
+        STRETCH => number(system.stretch),
+        DELAY => number(system.delay),
         _ => return None,
     })
 }
@@ -266,6 +313,8 @@ fn write(system: &mut ParticleSystem, what: i32, [x, y, z, w]: [f32; 4]) {
         FRICTION => system.friction = x.clamp(0.0, 1.0),
         LIFE_LOST => system.life_lost = x.clamp(0.0, 1.0),
         FORCES => system.forces = x.max(0.0),
+        STRETCH => system.stretch = x.max(0.0),
+        DELAY => system.delay = x.max(0.0),
         _ => {}
     }
 }

@@ -17,6 +17,10 @@ struct ParticleOut
     nointerpolation float depth : DEPTH;
     nointerpolation float softness : SOFTNESS;
     nointerpolation uint additive : ADDITIVE;
+    // The texture it is drawn with, or NO_TEXTURE for a soft round dot; and which of the texture's pictures: where
+    // its corner is in the texture, then how much of the texture it takes.
+    nointerpolation uint texture : TEXTURE;
+    nointerpolation float4 tile : TILE;
 };
 
 // When slot `slot` of `system` last set out a particle, up to the system's
@@ -99,6 +103,8 @@ ParticleOut particleNone(ParticleSystem system, float2 corner)
     output.depth = 0.0;
     output.softness = system.softness;
     output.additive = 0;
+    output.texture = NO_TEXTURE;
+    output.tile = float4(0.0, 0.0, 1.0, 1.0);
     output.position = float4(0.0, 0.0, -1.0, 1.0);
     return output;
 }
@@ -139,10 +145,12 @@ float4 particleFog(Frame* frame, float3 world, float4 clip)
     return float4(added * (1.0 - amount) + color * amount, through * (1.0 - amount));
 }
 
-// Places the quad of a particle at `world` that has lived `aged` of its
-// life, `age` seconds, of `system`, at `corner` of its quad, with its
-// random numbers `h`; and how bright and opaque it shows, `fade` of it.
-ParticleOut particlePlace(Frame* frame, ParticleSystem system, float3 world, float age, float aged, float2 corner, inout uint h, float fade)
+// Places the quad of a particle at `world`, going at `velocity`, that has
+// lived `aged` of its life, `age` seconds, of `system`, at `corner` of its
+// quad, with its random numbers `h`; and how bright and opaque it shows,
+// `fade` of it. A system that stretches its particles draws each along its
+// way across the view, longer the faster it goes, rather than turned.
+ParticleOut particlePlaceGoing(Frame* frame, ParticleSystem system, float3 world, float3 velocity, float age, float aged, float2 corner, inout uint h, float fade)
 {
     ParticleOut output;
     output.corner = corner;
@@ -156,7 +164,23 @@ ParticleOut particlePlace(Frame* frame, ParticleSystem system, float3 world, flo
     float3 right = normalizeOr(cross(float3(0.0, 1.0, 0.0), forward), float3(1.0, 0.0, 0.0));
     float3 up = cross(forward, right);
     float3 at = world + (right * spun.x + up * spun.y) * size * 0.5;
+    float3 across = velocity - forward * dot(velocity, forward);
+    float going = length(across);
+    if (system.stretch > 0.0 && going > 1e-3)
+    {
+        // Along its way as the view sees it, and as wide as it is across it.
+        float3 along = across / going;
+        float3 side = cross(forward, along);
+        at = world + side * corner.x * size * 0.5 + along * corner.y * (size * 0.5 + going * system.stretch * 0.5);
+    }
     float4 clip = transform(frame->viewProj, float4(at, 1.0));
+
+    // Which of its texture's pictures: one for good, picked by its own number, or each in turn over its life.
+    output.texture = system.texture;
+    uint pictures = max(system.tiles.x * system.tiles.y, 1);
+    uint picture = (system.flags & PARTICLES_ANIMATE) != 0 ? min(uint(aged * float(pictures)), pictures - 1) : particleHash(h) % pictures;
+    float2 share = 1.0 / float2(max(system.tiles, 1));
+    output.tile = float4(float2(picture % max(system.tiles.x, 1), picture / max(system.tiles.x, 1)) * share, share);
 
     float4 color = lerp(system.color, system.colorEnd, aged);
     if (system.curveCounts.w > 0)
@@ -179,14 +203,30 @@ ParticleOut particlePlace(Frame* frame, ParticleSystem system, float3 world, flo
 }
 
 
-// A particle's pixel: a soft round dot, faded before what it meets, and
-// hidden behind it (the scene's depth, push.textures.x).
+// The same, for a particle that is not going anywhere the caller knows of.
+ParticleOut particlePlace(Frame* frame, ParticleSystem system, float3 world, float age, float aged, float2 corner, inout uint h, float fade)
+{
+    return particlePlaceGoing(frame, system, world, 0.0, age, aged, corner, h, fade);
+}
+
+// A particle's pixel: its texture's picture, or without one a soft round
+// dot; faded before what it meets, and hidden behind it (the scene's depth,
+// push.textures.x).
 [shader("fragment")]
 float4 particleFragment(ParticleOut input) : SV_Target0
 {
     Frame* frame = push.frame;
     float edge = dot(input.corner, input.corner);
-    if (edge >= 1.0)
+    float3 tint = 1.0;
+    float shape = (1.0 - edge) * (1.0 - edge);
+    if (input.texture != NO_TEXTURE)
+    {
+        float2 within = float2(input.corner.x, -input.corner.y) * 0.5 + 0.5;
+        float4 picture = sampleTexture(input.texture, input.tile.xy + within * input.tile.zw);
+        tint = picture.rgb;
+        shape = picture.a;
+    }
+    else if (edge >= 1.0)
     {
         discard;
     }
@@ -197,6 +237,6 @@ float4 particleFragment(ParticleOut input) : SV_Target0
         discard;
     }
     float soft = input.softness > 0.0 ? saturate(gap / input.softness) : 1.0;
-    float alpha = input.color.a * (1.0 - edge) * (1.0 - edge) * soft;
-    return float4(input.color.rgb * alpha, input.additive != 0 ? 0.0 : alpha);
+    float alpha = input.color.a * shape * soft;
+    return float4(input.color.rgb * tint * alpha, input.additive != 0 ? 0.0 : alpha);
 }

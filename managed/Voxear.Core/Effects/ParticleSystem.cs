@@ -249,6 +249,20 @@ public readonly struct ParticleSystem : IEquatable<ParticleSystem>, IObjComponen
 		set { Set(NativeParticles.Forces, value); }
 	}
 
+	/// <summary>How much longer each particle is drawn along the way it is going, in metres for each metre a second: sparks and rain as streaks.</summary>
+	public float Stretch
+	{
+		get { return Number(NativeParticles.Stretch); }
+		set { Set(NativeParticles.Stretch, value); }
+	}
+
+	/// <summary>How long after it starts before it sends anything out, in seconds.</summary>
+	public float Delay
+	{
+		get { return Number(NativeParticles.Delay); }
+		set { Set(NativeParticles.Delay, value); }
+	}
+
 	/// <summary>Which particles: two systems alike but for this send out different ones.</summary>
 	public int Seed
 	{

@@ -386,6 +386,7 @@ pub fn server_reads(kind: AssetKind) -> bool {
         | AssetKind::GunHandling
         | AssetKind::Data
         | AssetKind::Terrain
+        | AssetKind::Particles
         | AssetKind::WorldGen
         | AssetKind::BlockWorld
         | AssetKind::Block
@@ -616,6 +617,8 @@ fn find_needs(db: &AssetDb, guid: AssetGuid, kind: AssetKind, path: &str) -> Res
         | AssetKind::GunHandling
         | AssetKind::Data
         | AssetKind::Terrain
+        // The pictures a particle effect's emitters draw with.
+        | AssetKind::Particles
         // The blocks a world of blocks lists and the materials its own kinds' faces are drawn with; what a block names.
         | AssetKind::BlockWorld
         | AssetKind::Block

@@ -1421,7 +1421,7 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   the Wind Zone's, gusts and all, as plants lean by it; turbulence is a curl of noise. **Project Settings ▸
   Quality ▸ Budget** (`[quality] particles`) is the most particles all may have room for, a million by default;
   the stats overlay, the Profiler and `vox render` count them. On an RTX 3070 a million are stepped in 0.19 ms
-  and drawn in 0.8 ms. `samples/Effects` has a campfire, sparks, dust and a million sparks in a wind. C#
+  and drawn in 0.9 ms. `samples/Effects` has a campfire, sparks, dust and a million sparks in a wind. C#
   `Space`, `Wind`, `Turbulence`, `TurbulenceSize`, `IsSimulated`. Tests: emission and the pool's room without a
   GPU; on one, a simulated system against one worked out from age, wind either way, turbulence, particles left
   behind, the budget, and a million timed.
@@ -1438,12 +1438,25 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   `LifeLost`, `Forces`. `samples/Effects` has sparks bouncing down steps and a whirl in its dust. The manual's
   Force Fields. Tests: fields and blasts gathered without a GPU; on one, sparks landing, dying and bouncing on
   a floor, a field pulling either way, and a blast.
+- **Particle effects, textures and starters ✅.** A Particle System's **Effect** plays an effect in place of its
+  own settings: several emitters, each a Particle System's settings with a name, played together, each a system
+  of its own to the renderer and the simulation (`voxear_render::effects`). Eleven starters are built in (Fire,
+  Smoke, Sparks, Dust, Rain, Snow, Blood, Muzzle Flash, Explosion, Magic, Mud), and a project's own are
+  `.particles` assets (`AssetKind::Particles`): **New Particle Effect…** copies a starter, the file is an
+  `[[emitter]]` table each, read by `Content::particle_effect` and taken up again when it changes, and its
+  Inspector lists its emitters. **Texture** draws particles with a built-in texture (Puff, Flame, Ring, Flare,
+  Shard, made on the CPU when the renderer starts, most of them four shapes to a picture) or a project's
+  picture with its **Tiles**, one picture a particle or, with **Animate**, each in turn over its life;
+  **Stretch** draws them along their way; **Delay** holds an emitter back. The engine lists the effects and
+  pictures the world's systems name for the renderer each frame (`particles::resolve`). An effect that plays
+  once plays again while selected in the editor. `samples/Effects` has a row of starters. C# `Stretch`,
+  `Delay`. Tests: references, the built-in textures, an effect's file, and each starter drawn on a GPU.
 - Particles, still to come, in this order (the design is in [ARCHITECTURE.md](ARCHITECTURE.md#particles)):
   - collision with what is out of view: the ground and colliders, and the scene's rays
-  - the effect asset (`.particles`) of several emitters as stacks of modules, sub-emitters and events, the
-    preset gallery, and its panel with play, pause and scrub
-  - textures and flipbooks blended by motion vectors, smoke lit from six sides, stretched quads, meshes, trails,
-    sorting, half-size drawing, lights from effects, particles in the fog volume
+  - editing an effect's emitters in the editor, with play, pause and scrub; sub-emitters and events; values an
+    effect shows on the Particle System that plays it
+  - flipbooks blended by motion vectors, smoke lit from six sides, meshes, trails, sorting, half-size drawing,
+    lights from effects, particles in the fog volume
   - `Particles.Play(effect, position)`, bursts at a place, picked parameters, hit events, curves from C#
   - the graph compiler shared with Shader Graph, graph mode, custom Slang modules, and each node's cost shown
   - sleeping off screen, level of detail by distance, and the particle debugger

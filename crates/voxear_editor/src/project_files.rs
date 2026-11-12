@@ -362,6 +362,17 @@ fn struct_name(name: &str) -> String {
     if named.starts_with(|c: char| c.is_ascii_alphabetic()) { named } else { format!("Shader{named}") }
 }
 
+/// Makes a particle effect in `folder` (from the project's folder) as a
+/// copy of `starter`, to change as the project's own, and returns its path.
+pub fn create_effect(root: &Path, folder: &str, starter: voxear_render::Starter) -> Result<String> {
+    let name = unique(&root.join(folder), starter.name(), ".particles");
+    let path = join(folder, &name);
+    let file = root.join(&path);
+    let text = starter.effect().to_toml().map_err(|error| anyhow::anyhow!("writing {name}: {error}"))?;
+    std::fs::write(&file, text).with_context(|| format!("making {}", file.display()))?;
+    Ok(path)
+}
+
 /// What a new shader starts as: a lit, an unlit or a UI one to write, or a
 /// copy of one built in, to change.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

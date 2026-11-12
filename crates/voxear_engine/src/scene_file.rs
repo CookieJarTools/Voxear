@@ -2558,10 +2558,23 @@ mod tests {
         assert_eq!((system.collision, system.forces, system.bounce), (ParticleCollision::Depth, 0.5, 0.4));
         let written = toml::to_string(&sparks).unwrap();
         assert!(written.contains("collision") && !written.contains("bounce"), "only what is not as new: {written}");
+        // An effect and a texture are named as files name them, built in or by GUID.
+        let fire: ObjData = toml::from_str("id = 4\n[particles]\neffect = \"builtin:fire\"").unwrap();
+        let system = fire.particles.expect("the system is read");
+        assert_eq!(system.effect, Some(voxear_render::EffectRef::Builtin(voxear_render::Starter::Fire)));
+        assert!(toml::to_string(&fire).unwrap().contains("effect = \"builtin:fire\""));
+        let guid = voxear_assets::AssetGuid::new_random();
+        let text = format!("id = 5\n[particles]\ntexture = \"{guid}\"\ntiles = [4, 4]\nstretch = 0.05");
+        let streaks: ObjData = toml::from_str(&text).unwrap();
+        let system = streaks.particles.expect("the system is read");
+        assert_eq!((system.texture, system.tiles), (voxear_render::ParticleTexture::Asset(guid), [4, 4]));
+        assert_eq!(toml::from_str::<ObjData>(&toml::to_string(&streaks).unwrap()).unwrap().particles, Some(system));
+        assert!(toml::from_str::<ObjData>("id = 6\n[particles]\neffect = \"builtin:nothing\"").is_err());
         // One written before there were any of these reads as it did, and writes none of them.
         let plain: ObjData = toml::from_str("id = 3\n[particles]\nrate = 5.0").unwrap();
         let written = toml::to_string(&plain).unwrap();
         assert!(!written.contains("collision") && !written.contains("forces") && !written.contains("wind"), "{written}");
+        assert!(!written.contains("texture") && !written.contains("effect") && !written.contains("tiles"), "{written}");
     }
 
     #[test]

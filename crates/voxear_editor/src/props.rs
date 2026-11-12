@@ -42,7 +42,7 @@ use voxear_engine::{
 use voxear_render::{
     Camera, Foliage, FoliageInteraction, Impostors, Light, LightKind, LodGroup, LodLevel, LodMeasure, MAX_TRANSITIONS, MeshRenderer, PostVolume, Renderer,
     ModelRenderer, Ocean, Season, Seasons, SkyBody, VolumeShape, Weather, WindShape, WindSource, WindZone, DryArea, DryShape, Liquid, Pool, Stream,
-    EmitShape, ForceField, ForceKind, ParticleBlend, ParticleCollision, ParticleSpace, ParticleSystem,
+    BuiltinTexture, EffectRef, EmitShape, ForceField, ForceKind, ParticleBlend, ParticleTexture, Starter, ParticleCollision, ParticleSpace, ParticleSystem,
 };
 use voxear_scene::{BehaviourSpec, Behaviours, Name, Parent, SceneComponents, Switch};
 use voxear_terrain::generate::{CaveExit, CaveMode, CaveShape, RoomForm};
@@ -429,6 +429,16 @@ pub enum Prop {
     ParticleLifeLost,
     ParticleForces,
     ParticleSimulated,
+    /// The effect it plays in place of its own settings; and for its own,
+    /// what each particle is drawn with, how many pictures that holds and
+    /// whether each plays through them, how far it stretches along its way,
+    /// and how long it waits to start.
+    ParticleEffect,
+    ParticleTexture,
+    ParticleTiles,
+    ParticleAnimate,
+    ParticleStretch,
+    ParticleDelay,
     /// A Force Field's kind, how hard it moves particles and how far it reaches.
     ForceKind,
     ForceStrength,
@@ -856,7 +866,13 @@ impl Prop {
             | Prop::ParticleFriction
             | Prop::ParticleLifeLost
             | Prop::ParticleForces
-            | Prop::ParticleSimulated => Part::ParticleSystem,
+            | Prop::ParticleSimulated
+            | Prop::ParticleEffect
+            | Prop::ParticleTexture
+            | Prop::ParticleTiles
+            | Prop::ParticleAnimate
+            | Prop::ParticleStretch
+            | Prop::ParticleDelay => Part::ParticleSystem,
             Prop::ForceKind | Prop::ForceStrength | Prop::ForceRadius => Part::ForceField,
             Prop::SmokeSize
             | Prop::SmokeCell
@@ -1168,6 +1184,12 @@ impl Prop {
             Prop::ParticleLifeLost => "life_lost",
             Prop::ParticleForces => "forces",
             Prop::ParticleSimulated => "simulated",
+            Prop::ParticleEffect => "effect",
+            Prop::ParticleTexture => "texture",
+            Prop::ParticleTiles => "tiles",
+            Prop::ParticleAnimate => "animate",
+            Prop::ParticleStretch => "stretch",
+            Prop::ParticleDelay => "delay",
             Prop::ForceKind => "kind",
             Prop::ForceStrength => "strength",
             Prop::ForceRadius => "radius",
@@ -1775,9 +1797,15 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
         ],
         Part::ParticleSystem => {
             let system = world.get::<ParticleSystem>(entity).copied().unwrap_or_default();
+            // Playing an effect, its own settings are not used: only which effect.
+            if system.effect.is_some() {
+                return vec![Prop::ParticleEffect];
+            }
             let shape = system.shape;
             let mut props = vec![
+                Prop::ParticleEffect,
                 Prop::ParticleDuration,
+                Prop::ParticleDelay,
                 Prop::ParticleLooping,
                 Prop::ParticleRate,
                 Prop::ParticleBurst,
@@ -1797,8 +1825,16 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
                 Prop::ParticleBlend,
                 Prop::ParticleLit,
                 Prop::ParticleSoftness,
-                Prop::ParticleShape,
+                Prop::ParticleTexture,
             ];
+            // How many pictures a project's picture holds; a built-in one knows.
+            if matches!(system.texture, ParticleTexture::Asset(_)) {
+                props.push(Prop::ParticleTiles);
+            }
+            if !system.texture.is_builtin(BuiltinTexture::Dot) {
+                props.push(Prop::ParticleAnimate);
+            }
+            props.extend([Prop::ParticleStretch, Prop::ParticleShape]);
             // Only what its shape uses.
             props.extend(match shape {
                 EmitShape::Point => vec![],
@@ -2104,6 +2140,12 @@ pub fn label(prop: &Prop) -> String {
         Prop::ParticleLifeLost => "Life Lost",
         Prop::ParticleForces => "Forces",
         Prop::ParticleSimulated => "Simulated",
+        Prop::ParticleEffect => "Effect",
+        Prop::ParticleTexture => "Texture",
+        Prop::ParticleTiles => "Tiles",
+        Prop::ParticleAnimate => "Animate",
+        Prop::ParticleStretch => "Stretch",
+        Prop::ParticleDelay => "Delay",
         Prop::ForceKind => "Kind",
         Prop::ForceStrength => "Strength",
         Prop::ForceRadius => "Radius",
@@ -2919,7 +2961,20 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         | Prop::ParticleFriction
         | Prop::ParticleLifeLost
         | Prop::ParticleForces
-        | Prop::ParticleSimulated => particle_value(world.get::<ParticleSystem>(entity)?, prop)?,
+        | Prop::ParticleSimulated
+        | Prop::ParticleTiles
+        | Prop::ParticleAnimate
+        | Prop::ParticleStretch
+        | Prop::ParticleDelay => particle_value(world.get::<ParticleSystem>(entity)?, prop)?,
+        Prop::ParticleEffect => Value::Asset(match world.get::<ParticleSystem>(entity)?.effect {
+            None => "None".into(),
+            Some(EffectRef::Builtin(starter)) => starter.name().into(),
+            Some(EffectRef::Asset(guid)) => guid_label(game, Some(guid)),
+        }),
+        Prop::ParticleTexture => Value::Asset(match world.get::<ParticleSystem>(entity)?.texture {
+            ParticleTexture::Builtin(texture) => texture.name().into(),
+            ParticleTexture::Asset(guid) => guid_label(game, Some(guid)),
+        }),
         Prop::ForceKind => {
             let kind = world.get::<ForceField>(entity)?.kind;
             let index = ForceKind::ALL.iter().position(|k| *k == kind).unwrap_or(0);
@@ -3434,6 +3489,36 @@ pub fn pick(
                 false => light.profile = texture,
             })
         }
+        (Prop::ParticleEffect, Pick::Asset(choice)) => {
+            // A starter by its reference, or one of the project's effects by its path.
+            let effect = match choice {
+                None => None,
+                Some(path) => match path.parse::<EffectRef>().ok().filter(|effect| matches!(effect, EffectRef::Builtin(_))) {
+                    Some(starter) => Some(starter),
+                    None => match game.content.parse(path).ok().and_then(|reference| reference.guid()) {
+                        Some(guid) => Some(EffectRef::Asset(guid)),
+                        None => return false,
+                    },
+                },
+            };
+            // Played from its start, so one that plays once is seen.
+            game.engine.world.remove::<voxear_render::ParticlePlayback>(entity);
+            with(&mut game.engine.world, entity, |system: &mut ParticleSystem| system.effect = effect)
+        }
+        (Prop::ParticleTexture, Pick::Asset(choice)) => {
+            let builtin = |path: &String| BuiltinTexture::from_reference(path).map(ParticleTexture::Builtin);
+            let texture = match choice {
+                None => ParticleTexture::default(),
+                Some(path) => match builtin(path) {
+                    Some(texture) => texture,
+                    None => match game.content.parse(path).ok().and_then(|reference| reference.guid()) {
+                        Some(guid) => ParticleTexture::Asset(guid),
+                        None => return false,
+                    },
+                },
+            };
+            with(&mut game.engine.world, entity, |system: &mut ParticleSystem| system.texture = texture)
+        }
         (Prop::GunHandling, Pick::Asset(choice)) => {
             let handling = match choice {
                 None => String::new(),
@@ -3714,6 +3799,20 @@ pub fn choices(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) ->
         Prop::MatcherMotionSet => return fields::assets_of(game, Some(AssetKind::MotionSet)),
         Prop::UiPanelDocument | Prop::ScreenUiDocument => return fields::assets_of(game, Some(AssetKind::Ui)),
         Prop::GunHandling => return fields::assets_of(game, Some(AssetKind::GunHandling)),
+        Prop::ParticleEffect => {
+            // None, the starters, then the project's own.
+            let mut found = vec![("None".to_string(), Pick::Asset(None))];
+            found.extend(Starter::ALL.map(|starter| (starter.name().to_string(), Pick::Asset(Some(starter.reference())))));
+            found.extend(fields::assets_of(game, Some(AssetKind::Particles)).into_iter().skip(1));
+            return found;
+        }
+        Prop::ParticleTexture => {
+            // The built-in ones, the Dot first, then the project's pictures.
+            let builtin = BuiltinTexture::ALL.map(|texture| (texture.name().to_string(), Pick::Asset(Some(texture.reference()))));
+            let mut found = builtin.to_vec();
+            found.extend(fields::assets_of(game, Some(AssetKind::Texture)).into_iter().skip(1));
+            return found;
+        }
         Prop::AnimatorClip => {
             let mut found = vec![("None".to_string(), Pick::Asset(None))];
             found.extend(model_clips(game));
@@ -4606,6 +4705,10 @@ fn particle_value(system: &ParticleSystem, prop: &Prop) -> Option<Value> {
         Prop::ParticleFriction => Value::Number(system.friction),
         Prop::ParticleLifeLost => Value::Number(system.life_lost),
         Prop::ParticleForces => Value::Number(system.forces),
+        Prop::ParticleTiles => Value::Vector(system.tiles.map(|n| n as f32).to_vec()),
+        Prop::ParticleAnimate => Value::Toggle(system.animate),
+        Prop::ParticleStretch => Value::Number(system.stretch),
+        Prop::ParticleDelay => Value::Number(system.delay),
         // Which settings have its particles kept and stepped on the GPU, rather than worked out from their age.
         Prop::ParticleSimulated => Value::Fixed(match system.simulated_for() {
             needs if needs.is_empty() => "No".into(),
@@ -4672,6 +4775,12 @@ fn set_particle(system: &mut ParticleSystem, prop: &Prop, value: Value) {
         (Prop::ParticleFriction, Value::Number(n)) => system.friction = n.clamp(0.0, 1.0),
         (Prop::ParticleLifeLost, Value::Number(n)) => system.life_lost = n.clamp(0.0, 1.0),
         (Prop::ParticleForces, Value::Number(n)) => system.forces = n.max(0.0),
+        (Prop::ParticleTiles, Value::Vector(v)) if v.len() == 2 => {
+            system.tiles = [v[0], v[1]].map(|n| n.round().clamp(1.0, 64.0) as u32);
+        }
+        (Prop::ParticleAnimate, Value::Toggle(on)) => system.animate = on,
+        (Prop::ParticleStretch, Value::Number(n)) => system.stretch = n.max(0.0),
+        (Prop::ParticleDelay, Value::Number(n)) => system.delay = n.max(0.0),
         _ => {}
     }
 }
@@ -5053,6 +5162,28 @@ mod tests {
         assert!(set_component(&mut world, entity, &Prop::ParticleBurst, Value::Whole(12)));
         assert_eq!(get_particle(&world, entity, Prop::ParticleBurst), Some(Value::Whole(12)));
         assert_eq!(Prop::ParticleOpacityEnd.lock_key(), "color_end");
+    }
+
+    #[test]
+    fn a_particle_system_playing_an_effect_shows_only_which_and_a_texture_brings_its_rows() {
+        let mut world = World::new();
+        let entity = world.spawn((ParticleSystem::default(),));
+        let types = ScriptTypes::default();
+        let shown = |world: &World| props(world, entity, &Part::ParticleSystem, &types);
+        assert_eq!(shown(&world)[0], Prop::ParticleEffect, "which effect comes first");
+        assert!(!shown(&world).contains(&Prop::ParticleAnimate), "the Dot has no pictures to play through");
+        assert!(set_component(&mut world, entity, &Prop::ParticleStretch, Value::Number(0.05)));
+        assert!(set_component(&mut world, entity, &Prop::ParticleDelay, Value::Number(-1.0)));
+        let puff = ParticleTexture::Builtin(BuiltinTexture::Puff);
+        world.get_mut::<ParticleSystem>(entity).unwrap().texture = puff;
+        assert!(shown(&world).contains(&Prop::ParticleAnimate) && !shown(&world).contains(&Prop::ParticleTiles));
+        world.get_mut::<ParticleSystem>(entity).unwrap().texture = ParticleTexture::Asset(voxear_assets::AssetGuid::new_random());
+        assert!(shown(&world).contains(&Prop::ParticleTiles), "a picture is told how many it holds");
+        assert!(set_component(&mut world, entity, &Prop::ParticleTiles, Value::Vector(vec![4.4, 0.0])));
+        let system = *world.get::<ParticleSystem>(entity).unwrap();
+        assert_eq!((system.stretch, system.delay, system.tiles), (0.05, 0.0, [4, 1]));
+        world.get_mut::<ParticleSystem>(entity).unwrap().effect = Some(EffectRef::Builtin(Starter::Explosion));
+        assert_eq!(shown(&world), [Prop::ParticleEffect], "its own settings are not used");
     }
 
     #[test]

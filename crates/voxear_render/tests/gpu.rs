@@ -4920,6 +4920,85 @@ fn a_force_field_pulls_particles_its_way_and_a_blast_throws_them_out() {
     assert!(same.abs_diff(hung) < 20, "one that takes no forces is not: {same} against {hung}");
 }
 
+/// The floor scene with `starter` played at the fountain's foot (or `height` above it), `seconds` after it
+/// started, at 60 frames a second.
+fn starter_render(starter: voxear_render::Starter, height: f32, seconds: f32) -> Option<(Vec<u8>, RenderStats)> {
+    use voxear_render::{EffectRef, ParticlePlayback, ParticleSystem, Sky, WindZone};
+    let mut renderer = renderer()?;
+    let mut world = World::new();
+    world.spawn((Camera::default(), Transform::from_position(Vec3::new(0.0, 1.5, -6.0))));
+    world.insert_resource(Sky { ambient: 0.1, ..Sky::default() });
+    let cube = renderer.primitive(Primitive::Cube).unwrap();
+    let grey = MaterialDesc { base_color: [0.3, 0.3, 0.3, 1.0], ..MaterialDesc::default() };
+    let grey = renderer.add_material(&grey).unwrap();
+    let wall = Transform::new(Vec3::new(0.0, 2.0, 3.0), Quat::IDENTITY, Vec3::new(12.0, 6.0, 0.2));
+    world.spawn((MeshRenderer::new(cube, grey), wall));
+    let slab = Transform::new(Vec3::new(0.0, -0.5, 0.0), Quat::IDENTITY, Vec3::new(12.0, 1.0, 12.0));
+    world.spawn((MeshRenderer::new(cube, grey), slab));
+    let sun = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0.3, -0.6, 1.0).normalize());
+    world.spawn((Light::directional(Vec3::ONE, 1.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));
+    // A light air across the view, for what the wind takes.
+    let breeze = WindZone { strength: 0.25, gusts: 0.0, turbulence: 0.0, ..WindZone::default() };
+    world.spawn((breeze, Transform::new(Vec3::ZERO, Quat::from_rotation_y(std::f32::consts::FRAC_PI_2), Vec3::ONE)));
+    let mut time = 10.0;
+    let system = ParticleSystem { effect: Some(EffectRef::Builtin(starter)), ..ParticleSystem::default() };
+    let playback = ParticlePlayback { started: time, stopped: None };
+    world.spawn((system, playback, Transform::from_position(Vec3::new(0.0, height, 0.0))));
+    world.insert_resource(steady_post());
+    let stats = run(&mut renderer, &world, &mut time, (seconds * 60.0) as u32);
+    Some((renderer.read_pixels().unwrap().2, stats))
+}
+
+#[test]
+fn every_starter_plays_its_emitters_and_shows() {
+    use voxear_render::Starter;
+    let Some(empty) = floor_render(None) else { return };
+    // When each is at its fullest, and how high over the floor it is played from.
+    for starter in Starter::ALL {
+        let (height, seconds) = match starter {
+            Starter::Rain | Starter::Snow => (4.0, 2.5),
+            Starter::MuzzleFlash => (1.2, 0.0),
+            Starter::Explosion => (0.3, 0.3),
+            Starter::Blood | Starter::Mud => (0.6, 0.35),
+            Starter::Magic => (1.2, 2.0),
+            _ => (0.1, 3.0),
+        };
+        let (shown, stats) = starter_render(starter, height, seconds).unwrap();
+        keep_image(&format!("starter {}.png", starter.name().to_lowercase()), &shown);
+        let changed = differing_pixels(&shown, &empty);
+        assert!(changed > 150, "{} shows: {changed} pixels", starter.name());
+        let simulated = starter.effect().emitters.iter().filter(|emitter| emitter.system.is_simulated()).count() as u32;
+        assert_eq!(stats.particles.systems, simulated, "{}: each simulated emitter has room of its own", starter.name());
+    }
+}
+
+#[test]
+fn an_emitter_waits_its_delay_and_a_texture_draws_its_pictures() {
+    use voxear_render::{BuiltinTexture, ParticleSystem, ParticleTexture};
+    let Some(empty) = particles_render(None, Vec3::ZERO, 0.0) else { return };
+    // Three seconds' delay, two seconds in: nothing yet. Simulated or not.
+    let waiting = ParticleSystem { delay: 3.0, ..sparks() };
+    assert_eq!(brighter_pixels(&particles_render(Some(waiting), Vec3::ZERO, 2.0).unwrap(), &empty), 0);
+    let kept = ParticleSystem { wind: 0.0001, ..waiting };
+    assert_eq!(brighter_pixels(&particles_render(Some(kept), Vec3::ZERO, 2.0).unwrap(), &empty), 0);
+    assert!(brighter_pixels(&particles_render(Some(kept), Vec3::ZERO, 4.5).unwrap(), &empty) > 300, "then it plays");
+    // Rings rather than dots: bright round their edge, and dark in their middles.
+    let big = ParticleSystem { size: [0.6, 0.6], rate: 6.0, speed: [0.5, 0.5], gravity: 0.0, angle: 60.0, ..sparks() };
+    let dots = particles_render(Some(big), Vec3::ZERO, 2.0).unwrap();
+    let rings = ParticleSystem { texture: ParticleTexture::Builtin(BuiltinTexture::Ring), ..big };
+    let rings = particles_render(Some(rings), Vec3::ZERO, 2.0).unwrap();
+    keep_image("particles rings.png", &rings);
+    let (hollow, unlike) = (brighter_pixels(&rings, &empty), differing_pixels(&rings, &dots));
+    assert!(hollow > 200 && unlike > 400, "rings show, and are not dots: {hollow} pixels, {unlike} unlike");
+    // Stretched, sparks are streaks: the same sparks cover more.
+    let fast = ParticleSystem { speed: [6.0, 8.0], ..sparks() };
+    let round = brighter_pixels(&particles_render(Some(fast), Vec3::ZERO, 1.0).unwrap(), &empty);
+    let streaks = particles_render(Some(ParticleSystem { stretch: 0.06, ..fast }), Vec3::ZERO, 1.0).unwrap();
+    keep_image("particles streaks.png", &streaks);
+    let long = brighter_pixels(&streaks, &empty);
+    assert!(long * 2 > round * 3, "streaks cover more than dots: {long} against {round}");
+}
+
 /// How many pixels of `pixels` in rows `rows` are much brighter in red than in `before`.
 fn brighter_in_rows(pixels: &[u8], before: &[u8], rows: std::ops::Range<u32>) -> usize {
     let all = rows.flat_map(|y| (0..640u32).map(move |x| (x, y)));

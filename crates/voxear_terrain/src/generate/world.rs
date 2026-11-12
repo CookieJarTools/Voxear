@@ -374,6 +374,9 @@ impl WorldGen {
         if let Some(voxels) = &compiled.volume {
             bytes.extend(voxels.hash.to_le_bytes());
         }
+        if let Some(rock) = &compiled.rock {
+            bytes.extend(rock.hash.to_le_bytes());
+        }
         let hash = crate::layers::stable_hash(&bytes);
         Self {
             seed,
@@ -512,6 +515,17 @@ impl WorldGen {
         let count = xs.len().min(zs.len()).min(heights.len()).min(warmth.len()).min(wetness.len());
         let given = Givens { x: xs, z: zs, ground: heights, ..Givens::default() };
         self.made.compiled.climate.run(count, given, &mut [warmth, wetness]);
+    }
+
+    /// Where the ground is bare rock at each `(xs[i], zs[i])` on ground
+    /// `heights[i]` metres high: whether the mask wired into the Output's
+    /// Rock is over a half there. None where nothing is wired in.
+    pub fn rock(&self, xs: &[f32], zs: &[f32], heights: &[f32]) -> Option<Vec<bool>> {
+        let rock = self.made.compiled.rock.as_ref()?;
+        let count = xs.len().min(zs.len()).min(heights.len());
+        let mut mask = vec![0.0; count];
+        rock.run(count, Givens { x: xs, z: zs, ground: heights, ..Givens::default() }, &mut [&mut mask]);
+        Some(mask.into_iter().map(|mask| mask > 0.5).collect())
     }
 
     /// What every output of every node makes at each `(xs[i], zs[i])`, in

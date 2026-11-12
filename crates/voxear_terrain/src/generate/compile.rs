@@ -543,6 +543,8 @@ pub(crate) struct Compiled {
     pub height: Program,
     pub climate: Program,
     pub volume: Option<Voxels>,
+    /// A mask of where the ground is bare rock, where one is wired in.
+    pub rock: Option<Program>,
 }
 
 /// A graph's Volume, compiled.
@@ -662,7 +664,21 @@ pub(crate) fn compile(graph: &Graph, world: World, faults: &mut Vec<Fault>) -> C
         }
     }
     let volume = voxels(graph, world, faults);
-    Compiled { height, climate, volume }
+    // Where the ground is bare rock, on ground it is given: for a graph with a mask wired in for it.
+    let rock = output.filter(|output| graph.link_into(*output, Output::ROCK).is_some()).and_then(|output| {
+        let mut cx = Compiler::new(graph, world, true);
+        cx.ground_from = graph.link_into(output, Output::HEIGHT).map(|link| (link.from, link.output));
+        let at = cx.places();
+        let mask = cx.input(output, Output::ROCK, at)?;
+        let (rock, found) = cx.finish(&[mask]);
+        for fault in found {
+            if !faults.contains(&fault) {
+                faults.push(fault);
+            }
+        }
+        Some(rock)
+    });
+    Compiled { height, climate, volume, rock }
 }
 
 /// A program making every output of every node of `graph` at its places,

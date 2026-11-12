@@ -252,6 +252,25 @@ pub fn far_tile(file: &BlockFile, generate: &BlockGenerate, world: &WorldGen, le
         tile.runs.extend(runs);
         tile.starts.push(tile.runs.len() as u32);
     }
+    // Ground the generator's Volume stands apart from the columns' own, arches and raised land: each column's
+    // blocks whose middles lie in it, the column's top block over its bottom one.
+    let standing = match world.volume().filter(|volume| source.own() && volume.spanned()) {
+        Some(volume) => volume.standing(&xs, &zs, &heights),
+        None => Vec::new(),
+    };
+    for (at, spans) in standing.iter().enumerate() {
+        let place = [at as u32 % CHUNK, at as u32 / CHUNK];
+        for [foot, top] in spans {
+            let (from, to) = ((foot / size - 0.5).ceil() as i32, (top / size - 0.5).floor() as i32 + 1);
+            let from = from.max((columns[at].surface - 0.5).floor() as i32 + 1);
+            // What is thinner than a block of this level is a block still, where it stands clear of the ground.
+            let to = if to <= from && top - foot > 0.0 && (top / size).floor() as i32 >= from { from + 1 } else { to };
+            if to > from {
+                tile.add(place, from, to - 1, columns[at].bottom);
+                tile.add(place, to - 1, to, columns[at].layers[0].0);
+            }
+        }
+    }
     tile
 }
 
@@ -364,6 +383,53 @@ mod tests {
         };
         file.generate = Some(generate.clone());
         (file, generate, Preset::RollingHills.world())
+    }
+
+    #[test]
+    fn raised_land_and_arches_stand_in_the_far_view() {
+        use crate::generate::{
+            Graph, NodeKind,
+            nodes::{Arches, Noise, Output, Plateaus, RaisedLand},
+        };
+        let (file, generate, _) = plain_with(false, false);
+        let generate = BlockGenerate { position: [0.0, 0.0], ..generate };
+        let world_of = |height: NodeKind, volume: NodeKind| {
+            let mut graph = Graph::default();
+            let (height, volume) = (graph.add(height, [0.0; 2]), graph.add(volume, [0.0; 2]));
+            let output = graph.add(NodeKind::Output(Output::default()), [0.0; 2]);
+            assert!(graph.connect(height, 0, output, Output::HEIGHT) && graph.connect(volume, 0, output, Output::VOLUME));
+            WorldGen::new(4, 1.0, -50.0, graph)
+        };
+        let hills = NodeKind::Noise(Noise { size: 400.0, low: 0.0, high: 80.0, ..Noise::default() });
+        let land = Plateaus { size: 500.0, low: 0.0, high: 200.0, ramps: 0.0, canyon: 90.0, ..Plateaus::default() };
+        let worlds = [
+            world_of(hills, NodeKind::RaisedLand(RaisedLand { often: 0.7, ..RaisedLand::default() })),
+            world_of(
+                NodeKind::Plateaus(land),
+                NodeKind::Arches(Arches { span_from: 90.0, span_to: 200.0, often: 1.0, ..Arches::default() }),
+            ),
+        ];
+        for (which, world) in worlds.iter().enumerate() {
+            // Blocks 8 m a side, tiles 256 m: over four kilometres, columns with blocks standing clear of the
+            // ground under them, air between, and the same blocks in the tile's chunks.
+            let (mut clear, mut found) = (0, 0);
+            for at in (0..64).map(|at| [at % 8 - 4, at / 8 - 4]) {
+                let tile = far_tile(&file, &generate, world, 3, at);
+                let chunks = far_chunks(&tile, false);
+                for column in (0..CHUNK * CHUNK).map(|at| [at % CHUNK, at / CHUNK]) {
+                    let runs = tile.column(column);
+                    let Some(gap) = runs.windows(2).find(|pair| pair[1].from > pair[0].to) else { continue };
+                    clear += 1;
+                    assert!(gap[1].from as f32 > tile.surface(column), "it stands over the ground");
+                    let y = gap[1].to - 1;
+                    let chunk = chunks.iter().find(|(key, _)| key[1] == y.div_euclid(CHUNK as i32));
+                    let block = chunk.map(|(_, chunk)| chunk.get(column[0], y.rem_euclid(CHUNK as i32) as u32, column[1]));
+                    assert_eq!(block, Some(gap[1].block), "a run is its chunk's blocks");
+                    found += usize::from(gap[1].from - gap[0].to >= 3);
+                }
+            }
+            assert!(clear > 40 && found > 10, "world {which}: {clear} columns stand clear, {found} by 24 m or more");
+        }
     }
 
     #[test]

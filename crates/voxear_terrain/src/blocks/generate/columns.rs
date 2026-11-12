@@ -62,7 +62,14 @@ pub(super) fn columns_at(
     let known = |block: BlockId| if usize::from(block) <= file.blocks.len() { block } else { AIR };
     let (mut warmth, mut wetness) = (vec![0.0; xs.len()], vec![0.0; xs.len()]);
     world.climates(xs, zs, heights, &mut warmth, &mut wetness);
-    let column = |height: f32, climate: (f32, f32)| -> Column {
+    // Where the generator says the ground is bare rock, a column is its bottom block to the top.
+    let rock = world.rock(xs, zs, heights);
+    let bare = |at: usize| rock.as_ref().is_some_and(|rock| rock[at]);
+    let column = |height: f32, climate: (f32, f32), bare: bool| -> Column {
+        if bare {
+            let bottom = known(ground.bottom);
+            return Column { surface: height / size, layers: [(bottom, 1.0), (bottom, 0.0)], bottom };
+        }
         let cover = file.blocks.iter().enumerate().rev().find_map(|(at, kind)| {
             kind.cover.filter(|c| c.covers(height, climate)).map(|c| ((at + 1) as BlockId, c.depth))
         });
@@ -76,7 +83,7 @@ pub(super) fn columns_at(
             bottom: known(ground.bottom),
         }
     };
-    (0..heights.len()).map(|at| column(heights[at], (warmth[at], wetness[at]))).collect()
+    (0..heights.len()).map(|at| column(heights[at], (warmth[at], wetness[at]), bare(at))).collect()
 }
 
 /// The sea's block, air for none, and its top in level `level`'s blocks, as

@@ -17,8 +17,9 @@ use super::{
     graph::{Graph, NodeId},
     landmass::Climate,
     nodes::{
-        Bend, Blend, CaveNetwork, Cellular, Clamp, Combine, Combining, Constant, Gullies, HeightMask, Laid, Math,
-        NodeKind, Noise, Operation, Output, Plateaus, Remap, Solid, Terrace,
+        Arches, Bend, Blend, CaveNetwork, Cellular, Clamp, Combine, Combining, Constant, Gullies, HeightMask, Laid,
+        Math, NodeKind, Noise, Operation, Output, Overhangs, Plateaus, RaisedLand, Remap, STEEPEST, SlopeMask, Solid,
+        Terrace,
     },
     world::WorldGen,
 };
@@ -88,6 +89,8 @@ pub fn starters() -> Vec<Starter> {
         canyons(),
         caves(),
         mesas(),
+        sky_islands(),
+        highlands(),
         cave_level(),
     ]
 }
@@ -482,7 +485,7 @@ fn mesas() -> Starter {
         levels: 5,
         low: 0.0,
         high: 260.0,
-        wall: 6.0,
+        wall: 14.0,
         ramps: 0.4,
         talus: 10.0,
         valleys: 0.4,
@@ -497,8 +500,109 @@ fn mesas() -> Starter {
     let roll = g.noise(Fractal, 110.0, 2, -1.2, 1.2);
     g.next();
     let ground = g.math(Add, land, roll);
+    // Natural bridges carry a tableland across the river's canyon, and the walls lean and bulge.
+    g.next();
+    let arches = g.add(NodeKind::Arches(Arches { span_from: 110.0, span_to: 230.0, thickness: 10.0, width: 30.0, ..Arches::default() }));
+    g.expose(arches, "often", "Arches");
+    g.next();
+    let rough = g.after(arches, NodeKind::Overhangs(Overhangs { amount: 5.0, size: 22.0, ..Overhangs::default() }));
     let climate = Climate { temperature: 20.0, humidity: 0.5, ..Climate::default() };
-    Starter { name: "Mesas", sea_level: -1.6, graph: g.finish(ground, climate) }
+    let mut graph = with_volume(g.finish(ground, climate), rough);
+    // The walls and their rubble are bare rock.
+    let output = graph.output().map(|node| node.id);
+    let wired = output.is_some_and(|output| graph.connect(land, Plateaus::WALLS, output, Output::ROCK));
+    debug_assert!(wired, "the mesas' rock");
+    Starter { name: "Mesas", sea_level: -1.6, graph }
+}
+
+/// `graph` with `volume` wired into its Output's Volume.
+fn with_volume(mut graph: Graph, volume: NodeId) -> Graph {
+    let output = graph.output().map(|node| node.id);
+    let wired = output.is_some_and(|output| graph.connect(volume, 0, output, Output::VOLUME));
+    debug_assert!(wired, "a starter's Volume");
+    graph
+}
+
+/// Low green hills and a sea, and over them islands of land standing in
+/// the sky, wide and flat on top and tapering underneath.
+fn sky_islands() -> Starter {
+    let mut g = Layout::new();
+    let hills = g.noise(Fractal, 520.0, 4, -30.0, 70.0);
+    g.expose(hills, "high", "Height");
+    g.next();
+    let islands = RaisedLand {
+        size_from: 90.0,
+        size_to: 340.0,
+        height_from: 110.0,
+        height_to: 300.0,
+        often: 0.5,
+        thickness: 60.0,
+        ..RaisedLand::default()
+    };
+    let islands = g.add(NodeKind::RaisedLand(islands));
+    g.expose(islands, "often", "Islands");
+    g.expose(islands, "height_to", "Island Height");
+    g.next();
+    let rough = g.after(islands, NodeKind::Overhangs(Overhangs { amount: 4.0, size: 18.0, ..Overhangs::default() }));
+    let climate = Climate { temperature: 16.0, humidity: 0.6, ..Climate::default() };
+    Starter { name: "Sky Islands", sea_level: 0.0, graph: with_volume(g.finish(hills, climate), rough) }
+}
+
+/// Tall, rugged highlands: ridges hundreds of metres high cut into ledges,
+/// with leaning crags, a natural bridge here and there, and caves in four
+/// layers reaching far down into the rock.
+fn highlands() -> Starter {
+    let mut g = Layout::new();
+    let lie = g.noise(Fractal, 2600.0, 3, 0.25, 1.0);
+    let ridges = g.noise(Ridged, 900.0, 5, 0.0, 1.0);
+    g.next();
+    let ridges = g.after(ridges, NodeKind::Warp(Bend { size: 700.0, strength: 170.0, octaves: 2 }));
+    g.next();
+    let shaped = g.math(Multiply, lie, ridges);
+    g.next();
+    let tall = g.math(Multiply, shaped, 640.0);
+    g.expose(tall, "b", "Height");
+    g.next();
+    let ledges = g.after(tall, NodeKind::Terrace(Terrace { step: 38.0, sharpness: 0.72 }));
+    g.expose(ledges, "step", "Ledges");
+    let bumps = g.noise(Fractal, 60.0, 3, -2.5, 2.5);
+    g.next();
+    let ground = g.math(Add, ledges, bumps);
+    g.next();
+    let arches = g.add(NodeKind::Arches(Arches { span_from: 40.0, span_to: 130.0, thickness: 7.0, width: 16.0, often: 0.8, seed: 0 }));
+    let hall = RoomRules { size: [30.0, 52.0], shapes: 5, height: 18.0, roughness: 1.5, floor: 0.5, pillars: 2, hanging: 4, ledges: 2, exits: 5, exits_apart: 0.8 };
+    let network = CaveNetwork {
+        spacing: 84.0,
+        depth: 50.0,
+        tunnel_width: 4.0,
+        tunnel_width_max: 8.0,
+        winding: 1.0,
+        slope_limit: 0.6,
+        branches: 0.3,
+        loops: 0.4,
+        roughness: 1.3,
+        entrances: 0.25,
+        layers: 4,
+        layer_depth: 70.0,
+        rooms: vec![Room::made(hall)],
+        ..CaveNetwork::default()
+    };
+    let caves = g.add(NodeKind::CaveNetwork(network));
+    g.expose(caves, "layers", "Cave Layers");
+    g.next();
+    let rough = g.after(arches, NodeKind::Overhangs(Overhangs { amount: 7.0, size: 26.0, ..Overhangs::default() }));
+    g.next();
+    let cut = g.add(NodeKind::Combine(Combine { operation: Combining::Subtract, ..Combine::default() }));
+    g.wire(rough, 0, cut, Combine::A);
+    g.wire(caves, 0, cut, Combine::B);
+    let climate = Climate { temperature: 9.0, humidity: 0.55, ..Climate::default() };
+    // Ground steeper than about 50 degrees is bare rock.
+    let steep = g.after(ground, NodeKind::SlopeMask(SlopeMask { min: 1.2, max: STEEPEST, ..SlopeMask::default() }));
+    let mut graph = with_volume(g.finish(ground, climate), cut);
+    let output = graph.output().map(|node| node.id);
+    let wired = output.is_some_and(|output| graph.connect(steep, 0, output, Output::ROCK));
+    debug_assert!(wired, "the highlands' rock");
+    Starter { name: "Highlands", sea_level: 0.0, graph }
 }
 
 /// Solid rock with one bounded cave in it: a main path of rooms with side
@@ -569,6 +673,28 @@ mod tests {
             assert!(!room.floors.is_empty() && !room.ceilings.is_empty());
         }
         assert_ne!(starter.world(2, 1.0).caves().unwrap().rooms_near([0.0, 40.0, 0.0], 600.0), rooms);
+    }
+
+    #[test]
+    fn mesas_sky_islands_and_highlands_stand_hundreds_of_metres_tall_with_a_volume_each() {
+        let pins: [(&str, u64, f32); 3] = [("Mesas", 0, 200.0), ("Sky Islands", 0, 40.0), ("Highlands", 0, 350.0)];
+        let mut changed = Vec::new();
+        for (name, hash, tall) in pins {
+            let starter = starters().into_iter().find(|starter| starter.name == name).expect(name);
+            let world = starter.world(1, 1.0);
+            let (low, high) = testing::checked(&world);
+            assert!(high - low > tall, "{name}: {low} to {high} m");
+            let volume = world.volume().expect("a Volume");
+            // What stands over the ground, and the caves under it, say where they are: no air or rock between is
+            // asked about.
+            assert!(volume.spanned() && volume.depth() < 20.0, "{name}: {}", volume.depth());
+            assert_eq!(world.graph().exposed[0].label, "Height", "{name}");
+            assert_eq!(world.starter(), Some(name));
+            if ground_hash(&world) != hash {
+                changed.push(format!("{name}: {:#018x}", ground_hash(&world)));
+            }
+        }
+        assert!(changed.is_empty(), "the ground of these changed: was it meant to? {changed:#?}");
     }
 
     #[test]

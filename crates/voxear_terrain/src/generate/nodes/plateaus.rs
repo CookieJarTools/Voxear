@@ -213,7 +213,12 @@ impl Kernel for Winding {
 
     fn run(&self, inputs: &[&[f32]], out: &mut [f32]) {
         for (at, out) in out.iter_mut().enumerate() {
-            let read = |x: f32, z: f32| noise::gradient(x / self.size, z / self.size, self.seed.wrapping_add(0x5A));
+            // A wide line with smaller bends along it.
+            let fine = self.size * 0.27;
+            let read = |x: f32, z: f32| {
+                noise::gradient(x / self.size, z / self.size, self.seed.wrapping_add(0x5A))
+                    + 0.22 * noise::gradient(x / fine, z / fine, self.seed.wrapping_add(0x5B))
+            };
             let (x, z) = (inputs[0][at], inputs[1][at]);
             let noise = read(x, z);
             let (along, across) = ((read(x + 4.0, z) - noise) / 4.0, (read(x, z + 4.0) - noise) / 4.0);

@@ -90,6 +90,30 @@ The ground cut into steps, each a level tread and a riser up to the next.
 
 **In:** In. **Out:** Out.
 
+### Plateaus
+
+Land in wide, level tablelands at uneven heights, with walls wherever two of unlike height meet. Tablelands of one height side by side are one, so they come in every shape and size.
+
+| Row | What it does |
+| --- | --- |
+| Size | How wide a tableland runs before the next, in metres |
+| Levels | How many heights there are, 2 to 12 |
+| Height From, Height To | The valley floor's height and the highest tableland's, in metres. The levels between lie at uneven heights |
+| Wall | How steep the walls stand |
+| Ramps | How many of the walls have a ramp built against them, 0 to 1: a stair of steps a player walks up from one level to the next |
+| Rim | Over 0, a lip raised along each tableland's edge, as many metres high. Under 0, the edge rounded off by as much |
+| Talus | How high the slope of rubble at a wall's foot is, in metres |
+| Valleys | How much of the land the lowest level takes, 0 to 1 |
+| River | How deep a winding river bed is cut into the lowest level, in metres. Set the generator's Sea Level a little under Height From to fill it |
+| Canyon | How wide a canyon the river cuts through the tablelands it meets, in metres, down to the valley floor. With 0 the river keeps to the valleys |
+| Wander | How far the walls' lines bend, 0 to 1 |
+
+Under Advanced: **Ramp Slope** (how steep the stairs climb), **Step** (how high each stair is, 1 m to be walked up in a world of 1 m blocks) and **Seed**.
+
+A mask wired into **Ramps** keeps the ramps to where it is over a half.
+
+**In:** Ramps. **Out:** Height, Walls (1 on walls and rubble), Floor (1 on the lowest level, clear of the walls).
+
 ### Clamp
 
 What is wired in, held between **Min** and **Max**.
@@ -225,10 +249,41 @@ Voxel nodes make the ground in three dimensions, for worlds of blocks and voxels
 | Tunnels | Long winding caves |
 | Chambers | Wide low caves |
 | Cave Network | Rooms made as prefabs, joined by winding tunnels: without end, or as one bounded level (see [[Caves]]) |
+| Arches | Natural bridges, laid where two high places face one another across low ground |
+| Raised Land | Islands of land standing high over the ground, floating or on a stalk |
 | Noise 3D | Noise through space |
 | Combine | Two of these made one: Union, Subtract or Smooth |
 
 A height or a mask from any node above can be wired into them: a Height Mask into the Overhangs' Mask keeps cliffs to the high ground. Their rows, and how a Block World's own Overhangs and Caves become these nodes, are in [[Block Worlds#Overhangs and caves in the generator|Overhangs and caves in the generator]].
+
+### Arches
+
+A span of ground from one high place to another across lower ground, with an opening under it and a top to walk over. The node looks the ground over a region at a time and lays a bridge where it finds high ground at both ends of a line and low ground between, so they stand across canyons and gaps and nowhere else.
+
+| Row | What it does |
+| --- | --- |
+| Span From, Span To | How short and how long a bridge may be, in metres |
+| Thickness | How thick it is at its middle, in metres. It is three times as thick where it springs from the ground |
+| How Often | How many of the places a bridge could stand get one, 0 to 1 |
+| Width | How wide its top is, in metres |
+
+**In:** Ground. **Out:** Ground.
+
+### Raised Land
+
+Islands of ground standing high over the land below, flat on top and tapering underneath. An island's top is ground like any other and takes its column's layers.
+
+| Row | What it does |
+| --- | --- |
+| Size From, Size To | How far across an island may be, in metres |
+| Height From, Height To | How far over the highest ground under it an island's top stands, in metres |
+| How Often | How much of the sky has an island, 0 to 1 |
+| Thickness | How deep an island is at its middle, in metres |
+| Joined | Floating, or Stalk: a column of rock from the ground up into its middle |
+
+**In:** Ground. **Out:** Ground.
+
+Arches and raised land say where they stand, a column at a time, so a world of blocks asks about no more air than they fill, and they show in the far view. Overhangs after either roughens them. A Volume is read no further than 64 m over the generator's ground but for these two.
 
 ## Output
 

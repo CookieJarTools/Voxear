@@ -3,8 +3,9 @@
 //! one to the other, with an opening under it and a top to walk over.
 //!
 //! Span From and Span To are how short and how long a bridge may be,
-//! Thickness how thick it is at its middle (it thickens to three times
-//! that where it springs from the ground), Width how wide its top is, and
+//! Thickness how thick it is at its middle (its underside is an arch,
+//! thicker by a sixth of its span where it springs from the ground),
+//! Width how wide its top is, and
 //! How Often how many of the places one could stand get one.
 //!
 //! The ground is looked over a region at a time, each a little larger
@@ -187,7 +188,8 @@ impl Bridge {
         }
         let top = self.tops[0] + (self.tops[1] - self.tops[0]) * along.clamp(0.0, 1.0);
         let top = top + self.span * 0.03 * (1.0 - out * out);
-        let thick = self.thick * (1.0 + 2.0 * out * out);
+        // Its underside is an arch: thicker towards the ground it springs from, by a sixth of its span.
+        let thick = self.thick + self.span * 0.17 * out * out;
         let ends = if along < 0.5 { along + PAST } else { 1.0 + PAST - along } * self.span;
         Some([top - thick, top, if half - beside < ends { half - beside } else { ends }])
     }

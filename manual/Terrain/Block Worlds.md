@@ -47,6 +47,12 @@ The ground's layers follow the pushed ground. The top block is whatever has open
 
 Caves keep three blocks under the surface whole, so they open onto it only where a slope cuts into them. The sea fills only the open air over the ground: caves under it stay dry.
 
+### Tall worlds
+
+Nothing limits how high a generator's ground stands or how far down **Lowest block** goes: mountains and tablelands hundreds of blocks high, with rock hundreds of blocks deep under them for caves in many layers. Set Lowest block as far under the world's corner as the deepest cave you want, and a little more.
+
+Depth costs little. Rock that nothing is hollowed out of is kept as whole chunks of one block, which are not made a block at a time, take almost no memory and are never drawn. A Cave Network, Arches and Raised Land say how high and how low they reach over each column, so only the cells between are asked about. A chunk column of plain ground takes about 3 ms at 256 blocks tall and 4 ms at 1024; one over three layers of caves about 28 ms and 39 ms. Tunnels, Chambers and Noise 3D can hollow rock at any depth, so with those every block down to Lowest block is asked about: keep such a world shallower.
+
 A block can **cover** generated ground in place of its top block, by the ground's climate and height. Under **Build**, pick the block for the brush and tick **Cover**, and its rows show:
 
 | Setting | What it does |

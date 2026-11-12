@@ -131,7 +131,9 @@ pub use effects::{
 };
 pub use forces::{BLAST_TIME, Blast, ForceField, ForceKind, MAX_FORCES, ParticleBlasts};
 pub use particle_sim::{DEFAULT_PARTICLE_BUDGET, MAX_PARTICLE_BUDGET, ParticleBudget, ParticleCounts};
-pub use particles::{EmitShape, ParticleBlend, ParticleCollision, ParticlePlayback, ParticleSpace, ParticleSystem};
+pub use particles::{
+    EmitShape, ParticleBlend, ParticleCollision, ParticlePlayback, ParticleSpace, ParticleSystem, ParticleTime,
+};
 pub use mist::{MAX_MIST_POINTS, MIST_RISE, Mist, MistTrail};
 pub use smoke::{SMOKE_GRID, Smoke, SmokeBlast, SmokeCue, SmokeFill, SmokeHoles, SmokeShot, smoke_origin};
 pub use grass::GrassLook;
@@ -1141,7 +1143,7 @@ impl Renderer {
         self.terrains.prepare(&self.gpu, assets, &mut self.frames, world, frame_index)?;
         self.blocks.prepare(&self.gpu, assets, &mut self.frames, world, frame_index)?;
         // Every simulated particle's step, for all the views.
-        let stepping = ((time, delta_time), (frame_index, frame.slot));
+        let stepping = (particles::time_of(world, time), (frame_index, frame.slot));
         self.particle_sim.prepare(&self.gpu, &mut self.frames, world, stepping.0, stepping.1)?;
         self.stats.particles = self.particle_sim.counts();
 
@@ -2375,7 +2377,7 @@ impl View {
         };
         let drawing = (&*setup.simulated.0, &particle_texture as particles::Textures<'_>);
         let (particle_systems, particles, spray, rapids) =
-            particles::gather(world, camera, setup.time, &extracted.water_bodies, drawing);
+            particles::gather(world, camera, particles::time_of(world, setup.time), &extracted.water_bodies, drawing);
         buffers.particle_systems.write(0, &particle_systems);
         let (smokes, smoke_cells, smoke_holes) = smoke::gather(world, camera, setup.time);
         buffers.smokes.write(0, &smokes);

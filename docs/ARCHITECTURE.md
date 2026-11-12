@@ -2866,15 +2866,29 @@ once read, so that is a few lookups a system. The starters are made in code from
 are made on the CPU when the renderer starts: white shapes in alpha, most of them four to a picture so particles
 differ, their outermost pixels clear so one never shows in the next.
 
+**Editing an effect** *(implemented)*. A `.particles` file opens as a scene opens, through the same door a prefab
+uses (`Levels::open_scene`): read as an effect, it is handed on as a scene of an Obj an emitter
+(`particles::effect_scene`), and on Save the scene's Objs go back as an effect, each one's Particle System an
+emitter in the Hierarchy's order (`scene_effect`). Chose that over a panel with an emitter list and a module
+stack of its own: the Hierarchy, the Inspector with its curves and gradients, undo, copy and paste and the Scene
+view already edit Particle Systems, and an effect is nothing but Particle Systems. What an effect cannot keep,
+where an emitter's Obj stands and its other components, is dropped when it is saved.
+
+**Playback.** Particles run on a time of their own, the engine's unless something holds it back
+(`voxear_engine::particles::ParticleClock`, published to the renderer as `ParticleTime`): every playback is in it,
+and the renderer draws and steps particles by it, taking the step's length from how far it moved. The editor's
+strip over the Scene view sets how fast it runs (`ParticlePreview`: paused, or a share of full speed) and restarts
+the systems being watched; scrubbing pauses it and starts them as long ago as the scrubber says, which the
+simulation answers as it answers any system first seen running, each particle where its age has it.
+
 **Planned, in the order it is built.**
 
 - **Physics.** Two more levels of collision beside depth: the terrain's heights and the nearest colliders,
   which work off screen; and the scene's rays, hardware or software, capped per frame, for what must land
   behind things. Particles stay visual only: gameplay gets hit events a frame or two late for sounds and
   marks, effects start on every machine by RPC with a seed, and a server simulates none.
-- **Editing effects.** An effect's emitters edited in the editor as stacks of modules in fixed stages (spawn,
-  start, update, events, draw), with sub-emitters and values an effect shows on the Particle System that plays
-  it; a panel with play, pause, restart, scrub and speed, and the same in the Scene view.
+- **More in an effect.** Sub-emitters and events, and values an effect shows on the Particle System that plays
+  it.
 - **Drawing.** Meshes, trails as short chains per particle; flipbooks blended by motion vectors; smoke lit from six sides; lighting worked out once a particle rather than once a corner; lights from
   effects; mist, dust and lingering smoke put into the fog volume; sorting only where blending needs it, big
   soft particles at half size, and anti-aliasing told about fast particles.

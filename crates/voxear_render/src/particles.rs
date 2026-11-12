@@ -423,6 +423,19 @@ pub struct ParticlePlayback {
 
 impl Component for ParticlePlayback {}
 
+/// The time particles run by, in seconds, when it is not the renderer's
+/// own: a resource of the world, kept by whoever plays them, so particles
+/// can be paused, slowed or stepped while everything else carries on. A
+/// Particle System's playback is in this time. Without it, the time the
+/// frame is rendered at.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ParticleTime(pub f32);
+
+/// The time particles run by this frame, rendered at `time`.
+pub(crate) fn time_of(world: &World, time: f32) -> f32 {
+    world.resource::<ParticleTime>().map_or(time, |particles| particles.0)
+}
+
 /// The spray over a Stream's rapids, as `gather` lists it: its system, the
 /// Stream's body, how many points the Stream has and how many drops.
 pub type RapidsSpray = (u32, u32, u32, u32);

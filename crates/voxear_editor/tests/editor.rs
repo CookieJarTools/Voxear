@@ -7491,6 +7491,80 @@ fn project_settings_switch_a_module_off_in_the_project_file_and_add_component() 
 }
 
 #[test]
+fn a_particle_effect_opens_as_an_obj_an_emitter_and_saves_back_as_an_effect() {
+    use voxear_engine::particles::ParticlePreview;
+    use voxear_render::{ParticleEffect, ParticlePlayback, ParticleSystem, Starter};
+    let Some(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()).ok() else { return };
+    let dir = hello_copy();
+    // A copy of the Mud starter, as New Particle Effect makes one.
+    let file = dir.path().join("Mud.particles");
+    std::fs::write(&file, Starter::Mud.effect().to_toml().unwrap()).unwrap();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    let strip = editor.ui.find(editor.ui.root(), "particle-strip").unwrap();
+    assert!(!editor.ui.is_visible(strip), "no playback with no Particle System selected");
+
+    // A double click in the Project opens it in place of the level: its three emitters, an Obj each.
+    assert!(editor.open_path("Mud.particles", &mut renderer));
+    frame(&mut editor, &mut renderer);
+    assert_eq!(editor.open_prefab_path(), Some("Mud.particles"));
+    let bar = editor.ui.find(editor.ui.root(), "prefab-bar").unwrap();
+    let close = editor.ui.find(editor.ui.root(), "prefab-close-label").unwrap();
+    assert!(editor.ui.is_visible(bar) && editor.ui.text(close) == "Close Effect");
+    assert!(obj(&editor, "Spinner A").is_none(), "the level's Objs are gone");
+    let (clods, spatter, dust) = (obj(&editor, "Clods").unwrap(), obj(&editor, "Spatter").unwrap(), obj(&editor, "Dust"));
+    assert!(dust.is_some() && editor.selected() == Some(clods), "its first emitter is selected");
+    let system = |editor: &voxear_editor::Editor, entity| *editor.game.engine.world.get::<ParticleSystem>(entity).unwrap();
+    assert_eq!(system(&editor, spatter), Starter::Mud.effect().emitters[1].system);
+
+    // Its playback is over the Scene view: pause holds the particles' time, and Restart plays all of it again.
+    assert!(editor.ui.is_visible(strip), "playback for every emitter of the effect");
+    let find = |editor: &voxear_editor::Editor, name: &str| editor.ui.find(editor.ui.root(), name).unwrap();
+    let particle_play = find(&editor, "particle-play");
+    click(&mut editor.ui, particle_play);
+    frame(&mut editor, &mut renderer);
+    let preview = |editor: &voxear_editor::Editor| editor.game.engine.world.resource::<ParticlePreview>().copied();
+    assert_eq!(preview(&editor).map(|preview| preview.paused), Some(true));
+    let held = voxear_engine::particles::now(&editor.game.engine.world);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(voxear_engine::particles::now(&editor.game.engine.world), held, "paused, their time stands still");
+    let particle_speed = find(&editor, "particle-speed");
+    click(&mut editor.ui, particle_speed);
+    frame(&mut editor, &mut renderer);
+    assert_eq!(preview(&editor).map(|preview| preview.speed), Some(0.5), "the speeds go round");
+    let particle_restart = find(&editor, "particle-restart");
+    click(&mut editor.ui, particle_restart);
+    frame(&mut editor, &mut renderer);
+    for emitter in [clods, spatter] {
+        let playback = *editor.game.engine.world.get::<ParticlePlayback>(emitter).unwrap();
+        assert_eq!(playback, ParticlePlayback { started: held as f32, stopped: None }, "started over, together");
+    }
+
+    // An emitter changed, one taken out and one made: saved, the file is the effect as it now is.
+    editor.game.engine.world.get_mut::<ParticleSystem>(clods).unwrap().burst = 77;
+    editor.game.engine.world.despawn(spatter);
+    let made = editor.game.engine.world.spawn((Name("Steam".into()), Transform::default(), ParticleSystem::default()));
+    frame(&mut editor, &mut renderer);
+    editor.save();
+    let saved = ParticleEffect::from_toml(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    let names: Vec<&str> = saved.emitters.iter().map(|emitter| emitter.name.as_str()).collect();
+    assert_eq!(names, ["Clods", "Dust", "Steam"]);
+    assert_eq!((saved.emitters[0].system.burst, saved.emitters[2].system), (77, ParticleSystem::default()));
+    let _ = made;
+
+    // Back, and the level is as it was, with no playback and particles at full speed again.
+    let prefab_back = find(&editor, "prefab-back");
+    click(&mut editor.ui, prefab_back);
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    assert!(editor.open_prefab_path().is_none() && obj(&editor, "Spinner A").is_some());
+    assert!(!editor.ui.is_visible(strip));
+    assert_eq!(preview(&editor), Some(ParticlePreview::default()));
+}
+
+#[test]
 fn project_settings_quality_tab_sets_the_particle_budget_in_the_project_file() {
     use voxear_render::{DEFAULT_PARTICLE_BUDGET, ParticleBudget};
     let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {

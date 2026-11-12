@@ -220,6 +220,8 @@ pub(crate) struct ParticleSim {
     stepped: u32,
     counts: ParticleCounts,
     warned: bool,
+    /// The particles' time at the last step.
+    last_time: Option<f32>,
 }
 
 impl ParticleSim {
@@ -236,6 +238,7 @@ impl ParticleSim {
             stepped: 0,
             counts: ParticleCounts { budget: DEFAULT_PARTICLE_BUDGET, ..ParticleCounts::default() },
             warned: false,
+            last_time: None,
         }
     }
 
@@ -257,17 +260,20 @@ impl ParticleSim {
         }
     }
 
-    /// Works out this frame's step for frame slot `slot`, `delta_time`
-    /// seconds after the last: which systems are simulated, room for the new
+    /// Works out this frame's step for frame slot `slot`, at `time` by the
+    /// particles' time: which systems are simulated, room for the new
     /// ones, what each sends out, and which chunks of the pool are stepped.
     pub fn prepare(
         &mut self,
         gpu: &Gpu,
         frames: &mut Frames,
         world: &World,
-        (time, delta_time): (f32, f32),
+        time: f32,
         (frame, slot): (u64, usize),
     ) -> Result<()> {
+        // How long since the last step, by the particles' own time: none while it stands still, or goes back.
+        let delta_time = self.last_time.map_or(0.0, |last| (time - last).clamp(0.0, 0.25));
+        self.last_time = Some(time);
         // This slot's last frame has finished, so its count is final.
         if let Some(buffers) = &self.buffers[slot] {
             self.counts.alive = bytemuck::cast_slice::<u8, u32>(&buffers.counted.read()[..4])[0];

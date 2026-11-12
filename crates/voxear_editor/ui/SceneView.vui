@@ -1,6 +1,6 @@
-<!-- A Scene view: its header's controls, the bar naming a prefab open on its own, and the 3D view with the tool
-     strip, stats and axis gizmo over it. Every Scene view is built from this, the first and any opened from a
-     window's menu. -->
+<!-- A Scene view: its header's controls, the bar naming a prefab or a particle effect open on its own, and the 3D
+     view with the tool strip, the particles' playback, stats and axis gizmo over it. Every Scene view is built
+     from this, the first and any opened from a window's menu. -->
 <vui>
     <Panel class="panel-actions">
         <Dropdown name="shading" class="shading">
@@ -16,10 +16,10 @@
     <!-- Over the view while a prefab is open on its own, as Unity's prefab mode. -->
     <Panel name="prefab-bar" class="prefab-bar">
         <Button name="prefab-back" class="header-button prefab-back"><Icon icon="chevron-left" /><Label>Back</Label></Button>
-        <Icon icon="cube" class="prefab-icon" />
+        <Icon name="prefab-icon" icon="cube" class="prefab-icon" />
         <Label name="prefab-name" class="prefab-name" />
-        <Label class="prefab-hint">Lock a component for designers from its menu</Label>
-        <Button name="prefab-close" class="header-button prefab-close"><Icon icon="close" /><Label>Close Prefab</Label></Button>
+        <Label name="prefab-hint" class="prefab-hint">Lock a component for designers from its menu</Label>
+        <Button name="prefab-close" class="header-button prefab-close"><Icon icon="close" /><Label name="prefab-close-label">Close Prefab</Label></Button>
     </Panel>
     <Panel name="viewport" class="viewport">
         <Panel name="handles" class="handles" />
@@ -35,6 +35,14 @@
             <Button name="space" class="tool-toggle">Global</Button>
             <Panel class="tool-divider" />
             <Button name="snap" class="tool-toggle"><Icon icon="grid" /><Label>0.25 m</Label></Button>
+        </Panel>
+        <!-- While a Particle System is selected, or an effect is open: its playback. -->
+        <Panel name="particle-strip" class="overlay particle-strip">
+            <Button name="particle-play" class="tool-toggle"><Icon name="particle-play-icon" icon="pause" /></Button>
+            <Button name="particle-restart" class="tool-toggle">Restart</Button>
+            <Button name="particle-speed" class="tool-toggle">1×</Button>
+            <Slider name="particle-scrub" class="particle-scrub" min="0" max="1" value="0" />
+            <Label name="particle-time" class="particle-time">0.00 s</Label>
         </Panel>
         <Label name="scene-stats" class="overlay chip" />
         <Panel name="view-gizmo" class="overlay gizmo-box">

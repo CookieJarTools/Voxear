@@ -1,3 +1,6 @@
+//! A particle effect opens the same way, an Obj an emitter (see
+//! `voxear_engine::particles::effect_scene`), and saves back as an effect.
+//!
 //! A prefab opened on its own to edit, as Unity's prefab mode does: its Objs
 //! load as a scene's would, in place of the level, a bar over each Scene view
 //! names it, and Back, or Close Prefab at the bar's other end, opens again
@@ -51,7 +54,7 @@ impl Editor {
     /// another prefab, Back still goes to the level both were opened from.
     pub fn open_prefab(&mut self, path: &str, renderer: &mut Renderer) {
         if self.is_playing() {
-            return self.notify("Stop playing to edit a prefab");
+            return self.notify("Stop playing to edit it");
         }
         if !self.may_discard(path) {
             return;
@@ -66,8 +69,10 @@ impl Editor {
         }
         self.opened(renderer);
         self.prefab = Some(OpenPrefab { path: path.to_string(), back });
+        // Locking components for designers is a prefab's, not a particle effect's.
+        let locks = !path.ends_with(".particles");
         for inspector in self.inspectors_mut() {
-            inspector.set_prefab_mode(true);
+            inspector.set_prefab_mode(locks);
         }
         self.show_prefab_bars(Some(path));
         let root = self.game.levels.scene_order().first().and_then(|(_, _, objs)| objs.first().copied());

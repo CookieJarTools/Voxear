@@ -47,6 +47,7 @@ mod chambers;
 mod combine;
 mod noise3d;
 mod overhangs;
+mod raised_land;
 mod solid;
 mod tunnels;
 
@@ -77,6 +78,7 @@ pub use chambers::Chambers;
 pub use combine::{Combine, Combining};
 pub use noise3d::Noise3d;
 pub use overhangs::Overhangs;
+pub use raised_land::{Joined, RaisedLand};
 pub use solid::Solid;
 pub use tunnels::Tunnels;
 
@@ -340,6 +342,8 @@ pub enum NodeKind {
     Chambers(Chambers),
     Combine(Combine),
     Arches(Arches),
+    #[serde(rename = "raised_land")]
+    RaisedLand(RaisedLand),
     #[serde(rename = "cave_network")]
     CaveNetwork(CaveNetwork),
 }
@@ -375,6 +379,7 @@ macro_rules! each_kind {
             NodeKind::Chambers($kind) => $do,
             NodeKind::Combine($kind) => $do,
             NodeKind::Arches($kind) => $do,
+            NodeKind::RaisedLand($kind) => $do,
             NodeKind::CaveNetwork($kind) => $do,
         }
     };
@@ -415,6 +420,7 @@ impl NodeKind {
             NodeKind::Chambers(Chambers::default()),
             NodeKind::Combine(Combine::default()),
             NodeKind::Arches(Arches::default()),
+            NodeKind::RaisedLand(RaisedLand::default()),
             NodeKind::CaveNetwork(CaveNetwork::default()),
             NodeKind::Output(Output::default()),
         ]

@@ -370,15 +370,8 @@ impl ApplicationHandler for App {
         if !self.fly.is_looking() && self.game.ui.panel_input(&event) {
             return;
         }
-        // Then the game's input, unless the tools' camera is flying. A button or a key let go while it flies
-        // is let go for the game too, or what the game saw go down would stay down: the right button that
-        // starts the flying, bound to an action, held it for good.
-        let let_go = matches!(
-            &event,
-            WindowEvent::MouseInput { state: ElementState::Released, .. }
-                | WindowEvent::KeyboardInput { event: winit::event::KeyEvent { state: ElementState::Released, .. }, .. }
-        );
-        if !self.fly.is_looking() || let_go {
+        // Then the game's input, unless the tools' camera is flying.
+        if !self.fly.is_looking() {
             self.game.input.handle(&event);
         }
         match event {

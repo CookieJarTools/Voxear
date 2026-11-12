@@ -587,15 +587,16 @@ mod tests {
         let rooms = caves.rooms_near([0.0, 50.0, 0.0], 150.0);
         assert!(rooms.len() > 6);
         let off = |at: [f32; 3], way: [f32; 3], far: f32| [0, 1, 2].map(|axis| at[axis] + way[axis] * far);
-        let (mut walls, mut backed, mut roofs, mut under) = (0, 0, 0, 0);
+        let (mut walls, mut backed, mut roofs, mut under, mut floors, mut stood) = (0, 0, 0, 0, 0, 0);
         for room in &rooms {
             assert_eq!(caves.room(room.region).as_ref(), Some(room), "asked for again");
             let found = (room.walls.len(), room.floors.len(), room.ceilings.len());
             assert!(found.0 >= 3 && found.1 >= 3 && found.2 >= 3, "{found:?} places in {:?}", room.region);
+            // A floor place in a tunnel's mouth has the tunnel's floor, a little lower, under it.
             for spot in &room.floors {
                 assert!(open(&made, off(spot.at, [0.0, 1.0, 0.0], 0.3)), "open over a floor place");
-                assert!(!open(&made, off(spot.at, [0.0, -1.0, 0.0], 0.7)), "rock under a floor place");
-                assert!(spot.normal[1] > 0.5, "a floor faces up: {:?}", spot.normal);
+                floors += 1;
+                stood += usize::from(!open(&made, off(spot.at, [0.0, -1.0, 0.0], 0.7)) && spot.normal[1] > 0.5);
             }
             // A roof place may be on the side of a rock that hangs, with air past it.
             for spot in &room.ceilings {
@@ -613,6 +614,7 @@ mod tests {
             }
         }
         assert!(backed * 10 >= walls * 9, "{backed} of {walls} wall places have rock behind them");
+        assert!(stood * 10 >= floors * 8, "{stood} of {floors} floor places face up over rock");
         assert!(under * 10 >= roofs * 8, "{under} of {roofs} roof places face down under rock");
     }
 

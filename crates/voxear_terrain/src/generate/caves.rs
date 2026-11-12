@@ -110,6 +110,12 @@ impl Caves {
         Self { net }
     }
 
+    /// The network itself, for a test to look at its tunnels.
+    #[cfg(test)]
+    pub(crate) fn network(&self) -> &Network {
+        &self.net
+    }
+
     pub fn layout(&self) -> CaveLayout {
         self.net.set.layout
     }

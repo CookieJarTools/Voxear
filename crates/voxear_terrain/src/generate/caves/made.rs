@@ -32,6 +32,14 @@ use crate::{
 /// How high over a room's floor its exits lie, in metres.
 const EXIT_HEIGHT: f32 = 1.2;
 
+/// How large the fine roughness of a made room's walls is, in metres: about a block or two.
+pub(crate) const DETAIL: f32 = 1.9;
+
+/// How far the fine roughness moves a wall at most, in metres; and how far an uneven floor rises over its
+/// lowest, for each part of 1 its Floor is short of level.
+const FINE: f32 = 0.45;
+const RISE: f32 = 2.5;
+
 /// The rules a cave room is made by.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -96,8 +104,8 @@ impl RoomRules {
     /// than this from its origin.
     pub(crate) fn reach(&self) -> f32 {
         let kept = self.kept();
-        let (wide, high) = (kept.size[1] * 0.7, kept.height * 1.3 / (1.0 - kept.floor / 3.0));
-        (wide * wide + high * high).sqrt() + kept.roughness + 1.0
+        let (wide, high) = (kept.size[1] * 0.8, kept.height * 2.0 / (1.0 - kept.floor / 3.0));
+        (wide * wide + high * high).sqrt() + kept.roughest() + 3.0
     }
 
     /// Its values as rows for an Inspector, in the order [`RoomRules::value`] counts them.
@@ -157,8 +165,13 @@ impl RoomRules {
         RoomSample { made: Made::of(self, seed), seed }
     }
 
+    /// The furthest a room made by these has a wall or its floor moved by roughness, in metres.
+    pub(crate) fn roughest(&self) -> f32 {
+        self.roughness + lesser(FINE, self.roughness * 0.5) + lesser(1.0 - self.floor, 0.5) * RISE
+    }
+
     pub(crate) fn key(&self, key: &mut Key) {
-        key.name("rules").number(self.size[0]).number(self.size[1]).whole(self.shapes).number(self.height);
+        key.name("rules 2").number(self.size[0]).number(self.size[1]).whole(self.shapes).number(self.height);
         key.number(self.roughness).number(self.floor).whole(self.pillars).whole(self.hanging);
         key.whole(self.ledges).whole(self.exits).number(self.exits_apart);
     }
@@ -175,8 +188,10 @@ impl RoomSample {
     /// How far inside its hollow `p` is, in metres, a place in the room's own space: its walls roughened as
     /// a network roughens them.
     pub fn inside(&self, p: [f32; 3]) -> f32 {
-        let grain = 4.0 + 2.0 * self.made.rough;
-        self.made.inside(p, Some(gradient3(p[0] / grain, p[1] / grain, p[2] / grain, self.seed.wrapping_add(11))))
+        let grain = 4.0 + 2.0 * self.made.roughest();
+        let lumps = gradient3(p[0] / grain, p[1] / grain, p[2] / grain, self.seed.wrapping_add(11));
+        let detail = gradient3(p[0] / DETAIL, p[1] / DETAIL, p[2] / DETAIL, self.seed.wrapping_add(12));
+        self.made.inside(p, Some([lumps, detail]))
     }
 
     /// No place in it is further than this from its origin.
@@ -229,8 +244,9 @@ impl Blob {
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Rock {
     /// A pillar from floor to roof round `(x, z)`, `radius` wide at its
-    /// waist, between these heights.
-    Pillar { x: f32, z: f32, radius: f32, low: f32, high: f32 },
+    /// waist, between these heights, and `flare` times wider again at its
+    /// foot and its head.
+    Pillar { x: f32, z: f32, radius: f32, low: f32, high: f32, flare: f32 },
     /// Rock hanging from the roof over `(x, z)`: `radius` wide at `top`,
     /// coming to a point at `tip`.
     Hanging { x: f32, z: f32, radius: f32, top: f32, tip: f32 },
@@ -243,10 +259,10 @@ impl Rock {
     fn inside(&self, p: V3) -> f32 {
         let away = |x: f32, z: f32| ((p[0] - x) * (p[0] - x) + (p[2] - z) * (p[2] - z)).sqrt();
         match *self {
-            Rock::Pillar { x, z, radius, low, high } => {
+            Rock::Pillar { x, z, radius, low, high, flare } => {
                 // Wider towards the floor and the roof than at its waist.
                 let t = greater(lesser((p[1] - low) / greater(high - low, 0.1), 1.0), 0.0) * 2.0 - 1.0;
-                radius * (1.0 + 0.9 * t * t) - away(x, z)
+                radius * (1.0 + flare * t * t) - away(x, z)
             }
             Rock::Hanging { x, z, radius, top, tip } => {
                 let wide = radius * (p[1] - tip) / greater(top - tip, 0.1);
@@ -269,9 +285,12 @@ pub(crate) struct Made {
     blend: f32,
     /// The height of its level floor: none where its rules leave a bowl.
     floor: Option<f32>,
-    /// How far its walls are pushed in and out, and the furthest in.
+    /// How far its walls are pushed in and out in lumps, and by fine detail; the furthest in; and how far its
+    /// floor rises over its lowest where the lumps are.
     rough: f32,
+    fine: f32,
     margin: f32,
+    uneven: f32,
     pub exits: Vec<RoomExit>,
     /// Its lowest and highest places before roughness.
     pub low: f32,
@@ -303,14 +322,19 @@ impl Made {
         let count = rules.shapes as usize;
         let mut blobs: Vec<Blob> = Vec::with_capacity(count);
         let mut necks = Vec::new();
+        // Which shape each other overlaps: the first, or one of those that overlap the first.
+        let ring = 1 + (count.max(1) - 1).div_ceil(2);
+        let onto_of = |at: usize| match at < ring {
+            true => 0,
+            false => 1 + (mix(seed, &[1, at as i32]) as usize % (ring - 1)),
+        };
         for at in 0..count {
             let part = at as i32;
             // The first holds the room's middle; each other overlaps the first, or one that does.
             let (middle, radius) = match at {
                 0 => ([0.0, 0.0], across * if count == 1 { 1.0 } else { 0.62 }),
                 _ => {
-                    let ring = 1 + (count - 1).div_ceil(2);
-                    let onto = if at < ring { 0 } else { 1 + (mix(seed, &[1, part]) as usize % (ring - 1)) };
+                    let onto = onto_of(at);
                     let parent = blobs[onto];
                     let [x, z] = way(roll(2, part), roll(3, part));
                     let far = parent.across() * between(0.55, 0.85, roll(4, part));
@@ -324,8 +348,10 @@ impl Made {
                 }
             };
             // Height is from the floor up, and the floor fills the lowest third at its flattest: so much taller
-            // the shapes are made.
-            let tall = rules.height / (1.0 - rules.floor / 3.0) * between(0.75, 1.0, roll(6, part));
+            // the shapes are made. The first is the room's height; the others from half as high to a quarter
+            // higher, so a room has high and low parts.
+            let share = if at == 0 { between(0.85, 1.0, roll(6, part)) } else { between(0.5, 1.1, roll(6, part)) };
+            let tall = rules.height / (1.0 - rules.floor / 3.0) * share;
             // The first, the room's middle, is never squashed.
             let form = match (at, roll(7, part)) {
                 (0, form) if form < 0.5 => 0.0,
@@ -334,11 +360,19 @@ impl Made {
             };
             let sides = [radius * between(0.85, 1.15, roll(8, part)), radius * between(0.85, 1.15, roll(9, part))];
             // A third each: a half ball standing on the floor, a ball squashed, a ball.
+            // Stacked up as well as out: an other's foot is anywhere from a little under the foot of the one
+            // it overlaps to two fifths of the way up it, so there are raised bays and domes over a room's side.
+            let lift = match at {
+                0 => 0.0,
+                _ => {
+                    let onto = blobs[onto_of(at)];
+                    onto.bottom() + (onto.top() - onto.bottom()) * between(-0.05, 0.4, roll(10, part))
+                }
+            };
             let blob = if form < 0.34 {
-                Blob { at: [middle[0], 0.0, middle[1]], half_sizes: [sides[0], tall, sides[1]], half: true }
+                Blob { at: [middle[0], lift, middle[1]], half_sizes: [sides[0], tall, sides[1]], half: true }
             } else {
                 let high = if form < 0.67 { tall * 0.72 } else { tall };
-                let lift = if at == 0 { 0.0 } else { rules.height * between(-0.08, 0.12, roll(10, part)) };
                 let at = [middle[0], high * 0.5 + lift, middle[1]];
                 Blob { at, half_sizes: [sides[0], high * 0.5, sides[1]], half: false }
             };
@@ -353,7 +387,10 @@ impl Made {
         let margin = lesser(rules.roughness, least * 0.2);
         let blend = greater(lesser(across * 0.25, 3.0), 0.5);
         let (rocks, exits, rough) = (Vec::new(), Vec::new(), rules.roughness);
-        let mut made = Made { blobs, necks, rocks, blend, floor, rough, margin, exits, low, high };
+        let fine = lesser(FINE, rough * 0.5);
+        // A floor short of level rolls and steps up where the walls' lumps are; a bowl has none to.
+        let uneven = if floor.is_some() { lesser(1.0 - rules.floor, 0.5) } else { 0.0 };
+        let mut made = Made { blobs, necks, rocks, blend, floor, rough, fine, margin, uneven, exits, low, high };
         made.exits = made.exits_of(&rules, seed, stood);
         made.rocks = made.rocks_of(&rules, seed, stood);
         made
@@ -380,7 +417,12 @@ impl Made {
         // Roughness leaves a floor where it is and moves the walls, so an exit is set by the walls alone: as
         // far in from them as they may come and a metre more. Over a bowl, as far over its bottom too.
         let open = self.margin + 1.0;
-        let height = stood + if self.floor.is_some() { EXIT_HEIGHT } else { greater(EXIT_HEIGHT, open + 0.5) };
+        // Over the floor at its highest, too, where it is uneven.
+        let over = match self.floor {
+            Some(_) => EXIT_HEIGHT + self.uneven * RISE,
+            None => greater(EXIT_HEIGHT, open + 0.5),
+        };
+        let height = stood + over;
         let half_way = (height + self.high) * 0.5;
         let exits = ways.into_iter().map(|[x, z]| {
             // Out from the middle to where the hollow is no longer well open, at the exit's height or half
@@ -427,12 +469,14 @@ impl Made {
                 let [wx, wz] = way(roll(part + 1, pillar), roll(part + 2, pillar));
                 let far = on.across() * between(0.2, 0.6, roll(part + 3, pillar));
                 let (x, z) = (on.at[0] + wx * far, on.at[2] + wz * far);
-                let radius = on.across() * between(0.06, 0.11, roll(part + 4, pillar));
-                // Its foot is about twice its waist. None in a shape too small to walk round one in.
-                if radius < 0.35 || from_ways(x, z) < radius * 2.0 + 1.2 {
+                // From a slim column to a mass of rock a fifth of its shape across, with a waist: its foot and
+                // head up to three times as wide. None in a shape too small to walk round one in.
+                let radius = on.across() * between(0.07, 0.2, roll(part + 4, pillar));
+                let flare = between(0.6, 2.0, roll(part + 5, pillar));
+                if radius < 0.5 || from_ways(x, z) < radius * (1.0 + flare) + 1.2 {
                     continue;
                 }
-                rocks.push(Rock::Pillar { x, z, radius, low: stood, high: on.top() });
+                rocks.push(Rock::Pillar { x, z, radius, low: stood, high: on.top(), flare });
                 break;
             }
         }
@@ -446,7 +490,8 @@ impl Made {
             if long < 0.5 {
                 continue;
             }
-            let radius = greater(long * between(0.25, 0.45, roll(205, hanging)), 0.4);
+            // From a spike to a broad boss of rock as wide as it is long.
+            let radius = greater(long * between(0.3, 1.1, roll(205, hanging)), 0.8);
             let (x, z) = (on.at[0] + wx * far, on.at[2] + wz * far);
             rocks.push(Rock::Hanging { x, z, radius, top, tip: top - 1.0 - long });
         }
@@ -476,11 +521,22 @@ impl Made {
     /// How far inside its hollow `p` is, in metres, a place in its own
     /// space: its walls moved by `noise`, about -1 to 1, where it is given,
     /// times its roughness and inward no further than its margin.
-    pub fn inside(&self, p: V3, noise: Option<f32>) -> f32 {
-        let moved = noise.map_or(0.0, |noise| greater(noise * self.rough, -self.margin));
+    pub fn inside(&self, p: V3, noise: Option<[f32; 2]>) -> f32 {
+        // Lumps of a few metres and detail of a block or two, together.
+        let moved = noise.map_or(0.0, |[lumps, detail]| greater(lumps * self.rough + detail * self.fine, -self.margin));
         let mut hollow = self.shell(p) + moved;
         if let Some(floor) = self.floor {
-            hollow = lesser(hollow, p[1] - floor);
+            // Short of level, the floor rolls with the lumps and steps up twice where they are greatest, with
+            // the detail over it: never under its lowest, which is what a room's exits are set over.
+            let raised = match noise {
+                Some([lumps, detail]) if self.uneven > 0.0 => {
+                    let roll = greater(lesser(lumps + 1.0, 2.0), 0.0) * 0.5;
+                    let steps = if lumps > 0.55 { 1.5 } else if lumps > 0.1 { 0.75 } else { 0.0 };
+                    self.uneven * (roll + steps) + greater(detail, 0.0) * self.fine * 0.4
+                }
+                _ => 0.0,
+            };
+            hollow = lesser(hollow, p[1] - floor - raised);
         }
         for rock in &self.rocks {
             // Rock put back is roughened a third as much, and never grows by it.
@@ -497,7 +553,12 @@ impl Made {
             let [x, y, z] = blob.half_sizes;
             far(blob.at) + greater(x, greater(y, z))
         });
-        blobs.chain(self.exits.iter().map(|exit| far(exit.at))).fold(1.0, greater) + self.rough + self.blend
+        blobs.chain(self.exits.iter().map(|exit| far(exit.at))).fold(1.0, greater) + self.roughest() + self.blend
+    }
+
+    /// The furthest a wall or its floor is moved by roughness, in metres.
+    pub fn roughest(&self) -> f32 {
+        self.rough + self.fine + self.uneven * RISE
     }
 
     /// The height of its floor at its middle.
@@ -516,11 +577,13 @@ mod tests {
         let reach = made.reach().ceil() as i32 * 2 + 2;
         let side = (reach * 2 + 1) as usize;
         let place = |cell: [i32; 3]| cell.map(|v| v as f32 * 0.5);
-        // The noise as coarse as a network makes it for walls this rough.
-        let grain = 4.0 + 2.0 * made.rough;
+        // The noise as coarse as a network makes it for walls this rough, and the fine detail over it.
+        let grain = 4.0 + 2.0 * made.roughest();
         let open = |cell: [i32; 3]| {
             let p = place(cell);
-            made.inside(p, Some(gradient3(p[0] / grain, p[1] / grain, p[2] / grain, seed))) > 0.0
+            let lumps = gradient3(p[0] / grain, p[1] / grain, p[2] / grain, seed);
+            let detail = gradient3(p[0] / DETAIL, p[1] / DETAIL, p[2] / DETAIL, seed + 1);
+            made.inside(p, Some([lumps, detail])) > 0.0
         };
         let index = |cell: [i32; 3]| {
             ((cell[1] + reach) as usize * side + (cell[2] + reach) as usize) * side + (cell[0] + reach) as usize
@@ -591,7 +654,7 @@ mod tests {
                     for back in [0.0, 0.5] {
                         let p = [exit.at[0] - exit.way[0] * back, exit.at[1], exit.at[2] - exit.way[2] * back];
                         for noise in [-1.5, 0.0, 1.5] {
-                            let open = made.inside(p, Some(noise)) > 0.0;
+                            let open = made.inside(p, Some([noise, noise])) > 0.0;
                             assert!(open, "{kind} {seed}: exit {exit:?} closed at {noise}");
                         }
                     }
@@ -602,7 +665,7 @@ mod tests {
 
     #[test]
     fn a_made_room_follows_its_rules_and_the_same_seed_makes_the_same_room() {
-        let rules = RoomRules { size: [20.0, 20.0], pillars: 3, hanging: 5, ledges: 2, ..RoomRules::default() };
+        let rules = RoomRules { size: [36.0, 36.0], pillars: 4, hanging: 5, ledges: 2, ..RoomRules::default() };
         let (made, again, other) = (Made::of(&rules, 5), Made::of(&rules, 5), Made::of(&rules, 6));
         assert!(made == again && made != other);
         assert_eq!(made.blobs.len(), 4);

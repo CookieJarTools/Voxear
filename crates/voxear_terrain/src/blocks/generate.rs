@@ -468,6 +468,45 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "a timing, to be read: run it optimised"]
+    fn timing_of_a_chunk_column_of_rooms_made_by_rules_against_rooms_of_set_shapes() {
+        use crate::generate::{NodeKind, Room, RoomRules, nodes::Laid, starters};
+        let time = |file: &BlockFile, world: &WorldGen| {
+            let generate = file.generate.clone().unwrap();
+            let mut least = f32::MAX;
+            for _ in 0..3 {
+                let started = std::time::Instant::now();
+                for at in [[0, 0], [1, 0], [0, 1], [1, 1], [3, 5], [-4, 2], [7, -3], [2, 8]] {
+                    std::hint::black_box(column_chunks(file, &generate, world, 0, at, None));
+                }
+                least = least.min(started.elapsed().as_secs_f32() * 1000.0 / 8.0);
+            }
+            least
+        };
+        let (file, mixed) = networked(Laid::Endless, false, true);
+        // The same hills and network with these rooms listed.
+        let with = |rooms: Vec<Room>| {
+            let mut graph = mixed.graph().clone();
+            for node in &mut graph.nodes {
+                if let NodeKind::CaveNetwork(network) = &mut node.kind {
+                    network.rooms = rooms.clone();
+                }
+            }
+            mixed.with_graph(graph)
+        };
+        let caves = starters().into_iter().find(|starter| starter.name == "Caves").unwrap().world(11, 1.0);
+        let kinds = [
+            ("a room of set shapes", with(vec![Room::chamber()])),
+            ("rooms made by rules", with(vec![Room::made(RoomRules::default())])),
+            ("the Caves starter", caves),
+        ];
+        let smooth = BlockFile { smooth: true, ..file.clone() };
+        for (name, world) in &kinds {
+            println!("{name}: a chunk column of cubes {:.2} ms, smooth {:.2} ms", time(&file, world), time(&smooth, world));
+        }
+    }
+
+    #[test]
     fn generated_chunks_with_overhangs_are_the_same_blocks_to_the_bit() {
         // Apart from those without. Pinned again when overhangs became a node: they push steep ground alone,
         // layers are counted down from the open air, and smooth fills are distances. At level 2 the blocks, 8 m

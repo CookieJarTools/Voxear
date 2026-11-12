@@ -413,29 +413,31 @@ fn caves() -> Starter {
     g.expose(hills, "high", "Height");
     g.next();
     let solid = g.after(hills, NodeKind::Solid(Solid::default()));
+    // Halls tens of metres across and many high, of several shapes stacked up and out, with a floor that
+    // rolls and steps; chambers half their size between; near enough that rooms meet now and then.
     let hall = RoomRules {
-        size: [30.0, 46.0],
-        shapes: 5,
-        height: 14.0,
-        roughness: 1.2,
-        floor: 0.8,
-        pillars: 4,
-        hanging: 10,
+        size: [38.0, 60.0],
+        shapes: 6,
+        height: 22.0,
+        roughness: 1.6,
+        floor: 0.6,
+        pillars: 2,
+        hanging: 5,
         ledges: 3,
         exits: 5,
         exits_apart: 0.8,
     };
-    let chamber = RoomRules { size: [14.0, 22.0], shapes: 3, height: 7.0, pillars: 1, hanging: 4, ledges: 1, ..hall };
+    let chamber = RoomRules { size: [20.0, 32.0], shapes: 4, height: 11.0, pillars: 1, hanging: 3, ledges: 2, ..hall };
     let network = CaveNetwork {
-        spacing: 96.0,
-        depth: 34.0,
+        spacing: 72.0,
+        depth: 44.0,
         tunnel_width: 4.0,
-        tunnel_width_max: 7.0,
-        winding: 0.8,
+        tunnel_width_max: 9.0,
+        winding: 1.0,
         slope_limit: 0.6,
-        branches: 0.3,
-        loops: 0.35,
-        roughness: 1.0,
+        branches: 0.35,
+        loops: 0.4,
+        roughness: 1.4,
         entrances: 0.2,
         rooms: vec![Room { weight: 2.0, ..Room::made(hall) }, Room { weight: 3.0, ..Room::made(chamber) }],
         ..CaveNetwork::default()
@@ -514,10 +516,10 @@ mod tests {
         assert!(rooms.len() > 30 && rooms.iter().all(|room| room.made), "{} rooms", rooms.len());
         // Halls and chambers both, each under the hills, with places on its rock.
         let wide = |room: &crate::generate::PlacedRoom| room.bounds[1][0] - room.bounds[0][0];
-        assert!(rooms.iter().any(|room| wide(room) > 60.0) && rooms.iter().any(|room| wide(room) < 45.0));
+        assert!(rooms.iter().any(|room| wide(room) > 70.0) && rooms.iter().any(|room| wide(room) < 60.0));
         for room in &rooms {
             let under = world.height_at(room.at[0], room.at[2]) - room.at[1];
-            assert!((20.0..=50.0).contains(&under), "a room {under} m under the hills");
+            assert!((30.0..=58.0).contains(&under), "a room {under} m under the hills");
             assert!(!room.floors.is_empty() && !room.ceilings.is_empty());
         }
         assert_ne!(starter.world(2, 1.0).caves().unwrap().rooms_near([0.0, 40.0, 0.0], 600.0), rooms);

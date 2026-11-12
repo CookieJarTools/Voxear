@@ -913,3 +913,73 @@ fn a_cave_networks_rooms_are_picked_from_prefabs_and_read_again_when_a_prefab_ch
     frame(&mut editor, &mut renderer);
     assert!(editor.game.engine.world.has::<voxear_terrain::generate::CaveShape>(exit));
 }
+
+#[test]
+fn a_cave_network_of_rooms_made_by_rules_shows_their_rules_and_one_room_alone_in_the_preview() {
+    let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {
+        return eprintln!("skipping: no usable GPU");
+    };
+    let dir = hello_with_a_field();
+    let starters = voxear_terrain::generate::starters();
+    let caves = starters.iter().find(|starter| starter.name == "Caves").expect("the Caves starter").world(1, 1.0);
+    std::fs::create_dir_all(dir.path().join("Worlds")).unwrap();
+    std::fs::write(dir.path().join("Worlds/Caves.worldgen"), caves.to_text()).unwrap();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    assert!(editor.open_path("Worlds/Caves.worldgen", &mut renderer));
+    frame(&mut editor, &mut renderer);
+    frame(&mut editor, &mut renderer);
+    let panel = editor.ui.find(editor.ui.root(), "generator-panel").expect("the Generator panel");
+    let note = |editor: &voxear_editor::Editor| {
+        let note = first_with(&editor.ui, panel, "asset-preview-hint").expect("the preview's note");
+        editor.ui.text(note)
+    };
+    // The Cave Network picked: its rooms, each Generated with its rules as rows under it.
+    let network = node(&editor, "Cave Network");
+    let on = editor.generator().node_point(&editor.ui, network).expect("the Cave Network node");
+    click_at(&mut editor, &mut renderer, on);
+    frame(&mut editor, &mut renderer);
+    let inspector = editor.ui.find(editor.ui.root(), "inspector").unwrap();
+    let mut rows = Vec::new();
+    with_class(&editor.ui, inspector, "room-row", &mut rows);
+    assert_eq!(rows.len(), 2, "a hall and a chamber");
+    let kind = first_with(&editor.ui, rows[0], "room-prefab").unwrap();
+    assert_eq!(all_text(&editor.ui, kind), "Generated");
+    let labels = row_labels(&editor.ui);
+    for rule in ["Size", "Largest", "Shapes", "Height", "Floor", "Pillars", "Hanging Rock", "Ledges", "Exits Apart"] {
+        assert_eq!(labels.iter().filter(|label| *label == rule).count(), 2, "{rule} for each room: {labels:?}");
+    }
+    // The preview shows a room by itself while the network is picked, and the ground again once it is not.
+    for _ in 0..600 {
+        if note(&editor) == "Room" && editor.generator().previews_settled() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        frame(&mut editor, &mut renderer);
+    }
+    assert_eq!(note(&editor), "Room");
+    for _ in 0..4 {
+        frame(&mut editor, &mut renderer);
+    }
+    shot(&mut renderer, "generator-cave-room.png");
+    // A rule typed is saved in the generator's file.
+    type_number(&mut editor, &mut renderer, "Pillars", "7");
+    for _ in 0..4 {
+        frame(&mut editor, &mut renderer);
+    }
+    let rules: Vec<_> = rooms_of(&saved(&dir, "Worlds/Caves.worldgen")).iter().filter_map(|room| room.rules).collect();
+    assert_eq!(rules.len(), 2);
+    assert!(rules.iter().any(|rules| rules.pillars == 7), "{rules:?}");
+    let output = node(&editor, "Output");
+    let on = editor.generator().node_point(&editor.ui, output).expect("the Output node");
+    click_at(&mut editor, &mut renderer, on);
+    for _ in 0..400 {
+        if note(&editor) != "Room" {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        frame(&mut editor, &mut renderer);
+    }
+    assert_ne!(note(&editor), "Room", "the ground again");
+}

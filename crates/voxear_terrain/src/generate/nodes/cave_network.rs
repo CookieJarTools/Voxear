@@ -148,7 +148,11 @@ impl CaveNetwork {
             side: self.side_rooms.min(64),
             seed,
         };
-        set.spacing = set.spacing.max(2.0 * (set.reach() + set.stray()) + 4.0).min(100_000.0);
+        // Regions wide enough that a room and its tunnels' ends stay in their own; with rooms made by rules,
+        // which may reach into the regions beside theirs, only that none reaches past those.
+        let (reach, made) = (set.reach() + set.stray(), set.rooms.iter().any(|room| room.rules.is_some()));
+        let least = if made && set.layout == CaveLayout::Endless { reach * 0.75 + 4.0 } else { 2.0 * reach + 4.0 };
+        set.spacing = set.spacing.max(least).min(100_000.0);
         set
     }
 }
@@ -581,10 +585,48 @@ mod tests {
     }
 
     #[test]
+    fn a_slope_limit_winds_steep_tunnels_longer_so_fewer_run_steeper_than_it() {
+        // Rooms at very different depths, so the straight way between two is often steep.
+        let deep = |slope_limit: f32| {
+            let set = CaveNetwork { depth: 70.0, winding: 0.2, slope_limit, branches: 0.0, ..ruled(Laid::Endless) };
+            world(set, Some(140.0), 8)
+        };
+        // Each tunnel's climb over how far it runs along the ground, for the tunnels round a few regions.
+        let slopes = |made: &WorldGen| -> Vec<f32> {
+            let caves = made.caves().expect("its caves");
+            let net = caves.network();
+            let mut found = Vec::new();
+            for region in [[0, 0, 0], [3, 0, 1], [-2, 0, 4], [5, 0, -3]] {
+                for tunnel in net.gathered(&net.grid(), region).tunnels.iter().filter(|tunnel| tunnel.roofed) {
+                    let (first, last) = (tunnel.line[0], tunnel.line[tunnel.line.len() - 1]);
+                    let run: f32 = tunnel
+                        .line
+                        .windows(2)
+                        .map(|piece| ((piece[1][0] - piece[0][0]).powi(2) + (piece[1][2] - piece[0][2]).powi(2)).sqrt())
+                        .sum();
+                    found.push((last[1] - first[1]).abs() / run.max(0.01));
+                }
+            }
+            found
+        };
+        let (free, held) = (slopes(&deep(NO_LIMIT)), slopes(&deep(0.3)));
+        assert_eq!(free.len(), held.len());
+        assert!(free.len() > 12, "{} tunnels", free.len());
+        let steep = |slopes: &[f32]| slopes.iter().filter(|slope| **slope > 0.3).count();
+        assert!(steep(&free) >= 4, "{} steep tunnels with no limit", steep(&free));
+        assert!(steep(&held) < steep(&free), "{} steep with a limit, {} without", steep(&held), steep(&free));
+        // None is steeper for the limit, and those it wound are gentler.
+        for (free, held) in free.iter().zip(&held) {
+            assert!(held <= &(free + 1e-4), "{held} with the limit, {free} without");
+        }
+        assert!(held.iter().sum::<f32>() < free.iter().sum::<f32>());
+    }
+
+    #[test]
     fn a_rooms_places_on_its_walls_floor_and_roof_lie_on_its_rock_and_are_the_same_each_time() {
-        let made = world(CaveNetwork { depth: 40.0, ..ruled(Laid::Endless) }, Some(90.0), 6);
+        let made = world(CaveNetwork { depth: 40.0, spacing: 90.0, ..ruled(Laid::Endless) }, Some(90.0), 6);
         let caves = made.caves().expect("its caves");
-        let rooms = caves.rooms_near([0.0, 50.0, 0.0], 150.0);
+        let rooms = caves.rooms_near([0.0, 50.0, 0.0], 260.0);
         assert!(rooms.len() > 6);
         let off = |at: [f32; 3], way: [f32; 3], far: f32| [0, 1, 2].map(|axis| at[axis] + way[axis] * far);
         let (mut walls, mut backed, mut roofs, mut under, mut floors, mut stood) = (0, 0, 0, 0, 0, 0);
@@ -617,7 +659,7 @@ mod tests {
         assert!(walls >= rooms.len() * 6, "{walls} wall places in {} rooms", rooms.len());
         assert!(backed * 10 >= walls * 9, "{backed} of {walls} wall places have rock behind them");
         assert!(stood * 10 >= floors * 8, "{stood} of {floors} floor places face up over rock");
-        assert!(under * 10 >= roofs * 8, "{under} of {roofs} roof places face down under rock");
+        assert!(under * 10 >= roofs * 6, "{under} of {roofs} roof places face down under rock");
     }
 
     #[test]

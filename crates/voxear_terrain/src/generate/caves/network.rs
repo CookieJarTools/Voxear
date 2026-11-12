@@ -20,7 +20,7 @@ use super::{
     grid::{Grid, Region, Stand, V3, add, cross, dot, sub, times, unit},
     joins::Joins,
     level::Level,
-    made::Made,
+    made::{DETAIL, Made},
     rooms::{NOTHING, Room, RoomExit, greater, lesser},
 };
 use crate::{
@@ -152,13 +152,17 @@ pub(crate) struct Placed {
     pub bounds: Bounds,
 }
 
-/// A tunnel: its line, the way up along it, half its width, and whether it
-/// is kept under the ground's roof.
+/// A tunnel: its line, the way up along it, half its width (at its widest,
+/// and at each place along its line) and whether it is kept under the
+/// ground's roof.
 #[derive(Clone, Debug)]
 pub(crate) struct Tunnel {
     pub line: [V3; PIECES + 1],
     pub up: V3,
     pub radius: f32,
+    pub radii: [f32; PIECES + 1],
+    /// How far under its line its floor lies: the same all along, however wide it is.
+    pub floor: f32,
     pub roofed: bool,
     pub bounds: Bounds,
 }
@@ -183,6 +187,8 @@ pub(crate) struct Network {
     pub id: u64,
     /// The furthest any of its walls is pushed in or out, in metres.
     pub roughest: f32,
+    /// Whether it has rooms made by rules, and so fine detail on its walls.
+    pub detailed: bool,
     pub level: Option<Level>,
 }
 
@@ -210,13 +216,19 @@ impl Settings {
 
     /// The furthest any wall is pushed in or out: its own roughness, or that of a room made by rules.
     pub fn roughest(&self) -> f32 {
-        self.rooms.iter().filter_map(|room| room.rules).map(|rules| rules.kept().roughness).fold(self.rough, greater)
+        self.rooms.iter().filter_map(|room| room.rules).map(|rules| rules.kept().roughest()).fold(self.rough, greater)
     }
 
     /// How far from its region's middle a room may be moved, of half the
     /// region, so it and its tunnels' ends stay inside.
     fn loose(&self) -> f32 {
         let free = 1.0 - 2.0 * (self.reach() + self.stray()) / self.spacing;
+        if self.rooms.iter().any(|room| room.rules.is_some()) {
+            // Rooms made by rules may reach into the regions beside theirs, and meet: only never past them,
+            // which is as far as what is gathered for a region looks.
+            let most = 2.8 - 2.0 * (self.reach() + self.stray()) / self.spacing;
+            return greater(lesser(greater(free, lesser(most, 0.6)), 0.8), 0.0);
+        }
         greater(lesser(free, 0.8), 0.0)
     }
 
@@ -250,7 +262,8 @@ impl Network {
     /// A network of these values under `ground`, known from every other by `id`: a level laid out.
     pub fn new(set: Settings, ground: Arc<Program>, id: u64) -> Self {
         let roughest = set.roughest();
-        let mut network = Network { set, ground, id, roughest, level: None };
+        let detailed = set.rooms.iter().any(|room| room.rules.is_some());
+        let mut network = Network { set, ground, id, roughest, detailed, level: None };
         if network.set.layout == CaveLayout::Level {
             network.level = Some(Level::laid(&network));
         }
@@ -262,12 +275,18 @@ impl Network {
         Grid { spacing: self.set.spacing }
     }
 
-    /// The noise its walls are roughened by at `p`, about -1 to 1.
-    pub fn noise(&self, p: V3) -> f32 {
+    /// The noise its walls are roughened by at `p`, each about -1 to 1: lumps, and where it has rooms made
+    /// by rules, detail of a block or two for them and its tunnels.
+    pub fn noise(&self, p: V3) -> [f32; 2] {
         // Coarser the rougher the walls, so a wall pushed far is pushed far over a long way, and no hollow
         // opens apart from its room.
         let grain = 4.0 + 2.0 * self.roughest;
-        gradient3(p[0] / grain, p[1] / grain, p[2] / grain, self.set.seed.wrapping_add(11))
+        let lumps = gradient3(p[0] / grain, p[1] / grain, p[2] / grain, self.set.seed.wrapping_add(11));
+        let detail = match self.detailed {
+            true => gradient3(p[0] / DETAIL, p[1] / DETAIL, p[2] / DETAIL, self.set.seed.wrapping_add(12)),
+            false => 0.0,
+        };
+        [lumps, detail]
     }
 
     /// The ground's height over each of `feet`.
@@ -291,10 +310,10 @@ impl Network {
 
     /// How far inside the hollow of `plan`'s room `own` is, a place in the room's space, its walls moved
     /// by `noise`, about -1 to 1, where it is given.
-    pub fn room_inside(&self, plan: &Plan, own: V3, noise: Option<f32>) -> f32 {
+    pub fn room_inside(&self, plan: &Plan, own: V3, noise: Option<[f32; 2]>) -> f32 {
         match &plan.made {
             Some(made) => made.inside(own, noise),
-            None => self.set.rooms[plan.room].inside(own, plan.present, noise.map(|noise| noise * self.set.rough)),
+            None => self.set.rooms[plan.room].inside(own, plan.present, noise.map(|noise| noise[0] * self.set.rough)),
         }
     }
 
@@ -676,11 +695,23 @@ impl Network {
                 lay(&mut line, most);
             }
         }
+        // Where a network's tunnels are of many widths, each also swells and narrows along its way, and
+        // opens out at its ends, into the rooms.
+        let mut radii = [radius; PIECES + 1];
+        if self.set.radius_to > self.set.radius {
+            for (at, wide) in radii.iter_mut().enumerate() {
+                let t = at as f32 / PIECES as f32;
+                let end = 1.0 - 4.0 * t * (1.0 - t);
+                let flared = 1.0 + 0.4 * end * end * end * end;
+                *wide = greater(radius * (1.0 + 0.35 * pushed(t, 2)) * flared, 0.75);
+            }
+        }
+        let fattest = radii.iter().copied().fold(radius, greater);
         let mut bounds = Bounds::NONE;
         for point in &line {
-            bounds = bounds.with(Bounds::round(*point, radius + self.set.rough));
+            bounds = bounds.with(Bounds::round(*point, fattest + self.set.rough + 0.5));
         }
-        Tunnel { line, up, radius, roofed, bounds }
+        Tunnel { line, up, radius: fattest, radii, floor: radius * FLOOR, roofed, bounds }
     }
 }
 
@@ -688,14 +719,15 @@ impl Tunnel {
     /// How far inside it `p` is, in metres: round, with a flat floor.
     fn inside(&self, p: V3) -> f32 {
         let mut hollow = NOTHING;
-        for piece in self.line.windows(2) {
+        for (at, piece) in self.line.windows(2).enumerate() {
             let (a, along) = (piece[0], sub(piece[1], piece[0]));
             let length = dot(along, along);
             let t = if length > 0.0 { dot(sub(p, a), along) / length } else { 0.0 };
             let t = greater(lesser(t, 1.0), 0.0);
             let away = sub(p, add(a, times(along, t)));
-            let round = self.radius - dot(away, away).sqrt();
-            let floor = dot(away, self.up) + self.radius * FLOOR;
+            let radius = self.radii[at] + (self.radii[at + 1] - self.radii[at]) * t;
+            let round = radius - dot(away, away).sqrt();
+            let floor = dot(away, self.up) + self.floor;
             hollow = greater(hollow, lesser(round, floor));
         }
         hollow
@@ -728,7 +760,7 @@ impl Gathered {
     }
 
     /// The same with its walls moved by `noise`, about -1 to 1, where it is given.
-    fn measured(&self, net: &Network, p: V3, noise: Option<f32>, only: Option<&[u16]>) -> (f32, f32) {
+    fn measured(&self, net: &Network, p: V3, noise: Option<[f32; 2]>, only: Option<&[u16]>) -> (f32, f32) {
         let (mut roofed, mut open) = (NOTHING, NOTHING);
         let mut room = |room: &Placed| {
             if !room.bounds.holds(p) {
@@ -747,7 +779,9 @@ impl Gathered {
                 return;
             }
             // A tunnel's walls come in no further than a quarter of its half width.
-            let moved = noise.map_or(0.0, |noise| greater(noise * net.set.rough, -tunnel.radius * 0.25));
+            let moved = noise.map_or(0.0, |[lumps, detail]| {
+                greater(lumps * net.set.rough + detail * 0.35, -tunnel.radius * 0.25)
+            });
             let hollow = tunnel.inside(p) + moved;
             match tunnel.roofed {
                 true => roofed = greater(roofed, hollow),

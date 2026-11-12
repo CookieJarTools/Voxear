@@ -36,6 +36,12 @@ public readonly struct ParticleSystem : IEquatable<ParticleSystem>, IObjComponen
 	/// <summary>Whether it is sending out particles: false once stopped, or once a round that does not loop is over.</summary>
 	public bool IsPlaying => NativeParticles.Number(Obj, NativeParticles.Playing, 0f) != 0f;
 
+	/// <summary>
+	/// Whether its particles are kept on the graphics card and stepped each frame, as World Space, Wind and
+	/// Turbulence need, rather than worked out from their age alone.
+	/// </summary>
+	public bool IsSimulated => NativeParticles.Number(Obj, NativeParticles.Simulated, 0f) != 0f;
+
 	/// <summary>How long one round lasts, in seconds; it starts over after it when it loops.</summary>
 	public float Duration
 	{
@@ -178,6 +184,34 @@ public readonly struct ParticleSystem : IEquatable<ParticleSystem>, IObjComponen
 	{
 		get { return Number(NativeParticles.Softness); }
 		set { Set(NativeParticles.Softness, value); }
+	}
+
+	/// <summary>What its particles move in: with their Obj, or left behind in the world as it moves on.</summary>
+	public ParticleSpace Space
+	{
+		get { return (ParticleSpace)(int)Number(NativeParticles.Space); }
+		set { Set(NativeParticles.Space, (int)value); }
+	}
+
+	/// <summary>How much of the wind they pick up: 0 none of it, 1 carried along at its speed, as smoke is.</summary>
+	public float Wind
+	{
+		get { return Number(NativeParticles.Wind); }
+		set { Set(NativeParticles.Wind, value); }
+	}
+
+	/// <summary>How fast swirls in the air stir them about, in metres a second.</summary>
+	public float Turbulence
+	{
+		get { return Number(NativeParticles.Turbulence); }
+		set { Set(NativeParticles.Turbulence, value); }
+	}
+
+	/// <summary>How wide those swirls are, in metres.</summary>
+	public float TurbulenceSize
+	{
+		get { return Number(NativeParticles.TurbulenceSize); }
+		set { Set(NativeParticles.TurbulenceSize, value); }
 	}
 
 	/// <summary>Which particles: two systems alike but for this send out different ones.</summary>

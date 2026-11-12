@@ -107,6 +107,8 @@ pub struct Pipelines {
     pub foliage_push: vk::Pipeline,
     /// Presses this frame's tracks into the map round the camera (see `tracks`).
     pub tracks: vk::Pipeline,
+    /// Steps the simulated particles (see `particle_sim`).
+    pub particle_sim: vk::Pipeline,
     /// Erosion's passes, run when the editor erodes a terrain (see `erosion`).
     pub erosion_flux: vk::Pipeline,
     pub erosion_water: vk::Pipeline,
@@ -259,6 +261,7 @@ impl Pipelines {
             module("tracks")?,
             module("erosion")?,
             module("blocks")?,
+            module("particle_sim")?,
         ];
         let [
             cull,
@@ -287,6 +290,7 @@ impl Pipelines {
             tracks,
             erosion,
             blocks,
+            particle_sim,
         ] = &modules;
         // Only a GPU with mesh shaders can load their modules.
         let meshlets = match gpu.mesh_shader {
@@ -421,6 +425,7 @@ impl Pipelines {
             glass_shadow_mip: create_compute_pipeline(gpu, layout, "Glass shadow mips", glass, c"glassShadowMipMain")?,
             foliage_push: create_compute_pipeline(gpu, layout, "Foliage pushes", foliage_push, c"pushMain")?,
             tracks: create_compute_pipeline(gpu, layout, "Tracks", tracks, c"tracksMain")?,
+            particle_sim: create_compute_pipeline(gpu, layout, "Particle simulation", particle_sim, c"simulateMain")?,
             erosion_flux: create_compute_pipeline(gpu, layout, "Erosion flow", erosion, c"erosionFlux")?,
             erosion_water: create_compute_pipeline(gpu, layout, "Erosion water", erosion, c"erosionWater")?,
             erosion_carve: create_compute_pipeline(gpu, layout, "Erosion carving", erosion, c"erosionCarve")?,
@@ -852,6 +857,7 @@ impl Pipelines {
             self.glass_copy,
             self.foliage_push,
             self.tracks,
+            self.particle_sim,
             self.erosion_flux,
             self.erosion_water,
             self.erosion_carve,

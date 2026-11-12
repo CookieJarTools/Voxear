@@ -129,8 +129,9 @@ pub struct Frame {
     /// The glass in view, drawn after the sky.
     pub glass: Option<glass::Glass>,
     /// How many particles each Particle System draws, in the order they are
-    /// listed, drawn after glass.
+    /// listed, drawn after glass; and the pool the simulated ones' are in.
     pub particles: Vec<u32>,
+    pub particle_pool: Option<BufferId>,
     /// How many drops the sea's spray has, listed after the Particle Systems.
     pub spray: Option<u32>,
     /// The spray over Streams' rapids (`particles::gather`).
@@ -650,7 +651,8 @@ pub fn record(
         let spray = frame.spray.filter(|_| !sea_images.is_empty());
         sampled.extend(sea_images);
         let clusters = draws.clusters;
-        let particle_targets = crate::particles::Targets { hdr, depth, sampled, clusters, extent: frame.extent };
+        let pool = frame.particle_pool;
+        let particle_targets = crate::particles::Targets { hdr, depth, sampled, clusters, pool, extent: frame.extent };
         let (counts, rapids) = (frame.particles.clone(), frame.rapids.clone());
         particles = Some(crate::particles::Draw { counts, spray, rapids, targets: particle_targets });
     }

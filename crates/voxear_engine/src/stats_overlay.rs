@@ -34,7 +34,7 @@ pub(crate) const SHEET: &str = include_str!("../ui/StatsOverlay.vss");
 /// The labels the numbers go in, by name, in the order [`refresh`] fills them.
 ///
 /// [`refresh`]: StatsOverlay::refresh
-const VALUES: [&str; 11] = [
+const VALUES: [&str; 12] = [
     "fps",
     "frame",
     "gpu",
@@ -44,6 +44,7 @@ const VALUES: [&str; 11] = [
     "meshlets",
     "block-triangles",
     "block-shadows",
+    "particles",
     "lights",
     "exposure",
 ];
@@ -212,6 +213,7 @@ impl StatsOverlay {
             format!("{} / {}", grouped(u64::from(stats.meshlets_drawn)), grouped(u64::from(stats.meshlets))),
             grouped(stats.blocks.triangles + stats.blocks.water_triangles),
             grouped(stats.blocks.shadow_triangles),
+            format!("{} / {}", grouped(u64::from(stats.particles.alive)), grouped(u64::from(stats.particles.budget))),
             grouped(u64::from(stats.cluster_max_lights)),
             exposure,
         ];

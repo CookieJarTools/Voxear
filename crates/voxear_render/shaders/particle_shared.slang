@@ -5,20 +5,7 @@
 #pragma once
 #include "shading.slang"
 #include "volume.slang"
-
-// A system's flags (particles::LOOPING and the rest).
-static const uint PARTICLES_LOOPING = 1;
-static const uint PARTICLES_ADDITIVE = 2;
-static const uint PARTICLES_LIT = 4;
-
-// Its shapes, as particles::EmitShape.
-static const uint EMIT_POINT = 0;
-static const uint EMIT_SPHERE = 1;
-static const uint EMIT_CONE = 2;
-static const uint EMIT_BOX = 3;
-
-// Gravity, in metres a second squared.
-static const float PARTICLE_GRAVITY = 9.81;
+#include "particle_motion.slang"
 
 struct ParticleOut
 {
@@ -31,30 +18,6 @@ struct ParticleOut
     nointerpolation float softness : SOFTNESS;
     nointerpolation uint additive : ADDITIVE;
 };
-
-// A well-mixed number from `v` (PCG).
-uint particleHash(uint v)
-{
-    uint state = v * 747796405u + 2891336453u;
-    uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
-    return (word >> 22u) ^ word;
-}
-
-// The next of a particle's random numbers, from 0 to 1.
-float particleRandom(inout uint h)
-{
-    h = particleHash(h);
-    return float(h) / 4294967296.0;
-}
-
-// A direction picked evenly from every way.
-float3 anyWay(inout uint h)
-{
-    float z = particleRandom(h) * 2.0 - 1.0;
-    float turn = particleRandom(h) * 2.0 * PI;
-    float across = sqrt(max(1.0 - z * z, 0.0));
-    return float3(across * cos(turn), z, across * sin(turn));
-}
 
 // When slot `slot` of `system` last set out a particle, up to the system's
 // time now, and which time round that was: false when it has none, as
@@ -122,96 +85,6 @@ float3 particleLight(Frame* frame, float3 world, float4 clip)
     }
     // A ball lit from one side takes half its light, spread over it.
     return ambient + lit * 0.5 / PI;
-}
-
-// Key `i` of a curve kept two keys to a row: where, then what.
-float2 curveKey(float4 rows[4], uint i)
-{
-    float4 row = rows[i / 2];
-    return i % 2 == 0 ? row.xy : row.zw;
-}
-
-// A curve's value at `t`, straight between its `count` keys and flat past
-// them (voxear_core::curve::Curve::at).
-float curveAt(float4 rows[4], uint count, float t)
-{
-    float2 last = curveKey(rows, 0);
-    if (t <= last.x)
-    {
-        return last.y;
-    }
-    for (uint i = 1; i < count; i++)
-    {
-        float2 next = curveKey(rows, i);
-        if (t <= next.x)
-        {
-            return lerp(last.y, next.y, next.x > last.x ? (t - last.x) / (next.x - last.x) : 1.0);
-        }
-        last = next;
-    }
-    return last.y;
-}
-
-// What a curve adds up to from 0 to `t`, the area under it
-// (voxear_core::curve::Curve::sum_to).
-float curveSum(float4 rows[4], uint count, float t)
-{
-    t = saturate(t);
-    float2 first = curveKey(rows, 0);
-    float total = first.y * min(first.x, t);
-    float2 last = first;
-    for (uint i = 1; i < count; i++)
-    {
-        float2 next = curveKey(rows, i);
-        if (t <= last.x)
-        {
-            break;
-        }
-        float end = min(t, next.x);
-        float atEnd = next.x > last.x ? lerp(last.y, next.y, (end - last.x) / (next.x - last.x)) : next.y;
-        total += (last.y + atEnd) * 0.5 * (end - last.x);
-        last = next;
-    }
-    return total + last.y * max(t - last.x, 0.0);
-}
-
-// A gradient's colour at `t` (voxear_core::curve::Gradient::at).
-float3 gradientAt(float4 rows[8], uint count, float t)
-{
-    float4 last = rows[0];
-    if (t <= last.x)
-    {
-        return last.yzw;
-    }
-    for (uint i = 1; i < count; i++)
-    {
-        float4 next = rows[i];
-        if (t <= next.x)
-        {
-            return lerp(last.yzw, next.yzw, next.x > last.x ? (t - last.x) / (next.x - last.x) : 1.0);
-        }
-        last = next;
-    }
-    return last.yzw;
-}
-
-// Where a particle that set out from `start` at `velocity` is `age`
-// seconds into a life of `life`, slowed by the air and pulled down:
-// x = x0 + v0 (1 - e^-kt) / k + g (t / k - (1 - e^-kt) / k^2). Its speed
-// over life, when it has one, scales how far it has flown, added up along
-// the way, and slowed by the air as much on average.
-float3 particleFlight(ParticleSystem system, float3 start, float3 velocity, float age, float life)
-{
-    float3 pull = float3(0.0, -PARTICLE_GRAVITY * system.gravity, 0.0);
-    float k = system.drag;
-    float slowed = k > 1e-4 ? (1.0 - exp(-k * age)) / k : age;
-    float flown = slowed;
-    if (system.curveCounts.z > 0)
-    {
-        flown = curveSum(system.speedCurve, system.curveCounts.z, age / life) * life * (age > 1e-5 ? slowed / age : 1.0);
-    }
-    float3 fallen = k > 1e-4 ? pull * (age - slowed) / k : pull * (0.5 * age * age);
-    return start + velocity * flown + fallen;
 }
 
 // The corners of a particle's quad, as its six vertices take them.

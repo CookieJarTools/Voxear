@@ -1,0 +1,5 @@
+# Voxear level
+format = 1
+
+[[scene]]
+scene = "8acfccd3797943f69fd980f1a009ed90"  # Scenes/Effects.scene

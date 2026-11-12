@@ -952,13 +952,63 @@ struct ParticleSystem
     uint flags;
     float stopped;
     float intensity;
-    float2 pad;
+    // How much of the wind it picks up, and how fast its turbulence stirs it, in metres a second.
+    float wind;
+    float turbulence;
     // Size, opacity and speed over life, two keys to a row; colour over life, a key to a row; how many keys each.
     float4 sizeCurve[4];
     float4 opacityCurve[4];
     float4 speedCurve[4];
     float4 gradient[8];
     uint4 curveCounts;
+    // From here on, only a simulated system's (src/particle_sim.rs). The world to its Obj's own space.
+    Mat4 toLocal;
+    float turbulenceSize;
+    // Its first particle in the pool, how many it has room for, and where in its room the next goes.
+    uint poolFirst;
+    uint capacity;
+    uint head;
+    // This frame's new particles: how many, the first emitBurst of them a burst burstAge seconds old, the rest a
+    // stream from streamAges.x seconds old, the first, to streamAges.y, the last; and how many it has sent out in all.
+    uint emitCount;
+    uint emitBurst;
+    float burstAge;
+    uint emitted;
+    float2 streamAges;
+    float2 pad;
+    // How far its Obj has moved since last frame, and how far the world's origin moved.
+    float3 moved;
+    float padMoved;
+    float3 shift;
+    float padShift;
+};
+
+// A simulated particle, kept from frame to frame (GpuParticle in src/gpu.rs): where it is and how fast it goes, in
+// the world or in its Obj's own space; how old it is and how long it lives, in seconds, none when it has no life;
+// and the number its random numbers come from.
+struct Particle
+{
+    float3 position;
+    float age;
+    float3 velocity;
+    float life;
+    uint seed;
+};
+
+// How many particles a chunk of the pool holds: the simulation steps whole chunks (particle_sim::CHUNK).
+static const uint PARTICLE_CHUNK = 256;
+
+// What a frame's simulation of particles reads besides its systems (GpuParticleSim in src/gpu.rs): the time and how
+// long since last frame, how many chunks of the pool it steps, the wind, and where the world's middle is from the
+// level's, as Frame::origin.
+struct ParticleSim
+{
+    float time;
+    float deltaTime;
+    uint chunks;
+    uint pad;
+    Wind wind;
+    float4 origin;
 };
 
 // A terrain as its patches are drawn (src/terrain.rs, shaders/terrain.slang).
@@ -1198,6 +1248,12 @@ struct Buffers
     float2* tracks;
     // This view's worlds of blocks (blocks.slang).
     BlockWorld* blockWorlds;
+    // Simulated particles (particle_sim.slang): the pool of them; the chunks a frame steps, each its system and its
+    // first particle among the system's; what the pass reads of the frame; and its counters, how many are alive.
+    Particle* particles;
+    uint2* particleChunks;
+    ParticleSim* particleSim;
+    uint* particleCounters;
 };
 
 struct Push

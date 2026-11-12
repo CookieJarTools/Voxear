@@ -35,6 +35,9 @@ static const float PUSH_LEAN = 0.8;
 // How far a branch sways at strength 1, as a share of the plant's height.
 static const float WIND_BRANCH = 0.05;
 
+// How fast the air moves at strength 1, in metres a second.
+static const float WIND_SPEED = 5.0;
+
 float windHash(float2 p)
 {
     return frac(sin(dot(p, float2(127.1, 311.7))) * 43758.5453);
@@ -51,6 +54,29 @@ float windNoise(float2 p)
     float c = windHash(cell + float2(0.0, 1.0));
     float d = windHash(cell + float2(1.0, 1.0));
     return lerp(lerp(a, b, u.x), lerp(c, d, u.x), u.y);
+}
+
+// How hard the wind blows over `place`, across the ground from the level's
+// middle (levelPosition), at `time`: its strength and the gust over it,
+// noise drifting downwind, so it sweeps across the level. Plants lean by it
+// and particles are carried by it, so a gust that bends the grass takes the
+// smoke over it too.
+float windPush(Wind wind, float2 place, float time)
+{
+    float2 drift = place / wind.gustSize - wind.direction * (time * wind.gustSpeed / wind.gustSize);
+    float gust = windNoise(drift) * 0.7 + windNoise(drift * 2.3 + 17.0) * 0.3;
+    return wind.strength * (1.0 + wind.gusts * (gust * 2.0 - 0.6));
+}
+
+// How fast the air moves over `place` at `time`, in metres a second, level
+// and downwind: WIND_SPEED at strength 1, a breeze.
+float3 windVelocity(Wind wind, float2 place, float time)
+{
+    if (wind.strength <= 0.0)
+    {
+        return 0.0;
+    }
+    return float3(wind.direction.x, 0.0, wind.direction.y) * (max(windPush(wind, place, time), 0.0) * WIND_SPEED);
 }
 
 // A plant's lean as its tip moves it: on an arc, lowering as it leans, so
@@ -167,9 +193,7 @@ float3 windOffset(Frame* frame, Material material, float3 origin, float height, 
     // The gust over the plant: noise drifting downwind, so it sweeps across the level. Where the plant stands is
     // read from the level's middle, so gusts and sways stay where they are as the world's middle moves.
     float2 place = levelPosition(frame, origin, 4096.0).xz;
-    float2 drift = place / wind.gustSize - wind.direction * (time * wind.gustSpeed / wind.gustSize);
-    float gust = windNoise(drift) * 0.7 + windNoise(drift * 2.3 + 17.0) * 0.3;
-    float push = wind.strength * (1.0 + wind.gusts * (gust * 2.0 - 0.6));
+    float push = windPush(wind, place, time);
     // Each plant sways at its own phase, so they never move in step.
     float phase = windHash(floor(place * 4.0)) * 6.2831;
     float sway = sin(time * 1.6 + phase) * 0.6 + sin(time * 2.7 + phase * 1.7) * 0.4;

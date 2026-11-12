@@ -3,7 +3,7 @@
 
 /// Shader files that are only included by others, never compiled alone.
 pub const SHADER_MODULES: &[&str] =
-    &["atmosphere", "block_quads", "common", "culling", "custom", "ddgi_sample", "glow", "impostor", "lava", "lights", "occlusion", "particle_shared", "seasons", "shading", "terrain_ground", "trace_software", "ui_custom", "ui_effects", "volume", "wind"];
+    &["atmosphere", "block_quads", "common", "culling", "custom", "ddgi_sample", "glow", "impostor", "lava", "lights", "occlusion", "particle_motion", "particle_shared", "seasons", "shading", "terrain_ground", "trace_software", "ui_custom", "ui_effects", "volume", "wind"];
 
 /// Shader files that draw materials, and so call a material's custom
 /// shader, and the UI's, which calls a project's UI shaders: compiled again

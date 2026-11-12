@@ -2,7 +2,7 @@
 order: 5
 ---
 
-Plants move in the wind: trees lean and sway, their leaves flutter, and gusts sweep across a field of grass in waves. One **Wind Zone** blows over the whole level, and every plant whose material moves in the wind follows it, in its shading, its shadow and its motion blur alike. Plants also bend out of the way of a player or a vehicle passing through them, and spring back after.
+Plants move in the wind: trees lean and sway, their leaves flutter, and gusts sweep across a field of grass in waves. One **Wind Zone** blows over the whole level, and every plant whose material moves in the wind follows it, in its shading, its shadow and its motion blur alike. Plants also bend out of the way of a player or a vehicle passing through them, and spring back after. The same wind carries smoke, dust and sparks: a Particle System picks up as much of it as its **Wind** says (see [[Particle Systems]]).
 
 Under water there is no wind: plants rooted under the sea sway back and forth with its swell instead, slowly, and less the deeper they stand, and under a Pool's still water they drift a little (see [[The Ocean]]).
 

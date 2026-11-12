@@ -1,14 +1,17 @@
 //! The Project Settings page, in the rail's drawer: settings kept in the
 //! project's `voxear.toml` rather than the editor's, a tab down the left for
 //! each section. Modules comes first: a row for each of the engine's
-//! optional systems, switched on or off with its toggle. World holds the
+//! optional systems, switched on or off with its toggle. Quality holds what
+//! the renderer may spend: the most simulated particles. World holds the
 //! floating origin: whether the world's middle moves with the camera, how
 //! far out it goes first, and how far it moves.
 
 use voxear_engine::{
     modules::{Module, Modules},
+    QualitySettings,
     origin::{OriginMode, OriginSettings},
 };
+use voxear_render::MAX_PARTICLE_BUDGET;
 use voxear_ui::{NodeId, Style, Ui};
 
 struct ModuleRow {
@@ -28,12 +31,20 @@ pub struct ProjectSettingsPanel {
     tabs: Vec<(NodeId, NodeId)>,
     rows: Vec<ModuleRow>,
     origin: OriginRows,
+    /// The most simulated particles, on the Quality tab.
+    particles: NodeId,
 }
 
 impl ProjectSettingsPanel {
     /// Builds the tabs into `tab_bar` and their rows into `view`, showing
-    /// `modules` and the floating origin's `origin`.
-    pub fn new(ui: &mut Ui, tab_bar: NodeId, view: NodeId, modules: &Modules, origin: &OriginSettings) -> Self {
+    /// `modules`, the floating origin's `origin` and the project's `quality`.
+    pub fn new(
+        ui: &mut Ui,
+        (tab_bar, view): (NodeId, NodeId),
+        modules: &Modules,
+        origin: &OriginSettings,
+        quality: &QualitySettings,
+    ) -> Self {
         let (modules_tab, body) = section(ui, tab_bar, view, "Modules");
         ui.set_checked(modules_tab, true);
         let heading = ui.add_label(body, "Modules");
@@ -67,10 +78,18 @@ impl ProjectSettingsPanel {
         let row = setting(ui, body, "Mode");
         let mode = ui.dropdown(row, &labels, selected);
         ui.add_class(mode, "value-choice");
-        let distance = number(ui, body, "Distance", origin.distance);
-        let step = number(ui, body, "Step", origin.step as f32);
+        let distance = number(ui, body, "Distance", origin.distance, "m");
+        let step = number(ui, body, "Step", origin.step as f32, "m");
         let origin = OriginRows { mode, distance, step };
-        Self { tabs: vec![(modules_tab, modules_body), (world_tab, body)], rows, origin }
+        let world_body = body;
+
+        let (quality_tab, body) = section(ui, tab_bar, view, "Quality");
+        ui.set_visible(body, false);
+        let heading = ui.add_label(body, "Particles");
+        ui.add_class(heading, "settings-group");
+        let particles = number(ui, body, "Budget", quality.particles as f32, "");
+        let tabs = vec![(modules_tab, modules_body), (quality_tab, body), (world_tab, world_body)];
+        Self { tabs, rows, origin, particles }
     }
 
     /// Shows the tab clicked this frame, its body in place of the others'.
@@ -103,6 +122,27 @@ impl ProjectSettingsPanel {
             return None;
         };
         (changed != *now).then_some(changed)
+    }
+
+    /// The quality settings as changed on the page this frame, from `now`:
+    /// a whole number of particles, no more than the renderer can keep.
+    pub fn quality_changed(&self, ui: &Ui, now: &QualitySettings) -> Option<QualitySettings> {
+        if !ui.changed(self.particles) {
+            return None;
+        }
+        let typed = ui.text(self.particles).trim().replace([',', ' ', '_'], "").parse::<f64>().ok()?;
+        let most = f64::from(MAX_PARTICLE_BUDGET);
+        let particles = (typed.is_finite() && typed >= 0.0).then(|| typed.round().min(most) as u32)?;
+        let changed = QualitySettings { particles };
+        (changed != *now).then_some(changed)
+    }
+
+    /// Shows the project's quality settings, but in a field being typed in.
+    pub fn show_quality(&self, ui: &mut Ui, quality: &QualitySettings) {
+        let text = format_metres(quality.particles as f32);
+        if ui.focused() != Some(self.particles) && ui.text(self.particles) != text {
+            ui.set_text(self.particles, &text);
+        }
     }
 
     /// Shows the project's modules, as changes are made or refused.
@@ -148,16 +188,18 @@ fn setting(ui: &mut Ui, body: NodeId, label: &str) -> NodeId {
     row
 }
 
-/// A row with a number of metres to type.
-fn number(ui: &mut Ui, body: NodeId, label: &str, value: f32) -> NodeId {
+/// A row with a number to type, and what it is a number of after it, if anything.
+fn number(ui: &mut Ui, body: NodeId, label: &str, value: f32, unit: &str) -> NodeId {
     let row = setting(ui, body, label);
     let holder = ui.panel(row, Style::row());
     ui.add_class(holder, "prop-value");
     let field = ui.text_field(holder, &format_metres(value));
     ui.add_class(field, "value-input");
     ui.add_class(field, "number-input");
-    let unit = ui.add_label(holder, "m");
-    ui.add_class(unit, "setting-unit");
+    if !unit.is_empty() {
+        let unit = ui.add_label(holder, unit);
+        ui.add_class(unit, "setting-unit");
+    }
     field
 }
 

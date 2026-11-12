@@ -1,7 +1,7 @@
-//! Project Settings: switching the project's modules on and off, and its
-//! floating origin. Each choice is written into `voxear.toml` at once; a
-//! module is put into effect at once, the floating origin the next time the
-//! game plays.
+//! Project Settings: switching the project's modules on and off, its
+//! quality settings and its floating origin. Each choice is written into
+//! `voxear.toml` at once; a module and a quality setting are put into effect
+//! at once, the floating origin the next time the game plays.
 
 use voxear_engine::modules::Module;
 
@@ -17,6 +17,10 @@ impl Editor {
         if let Some(origin) = origin {
             self.set_floating_origin(&origin);
         }
+        let quality = self.project_settings.quality_changed(&self.ui, &self.game.project.file.quality);
+        if let Some(quality) = quality {
+            self.set_quality(&quality);
+        }
         if let Some(module) = self.inspector.module_wanted(&self.ui) {
             self.set_module(module, true);
         }
@@ -29,6 +33,17 @@ impl Editor {
             tracing::error!("{error:#}");
         }
         self.project_settings.show_origin(&mut self.ui, &self.game.project.file.floating_origin);
+    }
+
+    /// Sets what the project lets the renderer spend (see
+    /// `voxear_engine::QualitySettings`), from now on.
+    pub fn set_quality(&mut self, quality: &voxear_engine::QualitySettings) {
+        if let Err(error) = self.game.project.set_quality(quality) {
+            tracing::error!("{error:#}");
+        }
+        let quality = self.game.project.file.quality.clone();
+        quality.put(&mut self.game.engine.world);
+        self.project_settings.show_quality(&mut self.ui, &quality);
     }
 
     /// Switches a module on or off for the project.

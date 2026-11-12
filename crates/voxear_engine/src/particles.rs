@@ -4,7 +4,7 @@
 //! system through one call, by number, as `lights` does a Light's.
 
 use voxear_ecs::{Entity, World};
-use voxear_render::{EmitShape, ParticleBlend, ParticlePlayback, ParticleSystem};
+use voxear_render::{EmitShape, ParticleBlend, ParticlePlayback, ParticleSpace, ParticleSystem};
 
 use crate::content::{linear, srgb};
 
@@ -37,6 +37,11 @@ const BLEND: i32 = 24;
 const LIT: i32 = 25;
 const SOFTNESS: i32 = 26;
 const SEED: i32 = 27;
+const SPACE: i32 = 28;
+const WIND: i32 = 29;
+const TURBULENCE: i32 = 30;
+const TURBULENCE_SIZE: i32 = 31;
+const SIMULATED: i32 = 32;
 
 /// The engine's time, as Particle Systems are played and stopped by.
 #[derive(Clone, Copy, Debug, Default)]
@@ -130,6 +135,11 @@ fn read(system: &ParticleSystem, what: i32) -> Option<[f32; 4]> {
         LIT => flag(system.lit),
         SOFTNESS => number(system.softness),
         SEED => number(system.seed as f32),
+        SPACE => number(ParticleSpace::ALL.iter().position(|s| *s == system.space).unwrap_or_default() as f32),
+        WIND => number(system.wind),
+        TURBULENCE => number(system.turbulence),
+        TURBULENCE_SIZE => number(system.turbulence_size),
+        SIMULATED => flag(system.is_simulated()),
         _ => return None,
     })
 }
@@ -164,6 +174,10 @@ fn write(system: &mut ParticleSystem, what: i32, [x, y, z, w]: [f32; 4]) {
         LIT => system.lit = x != 0.0,
         SOFTNESS => system.softness = x.max(0.0),
         SEED => system.seed = whole(),
+        SPACE => system.space = ParticleSpace::ALL[pick(ParticleSpace::ALL.len())],
+        WIND => system.wind = x.max(0.0),
+        TURBULENCE => system.turbulence = x.max(0.0),
+        TURBULENCE_SIZE => system.turbulence_size = x.max(0.01),
         _ => {}
     }
 }
@@ -216,5 +230,13 @@ mod tests {
         values(&mut world, obj, PLAY, Some([0.0; 4]));
         assert_eq!(*world.get::<ParticlePlayback>(obj).unwrap(), ParticlePlayback { started: 4.0, stopped: None });
         assert_eq!(values(&mut world, obj, PLAYING, None), Some([1.0, 0.0, 0.0, 0.0]));
+        // Left in the world and blown about, it is simulated; as it was, it is not.
+        assert_eq!(values(&mut world, obj, SIMULATED, None), Some([0.0; 4]));
+        values(&mut world, obj, SPACE, Some([1.0, 0.0, 0.0, 0.0]));
+        values(&mut world, obj, WIND, Some([0.8, 0.0, 0.0, 0.0]));
+        values(&mut world, obj, TURBULENCE_SIZE, Some([0.0; 4]));
+        let system = *world.get::<ParticleSystem>(obj).unwrap();
+        assert_eq!((system.space, system.wind, system.turbulence_size), (ParticleSpace::World, 0.8, 0.01));
+        assert_eq!(values(&mut world, obj, SIMULATED, None), Some([1.0, 0.0, 0.0, 0.0]));
     }
 }

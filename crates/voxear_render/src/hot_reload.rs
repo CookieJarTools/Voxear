@@ -31,7 +31,7 @@ pub struct ShaderSet {
 impl ShaderSet {
     /// The shaders compiled into the binary at build time.
     pub fn embedded() -> Self {
-        let embedded: [(&str, &'static [u8]); 30] = [
+        let embedded: [(&str, &'static [u8]); 31] = [
             ("cull", include_bytes!(concat!(env!("OUT_DIR"), "/cull.spv"))),
             ("pyramid", include_bytes!(concat!(env!("OUT_DIR"), "/pyramid.spv"))),
             ("shadow", include_bytes!(concat!(env!("OUT_DIR"), "/shadow.spv"))),
@@ -56,6 +56,7 @@ impl ShaderSet {
             ("erosion", include_bytes!(concat!(env!("OUT_DIR"), "/erosion.spv"))),
             ("water", include_bytes!(concat!(env!("OUT_DIR"), "/water.spv"))),
             ("particles", include_bytes!(concat!(env!("OUT_DIR"), "/particles.spv"))),
+            ("particle_sim", include_bytes!(concat!(env!("OUT_DIR"), "/particle_sim.spv"))),
             ("smoke", include_bytes!(concat!(env!("OUT_DIR"), "/smoke.spv"))),
             ("dice", include_bytes!(concat!(env!("OUT_DIR"), "/dice.spv"))),
             ("skinning", include_bytes!(concat!(env!("OUT_DIR"), "/skinning.spv"))),

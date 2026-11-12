@@ -48,8 +48,9 @@ Done so far:
   lists, with 3×3 hardware PCF.
 - **Debug views:** LOD colours, shadow cascades, light complexity and normals (`--debug-view`, or F2 to F5 in the
   window).
-- **Samples:** `samples/Stress` (1,600 spheres and a wall) for culling and LOD, and `samples/Lights` (256 point lights
-  at night) for clustered lighting.
+- **Samples:** `samples/Stress` (1,600 spheres and a wall) for culling and LOD, `samples/Lights` (256 point lights
+  at night) for clustered lighting, and `samples/Effects` (Particle Systems in a wind, a million sparks among
+  them).
 - **Clustered lighting:** a 16×9×24 froxel grid whose light lists are built on the GPU each frame. 256 lights shade a
   1280×720 frame in about 0.3 ms on an RTX 3070.
 - **Dithered LOD cross-fades:** when an instance changes LOD, both LODs draw for a quarter of a second with
@@ -1376,7 +1377,9 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   depth and tests itself against it), and `SurfaceOutput.reflectance`, `transmission` and `data`; the glass pass
   runs a custom shader's surface and light functions; bounced light is read where a moved vertex rests; and a
   material that moves its vertices always draws its full mesh, so its shadow matches it.
-- Shader Graph with previews and sub-graphs, plus material variants, writing custom shaders.
+- Shader Graph with previews and sub-graphs, plus material variants, writing custom shaders: on the graph compiler
+  particles share, whose shaders must cost what hand-written ones do (see
+  [ARCHITECTURE.md](ARCHITECTURE.md#materials-and-shader-graph)).
 - **Particle Systems, the stateless path ✅.** A `ParticleSystem` component (`voxear_render::particles`): a round
   with a stream and a burst, looping or once; each particle's lifetime, speed and size ranges, its end size, colours
   and opacity as it starts and dies, intensity, gravity, drag and spin; Point, Sphere, Cone or Box shapes; Alpha or
@@ -1409,12 +1412,30 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   from inside; a fresh blast pushes it into a thicker shell. At the end of its life it disperses: breaking up from its thin
   swirls into wisps, rising and drifting apart in broad slow swirls, thinning to nothing. Still to come: drifting in the wind, filling again as
   walls change.
-- Particles, still to come:
-  - the IR compiler, which promotes a system off the stateless path when it needs state
-  - the preset gallery
-  - stack mode, then graph mode
-  - depth collision, ribbons and flipbook baking
-  - the particle debugger
+- **Simulated particles ✅.** A Particle System's **Space** (Local or World), **Wind** and **Turbulence** (with its
+  size): any of them makes it a simulated system, its particles kept on the GPU and stepped each frame in one
+  compute pass for every system and view (`voxear_render::particle_sim`, `shaders/particle_sim.slang`), and the
+  Inspector's Simulated row says which. All share one pool, 36 bytes a particle, a run of it each, filled in a
+  ring, so nothing is counted or sorted and they draw in the order sent out; only systems with particles out are
+  stepped. A new particle starts where its age has it, so a system first seen running starts full. The wind is
+  the Wind Zone's, gusts and all, as plants lean by it; turbulence is a curl of noise. **Project Settings ▸
+  Quality ▸ Budget** (`[quality] particles`) is the most particles all may have room for, a million by default;
+  the stats overlay, the Profiler and `vox render` count them. On an RTX 3070 a million are stepped in 0.19 ms
+  and drawn in 0.8 ms. `samples/Effects` has a campfire, sparks, dust and a million sparks in a wind. C#
+  `Space`, `Wind`, `Turbulence`, `TurbulenceSize`, `IsSimulated`. Tests: emission and the pool's room without a
+  GPU; on one, a simulated system against one worked out from age, wind either way, turbulence, particles left
+  behind, the budget, and a million timed.
+- Particles, still to come, in this order (the design is in [ARCHITECTURE.md](ARCHITECTURE.md#particles)):
+  - collision (last frame's depth, the ground and colliders, the scene's rays), Force Fields, blasts, and
+    particles pushed by characters
+  - the effect asset (`.particles`) of several emitters as stacks of modules, sub-emitters and events, the
+    preset gallery, and its panel with play, pause and scrub
+  - textures and flipbooks blended by motion vectors, smoke lit from six sides, stretched quads, meshes, trails,
+    sorting, half-size drawing, lights from effects, particles in the fog volume
+  - `Particles.Play(effect, position)`, bursts at a place, picked parameters, hit events, curves from C#
+  - the graph compiler shared with Shader Graph, graph mode, custom Slang modules, and each node's cost shown
+  - sleeping off screen, level of detail by distance, and the particle debugger
+  - decals on hit, heat distortion, shadows cast by particles, blending in any order
 
 ## M8 — Terrain (in progress)
 

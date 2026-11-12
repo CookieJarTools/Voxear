@@ -150,6 +150,7 @@ impl Game {
         game.load_strings();
         game.engine.world.insert_resource(game.project.layers());
         crate::modules::put(&mut game.engine.world, game.project.modules());
+        game.project.file.quality.put(&mut game.engine.world);
         game
     }
 

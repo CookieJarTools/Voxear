@@ -286,6 +286,38 @@ impl BlockEdits {
     }
 
     /// Makes these changes to `blocks`; the chunks changed, by where they are.
+    /// Each block the changes put that is not air, where it is in the
+    /// world's blocks: what was built.
+    pub fn placed(&self) -> Vec<([i32; 3], BlockId)> {
+        let mut placed = Vec::new();
+        for (key, change) in &self.chunks {
+            let base = key.map(|v| v * CHUNK as i32);
+            let at = |index: usize| {
+                let [x, y, z] = place(index);
+                [base[0] + x as i32, base[1] + y as i32, base[2] + z as i32]
+            };
+            match change {
+                ChunkChange::Blocks(changed) => {
+                    placed.extend(changed.iter().filter(|(_, b)| *b != AIR).map(|&(i, b)| (at(usize::from(i)), b)));
+                }
+                ChunkChange::Cells(changed) => {
+                    placed
+                        .extend(changed.iter().filter(|(_, b, _)| *b != AIR).map(|&(i, b, _)| (at(usize::from(i)), b)));
+                }
+                ChunkChange::Whole(chunk) => {
+                    for index in 0..(CHUNK * CHUNK * CHUNK) as usize {
+                        let [x, y, z] = place(index);
+                        let block = chunk.get(x, y, z);
+                        if block != AIR {
+                            placed.push((at(index), block));
+                        }
+                    }
+                }
+            }
+        }
+        placed
+    }
+
     pub fn apply(&self, blocks: &mut BlockMap) -> Vec<[i32; 3]> {
         for (key, change) in &self.chunks {
             match change {

@@ -92,9 +92,15 @@ Generated ground can go on **without end**: tick **Endless** under its generator
 | Setting | What it does |
 | --- | --- |
 | View distance | How far round the camera its own blocks are made, in metres: built on, stood on and drawn |
-| Far distance | How far coarser blocks are drawn beyond, in metres |
+| Far distance | How far coarser blocks are drawn beyond, in metres: up to 16 km with metre blocks (see [[Block Worlds#The far view]]) |
 
 Beyond its view distance, it is drawn in rings of coarser blocks, each ring's blocks twice as large as the one inside it, so mountains stand on the horizon at a fraction of the cost. A coarse ring shows the ground until the finer one inside it is drawn, and never where it is. Only its own blocks near the camera can be built on and stood on.
+
+### The far view
+
+From the third ring out, the world is the **far view**: up to five more rings, the last with blocks 128 times as large as the world's own, so with metre blocks and a View distance of 128 m the ground reaches 16 km. The far view is made from the generator's heights, climate and sea alone, as columns of blocks one over another, which is quick to make and small to keep. It shows the ground's surface, its layers and its sea, but not overhangs or caves: they are too small to see from so far off.
+
+Each piece of the far view is kept in the project's `.voxear/FarView` folder once made, so ground seen once comes back at once, and is made again when the world or its generator changes. What you build shows in every ring once the camera has gone from it, wherever it fills at least an eighth of a ring's block: a castle stays on the horizon, and a fence post does not grow into a tower. Ground taken out shows only when the camera is near it again.
 
 Its own blocks are made a column of chunks further out than they are drawn, and each column's faces are made on those threads too, once the columns round it have their blocks. So every column is made once, its edges meeting the ground beside it, and the game never waits for one.
 
@@ -123,9 +129,9 @@ How much making worlds without end may spend is the project's, in **Project Sett
 | Columns at once | 2 | 8 | 24 | 48 |
 | Upload a frame | 4 MB | 8 MB | 16 MB | 32 MB |
 | View distance | 64 m | 128 m | 192 m | 256 m |
-| Far distance | 512 m | 1 km | 2 km | 4 km |
+| Far distance | 1 km | 4 km | 8 km | 16 km |
 
-A project starts on High. A world is drawn as far as its own View distance and Far distance say, and no further than these: on High, a world of 128 m and 1 km is drawn just as it says, and on Low only to 64 m and 512 m. A machine never uses more threads than one fewer than its cores, whatever the setting says.
+A project starts on High. A world is drawn as far as its own View distance and Far distance say, and no further than these: on High, a world of 128 m and 1 km is drawn just as it says, and on Low only to 64 m and 1 km. A machine never uses more threads than one fewer than its cores, whatever the setting says.
 
 A change takes hold at once, even while a world is being made round the camera, and nothing already made is made again. From a script:
 

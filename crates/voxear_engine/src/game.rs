@@ -643,7 +643,7 @@ impl Game {
             let _scope = ServicesScope::enter(&mut services);
             self.engine.tick(delta);
         }
-        // A block a script put down where its world did not list it is drawn as it says from this frame.
+        // A block a script put down in a world that had not held it is drawn as it says from this frame.
         crate::blocks::refresh(&mut self.engine.world, &mut self.content, renderer.as_deref_mut());
         // Screen UIs show while the game plays: those made this frame, without their Objs gone.
         if !self.engine.is_edit_mode() {
@@ -896,6 +896,10 @@ impl ScriptServices for GameServices<'_> {
         self.content.blocks_version()
     }
 
+    fn block_guids(&mut self) -> Vec<String> {
+        crate::blocks::every_block(self.content)
+    }
+
     fn caves_json(&mut self, world: &World, obj: u64, what: i32, at: [f32; 4]) -> Result<String> {
         crate::caves::caves_json(world, self.content, obj, what, at)
     }
@@ -909,7 +913,7 @@ impl ScriptServices for GameServices<'_> {
     }
 
     fn blocks_grown(&mut self, world: &World, entity: Entity) -> Vec<(u16, String)> {
-        crate::blocks::blocks_grown(world, entity)
+        crate::blocks::blocks_numbered_since(world, entity)
     }
 
     fn block_listed(&mut self, world: &World, entity: Entity, block: u16) -> bool {

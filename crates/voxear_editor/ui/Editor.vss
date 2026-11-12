@@ -3156,6 +3156,22 @@ DockSpace .resizable-columns > .split-divider:active > .split-handle {
     white-space: nowrap;
 }
 
+/* The Blocks panel: the project's blocks as tiles under its search and buttons. */
+.blocks-panel {
+    flex-direction: column;
+    font-size: 11px;
+}
+
+.blocks-search {
+    flex-grow: 1;
+    min-width: 120px;
+    max-width: 280px;
+}
+
+.blocks-panel .entities-hint {
+    padding: 8px 10px;
+}
+
 /* The Frame Debugger: the frame's passes, the picked pass's images, and the picked image as it was. */
 .frame-debugger-panel {
     flex-direction: column;

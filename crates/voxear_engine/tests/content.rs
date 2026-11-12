@@ -594,15 +594,15 @@ fn a_data_asset_ships_when_a_field_names_it_and_not_otherwise() {
 }
 
 #[test]
-fn a_block_ships_with_the_world_that_lists_it_or_the_data_asset_that_names_it_with_what_it_names() {
+fn every_block_of_the_project_ships_with_what_it_names_unless_it_is_left_out() {
     let dir = project();
     let write = |path: &str, text: &str| {
         let path = dir.path().join(path);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, text).unwrap();
     };
-    // Grass is listed by the forest's world of blocks and drawn with a material; planks are named only by an item
-    // the wolf holds; nothing names marble.
+    // Grass is held by the forest's world of blocks and drawn with a material; planks are named only by an item
+    // the wolf holds; nothing names marble, which a world may come to hold all the same.
     write("Materials/Turf.material", MATERIAL);
     write("Blocks/Grass.block", "color = [0.3, 0.5, 0.2]\ntop = \"Materials/Turf.material\"\n");
     write("Blocks/Planks.block", "color = [0.6, 0.4, 0.2]\n");
@@ -616,10 +616,17 @@ fn a_block_ships_with_the_world_that_lists_it_or_the_data_asset_that_names_it_wi
     let output = dir.path().join("Built");
     let report = content_build::build(dir.path(), &output, &unmerged(), &[]).unwrap();
     let shipped: Vec<&String> = report.bundles.iter().flat_map(|b| &b.assets).collect();
-    for path in ["Blocks/Field.blockworld", "Blocks/Grass.block", "Materials/Turf.material", "Blocks/Planks.block"] {
+    let blocks = ["Blocks/Grass.block", "Blocks/Planks.block", "Blocks/Marble.block"];
+    for path in ["Blocks/Field.blockworld", "Materials/Turf.material"].into_iter().chain(blocks) {
         assert!(shipped.iter().any(|p| *p == path), "{path} ships: {shipped:?}");
     }
-    assert!(report.excluded.iter().any(|p| p == "Blocks/Marble.block"), "nothing names the marble");
+    // Left out by the project's settings, the marble does not ship; the grass a world holds ships whatever they say.
+    let fewer = dir.path().join("Fewer");
+    let settings = ContentSettings { exclude: vec!["Blocks/*.block".into()], ..unmerged() };
+    let report = content_build::build(dir.path(), &fewer, &settings, &[]).unwrap();
+    let shipped: Vec<&String> = report.bundles.iter().flat_map(|b| &b.assets).collect();
+    assert!(report.excluded.iter().any(|p| p == "Blocks/Marble.block"), "left out: {:?}", report.excluded);
+    assert!(shipped.iter().any(|p| *p == "Blocks/Grass.block") && shipped.iter().any(|p| *p == "Blocks/Planks.block"));
     let catalog = Catalog::read(&output).unwrap();
     let grass = catalog.assets.iter().find(|a| a.path == "Blocks/Grass.block").unwrap();
     assert_eq!(grass.kind, voxear_assets::AssetKind::Block);

@@ -3139,12 +3139,24 @@ a column past those drawn, and each column's faces on the same background thread
 blocks, so none is meshed twice and the frame waits for none. Models of small coloured
 blocks come from `.vox` files (`blocks::vox`), each colour built as a kind of the world's own. A block is an asset
 (`.block`, `blocks::block`): its look and liquid are read natively, by meshing, flow, physics and servers, and its
-rules (hardness, tool kind, tier, drops, sounds) are kept with them for scripts to apply. A world's file lists its
-blocks by reference; a block's number is its place in that list, which never changes, a place taken out left empty.
-The engine keeps the file as written and draws from a copy with each entry given its block's look
-(`voxear_engine::blocks::resolved`), made again for every world listing a block once the block is saved
-(`blocks::refresh`, by a version `Content` counts). A block placed in play that its world does not list is numbered
-in the game alone, and saved changes carry which block each such number is. Items, tool kinds, stations and recipes
+rules (hardness, tool kind, tier, drops, sounds) are kept with them for scripts to apply. Every `.block` of the
+project is a block any world can hold: there is no list to keep by hand, and a build ships them all. A world numbers
+a block the first time it holds one (`voxear_engine::blocks::block_number`; in the editor
+`block_props::number_block`, as a brush first builds with it or its ground is first made of it), and its file keeps
+that numbering, `[[blocks]]`, by reference: its palette, which nothing shows. A block's number is its place there
+and never changes, entries only ever added at the end, a place once taken out left empty; a colour a `.vox` model
+brought is an entry of the world's own. A world's ground is made from its file cut after the last entry the ground
+can name (`BlockFile::for_ground`), so a world that comes to hold more blocks makes no ground again. The engine keeps
+the file as written and draws from a copy with each entry given its block's look
+(`voxear_engine::blocks::resolved`), made again for every world holding a block once the block is saved
+(`blocks::refresh`, by a version `Content` counts). The editor's world keeps its numbering in its asset, written with
+the level. A game's world numbers the same way and writes no file, so its saved changes carry which block each
+number given since its file was read is (`blocks_numbered_since`). A world draws 256 looks at most, a look being a
+colour or material a face is drawn with: a quad names its look in eight bits, and each world has 256 places in the
+renderer's buffer of surfaces. Past that a block gets no number, and the Console is told once (`say_full`). A world
+written while worlds kept all their kinds themselves still reads and draws as it did; in the editor its kinds made
+by hand become blocks beside it as it opens (`block_props::make_kinds_blocks`). The editor's Blocks panel
+(`block_database`) is the project's blocks as a grid of tiles made a row at a time. Items, tool kinds, stations and recipes
 are C# Definitions of Voxear.Core's own, so games derive from them; `Blocks.Mine`, `Place`, `Scoop` and
 `Recipes.Match` apply the rules, and what holds items is a package's. A world drawn smooth (a Voxel
 Terrain) keeps how full each block is near its surface and is meshed by surface nets (`blocks::smooth`), drawn from

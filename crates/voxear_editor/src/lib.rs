@@ -96,6 +96,7 @@ mod project_files;
 mod project_view;
 mod props;
 mod block_inspector;
+pub mod block_database;
 mod block_panel;
 mod block_props;
 mod block_tools;

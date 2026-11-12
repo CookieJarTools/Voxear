@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Numerics;
 using Voxear.Interop;
 
@@ -17,10 +18,11 @@ namespace Voxear;
 ///     if (Input.Pressed(use)) Blocks.Place(hit, Stone);
 /// }
 /// </code>
-/// A block is named by its <see cref="Block"/>, a .block file, which is the same block in every world. It can be
-/// named by its number in one world's list too, from 1, with 0 for air: a number is that world's own, and for a block
-/// the world did not list until a script placed it, this machine's own, so send a Block to another machine, never
-/// its number.
+/// A block is named by its <see cref="Block"/>, a .block file, which is the same block in every world: any world can
+/// hold any block of the project, and <see cref="All"/> is every one of them. A world numbers a block the first time
+/// it holds one, from 1, with 0 for air, and a block can be named by that number too. A number is that world's own,
+/// and for a block the world first held while the game ran, this machine's own, so send a Block to another machine,
+/// never its number.
 /// <para>
 /// With items, the blocks' own rules apply: <see cref="Mine(in BlockHit, Item)"/> breaks a block and gives what it
 /// drops to the tool held, <see cref="Place(in BlockHit, Item)"/> puts down the block an item places, and
@@ -35,7 +37,7 @@ public static unsafe class Blocks
 	public const ushort Air = 0;
 
 	/// <summary>Which blocks a change reaches: all, only air, only blocks, air and liquids, or only liquids at rest.</summary>
-	private const int All = 0;
+	private const int Everything = 0;
 	private const int AirOnly = 1;
 	private const int BlocksOnly = 2;
 	private const int AirAndLiquids = 3;
@@ -52,6 +54,17 @@ public static unsafe class Blocks
 
 	/// <summary>A block was put down by <see cref="Place(in BlockHit, Item)"/>.</summary>
 	public static event Action<BlockPlaced>? Placed;
+
+	/// <summary>
+	/// Every block of the project, in the order of their paths: any world can hold any of them.
+	/// <code>
+	/// foreach (var block in Blocks.All)
+	/// {
+	///     Log.Info($"{block.Name}: {block.Hardness}s");
+	/// }
+	/// </code>
+	/// </summary>
+	public static IReadOnlyList<Block> All => BlockInfos.All();
 
 	/// <summary>The block at <paramref name="position"/> in the first Block World with one there; None for air, and for a kind a world keeps itself.</summary>
 	public static Block DefinitionAt(Vector3 position)
@@ -74,37 +87,37 @@ public static unsafe class Blocks
 	/// <summary>Sets the block at <paramref name="position"/> to <paramref name="block"/>; whether it changed.</summary>
 	public static bool Set(Vector3 position, ushort block)
 	{
-		return Change(0, position, Vector3.Zero, block, All) > 0;
+		return Change(0, position, Vector3.Zero, block, Everything) > 0;
 	}
 
 	/// <summary>Sets the block at <paramref name="position"/> to <paramref name="block"/>; whether it changed.</summary>
 	public static bool Set(Vector3 position, Block block)
 	{
-		return Change(0, position, Vector3.Zero, block, All) > 0;
+		return Change(0, position, Vector3.Zero, block, Everything) > 0;
 	}
 
 	/// <summary>Sets every block in the box between two corners to <paramref name="block"/>; how many changed.</summary>
 	public static int Fill(Vector3 from, Vector3 to, ushort block)
 	{
-		return Change(1, from, to, block, All);
+		return Change(1, from, to, block, Everything);
 	}
 
 	/// <summary>Sets every block in the box between two corners to <paramref name="block"/>; how many changed.</summary>
 	public static int Fill(Vector3 from, Vector3 to, Block block)
 	{
-		return Change(1, from, to, block, All);
+		return Change(1, from, to, block, Everything);
 	}
 
 	/// <summary>Sets every block whose middle is within <paramref name="radius"/> metres of a point; how many changed.</summary>
 	public static int Ball(Vector3 middle, float radius, ushort block)
 	{
-		return Change(2, middle, new Vector3(radius, 0f, 0f), block, All);
+		return Change(2, middle, new Vector3(radius, 0f, 0f), block, Everything);
 	}
 
 	/// <summary>Sets every block whose middle is within <paramref name="radius"/> metres of a point; how many changed.</summary>
 	public static int Ball(Vector3 middle, float radius, Block block)
 	{
-		return Change(2, middle, new Vector3(radius, 0f, 0f), block, All);
+		return Change(2, middle, new Vector3(radius, 0f, 0f), block, Everything);
 	}
 
 	/// <summary>Takes away the blocks within <paramref name="radius"/> metres of a point, as a blast does; how many.</summary>
@@ -272,7 +285,7 @@ public static unsafe class Blocks
 			return Native.IsConnected;
 		}
 
-		// A world may number blocks it did not list, as the changes name them.
+		// A world may number blocks it had not held, as the changes name them.
 		BlockInfos.Renumbered();
 		fixed (byte* from = edits)
 		{
@@ -293,7 +306,7 @@ public static unsafe class Blocks
 			return 0;
 		}
 		var changed = NativeBlocks.Set(shape, a, b, block.Key, only);
-		// A world that did not list the block has numbered it now.
+		// A world that had not held the block has numbered it now.
 		BlockInfos.Renumbered();
 		return changed;
 	}

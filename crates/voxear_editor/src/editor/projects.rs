@@ -172,7 +172,9 @@ impl Editor {
     pub(super) fn dragged_assets(&self, source: &DragSource) -> Vec<String> {
         let extras = self.extra_projects.iter().map(|extra| &extra.project);
         let panels = std::iter::once(&self.project).chain(extras);
-        panels.map(|project| project.dragged_all(source)).find(|dragged| !dragged.is_empty()).unwrap_or_default()
+        let from_files = panels.map(|project| project.dragged_all(source)).find(|dragged| !dragged.is_empty());
+        // Or a block, from the Blocks panel.
+        from_files.unwrap_or_else(|| self.block_database.dragged(source).into_iter().collect())
     }
 
     /// The folder under a point in any Project panel, as a drop from

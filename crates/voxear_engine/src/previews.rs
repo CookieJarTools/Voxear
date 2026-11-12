@@ -1,11 +1,12 @@
-//! Previews of assets: what a preview of a material, prefab, model or mesh
-//! shows, as parts for the renderer to draw (see
+//! Previews of assets: what a preview of a material, prefab, model, mesh
+//! or block shows, as parts for the renderer to draw (see
 //! [`Renderer::add_preview`]), and [`AssetPreviews`], which keeps one per
 //! asset and size, as the editor's panels show them.
 //!
 //! A material shows on a sphere; a prefab as all its Objs' meshes where
-//! they sit in it; a model as all its nodes; and a mesh on its own, in the
-//! default material. A picture shows as itself, a thumbnail of it decoded
+//! they sit in it; a model as all its nodes; a mesh on its own, in the
+//! default material; and a block as one cube of it, its top and bottom
+//! their own where it has them. A picture shows as itself, a thumbnail of it decoded
 //! on a thread of its own, so a list of large pictures does not stall. The easy way to a preview is
 //! [`AssetPreviews::image`]; the advanced one is [`preview_parts`] and
 //! [`Renderer::add_preview`] with [`PreviewOptions`] of one's own: any
@@ -81,8 +82,48 @@ pub fn preview_parts(content: &mut Content, renderer: &mut Renderer, reference: 
                 &template.objs.iter().map(|o| (o.parent, o.transform.matrix(), o.renderer)).collect::<Vec<_>>(),
             ))
         }
+        AssetKind::Block => {
+            let (_, block) = content.block(reference).with_context(|| format!("no block `{reference}`"))?;
+            block_parts(content, renderer, &block)
+        }
         _ => bail!("`{reference}` has nothing to preview"),
     }
+}
+
+/// A block as one cube: drawn with its material, or its colour where it
+/// has none, and over its top and under its bottom a face of theirs where
+/// they are drawn another way.
+fn block_parts(
+    content: &mut Content,
+    renderer: &mut Renderer,
+    block: &voxear_terrain::blocks::block::BlockDef,
+) -> Result<Vec<PreviewPart>> {
+    use voxear_core::math::{Quat, Vec3};
+    let drawn = |content: &mut Content, renderer: &mut Renderer, named: Option<&String>| {
+        let named = named.and_then(|reference| content.parse(reference).ok());
+        let asset = named.and_then(|parsed| content.material(renderer, &MaterialSource::Asset(parsed)).ok());
+        match asset {
+            Some(material) => Ok(material),
+            None => {
+                let colored = crate::MaterialData { color: block.color, ..default_material() };
+                content.material(renderer, &MaterialSource::Inline(colored))
+            }
+        }
+    };
+    let cube = renderer.primitive(Primitive::Cube)?;
+    let sides = drawn(content, renderer, block.material.as_ref())?;
+    let mut parts = vec![PreviewPart { mesh: cube, material: sides, transform: Mat4::IDENTITY }];
+    // A face of its own lies just clear of the cube's, as thin as shows.
+    for (named, up) in [(block.top.as_ref(), 1.0), (block.bottom.as_ref(), -1.0)] {
+        if named.is_none() || named == block.material.as_ref() {
+            continue;
+        }
+        let material = drawn(content, renderer, named)?;
+        let (scale, at) = (Vec3::new(1.0, 0.004, 1.0), Vec3::new(0.0, 0.502 * up, 0.0));
+        let transform = Mat4::from_scale_rotation_translation(scale, Quat::IDENTITY, at);
+        parts.push(PreviewPart { mesh: cube, material, transform });
+    }
+    Ok(parts)
 }
 
 /// A prefab's drawn Objs, each placed by its parents' transforms and its
@@ -196,7 +237,10 @@ impl AssetPreviews {
 
     /// Whether an asset can have a preview, by its kind.
     pub fn shows(kind: AssetKind) -> bool {
-        matches!(kind, AssetKind::Material | AssetKind::Prefab | AssetKind::Model | AssetKind::Texture)
+        matches!(
+            kind,
+            AssetKind::Material | AssetKind::Prefab | AssetKind::Model | AssetKind::Texture | AssetKind::Block
+        )
     }
 
     /// Draws an asset's previews again, as after it changed, or lets them go

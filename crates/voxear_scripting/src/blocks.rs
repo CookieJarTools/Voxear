@@ -5,13 +5,13 @@
 //! changed is kept for a save of the scene or a player joining a game, as
 //! only what differs from the world as its level built it.
 //!
-//! A block is named by its number in a world's list, or by its `.block`
-//! asset, which each world it reaches numbers as it has it: a world that
-//! does not list the block numbers it then, for as long as the game runs
-//! (`ScriptServices::block_number`). Such a number is this machine's own,
-//! so the changes kept say which block each one is, after the changes
-//! themselves, and are matched to the numbers of the game they are put
-//! back in.
+//! A block is named by its `.block` asset, which is the same block in
+//! every world, or by its number in one world. A world numbers a block the
+//! first time it holds one (`ScriptServices::block_number`). In a game,
+//! nothing writes that down in the world's file, so such a number is this
+//! machine's own: the changes kept say which block each one is, after the
+//! changes themselves, and are matched to the numbers of the game they are
+//! put back in.
 
 use voxear_core::math::Vec3;
 use voxear_ecs::{Entity, World};
@@ -116,7 +116,7 @@ pub(crate) unsafe extern "C" fn block_set(
 
 /// As [`block_set`], with the block named by its `.block`, a project path
 /// or GUID: in each world the number that world has it by, one given it
-/// there now where the world does not list it.
+/// there now where the world has not held it.
 pub(crate) unsafe extern "C" fn block_set_named(
     shape: i32,
     a: *const [f32; 3],
@@ -306,13 +306,23 @@ pub(crate) unsafe extern "C" fn block_of(obj: u64, block: i32, buffer: *mut u8, 
     guid.len() as i32
 }
 
+/// Every block of the project, by GUID, a line each, written into `buffer`
+/// when it fits: the text's length.
+pub(crate) unsafe extern "C" fn blocks_all(buffer: *mut u8, capacity: i32) -> i32 {
+    let every = with_services(|services| services.block_guids()).unwrap_or_default().join("\n");
+    if !buffer.is_null() && every.len() <= capacity.max(0) as usize {
+        unsafe { std::ptr::copy_nonoverlapping(every.as_ptr(), buffer, every.len()) };
+    }
+    every.len() as i32
+}
+
 /// Goes up whenever a block is saved (see `ScriptServices::blocks_version`).
 pub(crate) unsafe extern "C" fn blocks_version() -> u64 {
     with_services(|services| services.blocks_version()).unwrap_or(0)
 }
 
 /// What follows the changes in the bytes `capture` gives, where a world
-/// numbered blocks its level does not list: this mark, a version, how many
+/// numbered blocks since its file was read: this mark, a version, how many
 /// worlds, and for each its key and the blocks it numbered, each number
 /// with its block's GUID. Bytes without it, as they were kept before blocks
 /// were assets of their own, read as they did.
@@ -423,7 +433,7 @@ fn capture(world: &World) -> Vec<u8> {
 /// was built, then makes its changes; how many it found. A block the
 /// changes numbered is the number this game has it by, one given it now
 /// where the world has none yet; a number of no block here, as of one taken
-/// out of the world's list since, is air.
+/// out of the world since, is air.
 fn restore(world: &mut World, bytes: &[u8]) -> anyhow::Result<i32> {
     use anyhow::Context;
     let mut found = 0;
@@ -541,7 +551,7 @@ mod tests {
     #[test]
     fn changes_put_back_take_this_games_numbers_for_their_blocks_and_air_for_blocks_gone() {
         use voxear_terrain::blocks::{BlockFaces, BlockMap};
-        // This game's world: planks numbered 5 here, the block once numbered 2 taken out of its list since.
+        // This game's world: planks numbered 5 here, the block once numbered 2 taken out of it since.
         struct Numbers(Entity);
         impl crate::services::ScriptServices for Numbers {
             fn obj_by_key(&self, _world: &World, key: &str) -> Option<Entity> {

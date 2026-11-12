@@ -276,7 +276,7 @@ fn ground_a_map_does_not_know_is_drawn_as_paper_and_news_colours_what_it_does() 
         |x: f32, z: f32| game.maps.column(shown.world, 2, Vec3::new(x, 0.0, z)).unwrap().highest() as f32 * 4.0;
     let ground = at(Vec3::new(40.0, column(40.0, 120.0), 120.0));
     let danger = at(Vec3::new(-200.0, column(-200.0, 250.0), 250.0));
-    let paper = at(Vec3::new(330.0, shown.base as f32 * 4.0, -330.0));
+    let paper = at(Vec3::new(250.0, shown.base as f32 * 4.0, -250.0));
     keep("game-known.png", picture.clone());
     assert!(ground[1] > ground[0] + 20 && ground[1] > ground[2] + 20, "grass where it is known: {ground:?}");
     assert!(danger[0] > danger[1] + 40, "red where it is dangerous: {danger:?}");

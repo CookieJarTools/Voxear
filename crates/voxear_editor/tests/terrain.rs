@@ -2319,3 +2319,28 @@ fn a_voxel_terrain_is_added_drawn_smooth_and_built_on_in_balls_whose_edges_lie_b
     assert!(!blocks(&editor).smooth);
     assert!(blocks(&editor).meshes.values().all(|mesh| mesh.quads.len() * 3 != mesh.indices.len() * 2));
 }
+
+#[test]
+fn plants_and_what_is_dropped_find_the_ground_of_a_block_world() {
+    use voxear_scene::{Transform, WorldTransform};
+    let Ok(mut renderer) = Renderer::new_offscreen(SIZE.0, SIZE.1, &RendererSettings::default()) else {
+        eprintln!("skipping: no usable GPU");
+        return;
+    };
+    let dir = hello_with_a_field();
+    let project = Project::open(dir.path()).unwrap();
+    let mut editor = voxear_editor::Editor::open_without_memory(project, &mut renderer, LogCapture::default()).unwrap();
+    frame(&mut editor, &mut renderer);
+    let field = obj(&editor, "Field");
+    editor.select(Some(field));
+    frame(&mut editor, &mut renderer);
+    add_component(&mut editor, &mut renderer, "Block World");
+    frame(&mut editor, &mut renderer);
+    // Its ground is 8 blocks of a metre deep: straight down onto it, from well over it, is its top.
+    let world = &editor.game.engine.world;
+    let corner = voxear_terrain::corner(world.get::<Transform>(field).unwrap(), world.get::<WorldTransform>(field));
+    let over = (corner.x + 40.5, corner.z + 40.5, corner.y + 200.0);
+    let (at, facing_up) = voxear_editor::scene_tools::ground_below(world, &renderer, over, &[]).expect("its blocks");
+    assert!((at.y - (corner.y + 8.0)).abs() < 1e-3, "on top of its blocks: {at}");
+    assert!(facing_up.y > 0.99, "flat ground faces up: {facing_up}");
+}

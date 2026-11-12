@@ -8,7 +8,9 @@
 //! each of its faces. The bar over both adds a bone or a box, copies what
 //! is picked, makes its mirror across the body, or takes it out.
 //!
-//! The bar's Shape, Paint, Motion and Animate say what the window is for.
+//! The bar's Shape, Sculpt, Paint, Motion and Animate say what the window
+//! is for. Sculpt makes a box of small cubes, to add to, take from and
+//! colour one at a time, for shapes boxes alone do not make.
 //! Animate shows the model's clips on a timeline under the view (see
 //! `model_timeline`): the model stands as the clip shown has it at the
 //! moment shown, and turning the bone picked by the rings round it, or
@@ -29,7 +31,7 @@ use std::{
 
 use voxear_core::math::Vec3;
 use voxear_engine::animation::{MobMotion, MobPoser, MotionInput};
-use voxear_render::{BoxKey, BoxModel, BoxSkin, Face, Renderer, on_step};
+use voxear_render::{BoxHit, BoxKey, BoxModel, BoxSkin, Face, Renderer, on_step};
 use voxear_ui::{ColorPicker, DropPlace, NodeId, PickedColor, Style, TreeItems, Ui};
 
 use crate::{
@@ -71,9 +73,37 @@ pub enum EditKey {
 pub enum Mode {
     #[default]
     Shape,
+    Sculpt,
     Paint,
     Motion,
     Animate,
+}
+
+/// What a stroke of sculpting does to the cubes it passes over.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Carve {
+    /// Puts a cube against the face met.
+    #[default]
+    Add,
+    /// Takes the cube met out.
+    Remove,
+    /// Colours the cube met.
+    Paint,
+    /// Takes the colour of the cube met to sculpt with.
+    Pick,
+}
+
+impl Carve {
+    const ALL: [Carve; 4] = [Carve::Add, Carve::Remove, Carve::Paint, Carve::Pick];
+
+    fn label(self) -> &'static str {
+        match self {
+            Carve::Add => "Add",
+            Carve::Remove => "Remove",
+            Carve::Paint => "Paint",
+            Carve::Pick => "Pick",
+        }
+    }
 }
 
 /// How fast the model is shown moving.
@@ -264,6 +294,12 @@ pub struct ModelPanel {
     shape_bar: NodeId,
     paint_bar: NodeId,
     tools: NodeId,
+    /// Sculpting: what a stroke does, and how far each box's cubes have
+    /// moved along in it since the stroke began, as boxes grow to hold
+    /// what is added.
+    carves: NodeId,
+    carve: Carve,
+    grown: Vec<((usize, usize), [i32; 3])>,
     /// The colour painted with: its swatch, which opens the picker, the
     /// picker in its frame, and the sheet's own colours to take again.
     swatch: NodeId,
@@ -328,6 +364,7 @@ impl ModelPanel {
         ui.add_class(name, "generator-name");
         let modes = ui.segmented(bar);
         ui.add_segment(modes, "Shape", None);
+        ui.add_segment(modes, "Sculpt", None);
         ui.add_segment(modes, "Paint", None);
         ui.add_segment(modes, "Motion", None);
         ui.add_segment(modes, "Animate", None);
@@ -360,6 +397,11 @@ impl ModelPanel {
         for tool in Tool::ALL {
             ui.add_segment(tools, tool.label(), None);
         }
+        let carves = ui.segmented(paint_bar);
+        for carve in Carve::ALL {
+            ui.add_segment(carves, carve.label(), None);
+        }
+        ui.set_visible(carves, false);
         let swatch = ui.panel(paint_bar, Style::default());
         ui.add_class(swatch, "model-swatch");
         ui.add_class(swatch, "model-swatch-own");
@@ -413,6 +455,9 @@ impl ModelPanel {
             shape_bar,
             paint_bar,
             tools,
+            carves,
+            carve: Carve::Add,
+            grown: Vec::new(),
             swatch,
             picker_frame,
             picker,
@@ -663,6 +708,16 @@ impl ModelPanel {
         self.tool = tool;
     }
 
+    /// What a stroke of sculpting does.
+    pub fn carve(&self) -> Carve {
+        self.carve
+    }
+
+    pub fn set_carve(&mut self, ui: &mut Ui, carve: Carve) {
+        ui.set_segment(self.carves, carve as usize);
+        self.carve = carve;
+    }
+
     /// The colour painted with: red, green, blue and how solid.
     pub fn color(&self) -> [u8; 4] {
         self.color
@@ -891,7 +946,11 @@ impl ModelPanel {
                 let model_box = &mut model.bones[at].boxes[index];
                 match edit {
                     BoxPartEdit::Position(from) => model_box.from = from,
-                    BoxPartEdit::Size(size) => model_box.size = size,
+                    BoxPartEdit::Size(size) => (0..3).for_each(|axis| model_box.set_side(axis, size[axis], false)),
+                    BoxPartEdit::Voxels(true) => drop(model.to_voxels(at, index)),
+                    BoxPartEdit::Voxels(false) => drop(model.from_voxels(at, index)),
+                    // A sculpted box has no layer: its cubes are its shape.
+                    BoxPartEdit::Layer(true) if model_box.voxels.is_some() => return,
                     BoxPartEdit::BoxRotation(rotation) => model_box.rotation = rotation,
                     BoxPartEdit::Inflate(inflate) => model_box.inflate = inflate,
                     BoxPartEdit::Layer(false) => model_box.layer = None,
@@ -979,12 +1038,13 @@ impl ModelPanel {
     /// the sheet's colours to take again, Symmetry and Lay Out.
     fn update_paint_bar(&mut self, ui: &mut Ui) {
         let mode = match ui.segment(self.modes) {
-            1 => Mode::Paint,
-            2 => Mode::Motion,
-            3 => Mode::Animate,
+            1 => Mode::Sculpt,
+            2 => Mode::Paint,
+            3 => Mode::Motion,
+            4 => Mode::Animate,
             _ => Mode::Shape,
         };
-        let painting = mode == Mode::Paint;
+        let (painting, sculpting) = (mode == Mode::Paint, mode == Mode::Sculpt);
         if mode != self.mode {
             // Back from being watched moving, or posed by a clip, it stands at rest again.
             if let (Mode::Motion | Mode::Animate, Some(open)) = (self.mode, self.open.as_mut()) {
@@ -992,7 +1052,12 @@ impl ModelPanel {
             }
             (self.poser, self.moved_at) = (None, None);
             (self.playing, self.played_at, self.pose_stale) = (false, None, true);
-            ui.set_visible(self.paint_bar, painting);
+            // Sculpting has the colour and Symmetry that painting has, and its own tools.
+            ui.set_visible(self.paint_bar, painting || sculpting);
+            for only_painting in [self.tools, self.on_layer, self.lay_out] {
+                ui.set_visible(only_painting, painting);
+            }
+            ui.set_visible(self.carves, sculpting);
             ui.set_visible(self.shape_bar, mode == Mode::Shape);
             ui.set_visible(self.motion_bar, mode == Mode::Motion);
             ui.set_visible(self.sheet.frame_node(), painting);
@@ -1005,10 +1070,11 @@ impl ModelPanel {
             }
         }
         self.mode = mode;
-        if !painting {
+        if !painting && !sculpting {
             return;
         }
         self.tool = Tool::ALL[ui.segment(self.tools).min(Tool::ALL.len() - 1)];
+        self.carve = Carve::ALL[ui.segment(self.carves).min(Carve::ALL.len() - 1)];
         for toggle in [self.symmetry, self.on_layer] {
             if ui.clicked(toggle) {
                 let on = !ui.is_checked(toggle);
@@ -1030,8 +1096,12 @@ impl ModelPanel {
             (self.color, self.color_shown) = ([r, g, b, 255], Some([r, g, b, 255]));
             ui.set_inline_style(self.swatch, &format!("background-color: #{r:02x}{g:02x}{b:02x}"));
         }
-        // The sheet's own colours, each a press away.
-        let offered = self.open.as_ref().map(|open| open.model.sheet.colors(SWATCHES)).unwrap_or_default();
+        // The sheet's own colours, each a press away; sculpting, the palette's.
+        let offered = self.open.as_ref().map(|open| match sculpting {
+            true => open.model.palette.iter().take(SWATCHES).copied().collect(),
+            false => open.model.sheet.colors(SWATCHES),
+        });
+        let offered = offered.unwrap_or_default();
         if offered != self.offered {
             for child in ui.children(self.swatches) {
                 ui.remove(child);
@@ -1191,6 +1261,55 @@ impl ModelPanel {
         }
     }
 
+    /// One cube of a stroke of sculpting, met on the model as the stroke
+    /// found it: a cube put against it, or it taken out, coloured, or its
+    /// colour taken, as the tool says. A plain box is made one of cubes
+    /// first, looking as it did.
+    fn sculpt(&mut self, hit: BoxHit) {
+        let Some(open) = self.open.as_mut() else { return };
+        let Some(cell) = hit.cell.map(|cell| cell.map(|at| at as i32)) else { return };
+        if open.held.is_none() {
+            open.held = Some(open.model.clone());
+            self.grown.clear();
+        }
+        let part = (hit.bone, hit.index);
+        let mut model = open.model.clone();
+        if self.carve == Carve::Pick {
+            // The colour as the stroke found it: a cube's, or a plain box's pixel.
+            let found = open.held.as_ref().unwrap_or(&model);
+            let model_box = found.bones.get(hit.bone).and_then(|bone| bone.boxes.get(hit.index));
+            let cube = model_box.and_then(|model_box| Some((model_box.voxels.as_ref()?, model_box.size)));
+            let color = match (cube, hit.pixel) {
+                (Some((cubes, size)), _) => Some(found.voxel_color(cubes.get(size, cell))),
+                (None, Some([x, y])) => Some(found.sheet.get(x, y)).filter(|color| color[3] >= 128),
+                _ => None,
+            };
+            return color.into_iter().for_each(|color| self.set_color(color));
+        }
+        model.to_voxels(hit.bone, hit.index);
+        // Where that cube is now, in a box that has grown since the stroke began.
+        let moved = self.grown.iter().find(|(grown, _)| *grown == part).map_or([0; 3], |(_, by)| *by);
+        let normal = hit.face.normal();
+        let out = if self.carve == Carve::Add { [normal.x as i32, normal.y as i32, normal.z as i32] } else { [0; 3] };
+        let at: [i32; 3] = std::array::from_fn(|axis| cell[axis] + out[axis] + moved[axis]);
+        let Some(model_box) = model.bones.get(hit.bone).and_then(|bone| bone.boxes.get(hit.index)) else { return };
+        let there = model_box.voxels.as_ref().map_or(0, |cubes| cubes.get(model_box.size, at));
+        let color = match self.carve {
+            Carve::Remove => 0,
+            // Only a cube that is there is coloured.
+            Carve::Paint if there == 0 => return,
+            _ => model.color_index(self.color),
+        };
+        let by = model.set_voxel(hit.bone, hit.index, at, color);
+        if by != [0; 3] {
+            let total: [i32; 3] = std::array::from_fn(|axis| moved[axis] + by[axis]);
+            self.grown.retain(|(grown, _)| *grown != part);
+            self.grown.push((part, total));
+        }
+        model.prune_palette();
+        self.change(model, Some(EditKey::Stroke));
+    }
+
     /// One pixel of a stroke: coloured, made a hole, filled from, or its
     /// colour taken, as the tool says.
     fn paint(&mut self, pixel: [u32; 2], within: [u32; 4]) {
@@ -1291,19 +1410,27 @@ impl ModelPanel {
             Mode::Paint => {
                 ViewMode::Paint { mirror: ui.is_checked(self.symmetry), layer: ui.is_checked(self.on_layer) }
             }
+            Mode::Sculpt => ViewMode::Sculpt { mirror: ui.is_checked(self.symmetry) },
             Mode::Motion => ViewMode::Look,
             Mode::Animate => ViewMode::Pose,
         };
-        let mut events = self.view.update(ui, renderer, &open.model, open.picked, mode, scale);
+        // A stroke of sculpting meets the model as it found it: it adds one layer of cubes, and takes one.
+        let met = open.held.as_ref().filter(|_| self.mode == Mode::Sculpt).unwrap_or(&open.model);
+        let mut events = self.view.update(ui, renderer, met, open.picked, mode, scale);
         if self.mode == Mode::Paint {
             events.extend(self.sheet.update(ui, &open.model, open.picked));
         }
         for event in events {
             match event {
                 ViewEvent::Paint { pixel, within } => self.paint(pixel, within),
+                ViewEvent::Sculpt(hit) => self.sculpt(hit),
                 ViewEvent::PaintEnded => {
                     if let Some(open) = self.open.as_mut() {
                         open.history.seal();
+                        // What a stroke of sculpting held the model as.
+                        if self.mode == Mode::Sculpt {
+                            open.held = None;
+                        }
                     }
                 }
                 ViewEvent::Pick(picked) => self.pick(picked),
@@ -1352,10 +1479,11 @@ impl ModelPanel {
                     Face::Front | Face::Back => 2,
                 };
                 let was = model_box.size[axis] as f32;
-                let now = (was + pixels).max(0.0);
-                model_box.size[axis] = now as u32;
+                let low = matches!(face, Face::Left | Face::Bottom | Face::Back);
+                model_box.set_side(axis, (was + pixels).max(0.0) as u32, low);
+                let now = model_box.size[axis] as f32;
                 // A face on the low side takes the corner the box is measured from with it.
-                if matches!(face, Face::Left | Face::Bottom | Face::Back) {
+                if low {
                     model_box.from[axis] -= now - was;
                 }
             }

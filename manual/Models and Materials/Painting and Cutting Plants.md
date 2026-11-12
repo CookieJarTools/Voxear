@@ -8,7 +8,7 @@ A Foliage's plants can be painted onto the ground, given trunks that collide, an
 
 Select an Obj with a **Foliage** and pick **Paint** along the top of the Foliage in the Inspector. A ring on the ground under the pointer shows the brush; hold the left mouse button to paint the Foliage's plant there, and hold **Shift** to take plants away instead. Each stroke is one step to undo.
 
-Each plant painted is dropped onto whatever is below it, a terrain or any mesh but other plants, and stands there. The brush paints until as many plants stand under it as the **Density** says, so painting over the same place again does not crowd it.
+Each plant painted is dropped onto whatever is below it, a terrain, a [[Block Worlds|Block World]]'s blocks or any mesh but other plants, and stands there. Under a Block World's water it stands on the bottom. The brush paints until as many plants stand under it as the **Density** says, so painting over the same place again does not crowd it.
 
 | Setting | What it does |
 | --- | --- |

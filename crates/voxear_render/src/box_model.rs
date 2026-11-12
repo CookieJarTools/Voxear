@@ -56,9 +56,11 @@ mod edit;
 mod layer;
 mod paint;
 mod rig;
+mod voxels;
 
 pub use clips::{BoxClip, BoxKey, BoxTrack, Ease, KEY_STEP, LONGEST_CLIP, on_step};
 pub use edit::BoxHit;
+pub use voxels::{LARGEST_GRID, MOST_COLORS, Voxels};
 
 /// A box model's file extension.
 pub const EXTENSION: &str = "boxmodel";
@@ -167,6 +169,9 @@ pub struct ModelBox {
     pub skin: BoxSkin,
     /// A second set of pixels over its own, standing out from its faces.
     pub layer: Option<BoxLayer>,
+    /// The small cubes it is sculpted from, one to each pixel of its size,
+    /// in place of its six faces.
+    pub voxels: Option<Voxels>,
 }
 
 /// A second set of pixels over a box's own: what is solid of it stands out
@@ -185,7 +190,7 @@ impl ModelBox {
     /// A box of `size` pixels from `from`, unfolded on the sheet at `uv`.
     pub fn new(from: Vec3, size: [u32; 3], uv: [u32; 2]) -> Self {
         let skin = BoxSkin::Unfolded { at: uv, mirror: false };
-        Self { from, size, rotation: Vec3::ZERO, inflate: 0.0, skin, layer: None }
+        Self { from, size, rotation: Vec3::ZERO, inflate: 0.0, skin, layer: None, voxels: None }
     }
 
     /// Where `face`'s pixels are on the sheet, or `None` for a face that is
@@ -398,6 +403,9 @@ pub struct BoxModel {
     pub bones: Vec<BoxBone>,
     /// Its clips: its bones moved by keys.
     pub clips: Vec<BoxClip>,
+    /// The colours its sculpted boxes' cubes have, red, green, blue and
+    /// how solid: a cube keeps its colour's place among them, and one.
+    pub palette: Vec<[u8; 4]>,
 }
 
 impl Default for BoxModel {
@@ -407,6 +415,7 @@ impl Default for BoxModel {
             sheet: Sheet::filled(64, 64, [0; 4]),
             bones: Vec::new(),
             clips: Vec::new(),
+            palette: Vec::new(),
         }
     }
 }
@@ -419,6 +428,8 @@ struct FileModel {
     sheet: [u32; 2],
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pixels: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    palette: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     bones: Vec<FileBone>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -460,6 +471,8 @@ struct FileBox {
     faces: Option<FileFaces>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     layer: Option<FileLayer>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    voxels: Option<String>,
 }
 
 /// A box's layer as the file has it: where its faces are, as a box's own
@@ -525,6 +538,8 @@ impl BoxModel {
             true => Sheet::filled(width, height, [255; 4]),
             false => Sheet::from_text(width, height, &file.pixels)?,
         };
+        ensure!(file.palette.len() <= MOST_COLORS, "a palette of {} colours, more than {MOST_COLORS}", file.palette.len());
+        let palette = file.palette.iter().map(|color| voxels::text_color(color)).collect::<Result<Vec<_>>>()?;
         let mut bones: Vec<BoxBone> = Vec::with_capacity(file.bones.len());
         for bone in file.bones {
             ensure!(!bone.name.is_empty(), "a bone with no name");
@@ -538,7 +553,7 @@ impl BoxModel {
                 ),
                 None => None,
             };
-            let boxes = bone.boxes.into_iter().map(read_box).collect::<Result<_>>();
+            let boxes = bone.boxes.into_iter().map(|read| read_box(read, palette.len())).collect::<Result<_>>();
             bones.push(BoxBone {
                 parent,
                 role: bone.role,
@@ -548,7 +563,7 @@ impl BoxModel {
                 name: bone.name,
             });
         }
-        let mut model = Self { pixels_per_block: file.pixels_per_block, sheet, bones, clips: Vec::new() };
+        let mut model = Self { pixels_per_block: file.pixels_per_block, sheet, bones, clips: Vec::new(), palette };
         model.clips = clips::read(file.clips, &model).context("reading its clips")?;
         Ok(model)
     }
@@ -559,6 +574,7 @@ impl BoxModel {
             pixels_per_block: self.pixels_per_block,
             sheet: [self.sheet.width, self.sheet.height],
             pixels: self.sheet.to_text(),
+            palette: self.palette.iter().map(|color| voxels::color_text(*color)).collect(),
             bones: self
                 .bones
                 .iter()
@@ -646,7 +662,9 @@ impl BoxModel {
     /// every pixel standing out. `None` where no box has a layer that
     /// stands out.
     pub(crate) fn build(&self, bones: &[Mat4]) -> (MeshData, Option<Vec<u32>>) {
-        let sheet = Vec3::new(self.sheet.width as f32, self.sheet.height as f32, 1.0);
+        // The texture is the sheet with the palette's colours under it.
+        let texture = self.texture();
+        let sheet = Vec3::new(texture.width as f32, texture.height as f32, 1.0);
         let mut data = MeshData::default();
         let mut far: Vec<u32> = Vec::new();
         let mut raised = false;
@@ -683,10 +701,16 @@ impl BoxModel {
                     data.indices.extend([first, first + 1, first + 2, first, first + 2, first + 3]);
                 }
                 // The box itself is drawn near and far alike; its layer stands out near, and lies flat far.
+                if let Some(cubes) = &model_box.voxels {
+                    let on = voxels::Onto { place, reach, joint, texture: [sheet.x, sheet.y] };
+                    voxels::build(&mut data, self, model_box, cubes, &on);
+                    far.extend_from_slice(&data.indices[before..]);
+                    continue;
+                }
                 far.extend_from_slice(&data.indices[before..]);
                 if let Some(layer) = model_box.layer {
                     let on = layer::Onto { place, reach, joint, pixel: self.pixel_size() };
-                    raised |= layer::raise(&mut data, &mut far, &self.sheet, model_box, layer, &on);
+                    raised |= layer::raise(&mut data, &mut far, &texture, model_box, layer, &on);
                 }
             }
         }
@@ -726,13 +750,14 @@ impl BoxModel {
             lods.push(crate::lod::Lod::new(&far, tallest * self.pixel_size(), &data.vertices));
         }
         model.meshes.push((data, lods));
+        let texture = self.texture();
         model.textures.push(PreparedTexture {
             name: SHEET.to_string(),
-            width: self.sheet.width,
-            height: self.sheet.height,
+            width: texture.width,
+            height: texture.height,
             srgb: true,
             format: TextureFormat::Rgba8,
-            mips: vec![self.sheet.rgba.clone()],
+            mips: vec![texture.rgba],
             compress: false,
             source: None,
         });
@@ -822,7 +847,15 @@ fn write_skin(skin: BoxSkin) -> (Option<[u32; 2]>, bool, Option<FileFaces>) {
     }
 }
 
-fn read_box(file: FileBox) -> Result<ModelBox> {
+fn read_box(file: FileBox, colors: usize) -> Result<ModelBox> {
+    let cubes = match &file.voxels {
+        Some(text) => {
+            let cubes = Voxels::from_text(file.size, text)?;
+            ensure!(cubes.cells.iter().all(|cell| usize::from(*cell) <= colors), "a cube of a colour the palette has not");
+            Some(cubes)
+        }
+        None => None,
+    };
     let skin = read_skin(file.uv, file.faces, file.mirror).context("a box's own faces")?;
     // An unfolded layer is turned over as its box is.
     let layer = match file.layer {
@@ -837,8 +870,10 @@ fn read_box(file: FileBox) -> Result<ModelBox> {
         size: file.size,
         rotation: file.rotation.into(),
         inflate: file.inflate,
-        skin,
-        layer,
+        // A sculpted box has no faces on the sheet.
+        skin: if cubes.is_some() { BoxSkin::Faces([None; 6]) } else { skin },
+        layer: layer.filter(|_| cubes.is_none()),
+        voxels: cubes,
     })
 }
 
@@ -853,10 +888,11 @@ fn write_box(model_box: &ModelBox) -> FileBox {
         size: model_box.size,
         rotation: model_box.rotation.into(),
         inflate: model_box.inflate,
-        uv,
+        uv: uv.filter(|_| model_box.voxels.is_none()),
         mirror,
-        faces,
+        faces: faces.filter(|_| model_box.voxels.is_none()),
         layer,
+        voxels: model_box.voxels.as_ref().map(Voxels::to_text),
     }
 }
 

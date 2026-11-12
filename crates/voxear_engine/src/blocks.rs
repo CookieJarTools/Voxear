@@ -281,13 +281,14 @@ pub fn with_structures(content: &mut Content, file: &BlockFile) -> BlockFile {
                 let mut rooms = Vec::new();
                 for room in &dungeon.rooms {
                     let Some(piece) = piece(content, &mut file, &room.structure) else { continue };
-                    rooms.push(TownHouseKind {
+                    let kind = TownHouseKind {
                         piece,
                         weight: room.weight,
                         most: room.most,
                         zone: room.zone,
                         biomes: Vec::new(),
-                    });
+                    };
+                    rooms.push((room.role, kind));
                 }
                 let mut block = |named: &Option<String>| {
                     named.as_deref().map_or(0, |named| number_named(content, &mut file, reference, named))
@@ -297,14 +298,19 @@ pub fn with_structures(content: &mut Content, file: &BlockFile) -> BlockFile {
                     entrance,
                     rooms,
                     count: dungeon.count,
-                    spacing: dungeon.spacing,
+                    main_path: dungeon.main_path,
+                    halls: dungeon.halls,
+                    corridor: dungeon.corridor,
+                    loops: dungeon.loops,
                     depth: dungeon.depth,
                     wall,
                     floor,
                     corridor_width: dungeon.corridor_width,
                     corridor_height: dungeon.corridor_height,
-                    loops: dungeon.loops,
                     room_size: dungeon.room_size,
+                    hall_size: dungeon.hall_size,
+                    loot_size: dungeon.loot_size,
+                    boss_size: dungeon.boss_size,
                 })
             }
             (None, None) => {

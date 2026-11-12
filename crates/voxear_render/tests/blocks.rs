@@ -1424,7 +1424,8 @@ fn a_dungeon_cut_open_shows_its_rooms_joined_by_corridors_and_its_stair() {
             file::{BlockKind, Ground},
             generate::BlockGenerate,
             structure::{
-                Dungeon, GroundFit, PlacedStructure, StructureBlocks, TownHouseKind, TownPiece, WorldStructures,
+                Dungeon, GroundFit, PlacedStructure, RoomRole, StructureBlocks, TownHouseKind, TownPiece,
+                WorldStructures,
             },
         },
         generate::{Preset, structures::Placement},
@@ -1433,7 +1434,7 @@ fn a_dungeon_cut_open_shows_its_rooms_joined_by_corridors_and_its_stair() {
     let world = Preset::RollingHills.world();
     let mut file = BlockFile {
         block_size: 1.0,
-        ground: Ground { size: [160, 160], ..Ground::default() },
+        ground: Ground { size: [320, 320], ..Ground::default() },
         generate: Some(BlockGenerate { caves: 0.0, bottom: -60, ..BlockGenerate::default() }),
         ..BlockFile::default()
     };
@@ -1467,21 +1468,30 @@ fn a_dungeon_cut_open_shows_its_rooms_joined_by_corridors_and_its_stair() {
         }
         TownPiece { size: [sx as u32, sy as u32, sz as u32], blocks, ground: GroundFit::Leave, sink: 0 }
     };
+    // A throne room for the boss with gold in its middle; treasuries of gold at the loot rooms; moss rooms on the way.
+    let kind =
+        |piece: TownPiece, most: u32| TownHouseKind { piece, weight: 1.0, most, zone: [0.0, 1.0], biomes: Vec::new() };
     let dungeon = Dungeon {
         entrance: None,
         rooms: vec![
-            TownHouseKind { piece: room([9, 5, 9], gold), weight: 5.0, most: 1, zone: [0.7, 1.0], biomes: Vec::new() },
-            TownHouseKind { piece: room([7, 5, 7], moss), weight: 1.0, most: 0, zone: [0.0, 1.0], biomes: Vec::new() },
+            (RoomRole::Boss, kind(room([15, 7, 15], gold), 1)),
+            (RoomRole::Loot, kind(room([7, 4, 7], gold), 0)),
+            (RoomRole::Any, kind(room([7, 5, 7], moss), 0)),
         ],
-        count: [10, 14],
-        spacing: 16,
+        count: [14, 18],
+        main_path: 0.5,
+        halls: 0.35,
+        corridor: [4, 10],
+        loops: 0.5,
         depth: [26, 30],
         wall: bricks,
         floor: flagstones,
         corridor_width: 3,
         corridor_height: 3,
-        loops: 0.3,
         room_size: [7, 5, 7],
+        hall_size: [13, 7, 13],
+        loot_size: [5, 4, 5],
+        boss_size: [17, 9, 17],
     };
     let placement = Placement {
         spacing: 600.0,
@@ -1497,7 +1507,7 @@ fn a_dungeon_cut_open_shows_its_rooms_joined_by_corridors_and_its_stair() {
         .into_iter()
         .find(|site| world.height_at(site.at[0], site.at[1]) > world.sea_level() + 2.0)
         .expect("a site on land");
-    file.generate.as_mut().unwrap().position = [site.at[0] - 80.0, site.at[1] - 80.0];
+    file.generate.as_mut().unwrap().position = [site.at[0] - 160.0, site.at[1] - 160.0];
     let list = vec![PlacedStructure {
         placement,
         ground: GroundFit::Leave,
@@ -1508,10 +1518,10 @@ fn a_dungeon_cut_open_shows_its_rooms_joined_by_corridors_and_its_stair() {
     file.generate.as_mut().unwrap().built = Some(Arc::new(WorldStructures { list }));
     let (looks, faces) = file.faces();
     let mut map = file.make_ground(Some(&world));
-    // Cut open: everything from four blocks over the dungeon's floor up taken away, its ceilings with it.
+    // Cut open: everything from three blocks over the dungeon's floor up taken away, its ceilings with it.
     let mut floors = std::collections::HashMap::<i32, usize>::new();
-    for z in 0..160 {
-        for x in 0..160 {
+    for z in 0..320 {
+        for x in 0..320 {
             for y in -60..200 {
                 if map.get([x, y, z]) == flagstones {
                     *floors.entry(y).or_default() += 1;
@@ -1521,11 +1531,11 @@ fn a_dungeon_cut_open_shows_its_rooms_joined_by_corridors_and_its_stair() {
     }
     let floor = floors.iter().max_by_key(|(_, count)| **count).map(|(y, _)| *y).expect("a dungeon floor");
     let golds =
-        (0..160 * 160 * 8).filter(|i| map.get([i % 160, floor + 1 + (i / 25600), (i / 160) % 160]) == gold).count();
+        (0..320 * 320 * 8).filter(|i| map.get([i % 320, floor + 1 + (i / 102400), (i / 320) % 320]) == gold).count();
     assert!(golds >= 9, "{golds} blocks of gold: the treasure room");
-    for z in 0..160 {
-        for x in 0..160 {
-            for y in floor + 4..200 {
+    for z in 0..320 {
+        for x in 0..320 {
+            for y in floor + 3..200 {
                 map.set([x, y, z], 0);
             }
         }
@@ -1551,10 +1561,24 @@ fn a_dungeon_cut_open_shows_its_rooms_joined_by_corridors_and_its_stair() {
     let default = renderer.add_material(&MaterialDesc::default()).unwrap();
     let mut scene = World::new();
     let look = BlockLook { material: default, surfaces: Arc::from(surfaces) };
-    scene.spawn((BlockWorld::made(map, &faces, 1.0, false), look, Transform::default()));
-    // Straight down from high over its middle; cameras look along +z.
-    let turn = Quat::from_rotation_x(1.3);
-    scene.spawn((Camera::default(), Transform::new(Vec3::new(96.0, floor as f32 + 95.0, 62.0), turn, Vec3::ONE)));
+    scene.spawn((BlockWorld::made(map.clone(), &faces, 1.0, false), look, Transform::default()));
+    // Straight down over the middle of its floor, high enough to hold all of it; cameras look along +z.
+    let (mut low, mut high) = ([i32::MAX; 2], [i32::MIN; 2]);
+    for z in 0..320 {
+        for x in 0..320 {
+            if map.get([x, floor, z]) == flagstones {
+                (low, high) = ([low[0].min(x), low[1].min(z)], [high[0].max(x), high[1].max(z)]);
+            }
+        }
+    }
+    let middle = [(low[0] + high[0]) as f32 * 0.5, (low[1] + high[1]) as f32 * 0.5];
+    let extent = ((high[0] - low[0]) as f32 * HEIGHT as f32 / WIDTH as f32).max((high[1] - low[1]) as f32) * 0.5 + 8.0;
+    let up = extent / (30.0f32).to_radians().tan();
+    let turn = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+    scene.spawn((
+        Camera::default(),
+        Transform::new(Vec3::new(middle[0], floor as f32 + up, middle[1]), turn, Vec3::ONE),
+    ));
     let towards_sun = Vec3::new(-0.3, 0.9, -0.2).normalize();
     let sun = Quat::from_rotation_arc(Vec3::Z, -towards_sun);
     scene.spawn((Light::directional(Vec3::ONE, 3.0), Transform::new(Vec3::ZERO, sun, Vec3::ONE)));

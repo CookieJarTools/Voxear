@@ -76,19 +76,40 @@ With **Roads** on, a town is joined to the towns of its kind next to it. A road 
 
 ## Dungeons
 
-A dungeon is rooms under the ground joined by corridors, reached by a winding stair down from the surface. Its rooms lie on a grid and grow out one at a time from the stair's foot, so every room can be reached, and a few more corridors make loops. Each room is a kind with the same rules as a town's houses: weight, most, and a zone, here how far from the stair as a share of the way to the furthest room, so a treasure room can come only at the far end. Where no kind may stand, a plain room of the dungeon's walls is built.
+A dungeon is rooms under the ground joined by corridors, reached by a stair winding down from the surface. It is laid out the way well-loved dungeons are:
+
+- **A main path** of rooms leads from the stair's foot to the **boss's room** at its far end. Some rooms along it are **great halls**.
+- **Side branches** leave the main path, one to three rooms long, each ending in a dead end where the **loot** is.
+- **Loops** join rooms that lie near each other but are three or more corridors apart along the paths, so not every way back is the way you came. A loop never reaches the boss's room or a loot room, so those stay dead ends with one way in.
+
+Rooms come in many sizes and are fitted on one at a time beside the room they leave, so every room can be reached. Paths turn now and then rather than running in a line.
+
+### Your own rooms
+
+A dungeon's rooms are kinds you list, each a structure with a model, each with a **role**:
+
+| Role | Where it stands |
+| --- | --- |
+| Any | Any room on the main path or a side branch |
+| Hall | A great hall on the main path |
+| Loot | A dead end at the end of a side branch |
+| Boss | The room at the end of the main path |
+
+Each kind also has the rules a town's houses have: **Weight** against the others of its role, **Most** a dungeon has, and a **Zone**, here how far from the stair as a share of the way to the furthest room. Where no kind of a room's role may stand, a plain room of the dungeon's walls is built, as large as that role's rooms are. So a dungeon with no kinds at all still has halls, loot rooms and a boss's room, and listing a throne room as Boss swaps it in for the plain one.
 
 | Setting | What it does |
 | --- | --- |
 | Entrance | The structure at the surface over the stair: a crypt door, a ruined tower. None for a bare stair |
-| Rooms | The kinds of room it builds, each a structure with a model, with its rules |
+| Rooms | The kinds of room it builds, each with its role and rules |
 | Count | How many rooms, from and to |
-| Spacing | How far apart its rooms' middles are, in blocks. Raised to fit its largest room |
+| Main path | The share of its rooms on the main path to the boss |
+| Halls | The share of the main path that is great halls |
+| Corridor | How long its corridors are, in blocks, from and to |
+| Loops | How many of the joins between near rooms are made, from 0 to 1 |
 | Depth | How far under the ground its floor is, in blocks, from and to |
 | Wall, Floor | The blocks its walls, plain rooms and stair are made of, and its floors |
 | Corridor width, Corridor height | How wide and high its corridors are |
-| Loops | How many more corridors join rooms already joined, from 0 to 1 |
-| Room size | A plain room's size, in blocks along x, up and along z |
+| Room size, Hall size, Loot size, Boss size | The sizes of its plain rooms of each role, in blocks along x, up and along z |
 
 A room's doors are in the middles of its sides, a block over its floor: the corridors open its walls there. The stair winds round a pillar, a block up for every block along.
 

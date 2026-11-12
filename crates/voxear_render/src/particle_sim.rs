@@ -20,6 +20,13 @@
 //! small and doubles as systems need room, up to the budget
 //! ([`ParticleBudget`]); a system there is no room for is left out,
 //! and counted ([`ParticleCounts::left_out`]).
+//!
+//! A system that reports its hits has each strike its particles make
+//! written out by the step, the first [`MAX_HITS`] a frame among them all,
+//! and copied back with the counters; once that frame is done, they are
+//! read here and kept as [`ParticleHit`]s until the engine takes them
+//! ([`take_hits`](ParticleSim::take_hits)), a few frames after they
+//! happened.
 
 use std::{collections::HashMap, sync::Arc};
 
@@ -31,7 +38,7 @@ use voxear_scene::{Destroying, Switch, Switched, Transform, WorldOrigin, WorldTr
 
 use crate::{
     effects::ParticleEffects,
-    gpu::{GpuParticle, GpuParticleSim, GpuParticleSystem, GpuWind},
+    gpu::{GpuParticle, GpuParticleHit, GpuParticleSim, GpuParticleSystem, GpuWind},
     graph::{BufferId, FrameGraph},
     particles::{self, ParticlePlayback, ParticleSpace, ParticleSystem, Placed, PlacedSystems, Step},
 };
@@ -50,6 +57,26 @@ pub const MAX_PARTICLE_BUDGET: u32 = 4_000_000;
 /// one, [`DEFAULT_PARTICLE_BUDGET`]. Never more than [`MAX_PARTICLE_BUDGET`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ParticleBudget(pub u32);
+
+/// The most strikes a frame's step writes out, among every system that
+/// reports them (`PARTICLE_MAX_HITS` in the shaders).
+pub const MAX_HITS: u32 = 512;
+/// How many strikes are kept for the engine at most, the newest, while it
+/// does not take them.
+const HITS_KEPT: usize = 4 * MAX_HITS as usize;
+
+/// A particle striking what the main view sees, as a system that reports
+/// its hits tells of it: the Obj of the system, which of its effect's
+/// emitters, where it struck, in the world, the way the surface faces there,
+/// and how fast it was going into it, in metres a second.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ParticleHit {
+    pub entity: Entity,
+    pub emitter: u32,
+    pub position: Vec3,
+    pub normal: Vec3,
+    pub speed: f32,
+}
 
 /// How many chunks the pool starts with.
 const FIRST_CHUNKS: u32 = 64;
@@ -201,6 +228,12 @@ struct SimBuffers {
     chunks: Buffer,
     frame: Buffer,
     counted: Buffer,
+    /// The strikes copied back, and whose they are: each stepped system's
+    /// Obj and emitter, in the order they were stepped; and whether that
+    /// frame had any system that reports them, not yet read.
+    hits: Buffer,
+    stepped: Vec<(Entity, u32)>,
+    reporting: bool,
     /// How many chunks `chunks` has room for.
     room: u32,
 }
@@ -211,8 +244,12 @@ pub(crate) struct ParticleSim {
     pool: Option<Buffer>,
     pool_chunks: u32,
     /// What the pass counts as it steps, in the GPU's own memory, where its
-    /// adding up is fast: how many particles are alive.
+    /// adding up is fast: how many particles are alive, and how many
+    /// strikes it wrote; and the strikes, there too.
     counters: Option<Buffer>,
+    hits: Option<Buffer>,
+    /// Strikes read back and not yet taken.
+    heard: Vec<ParticleHit>,
     spans: Spans,
     kept: HashMap<(Entity, u32), Kept>,
     buffers: Vec<Option<SimBuffers>>,
@@ -233,6 +270,8 @@ impl ParticleSim {
             pool: None,
             pool_chunks: 0,
             counters: None,
+            hits: None,
+            heard: Vec::new(),
             spans: Spans::default(),
             kept: HashMap::new(),
             buffers: (0..slots).map(|_| None).collect(),
@@ -246,6 +285,11 @@ impl ParticleSim {
 
     pub fn counts(&self) -> ParticleCounts {
         self.counts
+    }
+
+    /// The strikes heard since they were last taken, the oldest first.
+    pub fn take_hits(&mut self) -> Vec<ParticleHit> {
+        std::mem::take(&mut self.heard)
     }
 
     /// The pool's address, for a view's shaders to draw from; 0 with none.
@@ -276,9 +320,23 @@ impl ParticleSim {
         // How long since the last step, by the particles' own time: none while it stands still, or goes back.
         let delta_time = self.last_time.map_or(0.0, |last| (time - last).clamp(0.0, 0.25));
         self.last_time = Some(time);
-        // This slot's last frame has finished, so its count is final.
-        if let Some(buffers) = &self.buffers[slot] {
-            self.counts.alive = bytemuck::cast_slice::<u8, u32>(&buffers.counted.read()[..4])[0];
+        // This slot's last frame has finished, so its counts and strikes are final.
+        if let Some(buffers) = &mut self.buffers[slot] {
+            let counted = buffers.counted.read();
+            let [alive, struck] = [0, 1].map(|at| bytemuck::pod_read_unaligned::<u32>(&counted[at * 4..at * 4 + 4]));
+            self.counts.alive = alive;
+            if std::mem::take(&mut buffers.reporting) {
+                let written = struck.min(MAX_HITS) as usize;
+                let bytes = buffers.hits.read();
+                let hits: &[GpuParticleHit] = bytemuck::cast_slice(&bytes[..written * size_of::<GpuParticleHit>()]);
+                self.heard.extend(hits.iter().filter_map(|hit| {
+                    let &(entity, emitter) = buffers.stepped.get(hit.system as usize)?;
+                    let (position, normal) = (Vec3::from(hit.position), Vec3::from(hit.normal));
+                    Some(ParticleHit { entity, emitter, position, normal, speed: hit.speed })
+                }));
+                let over = self.heard.len().saturating_sub(HITS_KEPT);
+                self.heard.drain(..over);
+            }
         }
         // Systems that already have room keep it; no more is handed out past the budget.
         let budget = world.resource::<ParticleBudget>().map_or(DEFAULT_PARTICLE_BUDGET, |budget| budget.0);
@@ -287,6 +345,7 @@ impl ParticleSim {
         }
         let limit = self.budget / CHUNK;
         let mut systems: Vec<GpuParticleSystem> = Vec::new();
+        let mut keys: Vec<(Entity, u32)> = Vec::new();
         let mut chunks: Vec<[u32; 2]> = Vec::new();
         let mut placed = PlacedSystems::new();
         let mut left_out = 0;
@@ -369,6 +428,7 @@ impl ParticleSim {
                 // Each tick gone by since the last step, a point for its particles' tails to keep.
                 let ticks = kept.trail_tick.replace(stepped.trail_tick).map_or(0, |last| stepped.trail_tick.saturating_sub(last));
                 let index = systems.len() as u32;
+                keys.push(key);
                 systems.push(GpuParticleSystem {
                     flags: stepped.flags | fresh,
                     pool_first: kept.first * CHUNK,
@@ -421,9 +481,11 @@ impl ParticleSim {
             return Ok(());
         }
         self.fit_pool(gpu, frames)?;
+        let reporting = systems.iter().any(|system| system.flags & particles::HITS != 0);
         let buffers = self.fit_buffers(gpu, frames, slot, chunks.len() as u32)?;
         buffers.systems.write(0, &systems);
         buffers.chunks.write(0, &chunks);
+        (buffers.stepped, buffers.reporting) = (keys, reporting);
         let mut header = GpuParticleSim {
             time,
             delta_time,
@@ -447,6 +509,8 @@ impl ParticleSim {
                 | vk::BufferUsageFlags::TRANSFER_SRC
                 | vk::BufferUsageFlags::TRANSFER_DST;
             self.counters = Some(gpu.create_buffer("particle counters", COUNTERS, usage, MemoryLocation::GpuOnly)?);
+            let size = u64::from(MAX_HITS) * size_of::<GpuParticleHit>() as u64;
+            self.hits = Some(gpu.create_buffer("particle hits", size, usage, MemoryLocation::GpuOnly)?);
         }
         if self.spans.end <= self.pool_chunks {
             return Ok(());
@@ -471,10 +535,10 @@ impl ParticleSim {
     }
 
     /// Frame slot `slot`'s buffers, with room for `chunks` chunks.
-    fn fit_buffers(&mut self, gpu: &Gpu, frames: &mut Frames, slot: usize, chunks: u32) -> Result<&SimBuffers> {
+    fn fit_buffers(&mut self, gpu: &Gpu, frames: &mut Frames, slot: usize, chunks: u32) -> Result<&mut SimBuffers> {
         if self.buffers[slot].as_ref().is_some_and(|buffers| buffers.room < chunks) {
             let old = self.buffers[slot].take().expect("checked above");
-            for buffer in [old.systems, old.chunks, old.frame, old.counted] {
+            for buffer in [old.systems, old.chunks, old.frame, old.counted, old.hits] {
                 frames.retire(Retired::Buffer(buffer));
             }
         }
@@ -500,10 +564,18 @@ impl ParticleSim {
                     storage | vk::BufferUsageFlags::TRANSFER_DST,
                     MemoryLocation::GpuToCpu,
                 )?,
+                hits: gpu.create_buffer(
+                    &named("hits"),
+                    u64::from(MAX_HITS) * size_of::<GpuParticleHit>() as u64,
+                    storage | vk::BufferUsageFlags::TRANSFER_DST,
+                    MemoryLocation::GpuToCpu,
+                )?,
+                stepped: Vec::new(),
+                reporting: false,
                 room,
             });
         }
-        Ok(self.buffers[slot].as_ref().expect("made above"))
+        Ok(self.buffers[slot].as_mut().expect("made above"))
     }
 
     /// The pool as this frame's graph knows it, for the pass that steps it
@@ -515,7 +587,9 @@ impl ParticleSim {
     /// This frame's step for the main view to record among its passes, once
     /// its depth is drawn; none with nothing to step.
     pub fn step(&self, fg: &mut FrameGraph<'_>, slot: usize) -> Option<Step> {
-        let (Some(buffers), Some(counters), true) = (&self.buffers[slot], &self.counters, self.stepped > 0) else {
+        let (Some(buffers), Some(counters), Some(hits), true) =
+            (&self.buffers[slot], &self.counters, &self.hits, self.stepped > 0)
+        else {
             return None;
         };
         Some(Step {
@@ -523,6 +597,8 @@ impl ParticleSim {
             counters: counters.handle,
             counted: buffers.counted.handle,
             counted_id: fg.import_buffer(&buffers.counted),
+            hits: buffers.reporting.then(|| (hits.handle, buffers.hits.handle, fg.import_buffer(&buffers.hits))),
+            hits_address: hits.address,
             systems: buffers.systems.address,
             chunks: buffers.chunks.address,
             frame: buffers.frame.address,
@@ -533,12 +609,12 @@ impl ParticleSim {
     /// Frees the pool and every frame's buffers.
     pub fn destroy(&mut self, gpu: &Gpu) {
         for buffers in self.buffers.iter_mut().filter_map(Option::take) {
-            for buffer in [buffers.systems, buffers.chunks, buffers.frame, buffers.counted] {
+            for buffer in [buffers.systems, buffers.chunks, buffers.frame, buffers.counted, buffers.hits] {
                 gpu.destroy_buffer(buffer);
             }
         }
-        if let Some(counters) = self.counters.take() {
-            gpu.destroy_buffer(counters);
+        for buffer in [self.counters.take(), self.hits.take()].into_iter().flatten() {
+            gpu.destroy_buffer(buffer);
         }
         if let Some(pool) = self.pool.take() {
             gpu.destroy_buffer(pool);

@@ -138,7 +138,7 @@ pub use effects::{
 };
 pub use forces::{BLAST_TIME, Blast, ForceField, ForceKind, MAX_FORCES, ParticleBlasts};
 pub use particle_meshes::{BuiltinMesh, ParticleMesh, ParticleMeshes};
-pub use particle_sim::{DEFAULT_PARTICLE_BUDGET, MAX_PARTICLE_BUDGET, ParticleBudget, ParticleCounts};
+pub use particle_sim::{DEFAULT_PARTICLE_BUDGET, MAX_HITS as MAX_PARTICLE_HITS, MAX_PARTICLE_BUDGET, ParticleBudget, ParticleCounts, ParticleHit};
 pub use particles::{
     MAX_PARTICLE_LIGHTS, EmitShape, ParticleBlend, ParticleCollision, ParticlePlayback, ParticleSpace, ParticleSystem, ParticleTime,
     ParticleHalfSize, ParticleTrails,
@@ -568,6 +568,13 @@ impl Renderer {
     }
 
     /// Culling and LOD counts from a recent frame.
+    /// The strikes particles of systems that report them made since this was
+    /// last asked, the oldest first: read back from the GPU a few frames
+    /// after they happened.
+    pub fn take_particle_hits(&mut self) -> Vec<ParticleHit> {
+        self.particle_sim.take_hits()
+    }
+
     pub fn stats(&self) -> RenderStats {
         RenderStats { blocks: self.views[0].block_counts, ..self.stats }
     }
@@ -2371,6 +2378,7 @@ impl View {
                 particle_counters: particle_step.map_or(0, |step| step.counters_address),
                 particle_steps: particle_step.map_or(0, |step| step.systems),
                 particle_trails: setup.simulated.1,
+                particle_hits: particle_step.map_or(0, |step| step.hits_address),
             }],
         );
         buffers.instances.write(0, &extracted.instances[..instance_count]);

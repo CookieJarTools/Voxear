@@ -3011,6 +3011,20 @@ differ, and the same seed gives the same particles on every machine. Scripts rea
 through the text call components share (`ComponentKind::Particles`), the play as four lines: effect, place,
 rotation, seed.
 
+**Hits** *(implemented)*. Gameplay hears of strikes, it does not decide by them. A system with Hit Events has its
+flag (`PARTICLES_HITS`) in the step, which, where a particle strikes the depth, adds to a second counter and
+writes the strike (where, which of the frame's stepped systems, the surface's facing, the speed into it) to a
+GPU-only list of 512. When any stepped system reports hits, the list is copied out with the counters to the frame
+slot's host-visible copy, with the slot remembering which Obj and emitter each stepped system was; when the slot
+comes round, its strikes are read and kept until the engine takes them. So a hit arrives as many frames late as
+there are frames in flight, and costs nothing when no system asks. The engine hands them to scripts through a
+managed callback of their own, as physics contacts are, before LateUpdate: `OnParticleHit` on the behaviours of
+the system's Obj, then `Particles.Hit`. A strike knows where, not what: the depth has no Objs in it.
+
+**Curves from scripts.** C# has `Curve` and `Gradient` of its own, up to eight keys, joined in straight lines as
+the engine's are. They cross as words through the text call components share, a key a line, a gradient's colours
+in sRGB both ways, as colours do.
+
 **Planned, in the order it is built.**
 
 - **Physics.** Two more levels of collision beside depth: the terrain's heights and the nearest colliders,
@@ -3024,7 +3038,7 @@ rotation, seed.
   anti-aliasing told about fast flat particles; a picture along a ribbon; a
   coarser LOD for far mesh particles, and their shadows.
 - **Scripts.** Bursts sent out at a place from a system already playing, values an effect shows for a play to
-  set, hit and finished events, curves and gradients.
+  set, and an event when an effect has finished.
 - **Scaling.** Off-screen systems asleep, far ones sending out less and stepping every other frame, the least
   significant thinned first when over budget; per-effect counts and GPU time in a debugger.
 - **Later.** Decals on hit (with a decal renderer), heat distortion, shadows cast by particles, blending in any

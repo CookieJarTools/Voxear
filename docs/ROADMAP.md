@@ -1600,14 +1600,21 @@ plain C# in a package (see Packages). They build on input and physics (M4) and, 
   field of it picked in the Inspector from the starters and the project's effects, and `ParticleSystem.Effect`
   reads and sets a system's. `samples/Effects` plays its explosions, muzzle flashes and mud from a script.
   Tests: plays, seeds and clearing up without a GPU, and the C# API without the engine.
+- **Particle hits and curves from scripts ✅.** A Particle System's **Hit Events** (with Collision on) has the
+  step write each strike, where, the surface's facing and how hard, the first 512 a frame among every system,
+  copied back with the counters and read once that frame is done (`particle_sim::ParticleHit`,
+  `Renderer::take_particle_hits`); the engine tells scripts before LateUpdate, `OnParticleHit` on the behaviours
+  of the system's Obj and `Particles.Hit` for every listener (managed callback `particle_hits`, API version
+  78). C# `Curve` and `Gradient` types, and `ParticleSystem.SizeCurve`, `OpacityCurve`, `SpeedCurve`,
+  `ColorGradient` and `HitEvents`. Tests: on a GPU, strikes on a floor from the system that tells and none from
+  one that does not; curves in words and hits told only of systems still there; the C# types.
 - Particles, still to come, in this order (the design is in [ARCHITECTURE.md](ARCHITECTURE.md#particles)):
   - collision with what is out of view: the ground and colliders, and the scene's rays
   - sub-emitters and events; values an effect shows on the Particle System that plays it
   - sorting, particles in the fog volume, flipbooks blended by motion vectors, and anti-aliasing told about
     fast flat particles; a picture along a ribbon; a mesh's LODs and shadows for
     mesh particles
-  - bursts sent out at a place from a system already playing, values an effect shows that a play sets, hit
-    events, curves and gradients from C#
+  - bursts sent out at a place from a system already playing, and values an effect shows that a play sets
   - the graph compiler shared with Shader Graph, graph mode, custom Slang modules, and each node's cost shown
   - sleeping off screen, level of detail by distance, and the particle debugger
   - decals on hit, heat distortion, shadows cast by particles, blending in any order

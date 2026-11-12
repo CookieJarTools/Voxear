@@ -107,6 +107,7 @@ Set **Collision** to **Depth** and particles land on what's in front of the came
 - **Bounce**: how much of its speed into a surface a particle keeps, away from it. 0 stops dead, and 1 bounces as fast as it came.
 - **Friction**: how much of its speed along the surface it loses each time it lands. 0 slides on, and 1 stops where it lands.
 - **Life Lost**: how much of the life it has left it loses each time it strikes something. 1 and it dies there, as a raindrop does.
+- **Hit Events**: scripts hear of each strike, for a hiss where a spark lands or a clink where a shell case does. See [Hearing of hits](#hearing-of-hits).
 
 Depth collision reads what the main camera sees, which costs next to nothing. The price is that particles only meet what's in view: one that falls behind a wall, or off the edge of the screen, meets nothing there. That suits sparks, rain and debris in front of the player. Particles are for looks: nothing they hit feels it, so anything that must hurt or push is a physics body with a Particle System on it.
 
@@ -236,6 +237,44 @@ smoke.TurbulenceSize = 2f;
 
 A behaviour can also have a `ParticleSystem` field, picked in the Inspector, to reach another Obj's system.
 
+### Curves and gradients
+
+`SizeCurve`, `OpacityCurve` and `SpeedCurve` are a `Curve` each, and `ColorGradient` is a `Gradient`, as the Inspector edits them. A curve is up to eight keys of where, from 0 at a particle's birth to 1 at its death, and what. A gradient's keys are where and which colour. Set one with no keys, `Curve.None`, to go back to the plain settings.
+
+```csharp
+var smoke = chimney.Particles;
+// Puffs up fast, then thins out.
+smoke.SizeCurve = new Curve((0f, 0.4f), (0.15f, 1f), (1f, 1.6f));
+smoke.OpacityCurve = new Curve((0f, 0f), (0.1f, 1f), (1f, 0f));
+// Soot that greys as it cools.
+smoke.ColorGradient = new Gradient((0f, Color.Hex("#202020")), (1f, Color.Hex("#8a8a8a")));
+```
+
+`Evaluate` reads a curve or a gradient at a point, so a script can follow the same shape.
+
+### Hearing of hits
+
+With **Collision** and **Hit Events** on, each strike a system's particles make is told to scripts. Every enabled behaviour on the system's Obj has `OnParticleHit` called, and everything listening to `Particles.Hit` hears of it too, effects played with `Particles.Play` among them.
+
+```csharp
+public sealed class Clinks : Behaviour
+{
+	public Sound Clink;
+
+	protected override void OnParticleHit(ParticleHit hit)
+	{
+		// Louder the harder it lands.
+		Audio.Play(Clink, hit.Point, volume: Math.Min(hit.Speed / 6f, 1f));
+	}
+}
+```
+
+A `ParticleHit` has the `Point` struck, the `Normal` of the surface there, the `Speed` the particle went in at, its system's `Obj`, and which of its effect's emitters it came from as `Emitter`.
+
+- A hit is told a few frames after it happens, about a twentieth of a second, as the graphics card works it out. That suits sounds and marks, not anything a game must decide.
+- The first 512 hits a frame are told, among every system. Keep Hit Events for the systems that need them: a downpour of rain could use all 512 on its own.
+- A hit says where, not what was struck. When that matters, cast a ray at the point.
+
 ## What's coming
 
-Still to come: an event when a particle hits something, curves and gradients from scripts, collision with what's out of view, a picture along a ribbon, mesh particles that cast shadows, mist and dust in the fog, and editing an effect as a graph.
+Still to come: collision with what's out of view, a picture along a ribbon, mesh particles that cast shadows, mist and dust in the fog, and editing an effect as a graph.

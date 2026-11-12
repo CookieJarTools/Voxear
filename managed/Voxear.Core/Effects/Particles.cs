@@ -1,3 +1,4 @@
+using System;
 using System.Globalization;
 using System.Numerics;
 using Voxear.Interop;
@@ -16,6 +17,16 @@ namespace Voxear;
 /// </summary>
 public static unsafe class Particles
 {
+	/// <summary>
+	/// Raised for every strike of every Particle System with Hit Events on, played effects among them, after its Obj's
+	/// behaviours are told. For one place to play every impact sound from. Take your handler off when its behaviour
+	/// is destroyed.
+	/// <code>
+	/// Particles.Hit += hit => Audio.Play(clink, hit.Point, volume: hit.Speed / 10f);
+	/// </code>
+	/// </summary>
+	public static event Action<ParticleHit>? Hit;
+
 	/// <summary>
 	/// Plays an effect at a point in the world, upright. It gets an Obj of its own, which is gone when the effect is
 	/// over: once the last particle of one that plays once has died, or for one that loops, such as Fire, once you
@@ -67,6 +78,18 @@ public static unsafe class Particles
 		if (Native.IsConnected)
 		{
 			Native.Api->ParticleBlast(&position, radius, speed);
+		}
+	}
+
+	internal static void Raise(ParticleHit hit)
+	{
+		try
+		{
+			Hit?.Invoke(hit);
+		}
+		catch (Exception exception)
+		{
+			Log.Exception(exception);
 		}
 	}
 

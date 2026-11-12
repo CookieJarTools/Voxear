@@ -900,6 +900,9 @@ pub struct GpuBuffers {
     /// The pool again, read as the points of particles' trails, three to a
     /// particle's room.
     pub particle_trails: u64,
+    /// Where the step writes the strikes of systems that report them, as
+    /// many as `particle_sim::MAX_HITS`, counted in the counters' second.
+    pub particle_hits: u64,
 }
 
 /// A UI panel as `uiPanelVertex` in `shaders/ui.slang` draws it: its top
@@ -1060,6 +1063,19 @@ pub struct GpuParticleSystem {
     /// and the material it is drawn with, for a system that draws meshes.
     pub mesh: u32,
     pub mesh_material: u32,
+}
+
+/// A particle striking what the main view sees, as the step writes it for a
+/// system that reports its hits: where, in the world; which of the frame's
+/// stepped systems; the way the surface faces; and how fast it was going
+/// into it, in metres a second.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuParticleHit {
+    pub position: [f32; 3],
+    pub system: u32,
+    pub normal: [f32; 3],
+    pub speed: f32,
 }
 
 /// A simulated particle, as `shaders/particle_sim.slang` keeps it from
@@ -1274,7 +1290,8 @@ mod tests {
         assert_eq!(size_of::<GpuDdgi>(), 32 * DDGI_CASCADES + 32 + 48);
         assert_eq!(size_of::<GpuLighting>(), lighting);
         assert_eq!(size_of::<GpuPost>(), post);
-        assert_eq!(size_of::<GpuBuffers>(), 65 * 8);
+        assert_eq!(size_of::<GpuBuffers>(), 66 * 8);
+        assert_eq!(size_of::<GpuParticleHit>(), 32);
         // Its corner and block size, three addresses, then four words.
         assert_eq!(size_of::<crate::blocks::GpuBlockWorld>(), 16 + 24 + 16);
         assert_eq!(size_of::<GpuUiPanel>(), 48);

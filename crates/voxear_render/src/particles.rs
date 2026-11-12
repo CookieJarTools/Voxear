@@ -282,6 +282,11 @@ pub struct ParticleSystem {
     /// from it: 0 stops dead, 1 bounces as fast as it came.
     #[serde(skip_serializing_if = "is_bounce")]
     pub bounce: f32,
+    /// Scripts hear of each strike its particles make: `OnParticleHit` on
+    /// its Obj's behaviours, and `Particles.Hit`. For sparks that should
+    /// hiss and shells that should clink where they land.
+    #[serde(skip_serializing_if = "is_false")]
+    pub hit_events: bool,
     /// How much of its speed along what it meets it loses each time: 0
     /// slides on, 1 stops.
     #[serde(skip_serializing_if = "is_friction")]
@@ -432,6 +437,7 @@ impl Default for ParticleSystem {
             turbulence_size: 1.0,
             collision: ParticleCollision::Off,
             bounce: BOUNCE,
+            hit_events: false,
             friction: FRICTION,
             life_lost: 0.0,
             forces: 0.0,
@@ -751,6 +757,11 @@ pub struct Step {
     pub chunks: u64,
     pub frame: u64,
     pub counters_address: u64,
+    /// Where strikes are written, and for a frame with any system that
+    /// reports them, where they are copied out for the CPU: the step's
+    /// own, the copy, and the copy as the frame's graph knows it.
+    pub hits_address: u64,
+    pub hits: Option<(vk::Buffer, vk::Buffer, BufferId)>,
 }
 
 /// What the particles' pass draws into and reads.
@@ -921,7 +932,8 @@ fn record_step(
     step: Step,
     (pool, depth): (BufferId, ImageId),
 ) {
-    let written = [(pool, BufferAccess::ComputeWrite), (step.counted_id, BufferAccess::TransferWrite)];
+    let mut written = vec![(pool, BufferAccess::ComputeWrite), (step.counted_id, BufferAccess::TransferWrite)];
+    written.extend(step.hits.map(|(_, _, copied)| (copied, BufferAccess::TransferWrite)));
     fg.add_pass("Particle simulation", &[(depth, ImageAccess::Sampled)], &written, move |ctx| {
         use vk::{AccessFlags2 as A, PipelineStageFlags2 as S};
         // The counters start from nothing, are added to as the particles are stepped, and are copied out: each
@@ -944,8 +956,16 @@ fn record_step(
         after(stepping, (S::ALL_TRANSFER, A::TRANSFER_READ));
         let region = vk::BufferCopy { src_offset: 0, dst_offset: 0, size };
         unsafe { ctx.gpu.device.cmd_copy_buffer(ctx.cmd, step.counters, step.counted, &[region]) };
+        if let Some((hits, copy, _)) = step.hits {
+            let size = u64::from(crate::particle_sim::MAX_HITS) * size_of::<crate::gpu::GpuParticleHit>() as u64;
+            let region = vk::BufferCopy { src_offset: 0, dst_offset: 0, size };
+            unsafe { ctx.gpu.device.cmd_copy_buffer(ctx.cmd, hits, copy, &[region]) };
+        }
     });
     fg.sync_buffer(step.counted_id, BufferAccess::HostRead);
+    if let Some((_, _, copied)) = step.hits {
+        fg.sync_buffer(copied, BufferAccess::HostRead);
+    }
 }
 
 /// The flags a system's GPU form carries, as `PARTICLES_*` in
@@ -967,6 +987,8 @@ const RIBBON: u32 = 1024;
 const RIBBON_FED: u32 = 2048;
 /// Each particle is drawn as a mesh.
 const MESH: u32 = 4096;
+/// Its particles' strikes are written out for the CPU.
+pub(crate) const HITS: u32 = 8192;
 /// Its room in the pool holds none of its own particles yet: only for the
 /// pass that steps them.
 pub(crate) const FRESH: u32 = 32;
@@ -990,6 +1012,7 @@ pub(crate) fn gpu(
         (system.collision == ParticleCollision::Depth, COLLIDE),
         (system.animate, ANIMATE),
         (system.mesh.is_some(), MESH),
+        (system.hit_events && system.collision != ParticleCollision::Off, HITS),
         (system.trails == ParticleTrails::Particles, TRAILS),
         (system.trails == ParticleTrails::Ribbon, RIBBON),
         (system.trails == ParticleTrails::Ribbon && sending(system, time - started, playback.stopped.map(|s| s - started)), RIBBON_FED),

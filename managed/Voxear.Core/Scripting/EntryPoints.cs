@@ -243,6 +243,13 @@ internal static unsafe class EntryPoints
 		MotionMessages.Dispatch(new ReadOnlySpan<ulong>(objs, count), Encoding.UTF8.GetString(text, length));
 	}
 
+	/// <summary>Tells scripts of particles' strikes, as OnParticleHit and Particles.Hit.</summary>
+	[UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+	public static void ParticleHits(ParticleHitData* hits, int count)
+	{
+		ParticleMessages.Dispatch(new ReadOnlySpan<ParticleHitData>(hits, count));
+	}
+
 	/// <summary>Tells scripts the world's origin moved, moving their [WorldPosition] fields with every Obj.</summary>
 	[UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
 	public static void OriginMoved(int* by)

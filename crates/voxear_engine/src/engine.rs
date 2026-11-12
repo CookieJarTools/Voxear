@@ -598,6 +598,7 @@ impl Engine {
             crate::animation::attach_to_bones(&mut self.world);
         }
         self.tell_motion_marks();
+        self.tell_particle_hits();
 
         {
             profile_scope!("LateUpdate");
@@ -719,6 +720,19 @@ impl Engine {
         if let Some(scripts) = self.scripts.as_mut().filter(|_| !marks.is_empty()) {
             profile_scope!("Motion Marks");
             scripts.motion_marks(&mut self.world, &marks);
+            self.with_host(|lifecycle, host| lifecycle.apply_requests(host));
+            self.flush();
+        }
+    }
+
+    /// Tells scripts of the strikes particles made that the renderer has
+    /// read back since the last frame, before LateUpdate, as
+    /// `OnParticleHit` and `Particles.Hit`.
+    fn tell_particle_hits(&mut self) {
+        let hits = crate::particles::take_hits(&mut self.world);
+        if let Some(scripts) = self.scripts.as_mut().filter(|_| !hits.is_empty()) {
+            profile_scope!("Particle Hits");
+            scripts.particle_hits(&mut self.world, &hits);
             self.with_host(|lifecycle, host| lifecycle.apply_requests(host));
             self.flush();
         }

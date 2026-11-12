@@ -458,6 +458,8 @@ pub enum Prop {
     ParticleTrails,
     ParticleTrailTime,
     ParticleTrailWidth,
+    /// Whether scripts hear of its particles' strikes.
+    ParticleHitEvents,
     /// A Force Field's kind, how hard it moves particles and how far it reaches.
     ForceKind,
     ForceStrength,
@@ -913,7 +915,8 @@ impl Prop {
             | Prop::ParticleMesh
             | Prop::ParticleTrails
             | Prop::ParticleTrailTime
-            | Prop::ParticleTrailWidth => Part::ParticleSystem,
+            | Prop::ParticleTrailWidth
+            | Prop::ParticleHitEvents => Part::ParticleSystem,
             Prop::ForceKind | Prop::ForceStrength | Prop::ForceRadius => Part::ForceField,
             Prop::SmokeSize
             | Prop::SmokeCell
@@ -1247,6 +1250,7 @@ impl Prop {
             Prop::ParticleTrails => "trails",
             Prop::ParticleTrailTime => "trail_time",
             Prop::ParticleTrailWidth => "trail_width",
+            Prop::ParticleHitEvents => "hit_events",
             Prop::ForceKind => "kind",
             Prop::ForceStrength => "strength",
             Prop::ForceRadius => "radius",
@@ -1959,7 +1963,7 @@ pub fn props(world: &World, entity: Entity, part: &Part, types: &ScriptTypes) ->
             props.extend([Prop::ParticleForces, Prop::ParticleCollision]);
             // How they come off what they meet only while they meet anything.
             if system.collision != ParticleCollision::Off {
-                props.extend([Prop::ParticleBounce, Prop::ParticleFriction, Prop::ParticleLifeLost]);
+                props.extend([Prop::ParticleBounce, Prop::ParticleFriction, Prop::ParticleLifeLost, Prop::ParticleHitEvents]);
             }
             props.extend([Prop::ParticleSeed, Prop::ParticleSimulated]);
             props
@@ -2261,6 +2265,7 @@ pub fn label(prop: &Prop) -> String {
         Prop::ParticleTrails => "Trails",
         Prop::ParticleTrailTime => "Trail Time",
         Prop::ParticleTrailWidth => "Trail Width",
+        Prop::ParticleHitEvents => "Hit Events",
         Prop::ForceKind => "Kind",
         Prop::ForceStrength => "Strength",
         Prop::ForceRadius => "Radius",
@@ -3117,7 +3122,8 @@ pub fn get(game: &Game, types: &ScriptTypes, entity: Entity, prop: &Prop) -> Opt
         | Prop::ParticleLightRange
         | Prop::ParticleTrails
         | Prop::ParticleTrailTime
-        | Prop::ParticleTrailWidth => particle_value(world.get::<ParticleSystem>(entity)?, prop)?,
+        | Prop::ParticleTrailWidth
+        | Prop::ParticleHitEvents => particle_value(world.get::<ParticleSystem>(entity)?, prop)?,
         Prop::ParticleMesh => Value::Asset(match world.get::<ParticleSystem>(entity)?.mesh {
             None => "None".into(),
             Some(ParticleMesh::Builtin(mesh)) => mesh.name().into(),
@@ -4936,6 +4942,7 @@ fn particle_value(system: &ParticleSystem, prop: &Prop) -> Option<Value> {
         }
         Prop::ParticleTrailTime => Value::Number(system.trail_time),
         Prop::ParticleTrailWidth => Value::Number(system.trail_width),
+        Prop::ParticleHitEvents => Value::Toggle(system.hit_events),
         // Which settings have its particles kept and stepped on the GPU, rather than worked out from their age.
         Prop::ParticleSimulated => Value::Fixed(match system.simulated_for() {
             needs if needs.is_empty() => "No".into(),
@@ -5015,6 +5022,7 @@ fn set_particle(system: &mut ParticleSystem, prop: &Prop, value: Value) {
         }
         (Prop::ParticleTrailTime, Value::Number(n)) => system.trail_time = n.max(0.01),
         (Prop::ParticleTrailWidth, Value::Number(n)) => system.trail_width = n.max(0.0),
+        (Prop::ParticleHitEvents, Value::Toggle(on)) => system.hit_events = on,
         _ => {}
     }
 }
@@ -5477,6 +5485,8 @@ mod tests {
         assert!(!shown(&world).contains(&Prop::ParticleBounce));
         assert!(set_component(&mut world, entity, &Prop::ParticleCollision, Value::Choice(1, Vec::new())));
         assert!(shown(&world).contains(&Prop::ParticleBounce) && shown(&world).contains(&Prop::ParticleLifeLost));
+        assert!(set_component(&mut world, entity, &Prop::ParticleHitEvents, Value::Toggle(true)));
+        assert!(world.get::<ParticleSystem>(entity).unwrap().hit_events);
         assert!(set_component(&mut world, entity, &Prop::ParticleBounce, Value::Number(3.0)));
         assert_eq!(world.get::<ParticleSystem>(entity).unwrap().bounce, 1.0, "never faster than it came");
         let simulated = get_particle(&world, entity, Prop::ParticleSimulated);

@@ -19,6 +19,9 @@
 // depth, is put back on it and bounces off, as much as the system says. What
 // the view cannot see, behind it or hidden, stops nothing.
 //
+// A system that reports its hits writes each strike out, where it struck and how hard, for the CPU to read back a
+// few frames later and tell scripts of; the first PARTICLE_MAX_HITS a frame, among every system.
+//
 // A system that takes forces is moved by the frame's Force Fields and
 // blasts (src/forces.rs), and driven out of the way of what passes through
 // it, the same pushers that part plants.
@@ -123,9 +126,12 @@ float3 surfaceFacing(Frame* frame, int2 pixel, float3 at)
 
 // A particle `radius` wide at `position` in the world, going at `velocity`, against what the main view sees: put
 // back on the surface it has come to and sent off it, keeping `bounce` of its speed into it and losing `friction`
-// of its speed along it. True when it struck it, rather than rested on it or met nothing.
-bool meetScene(Frame* frame, float radius, float bounce, float friction, float step, inout float3 position, inout float3 velocity)
+// of its speed along it. True when it struck it, rather than rested on it or met nothing, with the way the surface
+// faces and how fast the particle went into it.
+bool meetScene(Frame* frame, float radius, float bounce, float friction, float step, inout float3 position, inout float3 velocity, out float3 facing, out float struck)
 {
+    facing = float3(0.0, 1.0, 0.0);
+    struck = 0.0;
     float4 clip = transform(frame->viewProj, float4(position, 1.0));
     if (clip.w <= frame->near)
     {
@@ -150,7 +156,7 @@ bool meetScene(Frame* frame, float radius, float bounce, float friction, float s
     {
         return false;
     }
-    float3 facing = surfaceFacing(frame, pixel, surface);
+    facing = surfaceFacing(frame, pixel, surface);
     float above = dot(position - surface, facing);
     if (above >= radius || above < -reach)
     {
@@ -166,7 +172,8 @@ bool meetScene(Frame* frame, float radius, float bounce, float friction, float s
     float3 sliding = velocity - facing * dot(velocity, facing);
     velocity -= sliding * friction;
     // Falling onto it for a frame, as one resting on it does, is no strike.
-    return -into > PARTICLE_GRAVITY * step * 2.0 + 0.1;
+    struck = -into;
+    return struck > PARTICLE_GRAVITY * step * 2.0 + 0.1;
 }
 
 // How the frame's forces speed up a particle at `at` in the world, in metres a second each second: each Force Field
@@ -374,9 +381,22 @@ void simulateMain(uint3 id : SV_DispatchThreadID)
                 going = transform(system->model, float4(going, 0.0)).xyz;
             }
             float radius = (system->size.x + system->size.y) * 0.25;
-            if (meetScene(push.frame, radius, system->bounce, system->friction, step, at, going))
+            float3 facing;
+            float struck;
+            if (meetScene(push.frame, radius, system->bounce, system->friction, step, at, going, facing, struck))
             {
                 particle.life = particle.age + (particle.life - particle.age) * (1.0 - system->lifeLost);
+                if ((flags & PARTICLES_HITS) != 0)
+                {
+                    // Written out for the CPU, as many as there is room for; the rest are not heard of.
+                    uint written;
+                    InterlockedAdd(buffers()->particleCounters[1], 1u, written);
+                    if (written < PARTICLE_MAX_HITS)
+                    {
+                        ParticleHit hit = { at, work.x, facing, struck };
+                        buffers()->particleHits[written] = hit;
+                    }
+                }
             }
             if (!inWorld)
             {

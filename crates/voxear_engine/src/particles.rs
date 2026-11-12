@@ -63,6 +63,7 @@ const LIGHT_RANGE: i32 = 41;
 const TRAILS: i32 = 42;
 const TRAIL_TIME: i32 = 43;
 const TRAIL_WIDTH: i32 = 44;
+const HIT_EVENTS: i32 = 45;
 
 /// The time Particle Systems are played and stopped by, and blasts go off
 /// in: the engine's, but for how the editor's preview holds it back; and
@@ -114,6 +115,26 @@ pub(crate) fn scene_effect(scene: &crate::scene_file::SceneFile) -> voxear_rende
         Some(voxear_render::Emitter { name: obj.name.clone(), system })
     });
     voxear_render::ParticleEffect { emitters: emitters.collect() }
+}
+
+/// Strikes particles made, read back by the renderer and not yet told to
+/// scripts (see [`take_hits`]).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ParticleHits(pub Vec<voxear_render::ParticleHit>);
+
+/// The strikes waiting to be told to scripts, as they are told of them;
+/// those of systems that have gone are left out.
+pub fn take_hits(world: &mut World) -> Vec<voxear_scripting::ParticleHitData> {
+    let Some(ParticleHits(hits)) = world.remove_resource::<ParticleHits>() else { return Vec::new() };
+    let told = hits.into_iter().filter(|hit| world.is_alive(hit.entity));
+    told.map(|hit| voxear_scripting::ParticleHitData {
+        entity: hit.entity.to_bits(),
+        emitter: hit.emitter,
+        speed: hit.speed,
+        point: hit.position.to_array(),
+        normal: hit.normal.to_array(),
+    })
+    .collect()
 }
 
 /// A Particle System that [`play`] made to play an effect at a place: its
@@ -184,6 +205,61 @@ fn played_out(
 const EFFECT: i32 = 0;
 const SET_EFFECT: i32 = 1;
 const PLAY_EFFECT: i32 = 2;
+/// A curve or the gradient, read; and, CHANGE on from it, set. Keys a line
+/// each, where then what; a gradient's colour as it looks on screen, sRGB.
+const SIZE_CURVE: i32 = 10;
+const OPACITY_CURVE: i32 = 11;
+const SPEED_CURVE: i32 = 12;
+const COLOR_GRADIENT: i32 = 13;
+const CHANGE: i32 = 10;
+
+/// A curve's or the gradient's keys as words, a line each.
+fn keys_text<const N: usize>(keys: &[[f32; N]]) -> String {
+    let line = |key: &[f32; N]| key.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(" ");
+    keys.iter().map(line).collect::<Vec<_>>().join("\n")
+}
+
+/// Keys from words, a line each of `N` numbers; `None` for any line that is not.
+fn text_keys<const N: usize>(text: &str) -> Option<Vec<[f32; N]>> {
+    let line = |line: &str| -> Option<[f32; N]> {
+        let numbers: Vec<f32> = line.split_whitespace().map(|n| n.parse().ok().filter(|n: &f32| n.is_finite())).collect::<Option<_>>()?;
+        numbers.try_into().ok()
+    };
+    text.lines().filter(|line| !line.trim().is_empty()).map(line).collect()
+}
+
+/// Reads, or with `text` sets, a curve or the gradient of `system`.
+fn curve_text(system: &mut ParticleSystem, which: i32, text: Option<&str>) -> Option<String> {
+    use voxear_core::curve::{Curve, Gradient};
+    let curve = match which {
+        SIZE_CURVE => &mut system.size_curve,
+        OPACITY_CURVE => &mut system.opacity_curve,
+        SPEED_CURVE => &mut system.speed_curve,
+        COLOR_GRADIENT => {
+            let Some(text) = text else {
+                let shown = system.color_gradient.keys().iter().map(|&[t, r, g, b]| {
+                    let [r, g, b] = srgb([r, g, b]);
+                    [t, r, g, b]
+                });
+                return Some(keys_text(&shown.collect::<Vec<_>>()));
+            };
+            let keys = text_keys::<4>(text)?.into_iter().map(|[t, r, g, b]| {
+                let [r, g, b] = linear([r, g, b].map(|c| c.max(0.0)));
+                [t, r, g, b]
+            });
+            system.color_gradient = Gradient::new(&keys.collect::<Vec<_>>());
+            return Some(String::new());
+        }
+        _ => return None,
+    };
+    match text {
+        None => Some(keys_text(curve.keys())),
+        Some(text) => {
+            *curve = Curve::new(&text_keys::<2>(text)?);
+            Some(String::new())
+        }
+    }
+}
 
 /// Answers scripts' asks in words (see [`EFFECT`]). To play an effect the
 /// text is four lines: the effect's reference, where, how it is turned, and
@@ -202,6 +278,13 @@ fn texts(world: &mut World, entity: Entity, what: i32, text: &str) -> Option<Str
             // Played from its start, so one that plays once is seen.
             world.insert(entity, ParticlePlayback { started, stopped: None });
             Some(String::new())
+        }
+        SIZE_CURVE..=COLOR_GRADIENT => {
+            curve_text(world.is_alive(entity).then(|| world.get_mut::<ParticleSystem>(entity))??, what, None)
+        }
+        _ if (SIZE_CURVE + CHANGE..=COLOR_GRADIENT + CHANGE).contains(&what) => {
+            let system = world.is_alive(entity).then(|| world.get_mut::<ParticleSystem>(entity))??;
+            curve_text(system, what - CHANGE, Some(text))
         }
         PLAY_EFFECT => {
             let mut lines = text.lines();
@@ -268,6 +351,15 @@ pub fn resolve(world: &mut World, content: &mut crate::content::Content, rendere
         world.insert_resource(effects);
     }
     let Some(renderer) = renderer else { return };
+    // The strikes read back since last frame, for scripts to hear of this one.
+    let struck = renderer.take_particle_hits();
+    if !struck.is_empty() {
+        let mut hits = world.remove_resource::<ParticleHits>().unwrap_or_default();
+        hits.0.extend(struck);
+        let over = hits.0.len().saturating_sub(voxear_render::MAX_PARTICLE_HITS as usize * 4);
+        hits.0.drain(..over);
+        world.insert_resource(hits);
+    }
     let mut pictures = ParticlePictures::default();
     for guid in wanted {
         match content.particle_picture(renderer, guid) {
@@ -476,6 +568,7 @@ fn read(system: &ParticleSystem, what: i32) -> Option<[f32; 4]> {
         TRAILS => number(ParticleTrails::ALL.iter().position(|t| *t == system.trails).unwrap_or_default() as f32),
         TRAIL_TIME => number(system.trail_time),
         TRAIL_WIDTH => number(system.trail_width),
+        HIT_EVENTS => flag(system.hit_events),
         _ => return None,
     })
 }
@@ -526,6 +619,7 @@ fn write(system: &mut ParticleSystem, what: i32, [x, y, z, w]: [f32; 4]) {
         TRAILS => system.trails = ParticleTrails::ALL[pick(ParticleTrails::ALL.len())],
         TRAIL_TIME => system.trail_time = x.max(0.01),
         TRAIL_WIDTH => system.trail_width = x.max(0.0),
+        HIT_EVENTS => system.hit_events = x != 0.0,
         _ => {}
     }
 }
@@ -643,6 +737,41 @@ mod tests {
         assert!(world.is_alive(lost) && world.is_alive(own));
         start(&mut world, 1020.0 + longest);
         assert!(!world.is_alive(lost) && !world.is_alive(flash) && world.is_alive(own));
+    }
+
+    #[test]
+    fn scripts_read_and_set_curves_and_the_gradient_in_words_and_hear_of_hits_when_asked() {
+        let mut world = World::new();
+        let obj = world.spawn((ParticleSystem::default(),));
+        assert_eq!(texts(&mut world, obj, SIZE_CURVE, ""), Some(String::new()), "no keys yet");
+        assert_eq!(texts(&mut world, obj, SIZE_CURVE + CHANGE, "1 0\n0 0.5\n0.25 1"), Some(String::new()));
+        let system = *world.get::<ParticleSystem>(obj).unwrap();
+        assert_eq!(system.size_curve.keys(), [[0.0, 0.5], [0.25, 1.0], [1.0, 0.0]], "put in order");
+        assert_eq!(texts(&mut world, obj, SIZE_CURVE, ""), Some("0 0.5\n0.25 1\n1 0".to_string()));
+        assert_eq!(texts(&mut world, obj, SPEED_CURVE + CHANGE, "0 nothing"), None, "not numbers");
+        assert_eq!(texts(&mut world, obj, OPACITY_CURVE + CHANGE, "0 1 2"), None, "too many");
+        // The gradient is written as it looks and kept linear, as the colours are.
+        assert_eq!(texts(&mut world, obj, COLOR_GRADIENT + CHANGE, "0 1 0.5 0\n1 0 0 1"), Some(String::new()));
+        let gradient = world.get::<ParticleSystem>(obj).unwrap().color_gradient;
+        assert!((gradient.keys()[0][2] - 0.214).abs() < 0.01 && gradient.keys()[1] == [1.0, 0.0, 0.0, 1.0], "{gradient:?}");
+        let read = texts(&mut world, obj, COLOR_GRADIENT, "").unwrap();
+        let back: Vec<f32> = read.split_whitespace().map(|n| n.parse().unwrap()).collect();
+        assert!((back[2] - 0.5).abs() < 1e-4 && back.len() == 8, "read back as it looks: {read}");
+        // Clearing takes every key away.
+        assert_eq!(texts(&mut world, obj, SIZE_CURVE + CHANGE, ""), Some(String::new()));
+        assert!(world.get::<ParticleSystem>(obj).unwrap().size_curve.is_empty());
+        // Hit Events read and set by number.
+        values(&mut world, obj, HIT_EVENTS, Some([1.0, 0.0, 0.0, 0.0]));
+        assert!(world.get::<ParticleSystem>(obj).unwrap().hit_events);
+        // Strikes are told only of systems still there.
+        let gone = world.spawn((ParticleSystem::default(),));
+        let hit = |entity| voxear_render::ParticleHit { entity, emitter: 1, position: Vec3::ONE, normal: Vec3::Y, speed: 4.0 };
+        world.insert_resource(ParticleHits(vec![hit(obj), hit(gone)]));
+        world.despawn(gone);
+        let told = take_hits(&mut world);
+        assert_eq!(told.len(), 1);
+        assert_eq!((told[0].entity, told[0].emitter, told[0].speed, told[0].normal), (obj.to_bits(), 1, 4.0, [0.0, 1.0, 0.0]));
+        assert!(take_hits(&mut world).is_empty(), "told once");
     }
 
     #[test]

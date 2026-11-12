@@ -2587,9 +2587,10 @@ mod tests {
         let field = obj.force_field.expect("the field is read");
         assert_eq!(field, ForceField { kind: ForceKind::Vortex, radius: 3.5, ..ForceField::default() });
         assert_eq!(toml::from_str::<ObjData>(&toml::to_string(&obj).unwrap()).unwrap().force_field, Some(field));
-        let sparks: ObjData = toml::from_str("id = 2\n[particles]\ncollision = \"depth\"\nforces = 0.5").unwrap();
+        let sparks: ObjData = toml::from_str("id = 2\n[particles]\ncollision = \"depth\"\nforces = 0.5\nhit_events = true").unwrap();
         let system = sparks.particles.expect("the system is read");
         assert_eq!((system.collision, system.forces, system.bounce), (ParticleCollision::Depth, 0.5, 0.4));
+        assert!(system.hit_events);
         let written = toml::to_string(&sparks).unwrap();
         assert!(written.contains("collision") && !written.contains("bounce"), "only what is not as new: {written}");
         // An effect and a texture are named as files name them, built in or by GUID.

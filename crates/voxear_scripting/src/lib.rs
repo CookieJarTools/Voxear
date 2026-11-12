@@ -42,7 +42,7 @@ pub use interop::{
     set_kind_texts, set_kind_values, set_particle_values, set_smoke_actions, set_smoke_values, set_water_sampler, set_water_splasher,
     PoseOps, set_pose_ops,
 };
-pub use physics::PhysicsEventData;
+pub use physics::{ParticleHitData, PhysicsEventData};
 pub use drawers::{DrawRequest, DrawerField, Drawn, FieldStep};
 pub use gizmos::{GizmoAnswer, GizmoTarget, HandleId, HandleInput, ScriptHandle, ScriptHandleKind};
 pub use hostfxr::{DotnetInstall, find_dotnet};

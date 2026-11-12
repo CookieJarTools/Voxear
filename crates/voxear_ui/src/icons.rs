@@ -97,6 +97,16 @@ pub const NAMES: &[&str] = &[
     "spade",
     "sprout",
     "drop",
+    "map-pin",
+    "map-player",
+    "map-town",
+    "map-dungeon",
+    "map-camp",
+    "map-note",
+    "map-chest",
+    "map-skull",
+    "map-star",
+    "map-arrow",
 ];
 
 fn shapes(name: &str) -> Option<&'static [Part]> {
@@ -194,6 +204,25 @@ fn shapes(name: &str) -> Option<&'static [Part]> {
         "spade" => &[("M9.5 3.5h5M12 3.5v8M8 11.5h8l-1 6a3 3 0 0 1-6 0Z", STROKE)],
         // A drop of water: rain wearing the ground.
         "drop" => &[("M12 3.5c3.5 4.5 6 7.5 6 10.5a6 6 0 0 1-12 0c0-3 2.5-6 6-10.5Z", STROKE)],
+        // What a map marks: a place, a player, a town's houses, a dungeon's gate, a camp's tent, a note, a
+        // chest, a skull for danger, a star, and an arrow for the way something faces or lies.
+        "map-pin" => &[(
+            "M12 21c-4-5-6.5-8.3-6.5-11.5a6.5 6.5 0 0 1 13 0c0 3.2-2.5 6.5-6.5 11.5ZM12 7a2.5 2.5 0 1 0 0 5a2.5 2.5 0 1 0 0-5Z",
+            STROKE,
+        )],
+        "map-player" => &[("M12 4.5a3.5 3.5 0 1 0 0 7a3.5 3.5 0 1 0 0-7ZM5 20c0-4 3-6 7-6s7 2 7 6Z", STROKE)],
+        "map-town" => &[("M3.5 20.5v-8l5-4 5 4v8ZM13.5 20.5v-12l3.5-3 3.5 3v12ZM7 20.5v-4h3v4", STROKE)],
+        "map-dungeon" => &[("M5 20.5v-9a7 7 0 0 1 14 0v9ZM9 20.5v-8.5M12 20.5v-9.5M15 20.5v-8.5", STROKE)],
+        "map-camp" => &[("M3.5 19.5l8.5-14 8.5 14ZM12 5.5v-2M9 19.5l3-5 3 5", STROKE)],
+        "map-note" => &[("M6 3.5h9l3.5 3.5v13.5H6ZM15 3.5v3.5h3.5M9 11h6.5M9 14.5h6.5M9 18h4", STROKE)],
+        "map-chest" => &[("M4 10.5a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v8H4ZM4 12.5h16M12 11.5v3", STROKE)],
+        "map-skull" => &[(
+            "M12 4a7 7 0 0 0-7 7c0 2.3 1 4 2.5 5v3.5h9V16c1.5-1 2.5-2.7 2.5-5a7 7 0 0 0-7-7ZM9.25 10.5a1.25 1.25 0 1 0 0 2.5\
+             a1.25 1.25 0 1 0 0-2.5ZM14.75 10.5a1.25 1.25 0 1 0 0 2.5a1.25 1.25 0 1 0 0-2.5ZM10.5 19.5v-2M13.5 19.5v-2",
+            STROKE,
+        )],
+        "map-star" => &[("M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.9-5.2-2.8-5.2 2.8 1-5.9-4.3-4.1 5.9-.8Z", STROKE)],
+        "map-arrow" => &[("M12 3.5l6.5 16-6.5-3.5-6.5 3.5Z", FILL)],
         // A sprout from the ground: ground grown from a seed.
         "sprout" => &[(
             "M5.5 20.5h13M12 20.5v-8.5M12 12c0-4 3-6.5 7-6.5 0 4-3 6.5-7 6.5ZM12 14.5c0-3-2.5-5-5.5-5 0 3 2.5 5 5.5 5Z",

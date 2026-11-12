@@ -396,6 +396,12 @@ fn apply_instance(root: &mut ObjData, instance: &ObjData) {
     if instance.screen_ui.is_some() {
         root.screen_ui = instance.screen_ui.clone();
     }
+    if instance.map.is_some() {
+        root.map = instance.map.clone();
+    }
+    if instance.map_marker.is_some() {
+        root.map_marker = instance.map_marker.clone();
+    }
     if instance.lod_group.is_some() {
         root.lod_group = instance.lod_group.clone();
     }
@@ -479,6 +485,8 @@ pub struct TemplateObj {
     pub audio_listener: bool,
     pub ui_panel: Option<voxear_render::UiPanel>,
     pub screen_ui: Option<crate::screen_ui::ScreenUi>,
+    pub map: Option<crate::map::Map>,
+    pub map_marker: Option<crate::map::MapMarker>,
     pub collider: Option<Collider>,
     pub rigidbody: Option<Rigidbody>,
     pub character: Option<CharacterController>,
@@ -649,6 +657,12 @@ impl Template {
             }
             if let Some(screen) = obj.screen_ui {
                 world.insert(entity, screen);
+            }
+            if let Some(map) = obj.map.clone() {
+                world.insert(entity, map);
+            }
+            if let Some(marker) = obj.map_marker.clone() {
+                world.insert(entity, marker);
             }
             if let Some(layer) = obj.layer.as_ref().map(|layer| layer.layer(world)).filter(|layer| layer.0 != 0) {
                 world.insert(entity, layer);
@@ -1257,6 +1271,8 @@ pub(crate) fn resolve_obj(
         audio_listener: data.audio_listener,
         ui_panel: data.ui_panel.as_ref().map(|panel| crate::ui_panels::ui_panel(content, panel)).transpose()?,
         screen_ui: data.screen_ui.as_ref().map(|screen| crate::screen_ui::screen_ui(content, screen)).transpose()?,
+        map: data.map.as_ref().map(crate::map::map_of),
+        map_marker: data.map_marker.clone(),
         collider: data.collider,
         rigidbody: data.rigidbody,
         character: data.character,

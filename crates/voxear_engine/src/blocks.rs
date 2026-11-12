@@ -373,6 +373,25 @@ pub fn save(content: &mut Content, project: &Path) -> Result<Vec<String>> {
     Ok(written)
 }
 
+/// What a generated world of blocks' chunks are made from, as its file and
+/// its blocks are now: none without a generator.
+pub fn making(content: &mut Content, asset: &BlockWorldAsset) -> Option<voxear_terrain::blocks::stream::BlockMaking> {
+    let generate = asset.file.generate.clone()?;
+    let generator = generator(content, &asset.file)?;
+    // Its file as its blocks are now, so a block saved since makes it anew; a block it comes to hold changes
+    // its faces alone, and nothing made is made again.
+    let (_, faces) = asset.drawn.faces();
+    // Its far view kept in the project's own folder of what is made, so ground seen once comes back at once.
+    let far_folder = Some(content.db().root().join(".voxear").join("FarView").join(asset.guid.to_string()));
+    Some(voxear_terrain::blocks::stream::BlockMaking {
+        file: asset.drawn.for_ground(),
+        generate,
+        world: generator,
+        faces: faces.into(),
+        far_folder,
+    })
+}
+
 /// Each world of blocks without end's streamer, by its Obj.
 #[derive(Default)]
 struct Streams(std::collections::HashMap<voxear_ecs::Entity, voxear_terrain::blocks::stream::BlockStreamer>);
@@ -399,21 +418,8 @@ pub fn stream(world: &mut World, content: &mut Content) {
     let mut streams = world.remove_resource::<Streams>().unwrap_or_default();
     streams.0.retain(|entity, _| endless.iter().any(|(e, ..)| e == entity));
     for (entity, mut asset, corner) in endless {
-        let Some(generate) = asset.file.generate.clone() else { continue };
-        let Some(far) = generate.endless else { continue };
-        let Some(generator) = generator(content, &asset.file) else { continue };
-        // Its file as its blocks are now, so a block saved since makes it anew; a block it comes to hold changes
-        // its faces alone, and nothing made is made again.
-        let (_, faces) = asset.drawn.faces();
-        // Its far view kept in the project's own folder of what is made, so ground seen once comes back at once.
-        let far_folder = Some(content.db().root().join(".voxear").join("FarView").join(asset.guid.to_string()));
-        let making = voxear_terrain::blocks::stream::BlockMaking {
-            file: asset.drawn.for_ground(),
-            generate,
-            world: generator,
-            faces: faces.into(),
-            far_folder,
-        };
+        let Some(far) = asset.file.generate.as_ref().and_then(|generate| generate.endless) else { continue };
+        let Some(making) = making(content, &asset) else { continue };
         let Some(mut blocks) = world.get::<BlockWorld>(entity).cloned() else { continue };
         let camera = [viewer.x - corner.x, viewer.z - corner.z];
         let streamer = streams.0.entry(entity).or_default();

@@ -217,6 +217,8 @@ pub fn put(
     set(world, entity, obj.audio_listener.then_some(AudioListener));
     set::<voxear_render::UiPanel>(world, entity, obj.ui_panel);
     set::<crate::screen_ui::ScreenUi>(world, entity, obj.screen_ui);
+    set::<crate::map::Map>(world, entity, obj.map);
+    set::<crate::map::MapMarker>(world, entity, obj.map_marker);
     let layer = obj.layer.as_ref().map(|layer| layer.layer(world)).filter(|layer| layer.0 != 0);
     set::<Layer>(world, entity, layer);
     set::<Collider>(world, entity, obj.collider);

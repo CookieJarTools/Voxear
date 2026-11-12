@@ -22,6 +22,7 @@ pub mod game_ui;
 pub mod joints;
 pub mod keymaps;
 pub mod lod_groups;
+pub mod map;
 mod levels;
 pub mod mesh_boxes;
 pub mod lighting;

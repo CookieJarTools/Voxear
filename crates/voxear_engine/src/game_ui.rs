@@ -715,6 +715,9 @@ pub struct GameUi {
     /// The shaders backgrounds can be drawn with, which every UI it shows is
     /// given (see [`GameUi::set_shaders`]).
     shaders: std::rc::Rc<voxear_ui::UiShaders>,
+    /// How many pixels one of the screen's UI's was when it was last laid
+    /// out: nothing until it has been.
+    scale: f32,
 }
 
 impl GameUi {
@@ -896,7 +899,18 @@ impl GameUi {
     /// Moves the screen's UI's clock on by a frame and lays it out for an
     /// area of `width` by `height` pixels, at `scale` pixels to a logical one.
     pub fn frame(&mut self, delta: f32, size: (u32, u32), scale: f32) -> UiFrame {
+        self.scale = scale;
         self.screen.frame(delta, size, scale)
+    }
+
+    /// The element scripts hold by `element`, in the screen's UI.
+    pub(crate) fn node(&self, element: u32) -> Option<voxear_ui::NodeId> {
+        self.screen.numbers.node(element)
+    }
+
+    /// How many pixels one of the screen's UI's is, as it was last laid out.
+    pub fn scale(&self) -> f32 {
+        if self.scale > 0.0 { self.scale } else { 1.0 }
     }
 
     /// Hands the renderer the screen's UI for the area at `origin` in the

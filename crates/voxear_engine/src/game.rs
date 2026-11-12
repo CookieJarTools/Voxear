@@ -50,6 +50,8 @@ pub struct Game {
     previews: ScriptPreviews,
     /// The game's own UI, which its scripts load documents into.
     pub ui: GameUi,
+    /// The maps of the world its UI shows.
+    pub maps: crate::map::Maps,
     /// The window as scripts see it and ask for it.
     pub display: Display,
     /// The game's sound, and what its Audio Sources play.
@@ -137,6 +139,7 @@ impl Game {
             watcher: None,
             previews: ScriptPreviews::default(),
             ui: GameUi::default(),
+            maps: crate::map::Maps::default(),
             display: Display::default(),
             audio: GameAudio::default(),
             input: voxear_input::Input::new(),
@@ -675,6 +678,13 @@ impl Game {
             self.prompt_icons.follow(&self.input, &mut self.content, renderer);
         }
         self.ui.follow_input(&self.input, self.prompt_icons.sprites());
+        // Maps show while the game plays, as the UI they are in does.
+        if !self.engine.is_edit_mode() {
+            self.maps.sync_huds(&mut self.engine.world, &mut self.ui, &mut self.input, &mut self.display);
+            let scale = self.ui.scale();
+            let world = &self.engine.world;
+            self.maps.update(world, &mut self.content, renderer.as_deref_mut(), (self.ui.ui(), scale));
+        }
         self.ui.show_tooltip(delta);
         // The UI's list and tree views have the scripts fill the rows now on screen, before the frame draws them.
         let rows = self.ui.rows_to_fill();

@@ -66,6 +66,7 @@ pub mod ui_input;
 pub mod ui_panels;
 pub mod upgrade;
 pub mod water;
+pub mod weather;
 mod windowed;
 
 pub use content::{

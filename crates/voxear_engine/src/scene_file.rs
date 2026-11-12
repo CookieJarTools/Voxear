@@ -156,6 +156,13 @@ pub struct SkyData {
     /// The sun's disc across the sky, in degrees.
     #[serde(default = "default_sun_size", skip_serializing_if = "is_default_sun_size")]
     pub sun_size: f32,
+    /// The sky's clouds, left out where they are as a new sky's: none.
+    #[serde(default, skip_serializing_if = "no_clouds_set")]
+    pub clouds: voxear_render::Clouds,
+}
+
+fn no_clouds_set(clouds: &voxear_render::Clouds) -> bool {
+    *clouds == voxear_render::Clouds::default()
 }
 
 fn default_haze_glow() -> f32 {
@@ -1424,6 +1431,8 @@ pub fn apply_environment(engine: &mut Engine, environment: Environment<'_>) -> R
         Some((reference, lit)) => {
             engine.world.insert_resource(SceneLighting(reference.to_string()));
             engine.world.insert_resource(LightingPost(lit.post.clone()));
+            // Lighting settings are the level's lighting whole, its weather too: their own, or clear.
+            engine.world.insert_resource(lit.weather.weather());
         }
         None if post.is_some() => {
             engine.world.remove_resource::<SceneLighting>();
@@ -1470,6 +1479,7 @@ pub fn sky_data(sky: &Sky) -> SkyData {
         haze_glow: sky.haze_glow,
         distance_haze: sky.distance_haze,
         sun_size: sky.sun_size,
+        clouds: sky.clouds,
     }
 }
 
@@ -1490,6 +1500,7 @@ pub fn sky_from_data(sky: &SkyData) -> Sky {
         haze_glow: sky.haze_glow,
         distance_haze: sky.distance_haze,
         sun_size: sky.sun_size,
+        clouds: sky.clouds,
     }
 }
 
@@ -2786,6 +2797,22 @@ mod tests {
         let dusty: SkyData = toml::from_str(&format!("{colours}\n{hazy}")).unwrap();
         assert_eq!(toml::from_str::<SkyData>(&toml::to_string(&dusty).unwrap()).unwrap(), dusty);
         assert_eq!((dusty.haze, dusty.haze_glow, dusty.distance_haze, dusty.sun_size), (2.0, 0.9, 20.0, 1.0));
+    }
+
+    #[test]
+    fn the_skys_clouds_read_and_write_back_and_are_left_out_unset() {
+        let colours = "zenith = [0.3, 0.5, 0.9]\nhorizon = [0.7, 0.8, 0.9]\nground = [0.4, 0.4, 0.4]";
+        let clear: SkyData = toml::from_str(colours).unwrap();
+        assert!(sky_from_data(&clear).clouds.is_none(), "no clouds unless the sky says so");
+        assert!(!toml::to_string(&clear).unwrap().contains("clouds"));
+        // Only what is written changes: the rest are a new sky's.
+        let cloudy: SkyData = toml::from_str(&format!("{colours}\n[clouds]\ncover = 0.6\nheight = 2000.0")).unwrap();
+        let clouds = sky_from_data(&cloudy).clouds;
+        let fresh = voxear_render::Clouds::default();
+        assert_eq!((clouds.cover, clouds.height, clouds.size), (0.6, 2000.0, fresh.size));
+        assert_eq!(toml::from_str::<SkyData>(&toml::to_string(&cloudy).unwrap()).unwrap(), cloudy);
+        assert_eq!(sky_data(&sky_from_data(&cloudy)).clouds, cloudy.clouds);
+        assert!(toml::from_str::<SkyData>(&format!("{colours}\n[clouds]\ncovr = 0.6")).is_err(), "a misspelt setting");
     }
 
     #[test]

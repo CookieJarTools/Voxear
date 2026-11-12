@@ -79,6 +79,11 @@ pub fn update(world: &mut World, time: f64) {
             zone.shape == voxear_render::WindShape::Global && switched.is_on(world, *entity, voxear_scene::Switch::WindZone)
         })
         .map(|(_, zone, transform, at)| (placed(transform, at).1, zone.strength));
+    // As hard as the weather has it blowing, as the renderer blows everything else.
+    let weather = voxear_render::weather::Weather::in_world(world);
+    let zone = zone.map(|(rotation, strength)| {
+        (rotation, weather.wind(WindZone { strength, ..WindZone::default() }).strength)
+    });
     let first = world.query_ref::<(Entity, &Ocean, &Transform, Option<&WorldTransform>)>().into_iter().next().map(
         |(entity, ocean, transform, at)| {
             let (position, rotation) = placed(transform, at);

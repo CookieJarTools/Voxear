@@ -1029,6 +1029,70 @@ point, area or tube light a cube's six, the nearest eight lights a frame.
 **Atmosphere.** A physically based sky (Hillaire 2020) and **volumetric fog**. The fog is a froxel volume lit by
 every light type and by GI, with temporal reprojection, local fog volumes and height fog.
 
+**Clouds** *(implemented; weather planned)*. A sky's `clouds` (`voxear_render::Clouds`, `[sky.clouds]`) are a layer
+between two heights over the level's ground (`src/clouds.rs`, `shaders/clouds.slang`, the passes in
+`shaders/sky.slang`). `cloudDensityAt` shapes them from the smoke's baked noise atlas, so they need no texture of
+their own: round puffs make the bodies, a noise over the plane hashed on whole numbers puts more cloud here and less
+there, smaller puffs and swirls are bitten out of the edges, and below a quarter of the layer's height a cloud keeps
+its outline, so all stand on one flat underside. With any cover, two passes run after the atmosphere's tables:
+
+1. **Cloud shadows** draws a 256² map of how much sun the layer lets through, 6 km each way round the camera,
+   snapped to its texels. `cloudShadowAt` reads it where the way from a point to the sun crosses the layer's middle,
+   and `sunShadow` and `sunShadowHard` multiply by it, so everything the sun lights is under the clouds' shadows
+   without knowing of them: opaque shading, blocks, plants, water, particles, smoke and the fog's froxels.
+2. **Clouds** marches the layer for each pixel at half the picture's size: the ray's stretch between the two
+   heights round a curved Earth (worked out from the heights' difference, which stays exact in metres), 40 steps
+   from a start jittered by pixel and frame, 4 doubling steps towards the sun from each. It is blended nine parts
+   in ten with last frame's picture, one of two history images, found by the pixel's direction through last
+   frame's view. The result is colour to add and, in alpha, how much of the sky shows through.
+
+Clouds of the **Blocks** kind (`CloudKind::Blocks`, `[sky.clouds] kind = "blocks"`) are the same field built of
+cubes `block` metres wide: `cloudDensityIn` snaps a place to its cube's middle, so a cube is cloud or not as a
+whole, and the shadow map needs no path of its own. The Clouds pass walks the cubes along the ray instead of
+marching (`cloudBlocksSeen`: up to 128 cubes, out to 16 km, in a flat layer), stops at the first cube that is cloud,
+and lights the face it came in by all one colour, from the way it faces and four cubes' worth of the way to the sun.
+The ray's place within its pixel moves each frame, which the history blend turns into smooth edges.
+
+With any `softness`, cubes are mist: `cloudCubeAt` gives each cube a share of cloud, less near its cloud's edge,
+the walk takes out light by that share and the length of the ray inside the cube and goes on, and each cube is lit
+through, by the cubes between its middle and the sun, blended with the face's shade by the softness.
+
+The sky pass lays that picture over the sky it draws. Clouds are therefore behind everything drawn, and are not in
+reflections. The renderer adds up the drift along the Wind Zone's direction and takes the world's origin from it,
+so the pattern is fixed in the level. The Sky light pass greys the sky's light by the cover. No cover skips both
+passes.
+
+**Weather** *(implemented; roofs, sound and networking planned)*. `voxear_render::weather::Weather`
+is a resource: a kind, the `WeatherAmounts` it is turning from and to, and how far through the turn it is. It
+changes no other state. `scene::extract` reads what it adds this moment and lays it over what it extracts:
+`WeatherAmounts::sky` on the `Sky` (cloud cover, density, thickness and shadows, haze, a gradient's colours),
+`sun` on the sun's radiance, which under the atmosphere dims the sky too, `fog` on the post-processing's fog after
+post volumes are blended, and `wind` on the first Global Wind Zone, which the particle simulation and the engine's
+sea read through the same call. So the editor, a saved scene and a script reading a component all see the level's
+lighting as its maker left it, and weather needs no undoing.
+
+The resource also keeps what has fallen (`WeatherGround`: wet and snow, each moving towards what the weather now
+would leave, at its own speed up and down) and a clock of its own. `extract` writes the ground into the frame beside
+the seasons, and `weatherSurface` in the shared fragment shader darkens and smooths every surface by the wet and
+lays snow on what faces up, by a noise over the level hashed on whole numbers while there is little: meshes,
+terrain and blocks all pass through it. Lightning is a pure function of the clock and the lightning amount
+(`flash_at`): time is cut into three-second stretches, a hash of each stretch's number says whether it holds a
+strike and when, and a strike is two or three decaying flickers. Its brightness goes into the frame's cloud data,
+where the Sky light pass adds it to the sky's light, and onto a gradient sky's colours.
+
+The engine's `weather::update`, early in each tick, advances the resource by the tick's time and keeps rain and
+snow falling: for each, four Particle Systems made from the starter effect, widened to a 24 m box, in the world's
+space, on `EditorOnly` Objs moved to stay over the viewer (`terrain::viewer`: the Scene view's camera in the
+editor, else the game's). Layers are turned on and off whole, because a simulated system whose rate changes is
+given new room and starts afresh; a layer stopped keeps its `PlayedEffect` mark, so the particles' own clean-up
+takes its Obj away once its last drops have fallen.
+
+Lighting settings carry `[weather]` (`lighting::WeatherData`), and `apply_environment` puts the level in it, or
+in clear weather, whenever lighting settings are applied. Scripts reach it as the seasons are reached: the engine
+publishes the weather's state before scripts run, and takes the last `Weather.Set` after the frame. The C# side
+raises `Weather.Changed` and `Weather.Struck` from its per-frame dispatch, by comparing what it reads with last
+frame's.
+
 **Post-processing.** Built in and on by default as the Voxear Look. See
 [Post-processing and the Voxear Look](#post-processing-and-the-voxear-look) below.
 

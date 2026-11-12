@@ -6886,7 +6886,9 @@ fn the_lighting_page_names_the_scenes_lighting_and_edits_its_asset() {
     let row = |editor: &voxear_editor::Editor, title: &str| {
         let mut rows = Vec::new();
         with_class(&editor.ui, inspector, "setting", &mut rows);
-        rows.into_iter().find(|&row| editor.ui.children(row).first().is_some_and(|&l| editor.ui.text(l) == title))
+        // The one on the tab shown: the clouds have a density too.
+        let named = |row: &NodeId| editor.ui.children(*row).first().is_some_and(|&l| editor.ui.text(l) == title);
+        rows.into_iter().filter(named).find(|&row| editor.ui.is_visible(row))
     };
     let density = row(&editor, "Density").expect("the fog's density");
     assert!(editor.ui.is_visible(density), "shown while there is fog");

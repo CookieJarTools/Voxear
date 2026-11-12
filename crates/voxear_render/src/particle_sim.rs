@@ -630,7 +630,9 @@ fn wind(world: &World) -> GpuWind {
     let global = |(entity, zone, _): &(Entity, &crate::WindZone, &Transform)| {
         zone.shape == crate::WindShape::Global && switched.is_on(world, *entity, Switch::WindZone)
     };
-    zones.into_iter().find(global).map(|(_, zone, transform)| zone.gpu(transform.rotation)).unwrap_or_default()
+    let weather = crate::weather::Weather::in_world(world);
+    let zone = zones.into_iter().find(global);
+    zone.map(|(_, zone, transform)| weather.wind(*zone).gpu(transform.rotation)).unwrap_or_default()
 }
 
 #[cfg(test)]

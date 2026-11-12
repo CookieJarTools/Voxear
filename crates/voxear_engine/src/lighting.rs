@@ -29,7 +29,10 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use voxear_core::math::Vec3;
-use voxear_render::{Look, LookName, Sky, SunLook, temperature_color};
+use voxear_render::{
+    Look, LookName, Sky, SunLook, temperature_color,
+    weather::{Weather, WeatherAmounts, WeatherKind},
+};
 
 use crate::{
     content::linear,
@@ -59,6 +62,41 @@ pub struct LightingFile {
     /// Post-processing, as a scene's `[post]` writes it, over the look's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub post: Option<toml::Table>,
+    /// The weather the level is in once lit by these settings, as
+    /// [`WeatherData`] writes it; clear when left out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub weather: Option<toml::Table>,
+}
+
+/// The weather lighting settings put a level in, as `[weather]` writes it:
+/// a kind by name, or with `kind = "custom"` the amounts beside it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct WeatherData {
+    pub kind: WeatherKind,
+    pub cloud: f32,
+    pub darkness: f32,
+    pub fog: f32,
+    pub wind: f32,
+    pub rain: f32,
+    pub snow: f32,
+    pub lightning: f32,
+}
+
+impl WeatherData {
+    /// The amounts written beside the kind, which a custom kind's are.
+    pub fn amounts(&self) -> WeatherAmounts {
+        let Self { cloud, darkness, fog, wind, rain, snow, lightning, .. } = *self;
+        WeatherAmounts { cloud, darkness, fog, wind, rain, snow, lightning }
+    }
+
+    /// The weather it describes, settled.
+    pub fn weather(&self) -> Weather {
+        match self.kind {
+            WeatherKind::Custom => Weather::custom(self.amounts()),
+            kind => Weather::of(kind),
+        }
+    }
 }
 
 fn lighting_format() -> u32 {
@@ -103,6 +141,8 @@ pub struct Lighting {
     pub sun: SunLook,
     /// Post-processing as a scene's `[post]` would write it, look and all.
     pub post: toml::Table,
+    /// The weather the level is in once lit: clear where the settings write none.
+    pub weather: WeatherData,
 }
 
 /// A sun look that changes nothing.
@@ -157,7 +197,11 @@ impl LightingFile {
         if let Some(over) = &self.post {
             merge(&mut post, over);
         }
-        Ok(Lighting { sky, sun, post })
+        let weather = match &self.weather {
+            Some(table) => table.clone().try_into().context("reading the lighting's [weather]")?,
+            None => WeatherData::default(),
+        };
+        Ok(Lighting { sky, sun, post, weather })
     }
 }
 
@@ -188,6 +232,37 @@ mod tests {
         assert_eq!((lighting.sun.strength, lighting.sun.softness), (2.0, golden.sun.softness));
         assert_eq!(lighting.post["look"].as_str(), Some("golden_hour"));
         assert_eq!(lighting.post["bloom"]["intensity"].as_float(), Some(0.3));
+    }
+
+    #[test]
+    fn lighting_sets_the_weather_by_kind_or_by_amounts_and_is_clear_without() {
+        let plain: LightingFile = toml::from_str("look = \"golden_hour\"").unwrap();
+        assert_eq!(plain.resolve().unwrap().weather.weather(), Weather::default(), "clear unless it says");
+        let rainy: LightingFile = toml::from_str("[weather]\nkind = \"rain\"").unwrap();
+        let rain = rainy.resolve().unwrap().weather.weather();
+        assert_eq!((rain.kind(), rain.now()), (WeatherKind::Rain, WeatherKind::Rain.amounts()));
+        assert!(rain.settled(), "at once");
+        let own: LightingFile = toml::from_str("[weather]\nkind = \"custom\"\nfog = 0.8\nsnow = 0.25").unwrap();
+        let custom = own.resolve().unwrap().weather.weather();
+        assert_eq!((custom.now().fog, custom.now().snow, custom.now().rain), (0.8, 0.25, 0.0));
+        // A kind's own amounts are its own, whatever is written beside it.
+        let both: LightingFile = toml::from_str("[weather]\nkind = \"fog\"\nrain = 1.0").unwrap();
+        assert_eq!(both.resolve().unwrap().weather.weather().now().rain, 0.0);
+        let misspelt: LightingFile = toml::from_str("[weather]\nkind = \"drizzle\"").unwrap();
+        assert!(misspelt.resolve().is_err());
+    }
+
+    #[test]
+    fn lighting_changes_its_looks_clouds_one_setting_at_a_time() {
+        let highland = Look::of(LookName::HighlandSummer).sky.clouds;
+        assert!(highland.cover > 0.0, "the look has clouds");
+        let file: LightingFile = toml::from_str("look = \"highland_summer\"\n[sky.clouds]\ndrift = 30.0").unwrap();
+        let clouds = file.resolve().unwrap().sky.clouds;
+        assert_eq!((clouds.drift, clouds.cover, clouds.height), (30.0, highland.cover, highland.height));
+        // A clear sky under a look.
+        let clear: LightingFile = toml::from_str("look = \"highland_summer\"\n[sky.clouds]\ncover = 0.0").unwrap();
+        assert!(clear.resolve().unwrap().sky.clouds.is_none());
+        assert!(Look::of(LookName::CandlelitCastle).sky.clouds.is_none(), "none indoors");
     }
 
     #[test]

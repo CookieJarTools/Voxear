@@ -375,6 +375,88 @@ pub struct Sky {
     pub distance_haze: f32,
     /// The sun's disc across the sky, in degrees: half a degree as on Earth.
     pub sun_size: f32,
+    /// The clouds in it; none by default.
+    pub clouds: Clouds,
+}
+
+/// Clouds in the sky: a layer of them between two heights, drifting with the
+/// wind, lit by the sun and the sky, and shading the ground under them (see
+/// `clouds`). With no cover there are none, and they cost nothing.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Clouds {
+    /// How much of the sky they cover, from 0 for a clear sky to 1 for
+    /// overcast.
+    pub cover: f32,
+    /// How high their undersides are over the level's ground, in metres.
+    pub height: f32,
+    /// How tall they are from their undersides to their tops, in metres.
+    pub thickness: f32,
+    /// How far across a cloud is, in metres.
+    pub size: f32,
+    /// How thick they are to look through: 1 for fair-weather clouds, less
+    /// for thin ones the sky shows through, more for heavy ones.
+    pub density: f32,
+    /// How fast they drift, in metres a second, the way the level's wind
+    /// blows.
+    pub drift: f32,
+    /// How dark their shadows on the ground are, from 0 for none to 1.
+    pub shadows: f32,
+    /// Soft clouds, or clouds built of cubes.
+    pub kind: CloudKind,
+    /// How wide one cube of a cloud built of them is, in metres.
+    pub block: f32,
+    /// How soft a cloud built of cubes is, from 0 for solid cubes to 1 for
+    /// cubes of mist: faint at a cloud's edges, where the sky shows through
+    /// them, and lit as mist is rather than a face at a time.
+    pub softness: f32,
+}
+
+/// What a sky's clouds are made of.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CloudKind {
+    /// Heaped clouds with soft, billowing edges.
+    #[default]
+    Soft,
+    /// The same clouds built of cubes, each flat-sided and one colour a
+    /// face, for a world of blocks.
+    Blocks,
+}
+
+impl Default for Clouds {
+    fn default() -> Self {
+        Self {
+            cover: 0.0,
+            height: 1200.0,
+            thickness: 700.0,
+            size: 900.0,
+            density: 1.0,
+            drift: 8.0,
+            shadows: 0.8,
+            kind: CloudKind::Soft,
+            block: 100.0,
+            softness: 0.0,
+        }
+    }
+}
+
+impl Clouds {
+    /// Clouds covering `cover` of the sky, the rest as they are by default.
+    pub fn covering(cover: f32) -> Self {
+        Self { cover, ..Self::default() }
+    }
+
+    /// Clouds built of cubes covering `cover` of the sky, the rest as they
+    /// are by default.
+    pub fn blocks(cover: f32) -> Self {
+        Self { cover, kind: CloudKind::Blocks, ..Self::default() }
+    }
+
+    /// Whether there are none.
+    pub fn is_none(&self) -> bool {
+        self.cover <= 0.0
+    }
 }
 
 /// What the sky is drawn as.
@@ -403,6 +485,7 @@ impl Default for Sky {
             haze_glow: 0.8,
             distance_haze: 10.0,
             sun_size: 0.5357,
+            clouds: Clouds::default(),
         }
     }
 }
@@ -434,7 +517,15 @@ pub fn extract(
         })
         .unwrap_or((Camera::default(), Vec3::new(0.0, 1.0, -5.0), Quat::IDENTITY));
 
-    let sky = world.resource::<Sky>().copied().unwrap_or_default();
+    // The weather is laid over the level's lighting: its sky, sun, fog and wind as they are, and what it adds.
+    let weathered = world.resource::<crate::weather::Weather>().copied().unwrap_or_default();
+    let weather = weathered.now();
+    let mut sky = weather.sky(world.resource::<Sky>().copied().unwrap_or_default());
+    // Lightning lights the sky for a moment, and all it lights: a gradient's own colours here, the atmosphere's
+    // sky light as it is worked out.
+    let flash = weathered.flash() * crate::weather::FLASH_LIGHT;
+    sky.zenith += crate::weather::FLASH_COLOUR * flash;
+    sky.horizon += crate::weather::FLASH_COLOUR * flash;
     let fov = camera.fov_y_degrees.to_radians();
     let view = Mat4::from_rotation_translation(rotation, position).inverse();
     let projection = vulkan::perspective_infinite_reverse(fov, aspect, camera.near);
@@ -447,7 +538,10 @@ pub fn extract(
     // Post volumes blend in where the camera is, unless a view sets its own settings.
     let scene_post = match options.post_override {
         Some(_) => scene_post,
-        None => crate::post_volume::blend_volumes(world, scene_post, position),
+        None => {
+            let blended = crate::post_volume::blend_volumes(world, scene_post, position);
+            PostProcess { fog: weather.fog(blended.fog), ..blended }
+        }
     };
     let post = match options.debug_view {
         DEBUG_VIEW_NONE => scene_post,
@@ -525,6 +619,7 @@ pub fn extract(
                 SkyMode::Atmosphere => SKY_ATMOSPHERE,
             },
             atmosphere: crate::atmosphere::of_sky(&sky),
+            clouds: crate::clouds::gpu(&sky.clouds),
             sun_cookie: NO_TEXTURE,
             transmittance: NO_TEXTURE,
             multi_scattering: NO_TEXTURE,
@@ -568,7 +663,7 @@ pub fn extract(
             LightKind::Directional if !sun_found => {
                 sun_found = true;
                 frame.sun_direction = vec3(forward);
-                frame.sun_color = vec3(radiance);
+                frame.sun_color = vec3(radiance * weather.sun());
                 frame.lighting.sun_softness = (light.softness.clamp(0.0, 20.0).to_radians() * 0.5).tan();
                 frame.lighting.sun_shadow_tint = vec3(light.shadow_tint.max(Vec3::ZERO));
                 frame.lighting.moon = u32::from(light.body == SkyBody::Moon);
@@ -617,7 +712,7 @@ pub fn extract(
     let global = |(entity, zone, _): &(Entity, &crate::WindZone, &Transform)| {
         zone.shape == crate::WindShape::Global && on(*entity, Switch::WindZone)
     };
-    let zone = zones.into_iter().find(global).map(|(_, zone, transform)| (*zone, transform.rotation));
+    let zone = zones.into_iter().find(global).map(|(_, zone, transform)| (weather.wind(*zone), transform.rotation));
     if let Some((zone, rotation)) = zone {
         frame.wind = zone.gpu(rotation);
     }
@@ -642,6 +737,10 @@ pub fn extract(
     if let Some((_, seasons)) = seasons.into_iter().find(|(entity, _)| on(*entity, Switch::Seasons)) {
         frame.seasons = seasons.gpu();
     }
+    // What the weather has left lying on everything, Seasons or none.
+    frame.seasons.weather_wet = weathered.ground().wet;
+    frame.seasons.weather_snow = weathered.ground().snow;
+    frame.lighting.clouds.flash = flash;
 
     if sun_found {
         let view = shadows::View { position, rotation, fov_y: fov, aspect, near: camera.near, origin };

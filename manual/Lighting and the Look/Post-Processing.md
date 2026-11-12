@@ -71,6 +71,8 @@ Five are after the places of Hogwarts Legacy:
 
 A look sets how the sun looks, not where it is: turn the level's sun to suit, low for the dusty looks and high for the bright ones. The night looks make the sun a faint moon.
 
+Every look but `candlelit_castle` has clouds to suit it: a few high ones for `sand_buried_city`, fair-weather clouds for `storybook` and `highland_summer`, a heavy ceiling for `electrical_storm` (see [[The Sky]]). For a clear sky under a look, set the clouds' `cover` to 0 in the lighting settings' `[sky.clouds]`, or on the Lighting page's Clouds tab.
+
 Whatever the scene sets itself wins over the look's:
 
 - The scene's own `[sky]` replaces the look's sky. Without one, the look's sky is used, and saving the scene leaves it out, so changing the look changes the sky too.
